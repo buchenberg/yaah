@@ -92,6 +92,10 @@ func TestChatResponse_parsesToolCalls(t *testing.T) {
 	if len(msg.ToolCalls) != 1 {
 		t.Fatalf("expected 1 tool call, got %d", len(msg.ToolCalls))
 	}
+	// Content may be empty string when the response contains tool_calls
+	if msg.Content != "" {
+		t.Errorf("expected empty content for tool_calls response, got %q", msg.Content)
+	}
 	if msg.ToolCalls[0].Function.Name != "read_file" {
 		t.Errorf("tool name = %q, want read_file", msg.ToolCalls[0].Function.Name)
 	}
