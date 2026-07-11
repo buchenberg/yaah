@@ -119,10 +119,10 @@ func startREPL() error {
 		}
 
 		// Call the agent
-		response, err := runAgentPrompt(input)
+		response, streamed, err := runAgentPrompt(input)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s\n", replYellow("error: "+err.Error()))
-		} else if response != "" {
+		} else if !streamed && response != "" {
 			fmt.Println(response)
 			fmt.Println()
 		}
@@ -139,20 +139,25 @@ func startREPL() error {
 func runOneShot(cmd *cobra.Command, prompt string) error {
 	cmd.Printf("%s\n\n", repl.Bold("yaah "+version))
 
-	response, err := runAgentPrompt(prompt)
+	response, streamed, err := runAgentPrompt(prompt)
 	if err != nil {
 		return fmt.Errorf("agent error: %w", err)
 	}
 
-	cmd.Println(response)
+	// When streaming, tokens were already printed — don't duplicate
+	if !streamed {
+		cmd.Println(response)
+	}
 	return nil
 }
 
 // runAgentPrompt builds the agent loop and runs it for a single prompt.
-func runAgentPrompt(prompt string) (string, error) {
+// Returns (response, streamed, error). streamed=true means tokens were
+// already printed to stderr by the OnToken callback.
+func runAgentPrompt(prompt string) (string, bool, error) {
 	cfg, err := config.Load()
 	if err != nil {
-		return "", fmt.Errorf("config: %w", err)
+		return "", false, fmt.Errorf("config: %w", err)
 	}
 
 	// Use the first configured provider, or the default model
@@ -188,10 +193,36 @@ func runAgentPrompt(prompt string) (string, error) {
 	// Show thinking spinner
 	spin := spinner.New(nil, "Thinking...")
 	spin.Start()
-	response, err := loop.Run(context.Background(), prompt)
-	spin.Stop()
 
-	return response, err
+	// Set up token callback — stops spinner on first token, then prints
+	streamed := false
+	loop.OnToken = func(token string) {
+		if !streamed {
+			spin.Stop()
+			streamed = true
+		}
+		fmt.Fprint(os.Stderr, token)
+	}
+
+	loop.OnTool = func(name string) {
+		if !streamed {
+			spin.Stop()
+			streamed = true
+		}
+		fmt.Fprintf(os.Stderr, "\n  %s %s\n", Dim("tool:"), name)
+	}
+
+	response, err := loop.Run(context.Background(), prompt)
+	if !streamed {
+		spin.Stop()
+	}
+
+	// When streaming, the tokens were already printed — add a newline
+	if streamed {
+		fmt.Fprintln(os.Stderr)
+	}
+
+	return response, streamed, err
 }
 
 // resolveProviderName extracts the provider name from the config.
