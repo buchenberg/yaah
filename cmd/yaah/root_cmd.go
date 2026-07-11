@@ -13,6 +13,7 @@ import (
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/repl"
 	"github.com/buchenberg/yaah/internal/skills"
+	"github.com/buchenberg/yaah/internal/spinner"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 	"github.com/spf13/cobra"
@@ -156,6 +157,11 @@ func runAgentPrompt(prompt string) (string, error) {
 
 	// Use the first configured provider, or the default model
 	provider := resolveProvider(cfg)
+	modelName := resolveModel(cfg)
+
+	// Show provider and model info
+	providerName := resolveProviderName(cfg)
+	fmt.Fprintf(os.Stderr, "  %s %s/%s\n", Dim("provider:"), providerName, modelName)
 
 	// Load project instructions (AGENTS.md / CLAUDE.md)
 	cwd, _ := os.Getwd()
@@ -174,12 +180,31 @@ func runAgentPrompt(prompt string) (string, error) {
 	loop := &agent.Loop{
 		Provider:      provider,
 		Registry:      toolReg,
-		Model:         resolveModel(cfg),
+		Model:         modelName,
 		SystemPrompt:  systemPrompt,
 		MaxIterations: cfg.Default.MaxIterations,
 	}
 
-	return loop.Run(context.Background(), prompt)
+	// Show thinking spinner
+	spin := spinner.New(nil, "Thinking...")
+	spin.Start()
+	response, err := loop.Run(context.Background(), prompt)
+	spin.Stop()
+
+	return response, err
+}
+
+// resolveProviderName extracts the provider name from the config.
+func resolveProviderName(cfg *config.Config) string {
+	modelParts := strings.SplitN(cfg.Default.Model, "/", 2)
+	if len(modelParts) == 2 {
+		return modelParts[0]
+	}
+	// No prefix — try to find which provider has this model
+	for name := range cfg.Providers {
+		return name
+	}
+	return "local"
 }
 
 // resolveModel extracts the model name part after the provider prefix.
