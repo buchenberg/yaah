@@ -27,6 +27,10 @@ var tuiCmd = &cobra.Command{
 	},
 }
 
+func init() {
+	rootCmd.AddCommand(tuiCmd)
+}
+
 // runTUI starts the bubbletea TUI.
 func runTUI() error {
 	cfg, _ := config.Load()
