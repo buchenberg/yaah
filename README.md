@@ -3,11 +3,6 @@
 > A vendor-free, open-source, fully customizable AI agent harness.
 > One static Go binary. Minimal config at `~/.yaah/`. Skills at `~/.agents/`.
 
-```
-$ yaah --version
-yaah 0.0.0
-```
-
 ---
 
 ## What is this?
@@ -67,29 +62,30 @@ curl -fsSL https://github.com/buchenberg/yaah/releases/latest/download/install.s
 ## Quick start
 
 ```bash
-# 1. Scaffold your config
-yaah config edit          # opens ~/.yaah/config.yaml in $EDITOR
+# 1. Check your setup
+yaah doctor
 
-# 2. Try a one-shot prompt
-yaah "summarize the last 3 commits in this repo"
+# 2. Scaffold or edit your config
+yaah config edit          # opens ~/.yaah/config.yaml in $EDITOR
 
 # 3. Start the REPL
 yaah
 
-# 4. List the skills yaah discovered
-yaah skill list
+# 4. See available commands
+yaah --help
 
-# 5. Diagnose anything that's broken
-yaah doctor
+# 5. Check for updates
+yaah update
 ```
 
 ## Where things live
 
 ```
 ~/.yaah/                          # yaah-specific (minimal!)
-├── config.yaml                   #   providers, defaults, keybinds
+├── config.yaml                   #   providers, defaults
 ├── AGENTS.md                     #   optional global instructions
-└── state.db                      #   SQLite: sessions, memory
+├── history                       #   plain-text REPL history
+└── state.db                      #   SQLite: sessions, memory (M5)
 
 ~/.agents/                        # cross-tool (shared with opencode, claude, hermes)
 ├── AGENTS.md
@@ -107,24 +103,18 @@ yaah doctor
 
 ## Status
 
-**v0.0.0 — bootstrap.** M0 just landed: the binary builds, `--version`
-and `--help` work, and a CI matrix is in place. The plan is to ship
-**v0.1.0** in 5 milestones:
+**Milestones 0 & 1 complete.** The binary builds on 5 platforms, CI is green
+across Linux / macOS / Windows, and the config, REPL, doctor, and update
+check commands all work. Next up: the agent loop and built-in tools.
 
-| Milestone | Scope | Time |
+| Milestone | Scope | Status |
 |---|---|---|
-| **M0** ✅ | Bootstrap: build, version, CI, cross-compile | 1 day |
-| **M1** | Config + REPL + `yaah doctor` + `yaah update` | 3-4 days |
-| **M2** | Providers + agent loop + built-in tools | 4-5 days |
-| **M3** | Skills + `AGENTS.md` instructions | 2-3 days |
-| **M4** | MCP stdio client | 3-4 days |
-| **M5** | Persistent memory (SQLite + FTS5) | 2-3 days |
-
-The full design plan lives at
-[`Markdown/agentic/yaah-plan.md`](https://github.com/buchenberg/MarkdownUI)
-(under the `agentic/` folder in the yaah author's note vault). It is the
-canonical source for the v0.1 scope, design decisions, and rejected
-alternatives.
+| **M0** | Bootstrap: build, version, CI, cross-compile | ✅ done |
+| **M1** | Config + REPL + `yaah doctor` + `yaah update` | ✅ done |
+| **M2** | Providers + agent loop + built-in tools | 🚧 next |
+| **M3** | Skills + `AGENTS.md` instructions | ⬜ |
+| **M4** | MCP stdio client | ⬜ |
+| **M5** | Persistent memory (SQLite + FTS5) | ⬜ |
 
 ## License
 
