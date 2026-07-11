@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -22,12 +23,24 @@ type StreamProvider interface {
 	SendStream(ctx context.Context, req types.ChatRequest) (<-chan providers.StreamChunk, <-chan error)
 }
 
-// TokenCallback is called for each streamed token. Returns true if the
-// caller handled it (e.g. stopped the spinner).
+// TokenCallback is called for each streamed token.
 type TokenCallback func(token string)
 
-// ToolCallback is called when the agent invokes a tool.
-type ToolCallback func(name string)
+// ToolInfo contains information about a tool call for display.
+type ToolInfo struct {
+	Name     string        // tool name
+	Args     string        // abbreviated arguments
+	Duration time.Duration // how long the tool took
+	Error    string        // error message if the tool failed
+}
+
+// ToolCallback is called before and after each tool execution.
+// The first call (before) has Duration=0 and Error="".
+// The second call (after) has the actual Duration and any Error.
+type ToolCallback func(info ToolInfo)
+
+// ThinkingCallback is called when the model outputs thinking/reasoning text.
+type ThinkingCallback func(text string)
 
 // Loop runs the agent conversation loop.
 type Loop struct {
@@ -36,8 +49,9 @@ type Loop struct {
 	SystemPrompt  string
 	Model         string
 	MaxIterations int
-	OnToken       TokenCallback // called for each streamed token
-	OnTool        ToolCallback  // called before each tool execution
+	OnToken       TokenCallback
+	OnTool        ToolCallback
+	OnThinking    ThinkingCallback
 }
 
 // Run executes the full conversation loop for a single user message.
@@ -94,14 +108,7 @@ func (l *Loop) Run(ctx context.Context, userInput string) (string, error) {
 
 		if len(msg.ToolCalls) > 0 {
 			for _, tc := range msg.ToolCalls {
-				if l.OnTool != nil {
-					l.OnTool(tc.Function.Name)
-				}
-				result, err := l.Registry.Execute(tc.Function.Name, tc.Function.Arguments)
-				if err != nil {
-					result = fmt.Sprintf("error: %v", err)
-				}
-				messages = append(messages, types.ToolResultMsg(tc.ID, tc.Function.Name, result))
+				l.executeTool(tc, &messages)
 			}
 			continue
 		}
@@ -112,7 +119,43 @@ func (l *Loop) Run(ctx context.Context, userInput string) (string, error) {
 	return "", fmt.Errorf("max iterations (%d) reached without final response", l.MaxIterations)
 }
 
-// runStream handles a streaming request. Returns the assembled response.
+// executeTool runs a single tool call and appends the result to messages.
+func (l *Loop) executeTool(tc types.ToolCall, messages *[]types.Message) {
+	abbreviated := abbreviateArgs(tc.Function.Arguments, 80)
+
+	// Notify: tool call starting
+	if l.OnTool != nil {
+		l.OnTool(ToolInfo{
+			Name: tc.Function.Name,
+			Args: abbreviated,
+		})
+	}
+
+	start := time.Now()
+	result, err := l.Registry.Execute(tc.Function.Name, tc.Function.Arguments)
+	duration := time.Since(start)
+
+	if err != nil {
+		result = fmt.Sprintf("error: %v", err)
+	}
+
+	// Notify: tool call complete
+	if l.OnTool != nil {
+		info := ToolInfo{
+			Name:     tc.Function.Name,
+			Args:     abbreviated,
+			Duration: duration,
+		}
+		if err != nil {
+			info.Error = err.Error()
+		}
+		l.OnTool(info)
+	}
+
+	*messages = append(*messages, types.ToolResultMsg(tc.ID, tc.Function.Name, result))
+}
+
+// runStream handles a streaming request.
 func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatRequest) (string, error) {
 	chunks, errs := sp.SendStream(ctx, req)
 
@@ -125,13 +168,10 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
-				// Channel closed — assemble result
 				if content.Len() > 0 && len(toolCalls) == 0 {
 					return content.String(), nil
 				}
 				if len(toolCalls) > 0 {
-					// We got tool calls — need to execute them and continue
-					// This is handled by the caller
 					return "", fmt.Errorf("streaming tool calls not yet fully supported")
 				}
 				return content.String(), nil
@@ -179,7 +219,6 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 			if err != nil {
 				return "", err
 			}
-			// nil error on closed channel
 			if content.Len() > 0 {
 				return content.String(), nil
 			}
@@ -189,7 +228,6 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 			return "", ctx.Err()
 		}
 
-		// Check if we're done
 		if finishReason != "" {
 			break
 		}
@@ -226,4 +264,12 @@ func (l *Loop) buildToolDefs() []types.ToolDef {
 		})
 	}
 	return toolDefs
+}
+
+// abbreviateArgs truncates JSON args to maxLen characters with ellipsis.
+func abbreviateArgs(args string, maxLen int) string {
+	if len(args) <= maxLen {
+		return args
+	}
+	return args[:maxLen-3] + "..."
 }

@@ -217,6 +217,7 @@ func runAgentPrompt(prompt string) (string, bool, error) {
 
 	// Set up token callback — stops spinner on first token, then prints
 	streamed := false
+	toolCount := 0
 	loop.OnToken = func(token string) {
 		if !streamed {
 			spin.Stop()
@@ -225,12 +226,30 @@ func runAgentPrompt(prompt string) (string, bool, error) {
 		fmt.Fprint(os.Stderr, token)
 	}
 
-	loop.OnTool = func(name string) {
+	loop.OnTool = func(info agent.ToolInfo) {
 		if !streamed {
 			spin.Stop()
 			streamed = true
 		}
-		fmt.Fprintf(os.Stderr, "\n  %s %s\n", Dim("tool:"), name)
+
+		if info.Duration == 0 {
+			// Tool call starting
+			toolCount++
+			fmt.Fprintf(os.Stderr, "\n  tool: %s", Bold(info.Name))
+			if info.Args != "" {
+				args := info.Args
+				if len(args) > 60 {
+					args = args[:57] + "..."
+				}
+				fmt.Fprintf(os.Stderr, "(%s)", Dim(args))
+			}
+		} else {
+			// Tool call complete — show timing
+			fmt.Fprintf(os.Stderr, " (%s)\n", Dim(fmt.Sprintf("%.1fs", info.Duration.Seconds())))
+			if info.Error != "" {
+				fmt.Fprintf(os.Stderr, "    %s\n", replYellow("error: "+info.Error))
+			}
+		}
 	}
 
 	response, err := loop.Run(context.Background(), prompt)
