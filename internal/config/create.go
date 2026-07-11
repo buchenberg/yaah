@@ -20,6 +20,8 @@ providers:
     api_key: ollama
 
 default:
+  # Change this to the model you want. Use provider/model syntax (e.g. openai/gpt-4o).
+  # The provider prefix is stripped before sending to the API.
   model: openai/gpt-4o-mini
   small_model: openai/gpt-4o-mini
   max_iterations: 50

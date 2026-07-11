@@ -2,12 +2,17 @@ package yaah
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/repl"
+	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/buchenberg/yaah/internal/types"
 	"github.com/spf13/cobra"
 )
 
@@ -62,10 +67,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	// One-shot mode: args present
 	if len(args) > 0 {
 		prompt := strings.Join(args, " ")
-		fmt.Fprintf(os.Stderr, "%s\n", repl.Bold("yaah "+version))
-		fmt.Fprintf(os.Stderr, "%s\n", repl.Dim("(one-shot agent loop lands in M2 — your prompt was received but not processed yet)"))
-		fmt.Fprintf(os.Stderr, "  prompt: %s\n", prompt)
-		return nil
+		return runOneShot(cmd, prompt)
 	}
 
 	// REPL mode: no args
@@ -113,9 +115,14 @@ func startREPL() error {
 			fmt.Fprintf(os.Stderr, "warning: could not save history: %v\n", err)
 		}
 
-		// M2: here is where we'll call the agent loop
-		fmt.Printf("%s\n", repl.Dim("(agent loop lands in M2 — prompt received but not processed)"))
-		fmt.Printf("  you said: %s\n\n", input)
+		// Call the agent
+		response, err := runAgentPrompt(input)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", replYellow("error: "+err.Error()))
+		} else if response != "" {
+			fmt.Println(response)
+			fmt.Println()
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -123,6 +130,99 @@ func startREPL() error {
 	}
 
 	return nil
+}
+
+// runOneShot runs the agent for a single prompt and prints the response.
+func runOneShot(cmd *cobra.Command, prompt string) error {
+	cmd.Printf("%s\n\n", repl.Bold("yaah "+version))
+
+	response, err := runAgentPrompt(prompt)
+	if err != nil {
+		return fmt.Errorf("agent error: %w", err)
+	}
+
+	cmd.Println(response)
+	return nil
+}
+
+// runAgentPrompt builds the agent loop and runs it for a single prompt.
+func runAgentPrompt(prompt string) (string, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return "", fmt.Errorf("config: %w", err)
+	}
+
+	// Use the first configured provider, or the default model
+	provider := resolveProvider(cfg)
+
+	toolReg := tools.NewRegistry()
+	loop := &agent.Loop{
+		Provider:      provider,
+		Registry:      toolReg,
+		Model:         resolveModel(cfg),
+		SystemPrompt:  "You are yaah, a helpful AI assistant. Respond concisely.",
+		MaxIterations: cfg.Default.MaxIterations,
+	}
+
+	return loop.Run(context.Background(), prompt)
+}
+
+// resolveModel extracts the model name part after the provider prefix.
+// "openai/gpt-4o-mini" → "gpt-4o-mini", "gpt-4o-mini" → "gpt-4o-mini".
+func resolveModel(cfg *config.Config) string {
+	parts := strings.SplitN(cfg.Default.Model, "/", 2)
+	if len(parts) == 2 {
+		return parts[1]
+	}
+	return cfg.Default.Model
+}
+
+// resolveProvider picks the best available provider from the config.
+func resolveProvider(cfg *config.Config) agent.Provider {
+	// Try to find a provider that matches the default model prefix
+	modelParts := strings.SplitN(cfg.Default.Model, "/", 2)
+	if len(modelParts) == 2 {
+		if p, ok := cfg.Providers[modelParts[0]]; ok && isRealKey(p.APIKey) {
+			return providers.NewOpenAIClient(p.BaseURL, p.APIKey)
+		}
+	}
+
+	// Fall back to any configured provider
+	for _, p := range cfg.Providers {
+		if isRealKey(p.APIKey) {
+			return providers.NewOpenAIClient(p.BaseURL, p.APIKey)
+		}
+	}
+
+	// Last resort: return a stub that explains the issue
+	return &noProviderStub{}
+}
+
+// isRealKey returns true if the API key looks like a real key (not empty,
+// not a placeholder, not an unsubstituted env var).
+func isRealKey(key string) bool {
+	if key == "" || key == "(not set)" || key == "(too short)" {
+		return false
+	}
+	if strings.Contains(key, "${") {
+		return false
+	}
+	return true
+}
+
+// noProviderStub is returned when no valid provider is configured.
+type noProviderStub struct{}
+
+func (s *noProviderStub) Send(req types.ChatRequest) (*types.ChatResponse, error) {
+	return nil, fmt.Errorf("no provider configured — run 'yaah config edit' to add one")
+}
+
+// replYellow is a quick color helper for the REPL (avoids import cycle).
+func replYellow(s string) string {
+	if os.Getenv("NO_COLOR") == "" {
+		return "\x1b[33m" + s + "\x1b[0m"
+	}
+	return s
 }
 
 // printHelp displays the available slash commands.
