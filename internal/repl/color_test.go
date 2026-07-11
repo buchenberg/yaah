@@ -37,8 +37,8 @@ func TestBannerContainsVersion(t *testing.T) {
 	if !strings.Contains(banner, "1.2.3") {
 		t.Errorf("banner missing version: %q", banner)
 	}
-	if !strings.Contains(banner, "yaah") {
-		t.Errorf("banner missing 'yaah': %q", banner)
+	if !strings.Contains(banner, "LOCAL-FIRST") {
+		t.Errorf("banner missing tagline: %q", banner)
 	}
 }
 

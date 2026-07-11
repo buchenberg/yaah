@@ -1,7 +1,6 @@
 package repl
 
 import (
-	"fmt"
 	"os"
 )
 
@@ -59,13 +58,33 @@ func Yellow(text string) string {
 	return wrap(ansiYellow, text)
 }
 
-// Banner returns the startup banner string for the REPL.
+// Banner returns the startup splash screen for the REPL.
 func Banner(version string) string {
-	return fmt.Sprintf("\n%s %s\n%s\n\n",
-		Bold("yaah"),
-		Dim(version),
-		Dim("Yet Another Agent Harness — type /? for help, /exit to quit"),
-	)
+	c := func(s string) string { return wrap(ansiCyan, s) }
+	d := func(s string) string { return wrap(ansiDim, s) }
+
+	art := d("**") + "                                                                      " + d("**") + "\n" +
+		d("**") + " " + c("*") + "               " + c("*") + "               " + c("*") + "               " + c("*") + "            " + d("**") + "\n" +
+		d("**") + "   " + c("* * *") + "           " + c("* * *") + "           " + c("* * *") + "           " + c("* * *") + "          " + d("**") + "\n" +
+		d("**") + " " + c("*") + "               " + c("*") + "               " + c("*") + "               " + c("*") + "            " + d("**") + "\n" +
+		d("**") + "                                                                      " + d("**") + "\n" +
+		d("**") + "                                                    " + c("****") + "              " + d("**") + "\n" +
+		d("**") + "                                                    " + c("****") + "              " + d("**") + "\n" +
+		d("**") + "        " + c("****") + "    " + c("****") + "     " + c("********") + "        " + c("********") + "   " + c("****") + "              " + d("**") + "\n" +
+		d("**") + "         " + c("****") + "  " + c("****") + "            " + c("****") + "            " + c("****") + " " + c("********") + "          " + d("**") + "\n" +
+		d("**") + "          " + c("********") + "      " + c("***********") + "    " + c("***********") + "  " + c("****") + "  " + c("****") + "        " + d("**") + "\n" +
+		d("**") + "               " + c("****") + "    " + c("****") + "    " + c("****") + "   " + c("****") + "    " + c("****") + "  " + c("****") + "  " + c("****") + "        " + d("**") + "\n" +
+		d("**") + "             " + c("****") + "       " + c("***********") + "    " + c("***********") + "  " + c("****") + "  " + c("****") + "        " + d("**") + "\n" +
+		d("**") + "                                                                      " + d("**") + "\n" +
+		d("**") + " " + c("*") + "               " + c("*") + "               " + c("*") + "               " + c("*") + "            " + d("**") + "\n" +
+		d("**") + "   " + c("* * *") + "           " + c("* * *") + "           " + c("* * *") + "           " + c("* * *") + "          " + d("**") + "\n" +
+		d("**") + " " + c("*") + "               " + c("*") + "               " + c("*") + "               " + c("*") + "            " + d("**") + "\n" +
+		d("**") + "                                                                      " + d("**") + "\n" +
+		d("**") + "  " + Bold("LOCAL-FIRST ::: VENDOR-FREE ::: STANDARDS OVER REINVENTION") + "  " + d("**") + "\n" +
+		d("**************************************************************************") +
+		"\n  " + Dim(version) + "\n"
+
+	return "\n" + art + "\n\n"
 }
 
 // Prompt returns the input prompt string for the REPL.
