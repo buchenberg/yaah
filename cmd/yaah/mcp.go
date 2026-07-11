@@ -40,7 +40,11 @@ var mcpListCmd = &cobra.Command{
 		cmd.Printf("Found %d MCP server(s):\n\n", len(manifests))
 		for name, m := range manifests {
 			cmd.Printf("  %s\n", Bold(name))
-			cmd.Printf("        command: %s %v\n", m.Command, m.Args)
+			if m.Transport == "http" {
+				cmd.Printf("        url: %s (HTTP)\n", m.URL)
+			} else {
+				cmd.Printf("        command: %s %v (stdio)\n", m.Command, m.Args)
+			}
 		}
 		return nil
 	},
@@ -49,21 +53,34 @@ var mcpListCmd = &cobra.Command{
 // mcpAddCmd registers a new MCP server.
 var mcpAddCmd = &cobra.Command{
 	Use:   "add <name> <command> [args...]",
-	Short: "Register a new MCP server",
-	Args:  cobra.MinimumNArgs(2),
+	Short: "Register a new MCP server (stdio or HTTP)",
+	Long: `Register an MCP server manifest.
+
+For stdio servers:
+  yaah mcp add filesystem npx -y @modelcontextprotocol/server-filesystem /tmp
+
+For HTTP servers (pass --url):
+  yaah mcp add markdownui --url http://localhost:3333/mcp`,
+	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
-		command := args[1]
-		var cmdArgs []string
-		if len(args) > 2 {
-			cmdArgs = args[2:]
-		}
+		url, _ := cmd.Flags().GetString("url")
 
 		home := config.HomeDir()
 		manifestDir := filepath.Join(home, "mcp")
-		manifest := mcp.Manifest{
-			Command: command,
-			Args:    cmdArgs,
+
+		var manifest mcp.Manifest
+		if url != "" {
+			manifest = mcp.Manifest{URL: url, Transport: "http"}
+		} else {
+			if len(args) < 2 {
+				return fmt.Errorf("command is required for stdio servers (or use --url for HTTP)")
+			}
+			manifest = mcp.Manifest{
+				Command:   args[1],
+				Args:      args[2:],
+				Transport: "stdio",
+			}
 		}
 
 		data, _ := json.MarshalIndent(manifest, "", "  ")
@@ -104,6 +121,7 @@ func mcpSearchPaths(home string) []string {
 }
 
 func init() {
+	mcpAddCmd.Flags().String("url", "", "HTTP URL for HTTP-based MCP servers")
 	mcpCmd.AddCommand(mcpListCmd)
 	mcpCmd.AddCommand(mcpAddCmd)
 	mcpCmd.AddCommand(mcpRemoveCmd)

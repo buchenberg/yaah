@@ -13,9 +13,11 @@ import (
 
 // Manifest represents an MCP server configuration file.
 type Manifest struct {
-	Command string            `json:"command"`
-	Args    []string          `json:"args"`
-	Env     map[string]string `json:"env"`
+	Command   string            `json:"command,omitempty"`
+	Args      []string          `json:"args,omitempty"`
+	Env       map[string]string `json:"env,omitempty"`
+	URL       string            `json:"url,omitempty"`
+	Transport string            `json:"transport,omitempty"` // "stdio" (default) or "http"
 }
 
 // ServerTool represents a tool exposed by an MCP server.
@@ -205,9 +207,30 @@ func LoadManifest(path string) (*Manifest, error) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("parse manifest %s: %w", path, err)
 	}
-	if m.Command == "" {
-		return nil, fmt.Errorf("manifest %s: command is required", path)
+
+	// Default transport
+	if m.Transport == "" {
+		if m.URL != "" {
+			m.Transport = "http"
+		} else {
+			m.Transport = "stdio"
+		}
 	}
+
+	// Validate
+	switch m.Transport {
+	case "stdio":
+		if m.Command == "" {
+			return nil, fmt.Errorf("manifest %s: command is required for stdio transport", path)
+		}
+	case "http":
+		if m.URL == "" {
+			return nil, fmt.Errorf("manifest %s: url is required for http transport", path)
+		}
+	default:
+		return nil, fmt.Errorf("manifest %s: unknown transport %q", path, m.Transport)
+	}
+
 	return &m, nil
 }
 
