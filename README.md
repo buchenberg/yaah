@@ -18,7 +18,7 @@ converging on:
 - **`SKILL.md`** (YAML frontmatter + markdown body) for skills
 - **`~/.agents/skills/`** for shared, vendor-neutral skill storage
 - **`AGENTS.md`** for project instructions (walked up from cwd)
-- **MCP** (Model Context Protocol) over stdio JSON-RPC for tool servers
+- **MCP** (Model Context Protocol) over stdio and HTTP for tool servers
 - **SQLite + FTS5** for persistent memory
 
 If a skill works in [opencode](https://github.com/anomalyco/opencode),
@@ -53,10 +53,24 @@ CLI that consumes them is more useful than another walled garden.
 # From source (Go 1.22+ required)
 go install github.com/buchenberg/yaah@latest
 
-# From a release (macOS / Linux)
-curl -fsSL https://github.com/buchenberg/yaah/releases/latest/download/install.sh | sh
+# macOS Apple Silicon
+curl -fsSL https://github.com/buchenberg/yaah/releases/latest/download/yaah-darwin-arm64 -o yaah
+chmod +x yaah && sudo mv yaah /usr/local/bin/
 
-# Or download a binary from https://github.com/buchenberg/yaah/releases
+# macOS Intel
+curl -fsSL https://github.com/buchenberg/yaah/releases/latest/download/yaah-darwin-amd64 -o yaah
+chmod +x yaah && sudo mv yaah /usr/local/bin/
+
+# Linux amd64
+curl -fsSL https://github.com/buchenberg/yaah/releases/latest/download/yaah-linux-amd64 -o yaah
+chmod +x yaah && sudo mv yaah /usr/local/bin/
+
+# Linux arm64
+curl -fsSL https://github.com/buchenberg/yaah/releases/latest/download/yaah-linux-arm64 -o yaah
+chmod +x yaah && sudo mv yaah /usr/local/bin/
+
+# Windows (PowerShell)
+Invoke-WebRequest -Uri "https://github.com/buchenberg/yaah/releases/latest/download/yaah-windows-amd64.exe" -OutFile yaah.exe
 ```
 
 ## Quick start
@@ -65,17 +79,84 @@ curl -fsSL https://github.com/buchenberg/yaah/releases/latest/download/install.s
 # 1. Check your setup
 yaah doctor
 
-# 2. Scaffold or edit your config
-yaah config edit          # opens ~/.yaah/config.yaml in $EDITOR
+# 2. Edit your config (add a provider API key)
+yaah config edit
 
 # 3. Start the REPL
 yaah
 
-# 4. See available commands
-yaah --help
+# 4. Try a one-shot prompt with streaming
+yaah "explain this codebase"
 
 # 5. Check for updates
 yaah update
+```
+
+## Features
+
+### Streaming responses
+Tokens stream in real time with a thinking spinner. The spinner stops on the first token and the response appears as it's generated.
+
+### Tool calling
+The agent can use built-in tools and MCP server tools:
+- `read` — read files
+- `bash` — run shell commands
+- `memory_search` / `memory_add` — persistent memory
+- `todowrite` — task tracking
+- MCP tools from registered servers (e.g. markdownui)
+
+### Skills
+Skills follow the cross-tool standard (`SKILL.md` with YAML frontmatter).
+Discover skills from `~/.agents/skills/`, `~/.yaah/skills/`, and `./.agents/skills/`.
+
+```bash
+yaah skill list              # list all discovered skills
+yaah skill show <name>       # show a skill's content
+```
+
+### MCP servers
+Register MCP servers for additional tool capabilities:
+
+```bash
+yaah mcp list                                    # list registered servers
+yaah mcp add <name> <command> [args...]          # stdio server
+yaah mcp add <name> --url http://localhost:3000   # HTTP server
+yaah mcp remove <name>
+```
+
+### Persistent memory
+SQLite + FTS5 memory that persists across sessions:
+
+```bash
+yaah memory add "user prefers dark mode" --tags '["ui"]'
+yaah memory search "dark mode"
+```
+
+The agent can also use `memory_search` and `memory_add` tools during conversations.
+
+### Project instructions
+Project `AGENTS.md` / `CLAUDE.md` files are automatically loaded and injected into the system prompt. yaah walks up from the current directory to find them.
+
+### Todo lists
+The agent can create and manage task lists during conversations using the `todowrite` tool.
+
+## Commands
+
+```
+yaah                          # interactive REPL with splash screen
+yaah "prompt"                 # one-shot with streaming
+yaah config show              # effective config (secrets redacted)
+yaah config edit              # scaffold or edit ~/.yaah/config.yaml
+yaah doctor                   # diagnose installation
+yaah skill list               # discover skills
+yaah skill show <name>        # show skill content
+yaah mcp list                 # list MCP servers
+yaah mcp add <name> --url <url>  # register HTTP MCP server
+yaah memory add <text>        # add persistent memory note
+yaah memory search <query>    # search memory (FTS5)
+yaah session list             # list recent sessions
+yaah update                   # check for newer release
+yaah version                  # version, commit, build date
 ```
 
 ## Where things live
@@ -85,7 +166,8 @@ yaah update
 ├── config.yaml                   #   providers, defaults
 ├── AGENTS.md                     #   optional global instructions
 ├── history                       #   plain-text REPL history
-└── state.db                      #   SQLite: sessions, memory (M5)
+├── state.db                      #   SQLite: sessions, memory
+└── mcp/<name>.json               #   MCP server manifests
 
 ~/.agents/                        # cross-tool (shared with opencode, claude, hermes)
 ├── AGENTS.md
@@ -101,20 +183,41 @@ yaah update
 └── commands/<name>.md
 ```
 
+## Config
+
+Edit `~/.yaah/config.yaml`:
+
+```yaml
+providers:
+  openai:
+    base_url: https://api.openai.com/v1
+    api_key: ${OPENAI_API_KEY}
+  ollama:
+    base_url: http://localhost:11434/v1
+    api_key: ollama
+
+default:
+  model: openai/gpt-4o-mini
+  max_iterations: 50
+  approval: ask
+```
+
+Environment variables referenced as `${VAR_NAME}` are substituted at load time.
+
 ## Status
 
-**Milestones 0 & 1 complete.** The binary builds on 5 platforms, CI is green
-across Linux / macOS / Windows, and the config, REPL, doctor, and update
-check commands all work. Next up: the agent loop and built-in tools.
+**v0.1.0 released.** All milestones complete.
 
 | Milestone | Scope | Status |
 |---|---|---|
-| **M0** | Bootstrap: build, version, CI, cross-compile | ✅ done |
-| **M1** | Config + REPL + `yaah doctor` + `yaah update` | ✅ done |
-| **M2** | Providers + agent loop + built-in tools | 🚧 next |
-| **M3** | Skills + `AGENTS.md` instructions | ⬜ |
-| **M4** | MCP stdio client | ⬜ |
-| **M5** | Persistent memory (SQLite + FTS5) | ⬜ |
+| **M0** | Bootstrap: build, version, CI, cross-compile | ✅ |
+| **M1** | Config + REPL + `yaah doctor` + `yaah update` | ✅ |
+| **M2** | Providers + agent loop + built-in tools + streaming | ✅ |
+| **M3** | Skills + `AGENTS.md` instructions | ✅ |
+| **M4** | MCP client (stdio + HTTP) | ✅ |
+| **M5** | Persistent memory (SQLite + FTS5) | ✅ |
+
+80+ tests across 14 packages. Cross-compiles to 5 platforms.
 
 ## License
 
