@@ -1,0 +1,44 @@
+# Build output
+/yaah
+/dist/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Go workspace files (we use a single module)
+go.work
+go.work.sum
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Local env / secrets (never commit)
+.env
+.env.local
+*.local.yaml
+
+# AI agent metadata dirs — never commit
+.qwen/
+.cursor/
+.claude/
+.continue/
+.hermes/
+.windsurf/
+.copilot/
+.aider/
+.roo/
+.codeium/
+.tabnine/
+.sourcegraph/
+.ghost/

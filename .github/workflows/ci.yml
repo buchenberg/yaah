@@ -1,0 +1,106 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }} / ${{ matrix.go }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go: ['1.22']
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+
+      - name: download modules
+        run: go mod download
+
+      - name: gofmt (must be empty)
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "gofmt found unformatted files:"
+            gofmt -l .
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+
+      - name: go test
+        run: go test -race -shuffle=on ./...
+
+      - name: build
+        run: go build -trimpath -ldflags '-s -w' -o yaah .
+
+  cross-compile:
+    name: cross-compile (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: darwin,  goarch: arm64 }
+          - { goos: darwin,  goarch: amd64 }
+          - { goos: linux,   goarch: amd64 }
+          - { goos: linux,   goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: build
+        env:
+          GOOS:   ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          mkdir -p dist
+          out=dist/yaah-${{ matrix.goos }}-${{ matrix.goarch }}
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            out="${out}.exe"
+          fi
+          go build -trimpath -ldflags '-s -w' -o "$out" .
+
+      - name: smoke test (version)
+        env:
+          GOOS:   ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          bin=dist/yaah-${{ matrix.goos }}-${{ matrix.goarch }}
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            bin="${bin}.exe"
+          fi
+          "$bin" --version
+          "$bin" --help
+
+      - name: upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: yaah-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/yaah-${{ matrix.goos }}-${{ matrix.goarch }}*
+          if-no-files-found: error
