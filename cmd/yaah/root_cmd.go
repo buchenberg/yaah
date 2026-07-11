@@ -10,6 +10,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/instructions"
+	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/repl"
@@ -190,6 +191,16 @@ func runAgentPrompt(prompt string) (string, bool, error) {
 		toolReg.Register(&tools.MemorySearchTool{DB: db})
 		toolReg.Register(&tools.MemoryAddTool{DB: db})
 		defer db.Close()
+	}
+
+	// Start MCP clients and register their tools
+	mcpDirs := mcpSearchPaths(config.HomeDir())
+	mcpClients, mcpTools, _ := mcp.StartMCPClients(context.Background(), mcpDirs)
+	for _, c := range mcpClients {
+		defer c.Close()
+	}
+	for _, t := range mcpTools {
+		toolReg.Register(t)
 	}
 
 	loop := &agent.Loop{
