@@ -2,9 +2,10 @@ package repl
 
 import (
 	"os"
+	"regexp"
+	"strings"
 )
 
-// ANSI escape codes
 const (
 	ansiReset  = "\x1b[0m"
 	ansiBold   = "\x1b[1m"
@@ -14,18 +15,12 @@ const (
 	ansiYellow = "\x1b[33m"
 )
 
-// useColor is set by InitNoColor() based on the NO_COLOR env convention.
 var useColor = true
 
-// InitNoColor reads the NO_COLOR env var and sets useColor accordingly.
-// Per https://no-color.org/: when NO_COLOR is present and non-empty,
-// color output is disabled. An empty value does NOT disable color.
-// Called once at startup, but safe to call again (e.g. in tests).
 func InitNoColor() {
 	useColor = os.Getenv("NO_COLOR") == ""
 }
 
-// wrap wraps text with an ANSI escape sequence if useColor is true.
 func wrap(prefix, text string) string {
 	if !useColor {
 		return text
@@ -33,29 +28,16 @@ func wrap(prefix, text string) string {
 	return prefix + text + ansiReset
 }
 
-// Bold returns text in bold (or plain if NO_COLOR is set).
-func Bold(text string) string {
-	return wrap(ansiBold, text)
-}
+func Bold(text string) string   { return wrap(ansiBold, text) }
+func Dim(text string) string    { return wrap(ansiDim, text) }
+func Cyan(text string) string   { return wrap(ansiCyan, text) }
+func Green(text string) string  { return wrap(ansiGreen, text) }
+func Yellow(text string) string { return wrap(ansiYellow, text) }
 
-// Dim returns text in dim (or plain if NO_COLOR is set).
-func Dim(text string) string {
-	return wrap(ansiDim, text)
-}
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
-// Cyan returns text in cyan (or plain if NO_COLOR is set).
-func Cyan(text string) string {
-	return wrap(ansiCyan, text)
-}
-
-// Green returns text in green (or plain if NO_COLOR is set).
-func Green(text string) string {
-	return wrap(ansiGreen, text)
-}
-
-// Yellow returns text in yellow (or plain if NO_COLOR is set).
-func Yellow(text string) string {
-	return wrap(ansiYellow, text)
+func visibleLen(s string) int {
+	return len(ansiRe.ReplaceAllString(s, ""))
 }
 
 // Banner returns the startup splash screen for the REPL.
@@ -63,31 +45,60 @@ func Banner(version string) string {
 	c := func(s string) string { return wrap(ansiCyan, s) }
 	d := func(s string) string { return wrap(ansiDim, s) }
 
-	art := d("**") + "                                                                      " + d("**") + "\n" +
-		d("**") + " " + c("*") + "               " + c("*") + "               " + c("*") + "               " + c("*") + "            " + d("**") + "\n" +
-		d("**") + "   " + c("* * *") + "           " + c("* * *") + "           " + c("* * *") + "           " + c("* * *") + "          " + d("**") + "\n" +
-		d("**") + " " + c("*") + "               " + c("*") + "               " + c("*") + "               " + c("*") + "            " + d("**") + "\n" +
-		d("**") + "                                                                      " + d("**") + "\n" +
-		d("**") + "                                                    " + c("****") + "              " + d("**") + "\n" +
-		d("**") + "                                                    " + c("****") + "              " + d("**") + "\n" +
-		d("**") + "        " + c("****") + "    " + c("****") + "     " + c("********") + "        " + c("********") + "   " + c("****") + "              " + d("**") + "\n" +
-		d("**") + "         " + c("****") + "  " + c("****") + "            " + c("****") + "            " + c("****") + " " + c("********") + "          " + d("**") + "\n" +
-		d("**") + "          " + c("********") + "      " + c("***********") + "    " + c("***********") + "  " + c("****") + "  " + c("****") + "        " + d("**") + "\n" +
-		d("**") + "               " + c("****") + "    " + c("****") + "    " + c("****") + "   " + c("****") + "    " + c("****") + "  " + c("****") + "  " + c("****") + "        " + d("**") + "\n" +
-		d("**") + "             " + c("****") + "       " + c("***********") + "    " + c("***********") + "  " + c("****") + "  " + c("****") + "        " + d("**") + "\n" +
-		d("**") + "                                                                      " + d("**") + "\n" +
-		d("**") + " " + c("*") + "               " + c("*") + "               " + c("*") + "               " + c("*") + "            " + d("**") + "\n" +
-		d("**") + "   " + c("* * *") + "           " + c("* * *") + "           " + c("* * *") + "           " + c("* * *") + "          " + d("**") + "\n" +
-		d("**") + " " + c("*") + "               " + c("*") + "               " + c("*") + "               " + c("*") + "            " + d("**") + "\n" +
-		d("**") + "                                                                      " + d("**") + "\n" +
-		d("**") + "  " + Bold("LOCAL-FIRST ::: VENDOR-FREE ::: STANDARDS OVER REINVENTION") + "  " + d("**") + "\n" +
-		d("**************************************************************************") +
-		"\n  " + Dim(version) + "\n"
+	const inner = 70
 
-	return "\n" + art + "\n\n"
+	box := func(content string) string {
+		pad := inner - visibleLen(content)
+		if pad < 0 {
+			pad = 0
+		}
+		return d("**") + content + strings.Repeat(" ", pad) + d("**")
+	}
+
+	s := c("*")
+	sp := c("* * *")
+	q := c("****")
+	e := c("********")
+	el := c("***********")
+
+	// Exact reproduction of the user's ASCII art with proper spacing
+	art := []string{
+		box(""),
+		box("         " + s + "               " + s + "               " + s + "               " + s + "            "),
+		box("       " + sp + "           " + sp + "           " + sp + "           " + sp + "          "),
+		box("         " + s + "               " + s + "               " + s + "               " + s + "            "),
+		box(""),
+		box("                                                    " + q + "              "),
+		box("                                                    " + q + "              "),
+		box("        " + q + "    " + q + "     " + e + "        " + e + "   " + q + "              "),
+		box("         " + q + "  " + q + "            " + q + "            " + q + " " + e + "          "),
+		box("          " + e + "      " + el + "    " + el + "  " + q + "  " + q + "        "),
+		box("               " + q + "    " + q + "    " + q + "   " + q + "    " + q + "  " + q + "  " + q + "        "),
+		box("             " + q + "       " + el + "    " + el + "  " + q + "  " + q + "        "),
+		box(""),
+		box("         " + s + "               " + s + "               " + s + "               " + s + "            "),
+		box("       " + sp + "           " + sp + "           " + sp + "           " + sp + "          "),
+		box("         " + s + "               " + s + "               " + s + "               " + s + "            "),
+		box(""),
+		box("      " + Bold("LOCAL-FIRST ::: VENDOR-FREE ::: STANDARDS OVER REINVENTION") + "      "),
+	}
+
+	border := strings.Repeat("*", 74)
+
+	var buf strings.Builder
+	buf.WriteString("\n")
+	for _, line := range art {
+		buf.WriteString(line)
+		buf.WriteString("\n")
+	}
+	buf.WriteString(d(border))
+	buf.WriteString("\n")
+	buf.WriteString("  " + Dim(version))
+	buf.WriteString("\n\n\n")
+
+	return buf.String()
 }
 
-// Prompt returns the input prompt string for the REPL.
 func Prompt() string {
 	return Bold("yaah") + " " + Cyan("❯") + " "
 }
