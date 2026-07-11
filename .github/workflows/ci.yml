@@ -75,6 +75,7 @@ jobs:
           cache: true
 
       - name: build
+        shell: bash
         env:
           GOOS:   ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -87,16 +88,13 @@ jobs:
           fi
           go build -trimpath -ldflags '-s -w' -o "$out" .
 
+      # Smoke test only runs when the target OS matches the runner OS.
+      # We can't execute darwin/windows binaries on an ubuntu runner.
       - name: smoke test (version)
+        if: matrix.goos == 'linux'
         shell: bash
-        env:
-          GOOS:   ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
         run: |
           bin=dist/yaah-${{ matrix.goos }}-${{ matrix.goarch }}
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            bin="${bin}.exe"
-          fi
           "$bin" --version
           "$bin" --help
 
