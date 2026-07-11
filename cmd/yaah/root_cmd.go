@@ -10,6 +10,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/instructions"
+	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/repl"
 	"github.com/buchenberg/yaah/internal/skills"
@@ -182,6 +183,15 @@ func runAgentPrompt(prompt string) (string, bool, error) {
 	_ = discovered // skills are loaded on demand via the skill tool
 
 	toolReg := tools.NewRegistry()
+
+	// Open persistent memory and register memory tools
+	db, err := memory.OpenDefault()
+	if err == nil {
+		toolReg.Register(&tools.MemorySearchTool{DB: db})
+		toolReg.Register(&tools.MemoryAddTool{DB: db})
+		defer db.Close()
+	}
+
 	loop := &agent.Loop{
 		Provider:      provider,
 		Registry:      toolReg,
