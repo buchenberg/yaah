@@ -9,8 +9,10 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/instructions"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/repl"
+	"github.com/buchenberg/yaah/internal/skills"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 	"github.com/spf13/cobra"
@@ -155,12 +157,25 @@ func runAgentPrompt(prompt string) (string, error) {
 	// Use the first configured provider, or the default model
 	provider := resolveProvider(cfg)
 
+	// Load project instructions (AGENTS.md / CLAUDE.md)
+	cwd, _ := os.Getwd()
+	instrFiles := instructions.Load(cwd, cwd)
+	systemPrompt := "You are yaah, a helpful AI assistant. Respond concisely."
+	if formatted := instructions.FormatForSystem(instrFiles); formatted != "" {
+		systemPrompt += "\n\n" + formatted
+	}
+
+	// Discover skills
+	dirs := skillSearchPaths()
+	discovered := skills.Discover(dirs)
+	_ = discovered // skills are loaded on demand via the skill tool
+
 	toolReg := tools.NewRegistry()
 	loop := &agent.Loop{
 		Provider:      provider,
 		Registry:      toolReg,
 		Model:         resolveModel(cfg),
-		SystemPrompt:  "You are yaah, a helpful AI assistant. Respond concisely.",
+		SystemPrompt:  systemPrompt,
 		MaxIterations: cfg.Default.MaxIterations,
 	}
 
