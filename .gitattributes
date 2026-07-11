@@ -1,0 +1,10 @@
+# Enforce LF line endings for all text files.
+# This prevents gofmt failures on Windows runners (Git Bash + CRLF).
+* text=auto eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.ico binary
+*.gz binary
+*.zip binary
