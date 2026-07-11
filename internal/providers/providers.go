@@ -17,9 +17,9 @@ import (
 
 // OpenAIClient sends chat completion requests to an OpenAI-compatible endpoint.
 type OpenAIClient struct {
-	baseURL  string
-	apiKey   string
-	client   *http.Client
+	baseURL string
+	apiKey  string
+	client  *http.Client
 }
 
 // NewOpenAIClient creates a new client targeting baseURL (e.g. "https://api.openai.com").

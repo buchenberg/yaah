@@ -20,7 +20,7 @@ func (f *fakeProvider) Send(req types.ChatRequest) (*types.ChatResponse, error) 
 	if f.index >= len(f.responses) {
 		return &types.ChatResponse{
 			Choices: []types.Choice{{
-				Message: types.Message{Role: "assistant", Content: "done"},
+				Message:      types.Message{Role: "assistant", Content: "done"},
 				FinishReason: "stop",
 			}},
 		}, nil
