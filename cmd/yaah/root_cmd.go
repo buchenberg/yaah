@@ -16,6 +16,7 @@ import (
 	"github.com/buchenberg/yaah/internal/repl"
 	"github.com/buchenberg/yaah/internal/skills"
 	"github.com/buchenberg/yaah/internal/spinner"
+	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 	"github.com/spf13/cobra"
@@ -202,6 +203,18 @@ func runAgentPrompt(prompt string) (string, bool, error) {
 	for _, t := range mcpTools {
 		toolReg.Register(t)
 	}
+
+	// Create todo store and register todowrite tool
+	todoStore := todo.NewStore()
+	toolReg.Register(&tools.TodoWriteTool{
+		Store: todoStore,
+		OnWrite: func() {
+			// Display todos when updated
+			if formatted := todoStore.Format(); formatted != "" {
+				fmt.Fprintf(os.Stderr, "\n%s\n", formatted)
+			}
+		},
+	})
 
 	loop := &agent.Loop{
 		Provider:      provider,
