@@ -150,17 +150,30 @@ func (d *DB) migrate() error {
 	}
 
 	triggers := `
+	CREATE TABLE IF NOT EXISTS schema_meta (
+		key   TEXT PRIMARY KEY,
+		value TEXT NOT NULL
+	);
+	INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('version', '1');
 	CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
 		INSERT INTO messages_fts(rowid, content, tool_name) VALUES (new.rowid, new.content, new.tool_name);
 	END;
 	CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
 		INSERT INTO messages_fts(messages_fts, rowid, content, tool_name) VALUES ('delete', old.rowid, old.content, old.tool_name);
 	END;
+	CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+		INSERT INTO messages_fts(messages_fts, rowid, content, tool_name) VALUES ('delete', old.rowid, old.content, old.tool_name);
+		INSERT INTO messages_fts(rowid, content, tool_name) VALUES (new.rowid, new.content, new.tool_name);
+	END;
 	CREATE TRIGGER IF NOT EXISTS memory_ai AFTER INSERT ON memory BEGIN
 		INSERT INTO memory_fts(rowid, text, tags, source) VALUES (new.rowid, new.text, new.tags, new.source);
 	END;
 	CREATE TRIGGER IF NOT EXISTS memory_ad AFTER DELETE ON memory BEGIN
 		INSERT INTO memory_fts(memory_fts, rowid, text, tags, source) VALUES ('delete', old.rowid, old.text, old.tags, old.source);
+	END;
+	CREATE TRIGGER IF NOT EXISTS memory_au AFTER UPDATE ON memory BEGIN
+		INSERT INTO memory_fts(memory_fts, rowid, text, tags, source) VALUES ('delete', old.rowid, old.text, old.tags, old.source);
+		INSERT INTO memory_fts(rowid, text, tags, source) VALUES (new.rowid, new.text, new.tags, new.source);
 	END;
 	`
 

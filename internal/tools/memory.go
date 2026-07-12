@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -26,7 +27,7 @@ func (t *MemorySearchTool) Schema() json.RawMessage {
 	}`)
 }
 
-func (t *MemorySearchTool) Execute(args string) (string, error) {
+func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, error) {
 	if t.DB == nil {
 		return "", fmt.Errorf("memory database not available")
 	}
@@ -76,7 +77,7 @@ func (t *MemoryAddTool) Schema() json.RawMessage {
 	}`)
 }
 
-func (t *MemoryAddTool) Execute(args string) (string, error) {
+func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error) {
 	if t.DB == nil {
 		return "", fmt.Errorf("memory database not available")
 	}

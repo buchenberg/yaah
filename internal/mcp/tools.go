@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -41,8 +42,8 @@ func (t *MCPTool) Schema() json.RawMessage {
 }
 
 // Execute calls the tool on the MCP server.
-func (t *MCPTool) Execute(args string) (string, error) {
-	result, err := t.client.CallTool(context.Background(), t.tool.Name, json.RawMessage(args))
+func (t *MCPTool) Execute(ctx context.Context, args string) (string, error) {
+	result, err := t.client.CallTool(ctx, t.tool.Name, json.RawMessage(args))
 	if err != nil {
 		return "", fmt.Errorf("mcp tool %s: %w", t.tool.Name, err)
 	}
@@ -73,6 +74,13 @@ func (t *MCPTool) Execute(args string) (string, error) {
 // StartMCPClients discovers MCP manifests and starts clients.
 // Returns a list of started clients and their tools.
 func StartMCPClients(ctx context.Context, dirs []string) ([]MCPClient, []*MCPTool, error) {
+	return StartMCPClientsWithStderr(ctx, dirs, os.Stderr)
+}
+
+// StartMCPClientsWithStderr is like StartMCPClients but redirects MCP server
+// stderr to the given writer. Pass io.Discard to suppress server log output
+// (e.g. when running inside a TUI that owns the terminal).
+func StartMCPClientsWithStderr(ctx context.Context, dirs []string, stderr io.Writer) ([]MCPClient, []*MCPTool, error) {
 	manifests := DiscoverManifests(dirs)
 	var clients []MCPClient
 	var tools []*MCPTool
@@ -88,6 +96,7 @@ func StartMCPClients(ctx context.Context, dirs []string) ([]MCPClient, []*MCPToo
 			client = httpClient
 		case "stdio":
 			stdioClient := NewClient(name, *manifest)
+			stdioClient.SetStderr(stderr)
 			err = stdioClient.Start(ctx)
 			if err == nil {
 				err = stdioClient.Initialize(ctx)

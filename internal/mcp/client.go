@@ -38,6 +38,7 @@ type Client struct {
 	cmd      *exec.Cmd
 	writer   messageWriter
 	reader   messageReader
+	stderr   io.Writer // destination for server stderr; defaults to io.Discard
 	nextID   atomic.Int64
 	mu       sync.Mutex
 	tools    []ServerTool
@@ -78,7 +79,15 @@ func (c *Client) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("stdout pipe: %w", err)
 	}
-	c.cmd.Stderr = os.Stderr
+
+	// Default to discarding stderr so MCP server log spam (e.g. Docker
+	// Gateway credential helpers, OAuth loops) doesn't corrupt the terminal.
+	// Call SetStderr before Start to redirect it elsewhere.
+	if c.stderr != nil {
+		c.cmd.Stderr = c.stderr
+	} else {
+		c.cmd.Stderr = io.Discard
+	}
 
 	if err := c.cmd.Start(); err != nil {
 		return fmt.Errorf("start server: %w", err)
@@ -88,6 +97,12 @@ func (c *Client) Start(ctx context.Context) error {
 	c.reader = newReader(stdout, c.manifest.Framing)
 
 	return nil
+}
+
+// SetStderr sets the writer for MCP server stderr output.
+// Set to os.Stderr for debugging, or leave unset to discard.
+func (c *Client) SetStderr(w io.Writer) {
+	c.stderr = w
 }
 
 // newWriter returns the writer for the configured framing mode.
@@ -263,7 +278,8 @@ func (c *Client) Close() error {
 	}
 	c.closed = true
 	if c.cmd != nil && c.cmd.Process != nil {
-		return c.cmd.Process.Kill()
+		_ = c.cmd.Process.Kill()
+		_ = c.cmd.Wait()
 	}
 	return nil
 }

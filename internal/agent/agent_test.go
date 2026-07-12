@@ -15,7 +15,7 @@ type fakeProvider struct {
 	requests  []types.ChatRequest
 }
 
-func (f *fakeProvider) Send(req types.ChatRequest) (*types.ChatResponse, error) {
+func (f *fakeProvider) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
 	f.requests = append(f.requests, req)
 	if f.index >= len(f.responses) {
 		return &types.ChatResponse{

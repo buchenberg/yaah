@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/agent"
@@ -14,7 +15,6 @@ import (
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/repl"
-	"github.com/buchenberg/yaah/internal/skills"
 	"github.com/buchenberg/yaah/internal/spinner"
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -81,14 +81,21 @@ func runRoot(cmd *cobra.Command, args []string) error {
 }
 
 // startREPL runs the interactive read-eval-print loop.
-// Reads from stdin, handles slash commands, and saves history.
-// The actual agent call lands in M2 — for now this is the shell.
+// Builds infrastructure (config, provider, tools, DB, MCP) once per session
+// and reuses it across prompts.
 func startREPL() error {
-	// Print banner
 	fmt.Print(repl.Banner(version))
 
+	// Build the agent session once for the entire REPL lifetime.
+	sess, err := newAgentSession()
+	if err != nil {
+		return err
+	}
+	defer sess.close()
+
+	fmt.Fprintf(os.Stderr, "  %s %s/%s\n", Dim("provider:"), sess.providerName, sess.modelName)
+
 	scanner := bufio.NewScanner(os.Stdin)
-	// Allow long lines (up to 1MB)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	for {
@@ -104,7 +111,6 @@ func startREPL() error {
 			continue
 		}
 
-		// Check for slash commands
 		switch repl.ParseSlashCommand(input) {
 		case repl.CmdExit:
 			return nil
@@ -116,13 +122,11 @@ func startREPL() error {
 			continue
 		}
 
-		// Save to history
 		if err := repl.AppendHistory(input); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not save history: %v\n", err)
 		}
 
-		// Call the agent
-		response, streamed, err := runAgentPrompt(input)
+		response, streamed, err := sess.runPrompt(input)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s\n", replYellow("error: "+err.Error()))
 		} else if !streamed && response != "" {
@@ -142,36 +146,50 @@ func startREPL() error {
 func runOneShot(cmd *cobra.Command, prompt string) error {
 	cmd.Printf("%s\n\n", repl.Bold("yaah "+version))
 
-	response, streamed, err := runAgentPrompt(prompt)
+	sess, err := newAgentSession()
+	if err != nil {
+		return err
+	}
+	defer sess.close()
+
+	cmd.Printf("  %s %s/%s\n\n", Dim("provider:"), sess.providerName, sess.modelName)
+
+	response, streamed, err := sess.runPrompt(prompt)
 	if err != nil {
 		return fmt.Errorf("agent error: %w", err)
 	}
 
-	// When streaming, tokens were already printed — don't duplicate
 	if !streamed {
 		cmd.Println(response)
 	}
 	return nil
 }
 
-// runAgentPrompt builds the agent loop and runs it for a single prompt.
-// Returns (response, streamed, error). streamed=true means tokens were
-// already printed to stderr by the OnToken callback.
-func runAgentPrompt(prompt string) (string, bool, error) {
+// agentSession holds the long-lived infrastructure shared across REPL and
+// one-shot prompts. Building it once avoids re-opening the database,
+// re-spawning MCP servers, and re-discovering skills on every turn.
+type agentSession struct {
+	cfg          *config.Config
+	provider     agent.Provider
+	providerName string
+	modelName    string
+	systemPrompt string
+	toolReg      *tools.Registry
+	db           *memory.DB
+	mcpClients   []mcp.MCPClient
+	messages     []types.Message
+}
+
+func newAgentSession() (*agentSession, error) {
 	cfg, err := config.Load()
 	if err != nil {
-		return "", false, fmt.Errorf("config: %w", err)
+		return nil, fmt.Errorf("config: %w", err)
 	}
 
-	// Use the first configured provider, or the default model
 	provider := resolveProvider(cfg)
 	modelName := resolveModel(cfg)
-
-	// Show provider and model info
 	providerName := resolveProviderName(cfg)
-	fmt.Fprintf(os.Stderr, "  %s %s/%s\n", Dim("provider:"), providerName, modelName)
 
-	// Load project instructions (AGENTS.md / CLAUDE.md)
 	cwd, _ := os.Getwd()
 	instrFiles := instructions.Load(cwd, cwd)
 	systemPrompt := "You are yaah, a helpful AI assistant. Respond concisely."
@@ -179,63 +197,73 @@ func runAgentPrompt(prompt string) (string, bool, error) {
 		systemPrompt += "\n\n" + formatted
 	}
 
-	// Discover skills
-	dirs := skillSearchPaths()
-	discovered := skills.Discover(dirs)
-	_ = discovered // skills are loaded on demand via the skill tool
-
 	toolReg := tools.NewRegistry()
 
-	// Open persistent memory and register memory tools
 	db, err := memory.OpenDefault()
 	if err == nil {
 		toolReg.Register(&tools.MemorySearchTool{DB: db})
 		toolReg.Register(&tools.MemoryAddTool{DB: db})
-		defer db.Close()
 	}
 
-	// Start MCP clients and register their tools.
-	// Errors are reported to stderr (not silently dropped) so the user
-	// knows when an MCP server fails to connect.
 	mcpDirs := mcpSearchPaths(config.HomeDir())
 	mcpClients, mcpTools, mcpErr := mcp.StartMCPClients(context.Background(), mcpDirs)
 	if mcpErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: MCP startup error: %v\n", mcpErr)
 	}
-	for _, c := range mcpClients {
-		defer c.Close()
-	}
 	for _, t := range mcpTools {
 		toolReg.Register(t)
 	}
 
-	// Create todo store and register todowrite tool
+	skillDirs := skillSearchPaths()
+	toolReg.Register(&tools.SkillTool{Dirs: skillDirs})
+
 	todoStore := todo.NewStore()
 	toolReg.Register(&tools.TodoWriteTool{
 		Store: todoStore,
 		OnWrite: func() {
-			// Display todos when updated
 			if formatted := todoStore.Format(); formatted != "" {
 				fmt.Fprintf(os.Stderr, "\n%s\n", formatted)
 			}
 		},
 	})
 
+	return &agentSession{
+		cfg:          cfg,
+		provider:     provider,
+		providerName: providerName,
+		modelName:    modelName,
+		systemPrompt: systemPrompt,
+		toolReg:      toolReg,
+		db:           db,
+		mcpClients:   mcpClients,
+	}, nil
+}
+
+func (s *agentSession) close() {
+	if s.db != nil {
+		s.db.Close()
+	}
+	for _, c := range s.mcpClients {
+		c.Close()
+	}
+}
+
+// runPrompt executes a single agent prompt with the session's shared
+// infrastructure and per-turn callbacks (spinner, streaming display).
+func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 	loop := &agent.Loop{
-		Provider:      provider,
-		Registry:      toolReg,
-		Model:         modelName,
-		SystemPrompt:  systemPrompt,
-		MaxIterations: cfg.Default.MaxIterations,
+		Provider:      s.provider,
+		Registry:      s.toolReg,
+		Model:         s.modelName,
+		SystemPrompt:  s.systemPrompt,
+		MaxIterations: s.cfg.Default.MaxIterations,
+		Messages:      s.messages,
 	}
 
-	// Show thinking spinner
 	spin := spinner.New(nil, "Thinking...")
 	spin.Start()
 
-	// Set up token callback — stops spinner on first token, then prints
 	streamed := false
-	toolCount := 0
 	loop.OnToken = func(token string) {
 		if !streamed {
 			spin.Stop()
@@ -251,8 +279,6 @@ func runAgentPrompt(prompt string) (string, bool, error) {
 		}
 
 		if info.Duration == 0 {
-			// Tool call starting
-			toolCount++
 			fmt.Fprintf(os.Stderr, "\n  tool: %s", Bold(info.Name))
 			if info.Args != "" {
 				args := info.Args
@@ -262,7 +288,6 @@ func runAgentPrompt(prompt string) (string, bool, error) {
 				fmt.Fprintf(os.Stderr, "(%s)", Dim(args))
 			}
 		} else {
-			// Tool call complete — show timing
 			fmt.Fprintf(os.Stderr, " (%s)\n", Dim(fmt.Sprintf("%.1fs", info.Duration.Seconds())))
 			if info.Error != "" {
 				fmt.Fprintf(os.Stderr, "    %s\n", replYellow("error: "+info.Error))
@@ -275,10 +300,12 @@ func runAgentPrompt(prompt string) (string, bool, error) {
 		spin.Stop()
 	}
 
-	// When streaming, the tokens were already printed — add a newline
 	if streamed {
 		fmt.Fprintln(os.Stderr)
 	}
+
+	// Persist the conversation history for the next turn.
+	s.messages = loop.Messages
 
 	return response, streamed, err
 }
@@ -289,9 +316,13 @@ func resolveProviderName(cfg *config.Config) string {
 	if len(modelParts) == 2 {
 		return modelParts[0]
 	}
-	// No prefix — try to find which provider has this model
+	names := make([]string, 0, len(cfg.Providers))
 	for name := range cfg.Providers {
-		return name
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) > 0 {
+		return names[0]
 	}
 	return "local"
 }
@@ -316,8 +347,14 @@ func resolveProvider(cfg *config.Config) agent.Provider {
 		}
 	}
 
-	// Fall back to any configured provider
-	for _, p := range cfg.Providers {
+	// Deterministic fallback: prefer the first provider by sorted name with a real key.
+	names := make([]string, 0, len(cfg.Providers))
+	for name := range cfg.Providers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		p := cfg.Providers[name]
 		if isRealKey(p.APIKey) {
 			return providers.NewOpenAIClient(p.BaseURL, p.APIKey)
 		}
@@ -342,7 +379,7 @@ func isRealKey(key string) bool {
 // noProviderStub is returned when no valid provider is configured.
 type noProviderStub struct{}
 
-func (s *noProviderStub) Send(req types.ChatRequest) (*types.ChatResponse, error) {
+func (s *noProviderStub) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
 	return nil, fmt.Errorf("no provider configured — run 'yaah config edit' to add one")
 }
 

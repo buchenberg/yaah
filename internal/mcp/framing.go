@@ -130,19 +130,20 @@ func NewNewlineReader(r io.Reader) *NewlineReader {
 // Returns io.EOF when the stream is closed.
 func (r *NewlineReader) ReadMessage() (JSONRPCMessage, error) {
 	var msg JSONRPCMessage
-	line, err := r.reader.ReadBytes('\n')
-	if err != nil {
-		return msg, err
+	for {
+		line, err := r.reader.ReadBytes('\n')
+		if err != nil {
+			return msg, err
+		}
+		trimmed := strings.TrimSpace(string(line))
+		if trimmed == "" {
+			continue
+		}
+		if err := json.Unmarshal([]byte(trimmed), &msg); err != nil {
+			return msg, fmt.Errorf("unmarshal JSON-RPC: %w", err)
+		}
+		return msg, nil
 	}
-	// Skip empty keepalive lines and pure whitespace
-	trimmed := strings.TrimSpace(string(line))
-	if trimmed == "" {
-		return r.ReadMessage()
-	}
-	if err := json.Unmarshal([]byte(trimmed), &msg); err != nil {
-		return msg, fmt.Errorf("unmarshal JSON-RPC: %w", err)
-	}
-	return msg, nil
 }
 
 // NewlineWriter writes raw newline-delimited JSON-RPC messages to an io.Writer.

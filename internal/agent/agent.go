@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 
 // Provider is the interface for model backends.
 type Provider interface {
-	Send(req types.ChatRequest) (*types.ChatResponse, error)
+	Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error)
 }
 
 // StreamProvider is a provider that supports streaming responses.
@@ -42,6 +43,12 @@ type ToolCallback func(info ToolInfo)
 // ThinkingCallback is called when the model outputs thinking/reasoning text.
 type ThinkingCallback func(text string)
 
+// FlushCallback is called when the model finishes a streaming segment and
+// is about to start a tool call or a new iteration. The TUI uses this to
+// flush the accumulated streaming content into the message list so the
+// next segment starts on a fresh line.
+type FlushCallback func(content string)
+
 // Loop runs the agent conversation loop.
 type Loop struct {
 	Provider      Provider
@@ -52,9 +59,21 @@ type Loop struct {
 	OnToken       TokenCallback
 	OnTool        ToolCallback
 	OnThinking    ThinkingCallback
+	OnFlush       FlushCallback
+
+	// Messages holds the conversation history across multiple Run calls.
+	// When nil (first call), Run initializes it with the system prompt and
+	// the current user input. When set by a preceding Run, subsequent calls
+	// append the new user input and continue the conversation. After Run
+	// returns (success or error), the caller can read this field to persist
+	// the conversation for the next turn.
+	Messages []types.Message
 }
 
 // Run executes the full conversation loop for a single user message.
+// If l.Messages is non-nil, the conversation continues from where it
+// left off (the user input is appended to the existing history). If nil,
+// a new conversation is started with the system prompt.
 func (l *Loop) Run(ctx context.Context, userInput string) (string, error) {
 	if l.MaxIterations <= 0 {
 		l.MaxIterations = 50
@@ -63,16 +82,23 @@ func (l *Loop) Run(ctx context.Context, userInput string) (string, error) {
 		l.Model = "gpt-4o-mini"
 	}
 
-	messages := []types.Message{
-		types.SystemMsg(l.SystemPrompt),
-		types.UserMsg(userInput),
+	if l.Messages != nil {
+		l.Messages = append(l.Messages, types.UserMsg(userInput))
+	} else {
+		l.Messages = []types.Message{
+			types.SystemMsg(l.SystemPrompt),
+			types.UserMsg(userInput),
+		}
 	}
+
+	messages := l.Messages
 
 	toolDefs := l.buildToolDefs()
 
 	for iter := 0; iter < l.MaxIterations; iter++ {
 		select {
 		case <-ctx.Done():
+			l.Messages = messages
 			return "", ctx.Err()
 		default:
 		}
@@ -83,44 +109,62 @@ func (l *Loop) Run(ctx context.Context, userInput string) (string, error) {
 			Tools:    toolDefs,
 		}
 
-		// Try streaming first
-		if sp, ok := l.Provider.(StreamProvider); ok && l.OnToken != nil {
-			result, err := l.runStream(ctx, sp, req)
-			if err == nil {
-				return result, nil
-			}
-			// Fall through to non-streaming on error
-		}
-
-		// Non-streaming fallback
-		resp, err := l.Provider.Send(req)
+		// Get the next assistant message, preferring streaming when supported.
+		msg, streamed, err := l.getAssistantMessage(ctx, req)
 		if err != nil {
+			l.Messages = messages
 			return "", fmt.Errorf("provider error: %w", err)
 		}
-
-		if len(resp.Choices) == 0 {
-			return "", fmt.Errorf("no choices in response")
-		}
-
-		choice := resp.Choices[0]
-		msg := choice.Message
 		messages = append(messages, msg)
 
-		if len(msg.ToolCalls) > 0 {
-			for _, tc := range msg.ToolCalls {
-				l.executeTool(tc, &messages)
-			}
-			continue
+		// No tool calls → this is the final answer.
+		if len(msg.ToolCalls) == 0 {
+			l.Messages = messages
+			return msg.Content, nil
 		}
 
-		return msg.Content, nil
+		// If the message came from streaming, flush the accumulated content
+		// to the UI so tool-call output starts on a fresh line.
+		if streamed && msg.Content != "" && l.OnFlush != nil {
+			l.OnFlush(msg.Content)
+		}
+
+		// Execute tool calls and append their results, then loop again.
+		for _, tc := range msg.ToolCalls {
+			l.executeTool(ctx, tc, &messages)
+		}
 	}
 
+	l.Messages = messages
 	return "", fmt.Errorf("max iterations (%d) reached without final response", l.MaxIterations)
 }
 
+// getAssistantMessage returns the next assistant message, preferring streaming
+// when the provider supports it and an OnToken callback is set. The second
+// return value is true when the message was assembled from a stream.
+func (l *Loop) getAssistantMessage(ctx context.Context, req types.ChatRequest) (types.Message, bool, error) {
+	if sp, ok := l.Provider.(StreamProvider); ok && l.OnToken != nil {
+		msg, err := l.runStream(ctx, sp, req)
+		return msg, true, err
+	}
+	msg, err := l.runNonStream(ctx, req)
+	return msg, false, err
+}
+
+// runNonStream sends a non-streaming request and returns the assistant message.
+func (l *Loop) runNonStream(ctx context.Context, req types.ChatRequest) (types.Message, error) {
+	resp, err := l.Provider.Send(ctx, req)
+	if err != nil {
+		return types.Message{}, err
+	}
+	if len(resp.Choices) == 0 {
+		return types.Message{}, fmt.Errorf("no choices in response")
+	}
+	return resp.Choices[0].Message, nil
+}
+
 // executeTool runs a single tool call and appends the result to messages.
-func (l *Loop) executeTool(tc types.ToolCall, messages *[]types.Message) {
+func (l *Loop) executeTool(ctx context.Context, tc types.ToolCall, messages *[]types.Message) {
 	abbreviated := abbreviateArgs(tc.Function.Arguments, 80)
 
 	// Notify: tool call starting
@@ -132,7 +176,7 @@ func (l *Loop) executeTool(tc types.ToolCall, messages *[]types.Message) {
 	}
 
 	start := time.Now()
-	result, err := l.Registry.Execute(tc.Function.Name, tc.Function.Arguments)
+	result, err := l.Registry.Execute(ctx, tc.Function.Name, tc.Function.Arguments)
 	duration := time.Since(start)
 
 	if err != nil {
@@ -155,12 +199,14 @@ func (l *Loop) executeTool(tc types.ToolCall, messages *[]types.Message) {
 	*messages = append(*messages, types.ToolResultMsg(tc.ID, tc.Function.Name, result))
 }
 
-// runStream handles a streaming request.
-func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatRequest) (string, error) {
+// runStream handles a streaming request and returns the assembled assistant
+// message (content + any tool calls). Tool calls accumulated from the stream
+// are returned to Run, which executes them exactly like the non-streaming
+// path. Content deltas are emitted via OnToken as they arrive.
+func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatRequest) (types.Message, error) {
 	chunks, errs := sp.SendStream(ctx, req)
 
 	var content strings.Builder
-	var toolCalls []types.ToolCall
 	toolCallMap := make(map[int]*types.ToolCall)
 	var finishReason string
 
@@ -168,13 +214,7 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
-				if content.Len() > 0 && len(toolCalls) == 0 {
-					return content.String(), nil
-				}
-				if len(toolCalls) > 0 {
-					return "", fmt.Errorf("streaming tool calls not yet fully supported")
-				}
-				return content.String(), nil
+				return l.assembleStreamed(content.String(), toolCallMap), nil
 			}
 
 			if len(chunk.Choices) == 0 {
@@ -183,19 +223,23 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 
 			delta := chunk.Choices[0].Delta
 
-			// Emit token callback
-			if delta.Content != "" && l.OnToken != nil {
-				l.OnToken(delta.Content)
+			if delta.Content != "" {
+				content.WriteString(delta.Content)
+				if l.OnToken != nil {
+					l.OnToken(delta.Content)
+				}
 			}
-			content.WriteString(delta.Content)
 
-			// Accumulate tool calls
+			// Accumulate tool-call deltas by index.
 			for _, tc := range delta.ToolCalls {
 				idx := tc.Index
 				if existing, ok := toolCallMap[idx]; ok {
 					existing.Function.Arguments += tc.Function.Arguments
 					if tc.ID != "" {
 						existing.ID = tc.ID
+					}
+					if tc.Function.Name != "" {
+						existing.Function.Name = tc.Function.Name
 					}
 				} else {
 					newTC := types.ToolCall{
@@ -217,15 +261,12 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 
 		case err := <-errs:
 			if err != nil {
-				return "", err
+				return types.Message{}, err
 			}
-			if content.Len() > 0 {
-				return content.String(), nil
-			}
-			return "", nil
+			return l.assembleStreamed(content.String(), toolCallMap), nil
 
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return types.Message{}, ctx.Err()
 		}
 
 		if finishReason != "" {
@@ -233,16 +274,27 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 		}
 	}
 
-	// Collect tool calls
-	for _, tc := range toolCallMap {
-		toolCalls = append(toolCalls, *tc)
-	}
+	return l.assembleStreamed(content.String(), toolCallMap), nil
+}
 
+// assembleStreamed builds the assistant message from accumulated stream state,
+// ordering tool calls by their delta index.
+func (l *Loop) assembleStreamed(content string, toolCalls map[int]*types.ToolCall) types.Message {
+	msg := types.Message{
+		Role:    "assistant",
+		Content: content,
+	}
 	if len(toolCalls) > 0 {
-		return "", fmt.Errorf("streaming tool calls not yet fully supported")
+		indices := make([]int, 0, len(toolCalls))
+		for idx := range toolCalls {
+			indices = append(indices, idx)
+		}
+		sort.Ints(indices)
+		for _, idx := range indices {
+			msg.ToolCalls = append(msg.ToolCalls, *toolCalls[idx])
+		}
 	}
-
-	return content.String(), nil
+	return msg
 }
 
 // buildToolDefs builds the OpenAI-format tool definitions from the registry.
@@ -267,9 +319,11 @@ func (l *Loop) buildToolDefs() []types.ToolDef {
 }
 
 // abbreviateArgs truncates JSON args to maxLen characters with ellipsis.
+// Handles multi-byte UTF-8 by counting runes, not bytes.
 func abbreviateArgs(args string, maxLen int) string {
-	if len(args) <= maxLen {
+	runes := []rune(args)
+	if len(runes) <= maxLen {
 		return args
 	}
-	return args[:maxLen-3] + "..."
+	return string(runes[:maxLen-3]) + "..."
 }

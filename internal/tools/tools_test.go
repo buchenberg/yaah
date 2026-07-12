@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,7 +15,7 @@ func TestReadTool_readsExistingFile(t *testing.T) {
 	}
 
 	rt := &ReadTool{}
-	result, err := rt.Execute(`{"path":"` + path + `","offset":0,"limit":10}`)
+	result, err := rt.Execute(context.Background(), `{"path":"`+path+`","offset":0,"limit":10}`)
 	if err != nil {
 		t.Fatalf("Execute() error: %v", err)
 	}
@@ -26,7 +27,7 @@ func TestReadTool_readsExistingFile(t *testing.T) {
 
 func TestReadTool_returnsErrorForMissingFile(t *testing.T) {
 	rt := &ReadTool{}
-	_, err := rt.Execute(`{"path":"/nonexistent/file.txt"}`)
+	_, err := rt.Execute(context.Background(), `{"path":"/nonexistent/file.txt"}`)
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
@@ -42,7 +43,7 @@ func TestReadTool_schemaIsValidJSON(t *testing.T) {
 
 func TestBashTool_runsSimpleCommand(t *testing.T) {
 	bt := &BashTool{}
-	result, err := bt.Execute(`{"command":"echo hello"}`)
+	result, err := bt.Execute(context.Background(), `{"command":"echo hello"}`)
 	if err != nil {
 		t.Fatalf("Execute() error: %v", err)
 	}
@@ -61,7 +62,7 @@ func TestBashTool_rejectsDangerousCommands(t *testing.T) {
 		`{"command":"dd if=/dev/zero"}`,
 	} {
 		t.Run(cmd, func(t *testing.T) {
-			_, err := bt.Execute(cmd)
+			_, err := bt.Execute(context.Background(), cmd)
 			if err == nil {
 				t.Errorf("expected error for dangerous command: %s", cmd)
 			}

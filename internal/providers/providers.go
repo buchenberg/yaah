@@ -6,6 +6,7 @@ package providers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,14 +35,14 @@ func NewOpenAIClient(baseURL, apiKey string) *OpenAIClient {
 }
 
 // Send posts a ChatRequest to the provider and returns the parsed ChatResponse.
-func (c *OpenAIClient) Send(req types.ChatRequest) (*types.ChatResponse, error) {
+func (c *OpenAIClient) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
 	url := c.baseURL + "/chat/completions"
-	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}

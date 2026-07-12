@@ -16,7 +16,8 @@ var doctorCmd = &cobra.Command{
 	Short: "Diagnose config, environment, and system health",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		for _, c := range runChecks() {
+		checks := runChecks()
+		for _, c := range checks {
 			cmd.Printf("  [%s]  %s\n", statusLabel(c.Status), c.Label)
 			if c.Detail != "" {
 				cmd.Printf("         %s\n", dimText(c.Detail))
@@ -24,7 +25,7 @@ var doctorCmd = &cobra.Command{
 		}
 
 		cmd.Println()
-		if allOK(runChecks()) {
+		if allOK(checks) {
 			cmd.Println(greenText("All checks passed. yaah is ready."))
 		} else {
 			cmd.Println(yellowText("Some checks need attention."))

@@ -47,6 +47,7 @@ type Message struct {
 type AgentMsg struct {
 	Token    string
 	ToolName string
+	Flush    string // streamed content to commit before a tool call
 	Done     bool
 	Response string
 	Err      error
@@ -55,7 +56,6 @@ type AgentMsg struct {
 // Model is the bubbletea model for the yaah TUI.
 type Model struct {
 	messages      []Message
-	scroll        int
 	input         textinput.Model
 	provider      string
 	modelName     string
@@ -89,7 +89,6 @@ func New(provider, model string, onSubmit func(string), onQuit func()) *Model {
 // AddMessage adds a message to the chat history.
 func (m *Model) AddMessage(role, content string) {
 	m.messages = append(m.messages, Message{Role: role, Content: content})
-	m.scrollToBottom()
 }
 
 // SetThinking sets the thinking state.
@@ -122,6 +121,16 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 		m.AddMessage("assistant", fmt.Sprintf("Error: %v", msg.Err))
 		m.SetThinking(false)
 		m.streaming = false
+		m.streamContent = ""
+		return
+	}
+
+	if msg.Flush != "" {
+		// Commit the accumulated streaming content as a message so the
+		// next segment (after a tool call) starts on a fresh line.
+		m.AddMessage("assistant", msg.Flush)
+		m.streaming = false
+		m.streamContent = ""
 		return
 	}
 
@@ -148,10 +157,6 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 	}
 }
 
-func (m *Model) scrollToBottom() {
-	m.scroll = len(m.messages)
-}
-
 // Init implements tea.Model.
 func (m *Model) Init() tea.Cmd {
 	return textinput.Blink
@@ -162,6 +167,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
+	case AgentMsg:
+		m.HandleAgentMsg(msg)
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -177,6 +186,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case tea.KeyEnter:
+			// Ignore input while thinking/streaming
+			if m.thinking {
+				return m, nil
+			}
 			value := m.input.Value()
 			if strings.TrimSpace(value) == "" {
 				return m, nil
@@ -189,22 +202,83 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case tea.KeyUp:
-			if m.scroll > 0 {
-				m.scroll--
-			}
-			return m, nil
-
-		case tea.KeyDown:
-			if m.scroll < len(m.messages) {
-				m.scroll++
-			}
-			return m, nil
 		}
 	}
 
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
+}
+
+// chatWrap wraps text to fit within the terminal width, accounting for a
+// prefix label (e.g. "yaah: "). It returns the wrapped text with the prefix
+// applied only to the first line.
+func chatWrap(prefix, content string, width int) string {
+	maxWidth := width - len(prefix)
+	if maxWidth < 10 {
+		maxWidth = 10
+	}
+	wrapped := wrapText(content, maxWidth)
+	lines := strings.Split(wrapped, "\n")
+	for i, line := range lines {
+		if i == 0 {
+			lines[i] = prefix + line
+		} else {
+			lines[i] = strings.Repeat(" ", len(prefix)) + line
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// wrapText performs simple word-wrapping at the given width, preserving
+// explicit newlines in the source text.
+func wrapText(text string, width int) string {
+	var result strings.Builder
+	for _, paragraph := range strings.Split(text, "\n") {
+		if paragraph == "" {
+			result.WriteString("\n")
+			continue
+		}
+		wrapped := wrapParagraph(paragraph, width)
+		result.WriteString(wrapped)
+		result.WriteString("\n")
+	}
+	out := result.String()
+	// Remove the trailing newline added by the last iteration
+	return strings.TrimSuffix(out, "\n")
+}
+
+// wrapParagraph wraps a single line (no embedded newlines) to the given width.
+func wrapParagraph(line string, width int) string {
+	words := strings.Fields(line)
+	if len(words) == 0 {
+		return ""
+	}
+	var result strings.Builder
+	lineLen := 0
+	for i, word := range words {
+		wLen := len(word)
+		if i == 0 {
+			result.WriteString(word)
+			lineLen = wLen
+		} else if lineLen+1+wLen > width {
+			result.WriteString("\n")
+			result.WriteString(word)
+			lineLen = wLen
+		} else {
+			result.WriteString(" ")
+			result.WriteString(word)
+			lineLen += 1 + wLen
+		}
+	}
+	return result.String()
+}
+
+// countLines counts the number of visual lines a string will occupy.
+func countLines(s string) int {
+	if s == "" {
+		return 0
+	}
+	return strings.Count(s, "\n") + 1
 }
 
 // View implements tea.Model.
@@ -215,83 +289,93 @@ func (m *Model) View() string {
 
 	var b strings.Builder
 
-	// Header
+	// Header (2 lines: content + blank)
 	b.WriteString(titleStyle.Render("yaah"))
 	b.WriteString(" ")
 	b.WriteString(fmt.Sprintf("%s/%s", m.provider, m.modelName))
 	b.WriteString("\n\n")
 
-	// Messages area
-	chatHeight := m.height - 6
+	// Available height for chat + status + input
+	// Layout: 2 (header) + chatArea + 1 (status) + 1 (input) = height
+	chatHeight := m.height - 4
 	if chatHeight < 5 {
 		chatHeight = 5
 	}
 
-	// Render visible messages
-	start := m.scroll - chatHeight
-	if start < 0 {
-		start = 0
+	// Build all rendered blocks (messages + streaming + status indicators)
+	// so we can count actual line usage and scroll correctly.
+	type block struct {
+		rendered string
+		lines    int
 	}
-	end := m.scroll
-	if end > len(m.messages) {
-		end = len(m.messages)
-	}
+	var blocks []block
 
-	for i := start; i < end; i++ {
-		msg := m.messages[i]
+	// Render messages
+	for _, msg := range m.messages {
+		var rendered string
 		switch msg.Role {
 		case "user":
-			b.WriteString(userStyle.Render("you: " + msg.Content))
+			rendered = userStyle.Render(chatWrap("you: ", msg.Content, m.width))
 		case "assistant":
-			b.WriteString(assistantStyle.Render("yaah: " + msg.Content))
+			rendered = assistantStyle.Render(chatWrap("yaah: ", msg.Content, m.width))
 		case "tool":
-			b.WriteString(toolStyle.Render("  " + msg.Content))
+			rendered = toolStyle.Render(chatWrap("  ", msg.Content, m.width))
 		default:
-			b.WriteString(msg.Content)
+			rendered = chatWrap("", msg.Content, m.width)
 		}
-		b.WriteString("\n")
+		blocks = append(blocks, block{rendered, countLines(rendered)})
 	}
 
-	// Streaming content (current response being streamed)
+	// Streaming content
 	if m.streaming && m.streamContent != "" {
-		b.WriteString(assistantStyle.Render("yaah: " + m.streamContent))
-		b.WriteString("\n")
+		rendered := assistantStyle.Render(chatWrap("yaah: ", m.streamContent, m.width))
+		blocks = append(blocks, block{rendered, countLines(rendered)})
 	}
 
 	// Thinking indicator
 	if m.thinking && !m.streaming {
-		b.WriteString(spinnerStyle.Render("  ⠋ Thinking..."))
-		b.WriteString("\n")
+		rendered := spinnerStyle.Render("  ⠋ Thinking...")
+		blocks = append(blocks, block{rendered, 1})
 	}
 
 	// Tool call display
 	if m.toolCall != "" {
-		b.WriteString(toolStyle.Render(fmt.Sprintf("  tool: %s", m.toolCall)))
+		rendered := toolStyle.Render(fmt.Sprintf("  tool: %s", m.toolCall))
+		blocks = append(blocks, block{rendered, 1})
+	}
+
+	// Determine which blocks to show to fit within chatHeight (show most recent)
+	linesUsed := 0
+	startBlock := len(blocks)
+	for i := len(blocks) - 1; i >= 0; i-- {
+		blockLines := blocks[i].lines + 1
+		if linesUsed+blockLines > chatHeight {
+			break
+		}
+		linesUsed += blockLines
+		startBlock = i
+	}
+
+	// Render visible blocks
+	for i := startBlock; i < len(blocks); i++ {
+		b.WriteString(blocks[i].rendered)
 		b.WriteString("\n")
 	}
 
-	// Pad to fill screen
-	linesRendered := end - start + 2
-	if m.thinking && !m.streaming {
-		linesRendered++
-	}
-	if m.streaming {
-		linesRendered++
-	}
-	for i := linesRendered; i < chatHeight; i++ {
+	// Pad remaining space to push status bar + input to the bottom
+	for i := linesUsed; i < chatHeight; i++ {
 		b.WriteString("\n")
 	}
 
-	// Status bar
+	// Status bar (1 line)
 	b.WriteString(statusStyle.Width(m.width).Render(
-		fmt.Sprintf(" %s/%s │ messages: %d │ ↑↓ scroll │ ctrl+c quit",
+		fmt.Sprintf(" %s/%s │ messages: %d │ ctrl+c quit",
 			m.provider, m.modelName, len(m.messages)),
 	))
 	b.WriteString("\n")
 
-	// Input
+	// Input (1 line)
 	b.WriteString(m.input.View())
-	b.WriteString("\n")
 
 	return b.String()
 }

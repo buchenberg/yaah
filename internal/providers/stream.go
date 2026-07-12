@@ -34,6 +34,7 @@ type StreamDelta struct {
 
 // SendStream sends a streaming chat request and returns a channel of chunks.
 // The channel is closed when the stream ends or an error occurs.
+// The request's Stream field is set to true (the caller's struct is mutated).
 func (c *OpenAIClient) SendStream(ctx context.Context, req types.ChatRequest) (<-chan StreamChunk, <-chan error) {
 	req.Stream = true
 
@@ -75,6 +76,7 @@ func (c *OpenAIClient) SendStream(ctx context.Context, req types.ChatRequest) (<
 		}
 
 		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
 		for scanner.Scan() {
 			line := scanner.Bytes()
 			chunk, done, err := parseSSEChunk(line)

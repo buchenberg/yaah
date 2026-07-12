@@ -77,7 +77,7 @@ ditto --norsrc yaah ~/.local/bin/yaah  # macOS: avoids Gatekeeper quarantine
 
 ## Conventions
 
-- **Go 1.22+** (per `go.mod`).
+- **Go 1.25+** (per `go.mod`).
 - **No codegen, no build tags, no `go generate`.**
 - **cobra + pflag** for CLI.
 - **`internal/` for everything private.** `pkg/` reserved for future exports.

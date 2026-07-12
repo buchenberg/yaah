@@ -3,6 +3,7 @@ package yaah
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/config"
@@ -76,10 +77,21 @@ var configEditCmd = &cobra.Command{
 
 		editor := os.Getenv("EDITOR")
 		if editor == "" {
+			editor = os.Getenv("VISUAL")
+		}
+		if editor == "" {
 			editor = "vi"
 		}
 
 		cmd.Printf("Opening %s with %s\n", path, editor)
+
+		editCmd := exec.Command(editor, path)
+		editCmd.Stdin = os.Stdin
+		editCmd.Stdout = os.Stdout
+		editCmd.Stderr = os.Stderr
+		if err := editCmd.Run(); err != nil {
+			return fmt.Errorf("launch editor %s: %w", editor, err)
+		}
 		return nil
 	},
 }

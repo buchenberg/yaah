@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -37,7 +38,7 @@ func (t *TodoWriteTool) Schema() json.RawMessage {
 	}`)
 }
 
-func (t *TodoWriteTool) Execute(args string) (string, error) {
+func (t *TodoWriteTool) Execute(ctx context.Context, args string) (string, error) {
 	var params struct {
 		Todos []struct {
 			ID      string `json:"id"`
