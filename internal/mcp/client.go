@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -19,7 +20,7 @@ type Manifest struct {
 	Env       map[string]string `json:"env,omitempty"`
 	URL       string            `json:"url,omitempty"`
 	Transport string            `json:"transport,omitempty"` // "stdio" (default) or "http"
-	Framing   string            `json:"framing,omitempty"`   // stdio only: "framed" (default) or "newline"
+	Framing   string            `json:"framing,omitempty"`   // stdio only: "" (auto), "newline", or "framed"
 }
 
 // ServerTool represents a tool exposed by an MCP server.
@@ -89,22 +90,62 @@ func (c *Client) Start(ctx context.Context) error {
 	return nil
 }
 
-// newWriter returns the appropriate writer for the given framing mode.
-// "" and "framed" → Content-Length LSP framing (MCP spec default).
-// "newline"      → raw newline-delimited JSON (Docker MCP gateway).
+// newWriter returns the writer for the configured framing mode.
+// The MCP specification (2025-06-18) mandates newline-delimited JSON on
+// stdio. Some non-spec servers (older @modelcontextprotocol/* releases)
+// require Content-Length LSP framing instead. When framing is unset we
+// default to newline, the spec-compliant mode.
 func newWriter(w io.Writer, framing string) messageWriter {
-	if framing == "newline" {
-		return NewNewlineWriter(w)
+	if framing == "framed" {
+		return NewFramedWriter(w)
 	}
-	return NewFramedWriter(w)
+	return NewNewlineWriter(w)
 }
 
-// newReader returns the appropriate reader for the given framing mode.
+// newReader returns a reader that auto-detects framing on the first message.
+// Spec-compliant servers send "{json}\n" (newline mode). LSP-style servers
+// send "Content-Length: N\r\n\r\n{json}" (framed mode). We peek the first
+// non-whitespace byte: '{' means newline, anything else means framed.
 func newReader(r io.Reader, framing string) messageReader {
 	if framing == "newline" {
 		return NewNewlineReader(r)
 	}
-	return NewFramedReader(r)
+	if framing == "framed" {
+		return NewFramedReader(r)
+	}
+	return &autoDetectReader{reader: bufio.NewReader(r), framed: nil}
+}
+
+// autoDetectReader peeks the first non-whitespace byte of the first message
+// to decide between Content-Length and newline framing, then delegates to
+// the appropriate reader for all subsequent messages.
+type autoDetectReader struct {
+	reader *bufio.Reader
+	framed messageReader
+}
+
+func (a *autoDetectReader) ReadMessage() (JSONRPCMessage, error) {
+	if a.framed != nil {
+		return a.framed.ReadMessage()
+	}
+	// Peek up to 16 bytes to find the first non-whitespace byte
+	peek, _ := a.reader.Peek(16)
+	for _, b := range peek {
+		switch b {
+		case ' ', '	', '\r', '\n':
+			continue
+		case '{':
+			// Spec-compliant newline-delimited JSON
+			a.framed = NewNewlineReader(a.reader)
+			return a.framed.ReadMessage()
+		default:
+			// Assume Content-Length framing
+			a.framed = NewFramedReader(a.reader)
+			return a.framed.ReadMessage()
+		}
+	}
+	// Empty stream
+	return JSONRPCMessage{}, io.EOF
 }
 
 // Initialize performs the MCP initialize handshake and fetches tools.

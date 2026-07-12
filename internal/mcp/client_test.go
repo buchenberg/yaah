@@ -2,8 +2,10 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -94,9 +96,9 @@ done
 	}
 
 	client := NewClient("fake", Manifest{
-		Command:   "/bin/sh",
-		Args:      []string{scriptPath},
-		Framing:   "newline",
+		Command: "/bin/sh",
+		Args:    []string{scriptPath},
+		// No Framing set — auto-detect from the first byte of the response.
 		Transport: "stdio",
 	})
 	defer client.Close()
@@ -122,7 +124,38 @@ func TestLoadManifest_defaultsFramingToEmpty(t *testing.T) {
 		t.Fatalf("LoadManifest() error: %v", err)
 	}
 	if m.Framing != "" {
-		t.Errorf("Framing = %q, want empty (default = framed)", m.Framing)
+		t.Errorf("Framing = %q, want empty (default = auto-detect)", m.Framing)
+	}
+}
+
+// TestAutoDetectReader_picksNewline — first byte '{' means newline framing
+func TestAutoDetectReader_picksNewline(t *testing.T) {
+	// Send two newline-delimited messages
+	raw := `{"jsonrpc":"2.0","id":1,"result":{"a":1}}` + "\n" +
+		`{"jsonrpc":"2.0","id":2,"result":{"a":2}}` + "\n"
+	r := newReader(strings.NewReader(raw), "")
+	for i := 1; i <= 2; i++ {
+		msg, err := r.ReadMessage()
+		if err != nil {
+			t.Fatalf("msg %d: %v", i, err)
+		}
+		if msg.ID != int64(i) {
+			t.Errorf("msg %d: ID = %d, want %d", i, msg.ID, i)
+		}
+	}
+}
+
+// TestAutoDetectReader_picksFramed — first byte 'C' (Content-Length) means framed
+func TestAutoDetectReader_picksFramed(t *testing.T) {
+	body := `{"jsonrpc":"2.0","id":1,"result":{"a":1}}`
+	raw := fmt.Sprintf("Content-Length: %d\r\n\r\n%s", len(body), body)
+	r := newReader(strings.NewReader(raw), "")
+	msg, err := r.ReadMessage()
+	if err != nil {
+		t.Fatalf("ReadMessage: %v", err)
+	}
+	if msg.ID != 1 {
+		t.Errorf("ID = %d, want 1", msg.ID)
 	}
 }
 
