@@ -26,6 +26,7 @@ yaah/
 │   ├── mcp.go                   # yaah mcp list/add/remove
 │   ├── memory.go                # yaah memory search/add
 │   ├── session.go               # yaah session list/show
+│   ├── tui.go                   # yaah tui (bubbletea)
 │   └── color.go                 # ANSI color helpers
 ├── internal/
 │   ├── agent/                   # agent loop (streaming, tool calling)
@@ -39,9 +40,9 @@ yaah/
 │   ├── spinner/                 # animated thinking spinner
 │   ├── todo/                    # in-memory todo store
 │   ├── tools/                   # built-in tools (read, bash, memory, todo)
+│   ├── tui/                     # bubbletea TUI (M7)
 │   ├── types/                   # OpenAI message types
 │   └── update/                  # GitHub release checking
-├── scripts/                     # release, cross-compile
 ├── .github/workflows/ci.yml     # CI: test, vet, staticcheck, cross-compile
 ├── README.md
 ├── CONTRIBUTING.md
@@ -100,20 +101,19 @@ ditto --norsrc yaah ~/.local/bin/yaah  # macOS: avoids Gatekeeper quarantine
 
 ## Milestone status
 
-All milestones complete (v0.1.0):
+All milestones complete through v0.1.0 plus M7 TUI for v0.2.0:
 
 - **M0:** Bootstrap, CI, cross-compile ✅
 - **M1:** Config, REPL, doctor, update ✅
 - **M2:** Providers, agent loop, tools, streaming ✅
 - **M3:** Skills, AGENTS.md instructions ✅
-- **M4:** MCP client (stdio + HTTP) ✅
+- **M4:** MCP client (stdio newline-delimited + HTTP) with framing auto-detect ✅
 - **M5:** Persistent memory (SQLite + FTS5) ✅
+- **M7:** TUI (bubbletea, tool-call display, streaming) ✅
 
 ## What NOT to do
 
-- Don't add a `TUI/` package, a `web/` package, or anything that needs
-  a frontend framework. v0.1 is CLI-only.
-- Don't add a `gateway/` package or anything that talks to
+- Don't add a `web/` package, a `gateway/` package, or anything that talks to
   Telegram/Discord/Slack. Out of scope.
 - Don't add a "yaah cloud" or any hosted service.
 - Don't add Anthropic-specific features unless via MCP.

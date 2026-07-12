@@ -85,6 +85,9 @@ yaah config edit
 # 3. Start the REPL
 yaah
 
+# 3a. Or launch the rich TUI (bubbletea)
+yaah tui
+
 # 4. Try a one-shot prompt with streaming
 yaah "explain this codebase"
 
@@ -155,6 +158,7 @@ yaah mcp add <name> --url <url>  # register HTTP MCP server
 yaah memory add <text>        # add persistent memory note
 yaah memory search <query>    # search memory (FTS5)
 yaah session list             # list recent sessions
+yaah tui                      # launch bubbletea TUI
 yaah update                   # check for newer release
 yaah version                  # version, commit, build date
 ```
@@ -206,7 +210,7 @@ Environment variables referenced as `${VAR_NAME}` are substituted at load time.
 
 ## Status
 
-**v0.1.0 released.** All milestones complete.
+**v0.1.0 released.** v0.2.0 in flight (M7 TUI shipped).
 
 | Milestone | Scope | Status |
 |---|---|---|
@@ -214,10 +218,11 @@ Environment variables referenced as `${VAR_NAME}` are substituted at load time.
 | **M1** | Config + REPL + `yaah doctor` + `yaah update` | ✅ |
 | **M2** | Providers + agent loop + built-in tools + streaming | ✅ |
 | **M3** | Skills + `AGENTS.md` instructions | ✅ |
-| **M4** | MCP client (stdio + HTTP) | ✅ |
+| **M4** | MCP client (stdio newline-delimited + HTTP) with framing auto-detect | ✅ |
 | **M5** | Persistent memory (SQLite + FTS5) | ✅ |
+| **M7** | TUI (`yaah tui`, bubbletea, tool-call display, streaming) | ✅ |
 
-80+ tests across 14 packages. Cross-compiles to 5 platforms.
+117 tests across 16 packages. Cross-compiles to 5 platforms.
 
 ## License
 
