@@ -108,3 +108,65 @@ func (w *FramedWriter) WriteMessage(msg JSONRPCMessage) error {
 	_, err = w.writer.Write(body)
 	return err
 }
+
+// --- Newline-delimited framing -------------------------------------------
+//
+// The MCP specification recommends Content-Length framing on stdio, but some
+// implementations (notably the Docker MCP gateway as of v0.42.x) reject the
+// "Content-Length:" header and expect raw newline-delimited JSON instead.
+// To stay compatible with both, we provide a parallel NewlineReader/Writer.
+
+// NewlineReader reads raw newline-delimited JSON-RPC messages from an io.Reader.
+type NewlineReader struct {
+	reader *bufio.Reader
+}
+
+// NewNewlineReader creates a new NewlineReader.
+func NewNewlineReader(r io.Reader) *NewlineReader {
+	return &NewlineReader{reader: bufio.NewReader(r)}
+}
+
+// ReadMessage reads one newline-terminated JSON object and unmarshals it.
+// Returns io.EOF when the stream is closed.
+func (r *NewlineReader) ReadMessage() (JSONRPCMessage, error) {
+	var msg JSONRPCMessage
+	line, err := r.reader.ReadBytes('\n')
+	if err != nil {
+		return msg, err
+	}
+	// Skip empty keepalive lines and pure whitespace
+	trimmed := strings.TrimSpace(string(line))
+	if trimmed == "" {
+		return r.ReadMessage()
+	}
+	if err := json.Unmarshal([]byte(trimmed), &msg); err != nil {
+		return msg, fmt.Errorf("unmarshal JSON-RPC: %w", err)
+	}
+	return msg, nil
+}
+
+// NewlineWriter writes raw newline-delimited JSON-RPC messages to an io.Writer.
+type NewlineWriter struct {
+	writer io.Writer
+	mu     sync.Mutex
+}
+
+// NewNewlineWriter creates a new NewlineWriter.
+func NewNewlineWriter(w io.Writer) *NewlineWriter {
+	return &NewlineWriter{writer: w}
+}
+
+// WriteMessage marshals a message and writes it followed by a newline.
+func (w *NewlineWriter) WriteMessage(msg JSONRPCMessage) error {
+	body, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshal JSON-RPC: %w", err)
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if _, err := w.writer.Write(body); err != nil {
+		return err
+	}
+	_, err = w.writer.Write([]byte("\n"))
+	return err
+}

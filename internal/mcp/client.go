@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +19,7 @@ type Manifest struct {
 	Env       map[string]string `json:"env,omitempty"`
 	URL       string            `json:"url,omitempty"`
 	Transport string            `json:"transport,omitempty"` // "stdio" (default) or "http"
+	Framing   string            `json:"framing,omitempty"`   // stdio only: "framed" (default) or "newline"
 }
 
 // ServerTool represents a tool exposed by an MCP server.
@@ -33,12 +35,22 @@ type Client struct {
 	name     string
 	manifest Manifest
 	cmd      *exec.Cmd
-	writer   *FramedWriter
-	reader   *FramedReader
+	writer   messageWriter
+	reader   messageReader
 	nextID   atomic.Int64
 	mu       sync.Mutex
 	tools    []ServerTool
 	closed   bool
+}
+
+// messageWriter is the interface satisfied by both FramedWriter and NewlineWriter.
+type messageWriter interface {
+	WriteMessage(msg JSONRPCMessage) error
+}
+
+// messageReader is the interface satisfied by both FramedReader and NewlineReader.
+type messageReader interface {
+	ReadMessage() (JSONRPCMessage, error)
 }
 
 // NewClient creates a new MCP client from a manifest.
@@ -71,10 +83,28 @@ func (c *Client) Start(ctx context.Context) error {
 		return fmt.Errorf("start server: %w", err)
 	}
 
-	c.writer = NewFramedWriter(stdin)
-	c.reader = NewFramedReader(stdout)
+	c.writer = newWriter(stdin, c.manifest.Framing)
+	c.reader = newReader(stdout, c.manifest.Framing)
 
 	return nil
+}
+
+// newWriter returns the appropriate writer for the given framing mode.
+// "" and "framed" → Content-Length LSP framing (MCP spec default).
+// "newline"      → raw newline-delimited JSON (Docker MCP gateway).
+func newWriter(w io.Writer, framing string) messageWriter {
+	if framing == "newline" {
+		return NewNewlineWriter(w)
+	}
+	return NewFramedWriter(w)
+}
+
+// newReader returns the appropriate reader for the given framing mode.
+func newReader(r io.Reader, framing string) messageReader {
+	if framing == "newline" {
+		return NewNewlineReader(r)
+	}
+	return NewFramedReader(r)
 }
 
 // Initialize performs the MCP initialize handshake and fetches tools.

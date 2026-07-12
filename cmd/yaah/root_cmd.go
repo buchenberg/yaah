@@ -194,9 +194,14 @@ func runAgentPrompt(prompt string) (string, bool, error) {
 		defer db.Close()
 	}
 
-	// Start MCP clients and register their tools
+	// Start MCP clients and register their tools.
+	// Errors are reported to stderr (not silently dropped) so the user
+	// knows when an MCP server fails to connect.
 	mcpDirs := mcpSearchPaths(config.HomeDir())
-	mcpClients, mcpTools, _ := mcp.StartMCPClients(context.Background(), mcpDirs)
+	mcpClients, mcpTools, mcpErr := mcp.StartMCPClients(context.Background(), mcpDirs)
+	if mcpErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: MCP startup error: %v\n", mcpErr)
+	}
 	for _, c := range mcpClients {
 		defer c.Close()
 	}

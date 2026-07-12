@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 )
 
 // MCPTool wraps an MCP server tool as a yaah Tool.
@@ -98,7 +99,7 @@ func StartMCPClients(ctx context.Context, dirs []string) ([]MCPClient, []*MCPToo
 
 		if err != nil {
 			// Log but don't fail — MCP servers are optional
-			fmt.Printf("  warning: MCP server %s: %v\n", name, err)
+			fmt.Fprintf(os.Stderr, "  warning: MCP server %s: %v\n", name, err)
 			continue
 		}
 
