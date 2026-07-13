@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -70,6 +71,9 @@ func TestLoadManifest_parsesFraming(t *testing.T) {
 // speaks newline-delimited JSON, not Content-Length. This was the bug that
 // caused "invalid character 'C'" warnings and silently dropped the server.
 func TestClient_newlineFraming_handshake(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires /bin/sh")
+	}
 	// Build a minimal in-process stdio server: a shell pipeline that
 	// responds to "initialize" with a newline-delimited JSON reply, then
 	// responds to "tools/list" with an empty tool list.

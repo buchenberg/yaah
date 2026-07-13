@@ -4,11 +4,16 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
+
+	"github.com/buchenberg/yaah/internal/banner"
 )
 
 // Styles
@@ -34,14 +39,23 @@ var (
 	spinnerStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("39"))
 
-	errorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196"))
+	panelBorder = lipgloss.RoundedBorder()
+
+	panelStyle = lipgloss.NewStyle().
+			Border(panelBorder).
+			BorderForeground(lipgloss.Color("240")).
+			Padding(0, 1)
+
+	copyStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("243")).
+			Italic(true)
 )
 
 // Message represents a chat message in the TUI.
 type Message struct {
 	Role    string
-	Content string
+	Content string // glamour-rendered for assistant, raw for others
+	Raw     string // original markdown (for copy), same as Content for user/tool
 }
 
 // AgentMsg is a message from the agent goroutine.
@@ -59,6 +73,9 @@ type Model struct {
 	messages      []Message
 	viewport      viewport.Model
 	input         textinput.Model
+	spinner       spinner.Model
+	mdRenderer    *glamour.TermRenderer
+	banner        string // pre-rendered figlet + lolcat ASCII art
 	provider      string
 	modelName     string
 	width         int
@@ -67,9 +84,13 @@ type Model struct {
 	toolCall      string
 	streaming     bool   // currently streaming a response
 	streamContent string // accumulated streaming content
+	copyFlash     string // brief "Copied!" indicator
 	onSubmit      func(string)
 	onQuit        func()
 }
+
+// clearCopyFlashMsg clears the copy flash indicator after a timeout.
+type clearCopyFlashMsg struct{}
 
 // New creates a new TUI model.
 func New(provider, model string, onSubmit func(string), onQuit func()) *Model {
@@ -79,16 +100,83 @@ func New(provider, model string, onSubmit func(string), onQuit func()) *Model {
 	input.CharLimit = 0
 	input.SetWidth(80)
 
+	sp := spinner.New(
+		spinner.WithSpinner(spinner.MiniDot),
+		spinner.WithStyle(spinnerStyle),
+	)
+
 	vp := viewport.New()
+
+	bn, _ := banner.Generate()
 
 	return &Model{
 		input:     input,
+		spinner:   sp,
 		viewport:  vp,
+		banner:    bn,
 		provider:  provider,
 		modelName: model,
 		onSubmit:  onSubmit,
 		onQuit:    onQuit,
 	}
+}
+
+// createRenderer (re)creates the glamour markdown renderer for the current
+// terminal width. Called on startup and on window resize.
+func (m *Model) createRenderer() {
+	width := m.width - 4
+	if width < 20 {
+		width = 20
+	}
+	r, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle("dark"),
+		glamour.WithWordWrap(width),
+	)
+	if err == nil {
+		m.mdRenderer = r
+	}
+}
+
+// renderMarkdown renders raw markdown through glamour. Falls back to the
+// raw string if the renderer is unavailable.
+func (m *Model) renderMarkdown(content string) string {
+	if m.mdRenderer == nil {
+		return content
+	}
+	out, err := m.mdRenderer.Render(content)
+	if err != nil {
+		return content
+	}
+	return strings.TrimSpace(out)
+}
+
+// AddAssistantMessage renders markdown through glamour and stores both
+// the rendered output (Content) and the raw markdown (Raw).
+func (m *Model) AddAssistantMessage(raw string) {
+	m.messages = append(m.messages, Message{
+		Role:    "assistant",
+		Content: m.renderMarkdown(raw),
+		Raw:     raw,
+	})
+	m.refreshViewport()
+}
+
+// reRenderMessages re-renders all assistant messages through the current
+// glamour renderer (used on window resize when word-wrap width changes).
+func (m *Model) reRenderMessages() {
+	for i := range m.messages {
+		if m.messages[i].Role == "assistant" && m.messages[i].Raw != "" {
+			m.messages[i].Content = m.renderMarkdown(m.messages[i].Raw)
+		}
+	}
+}
+
+// headerHeight returns the number of lines the banner + provider header
+// occupies. Used to size the viewport.
+func (m *Model) headerHeight() int {
+	header := m.banner + "\n\n" +
+		titleStyle.Render(fmt.Sprintf("%s/%s", m.provider, m.modelName)) + "\n"
+	return len(strings.Split(header, "\n"))
 }
 
 // refreshViewport rebuilds the viewport content from the current message
@@ -100,7 +188,7 @@ func (m *Model) refreshViewport() {
 
 // AddMessage adds a message to the chat history.
 func (m *Model) AddMessage(role, content string) {
-	m.messages = append(m.messages, Message{Role: role, Content: content})
+	m.messages = append(m.messages, Message{Role: role, Content: content, Raw: content})
 	m.refreshViewport()
 }
 
@@ -145,9 +233,9 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 	if msg.Flush != "" {
 		// Commit the accumulated streaming content as a message so the
 		// next segment (after a tool call) starts on a fresh line.
-		m.AddMessage("assistant", msg.Flush)
 		m.streaming = false
 		m.streamContent = ""
+		m.AddAssistantMessage(msg.Flush)
 		return
 	}
 
@@ -165,18 +253,19 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 		m.SetThinking(false)
 		m.ClearToolCall()
 		if m.streaming && m.streamContent != "" {
-			m.AddMessage("assistant", m.streamContent)
+			content := m.streamContent
+			m.streaming = false
+			m.streamContent = ""
+			m.AddAssistantMessage(content)
 		} else if msg.Response != "" {
-			m.AddMessage("assistant", msg.Response)
+			m.AddAssistantMessage(msg.Response)
 		}
-		m.streaming = false
-		m.streamContent = ""
 	}
 }
 
 // Init implements tea.Model.
 func (m *Model) Init() tea.Cmd {
-	return textinput.Blink
+	return tea.Batch(textinput.Blink, m.spinner.Tick)
 }
 
 // Update implements tea.Model.
@@ -188,12 +277,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.HandleAgentMsg(msg)
 		return m, nil
 
+	case spinner.TickMsg:
+		var spinCmd tea.Cmd
+		m.spinner, spinCmd = m.spinner.Update(msg)
+		if m.thinking {
+			m.refreshViewport()
+		}
+		return m, spinCmd
+
+	case clearCopyFlashMsg:
+		m.copyFlash = ""
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		m.input.SetWidth(msg.Width - 4)
-		// Layout: 2 (header) + chatArea + 1 (status) + 1 (input) = height
-		chatHeight := msg.Height - 4
+		m.createRenderer()
+		m.reRenderMessages()
+		chatHeight := msg.Height - m.headerHeight() - 2
 		if chatHeight < 5 {
 			chatHeight = 5
 		}
@@ -209,6 +311,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.onQuit()
 			}
 			return m, tea.Quit
+
+		case "ctrl+y":
+			for i := len(m.messages) - 1; i >= 0; i-- {
+				if m.messages[i].Role == "assistant" && m.messages[i].Raw != "" {
+					m.copyFlash = "Copied markdown to clipboard!"
+					return m, tea.Batch(
+						tea.SetClipboard(m.messages[i].Raw),
+						tea.Tick(2*time.Second, func(time.Time) tea.Msg {
+							return clearCopyFlashMsg{}
+						}),
+					)
+				}
+			}
+			return m, nil
 
 		case "enter":
 			// Ignore input while thinking/streaming
@@ -305,24 +421,37 @@ func wrapParagraph(line string, width int) string {
 func (m *Model) renderMessages() string {
 	var b strings.Builder
 
-	// Render committed messages
+	panelW := m.width - 4
+
 	for _, msg := range m.messages {
-		var rendered string
 		switch msg.Role {
 		case "user":
-			rendered = userStyle.Render(chatWrap("you: ", msg.Content, m.width))
+			rendered := userStyle.Render(chatWrap("you: ", msg.Content, m.width))
+			b.WriteString(rendered)
+			b.WriteString("\n\n")
+
 		case "assistant":
-			rendered = assistantStyle.Render(chatWrap("yaah: ", msg.Content, m.width))
+			b.WriteString(assistantStyle.Render("yaah:"))
+			b.WriteString("\n")
+			copyText := copyStyle.Render("📋 ctrl+y to copy as md")
+			inner := msg.Content + "\n\n" + copyText
+			panel := panelStyle.Width(panelW).Render(inner)
+			b.WriteString(panel)
+			b.WriteString("\n\n")
+
 		case "tool":
-			rendered = toolStyle.Render(chatWrap("  ", msg.Content, m.width))
+			rendered := toolStyle.Render(chatWrap("  ", msg.Content, m.width))
+			b.WriteString(rendered)
+			b.WriteString("\n")
+
 		default:
-			rendered = chatWrap("", msg.Content, m.width)
+			rendered := chatWrap("", msg.Content, m.width)
+			b.WriteString(rendered)
+			b.WriteString("\n")
 		}
-		b.WriteString(rendered)
-		b.WriteString("\n")
 	}
 
-	// Streaming content
+	// Streaming content (not yet committed — no panel)
 	if m.streaming && m.streamContent != "" {
 		rendered := assistantStyle.Render(chatWrap("yaah: ", m.streamContent, m.width))
 		b.WriteString(rendered)
@@ -331,13 +460,15 @@ func (m *Model) renderMessages() string {
 
 	// Thinking indicator
 	if m.thinking && !m.streaming {
-		b.WriteString(spinnerStyle.Render("  ⠋ Thinking..."))
+		rendered := spinnerStyle.Render(fmt.Sprintf("  %s Thinking...", m.spinner.View()))
+		b.WriteString(rendered)
 		b.WriteString("\n")
 	}
 
 	// Tool call display
 	if m.toolCall != "" {
-		b.WriteString(toolStyle.Render(fmt.Sprintf("  tool: %s", m.toolCall)))
+		rendered := toolStyle.Render(fmt.Sprintf("  tool: %s", m.toolCall))
+		b.WriteString(rendered)
 		b.WriteString("\n")
 	}
 
@@ -350,15 +481,19 @@ func (m *Model) View() tea.View {
 		return tea.NewView("Initializing...")
 	}
 
-	// Header (2 lines: content + blank)
-	header := titleStyle.Render("yaah") + " " +
-		fmt.Sprintf("%s/%s", m.provider, m.modelName) + "\n\n"
+	// Header: figlet banner + blank line + provider/model line + trailing newline.
+	header := m.banner + "\n\n" +
+		titleStyle.Render(fmt.Sprintf("%s/%s", m.provider, m.modelName)) + "\n"
 
-	// Status bar (1 line)
-	status := statusStyle.Width(m.width).Render(
-		fmt.Sprintf(" %s/%s │ messages: %d │ ctrl+c quit",
-			m.provider, m.modelName, len(m.messages)),
-	) + "\n"
+	// Status bar (1 line). No trailing \n — JoinVertical adds the separator.
+	var statusText string
+	if m.copyFlash != "" {
+		statusText = " " + m.copyFlash
+	} else {
+		statusText = fmt.Sprintf(" %s/%s │ messages: %d │ ctrl+y copy as md │ ctrl+c quit",
+			m.provider, m.modelName, len(m.messages))
+	}
+	status := statusStyle.Width(m.width).Render(statusText)
 
 	// Viewport holds the scrollable chat history
 	viewportView := m.viewport.View()
@@ -375,10 +510,12 @@ func (m *Model) View() tea.View {
 
 	v := tea.NewView(body)
 	v.AltScreen = true
-	// Position the terminal cursor at the textinput's location
-	// (only when not in virtual-cursor mode, which most terminals use).
+	// Position the terminal cursor at the textinput's location.
+	// textinput.Cursor() returns Y=0 (relative to the widget), so we
+	// offset it to the input line, which is the last line of the view.
 	if !m.input.VirtualCursor() {
 		if c := m.input.Cursor(); c != nil {
+			c.Y = m.height - 1
 			v.Cursor = c
 		}
 	}

@@ -103,6 +103,9 @@ var dangerousCommands = []string{
 	"mkfs", "mkswap",
 	"dd if=", ":(){ :|:& };:",
 	"chmod 777 /", "chown -R",
+	"remove-item -recurse -force c:\\",
+	"format-volume", "stop-computer", "restart-computer",
+	"clear-disk", "initialize-disk",
 }
 
 // isDangerous reports whether cmd matches a known destructive pattern. It is a
@@ -182,6 +185,71 @@ func truncateOutput(b []byte) []byte {
 	return append(b[:bashMaxOutput], []byte("\n...[output truncated]...")...)
 }
 
+// --- PowerShellTool ---
+
+// PowerShellTool runs a PowerShell command and returns its stdout.
+// It tries pwsh (PowerShell 7+, cross-platform) first, then falls back
+// to powershell (Windows PowerShell 5.1).
+type PowerShellTool struct{}
+
+func (t *PowerShellTool) Name() string { return "powershell" }
+
+func (t *PowerShellTool) Schema() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"command": {"type": "string", "description": "The PowerShell command to execute"},
+			"timeout": {"type": "integer", "description": "Timeout in seconds (default 30)"}
+		},
+		"required": ["command"]
+	}`)
+}
+
+// psExecutable returns the best available PowerShell executable.
+func psExecutable() string {
+	if _, err := exec.LookPath("pwsh"); err == nil {
+		return "pwsh"
+	}
+	return "powershell"
+}
+
+func (t *PowerShellTool) Execute(ctx context.Context, args string) (string, error) {
+	var params struct {
+		Command string `json:"command"`
+		Timeout int    `json:"timeout"`
+	}
+	if err := json.Unmarshal([]byte(args), &params); err != nil {
+		return "", fmt.Errorf("powershell: invalid arguments: %w", err)
+	}
+	if params.Command == "" {
+		return "", fmt.Errorf("powershell: command is required")
+	}
+
+	if isDangerous(params.Command) {
+		return "", fmt.Errorf("powershell: command matches a dangerous pattern; refused")
+	}
+
+	timeout := bashDefaultTimeout
+	if params.Timeout > 0 {
+		timeout = time.Duration(params.Timeout) * time.Second
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	exe := psExecutable()
+	cmd := exec.CommandContext(ctx, exe, "-NoProfile", "-NonInteractive", "-Command", params.Command)
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return "", fmt.Errorf("powershell: timed out after %s", timeout)
+	}
+	output = truncateOutput(output)
+	if err != nil {
+		return "", fmt.Errorf("powershell: %w\n%s", err, string(output))
+	}
+	return string(output), nil
+}
+
 // --- Tool Registry ---
 
 // Registry holds all available tools and dispatches by name.
@@ -194,6 +262,7 @@ func NewRegistry() *Registry {
 	r := &Registry{tools: make(map[string]Tool)}
 	r.Register(&ReadTool{})
 	r.Register(&BashTool{})
+	r.Register(&PowerShellTool{})
 	return r
 }
 
