@@ -19,6 +19,7 @@ type Defaults struct {
 	Model         string `yaml:"model"`
 	SmallModel    string `yaml:"small_model"`
 	MaxIterations int    `yaml:"max_iterations"`
+	ContextWindow int    `yaml:"context_window"`
 	Approval      string `yaml:"approval"`
 }
 
@@ -36,6 +37,7 @@ func defaultConfig() *Config {
 			Model:         "openai/gpt-4o-mini",
 			SmallModel:    "openai/gpt-4o-mini",
 			MaxIterations: 50,
+			ContextWindow: 128000,
 			Approval:      "ask",
 		},
 		LogLevel: "INFO",

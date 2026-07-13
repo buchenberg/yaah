@@ -5,9 +5,9 @@
 ## What yaah is
 
 yaah is a vendor-free AI agent harness. One Go static binary, minimal
-config at `~/.yaah/`, skills at `~/.agents/` (cross-tool standard),
-MCP over stdio and HTTP for tool servers. See `README.md` for the
-user-facing pitch.
+config at `~/.yaah/`, skills at `./.agents/` (project, walked up from cwd)
+and `~/.agents/` (cross-tool standard), MCP over stdio and HTTP for tool
+servers. See `README.md` for the user-facing pitch.
 
 ## Repo layout (canonical)
 
@@ -30,6 +30,7 @@ yaah/
 │   └── color.go                 # ANSI color helpers
 ├── internal/
 │   ├── agent/                   # agent loop (streaming, tool calling)
+│   ├── banner/                  # figlet + lolcat banner for the TUI/REPL
 │   ├── config/                  # load ~/.yaah/config.yaml, env subst
 │   ├── instructions/            # walk up cwd, load AGENTS.md/CLAUDE.md
 │   ├── mcp/                     # MCP client (stdio + HTTP), manifests

@@ -191,3 +191,267 @@ func TestDB_ListSessions(t *testing.T) {
 		t.Errorf("expected 3 sessions, got %d", len(sessions))
 	}
 }
+
+func TestDB_AddMemoryDedup_SkipsDuplicate(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	e1 := Entry{
+		ID:        "mem-1",
+		Text:      "User's name is Greg",
+		Source:    "agent",
+		CreatedAt: time.Now().Unix(),
+	}
+	if err := db.AddMemory(e1); err != nil {
+		t.Fatalf("AddMemory() error: %v", err)
+	}
+
+	e2 := Entry{
+		ID:        "mem-2",
+		Text:      "User's name is Greg",
+		Source:    "agent",
+		CreatedAt: time.Now().Unix(),
+	}
+	dupID, err := db.AddMemoryDedup(e2)
+	if err != nil {
+		t.Fatalf("AddMemoryDedup() error: %v", err)
+	}
+	if dupID != "mem-1" {
+		t.Errorf("expected duplicate ID mem-1, got %q", dupID)
+	}
+
+	all, _ := db.ListMemory(10)
+	if len(all) != 1 {
+		t.Errorf("expected 1 memory after dedup, got %d", len(all))
+	}
+}
+
+func TestDB_AddMemoryDedup_AddsWhenNoDuplicate(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	db.AddMemory(Entry{
+		ID: "mem-1", Text: "User's name is Greg", Source: "agent",
+		CreatedAt: time.Now().Unix(),
+	})
+
+	e := Entry{
+		ID: "mem-2", Text: "Project uses Go for backend", Source: "agent",
+		CreatedAt: time.Now().Unix(),
+	}
+	dupID, err := db.AddMemoryDedup(e)
+	if err != nil {
+		t.Fatalf("AddMemoryDedup() error: %v", err)
+	}
+	if dupID != "" {
+		t.Errorf("expected no duplicate, got %q", dupID)
+	}
+
+	all, _ := db.ListMemory(10)
+	if len(all) != 2 {
+		t.Errorf("expected 2 memories, got %d", len(all))
+	}
+}
+
+func TestDB_SearchMemory_TracksAccess(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	db.AddMemory(Entry{
+		ID: "mem-1", Text: "the user prefers dark mode",
+		Source: "cli", CreatedAt: time.Now().Unix(),
+	})
+
+	results1, _ := db.SearchMemory("dark mode", 10)
+	if len(results1) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results1))
+	}
+	if results1[0].AccessCount != 1 {
+		t.Errorf("expected AccessCount=1 after first search, got %d", results1[0].AccessCount)
+	}
+	if results1[0].AccessedAt == 0 {
+		t.Error("expected AccessedAt to be set after search")
+	}
+
+	results2, _ := db.SearchMemory("dark mode", 10)
+	if len(results2) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results2))
+	}
+	if results2[0].AccessCount != 2 {
+		t.Errorf("expected AccessCount=2 after second search, got %d", results2[0].AccessCount)
+	}
+}
+
+func TestDB_DeleteMemory(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	db.AddMemory(Entry{
+		ID: "mem-1", Text: "test memory", Source: "cli",
+		CreatedAt: time.Now().Unix(),
+	})
+
+	if err := db.DeleteMemory("mem-1"); err != nil {
+		t.Fatalf("DeleteMemory() error: %v", err)
+	}
+
+	all, _ := db.ListMemory(10)
+	if len(all) != 0 {
+		t.Errorf("expected 0 memories after delete, got %d", len(all))
+	}
+
+	// Deleting again should not error (no-op)
+	if err := db.DeleteMemory("mem-1"); err != nil {
+		t.Errorf("DeleteMemory() on non-existent should not error: %v", err)
+	}
+}
+
+func TestDB_UpdateMemory(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	db.AddMemory(Entry{
+		ID: "mem-1", Text: "User's name is Greg", Source: "agent",
+		CreatedAt: time.Now().Unix(),
+	})
+
+	if err := db.UpdateMemory("mem-1", "User's name is Greg Buchenberger"); err != nil {
+		t.Fatalf("UpdateMemory() error: %v", err)
+	}
+
+	// Search for updated text
+	results, _ := db.SearchMemory("Buchenberger", 10)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result after update, got %d", len(results))
+	}
+	if results[0].Text != "User's name is Greg Buchenberger" {
+		t.Errorf("expected updated text, got %q", results[0].Text)
+	}
+}
+
+func TestDB_UpdateMemory_NonExistentReturnsError(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	err = db.UpdateMemory("nonexistent", "new text")
+	if err == nil {
+		t.Error("expected error for non-existent memory update")
+	}
+}
+
+func TestDB_EndSession(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	db.CreateSession(Session{
+		ID: "sess-1", StartedAt: 1000, CWD: "/tmp", Model: "gpt-4o",
+	})
+
+	if err := db.EndSession("sess-1", 2000); err != nil {
+		t.Fatalf("EndSession() error: %v", err)
+	}
+
+	sessions, _ := db.ListSessions(10)
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(sessions))
+	}
+	if sessions[0].EndedAt != 2000 {
+		t.Errorf("expected ended_at=2000, got %d", sessions[0].EndedAt)
+	}
+}
+
+func TestDB_SearchMemoryByTag(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	db.AddMemory(Entry{
+		ID: "mem-1", Text: "User prefers dark mode", Tags: `["preferences"]`,
+		Source: "agent", CreatedAt: 1,
+	})
+	db.AddMemory(Entry{
+		ID: "mem-2", Text: "Project uses Go", Tags: `["tech"]`,
+		Source: "agent", CreatedAt: 2,
+	})
+	db.AddMemory(Entry{
+		ID: "mem-3", Text: "User's name is Greg", Tags: `["user_info"]`,
+		Source: "agent", CreatedAt: 3,
+	})
+
+	t.Run("filter by tag returns only matching", func(t *testing.T) {
+		results, _ := db.SearchMemory("", 10, "preferences")
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result with tag filter, got %d", len(results))
+		}
+		if results[0].Text != "User prefers dark mode" {
+			t.Errorf("wrong result: %q", results[0].Text)
+		}
+	})
+
+	t.Run("empty tag returns all", func(t *testing.T) {
+		results, _ := db.SearchMemory("", 10, "")
+		if len(results) != 3 {
+			t.Errorf("expected 3 results, got %d", len(results))
+		}
+	})
+
+	t.Run("query plus tag filter", func(t *testing.T) {
+		results, _ := db.SearchMemory("Greg", 10, "user_info")
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+		if results[0].ID != "mem-3" {
+			t.Errorf("wrong result id: %q", results[0].ID)
+		}
+	})
+}
+
+func TestDB_SearchMemory_TagNotFound(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	db.AddMemory(Entry{
+		ID: "mem-1", Text: "User prefers dark mode", Tags: `["preferences"]`,
+		Source: "agent", CreatedAt: 1,
+	})
+
+	results, _ := db.SearchMemory("", 10, "nonexistent")
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for non-matching tag, got %d", len(results))
+	}
+}

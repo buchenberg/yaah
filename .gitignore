@@ -44,3 +44,9 @@ go.work.sum
 .ghost/
 .agents/
 .kilo/
+
+**.exe~
+**.dll~
+**.so~
+**.dylib~
+

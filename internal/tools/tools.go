@@ -20,6 +20,9 @@ type Tool interface {
 	// Name returns the tool name as it appears in the function call.
 	Name() string
 
+	// Description returns a short description of what the tool does.
+	Description() string
+
 	// Schema returns the JSON Schema for the tool's parameters.
 	Schema() json.RawMessage
 
@@ -37,6 +40,9 @@ type Tool interface {
 type ReadTool struct{}
 
 func (t *ReadTool) Name() string { return "read" }
+func (t *ReadTool) Description() string {
+	return "Reads a file from the local filesystem with optional offset and limit."
+}
 
 func (t *ReadTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
@@ -127,7 +133,8 @@ const bashDefaultTimeout = 30 * time.Second
 // memory on runaway output.
 const bashMaxOutput = 1 << 20 // 1 MiB
 
-func (t *BashTool) Name() string { return "bash" }
+func (t *BashTool) Name() string        { return "bash" }
+func (t *BashTool) Description() string { return "Executes a shell command and returns its output." }
 
 func (t *BashTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
@@ -193,6 +200,9 @@ func truncateOutput(b []byte) []byte {
 type PowerShellTool struct{}
 
 func (t *PowerShellTool) Name() string { return "powershell" }
+func (t *PowerShellTool) Description() string {
+	return "Executes a PowerShell command and returns its output."
+}
 
 func (t *PowerShellTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
@@ -250,6 +260,149 @@ func (t *PowerShellTool) Execute(ctx context.Context, args string) (string, erro
 	return string(output), nil
 }
 
+// --- WriteTool ---
+
+// WriteTool writes content to a file, overwriting if it exists.
+type WriteTool struct{}
+
+func (t *WriteTool) Name() string        { return "write" }
+func (t *WriteTool) Description() string { return "Writes content to a file on the local filesystem." }
+
+func (t *WriteTool) Schema() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"content": {"type": "string", "description": "The content to write to the file"},
+			"filePath": {"type": "string", "description": "The absolute path to the file to write"}
+		},
+		"required": ["content", "filePath"]
+	}`)
+}
+
+func (t *WriteTool) Execute(ctx context.Context, args string) (string, error) {
+	var params struct {
+		Content  string `json:"content"`
+		FilePath string `json:"filePath"`
+	}
+	if err := json.Unmarshal([]byte(args), &params); err != nil {
+		return "", fmt.Errorf("write: invalid arguments: %w", err)
+	}
+	if params.FilePath == "" {
+		return "", fmt.Errorf("write: filePath is required")
+	}
+
+	if err := os.WriteFile(params.FilePath, []byte(params.Content), 0o644); err != nil {
+		return "", fmt.Errorf("write: %w", err)
+	}
+	return fmt.Sprintf("Wrote %d bytes to %s", len(params.Content), params.FilePath), nil
+}
+
+// --- EditTool ---
+
+// EditTool performs exact string replacements in a file.
+type EditTool struct{}
+
+func (t *EditTool) Name() string { return "edit" }
+func (t *EditTool) Description() string {
+	return "Performs exact string replacements in an existing file."
+}
+
+func (t *EditTool) Schema() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"filePath": {"type": "string", "description": "The absolute path to the file to edit"},
+			"oldString": {"type": "string", "description": "The text to replace"},
+			"newString": {"type": "string", "description": "The text to replace with (must differ from oldString)"},
+			"replaceAll": {"type": "boolean", "description": "Replace all occurrences (default false)"}
+		},
+		"required": ["filePath", "oldString", "newString"]
+	}`)
+}
+
+func (t *EditTool) Execute(ctx context.Context, args string) (string, error) {
+	var params struct {
+		FilePath   string `json:"filePath"`
+		OldString  string `json:"oldString"`
+		NewString  string `json:"newString"`
+		ReplaceAll bool   `json:"replaceAll"`
+	}
+	if err := json.Unmarshal([]byte(args), &params); err != nil {
+		return "", fmt.Errorf("edit: invalid arguments: %w", err)
+	}
+	if params.FilePath == "" {
+		return "", fmt.Errorf("edit: filePath is required")
+	}
+	if params.OldString == params.NewString {
+		return "", fmt.Errorf("edit: oldString and newString must differ")
+	}
+
+	data, err := os.ReadFile(params.FilePath)
+	if err != nil {
+		return "", fmt.Errorf("edit: %w", err)
+	}
+
+	content := string(data)
+	count := strings.Count(content, params.OldString)
+	if count == 0 {
+		return "", fmt.Errorf("edit: oldString not found in %s", params.FilePath)
+	}
+
+	if !params.ReplaceAll {
+		if count > 1 {
+			return "", fmt.Errorf("edit: found %d matches for oldString in %s; use replaceAll or provide more context", count, params.FilePath)
+		}
+		content = strings.Replace(content, params.OldString, params.NewString, 1)
+	} else {
+		content = strings.ReplaceAll(content, params.OldString, params.NewString)
+	}
+
+	if err := os.WriteFile(params.FilePath, []byte(content), 0o644); err != nil {
+		return "", fmt.Errorf("edit: %w", err)
+	}
+
+	replaced := count
+	if !params.ReplaceAll {
+		replaced = 1
+	}
+	return fmt.Sprintf("Replaced %d occurrence(s) in %s", replaced, params.FilePath), nil
+}
+
+// --- DeleteTool ---
+
+// DeleteTool removes a file from the local filesystem.
+type DeleteTool struct{}
+
+func (t *DeleteTool) Name() string        { return "delete" }
+func (t *DeleteTool) Description() string { return "Deletes a file from the local filesystem." }
+
+func (t *DeleteTool) Schema() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"filePath": {"type": "string", "description": "The absolute path of the file to delete"}
+		},
+		"required": ["filePath"]
+	}`)
+}
+
+func (t *DeleteTool) Execute(ctx context.Context, args string) (string, error) {
+	var params struct {
+		FilePath string `json:"filePath"`
+	}
+	if err := json.Unmarshal([]byte(args), &params); err != nil {
+		return "", fmt.Errorf("delete: invalid arguments: %w", err)
+	}
+	if params.FilePath == "" {
+		return "", fmt.Errorf("delete: filePath is required")
+	}
+
+	if err := os.Remove(params.FilePath); err != nil {
+		return "", fmt.Errorf("delete: %w", err)
+	}
+	return fmt.Sprintf("Deleted %s", params.FilePath), nil
+}
+
 // --- Tool Registry ---
 
 // Registry holds all available tools and dispatches by name.
@@ -263,6 +416,9 @@ func NewRegistry() *Registry {
 	r.Register(&ReadTool{})
 	r.Register(&BashTool{})
 	r.Register(&PowerShellTool{})
+	r.Register(&WriteTool{})
+	r.Register(&EditTool{})
+	r.Register(&DeleteTool{})
 	return r
 }
 

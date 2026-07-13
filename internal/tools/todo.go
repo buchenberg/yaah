@@ -15,6 +15,9 @@ type TodoWriteTool struct {
 }
 
 func (t *TodoWriteTool) Name() string { return "todowrite" }
+func (t *TodoWriteTool) Description() string {
+	return "Creates and manages a structured todo list for the current session."
+}
 
 func (t *TodoWriteTool) Schema() json.RawMessage {
 	return json.RawMessage(`{

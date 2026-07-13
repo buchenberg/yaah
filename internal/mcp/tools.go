@@ -33,6 +33,14 @@ func (t *MCPTool) Name() string {
 	return t.tool.Name
 }
 
+// Description returns the tool description from the MCP manifest.
+func (t *MCPTool) Description() string {
+	if t.tool.Description != "" {
+		return t.tool.Description
+	}
+	return "Remote tool via MCP server."
+}
+
 // Schema returns the tool's input schema.
 func (t *MCPTool) Schema() json.RawMessage {
 	if len(t.tool.InputSchema) > 0 {

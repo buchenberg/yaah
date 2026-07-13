@@ -50,7 +50,7 @@ CLI that consumes them is more useful than another walled garden.
 ## Install
 
 ```bash
-# From source (Go 1.22+ required)
+# From source (Go 1.25+ required)
 go install github.com/buchenberg/yaah@latest
 
 # macOS Apple Silicon
@@ -103,9 +103,14 @@ Tokens stream in real time with a thinking spinner. The spinner stops on the fir
 ### Tool calling
 The agent can use built-in tools and MCP server tools:
 - `read` — read files
-- `bash` — run shell commands
-- `memory_search` / `memory_add` — persistent memory
+- `write` — write/overwrite files
+- `edit` — exact-string replacements in existing files
+- `delete` — remove files
+- `bash` — run shell commands (POSIX)
+- `powershell` — run PowerShell commands (Windows PowerShell 5.1)
+- `memory_search` / `memory_add` / `memory_update` / `memory_delete` / `memory_search_sessions` — persistent memory
 - `todowrite` — task tracking
+- `skill` — load skill content into the conversation
 - MCP tools from registered servers (e.g. markdownui)
 
 ### Skills
@@ -222,7 +227,7 @@ Environment variables referenced as `${VAR_NAME}` are substituted at load time.
 | **M5** | Persistent memory (SQLite + FTS5) | ✅ |
 | **M7** | TUI (`yaah tui`, bubbletea, tool-call display, streaming) | ✅ |
 
-117 tests across 16 packages. Cross-compiles to 5 platforms.
+203 tests across 15 packages. Cross-compiles to 5 platforms.
 
 ## License
 

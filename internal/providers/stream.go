@@ -27,9 +27,10 @@ type StreamChoice struct {
 
 // StreamDelta contains the incremental content for a stream chunk.
 type StreamDelta struct {
-	Role      string           `json:"role,omitempty"`
-	Content   string           `json:"content,omitempty"`
-	ToolCalls []types.ToolCall `json:"tool_calls,omitempty"`
+	Role             string           `json:"role,omitempty"`
+	Content          string           `json:"content,omitempty"`
+	ReasoningContent string           `json:"reasoning_content,omitempty"`
+	ToolCalls        []types.ToolCall `json:"tool_calls,omitempty"`
 }
 
 // SendStream sends a streaming chat request and returns a channel of chunks.

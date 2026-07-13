@@ -50,17 +50,39 @@ yaah does **not** trust:
 
 ## Permission model
 
-yaah v0.1 ships with these defaults (see the design plan §8 for the
-full table):
+yaah's safety model is intentionally simple: one global `approval`
+setting, a coarse deny-list for obviously destructive shell patterns,
+and an explicit opt-in for auto-approve.
 
-- `read`, `glob`, `grep`, `list` — `allow`
-- `skill`, `bash`, `write`, `edit`, `webfetch` — `ask`
-- MCP tools — `ask` (override per-server in the MCP manifest)
+### `default.approval` (in `~/.yaah/config.yaml`)
 
-The last matching rule wins, broad rules first, narrow rules last.
-There is no global "allow all" mode. If a user wants that, they can
-pass `--yes` (one-shot auto-approve) or set `default.approval: allow`
-in their config (we recommend against it).
+| Value   | Behavior                                                                 |
+|---------|--------------------------------------------------------------------------|
+| `ask`   | (Default) Prompt before every tool call. User types `y` / `n` at the REPL.|
+| `allow` | Run every tool call without prompting. Explicit opt-in.                  |
+| `deny`  | Refuse every tool call. Useful for read-only sessions.                   |
+
+There are no per-tool allow/ask/deny rules. The "last matching rule
+wins" framing from earlier design notes does not apply — the code is
+a single switch. If you need a read-only mode, set `approval: deny`
+or only register the `read`/`memory_search` tools via your config.
+
+### Dangerous-command guard (best-effort, not a security boundary)
+
+The `bash` and `powershell` tools have a coarse deny-list of obviously
+destructive patterns (`rm -rf /`, disk-init commands, etc.). It catches
+the most blatant mistakes. It is **not** a security boundary — model-
+generated shell can trivially evade a substring deny-list. Real
+protection comes from the `approval` gate above; the deny-list only
+buys you protection against accidental destructive commands when
+`approval: allow` is set.
+
+### MCP server tools
+
+Each registered MCP server is launched at startup; its tool list is
+appended to the agent's available tools. There is no per-server
+approval override today — MCP tools follow the global `approval`
+setting. (Per-server overrides are a future enhancement.)
 
 ## Reporting MCP server issues
 
