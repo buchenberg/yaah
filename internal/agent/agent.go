@@ -358,13 +358,13 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 				continue
 			}
 
-		delta := chunk.Choices[0].Delta
+			delta := chunk.Choices[0].Delta
 
-		if delta.ReasoningContent != "" && l.OnThinking != nil {
-			l.OnThinking(delta.ReasoningContent)
-		}
+			if delta.ReasoningContent != "" && l.OnThinking != nil {
+				l.OnThinking(delta.ReasoningContent)
+			}
 
-		if delta.Content != "" {
+			if delta.Content != "" {
 				content.WriteString(delta.Content)
 				if l.OnToken != nil {
 					l.OnToken(delta.Content)

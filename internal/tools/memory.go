@@ -14,8 +14,10 @@ type MemorySearchTool struct {
 	DB *memory.DB
 }
 
-func (t *MemorySearchTool) Name() string        { return "memory_search" }
-func (t *MemorySearchTool) Description() string { return "Searches stored memory notes (user facts, preferences, project details)." }
+func (t *MemorySearchTool) Name() string { return "memory_search" }
+func (t *MemorySearchTool) Description() string {
+	return "Searches stored memory notes (user facts, preferences, project details)."
+}
 
 func (t *MemorySearchTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
@@ -75,8 +77,10 @@ type MemoryAddTool struct {
 	DB *memory.DB
 }
 
-func (t *MemoryAddTool) Name() string        { return "memory_add" }
-func (t *MemoryAddTool) Description() string { return "Saves a fact, preference, or decision to persistent memory for future recall." }
+func (t *MemoryAddTool) Name() string { return "memory_add" }
+func (t *MemoryAddTool) Description() string {
+	return "Saves a fact, preference, or decision to persistent memory for future recall."
+}
 
 func (t *MemoryAddTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
@@ -159,8 +163,10 @@ type MemoryUpdateTool struct {
 	DB *memory.DB
 }
 
-func (t *MemoryUpdateTool) Name() string        { return "memory_update" }
-func (t *MemoryUpdateTool) Description() string { return "Updates the text of an existing stored memory entry." }
+func (t *MemoryUpdateTool) Name() string { return "memory_update" }
+func (t *MemoryUpdateTool) Description() string {
+	return "Updates the text of an existing stored memory entry."
+}
 
 func (t *MemoryUpdateTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
@@ -195,8 +201,10 @@ type MemorySessionSearchTool struct {
 	DB *memory.DB
 }
 
-func (t *MemorySessionSearchTool) Name() string        { return "memory_search_sessions" }
-func (t *MemorySessionSearchTool) Description() string { return "Searches past conversation session transcripts for specific topics or questions." }
+func (t *MemorySessionSearchTool) Name() string { return "memory_search_sessions" }
+func (t *MemorySessionSearchTool) Description() string {
+	return "Searches past conversation session transcripts for specific topics or questions."
+}
 
 func (t *MemorySessionSearchTool) Schema() json.RawMessage {
 	return json.RawMessage(`{

@@ -62,8 +62,8 @@ var (
 			Italic(true)
 
 	listBulletStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("99")).
-				MarginRight(1)
+			Foreground(lipgloss.Color("99")).
+			MarginRight(1)
 
 	listItemStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("252"))
@@ -175,9 +175,9 @@ func (m *Model) createRenderer() {
 }
 
 var (
-	mdLinkRe = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
+	mdLinkRe   = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
 	autoLinkRe = regexp.MustCompile(`<((?:https?|ftp)://[^>]+)>`)
-	bareURLRe = regexp.MustCompile(`(?m)(?:^|\s)((?:https?)://\S+)`)
+	bareURLRe  = regexp.MustCompile(`(?m)(?:^|\s)((?:https?)://\S+)`)
 )
 
 // osc8Link wraps text in an OSC 8 hyperlink for clickable terminal links.

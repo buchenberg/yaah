@@ -39,8 +39,10 @@ type Tool interface {
 // the returned line count).
 type ReadTool struct{}
 
-func (t *ReadTool) Name() string        { return "read" }
-func (t *ReadTool) Description() string { return "Reads a file from the local filesystem with optional offset and limit." }
+func (t *ReadTool) Name() string { return "read" }
+func (t *ReadTool) Description() string {
+	return "Reads a file from the local filesystem with optional offset and limit."
+}
 
 func (t *ReadTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
@@ -197,8 +199,10 @@ func truncateOutput(b []byte) []byte {
 // to powershell (Windows PowerShell 5.1).
 type PowerShellTool struct{}
 
-func (t *PowerShellTool) Name() string        { return "powershell" }
-func (t *PowerShellTool) Description() string { return "Executes a PowerShell command and returns its output." }
+func (t *PowerShellTool) Name() string { return "powershell" }
+func (t *PowerShellTool) Description() string {
+	return "Executes a PowerShell command and returns its output."
+}
 
 func (t *PowerShellTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
@@ -298,8 +302,10 @@ func (t *WriteTool) Execute(ctx context.Context, args string) (string, error) {
 // EditTool performs exact string replacements in a file.
 type EditTool struct{}
 
-func (t *EditTool) Name() string        { return "edit" }
-func (t *EditTool) Description() string { return "Performs exact string replacements in an existing file." }
+func (t *EditTool) Name() string { return "edit" }
+func (t *EditTool) Description() string {
+	return "Performs exact string replacements in an existing file."
+}
 
 func (t *EditTool) Schema() json.RawMessage {
 	return json.RawMessage(`{

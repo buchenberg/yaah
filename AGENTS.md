@@ -30,6 +30,7 @@ yaah/
 │   └── color.go                 # ANSI color helpers
 ├── internal/
 │   ├── agent/                   # agent loop (streaming, tool calling)
+│   ├── banner/                  # figlet + lolcat banner for the TUI/REPL
 │   ├── config/                  # load ~/.yaah/config.yaml, env subst
 │   ├── instructions/            # walk up cwd, load AGENTS.md/CLAUDE.md
 │   ├── mcp/                     # MCP client (stdio + HTTP), manifests

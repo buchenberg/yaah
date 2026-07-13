@@ -20,9 +20,9 @@ type fakeProvider struct {
 	index     int
 	requests  []types.ChatRequest
 	// retry testing
-	failCount  int
-	maxFails   int
-	failErr    error
+	failCount int
+	maxFails  int
+	failErr   error
 }
 
 func (f *fakeProvider) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
@@ -47,10 +47,10 @@ func (f *fakeProvider) Send(ctx context.Context, req types.ChatRequest) (*types.
 
 // fakeStreamProvider implements StreamProvider for testing.
 type fakeStreamProvider struct {
-	chunks    []providers.StreamChunk
-	err       error
-	chunkIdx  int
-	closeCh   chan struct{}
+	chunks   []providers.StreamChunk
+	err      error
+	chunkIdx int
+	closeCh  chan struct{}
 	// retry testing
 	failCount int
 	maxFails  int
@@ -100,7 +100,9 @@ type fakeTool struct {
 
 func (t *fakeTool) Name() string        { return t.name }
 func (t *fakeTool) Description() string { return "fake test tool" }
-func (t *fakeTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object","properties":{}}`) }
+func (t *fakeTool) Schema() json.RawMessage {
+	return json.RawMessage(`{"type":"object","properties":{}}`)
+}
 
 func (t *fakeTool) Execute(ctx context.Context, args string) (string, error) {
 	if t.delay > 0 {
@@ -327,11 +329,11 @@ func TestLoop_parallelToolExecution(t *testing.T) {
 						Role: "assistant",
 						ToolCalls: []types.ToolCall{
 							{
-								ID:   "call_1", Type: "function",
+								ID: "call_1", Type: "function",
 								Function: types.ToolCallFn{Name: "slow1", Arguments: `{}`},
 							},
 							{
-								ID:   "call_2", Type: "function",
+								ID: "call_2", Type: "function",
 								Function: types.ToolCallFn{Name: "slow2", Arguments: `{}`},
 							},
 						},
