@@ -8,6 +8,7 @@ const (
 	CmdExit
 	CmdClear
 	CmdHelp
+	CmdCompact
 )
 
 // ParseSlashCommand checks if input is a recognized slash command.
@@ -20,6 +21,8 @@ func ParseSlashCommand(input string) SlashCommand {
 		return CmdClear
 	case "/?", "/help":
 		return CmdHelp
+	case "/compact":
+		return CmdCompact
 	default:
 		return CmdNone
 	}

@@ -20,6 +20,9 @@ type Tool interface {
 	// Name returns the tool name as it appears in the function call.
 	Name() string
 
+	// Description returns a short description of what the tool does.
+	Description() string
+
 	// Schema returns the JSON Schema for the tool's parameters.
 	Schema() json.RawMessage
 
@@ -36,7 +39,8 @@ type Tool interface {
 // the returned line count).
 type ReadTool struct{}
 
-func (t *ReadTool) Name() string { return "read" }
+func (t *ReadTool) Name() string        { return "read" }
+func (t *ReadTool) Description() string { return "Reads a file from the local filesystem with optional offset and limit." }
 
 func (t *ReadTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
@@ -127,7 +131,8 @@ const bashDefaultTimeout = 30 * time.Second
 // memory on runaway output.
 const bashMaxOutput = 1 << 20 // 1 MiB
 
-func (t *BashTool) Name() string { return "bash" }
+func (t *BashTool) Name() string        { return "bash" }
+func (t *BashTool) Description() string { return "Executes a shell command and returns its output." }
 
 func (t *BashTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
@@ -192,7 +197,8 @@ func truncateOutput(b []byte) []byte {
 // to powershell (Windows PowerShell 5.1).
 type PowerShellTool struct{}
 
-func (t *PowerShellTool) Name() string { return "powershell" }
+func (t *PowerShellTool) Name() string        { return "powershell" }
+func (t *PowerShellTool) Description() string { return "Executes a PowerShell command and returns its output." }
 
 func (t *PowerShellTool) Schema() json.RawMessage {
 	return json.RawMessage(`{

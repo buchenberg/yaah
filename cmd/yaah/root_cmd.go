@@ -3,10 +3,12 @@ package yaah
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/config"
@@ -120,6 +122,9 @@ func startREPL() error {
 		case repl.CmdHelp:
 			printHelp()
 			continue
+		case repl.CmdCompact:
+			sess.compactContext()
+			continue
 		}
 
 		if err := repl.AppendHistory(input); err != nil {
@@ -169,15 +174,18 @@ func runOneShot(cmd *cobra.Command, prompt string) error {
 // one-shot prompts. Building it once avoids re-opening the database,
 // re-spawning MCP servers, and re-discovering skills on every turn.
 type agentSession struct {
-	cfg          *config.Config
-	provider     agent.Provider
-	providerName string
-	modelName    string
-	systemPrompt string
-	toolReg      *tools.Registry
-	db           *memory.DB
-	mcpClients   []mcp.MCPClient
-	messages     []types.Message
+	cfg            *config.Config
+	provider       agent.Provider
+	providerName   string
+	modelName      string
+	systemPrompt   string
+	toolReg        *tools.Registry
+	db             *memory.DB
+	mcpClients     []mcp.MCPClient
+	messages       []types.Message
+	sessionID      string
+	msgIdx         int
+	persistedCount int
 }
 
 func newAgentSession() (*agentSession, error) {
@@ -201,8 +209,20 @@ func newAgentSession() (*agentSession, error) {
 
 	db, err := memory.OpenDefault()
 	if err == nil {
+		if entries, memErr := db.ListMemory(50); memErr == nil && len(entries) > 0 {
+			var memLines []string
+			for _, entry := range entries {
+				memLines = append(memLines, "- "+entry.Text)
+			}
+			systemPrompt += "\n\n## Memory\nYou have the following stored information about the user and project:\n" + strings.Join(memLines, "\n")
+		}
+		systemPrompt += "\n\n## Memory Guidelines\n- Use memory_search to find relevant memories before answering personal/project questions. Pass a tag to filter by category.\n- When the user asks about past conversations or session history, use memory_search_sessions with an empty query to list recent transcripts.\n- Use memory_add to save important facts. Always include a tags array (e.g., [\"user_info\"], [\"preferences\"], [\"project:yaah\"], [\"decision\"]).\n- Use memory_update to correct stale facts (requires the memory ID). Use memory_delete to remove incorrect memories.\n- At the end of a conversation or when the user says goodbye, use memory_add to save a 2-3 line summary of key discussion points with tag [\"session_summary\"]."
+
 		toolReg.Register(&tools.MemorySearchTool{DB: db})
 		toolReg.Register(&tools.MemoryAddTool{DB: db})
+		toolReg.Register(&tools.MemoryDeleteTool{DB: db})
+		toolReg.Register(&tools.MemoryUpdateTool{DB: db})
+		toolReg.Register(&tools.MemorySessionSearchTool{DB: db})
 	}
 
 	mcpDirs := mcpSearchPaths(config.HomeDir())
@@ -227,6 +247,17 @@ func newAgentSession() (*agentSession, error) {
 		},
 	})
 
+	sessionID := fmt.Sprintf("sess-%d", time.Now().UnixNano())
+	if db != nil {
+		cwd, _ := os.Getwd()
+		db.CreateSession(memory.Session{
+			ID:        sessionID,
+			StartedAt: time.Now().Unix(),
+			CWD:       cwd,
+			Model:     modelName,
+		})
+	}
+
 	return &agentSession{
 		cfg:          cfg,
 		provider:     provider,
@@ -236,16 +267,92 @@ func newAgentSession() (*agentSession, error) {
 		toolReg:      toolReg,
 		db:           db,
 		mcpClients:   mcpClients,
+		sessionID:    sessionID,
 	}, nil
 }
 
 func (s *agentSession) close() {
 	if s.db != nil {
+		s.db.EndSession(s.sessionID, time.Now().Unix())
 		s.db.Close()
 	}
 	for _, c := range s.mcpClients {
 		c.Close()
 	}
+}
+
+func (s *agentSession) compactContext() {
+	if len(s.messages) <= 4 {
+		fmt.Fprintf(os.Stderr, "  %s\n", Dim("context is already small enough"))
+		return
+	}
+
+	window := s.cfg.Default.ContextWindow
+	if window <= 0 {
+		window = 128000
+	}
+
+	totalChars := 0
+	for _, m := range s.messages {
+		totalChars += len(m.Content)
+	}
+	estTokens := totalChars / 4
+	target := window * 4 / 5
+
+	if estTokens <= target {
+		fmt.Fprintf(os.Stderr, "  %s %d/%d tokens (%d%%)\n",
+			Dim("context:"), estTokens, window, estTokens*100/window)
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "  %s %d/%d tokens (%d%%) — compacting...\n",
+		Dim("context:"), estTokens, window, estTokens*100/window)
+
+	sysMsg := s.messages[0]
+	rest := s.messages[1:]
+
+	split := len(rest) / 2
+	oldMsgs := rest[:split]
+	keepMsgs := rest[split:]
+
+	var sb strings.Builder
+	sb.WriteString("Summarize the following conversation excerpt in 2-3 sentences. Be concise and factual.\n\n")
+	for _, m := range oldMsgs {
+		if m.Content != "" {
+			sb.WriteString(fmt.Sprintf("%s: %s\n", m.Role, m.Content))
+		}
+	}
+
+	req := types.ChatRequest{
+		Model: s.modelName,
+		Messages: []types.Message{
+			types.UserMsg(sb.String()),
+		},
+	}
+
+	resp, err := s.provider.Send(context.Background(), req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  %s\n", replYellow("compact failed: "+err.Error()))
+		return
+	}
+
+	if len(resp.Choices) == 0 {
+		fmt.Fprintf(os.Stderr, "  %s\n", replYellow("compact failed: no response"))
+		return
+	}
+
+	summary := resp.Choices[0].Message.Content
+	newMsgs := []types.Message{sysMsg}
+	newMsgs = append(newMsgs, types.SystemMsg("Previous conversation summary: "+summary))
+	newMsgs = append(newMsgs, keepMsgs...)
+	s.messages = newMsgs
+
+	newTokens := 0
+	for _, m := range s.messages {
+		newTokens += len(m.Content) / 4
+	}
+	fmt.Fprintf(os.Stderr, "  %s %d/%d tokens (%d%%)\n",
+		Dim("compacted:"), newTokens, window, newTokens*100/window)
 }
 
 // runPrompt executes a single agent prompt with the session's shared
@@ -257,6 +364,7 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		Model:         s.modelName,
 		SystemPrompt:  s.systemPrompt,
 		MaxIterations: s.cfg.Default.MaxIterations,
+		ContextWindow: s.cfg.Default.ContextWindow,
 		Messages:      s.messages,
 	}
 
@@ -307,7 +415,46 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 	// Persist the conversation history for the next turn.
 	s.messages = loop.Messages
 
+	if s.db != nil {
+		s.persistMessages(loop.Messages)
+	}
+
 	return response, streamed, err
+}
+
+func (s *agentSession) persistMessages(messages []types.Message) {
+	newMsgs := messages[s.persistedCount:]
+	for _, m := range newMsgs {
+		content := m.Content
+		if content == "" {
+			var parts []string
+			for _, tc := range m.ToolCalls {
+				parts = append(parts, fmt.Sprintf("[tool:%s] %s", tc.Function.Name, tc.Function.Arguments))
+			}
+			content = strings.Join(parts, "\n")
+		}
+		toolCallsJSON := ""
+		if len(m.ToolCalls) > 0 {
+			data, _ := json.Marshal(m.ToolCalls)
+			toolCallsJSON = string(data)
+		}
+		toolName := ""
+		if m.Role == "tool" {
+			toolName = m.Name
+		}
+		msg := memory.Message{
+			SessionID: s.sessionID,
+			Idx:       s.msgIdx,
+			Role:      m.Role,
+			Content:   content,
+			ToolName:  toolName,
+			ToolCalls: toolCallsJSON,
+			Timestamp: time.Now().Unix(),
+		}
+		s.db.AddMessage(msg)
+		s.msgIdx++
+	}
+	s.persistedCount = len(messages)
 }
 
 // resolveProviderName extracts the provider name from the config.
@@ -395,6 +542,7 @@ func replYellow(s string) string {
 func printHelp() {
 	fmt.Printf("  %s  %s\n", repl.Bold("/exit"), repl.Dim("quit yaah"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/clear"), repl.Dim("clear the screen"))
+	fmt.Printf("  %s  %s\n", repl.Bold("/compact"), repl.Dim("summarize old messages to free context"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/?"), repl.Dim("show this help"))
 	fmt.Println()
 }

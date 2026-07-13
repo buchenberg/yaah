@@ -14,7 +14,8 @@ type SkillTool struct {
 	Dirs []string
 }
 
-func (t *SkillTool) Name() string { return "skill" }
+func (t *SkillTool) Name() string        { return "skill" }
+func (t *SkillTool) Description() string { return "Loads a skill's instructions and resources by name." }
 
 func (t *SkillTool) Schema() json.RawMessage {
 	return json.RawMessage(`{

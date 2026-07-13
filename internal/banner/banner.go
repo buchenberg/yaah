@@ -15,6 +15,9 @@ import (
 	"github.com/lsferreira42/figlet-go/figlet"
 )
 
+const Tagline = "For agents by agents"
+const Title = "yaah"
+
 // lolcatRGB maps a character index to an RGB triple using the same
 // sine-wave algorithm as gololcat / the original lolcat.
 func lolcatRGB(i int) (int, int, int) {
@@ -29,19 +32,18 @@ func lolcatRGB(i int) (int, int, int) {
 // banner string and its line count. Falls back to plain "yaah" if
 // figlet fails. Respects the NO_COLOR environment variable.
 func Generate() (string, int) {
-	art, err := figlet.Render("yaah", figlet.WithFont("fonts/standard"))
+	art, err := figlet.Render(Title, figlet.WithFont("fonts/standard"))
 	if err != nil || strings.TrimSpace(art) == "" {
-		return "yaah", 1
+		return Title, 1
 	}
 
 	lines := strings.Split(strings.TrimRight(art, "\n"), "\n")
 	noColor := os.Getenv("NO_COLOR") != ""
 
-	bold := "\033[1m"
 	dim := "\033[2m"
 	reset := "\033[0m"
 	if noColor {
-		bold, dim, reset = "", "", ""
+		dim, reset = "", ""
 	}
 
 	var b strings.Builder
@@ -52,7 +54,7 @@ func Generate() (string, int) {
 				b.WriteRune(r)
 			} else {
 				cr, cg, cb := lolcatRGB(charIdx)
-				b.WriteString(fmt.Sprintf("\033[38;2;%d;%d;%dm%c\033[0m", cr, cg, cb, r))
+				fmt.Fprintf(&b, "\033[38;2;%d;%d;%dm%c\033[0m", cr, cg, cb, r)
 			}
 			charIdx++
 		}
@@ -60,9 +62,9 @@ func Generate() (string, int) {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(bold + "LOCAL-FIRST ::: VENDOR-FREE ::: STANDARDS OVER REINVENTION" + reset)
-	b.WriteString("\n")
-	b.WriteString(dim + "For agents by agents" + reset)
+	b.WriteString(dim)
+	b.WriteString(Tagline)
+	b.WriteString(reset)
 
 	return b.String(), len(lines) + 3
 }
@@ -76,7 +78,9 @@ func Render(version string) string {
 	b.WriteString("\n")
 	b.WriteString(art)
 	b.WriteString("\n\n")
-	b.WriteString("  \033[2m" + version + "\033[0m")
+	b.WriteString("  \033[2m")
+	b.WriteString(version)
+	b.WriteString("\033[0m")
 	b.WriteString("\n\n")
 	return b.String()
 }

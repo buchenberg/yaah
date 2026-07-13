@@ -49,6 +49,9 @@ type ThinkingCallback func(text string)
 // next segment starts on a fresh line.
 type FlushCallback func(content string)
 
+// ToolResultMaxLen is the maximum length of a tool result before truncation.
+const ToolResultMaxLen = 8192
+
 // Loop runs the agent conversation loop.
 type Loop struct {
 	Provider      Provider
@@ -61,25 +64,36 @@ type Loop struct {
 	OnThinking    ThinkingCallback
 	OnFlush       FlushCallback
 
+	// ContextWindow is the estimated token budget for the conversation.
+	// When the total estimated tokens exceed 80% of this value, old messages
+	// are trimmed (system prompt + recent messages are preserved).
+	// Default 0 means no trimming.
+	ContextWindow int
+
+	// MaxRetries is the number of retries on transient provider errors.
+	// Default 0 means no retries.
+	MaxRetries int
+
+	// RetryBackoff is the base backoff duration. Default 1s.
+	RetryBackoff time.Duration
+
+	// TotalTokens accumulates token usage across all API calls in the loop.
+	TotalTokens types.Usage
+
 	// Messages holds the conversation history across multiple Run calls.
-	// When nil (first call), Run initializes it with the system prompt and
-	// the current user input. When set by a preceding Run, subsequent calls
-	// append the new user input and continue the conversation. After Run
-	// returns (success or error), the caller can read this field to persist
-	// the conversation for the next turn.
 	Messages []types.Message
 }
 
 // Run executes the full conversation loop for a single user message.
-// If l.Messages is non-nil, the conversation continues from where it
-// left off (the user input is appended to the existing history). If nil,
-// a new conversation is started with the system prompt.
 func (l *Loop) Run(ctx context.Context, userInput string) (string, error) {
 	if l.MaxIterations <= 0 {
 		l.MaxIterations = 50
 	}
 	if l.Model == "" {
 		l.Model = "gpt-4o-mini"
+	}
+	if l.RetryBackoff <= 0 {
+		l.RetryBackoff = time.Second
 	}
 
 	if l.Messages != nil {
@@ -89,6 +103,10 @@ func (l *Loop) Run(ctx context.Context, userInput string) (string, error) {
 			types.SystemMsg(l.SystemPrompt),
 			types.UserMsg(userInput),
 		}
+	}
+
+	if l.ContextWindow > 0 {
+		l.trimContext()
 	}
 
 	messages := l.Messages
@@ -109,7 +127,6 @@ func (l *Loop) Run(ctx context.Context, userInput string) (string, error) {
 			Tools:    toolDefs,
 		}
 
-		// Get the next assistant message, preferring streaming when supported.
 		msg, streamed, err := l.getAssistantMessage(ctx, req)
 		if err != nil {
 			l.Messages = messages
@@ -117,62 +134,186 @@ func (l *Loop) Run(ctx context.Context, userInput string) (string, error) {
 		}
 		messages = append(messages, msg)
 
-		// No tool calls → this is the final answer.
 		if len(msg.ToolCalls) == 0 {
 			l.Messages = messages
 			return msg.Content, nil
 		}
 
-		// If the message came from streaming, flush the accumulated content
-		// to the UI so tool-call output starts on a fresh line.
 		if streamed && msg.Content != "" && l.OnFlush != nil {
 			l.OnFlush(msg.Content)
 		}
 
-		// Execute tool calls and append their results, then loop again.
-		for _, tc := range msg.ToolCalls {
-			l.executeTool(ctx, tc, &messages)
-		}
+		l.executeToolsParallel(ctx, msg.ToolCalls, &messages)
 	}
 
 	l.Messages = messages
 	return "", fmt.Errorf("max iterations (%d) reached without final response", l.MaxIterations)
 }
 
-// getAssistantMessage returns the next assistant message, preferring streaming
-// when the provider supports it and an OnToken callback is set. The second
-// return value is true when the message was assembled from a stream.
+// getAssistantMessage returns the next assistant message with retry logic.
 func (l *Loop) getAssistantMessage(ctx context.Context, req types.ChatRequest) (types.Message, bool, error) {
-	if sp, ok := l.Provider.(StreamProvider); ok && l.OnToken != nil {
-		msg, err := l.runStream(ctx, sp, req)
-		return msg, true, err
+	var lastMsg types.Message
+	var wasStreamed bool
+	var lastErr error
+
+	for attempt := 0; attempt <= l.MaxRetries; attempt++ {
+		var msg types.Message
+		var streamed bool
+		var err error
+
+		if sp, ok := l.Provider.(StreamProvider); ok && l.OnToken != nil {
+			msg, err = l.runStream(ctx, sp, req)
+			streamed = true
+		} else {
+			resp, sendErr := l.Provider.Send(ctx, req)
+			if sendErr != nil {
+				err = sendErr
+			} else {
+				l.captureUsage(resp)
+				if len(resp.Choices) == 0 {
+					err = fmt.Errorf("no choices in response")
+				} else {
+					msg = resp.Choices[0].Message
+				}
+			}
+		}
+
+		if err == nil {
+			return msg, streamed, nil
+		}
+
+		lastMsg = msg
+		wasStreamed = streamed
+		lastErr = err
+
+		if attempt < l.MaxRetries {
+			backoff := l.RetryBackoff * time.Duration(1<<attempt)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return types.Message{}, false, ctx.Err()
+			}
+		}
 	}
-	msg, err := l.runNonStream(ctx, req)
-	return msg, false, err
+	return lastMsg, wasStreamed, lastErr
 }
 
-// runNonStream sends a non-streaming request and returns the assistant message.
-func (l *Loop) runNonStream(ctx context.Context, req types.ChatRequest) (types.Message, error) {
-	resp, err := l.Provider.Send(ctx, req)
-	if err != nil {
-		return types.Message{}, err
+// captureUsage adds response token usage to the running total.
+func (l *Loop) captureUsage(resp *types.ChatResponse) {
+	l.TotalTokens.PromptTokens += resp.Usage.PromptTokens
+	l.TotalTokens.CompletionTokens += resp.Usage.CompletionTokens
+	l.TotalTokens.TotalTokens += resp.Usage.TotalTokens
+}
+
+// EstimatedTokens returns the estimated token count for all messages.
+func (l *Loop) EstimatedTokens() int {
+	total := 0
+	for _, m := range l.Messages {
+		total += len(m.Content)
+		for _, tc := range m.ToolCalls {
+			total += len(tc.Function.Arguments) + len(tc.Function.Name)
+		}
 	}
-	if len(resp.Choices) == 0 {
-		return types.Message{}, fmt.Errorf("no choices in response")
+	return total / 4
+}
+
+// executeToolsParallel runs all tool calls concurrently and appends results
+// in the original order.
+func (l *Loop) executeToolsParallel(ctx context.Context, calls []types.ToolCall, messages *[]types.Message) {
+	type result struct {
+		idx     int
+		callID  string
+		name    string
+		content string
+		dur     time.Duration
+		err     error
 	}
-	return resp.Choices[0].Message, nil
+
+	results := make(chan result, len(calls))
+
+	for i, tc := range calls {
+		i, tc := i, tc
+		go func() {
+			abbreviated := abbreviateArgs(tc.Function.Arguments, 80)
+
+			if l.OnTool != nil {
+				l.OnTool(ToolInfo{Name: tc.Function.Name, Args: abbreviated})
+			}
+
+			start := time.Now()
+			res, err := l.Registry.Execute(ctx, tc.Function.Name, tc.Function.Arguments)
+			duration := time.Since(start)
+
+			if err != nil {
+				res = fmt.Sprintf("error: %v", err)
+			} else if len(res) > ToolResultMaxLen {
+				res = res[:ToolResultMaxLen] + "\n...[truncated]..."
+			}
+
+			if l.OnTool != nil {
+				info := ToolInfo{Name: tc.Function.Name, Args: abbreviated, Duration: duration}
+				if err != nil {
+					info.Error = err.Error()
+				}
+				l.OnTool(info)
+			}
+
+			results <- result{idx: i, callID: tc.ID, name: tc.Function.Name, content: res, dur: duration, err: err}
+		}()
+	}
+
+	ordered := make([]result, len(calls))
+	for range calls {
+		r := <-results
+		ordered[r.idx] = r
+	}
+
+	for _, r := range ordered {
+		*messages = append(*messages, types.ToolResultMsg(r.callID, r.name, r.content))
+	}
+}
+
+// trimContext removes old messages when the estimated token count exceeds
+// 80% of ContextWindow. Preserves the system message and recent exchanges.
+func (l *Loop) trimContext() {
+	target := l.ContextWindow * 4 / 5 // 80% threshold
+	// Estimate tokens: ~4 chars per token
+	totalChars := 0
+	for _, m := range l.Messages {
+		totalChars += len(m.Content)
+		for _, tc := range m.ToolCalls {
+			totalChars += len(tc.Function.Arguments) + len(tc.Function.Name)
+		}
+	}
+	if totalChars/4 <= target {
+		return
+	}
+
+	// Remove oldest non-system messages until we're under target
+	sysMsg := l.Messages[0]
+	rest := l.Messages[1:]
+	for len(rest) > 0 && totalChars/4 > target {
+		// Calculate chars for the oldest user-assistant exchange
+		removed := len(rest[0].Content)
+		for _, tc := range rest[0].ToolCalls {
+			removed += len(tc.Function.Arguments) + len(tc.Function.Name)
+		}
+		totalChars -= removed
+		rest = rest[1:]
+	}
+
+	newMsgs := make([]types.Message, 1, len(rest)+1)
+	newMsgs[0] = sysMsg
+	newMsgs = append(newMsgs, rest...)
+	l.Messages = newMsgs
 }
 
 // executeTool runs a single tool call and appends the result to messages.
 func (l *Loop) executeTool(ctx context.Context, tc types.ToolCall, messages *[]types.Message) {
 	abbreviated := abbreviateArgs(tc.Function.Arguments, 80)
 
-	// Notify: tool call starting
 	if l.OnTool != nil {
-		l.OnTool(ToolInfo{
-			Name: tc.Function.Name,
-			Args: abbreviated,
-		})
+		l.OnTool(ToolInfo{Name: tc.Function.Name, Args: abbreviated})
 	}
 
 	start := time.Now()
@@ -183,13 +324,8 @@ func (l *Loop) executeTool(ctx context.Context, tc types.ToolCall, messages *[]t
 		result = fmt.Sprintf("error: %v", err)
 	}
 
-	// Notify: tool call complete
 	if l.OnTool != nil {
-		info := ToolInfo{
-			Name:     tc.Function.Name,
-			Args:     abbreviated,
-			Duration: duration,
-		}
+		info := ToolInfo{Name: tc.Function.Name, Args: abbreviated, Duration: duration}
 		if err != nil {
 			info.Error = err.Error()
 		}
@@ -221,9 +357,13 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 				continue
 			}
 
-			delta := chunk.Choices[0].Delta
+		delta := chunk.Choices[0].Delta
 
-			if delta.Content != "" {
+		if delta.ReasoningContent != "" && l.OnThinking != nil {
+			l.OnThinking(delta.ReasoningContent)
+		}
+
+		if delta.Content != "" {
 				content.WriteString(delta.Content)
 				if l.OnToken != nil {
 					l.OnToken(delta.Content)
@@ -310,7 +450,7 @@ func (l *Loop) buildToolDefs() []types.ToolDef {
 			Type: "function",
 			Function: types.ToolFn{
 				Name:        t.Name(),
-				Description: "",
+				Description: t.Description(),
 				Parameters:  json.RawMessage(t.Schema()),
 			},
 		})
