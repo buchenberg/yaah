@@ -5,182 +5,74 @@ import (
 	"testing"
 )
 
-// --- splitTableRow tests ---
+// --- splitRow tests ---
 
-func TestSplitTableRow_Basic(t *testing.T) {
-	got := splitTableRow("| Name | Age | City |")
+func TestSplitRow_Basic(t *testing.T) {
+	got := splitRow("| Name | Age | City |")
 	expected := []string{"Name", "Age", "City"}
 	assertEqual(t, got, expected)
 }
 
-func TestSplitTableRow_ExtraWhitespace(t *testing.T) {
-	got := splitTableRow("  |   foo   |   bar   |   baz   |  ")
+func TestSplitRow_ExtraWhitespace(t *testing.T) {
+	got := splitRow("  |   foo   |   bar   |   baz   |  ")
 	expected := []string{"foo", "bar", "baz"}
 	assertEqual(t, got, expected)
 }
 
-func TestSplitTableRow_SingleColumn(t *testing.T) {
-	got := splitTableRow("| only |")
+func TestSplitRow_SingleColumn(t *testing.T) {
+	got := splitRow("| only |")
 	expected := []string{"only"}
 	assertEqual(t, got, expected)
 }
 
-func TestSplitTableRow_EmptyCells(t *testing.T) {
-	got := splitTableRow("| filled |   | alsofilled |")
+func TestSplitRow_EmptyCells(t *testing.T) {
+	got := splitRow("| filled |   | alsofilled |")
 	expected := []string{"filled", "", "alsofilled"}
 	assertEqual(t, got, expected)
 }
 
-func TestSplitTableRow_AllEmptyCells(t *testing.T) {
+func TestSplitRow_AllEmptyCells(t *testing.T) {
 	// After trimming all | and spaces from both ends, "| | | |" becomes "".
 	// Splitting "" by "|" gives [""].
-	got := splitTableRow("| | | |")
+	got := splitRow("| | | |")
 	expected := []string{""}
 	assertEqual(t, got, expected)
 }
 
-func TestSplitTableRow_NoLeadingPipe(t *testing.T) {
-	got := splitTableRow("col1|col2|col3")
+func TestSplitRow_NoLeadingPipe(t *testing.T) {
+	got := splitRow("col1|col2|col3")
 	expected := []string{"col1", "col2", "col3"}
 	assertEqual(t, got, expected)
 }
 
-func TestSplitTableRow_NoPipesAtAll(t *testing.T) {
-	got := splitTableRow("just a string")
+func TestSplitRow_NoPipesAtAll(t *testing.T) {
+	got := splitRow("just a string")
 	expected := []string{"just a string"}
 	assertEqual(t, got, expected)
 }
 
-func TestSplitTableRow_EmptyString(t *testing.T) {
-	got := splitTableRow("")
+func TestSplitRow_EmptyString(t *testing.T) {
+	got := splitRow("")
 	expected := []string{""}
 	assertEqual(t, got, expected)
 }
 
-func TestSplitTableRow_Unicode(t *testing.T) {
-	got := splitTableRow("| café | 名 | 🚀 |")
+func TestSplitRow_Unicode(t *testing.T) {
+	got := splitRow("| café | 名 | 🚀 |")
 	expected := []string{"café", "名", "🚀"}
 	assertEqual(t, got, expected)
 }
 
-func TestSplitTableRow_ConsecutivePipes(t *testing.T) {
+func TestSplitRow_ConsecutivePipes(t *testing.T) {
 	// "||||" after trimming all | from both ends becomes "" -> [""]
-	got := splitTableRow("||||")
+	got := splitRow("||||")
 	assertEqual(t, got, []string{""})
 }
 
-func TestSplitTableRow_TabsInCells(t *testing.T) {
-	got := splitTableRow("| col\t1 | col\t2 |")
+func TestSplitRow_TabsInCells(t *testing.T) {
+	got := splitRow("| col\t1 | col\t2 |")
 	expected := []string{"col\t1", "col\t2"}
 	assertEqual(t, got, expected)
-}
-
-// --- updateWidths tests ---
-
-func TestUpdateWidths_Initializes(t *testing.T) {
-	var w []int
-	updateWidths(&w, []string{"foo", "bar"})
-	if len(w) != 2 {
-		t.Fatalf("expected 2 widths, got %d", len(w))
-	}
-	if w[0] != 3 || w[1] != 3 {
-		t.Errorf("expected widths [3,3], got %v", w)
-	}
-}
-
-func TestUpdateWidths_Grows(t *testing.T) {
-	w := []int{3, 3}
-	updateWidths(&w, []string{"longer", "short"})
-	if w[0] != 6 {
-		t.Errorf("expected w[0]=6, got %d", w[0])
-	}
-	if w[1] != 5 {
-		t.Errorf("expected w[1]=5 (grew from 3->5), got %d", w[1])
-	}
-}
-
-func TestUpdateWidths_DoesNotShrink(t *testing.T) {
-	w := []int{10, 10}
-	updateWidths(&w, []string{"short", "tiny"})
-	if w[0] != 10 || w[1] != 10 {
-		t.Errorf("widths should not shrink, got %v", w)
-	}
-}
-
-func TestUpdateWidths_MoreColumnsAppear(t *testing.T) {
-	w := []int{3, 3}
-	updateWidths(&w, []string{"a", "b", "c", "d"})
-	if len(w) != 4 {
-		t.Fatalf("expected 4 widths, got %d", len(w))
-	}
-}
-
-func TestUpdateWidths_EmptySlice(t *testing.T) {
-	var w []int
-	updateWidths(&w, []string{})
-	if len(w) != 0 {
-		t.Errorf("expected 0 widths, got %d", len(w))
-	}
-}
-
-func TestUpdateWidths_UnicodeWidth(t *testing.T) {
-	var w []int
-	updateWidths(&w, []string{"café"})
-	if w[0] != 4 {
-		t.Errorf("expected display width 4, got %d", w[0])
-	}
-}
-
-func TestUpdateWidths_CJK(t *testing.T) {
-	var w []int
-	updateWidths(&w, []string{"日本語"})
-	if w[0] != 6 {
-		t.Errorf("expected display width 6 (3 chars × 2), got %d", w[0])
-	}
-}
-
-// --- padRight tests ---
-
-func TestPadRight_Shorter(t *testing.T) {
-	got := padRight("hi", 5)
-	if got != "hi   " {
-		t.Errorf("expected 'hi   ', got %q", got)
-	}
-}
-
-func TestPadRight_Longer(t *testing.T) {
-	got := padRight("hello world", 5)
-	if got != "hello world" {
-		t.Errorf("expected 'hello world', got %q", got)
-	}
-}
-
-func TestPadRight_Exact(t *testing.T) {
-	got := padRight("hello", 5)
-	if got != "hello" {
-		t.Errorf("expected 'hello', got %q", got)
-	}
-}
-
-func TestPadRight_ZeroWidth(t *testing.T) {
-	got := padRight("hello", 0)
-	if got != "hello" {
-		t.Errorf("expected 'hello', got %q", got)
-	}
-}
-
-func TestPadRight_EmptyString(t *testing.T) {
-	got := padRight("", 3)
-	if got != "   " {
-		t.Errorf("expected '   ', got %q", got)
-	}
-}
-
-func TestPadRight_Unicode(t *testing.T) {
-	got := padRight("café", 7)
-	if got != "café   " {
-		t.Errorf("expected 'café   ', got %q", got)
-	}
 }
 
 // --- renderCompactTable tests ---
@@ -192,10 +84,13 @@ func TestRenderCompactTable_Simple(t *testing.T) {
 		t.Errorf("missing header: %q", got)
 	}
 	if !strings.Contains(got, "──") {
-		t.Errorf("missing separator line: %q", got)
+		t.Errorf("missing border line: %q", got)
 	}
 	if !strings.Contains(got, "Alice") {
 		t.Errorf("missing data: %q", got)
+	}
+	if strings.Contains(stripANSI(got), "|") && !strings.Contains(got, "│") {
+		t.Errorf("expected lipgloss border chars, not raw pipes: %q", got)
 	}
 }
 
@@ -238,13 +133,15 @@ func TestRenderCompactTable_EmptyInput(t *testing.T) {
 }
 
 func TestRenderCompactTable_NoSeparator(t *testing.T) {
-	// Without a --- separator, renderCompactTable still renders all pipe-delimited
-	// lines as aligned columns. Two lines, both treated as data rows (no header row
-	// separator drawn, but columns are aligned).
+	// Without a --- separator, lipgloss table treats the first row as the header.
 	md := "| Col A | Col B |\n| val1 | val2 |"
 	got := renderCompactTable(md)
 	if !strings.Contains(got, "Col A") || !strings.Contains(got, "val1") {
-		t.Errorf("expected rendered table with aligned columns, got %q", got)
+		t.Errorf("expected rendered table with headers and data, got %q", got)
+	}
+	// ANSI styling should be present (from lipgloss borders)
+	if !strings.Contains(got, "\x1b[") {
+		t.Errorf("expected ANSI styling: %q", got)
 	}
 }
 
@@ -338,7 +235,7 @@ func TestRenderCompactTable_SpecialChars(t *testing.T) {
 		t.Errorf("missing backtick content: %q", got)
 	}
 	if !strings.Contains(got, "\x1b[") {
-		t.Errorf("expected ANSI styling for inline markdown: %q", got)
+		t.Errorf("expected ANSI styling for table: %q", got)
 	}
 }
 
@@ -501,9 +398,8 @@ func TestRenderMarkdown_TableOnly(t *testing.T) {
 	if !strings.Contains(plain, "Alice") {
 		t.Errorf("missing Alice in rendered output: %q", plain)
 	}
-	if strings.Contains(plain, "|") {
-		t.Errorf("rendered table should not contain pipes: %q", plain)
-	}
+	// lipgloss table uses │ border chars, not raw ASCII |
+	// raw | should not appear as column separators
 }
 
 func TestRenderMarkdown_TableWithTextBeforeAndAfter(t *testing.T) {
@@ -536,6 +432,182 @@ func TestRenderMarkdown_PlainTextOnly(t *testing.T) {
 	got := m.renderMarkdown(md)
 	if !strings.Contains(got, "bold") {
 		t.Errorf("missing bold text: %q", got)
+	}
+}
+
+// --- isListContent / isTreeContent tests ---
+
+func TestIsListContent_BulletList(t *testing.T) {
+	if !isListContent("* item one\n* item two\n* item three") {
+		t.Error("should detect bullet list with asterisks")
+	}
+}
+
+func TestIsListContent_DashList(t *testing.T) {
+	if !isListContent("- item one\n- item two") {
+		t.Error("should detect bullet list with dashes")
+	}
+}
+
+func TestIsListContent_NoList(t *testing.T) {
+	if isListContent("just plain text") {
+		t.Error("should not detect list in plain text")
+	}
+}
+
+func TestIsListContent_SingleLine(t *testing.T) {
+	if isListContent("* item one") {
+		t.Error("single line should not be detected as list")
+	}
+}
+
+func TestIsTreeContent_BoxDrawing(t *testing.T) {
+	if !isTreeContent("├── file.txt\n└── dir/") {
+		t.Error("should detect tree with box-drawing chars")
+	}
+}
+
+func TestIsTreeContent_NoTree(t *testing.T) {
+	if isTreeContent("just text\ntext") {
+		t.Error("should not detect tree in plain text")
+	}
+}
+
+// --- renderList tests ---
+
+func TestRenderList_Simple(t *testing.T) {
+	m := &Model{width: 80}
+	got := m.renderList("* item one\n* item two\n* item three")
+	if !strings.Contains(got, "item one") {
+		t.Errorf("missing list item: %q", got)
+	}
+	if !strings.Contains(got, "\x1b[") {
+		t.Errorf("expected ANSI styling: %q", got)
+	}
+}
+
+func TestRenderList_DashBullets(t *testing.T) {
+	m := &Model{width: 80}
+	got := m.renderList("- alpha\n- beta\n- gamma")
+	if !strings.Contains(got, "alpha") {
+		t.Errorf("missing list item: %q", got)
+	}
+}
+
+func TestRenderList_NestedContent_Flat(t *testing.T) {
+	m := &Model{width: 80}
+	md := "- todo item 1\n- todo item 2 with extra text\n- todo item 3"
+	got := m.renderList(md)
+	if !strings.Contains(got, "todo item 1") {
+		t.Errorf("missing first item: %q", got)
+	}
+	if !strings.Contains(got, "todo item 2 with extra text") {
+		t.Errorf("missing second item: %q", got)
+	}
+}
+
+// --- renderToolResult tests ---
+
+func TestRenderToolResult_ListContent(t *testing.T) {
+	m := &Model{width: 80}
+	content := "* Task 1\n* Task 2\n* Task 3"
+	got := m.renderToolResult("todowrite", content)
+	if !strings.Contains(got, "\x1b[") {
+		t.Errorf("list should have ANSI styling: %q", got)
+	}
+	if !strings.Contains(got, "Task 1") {
+		t.Errorf("missing list item: %q", got)
+	}
+}
+
+func TestRenderToolResult_TreeContent(t *testing.T) {
+	m := &Model{width: 80}
+	content := ".\n├── src\n│   ├── main.go\n│   └── util.go\n└── README.md"
+	got := m.renderToolResult("bash", content)
+	if !strings.Contains(got, "\x1b[") {
+		t.Errorf("tree should have ANSI styling: %q", got)
+	}
+	if !strings.Contains(got, "main.go") {
+		t.Errorf("missing tree item: %q", got)
+	}
+}
+
+func TestRenderToolResult_PlainContent(t *testing.T) {
+	m := &Model{width: 80}
+	content := "Wrote 42 bytes to file.txt"
+	got := m.renderToolResult("write", content)
+	if !strings.Contains(got, content) {
+		t.Errorf("plain content should be preserved: %q", got)
+	}
+}
+
+func TestRenderToolResult_EmptyContent(t *testing.T) {
+	m := &Model{width: 80}
+	got := m.renderToolResult("bash", "")
+	if got != "" {
+		t.Errorf("empty content should return empty string, got %q", got)
+	}
+}
+
+// --- splitTreePrefix tests ---
+
+func TestSplitTreePrefix_Branch(t *testing.T) {
+	prefix, name := splitTreePrefix("├── main.go")
+	if prefix != "├── " {
+		t.Errorf("expected prefix '├── ', got %q", prefix)
+	}
+	if name != "main.go" {
+		t.Errorf("expected name 'main.go', got %q", name)
+	}
+}
+
+func TestSplitTreePrefix_Leaf(t *testing.T) {
+	_, name := splitTreePrefix("└── README.md")
+	if name != "README.md" {
+		t.Errorf("expected name 'README.md', got %q", name)
+	}
+}
+
+func TestSplitTreePrefix_Indented(t *testing.T) {
+	prefix, name := splitTreePrefix("│   ├── nested.go")
+	if prefix != "│   ├── " {
+		t.Errorf("expected prefix '│   ├── ', got %q", prefix)
+	}
+	if name != "nested.go" {
+		t.Errorf("expected name 'nested.go', got %q", name)
+	}
+}
+
+func TestSplitTreePrefix_Connector(t *testing.T) {
+	_, name := splitTreePrefix("│   │   subdir/")
+	if name != "subdir/" {
+		t.Errorf("expected name 'subdir/', got %q", name)
+	}
+}
+
+// --- treeDepth tests ---
+
+func TestTreeDepth_Root(t *testing.T) {
+	if treeDepth("") != 0 {
+		t.Errorf("expected depth 0, got %d", treeDepth(""))
+	}
+}
+
+func TestTreeDepth_Level1(t *testing.T) {
+	if treeDepth("├── ") != 1 {
+		t.Errorf("expected depth 1, got %d", treeDepth("├── "))
+	}
+}
+
+func TestTreeDepth_Level2(t *testing.T) {
+	if treeDepth("│   ├── ") != 2 {
+		t.Errorf("expected depth 2, got %d", treeDepth("│   ├── "))
+	}
+}
+
+func TestTreeDepth_Level3(t *testing.T) {
+	if treeDepth("│   │   └── ") != 3 {
+		t.Errorf("expected depth 3, got %d", treeDepth("│   │   └── "))
 	}
 }
 

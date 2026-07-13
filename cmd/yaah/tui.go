@@ -172,6 +172,11 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 		OnTool: func(info agent.ToolInfo) {
 			if info.Duration == 0 {
 				ch <- tui.AgentMsg{ToolName: info.Name}
+			} else {
+				ch <- tui.AgentMsg{
+					ToolResult:     info.Result,
+					ToolResultName: info.Name,
+				}
 			}
 		},
 		OnThinking: func(text string) {

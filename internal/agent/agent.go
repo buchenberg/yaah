@@ -32,6 +32,7 @@ type ToolInfo struct {
 	Name     string        // tool name
 	Args     string        // abbreviated arguments
 	Duration time.Duration // how long the tool took
+	Result   string        // truncated tool result (only on second call)
 	Error    string        // error message if the tool failed
 }
 
@@ -251,7 +252,7 @@ func (l *Loop) executeToolsParallel(ctx context.Context, calls []types.ToolCall,
 			}
 
 			if l.OnTool != nil {
-				info := ToolInfo{Name: tc.Function.Name, Args: abbreviated, Duration: duration}
+				info := ToolInfo{Name: tc.Function.Name, Args: abbreviated, Duration: duration, Result: res}
 				if err != nil {
 					info.Error = err.Error()
 				}

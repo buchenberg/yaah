@@ -13,6 +13,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/list"
+	"charm.land/lipgloss/v2/table"
+	"charm.land/lipgloss/v2/tree"
 
 	"github.com/buchenberg/yaah/internal/banner"
 )
@@ -57,26 +60,42 @@ var (
 	thinkingStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240")).
 			Italic(true)
+
+	listBulletStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("99")).
+				MarginRight(1)
+
+	listItemStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("252"))
+
+	treeStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240"))
+
+	treeItemStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("252"))
 )
 
 // Message represents a chat message in the TUI.
 type Message struct {
-	Role    string
-	Content string // glamour-rendered for assistant, raw for others
-	Raw     string // original markdown (for copy), same as Content for user/tool
+	Role     string
+	Content  string // glamour-rendered for assistant, raw for others
+	Raw      string // original markdown (for copy), same as Content for user/tool
+	ToolName string // tool that produced this message (for tool result messages)
 }
 
 // AgentMsg is a message from the agent goroutine.
 type AgentMsg struct {
-	Token         string
-	Thinking      string // reasoning/thinking content from models like DeepSeek
-	ToolName      string
-	Flush         string // streamed content to commit before a tool call
-	Done          bool
-	Response      string
-	Err           error
-	ContextTokens int // estimated tokens used, for status bar
-	ContextWindow int // context window size, for status bar
+	Token          string
+	Thinking       string // reasoning/thinking content from models like DeepSeek
+	ToolName       string
+	ToolResult     string // tool result content
+	ToolResultName string // tool name for the result
+	Flush          string // streamed content to commit before a tool call
+	Done           bool
+	Response       string
+	Err            error
+	ContextTokens  int // estimated tokens used, for status bar
+	ContextWindow  int // context window size, for status bar
 }
 
 // Model is the bubbletea model for the yaah TUI.
@@ -333,89 +352,73 @@ func parseAndRenderTables(md string) []textSegment {
 	return segments
 }
 
-// renderCompactTable renders a markdown table as compact aligned text.
+// splitRow splits a pipe-delimited table row into trimmed columns.
+func splitRow(line string) []string {
+	line = strings.Trim(line, "| \t")
+	cols := strings.Split(line, "|")
+	for i := range cols {
+		cols[i] = strings.TrimSpace(cols[i])
+	}
+	return cols
+}
+
+// renderCompactTable renders a markdown table using lipgloss's table package.
 func renderCompactTable(md string) string {
 	lines := strings.Split(strings.TrimSpace(md), "\n")
 	if len(lines) < 2 {
 		return md
 	}
 
-	type cell struct {
-		raw  string
-		rendered string
-	}
+	var headers []string
+	var data [][]string
+	var pastHeader bool
 
-	var rows [][]cell
-	var colWidths []int
-	var sepIndex int
-
-	for i, line := range lines {
+	for _, line := range lines {
 		if !strings.HasPrefix(line, "|") {
 			continue
 		}
-		rawCols := splitTableRow(line)
+		cols := splitRow(line)
 		if strings.Contains(line, "---") {
-			sepIndex = i
-			for j, c := range rawCols {
-				w := len(c)
-				for len(colWidths) <= j {
-					colWidths = append(colWidths, 0)
-				}
-				if w > colWidths[j] {
-					colWidths[j] = w
-				}
-			}
+			pastHeader = true
 			continue
 		}
-		cells := make([]cell, len(rawCols))
-		for j, c := range rawCols {
-			rendered := renderInlineMarkdown(c)
-			cells[j] = cell{raw: c, rendered: rendered}
-			w := visibleWidth(rendered)
-			for len(colWidths) <= j {
-				colWidths = append(colWidths, 0)
+		if !pastHeader {
+			headers = cols
+			pastHeader = true
+		} else {
+			styled := make([]string, len(cols))
+			for i, c := range cols {
+				styled[i] = renderInlineMarkdown(c)
 			}
-			if w > colWidths[j] {
-				colWidths[j] = w
-			}
+			data = append(data, styled)
 		}
-		rows = append(rows, cells)
 	}
 
-	if len(rows) == 0 || len(colWidths) == 0 {
+	if len(headers) == 0 {
 		return md
 	}
 
-	var out strings.Builder
-
-	for i, row := range rows {
-		for j, c := range row {
-			if j < len(colWidths) {
-				dw := visibleWidth(c.rendered)
-				out.WriteString(c.rendered)
-				if dw < colWidths[j] {
-					out.WriteString(strings.Repeat(" ", colWidths[j]-dw))
-				}
-			} else {
-				out.WriteString(c.rendered)
-			}
-			if j < len(row)-1 {
-				out.WriteString("  ")
-			}
-		}
-		out.WriteString("\n")
-		if i == 0 && sepIndex > 0 {
-			for j := range colWidths {
-				out.WriteString(strings.Repeat("─", colWidths[j]))
-				if j < len(colWidths)-1 {
-					out.WriteString("  ")
-				}
-			}
-			out.WriteString("\n")
-		}
+	styledHeaders := make([]string, len(headers))
+	for i, h := range headers {
+		styledHeaders[i] = renderInlineMarkdown(h)
 	}
 
-	return out.String() + "\n"
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
+	cellStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+
+	t := table.New().
+		Border(lipgloss.NormalBorder()).
+		BorderStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("240"))).
+		StyleFunc(func(row, col int) lipgloss.Style {
+			if row == table.HeaderRow {
+				return headerStyle
+			}
+			return cellStyle
+		}).
+		Headers(styledHeaders...).
+		Rows(data...)
+
+	return t.String()
 }
 
 // renderInlineMarkdown renders basic inline markdown in a table cell:
@@ -448,32 +451,6 @@ func replacePattern(s, open, close string, style func(string) string) string {
 	return s
 }
 
-// visibleWidth returns the display width of a string, stripping ANSI codes.
-func visibleWidth(s string) int {
-	w := 0
-	inEscape := false
-	for _, r := range s {
-		if r == '\x1b' {
-			inEscape = true
-			continue
-		}
-		if inEscape {
-			if r == 'm' {
-				inEscape = false
-			}
-			continue
-		}
-		if r <= 0x7F {
-			w++
-		} else if isWideRune(r) {
-			w += 2
-		} else {
-			w++
-		}
-	}
-	return w
-}
-
 func isWideRune(r rune) bool {
 	return r >= 0x1100 && r <= 0x115F ||
 		r >= 0x2E80 && r <= 0xA4CF ||
@@ -487,33 +464,163 @@ func isWideRune(r rune) bool {
 		r >= 0x20000 && r <= 0x3FFFD
 }
 
-func splitTableRow(line string) []string {
-	line = strings.Trim(line, "| \t")
-	cols := strings.Split(line, "|")
-	for i := range cols {
-		cols[i] = strings.TrimSpace(cols[i])
+// --- list and tree rendering ---
+
+// renderToolResult renders tool result content, detecting lists and trees.
+func (m *Model) renderToolResult(toolName, content string) string {
+	if content == "" {
+		return ""
 	}
-	return cols
+	if isTreeContent(content) {
+		return m.renderTree(content)
+	}
+	if isListContent(content) {
+		return m.renderList(content)
+	}
+	return toolStyle.Render(content)
 }
 
-func updateWidths(widths *[]int, cols []string) {
-	for len(*widths) < len(cols) {
-		*widths = append(*widths, 0)
-	}
-	for i, col := range cols {
-		w := displayWidth(col)
-		if w > (*widths)[i] {
-			(*widths)[i] = w
+// bulletPattern matches markdown bullet list items (* item, - item, + item).
+var bulletPattern = regexp.MustCompile(`(?m)^[*\-+]\s`)
+
+// isListContent detects if content contains bullet list items.
+func isListContent(s string) bool {
+	return strings.Contains(s, "\n") && bulletPattern.MatchString(s)
+}
+
+var treeLineRe = regexp.MustCompile(`[├└]──`)
+
+// isTreeContent detects tree-like content with box-drawing characters.
+func isTreeContent(s string) bool {
+	return treeLineRe.MatchString(s)
+}
+
+// renderList renders bullet-list content using lipgloss's list package.
+func (m *Model) renderList(md string) string {
+	lines := strings.Split(md, "\n")
+	var items []string
+	var current strings.Builder
+
+	flushCurrent := func() {
+		if current.Len() > 0 {
+			items = append(items, strings.TrimSpace(current.String()))
+			current.Reset()
 		}
 	}
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if bulletPattern.MatchString(trimmed) {
+			flushCurrent()
+			content := bulletPattern.ReplaceAllString(trimmed, "")
+			current.WriteString(content)
+		} else if trimmed == "" {
+			flushCurrent()
+			items = append(items, "")
+		} else if current.Len() > 0 {
+			current.WriteString(" ")
+			current.WriteString(trimmed)
+		} else {
+			flushCurrent()
+			items = append(items, trimmed)
+		}
+	}
+	flushCurrent()
+
+	var nonEmpty []string
+	for _, item := range items {
+		if item != "" {
+			nonEmpty = append(nonEmpty, item)
+		}
+	}
+	if len(nonEmpty) == 0 {
+		return toolStyle.Render(md)
+	}
+
+	l := list.New()
+	for _, item := range nonEmpty {
+		l.Item(item)
+	}
+	l.EnumeratorStyle(listBulletStyle).ItemStyle(listItemStyle)
+	return l.String()
 }
 
-func padRight(s string, width int) string {
-	dw := displayWidth(s)
-	if dw >= width {
-		return s
+// renderTree renders tree-like content using lipgloss's tree package.
+func (m *Model) renderTree(content string) string {
+	lines := strings.Split(strings.TrimSpace(content), "\n")
+
+	var rootName string
+	var start int
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		_, rootName = splitTreePrefix(line)
+		start = i + 1
+		break
 	}
-	return s + strings.Repeat(" ", width-dw)
+	if rootName == "" {
+		return toolStyle.Render(content)
+	}
+
+	t := tree.New().Root(rootName).
+		Enumerator(tree.RoundedEnumerator).
+		EnumeratorStyle(treeStyle).
+		RootStyle(treeItemStyle).
+		ItemStyle(treeItemStyle)
+	stack := []*tree.Tree{t}
+
+	for _, line := range lines[start:] {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		prefix, name := splitTreePrefix(line)
+		depth := treeDepth(prefix)
+
+		for len(stack) > depth {
+			stack = stack[:len(stack)-1]
+		}
+
+		parent := stack[len(stack)-1]
+		node := tree.New().Root(name).
+			Enumerator(tree.RoundedEnumerator).
+			EnumeratorStyle(treeStyle).
+			ItemStyle(treeItemStyle)
+		parent.Child(node)
+		stack = append(stack, node)
+	}
+
+	return t.String()
+}
+
+// splitTreePrefix separates tree-drawing characters from the node name.
+func splitTreePrefix(line string) (prefix, name string) {
+	treeChars := map[rune]bool{'│': true, ' ': true, '├': true, '└': true, '─': true, '┬': true}
+	runes := []rune(line)
+	i := 0
+	for i < len(runes) {
+		r := runes[i]
+		if !treeChars[r] {
+			if r == '\\' && i+1 < len(runes) {
+				i += 2
+				continue
+			}
+			break
+		}
+		i++
+	}
+	return string(runes[:i]), strings.TrimSpace(string(runes[i:]))
+}
+
+// treeDepth computes the depth from tree-drawing prefix characters.
+func treeDepth(prefix string) int {
+	depth := 0
+	for _, r := range prefix {
+		if r == '│' || r == '├' || r == '└' {
+			depth++
+		}
+	}
+	return depth
 }
 
 // displayWidth returns the approximate terminal display width of a string.
@@ -574,6 +681,19 @@ func (m *Model) scrollToBottom() {
 // AddMessage adds a message to the chat history.
 func (m *Model) AddMessage(role, content string) {
 	m.messages = append(m.messages, Message{Role: role, Content: content, Raw: content})
+	m.refreshViewport()
+	m.scrollToBottom()
+}
+
+// AddToolResult adds a tool result message. For todowrite, it renders the
+// formatted todo list. For other tools, it shows the raw result.
+func (m *Model) AddToolResult(toolName, content string) {
+	m.messages = append(m.messages, Message{
+		Role:     "tool",
+		Content:  m.renderToolResult(toolName, content),
+		Raw:      content,
+		ToolName: toolName,
+	})
 	m.refreshViewport()
 	m.scrollToBottom()
 }
@@ -640,6 +760,11 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 
 	if msg.ToolName != "" {
 		m.SetToolCall(msg.ToolName)
+		return
+	}
+
+	if msg.ToolResult != "" || msg.ToolResultName != "" {
+		m.AddToolResult(msg.ToolResultName, msg.ToolResult)
 		return
 	}
 
@@ -845,9 +970,14 @@ func (m *Model) renderMessages() string {
 			b.WriteString("\n\n")
 
 		case "tool":
-			rendered := toolStyle.Render(chatWrap("", msg.Content, m.width))
-			b.WriteString(rendered)
-			b.WriteString("\n")
+			if msg.ToolName != "" && (isListContent(msg.Raw) || isTreeContent(msg.Raw)) {
+				b.WriteString(msg.Content)
+				b.WriteString("\n")
+			} else {
+				rendered := toolStyle.Render(chatWrap("", msg.Content, m.width))
+				b.WriteString(rendered)
+				b.WriteString("\n")
+			}
 
 		default:
 			rendered := chatWrap("", msg.Content, m.width)
