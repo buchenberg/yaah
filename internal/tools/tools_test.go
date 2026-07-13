@@ -2,8 +2,10 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -14,8 +16,9 @@ func TestReadTool_readsExistingFile(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
+	args, _ := json.Marshal(map[string]any{"path": path, "offset": 0, "limit": 10})
 	rt := &ReadTool{}
-	result, err := rt.Execute(context.Background(), `{"path":"`+path+`","offset":0,"limit":10}`)
+	result, err := rt.Execute(context.Background(), string(args))
 	if err != nil {
 		t.Fatalf("Execute() error: %v", err)
 	}
@@ -36,12 +39,15 @@ func TestReadTool_returnsErrorForMissingFile(t *testing.T) {
 func TestReadTool_schemaIsValidJSON(t *testing.T) {
 	rt := &ReadTool{}
 	schema := rt.Schema()
-	if schema == nil || len(schema) == 0 {
+	if len(schema) == 0 {
 		t.Fatal("schema is empty")
 	}
 }
 
 func TestBashTool_runsSimpleCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires sh")
+	}
 	bt := &BashTool{}
 	result, err := bt.Execute(context.Background(), `{"command":"echo hello"}`)
 	if err != nil {

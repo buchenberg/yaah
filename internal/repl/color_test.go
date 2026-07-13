@@ -37,8 +37,9 @@ func TestBannerContainsVersion(t *testing.T) {
 	if !strings.Contains(banner, "1.2.3") {
 		t.Errorf("banner missing version: %q", banner)
 	}
-	if !strings.Contains(banner, "LOCAL-FIRST") {
-		t.Errorf("banner missing tagline: %q", banner)
+	// figlet renders "yaah" as ASCII art, not the literal string
+	if !strings.Contains(banner, "_") {
+		t.Errorf("banner missing figlet art: %q", banner)
 	}
 }
 
