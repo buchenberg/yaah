@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // Styles
@@ -56,6 +57,7 @@ type AgentMsg struct {
 // Model is the bubbletea model for the yaah TUI.
 type Model struct {
 	messages      []Message
+	viewport      viewport.Model
 	input         textinput.Model
 	provider      string
 	modelName     string
@@ -75,10 +77,13 @@ func New(provider, model string, onSubmit func(string), onQuit func()) *Model {
 	input.Placeholder = "Type a message..."
 	input.Focus()
 	input.CharLimit = 0
-	input.Width = 80
+	input.SetWidth(80)
+
+	vp := viewport.New()
 
 	return &Model{
 		input:     input,
+		viewport:  vp,
 		provider:  provider,
 		modelName: model,
 		onSubmit:  onSubmit,
@@ -86,24 +91,35 @@ func New(provider, model string, onSubmit func(string), onQuit func()) *Model {
 	}
 }
 
+// refreshViewport rebuilds the viewport content from the current message
+// state and scrolls to the bottom so the user sees the latest message.
+func (m *Model) refreshViewport() {
+	m.viewport.SetContent(m.renderMessages())
+	m.viewport.GotoBottom()
+}
+
 // AddMessage adds a message to the chat history.
 func (m *Model) AddMessage(role, content string) {
 	m.messages = append(m.messages, Message{Role: role, Content: content})
+	m.refreshViewport()
 }
 
 // SetThinking sets the thinking state.
 func (m *Model) SetThinking(thinking bool) {
 	m.thinking = thinking
+	m.refreshViewport()
 }
 
 // SetToolCall sets the current tool call display.
 func (m *Model) SetToolCall(name string) {
 	m.toolCall = name
+	m.refreshViewport()
 }
 
 // ClearToolCall clears the tool call display.
 func (m *Model) ClearToolCall() {
 	m.toolCall = ""
+	m.refreshViewport()
 }
 
 // AppendToken appends a streaming token to the current response.
@@ -113,6 +129,7 @@ func (m *Model) AppendToken(token string) {
 		m.streamContent = ""
 	}
 	m.streamContent += token
+	m.refreshViewport()
 }
 
 // HandleAgentMsg processes messages from the agent goroutine.
@@ -174,18 +191,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.input.Width = msg.Width - 4
+		m.input.SetWidth(msg.Width - 4)
+		// Layout: 2 (header) + chatArea + 1 (status) + 1 (input) = height
+		chatHeight := msg.Height - 4
+		if chatHeight < 5 {
+			chatHeight = 5
+		}
+		m.viewport.SetWidth(msg.Width)
+		m.viewport.SetHeight(chatHeight)
+		m.refreshViewport()
 		return m, nil
 
-	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyCtrlC, tea.KeyEsc:
+	case tea.KeyPressMsg:
+		switch msg.String() {
+		case "ctrl+c", "esc":
 			if m.onQuit != nil {
 				m.onQuit()
 			}
 			return m, tea.Quit
 
-		case tea.KeyEnter:
+		case "enter":
 			// Ignore input while thinking/streaming
 			if m.thinking {
 				return m, nil
@@ -273,44 +298,14 @@ func wrapParagraph(line string, width int) string {
 	return result.String()
 }
 
-// countLines counts the number of visual lines a string will occupy.
-func countLines(s string) int {
-	if s == "" {
-		return 0
-	}
-	return strings.Count(s, "\n") + 1
-}
-
-// View implements tea.Model.
-func (m *Model) View() string {
-	if m.width == 0 {
-		return "Initializing..."
-	}
-
+// renderMessages produces the full chat content (messages, streaming,
+// thinking indicator, tool call) as a single string suitable for
+// handing to the viewport. Width is m.width; callers must ensure
+// m.width is set.
+func (m *Model) renderMessages() string {
 	var b strings.Builder
 
-	// Header (2 lines: content + blank)
-	b.WriteString(titleStyle.Render("yaah"))
-	b.WriteString(" ")
-	b.WriteString(fmt.Sprintf("%s/%s", m.provider, m.modelName))
-	b.WriteString("\n\n")
-
-	// Available height for chat + status + input
-	// Layout: 2 (header) + chatArea + 1 (status) + 1 (input) = height
-	chatHeight := m.height - 4
-	if chatHeight < 5 {
-		chatHeight = 5
-	}
-
-	// Build all rendered blocks (messages + streaming + status indicators)
-	// so we can count actual line usage and scroll correctly.
-	type block struct {
-		rendered string
-		lines    int
-	}
-	var blocks []block
-
-	// Render messages
+	// Render committed messages
 	for _, msg := range m.messages {
 		var rendered string
 		switch msg.Role {
@@ -323,59 +318,69 @@ func (m *Model) View() string {
 		default:
 			rendered = chatWrap("", msg.Content, m.width)
 		}
-		blocks = append(blocks, block{rendered, countLines(rendered)})
+		b.WriteString(rendered)
+		b.WriteString("\n")
 	}
 
 	// Streaming content
 	if m.streaming && m.streamContent != "" {
 		rendered := assistantStyle.Render(chatWrap("yaah: ", m.streamContent, m.width))
-		blocks = append(blocks, block{rendered, countLines(rendered)})
+		b.WriteString(rendered)
+		b.WriteString("\n")
 	}
 
 	// Thinking indicator
 	if m.thinking && !m.streaming {
-		rendered := spinnerStyle.Render("  ⠋ Thinking...")
-		blocks = append(blocks, block{rendered, 1})
+		b.WriteString(spinnerStyle.Render("  ⠋ Thinking..."))
+		b.WriteString("\n")
 	}
 
 	// Tool call display
 	if m.toolCall != "" {
-		rendered := toolStyle.Render(fmt.Sprintf("  tool: %s", m.toolCall))
-		blocks = append(blocks, block{rendered, 1})
-	}
-
-	// Determine which blocks to show to fit within chatHeight (show most recent)
-	linesUsed := 0
-	startBlock := len(blocks)
-	for i := len(blocks) - 1; i >= 0; i-- {
-		blockLines := blocks[i].lines + 1
-		if linesUsed+blockLines > chatHeight {
-			break
-		}
-		linesUsed += blockLines
-		startBlock = i
-	}
-
-	// Render visible blocks
-	for i := startBlock; i < len(blocks); i++ {
-		b.WriteString(blocks[i].rendered)
+		b.WriteString(toolStyle.Render(fmt.Sprintf("  tool: %s", m.toolCall)))
 		b.WriteString("\n")
 	}
-
-	// Pad remaining space to push status bar + input to the bottom
-	for i := linesUsed; i < chatHeight; i++ {
-		b.WriteString("\n")
-	}
-
-	// Status bar (1 line)
-	b.WriteString(statusStyle.Width(m.width).Render(
-		fmt.Sprintf(" %s/%s │ messages: %d │ ctrl+c quit",
-			m.provider, m.modelName, len(m.messages)),
-	))
-	b.WriteString("\n")
-
-	// Input (1 line)
-	b.WriteString(m.input.View())
 
 	return b.String()
+}
+
+// View implements tea.Model.
+func (m *Model) View() tea.View {
+	if m.width == 0 {
+		return tea.NewView("Initializing...")
+	}
+
+	// Header (2 lines: content + blank)
+	header := titleStyle.Render("yaah") + " " +
+		fmt.Sprintf("%s/%s", m.provider, m.modelName) + "\n\n"
+
+	// Status bar (1 line)
+	status := statusStyle.Width(m.width).Render(
+		fmt.Sprintf(" %s/%s │ messages: %d │ ctrl+c quit",
+			m.provider, m.modelName, len(m.messages)),
+	) + "\n"
+
+	// Viewport holds the scrollable chat history
+	viewportView := m.viewport.View()
+
+	// Input (1 line)
+	inputView := m.input.View()
+
+	body := lipgloss.JoinVertical(lipgloss.Left,
+		header,
+		viewportView,
+		status,
+		inputView,
+	)
+
+	v := tea.NewView(body)
+	v.AltScreen = true
+	// Position the terminal cursor at the textinput's location
+	// (only when not in virtual-cursor mode, which most terminals use).
+	if !m.input.VirtualCursor() {
+		if c := m.input.Cursor(); c != nil {
+			v.Cursor = c
+		}
+	}
+	return v
 }

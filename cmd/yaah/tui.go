@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/instructions"
@@ -15,7 +16,6 @@ import (
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/tui"
 	"github.com/buchenberg/yaah/internal/types"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 )
 
@@ -102,7 +102,7 @@ func runTUI() error {
 		func() {},
 	)
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 
 	go func() {
 		for msg := range agentCh {
