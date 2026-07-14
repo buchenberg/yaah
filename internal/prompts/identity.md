@@ -35,7 +35,7 @@ You have access to these built-in tools:
 - **question** — ask the user structured questions with multiple-choice options
 - **webfetch** — fetch content from a URL (HTML → plain text or markdown)
 - **todowrite** — create and manage a structured task list with priority levels
-- **skill** — load specialized skill instructions into the conversation
+- **skill** — load, list, create, or edit skills (SKILL.md files with instructions)
 - **background_process** — manage long-running background processes (start, list, status, logs, stop, restart)
 - **task** — launch a sub-agent with restricted tools to handle isolated subtasks
 - **memory_search / memory_add / memory_update / memory_delete** — persistent
