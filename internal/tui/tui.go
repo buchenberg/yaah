@@ -73,6 +73,19 @@ var (
 
 	treeItemStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("252"))
+
+	commandPaletteStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("99")).
+				Padding(0, 1)
+
+	commandNameStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("39")).
+				Width(12)
+
+	commandDescStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("243"))
 )
 
 // Message represents a chat message in the TUI.
@@ -98,6 +111,20 @@ type AgentMsg struct {
 	ContextWindow  int // context window size, for status bar
 }
 
+// Command represents a slash command available in the TUI.
+type Command struct {
+	Name        string
+	Description string
+}
+
+// defaultCommands lists the built-in slash commands.
+var defaultCommands = []Command{
+	{Name: "/help", Description: "Show available commands"},
+	{Name: "/clear", Description: "Clear chat history"},
+	{Name: "/compact", Description: "Summarize old messages"},
+	{Name: "/quit", Description: "Exit the TUI"},
+}
+
 // Model is the bubbletea model for the yaah TUI.
 type Model struct {
 	messages      []Message
@@ -121,13 +148,16 @@ type Model struct {
 	contextWindow int    // context window size
 	onSubmit      func(string)
 	onQuit        func()
+	onCompact     func()
+	commandMode   bool      // true when input starts with "/"
+	commands      []Command // registered slash commands
 }
 
 // clearCopyFlashMsg clears the copy flash indicator after a timeout.
 type clearCopyFlashMsg struct{}
 
 // New creates a new TUI model.
-func New(provider, model string, contextWindow int, onSubmit func(string), onQuit func()) *Model {
+func New(provider, model string, contextWindow int, onSubmit func(string), onQuit func(), onCompact func()) *Model {
 	input := textinput.New()
 	input.Placeholder = "Type a message..."
 	input.Focus()
@@ -153,6 +183,8 @@ func New(provider, model string, contextWindow int, onSubmit func(string), onQui
 		contextWindow: contextWindow,
 		onSubmit:      onSubmit,
 		onQuit:        onQuit,
+		onCompact:     onCompact,
+		commands:      defaultCommands,
 	}
 }
 
@@ -698,6 +730,39 @@ func (m *Model) AddToolResult(toolName, content string) {
 	m.scrollToBottom()
 }
 
+// executeCommand executes a slash command and adds the result to messages.
+// /quit is handled by the caller (returns tea.Quit from Update).
+func (m *Model) executeCommand(input string) {
+	cmd := strings.TrimSpace(input)
+	switch cmd {
+	case "/help":
+		var b strings.Builder
+		b.WriteString("Available commands:\n")
+		for _, c := range m.commands {
+			b.WriteString(fmt.Sprintf("  %s  %s\n", c.Name, c.Description))
+		}
+		m.AddMessage("system", b.String())
+	case "/clear":
+		m.messages = nil
+		m.refreshViewport()
+	case "/compact":
+		if m.onCompact != nil {
+			m.onCompact()
+		}
+	default:
+		m.AddMessage("system", fmt.Sprintf("Unknown command: %s", cmd))
+	}
+}
+
+// updateCommandSuggestions updates the textinput suggestions for command mode.
+func (m *Model) updateCommandSuggestions() {
+	var names []string
+	for _, c := range m.commands {
+		names = append(names, c.Name)
+	}
+	m.input.SetSuggestions(names)
+}
+
 // SetThinking sets the thinking state.
 func (m *Model) SetThinking(thinking bool) {
 	m.thinking = thinking
@@ -819,13 +884,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.SetWidth(msg.Width - 4)
 		m.createRenderer()
 		m.reRenderMessages()
-		chatHeight := msg.Height - m.headerHeight() - 2
-		if chatHeight < 5 {
-			chatHeight = 5
-		}
-		m.viewport.SetWidth(msg.Width)
-		m.viewport.SetHeight(chatHeight)
-		m.refreshViewport()
+		m.adjustViewport()
 		return m, nil
 
 	case tea.MouseMsg:
@@ -856,6 +915,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "enter":
+			if m.commandMode {
+				value := m.input.Value()
+				m.input.SetValue("")
+				m.clearCommandMode()
+				if strings.TrimSpace(value) == "/quit" {
+					return m, tea.Quit
+				}
+				m.executeCommand(value)
+				return m, nil
+			}
 			if m.thinking {
 				return m, nil
 			}
@@ -881,7 +950,70 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	m.input, cmd = m.input.Update(msg)
+	m.detectCommandMode()
 	return m, cmd
+}
+
+// detectCommandMode enables or disables command mode based on the input prefix.
+func (m *Model) detectCommandMode() {
+	if strings.HasPrefix(m.input.Value(), "/") {
+		if !m.commandMode {
+			m.commandMode = true
+			m.input.ShowSuggestions = true
+			m.updateCommandSuggestions()
+			m.adjustViewport()
+		}
+	} else {
+		if m.commandMode {
+			m.clearCommandMode()
+		}
+	}
+}
+
+func (m *Model) clearCommandMode() {
+	m.commandMode = false
+	m.input.ShowSuggestions = false
+	m.input.SetSuggestions(nil)
+	m.adjustViewport()
+}
+
+// paletteLines returns the number of terminal rows the command palette
+// occupies when visible. Includes the rounded border (2) and padding (2).
+func (m *Model) paletteLines() int {
+	if !m.commandMode {
+		return 0
+	}
+	filter := strings.TrimPrefix(strings.TrimSpace(m.input.Value()), "/")
+	filter = strings.ToLower(filter)
+	count := 0
+	for _, c := range m.commands {
+		name := strings.TrimPrefix(c.Name, "/")
+		if filter == "" || strings.HasPrefix(strings.ToLower(name), filter) {
+			count++
+		}
+	}
+	if count == 0 {
+		return 0
+	}
+	return 4 + count // border (2) + padding (2) + command lines
+}
+
+// adjustViewport recalculates and applies the viewport height based on
+// current terminal dimensions and command mode state.
+func (m *Model) adjustViewport() {
+	if m.height == 0 {
+		return
+	}
+	chatHeight := m.height - m.headerHeight() - 2
+	if m.commandMode {
+		chatHeight -= m.paletteLines()
+	}
+	if chatHeight < 5 {
+		chatHeight = 5
+	}
+	m.viewport.SetWidth(m.width)
+	m.viewport.SetHeight(chatHeight)
+	m.refreshViewport()
 }
 
 // chatWrap wraps text to fit within the terminal width, accounting for a
@@ -1017,6 +1149,33 @@ func (m *Model) renderMessages() string {
 	return b.String()
 }
 
+// renderCommandPalette renders the command suggestion list above the input.
+func (m *Model) renderCommandPalette() string {
+	filter := strings.TrimPrefix(strings.TrimSpace(m.input.Value()), "/")
+	filter = strings.ToLower(filter)
+
+	var visible []Command
+	for _, c := range m.commands {
+		name := strings.TrimPrefix(c.Name, "/")
+		if filter == "" || strings.HasPrefix(strings.ToLower(name), filter) {
+			visible = append(visible, c)
+		}
+	}
+
+	var lines []string
+	for _, c := range visible {
+		name := commandNameStyle.Render(c.Name)
+		desc := commandDescStyle.Render(c.Description)
+		lines = append(lines, name+" "+desc)
+	}
+
+	if len(lines) == 0 {
+		return ""
+	}
+
+	return commandPaletteStyle.Render(strings.Join(lines, "\n"))
+}
+
 // View implements tea.Model.
 func (m *Model) View() tea.View {
 	if m.width == 0 {
@@ -1044,15 +1203,21 @@ func (m *Model) View() tea.View {
 	// Viewport holds the scrollable chat history
 	viewportView := m.viewport.View()
 
+	// Command palette (shown above input when in command mode)
+	var commandPalette string
+	if m.commandMode {
+		commandPalette = m.renderCommandPalette()
+	}
+
 	// Input (1 line)
 	inputView := m.input.View()
 
-	body := lipgloss.JoinVertical(lipgloss.Left,
-		header,
-		viewportView,
-		status,
-		inputView,
-	)
+	elements := []string{header, viewportView, status}
+	if m.commandMode && commandPalette != "" {
+		elements = append(elements, commandPalette)
+	}
+	elements = append(elements, inputView)
+	body := lipgloss.JoinVertical(lipgloss.Left, elements...)
 
 	v := tea.NewView(body)
 	v.AltScreen = true

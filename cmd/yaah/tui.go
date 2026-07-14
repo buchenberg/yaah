@@ -132,6 +132,7 @@ func runTUI() error {
 			go runAgentForTUI(input, agentCh, cfg, systemPrompt, modelName, toolReg, &messages, db, sessionID, &msgIdx, &persistedCount)
 		},
 		func() {},
+		nil,
 	)
 
 	p := tea.NewProgram(m)
