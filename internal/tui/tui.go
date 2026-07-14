@@ -258,7 +258,7 @@ func (m *Model) renderMarkdown(content string) string {
 			if i > 0 {
 				result.WriteString("\n\n")
 			}
-			result.WriteString(renderCompactTable(seg.content))
+			result.WriteString(m.renderCompactTable(seg.content))
 			result.WriteString("\n")
 		} else if seg.content != "" {
 			result.WriteString(m.glamourRender(seg.content))
@@ -344,7 +344,8 @@ func splitRow(line string) []string {
 }
 
 // renderCompactTable renders a markdown table using lipgloss's table package.
-func renderCompactTable(md string) string {
+// It constrains the table to the TUI width and wraps long cell content.
+func (m *Model) renderCompactTable(md string) string {
 	lines := strings.Split(strings.TrimSpace(md), "\n")
 	if len(lines) < 2 {
 		return md
@@ -388,6 +389,8 @@ func renderCompactTable(md string) string {
 	cellStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 
 	t := table.New().
+		Width(m.width - 2).
+		Wrap(true).
 		Border(lipgloss.NormalBorder()).
 		BorderStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("240"))).
 		StyleFunc(func(row, col int) lipgloss.Style {

@@ -75,11 +75,20 @@ func TestSplitRow_TabsInCells(t *testing.T) {
 	assertEqual(t, got, expected)
 }
 
+// testModel creates a minimal Model for testing renderCompactTable.
+func testModel(width int) *Model {
+	m := &Model{width: width}
+	return m
+}
+
+// m is a default test model used by renderCompactTable tests.
+var m = testModel(80)
+
 // --- renderCompactTable tests ---
 
 func TestRenderCompactTable_Simple(t *testing.T) {
 	md := "| Name | Age |\n|------|-----|\n| Alice | 30 |\n| Bob | 25 |"
-	got := renderCompactTable(md)
+	got := m.renderCompactTable(md)
 	if !strings.Contains(got, "Name") {
 		t.Errorf("missing header: %q", got)
 	}
@@ -96,7 +105,7 @@ func TestRenderCompactTable_Simple(t *testing.T) {
 
 func TestRenderCompactTable_SingleColumn(t *testing.T) {
 	md := "| Item |\n|------|\n| Apple |\n| Banana |"
-	got := renderCompactTable(md)
+	got := m.renderCompactTable(md)
 	if !strings.Contains(got, "Item") {
 		t.Errorf("missing header: %q", got)
 	}
@@ -107,7 +116,7 @@ func TestRenderCompactTable_SingleColumn(t *testing.T) {
 
 func TestRenderCompactTable_EmptyCells(t *testing.T) {
 	md := "| Col A | Col B |\n|-------|-------|\n| foo | |\n| | bar |"
-	got := renderCompactTable(md)
+	got := m.renderCompactTable(md)
 	if !strings.Contains(got, "Col A") {
 		t.Errorf("missing header: %q", got)
 	}
@@ -119,14 +128,14 @@ func TestRenderCompactTable_EmptyCells(t *testing.T) {
 
 func TestRenderCompactTable_HeaderOnly(t *testing.T) {
 	md := "| Col A | Col B |\n|-------|-------|"
-	got := renderCompactTable(md)
+	got := m.renderCompactTable(md)
 	if !strings.Contains(got, "Col A") {
 		t.Errorf("expected header in output: %q", got)
 	}
 }
 
 func TestRenderCompactTable_EmptyInput(t *testing.T) {
-	got := renderCompactTable("")
+	got := m.renderCompactTable("")
 	if got != "" {
 		t.Errorf("expected empty string, got %q", got)
 	}
@@ -135,7 +144,7 @@ func TestRenderCompactTable_EmptyInput(t *testing.T) {
 func TestRenderCompactTable_NoSeparator(t *testing.T) {
 	// Without a --- separator, lipgloss table treats the first row as the header.
 	md := "| Col A | Col B |\n| val1 | val2 |"
-	got := renderCompactTable(md)
+	got := m.renderCompactTable(md)
 	if !strings.Contains(got, "Col A") || !strings.Contains(got, "val1") {
 		t.Errorf("expected rendered table with headers and data, got %q", got)
 	}
@@ -146,7 +155,7 @@ func TestRenderCompactTable_NoSeparator(t *testing.T) {
 }
 
 func TestRenderCompactTable_SingleLine(t *testing.T) {
-	got := renderCompactTable("| just | one |")
+	got := m.renderCompactTable("| just | one |")
 	if got != "| just | one |" {
 		t.Errorf("expected fallback, got %q", got)
 	}
@@ -154,7 +163,7 @@ func TestRenderCompactTable_SingleLine(t *testing.T) {
 
 func TestRenderCompactTable_ManyColumns(t *testing.T) {
 	md := "| A | B | C | D | E | F | G | H |\n|---|---|---|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |"
-	got := renderCompactTable(md)
+	got := m.renderCompactTable(md)
 	for _, col := range []string{"A", "B", "C", "D", "E", "F", "G", "H"} {
 		if !strings.Contains(got, col) {
 			t.Errorf("missing column %q in output: %q", col, got)
@@ -165,15 +174,18 @@ func TestRenderCompactTable_ManyColumns(t *testing.T) {
 func TestRenderCompactTable_WideContent(t *testing.T) {
 	longStr := strings.Repeat("x", 80)
 	md := "| Short | Long |\n|-------|------|\n| s | " + longStr + " |"
-	got := renderCompactTable(md)
-	if !strings.Contains(got, longStr) {
-		t.Errorf("missing wide content: %q", got)
+	got := m.renderCompactTable(md)
+	// With wrapping enabled, the long string may be split across lines.
+	// Verify the content is present after stripping ANSI codes.
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "xxxxxxxxxx") {
+		t.Errorf("missing wide content: %q", plain)
 	}
 }
 
 func TestRenderCompactTable_Unicode(t *testing.T) {
 	md := "| 名前 | 値 |\n|------|----|\n| 東京 | 100 |\n| 大阪 | 200 |"
-	got := renderCompactTable(md)
+	got := m.renderCompactTable(md)
 	if !strings.Contains(got, "名前") {
 		t.Errorf("missing unicode header: %q", got)
 	}
@@ -184,7 +196,7 @@ func TestRenderCompactTable_Unicode(t *testing.T) {
 
 func TestRenderCompactTable_Emoji(t *testing.T) {
 	md := "| Status | Count |\n|--------|-------|\n| ✅ | 42 |\n| ❌ | 0 |"
-	got := renderCompactTable(md)
+	got := m.renderCompactTable(md)
 	if !strings.Contains(got, "✅") {
 		t.Errorf("missing emoji: %q", got)
 	}
@@ -192,7 +204,7 @@ func TestRenderCompactTable_Emoji(t *testing.T) {
 
 func TestRenderCompactTable_MixedWidths(t *testing.T) {
 	md := "| A | B |\n|---|---|\n| x | a very long cell value here |"
-	got := renderCompactTable(md)
+	got := m.renderCompactTable(md)
 	if !strings.Contains(got, "a very long cell value here") {
 		t.Errorf("missing long cell: %q", got)
 	}
@@ -200,7 +212,7 @@ func TestRenderCompactTable_MixedWidths(t *testing.T) {
 
 func TestRenderCompactTable_TrailingWhitespaceInCells(t *testing.T) {
 	md := "| Name   | Value  |\n|--------|--------|\n| foo    | 123    |"
-	got := renderCompactTable(md)
+	got := m.renderCompactTable(md)
 	if !strings.Contains(got, "foo") {
 		t.Errorf("missing cell content: %q", got)
 	}
@@ -208,7 +220,7 @@ func TestRenderCompactTable_TrailingWhitespaceInCells(t *testing.T) {
 
 func TestRenderCompactTable_SeparatorWithColons(t *testing.T) {
 	md := "| Left | Center | Right |\n|:-----|:------:|------:|\n| a | b | c |"
-	got := renderCompactTable(md)
+	got := m.renderCompactTable(md)
 	if !strings.Contains(got, "Left") {
 		t.Errorf("missing header: %q", got)
 	}
@@ -219,7 +231,7 @@ func TestRenderCompactTable_SeparatorWithColons(t *testing.T) {
 
 func TestRenderCompactTable_NumbersOnly(t *testing.T) {
 	md := "| 2023 | 2024 | 2025 |\n|------|------|------|\n| 100 | 200 | 300 |\n| -5 | 0 | 5.5 |"
-	got := renderCompactTable(md)
+	got := m.renderCompactTable(md)
 	if !strings.Contains(got, "-5") {
 		t.Errorf("missing negative number: %q", got)
 	}
@@ -230,7 +242,7 @@ func TestRenderCompactTable_NumbersOnly(t *testing.T) {
 
 func TestRenderCompactTable_SpecialChars(t *testing.T) {
 	md := "| Expression | Result |\n|------------|--------|\n| 2 + 2 | 4 |\n| `code` | ok |\n| **bold** | yes |"
-	got := renderCompactTable(md)
+	got := m.renderCompactTable(md)
 	if !strings.Contains(got, "code") {
 		t.Errorf("missing backtick content: %q", got)
 	}
