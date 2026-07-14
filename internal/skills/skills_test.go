@@ -102,3 +102,95 @@ No frontmatter here.
 		t.Error("expected error for missing frontmatter")
 	}
 }
+
+func TestCreate_writesSkillFile(t *testing.T) {
+	tmp := t.TempDir()
+	path, err := Create(tmp, "my-skill", "A test skill", "# Instructions\n\nDo stuff.")
+	if err != nil {
+		t.Fatalf("Create() error: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error: %v", err)
+	}
+
+	skill, err := ParseFrontmatter(data)
+	if err != nil {
+		t.Fatalf("ParseFrontmatter() error: %v", err)
+	}
+	if skill.Name != "my-skill" {
+		t.Errorf("Name = %q, want %q", skill.Name, "my-skill")
+	}
+	if skill.Description != "A test skill" {
+		t.Errorf("Description = %q", skill.Description)
+	}
+	if skill.Body != "# Instructions\n\nDo stuff." {
+		t.Errorf("Body = %q", skill.Body)
+	}
+}
+
+func TestCreate_rejectsDuplicate(t *testing.T) {
+	tmp := t.TempDir()
+	if _, err := Create(tmp, "dup", "first", "body"); err != nil {
+		t.Fatalf("first Create() error: %v", err)
+	}
+	_, err := Create(tmp, "dup", "second", "body")
+	if err == nil {
+		t.Error("expected error for duplicate skill")
+	}
+}
+
+func TestEdit_updatesDescription(t *testing.T) {
+	tmp := t.TempDir()
+	path, err := Create(tmp, "edit-me", "old desc", "old body")
+	if err != nil {
+		t.Fatalf("Create() error: %v", err)
+	}
+
+	s := FindSkill([]string{tmp}, "edit-me")
+	if s == nil {
+		t.Fatal("FindSkill() returned nil")
+	}
+
+	path, err = Edit(s, "new desc", "")
+	if err != nil {
+		t.Fatalf("Edit() error: %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	skill, _ := ParseFrontmatter(data)
+	if skill.Description != "new desc" {
+		t.Errorf("Description = %q, want %q", skill.Description, "new desc")
+	}
+	if skill.Body != "old body" {
+		t.Errorf("Body = %q, want %q", skill.Body, "old body")
+	}
+}
+
+func TestEdit_updatesBody(t *testing.T) {
+	tmp := t.TempDir()
+	path, err := Create(tmp, "edit-body", "desc", "old body")
+	if err != nil {
+		t.Fatalf("Create() error: %v", err)
+	}
+
+	s := FindSkill([]string{tmp}, "edit-body")
+	if s == nil {
+		t.Fatal("FindSkill() returned nil")
+	}
+
+	path, err = Edit(s, "", "new body content")
+	if err != nil {
+		t.Fatalf("Edit() error: %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	skill, _ := ParseFrontmatter(data)
+	if skill.Description != "desc" {
+		t.Errorf("Description = %q, want %q", skill.Description, "desc")
+	}
+	if skill.Body != "new body content" {
+		t.Errorf("Body = %q, want %q", skill.Body, "new body content")
+	}
+}

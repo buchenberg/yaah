@@ -136,3 +136,52 @@ func FormatSkillForAgent(skill *Skill) string {
 	buf.WriteString("</skill_content>\n")
 	return buf.String()
 }
+
+// Create writes a new SKILL.md file in the given directory. The skill is
+// placed at <dir>/<name>/SKILL.md. Returns the path to the created file.
+func Create(dir, name, description, body string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("skill name is required")
+	}
+	skillDir := filepath.Join(dir, name)
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		return "", fmt.Errorf("create skill directory: %w", err)
+	}
+	path := filepath.Join(skillDir, "SKILL.md")
+	if _, err := os.Stat(path); err == nil {
+		return "", fmt.Errorf("skill %q already exists at %s", name, path)
+	}
+	content := fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n%s\n", name, description, body)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return "", fmt.Errorf("write SKILL.md: %w", err)
+	}
+	return path, nil
+}
+
+// Edit updates an existing SKILL.md file. Non-empty fields overwrite the
+// corresponding frontmatter or body. Returns the path to the edited file.
+func Edit(skill *Skill, description, body string) (string, error) {
+	data, err := os.ReadFile(skill.Path)
+	if err != nil {
+		return "", fmt.Errorf("read SKILL.md: %w", err)
+	}
+
+	// Parse current frontmatter to preserve fields not being updated.
+	current, err := ParseFrontmatter(data)
+	if err != nil {
+		return "", fmt.Errorf("parse SKILL.md: %w", err)
+	}
+
+	if description == "" {
+		description = current.Description
+	}
+	if body == "" {
+		body = current.Body
+	}
+
+	content := fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n%s\n", current.Name, description, body)
+	if err := os.WriteFile(skill.Path, []byte(content), 0o644); err != nil {
+		return "", fmt.Errorf("write SKILL.md: %w", err)
+	}
+	return skill.Path, nil
+}
