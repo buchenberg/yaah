@@ -6,6 +6,8 @@ package prompts
 
 import (
 	_ "embed"
+	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/instructions"
@@ -22,6 +24,7 @@ var IdentityPrompt string
 // from multiple sources.
 type Layers struct {
 	Identity    string // embedded identity (always present)
+	Environment string // runtime OS/arch/shell context
 	UserContext string // ~/.yaah/AGENTS.md (optional)
 	Project     string // walked-up AGENTS.md/CLAUDE.md from cwd
 	Memory      string // stored facts from SQLite
@@ -34,6 +37,10 @@ func Build(l Layers) string {
 
 	if strings.TrimSpace(l.Identity) != "" {
 		parts = append(parts, l.Identity)
+	}
+
+	if strings.TrimSpace(l.Environment) != "" {
+		parts = append(parts, "## Runtime Environment\n"+strings.TrimSpace(l.Environment))
 	}
 
 	if strings.TrimSpace(l.UserContext) != "" {
@@ -49,6 +56,16 @@ func Build(l Layers) string {
 	}
 
 	return strings.Join(parts, "\n\n")
+}
+
+// DetectEnvironment returns a human-readable string describing the
+// current OS, architecture, and default shell for the runtime.
+func DetectEnvironment() string {
+	shell := "bash"
+	if runtime.GOOS == "windows" {
+		shell = "powershell (pwsh 7+ or Windows PowerShell)"
+	}
+	return fmt.Sprintf("OS: %s/%s. Default shell: %s.", runtime.GOOS, runtime.GOARCH, shell)
 }
 
 // LoadUserContext reads the user-level AGENTS.md from the yaah home

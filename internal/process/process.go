@@ -49,9 +49,9 @@ func (p *Info) appendLog(s string) {
 
 // Manager tracks all background processes.
 type Manager struct {
-	mu      sync.Mutex
-	procs   map[string]*Info
-	nextID  atomic.Int64
+	mu     sync.Mutex
+	procs  map[string]*Info
+	nextID atomic.Int64
 }
 
 // NewManager creates a new process manager.
@@ -99,8 +99,12 @@ func (m *Manager) Start(command, description string) (*Info, error) {
 	m.procs[id] = info
 	m.mu.Unlock()
 
-	// Read stdout/stderr in background.
+	// Read stdout/stderr in background, then wait for the process to exit.
+	// Per Go docs, cmd.Wait must not be called before all pipe reads complete.
+	var pipeWg sync.WaitGroup
+	pipeWg.Add(2)
 	go func() {
+		defer pipeWg.Done()
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for scanner.Scan() {
@@ -108,6 +112,7 @@ func (m *Manager) Start(command, description string) (*Info, error) {
 		}
 	}()
 	go func() {
+		defer pipeWg.Done()
 		scanner := bufio.NewScanner(stderr)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for scanner.Scan() {
@@ -116,12 +121,15 @@ func (m *Manager) Start(command, description string) (*Info, error) {
 	}()
 
 	go func() {
+		pipeWg.Wait()
 		err := cmd.Wait()
 		info.mu.Lock()
 		if info.Status == "running" {
 			if err != nil {
 				info.Status = "error"
-				info.appendLog(fmt.Sprintf("exit error: %v\n", err))
+				// Write directly to logs since we already hold info.mu
+				// (appendLog would deadlock — sync.Mutex is not reentrant).
+				info.logs.WriteString(fmt.Sprintf("exit error: %v\n", err))
 			} else {
 				info.Status = "finished"
 			}

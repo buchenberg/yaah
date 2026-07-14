@@ -18,6 +18,8 @@ import (
 	"github.com/buchenberg/yaah/internal/instructions"
 	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
+	processpkg "github.com/buchenberg/yaah/internal/process"
+	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -130,6 +132,7 @@ func runTUI() error {
 	cwd, _ := os.Getwd()
 	instrFiles := instructions.Load(cwd, cwd)
 	systemPrompt := "You are yaah, a helpful AI assistant. Respond concisely."
+	systemPrompt += "\n\n## Runtime Environment\n" + prompts.DetectEnvironment()
 	if formatted := instructions.FormatForSystem(instrFiles); formatted != "" {
 		systemPrompt += "\n\n" + formatted
 	}
@@ -188,6 +191,13 @@ func runTUI() error {
 	// Register the skill-loading tool
 	skillDirs := skillSearchPaths()
 	toolReg.Register(&tools.SkillTool{Dirs: skillDirs})
+
+	procMgr := processpkg.NewManager()
+	toolReg.Register(&tools.BackgroundProcessTool{Manager: procMgr})
+
+	toolReg.Register(&tools.TaskTool{
+		Runner: makeTaskRunner(resolveProvider(cfg), systemPrompt, modelName),
+	})
 
 	agentCh := make(chan tui.AgentMsg, 256)
 
@@ -263,7 +273,7 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 		},
 		OnTool: func(info agent.ToolInfo) {
 			if info.Duration == 0 {
-				ch <- tui.AgentMsg{ToolName: info.Name}
+				ch <- tui.AgentMsg{ToolName: info.Name, ToolArgs: info.Args}
 			} else {
 				ch <- tui.AgentMsg{
 					ToolResult:     info.Result,

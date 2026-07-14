@@ -205,6 +205,7 @@ func newAgentSession() (*agentSession, error) {
 
 	layers := prompts.Layers{
 		Identity:    prompts.IdentityPrompt,
+		Environment: prompts.DetectEnvironment(),
 		UserContext: prompts.LoadUserContext(config.HomeDir()),
 		Project:     instructions.FormatForSystem(instructions.Load(cwd, cwd)),
 	}

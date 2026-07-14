@@ -98,10 +98,10 @@ func (t *WebFetchTool) Execute(ctx context.Context, args string) (string, error)
 }
 
 var (
-	htmlTagRe   = regexp.MustCompile(`<[^>]*>`)
-	htmlScriptRe = regexp.MustCompile(`(?s)<script[^>]*>.*?</script>`)
-	htmlStyleRe  = regexp.MustCompile(`(?s)<style[^>]*>.*?</style>`)
-	htmlEntityRe = regexp.MustCompile(`&[a-zA-Z]+;|&#\d+;|&#x[0-9a-fA-F]+;`)
+	htmlTagRe      = regexp.MustCompile(`<[^>]*>`)
+	htmlScriptRe   = regexp.MustCompile(`(?s)<script[^>]*>.*?</script>`)
+	htmlStyleRe    = regexp.MustCompile(`(?s)<style[^>]*>.*?</style>`)
+	htmlEntityRe   = regexp.MustCompile(`&[a-zA-Z]+;|&#\d+;|&#x[0-9a-fA-F]+;`)
 	multiNewlineRe = regexp.MustCompile(`\n{3,}`)
 )
 
@@ -135,12 +135,18 @@ func htmlToText(html string) string {
 func decodeHTMLEntities(s string) string {
 	return htmlEntityRe.ReplaceAllStringFunc(s, func(e string) string {
 		switch e {
-		case "&amp;": return "&"
-		case "&lt;": return "<"
-		case "&gt;": return ">"
-		case "&quot;": return `"`
-		case "&apos;": return "'"
-		case "&nbsp;": return " "
+		case "&amp;":
+			return "&"
+		case "&lt;":
+			return "<"
+		case "&gt;":
+			return ">"
+		case "&quot;":
+			return `"`
+		case "&apos;":
+			return "'"
+		case "&nbsp;":
+			return " "
 		default:
 			return e
 		}

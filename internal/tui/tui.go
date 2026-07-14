@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
@@ -43,10 +42,6 @@ var (
 
 	spinnerStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("39"))
-
-	copyStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("243")).
-			Italic(true)
 
 	codeStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("214"))
@@ -101,6 +96,7 @@ type AgentMsg struct {
 	Token          string
 	Thinking       string // reasoning/thinking content from models like DeepSeek
 	ToolName       string
+	ToolArgs       string // tool arguments (for display, e.g. task description)
 	ToolResult     string // tool result content
 	ToolResultName string // tool name for the result
 	Flush          string // streamed content to commit before a tool call
@@ -142,10 +138,10 @@ type Model struct {
 	height        int
 	thinking      bool
 	toolCall      string
+	toolArgs      string // args for current tool call (e.g. task description)
 	streaming     bool   // currently streaming a response
 	streamContent string // accumulated streaming content
 	thinkContent  string // accumulated thinking/reasoning content
-	copyFlash     string // brief "Copied!" indicator
 	contextPct    int    // context window fill percentage (0-100)
 	contextTokens int    // estimated token count
 	contextWindow int    // context window size
@@ -160,9 +156,6 @@ type Model struct {
 	modelSelected int               // highlighted index in filtered list
 	providerNames map[string]string // provider key → display name
 }
-
-// clearCopyFlashMsg clears the copy flash indicator after a timeout.
-type clearCopyFlashMsg struct{}
 
 // New creates a new TUI model.
 func New(provider, model string, contextWindow int, onSubmit func(string), onQuit func(), onCompact func(), onModel func(string, string)) *Model {
@@ -266,6 +259,7 @@ func (m *Model) renderMarkdown(content string) string {
 				result.WriteString("\n\n")
 			}
 			result.WriteString(renderCompactTable(seg.content))
+			result.WriteString("\n")
 		} else if seg.content != "" {
 			result.WriteString(m.glamourRender(seg.content))
 		}
@@ -457,6 +451,9 @@ func isWideRune(r rune) bool {
 func (m *Model) renderToolResult(toolName, content string) string {
 	if content == "" {
 		return ""
+	}
+	if toolName == "task" {
+		return m.renderMarkdown(content)
 	}
 	if isTreeContent(content) {
 		return m.renderTree(content)
@@ -784,14 +781,16 @@ func (m *Model) SetThinking(thinking bool) {
 }
 
 // SetToolCall sets the current tool call display.
-func (m *Model) SetToolCall(name string) {
+func (m *Model) SetToolCall(name, args string) {
 	m.toolCall = name
+	m.toolArgs = args
 	m.refreshViewport()
 }
 
 // ClearToolCall clears the tool call display.
 func (m *Model) ClearToolCall() {
 	m.toolCall = ""
+	m.toolArgs = ""
 	m.refreshViewport()
 }
 
@@ -838,7 +837,7 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 	}
 
 	if msg.ToolName != "" {
-		m.SetToolCall(msg.ToolName)
+		m.SetToolCall(msg.ToolName, msg.ToolArgs)
 		return
 	}
 
@@ -896,10 +895,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, spinCmd
 
-	case clearCopyFlashMsg:
-		m.copyFlash = ""
-		return m, nil
-
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -933,17 +928,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "ctrl+y":
-			for i := len(m.messages) - 1; i >= 0; i-- {
-				if m.messages[i].Role == "assistant" && m.messages[i].Raw != "" {
-					m.copyFlash = "Copied markdown to clipboard!"
-					return m, tea.Batch(
-						tea.SetClipboard(m.messages[i].Raw),
-						tea.Tick(2*time.Second, func(time.Time) tea.Msg {
-							return clearCopyFlashMsg{}
-						}),
-					)
-				}
-			}
+			// reserved for future use
 			return m, nil
 
 		case "enter":
@@ -1193,12 +1178,10 @@ func (m *Model) renderMessages() string {
 		case "assistant":
 			b.WriteString("\n")
 			b.WriteString(assistantStyle.Render(msg.Content))
-			copyText := copyStyle.Render("\n\n📋 ctrl+y to copy as md")
-			b.WriteString(copyText)
 			b.WriteString("\n\n")
 
 		case "tool":
-			if msg.ToolName != "" && (isListContent(msg.Raw) || isTreeContent(msg.Raw)) {
+			if msg.ToolName == "task" || (msg.ToolName != "" && (isListContent(msg.Raw) || isTreeContent(msg.Raw))) {
 				b.WriteString(msg.Content)
 				b.WriteString("\n")
 			} else {
@@ -1217,13 +1200,13 @@ func (m *Model) renderMessages() string {
 	// Thinking/reasoning content (from models like DeepSeek)
 	if m.thinkContent != "" {
 		b.WriteString("\n")
-		b.WriteString(thinkingStyle.Render(m.thinkContent))
+		b.WriteString(thinkingStyle.Render(chatWrap("", m.thinkContent, m.width)))
 		b.WriteString("\n")
 	}
 
 	// Streaming content
 	if m.streaming && m.streamContent != "" {
-		rendered := assistantStyle.Render(chatWrap("", m.streamContent, m.width))
+		rendered := assistantStyle.Render(m.renderMarkdown(m.streamContent))
 		b.WriteString(rendered)
 		b.WriteString("\n")
 	}
@@ -1237,7 +1220,16 @@ func (m *Model) renderMessages() string {
 
 	// Tool call display
 	if m.toolCall != "" {
-		rendered := toolStyle.Render(fmt.Sprintf("  tool: %s", m.toolCall))
+		label := m.toolCall
+		if m.toolCall == "task" && m.toolArgs != "" {
+			re := regexp.MustCompile(`"description"\s*:\s*"([^"]*)"`)
+			if match := re.FindStringSubmatch(m.toolArgs); len(match) > 1 && match[1] != "" {
+				label = fmt.Sprintf("sub-agent — %s", match[1])
+			} else {
+				label = "sub-agent"
+			}
+		}
+		rendered := toolStyle.Render(fmt.Sprintf("  ⏳ %s…", label))
 		b.WriteString(rendered)
 		b.WriteString("\n")
 	}
@@ -1366,16 +1358,12 @@ func (m *Model) View() tea.View {
 
 	// Status bar (1 line). No trailing \n — JoinVertical adds the separator.
 	var statusText string
-	if m.copyFlash != "" {
-		statusText = " " + m.copyFlash
-	} else {
-		ctxBar := ""
-		if m.contextWindow > 0 {
-			ctxBar = " " + contextBar(m.contextPct)
-		}
-		statusText = fmt.Sprintf(" %s/%s │ messages: %d │ ctrl+y copy as md │ ctrl+c quit%s",
-			m.provider, m.modelName, len(m.messages), ctxBar)
+	ctxBar := ""
+	if m.contextWindow > 0 {
+		ctxBar = " " + contextBar(m.contextPct)
 	}
+	statusText = fmt.Sprintf(" %s/%s │ messages: %d │ ctrl+c quit%s",
+		m.provider, m.modelName, len(m.messages), ctxBar)
 	status := statusStyle.Width(m.width).Render(statusText)
 
 	// Viewport holds the scrollable chat history

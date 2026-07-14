@@ -107,8 +107,10 @@ func (t *BackgroundProcessTool) Execute(ctx context.Context, args string) (strin
 		if info == nil {
 			return "", fmt.Errorf("background_process: process %s not found", params.ID)
 		}
-		if err := t.Manager.Stop(params.ID); err != nil {
-			return "", fmt.Errorf("background_process: restart stop: %w", err)
+		if info.Status == "running" {
+			if err := t.Manager.Stop(params.ID); err != nil {
+				return "", fmt.Errorf("background_process: restart stop: %w", err)
+			}
 		}
 		newInfo, err := t.Manager.Start(info.Command, info.Description)
 		if err != nil {
