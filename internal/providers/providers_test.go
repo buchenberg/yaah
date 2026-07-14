@@ -115,3 +115,68 @@ func TestEstimateTokens_returnsRoughEstimate(t *testing.T) {
 		t.Errorf("EstimateTokens = %d, expected roughly 7-8", tok)
 	}
 }
+
+func TestListModels_returnsModelIDs(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		if r.URL.Path != "/models" {
+			t.Errorf("expected /models, got %s", r.URL.Path)
+		}
+		resp := map[string]any{
+			"object": "list",
+			"data": []map[string]any{
+				{"id": "gpt-4o", "object": "model"},
+				{"id": "gpt-4o-mini", "object": "model"},
+				{"id": "o1", "object": "model"},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	client := NewOpenAIClient(ts.URL, "sk-test")
+	models, err := client.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels() error: %v", err)
+	}
+
+	if len(models) != 3 {
+		t.Fatalf("expected 3 models, got %d: %v", len(models), models)
+	}
+	if models[0] != "gpt-4o" || models[1] != "gpt-4o-mini" || models[2] != "o1" {
+		t.Errorf("models = %v, want [gpt-4o gpt-4o-mini o1]", models)
+	}
+}
+
+func TestListModels_returnsErrorOnHTTPFailure(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+	}))
+	defer ts.Close()
+
+	client := NewOpenAIClient(ts.URL, "sk-test")
+	_, err := client.ListModels(context.Background())
+	if err == nil {
+		t.Fatal("expected error on 500, got nil")
+	}
+}
+
+func TestListModels_includesAPIKey(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer sk-test-key" {
+			t.Errorf("Authorization header = %q", r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"data":[]}`))
+	}))
+	defer ts.Close()
+
+	client := NewOpenAIClient(ts.URL, "sk-test-key")
+	_, err := client.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels() error: %v", err)
+	}
+}

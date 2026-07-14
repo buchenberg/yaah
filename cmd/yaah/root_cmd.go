@@ -459,10 +459,19 @@ func (s *agentSession) persistMessages(messages []types.Message) {
 
 // resolveProviderName extracts the provider name from the config.
 func resolveProviderName(cfg *config.Config) string {
-	modelParts := strings.SplitN(cfg.Default.Model, "/", 2)
-	if len(modelParts) == 2 {
-		return modelParts[0]
+	// 1. Explicit default.provider setting
+	if cfg.Default.Provider != "" {
+		if _, ok := cfg.Providers[cfg.Default.Provider]; ok {
+			return cfg.Default.Provider
+		}
 	}
+	// 2. Provider/model prefix in default.model
+	if parts := strings.SplitN(cfg.Default.Model, "/", 2); len(parts) == 2 {
+		if _, ok := cfg.Providers[parts[0]]; ok {
+			return parts[0]
+		}
+	}
+	// 3. First provider alphabetically
 	names := make([]string, 0, len(cfg.Providers))
 	for name := range cfg.Providers {
 		names = append(names, name)
@@ -486,12 +495,9 @@ func resolveModel(cfg *config.Config) string {
 
 // resolveProvider picks the best available provider from the config.
 func resolveProvider(cfg *config.Config) agent.Provider {
-	// Try to find a provider that matches the default model prefix
-	modelParts := strings.SplitN(cfg.Default.Model, "/", 2)
-	if len(modelParts) == 2 {
-		if p, ok := cfg.Providers[modelParts[0]]; ok && isRealKey(p.APIKey) {
-			return providers.NewOpenAIClient(p.BaseURL, p.APIKey)
-		}
+	providerName := resolveProviderName(cfg)
+	if p, ok := cfg.Providers[providerName]; ok && isRealKey(p.APIKey) {
+		return providers.NewOpenAIClient(p.BaseURL, p.APIKey)
 	}
 
 	// Deterministic fallback: prefer the first provider by sorted name with a real key.

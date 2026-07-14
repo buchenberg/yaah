@@ -709,6 +709,135 @@ func TestCommandSuggestions(t *testing.T) {
 	}
 }
 
+// --- model mode tests ---
+
+func TestExecuteCommand_Model(t *testing.T) {
+	m := &Model{width: 80}
+	m.commands = defaultCommands
+	m.modelItems = []string{"openai/gpt-4o", "openai/gpt-4o-mini", "ollama/llama3"}
+	m.executeCommand("/model")
+	if !m.modelMode {
+		t.Fatal("expected modelMode to be true after /model command")
+	}
+	if m.modelSelected != 0 {
+		t.Errorf("expected modelSelected 0, got %d", m.modelSelected)
+	}
+}
+
+func TestExecuteCommand_ModelNoItems(t *testing.T) {
+	m := &Model{width: 80}
+	m.commands = defaultCommands
+	m.modelItems = nil
+	m.executeCommand("/model")
+	if m.modelMode {
+		t.Error("modelMode should remain false when no models available")
+	}
+	if len(m.messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(m.messages))
+	}
+	if !strings.Contains(m.messages[0].Content, "No models") {
+		t.Errorf("expected 'No models' message: %q", m.messages[0].Content)
+	}
+}
+
+func TestFilteredModels(t *testing.T) {
+	m := &Model{width: 80}
+	m.modelItems = []string{"openai/gpt-4o", "openai/gpt-4o-mini", "ollama/llama3", "ollama/qwen2"}
+
+	all := m.filteredModels()
+	if len(all) != 4 {
+		t.Fatalf("expected 4 unfiltered models, got %d", len(all))
+	}
+
+	m.input.SetValue("gpt")
+	filtered := m.filteredModels()
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 filtered models for 'gpt', got %d: %v", len(filtered), filtered)
+	}
+	if filtered[0] != "openai/gpt-4o" {
+		t.Errorf("expected gpt-4o first, got %s", filtered[0])
+	}
+
+	m.input.SetValue("nonexistent")
+	filtered = m.filteredModels()
+	if len(filtered) != 0 {
+		t.Errorf("expected 0 results for 'nonexistent', got %d", len(filtered))
+	}
+
+	m.input.SetValue("")
+	filtered = m.filteredModels()
+	if len(filtered) != 4 {
+		t.Errorf("expected all models with empty filter, got %d", len(filtered))
+	}
+}
+
+func TestModelSelection_Callback(t *testing.T) {
+	m := &Model{width: 80}
+	m.commands = defaultCommands
+	m.modelItems = []string{"openai/gpt-4o", "openai/gpt-4o-mini", "ollama/llama3"}
+
+	var gotProvider, gotModel string
+	m.onModel = func(p, m2 string) {
+		gotProvider = p
+		gotModel = m2
+	}
+
+	m.modelMode = true
+	m.modelSelected = 1 // "openai/gpt-4o-mini"
+	m.selectModel()
+
+	if gotProvider != "openai" {
+		t.Errorf("expected provider 'openai', got %q", gotProvider)
+	}
+	if gotModel != "gpt-4o-mini" {
+		t.Errorf("expected model 'gpt-4o-mini', got %q", gotModel)
+	}
+	if m.modelMode {
+		t.Error("modelMode should be false after selection")
+	}
+	if m.provider != "openai" {
+		t.Errorf("expected model.provider to be 'openai', got %q", m.provider)
+	}
+	if m.modelName != "gpt-4o-mini" {
+		t.Errorf("expected model.modelName to be 'gpt-4o-mini', got %q", m.modelName)
+	}
+}
+
+func TestExitModelMode(t *testing.T) {
+	m := &Model{width: 80}
+	m.modelMode = true
+	m.modelSelected = 3
+	m.input.SetValue("search text")
+	m.input.Placeholder = "Search models..."
+
+	m.exitModelMode()
+
+	if m.modelMode {
+		t.Error("modelMode should be false after exit")
+	}
+	if m.modelSelected != 0 {
+		t.Errorf("modelSelected should be 0 after exit, got %d", m.modelSelected)
+	}
+	if m.input.Value() != "" {
+		t.Errorf("input value should be cleared after exit, got %q", m.input.Value())
+	}
+	if m.input.Placeholder != "Type a message..." {
+		t.Errorf("placeholder should be restored, got %q", m.input.Placeholder)
+	}
+}
+
+func TestHandleModelList(t *testing.T) {
+	m := &Model{width: 80}
+	m.HandleAgentMsg(AgentMsg{ModelList: []string{"openai/gpt-4o", "ollama/llama3"}})
+
+	if len(m.modelItems) != 2 {
+		t.Fatalf("expected 2 modelItems, got %d", len(m.modelItems))
+	}
+	if m.modelItems[0] != "openai/gpt-4o" {
+		t.Errorf("expected first model 'openai/gpt-4o', got %q", m.modelItems[0])
+	}
+}
+
 // --- helpers ---
 
 func assertEqual(t *testing.T, got, expected []string) {

@@ -107,8 +107,10 @@ type AgentMsg struct {
 	Done           bool
 	Response       string
 	Err            error
-	ContextTokens  int // estimated tokens used, for status bar
-	ContextWindow  int // context window size, for status bar
+	ContextTokens  int               // estimated tokens used, for status bar
+	ContextWindow  int               // context window size, for status bar
+	ModelList      []string          // models fetched from providers
+	ProviderNames  map[string]string // provider key → display name
 }
 
 // Command represents a slash command available in the TUI.
@@ -122,6 +124,7 @@ var defaultCommands = []Command{
 	{Name: "/help", Description: "Show available commands"},
 	{Name: "/clear", Description: "Clear chat history"},
 	{Name: "/compact", Description: "Summarize old messages"},
+	{Name: "/model", Description: "Switch model"},
 	{Name: "/quit", Description: "Exit the TUI"},
 }
 
@@ -149,15 +152,20 @@ type Model struct {
 	onSubmit      func(string)
 	onQuit        func()
 	onCompact     func()
-	commandMode   bool      // true when input starts with "/"
-	commands      []Command // registered slash commands
+	onModel       func(string, string)
+	commandMode   bool              // true when input starts with "/"
+	commands      []Command         // registered slash commands
+	modelMode     bool              // true when in model-selection sub-mode
+	modelItems    []string          // available models in "provider/model" format
+	modelSelected int               // highlighted index in filtered list
+	providerNames map[string]string // provider key → display name
 }
 
 // clearCopyFlashMsg clears the copy flash indicator after a timeout.
 type clearCopyFlashMsg struct{}
 
 // New creates a new TUI model.
-func New(provider, model string, contextWindow int, onSubmit func(string), onQuit func(), onCompact func()) *Model {
+func New(provider, model string, contextWindow int, onSubmit func(string), onQuit func(), onCompact func(), onModel func(string, string)) *Model {
 	input := textinput.New()
 	input.Placeholder = "Type a message..."
 	input.Focus()
@@ -184,6 +192,7 @@ func New(provider, model string, contextWindow int, onSubmit func(string), onQui
 		onSubmit:      onSubmit,
 		onQuit:        onQuit,
 		onCompact:     onCompact,
+		onModel:       onModel,
 		commands:      defaultCommands,
 	}
 }
@@ -209,7 +218,6 @@ func (m *Model) createRenderer() {
 var (
 	mdLinkRe   = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
 	autoLinkRe = regexp.MustCompile(`<((?:https?|ftp)://[^>]+)>`)
-	bareURLRe  = regexp.MustCompile(`(?m)(?:^|\s)((?:https?)://\S+)`)
 )
 
 // osc8Link wraps text in an OSC 8 hyperlink for clickable terminal links.
@@ -245,59 +253,6 @@ func (m *Model) glamourRender(content string) string {
 		return content
 	}
 	return strings.TrimSpace(out)
-}
-
-// tuiCompactStyle returns a glamour override style JSON. It strips heading
-// markers (###), removes document margins, and keeps everything else default.
-func tuiCompactStyle() []byte {
-	return []byte(`{
-  "document": {
-    "margin": 0
-  },
-  "h1": {
-    "prefix": "",
-    "suffix": "",
-    "block_prefix": "\n\n\n",
-    "block_suffix": "\n"
-  },
-  "h2": {
-    "prefix": "",
-    "suffix": "",
-    "block_prefix": "\n\n\n",
-    "block_suffix": "\n"
-  },
-  "h3": {
-    "prefix": "",
-    "suffix": "",
-    "block_prefix": "\n\n\n",
-    "block_suffix": "\n"
-  },
-  "h4": {
-    "prefix": "",
-    "suffix": "",
-    "block_prefix": "\n\n\n",
-    "block_suffix": "\n"
-  },
-  "h5": {
-    "prefix": "",
-    "suffix": "",
-    "block_prefix": "\n\n\n",
-    "block_suffix": "\n"
-  },
-  "h6": {
-    "prefix": "",
-    "suffix": "",
-    "block_prefix": "\n\n\n",
-    "block_suffix": "\n"
-  },
-  "codeblock": {
-    "block_prefix": "\n",
-    "block_suffix": "\n",
-    "prefix": "  ",
-    "style_prefix": "\033[48;5;236m",
-    "style_suffix": "\033[0m"
-  }
-}`)
 }
 
 // renderMarkdown renders raw markdown through glamour. Tables are extracted
@@ -749,6 +704,18 @@ func (m *Model) executeCommand(input string) {
 		if m.onCompact != nil {
 			m.onCompact()
 		}
+	case "/model":
+		if len(m.modelItems) == 0 {
+			m.AddMessage("system", "No models available. Configure providers or wait for model list to load.")
+			return
+		}
+		m.modelMode = true
+		m.modelSelected = 0
+		m.input.SetValue("")
+		m.input.Placeholder = "Search models..."
+		m.clearCommandMode()
+		m.adjustViewport()
+		return
 	default:
 		m.AddMessage("system", fmt.Sprintf("Unknown command: %s", cmd))
 	}
@@ -761,6 +728,50 @@ func (m *Model) updateCommandSuggestions() {
 		names = append(names, c.Name)
 	}
 	m.input.SetSuggestions(names)
+}
+
+// selectModel applies the currently highlighted model and exits model mode.
+func (m *Model) selectModel() {
+	filtered := m.filteredModels()
+	if m.modelSelected < len(filtered) {
+		selected := filtered[m.modelSelected]
+		parts := strings.SplitN(selected, "/", 2)
+		providerName := parts[0]
+		modelName := selected
+		if len(parts) == 2 {
+			modelName = parts[1]
+		}
+		m.provider = providerName
+		m.modelName = modelName
+		if m.onModel != nil {
+			m.onModel(providerName, modelName)
+		}
+	}
+	m.exitModelMode()
+}
+
+// filteredModels returns modelItems filtered by the current input value.
+func (m *Model) filteredModels() []string {
+	filter := strings.ToLower(m.input.Value())
+	if filter == "" {
+		return m.modelItems
+	}
+	var out []string
+	for _, model := range m.modelItems {
+		if strings.Contains(strings.ToLower(model), filter) {
+			out = append(out, model)
+		}
+	}
+	return out
+}
+
+// exitModelMode exits model-selection mode and resets the input.
+func (m *Model) exitModelMode() {
+	m.modelMode = false
+	m.modelSelected = 0
+	m.input.SetValue("")
+	m.input.Placeholder = "Type a message..."
+	m.adjustViewport()
 }
 
 // SetThinking sets the thinking state.
@@ -850,6 +861,14 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 	if msg.ContextWindow > 0 {
 		m.HandleContextInfo(msg.ContextTokens, msg.ContextWindow)
 	}
+
+	if len(msg.ModelList) > 0 {
+		m.modelItems = msg.ModelList
+		if msg.ProviderNames != nil {
+			m.providerNames = msg.ProviderNames
+		}
+		m.refreshViewport()
+	}
 }
 
 // Init implements tea.Model.
@@ -894,7 +913,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "ctrl+c", "esc":
+		case "ctrl+c":
+			if m.onQuit != nil {
+				m.onQuit()
+			}
+			return m, tea.Quit
+
+		case "esc":
+			if m.modelMode {
+				m.exitModelMode()
+				return m, nil
+			}
 			if m.onQuit != nil {
 				m.onQuit()
 			}
@@ -915,6 +944,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "enter":
+			if m.modelMode {
+				m.selectModel()
+				return m, nil
+			}
 			if m.commandMode {
 				value := m.input.Value()
 				m.input.SetValue("")
@@ -940,10 +973,36 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "up", "down", "pgup", "pgdown", "home", "end":
+		case "up":
+			if m.modelMode {
+				filtered := m.filteredModels()
+				if m.modelSelected > 0 {
+					m.modelSelected--
+				}
+				_ = filtered
+				return m, nil
+			}
 			var vpCmd tea.Cmd
 			m.viewport, vpCmd = m.viewport.Update(msg)
 			return m, vpCmd
+
+		case "down":
+			if m.modelMode {
+				filtered := m.filteredModels()
+				if m.modelSelected < len(filtered)-1 {
+					m.modelSelected++
+				}
+				_ = filtered
+				return m, nil
+			}
+			var vpCmd2 tea.Cmd
+			m.viewport, vpCmd2 = m.viewport.Update(msg)
+			return m, vpCmd2
+
+		case "pgup", "pgdown", "home", "end":
+			var vpCmd3 tea.Cmd
+			m.viewport, vpCmd3 = m.viewport.Update(msg)
+			return m, vpCmd3
 
 		}
 
@@ -956,6 +1015,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // detectCommandMode enables or disables command mode based on the input prefix.
 func (m *Model) detectCommandMode() {
+	if m.modelMode {
+		return
+	}
 	if strings.HasPrefix(m.input.Value(), "/") {
 		if !m.commandMode {
 			m.commandMode = true
@@ -979,7 +1041,39 @@ func (m *Model) clearCommandMode() {
 
 // paletteLines returns the number of terminal rows the command palette
 // occupies when visible. Includes the rounded border (2) and padding (2).
+// maxModelLines returns the maximum number of model items that can fit
+// in the terminal without pushing the input off-screen.
+func (m *Model) maxModelLines() int {
+	if m.height == 0 {
+		return 10
+	}
+	available := m.height - m.headerHeight() - 4 // status, input, border/padding
+	items := available - 4                       // border (2) + padding (2)
+	if items < 1 {
+		items = 1
+	}
+	return items
+}
+
 func (m *Model) paletteLines() int {
+	if m.modelMode {
+		filtered := m.filteredModels()
+		if len(filtered) == 0 {
+			return 4
+		}
+		// Count display rows: model items + provider heading rows
+		rowCount := len(filtered)
+		providers := make(map[string]bool)
+		for _, model := range filtered {
+			parts := strings.SplitN(model, "/", 2)
+			providers[parts[0]] = true
+		}
+		rowCount += len(providers)
+		if rowCount > m.maxModelLines() {
+			rowCount = m.maxModelLines()
+		}
+		return 4 + rowCount
+	}
 	if !m.commandMode {
 		return 0
 	}
@@ -1005,7 +1099,7 @@ func (m *Model) adjustViewport() {
 		return
 	}
 	chatHeight := m.height - m.headerHeight() - 2
-	if m.commandMode {
+	if m.commandMode || m.modelMode {
 		chatHeight -= m.paletteLines()
 	}
 	if chatHeight < 5 {
@@ -1149,6 +1243,88 @@ func (m *Model) renderMessages() string {
 	return b.String()
 }
 
+// renderModelPalette renders the model selection list above the input.
+func (m *Model) renderModelPalette() string {
+	filtered := m.filteredModels()
+	if len(filtered) == 0 {
+		return commandPaletteStyle.Render("No matching models")
+	}
+
+	// Build display rows: provider heading + model items
+	type row struct {
+		isHeading bool
+		text      string
+		modelIdx  int
+	}
+	var rows []row
+	lastProvider := ""
+	for i, model := range filtered {
+		parts := strings.SplitN(model, "/", 2)
+		providerKey := parts[0]
+		name := model
+		if len(parts) == 2 {
+			name = parts[1]
+		}
+		if providerKey != lastProvider {
+			displayName := providerKey
+			if m.providerNames != nil {
+				if dn, ok := m.providerNames[providerKey]; ok && dn != "" {
+					displayName = dn
+				}
+			}
+			rows = append(rows, row{isHeading: true, text: displayName})
+			lastProvider = providerKey
+		}
+		rows = append(rows, row{text: name, modelIdx: i})
+	}
+
+	// Find the display row index for the selected model
+	selectedRowIdx := 0
+	for i, r := range rows {
+		if r.modelIdx == m.modelSelected {
+			selectedRowIdx = i
+			break
+		}
+	}
+
+	// Window calculation over display rows
+	maxVisible := m.maxModelLines()
+	start := selectedRowIdx - maxVisible/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxVisible
+	if end > len(rows) {
+		end = len(rows)
+		start = end - maxVisible
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	current := m.provider + "/" + m.modelName
+	var lines []string
+	for i := start; i < end; i++ {
+		r := rows[i]
+		if r.isHeading {
+			lines = append(lines, commandNameStyle.Render(r.text))
+			continue
+		}
+		model := filtered[r.modelIdx]
+		marker := "  "
+		if r.modelIdx == m.modelSelected {
+			marker = "> "
+		}
+		styled := listItemStyle.Render(r.text)
+		if model == current {
+			styled = commandNameStyle.Render(r.text + " (current)")
+		}
+		lines = append(lines, "  "+marker+styled)
+	}
+
+	return commandPaletteStyle.Render(strings.Join(lines, "\n"))
+}
+
 // renderCommandPalette renders the command suggestion list above the input.
 func (m *Model) renderCommandPalette() string {
 	filter := strings.TrimPrefix(strings.TrimSpace(m.input.Value()), "/")
@@ -1203,18 +1379,20 @@ func (m *Model) View() tea.View {
 	// Viewport holds the scrollable chat history
 	viewportView := m.viewport.View()
 
-	// Command palette (shown above input when in command mode)
-	var commandPalette string
-	if m.commandMode {
-		commandPalette = m.renderCommandPalette()
+	// Palette (shown above input when in command or model mode)
+	var palette string
+	if m.modelMode {
+		palette = m.renderModelPalette()
+	} else if m.commandMode {
+		palette = m.renderCommandPalette()
 	}
 
 	// Input (1 line)
 	inputView := m.input.View()
 
 	elements := []string{header, viewportView, status}
-	if m.commandMode && commandPalette != "" {
-		elements = append(elements, commandPalette)
+	if palette != "" {
+		elements = append(elements, palette)
 	}
 	elements = append(elements, inputView)
 	body := lipgloss.JoinVertical(lipgloss.Left, elements...)

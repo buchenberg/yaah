@@ -199,35 +199,33 @@ Edit `~/.yaah/config.yaml`:
 ```yaml
 providers:
   openai:
+    name: OpenAI                          # display name (shown in /model)
     base_url: https://api.openai.com/v1
     api_key: ${OPENAI_API_KEY}
+    # models:                              # optional: override API model list
+    #   - gpt-4o
+    #   - gpt-4o-mini
   ollama:
+    name: Ollama
     base_url: http://localhost:11434/v1
     api_key: ollama
 
 default:
-  model: openai/gpt-4o-mini
+  provider: openai                        # which provider to use by default
+  model: gpt-4o-mini                      # model name (no provider prefix needed)
+  small_model: gpt-4o-mini
   max_iterations: 50
-  approval: ask
+  approval: ask                           # ask | allow | deny
+
+log_level: INFO
 ```
 
 Environment variables referenced as `${VAR_NAME}` are substituted at load time.
 
 ## Status
 
-**v0.1.0 released.** v0.2.0 in flight (M7 TUI shipped).
-
-| Milestone | Scope | Status |
-|---|---|---|
-| **M0** | Bootstrap: build, version, CI, cross-compile | ✅ |
-| **M1** | Config + REPL + `yaah doctor` + `yaah update` | ✅ |
-| **M2** | Providers + agent loop + built-in tools + streaming | ✅ |
-| **M3** | Skills + `AGENTS.md` instructions | ✅ |
-| **M4** | MCP client (stdio newline-delimited + HTTP) with framing auto-detect | ✅ |
-| **M5** | Persistent memory (SQLite + FTS5) | ✅ |
-| **M7** | TUI (`yaah tui`, bubbletea, tool-call display, streaming) | ✅ |
-
-203 tests across 15 packages. Cross-compiles to 5 platforms.
+**v0.2.0 released.** TUI with streaming, tool-call display, slash commands,
+and model switching shipped.
 
 ## License
 

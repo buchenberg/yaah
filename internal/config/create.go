@@ -13,19 +13,23 @@ const defaultConfigYAML = `# yaah configuration — see https://github.com/buche
 
 providers:
   openai:
+    name: OpenAI                          # display name (optional, shown in /model)
     base_url: https://api.openai.com/v1
     api_key: ${OPENAI_API_KEY}
+    # models:                              # optional: override the API model list
+    #   - gpt-4o
+    #   - gpt-4o-mini
   ollama:
+    name: Ollama
     base_url: http://localhost:11434/v1
     api_key: ollama
 
 default:
-  # Change this to the model you want. Use provider/model syntax (e.g. openai/gpt-4o).
-  # The provider prefix is stripped before sending to the API.
-  model: openai/gpt-4o-mini
-  small_model: openai/gpt-4o-mini
+  provider: openai                        # which provider to use by default
+  model: gpt-4o-mini                      # model name (no provider prefix needed)
+  small_model: gpt-4o-mini
   max_iterations: 50
-  approval: ask                          # ask | allow | deny
+  approval: ask                           # ask | allow | deny
 
 log_level: INFO
 `

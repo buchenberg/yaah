@@ -73,6 +73,49 @@ func (c *OpenAIClient) Send(ctx context.Context, req types.ChatRequest) (*types.
 	return &result, nil
 }
 
+// ModelLister is an optional interface for providers that can list available models.
+type ModelLister interface {
+	ListModels(ctx context.Context) ([]string, error)
+}
+
+// ListModels fetches the available model IDs from the provider's /v1/models endpoint.
+func (c *OpenAIClient) ListModels(ctx context.Context) ([]string, error) {
+	url := c.baseURL + "/models"
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("list models returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode models: %w", err)
+	}
+
+	models := make([]string, 0, len(result.Data))
+	for _, m := range result.Data {
+		if m.ID != "" {
+			models = append(models, m.ID)
+		}
+	}
+	return models, nil
+}
+
 // EstimateTokens returns a rough token count using the char/4 heuristic.
 // This is a fallback; when a proper tokenizer is available (e.g. tiktoken),
 // it will be used instead. Accurate to within ~20% for English text.
