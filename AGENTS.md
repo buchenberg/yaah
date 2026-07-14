@@ -100,18 +100,6 @@ ditto --norsrc yaah ~/.local/bin/yaah  # macOS: avoids Gatekeeper quarantine
 - Tests live next to the code they test (`foo.go` ↔ `foo_test.go`).
 - Use `t.Run("name", func(t *testing.T) { ... })` for subtests.
 
-## Milestone status
-
-All milestones complete through v0.1.0 plus M7 TUI for v0.2.0:
-
-- **M0:** Bootstrap, CI, cross-compile ✅
-- **M1:** Config, REPL, doctor, update ✅
-- **M2:** Providers, agent loop, tools, streaming ✅
-- **M3:** Skills, AGENTS.md instructions ✅
-- **M4:** MCP client (stdio newline-delimited + HTTP) with framing auto-detect ✅
-- **M5:** Persistent memory (SQLite + FTS5) ✅
-- **M7:** TUI (bubbletea, tool-call display, streaming) ✅
-
 ## What NOT to do
 
 - Don't add a `web/` package, a `gateway/` package, or anything that talks to
