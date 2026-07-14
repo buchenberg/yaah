@@ -27,6 +27,8 @@ You have access to these built-in tools:
 - **delete** — remove files
 - **bash** — execute shell commands (POSIX)
 - **powershell** — execute PowerShell commands (Windows)
+- **grep** — search file contents with ripgrep (or Go-native regex fallback)
+- **glob** — find files by pattern (e.g. `**/*.go`, `src/**/*.ts`)
 - **todowrite** — create and manage a structured task list for complex work
 - **skill** — load specialized skill instructions into the conversation
 - **memory_search / memory_add / memory_update / memory_delete** — persistent
@@ -113,6 +115,13 @@ Use `todowrite` for any non-trivial task with 3+ distinct steps:
   which skills are available.
 - When a skill is loaded, follow its instructions. The skill's content
   overrides conflicting general guidance.
+
+## Codebase search
+
+- Use `grep` to find code by content — supports full regex, file filter (`include`), and directory scoping.
+- Use `glob` to find files by name pattern — supports `**`, `?`, `[...]`, `{a,b}` glob patterns.
+- Prefer `grep` over `bash rg` or `bash grep`. The `grep` tool has a pure-Go fallback when ripgrep is not installed.
+- Search first, read later — use `grep`/`glob` to locate relevant files before reading them.
 
 ## Provider/model switching
 

@@ -100,14 +100,22 @@ yaah update
 ### Streaming responses
 Tokens stream in real time with a thinking spinner. The spinner stops on the first token and the response appears as it's generated.
 
+### Agent loop safety
+The agent loop includes several safeguards for long-running tasks:
+- **Context compaction** — when the conversation approaches the context window, older messages are summarized by the LLM using a structured template (goal, completed work, active tasks, decisions, files modified). Falls back to simple trimming if the LLM call fails.
+- **Loop detection** — SHA-256 hashes of tool calls (name + result) are tracked in a sliding window. If the same tool produces the same result 5+ times in 10 steps, the loop halts to prevent stuck agents.
+- **Truncation safety** — if the provider response has `finish_reason=length` (truncated mid-generation), tool calls from that response are discarded rather than executed with potentially corrupted arguments.
+
 ### Tool calling
 The agent can use built-in tools and MCP server tools:
 - `read` — read files
 - `write` — write/overwrite files
 - `edit` — exact-string replacements in existing files
 - `delete` — remove files
+- `grep` — search file contents (ripgrep with Go-native fallback)
+- `glob` — find files by pattern (e.g. `**/*.go`)
 - `bash` — run shell commands (POSIX)
-- `powershell` — run PowerShell commands (Windows PowerShell 5.1)
+- `powershell` — run PowerShell commands (pwsh 7+ or Windows PowerShell)
 - `memory_search` / `memory_add` / `memory_update` / `memory_delete` / `memory_search_sessions` — persistent memory
 - `todowrite` — task tracking
 - `skill` — load skill content into the conversation
@@ -213,7 +221,7 @@ providers:
 default:
   provider: openai                        # which provider to use by default
   model: gpt-4o-mini                      # model name (no provider prefix needed)
-  small_model: gpt-4o-mini
+  small_model: gpt-4o-mini                  # used for context compaction (optional; falls back to model)
   max_iterations: 50
   approval: ask                           # ask | allow | deny
 

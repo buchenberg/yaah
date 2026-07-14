@@ -43,7 +43,7 @@ yaah/
 │   ├── tui.go                   # yaah tui (bubbletea)
 │   └── color.go                 # ANSI color helpers
 ├── internal/
-│   ├── agent/                   # agent loop (streaming, tool calling)
+│   ├── agent/                   # agent loop (streaming, compaction, loop detection, truncation safety)
 │   ├── banner/                  # figlet + lolcat banner for the TUI/REPL
 │   ├── config/                  # load ~/.yaah/config.yaml, env subst
 │   ├── instructions/            # walk up cwd, load AGENTS.md/CLAUDE.md
@@ -54,7 +54,7 @@ yaah/
 │   ├── skills/                  # SKILL.md discovery, frontmatter parsing
 │   ├── spinner/                 # animated thinking spinner
 │   ├── todo/                    # in-memory todo store
-│   ├── tools/                   # built-in tools (read, bash, memory, todo)
+│   ├── tools/                   # built-in tools (read, write, edit, grep, glob, bash, powershell, memory, todo)
 │   ├── tui/                     # bubbletea TUI (M7)
 │   ├── types/                   # OpenAI message types
 │   └── update/                  # GitHub release checking

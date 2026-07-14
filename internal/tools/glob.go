@@ -59,17 +59,14 @@ func (t *GlobTool) Execute(ctx context.Context, args string) (string, error) {
 }
 
 func (t *GlobTool) globRipgrep(ctx context.Context, params globParams) (string, error) {
-	exclude := make([]string, 0, len(commonIgnoreDirs))
-	for dir := range commonIgnoreDirs {
-		exclude = append(exclude, fmt.Sprintf("!%s", dir))
-	}
-	rgArgs := []string{"--files", "--glob", params.Pattern, "--no-messages"}
-	rgArgs = append(rgArgs, exclude...)
-	rgArgs = append(rgArgs, "--", params.Path)
+	rgArgs := []string{"--files", "--glob", params.Pattern, "--no-messages", "--", params.Path}
 
 	cmd := exec.CommandContext(ctx, "rg", rgArgs...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return "No files found.", nil
+		}
 		return "", fmt.Errorf("glob: %w\n%s", err, string(output))
 	}
 
