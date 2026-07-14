@@ -15,6 +15,8 @@ import (
 	"time"
 )
 
+const toolResultMaxLen = 8192
+
 // Tool is the interface that all tools (built-in and MCP) must satisfy.
 type Tool interface {
 	// Name returns the tool name as it appears in the function call.
@@ -620,6 +622,7 @@ func NewRegistry() *Registry {
 	r.Register(&GlobTool{})
 	r.Register(&LsTool{})
 	r.Register(&QuestionTool{})
+	r.Register(&WebFetchTool{})
 	return r
 }
 

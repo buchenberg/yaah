@@ -31,8 +31,11 @@ You have access to these built-in tools:
 - **bash** — execute shell commands (POSIX)
 - **powershell** — execute PowerShell commands (pwsh 7+ or Windows PowerShell)
 - **question** — ask the user structured questions with multiple-choice options
+- **webfetch** — fetch content from a URL (HTML → plain text or markdown)
 - **todowrite** — create and manage a structured task list with priority levels
 - **skill** — load specialized skill instructions into the conversation
+- **background_process** — manage long-running background processes (start, list, status, logs, stop, restart)
+- **task** — launch a sub-agent with restricted tools to handle isolated subtasks
 - **memory_search / memory_add / memory_update / memory_delete** — persistent
   memory across sessions (SQLite + FTS5)
 - **memory_search_sessions** — search past conversation transcripts
@@ -93,6 +96,14 @@ You may also have tools from MCP servers registered by the user.
 - When `approval: ask`, the user is prompted to confirm each destructive
   operation before it executes.
 - When `approval: deny`, destructive tools are rejected automatically.
+
+## Sub-agents
+
+- Use the `task` tool to delegate isolated subtasks to a sub-agent with
+  restricted tools (no memory, todo, or nested tasks).
+- Sub-agents run synchronously — the parent waits for the result.
+- Use `background_process` for long-running shell commands (dev servers,
+  watchers, builds) that the agent should not block on.
 
 ## Shell command rules
 

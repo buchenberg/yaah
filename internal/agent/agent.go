@@ -103,11 +103,17 @@ type Loop struct {
 	LoopDetectWindow int
 
 	// ApprovalMode controls per-tool approval behavior: "allow", "ask", or "deny".
-	// "allow" — execute all tools without asking.
-	// "ask" — prompt before executing write/destructive tools (bash, powershell, write, edit, delete).
-	// "deny" — reject all write/destructive tools.
-	// Default "ask".
 	ApprovalMode string
+
+	// FollowUps is an optional channel for queuing follow-up messages while
+	// the agent is running. Messages received are injected as user messages
+	// at the start of the next iteration. Close this channel to unblock draining.
+	FollowUps <-chan string
+
+	// Steer is an optional channel for high-priority mid-turn input. Messages
+	// received are injected immediately before the next provider call as a
+	// user message, overriding the normal iteration flow.
+	Steer <-chan string
 
 	// loopHistory tracks recent tool call hashes for loop detection.
 	loopHistory []string
@@ -154,6 +160,31 @@ func (l *Loop) Run(ctx context.Context, userInput string) (string, error) {
 			l.Messages = messages
 			return "", ctx.Err()
 		default:
+		}
+
+		// Drain steering messages (high priority, before this turn).
+		if l.Steer != nil {
+			select {
+			case msg, ok := <-l.Steer:
+				if ok && msg != "" {
+					messages = append(messages, types.UserMsg("[STEER] "+msg))
+					if l.ContextWindow > 0 {
+						l.compactContext(ctx)
+					}
+				}
+			default:
+			}
+		}
+
+		// Drain follow-up messages (queued between turns).
+		if l.FollowUps != nil {
+			select {
+			case msg, ok := <-l.FollowUps:
+				if ok && msg != "" {
+					messages = append(messages, types.UserMsg(msg))
+				}
+			default:
+			}
 		}
 
 		req := types.ChatRequest{

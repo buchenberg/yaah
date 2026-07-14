@@ -124,6 +124,9 @@ The agent can use built-in tools and MCP server tools:
 - `bash` — run shell commands (POSIX)
 - `powershell` — run PowerShell commands (pwsh 7+ or Windows PowerShell)
 - `question` — ask the user structured questions with multiple-choice options
+- `webfetch` — fetch URL content (HTML to plain text/markdown)
+- `task` — delegate subtasks to sub-agents with restricted tools
+- `background_process` — manage long-running background processes (start/list/logs/stop/restart)
 - `memory_search` / `memory_add` / `memory_update` / `memory_delete` / `memory_search_sessions` — persistent memory
 - `todowrite` — task tracking with priority levels (high/medium/low), persisted to SQLite
 - `skill` — load skill content into the conversation

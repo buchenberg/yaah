@@ -15,6 +15,7 @@ import (
 	"github.com/buchenberg/yaah/internal/instructions"
 	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
+	processpkg "github.com/buchenberg/yaah/internal/process"
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/repl"
@@ -183,6 +184,7 @@ type agentSession struct {
 	toolReg        *tools.Registry
 	db             *memory.DB
 	mcpClients     []mcp.MCPClient
+	procMgr        *processpkg.Manager
 	messages       []types.Message
 	sessionID      string
 	msgIdx         int
@@ -258,6 +260,13 @@ func newAgentSession() (*agentSession, error) {
 		},
 	})
 
+	procMgr := processpkg.NewManager()
+	toolReg.Register(&tools.BackgroundProcessTool{Manager: procMgr})
+
+	toolReg.Register(&tools.TaskTool{
+		Runner: makeTaskRunner(provider, systemPrompt, modelName),
+	})
+
 	sessionID := fmt.Sprintf("sess-%d", time.Now().UnixNano())
 	if db != nil {
 		cwd, _ := os.Getwd()
@@ -278,6 +287,7 @@ func newAgentSession() (*agentSession, error) {
 		toolReg:      toolReg,
 		db:           db,
 		mcpClients:   mcpClients,
+		procMgr:      procMgr,
 		sessionID:    sessionID,
 	}, nil
 }
@@ -553,6 +563,35 @@ func resolveProvider(cfg *config.Config) agent.Provider {
 
 	// Last resort: return a stub that explains the issue
 	return &noProviderStub{}
+}
+
+// makeTaskRunner creates a sub-agent runner for the task tool.
+func makeTaskRunner(provider agent.Provider, systemPrompt, modelName string) tools.TaskRunner {
+	return func(ctx context.Context, prompt string) (string, error) {
+		subReg := tools.NewRegistry()
+		subReg.Register(&tools.ReadTool{})
+		subReg.Register(&tools.WriteTool{})
+		subReg.Register(&tools.EditTool{})
+		subReg.Register(&tools.DeleteTool{})
+		subReg.Register(&tools.GrepTool{})
+		subReg.Register(&tools.GlobTool{})
+		subReg.Register(&tools.LsTool{})
+		subReg.Register(&tools.BashTool{})
+		subReg.Register(&tools.PowerShellTool{})
+		subReg.Register(&tools.WebFetchTool{})
+
+		subLoop := &agent.Loop{
+			Provider:      provider,
+			Registry:      subReg,
+			SystemPrompt:  systemPrompt,
+			Model:         modelName,
+			MaxIterations: 25,
+			MaxRetries:    2,
+			ApprovalMode:  "allow",
+		}
+
+		return subLoop.Run(ctx, prompt)
+	}
 }
 
 // isRealKey returns true if the API key looks like a real key (not empty,
