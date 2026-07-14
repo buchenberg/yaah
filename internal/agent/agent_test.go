@@ -47,10 +47,8 @@ func (f *fakeProvider) Send(ctx context.Context, req types.ChatRequest) (*types.
 
 // fakeStreamProvider implements StreamProvider for testing.
 type fakeStreamProvider struct {
-	chunks   []providers.StreamChunk
-	err      error
-	chunkIdx int
-	closeCh  chan struct{}
+	chunks  []providers.StreamChunk
+	closeCh chan struct{}
 	// retry testing
 	failCount int
 	maxFails  int

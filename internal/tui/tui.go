@@ -218,7 +218,6 @@ func (m *Model) createRenderer() {
 var (
 	mdLinkRe   = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
 	autoLinkRe = regexp.MustCompile(`<((?:https?|ftp)://[^>]+)>`)
-	bareURLRe  = regexp.MustCompile(`(?m)(?:^|\s)((?:https?)://\S+)`)
 )
 
 // osc8Link wraps text in an OSC 8 hyperlink for clickable terminal links.
@@ -254,59 +253,6 @@ func (m *Model) glamourRender(content string) string {
 		return content
 	}
 	return strings.TrimSpace(out)
-}
-
-// tuiCompactStyle returns a glamour override style JSON. It strips heading
-// markers (###), removes document margins, and keeps everything else default.
-func tuiCompactStyle() []byte {
-	return []byte(`{
-  "document": {
-    "margin": 0
-  },
-  "h1": {
-    "prefix": "",
-    "suffix": "",
-    "block_prefix": "\n\n\n",
-    "block_suffix": "\n"
-  },
-  "h2": {
-    "prefix": "",
-    "suffix": "",
-    "block_prefix": "\n\n\n",
-    "block_suffix": "\n"
-  },
-  "h3": {
-    "prefix": "",
-    "suffix": "",
-    "block_prefix": "\n\n\n",
-    "block_suffix": "\n"
-  },
-  "h4": {
-    "prefix": "",
-    "suffix": "",
-    "block_prefix": "\n\n\n",
-    "block_suffix": "\n"
-  },
-  "h5": {
-    "prefix": "",
-    "suffix": "",
-    "block_prefix": "\n\n\n",
-    "block_suffix": "\n"
-  },
-  "h6": {
-    "prefix": "",
-    "suffix": "",
-    "block_prefix": "\n\n\n",
-    "block_suffix": "\n"
-  },
-  "codeblock": {
-    "block_prefix": "\n",
-    "block_suffix": "\n",
-    "prefix": "  ",
-    "style_prefix": "\033[48;5;236m",
-    "style_suffix": "\033[0m"
-  }
-}`)
 }
 
 // renderMarkdown renders raw markdown through glamour. Tables are extracted

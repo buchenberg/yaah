@@ -309,33 +309,6 @@ func (l *Loop) trimContext() {
 	l.Messages = newMsgs
 }
 
-// executeTool runs a single tool call and appends the result to messages.
-func (l *Loop) executeTool(ctx context.Context, tc types.ToolCall, messages *[]types.Message) {
-	abbreviated := abbreviateArgs(tc.Function.Arguments, 80)
-
-	if l.OnTool != nil {
-		l.OnTool(ToolInfo{Name: tc.Function.Name, Args: abbreviated})
-	}
-
-	start := time.Now()
-	result, err := l.Registry.Execute(ctx, tc.Function.Name, tc.Function.Arguments)
-	duration := time.Since(start)
-
-	if err != nil {
-		result = fmt.Sprintf("error: %v", err)
-	}
-
-	if l.OnTool != nil {
-		info := ToolInfo{Name: tc.Function.Name, Args: abbreviated, Duration: duration}
-		if err != nil {
-			info.Error = err.Error()
-		}
-		l.OnTool(info)
-	}
-
-	*messages = append(*messages, types.ToolResultMsg(tc.ID, tc.Function.Name, result))
-}
-
 // runStream handles a streaming request and returns the assembled assistant
 // message (content + any tool calls). Tool calls accumulated from the stream
 // are returned to Run, which executes them exactly like the non-streaming
