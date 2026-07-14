@@ -126,6 +126,12 @@ func (d *DB) migrate() error {
 		accessed_at INTEGER,
 		access_count INTEGER DEFAULT 0
 	);
+
+	CREATE TABLE IF NOT EXISTS todos (
+		id         INTEGER PRIMARY KEY,
+		data       TEXT NOT NULL,
+		updated_at INTEGER NOT NULL
+	);
 	`
 
 	if _, err := d.sql.Exec(schema); err != nil {

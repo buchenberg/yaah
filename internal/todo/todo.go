@@ -1,6 +1,3 @@
-// Package todo provides an in-memory todo list for the agent to track
-// tasks during a session. The agent can add, update, and display todos
-// using the todowrite tool.
 package todo
 
 import (
@@ -11,27 +8,71 @@ import (
 
 // Item represents a single todo item.
 type Item struct {
-	ID      string `json:"id"`
-	Content string `json:"content"`
-	Status  string `json:"status"` // pending, in_progress, completed, cancelled
+	ID       string `json:"id"`
+	Content  string `json:"content"`
+	Status   string `json:"status"`   // pending, in_progress, completed, cancelled
+	Priority string `json:"priority"` // high, medium, low
 }
 
 // Store is a thread-safe in-memory todo store.
 type Store struct {
 	mu    sync.RWMutex
 	items []Item
+	db    Persister
 }
 
-// NewStore creates a new empty todo store.
+// Persister saves and loads todos from persistent storage.
+type Persister interface {
+	SaveTodos(items []Item) error
+	LoadTodos() ([]Item, error)
+}
+
+// NewStore creates a new todo store.
 func NewStore() *Store {
 	return &Store{}
 }
 
+// NewStoreWithDB creates a todo store backed by persistent storage.
+func NewStoreWithDB(db Persister) *Store {
+	return &Store{db: db}
+}
+
+// LoadFromDB loads todos from persistent storage.
+func (s *Store) LoadFromDB() error {
+	if s.db == nil {
+		return nil
+	}
+	items, err := s.db.LoadTodos()
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.items = items
+	s.mu.Unlock()
+	return nil
+}
+
+// Replace replaces all todo items and persists if a DB is configured.
+func (s *Store) Replace(items []Item) {
+	s.mu.Lock()
+	s.items = items
+	if s.db != nil {
+		s.db.SaveTodos(items)
+	}
+	s.mu.Unlock()
+}
+
 // Add adds a new todo item.
-func (s *Store) Add(id, content, status string) {
+func (s *Store) Add(id, content, status, priority string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.items = append(s.items, Item{ID: id, Content: content, Status: status})
+	if priority == "" {
+		priority = "medium"
+	}
+	s.items = append(s.items, Item{ID: id, Content: content, Status: status, Priority: priority})
+	if s.db != nil {
+		s.db.SaveTodos(s.items)
+	}
 }
 
 // Update updates the status of a todo item by ID.
@@ -41,8 +82,11 @@ func (s *Store) Update(id, status string) {
 	for i := range s.items {
 		if s.items[i].ID == id {
 			s.items[i].Status = status
-			return
+			break
 		}
+	}
+	if s.db != nil {
+		s.db.SaveTodos(s.items)
 	}
 }
 
@@ -53,8 +97,11 @@ func (s *Store) UpdateContent(id, content string) {
 	for i := range s.items {
 		if s.items[i].ID == id {
 			s.items[i].Content = content
-			return
+			break
 		}
+	}
+	if s.db != nil {
+		s.db.SaveTodos(s.items)
 	}
 }
 
@@ -79,7 +126,8 @@ func (s *Store) Format() string {
 	var buf strings.Builder
 	for _, item := range s.items {
 		icon := statusIcon(item.Status)
-		fmt.Fprintf(&buf, "  %s %s\n", icon, item.Content)
+		prio := priorityLabel(item.Priority)
+		fmt.Fprintf(&buf, "  %s [%s] %s\n", icon, prio, item.Content)
 	}
 	return buf.String()
 }
@@ -93,7 +141,19 @@ func statusIcon(status string) string {
 		return "→"
 	case "cancelled":
 		return "✗"
-	default: // pending
+	default:
 		return "○"
+	}
+}
+
+// priorityLabel returns a short label for the priority level.
+func priorityLabel(priority string) string {
+	switch priority {
+	case "high":
+		return "HIGH"
+	case "low":
+		return "LOW "
+	default:
+		return "MED "
 	}
 }

@@ -18,6 +18,8 @@ import (
 	"github.com/buchenberg/yaah/internal/instructions"
 	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
+	processpkg "github.com/buchenberg/yaah/internal/process"
+	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -130,6 +132,7 @@ func runTUI() error {
 	cwd, _ := os.Getwd()
 	instrFiles := instructions.Load(cwd, cwd)
 	systemPrompt := "You are yaah, a helpful AI assistant. Respond concisely."
+	systemPrompt += "\n\n## Runtime Environment\n" + prompts.DetectEnvironment()
 	if formatted := instructions.FormatForSystem(instrFiles); formatted != "" {
 		systemPrompt += "\n\n" + formatted
 	}
@@ -189,6 +192,13 @@ func runTUI() error {
 	skillDirs := skillSearchPaths()
 	toolReg.Register(&tools.SkillTool{Dirs: skillDirs})
 
+	procMgr := processpkg.NewManager()
+	toolReg.Register(&tools.BackgroundProcessTool{Manager: procMgr})
+
+	toolReg.Register(&tools.TaskTool{
+		Runner: makeTaskRunner(resolveProvider(cfg), systemPrompt, modelName),
+	})
+
 	agentCh := make(chan tui.AgentMsg, 256)
 
 	// Shared conversation history for the TUI session.
@@ -207,7 +217,76 @@ func runTUI() error {
 			_ = pName
 		},
 		func() {},
-		nil,
+		func() {
+			go func() {
+				window := cfg.Default.ContextWindow
+				if window <= 0 {
+					window = 128000
+				}
+				if len(messages) <= 4 {
+					agentCh <- tui.AgentMsg{Flush: "Context is already small enough."}
+					return
+				}
+				totalChars := 0
+				for _, m := range messages {
+					totalChars += len(m.Content)
+					for _, tc := range m.ToolCalls {
+						totalChars += len(tc.Function.Arguments) + len(tc.Function.Name)
+					}
+				}
+				if totalChars/4 <= window*4/5 {
+					agentCh <- tui.AgentMsg{Flush: fmt.Sprintf("Context is already compact enough (%d/%d tokens).", totalChars/4, window)}
+					return
+				}
+
+				sysMsg := messages[0]
+				rest := messages[1:]
+				keepRecent := 6
+				if len(rest) <= keepRecent {
+					agentCh <- tui.AgentMsg{Flush: "Not enough messages to compact."}
+					return
+				}
+				split := len(rest) - keepRecent
+				oldMsgs := rest[:split]
+				keepMsgs := rest[split:]
+
+				var sb strings.Builder
+				sb.WriteString("Summarize the following conversation excerpt. Keep the structured format below.\n\n")
+				sb.WriteString("## Goal\n## Completed Work\n## Active Work\n## Pending Tasks\n## Key Decisions\n## Files Modified\n\n---\nConversation excerpt:\n\n")
+				for _, m := range oldMsgs {
+					if m.Content != "" {
+						sb.WriteString(fmt.Sprintf("%s: %s\n", m.Role, m.Content))
+					}
+					for _, tc := range m.ToolCalls {
+						sb.WriteString(fmt.Sprintf("[tool:%s] %s\n", tc.Function.Name, tc.Function.Arguments))
+					}
+				}
+
+				pName, mName := sm.get()
+				compactProv := providerFor(cfg, pName)
+				compactModel := cfg.Default.SmallModel
+				if compactModel == "" {
+					compactModel = mName
+				}
+				req := types.ChatRequest{
+					Model:    compactModel,
+					Messages: []types.Message{types.UserMsg(sb.String())},
+				}
+				resp, err := compactProv.Send(context.Background(), req)
+				if err != nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+					// Fallback: trim oldest half
+					messages = append([]types.Message{sysMsg}, keepMsgs...)
+					agentCh <- tui.AgentMsg{Flush: "Compacted (trimmed)."}
+					return
+				}
+				summary := resp.Choices[0].Message.Content
+				newMsgs := []types.Message{sysMsg}
+				newMsgs = append(newMsgs, types.SystemMsg("Previous conversation summary:\n"+summary))
+				newMsgs = append(newMsgs, keepMsgs...)
+				messages = newMsgs
+				agentCh <- tui.AgentMsg{Flush: "Compacted."}
+			}()
+		},
 		func(pName, mName string) {
 			sm.set(pName, mName)
 		},
@@ -263,7 +342,7 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 		},
 		OnTool: func(info agent.ToolInfo) {
 			if info.Duration == 0 {
-				ch <- tui.AgentMsg{ToolName: info.Name}
+				ch <- tui.AgentMsg{ToolName: info.Name, ToolArgs: info.Args}
 			} else {
 				ch <- tui.AgentMsg{
 					ToolResult:     info.Result,

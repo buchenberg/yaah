@@ -100,18 +100,37 @@ yaah update
 ### Streaming responses
 Tokens stream in real time with a thinking spinner. The spinner stops on the first token and the response appears as it's generated.
 
+### Agent loop safety
+The agent loop includes several safeguards for long-running tasks:
+- **Context compaction** — when the conversation approaches the context window, older messages are summarized by the LLM using a structured template (goal, completed work, active tasks, decisions, files modified). Falls back to simple trimming if the LLM call fails.
+- **Loop detection** — SHA-256 hashes of tool calls (name + result) are tracked in a sliding window. If the same tool produces the same result 5+ times in 10 steps, the loop halts to prevent stuck agents.
+- **Truncation safety** — if the provider response has `finish_reason=length` (truncated mid-generation), tool calls from that response are discarded rather than executed with potentially corrupted arguments.
+
+### Approval gates
+Destructive tools (`bash`, `powershell`, `write`, `edit`, `delete`) are gated by the `approval` config setting:
+- `approval: allow` — execute without asking
+- `approval: ask` — prompt for confirmation before each destructive operation
+- `approval: deny` — reject all destructive operations
+
 ### Tool calling
 The agent can use built-in tools and MCP server tools:
 - `read` — read files
 - `write` — write/overwrite files
-- `edit` — exact-string replacements in existing files
+- `edit` — string replacements with fuzzy matching (smart quotes, dashes, whitespace) and multi-edit `edits[]` support
 - `delete` — remove files
+- `grep` — search file contents (ripgrep with Go-native fallback)
+- `glob` — find files by pattern (e.g. `**/*.go`)
+- `ls` — list directory contents with tree formatting
 - `bash` — run shell commands (POSIX)
-- `powershell` — run PowerShell commands (Windows PowerShell 5.1)
+- `powershell` — run PowerShell commands (pwsh 7+ or Windows PowerShell)
+- `question` — ask the user structured questions with multiple-choice options
+- `webfetch` — fetch URL content (HTML to plain text/markdown)
+- `task` — delegate subtasks to sub-agents with restricted tools
+- `background_process` — manage long-running background processes (start/list/logs/stop/restart)
 - `memory_search` / `memory_add` / `memory_update` / `memory_delete` / `memory_search_sessions` — persistent memory
-- `todowrite` — task tracking
-- `skill` — load skill content into the conversation
-- MCP tools from registered servers (e.g. markdownui)
+- `todowrite` — task tracking with priority levels (high/medium/low), persisted to SQLite
+- `skill` — load, list, create, or edit skills (SKILL.md files with instructions)
+- MCP tools from registered servers
 
 ### Skills
 Skills follow the cross-tool standard (`SKILL.md` with YAML frontmatter).
@@ -213,7 +232,7 @@ providers:
 default:
   provider: openai                        # which provider to use by default
   model: gpt-4o-mini                      # model name (no provider prefix needed)
-  small_model: gpt-4o-mini
+  small_model: gpt-4o-mini                  # used for context compaction (optional; falls back to model)
   max_iterations: 50
   approval: ask                           # ask | allow | deny
 

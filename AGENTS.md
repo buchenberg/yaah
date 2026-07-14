@@ -9,12 +9,26 @@ config at `~/.yaah/`, skills at `./.agents/` (project, walked up from cwd)
 and `~/.agents/` (cross-tool standard), MCP over stdio and HTTP for tool
 servers. See `README.md` for the user-facing pitch.
 
+## Local-only directories
+
+The following are local to a developer's working copy and are gitignored.
+They are not part of the yaah repo and should never be committed:
+
+- **`.scratch/`** — scratch space for AI coding assistants to clone
+  third-party repos when building yaah skills. For example, building the
+  `charm-bubbles` skill clones `github.com/charmbracelet/bubbles` here
+  for reading. These clones are working copies only — the real upstream
+  dependencies are pinned in `go.sum` as Go modules.
+- **`.agents/`** — local user-authored skills (see "Skills" below).
+- **`.ghost/`, `.claude/`, `.qwen/`, `.hermes/`, etc.** — metadata dirs
+  for various AI coding tools. Never commit.
+
 ## Repo layout (canonical)
 
 ```
 yaah/
 ├── main.go                      # calls cmd/yaah.Execute()
-├── go.mod                       # Go 1.22+, cobra, modernc.org/sqlite
+├── go.mod                       # Go 1.25+, cobra, modernc.org/sqlite
 ├── cmd/yaah/                    # cobra commands
 │   ├── root.go                  # build-time vars (version, commit, date)
 │   ├── root_cmd.go              # rootCmd, REPL, one-shot, agent wiring
@@ -29,18 +43,20 @@ yaah/
 │   ├── tui.go                   # yaah tui (bubbletea)
 │   └── color.go                 # ANSI color helpers
 ├── internal/
-│   ├── agent/                   # agent loop (streaming, tool calling)
+│   ├── agent/                   # agent loop (streaming, compaction, loop detection, truncation safety)
 │   ├── banner/                  # figlet + lolcat banner for the TUI/REPL
 │   ├── config/                  # load ~/.yaah/config.yaml, env subst
 │   ├── instructions/            # walk up cwd, load AGENTS.md/CLAUDE.md
 │   ├── mcp/                     # MCP client (stdio + HTTP), manifests
 │   ├── memory/                  # SQLite + FTS5 (sessions, messages, memory)
+│   ├── process/                 # background process manager
 │   ├── providers/               # OpenAI Chat Completions client, streaming
+│   ├── prompts/                 # system prompt assembly (identity, env, memory, project)
 │   ├── repl/                    # REPL, history, slash commands, colors, banner
 │   ├── skills/                  # SKILL.md discovery, frontmatter parsing
 │   ├── spinner/                 # animated thinking spinner
 │   ├── todo/                    # in-memory todo store
-│   ├── tools/                   # built-in tools (read, bash, memory, todo)
+│   ├── tools/                   # built-in tools (read, write, edit, grep, glob, ls, bash, powershell, question, webfetch, task, background_process, memory, todo)
 │   ├── tui/                     # bubbletea TUI (M7)
 │   ├── types/                   # OpenAI message types
 │   └── update/                  # GitHub release checking

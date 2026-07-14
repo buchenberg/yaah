@@ -45,6 +45,9 @@ go.work.sum
 .agents/
 .kilo/
 
+# Local scratch / working dirs — never commit
+.scratch/
+
 **.exe~
 **.dll~
 **.so~
