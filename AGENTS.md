@@ -54,7 +54,7 @@ yaah/
 │   ├── skills/                  # SKILL.md discovery, frontmatter parsing
 │   ├── spinner/                 # animated thinking spinner
 │   ├── todo/                    # in-memory todo store
-│   ├── tools/                   # built-in tools (read, write, edit, grep, glob, bash, powershell, memory, todo)
+│   ├── tools/                   # built-in tools (read, write, edit, grep, glob, ls, bash, powershell, question, memory, todo)
 │   ├── tui/                     # bubbletea TUI (M7)
 │   ├── types/                   # OpenAI message types
 │   └── update/                  # GitHub release checking

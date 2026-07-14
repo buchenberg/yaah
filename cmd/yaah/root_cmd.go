@@ -240,7 +240,15 @@ func newAgentSession() (*agentSession, error) {
 	skillDirs := skillSearchPaths()
 	toolReg.Register(&tools.SkillTool{Dirs: skillDirs})
 
-	todoStore := todo.NewStore()
+	var todoStore *todo.Store
+	if db != nil {
+		todoStore = todo.NewStoreWithDB(db)
+		if err := todoStore.LoadFromDB(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not load todos: %v\n", err)
+		}
+	} else {
+		todoStore = todo.NewStore()
+	}
 	toolReg.Register(&tools.TodoWriteTool{
 		Store: todoStore,
 		OnWrite: func() {
@@ -372,6 +380,7 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		SystemPrompt:    s.systemPrompt,
 		MaxIterations:   s.cfg.Default.MaxIterations,
 		ContextWindow:   s.cfg.Default.ContextWindow,
+		ApprovalMode:    s.cfg.Default.Approval,
 		Messages:        s.messages,
 	}
 

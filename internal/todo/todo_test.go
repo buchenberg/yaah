@@ -7,8 +7,8 @@ import (
 func TestTodoStore_AddAndList(t *testing.T) {
 	store := NewStore()
 
-	store.Add("task-1", "Implement feature A", "pending")
-	store.Add("task-2", "Write tests", "pending")
+	store.Add("task-1", "Implement feature A", "pending", "high")
+	store.Add("task-2", "Write tests", "pending", "medium")
 
 	todos := store.List()
 	if len(todos) != 2 {
@@ -21,7 +21,7 @@ func TestTodoStore_AddAndList(t *testing.T) {
 
 func TestTodoStore_UpdateStatus(t *testing.T) {
 	store := NewStore()
-	store.Add("task-1", "Implement feature A", "pending")
+	store.Add("task-1", "Implement feature A", "pending", "high")
 
 	store.Update("task-1", "in_progress")
 	todos := store.List()
@@ -38,7 +38,7 @@ func TestTodoStore_UpdateStatus(t *testing.T) {
 
 func TestTodoStore_UpdateContent(t *testing.T) {
 	store := NewStore()
-	store.Add("task-1", "Old content", "pending")
+	store.Add("task-1", "Old content", "pending", "medium")
 
 	store.UpdateContent("task-1", "New content")
 	todos := store.List()
@@ -49,16 +49,15 @@ func TestTodoStore_UpdateContent(t *testing.T) {
 
 func TestTodoStore_Format(t *testing.T) {
 	store := NewStore()
-	store.Add("task-1", "Implement feature A", "completed")
-	store.Add("task-2", "Write tests", "in_progress")
-	store.Add("task-3", "Deploy", "pending")
+	store.Add("task-1", "Implement feature A", "completed", "high")
+	store.Add("task-2", "Write tests", "in_progress", "medium")
+	store.Add("task-3", "Deploy", "pending", "low")
 
 	output := store.Format()
 	if len(output) == 0 {
 		t.Error("expected non-empty format output")
 	}
-	// Should contain checkmark for completed, arrow for in_progress, circle for pending
-	if !containsStr(output, "✓") {
+	if !containsStr(output, "\u2713") {
 		t.Error("expected checkmark for completed task")
 	}
 }

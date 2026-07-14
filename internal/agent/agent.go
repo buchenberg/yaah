@@ -1,11 +1,13 @@
 package agent
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -99,6 +101,13 @@ type Loop struct {
 
 	// LoopDetectWindow is the size of the loop detection sliding window. Default 10.
 	LoopDetectWindow int
+
+	// ApprovalMode controls per-tool approval behavior: "allow", "ask", or "deny".
+	// "allow" — execute all tools without asking.
+	// "ask" — prompt before executing write/destructive tools (bash, powershell, write, edit, delete).
+	// "deny" — reject all write/destructive tools.
+	// Default "ask".
+	ApprovalMode string
 
 	// loopHistory tracks recent tool call hashes for loop detection.
 	loopHistory []string
@@ -258,6 +267,7 @@ func (l *Loop) EstimatedTokens() int {
 // executeToolsParallel runs all tool calls concurrently and appends results
 // in the original order. Returns an error if a loop is detected (same
 // name+args+result repeats LoopDetectCount+ times within LoopDetectWindow).
+// If ApprovalMode is "ask", prompts the user before executing dangerous tools.
 func (l *Loop) executeToolsParallel(ctx context.Context, calls []types.ToolCall, messages *[]types.Message) error {
 	type result struct {
 		idx     int
@@ -269,9 +279,27 @@ func (l *Loop) executeToolsParallel(ctx context.Context, calls []types.ToolCall,
 	}
 
 	results := make(chan result, len(calls))
+	active := 0
 
 	for i, tc := range calls {
+		if l.ApprovalMode == "deny" && toolIsDangerous(tc.Function.Name) {
+			results <- result{idx: i, callID: tc.ID, name: tc.Function.Name,
+				content: fmt.Sprintf("error: tool %q requires approval but approval mode is 'deny'", tc.Function.Name),
+				err:     fmt.Errorf("tool denied")}
+			continue
+		}
+
+		if l.ApprovalMode == "ask" && toolIsDangerous(tc.Function.Name) {
+			if !l.approveTool(tc.Function.Name, tc.Function.Arguments) {
+				results <- result{idx: i, callID: tc.ID, name: tc.Function.Name,
+					content: fmt.Sprintf("error: tool %q was denied by user", tc.Function.Name),
+					err:     fmt.Errorf("tool denied by user")}
+				continue
+			}
+		}
+
 		i, tc := i, tc
+		active++
 		go func() {
 			abbreviated := abbreviateArgs(tc.Function.Arguments, 80)
 
@@ -302,7 +330,7 @@ func (l *Loop) executeToolsParallel(ctx context.Context, calls []types.ToolCall,
 	}
 
 	ordered := make([]result, len(calls))
-	for range calls {
+	for range len(calls) {
 		r := <-results
 		ordered[r.idx] = r
 	}
@@ -608,4 +636,34 @@ func abbreviateArgs(args string, maxLen int) string {
 		return args
 	}
 	return string(runes[:maxLen-3]) + "..."
+}
+
+// dangerousTools is the set of tool names that require approval.
+var dangerousTools = map[string]bool{
+	"bash":       true,
+	"powershell": true,
+	"write":      true,
+	"edit":       true,
+	"delete":     true,
+}
+
+// toolIsDangerous returns true if the tool requires user approval.
+func toolIsDangerous(name string) bool {
+	return dangerousTools[name]
+}
+
+// approveTool prompts the user on stderr/stdin to approve a tool call.
+// Returns true if the user approves.
+func (l *Loop) approveTool(name, args string) bool {
+	abbr := abbreviateArgs(args, 120)
+	fmt.Fprintf(os.Stderr, "\n  ⚠ Approve %s(%s)? [y/N]: ", name, abbr)
+	os.Stderr.Sync()
+
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Buffer(make([]byte, 0, 1024), 1024)
+	if scanner.Scan() {
+		input := strings.ToLower(strings.TrimSpace(scanner.Text()))
+		return input == "y" || input == "yes"
+	}
+	return false
 }
