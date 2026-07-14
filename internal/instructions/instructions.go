@@ -18,6 +18,20 @@ var instructionFileNames = []string{
 	"CONTEXT.md", // deprecated but still accepted
 }
 
+// ReadFile reads a single instruction file (AGENTS.md, CLAUDE.md, or
+// CONTEXT.md) from the given directory. Returns the file contents or an
+// error. Only the first matching file is returned (AGENTS.md preferred).
+func ReadFile(dir string) ([]byte, error) {
+	for _, name := range instructionFileNames {
+		path := filepath.Join(dir, name)
+		data, err := os.ReadFile(path)
+		if err == nil {
+			return data, nil
+		}
+	}
+	return nil, os.ErrNotExist
+}
+
 // Load discovers instruction files by walking from cwd up to worktreeRoot.
 // It returns the contents of each file found, in discovery order (closest
 // ancestor first). AGENTS.md takes priority over CLAUDE.md at each level.

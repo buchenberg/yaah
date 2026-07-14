@@ -15,6 +15,7 @@ import (
 	"github.com/buchenberg/yaah/internal/instructions"
 	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/repl"
 	"github.com/buchenberg/yaah/internal/spinner"
@@ -199,10 +200,11 @@ func newAgentSession() (*agentSession, error) {
 	providerName := resolveProviderName(cfg)
 
 	cwd, _ := os.Getwd()
-	instrFiles := instructions.Load(cwd, cwd)
-	systemPrompt := "You are yaah, a helpful AI assistant. Respond concisely."
-	if formatted := instructions.FormatForSystem(instrFiles); formatted != "" {
-		systemPrompt += "\n\n" + formatted
+
+	layers := prompts.Layers{
+		Identity:    prompts.IdentityPrompt,
+		UserContext: prompts.LoadUserContext(config.HomeDir()),
+		Project:     instructions.FormatForSystem(instructions.Load(cwd, cwd)),
 	}
 
 	toolReg := tools.NewRegistry()
@@ -214,9 +216,8 @@ func newAgentSession() (*agentSession, error) {
 			for _, entry := range entries {
 				memLines = append(memLines, "- "+entry.Text)
 			}
-			systemPrompt += "\n\n## Memory\nYou have the following stored information about the user and project:\n" + strings.Join(memLines, "\n")
+			layers.Memory = "You have the following stored information about the user and project:\n" + strings.Join(memLines, "\n")
 		}
-		systemPrompt += "\n\n## Memory Guidelines\n- Use memory_search to find relevant memories before answering personal/project questions. Pass a tag to filter by category.\n- When the user asks about past conversations or session history, use memory_search_sessions with an empty query to list recent transcripts.\n- Use memory_add to save important facts. Always include a tags array (e.g., [\"user_info\"], [\"preferences\"], [\"project:yaah\"], [\"decision\"]).\n- Use memory_update to correct stale facts (requires the memory ID). Use memory_delete to remove incorrect memories.\n- At the end of a conversation or when the user says goodbye, use memory_add to save a 2-3 line summary of key discussion points with tag [\"session_summary\"]."
 
 		toolReg.Register(&tools.MemorySearchTool{DB: db})
 		toolReg.Register(&tools.MemoryAddTool{DB: db})
@@ -224,6 +225,8 @@ func newAgentSession() (*agentSession, error) {
 		toolReg.Register(&tools.MemoryUpdateTool{DB: db})
 		toolReg.Register(&tools.MemorySessionSearchTool{DB: db})
 	}
+
+	systemPrompt := prompts.Build(layers)
 
 	mcpDirs := mcpSearchPaths(config.HomeDir())
 	mcpClients, mcpTools, mcpErr := mcp.StartMCPClients(context.Background(), mcpDirs)
