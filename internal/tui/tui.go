@@ -86,9 +86,6 @@ var (
 
 	commandDescStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("243"))
-
-	questionPromptStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("240"))
 )
 
 // Message represents a chat message in the TUI.
