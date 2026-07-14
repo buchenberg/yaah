@@ -9,12 +9,26 @@ config at `~/.yaah/`, skills at `./.agents/` (project, walked up from cwd)
 and `~/.agents/` (cross-tool standard), MCP over stdio and HTTP for tool
 servers. See `README.md` for the user-facing pitch.
 
+## Local-only directories
+
+The following are local to a developer's working copy and are gitignored.
+They are not part of the yaah repo and should never be committed:
+
+- **`.scratch/`** — scratch space for AI coding assistants to clone
+  third-party repos when building yaah skills. For example, building the
+  `charm-bubbles` skill clones `github.com/charmbracelet/bubbles` here
+  for reading. These clones are working copies only — the real upstream
+  dependencies are pinned in `go.sum` as Go modules.
+- **`.agents/`** — local user-authored skills (see "Skills" below).
+- **`.ghost/`, `.claude/`, `.qwen/`, `.hermes/`, etc.** — metadata dirs
+  for various AI coding tools. Never commit.
+
 ## Repo layout (canonical)
 
 ```
 yaah/
 ├── main.go                      # calls cmd/yaah.Execute()
-├── go.mod                       # Go 1.22+, cobra, modernc.org/sqlite
+├── go.mod                       # Go 1.25+, cobra, modernc.org/sqlite
 ├── cmd/yaah/                    # cobra commands
 │   ├── root.go                  # build-time vars (version, commit, date)
 │   ├── root_cmd.go              # rootCmd, REPL, one-shot, agent wiring

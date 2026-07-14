@@ -361,14 +361,18 @@ func (s *agentSession) compactContext() {
 // runPrompt executes a single agent prompt with the session's shared
 // infrastructure and per-turn callbacks (spinner, streaming display).
 func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
+	compactProvider, compactModel := resolveCompact(s.cfg)
+
 	loop := &agent.Loop{
-		Provider:      s.provider,
-		Registry:      s.toolReg,
-		Model:         s.modelName,
-		SystemPrompt:  s.systemPrompt,
-		MaxIterations: s.cfg.Default.MaxIterations,
-		ContextWindow: s.cfg.Default.ContextWindow,
-		Messages:      s.messages,
+		Provider:        s.provider,
+		CompactProvider: compactProvider,
+		CompactModel:    compactModel,
+		Registry:        s.toolReg,
+		Model:           s.modelName,
+		SystemPrompt:    s.systemPrompt,
+		MaxIterations:   s.cfg.Default.MaxIterations,
+		ContextWindow:   s.cfg.Default.ContextWindow,
+		Messages:        s.messages,
 	}
 
 	spin := spinner.New(nil, "Thinking...")
@@ -494,6 +498,28 @@ func resolveModel(cfg *config.Config) string {
 		return parts[1]
 	}
 	return cfg.Default.Model
+}
+
+// resolveCompact returns the provider and model to use for context compaction.
+// Uses the configured small_model (no tools, fast summarization) if available,
+// otherwise falls back to the main provider and model.
+func resolveCompact(cfg *config.Config) (agent.Provider, string) {
+	if cfg.Default.SmallModel != "" {
+		compactProviderName, compactModel := "", ""
+		if parts := strings.SplitN(cfg.Default.SmallModel, "/", 2); len(parts) == 2 {
+			compactProviderName = parts[0]
+			compactModel = parts[1]
+		} else {
+			compactModel = cfg.Default.SmallModel
+			compactProviderName = resolveProviderName(cfg)
+		}
+		if compactProviderName != "" {
+			if p, ok := cfg.Providers[compactProviderName]; ok && isRealKey(p.APIKey) {
+				return providers.NewOpenAIClient(p.BaseURL, p.APIKey), compactModel
+			}
+		}
+	}
+	return nil, ""
 }
 
 // resolveProvider picks the best available provider from the config.

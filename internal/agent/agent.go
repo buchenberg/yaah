@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -67,7 +69,7 @@ type Loop struct {
 
 	// ContextWindow is the estimated token budget for the conversation.
 	// When the total estimated tokens exceed 80% of this value, old messages
-	// are trimmed (system prompt + recent messages are preserved).
+	// are compacted via LLM summarization (system prompt + recent messages are preserved).
 	// Default 0 means no trimming.
 	ContextWindow int
 
@@ -83,6 +85,23 @@ type Loop struct {
 
 	// Messages holds the conversation history across multiple Run calls.
 	Messages []types.Message
+
+	// CompactProvider is used for context compaction summarization.
+	// If nil, the main Provider is used.
+	CompactProvider Provider
+
+	// CompactModel is the model to use for compaction. If empty, Model is used.
+	CompactModel string
+
+	// LoopDetectCount is the number of identical tool calls (name+args+result hash)
+	// required to trigger loop detection. Default 5.
+	LoopDetectCount int
+
+	// LoopDetectWindow is the size of the loop detection sliding window. Default 10.
+	LoopDetectWindow int
+
+	// loopHistory tracks recent tool call hashes for loop detection.
+	loopHistory []string
 }
 
 // Run executes the full conversation loop for a single user message.
@@ -96,6 +115,12 @@ func (l *Loop) Run(ctx context.Context, userInput string) (string, error) {
 	if l.RetryBackoff <= 0 {
 		l.RetryBackoff = time.Second
 	}
+	if l.LoopDetectCount <= 0 {
+		l.LoopDetectCount = 5
+	}
+	if l.LoopDetectWindow <= 0 {
+		l.LoopDetectWindow = 10
+	}
 
 	if l.Messages != nil {
 		l.Messages = append(l.Messages, types.UserMsg(userInput))
@@ -107,7 +132,7 @@ func (l *Loop) Run(ctx context.Context, userInput string) (string, error) {
 	}
 
 	if l.ContextWindow > 0 {
-		l.trimContext()
+		l.compactContext(ctx)
 	}
 
 	messages := l.Messages
@@ -144,7 +169,14 @@ func (l *Loop) Run(ctx context.Context, userInput string) (string, error) {
 			l.OnFlush(msg.Content)
 		}
 
-		l.executeToolsParallel(ctx, msg.ToolCalls, &messages)
+		if err := l.executeToolsParallel(ctx, msg.ToolCalls, &messages); err != nil {
+			l.Messages = messages
+			return "", err
+		}
+
+		if l.ContextWindow > 0 {
+			l.compactContext(ctx)
+		}
 	}
 
 	l.Messages = messages
@@ -152,6 +184,8 @@ func (l *Loop) Run(ctx context.Context, userInput string) (string, error) {
 }
 
 // getAssistantMessage returns the next assistant message with retry logic.
+// If the response has finish_reason="length" and tool calls, it errors rather
+// than executing potentially truncated tool calls.
 func (l *Loop) getAssistantMessage(ctx context.Context, req types.ChatRequest) (types.Message, bool, error) {
 	var lastMsg types.Message
 	var wasStreamed bool
@@ -166,15 +200,18 @@ func (l *Loop) getAssistantMessage(ctx context.Context, req types.ChatRequest) (
 			msg, err = l.runStream(ctx, sp, req)
 			streamed = true
 		} else {
-			resp, sendErr := l.Provider.Send(ctx, req)
-			if sendErr != nil {
-				err = sendErr
-			} else {
+			var resp *types.ChatResponse
+			resp, err = l.Provider.Send(ctx, req)
+			if err == nil {
 				l.captureUsage(resp)
 				if len(resp.Choices) == 0 {
 					err = fmt.Errorf("no choices in response")
 				} else {
 					msg = resp.Choices[0].Message
+					if resp.Choices[0].FinishReason == "length" && len(msg.ToolCalls) > 0 {
+						err = fmt.Errorf("response truncated (finish_reason=length), discarding %d tool calls", len(msg.ToolCalls))
+						msg = types.Message{}
+					}
 				}
 			}
 		}
@@ -219,8 +256,9 @@ func (l *Loop) EstimatedTokens() int {
 }
 
 // executeToolsParallel runs all tool calls concurrently and appends results
-// in the original order.
-func (l *Loop) executeToolsParallel(ctx context.Context, calls []types.ToolCall, messages *[]types.Message) {
+// in the original order. Returns an error if a loop is detected (same
+// name+args+result repeats LoopDetectCount+ times within LoopDetectWindow).
+func (l *Loop) executeToolsParallel(ctx context.Context, calls []types.ToolCall, messages *[]types.Message) error {
 	type result struct {
 		idx     int
 		callID  string
@@ -270,15 +308,46 @@ func (l *Loop) executeToolsParallel(ctx context.Context, calls []types.ToolCall,
 	}
 
 	for _, r := range ordered {
+		hashKey := toolCallHash(r.name, r.content)
+		l.loopHistory = append(l.loopHistory, hashKey)
+
+		if len(l.loopHistory) > l.LoopDetectWindow {
+			l.loopHistory = l.loopHistory[len(l.loopHistory)-l.LoopDetectWindow:]
+		}
+
+		count := 0
+		for _, h := range l.loopHistory {
+			if h == hashKey {
+				count++
+			}
+		}
+		if count >= l.LoopDetectCount {
+			return fmt.Errorf("loop detected: tool %q produced the same result %d times in the last %d steps — halting to prevent stuck agent",
+				r.name, count, len(l.loopHistory))
+		}
+
 		*messages = append(*messages, types.ToolResultMsg(r.callID, r.name, r.content))
 	}
+
+	return nil
 }
 
-// trimContext removes old messages when the estimated token count exceeds
-// 80% of ContextWindow. Preserves the system message and recent exchanges.
-func (l *Loop) trimContext() {
-	target := l.ContextWindow * 4 / 5 // 80% threshold
-	// Estimate tokens: ~4 chars per token
+// toolCallHash returns a SHA-256 hash of tool name and result for loop detection.
+func toolCallHash(name, content string) string {
+	h := sha256.New()
+	h.Write([]byte(name))
+	h.Write([]byte{0})
+	h.Write([]byte(content))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// compactContext checks if the estimated token count exceeds 80% of
+// ContextWindow. If so, it uses the LLM (CompactProvider or Provider) to
+// summarize old messages into a structured summary, preserving the system
+// message and recent turns. Falls back to simple trimming if the LLM call
+// fails or returns empty.
+func (l *Loop) compactContext(ctx context.Context) {
+	target := l.ContextWindow * 4 / 5
 	totalChars := 0
 	for _, m := range l.Messages {
 		totalChars += len(m.Content)
@@ -290,11 +359,99 @@ func (l *Loop) trimContext() {
 		return
 	}
 
-	// Remove oldest non-system messages until we're under target
+	sysMsg := l.Messages[0]
+	rest := l.Messages[1:]
+	if len(rest) <= 4 {
+		return
+	}
+
+	keepRecent := 6
+	if len(rest) <= keepRecent {
+		return
+	}
+
+	split := len(rest) - keepRecent
+	oldMsgs := rest[:split]
+	keepMsgs := rest[split:]
+
+	var sb strings.Builder
+	sb.WriteString("Summarize the following conversation excerpt. Keep the structured format below.\n\n")
+	sb.WriteString("## Goal\n")
+	sb.WriteString("(what the user is working on)\n\n")
+	sb.WriteString("## Completed Work\n")
+	sb.WriteString("(what was accomplished)\n\n")
+	sb.WriteString("## Active Work\n")
+	sb.WriteString("(what is in progress)\n\n")
+	sb.WriteString("## Pending Tasks\n")
+	sb.WriteString("(what still needs to be done)\n\n")
+	sb.WriteString("## Key Decisions\n")
+	sb.WriteString("(important decisions made)\n\n")
+	sb.WriteString("## Files Modified\n")
+	sb.WriteString("(list of files that were read, edited, or created)\n\n")
+	sb.WriteString("---\n")
+	sb.WriteString("Conversation excerpt to summarize:\n\n")
+	for _, m := range oldMsgs {
+		if m.Content != "" {
+			sb.WriteString(fmt.Sprintf("%s: %s\n", m.Role, m.Content))
+		}
+		for _, tc := range m.ToolCalls {
+			sb.WriteString(fmt.Sprintf("[tool:%s] %s\n", tc.Function.Name, tc.Function.Arguments))
+		}
+	}
+
+	compactProvider := l.CompactProvider
+	if compactProvider == nil {
+		compactProvider = l.Provider
+	}
+	compactModel := l.CompactModel
+	if compactModel == "" {
+		compactModel = l.Model
+	}
+
+	req := types.ChatRequest{
+		Model: compactModel,
+		Messages: []types.Message{
+			types.UserMsg(sb.String()),
+		},
+	}
+
+	resp, err := compactProvider.Send(ctx, req)
+	if err != nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+		l.trimContext()
+		return
+	}
+
+	summary := resp.Choices[0].Message.Content
+
+	newMsgs := []types.Message{sysMsg}
+	if l.SystemPrompt == "" {
+		newMsgs[0] = types.SystemMsg(summary)
+	} else {
+		newMsgs = append(newMsgs, types.SystemMsg("Previous conversation summary:\n"+summary))
+	}
+	newMsgs = append(newMsgs, keepMsgs...)
+	l.Messages = newMsgs
+}
+
+// trimContext removes old messages when the estimated token count exceeds
+// 80% of ContextWindow. Preserves the system message and recent exchanges.
+// This is a fallback when LLM-powered compaction is unavailable.
+func (l *Loop) trimContext() {
+	target := l.ContextWindow * 4 / 5
+	totalChars := 0
+	for _, m := range l.Messages {
+		totalChars += len(m.Content)
+		for _, tc := range m.ToolCalls {
+			totalChars += len(tc.Function.Arguments) + len(tc.Function.Name)
+		}
+	}
+	if totalChars/4 <= target {
+		return
+	}
+
 	sysMsg := l.Messages[0]
 	rest := l.Messages[1:]
 	for len(rest) > 0 && totalChars/4 > target {
-		// Calculate chars for the oldest user-assistant exchange
 		removed := len(rest[0].Content)
 		for _, tc := range rest[0].ToolCalls {
 			removed += len(tc.Function.Arguments) + len(tc.Function.Name)
@@ -313,6 +470,8 @@ func (l *Loop) trimContext() {
 // message (content + any tool calls). Tool calls accumulated from the stream
 // are returned to Run, which executes them exactly like the non-streaming
 // path. Content deltas are emitted via OnToken as they arrive.
+// If finish_reason is "length" and tool calls are present, returns an error
+// to prevent executing truncated tool calls.
 func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatRequest) (types.Message, error) {
 	chunks, errs := sp.SendStream(ctx, req)
 
@@ -324,7 +483,7 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
-				return l.assembleStreamed(content.String(), toolCallMap), nil
+				return l.checkTruncatedStream(content.String(), toolCallMap, finishReason)
 			}
 
 			if len(chunk.Choices) == 0 {
@@ -344,7 +503,6 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 				}
 			}
 
-			// Accumulate tool-call deltas by index.
 			for _, tc := range delta.ToolCalls {
 				idx := tc.Index
 				if existing, ok := toolCallMap[idx]; ok {
@@ -377,7 +535,7 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 			if err != nil {
 				return types.Message{}, err
 			}
-			return l.assembleStreamed(content.String(), toolCallMap), nil
+			return l.checkTruncatedStream(content.String(), toolCallMap, finishReason)
 
 		case <-ctx.Done():
 			return types.Message{}, ctx.Err()
@@ -388,7 +546,17 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 		}
 	}
 
-	return l.assembleStreamed(content.String(), toolCallMap), nil
+	return l.checkTruncatedStream(content.String(), toolCallMap, finishReason)
+}
+
+// checkTruncatedStream returns the assembled message or an error if the
+// stream was truncated (finish_reason=length) with pending tool calls.
+func (l *Loop) checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, finishReason string) (types.Message, error) {
+	msg := l.assembleStreamed(content, toolCallMap)
+	if finishReason == "length" && len(msg.ToolCalls) > 0 {
+		return types.Message{}, fmt.Errorf("streamed response truncated (finish_reason=length), discarding %d tool calls", len(msg.ToolCalls))
+	}
+	return msg, nil
 }
 
 // assembleStreamed builds the assistant message from accumulated stream state,

@@ -419,6 +419,8 @@ func NewRegistry() *Registry {
 	r.Register(&WriteTool{})
 	r.Register(&EditTool{})
 	r.Register(&DeleteTool{})
+	r.Register(&GrepTool{})
+	r.Register(&GlobTool{})
 	return r
 }
 
