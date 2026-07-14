@@ -18,7 +18,6 @@ import (
 	"charm.land/lipgloss/v2/tree"
 
 	"github.com/buchenberg/yaah/internal/banner"
-	"github.com/buchenberg/yaah/internal/tools"
 )
 
 // Styles
@@ -88,27 +87,6 @@ var (
 	commandDescStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("243"))
 
-	questionBoxStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("99")).
-				Padding(1, 2).
-				MarginTop(1).
-				MarginBottom(1)
-
-	questionHeaderStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("39"))
-
-	questionBodyStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("252"))
-
-	questionOptionStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("99")).
-				Bold(true)
-
-	questionDescStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("243"))
-
 	questionPromptStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("240"))
 )
@@ -136,10 +114,6 @@ type AgentMsg struct {
 	ContextWindow  int               // context window size, for status bar
 	ModelList      []string          // models fetched from providers
 	ProviderNames  map[string]string // provider key → display name
-
-	// Question support
-	Question    []tools.QuestionEntry // questions to display
-	QuestionCh  chan string           // channel to receive answers back
 }
 
 // Command represents a slash command available in the TUI.
@@ -188,12 +162,6 @@ type Model struct {
 	modelItems    []string          // available models in "provider/model" format
 	modelSelected int               // highlighted index in filtered list
 	providerNames map[string]string // provider key → display name
-
-	questionActive  bool                 // displaying a question modal
-	questionIndex   int                  // which question is active (0-indexed)
-	questionEntries []tools.QuestionEntry // all questions
-	questionAnswers []string             // accumulated answers
-	questionCh      chan string          // channel to send answers back
 }
 
 // clearCopyFlashMsg clears the copy flash indicator after a timeout.
@@ -230,65 +198,6 @@ func New(provider, model string, contextWindow int, onSubmit func(string), onQui
 		onModel:       onModel,
 		commands:      defaultCommands,
 	}
-}
-
-func (m *Model) submitQuestionAnswer(input string) {
-	q := m.questionEntries[m.questionIndex]
-	m.questionAnswers = append(m.questionAnswers, fmt.Sprintf("%s: %s", q.Header, input))
-	m.questionIndex++
-
-	if m.questionIndex >= len(m.questionEntries) {
-		m.questionActive = false
-		if m.questionCh != nil {
-			m.questionCh <- strings.Join(m.questionAnswers, "\n")
-		}
-		m.questionCh = nil
-		m.questionEntries = nil
-		m.questionAnswers = nil
-	}
-	m.refreshViewport()
-}
-
-func (m *Model) cancelQuestion() {
-	m.questionActive = false
-	if m.questionCh != nil {
-		m.questionCh <- ""
-	}
-	m.questionCh = nil
-	m.questionEntries = nil
-	m.questionAnswers = nil
-	m.refreshViewport()
-}
-
-func (m *Model) renderQuestion() string {
-	if !m.questionActive || m.questionIndex >= len(m.questionEntries) {
-		return ""
-	}
-	q := m.questionEntries[m.questionIndex]
-
-	var sb strings.Builder
-	sb.WriteString(questionHeaderStyle.Render(fmt.Sprintf("═══ %s ═══", q.Header)))
-	sb.WriteString("\n\n")
-	sb.WriteString(questionBodyStyle.Render(q.Question))
-	sb.WriteString("\n\n")
-
-	for i, opt := range q.Options {
-		key := fmt.Sprintf("[%d]", i+1)
-		desc := opt.Description
-		if desc != "" {
-			desc = " — " + desc
-		}
-		sb.WriteString(fmt.Sprintf("  %s %s%s\n", questionOptionStyle.Render(key), questionOptionStyle.Render(opt.Label), questionDescStyle.Render(desc)))
-	}
-
-	sb.WriteString("\n")
-	sb.WriteString(questionPromptStyle.Render(fmt.Sprintf("Question %d/%d — type answer and press Enter: ", m.questionIndex+1, len(m.questionEntries))))
-
-	width := m.width
-	if width < 40 {
-		width = 40
-	}
-	return questionBoxStyle.Width(width - 4).Render(sb.String())
 }
 
 // createRenderer (re)creates the glamour markdown renderer.
@@ -936,17 +845,6 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 		return
 	}
 
-	if len(msg.Question) > 0 {
-		m.questionActive = true
-		m.questionIndex = 0
-		m.questionEntries = msg.Question
-		m.questionAnswers = nil
-		m.questionCh = msg.QuestionCh
-		m.refreshViewport()
-		m.scrollToBottom()
-		return
-	}
-
 	if msg.ToolResult != "" || msg.ToolResultName != "" {
 		m.AddToolResult(msg.ToolResultName, msg.ToolResult)
 		return
@@ -1028,10 +926,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "esc":
-			if m.questionActive {
-				m.cancelQuestion()
-				return m, nil
-			}
 			if m.modelMode {
 				m.exitModelMode()
 				return m, nil
@@ -1056,14 +950,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "enter":
-			if m.questionActive {
-				input := strings.TrimSpace(m.input.Value())
-				m.input.SetValue("")
-				if input != "" {
-					m.submitQuestionAnswer(input)
-				}
-				return m, nil
-			}
 			if m.modelMode {
 				m.selectModel()
 				return m, nil
@@ -1509,13 +1395,7 @@ func (m *Model) View() tea.View {
 	// Input (1 line)
 	inputView := m.input.View()
 
-	// Question modal (shown above status when active)
-	question := m.renderQuestion()
-
 	elements := []string{header, viewportView, status}
-	if question != "" {
-		elements = append(elements, question)
-	}
 	if palette != "" {
 		elements = append(elements, palette)
 	}

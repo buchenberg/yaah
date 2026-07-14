@@ -191,24 +191,6 @@ func runTUI() error {
 
 	agentCh := make(chan tui.AgentMsg, 256)
 
-	// Wire the question tool handler for the TUI once at startup.
-	if qt, ok := toolReg.Get("question").(*tools.QuestionTool); ok {
-		qt.Handler = func(entries []tools.QuestionEntry) []string {
-			respCh := make(chan string, 1)
-			agentCh <- tui.AgentMsg{Question: entries, QuestionCh: respCh}
-			select {
-			case answer := <-respCh:
-				return strings.Split(answer, "\n")
-			case <-time.After(30 * time.Second):
-				var answers []string
-				for _, q := range entries {
-					answers = append(answers, fmt.Sprintf("%s: (no response)", q.Header))
-				}
-				return answers
-			}
-		}
-	}
-
 	// Shared conversation history for the TUI session.
 	var messages []types.Message
 
@@ -235,13 +217,7 @@ func runTUI() error {
 
 	go func() {
 		for msg := range agentCh {
-			if len(msg.Question) > 0 {
-				log.Printf("forwarder: sending question msg to bubbletea")
-			}
 			p.Send(msg)
-			if len(msg.Question) > 0 {
-				log.Printf("forwarder: bubbletea Send returned")
-			}
 		}
 	}()
 
