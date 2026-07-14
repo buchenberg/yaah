@@ -611,6 +611,104 @@ func TestTreeDepth_Level3(t *testing.T) {
 	}
 }
 
+// --- command mode tests ---
+
+func TestDefaultCommands(t *testing.T) {
+	cmds := defaultCommands
+	if len(cmds) < 3 {
+		t.Fatalf("expected at least 3 default commands, got %d", len(cmds))
+	}
+	names := make(map[string]bool)
+	for _, c := range cmds {
+		if c.Name == "" {
+			t.Error("command name must not be empty")
+		}
+		if !strings.HasPrefix(c.Name, "/") {
+			t.Errorf("command name should start with /: %q", c.Name)
+		}
+		names[c.Name] = true
+	}
+	for _, want := range []string{"/help", "/clear", "/quit"} {
+		if !names[want] {
+			t.Errorf("missing expected command: %s", want)
+		}
+	}
+}
+
+func TestExecuteCommand_Help(t *testing.T) {
+	m := &Model{width: 80}
+	m.commands = defaultCommands
+	m.executeCommand("/help")
+	if len(m.messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(m.messages))
+	}
+	if m.messages[0].Role != "system" {
+		t.Errorf("expected system role, got %s", m.messages[0].Role)
+	}
+	if !strings.Contains(m.messages[0].Content, "Available commands") {
+		t.Errorf("help should list available commands: %q", m.messages[0].Content)
+	}
+}
+
+func TestExecuteCommand_Clear(t *testing.T) {
+	m := &Model{width: 80}
+	m.commands = defaultCommands
+	m.messages = []Message{
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "hi there"},
+	}
+	m.executeCommand("/clear")
+	if len(m.messages) != 0 {
+		t.Errorf("expected 0 messages after clear, got %d", len(m.messages))
+	}
+}
+
+func TestExecuteCommand_Unknown(t *testing.T) {
+	m := &Model{width: 80}
+	m.commands = defaultCommands
+	m.executeCommand("/invalid")
+	if len(m.messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(m.messages))
+	}
+	if m.messages[0].Role != "system" {
+		t.Errorf("expected system role, got %s", m.messages[0].Role)
+	}
+	if !strings.Contains(m.messages[0].Content, "Unknown") {
+		t.Errorf("expected unknown command message: %q", m.messages[0].Content)
+	}
+}
+
+func TestExecuteCommand_CompactCallback(t *testing.T) {
+	m := &Model{width: 80}
+	m.commands = defaultCommands
+	called := false
+	m.onCompact = func() { called = true }
+	m.executeCommand("/compact")
+	if !called {
+		t.Error("expected onCompact callback to be called")
+	}
+}
+
+func TestCommandSuggestions(t *testing.T) {
+	m := &Model{width: 80}
+	m.commands = defaultCommands
+	m.updateCommandSuggestions()
+
+	suggestions := m.input.AvailableSuggestions()
+	if len(suggestions) != len(defaultCommands) {
+		t.Fatalf("expected %d suggestions, got %d", len(defaultCommands), len(suggestions))
+	}
+	names := make(map[string]bool)
+	for _, s := range suggestions {
+		names[s] = true
+	}
+	for _, c := range defaultCommands {
+		if !names[c.Name] {
+			t.Errorf("missing suggestion for command: %s", c.Name)
+		}
+	}
+}
+
 // --- helpers ---
 
 func assertEqual(t *testing.T, got, expected []string) {
