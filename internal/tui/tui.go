@@ -1424,7 +1424,7 @@ func contextBar(pct int) string {
 	if filled >= 5 {
 		return fmt.Sprintf("[%s%s %d%%]", strings.Repeat("▓", filled), strings.Repeat("░", empty), pct)
 	}
-	return fmt.Sprintf("[%s%s %d%%]", strings.Repeat("░", empty), strings.Repeat("█", filled), pct)
+	return fmt.Sprintf("[%s%s %d%%]", strings.Repeat("█", filled), strings.Repeat("░", empty), pct)
 }
 
 // HandleContextInfo updates the context window display.
