@@ -194,14 +194,18 @@ func runTUI() error {
 	// Wire the question tool handler for the TUI once at startup.
 	if qt, ok := toolReg.Get("question").(*tools.QuestionTool); ok {
 		qt.Handler = func(entries []tools.QuestionEntry) []string {
-			// Send question to TUI asynchronously, return immediately with placeholder.
-			// The real answer will arrive as a follow-up user message.
-			agentCh <- tui.AgentMsg{Question: entries}
-			var answers []string
-			for _, q := range entries {
-				answers = append(answers, fmt.Sprintf("%s: (awaiting input)", q.Header))
+			respCh := make(chan string, 1)
+			agentCh <- tui.AgentMsg{Question: entries, QuestionCh: respCh}
+			select {
+			case answer := <-respCh:
+				return strings.Split(answer, "\n")
+			case <-time.After(30 * time.Second):
+				var answers []string
+				for _, q := range entries {
+					answers = append(answers, fmt.Sprintf("%s: (no response)", q.Header))
+				}
+				return answers
 			}
-			return answers
 		}
 	}
 
