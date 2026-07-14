@@ -191,6 +191,25 @@ func runTUI() error {
 
 	agentCh := make(chan tui.AgentMsg, 256)
 
+	// In the TUI, bubbletea owns stdin. The question tool cannot block on
+	// os.Stdin reads. Instead, return immediately — the model will see the
+	// empty result and re-ask the user in plain text via the chat.
+	if qt, ok := toolReg.Get("question").(*tools.QuestionTool); ok {
+		qt.Handler = func(entries []tools.QuestionEntry) []string {
+			// Print questions to stderr for user visibility.
+			for _, q := range entries {
+				fmt.Fprintf(os.Stderr, "\n  ═══ %s ═══\n", q.Header)
+				fmt.Fprintf(os.Stderr, "  %s\n\n", q.Question)
+				for j, opt := range q.Options {
+					fmt.Fprintf(os.Stderr, "  [%d] %s — %s\n", j+1, opt.Label, opt.Description)
+				}
+			}
+			fmt.Fprintf(os.Stderr, "  → (answer in chat below)\n\n")
+			// Return placeholder — model will ask in plain text.
+			return []string{"(please answer in chat)"}
+		}
+	}
+
 	// Shared conversation history for the TUI session.
 	var messages []types.Message
 
