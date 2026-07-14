@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -15,6 +18,7 @@ import (
 	"github.com/buchenberg/yaah/internal/instructions"
 	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/tui"
@@ -35,6 +39,72 @@ var tuiCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(tuiCmd)
+}
+
+// sessionModel holds the current provider and model for the TUI session.
+// It is updated when the user switches models via /model.
+type sessionModel struct {
+	mu       sync.Mutex
+	provider string
+	model    string
+}
+
+func (s *sessionModel) get() (string, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.provider, s.model
+}
+
+func (s *sessionModel) set(provider, model string) {
+	s.mu.Lock()
+	s.provider = provider
+	s.model = model
+	s.mu.Unlock()
+}
+
+// fetchAllModels gathers model IDs from all configured providers.
+// If a provider has a models: override in config, those are used.
+// Otherwise, ListModels is called against the provider's /v1/models endpoint.
+// Results are returned in "provider/model" format, sorted.
+func fetchAllModels(ctx context.Context, cfg *config.Config) []string {
+	var all []string
+
+	names := make([]string, 0, len(cfg.Providers))
+	for name := range cfg.Providers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		p := cfg.Providers[name]
+
+		if len(p.Models) > 0 {
+			for _, m := range p.Models {
+				all = append(all, name+"/"+m)
+			}
+			continue
+		}
+
+		client := providers.NewOpenAIClient(p.BaseURL, p.APIKey)
+		models, err := client.ListModels(ctx)
+		if err != nil {
+			log.Printf("fetch models from %s: %v", name, err)
+			continue
+		}
+		for _, m := range models {
+			all = append(all, name+"/"+m)
+		}
+	}
+
+	return all
+}
+
+// providerFor returns a provider client for the given provider name.
+func providerFor(cfg *config.Config, name string) agent.Provider {
+	if p, ok := cfg.Providers[name]; ok && isRealKey(p.APIKey) {
+		return providers.NewOpenAIClient(p.BaseURL, p.APIKey)
+	}
+	return &noProviderStub{}
 }
 
 // runTUI starts the bubbletea TUI.
@@ -124,15 +194,23 @@ func runTUI() error {
 	// Shared conversation history for the TUI session.
 	var messages []types.Message
 
+	// Shared mutable state for the current provider/model.
+	sm := &sessionModel{provider: providerName, model: resolveModel(cfg)}
+
 	m := tui.New(
 		providerName,
 		modelName,
 		cfg.Default.ContextWindow,
 		func(input string) {
-			go runAgentForTUI(input, agentCh, cfg, systemPrompt, modelName, toolReg, &messages, db, sessionID, &msgIdx, &persistedCount)
+			pName, mName := sm.get()
+			go runAgentForTUI(input, agentCh, cfg, systemPrompt, mName, toolReg, &messages, db, sessionID, &msgIdx, &persistedCount, sm)
+			_ = pName
 		},
 		func() {},
 		nil,
+		func(pName, mName string) {
+			sm.set(pName, mName)
+		},
 	)
 
 	p := tea.NewProgram(m)
@@ -141,6 +219,18 @@ func runTUI() error {
 		for msg := range agentCh {
 			p.Send(msg)
 		}
+	}()
+
+	// Pre-fetch model lists from all providers in the background.
+	go func() {
+		names := make(map[string]string)
+		for key, p := range cfg.Providers {
+			if p.Name != "" {
+				names[key] = p.Name
+			}
+		}
+		models := fetchAllModels(context.Background(), cfg)
+		agentCh <- tui.AgentMsg{ModelList: models, ProviderNames: names}
 	}()
 
 	if _, err := p.Run(); err != nil {
@@ -153,8 +243,9 @@ func runTUI() error {
 // runAgentForTUI runs the agent loop for a single prompt and sends messages
 // to the TUI channel. The channel is NOT closed here — it is shared across
 // multiple prompts for the lifetime of the TUI session.
-func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, systemPrompt, modelName string, toolReg *tools.Registry, messages *[]types.Message, db *memory.DB, sessionID string, msgIdx *int, persistedCount *int) {
-	provider := resolveProvider(cfg)
+func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, systemPrompt, modelName string, toolReg *tools.Registry, messages *[]types.Message, db *memory.DB, sessionID string, msgIdx *int, persistedCount *int, sm *sessionModel) {
+	pName, _ := sm.get()
+	provider := providerFor(cfg, pName)
 
 	loop := &agent.Loop{
 		Provider:      provider,

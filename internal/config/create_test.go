@@ -26,7 +26,8 @@ func TestCreateDefault_writesConfigFile(t *testing.T) {
 	// Should contain expected default values
 	content := string(data)
 	for _, want := range []string{
-		"openai/gpt-4o-mini",
+		"provider: openai",
+		"model: gpt-4o-mini",
 		"max_iterations: 50",
 		"approval: ask",
 	} {

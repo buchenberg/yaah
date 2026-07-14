@@ -114,3 +114,51 @@ providers:
 			cfg.Providers["openai"].APIKey, "sk-from-env-456")
 	}
 }
+
+func TestLoad_providerModelsOverride(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("YAAH_HOME", tmp)
+
+	configContent := `
+providers:
+  openai:
+    base_url: https://api.openai.com/v1
+    api_key: sk-test
+    models:
+      - gpt-4o
+      - gpt-4o-mini
+      - o1
+  ollama:
+    base_url: http://localhost:11434/v1
+    api_key: ollama
+
+default:
+  model: openai/gpt-4o-mini
+  small_model: openai/gpt-4o-mini
+  max_iterations: 50
+  approval: ask
+`
+	err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(configContent), 0o644)
+	if err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	openaiModels := cfg.Providers["openai"].Models
+	if len(openaiModels) != 3 {
+		t.Fatalf("expected 3 openai models, got %d: %v", len(openaiModels), openaiModels)
+	}
+	if openaiModels[0] != "gpt-4o" || openaiModels[1] != "gpt-4o-mini" || openaiModels[2] != "o1" {
+		t.Errorf("openai models = %v, want [gpt-4o gpt-4o-mini o1]", openaiModels)
+	}
+
+	// Provider without models should have nil/empty slice
+	ollamaModels := cfg.Providers["ollama"].Models
+	if len(ollamaModels) != 0 {
+		t.Errorf("ollama models should be empty, got %v", ollamaModels)
+	}
+}
