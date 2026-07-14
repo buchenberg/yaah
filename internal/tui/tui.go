@@ -563,6 +563,9 @@ func (m *Model) renderTree(content string) string {
 		}
 		prefix, name := splitTreePrefix(line)
 		depth := treeDepth(prefix)
+		if depth < 1 {
+			depth = 1
+		}
 
 		for len(stack) > depth {
 			stack = stack[:len(stack)-1]
