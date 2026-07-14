@@ -191,6 +191,16 @@ func runTUI() error {
 
 	agentCh := make(chan tui.AgentMsg, 256)
 
+	// Wire the question tool handler for the TUI once at startup.
+	if qt, ok := toolReg.Get("question").(*tools.QuestionTool); ok {
+		qt.Handler = func(entries []tools.QuestionEntry) []string {
+			respCh := make(chan string, 1)
+			agentCh <- tui.AgentMsg{Question: entries, QuestionCh: respCh}
+			answer := <-respCh
+			return strings.Split(answer, "\n")
+		}
+	}
+
 	// Shared conversation history for the TUI session.
 	var messages []types.Message
 
@@ -246,16 +256,6 @@ func runTUI() error {
 func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, systemPrompt, modelName string, toolReg *tools.Registry, messages *[]types.Message, db *memory.DB, sessionID string, msgIdx *int, persistedCount *int, sm *sessionModel) {
 	pName, _ := sm.get()
 	provider := providerFor(cfg, pName)
-
-	// Wire the question tool handler for the TUI.
-	if qt, ok := toolReg.Get("question").(*tools.QuestionTool); ok {
-		qt.Handler = func(entries []tools.QuestionEntry) []string {
-			respCh := make(chan string, 1)
-			ch <- tui.AgentMsg{Question: entries, QuestionCh: respCh}
-			answer := <-respCh
-			return strings.Split(answer, "\n")
-		}
-	}
 
 	loop := &agent.Loop{
 		Provider:      provider,
