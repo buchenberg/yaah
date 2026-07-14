@@ -49,7 +49,9 @@ yaah/
 │   ├── instructions/            # walk up cwd, load AGENTS.md/CLAUDE.md
 │   ├── mcp/                     # MCP client (stdio + HTTP), manifests
 │   ├── memory/                  # SQLite + FTS5 (sessions, messages, memory)
+│   ├── process/                 # background process manager
 │   ├── providers/               # OpenAI Chat Completions client, streaming
+│   ├── prompts/                 # system prompt assembly (identity, env, memory, project)
 │   ├── repl/                    # REPL, history, slash commands, colors, banner
 │   ├── skills/                  # SKILL.md discovery, frontmatter parsing
 │   ├── spinner/                 # animated thinking spinner
