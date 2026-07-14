@@ -247,6 +247,16 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 	pName, _ := sm.get()
 	provider := providerFor(cfg, pName)
 
+	// Wire the question tool handler for the TUI.
+	if qt, ok := toolReg.Get("question").(*tools.QuestionTool); ok {
+		qt.Handler = func(entries []tools.QuestionEntry) []string {
+			respCh := make(chan string, 1)
+			ch <- tui.AgentMsg{Question: entries, QuestionCh: respCh}
+			answer := <-respCh
+			return strings.Split(answer, "\n")
+		}
+	}
+
 	loop := &agent.Loop{
 		Provider:      provider,
 		Registry:      toolReg,

@@ -9,8 +9,28 @@ import (
 	"strings"
 )
 
+// QuestionEntry represents a single question to ask the user.
+type QuestionEntry struct {
+	Question string
+	Header   string
+	Options  []QuestionOption
+	Multiple bool
+}
+
+// QuestionOption is a single choice in a question.
+type QuestionOption struct {
+	Label       string
+	Description string
+}
+
+// QuestionHandler receives questions and returns answers. If nil, the
+// default stdin/stderr handler is used.
+type QuestionHandler func(questions []QuestionEntry) []string
+
 // QuestionTool asks the user structured questions with multiple-choice options.
-type QuestionTool struct{}
+type QuestionTool struct {
+	Handler QuestionHandler
+}
 
 func (t *QuestionTool) Name() string { return "question" }
 func (t *QuestionTool) Description() string {
@@ -50,19 +70,17 @@ func (t *QuestionTool) Schema() json.RawMessage {
 	}`)
 }
 
-type questionEntry struct {
-	Question string `json:"question"`
-	Header   string `json:"header"`
-	Options  []struct {
-		Label       string `json:"label"`
-		Description string `json:"description"`
-	} `json:"options"`
-	Multiple bool `json:"multiple"`
-}
-
 func (t *QuestionTool) Execute(ctx context.Context, args string) (string, error) {
 	var params struct {
-		Questions []questionEntry `json:"questions"`
+		Questions []struct {
+			Question string `json:"question"`
+			Header   string `json:"header"`
+			Options  []struct {
+				Label       string `json:"label"`
+				Description string `json:"description"`
+			} `json:"options"`
+			Multiple bool `json:"multiple"`
+		} `json:"questions"`
 	}
 	if err := json.Unmarshal([]byte(args), &params); err != nil {
 		return "", fmt.Errorf("question: invalid arguments: %w", err)
@@ -71,11 +89,36 @@ func (t *QuestionTool) Execute(ctx context.Context, args string) (string, error)
 		return "", fmt.Errorf("question: at least one question is required")
 	}
 
+	entries := make([]QuestionEntry, len(params.Questions))
+	for i, q := range params.Questions {
+		opts := make([]QuestionOption, len(q.Options))
+		for j, o := range q.Options {
+			opts[j] = QuestionOption{Label: o.Label, Description: o.Description}
+		}
+		entries[i] = QuestionEntry{
+			Question: q.Question,
+			Header:   q.Header,
+			Options:  opts,
+			Multiple: q.Multiple,
+		}
+	}
+
+	var answers []string
+	if t.Handler != nil {
+		answers = t.Handler(entries)
+	} else {
+		answers = defaultQuestionHandler(entries)
+	}
+
+	return strings.Join(answers, "\n"), nil
+}
+
+func defaultQuestionHandler(entries []QuestionEntry) []string {
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	var answers []string
 
-	for i, q := range params.Questions {
+	for i, q := range entries {
 		if i > 0 {
 			fmt.Fprintln(os.Stderr)
 		}
@@ -109,6 +152,5 @@ func (t *QuestionTool) Execute(ctx context.Context, args string) (string, error)
 	}
 
 	fmt.Fprintln(os.Stderr)
-
-	return strings.Join(answers, "\n"), nil
+	return answers
 }
