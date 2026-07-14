@@ -943,6 +943,7 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 		m.questionAnswers = nil
 		m.questionCh = msg.QuestionCh
 		m.refreshViewport()
+		m.scrollToBottom()
 		return
 	}
 
