@@ -495,17 +495,15 @@ func TestLoop_tokenUsageTracking(t *testing.T) {
 // --- Test: Context window management ---
 
 func TestLoop_contextWindowTrimming(t *testing.T) {
-	// Set a very small context window to force trimming
 	reg := tools.NewRegistry()
 	loop := &Loop{
 		Provider:      &fakeProvider{},
 		Registry:      reg,
 		SystemPrompt:  "test",
 		MaxIterations: 1,
-		ContextWindow: 500, // very small — about 125 chars worth of tokens
+		ContextWindow: 500,
 	}
 
-	// Build up a long history
 	loop.Messages = []types.Message{
 		types.SystemMsg("test prompt that is fairly long and takes up some token space"),
 	}
@@ -519,8 +517,6 @@ func TestLoop_contextWindowTrimming(t *testing.T) {
 		t.Fatalf("Run() error: %v", err)
 	}
 
-	// After trimming, the total estimated tokens should be under the window
-	// The system message + new user message should be preserved
 	totalChars := 0
 	for _, m := range loop.Messages {
 		totalChars += len(m.Content)
@@ -530,7 +526,8 @@ func TestLoop_contextWindowTrimming(t *testing.T) {
 		t.Errorf("messages not trimmed: estimated %d tokens for %d chars in %d messages",
 			estimatedTokens, totalChars, len(loop.Messages))
 	}
-	if len(loop.Messages) < 15 {
+	// LLM compaction keeps sysMsg + summary + 6 recent messages + assistant response
+	if len(loop.Messages) < 5 {
 		t.Errorf("expected some messages preserved, got %d", len(loop.Messages))
 	}
 }
