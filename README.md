@@ -129,7 +129,7 @@ The agent can use built-in tools and MCP server tools:
 - `background_process` — manage long-running background processes (start/list/logs/stop/restart)
 - `memory_search` / `memory_add` / `memory_update` / `memory_delete` / `memory_search_sessions` — persistent memory
 - `todowrite` — task tracking with priority levels (high/medium/low), persisted to SQLite
-- `skill` — load skill content into the conversation
+- `skill` — load, list, create, or edit skills (SKILL.md files with instructions)
 - MCP tools from registered servers
 
 ### Skills
