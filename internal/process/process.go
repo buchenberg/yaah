@@ -22,7 +22,6 @@ type Info struct {
 	Status      string // "running", "finished", "stopped", "error"
 	logs        strings.Builder
 	cmd         *exec.Cmd
-	cancel      func()
 	mu          sync.Mutex
 }
 

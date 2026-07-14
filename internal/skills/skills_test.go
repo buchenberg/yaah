@@ -143,8 +143,7 @@ func TestCreate_rejectsDuplicate(t *testing.T) {
 
 func TestEdit_updatesDescription(t *testing.T) {
 	tmp := t.TempDir()
-	path, err := Create(tmp, "edit-me", "old desc", "old body")
-	if err != nil {
+	if _, err := Create(tmp, "edit-me", "old desc", "old body"); err != nil {
 		t.Fatalf("Create() error: %v", err)
 	}
 
@@ -153,7 +152,7 @@ func TestEdit_updatesDescription(t *testing.T) {
 		t.Fatal("FindSkill() returned nil")
 	}
 
-	path, err = Edit(s, "new desc", "")
+	path, err := Edit(s, "new desc", "")
 	if err != nil {
 		t.Fatalf("Edit() error: %v", err)
 	}
@@ -170,8 +169,7 @@ func TestEdit_updatesDescription(t *testing.T) {
 
 func TestEdit_updatesBody(t *testing.T) {
 	tmp := t.TempDir()
-	path, err := Create(tmp, "edit-body", "desc", "old body")
-	if err != nil {
+	if _, err := Create(tmp, "edit-body", "desc", "old body"); err != nil {
 		t.Fatalf("Create() error: %v", err)
 	}
 
@@ -180,7 +178,7 @@ func TestEdit_updatesBody(t *testing.T) {
 		t.Fatal("FindSkill() returned nil")
 	}
 
-	path, err = Edit(s, "", "new body content")
+	path, err := Edit(s, "", "new body content")
 	if err != nil {
 		t.Fatalf("Edit() error: %v", err)
 	}
