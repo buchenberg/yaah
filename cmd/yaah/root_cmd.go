@@ -65,6 +65,13 @@ See the design plan for the full v0.1 roadmap.`,
 // One+ args → one-shot prompt (M2: will call the agent loop; for now
 // we just echo back and note the feature is coming).
 func runRoot(cmd *cobra.Command, args []string) error {
+	// Easter egg: `yaah yaah [yaah ...]` prints the goat (see goat.go).
+	// Checked before any session setup so it stays off the hot path.
+	if isAllYaahs(args) {
+		cmd.Println(goatCelebration(len(args)))
+		return nil
+	}
+
 	// Initialize color support
 	repl.InitNoColor()
 
