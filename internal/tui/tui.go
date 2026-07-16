@@ -130,36 +130,36 @@ var defaultCommands = []Command{
 
 // Model is the bubbletea model for the yaah TUI.
 type Model struct {
-	messages      []Message
-	viewport      viewport.Model
-	input         textinput.Model
-	spinner       spinner.Model
-	mdRenderer    *glamour.TermRenderer
-	banner        string // pre-rendered figlet + lolcat ASCII art
-	provider      string
-	modelName     string
-	width         int
-	height        int
-	thinking      bool
-	toolCall      string
-	toolArgs      string // args for current tool call (e.g. task description)
-	streaming     bool   // currently streaming a response
-	streamContent string // accumulated streaming content
-	thinkContent        string // accumulated thinking/reasoning content
-	reasoningCollapsed  bool   // true when reasoning collapsed after thinking ends
-	contextPct          int    // context window fill percentage (0-100)
-	contextTokens int    // estimated token count
-	contextWindow int    // context window size
-	onSubmit      func(string)
-	onQuit        func()
-	onCompact     func()
-	onModel       func(string, string)
-	commandMode   bool              // true when input starts with "/"
-	commands      []Command         // registered slash commands
-	modelMode     bool              // true when in model-selection sub-mode
-	modelItems    []string          // available models in "provider/model" format
-	modelSelected int               // highlighted index in filtered list
-	providerNames map[string]string // provider key → display name
+	messages           []Message
+	viewport           viewport.Model
+	input              textinput.Model
+	spinner            spinner.Model
+	mdRenderer         *glamour.TermRenderer
+	banner             string // pre-rendered figlet + lolcat ASCII art
+	provider           string
+	modelName          string
+	width              int
+	height             int
+	thinking           bool
+	toolCall           string
+	toolArgs           string // args for current tool call (e.g. task description)
+	streaming          bool   // currently streaming a response
+	streamContent      string // accumulated streaming content
+	thinkContent       string // accumulated thinking/reasoning content
+	reasoningCollapsed bool   // true when reasoning collapsed after thinking ends
+	contextPct         int    // context window fill percentage (0-100)
+	contextTokens      int    // estimated token count
+	contextWindow      int    // context window size
+	onSubmit           func(string)
+	onQuit             func()
+	onCompact          func()
+	onModel            func(string, string)
+	commandMode        bool              // true when input starts with "/"
+	commands           []Command         // registered slash commands
+	modelMode          bool              // true when in model-selection sub-mode
+	modelItems         []string          // available models in "provider/model" format
+	modelSelected      int               // highlighted index in filtered list
+	providerNames      map[string]string // provider key → display name
 }
 
 // New creates a new TUI model.
