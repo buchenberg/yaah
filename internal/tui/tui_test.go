@@ -890,9 +890,6 @@ func TestReasoningPersistsAfterDone(t *testing.T) {
 	if m.thinkContent != "" {
 		t.Errorf("thinkContent should be cleared after Done, got %q", m.thinkContent)
 	}
-	if !m.reasoningCollapsed {
-		t.Error("reasoning should be collapsed after Done")
-	}
 	if len(m.messages) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(m.messages))
 	}
@@ -918,9 +915,6 @@ func TestReasoningTransferOnDone(t *testing.T) {
 	if m.messages[0].Reasoning != "reasoning" {
 		t.Errorf("expected reasoning on message, got %q", m.messages[0].Reasoning)
 	}
-	if !m.reasoningCollapsed {
-		t.Error("reasoning should be collapsed after transfer")
-	}
 }
 
 func TestReasoningTransferOnFlush(t *testing.T) {
@@ -937,9 +931,6 @@ func TestReasoningTransferOnFlush(t *testing.T) {
 	}
 	if m.messages[0].Reasoning != "the reasoning" {
 		t.Errorf("expected reasoning on message, got %q", m.messages[0].Reasoning)
-	}
-	if !m.reasoningCollapsed {
-		t.Error("reasoning should be collapsed after Flush")
 	}
 }
 
@@ -976,36 +967,64 @@ func TestReasoningClearedOnNewSubmit(t *testing.T) {
 	m.HandleAgentMsg(AgentMsg{Done: true})
 
 	m.thinkContent = ""
-	m.reasoningCollapsed = false
+	m.reasoningExpanded = make(map[string]bool)
 
 	if m.thinkContent != "" {
 		t.Errorf("thinkContent should be empty after clearing, got %q", m.thinkContent)
 	}
-	if m.reasoningCollapsed {
-		t.Error("reasoningCollapsed should be false after clearing")
+	if len(m.reasoningExpanded) != 0 {
+		t.Error("reasoningExpanded should be empty after clearing")
 	}
 }
 
 func TestCTRLRTogglesReasoning(t *testing.T) {
-	m := &Model{width: 80}
+	m := &Model{width: 80, height: 40, reasoningExpanded: make(map[string]bool)}
 	m.HandleAgentMsg(AgentMsg{Thinking: "reasoning"})
 
 	m.streaming = true
 	m.streamContent = "response"
 	m.HandleAgentMsg(AgentMsg{Done: true})
 
-	if !m.reasoningCollapsed {
-		t.Fatal("expected collapsed after Done")
+	// Render to populate reasoningZones
+	m.renderMessages()
+	if len(m.reasoningZones) == 0 {
+		t.Fatal("expected reasoning zones after render")
+	}
+	zoneID := m.reasoningZones[0]
+
+	// Default: collapsed (not in map)
+	if m.reasoningExpanded[zoneID] {
+		t.Fatal("expected collapsed by default")
 	}
 
-	m.reasoningCollapsed = !m.reasoningCollapsed
-	if m.reasoningCollapsed {
-		t.Error("expected expanded after first toggle")
+	// Simulate ctrl+r: expand all
+	anyExpanded := false
+	for _, zid := range m.reasoningZones {
+		if m.reasoningExpanded[zid] {
+			anyExpanded = true
+			break
+		}
+	}
+	for _, zid := range m.reasoningZones {
+		m.reasoningExpanded[zid] = !anyExpanded
+	}
+	if !m.reasoningExpanded[zoneID] {
+		t.Error("expected expanded after first ctrl+r")
 	}
 
-	m.reasoningCollapsed = !m.reasoningCollapsed
-	if !m.reasoningCollapsed {
-		t.Error("expected collapsed after second toggle")
+	// Simulate ctrl+r again: collapse all
+	anyExpanded = false
+	for _, zid := range m.reasoningZones {
+		if m.reasoningExpanded[zid] {
+			anyExpanded = true
+			break
+		}
+	}
+	for _, zid := range m.reasoningZones {
+		m.reasoningExpanded[zid] = !anyExpanded
+	}
+	if m.reasoningExpanded[zoneID] {
+		t.Error("expected collapsed after second ctrl+r")
 	}
 }
 
@@ -1029,7 +1048,7 @@ func TestHasReasoning(t *testing.T) {
 	}
 
 	m.thinkContent = ""
-	m.reasoningCollapsed = false
+	m.reasoningExpanded = make(map[string]bool)
 	m.messages = nil
 	if m.hasReasoning() {
 		t.Error("should not have reasoning after clearing everything")
@@ -1037,19 +1056,17 @@ func TestHasReasoning(t *testing.T) {
 }
 
 func TestReasoningNotClearedOnDoneWhenEmpty(t *testing.T) {
-	m := &Model{width: 80}
-	m.reasoningCollapsed = false
+	m := &Model{width: 80, reasoningExpanded: make(map[string]bool)}
 
 	m.HandleAgentMsg(AgentMsg{Done: true})
 
-	if m.reasoningCollapsed {
-		t.Error("reasoningCollapsed should remain false when thinkContent was empty")
+	if len(m.reasoningExpanded) != 0 {
+		t.Error("reasoningExpanded should remain empty when thinkContent was empty")
 	}
 }
 
 func TestRenderReasoningCollapsed_MessageLevel(t *testing.T) {
-	m := &Model{width: 80}
-	m.reasoningCollapsed = true
+	m := &Model{width: 80, reasoningExpanded: make(map[string]bool)}
 	m.messages = []Message{
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "response", Reasoning: "the model's reasoning"},
@@ -1071,8 +1088,7 @@ func TestRenderReasoningCollapsed_MessageLevel(t *testing.T) {
 }
 
 func TestRenderReasoningExpanded_MessageLevel(t *testing.T) {
-	m := &Model{width: 80}
-	m.reasoningCollapsed = false
+	m := &Model{width: 80, reasoningExpanded: map[string]bool{"reasoning-1": true}}
 	m.messages = []Message{
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "response", Reasoning: "the model's reasoning"},
@@ -1131,8 +1147,7 @@ func TestRenderReasoningActiveThinkingNoContent(t *testing.T) {
 // --- zone + clipboard tests ---
 
 func TestReasoningZonesPopulated_MessageLevel(t *testing.T) {
-	m := &Model{width: 80}
-	m.reasoningCollapsed = true
+	m := &Model{width: 80, reasoningExpanded: make(map[string]bool)}
 	m.messages = []Message{
 		{Role: "assistant", Content: "response", Reasoning: "the model's reasoning"},
 	}
@@ -1148,8 +1163,7 @@ func TestReasoningZonesPopulated_MessageLevel(t *testing.T) {
 }
 
 func TestReasoningZonesPopulated_ModelLevel(t *testing.T) {
-	m := &Model{width: 80}
-	m.reasoningCollapsed = true
+	m := &Model{width: 80, reasoningExpanded: make(map[string]bool)}
 	m.thinkContent = "reasoning text"
 
 	m.renderMessages()
@@ -1163,8 +1177,7 @@ func TestReasoningZonesPopulated_ModelLevel(t *testing.T) {
 }
 
 func TestReasoningZonesMultipleMessages(t *testing.T) {
-	m := &Model{width: 80}
-	m.reasoningCollapsed = true
+	m := &Model{width: 80, reasoningExpanded: make(map[string]bool)}
 	m.messages = []Message{
 		{Role: "assistant", Content: "response1", Reasoning: "reasoning1"},
 		{Role: "assistant", Content: "response2", Reasoning: "reasoning2"},
@@ -1198,8 +1211,7 @@ func TestReasoningZonesEmptyWhenNoReasoning(t *testing.T) {
 }
 
 func TestReasoningZonesClearedEachRender(t *testing.T) {
-	m := &Model{width: 80}
-	m.reasoningCollapsed = true
+	m := &Model{width: 80, reasoningExpanded: make(map[string]bool)}
 	m.messages = []Message{
 		{Role: "assistant", Content: "response", Reasoning: "reasoning"},
 	}

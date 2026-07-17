@@ -147,41 +147,41 @@ var defaultCommands = []Command{
 
 // Model is the bubbletea model for the yaah TUI.
 type Model struct {
-	messages           []Message
-	viewport           viewport.Model
-	input              textinput.Model
-	spinner            spinner.Model
-	mdRenderer         *glamour.TermRenderer
-	banner             string // pre-rendered figlet + lolcat ASCII art
-	provider           string
-	modelName          string
-	width              int
-	height             int
-	thinking           bool
-	toolCall           string
-	toolArgs           string        // args for current tool call (e.g. task description)
-	streaming          bool          // currently streaming a response
-	streamContent      string        // accumulated streaming content
-	thinkContent       string        // accumulated thinking/reasoning content
-	reasoningCollapsed bool          // true when reasoning collapsed after thinking ends
-	reasoningZones     []string      // active reasoning zone IDs (for click handling)
-	questionMode       bool          // true when showing a question modal
-	questionModal      QuestionModal // the current question
-	questionIdx        int           // highlighted option index
-	questionMulti      []bool        // toggled state for multi-select
-	contextPct         int           // context window fill percentage (0-100)
-	contextTokens      int           // estimated token count
-	contextWindow      int           // context window size
-	onSubmit           func(string)
-	onQuit             func()
-	onCompact          func()
-	onModel            func(string, string)
-	commandMode        bool              // true when input starts with "/"
-	commands           []Command         // registered slash commands
-	modelMode          bool              // true when in model-selection sub-mode
-	modelItems         []string          // available models in "provider/model" format
-	modelSelected      int               // highlighted index in filtered list
-	providerNames      map[string]string // provider key → display name
+	messages          []Message
+	viewport          viewport.Model
+	input             textinput.Model
+	spinner           spinner.Model
+	mdRenderer        *glamour.TermRenderer
+	banner            string // pre-rendered figlet + lolcat ASCII art
+	provider          string
+	modelName         string
+	width             int
+	height            int
+	thinking          bool
+	toolCall          string
+	toolArgs          string          // args for current tool call (e.g. task description)
+	streaming         bool            // currently streaming a response
+	streamContent     string          // accumulated streaming content
+	thinkContent      string          // accumulated thinking/reasoning content
+	reasoningExpanded map[string]bool // zone ID → true if expanded (absent = collapsed)
+	reasoningZones    []string        // active reasoning zone IDs (for click handling)
+	questionMode      bool            // true when showing a question modal
+	questionModal     QuestionModal   // the current question
+	questionIdx       int             // highlighted option index
+	questionMulti     []bool          // toggled state for multi-select
+	contextPct        int             // context window fill percentage (0-100)
+	contextTokens     int             // estimated token count
+	contextWindow     int             // context window size
+	onSubmit          func(string)
+	onQuit            func()
+	onCompact         func()
+	onModel           func(string, string)
+	commandMode       bool              // true when input starts with "/"
+	commands          []Command         // registered slash commands
+	modelMode         bool              // true when in model-selection sub-mode
+	modelItems        []string          // available models in "provider/model" format
+	modelSelected     int               // highlighted index in filtered list
+	providerNames     map[string]string // provider key → display name
 }
 
 // New creates a new TUI model.
@@ -202,18 +202,19 @@ func New(provider, model string, contextWindow int, onSubmit func(string), onQui
 	bn, _ := banner.Generate()
 
 	return &Model{
-		input:         input,
-		spinner:       sp,
-		viewport:      vp,
-		banner:        bn,
-		provider:      provider,
-		modelName:     model,
-		contextWindow: contextWindow,
-		onSubmit:      onSubmit,
-		onQuit:        onQuit,
-		onCompact:     onCompact,
-		onModel:       onModel,
-		commands:      defaultCommands,
+		input:             input,
+		spinner:           sp,
+		viewport:          vp,
+		banner:            bn,
+		reasoningExpanded: make(map[string]bool),
+		provider:          provider,
+		modelName:         model,
+		contextWindow:     contextWindow,
+		onSubmit:          onSubmit,
+		onQuit:            onQuit,
+		onCompact:         onCompact,
+		onModel:           onModel,
+		commands:          defaultCommands,
 	}
 }
 
@@ -841,10 +842,8 @@ func (m *Model) AppendToken(token string) {
 	if !m.streaming {
 		m.streaming = true
 		m.streamContent = ""
-		if m.thinkContent != "" {
-			m.reasoningCollapsed = true
-		}
 	}
+
 	m.streamContent += token
 	m.refreshViewport()
 	m.scrollToBottom()
@@ -862,9 +861,6 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 
 	if msg.Flush != "" {
 		haveReasoning := m.thinkContent != ""
-		if haveReasoning {
-			m.reasoningCollapsed = true
-		}
 		m.streaming = false
 		m.streamContent = ""
 		if haveReasoning {
@@ -891,7 +887,6 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 
 	if msg.ToolName != "" {
 		if m.thinkContent != "" {
-			m.reasoningCollapsed = true
 			reasoning := m.thinkContent
 			m.thinkContent = ""
 			m.AddAssistantMessageWithReasoning("", reasoning)
@@ -909,9 +904,6 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 		m.SetThinking(false)
 		m.ClearToolCall()
 		haveReasoning := m.thinkContent != ""
-		if haveReasoning {
-			m.reasoningCollapsed = true
-		}
 		if m.streaming && m.streamContent != "" {
 			content := m.streamContent
 			m.streaming = false
@@ -1010,7 +1002,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			for _, zoneID := range m.reasoningZones {
 				if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
-					m.reasoningCollapsed = !m.reasoningCollapsed
+					m.reasoningExpanded[zoneID] = !m.reasoningExpanded[zoneID]
 					m.refreshViewport()
 					return m, nil
 				}
@@ -1083,7 +1075,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "ctrl+r":
 			if m.hasReasoning() {
-				m.reasoningCollapsed = !m.reasoningCollapsed
+				anyExpanded := false
+				for _, zid := range m.reasoningZones {
+					if m.reasoningExpanded[zid] {
+						anyExpanded = true
+						break
+					}
+				}
+				for _, zid := range m.reasoningZones {
+					m.reasoningExpanded[zid] = !anyExpanded
+				}
 				m.refreshViewport()
 			}
 			return m, nil
@@ -1107,7 +1108,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.thinkContent = ""
-			m.reasoningCollapsed = false
+			m.reasoningExpanded = make(map[string]bool)
 			value := m.input.Value()
 			if strings.TrimSpace(value) == "" {
 				return m, nil
@@ -1398,7 +1399,7 @@ func (m *Model) renderMessages() string {
 				b.WriteString("\n\n")
 				zoneID := fmt.Sprintf("reasoning-%d", msgIdx)
 				m.reasoningZones = append(m.reasoningZones, zoneID)
-				if m.reasoningCollapsed {
+				if !m.reasoningExpanded[zoneID] {
 					b.WriteString(zone.Mark(zoneID, toggleStyle.Render("  ▶ Reasoning...")))
 				} else {
 					b.WriteString(zone.Mark(zoneID, toggleStyle.Render("  ▼ Reasoning...")))
@@ -1458,7 +1459,7 @@ func (m *Model) renderMessages() string {
 			b.WriteString(thinkingStyle.Render(chatWrap("", m.thinkContent, m.width)))
 		} else {
 			m.reasoningZones = append(m.reasoningZones, "reasoning-live")
-			if m.reasoningCollapsed {
+			if !m.reasoningExpanded["reasoning-live"] {
 				b.WriteString(zone.Mark("reasoning-live", toggleStyle.Render("  ▶ Reasoning...")))
 			} else {
 				b.WriteString(zone.Mark("reasoning-live", toggleStyle.Render("  ▼ Reasoning...")))
