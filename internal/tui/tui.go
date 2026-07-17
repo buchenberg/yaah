@@ -15,6 +15,7 @@ import (
 	"charm.land/lipgloss/v2/list"
 	"charm.land/lipgloss/v2/table"
 	"charm.land/lipgloss/v2/tree"
+	zone "github.com/lrstanley/bubblezone/v2"
 
 	"github.com/buchenberg/yaah/internal/banner"
 )
@@ -111,6 +112,22 @@ type AgentMsg struct {
 	ContextWindow  int               // context window size, for status bar
 	ModelList      []string          // models fetched from providers
 	ProviderNames  map[string]string // provider key → display name
+	Question       *QuestionModal    // non-nil when a question should be shown
+}
+
+// QuestionModal carries question data for the interactive modal dialog.
+type QuestionModal struct {
+	Header   string
+	Question string
+	Options  []QuestionOption
+	Multiple bool
+	AnswerCh chan<- string
+}
+
+// QuestionOption is a single choice in a question modal.
+type QuestionOption struct {
+	Label       string
+	Description string
 }
 
 // Command represents a slash command available in the TUI.
@@ -142,14 +159,19 @@ type Model struct {
 	height             int
 	thinking           bool
 	toolCall           string
-	toolArgs           string // args for current tool call (e.g. task description)
-	streaming          bool   // currently streaming a response
-	streamContent      string // accumulated streaming content
-	thinkContent       string // accumulated thinking/reasoning content
-	reasoningCollapsed bool   // true when reasoning collapsed after thinking ends
-	contextPct         int    // context window fill percentage (0-100)
-	contextTokens      int    // estimated token count
-	contextWindow      int    // context window size
+	toolArgs           string        // args for current tool call (e.g. task description)
+	streaming          bool          // currently streaming a response
+	streamContent      string        // accumulated streaming content
+	thinkContent       string        // accumulated thinking/reasoning content
+	reasoningCollapsed bool          // true when reasoning collapsed after thinking ends
+	reasoningZones     []string      // active reasoning zone IDs (for click handling)
+	questionMode       bool          // true when showing a question modal
+	questionModal      QuestionModal // the current question
+	questionIdx        int           // highlighted option index
+	questionMulti      []bool        // toggled state for multi-select
+	contextPct         int           // context window fill percentage (0-100)
+	contextTokens      int           // estimated token count
+	contextWindow      int           // context window size
 	onSubmit           func(string)
 	onQuit             func()
 	onCompact          func()
@@ -914,6 +936,18 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 		}
 	}
 
+	if msg.Question != nil {
+		m.questionModal = *msg.Question
+		m.questionIdx = 0
+		m.questionMulti = make([]bool, len(msg.Question.Options))
+		m.questionMode = true
+		m.input.SetValue("")
+		m.input.Placeholder = ""
+		m.adjustViewport()
+		m.refreshViewport()
+		return
+	}
+
 	if msg.ContextWindow > 0 {
 		m.HandleContextInfo(msg.ContextTokens, msg.ContextWindow)
 	}
@@ -958,12 +992,73 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.adjustViewport()
 		return m, nil
 
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
+			if m.questionMode {
+				for i := range m.questionModal.Options {
+					zoneID := fmt.Sprintf("question-opt-%d", i)
+					if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
+						if m.questionModal.Multiple {
+							m.questionMulti[i] = !m.questionMulti[i]
+							m.questionIdx = i
+							m.refreshViewport()
+						} else {
+							m.questionIdx = i
+							m.commitQuestionAnswer()
+						}
+						return m, nil
+					}
+				}
+				return m, nil
+			}
+			for _, zoneID := range m.reasoningZones {
+				if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
+					m.reasoningCollapsed = !m.reasoningCollapsed
+					m.refreshViewport()
+					return m, nil
+				}
+			}
+		}
+		var vpCmd tea.Cmd
+		m.viewport, vpCmd = m.viewport.Update(msg)
+		return m, vpCmd
+
 	case tea.MouseMsg:
 		var vpCmd tea.Cmd
 		m.viewport, vpCmd = m.viewport.Update(msg)
 		return m, vpCmd
 
 	case tea.KeyPressMsg:
+		if m.questionMode {
+			switch msg.String() {
+			case "esc":
+				m.answerQuestion("")
+				return m, nil
+			case "enter":
+				m.commitQuestionAnswer()
+				return m, nil
+			case "up":
+				if m.questionIdx > 0 {
+					m.questionIdx--
+				}
+				m.refreshViewport()
+				return m, nil
+			case "down":
+				if m.questionIdx < len(m.questionModal.Options)-1 {
+					m.questionIdx++
+				}
+				m.refreshViewport()
+				return m, nil
+			case "space":
+				if m.questionModal.Multiple {
+					m.questionMulti[m.questionIdx] = !m.questionMulti[m.questionIdx]
+				}
+				m.refreshViewport()
+				return m, nil
+			}
+			return m, nil
+		}
+
 		switch msg.String() {
 		case "ctrl+c":
 			if m.onQuit != nil {
@@ -982,7 +1077,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "ctrl+y":
-			// reserved for future use
+			for i := len(m.messages) - 1; i >= 0; i-- {
+				if m.messages[i].Role == "assistant" && m.messages[i].Raw != "" {
+					return m, tea.SetClipboard(m.messages[i].Raw)
+				}
+			}
 			return m, nil
 
 		case "ctrl+r":
@@ -1065,7 +1164,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // detectCommandMode enables or disables command mode based on the input prefix.
 func (m *Model) detectCommandMode() {
-	if m.modelMode {
+	if m.modelMode || m.questionMode {
 		return
 	}
 	if strings.HasPrefix(m.input.Value(), "/") {
@@ -1101,6 +1200,29 @@ func (m *Model) hasReasoning() bool {
 	return false
 }
 
+func (m *Model) answerQuestion(labels string) {
+	m.questionModal.AnswerCh <- labels
+	m.questionMode = false
+	m.questionModal = QuestionModal{}
+	m.questionMulti = nil
+	m.input.Placeholder = "Type a message..."
+	m.adjustViewport()
+}
+
+func (m *Model) commitQuestionAnswer() {
+	if m.questionModal.Multiple {
+		var selected []string
+		for i, toggled := range m.questionMulti {
+			if toggled {
+				selected = append(selected, m.questionModal.Options[i].Label)
+			}
+		}
+		m.answerQuestion(strings.Join(selected, ", "))
+	} else {
+		m.answerQuestion(m.questionModal.Options[m.questionIdx].Label)
+	}
+}
+
 // paletteLines returns the number of terminal rows the command palette
 // occupies when visible. Includes the rounded border (2) and padding (2).
 // maxModelLines returns the maximum number of model items that can fit
@@ -1118,6 +1240,13 @@ func (m *Model) maxModelLines() int {
 }
 
 func (m *Model) paletteLines() int {
+	if m.questionMode {
+		lines := 6 + len(m.questionModal.Options) // header, question, options, help, spacing
+		if lines > 16 {
+			lines = 16
+		}
+		return lines
+	}
 	if m.modelMode {
 		filtered := m.filteredModels()
 		if len(filtered) == 0 {
@@ -1161,7 +1290,7 @@ func (m *Model) adjustViewport() {
 		return
 	}
 	chatHeight := m.height - m.headerHeight() - 2
-	if m.commandMode || m.modelMode {
+	if m.commandMode || m.modelMode || m.questionMode {
 		chatHeight -= m.paletteLines()
 	}
 	if chatHeight < 5 {
@@ -1244,8 +1373,9 @@ func (m *Model) renderMessages() string {
 	var b strings.Builder
 
 	toolLabelRendered := false
+	m.reasoningZones = m.reasoningZones[:0]
 
-	for _, msg := range m.messages {
+	for msgIdx, msg := range m.messages {
 		switch msg.Role {
 		case "user":
 			rendered := userStyle.Render(chatWrap("", msg.Content, m.width))
@@ -1255,10 +1385,12 @@ func (m *Model) renderMessages() string {
 		case "assistant":
 			if msg.Reasoning != "" {
 				b.WriteString("\n\n")
+				zoneID := fmt.Sprintf("reasoning-%d", msgIdx)
+				m.reasoningZones = append(m.reasoningZones, zoneID)
 				if m.reasoningCollapsed {
-					b.WriteString(toggleStyle.Render("  ▶ Reasoning..."))
+					b.WriteString(zone.Mark(zoneID, toggleStyle.Render("  ▶ Reasoning...")))
 				} else {
-					b.WriteString(toggleStyle.Render("  ▼ Reasoning..."))
+					b.WriteString(zone.Mark(zoneID, toggleStyle.Render("  ▼ Reasoning...")))
 					b.WriteString("\n\n")
 					b.WriteString(thinkingStyle.Render(chatWrap("", msg.Reasoning, m.width)))
 				}
@@ -1313,13 +1445,16 @@ func (m *Model) renderMessages() string {
 			b.WriteString(rendered)
 			b.WriteString("\n\n")
 			b.WriteString(thinkingStyle.Render(chatWrap("", m.thinkContent, m.width)))
-		} else if m.reasoningCollapsed {
-			b.WriteString(toggleStyle.Render("  ▶ Reasoning..."))
-			b.WriteString("\n")
 		} else {
-			b.WriteString(toggleStyle.Render("  ▼ Reasoning..."))
-			b.WriteString("\n\n")
-			b.WriteString(thinkingStyle.Render(chatWrap("", m.thinkContent, m.width)))
+			m.reasoningZones = append(m.reasoningZones, "reasoning-live")
+			if m.reasoningCollapsed {
+				b.WriteString(zone.Mark("reasoning-live", toggleStyle.Render("  ▶ Reasoning...")))
+			} else {
+				b.WriteString(zone.Mark("reasoning-live", toggleStyle.Render("  ▼ Reasoning...")))
+				b.WriteString("\n\n")
+				b.WriteString(thinkingStyle.Render(chatWrap("", m.thinkContent, m.width)))
+			}
+			b.WriteString("\n")
 		}
 		b.WriteString("\n\n")
 	}
@@ -1450,6 +1585,45 @@ func (m *Model) renderCommandPalette() string {
 	return commandPaletteStyle.Render(strings.Join(lines, "\n"))
 }
 
+// renderQuestionModal renders the interactive question dialog.
+func (m *Model) renderQuestionModal() string {
+	var b strings.Builder
+	b.WriteString(boldStyle.Render("═══ " + m.questionModal.Header + " ═══"))
+	b.WriteString("\n\n")
+	b.WriteString(m.questionModal.Question)
+	b.WriteString("\n\n")
+
+	for i, opt := range m.questionModal.Options {
+		prefix := "  "
+		suffix := ""
+		if m.questionModal.Multiple {
+			if m.questionMulti[i] {
+				prefix = " ☑ "
+			} else {
+				prefix = " ☐ "
+			}
+		} else {
+			if i == m.questionIdx {
+				prefix = " ▶ "
+			}
+		}
+		if opt.Description != "" {
+			suffix = " — " + opt.Description
+		}
+		line := prefix + opt.Label + suffix
+		b.WriteString(zone.Mark(fmt.Sprintf("question-opt-%d", i), listItemStyle.Render(line)))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(commandDescStyle.Render("↑↓ navigate · Enter select · Esc cancel"))
+	if m.questionModal.Multiple {
+		b.WriteString(commandDescStyle.Render(" · Space toggle"))
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
 // View implements tea.Model.
 func (m *Model) View() tea.View {
 	if m.width == 0 {
@@ -1473,9 +1647,11 @@ func (m *Model) View() tea.View {
 	// Viewport holds the scrollable chat history
 	viewportView := m.viewport.View()
 
-	// Palette (shown above input when in command or model mode)
+	// Palette (shown above input when in command, model, or question mode)
 	var palette string
-	if m.modelMode {
+	if m.questionMode {
+		palette = m.renderQuestionModal()
+	} else if m.modelMode {
 		palette = m.renderModelPalette()
 	} else if m.commandMode {
 		palette = m.renderCommandPalette()
@@ -1491,8 +1667,9 @@ func (m *Model) View() tea.View {
 	elements = append(elements, inputView)
 	body := lipgloss.JoinVertical(lipgloss.Left, elements...)
 
-	v := tea.NewView(body)
+	v := tea.NewView(zone.Scan(body))
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	// Position the terminal cursor at the textinput's location.
 	// textinput.Cursor() returns Y=0 (relative to the widget), so we
 	// offset it to the input line, which is the last line of the view.

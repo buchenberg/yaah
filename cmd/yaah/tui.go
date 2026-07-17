@@ -25,6 +25,7 @@ import (
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/tui"
 	"github.com/buchenberg/yaah/internal/types"
+	zone "github.com/lrstanley/bubblezone/v2"
 	"github.com/spf13/cobra"
 )
 
@@ -111,6 +112,8 @@ func providerFor(cfg *config.Config, name string) agent.Provider {
 
 // runTUI starts the bubbletea TUI.
 func runTUI() error {
+	zone.NewGlobal()
+
 	cfg, err := config.Load()
 	if err != nil || cfg == nil {
 		cfg = &config.Config{
@@ -293,6 +296,32 @@ func runTUI() error {
 	)
 
 	p := tea.NewProgram(m)
+
+	// Wire the question tool handler for TUI modal dialogs.
+	if qt := toolReg.Get("question"); qt != nil {
+		if qtp, ok := qt.(*tools.QuestionTool); ok {
+			qtp.Handler = func(entries []tools.QuestionEntry) []string {
+				var answers []string
+				for _, e := range entries {
+					ch := make(chan string, 1)
+					opts := make([]tui.QuestionOption, len(e.Options))
+					for i, o := range e.Options {
+						opts[i] = tui.QuestionOption{Label: o.Label, Description: o.Description}
+					}
+					p.Send(tui.AgentMsg{Question: &tui.QuestionModal{
+						Header:   e.Header,
+						Question: e.Question,
+						Options:  opts,
+						Multiple: e.Multiple,
+						AnswerCh: ch,
+					}})
+					answer := <-ch
+					answers = append(answers, fmt.Sprintf("%s: %s", e.Header, answer))
+				}
+				return answers
+			}
+		}
+	}
 
 	go func() {
 		for msg := range agentCh {
