@@ -1240,27 +1240,24 @@ func (m *Model) maxModelLines() int {
 }
 
 func (m *Model) maxQuestionLines() int {
-	if m.height == 0 {
-		return 8
+	n := m.maxModelLines() - 6 // 6 = header + blank + question + blank + blank + help
+	if n < 1 {
+		n = 1
 	}
-	available := m.height - m.headerHeight() - 4 // status, input, border/padding
-	items := available - 8                       // header, question, spacing, help, border, padding
-	if items < 1 {
-		items = 1
-	}
-	return items
+	return n
 }
 
 func (m *Model) paletteLines() int {
 	if m.questionMode {
-		optLines := len(m.questionModal.Options)
+		optCount := len(m.questionModal.Options)
 		max := m.maxQuestionLines()
-		if optLines > max {
-			optLines = max
+		visible := optCount
+		if visible > max {
+			visible = max
 		}
-		lines := 6 + optLines // header, question, options, help, spacing
-		if lines > 16 {
-			lines = 16
+		lines := 10 + visible // 4 (border+padding) + 6 (header+question+help+blanks) + options
+		if optCount > visible {
+			lines++ // overflow indicator
 		}
 		return lines
 	}
@@ -1610,7 +1607,7 @@ func (m *Model) renderQuestionModal() string {
 	}
 
 	var lines []string
-	lines = append(lines, boldStyle.Render(chatWrap("", m.questionModal.Header, contentWidth)))
+	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99")).Render(chatWrap("", m.questionModal.Header, contentWidth)))
 	lines = append(lines, "")
 	lines = append(lines, chatWrap("", m.questionModal.Question, contentWidth))
 	lines = append(lines, "")
