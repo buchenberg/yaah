@@ -1000,12 +1000,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
 						if m.questionModal.Multiple {
 							m.questionMulti[i] = !m.questionMulti[i]
-							m.questionIdx = i
-							m.refreshViewport()
-						} else {
-							m.questionIdx = i
-							m.commitQuestionAnswer()
 						}
+						m.questionIdx = i
+						m.refreshViewport()
 						return m, nil
 					}
 				}
