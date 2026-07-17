@@ -1604,10 +1604,15 @@ func (m *Model) renderCommandPalette() string {
 
 // renderQuestionModal renders the interactive question dialog.
 func (m *Model) renderQuestionModal() string {
+	contentWidth := m.width - 6
+	if contentWidth < 20 {
+		contentWidth = 20
+	}
+
 	var lines []string
-	lines = append(lines, boldStyle.Render(m.questionModal.Header))
+	lines = append(lines, boldStyle.Render(chatWrap("", m.questionModal.Header, contentWidth)))
 	lines = append(lines, "")
-	lines = append(lines, chatWrap("", m.questionModal.Question, m.width-6))
+	lines = append(lines, chatWrap("", m.questionModal.Question, contentWidth))
 	lines = append(lines, "")
 
 	// Window calculation: show options around the highlighted index
@@ -1639,11 +1644,12 @@ func (m *Model) renderQuestionModal() string {
 				prefix = " ▶ "
 			}
 		}
-		label := listItemStyle.Render(opt.Label)
+		fullLine := prefix + opt.Label
 		if opt.Description != "" {
-			label += commandDescStyle.Render(" — " + opt.Description)
+			fullLine += " — " + opt.Description
 		}
-		lines = append(lines, zone.Mark(fmt.Sprintf("question-opt-%d", i), prefix+label))
+		wrapped := chatWrap(prefix, fullLine[len(prefix):], contentWidth)
+		lines = append(lines, zone.Mark(fmt.Sprintf("question-opt-%d", i), listItemStyle.Render(wrapped)))
 	}
 
 	if start > 0 || end < len(m.questionModal.Options) {
