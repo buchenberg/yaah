@@ -9,14 +9,61 @@ package banner
 import (
 	"fmt"
 	"math"
+	"math/rand/v2"
 	"os"
 	"strings"
 
 	"github.com/lsferreira42/figlet-go/figlet"
 )
 
-const Tagline = "For agents by agents"
 const Title = "yaah"
+
+var taglines = []string{
+	"For agents by agents",
+	"A pretty fine day for a yaah",
+	"Hallucinations sold separately",
+	"I'm sorry Dave, I can't do that",
+	"It's a feature, not a bug",
+	"No vendors, no masters",
+	"Your vibe attracts your tribe",
+	"Keep it simple, keep it stupid",
+	"I reason, therefore I am",
+	"Implement",
+	"You should know this by now",
+	"Works on my machine",
+	"Soon™",
+	"Under new management",
+	"I train on your vibes",
+	"Forward, always",
+	"Yet another agent harness",
+	"Your prompt, your rules",
+	"Mo dependencies, mo problems",
+	"Born to run, built to yaah",
+	"yaah yaah yaah!!",
+}
+
+var fonts = []string{
+	"standard",
+	"big",
+	"slant",
+	"shadow",
+	"small",
+	"banner3-D",
+	"block",
+	"colossal",
+	"doom",
+	"epic",
+	"larry3d",
+	"rounded",
+	"bubble",
+	"lean",
+	"digital",
+	"avatar",
+	"isometric1",
+	"mini",
+	"starwars",
+	"cyberlarge",
+}
 
 // lolcatRGB maps a character index to an RGB triple using the same
 // sine-wave algorithm as gololcat / the original lolcat.
@@ -27,24 +74,12 @@ func lolcatRGB(i int) (int, int, int) {
 		int(math.Sin(f*float64(i)+4*math.Pi/3)*127 + 128)
 }
 
-// Generate renders "yaah" as figlet ASCII art with lolcat rainbow
-// coloring, followed by the tagline and subtitle. Returns the styled
-// banner string and its line count. Falls back to plain "yaah" if
-// figlet fails. Respects the NO_COLOR environment variable.
-func Generate() (string, int) {
-	art, err := figlet.Render(Title, figlet.WithFont("fonts/standard"))
-	if err != nil || strings.TrimSpace(art) == "" {
-		return Title, 1
-	}
-
-	lines := strings.Split(strings.TrimRight(art, "\n"), "\n")
+// Lolcat applies lolcat rainbow coloring to arbitrary ASCII art text.
+// Each character receives an RGB color from the sine-wave algorithm.
+// Respects the NO_COLOR environment variable.
+func Lolcat(art string) string {
+	lines := strings.Split(art, "\n")
 	noColor := os.Getenv("NO_COLOR") != ""
-
-	dim := "\033[2m"
-	reset := "\033[0m"
-	if noColor {
-		dim, reset = "", ""
-	}
 
 	var b strings.Builder
 	charIdx := 0
@@ -60,10 +95,43 @@ func Generate() (string, int) {
 		}
 		b.WriteString("\n")
 	}
+	return b.String()
+}
+
+// Generate renders "yaah" as figlet ASCII art with lolcat rainbow
+// coloring, followed by the tagline and subtitle. Picks a random
+// font from the curated list on each call. Returns the styled
+// banner string and its line count. Falls back to plain "yaah" if
+// figlet fails. Respects the NO_COLOR environment variable.
+func Generate() (string, int) {
+	font := "fonts/" + fonts[rand.IntN(len(fonts))]
+	art, err := figlet.Render(Title, figlet.WithFont(font))
+	if err != nil || strings.TrimSpace(art) == "" {
+		art, err = figlet.Render(Title, figlet.WithFont("fonts/standard"))
+		if err != nil || strings.TrimSpace(art) == "" {
+			return Title, 1
+		}
+	}
+
+	lines := strings.Split(strings.TrimRight(art, "\n"), "\n")
+	noColor := os.Getenv("NO_COLOR") != ""
+
+	dim := "\033[2m"
+	reset := "\033[0m"
+	if noColor {
+		dim, reset = "", ""
+	}
+
+	var b strings.Builder
+	if noColor {
+		b.WriteString(art)
+	} else {
+		b.WriteString(Lolcat(art))
+	}
 
 	b.WriteString("\n")
 	b.WriteString(dim)
-	b.WriteString(Tagline)
+	b.WriteString(taglines[rand.IntN(len(taglines))])
 	b.WriteString(reset)
 
 	return b.String(), len(lines) + 3

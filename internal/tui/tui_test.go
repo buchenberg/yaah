@@ -864,3 +864,259 @@ func assertEqual(t *testing.T, got, expected []string) {
 		}
 	}
 }
+
+// --- reasoning collapse tests ---
+
+func TestReasoningPersistsAfterDone(t *testing.T) {
+	m := &Model{width: 80}
+	m.HandleAgentMsg(AgentMsg{Thinking: "step 1"})
+	m.HandleAgentMsg(AgentMsg{Thinking: " step 2"})
+
+	if m.thinkContent != "step 1 step 2" {
+		t.Errorf("expected thinkContent 'step 1 step 2', got %q", m.thinkContent)
+	}
+
+	m.streaming = true
+	m.streamContent = "the response"
+	m.HandleAgentMsg(AgentMsg{Done: true})
+
+	if m.thinkContent != "" {
+		t.Errorf("thinkContent should be cleared after Done, got %q", m.thinkContent)
+	}
+	if !m.reasoningCollapsed {
+		t.Error("reasoning should be collapsed after Done")
+	}
+	if len(m.messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(m.messages))
+	}
+	if m.messages[0].Reasoning != "step 1 step 2" {
+		t.Errorf("reasoning should be on the message, got %q", m.messages[0].Reasoning)
+	}
+}
+
+func TestReasoningTransferOnDone(t *testing.T) {
+	m := &Model{width: 80}
+	m.HandleAgentMsg(AgentMsg{Thinking: "reasoning"})
+
+	m.streaming = true
+	m.streamContent = "the response"
+	m.HandleAgentMsg(AgentMsg{Done: true})
+
+	if m.thinkContent != "" {
+		t.Errorf("thinkContent should be cleared after Done with streaming, got %q", m.thinkContent)
+	}
+	if len(m.messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(m.messages))
+	}
+	if m.messages[0].Reasoning != "reasoning" {
+		t.Errorf("expected reasoning on message, got %q", m.messages[0].Reasoning)
+	}
+	if !m.reasoningCollapsed {
+		t.Error("reasoning should be collapsed after transfer")
+	}
+}
+
+func TestReasoningTransferOnFlush(t *testing.T) {
+	m := &Model{width: 80}
+	m.HandleAgentMsg(AgentMsg{Thinking: "the reasoning"})
+
+	m.HandleAgentMsg(AgentMsg{Flush: "flushed content"})
+
+	if m.thinkContent != "" {
+		t.Errorf("thinkContent should be cleared after Flush, got %q", m.thinkContent)
+	}
+	if len(m.messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(m.messages))
+	}
+	if m.messages[0].Reasoning != "the reasoning" {
+		t.Errorf("expected reasoning on message, got %q", m.messages[0].Reasoning)
+	}
+	if !m.reasoningCollapsed {
+		t.Error("reasoning should be collapsed after Flush")
+	}
+}
+
+func TestReasoningNotDuplicatedAfterFlushAndDone(t *testing.T) {
+	m := &Model{width: 80}
+	m.HandleAgentMsg(AgentMsg{Thinking: "reasoning"})
+
+	m.HandleAgentMsg(AgentMsg{Flush: "first part"})
+	if m.thinkContent != "" {
+		t.Errorf("thinkContent should be cleared after Flush, got %q", m.thinkContent)
+	}
+
+	m.streaming = true
+	m.streamContent = "second part"
+	m.HandleAgentMsg(AgentMsg{Done: true})
+
+	if len(m.messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(m.messages))
+	}
+	if m.messages[0].Reasoning != "reasoning" {
+		t.Errorf("first message should have reasoning, got %q", m.messages[0].Reasoning)
+	}
+	if m.messages[1].Reasoning != "" {
+		t.Error("second message should NOT have reasoning")
+	}
+}
+
+func TestReasoningClearedOnNewSubmit(t *testing.T) {
+	m := &Model{width: 80}
+	m.HandleAgentMsg(AgentMsg{Thinking: "reasoning"})
+
+	m.streaming = true
+	m.streamContent = "response"
+	m.HandleAgentMsg(AgentMsg{Done: true})
+
+	m.thinkContent = ""
+	m.reasoningCollapsed = false
+
+	if m.thinkContent != "" {
+		t.Errorf("thinkContent should be empty after clearing, got %q", m.thinkContent)
+	}
+	if m.reasoningCollapsed {
+		t.Error("reasoningCollapsed should be false after clearing")
+	}
+}
+
+func TestCTRLRTogglesReasoning(t *testing.T) {
+	m := &Model{width: 80}
+	m.HandleAgentMsg(AgentMsg{Thinking: "reasoning"})
+
+	m.streaming = true
+	m.streamContent = "response"
+	m.HandleAgentMsg(AgentMsg{Done: true})
+
+	if !m.reasoningCollapsed {
+		t.Fatal("expected collapsed after Done")
+	}
+
+	m.reasoningCollapsed = !m.reasoningCollapsed
+	if m.reasoningCollapsed {
+		t.Error("expected expanded after first toggle")
+	}
+
+	m.reasoningCollapsed = !m.reasoningCollapsed
+	if !m.reasoningCollapsed {
+		t.Error("expected collapsed after second toggle")
+	}
+}
+
+func TestHasReasoning(t *testing.T) {
+	m := &Model{width: 80}
+
+	if m.hasReasoning() {
+		t.Error("should not have reasoning initially")
+	}
+
+	m.HandleAgentMsg(AgentMsg{Thinking: "reasoning"})
+	if !m.hasReasoning() {
+		t.Error("should have reasoning via thinkContent")
+	}
+
+	m.streaming = true
+	m.streamContent = "response"
+	m.HandleAgentMsg(AgentMsg{Done: true})
+	if !m.hasReasoning() {
+		t.Error("should have reasoning via message after transfer")
+	}
+
+	m.thinkContent = ""
+	m.reasoningCollapsed = false
+	m.messages = nil
+	if m.hasReasoning() {
+		t.Error("should not have reasoning after clearing everything")
+	}
+}
+
+func TestReasoningNotClearedOnDoneWhenEmpty(t *testing.T) {
+	m := &Model{width: 80}
+	m.reasoningCollapsed = false
+
+	m.HandleAgentMsg(AgentMsg{Done: true})
+
+	if m.reasoningCollapsed {
+		t.Error("reasoningCollapsed should remain false when thinkContent was empty")
+	}
+}
+
+func TestRenderReasoningCollapsed_MessageLevel(t *testing.T) {
+	m := &Model{width: 80}
+	m.reasoningCollapsed = true
+	m.messages = []Message{
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "response", Reasoning: "the model's reasoning"},
+	}
+
+	output := m.renderMessages()
+
+	if !strings.Contains(output, "▶ Reasoning") {
+		t.Errorf("collapsed output should contain ▶ Reasoning... toggle, got: %q", output)
+	}
+	if strings.Contains(output, "the model's reasoning") {
+		t.Error("collapsed output should NOT contain reasoning text")
+	}
+	posToggle := strings.Index(output, "▶ Reasoning")
+	posResponse := strings.Index(output, "response")
+	if posToggle > posResponse {
+		t.Errorf("toggle should appear before response text, got toggle at %d, response at %d", posToggle, posResponse)
+	}
+}
+
+func TestRenderReasoningExpanded_MessageLevel(t *testing.T) {
+	m := &Model{width: 80}
+	m.reasoningCollapsed = false
+	m.messages = []Message{
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "response", Reasoning: "the model's reasoning"},
+	}
+
+	output := m.renderMessages()
+
+	if !strings.Contains(output, "▼ Reasoning") {
+		t.Errorf("expanded output should contain ▼ Reasoning... toggle, got: %q", output)
+	}
+	if !strings.Contains(output, "the model's reasoning") {
+		t.Error("expanded output should contain the reasoning text")
+	}
+	posToggle := strings.Index(output, "▼ Reasoning")
+	posResponse := strings.Index(output, "response")
+	if posToggle > posResponse {
+		t.Errorf("toggle should appear before response text, got toggle at %d, response at %d", posToggle, posResponse)
+	}
+}
+
+func TestRenderReasoningActiveThinking(t *testing.T) {
+	m := &Model{width: 80}
+	m.thinking = true
+	m.streaming = false
+	m.thinkContent = "thinking..."
+
+	output := m.renderMessages()
+
+	if !strings.Contains(output, "Reasoning...") {
+		t.Errorf("active thinking should show spinner + Reasoning..., got: %q", output)
+	}
+	if !strings.Contains(output, "thinking...") {
+		t.Error("active thinking should show reasoning text inline")
+	}
+	if strings.Contains(output, "▶ Reasoning") || strings.Contains(output, "▼ Reasoning") {
+		t.Error("active thinking should NOT show collapse toggle")
+	}
+}
+
+func TestRenderReasoningActiveThinkingNoContent(t *testing.T) {
+	m := &Model{width: 80}
+	m.thinking = true
+	m.streaming = false
+	m.thinkContent = ""
+
+	output := m.renderMessages()
+
+	if !strings.Contains(output, "Thinking...") {
+		t.Errorf("active thinking without reasoning should show spinner: %q", output)
+	}
+	if strings.Contains(output, "▶ Reasoning") || strings.Contains(output, "▼ Reasoning") {
+		t.Error("no content means no toggle should appear")
+	}
+}

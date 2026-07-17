@@ -1,5 +1,7 @@
 package yaah
 
+import "github.com/buchenberg/yaah/internal/banner"
+
 // The yaah goat. Running `yaah yaah` prints an ASCII goat; each extra
 // "yaah" argument escalates the celebration, capping at the final level.
 // This is an easter egg: it is checked by arg inspection in runRoot
@@ -71,5 +73,5 @@ func goatCelebration(count int) string {
 		count = len(goatLevels)
 	}
 	level := goatLevels[count-1]
-	return "  " + Bold(level.chant) + "\n\n" + level.art + "\n"
+	return "  " + Bold(level.chant) + "\n\n" + banner.Lolcat(level.art) + "\n"
 }

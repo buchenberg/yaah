@@ -56,6 +56,9 @@ var (
 			Foreground(lipgloss.Color("240")).
 			Italic(true)
 
+	toggleStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240"))
+
 	listBulletStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("99")).
 			MarginRight(1)
@@ -85,16 +88,17 @@ var (
 
 // Message represents a chat message in the TUI.
 type Message struct {
-	Role     string
-	Content  string // glamour-rendered for assistant, raw for others
-	Raw      string // original markdown (for copy), same as Content for user/tool
-	ToolName string // tool that produced this message (for tool result messages)
+	Role      string
+	Content   string // glamour-rendered for assistant, raw for others
+	Raw       string // original markdown (for copy), same as Content for user/tool
+	ToolName  string // tool that produced this message (for tool result messages)
+	Reasoning string // thinking/reasoning text (empty for non-assistant or normal responses)
 }
 
 // AgentMsg is a message from the agent goroutine.
 type AgentMsg struct {
 	Token          string
-	Thinking       string // reasoning/thinking content from models like DeepSeek
+	Thinking       string // reasoning content from models like DeepSeek
 	ToolName       string
 	ToolArgs       string // tool arguments (for display, e.g. task description)
 	ToolResult     string // tool result content
@@ -126,35 +130,36 @@ var defaultCommands = []Command{
 
 // Model is the bubbletea model for the yaah TUI.
 type Model struct {
-	messages      []Message
-	viewport      viewport.Model
-	input         textinput.Model
-	spinner       spinner.Model
-	mdRenderer    *glamour.TermRenderer
-	banner        string // pre-rendered figlet + lolcat ASCII art
-	provider      string
-	modelName     string
-	width         int
-	height        int
-	thinking      bool
-	toolCall      string
-	toolArgs      string // args for current tool call (e.g. task description)
-	streaming     bool   // currently streaming a response
-	streamContent string // accumulated streaming content
-	thinkContent  string // accumulated thinking/reasoning content
-	contextPct    int    // context window fill percentage (0-100)
-	contextTokens int    // estimated token count
-	contextWindow int    // context window size
-	onSubmit      func(string)
-	onQuit        func()
-	onCompact     func()
-	onModel       func(string, string)
-	commandMode   bool              // true when input starts with "/"
-	commands      []Command         // registered slash commands
-	modelMode     bool              // true when in model-selection sub-mode
-	modelItems    []string          // available models in "provider/model" format
-	modelSelected int               // highlighted index in filtered list
-	providerNames map[string]string // provider key → display name
+	messages           []Message
+	viewport           viewport.Model
+	input              textinput.Model
+	spinner            spinner.Model
+	mdRenderer         *glamour.TermRenderer
+	banner             string // pre-rendered figlet + lolcat ASCII art
+	provider           string
+	modelName          string
+	width              int
+	height             int
+	thinking           bool
+	toolCall           string
+	toolArgs           string // args for current tool call (e.g. task description)
+	streaming          bool   // currently streaming a response
+	streamContent      string // accumulated streaming content
+	thinkContent       string // accumulated thinking/reasoning content
+	reasoningCollapsed bool   // true when reasoning collapsed after thinking ends
+	contextPct         int    // context window fill percentage (0-100)
+	contextTokens      int    // estimated token count
+	contextWindow      int    // context window size
+	onSubmit           func(string)
+	onQuit             func()
+	onCompact          func()
+	onModel            func(string, string)
+	commandMode        bool              // true when input starts with "/"
+	commands           []Command         // registered slash commands
+	modelMode          bool              // true when in model-selection sub-mode
+	modelItems         []string          // available models in "provider/model" format
+	modelSelected      int               // highlighted index in filtered list
+	providerNames      map[string]string // provider key → display name
 }
 
 // New creates a new TUI model.
@@ -640,6 +645,18 @@ func (m *Model) AddAssistantMessage(raw string) {
 	m.scrollToBottom()
 }
 
+// AddAssistantMessageWithReasoning adds an assistant message with attached reasoning text.
+func (m *Model) AddAssistantMessageWithReasoning(raw, reasoning string) {
+	m.messages = append(m.messages, Message{
+		Role:      "assistant",
+		Content:   m.renderMarkdown(raw),
+		Raw:       raw,
+		Reasoning: reasoning,
+	})
+	m.refreshViewport()
+	m.scrollToBottom()
+}
+
 // reRenderMessages re-renders all assistant messages through the current
 // glamour renderer (used on window resize when word-wrap width changes).
 func (m *Model) reRenderMessages() {
@@ -802,6 +819,9 @@ func (m *Model) AppendToken(token string) {
 	if !m.streaming {
 		m.streaming = true
 		m.streamContent = ""
+		if m.thinkContent != "" {
+			m.reasoningCollapsed = true
+		}
 	}
 	m.streamContent += token
 	m.refreshViewport()
@@ -819,11 +839,19 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 	}
 
 	if msg.Flush != "" {
-		// Commit the accumulated streaming content as a message so the
-		// next segment (after a tool call) starts on a fresh line.
+		haveReasoning := m.thinkContent != ""
+		if haveReasoning {
+			m.reasoningCollapsed = true
+		}
 		m.streaming = false
 		m.streamContent = ""
-		m.AddAssistantMessage(msg.Flush)
+		if haveReasoning {
+			reasoning := m.thinkContent
+			m.thinkContent = ""
+			m.AddAssistantMessageWithReasoning(msg.Flush, reasoning)
+		} else {
+			m.AddAssistantMessage(msg.Flush)
+		}
 		return
 	}
 
@@ -840,6 +868,12 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 	}
 
 	if msg.ToolName != "" {
+		if m.thinkContent != "" {
+			m.reasoningCollapsed = true
+			reasoning := m.thinkContent
+			m.thinkContent = ""
+			m.AddAssistantMessageWithReasoning("", reasoning)
+		}
 		m.SetToolCall(msg.ToolName, msg.ToolArgs)
 		return
 	}
@@ -852,14 +886,31 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 	if msg.Done {
 		m.SetThinking(false)
 		m.ClearToolCall()
-		m.thinkContent = ""
+		haveReasoning := m.thinkContent != ""
+		if haveReasoning {
+			m.reasoningCollapsed = true
+		}
 		if m.streaming && m.streamContent != "" {
 			content := m.streamContent
 			m.streaming = false
 			m.streamContent = ""
-			m.AddAssistantMessage(content)
+			if haveReasoning {
+				reasoning := m.thinkContent
+				m.thinkContent = ""
+				m.AddAssistantMessageWithReasoning(content, reasoning)
+			} else {
+				m.AddAssistantMessage(content)
+			}
 		} else if msg.Response != "" {
-			m.AddAssistantMessage(msg.Response)
+			if haveReasoning {
+				reasoning := m.thinkContent
+				m.thinkContent = ""
+				m.AddAssistantMessageWithReasoning(msg.Response, reasoning)
+			} else {
+				m.AddAssistantMessage(msg.Response)
+			}
+		} else {
+			m.thinkContent = ""
 		}
 	}
 
@@ -934,6 +985,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// reserved for future use
 			return m, nil
 
+		case "ctrl+r":
+			if m.hasReasoning() {
+				m.reasoningCollapsed = !m.reasoningCollapsed
+				m.refreshViewport()
+			}
+			return m, nil
+
 		case "enter":
 			if m.modelMode {
 				m.selectModel()
@@ -952,6 +1010,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.thinking {
 				return m, nil
 			}
+			m.thinkContent = ""
+			m.reasoningCollapsed = false
 			value := m.input.Value()
 			if strings.TrimSpace(value) == "" {
 				return m, nil
@@ -1027,6 +1087,18 @@ func (m *Model) clearCommandMode() {
 	m.input.ShowSuggestions = false
 	m.input.SetSuggestions(nil)
 	m.adjustViewport()
+}
+
+func (m *Model) hasReasoning() bool {
+	if m.thinkContent != "" {
+		return true
+	}
+	for _, msg := range m.messages {
+		if msg.Reasoning != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // paletteLines returns the number of terminal rows the command palette
@@ -1171,6 +1243,8 @@ func wrapParagraph(line string, width int) string {
 func (m *Model) renderMessages() string {
 	var b strings.Builder
 
+	toolLabelRendered := false
+
 	for _, msg := range m.messages {
 		switch msg.Role {
 		case "user":
@@ -1179,11 +1253,42 @@ func (m *Model) renderMessages() string {
 			b.WriteString("\n\n")
 
 		case "assistant":
-			b.WriteString("\n")
+			if msg.Reasoning != "" {
+				b.WriteString("\n\n")
+				if m.reasoningCollapsed {
+					b.WriteString(toggleStyle.Render("  ▶ Reasoning..."))
+				} else {
+					b.WriteString(toggleStyle.Render("  ▼ Reasoning..."))
+					b.WriteString("\n\n")
+					b.WriteString(thinkingStyle.Render(chatWrap("", msg.Reasoning, m.width)))
+				}
+				b.WriteString("\n\n")
+			} else {
+				b.WriteString("\n")
+			}
 			b.WriteString(assistantStyle.Render(msg.Content))
 			b.WriteString("\n\n")
 
 		case "tool":
+			if m.toolCall != "" && !toolLabelRendered {
+				label := m.toolCall
+				if m.toolCall == "task" && m.toolArgs != "" {
+					re := regexp.MustCompile(`"description"\s*:\s*"([^"]*)"`)
+					if match := re.FindStringSubmatch(m.toolArgs); len(match) > 1 && match[1] != "" {
+						label = fmt.Sprintf("sub-agent — %s", match[1])
+					} else {
+						label = "sub-agent"
+					}
+				} else if m.toolCall == "webfetch" && m.toolArgs != "" {
+					re := regexp.MustCompile(`"url"\s*:\s*"([^"]*)"`)
+					if match := re.FindStringSubmatch(m.toolArgs); len(match) > 1 && match[1] != "" {
+						label = fmt.Sprintf("web_fetch → %s", match[1])
+					}
+				}
+				b.WriteString(toolStyle.Render(fmt.Sprintf("  ⏳ %s…", label)))
+				b.WriteString("\n")
+				toolLabelRendered = true
+			}
 			if msg.ToolName == "task" || (msg.ToolName != "" && (isListContent(msg.Raw) || isTreeContent(msg.Raw))) {
 				b.WriteString(msg.Content)
 				b.WriteString("\n")
@@ -1200,11 +1305,23 @@ func (m *Model) renderMessages() string {
 		}
 	}
 
-	// Thinking/reasoning content (from models like DeepSeek)
+	// Reasoning content (from models like DeepSeek)
 	if m.thinkContent != "" {
-		b.WriteString("\n")
-		b.WriteString(thinkingStyle.Render(chatWrap("", m.thinkContent, m.width)))
-		b.WriteString("\n")
+		b.WriteString("\n\n")
+		if m.thinking && !m.streaming {
+			rendered := spinnerStyle.Render(fmt.Sprintf("  %s Reasoning...", m.spinner.View()))
+			b.WriteString(rendered)
+			b.WriteString("\n\n")
+			b.WriteString(thinkingStyle.Render(chatWrap("", m.thinkContent, m.width)))
+		} else if m.reasoningCollapsed {
+			b.WriteString(toggleStyle.Render("  ▶ Reasoning..."))
+			b.WriteString("\n")
+		} else {
+			b.WriteString(toggleStyle.Render("  ▼ Reasoning..."))
+			b.WriteString("\n\n")
+			b.WriteString(thinkingStyle.Render(chatWrap("", m.thinkContent, m.width)))
+		}
+		b.WriteString("\n\n")
 	}
 
 	// Streaming content
@@ -1214,25 +1331,9 @@ func (m *Model) renderMessages() string {
 		b.WriteString("\n")
 	}
 
-	// Thinking indicator
-	if m.thinking && !m.streaming {
+	// Thinking indicator (only when no reasoning text to show)
+	if m.thinking && !m.streaming && m.thinkContent == "" {
 		rendered := spinnerStyle.Render(fmt.Sprintf("  %s Thinking...", m.spinner.View()))
-		b.WriteString(rendered)
-		b.WriteString("\n")
-	}
-
-	// Tool call display
-	if m.toolCall != "" {
-		label := m.toolCall
-		if m.toolCall == "task" && m.toolArgs != "" {
-			re := regexp.MustCompile(`"description"\s*:\s*"([^"]*)"`)
-			if match := re.FindStringSubmatch(m.toolArgs); len(match) > 1 && match[1] != "" {
-				label = fmt.Sprintf("sub-agent — %s", match[1])
-			} else {
-				label = "sub-agent"
-			}
-		}
-		rendered := toolStyle.Render(fmt.Sprintf("  ⏳ %s…", label))
 		b.WriteString(rendered)
 		b.WriteString("\n")
 	}
