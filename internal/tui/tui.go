@@ -1239,9 +1239,26 @@ func (m *Model) maxModelLines() int {
 	return items
 }
 
+func (m *Model) maxQuestionLines() int {
+	if m.height == 0 {
+		return 8
+	}
+	available := m.height - m.headerHeight() - 4 // status, input, border/padding
+	items := available - 8                       // header, question, spacing, help, border, padding
+	if items < 1 {
+		items = 1
+	}
+	return items
+}
+
 func (m *Model) paletteLines() int {
 	if m.questionMode {
-		lines := 6 + len(m.questionModal.Options) // header, question, options, help, spacing
+		optLines := len(m.questionModal.Options)
+		max := m.maxQuestionLines()
+		if optLines > max {
+			optLines = max
+		}
+		lines := 6 + optLines // header, question, options, help, spacing
 		if lines > 16 {
 			lines = 16
 		}
@@ -1587,15 +1604,30 @@ func (m *Model) renderCommandPalette() string {
 
 // renderQuestionModal renders the interactive question dialog.
 func (m *Model) renderQuestionModal() string {
-	var b strings.Builder
-	b.WriteString(boldStyle.Render("═══ " + m.questionModal.Header + " ═══"))
-	b.WriteString("\n\n")
-	b.WriteString(m.questionModal.Question)
-	b.WriteString("\n\n")
+	var lines []string
+	lines = append(lines, boldStyle.Render(m.questionModal.Header))
+	lines = append(lines, "")
+	lines = append(lines, chatWrap("", m.questionModal.Question, m.width-6))
+	lines = append(lines, "")
 
-	for i, opt := range m.questionModal.Options {
+	// Window calculation: show options around the highlighted index
+	maxVisible := m.maxQuestionLines()
+	start := m.questionIdx - maxVisible/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxVisible
+	if end > len(m.questionModal.Options) {
+		end = len(m.questionModal.Options)
+		start = end - maxVisible
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	for i := start; i < end; i++ {
+		opt := m.questionModal.Options[i]
 		prefix := "  "
-		suffix := ""
 		if m.questionModal.Multiple {
 			if m.questionMulti[i] {
 				prefix = " ☑ "
@@ -1607,21 +1639,25 @@ func (m *Model) renderQuestionModal() string {
 				prefix = " ▶ "
 			}
 		}
+		label := listItemStyle.Render(opt.Label)
 		if opt.Description != "" {
-			suffix = " — " + opt.Description
+			label += commandDescStyle.Render(" — " + opt.Description)
 		}
-		line := prefix + opt.Label + suffix
-		b.WriteString(zone.Mark(fmt.Sprintf("question-opt-%d", i), listItemStyle.Render(line)))
-		b.WriteString("\n")
+		lines = append(lines, zone.Mark(fmt.Sprintf("question-opt-%d", i), prefix+label))
 	}
 
-	b.WriteString("\n")
-	b.WriteString(commandDescStyle.Render("↑↓ navigate · Enter select · Esc cancel"))
-	if m.questionModal.Multiple {
-		b.WriteString(commandDescStyle.Render(" · Space toggle"))
+	if start > 0 || end < len(m.questionModal.Options) {
+		lines = append(lines, commandDescStyle.Render(fmt.Sprintf("  (%d-%d of %d)", start+1, end, len(m.questionModal.Options))))
 	}
-	b.WriteString("\n")
-	return b.String()
+
+	lines = append(lines, "")
+	help := "↑↓ navigate · Enter select · Esc cancel"
+	if m.questionModal.Multiple {
+		help += " · Space toggle"
+	}
+	lines = append(lines, commandDescStyle.Render(help))
+
+	return commandPaletteStyle.Render(strings.Join(lines, "\n"))
 }
 
 // View implements tea.Model.

@@ -31,7 +31,7 @@ var taglines = []string{
 	"Implement",
 	"You should know this by now",
 	"Works on my machine",
-	"Consilium vexare",
+	"Consilium vexāre 🪄",
 	"I train on your vibes",
 	"Forward, always",
 	"Yet another agent harness",
