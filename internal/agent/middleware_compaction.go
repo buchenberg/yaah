@@ -8,11 +8,8 @@ import (
 
 // CompactionMiddleware triggers context compaction when token limits are approached.
 type CompactionMiddleware struct {
-	window      int
-	provider    Provider
-	compactProv Provider
-	compactModel string
-	loop        *Loop // back-reference to call compactContext
+	window int
+	loop   *Loop
 }
 
 func (m *CompactionMiddleware) Name() string { return "compaction" }

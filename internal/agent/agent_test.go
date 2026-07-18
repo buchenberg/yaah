@@ -420,6 +420,7 @@ func TestLoop_loopDetection(t *testing.T) {
 		MaxIterations:    10,
 		LoopDetectCount:  3,
 		LoopDetectWindow: 5,
+		AgentMode:        "middleware",
 	}
 
 	_, err := loop.Run(context.Background(), "test")

@@ -204,7 +204,7 @@ func (l *Loop) denyTool(tc types.ToolCall, idx int, results chan<- toolExecResul
 		ToolResult: errMsg,
 	})
 	results <- toolExecResult{idx: idx, callID: tc.ID, name: tc.Function.Name,
-		content: errMsg, err: fmt.Errorf("tool denied")}
+		args: tc.Function.Arguments, content: errMsg, err: fmt.Errorf("tool denied")}
 }
 
 func (l *Loop) buildPipeline() *Pipeline {
@@ -215,11 +215,8 @@ func (l *Loop) buildPipeline() *Pipeline {
 		&SteerMiddleware{ch: l.Steer, compact: l.compactContext},
 		&FollowupMiddleware{ch: l.FollowUps},
 		&CompactionMiddleware{
-			window:      l.ContextWindow,
-			provider:    l.Provider,
-			compactProv: l.CompactProvider,
-			compactModel: l.CompactModel,
-			loop:        l,
+			window: l.ContextWindow,
+			loop:   l,
 		},
 		&ApprovalMiddleware{mode: l.ApprovalMode},
 		&LoopDetectionMiddleware{
@@ -234,7 +231,7 @@ func (l *Loop) buildPipeline() *Pipeline {
 // It supports both legacy inline mode and the new middleware pipeline mode.
 func (l *Loop) Run(ctx context.Context, userInput string) (response string, runErr error) {
 	// Config gate: use legacy mode if explicitly set or if no middleware pipeline configured
-	if l.AgentMode == "legacy" {
+	if l.AgentMode == "middleware" {
 		return l.runLegacy(ctx, userInput)
 	}
 	return l.runMiddleware(ctx, userInput)
@@ -346,12 +343,6 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		}
 
 		messages = step.Messages
-
-		if l.ContextWindow > 0 {
-			l.Messages = messages
-			l.compactContext(ctx)
-			messages = l.Messages
-		}
 	}
 
 	l.Messages = messages
@@ -381,11 +372,28 @@ func (l *Loop) applyDefaults() {
 func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, messages *[]types.Message) []ToolResult {
 	results := make([]ToolResult, len(calls))
 	ordered := make([]toolExecResult, len(calls))
-
 	execResults := make(chan toolExecResult, len(calls))
 
 	for i, tc := range calls {
 		i, tc := i, tc
+
+		if l.ApprovalMode == "deny" && toolIsDangerous(tc.Function.Name) {
+			errMsg := fmt.Sprintf("error: tool %q requires approval but approval mode is 'deny'", tc.Function.Name)
+			l.emitHook(HookEvent{Event: ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
+			l.emitHook(HookEvent{Event: ToolEnd, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, ToolError: fmt.Sprintf("tool %q requires approval but approval mode is 'deny'", tc.Function.Name), ToolResult: errMsg})
+			execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: errMsg, err: fmt.Errorf("tool denied")}
+			continue
+		}
+		if l.ApprovalMode == "ask" && toolIsDangerous(tc.Function.Name) {
+			if !l.approveTool(tc.Function.Name, tc.Function.Arguments) {
+				errMsg := fmt.Sprintf("error: tool %q was denied by user", tc.Function.Name)
+				l.emitHook(HookEvent{Event: ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
+				l.emitHook(HookEvent{Event: ToolEnd, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, ToolError: fmt.Sprintf("tool %q was denied by user", tc.Function.Name), ToolResult: errMsg})
+				execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: errMsg, err: fmt.Errorf("tool denied")}
+				continue
+			}
+		}
+
 		go func() {
 			abbreviated := abbreviateArgs(tc.Function.Arguments, 80)
 
@@ -428,7 +436,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 				ToolError:  errStr,
 			})
 
-			execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, content: res, dur: duration, err: err}
+			execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: res, dur: duration, err: err}
 		}()
 	}
 
@@ -440,7 +448,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 	for i, r := range ordered {
 		results[i] = ToolResult{
 			Name:     r.name,
-			Args:     r.content,
+			Args:     r.args,
 			Result:   r.content,
 			Error:    r.err,
 			Duration: r.dur,
@@ -644,6 +652,7 @@ type toolExecResult struct {
 	idx     int
 	callID  string
 	name    string
+	args    string
 	content string
 	dur     time.Duration
 	err     error
@@ -692,9 +701,7 @@ func (l *Loop) executeToolsParallel(ctx context.Context, calls []types.ToolCall,
 				errStr = err.Error()
 				res = fmt.Sprintf("error: %v", err)
 			} else if len(res) > ToolResultMaxLen {
-				fmt.Printf("DEBUG executeAndCollect before truncation len=%d\n", len(res))
 				res = res[:ToolResultMaxLen] + "\n...[truncated]..."
-				fmt.Printf("DEBUG executeAndCollect after truncation len=%d\n", len(res))
 			}
 
 			if l.OnTool != nil {
@@ -714,7 +721,7 @@ func (l *Loop) executeToolsParallel(ctx context.Context, calls []types.ToolCall,
 				ToolError:  errStr,
 			})
 
-			results <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, content: res, dur: duration, err: err}
+			results <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: res, dur: duration, err: err}
 		}()
 	}
 

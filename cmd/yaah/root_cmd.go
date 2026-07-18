@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -212,7 +213,7 @@ func newAgentSession() (*agentSession, error) {
 
 	layers := prompts.Layers{
 		Identity:    prompts.IdentityPrompt,
-		Environment: prompts.DetectEnvironment(),
+		Environment: prompts.DetectEnvironment(cwd),
 		UserContext: prompts.LoadUserContext(config.HomeDir()),
 		Project:     instructions.FormatForSystem(instructions.Load(cwd, cwd)),
 	}
@@ -239,7 +240,7 @@ func newAgentSession() (*agentSession, error) {
 	systemPrompt := prompts.Build(layers)
 
 	mcpDirs := mcpSearchPaths(config.HomeDir())
-	mcpClients, mcpTools, mcpErr := mcp.StartMCPClients(context.Background(), mcpDirs)
+	mcpClients, mcpTools, mcpErr := mcp.StartMCPClientsWithStderr(context.Background(), mcpDirs, io.Discard)
 	if mcpErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: MCP startup error: %v\n", mcpErr)
 	}

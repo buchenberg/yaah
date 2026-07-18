@@ -9,10 +9,10 @@ import (
 
 // Step is the mutable state passed through the pipeline at each iteration.
 type Step struct {
-	Messages   []types.Message
-	Tools      []types.ToolDef
-	Iteration  int
-	Model      string
+	Messages     []types.Message
+	Tools        []types.ToolDef
+	Iteration    int
+	Model        string
 	SystemPrompt string
 }
 

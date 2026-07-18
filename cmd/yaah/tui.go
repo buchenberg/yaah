@@ -135,7 +135,7 @@ func runTUI() error {
 	cwd, _ := os.Getwd()
 	instrFiles := instructions.Load(cwd, cwd)
 	systemPrompt := "You are yaah, a helpful AI assistant. Respond concisely."
-	systemPrompt += "\n\n## Runtime Environment\n" + prompts.DetectEnvironment()
+	systemPrompt += "\n\n## Runtime Environment\n" + prompts.DetectEnvironment(cwd)
 	if formatted := instructions.FormatForSystem(instrFiles); formatted != "" {
 		systemPrompt += "\n\n" + formatted
 	}

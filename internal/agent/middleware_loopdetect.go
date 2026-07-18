@@ -2,8 +2,6 @@ package agent
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 
 	"github.com/buchenberg/yaah/internal/types"
@@ -32,7 +30,7 @@ func (m *LoopDetectionMiddleware) PostTool(ctx context.Context, results []ToolRe
 	}
 
 	for _, r := range results {
-		hashKey := m.toolCallHash(r.Name, r.Result)
+		hashKey := toolCallHash(r.Name, r.Result)
 		*m.history = append(*m.history, hashKey)
 
 		if len(*m.history) > m.window {
@@ -51,12 +49,4 @@ func (m *LoopDetectionMiddleware) PostTool(ctx context.Context, results []ToolRe
 		}
 	}
 	return step, nil
-}
-
-func (m *LoopDetectionMiddleware) toolCallHash(name, content string) string {
-	h := sha256.New()
-	h.Write([]byte(name))
-	h.Write([]byte{0})
-	h.Write([]byte(content))
-	return hex.EncodeToString(h.Sum(nil))
 }

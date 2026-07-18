@@ -59,13 +59,13 @@ func Build(l Layers) string {
 }
 
 // DetectEnvironment returns a human-readable string describing the
-// current OS, architecture, and default shell for the runtime.
-func DetectEnvironment() string {
+// current OS, architecture, default shell, and working directory.
+func DetectEnvironment(cwd string) string {
 	shell := "bash"
 	if runtime.GOOS == "windows" {
 		shell = "powershell (pwsh 7+ or Windows PowerShell)"
 	}
-	return fmt.Sprintf("OS: %s/%s. Default shell: %s.", runtime.GOOS, runtime.GOARCH, shell)
+	return fmt.Sprintf("OS: %s/%s. Default shell: %s. Working directory: %s.", runtime.GOOS, runtime.GOARCH, shell, cwd)
 }
 
 // LoadUserContext reads the user-level AGENTS.md from the yaah home

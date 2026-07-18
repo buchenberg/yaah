@@ -54,6 +54,7 @@ func (t *GrepTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.Path == "" {
 		params.Path = "."
 	}
+	params.Path = expandHomeDir(params.Path)
 
 	if rgAvailable() {
 		return t.execRipgrep(ctx, params)

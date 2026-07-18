@@ -11,11 +11,30 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
 const toolResultMaxLen = 8192
+
+func expandHomeDir(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return path
+		}
+		return filepath.Join(home, path[2:])
+	}
+	if path == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return path
+		}
+		return home
+	}
+	return path
+}
 
 // Tool is the interface that all tools (built-in and MCP) must satisfy.
 type Tool interface {
@@ -70,6 +89,7 @@ func (t *ReadTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.Path == "" {
 		return "", fmt.Errorf("read: path is required")
 	}
+	params.Path = expandHomeDir(params.Path)
 
 	data, err := os.ReadFile(params.Path)
 	if err != nil {
@@ -292,6 +312,7 @@ func (t *WriteTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.FilePath == "" {
 		return "", fmt.Errorf("write: filePath is required")
 	}
+	params.FilePath = expandHomeDir(params.FilePath)
 
 	if err := os.WriteFile(params.FilePath, []byte(params.Content), 0o644); err != nil {
 		return "", fmt.Errorf("write: %w", err)
@@ -344,6 +365,7 @@ func (t *EditTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.FilePath == "" {
 		return "", fmt.Errorf("edit: filePath is required")
 	}
+	params.FilePath = expandHomeDir(params.FilePath)
 
 	if len(params.Edits) > 0 {
 		return t.executeMultiEdit(params.FilePath, params.Edits)
@@ -595,6 +617,7 @@ func (t *DeleteTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.FilePath == "" {
 		return "", fmt.Errorf("delete: filePath is required")
 	}
+	params.FilePath = expandHomeDir(params.FilePath)
 
 	if err := os.Remove(params.FilePath); err != nil {
 		return "", fmt.Errorf("delete: %w", err)

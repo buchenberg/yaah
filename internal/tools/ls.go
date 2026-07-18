@@ -45,6 +45,7 @@ func (t *LsTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.Path == "" {
 		params.Path = "."
 	}
+	params.Path = expandHomeDir(params.Path)
 	if params.Depth <= 0 {
 		params.Depth = 1
 	}
