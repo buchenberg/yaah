@@ -70,6 +70,7 @@ type Loop struct {
 	OnTool        ToolCallback
 	OnThinking    ThinkingCallback
 	OnFlush       FlushCallback
+	Middleware    []Middleware // Optional custom middleware override
 
 	// ContextWindow is the estimated token budget for the conversation.
 	// When the total estimated tokens exceed 80% of this value, old messages
@@ -116,6 +117,10 @@ type Loop struct {
 	// received are injected immediately before the next provider call as a
 	// user message, overriding the normal iteration flow.
 	Steer <-chan string
+
+	// AgentMode controls whether to use the legacy inline loop or the middleware pipeline.
+	// Values: "legacy" (default), "middleware"
+	AgentMode string
 
 	// SessionID is a stable identifier for the session, set by the caller.
 	// Used by emitHook to label events.
@@ -202,8 +207,41 @@ func (l *Loop) denyTool(tc types.ToolCall, idx int, results chan<- toolExecResul
 		content: errMsg, err: fmt.Errorf("tool denied")}
 }
 
+func (l *Loop) buildPipeline() *Pipeline {
+	if len(l.Middleware) > 0 {
+		return NewPipeline(l.Middleware...)
+	}
+	return NewPipeline(
+		&SteerMiddleware{ch: l.Steer, compact: l.compactContext},
+		&FollowupMiddleware{ch: l.FollowUps},
+		&CompactionMiddleware{
+			window:      l.ContextWindow,
+			provider:    l.Provider,
+			compactProv: l.CompactProvider,
+			compactModel: l.CompactModel,
+			loop:        l,
+		},
+		&ApprovalMiddleware{mode: l.ApprovalMode},
+		&LoopDetectionMiddleware{
+			history: &l.loopHistory,
+			count:   l.LoopDetectCount,
+			window:  l.LoopDetectWindow,
+		},
+	)
+}
+
 // Run executes the full conversation loop for a single user message.
+// It supports both legacy inline mode and the new middleware pipeline mode.
 func (l *Loop) Run(ctx context.Context, userInput string) (response string, runErr error) {
+	// Config gate: use legacy mode if explicitly set or if no middleware pipeline configured
+	if l.AgentMode == "legacy" {
+		return l.runLegacy(ctx, userInput)
+	}
+	return l.runMiddleware(ctx, userInput)
+}
+
+// runMiddleware executes the agent loop using the middleware pipeline.
+func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response string, runErr error) {
 	defer func() {
 		l.closeHook()
 		reason := "completed"
@@ -217,6 +255,111 @@ func (l *Loop) Run(ctx context.Context, userInput string) (response string, runE
 		})
 	}()
 
+	l.applyDefaults()
+
+	if l.Messages != nil {
+		l.Messages = append(l.Messages, types.UserMsg(userInput))
+	} else {
+		l.Messages = []types.Message{
+			types.SystemMsg(l.SystemPrompt),
+			types.UserMsg(userInput),
+		}
+		l.emitHook(HookEvent{
+			Event: SessionStart,
+			Model: l.Model,
+		})
+	}
+
+	messages := l.Messages
+	pipeline := l.buildPipeline()
+
+	for iter := 0; iter < l.MaxIterations; iter++ {
+		select {
+		case <-ctx.Done():
+			l.Messages = messages
+			return "", ctx.Err()
+		default:
+		}
+
+		l.emitHook(HookEvent{
+			Event:  TurnStart,
+			Prompt: userInput,
+			Turn:   iter,
+			Model:  l.Model,
+		})
+
+		step := &Step{
+			Messages:     messages,
+			Tools:        l.buildToolDefs(),
+			Iteration:    iter,
+			Model:        l.Model,
+			SystemPrompt: l.SystemPrompt,
+		}
+
+		step, err := pipeline.RunPrepareStep(ctx, step)
+		if err != nil {
+			l.Messages = messages
+			return "", err
+		}
+		messages = step.Messages
+
+		req := types.ChatRequest{
+			Model:    l.Model,
+			Messages: messages,
+			Tools:    step.Tools,
+		}
+
+		msg, streamed, err := l.getAssistantMessage(ctx, req)
+		if err != nil {
+			l.Messages = messages
+			return "", fmt.Errorf("provider error: %w", err)
+		}
+		messages = append(messages, msg)
+
+		if len(msg.ToolCalls) == 0 {
+			l.Messages = messages
+			return msg.Content, nil
+		}
+
+		if streamed && msg.Content != "" && l.OnFlush != nil {
+			l.OnFlush(msg.Content)
+		}
+
+		step, err = pipeline.RunPostModel(ctx, &msg, step)
+		if err != nil {
+			l.Messages = messages
+			return "", err
+		}
+
+		toolResults := l.executeAndCollect(ctx, msg.ToolCalls, &messages)
+
+		// Update step.Messages to reflect the tool results added by executeAndCollect
+		step.Messages = messages
+
+		// Update l.Messages so that CompactionMiddleware sees the latest messages
+		l.Messages = messages
+
+		step, err = pipeline.RunPostTool(ctx, toolResults, step)
+		if err != nil {
+			l.Messages = messages
+			return "", err
+		}
+
+		messages = step.Messages
+
+		if l.ContextWindow > 0 {
+			l.Messages = messages
+			l.compactContext(ctx)
+			messages = l.Messages
+		}
+	}
+
+	l.Messages = messages
+	return "", fmt.Errorf("max iterations (%d) reached", l.MaxIterations)
+}
+
+// applyDefaults sets default values for Loop fields.
+func (l *Loop) applyDefaults() {
 	if l.MaxIterations <= 0 {
 		l.MaxIterations = 50
 	}
@@ -232,6 +375,98 @@ func (l *Loop) Run(ctx context.Context, userInput string) (response string, runE
 	if l.LoopDetectWindow <= 0 {
 		l.LoopDetectWindow = 10
 	}
+}
+
+// executeAndCollect runs tool calls and returns ToolResult for middleware inspection.
+func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, messages *[]types.Message) []ToolResult {
+	results := make([]ToolResult, len(calls))
+	ordered := make([]toolExecResult, len(calls))
+
+	execResults := make(chan toolExecResult, len(calls))
+
+	for i, tc := range calls {
+		i, tc := i, tc
+		go func() {
+			abbreviated := abbreviateArgs(tc.Function.Arguments, 80)
+
+			if l.OnTool != nil {
+				l.OnTool(ToolInfo{Name: tc.Function.Name, Args: abbreviated})
+			}
+
+			l.emitHook(HookEvent{
+				Event:    ToolStart,
+				ToolName: tc.Function.Name,
+				ToolArgs: tc.Function.Arguments,
+			})
+
+			start := time.Now()
+			res, err := l.Registry.Execute(ctx, tc.Function.Name, tc.Function.Arguments)
+			duration := time.Since(start)
+
+			errStr := ""
+			if err != nil {
+				errStr = err.Error()
+				res = fmt.Sprintf("error: %v", err)
+			} else if len(res) > ToolResultMaxLen {
+				res = res[:ToolResultMaxLen] + "\n...[truncated]..."
+			}
+
+			if l.OnTool != nil {
+				info := ToolInfo{Name: tc.Function.Name, Args: abbreviated, Duration: duration, Result: res}
+				if err != nil {
+					info.Error = err.Error()
+				}
+				l.OnTool(info)
+			}
+
+			l.emitHook(HookEvent{
+				Event:      ToolEnd,
+				ToolName:   tc.Function.Name,
+				ToolArgs:   tc.Function.Arguments,
+				ToolResult: res,
+				DurationMs: duration.Milliseconds(),
+				ToolError:  errStr,
+			})
+
+			execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, content: res, dur: duration, err: err}
+		}()
+	}
+
+	for range len(calls) {
+		r := <-execResults
+		ordered[r.idx] = r
+	}
+
+	for i, r := range ordered {
+		results[i] = ToolResult{
+			Name:     r.name,
+			Args:     r.content,
+			Result:   r.content,
+			Error:    r.err,
+			Duration: r.dur,
+		}
+		*messages = append(*messages, types.ToolResultMsg(r.callID, r.name, r.content))
+	}
+
+	return results
+}
+
+// runLegacy executes the original inline agent loop (backward compatible).
+func (l *Loop) runLegacy(ctx context.Context, userInput string) (response string, runErr error) {
+	defer func() {
+		l.closeHook()
+		reason := "completed"
+		if runErr != nil {
+			reason = "error"
+		}
+		l.emitHook(HookEvent{
+			Event:      SessionEnd,
+			ExitReason: reason,
+			Model:      l.Model,
+		})
+	}()
+
+	l.applyDefaults()
 
 	if l.Messages != nil {
 		l.Messages = append(l.Messages, types.UserMsg(userInput))
@@ -322,7 +557,9 @@ func (l *Loop) Run(ctx context.Context, userInput string) (response string, runE
 		}
 
 		if l.ContextWindow > 0 {
+			l.Messages = messages
 			l.compactContext(ctx)
+			messages = l.Messages
 		}
 	}
 
@@ -455,7 +692,9 @@ func (l *Loop) executeToolsParallel(ctx context.Context, calls []types.ToolCall,
 				errStr = err.Error()
 				res = fmt.Sprintf("error: %v", err)
 			} else if len(res) > ToolResultMaxLen {
+				fmt.Printf("DEBUG executeAndCollect before truncation len=%d\n", len(res))
 				res = res[:ToolResultMaxLen] + "\n...[truncated]..."
+				fmt.Printf("DEBUG executeAndCollect after truncation len=%d\n", len(res))
 			}
 
 			if l.OnTool != nil {
