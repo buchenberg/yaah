@@ -50,15 +50,18 @@ CLI that consumes them is more useful than another walled garden.
 ## Install
 
 ```bash
-# One-liner (macOS / Linux)
+# macOS / Linux — one-liner
 curl -fsSL https://raw.githubusercontent.com/buchenberg/yaah/main/install.sh | sh
+```
 
+```powershell
+# Windows — PowerShell one-liner
+iwr -useb https://raw.githubusercontent.com/buchenberg/yaah/main/install.ps1 | iex
+```
+
+```bash
 # From source (Go 1.25+ required)
 go install github.com/buchenberg/yaah@latest
-
-# macOS Apple Silicon
-curl -fsSL https://github.com/buchenberg/yaah/releases/latest/download/yaah-darwin-arm64 -o yaah
-chmod +x yaah && sudo mv yaah /usr/local/bin/
 ```
 
 ## Quick start
