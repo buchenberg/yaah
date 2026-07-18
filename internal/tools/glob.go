@@ -51,6 +51,7 @@ func (t *GlobTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.Path == "" {
 		params.Path = "."
 	}
+	params.Path = expandHomeDir(params.Path)
 
 	if rgAvailable() {
 		return t.globRipgrep(ctx, params)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -104,7 +105,7 @@ func startREPL() error {
 	}
 	defer sess.close()
 
-	fmt.Fprintf(os.Stderr, "  %s %s/%s\n", Dim("provider:"), sess.providerName, sess.modelName)
+	fmt.Fprintf(os.Stderr, "\n  %s %s/%s\n\n", Dim("provider:"), sess.providerName, sess.modelName)
 
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -166,7 +167,7 @@ func runOneShot(cmd *cobra.Command, prompt string) error {
 	}
 	defer sess.close()
 
-	cmd.Printf("  %s %s/%s\n\n", Dim("provider:"), sess.providerName, sess.modelName)
+	cmd.Printf("\n  %s %s/%s\n\n", Dim("provider:"), sess.providerName, sess.modelName)
 
 	response, streamed, err := sess.runPrompt(prompt)
 	if err != nil {
@@ -212,7 +213,7 @@ func newAgentSession() (*agentSession, error) {
 
 	layers := prompts.Layers{
 		Identity:    prompts.IdentityPrompt,
-		Environment: prompts.DetectEnvironment(),
+		Environment: prompts.DetectEnvironment(cwd),
 		UserContext: prompts.LoadUserContext(config.HomeDir()),
 		Project:     instructions.FormatForSystem(instructions.Load(cwd, cwd)),
 	}
@@ -239,7 +240,7 @@ func newAgentSession() (*agentSession, error) {
 	systemPrompt := prompts.Build(layers)
 
 	mcpDirs := mcpSearchPaths(config.HomeDir())
-	mcpClients, mcpTools, mcpErr := mcp.StartMCPClients(context.Background(), mcpDirs)
+	mcpClients, mcpTools, mcpErr := mcp.StartMCPClientsWithStderr(context.Background(), mcpDirs, io.Discard)
 	if mcpErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: MCP startup error: %v\n", mcpErr)
 	}
@@ -390,52 +391,53 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 	compactProvider, compactModel := resolveCompact(s.cfg)
 
 	loop := &agent.Loop{
-		Provider:        s.provider,
-		CompactProvider: compactProvider,
-		CompactModel:    compactModel,
-		Registry:        s.toolReg,
-		Model:           s.modelName,
-		SystemPrompt:    s.systemPrompt,
-		MaxIterations:   s.cfg.Default.MaxIterations,
-		ContextWindow:   s.cfg.Default.ContextWindow,
-		ApprovalMode:    resolveApproval(s.cfg),
-		Messages:        s.messages,
-		HookDir:         s.cfg.Hooks.Dir,
-		SessionID:       s.sessionID,
+		Provider:         s.provider,
+		CompactProvider:  compactProvider,
+		CompactModel:     compactModel,
+		Registry:         s.toolReg,
+		Model:            s.modelName,
+		SystemPrompt:     s.systemPrompt,
+		MaxIterations:    s.cfg.Default.MaxIterations,
+		ContextWindow:    s.cfg.Default.ContextWindow,
+		ApprovalMode:     resolveApproval(s.cfg),
+		Messages:         s.messages,
+		HookDir:          s.cfg.Hooks.Dir,
+		SessionID:        s.sessionID,
+		PipelineNames:    s.cfg.Agent.Middleware.Enabled,
+		PipelineDisabled: s.cfg.Agent.Middleware.Disabled,
 	}
 
 	spin := spinner.New(nil, "Thinking...")
+	fmt.Fprintln(os.Stderr)
 	spin.Start()
 
 	streamed := false
 	loop.OnToken = func(token string) {
 		if !streamed {
 			spin.Stop()
+			fmt.Fprintln(os.Stderr)
 			streamed = true
 		}
 		fmt.Fprint(os.Stderr, token)
 	}
 
 	loop.OnTool = func(info agent.ToolInfo) {
-		if !streamed {
+		if info.Duration == 0 {
 			spin.Stop()
-			streamed = true
+			return
 		}
 
-		if info.Duration == 0 {
-			fmt.Fprintf(os.Stderr, "\n  tool: %s", Bold(info.Name))
-			if info.Args != "" {
-				args := info.Args
-				if len(args) > 60 {
-					args = args[:57] + "..."
-				}
-				fmt.Fprintf(os.Stderr, "(%s)", Dim(args))
+		fmt.Fprintf(os.Stderr, "\n  tool: %s", Bold(info.Name))
+		if info.Args != "" {
+			args := info.Args
+			if len(args) > 60 {
+				args = args[:57] + "..."
 			}
-		} else {
-			fmt.Fprintf(os.Stderr, " (%s)\n", Dim(fmt.Sprintf("%.1fs", info.Duration.Seconds())))
-			if info.Error != "" {
-				fmt.Fprintf(os.Stderr, "    %s\n", replYellow("error: "+info.Error))
-			}
+			fmt.Fprintf(os.Stderr, "(%s)", Dim(args))
+		}
+		fmt.Fprintf(os.Stderr, " (%s)\n", Dim(formatDuration(info.Duration)))
+		if info.Error != "" {
+			fmt.Fprintf(os.Stderr, "    %s\n", replYellow("error: "+info.Error))
 		}
 	}
 
@@ -445,6 +447,7 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 	}
 
 	if streamed {
+		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr)
 	}
 
@@ -648,6 +651,13 @@ func replYellow(s string) string {
 		return "\x1b[33m" + s + "\x1b[0m"
 	}
 	return s
+}
+
+func formatDuration(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	return fmt.Sprintf("%.1fs", d.Seconds())
 }
 
 // printHelp displays the available slash commands.

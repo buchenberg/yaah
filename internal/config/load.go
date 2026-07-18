@@ -33,11 +33,23 @@ type Hooks struct {
 	Dir string `yaml:"dir"` // directory for JSONL hook event files
 }
 
+// MiddlewareConfig controls which middleware runs in the agent pipeline.
+type MiddlewareConfig struct {
+	Enabled  []string `yaml:"enabled"`
+	Disabled []string `yaml:"disabled"`
+}
+
+// AgentConfig holds agent loop and middleware pipeline settings.
+type AgentConfig struct {
+	Middleware MiddlewareConfig `yaml:"middleware"`
+}
+
 // Config is the full yaah configuration loaded from ~/.yaah/config.yaml.
 type Config struct {
 	Providers map[string]Provider `yaml:"providers"`
 	Default   Defaults            `yaml:"default"`
 	Hooks     Hooks               `yaml:"hooks"`
+	Agent     AgentConfig         `yaml:"agent"`
 	LogLevel  string              `yaml:"log_level"`
 }
 

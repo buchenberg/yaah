@@ -278,6 +278,7 @@ func TestLoop_toolResultTruncation(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
+	// Add a tool that returns a long result
 	reg.Register(&fakeTool{name: "echo", result: longText})
 	loop := &Loop{
 		Provider:      fp,
@@ -309,11 +310,126 @@ func TestLoop_toolResultTruncation(t *testing.T) {
 		t.Errorf("tool result not truncated: len=%d, content=%q...", len(toolResult), toolResult[:80])
 	}
 	if !strings.Contains(toolResult, "[truncated]") {
-		t.Error("truncation marker missing from tool result")
+		t.Errorf("truncation marker missing from tool result: %q", toolResult)
 	}
 }
 
 // --- Test: Parallel tool execution ---
+
+func TestLoop_loopDetection(t *testing.T) {
+	// Test that loop detection works in middleware mode.
+	// If the model keeps calling the same tool with the same result,
+	// it should eventually halt.
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{
+			{
+				Choices: []types.Choice{{
+					Message: types.Message{
+						Role: "assistant",
+						ToolCalls: []types.ToolCall{{
+							ID:   "call_1",
+							Type: "function",
+							Function: types.ToolCallFn{
+								Name:      "echo",
+								Arguments: `{}`,
+							},
+						}},
+					},
+					FinishReason: "tool_calls",
+				}},
+			},
+			{
+				Choices: []types.Choice{{
+					Message: types.Message{
+						Role: "assistant",
+						ToolCalls: []types.ToolCall{{
+							ID:   "call_2",
+							Type: "function",
+							Function: types.ToolCallFn{
+								Name:      "echo",
+								Arguments: `{}`,
+							},
+						}},
+					},
+					FinishReason: "tool_calls",
+				}},
+			},
+			{
+				Choices: []types.Choice{{
+					Message: types.Message{
+						Role: "assistant",
+						ToolCalls: []types.ToolCall{{
+							ID:   "call_3",
+							Type: "function",
+							Function: types.ToolCallFn{
+								Name:      "echo",
+								Arguments: `{}`,
+							},
+						}},
+					},
+					FinishReason: "tool_calls",
+				}},
+			},
+			{
+				Choices: []types.Choice{{
+					Message: types.Message{
+						Role: "assistant",
+						ToolCalls: []types.ToolCall{{
+							ID:   "call_4",
+							Type: "function",
+							Function: types.ToolCallFn{
+								Name:      "echo",
+								Arguments: `{}`,
+							},
+						}},
+					},
+					FinishReason: "tool_calls",
+				}},
+			},
+			{
+				Choices: []types.Choice{{
+					Message: types.Message{
+						Role: "assistant",
+						ToolCalls: []types.ToolCall{{
+							ID:   "call_5",
+							Type: "function",
+							Function: types.ToolCallFn{
+								Name:      "echo",
+								Arguments: `{}`,
+							},
+						}},
+					},
+					FinishReason: "tool_calls",
+				}},
+			},
+			{
+				Choices: []types.Choice{{
+					Message:      types.Message{Role: "assistant", Content: "done"},
+					FinishReason: "stop",
+				}},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	reg.Register(&fakeTool{name: "echo", result: "same result"})
+	loop := &Loop{
+		Provider:         fp,
+		Registry:         reg,
+		SystemPrompt:     "test",
+		MaxIterations:    10,
+		LoopDetectCount:  3,
+		LoopDetectWindow: 5,
+	}
+
+	_, err := loop.Run(context.Background(), "test")
+	if err == nil {
+		t.Fatal("expected error for loop detection")
+	}
+	if !strings.Contains(err.Error(), "loop detected") {
+		t.Errorf("expected loop detection error, got: %v", err)
+	}
+}
 
 func TestLoop_parallelToolExecution(t *testing.T) {
 	var mu sync.Mutex

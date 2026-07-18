@@ -44,6 +44,8 @@ go.work.sum
 .ghost/
 .agents/
 .kilo/
+.pi/
+.opencode/
 
 # Local scratch / working dirs — never commit
 .scratch/

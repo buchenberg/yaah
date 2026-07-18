@@ -70,12 +70,17 @@ type Loop struct {
 	OnTool        ToolCallback
 	OnThinking    ThinkingCallback
 	OnFlush       FlushCallback
+	Middleware    []Middleware // Optional custom middleware override
 
 	// ContextWindow is the estimated token budget for the conversation.
 	// When the total estimated tokens exceed 80% of this value, old messages
 	// are compacted via LLM summarization (system prompt + recent messages are preserved).
 	// Default 0 means no trimming.
 	ContextWindow int
+
+	// CompactionThreshold is the fraction of ContextWindow that triggers
+	// compaction (e.g. 0.8 = 80%). Default 0 means 0.8.
+	CompactionThreshold float64
 
 	// MaxRetries is the number of retries on transient provider errors.
 	// Default 0 means no retries.
@@ -116,6 +121,30 @@ type Loop struct {
 	// received are injected immediately before the next provider call as a
 	// user message, overriding the normal iteration flow.
 	Steer <-chan string
+
+	// PipelineNames is the ordered list of middleware names to use.
+	// If non-empty, only these middleware run (subject to PipelineDisabled exclusions).
+	// If empty, the default set (steer, followup, compaction, approval, loop_detection) is used.
+	PipelineNames []string
+
+	// PipelineDisabled is the set of middleware names to exclude from the pipeline.
+	PipelineDisabled []string
+
+	// MaxToolConcurrency caps concurrent tool goroutines. 0 means unlimited.
+	// When > 0, a buffered channel semaphore is created by buildPipeline().
+	MaxToolConcurrency int
+
+	// PermissionRules is the list of permission rules for the PermissionMiddleware.
+	PermissionRules []PermissionRule
+
+	// MaxSubAgentDepth caps nested sub-agent calls. 0 means unlimited.
+	MaxSubAgentDepth int
+
+	// PromptCaching enables Anthropic-style cache-control breakpoints on
+	// system messages and recent tool results. Has no effect for non-Anthropic providers.
+	PromptCaching bool
+
+	toolSem chan struct{}
 
 	// SessionID is a stable identifier for the session, set by the caller.
 	// Used by emitHook to label events.
@@ -182,28 +211,32 @@ func (l *Loop) closeHook() {
 	}
 }
 
-// denyTool emits hook events and a denied result for a tool that was
-// blocked by approval mode.
-func (l *Loop) denyTool(tc types.ToolCall, idx int, results chan<- toolExecResult, reason string) {
-	errMsg := "error: " + reason
-	l.emitHook(HookEvent{
-		Event:    ToolStart,
-		ToolName: tc.Function.Name,
-		ToolArgs: tc.Function.Arguments,
-	})
-	l.emitHook(HookEvent{
-		Event:      ToolEnd,
-		ToolName:   tc.Function.Name,
-		ToolArgs:   tc.Function.Arguments,
-		ToolError:  reason,
-		ToolResult: errMsg,
-	})
-	results <- toolExecResult{idx: idx, callID: tc.ID, name: tc.Function.Name,
-		content: errMsg, err: fmt.Errorf("tool denied")}
+// buildPipeline assembles the middleware pipeline from config.
+func (l *Loop) buildPipeline() *Pipeline {
+	if len(l.Middleware) > 0 {
+		return NewPipeline(l.Middleware...)
+	}
+	if l.MaxToolConcurrency > 0 {
+		l.toolSem = make(chan struct{}, l.MaxToolConcurrency)
+	}
+	names := resolvedPipelineNames(l.PipelineNames, l.PipelineDisabled)
+	mws := make([]Middleware, 0, len(names))
+	for _, name := range names {
+		if build, ok := builtinMiddleware[name]; ok {
+			mws = append(mws, build(l))
+		}
+	}
+	return NewPipeline(mws...)
 }
 
-// Run executes the full conversation loop for a single user message.
+// Run executes the full conversation loop for a single user message
+// using the middleware pipeline.
 func (l *Loop) Run(ctx context.Context, userInput string) (response string, runErr error) {
+	return l.runMiddleware(ctx, userInput)
+}
+
+// runMiddleware executes the agent loop using the middleware pipeline.
+func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response string, runErr error) {
 	defer func() {
 		l.closeHook()
 		reason := "completed"
@@ -217,21 +250,7 @@ func (l *Loop) Run(ctx context.Context, userInput string) (response string, runE
 		})
 	}()
 
-	if l.MaxIterations <= 0 {
-		l.MaxIterations = 50
-	}
-	if l.Model == "" {
-		l.Model = "gpt-4o-mini"
-	}
-	if l.RetryBackoff <= 0 {
-		l.RetryBackoff = time.Second
-	}
-	if l.LoopDetectCount <= 0 {
-		l.LoopDetectCount = 5
-	}
-	if l.LoopDetectWindow <= 0 {
-		l.LoopDetectWindow = 10
-	}
+	l.applyDefaults()
 
 	if l.Messages != nil {
 		l.Messages = append(l.Messages, types.UserMsg(userInput))
@@ -246,13 +265,8 @@ func (l *Loop) Run(ctx context.Context, userInput string) (response string, runE
 		})
 	}
 
-	if l.ContextWindow > 0 {
-		l.compactContext(ctx)
-	}
-
 	messages := l.Messages
-
-	toolDefs := l.buildToolDefs()
+	pipeline := l.buildPipeline()
 
 	for iter := 0; iter < l.MaxIterations; iter++ {
 		select {
@@ -269,35 +283,25 @@ func (l *Loop) Run(ctx context.Context, userInput string) (response string, runE
 			Model:  l.Model,
 		})
 
-		// Drain steering messages (high priority, before this turn).
-		if l.Steer != nil {
-			select {
-			case msg, ok := <-l.Steer:
-				if ok && msg != "" {
-					messages = append(messages, types.UserMsg("[STEER] "+msg))
-					if l.ContextWindow > 0 {
-						l.compactContext(ctx)
-					}
-				}
-			default:
-			}
+		step := &Step{
+			Messages:     messages,
+			Tools:        l.buildToolDefs(),
+			Iteration:    iter,
+			Model:        l.Model,
+			SystemPrompt: l.SystemPrompt,
 		}
 
-		// Drain follow-up messages (queued between turns).
-		if l.FollowUps != nil {
-			select {
-			case msg, ok := <-l.FollowUps:
-				if ok && msg != "" {
-					messages = append(messages, types.UserMsg(msg))
-				}
-			default:
-			}
+		step, err := pipeline.RunPrepareStep(ctx, step)
+		if err != nil {
+			l.Messages = messages
+			return "", err
 		}
+		messages = step.Messages
 
 		req := types.ChatRequest{
 			Model:    l.Model,
 			Messages: messages,
-			Tools:    toolDefs,
+			Tools:    step.Tools,
 		}
 
 		msg, streamed, err := l.getAssistantMessage(ctx, req)
@@ -316,20 +320,148 @@ func (l *Loop) Run(ctx context.Context, userInput string) (response string, runE
 			l.OnFlush(msg.Content)
 		}
 
-		if err := l.executeToolsParallel(ctx, msg.ToolCalls, &messages); err != nil {
+		step, err = pipeline.RunPostModel(ctx, &msg, step)
+		if err != nil {
 			l.Messages = messages
 			return "", err
 		}
 
-		if l.ContextWindow > 0 {
-			l.compactContext(ctx)
+		toolResults := l.executeAndCollect(ctx, msg.ToolCalls, &messages)
+
+		// Update step.Messages to reflect the tool results added by executeAndCollect
+		step.Messages = messages
+
+		// Update l.Messages so that CompactionMiddleware sees the latest messages
+		l.Messages = messages
+
+		step, err = pipeline.RunPostTool(ctx, toolResults, step)
+		if err != nil {
+			l.Messages = messages
+			return "", err
 		}
+
+		messages = step.Messages
 	}
 
 	l.Messages = messages
-	return "", fmt.Errorf("max iterations (%d) reached without final response", l.MaxIterations)
+	return "", fmt.Errorf("max iterations (%d) reached", l.MaxIterations)
 }
 
+// applyDefaults sets default values for Loop fields.
+func (l *Loop) applyDefaults() {
+	if l.MaxIterations <= 0 {
+		l.MaxIterations = 50
+	}
+	if l.Model == "" {
+		l.Model = "gpt-4o-mini"
+	}
+	if l.RetryBackoff <= 0 {
+		l.RetryBackoff = time.Second
+	}
+	if l.LoopDetectCount <= 0 {
+		l.LoopDetectCount = 5
+	}
+	if l.LoopDetectWindow <= 0 {
+		l.LoopDetectWindow = 10
+	}
+}
+
+// executeAndCollect runs tool calls and returns ToolResult for middleware inspection.
+func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, messages *[]types.Message) []ToolResult {
+	results := make([]ToolResult, len(calls))
+	ordered := make([]toolExecResult, len(calls))
+	execResults := make(chan toolExecResult, len(calls))
+
+	for i, tc := range calls {
+		i, tc := i, tc
+
+		if l.ApprovalMode == "deny" && toolIsDangerous(tc.Function.Name) {
+			errMsg := fmt.Sprintf("error: tool %q requires approval but approval mode is 'deny'", tc.Function.Name)
+			l.emitHook(HookEvent{Event: ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
+			l.emitHook(HookEvent{Event: ToolEnd, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, ToolError: fmt.Sprintf("tool %q requires approval but approval mode is 'deny'", tc.Function.Name), ToolResult: errMsg})
+			execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: errMsg, err: fmt.Errorf("tool denied")}
+			continue
+		}
+		if l.ApprovalMode == "ask" && toolIsDangerous(tc.Function.Name) {
+			if !l.approveTool(tc.Function.Name, tc.Function.Arguments) {
+				errMsg := fmt.Sprintf("error: tool %q was denied by user", tc.Function.Name)
+				l.emitHook(HookEvent{Event: ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
+				l.emitHook(HookEvent{Event: ToolEnd, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, ToolError: fmt.Sprintf("tool %q was denied by user", tc.Function.Name), ToolResult: errMsg})
+				execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: errMsg, err: fmt.Errorf("tool denied")}
+				continue
+			}
+		}
+
+		go func() {
+			if l.toolSem != nil {
+				l.toolSem <- struct{}{}
+				defer func() { <-l.toolSem }()
+			}
+			abbreviated := abbreviateArgs(tc.Function.Arguments, 80)
+
+			if l.OnTool != nil {
+				l.OnTool(ToolInfo{Name: tc.Function.Name, Args: abbreviated})
+			}
+
+			l.emitHook(HookEvent{
+				Event:    ToolStart,
+				ToolName: tc.Function.Name,
+				ToolArgs: tc.Function.Arguments,
+			})
+
+			start := time.Now()
+			res, err := l.Registry.Execute(ctx, tc.Function.Name, tc.Function.Arguments)
+			duration := time.Since(start)
+
+			errStr := ""
+			if err != nil {
+				errStr = err.Error()
+				res = fmt.Sprintf("error: %v", err)
+			} else if len(res) > ToolResultMaxLen {
+				res = res[:ToolResultMaxLen] + "\n...[truncated]..."
+			}
+
+			if l.OnTool != nil {
+				info := ToolInfo{Name: tc.Function.Name, Args: abbreviated, Duration: duration, Result: res}
+				if err != nil {
+					info.Error = err.Error()
+				}
+				l.OnTool(info)
+			}
+
+			l.emitHook(HookEvent{
+				Event:      ToolEnd,
+				ToolName:   tc.Function.Name,
+				ToolArgs:   tc.Function.Arguments,
+				ToolResult: res,
+				DurationMs: duration.Milliseconds(),
+				ToolError:  errStr,
+			})
+
+			execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: res, dur: duration, err: err}
+		}()
+	}
+
+	for range len(calls) {
+		r := <-execResults
+		ordered[r.idx] = r
+	}
+
+	for i, r := range ordered {
+		results[i] = ToolResult{
+			Name:     r.name,
+			Args:     r.args,
+			Result:   r.content,
+			Error:    r.err,
+			Duration: r.dur,
+		}
+		*messages = append(*messages, types.ToolResultMsg(r.callID, r.name, r.content))
+	}
+
+	return results
+}
+
+// runLegacy executes the original inline agent loop (backward compatible).
 // getAssistantMessage returns the next assistant message with retry logic.
 // If the response has finish_reason="length" and tool calls, it errors rather
 // than executing potentially truncated tool calls.
@@ -407,107 +539,10 @@ type toolExecResult struct {
 	idx     int
 	callID  string
 	name    string
+	args    string
 	content string
 	dur     time.Duration
 	err     error
-}
-
-// executeToolsParallel runs all tool calls concurrently and appends results
-// in the original order. Returns an error if a loop is detected (same
-// name+args+result repeats LoopDetectCount+ times within LoopDetectWindow).
-// If ApprovalMode is "ask", prompts the user before executing dangerous tools.
-func (l *Loop) executeToolsParallel(ctx context.Context, calls []types.ToolCall, messages *[]types.Message) error {
-	results := make(chan toolExecResult, len(calls))
-
-	for i, tc := range calls {
-		if l.ApprovalMode == "deny" && toolIsDangerous(tc.Function.Name) {
-			l.denyTool(tc, i, results, fmt.Sprintf("tool %q requires approval but approval mode is 'deny'", tc.Function.Name))
-			continue
-		}
-
-		if l.ApprovalMode == "ask" && toolIsDangerous(tc.Function.Name) {
-			if !l.approveTool(tc.Function.Name, tc.Function.Arguments) {
-				l.denyTool(tc, i, results, fmt.Sprintf("tool %q was denied by user", tc.Function.Name))
-				continue
-			}
-		}
-
-		i, tc := i, tc
-		go func() {
-			abbreviated := abbreviateArgs(tc.Function.Arguments, 80)
-
-			if l.OnTool != nil {
-				l.OnTool(ToolInfo{Name: tc.Function.Name, Args: abbreviated})
-			}
-
-			l.emitHook(HookEvent{
-				Event:    ToolStart,
-				ToolName: tc.Function.Name,
-				ToolArgs: tc.Function.Arguments,
-			})
-
-			start := time.Now()
-			res, err := l.Registry.Execute(ctx, tc.Function.Name, tc.Function.Arguments)
-			duration := time.Since(start)
-
-			errStr := ""
-			if err != nil {
-				errStr = err.Error()
-				res = fmt.Sprintf("error: %v", err)
-			} else if len(res) > ToolResultMaxLen {
-				res = res[:ToolResultMaxLen] + "\n...[truncated]..."
-			}
-
-			if l.OnTool != nil {
-				info := ToolInfo{Name: tc.Function.Name, Args: abbreviated, Duration: duration, Result: res}
-				if err != nil {
-					info.Error = err.Error()
-				}
-				l.OnTool(info)
-			}
-
-			l.emitHook(HookEvent{
-				Event:      ToolEnd,
-				ToolName:   tc.Function.Name,
-				ToolArgs:   tc.Function.Arguments,
-				ToolResult: res,
-				DurationMs: duration.Milliseconds(),
-				ToolError:  errStr,
-			})
-
-			results <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, content: res, dur: duration, err: err}
-		}()
-	}
-
-	ordered := make([]toolExecResult, len(calls))
-	for range len(calls) {
-		r := <-results
-		ordered[r.idx] = r
-	}
-
-	for _, r := range ordered {
-		hashKey := toolCallHash(r.name, r.content)
-		l.loopHistory = append(l.loopHistory, hashKey)
-
-		if len(l.loopHistory) > l.LoopDetectWindow {
-			l.loopHistory = l.loopHistory[len(l.loopHistory)-l.LoopDetectWindow:]
-		}
-
-		count := 0
-		for _, h := range l.loopHistory {
-			if h == hashKey {
-				count++
-			}
-		}
-		if count >= l.LoopDetectCount {
-			return fmt.Errorf("loop detected: tool %q produced the same result %d times in the last %d steps — halting to prevent stuck agent",
-				r.name, count, len(l.loopHistory))
-		}
-
-		*messages = append(*messages, types.ToolResultMsg(r.callID, r.name, r.content))
-	}
-
-	return nil
 }
 
 // toolCallHash returns a SHA-256 hash of tool name and result for loop detection.
@@ -519,13 +554,16 @@ func toolCallHash(name, content string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// compactContext checks if the estimated token count exceeds 80% of
-// ContextWindow. If so, it uses the LLM (CompactProvider or Provider) to
-// summarize old messages into a structured summary, preserving the system
-// message and recent turns. Falls back to simple trimming if the LLM call
-// fails or returns empty.
-func (l *Loop) compactContext(ctx context.Context) {
-	target := l.ContextWindow * 4 / 5
+// compactContext checks if the estimated token count exceeds the given
+// fraction of ContextWindow. If threshold is 0, defaults to 0.8 (80%).
+// If over budget, it uses the LLM to summarize old messages into a
+// structured summary, preserving the system message and recent turns.
+// Falls back to simple trimming if the LLM call fails or returns empty.
+func (l *Loop) compactContext(ctx context.Context, threshold float64) {
+	if threshold <= 0 {
+		threshold = 0.8
+	}
+	target := int(float64(l.ContextWindow) * threshold)
 	totalChars := 0
 	for _, m := range l.Messages {
 		totalChars += len(m.Content)
