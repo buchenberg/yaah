@@ -50,27 +50,15 @@ CLI that consumes them is more useful than another walled garden.
 ## Install
 
 ```bash
+# One-liner (macOS / Linux)
+curl -fsSL https://raw.githubusercontent.com/buchenberg/yaah/main/install.sh | sh
+
 # From source (Go 1.25+ required)
 go install github.com/buchenberg/yaah@latest
 
 # macOS Apple Silicon
 curl -fsSL https://github.com/buchenberg/yaah/releases/latest/download/yaah-darwin-arm64 -o yaah
 chmod +x yaah && sudo mv yaah /usr/local/bin/
-
-# macOS Intel
-curl -fsSL https://github.com/buchenberg/yaah/releases/latest/download/yaah-darwin-amd64 -o yaah
-chmod +x yaah && sudo mv yaah /usr/local/bin/
-
-# Linux amd64
-curl -fsSL https://github.com/buchenberg/yaah/releases/latest/download/yaah-linux-amd64 -o yaah
-chmod +x yaah && sudo mv yaah /usr/local/bin/
-
-# Linux arm64
-curl -fsSL https://github.com/buchenberg/yaah/releases/latest/download/yaah-linux-arm64 -o yaah
-chmod +x yaah && sudo mv yaah /usr/local/bin/
-
-# Windows (PowerShell)
-Invoke-WebRequest -Uri "https://github.com/buchenberg/yaah/releases/latest/download/yaah-windows-amd64.exe" -OutFile yaah.exe
 ```
 
 ## Quick start
