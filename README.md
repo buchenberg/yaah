@@ -95,52 +95,10 @@ yaah "explain this codebase"
 
 # 5. Check for updates
 yaah update
-```
 
-## Features
-
-### Streaming responses
-Tokens stream in real time with a thinking spinner. The spinner stops on the first token and the response appears as it's generated.
-
-### Agent loop safety
-The agent loop includes several safeguards for long-running tasks:
-- **Context compaction** — when the conversation approaches the context window, older messages are summarized by the LLM using a structured template (goal, completed work, active tasks, decisions, files modified). Falls back to simple trimming if the LLM call fails.
-- **Loop detection** — SHA-256 hashes of tool calls (name + result) are tracked in a sliding window. If the same tool produces the same result 5+ times in 10 steps, the loop halts to prevent stuck agents.
-- **Truncation safety** — if the provider response has `finish_reason=length` (truncated mid-generation), tool calls from that response are discarded rather than executed with potentially corrupted arguments.
-
-### Approval gates
-Destructive tools (`bash`, `powershell`, `write`, `edit`, `delete`) are gated by the `approval` config setting:
-- `approval: allow` — execute without asking
-- `approval: ask` — prompt for confirmation before each destructive operation
-- `approval: deny` — reject all destructive operations
-
-### Tool calling
-The agent can use built-in tools and MCP server tools:
-- `read` — read files
-- `write` — write/overwrite files
-- `edit` — string replacements with fuzzy matching (smart quotes, dashes, whitespace) and multi-edit `edits[]` support
-- `delete` — remove files
-- `grep` — search file contents (ripgrep with Go-native fallback)
-- `glob` — find files by pattern (e.g. `**/*.go`)
-- `ls` — list directory contents with tree formatting
-- `bash` — run shell commands (POSIX)
-- `powershell` — run PowerShell commands (pwsh 7+ or Windows PowerShell)
-- `question` — ask the user structured questions with multiple-choice options
-- `webfetch` — fetch URL content (HTML to plain text/markdown)
-- `task` — delegate subtasks to sub-agents with restricted tools
-- `background_process` — manage long-running background processes (start/list/logs/stop/restart)
-- `memory_search` / `memory_add` / `memory_update` / `memory_delete` / `memory_search_sessions` — persistent memory
-- `todowrite` — task tracking with priority levels (high/medium/low), persisted to SQLite
-- `skill` — load, list, create, or edit skills (SKILL.md files with instructions)
-- MCP tools from registered servers
-
-### Skills
-Skills follow the cross-tool standard (`SKILL.md` with YAML frontmatter).
-Discover skills from `~/.agents/skills/`, `~/.yaah/skills/`, and `./.agents/skills/`.
-
-```bash
-yaah skill list              # list all discovered skills
-yaah skill show <name>       # show a skill's content
+# 6. Override approval (for headless / CI)
+yaah --approval allow "write a script"
+YAAH_APPROVAL=allow yaah "run the tests"
 ```
 
 ### MCP servers
@@ -169,11 +127,39 @@ Project `AGENTS.md` / `CLAUDE.md` files are automatically loaded and injected in
 ### Todo lists
 The agent can create and manage task lists during conversations using the `todowrite` tool.
 
+### Hook events (external integrations)
+
+When `hooks.dir` is set in `~/.yaah/config.yaml`, yaah appends structured JSONL
+events to `<hooks.dir>/<session-id>.jsonl` on session boundaries, turn
+boundaries, and tool calls. This enables external tools (e.g.
+[Entire.io](https://entire.io)) to track sessions for checkpoint/transcript
+integration.
+
+```yaml
+hooks:
+  dir: ~/.yaah/hooks
+```
+
+Events are off by default — set `hooks.dir` to enable them.
+
+### Approval override
+
+The global approval mode can be overridden at runtime for headless or CI
+environments:
+
+```bash
+yaah --approval allow "run the tests"     # allow all destructive tools
+YAAH_APPROVAL=allow yaah "deploy"         # via environment variable
+```
+
+Invalid values fall back to `ask` with a warning.
+
 ## Commands
 
 ```
 yaah                          # interactive REPL with splash screen
 yaah "prompt"                 # one-shot with streaming
+yaah --approval allow "..."   # one-shot with approval override
 yaah config show              # effective config (secrets redacted)
 yaah config edit              # scaffold or edit ~/.yaah/config.yaml
 yaah doctor                   # diagnose installation
@@ -237,6 +223,9 @@ default:
   small_model: gpt-4o-mini                  # used for context compaction (optional; falls back to model)
   max_iterations: 50
   approval: ask                           # ask | allow | deny
+
+# hooks:
+#   dir: ~/.yaah/hooks                    # optional: JSONL event log for external integrations
 
 log_level: INFO
 ```
