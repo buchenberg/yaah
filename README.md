@@ -7,6 +7,8 @@
 
 ## What is this?
 
+test commit
+
 yaah is a CLI that lets you run an AI agent on your machine. It loads
 your project context, calls the model you choose, executes the tools it
 asks for, and remembers what it learned — all from a single static binary
