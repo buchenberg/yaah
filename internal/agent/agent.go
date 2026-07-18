@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/providers"
@@ -115,12 +117,106 @@ type Loop struct {
 	// user message, overriding the normal iteration flow.
 	Steer <-chan string
 
+	// SessionID is a stable identifier for the session, set by the caller.
+	// Used by emitHook to label events.
+	SessionID string
+
+	// HookDir is the directory where yaah writes JSONL hook event files.
+	// When set, structured events are appended to <HookDir>/<session-id>.jsonl
+	// on session boundaries, turn boundaries, and tool calls. Used by
+	// external agents (e.g. entire-agent-yaah) for checkpoint/transcript
+	// integration. Empty string means no hook events are written.
+	// Must be set before Run() is called; must not change after.
+	HookDir string
+
+	hookOnce sync.Once
+	hookOK   bool
+	hookMu   sync.Mutex
+	hookFile *os.File
+
 	// loopHistory tracks recent tool call hashes for loop detection.
 	loopHistory []string
 }
 
+// emitHook writes a structured JSONL line to the hook directory.
+// It is a no-op when HookDir is empty. Failures are silent — hook
+// emission must never break the agent loop.
+func (l *Loop) emitHook(event HookEvent) {
+	if l.HookDir == "" {
+		return
+	}
+	l.hookOnce.Do(func() {
+		if err := os.MkdirAll(l.HookDir, 0o755); err != nil {
+			return
+		}
+		path := filepath.Join(l.HookDir, l.SessionID+".jsonl")
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			return
+		}
+		l.hookFile = f
+		l.hookOK = true
+	})
+	if !l.hookOK {
+		return
+	}
+	event.SessionID = l.SessionID
+	if event.Timestamp == 0 {
+		event.Timestamp = time.Now().UnixMilli()
+	}
+	line, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+	l.hookMu.Lock()
+	l.hookFile.Write(append(line, '\n'))
+	l.hookMu.Unlock()
+}
+
+// closeHook closes the hook file if it was opened. Must be called after Run()
+// completes to flush and release the file descriptor.
+func (l *Loop) closeHook() {
+	if l.hookFile != nil {
+		l.hookFile.Close()
+		l.hookFile = nil
+	}
+}
+
+// denyTool emits hook events and a denied result for a tool that was
+// blocked by approval mode.
+func (l *Loop) denyTool(tc types.ToolCall, idx int, results chan<- toolExecResult, reason string) {
+	errMsg := "error: " + reason
+	l.emitHook(HookEvent{
+		Event:    ToolStart,
+		ToolName: tc.Function.Name,
+		ToolArgs: tc.Function.Arguments,
+	})
+	l.emitHook(HookEvent{
+		Event:      ToolEnd,
+		ToolName:   tc.Function.Name,
+		ToolArgs:   tc.Function.Arguments,
+		ToolError:  reason,
+		ToolResult: errMsg,
+	})
+	results <- toolExecResult{idx: idx, callID: tc.ID, name: tc.Function.Name,
+		content: errMsg, err: fmt.Errorf("tool denied")}
+}
+
 // Run executes the full conversation loop for a single user message.
-func (l *Loop) Run(ctx context.Context, userInput string) (string, error) {
+func (l *Loop) Run(ctx context.Context, userInput string) (response string, runErr error) {
+	defer func() {
+		l.closeHook()
+		reason := "completed"
+		if runErr != nil {
+			reason = "error"
+		}
+		l.emitHook(HookEvent{
+			Event:      SessionEnd,
+			ExitReason: reason,
+			Model:      l.Model,
+		})
+	}()
+
 	if l.MaxIterations <= 0 {
 		l.MaxIterations = 50
 	}
@@ -144,6 +240,10 @@ func (l *Loop) Run(ctx context.Context, userInput string) (string, error) {
 			types.SystemMsg(l.SystemPrompt),
 			types.UserMsg(userInput),
 		}
+		l.emitHook(HookEvent{
+			Event: SessionStart,
+			Model: l.Model,
+		})
 	}
 
 	if l.ContextWindow > 0 {
@@ -161,6 +261,13 @@ func (l *Loop) Run(ctx context.Context, userInput string) (string, error) {
 			return "", ctx.Err()
 		default:
 		}
+
+		l.emitHook(HookEvent{
+			Event:  TurnStart,
+			Prompt: userInput,
+			Turn:   iter,
+			Model:  l.Model,
+		})
 
 		// Drain steering messages (high priority, before this turn).
 		if l.Steer != nil {
@@ -295,42 +402,37 @@ func (l *Loop) EstimatedTokens() int {
 	return total / 4
 }
 
+// toolExecResult holds the outcome of a single tool execution.
+type toolExecResult struct {
+	idx     int
+	callID  string
+	name    string
+	content string
+	dur     time.Duration
+	err     error
+}
+
 // executeToolsParallel runs all tool calls concurrently and appends results
 // in the original order. Returns an error if a loop is detected (same
 // name+args+result repeats LoopDetectCount+ times within LoopDetectWindow).
 // If ApprovalMode is "ask", prompts the user before executing dangerous tools.
 func (l *Loop) executeToolsParallel(ctx context.Context, calls []types.ToolCall, messages *[]types.Message) error {
-	type result struct {
-		idx     int
-		callID  string
-		name    string
-		content string
-		dur     time.Duration
-		err     error
-	}
-
-	results := make(chan result, len(calls))
-	active := 0
+	results := make(chan toolExecResult, len(calls))
 
 	for i, tc := range calls {
 		if l.ApprovalMode == "deny" && toolIsDangerous(tc.Function.Name) {
-			results <- result{idx: i, callID: tc.ID, name: tc.Function.Name,
-				content: fmt.Sprintf("error: tool %q requires approval but approval mode is 'deny'", tc.Function.Name),
-				err:     fmt.Errorf("tool denied")}
+			l.denyTool(tc, i, results, fmt.Sprintf("tool %q requires approval but approval mode is 'deny'", tc.Function.Name))
 			continue
 		}
 
 		if l.ApprovalMode == "ask" && toolIsDangerous(tc.Function.Name) {
 			if !l.approveTool(tc.Function.Name, tc.Function.Arguments) {
-				results <- result{idx: i, callID: tc.ID, name: tc.Function.Name,
-					content: fmt.Sprintf("error: tool %q was denied by user", tc.Function.Name),
-					err:     fmt.Errorf("tool denied by user")}
+				l.denyTool(tc, i, results, fmt.Sprintf("tool %q was denied by user", tc.Function.Name))
 				continue
 			}
 		}
 
 		i, tc := i, tc
-		active++
 		go func() {
 			abbreviated := abbreviateArgs(tc.Function.Arguments, 80)
 
@@ -338,11 +440,19 @@ func (l *Loop) executeToolsParallel(ctx context.Context, calls []types.ToolCall,
 				l.OnTool(ToolInfo{Name: tc.Function.Name, Args: abbreviated})
 			}
 
+			l.emitHook(HookEvent{
+				Event:    ToolStart,
+				ToolName: tc.Function.Name,
+				ToolArgs: tc.Function.Arguments,
+			})
+
 			start := time.Now()
 			res, err := l.Registry.Execute(ctx, tc.Function.Name, tc.Function.Arguments)
 			duration := time.Since(start)
 
+			errStr := ""
 			if err != nil {
+				errStr = err.Error()
 				res = fmt.Sprintf("error: %v", err)
 			} else if len(res) > ToolResultMaxLen {
 				res = res[:ToolResultMaxLen] + "\n...[truncated]..."
@@ -356,11 +466,20 @@ func (l *Loop) executeToolsParallel(ctx context.Context, calls []types.ToolCall,
 				l.OnTool(info)
 			}
 
-			results <- result{idx: i, callID: tc.ID, name: tc.Function.Name, content: res, dur: duration, err: err}
+			l.emitHook(HookEvent{
+				Event:      ToolEnd,
+				ToolName:   tc.Function.Name,
+				ToolArgs:   tc.Function.Arguments,
+				ToolResult: res,
+				DurationMs: duration.Milliseconds(),
+				ToolError:  errStr,
+			})
+
+			results <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, content: res, dur: duration, err: err}
 		}()
 	}
 
-	ordered := make([]result, len(calls))
+	ordered := make([]toolExecResult, len(calls))
 	for range len(calls) {
 		r := <-results
 		ordered[r.idx] = r

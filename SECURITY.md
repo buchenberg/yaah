@@ -67,6 +67,20 @@ wins" framing from earlier design notes does not apply — the code is
 a single switch. If you need a read-only mode, set `approval: deny`
 or only register the `read`/`memory_search` tools via your config.
 
+### Approval override
+
+The global `approval` setting can be overridden at runtime via the `--approval`
+(`-a`) CLI flag or the `YAAH_APPROVAL` environment variable. Resolution order:
+CLI flag → `YAAH_APPROVAL` env var → `config.yaml` → built-in default (`ask`).
+
+```bash
+yaah --approval allow "run headless tests"
+YAAH_APPROVAL=deny yaah                       # read-only session
+```
+
+Invalid values fall back to `ask` with a warning on stderr. The override
+applies to all tools — there is still no per-tool or per-path approval.
+
 ### Dangerous-command guard (best-effort, not a security boundary)
 
 The `bash` and `powershell` tools have a coarse deny-list of obviously
@@ -82,7 +96,8 @@ buys you protection against accidental destructive commands when
 Each registered MCP server is launched at startup; its tool list is
 appended to the agent's available tools. There is no per-server
 approval override today — MCP tools follow the global `approval`
-setting. (Per-server overrides are a future enhancement.)
+setting (including any `--approval` or `YAAH_APPROVAL` override).
+(Per-server overrides are a future enhancement.)
 
 ## Reporting MCP server issues
 

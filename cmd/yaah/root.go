@@ -45,4 +45,9 @@ func init() {
 		}
 	}
 	rootCmd.Version = fmt.Sprintf("%s (commit %s, built %s)", version, commit, date)
+	rootCmd.PersistentFlags().StringVarP(&approvalOverride,
+		"approval", "a", "",
+		"override approval mode: allow, ask, or deny")
 }
+
+var approvalOverride string
