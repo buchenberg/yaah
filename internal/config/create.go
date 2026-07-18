@@ -31,6 +31,17 @@ default:
   max_iterations: 50
   approval: ask                           # ask | allow | deny
 
+# agent:
+#   middleware:
+#     enabled:                             # explicit set of middleware to run (in order)
+#       - steer
+#       - followup
+#       - compaction
+#       - approval
+#       - loop_detection
+#     # disabled:                          # exclude specific middleware
+#     #   - approval
+
 # hooks:
 #   dir: ~/.yaah/hooks                    # optional: JSONL event log for external integrations
 

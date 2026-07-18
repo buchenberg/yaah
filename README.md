@@ -7,8 +7,6 @@
 
 ## What is this?
 
-test commit
-
 yaah is a CLI that lets you run an AI agent on your machine. It loads
 your project context, calls the model you choose, executes the tools it
 asks for, and remembers what it learned — all from a single static binary
@@ -224,6 +222,17 @@ default:
   max_iterations: 50
   approval: ask                           # ask | allow | deny
 
+# agent:
+#   middleware:
+#     enabled:                             # explicit set of middleware to run (in order)
+#       - steer
+#       - followup
+#       - compaction
+#       - approval
+#       - loop_detection
+#     # disabled:                          # exclude specific middleware
+#     #   - approval
+
 # hooks:
 #   dir: ~/.yaah/hooks                    # optional: JSONL event log for external integrations
 
@@ -232,10 +241,110 @@ log_level: INFO
 
 Environment variables referenced as `${VAR_NAME}` are substituted at load time.
 
+## Development
+
+### Prerequisites
+
+- Go 1.25+
+- `gofmt` (ships with Go)
+- `staticcheck` for linting (optional but recommended)
+
+### Build
+
+```bash
+go build .
+
+# Optimized binary
+go build -trimpath -ldflags '-s -w' -o yaah .
+```
+
+### Test
+
+```bash
+go test ./...       # all tests
+go vet ./...        # vet
+gofmt -l .          # must be empty (no unformatted files)
+```
+
+### Lint
+
+```bash
+go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+```
+
+### Cross-compile
+
+```bash
+GOOS=darwin  GOARCH=arm64 go build -trimpath -ldflags '-s -w' -o dist/yaah-darwin-arm64  .
+GOOS=darwin  GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o dist/yaah-darwin-amd64  .
+GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o dist/yaah-linux-amd64   .
+GOOS=linux   GOARCH=arm64 go build -trimpath -ldflags '-s -w' -o dist/yaah-linux-arm64    .
+GOOS=windows GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o dist/yaah-windows-amd64  .
+```
+
+### Install locally
+
+```bash
+go build -trimpath -ldflags '-s -w' -o yaah .
+ditto --norsrc yaah ~/.local/bin/yaah  # macOS: avoids Gatekeeper quarantine
+```
+
+### Repo layout
+
+```
+yaah/
+├── main.go                      # calls cmd/yaah.Execute()
+├── cmd/yaah/                    # cobra commands
+│   ├── root.go                  # build-time vars (version, commit, date)
+│   ├── root_cmd.go              # rootCmd, REPL, one-shot, agent wiring
+│   ├── version.go config.go     # CLI subcommands
+│   ├── doctor.go update.go
+│   ├── skill.go mcp.go memory.go session.go
+│   ├── tui.go                   # bubbletea TUI
+│   └── color.go                 # ANSI color helpers
+├── internal/
+│   ├── agent/                   # agent loop, middleware pipeline, streaming, compaction
+│   ├── config/                  # ~/.yaah/config.yaml loader
+│   ├── instructions/            # AGENTS.md/CLAUDE.md discovery
+│   ├── mcp/                     # MCP client (stdio + HTTP)
+│   ├── memory/                  # SQLite + FTS5 (sessions, messages, memory)
+│   ├── process/                 # background process manager
+│   ├── providers/               # OpenAI Chat Completions client
+│   ├── prompts/                 # system prompt assembly
+│   ├── repl/                    # REPL, history, slash commands
+│   ├── skills/                  # SKILL.md discovery
+│   ├── tools/                   # built-in tools (read, write, edit, grep, bash, task, etc.)
+│   ├── tui/                     # bubbletea TUI components
+│   └── types/                   # OpenAI message types
+├── docs/
+│   └── architecture.md          # detailed architecture documentation
+├── AGENTS.md                    # coding assistant instructions
+├── CONTRIBUTING.md
+└── SECURITY.md
+```
+
+### Architecture
+
+See [docs/architecture.md](./docs/architecture.md) for a detailed walkthrough of the
+agent loop, middleware pipeline, tool execution, streaming, and context compaction.
+
+### Tests
+
+```bash
+go test ./...                 # all tests
+go test -race ./...           # with race detector
+go test -v ./internal/agent/  # verbose agent tests
+go test -cover ./...          # with coverage
+```
+
+Tests live next to the code they test (`foo.go` ↔ `foo_test.go`) and use
+`t.Run("name", func(t *testing.T) { ... })` for subtests.
+
 ## Status
 
-**v0.2.0 released.** TUI with streaming, tool-call display, slash commands,
-and model switching shipped.
+**Active development.** Core features stable: middleware pipeline, streaming,
+tool execution, SQLite memory, MCP integration, TUI, and hook events for
+external agents. See [docs/architecture.md](./docs/architecture.md) for details.
 
 ## License
 

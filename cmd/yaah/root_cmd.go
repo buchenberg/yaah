@@ -391,18 +391,20 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 	compactProvider, compactModel := resolveCompact(s.cfg)
 
 	loop := &agent.Loop{
-		Provider:        s.provider,
-		CompactProvider: compactProvider,
-		CompactModel:    compactModel,
-		Registry:        s.toolReg,
-		Model:           s.modelName,
-		SystemPrompt:    s.systemPrompt,
-		MaxIterations:   s.cfg.Default.MaxIterations,
-		ContextWindow:   s.cfg.Default.ContextWindow,
-		ApprovalMode:    resolveApproval(s.cfg),
-		Messages:        s.messages,
-		HookDir:         s.cfg.Hooks.Dir,
-		SessionID:       s.sessionID,
+		Provider:         s.provider,
+		CompactProvider:  compactProvider,
+		CompactModel:     compactModel,
+		Registry:         s.toolReg,
+		Model:            s.modelName,
+		SystemPrompt:     s.systemPrompt,
+		MaxIterations:    s.cfg.Default.MaxIterations,
+		ContextWindow:    s.cfg.Default.ContextWindow,
+		ApprovalMode:     resolveApproval(s.cfg),
+		Messages:         s.messages,
+		HookDir:          s.cfg.Hooks.Dir,
+		SessionID:        s.sessionID,
+		PipelineNames:    s.cfg.Agent.Middleware.Enabled,
+		PipelineDisabled: s.cfg.Agent.Middleware.Disabled,
 	}
 
 	spin := spinner.New(nil, "Thinking...")
