@@ -31,15 +31,15 @@ var taglines = []string{
 	"Implement",
 	"You should know this by now",
 	"Works on my machine",
-	"Soon™",
-	"Under new management",
+	"Consilium vexāre 🪄",
 	"I train on your vibes",
 	"Forward, always",
 	"Yet another agent harness",
+	"Never gonna give you up",
+	"Hold my beer",
 	"Your prompt, your rules",
-	"Mo dependencies, mo problems",
 	"Born to run, built to yaah",
-	"yaah yaah yaah!!",
+	"yaah yaah yaah!!!",
 }
 
 var fonts = []string{

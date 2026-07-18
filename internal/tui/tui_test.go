@@ -3,7 +3,14 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	zone "github.com/lrstanley/bubblezone/v2"
 )
+
+func TestMain(m *testing.M) {
+	zone.NewGlobal()
+	m.Run()
+}
 
 // --- splitRow tests ---
 
@@ -883,9 +890,6 @@ func TestReasoningPersistsAfterDone(t *testing.T) {
 	if m.thinkContent != "" {
 		t.Errorf("thinkContent should be cleared after Done, got %q", m.thinkContent)
 	}
-	if !m.reasoningCollapsed {
-		t.Error("reasoning should be collapsed after Done")
-	}
 	if len(m.messages) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(m.messages))
 	}
@@ -911,9 +915,6 @@ func TestReasoningTransferOnDone(t *testing.T) {
 	if m.messages[0].Reasoning != "reasoning" {
 		t.Errorf("expected reasoning on message, got %q", m.messages[0].Reasoning)
 	}
-	if !m.reasoningCollapsed {
-		t.Error("reasoning should be collapsed after transfer")
-	}
 }
 
 func TestReasoningTransferOnFlush(t *testing.T) {
@@ -930,9 +931,6 @@ func TestReasoningTransferOnFlush(t *testing.T) {
 	}
 	if m.messages[0].Reasoning != "the reasoning" {
 		t.Errorf("expected reasoning on message, got %q", m.messages[0].Reasoning)
-	}
-	if !m.reasoningCollapsed {
-		t.Error("reasoning should be collapsed after Flush")
 	}
 }
 
@@ -969,36 +967,64 @@ func TestReasoningClearedOnNewSubmit(t *testing.T) {
 	m.HandleAgentMsg(AgentMsg{Done: true})
 
 	m.thinkContent = ""
-	m.reasoningCollapsed = false
+	m.reasoningExpanded = make(map[string]bool)
 
 	if m.thinkContent != "" {
 		t.Errorf("thinkContent should be empty after clearing, got %q", m.thinkContent)
 	}
-	if m.reasoningCollapsed {
-		t.Error("reasoningCollapsed should be false after clearing")
+	if len(m.reasoningExpanded) != 0 {
+		t.Error("reasoningExpanded should be empty after clearing")
 	}
 }
 
 func TestCTRLRTogglesReasoning(t *testing.T) {
-	m := &Model{width: 80}
+	m := &Model{width: 80, height: 40, reasoningExpanded: make(map[string]bool)}
 	m.HandleAgentMsg(AgentMsg{Thinking: "reasoning"})
 
 	m.streaming = true
 	m.streamContent = "response"
 	m.HandleAgentMsg(AgentMsg{Done: true})
 
-	if !m.reasoningCollapsed {
-		t.Fatal("expected collapsed after Done")
+	// Render to populate reasoningZones
+	m.renderMessages()
+	if len(m.reasoningZones) == 0 {
+		t.Fatal("expected reasoning zones after render")
+	}
+	zoneID := m.reasoningZones[0]
+
+	// Default: collapsed (not in map)
+	if m.reasoningExpanded[zoneID] {
+		t.Fatal("expected collapsed by default")
 	}
 
-	m.reasoningCollapsed = !m.reasoningCollapsed
-	if m.reasoningCollapsed {
-		t.Error("expected expanded after first toggle")
+	// Simulate ctrl+r: expand all
+	anyExpanded := false
+	for _, zid := range m.reasoningZones {
+		if m.reasoningExpanded[zid] {
+			anyExpanded = true
+			break
+		}
+	}
+	for _, zid := range m.reasoningZones {
+		m.reasoningExpanded[zid] = !anyExpanded
+	}
+	if !m.reasoningExpanded[zoneID] {
+		t.Error("expected expanded after first ctrl+r")
 	}
 
-	m.reasoningCollapsed = !m.reasoningCollapsed
-	if !m.reasoningCollapsed {
-		t.Error("expected collapsed after second toggle")
+	// Simulate ctrl+r again: collapse all
+	anyExpanded = false
+	for _, zid := range m.reasoningZones {
+		if m.reasoningExpanded[zid] {
+			anyExpanded = true
+			break
+		}
+	}
+	for _, zid := range m.reasoningZones {
+		m.reasoningExpanded[zid] = !anyExpanded
+	}
+	if m.reasoningExpanded[zoneID] {
+		t.Error("expected collapsed after second ctrl+r")
 	}
 }
 
@@ -1022,7 +1048,7 @@ func TestHasReasoning(t *testing.T) {
 	}
 
 	m.thinkContent = ""
-	m.reasoningCollapsed = false
+	m.reasoningExpanded = make(map[string]bool)
 	m.messages = nil
 	if m.hasReasoning() {
 		t.Error("should not have reasoning after clearing everything")
@@ -1030,19 +1056,17 @@ func TestHasReasoning(t *testing.T) {
 }
 
 func TestReasoningNotClearedOnDoneWhenEmpty(t *testing.T) {
-	m := &Model{width: 80}
-	m.reasoningCollapsed = false
+	m := &Model{width: 80, reasoningExpanded: make(map[string]bool)}
 
 	m.HandleAgentMsg(AgentMsg{Done: true})
 
-	if m.reasoningCollapsed {
-		t.Error("reasoningCollapsed should remain false when thinkContent was empty")
+	if len(m.reasoningExpanded) != 0 {
+		t.Error("reasoningExpanded should remain empty when thinkContent was empty")
 	}
 }
 
 func TestRenderReasoningCollapsed_MessageLevel(t *testing.T) {
-	m := &Model{width: 80}
-	m.reasoningCollapsed = true
+	m := &Model{width: 80, reasoningExpanded: make(map[string]bool)}
 	m.messages = []Message{
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "response", Reasoning: "the model's reasoning"},
@@ -1064,8 +1088,7 @@ func TestRenderReasoningCollapsed_MessageLevel(t *testing.T) {
 }
 
 func TestRenderReasoningExpanded_MessageLevel(t *testing.T) {
-	m := &Model{width: 80}
-	m.reasoningCollapsed = false
+	m := &Model{width: 80, reasoningExpanded: map[string]bool{"reasoning-1": true}}
 	m.messages = []Message{
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "response", Reasoning: "the model's reasoning"},
@@ -1118,5 +1141,274 @@ func TestRenderReasoningActiveThinkingNoContent(t *testing.T) {
 	}
 	if strings.Contains(output, "▶ Reasoning") || strings.Contains(output, "▼ Reasoning") {
 		t.Error("no content means no toggle should appear")
+	}
+}
+
+// --- zone + clipboard tests ---
+
+func TestReasoningZonesPopulated_MessageLevel(t *testing.T) {
+	m := &Model{width: 80, reasoningExpanded: make(map[string]bool)}
+	m.messages = []Message{
+		{Role: "assistant", Content: "response", Reasoning: "the model's reasoning"},
+	}
+
+	m.renderMessages()
+
+	if len(m.reasoningZones) != 1 {
+		t.Fatalf("expected 1 reasoning zone, got %d", len(m.reasoningZones))
+	}
+	if m.reasoningZones[0] != "reasoning-0" {
+		t.Errorf("expected zone ID 'reasoning-0', got %q", m.reasoningZones[0])
+	}
+}
+
+func TestReasoningZonesPopulated_ModelLevel(t *testing.T) {
+	m := &Model{width: 80, reasoningExpanded: make(map[string]bool)}
+	m.thinkContent = "reasoning text"
+
+	m.renderMessages()
+
+	if len(m.reasoningZones) != 1 {
+		t.Fatalf("expected 1 reasoning zone, got %d", len(m.reasoningZones))
+	}
+	if m.reasoningZones[0] != "reasoning-live" {
+		t.Errorf("expected zone ID 'reasoning-live', got %q", m.reasoningZones[0])
+	}
+}
+
+func TestReasoningZonesMultipleMessages(t *testing.T) {
+	m := &Model{width: 80, reasoningExpanded: make(map[string]bool)}
+	m.messages = []Message{
+		{Role: "assistant", Content: "response1", Reasoning: "reasoning1"},
+		{Role: "assistant", Content: "response2", Reasoning: "reasoning2"},
+	}
+
+	m.renderMessages()
+
+	if len(m.reasoningZones) != 2 {
+		t.Fatalf("expected 2 reasoning zones, got %d", len(m.reasoningZones))
+	}
+	if m.reasoningZones[0] != "reasoning-0" {
+		t.Errorf("expected first zone 'reasoning-0', got %q", m.reasoningZones[0])
+	}
+	if m.reasoningZones[1] != "reasoning-1" {
+		t.Errorf("expected second zone 'reasoning-1', got %q", m.reasoningZones[1])
+	}
+}
+
+func TestReasoningZonesEmptyWhenNoReasoning(t *testing.T) {
+	m := &Model{width: 80}
+	m.messages = []Message{
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "response"},
+	}
+
+	m.renderMessages()
+
+	if len(m.reasoningZones) != 0 {
+		t.Errorf("expected 0 reasoning zones, got %d: %v", len(m.reasoningZones), m.reasoningZones)
+	}
+}
+
+func TestReasoningZonesClearedEachRender(t *testing.T) {
+	m := &Model{width: 80, reasoningExpanded: make(map[string]bool)}
+	m.messages = []Message{
+		{Role: "assistant", Content: "response", Reasoning: "reasoning"},
+	}
+
+	m.renderMessages()
+	if len(m.reasoningZones) != 1 {
+		t.Fatalf("expected 1 zone after first render, got %d", len(m.reasoningZones))
+	}
+
+	m.messages = []Message{
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "response"},
+	}
+	m.renderMessages()
+	if len(m.reasoningZones) != 0 {
+		t.Errorf("expected 0 zones after re-render without reasoning, got %d", len(m.reasoningZones))
+	}
+}
+
+// --- question mode tests ---
+
+func TestQuestionModeEnter(t *testing.T) {
+	m := &Model{width: 80}
+	ch := make(chan string, 1)
+	m.HandleAgentMsg(AgentMsg{Question: &QuestionModal{
+		Header:   "Next step",
+		Question: "What should we do?",
+		Options:  []QuestionOption{{Label: "A", Description: "First"}, {Label: "B", Description: "Second"}},
+		AnswerCh: ch,
+	}})
+
+	if !m.questionMode {
+		t.Fatal("expected questionMode to be true")
+	}
+	if m.questionIdx != 0 {
+		t.Errorf("expected questionIdx 0, got %d", m.questionIdx)
+	}
+	if len(m.questionMulti) != 2 {
+		t.Errorf("expected questionMulti len 2, got %d", len(m.questionMulti))
+	}
+}
+
+func TestQuestionModeSingleSelectAnswer(t *testing.T) {
+	m := &Model{width: 80}
+	ch := make(chan string, 1)
+	m.HandleAgentMsg(AgentMsg{Question: &QuestionModal{
+		Header:   "Next step",
+		Question: "What?",
+		Options:  []QuestionOption{{Label: "A", Description: ""}, {Label: "B", Description: ""}},
+		AnswerCh: ch,
+	}})
+	m.questionIdx = 1
+	m.commitQuestionAnswer()
+
+	answer := <-ch
+	if answer != "B" {
+		t.Errorf("expected answer 'B', got %q", answer)
+	}
+	if m.questionMode {
+		t.Error("questionMode should be false after answer")
+	}
+}
+
+func TestQuestionModeMultiSelectAnswer(t *testing.T) {
+	m := &Model{width: 80}
+	ch := make(chan string, 1)
+	m.HandleAgentMsg(AgentMsg{Question: &QuestionModal{
+		Header:   "Choose",
+		Question: "Which?",
+		Options:  []QuestionOption{{Label: "A", Description: ""}, {Label: "B", Description: ""}, {Label: "C", Description: ""}},
+		Multiple: true,
+		AnswerCh: ch,
+	}})
+	m.questionMulti[0] = true
+	m.questionMulti[2] = true
+	m.commitQuestionAnswer()
+
+	answer := <-ch
+	if answer != "A, C" {
+		t.Errorf("expected answer 'A, C', got %q", answer)
+	}
+}
+
+func TestQuestionModeEscapeCancel(t *testing.T) {
+	m := &Model{width: 80}
+	ch := make(chan string, 1)
+	m.HandleAgentMsg(AgentMsg{Question: &QuestionModal{
+		Header:   "Next step",
+		Question: "What?",
+		Options:  []QuestionOption{{Label: "A", Description: ""}},
+		AnswerCh: ch,
+	}})
+	m.answerQuestion("")
+
+	answer := <-ch
+	if answer != "" {
+		t.Errorf("expected empty answer on cancel, got %q", answer)
+	}
+}
+
+func TestRenderQuestionModal(t *testing.T) {
+	m := &Model{width: 80}
+	m.questionMode = true
+	m.questionModal = QuestionModal{
+		Header:   "Next step",
+		Question: "What should we do?",
+		Options:  []QuestionOption{{Label: "Option A", Description: "First choice"}, {Label: "Option B", Description: "Second choice"}},
+	}
+	m.questionIdx = 0
+	m.questionMulti = make([]bool, 2)
+
+	output := m.renderQuestionModal()
+
+	if !strings.Contains(output, "Next step") {
+		t.Errorf("output should contain header: %q", output)
+	}
+	if !strings.Contains(output, "What should we do") {
+		t.Errorf("output should contain question: %q", output)
+	}
+	if !strings.Contains(output, "Option A") {
+		t.Errorf("output should contain first option: %q", output)
+	}
+	if !strings.Contains(output, "▶") {
+		t.Errorf("output should contain selection marker for highlighted option: %q", output)
+	}
+}
+
+func TestRenderQuestionModalMultiSelect(t *testing.T) {
+	m := &Model{width: 80}
+	m.questionMode = true
+	m.questionModal = QuestionModal{
+		Header:   "Choose",
+		Question: "Select options?",
+		Options:  []QuestionOption{{Label: "A", Description: ""}, {Label: "B", Description: ""}},
+		Multiple: true,
+	}
+	m.questionMulti = []bool{true, false}
+
+	output := m.renderQuestionModal()
+
+	if !strings.Contains(output, "☑") {
+		t.Errorf("multi-select output should contain checked box: %q", output)
+	}
+	if !strings.Contains(output, "☐") {
+		t.Errorf("multi-select output should contain unchecked box: %q", output)
+	}
+	if strings.Contains(output, "Space toggle") {
+		// should have the Space toggle hint
+	} else {
+		t.Errorf("multi-select help should mention Space toggle: %q", output)
+	}
+}
+
+func TestQuestionModeResetsState(t *testing.T) {
+	m := &Model{width: 80}
+	ch := make(chan string, 1)
+	m.HandleAgentMsg(AgentMsg{Question: &QuestionModal{
+		Header:   "Q",
+		Question: "A?",
+		Options:  []QuestionOption{{Label: "X", Description: ""}},
+		AnswerCh: ch,
+	}})
+	m.answerQuestion("X")
+
+	<-ch
+	if m.questionMode {
+		t.Error("questionMode should be false after answer")
+	}
+	if m.questionMulti != nil {
+		t.Error("questionMulti should be nil after answer")
+	}
+}
+
+func TestQuestionModePaletteLines(t *testing.T) {
+	m := &Model{width: 80, height: 40}
+	m.questionMode = true
+	m.questionModal = QuestionModal{Options: make([]QuestionOption, 3)}
+
+	lines := m.paletteLines()
+	expected := 10 + 3 // border+padding(4) + header+question+help+blanks(6) + options(3)
+	if lines != expected {
+		t.Errorf("expected %d palette lines, got %d", expected, lines)
+	}
+}
+
+func TestQuestionModeIncreasesPortHeight(t *testing.T) {
+	m := &Model{width: 80, height: 40}
+	m.questionMode = true
+	m.questionModal.Options = make([]QuestionOption, 10)
+
+	lines := m.paletteLines()
+	// With 10 options, visible = min(10, maxQuestionLines())
+	// maxQuestionLines = maxModelLines() - 6
+	// maxModelLines = 40 - headerHeight - 8 (estimated small header)
+	// So visible should be at least 10 if the terminal is tall enough
+	// Just verify it's reasonable and includes all options when they fit
+	if lines < 10 {
+		t.Errorf("expected at least 10 palette lines, got %d", lines)
 	}
 }
