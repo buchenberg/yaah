@@ -105,7 +105,7 @@ func startREPL() error {
 	}
 	defer sess.close()
 
-	fmt.Fprintf(os.Stderr, "  %s %s/%s\n", Dim("provider:"), sess.providerName, sess.modelName)
+	fmt.Fprintf(os.Stderr, "\n  %s %s/%s\n\n", Dim("provider:"), sess.providerName, sess.modelName)
 
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -167,7 +167,7 @@ func runOneShot(cmd *cobra.Command, prompt string) error {
 	}
 	defer sess.close()
 
-	cmd.Printf("  %s %s/%s\n\n", Dim("provider:"), sess.providerName, sess.modelName)
+	cmd.Printf("\n  %s %s/%s\n\n", Dim("provider:"), sess.providerName, sess.modelName)
 
 	response, streamed, err := sess.runPrompt(prompt)
 	if err != nil {
@@ -406,37 +406,36 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 	}
 
 	spin := spinner.New(nil, "Thinking...")
+	fmt.Fprintln(os.Stderr)
 	spin.Start()
 
 	streamed := false
 	loop.OnToken = func(token string) {
 		if !streamed {
 			spin.Stop()
+			fmt.Fprintln(os.Stderr)
 			streamed = true
 		}
 		fmt.Fprint(os.Stderr, token)
 	}
 
 	loop.OnTool = func(info agent.ToolInfo) {
-		if !streamed {
+		if info.Duration == 0 {
 			spin.Stop()
-			streamed = true
+			return
 		}
 
-		if info.Duration == 0 {
-			fmt.Fprintf(os.Stderr, "\n  tool: %s", Bold(info.Name))
-			if info.Args != "" {
-				args := info.Args
-				if len(args) > 60 {
-					args = args[:57] + "..."
-				}
-				fmt.Fprintf(os.Stderr, "(%s)", Dim(args))
+		fmt.Fprintf(os.Stderr, "\n  tool: %s", Bold(info.Name))
+		if info.Args != "" {
+			args := info.Args
+			if len(args) > 60 {
+				args = args[:57] + "..."
 			}
-		} else {
-			fmt.Fprintf(os.Stderr, " (%s)\n", Dim(fmt.Sprintf("%.1fs", info.Duration.Seconds())))
-			if info.Error != "" {
-				fmt.Fprintf(os.Stderr, "    %s\n", replYellow("error: "+info.Error))
-			}
+			fmt.Fprintf(os.Stderr, "(%s)", Dim(args))
+		}
+		fmt.Fprintf(os.Stderr, " (%s)\n", Dim(formatDuration(info.Duration)))
+		if info.Error != "" {
+			fmt.Fprintf(os.Stderr, "    %s\n", replYellow("error: "+info.Error))
 		}
 	}
 
@@ -446,6 +445,7 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 	}
 
 	if streamed {
+		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr)
 	}
 
@@ -649,6 +649,13 @@ func replYellow(s string) string {
 		return "\x1b[33m" + s + "\x1b[0m"
 	}
 	return s
+}
+
+func formatDuration(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	return fmt.Sprintf("%.1fs", d.Seconds())
 }
 
 // printHelp displays the available slash commands.
