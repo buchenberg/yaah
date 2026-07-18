@@ -31,6 +31,9 @@ default:
   max_iterations: 50
   approval: ask                           # ask | allow | deny
 
+# hooks:
+#   dir: ~/.yaah/hooks                    # optional: JSONL event log for external integrations
+
 log_level: INFO
 `
 

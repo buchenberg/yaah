@@ -398,8 +398,10 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		SystemPrompt:    s.systemPrompt,
 		MaxIterations:   s.cfg.Default.MaxIterations,
 		ContextWindow:   s.cfg.Default.ContextWindow,
-		ApprovalMode:    s.cfg.Default.Approval,
+		ApprovalMode:    resolveApproval(s.cfg),
 		Messages:        s.messages,
+		HookDir:         s.cfg.Hooks.Dir,
+		SessionID:       s.sessionID,
 	}
 
 	spin := spinner.New(nil, "Thinking...")
@@ -489,6 +491,25 @@ func (s *agentSession) persistMessages(messages []types.Message) {
 		s.msgIdx++
 	}
 	s.persistedCount = len(messages)
+}
+
+// resolveApproval returns the effective approval mode.
+// Order: CLI --approval flag → YAAH_APPROVAL env var → config file → "ask" default.
+func resolveApproval(cfg *config.Config) string {
+	mode := cfg.Default.Approval
+	if v := os.Getenv("YAAH_APPROVAL"); v != "" {
+		mode = v
+	}
+	if approvalOverride != "" {
+		mode = approvalOverride
+	}
+	switch mode {
+	case "allow", "ask", "deny":
+		return mode
+	default:
+		fmt.Fprintf(os.Stderr, "warning: unknown approval mode %q, defaulting to 'ask'\n", mode)
+		return "ask"
+	}
 }
 
 // resolveProviderName extracts the provider name from the config.

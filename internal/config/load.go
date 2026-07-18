@@ -3,7 +3,9 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -26,10 +28,16 @@ type Defaults struct {
 	Approval      string `yaml:"approval"`
 }
 
+// Hooks holds configuration for external integrations via JSONL hook events.
+type Hooks struct {
+	Dir string `yaml:"dir"` // directory for JSONL hook event files
+}
+
 // Config is the full yaah configuration loaded from ~/.yaah/config.yaml.
 type Config struct {
 	Providers map[string]Provider `yaml:"providers"`
 	Default   Defaults            `yaml:"default"`
+	Hooks     Hooks               `yaml:"hooks"`
 	LogLevel  string              `yaml:"log_level"`
 }
 
@@ -87,5 +95,27 @@ func Load() (*Config, error) {
 		cfg.Providers[name] = p
 	}
 
+	if cfg.Hooks.Dir != "" {
+		cfg.Hooks.Dir = expandHomeDir(cfg.Hooks.Dir)
+	}
+
 	return cfg, nil
+}
+
+func expandHomeDir(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return path
+		}
+		return filepath.Join(home, path[2:])
+	}
+	if strings.HasPrefix(path, "$HOME/") {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return path
+		}
+		return filepath.Join(home, path[6:])
+	}
+	return path
 }
