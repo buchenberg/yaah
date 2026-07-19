@@ -46,6 +46,12 @@ type TaskTool struct {
 	// defaults; TaskTool clamps any per-call override to the schema
 	// bounds before this is consulted.
 	ResolveTimeout func(params SubAgentParams) time.Duration
+
+	// RoleNames is the active set of sub-agent role names known to the
+	// registry. When non-empty the schema's role enum is built
+	// dynamically so user-defined roles are visible to the model.
+	// When empty the legacy static schema is used.
+	RoleNames []string
 }
 
 func (t *TaskTool) Name() string { return "task" }
@@ -54,6 +60,9 @@ func (t *TaskTool) Description() string {
 }
 
 func (t *TaskTool) Schema() json.RawMessage {
+	if len(t.RoleNames) > 0 {
+		return BuildTaskSchema(t.RoleNames)
+	}
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
@@ -65,6 +74,48 @@ func (t *TaskTool) Schema() json.RawMessage {
 		},
 		"required": ["description", "prompt"]
 	}`)
+}
+
+// BuildTaskSchema returns a JSON Schema for the task tool whose role
+// enum is populated from the given list of role names, so user-defined
+// roles discovered at runtime are visible to the model.
+func BuildTaskSchema(roleNames []string) json.RawMessage {
+	roles := make([]string, len(roleNames))
+	copy(roles, roleNames)
+
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"description": map[string]any{
+				"type":        "string",
+				"description": "3-5 word description of the subtask",
+			},
+			"prompt": map[string]any{
+				"type":        "string",
+				"description": "The task for the sub-agent to perform autonomously",
+			},
+			"role": map[string]any{
+				"type":        "string",
+				"enum":        roles,
+				"description": "Sub-agent role selecting its tool set and limits. Omit for the legacy default tool set.",
+			},
+			"timeout_seconds": map[string]any{
+				"type":        "integer",
+				"minimum":     10,
+				"maximum":     600,
+				"description": "Optional wall-clock deadline for the sub-agent. Overrides the role default.",
+			},
+			"max_iterations": map[string]any{
+				"type":        "integer",
+				"minimum":     1,
+				"maximum":     50,
+				"description": "Optional cap on sub-agent loop turns. Overrides the role default.",
+			},
+		},
+		"required": []string{"description", "prompt"},
+	}
+	data, _ := json.Marshal(schema)
+	return json.RawMessage(data)
 }
 
 func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {

@@ -368,14 +368,28 @@ func (m *Model) renderMessages() string {
 				b.WriteString("\n")
 			}
 
+		case "subagent-start":
+			b.WriteString(subAgentStartStyle.Render("  " + msg.Content))
+			b.WriteString("\n")
+
+		case "subagent-end":
+			b.WriteString(subAgentEndStyle.Render("  " + msg.Content))
+			b.WriteString("\n")
+
 		case "tool":
 			// Build a header from the tool name and args.
 			header := msg.ToolName
 			if msg.ToolName == "task" && msg.ToolArgs != "" {
-				re := regexp.MustCompile(`"description"\s*:\s*"([^"]*)"`)
-				if match := re.FindStringSubmatch(msg.ToolArgs); len(match) > 1 && match[1] != "" {
-					header = "sub-agent — " + match[1]
-				} else {
+				desc := matchJSONField(msg.ToolArgs, "description")
+				role := matchJSONField(msg.ToolArgs, "role")
+				switch {
+				case role != "" && desc != "":
+					header = "sub-agent: " + role + " — " + desc
+				case desc != "":
+					header = "sub-agent — " + desc
+				case role != "":
+					header = "sub-agent: " + role
+				default:
 					header = "sub-agent"
 				}
 			} else if msg.ToolName == "webfetch" && msg.ToolArgs != "" {
@@ -732,4 +746,14 @@ func (m *Model) renderMCPStatus() string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// matchJSONField extracts a string field value from a JSON object.
+// Returns "" if the field is absent or unparseable.
+func matchJSONField(jsonStr, field string) string {
+	re := regexp.MustCompile(fmt.Sprintf(`"%s"\s*:\s*"([^"]*)"`, field))
+	if match := re.FindStringSubmatch(jsonStr); len(match) > 1 {
+		return match[1]
+	}
+	return ""
 }

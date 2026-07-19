@@ -216,7 +216,7 @@ The `task` tool spawns a sub-agent: a fresh `agent.Loop` with a curated tool reg
 
 ### Roles and tool profiles
 
-Each sub-agent runs under a **role** that selects its tool set and default limits. Roles are defined in `internal/agent/subagent.go`:
+Each sub-agent runs under a **role** that selects its tool set and default limits. Built-in roles are defined in embedded markdown files (`internal/prompts/roles/*.md`) with YAML frontmatter and are loaded into a `RoleRegistry` at startup. User-defined roles can be added without recompilation by placing identically formatted `.md` files in `~/.agents/roles/` or `./.agents/roles/`; built-in roles take precedence on name conflict.
 
 | Role | Tools | Max iterations | Default timeout | Can spawn |
 |---|---|---|---|---|
@@ -225,7 +225,27 @@ Each sub-agent runs under a **role** that selects its tool set and default limit
 | `planner` | worker set + `task` | 50 | 300s | yes |
 | _(default)_ | full built-in set (legacy) | — | — | depth permitting |
 
-`RoleProfileFor(role)` returns the profile; `RoleDefault` returns a zero-value profile, signalling `makeTaskRunner` to use the legacy full tool set for backward compatibility.
+`RoleProfileFor(role)` delegates to the global `RoleRegistry` if one has been installed via `SetDefaultRoleRegistry`; otherwise it falls back to hardcoded legacy profiles. `RoleDefault` returns a zero-value profile, signalling `makeTaskRunner` to use the legacy full tool set.
+
+### Role definition format
+
+```
+File: ~/.agents/roles/<name>.md (user-defined) or embedded
+
+---
+tools:
+  - read
+  - grep
+  - bash
+max_iterations: 30
+timeout: 180
+max_depth: 0
+---
+
+You are a SECURITY AUDITOR. Find vulnerabilities...
+```
+
+The file name (minus `.md`) becomes the role name. `RoleRegistry.Names()` supplies the active role list to `TaskTool.BuildTaskSchema` so the `task` tool's JSON schema enum stays in sync with discovered roles.
 
 ### Timeout enforcement
 

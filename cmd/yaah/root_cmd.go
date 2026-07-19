@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -212,6 +213,17 @@ func newAgentSession() (*agentSession, error) {
 
 	cwd, _ := os.Getwd()
 
+	// Load sub-agent role definitions: built-in (embedded) +
+	// user-defined (~/.agents/roles/, ./.agents/roles/).
+	reg := agent.NewRoleRegistry()
+	if files := builtinRoleFiles(); files != nil {
+		reg.LoadBytes(files)
+	}
+	for _, dir := range roleSearchPaths(cwd) {
+		reg.LoadDir(dir)
+	}
+	agent.SetDefaultRoleRegistry(reg)
+
 	layers := prompts.Layers{
 		Identity:    prompts.IdentityPrompt,
 		Environment: prompts.DetectEnvironment(cwd),
@@ -321,7 +333,7 @@ func newAgentSession() (*agentSession, error) {
 		}
 	}
 
-	toolReg.Register(newTaskTool(provider, systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent))
+	toolReg.Register(newTaskTool(provider, systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent, reg.Names()))
 
 	return &agentSession{
 		cfg:          cfg,
@@ -469,6 +481,9 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 			spin.Stop()
 			return
 		}
+		if info.Name == "task" {
+			return // sub-agent lifecycle rendered by OnSubAgent
+		}
 
 		fmt.Fprintf(os.Stderr, "\n  tool: %s", Bold(info.Name))
 		if info.Args != "" {
@@ -481,6 +496,18 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		fmt.Fprintf(os.Stderr, " (%s)\n", Dim(formatDuration(info.Duration)))
 		if info.Error != "" {
 			fmt.Fprintf(os.Stderr, "    %s\n", replYellow("error: "+info.Error))
+		}
+	}
+
+	loop.OnSubAgent = func(info agent.SubAgentInfo) {
+		if info.Duration == 0 {
+			fmt.Fprintf(os.Stderr, "\n  >>> sub-agent: %s — %s\n", Bold(info.Role), info.Prompt)
+		} else {
+			status := "completed"
+			if info.Error != "" {
+				status = replYellow(info.Error)
+			}
+			fmt.Fprintf(os.Stderr, "  <<< sub-agent: %s — %s (%s)\n", Bold(info.Role), status, Dim(formatDuration(info.Duration)))
 		}
 	}
 
@@ -605,7 +632,7 @@ func resolveProvider(cfg *config.Config) agent.Provider {
 // newTaskTool builds the root-level TaskTool wired to the session's
 // provider, prompt, db, and sub-agent config. Shared by the REPL and
 // TUI entrypoints so the two cannot drift.
-func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subCfg config.SubAgentConfig) *tools.TaskTool {
+func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subCfg config.SubAgentConfig, roleNames []string) *tools.TaskTool {
 	// Map a config "0 = unlimited" MaxDepth to a sentinel so the
 	// structural nesting decrement in makeTaskRunner does not disable
 	// spawning for an "unlimited" setting.
@@ -615,15 +642,72 @@ func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 	}
 	return &tools.TaskTool{
 		Runner: makeTaskRunner(taskRunnerOpts{
-			provider:      provider,
-			systemPrompt:  systemPrompt,
-			modelName:     modelName,
-			db:            db,
-			parentSession: sessionID,
-			subCfg:        subCfg,
+			provider:        provider,
+			systemPrompt:    systemPrompt,
+			modelName:       modelName,
+			db:              db,
+			parentSession:   sessionID,
+			subCfg:          subCfg,
+			SubToolCallback: subToolDisplay,
 		}, depth),
 		ResolveTimeout: subAgentTimeoutResolver(subCfg),
+		RoleNames:      roleNames,
 	}
+}
+
+// subToolDisplay prints sub-agent tool calls indented under the
+// parent's sub-agent banner so they are visually distinct.
+func subToolDisplay(info agent.ToolInfo) {
+	if info.Duration == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "    tool: %s", Bold(info.Name))
+	if info.Args != "" {
+		args := info.Args
+		if len(args) > 40 {
+			args = args[:37] + "..."
+		}
+		fmt.Fprintf(os.Stderr, "(%s)", Dim(args))
+	}
+	fmt.Fprintf(os.Stderr, " (%s)\n", Dim(formatDuration(info.Duration)))
+	if info.Error != "" {
+		fmt.Fprintf(os.Stderr, "      %s\n", replYellow("error: "+info.Error))
+	}
+}
+
+// builtinRoleFiles reads the embedded roles/*.md files shipped in the
+// binary and returns them keyed by file name (e.g. "worker.md").
+func builtinRoleFiles() map[string][]byte {
+	entries, err := prompts.BuiltinRolesFS.ReadDir("roles")
+	if err != nil {
+		return nil
+	}
+	files := make(map[string][]byte, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		data, _ := prompts.BuiltinRolesFS.ReadFile("roles/" + e.Name())
+		files[e.Name()] = data
+	}
+	return files
+}
+
+// roleSearchPaths returns directories to scan for user-defined role
+// definitions. Mirrors the skill search hierarchy: project-level
+// (walked up from cwd) then user-level (~/.agents/roles/).
+func roleSearchPaths(cwd string) []string {
+	home := config.HomeDir()
+	var dirs []string
+	for dir := cwd; ; dir = filepath.Dir(dir) {
+		dirs = append(dirs, filepath.Join(dir, ".agents", "roles"))
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+	}
+	dirs = append(dirs, filepath.Join(home, ".agents", "roles"))
+	return dirs
 }
 
 // taskRunnerOpts holds the shared state needed to build sub-agent loops.
@@ -636,6 +720,10 @@ type taskRunnerOpts struct {
 	db            *memory.DB
 	parentSession string
 	subCfg        config.SubAgentConfig
+
+	// SubToolCallback is set on the sub-loop's OnTool so sub-agent
+	// tool calls can be rendered indented in the CLI.
+	SubToolCallback agent.ToolCallback
 }
 
 // subAgentSeq guarantees unique sub-session IDs across concurrent
@@ -699,6 +787,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			MaxSubAgentDepth:       opts.subCfg.MaxDepth,
 			MaxSubAgentConcurrency: opts.subCfg.MaxConcurrency,
 			MaxSubAgentDepthByRole: subAgentDepthByRole(opts.subCfg),
+			OnTool:                 opts.SubToolCallback,
 		}
 
 		return subLoop.Run(ctx, prompt)

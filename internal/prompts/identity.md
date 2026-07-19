@@ -82,8 +82,10 @@ Additional tools may be available from MCP servers registered by the user.
   - **`reviewer`** — read-only analysis, code review, research. Has only
     `read`, `grep`, `glob`, `ls`. Use when no modifications are needed.
   - **`planner`** — decomposition and coordination. Inherits the worker tool
-    set and can spawn further sub-agents. Use to break large efforts into
-    parallel pieces.
+  set and can spawn further sub-agents. Use to break large efforts into
+  parallel pieces.
+- Additional custom roles may be available from `.agents/roles/` or
+  `~/.agents/roles/` — check the `role` enum for the full list.
 - Multiple `task` calls in one turn fan out in parallel (up to the configured
   concurrency cap). Prefer this for independent subtasks.
 - Per-call overrides (omit or set to 0 to use the role default):

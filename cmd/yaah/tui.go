@@ -152,6 +152,18 @@ func runTUI() error {
 
 	// --- One-time setup: load instructions, memory, MCP tools ---
 	cwd, _ := os.Getwd()
+
+	// Load sub-agent role definitions: built-in (embedded) +
+	// user-defined (~/.agents/roles/, ./.agents/roles/).
+	reg := agent.NewRoleRegistry()
+	if files := builtinRoleFiles(); files != nil {
+		reg.LoadBytes(files)
+	}
+	for _, dir := range roleSearchPaths(cwd) {
+		reg.LoadDir(dir)
+	}
+	agent.SetDefaultRoleRegistry(reg)
+
 	instrFiles := instructions.Load(cwd, cwd)
 	systemPrompt := "You are yaah, a helpful AI assistant. Respond concisely."
 	systemPrompt += "\n\n## Runtime Environment\n" + prompts.DetectEnvironment(cwd)
@@ -231,7 +243,7 @@ func runTUI() error {
 	procMgr := processpkg.NewManager()
 	toolReg.Register(&tools.BackgroundProcessTool{Manager: procMgr})
 
-	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent))
+	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent, reg.Names()))
 
 	agentCh := make(chan tui.AgentMsg, 256)
 
@@ -462,6 +474,27 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 				ch <- tui.AgentMsg{
 					ToolResult:     info.Result,
 					ToolResultName: info.Name,
+				}
+			}
+		},
+		OnSubAgent: func(info agent.SubAgentInfo) {
+			if info.Duration == 0 {
+				ch <- tui.AgentMsg{
+					SubAgentStart: true,
+					SubAgentRole:  info.Role,
+					SubAgentLabel: info.Prompt,
+				}
+			} else {
+				dur := formatDuration(info.Duration)
+				errStr := ""
+				if info.Error != "" {
+					errStr = info.Error
+				}
+				ch <- tui.AgentMsg{
+					SubAgentEnd:  true,
+					SubAgentRole: info.Role,
+					SubAgentDur:  dur,
+					SubAgentErr:  errStr,
 				}
 			}
 		},

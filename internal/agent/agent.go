@@ -48,6 +48,21 @@ type ToolInfo struct {
 // The second call (after) has the actual Duration and any Error.
 type ToolCallback func(info ToolInfo)
 
+// SubAgentInfo contains information about a sub-agent dispatched by the
+// task tool for display in the CLI/TUI.
+type SubAgentInfo struct {
+	Role     string        // worker, reviewer, planner, or custom
+	Prompt   string        // abbreviated task prompt
+	Duration time.Duration // how long the sub-agent ran (0 on start)
+	Error    string        // error or status message on completion
+}
+
+// SubAgentCallback is called when a sub-agent starts (Duration=0) and
+// when it completes (Duration set). Unlike ToolCallback, both calls are
+// emitted by executeAndCollect so the CLI can bracket the sub-agent
+// with visual markers independent of the task tool's own output.
+type SubAgentCallback func(info SubAgentInfo)
+
 // ThinkingCallback is called when the model outputs thinking/reasoning text.
 type ThinkingCallback func(text string)
 
@@ -69,6 +84,7 @@ type Loop struct {
 	MaxIterations int
 	OnToken       TokenCallback
 	OnTool        ToolCallback
+	OnSubAgent    SubAgentCallback
 	OnThinking    ThinkingCallback
 	OnFlush       FlushCallback
 	Middleware    []Middleware // Optional custom middleware override
@@ -487,6 +503,13 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			}
 			abbreviated := abbreviateArgs(tc.Function.Arguments, 80)
 
+			isTask := tc.Function.Name == "task"
+			var taskRole, taskPrompt string
+			if isTask && l.OnSubAgent != nil {
+				taskRole, taskPrompt = parseTaskArgs(tc.Function.Arguments)
+				l.OnSubAgent(SubAgentInfo{Role: taskRole, Prompt: taskPrompt})
+			}
+
 			if l.OnTool != nil {
 				l.OnTool(ToolInfo{Name: tc.Function.Name, Args: abbreviated})
 			}
@@ -507,6 +530,10 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 				res = fmt.Sprintf("error: %v", err)
 			} else if len(res) > ToolResultMaxLen {
 				res = res[:ToolResultMaxLen] + "\n...[truncated]..."
+			}
+
+			if isTask && l.OnSubAgent != nil {
+				l.OnSubAgent(SubAgentInfo{Role: taskRole, Prompt: taskPrompt, Duration: duration, Error: errStr})
 			}
 
 			if l.OnTool != nil {
@@ -687,6 +714,25 @@ func toolCallHash(name, args, content string) string {
 	h.Write([]byte{0})
 	h.Write([]byte(content))
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// parseTaskArgs extracts a display-friendly role and prompt from a task
+// tool's JSON arguments. Returns ("default", prompt-abbreviation) when
+// the role is empty or the JSON is unparseable.
+func parseTaskArgs(args string) (role, prompt string) {
+	var p struct {
+		Description string `json:"description"`
+		Prompt      string `json:"prompt"`
+		Role        string `json:"role"`
+	}
+	if err := json.Unmarshal([]byte(args), &p); err != nil {
+		return "default", ""
+	}
+	role = p.Role
+	if role == "" {
+		role = "default"
+	}
+	return role, abbreviateArgs(p.Description, 60)
 }
 
 // compactContext checks if the estimated token count exceeds the given

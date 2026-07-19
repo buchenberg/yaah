@@ -45,6 +45,8 @@ var (
 	commandNameStyle    lipgloss.Style
 	commandDescStyle    lipgloss.Style
 	toolBoxStyle        lipgloss.Style
+	subAgentStartStyle  lipgloss.Style
+	subAgentEndStyle    lipgloss.Style
 )
 
 // Message represents a chat message in the TUI.
@@ -55,6 +57,7 @@ type Message struct {
 	ToolName  string // tool that produced this message (for tool result messages)
 	ToolArgs  string // tool arguments (for extracting descriptions)
 	Reasoning string // thinking/reasoning text (empty for non-assistant or normal responses)
+	SubRole   string // sub-agent role ("worker"/"reviewer"/"planner") for task tool messages
 }
 
 // AgentMsg is a message from the agent goroutine.
@@ -78,6 +81,14 @@ type AgentMsg struct {
 	ApproveName    string            // tool name for approval display
 	ApproveArgs    string            // abbreviated tool args for approval display
 	MCPInfos       []ServerInfo      // MCP server status info (sent at startup)
+
+	// Sub-agent lifecycle markers — sent by OnSubAgent.
+	SubAgentStart bool
+	SubAgentRole  string
+	SubAgentLabel string // description or prompt abbreviation
+	SubAgentEnd   bool
+	SubAgentDur   string // formatted duration string
+	SubAgentErr   string
 }
 
 // ServerInfo holds status details about an MCP server (mirrors mcp.ServerInfo).
@@ -673,6 +684,38 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 
 	if msg.Thinking != "" {
 		m.thinkContent += msg.Thinking
+		m.refreshViewport()
+		m.scrollToBottom()
+		return
+	}
+
+	if msg.SubAgentStart {
+		label := msg.SubAgentRole
+		if msg.SubAgentLabel != "" {
+			label += " — " + msg.SubAgentLabel
+		}
+		m.messages = append(m.messages, Message{
+			Role:    "subagent-start",
+			Content: ">>> sub-agent: " + label,
+		})
+		m.refreshViewport()
+		m.scrollToBottom()
+		return
+	}
+
+	if msg.SubAgentEnd {
+		status := "completed"
+		if msg.SubAgentErr != "" {
+			status = msg.SubAgentErr
+		}
+		label := msg.SubAgentRole + " — " + status
+		if msg.SubAgentDur != "" {
+			label += " (" + msg.SubAgentDur + ")"
+		}
+		m.messages = append(m.messages, Message{
+			Role:    "subagent-end",
+			Content: "<<< sub-agent: " + label,
+		})
 		m.refreshViewport()
 		m.scrollToBottom()
 		return

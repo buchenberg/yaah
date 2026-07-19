@@ -1,6 +1,9 @@
 package agent
 
-import "time"
+import (
+	"sync/atomic"
+	"time"
+)
 
 // SubAgentRole identifies the profile a sub-agent runs under. The role
 // determines which tools the sub-agent has access to, its iteration
@@ -26,67 +29,15 @@ const (
 	RoleDefault SubAgentRole = ""
 )
 
-// RoleProfile describes the capabilities and limits of a sub-agent role.
+// RoleProfile describes the capabilities and limits of a sub-agent
+// role. Profiles are derived from parsed RoleDef entries in the
+// default RoleRegistry at startup; the fallback below provides
+// built-in defaults when no registry has been set.
 type RoleProfile struct {
-	// Tools is the ordered list of tool names the role may use.
-	Tools []string
-
-	// MaxIterations caps the sub-agent loop turns. 0 means inherit the
-	// caller-supplied value or the Loop default.
+	Tools         []string
 	MaxIterations int
-
-	// Timeout is the default wall-clock deadline for the role. 0 means
-	// no timeout (the sub-agent runs until it finishes or the parent
-	// context is cancelled).
-	Timeout time.Duration
-
-	// MaxDepth is the maximum number of nested sub-agent levels the
-	// role may spawn. 0 means the role cannot nest further.
-	MaxDepth int
-}
-
-// roleProfiles maps each role to its default profile. RoleDefault is
-// intentionally absent — callers fall back to the legacy tool set.
-var roleProfiles = map[SubAgentRole]RoleProfile{
-	RoleWorker: {
-		Tools: []string{
-			"read", "write", "edit", "delete",
-			"grep", "glob", "ls",
-			"bash", "powershell",
-			"webfetch",
-		},
-		MaxIterations: 25,
-		Timeout:       120 * time.Second,
-		MaxDepth:      1,
-	},
-	RoleReviewer: {
-		Tools:         []string{"read", "grep", "glob", "ls"},
-		MaxIterations: 10,
-		Timeout:       0, // unlimited; reviewer tasks should not be cut off
-		MaxDepth:      0,
-	},
-	RolePlanner: {
-		Tools: []string{
-			"read", "write", "edit", "delete",
-			"grep", "glob", "ls",
-			"bash", "powershell",
-			"webfetch",
-			"task",
-		},
-		MaxIterations: 50,
-		Timeout:       300 * time.Second,
-		MaxDepth:      3,
-	},
-}
-
-// RoleProfileFor returns the profile for the given role. The RoleDefault
-// role (empty string) returns the zero value, signalling the caller to
-// use the legacy tool set.
-func RoleProfileFor(role SubAgentRole) RoleProfile {
-	if p, ok := roleProfiles[role]; ok {
-		return p
-	}
-	return RoleProfile{}
+	Timeout       time.Duration
+	MaxDepth      int
 }
 
 // IsSpawnCapable returns true if the role's profile includes the task
@@ -100,9 +51,37 @@ func (p RoleProfile) IsSpawnCapable() bool {
 	return false
 }
 
-// RoleGuidance returns system-prompt text appended to a sub-agent so it
-// understands its role and constraints. Returns "" for RoleDefault.
+// defaultRoleReg is set at startup by the CLI layer after built-in and
+// user-defined role files have been loaded. When nil (e.g. in tests),
+// the legacy built-in profiles are used as a fallback.
+var defaultRoleReg atomic.Pointer[RoleRegistry]
+
+// SetDefaultRoleRegistry installs the global registry used by
+// RoleProfileFor and RoleGuidance. Call once at startup.
+func SetDefaultRoleRegistry(r *RoleRegistry) {
+	defaultRoleReg.Store(r)
+}
+
+// RoleProfileFor returns the runtime profile for the given role. Falls
+// back to legacy built-in constants when no registry has been set.
+func RoleProfileFor(role SubAgentRole) RoleProfile {
+	if r := defaultRoleReg.Load(); r != nil {
+		return r.ProfileFor(role)
+	}
+	return legacyProfileFor(role)
+}
+
+// RoleGuidance returns system-prompt text appended to a sub-agent so
+// it understands its role and constraints. Returns "" for RoleDefault.
+// Falls back to built-in text when no registry is set.
 func RoleGuidance(role SubAgentRole) string {
+	if r := defaultRoleReg.Load(); r != nil {
+		return r.Guidance(role)
+	}
+	return legacyGuidance(role)
+}
+
+func legacyGuidance(role SubAgentRole) string {
 	switch role {
 	case RoleWorker:
 		return "You are running as a WORKER sub-agent. Implement the assigned " +
@@ -120,5 +99,47 @@ func RoleGuidance(role SubAgentRole) string {
 			"and return a consolidated summary."
 	default:
 		return ""
+	}
+}
+
+// legacyProfileFor provides built-in hardcoded profiles so callers
+// that never initialise a RoleRegistry (e.g. unit tests) still get
+// sensible defaults.
+func legacyProfileFor(role SubAgentRole) RoleProfile {
+	switch role {
+	case RoleWorker:
+		return RoleProfile{
+			Tools: []string{
+				"read", "write", "edit", "delete",
+				"grep", "glob", "ls",
+				"bash", "powershell",
+				"webfetch",
+			},
+			MaxIterations: 25,
+			Timeout:       120 * time.Second,
+			MaxDepth:      1,
+		}
+	case RoleReviewer:
+		return RoleProfile{
+			Tools:         []string{"read", "grep", "glob", "ls"},
+			MaxIterations: 10,
+			Timeout:       0,
+			MaxDepth:      0,
+		}
+	case RolePlanner:
+		return RoleProfile{
+			Tools: []string{
+				"read", "write", "edit", "delete",
+				"grep", "glob", "ls",
+				"bash", "powershell",
+				"webfetch",
+				"task",
+			},
+			MaxIterations: 50,
+			Timeout:       300 * time.Second,
+			MaxDepth:      3,
+		}
+	default:
+		return RoleProfile{}
 	}
 }

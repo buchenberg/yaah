@@ -154,13 +154,72 @@ The agent can create and manage task lists during conversations using the `todow
 
 ### Sub-agents
 
-The `task` tool delegates isolated subtasks to a sub-agent running under a **role** that selects its tool set, iteration budget, and timeout:
+The `task` tool delegates isolated subtasks to a sub-agent running under a
+**role** that selects its tool set, iteration budget, and timeout:
 
-- **`worker`** — code changes, file edits, test runs (filesystem + shell tools).
-- **`reviewer`** — read-only analysis and code review (`read`, `grep`, `glob`, `ls`).
-- **`planner`** — decomposition and coordination; inherits the worker set and can spawn further workers via `task`.
+- **`worker`** — code changes, file edits, test runs. Has `read`, `write`,
+  `edit`, `delete`, `grep`, `glob`, `ls`, `bash`, `powershell`, `webfetch`.
+  Default: 25 iterations, 120s timeout.
+- **`reviewer`** — read-only analysis and code review. Has only `read`,
+  `grep`, `glob`, `ls`. Default: 10 iterations, no timeout.
+- **`planner`** — decomposition and coordination. Inherits the worker tool
+  set and can spawn further sub-agents via `task`. Default: 50 iterations,
+  300s timeout.
 
-Multiple `task` calls in one turn run in parallel up to a configurable concurrency cap. Sub-agents honour a per-call or role-default timeout and return a structured result (`{"error":"timed out","partial":"..."}`) on timeout or cancellation so the parent can recover gracefully. Configurable under `agent.subagent` in `config.yaml`.
+Multiple `task` calls in one turn fan out in parallel up to the configured
+concurrency cap (`agent.subagent.max_concurrency`, default 3). Nesting depth
+is bounded structurally — each level decrements a counter seeded from
+`max_depth` — so planner → worker → [stop] chains terminate naturally.
+
+Sub-agents honour per-call overrides (`timeout_seconds`, `max_iterations`) or
+their role defaults. On timeout or cancellation the tool returns structured
+JSON (`{"error":"timed out","partial":"..."}`) so the parent can inspect
+partial output and decide whether to retry or continue.
+
+All `agent.subagent.*` settings in `config.yaml` are detailed in the
+[Config](#agent) section above.
+
+### Custom roles
+
+Define your own sub-agent roles by adding markdown files to `.agents/roles/`
+(project-level, walked up from cwd) or `~/.agents/roles/` (user-level). Each
+file is a YAML frontmatter block followed by the role's system guidance:
+
+```markdown
+---
+tools:
+  - read
+  - grep
+  - glob
+  - ls
+  - bash
+max_iterations: 30
+timeout: 180
+max_depth: 0
+---
+
+You are a SECURITY AUDITOR. Find vulnerabilities, hardcoded secrets, and
+unsafe patterns. Report findings with file paths, line numbers, and severity.
+```
+
+The file name (without `.md`) becomes the role name. Built-in roles
+(`worker`, `reviewer`, `planner`) take precedence and cannot be overridden.
+New roles appear in the `task` tool's `role` enum automatically at startup.
+Per-role defaults can be tuned in `config.yaml` under
+`agent.subagent.roles.<name>`.
+
+### REPL slash commands
+
+In the interactive REPL, prefix with `/` for built-in commands:
+
+| Command | Action |
+|---|---|
+| `/exit`, `/quit` | Quit yaah |
+| `/clear` | Clear the terminal screen |
+| `/compact` | Force LLM context summarization |
+| `/help`, `/?` | Show available commands |
+
+Arrows navigate REPL history. History is persisted at `~/.yaah/history`.
 
 ### Session persistence
 
@@ -342,57 +401,148 @@ yaah version
 
 ## Config
 
-Edit `~/.yaah/config.yaml`:
+Edit `~/.yaah/config.yaml`. Environment variables referenced as `${VAR_NAME}`
+are substituted at load time. Missing sections fall back to built-in defaults
+so you only need to write what you're overriding.
+
+### Providers
+
+At least one provider is required. Each provider has a `name` (shown in the
+UI), a `base_url` (OpenAI-compatible endpoint), and an `api_key`.
+Optionally, list `models` to restrict the model picker:
 
 ```yaml
 providers:
   openai:
-    name: OpenAI                          # display name (shown in :model)
+    name: OpenAI
     base_url: https://api.openai.com/v1
     api_key: ${OPENAI_API_KEY}
-    # models:                              # optional: override API model list
+    # models:                              # optional: restrict the model list
     #   - gpt-4o
     #   - gpt-4o-mini
+
   ollama:
     name: Ollama
     base_url: http://localhost:11434/v1
     api_key: ollama
 
-default:
-  provider: openai                        # which provider to use by default
-  model: gpt-4o-mini                      # model name (no provider prefix needed)
-  small_model: gpt-4o-mini                  # used for context compaction (optional; falls back to model)
-  max_iterations: 50
-  approval: ask                           # ask | allow | deny
-
-# agent:
-#   middleware:
-#     enabled:                             # explicit set of middleware to run (in order)
-#       - steer
-#       - followup
-#       - compaction
-#       - approval
-#       - loop_detection
-#     # disabled:                          # exclude specific middleware
-#     #   - approval
-
-# hooks:
-#   dir: ~/.yaah/hooks                    # optional: JSONL event log for external integrations
-
-# editor: code --wait                    # editor for 'yaah config edit' (falls back to $EDITOR, $VISUAL, vi)
-
-log_level: INFO
+  anthropic:
+    name: Anthropic
+    base_url: https://api.anthropic.com/v1
+    api_key: ${ANTHROPIC_API_KEY}
 ```
 
-Environment variables referenced as `${VAR_NAME}` are substituted at load time.
+### Default
 
-The editor for `yaah config edit` is resolved in this order:
-1. `editor` field in config.yaml
-2. `$EDITOR` environment variable
-3. `$VISUAL` environment variable
-4. `vi` (built-in fallback)
+Controls which provider and model are used, iteration and context budgets,
+and the approval mode:
 
-Run `yaah doctor` to see which editor is active and how it was resolved.
+```yaml
+default:
+  provider: openai       # provider key from the providers map above
+  model: gpt-4o-mini     # model name (without provider prefix)
+  small_model: gpt-4o-mini  # used for context compaction; falls back to model
+  max_iterations: 50     # safety cap on agent loop turns per prompt
+  context_window: 128000 # token budget for LLM compaction; 0 disables
+  approval: ask          # ask | allow | deny
+```
+
+The `provider` field is optional. When omitted, yaah picks the provider whose
+name prefix matches `model`, or the first provider alphabetically.
+
+### Agent
+
+Controls the agent loop's middleware pipeline and sub-agent lifecycle:
+
+```yaml
+agent:
+  middleware:
+    enabled:             # explicit set (in order); overrides the default pipeline
+      - steer
+      - followup
+      - compaction
+      - approval
+      - loop_detection
+    # disabled:          # remove specific middleware from the pipeline
+    #   - approval
+
+  subagent:
+    max_depth: 3         # max task calls per loop; 0 = unlimited
+    max_concurrency: 3   # simultaneous task calls per iteration; 0 = unlimited
+    default_timeout: 120 # seconds; used when no role default applies
+    roles:               # per-role overrides (all optional)
+      worker:
+        timeout: 120
+        max_iterations: 25
+        max_depth: 1
+      reviewer:
+        timeout: 60
+        max_iterations: 10
+      planner:
+        timeout: 300
+        max_iterations: 50
+        max_depth: 3
+```
+
+#### Middleware reference
+
+Nine middleware are available. The default pipeline (when `enabled` is unset)
+runs `steer` → `followup` → `compaction` → `approval` → `loop_detection`.
+
+| Name | Default | Purpose |
+|---|---|---|
+| `steer` | on | High-priority mid-turn input injected before the next LLM call |
+| `followup` | on | Queued between-turn messages (e.g. from parallel agents) |
+| `compaction` | on | LLM-powered context summarization when `context_window` is exceeded |
+| `approval` | on | Gate on destructive tools (bash, write, edit, delete) per `approval` mode |
+| `loop_detection` | on | Detect and halt stuck loops by hashing identical tool call chains |
+| `permission` | off | Path-pattern rules to allow/deny tools by file path glob |
+| `tool_concurrency` | off | Cap concurrent tool goroutines via `MaxToolConcurrency` |
+| `sub_agent` | off | Enforce per-role sub-agent depth caps |
+| `prompt_caching` | off | Inject Anthropic cache-control breakpoints on system/tool messages |
+
+To enable an off-by-default middleware, list it in `enabled`. To disable a
+default middleware, list it in `disabled`. When `enabled` is set, only those
+middleware run (in the given order), minus any in `disabled`.
+
+The `permission` middleware accepts rules in the form `{tool, path, mode}`
+where `tool` and `path` are optional (empty = match all), and `mode` is
+`allow`, `ask`, or `deny`. Paths use `filepath.Match` globs. Rules are
+injected programmatically via `Loop.PermissionRules` — there is no YAML
+syntax for them currently.
+
+### Hooks
+
+JSONL event log for external integrations (e.g. session tracking,
+checkpointing). Off by default:
+
+```yaml
+hooks:
+  dir: ~/.yaah/hooks
+```
+
+Events are appended to `<dir>/<session-id>.jsonl` and include
+`session.start`, `session.end`, `turn.start`, `tool.start`, and `tool.end`
+with timestamps, model, tool results, and durations.
+
+### Editor
+
+Editor for `yaah config edit`. Resolution order: `editor` field → `$EDITOR`
+env var → `$VISUAL` env var → `vi`. Run `yaah doctor` to see which editor is
+active.
+
+```yaml
+editor: code --wait
+```
+
+### Log level
+
+```yaml
+log_level: INFO           # DEBUG | INFO | WARN | ERROR
+```
+
+Controls internal diagnostic output written to stderr. Agent responses and
+tool output are unaffected.
 
 ## Development
 
@@ -525,10 +675,46 @@ Tests live next to the code they test (`foo.go` ↔ `foo_test.go`) and use
 
 ## Status
 
-**Active development.** Core features stable: middleware pipeline, streaming,
-tool execution, SQLite memory and session persistence, MCP integration, TUI,
-session resume, and hook events for external agents. See
-[docs/architecture.md](./docs/architecture.md) for details.
+yaah is in active development and is feature-complete for daily use.
+
+**Stable** — middleware pipeline, streaming LLM responses, tool execution,
+context compaction, approval gates, loop detection, SQLite session and memory
+persistence, session resume, MCP integration (stdio + HTTP), bubbletea TUI,
+REPL with slash commands, hook events for external agents, sub-agent dispatch
+with roles/concurrency/timeouts.
+
+**Experimental** — `yaah update` (GitHub release check), `yaah tui`'s
+`:model` and `:provider` commands.
+
+## Future improvements
+
+- **Plugin system** — register custom Go tools and middleware without
+  recompiling, via a well-defined interface and a `plugins/` directory
+  convention.
+- **OpenTelemetry tracing** — wire the agent loop, middleware hooks, and
+  tool calls into OTel spans for observability in production agent
+  pipelines.
+- **Multi-agent orchestration** — first-class support for dispatching
+  parallel agents, collecting their results, and reconciling conflicts
+  (building on the existing `task` tool infrastructure).
+- **Web UI** — a browser-based interface as an alternative to the terminal,
+  with session browsing, config editing, and real-time streaming.
+- **Prompt template library** — curated system prompts and skill packs
+  for common use cases (code review, PR triage, security audit,
+  documentation generation).
+- **Remote MCP gateway** — a thin sidecar that bridges local `yaah`
+  instances with remote MCP servers over HTTPS, enabling secure sharing
+  of tool servers across machines.
+- **Better MCP lifecycle** — health checks, auto-restart on crash,
+  graceful shutdown ordering, and `yaah mcp status` per-server.
+- **Session export / import** — dump a session transcript as JSONL or
+  Markdown, and replay or resume from a file.
+- **Chat completions streaming with tool use in one pass** — some
+  providers (Anthropic, Groq) support streaming tool calls alongside
+  content in a single response, reducing round-trips.
+- **Knowledge base from project files** — index the project tree (RAG)
+  into the SQLite FTS5 store so the model can ask about the codebase
+  without reading every file.
 
 ## License
 

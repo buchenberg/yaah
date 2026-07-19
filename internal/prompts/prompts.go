@@ -5,7 +5,7 @@
 package prompts
 
 import (
-	_ "embed"
+	"embed"
 	"fmt"
 	"runtime"
 	"strings"
@@ -19,6 +19,15 @@ import (
 //
 //go:embed identity.md
 var IdentityPrompt string
+
+// BuiltinRolesFS embeds the built-in sub-agent role definitions under
+// roles/*.md. Each file is a YAML frontmatter block + markdown body
+// that together define a role's tool set, limits, and system guidance.
+// Filesystem roles in ~/.agents/roles/ (or ./.agents/roles/) extend
+// this set at runtime without recompilation.
+//
+//go:embed roles/*.md
+var BuiltinRolesFS embed.FS
 
 // Layers holds the composable pieces of the system prompt assembled
 // from multiple sources.

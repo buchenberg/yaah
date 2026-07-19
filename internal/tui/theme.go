@@ -183,6 +183,13 @@ func ApplyTheme(t Theme) {
 	toolStyle = lipgloss.NewStyle().
 		Foreground(colorOrNone(t.Tool))
 
+	subAgentStartStyle = lipgloss.NewStyle().
+		Foreground(colorOrNone(t.Tool)).
+		Bold(true)
+
+	subAgentEndStyle = lipgloss.NewStyle().
+		Foreground(colorOrNone(t.Tool))
+
 	systemStyle = lipgloss.NewStyle().
 		Foreground(colorOrNone(t.System))
 
