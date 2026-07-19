@@ -642,12 +642,12 @@ func TestDefaultCommands(t *testing.T) {
 		if c.Name == "" {
 			t.Error("command name must not be empty")
 		}
-		if !strings.HasPrefix(c.Name, "/") {
-			t.Errorf("command name should start with /: %q", c.Name)
+		if !strings.HasPrefix(c.Name, ":") {
+			t.Errorf("command name should start with :: %q", c.Name)
 		}
 		names[c.Name] = true
 	}
-	for _, want := range []string{"/help", "/clear", "/quit"} {
+	for _, want := range []string{":help", ":clear", ":quit"} {
 		if !names[want] {
 			t.Errorf("missing expected command: %s", want)
 		}
@@ -657,7 +657,7 @@ func TestDefaultCommands(t *testing.T) {
 func TestExecuteCommand_Help(t *testing.T) {
 	m := &Model{width: 80}
 	m.commands = defaultCommands
-	m.executeCommand("/help")
+	m.executeCommand(":help")
 	if len(m.messages) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(m.messages))
 	}
@@ -676,7 +676,7 @@ func TestExecuteCommand_Clear(t *testing.T) {
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "hi there"},
 	}
-	m.executeCommand("/clear")
+	m.executeCommand(":clear")
 	if len(m.messages) != 0 {
 		t.Errorf("expected 0 messages after clear, got %d", len(m.messages))
 	}
@@ -685,7 +685,7 @@ func TestExecuteCommand_Clear(t *testing.T) {
 func TestExecuteCommand_Unknown(t *testing.T) {
 	m := &Model{width: 80}
 	m.commands = defaultCommands
-	m.executeCommand("/invalid")
+	m.executeCommand(":invalid")
 	if len(m.messages) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(m.messages))
 	}
@@ -702,7 +702,7 @@ func TestExecuteCommand_CompactCallback(t *testing.T) {
 	m.commands = defaultCommands
 	called := false
 	m.onCompact = func() { called = true }
-	m.executeCommand("/compact")
+	m.executeCommand(":compact")
 	if !called {
 		t.Error("expected onCompact callback to be called")
 	}
@@ -734,9 +734,9 @@ func TestExecuteCommand_Model(t *testing.T) {
 	m := &Model{width: 80}
 	m.commands = defaultCommands
 	m.modelItems = []string{"openai/gpt-4o", "openai/gpt-4o-mini", "ollama/llama3"}
-	m.executeCommand("/model")
+	m.executeCommand(":model")
 	if !m.modelMode {
-		t.Fatal("expected modelMode to be true after /model command")
+		t.Fatal("expected modelMode to be true after :model command")
 	}
 	if m.modelSelected != 0 {
 		t.Errorf("expected modelSelected 0, got %d", m.modelSelected)
@@ -747,7 +747,7 @@ func TestExecuteCommand_ModelNoItems(t *testing.T) {
 	m := &Model{width: 80}
 	m.commands = defaultCommands
 	m.modelItems = nil
-	m.executeCommand("/model")
+	m.executeCommand(":model")
 	if m.modelMode {
 		t.Error("modelMode should remain false when no models available")
 	}

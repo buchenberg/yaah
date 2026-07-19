@@ -94,13 +94,14 @@ type Command struct {
 }
 
 // defaultCommands lists the built-in slash commands.
+// defaultCommands lists the built-in slash commands (triggered by typing ":").
 var defaultCommands = []Command{
-	{Name: "/help", Description: "Show available commands"},
-	{Name: "/clear", Description: "Clear chat history"},
-	{Name: "/compact", Description: "Summarize old messages"},
-	{Name: "/banner", Description: "Toggle ASCII art banner"},
-	{Name: "/model", Description: "Switch model"},
-	{Name: "/quit", Description: "Exit the TUI"},
+	{Name: ":help", Description: "Show available commands"},
+	{Name: ":clear", Description: "Clear chat history"},
+	{Name: ":compact", Description: "Summarize old messages"},
+	{Name: ":banner", Description: "Toggle ASCII art banner"},
+	{Name: ":model", Description: "Switch model"},
+	{Name: ":quit", Description: "Exit the TUI"},
 }
 
 // Model is the bubbletea model for the yaah TUI.
@@ -144,7 +145,7 @@ type Model struct {
 	onQuit            func()
 	onCompact         func()
 	onModel           func(string, string)
-	commandMode       bool              // true when input starts with "/"
+	commandMode       bool              // true when input starts with ":"
 	commands          []Command         // registered slash commands
 	modelMode         bool              // true when in model-selection sub-mode
 	modelItems        []string          // available models in "provider/model" format
@@ -720,21 +721,21 @@ func (m *Model) RegisterCommand(name, description string) {
 func (m *Model) executeCommand(input string) {
 	cmd := strings.TrimSpace(input)
 	switch cmd {
-	case "/help":
+	case ":help":
 		var b strings.Builder
 		b.WriteString("Available commands:\n")
 		for _, c := range m.commands {
 			b.WriteString(fmt.Sprintf("  %s  %s\n", c.Name, c.Description))
 		}
 		m.AddMessage("system", b.String())
-	case "/clear":
+	case ":clear":
 		m.messages = nil
 		m.refreshViewport()
-	case "/compact":
+	case ":compact":
 		if m.onCompact != nil {
 			m.onCompact()
 		}
-	case "/banner":
+	case ":banner":
 		m.showBanner = !m.showBanner
 		m.adjustViewport()
 		m.refreshViewport()
@@ -743,7 +744,7 @@ func (m *Model) executeCommand(input string) {
 		} else {
 			m.SetEphemeral("Banner hidden. Use /banner to show it again.")
 		}
-	case "/model":
+	case ":model":
 		if len(m.modelItems) == 0 {
 			m.AddMessage("system", "No models available. Configure providers or wait for model list to load.")
 			return
@@ -1204,7 +1205,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				value := m.input.Value()
 				m.input.SetValue("")
 				m.clearCommandMode()
-				if strings.TrimSpace(value) == "/quit" {
+				if strings.TrimSpace(value) == ":quit" {
 					return m, tea.Quit
 				}
 				m.executeCommand(value)
@@ -1264,7 +1265,7 @@ func (m *Model) detectCommandMode() {
 	if m.modelMode || m.questionMode {
 		return
 	}
-	if strings.HasPrefix(m.input.Value(), "/") {
+	if strings.HasPrefix(m.input.Value(), ":") {
 		if !m.commandMode {
 			m.commandMode = true
 			m.input.ShowSuggestions = true
@@ -1394,11 +1395,11 @@ func (m *Model) paletteLines() int {
 	if !m.commandMode {
 		return 0
 	}
-	filter := strings.TrimPrefix(strings.TrimSpace(m.input.Value()), "/")
+	filter := strings.TrimPrefix(strings.TrimSpace(m.input.Value()), ":")
 	filter = strings.ToLower(filter)
 	count := 0
 	for _, c := range m.commands {
-		name := strings.TrimPrefix(c.Name, "/")
+		name := strings.TrimPrefix(c.Name, ":")
 		if filter == "" || strings.HasPrefix(strings.ToLower(name), filter) {
 			count++
 		}
@@ -1751,12 +1752,12 @@ func (m *Model) renderModelPalette() string {
 
 // renderCommandPalette renders the command suggestion list above the input.
 func (m *Model) renderCommandPalette() string {
-	filter := strings.TrimPrefix(strings.TrimSpace(m.input.Value()), "/")
+	filter := strings.TrimPrefix(strings.TrimSpace(m.input.Value()), ":")
 	filter = strings.ToLower(filter)
 
 	var visible []Command
 	for _, c := range m.commands {
-		name := strings.TrimPrefix(c.Name, "/")
+		name := strings.TrimPrefix(c.Name, ":")
 		if filter == "" || strings.HasPrefix(strings.ToLower(name), filter) {
 			visible = append(visible, c)
 		}
@@ -1973,6 +1974,9 @@ func (m *Model) renderHelpOverlay() string {
 		{"Navigation", []key.Binding{keys.Up, keys.Down, keys.PageUp, keys.PageDown, keys.Top, keys.Bottom}},
 		{"Actions", []key.Binding{keys.Search, keys.Copy, keys.Reasoning, keys.Help}},
 		{"Input", []key.Binding{keys.Submit, keys.Cancel}},
+		{"Commands", []key.Binding{
+			key.NewBinding(key.WithKeys(":"), key.WithHelp(":", "command mode (:help, :model, :compact, :banner)")),
+		}},
 		{"System", []key.Binding{keys.Quit}},
 	}
 
