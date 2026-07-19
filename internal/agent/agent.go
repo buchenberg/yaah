@@ -925,17 +925,36 @@ func (l *Loop) trimContext() {
 // If finish_reason is "length" and tool calls are present, returns an error
 // to prevent executing truncated tool calls.
 func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatRequest) (types.Message, error) {
+	var streamSpan trace.Span
+	if l.OtelEnabled {
+		ctx, streamSpan = observability.StartStream(ctx, req.Model)
+	}
+
+	start := time.Now()
 	chunks, errs := sp.SendStream(ctx, req)
 
 	var content strings.Builder
 	toolCallMap := make(map[int]*types.ToolCall)
 	var finishReason string
+	var firstToken bool
+	var tokenCount int
 
 	for {
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
+				if streamSpan != nil {
+					observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
+					streamSpan.End()
+				}
 				return l.checkTruncatedStream(content.String(), toolCallMap, finishReason)
+			}
+
+			if !firstToken {
+				firstToken = true
+				if streamSpan != nil {
+					streamSpan.SetAttributes(attribute.Int64("llm.ttft_ms", time.Since(start).Milliseconds()))
+				}
 			}
 
 			if len(chunk.Choices) == 0 {
@@ -950,6 +969,7 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 
 			if delta.Content != "" {
 				content.WriteString(delta.Content)
+				tokenCount++
 				if l.OnToken != nil {
 					l.OnToken(delta.Content)
 				}
@@ -985,11 +1005,23 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 
 		case err := <-errs:
 			if err != nil {
+				if streamSpan != nil {
+					observability.RecordError(streamSpan, err)
+					streamSpan.End()
+				}
 				return types.Message{}, err
+			}
+			if streamSpan != nil {
+				observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
+				streamSpan.End()
 			}
 			return l.checkTruncatedStream(content.String(), toolCallMap, finishReason)
 
 		case <-ctx.Done():
+			if streamSpan != nil {
+				observability.RecordError(streamSpan, ctx.Err())
+				streamSpan.End()
+			}
 			return types.Message{}, ctx.Err()
 		}
 
@@ -998,6 +1030,10 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 		}
 	}
 
+	if streamSpan != nil {
+		observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
+		streamSpan.End()
+	}
 	return l.checkTruncatedStream(content.String(), toolCallMap, finishReason)
 }
 

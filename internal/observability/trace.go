@@ -71,6 +71,26 @@ func FinishLLM(span trace.Span, promptLen, systemLen int, promptTokens, completi
 	))
 }
 
+// StartStream creates a span for a streaming LLM call. The returned
+// context should flow into SendStream so the provider wrapper inherits
+// the span hierarchy.
+func StartStream(ctx context.Context, model string) (context.Context, trace.Span) {
+	ctx, span := tracer.Start(ctx, "llm.stream")
+	span.SetAttributes(attribute.String("llm.model", model))
+	return ctx, span
+}
+
+// FinishStream adds first-token latency and token count events to a
+// streaming span. ttft is the time until the first content or tool-call
+// delta arrived; totalTokens is the count of content deltas emitted.
+func FinishStream(span trace.Span, ttftMs int64, totalTokens int, toolCalls int) {
+	span.AddEvent("stream", trace.WithAttributes(
+		attribute.Int64("llm.ttft_ms", ttftMs),
+		attribute.Int("llm.stream_tokens", totalTokens),
+		attribute.Int("llm.tool_calls", toolCalls),
+	))
+}
+
 // StartSubAgent creates a span for a sub-agent dispatched by the task
 // tool. The operation name includes role and description so the
 // waterfall bar itself is readable.
