@@ -16,11 +16,11 @@ func TestLoad_returnsDefaultsWhenFileMissing(t *testing.T) {
 	}
 
 	// Defaults from the plan §3.2
-	if cfg.Default.Model != "deepseek/deepseek-chat" {
-		t.Errorf("Default.Model = %q, want %q", cfg.Default.Model, "deepseek/deepseek-chat")
+	if cfg.Default.Model != "deepseek/deepseek-v4-pro" {
+		t.Errorf("Default.Model = %q, want %q", cfg.Default.Model, "deepseek/deepseek-v4-pro")
 	}
-	if cfg.Default.SmallModel != "deepseek/deepseek-chat" {
-		t.Errorf("Default.SmallModel = %q, want %q", cfg.Default.SmallModel, "deepseek/deepseek-chat")
+	if cfg.Default.SmallModel != "deepseek/deepseek-v4-flash" {
+		t.Errorf("Default.SmallModel = %q, want %q", cfg.Default.SmallModel, "deepseek/deepseek-v4-flash")
 	}
 	if cfg.Default.MaxIterations != 50 {
 		t.Errorf("Default.MaxIterations = %d, want 50", cfg.Default.MaxIterations)

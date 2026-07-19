@@ -100,8 +100,8 @@ type OtelConfig struct {
 func defaultConfig() *Config {
 	return &Config{
 		Default: Defaults{
-			Model:         "deepseek/deepseek-chat",
-			SmallModel:    "deepseek/deepseek-chat",
+			Model:         "deepseek/deepseek-v4-pro",
+			SmallModel:    "deepseek/deepseek-v4-flash",
 			MaxIterations: 50,
 			ContextWindow: 128000,
 			Approval:      "ask",

@@ -29,8 +29,8 @@ providers:
 
 default:
   provider: deepseek                       # which provider to use by default
-  model: deepseek-chat                      # model name (no provider prefix needed)
-  small_model: deepseek-chat
+  model: deepseek-v4-pro                      # model name (no provider prefix needed)
+  small_model: deepseek-v4-flash
   max_iterations: 50
   approval: ask                           # ask | allow | deny
 

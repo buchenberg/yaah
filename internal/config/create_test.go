@@ -27,7 +27,7 @@ func TestCreateDefault_writesConfigFile(t *testing.T) {
 	content := string(data)
 	for _, want := range []string{
 		"provider: deepseek",
-		"model: deepseek-chat",
+		"model: deepseek-v4-pro",
 		"max_iterations: 50",
 		"approval: ask",
 	} {

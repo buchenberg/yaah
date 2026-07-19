@@ -26,7 +26,7 @@ func TestConfigShow_printsConfig(t *testing.T) {
 
 	output := buf.String()
 	// Should print the default model (from built-in defaults since file is missing)
-	if !strings.Contains(output, "deepseek-chat") {
+	if !strings.Contains(output, "deepseek-v4-pro") {
 		t.Errorf("config show output missing default model\ngot:\n%s", output)
 	}
 	// Should NOT print raw API keys

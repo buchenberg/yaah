@@ -138,8 +138,8 @@ func runTUI() error {
 	if err != nil || cfg == nil {
 		cfg = &config.Config{
 			Default: config.Defaults{
-				Model:         "deepseek/deepseek-chat",
-				SmallModel:    "deepseek/deepseek-chat",
+				Model:         "deepseek/deepseek-v4-pro",
+				SmallModel:    "deepseek/deepseek-v4-flash",
 				MaxIterations: 50,
 			},
 		}

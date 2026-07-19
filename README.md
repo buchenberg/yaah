@@ -484,8 +484,8 @@ and the approval mode:
 ```yaml
 default:
   provider: deepseek
-  model: deepseek-chat
-  small_model: deepseek-chat
+  model: deepseek-v4-pro
+  small_model: deepseek-v4-flash
   max_iterations: 50
   context_window: 128000
   approval: ask          # ask | allow | deny
