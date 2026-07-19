@@ -372,10 +372,26 @@ func treeDepth(prefix string) int {
 	return depth
 }
 
-// displayWidth returns the approximate terminal display width of a string.
+// displayWidth returns the approximate terminal display width of a string,
+// skipping ANSI escape sequences so styled text measures correctly.
 func displayWidth(s string) int {
 	w := 0
+	inEscape := false
 	for _, r := range s {
+		if r == 0x1b { // ESC
+			inEscape = true
+			continue
+		}
+		if inEscape {
+			if r == '[' {
+				continue // CSI sequence continues
+			}
+			// CSI: skip until final byte (0x40–0x7E)
+			if r >= 0x40 && r <= 0x7E {
+				inEscape = false
+			}
+			continue
+		}
 		if r <= 0x7F {
 			w++
 		} else if isWideRune(r) {
@@ -980,8 +996,8 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg) tea.Cmd {
 		if !m.commandMode && m.input.Value() == "" {
 			m.showHelp = true
 			m.adjustViewport()
+			return nil
 		}
-		return nil
 
 	case key.Matches(msg, keys.Search):
 		if !m.commandMode && m.input.Value() == "" {
@@ -989,8 +1005,8 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg) tea.Cmd {
 			m.searchQuery = ""
 			m.searchMatches = nil
 			m.searchIdx = -1
+			return nil
 		}
-		return nil
 
 	case key.Matches(msg, keys.Copy):
 		for i := len(m.messages) - 1; i >= 0; i-- {
@@ -1549,13 +1565,33 @@ func contextBar(pct int) string {
 
 // toolIndent prefixes each line of content with a dimmed border character
 // for a clean left-margin treatment (no background needed).
+// Lines are wrapped to fit within width after accounting for the prefix.
 func toolIndent(width int, content string) string {
 	prefix := toolStyle.Render("│ ")
-	lines := strings.Split(content, "\n")
-	for i, line := range lines {
-		lines[i] = prefix + line
+	prefixWidth := 2 // │ + space visual width
+	wrapWidth := width - prefixWidth
+	if wrapWidth < 20 {
+		wrapWidth = 20
 	}
-	return strings.Join(lines, "\n")
+
+	lines := strings.Split(content, "\n")
+	var result strings.Builder
+	for i, line := range lines {
+		if i > 0 {
+			result.WriteString("\n")
+		}
+		// Wrap long lines to fit within available width
+		wrapped := wrapText(line, wrapWidth)
+		wrappedLines := strings.Split(wrapped, "\n")
+		for j, wl := range wrappedLines {
+			if j > 0 {
+				result.WriteString("\n")
+			}
+			result.WriteString(prefix)
+			result.WriteString(wl)
+		}
+	}
+	return result.String()
 }
 
 // HandleContextInfo updates the context window display.

@@ -358,11 +358,10 @@ func (m *Model) renderMessages() string {
 						thinkingStyle.Render(chatWrap("", msg.Reasoning, m.width))))
 				}
 				b.WriteString("\n")
-			} else {
-				b.WriteString("\n")
 			}
-			b.WriteString(assistantStyle.Render(msg.Content))
 			b.WriteString("\n")
+			b.WriteString(assistantStyle.Render(msg.Content))
+			b.WriteString("\n\n")
 
 		case "tool":
 			// Build a header from the tool name and args.
@@ -401,12 +400,8 @@ func (m *Model) renderMessages() string {
 			if expanded {
 				b.WriteString(zone.Mark(zoneID, toolStyle.Render(fmt.Sprintf("  ▼ %s %s", icon, header))))
 				b.WriteString("\n")
-				// Tool output content.
-				if msg.ToolName == "task" || (msg.ToolName != "" && (isListContent(msg.Raw) || isTreeContent(msg.Raw))) {
-					b.WriteString(toolIndent(m.width, msg.Content))
-				} else {
-					b.WriteString(toolIndent(m.width, chatWrap("", msg.Content, m.width)))
-				}
+				// Tool output content — toolIndent handles wrapping to fit within width.
+				b.WriteString(toolIndent(m.width, msg.Content))
 			} else {
 				b.WriteString(zone.Mark(zoneID, toolStyle.Render(fmt.Sprintf("  ▶ %s %s", icon, header))))
 			}
@@ -444,9 +439,10 @@ func (m *Model) renderMessages() string {
 	}
 
 	if m.streaming && m.streamContent != "" {
+		b.WriteString("\n")
 		rendered := assistantStyle.Render(m.renderMarkdown(m.streamContent))
 		b.WriteString(rendered)
-		b.WriteString("\n")
+		b.WriteString("\n\n")
 	}
 
 	if m.thinking && !m.streaming && m.thinkContent == "" {
