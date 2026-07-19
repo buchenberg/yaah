@@ -342,11 +342,11 @@ func (m *Model) renderMessages() string {
 		case "user":
 			rendered := userStyle.Render(chatWrap("", msg.Content, m.width))
 			b.WriteString(userBgStyle.Width(m.width).Render(rendered))
-			b.WriteString("\n\n")
+			b.WriteString("\n")
 
 		case "assistant":
 			if msg.Reasoning != "" {
-				b.WriteString("\n\n")
+				b.WriteString("\n")
 				zoneID := fmt.Sprintf("reasoning-%d", msgIdx)
 				m.reasoningZones = append(m.reasoningZones, zoneID)
 				if !m.reasoningExpanded[zoneID] {
@@ -357,12 +357,12 @@ func (m *Model) renderMessages() string {
 					b.WriteString(reasoningBgStyle.Width(m.width).Render(
 						thinkingStyle.Render(chatWrap("", msg.Reasoning, m.width))))
 				}
-				b.WriteString("\n\n")
+				b.WriteString("\n")
 			} else {
 				b.WriteString("\n")
 			}
 			b.WriteString(assistantStyle.Render(msg.Content))
-			b.WriteString("\n\n")
+			b.WriteString("\n")
 
 		case "tool":
 			// Build a header from the tool name and args.
@@ -409,7 +409,6 @@ func (m *Model) renderMessages() string {
 				}
 			} else {
 				b.WriteString(zone.Mark(zoneID, toolStyle.Render(fmt.Sprintf("  ▶ %s %s", icon, header))))
-				b.WriteString("\n")
 			}
 			b.WriteString("\n")
 
@@ -422,11 +421,11 @@ func (m *Model) renderMessages() string {
 	}
 
 	if m.thinkContent != "" {
-		b.WriteString("\n\n")
+		b.WriteString("\n")
 		if m.thinking && !m.streaming {
 			rendered := spinnerStyle.Render(fmt.Sprintf("  %s Reasoning...", m.spinner.View()))
 			b.WriteString(rendered)
-			b.WriteString("\n\n")
+			b.WriteString("\n")
 			b.WriteString(reasoningBgStyle.Width(m.width).Render(
 				thinkingStyle.Render(chatWrap("", m.thinkContent, m.width))))
 		} else {
@@ -435,13 +434,13 @@ func (m *Model) renderMessages() string {
 				b.WriteString(zone.Mark("reasoning-live", toggleStyle.Render("  ▶ Reasoning...")))
 			} else {
 				b.WriteString(zone.Mark("reasoning-live", toggleStyle.Render("  ▼ Reasoning...")))
-				b.WriteString("\n\n")
+				b.WriteString("\n")
 				b.WriteString(reasoningBgStyle.Width(m.width).Render(
 					thinkingStyle.Render(chatWrap("", m.thinkContent, m.width))))
 			}
 			b.WriteString("\n")
 		}
-		b.WriteString("\n\n")
+		b.WriteString("\n")
 	}
 
 	if m.streaming && m.streamContent != "" {
