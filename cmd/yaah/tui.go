@@ -243,13 +243,15 @@ func runTUI() error {
 	// Shared mutable state for the current provider/model.
 	sm := &sessionModel{provider: providerName, model: resolveModel(cfg)}
 
-	m := tui.New(tui.Config{
+	var m *tui.Model
+	m = tui.New(tui.Config{
 		Provider:      providerName,
 		Model:         modelName,
 		CWD:           cwd,
 		ContextWindow: cfg.Default.ContextWindow,
 		OnSubmit: func(input string) {
 			pName, mName := sm.get()
+			
 			go runAgentForTUI(input, agentCh, cfg, systemPrompt, mName, toolReg, &messages, db, sessionID, &msgIdx, &persistedCount, sm)
 			_ = pName
 		},

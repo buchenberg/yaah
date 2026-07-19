@@ -351,6 +351,7 @@ func (m *Model) renderMessages() string {
 				m.reasoningZones = append(m.reasoningZones, zoneID)
 				if !m.reasoningExpanded[zoneID] {
 					b.WriteString(zone.Mark(zoneID, toggleStyle.Render("  ▶ Reasoning...")))
+					b.WriteString("\n")
 				} else {
 					b.WriteString(zone.Mark(zoneID, toggleStyle.Render("  ▼ Reasoning...")))
 					b.WriteString("\n\n")
@@ -359,9 +360,13 @@ func (m *Model) renderMessages() string {
 					b.WriteString("\n")
 				}
 			}
-			b.WriteString("\n")
-			b.WriteString(assistantStyle.Render(msg.Content))
-			b.WriteString("\n\n")
+			if msg.Content != "" {
+				b.WriteString("\n")
+				b.WriteString(assistantStyle.Render(msg.Content))
+				b.WriteString("\n\n")
+			} else {
+				b.WriteString("\n")
+			}
 
 		case "tool":
 			// Build a header from the tool name and args.
@@ -400,12 +405,25 @@ func (m *Model) renderMessages() string {
 			if expanded {
 				b.WriteString(zone.Mark(zoneID, toolStyle.Render(fmt.Sprintf("  ▼ %s %s", icon, header))))
 				b.WriteString("\n")
-				// Tool output content — toolIndent handles wrapping to fit within width.
-				indented := toolIndent(m.width, msg.Content)
+				// Wrap in a bordered box constrained to viewport width.
+				boxWidth := m.width - 4 // leave margin for indent
+				if boxWidth < 20 {
+					boxWidth = 20
+				}
+				// Inner content width: boxWidth minus border (2) and padding (2).
+				innerWidth := boxWidth - 4
+				if innerWidth < 10 {
+					innerWidth = 10
+				}
+				// Tool output content — wrap to the inner box width so lines
+				// don't get re-wrapped by lipgloss (which would double the
+				// visual line count and overflow the viewport).
+				indented := toolIndent(innerWidth, msg.Content)
 				// Cap visible lines to prevent overflow past footer/prompt.
-				maxLines := m.viewport.Height() / 3
-				if maxLines < 8 {
-					maxLines = 8
+				// Reserve 4 lines for box borders (2), header line, and truncation notice.
+				maxLines := m.viewport.Height()/3 - 4
+				if maxLines < 4 {
+					maxLines = 4
 				}
 				if maxLines > 24 {
 					maxLines = 24
@@ -421,11 +439,6 @@ func (m *Model) renderMessages() string {
 					visible = headerLine + "\n" + strings.Join(tail, "\n")
 				} else {
 					visible = indented
-				}
-				// Wrap in a bordered box constrained to viewport width.
-				boxWidth := m.width - 4 // leave margin for indent
-				if boxWidth < 20 {
-					boxWidth = 20
 				}
 				b.WriteString(toolBoxStyle.Width(boxWidth).Render(visible))
 			} else {
@@ -446,13 +459,14 @@ func (m *Model) renderMessages() string {
 		if m.thinking && !m.streaming {
 			rendered := spinnerStyle.Render(fmt.Sprintf("  %s Reasoning...", m.spinner.View()))
 			b.WriteString(rendered)
-			b.WriteString("\n")
+			b.WriteString("\n\n")
 			b.WriteString(reasoningBgStyle.Width(m.width).Render(
 				thinkingStyle.Render(chatWrap("", m.thinkContent, m.width))))
 		} else {
 			m.reasoningZones = append(m.reasoningZones, "reasoning-live")
 			if !m.reasoningExpanded["reasoning-live"] {
 				b.WriteString(zone.Mark("reasoning-live", toggleStyle.Render("  ▶ Reasoning...")))
+				b.WriteString("\n")
 			} else {
 				b.WriteString(zone.Mark("reasoning-live", toggleStyle.Render("  ▼ Reasoning...")))
 				b.WriteString("\n")

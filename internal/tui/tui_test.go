@@ -1412,3 +1412,49 @@ func TestQuestionModeIncreasesPortHeight(t *testing.T) {
 		t.Errorf("expected at least 10 palette lines, got %d", lines)
 	}
 }
+
+func TestCursorHoverMsg_SetsHoveredZone(t *testing.T) {
+	m := &Model{width: 80, height: 40, hoveredZone: false}
+
+	// Simulate receiving a cursorHoverMsg with hovering=true
+	newModel, _ := m.Update(cursorHoverMsg{hovering: true})
+	updated := newModel.(*Model)
+	if !updated.hoveredZone {
+		t.Error("expected hoveredZone to be true after cursorHoverMsg{hovering: true}")
+	}
+
+	// Simulate receiving a cursorHoverMsg with hovering=false
+	newModel, _ = updated.Update(cursorHoverMsg{hovering: false})
+	updated = newModel.(*Model)
+	if updated.hoveredZone {
+		t.Error("expected hoveredZone to be false after cursorHoverMsg{hovering: false}")
+	}
+}
+
+func TestViewCursorSequence_HoveredZone(t *testing.T) {
+	m := New(Config{Provider: "test", Model: "model", CWD: "/tmp"})
+	m.width = 80
+	m.height = 40
+	m.hoveredZone = true
+	m.adjustViewport()
+
+	v := m.View()
+	if !strings.Contains(v.Content, "\x1b]22;pointer\x07") {
+		t.Error("expected OSC 22 pointer cursor sequence when hoveredZone is true")
+	}
+}
+
+func TestViewCursorSequence_NotHovered(t *testing.T) {
+	m := New(Config{Provider: "test", Model: "model", CWD: "/tmp"})
+	m.width = 80
+	m.height = 40
+	m.hoveredZone = false
+	m.adjustViewport()
+
+	v := m.View()
+	if !strings.Contains(v.Content, "\x1b]22;text\x07") {
+		t.Error("expected OSC 22 text cursor sequence when hoveredZone is false")
+	}
+}
+
+

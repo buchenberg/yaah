@@ -91,6 +91,11 @@ type ServerInfo struct {
 	Error     string
 }
 
+// cursorHoverMsg is sent when the mouse moves over or leaves a clickable zone.
+type cursorHoverMsg struct {
+	hovering bool
+}
+
 // QuestionModal carries question data for the interactive modal dialog.
 type QuestionModal struct {
 	Header   string
@@ -194,6 +199,9 @@ type Model struct {
 
 	// --- mcp ---
 	mcpInfos []ServerInfo
+
+	// --- cursor hover ---
+	hoveredZone bool // true when mouse is over a clickable zone (pointer cursor)
 
 	// --- misc UI ---
 	showBanner   bool
@@ -779,6 +787,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.HandleAgentMsg(msg)
 		return m, nil
 
+	case cursorHoverMsg:
+		if m.hoveredZone != msg.hovering {
+			m.hoveredZone = msg.hovering
+		}
+		return m, nil
+
 	case spinner.TickMsg:
 		return m, m.handleSpinnerTick(msg)
 
@@ -793,6 +807,40 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseClickMsg:
 		return m, m.handleMouseClick(msg)
+
+	case tea.MouseMotionMsg:
+		// Check if mouse is over a clickable zone (from previous render).
+		for _, zoneID := range m.reasoningZones {
+			if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
+				if !m.hoveredZone {
+					return m, func() tea.Msg { return cursorHoverMsg{hovering: true} }
+				}
+				return m, m.viewportUpdate(msg)
+			}
+		}
+		for _, zoneID := range m.toolZones {
+			if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
+				if !m.hoveredZone {
+					return m, func() tea.Msg { return cursorHoverMsg{hovering: true} }
+				}
+				return m, m.viewportUpdate(msg)
+			}
+		}
+		if m.questionMode {
+			for i := range m.questionModal.Options {
+				zoneID := fmt.Sprintf("question-opt-%d", i)
+				if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
+					if !m.hoveredZone {
+						return m, func() tea.Msg { return cursorHoverMsg{hovering: true} }
+					}
+					return m, m.viewportUpdate(msg)
+				}
+			}
+		}
+		if m.hoveredZone {
+			return m, func() tea.Msg { return cursorHoverMsg{hovering: false} }
+		}
+		return m, m.viewportUpdate(msg)
 
 	case tea.MouseMsg:
 		// Forward mouse events to viewport (wheel scroll).
@@ -1520,6 +1568,14 @@ func (m *Model) View() tea.View {
 			c.Y = m.height - offset
 			v.Cursor = c
 		}
+	}
+	// OSC 22: change terminal cursor to pointer when over a clickable zone.
+	// Supported by Kitty, WezTerm, foot, iTerm2, and others; ignored by terminals
+	// that don't understand it.
+	if m.hoveredZone {
+		v.Content += "\x1b]22;pointer\x07"
+	} else {
+		v.Content += "\x1b]22;text\x07"
 	}
 	return v
 }
