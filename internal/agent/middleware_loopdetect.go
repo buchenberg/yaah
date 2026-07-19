@@ -30,7 +30,7 @@ func (m *LoopDetectionMiddleware) PostTool(ctx context.Context, results []ToolRe
 	}
 
 	for _, r := range results {
-		hashKey := toolCallHash(r.Name, r.Result)
+		hashKey := toolCallHash(r.Name, r.Args, r.Result)
 		*m.history = append(*m.history, hashKey)
 
 		if len(*m.history) > m.window {

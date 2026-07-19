@@ -431,6 +431,106 @@ func TestLoop_loopDetection(t *testing.T) {
 	}
 }
 
+func TestLoop_noFalsePositiveOnDifferentArgs(t *testing.T) {
+	// Test that loop detection does NOT trigger when the same tool returns
+	// identical results for different arguments (e.g. writing different files).
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{
+			{
+				Choices: []types.Choice{{
+					Message: types.Message{
+						Role: "assistant",
+						ToolCalls: []types.ToolCall{{
+							ID:        "call_1",
+							Type:      "function",
+							Function:  types.ToolCallFn{Name: "write", Arguments: `{"path":"/tmp/a.go","content":"aaa"}`},
+						}},
+					},
+					FinishReason: "tool_calls",
+				}},
+			},
+			{
+				Choices: []types.Choice{{
+					Message: types.Message{
+						Role: "assistant",
+						ToolCalls: []types.ToolCall{{
+							ID:        "call_2",
+							Type:      "function",
+							Function:  types.ToolCallFn{Name: "write", Arguments: `{"path":"/tmp/b.go","content":"bbb"}`},
+						}},
+					},
+					FinishReason: "tool_calls",
+				}},
+			},
+			{
+				Choices: []types.Choice{{
+					Message: types.Message{
+						Role: "assistant",
+						ToolCalls: []types.ToolCall{{
+							ID:        "call_3",
+							Type:      "function",
+							Function:  types.ToolCallFn{Name: "write", Arguments: `{"path":"/tmp/c.go","content":"ccc"}`},
+						}},
+					},
+					FinishReason: "tool_calls",
+				}},
+			},
+			{
+				Choices: []types.Choice{{
+					Message: types.Message{
+						Role: "assistant",
+						ToolCalls: []types.ToolCall{{
+							ID:        "call_4",
+							Type:      "function",
+							Function:  types.ToolCallFn{Name: "write", Arguments: `{"path":"/tmp/d.go","content":"ddd"}`},
+						}},
+					},
+					FinishReason: "tool_calls",
+				}},
+			},
+			{
+				Choices: []types.Choice{{
+					Message: types.Message{
+						Role: "assistant",
+						ToolCalls: []types.ToolCall{{
+							ID:        "call_5",
+							Type:      "function",
+							Function:  types.ToolCallFn{Name: "write", Arguments: `{"path":"/tmp/e.go","content":"eee"}`},
+						}},
+					},
+					FinishReason: "tool_calls",
+				}},
+			},
+			{
+				Choices: []types.Choice{{
+					Message:      types.Message{Role: "assistant", Content: "done"},
+					FinishReason: "stop",
+				}},
+			},
+		},
+	}
+
+	// All writes return the same success message — but with different args.
+	reg := tools.NewRegistry()
+	reg.Register(&fakeTool{name: "write", result: "File written successfully"})
+	loop := &Loop{
+		Provider:         fp,
+		Registry:         reg,
+		SystemPrompt:     "test",
+		MaxIterations:    10,
+		LoopDetectCount:  3,
+		LoopDetectWindow: 5,
+	}
+
+	resp, err := loop.Run(context.Background(), "write five files")
+	if err != nil {
+		t.Fatalf("loop detection false positive: different args should not trigger loop: %v", err)
+	}
+	if resp != "done" {
+		t.Errorf("expected 'done', got %q", resp)
+	}
+}
+
 func TestLoop_parallelToolExecution(t *testing.T) {
 	var mu sync.Mutex
 	var cnt int
