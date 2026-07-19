@@ -460,23 +460,20 @@ Optionally, list `models` to restrict the model picker:
 
 ```yaml
 providers:
-  openai:
-    name: OpenAI
-    base_url: https://api.openai.com/v1
-    api_key: ${OPENAI_API_KEY}
-    # models:                              # optional: restrict the model list
-    #   - gpt-4o
-    #   - gpt-4o-mini
+  deepseek:
+    name: DeepSeek
+    base_url: https://api.deepseek.com/v1
+    api_key: ${DEEPSEEK_API_KEY}
+
+  glm:
+    name: GLM
+    base_url: https://api.z.ai/api/paas/v4
+    api_key: ${GLM_API_KEY}
 
   ollama:
     name: Ollama
     base_url: http://localhost:11434/v1
     api_key: ollama
-
-  anthropic:
-    name: Anthropic
-    base_url: https://api.anthropic.com/v1
-    api_key: ${ANTHROPIC_API_KEY}
 ```
 
 ### Default
@@ -486,11 +483,11 @@ and the approval mode:
 
 ```yaml
 default:
-  provider: openai       # provider key from the providers map above
-  model: gpt-4o-mini     # model name (without provider prefix)
-  small_model: gpt-4o-mini  # used for context compaction; falls back to model
-  max_iterations: 50     # safety cap on agent loop turns per prompt
-  context_window: 128000 # token budget for LLM compaction; 0 disables
+  provider: deepseek
+  model: deepseek-chat
+  small_model: deepseek-chat
+  max_iterations: 50
+  context_window: 128000
   approval: ask          # ask | allow | deny
 ```
 

@@ -100,8 +100,8 @@ type OtelConfig struct {
 func defaultConfig() *Config {
 	return &Config{
 		Default: Defaults{
-			Model:         "openai/gpt-4o-mini",
-			SmallModel:    "openai/gpt-4o-mini",
+			Model:         "deepseek/deepseek-chat",
+			SmallModel:    "deepseek/deepseek-chat",
 			MaxIterations: 50,
 			ContextWindow: 128000,
 			Approval:      "ask",

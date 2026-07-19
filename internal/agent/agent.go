@@ -495,7 +495,7 @@ func (l *Loop) applyDefaults() {
 		l.MaxIterations = 50
 	}
 	if l.Model == "" {
-		l.Model = "gpt-4o-mini"
+		l.Model = "deepseek-chat"
 	}
 	if l.RetryBackoff <= 0 {
 		l.RetryBackoff = time.Second

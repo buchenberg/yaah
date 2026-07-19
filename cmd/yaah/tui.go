@@ -138,8 +138,8 @@ func runTUI() error {
 	if err != nil || cfg == nil {
 		cfg = &config.Config{
 			Default: config.Defaults{
-				Model:         "openai/gpt-4o-mini",
-				SmallModel:    "openai/gpt-4o-mini",
+				Model:         "deepseek/deepseek-chat",
+				SmallModel:    "deepseek/deepseek-chat",
 				MaxIterations: 50,
 			},
 		}

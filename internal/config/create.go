@@ -12,13 +12,14 @@ const defaultConfigYAML = `# yaah configuration — see https://github.com/buche
 # Environment variables can be referenced as ${VAR_NAME}.
 
 providers:
-  openai:
-    name: OpenAI                          # display name (optional, shown in /model)
-    base_url: https://api.openai.com/v1
-    api_key: ${OPENAI_API_KEY}
-    # models:                              # optional: override the API model list
-    #   - gpt-4o
-    #   - gpt-4o-mini
+  deepseek:
+    name: DeepSeek
+    base_url: https://api.deepseek.com/v1
+    api_key: ${DEEPSEEK_API_KEY}
+  glm:
+    name: GLM
+    base_url: https://api.z.ai/api/paas/v4
+    api_key: ${GLM_API_KEY}
   ollama:
     name: Ollama
     base_url: http://localhost:11434/v1
@@ -27,9 +28,9 @@ providers:
 # editor: code --wait                    # editor for 'yaah config edit' (falls back to $EDITOR, $VISUAL, vi)
 
 default:
-  provider: openai                        # which provider to use by default
-  model: gpt-4o-mini                      # model name (no provider prefix needed)
-  small_model: gpt-4o-mini
+  provider: deepseek                       # which provider to use by default
+  model: deepseek-chat                      # model name (no provider prefix needed)
+  small_model: deepseek-chat
   max_iterations: 50
   approval: ask                           # ask | allow | deny
 
