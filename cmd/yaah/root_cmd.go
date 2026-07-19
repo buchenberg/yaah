@@ -184,19 +184,18 @@ func runOneShot(cmd *cobra.Command, prompt string) error {
 // one-shot prompts. Building it once avoids re-opening the database,
 // re-spawning MCP servers, and re-discovering skills on every turn.
 type agentSession struct {
-	cfg            *config.Config
-	provider       agent.Provider
-	providerName   string
-	modelName      string
-	systemPrompt   string
-	toolReg        *tools.Registry
-	db             *memory.DB
-	mcpClients     []mcp.MCPClient
-	procMgr        *processpkg.Manager
-	messages       []types.Message
-	sessionID      string
-	msgIdx         int
-	persistedCount int
+	cfg          *config.Config
+	provider     agent.Provider
+	providerName string
+	modelName    string
+	systemPrompt string
+	toolReg      *tools.Registry
+	db           *memory.DB
+	mcpClients   []mcp.MCPClient
+	procMgr      *processpkg.Manager
+	messages     []types.Message
+	sessionID    string
+	msgIdx       int
 }
 
 func newAgentSession() (*agentSession, error) {
@@ -276,15 +275,52 @@ func newAgentSession() (*agentSession, error) {
 		Runner: makeTaskRunner(provider, systemPrompt, modelName),
 	})
 
-	sessionID := fmt.Sprintf("sess-%d", time.Now().UnixNano())
-	if db != nil {
-		cwd, _ := os.Getwd()
-		db.CreateSession(memory.Session{
-			ID:        sessionID,
-			StartedAt: time.Now().Unix(),
-			CWD:       cwd,
-			Model:     modelName,
-		})
+	var messages []types.Message
+	var sessionID string
+	var msgIdx int
+	if resumeSessionID != "" {
+		if db == nil {
+			return nil, fmt.Errorf("cannot resume session: no database available (run 'yaah doctor')")
+		}
+		dbMsgs, err := db.GetMessages(resumeSessionID)
+		if err != nil {
+			return nil, fmt.Errorf("cannot resume session %s: %w", resumeSessionID, err)
+		}
+		if len(dbMsgs) == 0 {
+			return nil, fmt.Errorf("session %s not found or has no messages", resumeSessionID)
+		}
+		messages = make([]types.Message, 0, len(dbMsgs))
+		for _, m := range dbMsgs {
+			msg := types.Message{
+				Role:    m.Role,
+				Content: m.Content,
+				Name:    m.ToolName,
+			}
+			if m.ToolCalls != "" {
+				json.Unmarshal([]byte(m.ToolCalls), &msg.ToolCalls)
+			}
+			messages = append(messages, msg)
+		}
+		if len(messages) > 0 {
+			last := messages[len(messages)-1]
+			if last.Role == "assistant" && len(last.ToolCalls) > 0 {
+				messages = append(messages, types.SystemMsg(
+					"Previous execution was interrupted. Please continue from where you left off."))
+			}
+		}
+		sessionID = resumeSessionID
+		msgIdx = len(dbMsgs)
+	} else {
+		sessionID = fmt.Sprintf("sess-%d", time.Now().UnixNano())
+		if db != nil {
+			cwd, _ := os.Getwd()
+			db.CreateSession(memory.Session{
+				ID:        sessionID,
+				StartedAt: time.Now().Unix(),
+				CWD:       cwd,
+				Model:     modelName,
+			})
+		}
 	}
 
 	return &agentSession{
@@ -298,6 +334,8 @@ func newAgentSession() (*agentSession, error) {
 		mcpClients:   mcpClients,
 		procMgr:      procMgr,
 		sessionID:    sessionID,
+		messages:     messages,
+		msgIdx:       msgIdx,
 	}, nil
 }
 
@@ -405,6 +443,8 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		SessionID:        s.sessionID,
 		PipelineNames:    s.cfg.Agent.Middleware.Enabled,
 		PipelineDisabled: s.cfg.Agent.Middleware.Disabled,
+		DB:               s.db,
+		MsgIdx:           s.msgIdx,
 	}
 
 	spin := spinner.New(nil, "Thinking...")
@@ -453,47 +493,9 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 
 	// Persist the conversation history for the next turn.
 	s.messages = loop.Messages
-
-	if s.db != nil {
-		s.persistMessages(loop.Messages)
-	}
+	s.msgIdx = loop.MsgIdx
 
 	return response, streamed, err
-}
-
-func (s *agentSession) persistMessages(messages []types.Message) {
-	newMsgs := messages[s.persistedCount:]
-	for _, m := range newMsgs {
-		content := m.Content
-		if content == "" {
-			var parts []string
-			for _, tc := range m.ToolCalls {
-				parts = append(parts, fmt.Sprintf("[tool:%s] %s", tc.Function.Name, tc.Function.Arguments))
-			}
-			content = strings.Join(parts, "\n")
-		}
-		toolCallsJSON := ""
-		if len(m.ToolCalls) > 0 {
-			data, _ := json.Marshal(m.ToolCalls)
-			toolCallsJSON = string(data)
-		}
-		toolName := ""
-		if m.Role == "tool" {
-			toolName = m.Name
-		}
-		msg := memory.Message{
-			SessionID: s.sessionID,
-			Idx:       s.msgIdx,
-			Role:      m.Role,
-			Content:   content,
-			ToolName:  toolName,
-			ToolCalls: toolCallsJSON,
-			Timestamp: time.Now().Unix(),
-		}
-		s.db.AddMessage(msg)
-		s.msgIdx++
-	}
-	s.persistedCount = len(messages)
 }
 
 // resolveApproval returns the effective approval mode.

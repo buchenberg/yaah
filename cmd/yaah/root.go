@@ -48,6 +48,10 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&approvalOverride,
 		"approval", "a", "",
 		"override approval mode: allow, ask, or deny")
+	rootCmd.PersistentFlags().StringVar(&resumeSessionID,
+		"resume", "",
+		"resume a previous session by ID")
 }
 
 var approvalOverride string
+var resumeSessionID string

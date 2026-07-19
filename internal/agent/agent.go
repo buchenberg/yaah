@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -111,6 +112,15 @@ type Loop struct {
 
 	// ApprovalMode controls per-tool approval behavior: "allow", "ask", or "deny".
 	ApprovalMode string
+
+	// DB is the optional SQLite database for per-message persistence.
+	// When non-nil, each message is persisted as it is appended to the
+	// conversation, enabling session resume across process restarts.
+	// When nil, the loop runs entirely in memory.
+	DB *memory.DB
+
+	// MsgIdx tracks the next message index for DB inserts.
+	MsgIdx int
 
 	// FollowUps is an optional channel for queuing follow-up messages while
 	// the agent is running. Messages received are injected as user messages
@@ -216,6 +226,47 @@ func (l *Loop) closeHook() {
 	}
 }
 
+// persistMessage writes a single message to the database.
+// No-op if DB is nil. Errors are logged to stderr but never returned,
+// so the agent loop can continue even if the database is unavailable.
+func (l *Loop) persistMessage(msg types.Message) {
+	if l.DB == nil {
+		return
+	}
+	content := msg.Content
+	if content == "" {
+		var parts []string
+		for _, tc := range msg.ToolCalls {
+			parts = append(parts, fmt.Sprintf("[tool:%s] %s", tc.Function.Name, tc.Function.Arguments))
+		}
+		content = strings.Join(parts, "\n")
+	}
+	toolCallsJSON := ""
+	if len(msg.ToolCalls) > 0 {
+		data, _ := json.Marshal(msg.ToolCalls)
+		toolCallsJSON = string(data)
+	}
+	toolName := ""
+	if msg.Role == "tool" {
+		toolName = msg.Name
+	}
+	m := memory.Message{
+		SessionID:  l.SessionID,
+		Idx:        l.MsgIdx,
+		Role:       msg.Role,
+		Content:    content,
+		ToolName:   toolName,
+		ToolCallID: msg.ToolCallID,
+		ToolCalls:  toolCallsJSON,
+		Timestamp:  time.Now().Unix(),
+	}
+	if err := l.DB.AddMessage(m); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: db persist: %v\n", err)
+		return
+	}
+	l.MsgIdx++
+}
+
 // buildPipeline assembles the middleware pipeline from config.
 func (l *Loop) buildPipeline() *Pipeline {
 	if len(l.Middleware) > 0 {
@@ -259,6 +310,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 
 	if l.Messages != nil {
 		l.Messages = append(l.Messages, types.UserMsg(userInput))
+		l.persistMessage(l.Messages[len(l.Messages)-1])
 	} else {
 		l.Messages = []types.Message{
 			types.SystemMsg(l.SystemPrompt),
@@ -268,6 +320,8 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			Event: SessionStart,
 			Model: l.Model,
 		})
+		l.persistMessage(l.Messages[0])
+		l.persistMessage(l.Messages[1])
 	}
 
 	messages := l.Messages
@@ -315,6 +369,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			return "", fmt.Errorf("provider error: %w", err)
 		}
 		messages = append(messages, msg)
+		l.persistMessage(msg)
 
 		if len(msg.ToolCalls) == 0 {
 			l.Messages = messages
@@ -346,6 +401,9 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		}
 
 		messages = step.Messages
+		for i := l.MsgIdx; i < len(messages); i++ {
+			l.persistMessage(messages[i])
+		}
 	}
 
 	l.Messages = messages
@@ -461,6 +519,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			Duration: r.dur,
 		}
 		*messages = append(*messages, types.ToolResultMsg(r.callID, r.name, r.content))
+		l.persistMessage((*messages)[len(*messages)-1])
 	}
 
 	return results
@@ -474,6 +533,7 @@ func (l *Loop) getAssistantMessage(ctx context.Context, req types.ChatRequest) (
 	var lastMsg types.Message
 	var wasStreamed bool
 	var lastErr error
+	compactAttempts := 0
 
 	for attempt := 0; attempt <= l.MaxRetries; attempt++ {
 		var msg types.Message
@@ -507,6 +567,22 @@ func (l *Loop) getAssistantMessage(ctx context.Context, req types.ChatRequest) (
 		lastMsg = msg
 		wasStreamed = streamed
 		lastErr = err
+
+		// Auto-compact on context overflow: if the provider rejected the
+		// request because it exceeds the model's context window, compact
+		// aggressively and retry without counting against MaxRetries.
+		if isContextOverflowError(err) && l.ContextWindow > 0 && compactAttempts < 2 {
+			beforeCount := len(l.Messages)
+			l.compactContext(ctx, 0.5) // aggressive 50% threshold
+			compactAttempts++
+			// If compaction actually reduced message count, rebuild request and retry freely.
+			if len(l.Messages) < beforeCount {
+				req.Messages = l.Messages
+				attempt-- // don't count against MaxRetries
+				continue
+			}
+			// Fall through to normal backoff if compaction didn't help.
+		}
 
 		if attempt < l.MaxRetries {
 			backoff := l.RetryBackoff * time.Duration(1<<attempt)
@@ -548,6 +624,31 @@ type toolExecResult struct {
 	content string
 	dur     time.Duration
 	err     error
+}
+
+// isContextOverflowError returns true if the error indicates the provider
+// rejected the request because it exceeds the model's context window.
+func isContextOverflowError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, pattern := range []string{
+		"context length",
+		"too many tokens",
+		"reduce the length",
+		"maximum context",
+		"max tokens",
+		"token limit",
+		"prompt is too long",
+		"context window",
+		"requested token count",
+	} {
+		if strings.Contains(msg, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 // toolCallHash returns a SHA-256 hash of tool name, arguments, and result for loop detection.

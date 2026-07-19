@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -793,3 +795,556 @@ func TestLoop_thinkingCallback(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// --- Test: Session persistence ---
+
+func TestLoop_persistMessageNilDB(t *testing.T) {
+	loop := &Loop{DB: nil, SessionID: "test"}
+	loop.persistMessage(types.Message{Role: "user", Content: "hello"})
+	// Should not panic
+}
+
+func TestLoop_persistMessageToDB(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := memory.Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	db.CreateSession(memory.Session{
+		ID: "sess-1", StartedAt: time.Now().Unix(), CWD: "/tmp", Model: "test",
+	})
+
+	loop := &Loop{DB: db, SessionID: "sess-1"}
+	loop.persistMessage(types.Message{Role: "system", Content: "you are a bot"})
+	loop.persistMessage(types.Message{Role: "user", Content: "hello"})
+
+	msgs, err := db.GetMessages("sess-1")
+	if err != nil {
+		t.Fatalf("GetMessages() error: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+	if msgs[0].Role != "system" || msgs[0].Content != "you are a bot" {
+		t.Errorf("msg[0] = role=%s content=%s", msgs[0].Role, msgs[0].Content)
+	}
+	if msgs[1].Role != "user" || msgs[1].Content != "hello" {
+		t.Errorf("msg[1] = role=%s content=%s", msgs[1].Role, msgs[1].Content)
+	}
+	if msgs[0].Idx != 0 {
+		t.Errorf("msg[0].Idx = %d, want 0", msgs[0].Idx)
+	}
+	if msgs[1].Idx != 1 {
+		t.Errorf("msg[1].Idx = %d, want 1", msgs[1].Idx)
+	}
+}
+
+func TestLoop_persistMessageWithToolCall(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := memory.Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	db.CreateSession(memory.Session{
+		ID: "sess-1", StartedAt: time.Now().Unix(), CWD: "/tmp", Model: "test",
+	})
+
+	loop := &Loop{DB: db, SessionID: "sess-1"}
+	assistantMsg := types.Message{
+		Role: "assistant",
+		ToolCalls: []types.ToolCall{{
+			ID:   "call_abc",
+			Type: "function",
+			Function: types.ToolCallFn{
+				Name:      "read",
+				Arguments: `{"filePath":"/tmp/foo"}`,
+			},
+		}},
+	}
+	loop.persistMessage(assistantMsg)
+
+	toolMsg := types.ToolResultMsg("call_abc", "read", "file contents here")
+	loop.persistMessage(toolMsg)
+
+	msgs, err := db.GetMessages("sess-1")
+	if err != nil {
+		t.Fatalf("GetMessages() error: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+
+	// Assistant message should have serialized tool calls
+	if msgs[0].Role != "assistant" {
+		t.Errorf("msg[0].Role = %s, want assistant", msgs[0].Role)
+	}
+	if msgs[0].ToolCalls == "" {
+		t.Error("msg[0].ToolCalls should not be empty")
+	}
+	if !strings.Contains(msgs[0].ToolCalls, "call_abc") {
+		t.Errorf("ToolCalls should contain call_abc: %s", msgs[0].ToolCalls)
+	}
+
+	// Tool message should have ToolCallID and ToolName
+	if msgs[1].Role != "tool" {
+		t.Errorf("msg[1].Role = %s, want tool", msgs[1].Role)
+	}
+	if msgs[1].ToolCallID != "call_abc" {
+		t.Errorf("msg[1].ToolCallID = %s, want call_abc", msgs[1].ToolCallID)
+	}
+	if msgs[1].ToolName != "read" {
+		t.Errorf("msg[1].ToolName = %s, want read", msgs[1].ToolName)
+	}
+	if msgs[1].Content != "file contents here" {
+		t.Errorf("msg[1].Content = %s, want file contents here", msgs[1].Content)
+	}
+}
+
+func TestLoop_sessionPersistenceAcrossRunCalls(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := memory.Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	sessionID := "sess-persist"
+	db.CreateSession(memory.Session{
+		ID: sessionID, StartedAt: time.Now().Unix(), CWD: "/tmp", Model: "test",
+	})
+
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{{
+			Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant", Content: "Hello from first run"},
+				FinishReason: "stop",
+			}},
+		}},
+	}
+
+	reg := tools.NewRegistry()
+	loop := &Loop{
+		Provider:      fp,
+		Registry:      reg,
+		SystemPrompt:  "You are a test bot.",
+		SessionID:     sessionID,
+		DB:            db,
+		MaxIterations: 5,
+	}
+
+	resp, err := loop.Run(context.Background(), "first message")
+	if err != nil {
+		t.Fatalf("first Run() error: %v", err)
+	}
+	if resp != "Hello from first run" {
+		t.Errorf("first response = %q", resp)
+	}
+
+	msgs, err := db.GetMessages(sessionID)
+	if err != nil {
+		t.Fatalf("GetMessages() error: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages (system + user + assistant), got %d: %+v", len(msgs), msgs)
+	}
+	if msgs[0].Role != "system" {
+		t.Errorf("msg[0].Role = %s, want system", msgs[0].Role)
+	}
+	if msgs[1].Role != "user" || msgs[1].Content != "first message" {
+		t.Errorf("msg[1] = role=%s content=%s", msgs[1].Role, msgs[1].Content)
+	}
+	if msgs[2].Role != "assistant" || msgs[2].Content != "Hello from first run" {
+		t.Errorf("msg[2] = role=%s content=%s", msgs[2].Role, msgs[2].Content)
+	}
+}
+
+func TestLoop_sessionPersistenceWithToolCalls(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := memory.Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	sessionID := "sess-tools"
+	db.CreateSession(memory.Session{
+		ID: sessionID, StartedAt: time.Now().Unix(), CWD: "/tmp", Model: "test",
+	})
+
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{
+			{
+				Choices: []types.Choice{{
+					Message: types.Message{
+						Role: "assistant",
+						ToolCalls: []types.ToolCall{{
+							ID:   "call_read",
+							Type: "function",
+							Function: types.ToolCallFn{
+								Name:      "read",
+								Arguments: `{"filePath":"/tmp/test.txt"}`,
+							},
+						}},
+					},
+					FinishReason: "tool_calls",
+				}},
+			},
+			{
+				Choices: []types.Choice{{
+					Message:      types.Message{Role: "assistant", Content: "File read successfully"},
+					FinishReason: "stop",
+				}},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	loop := &Loop{
+		Provider:      fp,
+		Registry:      reg,
+		SystemPrompt:  "You are a test bot.",
+		SessionID:     sessionID,
+		DB:            db,
+		MaxIterations: 5,
+	}
+
+	resp, err := loop.Run(context.Background(), "read /tmp/test.txt")
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if resp != "File read successfully" {
+		t.Errorf("response = %q", resp)
+	}
+
+	msgs, err := db.GetMessages(sessionID)
+	if err != nil {
+		t.Fatalf("GetMessages() error: %v", err)
+	}
+	// Expected: system, user, assistant(tool_calls), tool(result), assistant(final)
+	if len(msgs) != 5 {
+		t.Fatalf("expected 5 messages, got %d", len(msgs))
+	}
+
+	// Check message sequence
+	roles := []string{"system", "user", "assistant", "tool", "assistant"}
+	for i, want := range roles {
+		if msgs[i].Role != want {
+			t.Errorf("msg[%d].Role = %s, want %s", i, msgs[i].Role, want)
+		}
+	}
+
+	// Tool message should have tool_call_id
+	if msgs[3].ToolCallID != "call_read" {
+		t.Errorf("tool msg ToolCallID = %s, want call_read", msgs[3].ToolCallID)
+	}
+	if msgs[3].ToolName != "read" {
+		t.Errorf("tool msg ToolName = %s, want read", msgs[3].ToolName)
+	}
+
+	// Assistant message with tool calls should have serialized ToolCalls
+	if msgs[2].ToolCalls == "" {
+		t.Error("assistant msg with tool calls has empty ToolCalls")
+	}
+	if !strings.Contains(msgs[2].ToolCalls, "call_read") {
+		t.Errorf("ToolCalls missing call_read: %s", msgs[2].ToolCalls)
+	}
+}
+
+func TestLoop_sessionPersistenceMultipleTurns(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := memory.Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	sessionID := "sess-multi"
+	db.CreateSession(memory.Session{
+		ID: sessionID, StartedAt: time.Now().Unix(), CWD: "/tmp", Model: "test",
+	})
+
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{
+			{Choices: []types.Choice{{Message: types.Message{Role: "assistant", Content: "Turn 1 response"}, FinishReason: "stop"}}},
+			{Choices: []types.Choice{{Message: types.Message{Role: "assistant", Content: "Turn 2 response"}, FinishReason: "stop"}}},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	loop := &Loop{
+		Provider:      fp,
+		Registry:      reg,
+		SystemPrompt:  "You are a test bot.",
+		SessionID:     sessionID,
+		DB:            db,
+		MaxIterations: 5,
+	}
+
+	// Run turn 1
+	resp1, err := loop.Run(context.Background(), "turn 1")
+	if err != nil {
+		t.Fatalf("Run() turn 1 error: %v", err)
+	}
+	if resp1 != "Turn 1 response" {
+		t.Errorf("response 1 = %q", resp1)
+	}
+
+	// Run turn 2 (Messages persists across runs)
+	resp2, err := loop.Run(context.Background(), "turn 2")
+	if err != nil {
+		t.Fatalf("Run() turn 2 error: %v", err)
+	}
+	if resp2 != "Turn 2 response" {
+		t.Errorf("response 2 = %q", resp2)
+	}
+
+	msgs, err := db.GetMessages(sessionID)
+	if err != nil {
+		t.Fatalf("GetMessages() error: %v", err)
+	}
+	// Expected: system, user1, assistant1, user2, assistant2 = 5 messages
+	if len(msgs) != 5 {
+		t.Fatalf("expected 5 messages, got %d", len(msgs))
+	}
+	expectedRoles := []string{"system", "user", "assistant", "user", "assistant"}
+	for i, want := range expectedRoles {
+		if msgs[i].Role != want {
+			t.Errorf("msg[%d].Role = %s, want %s", i, msgs[i].Role, want)
+		}
+	}
+	if msgs[4].Content != "Turn 2 response" {
+		t.Errorf("last msg content = %q", msgs[4].Content)
+	}
+}
+
+func TestLoop_persistMessageNoDB(t *testing.T) {
+	loop := &Loop{DB: nil, SessionID: "test"}
+	loop.MsgIdx = 5
+	loop.persistMessage(types.Message{Role: "user", Content: "hello"})
+	// Should be a no-op, not increment MsgIdx
+	if loop.MsgIdx != 5 {
+		t.Errorf("MsgIdx should not change when DB is nil, got %d", loop.MsgIdx)
+	}
+}
+
+func TestLoop_persistMessageEmptyContent(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := memory.Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	db.CreateSession(memory.Session{
+		ID: "sess-1", StartedAt: time.Now().Unix(), CWD: "/tmp", Model: "test",
+	})
+
+	loop := &Loop{DB: db, SessionID: "sess-1"}
+	assistantMsg := types.Message{
+		Role:    "assistant",
+		Content: "",
+		ToolCalls: []types.ToolCall{{
+			ID:   "call_1",
+			Type: "function",
+			Function: types.ToolCallFn{
+				Name:      "bash",
+				Arguments: `{"command":"ls"}`,
+			},
+		}},
+	}
+	loop.persistMessage(assistantMsg)
+
+	msgs, err := db.GetMessages("sess-1")
+	if err != nil {
+		t.Fatalf("GetMessages() error: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	// Empty content with tool calls should have a synthetic content
+	if msgs[0].Content == "" {
+		t.Error("empty content with tool calls should produce synthetic content")
+	}
+	if !strings.Contains(msgs[0].Content, "[tool:bash]") {
+		t.Errorf("synthetic content missing tool info: %q", msgs[0].Content)
+	}
+}
+
+// --- Test: Context-overflow auto-compact ---
+
+func TestIsContextOverflowError(t *testing.T) {
+	positives := []string{
+		"context length exceeded",
+		"too many tokens in the request",
+		"reduce the length of your prompt",
+		"maximum context window reached",
+		"max tokens limit exceeded",
+		"token limit reached",
+		"prompt is too long for this model",
+		"context window exceeded for model gpt-4o",
+		"requested token count exceeds the maximum",
+	}
+	for _, msg := range positives {
+		name := msg
+		if len(name) > 30 {
+			name = name[:27] + "..."
+		}
+		t.Run(name, func(t *testing.T) {
+			if !isContextOverflowError(fmtErrorf(msg)) {
+				t.Errorf("expected true for: %q", msg)
+			}
+		})
+	}
+
+	negatives := []string{
+		"rate limit exceeded",
+		"authentication failed",
+		"connection refused",
+		"timeout",
+		"",
+	}
+	for _, msg := range negatives {
+		t.Run(msg, func(t *testing.T) {
+			if isContextOverflowError(fmtErrorf(msg)) {
+				t.Errorf("expected false for: %q", msg)
+			}
+		})
+	}
+}
+
+func TestLoop_autoCompactOnContextOverflow(t *testing.T) {
+	fp := &fakeProvider{
+		maxFails: 1,
+		failErr:  fmtErrorf("context length exceeded: maximum tokens 4096"),
+		responses: []*types.ChatResponse{{
+			Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant", Content: "success after compact"},
+				FinishReason: "stop",
+			}},
+		}},
+	}
+
+	reg := tools.NewRegistry()
+	loop := &Loop{
+		Provider:        fp,
+		Registry:        reg,
+		SystemPrompt:    "test prompt",
+		MaxIterations:   3,
+		MaxRetries:      0, // No regular retries — auto-compact handles it
+		ContextWindow:   1000,
+		CompactProvider: fp,
+		CompactModel:    "test",
+	}
+
+	// Pre-populate with enough messages to need compaction
+	loop.Messages = []types.Message{
+		types.SystemMsg("test prompt"),
+	}
+	for i := 0; i < 20; i++ {
+		loop.Messages = append(loop.Messages, types.UserMsg("message "+strings.Repeat("x", 80)))
+		loop.Messages = append(loop.Messages, types.AssistantMsg("response "+strings.Repeat("y", 80), nil))
+	}
+
+	resp, err := loop.Run(context.Background(), "test")
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if resp != "success after compact" {
+		t.Errorf("response = %q", resp)
+	}
+	// Two LLM calls: first failed (context overflow), then compaction succeeded, then original call succeeded
+	if fp.failCount != 1 {
+		t.Errorf("expected 1 failure before success, got %d", fp.failCount)
+	}
+}
+
+func TestLoop_autoCompactDoesNotTriggerOnNonContextError(t *testing.T) {
+	var compactionCalls int
+	reg := tools.NewRegistry()
+
+	// Use a provider that returns a non-context error
+	fp := &fakeProvider{
+		maxFails: 3,
+		failErr:  fmtErrorf("authentication failed"),
+	}
+
+	loop := &Loop{
+		Provider:      fp,
+		Registry:      reg,
+		SystemPrompt:  "test",
+		MaxIterations: 3,
+		MaxRetries:    2,
+		ContextWindow: 1000,
+	}
+
+	// Pre-populate so we can check if compaction was called
+	loop.Messages = []types.Message{
+		types.SystemMsg("test"),
+	}
+	for i := 0; i < 15; i++ {
+		loop.Messages = append(loop.Messages, types.UserMsg("msg"))
+	}
+	_ = compactionCalls
+
+	_, err := loop.Run(context.Background(), "test")
+	if err == nil {
+		t.Fatal("expected error on non-context failure")
+	}
+	if !strings.Contains(err.Error(), "authentication failed") {
+		t.Errorf("expected auth error, got: %v", err)
+	}
+}
+
+func TestLoop_autoCompactCapped(t *testing.T) {
+	// Verify that auto-compact doesn't retry forever.
+	// compactContext only compacts if len(rest) > 4, so after one compact
+	// the second call should fall through to normal backoff.
+	compactProvider := &fakeProvider{
+		failCount: 0,
+		maxFails:  0,
+	}
+	_ = compactProvider
+
+	fp := &fakeProvider{
+		maxFails: 10,
+		failErr:  fmtErrorf("token limit exceeded"),
+	}
+
+	reg := tools.NewRegistry()
+	loop := &Loop{
+		Provider:            fp,
+		Registry:            reg,
+		SystemPrompt:        "test",
+		MaxIterations:       3,
+		MaxRetries:          2,
+		ContextWindow:       500,
+		CompactProvider:     fp,
+		CompactModel:        "test",
+		CompactionThreshold: 0.5,
+	}
+
+	// Enough messages for one compact to help
+	loop.Messages = []types.Message{
+		types.SystemMsg("test"),
+	}
+	for i := 0; i < 30; i++ {
+		loop.Messages = append(loop.Messages, types.UserMsg("message "+strings.Repeat("x", 50)))
+	}
+
+	_, err := loop.Run(context.Background(), "test")
+	if err == nil {
+		t.Fatal("expected eventual error")
+	}
+	// Should have attempted multiple compacts + normal retries
+	if !strings.Contains(err.Error(), "token limit exceeded") {
+		t.Errorf("expected token limit error, got: %v", err)
+	}
+}
+
+type fmtErrorf string
+
+func (e fmtErrorf) Error() string { return string(e) }

@@ -46,6 +46,8 @@ The agent loop lives in `internal/agent/agent.go`. The entry point is `Loop.Run(
 | `Messages` | Conversation history, persisted across multiple `Run()` calls |
 | `ContextWindow` | Token budget for context compaction (0 = disabled) |
 | `ApprovalMode` | `"allow"`, `"ask"`, or `"deny"` for destructive tools |
+| `DB` | Optional SQLite database for per-message persistence (nil = in-memory only) |
+| `MsgIdx` | Next message index for DB inserts, initialized to `len(Messages)` on resume |
 
 ### Agent loop (`runMiddleware`)
 
@@ -57,12 +59,14 @@ for iter := 0; iter < MaxIterations; iter++ {
     2. Build Step{ Messages, Tools, Iteration, Model, SystemPrompt }
     3. pipeline.RunPrepareStep(ctx, step)      ← middleware hook
     4. getAssistantMessage(ctx, req)            ← LLM call (+ retry)
-    5. If no tool calls → return content        ← terminal
-    6. If streamed → OnFlush(content)           ← flush streamed content
-    7. pipeline.RunPostModel(ctx, &msg, step)   ← middleware hook
-    8. executeAndCollect(ctx, toolCalls, &messages)  ← run tools
-    9. pipeline.RunPostTool(ctx, results, step) ← middleware hook
-   10. Update messages ← step.Messages
+    5. persistMessage(msg)                      ← DB persistence (no-op if DB==nil)
+    6. If no tool calls → return content        ← terminal
+    7. If streamed → OnFlush(content)           ← flush streamed content
+    8. pipeline.RunPostModel(ctx, &msg, step)   ← middleware hook
+    9. executeAndCollect(ctx, toolCalls, &messages)  ← run tools, persist results
+   10. pipeline.RunPostTool(ctx, results, step) ← middleware hook
+   11. Update messages ← step.Messages
+   12. Persist any new messages from middleware (e.g. compaction summaries)
 }
 ```
 
@@ -288,6 +292,54 @@ Summarize the following conversation excerpt.
 ### Truncation fallback (`trimContext`)
 
 Removes oldest messages one at a time until the token budget is met. Always preserves the system message at index 0.
+
+---
+
+## Session persistence
+
+File: `internal/agent/agent.go` (`persistMessage`)
+
+When `Loop.DB` is non-nil, every message is persisted to SQLite as it is
+appended to the conversation. This enables session resume across process
+restarts and crash recovery.
+
+### Persistence points
+
+| Point | What | Where |
+|---|---|---|
+| First turn | System prompt + user message | `runMiddleware`, after message construction |
+| Subsequent turns | User message only | `runMiddleware`, before loop entry |
+| Assistant response | Content + tool calls (serialized as JSON) | `runMiddleware`, after `getAssistantMessage` |
+| Tool results | Result content, call ID, tool name | `executeAndCollect`, after each tool execution |
+| Compaction summaries | New synthetic system messages | `runMiddleware`, after `step.Messages` assignment |
+
+### Message conversion
+
+`types.Message` → `memory.Message` mapping:
+
+- `Content`: serialized as-is; empty assistant content with tool calls gets a synthetic `[tool:name] args` representation
+- `ToolCalls`: serialized as JSON array; deserialized on load
+- `ToolCallID`: preserved for tool result messages (required for OpenAI round-trip)
+- `ToolName`: the tool name for tool result messages
+
+### Resume flow
+
+```
+yaah --resume <session-id> "continue"
+  → newAgentSession loads messages from DB
+  → Populates s.messages with the full conversation history
+  → If last message is an assistant message with pending tool calls,
+    injects an interruption notice as a system message
+  → runPrompt sets loop.MsgIdx = len(s.messages) so new messages
+    get the correct DB indices
+  → Loop runs normally, appending new messages to both memory and DB
+```
+
+### Error handling
+
+`persistMessage` logs errors to stderr (`warning: db persist: ...`) but never
+returns them. The agent loop continues even if the database is unavailable.
+`MsgIdx` is not incremented on error, so the failed message slot is skipped.
 
 ---
 
