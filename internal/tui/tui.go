@@ -98,6 +98,7 @@ var defaultCommands = []Command{
 	{Name: "/help", Description: "Show available commands"},
 	{Name: "/clear", Description: "Clear chat history"},
 	{Name: "/compact", Description: "Summarize old messages"},
+	{Name: "/banner", Description: "Toggle ASCII art banner"},
 	{Name: "/model", Description: "Switch model"},
 	{Name: "/quit", Description: "Exit the TUI"},
 }
@@ -135,6 +136,8 @@ type Model struct {
 	searchQuery       string          // current search term
 	searchMatches     []int           // line numbers with matches
 	searchIdx         int             // current match index (-1 = no active match)
+	showBanner        bool            // false when banner is hidden via /banner
+	needsRefresh      bool            // true when viewport needs a throttled refresh
 	onSubmit          func(string)
 	onQuit            func()
 	onCompact         func()
@@ -171,6 +174,7 @@ func New(provider, model string, contextWindow int, onSubmit func(string), onQui
 		banner:            bn,
 		reasoningExpanded: make(map[string]bool),
 		help:              help.New(),
+		showBanner:        true,
 		provider:          provider,
 		modelName:         model,
 		contextWindow:     contextWindow,
@@ -655,8 +659,12 @@ func (m *Model) reRenderMessages() {
 }
 
 // headerHeight returns the number of lines the banner + provider header
-// occupies. Used to size the viewport.
+// occupies. Used to size the viewport. When the banner is hidden, only the
+// provider line counts.
 func (m *Model) headerHeight() int {
+	if !m.showBanner || m.banner == "" {
+		return 2 // provider line + blank line
+	}
 	header := m.banner + "\n\n" +
 		titleStyle.Render(fmt.Sprintf("%s/%s", m.provider, m.modelName)) + "\n"
 	return len(strings.Split(header, "\n"))
@@ -710,6 +718,15 @@ func (m *Model) executeCommand(input string) {
 	case "/compact":
 		if m.onCompact != nil {
 			m.onCompact()
+		}
+	case "/banner":
+		m.showBanner = !m.showBanner
+		m.adjustViewport()
+		m.refreshViewport()
+		if m.showBanner {
+			m.AddMessage("system", "Banner shown.")
+		} else {
+			m.AddMessage("system", "Banner hidden. Use /banner to show it again.")
 		}
 	case "/model":
 		if len(m.modelItems) == 0 {
@@ -802,15 +819,25 @@ func (m *Model) ClearToolCall() {
 }
 
 // AppendToken appends a streaming token to the current response.
+// To avoid excessive viewport rebuilds during fast streaming, only
+// a full refresh + scroll runs when the debounce flag is cleared.
+// The spinner tick (which fires ~15 times/sec) picks up pending
+// refreshes.
 func (m *Model) AppendToken(token string) {
 	if !m.streaming {
 		m.streaming = true
 		m.streamContent = ""
+		m.needsRefresh = true
 	}
 
 	m.streamContent += token
-	m.refreshViewport()
-	m.scrollToBottom()
+
+	// Refresh immediately if no pending refresh, then set the debounce flag.
+	if !m.needsRefresh {
+		m.refreshViewport()
+		m.scrollToBottom()
+		m.needsRefresh = true
+	}
 }
 
 // HandleAgentMsg processes messages from the agent goroutine.
@@ -936,6 +963,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, spinCmd = m.spinner.Update(msg)
 		if m.thinking {
 			m.refreshViewport()
+		}
+		// Flush pending viewport refresh from streaming tokens.
+		if m.needsRefresh && m.streaming {
+			m.refreshViewport()
+			m.scrollToBottom()
+			m.needsRefresh = false
 		}
 		return m, spinCmd
 
@@ -1773,9 +1806,27 @@ func (m *Model) View() tea.View {
 		return tea.NewView("Initializing...")
 	}
 
-	// Header: figlet banner + provider/model line
-	header := m.banner + "\n\n" +
-		titleStyle.Render(fmt.Sprintf("%s/%s", m.provider, m.modelName)) + "\n"
+	// Minimum size check: if the terminal is too small, show a message.
+	if m.width < 60 || m.height < 20 {
+		msg := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("9")).
+			Render(fmt.Sprintf(
+				"Terminal too small — yaah needs at least 60×20 (current: %d×%d)",
+				m.width, m.height))
+		v := tea.NewView(zone.Scan(msg))
+		v.AltScreen = true
+		return v
+	}
+
+	// Header: figlet banner + provider/model line (or compact if hidden)
+	var header string
+	if m.showBanner && m.banner != "" {
+		header = m.banner + "\n\n" +
+			titleStyle.Render(fmt.Sprintf("%s/%s", m.provider, m.modelName)) + "\n"
+	} else {
+		header = titleStyle.Render(fmt.Sprintf("yaah · %s/%s", m.provider, m.modelName)) + "\n\n"
+	}
 
 	// Status bar (1 line): message count + context bar only.
 	// Provider/model is in the header; no need to duplicate.
