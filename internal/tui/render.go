@@ -461,7 +461,7 @@ func (m *Model) renderMessages() string {
 			}
 			b.WriteString("\n")
 		}
-		b.WriteString("\n")
+		b.WriteString("\n\n")
 	}
 
 	if m.streaming && m.streamContent != "" {
@@ -472,9 +472,10 @@ func (m *Model) renderMessages() string {
 	}
 
 	if m.thinking && !m.streaming && m.thinkContent == "" {
+		b.WriteString("\n")
 		rendered := spinnerStyle.Render(fmt.Sprintf("  %s Thinking...", m.spinner.View()))
 		b.WriteString(rendered)
-		b.WriteString("\n")
+		b.WriteString("\n\n")
 	}
 
 	return b.String()
