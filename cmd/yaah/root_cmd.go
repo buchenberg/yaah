@@ -229,6 +229,9 @@ func newAgentSession() (*agentSession, error) {
 		if ep := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); ep != "" {
 			otelCfg.Endpoint = ep
 		}
+		if os.Getenv("YAAH_OTEL_ENABLED") == "true" {
+			otelCfg.Enabled = true
+		}
 		if otelCfg.ServiceName == "" {
 			otelCfg.ServiceName = "yaah"
 		}
