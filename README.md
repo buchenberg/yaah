@@ -88,6 +88,10 @@ yaah update
 # 6. Override approval (for headless / CI)
 yaah --approval allow "write a script"
 YAAH_APPROVAL=allow yaah "run the tests"
+
+# 7. Resume a previous session
+yaah --resume <session-id> "continue where we left off"
+yaah session list                        # find session IDs
 ```
 
 ### MCP servers
@@ -115,6 +119,22 @@ Project `AGENTS.md` / `CLAUDE.md` files are automatically loaded and injected in
 
 ### Todo lists
 The agent can create and manage task lists during conversations using the `todowrite` tool.
+
+### Session persistence
+
+Every message (user prompts, assistant responses, tool calls, and tool results)
+is persisted to SQLite in real time as the agent loop runs. If the process
+crashes mid-conversation, all messages up to that point are recoverable.
+
+```bash
+yaah session list                         # list recent sessions
+yaah session show <id>                    # view messages in a session
+yaah --resume <id> "pick up where we left off"  # resume a session
+```
+
+Sessions survive process restarts. Use `--resume` to continue a conversation
+exactly where it stopped — the agent has the full message history including
+tool call context.
 
 ### Hook events (external integrations)
 
@@ -149,6 +169,7 @@ Invalid values fall back to `ask` with a warning.
 yaah                          # interactive REPL with splash screen
 yaah "prompt"                 # one-shot with streaming
 yaah --approval allow "..."   # one-shot with approval override
+yaah --resume <id> "..."     # resume a previous session
 yaah config show              # effective config (secrets redacted)
 yaah config edit              # scaffold or edit ~/.yaah/config.yaml
 yaah doctor                   # diagnose installation
@@ -345,8 +366,9 @@ Tests live next to the code they test (`foo.go` ↔ `foo_test.go`) and use
 ## Status
 
 **Active development.** Core features stable: middleware pipeline, streaming,
-tool execution, SQLite memory, MCP integration, TUI, and hook events for
-external agents. See [docs/architecture.md](./docs/architecture.md) for details.
+tool execution, SQLite memory and session persistence, MCP integration, TUI,
+session resume, and hook events for external agents. See
+[docs/architecture.md](./docs/architecture.md) for details.
 
 ## License
 
