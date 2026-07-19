@@ -120,6 +120,19 @@ ditto --norsrc yaah ~/.local/bin/yaah  # macOS: avoids Gatekeeper quarantine
 - Tests live next to the code they test (`foo.go` ↔ `foo_test.go`).
 - Use `t.Run("name", func(t *testing.T) { ... })` for subtests.
 
+## Skills
+
+Project-level skills live in `.agents/skills/` and are tracked in git.
+Load a skill when the task at hand matches its description. Use the
+`skill` tool with `action: "load"` to inject its instructions into the
+current context.
+
+Available skills:
+
+| Skill | When to load |
+|---|---|
+| `yaah-testing` | Smoke testing the CLI, sub-agents, OTel traces, Docker containers, or running CI checks |
+
 ## What NOT to do
 
 - Don't add a `web/` package, a `gateway/` package, or anything that talks to
