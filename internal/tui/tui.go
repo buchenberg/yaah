@@ -110,53 +110,77 @@ var defaultCommands = []Command{
 }
 
 // Model is the bubbletea model for the yaah TUI.
+// Model is the bubbletea model for the yaah TUI.
 type Model struct {
-	messages          []Message
-	viewport          viewport.Model
-	input             textinput.Model
-	spinner           spinner.Model
-	mdRenderer        *glamour.TermRenderer
-	banner            string // pre-rendered figlet + lolcat ASCII art
-	provider          string
-	modelName         string
-	width             int
-	height            int
-	thinking          bool
-	toolCall          string
-	toolArgs          string          // args for current tool call (e.g. task description)
-	streaming         bool            // currently streaming a response
-	streamContent     string          // accumulated streaming content
-	thinkContent      string          // accumulated thinking/reasoning content
-	reasoningExpanded map[string]bool // zone ID → true if expanded (absent = collapsed)
-	reasoningZones    []string        // active reasoning zone IDs (for click handling)
-	questionMode      bool            // true when showing a question modal
-	questionModal     QuestionModal   // the current question
-	questionIdx       int             // highlighted option index
-	questionMulti     []bool          // toggled state for multi-select
-	contextPct        int             // context window fill percentage (0-100)
-	contextTokens     int             // estimated token count
-	contextWindow     int             // context window size
-	help              help.Model      // auto-generated footer hint bar
-	showHelp          bool            // true when the full help overlay is visible
-	searchMode        bool            // true when search is active
-	searchQuery       string          // current search term
-	searchMatches     []int           // line numbers with matches
-	searchIdx         int             // current match index (-1 = no active match)
-	showBanner        bool            // false when banner is hidden via /banner
-	needsRefresh      bool            // true when viewport needs a throttled refresh
-	ephemMsg          string          // ephemeral status message (auto-clears)
-	ephemTimer        int             // ticks remaining until ephemMsg clears
-	cwd               string          // current working directory
-	onSubmit          func(string)
-	onQuit            func()
-	onCompact         func()
-	onModel           func(string, string)
-	commandMode       bool              // true when input starts with ":"
-	commands          []Command         // registered slash commands
-	modelMode         bool              // true when in model-selection sub-mode
-	modelItems        []string          // available models in "provider/model" format
-	modelSelected     int               // highlighted index in filtered list
-	providerNames     map[string]string // provider key → display name
+	// --- core widgets ---
+	messages   []Message
+	viewport   viewport.Model
+	input      textinput.Model
+	spinner    spinner.Model
+	help       help.Model
+	mdRenderer *glamour.TermRenderer
+
+	// --- static config ---
+	banner        string // pre-rendered figlet + lolcat ASCII art
+	provider      string
+	modelName     string
+	cwd           string
+	contextWindow int
+	onSubmit      func(string)
+	onQuit        func()
+	onCompact     func()
+	onModel       func(string, string)
+
+	// --- layout ---
+	width  int
+	height int
+
+	// --- streaming response state ---
+	thinking      bool
+	toolCall      string
+	toolArgs      string // args for current tool call (e.g. task description)
+	streaming     bool   // currently streaming a response
+	streamContent string // accumulated streaming content
+	thinkContent  string // accumulated thinking/reasoning content
+
+	// --- reasoning ---
+	reasoningExpanded map[string]bool // zone ID → true if expanded
+	reasoningZones    []string        // active reasoning zone IDs
+
+	// --- overlays ---
+	showHelp   bool // help overlay visible
+	searchMode bool // search overlay active
+
+	// --- search ---
+	searchQuery   string
+	searchMatches []int
+	searchIdx     int // current match index (-1 = none)
+
+	// --- question modal ---
+	questionMode  bool
+	questionModal QuestionModal
+	questionIdx   int
+	questionMulti []bool
+
+	// --- command mode ---
+	commandMode bool
+	commands    []Command
+
+	// --- model selection ---
+	modelMode     bool
+	modelItems    []string
+	modelSelected int
+	providerNames map[string]string // provider key → display name
+
+	// --- context window ---
+	contextPct    int
+	contextTokens int
+
+	// --- misc UI ---
+	showBanner   bool
+	needsRefresh bool
+	ephemMsg     string
+	ephemTimer   int
 }
 
 // Config holds the immutable setup parameters for a TUI model.
