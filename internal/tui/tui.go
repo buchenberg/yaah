@@ -24,24 +24,24 @@ import (
 
 // Styles — declared here, initialized by ApplyTheme in theme.go.
 var (
-	titleStyle           lipgloss.Style
-	userStyle            lipgloss.Style
-	assistantStyle       lipgloss.Style
-	toolStyle            lipgloss.Style
-	statusStyle          lipgloss.Style
-	spinnerStyle         lipgloss.Style
-	codeStyle            lipgloss.Style
-	boldStyle            lipgloss.Style
-	italicStyle          lipgloss.Style
-	thinkingStyle        lipgloss.Style
-	toggleStyle          lipgloss.Style
-	listBulletStyle      lipgloss.Style
-	listItemStyle        lipgloss.Style
-	treeStyle            lipgloss.Style
-	treeItemStyle        lipgloss.Style
-	commandPaletteStyle  lipgloss.Style
-	commandNameStyle     lipgloss.Style
-	commandDescStyle     lipgloss.Style
+	titleStyle          lipgloss.Style
+	userStyle           lipgloss.Style
+	assistantStyle      lipgloss.Style
+	toolStyle           lipgloss.Style
+	statusStyle         lipgloss.Style
+	spinnerStyle        lipgloss.Style
+	codeStyle           lipgloss.Style
+	boldStyle           lipgloss.Style
+	italicStyle         lipgloss.Style
+	thinkingStyle       lipgloss.Style
+	toggleStyle         lipgloss.Style
+	listBulletStyle     lipgloss.Style
+	listItemStyle       lipgloss.Style
+	treeStyle           lipgloss.Style
+	treeItemStyle       lipgloss.Style
+	commandPaletteStyle lipgloss.Style
+	commandNameStyle    lipgloss.Style
+	commandDescStyle    lipgloss.Style
 )
 
 // Message represents a chat message in the TUI.
@@ -1883,7 +1883,7 @@ func (m *Model) View() tea.View {
 	// Ephemeral message line (shown only when active, auto-clears)
 	var ephemLine string
 	if m.ephemMsg != "" {
-		ephemLine = statusStyle.Copy().
+		ephemLine = statusStyle.
 			Foreground(lipgloss.Color("10")).
 			Width(m.width).
 			Render(m.ephemMsg)

@@ -7,11 +7,9 @@ import (
 	"io"
 	"log"
 	"os"
-	"os/signal"
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -311,18 +309,9 @@ func runTUI() error {
 		}
 	}()
 
-	// SIGTSTP / SIGCONT handling: Bubble Tea v2 already manages terminal state
-	// on suspend/resume, but explicitly install a handler so goroutine-spawned
-	// work (MCP clients, network) is visible to the runtime.
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTSTP, syscall.SIGCONT)
-	go func() {
-		for range sigCh {
-			// Bubble Tea v2's internal signal handlers restore and re-enter
-			// raw mode / alt screen automatically. This goroutine ensures the
-			// signal is not blocked by the Go runtime's default behavior.
-		}
-	}()
+	// Install suspend/resume signal handlers (no-op on Windows).
+	stopSignals := installSignalHandlers()
+	defer stopSignals()
 
 	p := tea.NewProgram(m)
 
@@ -373,9 +362,6 @@ func runTUI() error {
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)
 	}
-
-	signal.Stop(sigCh)
-	close(sigCh)
 
 	return nil
 }

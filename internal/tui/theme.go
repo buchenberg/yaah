@@ -98,12 +98,12 @@ var catppuccinMocha = Theme{
 
 // namedThemes holds extra themes beyond the built-in dark/light.
 var namedThemes = map[string]Theme{
-	"catppuccin-mocha":  catppuccinMocha,
-	"catppuccin-latte":  LightTheme,
-	"dracula":           DarkTheme,
-	"nord":              DarkTheme,
-	"gruvbox":           DarkTheme,
-	"tokyo-night":       DarkTheme,
+	"catppuccin-mocha": catppuccinMocha,
+	"catppuccin-latte": LightTheme,
+	"dracula":          DarkTheme,
+	"nord":             DarkTheme,
+	"gruvbox":          DarkTheme,
+	"tokyo-night":      DarkTheme,
 }
 
 // monochromeTheme uses empty strings for all colors — the terminal's
