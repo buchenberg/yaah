@@ -3,6 +3,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
@@ -145,6 +146,7 @@ type Model struct {
 	needsRefresh      bool            // true when viewport needs a throttled refresh
 	ephemMsg          string          // ephemeral status message (auto-clears)
 	ephemTimer        int             // ticks remaining until ephemMsg clears
+	cwd               string          // current working directory
 	onSubmit          func(string)
 	onQuit            func()
 	onCompact         func()
@@ -158,7 +160,7 @@ type Model struct {
 }
 
 // New creates a new TUI model.
-func New(provider, model string, contextWindow int, onSubmit func(string), onQuit func(), onCompact func(), onModel func(string, string)) *Model {
+func New(provider, model, cwd string, contextWindow int, onSubmit func(string), onQuit func(), onCompact func(), onModel func(string, string)) *Model {
 	input := textinput.New()
 	input.Placeholder = "Type a message..."
 	input.Focus()
@@ -182,6 +184,7 @@ func New(provider, model string, contextWindow int, onSubmit func(string), onQui
 		reasoningExpanded: make(map[string]bool),
 		help:              help.New(),
 		showBanner:        true,
+		cwd:               cwd,
 		provider:          provider,
 		modelName:         model,
 		contextWindow:     contextWindow,
@@ -1883,8 +1886,8 @@ func (m *Model) View() tea.View {
 	if m.contextWindow > 0 {
 		ctxBar = " " + contextBar(m.contextPct)
 	}
-	statusText = fmt.Sprintf(" messages: %d │%s",
-		len(m.messages), ctxBar)
+	statusText = fmt.Sprintf(" %s │ messages: %d │%s",
+		shortenCWD(m.cwd, m.width/3), len(m.messages), ctxBar)
 	status := statusStyle.Width(m.width).Render(statusText)
 
 	// Ephemeral message line (shown only when active, auto-clears)
@@ -1998,6 +2001,20 @@ func (m *Model) renderHelpOverlay() string {
 	lines = append(lines, commandDescStyle.Render("Press any key to close"))
 
 	return commandPaletteStyle.Render(strings.Join(lines, "\n"))
+}
+
+// shortenCWD returns the current working directory with $HOME replaced
+// by ~, truncated to maxLen if longer.
+func shortenCWD(cwd string, maxLen int) string {
+	home, _ := os.UserHomeDir()
+	s := cwd
+	if home != "" && strings.HasPrefix(s, home) {
+		s = "~" + s[len(home):]
+	}
+	if len(s) > maxLen && maxLen > 3 {
+		s = "..." + s[len(s)-(maxLen-3):]
+	}
+	return s
 }
 
 // contextBar returns a 10-segment bar showing fill percentage.

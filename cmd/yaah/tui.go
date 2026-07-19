@@ -217,6 +217,7 @@ func runTUI() error {
 	m := tui.New(
 		providerName,
 		modelName,
+		cwd,
 		cfg.Default.ContextWindow,
 		func(input string) {
 			pName, mName := sm.get()
