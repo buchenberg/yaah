@@ -15,8 +15,12 @@ import (
 type Theme struct {
 	Title      string
 	User       string
+	UserBg     string
 	Assistant  string
 	Tool       string
+	ToolBg     string
+	System     string
+	SystemBg   string
 	Status     string
 	StatusBg   string
 	Spinner    string
@@ -36,8 +40,12 @@ type Theme struct {
 var DarkTheme = Theme{
 	Title:      "39",
 	User:       "14",
+	UserBg:     "24",
 	Assistant:  "252",
 	Tool:       "243",
+	ToolBg:     "236",
+	System:     "243",
+	SystemBg:   "236",
 	Status:     "243",
 	StatusBg:   "236",
 	Spinner:    "39",
@@ -57,8 +65,12 @@ var DarkTheme = Theme{
 var LightTheme = Theme{
 	Title:      "25",
 	User:       "26",
+	UserBg:     "153",
 	Assistant:  "235",
 	Tool:       "244",
+	ToolBg:     "251",
+	System:     "244",
+	SystemBg:   "251",
 	Status:     "244",
 	StatusBg:   "251",
 	Spinner:    "25",
@@ -79,8 +91,12 @@ var LightTheme = Theme{
 var catppuccinMocha = Theme{
 	Title:      "39",
 	User:       "14",
+	UserBg:     "24",
 	Assistant:  "252",
 	Tool:       "243",
+	ToolBg:     "236",
+	System:     "243",
+	SystemBg:   "236",
 	Status:     "243",
 	StatusBg:   "236",
 	Spinner:    "39",
@@ -135,11 +151,23 @@ func ApplyTheme(t Theme) {
 		Bold(true).
 		Foreground(colorOrNone(t.User))
 
+	userBgStyle = lipgloss.NewStyle().
+		Background(colorOrNone(t.UserBg))
+
 	assistantStyle = lipgloss.NewStyle().
 		Foreground(colorOrNone(t.Assistant))
 
 	toolStyle = lipgloss.NewStyle().
 		Foreground(colorOrNone(t.Tool))
+
+	toolBgStyle = lipgloss.NewStyle().
+		Background(colorOrNone(t.ToolBg))
+
+	systemStyle = lipgloss.NewStyle().
+		Foreground(colorOrNone(t.System))
+
+	systemBgStyle = lipgloss.NewStyle().
+		Background(colorOrNone(t.SystemBg))
 
 	statusStyle = lipgloss.NewStyle().
 		Foreground(colorOrNone(t.Status)).

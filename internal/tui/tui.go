@@ -26,8 +26,12 @@ import (
 var (
 	titleStyle          lipgloss.Style
 	userStyle           lipgloss.Style
+	userBgStyle         lipgloss.Style
 	assistantStyle      lipgloss.Style
 	toolStyle           lipgloss.Style
+	toolBgStyle         lipgloss.Style
+	systemStyle         lipgloss.Style
+	systemBgStyle       lipgloss.Style
 	statusStyle         lipgloss.Style
 	spinnerStyle        lipgloss.Style
 	codeStyle           lipgloss.Style
@@ -1571,7 +1575,7 @@ func (m *Model) renderMessages() string {
 		switch msg.Role {
 		case "user":
 			rendered := userStyle.Render(chatWrap("", msg.Content, m.width))
-			b.WriteString(rendered)
+			b.WriteString(userBgStyle.Width(m.width).Render(rendered))
 			b.WriteString("\n\n")
 
 		case "assistant":
@@ -1609,7 +1613,7 @@ func (m *Model) renderMessages() string {
 						label = fmt.Sprintf("web_fetch → %s", match[1])
 					}
 				}
-				b.WriteString(toolStyle.Render(fmt.Sprintf("  ⏳ %s…", label)))
+				b.WriteString(toolBgStyle.Width(m.width).Render(toolStyle.Render(fmt.Sprintf("  ⏳ %s…", label))))
 				b.WriteString("\n")
 				toolLabelRendered = true
 			}
@@ -1624,6 +1628,7 @@ func (m *Model) renderMessages() string {
 
 		default:
 			rendered := chatWrap("", msg.Content, m.width)
+			rendered = systemBgStyle.Width(m.width).Render(systemStyle.Render(rendered))
 			b.WriteString(rendered)
 			b.WriteString("\n")
 		}
