@@ -184,6 +184,11 @@ type Loop struct {
 	// system messages and recent tool results. Has no effect for non-Anthropic providers.
 	PromptCaching bool
 
+	// ConflictTracker records file operations from sub-agent
+	// write/edit/delete tools so the agent loop can detect when parallel
+	// workers touch the same files and inject a conflict report.
+	ConflictTracker *tools.ConflictTracker
+
 	// OtelEnabled enables OpenTelemetry spans for tool calls, sub-agent
 	// dispatch, and LLM provider calls (via InstrumentedProvider).
 	OtelEnabled bool
@@ -466,6 +471,44 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		// Update l.Messages so that CompactionMiddleware sees the latest messages
 		l.Messages = messages
 
+		if l.ConflictTracker != nil {
+			var conflictSpan trace.Span
+			checkCtx := ctx
+			if l.OtelEnabled {
+				checkCtx, conflictSpan = observability.StartConflictCheck(ctx)
+			}
+
+			l.emitHook(HookEvent{
+				Event: ConflictCheck,
+				Turn:  iter,
+				Model: l.Model,
+			})
+
+			if report := l.ConflictTracker.DetectAndReset(); report != "" {
+				fileCount := strings.Count(report, "File: ")
+				l.emitHook(HookEvent{
+					Event:         ConflictDetect,
+					Turn:          iter,
+					Model:         l.Model,
+					ConflictFiles: fileCount,
+				})
+				if conflictSpan != nil {
+					observability.FinishConflictCheck(conflictSpan, fileCount)
+				}
+				conflictMsg := types.UserMsg(report)
+				messages = append(messages, conflictMsg)
+				step.Messages = messages
+				l.Messages = messages
+				l.persistMessage(conflictMsg)
+			} else if conflictSpan != nil {
+				observability.FinishConflictCheck(conflictSpan, 0)
+			}
+			if conflictSpan != nil {
+				conflictSpan.End()
+			}
+			_ = checkCtx
+		}
+
 		step, err = pipeline.RunPostTool(ctx, toolResults, step)
 		if err != nil {
 			if turnSpan != nil {
@@ -535,24 +578,47 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 		}
 
 		go func() {
-			// Acquire the sub-agent semaphore before the general tool
-			// semaphore so a task goroutine waiting on the sub-agent cap
-			// does not hold a general tool slot and block unrelated
-			// (non-task) calls in the same iteration.
-			if tc.Function.Name == "task" && l.subAgentSem != nil {
-				l.subAgentSem <- struct{}{}
-				defer func() { <-l.subAgentSem }()
-			}
-			if l.toolSem != nil {
-				l.toolSem <- struct{}{}
-				defer func() { <-l.toolSem }()
-			}
 			abbreviated := abbreviateArgs(tc.Function.Arguments, 80)
 
 			isTask := tc.Function.Name == "task"
 			var taskRole, taskPrompt string
 			if isTask && l.OnSubAgent != nil {
 				taskRole, taskPrompt = parseTaskArgs(tc.Function.Arguments)
+			}
+
+			var releaseSubAgent, releaseTool func()
+
+			if isTask && l.subAgentSem != nil {
+				select {
+				case l.subAgentSem <- struct{}{}:
+					releaseSubAgent = func() { <-l.subAgentSem }
+				case <-ctx.Done():
+					execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: "cancelled", err: ctx.Err()}
+					return
+				}
+			}
+			if l.toolSem != nil {
+				select {
+				case l.toolSem <- struct{}{}:
+					releaseTool = func() { <-l.toolSem }
+				case <-ctx.Done():
+					if releaseSubAgent != nil {
+						releaseSubAgent()
+					}
+					execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: "cancelled", err: ctx.Err()}
+					return
+				}
+			}
+			defer func() {
+				if releaseTool != nil {
+					releaseTool()
+				}
+				if releaseSubAgent != nil {
+					releaseSubAgent()
+				}
+			}()
+
+			if isTask && l.OnSubAgent != nil {
 				l.OnSubAgent(SubAgentInfo{Role: taskRole, Prompt: taskPrompt})
 			}
 

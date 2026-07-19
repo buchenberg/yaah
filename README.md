@@ -762,7 +762,9 @@ yaah is in active development and is feature-complete for daily use.
 context compaction, approval gates, loop detection, SQLite session and memory
 persistence, session resume, MCP integration (stdio + HTTP), bubbletea TUI,
 REPL with slash commands, hook events for external agents, sub-agent dispatch
-with roles/concurrency/timeouts.
+with roles/concurrency/timeouts, agent conflict reconciliation (detects when
+parallel workers touch the same files and injects a resolution report),
+context-aware sub-agent interrupt propagation.
 
 **Experimental** — `yaah update` (GitHub release check), `yaah tui`'s
 `:model` and `:provider` commands.
@@ -772,9 +774,6 @@ with roles/concurrency/timeouts.
 - **Plugin system** — register custom Go tools and middleware without
   recompiling, via a well-defined interface and a `plugins/` directory
   convention.
-- **Agent conflict reconciliation** — detect and merge conflicting edits
-  when multiple parallel workers touch the same files, and present
-  resolution options to the parent agent.
 - **Declarative workflows** — define multi-step agent pipelines as DAGs
   of role-typed tasks with dependencies and failure handlers, replacing
   ad-hoc planner prompts with reproducible recipes.

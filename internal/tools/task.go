@@ -52,6 +52,11 @@ type TaskTool struct {
 	// dynamically so user-defined roles are visible to the model.
 	// When empty the legacy static schema is used.
 	RoleNames []string
+
+	// Tracker records file operations from sub-agent write/edit/delete
+	// tools so the parent agent can detect when parallel workers touch
+	// the same files. Nil means no tracking.
+	Tracker *ConflictTracker
 }
 
 func (t *TaskTool) Name() string { return "task" }
@@ -151,10 +156,18 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 
 	timeout := resolveTaskTimeout(clampedTimeout, t.ResolveTimeout, subParams)
 
-	runCtx := ctx
+	label := params.Role
+	if label == "" {
+		label = "default"
+	}
+	if params.Description != "" {
+		label = label + " — " + params.Description
+	}
+
+	runCtx := WithConflictLabel(ctx, label)
 	if timeout > 0 {
 		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(ctx, timeout)
+		runCtx, cancel = context.WithTimeout(runCtx, timeout)
 		defer cancel()
 	}
 

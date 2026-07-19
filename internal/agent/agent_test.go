@@ -1345,6 +1345,215 @@ func TestLoop_autoCompactCapped(t *testing.T) {
 	}
 }
 
+func TestConflictDetection_ReportsConflictInConversation(t *testing.T) {
+	tracker := &tools.ConflictTracker{}
+	tracker.Record("worker — Add login handler", "/tmp/test.go", "write")
+	tracker.Record("worker — Refactor auth", "/tmp/test.go", "edit")
+
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{
+			{
+				Choices: []types.Choice{{
+					Message: types.Message{
+						Role: "assistant",
+						ToolCalls: []types.ToolCall{{
+							ID:   "call_1",
+							Type: "function",
+							Function: types.ToolCallFn{
+								Name:      "read",
+								Arguments: `{"path":"/tmp/test.go"}`,
+							},
+						}},
+					},
+					FinishReason: "tool_calls",
+				}},
+				Usage: types.Usage{TotalTokens: 10},
+			},
+			{
+				Choices: []types.Choice{{
+					Message:      types.Message{Role: "assistant", Content: "Resolved."},
+					FinishReason: "stop",
+				}},
+				Usage: types.Usage{TotalTokens: 10},
+			},
+		},
+	}
+
+	reg := tools.NewEmptyRegistry()
+	reg.Register(&fakeTool{name: "read", result: "file contents"})
+
+	loop := &Loop{
+		Provider:        fp,
+		Registry:        reg,
+		SystemPrompt:    "test",
+		MaxIterations:   10,
+		ConflictTracker: tracker,
+	}
+
+	_, err := loop.Run(context.Background(), "check for conflicts")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	found := false
+	for _, msg := range loop.Messages {
+		if strings.Contains(msg.Content, "CONFLICT:") {
+			found = true
+			if !strings.Contains(msg.Content, "worker — Add login handler") {
+				t.Errorf("expected first worker label in conflict message")
+			}
+			if !strings.Contains(msg.Content, "worker — Refactor auth") {
+				t.Errorf("expected second worker label in conflict message")
+			}
+			if !strings.Contains(msg.Content, "/tmp/test.go") {
+				t.Errorf("expected file path in conflict message")
+			}
+			break
+		}
+	}
+	if !found {
+		t.Error("conflict message was not injected into conversation")
+	}
+}
+
+func TestConflictDetection_NoConflictWhenTrackerEmpty(t *testing.T) {
+	tracker := &tools.ConflictTracker{}
+
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{
+			{
+				Choices: []types.Choice{{
+					Message: types.Message{
+						Role: "assistant",
+						ToolCalls: []types.ToolCall{{
+							ID:   "call_1",
+							Type: "function",
+							Function: types.ToolCallFn{
+								Name:      "read",
+								Arguments: `{"path":"/tmp/test.go"}`,
+							},
+						}},
+					},
+					FinishReason: "tool_calls",
+				}},
+				Usage: types.Usage{TotalTokens: 10},
+			},
+			{
+				Choices: []types.Choice{{
+					Message:      types.Message{Role: "assistant", Content: "done"},
+					FinishReason: "stop",
+				}},
+				Usage: types.Usage{TotalTokens: 10},
+			},
+		},
+	}
+
+	reg := tools.NewEmptyRegistry()
+	reg.Register(&fakeTool{name: "read", result: "file contents"})
+
+	loop := &Loop{
+		Provider:        fp,
+		Registry:        reg,
+		SystemPrompt:    "test",
+		MaxIterations:   10,
+		ConflictTracker: tracker,
+	}
+
+	_, err := loop.Run(context.Background(), "no conflicts here")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, msg := range loop.Messages {
+		if strings.Contains(msg.Content, "CONFLICT:") {
+			t.Error("unexpected conflict message when tracker is empty")
+			break
+		}
+	}
+}
+
+func TestConflictDetection_TrackerClearedAfterIteration(t *testing.T) {
+	tracker := &tools.ConflictTracker{}
+	tracker.Record("w1", "/a.go", "write")
+	tracker.Record("w2", "/a.go", "edit")
+
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{
+			{
+				Choices: []types.Choice{{
+					Message: types.Message{
+						Role: "assistant",
+						ToolCalls: []types.ToolCall{{
+							ID:   "call_1",
+							Type: "function",
+							Function: types.ToolCallFn{
+								Name:      "read",
+								Arguments: `{"path":"/a.go"}`,
+							},
+						}},
+					},
+					FinishReason: "tool_calls",
+				}},
+				Usage: types.Usage{TotalTokens: 10},
+			},
+			{
+				Choices: []types.Choice{{
+					Message:      types.Message{Role: "assistant", Content: "first"},
+					FinishReason: "stop",
+				}},
+				Usage: types.Usage{TotalTokens: 10},
+			},
+			{
+				Choices: []types.Choice{{
+					Message: types.Message{
+						Role: "assistant",
+						ToolCalls: []types.ToolCall{{
+							ID:   "call_2",
+							Type: "function",
+							Function: types.ToolCallFn{
+								Name:      "read",
+								Arguments: `{"path":"/a.go"}`,
+							},
+						}},
+					},
+					FinishReason: "tool_calls",
+				}},
+				Usage: types.Usage{TotalTokens: 10},
+			},
+			{
+				Choices: []types.Choice{{
+					Message:      types.Message{Role: "assistant", Content: "second"},
+					FinishReason: "stop",
+				}},
+				Usage: types.Usage{TotalTokens: 10},
+			},
+		},
+	}
+
+	reg := tools.NewEmptyRegistry()
+	reg.Register(&fakeTool{name: "read", result: "file contents"})
+
+	loop := &Loop{
+		Provider:        fp,
+		Registry:        reg,
+		SystemPrompt:    "test",
+		MaxIterations:   10,
+		ConflictTracker: tracker,
+	}
+
+	loop.Run(context.Background(), "first prompt")
+
+	conflictCount := 0
+	for _, msg := range loop.Messages {
+		if strings.Contains(msg.Content, "CONFLICT:") {
+			conflictCount++
+		}
+	}
+	if conflictCount != 1 {
+		t.Errorf("expected exactly 1 conflict message in first run, got %d", conflictCount)
+	}
+}
+
 type fmtErrorf string
 
 func (e fmtErrorf) Error() string { return string(e) }

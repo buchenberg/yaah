@@ -278,7 +278,8 @@ func runTUI() error {
 	procMgr := processpkg.NewManager()
 	toolReg.Register(&tools.BackgroundProcessTool{Manager: procMgr})
 
-	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled))
+	conflictTracker := &tools.ConflictTracker{}
+	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, conflictTracker))
 
 	agentCh := make(chan tui.AgentMsg, 256)
 
@@ -296,7 +297,7 @@ func runTUI() error {
 		OnSubmit: func(input string) {
 			pName, mName := sm.get()
 
-			go runAgentForTUI(input, agentCh, cfg, systemPrompt, mName, toolReg, &messages, db, sessionID, &msgIdx, &persistedCount, sm)
+			go runAgentForTUI(input, agentCh, cfg, systemPrompt, mName, toolReg, &messages, db, sessionID, &msgIdx, &persistedCount, sm, conflictTracker)
 			_ = pName
 		},
 		OnQuit: func() {},
@@ -474,7 +475,7 @@ func runTUI() error {
 // runAgentForTUI runs the agent loop for a single prompt and sends messages
 // to the TUI channel. The channel is NOT closed here — it is shared across
 // multiple prompts for the lifetime of the TUI session.
-func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, systemPrompt, modelName string, toolReg *tools.Registry, messages *[]types.Message, db *memory.DB, sessionID string, msgIdx *int, persistedCount *int, sm *sessionModel) {
+func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, systemPrompt, modelName string, toolReg *tools.Registry, messages *[]types.Message, db *memory.DB, sessionID string, msgIdx *int, persistedCount *int, sm *sessionModel, conflictTracker *tools.ConflictTracker) {
 	pName, _ := sm.get()
 	provider := providerFor(cfg, pName)
 
@@ -485,15 +486,16 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 	}
 
 	loop := &agent.Loop{
-		Provider:      provider,
-		Registry:      toolReg,
-		Model:         modelName,
-		SystemPrompt:  systemPrompt,
-		MaxIterations: cfg.Default.MaxIterations,
-		ContextWindow: cfg.Default.ContextWindow,
-		ApprovalMode:  resolveApproval(cfg),
-		Messages:      *messages,
-		OtelEnabled:   cfg.Observability.Otel.Enabled,
+		Provider:        provider,
+		Registry:        toolReg,
+		Model:           modelName,
+		SystemPrompt:    systemPrompt,
+		MaxIterations:   cfg.Default.MaxIterations,
+		ContextWindow:   cfg.Default.ContextWindow,
+		ApprovalMode:    resolveApproval(cfg),
+		Messages:        *messages,
+		OtelEnabled:     cfg.Observability.Otel.Enabled,
+		ConflictTracker: conflictTracker,
 		ApproveFn: func(name, args string) bool {
 			respCh := make(chan bool, 1)
 			ch <- tui.AgentMsg{

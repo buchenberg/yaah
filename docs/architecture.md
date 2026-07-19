@@ -341,6 +341,8 @@ Multiple `task` tool calls issued in a single turn are dispatched concurrently b
 
 The parent context flows through `executeAndCollect` → `TaskTool.Execute` → `Runner` → `subLoop.Run`. Cancelling the parent (e.g. Ctrl-C) propagates via the context: each sub-agent's `Loop.Run` checks `ctx.Done()` at the top of every iteration and the underlying provider HTTP call respects the context. A cancelled sub-agent returns the structured cancellation result described above rather than failing the parent turn.
 
+Semaphore acquisitions in `executeAndCollect` (`subAgentSem` and `toolSem`) use `select` on `ctx.Done()` alongside the channel send, so goroutines queued on concurrency caps immediately return a cancellation result instead of blocking until a slot opens.
+
 ### Nesting depth
 
 Two mechanisms bound nesting:
@@ -369,6 +371,20 @@ agent:
         timeout: 300
         max_iterations: 50
 ```
+
+### Agent conflict reconciliation
+
+Files: `internal/tools/conflict_tracker.go`, `internal/tools/recording.go`, `internal/agent/agent.go`
+
+When a parent agent dispatches multiple parallel worker sub-agents in a single turn, those workers may independently modify the same files. If worker B's write clobbers worker A's changes, the parent has no way of knowing without explicit conflict detection.
+
+**Tracker:** `ConflictTracker` is a thread-safe `[]FileRecord` store on `Loop`. Sub-agent write/edit/delete tools are wrapped with `RecordingTool` (via `buildSubAgentRegistry`), which extracts the `filePath` from JSON args and records `(subAgentLabel, filePath, toolName)` to the shared tracker.
+
+**Label propagation:** `TaskTool.Execute` builds a label from the task's `role` and `description` (e.g. `"worker — Add login handler"`) and injects it into the request context via `WithConflictLabel()`. `RecordingTool.Execute` reads this label from the context, so each record is tagged with which sub-agent produced it.
+
+**Detection:** After `executeAndCollect` returns (all parallel tasks complete), `runMiddleware` calls `ConflictTracker.DetectAndReset()`. Files touched by more than one distinct sub-agent label are flagged. If conflicts are found, a structured `CONFLICT:` user message is injected into the conversation before the next LLM call. The report lists each conflicting file, which sub-agents touched it, and which tools they used.
+
+**Observability:** Two hook event types are emitted: `conflict.check` (every turn when a tracker is present) and `conflict.detect` (when conflicts are found, with `conflict_files` count). When OTel is enabled, a `conflict.check` span appears in the trace waterfall as a child of the turn span.
 
 ---
 
@@ -531,6 +547,8 @@ yaah emits structured JSONL events to `<HookDir>/<session-id>.jsonl` for externa
 | `turn.start` | Start of each iteration (with `turn` number) |
 | `tool.start` | Before each tool execution (with `tool_name`, `tool_args`) |
 | `tool.end` | After each tool execution (with `tool_result`, `duration_ms`, `tool_error`) |
+| `conflict.check` | Every turn when a `ConflictTracker` is present |
+| `conflict.detect` | When parallel workers touched the same files (with `conflict_files` count) |
 
 ### HookEvent struct
 
@@ -546,8 +564,9 @@ type HookEvent struct {
     ToolArgs   string        `json:"tool_args,omitempty"`
     ToolResult string        `json:"tool_result,omitempty"`
     DurationMs int64         `json:"duration_ms,omitempty"`
-    ToolError  string        `json:"tool_error,omitempty"`
-    ExitReason string        `json:"exit_reason,omitempty"`
+    ToolError    string        `json:"tool_error,omitempty"`
+    ExitReason   string        `json:"exit_reason,omitempty"`
+    ConflictFiles int          `json:"conflict_files,omitempty"`
 }
 ```
 
@@ -646,6 +665,7 @@ yaah emits traces via OTLP gRPC to any OpenTelemetry-compatible backend. Tracing
 | `tool.<name>` | `executeAndCollect` in `agent.go` | Operation name is the tool name. `tool.args` attribute (200-char truncated JSON). `result` event with truncated output. Errors are recorded via `RecordError`. |
 | `subagent: <role> — <description>` | `executeAndCollect` in `agent.go` | Role + task description in the operation name. `dispatched` event with role and task text. `completed` / `failed` event on finish. |
 | `llm.chat` | `InstrumentedProvider.Send` in `observability/provider.go` | `tokens` event with `llm.prompt_tokens`, `llm.completion_tokens`, `llm.total_tokens`, `llm.messages`, and `llm.system_len`. `llm.duration_ms` attribute. |
+| `conflict.check` | `runMiddleware` in `agent.go` | Child of the turn span. `conflict.files` attribute. When conflicts are found, a `conflict.detected` event is added with the file count. |
 
 ### Propagation to sub-agents
 

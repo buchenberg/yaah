@@ -201,6 +201,7 @@ type agentSession struct {
 	sessionID    string
 	msgIdx       int
 	otelShutdown func(context.Context) error
+	tracker      *tools.ConflictTracker
 }
 
 func newAgentSession() (*agentSession, error) {
@@ -364,7 +365,8 @@ func newAgentSession() (*agentSession, error) {
 		}
 	}
 
-	toolReg.Register(newTaskTool(provider, systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled))
+	tracker := &tools.ConflictTracker{}
+	toolReg.Register(newTaskTool(provider, systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, tracker))
 
 	// Wrap the provider with OTel instrumentation if enabled.
 	if cfg.Observability.Otel.Enabled {
@@ -387,6 +389,7 @@ func newAgentSession() (*agentSession, error) {
 		messages:     messages,
 		msgIdx:       msgIdx,
 		otelShutdown: otelShutdown,
+		tracker:      tracker,
 	}, nil
 }
 
@@ -504,6 +507,7 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		MaxSubAgentConcurrency: s.cfg.Agent.SubAgent.MaxConcurrency,
 		MaxSubAgentDepthByRole: subAgentDepthByRole(s.cfg.Agent.SubAgent),
 		OtelEnabled:            s.cfg.Observability.Otel.Enabled,
+		ConflictTracker:        s.tracker,
 	}
 
 	spin := spinner.New(nil, "Thinking...")
@@ -676,7 +680,7 @@ func resolveProvider(cfg *config.Config) agent.Provider {
 // newTaskTool builds the root-level TaskTool wired to the session's
 // provider, prompt, db, and sub-agent config. Shared by the REPL and
 // TUI entrypoints so the two cannot drift.
-func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool) *tools.TaskTool {
+func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, tracker *tools.ConflictTracker) *tools.TaskTool {
 	// Map a config "0 = unlimited" MaxDepth to a sentinel so the
 	// structural nesting decrement in makeTaskRunner does not disable
 	// spawning for an "unlimited" setting.
@@ -694,9 +698,11 @@ func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 			subCfg:          subCfg,
 			SubToolCallback: subToolDisplay,
 			OtelEnabled:     otelEnabled,
+			tracker:         tracker,
 		}, depth),
 		ResolveTimeout: subAgentTimeoutResolver(subCfg),
 		RoleNames:      roleNames,
+		Tracker:        tracker,
 	}
 }
 
@@ -773,6 +779,10 @@ type taskRunnerOpts struct {
 	// OtelEnabled propagates OpenTelemetry tracing to sub-agent loops
 	// so their tool calls appear as child spans in the trace waterfall.
 	OtelEnabled bool
+
+	// tracker records file operations from sub-agent write/edit/delete
+	// tools so the parent agent can detect parallel-worker conflicts.
+	tracker *tools.ConflictTracker
 }
 
 // subAgentSeq guarantees unique sub-session IDs across concurrent
@@ -890,9 +900,40 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile agent.RoleProfile, remai
 		})
 	}
 
+	wrapWithTracker := func(t tools.Tool) tools.Tool {
+		if opts.tracker != nil {
+			return tools.NewRecordingTool(t, opts.tracker)
+		}
+		return t
+	}
+
+	destructiveTools := map[string]bool{
+		"write":  true,
+		"edit":   true,
+		"delete": true,
+	}
+
+	registerLeaf := func(reg *tools.Registry, name string) bool {
+		if t := tools.NewLeafTool(name); t != nil {
+			if destructiveTools[name] {
+				reg.Register(wrapWithTracker(t))
+			} else {
+				reg.Register(t)
+			}
+			return true
+		}
+		return false
+	}
+
 	if len(profile.Tools) == 0 {
-		// Legacy default: the full built-in tool set.
 		reg := tools.NewRegistry()
+		if opts.tracker != nil {
+			for _, name := range []string{"write", "edit", "delete"} {
+				if t := tools.NewLeafTool(name); t != nil {
+					reg.Register(tools.NewRecordingTool(t, opts.tracker))
+				}
+			}
+		}
 		if remainingDepth > 0 {
 			registerTask(reg)
 		}
@@ -907,9 +948,7 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile agent.RoleProfile, remai
 			}
 			continue
 		}
-		if t := tools.NewLeafTool(name); t != nil {
-			reg.Register(t)
-		}
+		registerLeaf(reg, name)
 	}
 	return reg
 }
