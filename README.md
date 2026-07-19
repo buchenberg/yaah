@@ -306,13 +306,19 @@ appear as child spans in the trace waterfall. Jaeger setup is a single
 Docker command:
 
 ```bash
-docker run -d --name jaeger \
-  -p 16686:16686 -p 4317:4317 \
-  jaegertracing/all-in-one:latest
+docker compose up -d jaeger
 ```
 
-Traces appear at http://localhost:16686. Full setup guide at
-[`docs/otel-setup.md`](./docs/otel-setup.md).
+Or manually:
+
+```bash
+docker run -d --name jaeger \
+  -p 16686:16686 -p 4317:4317 \
+  cr.jaegertracing.io/jaegertracing/jaeger:2.19.0
+```
+
+Traces appear at http://localhost:16686. Dark mode is in the gear menu
+top-right. Full setup guide at [`docs/otel-setup.md`](./docs/otel-setup.md).
 
 ## Commands
 

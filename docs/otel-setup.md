@@ -2,41 +2,51 @@
 
 yaah can emit traces to any OpenTelemetry-compatible backend
 via OTLP gRPC. This document covers local development setup with
-[Jaeger](https://www.jaegertracing.io/) (traces) and
-production options.
+[Jaeger](https://www.jaegertracing.io/) and production options.
 
-## Quick start (Jaeger all-in-one)
+## Quick start (Docker Compose)
 
-Start Jaeger with a single Docker command:
+A `docker-compose.yml` is included in the repo root:
+
+```bash
+docker compose up -d jaeger
+```
+
+This starts Jaeger v2 all-in-one. The UI has a settings gear icon in
+the top-right corner — toggle dark mode there. Ports:
+
+- `16686` — Jaeger UI (http://localhost:16686)
+- `4317` — OTLP gRPC (yaah sends traces here)
+
+To run yaah in a container alongside Jaeger:
+
+```bash
+docker compose run --rm yaah "your prompt"
+```
+
+When yaah runs inside Docker, set the OTel endpoint to `jaeger:4317`
+(the Docker service name). When running yaah on the host, use
+`localhost:4317`.
+
+## Manual Jaeger setup
 
 ```bash
 docker run -d --name jaeger \
-  -p 16686:16686 \
-  -p 4317:4317 \
-  -p 4318:4318 \
-  jaegertracing/all-in-one:latest
+  -p 16686:16686 -p 4317:4317 \
+  cr.jaegertracing.io/jaegertracing/jaeger:2.19.0
 ```
 
-Ports:
-- `16686` — Jaeger web UI
-- `4317` — OTLP gRPC (yaah sends traces here)
-- `4318` — OTLP HTTP (alternative; not used by yaah)
-
 ## Enable in yaah
-
-Add to `~/.yaah/config.yaml`:
 
 ```yaml
 observability:
   otel:
     enabled: true
-    endpoint: "localhost:4317"
+    endpoint: "localhost:4317"   # or "jaeger:4317" from Docker
     service_name: "yaah"
-    traces: true
-    metrics: false
 ```
 
-All fields are optional with these defaults:
+All other fields default as shown. The full reference:
 
 | Field | Default | Description |
 |---|---|---|
@@ -112,15 +122,11 @@ export OTEL_TRACES_SAMPLER_ARG="0.1"
 
 ## Troubleshooting
 
-**"No traces in Jaeger"**: Verify the endpoint is reachable. Jaeger's
-all-in-one container must have port 4317 mapped. Check yaah stderr for
-OTel errors (logged at startup).
+**"No traces in Jaeger"**: Verify the endpoint is reachable. The Jaeger
+container must have port 4317 mapped. Check yaah stderr for OTel errors.
 
-**"Spans appear but no waterfall"**: Jaeger's default view shows the last
-hour. Refresh the time range.
-
-**"Error: resource exhausted"**: The gRPC client may need a larger
-message size. This is rare — contact the project if you encounter this.
+**"Spans appear but no waterfall"**: The default time range may filter them
+out — adjust the time picker in the Jaeger UI.
 
 ## Disabling
 

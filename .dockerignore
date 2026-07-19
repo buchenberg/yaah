@@ -1,0 +1,9 @@
+yaah
+dist/
+.agents/
+.kilo/
+.entire/
+.ghost/
+.scratch/
+.git/
+*.test

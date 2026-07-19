@@ -164,6 +164,9 @@ func runTUI() error {
 		if otelCfg.Endpoint == "" {
 			otelCfg.Endpoint = "localhost:4317"
 		}
+		if ep := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); ep != "" {
+			otelCfg.Endpoint = ep
+		}
 		if otelCfg.ServiceName == "" {
 			otelCfg.ServiceName = "yaah"
 		}

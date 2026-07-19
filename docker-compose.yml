@@ -1,0 +1,21 @@
+services:
+  yaah:
+    build: .
+    image: yaah:local
+    stdin_open: true
+    tty: true
+    volumes:
+      - ~/.yaah:/root/.yaah
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    depends_on:
+      - jaeger
+    profiles: [cli]
+
+  jaeger:
+    image: cr.jaegertracing.io/jaegertracing/jaeger:2.19.0
+    ports:
+      - "16686:16686"  # Jaeger UI — gear icon top-right for dark mode
+      - "4317:4317"    # OTLP gRPC
