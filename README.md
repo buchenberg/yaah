@@ -772,9 +772,6 @@ with roles/concurrency/timeouts.
 - **Plugin system** — register custom Go tools and middleware without
   recompiling, via a well-defined interface and a `plugins/` directory
   convention.
-- **OpenTelemetry tracing** — wire the agent loop, middleware hooks, and
-  tool calls into OTel spans for observability in production agent
-  pipelines.
 - **Agent conflict reconciliation** — detect and merge conflicting edits
   when multiple parallel workers touch the same files, and present
   resolution options to the parent agent.
