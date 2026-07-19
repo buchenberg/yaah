@@ -116,6 +116,10 @@ func providerFor(cfg *config.Config, name string) agent.Provider {
 func runTUI() error {
 	zone.NewGlobal()
 
+	// Detect and apply the theme (respects NO_COLOR, YAah_THEME env var,
+	// and terminal background).
+	tui.ApplyTheme(tui.DetectTheme())
+
 	cfg, err := config.Load()
 	if err != nil || cfg == nil {
 		cfg = &config.Config{

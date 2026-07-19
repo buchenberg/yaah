@@ -20,71 +20,26 @@ import (
 	"github.com/buchenberg/yaah/internal/banner"
 )
 
-// Styles
+// Styles — declared here, initialized by ApplyTheme in theme.go.
 var (
-	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("39"))
-
-	userStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("14"))
-
-	assistantStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252"))
-
-	toolStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("243"))
-
-	statusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("243")).
-			Background(lipgloss.Color("236")).
-			Padding(0, 1)
-
-	spinnerStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("39"))
-
-	codeStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("214"))
-
-	boldStyle = lipgloss.NewStyle().
-			Bold(true)
-
-	italicStyle = lipgloss.NewStyle().
-			Italic(true)
-
-	thinkingStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
-			Italic(true)
-
-	toggleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240"))
-
-	listBulletStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("99")).
-			MarginRight(1)
-
-	listItemStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252"))
-
-	treeStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240"))
-
-	treeItemStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252"))
-
-	commandPaletteStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("99")).
-				Padding(0, 1)
-
-	commandNameStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("39")).
-				Width(12)
-
-	commandDescStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("243"))
+	titleStyle           lipgloss.Style
+	userStyle            lipgloss.Style
+	assistantStyle       lipgloss.Style
+	toolStyle            lipgloss.Style
+	statusStyle          lipgloss.Style
+	spinnerStyle         lipgloss.Style
+	codeStyle            lipgloss.Style
+	boldStyle            lipgloss.Style
+	italicStyle          lipgloss.Style
+	thinkingStyle        lipgloss.Style
+	toggleStyle          lipgloss.Style
+	listBulletStyle      lipgloss.Style
+	listItemStyle        lipgloss.Style
+	treeStyle            lipgloss.Style
+	treeItemStyle        lipgloss.Style
+	commandPaletteStyle  lipgloss.Style
+	commandNameStyle     lipgloss.Style
+	commandDescStyle     lipgloss.Style
 )
 
 // Message represents a chat message in the TUI.
@@ -413,14 +368,14 @@ func (m *Model) renderCompactTable(md string) string {
 		styledHeaders[i] = renderInlineMarkdown(h)
 	}
 
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
-	cellStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(assistantStyle.GetForeground())
+	cellStyle := lipgloss.NewStyle().Foreground(assistantStyle.GetForeground())
 
 	t := table.New().
 		Width(m.width - 2).
 		Wrap(true).
 		Border(lipgloss.NormalBorder()).
-		BorderStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("240"))).
+		BorderStyle(lipgloss.NewStyle().Foreground(toggleStyle.GetForeground())).
 		StyleFunc(func(row, col int) lipgloss.Style {
 			if row == table.HeaderRow {
 				return headerStyle
@@ -1609,7 +1564,7 @@ func (m *Model) renderQuestionModal() string {
 	}
 
 	var lines []string
-	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99")).Render(chatWrap("", m.questionModal.Header, contentWidth)))
+	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(listBulletStyle.GetForeground()).Render(chatWrap("", m.questionModal.Header, contentWidth)))
 	lines = append(lines, "")
 	lines = append(lines, chatWrap("", m.questionModal.Question, contentWidth))
 	lines = append(lines, "")
