@@ -252,10 +252,20 @@ default:
 # hooks:
 #   dir: ~/.yaah/hooks                    # optional: JSONL event log for external integrations
 
+# editor: code --wait                    # editor for 'yaah config edit' (falls back to $EDITOR, $VISUAL, vi)
+
 log_level: INFO
 ```
 
 Environment variables referenced as `${VAR_NAME}` are substituted at load time.
+
+The editor for `yaah config edit` is resolved in this order:
+1. `editor` field in config.yaml
+2. `$EDITOR` environment variable
+3. `$VISUAL` environment variable
+4. `vi` (built-in fallback)
+
+Run `yaah doctor` to see which editor is active and how it was resolved.
 
 ## Development
 

@@ -50,6 +50,7 @@ type Config struct {
 	Default   Defaults            `yaml:"default"`
 	Hooks     Hooks               `yaml:"hooks"`
 	Agent     AgentConfig         `yaml:"agent"`
+	Editor    string              `yaml:"editor"`
 	LogLevel  string              `yaml:"log_level"`
 }
 
@@ -112,6 +113,26 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// ResolveEditor returns the editor command to use, with this priority:
+//  1. cfg.Editor (config file)
+//  2. $EDITOR environment variable
+//  3. $VISUAL environment variable
+//  4. "vi" (hardcoded fallback)
+//
+// If cfg is nil, only environment variables and the fallback are checked.
+func ResolveEditor(cfg *Config) string {
+	if cfg != nil && cfg.Editor != "" {
+		return cfg.Editor
+	}
+	if editor := os.Getenv("EDITOR"); editor != "" {
+		return editor
+	}
+	if visual := os.Getenv("VISUAL"); visual != "" {
+		return visual
+	}
+	return "vi"
 }
 
 func expandHomeDir(path string) string {

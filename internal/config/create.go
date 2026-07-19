@@ -24,6 +24,8 @@ providers:
     base_url: http://localhost:11434/v1
     api_key: ollama
 
+# editor: code --wait                    # editor for 'yaah config edit' (falls back to $EDITOR, $VISUAL, vi)
+
 default:
   provider: openai                        # which provider to use by default
   model: gpt-4o-mini                      # model name (no provider prefix needed)

@@ -53,6 +53,7 @@ var configShowCmd = &cobra.Command{
 
 		cmd.Println()
 		cmd.Printf("[other]\n")
+		cmd.Printf("  editor:    %s\n", config.ResolveEditor(cfg))
 		cmd.Printf("  log_level: %s\n", cfg.LogLevel)
 
 		return nil
@@ -75,13 +76,8 @@ var configEditCmd = &cobra.Command{
 			return err
 		}
 
-		editor := os.Getenv("EDITOR")
-		if editor == "" {
-			editor = os.Getenv("VISUAL")
-		}
-		if editor == "" {
-			editor = "vi"
-		}
+		cfg, _ := config.Load()
+		editor := config.ResolveEditor(cfg)
 
 		cmd.Printf("Opening %s with %s\n", path, editor)
 

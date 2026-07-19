@@ -117,18 +117,27 @@ func checkPlatform() check {
 }
 
 func checkEditor() check {
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = os.Getenv("VISUAL")
+	cfg, _ := config.Load()
+	editor := config.ResolveEditor(cfg)
+
+	// Determine the source for the detail line
+	source := "default (vi)"
+	if cfg != nil && cfg.Editor != "" {
+		source = "config.yaml"
+	} else if env := os.Getenv("EDITOR"); env != "" {
+		source = "$EDITOR"
+	} else if env := os.Getenv("VISUAL"); env != "" {
+		source = "$VISUAL"
 	}
-	if editor == "" {
+
+	if editor == "vi" && source == "default (vi)" {
 		return check{
-			Label:  "Editor ($EDITOR)",
-			Detail: "not set — 'yaah config edit' will default to vi",
+			Label:  "Editor",
+			Detail: "not configured — set 'editor' in config.yaml or $EDITOR/$VISUAL (falling back to vi)",
 			Status: "WARN",
 		}
 	}
-	return check{Label: "Editor ($EDITOR)", Status: "OK", Detail: editor}
+	return check{Label: "Editor", Status: "OK", Detail: fmt.Sprintf("%s (via %s)", editor, source)}
 }
 
 // --- color helpers (respect NO_COLOR) ---
