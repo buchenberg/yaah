@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/buchenberg/yaah/internal/memory"
@@ -382,6 +383,12 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			Model:  l.Model,
 		})
 
+		var turnSpan trace.Span
+		turnCtx := ctx
+		if l.OtelEnabled {
+			turnCtx, turnSpan = observability.StartTurn(ctx, iter, userInput)
+		}
+
 		step := &Step{
 			Messages:     messages,
 			Tools:        l.buildToolDefs(),
@@ -403,15 +410,30 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			Tools:    step.Tools,
 		}
 
-		msg, streamed, err := l.getAssistantMessage(ctx, req)
+		msg, streamed, err := l.getAssistantMessage(turnCtx, req)
 		if err != nil {
+			if turnSpan != nil {
+				observability.RecordError(turnSpan, err)
+				turnSpan.End()
+			}
 			l.Messages = messages
 			return "", fmt.Errorf("provider error: %w", err)
 		}
 		messages = append(messages, msg)
 		l.persistMessage(msg)
 
+		if turnSpan != nil {
+			turnSpan.SetAttributes(
+				attribute.Bool("turn.streamed", streamed),
+				attribute.Int("turn.tool_calls", len(msg.ToolCalls)),
+				attribute.Int("turn.messages", len(messages)),
+			)
+		}
+
 		if len(msg.ToolCalls) == 0 {
+			if turnSpan != nil {
+				turnSpan.End()
+			}
 			l.Messages = messages
 			return msg.Content, nil
 		}
@@ -426,7 +448,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			return "", err
 		}
 
-		toolResults := l.executeAndCollect(ctx, msg.ToolCalls, &messages)
+		toolResults := l.executeAndCollect(turnCtx, msg.ToolCalls, &messages)
 
 		// Update step.Messages to reflect the tool results added by executeAndCollect
 		step.Messages = messages
@@ -436,8 +458,15 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 
 		step, err = pipeline.RunPostTool(ctx, toolResults, step)
 		if err != nil {
+			if turnSpan != nil {
+				turnSpan.End()
+			}
 			l.Messages = messages
 			return "", err
+		}
+
+		if turnSpan != nil {
+			turnSpan.End()
 		}
 
 		messages = step.Messages

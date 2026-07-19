@@ -633,7 +633,7 @@ Deeper walkthroughs of the TUI component design, refactoring approach, and visua
 
 Files: `internal/observability/`, `internal/agent/agent.go`, `internal/config/load.go`
 
-yaah emits traces and metrics via OTLP gRPC to any OpenTelemetry-compatible backend. Tracing is off by default; enable with `observability.otel.enabled: true` in `config.yaml`.
+yaah emits traces via OTLP gRPC to any OpenTelemetry-compatible backend. Tracing is off by default; enable with `observability.otel.enabled: true` in `config.yaml`.
 
 ### Initialisation
 
@@ -660,7 +660,7 @@ observability:
     endpoint: "localhost:4317"
     service_name: "yaah"
     traces: true
-    metrics: true
+    metrics: false
 ```
 
 The OTel SDK also honours standard environment variables for sampling, TLS, and resource attributes (`OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER`, etc.).

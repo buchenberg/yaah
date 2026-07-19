@@ -291,7 +291,7 @@ Invalid values fall back to `ask` with a warning.
 
 ### OpenTelemetry observability
 
-yaah can emit traces and span metrics to any OTLP-compatible backend
+yaah can emit traces to any OTLP-compatible backend
 (Jaeger, Grafana Tempo, OTel Collector). Enable in `config.yaml`:
 
 ```yaml

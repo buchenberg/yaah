@@ -118,7 +118,7 @@ func defaultConfig() *Config {
 				Endpoint:    "localhost:4317",
 				ServiceName: "yaah",
 				Traces:      true,
-				Metrics:     true,
+				Metrics:     false,
 			},
 		},
 	}

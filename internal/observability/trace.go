@@ -8,6 +8,21 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// StartTurn creates a span for one agent loop iteration (one user prompt
+// + all tool calls + assistant response). The returned context should
+// flow into getAssistantMessage and executeAndCollect so tool and LLM
+// spans appear as children of the turn span in Jaeger.
+func StartTurn(ctx context.Context, turnNum int, prompt string) (context.Context, trace.Span) {
+	ctx, span := tracer.Start(ctx, "agent.turn")
+	span.SetAttributes(
+		attribute.Int("turn.number", turnNum),
+	)
+	if prompt != "" {
+		span.SetAttributes(attribute.String("turn.prompt", truncate(prompt, 200)))
+	}
+	return ctx, span
+}
+
 // StartTool creates a span for a single tool execution. The operation
 // name is the tool name; the full args are stored as an attribute so
 // they are visible in the Jaeger detail panel without cluttering the

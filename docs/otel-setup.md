@@ -1,8 +1,8 @@
 # OpenTelemetry Observability
 
-yaah can emit traces and metrics to any OpenTelemetry-compatible backend
+yaah can emit traces to any OpenTelemetry-compatible backend
 via OTLP gRPC. This document covers local development setup with
-[Jaeger](https://www.jaegertracing.io/) (traces + span metrics) and
+[Jaeger](https://www.jaegertracing.io/) (traces) and
 production options.
 
 ## Quick start (Jaeger all-in-one)
@@ -33,7 +33,7 @@ observability:
     endpoint: "localhost:4317"
     service_name: "yaah"
     traces: true
-    metrics: true
+    metrics: false
 ```
 
 All fields are optional with these defaults:
@@ -44,7 +44,7 @@ All fields are optional with these defaults:
 | `endpoint` | `localhost:4317` | OTLP gRPC collector address |
 | `service_name` | `yaah` | Display name in the tracing UI |
 | `traces` | `true` | Emit trace spans |
-| `metrics` | `true` | Emit OTLP metrics |
+| `metrics` | `false` | Emit OTLP metrics (needs a metrics-capable backend) |
 
 ## View traces
 
