@@ -301,18 +301,33 @@ All five phases were implemented on branch `tui-improvements` (7 commits).
 
 ### Keybinding reference (final state)
 
-| Key | Action |
-|-----|--------|
-| `Ctrl+C` | Quit |
-| `Esc` | Cancel / back (command mode, model mode, question, search, help) |
-| `?` | Full help overlay |
-| `:` | Command mode (`:help`, `:clear`, `:compact`, `:banner`, `:model`, `:quit`) |
-| `/` | Search in chat history |
-| `n` / `N` | Next / prev search match |
-| `Enter` | Submit message / confirm selection |
-| `↑`/`↓` / `j`/`k` | Scroll viewport |
-| `PgUp`/`PgDn` / `Ctrl+U`/`Ctrl+D` | Page up/down |
-| `Home`/`g` / `End`/`G` | Jump to top / bottom |
-| `Ctrl+Y` | Copy last assistant response |
-| `Ctrl+T` | Toggle reasoning expand/collapse |
-| `Tab`/`Shift+Tab` | (future: cycle focus) |
+| Key | Action | Guard |
+|-----|--------|-------|
+| `Ctrl+C` | Quit | always |
+| `Esc` | Cancel / back (command mode, model mode, question, search, help) | always |
+| `?` | Full help overlay | input empty only |
+| `/` | Search in chat history | input empty only |
+| `n` / `N` | Next / prev search match | search mode only |
+| `:` | Command mode (`:help`, `:clear`, `:compact`, `:banner`, `:model`, `:quit`) | first character only |
+| `Enter` | Submit message / confirm selection | always |
+| `↑` / `↓` | Scroll viewport | always (arrows don't conflict with typing) |
+| `PgUp` / `PgDn` | Page up/down | always |
+| `Home` / `End` | Jump to top / bottom | always |
+| `Ctrl+Y` | Copy last assistant response | always |
+| `Ctrl+T` | Toggle reasoning expand/collapse | always |
+
+Single-character keys (`j`, `k`, `g`, `G`, etc.) are NOT bound — they pass through
+ to the text input for normal typing. Only special keys (arrows, PgUp, etc.) or
+ guarded single chars (empty-input-only or search-mode-only) are intercepted.
+
+### Message backgrounds
+
+| Role | Dark theme | Light theme |
+|------|-----------|-------------|
+| User | dark blue (`24`) | light blue (`153`) |
+| Assistant | none (terminal default) | none |
+| Tool output | dark gray (`236`) | light gray (`251`) |
+| System | dark gray (`236`) | light gray (`251`) |
+
+Backgrounds are defined as `UserBg`, `ToolBg`, `SystemBg` in the `Theme` struct
+and rendered as full-width blocks for clear visual separation.
