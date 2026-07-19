@@ -138,6 +138,8 @@ type Model struct {
 	searchIdx         int             // current match index (-1 = no active match)
 	showBanner        bool            // false when banner is hidden via /banner
 	needsRefresh      bool            // true when viewport needs a throttled refresh
+	ephemMsg          string          // ephemeral status message (auto-clears)
+	ephemTimer        int             // ticks remaining until ephemMsg clears
 	onSubmit          func(string)
 	onQuit            func()
 	onCompact         func()
@@ -700,6 +702,19 @@ func (m *Model) AddToolResult(toolName, content string) {
 	m.scrollToBottom()
 }
 
+// SetEphemeral sets a transient status message that auto-clears after
+// ~3 seconds. Use for feedback like "Compacted." or "Copied!".
+func (m *Model) SetEphemeral(msg string) {
+	m.ephemMsg = msg
+	m.ephemTimer = 15 // ~3 seconds at ~200ms spinner tick rate
+}
+
+// RegisterCommand adds a slash command at runtime. Safe to call from
+// any goroutine (e.g., when MCP tools register themselves).
+func (m *Model) RegisterCommand(name, description string) {
+	m.commands = append(m.commands, Command{Name: name, Description: description})
+}
+
 // executeCommand executes a slash command and adds the result to messages.
 // /quit is handled by the caller (returns tea.Quit from Update).
 func (m *Model) executeCommand(input string) {
@@ -724,9 +739,9 @@ func (m *Model) executeCommand(input string) {
 		m.adjustViewport()
 		m.refreshViewport()
 		if m.showBanner {
-			m.AddMessage("system", "Banner shown.")
+			m.SetEphemeral("Banner shown.")
 		} else {
-			m.AddMessage("system", "Banner hidden. Use /banner to show it again.")
+			m.SetEphemeral("Banner hidden. Use /banner to show it again.")
 		}
 	case "/model":
 		if len(m.modelItems) == 0 {
@@ -969,6 +984,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshViewport()
 			m.scrollToBottom()
 			m.needsRefresh = false
+		}
+		// Auto-clear ephemeral message after ~3 seconds (~15 ticks at ~200ms).
+		if m.ephemTimer > 0 {
+			m.ephemTimer--
+			if m.ephemTimer == 0 {
+				m.ephemMsg = ""
+			}
 		}
 		return m, spinCmd
 
@@ -1438,6 +1460,9 @@ func (m *Model) adjustViewport() {
 		return
 	}
 	chatHeight := m.height - m.headerHeight() - 3 // -3 for status line + footer
+	if m.ephemMsg != "" {
+		chatHeight-- // ephemeral message line
+	}
 	if m.commandMode || m.modelMode || m.questionMode || m.showHelp {
 		chatHeight -= m.paletteLines()
 	}
@@ -1839,6 +1864,15 @@ func (m *Model) View() tea.View {
 		len(m.messages), ctxBar)
 	status := statusStyle.Width(m.width).Render(statusText)
 
+	// Ephemeral message line (shown only when active, auto-clears)
+	var ephemLine string
+	if m.ephemMsg != "" {
+		ephemLine = statusStyle.Copy().
+			Foreground(lipgloss.Color("10")).
+			Width(m.width).
+			Render(m.ephemMsg)
+	}
+
 	// Viewport holds the scrollable chat history
 	viewportView := m.viewport.View()
 
@@ -1873,6 +1907,9 @@ func (m *Model) View() tea.View {
 	footer := m.help.View(footerKeyMap{})
 
 	elements := []string{header, viewportView, status}
+	if ephemLine != "" {
+		elements = append(elements, ephemLine)
+	}
 	if palette != "" {
 		elements = append(elements, palette)
 	}
@@ -1886,11 +1923,16 @@ func (m *Model) View() tea.View {
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	// Position the terminal cursor at the textinput's location.
-	// textinput.Cursor() returns Y=0 (relative to the widget), so we
-	// offset it to the input line (second-to-last line; last is footer).
+	// The input line is above the footer (last line).
 	if !m.input.VirtualCursor() {
 		if c := m.input.Cursor(); c != nil {
-			c.Y = m.height - 2
+			// input is the second-to-last element; footer is last.
+			// If ephemeral message is shown, input is third-to-last.
+			offset := 2
+			if m.ephemMsg != "" {
+				offset = 3
+			}
+			c.Y = m.height - offset
 			v.Cursor = c
 		}
 	}
