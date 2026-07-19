@@ -49,18 +49,20 @@ CLI that consumes them is more useful than another walled garden.
 
 ## Install
 
+### macOS / Linux — one-liner
+
 ```bash
-# macOS / Linux — one-liner
 curl -fsSL https://raw.githubusercontent.com/buchenberg/yaah/main/install.sh | sh
 ```
+### Windows — PowerShell one-liner
 
 ```powershell
-# Windows — PowerShell one-liner
+
 iwr -useb https://raw.githubusercontent.com/buchenberg/yaah/main/install.ps1 | iex
 ```
+### From source (Go 1.25+ required)
 
 ```bash
-# From source (Go 1.25+ required)
 go install github.com/buchenberg/yaah@latest
 ```
 
