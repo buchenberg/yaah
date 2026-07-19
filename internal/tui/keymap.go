@@ -14,6 +14,7 @@ type keyMap struct {
 	Quit      key.Binding
 	Help      key.Binding
 	Search    key.Binding
+	Commands  key.Binding
 	NextMatch key.Binding
 	PrevMatch key.Binding
 	Copy      key.Binding
@@ -59,6 +60,10 @@ var keys = keyMap{
 		key.WithKeys("/"),
 		key.WithHelp("/", "search"),
 	),
+	Commands: key.NewBinding(
+		key.WithKeys(":"),
+		key.WithHelp(":", "commands"),
+	),
 	NextMatch: key.NewBinding(
 		key.WithKeys("n"),
 		key.WithHelp("n", "next match"),
@@ -89,10 +94,10 @@ var keys = keyMap{
 // footer hint bar. Ordered by priority.
 func footerBindings() []key.Binding {
 	return []key.Binding{
-		keys.Help,
+		keys.Commands,
 		keys.Search,
+		keys.Help,
 		keys.Copy,
-		keys.Reasoning,
 		keys.Quit,
 	}
 }

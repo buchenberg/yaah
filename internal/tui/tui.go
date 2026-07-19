@@ -1981,9 +1981,7 @@ func (m *Model) renderHelpOverlay() string {
 		{"Navigation", []key.Binding{keys.Up, keys.Down, keys.PageUp, keys.PageDown, keys.Top, keys.Bottom}},
 		{"Actions", []key.Binding{keys.Search, keys.Copy, keys.Reasoning, keys.Help}},
 		{"Input", []key.Binding{keys.Submit, keys.Cancel}},
-		{"Commands", []key.Binding{
-			key.NewBinding(key.WithKeys(":"), key.WithHelp(":", "command mode (:help, :model, :compact, :banner)")),
-		}},
+		{"Commands", []key.Binding{keys.Commands}},
 		{"System", []key.Binding{keys.Quit}},
 	}
 
