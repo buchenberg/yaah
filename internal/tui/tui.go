@@ -52,6 +52,7 @@ type Message struct {
 	Content   string // glamour-rendered for assistant, raw for others
 	Raw       string // original markdown (for copy), same as Content for user/tool
 	ToolName  string // tool that produced this message (for tool result messages)
+	ToolArgs  string // tool arguments (for extracting descriptions)
 	Reasoning string // thinking/reasoning text (empty for non-assistant or normal responses)
 }
 
@@ -143,6 +144,8 @@ type Model struct {
 	// --- reasoning ---
 	reasoningExpanded map[string]bool // zone ID → true if expanded
 	reasoningZones    []string        // active reasoning zone IDs
+	toolExpanded      map[string]bool // zone ID → true for expanded tool output
+	toolZones         []string        // active tool zone IDs
 
 	// --- overlays ---
 	showHelp   bool // help overlay visible
@@ -216,6 +219,7 @@ func New(cfg Config) *Model {
 		viewport:          vp,
 		banner:            bn,
 		reasoningExpanded: make(map[string]bool),
+		toolExpanded:      make(map[string]bool),
 		help:              help.New(),
 		showBanner:        true,
 		cwd:               cfg.CWD,
@@ -459,12 +463,13 @@ func (m *Model) AddMessage(role, content string) {
 
 // AddToolResult adds a tool result message. For todowrite, it renders the
 // formatted todo list. For other tools, it shows the raw result.
-func (m *Model) AddToolResult(toolName, content string) {
+func (m *Model) AddToolResult(toolName, content, toolArgs string) {
 	m.messages = append(m.messages, Message{
 		Role:     "tool",
 		Content:  m.renderToolResult(toolName, content),
 		Raw:      content,
 		ToolName: toolName,
+		ToolArgs: toolArgs,
 	})
 	m.refreshViewport()
 	m.scrollToBottom()
@@ -671,7 +676,7 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 
 	if msg.ToolResult != "" || msg.ToolResultName != "" {
 		m.ClearToolCall() // tool finished — collapse progress label
-		m.AddToolResult(msg.ToolResultName, msg.ToolResult)
+		m.AddToolResult(msg.ToolResultName, msg.ToolResult, msg.ToolArgs)
 		return
 	}
 
@@ -812,6 +817,13 @@ func (m *Model) handleMouseClick(msg tea.MouseClickMsg) tea.Cmd {
 		for _, zoneID := range m.reasoningZones {
 			if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
 				m.reasoningExpanded[zoneID] = !m.reasoningExpanded[zoneID]
+				m.refreshViewport()
+				return nil
+			}
+		}
+		for _, zoneID := range m.toolZones {
+			if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
+				m.toolExpanded[zoneID] = !m.toolExpanded[zoneID]
 				m.refreshViewport()
 				return nil
 			}

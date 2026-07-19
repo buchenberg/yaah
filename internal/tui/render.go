@@ -334,8 +334,8 @@ func (m *Model) reRenderMessages() {
 func (m *Model) renderMessages() string {
 	var b strings.Builder
 
-	toolLabelRendered := false
 	m.reasoningZones = m.reasoningZones[:0]
+	m.toolZones = m.toolZones[:0]
 
 	for msgIdx, msg := range m.messages {
 		switch msg.Role {
@@ -365,34 +365,51 @@ func (m *Model) renderMessages() string {
 			b.WriteString("\n\n")
 
 		case "tool":
-			// Tool progress label — shown while waiting, cleared when result arrives.
-			if m.toolCall != "" && !toolLabelRendered {
-				label := m.toolCall
-				if m.toolCall == "task" && m.toolArgs != "" {
-					re := regexp.MustCompile(`"description"\s*:\s*"([^"]*)"`)
-					if match := re.FindStringSubmatch(m.toolArgs); len(match) > 1 && match[1] != "" {
-						label = fmt.Sprintf("sub-agent — %s", match[1])
-					} else {
-						label = "sub-agent"
-					}
-				} else if m.toolCall == "webfetch" && m.toolArgs != "" {
-					re := regexp.MustCompile(`"url"\s*:\s*"([^"]*)"`)
-					if match := re.FindStringSubmatch(m.toolArgs); len(match) > 1 && match[1] != "" {
-						label = fmt.Sprintf("web_fetch → %s", match[1])
-					}
+			// Build a header from the tool name and args.
+			header := msg.ToolName
+			if msg.ToolName == "task" && msg.ToolArgs != "" {
+				re := regexp.MustCompile(`"description"\s*:\s*"([^"]*)"`)
+				if match := re.FindStringSubmatch(msg.ToolArgs); len(match) > 1 && match[1] != "" {
+					header = "sub-agent — " + match[1]
+				} else {
+					header = "sub-agent"
 				}
-				b.WriteString("\n")
-				b.WriteString(toolStyle.Render(fmt.Sprintf("  ⏳ %s…", label)))
-				b.WriteString("\n\n")
-				toolLabelRendered = true
+			} else if msg.ToolName == "webfetch" && msg.ToolArgs != "" {
+				re := regexp.MustCompile(`"url"\s*:\s*"([^"]*)"`)
+				if match := re.FindStringSubmatch(msg.ToolArgs); len(match) > 1 && match[1] != "" {
+					header = "web_fetch → " + match[1]
+				}
+			} else if msg.ToolName == "bash" && msg.ToolArgs != "" {
+				header = "bash — " + msg.ToolArgs
 			}
 
-			// Tool result — indented and dimmed, no background.
-			b.WriteString("\n")
-			if msg.ToolName == "task" || (msg.ToolName != "" && (isListContent(msg.Raw) || isTreeContent(msg.Raw))) {
-				b.WriteString(toolIndent(m.width, msg.Content))
+			// Icon: ⏳ if still running, ✓ if completed.
+			icon := "✓"
+			if m.toolCall == msg.ToolName {
+				icon = "⏳"
+			}
+
+			zoneID := fmt.Sprintf("tool-%d", msgIdx)
+			m.toolZones = append(m.toolZones, zoneID)
+
+			// Default: collapsed when completed, expanded while running.
+			expanded, has := m.toolExpanded[zoneID]
+			if !has {
+				expanded = m.toolCall == msg.ToolName
+			}
+
+			if expanded {
+				b.WriteString(zone.Mark(zoneID, toolStyle.Render(fmt.Sprintf("  ▼ %s %s", icon, header))))
+				b.WriteString("\n")
+				// Tool output content.
+				if msg.ToolName == "task" || (msg.ToolName != "" && (isListContent(msg.Raw) || isTreeContent(msg.Raw))) {
+					b.WriteString(toolIndent(m.width, msg.Content))
+				} else {
+					b.WriteString(toolIndent(m.width, chatWrap("", msg.Content, m.width)))
+				}
 			} else {
-				b.WriteString(toolIndent(m.width, chatWrap("", msg.Content, m.width)))
+				b.WriteString(zone.Mark(zoneID, toolStyle.Render(fmt.Sprintf("  ▶ %s %s", icon, header))))
+				b.WriteString("\n")
 			}
 			b.WriteString("\n")
 
