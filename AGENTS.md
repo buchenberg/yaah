@@ -5,9 +5,9 @@
 ## What yaah is
 
 yaah is a vendor-free AI agent harness. One Go static binary, minimal
-config at `~/.yaah/`, skills at `./.agents/` (project, walked up from cwd)
-and `~/.agents/` (cross-tool standard), MCP over stdio and HTTP for tool
-servers. See `README.md` for the user-facing pitch.
+config at `~/.yaah/`, skills at `./.agents/` (project, tracked in git)
+and `~/.agents/` (cross-tool standard, per-machine), MCP over stdio and
+HTTP for tool servers. See `README.md` for the user-facing pitch.
 
 ## Local-only directories
 
@@ -19,7 +19,6 @@ They are not part of the yaah repo and should never be committed:
   `charm-bubbles` skill clones `github.com/charmbracelet/bubbles` here
   for reading. These clones are working copies only — the real upstream
   dependencies are pinned in `go.sum` as Go modules.
-- **`.agents/`** — local user-authored skills (see "Skills" below).
 - **`.ghost/`, `.claude/`, `.qwen/`, `.hermes/`, etc.** — metadata dirs
   for various AI coding tools. Never commit.
 

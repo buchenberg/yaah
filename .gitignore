@@ -42,7 +42,6 @@ go.work.sum
 .tabnine/
 .sourcegraph/
 .ghost/
-.agents/
 .kilo/
 .pi/
 .opencode/
