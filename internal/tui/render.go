@@ -365,6 +365,7 @@ func (m *Model) renderMessages() string {
 			b.WriteString("\n\n")
 
 		case "tool":
+			// Tool progress label — shown while waiting, cleared when result arrives.
 			if m.toolCall != "" && !toolLabelRendered {
 				label := m.toolCall
 				if m.toolCall == "task" && m.toolArgs != "" {
@@ -380,18 +381,21 @@ func (m *Model) renderMessages() string {
 						label = fmt.Sprintf("web_fetch → %s", match[1])
 					}
 				}
-				b.WriteString(toolBgStyle.Width(m.width).Render(toolStyle.Render(fmt.Sprintf("  ⏳ %s…", label))))
 				b.WriteString("\n")
+				b.WriteString(toolBgStyle.Width(m.width).Render(toolStyle.Render(fmt.Sprintf("  ⏳ %s…", label))))
+				b.WriteString("\n\n")
 				toolLabelRendered = true
 			}
+
+			// Tool result — always rendered with green background.
+			b.WriteString("\n")
 			if msg.ToolName == "task" || (msg.ToolName != "" && (isListContent(msg.Raw) || isTreeContent(msg.Raw))) {
-				b.WriteString(msg.Content)
-				b.WriteString("\n")
+				b.WriteString(toolBgStyle.Width(m.width).Render(msg.Content))
 			} else {
 				rendered := toolStyle.Render(chatWrap("", msg.Content, m.width))
-				b.WriteString(rendered)
-				b.WriteString("\n")
+				b.WriteString(toolBgStyle.Width(m.width).Render(rendered))
 			}
+			b.WriteString("\n")
 
 		default:
 			rendered := chatWrap("", msg.Content, m.width)

@@ -671,6 +671,7 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 	}
 
 	if msg.ToolResult != "" || msg.ToolResultName != "" {
+		m.ClearToolCall() // tool finished — collapse progress label
 		m.AddToolResult(msg.ToolResultName, msg.ToolResult)
 		return
 	}
