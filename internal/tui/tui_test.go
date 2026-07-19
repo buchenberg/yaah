@@ -642,12 +642,12 @@ func TestDefaultCommands(t *testing.T) {
 		if c.Name == "" {
 			t.Error("command name must not be empty")
 		}
-		if !strings.HasPrefix(c.Name, "/") {
-			t.Errorf("command name should start with /: %q", c.Name)
+		if !strings.HasPrefix(c.Name, ":") {
+			t.Errorf("command name should start with :: %q", c.Name)
 		}
 		names[c.Name] = true
 	}
-	for _, want := range []string{"/help", "/clear", "/quit"} {
+	for _, want := range []string{":help", ":clear", ":quit"} {
 		if !names[want] {
 			t.Errorf("missing expected command: %s", want)
 		}
@@ -657,7 +657,7 @@ func TestDefaultCommands(t *testing.T) {
 func TestExecuteCommand_Help(t *testing.T) {
 	m := &Model{width: 80}
 	m.commands = defaultCommands
-	m.executeCommand("/help")
+	m.executeCommand(":help")
 	if len(m.messages) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(m.messages))
 	}
@@ -676,7 +676,7 @@ func TestExecuteCommand_Clear(t *testing.T) {
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "hi there"},
 	}
-	m.executeCommand("/clear")
+	m.executeCommand(":clear")
 	if len(m.messages) != 0 {
 		t.Errorf("expected 0 messages after clear, got %d", len(m.messages))
 	}
@@ -685,7 +685,7 @@ func TestExecuteCommand_Clear(t *testing.T) {
 func TestExecuteCommand_Unknown(t *testing.T) {
 	m := &Model{width: 80}
 	m.commands = defaultCommands
-	m.executeCommand("/invalid")
+	m.executeCommand(":invalid")
 	if len(m.messages) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(m.messages))
 	}
@@ -702,7 +702,7 @@ func TestExecuteCommand_CompactCallback(t *testing.T) {
 	m.commands = defaultCommands
 	called := false
 	m.onCompact = func() { called = true }
-	m.executeCommand("/compact")
+	m.executeCommand(":compact")
 	if !called {
 		t.Error("expected onCompact callback to be called")
 	}
@@ -734,9 +734,9 @@ func TestExecuteCommand_Model(t *testing.T) {
 	m := &Model{width: 80}
 	m.commands = defaultCommands
 	m.modelItems = []string{"openai/gpt-4o", "openai/gpt-4o-mini", "ollama/llama3"}
-	m.executeCommand("/model")
+	m.executeCommand(":model")
 	if !m.modelMode {
-		t.Fatal("expected modelMode to be true after /model command")
+		t.Fatal("expected modelMode to be true after :model command")
 	}
 	if m.modelSelected != 0 {
 		t.Errorf("expected modelSelected 0, got %d", m.modelSelected)
@@ -747,7 +747,7 @@ func TestExecuteCommand_ModelNoItems(t *testing.T) {
 	m := &Model{width: 80}
 	m.commands = defaultCommands
 	m.modelItems = nil
-	m.executeCommand("/model")
+	m.executeCommand(":model")
 	if m.modelMode {
 		t.Error("modelMode should remain false when no models available")
 	}
@@ -1410,5 +1410,49 @@ func TestQuestionModeIncreasesPortHeight(t *testing.T) {
 	// Just verify it's reasonable and includes all options when they fit
 	if lines < 10 {
 		t.Errorf("expected at least 10 palette lines, got %d", lines)
+	}
+}
+
+func TestCursorHoverMsg_SetsHoveredZone(t *testing.T) {
+	m := &Model{width: 80, height: 40, hoveredZone: false}
+
+	// Simulate receiving a cursorHoverMsg with hovering=true
+	newModel, _ := m.Update(cursorHoverMsg{hovering: true})
+	updated := newModel.(*Model)
+	if !updated.hoveredZone {
+		t.Error("expected hoveredZone to be true after cursorHoverMsg{hovering: true}")
+	}
+
+	// Simulate receiving a cursorHoverMsg with hovering=false
+	newModel, _ = updated.Update(cursorHoverMsg{hovering: false})
+	updated = newModel.(*Model)
+	if updated.hoveredZone {
+		t.Error("expected hoveredZone to be false after cursorHoverMsg{hovering: false}")
+	}
+}
+
+func TestViewCursorSequence_HoveredZone(t *testing.T) {
+	m := New(Config{Provider: "test", Model: "model", CWD: "/tmp"})
+	m.width = 80
+	m.height = 40
+	m.hoveredZone = true
+	m.adjustViewport()
+
+	v := m.View()
+	if !strings.Contains(v.Content, "\x1b]22;pointer\x07") {
+		t.Error("expected OSC 22 pointer cursor sequence when hoveredZone is true")
+	}
+}
+
+func TestViewCursorSequence_NotHovered(t *testing.T) {
+	m := New(Config{Provider: "test", Model: "model", CWD: "/tmp"})
+	m.width = 80
+	m.height = 40
+	m.hoveredZone = false
+	m.adjustViewport()
+
+	v := m.View()
+	if !strings.Contains(v.Content, "\x1b]22;text\x07") {
+		t.Error("expected OSC 22 text cursor sequence when hoveredZone is false")
 	}
 }

@@ -61,6 +61,11 @@ yaah/
 │   ├── types/                   # OpenAI message types
 │   └── update/                  # GitHub release checking
 ├── .github/workflows/ci.yml     # CI: test, vet, staticcheck, cross-compile
+├── docs/
+│   ├── architecture.md          # detailed architecture documentation
+│   ├── tui-component-design.md  # TUI component system design proposal
+│   ├── tui-refactoring-example.md # before/after refactoring examples
+│   └── tui-summary.md           # TUI component system design summary
 ├── README.md
 ├── CONTRIBUTING.md
 ├── SECURITY.md

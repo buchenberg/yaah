@@ -240,7 +240,7 @@ func newAgentSession() (*agentSession, error) {
 	systemPrompt := prompts.Build(layers)
 
 	mcpDirs := mcpSearchPaths(config.HomeDir())
-	mcpClients, mcpTools, mcpErr := mcp.StartMCPClientsWithStderr(context.Background(), mcpDirs, io.Discard)
+	mcpClients, mcpTools, _, mcpErr := mcp.StartMCPClientsWithStderr(context.Background(), mcpDirs, io.Discard)
 	if mcpErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: MCP startup error: %v\n", mcpErr)
 	}

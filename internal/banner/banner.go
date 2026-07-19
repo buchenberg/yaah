@@ -19,6 +19,9 @@ import (
 const Title = "yaah"
 
 var taglines = []string{
+	"Everything is better with goats",
+	"The prompting will continue until morale improves",
+	"This call may be recorded for quality assurance",
 	"For agents by agents",
 	"A pretty fine day for a yaah",
 	"Hallucinations sold separately",

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -267,6 +268,35 @@ func (c *Client) CallTool(ctx context.Context, name string, args json.RawMessage
 // Tools returns the tools discovered from this server.
 func (c *Client) Tools() []ServerTool {
 	return c.tools
+}
+
+// Info returns server status details.
+func (c *Client) Info() ServerInfo {
+	info := ServerInfo{
+		Name:      c.name,
+		Transport: "stdio",
+		Command:   c.manifest.Command + " " + joinArgs(c.manifest.Args),
+		ToolCount: len(c.tools),
+	}
+	if c.cmd != nil && c.cmd.Process != nil {
+		info.Connected = true
+	}
+	return info
+}
+
+func joinArgs(args []string) string {
+	s := ""
+	for i, a := range args {
+		if i > 0 {
+			s += " "
+		}
+		if strings.Contains(a, " ") {
+			s += "\"" + a + "\""
+		} else {
+			s += a
+		}
+	}
+	return s
 }
 
 // Close shuts down the MCP server process.

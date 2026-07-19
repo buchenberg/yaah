@@ -125,6 +125,17 @@ func (c *HTTPClient) Tools() []ServerTool {
 	return c.tools
 }
 
+// Info returns server status details.
+func (c *HTTPClient) Info() ServerInfo {
+	return ServerInfo{
+		Name:      c.name,
+		Transport: "http",
+		URL:       c.url,
+		Connected: c.sessionID != "" || len(c.tools) > 0,
+		ToolCount: len(c.tools),
+	}
+}
+
 // Close is a no-op for HTTP clients (no persistent connection).
 func (c *HTTPClient) Close() error {
 	return nil

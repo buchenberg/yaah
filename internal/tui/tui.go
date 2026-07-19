@@ -3,88 +3,48 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
-	"charm.land/lipgloss/v2/list"
-	"charm.land/lipgloss/v2/table"
-	"charm.land/lipgloss/v2/tree"
 	zone "github.com/lrstanley/bubblezone/v2"
 
 	"github.com/buchenberg/yaah/internal/banner"
 )
 
-// Styles
+// Styles — declared here, initialized by ApplyTheme in theme.go.
 var (
-	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("39"))
-
-	userStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("14"))
-
-	assistantStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252"))
-
-	toolStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("243"))
-
-	statusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("243")).
-			Background(lipgloss.Color("236")).
-			Padding(0, 1)
-
-	spinnerStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("39"))
-
-	codeStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("214"))
-
-	boldStyle = lipgloss.NewStyle().
-			Bold(true)
-
-	italicStyle = lipgloss.NewStyle().
-			Italic(true)
-
-	thinkingStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
-			Italic(true)
-
-	toggleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240"))
-
-	listBulletStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("99")).
-			MarginRight(1)
-
-	listItemStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252"))
-
-	treeStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240"))
-
-	treeItemStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252"))
-
-	commandPaletteStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("99")).
-				Padding(0, 1)
-
-	commandNameStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("39")).
-				Width(12)
-
-	commandDescStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("243"))
+	titleStyle          lipgloss.Style
+	userStyle           lipgloss.Style
+	userBgStyle         lipgloss.Style
+	assistantStyle      lipgloss.Style
+	toolStyle           lipgloss.Style
+	systemStyle         lipgloss.Style
+	systemBgStyle       lipgloss.Style
+	statusStyle         lipgloss.Style
+	spinnerStyle        lipgloss.Style
+	codeStyle           lipgloss.Style
+	boldStyle           lipgloss.Style
+	italicStyle         lipgloss.Style
+	thinkingStyle       lipgloss.Style
+	reasoningBgStyle    lipgloss.Style
+	toggleStyle         lipgloss.Style
+	listBulletStyle     lipgloss.Style
+	listItemStyle       lipgloss.Style
+	treeStyle           lipgloss.Style
+	treeItemStyle       lipgloss.Style
+	commandPaletteStyle lipgloss.Style
+	commandNameStyle    lipgloss.Style
+	commandDescStyle    lipgloss.Style
+	toolBoxStyle        lipgloss.Style
 )
 
 // Message represents a chat message in the TUI.
@@ -93,6 +53,7 @@ type Message struct {
 	Content   string // glamour-rendered for assistant, raw for others
 	Raw       string // original markdown (for copy), same as Content for user/tool
 	ToolName  string // tool that produced this message (for tool result messages)
+	ToolArgs  string // tool arguments (for extracting descriptions)
 	Reasoning string // thinking/reasoning text (empty for non-assistant or normal responses)
 }
 
@@ -113,6 +74,26 @@ type AgentMsg struct {
 	ModelList      []string          // models fetched from providers
 	ProviderNames  map[string]string // provider key → display name
 	Question       *QuestionModal    // non-nil when a question should be shown
+	ApproveChan    chan bool         // set when asking for tool approval; the TUI sends true/false
+	ApproveName    string            // tool name for approval display
+	ApproveArgs    string            // abbreviated tool args for approval display
+	MCPInfos       []ServerInfo      // MCP server status info (sent at startup)
+}
+
+// ServerInfo holds status details about an MCP server (mirrors mcp.ServerInfo).
+type ServerInfo struct {
+	Name      string
+	Transport string
+	Command   string
+	URL       string
+	Connected bool
+	ToolCount int
+	Error     string
+}
+
+// cursorHoverMsg is sent when the mouse moves over or leaves a clickable zone.
+type cursorHoverMsg struct {
+	hovering bool
 }
 
 // QuestionModal carries question data for the interactive modal dialog.
@@ -136,56 +117,114 @@ type Command struct {
 	Description string
 }
 
-// defaultCommands lists the built-in slash commands.
+// defaultCommands lists the built-in colon commands (triggered by typing ":").
 var defaultCommands = []Command{
-	{Name: "/help", Description: "Show available commands"},
-	{Name: "/clear", Description: "Clear chat history"},
-	{Name: "/compact", Description: "Summarize old messages"},
-	{Name: "/model", Description: "Switch model"},
-	{Name: "/quit", Description: "Exit the TUI"},
+	{Name: ":help", Description: "Show available commands"},
+	{Name: ":clear", Description: "Clear chat history"},
+	{Name: ":compact", Description: "Summarize old messages"},
+	{Name: ":banner", Description: "Toggle ASCII art banner"},
+	{Name: ":model", Description: "Switch model"},
+	{Name: ":quit", Description: "Exit the TUI"},
 }
 
 // Model is the bubbletea model for the yaah TUI.
+// Model is the bubbletea model for the yaah TUI.
 type Model struct {
-	messages          []Message
-	viewport          viewport.Model
-	input             textinput.Model
-	spinner           spinner.Model
-	mdRenderer        *glamour.TermRenderer
-	banner            string // pre-rendered figlet + lolcat ASCII art
-	provider          string
-	modelName         string
-	width             int
-	height            int
-	thinking          bool
-	toolCall          string
-	toolArgs          string          // args for current tool call (e.g. task description)
-	streaming         bool            // currently streaming a response
-	streamContent     string          // accumulated streaming content
-	thinkContent      string          // accumulated thinking/reasoning content
-	reasoningExpanded map[string]bool // zone ID → true if expanded (absent = collapsed)
-	reasoningZones    []string        // active reasoning zone IDs (for click handling)
-	questionMode      bool            // true when showing a question modal
-	questionModal     QuestionModal   // the current question
-	questionIdx       int             // highlighted option index
-	questionMulti     []bool          // toggled state for multi-select
-	contextPct        int             // context window fill percentage (0-100)
-	contextTokens     int             // estimated token count
-	contextWindow     int             // context window size
-	onSubmit          func(string)
-	onQuit            func()
-	onCompact         func()
-	onModel           func(string, string)
-	commandMode       bool              // true when input starts with "/"
-	commands          []Command         // registered slash commands
-	modelMode         bool              // true when in model-selection sub-mode
-	modelItems        []string          // available models in "provider/model" format
-	modelSelected     int               // highlighted index in filtered list
-	providerNames     map[string]string // provider key → display name
+	// --- core widgets ---
+	messages   []Message
+	viewport   viewport.Model
+	input      textinput.Model
+	spinner    spinner.Model
+	help       help.Model
+	mdRenderer *glamour.TermRenderer
+
+	// --- static config ---
+	banner        string // pre-rendered figlet + lolcat ASCII art
+	provider      string
+	modelName     string
+	cwd           string
+	contextWindow int
+	onSubmit      func(string)
+	onQuit        func()
+	onCompact     func()
+	onModel       func(string, string)
+
+	// --- layout ---
+	width  int
+	height int
+
+	// --- streaming response state ---
+	thinking      bool
+	toolCall      string
+	toolArgs      string // args for current tool call (e.g. task description)
+	streaming     bool   // currently streaming a response
+	streamContent string // accumulated streaming content
+	thinkContent  string // accumulated thinking/reasoning content
+
+	// --- reasoning ---
+	reasoningExpanded map[string]bool // zone ID → true if expanded
+	reasoningZones    []string        // active reasoning zone IDs
+	toolExpanded      map[string]bool // zone ID → true for expanded tool output
+	toolZones         []string        // active tool zone IDs
+
+	// --- overlays ---
+	showHelp   bool // help overlay visible
+	searchMode bool // search overlay active
+
+	// --- search ---
+	searchQuery   string
+	searchMatches []int
+	searchIdx     int // current match index (-1 = none)
+
+	// --- question modal ---
+	questionMode  bool
+	questionModal QuestionModal
+	questionIdx   int
+	questionMulti []bool
+	approveModal  AgentMsg // pending approval request (ApproveChan set)
+
+	// --- command mode ---
+	commandMode bool
+	commands    []Command
+
+	// --- model selection ---
+	modelMode     bool
+	modelItems    []string
+	modelSelected int
+	providerNames map[string]string // provider key → display name
+
+	// --- context window ---
+	contextPct    int
+	contextTokens int
+
+	// --- mcp ---
+	mcpInfos []ServerInfo
+
+	// --- cursor hover ---
+	hoveredZone bool // true when mouse is over a clickable zone (pointer cursor)
+
+	// --- misc UI ---
+	showBanner   bool
+	needsRefresh bool
+	ephemMsg     string
+	ephemTimer   int
 }
 
-// New creates a new TUI model.
-func New(provider, model string, contextWindow int, onSubmit func(string), onQuit func(), onCompact func(), onModel func(string, string)) *Model {
+// Config holds the immutable setup parameters for a TUI model.
+// Use New(cfg) instead of positional arguments.
+type Config struct {
+	Provider      string
+	Model         string
+	CWD           string
+	ContextWindow int
+	OnSubmit      func(string)
+	OnQuit        func()
+	OnCompact     func()
+	OnModel       func(string, string)
+}
+
+// New creates a new TUI model from a Config.
+func New(cfg Config) *Model {
 	input := textinput.New()
 	input.Placeholder = "Type a message..."
 	input.Focus()
@@ -207,32 +246,18 @@ func New(provider, model string, contextWindow int, onSubmit func(string), onQui
 		viewport:          vp,
 		banner:            bn,
 		reasoningExpanded: make(map[string]bool),
-		provider:          provider,
-		modelName:         model,
-		contextWindow:     contextWindow,
-		onSubmit:          onSubmit,
-		onQuit:            onQuit,
-		onCompact:         onCompact,
-		onModel:           onModel,
+		toolExpanded:      make(map[string]bool),
+		help:              help.New(),
+		showBanner:        true,
+		cwd:               cfg.CWD,
+		provider:          cfg.Provider,
+		modelName:         cfg.Model,
+		contextWindow:     cfg.ContextWindow,
+		onSubmit:          cfg.OnSubmit,
+		onQuit:            cfg.OnQuit,
+		onCompact:         cfg.OnCompact,
+		onModel:           cfg.OnModel,
 		commands:          defaultCommands,
-	}
-}
-
-// createRenderer (re)creates the glamour markdown renderer.
-func (m *Model) createRenderer() {
-	width := m.width - 2
-	if width < 20 {
-		width = 20
-	}
-	r, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle("dark"),
-		glamour.WithWordWrap(width),
-		glamour.WithEmoji(),
-		glamour.WithChromaFormatter("terminal256"),
-		glamour.WithPreservedNewLines(),
-	)
-	if err == nil {
-		m.mdRenderer = r
 	}
 }
 
@@ -263,102 +288,9 @@ func injectHyperlinks(md string) string {
 	return md
 }
 
-// glamourRender renders markdown through the reusable renderer.
-func (m *Model) glamourRender(content string) string {
-	if m.mdRenderer == nil {
-		return content
-	}
-	content = injectHyperlinks(content)
-	out, err := m.mdRenderer.Render(content)
-	if err != nil {
-		return content
-	}
-	return strings.TrimSpace(out)
-}
-
-// renderMarkdown renders raw markdown through glamour. Tables are extracted
-// and rendered as plain compact text before passing the rest to glamour.
-func (m *Model) renderMarkdown(content string) string {
-	segments := parseAndRenderTables(content)
-	var result strings.Builder
-	for i, seg := range segments {
-		if seg.isTable {
-			if i > 0 {
-				result.WriteString("\n\n")
-			}
-			result.WriteString(m.renderCompactTable(seg.content))
-			result.WriteString("\n")
-		} else if seg.content != "" {
-			result.WriteString(m.glamourRender(seg.content))
-		}
-	}
-	return strings.TrimSpace(result.String())
-}
-
 type textSegment struct {
 	content string
 	isTable bool
-}
-
-// parseAndRenderTables splits markdown into table and non-table segments.
-// A table is: one or more lines starting with "|", where the first or second
-// line contains "---" (the separator row).
-func parseAndRenderTables(md string) []textSegment {
-	lines := strings.Split(md, "\n")
-	var segments []textSegment
-
-	i := 0
-	for i < len(lines) {
-		line := lines[i]
-
-		// Detect table start: current line starts with | and next line is a separator
-		if strings.HasPrefix(line, "|") && i+1 < len(lines) {
-			next := lines[i+1]
-			if strings.HasPrefix(next, "|") && strings.Contains(next, "---") {
-				var buf strings.Builder
-				// Collect header + separator + all continuation rows
-				for i < len(lines) && strings.HasPrefix(lines[i], "|") {
-					buf.WriteString(lines[i])
-					buf.WriteString("\n")
-					i++
-					// After separator, collect remaining data rows
-					if i-1 >= 0 && strings.Contains(lines[i-1], "---") {
-						for i < len(lines) && strings.HasPrefix(lines[i], "|") {
-							buf.WriteString(lines[i])
-							buf.WriteString("\n")
-							i++
-						}
-						break
-					}
-				}
-				// Also check: line before separator IS the header, separator IS second
-				// Handles case where separator is first line (unusual but possible)
-				segments = append(segments, textSegment{content: buf.String(), isTable: true})
-				continue
-			}
-		}
-
-		// Non-table line: accumulate into a text segment
-		var buf strings.Builder
-		for i < len(lines) {
-			line := lines[i]
-			// Stop if we hit a table start
-			if strings.HasPrefix(line, "|") && i+1 < len(lines) {
-				next := lines[i+1]
-				if strings.HasPrefix(next, "|") && strings.Contains(next, "---") {
-					break
-				}
-			}
-			buf.WriteString(line)
-			buf.WriteString("\n")
-			i++
-		}
-		s := strings.TrimSpace(buf.String())
-		if s != "" {
-			segments = append(segments, textSegment{content: s, isTable: false})
-		}
-	}
-	return segments
 }
 
 // splitRow splits a pipe-delimited table row into trimmed columns.
@@ -369,80 +301,6 @@ func splitRow(line string) []string {
 		cols[i] = strings.TrimSpace(cols[i])
 	}
 	return cols
-}
-
-// renderCompactTable renders a markdown table using lipgloss's table package.
-// It constrains the table to the TUI width and wraps long cell content.
-func (m *Model) renderCompactTable(md string) string {
-	lines := strings.Split(strings.TrimSpace(md), "\n")
-	if len(lines) < 2 {
-		return md
-	}
-
-	var headers []string
-	var data [][]string
-	var pastHeader bool
-
-	for _, line := range lines {
-		if !strings.HasPrefix(line, "|") {
-			continue
-		}
-		cols := splitRow(line)
-		if strings.Contains(line, "---") {
-			pastHeader = true
-			continue
-		}
-		if !pastHeader {
-			headers = cols
-			pastHeader = true
-		} else {
-			styled := make([]string, len(cols))
-			for i, c := range cols {
-				styled[i] = renderInlineMarkdown(c)
-			}
-			data = append(data, styled)
-		}
-	}
-
-	if len(headers) == 0 {
-		return md
-	}
-
-	styledHeaders := make([]string, len(headers))
-	for i, h := range headers {
-		styledHeaders[i] = renderInlineMarkdown(h)
-	}
-
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
-	cellStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-
-	t := table.New().
-		Width(m.width - 2).
-		Wrap(true).
-		Border(lipgloss.NormalBorder()).
-		BorderStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("240"))).
-		StyleFunc(func(row, col int) lipgloss.Style {
-			if row == table.HeaderRow {
-				return headerStyle
-			}
-			return cellStyle
-		}).
-		Headers(styledHeaders...).
-		Rows(data...)
-
-	return t.String()
-}
-
-// renderInlineMarkdown renders basic inline markdown in a table cell:
-// backtick code spans, bold, and italic.
-func renderInlineMarkdown(s string) string {
-	code := func(t string) string { return codeStyle.Render(t) }
-	bold := func(t string) string { return boldStyle.Render(t) }
-	italic := func(t string) string { return italicStyle.Render(t) }
-	s = replacePattern(s, "`", "`", code)
-	s = replacePattern(s, "**", "**", bold)
-	s = replacePattern(s, "*", "*", italic)
-	return s
 }
 
 func replacePattern(s, open, close string, style func(string) string) string {
@@ -478,23 +336,6 @@ func isWideRune(r rune) bool {
 
 // --- list and tree rendering ---
 
-// renderToolResult renders tool result content, detecting lists and trees.
-func (m *Model) renderToolResult(toolName, content string) string {
-	if content == "" {
-		return ""
-	}
-	if toolName == "task" {
-		return m.renderMarkdown(content)
-	}
-	if isTreeContent(content) {
-		return m.renderTree(content)
-	}
-	if isListContent(content) {
-		return m.renderList(content)
-	}
-	return toolStyle.Render(content)
-}
-
 // bulletPattern matches markdown bullet list items (* item, - item, + item).
 var bulletPattern = regexp.MustCompile(`(?m)^[*\-+]\s`)
 
@@ -508,107 +349,6 @@ var treeLineRe = regexp.MustCompile(`[├└]──`)
 // isTreeContent detects tree-like content with box-drawing characters.
 func isTreeContent(s string) bool {
 	return treeLineRe.MatchString(s)
-}
-
-// renderList renders bullet-list content using lipgloss's list package.
-func (m *Model) renderList(md string) string {
-	lines := strings.Split(md, "\n")
-	var items []string
-	var current strings.Builder
-
-	flushCurrent := func() {
-		if current.Len() > 0 {
-			items = append(items, strings.TrimSpace(current.String()))
-			current.Reset()
-		}
-	}
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if bulletPattern.MatchString(trimmed) {
-			flushCurrent()
-			content := bulletPattern.ReplaceAllString(trimmed, "")
-			current.WriteString(content)
-		} else if trimmed == "" {
-			flushCurrent()
-			items = append(items, "")
-		} else if current.Len() > 0 {
-			current.WriteString(" ")
-			current.WriteString(trimmed)
-		} else {
-			flushCurrent()
-			items = append(items, trimmed)
-		}
-	}
-	flushCurrent()
-
-	var nonEmpty []string
-	for _, item := range items {
-		if item != "" {
-			nonEmpty = append(nonEmpty, item)
-		}
-	}
-	if len(nonEmpty) == 0 {
-		return toolStyle.Render(md)
-	}
-
-	l := list.New()
-	for _, item := range nonEmpty {
-		l.Item(item)
-	}
-	l.EnumeratorStyle(listBulletStyle).ItemStyle(listItemStyle)
-	return l.String()
-}
-
-// renderTree renders tree-like content using lipgloss's tree package.
-func (m *Model) renderTree(content string) string {
-	lines := strings.Split(strings.TrimSpace(content), "\n")
-
-	var rootName string
-	var start int
-	for i, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		_, rootName = splitTreePrefix(line)
-		start = i + 1
-		break
-	}
-	if rootName == "" {
-		return toolStyle.Render(content)
-	}
-
-	t := tree.New().Root(rootName).
-		Enumerator(tree.RoundedEnumerator).
-		EnumeratorStyle(treeStyle).
-		RootStyle(treeItemStyle).
-		ItemStyle(treeItemStyle)
-	stack := []*tree.Tree{t}
-
-	for _, line := range lines[start:] {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		prefix, name := splitTreePrefix(line)
-		depth := treeDepth(prefix)
-		if depth < 1 {
-			depth = 1
-		}
-
-		for len(stack) > depth {
-			stack = stack[:len(stack)-1]
-		}
-
-		parent := stack[len(stack)-1]
-		node := tree.New().Root(name).
-			Enumerator(tree.RoundedEnumerator).
-			EnumeratorStyle(treeStyle).
-			ItemStyle(treeItemStyle)
-		parent.Child(node)
-		stack = append(stack, node)
-	}
-
-	return t.String()
 }
 
 // splitTreePrefix separates tree-drawing characters from the node name.
@@ -641,10 +381,26 @@ func treeDepth(prefix string) int {
 	return depth
 }
 
-// displayWidth returns the approximate terminal display width of a string.
+// displayWidth returns the approximate terminal display width of a string,
+// skipping ANSI escape sequences so styled text measures correctly.
 func displayWidth(s string) int {
 	w := 0
+	inEscape := false
 	for _, r := range s {
+		if r == 0x1b { // ESC
+			inEscape = true
+			continue
+		}
+		if inEscape {
+			if r == '[' {
+				continue // CSI sequence continues
+			}
+			// CSI: skip until final byte (0x40–0x7E)
+			if r >= 0x40 && r <= 0x7E {
+				inEscape = false
+			}
+			continue
+		}
 		if r <= 0x7F {
 			w++
 		} else if isWideRune(r) {
@@ -682,17 +438,14 @@ func (m *Model) AddAssistantMessageWithReasoning(raw, reasoning string) {
 
 // reRenderMessages re-renders all assistant messages through the current
 // glamour renderer (used on window resize when word-wrap width changes).
-func (m *Model) reRenderMessages() {
-	for i := range m.messages {
-		if m.messages[i].Role == "assistant" && m.messages[i].Raw != "" {
-			m.messages[i].Content = m.renderMarkdown(m.messages[i].Raw)
-		}
-	}
-}
 
 // headerHeight returns the number of lines the banner + provider header
-// occupies. Used to size the viewport.
+// occupies. Used to size the viewport. When the banner is hidden, only the
+// provider line counts.
 func (m *Model) headerHeight() int {
+	if !m.showBanner || m.banner == "" {
+		return 2 // provider line + blank line
+	}
 	header := m.banner + "\n\n" +
 		titleStyle.Render(fmt.Sprintf("%s/%s", m.provider, m.modelName)) + "\n"
 	return len(strings.Split(header, "\n"))
@@ -717,37 +470,65 @@ func (m *Model) AddMessage(role, content string) {
 
 // AddToolResult adds a tool result message. For todowrite, it renders the
 // formatted todo list. For other tools, it shows the raw result.
-func (m *Model) AddToolResult(toolName, content string) {
+func (m *Model) AddToolResult(toolName, content, toolArgs string) {
 	m.messages = append(m.messages, Message{
 		Role:     "tool",
 		Content:  m.renderToolResult(toolName, content),
 		Raw:      content,
 		ToolName: toolName,
+		ToolArgs: toolArgs,
 	})
 	m.refreshViewport()
 	m.scrollToBottom()
 }
 
-// executeCommand executes a slash command and adds the result to messages.
-// /quit is handled by the caller (returns tea.Quit from Update).
+// SetEphemeral sets a transient status message that auto-clears after
+// ~3 seconds. Use for feedback like "Compacted." or "Copied!".
+func (m *Model) SetEphemeral(msg string) {
+	m.ephemMsg = msg
+	m.ephemTimer = 15 // ~3 seconds at ~200ms spinner tick rate
+}
+
+// RegisterCommand adds a slash command at runtime. Safe to call from
+// any goroutine (e.g., when MCP tools register themselves).
+func (m *Model) RegisterCommand(name, description string) {
+	m.commands = append(m.commands, Command{Name: name, Description: description})
+}
+
+// SetMCPInfos stores MCP server status info and adds an :mcp command.
+func (m *Model) SetMCPInfos(infos []ServerInfo) {
+	m.mcpInfos = infos
+}
+
+// executeCommand executes a colon command and adds the result to messages.
+// :quit is handled by the caller (returns tea.Quit from Update).
 func (m *Model) executeCommand(input string) {
 	cmd := strings.TrimSpace(input)
 	switch cmd {
-	case "/help":
+	case ":help":
 		var b strings.Builder
 		b.WriteString("Available commands:\n")
 		for _, c := range m.commands {
 			b.WriteString(fmt.Sprintf("  %s  %s\n", c.Name, c.Description))
 		}
 		m.AddMessage("system", b.String())
-	case "/clear":
+	case ":clear":
 		m.messages = nil
 		m.refreshViewport()
-	case "/compact":
+	case ":compact":
 		if m.onCompact != nil {
 			m.onCompact()
 		}
-	case "/model":
+	case ":banner":
+		m.showBanner = !m.showBanner
+		m.adjustViewport()
+		m.refreshViewport()
+		if m.showBanner {
+			m.SetEphemeral("Banner shown.")
+		} else {
+			m.SetEphemeral("Banner hidden. Use /banner to show it again.")
+		}
+	case ":model":
 		if len(m.modelItems) == 0 {
 			m.AddMessage("system", "No models available. Configure providers or wait for model list to load.")
 			return
@@ -759,6 +540,8 @@ func (m *Model) executeCommand(input string) {
 		m.clearCommandMode()
 		m.adjustViewport()
 		return
+	case ":mcp":
+		m.AddMessage("system", m.renderMCPStatus())
 	default:
 		m.AddMessage("system", fmt.Sprintf("Unknown command: %s", cmd))
 	}
@@ -838,15 +621,25 @@ func (m *Model) ClearToolCall() {
 }
 
 // AppendToken appends a streaming token to the current response.
+// To avoid excessive viewport rebuilds during fast streaming, only
+// a full refresh + scroll runs when the debounce flag is cleared.
+// The spinner tick (which fires ~15 times/sec) picks up pending
+// refreshes.
 func (m *Model) AppendToken(token string) {
 	if !m.streaming {
 		m.streaming = true
 		m.streamContent = ""
+		m.needsRefresh = true
 	}
 
 	m.streamContent += token
-	m.refreshViewport()
-	m.scrollToBottom()
+
+	// Refresh immediately if no pending refresh, then set the debounce flag.
+	if !m.needsRefresh {
+		m.refreshViewport()
+		m.scrollToBottom()
+		m.needsRefresh = true
+	}
 }
 
 // HandleAgentMsg processes messages from the agent goroutine.
@@ -896,7 +689,8 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 	}
 
 	if msg.ToolResult != "" || msg.ToolResultName != "" {
-		m.AddToolResult(msg.ToolResultName, msg.ToolResult)
+		m.ClearToolCall() // tool finished — collapse progress label
+		m.AddToolResult(msg.ToolResultName, msg.ToolResult, msg.ToolArgs)
 		return
 	}
 
@@ -940,6 +734,34 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 		return
 	}
 
+	if msg.ApproveChan != nil {
+		m.approveModal = msg
+		ch := make(chan string, 1)
+		m.questionModal = QuestionModal{
+			Header:   "Approve",
+			Question: fmt.Sprintf("Run %s(%s)?", msg.ApproveName, msg.ApproveArgs),
+			Options: []QuestionOption{
+				{Label: "Yes", Description: "Approve this tool call"},
+				{Label: "No", Description: "Deny this tool call"},
+			},
+			Multiple: false,
+			AnswerCh: ch,
+		}
+		m.questionIdx = 0
+		m.questionMulti = make([]bool, 2)
+		m.questionMode = true
+		m.input.SetValue("")
+		m.input.Placeholder = ""
+		m.adjustViewport()
+		m.refreshViewport()
+		// Answer in the background so we don't block the event loop.
+		go func() {
+			answer := <-ch
+			msg.ApproveChan <- (answer == "Yes" || answer == "Yes, Yes")
+		}()
+		return
+	}
+
 	if msg.ContextWindow > 0 {
 		m.HandleContextInfo(msg.ContextTokens, msg.ContextWindow)
 	}
@@ -960,20 +782,19 @@ func (m *Model) Init() tea.Cmd {
 
 // Update implements tea.Model.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-
 	switch msg := msg.(type) {
 	case AgentMsg:
 		m.HandleAgentMsg(msg)
 		return m, nil
 
-	case spinner.TickMsg:
-		var spinCmd tea.Cmd
-		m.spinner, spinCmd = m.spinner.Update(msg)
-		if m.thinking {
-			m.refreshViewport()
+	case cursorHoverMsg:
+		if m.hoveredZone != msg.hovering {
+			m.hoveredZone = msg.hovering
 		}
-		return m, spinCmd
+		return m, nil
+
+	case spinner.TickMsg:
+		return m, m.handleSpinnerTick(msg)
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -985,179 +806,333 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseClickMsg:
-		if msg.Button == tea.MouseLeft {
-			if m.questionMode {
-				for i := range m.questionModal.Options {
-					zoneID := fmt.Sprintf("question-opt-%d", i)
-					if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
-						if m.questionModal.Multiple {
-							m.questionMulti[i] = !m.questionMulti[i]
-						}
-						m.questionIdx = i
-						m.refreshViewport()
-						return m, nil
-					}
+		return m, m.handleMouseClick(msg)
+
+	case tea.MouseMotionMsg:
+		// Check if mouse is over a clickable zone (from previous render).
+		for _, zoneID := range m.reasoningZones {
+			if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
+				if !m.hoveredZone {
+					return m, func() tea.Msg { return cursorHoverMsg{hovering: true} }
 				}
-				return m, nil
+				return m, m.viewportUpdate(msg)
 			}
-			for _, zoneID := range m.reasoningZones {
+		}
+		for _, zoneID := range m.toolZones {
+			if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
+				if !m.hoveredZone {
+					return m, func() tea.Msg { return cursorHoverMsg{hovering: true} }
+				}
+				return m, m.viewportUpdate(msg)
+			}
+		}
+		if m.questionMode {
+			for i := range m.questionModal.Options {
+				zoneID := fmt.Sprintf("question-opt-%d", i)
 				if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
-					m.reasoningExpanded[zoneID] = !m.reasoningExpanded[zoneID]
-					m.refreshViewport()
-					return m, nil
+					if !m.hoveredZone {
+						return m, func() tea.Msg { return cursorHoverMsg{hovering: true} }
+					}
+					return m, m.viewportUpdate(msg)
 				}
 			}
 		}
-		var vpCmd tea.Cmd
-		m.viewport, vpCmd = m.viewport.Update(msg)
-		return m, vpCmd
+		if m.hoveredZone {
+			return m, func() tea.Msg { return cursorHoverMsg{hovering: false} }
+		}
+		return m, m.viewportUpdate(msg)
 
 	case tea.MouseMsg:
-		var vpCmd tea.Cmd
-		m.viewport, vpCmd = m.viewport.Update(msg)
-		return m, vpCmd
+		// Forward mouse events to viewport (wheel scroll).
+		return m, m.viewportUpdate(msg)
 
 	case tea.KeyPressMsg:
-		if m.questionMode {
-			switch msg.String() {
-			case "esc":
-				m.answerQuestion("")
-				return m, nil
-			case "enter":
-				m.commitQuestionAnswer()
-				return m, nil
-			case "up":
-				if m.questionIdx > 0 {
-					m.questionIdx--
-				}
-				m.refreshViewport()
-				return m, nil
-			case "down":
-				if m.questionIdx < len(m.questionModal.Options)-1 {
-					m.questionIdx++
-				}
-				m.refreshViewport()
-				return m, nil
-			case "space":
-				if m.questionModal.Multiple {
-					m.questionMulti[m.questionIdx] = !m.questionMulti[m.questionIdx]
-				}
-				m.refreshViewport()
-				return m, nil
-			}
-			return m, nil
-		}
-
-		switch msg.String() {
-		case "ctrl+c":
-			if m.onQuit != nil {
-				m.onQuit()
-			}
-			return m, tea.Quit
-
-		case "esc":
-			if m.modelMode {
-				m.exitModelMode()
-				return m, nil
-			}
-			if m.onQuit != nil {
-				m.onQuit()
-			}
-			return m, tea.Quit
-
-		case "ctrl+y":
-			for i := len(m.messages) - 1; i >= 0; i-- {
-				if m.messages[i].Role == "assistant" && m.messages[i].Raw != "" {
-					return m, tea.SetClipboard(m.messages[i].Raw)
-				}
-			}
-			return m, nil
-
-		case "ctrl+r":
-			if m.hasReasoning() {
-				anyExpanded := false
-				for _, zid := range m.reasoningZones {
-					if m.reasoningExpanded[zid] {
-						anyExpanded = true
-						break
-					}
-				}
-				for _, zid := range m.reasoningZones {
-					m.reasoningExpanded[zid] = !anyExpanded
-				}
-				m.refreshViewport()
-			}
-			return m, nil
-
-		case "enter":
-			if m.modelMode {
-				m.selectModel()
-				return m, nil
-			}
-			if m.commandMode {
-				value := m.input.Value()
-				m.input.SetValue("")
-				m.clearCommandMode()
-				if strings.TrimSpace(value) == "/quit" {
-					return m, tea.Quit
-				}
-				m.executeCommand(value)
-				return m, nil
-			}
-			if m.thinking {
-				return m, nil
-			}
-			m.thinkContent = ""
-			m.reasoningExpanded = make(map[string]bool)
-			value := m.input.Value()
-			if strings.TrimSpace(value) == "" {
-				return m, nil
-			}
-			m.AddMessage("user", value)
-			m.SetThinking(true)
-			m.input.SetValue("")
-			if m.onSubmit != nil {
-				m.onSubmit(value)
-			}
-			return m, nil
-
-		case "up":
-			if m.modelMode {
-				filtered := m.filteredModels()
-				if m.modelSelected > 0 {
-					m.modelSelected--
-				}
-				_ = filtered
-				return m, nil
-			}
-			var vpCmd tea.Cmd
-			m.viewport, vpCmd = m.viewport.Update(msg)
-			return m, vpCmd
-
-		case "down":
-			if m.modelMode {
-				filtered := m.filteredModels()
-				if m.modelSelected < len(filtered)-1 {
-					m.modelSelected++
-				}
-				_ = filtered
-				return m, nil
-			}
-			var vpCmd2 tea.Cmd
-			m.viewport, vpCmd2 = m.viewport.Update(msg)
-			return m, vpCmd2
-
-		case "pgup", "pgdown", "home", "end":
-			var vpCmd3 tea.Cmd
-			m.viewport, vpCmd3 = m.viewport.Update(msg)
-			return m, vpCmd3
-		}
-
+		return m.handleKeyPress(msg)
 	}
 
+	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.detectCommandMode()
 	return m, cmd
+}
+
+// --- spinner ---
+
+func (m *Model) handleSpinnerTick(msg spinner.TickMsg) tea.Cmd {
+	var spinCmd tea.Cmd
+	m.spinner, spinCmd = m.spinner.Update(msg)
+	if m.thinking {
+		m.refreshViewport()
+	}
+	if m.needsRefresh && m.streaming {
+		m.refreshViewport()
+		m.scrollToBottom()
+		m.needsRefresh = false
+	}
+	if m.ephemTimer > 0 {
+		m.ephemTimer--
+		if m.ephemTimer == 0 {
+			m.ephemMsg = ""
+		}
+	}
+	return spinCmd
+}
+
+// --- mouse ---
+
+func (m *Model) handleMouseClick(msg tea.MouseClickMsg) tea.Cmd {
+	if msg.Button == tea.MouseLeft {
+		if m.questionMode {
+			for i := range m.questionModal.Options {
+				zoneID := fmt.Sprintf("question-opt-%d", i)
+				if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
+					if m.questionModal.Multiple {
+						m.questionMulti[i] = !m.questionMulti[i]
+					}
+					m.questionIdx = i
+					m.refreshViewport()
+					return nil
+				}
+			}
+			return nil
+		}
+		for _, zoneID := range m.reasoningZones {
+			if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
+				m.reasoningExpanded[zoneID] = !m.reasoningExpanded[zoneID]
+				m.refreshViewport()
+				return nil
+			}
+		}
+		for _, zoneID := range m.toolZones {
+			if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
+				m.toolExpanded[zoneID] = !m.toolExpanded[zoneID]
+				m.refreshViewport()
+				return nil
+			}
+		}
+	}
+	return m.viewportUpdate(msg)
+}
+
+func (m *Model) viewportUpdate(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
+	m.viewport, cmd = m.viewport.Update(msg)
+	return cmd
+}
+
+// --- key dispatch ---
+
+// handleKeyPress routes a key press to the active mode handler.
+func (m *Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// Dismiss overlays first
+	if m.showHelp {
+		m.showHelp = false
+		m.adjustViewport()
+		return m, nil
+	}
+	if m.searchMode {
+		return m, m.handleSearchKey(msg)
+	}
+	if m.questionMode {
+		return m, m.handleQuestionKey(msg)
+	}
+	if m.modelMode {
+		return m, m.handleModelKey(msg)
+	}
+	return m, m.handleNormalKey(msg)
+}
+
+func (m *Model) handleSearchKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch {
+	case key.Matches(msg, keys.Cancel):
+		m.searchMode = false
+		m.searchQuery = ""
+		return nil
+	case key.Matches(msg, keys.NextMatch):
+		m.searchNextMatch()
+		return nil
+	case key.Matches(msg, keys.PrevMatch):
+		m.searchPrevMatch()
+		return nil
+	case key.Matches(msg, keys.Submit):
+		m.searchMode = false
+		return nil
+	case msg.String() == "backspace":
+		if len(m.searchQuery) > 0 {
+			m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+			m.buildSearchMatches()
+		}
+		return nil
+	default:
+		s := msg.String()
+		if len(s) == 1 && s[0] >= 32 && s[0] < 127 {
+			m.searchQuery += s
+			m.buildSearchMatches()
+		}
+		return nil
+	}
+}
+
+func (m *Model) handleQuestionKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch {
+	case key.Matches(msg, keys.Cancel):
+		m.answerQuestion("")
+		return nil
+	case key.Matches(msg, keys.Submit):
+		m.commitQuestionAnswer()
+		return nil
+	case key.Matches(msg, keys.Up):
+		if m.questionIdx > 0 {
+			m.questionIdx--
+		}
+		m.refreshViewport()
+		return nil
+	case key.Matches(msg, keys.Down):
+		if m.questionIdx < len(m.questionModal.Options)-1 {
+			m.questionIdx++
+		}
+		m.refreshViewport()
+		return nil
+	case msg.String() == "space":
+		if m.questionModal.Multiple {
+			m.questionMulti[m.questionIdx] = !m.questionMulti[m.questionIdx]
+		}
+		m.refreshViewport()
+		return nil
+	}
+	return nil
+}
+
+func (m *Model) handleModelKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch {
+	case key.Matches(msg, keys.Cancel):
+		m.exitModelMode()
+		return nil
+	case key.Matches(msg, keys.Up):
+		if m.modelSelected > 0 {
+			m.modelSelected--
+		}
+		return nil
+	case key.Matches(msg, keys.Down):
+		filtered := m.filteredModels()
+		if m.modelSelected < len(filtered)-1 {
+			m.modelSelected++
+		}
+		return nil
+	case key.Matches(msg, keys.Submit):
+		m.selectModel()
+		return nil
+	}
+	return nil
+}
+
+func (m *Model) handleNormalKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch {
+	case key.Matches(msg, keys.Quit):
+		if m.onQuit != nil {
+			m.onQuit()
+		}
+		return tea.Quit
+
+	case key.Matches(msg, keys.Cancel):
+		if m.commandMode {
+			m.input.SetValue("")
+			m.clearCommandMode()
+		}
+		return nil
+
+	case key.Matches(msg, keys.Help):
+		if !m.commandMode && m.input.Value() == "" {
+			m.showHelp = true
+			m.adjustViewport()
+			return nil
+		}
+
+	case key.Matches(msg, keys.Search):
+		if !m.commandMode && m.input.Value() == "" {
+			m.searchMode = true
+			m.searchQuery = ""
+			m.searchMatches = nil
+			m.searchIdx = -1
+			return nil
+		}
+
+	case key.Matches(msg, keys.Copy):
+		for i := len(m.messages) - 1; i >= 0; i-- {
+			if m.messages[i].Role == "assistant" && m.messages[i].Raw != "" {
+				return tea.SetClipboard(m.messages[i].Raw)
+			}
+		}
+		return nil
+
+	case key.Matches(msg, keys.Reasoning):
+		if m.hasReasoning() {
+			anyExpanded := false
+			for _, zid := range m.reasoningZones {
+				if m.reasoningExpanded[zid] {
+					anyExpanded = true
+					break
+				}
+			}
+			for _, zid := range m.reasoningZones {
+				m.reasoningExpanded[zid] = !anyExpanded
+			}
+			m.refreshViewport()
+		}
+		return nil
+
+	case key.Matches(msg, keys.Top):
+		if !m.commandMode {
+			m.viewport.GotoTop()
+		}
+		return nil
+
+	case key.Matches(msg, keys.Bottom):
+		if !m.commandMode {
+			m.viewport.GotoBottom()
+		}
+		return nil
+
+	case key.Matches(msg, keys.Submit):
+		if m.commandMode {
+			value := m.input.Value()
+			m.input.SetValue("")
+			m.clearCommandMode()
+			if strings.TrimSpace(value) == ":quit" {
+				return tea.Quit
+			}
+			m.executeCommand(value)
+			return nil
+		}
+		if m.thinking {
+			return nil
+		}
+		m.thinkContent = ""
+		m.reasoningExpanded = make(map[string]bool)
+		value := m.input.Value()
+		if strings.TrimSpace(value) == "" {
+			return nil
+		}
+		m.AddMessage("user", value)
+		m.SetThinking(true)
+		m.input.SetValue("")
+		if m.onSubmit != nil {
+			m.onSubmit(value)
+		}
+		return nil
+
+	case key.Matches(msg, keys.Up), key.Matches(msg, keys.Down),
+		key.Matches(msg, keys.PageUp), key.Matches(msg, keys.PageDown):
+		if !m.commandMode {
+			return m.viewportUpdate(msg)
+		}
+	}
+
+	// Key not consumed by any binding — forward to text input.
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	m.detectCommandMode()
+	return cmd
 }
 
 // detectCommandMode enables or disables command mode based on the input prefix.
@@ -1165,7 +1140,7 @@ func (m *Model) detectCommandMode() {
 	if m.modelMode || m.questionMode {
 		return
 	}
-	if strings.HasPrefix(m.input.Value(), "/") {
+	if strings.HasPrefix(m.input.Value(), ":") {
 		if !m.commandMode {
 			m.commandMode = true
 			m.input.ShowSuggestions = true
@@ -1246,6 +1221,21 @@ func (m *Model) maxQuestionLines() int {
 }
 
 func (m *Model) paletteLines() int {
+	if m.showHelp {
+		// Help overlay: title + 4 groups with headers + footer + border/padding
+		// Rough estimate: 22 content lines + 4 border/padding = 26.
+		// Cap at 80% of available terminal height.
+		available := m.height - m.headerHeight() - 5
+		if available < 10 {
+			return 10
+		}
+		max := available * 4 / 5
+		helpLines := 26
+		if helpLines > max {
+			helpLines = max
+		}
+		return helpLines
+	}
 	if m.questionMode {
 		optCount := len(m.questionModal.Options)
 		max := m.maxQuestionLines()
@@ -1280,11 +1270,11 @@ func (m *Model) paletteLines() int {
 	if !m.commandMode {
 		return 0
 	}
-	filter := strings.TrimPrefix(strings.TrimSpace(m.input.Value()), "/")
+	filter := strings.TrimPrefix(strings.TrimSpace(m.input.Value()), ":")
 	filter = strings.ToLower(filter)
 	count := 0
 	for _, c := range m.commands {
-		name := strings.TrimPrefix(c.Name, "/")
+		name := strings.TrimPrefix(c.Name, ":")
 		if filter == "" || strings.HasPrefix(strings.ToLower(name), filter) {
 			count++
 		}
@@ -1295,15 +1285,80 @@ func (m *Model) paletteLines() int {
 	return 4 + count // border (2) + padding (2) + command lines
 }
 
+// --- search ---
+
+// buildSearchMatches scans the rendered message content for lines containing
+// the current search query (case-insensitive) and populates m.searchMatches
+// with line indices.
+func (m *Model) buildSearchMatches() {
+	m.searchMatches = nil
+	m.searchIdx = -1
+	if m.searchQuery == "" {
+		return
+	}
+	query := strings.ToLower(m.searchQuery)
+	content := m.viewport.View()
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		if strings.Contains(strings.ToLower(line), query) {
+			m.searchMatches = append(m.searchMatches, i)
+		}
+	}
+	if len(m.searchMatches) > 0 {
+		m.searchIdx = 0
+		m.scrollToMatch()
+	}
+}
+
+// searchNextMatch advances to the next search match.
+func (m *Model) searchNextMatch() {
+	if len(m.searchMatches) == 0 {
+		return
+	}
+	m.searchIdx++
+	if m.searchIdx >= len(m.searchMatches) {
+		m.searchIdx = 0
+	}
+	m.scrollToMatch()
+}
+
+// searchPrevMatch moves to the previous search match.
+func (m *Model) searchPrevMatch() {
+	if len(m.searchMatches) == 0 {
+		return
+	}
+	m.searchIdx--
+	if m.searchIdx < 0 {
+		m.searchIdx = len(m.searchMatches) - 1
+	}
+	m.scrollToMatch()
+}
+
+// scrollToMatch scrolls the viewport to the current search match line.
+func (m *Model) scrollToMatch() {
+	if m.searchIdx < 0 || m.searchIdx >= len(m.searchMatches) {
+		return
+	}
+	m.viewport.SetYOffset(m.searchMatches[m.searchIdx])
+}
+
+// --- layout ---
+
 // adjustViewport recalculates and applies the viewport height based on
 // current terminal dimensions and command mode state.
 func (m *Model) adjustViewport() {
 	if m.height == 0 {
 		return
 	}
-	chatHeight := m.height - m.headerHeight() - 2
-	if m.commandMode || m.modelMode || m.questionMode {
+	chatHeight := m.height - m.headerHeight() - 3 // -3 for status line + footer
+	if m.ephemMsg != "" {
+		chatHeight-- // ephemeral message line
+	}
+	if m.commandMode || m.modelMode || m.questionMode || m.showHelp {
 		chatHeight -= m.paletteLines()
+	}
+	if m.searchMode {
+		chatHeight -= 1 // search indicator line
 	}
 	if chatHeight < 5 {
 		chatHeight = 5
@@ -1381,285 +1436,26 @@ func wrapParagraph(line string, width int) string {
 // thinking indicator, tool call) as a single string suitable for
 // handing to the viewport. Width is m.width; callers must ensure
 // m.width is set.
-func (m *Model) renderMessages() string {
-	var b strings.Builder
 
-	toolLabelRendered := false
-	m.reasoningZones = m.reasoningZones[:0]
+// Reasoning content (from models like DeepSeek)
 
-	for msgIdx, msg := range m.messages {
-		switch msg.Role {
-		case "user":
-			rendered := userStyle.Render(chatWrap("", msg.Content, m.width))
-			b.WriteString(rendered)
-			b.WriteString("\n\n")
+// Streaming content
 
-		case "assistant":
-			if msg.Reasoning != "" {
-				b.WriteString("\n\n")
-				zoneID := fmt.Sprintf("reasoning-%d", msgIdx)
-				m.reasoningZones = append(m.reasoningZones, zoneID)
-				if !m.reasoningExpanded[zoneID] {
-					b.WriteString(zone.Mark(zoneID, toggleStyle.Render("  ▶ Reasoning...")))
-				} else {
-					b.WriteString(zone.Mark(zoneID, toggleStyle.Render("  ▼ Reasoning...")))
-					b.WriteString("\n\n")
-					b.WriteString(thinkingStyle.Render(chatWrap("", msg.Reasoning, m.width)))
-				}
-				b.WriteString("\n\n")
-			} else {
-				b.WriteString("\n")
-			}
-			b.WriteString(assistantStyle.Render(msg.Content))
-			b.WriteString("\n\n")
-
-		case "tool":
-			if m.toolCall != "" && !toolLabelRendered {
-				label := m.toolCall
-				if m.toolCall == "task" && m.toolArgs != "" {
-					re := regexp.MustCompile(`"description"\s*:\s*"([^"]*)"`)
-					if match := re.FindStringSubmatch(m.toolArgs); len(match) > 1 && match[1] != "" {
-						label = fmt.Sprintf("sub-agent — %s", match[1])
-					} else {
-						label = "sub-agent"
-					}
-				} else if m.toolCall == "webfetch" && m.toolArgs != "" {
-					re := regexp.MustCompile(`"url"\s*:\s*"([^"]*)"`)
-					if match := re.FindStringSubmatch(m.toolArgs); len(match) > 1 && match[1] != "" {
-						label = fmt.Sprintf("web_fetch → %s", match[1])
-					}
-				}
-				b.WriteString(toolStyle.Render(fmt.Sprintf("  ⏳ %s…", label)))
-				b.WriteString("\n")
-				toolLabelRendered = true
-			}
-			if msg.ToolName == "task" || (msg.ToolName != "" && (isListContent(msg.Raw) || isTreeContent(msg.Raw))) {
-				b.WriteString(msg.Content)
-				b.WriteString("\n")
-			} else {
-				rendered := toolStyle.Render(chatWrap("", msg.Content, m.width))
-				b.WriteString(rendered)
-				b.WriteString("\n")
-			}
-
-		default:
-			rendered := chatWrap("", msg.Content, m.width)
-			b.WriteString(rendered)
-			b.WriteString("\n")
-		}
-	}
-
-	// Reasoning content (from models like DeepSeek)
-	if m.thinkContent != "" {
-		b.WriteString("\n\n")
-		if m.thinking && !m.streaming {
-			rendered := spinnerStyle.Render(fmt.Sprintf("  %s Reasoning...", m.spinner.View()))
-			b.WriteString(rendered)
-			b.WriteString("\n\n")
-			b.WriteString(thinkingStyle.Render(chatWrap("", m.thinkContent, m.width)))
-		} else {
-			m.reasoningZones = append(m.reasoningZones, "reasoning-live")
-			if !m.reasoningExpanded["reasoning-live"] {
-				b.WriteString(zone.Mark("reasoning-live", toggleStyle.Render("  ▶ Reasoning...")))
-			} else {
-				b.WriteString(zone.Mark("reasoning-live", toggleStyle.Render("  ▼ Reasoning...")))
-				b.WriteString("\n\n")
-				b.WriteString(thinkingStyle.Render(chatWrap("", m.thinkContent, m.width)))
-			}
-			b.WriteString("\n")
-		}
-		b.WriteString("\n\n")
-	}
-
-	// Streaming content
-	if m.streaming && m.streamContent != "" {
-		rendered := assistantStyle.Render(m.renderMarkdown(m.streamContent))
-		b.WriteString(rendered)
-		b.WriteString("\n")
-	}
-
-	// Thinking indicator (only when no reasoning text to show)
-	if m.thinking && !m.streaming && m.thinkContent == "" {
-		rendered := spinnerStyle.Render(fmt.Sprintf("  %s Thinking...", m.spinner.View()))
-		b.WriteString(rendered)
-		b.WriteString("\n")
-	}
-
-	return b.String()
-}
+// Thinking indicator (only when no reasoning text to show)
 
 // renderModelPalette renders the model selection list above the input.
-func (m *Model) renderModelPalette() string {
-	filtered := m.filteredModels()
-	if len(filtered) == 0 {
-		return commandPaletteStyle.Render("No matching models")
-	}
 
-	// Build display rows: provider heading + model items
-	type row struct {
-		isHeading bool
-		text      string
-		modelIdx  int
-	}
-	var rows []row
-	lastProvider := ""
-	for i, model := range filtered {
-		parts := strings.SplitN(model, "/", 2)
-		providerKey := parts[0]
-		name := model
-		if len(parts) == 2 {
-			name = parts[1]
-		}
-		if providerKey != lastProvider {
-			displayName := providerKey
-			if m.providerNames != nil {
-				if dn, ok := m.providerNames[providerKey]; ok && dn != "" {
-					displayName = dn
-				}
-			}
-			rows = append(rows, row{isHeading: true, text: displayName})
-			lastProvider = providerKey
-		}
-		rows = append(rows, row{text: name, modelIdx: i})
-	}
+// Build display rows: provider heading + model items
 
-	// Find the display row index for the selected model
-	selectedRowIdx := 0
-	for i, r := range rows {
-		if r.modelIdx == m.modelSelected {
-			selectedRowIdx = i
-			break
-		}
-	}
+// Find the display row index for the selected model
 
-	// Window calculation over display rows
-	maxVisible := m.maxModelLines()
-	start := selectedRowIdx - maxVisible/2
-	if start < 0 {
-		start = 0
-	}
-	end := start + maxVisible
-	if end > len(rows) {
-		end = len(rows)
-		start = end - maxVisible
-		if start < 0 {
-			start = 0
-		}
-	}
-
-	current := m.provider + "/" + m.modelName
-	var lines []string
-	for i := start; i < end; i++ {
-		r := rows[i]
-		if r.isHeading {
-			lines = append(lines, commandNameStyle.Render(r.text))
-			continue
-		}
-		model := filtered[r.modelIdx]
-		marker := "  "
-		if r.modelIdx == m.modelSelected {
-			marker = "> "
-		}
-		styled := listItemStyle.Render(r.text)
-		if model == current {
-			styled = commandNameStyle.Render(r.text + " (current)")
-		}
-		lines = append(lines, "  "+marker+styled)
-	}
-
-	return commandPaletteStyle.Render(strings.Join(lines, "\n"))
-}
+// Window calculation over display rows
 
 // renderCommandPalette renders the command suggestion list above the input.
-func (m *Model) renderCommandPalette() string {
-	filter := strings.TrimPrefix(strings.TrimSpace(m.input.Value()), "/")
-	filter = strings.ToLower(filter)
-
-	var visible []Command
-	for _, c := range m.commands {
-		name := strings.TrimPrefix(c.Name, "/")
-		if filter == "" || strings.HasPrefix(strings.ToLower(name), filter) {
-			visible = append(visible, c)
-		}
-	}
-
-	var lines []string
-	for _, c := range visible {
-		name := commandNameStyle.Render(c.Name)
-		desc := commandDescStyle.Render(c.Description)
-		lines = append(lines, name+" "+desc)
-	}
-
-	if len(lines) == 0 {
-		return ""
-	}
-
-	return commandPaletteStyle.Render(strings.Join(lines, "\n"))
-}
 
 // renderQuestionModal renders the interactive question dialog.
-func (m *Model) renderQuestionModal() string {
-	contentWidth := m.width - 6
-	if contentWidth < 20 {
-		contentWidth = 20
-	}
 
-	var lines []string
-	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99")).Render(chatWrap("", m.questionModal.Header, contentWidth)))
-	lines = append(lines, "")
-	lines = append(lines, chatWrap("", m.questionModal.Question, contentWidth))
-	lines = append(lines, "")
-
-	// Window calculation: show options around the highlighted index
-	maxVisible := m.maxQuestionLines()
-	start := m.questionIdx - maxVisible/2
-	if start < 0 {
-		start = 0
-	}
-	end := start + maxVisible
-	if end > len(m.questionModal.Options) {
-		end = len(m.questionModal.Options)
-		start = end - maxVisible
-		if start < 0 {
-			start = 0
-		}
-	}
-
-	for i := start; i < end; i++ {
-		opt := m.questionModal.Options[i]
-		prefix := "  "
-		if m.questionModal.Multiple {
-			if m.questionMulti[i] {
-				prefix = " ☑ "
-			} else {
-				prefix = " ☐ "
-			}
-		} else {
-			if i == m.questionIdx {
-				prefix = " ▶ "
-			}
-		}
-		fullLine := prefix + opt.Label
-		if opt.Description != "" {
-			fullLine += " — " + opt.Description
-		}
-		wrapped := chatWrap(prefix, fullLine[len(prefix):], contentWidth)
-		lines = append(lines, zone.Mark(fmt.Sprintf("question-opt-%d", i), listItemStyle.Render(wrapped)))
-	}
-
-	if start > 0 || end < len(m.questionModal.Options) {
-		lines = append(lines, commandDescStyle.Render(fmt.Sprintf("  (%d-%d of %d)", start+1, end, len(m.questionModal.Options))))
-	}
-
-	lines = append(lines, "")
-	help := "↑↓ navigate · Enter select · Esc cancel"
-	if m.questionModal.Multiple {
-		help += " · Space toggle"
-	}
-	lines = append(lines, commandDescStyle.Render(help))
-
-	return commandPaletteStyle.Render(strings.Join(lines, "\n"))
-}
+// Window calculation: show options around the highlighted index
 
 // View implements tea.Model.
 func (m *Model) View() tea.View {
@@ -1667,26 +1463,69 @@ func (m *Model) View() tea.View {
 		return tea.NewView("Initializing...")
 	}
 
-	// Header: figlet banner + blank line + provider/model line + trailing newline.
-	header := m.banner + "\n\n" +
-		titleStyle.Render(fmt.Sprintf("%s/%s", m.provider, m.modelName)) + "\n"
+	// Minimum size check: if the terminal is too small, show a message.
+	if m.width < 60 || m.height < 20 {
+		msg := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("9")).
+			Render(fmt.Sprintf(
+				"Terminal too small — yaah needs at least 60×20 (current: %d×%d)",
+				m.width, m.height))
+		v := tea.NewView(zone.Scan(msg))
+		v.AltScreen = true
+		v.MouseMode = tea.MouseModeAllMotion
+		return v
+	}
 
-	// Status bar (1 line). No trailing \n — JoinVertical adds the separator.
+	// Header: figlet banner + provider/model line (or compact if hidden)
+	var header string
+	if m.showBanner && m.banner != "" {
+		header = m.banner + "\n\n" +
+			titleStyle.Render(fmt.Sprintf("%s/%s", m.provider, m.modelName)) + "\n"
+	} else {
+		header = titleStyle.Render(fmt.Sprintf("yaah · %s/%s", m.provider, m.modelName)) + "\n\n"
+	}
+
+	// Status bar (1 line): message count + context bar only.
+	// Provider/model is in the header; no need to duplicate.
 	var statusText string
 	ctxBar := ""
 	if m.contextWindow > 0 {
 		ctxBar = " " + contextBar(m.contextPct)
 	}
-	statusText = fmt.Sprintf(" %s/%s │ messages: %d │ ctrl+c quit%s",
-		m.provider, m.modelName, len(m.messages), ctxBar)
+	statusText = fmt.Sprintf(" %s │ messages: %d │%s",
+		shortenCWD(m.cwd, m.width/3), len(m.messages), ctxBar)
 	status := statusStyle.Width(m.width).Render(statusText)
+
+	// Ephemeral message line (shown only when active, auto-clears)
+	var ephemLine string
+	if m.ephemMsg != "" {
+		ephemLine = statusStyle.
+			Foreground(lipgloss.Color("10")).
+			Width(m.width).
+			Render(m.ephemMsg)
+	}
 
 	// Viewport holds the scrollable chat history
 	viewportView := m.viewport.View()
 
-	// Palette (shown above input when in command, model, or question mode)
+	// Search indicator line
+	var searchLine string
+	if m.searchMode {
+		matchInfo := ""
+		if len(m.searchMatches) > 0 && m.searchIdx >= 0 {
+			matchInfo = fmt.Sprintf("  [%d/%d]", m.searchIdx+1, len(m.searchMatches))
+		} else if m.searchQuery != "" && len(m.searchMatches) == 0 {
+			matchInfo = "  [no matches]"
+		}
+		searchLine = commandDescStyle.Render(fmt.Sprintf("/%s%s", m.searchQuery, matchInfo))
+	}
+
+	// Palette (shown above input when in command, model, question, or help mode)
 	var palette string
-	if m.questionMode {
+	if m.showHelp {
+		palette = m.renderHelpOverlay()
+	} else if m.questionMode {
 		palette = m.renderQuestionModal()
 	} else if m.modelMode {
 		palette = m.renderModelPalette()
@@ -1697,26 +1536,64 @@ func (m *Model) View() tea.View {
 	// Input (1 line)
 	inputView := m.input.View()
 
+	// Footer hint bar (1 line) — always visible with key shortcuts
+	footer := m.help.View(footerKeyMap{})
+
 	elements := []string{header, viewportView, status}
+	if ephemLine != "" {
+		elements = append(elements, ephemLine)
+	}
 	if palette != "" {
 		elements = append(elements, palette)
 	}
-	elements = append(elements, inputView)
+	if searchLine != "" {
+		elements = append(elements, searchLine)
+	}
+	elements = append(elements, inputView, footer)
 	body := lipgloss.JoinVertical(lipgloss.Left, elements...)
 
 	v := tea.NewView(zone.Scan(body))
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
+	v.MouseMode = tea.MouseModeAllMotion
 	// Position the terminal cursor at the textinput's location.
-	// textinput.Cursor() returns Y=0 (relative to the widget), so we
-	// offset it to the input line, which is the last line of the view.
+	// The input line is above the footer (last line).
 	if !m.input.VirtualCursor() {
 		if c := m.input.Cursor(); c != nil {
-			c.Y = m.height - 1
+			// input is the second-to-last element; footer is last.
+			// If ephemeral message is shown, input is third-to-last.
+			offset := 2
+			if m.ephemMsg != "" {
+				offset = 3
+			}
+			c.Y = m.height - offset
 			v.Cursor = c
 		}
 	}
+	// OSC 22: change terminal cursor to pointer when over a clickable zone.
+	// Supported by Kitty, WezTerm, foot, iTerm2, and others; ignored by terminals
+	// that don't understand it.
+	if m.hoveredZone {
+		v.Content += "\x1b]22;pointer\x07"
+	} else {
+		v.Content += "\x1b]22;text\x07"
+	}
 	return v
+}
+
+// renderHelpOverlay renders a full help screen with all keybindings.
+
+// shortenCWD returns the current working directory with $HOME replaced
+// by ~, truncated to maxLen if longer.
+func shortenCWD(cwd string, maxLen int) string {
+	home, _ := os.UserHomeDir()
+	s := cwd
+	if home != "" && strings.HasPrefix(s, home) {
+		s = "~" + s[len(home):]
+	}
+	if len(s) > maxLen && maxLen > 3 {
+		s = "..." + s[len(s)-(maxLen-3):]
+	}
+	return s
 }
 
 // contextBar returns a 10-segment bar showing fill percentage.
@@ -1743,6 +1620,23 @@ func contextBar(pct int) string {
 		return fmt.Sprintf("[%s%s %d%%]", strings.Repeat("▓", filled), strings.Repeat("░", empty), pct)
 	}
 	return fmt.Sprintf("[%s%s %d%%]", strings.Repeat("█", filled), strings.Repeat("░", empty), pct)
+}
+
+// toolIndent wraps each line of content to fit within the given width.
+func toolIndent(width int, content string) string {
+	if width < 20 {
+		width = 20
+	}
+
+	lines := strings.Split(content, "\n")
+	var result strings.Builder
+	for i, line := range lines {
+		if i > 0 {
+			result.WriteString("\n")
+		}
+		result.WriteString(wrapText(line, width))
+	}
+	return result.String()
 }
 
 // HandleContextInfo updates the context window display.
