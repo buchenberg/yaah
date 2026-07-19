@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/spf13/cobra"
@@ -44,11 +45,17 @@ type check struct {
 
 // runChecks executes all diagnostic checks and returns the results.
 func runChecks() []check {
+	cfg, cfgErr := config.Load()
+	cfgPath, pathErr := config.ConfigPath()
+
 	return []check{
-		checkConfig(),
+		checkConfigFile(cfgPath, cfg, cfgErr, pathErr),
+		checkProvider(cfg, cfgErr),
+		checkModel(cfg, cfgErr),
+		checkOTel(cfg, cfgErr),
 		checkHomeWritable(),
 		checkPlatform(),
-		checkEditor(),
+		checkEditor(cfg),
 	}
 }
 
@@ -61,28 +68,94 @@ func allOK(checks []check) bool {
 	return true
 }
 
-func checkConfig() check {
-	path, err := config.ConfigPath()
-	if err != nil {
-		return check{Label: "Config path", Status: "FAIL", Detail: err.Error()}
+func checkConfigFile(path string, cfg *config.Config, cfgErr, pathErr error) check {
+	if pathErr != nil {
+		return check{Label: "Config path", Status: "FAIL", Detail: pathErr.Error()}
 	}
-
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return check{
 			Label:  "Config file",
-			Detail: fmt.Sprintf("not found at %s — will use built-in defaults", path),
+			Detail: fmt.Sprintf("not found at %s — using built-in defaults", path),
 			Status: "WARN",
 		}
 	}
+	if cfgErr != nil {
+		return check{Label: "Config file", Status: "FAIL", Detail: cfgErr.Error()}
+	}
+	detail := fmt.Sprintf("%s (model: %s, %d provider(s))", path, cfg.Default.Model, len(cfg.Providers))
+	return check{Label: "Config file", Status: "OK", Detail: detail}
+}
 
-	cfg, err := config.Load()
-	if err != nil {
-		return check{Label: "Config file", Status: "FAIL", Detail: err.Error()}
+func checkProvider(cfg *config.Config, cfgErr error) check {
+	if cfgErr != nil {
+		return check{Label: "Providers", Status: "WARN", Detail: "config not loaded"}
+	}
+	if len(cfg.Providers) == 0 {
+		return check{Label: "Providers", Status: "FAIL", Detail: "no providers configured — add at least one provider in config.yaml"}
 	}
 
-	detail := fmt.Sprintf("%s (model: %s, %d provider(s))",
-		path, cfg.Default.Model, len(cfg.Providers))
-	return check{Label: "Config file", Status: "OK", Detail: detail}
+	providerName := cfg.Default.Provider
+	if providerName == "" {
+		providerName = resolveProviderName(cfg)
+	}
+
+	if _, ok := cfg.Providers[providerName]; !ok {
+		return check{
+			Label:  "Default provider",
+			Status: "WARN",
+			Detail: fmt.Sprintf("no provider key %q found — check default.provider or set a provider prefix on default.model", providerName),
+		}
+	}
+
+	var issues []string
+	for name, p := range cfg.Providers {
+		if p.APIKey == "" || p.APIKey == "ollama" {
+			continue
+		}
+		if strings.HasPrefix(p.APIKey, "${") && strings.HasSuffix(p.APIKey, "}") {
+			envVar := p.APIKey[2 : len(p.APIKey)-1]
+			if os.Getenv(envVar) == "" {
+				issues = append(issues, fmt.Sprintf("%s: env var %s is empty or unset", name, envVar))
+			}
+		}
+	}
+
+	if len(issues) > 0 {
+		return check{
+			Label:  "Provider API keys",
+			Status: "WARN",
+			Detail: strings.Join(issues, "; "),
+		}
+	}
+
+	return check{Label: "Providers", Status: "OK", Detail: fmt.Sprintf("%d configured, default is %q", len(cfg.Providers), providerName)}
+}
+
+func checkModel(cfg *config.Config, cfgErr error) check {
+	if cfgErr != nil {
+		return check{Label: "Default model", Status: "WARN", Detail: "config not loaded"}
+	}
+	if cfg.Default.Model == "" {
+		return check{Label: "Default model", Status: "FAIL", Detail: "default.model is not set"}
+	}
+	return check{Label: "Default model", Status: "OK", Detail: cfg.Default.Model}
+}
+
+func checkOTel(cfg *config.Config, cfgErr error) check {
+	if cfgErr != nil {
+		return check{Label: "Observability", Status: "WARN", Detail: "config not loaded"}
+	}
+	if !cfg.Observability.Otel.Enabled {
+		return check{Label: "Observability", Status: "OK", Detail: "OTel disabled"}
+	}
+	endpoint := cfg.Observability.Otel.Endpoint
+	if ep := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); ep != "" {
+		endpoint = ep
+	}
+	if endpoint == "" {
+		return check{Label: "Observability", Status: "WARN", Detail: "OTel enabled but no endpoint set"}
+	}
+	return check{Label: "Observability", Status: "OK", Detail: fmt.Sprintf("traces → %s", endpoint)}
 }
 
 func checkHomeWritable() check {
@@ -116,8 +189,7 @@ func checkPlatform() check {
 	}
 }
 
-func checkEditor() check {
-	cfg, _ := config.Load()
+func checkEditor(cfg *config.Config) check {
 	editor := config.ResolveEditor(cfg)
 
 	// Determine the source for the detail line
