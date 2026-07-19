@@ -329,6 +329,16 @@ func (l *Loop) buildPipeline() *Pipeline {
 // Run executes the full conversation loop for a single user message
 // using the middleware pipeline.
 func (l *Loop) Run(ctx context.Context, userInput string) (response string, runErr error) {
+	if l.OtelEnabled {
+		var rootSpan trace.Span
+		ctx, rootSpan = observability.StartPrompt(ctx, userInput)
+		defer func() {
+			if runErr != nil {
+				observability.RecordError(rootSpan, runErr)
+			}
+			rootSpan.End()
+		}()
+	}
 	return l.runMiddleware(ctx, userInput)
 }
 
