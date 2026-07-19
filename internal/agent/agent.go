@@ -14,7 +14,11 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -180,6 +184,10 @@ type Loop struct {
 	// system messages and recent tool results. Has no effect for non-Anthropic providers.
 	PromptCaching bool
 
+	// OtelEnabled enables OpenTelemetry spans for tool calls, sub-agent
+	// dispatch, and LLM provider calls (via InstrumentedProvider).
+	OtelEnabled bool
+
 	// ApproveFn is an optional callback for tool approval in TUI contexts.
 	// When set, it is called instead of the default stdin/stderr approveTool.
 	// It receives the tool name and abbreviated args; returns true to approve.
@@ -321,6 +329,16 @@ func (l *Loop) buildPipeline() *Pipeline {
 // Run executes the full conversation loop for a single user message
 // using the middleware pipeline.
 func (l *Loop) Run(ctx context.Context, userInput string) (response string, runErr error) {
+	if l.OtelEnabled {
+		var rootSpan trace.Span
+		ctx, rootSpan = observability.StartPrompt(ctx, userInput)
+		defer func() {
+			if runErr != nil {
+				observability.RecordError(rootSpan, runErr)
+			}
+			rootSpan.End()
+		}()
+	}
 	return l.runMiddleware(ctx, userInput)
 }
 
@@ -375,6 +393,12 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			Model:  l.Model,
 		})
 
+		var turnSpan trace.Span
+		turnCtx := ctx
+		if l.OtelEnabled {
+			turnCtx, turnSpan = observability.StartTurn(ctx, iter, userInput)
+		}
+
 		step := &Step{
 			Messages:     messages,
 			Tools:        l.buildToolDefs(),
@@ -396,15 +420,30 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			Tools:    step.Tools,
 		}
 
-		msg, streamed, err := l.getAssistantMessage(ctx, req)
+		msg, streamed, err := l.getAssistantMessage(turnCtx, req)
 		if err != nil {
+			if turnSpan != nil {
+				observability.RecordError(turnSpan, err)
+				turnSpan.End()
+			}
 			l.Messages = messages
 			return "", fmt.Errorf("provider error: %w", err)
 		}
 		messages = append(messages, msg)
 		l.persistMessage(msg)
 
+		if turnSpan != nil {
+			turnSpan.SetAttributes(
+				attribute.Bool("turn.streamed", streamed),
+				attribute.Int("turn.tool_calls", len(msg.ToolCalls)),
+				attribute.Int("turn.messages", len(messages)),
+			)
+		}
+
 		if len(msg.ToolCalls) == 0 {
+			if turnSpan != nil {
+				turnSpan.End()
+			}
 			l.Messages = messages
 			return msg.Content, nil
 		}
@@ -419,7 +458,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			return "", err
 		}
 
-		toolResults := l.executeAndCollect(ctx, msg.ToolCalls, &messages)
+		toolResults := l.executeAndCollect(turnCtx, msg.ToolCalls, &messages)
 
 		// Update step.Messages to reflect the tool results added by executeAndCollect
 		step.Messages = messages
@@ -429,8 +468,15 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 
 		step, err = pipeline.RunPostTool(ctx, toolResults, step)
 		if err != nil {
+			if turnSpan != nil {
+				turnSpan.End()
+			}
 			l.Messages = messages
 			return "", err
+		}
+
+		if turnSpan != nil {
+			turnSpan.End()
 		}
 
 		messages = step.Messages
@@ -449,7 +495,7 @@ func (l *Loop) applyDefaults() {
 		l.MaxIterations = 50
 	}
 	if l.Model == "" {
-		l.Model = "gpt-4o-mini"
+		l.Model = "deepseek-v4-pro"
 	}
 	if l.RetryBackoff <= 0 {
 		l.RetryBackoff = time.Second
@@ -521,7 +567,26 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			})
 
 			start := time.Now()
-			res, err := l.Registry.Execute(ctx, tc.Function.Name, tc.Function.Arguments)
+
+			runCtx := ctx
+			var toolSpan trace.Span
+			if l.OtelEnabled {
+				if isTask {
+					runCtx, toolSpan = observability.StartSubAgent(ctx, taskRole, taskPrompt)
+				} else {
+					runCtx, toolSpan = observability.StartTool(ctx, tc.Function.Name, tc.Function.Arguments)
+				}
+			}
+
+			res, err := l.Registry.Execute(runCtx, tc.Function.Name, tc.Function.Arguments)
+			if l.OtelEnabled && toolSpan != nil {
+				if isTask {
+					observability.FinishSubAgent(toolSpan, err)
+				} else {
+					observability.FinishTool(toolSpan, res, err)
+				}
+				toolSpan.End()
+			}
 			duration := time.Since(start)
 
 			errStr := ""
@@ -870,17 +935,36 @@ func (l *Loop) trimContext() {
 // If finish_reason is "length" and tool calls are present, returns an error
 // to prevent executing truncated tool calls.
 func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatRequest) (types.Message, error) {
+	var streamSpan trace.Span
+	if l.OtelEnabled {
+		ctx, streamSpan = observability.StartStream(ctx, req.Model)
+	}
+
+	start := time.Now()
 	chunks, errs := sp.SendStream(ctx, req)
 
 	var content strings.Builder
 	toolCallMap := make(map[int]*types.ToolCall)
 	var finishReason string
+	var firstToken bool
+	var tokenCount int
 
 	for {
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
+				if streamSpan != nil {
+					observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
+					streamSpan.End()
+				}
 				return l.checkTruncatedStream(content.String(), toolCallMap, finishReason)
+			}
+
+			if !firstToken {
+				firstToken = true
+				if streamSpan != nil {
+					streamSpan.SetAttributes(attribute.Int64("llm.ttft_ms", time.Since(start).Milliseconds()))
+				}
 			}
 
 			if len(chunk.Choices) == 0 {
@@ -895,6 +979,7 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 
 			if delta.Content != "" {
 				content.WriteString(delta.Content)
+				tokenCount++
 				if l.OnToken != nil {
 					l.OnToken(delta.Content)
 				}
@@ -930,11 +1015,23 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 
 		case err := <-errs:
 			if err != nil {
+				if streamSpan != nil {
+					observability.RecordError(streamSpan, err)
+					streamSpan.End()
+				}
 				return types.Message{}, err
+			}
+			if streamSpan != nil {
+				observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
+				streamSpan.End()
 			}
 			return l.checkTruncatedStream(content.String(), toolCallMap, finishReason)
 
 		case <-ctx.Done():
+			if streamSpan != nil {
+				observability.RecordError(streamSpan, ctx.Err())
+				streamSpan.End()
+			}
 			return types.Message{}, ctx.Err()
 		}
 
@@ -943,6 +1040,10 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 		}
 	}
 
+	if streamSpan != nil {
+		observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
+		streamSpan.End()
+	}
 	return l.checkTruncatedStream(content.String(), toolCallMap, finishReason)
 }
 

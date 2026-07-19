@@ -5,9 +5,9 @@
 ## What yaah is
 
 yaah is a vendor-free AI agent harness. One Go static binary, minimal
-config at `~/.yaah/`, skills at `./.agents/` (project, walked up from cwd)
-and `~/.agents/` (cross-tool standard), MCP over stdio and HTTP for tool
-servers. See `README.md` for the user-facing pitch.
+config at `~/.yaah/`, skills at `./.agents/` (project, tracked in git)
+and `~/.agents/` (cross-tool standard, per-machine), MCP over stdio and
+HTTP for tool servers. See `README.md` for the user-facing pitch.
 
 ## Local-only directories
 
@@ -19,7 +19,6 @@ They are not part of the yaah repo and should never be committed:
   `charm-bubbles` skill clones `github.com/charmbracelet/bubbles` here
   for reading. These clones are working copies only — the real upstream
   dependencies are pinned in `go.sum` as Go modules.
-- **`.agents/`** — local user-authored skills (see "Skills" below).
 - **`.ghost/`, `.claude/`, `.qwen/`, `.hermes/`, etc.** — metadata dirs
   for various AI coding tools. Never commit.
 
@@ -120,6 +119,19 @@ ditto --norsrc yaah ~/.local/bin/yaah  # macOS: avoids Gatekeeper quarantine
 - One file, one concern.
 - Tests live next to the code they test (`foo.go` ↔ `foo_test.go`).
 - Use `t.Run("name", func(t *testing.T) { ... })` for subtests.
+
+## Skills
+
+Project-level skills live in `.agents/skills/` and are tracked in git.
+Load a skill when the task at hand matches its description. Use the
+`skill` tool with `action: "load"` to inject its instructions into the
+current context.
+
+Available skills:
+
+| Skill | When to load |
+|---|---|
+| `yaah-testing` | Smoke testing the CLI, sub-agents, OTel traces, Docker containers, or running CI checks |
 
 ## What NOT to do
 

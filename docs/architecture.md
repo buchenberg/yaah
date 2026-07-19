@@ -629,6 +629,46 @@ Deeper walkthroughs of the TUI component design, refactoring approach, and visua
 
 ---
 
+## OpenTelemetry observability
+
+Files: `internal/observability/`, `internal/agent/agent.go`, `internal/config/load.go`
+
+yaah emits traces via OTLP gRPC to any OpenTelemetry-compatible backend. Tracing is off by default; enable with `observability.otel.enabled: true` in `config.yaml`.
+
+### Initialisation
+
+`observability.Setup(ctx, cfg)` in `internal/observability/otel.go` creates a `TracerProvider` (and optionally a `MeterProvider`) configured for the OTLP endpoint. It returns a `shutdown` function that the CLI (`root_cmd.go`) and TUI (`tui.go`) defer. Both entrypoints set `Loop.OtelEnabled` so individual spans are gated on the config flag.
+
+### Span hierarchy
+
+| Span type | Location | Contents |
+|---|---|---|
+| `tool.<name>` | `executeAndCollect` in `agent.go` | Operation name is the tool name. `tool.args` attribute (200-char truncated JSON). `result` event with truncated output. Errors are recorded via `RecordError`. |
+| `subagent: <role> — <description>` | `executeAndCollect` in `agent.go` | Role + task description in the operation name. `dispatched` event with role and task text. `completed` / `failed` event on finish. |
+| `llm.chat` | `InstrumentedProvider.Send` in `observability/provider.go` | `tokens` event with `llm.prompt_tokens`, `llm.completion_tokens`, `llm.total_tokens`, `llm.messages`, and `llm.system_len`. `llm.duration_ms` attribute. |
+
+### Propagation to sub-agents
+
+`Loop.OtelEnabled` is propagated through `taskRunnerOpts.OtelEnabled` → `makeTaskRunner` → `subLoop.OtelEnabled`. The parent span context flows via `context.Context` through `Registry.Execute(runCtx, ...)`, so sub-agent tool spans appear as children of the sub-agent span in the trace waterfall.
+
+### Configuration
+
+```yaml
+observability:
+  otel:
+    enabled: false
+    endpoint: "localhost:4317"
+    service_name: "yaah"
+    traces: true
+    metrics: false
+```
+
+The OTel SDK also honours standard environment variables for sampling, TLS, and resource attributes (`OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER`, etc.).
+
+A Docker-based Jaeger setup and trace interpretation guide is at [`docs/otel-setup.md`](./otel-setup.md).
+
+---
+
 ## Message types
 
 File: `internal/types/types.go`

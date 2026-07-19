@@ -66,6 +66,43 @@ iwr -useb https://raw.githubusercontent.com/buchenberg/yaah/main/install.ps1 | i
 go install github.com/buchenberg/yaah@latest
 ```
 
+### Docker
+
+A `Dockerfile` and `docker-compose.yml` are included for containerized use
+with Jaeger tracing. Build and run:
+
+```bash
+docker compose build
+```
+
+Set your API keys and run a prompt:
+
+```bash
+DEEPSEEK_API_KEY=sk-... docker compose run --rm yaah "what is 2+2"
+```
+
+Or export them once and use interactively:
+
+```bash
+export DEEPSEEK_API_KEY=sk-...
+export ZAI_API_KEY=...
+docker compose run --rm yaah
+```
+
+The compose stack starts Jaeger automatically on port 16686. Traces appear
+at http://localhost:16686. The yaah service mounts your `~/.yaah` config
+directory, passes `DEEPSEEK_API_KEY` and `ZAI_API_KEY` environment
+variables, and enables OpenTelemetry via `YAAH_OTEL_ENABLED=true`.
+
+To run only the tracing backend:
+
+```bash
+docker compose up -d jaeger
+```
+
+See [`docs/otel-setup.md`](./docs/otel-setup.md) for the full observability
+guide.
+
 ## Quick start
 
 Check your setup, then add a provider API key:
@@ -289,6 +326,37 @@ YAAH_APPROVAL=allow yaah "deploy"
 
 Invalid values fall back to `ask` with a warning.
 
+### OpenTelemetry observability
+
+yaah can emit traces to any OTLP-compatible backend
+(Jaeger, Grafana Tempo, OTel Collector). Enable in `config.yaml`:
+
+```yaml
+observability:
+  otel:
+    enabled: true
+```
+
+Every LLM call, tool execution, and sub-agent dispatch produces a span
+with duration, events, and attributes. Sub-agent internal tool calls
+appear as child spans in the trace waterfall. Jaeger setup is a single
+Docker command:
+
+```bash
+docker compose up -d jaeger
+```
+
+Or manually:
+
+```bash
+docker run -d --name jaeger \
+  -p 16686:16686 -p 4317:4317 \
+  cr.jaegertracing.io/jaegertracing/jaeger:2.19.0
+```
+
+Traces appear at http://localhost:16686. Dark mode is in the gear menu
+top-right. Full setup guide at [`docs/otel-setup.md`](./docs/otel-setup.md).
+
 ## Commands
 
 Start yaah — interactive REPL or one-shot:
@@ -429,23 +497,20 @@ Optionally, list `models` to restrict the model picker:
 
 ```yaml
 providers:
-  openai:
-    name: OpenAI
-    base_url: https://api.openai.com/v1
-    api_key: ${OPENAI_API_KEY}
-    # models:                              # optional: restrict the model list
-    #   - gpt-4o
-    #   - gpt-4o-mini
+  deepseek:
+    name: DeepSeek
+    base_url: https://api.deepseek.com/v1
+    api_key: ${DEEPSEEK_API_KEY}
+
+  glm:
+    name: GLM
+    base_url: https://api.z.ai/api/paas/v4
+    api_key: ${ZAI_API_KEY}
 
   ollama:
     name: Ollama
     base_url: http://localhost:11434/v1
     api_key: ollama
-
-  anthropic:
-    name: Anthropic
-    base_url: https://api.anthropic.com/v1
-    api_key: ${ANTHROPIC_API_KEY}
 ```
 
 ### Default
@@ -455,11 +520,11 @@ and the approval mode:
 
 ```yaml
 default:
-  provider: openai       # provider key from the providers map above
-  model: gpt-4o-mini     # model name (without provider prefix)
-  small_model: gpt-4o-mini  # used for context compaction; falls back to model
-  max_iterations: 50     # safety cap on agent loop turns per prompt
-  context_window: 128000 # token budget for LLM compaction; 0 disables
+  provider: deepseek
+  model: deepseek-v4-pro
+  small_model: deepseek-v4-flash
+  max_iterations: 50
+  context_window: 128000
   approval: ask          # ask | allow | deny
 ```
 

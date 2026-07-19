@@ -74,20 +74,34 @@ type RoleConfig struct {
 
 // Config is the full yaah configuration loaded from ~/.yaah/config.yaml.
 type Config struct {
-	Providers map[string]Provider `yaml:"providers"`
-	Default   Defaults            `yaml:"default"`
-	Hooks     Hooks               `yaml:"hooks"`
-	Agent     AgentConfig         `yaml:"agent"`
-	Editor    string              `yaml:"editor"`
-	LogLevel  string              `yaml:"log_level"`
+	Providers     map[string]Provider `yaml:"providers"`
+	Default       Defaults            `yaml:"default"`
+	Hooks         Hooks               `yaml:"hooks"`
+	Agent         AgentConfig         `yaml:"agent"`
+	Editor        string              `yaml:"editor"`
+	Observability ObservabilityConfig `yaml:"observability"`
+}
+
+// ObservabilityConfig holds OpenTelemetry tracing and metrics settings.
+type ObservabilityConfig struct {
+	Otel OtelConfig `yaml:"otel"`
+}
+
+// OtelConfig controls the OpenTelemetry OTLP exporter.
+type OtelConfig struct {
+	Enabled     bool   `yaml:"enabled"`      // must be true to activate
+	Endpoint    string `yaml:"endpoint"`     // OTLP gRPC endpoint (e.g. "localhost:4317")
+	ServiceName string `yaml:"service_name"` // displayed in the tracing UI
+	Traces      bool   `yaml:"traces"`       // enable trace spans
+	Metrics     bool   `yaml:"metrics"`      // enable OTLP metrics
 }
 
 // defaultConfig returns the built-in defaults used when no config file exists.
 func defaultConfig() *Config {
 	return &Config{
 		Default: Defaults{
-			Model:         "openai/gpt-4o-mini",
-			SmallModel:    "openai/gpt-4o-mini",
+			Model:         "deepseek/deepseek-v4-pro",
+			SmallModel:    "deepseek/deepseek-v4-flash",
 			MaxIterations: 50,
 			ContextWindow: 128000,
 			Approval:      "ask",
@@ -98,7 +112,15 @@ func defaultConfig() *Config {
 				MaxConcurrency: 3,
 			},
 		},
-		LogLevel: "INFO",
+		Observability: ObservabilityConfig{
+			Otel: OtelConfig{
+				Enabled:     false,
+				Endpoint:    "localhost:4317",
+				ServiceName: "yaah",
+				Traces:      true,
+				Metrics:     false,
+			},
+		},
 	}
 }
 

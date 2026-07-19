@@ -1,0 +1,22 @@
+services:
+  yaah:
+    build: .
+    image: yaah:local
+    stdin_open: true
+    tty: true
+    volumes:
+      - ~/.yaah:/root/.yaah
+    environment:
+      - YAAH_OTEL_ENABLED=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - ZAI_API_KEY=${ZAI_API_KEY:-}
+    depends_on:
+      - jaeger
+    profiles: [cli]
+
+  jaeger:
+    image: cr.jaegertracing.io/jaegertracing/jaeger:2.19.0
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "4317:4317"    # OTLP gRPC
