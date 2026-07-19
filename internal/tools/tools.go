@@ -633,20 +633,48 @@ type Registry struct {
 }
 
 // NewRegistry creates a tool registry with yaah's built-in tools.
+// leafTools is the single source of truth for the names and
+// constructors of built-in leaf tools (those that need no runtime
+// wiring). NewRegistry installs all of them; NewLeafTool hands out
+// individual instances by name so sub-agent role profiles build
+// curated registries from the same map and cannot silently diverge.
+var leafTools = map[string]func() Tool{
+	"read":       func() Tool { return &ReadTool{} },
+	"write":      func() Tool { return &WriteTool{} },
+	"edit":       func() Tool { return &EditTool{} },
+	"delete":     func() Tool { return &DeleteTool{} },
+	"grep":       func() Tool { return &GrepTool{} },
+	"glob":       func() Tool { return &GlobTool{} },
+	"ls":         func() Tool { return &LsTool{} },
+	"bash":       func() Tool { return &BashTool{} },
+	"powershell": func() Tool { return &PowerShellTool{} },
+	"question":   func() Tool { return &QuestionTool{} },
+	"webfetch":   func() Tool { return &WebFetchTool{} },
+}
+
 func NewRegistry() *Registry {
-	r := &Registry{tools: make(map[string]Tool)}
-	r.Register(&ReadTool{})
-	r.Register(&BashTool{})
-	r.Register(&PowerShellTool{})
-	r.Register(&WriteTool{})
-	r.Register(&EditTool{})
-	r.Register(&DeleteTool{})
-	r.Register(&GrepTool{})
-	r.Register(&GlobTool{})
-	r.Register(&LsTool{})
-	r.Register(&QuestionTool{})
-	r.Register(&WebFetchTool{})
+	r := NewEmptyRegistry()
+	for _, factory := range leafTools {
+		r.Register(factory())
+	}
 	return r
+}
+
+// NewEmptyRegistry returns a Registry with no tools pre-registered, so
+// callers that want a curated tool set (e.g. sub-agent role profiles)
+// can build it up via Register without inheriting every built-in tool.
+func NewEmptyRegistry() *Registry {
+	return &Registry{tools: make(map[string]Tool)}
+}
+
+// NewLeafTool returns a fresh instance of the named built-in leaf tool,
+// or nil if the name is unknown. It is backed by the same map as
+// NewRegistry, so the two cannot drift.
+func NewLeafTool(name string) Tool {
+	if factory, ok := leafTools[name]; ok {
+		return factory()
+	}
+	return nil
 }
 
 // Register adds a tool to the registry.

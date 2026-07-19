@@ -58,8 +58,13 @@ var builtinMiddleware = map[string]MiddlewareBuilder{
 	},
 	"permission":       func(l *Loop) Middleware { return &PermissionMiddleware{rules: l.PermissionRules} },
 	"tool_concurrency": func(l *Loop) Middleware { return &ToolConcurrencyMiddleware{max: l.MaxToolConcurrency} },
-	"sub_agent":        func(l *Loop) Middleware { return &SubAgentMiddleware{MaxDepth: l.MaxSubAgentDepth} },
-	"prompt_caching":   func(l *Loop) Middleware { return &PromptCachingMiddleware{enabled: l.PromptCaching} },
+	"sub_agent": func(l *Loop) Middleware {
+		return &SubAgentMiddleware{
+			MaxDepth:       l.MaxSubAgentDepth,
+			MaxDepthByRole: l.MaxSubAgentDepthByRole,
+		}
+	},
+	"prompt_caching": func(l *Loop) Middleware { return &PromptCachingMiddleware{enabled: l.PromptCaching} },
 }
 
 // defaultPipelineNames is the ordered list of middleware names used when no

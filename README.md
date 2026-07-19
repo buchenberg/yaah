@@ -120,6 +120,16 @@ Project `AGENTS.md` / `CLAUDE.md` files are automatically loaded and injected in
 ### Todo lists
 The agent can create and manage task lists during conversations using the `todowrite` tool.
 
+### Sub-agents
+
+The `task` tool delegates isolated subtasks to a sub-agent running under a **role** that selects its tool set, iteration budget, and timeout:
+
+- **`worker`** — code changes, file edits, test runs (filesystem + shell tools).
+- **`reviewer`** — read-only analysis and code review (`read`, `grep`, `glob`, `ls`).
+- **`planner`** — decomposition and coordination; inherits the worker set and can spawn further workers via `task`.
+
+Multiple `task` calls in one turn run in parallel up to a configurable concurrency cap. Sub-agents honour a per-call or role-default timeout and return a structured result (`{"error":"timed out","partial":"..."}`) on timeout or cancellation so the parent can recover gracefully. Configurable under `agent.subagent` in `config.yaml`.
+
 ### Session persistence
 
 Every message (user prompts, assistant responses, tool calls, and tool results)

@@ -150,6 +150,16 @@ type Loop struct {
 	// MaxSubAgentDepth caps nested sub-agent calls. 0 means unlimited.
 	MaxSubAgentDepth int
 
+	// MaxSubAgentDepthByRole optionally caps task calls per sub-agent
+	// role. A role absent from the map falls back to MaxSubAgentDepth.
+	MaxSubAgentDepthByRole map[SubAgentRole]int
+
+	// MaxSubAgentConcurrency caps the number of task tool calls that may
+	// run simultaneously within a single iteration. It is a separate
+	// semaphore from MaxToolConcurrency so sub-agent fan-out can be
+	// bounded independently. 0 means unlimited.
+	MaxSubAgentConcurrency int
+
 	// PromptCaching enables Anthropic-style cache-control breakpoints on
 	// system messages and recent tool results. Has no effect for non-Anthropic providers.
 	PromptCaching bool
@@ -160,6 +170,10 @@ type Loop struct {
 	ApproveFn func(name, args string) bool
 
 	toolSem chan struct{}
+
+	// subAgentSem bounds concurrent task tool calls per iteration when
+	// MaxSubAgentConcurrency > 0. Initialised by buildPipeline().
+	subAgentSem chan struct{}
 
 	// SessionID is a stable identifier for the session, set by the caller.
 	// Used by emitHook to label events.
@@ -274,6 +288,9 @@ func (l *Loop) buildPipeline() *Pipeline {
 	}
 	if l.MaxToolConcurrency > 0 {
 		l.toolSem = make(chan struct{}, l.MaxToolConcurrency)
+	}
+	if l.MaxSubAgentConcurrency > 0 {
+		l.subAgentSem = make(chan struct{}, l.MaxSubAgentConcurrency)
 	}
 	names := resolvedPipelineNames(l.PipelineNames, l.PipelineDisabled)
 	mws := make([]Middleware, 0, len(names))
@@ -456,6 +473,14 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 		}
 
 		go func() {
+			// Acquire the sub-agent semaphore before the general tool
+			// semaphore so a task goroutine waiting on the sub-agent cap
+			// does not hold a general tool slot and block unrelated
+			// (non-task) calls in the same iteration.
+			if tc.Function.Name == "task" && l.subAgentSem != nil {
+				l.subAgentSem <- struct{}{}
+				defer func() { <-l.subAgentSem }()
+			}
 			if l.toolSem != nil {
 				l.toolSem <- struct{}{}
 				defer func() { <-l.toolSem }()

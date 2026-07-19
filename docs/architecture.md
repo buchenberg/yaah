@@ -191,11 +191,82 @@ Limits concurrent tool goroutines via a buffered channel semaphore. When `MaxToo
 
 #### SubAgentMiddleware (`middleware_subagent.go`)
 
-Enforces sub-agent depth limits. Tracks `depth` across iterations and blocks `task` tool calls when `depth >= MaxSubAgentDepth`. Denied task calls are removed from the message and a system notice is injected.
+Enforces sub-agent depth limits and lifecycle tracking. Two depth mechanisms are supported:
+
+1. A legacy cumulative `MaxDepth` that caps the total number of `task` calls a single `Loop` may issue across its lifetime.
+2. An optional per-role `MaxDepthByRole` map that caps `task` calls per role independently. A role absent from the map falls back to `MaxDepth`.
+
+`PostModel` walks the assistant message's tool calls, parses each `task` call's `role` argument, and drops any `task` call whose role budget is exhausted (a system notice is injected). Non-task calls are always preserved.
+
+Actual nesting depth (planner → worker → …) is bounded structurally rather than by this middleware alone: only the `planner` role registers the `task` tool, and `makeTaskRunner` decrements the remaining depth on each level so a sub-loop eventually loses its `task` tool entirely (see [Sub-Agent Lifecycle](#sub-agent-lifecycle)).
+
+Sub-agent concurrency is **not** enforced here — it lives on `Loop.subAgentSem` (see `executeAndCollect`), mirroring how `ToolConcurrencyMiddleware` relates to `Loop.toolSem`.
 
 #### PromptCachingMiddleware (`middleware_promptcaching.go`)
 
 Injects Anthropic `cache_control: {type: "ephemeral"}` breakpoints on system messages and tool results in `PrepareStep`. When `PromptCaching` is `true`, the system message and the last tool result before a user turn are marked for caching. The `CacheControl` field uses `omitempty` so it is a no-op for non-Anthropic providers.
+
+---
+
+## Sub-agent lifecycle
+
+Files: `internal/agent/subagent.go`, `internal/tools/task.go`, `cmd/yaah/root_cmd.go`, `internal/agent/middleware_subagent.go`
+
+The `task` tool spawns a sub-agent: a fresh `agent.Loop` with a curated tool registry, its own iteration budget, deadline, and system prompt. Sub-agents let the parent agent delegate isolated work and fan out independent subtasks in parallel.
+
+### Roles and tool profiles
+
+Each sub-agent runs under a **role** that selects its tool set and default limits. Roles are defined in `internal/agent/subagent.go`:
+
+| Role | Tools | Max iterations | Default timeout | Can spawn |
+|---|---|---|---|---|
+| `worker` | read, write, edit, delete, grep, glob, ls, bash, powershell, webfetch | 25 | 120s | no |
+| `reviewer` | read, grep, glob, ls | 10 | unlimited | no |
+| `planner` | worker set + `task` | 50 | 300s | yes |
+| _(default)_ | full built-in set (legacy) | — | — | depth permitting |
+
+`RoleProfileFor(role)` returns the profile; `RoleDefault` returns a zero-value profile, signalling `makeTaskRunner` to use the legacy full tool set for backward compatibility.
+
+### Timeout enforcement
+
+`TaskTool.Execute` (`internal/tools/task.go`) wraps the runner call in `context.WithTimeout`. The effective timeout is the per-call `timeout_seconds` argument (10–600), falling back to the resolved role default, then the tool's `DefaultTimeout`. On `DeadlineExceeded` or `Canceled` the tool returns a **structured JSON result** (`{"error":"timed out","partial":"..."}`) instead of a Go error, so the parent agent can decide whether to retry, continue, or report. Any non-empty string returned alongside the context error is surfaced as `partial`.
+
+### Parallel dispatch and concurrency cap
+
+Multiple `task` tool calls issued in a single turn are dispatched concurrently by `executeAndCollect` like any other tool. Sub-agent fan-out is bounded independently by `Loop.MaxSubAgentConcurrency` (default 3), realised as a separate `subAgentSem` semaphore acquired only for tool calls named `task`. This lets a planner dispatch many workers without exceeding the configured concurrency, and is independent of `MaxToolConcurrency`.
+
+### Interrupt propagation
+
+The parent context flows through `executeAndCollect` → `TaskTool.Execute` → `Runner` → `subLoop.Run`. Cancelling the parent (e.g. Ctrl-C) propagates via the context: each sub-agent's `Loop.Run` checks `ctx.Done()` at the top of every iteration and the underlying provider HTTP call respects the context. A cancelled sub-agent returns the structured cancellation result described above rather than failing the parent turn.
+
+### Nesting depth
+
+Two mechanisms bound nesting:
+
+1. **Structural**: only the `planner` role registers the `task` tool. A `worker` or `reviewer` sub-agent physically cannot spawn further sub-agents.
+2. **Depth budget**: `makeTaskRunner` receives a `remainingDepth` counter (seeded from `subagent.max_depth`, default 3). Each nested `task` tool is built with `remainingDepth-1`; when it reaches zero the `task` tool is omitted from the sub-loop's registry entirely. This bounds planner → planner chains without relying on runtime checks.
+
+The `SubAgentMiddleware` additionally caps the number of `task` calls a single `Loop` may issue (globally via `MaxSubAgentDepth`, or per-role via `MaxSubAgentDepthByRole`).
+
+### Configuration
+
+```yaml
+agent:
+  subagent:
+    max_depth: 3          # global nesting depth (default)
+    max_concurrency: 3    # simultaneous task calls per iteration
+    default_timeout: 120  # seconds; used when no role default applies
+    roles:
+      worker:
+        timeout: 120
+        max_iterations: 25
+      reviewer:
+        timeout: 60
+        max_iterations: 10
+      planner:
+        timeout: 300
+        max_iterations: 50
+```
 
 ---
 
