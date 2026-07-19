@@ -401,7 +401,33 @@ func (m *Model) renderMessages() string {
 				b.WriteString(zone.Mark(zoneID, toolStyle.Render(fmt.Sprintf("  ▼ %s %s", icon, header))))
 				b.WriteString("\n")
 				// Tool output content — toolIndent handles wrapping to fit within width.
-				b.WriteString(toolIndent(m.width, msg.Content))
+				indented := toolIndent(m.width, msg.Content)
+				// Cap visible lines to prevent overflow past footer/prompt.
+				maxLines := m.viewport.Height() / 3
+				if maxLines < 8 {
+					maxLines = 8
+				}
+				if maxLines > 24 {
+					maxLines = 24
+				}
+				indentedLines := strings.Split(indented, "\n")
+				totalLines := len(indentedLines)
+				var visible string
+				if totalLines > maxLines {
+					// Show the last maxLines lines with a truncation header.
+					tail := indentedLines[totalLines-maxLines:]
+					omitted := totalLines - maxLines
+					headerLine := toolStyle.Render(fmt.Sprintf("  ··· %d more lines above ···", omitted))
+					visible = headerLine + "\n" + strings.Join(tail, "\n")
+				} else {
+					visible = indented
+				}
+				// Wrap in a bordered box constrained to viewport width.
+				boxWidth := m.width - 4 // leave margin for indent
+				if boxWidth < 20 {
+					boxWidth = 20
+				}
+				b.WriteString(toolBoxStyle.Width(boxWidth).Render(visible))
 			} else {
 				b.WriteString(zone.Mark(zoneID, toolStyle.Render(fmt.Sprintf("  ▶ %s %s", icon, header))))
 			}

@@ -241,6 +241,11 @@ func ApplyTheme(t Theme) {
 
 	commandDescStyle = lipgloss.NewStyle().
 		Foreground(colorOrNone(t.CmdDesc))
+
+	toolBoxStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorOrNone(t.Tool)).
+		Padding(0, 1)
 }
 
 // DetectTheme picks the appropriate theme based on environment variables

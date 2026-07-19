@@ -44,6 +44,7 @@ var (
 	commandPaletteStyle lipgloss.Style
 	commandNameStyle    lipgloss.Style
 	commandDescStyle    lipgloss.Style
+	toolBoxStyle        lipgloss.Style
 )
 
 // Message represents a chat message in the TUI.
