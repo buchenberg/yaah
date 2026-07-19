@@ -214,18 +214,18 @@ func runTUI() error {
 	// Shared mutable state for the current provider/model.
 	sm := &sessionModel{provider: providerName, model: resolveModel(cfg)}
 
-	m := tui.New(
-		providerName,
-		modelName,
-		cwd,
-		cfg.Default.ContextWindow,
-		func(input string) {
+	m := tui.New(tui.Config{
+		Provider:      providerName,
+		Model:         modelName,
+		CWD:           cwd,
+		ContextWindow: cfg.Default.ContextWindow,
+		OnSubmit: func(input string) {
 			pName, mName := sm.get()
 			go runAgentForTUI(input, agentCh, cfg, systemPrompt, mName, toolReg, &messages, db, sessionID, &msgIdx, &persistedCount, sm)
 			_ = pName
 		},
-		func() {},
-		func() {
+		OnQuit: func() {},
+		OnCompact: func() {
 			go func() {
 				window := cfg.Default.ContextWindow
 				if window <= 0 {
@@ -295,10 +295,10 @@ func runTUI() error {
 				agentCh <- tui.AgentMsg{Flush: "Compacted."}
 			}()
 		},
-		func(pName, mName string) {
+		OnModel: func(pName, mName string) {
 			sm.set(pName, mName)
 		},
-	)
+	})
 
 	// Panic recovery: ensure terminal is restored even if something panics.
 	// Bubble Tea v2 restores on Run() return, but this belt-and-suspenders

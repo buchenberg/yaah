@@ -159,8 +159,21 @@ type Model struct {
 	providerNames     map[string]string // provider key → display name
 }
 
-// New creates a new TUI model.
-func New(provider, model, cwd string, contextWindow int, onSubmit func(string), onQuit func(), onCompact func(), onModel func(string, string)) *Model {
+// Config holds the immutable setup parameters for a TUI model.
+// Use New(cfg) instead of positional arguments.
+type Config struct {
+	Provider      string
+	Model         string
+	CWD           string
+	ContextWindow int
+	OnSubmit      func(string)
+	OnQuit        func()
+	OnCompact     func()
+	OnModel       func(string, string)
+}
+
+// New creates a new TUI model from a Config.
+func New(cfg Config) *Model {
 	input := textinput.New()
 	input.Placeholder = "Type a message..."
 	input.Focus()
@@ -184,14 +197,14 @@ func New(provider, model, cwd string, contextWindow int, onSubmit func(string), 
 		reasoningExpanded: make(map[string]bool),
 		help:              help.New(),
 		showBanner:        true,
-		cwd:               cwd,
-		provider:          provider,
-		modelName:         model,
-		contextWindow:     contextWindow,
-		onSubmit:          onSubmit,
-		onQuit:            onQuit,
-		onCompact:         onCompact,
-		onModel:           onModel,
+		cwd:               cfg.CWD,
+		provider:          cfg.Provider,
+		modelName:         cfg.Model,
+		contextWindow:     cfg.ContextWindow,
+		onSubmit:          cfg.OnSubmit,
+		onQuit:            cfg.OnQuit,
+		onCompact:         cfg.OnCompact,
+		onModel:           cfg.OnModel,
 		commands:          defaultCommands,
 	}
 }
@@ -974,33 +987,13 @@ func (m *Model) Init() tea.Cmd {
 
 // Update implements tea.Model.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-
 	switch msg := msg.(type) {
 	case AgentMsg:
 		m.HandleAgentMsg(msg)
 		return m, nil
 
 	case spinner.TickMsg:
-		var spinCmd tea.Cmd
-		m.spinner, spinCmd = m.spinner.Update(msg)
-		if m.thinking {
-			m.refreshViewport()
-		}
-		// Flush pending viewport refresh from streaming tokens.
-		if m.needsRefresh && m.streaming {
-			m.refreshViewport()
-			m.scrollToBottom()
-			m.needsRefresh = false
-		}
-		// Auto-clear ephemeral message after ~3 seconds (~15 ticks at ~200ms).
-		if m.ephemTimer > 0 {
-			m.ephemTimer--
-			if m.ephemTimer == 0 {
-				m.ephemMsg = ""
-			}
-		}
-		return m, spinCmd
+		return m, m.handleSpinnerTick(msg)
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -1012,261 +1005,288 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseClickMsg:
-		if msg.Button == tea.MouseLeft {
-			if m.questionMode {
-				for i := range m.questionModal.Options {
-					zoneID := fmt.Sprintf("question-opt-%d", i)
-					if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
-						if m.questionModal.Multiple {
-							m.questionMulti[i] = !m.questionMulti[i]
-						}
-						m.questionIdx = i
-						m.refreshViewport()
-						return m, nil
-					}
-				}
-				return m, nil
-			}
-			for _, zoneID := range m.reasoningZones {
-				if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
-					m.reasoningExpanded[zoneID] = !m.reasoningExpanded[zoneID]
-					m.refreshViewport()
-					return m, nil
-				}
-			}
-		}
-		var vpCmd tea.Cmd
-		m.viewport, vpCmd = m.viewport.Update(msg)
-		return m, vpCmd
+		return m, m.handleMouseClick(msg)
 
 	case tea.MouseMsg:
-		var vpCmd tea.Cmd
-		m.viewport, vpCmd = m.viewport.Update(msg)
-		return m, vpCmd
+		// Forward mouse events to viewport (wheel scroll).
+		return m, m.viewportUpdate(msg)
 
 	case tea.KeyPressMsg:
-		// Help overlay: dismiss with any key
-		if m.showHelp {
-			m.showHelp = false
-			m.adjustViewport()
-			return m, nil
-		}
-
-		// Search mode: handle search keys
-		if m.searchMode {
-			switch {
-			case key.Matches(msg, keys.Cancel):
-				m.searchMode = false
-				m.searchQuery = ""
-				return m, nil
-			case key.Matches(msg, keys.NextMatch):
-				m.searchNextMatch()
-				return m, nil
-			case key.Matches(msg, keys.PrevMatch):
-				m.searchPrevMatch()
-				return m, nil
-			case key.Matches(msg, keys.Submit):
-				m.searchMode = false
-				return m, nil
-			case msg.String() == "backspace":
-				if len(m.searchQuery) > 0 {
-					m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
-					m.buildSearchMatches()
-				}
-				return m, nil
-			default:
-				// Accumulate search characters
-				s := msg.String()
-				if len(s) == 1 && s[0] >= 32 && s[0] < 127 {
-					m.searchQuery += s
-					m.buildSearchMatches()
-				}
-				return m, nil
-			}
-		}
-
-		if m.questionMode {
-			switch {
-			case key.Matches(msg, keys.Cancel):
-				m.answerQuestion("")
-				return m, nil
-			case key.Matches(msg, keys.Submit):
-				m.commitQuestionAnswer()
-				return m, nil
-			case key.Matches(msg, keys.Up):
-				if m.questionIdx > 0 {
-					m.questionIdx--
-				}
-				m.refreshViewport()
-				return m, nil
-			case key.Matches(msg, keys.Down):
-				if m.questionIdx < len(m.questionModal.Options)-1 {
-					m.questionIdx++
-				}
-				m.refreshViewport()
-				return m, nil
-			case msg.String() == "space":
-				if m.questionModal.Multiple {
-					m.questionMulti[m.questionIdx] = !m.questionMulti[m.questionIdx]
-				}
-				m.refreshViewport()
-				return m, nil
-			}
-			return m, nil
-		}
-
-		// Model mode: pass up/down/enter/esc to model selector
-		if m.modelMode {
-			switch {
-			case key.Matches(msg, keys.Cancel):
-				m.exitModelMode()
-				return m, nil
-			case key.Matches(msg, keys.Up):
-				if m.modelSelected > 0 {
-					m.modelSelected--
-				}
-				return m, nil
-			case key.Matches(msg, keys.Down):
-				filtered := m.filteredModels()
-				if m.modelSelected < len(filtered)-1 {
-					m.modelSelected++
-				}
-				return m, nil
-			case key.Matches(msg, keys.Submit):
-				m.selectModel()
-				return m, nil
-			}
-			return m, nil
-		}
-
-		switch {
-		case key.Matches(msg, keys.Quit):
-			if m.onQuit != nil {
-				m.onQuit()
-			}
-			return m, tea.Quit
-
-		case key.Matches(msg, keys.Cancel):
-			if m.commandMode {
-				m.input.SetValue("")
-				m.clearCommandMode()
-				return m, nil
-			}
-			// Esc does nothing in normal chat mode.
-			return m, nil
-
-		case key.Matches(msg, keys.Help):
-			// Only trigger ? when input is empty (don't steal the ? character).
-			if !m.commandMode && !m.modelMode && m.input.Value() == "" {
-				m.showHelp = true
-				m.adjustViewport()
-				return m, nil
-			}
-
-		case key.Matches(msg, keys.Search):
-			// Only trigger / when input is empty (don't steal the / character).
-			if !m.commandMode && !m.modelMode && m.input.Value() == "" {
-				m.searchMode = true
-				m.searchQuery = ""
-				m.searchMatches = nil
-				m.searchIdx = -1
-				return m, nil
-			}
-
-		case key.Matches(msg, keys.Copy):
-			for i := len(m.messages) - 1; i >= 0; i-- {
-				if m.messages[i].Role == "assistant" && m.messages[i].Raw != "" {
-					return m, tea.SetClipboard(m.messages[i].Raw)
-				}
-			}
-			return m, nil
-
-		case key.Matches(msg, keys.Reasoning):
-			if m.hasReasoning() {
-				anyExpanded := false
-				for _, zid := range m.reasoningZones {
-					if m.reasoningExpanded[zid] {
-						anyExpanded = true
-						break
-					}
-				}
-				for _, zid := range m.reasoningZones {
-					m.reasoningExpanded[zid] = !anyExpanded
-				}
-				m.refreshViewport()
-			}
-			return m, nil
-
-		case key.Matches(msg, keys.Top):
-			if !m.commandMode && !m.modelMode {
-				m.viewport.GotoTop()
-			}
-			return m, nil
-
-		case key.Matches(msg, keys.Bottom):
-			if !m.commandMode && !m.modelMode {
-				m.viewport.GotoBottom()
-			}
-			return m, nil
-
-		case key.Matches(msg, keys.Submit):
-			if m.commandMode {
-				value := m.input.Value()
-				m.input.SetValue("")
-				m.clearCommandMode()
-				if strings.TrimSpace(value) == ":quit" {
-					return m, tea.Quit
-				}
-				m.executeCommand(value)
-				return m, nil
-			}
-			if m.thinking {
-				return m, nil
-			}
-			m.thinkContent = ""
-			m.reasoningExpanded = make(map[string]bool)
-			value := m.input.Value()
-			if strings.TrimSpace(value) == "" {
-				return m, nil
-			}
-			m.AddMessage("user", value)
-			m.SetThinking(true)
-			m.input.SetValue("")
-			if m.onSubmit != nil {
-				m.onSubmit(value)
-			}
-			return m, nil
-
-		case key.Matches(msg, keys.Up):
-			if !m.commandMode && !m.modelMode {
-				var vpCmd tea.Cmd
-				m.viewport, vpCmd = m.viewport.Update(msg)
-				return m, vpCmd
-			}
-			return m, nil
-
-		case key.Matches(msg, keys.Down):
-			if !m.commandMode && !m.modelMode {
-				var vpCmd tea.Cmd
-				m.viewport, vpCmd = m.viewport.Update(msg)
-				return m, vpCmd
-			}
-			return m, nil
-
-		case key.Matches(msg, keys.PageUp), key.Matches(msg, keys.PageDown):
-			if !m.commandMode && !m.modelMode {
-				var vpCmd tea.Cmd
-				m.viewport, vpCmd = m.viewport.Update(msg)
-				return m, vpCmd
-			}
-			return m, nil
-		}
-
+		return m.handleKeyPress(msg)
 	}
 
+	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.detectCommandMode()
 	return m, cmd
+}
+
+// --- spinner ---
+
+func (m *Model) handleSpinnerTick(msg spinner.TickMsg) tea.Cmd {
+	var spinCmd tea.Cmd
+	m.spinner, spinCmd = m.spinner.Update(msg)
+	if m.thinking {
+		m.refreshViewport()
+	}
+	if m.needsRefresh && m.streaming {
+		m.refreshViewport()
+		m.scrollToBottom()
+		m.needsRefresh = false
+	}
+	if m.ephemTimer > 0 {
+		m.ephemTimer--
+		if m.ephemTimer == 0 {
+			m.ephemMsg = ""
+		}
+	}
+	return spinCmd
+}
+
+// --- mouse ---
+
+func (m *Model) handleMouseClick(msg tea.MouseClickMsg) tea.Cmd {
+	if msg.Button == tea.MouseLeft {
+		if m.questionMode {
+			for i := range m.questionModal.Options {
+				zoneID := fmt.Sprintf("question-opt-%d", i)
+				if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
+					if m.questionModal.Multiple {
+						m.questionMulti[i] = !m.questionMulti[i]
+					}
+					m.questionIdx = i
+					m.refreshViewport()
+					return nil
+				}
+			}
+			return nil
+		}
+		for _, zoneID := range m.reasoningZones {
+			if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
+				m.reasoningExpanded[zoneID] = !m.reasoningExpanded[zoneID]
+				m.refreshViewport()
+				return nil
+			}
+		}
+	}
+	return m.viewportUpdate(msg)
+}
+
+func (m *Model) viewportUpdate(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
+	m.viewport, cmd = m.viewport.Update(msg)
+	return cmd
+}
+
+// --- key dispatch ---
+
+// handleKeyPress routes a key press to the active mode handler.
+func (m *Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// Dismiss overlays first
+	if m.showHelp {
+		m.showHelp = false
+		m.adjustViewport()
+		return m, nil
+	}
+	if m.searchMode {
+		return m, m.handleSearchKey(msg)
+	}
+	if m.questionMode {
+		return m, m.handleQuestionKey(msg)
+	}
+	if m.modelMode {
+		return m, m.handleModelKey(msg)
+	}
+	return m, m.handleNormalKey(msg)
+}
+
+func (m *Model) handleSearchKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch {
+	case key.Matches(msg, keys.Cancel):
+		m.searchMode = false
+		m.searchQuery = ""
+		return nil
+	case key.Matches(msg, keys.NextMatch):
+		m.searchNextMatch()
+		return nil
+	case key.Matches(msg, keys.PrevMatch):
+		m.searchPrevMatch()
+		return nil
+	case key.Matches(msg, keys.Submit):
+		m.searchMode = false
+		return nil
+	case msg.String() == "backspace":
+		if len(m.searchQuery) > 0 {
+			m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+			m.buildSearchMatches()
+		}
+		return nil
+	default:
+		s := msg.String()
+		if len(s) == 1 && s[0] >= 32 && s[0] < 127 {
+			m.searchQuery += s
+			m.buildSearchMatches()
+		}
+		return nil
+	}
+}
+
+func (m *Model) handleQuestionKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch {
+	case key.Matches(msg, keys.Cancel):
+		m.answerQuestion("")
+		return nil
+	case key.Matches(msg, keys.Submit):
+		m.commitQuestionAnswer()
+		return nil
+	case key.Matches(msg, keys.Up):
+		if m.questionIdx > 0 {
+			m.questionIdx--
+		}
+		m.refreshViewport()
+		return nil
+	case key.Matches(msg, keys.Down):
+		if m.questionIdx < len(m.questionModal.Options)-1 {
+			m.questionIdx++
+		}
+		m.refreshViewport()
+		return nil
+	case msg.String() == "space":
+		if m.questionModal.Multiple {
+			m.questionMulti[m.questionIdx] = !m.questionMulti[m.questionIdx]
+		}
+		m.refreshViewport()
+		return nil
+	}
+	return nil
+}
+
+func (m *Model) handleModelKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch {
+	case key.Matches(msg, keys.Cancel):
+		m.exitModelMode()
+		return nil
+	case key.Matches(msg, keys.Up):
+		if m.modelSelected > 0 {
+			m.modelSelected--
+		}
+		return nil
+	case key.Matches(msg, keys.Down):
+		filtered := m.filteredModels()
+		if m.modelSelected < len(filtered)-1 {
+			m.modelSelected++
+		}
+		return nil
+	case key.Matches(msg, keys.Submit):
+		m.selectModel()
+		return nil
+	}
+	return nil
+}
+
+func (m *Model) handleNormalKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch {
+	case key.Matches(msg, keys.Quit):
+		if m.onQuit != nil {
+			m.onQuit()
+		}
+		return tea.Quit
+
+	case key.Matches(msg, keys.Cancel):
+		if m.commandMode {
+			m.input.SetValue("")
+			m.clearCommandMode()
+		}
+		return nil
+
+	case key.Matches(msg, keys.Help):
+		if !m.commandMode && m.input.Value() == "" {
+			m.showHelp = true
+			m.adjustViewport()
+		}
+		return nil
+
+	case key.Matches(msg, keys.Search):
+		if !m.commandMode && m.input.Value() == "" {
+			m.searchMode = true
+			m.searchQuery = ""
+			m.searchMatches = nil
+			m.searchIdx = -1
+		}
+		return nil
+
+	case key.Matches(msg, keys.Copy):
+		for i := len(m.messages) - 1; i >= 0; i-- {
+			if m.messages[i].Role == "assistant" && m.messages[i].Raw != "" {
+				return tea.SetClipboard(m.messages[i].Raw)
+			}
+		}
+		return nil
+
+	case key.Matches(msg, keys.Reasoning):
+		if m.hasReasoning() {
+			anyExpanded := false
+			for _, zid := range m.reasoningZones {
+				if m.reasoningExpanded[zid] {
+					anyExpanded = true
+					break
+				}
+			}
+			for _, zid := range m.reasoningZones {
+				m.reasoningExpanded[zid] = !anyExpanded
+			}
+			m.refreshViewport()
+		}
+		return nil
+
+	case key.Matches(msg, keys.Top):
+		if !m.commandMode {
+			m.viewport.GotoTop()
+		}
+		return nil
+
+	case key.Matches(msg, keys.Bottom):
+		if !m.commandMode {
+			m.viewport.GotoBottom()
+		}
+		return nil
+
+	case key.Matches(msg, keys.Submit):
+		if m.commandMode {
+			value := m.input.Value()
+			m.input.SetValue("")
+			m.clearCommandMode()
+			if strings.TrimSpace(value) == ":quit" {
+				return tea.Quit
+			}
+			m.executeCommand(value)
+			return nil
+		}
+		if m.thinking {
+			return nil
+		}
+		m.thinkContent = ""
+		m.reasoningExpanded = make(map[string]bool)
+		value := m.input.Value()
+		if strings.TrimSpace(value) == "" {
+			return nil
+		}
+		m.AddMessage("user", value)
+		m.SetThinking(true)
+		m.input.SetValue("")
+		if m.onSubmit != nil {
+			m.onSubmit(value)
+		}
+		return nil
+
+	case key.Matches(msg, keys.Up), key.Matches(msg, keys.Down),
+		key.Matches(msg, keys.PageUp), key.Matches(msg, keys.PageDown):
+		if !m.commandMode {
+			return m.viewportUpdate(msg)
+		}
+		return nil
+	}
+	return nil
 }
 
 // detectCommandMode enables or disables command mode based on the input prefix.
