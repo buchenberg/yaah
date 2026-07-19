@@ -36,6 +36,7 @@ var (
 	boldStyle           lipgloss.Style
 	italicStyle         lipgloss.Style
 	thinkingStyle       lipgloss.Style
+	reasoningBgStyle    lipgloss.Style
 	toggleStyle         lipgloss.Style
 	listBulletStyle     lipgloss.Style
 	listItemStyle       lipgloss.Style

@@ -13,103 +13,107 @@ import (
 // means "terminal default" (used for NO_COLOR / monochrome mode).
 // Styles are reassigned via ApplyTheme at startup or on theme switch.
 type Theme struct {
-	Title      string
-	User       string
-	UserBg     string
-	Assistant  string
-	Tool       string
-	ToolBg     string
-	System     string
-	SystemBg   string
-	Status     string
-	StatusBg   string
-	Spinner    string
-	Code       string
-	Thinking   string
-	Toggle     string
-	ListBullet string
-	ListItem   string
-	Tree       string
-	TreeItem   string
-	CmdBorder  string
-	CmdName    string
-	CmdDesc    string
+	Title       string
+	User        string
+	UserBg      string
+	Assistant   string
+	Tool        string
+	ToolBg      string
+	System      string
+	SystemBg    string
+	Status      string
+	StatusBg    string
+	Spinner     string
+	Code        string
+	Thinking    string
+	ReasoningBg string
+	Toggle      string
+	ListBullet  string
+	ListItem    string
+	Tree        string
+	TreeItem    string
+	CmdBorder   string
+	CmdName     string
+	CmdDesc     string
 }
 
 // Default dark theme — the original yaah palette.
 var DarkTheme = Theme{
-	Title:      "39",
-	User:       "14",
-	UserBg:     "24",
-	Assistant:  "252",
-	Tool:       "243",
-	ToolBg:     "236",
-	System:     "243",
-	SystemBg:   "236",
-	Status:     "243",
-	StatusBg:   "236",
-	Spinner:    "39",
-	Code:       "214",
-	Thinking:   "240",
-	Toggle:     "240",
-	ListBullet: "99",
-	ListItem:   "252",
-	Tree:       "240",
-	TreeItem:   "252",
-	CmdBorder:  "99",
-	CmdName:    "39",
-	CmdDesc:    "243",
+	Title:       "39",
+	User:        "14",
+	UserBg:      "24",
+	Assistant:   "252",
+	Tool:        "243",
+	ToolBg:      "22",
+	System:      "243",
+	SystemBg:    "236",
+	Status:      "243",
+	StatusBg:    "236",
+	Spinner:     "39",
+	Code:        "214",
+	Thinking:    "240",
+	ReasoningBg: "17",
+	Toggle:      "240",
+	ListBullet:  "99",
+	ListItem:    "252",
+	Tree:        "240",
+	TreeItem:    "252",
+	CmdBorder:   "99",
+	CmdName:     "39",
+	CmdDesc:     "243",
 }
 
 // Light theme — tuned for light terminal backgrounds.
 var LightTheme = Theme{
-	Title:      "25",
-	User:       "26",
-	UserBg:     "153",
-	Assistant:  "235",
-	Tool:       "244",
-	ToolBg:     "251",
-	System:     "244",
-	SystemBg:   "251",
-	Status:     "244",
-	StatusBg:   "251",
-	Spinner:    "25",
-	Code:       "130",
-	Thinking:   "246",
-	Toggle:     "246",
-	ListBullet: "55",
-	ListItem:   "235",
-	Tree:       "246",
-	TreeItem:   "235",
-	CmdBorder:  "55",
-	CmdName:    "25",
-	CmdDesc:    "244",
+	Title:       "25",
+	User:        "26",
+	UserBg:      "153",
+	Assistant:   "235",
+	Tool:        "244",
+	ToolBg:      "156",
+	System:      "244",
+	SystemBg:    "251",
+	Status:      "244",
+	StatusBg:    "251",
+	Spinner:     "25",
+	Code:        "130",
+	Thinking:    "246",
+	ReasoningBg: "189",
+	Toggle:      "246",
+	ListBullet:  "55",
+	ListItem:    "235",
+	Tree:        "246",
+	TreeItem:    "235",
+	CmdBorder:   "55",
+	CmdName:     "25",
+	CmdDesc:     "244",
 }
 
 // catppuccinMocha maps Catppuccin Mocha palette to 256-color ANSI
 // approximations. Full palette support requires a truecolor terminal.
 var catppuccinMocha = Theme{
-	Title:      "39",
-	User:       "14",
-	UserBg:     "24",
-	Assistant:  "252",
-	Tool:       "243",
-	ToolBg:     "236",
-	System:     "243",
-	SystemBg:   "236",
-	Status:     "243",
-	StatusBg:   "236",
-	Spinner:    "39",
-	Code:       "214",
-	Thinking:   "240",
-	Toggle:     "240",
-	ListBullet: "99",
-	ListItem:   "252",
-	Tree:       "240",
-	TreeItem:   "252",
-	CmdBorder:  "99",
-	CmdName:    "39",
-	CmdDesc:    "243",
+	Title:       "39",
+	User:        "14",
+	UserBg:      "24",
+	Assistant:   "252",
+	Tool:        "243",
+	ToolBg:      "22",
+	System:      "243",
+	SystemBg:    "236",
+	Status:      "243",
+	StatusBg:    "236",
+	Spinner:     "39",
+	Code:        "214",
+	Thinking:    "240",
+	ReasoningBg: "17",
+	Toggle:      "240",
+	ListBullet:  "99",
+	ListItem:    "252",
+	Tree:        "240",
+	TreeItem:    "252",
+	CmdBorder:   "99",
+	CmdName:     "39",
+	CmdDesc:     "243",
 }
 
 // namedThemes holds extra themes beyond the built-in dark/light.
@@ -189,6 +193,9 @@ func ApplyTheme(t Theme) {
 	thinkingStyle = lipgloss.NewStyle().
 		Foreground(colorOrNone(t.Thinking)).
 		Italic(true)
+
+	reasoningBgStyle = lipgloss.NewStyle().
+		Background(colorOrNone(t.ReasoningBg))
 
 	toggleStyle = lipgloss.NewStyle().
 		Foreground(colorOrNone(t.Toggle))

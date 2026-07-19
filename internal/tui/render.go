@@ -354,7 +354,8 @@ func (m *Model) renderMessages() string {
 				} else {
 					b.WriteString(zone.Mark(zoneID, toggleStyle.Render("  ▼ Reasoning...")))
 					b.WriteString("\n\n")
-					b.WriteString(thinkingStyle.Render(chatWrap("", msg.Reasoning, m.width)))
+					b.WriteString(reasoningBgStyle.Width(m.width).Render(
+						thinkingStyle.Render(chatWrap("", msg.Reasoning, m.width))))
 				}
 				b.WriteString("\n\n")
 			} else {
@@ -406,7 +407,8 @@ func (m *Model) renderMessages() string {
 			rendered := spinnerStyle.Render(fmt.Sprintf("  %s Reasoning...", m.spinner.View()))
 			b.WriteString(rendered)
 			b.WriteString("\n\n")
-			b.WriteString(thinkingStyle.Render(chatWrap("", m.thinkContent, m.width)))
+			b.WriteString(reasoningBgStyle.Width(m.width).Render(
+				thinkingStyle.Render(chatWrap("", m.thinkContent, m.width))))
 		} else {
 			m.reasoningZones = append(m.reasoningZones, "reasoning-live")
 			if !m.reasoningExpanded["reasoning-live"] {
@@ -414,7 +416,8 @@ func (m *Model) renderMessages() string {
 			} else {
 				b.WriteString(zone.Mark("reasoning-live", toggleStyle.Render("  ▼ Reasoning...")))
 				b.WriteString("\n\n")
-				b.WriteString(thinkingStyle.Render(chatWrap("", m.thinkContent, m.width)))
+				b.WriteString(reasoningBgStyle.Width(m.width).Render(
+					thinkingStyle.Render(chatWrap("", m.thinkContent, m.width))))
 			}
 			b.WriteString("\n")
 		}
