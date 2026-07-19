@@ -382,18 +382,17 @@ func (m *Model) renderMessages() string {
 					}
 				}
 				b.WriteString("\n")
-				b.WriteString(toolBgStyle.Width(m.width).Render(toolStyle.Render(fmt.Sprintf("  ⏳ %s…", label))))
+				b.WriteString(toolStyle.Render(fmt.Sprintf("  ⏳ %s…", label)))
 				b.WriteString("\n\n")
 				toolLabelRendered = true
 			}
 
-			// Tool result — always rendered with green background.
+			// Tool result — indented and dimmed, no background.
 			b.WriteString("\n")
 			if msg.ToolName == "task" || (msg.ToolName != "" && (isListContent(msg.Raw) || isTreeContent(msg.Raw))) {
-				b.WriteString(toolBgStyle.Width(m.width).Render(msg.Content))
+				b.WriteString(toolIndent(m.width, msg.Content))
 			} else {
-				rendered := toolStyle.Render(chatWrap("", msg.Content, m.width))
-				b.WriteString(toolBgStyle.Width(m.width).Render(rendered))
+				b.WriteString(toolIndent(m.width, chatWrap("", msg.Content, m.width)))
 			}
 			b.WriteString("\n")
 

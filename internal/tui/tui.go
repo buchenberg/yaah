@@ -27,7 +27,6 @@ var (
 	userBgStyle         lipgloss.Style
 	assistantStyle      lipgloss.Style
 	toolStyle           lipgloss.Style
-	toolBgStyle         lipgloss.Style
 	systemStyle         lipgloss.Style
 	systemBgStyle       lipgloss.Style
 	statusStyle         lipgloss.Style
@@ -1517,6 +1516,17 @@ func contextBar(pct int) string {
 		return fmt.Sprintf("[%s%s %d%%]", strings.Repeat("▓", filled), strings.Repeat("░", empty), pct)
 	}
 	return fmt.Sprintf("[%s%s %d%%]", strings.Repeat("█", filled), strings.Repeat("░", empty), pct)
+}
+
+// toolIndent prefixes each line of content with a dimmed border character
+// for a clean left-margin treatment (no background needed).
+func toolIndent(width int, content string) string {
+	prefix := toolStyle.Render("│ ")
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		lines[i] = prefix + line
+	}
+	return strings.Join(lines, "\n")
 }
 
 // HandleContextInfo updates the context window display.

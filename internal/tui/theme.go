@@ -44,7 +44,7 @@ var DarkTheme = Theme{
 	UserBg:      "24",
 	Assistant:   "252",
 	Tool:        "243",
-	ToolBg:      "22",
+	ToolBg:      "",
 	System:      "243",
 	SystemBg:    "236",
 	Status:      "243",
@@ -70,7 +70,7 @@ var LightTheme = Theme{
 	UserBg:      "153",
 	Assistant:   "235",
 	Tool:        "244",
-	ToolBg:      "156",
+	ToolBg:      "",
 	System:      "244",
 	SystemBg:    "251",
 	Status:      "244",
@@ -97,7 +97,7 @@ var catppuccinMocha = Theme{
 	UserBg:      "24",
 	Assistant:   "252",
 	Tool:        "243",
-	ToolBg:      "22",
+	ToolBg:      "",
 	System:      "243",
 	SystemBg:    "236",
 	Status:      "243",
@@ -163,9 +163,6 @@ func ApplyTheme(t Theme) {
 
 	toolStyle = lipgloss.NewStyle().
 		Foreground(colorOrNone(t.Tool))
-
-	toolBgStyle = lipgloss.NewStyle().
-		Background(colorOrNone(t.ToolBg))
 
 	systemStyle = lipgloss.NewStyle().
 		Foreground(colorOrNone(t.System))
