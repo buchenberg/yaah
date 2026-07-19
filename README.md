@@ -154,13 +154,17 @@ yaah config edit              # scaffold or edit ~/.yaah/config.yaml
 yaah doctor                   # diagnose installation
 yaah skill list               # discover skills
 yaah skill show <name>        # show skill content
-yaah mcp list                 # list MCP servers
-yaah mcp add <name> --url <url>  # register HTTP MCP server
+yaah mcp list                 # list registered MCP servers
+yaah mcp add <name> <cmd> [args...]  # register stdio MCP server
+yaah mcp add <name> --url <url>      # register HTTP MCP server
+yaah mcp remove <name>        # remove MCP server
 yaah memory add <text>        # add persistent memory note
 yaah memory search <query>    # search memory (FTS5)
 yaah session list             # list recent sessions
+yaah session show <id>        # show session details
 yaah tui                      # launch bubbletea TUI
 yaah update                   # check for newer release
+yaah update check             # check without interactive prompt
 yaah version                  # version, commit, build date
 ```
 
@@ -295,6 +299,7 @@ yaah/
 │   └── color.go                 # ANSI color helpers
 ├── internal/
 │   ├── agent/                   # agent loop, middleware pipeline, streaming, compaction
+│   ├── banner/                  # figlet + lolcat banner for TUI/REPL
 │   ├── config/                  # ~/.yaah/config.yaml loader
 │   ├── instructions/            # AGENTS.md/CLAUDE.md discovery
 │   ├── mcp/                     # MCP client (stdio + HTTP)
@@ -304,11 +309,17 @@ yaah/
 │   ├── prompts/                 # system prompt assembly
 │   ├── repl/                    # REPL, history, slash commands
 │   ├── skills/                  # SKILL.md discovery
+│   ├── spinner/                 # animated thinking spinner
+│   ├── todo/                    # in-memory todo store
 │   ├── tools/                   # built-in tools (read, write, edit, grep, bash, task, etc.)
 │   ├── tui/                     # bubbletea TUI components
-│   └── types/                   # OpenAI message types
+│   ├── types/                   # OpenAI message types
+│   └── update/                  # GitHub release checking
 ├── docs/
-│   └── architecture.md          # detailed architecture documentation
+│   ├── architecture.md          # detailed architecture documentation
+│   ├── tui-component-design.md  # TUI component system design proposal
+│   ├── tui-refactoring-example.md # before/after refactoring examples
+│   └── tui-summary.md           # TUI component system design summary
 ├── AGENTS.md                    # coding assistant instructions
 ├── CONTRIBUTING.md
 └── SECURITY.md

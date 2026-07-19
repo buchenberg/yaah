@@ -1,5 +1,10 @@
 # Refactoring Examples: Current vs Component System
 
+> **Status**: Aspirational design document. Not yet implemented.
+
+These examples compare the current inline styling approach against a proposed
+component-based refactor.
+
 ## Example 1: User Message Rendering
 
 ### Current Approach (render.go)

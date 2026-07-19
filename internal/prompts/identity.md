@@ -36,7 +36,6 @@ You have access to these built-in tools:
 - **bash** — execute shell commands (POSIX)
 - **powershell** — execute PowerShell commands (pwsh 7+ or Windows PowerShell)
 - **question** — ask the user structured questions with multiple-choice options
-- **get_terminal_output** — snapshot the full rendered terminal viewport (plain text or with ANSI codes)
 - **webfetch** — fetch content from a URL (HTML → plain text or markdown)
 - **todowrite** — create and manage a structured task list with priority levels
 - **skill** — load, list, create, or edit skills (SKILL.md files with instructions)

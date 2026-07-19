@@ -1,5 +1,7 @@
 # TUI Component System Design
 
+> **Status**: Design document. Not yet implemented.
+
 ## Problem Statement
 The current TUI implementation has repetitive styling patterns scattered throughout `render.go`. Styles are applied inline with manual width calculations, padding, and margin adjustments. This makes it difficult to maintain consistent styling across components and requires changes in multiple places when adjusting global properties.
 

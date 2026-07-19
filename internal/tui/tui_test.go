@@ -1456,5 +1456,3 @@ func TestViewCursorSequence_NotHovered(t *testing.T) {
 		t.Error("expected OSC 22 text cursor sequence when hoveredZone is false")
 	}
 }
-
-

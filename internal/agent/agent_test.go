@@ -441,9 +441,9 @@ func TestLoop_noFalsePositiveOnDifferentArgs(t *testing.T) {
 					Message: types.Message{
 						Role: "assistant",
 						ToolCalls: []types.ToolCall{{
-							ID:        "call_1",
-							Type:      "function",
-							Function:  types.ToolCallFn{Name: "write", Arguments: `{"path":"/tmp/a.go","content":"aaa"}`},
+							ID:       "call_1",
+							Type:     "function",
+							Function: types.ToolCallFn{Name: "write", Arguments: `{"path":"/tmp/a.go","content":"aaa"}`},
 						}},
 					},
 					FinishReason: "tool_calls",
@@ -454,9 +454,9 @@ func TestLoop_noFalsePositiveOnDifferentArgs(t *testing.T) {
 					Message: types.Message{
 						Role: "assistant",
 						ToolCalls: []types.ToolCall{{
-							ID:        "call_2",
-							Type:      "function",
-							Function:  types.ToolCallFn{Name: "write", Arguments: `{"path":"/tmp/b.go","content":"bbb"}`},
+							ID:       "call_2",
+							Type:     "function",
+							Function: types.ToolCallFn{Name: "write", Arguments: `{"path":"/tmp/b.go","content":"bbb"}`},
 						}},
 					},
 					FinishReason: "tool_calls",
@@ -467,9 +467,9 @@ func TestLoop_noFalsePositiveOnDifferentArgs(t *testing.T) {
 					Message: types.Message{
 						Role: "assistant",
 						ToolCalls: []types.ToolCall{{
-							ID:        "call_3",
-							Type:      "function",
-							Function:  types.ToolCallFn{Name: "write", Arguments: `{"path":"/tmp/c.go","content":"ccc"}`},
+							ID:       "call_3",
+							Type:     "function",
+							Function: types.ToolCallFn{Name: "write", Arguments: `{"path":"/tmp/c.go","content":"ccc"}`},
 						}},
 					},
 					FinishReason: "tool_calls",
@@ -480,9 +480,9 @@ func TestLoop_noFalsePositiveOnDifferentArgs(t *testing.T) {
 					Message: types.Message{
 						Role: "assistant",
 						ToolCalls: []types.ToolCall{{
-							ID:        "call_4",
-							Type:      "function",
-							Function:  types.ToolCallFn{Name: "write", Arguments: `{"path":"/tmp/d.go","content":"ddd"}`},
+							ID:       "call_4",
+							Type:     "function",
+							Function: types.ToolCallFn{Name: "write", Arguments: `{"path":"/tmp/d.go","content":"ddd"}`},
 						}},
 					},
 					FinishReason: "tool_calls",
@@ -493,9 +493,9 @@ func TestLoop_noFalsePositiveOnDifferentArgs(t *testing.T) {
 					Message: types.Message{
 						Role: "assistant",
 						ToolCalls: []types.ToolCall{{
-							ID:        "call_5",
-							Type:      "function",
-							Function:  types.ToolCallFn{Name: "write", Arguments: `{"path":"/tmp/e.go","content":"eee"}`},
+							ID:       "call_5",
+							Type:     "function",
+							Function: types.ToolCallFn{Name: "write", Arguments: `{"path":"/tmp/e.go","content":"eee"}`},
 						}},
 					},
 					FinishReason: "tool_calls",
