@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
@@ -127,6 +129,12 @@ type Model struct {
 	contextPct        int             // context window fill percentage (0-100)
 	contextTokens     int             // estimated token count
 	contextWindow     int             // context window size
+	help              help.Model      // auto-generated footer hint bar
+	showHelp          bool            // true when the full help overlay is visible
+	searchMode        bool            // true when search is active
+	searchQuery       string          // current search term
+	searchMatches     []int           // line numbers with matches
+	searchIdx         int             // current match index (-1 = no active match)
 	onSubmit          func(string)
 	onQuit            func()
 	onCompact         func()
@@ -162,6 +170,7 @@ func New(provider, model string, contextWindow int, onSubmit func(string), onQui
 		viewport:          vp,
 		banner:            bn,
 		reasoningExpanded: make(map[string]bool),
+		help:              help.New(),
 		provider:          provider,
 		modelName:         model,
 		contextWindow:     contextWindow,
@@ -973,27 +982,67 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, vpCmd
 
 	case tea.KeyPressMsg:
+		// Help overlay: dismiss with any key
+		if m.showHelp {
+			m.showHelp = false
+			m.refreshViewport()
+			return m, nil
+		}
+
+		// Search mode: handle search keys
+		if m.searchMode {
+			switch {
+			case key.Matches(msg, keys.Cancel):
+				m.searchMode = false
+				m.searchQuery = ""
+				return m, nil
+			case key.Matches(msg, keys.NextMatch):
+				m.searchNextMatch()
+				return m, nil
+			case key.Matches(msg, keys.PrevMatch):
+				m.searchPrevMatch()
+				return m, nil
+			case key.Matches(msg, keys.Submit):
+				m.searchMode = false
+				return m, nil
+			case msg.String() == "backspace":
+				if len(m.searchQuery) > 0 {
+					m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+					m.buildSearchMatches()
+				}
+				return m, nil
+			default:
+				// Accumulate search characters
+				s := msg.String()
+				if len(s) == 1 && s[0] >= 32 && s[0] < 127 {
+					m.searchQuery += s
+					m.buildSearchMatches()
+				}
+				return m, nil
+			}
+		}
+
 		if m.questionMode {
-			switch msg.String() {
-			case "esc":
+			switch {
+			case key.Matches(msg, keys.Cancel):
 				m.answerQuestion("")
 				return m, nil
-			case "enter":
+			case key.Matches(msg, keys.Submit):
 				m.commitQuestionAnswer()
 				return m, nil
-			case "up":
+			case key.Matches(msg, keys.Up):
 				if m.questionIdx > 0 {
 					m.questionIdx--
 				}
 				m.refreshViewport()
 				return m, nil
-			case "down":
+			case key.Matches(msg, keys.Down):
 				if m.questionIdx < len(m.questionModal.Options)-1 {
 					m.questionIdx++
 				}
 				m.refreshViewport()
 				return m, nil
-			case "space":
+			case msg.String() == "space":
 				if m.questionModal.Multiple {
 					m.questionMulti[m.questionIdx] = !m.questionMulti[m.questionIdx]
 				}
@@ -1003,28 +1052,63 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		switch msg.String() {
-		case "ctrl+c":
+		// Model mode: pass up/down/enter/esc to model selector
+		if m.modelMode {
+			switch {
+			case key.Matches(msg, keys.Cancel):
+				m.exitModelMode()
+				return m, nil
+			case key.Matches(msg, keys.Up):
+				if m.modelSelected > 0 {
+					m.modelSelected--
+				}
+				return m, nil
+			case key.Matches(msg, keys.Down):
+				filtered := m.filteredModels()
+				if m.modelSelected < len(filtered)-1 {
+					m.modelSelected++
+				}
+				return m, nil
+			case key.Matches(msg, keys.Submit):
+				m.selectModel()
+				return m, nil
+			}
+			return m, nil
+		}
+
+		switch {
+		case key.Matches(msg, keys.Quit):
 			if m.onQuit != nil {
 				m.onQuit()
 			}
 			return m, tea.Quit
 
-		case "esc":
-			if m.modelMode {
-				m.exitModelMode()
-				return m, nil
-			}
+		case key.Matches(msg, keys.Cancel):
 			if m.commandMode {
 				m.input.SetValue("")
 				m.clearCommandMode()
 				return m, nil
 			}
 			// Esc does nothing in normal chat mode.
-			// Use ctrl+c to quit.
 			return m, nil
 
-		case "ctrl+y":
+		case key.Matches(msg, keys.Help):
+			if !m.commandMode && !m.modelMode {
+				m.showHelp = true
+				m.refreshViewport()
+			}
+			return m, nil
+
+		case key.Matches(msg, keys.Search):
+			if !m.commandMode && !m.modelMode {
+				m.searchMode = true
+				m.searchQuery = ""
+				m.searchMatches = nil
+				m.searchIdx = -1
+			}
+			return m, nil
+
+		case key.Matches(msg, keys.Copy):
 			for i := len(m.messages) - 1; i >= 0; i-- {
 				if m.messages[i].Role == "assistant" && m.messages[i].Raw != "" {
 					return m, tea.SetClipboard(m.messages[i].Raw)
@@ -1032,7 +1116,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "ctrl+r":
+		case key.Matches(msg, keys.Reasoning):
 			if m.hasReasoning() {
 				anyExpanded := false
 				for _, zid := range m.reasoningZones {
@@ -1048,11 +1132,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "enter":
-			if m.modelMode {
-				m.selectModel()
-				return m, nil
+		case key.Matches(msg, keys.Top):
+			if !m.commandMode && !m.modelMode {
+				m.viewport.GotoTop()
 			}
+			return m, nil
+
+		case key.Matches(msg, keys.Bottom):
+			if !m.commandMode && !m.modelMode {
+				m.viewport.GotoBottom()
+			}
+			return m, nil
+
+		case key.Matches(msg, keys.Submit):
 			if m.commandMode {
 				value := m.input.Value()
 				m.input.SetValue("")
@@ -1080,36 +1172,29 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "up":
-			if m.modelMode {
-				filtered := m.filteredModels()
-				if m.modelSelected > 0 {
-					m.modelSelected--
-				}
-				_ = filtered
-				return m, nil
+		case key.Matches(msg, keys.Up):
+			if !m.commandMode && !m.modelMode {
+				var vpCmd tea.Cmd
+				m.viewport, vpCmd = m.viewport.Update(msg)
+				return m, vpCmd
 			}
-			var vpCmd tea.Cmd
-			m.viewport, vpCmd = m.viewport.Update(msg)
-			return m, vpCmd
+			return m, nil
 
-		case "down":
-			if m.modelMode {
-				filtered := m.filteredModels()
-				if m.modelSelected < len(filtered)-1 {
-					m.modelSelected++
-				}
-				_ = filtered
-				return m, nil
+		case key.Matches(msg, keys.Down):
+			if !m.commandMode && !m.modelMode {
+				var vpCmd tea.Cmd
+				m.viewport, vpCmd = m.viewport.Update(msg)
+				return m, vpCmd
 			}
-			var vpCmd2 tea.Cmd
-			m.viewport, vpCmd2 = m.viewport.Update(msg)
-			return m, vpCmd2
+			return m, nil
 
-		case "pgup", "pgdown", "home", "end":
-			var vpCmd3 tea.Cmd
-			m.viewport, vpCmd3 = m.viewport.Update(msg)
-			return m, vpCmd3
+		case key.Matches(msg, keys.PageUp), key.Matches(msg, keys.PageDown):
+			if !m.commandMode && !m.modelMode {
+				var vpCmd tea.Cmd
+				m.viewport, vpCmd = m.viewport.Update(msg)
+				return m, vpCmd
+			}
+			return m, nil
 		}
 
 	}
@@ -1254,15 +1339,77 @@ func (m *Model) paletteLines() int {
 	return 4 + count // border (2) + padding (2) + command lines
 }
 
+// --- search ---
+
+// buildSearchMatches scans the rendered message content for lines containing
+// the current search query (case-insensitive) and populates m.searchMatches
+// with line indices.
+func (m *Model) buildSearchMatches() {
+	m.searchMatches = nil
+	m.searchIdx = -1
+	if m.searchQuery == "" {
+		return
+	}
+	query := strings.ToLower(m.searchQuery)
+	content := m.viewport.View()
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		if strings.Contains(strings.ToLower(line), query) {
+			m.searchMatches = append(m.searchMatches, i)
+		}
+	}
+	if len(m.searchMatches) > 0 {
+		m.searchIdx = 0
+		m.scrollToMatch()
+	}
+}
+
+// searchNextMatch advances to the next search match.
+func (m *Model) searchNextMatch() {
+	if len(m.searchMatches) == 0 {
+		return
+	}
+	m.searchIdx++
+	if m.searchIdx >= len(m.searchMatches) {
+		m.searchIdx = 0
+	}
+	m.scrollToMatch()
+}
+
+// searchPrevMatch moves to the previous search match.
+func (m *Model) searchPrevMatch() {
+	if len(m.searchMatches) == 0 {
+		return
+	}
+	m.searchIdx--
+	if m.searchIdx < 0 {
+		m.searchIdx = len(m.searchMatches) - 1
+	}
+	m.scrollToMatch()
+}
+
+// scrollToMatch scrolls the viewport to the current search match line.
+func (m *Model) scrollToMatch() {
+	if m.searchIdx < 0 || m.searchIdx >= len(m.searchMatches) {
+		return
+	}
+	m.viewport.SetYOffset(m.searchMatches[m.searchIdx])
+}
+
+// --- layout ---
+
 // adjustViewport recalculates and applies the viewport height based on
 // current terminal dimensions and command mode state.
 func (m *Model) adjustViewport() {
 	if m.height == 0 {
 		return
 	}
-	chatHeight := m.height - m.headerHeight() - 2
-	if m.commandMode || m.modelMode || m.questionMode {
+	chatHeight := m.height - m.headerHeight() - 3 // -3 for status line + footer
+	if m.commandMode || m.modelMode || m.questionMode || m.showHelp {
 		chatHeight -= m.paletteLines()
+	}
+	if m.searchMode {
+		chatHeight -= 1 // search indicator line
 	}
 	if chatHeight < 5 {
 		chatHeight = 5
@@ -1626,26 +1773,41 @@ func (m *Model) View() tea.View {
 		return tea.NewView("Initializing...")
 	}
 
-	// Header: figlet banner + blank line + provider/model line + trailing newline.
+	// Header: figlet banner + provider/model line
 	header := m.banner + "\n\n" +
 		titleStyle.Render(fmt.Sprintf("%s/%s", m.provider, m.modelName)) + "\n"
 
-	// Status bar (1 line). No trailing \n — JoinVertical adds the separator.
+	// Status bar (1 line): message count + context bar only.
+	// Provider/model is in the header; no need to duplicate.
 	var statusText string
 	ctxBar := ""
 	if m.contextWindow > 0 {
 		ctxBar = " " + contextBar(m.contextPct)
 	}
-	statusText = fmt.Sprintf(" %s/%s │ messages: %d │ ctrl+c quit%s",
-		m.provider, m.modelName, len(m.messages), ctxBar)
+	statusText = fmt.Sprintf(" messages: %d │%s",
+		len(m.messages), ctxBar)
 	status := statusStyle.Width(m.width).Render(statusText)
 
 	// Viewport holds the scrollable chat history
 	viewportView := m.viewport.View()
 
-	// Palette (shown above input when in command, model, or question mode)
+	// Search indicator line
+	var searchLine string
+	if m.searchMode {
+		matchInfo := ""
+		if len(m.searchMatches) > 0 && m.searchIdx >= 0 {
+			matchInfo = fmt.Sprintf("  [%d/%d]", m.searchIdx+1, len(m.searchMatches))
+		} else if m.searchQuery != "" && len(m.searchMatches) == 0 {
+			matchInfo = "  [no matches]"
+		}
+		searchLine = commandDescStyle.Render(fmt.Sprintf("/%s%s", m.searchQuery, matchInfo))
+	}
+
+	// Palette (shown above input when in command, model, question, or help mode)
 	var palette string
-	if m.questionMode {
+	if m.showHelp {
+		palette = m.renderHelpOverlay()
+	} else if m.questionMode {
 		palette = m.renderQuestionModal()
 	} else if m.modelMode {
 		palette = m.renderModelPalette()
@@ -1656,11 +1818,17 @@ func (m *Model) View() tea.View {
 	// Input (1 line)
 	inputView := m.input.View()
 
+	// Footer hint bar (1 line) — always visible with key shortcuts
+	footer := m.help.View(footerKeyMap{})
+
 	elements := []string{header, viewportView, status}
 	if palette != "" {
 		elements = append(elements, palette)
 	}
-	elements = append(elements, inputView)
+	if searchLine != "" {
+		elements = append(elements, searchLine)
+	}
+	elements = append(elements, inputView, footer)
 	body := lipgloss.JoinVertical(lipgloss.Left, elements...)
 
 	v := tea.NewView(zone.Scan(body))
@@ -1668,14 +1836,51 @@ func (m *Model) View() tea.View {
 	v.MouseMode = tea.MouseModeCellMotion
 	// Position the terminal cursor at the textinput's location.
 	// textinput.Cursor() returns Y=0 (relative to the widget), so we
-	// offset it to the input line, which is the last line of the view.
+	// offset it to the input line (second-to-last line; last is footer).
 	if !m.input.VirtualCursor() {
 		if c := m.input.Cursor(); c != nil {
-			c.Y = m.height - 1
+			c.Y = m.height - 2
 			v.Cursor = c
 		}
 	}
 	return v
+}
+
+// renderHelpOverlay renders a full help screen with all keybindings.
+func (m *Model) renderHelpOverlay() string {
+	contentWidth := m.width - 6
+	if contentWidth < 30 {
+		contentWidth = 30
+	}
+
+	var lines []string
+	lines = append(lines, boldStyle.Render("Keybindings"))
+	lines = append(lines, "")
+
+	type group struct {
+		title    string
+		bindings []key.Binding
+	}
+	groups := []group{
+		{"Navigation", []key.Binding{keys.Up, keys.Down, keys.PageUp, keys.PageDown, keys.Top, keys.Bottom}},
+		{"Actions", []key.Binding{keys.Search, keys.Copy, keys.Reasoning, keys.Help}},
+		{"Input", []key.Binding{keys.Submit, keys.Cancel}},
+		{"System", []key.Binding{keys.Quit}},
+	}
+
+	for _, g := range groups {
+		lines = append(lines, boldStyle.Render(g.title))
+		for _, b := range g.bindings {
+			keys := strings.Join(b.Keys(), ", ")
+			line := fmt.Sprintf("  %-18s %s", keys, b.Help().Desc)
+			lines = append(lines, chatWrap("", line, contentWidth))
+		}
+		lines = append(lines, "")
+	}
+
+	lines = append(lines, commandDescStyle.Render("Press any key to close"))
+
+	return commandPaletteStyle.Render(strings.Join(lines, "\n"))
 }
 
 // contextBar returns a 10-segment bar showing fill percentage.
