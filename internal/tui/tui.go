@@ -1425,6 +1425,7 @@ func (m *Model) View() tea.View {
 				m.width, m.height))
 		v := tea.NewView(zone.Scan(msg))
 		v.AltScreen = true
+		v.MouseMode = tea.MouseModeAllMotion
 		return v
 	}
 
@@ -1505,6 +1506,7 @@ func (m *Model) View() tea.View {
 
 	v := tea.NewView(zone.Scan(body))
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeAllMotion
 	// Position the terminal cursor at the textinput's location.
 	// The input line is above the footer (last line).
 	if !m.input.VirtualCursor() {
@@ -1564,15 +1566,10 @@ func contextBar(pct int) string {
 	return fmt.Sprintf("[%s%s %d%%]", strings.Repeat("█", filled), strings.Repeat("░", empty), pct)
 }
 
-// toolIndent prefixes each line of content with a dimmed border character
-// for a clean left-margin treatment (no background needed).
-// Lines are wrapped to fit within width after accounting for the prefix.
+// toolIndent wraps each line of content to fit within the given width.
 func toolIndent(width int, content string) string {
-	prefix := toolStyle.Render("│ ")
-	prefixWidth := 2 // │ + space visual width
-	wrapWidth := width - prefixWidth
-	if wrapWidth < 20 {
-		wrapWidth = 20
+	if width < 20 {
+		width = 20
 	}
 
 	lines := strings.Split(content, "\n")
@@ -1581,16 +1578,7 @@ func toolIndent(width int, content string) string {
 		if i > 0 {
 			result.WriteString("\n")
 		}
-		// Wrap long lines to fit within available width
-		wrapped := wrapText(line, wrapWidth)
-		wrappedLines := strings.Split(wrapped, "\n")
-		for j, wl := range wrappedLines {
-			if j > 0 {
-				result.WriteString("\n")
-			}
-			result.WriteString(prefix)
-			result.WriteString(wl)
-		}
+		result.WriteString(wrapText(line, width))
 	}
 	return result.String()
 }

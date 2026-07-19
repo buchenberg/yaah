@@ -356,8 +356,8 @@ func (m *Model) renderMessages() string {
 					b.WriteString("\n\n")
 					b.WriteString(reasoningBgStyle.Width(m.width).Render(
 						thinkingStyle.Render(chatWrap("", msg.Reasoning, m.width))))
+					b.WriteString("\n")
 				}
-				b.WriteString("\n")
 			}
 			b.WriteString("\n")
 			b.WriteString(assistantStyle.Render(msg.Content))
