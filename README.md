@@ -66,6 +66,43 @@ iwr -useb https://raw.githubusercontent.com/buchenberg/yaah/main/install.ps1 | i
 go install github.com/buchenberg/yaah@latest
 ```
 
+### Docker
+
+A `Dockerfile` and `docker-compose.yml` are included for containerized use
+with Jaeger tracing. Build and run:
+
+```bash
+docker compose build
+```
+
+Set your API keys and run a prompt:
+
+```bash
+DEEPSEEK_API_KEY=sk-... docker compose run --rm yaah "what is 2+2"
+```
+
+Or export them once and use interactively:
+
+```bash
+export DEEPSEEK_API_KEY=sk-...
+export ZAI_API_KEY=...
+docker compose run --rm yaah
+```
+
+The compose stack starts Jaeger automatically on port 16686. Traces appear
+at http://localhost:16686. The yaah service mounts your `~/.yaah` config
+directory, passes `DEEPSEEK_API_KEY` and `ZAI_API_KEY` environment
+variables, and enables OpenTelemetry via `YAAH_OTEL_ENABLED=true`.
+
+To run only the tracing backend:
+
+```bash
+docker compose up -d jaeger
+```
+
+See [`docs/otel-setup.md`](./docs/otel-setup.md) for the full observability
+guide.
+
 ## Quick start
 
 Check your setup, then add a provider API key:
@@ -468,7 +505,7 @@ providers:
   glm:
     name: GLM
     base_url: https://api.z.ai/api/paas/v4
-    api_key: ${GLM_API_KEY}
+    api_key: ${ZAI_API_KEY}
 
   ollama:
     name: Ollama

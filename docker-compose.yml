@@ -10,7 +10,7 @@ services:
       - YAAH_OTEL_ENABLED=true
       - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
-      - GLM_API_KEY=${GLM_API_KEY:-}
+      - ZAI_API_KEY=${ZAI_API_KEY:-}
     depends_on:
       - jaeger
     profiles: [cli]

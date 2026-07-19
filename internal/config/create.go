@@ -19,7 +19,7 @@ providers:
   glm:
     name: GLM
     base_url: https://api.z.ai/api/paas/v4
-    api_key: ${GLM_API_KEY}
+    api_key: ${ZAI_API_KEY}
   ollama:
     name: Ollama
     base_url: http://localhost:11434/v1
