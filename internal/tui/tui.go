@@ -1032,9 +1032,13 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg) tea.Cmd {
 		if !m.commandMode {
 			return m.viewportUpdate(msg)
 		}
-		return nil
 	}
-	return nil
+
+	// Key not consumed by any binding — forward to text input.
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	m.detectCommandMode()
+	return cmd
 }
 
 // detectCommandMode enables or disables command mode based on the input prefix.
