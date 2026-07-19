@@ -144,6 +144,11 @@ type Loop struct {
 	// system messages and recent tool results. Has no effect for non-Anthropic providers.
 	PromptCaching bool
 
+	// ApproveFn is an optional callback for tool approval in TUI contexts.
+	// When set, it is called instead of the default stdin/stderr approveTool.
+	// It receives the tool name and abbreviated args; returns true to approve.
+	ApproveFn func(name, args string) bool
+
 	toolSem chan struct{}
 
 	// SessionID is a stable identifier for the session, set by the caller.
@@ -841,9 +846,12 @@ func toolIsDangerous(name string) bool {
 }
 
 // approveTool prompts the user on stderr/stdin to approve a tool call.
-// Returns true if the user approves.
+// Returns true if the user approves. If ApproveFn is set, it delegates to that instead.
 func (l *Loop) approveTool(name, args string) bool {
 	abbr := abbreviateArgs(args, 120)
+	if l.ApproveFn != nil {
+		return l.ApproveFn(name, abbr)
+	}
 	fmt.Fprintf(os.Stderr, "\n  ⚠ Approve %s(%s)? [y/N]: ", name, abbr)
 	os.Stderr.Sync()
 

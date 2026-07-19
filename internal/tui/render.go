@@ -563,7 +563,7 @@ func (m *Model) renderCommandPalette() string {
 		return ""
 	}
 
-	return commandPaletteStyle.Render(strings.Join(lines, "\n"))
+	return commandPaletteStyle.Width(m.width).Render(strings.Join(lines, "\n"))
 }
 
 // renderQuestionModal renders the interactive question dialog.
@@ -626,7 +626,7 @@ func (m *Model) renderQuestionModal() string {
 	}
 	lines = append(lines, commandDescStyle.Render(help))
 
-	return commandPaletteStyle.Render(strings.Join(lines, "\n"))
+	return commandPaletteStyle.Width(m.width).Render(strings.Join(lines, "\n"))
 }
 
 // renderHelpOverlay renders a full help screen with all keybindings.
@@ -664,5 +664,36 @@ func (m *Model) renderHelpOverlay() string {
 
 	lines = append(lines, commandDescStyle.Render("Press any key to close"))
 
-	return commandPaletteStyle.Render(strings.Join(lines, "\n"))
+	return commandPaletteStyle.Width(m.width).Render(strings.Join(lines, "\n"))
+}
+
+// renderMCPStatus builds a status string for all discovered MCP servers.
+func (m *Model) renderMCPStatus() string {
+	if len(m.mcpInfos) == 0 {
+		return "No MCP servers configured. Add manifests to ~/.yaah/mcp/"
+	}
+	var b strings.Builder
+	b.WriteString("MCP Servers:\n")
+	for _, info := range m.mcpInfos {
+		status := "✓ connected"
+		if !info.Connected {
+			status = "✗ offline"
+		}
+		label := info.Name
+		switch info.Transport {
+		case "http":
+			label += " → " + info.URL
+		case "stdio":
+			label += " → " + info.Command
+		}
+		b.WriteString(fmt.Sprintf("  %s  %s", status, label))
+		if info.ToolCount > 0 {
+			b.WriteString(fmt.Sprintf(" (%d tools)", info.ToolCount))
+		}
+		if info.Error != "" {
+			b.WriteString(fmt.Sprintf("\n         error: %s", info.Error))
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }

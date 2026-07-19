@@ -14,10 +14,22 @@ type MCPTool struct {
 	client MCPClient
 }
 
+// ServerInfo holds status details about a discovered MCP server.
+type ServerInfo struct {
+	Name      string // server name (from manifest filename)
+	Transport string // "stdio" or "http"
+	Command   string // for stdio servers
+	URL       string // for http servers
+	Connected bool   // initialization succeeded
+	ToolCount int    // number of tools exposed
+	Error     string // non-empty if connection/init failed
+}
+
 // MCPClient is the interface for calling tools on an MCP server.
 type MCPClient interface {
 	CallTool(ctx context.Context, name string, args json.RawMessage) (json.RawMessage, error)
 	Close() error
+	Info() ServerInfo
 }
 
 // NewMCPTool creates a tool wrapper for an MCP server tool.
@@ -80,18 +92,19 @@ func (t *MCPTool) Execute(ctx context.Context, args string) (string, error) {
 }
 
 // StartMCPClients discovers MCP manifests and starts clients.
-// Returns a list of started clients and their tools.
-func StartMCPClients(ctx context.Context, dirs []string) ([]MCPClient, []*MCPTool, error) {
+// Returns a list of started clients, their tools, and status info.
+func StartMCPClients(ctx context.Context, dirs []string) ([]MCPClient, []*MCPTool, []ServerInfo, error) {
 	return StartMCPClientsWithStderr(ctx, dirs, os.Stderr)
 }
 
 // StartMCPClientsWithStderr is like StartMCPClients but redirects MCP server
 // stderr to the given writer. Pass io.Discard to suppress server log output
 // (e.g. when running inside a TUI that owns the terminal).
-func StartMCPClientsWithStderr(ctx context.Context, dirs []string, stderr io.Writer) ([]MCPClient, []*MCPTool, error) {
+func StartMCPClientsWithStderr(ctx context.Context, dirs []string, stderr io.Writer) ([]MCPClient, []*MCPTool, []ServerInfo, error) {
 	manifests := DiscoverManifests(dirs)
 	var clients []MCPClient
 	var tools []*MCPTool
+	var infos []ServerInfo
 
 	for name, manifest := range manifests {
 		var client MCPClient
@@ -114,9 +127,11 @@ func StartMCPClientsWithStderr(ctx context.Context, dirs []string, stderr io.Wri
 			continue
 		}
 
+		info := client.Info()
 		if err != nil {
-			// Log but don't fail — MCP servers are optional
-			fmt.Fprintf(os.Stderr, "  warning: MCP server %s: %v\n", name, err)
+			info.Connected = false
+			info.Error = err.Error()
+			infos = append(infos, info)
 			continue
 		}
 
@@ -132,7 +147,8 @@ func StartMCPClientsWithStderr(ctx context.Context, dirs []string, stderr io.Wri
 				tools = append(tools, NewMCPTool(tool, client))
 			}
 		}
+		infos = append(infos, info)
 	}
 
-	return clients, tools, nil
+	return clients, tools, infos, nil
 }

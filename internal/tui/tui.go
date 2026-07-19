@@ -73,6 +73,21 @@ type AgentMsg struct {
 	ModelList      []string          // models fetched from providers
 	ProviderNames  map[string]string // provider key → display name
 	Question       *QuestionModal    // non-nil when a question should be shown
+	ApproveChan    chan bool         // set when asking for tool approval; the TUI sends true/false
+	ApproveName    string            // tool name for approval display
+	ApproveArgs    string            // abbreviated tool args for approval display
+	MCPInfos       []ServerInfo      // MCP server status info (sent at startup)
+}
+
+// ServerInfo holds status details about an MCP server (mirrors mcp.ServerInfo).
+type ServerInfo struct {
+	Name      string
+	Transport string
+	Command   string
+	URL       string
+	Connected bool
+	ToolCount int
+	Error     string
 }
 
 // QuestionModal carries question data for the interactive modal dialog.
@@ -160,6 +175,7 @@ type Model struct {
 	questionModal QuestionModal
 	questionIdx   int
 	questionMulti []bool
+	approveModal  AgentMsg // pending approval request (ApproveChan set)
 
 	// --- command mode ---
 	commandMode bool
@@ -174,6 +190,9 @@ type Model struct {
 	// --- context window ---
 	contextPct    int
 	contextTokens int
+
+	// --- mcp ---
+	mcpInfos []ServerInfo
 
 	// --- misc UI ---
 	showBanner   bool
@@ -451,6 +470,11 @@ func (m *Model) RegisterCommand(name, description string) {
 	m.commands = append(m.commands, Command{Name: name, Description: description})
 }
 
+// SetMCPInfos stores MCP server status info and adds an :mcp command.
+func (m *Model) SetMCPInfos(infos []ServerInfo) {
+	m.mcpInfos = infos
+}
+
 // executeCommand executes a colon command and adds the result to messages.
 // :quit is handled by the caller (returns tea.Quit from Update).
 func (m *Model) executeCommand(input string) {
@@ -491,6 +515,8 @@ func (m *Model) executeCommand(input string) {
 		m.clearCommandMode()
 		m.adjustViewport()
 		return
+	case ":mcp":
+		m.AddMessage("system", m.renderMCPStatus())
 	default:
 		m.AddMessage("system", fmt.Sprintf("Unknown command: %s", cmd))
 	}
@@ -680,6 +706,34 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 		m.input.Placeholder = ""
 		m.adjustViewport()
 		m.refreshViewport()
+		return
+	}
+
+	if msg.ApproveChan != nil {
+		m.approveModal = msg
+		ch := make(chan string, 1)
+		m.questionModal = QuestionModal{
+			Header:   "Approve",
+			Question: fmt.Sprintf("Run %s(%s)?", msg.ApproveName, msg.ApproveArgs),
+			Options: []QuestionOption{
+				{Label: "Yes", Description: "Approve this tool call"},
+				{Label: "No", Description: "Deny this tool call"},
+			},
+			Multiple: false,
+			AnswerCh: ch,
+		}
+		m.questionIdx = 0
+		m.questionMulti = make([]bool, 2)
+		m.questionMode = true
+		m.input.SetValue("")
+		m.input.Placeholder = ""
+		m.adjustViewport()
+		m.refreshViewport()
+		// Answer in the background so we don't block the event loop.
+		go func() {
+			answer := <-ch
+			msg.ApproveChan <- (answer == "Yes" || answer == "Yes, Yes")
+		}()
 		return
 	}
 

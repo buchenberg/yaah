@@ -112,6 +112,21 @@ func providerFor(cfg *config.Config, name string) agent.Provider {
 
 // runTUI starts the bubbletea TUI.
 func runTUI() error {
+	// Suppress stderr globally while the TUI is active. Anything written to
+	// stderr (MCP warnings, tool prompts, etc.) would bleed through the
+	// alt-screen and break the layout. We restore stderr on exit.
+	origStderr := os.Stderr
+	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err == nil {
+		os.Stderr = devNull
+	}
+	defer func() {
+		os.Stderr = origStderr
+		if devNull != nil {
+			devNull.Close()
+		}
+	}()
+
 	zone.NewGlobal()
 
 	// Detect and apply the theme (respects NO_COLOR, YAah_THEME env var,
@@ -187,12 +202,26 @@ func runTUI() error {
 
 	// Start MCP clients once for the entire TUI session.
 	mcpDirs := mcpSearchPaths(config.HomeDir())
-	mcpClients, mcpTools, _ := mcp.StartMCPClientsWithStderr(context.Background(), mcpDirs, io.Discard)
+	mcpClients, mcpTools, mcpInfos, _ := mcp.StartMCPClientsWithStderr(context.Background(), mcpDirs, io.Discard)
 	for _, c := range mcpClients {
 		defer c.Close()
 	}
 	for _, t := range mcpTools {
 		toolReg.Register(t)
+	}
+
+	// Convert MCP server info for the TUI.
+	var tuiMCPInfos []tui.ServerInfo
+	for _, info := range mcpInfos {
+		tuiMCPInfos = append(tuiMCPInfos, tui.ServerInfo{
+			Name:      info.Name,
+			Transport: info.Transport,
+			Command:   info.Command,
+			URL:       info.URL,
+			Connected: info.Connected,
+			ToolCount: info.ToolCount,
+			Error:     info.Error,
+		})
 	}
 
 	// Register the skill-loading tool
@@ -300,11 +329,41 @@ func runTUI() error {
 		},
 	})
 
+	// Show MCP server status.
+	m.SetMCPInfos(tuiMCPInfos)
+	m.RegisterCommand(":mcp", "Show MCP server status")
+	// Add an initial system message showing MCP status.
+	if len(tuiMCPInfos) > 0 {
+		var connected, failed int
+		for _, info := range tuiMCPInfos {
+			if info.Connected {
+				connected++
+			} else {
+				failed++
+			}
+		}
+		statusMsg := fmt.Sprintf("MCP: %d server", len(tuiMCPInfos))
+		if len(tuiMCPInfos) > 1 {
+			statusMsg += "s"
+		}
+		if connected > 0 {
+			statusMsg += fmt.Sprintf(" (%d connected", connected)
+			if failed > 0 {
+				statusMsg += fmt.Sprintf(", %d failed", failed)
+			}
+			statusMsg += ")"
+		} else {
+			statusMsg += " — all failed"
+		}
+		statusMsg += ". Type :mcp for details."
+		m.AddMessage("system", statusMsg)
+	}
+
 	// Panic recovery: catch panics in the main goroutine so the terminal
 	// is restored. Note: panics in agent goroutines are not caught here.
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Fprintf(os.Stderr, "yaah panic: %v\n", r)
+			fmt.Fprintf(origStderr, "yaah panic: %v\n", r)
 			os.Exit(1)
 		}
 	}()
@@ -380,7 +439,17 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 		SystemPrompt:  systemPrompt,
 		MaxIterations: cfg.Default.MaxIterations,
 		ContextWindow: cfg.Default.ContextWindow,
+		ApprovalMode:  resolveApproval(cfg),
 		Messages:      *messages,
+		ApproveFn: func(name, args string) bool {
+			respCh := make(chan bool, 1)
+			ch <- tui.AgentMsg{
+				ApproveChan: respCh,
+				ApproveName: name,
+				ApproveArgs: args,
+			}
+			return <-respCh
+		},
 		OnToken: func(token string) {
 			ch <- tui.AgentMsg{Token: token}
 		},
