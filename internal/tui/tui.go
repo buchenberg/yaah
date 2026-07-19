@@ -1153,20 +1153,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case key.Matches(msg, keys.Help):
-			if !m.commandMode && !m.modelMode {
+			// Only trigger ? when input is empty (don't steal the ? character).
+			if !m.commandMode && !m.modelMode && m.input.Value() == "" {
 				m.showHelp = true
 				m.adjustViewport()
+				return m, nil
 			}
-			return m, nil
 
 		case key.Matches(msg, keys.Search):
-			if !m.commandMode && !m.modelMode {
+			// Only trigger / when input is empty (don't steal the / character).
+			if !m.commandMode && !m.modelMode && m.input.Value() == "" {
 				m.searchMode = true
 				m.searchQuery = ""
 				m.searchMatches = nil
 				m.searchIdx = -1
+				return m, nil
 			}
-			return m, nil
 
 		case key.Matches(msg, keys.Copy):
 			for i := len(m.messages) - 1; i >= 0; i-- {

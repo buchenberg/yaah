@@ -24,28 +24,28 @@ type keyMap struct {
 
 var keys = keyMap{
 	Up: key.NewBinding(
-		key.WithKeys("up", "k"),
-		key.WithHelp("↑/k", "scroll up"),
+		key.WithKeys("up"),
+		key.WithHelp("↑", "scroll up"),
 	),
 	Down: key.NewBinding(
-		key.WithKeys("down", "j"),
-		key.WithHelp("↓/j", "scroll down"),
+		key.WithKeys("down"),
+		key.WithHelp("↓", "scroll down"),
 	),
 	PageUp: key.NewBinding(
-		key.WithKeys("pgup", "ctrl+u"),
+		key.WithKeys("pgup"),
 		key.WithHelp("PgUp", "page up"),
 	),
 	PageDown: key.NewBinding(
-		key.WithKeys("pgdown", "ctrl+d"),
+		key.WithKeys("pgdown"),
 		key.WithHelp("PgDn", "page down"),
 	),
 	Top: key.NewBinding(
-		key.WithKeys("home", "g"),
-		key.WithHelp("Home/g", "jump to top"),
+		key.WithKeys("home"),
+		key.WithHelp("Home", "jump to top"),
 	),
 	Bottom: key.NewBinding(
-		key.WithKeys("end", "G"),
-		key.WithHelp("End/G", "jump to bottom"),
+		key.WithKeys("end"),
+		key.WithHelp("End", "jump to bottom"),
 	),
 	Quit: key.NewBinding(
 		key.WithKeys("ctrl+c"),
