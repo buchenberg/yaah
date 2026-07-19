@@ -14,7 +14,10 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -179,6 +182,10 @@ type Loop struct {
 	// PromptCaching enables Anthropic-style cache-control breakpoints on
 	// system messages and recent tool results. Has no effect for non-Anthropic providers.
 	PromptCaching bool
+
+	// OtelEnabled enables OpenTelemetry spans for tool calls, sub-agent
+	// dispatch, and LLM provider calls (via InstrumentedProvider).
+	OtelEnabled bool
 
 	// ApproveFn is an optional callback for tool approval in TUI contexts.
 	// When set, it is called instead of the default stdin/stderr approveTool.
@@ -521,7 +528,26 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			})
 
 			start := time.Now()
-			res, err := l.Registry.Execute(ctx, tc.Function.Name, tc.Function.Arguments)
+
+			runCtx := ctx
+			var toolSpan trace.Span
+			if l.OtelEnabled {
+				if isTask {
+					runCtx, toolSpan = observability.StartSubAgent(ctx, taskRole, taskPrompt)
+				} else {
+					runCtx, toolSpan = observability.StartTool(ctx, tc.Function.Name, tc.Function.Arguments)
+				}
+			}
+
+			res, err := l.Registry.Execute(runCtx, tc.Function.Name, tc.Function.Arguments)
+			if l.OtelEnabled && toolSpan != nil {
+				if isTask {
+					observability.FinishSubAgent(toolSpan, err)
+				} else {
+					observability.FinishTool(toolSpan, res, err)
+				}
+				toolSpan.End()
+			}
 			duration := time.Since(start)
 
 			errStr := ""

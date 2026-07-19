@@ -19,6 +19,7 @@ import (
 	"github.com/buchenberg/yaah/internal/instructions"
 	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/buchenberg/yaah/internal/observability"
 	processpkg "github.com/buchenberg/yaah/internal/process"
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/providers"
@@ -199,6 +200,7 @@ type agentSession struct {
 	messages     []types.Message
 	sessionID    string
 	msgIdx       int
+	otelShutdown func(context.Context) error
 }
 
 func newAgentSession() (*agentSession, error) {
@@ -210,6 +212,29 @@ func newAgentSession() (*agentSession, error) {
 	provider := resolveProvider(cfg)
 	modelName := resolveModel(cfg)
 	providerName := resolveProviderName(cfg)
+
+	// Initialise OpenTelemetry if configured.
+	otelShutdown := func(_ context.Context) error { return nil }
+	if cfg.Observability.Otel.Enabled {
+		otelCfg := observability.Config{
+			Enabled:     true,
+			Endpoint:    cfg.Observability.Otel.Endpoint,
+			ServiceName: cfg.Observability.Otel.ServiceName,
+			Traces:      cfg.Observability.Otel.Traces,
+			Metrics:     cfg.Observability.Otel.Metrics,
+		}
+		if otelCfg.Endpoint == "" {
+			otelCfg.Endpoint = "localhost:4317"
+		}
+		if otelCfg.ServiceName == "" {
+			otelCfg.ServiceName = "yaah"
+		}
+		sd, err := observability.Setup(context.Background(), otelCfg)
+		if err != nil {
+			return nil, fmt.Errorf("otel: %w", err)
+		}
+		otelShutdown = sd
+	}
 
 	cwd, _ := os.Getwd()
 
@@ -333,7 +358,14 @@ func newAgentSession() (*agentSession, error) {
 		}
 	}
 
-	toolReg.Register(newTaskTool(provider, systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent, reg.Names()))
+	toolReg.Register(newTaskTool(provider, systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled))
+
+	// Wrap the provider with OTel instrumentation if enabled.
+	if cfg.Observability.Otel.Enabled {
+		if sp, ok := provider.(agent.StreamProvider); ok {
+			provider = &observability.InstrumentedProvider{Inner: sp}
+		}
+	}
 
 	return &agentSession{
 		cfg:          cfg,
@@ -348,10 +380,15 @@ func newAgentSession() (*agentSession, error) {
 		sessionID:    sessionID,
 		messages:     messages,
 		msgIdx:       msgIdx,
+		otelShutdown: otelShutdown,
 	}, nil
 }
 
 func (s *agentSession) close() {
+	ctx := context.Background()
+	if s.otelShutdown != nil {
+		s.otelShutdown(ctx)
+	}
 	if s.db != nil {
 		s.db.EndSession(s.sessionID, time.Now().Unix())
 		s.db.Close()
@@ -460,6 +497,7 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		MaxSubAgentDepth:       s.cfg.Agent.SubAgent.MaxDepth,
 		MaxSubAgentConcurrency: s.cfg.Agent.SubAgent.MaxConcurrency,
 		MaxSubAgentDepthByRole: subAgentDepthByRole(s.cfg.Agent.SubAgent),
+		OtelEnabled:            s.cfg.Observability.Otel.Enabled,
 	}
 
 	spin := spinner.New(nil, "Thinking...")
@@ -632,7 +670,7 @@ func resolveProvider(cfg *config.Config) agent.Provider {
 // newTaskTool builds the root-level TaskTool wired to the session's
 // provider, prompt, db, and sub-agent config. Shared by the REPL and
 // TUI entrypoints so the two cannot drift.
-func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subCfg config.SubAgentConfig, roleNames []string) *tools.TaskTool {
+func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool) *tools.TaskTool {
 	// Map a config "0 = unlimited" MaxDepth to a sentinel so the
 	// structural nesting decrement in makeTaskRunner does not disable
 	// spawning for an "unlimited" setting.
@@ -649,6 +687,7 @@ func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 			parentSession:   sessionID,
 			subCfg:          subCfg,
 			SubToolCallback: subToolDisplay,
+			OtelEnabled:     otelEnabled,
 		}, depth),
 		ResolveTimeout: subAgentTimeoutResolver(subCfg),
 		RoleNames:      roleNames,
@@ -724,6 +763,10 @@ type taskRunnerOpts struct {
 	// SubToolCallback is set on the sub-loop's OnTool so sub-agent
 	// tool calls can be rendered indented in the CLI.
 	SubToolCallback agent.ToolCallback
+
+	// OtelEnabled propagates OpenTelemetry tracing to sub-agent loops
+	// so their tool calls appear as child spans in the trace waterfall.
+	OtelEnabled bool
 }
 
 // subAgentSeq guarantees unique sub-session IDs across concurrent
@@ -787,6 +830,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			MaxSubAgentDepth:       opts.subCfg.MaxDepth,
 			MaxSubAgentConcurrency: opts.subCfg.MaxConcurrency,
 			MaxSubAgentDepthByRole: subAgentDepthByRole(opts.subCfg),
+			OtelEnabled:            opts.OtelEnabled,
 			OnTool:                 opts.SubToolCallback,
 		}
 

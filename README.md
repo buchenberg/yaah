@@ -289,6 +289,31 @@ YAAH_APPROVAL=allow yaah "deploy"
 
 Invalid values fall back to `ask` with a warning.
 
+### OpenTelemetry observability
+
+yaah can emit traces and span metrics to any OTLP-compatible backend
+(Jaeger, Grafana Tempo, OTel Collector). Enable in `config.yaml`:
+
+```yaml
+observability:
+  otel:
+    enabled: true
+```
+
+Every LLM call, tool execution, and sub-agent dispatch produces a span
+with duration, events, and attributes. Sub-agent internal tool calls
+appear as child spans in the trace waterfall. Jaeger setup is a single
+Docker command:
+
+```bash
+docker run -d --name jaeger \
+  -p 16686:16686 -p 4317:4317 \
+  jaegertracing/all-in-one:latest
+```
+
+Traces appear at http://localhost:16686. Full setup guide at
+[`docs/otel-setup.md`](./docs/otel-setup.md).
+
 ## Commands
 
 Start yaah — interactive REPL or one-shot:

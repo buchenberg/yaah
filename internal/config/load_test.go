@@ -49,8 +49,6 @@ default:
   small_model: openai/gpt-4o-mini
   max_iterations: 25
   approval: allow
-
-log_level: DEBUG
 `
 	err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(configContent), 0o644)
 	if err != nil {
@@ -83,8 +81,8 @@ log_level: DEBUG
 		t.Errorf("Providers[ollama].BaseURL = %q, want %q", cfg.Providers["ollama"].BaseURL, "http://localhost:11434/v1")
 	}
 
-	if cfg.LogLevel != "DEBUG" {
-		t.Errorf("LogLevel = %q, want %q", cfg.LogLevel, "DEBUG")
+	if cfg.Observability.Otel.Enabled {
+		t.Error("Observability.Otel.Enabled should default to false")
 	}
 }
 

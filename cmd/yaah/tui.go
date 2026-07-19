@@ -18,6 +18,7 @@ import (
 	"github.com/buchenberg/yaah/internal/instructions"
 	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/buchenberg/yaah/internal/observability"
 	processpkg "github.com/buchenberg/yaah/internal/process"
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/providers"
@@ -150,6 +151,34 @@ func runTUI() error {
 		modelName = resolveModel(cfg)
 	}
 
+	// Initialise OpenTelemetry if configured.
+	var otelShutdown func(context.Context) error
+	if cfg != nil && cfg.Observability.Otel.Enabled {
+		otelCfg := observability.Config{
+			Enabled:     true,
+			Endpoint:    cfg.Observability.Otel.Endpoint,
+			ServiceName: cfg.Observability.Otel.ServiceName,
+			Traces:      cfg.Observability.Otel.Traces,
+			Metrics:     cfg.Observability.Otel.Metrics,
+		}
+		if otelCfg.Endpoint == "" {
+			otelCfg.Endpoint = "localhost:4317"
+		}
+		if otelCfg.ServiceName == "" {
+			otelCfg.ServiceName = "yaah"
+		}
+		sd, err := observability.Setup(context.Background(), otelCfg)
+		if err != nil {
+			return fmt.Errorf("otel: %w", err)
+		}
+		otelShutdown = sd
+	}
+	defer func() {
+		if otelShutdown != nil {
+			otelShutdown(context.Background())
+		}
+	}()
+
 	// --- One-time setup: load instructions, memory, MCP tools ---
 	cwd, _ := os.Getwd()
 
@@ -243,7 +272,7 @@ func runTUI() error {
 	procMgr := processpkg.NewManager()
 	toolReg.Register(&tools.BackgroundProcessTool{Manager: procMgr})
 
-	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent, reg.Names()))
+	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled))
 
 	agentCh := make(chan tui.AgentMsg, 256)
 
@@ -443,6 +472,12 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 	pName, _ := sm.get()
 	provider := providerFor(cfg, pName)
 
+	if cfg.Observability.Otel.Enabled {
+		if sp, ok := provider.(agent.StreamProvider); ok {
+			provider = &observability.InstrumentedProvider{Inner: sp}
+		}
+	}
+
 	loop := &agent.Loop{
 		Provider:      provider,
 		Registry:      toolReg,
@@ -452,6 +487,7 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 		ContextWindow: cfg.Default.ContextWindow,
 		ApprovalMode:  resolveApproval(cfg),
 		Messages:      *messages,
+		OtelEnabled:   cfg.Observability.Otel.Enabled,
 		ApproveFn: func(name, args string) bool {
 			respCh := make(chan bool, 1)
 			ch <- tui.AgentMsg{

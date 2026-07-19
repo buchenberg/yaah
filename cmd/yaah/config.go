@@ -54,7 +54,6 @@ var configShowCmd = &cobra.Command{
 		cmd.Println()
 		cmd.Printf("[other]\n")
 		cmd.Printf("  editor:    %s\n", config.ResolveEditor(cfg))
-		cmd.Printf("  log_level: %s\n", cfg.LogLevel)
 
 		return nil
 	},

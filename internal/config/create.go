@@ -46,8 +46,6 @@ default:
 
 # hooks:
 #   dir: ~/.yaah/hooks                    # optional: JSONL event log for external integrations
-
-log_level: INFO
 `
 
 // CreateDefault writes a scaffold config file to ConfigPath() if and only
