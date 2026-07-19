@@ -1947,7 +1947,6 @@ func (m *Model) View() tea.View {
 
 	v := tea.NewView(zone.Scan(body))
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
 	// Position the terminal cursor at the textinput's location.
 	// The input line is above the footer (last line).
 	if !m.input.VirtualCursor() {
