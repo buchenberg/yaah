@@ -69,32 +69,47 @@ go install github.com/buchenberg/yaah@latest
 ### Docker
 
 A `Dockerfile` and `docker-compose.yml` are included for containerized use
-with Jaeger tracing. Build and run:
+with Jaeger tracing. The `yaah` service is scoped behind the `cli` profile —
+add `--profile cli` to `docker compose up` and `run` commands, or `-p cli` to
+`docker compose exec`.
 
-```bash
-docker compose build
-```
-
-Set your API keys and run a prompt:
-
-```bash
-DEEPSEEK_API_KEY=sk-... docker compose run --rm yaah "what is 2+2"
-```
-
-Or export them once and use interactively:
+Export your API keys, then build the image:
 
 ```bash
 export DEEPSEEK_API_KEY=sk-...
 export ZAI_API_KEY=...
-docker compose run --rm yaah
+docker compose --profile cli build
 ```
 
-The compose stack starts Jaeger automatically on port 16686. Traces appear
-at http://localhost:16686. The yaah service mounts your `~/.yaah` config
-directory, passes `DEEPSEEK_API_KEY` and `ZAI_API_KEY` environment
-variables, and enables OpenTelemetry via `YAAH_OTEL_ENABLED=true`.
+**Start both containers in the background:**
 
-To run only the tracing backend:
+```bash
+docker compose --profile cli up -d
+```
+
+This starts `yaah` and `jaeger`. Traces appear at http://localhost:16686.
+The yaah service mounts your `~/.yaah` config directory and enables
+OpenTelemetry via `YAAH_OTEL_ENABLED=true`.
+
+**Run a one-shot prompt:**
+
+```bash
+docker compose --profile cli run --rm yaah "explain this codebase"
+```
+
+**Start an interactive REPL:**
+
+```bash
+docker compose --profile cli run --rm yaah
+```
+
+**Attach a shell to the running container:**
+
+```bash
+docker compose --profile cli exec yaah /bin/bash
+```
+
+**Run only the tracing backend:**
 
 ```bash
 docker compose up -d jaeger
