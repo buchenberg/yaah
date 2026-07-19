@@ -195,7 +195,7 @@ Edit `~/.yaah/config.yaml`:
 ```yaml
 providers:
   openai:
-    name: OpenAI                          # display name (shown in /model)
+    name: OpenAI                          # display name (shown in :model)
     base_url: https://api.openai.com/v1
     api_key: ${OPENAI_API_KEY}
     # models:                              # optional: override API model list

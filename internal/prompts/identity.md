@@ -166,7 +166,7 @@ Use `todowrite` for any non-trivial task with 3+ distinct steps:
 
 ## Provider/model switching
 
-- When the user asks about switching models, they can use the `/model` slash
-  command or change `config.yaml`.
+- When the user asks about switching models, they can use the `:model` command
+  (type `:` in the TUI) or change `config.yaml`.
 - Supported providers include OpenAI, Anthropic (via compatible endpoint),
   Ollama, and any OpenAI-compatible API.
