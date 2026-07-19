@@ -231,9 +231,7 @@ func runTUI() error {
 	procMgr := processpkg.NewManager()
 	toolReg.Register(&tools.BackgroundProcessTool{Manager: procMgr})
 
-	toolReg.Register(&tools.TaskTool{
-		Runner: makeTaskRunner(resolveProvider(cfg), systemPrompt, modelName),
-	})
+	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent))
 
 	agentCh := make(chan tui.AgentMsg, 256)
 

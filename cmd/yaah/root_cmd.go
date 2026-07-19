@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
@@ -271,10 +273,6 @@ func newAgentSession() (*agentSession, error) {
 	procMgr := processpkg.NewManager()
 	toolReg.Register(&tools.BackgroundProcessTool{Manager: procMgr})
 
-	toolReg.Register(&tools.TaskTool{
-		Runner: makeTaskRunner(provider, systemPrompt, modelName),
-	})
-
 	var messages []types.Message
 	var sessionID string
 	var msgIdx int
@@ -322,6 +320,8 @@ func newAgentSession() (*agentSession, error) {
 			})
 		}
 	}
+
+	toolReg.Register(newTaskTool(provider, systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent))
 
 	return &agentSession{
 		cfg:          cfg,
@@ -429,22 +429,25 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 	compactProvider, compactModel := resolveCompact(s.cfg)
 
 	loop := &agent.Loop{
-		Provider:         s.provider,
-		CompactProvider:  compactProvider,
-		CompactModel:     compactModel,
-		Registry:         s.toolReg,
-		Model:            s.modelName,
-		SystemPrompt:     s.systemPrompt,
-		MaxIterations:    s.cfg.Default.MaxIterations,
-		ContextWindow:    s.cfg.Default.ContextWindow,
-		ApprovalMode:     resolveApproval(s.cfg),
-		Messages:         s.messages,
-		HookDir:          s.cfg.Hooks.Dir,
-		SessionID:        s.sessionID,
-		PipelineNames:    s.cfg.Agent.Middleware.Enabled,
-		PipelineDisabled: s.cfg.Agent.Middleware.Disabled,
-		DB:               s.db,
-		MsgIdx:           s.msgIdx,
+		Provider:               s.provider,
+		CompactProvider:        compactProvider,
+		CompactModel:           compactModel,
+		Registry:               s.toolReg,
+		Model:                  s.modelName,
+		SystemPrompt:           s.systemPrompt,
+		MaxIterations:          s.cfg.Default.MaxIterations,
+		ContextWindow:          s.cfg.Default.ContextWindow,
+		ApprovalMode:           resolveApproval(s.cfg),
+		Messages:               s.messages,
+		HookDir:                s.cfg.Hooks.Dir,
+		SessionID:              s.sessionID,
+		PipelineNames:          s.cfg.Agent.Middleware.Enabled,
+		PipelineDisabled:       s.cfg.Agent.Middleware.Disabled,
+		DB:                     s.db,
+		MsgIdx:                 s.msgIdx,
+		MaxSubAgentDepth:       s.cfg.Agent.SubAgent.MaxDepth,
+		MaxSubAgentConcurrency: s.cfg.Agent.SubAgent.MaxConcurrency,
+		MaxSubAgentDepthByRole: subAgentDepthByRole(s.cfg.Agent.SubAgent),
 	}
 
 	spin := spinner.New(nil, "Thinking...")
@@ -599,33 +602,220 @@ func resolveProvider(cfg *config.Config) agent.Provider {
 	return &noProviderStub{}
 }
 
-// makeTaskRunner creates a sub-agent runner for the task tool.
-func makeTaskRunner(provider agent.Provider, systemPrompt, modelName string) tools.TaskRunner {
-	return func(ctx context.Context, prompt string) (string, error) {
-		subReg := tools.NewRegistry()
-		subReg.Register(&tools.ReadTool{})
-		subReg.Register(&tools.WriteTool{})
-		subReg.Register(&tools.EditTool{})
-		subReg.Register(&tools.DeleteTool{})
-		subReg.Register(&tools.GrepTool{})
-		subReg.Register(&tools.GlobTool{})
-		subReg.Register(&tools.LsTool{})
-		subReg.Register(&tools.BashTool{})
-		subReg.Register(&tools.PowerShellTool{})
-		subReg.Register(&tools.WebFetchTool{})
+// newTaskTool builds the root-level TaskTool wired to the session's
+// provider, prompt, db, and sub-agent config. Shared by the REPL and
+// TUI entrypoints so the two cannot drift.
+func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subCfg config.SubAgentConfig) *tools.TaskTool {
+	// Map a config "0 = unlimited" MaxDepth to a sentinel so the
+	// structural nesting decrement in makeTaskRunner does not disable
+	// spawning for an "unlimited" setting.
+	depth := subCfg.MaxDepth
+	if depth <= 0 {
+		depth = math.MaxInt32
+	}
+	return &tools.TaskTool{
+		Runner: makeTaskRunner(taskRunnerOpts{
+			provider:      provider,
+			systemPrompt:  systemPrompt,
+			modelName:     modelName,
+			db:            db,
+			parentSession: sessionID,
+			subCfg:        subCfg,
+		}, depth),
+		ResolveTimeout: subAgentTimeoutResolver(subCfg),
+	}
+}
+
+// taskRunnerOpts holds the shared state needed to build sub-agent loops.
+// It is captured by every makeTaskRunner closure so nested sub-agents
+// (planner → worker) inherit the same provider, prompt base, and config.
+type taskRunnerOpts struct {
+	provider      agent.Provider
+	systemPrompt  string
+	modelName     string
+	db            *memory.DB
+	parentSession string
+	subCfg        config.SubAgentConfig
+}
+
+// subAgentSeq guarantees unique sub-session IDs across concurrent
+// goroutines without relying on wall-clock resolution.
+var subAgentSeq atomic.Int64
+
+// makeTaskRunner creates a sub-agent runner that honours roles, timeouts,
+// iteration caps, and nesting depth.
+//
+// remainingDepth bounds how many levels of nested task calls the
+// returned runner may itself issue. When it reaches zero the task tool
+// is omitted from the sub-loop's registry, so nesting is bounded
+// structurally without relying on middleware alone. A zero/negative
+// config MaxDepth is mapped to a sentinel so "unlimited" is preserved.
+func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
+	return func(ctx context.Context, prompt string, params tools.SubAgentParams) (string, error) {
+		role := agent.SubAgentRole(params.Role)
+		profile := agent.RoleProfileFor(role)
+
+		subReg := buildSubAgentRegistry(opts, profile, remainingDepth)
+
+		maxIter := resolveSubAgentIterations(params.MaxIterations, profile, opts.subCfg, role)
+		sysPrompt := opts.systemPrompt
+		if g := agent.RoleGuidance(role); g != "" {
+			if sysPrompt != "" {
+				sysPrompt += "\n\n"
+			}
+			sysPrompt += g
+		}
+
+		// Persist the sub-agent transcript under a child session. The ID
+		// combines wall-clock time with a process-wide atomic counter so
+		// parallel task calls cannot collide; if session creation fails
+		// the sub-agent runs in-memory rather than polluting the parent
+		// transcript.
+		subDB := opts.db
+		subSessionID := opts.parentSession
+		if opts.db != nil {
+			subSessionID = fmt.Sprintf("%s-sub-%d-%d", opts.parentSession, time.Now().UnixNano(), subAgentSeq.Add(1))
+			cwd, _ := os.Getwd()
+			if err := opts.db.CreateSession(memory.Session{
+				ID:        subSessionID,
+				StartedAt: time.Now().Unix(),
+				CWD:       cwd,
+				Model:     opts.modelName,
+			}); err != nil {
+				subDB = nil
+			}
+		}
 
 		subLoop := &agent.Loop{
-			Provider:      provider,
-			Registry:      subReg,
-			SystemPrompt:  systemPrompt,
-			Model:         modelName,
-			MaxIterations: 25,
-			MaxRetries:    2,
-			ApprovalMode:  "allow",
+			Provider:               opts.provider,
+			Registry:               subReg,
+			SystemPrompt:           sysPrompt,
+			Model:                  opts.modelName,
+			MaxIterations:          maxIter,
+			MaxRetries:             2,
+			ApprovalMode:           "allow",
+			DB:                     subDB,
+			SessionID:              subSessionID,
+			MaxSubAgentDepth:       opts.subCfg.MaxDepth,
+			MaxSubAgentConcurrency: opts.subCfg.MaxConcurrency,
+			MaxSubAgentDepthByRole: subAgentDepthByRole(opts.subCfg),
 		}
 
 		return subLoop.Run(ctx, prompt)
 	}
+}
+
+// subAgentTimeoutResolver returns a TaskTool timeout resolver that folds
+// in the actual per-call role, so role-profile and per-role config
+// timeouts are honoured rather than a single construction-time default.
+func subAgentTimeoutResolver(subCfg config.SubAgentConfig) func(tools.SubAgentParams) time.Duration {
+	return func(p tools.SubAgentParams) time.Duration {
+		return resolveSubAgentTimeout(0, subCfg, agent.SubAgentRole(p.Role))
+	}
+}
+
+// subAgentDepthByRole builds the per-role depth cap map from role
+// profile defaults, overridden by per-role config. Roles absent from
+// the map fall back to the global MaxDepth in the middleware.
+func subAgentDepthByRole(subCfg config.SubAgentConfig) map[agent.SubAgentRole]int {
+	out := make(map[agent.SubAgentRole]int)
+	for _, role := range []agent.SubAgentRole{agent.RoleWorker, agent.RoleReviewer, agent.RolePlanner} {
+		if d := agent.RoleProfileFor(role).MaxDepth; d > 0 {
+			out[role] = d
+		}
+	}
+	for name, rc := range subCfg.Roles {
+		if rc.MaxDepth > 0 {
+			out[agent.SubAgentRole(name)] = rc.MaxDepth
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// buildSubAgentRegistry constructs a tool registry for the given role
+// profile. If the profile includes the task tool and remainingDepth > 0,
+// a nested TaskTool is registered so the sub-agent can spawn further
+// workers. When remainingDepth == 0 the task tool is omitted entirely.
+//
+// The RoleDefault profile (empty Tools) falls back to the full built-in
+// tool set to preserve the legacy task tool behaviour.
+func buildSubAgentRegistry(opts taskRunnerOpts, profile agent.RoleProfile, remainingDepth int) *tools.Registry {
+	resolveTimeout := subAgentTimeoutResolver(opts.subCfg)
+	registerTask := func(reg *tools.Registry) {
+		reg.Register(&tools.TaskTool{
+			Runner:         makeTaskRunner(opts, remainingDepth-1),
+			ResolveTimeout: resolveTimeout,
+		})
+	}
+
+	if len(profile.Tools) == 0 {
+		// Legacy default: the full built-in tool set.
+		reg := tools.NewRegistry()
+		if remainingDepth > 0 {
+			registerTask(reg)
+		}
+		return reg
+	}
+
+	reg := tools.NewEmptyRegistry()
+	for _, name := range profile.Tools {
+		if name == "task" {
+			if remainingDepth > 0 {
+				registerTask(reg)
+			}
+			continue
+		}
+		if t := tools.NewLeafTool(name); t != nil {
+			reg.Register(t)
+		}
+	}
+	return reg
+}
+
+// resolveSubAgentTimeout picks the effective default timeout for a
+// sub-agent TaskTool. Precedence: per-call override (handled by the
+// TaskTool itself) > role-specific config > role profile default >
+// global subagent default_timeout.
+func resolveSubAgentTimeout(callSeconds int, subCfg config.SubAgentConfig, role agent.SubAgentRole) time.Duration {
+	if callSeconds > 0 {
+		return time.Duration(callSeconds) * time.Second
+	}
+	if rc, ok := subCfg.Roles[string(role)]; ok && rc.Timeout > 0 {
+		return time.Duration(rc.Timeout) * time.Second
+	}
+	if d := agent.RoleProfileFor(role).Timeout; d > 0 {
+		return d
+	}
+	if subCfg.DefaultTimeout > 0 {
+		return time.Duration(subCfg.DefaultTimeout) * time.Second
+	}
+	return 0
+}
+
+// resolveSubAgentIterations picks the iteration cap for a sub-agent Loop.
+// Precedence: per-call override > role-specific config > role profile
+// default > a sane floor of 1. The result is never allowed to exceed the
+// role profile's MaxIterations ceiling, so a per-call override cannot
+// neutralize the role's cap.
+func resolveSubAgentIterations(callMax int, profile agent.RoleProfile, subCfg config.SubAgentConfig, role agent.SubAgentRole) int {
+	var v int
+	switch {
+	case callMax > 0:
+		v = callMax
+	case subCfg.Roles[string(role)].MaxIterations > 0:
+		v = subCfg.Roles[string(role)].MaxIterations
+	case profile.MaxIterations > 0:
+		v = profile.MaxIterations
+	default:
+		return 1
+	}
+	if profile.MaxIterations > 0 && v > profile.MaxIterations {
+		v = profile.MaxIterations
+	}
+	return v
 }
 
 // isRealKey returns true if the API key looks like a real key (not empty,

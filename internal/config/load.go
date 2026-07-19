@@ -42,6 +42,34 @@ type MiddlewareConfig struct {
 // AgentConfig holds agent loop and middleware pipeline settings.
 type AgentConfig struct {
 	Middleware MiddlewareConfig `yaml:"middleware"`
+	SubAgent   SubAgentConfig   `yaml:"subagent"`
+}
+
+// SubAgentConfig configures the task tool's sub-agent lifecycle:
+// nesting depth, concurrency, default timeout, and per-role overrides.
+type SubAgentConfig struct {
+	// MaxDepth is the global default for how many task calls a single
+	// Loop may issue. 0 means unlimited.
+	MaxDepth int `yaml:"max_depth"`
+
+	// MaxConcurrency caps simultaneous task tool calls per iteration.
+	// 0 means unlimited.
+	MaxConcurrency int `yaml:"max_concurrency"`
+
+	// DefaultTimeout is applied when a task call supplies no timeout
+	// and the role profile has none. Seconds. 0 means no timeout.
+	DefaultTimeout int `yaml:"default_timeout"`
+
+	// Roles holds per-role overrides keyed by role name
+	// ("worker", "reviewer", "planner").
+	Roles map[string]RoleConfig `yaml:"roles"`
+}
+
+// RoleConfig overrides a single role's default timeout and iteration cap.
+type RoleConfig struct {
+	Timeout       int `yaml:"timeout"`        // seconds; 0 = use role default
+	MaxIterations int `yaml:"max_iterations"` // 0 = use role default
+	MaxDepth      int `yaml:"max_depth"`      // 0 = use global MaxDepth
 }
 
 // Config is the full yaah configuration loaded from ~/.yaah/config.yaml.
@@ -63,6 +91,12 @@ func defaultConfig() *Config {
 			MaxIterations: 50,
 			ContextWindow: 128000,
 			Approval:      "ask",
+		},
+		Agent: AgentConfig{
+			SubAgent: SubAgentConfig{
+				MaxDepth:       3,
+				MaxConcurrency: 3,
+			},
 		},
 		LogLevel: "INFO",
 	}

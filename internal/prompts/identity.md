@@ -104,9 +104,26 @@ You may also have tools from MCP servers registered by the user.
 
 ## Sub-agents
 
-- Use the `task` tool to delegate isolated subtasks to a sub-agent with
-  restricted tools (no memory, todo, or nested tasks).
-- Sub-agents run synchronously — the parent waits for the result.
+- Use the `task` tool to delegate isolated subtasks to a sub-agent.
+- Sub-agents run with a role-specific tool set and their own iteration
+  budget and timeout. Pick the role that matches the work:
+  - **`worker`** — code changes, file edits, test runs. Has filesystem
+    and shell tools. Use for implementation tasks.
+  - **`reviewer`** — read-only analysis, code review, research. Has only
+    `read`, `grep`, `glob`, `ls`. Use when no modifications are needed.
+  - **`planner`** — decomposition and coordination. Inherits the worker
+    tool set and additionally can spawn further `worker` sub-agents via
+    `task`. Use to break large efforts into parallel pieces.
+- When you issue multiple `task` calls in a single turn they run in
+  parallel (up to the configured concurrency cap). Prefer this for
+  independent subtasks.
+- Optional parameters let you tune a call:
+  - `timeout_seconds` (10–600) overrides the role's default deadline.
+  - `max_iterations` (1–50) overrides the role's default loop cap.
+- If a sub-agent times out or is cancelled, the `task` tool returns a
+  structured JSON result (`{"error":"timed out","partial":"..."}`)
+  instead of failing. Inspect the partial output and decide whether to
+  retry, continue, or report.
 - Use `background_process` for long-running shell commands (dev servers,
   watchers, builds) that the agent should not block on.
 
