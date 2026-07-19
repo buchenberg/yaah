@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"image/color"
 	"os"
 	"strings"
@@ -18,7 +19,6 @@ type Theme struct {
 	UserBg      string
 	Assistant   string
 	Tool        string
-	ToolBg      string
 	System      string
 	SystemBg    string
 	Status      string
@@ -41,10 +41,9 @@ type Theme struct {
 var DarkTheme = Theme{
 	Title:       "39",
 	User:        "14",
-	UserBg:      "24",
+	UserBg:      "",
 	Assistant:   "252",
 	Tool:        "243",
-	ToolBg:      "",
 	System:      "243",
 	SystemBg:    "236",
 	Status:      "243",
@@ -52,7 +51,7 @@ var DarkTheme = Theme{
 	Spinner:     "39",
 	Code:        "214",
 	Thinking:    "240",
-	ReasoningBg: "25",
+	ReasoningBg: "",
 	Toggle:      "240",
 	ListBullet:  "99",
 	ListItem:    "252",
@@ -67,10 +66,9 @@ var DarkTheme = Theme{
 var LightTheme = Theme{
 	Title:       "25",
 	User:        "26",
-	UserBg:      "153",
+	UserBg:      "",
 	Assistant:   "235",
 	Tool:        "244",
-	ToolBg:      "",
 	System:      "244",
 	SystemBg:    "251",
 	Status:      "244",
@@ -78,7 +76,7 @@ var LightTheme = Theme{
 	Spinner:     "25",
 	Code:        "130",
 	Thinking:    "246",
-	ReasoningBg: "153",
+	ReasoningBg: "",
 	Toggle:      "246",
 	ListBullet:  "55",
 	ListItem:    "235",
@@ -89,41 +87,62 @@ var LightTheme = Theme{
 	CmdDesc:     "244",
 }
 
-// catppuccinMocha maps Catppuccin Mocha palette to 256-color ANSI
-// approximations. Full palette support requires a truecolor terminal.
+// catppuccinMocha maps the Catppuccin Mocha palette to 256-color ANSI
+// approximations. Full palette details: https://catppuccin.com/palette
 var catppuccinMocha = Theme{
-	Title:       "39",
-	User:        "14",
-	UserBg:      "24",
-	Assistant:   "252",
-	Tool:        "243",
-	ToolBg:      "",
-	System:      "243",
-	SystemBg:    "236",
-	Status:      "243",
-	StatusBg:    "236",
-	Spinner:     "39",
-	Code:        "214",
-	Thinking:    "240",
-	ReasoningBg: "25",
-	Toggle:      "240",
-	ListBullet:  "99",
-	ListItem:    "252",
-	Tree:        "240",
-	TreeItem:    "252",
-	CmdBorder:   "99",
-	CmdName:     "39",
-	CmdDesc:     "243",
+	Title:       "111", // Blue
+	User:        "116", // Sky
+	UserBg:      "238", // Surface1
+	Assistant:   "252", // Text
+	Tool:        "244", // Overlay1
+	System:      "244", // Overlay1
+	SystemBg:    "236", // Surface0
+	Status:      "244", // Overlay1
+	StatusBg:    "236", // Surface0
+	Spinner:     "183", // Mauve
+	Code:        "216", // Peach
+	Thinking:    "246", // Overlay2
+	ReasoningBg: "238", // Surface1
+	Toggle:      "246", // Overlay2
+	ListBullet:  "183", // Mauve
+	ListItem:    "252", // Text
+	Tree:        "246", // Overlay2
+	TreeItem:    "252", // Text
+	CmdBorder:   "183", // Mauve
+	CmdName:     "111", // Blue
+	CmdDesc:     "244", // Overlay1
+}
+
+// catppuccinLatte maps the Catppuccin Latte palette to 256-color ANSI
+// approximations for light terminal backgrounds.
+var catppuccinLatte = Theme{
+	Title:       "25",  // Blue
+	User:        "31",  // Sky
+	UserBg:      "252", // Surface1
+	Assistant:   "235", // Text
+	Tool:        "244", // Overlay1
+	System:      "244", // Overlay1
+	SystemBg:    "251", // Surface0
+	Status:      "244", // Overlay1
+	StatusBg:    "251", // Surface0
+	Spinner:     "97",  // Mauve
+	Code:        "130", // Peach
+	Thinking:    "246", // Overlay2
+	ReasoningBg: "252", // Surface1
+	Toggle:      "246", // Overlay2
+	ListBullet:  "97",  // Mauve
+	ListItem:    "235", // Text
+	Tree:        "246", // Overlay2
+	TreeItem:    "235", // Text
+	CmdBorder:   "97",  // Mauve
+	CmdName:     "25",  // Blue
+	CmdDesc:     "244", // Overlay1
 }
 
 // namedThemes holds extra themes beyond the built-in dark/light.
 var namedThemes = map[string]Theme{
 	"catppuccin-mocha": catppuccinMocha,
-	"catppuccin-latte": LightTheme,
-	"dracula":          DarkTheme,
-	"nord":             DarkTheme,
-	"gruvbox":          DarkTheme,
-	"tokyo-night":      DarkTheme,
+	"catppuccin-latte": catppuccinLatte,
 }
 
 // monochromeTheme uses empty strings for all colors — the terminal's
@@ -238,6 +257,7 @@ func DetectTheme() Theme {
 		if t, ok := namedThemes[strings.ToLower(name)]; ok {
 			return t
 		}
+		fmt.Fprintf(os.Stderr, "yaah: unknown theme %q, falling back to auto-detect\n", name)
 	}
 
 	if lipgloss.HasDarkBackground(os.Stdin, os.Stdout) {

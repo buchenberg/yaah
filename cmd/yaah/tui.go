@@ -300,9 +300,8 @@ func runTUI() error {
 		},
 	})
 
-	// Panic recovery: ensure terminal is restored even if something panics.
-	// Bubble Tea v2 restores on Run() return, but this belt-and-suspenders
-	// catches panics from goroutines that Bubble Tea can't see.
+	// Panic recovery: catch panics in the main goroutine so the terminal
+	// is restored. Note: panics in agent goroutines are not caught here.
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(os.Stderr, "yaah panic: %v\n", r)

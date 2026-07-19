@@ -96,8 +96,7 @@ type Command struct {
 	Description string
 }
 
-// defaultCommands lists the built-in slash commands.
-// defaultCommands lists the built-in slash commands (triggered by typing ":").
+// defaultCommands lists the built-in colon commands (triggered by typing ":").
 var defaultCommands = []Command{
 	{Name: ":help", Description: "Show available commands"},
 	{Name: ":clear", Description: "Clear chat history"},
@@ -234,8 +233,6 @@ func New(cfg Config) *Model {
 	}
 }
 
-// createRenderer (re)creates the glamour markdown renderer.
-
 var (
 	mdLinkRe   = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
 	autoLinkRe = regexp.MustCompile(`<((?:https?|ftp)://[^>]+)>`)
@@ -263,32 +260,10 @@ func injectHyperlinks(md string) string {
 	return md
 }
 
-// glamourRender renders markdown through the reusable renderer.
-
-// renderMarkdown renders raw markdown through glamour. Tables are extracted
-// and rendered as plain compact text before passing the rest to glamour.
-
 type textSegment struct {
 	content string
 	isTable bool
 }
-
-// parseAndRenderTables splits markdown into table and non-table segments.
-// A table is: one or more lines starting with "|", where the first or second
-// line contains "---" (the separator row).
-
-// Detect table start: current line starts with | and next line is a separator
-
-// Collect header + separator + all continuation rows
-
-// After separator, collect remaining data rows
-
-// Also check: line before separator IS the header, separator IS second
-// Handles case where separator is first line (unusual but possible)
-
-// Non-table line: accumulate into a text segment
-
-// Stop if we hit a table start
 
 // splitRow splits a pipe-delimited table row into trimmed columns.
 func splitRow(line string) []string {
@@ -299,12 +274,6 @@ func splitRow(line string) []string {
 	}
 	return cols
 }
-
-// renderCompactTable renders a markdown table using lipgloss's table package.
-// It constrains the table to the TUI width and wraps long cell content.
-
-// renderInlineMarkdown renders basic inline markdown in a table cell:
-// backtick code spans, bold, and italic.
 
 func replacePattern(s, open, close string, style func(string) string) string {
 	for {
@@ -339,8 +308,6 @@ func isWideRune(r rune) bool {
 
 // --- list and tree rendering ---
 
-// renderToolResult renders tool result content, detecting lists and trees.
-
 // bulletPattern matches markdown bullet list items (* item, - item, + item).
 var bulletPattern = regexp.MustCompile(`(?m)^[*\-+]\s`)
 
@@ -355,10 +322,6 @@ var treeLineRe = regexp.MustCompile(`[├└]──`)
 func isTreeContent(s string) bool {
 	return treeLineRe.MatchString(s)
 }
-
-// renderList renders bullet-list content using lipgloss's list package.
-
-// renderTree renders tree-like content using lipgloss's tree package.
 
 // splitTreePrefix separates tree-drawing characters from the node name.
 func splitTreePrefix(line string) (prefix, name string) {
@@ -488,8 +451,8 @@ func (m *Model) RegisterCommand(name, description string) {
 	m.commands = append(m.commands, Command{Name: name, Description: description})
 }
 
-// executeCommand executes a slash command and adds the result to messages.
-// /quit is handled by the caller (returns tea.Quit from Update).
+// executeCommand executes a colon command and adds the result to messages.
+// :quit is handled by the caller (returns tea.Quit from Update).
 func (m *Model) executeCommand(input string) {
 	cmd := strings.TrimSpace(input)
 	switch cmd {
