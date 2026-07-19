@@ -1345,6 +1345,21 @@ func (m *Model) maxQuestionLines() int {
 }
 
 func (m *Model) paletteLines() int {
+	if m.showHelp {
+		// Help overlay: title + 4 groups with headers + footer + border/padding
+		// Rough estimate: 22 content lines + 4 border/padding = 26.
+		// Cap at 80% of available terminal height.
+		available := m.height - m.headerHeight() - 5
+		if available < 10 {
+			return 10
+		}
+		max := available * 4 / 5
+		helpLines := 26
+		if helpLines > max {
+			helpLines = max
+		}
+		return helpLines
+	}
 	if m.questionMode {
 		optCount := len(m.questionModal.Options)
 		max := m.maxQuestionLines()
