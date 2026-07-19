@@ -37,7 +37,7 @@ yaah is structured as a single Go binary. The entry point is `main.go`, which de
 The agent loop lives in `internal/agent/agent.go`. The entry point is `Loop.Run(ctx, userInput)`. A `Loop` holds:
 
 | Field | Purpose |
-|---|---|
+|---|---|---|
 | `Provider` | LLM backend implementing `Provider` or `StreamProvider` |
 | `Registry` | Tool registry mapping names to `Tool` implementations |
 | `SystemPrompt` | Assembled system prompt (identity + env + project + memory) |
@@ -48,6 +48,18 @@ The agent loop lives in `internal/agent/agent.go`. The entry point is `Loop.Run(
 | `ApprovalMode` | `"allow"`, `"ask"`, or `"deny"` for destructive tools |
 | `DB` | Optional SQLite database for per-message persistence (nil = in-memory only) |
 | `MsgIdx` | Next message index for DB inserts, initialized to `len(Messages)` on resume |
+| `OnToken` | Streaming token callback (set by CLI/TUI for display) |
+| `OnTool` | Before/after tool execution callback |
+| `OnSubAgent` | Sub-agent start/completion callback (fires for `task` tools) |
+| `OnThinking` | Reasoning/thinking text callback (DeepSeek, Claude) |
+| `OnFlush` | Callback when model finishes a streaming segment |
+| `MaxToolConcurrency` | Cap on concurrent tool goroutines (0 = unlimited) |
+| `MaxSubAgentConcurrency` | Cap on concurrent task tool calls (0 = unlimited, default 3) |
+| `MaxSubAgentDepth` | SubAgentMiddleware cap on task calls per Loop |
+| `MaxSubAgentDepthByRole` | Optional per-role caps; falls back to `MaxSubAgentDepth` |
+| `PermissionRules` | Path-pattern rules for the `permission` middleware |
+| `MCPServers` | Attached MCP servers whose tools are added to the registry |
+| `Pipe` | Write stream during one-shot; nil in REPL/TUI |
 
 ### Agent loop (`runMiddleware`)
 
@@ -210,13 +222,13 @@ Injects Anthropic `cache_control: {type: "ephemeral"}` breakpoints on system mes
 
 ## Sub-agent lifecycle
 
-Files: `internal/agent/subagent.go`, `internal/tools/task.go`, `cmd/yaah/root_cmd.go`, `internal/agent/middleware_subagent.go`
+Files: `internal/agent/subagent.go`, `internal/agent/role_def.go`, `internal/tools/task.go`, `cmd/yaah/root_cmd.go`, `internal/agent/middleware_subagent.go`
 
 The `task` tool spawns a sub-agent: a fresh `agent.Loop` with a curated tool registry, its own iteration budget, deadline, and system prompt. Sub-agents let the parent agent delegate isolated work and fan out independent subtasks in parallel.
 
 ### Roles and tool profiles
 
-Each sub-agent runs under a **role** that selects its tool set and default limits. Built-in roles are defined in embedded markdown files (`internal/prompts/roles/*.md`) with YAML frontmatter and are loaded into a `RoleRegistry` at startup. User-defined roles can be added without recompilation by placing identically formatted `.md` files in `~/.agents/roles/` or `./.agents/roles/`; built-in roles take precedence on name conflict.
+Each sub-agent runs under a **role** that selects its tool set and default limits.
 
 | Role | Tools | Max iterations | Default timeout | Can spawn |
 |---|---|---|---|---|
@@ -225,27 +237,97 @@ Each sub-agent runs under a **role** that selects its tool set and default limit
 | `planner` | worker set + `task` | 50 | 300s | yes |
 | _(default)_ | full built-in set (legacy) | — | — | depth permitting |
 
-`RoleProfileFor(role)` delegates to the global `RoleRegistry` if one has been installed via `SetDefaultRoleRegistry`; otherwise it falls back to hardcoded legacy profiles. `RoleDefault` returns a zero-value profile, signalling `makeTaskRunner` to use the legacy full tool set.
+`RoleProfileFor(role)` delegates to the global `RoleRegistry` if one has been installed via `SetDefaultRoleRegistry`; otherwise it falls back to hardcoded legacy profiles in `legacyProfileFor`. `RoleDefault` returns a zero-value profile, signalling `makeTaskRunner` to use the legacy full tool set.
 
-### Role definition format
+### RoleRegistry
+
+File: `internal/agent/role_def.go`
+
+The `RoleRegistry` is the central store for role definitions. It holds built-in roles (embedded in the binary) and user-defined roles (discovered from the filesystem at startup), with built-in roles taking precedence on name conflict.
+
+**Core types:**
+
+- `RoleDef` — the persistent format for a role, parsed from YAML frontmatter: `Tools []string`, `MaxIterations`, `Timeout` (seconds), `MaxDepth`, and `Body` (the markdown guidance text). Its `ToProfile()` method converts to the runtime `RoleProfile` struct.
+- `RoleRegistry` — a `sync.RWMutex`-protected `map[SubAgentRole]RoleDef`. Thread-safe for concurrent reads during sub-agent dispatch.
+
+**Loading built-in roles:**
+
+Built-in roles are embedded via `//go:embed roles/*.md` in `internal/prompts/prompts.go` as `BuiltinRolesFS` (an `embed.FS`). At startup, `builtinRoleFiles()` in `cmd/yaah/root_cmd.go` reads the directory and passes each file's content to `reg.LoadBytes(files)`. The file name minus `.md` becomes the role name (e.g. `worker.md` → `"worker"`).
+
+**Loading user-defined roles:**
+
+`roleSearchPaths(cwd)` returns directories to scan: every `.agents/roles/` directory walked up from `cwd`, then `~/.agents/roles/`. `reg.LoadDir(dir)` reads every `.md` file in each directory, parses it with `parseRoleFile`, and adds the role — but only if the role name isn't already registered (built-in always wins).
+
+**Parsing: `parseRoleFile`** splits the markdown at the first `---\n...\n---` YAML frontmatter block, unmarshals the YAML portion into `RoleDef`, and stores the remaining markdown in `Body`. It returns an error on missing or unterminated frontmatter.
+
+**Atomic installation:**
+
+`SetDefaultRoleRegistry` stores the loaded registry in a package-level `atomic.Pointer[RoleRegistry]` in `subagent.go`. `RoleProfileFor` and `RoleGuidance` read from this pointer; when it's `nil` (e.g. in unit tests), they fall back to hardcoded `legacyProfileFor` / `legacyGuidance`.
+
+**Key methods:**
+
+| Method | Purpose |
+|---|---|
+| `LoadBytes(files map[string][]byte)` | Parse and register built-in roles (takes precedence) |
+| `LoadDir(dir string)` | Discover and register user-defined roles (skipped if name already registered) |
+| `ProfileFor(role SubAgentRole) RoleProfile` | Return runtime profile; zero-value for `RoleDefault` or unknown |
+| `Guidance(role SubAgentRole) string` | Return role-specific system-prompt text (the markdown body) |
+| `Names() []string` | All registered role names, for dynamic schema generation |
+
+### Dynamic task tool schema
+
+File: `internal/tools/task.go`
+
+`BuildTaskSchema(roleNames []string) json.RawMessage` constructs the `task` tool's JSON Schema at startup from the active role list, using `encoding/json` marshalling to avoid injection. The `TaskTool.Schema()` method checks `RoleNames`: when non-empty it calls `BuildTaskSchema`; when empty it returns a legacy static schema with `["worker", "reviewer", "planner"]`. This means user-defined roles are only visible to the model when a registry is configured (the default for both CLI and TUI sessions).
+
+Wiring chain: `reg.Names()` → `newTaskTool(…, roleNames)` → `TaskTool.RoleNames` → `TaskTool.Schema()`.
+
+### CLI lifecycle display
+
+Files: `internal/agent/agent.go`, `cmd/yaah/root_cmd.go`
+
+Sub-agent activity is rendered with `>>>` / `<<<` brackets in the CLI, distinct from ordinary tool calls.
+
+**Callbacks:**
+
+- `SubAgentInfo` struct — `Role`, `Prompt` (abbreviated description), `Duration` (0 = start), `Error`.
+- `SubAgentCallback` — `func(info SubAgentInfo)`. Set as `Loop.OnSubAgent`.
+- `OnTool` for `task` tools is suppressed (line 484-486 of `root_cmd.go`) — all task lifecycle rendering goes through `OnSubAgent`.
+
+**Emission:** In `executeAndCollect`, when a tool named `"task"` is about to run, `parseTaskArgs` extracts the `role` and `description` from tool arguments JSON. `OnSubAgent` fires with `Duration=0` (start marker). After execution, it fires again with the actual duration and any error.
+
+**Rendering:** The REPL's `runPrompt` sets `OnSubAgent` to print:
+```
+>>> sub-agent: worker — List directory contents
+<<< sub-agent: worker — completed (6.8s)
+```
+If a sub-agent errors, status shows the error string (styled in yellow) instead of "completed".
+
+### Sub-agent tool callbacks
+
+File: `cmd/yaah/root_cmd.go`
+
+Sub-agent tool calls are displayed indented beneath the parent's activity.
+
+**`taskRunnerOpts.SubToolCallback`** is a `ToolCallback` field captured in the `taskRunnerOpts` closure and set on every sub-loop's `OnTool` via `makeTaskRunner`. The callback, `subToolDisplay`, renders with 4-space indent (vs. the parent's 2-space) and 40-char arg abbreviation (vs. the parent's 60-char):
 
 ```
-File: ~/.agents/roles/<name>.md (user-defined) or embedded
-
----
-tools:
-  - read
-  - grep
-  - bash
-max_iterations: 30
-timeout: 180
-max_depth: 0
----
-
-You are a SECURITY AUDITOR. Find vulnerabilities...
+    tool: glob({"pattern": "**/*.go",...}) (19ms)
 ```
 
-The file name (minus `.md`) becomes the role name. `RoleRegistry.Names()` supplies the active role list to `TaskTool.BuildTaskSchema` so the `task` tool's JSON schema enum stays in sync with discovered roles.
+Since `taskRunnerOpts` is reused for all nesting levels, every sub-agent (regardless of depth) uses the same callback. The indentation is achieved by the callback itself, not by positional tracking.
+
+### TUI lifecycle display
+
+Files: `cmd/yaah/tui.go`, `internal/tui/tui.go`, `internal/tui/render.go`
+
+The TUI mirrors the CLI's bracketed sub-agent display through its own event model.
+
+**Data flow:** `OnSubAgent` in `runAgentForTUI` translates `agent.SubAgentInfo` into `AgentMsg` fields (`SubAgentStart`/`SubAgentEnd`, `SubAgentRole`, `SubAgentLabel`, `SubAgentDur`, `SubAgentErr`). These are sent over the `agentCh` channel to the TUI event loop.
+
+**`HandleAgentMsg`** converts sub-agent events into `Message` entries: `"subagent-start"` role with `">>> sub-agent: worker — List files"` content, and `"subagent-end"` role with `"<<< sub-agent: worker — completed (6.8s)"` content.
+
+**`renderMessages`** handles `"subagent-start"` and `"subagent-end"` roles with `subAgentStartStyle` (bold tool color) and `subAgentEndStyle` (tool color). The task tool header in the `"tool"` case uses `matchJSONField` to extract `role` and `description` from tool args JSON, displaying e.g. `"sub-agent: worker — List files"` instead of the generic `"sub-agent"`.
 
 ### Timeout enforcement
 
@@ -490,6 +572,7 @@ Callbacks available on `Loop`:
 | `OnToken` | `func(string)` | Each streamed content delta |
 | `OnThinking` | `func(string)` | Reasoning/thinking content deltas |
 | `OnTool` | `func(ToolInfo)` | Called twice per tool: before (Duration=0) and after |
+| `OnSubAgent` | `func(SubAgentInfo)` | Called twice per sub-agent: start (Duration=0) and completion |
 | `OnFlush` | `func(string)` | Flush accumulated streamed content before next tool/iteration |
 
 ---
@@ -523,6 +606,26 @@ The `internal/providers/` package implements OpenAI Chat Completions-compatible 
 The `ToolInfo.Duration == 0` check is the canonical way to distinguish before vs. after. The CLI uses this in `root_cmd.go` to show:
 - Before: `"  tool: bash(args)"`
 - After: `" (1.2s)\n"`
+
+---
+
+## TUI architecture
+
+Files: `cmd/yaah/tui.go`, `internal/tui/`
+
+The TUI is a [bubbletea](https://github.com/charmbracelet/bubbletea) application running the agent loop in a background goroutine. Communication between the agent goroutine and the TUI model goes through a typed `chan AgentMsg` channel.
+
+**Data flow:** Agent events (tokens, tool starts/results, sub-agent lifecycle, thinking text) are converted to `AgentMsg` values by the callbacks in `runAgentForTUI` and sent over the channel. The TUI's `HandleAgentMsg` maps each `AgentMsg` to state transitions on `Model`: appending `Message` entries, toggling spinner state, updating the status bar, or setting approval modals.
+
+**Message rendering:** `renderMessages` in `render.go` switches on `Message.Role` (`"user"`, `"assistant"`, `"tool"`, `"subagent-start"`, `"subagent-end"`, `"system"`). Tool messages are collapsible (▶/▼), styled by `toolStyle`, and display a header extracted from `ToolName` and `ToolArgs`. Sub-agent brackets use `subAgentStartStyle` (bold) and `subAgentEndStyle`.
+
+**Command palette:** Typing `:` in the TUI opens a command palette (`:help`, `:clear`, `:compact`, `:banner`, `:model`, `:quit`). `:model` queries providers' model lists and filters live.
+
+Deeper walkthroughs of the TUI component design, refactoring approach, and visual layout are in the TUI-specific docs:
+
+- [TUI component design proposal](./tui-component-design.md)
+- [TUI refactoring examples](./tui-refactoring-example.md)
+- [TUI summary](./tui-summary.md)
 
 ---
 

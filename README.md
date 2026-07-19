@@ -221,6 +221,22 @@ In the interactive REPL, prefix with `/` for built-in commands:
 
 Arrows navigate REPL history. History is persisted at `~/.yaah/history`.
 
+### TUI colon commands
+
+In the TUI, type `:` to open the command palette:
+
+| Command | Action |
+|---|---|
+| `:help` | Show available commands |
+| `:clear` | Clear chat history |
+| `:compact` | Summarize old messages to free context |
+| `:banner` | Toggle the ASCII art banner on/off |
+| `:model` | Search and switch the active model/provider |
+| `:quit` | Exit the TUI |
+
+Type to filter the list after `:`. `:model` queries providers' model lists
+live. Press `Esc` to dismiss the palette.
+
 ### Session persistence
 
 Every message (user prompts, assistant responses, tool calls, and tool results)
@@ -694,9 +710,15 @@ with roles/concurrency/timeouts.
 - **OpenTelemetry tracing** — wire the agent loop, middleware hooks, and
   tool calls into OTel spans for observability in production agent
   pipelines.
-- **Multi-agent orchestration** — first-class support for dispatching
-  parallel agents, collecting their results, and reconciling conflicts
-  (building on the existing `task` tool infrastructure).
+- **Agent conflict reconciliation** — detect and merge conflicting edits
+  when multiple parallel workers touch the same files, and present
+  resolution options to the parent agent.
+- **Declarative workflows** — define multi-step agent pipelines as DAGs
+  of role-typed tasks with dependencies and failure handlers, replacing
+  ad-hoc planner prompts with reproducible recipes.
+- **Inter-agent messaging** — direct messages between concurrently
+  running sub-agents so they can coordinate without routing through
+  the parent's context.
 - **Web UI** — a browser-based interface as an alternative to the terminal,
   with session browsing, config editing, and real-time streaming.
 - **Prompt template library** — curated system prompts and skill packs
