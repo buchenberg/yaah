@@ -7,9 +7,11 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -295,6 +297,29 @@ func runTUI() error {
 		},
 	)
 
+	// Panic recovery: ensure terminal is restored even if something panics.
+	// Bubble Tea v2 restores on Run() return, but this belt-and-suspenders
+	// catches panics from goroutines that Bubble Tea can't see.
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "yaah panic: %v\n", r)
+			os.Exit(1)
+		}
+	}()
+
+	// SIGTSTP / SIGCONT handling: Bubble Tea v2 already manages terminal state
+	// on suspend/resume, but explicitly install a handler so goroutine-spawned
+	// work (MCP clients, network) is visible to the runtime.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTSTP, syscall.SIGCONT)
+	go func() {
+		for range sigCh {
+			// Bubble Tea v2's internal signal handlers restore and re-enter
+			// raw mode / alt screen automatically. This goroutine ensures the
+			// signal is not blocked by the Go runtime's default behavior.
+		}
+	}()
+
 	p := tea.NewProgram(m)
 
 	// Wire the question tool handler for TUI modal dialogs.
@@ -344,6 +369,9 @@ func runTUI() error {
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)
 	}
+
+	signal.Stop(sigCh)
+	close(sigCh)
 
 	return nil
 }

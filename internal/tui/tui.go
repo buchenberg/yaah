@@ -1060,10 +1060,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.exitModelMode()
 				return m, nil
 			}
-			if m.onQuit != nil {
-				m.onQuit()
+			if m.commandMode {
+				m.input.SetValue("")
+				m.clearCommandMode()
+				return m, nil
 			}
-			return m, tea.Quit
+			// Esc does nothing in normal chat mode.
+			// Use ctrl+c to quit.
+			return m, nil
 
 		case "ctrl+y":
 			for i := len(m.messages) - 1; i >= 0; i-- {
