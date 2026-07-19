@@ -1040,7 +1040,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Help overlay: dismiss with any key
 		if m.showHelp {
 			m.showHelp = false
-			m.refreshViewport()
+			m.adjustViewport()
 			return m, nil
 		}
 
@@ -1150,7 +1150,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Help):
 			if !m.commandMode && !m.modelMode {
 				m.showHelp = true
-				m.refreshViewport()
+				m.adjustViewport()
 			}
 			return m, nil
 
