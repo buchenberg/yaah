@@ -54,10 +54,10 @@ CLI that consumes them is more useful than another walled garden.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/buchenberg/yaah/main/install.sh | sh
 ```
+
 ### Windows — PowerShell one-liner
 
 ```powershell
-
 iwr -useb https://raw.githubusercontent.com/buchenberg/yaah/main/install.ps1 | iex
 ```
 ### From source (Go 1.25+ required)
@@ -68,41 +68,68 @@ go install github.com/buchenberg/yaah@latest
 
 ## Quick start
 
+Check your setup, then add a provider API key:
+
 ```bash
-# 1. Check your setup
 yaah doctor
+```
 
-# 2. Edit your config (add a provider API key)
+```bash
 yaah config edit
+```
 
-# 3. Start the REPL
+Start chatting — interactive REPL, one-shot prompt, or the rich TUI:
+
+```bash
 yaah
+```
 
-# 3a. Or launch the rich TUI (bubbletea)
-yaah tui
-
-# 4. Try a one-shot prompt with streaming
+```bash
 yaah "explain this codebase"
+```
 
-# 5. Check for updates
-yaah update
+```bash
+yaah tui
+```
 
-# 6. Override approval (for headless / CI)
+Headless / CI (override approval), check for updates, or resume a session:
+
+```bash
 yaah --approval allow "write a script"
-YAAH_APPROVAL=allow yaah "run the tests"
+```
 
-# 7. Resume a previous session
+```bash
+YAAH_APPROVAL=allow yaah "run the tests"
+```
+
+```bash
+yaah update
+```
+
+```bash
 yaah --resume <session-id> "continue where we left off"
-yaah session list                        # find session IDs
+```
+
+```bash
+yaah session list
 ```
 
 ### MCP servers
-Register MCP servers for additional tool capabilities:
+List, add (stdio or HTTP), and remove MCP servers:
 
 ```bash
-yaah mcp list                                    # list registered servers
-yaah mcp add <name> <command> [args...]          # stdio server
-yaah mcp add <name> --url http://localhost:3000   # HTTP server
+yaah mcp list
+```
+
+```bash
+yaah mcp add <name> <command> [args...]
+```
+
+```bash
+yaah mcp add <name> --url http://localhost:3000
+```
+
+```bash
 yaah mcp remove <name>
 ```
 
@@ -111,6 +138,9 @@ SQLite + FTS5 memory that persists across sessions:
 
 ```bash
 yaah memory add "user prefers dark mode" --tags '["ui"]'
+```
+
+```bash
 yaah memory search "dark mode"
 ```
 
@@ -139,9 +169,15 @@ is persisted to SQLite in real time as the agent loop runs. If the process
 crashes mid-conversation, all messages up to that point are recoverable.
 
 ```bash
-yaah session list                         # list recent sessions
-yaah session show <id>                    # view messages in a session
-yaah --resume <id> "pick up where we left off"  # resume a session
+yaah session list
+```
+
+```bash
+yaah session show <id>
+```
+
+```bash
+yaah --resume <id> "pick up where we left off"
 ```
 
 Sessions survive process restarts. Use `--resume` to continue a conversation
@@ -169,36 +205,115 @@ The global approval mode can be overridden at runtime for headless or CI
 environments:
 
 ```bash
-yaah --approval allow "run the tests"     # allow all destructive tools
-YAAH_APPROVAL=allow yaah "deploy"         # via environment variable
+yaah --approval allow "run the tests"
+```
+
+```bash
+YAAH_APPROVAL=allow yaah "deploy"
 ```
 
 Invalid values fall back to `ask` with a warning.
 
 ## Commands
 
+Start yaah — interactive REPL or one-shot:
+
+```bash
+yaah
 ```
-yaah                          # interactive REPL with splash screen
-yaah "prompt"                 # one-shot with streaming
-yaah --approval allow "..."   # one-shot with approval override
-yaah --resume <id> "..."     # resume a previous session
-yaah config show              # effective config (secrets redacted)
-yaah config edit              # scaffold or edit ~/.yaah/config.yaml
-yaah doctor                   # diagnose installation
-yaah skill list               # discover skills
-yaah skill show <name>        # show skill content
-yaah mcp list                 # list registered MCP servers
-yaah mcp add <name> <cmd> [args...]  # register stdio MCP server
-yaah mcp add <name> --url <url>      # register HTTP MCP server
-yaah mcp remove <name>        # remove MCP server
-yaah memory add <text>        # add persistent memory note
-yaah memory search <query>    # search memory (FTS5)
-yaah session list             # list recent sessions
-yaah session show <id>        # show session details
-yaah tui                      # launch bubbletea TUI
-yaah update                   # check for newer release
-yaah update check             # check without interactive prompt
-yaah version                  # version, commit, build date
+
+```bash
+yaah "prompt"
+```
+
+With approval override or session resume:
+
+```bash
+yaah --approval allow "..."
+```
+
+```bash
+yaah --resume <id> "..."
+```
+
+Config and diagnostics:
+
+```bash
+yaah config show
+```
+
+```bash
+yaah config edit
+```
+
+```bash
+yaah doctor
+```
+
+Skills:
+
+```bash
+yaah skill list
+```
+
+```bash
+yaah skill show <name>
+```
+
+MCP servers:
+
+```bash
+yaah mcp list
+```
+
+```bash
+yaah mcp add <name> <cmd> [args...]
+```
+
+```bash
+yaah mcp add <name> --url <url>
+```
+
+```bash
+yaah mcp remove <name>
+```
+
+Memory:
+
+```bash
+yaah memory add <text>
+```
+
+```bash
+yaah memory search <query>
+```
+
+Sessions:
+
+```bash
+yaah session list
+```
+
+```bash
+yaah session show <id>
+```
+
+TUI, updates, version:
+
+```bash
+yaah tui
+```
+
+```bash
+yaah update
+```
+
+```bash
+yaah update check
+```
+
+```bash
+yaah version
 ```
 
 ## Where things live
@@ -291,17 +406,26 @@ Run `yaah doctor` to see which editor is active and how it was resolved.
 
 ```bash
 go build .
+```
 
-# Optimized binary
+Optimized binary (stripped, no debug info):
+
+```bash
 go build -trimpath -ldflags '-s -w' -o yaah .
 ```
 
 ### Test
 
 ```bash
-go test ./...       # all tests
-go vet ./...        # vet
-gofmt -l .          # must be empty (no unformatted files)
+go test ./...
+```
+
+```bash
+go vet ./...
+```
+
+```bash
+gofmt -l .
 ```
 
 ### Lint
@@ -324,7 +448,12 @@ GOOS=windows GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o dist/yaah-windo
 
 ```bash
 go build -trimpath -ldflags '-s -w' -o yaah .
-ditto --norsrc yaah ~/.local/bin/yaah  # macOS: avoids Gatekeeper quarantine
+```
+
+On macOS use `ditto` instead of `cp` to avoid Gatekeeper quarantine:
+
+```bash
+ditto --norsrc yaah ~/.local/bin/yaah
 ```
 
 ### Repo layout
@@ -376,10 +505,19 @@ agent loop, middleware pipeline, tool execution, streaming, and context compacti
 ### Tests
 
 ```bash
-go test ./...                 # all tests
-go test -race ./...           # with race detector
-go test -v ./internal/agent/  # verbose agent tests
-go test -cover ./...          # with coverage
+go test ./...
+```
+
+```bash
+go test -race ./...
+```
+
+```bash
+go test -v ./internal/agent/
+```
+
+```bash
+go test -cover ./...
 ```
 
 Tests live next to the code they test (`foo.go` ↔ `foo_test.go`) and use
