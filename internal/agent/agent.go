@@ -516,6 +516,21 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			taskPrompt := l.formatToolCallsForExecutor(msg)
 			innerResult, exhausted, innerErr := l.innerLoop(turnCtx, taskPrompt, step.Tools)
 
+			// Inject tool result messages for the outer model's original
+			// tool calls so the conversation history satisfies the OpenAI
+			// requirement: every assistant message with tool_calls must be
+			// followed by tool messages responding to each tool_call_id.
+			for _, tc := range msg.ToolCalls {
+				tr := types.Message{
+					Role:       "tool",
+					Content:    "[handled by inner executor]",
+					ToolCallID: tc.ID,
+					Name:       tc.Function.Name,
+				}
+				messages = append(messages, tr)
+				l.persistMessage(tr)
+			}
+
 			summary := innerResult
 			if innerErr != nil {
 				summary = fmt.Sprintf("Inner executor error: %v", innerErr)
