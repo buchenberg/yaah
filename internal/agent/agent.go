@@ -654,13 +654,31 @@ func (l *Loop) applyDefaults() {
 // together within a single outer-loop turn. Returns the final text response
 // and flag indicating whether the inner loop exhausted its iteration budget.
 func (l *Loop) innerLoop(ctx context.Context, taskPrompt string, tools []types.ToolDef) (string, bool, error) {
+	var innerSpan trace.Span
+	if l.OtelEnabled {
+		ctx, innerSpan = observability.StartInnerLoop(ctx, taskPrompt)
+		defer innerSpan.End()
+	}
+
 	provider := l.ExecutorProvider
+	hasOwnProvider := provider != nil
 	if provider == nil {
 		provider = l.Provider // fall back to main provider
 	}
 	model := l.ExecutorModel
 	if model == "" {
 		model = l.Model
+	}
+
+	// Set provider/model on the span for Jaeger visibility.
+	if innerSpan != nil {
+		innerSpan.SetAttributes(
+			attribute.String("inner.model", model),
+			attribute.Bool("inner.dedicated_provider", hasOwnProvider),
+		)
+		if l.Model != "" {
+			innerSpan.SetAttributes(attribute.String("outer.model", l.Model))
+		}
 	}
 
 	// Build a focused context: system prompt + task directive only.
@@ -694,6 +712,9 @@ func (l *Loop) innerLoop(ctx context.Context, taskPrompt string, tools []types.T
 		}
 
 		if err != nil {
+			if innerSpan != nil {
+				observability.FinishInnerLoop(innerSpan, iter+1, false, err)
+			}
 			return "", false, fmt.Errorf("inner loop: %w", err)
 		}
 
@@ -701,6 +722,9 @@ func (l *Loop) innerLoop(ctx context.Context, taskPrompt string, tools []types.T
 
 		// No tool calls — inner loop is done, return the text content.
 		if len(msg.ToolCalls) == 0 {
+			if innerSpan != nil {
+				observability.FinishInnerLoop(innerSpan, iter+1, false, nil)
+			}
 			return msg.Content, false, nil
 		}
 
@@ -714,11 +738,17 @@ func (l *Loop) innerLoop(ctx context.Context, taskPrompt string, tools []types.T
 				Name:       tc.Function.Name,
 			})
 			if result.err != nil {
+				if innerSpan != nil {
+					observability.FinishInnerLoop(innerSpan, iter+1, false, result.err)
+				}
 				return "", false, fmt.Errorf("inner loop tool %q: %w", tc.Function.Name, result.err)
 			}
 		}
 	}
 
+	if innerSpan != nil {
+		observability.FinishInnerLoop(innerSpan, l.MaxInnerIterations, true, nil)
+	}
 	return "", true, fmt.Errorf("inner loop exhausted after %d iterations", l.MaxInnerIterations)
 }
 
@@ -729,9 +759,21 @@ func (l *Loop) executeOneTool(ctx context.Context, tc types.ToolCall) toolExecRe
 	if t == nil {
 		return toolExecResult{err: fmt.Errorf("tool %q not found", tc.Function.Name)}
 	}
+
+	var toolSpan trace.Span
+	if l.OtelEnabled {
+		ctx, toolSpan = observability.StartTool(ctx, tc.Function.Name, tc.Function.Arguments)
+		defer toolSpan.End()
+	}
+
 	start := time.Now()
 	result, err := t.Execute(ctx, tc.Function.Arguments)
 	dur := time.Since(start)
+
+	if toolSpan != nil {
+		observability.FinishTool(toolSpan, result, err)
+	}
+
 	return toolExecResult{
 		callID:  tc.ID,
 		name:    tc.Function.Name,
