@@ -16,6 +16,7 @@ import (
 type StreamChunk struct {
 	ID      string         `json:"id"`
 	Choices []StreamChoice `json:"choices"`
+	Usage   *types.Usage   `json:"usage,omitempty"`
 }
 
 // StreamChoice represents a choice within a stream chunk.
@@ -38,6 +39,7 @@ type StreamDelta struct {
 // The request's Stream field is set to true (the caller's struct is mutated).
 func (c *OpenAIClient) SendStream(ctx context.Context, req types.ChatRequest) (<-chan StreamChunk, <-chan error) {
 	req.Stream = true
+	req.StreamOptions = &types.StreamOptions{IncludeUsage: true}
 
 	chunks := make(chan StreamChunk, 64)
 	errs := make(chan error, 1)

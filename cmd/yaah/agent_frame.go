@@ -135,6 +135,9 @@ func newAgentSession() (*agentSession, error) {
 	skillDirs := skillSearchPaths()
 	toolReg.Register(&tools.SkillTool{Dirs: skillDirs})
 
+	planDirs := planSearchPaths()
+	toolReg.Register(&tools.PlanTool{Dirs: planDirs})
+
 	var todoStore *todo.Store
 	if db != nil {
 		todoStore = todo.NewStoreWithDB(db)

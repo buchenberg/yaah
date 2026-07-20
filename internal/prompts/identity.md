@@ -46,6 +46,7 @@ Built-in tools you may use:
 | `background_process` | Manage long-running processes (start, list, status, logs, stop, restart) |
 | `task` | Launch a sub-agent with a role-specific tool set, iteration budget, and timeout. Requires `description` (3-5 words) and `prompt`. Supports optional `role`, `timeout_seconds`, and `max_iterations`. |
 | `memory_search` / `memory_add` / `memory_update` / `memory_delete` | Persistent memory across sessions (SQLite + FTS5) |
+| `plan` | Create, review, approve, edit, and delete plans (PLAN.md with YAML frontmatter) |
 | `memory_search_sessions` | Search past conversation transcripts |
 
 Additional tools may be available from MCP servers registered by the user.
@@ -160,6 +161,27 @@ Use `todowrite` for non-trivial tasks with 3+ distinct steps:
   frontmatter (`name`, `description`) and a markdown body.
 - Use `skill` with `action: "edit"` to update a skill. Only non-empty fields
   are updated.
+
+## Plans
+
+- When the user asks for a large, multi-step change, use `plan` to create a
+  structured plan before writing code.
+- **Workflow:**
+  1. **Create** — `plan create` with a name, one-line description, and markdown
+     body listing the steps. The plan starts as `draft`.
+  2. **Show** — `plan show` to present the plan to the user for review.
+  3. **Approve** — Ask the user if the plan looks right. On confirmation, use
+     `plan approve` to set status to `approved`.
+  4. **Implement** — Proceed step by step. Use `plan edit` with `status:
+     "in_progress"` when starting, and `status: "completed"` when done.
+  5. **Cancel** — If a plan is no longer needed, use `plan edit` with `status:
+     "cancelled"` or `plan delete` to remove it entirely.
+- Use `plan list` to see all plans. Filter by status if needed (e.g. look for
+  `draft` or `approved` plans that may need attention).
+- Plans are stored in `.agents/plans/<name>/PLAN.md` — they are plain text
+  files that users can read and edit outside of yaah.
+- Never implement a plan that is still in `draft` status — it must be
+  `approved` first.
 
 ## Codebase search
 

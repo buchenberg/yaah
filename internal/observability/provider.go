@@ -47,7 +47,7 @@ func (p *InstrumentedProvider) Send(ctx context.Context, req types.ChatRequest) 
 			sysLen += len(m.Content)
 		}
 	}
-	FinishLLM(span, len(req.Messages), sysLen, resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
+	FinishLLM(span, len(req.Messages), sysLen, resp.Usage)
 
 	return resp, nil
 }

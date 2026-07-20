@@ -8,6 +8,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/buchenberg/yaah/internal/types"
 )
 
 // StartPrompt creates the root span for a single user-visible question-
@@ -74,14 +76,21 @@ func StartLLM(ctx context.Context, model string) (context.Context, trace.Span) {
 }
 
 // FinishLLM records prompt/completion token counts and duration as an event.
-func FinishLLM(span trace.Span, promptLen, systemLen int, promptTokens, completionTokens int) {
-	span.AddEvent("tokens", trace.WithAttributes(
+func FinishLLM(span trace.Span, promptLen, systemLen int, usage types.Usage) {
+	attrs := []attribute.KeyValue{
 		attribute.Int("llm.messages", promptLen),
 		attribute.Int("llm.system_len", systemLen),
-		attribute.Int("llm.prompt_tokens", promptTokens),
-		attribute.Int("llm.completion_tokens", completionTokens),
-		attribute.Int("llm.total_tokens", promptTokens+completionTokens),
-	))
+		attribute.Int("llm.prompt_tokens", usage.PromptTokens),
+		attribute.Int("llm.completion_tokens", usage.CompletionTokens),
+		attribute.Int("llm.total_tokens", usage.TotalTokens),
+	}
+	if d := usage.CompletionTokensDetails; d != nil && d.ReasoningTokens > 0 {
+		attrs = append(attrs, attribute.Int("llm.reasoning_tokens", d.ReasoningTokens))
+	}
+	if d := usage.PromptTokensDetails; d != nil && d.CachedTokens > 0 {
+		attrs = append(attrs, attribute.Int("llm.cached_prompt_tokens", d.CachedTokens))
+	}
+	span.AddEvent("tokens", trace.WithAttributes(attrs...))
 }
 
 // StartStream creates a span for a streaming LLM call. The returned

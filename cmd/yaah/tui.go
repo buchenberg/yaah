@@ -285,6 +285,9 @@ func runTUI() error {
 	skillDirs := skillSearchPaths()
 	toolReg.Register(&tools.SkillTool{Dirs: skillDirs})
 
+	planDirs := planSearchPaths()
+	toolReg.Register(&tools.PlanTool{Dirs: planDirs})
+
 	procMgr := processpkg.NewManager()
 	toolReg.Register(&tools.BackgroundProcessTool{Manager: procMgr})
 

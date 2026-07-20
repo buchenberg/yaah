@@ -773,6 +773,12 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 			} else {
 				m.AddAssistantMessage(msg.Response)
 			}
+		} else if haveReasoning {
+			// Model produced reasoning but no content — commit the
+			// reasoning as the message so it is not silently discarded.
+			reasoning := m.thinkContent
+			m.thinkContent = ""
+			m.AddAssistantMessageWithReasoning("", reasoning)
 		} else {
 			m.thinkContent = ""
 		}
