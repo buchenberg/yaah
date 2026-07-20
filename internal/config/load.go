@@ -26,6 +26,14 @@ type Defaults struct {
 	MaxIterations int    `yaml:"max_iterations"`
 	ContextWindow int    `yaml:"context_window"`
 	Approval      string `yaml:"approval"`
+
+	// FallbackProvider is the provider name to use when the primary
+	// provider returns auth, billing, or rate-limit errors.
+	FallbackProvider string `yaml:"fallback_provider"`
+
+	// FallbackModel is the model name to use with FallbackProvider.
+	// When empty, the default model is used.
+	FallbackModel string `yaml:"fallback_model"`
 }
 
 // Hooks holds configuration for external integrations via JSONL hook events.

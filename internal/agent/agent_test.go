@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/agent/errorclassify"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -1194,7 +1195,7 @@ func TestIsContextOverflowError(t *testing.T) {
 			name = name[:27] + "..."
 		}
 		t.Run(name, func(t *testing.T) {
-			if !isContextOverflowError(fmtErrorf(msg)) {
+			if !errorclassify.IsContextOverflow(fmtErrorf(msg), errorclassify.ErrorMeta{}) {
 				t.Errorf("expected true for: %q", msg)
 			}
 		})
@@ -1209,7 +1210,7 @@ func TestIsContextOverflowError(t *testing.T) {
 	}
 	for _, msg := range negatives {
 		t.Run(msg, func(t *testing.T) {
-			if isContextOverflowError(fmtErrorf(msg)) {
+			if errorclassify.IsContextOverflow(fmtErrorf(msg), errorclassify.ErrorMeta{}) {
 				t.Errorf("expected false for: %q", msg)
 			}
 		})
