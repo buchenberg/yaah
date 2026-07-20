@@ -137,7 +137,7 @@ func TestLoop_plainTextResponse(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
+	loop := &Loop{DisableInnerLoop: true, 
 		Provider:      fp,
 		Registry:      reg,
 		SystemPrompt:  "You are helpful.",
@@ -188,7 +188,7 @@ func TestLoop_toolCalling(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
+	loop := &Loop{DisableInnerLoop: true, 
 		Provider:      fp,
 		Registry:      reg,
 		SystemPrompt:  "You are helpful.",
@@ -232,7 +232,7 @@ func TestLoop_hitsMaxIterations(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
+	loop := &Loop{DisableInnerLoop: true, 
 		Provider:      fp,
 		Registry:      reg,
 		SystemPrompt:  "You are helpful.",
@@ -283,7 +283,7 @@ func TestLoop_toolResultTruncation(t *testing.T) {
 	reg := tools.NewRegistry()
 	// Add a tool that returns a long result
 	reg.Register(&fakeTool{name: "echo", result: longText})
-	loop := &Loop{
+	loop := &Loop{DisableInnerLoop: true, 
 		Provider:      fp,
 		Registry:      reg,
 		SystemPrompt:  "test",
@@ -416,7 +416,7 @@ func TestLoop_loopDetection(t *testing.T) {
 
 	reg := tools.NewRegistry()
 	reg.Register(&fakeTool{name: "echo", result: "same result"})
-	loop := &Loop{
+	loop := &Loop{DisableInnerLoop: true, 
 		Provider:         fp,
 		Registry:         reg,
 		SystemPrompt:     "test",
@@ -516,7 +516,7 @@ func TestLoop_noFalsePositiveOnDifferentArgs(t *testing.T) {
 	// All writes return the same success message — but with different args.
 	reg := tools.NewRegistry()
 	reg.Register(&fakeTool{name: "write", result: "File written successfully"})
-	loop := &Loop{
+	loop := &Loop{DisableInnerLoop: true, 
 		Provider:         fp,
 		Registry:         reg,
 		SystemPrompt:     "test",
@@ -570,7 +570,7 @@ func TestLoop_parallelToolExecution(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(&fakeTool{name: "slow1", result: "result1", delay: 100 * time.Millisecond, callCnt: &cnt, mu: &mu})
 	reg.Register(&fakeTool{name: "slow2", result: "result2", delay: 100 * time.Millisecond, callCnt: &cnt, mu: &mu})
-	loop := &Loop{
+	loop := &Loop{DisableInnerLoop: true, 
 		Provider:      fp,
 		Registry:      reg,
 		SystemPrompt:  "test",
@@ -627,7 +627,7 @@ func TestLoop_retryOnError(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
+	loop := &Loop{DisableInnerLoop: true, 
 		Provider:      fp,
 		Registry:      reg,
 		SystemPrompt:  "test",
@@ -655,7 +655,7 @@ func TestLoop_retryExceedsMax(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
+	loop := &Loop{DisableInnerLoop: true, 
 		Provider:      fp,
 		Registry:      reg,
 		SystemPrompt:  "test",
@@ -688,7 +688,7 @@ func TestLoop_tokenUsageTracking(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
+	loop := &Loop{DisableInnerLoop: true, 
 		Provider:      fp,
 		Registry:      reg,
 		SystemPrompt:  "test",
@@ -715,7 +715,7 @@ func TestLoop_tokenUsageTracking(t *testing.T) {
 
 func TestLoop_contextWindowTrimming(t *testing.T) {
 	reg := tools.NewRegistry()
-	loop := &Loop{
+	loop := &Loop{DisableInnerLoop: true, 
 		Provider:      &fakeProvider{},
 		Registry:      reg,
 		SystemPrompt:  "test",
@@ -766,7 +766,7 @@ func TestLoop_thinkingCallback(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
+	loop := &Loop{DisableInnerLoop: true, 
 		Provider:      bsp,
 		Registry:      reg,
 		SystemPrompt:  "test",
@@ -800,7 +800,7 @@ func strPtr(s string) *string { return &s }
 // --- Test: Session persistence ---
 
 func TestLoop_persistMessageNilDB(t *testing.T) {
-	loop := &Loop{DB: nil, SessionID: "test"}
+	loop := &Loop{DisableInnerLoop: true, DB: nil, SessionID: "test"}
 	loop.persistMessage(types.Message{Role: "user", Content: "hello"})
 	// Should not panic
 }
@@ -817,7 +817,7 @@ func TestLoop_persistMessageToDB(t *testing.T) {
 		ID: "sess-1", StartedAt: time.Now().Unix(), CWD: "/tmp", Model: "test",
 	})
 
-	loop := &Loop{DB: db, SessionID: "sess-1"}
+	loop := &Loop{DisableInnerLoop: true, DB: db, SessionID: "sess-1"}
 	loop.persistMessage(types.Message{Role: "system", Content: "you are a bot"})
 	loop.persistMessage(types.Message{Role: "user", Content: "hello"})
 
@@ -854,7 +854,7 @@ func TestLoop_persistMessageWithToolCall(t *testing.T) {
 		ID: "sess-1", StartedAt: time.Now().Unix(), CWD: "/tmp", Model: "test",
 	})
 
-	loop := &Loop{DB: db, SessionID: "sess-1"}
+	loop := &Loop{DisableInnerLoop: true, DB: db, SessionID: "sess-1"}
 	assistantMsg := types.Message{
 		Role: "assistant",
 		ToolCalls: []types.ToolCall{{
@@ -928,7 +928,7 @@ func TestLoop_sessionPersistenceAcrossRunCalls(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
+	loop := &Loop{DisableInnerLoop: true, 
 		Provider:      fp,
 		Registry:      reg,
 		SystemPrompt:  "You are a test bot.",
@@ -1004,7 +1004,7 @@ func TestLoop_sessionPersistenceWithToolCalls(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
+	loop := &Loop{DisableInnerLoop: true, 
 		Provider:      fp,
 		Registry:      reg,
 		SystemPrompt:  "You are a test bot.",
@@ -1076,7 +1076,7 @@ func TestLoop_sessionPersistenceMultipleTurns(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
+	loop := &Loop{DisableInnerLoop: true, 
 		Provider:      fp,
 		Registry:      reg,
 		SystemPrompt:  "You are a test bot.",
@@ -1123,7 +1123,7 @@ func TestLoop_sessionPersistenceMultipleTurns(t *testing.T) {
 }
 
 func TestLoop_persistMessageNoDB(t *testing.T) {
-	loop := &Loop{DB: nil, SessionID: "test"}
+	loop := &Loop{DisableInnerLoop: true, DB: nil, SessionID: "test"}
 	loop.MsgIdx = 5
 	loop.persistMessage(types.Message{Role: "user", Content: "hello"})
 	// Should be a no-op, not increment MsgIdx
@@ -1144,7 +1144,7 @@ func TestLoop_persistMessageEmptyContent(t *testing.T) {
 		ID: "sess-1", StartedAt: time.Now().Unix(), CWD: "/tmp", Model: "test",
 	})
 
-	loop := &Loop{DB: db, SessionID: "sess-1"}
+	loop := &Loop{DisableInnerLoop: true, DB: db, SessionID: "sess-1"}
 	assistantMsg := types.Message{
 		Role:    "assistant",
 		Content: "",
@@ -1230,7 +1230,7 @@ func TestLoop_autoCompactOnContextOverflow(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
+	loop := &Loop{DisableInnerLoop: true, 
 		Provider:        fp,
 		Registry:        reg,
 		SystemPrompt:    "test prompt",
@@ -1273,7 +1273,7 @@ func TestLoop_autoCompactDoesNotTriggerOnNonContextError(t *testing.T) {
 		failErr:  fmtErrorf("authentication failed"),
 	}
 
-	loop := &Loop{
+	loop := &Loop{DisableInnerLoop: true, 
 		Provider:      fp,
 		Registry:      reg,
 		SystemPrompt:  "test",
@@ -1316,7 +1316,7 @@ func TestLoop_autoCompactCapped(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
+	loop := &Loop{DisableInnerLoop: true, 
 		Provider:            fp,
 		Registry:            reg,
 		SystemPrompt:        "test",
@@ -1383,7 +1383,7 @@ func TestConflictDetection_ReportsConflictInConversation(t *testing.T) {
 	reg := tools.NewEmptyRegistry()
 	reg.Register(&fakeTool{name: "read", result: "file contents"})
 
-	loop := &Loop{
+	loop := &Loop{DisableInnerLoop: true, 
 		Provider:        fp,
 		Registry:        reg,
 		SystemPrompt:    "test",
@@ -1452,7 +1452,7 @@ func TestConflictDetection_NoConflictWhenTrackerEmpty(t *testing.T) {
 	reg := tools.NewEmptyRegistry()
 	reg.Register(&fakeTool{name: "read", result: "file contents"})
 
-	loop := &Loop{
+	loop := &Loop{DisableInnerLoop: true, 
 		Provider:        fp,
 		Registry:        reg,
 		SystemPrompt:    "test",
@@ -1534,7 +1534,7 @@ func TestConflictDetection_TrackerClearedAfterIteration(t *testing.T) {
 	reg := tools.NewEmptyRegistry()
 	reg.Register(&fakeTool{name: "read", result: "file contents"})
 
-	loop := &Loop{
+	loop := &Loop{DisableInnerLoop: true, 
 		Provider:        fp,
 		Registry:        reg,
 		SystemPrompt:    "test",

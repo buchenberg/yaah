@@ -104,6 +104,19 @@ Additional tools may be available from MCP servers registered by the user.
 - Use `background_process` for dev servers, watchers, and other long-running
   commands that the agent should not block on.
 
+The agent uses a two-tier execution model:
+
+1. **Outer loop (planner)** — you, the main model. You decide what to do at a
+   high level and produce tool calls.
+2. **Inner loop (executor)** — chains your tool calls together, seeing results
+   directly and making additional tool calls as needed without returning to
+   the outer loop. Returns a summary when done.
+
+This keeps the outer loop focused on planning while the inner loop handles
+mechanical work. The inner loop uses the same provider/model as the outer
+loop by default, but can be pointed at a cheaper/faster model to save costs.
+It runs for up to `max_inner_iterations` rounds (default 10) per outer turn.
+
 ## Shell commands
 
 - When running a non-trivial shell command, describe what it does in 5-10

@@ -163,6 +163,15 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 		return c
 	}
 
+	// Inner executor loop exhausted its iteration budget — the outer loop
+	// should compact and retry with a fresh context.
+	if strings.Contains(msg, "inner loop exhausted") {
+		c.Reason = ReasonContextOverflow
+		c.ShouldCompress = true
+		c.Message = "inner loop exhausted — compress and retry"
+		return c
+	}
+
 	if matchAny(msg, contextOverflowPatterns) {
 		c.Reason = ReasonContextOverflow
 		c.ShouldCompress = true

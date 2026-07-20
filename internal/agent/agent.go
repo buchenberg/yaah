@@ -135,6 +135,24 @@ type Loop struct {
 	// CompactModel is the model to use for compaction. If empty, Model is used.
 	CompactModel string
 
+	// ExecutorProvider is used for the dual-loop inner executor loop.
+	// If nil, dual-loop execution is disabled (tools execute directly).
+	// Typically set to a cheaper/faster provider than the main loop.
+	ExecutorProvider Provider
+
+	// ExecutorModel is the model to use for the inner executor loop.
+	// If empty, Model is used.
+	ExecutorModel string
+
+	// MaxInnerIterations caps the number of tool-chaining rounds the
+	// inner executor loop may run per outer-loop turn. Default 10.
+	MaxInnerIterations int
+
+	// DisableInnerLoop skips the inner executor loop and falls back to
+	// direct parallel tool execution. Used in tests and when the inner
+	// loop would add overhead without benefit (e.g. single tool calls).
+	DisableInnerLoop bool
+
 	// FallbackProvider is an alternative model backend used when the
 	// primary provider returns auth, billing, or rate-limit errors.
 	// If nil, retries continue with the primary provider.
@@ -493,6 +511,27 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			return "", err
 		}
 
+		// ── Dual-loop: route tool execution through inner executor ──
+		if !l.DisableInnerLoop {
+			taskPrompt := l.formatToolCallsForExecutor(msg)
+			innerResult, exhausted, innerErr := l.innerLoop(turnCtx, taskPrompt, step.Tools)
+
+			summary := innerResult
+			if innerErr != nil {
+				summary = fmt.Sprintf("Inner executor error: %v", innerErr)
+			} else if exhausted {
+				summary += "\n\n(inner loop iteration budget exhausted)"
+			}
+			innerMsg := types.AssistantMsg(summary, nil)
+			messages = append(messages, innerMsg)
+			l.persistMessage(innerMsg)
+
+			if turnSpan != nil {
+				turnSpan.End()
+			}
+			continue
+		}
+
 		toolResults := l.executeAndCollect(turnCtx, msg.ToolCalls, &messages)
 
 		// Update step.Messages to reflect the tool results added by executeAndCollect
@@ -553,6 +592,25 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 	return "", fmt.Errorf("max iterations (%d) reached", l.MaxIterations)
 }
 
+// formatToolCallsForExecutor formats the outer model's tool calls as a task
+// prompt for the inner executor loop.
+func (l *Loop) formatToolCallsForExecutor(msg types.Message) string {
+	var sb strings.Builder
+	sb.WriteString("Execute the following task using the available tools. ")
+	sb.WriteString("Chain tools as needed — you can make multiple tool calls in sequence. ")
+	sb.WriteString("When done, summarize what you accomplished.\n\n")
+	if msg.Content != "" {
+		sb.WriteString("## Instructions\n")
+		sb.WriteString(msg.Content)
+		sb.WriteString("\n\n")
+	}
+	sb.WriteString("## Required tool calls\n")
+	for _, tc := range msg.ToolCalls {
+		sb.WriteString(fmt.Sprintf("- `%s(%s)`\n", tc.Function.Name, tc.Function.Arguments))
+	}
+	return sb.String()
+}
+
 // applyDefaults sets default values for Loop fields.
 func (l *Loop) applyDefaults() {
 	if l.MaxIterations <= 0 {
@@ -569,6 +627,103 @@ func (l *Loop) applyDefaults() {
 	}
 	if l.LoopDetectWindow <= 0 {
 		l.LoopDetectWindow = 10
+	}
+	if l.MaxInnerIterations <= 0 {
+		l.MaxInnerIterations = 10
+	}
+}
+
+// innerLoop runs a lightweight tool-chaining loop using a potentially cheaper
+// executor model. Instead of returning every tool result to the outer loop,
+// the inner model sees tool results directly and can chain multiple tool calls
+// together within a single outer-loop turn. Returns the final text response
+// and flag indicating whether the inner loop exhausted its iteration budget.
+func (l *Loop) innerLoop(ctx context.Context, taskPrompt string, tools []types.ToolDef) (string, bool, error) {
+	provider := l.ExecutorProvider
+	if provider == nil {
+		provider = l.Provider // fall back to main provider
+	}
+	model := l.ExecutorModel
+	if model == "" {
+		model = l.Model
+	}
+
+	// Build a focused context: system prompt + task directive only.
+	// The inner loop doesn't carry the full conversation history — just
+	// the current task and any tool results from its own actions.
+	messages := []types.Message{
+		types.SystemMsg(l.SystemPrompt),
+		types.UserMsg(taskPrompt),
+	}
+
+	for iter := 0; iter < l.MaxInnerIterations; iter++ {
+		req := types.ChatRequest{
+			Model:    model,
+			Messages: messages,
+			Tools:    tools,
+		}
+
+		var msg types.Message
+		var err error
+
+		if sp, ok := provider.(StreamProvider); ok {
+			msg, err = l.runStream(ctx, sp, req)
+		} else {
+			var resp *types.ChatResponse
+			resp, err = provider.Send(ctx, req)
+			if err == nil && len(resp.Choices) > 0 {
+				msg = resp.Choices[0].Message
+			} else if err == nil {
+				err = fmt.Errorf("no choices in inner loop response")
+			}
+		}
+
+		if err != nil {
+			return "", false, fmt.Errorf("inner loop: %w", err)
+		}
+
+		messages = append(messages, msg)
+
+		// No tool calls — inner loop is done, return the text content.
+		if len(msg.ToolCalls) == 0 {
+			return msg.Content, false, nil
+		}
+
+		// Execute tools and append results for the inner model to see.
+		for _, tc := range msg.ToolCalls {
+			result := l.executeOneTool(ctx, tc)
+			messages = append(messages, types.Message{
+				Role:       "tool",
+				Content:    result.content,
+				ToolCallID: tc.ID,
+				Name:       tc.Function.Name,
+			})
+			if result.err != nil {
+				return "", false, fmt.Errorf("inner loop tool %q: %w", tc.Function.Name, result.err)
+			}
+		}
+	}
+
+	return "", true, fmt.Errorf("inner loop exhausted after %d iterations", l.MaxInnerIterations)
+}
+
+// executeOneTool runs a single tool call synchronously. Used by innerLoop
+// which needs to append results to messages between model calls.
+func (l *Loop) executeOneTool(ctx context.Context, tc types.ToolCall) toolExecResult {
+	t := l.Registry.Get(tc.Function.Name)
+	if t == nil {
+		return toolExecResult{err: fmt.Errorf("tool %q not found", tc.Function.Name)}
+	}
+	start := time.Now()
+	result, err := t.Execute(ctx, tc.Function.Arguments)
+	dur := time.Since(start)
+	return toolExecResult{
+		callID:  tc.ID,
+		name:    tc.Function.Name,
+		args:    tc.Function.Arguments,
+		content: result,
+		dur:     dur,
+		err:     err,
 	}
 }
 
