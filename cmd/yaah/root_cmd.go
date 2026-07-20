@@ -549,13 +549,13 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 
 	loop.OnSubAgent = func(info agent.SubAgentInfo) {
 		if info.Duration == 0 {
-			fmt.Fprintf(os.Stderr, "\n  >>> sub-agent: %s — %s\n", Bold(info.Role), info.Prompt)
+			fmt.Fprintf(os.Stderr, "\n╭─ sub-agent: %s — %s\n", Bold(info.Role), info.Prompt)
 		} else {
 			status := "completed"
 			if info.Error != "" {
 				status = replYellow(info.Error)
 			}
-			fmt.Fprintf(os.Stderr, "  <<< sub-agent: %s — %s (%s)\n", Bold(info.Role), status, Dim(formatDuration(info.Duration)))
+			fmt.Fprintf(os.Stderr, "╰─ sub-agent: %s — %s (%s)\n", Bold(info.Role), status, Dim(formatDuration(info.Duration)))
 		}
 	}
 

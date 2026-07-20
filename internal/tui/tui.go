@@ -18,6 +18,7 @@ import (
 	zone "github.com/lrstanley/bubblezone/v2"
 
 	"github.com/buchenberg/yaah/internal/banner"
+	"github.com/buchenberg/yaah/internal/todo"
 )
 
 // Styles — declared here, initialized by ApplyTheme in theme.go.
@@ -47,6 +48,8 @@ var (
 	toolBoxStyle        lipgloss.Style
 	subAgentStartStyle  lipgloss.Style
 	subAgentEndStyle    lipgloss.Style
+	paletteTitleStyle   lipgloss.Style
+	noticeStyle         lipgloss.Style
 )
 
 // Message represents a chat message in the TUI.
@@ -81,6 +84,7 @@ type AgentMsg struct {
 	ApproveName    string            // tool name for approval display
 	ApproveArgs    string            // abbreviated tool args for approval display
 	MCPInfos       []ServerInfo      // MCP server status info (sent at startup)
+	Todos          []todo.Item       // current todo list (sent on every todowrite)
 
 	// Sub-agent lifecycle markers — sent by OnSubAgent.
 	SubAgentStart bool
@@ -210,6 +214,9 @@ type Model struct {
 
 	// --- mcp ---
 	mcpInfos []ServerInfo
+
+	// --- todos ---
+	todos []todo.Item
 
 	// --- cursor hover ---
 	hoveredZone bool // true when mouse is over a clickable zone (pointer cursor)
@@ -655,6 +662,12 @@ func (m *Model) AppendToken(token string) {
 
 // HandleAgentMsg processes messages from the agent goroutine.
 func (m *Model) HandleAgentMsg(msg AgentMsg) {
+	if msg.Todos != nil {
+		// Snapshot the latest todo list; rendered as a table when the
+		// todowrite tool result arrives (see renderToolResult).
+		m.todos = msg.Todos
+		return
+	}
 	if msg.Err != nil {
 		m.AddMessage("assistant", fmt.Sprintf("Error: %v", msg.Err))
 		m.SetThinking(false)
@@ -696,7 +709,7 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 		}
 		m.messages = append(m.messages, Message{
 			Role:    "subagent-start",
-			Content: ">>> sub-agent: " + label,
+			Content: label,
 		})
 		m.refreshViewport()
 		m.scrollToBottom()
@@ -714,7 +727,7 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 		}
 		m.messages = append(m.messages, Message{
 			Role:    "subagent-end",
-			Content: "<<< sub-agent: " + label,
+			Content: label,
 		})
 		m.refreshViewport()
 		m.scrollToBottom()
@@ -1305,10 +1318,15 @@ func (m *Model) paletteLines() int {
 			providers[parts[0]] = true
 		}
 		rowCount += len(providers)
-		if rowCount > m.maxModelLines() {
+		truncated := rowCount > m.maxModelLines()
+		if truncated {
 			rowCount = m.maxModelLines()
 		}
-		return 4 + rowCount
+		lines := 4 + rowCount
+		if truncated {
+			lines++ // overflow indicator
+		}
+		return lines
 	}
 	if !m.commandMode {
 		return 0
@@ -1415,10 +1433,7 @@ func (m *Model) adjustViewport() {
 // prefix label (e.g. "yaah: "). It returns the wrapped text with the prefix
 // applied only to the first line.
 func chatWrap(prefix, content string, width int) string {
-	maxWidth := width - len(prefix)
-	if maxWidth < 10 {
-		maxWidth = 10
-	}
+	maxWidth := max(width-len(prefix), 10)
 	wrapped := wrapText(content, maxWidth)
 	lines := strings.Split(wrapped, "\n")
 	for i, line := range lines {
@@ -1521,30 +1536,16 @@ func (m *Model) View() tea.View {
 	}
 
 	// Header: figlet banner + provider/model line (or compact if hidden)
-	var header string
-	if m.showBanner && m.banner != "" {
-		header = m.banner + "\n\n" +
-			titleStyle.Render(fmt.Sprintf("%s/%s", m.provider, m.modelName)) + "\n"
-	} else {
-		header = titleStyle.Render(fmt.Sprintf("yaah · %s/%s", m.provider, m.modelName)) + "\n\n"
-	}
+	header := NewHeader(m.banner, m.provider, m.modelName, m.showBanner).Render()
 
 	// Status bar (1 line): message count + context bar only.
 	// Provider/model is in the header; no need to duplicate.
-	var statusText string
-	ctxBar := ""
-	if m.contextWindow > 0 {
-		ctxBar = " " + contextBar(m.contextPct)
-	}
-	statusText = fmt.Sprintf(" %s │ messages: %d │%s",
-		shortenCWD(m.cwd, m.width/3), len(m.messages), ctxBar)
-	status := statusStyle.Width(m.width).Render(statusText)
+	status := NewStatusBar(m.cwd, len(m.messages), m.contextPct, m.contextWindow > 0, m.width).Render()
 
 	// Ephemeral message line (shown only when active, auto-clears)
 	var ephemLine string
 	if m.ephemMsg != "" {
-		ephemLine = statusStyle.
-			Foreground(lipgloss.Color("10")).
+		ephemLine = noticeStyle.
 			Width(m.width).
 			Render(m.ephemMsg)
 	}
@@ -1567,13 +1568,13 @@ func (m *Model) View() tea.View {
 	// Palette (shown above input when in command, model, question, or help mode)
 	var palette string
 	if m.showHelp {
-		palette = m.renderHelpOverlay()
+		palette = NewHelpOverlay(m.width).Render()
 	} else if m.questionMode {
-		palette = m.renderQuestionModal()
+		palette = NewQuestionPalette(m.questionModal, m.questionIdx, m.questionMulti, m.maxQuestionLines(), m.width).Render()
 	} else if m.modelMode {
-		palette = m.renderModelPalette()
+		palette = NewModelPalette(m.filteredModels(), m.providerNames, m.modelSelected, m.provider+"/"+m.modelName, m.maxModelLines(), m.width).Render()
 	} else if m.commandMode {
-		palette = m.renderCommandPalette()
+		palette = NewCommandPalette(m.commands, m.input.Value(), m.width).Render()
 	}
 
 	// Input (1 line)
@@ -1667,9 +1668,7 @@ func contextBar(pct int) string {
 
 // toolIndent wraps each line of content to fit within the given width.
 func toolIndent(width int, content string) string {
-	if width < 20 {
-		width = 20
-	}
+	width = max(width, 20)
 
 	lines := strings.Split(content, "\n")
 	var result strings.Builder

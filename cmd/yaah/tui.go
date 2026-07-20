@@ -208,9 +208,17 @@ func runTUI() error {
 
 	toolReg := tools.NewRegistry()
 
-	// Todo store for the session
+	agentCh := make(chan tui.AgentMsg, 256)
+
+	// Todo store for the session. OnWrite pushes the full list to the
+	// TUI so the todo panel stays current as the agent updates it.
 	todoStore := todo.NewStore()
-	toolReg.Register(&tools.TodoWriteTool{Store: todoStore})
+	toolReg.Register(&tools.TodoWriteTool{
+		Store: todoStore,
+		OnWrite: func() {
+			agentCh <- tui.AgentMsg{Todos: todoStore.List()}
+		},
+	})
 
 	db, err := memory.OpenDefault()
 	var sessionID string
@@ -280,8 +288,6 @@ func runTUI() error {
 
 	conflictTracker := &tools.ConflictTracker{}
 	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, conflictTracker))
-
-	agentCh := make(chan tui.AgentMsg, 256)
 
 	// Shared conversation history for the TUI session.
 	var messages []types.Message

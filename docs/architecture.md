@@ -286,7 +286,7 @@ Wiring chain: `reg.Names()` → `newTaskTool(…, roleNames)` → `TaskTool.Role
 
 Files: `internal/agent/agent.go`, `cmd/yaah/root_cmd.go`
 
-Sub-agent activity is rendered with `>>>` / `<<<` brackets in the CLI, distinct from ordinary tool calls.
+Sub-agent activity is rendered with `╭─` / `╰─` box-drawing corners in the CLI, distinct from ordinary tool calls.
 
 **Callbacks:**
 
@@ -298,8 +298,8 @@ Sub-agent activity is rendered with `>>>` / `<<<` brackets in the CLI, distinct 
 
 **Rendering:** The REPL's `runPrompt` sets `OnSubAgent` to print:
 ```
->>> sub-agent: worker — List directory contents
-<<< sub-agent: worker — completed (6.8s)
+╭─ sub-agent: worker — List directory contents
+╰─ sub-agent: worker — completed (6.8s)
 ```
 If a sub-agent errors, status shows the error string (styled in yellow) instead of "completed".
 
@@ -325,7 +325,7 @@ The TUI mirrors the CLI's bracketed sub-agent display through its own event mode
 
 **Data flow:** `OnSubAgent` in `runAgentForTUI` translates `agent.SubAgentInfo` into `AgentMsg` fields (`SubAgentStart`/`SubAgentEnd`, `SubAgentRole`, `SubAgentLabel`, `SubAgentDur`, `SubAgentErr`). These are sent over the `agentCh` channel to the TUI event loop.
 
-**`HandleAgentMsg`** converts sub-agent events into `Message` entries: `"subagent-start"` role with `">>> sub-agent: worker — List files"` content, and `"subagent-end"` role with `"<<< sub-agent: worker — completed (6.8s)"` content.
+**`HandleAgentMsg`** converts sub-agent events into `Message` entries: `"subagent-start"` role with the task label (e.g. `"worker — List files"`), and `"subagent-end"` role with the completion label (e.g. `"worker — completed (6.8s)"`). The `SubAgentBracket` component renders these as `╭─` / `╰─` container corners (see [TUI component system](./tui-components.md)).
 
 **`renderMessages`** handles `"subagent-start"` and `"subagent-end"` roles with `subAgentStartStyle` (bold tool color) and `subAgentEndStyle` (tool color). The task tool header in the `"tool"` case uses `matchJSONField` to extract `role` and `description` from tool args JSON, displaying e.g. `"sub-agent: worker — List files"` instead of the generic `"sub-agent"`.
 
@@ -640,11 +640,9 @@ The TUI is a [bubbletea](https://github.com/charmbracelet/bubbletea) application
 
 **Command palette:** Typing `:` in the TUI opens a command palette (`:help`, `:clear`, `:compact`, `:banner`, `:model`, `:quit`). `:model` queries providers' model lists and filters live.
 
-Deeper walkthroughs of the TUI component design, refactoring approach, and visual layout are in the TUI-specific docs:
-
-- [TUI component design proposal](./tui-component-design.md)
-- [TUI refactoring examples](./tui-refactoring-example.md)
-- [TUI summary](./tui-summary.md)
+The TUI renders through a component system — stateless renderers for
+messages, expandables, palettes, header, and status bar, all styled from the
+shared theme. Full reference: [TUI component system](./tui-components.md).
 
 ---
 

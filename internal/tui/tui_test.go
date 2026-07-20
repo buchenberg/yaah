@@ -1109,6 +1109,36 @@ func TestRenderReasoningExpanded_MessageLevel(t *testing.T) {
 	}
 }
 
+func TestRenderReasoningMarkdownFormatted(t *testing.T) {
+	m := &Model{width: 80, reasoningExpanded: map[string]bool{"reasoning-0": true}}
+	m.createRenderer()
+	m.messages = []Message{
+		{Role: "assistant", Content: "response", Reasoning: "Let me think:\n\n```\ncode here\n```"},
+	}
+
+	output := stripANSI(m.renderMessages())
+
+	if !strings.Contains(output, "code here") {
+		t.Errorf("expected reasoning content in output, got: %q", output)
+	}
+	if strings.Contains(output, "```") {
+		t.Errorf("raw markdown fences should be rendered away, got: %q", output)
+	}
+}
+
+func TestRenderReasoningMarkdownPreservedOnRaw(t *testing.T) {
+	m := &Model{width: 80, reasoningExpanded: map[string]bool{"reasoning-0": true}}
+	m.messages = []Message{
+		{Role: "assistant", Content: "response", Reasoning: "step 1 step 2"},
+	}
+
+	output := m.renderMessages()
+
+	if !strings.Contains(output, "step 1 step 2") {
+		t.Errorf("plain reasoning should still render, got: %q", output)
+	}
+}
+
 func TestRenderReasoningActiveThinking(t *testing.T) {
 	m := &Model{width: 80}
 	m.thinking = true
@@ -1323,7 +1353,7 @@ func TestRenderQuestionModal(t *testing.T) {
 	m.questionIdx = 0
 	m.questionMulti = make([]bool, 2)
 
-	output := m.renderQuestionModal()
+	output := NewQuestionPalette(m.questionModal, m.questionIdx, m.questionMulti, m.maxQuestionLines(), m.width).Render()
 
 	if !strings.Contains(output, "Next step") {
 		t.Errorf("output should contain header: %q", output)
@@ -1350,7 +1380,7 @@ func TestRenderQuestionModalMultiSelect(t *testing.T) {
 	}
 	m.questionMulti = []bool{true, false}
 
-	output := m.renderQuestionModal()
+	output := NewQuestionPalette(m.questionModal, m.questionIdx, m.questionMulti, m.maxQuestionLines(), m.width).Render()
 
 	if !strings.Contains(output, "☑") {
 		t.Errorf("multi-select output should contain checked box: %q", output)

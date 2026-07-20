@@ -5,8 +5,6 @@ import (
 	"regexp"
 	"strings"
 
-	"charm.land/bubbles/v2/key"
-
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/list"
@@ -204,6 +202,12 @@ func (m *Model) renderToolResult(toolName, content string) string {
 	if content == "" {
 		return ""
 	}
+	if toolName == "todowrite" {
+		if table := NewTodoTable(m.todos, m.width-8).Render(); table != "" {
+			return table
+		}
+		// No snapshot available — fall through to plain text.
+	}
 	if toolName == "task" {
 		return m.renderMarkdown(content)
 	}
@@ -340,73 +344,30 @@ func (m *Model) renderMessages() string {
 	for msgIdx, msg := range m.messages {
 		switch msg.Role {
 		case "user":
-			rendered := userStyle.Render(chatWrap("", msg.Content, m.width))
-			b.WriteString(userBgStyle.Width(m.width).Render(rendered))
-			b.WriteString("\n")
+			b.WriteString(NewUserMessage(msg.Content, m.width).Render())
 
 		case "assistant":
 			if msg.Reasoning != "" {
 				b.WriteString("\n")
 				zoneID := fmt.Sprintf("reasoning-%d", msgIdx)
 				m.reasoningZones = append(m.reasoningZones, zoneID)
-				if !m.reasoningExpanded[zoneID] {
-					b.WriteString(zone.Mark(zoneID, toggleStyle.Render("  ▶ Reasoning...")))
-					b.WriteString("\n")
-				} else {
-					b.WriteString(zone.Mark(zoneID, toggleStyle.Render("  ▼ Reasoning...")))
-					b.WriteString("\n\n")
-					b.WriteString(reasoningBgStyle.Width(m.width).Render(
-						thinkingStyle.Render(chatWrap("", msg.Reasoning, m.width))))
-					b.WriteString("\n")
-				}
+				b.WriteString(NewExpandableSection(zoneID, "Reasoning...", m.reasoningExpanded[zoneID], m.renderMarkdown(msg.Reasoning), m.width, reasoningBgStyle, thinkingStyle).AsPreWrapped().Render())
 			}
 			if msg.Content != "" {
 				b.WriteString("\n")
-				b.WriteString(assistantStyle.Render(msg.Content))
+				b.WriteString(NewAssistantMessage(msg.Content).Render())
 				b.WriteString("\n\n")
 			} else {
 				b.WriteString("\n")
 			}
 
 		case "subagent-start":
-			b.WriteString(subAgentStartStyle.Render("  " + msg.Content))
-			b.WriteString("\n")
+			b.WriteString(NewSubAgentBracket(msg.Content, true).Render())
 
 		case "subagent-end":
-			b.WriteString(subAgentEndStyle.Render("  " + msg.Content))
-			b.WriteString("\n")
+			b.WriteString(NewSubAgentBracket(msg.Content, false).Render())
 
 		case "tool":
-			// Build a header from the tool name and args.
-			header := msg.ToolName
-			if msg.ToolName == "task" && msg.ToolArgs != "" {
-				desc := matchJSONField(msg.ToolArgs, "description")
-				role := matchJSONField(msg.ToolArgs, "role")
-				switch {
-				case role != "" && desc != "":
-					header = "sub-agent: " + role + " — " + desc
-				case desc != "":
-					header = "sub-agent — " + desc
-				case role != "":
-					header = "sub-agent: " + role
-				default:
-					header = "sub-agent"
-				}
-			} else if msg.ToolName == "webfetch" && msg.ToolArgs != "" {
-				re := regexp.MustCompile(`"url"\s*:\s*"([^"]*)"`)
-				if match := re.FindStringSubmatch(msg.ToolArgs); len(match) > 1 && match[1] != "" {
-					header = "web_fetch → " + match[1]
-				}
-			} else if msg.ToolName == "bash" && msg.ToolArgs != "" {
-				header = "bash — " + msg.ToolArgs
-			}
-
-			// Icon: ⏳ if still running, ✓ if completed.
-			icon := "✓"
-			if m.toolCall == msg.ToolName {
-				icon = "⏳"
-			}
-
 			zoneID := fmt.Sprintf("tool-%d", msgIdx)
 			m.toolZones = append(m.toolZones, zoneID)
 
@@ -416,55 +377,10 @@ func (m *Model) renderMessages() string {
 				expanded = m.toolCall == msg.ToolName
 			}
 
-			if expanded {
-				b.WriteString(zone.Mark(zoneID, toolStyle.Render(fmt.Sprintf("  ▼ %s %s", icon, header))))
-				b.WriteString("\n")
-				// Wrap in a bordered box constrained to viewport width.
-				boxWidth := m.width - 4 // leave margin for indent
-				if boxWidth < 20 {
-					boxWidth = 20
-				}
-				// Inner content width: boxWidth minus border (2) and padding (2).
-				innerWidth := boxWidth - 4
-				if innerWidth < 10 {
-					innerWidth = 10
-				}
-				// Tool output content — wrap to the inner box width so lines
-				// don't get re-wrapped by lipgloss (which would double the
-				// visual line count and overflow the viewport).
-				indented := toolIndent(innerWidth, msg.Content)
-				// Cap visible lines to prevent overflow past footer/prompt.
-				// Reserve 4 lines for box borders (2), header line, and truncation notice.
-				maxLines := m.viewport.Height()/3 - 4
-				if maxLines < 4 {
-					maxLines = 4
-				}
-				if maxLines > 24 {
-					maxLines = 24
-				}
-				indentedLines := strings.Split(indented, "\n")
-				totalLines := len(indentedLines)
-				var visible string
-				if totalLines > maxLines {
-					// Show the last maxLines lines with a truncation header.
-					tail := indentedLines[totalLines-maxLines:]
-					omitted := totalLines - maxLines
-					headerLine := toolStyle.Render(fmt.Sprintf("  ··· %d more lines above ···", omitted))
-					visible = headerLine + "\n" + strings.Join(tail, "\n")
-				} else {
-					visible = indented
-				}
-				b.WriteString(toolBoxStyle.Width(boxWidth).Render(visible))
-			} else {
-				b.WriteString(zone.Mark(zoneID, toolStyle.Render(fmt.Sprintf("  ▶ %s %s", icon, header))))
-			}
-			b.WriteString("\n")
+			b.WriteString(NewToolMessage(zoneID, msg.ToolName, msg.ToolArgs, msg.Content, m.width, m.viewport.Height(), expanded, m.toolCall == msg.ToolName).Render())
 
 		default:
-			rendered := chatWrap("", msg.Content, m.width)
-			rendered = systemBgStyle.Width(m.width).Render(systemStyle.Render(rendered))
-			b.WriteString(rendered)
-			b.WriteString("\n")
+			b.WriteString(NewSystemMessage(msg.Content, m.width).Render())
 		}
 	}
 
@@ -475,7 +391,7 @@ func (m *Model) renderMessages() string {
 			b.WriteString(rendered)
 			b.WriteString("\n\n")
 			b.WriteString(reasoningBgStyle.Width(m.width).Render(
-				thinkingStyle.Render(chatWrap("", m.thinkContent, m.width))))
+				thinkingStyle.Render(m.renderMarkdown(m.thinkContent))))
 		} else {
 			m.reasoningZones = append(m.reasoningZones, "reasoning-live")
 			if !m.reasoningExpanded["reasoning-live"] {
@@ -485,7 +401,7 @@ func (m *Model) renderMessages() string {
 				b.WriteString(zone.Mark("reasoning-live", toggleStyle.Render("  ▼ Reasoning...")))
 				b.WriteString("\n")
 				b.WriteString(reasoningBgStyle.Width(m.width).Render(
-					thinkingStyle.Render(chatWrap("", m.thinkContent, m.width))))
+					thinkingStyle.Render(m.renderMarkdown(m.thinkContent))))
 			}
 			b.WriteString("\n")
 		}
@@ -507,214 +423,6 @@ func (m *Model) renderMessages() string {
 	}
 
 	return b.String()
-}
-
-// renderModelPalette renders the model selection list above the input.
-func (m *Model) renderModelPalette() string {
-	filtered := m.filteredModels()
-	if len(filtered) == 0 {
-		return commandPaletteStyle.Render("No matching models")
-	}
-
-	// Build display rows: provider heading + model items
-	type row struct {
-		isHeading bool
-		text      string
-		modelIdx  int
-	}
-	var rows []row
-	lastProvider := ""
-	for i, model := range filtered {
-		parts := strings.SplitN(model, "/", 2)
-		providerKey := parts[0]
-		name := model
-		if len(parts) == 2 {
-			name = parts[1]
-		}
-		if providerKey != lastProvider {
-			displayName := providerKey
-			if m.providerNames != nil {
-				if dn, ok := m.providerNames[providerKey]; ok && dn != "" {
-					displayName = dn
-				}
-			}
-			rows = append(rows, row{isHeading: true, text: displayName})
-			lastProvider = providerKey
-		}
-		rows = append(rows, row{text: name, modelIdx: i})
-	}
-
-	selectedRowIdx := 0
-	for i, r := range rows {
-		if r.modelIdx == m.modelSelected {
-			selectedRowIdx = i
-			break
-		}
-	}
-
-	maxVisible := m.maxModelLines()
-	start := selectedRowIdx - maxVisible/2
-	if start < 0 {
-		start = 0
-	}
-	end := start + maxVisible
-	if end > len(rows) {
-		end = len(rows)
-		start = end - maxVisible
-		if start < 0 {
-			start = 0
-		}
-	}
-
-	current := m.provider + "/" + m.modelName
-	var lines []string
-	for i := start; i < end; i++ {
-		r := rows[i]
-		if r.isHeading {
-			lines = append(lines, commandNameStyle.Render(r.text))
-			continue
-		}
-		model := filtered[r.modelIdx]
-		marker := "  "
-		if r.modelIdx == m.modelSelected {
-			marker = "> "
-		}
-		styled := listItemStyle.Render(r.text)
-		if model == current {
-			styled = commandNameStyle.Render(r.text + " (current)")
-		}
-		lines = append(lines, "  "+marker+styled)
-	}
-
-	return commandPaletteStyle.Render(strings.Join(lines, "\n"))
-}
-
-// renderCommandPalette renders the command suggestion list above the input.
-func (m *Model) renderCommandPalette() string {
-	filter := strings.TrimPrefix(strings.TrimSpace(m.input.Value()), ":")
-	filter = strings.ToLower(filter)
-
-	var visible []Command
-	for _, c := range m.commands {
-		name := strings.TrimPrefix(c.Name, ":")
-		if filter == "" || strings.HasPrefix(strings.ToLower(name), filter) {
-			visible = append(visible, c)
-		}
-	}
-
-	var lines []string
-	for _, c := range visible {
-		name := commandNameStyle.Render(c.Name)
-		desc := commandDescStyle.Render(c.Description)
-		lines = append(lines, name+" "+desc)
-	}
-
-	if len(lines) == 0 {
-		return ""
-	}
-
-	return commandPaletteStyle.Width(m.width).Render(strings.Join(lines, "\n"))
-}
-
-// renderQuestionModal renders the interactive question dialog.
-func (m *Model) renderQuestionModal() string {
-	contentWidth := m.width - 6
-	if contentWidth < 20 {
-		contentWidth = 20
-	}
-
-	var lines []string
-	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(listBulletStyle.GetForeground()).Render(chatWrap("", m.questionModal.Header, contentWidth)))
-	lines = append(lines, "")
-	lines = append(lines, chatWrap("", m.questionModal.Question, contentWidth))
-	lines = append(lines, "")
-
-	maxVisible := m.maxQuestionLines()
-	start := m.questionIdx - maxVisible/2
-	if start < 0 {
-		start = 0
-	}
-	end := start + maxVisible
-	if end > len(m.questionModal.Options) {
-		end = len(m.questionModal.Options)
-		start = end - maxVisible
-		if start < 0 {
-			start = 0
-		}
-	}
-
-	for i := start; i < end; i++ {
-		opt := m.questionModal.Options[i]
-		prefix := "  "
-		if m.questionModal.Multiple {
-			if m.questionMulti[i] {
-				prefix = " ☑ "
-			} else {
-				prefix = " ☐ "
-			}
-		} else {
-			if i == m.questionIdx {
-				prefix = " ▶ "
-			}
-		}
-		fullLine := prefix + opt.Label
-		if opt.Description != "" {
-			fullLine += " — " + opt.Description
-		}
-		wrapped := chatWrap(prefix, fullLine[len(prefix):], contentWidth)
-		lines = append(lines, zone.Mark(fmt.Sprintf("question-opt-%d", i), listItemStyle.Render(wrapped)))
-	}
-
-	if start > 0 || end < len(m.questionModal.Options) {
-		lines = append(lines, commandDescStyle.Render(fmt.Sprintf("  (%d-%d of %d)", start+1, end, len(m.questionModal.Options))))
-	}
-
-	lines = append(lines, "")
-	help := "↑↓ navigate · Enter select · Esc cancel"
-	if m.questionModal.Multiple {
-		help += " · Space toggle"
-	}
-	lines = append(lines, commandDescStyle.Render(help))
-
-	return commandPaletteStyle.Width(m.width).Render(strings.Join(lines, "\n"))
-}
-
-// renderHelpOverlay renders a full help screen with all keybindings.
-func (m *Model) renderHelpOverlay() string {
-	contentWidth := m.width - 6
-	if contentWidth < 30 {
-		contentWidth = 30
-	}
-
-	var lines []string
-	lines = append(lines, boldStyle.Render("Keybindings"))
-	lines = append(lines, "")
-
-	type group struct {
-		title    string
-		bindings []key.Binding
-	}
-	groups := []group{
-		{"Navigation", []key.Binding{keys.Up, keys.Down, keys.PageUp, keys.PageDown, keys.Top, keys.Bottom}},
-		{"Actions", []key.Binding{keys.Search, keys.Copy, keys.Reasoning, keys.Help}},
-		{"Input", []key.Binding{keys.Submit, keys.Cancel}},
-		{"Commands", []key.Binding{keys.Commands}},
-		{"System", []key.Binding{keys.Quit}},
-	}
-
-	for _, g := range groups {
-		lines = append(lines, boldStyle.Render(g.title))
-		for _, b := range g.bindings {
-			keys := strings.Join(b.Keys(), ", ")
-			line := fmt.Sprintf("  %-18s %s", keys, b.Help().Desc)
-			lines = append(lines, chatWrap("", line, contentWidth))
-		}
-		lines = append(lines, "")
-	}
-
-	lines = append(lines, commandDescStyle.Render("Press any key to close"))
-
-	return commandPaletteStyle.Width(m.width).Render(strings.Join(lines, "\n"))
 }
 
 // renderMCPStatus builds a status string for all discovered MCP servers.
