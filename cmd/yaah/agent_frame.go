@@ -255,7 +255,7 @@ func (s *agentSession) compactContext() {
 		return
 	}
 
-	window := s.cfg.Default.ContextWindow
+	window := s.cfg.Agent.Default.ContextWindow
 	if window <= 0 {
 		window = 128000
 	}
@@ -344,8 +344,8 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		Registry:               s.toolReg,
 		Model:                  s.modelName,
 		SystemPrompt:           s.systemPrompt,
-		MaxIterations:          s.cfg.Default.MaxIterations,
-		ContextWindow:          s.cfg.Default.ContextWindow,
+		MaxIterations:          s.cfg.Agent.Default.MaxIterations,
+		ContextWindow:          s.cfg.Agent.Default.ContextWindow,
 		ApprovalMode:           resolveApproval(s.cfg),
 		Messages:               s.messages,
 		HookDir:                s.cfg.Hooks.Dir,

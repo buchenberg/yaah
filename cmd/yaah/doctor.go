@@ -50,6 +50,7 @@ func runChecks() []check {
 
 	return []check{
 		checkConfigFile(cfgPath, cfg, cfgErr, pathErr),
+		checkOldConfig(cfgPath),
 		checkProvider(cfg, cfgErr),
 		checkModel(cfg, cfgErr),
 		checkExecutor(cfg, cfgErr),
@@ -83,8 +84,26 @@ func checkConfigFile(path string, cfg *config.Config, cfgErr, pathErr error) che
 	if cfgErr != nil {
 		return check{Label: "Config file", Status: "FAIL", Detail: cfgErr.Error()}
 	}
-	detail := fmt.Sprintf("%s (model: %s, %d provider(s))", path, cfg.Default.Model, len(cfg.Providers))
+	detail := fmt.Sprintf("%s (model: %s, %d provider(s))", path, cfg.Agent.Default.Model, len(cfg.Providers))
 	return check{Label: "Config file", Status: "OK", Detail: detail}
+}
+
+func checkOldConfig(path string) check {
+	if path == "" {
+		return check{Label: "Config format", Status: "OK", Detail: "no config file"}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return check{Label: "Config format", Status: "OK", Detail: "cannot read"}
+	}
+	if config.HasOldConfig(data) {
+		return check{
+			Label:  "Config format",
+			Status: "WARN",
+			Detail: "old-style config detected — rename 'default:' to 'agents: default:' and 'agent:' to 'agents:'",
+		}
+	}
+	return check{Label: "Config format", Status: "OK", Detail: "agents.* format"}
 }
 
 func checkProvider(cfg *config.Config, cfgErr error) check {
@@ -95,7 +114,7 @@ func checkProvider(cfg *config.Config, cfgErr error) check {
 		return check{Label: "Providers", Status: "FAIL", Detail: "no providers configured — add at least one provider in config.yaml"}
 	}
 
-	providerName := cfg.Default.Provider
+	providerName := cfg.Agent.Default.Provider
 	if providerName == "" {
 		providerName = resolveProviderName(cfg)
 	}
@@ -136,10 +155,10 @@ func checkModel(cfg *config.Config, cfgErr error) check {
 	if cfgErr != nil {
 		return check{Label: "Default model", Status: "WARN", Detail: "config not loaded"}
 	}
-	if cfg.Default.Model == "" {
+	if cfg.Agent.Default.Model == "" {
 		return check{Label: "Default model", Status: "FAIL", Detail: "default.model is not set"}
 	}
-	return check{Label: "Default model", Status: "OK", Detail: cfg.Default.Model}
+	return check{Label: "Default model", Status: "OK", Detail: cfg.Agent.Default.Model}
 }
 
 func checkExecutor(cfg *config.Config, cfgErr error) check {
@@ -163,7 +182,7 @@ func checkExecutor(cfg *config.Config, cfgErr error) check {
 	}
 	model := ec.Model
 	if model == "" {
-		model = cfg.Default.Model
+		model = cfg.Agent.Default.Model
 	}
 	return check{
 		Label:  "Executor",
