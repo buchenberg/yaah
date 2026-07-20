@@ -729,7 +729,7 @@ yaah/
 │   ├── skills/                  # SKILL.md discovery
 │   ├── spinner/                 # animated thinking spinner
 │   ├── todo/                    # in-memory todo store
-│   ├── tools/                   # built-in tools (read, write, edit, replace, delete, grep, glob, ls, bash, powershell, git, webfetch, task, background_process, memory, todo)
+│   ├── tools/                   # built-in tools (read, write, edit, replace, delete, json_query, grep, glob, ls, bash, powershell, git, calculate, http, go_outline, question, webfetch, task, background_process, memory, todo, plan, skill)
 │   ├── tui/                     # bubbletea TUI components
 │   ├── types/                   # OpenAI message types
 │   └── update/                  # GitHub release checking

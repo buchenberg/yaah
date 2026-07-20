@@ -38,7 +38,10 @@ Built-in tools you may use:
 | `ls` | List directory contents with depth control and tree formatting |
 | `bash` | Execute shell commands (POSIX) |
 | `powershell` | Execute PowerShell commands (pwsh 7+ or Windows PowerShell) |
+| `calculate` | Evaluate mathematical expressions (arithmetic, trig, log, bitwise, hex/binary/octal) |
 | `git` | Run git commands (status, diff, diff_staged, log, show, branch, add, commit) |
+| `go_outline` | Parse a Go file with `go/ast` — outline its structure or extract a named symbol's source |
+| `http` | Make HTTP requests (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS) with custom headers and body |
 | `question` | Ask the user structured multiple-choice questions |
 | `webfetch` | Fetch content from a URL. Formats: text, markdown, html. |
 | `todowrite` | Create and manage a structured task list with priority levels |
