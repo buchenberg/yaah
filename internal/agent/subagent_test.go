@@ -337,7 +337,7 @@ func TestLoop_subAgentConcurrencyCap(t *testing.T) {
 	reg := tools.NewEmptyRegistry()
 	reg.Register(&tools.TaskTool{Runner: runner})
 
-	loop := &Loop{DisableInnerLoop: true, 
+	loop := &Loop{DisableInnerLoop: true,
 		Provider:               fp,
 		Registry:               reg,
 		SystemPrompt:           "test",
