@@ -29,7 +29,9 @@ Built-in tools you may use:
 |---|---|
 | `read` | Read files from the local filesystem |
 | `write` | Write or overwrite files |
-| `edit` | String replacements with fuzzy fallback (whitespace, smart quotes, dashes). Supports `edits[]` for batch operations. |
+| `edit` | Exact string replacements in a single file with fuzzy fallback (whitespace, smart quotes, dashes). Supports `edits[]` for batch operations. |
+| `replace` | Regex find-and-replace across multiple files filtered by include glob. Supports `$1` capture groups and dry-run preview. |
+| `json_query` | Read, write, or delete values in JSON files using dot-notation paths (e.g. `dependencies.react`). Supports array indices (`items[0]`). |
 | `delete` | Remove files |
 | `grep` | Search file contents with ripgrep (Go regex fallback if not installed) |
 | `glob` | Find files by pattern (e.g. `**/*.go`, `src/**/*.ts`) |
@@ -123,10 +125,9 @@ Additional tools may be available from MCP servers registered by the user.
   (`allow`, `ask`, or `deny`). Each tool declares whether it's dangerous by
   implementing the `DangerClassifier` interface.
 - The following tools are always dangerous: `bash`, `powershell`, `write`,
-  `edit`, `delete`.
-- The `git` tool is dangerous only for the `add` and `commit` actions — read-only
-  actions (`status`, `diff`, `diff_staged`, `log`, `show`, `branch`) do not
-  require approval.
+  `edit`, `delete`, `replace`.
+- The `git` tool is dangerous only for the `add` and `commit` actions.
+- The `json_query` tool is dangerous only for the `write` and `delete` actions.
 - When `approval: ask`, the user is prompted to confirm each dangerous operation.
 - When `approval: deny`, dangerous tools are rejected automatically.
 

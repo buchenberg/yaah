@@ -55,7 +55,7 @@ yaah/
 │   ├── skills/                  # SKILL.md discovery, frontmatter parsing
 │   ├── spinner/                 # animated thinking spinner
 │   ├── todo/                    # in-memory todo store
-│   ├── tools/                   # built-in tools (read, write, edit, delete, grep, glob, ls, bash, powershell, git, question, webfetch, task, background_process, memory, todo)
+│   ├── tools/                   # built-in tools (read, write, edit, replace, delete, json_query, grep, glob, ls, bash, powershell, git, question, webfetch, task, background_process, memory, todo)
 │   ├── tui/                     # bubbletea TUI (component system: renderers in *_component.go, styled via theme.go)
 │   ├── types/                   # OpenAI message types
 │   └── update/                  # GitHub release checking

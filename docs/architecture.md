@@ -394,14 +394,16 @@ When a parent agent dispatches multiple parallel worker sub-agents in a single t
 
 File: `internal/tools/tools.go`
 
-`NewRegistry()` pre-registers 13 built-in tools:
+`NewRegistry()` pre-registers 15 built-in tools:
 
 | Tool | Category | Dangerous |
 |---|---|---|
 | `read` | Filesystem | No |
 | `write` | Filesystem | Always |
 | `edit` | Filesystem | Always |
+| `replace` | Filesystem | Always |
 | `delete` | Filesystem | Always |
+| `json_query` | Filesystem | Per-action |
 | `grep` | Search | No |
 | `glob` | Search | No |
 | `ls` | Filesystem | No |
@@ -451,7 +453,7 @@ type DangerClassifier interface {
 ```
 
 Tools that always require approval (`BashTool`, `PowerShellTool`, `WriteTool`,
-`EditTool`, `DeleteTool`) return `true` unconditionally. Tools with
+`EditTool`, `DeleteTool`, `ReplaceTool`) return `true` unconditionally. Tools with
 argument-level classification (`GitTool`) inspect their JSON arguments — `add`
 and `commit` are dangerous; `status`, `diff`, `log`, etc. are not. Tools that
 are never dangerous (`ReadTool`, `GrepTool`, `GlobTool`, etc.) simply don't
