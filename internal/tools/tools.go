@@ -110,6 +110,8 @@ var leafTools = map[string]func() Tool{
 	"write":      func() Tool { return &WriteTool{} },
 	"edit":       func() Tool { return &EditTool{} },
 	"delete":     func() Tool { return &DeleteTool{} },
+	"replace":    func() Tool { return &ReplaceTool{} },
+	"json_query": func() Tool { return &JSONQueryTool{} },
 	"grep":       func() Tool { return &GrepTool{} },
 	"glob":       func() Tool { return &GlobTool{} },
 	"ls":         func() Tool { return &LsTool{} },
@@ -118,6 +120,7 @@ var leafTools = map[string]func() Tool{
 	"question":   func() Tool { return &QuestionTool{} },
 	"webfetch":   func() Tool { return &WebFetchTool{} },
 	"git":        func() Tool { return &GitTool{} },
+	"http":       func() Tool { return &HTTPTool{} },
 }
 
 // NewRegistry creates a tool registry with yaah's built-in tools.
