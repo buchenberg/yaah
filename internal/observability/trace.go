@@ -2,6 +2,8 @@ package observability
 
 import (
 	"context"
+	"strings"
+	"unicode/utf8"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -15,7 +17,7 @@ import (
 func StartPrompt(ctx context.Context, prompt string) (context.Context, trace.Span) {
 	ctx, span := tracer.Start(ctx, "prompt")
 	if prompt != "" {
-		span.SetAttributes(attribute.String("prompt.text", truncate(prompt, 200)))
+		span.SetAttributes(attribute.String("prompt.text", truncate(safeString(prompt), 200)))
 	}
 	return ctx, span
 }
@@ -29,7 +31,7 @@ func StartTurn(ctx context.Context, turnNum int, prompt string) (context.Context
 		attribute.Int("turn.number", turnNum),
 	)
 	if prompt != "" {
-		span.SetAttributes(attribute.String("turn.prompt", truncate(prompt, 200)))
+		span.SetAttributes(attribute.String("turn.prompt", truncate(safeString(prompt), 200)))
 	}
 	return ctx, span
 }
@@ -42,7 +44,7 @@ func StartTool(ctx context.Context, name, argsJSON string) (context.Context, tra
 	ctx, span := tracer.Start(ctx, name)
 	span.SetAttributes(
 		attribute.String("tool.name", name),
-		attribute.String("tool.args", truncate(argsJSON, 200)),
+		attribute.String("tool.args", truncate(safeString(argsJSON), 200)),
 	)
 	return ctx, span
 }
@@ -55,7 +57,7 @@ func FinishTool(span trace.Span, result string, err error) {
 	}
 	if result != "" {
 		span.AddEvent("result", trace.WithAttributes(
-			attribute.String("tool.result", truncate(result, 200)),
+			attribute.String("tool.result", truncate(safeString(result), 200)),
 		))
 	}
 }
@@ -113,11 +115,11 @@ func StartSubAgent(ctx context.Context, role, description string) (context.Conte
 	ctx, span := tracer.Start(ctx, name)
 	span.SetAttributes(
 		attribute.String("subagent.role", role),
-		attribute.String("subagent.description", description),
+		attribute.String("subagent.description", safeString(description)),
 	)
 	span.AddEvent("dispatched", trace.WithAttributes(
 		attribute.String("subagent.role", role),
-		attribute.String("subagent.task", description),
+		attribute.String("subagent.task", safeString(description)),
 	))
 	return ctx, span
 }
@@ -126,7 +128,7 @@ func StartSubAgent(ctx context.Context, role, description string) (context.Conte
 func FinishSubAgent(span trace.Span, err error) {
 	if err != nil {
 		span.AddEvent("failed", trace.WithAttributes(
-			attribute.String("subagent.error", err.Error()),
+			attribute.String("subagent.error", safeString(err.Error())),
 		))
 		RecordError(span, err)
 	} else {
@@ -137,7 +139,7 @@ func FinishSubAgent(span trace.Span, err error) {
 // RecordError marks the span as errored and records the error string.
 func RecordError(span trace.Span, err error) {
 	if err != nil {
-		span.SetStatus(codes.Error, err.Error())
+		span.SetStatus(codes.Error, safeString(err.Error()))
 		span.RecordError(err)
 	}
 }
@@ -146,7 +148,18 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n-3] + "..."
+	cut := n - 3
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
+}
+
+// safeString replaces invalid UTF-8 byte sequences with the Unicode
+// replacement character so the result is safe for protobuf string fields
+// (which require valid UTF-8).
+func safeString(s string) string {
+	return strings.ToValidUTF8(s, "\uFFFD")
 }
 
 // StartConflictCheck creates a span for the conflict detection phase

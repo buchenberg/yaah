@@ -12,10 +12,11 @@ import (
 
 // Provider holds connection details for a model provider.
 type Provider struct {
-	BaseURL string   `yaml:"base_url"`
-	APIKey  string   `yaml:"api_key"`
-	Name    string   `yaml:"name,omitempty"`
-	Models  []string `yaml:"models,omitempty"`
+	BaseURL        string   `yaml:"base_url"`
+	APIKey         string   `yaml:"api_key"`
+	Name           string   `yaml:"name,omitempty"`
+	Models         []string `yaml:"models,omitempty"`
+	TimeoutSeconds int      `yaml:"timeout,omitempty"`
 }
 
 // Defaults hold the default model and agent loop settings.

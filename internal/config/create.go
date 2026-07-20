@@ -24,6 +24,7 @@ providers:
     name: Ollama
     base_url: http://localhost:11434/v1
     api_key: ollama
+    # timeout: 0               # seconds; 0 = no timeout (for slow local models)
 
 # editor: code --wait                    # editor for 'yaah config edit' (falls back to $EDITOR, $VISUAL, vi)
 
