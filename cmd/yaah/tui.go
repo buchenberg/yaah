@@ -500,21 +500,21 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 	executorProvider, executorModel := resolveExecutor(cfg)
 
 	loop := &agent.Loop{
-		Provider:            provider,
-		Registry:            toolReg,
-		Model:               modelName,
-		SystemPrompt:        systemPrompt,
-		MaxIterations:       cfg.Default.MaxIterations,
-		ContextWindow:       cfg.Default.ContextWindow,
-		ApprovalMode:        resolveApproval(cfg),
-		Messages:            *messages,
-		OtelEnabled:         cfg.Observability.Otel.Enabled,
-		ConflictTracker:     conflictTracker,
-		ExecutorProvider:    executorProvider,
-		ExecutorModel:       executorModel,
-		MaxInnerIterations:  cfg.Agent.Executor.MaxIterations,
-		CompactProvider:     compactProvider,
-		CompactModel:        compactModel,
+		Provider:           provider,
+		Registry:           toolReg,
+		Model:              modelName,
+		SystemPrompt:       systemPrompt,
+		MaxIterations:      cfg.Default.MaxIterations,
+		ContextWindow:      cfg.Default.ContextWindow,
+		ApprovalMode:       resolveApproval(cfg),
+		Messages:           *messages,
+		OtelEnabled:        cfg.Observability.Otel.Enabled,
+		ConflictTracker:    conflictTracker,
+		ExecutorProvider:   executorProvider,
+		ExecutorModel:      executorModel,
+		MaxInnerIterations: cfg.Agent.Executor.MaxIterations,
+		CompactProvider:    compactProvider,
+		CompactModel:       compactModel,
 		ApproveFn: func(name, args string) bool {
 			respCh := make(chan bool, 1)
 			ch <- tui.AgentMsg{

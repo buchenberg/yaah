@@ -147,10 +147,14 @@ func checkExecutor(cfg *config.Config, cfgErr error) check {
 		return check{Label: "Executor", Status: "WARN", Detail: "config not loaded"}
 	}
 	ec := cfg.Agent.Executor
-	if ec.Provider == "" {
+	if ec.Provider == "" && ec.Model == "" {
 		return check{Label: "Executor", Status: "OK", Detail: "using main provider/model (default)"}
 	}
-	if _, ok := cfg.Providers[ec.Provider]; !ok {
+	providerName := ec.Provider
+	if providerName == "" {
+		providerName = resolveProviderName(cfg)
+	}
+	if _, ok := cfg.Providers[providerName]; !ok {
 		return check{
 			Label:  "Executor",
 			Status: "WARN",
@@ -164,7 +168,7 @@ func checkExecutor(cfg *config.Config, cfgErr error) check {
 	return check{
 		Label:  "Executor",
 		Status: "OK",
-		Detail: fmt.Sprintf("%s / %s (max %d inner iterations)", ec.Provider, model, ec.MaxIterations),
+		Detail: fmt.Sprintf("%s / %s (max %d inner iterations)", providerName, model, ec.MaxIterations),
 	}
 }
 
