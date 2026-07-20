@@ -328,12 +328,17 @@ func (s *agentSession) compactContext() {
 func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 	compactProvider, compactModel := resolveCompact(s.cfg)
 
+	executorProvider, executorModel := resolveExecutor(s.cfg)
+
 	fallbackProvider, fallbackModel := resolveFallback(s.cfg)
 
 	loop := &agent.Loop{
 		Provider:               s.provider,
 		CompactProvider:        compactProvider,
 		CompactModel:           compactModel,
+		ExecutorProvider:       executorProvider,
+		ExecutorModel:          executorModel,
+		MaxInnerIterations:     s.cfg.Agent.Executor.MaxIterations,
 		FallbackProvider:       fallbackProvider,
 		FallbackModel:          fallbackModel,
 		Registry:               s.toolReg,

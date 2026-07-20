@@ -52,6 +52,7 @@ func runChecks() []check {
 		checkConfigFile(cfgPath, cfg, cfgErr, pathErr),
 		checkProvider(cfg, cfgErr),
 		checkModel(cfg, cfgErr),
+		checkExecutor(cfg, cfgErr),
 		checkOTel(cfg, cfgErr),
 		checkHomeWritable(),
 		checkPlatform(),
@@ -139,6 +140,32 @@ func checkModel(cfg *config.Config, cfgErr error) check {
 		return check{Label: "Default model", Status: "FAIL", Detail: "default.model is not set"}
 	}
 	return check{Label: "Default model", Status: "OK", Detail: cfg.Default.Model}
+}
+
+func checkExecutor(cfg *config.Config, cfgErr error) check {
+	if cfgErr != nil {
+		return check{Label: "Executor", Status: "WARN", Detail: "config not loaded"}
+	}
+	ec := cfg.Agent.Executor
+	if ec.Provider == "" {
+		return check{Label: "Executor", Status: "OK", Detail: "using main provider/model (default)"}
+	}
+	if _, ok := cfg.Providers[ec.Provider]; !ok {
+		return check{
+			Label:  "Executor",
+			Status: "WARN",
+			Detail: fmt.Sprintf("executor provider %q not found in providers — falling back to main", ec.Provider),
+		}
+	}
+	model := ec.Model
+	if model == "" {
+		model = cfg.Default.Model
+	}
+	return check{
+		Label:  "Executor",
+		Status: "OK",
+		Detail: fmt.Sprintf("%s / %s (max %d inner iterations)", ec.Provider, model, ec.MaxIterations),
+	}
 }
 
 func checkOTel(cfg *config.Config, cfgErr error) check {

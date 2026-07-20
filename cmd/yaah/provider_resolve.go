@@ -124,6 +124,22 @@ func resolveFallback(cfg *config.Config) (agent.Provider, string) {
 	return nil, ""
 }
 
+// resolveExecutor returns the provider and model for the inner executor loop
+// used by the dual-loop architecture. Returns nil if no separate executor is
+// configured — the inner loop falls back to the main provider and model.
+func resolveExecutor(cfg *config.Config) (agent.Provider, string) {
+	ec := cfg.Agent.Executor
+	if ec.Provider == "" {
+		return nil, ""
+	}
+	if p, ok := cfg.Providers[ec.Provider]; ok {
+		if prov, ok2 := makeProvider(p); ok2 {
+			return prov, ec.Model
+		}
+	}
+	return nil, ""
+}
+
 // resolveProvider picks the best available provider from the config.
 func resolveProvider(cfg *config.Config) agent.Provider {
 	providerName := resolveProviderName(cfg)
