@@ -170,19 +170,3 @@ func truncate(s string, n int) string {
 func safeString(s string) string {
 	return strings.ToValidUTF8(s, "\uFFFD")
 }
-
-// StartConflictCheck creates a span for the conflict detection phase
-// that runs after tool execution to check for parallel-worker file conflicts.
-func StartConflictCheck(ctx context.Context) (context.Context, trace.Span) {
-	return tracer.Start(ctx, "conflict.check")
-}
-
-// FinishConflictCheck records the conflict count and files as span events.
-func FinishConflictCheck(span trace.Span, fileCount int) {
-	span.SetAttributes(attribute.Int("conflict.files", fileCount))
-	if fileCount > 0 {
-		span.AddEvent("conflict.detected", trace.WithAttributes(
-			attribute.Int("conflict.files", fileCount),
-		))
-	}
-}
