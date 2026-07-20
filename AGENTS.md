@@ -56,15 +56,14 @@ yaah/
 │   ├── spinner/                 # animated thinking spinner
 │   ├── todo/                    # in-memory todo store
 │   ├── tools/                   # built-in tools (read, write, edit, grep, glob, ls, bash, powershell, question, webfetch, task, background_process, memory, todo)
-│   ├── tui/                     # bubbletea TUI (M7)
+│   ├── tui/                     # bubbletea TUI (component system: renderers in *_component.go, styled via theme.go)
 │   ├── types/                   # OpenAI message types
 │   └── update/                  # GitHub release checking
 ├── .github/workflows/ci.yml     # CI: test, vet, staticcheck, cross-compile
 ├── docs/
 │   ├── architecture.md          # detailed architecture documentation
-│   ├── tui-component-design.md  # TUI component system design proposal
-│   ├── tui-refactoring-example.md # before/after refactoring examples
-│   └── tui-summary.md           # TUI component system design summary
+│   ├── tui-components.md        # TUI component system reference
+│   └── otel-setup.md            # OpenTelemetry/Jaeger setup guide
 ├── README.md
 ├── CONTRIBUTING.md
 ├── SECURITY.md

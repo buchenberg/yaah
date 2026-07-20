@@ -37,7 +37,7 @@ Test worker, reviewer, and planner roles end-to-end:
 ./yaah "use a planner sub-agent to read internal/agent/agent.go then dispatch a worker to count .go files"
 ```
 
-Each test should show `>>> sub-agent: <role>` and `<<< sub-agent: <role>`
+Each test should show `╭─ sub-agent: <role>` and `╰─ sub-agent: <role>`
 brackets in the CLI output. Verify custom roles are discovered:
 
 ```bash

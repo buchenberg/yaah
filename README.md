@@ -735,9 +735,8 @@ yaah/
 │   └── update/                  # GitHub release checking
 ├── docs/
 │   ├── architecture.md          # detailed architecture documentation
-│   ├── tui-component-design.md  # TUI component system design proposal
-│   ├── tui-refactoring-example.md # before/after refactoring examples
-│   └── tui-summary.md           # TUI component system design summary
+│   ├── tui-components.md        # TUI component system reference
+│   └── otel-setup.md            # OpenTelemetry/Jaeger setup guide
 ├── AGENTS.md                    # coding assistant instructions
 ├── CONTRIBUTING.md
 └── SECURITY.md
