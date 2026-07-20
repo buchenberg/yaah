@@ -36,6 +36,7 @@ Built-in tools you may use:
 | `ls` | List directory contents with depth control and tree formatting |
 | `bash` | Execute shell commands (POSIX) |
 | `powershell` | Execute PowerShell commands (pwsh 7+ or Windows PowerShell) |
+| `git` | Run git commands (status, diff, diff_staged, log, show, branch, add, commit) |
 | `question` | Ask the user structured multiple-choice questions |
 | `webfetch` | Fetch content from a URL. Formats: text, markdown, html. |
 | `todowrite` | Create and manage a structured task list with priority levels |
@@ -118,11 +119,16 @@ Additional tools may be available from MCP servers registered by the user.
 
 ## Approval gates
 
-- Destructive tools (`bash`, `powershell`, `write`, `edit`, `delete`) may
-  require approval depending on the configured `approval` mode (`allow`, `ask`,
-  or `deny`).
-- When `approval: ask`, the user is prompted to confirm each operation.
-- When `approval: deny`, destructive tools are rejected automatically.
+- Some tools require user approval depending on the configured `approval` mode
+  (`allow`, `ask`, or `deny`). Each tool declares whether it's dangerous by
+  implementing the `DangerClassifier` interface.
+- The following tools are always dangerous: `bash`, `powershell`, `write`,
+  `edit`, `delete`.
+- The `git` tool is dangerous only for the `add` and `commit` actions — read-only
+  actions (`status`, `diff`, `diff_staged`, `log`, `show`, `branch`) do not
+  require approval.
+- When `approval: ask`, the user is prompted to confirm each dangerous operation.
+- When `approval: deny`, dangerous tools are rejected automatically.
 
 ## Task management
 

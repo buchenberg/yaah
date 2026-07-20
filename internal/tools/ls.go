@@ -32,13 +32,11 @@ func (t *LsTool) Schema() json.RawMessage {
 	}`)
 }
 
-type lsParams struct {
-	Path  string
-	Depth int
-}
-
 func (t *LsTool) Execute(ctx context.Context, args string) (string, error) {
-	var params lsParams
+	var params struct {
+		Path  string `json:"path"`
+		Depth int    `json:"depth"`
+	}
 	if err := json.Unmarshal([]byte(args), &params); err != nil {
 		return "", fmt.Errorf("ls: invalid arguments: %w", err)
 	}

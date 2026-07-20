@@ -570,14 +570,14 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 	for i, tc := range calls {
 		i, tc := i, tc
 
-		if l.ApprovalMode == "deny" && toolIsDangerous(tc.Function.Name) {
+		if l.ApprovalMode == "deny" && l.classifyDanger(tc.Function.Name, tc.Function.Arguments) {
 			errMsg := fmt.Sprintf("error: tool %q requires approval but approval mode is 'deny'", tc.Function.Name)
 			l.emitHook(HookEvent{Event: ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
 			l.emitHook(HookEvent{Event: ToolEnd, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, ToolError: fmt.Sprintf("tool %q requires approval but approval mode is 'deny'", tc.Function.Name), ToolResult: errMsg})
 			execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: errMsg, err: fmt.Errorf("tool denied")}
 			continue
 		}
-		if l.ApprovalMode == "ask" && toolIsDangerous(tc.Function.Name) {
+		if l.ApprovalMode == "ask" && l.classifyDanger(tc.Function.Name, tc.Function.Arguments) {
 			if !l.approveTool(tc.Function.Name, tc.Function.Arguments) {
 				errMsg := fmt.Sprintf("error: tool %q was denied by user", tc.Function.Name)
 				l.emitHook(HookEvent{Event: ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
@@ -1222,18 +1222,16 @@ func abbreviateArgs(args string, maxLen int) string {
 	return string(runes[:maxLen-3]) + "..."
 }
 
-// dangerousTools is the set of tool names that require approval.
-var dangerousTools = map[string]bool{
-	"bash":       true,
-	"powershell": true,
-	"write":      true,
-	"edit":       true,
-	"delete":     true,
-}
-
-// toolIsDangerous returns true if the tool requires user approval.
-func toolIsDangerous(name string) bool {
-	return dangerousTools[name]
+// classifyDanger returns true if the given tool+args combination requires
+// user approval. It first checks whether the tool implements tools.DangerClassifier
+// for argument-level classification; tools without that interface are never dangerous.
+func (l *Loop) classifyDanger(name, args string) bool {
+	if t := l.Registry.Get(name); t != nil {
+		if dc, ok := t.(tools.DangerClassifier); ok {
+			return dc.IsDangerous(args)
+		}
+	}
+	return false
 }
 
 // approveTool prompts the user on stderr/stdin to approve a tool call.

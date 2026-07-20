@@ -394,19 +394,20 @@ When a parent agent dispatches multiple parallel worker sub-agents in a single t
 
 File: `internal/tools/tools.go`
 
-`NewRegistry()` pre-registers 12 built-in tools:
+`NewRegistry()` pre-registers 13 built-in tools:
 
-| Tool | Category | Destructive |
+| Tool | Category | Dangerous |
 |---|---|---|
 | `read` | Filesystem | No |
-| `write` | Filesystem | Yes |
-| `edit` | Filesystem | Yes |
-| `delete` | Filesystem | Yes |
+| `write` | Filesystem | Always |
+| `edit` | Filesystem | Always |
+| `delete` | Filesystem | Always |
 | `grep` | Search | No |
 | `glob` | Search | No |
 | `ls` | Filesystem | No |
-| `bash` | Shell | Yes |
-| `powershell` | Shell | Yes |
+| `bash` | Shell | Always |
+| `powershell` | Shell | Always |
+| `git` | VCS | Per-action |
 | `question` | Interactive | No |
 | `webfetch` | Network | No |
 
@@ -440,16 +441,30 @@ executeAndCollect(ctx, calls, messages):
 
 ### Dangerous tools
 
-Defined in `dangerousTools` map at `agent.go:1038`:
+Tools implement the `DangerClassifier` interface (`internal/tools/tools.go`) to
+declare whether they require user approval:
 
 ```go
-var dangerousTools = map[string]bool{
-    "bash": true, "powershell": true,
-    "write": true, "edit": true, "delete": true,
+type DangerClassifier interface {
+    IsDangerous(argsJSON string) bool
 }
 ```
 
-All paths support `~` expansion via `expandHomeDir()` in `tools.go`. Tools that accept file paths (read, write, edit, delete, grep, glob, ls) call this before opening files.
+Tools that always require approval (`BashTool`, `PowerShellTool`, `WriteTool`,
+`EditTool`, `DeleteTool`) return `true` unconditionally. Tools with
+argument-level classification (`GitTool`) inspect their JSON arguments — `add`
+and `commit` are dangerous; `status`, `diff`, `log`, etc. are not. Tools that
+are never dangerous (`ReadTool`, `GrepTool`, `GlobTool`, etc.) simply don't
+implement the interface.
+
+The `Loop.classifyDanger(name, args)` method in `agent.go` checks whether a
+tool implements `DangerClassifier` and calls `IsDangerous` when present.
+Approval checks (`executeAndCollect` at line 570) use this single code path
+for all tools.
+
+All file-path-accepting tools support `~` expansion via `expandHomeDir()`
+in `helpers.go`. Shared tool utilities (`rgAvailable`, `commonIgnoreDirs`,
+`truncateOutput`) also live there.
 
 ---
 

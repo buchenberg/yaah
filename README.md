@@ -590,7 +590,7 @@ runs `steer` → `followup` → `compaction` → `approval` → `loop_detection`
 | `steer` | on | High-priority mid-turn input injected before the next LLM call |
 | `followup` | on | Queued between-turn messages (e.g. from parallel agents) |
 | `compaction` | on | LLM-powered context summarization when `context_window` is exceeded |
-| `approval` | on | Gate on destructive tools (bash, write, edit, delete) per `approval` mode |
+| `approval` | on | Gate on dangerous tools per `DangerClassifier` interface and `approval` mode |
 | `loop_detection` | on | Detect and halt stuck loops by hashing identical tool call chains |
 | `permission` | off | Path-pattern rules to allow/deny tools by file path glob |
 | `tool_concurrency` | off | Cap concurrent tool goroutines via `MaxToolConcurrency` |
@@ -729,7 +729,7 @@ yaah/
 │   ├── skills/                  # SKILL.md discovery
 │   ├── spinner/                 # animated thinking spinner
 │   ├── todo/                    # in-memory todo store
-│   ├── tools/                   # built-in tools (read, write, edit, grep, bash, task, etc.)
+│   ├── tools/                   # built-in tools (read, write, edit, delete, grep, glob, ls, bash, powershell, git, webfetch, task, background_process, memory, todo)
 │   ├── tui/                     # bubbletea TUI components
 │   ├── types/                   # OpenAI message types
 │   └── update/                  # GitHub release checking
