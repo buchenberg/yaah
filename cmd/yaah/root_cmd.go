@@ -486,10 +486,14 @@ func (s *agentSession) compactContext() {
 func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 	compactProvider, compactModel := resolveCompact(s.cfg)
 
+	fallbackProvider, fallbackModel := resolveFallback(s.cfg)
+
 	loop := &agent.Loop{
 		Provider:               s.provider,
 		CompactProvider:        compactProvider,
 		CompactModel:           compactModel,
+		FallbackProvider:       fallbackProvider,
+		FallbackModel:          fallbackModel,
 		Registry:               s.toolReg,
 		Model:                  s.modelName,
 		SystemPrompt:           s.systemPrompt,
@@ -649,6 +653,19 @@ func resolveCompact(cfg *config.Config) (agent.Provider, string) {
 				return providers.NewOpenAIClient(p.BaseURL, p.APIKey), compactModel
 			}
 		}
+	}
+	return nil, ""
+}
+
+// resolveFallback returns the provider and model to use when the primary
+// provider fails with auth, billing, or rate-limit errors.
+// Returns nil if no fallback is configured.
+func resolveFallback(cfg *config.Config) (agent.Provider, string) {
+	if cfg.Default.FallbackProvider == "" {
+		return nil, ""
+	}
+	if p, ok := cfg.Providers[cfg.Default.FallbackProvider]; ok && isRealKey(p.APIKey) {
+		return providers.NewOpenAIClient(p.BaseURL, p.APIKey), cfg.Default.FallbackModel
 	}
 	return nil, ""
 }

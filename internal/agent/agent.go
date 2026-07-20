@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/buchenberg/yaah/internal/agent/errorclassify"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/providers"
@@ -122,6 +123,15 @@ type Loop struct {
 
 	// CompactModel is the model to use for compaction. If empty, Model is used.
 	CompactModel string
+
+	// FallbackProvider is an alternative model backend used when the
+	// primary provider returns auth, billing, or rate-limit errors.
+	// If nil, retries continue with the primary provider.
+	FallbackProvider Provider
+
+	// FallbackModel is the model name to use with FallbackProvider.
+	// When empty, Model is used.
+	FallbackModel string
 
 	// LoopDetectCount is the number of identical tool calls (name+args+result hash)
 	// required to trigger loop detection. Default 5.
@@ -712,11 +722,13 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 // getAssistantMessage returns the next assistant message with retry logic.
 // If the response has finish_reason="length" and tool calls, it errors rather
 // than executing potentially truncated tool calls.
+// Uses the errorclassify package for structured classification and recovery hints.
 func (l *Loop) getAssistantMessage(ctx context.Context, req types.ChatRequest) (types.Message, bool, error) {
 	var lastMsg types.Message
 	var wasStreamed bool
 	var lastErr error
 	compactAttempts := 0
+	providerSwapped := false
 
 	for attempt := 0; attempt <= l.MaxRetries; attempt++ {
 		var msg types.Message
@@ -751,32 +763,93 @@ func (l *Loop) getAssistantMessage(ctx context.Context, req types.ChatRequest) (
 		wasStreamed = streamed
 		lastErr = err
 
-		// Auto-compact on context overflow: if the provider rejected the
-		// request because it exceeds the model's context window, compact
-		// aggressively and retry without counting against MaxRetries.
-		if isContextOverflowError(err) && l.ContextWindow > 0 && compactAttempts < 2 {
+		// ── Classify the error with structured recovery hints ──────
+		meta := errorclassify.ErrorMeta{
+			StatusCode:  httpStatusCode(err),
+			NumMessages: len(l.Messages),
+		}
+		classified := errorclassify.Classify(err, meta)
+
+		// ── Act on recovery hints ──────────────────────────────────
+		switch {
+		case classified.ShouldCompress && l.ContextWindow > 0 && compactAttempts < 2:
+			// Context overflow or payload too large: compact and retry.
 			beforeCount := len(l.Messages)
 			l.compactContext(ctx, 0.5) // aggressive 50% threshold
 			compactAttempts++
-			// If compaction actually reduced message count, rebuild request and retry freely.
 			if len(l.Messages) < beforeCount {
 				req.Messages = l.Messages
 				attempt-- // don't count against MaxRetries
 				continue
 			}
-			// Fall through to normal backoff if compaction didn't help.
+
+		case classified.ShouldRotateCred && l.FallbackProvider != nil && !providerSwapped:
+			// Auth, billing, or rate-limit: swap to fallback provider.
+			oldProvider := l.Provider
+			oldModel := l.Model
+			l.Provider = l.FallbackProvider
+			if l.FallbackModel != "" {
+				l.Model = l.FallbackModel
+				req.Model = l.FallbackModel
+			}
+			providerSwapped = true
+			// Keep the old provider as fallback for the next rotation.
+			l.FallbackProvider = oldProvider
+			l.FallbackModel = oldModel
+			attempt-- // don't count against MaxRetries
+			continue
+
+		case classified.ShouldAbort:
+			// Content policy, format error: surface immediately.
+			return types.Message{}, false, err
 		}
 
-		if attempt < l.MaxRetries {
-			backoff := l.RetryBackoff * time.Duration(1<<attempt)
+		// ── Standard backoff for retryable errors ──────────────────
+		if classified.Retryable && attempt < l.MaxRetries {
+			backoff := l.RetryBackoff
+			if backoff == 0 {
+				backoff = time.Second
+			}
+			backoff *= time.Duration(1 << attempt)
 			select {
 			case <-time.After(backoff):
 			case <-ctx.Done():
 				return types.Message{}, false, ctx.Err()
 			}
+		} else if !classified.Retryable {
+			return types.Message{}, false, err
 		}
 	}
 	return lastMsg, wasStreamed, lastErr
+}
+
+// httpStatusCode extracts the HTTP status code from a provider error.
+// Parses the common "provider returned NNN: body" format used by OpenAIClient.
+func httpStatusCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	msg := err.Error()
+	// Match "provider returned NNN: ..."
+	const prefix = "provider returned "
+	for i := 0; i+len(prefix) <= len(msg); i++ {
+		if msg[i:i+len(prefix)] == prefix {
+			rest := msg[i+len(prefix):]
+			end := 0
+			for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
+				end++
+			}
+			if end == 3 && rest[end] == ':' {
+				var code int
+				for j := 0; j < 3; j++ {
+					code = code*10 + int(rest[j]-'0')
+				}
+				return code
+			}
+			break
+		}
+	}
+	return 0
 }
 
 // captureUsage adds response token usage to the running total.
@@ -807,31 +880,6 @@ type toolExecResult struct {
 	content string
 	dur     time.Duration
 	err     error
-}
-
-// isContextOverflowError returns true if the error indicates the provider
-// rejected the request because it exceeds the model's context window.
-func isContextOverflowError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	for _, pattern := range []string{
-		"context length",
-		"too many tokens",
-		"reduce the length",
-		"maximum context",
-		"max tokens",
-		"token limit",
-		"prompt is too long",
-		"context window",
-		"requested token count",
-	} {
-		if strings.Contains(msg, pattern) {
-			return true
-		}
-	}
-	return false
 }
 
 // toolCallHash returns a SHA-256 hash of tool name, arguments, and result for loop detection.

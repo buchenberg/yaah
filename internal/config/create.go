@@ -33,6 +33,8 @@ default:
   small_model: deepseek-v4-flash
   max_iterations: 50
   approval: ask                           # ask | allow | deny
+  # fallback_provider: openrouter          # optional: rotate to this provider on auth/billing/rate-limit errors
+  # fallback_model: meta-llama/llama-4-maverick  # optional: model to use with fallback provider
 
 # agent:
 #   middleware:
