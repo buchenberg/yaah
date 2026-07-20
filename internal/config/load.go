@@ -57,10 +57,9 @@ type AgentConfig struct {
 
 // ExecutorConfig configures the inner executor loop used by the dual-loop
 // architecture. When unset, the inner loop uses the main provider and model.
-// The model field accepts provider/model syntax (e.g. "deepseek/deepseek-v4-flash").
 type ExecutorConfig struct {
 	Provider      string `yaml:"provider"`       // provider name (default: main provider)
-	Model         string `yaml:"model"`          // model name, accepts "provider/model" prefix
+	Model         string `yaml:"model"`          // model name
 	MaxIterations int    `yaml:"max_iterations"` // max inner rounds per outer turn (default: 10)
 }
 

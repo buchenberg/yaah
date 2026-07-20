@@ -128,34 +128,22 @@ func resolveFallback(cfg *config.Config) (agent.Provider, string) {
 // used by the dual-loop architecture. Returns nil if no separate executor is
 // configured — the inner loop falls back to the main provider and model.
 //
-// The model field accepts the same provider/model syntax as default.model
-// (e.g. "deepseek/deepseek-v4-flash"). When provider is explicitly set via
-// agent.executor.provider it takes precedence over any prefix in the model.
+// Use agent.executor.provider to select a different provider. When only
+// model is set, the main provider is used.
 func resolveExecutor(cfg *config.Config) (agent.Provider, string) {
 	ec := cfg.Agent.Executor
 	if ec.Provider == "" && ec.Model == "" {
 		return nil, ""
 	}
 
-	// Determine the provider name: explicit field > model prefix > main provider.
 	providerName := ec.Provider
-	executorModel := ec.Model
-
-	if providerName == "" && executorModel != "" {
-		if parts := strings.SplitN(executorModel, "/", 2); len(parts) == 2 {
-			if _, ok := cfg.Providers[parts[0]]; ok {
-				providerName = parts[0]
-				executorModel = parts[1]
-			}
-		}
-	}
 	if providerName == "" {
 		providerName = resolveProviderName(cfg)
 	}
 
 	if p, ok := cfg.Providers[providerName]; ok {
 		if prov, ok2 := makeProvider(p); ok2 {
-			return prov, executorModel
+			return prov, ec.Model
 		}
 	}
 	return nil, ""

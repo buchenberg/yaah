@@ -114,15 +114,14 @@ The agent uses a two-tier execution model:
 
 This keeps the outer loop focused on planning while the inner loop handles
 mechanical work. The inner loop uses the same provider/model as the outer
-loop by default, but can be pointed at a cheaper/faster model via the
-`agent.executor` config section:
+loop by default. Point it at a different model or provider via config:
 
 ```yaml
 agent:
   executor:
-    provider: deepseek       # separate provider (optional)
-    model: deepseek-v4-flash # cheaper model (optional)
-    max_iterations: 10      # inner rounds per outer turn (default: 10)
+    provider: deepseek       # optional — defaults to main provider
+    model: deepseek-v4-flash # cheaper/faster model
+    max_iterations: 10       # inner rounds per outer turn (default: 10)
 ```
 
 It runs for up to `max_inner_iterations` rounds (default 10) per outer turn.
