@@ -36,15 +36,12 @@ func (t *GrepTool) Schema() json.RawMessage {
 	}`)
 }
 
-// grepParams holds the parameters for grep execution.
-type grepParams struct {
-	Pattern string
-	Path    string
-	Include string
-}
-
 func (t *GrepTool) Execute(ctx context.Context, args string) (string, error) {
-	var params grepParams
+	var params struct {
+		Pattern string `json:"pattern"`
+		Path    string `json:"path"`
+		Include string `json:"include"`
+	}
 	if err := json.Unmarshal([]byte(args), &params); err != nil {
 		return "", fmt.Errorf("grep: invalid arguments: %w", err)
 	}
@@ -57,23 +54,17 @@ func (t *GrepTool) Execute(ctx context.Context, args string) (string, error) {
 	params.Path = expandHomeDir(params.Path)
 
 	if rgAvailable() {
-		return t.execRipgrep(ctx, params)
+		return t.execRipgrep(ctx, params.Pattern, params.Path, params.Include)
 	}
-	return t.grepNative(ctx, params)
+	return t.grepNative(ctx, params.Pattern, params.Path, params.Include)
 }
 
-// rgAvailable checks if ripgrep is on PATH.
-func rgAvailable() bool {
-	_, err := exec.LookPath("rg")
-	return err == nil
-}
-
-func (t *GrepTool) execRipgrep(ctx context.Context, params grepParams) (string, error) {
-	rgArgs := []string{"--no-heading", "--line-number", "--color", "never", "--no-messages", "-e", params.Pattern}
-	if params.Include != "" {
-		rgArgs = append(rgArgs, "--glob", params.Include)
+func (t *GrepTool) execRipgrep(ctx context.Context, pattern, path, include string) (string, error) {
+	rgArgs := []string{"--no-heading", "--line-number", "--color", "never", "--no-messages", "-e", pattern}
+	if include != "" {
+		rgArgs = append(rgArgs, "--glob", include)
 	}
-	rgArgs = append(rgArgs, "--", params.Path)
+	rgArgs = append(rgArgs, "--", path)
 
 	cmd := exec.CommandContext(ctx, "rg", rgArgs...)
 	output, err := cmd.CombinedOutput()
@@ -95,38 +86,15 @@ func (t *GrepTool) execRipgrep(ctx context.Context, params grepParams) (string, 
 	return result, nil
 }
 
-// commonIgnoreDirs lists directories that are nearly always safe to skip.
-var commonIgnoreDirs = map[string]bool{
-	".git": true, "node_modules": true, ".venv": true, "venv": true,
-	"__pycache__": true, ".mypy_cache": true, ".pytest_cache": true,
-	".tox": true, ".eggs": true, "dist": true, "build": true,
-	".next": true, ".nuxt": true, ".output": true,
-	"vendor": true, ".idea": true, ".vscode": true,
-	"target": true, ".dart_tool": true, ".turbo": true,
-	"bin": true, "obj": true,
-}
-
-// binaryExtensions is a rough set of extensions that should be skipped.
-var binaryExtensions = map[string]bool{
-	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".ico": true,
-	".pdf": true, ".zip": true, ".gz": true, ".tar": true, ".bz2": true,
-	".exe": true, ".dll": true, ".so": true, ".dylib": true,
-	".class": true, ".pyc": true, ".pyo": true, ".o": true, ".obj": true,
-	".db": true, ".sqlite": true, ".sqlite3": true,
-	".woff": true, ".woff2": true, ".ttf": true, ".eot": true,
-	".mp3": true, ".mp4": true, ".avi": true, ".mov": true,
-	".min.js": true, ".min.css": true, ".map": true,
-}
-
-func (t *GrepTool) grepNative(ctx context.Context, params grepParams) (string, error) {
-	re, err := regexp.Compile(params.Pattern)
+func (t *GrepTool) grepNative(ctx context.Context, pattern, path, include string) (string, error) {
+	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return "", fmt.Errorf("grep: invalid regex: %w", err)
 	}
 
 	var includeRe *regexp.Regexp
-	if params.Include != "" {
-		pat := globToRegex(params.Include)
+	if include != "" {
+		pat := globToRegex(include)
 		includeRe, err = regexp.Compile(pat)
 		if err != nil {
 			return "", fmt.Errorf("grep: invalid include pattern: %w", err)
@@ -136,7 +104,7 @@ func (t *GrepTool) grepNative(ctx context.Context, params grepParams) (string, e
 	var buf bytes.Buffer
 	matchCount := 0
 
-	walkErr := filepath.Walk(params.Path, func(path string, info os.FileInfo, err error) error {
+	walkErr := filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -146,14 +114,14 @@ func (t *GrepTool) grepNative(ctx context.Context, params grepParams) (string, e
 			}
 			return nil
 		}
-		if binaryExtensions[filepath.Ext(path)] {
+		if binaryExtensions[filepath.Ext(p)] {
 			return nil
 		}
-		if includeRe != nil && !includeRe.MatchString(filepath.Base(path)) {
+		if includeRe != nil && !includeRe.MatchString(filepath.Base(p)) {
 			return nil
 		}
 
-		file, ferr := os.Open(path)
+		file, ferr := os.Open(p)
 		if ferr != nil {
 			return nil
 		}
@@ -169,8 +137,8 @@ func (t *GrepTool) grepNative(ctx context.Context, params grepParams) (string, e
 			}
 			if re.Match(scanner.Bytes()) {
 				matchCount++
-				fmt.Fprintf(&buf, "%s:%d:%s\n", path, lineNum, scanner.Text())
-				if buf.Len() > bashMaxOutput {
+				fmt.Fprintf(&buf, "%s:%d:%s\n", p, lineNum, scanner.Text())
+				if buf.Len() > grepMaxResultLen {
 					return nil
 				}
 			}

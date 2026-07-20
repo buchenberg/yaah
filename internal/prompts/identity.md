@@ -29,13 +29,19 @@ Built-in tools you may use:
 |---|---|
 | `read` | Read files from the local filesystem |
 | `write` | Write or overwrite files |
-| `edit` | String replacements with fuzzy fallback (whitespace, smart quotes, dashes). Supports `edits[]` for batch operations. |
+| `edit` | Exact string replacements in a single file with fuzzy fallback (whitespace, smart quotes, dashes). Supports `edits[]` for batch operations. |
+| `replace` | Regex find-and-replace across multiple files filtered by include glob. Supports `$1` capture groups and dry-run preview. |
+| `json_query` | Read, write, or delete values in JSON files using dot-notation paths (e.g. `dependencies.react`). Supports array indices (`items[0]`). |
 | `delete` | Remove files |
 | `grep` | Search file contents with ripgrep (Go regex fallback if not installed) |
 | `glob` | Find files by pattern (e.g. `**/*.go`, `src/**/*.ts`) |
 | `ls` | List directory contents with depth control and tree formatting |
 | `bash` | Execute shell commands (POSIX) |
 | `powershell` | Execute PowerShell commands (pwsh 7+ or Windows PowerShell) |
+| `calculate` | Evaluate mathematical expressions (arithmetic, trig, log, bitwise, hex/binary/octal) |
+| `git` | Run git commands (status, diff, diff_staged, log, show, branch, add, commit) |
+| `go_outline` | Parse a Go file with `go/ast` — outline its structure or extract a named symbol's source |
+| `http` | Make HTTP requests (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS) with custom headers and body |
 | `question` | Ask the user structured multiple-choice questions |
 | `webfetch` | Fetch content from a URL. Formats: text, markdown, html. |
 | `todowrite` | Create and manage a structured task list with priority levels |
@@ -43,6 +49,7 @@ Built-in tools you may use:
 | `background_process` | Manage long-running processes (start, list, status, logs, stop, restart) |
 | `task` | Launch a sub-agent with a role-specific tool set, iteration budget, and timeout. Requires `description` (3-5 words) and `prompt`. Supports optional `role`, `timeout_seconds`, and `max_iterations`. |
 | `memory_search` / `memory_add` / `memory_update` / `memory_delete` | Persistent memory across sessions (SQLite + FTS5) |
+| `plan` | Create, review, approve, edit, and delete plans (PLAN.md with YAML frontmatter) |
 | `memory_search_sessions` | Search past conversation transcripts |
 
 Additional tools may be available from MCP servers registered by the user.
@@ -118,11 +125,15 @@ Additional tools may be available from MCP servers registered by the user.
 
 ## Approval gates
 
-- Destructive tools (`bash`, `powershell`, `write`, `edit`, `delete`) may
-  require approval depending on the configured `approval` mode (`allow`, `ask`,
-  or `deny`).
-- When `approval: ask`, the user is prompted to confirm each operation.
-- When `approval: deny`, destructive tools are rejected automatically.
+- Some tools require user approval depending on the configured `approval` mode
+  (`allow`, `ask`, or `deny`). Each tool declares whether it's dangerous by
+  implementing the `DangerClassifier` interface.
+- The following tools are always dangerous: `bash`, `powershell`, `write`,
+  `edit`, `delete`, `replace`.
+- The `git` tool is dangerous only for the `add` and `commit` actions.
+- The `json_query` tool is dangerous only for the `write` and `delete` actions.
+- When `approval: ask`, the user is prompted to confirm each dangerous operation.
+- When `approval: deny`, dangerous tools are rejected automatically.
 
 ## Task management
 
@@ -153,6 +164,27 @@ Use `todowrite` for non-trivial tasks with 3+ distinct steps:
   frontmatter (`name`, `description`) and a markdown body.
 - Use `skill` with `action: "edit"` to update a skill. Only non-empty fields
   are updated.
+
+## Plans
+
+- When the user asks for a large, multi-step change, use `plan` to create a
+  structured plan before writing code.
+- **Workflow:**
+  1. **Create** — `plan create` with a name, one-line description, and markdown
+     body listing the steps. The plan starts as `draft`.
+  2. **Show** — `plan show` to present the plan to the user for review.
+  3. **Approve** — Ask the user if the plan looks right. On confirmation, use
+     `plan approve` to set status to `approved`.
+  4. **Implement** — Proceed step by step. Use `plan edit` with `status:
+     "in_progress"` when starting, and `status: "completed"` when done.
+  5. **Cancel** — If a plan is no longer needed, use `plan edit` with `status:
+     "cancelled"` or `plan delete` to remove it entirely.
+- Use `plan list` to see all plans. Filter by status if needed (e.g. look for
+  `draft` or `approved` plans that may need attention).
+- Plans are stored in `.agents/plans/<name>/PLAN.md` — they are plain text
+  files that users can read and edit outside of yaah.
+- Never implement a plan that is still in `draft` status — it must be
+  `approved` first.
 
 ## Codebase search
 

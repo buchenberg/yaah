@@ -8,12 +8,14 @@ import "encoding/json"
 
 // Message represents a single chat message in OpenAI format.
 type Message struct {
-	Role         string        `json:"role"`
-	Content      string        `json:"content"`
-	ToolCalls    []ToolCall    `json:"tool_calls,omitempty"`
-	ToolCallID   string        `json:"tool_call_id,omitempty"`
-	Name         string        `json:"name,omitempty"`
-	CacheControl *CacheControl `json:"cache_control,omitempty"`
+	Role             string        `json:"role"`
+	Content          string        `json:"content"`
+	Refusal          string        `json:"refusal,omitempty"`
+	ReasoningContent string        `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCall    `json:"tool_calls,omitempty"`
+	ToolCallID       string        `json:"tool_call_id,omitempty"`
+	Name             string        `json:"name,omitempty"`
+	CacheControl     *CacheControl `json:"cache_control,omitempty"`
 }
 
 // CacheControl marks a message for Anthropic prompt caching.
@@ -50,11 +52,17 @@ type ToolDef struct {
 
 // ChatRequest is the request body sent to /chat/completions.
 type ChatRequest struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	Tools       []ToolDef `json:"tools,omitempty"`
-	Temperature float64   `json:"temperature,omitempty"`
-	Stream      bool      `json:"stream"`
+	Model         string         `json:"model"`
+	Messages      []Message      `json:"messages"`
+	Tools         []ToolDef      `json:"tools,omitempty"`
+	Temperature   float64        `json:"temperature,omitempty"`
+	Stream        bool           `json:"stream"`
+	StreamOptions *StreamOptions `json:"stream_options,omitempty"`
+}
+
+// StreamOptions configures streaming behaviour (e.g. include_usage).
+type StreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 // ChatResponse is the response from /chat/completions.
@@ -74,9 +82,25 @@ type Choice struct {
 
 // Usage holds token usage statistics from the provider.
 type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens            int                      `json:"prompt_tokens"`
+	CompletionTokens        int                      `json:"completion_tokens"`
+	TotalTokens             int                      `json:"total_tokens"`
+	CompletionTokensDetails *CompletionTokensDetails `json:"completion_tokens_details,omitempty"`
+	PromptTokensDetails     *PromptTokensDetails     `json:"prompt_tokens_details,omitempty"`
+}
+
+// CompletionTokensDetails breaks down where completion tokens were spent.
+type CompletionTokensDetails struct {
+	ReasoningTokens          int `json:"reasoning_tokens"`
+	AudioTokens              int `json:"audio_tokens,omitempty"`
+	AcceptedPredictionTokens int `json:"accepted_prediction_tokens,omitempty"`
+	RejectedPredictionTokens int `json:"rejected_prediction_tokens,omitempty"`
+}
+
+// PromptTokensDetails breaks down prompt token usage.
+type PromptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+	AudioTokens  int `json:"audio_tokens,omitempty"`
 }
 
 // ToolResultMsg creates a tool result message to append to the conversation.

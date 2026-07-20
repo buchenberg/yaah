@@ -24,12 +24,18 @@ type OpenAIClient struct {
 }
 
 // NewOpenAIClient creates a new client targeting baseURL (e.g. "https://api.openai.com").
-func NewOpenAIClient(baseURL, apiKey string) *OpenAIClient {
+// timeoutSeconds is the HTTP client timeout; 0 means no timeout (useful for local
+// models behind slow servers like llama.cpp). Negative values fall back to 120s.
+func NewOpenAIClient(baseURL, apiKey string, timeoutSeconds int) *OpenAIClient {
+	to := time.Duration(timeoutSeconds) * time.Second
+	if timeoutSeconds < 0 {
+		to = 120 * time.Second
+	}
 	return &OpenAIClient{
 		baseURL: baseURL,
 		apiKey:  apiKey,
 		client: &http.Client{
-			Timeout: 120 * time.Second,
+			Timeout: to,
 		},
 	}
 }

@@ -46,7 +46,7 @@ func TestSend_sendsChatRequest(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := NewOpenAIClient(ts.URL, "sk-test")
+	client := NewOpenAIClient(ts.URL, "sk-test", -1)
 	req := types.ChatRequest{
 		Model: "gpt-4o-mini",
 		Messages: []types.Message{
@@ -87,7 +87,7 @@ func TestSend_includesAPIKey(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := NewOpenAIClient(ts.URL, "sk-test-key")
+	client := NewOpenAIClient(ts.URL, "sk-test-key", -1)
 	_, err := client.Send(context.Background(), types.ChatRequest{Model: "gpt-4o-mini"})
 	if err != nil {
 		t.Fatalf("Send() error: %v", err)
@@ -101,7 +101,7 @@ func TestSend_returnsErrorOnHTTPFailure(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := NewOpenAIClient(ts.URL, "sk-test")
+	client := NewOpenAIClient(ts.URL, "sk-test", -1)
 	_, err := client.Send(context.Background(), types.ChatRequest{Model: "gpt-4o-mini"})
 	if err == nil {
 		t.Fatal("expected error on 500, got nil")
@@ -137,7 +137,7 @@ func TestListModels_returnsModelIDs(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := NewOpenAIClient(ts.URL, "sk-test")
+	client := NewOpenAIClient(ts.URL, "sk-test", -1)
 	models, err := client.ListModels(context.Background())
 	if err != nil {
 		t.Fatalf("ListModels() error: %v", err)
@@ -157,7 +157,7 @@ func TestListModels_returnsErrorOnHTTPFailure(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := NewOpenAIClient(ts.URL, "sk-test")
+	client := NewOpenAIClient(ts.URL, "sk-test", -1)
 	_, err := client.ListModels(context.Background())
 	if err == nil {
 		t.Fatal("expected error on 500, got nil")
@@ -174,7 +174,7 @@ func TestListModels_includesAPIKey(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := NewOpenAIClient(ts.URL, "sk-test-key")
+	client := NewOpenAIClient(ts.URL, "sk-test-key", -1)
 	_, err := client.ListModels(context.Background())
 	if err != nil {
 		t.Fatalf("ListModels() error: %v", err)

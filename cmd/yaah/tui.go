@@ -89,7 +89,7 @@ func fetchAllModels(ctx context.Context, cfg *config.Config) []string {
 			continue
 		}
 
-		client := providers.NewOpenAIClient(p.BaseURL, p.APIKey)
+		client := providers.NewOpenAIClient(p.BaseURL, p.APIKey, p.TimeoutSeconds)
 		models, err := client.ListModels(ctx)
 		if err != nil {
 			log.Printf("fetch models from %s: %v", name, err)
@@ -105,8 +105,10 @@ func fetchAllModels(ctx context.Context, cfg *config.Config) []string {
 
 // providerFor returns a provider client for the given provider name.
 func providerFor(cfg *config.Config, name string) agent.Provider {
-	if p, ok := cfg.Providers[name]; ok && isRealKey(p.APIKey) {
-		return providers.NewOpenAIClient(p.BaseURL, p.APIKey)
+	if p, ok := cfg.Providers[name]; ok {
+		if prov, ok2 := makeProvider(p); ok2 {
+			return prov
+		}
 	}
 	return &noProviderStub{}
 }
@@ -282,6 +284,9 @@ func runTUI() error {
 	// Register the skill-loading tool
 	skillDirs := skillSearchPaths()
 	toolReg.Register(&tools.SkillTool{Dirs: skillDirs})
+
+	planDirs := planSearchPaths()
+	toolReg.Register(&tools.PlanTool{Dirs: planDirs})
 
 	procMgr := processpkg.NewManager()
 	toolReg.Register(&tools.BackgroundProcessTool{Manager: procMgr})

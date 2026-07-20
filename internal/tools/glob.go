@@ -34,14 +34,11 @@ func (t *GlobTool) Schema() json.RawMessage {
 	}`)
 }
 
-// globParams holds the parameters for glob execution.
-type globParams struct {
-	Pattern string
-	Path    string
-}
-
 func (t *GlobTool) Execute(ctx context.Context, args string) (string, error) {
-	var params globParams
+	var params struct {
+		Pattern string `json:"pattern"`
+		Path    string `json:"path"`
+	}
 	if err := json.Unmarshal([]byte(args), &params); err != nil {
 		return "", fmt.Errorf("glob: invalid arguments: %w", err)
 	}
@@ -54,13 +51,13 @@ func (t *GlobTool) Execute(ctx context.Context, args string) (string, error) {
 	params.Path = expandHomeDir(params.Path)
 
 	if rgAvailable() {
-		return t.globRipgrep(ctx, params)
+		return t.globRipgrep(ctx, params.Pattern, params.Path)
 	}
-	return t.globNative(ctx, params)
+	return t.globNative(ctx, params.Pattern, params.Path)
 }
 
-func (t *GlobTool) globRipgrep(ctx context.Context, params globParams) (string, error) {
-	rgArgs := []string{"--files", "--glob", params.Pattern, "--no-messages", "--", params.Path}
+func (t *GlobTool) globRipgrep(ctx context.Context, pattern, path string) (string, error) {
+	rgArgs := []string{"--files", "--glob", pattern, "--no-messages", "--", path}
 
 	cmd := exec.CommandContext(ctx, "rg", rgArgs...)
 	output, err := cmd.CombinedOutput()
@@ -86,14 +83,15 @@ func (t *GlobTool) globRipgrep(ctx context.Context, params globParams) (string, 
 	return result, nil
 }
 
-func (t *GlobTool) globNative(ctx context.Context, params globParams) (string, error) {
-	re, err := patternToRegex(params.Pattern)
+func (t *GlobTool) globNative(ctx context.Context, pattern, path string) (string, error) {
+	re, err := patternToRegex(pattern)
 	if err != nil {
 		return "", fmt.Errorf("glob: invalid pattern: %w", err)
 	}
 
 	var matches []string
-	walkErr := filepath.Walk(params.Path, func(path string, info os.FileInfo, err error) error {
+	hasSeparator := strings.ContainsAny(pattern, "/\\")
+	walkErr := filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -103,11 +101,15 @@ func (t *GlobTool) globNative(ctx context.Context, params globParams) (string, e
 			}
 			return nil
 		}
-		if binaryExtensions[filepath.Ext(path)] {
+		if binaryExtensions[filepath.Ext(p)] {
 			return nil
 		}
-		if re.MatchString(path) {
-			matches = append(matches, path)
+		target := p
+		if !hasSeparator {
+			target = filepath.Base(p)
+		}
+		if re.MatchString(target) {
+			matches = append(matches, p)
 			if len(matches) >= 10000 {
 				return nil
 			}

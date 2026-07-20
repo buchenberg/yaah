@@ -114,6 +114,12 @@ type Loop struct {
 	// TotalTokens accumulates token usage across all API calls in the loop.
 	TotalTokens types.Usage
 
+	// TotalReasoningTokens accumulates reasoning token usage for observability.
+	TotalReasoningTokens int
+
+	// TotalCachedPromptTokens accumulates cached prompt tokens for observability.
+	TotalCachedPromptTokens int
+
 	// Messages holds the conversation history across multiple Run calls.
 	Messages []types.Message
 
@@ -448,11 +454,20 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		l.persistMessage(msg)
 
 		if turnSpan != nil {
-			turnSpan.SetAttributes(
+			turnAttrs := []attribute.KeyValue{
 				attribute.Bool("turn.streamed", streamed),
 				attribute.Int("turn.tool_calls", len(msg.ToolCalls)),
 				attribute.Int("turn.messages", len(messages)),
-			)
+				attribute.Int("llm.total_prompt_tokens", l.TotalTokens.PromptTokens),
+				attribute.Int("llm.total_completion_tokens", l.TotalTokens.CompletionTokens),
+			}
+			if l.TotalReasoningTokens > 0 {
+				turnAttrs = append(turnAttrs, attribute.Int("llm.total_reasoning_tokens", l.TotalReasoningTokens))
+			}
+			if l.TotalCachedPromptTokens > 0 {
+				turnAttrs = append(turnAttrs, attribute.Int("llm.total_cached_prompt_tokens", l.TotalCachedPromptTokens))
+			}
+			turnSpan.SetAttributes(turnAttrs...)
 		}
 
 		if len(msg.ToolCalls) == 0 {
@@ -570,14 +585,14 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 	for i, tc := range calls {
 		i, tc := i, tc
 
-		if l.ApprovalMode == "deny" && toolIsDangerous(tc.Function.Name) {
+		if l.ApprovalMode == "deny" && l.classifyDanger(tc.Function.Name, tc.Function.Arguments) {
 			errMsg := fmt.Sprintf("error: tool %q requires approval but approval mode is 'deny'", tc.Function.Name)
 			l.emitHook(HookEvent{Event: ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
 			l.emitHook(HookEvent{Event: ToolEnd, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, ToolError: fmt.Sprintf("tool %q requires approval but approval mode is 'deny'", tc.Function.Name), ToolResult: errMsg})
 			execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: errMsg, err: fmt.Errorf("tool denied")}
 			continue
 		}
-		if l.ApprovalMode == "ask" && toolIsDangerous(tc.Function.Name) {
+		if l.ApprovalMode == "ask" && l.classifyDanger(tc.Function.Name, tc.Function.Arguments) {
 			if !l.approveTool(tc.Function.Name, tc.Function.Arguments) {
 				errMsg := fmt.Sprintf("error: tool %q was denied by user", tc.Function.Name)
 				l.emitHook(HookEvent{Event: ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
@@ -747,7 +762,23 @@ func (l *Loop) getAssistantMessage(ctx context.Context, req types.ChatRequest) (
 					err = fmt.Errorf("no choices in response")
 				} else {
 					msg = resp.Choices[0].Message
-					if resp.Choices[0].FinishReason == "length" && len(msg.ToolCalls) > 0 {
+
+					// Surface model refusal as content so it is visible to the user.
+					if msg.Content == "" && msg.Refusal != "" {
+						msg.Content = msg.Refusal
+					}
+
+					// Fire the thinking callback for non-streaming reasoning content
+					// (streaming path handles this via StreamDelta in runStream).
+					if msg.ReasoningContent != "" && l.OnThinking != nil {
+						l.OnThinking(msg.ReasoningContent)
+					}
+
+					finish := resp.Choices[0].FinishReason
+					if finish == "content_filter" && msg.Content == "" {
+						err = fmt.Errorf("response blocked by content filter")
+						msg = types.Message{}
+					} else if finish == "length" && len(msg.ToolCalls) > 0 {
 						err = fmt.Errorf("response truncated (finish_reason=length), discarding %d tool calls", len(msg.ToolCalls))
 						msg = types.Message{}
 					}
@@ -852,11 +883,48 @@ func httpStatusCode(err error) int {
 	return 0
 }
 
-// captureUsage adds response token usage to the running total.
+// captureUsage adds response token usage to the running total,
+// including detailed breakdowns (reasoning, cached) when provided.
 func (l *Loop) captureUsage(resp *types.ChatResponse) {
 	l.TotalTokens.PromptTokens += resp.Usage.PromptTokens
 	l.TotalTokens.CompletionTokens += resp.Usage.CompletionTokens
 	l.TotalTokens.TotalTokens += resp.Usage.TotalTokens
+
+	if d := resp.Usage.CompletionTokensDetails; d != nil {
+		l.TotalReasoningTokens += d.ReasoningTokens
+	}
+	if d := resp.Usage.PromptTokensDetails; d != nil {
+		l.TotalCachedPromptTokens += d.CachedTokens
+	}
+}
+
+// captureStreamUsage accumulates token details from a streaming usage report
+// (sent by providers in the final SSE chunk when stream_options.include_usage is set).
+func (l *Loop) captureStreamUsage(u *types.Usage) {
+	l.TotalTokens.PromptTokens += u.PromptTokens
+	l.TotalTokens.CompletionTokens += u.CompletionTokens
+	l.TotalTokens.TotalTokens += u.TotalTokens
+	if d := u.CompletionTokensDetails; d != nil {
+		l.TotalReasoningTokens += d.ReasoningTokens
+	}
+	if d := u.PromptTokensDetails; d != nil {
+		l.TotalCachedPromptTokens += d.CachedTokens
+	}
+}
+
+// setStreamUsageAttrs enriches a stream span with token detail attributes.
+func (l *Loop) setStreamUsageAttrs(span trace.Span, u *types.Usage) {
+	span.SetAttributes(
+		attribute.Int("llm.prompt_tokens", u.PromptTokens),
+		attribute.Int("llm.completion_tokens", u.CompletionTokens),
+		attribute.Int("llm.total_tokens", u.TotalTokens),
+	)
+	if d := u.CompletionTokensDetails; d != nil && d.ReasoningTokens > 0 {
+		span.SetAttributes(attribute.Int("llm.reasoning_tokens", d.ReasoningTokens))
+	}
+	if d := u.PromptTokensDetails; d != nil && d.CachedTokens > 0 {
+		span.SetAttributes(attribute.Int("llm.cached_prompt_tokens", d.CachedTokens))
+	}
 }
 
 // EstimatedTokens returns the estimated token count for all messages.
@@ -1082,6 +1150,13 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 			}
 
 			if len(chunk.Choices) == 0 {
+				// The final chunk may carry usage with no choices (pure usage marker).
+				if chunk.Usage != nil {
+					l.captureStreamUsage(chunk.Usage)
+					if streamSpan != nil {
+						l.setStreamUsageAttrs(streamSpan, chunk.Usage)
+					}
+				}
 				continue
 			}
 
@@ -1127,6 +1202,31 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 				finishReason = *chunk.Choices[0].FinishReason
 			}
 
+			if finishReason != "" {
+				// finish_reason received — capture usage from this chunk
+				// (providers like DeepSeek send usage in the same chunk as
+				// the finish_reason), then drain any remaining chunks.
+				if chunk.Usage != nil {
+					l.captureStreamUsage(chunk.Usage)
+					if streamSpan != nil {
+						l.setStreamUsageAttrs(streamSpan, chunk.Usage)
+					}
+				}
+				for chunk := range chunks {
+					if chunk.Usage != nil {
+						l.captureStreamUsage(chunk.Usage)
+						if streamSpan != nil {
+							l.setStreamUsageAttrs(streamSpan, chunk.Usage)
+						}
+					}
+				}
+				if streamSpan != nil {
+					observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
+					streamSpan.End()
+				}
+				return l.checkTruncatedStream(content.String(), toolCallMap, finishReason)
+			}
+
 		case err := <-errs:
 			if err != nil {
 				if streamSpan != nil {
@@ -1148,23 +1248,17 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 			}
 			return types.Message{}, ctx.Err()
 		}
-
-		if finishReason != "" {
-			break
-		}
 	}
-
-	if streamSpan != nil {
-		observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
-		streamSpan.End()
-	}
-	return l.checkTruncatedStream(content.String(), toolCallMap, finishReason)
 }
 
 // checkTruncatedStream returns the assembled message or an error if the
-// stream was truncated (finish_reason=length) with pending tool calls.
+// stream was truncated (finish_reason=length) with pending tool calls,
+// or if the response was blocked by a content filter with no usable output.
 func (l *Loop) checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, finishReason string) (types.Message, error) {
 	msg := l.assembleStreamed(content, toolCallMap)
+	if finishReason == "content_filter" && content == "" && len(msg.ToolCalls) == 0 {
+		return types.Message{}, fmt.Errorf("streamed response blocked by content filter")
+	}
 	if finishReason == "length" && len(msg.ToolCalls) > 0 {
 		return types.Message{}, fmt.Errorf("streamed response truncated (finish_reason=length), discarding %d tool calls", len(msg.ToolCalls))
 	}
@@ -1222,18 +1316,16 @@ func abbreviateArgs(args string, maxLen int) string {
 	return string(runes[:maxLen-3]) + "..."
 }
 
-// dangerousTools is the set of tool names that require approval.
-var dangerousTools = map[string]bool{
-	"bash":       true,
-	"powershell": true,
-	"write":      true,
-	"edit":       true,
-	"delete":     true,
-}
-
-// toolIsDangerous returns true if the tool requires user approval.
-func toolIsDangerous(name string) bool {
-	return dangerousTools[name]
+// classifyDanger returns true if the given tool+args combination requires
+// user approval. It first checks whether the tool implements tools.DangerClassifier
+// for argument-level classification; tools without that interface are never dangerous.
+func (l *Loop) classifyDanger(name, args string) bool {
+	if t := l.Registry.Get(name); t != nil {
+		if dc, ok := t.(tools.DangerClassifier); ok {
+			return dc.IsDangerous(args)
+		}
+	}
+	return false
 }
 
 // approveTool prompts the user on stderr/stdin to approve a tool call.
