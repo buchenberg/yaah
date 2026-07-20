@@ -145,6 +145,36 @@ func FinishSubAgent(span trace.Span, err error) {
 	}
 }
 
+// StartInnerLoop creates a span for the dual-loop inner executor. The
+// task prompt is included as an attribute so traces show what the inner
+// loop was asked to do.
+func StartInnerLoop(ctx context.Context, taskPrompt string) (context.Context, trace.Span) {
+	ctx, span := tracer.Start(ctx, "inner.loop")
+	span.SetAttributes(
+		attribute.String("inner.task", truncate(safeString(taskPrompt), 200)),
+	)
+	return ctx, span
+}
+
+// FinishInnerLoop records the inner loop outcome. iterations is the number
+// of rounds the inner loop ran (including the final text-only round).
+// exhausted is true if it hit MaxInnerIterations.
+func FinishInnerLoop(span trace.Span, iterations int, exhausted bool, err error) {
+	attrs := []attribute.KeyValue{
+		attribute.Int("inner.iterations", iterations),
+		attribute.Bool("inner.exhausted", exhausted),
+	}
+	if err != nil {
+		attrs = append(attrs, attribute.String("inner.error", safeString(err.Error())))
+		span.AddEvent("error", trace.WithAttributes(attrs...))
+		RecordError(span, err)
+	} else if exhausted {
+		span.AddEvent("exhausted", trace.WithAttributes(attrs...))
+	} else {
+		span.AddEvent("completed", trace.WithAttributes(attrs...))
+	}
+}
+
 // RecordError marks the span as errored and records the error string.
 func RecordError(span trace.Span, err error) {
 	if err != nil {
