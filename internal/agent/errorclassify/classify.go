@@ -20,7 +20,7 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 	msg := strings.ToLower(err.Error())
 
 	c := ClassifiedError{
-		Meta:     meta,
+		Meta:      meta,
 		Retryable: true, // default: unknown errors are retryable
 		Message:   msg,
 	}

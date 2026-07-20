@@ -282,20 +282,20 @@ func TestIsContextOverflow(t *testing.T) {
 
 func TestErrorReasonString(t *testing.T) {
 	tests := map[ErrorReason]string{
-		ReasonUnknown:            "unknown",
-		ReasonAuth:               "auth",
-		ReasonAuthPermanent:      "auth_permanent",
-		ReasonBilling:            "billing",
-		ReasonRateLimit:          "rate_limit",
-		ReasonOverloaded:         "overloaded",
-		ReasonServerError:        "server_error",
-		ReasonTimeout:            "timeout",
-		ReasonContextOverflow:    "context_overflow",
-		ReasonPayloadTooLarge:    "payload_too_large",
-		ReasonModelNotFound:      "model_not_found",
-		ReasonContentPolicyBlocked: "content_policy_blocked",
+		ReasonUnknown:               "unknown",
+		ReasonAuth:                  "auth",
+		ReasonAuthPermanent:         "auth_permanent",
+		ReasonBilling:               "billing",
+		ReasonRateLimit:             "rate_limit",
+		ReasonOverloaded:            "overloaded",
+		ReasonServerError:           "server_error",
+		ReasonTimeout:               "timeout",
+		ReasonContextOverflow:       "context_overflow",
+		ReasonPayloadTooLarge:       "payload_too_large",
+		ReasonModelNotFound:         "model_not_found",
+		ReasonContentPolicyBlocked:  "content_policy_blocked",
 		ReasonProviderPolicyBlocked: "provider_policy_blocked",
-		ReasonFormatError:        "format_error",
+		ReasonFormatError:           "format_error",
 	}
 	for reason, want := range tests {
 		got := reason.String()
