@@ -114,6 +114,11 @@ type Loop struct {
 	// TotalTokens accumulates token usage across all API calls in the loop.
 	TotalTokens types.Usage
 
+	// LastPromptTokens is the prompt token count from the most recent
+	// API call — used for context compaction decisions (avoiding the
+	// inaccurate chars/4 estimate).
+	LastPromptTokens int
+
 	// TotalReasoningTokens accumulates reasoning token usage for observability.
 	TotalReasoningTokens int
 
@@ -497,12 +502,6 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		l.Messages = messages
 
 		if l.ConflictTracker != nil {
-			var conflictSpan trace.Span
-			checkCtx := ctx
-			if l.OtelEnabled {
-				checkCtx, conflictSpan = observability.StartConflictCheck(ctx)
-			}
-
 			l.emitHook(HookEvent{
 				Event: ConflictCheck,
 				Turn:  iter,
@@ -517,21 +516,18 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 					Model:         l.Model,
 					ConflictFiles: fileCount,
 				})
-				if conflictSpan != nil {
-					observability.FinishConflictCheck(conflictSpan, fileCount)
+				if turnSpan != nil {
+					turnSpan.SetAttributes(attribute.Int("conflict.files", fileCount))
+					turnSpan.AddEvent("conflict.detected", trace.WithAttributes(
+						attribute.Int("conflict.files", fileCount),
+					))
 				}
 				conflictMsg := types.UserMsg(report)
 				messages = append(messages, conflictMsg)
 				step.Messages = messages
 				l.Messages = messages
 				l.persistMessage(conflictMsg)
-			} else if conflictSpan != nil {
-				observability.FinishConflictCheck(conflictSpan, 0)
 			}
-			if conflictSpan != nil {
-				conflictSpan.End()
-			}
-			_ = checkCtx
 		}
 
 		step, err = pipeline.RunPostTool(ctx, toolResults, step)
@@ -781,6 +777,9 @@ func (l *Loop) getAssistantMessage(ctx context.Context, req types.ChatRequest) (
 					} else if finish == "length" && len(msg.ToolCalls) > 0 {
 						err = fmt.Errorf("response truncated (finish_reason=length), discarding %d tool calls", len(msg.ToolCalls))
 						msg = types.Message{}
+					} else if msg.Content == "" && len(msg.ToolCalls) == 0 {
+						err = fmt.Errorf("non-streaming response produced no content (finish_reason=%s)", finish)
+						msg = types.Message{}
 					}
 				}
 			}
@@ -889,6 +888,7 @@ func (l *Loop) captureUsage(resp *types.ChatResponse) {
 	l.TotalTokens.PromptTokens += resp.Usage.PromptTokens
 	l.TotalTokens.CompletionTokens += resp.Usage.CompletionTokens
 	l.TotalTokens.TotalTokens += resp.Usage.TotalTokens
+	l.LastPromptTokens = resp.Usage.PromptTokens
 
 	if d := resp.Usage.CompletionTokensDetails; d != nil {
 		l.TotalReasoningTokens += d.ReasoningTokens
@@ -904,6 +904,7 @@ func (l *Loop) captureStreamUsage(u *types.Usage) {
 	l.TotalTokens.PromptTokens += u.PromptTokens
 	l.TotalTokens.CompletionTokens += u.CompletionTokens
 	l.TotalTokens.TotalTokens += u.TotalTokens
+	l.LastPromptTokens = u.PromptTokens
 	if d := u.CompletionTokensDetails; d != nil {
 		l.TotalReasoningTokens += d.ReasoningTokens
 	}
@@ -989,17 +990,18 @@ func parseTaskArgs(args string) (role, prompt string) {
 // Falls back to simple trimming if the LLM call fails or returns empty.
 func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	if threshold <= 0 {
-		threshold = 0.8
+		threshold = 0.6
 	}
 	target := int(float64(l.ContextWindow) * threshold)
-	totalChars := 0
-	for _, m := range l.Messages {
-		totalChars += len(m.Content)
-		for _, tc := range m.ToolCalls {
-			totalChars += len(tc.Function.Arguments) + len(tc.Function.Name)
-		}
+
+	// Use the most recent API-reported prompt token count when available;
+	// fall back to the coarse chars/4 estimate when no API call has
+	// completed yet (e.g. first turn, before any usage data arrives).
+	estimatedTokens := l.LastPromptTokens
+	if estimatedTokens <= 0 {
+		estimatedTokens = l.EstimatedTokens()
 	}
-	if totalChars/4 <= target {
+	if estimatedTokens <= target {
 		return
 	}
 
@@ -1261,6 +1263,9 @@ func (l *Loop) checkTruncatedStream(content string, toolCallMap map[int]*types.T
 	}
 	if finishReason == "length" && len(msg.ToolCalls) > 0 {
 		return types.Message{}, fmt.Errorf("streamed response truncated (finish_reason=length), discarding %d tool calls", len(msg.ToolCalls))
+	}
+	if content == "" && len(msg.ToolCalls) == 0 {
+		return types.Message{}, fmt.Errorf("streamed response produced no content (finish_reason=%s)", finishReason)
 	}
 	return msg, nil
 }

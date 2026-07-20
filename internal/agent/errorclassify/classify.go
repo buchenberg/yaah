@@ -152,6 +152,17 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 	}
 
 	// ── 2. Status-code-agnostic pattern matching ──────────────────
+
+	// Empty streamed/non-streamed response with known finish_reason — the
+	// model may be hitting a context limit without returning a clear error
+	// code (DeepSeek v4-pro is known to do this).
+	if strings.Contains(msg, "produced no content") {
+		c.Reason = ReasonContextOverflow
+		c.ShouldCompress = true
+		c.Message = "empty response — likely context overflow, compress and retry"
+		return c
+	}
+
 	if matchAny(msg, contextOverflowPatterns) {
 		c.Reason = ReasonContextOverflow
 		c.ShouldCompress = true
