@@ -22,29 +22,29 @@ func (t *ReadTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"path": {"type": "string", "description": "Path to the file to read"},
+			"filePath": {"type": "string", "description": "The absolute path to the file to read"},
 			"offset": {"type": "integer", "description": "Line number to start from (1-based)"},
 			"limit": {"type": "integer", "description": "Maximum number of lines to return"}
 		},
-		"required": ["path"]
+		"required": ["filePath"]
 	}`)
 }
 
 func (t *ReadTool) Execute(ctx context.Context, args string) (string, error) {
 	var params struct {
-		Path   string `json:"path"`
-		Offset int    `json:"offset"`
-		Limit  int    `json:"limit"`
+		FilePath string `json:"filePath"`
+		Offset   int    `json:"offset"`
+		Limit    int    `json:"limit"`
 	}
 	if err := json.Unmarshal([]byte(args), &params); err != nil {
 		return "", fmt.Errorf("read: invalid arguments: %w", err)
 	}
-	if params.Path == "" {
-		return "", fmt.Errorf("read: path is required")
+	if params.FilePath == "" {
+		return "", fmt.Errorf("read: filePath is required")
 	}
-	params.Path = expandHomeDir(params.Path)
+	params.FilePath = expandHomeDir(params.FilePath)
 
-	data, err := os.ReadFile(params.Path)
+	data, err := os.ReadFile(params.FilePath)
 	if err != nil {
 		return "", fmt.Errorf("read: %w", err)
 	}

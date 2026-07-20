@@ -14,7 +14,7 @@ func TestReadTool_readsExistingFile(t *testing.T) {
 	os.WriteFile(path, []byte("hello\ngoodbye\n"), 0o644)
 
 	rt := &ReadTool{}
-	args, _ := json.Marshal(map[string]any{"path": path})
+	args, _ := json.Marshal(map[string]any{"filePath": path})
 	result, err := rt.Execute(context.Background(), string(args))
 	if err != nil {
 		t.Fatalf("Execute() error: %v", err)
@@ -30,7 +30,7 @@ func TestReadTool_respectsOffsetAndLimit(t *testing.T) {
 	os.WriteFile(path, []byte("line1\nline2\nline3\nline4\nline5\n"), 0o644)
 
 	rt := &ReadTool{}
-	args, _ := json.Marshal(map[string]any{"path": path, "offset": 2, "limit": 2})
+	args, _ := json.Marshal(map[string]any{"filePath": path, "offset": 2, "limit": 2})
 	result, err := rt.Execute(context.Background(), string(args))
 	if err != nil {
 		t.Fatalf("Execute() error: %v", err)
@@ -42,7 +42,7 @@ func TestReadTool_respectsOffsetAndLimit(t *testing.T) {
 
 func TestReadTool_returnsErrorForMissingFile(t *testing.T) {
 	rt := &ReadTool{}
-	_, err := rt.Execute(context.Background(), `{"path":"/nonexistent/file.txt"}`)
+	_, err := rt.Execute(context.Background(), `{"filePath":"/nonexistent/file.txt"}`)
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
