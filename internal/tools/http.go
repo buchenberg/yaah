@@ -24,8 +24,8 @@ var allowedHTTPMethods = map[string]struct {
 	verb      string
 	dangerous bool
 }{
-	"GET":    {"GET", false},
-	"HEAD":   {"HEAD", false},
+	"GET":     {"GET", false},
+	"HEAD":    {"HEAD", false},
 	"OPTIONS": {"OPTIONS", false},
 	"POST":    {"POST", true},
 	"PUT":     {"PUT", true},
@@ -38,8 +38,10 @@ var allowedHTTPMethods = map[string]struct {
 // POST, PUT, PATCH, and DELETE are dangerous and require approval.
 type HTTPTool struct{}
 
-func (t *HTTPTool) Name() string        { return "http" }
-func (t *HTTPTool) Description() string { return "Make an HTTP request to a URL. Supports GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS with custom headers and body." }
+func (t *HTTPTool) Name() string { return "http" }
+func (t *HTTPTool) Description() string {
+	return "Make an HTTP request to a URL. Supports GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS with custom headers and body."
+}
 
 func (t *HTTPTool) Schema() json.RawMessage {
 	return json.RawMessage(`{

@@ -13,8 +13,10 @@ import (
 // Reading (no set value) is safe; writing and deleting are dangerous.
 type JSONQueryTool struct{}
 
-func (t *JSONQueryTool) Name() string        { return "json_query" }
-func (t *JSONQueryTool) Description() string { return "Read, write, or delete a value in a JSON file using a dot-notation path." }
+func (t *JSONQueryTool) Name() string { return "json_query" }
+func (t *JSONQueryTool) Description() string {
+	return "Read, write, or delete a value in a JSON file using a dot-notation path."
+}
 
 func (t *JSONQueryTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
@@ -337,17 +339,6 @@ func splitPath(path string) []string {
 		parts = append(parts, path)
 	}
 	return parts
-}
-
-func bracketIndex(part string) int {
-	if !strings.HasPrefix(part, "[") || !strings.HasSuffix(part, "]") || len(part) <= 2 {
-		return -1
-	}
-	n, err := strconv.Atoi(part[1 : len(part)-1])
-	if err != nil {
-		return -1
-	}
-	return n
 }
 
 func splitBracketPart(part string) (string, int) {

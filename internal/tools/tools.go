@@ -120,9 +120,9 @@ var leafTools = map[string]func() Tool{
 	"question":   func() Tool { return &QuestionTool{} },
 	"webfetch":   func() Tool { return &WebFetchTool{} },
 	"git":        func() Tool { return &GitTool{} },
-	"http":        func() Tool { return &HTTPTool{} },
-	"go_outline":  func() Tool { return &GoOutlineTool{} },
-	"calculate":   func() Tool { return &CalculateTool{} },
+	"http":       func() Tool { return &HTTPTool{} },
+	"go_outline": func() Tool { return &GoOutlineTool{} },
+	"calculate":  func() Tool { return &CalculateTool{} },
 }
 
 // NewRegistry creates a tool registry with yaah's built-in tools.

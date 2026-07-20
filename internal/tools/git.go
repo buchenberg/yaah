@@ -28,8 +28,10 @@ var allowedGitActions = map[string]struct {
 // (add, commit) are flagged as dangerous via DangerClassifier.
 type GitTool struct{}
 
-func (t *GitTool) Name() string        { return "git" }
-func (t *GitTool) Description() string { return "Run a git command (status, diff, log, show, branch, add, commit)." }
+func (t *GitTool) Name() string { return "git" }
+func (t *GitTool) Description() string {
+	return "Run a git command (status, diff, log, show, branch, add, commit)."
+}
 
 func (t *GitTool) Schema() json.RawMessage {
 	return json.RawMessage(`{

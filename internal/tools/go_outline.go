@@ -17,8 +17,10 @@ import (
 // outlines or extracts specific symbols by name. Read-only — never dangerous.
 type GoOutlineTool struct{}
 
-func (t *GoOutlineTool) Name() string        { return "go_outline" }
-func (t *GoOutlineTool) Description() string { return "Parses a Go file with go/ast: outline its structure or extract a named symbol's source." }
+func (t *GoOutlineTool) Name() string { return "go_outline" }
+func (t *GoOutlineTool) Description() string {
+	return "Parses a Go file with go/ast: outline its structure or extract a named symbol's source."
+}
 
 func (t *GoOutlineTool) Schema() json.RawMessage {
 	return json.RawMessage(`{

@@ -1246,7 +1246,7 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 				observability.RecordError(streamSpan, ctx.Err())
 				streamSpan.End()
 			}
-		return types.Message{}, ctx.Err()
+			return types.Message{}, ctx.Err()
 		}
 	}
 }

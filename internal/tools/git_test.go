@@ -59,7 +59,7 @@ func TestGitTool_commitRequiresMessage(t *testing.T) {
 func TestGitTool_isDangerousForMutatingActions(t *testing.T) {
 	gt := &GitTool{}
 	tests := []struct {
-		args     string
+		args      string
 		dangerous bool
 	}{
 		{`{"action":"status"}`, false},

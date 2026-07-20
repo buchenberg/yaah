@@ -256,10 +256,7 @@ func TestHTTPTool_InvalidURL(t *testing.T) {
 func TestHTTPTool_Timeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Sleep longer than the timeout.
-		select {
-		case <-r.Context().Done():
-			return
-		}
+		<-r.Context().Done()
 	}))
 	defer srv.Close()
 
@@ -284,9 +281,9 @@ func TestHTTPTool_IsDangerous(t *testing.T) {
 		{`{"method":"PUT"}`, true},
 		{`{"method":"PATCH"}`, true},
 		{`{"method":"DELETE"}`, true},
-		{`{}`, true},                        // no method → default GET, but IsDangerous doesn't default
-		{`{"method":"CONNECT"}`, true},       // unknown → dangerous
-		{`not json`, false},                  // invalid JSON
+		{`{}`, true},                   // no method → default GET, but IsDangerous doesn't default
+		{`{"method":"CONNECT"}`, true}, // unknown → dangerous
+		{`not json`, false},            // invalid JSON
 	}
 	for _, tt := range tests {
 		t.Run(tt.args, func(t *testing.T) {

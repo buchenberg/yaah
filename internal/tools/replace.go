@@ -18,8 +18,10 @@ const replaceMaxResultLen = 4096
 // replacement to every matching file.
 type ReplaceTool struct{}
 
-func (t *ReplaceTool) Name() string        { return "replace" }
-func (t *ReplaceTool) Description() string { return "Regex find-and-replace across multiple files in a directory." }
+func (t *ReplaceTool) Name() string { return "replace" }
+func (t *ReplaceTool) Description() string {
+	return "Regex find-and-replace across multiple files in a directory."
+}
 
 func (t *ReplaceTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
