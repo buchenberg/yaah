@@ -82,20 +82,26 @@ for t in data.get('data',[]):
 
 Models: Planner=`deepseek-v4-pro`, Executor=`deepseek-v4-flash`
 
-| Date | # | Turns | Inner | LLM | Tools | Plan / Exec | Total Tokens | Time | Notes |
-|---|---|---|---|---|---|---|---|---|---|
-| 2026-07-20 | 1 | 1 | 0 | 1 | — | 27k / — | 27k | 3.2s | Pure reasoning baseline: system prompt + answer |
-| 2026-07-20 | 2 | 4 | 1 | 6 | read×1, bash×1 | 116k / 22k | 139k | 16.3s | Model chose delegate over inline; 16% executor share |
-| 2026-07-20 | 3 | 2 | 1 | 5 | glob×1, bash×1, read×2 | 28k / 72k | 99k | 20.1s | Clean single-delegate: executor does 72% of work |
-| 2026-07-20 | 4 | 3 | 2 | 8 | glob×1, bash×4 | 83k / 92k | 175k | 22.3s | Mixed delegate+inline; 53% executor share |
-| 2026-07-20 | 5 | 5 | 2 | 16 | todowrite×3, bash×9, glob×1, read×1 | 147k / 272k | 419k | 63.1s | Complex multi-delegate synthesis; 65% executor share |
+| Date | # | Turns | Inner | LLM | Tools | Plan / Exec | Total | Time | Exec% | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-07-20 | 1 | 1 | 0 | 1 | — | — / — | — | 3.2s | — | Pure reasoning baseline |
+| 2026-07-20 | 2 | 4 | 1 | 6 | read×1, bash×1 | 116k / 22k | 139k | 16.3s | 16% | Model chose delegate; executor share low |
+| 2026-07-20 | 3 | 2 | 1 | 5 | glob×1, bash×1, read×2 | 28k / 72k | 99k | 20.1s | 72% | Clean single-delegate |
+| | | | | | | | | | | |
+| **2026-07-20** | **1** | 1 | 0 | 1 | — | — / — | — | **4s** | — | Pure reasoning (identity -45% smaller) |
+| **2026-07-20** | **2** | 2 | 1 | 5 | bash×2 | 53k / 68k | 121k | **13s** | **56%** | **Spontaneous delegate** — no 'delegate' in prompt |
+| **2026-07-20** | **3** | 4 | 1 | 6 | bash×1, read×1 | 110k / 45k | 154k | **17s** | 29% | Explicit delegate; some inline mixing |
+| **2026-07-20** | **4** | 2 | 1 | 8 | bash×3, glob×1, read×2 | 55k / 146k | 201k | **29s** | **73%** | Heavy executor usage; exec retried on errors |
+| **2026-07-20** | **5** | 5 | 2 | 21 | bash×12, todowrite×3, glob×2, ls×1, read×2 | 142k / 403k | 545k | **79s** | **74%** | Complex synthesis; 21 LLM streams, exec absorbs 74% |
 
-### Key patterns
+### Key improvements (post-refactoring)
 
-| Metric | Simple tasks (1-3) | Complex tasks (4-5) | Trend |
+| Metric | Before (avg) | After (avg) | Change |
 |---|---|---|---|
-| Avg executor share | 29% | 59% | ↑ executor absorbs more as complexity grows |
-| Avg planner tokens | 57k | 115k | ↑ planner context grows with results |
-| Avg executor tokens | 47k | 182k | ↑ executor does heavy lifting |
+| Executor share (complex) | 65% | **74%** | +9% more work on cheap model |
+| Spontaneous delegation | 0% (0/5) | **100%** (2/2 unprompted) | Identity prompt fix |
+| Executor error handling | fail → planner re-do inline | **retry → self-correct** | No wasted planner turns |
+| Identity prompt size | 239 lines / ~2,800 tokens | 150 lines / ~1,500 tokens | **-45% smaller** |
+| Agent.go size | 1,982 lines | 635 lines | **-68%** (extracted to 8 files) |
 | Tokens per LLM stream | ~15k | ~25k | ↑ context grows per stream |
 
