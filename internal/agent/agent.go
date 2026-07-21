@@ -80,23 +80,6 @@ type FlushCallback func(content string)
 // ToolResultMaxLen is the maximum length of a tool result before truncation.
 const ToolResultMaxLen = 8192
 
-// maxInnerSummaryLen caps the inner executor loop's final summary to prevent
-// unbounded context growth from the dual-loop architecture.
-const maxInnerSummaryLen = 8000
-
-// executorSystemPrompt is the purpose-built prompt for the inner executor.
-// It is deliberately NOT the planner's identity prompt: the executor does
-// tactical tool selection, not user-facing reasoning, so it gets only what
-// its responsibility requires. This keeps its context small and stops it
-// from narrating like a user-facing agent.
-const executorSystemPrompt = `You are a tool executor. You receive a task directive and the user's original request. Select and run the built-in tools needed to accomplish the directive; you may chain tools based on their results. When finished, respond with a terse structured summary: one line per tool executed naming the tool and its outcome (e.g. "write(path): wrote 138B", "bash(cmd): exit 0"). Do not write conversational prose, confirmations, or next-step plans.`
-
-// delegateToolName is the single tool the planner may call when the
-// dual-loop is active. Calling it hands an intent-level directive to the
-// executor. This is how the "one decision, one owner" boundary is enforced
-// by schema: the planner cannot name file/bash tools, only delegate.
-const delegateToolName = "delegate"
-
 // pruneMessageMaxLen is the threshold above which old messages are pruned
 // before being sent to the LLM summarizer during compaction.
 const pruneMessageMaxLen = 2000
@@ -160,9 +143,10 @@ type Loop struct {
 	// CompactModel is the model to use for compaction. If empty, Model is used.
 	CompactModel string
 
-	// ExecutorProvider is used for the dual-loop inner executor loop.
-	// If nil, dual-loop execution is disabled (tools execute directly).
-	// Typically set to a cheaper/faster provider than the main loop.
+	// ExecutorProvider is used for the dual-loop executor.
+	// When configured, delegated tasks run on this provider; when nil, the
+	// main Provider is used (default-model fallback). Typically set to a
+	// cheaper/faster provider than the main loop for model tiering.
 	ExecutorProvider Provider
 
 	// ExecutorModel is the model to use for the inner executor loop.
@@ -172,11 +156,6 @@ type Loop struct {
 	// MaxInnerIterations caps the number of tool-chaining rounds the
 	// inner executor loop may run per outer-loop turn. Default 10.
 	MaxInnerIterations int
-
-	// DisableInnerLoop skips the inner executor loop and falls back to
-	// direct parallel tool execution. Used in tests and when the inner
-	// loop would add overhead without benefit (e.g. single tool calls).
-	DisableInnerLoop bool
 
 	// FallbackProvider is an alternative model backend used when the
 	// primary provider returns auth, billing, or rate-limit errors.
@@ -500,10 +479,12 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		}
 		messages = step.Messages
 
+		// Planner always gets the full tool set PLUS delegate (additive).
+		// The planner chooses inline vs. delegate per-action. No gate.
 		req := types.ChatRequest{
 			Model:    l.Model,
 			Messages: messages,
-			Tools:    step.Tools,
+			Tools:    l.buildPlannerToolDefs(),
 		}
 
 		// Verbose: record the conversation the outer model is about to see
@@ -523,6 +504,8 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			req.Messages = messages
 		}
 
+		tokensBeforeTurn := l.TotalTokens
+
 		msg, streamed, err := l.getAssistantMessage(turnCtx, req)
 		if err != nil {
 			if turnSpan != nil {
@@ -536,12 +519,28 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		l.persistMessage(msg)
 
 		if turnSpan != nil {
+			delegCnt, inlineCnt := 0, 0
+			toolNames := make([]string, 0, len(msg.ToolCalls))
+			for _, tc := range msg.ToolCalls {
+				toolNames = append(toolNames, tc.Function.Name)
+				if tc.Function.Name == delegateToolName {
+					delegCnt++
+				} else {
+					inlineCnt++
+				}
+			}
 			turnAttrs := []attribute.KeyValue{
 				attribute.Bool("turn.streamed", streamed),
+				attribute.Int("turn.iteration", iter),
 				attribute.Int("turn.tool_calls", len(msg.ToolCalls)),
+				attribute.Int("turn.delegate_calls", delegCnt),
+				attribute.Int("turn.inline_calls", inlineCnt),
+				attribute.String("turn.tool_call_names", strings.Join(toolNames, ",")),
 				attribute.Int("turn.messages", len(messages)),
 				attribute.Int("llm.total_prompt_tokens", l.TotalTokens.PromptTokens),
 				attribute.Int("llm.total_completion_tokens", l.TotalTokens.CompletionTokens),
+				attribute.Int("turn.prompt_tokens", l.TotalTokens.PromptTokens-tokensBeforeTurn.PromptTokens),
+				attribute.Int("turn.completion_tokens", l.TotalTokens.CompletionTokens-tokensBeforeTurn.CompletionTokens),
 			}
 			if l.TotalReasoningTokens > 0 {
 				turnAttrs = append(turnAttrs, attribute.Int("llm.total_reasoning_tokens", l.TotalReasoningTokens))
@@ -570,67 +569,77 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			return "", err
 		}
 
-		// ── Dual-loop: route tool execution through inner executor ──
-		if !l.DisableInnerLoop {
-			taskPrompt := l.formatToolCallsForExecutor(msg)
-			innerResult, exhausted, innerErr := l.innerLoop(turnCtx, taskPrompt, step.Tools)
+		// ── Dispatch: delegate calls → executor; inline calls → direct execution ──
+		delegateCalls, inlineCalls := splitDelegateCalls(msg.ToolCalls)
 
-			summary := innerResult
-			if innerErr != nil {
-				summary = fmt.Sprintf("inner executor error: %v", innerErr)
-			} else if exhausted {
-				if summary != "" {
-					summary += "\n(inner loop iteration budget exhausted)"
-				} else {
-					summary = "inner loop iteration budget exhausted"
-				}
+		// Delegate calls: each routes to the executor, which owns tool selection
+		// for that directive. The executor's summary is the honest tool result of
+		// the planner's delegate call.
+		if len(delegateCalls) > 0 {
+			originalIntent := l.lastUserMessage(messages)
+			if l.OtelVerbose && turnSpan != nil {
+				turnSpan.AddEvent("dispatch.delegate", trace.WithAttributes(
+					attribute.Int("delegate.count", len(delegateCalls)),
+					attribute.Int("inline.count", len(inlineCalls)),
+					attribute.Int("turn.messages", len(messages)),
+				))
 			}
-			if len(summary) > maxInnerSummaryLen {
-				summary = truncateRunes(summary, maxInnerSummaryLen)
-			}
-
-			// Inject tool result messages for the outer model's original
-			// tool calls so the conversation history satisfies the OpenAI
-			// requirement: every assistant message with tool_calls must be
-			// followed by tool messages responding to each tool_call_id.
-			//
-			// The inner executor's structured summary is carried by the
-			// FINAL tool message (rather than a separate assistant
-			// message) so the outer model sees it as tool-output data to
-			// act on, not as a conversational assistant turn to reply to.
-			// Injecting it as an assistant message caused the outer model
-			// to respond to its own inner summary ("Done. All tools
-			// executed successfully...") with a new narrative beat ("Now
-			// let me test the remaining tools..."), producing a
-			// multi-turn feedback loop for what should be one turn.
-			for i, tc := range msg.ToolCalls {
-				content := "[handled by inner executor]"
-				if i == len(msg.ToolCalls)-1 {
-					content = summary
+			for _, tc := range delegateCalls {
+				directive, execType := parseDelegateCall(tc.Function.Arguments)
+				if l.OtelVerbose && turnSpan != nil {
+					turnSpan.AddEvent("dispatch.delegate.call", trace.WithAttributes(
+						attribute.String("delegate.directive", abbreviateArgs(directive, 200)),
+						attribute.String("delegate.executor_type", execType),
+					))
 				}
-				tr := types.Message{
-					Role:       "tool",
-					Content:    content,
-					ToolCallID: tc.ID,
-					Name:       tc.Function.Name,
+				summary, exhausted, innerErr := l.runExecutor(turnCtx, directive, originalIntent, execType)
+				truncated := false
+				switch {
+				case innerErr != nil:
+					summary = fmt.Sprintf("executor error: %v", innerErr)
+				case exhausted:
+					if summary == "" {
+						summary = "executor iteration budget exhausted"
+					}
 				}
+				if len(summary) > maxInnerSummaryLen {
+					summary = truncateRunes(summary, maxInnerSummaryLen)
+					truncated = true
+				}
+				content := wrapExecutorResult(summary, exhausted, innerErr, truncated)
+				tr := types.Message{Role: "tool", Content: content, ToolCallID: tc.ID, Name: delegateToolName}
 				messages = append(messages, tr)
 				l.persistMessage(tr)
+				if l.OtelVerbose && turnSpan != nil {
+					observability.RecordInnerSummary(turnSpan, content, len(messages))
+				}
 			}
+		}
 
-			// Verbose: record the summary the inner loop produced and that
-			// is now carried by the final tool message in the outer history.
+		// Inline calls: direct execution on the full middleware path (approval,
+		// conflict tracking, loop detection). Skipped when there are no inline
+		// calls in this turn.
+		var toolResults []ToolResult
+		if len(inlineCalls) > 0 {
 			if l.OtelVerbose && turnSpan != nil {
-				observability.RecordInnerSummary(turnSpan, summary, len(messages))
+				names := make([]string, len(inlineCalls))
+				for i, tc := range inlineCalls {
+					names[i] = tc.Function.Name
+				}
+				turnSpan.AddEvent("dispatch.inline", trace.WithAttributes(
+					attribute.Int("inline.count", len(inlineCalls)),
+					attribute.String("inline.tool_names", strings.Join(names, ",")),
+				))
 			}
+			toolResults = l.executeAndCollect(turnCtx, inlineCalls, &messages)
+		}
 
+		if len(delegateCalls) > 0 && len(inlineCalls) == 0 {
 			if turnSpan != nil {
 				turnSpan.End()
 			}
 			continue
 		}
-
-		toolResults := l.executeAndCollect(turnCtx, msg.ToolCalls, &messages)
 
 		// Update step.Messages to reflect the tool results added by executeAndCollect
 		step.Messages = messages
@@ -690,31 +699,6 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 	return "", fmt.Errorf("max iterations (%d) reached", l.MaxIterations)
 }
 
-// formatToolCallsForExecutor formats the outer model's tool calls as a task
-// prompt for the inner executor loop.
-//
-// The outer model's msg.Content (its reasoning/narrative prose) is
-// deliberately NOT included. Feeding that prose back as "## Instructions"
-// caused the inner model to re-interpret the outer model's narrative as a
-// task scope — e.g. "run a comprehensive self-test of all tools" made the
-// inner loop exhaust its iteration budget trying to exercise every tool,
-// instead of just running the one bash(mkdir) call the outer model
-// actually requested. The inner loop sees only the explicit required tool
-// calls; it may chain additional tools based on their results.
-func (l *Loop) formatToolCallsForExecutor(msg types.Message) string {
-	var sb strings.Builder
-	sb.WriteString("Execute the following tool calls. You may chain additional tool calls ")
-	sb.WriteString("if needed to complete the task. When finished, respond with a terse ")
-	sb.WriteString("structured summary: one line per tool executed, naming the tool and its ")
-	sb.WriteString("outcome (e.g. `write(filePath): wrote 138B`, `bash(cmd): exit 0`). ")
-	sb.WriteString("Do not write conversational prose, confirmations, or next-step plans.\n\n")
-	sb.WriteString("## Required tool calls\n")
-	for _, tc := range msg.ToolCalls {
-		sb.WriteString(fmt.Sprintf("- `%s(%s)`\n", tc.Function.Name, tc.Function.Arguments))
-	}
-	return sb.String()
-}
-
 // applyDefaults sets default values for Loop fields.
 func (l *Loop) applyDefaults() {
 	if l.MaxIterations <= 0 {
@@ -743,272 +727,17 @@ func (l *Loop) applyDefaults() {
 // pre-formed tool calls), and the executor selects, runs, and chains tools
 // to accomplish it.
 //
-// Three properties distinguish it from the legacy innerLoop:
+// Key properties:
 //   - It uses a purpose-built executorSystemPrompt (NOT the planner identity),
 //     keeping its context small and stopping user-facing narration.
 //   - It receives the ORIGINAL user intent alongside the directive, fixing
 //     the "user is asking me to…" mischaracterization (the executor finally
 //     sees the real request, not a reframed subtask).
-//   - Tool selection happens here and ONLY here — the planner cannot name
-//     tools, so the decision is made once.
+//   - Tool selection happens here and ONLY here — the planner delegates
+//     intent, the executor selects tools.
 //
-// Returns the executor's final summary and whether it exhausted its budget.
-func (l *Loop) runExecutor(ctx context.Context, directive, originalIntent string) (string, bool, error) {
-	var span trace.Span
-	if l.OtelEnabled {
-		ctx, span = observability.StartInnerLoop(ctx, directive)
-		defer span.End()
-	}
-
-	provider := l.ExecutorProvider
-	hasOwnProvider := provider != nil && provider != l.Provider
-	model := l.ExecutorModel
-	if model == "" {
-		model = l.Model
-	}
-	if span != nil {
-		span.SetAttributes(
-			attribute.String("inner.model", model),
-			attribute.Bool("inner.dedicated_provider", hasOwnProvider),
-		)
-		if l.Model != "" {
-			span.SetAttributes(attribute.String("outer.model", l.Model))
-		}
-	}
-
-	// Directive + original intent. Carrying the raw user request is the fix
-	// for intent loss in the legacy dual-loop.
-	payload := directive
-	if originalIntent != "" {
-		payload += "\n\n## Original user request\n" + originalIntent
-	}
-	messages := []types.Message{
-		types.SystemMsg(executorSystemPrompt),
-		types.UserMsg(payload),
-	}
-	if l.OtelVerbose && span != nil {
-		observability.RecordInnerTask(span, payload)
-		observability.RecordConversation(span, messages)
-	}
-	executorTools := l.buildExecutorToolDefs()
-
-	for iter := 0; iter < l.MaxInnerIterations; iter++ {
-		req := types.ChatRequest{Model: model, Messages: messages, Tools: executorTools}
-		msg, err := l.getExecutorMessage(ctx, provider, req)
-		if err != nil {
-			if span != nil {
-				observability.FinishInnerLoop(span, iter+1, false, err)
-			}
-			return "", false, fmt.Errorf("executor: %w", err)
-		}
-		messages = append(messages, msg)
-		if l.OtelVerbose && span != nil {
-			observability.RecordAssistantResponse(span, msg, "")
-		}
-
-		// No tool calls — executor is done, return the summary text.
-		if len(msg.ToolCalls) == 0 {
-			if span != nil {
-				observability.FinishInnerLoop(span, iter+1, false, nil)
-			}
-			return msg.Content, false, nil
-		}
-
-		// Execute the executor-selected tools and feed results back so it
-		// can chain based on outcomes.
-		for _, tc := range msg.ToolCalls {
-			abbr := abbreviateArgs(tc.Function.Arguments, 60)
-			if l.OnTool != nil {
-				l.OnTool(ToolInfo{Name: tc.Function.Name, Args: abbr})
-			}
-			result := l.executeOneTool(ctx, tc)
-			if l.OnTool != nil {
-				errMsg := ""
-				if result.err != nil {
-					errMsg = result.err.Error()
-				}
-				l.OnTool(ToolInfo{Name: tc.Function.Name, Args: abbr, Duration: result.dur, Result: result.content, Error: errMsg})
-			}
-			messages = append(messages, types.Message{
-				Role:       "tool",
-				Content:    result.content,
-				ToolCallID: tc.ID,
-				Name:       tc.Function.Name,
-			})
-			if result.err != nil {
-				if span != nil {
-					observability.FinishInnerLoop(span, iter+1, false, result.err)
-				}
-				return "", false, fmt.Errorf("executor tool %q: %w", tc.Function.Name, result.err)
-			}
-		}
-	}
-
-	if span != nil {
-		observability.FinishInnerLoop(span, l.MaxInnerIterations, true, nil)
-	}
-	return "", true, fmt.Errorf("executor exhausted after %d iterations", l.MaxInnerIterations)
-}
-
-// getExecutorMessage obtains one assistant message from the executor
-// provider, using streaming when available (reusing runStream so token
-// accounting and callbacks stay consistent with the main loop).
-func (l *Loop) getExecutorMessage(ctx context.Context, p Provider, req types.ChatRequest) (types.Message, error) {
-	if sp, ok := p.(StreamProvider); ok {
-		msg, err := l.runStream(ctx, sp, req)
-		if err != nil {
-			return types.Message{}, err
-		}
-		return msg, nil
-	}
-	resp, err := p.Send(ctx, req)
-	if err != nil {
-		return types.Message{}, err
-	}
-	if len(resp.Choices) == 0 {
-		return types.Message{}, fmt.Errorf("executor: no choices in response")
-	}
-	return resp.Choices[0].Message, nil
-}
-
-// innerLoop runs a lightweight tool-chaining loop using a potentially cheaper
-// executor model. Instead of returning every tool result to the outer loop,
-// the inner model sees tool results directly and can chain multiple tool calls
-// together within a single outer-loop turn. Returns the final text response
-// and flag indicating whether the inner loop exhausted its iteration budget.
-func (l *Loop) innerLoop(ctx context.Context, taskPrompt string, tools []types.ToolDef) (string, bool, error) {
-	var innerSpan trace.Span
-	if l.OtelEnabled {
-		ctx, innerSpan = observability.StartInnerLoop(ctx, taskPrompt)
-		defer innerSpan.End()
-	}
-
-	provider := l.ExecutorProvider
-	hasOwnProvider := provider != nil
-	if provider == nil {
-		provider = l.Provider // fall back to main provider
-	}
-	model := l.ExecutorModel
-	if model == "" {
-		model = l.Model
-	}
-
-	// Set provider/model on the span for Jaeger visibility.
-	if innerSpan != nil {
-		innerSpan.SetAttributes(
-			attribute.String("inner.model", model),
-			attribute.Bool("inner.dedicated_provider", hasOwnProvider),
-		)
-		if l.Model != "" {
-			innerSpan.SetAttributes(attribute.String("outer.model", l.Model))
-		}
-	}
-
-	// Build a focused context: system prompt + task directive only.
-	// The inner loop doesn't carry the full conversation history — just
-	// the current task and any tool results from its own actions.
-	messages := []types.Message{
-		types.SystemMsg(l.SystemPrompt),
-		types.UserMsg(taskPrompt),
-	}
-
-	// Verbose: record the full task prompt handed to the inner executor.
-	// This is what reveals the dual-loop confusion when the outer model's
-	// prose is fed back as "## Instructions".
-	if l.OtelVerbose && innerSpan != nil {
-		observability.RecordInnerTask(innerSpan, taskPrompt)
-		observability.RecordConversation(innerSpan, messages)
-	}
-
-	for iter := 0; iter < l.MaxInnerIterations; iter++ {
-		req := types.ChatRequest{
-			Model:    model,
-			Messages: messages,
-			Tools:    tools,
-		}
-
-		var msg types.Message
-		var err error
-
-		if sp, ok := provider.(StreamProvider); ok {
-			msg, err = l.runStream(ctx, sp, req)
-		} else {
-			var resp *types.ChatResponse
-			resp, err = provider.Send(ctx, req)
-			if err == nil && len(resp.Choices) > 0 {
-				msg = resp.Choices[0].Message
-			} else if err == nil {
-				err = fmt.Errorf("no choices in inner loop response")
-			}
-		}
-
-		if err != nil {
-			if innerSpan != nil {
-				observability.FinishInnerLoop(innerSpan, iter+1, false, err)
-			}
-			return "", false, fmt.Errorf("inner loop: %w", err)
-		}
-
-		messages = append(messages, msg)
-
-		// Verbose: record this inner iteration's model response (content,
-		// reasoning, tool calls) on the inner.loop span so each round of
-		// the tool-chaining loop is visible in Jaeger.
-		if l.OtelVerbose && innerSpan != nil {
-			observability.RecordAssistantResponse(innerSpan, msg, "")
-		}
-
-		// No tool calls — inner loop is done, return the text content.
-		if len(msg.ToolCalls) == 0 {
-			if innerSpan != nil {
-				observability.FinishInnerLoop(innerSpan, iter+1, false, nil)
-			}
-			return msg.Content, false, nil
-		}
-
-		// Execute tools and append results for the inner model to see.
-		for _, tc := range msg.ToolCalls {
-			abbr := abbreviateArgs(tc.Function.Arguments, 60)
-			if l.OnTool != nil {
-				l.OnTool(ToolInfo{Name: tc.Function.Name, Args: abbr})
-			}
-			result := l.executeOneTool(ctx, tc)
-			var errMsg string
-			if result.err != nil {
-				errMsg = result.err.Error()
-			}
-			if l.OnTool != nil {
-				l.OnTool(ToolInfo{
-					Name:     tc.Function.Name,
-					Args:     abbr,
-					Duration: result.dur,
-					Result:   result.content,
-					Error:    errMsg,
-				})
-			}
-			messages = append(messages, types.Message{
-				Role:       "tool",
-				Content:    result.content,
-				ToolCallID: tc.ID,
-				Name:       tc.Function.Name,
-			})
-			if result.err != nil {
-				if innerSpan != nil {
-					observability.FinishInnerLoop(innerSpan, iter+1, false, result.err)
-				}
-				return "", false, fmt.Errorf("inner loop tool %q: %w", tc.Function.Name, result.err)
-			}
-		}
-	}
-
-	if innerSpan != nil {
-		observability.FinishInnerLoop(innerSpan, l.MaxInnerIterations, true, nil)
-	}
-	return "", true, fmt.Errorf("inner loop exhausted after %d iterations", l.MaxInnerIterations)
-}
-
-// executeOneTool runs a single tool call synchronously. Used by innerLoop
-// which needs to append results to messages between model calls.
+// executeOneTool runs a single tool call synchronously. Used by the executor
+// loop which needs to append results to messages between model calls.
 func (l *Loop) executeOneTool(ctx context.Context, tc types.ToolCall) toolExecResult {
 	t := l.Registry.Get(tc.Function.Name)
 	if t == nil {
@@ -1911,51 +1640,6 @@ func (l *Loop) assembleStreamed(content string, toolCalls map[int]*types.ToolCal
 	}
 	return msg
 }
-
-// dualLoopActive reports whether the executor-owns-tools dual-loop should
-// run. It is gated purely on an explicitly-configured executor provider so
-// that the default (no executor) — and all subagents, which never set an
-// ExecutorProvider — stay on the single-loop path. A subagent is already
-// an isolated executor; nesting another executor inside it is redundant.
-func (l *Loop) dualLoopActive() bool {
-	return l.ExecutorProvider != nil
-}
-
-// delegateToolDef returns the planner's sole tool when the dual-loop is
-// active. Its description instructs the model to use it for ANY tool work,
-// which is how the "one decision, one owner" boundary is enforced by schema
-// rather than convention — the planner structurally cannot name file/bash
-// tools, only hand an intent-level directive to the executor.
-func delegateToolDef() types.ToolDef {
-	return types.ToolDef{
-		Type: "function",
-		Function: types.ToolFn{
-			Name:        delegateToolName,
-			Description: "Delegate a tool-execution task to the executor. Use this for ANY task that requires running tools (read, write, bash, grep, etc.). Provide a concise intent-level directive describing what to accomplish, not which specific tools to call — the executor selects the tools.",
-			Parameters: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"task": {"type": "string", "description": "Intent-level directive: what to accomplish."}
-				},
-				"required": ["task"]
-			}`),
-		},
-	}
-}
-
-// buildPlannerToolDefs returns the tool set exposed to the planner. When the
-// dual-loop is active the planner gets only {delegate} (it cannot pick
-// file/bash tools — the executor owns tool selection). Otherwise it gets the
-// full set (the single-loop path used by default and by subagents).
-func (l *Loop) buildPlannerToolDefs() []types.ToolDef {
-	if l.dualLoopActive() {
-		return []types.ToolDef{delegateToolDef()}
-	}
-	return l.buildToolDefs()
-}
-
-// buildExecutorToolDefs returns the full tool set the executor may use.
-func (l *Loop) buildExecutorToolDefs() []types.ToolDef { return l.buildToolDefs() }
 
 // buildToolDefs builds the OpenAI-format tool definitions from the registry.
 func (l *Loop) buildToolDefs() []types.ToolDef {

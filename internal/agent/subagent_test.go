@@ -337,8 +337,7 @@ func TestLoop_subAgentConcurrencyCap(t *testing.T) {
 	reg := tools.NewEmptyRegistry()
 	reg.Register(&tools.TaskTool{Runner: runner})
 
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:               fp,
+	loop := &Loop{Provider: fp,
 		Registry:               reg,
 		SystemPrompt:           "test",
 		MaxIterations:          5,
@@ -372,7 +371,7 @@ func TestLoop_subAgentParallelWithoutCap(t *testing.T) {
 	reg := tools.NewEmptyRegistry()
 	reg.Register(&tools.TaskTool{Runner: runner})
 
-	loop := &Loop{DisableInnerLoop: true, Provider: fp, Registry: reg, SystemPrompt: "test", MaxIterations: 5}
+	loop := &Loop{Provider: fp, Registry: reg, SystemPrompt: "test", MaxIterations: 5}
 	start := time.Now()
 	if _, err := loop.Run(context.Background(), "fan out"); err != nil {
 		t.Fatalf("Run() error: %v", err)
@@ -416,7 +415,7 @@ func TestLoop_subAgentInterruptPropagation(t *testing.T) {
 	reg := tools.NewEmptyRegistry()
 	reg.Register(&tools.TaskTool{Runner: runner})
 
-	loop := &Loop{DisableInnerLoop: true, Provider: fp, Registry: reg, SystemPrompt: "test", MaxIterations: 5}
+	loop := &Loop{Provider: fp, Registry: reg, SystemPrompt: "test", MaxIterations: 5}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {

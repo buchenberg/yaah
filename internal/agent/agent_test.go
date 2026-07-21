@@ -137,8 +137,7 @@ func TestLoop_plainTextResponse(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "You are helpful.",
 		MaxIterations: 10,
@@ -188,8 +187,7 @@ func TestLoop_toolCalling(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "You are helpful.",
 		MaxIterations: 10,
@@ -232,8 +230,7 @@ func TestLoop_hitsMaxIterations(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "You are helpful.",
 		MaxIterations: 3,
@@ -283,8 +280,7 @@ func TestLoop_toolResultTruncation(t *testing.T) {
 	reg := tools.NewRegistry()
 	// Add a tool that returns a long result
 	reg.Register(&fakeTool{name: "echo", result: longText})
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "test",
 		MaxIterations: 5,
@@ -416,8 +412,7 @@ func TestLoop_loopDetection(t *testing.T) {
 
 	reg := tools.NewRegistry()
 	reg.Register(&fakeTool{name: "echo", result: "same result"})
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:         fp,
+	loop := &Loop{Provider: fp,
 		Registry:         reg,
 		SystemPrompt:     "test",
 		MaxIterations:    10,
@@ -516,8 +511,7 @@ func TestLoop_noFalsePositiveOnDifferentArgs(t *testing.T) {
 	// All writes return the same success message — but with different args.
 	reg := tools.NewRegistry()
 	reg.Register(&fakeTool{name: "write", result: "File written successfully"})
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:         fp,
+	loop := &Loop{Provider: fp,
 		Registry:         reg,
 		SystemPrompt:     "test",
 		MaxIterations:    10,
@@ -570,8 +564,7 @@ func TestLoop_parallelToolExecution(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(&fakeTool{name: "slow1", result: "result1", delay: 100 * time.Millisecond, callCnt: &cnt, mu: &mu})
 	reg.Register(&fakeTool{name: "slow2", result: "result2", delay: 100 * time.Millisecond, callCnt: &cnt, mu: &mu})
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "test",
 		MaxIterations: 5,
@@ -627,8 +620,7 @@ func TestLoop_retryOnError(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "test",
 		MaxIterations: 5,
@@ -655,8 +647,7 @@ func TestLoop_retryExceedsMax(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "test",
 		MaxIterations: 5,
@@ -688,8 +679,7 @@ func TestLoop_tokenUsageTracking(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "test",
 		MaxIterations: 5,
@@ -715,8 +705,7 @@ func TestLoop_tokenUsageTracking(t *testing.T) {
 
 func TestLoop_contextWindowTrimming(t *testing.T) {
 	reg := tools.NewRegistry()
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:      &fakeProvider{},
+	loop := &Loop{Provider: &fakeProvider{},
 		Registry:      reg,
 		SystemPrompt:  "test",
 		MaxIterations: 1,
@@ -766,8 +755,7 @@ func TestLoop_thinkingCallback(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:      bsp,
+	loop := &Loop{Provider: bsp,
 		Registry:      reg,
 		SystemPrompt:  "test",
 		MaxIterations: 5,
@@ -800,7 +788,7 @@ func strPtr(s string) *string { return &s }
 // --- Test: Session persistence ---
 
 func TestLoop_persistMessageNilDB(t *testing.T) {
-	loop := &Loop{DisableInnerLoop: true, DB: nil, SessionID: "test"}
+	loop := &Loop{DB: nil, SessionID: "test"}
 	loop.persistMessage(types.Message{Role: "user", Content: "hello"})
 	// Should not panic
 }
@@ -817,7 +805,7 @@ func TestLoop_persistMessageToDB(t *testing.T) {
 		ID: "sess-1", StartedAt: time.Now().Unix(), CWD: "/tmp", Model: "test",
 	})
 
-	loop := &Loop{DisableInnerLoop: true, DB: db, SessionID: "sess-1"}
+	loop := &Loop{DB: db, SessionID: "sess-1"}
 	loop.persistMessage(types.Message{Role: "system", Content: "you are a bot"})
 	loop.persistMessage(types.Message{Role: "user", Content: "hello"})
 
@@ -854,7 +842,7 @@ func TestLoop_persistMessageWithToolCall(t *testing.T) {
 		ID: "sess-1", StartedAt: time.Now().Unix(), CWD: "/tmp", Model: "test",
 	})
 
-	loop := &Loop{DisableInnerLoop: true, DB: db, SessionID: "sess-1"}
+	loop := &Loop{DB: db, SessionID: "sess-1"}
 	assistantMsg := types.Message{
 		Role: "assistant",
 		ToolCalls: []types.ToolCall{{
@@ -928,8 +916,7 @@ func TestLoop_sessionPersistenceAcrossRunCalls(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "You are a test bot.",
 		SessionID:     sessionID,
@@ -1004,8 +991,7 @@ func TestLoop_sessionPersistenceWithToolCalls(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "You are a test bot.",
 		SessionID:     sessionID,
@@ -1076,8 +1062,7 @@ func TestLoop_sessionPersistenceMultipleTurns(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "You are a test bot.",
 		SessionID:     sessionID,
@@ -1123,7 +1108,7 @@ func TestLoop_sessionPersistenceMultipleTurns(t *testing.T) {
 }
 
 func TestLoop_persistMessageNoDB(t *testing.T) {
-	loop := &Loop{DisableInnerLoop: true, DB: nil, SessionID: "test"}
+	loop := &Loop{DB: nil, SessionID: "test"}
 	loop.MsgIdx = 5
 	loop.persistMessage(types.Message{Role: "user", Content: "hello"})
 	// Should be a no-op, not increment MsgIdx
@@ -1144,7 +1129,7 @@ func TestLoop_persistMessageEmptyContent(t *testing.T) {
 		ID: "sess-1", StartedAt: time.Now().Unix(), CWD: "/tmp", Model: "test",
 	})
 
-	loop := &Loop{DisableInnerLoop: true, DB: db, SessionID: "sess-1"}
+	loop := &Loop{DB: db, SessionID: "sess-1"}
 	assistantMsg := types.Message{
 		Role:    "assistant",
 		Content: "",
@@ -1230,8 +1215,7 @@ func TestLoop_autoCompactOnContextOverflow(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:        fp,
+	loop := &Loop{Provider: fp,
 		Registry:        reg,
 		SystemPrompt:    "test prompt",
 		MaxIterations:   3,
@@ -1273,8 +1257,7 @@ func TestLoop_autoCompactDoesNotTriggerOnNonContextError(t *testing.T) {
 		failErr:  fmtErrorf("authentication failed"),
 	}
 
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "test",
 		MaxIterations: 3,
@@ -1316,8 +1299,7 @@ func TestLoop_autoCompactCapped(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:            fp,
+	loop := &Loop{Provider: fp,
 		Registry:            reg,
 		SystemPrompt:        "test",
 		MaxIterations:       3,
@@ -1383,8 +1365,7 @@ func TestConflictDetection_ReportsConflictInConversation(t *testing.T) {
 	reg := tools.NewEmptyRegistry()
 	reg.Register(&fakeTool{name: "read", result: "file contents"})
 
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:        fp,
+	loop := &Loop{Provider: fp,
 		Registry:        reg,
 		SystemPrompt:    "test",
 		MaxIterations:   10,
@@ -1452,8 +1433,7 @@ func TestConflictDetection_NoConflictWhenTrackerEmpty(t *testing.T) {
 	reg := tools.NewEmptyRegistry()
 	reg.Register(&fakeTool{name: "read", result: "file contents"})
 
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:        fp,
+	loop := &Loop{Provider: fp,
 		Registry:        reg,
 		SystemPrompt:    "test",
 		MaxIterations:   10,
@@ -1534,8 +1514,7 @@ func TestConflictDetection_TrackerClearedAfterIteration(t *testing.T) {
 	reg := tools.NewEmptyRegistry()
 	reg.Register(&fakeTool{name: "read", result: "file contents"})
 
-	loop := &Loop{DisableInnerLoop: true,
-		Provider:        fp,
+	loop := &Loop{Provider: fp,
 		Registry:        reg,
 		SystemPrompt:    "test",
 		MaxIterations:   10,
@@ -1559,346 +1538,3 @@ type fmtErrorf string
 
 func (e fmtErrorf) Error() string { return string(e) }
 
-// TestFormatToolCallsForExecutor_noInstructionsRefeed locks in fix 1: the
-// outer model's msg.Content (its reasoning/narrative prose) must NOT be
-// re-fed to the inner executor as "## Instructions". That re-feed caused
-// the inner model to re-interpret prose like "run a comprehensive
-// self-test of all tools" as its task scope and exhaust its iteration
-// budget. The task prompt should list only the required tool calls.
-func TestFormatToolCallsForExecutor_noInstructionsRefeed(t *testing.T) {
-	loop := &Loop{SystemPrompt: "sys"}
-	msg := types.Message{
-		Role:    "assistant",
-		Content: "Let me run a comprehensive self-test of all file-based tools.",
-		ToolCalls: []types.ToolCall{{
-			ID:   "call_1",
-			Type: "function",
-			Function: types.ToolCallFn{
-				Name:      "bash",
-				Arguments: `{"command":"mkdir -p .scratch/selftest"}`,
-			},
-		}},
-	}
-	task := loop.formatToolCallsForExecutor(msg)
-
-	if strings.Contains(task, "## Instructions") {
-		t.Errorf("task prompt re-feeds outer model prose as ## Instructions: %q", task)
-	}
-	if strings.Contains(task, "comprehensive self-test") {
-		t.Errorf("task prompt leaks outer model prose into inner task: %q", task)
-	}
-	if !strings.Contains(task, "## Required tool calls") {
-		t.Errorf("task prompt missing required tool calls section: %q", task)
-	}
-	if !strings.Contains(task, "bash") {
-		t.Errorf("task prompt missing the bash tool call: %q", task)
-	}
-}
-
-// TestDualLoop_summaryInjectedAsToolMessage locks in fix 2: the inner
-// executor's summary is carried by the final tool-result message, not by
-// a separate assistant message. Injecting it as an assistant message made
-// the outer model respond to its own inner summary ("Done. All tools
-// executed...") with a new narrative beat, producing a multi-turn
-// feedback loop for what should be one turn.
-func TestDualLoop_summaryInjectedAsToolMessage(t *testing.T) {
-	// Outer provider: turn 0 emits a bash tool call + prose; turn 1
-	// produces the final answer after seeing the inner executor's result.
-	outer := &fakeProvider{responses: []*types.ChatResponse{
-		{
-			Choices: []types.Choice{{
-				Message: types.Message{
-					Role:    "assistant",
-					Content: "Let me create the scratch dir.",
-					ToolCalls: []types.ToolCall{{
-						ID:   "call_outer_1",
-						Type: "function",
-						Function: types.ToolCallFn{
-							Name:      "bash",
-							Arguments: `{"command":"mkdir -p .scratch/selftest"}`,
-						},
-					}},
-				},
-				FinishReason: "tool_calls",
-			}},
-		},
-		{
-			Choices: []types.Choice{{
-				Message:      types.Message{Role: "assistant", Content: "Done."},
-				FinishReason: "stop",
-			}},
-		},
-	}}
-
-	// Inner executor: iteration 0 executes the bash call; iteration 1
-	// returns a terse structured summary.
-	inner := &fakeProvider{responses: []*types.ChatResponse{
-		{
-			Choices: []types.Choice{{
-				Message: types.Message{
-					Role: "assistant",
-					ToolCalls: []types.ToolCall{{
-						ID:   "call_inner_1",
-						Type: "function",
-						Function: types.ToolCallFn{
-							Name:      "bash",
-							Arguments: `{"command":"mkdir -p .scratch/selftest"}`,
-						},
-					}},
-				},
-				FinishReason: "tool_calls",
-			}},
-		},
-		{
-			Choices: []types.Choice{{
-				Message:      types.Message{Role: "assistant", Content: "bash(mkdir): exit 0"},
-				FinishReason: "stop",
-			}},
-		},
-	}}
-
-	bashTool := &fakeTool{name: "bash", result: "OK"}
-	reg := tools.NewRegistry()
-	reg.Register(bashTool)
-
-	loop := &Loop{
-		Provider:           outer,
-		ExecutorProvider:   inner,
-		Registry:           reg,
-		SystemPrompt:       "You are helpful.",
-		MaxIterations:      10,
-		MaxInnerIterations: 10,
-		// DisableInnerLoop defaults to false → dual-loop path runs.
-	}
-
-	resp, err := loop.Run(context.Background(), "self-test the bash tool")
-	if err != nil {
-		t.Fatalf("Run() error: %v", err)
-	}
-	if resp != "Done." {
-		t.Errorf("response = %q, want %q", resp, "Done.")
-	}
-
-	// The summary must live in a tool message (the final one for the
-	// outer tool_call_id), not in a standalone assistant message.
-	var summaryToolMsg *types.Message
-	var assistantSummaryCount int
-	for i := range loop.Messages {
-		m := &loop.Messages[i]
-		if m.Role == "tool" && m.ToolCallID == "call_outer_1" {
-			if summaryToolMsg == nil || len(m.Content) > len(summaryToolMsg.Content) {
-				summaryToolMsg = m
-			}
-		}
-		if m.Role == "assistant" && strings.Contains(m.Content, "bash(mkdir): exit 0") {
-			assistantSummaryCount++
-		}
-	}
-	if summaryToolMsg == nil {
-		t.Fatalf("expected a tool message for call_outer_1 carrying the summary")
-	}
-	if !strings.Contains(summaryToolMsg.Content, "bash(mkdir): exit 0") {
-		t.Errorf("tool message content = %q, want it to carry the inner summary", summaryToolMsg.Content)
-	}
-	if assistantSummaryCount != 0 {
-		t.Errorf("inner summary was injected as an assistant message (%d found) — this is the feedback-loop bug", assistantSummaryCount)
-	}
-}
-
-// --- executor-owns-tools architecture (Task 1) ------------------------------
-
-// toolDefNames returns the function names of a ToolDef slice, in order.
-func toolDefNames(defs []types.ToolDef) []string {
-	out := make([]string, 0, len(defs))
-	for _, d := range defs {
-		out = append(out, d.Function.Name)
-	}
-	return out
-}
-
-// sameSet reports whether two string slices hold the same elements ignoring
-// order (and ignoring duplicates).
-func sameSet(a, b []string) bool {
-	am := map[string]bool{}
-	for _, s := range a {
-		am[s] = true
-	}
-	for _, s := range b {
-		if !am[s] {
-			return false
-		}
-		delete(am, s)
-	}
-	return len(am) == 0
-}
-
-// TestDualLoopInactiveByDefault locks in the opt-in contract: with no
-// ExecutorProvider configured, the dual-loop must NOT engage. This is the
-// waste fix — the default path (and every subagent, which never sets an
-// ExecutorProvider) runs the single-loop path.
-func TestDualLoopInactiveByDefault(t *testing.T) {
-	loop := &Loop{Provider: &fakeProvider{}, Registry: tools.NewRegistry()}
-	if loop.dualLoopActive() {
-		t.Fatalf("dual-loop must be inactive when ExecutorProvider is nil")
-	}
-}
-
-// TestDualLoopActiveWhenExecutorConfigured: an explicitly configured
-// executor is the sole trigger for the dual-loop.
-func TestDualLoopActiveWhenExecutorConfigured(t *testing.T) {
-	loop := &Loop{
-		Provider:         &fakeProvider{},
-		ExecutorProvider: &fakeProvider{},
-		Registry:         tools.NewRegistry(),
-	}
-	if !loop.dualLoopActive() {
-		t.Fatalf("dual-loop must be active when ExecutorProvider is set")
-	}
-}
-
-// TestPlannerToolSet_DelegateOnlyWhenActive enforces the "one decision, one
-// owner" boundary by schema: when the dual-loop is active the planner may
-// only call `delegate`; it cannot see file/bash tools. When inactive, it
-// gets the full set (single-loop path).
-func TestPlannerToolSet_DelegateOnlyWhenActive(t *testing.T) {
-	reg := tools.NewEmptyRegistry()
-	reg.Register(&fakeTool{name: "bash", result: "ok"})
-	reg.Register(&fakeTool{name: "read", result: "ok"})
-
-	// Inactive → planner sees the full tool set.
-	inactive := &Loop{Registry: reg}
-	if got := inactive.buildPlannerToolDefs(); !sameSet(toolDefNames(got), []string{"bash", "read"}) {
-		t.Fatalf("inactive planner tools = %v, want [bash read]", toolDefNames(got))
-	}
-
-	// Active → planner sees only delegate.
-	active := &Loop{Registry: reg, ExecutorProvider: &fakeProvider{}}
-	got := active.buildPlannerToolDefs()
-	if names := toolDefNames(got); len(names) != 1 || names[0] != "delegate" {
-		t.Fatalf("active planner tools = %v, want [delegate]", names)
-	}
-}
-
-// --- executor-owns-tools architecture (Task 2) ------------------------------
-
-// TestExecutorReceivesOriginalIntent verifies runExecutor is given a
-// purpose-built system prompt (NOT the planner identity) and that the
-// original user intent reaches the executor. This is the fix for the
-// "user is asking me to…" mischaracterization: the executor finally sees
-// the real request instead of a reframed subtask.
-func TestExecutorReceivesOriginalIntent(t *testing.T) {
-	inner := &fakeProvider{responses: []*types.ChatResponse{
-		{Choices: []types.Choice{{
-			Message:      types.Message{Role: "assistant", Content: "read(f): 10B"},
-			FinishReason: "stop",
-		}}},
-	}}
-	reg := tools.NewEmptyRegistry()
-	reg.Register(&fakeTool{name: "read", result: "10B"})
-
-	loop := &Loop{
-		Provider:           &fakeProvider{},
-		ExecutorProvider:   inner,
-		Registry:           reg,
-		SystemPrompt:       "PLANNER-IDENTITY",
-		Model:              "m",
-		MaxInnerIterations: 5,
-	}
-
-	summary, exhausted, err := loop.runExecutor(
-		context.Background(),
-		"read the file and report its size", // directive
-		"tell me about f",                   // originalIntent
-	)
-	if err != nil {
-		t.Fatalf("runExecutor: %v", err)
-	}
-	if exhausted {
-		t.Fatalf("should not be exhausted for a one-shot read")
-	}
-	if summary != "read(f): 10B" {
-		t.Fatalf("summary = %q, want %q", summary, "read(f): 10B")
-	}
-
-	if len(inner.requests) != 1 {
-		t.Fatalf("expected exactly 1 executor request, got %d", len(inner.requests))
-	}
-	msgs := inner.requests[0].Messages
-
-	// The executor's system message must be its OWN prompt, not the planner
-	// identity — this is what keeps its context small and stops user-facing
-	// narration.
-	if len(msgs) == 0 || msgs[0].Role != "system" {
-		t.Fatalf("executor saw no leading system message: %+v", msgs)
-	}
-	if msgs[0].Content == "PLANNER-IDENTITY" {
-		t.Fatalf("executor reused the planner identity prompt — must use executorSystemPrompt")
-	}
-	if !strings.Contains(msgs[0].Content, "tool executor") {
-		t.Fatalf("executor system message does not look like the executor prompt: %q", msgs[0].Content)
-	}
-
-	// The user-message payload handed to the executor must carry the ORIGINAL
-	// intent so its reasoning reflects the real request.
-	var payload string
-	for _, m := range msgs {
-		if m.Role == "user" {
-			payload = m.Content
-			break
-		}
-	}
-	if !strings.Contains(payload, "tell me about f") {
-		t.Fatalf("executor payload missing original intent: %q", payload)
-	}
-	if !strings.Contains(payload, "read the file and report its size") {
-		t.Fatalf("executor payload missing the directive: %q", payload)
-	}
-}
-
-// TestExecutorChainsTools verifies the executor owns tool selection: given
-// a directive (not pre-formed tool calls), it selects and chains tools based
-// on results, then returns a summary. This is the capability the dual-loop
-// is supposed to buy.
-func TestExecutorChainsTools(t *testing.T) {
-	// Executor: iter 0 calls glob; iter 1 reads one match; iter 2 summarizes.
-	inner := &fakeProvider{responses: []*types.ChatResponse{
-		{Choices: []types.Choice{{
-			Message: types.Message{Role: "assistant", ToolCalls: []types.ToolCall{{
-				ID: "i1", Type: "function",
-				Function: types.ToolCallFn{Name: "glob", Arguments: `{"pattern":"*.go"}`},
-			}}},
-			FinishReason: "tool_calls",
-		}}},
-		{Choices: []types.Choice{{
-			Message: types.Message{Role: "assistant", ToolCalls: []types.ToolCall{{
-				ID: "i2", Type: "function",
-				Function: types.ToolCallFn{Name: "read", Arguments: `{"filePath":"a.go"}`},
-			}}},
-			FinishReason: "tool_calls",
-		}}},
-		{Choices: []types.Choice{{
-			Message:      types.Message{Role: "assistant", Content: "glob: 1 match; read(a.go): 50B"},
-			FinishReason: "stop",
-		}}},
-	}}
-	reg := tools.NewEmptyRegistry()
-	reg.Register(&fakeTool{name: "glob", result: "a.go"})
-	reg.Register(&fakeTool{name: "read", result: "50B"})
-
-	loop := &Loop{
-		Provider:           &fakeProvider{},
-		ExecutorProvider:   inner,
-		Registry:           reg,
-		MaxInnerIterations: 5,
-	}
-	summary, exhausted, err := loop.runExecutor(context.Background(), "find and read go files", "")
-	if err != nil {
-		t.Fatalf("runExecutor: %v", err)
-	}
-	if exhausted {
-		t.Fatalf("should not be exhausted")
-	}
-	if !strings.Contains(summary, "glob") || !strings.Contains(summary, "read") {
-		t.Fatalf("summary should name both chained tools: %q", summary)
-	}
-}

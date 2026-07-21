@@ -163,31 +163,33 @@ func checkModel(cfg *config.Config, cfgErr error) check {
 
 func checkExecutor(cfg *config.Config, cfgErr error) check {
 	if cfgErr != nil {
-		return check{Label: "Executor", Status: "WARN", Detail: "config not loaded"}
+		return check{Label: "Dual-loop", Status: "WARN", Detail: "config not loaded"}
 	}
 	ec := cfg.Agent.Executor
-	if ec.Provider == "" && ec.Model == "" {
-		return check{Label: "Executor", Status: "OK", Detail: "using main provider/model (default)"}
-	}
 	providerName := ec.Provider
-	if providerName == "" {
-		providerName = resolveProviderName(cfg)
-	}
-	if _, ok := cfg.Providers[providerName]; !ok {
-		return check{
-			Label:  "Executor",
-			Status: "WARN",
-			Detail: fmt.Sprintf("executor provider %q not found in providers — falling back to main", ec.Provider),
-		}
-	}
 	model := ec.Model
 	if model == "" {
 		model = cfg.Agent.Default.Model
 	}
+	if providerName == "" {
+		providerName = resolveProviderName(cfg)
+		return check{
+			Label:  "Dual-loop",
+			Status: "OK",
+			Detail: fmt.Sprintf("enabled (executor = default model: %s / %s)", providerName, model),
+		}
+	}
+	if _, ok := cfg.Providers[providerName]; !ok {
+		return check{
+			Label:  "Dual-loop",
+			Status: "WARN",
+			Detail: fmt.Sprintf("enabled (executor = %s / %s, but provider %q not found — falling back to main)", providerName, model, ec.Provider),
+		}
+	}
 	return check{
-		Label:  "Executor",
+		Label:  "Dual-loop",
 		Status: "OK",
-		Detail: fmt.Sprintf("%s / %s (max %d inner iterations)", providerName, model, ec.MaxIterations),
+		Detail: fmt.Sprintf("enabled (executor = %s / %s, max %d inner iterations)", providerName, model, ec.MaxIterations),
 	}
 }
 
