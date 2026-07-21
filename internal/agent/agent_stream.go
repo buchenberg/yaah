@@ -45,8 +45,7 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 		if !l.OtelVerbose || streamSpan == nil {
 			return
 		}
-		msg := l.assembleStreamed(content.String(), toolCallMap)
-		msg.ReasoningContent = reasoning.String()
+		msg := l.assembleStreamed(content.String(), toolCallMap, reasoning.String())
 		observability.RecordAssistantResponse(streamSpan, msg, finishReason)
 		observability.RecordStreamEnd(streamSpan, path, finishReason, usageCaptured, len(msg.Content), len(msg.ToolCalls))
 	}
@@ -60,7 +59,7 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 					observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 					streamSpan.End()
 				}
-				return l.checkTruncatedStream(content.String(), toolCallMap, finishReason)
+				return l.checkTruncatedStream(content.String(), toolCallMap, finishReason, reasoning.String())
 			}
 
 			if !firstToken {
@@ -152,7 +151,7 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 					observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 					streamSpan.End()
 				}
-				return l.checkTruncatedStream(content.String(), toolCallMap, finishReason)
+				return l.checkTruncatedStream(content.String(), toolCallMap, finishReason, reasoning.String())
 			}
 
 		case err := <-errs:
@@ -168,7 +167,7 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 				observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 				streamSpan.End()
 			}
-			return l.checkTruncatedStream(content.String(), toolCallMap, finishReason)
+			return l.checkTruncatedStream(content.String(), toolCallMap, finishReason, reasoning.String())
 
 		case <-ctx.Done():
 			if streamSpan != nil {
@@ -183,8 +182,8 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 // checkTruncatedStream returns the assembled message or an error if the
 // stream was truncated (finish_reason=length) with pending tool calls,
 // or if the response was blocked by a content filter with no usable output.
-func (l *Loop) checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, finishReason string) (types.Message, error) {
-	msg := l.assembleStreamed(content, toolCallMap)
+func (l *Loop) checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, finishReason string, reasoningContent string) (types.Message, error) {
+	msg := l.assembleStreamed(content, toolCallMap, reasoningContent)
 	if finishReason == "content_filter" && content == "" && len(msg.ToolCalls) == 0 {
 		return types.Message{}, fmt.Errorf("streamed response blocked by content filter")
 	}
@@ -199,10 +198,11 @@ func (l *Loop) checkTruncatedStream(content string, toolCallMap map[int]*types.T
 
 // assembleStreamed builds the assistant message from accumulated stream state,
 // ordering tool calls by their delta index.
-func (l *Loop) assembleStreamed(content string, toolCalls map[int]*types.ToolCall) types.Message {
+func (l *Loop) assembleStreamed(content string, toolCalls map[int]*types.ToolCall, reasoningContent string) types.Message {
 	msg := types.Message{
-		Role:    "assistant",
-		Content: content,
+		Role:             "assistant",
+		Content:          content,
+		ReasoningContent: reasoningContent,
 	}
 	if len(toolCalls) > 0 {
 		indices := make([]int, 0, len(toolCalls))

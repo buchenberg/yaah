@@ -5,25 +5,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/buchenberg/yaah/internal/observability"
+	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
 // maxInnerSummaryLen caps the inner executor loop's final summary to prevent
 // unbounded context growth from the dual-loop architecture.
 const maxInnerSummaryLen = 8000
-
-// executorSystemPrompt is the purpose-built prompt for the inner executor.
-// It is deliberately NOT the planner's identity prompt: the executor does
-// tactical tool selection, not user-facing reasoning, so it gets only what
-// its responsibility requires. This keeps its context small and stops it
-// from narrating like a user-facing agent.
-const executorSystemPrompt = `You are a tool executor. You receive a task directive, the user's original request, and the working directory. You run in the same filesystem as the planner — use absolute paths or paths relative to the working directory. Select and run the built-in tools needed to accomplish the directive; you may chain tools based on their results. When finished, respond with a terse structured summary: one line per tool executed naming the tool and its outcome (e.g. "write(path): wrote 138B", "bash(cmd): exit 0"). Do not write conversational prose, confirmations, or next-step plans. If a tool fails, you will see the error and can retry with a corrected approach — do not give up after one failure.`
 
 // delegateToolName is the dispatch tool the planner may call to hand an
 // intent-level directive to the executor. The planner keeps its full tool
@@ -79,7 +74,7 @@ func (l *Loop) lastUserMessage(msgs []types.Message) string {
 // envelope so tool-return consumers (TUI, middleware, composition code) can
 // programmatically detect state without parsing free-form prose. Mirrors
 // opencode's <task id="..." state="..."> wrapping.
-func wrapExecutorResult(summary string, exhausted bool, err error, truncated bool) string {
+func wrapExecutorResult(summary string, exhausted bool, err error, truncated bool, fellBack bool) string {
 	state := "completed"
 	if err != nil {
 		state = "error"
@@ -87,8 +82,8 @@ func wrapExecutorResult(summary string, exhausted bool, err error, truncated boo
 		state = "exhausted"
 	}
 	return fmt.Sprintf(
-		`<executor_result state="%s" truncated="%v">%s</executor_result>`,
-		state, truncated, summary,
+		`<executor_result state="%s" truncated="%v" fallback="%v">%s</executor_result>`,
+		state, truncated, fellBack, summary,
 	)
 }
 
@@ -99,7 +94,7 @@ func wrapExecutorResult(summary string, exhausted bool, err error, truncated boo
 // to accomplish it.
 //
 // Key properties:
-//   - It uses a purpose-built executorSystemPrompt (NOT the planner identity),
+//   - It uses a purpose-built executor prompt (NOT the planner identity),
 //     keeping its context small and stopping user-facing narration.
 //   - It receives the ORIGINAL user intent alongside the directive, fixing
 //     the "user is asking me to…" mischaracterization (the executor finally
@@ -108,7 +103,7 @@ func wrapExecutorResult(summary string, exhausted bool, err error, truncated boo
 //     intent, the executor selects tools.
 //
 // Returns the executor's final summary and whether it exhausted its budget.
-func (l *Loop) runExecutor(ctx context.Context, directive, originalIntent, executorType string) (string, bool, error) {
+func (l *Loop) runExecutor(ctx context.Context, directive, originalIntent, executorType string) (string, bool, bool, error) {
 	var span trace.Span
 	if l.OtelEnabled {
 		ctx, span = observability.StartInnerLoop(ctx, directive)
@@ -127,11 +122,12 @@ func (l *Loop) runExecutor(ctx context.Context, directive, originalIntent, execu
 		}
 	}
 
-	// payload: directive + original intent + working directory.
+	// payload: directive + original intent + working directory + runtime env.
 	// The executor model gets a minimal system prompt and needs to know
-	// WHERE it is running to resolve relative paths. Without this, the
-	// executor returns results with wrong paths (e.g. /workspace/…),
-	// the planner sees insufficient results, and re-runs tools inline —
+	// WHERE it is running to resolve relative paths and WHICH shell to use.
+	// Without this, the executor returns results with wrong paths (e.g.
+	// /workspace/…) or keeps trying bash on Windows where sh is not available —
+	// the planner sees insufficient results, and re-runs tools inline,
 	// producing an extra turn for every delegation.
 	payload := directive
 	if originalIntent != "" {
@@ -140,8 +136,9 @@ func (l *Loop) runExecutor(ctx context.Context, directive, originalIntent, execu
 	if wd, err := os.Getwd(); err == nil {
 		payload += "\n\n## Working directory\n" + wd
 	}
+	payload += "\n\n## Runtime environment\n" + detectRuntimeEnv()
 	messages := []types.Message{
-		types.SystemMsg(executorSystemPrompt),
+		types.SystemMsg(l.executorPrompt()),
 		types.UserMsg(payload),
 	}
 	if l.OtelVerbose && span != nil {
@@ -154,14 +151,37 @@ func (l *Loop) runExecutor(ctx context.Context, directive, originalIntent, execu
 	// executor's usage separately from the planner on the inner.loop span.
 	tokensBefore := l.TotalTokens
 
+	fellBack := false
+
 	for iter := 0; iter < l.MaxInnerIterations; iter++ {
 		req := types.ChatRequest{Model: model, Messages: messages, Tools: executorTools}
 		msg, err := l.getExecutorMessage(ctx, provider, req)
 		if err != nil {
+			if !fellBack && l.ExecutorProvider != nil && l.ExecutorProvider != l.Provider && l.Provider != nil {
+				fellBack = true
+				if span != nil {
+					span.SetAttributes(
+						attribute.Bool("inner.fallback_to_main", true),
+						attribute.String("inner.fallback_reason", err.Error()),
+					)
+					span.AddEvent("fallback.to_main", trace.WithAttributes(
+						attribute.String("inner.fallback_reason", err.Error()),
+					))
+				}
+				l.emitHook(HookEvent{
+					Event:          ExecutorFallback,
+					Model:          l.Model,
+					FallbackReason: err.Error(),
+				})
+				provider = l.Provider
+				model = l.Model
+				iter--
+				continue
+			}
 			if span != nil {
 				observability.FinishInnerLoop(span, iter+1, false, err)
 			}
-			return "", false, fmt.Errorf("executor: %w", err)
+			return "", false, fellBack, fmt.Errorf("executor: %w", err)
 		}
 		messages = append(messages, msg)
 		if l.OtelVerbose && span != nil {
@@ -179,7 +199,7 @@ func (l *Loop) runExecutor(ctx context.Context, directive, originalIntent, execu
 				)
 				observability.FinishInnerLoop(span, iter+1, false, nil)
 			}
-			return msg.Content, false, nil
+			return msg.Content, false, fellBack, nil
 		}
 
 		// Execute the executor-selected tools and feed results back so it
@@ -222,7 +242,7 @@ func (l *Loop) runExecutor(ctx context.Context, directive, originalIntent, execu
 		)
 		observability.FinishInnerLoop(span, l.MaxInnerIterations, true, nil)
 	}
-	return "", true, fmt.Errorf("executor exhausted after %d iterations", l.MaxInnerIterations)
+	return "", true, fellBack, fmt.Errorf("executor exhausted after %d iterations", l.MaxInnerIterations)
 }
 
 // getExecutorMessage obtains one assistant message from the executor
@@ -296,8 +316,37 @@ func (l *Loop) buildPlannerToolDefs() []types.ToolDef {
 }
 
 // buildExecutorToolDefs returns the tool set the executor may use: the full
-// registry set with NO delegate. Because delegate is constructed inline
-// (never registered), buildToolDefs() cannot surface it — the executor
-// structurally cannot delegate. This is the recursion guard, explicit by
-// construction.
-func (l *Loop) buildExecutorToolDefs() []types.ToolDef { return l.buildToolDefs() }
+// registry set MINUS task and delegate. Delegate is excluded structurally
+// (never registered), while task is filtered here so the executor cannot
+// spawn sub-agents from within a delegated directive — that is the
+// planner's responsibility.
+func (l *Loop) buildExecutorToolDefs() []types.ToolDef {
+	defs := l.buildToolDefs()
+	filtered := make([]types.ToolDef, 0, len(defs))
+	for _, d := range defs {
+		if d.Function.Name == "task" {
+			continue
+		}
+		filtered = append(filtered, d)
+	}
+	return filtered
+}
+
+// detectRuntimeEnv returns a compact string describing the OS, architecture,
+// and default shell so the executor knows when to prefer powershell over bash.
+func detectRuntimeEnv() string {
+	shell := "bash"
+	if runtime.GOOS == "windows" {
+		shell = "powershell (pwsh 7+ or Windows PowerShell)"
+	}
+	return fmt.Sprintf("OS: %s/%s. Default shell: %s. Prefer the default shell for commands.", runtime.GOOS, runtime.GOARCH, shell)
+}
+
+// executorPrompt returns the system prompt for the executor, preferring the
+// loadable identity-executor.md when set, falling back to the embedded default.
+func (l *Loop) executorPrompt() string {
+	if l.ExecutorSystemPrompt != "" {
+		return l.ExecutorSystemPrompt
+	}
+	return prompts.ExecutorIdentityPrompt
+}

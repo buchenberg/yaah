@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -265,7 +266,7 @@ func TestExecutorReceivesOriginalIntent(t *testing.T) {
 		MaxInnerIterations: 5,
 	}
 
-	summary, exhausted, err := loop.runExecutor(
+	summary, exhausted, _, err := loop.runExecutor(
 		context.Background(),
 		"read the file and report its size",
 		"tell me about f",
@@ -290,7 +291,7 @@ func TestExecutorReceivesOriginalIntent(t *testing.T) {
 		t.Fatalf("executor saw no leading system message: %+v", msgs)
 	}
 	if msgs[0].Content == "PLANNER-IDENTITY" {
-		t.Fatalf("executor reused the planner identity prompt — must use executorSystemPrompt")
+		t.Fatalf("executor reused the planner identity prompt — must use executor identity prompt")
 	}
 	if !strings.Contains(msgs[0].Content, "tool executor") {
 		t.Fatalf("executor system message does not look like the executor prompt: %q", msgs[0].Content)
@@ -342,7 +343,7 @@ func TestExecutorChainsTools(t *testing.T) {
 		Registry:           reg,
 		MaxInnerIterations: 5,
 	}
-	summary, exhausted, err := loop.runExecutor(context.Background(), "find and read go files", "", "default")
+	summary, exhausted, _, err := loop.runExecutor(context.Background(), "find and read go files", "", "default")
 	if err != nil {
 		t.Fatalf("runExecutor: %v", err)
 	}
@@ -362,7 +363,7 @@ func TestExecutor_DefaultModelFallbackThroughRun(t *testing.T) {
 	reg.Register(&fakeTool{name: "read", result: "8B"})
 	loop := &Loop{Provider: mainP, Registry: reg, Model: "main", MaxInnerIterations: 5}
 
-	summary, _, err := loop.runExecutor(context.Background(), "report file size", "how big is f", "default")
+	summary, _, _, err := loop.runExecutor(context.Background(), "report file size", "how big is f", "default")
 	if err != nil {
 		t.Fatalf("runExecutor with no dedicated executor: %v", err)
 	}
@@ -371,5 +372,84 @@ func TestExecutor_DefaultModelFallbackThroughRun(t *testing.T) {
 	}
 	if len(mainP.requests) != 1 {
 		t.Fatalf("default-model executor should have used the main provider once, got %d requests", len(mainP.requests))
+	}
+}
+
+func TestExecutor_FallbackToMainProviderOnError(t *testing.T) {
+	execP := &fakeProvider{failErr: fmt.Errorf("executor model 429: rate limited"), maxFails: 1}
+	mainP := &fakeProvider{responses: []*types.ChatResponse{
+		{Choices: []types.Choice{{Message: types.Message{Role: "assistant", Content: "read(f): done"}, FinishReason: "stop"}}},
+	}}
+	reg := tools.NewEmptyRegistry()
+	reg.Register(&fakeTool{name: "read", result: "ok"})
+	loop := &Loop{
+		Provider:           mainP,
+		ExecutorProvider:   execP,
+		Model:              "main-model",
+		ExecutorModel:      "exec-model",
+		Registry:           reg,
+		MaxInnerIterations: 5,
+	}
+
+	summary, exhausted, fellBack, err := loop.runExecutor(context.Background(), "read f", "", "default")
+	if err != nil {
+		t.Fatalf("runExecutor with fallback: %v", err)
+	}
+	if exhausted {
+		t.Fatalf("should not be exhausted after fallback")
+	}
+	if !fellBack {
+		t.Fatalf("expected fellBack=true when executor provider fails")
+	}
+	if summary != "read(f): done" {
+		t.Fatalf("summary = %q, want %q", summary, "read(f): done")
+	}
+	if execP.failCount != 1 {
+		t.Fatalf("executor provider should have been tried exactly once, got %d failures", execP.failCount)
+	}
+	if len(mainP.requests) != 1 {
+		t.Fatalf("main provider should have been tried exactly once after fallback, got %d", len(mainP.requests))
+	}
+}
+
+func TestExecutor_NoFallbackWhenBothFail(t *testing.T) {
+	execP := &fakeProvider{failErr: fmt.Errorf("executor 429"), maxFails: 1}
+	mainP := &fakeProvider{failErr: fmt.Errorf("main 503"), maxFails: 1}
+	reg := tools.NewEmptyRegistry()
+	reg.Register(&fakeTool{name: "read", result: "ok"})
+	loop := &Loop{
+		Provider:           mainP,
+		ExecutorProvider:   execP,
+		Model:              "main-model",
+		ExecutorModel:      "exec-model",
+		Registry:           reg,
+		MaxInnerIterations: 5,
+	}
+
+	_, _, fellBack, err := loop.runExecutor(context.Background(), "read f", "", "default")
+	if err == nil {
+		t.Fatalf("expected error when both providers fail")
+	}
+	if !fellBack {
+		t.Fatalf("expected fellBack=true before propagating the error")
+	}
+}
+
+func TestExecutor_NoFallbackWhenNoDedicatedProvider(t *testing.T) {
+	mainP := &fakeProvider{failErr: fmt.Errorf("main 503"), maxFails: 1}
+	reg := tools.NewEmptyRegistry()
+	loop := &Loop{
+		Provider:           mainP,
+		Model:              "main-model",
+		Registry:           reg,
+		MaxInnerIterations: 5,
+	}
+
+	_, _, fellBack, err := loop.runExecutor(context.Background(), "read f", "", "default")
+	if err == nil {
+		t.Fatalf("expected error when main provider fails with no executor")
+	}
+	if fellBack {
+		t.Fatalf("expected fellBack=false with no dedicated executor provider")
 	}
 }

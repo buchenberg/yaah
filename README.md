@@ -111,14 +111,19 @@ whether to work inline or delegate.
 
 - **Model tiering**: run the executor on a cheaper model (e.g. deepseek-v4-flash)
   while the planner uses a stronger reasoning model (deepseek-v4-pro).
+- **Cross-provider**: the executor can use a different provider than the planner.
 - **Auto-approval**: the executor runs tools without user prompts — bash,
   write, edit all auto-execute when delegated.
-- **Spontaneous delegation**: the agent is prompted to delegate batch work,
-  test runs, and multi-step tool sequences without being asked.
+- **Fallback**: if the executor model fails (rate limit, auth, 5xx), the executor
+  gracefully falls back to the planner's model and continues. The `fellBack`
+  attribute is recorded in traces and the `executor_result` XML envelope.
 - **Self-correcting**: the executor retries failed tools before reporting
   errors to the planner.
 - **No gate**: delegate is always available alongside all tools (additive,
   not substitutive). No config flag to turn it on.
+- **Tool isolation**: the executor's tool set excludes `task` and `delegate`
+  — it cannot spawn sub-agents or recursively delegate. Those are the
+  planner's responsibilities.
 
 ```
 # Config (optional — executor falls back to main provider/model)
@@ -128,8 +133,11 @@ agents:
     model: deepseek-v4-flash
     max_iterations: 10
 ```
+
 See [`docs/BENCHMARK.md`](./docs/BENCHMARK.md) for token/cost benchmarks —
 complex tasks push ~65% of tokens to the executor on the cheap model.
+See [`docs/PROMPT-INJECTION.md`](./docs/PROMPT-INJECTION.md) for the executor
+prompt architecture.
 
 ### Sub-agents (`task` tool)
 
@@ -146,6 +154,18 @@ Multiple `task` calls in one turn fan out in parallel (up to
 `agent.subagent.max_concurrency`, default 3). Nesting depth is bounded
 structurally — each level decrements a counter seeded from `max_depth`.
 Timeouts return structured JSON (`{"error":"timed out","partial":"..."}`).
+
+Sub-agents can be configured to use a different provider and model than the
+planner, similar to the executor:
+
+```yaml
+agents:
+  subagent:
+    provider: deepseek               # optional — defaults to planner's provider
+    model: deepseek-v4-flash         # optional — defaults to planner's model
+```
+
+When unset, sub-agents inherit the planner's provider and model.
 
 See the [Config](#config) section for all `agent.subagent.*` settings.
 
@@ -327,19 +347,11 @@ agents:
   executor:
     provider: deepseek               # optional — defaults to main provider
     model: deepseek-v4-flash         # optional — defaults to main model
-    max_iterations: 10               # inner executor iterations per turn
-
-  middleware:
-    enabled:                         # explicit set overrides default pipeline
-      - steer
-      - followup
-      - compaction
-      - approval
-      - loop_detection
-    # disabled:                      # remove specific middleware
-    #   - approval
+    max_iterations: 10               # inner executor iterations per delegation
 
   subagent:
+    provider: deepseek               # optional — defaults to planner's provider
+    model: deepseek-v4-flash         # optional — defaults to planner's model
     max_depth: 3                     # max task calls per loop
     max_concurrency: 3               # simultaneous task calls per iteration
     default_timeout: 120             # seconds
@@ -358,18 +370,29 @@ agents:
       security_auditor:              # custom role — loaded from .agents/roles/
         max_iterations: 30
 
+  middleware:
+    enabled:                         # explicit set overrides default pipeline
+      - steer
+      - followup
+      - compaction
+      - approval
+      - loop_detection
+    # disabled:                      # remove specific middleware
+    #   - approval
+
 observability:
   otel:
     enabled: false
     endpoint: localhost:4317
     service_name: yaah
+    traces: true                     # enable trace spans (default: true)
+    metrics: false                   # enable OTLP metrics (default: false)
     verbose: false                   # record full conversations in spans
 
 hooks:
   dir: ~/.yaah/hooks                 # JSONL event log (off by default)
 
 editor: code --wait                  # config editor override
-log_level: INFO                      # DEBUG | INFO | WARN | ERROR
 
 # Optional — provider to try on primary provider failure
 fallback:
@@ -387,10 +410,31 @@ providers:
   deepseek:
     base_url: https://api.deepseek.com/v1
     api_key: ${DEEPSEEK_API_KEY}
+    name: Deepseek                   # display name (defaults to map key)
+
   ollama:
     base_url: http://localhost:11434/v1
     api_key: ollama
+    name: Ollama
+
+  llama-cpp:
+    base_url: http://localhost:8080/v1
+    api_key:                         # not required for local models
+    name: Llama.cpp
+    timeout: 0                       # 0 = no timeout (slow local models)
+    models:                          # limit available models for this provider
+      - prism-ml/Bonsai-27B-gguf:Q1_0
 ```
+
+Provider fields:
+
+| Field | Default | Description |
+|---|---|---|
+| `base_url` | (required) | OpenAI-compatible API endpoint |
+| `api_key` | — | API key (supports `${ENV_VAR}` substitution) |
+| `name` | map key | Display name shown in CLI/TUI |
+| `models` | — | Limit available models (empty = all from `/models` endpoint) |
+| `timeout` | 120 | HTTP request timeout in seconds (0 = no timeout) |
 
 ### Agents
 
@@ -407,14 +451,31 @@ middleware pipeline, and sub-agents.
 | `max_iterations` | 50 | Safety cap on loop turns |
 | `context_window` | — | Token budget for compaction (0 = disabled) |
 | `approval` | `ask` | `allow`, `ask`, or `deny` for dangerous tools |
+| `max_inline_tools_per_turn` | `0` (unlimited) | Caps inline tool calls per turn; warns when exceeded |
 
 **`agents.executor`** — the dual-loop tool-execution agent:
 
 | Field | Default | Description |
 |---|---|---|
-| `provider` | `default.provider` | Provider for the executor |
+| `provider` | `default.provider` | Provider for the executor (can differ from planner) |
 | `model` | `default.model` | Model for the executor (tip: use a cheaper one) |
 | `max_iterations` | 10 | Inner executor iterations per delegation |
+
+When the executor model fails (rate limit, auth, 5xx), the executor
+falls back to the planner's model and records `fellBack=true` in traces.
+
+**`agents.subagent`** — configures sub-agents spawned via the `task` tool:
+
+| Field | Default | Description |
+|---|---|---|
+| `provider` | `default.provider` | Provider for sub-agents (can differ from planner) |
+| `model` | `default.model` | Model for sub-agents (tip: use a cheaper one) |
+| `max_depth` | — | Max total `task` calls per loop (0 = unlimited) |
+| `max_concurrency` | 3 | Simultaneous `task` calls per iteration |
+| `default_timeout` | — | Default seconds per sub-agent (0 = no timeout) |
+| `roles.<name>.timeout` | — | Per-role timeout override |
+| `roles.<name>.max_iterations` | — | Per-role iteration cap override |
+| `roles.<name>.max_depth` | — | Per-role depth cap override |
 
 **`agents.fallback`** — optional provider/model to use if the primary
 provider returns a transient error (429, 503):
@@ -454,7 +515,9 @@ hooks:
 ```
 
 Events include `session.start`, `session.end`, `turn.start`, `tool.start`,
-and `tool.end` with timestamps, model, tool results, and durations.
+`tool.end`, and `executor.fallback` with timestamps, model, tool results,
+and durations. The `executor.fallback` event includes a `fallback_reason`
+field with the error that triggered the fallback.
 
 ### Observability
 
@@ -464,6 +527,8 @@ observability:
     enabled: false
     endpoint: localhost:4317     # OTLP gRPC endpoint
     service_name: yaah
+    traces: true                 # emit trace spans (default: true)
+    metrics: false               # emit OTLP metrics (default: false)
     verbose: false               # record full conversation + summaries
 ```
 
@@ -478,15 +543,6 @@ editor: code --wait              # overrides $EDITOR and $VISUAL
 ```
 
 Resolution order: `editor` field → `$EDITOR` → `$VISUAL` → `vi`.
-
-### Log level
-
-```yaml
-log_level: INFO                  # DEBUG | INFO | WARN | ERROR
-```
-
-Controls internal diagnostics written to stderr. Agent responses and
-tool output are unaffected.
 
 ## Development
 
@@ -565,6 +621,8 @@ yaah/
 │   ├── architecture.md           # detailed architecture
 │   ├── AGENT-LOOP-DIAGRAMS.md    # mermaid diagrams
 │   ├── BENCHMARK.md              # benchmark suite
+│   ├── PROMPT-INJECTION.md       # prompt injection architecture map
+│   ├── EXECUTOR-FALLBACK-ANALYSIS.md # executor fallback analysis
 │   ├── tui-components.md         # TUI component reference
 │   └── otel-setup.md             # Jaeger setup guide
 ├── AGENTS.md                     # coding assistant instructions

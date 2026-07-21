@@ -149,6 +149,36 @@ func resolveExecutor(cfg *config.Config) (agent.Provider, string) {
 	return nil, ""
 }
 
+// resolveSubAgent returns the provider and model to use for sub-agents
+// spawned via the task tool. When unconfigured, returns nil — sub-agents
+// fall back to the loop's provider and model (inherited from the planner).
+//
+// Use agent.subagent.provider and agent.subagent.model to select a
+// different provider or model for sub-agents.
+func resolveSubAgent(cfg *config.Config) (agent.Provider, string) {
+	sc := cfg.Agent.SubAgent
+	if sc.Provider == "" && sc.Model == "" {
+		return nil, ""
+	}
+
+	providerName := sc.Provider
+	if providerName == "" {
+		providerName = resolveProviderName(cfg)
+	}
+
+	model := sc.Model
+	if model == "" {
+		model = resolveModel(cfg)
+	}
+
+	if p, ok := cfg.Providers[providerName]; ok {
+		if prov, ok2 := makeProvider(p); ok2 {
+			return prov, model
+		}
+	}
+	return nil, ""
+}
+
 // resolveProvider picks the best available provider from the config.
 func resolveProvider(cfg *config.Config) agent.Provider {
 	providerName := resolveProviderName(cfg)

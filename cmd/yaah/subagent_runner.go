@@ -16,7 +16,7 @@ import (
 	"github.com/buchenberg/yaah/internal/tools"
 )
 
-func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker) *tools.TaskTool {
+func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker) *tools.TaskTool {
 	// Map a config "0 = unlimited" MaxDepth to a sentinel so the
 	// structural nesting decrement in makeTaskRunner does not disable
 	// spawning for an "unlimited" setting.
@@ -26,16 +26,18 @@ func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 	}
 	return &tools.TaskTool{
 		Runner: makeTaskRunner(taskRunnerOpts{
-			provider:        provider,
-			systemPrompt:    systemPrompt,
-			modelName:       modelName,
-			db:              db,
-			parentSession:   sessionID,
-			subCfg:          subCfg,
-			SubToolCallback: subToolDisplay,
-			OtelEnabled:     otelEnabled,
-			OtelVerbose:     otelVerbose,
-			tracker:         tracker,
+			provider:         provider,
+			systemPrompt:     systemPrompt,
+			modelName:        modelName,
+			db:               db,
+			parentSession:    sessionID,
+			subCfg:           subCfg,
+			subAgentProvider: subAgentProvider,
+			subAgentModel:    subAgentModel,
+			SubToolCallback:  subToolDisplay,
+			OtelEnabled:      otelEnabled,
+			OtelVerbose:      otelVerbose,
+			tracker:          tracker,
 		}, depth),
 		ResolveTimeout: subAgentTimeoutResolver(subCfg),
 		RoleNames:      roleNames,
@@ -109,6 +111,12 @@ type taskRunnerOpts struct {
 	parentSession string
 	subCfg        config.SubAgentConfig
 
+	// subAgentProvider and subAgentModel override the planner's
+	// provider/model for sub-agent loops. When nil/empty, sub-agents
+	// inherit the planner's provider and model.
+	subAgentProvider agent.Provider
+	subAgentModel    string
+
 	// SubToolCallback is set on the sub-loop's OnTool so sub-agent
 	// tool calls can be rendered indented in the CLI.
 	SubToolCallback agent.ToolCallback
@@ -175,11 +183,20 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			}
 		}
 
+		subProvider := opts.subAgentProvider
+		if subProvider == nil {
+			subProvider = opts.provider
+		}
+		subModel := opts.subAgentModel
+		if subModel == "" {
+			subModel = opts.modelName
+		}
+
 		subLoop := &agent.Loop{
-			Provider:               opts.provider,
+			Provider:               subProvider,
 			Registry:               subReg,
 			SystemPrompt:           sysPrompt,
-			Model:                  opts.modelName,
+			Model:                  subModel,
 			MaxIterations:          maxIter,
 			MaxRetries:             2,
 			ApprovalMode:           "allow",

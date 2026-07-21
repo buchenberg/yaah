@@ -294,7 +294,8 @@ func runTUI() error {
 	toolReg.Register(&tools.BackgroundProcessTool{Manager: procMgr})
 
 	conflictTracker := &tools.ConflictTracker{}
-	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, conflictTracker))
+	subAgentProvider, subAgentModel := resolveSubAgent(cfg)
+	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, conflictTracker))
 
 	// Shared conversation history for the TUI session.
 	var messages []types.Message
@@ -502,22 +503,24 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 	executorProvider, executorModel := resolveExecutor(cfg)
 
 	loop := &agent.Loop{
-		Provider:           provider,
-		Registry:           toolReg,
-		Model:              modelName,
-		SystemPrompt:       systemPrompt,
-		MaxIterations:      cfg.Agent.Default.MaxIterations,
-		ContextWindow:      cfg.Agent.Default.ContextWindow,
-		ApprovalMode:       resolveApproval(cfg),
-		Messages:           *messages,
-		OtelEnabled:        cfg.Observability.Otel.Enabled,
-		OtelVerbose:        cfg.Observability.Otel.Verbose,
-		ConflictTracker:    conflictTracker,
-		ExecutorProvider:   executorProvider,
-		ExecutorModel:      executorModel,
-		MaxInnerIterations: cfg.Agent.Executor.MaxIterations,
-		CompactProvider:    compactProvider,
-		CompactModel:       compactModel,
+		Provider:              provider,
+		Registry:              toolReg,
+		Model:                 modelName,
+		SystemPrompt:          systemPrompt,
+		ExecutorSystemPrompt:  prompts.ExecutorIdentityPrompt,
+		MaxInlineToolsPerTurn: cfg.Agent.Default.MaxInlineToolsPerTurn,
+		MaxIterations:         cfg.Agent.Default.MaxIterations,
+		ContextWindow:         cfg.Agent.Default.ContextWindow,
+		ApprovalMode:          resolveApproval(cfg),
+		Messages:              *messages,
+		OtelEnabled:           cfg.Observability.Otel.Enabled,
+		OtelVerbose:           cfg.Observability.Otel.Verbose,
+		ConflictTracker:       conflictTracker,
+		ExecutorProvider:      executorProvider,
+		ExecutorModel:         executorModel,
+		MaxInnerIterations:    cfg.Agent.Executor.MaxIterations,
+		CompactProvider:       compactProvider,
+		CompactModel:          compactModel,
 		ApproveFn: func(name, args string) bool {
 			respCh := make(chan bool, 1)
 			ch <- tui.AgentMsg{

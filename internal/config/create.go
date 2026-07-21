@@ -16,40 +16,58 @@ providers:
     name: DeepSeek
     base_url: https://api.deepseek.com/v1
     api_key: ${DEEPSEEK_API_KEY}
-  glm:
-    name: GLM
-    base_url: https://api.z.ai/api/paas/v4
-    api_key: ${ZAI_API_KEY}
   ollama:
     name: Ollama
     base_url: http://localhost:11434/v1
     api_key: ollama
-    # timeout: 0               # seconds; 0 = no timeout (for slow local models)
+    # timeout: 0               # 0 = no timeout (for slow local models)
 
-# editor: code --wait                    # editor for 'yaah config edit' (falls back to $EDITOR, $VISUAL, vi)
+agents:
+  default:
+    provider: deepseek
+    model: deepseek-v4-pro
+    small_model: deepseek-v4-flash
+    max_iterations: 50
+    approval: ask               # ask | allow | deny
+    # max_inline_tools_per_turn: 12  # cap inline tools per turn; 0 = unlimited
 
-default:
-  provider: deepseek                       # which provider to use by default
-  model: deepseek-v4-pro                      # model name (no provider prefix needed)
-  small_model: deepseek-v4-flash
-  max_iterations: 50
-  approval: ask                           # ask | allow | deny
-  # fallback_provider: openrouter          # optional: rotate to this provider on auth/billing/rate-limit errors
-  # fallback_model: meta-llama/llama-4-maverick  # optional: model to use with fallback provider
+  # executor:
+  #   provider: deepseek         # override provider (default: inherit from planner)
+  #   model: deepseek-v4-flash   # override model (default: inherit from planner)
+  #   max_iterations: 10
 
-# agent:
-#   middleware:
-#     enabled:                             # explicit set of middleware to run (in order)
-#       - steer
-#       - followup
-#       - compaction
-#       - approval
-#       - loop_detection
-#     # disabled:                          # exclude specific middleware
-#     #   - approval
+  # subagent:
+  #   provider: deepseek         # override provider (default: inherit from planner)
+  #   model: deepseek-v4-flash   # override model (default: inherit from planner)
+  #   max_depth: 3
+  #   max_concurrency: 3
+  #   default_timeout: 120
+
+  # fallback:
+  #   provider: openrouter        # optional: rotate on auth/billing/rate-limit errors
+  #   model: meta-llama/llama-4-maverick
+
+  # middleware:
+  #   enabled:
+  #     - steer
+  #     - followup
+  #     - compaction
+  #     - approval
+  #     - loop_detection
+  #   # disabled:
+  #   #   - approval
+
+# observability:
+#   otel:
+#     enabled: true
+#     endpoint: localhost:4317
+#     service_name: yaah
+#     verbose: false
 
 # hooks:
-#   dir: ~/.yaah/hooks                    # optional: JSONL event log for external integrations
+#   dir: ~/.yaah/hooks
+
+# editor: code --wait
 `
 
 // CreateDefault writes a scaffold config file to ConfigPath() if and only

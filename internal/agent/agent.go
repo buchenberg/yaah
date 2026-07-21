@@ -200,6 +200,13 @@ type Loop struct {
 	// When > 0, a buffered channel semaphore is created by buildPipeline().
 	MaxToolConcurrency int
 
+	// MaxInlineToolsPerTurn caps the number of inline tool calls the
+	// planner may issue in a single turn. When exceeded, excess calls
+	// are dropped and a warning is injected into the conversation so the
+	// model learns to break work into smaller batches or delegate.
+	// 0 means unlimited. Default: 0 (use with models prone to tool spam).
+	MaxInlineToolsPerTurn int
+
 	// PermissionRules is the list of permission rules for the PermissionMiddleware.
 	PermissionRules []PermissionRule
 
@@ -254,6 +261,10 @@ type Loop struct {
 	// When set, the Loop will use this prompt instead of one assembled from
 	// instructions and provider defaults.
 	SystemPromptOverride string
+
+	// ExecutorSystemPrompt is the system prompt for the dual-loop executor.
+	// When empty, the embedded identity-executor.md is used.
+	ExecutorSystemPrompt string
 
 	// hookFile is the open file descriptor for JSONL event hooks.
 	hookFile *os.File
@@ -509,7 +520,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 						attribute.String("delegate.executor_type", execType),
 					))
 				}
-				summary, exhausted, innerErr := l.runExecutor(turnCtx, directive, originalIntent, execType)
+				summary, exhausted, fellBack, innerErr := l.runExecutor(turnCtx, directive, originalIntent, execType)
 				truncated := false
 				switch {
 				case innerErr != nil:
@@ -523,7 +534,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 					summary = truncateRunes(summary, maxInnerSummaryLen)
 					truncated = true
 				}
-				content := wrapExecutorResult(summary, exhausted, innerErr, truncated)
+				content := wrapExecutorResult(summary, exhausted, innerErr, truncated, fellBack)
 				tr := types.Message{Role: "tool", Content: content, ToolCallID: tc.ID, Name: delegateToolName}
 				messages = append(messages, tr)
 				l.persistMessage(tr)
@@ -547,6 +558,24 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 
 		// Inline calls present (possibly alongside delegates): execute inline
 		// tools and run post-tool middleware.
+		if l.MaxInlineToolsPerTurn > 0 && len(inlineCalls) > l.MaxInlineToolsPerTurn {
+			dropped := len(inlineCalls) - l.MaxInlineToolsPerTurn
+			inlineCalls = inlineCalls[:l.MaxInlineToolsPerTurn]
+			if dropped > 0 {
+				warning := fmt.Sprintf(
+					"[system] %d tool call(s) dropped — inline limit is %d per turn. "+
+						"Break large batches into smaller turns or use the delegate tool for batch work.",
+					dropped, l.MaxInlineToolsPerTurn,
+				)
+				messages = append(messages, types.UserMsg(warning))
+				if l.OtelVerbose && turnSpan != nil {
+					turnSpan.AddEvent("inline.truncated", trace.WithAttributes(
+						attribute.Int("inline.dropped", dropped),
+					))
+				}
+			}
+		}
+
 		if l.OtelVerbose && turnSpan != nil {
 			names := make([]string, len(inlineCalls))
 			for i, tc := range inlineCalls {

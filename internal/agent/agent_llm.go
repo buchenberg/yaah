@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent/errorclassify"
@@ -78,6 +79,26 @@ func (l *Loop) getAssistantMessage(ctx context.Context, req types.ChatRequest) (
 			NumMessages: len(l.Messages),
 		}
 		classified := errorclassify.Classify(err, meta)
+
+		// ── Fast-path: degenerate model producing empty streams ──────
+		// Some models (e.g. GLM in thinking mode) produce streams with
+		// zero content and zero tool calls — not a provider error, but
+		// a useless response. Rotate immediately to the fallback rather
+		// than burning retries on the same broken model.
+		if isDegenerateStream(err) && l.FallbackProvider != nil && !providerSwapped {
+			oldProvider := l.Provider
+			oldModel := l.Model
+			l.Provider = l.FallbackProvider
+			if l.FallbackModel != "" {
+				l.Model = l.FallbackModel
+				req.Model = l.FallbackModel
+			}
+			providerSwapped = true
+			l.FallbackProvider = oldProvider
+			l.FallbackModel = oldModel
+			attempt-- // don't count against MaxRetries
+			continue
+		}
 
 		// ── Act on recovery hints ──────────────────────────────────
 		switch {
@@ -159,4 +180,15 @@ func httpStatusCode(err error) int {
 		}
 	}
 	return 0
+}
+
+// isDegenerateStream returns true if the error is from a model that produced
+// a stream with zero content and zero tool calls — a useless response, not a
+// provider error. These can be rotated immediately without backoff.
+func isDegenerateStream(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "streamed response produced no content")
 }
