@@ -346,7 +346,6 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		Registry:               s.toolReg,
 		Model:                  s.modelName,
 		SystemPrompt:           s.systemPrompt,
-		ExecutorSystemPrompt:   prompts.ExecutorIdentityPrompt,
 		MaxInlineToolsPerTurn:  s.cfg.Agent.Default.MaxInlineToolsPerTurn,
 		MaxIterations:          s.cfg.Agent.Default.MaxIterations,
 		ContextWindow:          s.cfg.Agent.Default.ContextWindow,
@@ -364,6 +363,7 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		OtelEnabled:            s.cfg.Observability.Otel.Enabled,
 		OtelVerbose:            s.cfg.Observability.Otel.Verbose,
 		ConflictTracker:        s.tracker,
+		ToolsLevel:             agent.SubAgentsOnly,
 	}
 
 	spin := spinner.New(nil, "Thinking...")

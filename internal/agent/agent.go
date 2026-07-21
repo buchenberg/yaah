@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -11,7 +12,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/buchenberg/yaah/internal/agent/executor"
 	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
@@ -62,6 +62,16 @@ type SubAgentCallback func(info SubAgentInfo)
 // ThinkingCallback is called when the model outputs thinking/reasoning text.
 type ThinkingCallback = llm.ThinkingCallback
 
+// ToolsLevel controls which tools the agent sees.
+type ToolsLevel int
+
+const (
+	// FullTools is the default — all tools from the registry.
+	FullTools ToolsLevel = iota
+	// SubAgentsOnly gives only the task tool — the agent coordinates through sub-agents.
+	SubAgentsOnly
+)
+
 // FlushCallback is called when the model finishes a streaming segment and
 // is about to start a tool call or a new iteration. The TUI uses this to
 // flush the accumulated streaming content into the message list so the
@@ -70,10 +80,6 @@ type FlushCallback func(content string)
 
 // ToolResultMaxLen is the maximum length of a tool result before truncation.
 const ToolResultMaxLen = 8192
-
-// maxInnerSummaryLen caps the inner executor loop's final summary to prevent
-// unbounded context growth from the dual-loop architecture.
-const maxInnerSummaryLen = 8000
 
 // pruneMessageMaxLen is the threshold above which old messages are pruned
 // before being sent to the LLM summarizer during compaction.
@@ -100,8 +106,9 @@ type Loop struct {
 	// LLM wraps the provider with streaming, retry, fallback, and compaction.
 	LLM *llm.Client
 
-	// Executor runs the tool-execution inner loop for delegated directives.
-	Executor *executor.Executor
+	// ToolsLevel controls tool visibility: FullTools gives all registry
+	// tools; SubAgentsOnly gives only the task tool for coordination.
+	ToolsLevel ToolsLevel
 
 	// ContextWindow is the estimated token budget for the conversation.
 	// When the estimated tokens exceed the compaction threshold, old messages
@@ -301,6 +308,9 @@ type Loop struct {
 	// ineffectiveCompactions counts successive compactions that saved < 10%
 	// of tokens. When >= 2, compaction is skipped.
 	ineffectiveCompactions int
+
+	// usageMu serializes addUsage calls from concurrent delegate dispatches.
+	usageMu sync.Mutex
 }
 
 // buildPipeline assembles the middleware pipeline from config.
@@ -429,12 +439,10 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		}
 		messages = step.Messages
 
-		// Planner always gets the full tool set PLUS delegate (additive).
-		// The planner chooses inline vs. delegate per-action. No gate.
 		req := types.ChatRequest{
 			Model:    l.Model,
 			Messages: messages,
-			Tools:    l.buildPlannerToolDefs(),
+			Tools:    l.buildToolsForLevel(),
 		}
 
 		// Verbose: record the conversation the outer model is about to see
@@ -470,22 +478,14 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		l.persistMessage(msg)
 
 		if turnSpan != nil {
-			delegCnt, inlineCnt := 0, 0
 			toolNames := make([]string, 0, len(msg.ToolCalls))
 			for _, tc := range msg.ToolCalls {
 				toolNames = append(toolNames, tc.Function.Name)
-				if tc.Function.Name == delegateToolName {
-					delegCnt++
-				} else {
-					inlineCnt++
-				}
 			}
 			turnAttrs := []attribute.KeyValue{
 				attribute.Bool("turn.streamed", streamed),
 				attribute.Int("turn.iteration", iter),
 				attribute.Int("turn.tool_calls", len(msg.ToolCalls)),
-				attribute.Int("turn.delegate_calls", delegCnt),
-				attribute.Int("turn.inline_calls", inlineCnt),
 				attribute.String("turn.tool_call_names", strings.Join(toolNames, ",")),
 				attribute.Int("turn.messages", len(messages)),
 				attribute.Int("llm.total_prompt_tokens", l.TotalTokens.PromptTokens),
@@ -520,70 +520,11 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			return "", err
 		}
 
-		// ── Dispatch: delegate calls → executor; inline calls → direct execution ──
-		delegateCalls, inlineCalls := splitDelegateCalls(msg.ToolCalls)
-
-		// Delegate calls: each routes to the executor, which owns tool selection
-		// for that directive. The executor's summary is the honest tool result of
-		// the planner's delegate call.
-		if len(delegateCalls) > 0 {
-			originalIntent := lastUserMessage(messages)
-			if l.OtelVerbose && turnSpan != nil {
-				turnSpan.AddEvent("dispatch.delegate", trace.WithAttributes(
-					attribute.Int("delegate.count", len(delegateCalls)),
-					attribute.Int("inline.count", len(inlineCalls)),
-					attribute.Int("turn.messages", len(messages)),
-				))
-			}
-			for _, tc := range delegateCalls {
-				directive, execType := parseDelegateCall(tc.Function.Arguments)
-				if l.OtelVerbose && turnSpan != nil {
-					turnSpan.AddEvent("delegate.call", trace.WithAttributes(
-						attribute.String("delegate.directive", abbreviateArgs(directive, 200)),
-						attribute.String("delegate.executor_type", execType),
-					))
-				}
-				summary, exhausted, fellBack, innerErr := l.Executor.Run(turnCtx, directive, originalIntent, execType)
-				truncated := false
-				switch {
-				case innerErr != nil:
-					summary = fmt.Sprintf("executor error: %v", innerErr)
-				case exhausted:
-					if summary == "" {
-						summary = "executor iteration budget exhausted"
-					}
-				}
-				if len(summary) > maxInnerSummaryLen {
-					summary = truncateRunes(summary, maxInnerSummaryLen)
-					truncated = true
-				}
-				content := wrapExecutorResult(summary, exhausted, innerErr, truncated, fellBack)
-				tr := types.Message{Role: "tool", Content: content, ToolCallID: tc.ID, Name: delegateToolName}
-				messages = append(messages, tr)
-				l.persistMessage(tr)
-				if l.OtelVerbose && turnSpan != nil {
-					observability.RecordInnerSummary(turnSpan, content, len(messages))
-				}
-			}
-		}
-
-		// Delegate+inline mixed turn: run delegate summaries, then inline tools.
-		if len(delegateCalls) > 0 && len(inlineCalls) == 0 {
-			// Delegate-only turn: tool results are already in messages.
-			// Sync step.Messages so the next iteration sees them, then skip
-			// inline path (no tools to execute).
-			step.Messages = messages
-			if turnSpan != nil {
-				turnSpan.End()
-			}
-			continue
-		}
-
-		// Inline calls present (possibly alongside delegates): execute inline
-		// tools and run post-tool middleware.
-		if l.MaxInlineToolsPerTurn > 0 && len(inlineCalls) > l.MaxInlineToolsPerTurn {
-			dropped := len(inlineCalls) - l.MaxInlineToolsPerTurn
-			inlineCalls = inlineCalls[:l.MaxInlineToolsPerTurn]
+		// Inline tool execution
+		calls := msg.ToolCalls
+		if l.MaxInlineToolsPerTurn > 0 && len(calls) > l.MaxInlineToolsPerTurn {
+			dropped := len(calls) - l.MaxInlineToolsPerTurn
+			calls = calls[:l.MaxInlineToolsPerTurn]
 			if dropped > 0 {
 				warning := fmt.Sprintf(
 					"[system] %d tool call(s) dropped — inline limit is %d per turn. "+
@@ -600,16 +541,16 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		}
 
 		if l.OtelVerbose && turnSpan != nil {
-			names := make([]string, len(inlineCalls))
-			for i, tc := range inlineCalls {
+			names := make([]string, len(calls))
+			for i, tc := range calls {
 				names[i] = tc.Function.Name
 			}
 			turnSpan.AddEvent("dispatch.inline", trace.WithAttributes(
-				attribute.Int("inline.count", len(inlineCalls)),
+				attribute.Int("inline.count", len(calls)),
 				attribute.String("inline.tool_names", strings.Join(names, ",")),
 			))
 		}
-		toolResults := l.executeAndCollect(turnCtx, inlineCalls, &messages)
+		toolResults := l.executeAndCollect(turnCtx, calls, &messages)
 		step.Messages = messages
 
 		if l.ConflictTracker != nil {
@@ -706,26 +647,40 @@ func (l *Loop) applyDefaults() {
 			OtelVerbose:      l.OtelVerbose,
 		}
 	}
-	if l.Executor == nil {
-		l.Executor = &executor.Executor{
-			Provider:         l.ExecutorProvider,
-			FallbackProvider: l.Provider,
-			Model:            l.ExecutorModel,
-			MaxIterations:    l.MaxInnerIterations,
-			SystemPrompt:     l.ExecutorSystemPrompt,
-			Registry:         l.Registry,
-			OnTool:           l.executorToolCallback,
-			OnUsage:          l.addUsage,
-			OnFallback:       l.executorFallbackCallback,
-			EmitHook:         l.executorEmitHook,
-			OtelEnabled:      l.OtelEnabled,
-			OtelVerbose:      l.OtelVerbose,
-			OuterModel:       l.Model,
-		}
+}
+
+func (l *Loop) buildToolsForLevel() []types.ToolDef {
+	switch l.ToolsLevel {
+	case SubAgentsOnly:
+		return l.agentTools()
+	default:
+		return l.buildToolDefs()
 	}
 }
 
+func (l *Loop) agentTools() []types.ToolDef {
+	for _, name := range l.Registry.List() {
+		if name == "task" {
+			t := l.Registry.Get(name)
+			if t == nil {
+				continue
+			}
+			return []types.ToolDef{{
+				Type: "function",
+				Function: types.ToolFn{
+					Name:        t.Name(),
+					Description: t.Description(),
+					Parameters:  json.RawMessage(t.Schema()),
+				},
+			}}
+		}
+	}
+	return nil
+}
+
 func (l *Loop) addUsage(u types.Usage) {
+	l.usageMu.Lock()
+	defer l.usageMu.Unlock()
 	l.TotalTokens.PromptTokens += u.PromptTokens
 	l.TotalTokens.CompletionTokens += u.CompletionTokens
 	l.TotalTokens.TotalTokens += u.TotalTokens
@@ -742,40 +697,6 @@ func (l *Loop) llmCompact(ctx context.Context, messages []types.Message, thresho
 	l.Messages = messages
 	l.compactContext(ctx, threshold)
 	return l.Messages
-}
-
-func (l *Loop) executorToolCallback(name string, args string, dur time.Duration, errMsg string) {
-	if l.OnTool == nil {
-		return
-	}
-	info := ToolInfo{Name: name, Args: args, Duration: dur}
-	if errMsg != "" {
-		info.Error = errMsg
-	}
-	l.OnTool(info)
-}
-
-func (l *Loop) executorFallbackCallback(reason string, model string) {
-	l.emitHook(HookEvent{
-		Event:          ExecutorFallback,
-		Model:          model,
-		FallbackReason: reason,
-	})
-}
-
-func (l *Loop) executorEmitHook(eventName string, model string, extra map[string]interface{}) {
-	l.emitHook(HookEvent{
-		Event:          HookEventType(eventName),
-		Model:          model,
-		FallbackReason: fmt.Sprint(extra["fallback_reason"]),
-	})
-}
-
-func (l *Loop) runExecutor(ctx context.Context, directive, originalIntent, executorType string) (string, bool, bool, error) {
-	if l.Executor == nil {
-		l.applyDefaults()
-	}
-	return l.Executor.Run(ctx, directive, originalIntent, executorType)
 }
 
 func (l *Loop) resolveExecutor(executorType string) (Provider, string) {

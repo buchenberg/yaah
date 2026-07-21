@@ -12,16 +12,13 @@ import (
 type SubAgentRole string
 
 const (
-	// RoleWorker can read, write, edit, delete, search, run shell
-	// commands, and fetch URLs. It cannot spawn further sub-agents.
-	RoleWorker SubAgentRole = "worker"
-
 	// RoleReviewer is read-only: read, grep, glob, ls. Use it for code
 	// review, analysis, and search-only tasks.
 	RoleReviewer SubAgentRole = "reviewer"
 
-	// RolePlanner inherits the worker tool set and additionally gains
-	// the task tool, letting it decompose work and dispatch workers.
+	// RolePlanner can read, write, edit, delete, search, run shell
+	// commands, fetch URLs, and additionally gains the task tool,
+	// letting it decompose work and dispatch reviewers.
 	RolePlanner SubAgentRole = "planner"
 
 	// RoleDefault preserves the legacy task tool behaviour: the full
@@ -83,19 +80,16 @@ func RoleGuidance(role SubAgentRole) string {
 
 func legacyGuidance(role SubAgentRole) string {
 	switch role {
-	case RoleWorker:
-		return "You are running as a WORKER sub-agent. Implement the assigned " +
-			"task directly using the filesystem and shell tools available to " +
-			"you. You cannot spawn further sub-agents. When you are done, " +
-			"return a concise summary of what you did."
 	case RoleReviewer:
 		return "You are running as a REVIEWER sub-agent. You have read-only " +
-			"tools. Analyze, review, or research the assigned topic and report " +
-			"findings. Do not attempt to modify files."
+			"tools for direct inspection. For any work requiring multiple " +
+			"tools (batch counting, bulk grep, measuring), use delegate to " +
+			"dispatch the work to a tool executor and report the result. " +
+			"Do not attempt to modify files."
 	case RolePlanner:
 		return "You are running as a PLANNER sub-agent. You may decompose the " +
-			"work and dispatch WORKER sub-agents with the task tool for " +
-			"parallel or isolated implementation. Coordinate their results " +
+			"work and dispatch REVIEWER sub-agents with the task tool for " +
+			"parallel or isolated analysis. Coordinate their results " +
 			"and return a consolidated summary."
 	default:
 		return ""
@@ -107,18 +101,6 @@ func legacyGuidance(role SubAgentRole) string {
 // sensible defaults.
 func legacyProfileFor(role SubAgentRole) RoleProfile {
 	switch role {
-	case RoleWorker:
-		return RoleProfile{
-			Tools: []string{
-				"read", "write", "edit", "delete",
-				"grep", "glob", "ls",
-				"bash", "powershell",
-				"webfetch",
-			},
-			MaxIterations: 25,
-			Timeout:       120 * time.Second,
-			MaxDepth:      1,
-		}
 	case RoleReviewer:
 		return RoleProfile{
 			Tools:         []string{"read", "grep", "glob", "ls"},

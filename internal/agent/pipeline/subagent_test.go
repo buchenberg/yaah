@@ -13,7 +13,7 @@ func TestRoleFromTaskArgs(t *testing.T) {
 		args string
 		want subagent.SubAgentRole
 	}{
-		{`{"role":"worker","prompt":"x"}`, subagent.RoleWorker},
+		{`{"role":"planner","prompt":"x"}`, subagent.RolePlanner},
 		{`{"role":"planner"}`, subagent.RolePlanner},
 		{`{"prompt":"x"}`, subagent.RoleDefault},
 		{``, subagent.RoleDefault},

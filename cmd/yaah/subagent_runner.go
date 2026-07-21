@@ -229,7 +229,7 @@ func subAgentTimeoutResolver(subCfg config.SubAgentConfig) func(tools.SubAgentPa
 // the map fall back to the global MaxDepth in the middleware.
 func subAgentDepthByRole(subCfg config.SubAgentConfig) map[subagent.SubAgentRole]int {
 	out := make(map[subagent.SubAgentRole]int)
-	for _, role := range []subagent.SubAgentRole{subagent.RoleWorker, subagent.RoleReviewer, subagent.RolePlanner} {
+	for _, role := range []subagent.SubAgentRole{subagent.RoleReviewer, subagent.RolePlanner} {
 		if d := subagent.RoleProfileFor(role).MaxDepth; d > 0 {
 			out[role] = d
 		}

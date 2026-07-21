@@ -123,6 +123,7 @@ var leafTools = map[string]func() Tool{
 	"http":       func() Tool { return &HTTPTool{} },
 	"go_outline": func() Tool { return &GoOutlineTool{} },
 	"calculate":  func() Tool { return &CalculateTool{} },
+	"file_info":  func() Tool { return &FileInfoTool{} },
 }
 
 // NewRegistry creates a tool registry with yaah's built-in tools.

@@ -6,28 +6,6 @@ import (
 )
 
 func TestRoleProfileFor(t *testing.T) {
-	t.Run("worker", func(t *testing.T) {
-		p := RoleProfileFor(RoleWorker)
-		if !contains(p.Tools, "bash") {
-			t.Error("worker profile must include bash")
-		}
-		if !contains(p.Tools, "webfetch") {
-			t.Error("worker profile must include webfetch")
-		}
-		if contains(p.Tools, "task") {
-			t.Error("worker profile must NOT include task (workers cannot spawn)")
-		}
-		if p.IsSpawnCapable() {
-			t.Error("worker should not be spawn-capable")
-		}
-		if p.MaxIterations != 25 {
-			t.Errorf("worker MaxIterations = %d, want 25", p.MaxIterations)
-		}
-		if p.Timeout != 120*time.Second {
-			t.Errorf("worker Timeout = %v, want 120s", p.Timeout)
-		}
-	})
-
 	t.Run("reviewer is read-only", func(t *testing.T) {
 		p := RoleProfileFor(RoleReviewer)
 		for _, dangerous := range []string{"write", "edit", "delete", "bash", "powershell", "task"} {
@@ -84,7 +62,7 @@ func TestRoleProfileFor(t *testing.T) {
 }
 
 func TestRoleGuidance(t *testing.T) {
-	for _, role := range []SubAgentRole{RoleWorker, RoleReviewer, RolePlanner} {
+	for _, role := range []SubAgentRole{RoleReviewer, RolePlanner} {
 		if g := RoleGuidance(role); g == "" {
 			t.Errorf("RoleGuidance(%q) returned empty", role)
 		}

@@ -102,72 +102,33 @@ yaah --resume <session-id> "continue"       # resume a saved session
 
 ## Features
 
-### Dual-loop executor (delegate)
+### Sub-agent team
 
-yaah uses a planner/executor dual-loop where the planner delegates
-tool-intensive work to a dedicated executor running on a potentially cheaper
-model. The `delegate` tool is always available — the agent chooses per-action
-whether to work inline or delegate.
+yaah uses a team-based architecture. The main agent coordinates via the `task`
+tool — it dispatches specialist sub-agents, each with a curated tool set and
+role-specific guidance. Sub-agents run tools directly on the filesystem.
 
-- **Model tiering**: run the executor on a cheaper model (e.g. deepseek-v4-flash)
-  while the planner uses a stronger reasoning model (deepseek-v4-pro).
-- **Cross-provider**: the executor can use a different provider than the planner.
-- **Auto-approval**: the executor runs tools without user prompts — bash,
-  write, edit all auto-execute when delegated.
-- **Fallback**: if the executor model fails (rate limit, auth, 5xx), the executor
-  gracefully falls back to the planner's model and continues. The `fellBack`
-  attribute is recorded in traces and the `executor_result` XML envelope.
-- **Self-correcting**: the executor retries failed tools before reporting
-  errors to the planner.
-- **No gate**: delegate is always available alongside all tools (additive,
-  not substitutive). No config flag to turn it on.
-- **Tool isolation**: the executor's tool set excludes `task` and `delegate`
-  — it cannot spawn sub-agents or recursively delegate. Those are the
-  planner's responsibilities.
+| Role | Tools | Iterations | Timeout |
+|---|---|---|---|
+| `planner` | read, write, edit, delete, replace, grep, glob, ls, powershell, webfetch, task | 50 | 300s |
+| `reviewer` | read, grep, glob, ls, powershell, webfetch | 15 | 120s |
+| `developer` | read, write, edit, delete, replace, grep, glob, ls, powershell | 25 | 180s |
+| `tester` | read, powershell, grep, glob, ls | 20 | 120s |
+| `researcher` | webfetch, http, read, grep, glob, ls | 15 | 120s |
+| `security_auditor` | read, grep, glob, ls, powershell | 30 | 120s |
 
-```
-# Config (optional — executor falls back to main provider/model)
-agents:
-  executor:
-    provider: deepseek
-    model: deepseek-v4-flash
-    max_iterations: 10
-```
-
-See [`docs/BENCHMARK.md`](./docs/BENCHMARK.md) for token/cost benchmarks —
-complex tasks push ~65% of tokens to the executor on the cheap model.
-See [`docs/PROMPT-INJECTION.md`](./docs/PROMPT-INJECTION.md) for the executor
-prompt architecture.
-
-### Sub-agents (`task` tool)
-
-The `task` tool spawns isolated sub-agents with role-based tool sets,
-iteration budgets, and timeouts:
-
-| Role | Tool set | Iterations | Timeout | Can spawn |
-|---|---|---|---|---|
-| `worker` | read, write, edit, delete, grep, glob, ls, bash, powershell, webfetch | 25 | 120s | no |
-| `reviewer` | read, grep, glob, ls | 10 | — | no |
-| `planner` | worker set + `task` | 50 | 300s | yes |
+Custom roles from `.agents/roles/` or `~/.agents/roles/` appear at startup.
 
 Multiple `task` calls in one turn fan out in parallel (up to
-`agent.subagent.max_concurrency`, default 3). Nesting depth is bounded
-structurally — each level decrements a counter seeded from `max_depth`.
-Timeouts return structured JSON (`{"error":"timed out","partial":"..."}`).
-
-Sub-agents can be configured to use a different provider and model than the
-planner, similar to the executor:
+`agent.subagent.max_concurrency`, default 3). Sub-agents can use a different
+provider and model than the planner:
 
 ```yaml
 agents:
   subagent:
-    provider: deepseek               # optional — defaults to planner's provider
-    model: deepseek-v4-flash         # optional — defaults to planner's model
+    provider: deepseek
+    model: deepseek-v4-flash
 ```
-
-When unset, sub-agents inherit the planner's provider and model.
-
-See the [Config](#config) section for all `agent.subagent.*` settings.
 
 ### Custom roles
 

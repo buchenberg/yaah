@@ -43,7 +43,6 @@ yaah/
 │   └── color.go                 # ANSI color helpers
 ├── internal/
 │   ├── agent/                   # agent loop, callbacks, tool dispatch, context, hooks, persistence
-│   │   ├── executor/             #   dual-loop inner executor for delegated directives
 │   │   ├── llm/                  #   LLM client wrapping (streaming, retry, fallback, usage)
 │   │   ├── pipeline/             #   middleware pipeline (compaction, approval, permissions, etc.)
 │   │   └── subagent/             #   sub-agent role definitions and registry
@@ -66,7 +65,7 @@ yaah/
 ├── .github/workflows/ci.yml     # CI: test, vet, staticcheck, cross-compile
 ├── docs/
 │   ├── architecture.md          # detailed architecture documentation
-│   ├── AGENT-LOOP-DIAGRAMS.md   # mermaid diagrams of agent loop + dual-loop
+│   ├── AGENT-LOOP-DIAGRAMS.md   # mermaid diagrams of agent loop
 │   ├── BENCHMARK.md             # benchmark suite + metrics history
 │   ├── tui-components.md        # TUI component system reference
 │   └── otel-setup.md            # OpenTelemetry/Jaeger setup guide

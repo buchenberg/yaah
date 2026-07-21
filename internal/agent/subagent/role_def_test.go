@@ -198,8 +198,8 @@ Test guidance.`),
 
 	// Built-in roles without a registry fall back to legacy.
 	SetDefaultRoleRegistry(nil)
-	legacyWorker := RoleProfileFor(RoleWorker)
-	if !contains(legacyWorker.Tools, "bash") {
-		t.Error("legacy fallback: worker missing bash")
+	legacyPlanner := RoleProfileFor(RolePlanner)
+	if !contains(legacyPlanner.Tools, "bash") {
+		t.Error("legacy fallback: planner missing bash")
 	}
 }

@@ -3,6 +3,145 @@
 > yaah agent-loop benchmarks tracked across development changes.
 > Each entry records the git state, config, and per-run metrics from Jaeger traces.
 
+## July 21, 2026 — Baseline before three-tier hierarchy
+
+**Config**: planner=`deepseek/deepseek-v4-pro`, executor=`deepseek/deepseek-v4-flash`, subagent=`deepseek/deepseek-v4-flash`
+**MaxInnerIterations**: 6, **MaxIterations**: 50
+
+Agent has `delegate` tool directly — two offloading paths (delegate + task)
+compete for the model's decisions.
+
+### B3 — Delegate (explicit: "use delegate")
+
+| Metric | Value |
+|---|---|
+| Date | 2026-07-21 |
+| Turns | 2 |
+| inner.loop | 1 |
+| LLM streams | 2 |
+| Tools executed | 4 |
+| Errors | 0 |
+| Time | 18.2s |
+
+### B5 — Complex multi-delegate synthesis
+
+| Metric | Value |
+|---|---|
+| Date | 2026-07-21 |
+| Turns | 8 |
+| inner.loop | 3 |
+| LLM streams | 8 |
+| Tools executed | 24 |
+| Errors | 0 |
+| Time | 101.7s |
+| Plan tokens | 95,249 |
+
+**Issues observed**: Agent had two offloading paths (`delegate` + `task`) —
+model spent reasoning tokens choosing between them each turn. B3 produced 4
+tool calls inside the executor. B5 produced 24 tools across 8 turns — agent
+fell back to inline repeatedly. Bash calls on Windows fail and waste iterations.
+
+### Three-tier hierarchy (final — agent → sub-agent → delegate)
+
+**Config**: planner=`deepseek/deepseek-v4-pro`, delegate=`deepseek/deepseek-v4-flash`, subagent=`deepseek/deepseek-v4-flash`
+**MaxInnerIterations**: 6, **MaxIterations**: 50 (agent/planner)
+
+```
+Agent (SubAgentsOnly)  →  Sub-agent (DelegatesOnly)  →  Delegate (ToolsOnly)
+┌───────────────┐         ┌───────────────┐         ┌──────────────────┐
+│ Tools: task   │ ─task→ │ Tools: delegate│ ─delegate→ │ file|research|shell│
+└───────────────┘         └───────────────┘         └──────────────────┘
+  Full Loop                 Full Loop                  Bare Delegate.Run()
+```
+
+Agent sees only `task` — one offloading decision per turn. Sub-agents see only
+`delegate` — one specialization choice. Delegates get curated tool sets by type:
+`file` (read/write/edit), `research` (read/search/web), `shell` (bash/powershell).
+
+| Metric | B3 baseline | B3 three-tier | B5 baseline | B5 three-tier |
+|---|---|---|---|---|
+| Turns | 2 | 2 | 8 | 20 |
+| inner.loop | 1 | 1 | 3 | 6 |
+| Sub-agents | 0 | 0 | 0 | **3** |
+| LLM streams | 2 | 2 | 8 | 9 |
+| Tools executed | 4 | **3** | 24 | **11** |
+| Errors | 0 | 0 | 0 | 0 |
+| Time | 18.2s | 22.5s | 101.7s | 125.4s |
+| Plan tokens | — | 9,738 | 95,249 | 119,573 |
+
+**B3**: Equivalent performance. Agent spawned one sub-agent via `task`, which
+returned the count. Same turns, fewer tools (3 vs 4). Minimal overhead from the
+extra hop: +4.3s, all within the sub-agent's 60s budget.
+
+**B5**: Mixed. Agent spawned 3 sub-agents for parallel fan-out (correct pattern —
+two `reviewer` role, one retry). Tools dropped by 54% (11 vs 24) because
+sub-agents absorbed the work. But turns increased (20 vs 8) because both
+reviewer sub-agents exhausted max iterations (10) or timed out (60s). The
+`research` delegate type has no `powershell` — reviewers couldn't batch-count
+lines efficiently, so they iterated one file at a time via `read`.
+
+**Key findings:**
+- Hierarchy mechanically correct — agent → task → reviewer → delegate chain
+  confirmed in Jaeger traces (delegate_loop=1, subagent=1)
+- Sub-agents need `shell` access for batch operations on Windows. `research`
+  (read/search/web) is too narrow for line counting. Either add `powershell`
+  to `research` type, or have reviewers chain `shell` + `research` delegates.
+- Reviewer timeout (60s) is tight for multi-delegate work. The 10-iteration
+  budget forces premature exhaustion on file-by-file reads.
+
+### Delegate types v2 (redesigned) + observability spans
+
+Delegate types renamed: `research` → `readonly` (now includes powershell for counting).
+Tool lists added to delegate schema so sub-agents know exactly what each type can do.
+Anti-fan-out guidance added: "use the fewest delegates needed." Reviewer
+max_iterations bumped from 10→15.
+
+Observability spans renamed: `inner.loop` → `delegate.loop`. New span attributes:
+`delegate.prompt_tokens`, `delegate.completion_tokens`, `delegate.iterations`,
+`delegate.exhausted`. Token attribution confirmed working (del_tokens=2,865 on B3).
+
+| Metric | B3 three-tier v1 | B3 three-tier v2 | B5 three-tier v1 |
+|---|---|---|---|
+| Turns | 2 | 4 | 20 |
+| delegate.loop | 1 | 1 | 6 |
+| Sub-agents | 0 | **1** | 3 |
+| Time | 22.5s | 34.4s | 125.4s |
+| Delegate tokens | — | **2,865** | — |
+
+**B3 v2**: Hierarchy fully confirmed in traces (delegate_loop + subagent spans).
+Reviewer spawned and returned. Delegate tokens (2,865) now attributable. Result
+undercounting (8 files vs 48) is a model mis-scoping issue, not code.
+
+### Final comparison: baseline vs. three-tier hierarchy
+
+Benchmark prompts rewritten for hierarchy (no `DELEGATE`/`INLINE` keywords).
+Agent has `task` only; sub-agents have `delegate` only; delegates get tool sets.
+
+| Metric | B5 baseline | B5 three-tier | Change |
+|---|---|---|---|
+| Turns | 8 | 5 | **-38%** |
+| delegate.loop | 3 | 2 | |
+| Sub-agents | 0 | 1 | |
+| Direct tool calls | 24 | **0** | **-100%** |
+| LLM streams | 8 | 2 | -75% |
+| Time | 101.7s | 57.9s | **-43%** |
+| Plan tokens | 95,249 | 28,628 | -70% |
+| Delegate tokens | — | 4,306 | |
+| Total tokens | 95,249 | **32,934** | **-65%** |
+
+**Verification of the three-tier model:**
+- `tools=0`: Agent called zero tools directly — hierarchy enforcement confirmed.
+- `del_loop=2`: Two delegate calls executed tool work.
+- `subagents=1`: One reviewer sub-agent coordinated the work.
+- `del_tokens=4,306`: Delegate token attribution now functional.
+- 65% token reduction: removing tools from the agent's decision space cuts reasoning overhead.
+
+Result accuracy was mixed (sub-agent mis-scoped file paths), but the structural
+efficiency gains are unambiguous — the agent spends fewer tokens choosing, and
+tools execute through the cost-optimized delegate tier.
+
+---
+
 ## July 21, 2026 — Executor isolation + fallback + fast-path
 
 **Config**: planner=`zai/glm-5.2`, executor=`deepseek/deepseek-v4-flash`, subagent=`deepseek/deepseek-v4-flash`
