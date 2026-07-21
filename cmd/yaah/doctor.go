@@ -50,8 +50,10 @@ func runChecks() []check {
 
 	return []check{
 		checkConfigFile(cfgPath, cfg, cfgErr, pathErr),
+		checkOldConfig(cfgPath),
 		checkProvider(cfg, cfgErr),
 		checkModel(cfg, cfgErr),
+		checkExecutor(cfg, cfgErr),
 		checkOTel(cfg, cfgErr),
 		checkHomeWritable(),
 		checkPlatform(),
@@ -82,8 +84,26 @@ func checkConfigFile(path string, cfg *config.Config, cfgErr, pathErr error) che
 	if cfgErr != nil {
 		return check{Label: "Config file", Status: "FAIL", Detail: cfgErr.Error()}
 	}
-	detail := fmt.Sprintf("%s (model: %s, %d provider(s))", path, cfg.Default.Model, len(cfg.Providers))
+	detail := fmt.Sprintf("%s (model: %s, %d provider(s))", path, cfg.Agent.Default.Model, len(cfg.Providers))
 	return check{Label: "Config file", Status: "OK", Detail: detail}
+}
+
+func checkOldConfig(path string) check {
+	if path == "" {
+		return check{Label: "Config format", Status: "OK", Detail: "no config file"}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return check{Label: "Config format", Status: "OK", Detail: "cannot read"}
+	}
+	if config.HasOldConfig(data) {
+		return check{
+			Label:  "Config format",
+			Status: "WARN",
+			Detail: "old-style config detected — rename 'default:' to 'agents: default:' and 'agent:' to 'agents:'",
+		}
+	}
+	return check{Label: "Config format", Status: "OK", Detail: "agents.* format"}
 }
 
 func checkProvider(cfg *config.Config, cfgErr error) check {
@@ -94,7 +114,7 @@ func checkProvider(cfg *config.Config, cfgErr error) check {
 		return check{Label: "Providers", Status: "FAIL", Detail: "no providers configured — add at least one provider in config.yaml"}
 	}
 
-	providerName := cfg.Default.Provider
+	providerName := cfg.Agent.Default.Provider
 	if providerName == "" {
 		providerName = resolveProviderName(cfg)
 	}
@@ -135,10 +155,42 @@ func checkModel(cfg *config.Config, cfgErr error) check {
 	if cfgErr != nil {
 		return check{Label: "Default model", Status: "WARN", Detail: "config not loaded"}
 	}
-	if cfg.Default.Model == "" {
+	if cfg.Agent.Default.Model == "" {
 		return check{Label: "Default model", Status: "FAIL", Detail: "default.model is not set"}
 	}
-	return check{Label: "Default model", Status: "OK", Detail: cfg.Default.Model}
+	return check{Label: "Default model", Status: "OK", Detail: cfg.Agent.Default.Model}
+}
+
+func checkExecutor(cfg *config.Config, cfgErr error) check {
+	if cfgErr != nil {
+		return check{Label: "Dual-loop", Status: "WARN", Detail: "config not loaded"}
+	}
+	ec := cfg.Agent.Executor
+	providerName := ec.Provider
+	model := ec.Model
+	if model == "" {
+		model = cfg.Agent.Default.Model
+	}
+	if providerName == "" {
+		providerName = resolveProviderName(cfg)
+		return check{
+			Label:  "Dual-loop",
+			Status: "OK",
+			Detail: fmt.Sprintf("enabled (executor = default model: %s / %s)", providerName, model),
+		}
+	}
+	if _, ok := cfg.Providers[providerName]; !ok {
+		return check{
+			Label:  "Dual-loop",
+			Status: "WARN",
+			Detail: fmt.Sprintf("enabled (executor = %s / %s, but provider %q not found — falling back to main)", providerName, model, ec.Provider),
+		}
+	}
+	return check{
+		Label:  "Dual-loop",
+		Status: "OK",
+		Detail: fmt.Sprintf("enabled (executor = %s / %s, max %d inner iterations)", providerName, model, ec.MaxIterations),
+	}
 }
 
 func checkOTel(cfg *config.Config, cfgErr error) check {
@@ -155,7 +207,11 @@ func checkOTel(cfg *config.Config, cfgErr error) check {
 	if endpoint == "" {
 		return check{Label: "Observability", Status: "WARN", Detail: "OTel enabled but no endpoint set"}
 	}
-	return check{Label: "Observability", Status: "OK", Detail: fmt.Sprintf("traces → %s", endpoint)}
+	detail := fmt.Sprintf("traces → %s", endpoint)
+	if cfg.Observability.Otel.Verbose {
+		detail += " (verbose)"
+	}
+	return check{Label: "Observability", Status: "OK", Detail: detail}
 }
 
 func checkHomeWritable() check {

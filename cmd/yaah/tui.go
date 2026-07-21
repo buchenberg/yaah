@@ -139,10 +139,12 @@ func runTUI() error {
 	cfg, err := config.Load()
 	if err != nil || cfg == nil {
 		cfg = &config.Config{
-			Default: config.Defaults{
-				Model:         "deepseek/deepseek-v4-pro",
-				SmallModel:    "deepseek/deepseek-v4-flash",
-				MaxIterations: 50,
+			Agent: config.AgentConfig{
+				Default: config.Defaults{
+					Model:         "deepseek/deepseek-v4-pro",
+					SmallModel:    "deepseek/deepseek-v4-flash",
+					MaxIterations: 50,
+				},
 			},
 		}
 	}
@@ -292,7 +294,7 @@ func runTUI() error {
 	toolReg.Register(&tools.BackgroundProcessTool{Manager: procMgr})
 
 	conflictTracker := &tools.ConflictTracker{}
-	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, conflictTracker))
+	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, conflictTracker))
 
 	// Shared conversation history for the TUI session.
 	var messages []types.Message
@@ -304,7 +306,7 @@ func runTUI() error {
 		Provider:      providerName,
 		Model:         modelName,
 		CWD:           cwd,
-		ContextWindow: cfg.Default.ContextWindow,
+		ContextWindow: cfg.Agent.Default.ContextWindow,
 		OnSubmit: func(input string) {
 			pName, mName := sm.get()
 
@@ -314,7 +316,7 @@ func runTUI() error {
 		OnQuit: func() {},
 		OnCompact: func() {
 			go func() {
-				window := cfg.Default.ContextWindow
+				window := cfg.Agent.Default.ContextWindow
 				if window <= 0 {
 					window = 128000
 				}
@@ -359,7 +361,7 @@ func runTUI() error {
 
 				pName, mName := sm.get()
 				compactProv := providerFor(cfg, pName)
-				compactModel := cfg.Default.SmallModel
+				compactModel := cfg.Agent.Default.SmallModel
 				if compactModel == "" {
 					compactModel = mName
 				}
@@ -492,21 +494,30 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 
 	if cfg.Observability.Otel.Enabled {
 		if sp, ok := provider.(agent.StreamProvider); ok {
-			provider = &observability.InstrumentedProvider{Inner: sp}
+			provider = &observability.InstrumentedProvider{Inner: sp, Verbose: cfg.Observability.Otel.Verbose}
 		}
 	}
 
+	compactProvider, compactModel := resolveCompact(cfg)
+	executorProvider, executorModel := resolveExecutor(cfg)
+
 	loop := &agent.Loop{
-		Provider:        provider,
-		Registry:        toolReg,
-		Model:           modelName,
-		SystemPrompt:    systemPrompt,
-		MaxIterations:   cfg.Default.MaxIterations,
-		ContextWindow:   cfg.Default.ContextWindow,
-		ApprovalMode:    resolveApproval(cfg),
-		Messages:        *messages,
-		OtelEnabled:     cfg.Observability.Otel.Enabled,
-		ConflictTracker: conflictTracker,
+		Provider:           provider,
+		Registry:           toolReg,
+		Model:              modelName,
+		SystemPrompt:       systemPrompt,
+		MaxIterations:      cfg.Agent.Default.MaxIterations,
+		ContextWindow:      cfg.Agent.Default.ContextWindow,
+		ApprovalMode:       resolveApproval(cfg),
+		Messages:           *messages,
+		OtelEnabled:        cfg.Observability.Otel.Enabled,
+		OtelVerbose:        cfg.Observability.Otel.Verbose,
+		ConflictTracker:    conflictTracker,
+		ExecutorProvider:   executorProvider,
+		ExecutorModel:      executorModel,
+		MaxInnerIterations: cfg.Agent.Executor.MaxIterations,
+		CompactProvider:    compactProvider,
+		CompactModel:       compactModel,
 		ApproveFn: func(name, args string) bool {
 			respCh := make(chan bool, 1)
 			ch <- tui.AgentMsg{
@@ -529,6 +540,8 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 				ch <- tui.AgentMsg{
 					ToolResult:     info.Result,
 					ToolResultName: info.Name,
+					ToolArgs:       info.Args,
+					ToolDuration:   formatDuration(info.Duration),
 				}
 			}
 		},

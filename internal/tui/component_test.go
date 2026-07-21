@@ -174,7 +174,7 @@ func TestToolMessage_Header(t *testing.T) {
 
 func TestToolMessage_Render(t *testing.T) {
 	t.Run("collapsed hides content", func(t *testing.T) {
-		tm := NewToolMessage("tool-0", "read", `{"path":"/x"}`, "file body", 80, 20, false, false)
+		tm := NewToolMessage("tool-0", "read", `{"path":"/x"}`, "file body", 80, 20, false, false, "")
 		out := tm.Render()
 		if !strings.Contains(out, "▶ ✓ read") {
 			t.Errorf("expected collapsed header, got %q", out)
@@ -185,7 +185,7 @@ func TestToolMessage_Render(t *testing.T) {
 	})
 
 	t.Run("expanded shows content in box", func(t *testing.T) {
-		tm := NewToolMessage("tool-0", "read", `{"path":"/x"}`, "file body", 80, 20, true, false)
+		tm := NewToolMessage("tool-0", "read", `{"path":"/x"}`, "file body", 80, 20, true, false, "")
 		out := tm.Render()
 		if !strings.Contains(out, "▼ ✓ read") {
 			t.Errorf("expected expanded header, got %q", out)
@@ -196,7 +196,7 @@ func TestToolMessage_Render(t *testing.T) {
 	})
 
 	t.Run("running tool shows hourglass", func(t *testing.T) {
-		tm := NewToolMessage("tool-0", "bash", `{"command":"ls"}`, "output", 80, 20, true, true)
+		tm := NewToolMessage("tool-0", "bash", `{"command":"ls"}`, "output", 80, 20, true, true, "")
 		out := tm.Render()
 		if !strings.Contains(out, "⏳") {
 			t.Errorf("expected hourglass for running tool, got %q", out)
@@ -208,7 +208,7 @@ func TestToolMessage_Render(t *testing.T) {
 		for i := 0; i < 100; i++ {
 			lines = append(lines, "line of output")
 		}
-		tm := NewToolMessage("tool-0", "bash", `{}`, strings.Join(lines, "\n"), 80, 12, true, false)
+		tm := NewToolMessage("tool-0", "bash", `{}`, strings.Join(lines, "\n"), 80, 12, true, false, "")
 		out := tm.Render()
 		if !strings.Contains(out, "more lines above") {
 			t.Errorf("expected truncation notice, got %q", out)

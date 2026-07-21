@@ -337,8 +337,7 @@ func TestLoop_subAgentConcurrencyCap(t *testing.T) {
 	reg := tools.NewEmptyRegistry()
 	reg.Register(&tools.TaskTool{Runner: runner})
 
-	loop := &Loop{
-		Provider:               fp,
+	loop := &Loop{Provider: fp,
 		Registry:               reg,
 		SystemPrompt:           "test",
 		MaxIterations:          5,

@@ -80,6 +80,14 @@ type FlushCallback func(content string)
 // ToolResultMaxLen is the maximum length of a tool result before truncation.
 const ToolResultMaxLen = 8192
 
+// pruneMessageMaxLen is the threshold above which old messages are pruned
+// before being sent to the LLM summarizer during compaction.
+const pruneMessageMaxLen = 2000
+
+// minContextFloor is the minimum trigger threshold for compaction, preventing
+// over-aggressive compaction on small-window models.
+const minContextFloor = 64000
+
 // Loop runs the agent conversation loop.
 type Loop struct {
 	Provider      Provider
@@ -95,13 +103,13 @@ type Loop struct {
 	Middleware    []Middleware // Optional custom middleware override
 
 	// ContextWindow is the estimated token budget for the conversation.
-	// When the total estimated tokens exceed 80% of this value, old messages
+	// When the estimated tokens exceed the compaction threshold, old messages
 	// are compacted via LLM summarization (system prompt + recent messages are preserved).
 	// Default 0 means no trimming.
 	ContextWindow int
 
 	// CompactionThreshold is the fraction of ContextWindow that triggers
-	// compaction (e.g. 0.8 = 80%). Default 0 means 0.8.
+	// compaction (e.g. 0.5 = 50%). Default 0 means 0.5.
 	CompactionThreshold float64
 
 	// MaxRetries is the number of retries on transient provider errors.
@@ -134,6 +142,20 @@ type Loop struct {
 
 	// CompactModel is the model to use for compaction. If empty, Model is used.
 	CompactModel string
+
+	// ExecutorProvider is used for the dual-loop executor.
+	// When configured, delegated tasks run on this provider; when nil, the
+	// main Provider is used (default-model fallback). Typically set to a
+	// cheaper/faster provider than the main loop for model tiering.
+	ExecutorProvider Provider
+
+	// ExecutorModel is the model to use for the inner executor loop.
+	// If empty, Model is used.
+	ExecutorModel string
+
+	// MaxInnerIterations caps the number of tool-chaining rounds the
+	// inner executor loop may run per outer-loop turn. Default 10.
+	MaxInnerIterations int
 
 	// FallbackProvider is an alternative model backend used when the
 	// primary provider returns auth, billing, or rate-limit errors.
@@ -205,6 +227,11 @@ type Loop struct {
 	// system messages and recent tool results. Has no effect for non-Anthropic providers.
 	PromptCaching bool
 
+	// PreviousSummary stores the last compaction summary for anchored
+	// (iterative) summarization. When non-empty, subsequent compactions
+	// update this summary rather than re-summarizing from scratch.
+	PreviousSummary string
+
 	// ConflictTracker records file operations from sub-agent
 	// write/edit/delete tools so the agent loop can detect when parallel
 	// workers touch the same files and inject a conflict report.
@@ -213,6 +240,14 @@ type Loop struct {
 	// OtelEnabled enables OpenTelemetry spans for tool calls, sub-agent
 	// dispatch, and LLM provider calls (via InstrumentedProvider).
 	OtelEnabled bool
+
+	// OtelVerbose enables detailed span attributes/events: full model
+	// content, reasoning, tool-call arguments, conversation context, and
+	// dual-loop handoffs. Only effective when OtelEnabled is true. Off by
+	// default to keep Jaeger payloads light; turn on via
+	// observability.otel.verbose in config when diagnosing agent-loop
+	// behaviour.
+	OtelVerbose bool
 
 	// ApproveFn is an optional callback for tool approval in TUI contexts.
 	// When set, it is called instead of the default stdin/stderr approveTool.
@@ -244,6 +279,10 @@ type Loop struct {
 
 	// loopHistory tracks recent tool call hashes for loop detection.
 	loopHistory []string
+
+	// compaction tracking for anti-thrashing guard.
+	ineffectiveCompactions int
+	lastCompactionTokens   int
 }
 
 // emitHook writes a structured JSONL line to the hook directory.
@@ -440,11 +479,32 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		}
 		messages = step.Messages
 
+		// Planner always gets the full tool set PLUS delegate (additive).
+		// The planner chooses inline vs. delegate per-action. No gate.
 		req := types.ChatRequest{
 			Model:    l.Model,
 			Messages: messages,
-			Tools:    step.Tools,
+			Tools:    l.buildPlannerToolDefs(),
 		}
+
+		// Verbose: record the conversation the outer model is about to see
+		// so the dual-loop "responds to its own summary" failure mode is
+		// visible in Jaeger (the assistant inner-summary message appears in
+		// the message list the model responds to).
+		if l.OtelVerbose && turnSpan != nil {
+			observability.RecordConversation(turnSpan, messages)
+		}
+
+		// Pre-flight context guard: compact before sending if context has
+		// exceeded the absolute window (last-resort safety net for between-turn
+		// growth from inner-loop summaries and large tool results).
+		if l.ContextWindow > 0 && l.LastPromptTokens > l.ContextWindow {
+			l.compactContext(turnCtx, 0.5)
+			messages = l.Messages
+			req.Messages = messages
+		}
+
+		tokensBeforeTurn := l.TotalTokens
 
 		msg, streamed, err := l.getAssistantMessage(turnCtx, req)
 		if err != nil {
@@ -459,12 +519,28 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		l.persistMessage(msg)
 
 		if turnSpan != nil {
+			delegCnt, inlineCnt := 0, 0
+			toolNames := make([]string, 0, len(msg.ToolCalls))
+			for _, tc := range msg.ToolCalls {
+				toolNames = append(toolNames, tc.Function.Name)
+				if tc.Function.Name == delegateToolName {
+					delegCnt++
+				} else {
+					inlineCnt++
+				}
+			}
 			turnAttrs := []attribute.KeyValue{
 				attribute.Bool("turn.streamed", streamed),
+				attribute.Int("turn.iteration", iter),
 				attribute.Int("turn.tool_calls", len(msg.ToolCalls)),
+				attribute.Int("turn.delegate_calls", delegCnt),
+				attribute.Int("turn.inline_calls", inlineCnt),
+				attribute.String("turn.tool_call_names", strings.Join(toolNames, ",")),
 				attribute.Int("turn.messages", len(messages)),
 				attribute.Int("llm.total_prompt_tokens", l.TotalTokens.PromptTokens),
 				attribute.Int("llm.total_completion_tokens", l.TotalTokens.CompletionTokens),
+				attribute.Int("turn.prompt_tokens", l.TotalTokens.PromptTokens-tokensBeforeTurn.PromptTokens),
+				attribute.Int("turn.completion_tokens", l.TotalTokens.CompletionTokens-tokensBeforeTurn.CompletionTokens),
 			}
 			if l.TotalReasoningTokens > 0 {
 				turnAttrs = append(turnAttrs, attribute.Int("llm.total_reasoning_tokens", l.TotalReasoningTokens))
@@ -493,7 +569,77 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			return "", err
 		}
 
-		toolResults := l.executeAndCollect(turnCtx, msg.ToolCalls, &messages)
+		// ── Dispatch: delegate calls → executor; inline calls → direct execution ──
+		delegateCalls, inlineCalls := splitDelegateCalls(msg.ToolCalls)
+
+		// Delegate calls: each routes to the executor, which owns tool selection
+		// for that directive. The executor's summary is the honest tool result of
+		// the planner's delegate call.
+		if len(delegateCalls) > 0 {
+			originalIntent := l.lastUserMessage(messages)
+			if l.OtelVerbose && turnSpan != nil {
+				turnSpan.AddEvent("dispatch.delegate", trace.WithAttributes(
+					attribute.Int("delegate.count", len(delegateCalls)),
+					attribute.Int("inline.count", len(inlineCalls)),
+					attribute.Int("turn.messages", len(messages)),
+				))
+			}
+			for _, tc := range delegateCalls {
+				directive, execType := parseDelegateCall(tc.Function.Arguments)
+				if l.OtelVerbose && turnSpan != nil {
+					turnSpan.AddEvent("dispatch.delegate.call", trace.WithAttributes(
+						attribute.String("delegate.directive", abbreviateArgs(directive, 200)),
+						attribute.String("delegate.executor_type", execType),
+					))
+				}
+				summary, exhausted, innerErr := l.runExecutor(turnCtx, directive, originalIntent, execType)
+				truncated := false
+				switch {
+				case innerErr != nil:
+					summary = fmt.Sprintf("executor error: %v", innerErr)
+				case exhausted:
+					if summary == "" {
+						summary = "executor iteration budget exhausted"
+					}
+				}
+				if len(summary) > maxInnerSummaryLen {
+					summary = truncateRunes(summary, maxInnerSummaryLen)
+					truncated = true
+				}
+				content := wrapExecutorResult(summary, exhausted, innerErr, truncated)
+				tr := types.Message{Role: "tool", Content: content, ToolCallID: tc.ID, Name: delegateToolName}
+				messages = append(messages, tr)
+				l.persistMessage(tr)
+				if l.OtelVerbose && turnSpan != nil {
+					observability.RecordInnerSummary(turnSpan, content, len(messages))
+				}
+			}
+		}
+
+		// Inline calls: direct execution on the full middleware path (approval,
+		// conflict tracking, loop detection). Skipped when there are no inline
+		// calls in this turn.
+		var toolResults []ToolResult
+		if len(inlineCalls) > 0 {
+			if l.OtelVerbose && turnSpan != nil {
+				names := make([]string, len(inlineCalls))
+				for i, tc := range inlineCalls {
+					names[i] = tc.Function.Name
+				}
+				turnSpan.AddEvent("dispatch.inline", trace.WithAttributes(
+					attribute.Int("inline.count", len(inlineCalls)),
+					attribute.String("inline.tool_names", strings.Join(names, ",")),
+				))
+			}
+			toolResults = l.executeAndCollect(turnCtx, inlineCalls, &messages)
+		}
+
+		if len(delegateCalls) > 0 && len(inlineCalls) == 0 {
+			if turnSpan != nil {
+				turnSpan.End()
+			}
+			continue
+		}
 
 		// Update step.Messages to reflect the tool results added by executeAndCollect
 		step.Messages = messages
@@ -569,6 +715,56 @@ func (l *Loop) applyDefaults() {
 	}
 	if l.LoopDetectWindow <= 0 {
 		l.LoopDetectWindow = 10
+	}
+	if l.MaxInnerIterations <= 0 {
+		l.MaxInnerIterations = 10
+	}
+}
+
+// runExecutor runs the tool-execution loop that OWNS tool selection for a
+// single delegated directive. It is the core of the executor-owns-tools
+// architecture: the planner hands it an intent-level directive (not
+// pre-formed tool calls), and the executor selects, runs, and chains tools
+// to accomplish it.
+//
+// Key properties:
+//   - It uses a purpose-built executorSystemPrompt (NOT the planner identity),
+//     keeping its context small and stopping user-facing narration.
+//   - It receives the ORIGINAL user intent alongside the directive, fixing
+//     the "user is asking me to…" mischaracterization (the executor finally
+//     sees the real request, not a reframed subtask).
+//   - Tool selection happens here and ONLY here — the planner delegates
+//     intent, the executor selects tools.
+//
+// executeOneTool runs a single tool call synchronously. Used by the executor
+// loop which needs to append results to messages between model calls.
+func (l *Loop) executeOneTool(ctx context.Context, tc types.ToolCall) toolExecResult {
+	t := l.Registry.Get(tc.Function.Name)
+	if t == nil {
+		return toolExecResult{err: fmt.Errorf("tool %q not found", tc.Function.Name)}
+	}
+
+	var toolSpan trace.Span
+	if l.OtelEnabled {
+		ctx, toolSpan = observability.StartTool(ctx, tc.Function.Name, tc.Function.Arguments)
+		defer toolSpan.End()
+	}
+
+	start := time.Now()
+	result, err := t.Execute(ctx, tc.Function.Arguments)
+	dur := time.Since(start)
+
+	if toolSpan != nil {
+		observability.FinishTool(toolSpan, result, err)
+	}
+
+	return toolExecResult{
+		callID:  tc.ID,
+		name:    tc.Function.Name,
+		args:    tc.Function.Arguments,
+		content: result,
+		dur:     dur,
+		err:     err,
 	}
 }
 
@@ -802,10 +998,10 @@ func (l *Loop) getAssistantMessage(ctx context.Context, req types.ChatRequest) (
 
 		// ── Act on recovery hints ──────────────────────────────────
 		switch {
-		case classified.ShouldCompress && l.ContextWindow > 0 && compactAttempts < 2:
+		case classified.ShouldCompress && l.ContextWindow > 0 && compactAttempts < 3:
 			// Context overflow or payload too large: compact and retry.
 			beforeCount := len(l.Messages)
-			l.compactContext(ctx, 0.5) // aggressive 50% threshold
+			l.compactContext(ctx, 0.4) // aggressive 40% threshold
 			compactAttempts++
 			if len(l.Messages) < beforeCount {
 				req.Messages = l.Messages
@@ -983,20 +1179,79 @@ func parseTaskArgs(args string) (role, prompt string) {
 	return role, abbreviateArgs(p.Description, 60)
 }
 
+// messageTokens estimates the token count of a single message using chars/4
+// for content plus tool-call arguments. Applies a 10-token floor for role/metadata.
+func messageTokens(m types.Message) int {
+	tokens := len(m.Content) / 4
+	for _, tc := range m.ToolCalls {
+		tokens += len(tc.Function.Arguments)/4 + len(tc.Function.Name)/4
+	}
+	if tokens < 10 {
+		tokens = 10
+	}
+	return tokens
+}
+
+// truncateRunes slices s to at most maxLen runes, preserving head and tail
+// with an ellipsis marker in between. Operates on rune boundaries to avoid
+// corrupting multi-byte UTF-8 characters.
+func truncateRunes(s string, maxLen int) string {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+	headLen := maxLen * 2 / 3
+	tailLen := maxLen / 3
+	return string(runes[:headLen]) + "\n...[truncated]...\n" + string(runes[len(runes)-tailLen:])
+}
+
+// pruneMessages replaces large tool and assistant messages with abbreviated
+// markers to reduce token load before LLM summarization. Tool outputs (which
+// also carry inner-executor summaries in the dual-loop path) become compact
+// summary markers; assistant messages are truncated with rune-safe
+// head+tail preservation.
+func pruneMessages(msgs []types.Message, maxLen int) []types.Message {
+	out := make([]types.Message, len(msgs))
+	for i, m := range msgs {
+		out[i] = m
+		if len(m.Content) <= maxLen {
+			continue
+		}
+		switch m.Role {
+		case "tool":
+			lines := strings.Count(m.Content, "\n") + 1
+			chars := len(m.Content)
+			out[i].Content = fmt.Sprintf("[tool %s output — %d lines, %d chars]",
+				m.Name, lines, chars)
+		case "assistant":
+			if len(m.ToolCalls) > 0 {
+				continue
+			}
+			out[i].Content = truncateRunes(m.Content, maxLen)
+		}
+	}
+	return out
+}
+
 // compactContext checks if the estimated token count exceeds the given
-// fraction of ContextWindow. If threshold is 0, defaults to 0.8 (80%).
+// fraction of ContextWindow. If threshold is 0, defaults to 0.5 (50%).
 // If over budget, it uses the LLM to summarize old messages into a
 // structured summary, preserving the system message and recent turns.
 // Falls back to simple trimming if the LLM call fails or returns empty.
 func (l *Loop) compactContext(ctx context.Context, threshold float64) {
-	if threshold <= 0 {
-		threshold = 0.6
+	if l.ineffectiveCompactions >= 2 {
+		return
 	}
-	target := int(float64(l.ContextWindow) * threshold)
 
-	// Use the most recent API-reported prompt token count when available;
-	// fall back to the coarse chars/4 estimate when no API call has
-	// completed yet (e.g. first turn, before any usage data arrives).
+	if threshold <= 0 {
+		threshold = 0.5
+	}
+
+	target := int(float64(l.ContextWindow) * threshold)
+	if target < minContextFloor && l.ContextWindow >= minContextFloor {
+		target = minContextFloor
+	}
+
 	estimatedTokens := l.LastPromptTokens
 	if estimatedTokens <= 0 {
 		estimatedTokens = l.EstimatedTokens()
@@ -1011,17 +1266,74 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 		return
 	}
 
-	keepRecent := 6
+	// Token-budget preservation: keep as many recent messages as fit in
+	// 20% of the context window, with a 2K floor that never exceeds half
+	// the window.
+	tokenBudget := l.ContextWindow / 5
+	if tokenBudget < 2000 {
+		tokenBudget = 2000
+	}
+	if tokenBudget > l.ContextWindow/2 {
+		tokenBudget = l.ContextWindow / 2
+	}
+
+	keepRecent := 0
+	keptTokens := 0
+	for i := len(rest) - 1; i >= 0; i-- {
+		msgTokens := messageTokens(rest[i])
+		if keptTokens+msgTokens > tokenBudget && keepRecent >= 4 {
+			break
+		}
+		keptTokens += msgTokens
+		keepRecent++
+	}
+	if keepRecent < 2 {
+		keepRecent = 2
+	}
 	if len(rest) <= keepRecent {
 		return
 	}
 
 	split := len(rest) - keepRecent
+
+	// Boundary alignment: don't split inside a tool-call/response group.
+	for split > 0 && rest[split].Role == "tool" {
+		split--
+	}
+	if split > 0 && rest[split].Role == "assistant" && len(rest[split].ToolCalls) > 0 {
+		split--
+	}
+
+	// Last-user-message anchor: ensure the active task is never lost.
+	lastUserIdx := -1
+	for i := len(rest) - 1; i >= 0; i-- {
+		if rest[i].Role == "user" {
+			lastUserIdx = i
+			break
+		}
+	}
+	if lastUserIdx >= 0 && lastUserIdx < split {
+		split = lastUserIdx
+	}
+	if split <= 0 {
+		return
+	}
+
 	oldMsgs := rest[:split]
 	keepMsgs := rest[split:]
 
+	// Prune large tool outputs and inner-loop summaries before summarization.
+	oldMsgs = pruneMessages(oldMsgs, pruneMessageMaxLen)
+
 	var sb strings.Builder
-	sb.WriteString("Summarize the following conversation excerpt. Keep the structured format below.\n\n")
+	if l.PreviousSummary != "" {
+		sb.WriteString("You are updating a context compaction summary. A previous compaction produced the summary below. New conversation turns have occurred since then. PRESERVE all still-relevant information, ADD new actions, move completed items, remove obsolete info.\n\n")
+		sb.WriteString("PREVIOUS SUMMARY:\n")
+		sb.WriteString(l.PreviousSummary)
+		sb.WriteString("\n\nNEW TURNS TO INCORPORATE:\n\n")
+	} else {
+		sb.WriteString("Summarize the following conversation excerpt. Keep the structured format below.\n\n")
+	}
 	sb.WriteString("## Goal\n")
 	sb.WriteString("(what the user is working on)\n\n")
 	sb.WriteString("## Completed Work\n")
@@ -1055,12 +1367,14 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	}
 
 	req := types.ChatRequest{
-		Model: compactModel,
+		Model:     compactModel,
+		MaxTokens: 4096,
 		Messages: []types.Message{
 			types.UserMsg(sb.String()),
 		},
 	}
 
+	beforeEstimate := l.EstimatedTokens()
 	resp, err := compactProvider.Send(ctx, req)
 	if err != nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
 		l.trimContext()
@@ -1068,6 +1382,7 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	}
 
 	summary := resp.Choices[0].Message.Content
+	l.PreviousSummary = summary
 
 	newMsgs := []types.Message{sysMsg}
 	if l.SystemPrompt == "" {
@@ -1077,6 +1392,17 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	}
 	newMsgs = append(newMsgs, keepMsgs...)
 	l.Messages = newMsgs
+
+	afterEstimate := l.EstimatedTokens()
+	if beforeEstimate > 0 {
+		savings := float64(beforeEstimate-afterEstimate) / float64(beforeEstimate)
+		if savings < 0.10 {
+			l.ineffectiveCompactions++
+		} else {
+			l.ineffectiveCompactions = 0
+		}
+	}
+	l.lastCompactionTokens = afterEstimate
 }
 
 // trimContext removes old messages when the estimated token count exceeds
@@ -1128,15 +1454,32 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 	chunks, errs := sp.SendStream(ctx, req)
 
 	var content strings.Builder
+	var reasoning strings.Builder
 	toolCallMap := make(map[int]*types.ToolCall)
 	var finishReason string
 	var firstToken bool
 	var tokenCount int
+	var usageCaptured bool
+
+	// recordVerbose captures the full streamed response (content +
+	// reasoning + tool calls) and the stream-termination path on the
+	// llm.stream span so the dual-loop conversation is visible in Jaeger.
+	// Gated on OtelVerbose — no work when verbose tracing is off.
+	recordVerbose := func(path string) {
+		if !l.OtelVerbose || streamSpan == nil {
+			return
+		}
+		msg := l.assembleStreamed(content.String(), toolCallMap)
+		msg.ReasoningContent = reasoning.String()
+		observability.RecordAssistantResponse(streamSpan, msg, finishReason)
+		observability.RecordStreamEnd(streamSpan, path, finishReason, usageCaptured, len(msg.Content), len(msg.ToolCalls))
+	}
 
 	for {
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
+				recordVerbose("channel_closed")
 				if streamSpan != nil {
 					observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 					streamSpan.End()
@@ -1154,6 +1497,7 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 			if len(chunk.Choices) == 0 {
 				// The final chunk may carry usage with no choices (pure usage marker).
 				if chunk.Usage != nil {
+					usageCaptured = true
 					l.captureStreamUsage(chunk.Usage)
 					if streamSpan != nil {
 						l.setStreamUsageAttrs(streamSpan, chunk.Usage)
@@ -1164,8 +1508,11 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 
 			delta := chunk.Choices[0].Delta
 
-			if delta.ReasoningContent != "" && l.OnThinking != nil {
-				l.OnThinking(delta.ReasoningContent)
+			if delta.ReasoningContent != "" {
+				reasoning.WriteString(delta.ReasoningContent)
+				if l.OnThinking != nil {
+					l.OnThinking(delta.ReasoningContent)
+				}
 			}
 
 			if delta.Content != "" {
@@ -1209,6 +1556,7 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 				// (providers like DeepSeek send usage in the same chunk as
 				// the finish_reason), then drain any remaining chunks.
 				if chunk.Usage != nil {
+					usageCaptured = true
 					l.captureStreamUsage(chunk.Usage)
 					if streamSpan != nil {
 						l.setStreamUsageAttrs(streamSpan, chunk.Usage)
@@ -1216,12 +1564,14 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 				}
 				for chunk := range chunks {
 					if chunk.Usage != nil {
+						usageCaptured = true
 						l.captureStreamUsage(chunk.Usage)
 						if streamSpan != nil {
 							l.setStreamUsageAttrs(streamSpan, chunk.Usage)
 						}
 					}
 				}
+				recordVerbose("finish_reason")
 				if streamSpan != nil {
 					observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 					streamSpan.End()
@@ -1237,6 +1587,7 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 				}
 				return types.Message{}, err
 			}
+			recordVerbose("errs_nil")
 			if streamSpan != nil {
 				observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 				streamSpan.End()

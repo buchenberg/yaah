@@ -137,8 +137,7 @@ func TestLoop_plainTextResponse(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "You are helpful.",
 		MaxIterations: 10,
@@ -188,8 +187,7 @@ func TestLoop_toolCalling(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "You are helpful.",
 		MaxIterations: 10,
@@ -232,8 +230,7 @@ func TestLoop_hitsMaxIterations(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "You are helpful.",
 		MaxIterations: 3,
@@ -283,8 +280,7 @@ func TestLoop_toolResultTruncation(t *testing.T) {
 	reg := tools.NewRegistry()
 	// Add a tool that returns a long result
 	reg.Register(&fakeTool{name: "echo", result: longText})
-	loop := &Loop{
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "test",
 		MaxIterations: 5,
@@ -416,8 +412,7 @@ func TestLoop_loopDetection(t *testing.T) {
 
 	reg := tools.NewRegistry()
 	reg.Register(&fakeTool{name: "echo", result: "same result"})
-	loop := &Loop{
-		Provider:         fp,
+	loop := &Loop{Provider: fp,
 		Registry:         reg,
 		SystemPrompt:     "test",
 		MaxIterations:    10,
@@ -516,8 +511,7 @@ func TestLoop_noFalsePositiveOnDifferentArgs(t *testing.T) {
 	// All writes return the same success message — but with different args.
 	reg := tools.NewRegistry()
 	reg.Register(&fakeTool{name: "write", result: "File written successfully"})
-	loop := &Loop{
-		Provider:         fp,
+	loop := &Loop{Provider: fp,
 		Registry:         reg,
 		SystemPrompt:     "test",
 		MaxIterations:    10,
@@ -570,8 +564,7 @@ func TestLoop_parallelToolExecution(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(&fakeTool{name: "slow1", result: "result1", delay: 100 * time.Millisecond, callCnt: &cnt, mu: &mu})
 	reg.Register(&fakeTool{name: "slow2", result: "result2", delay: 100 * time.Millisecond, callCnt: &cnt, mu: &mu})
-	loop := &Loop{
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "test",
 		MaxIterations: 5,
@@ -627,8 +620,7 @@ func TestLoop_retryOnError(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "test",
 		MaxIterations: 5,
@@ -655,8 +647,7 @@ func TestLoop_retryExceedsMax(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "test",
 		MaxIterations: 5,
@@ -688,8 +679,7 @@ func TestLoop_tokenUsageTracking(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "test",
 		MaxIterations: 5,
@@ -715,8 +705,7 @@ func TestLoop_tokenUsageTracking(t *testing.T) {
 
 func TestLoop_contextWindowTrimming(t *testing.T) {
 	reg := tools.NewRegistry()
-	loop := &Loop{
-		Provider:      &fakeProvider{},
+	loop := &Loop{Provider: &fakeProvider{},
 		Registry:      reg,
 		SystemPrompt:  "test",
 		MaxIterations: 1,
@@ -745,7 +734,7 @@ func TestLoop_contextWindowTrimming(t *testing.T) {
 		t.Errorf("messages not trimmed: estimated %d tokens for %d chars in %d messages",
 			estimatedTokens, totalChars, len(loop.Messages))
 	}
-	// LLM compaction keeps sysMsg + summary + 6 recent messages + assistant response
+	// LLM compaction keeps sysMsg + summary + token-budget recent messages + assistant response
 	if len(loop.Messages) < 5 {
 		t.Errorf("expected some messages preserved, got %d", len(loop.Messages))
 	}
@@ -766,8 +755,7 @@ func TestLoop_thinkingCallback(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
-		Provider:      bsp,
+	loop := &Loop{Provider: bsp,
 		Registry:      reg,
 		SystemPrompt:  "test",
 		MaxIterations: 5,
@@ -928,8 +916,7 @@ func TestLoop_sessionPersistenceAcrossRunCalls(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "You are a test bot.",
 		SessionID:     sessionID,
@@ -1004,8 +991,7 @@ func TestLoop_sessionPersistenceWithToolCalls(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "You are a test bot.",
 		SessionID:     sessionID,
@@ -1076,8 +1062,7 @@ func TestLoop_sessionPersistenceMultipleTurns(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "You are a test bot.",
 		SessionID:     sessionID,
@@ -1230,8 +1215,7 @@ func TestLoop_autoCompactOnContextOverflow(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
-		Provider:        fp,
+	loop := &Loop{Provider: fp,
 		Registry:        reg,
 		SystemPrompt:    "test prompt",
 		MaxIterations:   3,
@@ -1273,8 +1257,7 @@ func TestLoop_autoCompactDoesNotTriggerOnNonContextError(t *testing.T) {
 		failErr:  fmtErrorf("authentication failed"),
 	}
 
-	loop := &Loop{
-		Provider:      fp,
+	loop := &Loop{Provider: fp,
 		Registry:      reg,
 		SystemPrompt:  "test",
 		MaxIterations: 3,
@@ -1316,8 +1299,7 @@ func TestLoop_autoCompactCapped(t *testing.T) {
 	}
 
 	reg := tools.NewRegistry()
-	loop := &Loop{
-		Provider:            fp,
+	loop := &Loop{Provider: fp,
 		Registry:            reg,
 		SystemPrompt:        "test",
 		MaxIterations:       3,
@@ -1383,8 +1365,7 @@ func TestConflictDetection_ReportsConflictInConversation(t *testing.T) {
 	reg := tools.NewEmptyRegistry()
 	reg.Register(&fakeTool{name: "read", result: "file contents"})
 
-	loop := &Loop{
-		Provider:        fp,
+	loop := &Loop{Provider: fp,
 		Registry:        reg,
 		SystemPrompt:    "test",
 		MaxIterations:   10,
@@ -1452,8 +1433,7 @@ func TestConflictDetection_NoConflictWhenTrackerEmpty(t *testing.T) {
 	reg := tools.NewEmptyRegistry()
 	reg.Register(&fakeTool{name: "read", result: "file contents"})
 
-	loop := &Loop{
-		Provider:        fp,
+	loop := &Loop{Provider: fp,
 		Registry:        reg,
 		SystemPrompt:    "test",
 		MaxIterations:   10,
@@ -1534,8 +1514,7 @@ func TestConflictDetection_TrackerClearedAfterIteration(t *testing.T) {
 	reg := tools.NewEmptyRegistry()
 	reg.Register(&fakeTool{name: "read", result: "file contents"})
 
-	loop := &Loop{
-		Provider:        fp,
+	loop := &Loop{Provider: fp,
 		Registry:        reg,
 		SystemPrompt:    "test",
 		MaxIterations:   10,

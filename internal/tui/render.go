@@ -211,6 +211,12 @@ func (m *Model) renderToolResult(toolName, content string) string {
 	if toolName == "task" {
 		return m.renderMarkdown(content)
 	}
+	if toolName == "delegate" {
+		inner := stripExecutorEnvelope(content)
+		if inner != content {
+			return m.renderMarkdown(inner)
+		}
+	}
 	if isTreeContent(content) {
 		return m.renderTree(content)
 	}
@@ -377,7 +383,7 @@ func (m *Model) renderMessages() string {
 				expanded = m.toolCall == msg.ToolName
 			}
 
-			b.WriteString(NewToolMessage(zoneID, msg.ToolName, msg.ToolArgs, msg.Content, m.width, m.viewport.Height(), expanded, m.toolCall == msg.ToolName).Render())
+			b.WriteString(NewToolMessage(zoneID, msg.ToolName, msg.ToolArgs, msg.Content, m.width, m.viewport.Height(), expanded, m.toolCall == msg.ToolName, msg.ToolDuration).Render())
 
 		default:
 			b.WriteString(NewSystemMessage(msg.Content, m.width).Render())

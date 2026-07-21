@@ -9,7 +9,7 @@ import (
 // CompactionMiddleware triggers context compaction when token limits are approached.
 type CompactionMiddleware struct {
 	window    int
-	threshold float64 // fraction of window that triggers compaction (0 = default 0.8)
+	threshold float64 // fraction of window that triggers compaction (0 = uses loop default)
 	loop      *Loop
 }
 

@@ -773,7 +773,8 @@ Tests live next to the code they test (`foo.go` ↔ `foo_test.go`) and use
 yaah is in active development and is feature-complete for daily use.
 
 **Stable** — middleware pipeline, streaming LLM responses, tool execution,
-context compaction, approval gates, loop detection, SQLite session and memory
+context compaction (token-budget preservation, anchored summarization, pre-compaction pruning, anti-thrashing guard, inner-loop summary capping),
+approval gates, loop detection, SQLite session and memory
 persistence, session resume, MCP integration (stdio + HTTP), bubbletea TUI,
 REPL with slash commands, hook events for external agents, sub-agent dispatch
 with roles/concurrency/timeouts, agent conflict reconciliation (detects when

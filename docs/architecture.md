@@ -88,6 +88,63 @@ for iter := 0; iter < MaxIterations; iter++ {
 - `l.Messages` is updated inside `executeAndCollect` (tool results are appended) AND after `RunPostTool` (middleware may have modified `step.Messages`). Both copies are kept in sync so `CompactionMiddleware` sees the latest messages.
 - The `Step` struct is the mutable per-iteration state bag. Middleware reads and writes it freely.
 
+### Dual-loop executor (always-on delegate)
+
+File: `internal/agent/executor.go`, `internal/agent/agent.go`
+
+yaah uses a planner/executor dual-loop where the planner delegates tool-intensive work to a dedicated executor running on a potentially cheaper model. The architecture is always-on: the `delegate` tool is always present alongside the full tool set (additive, no config gate). The planner chooses per-action whether to work inline or delegate.
+
+**Key properties:**
+
+- **Additive tool set**: `buildPlannerToolDefs()` returns `buildToolDefs() + delegateToolDef()` — always. The planner sees every tool AND `delegate`.
+- **Per-action choice**: the planner decides whether to delegate a task or handle it inline. A single turn may contain both delegate and inline calls (mixed dispatch).
+- **Executor owns tool selection**: when the planner calls `delegate(task, executor_type?)`, the executor selects, runs, and chains tools to accomplish the directive. The planner never names specific tools in a delegate call.
+- **Recursion guard by schema**: `buildExecutorToolDefs()` returns `buildToolDefs()` only — `delegate` is never registered as a tool, so the executor structurally cannot delegate.
+- **Model tiering**: `resolveExecutor(executorType)` returns the dedicated `ExecutorProvider`/`ExecutorModel` if configured, else falls back to the main provider/model.
+- **Working directory injection**: the executor receives `## Working directory` via `os.Getwd()` in its payload, preventing the "different workspace" hallucination that caused wasted turns.
+- **Auto-approval**: the executor runs tools via `executeOneTool` which bypasses the approval pipeline — tools like `bash` run without user prompts when delegated.
+
+**Delegate call flow:**
+
+```
+1. Planner emits delegate(task="directive", executor_type="default")
+2. splitDelegateCalls(msg.ToolCalls) → delegateCalls, inlineCalls
+3. For each delegate call:
+   a. parseDelegateCall(args) → directive, executorType
+   b. lastUserMessage(messages) → originalIntent (forwarded to executor)
+   c. runExecutor(ctx, directive, originalIntent, executorType):
+      - resolveExecutor(executorType) → provider, model
+      - Build messages: executorSystemPrompt + UserMsg(directive + intent + workdir)
+      - Loop up to MaxInnerIterations:
+        * getExecutorMessage(ctx, provider, req) — streaming or REST
+        * Execute tools via executeOneTool (no approval checks)
+        * Feed results back to executor for chaining
+      - Return summary, exhausted, error
+   d. wrapExecutorResult(summary, exhausted, err, truncated) →
+      <executor_result state="completed|error|exhausted" truncated="true|false">…</executor_result>
+   e. Inject as tool message (Role=tool, Name=delegate, ToolCallID=delegateCall.ID)
+4. If only delegate calls (no inline): continue → next iteration (planner sees results)
+5. If inline calls exist: executeAndCollect → normal middleware pipeline
+```
+
+**Structured result envelope:**
+
+The executor's summary is wrapped in an XML envelope for programmatic state detection:
+
+```xml
+<executor_result state="completed" truncated="false">
+  glob: 47 files; bash(wc -l): 7452 lines
+</executor_result>
+```
+
+States: `completed`, `error` (executor hit a fatal error), `exhausted` (hit MaxInnerIterations). The `truncated` flag indicates the summary exceeded `maxInnerSummaryLen` (8000 chars) and was trimmed.
+
+**Token attribution:**
+
+Each inner.loop span carries `inner.prompt_tokens`, `inner.completion_tokens`, and `inner.iterations` — the executor's token usage, isolated from the planner. Each agent.turn span carries `turn.prompt_tokens` and `turn.completion_tokens` (per-turn deltas) alongside cumulative `llm.total_*`. Dispatch events (`dispatch.delegate`, `dispatch.inline`) log the tool names and counts at each routing decision.
+
+**Benchmarks documented in** [`docs/BENCHMARK.md`](./BENCHMARK.md). Complex tasks push ~65% of tokens to the executor on a 3x cheaper model.
+
 ### LLM call with retry (`getAssistantMessage`)
 
 Both paths use the same `getAssistantMessage` method, which:
@@ -472,32 +529,79 @@ in `helpers.go`. Shared tool utilities (`rgAvailable`, `commonIgnoreDirs`,
 
 ## Context compaction
 
-File: `internal/agent/agent.go` (`compactContext`, `trimContext`)
+File: `internal/agent/agent.go` (`compactContext`, `trimContext`, `pruneMessages`, `messageTokens`)
 
-Triggered when estimated tokens exceed 80% of `ContextWindow` (character count / 4).
+yaah uses a multi-layered context management system to prevent conversation
+history from exceeding the model's context window. Compaction is triggered
+proactively when estimated tokens reach 50% of `ContextWindow` (with a 64K
+minimum floor), or reactively when the provider signals context overflow.
+
+### Token estimation
+
+Primary: API-reported `LastPromptTokens` from the most recent model call.
+Fallback: `EstimatedTokens()` which uses a `len(content) / 4` heuristic.
+
+### Pre-compaction pruning (`pruneMessages`)
+
+Before the LLM summarizer call, old messages outside the preserved tail are
+pruned to reduce token load:
+
+- **Tool outputs** (>2K chars): Replaced with compact markers like
+  `[tool grep output — 142 lines, 8192 chars]`
+- **Assistant summaries** (>2K chars, no tool calls): Truncated with
+  head+tail preservation (⅔ head + ⅓ tail)
+
+This reduces the summarizer's input by ~80% while preserving enough
+information for a useful summary.
+
+### Preservation budget
+
+Instead of a fixed message count, yaah uses a **token-budget approach**:
+keep as many recent messages as fit in 20% of the context window, with:
+
+- A 2K-token minimum floor (capped at half the window)
+- A 4-message hard minimum (always keep at least 2 exchanges)
+- **Boundary alignment**: never split inside a tool-call/response group
+- **User-message anchor**: the most recent user message is always in the
+  tail, preventing the active task from being summarized away
 
 ### LLM-powered compaction (`compactContext`)
 
-1. Check token budget: if `estimated_tokens <= ContextWindow * 0.8`, return.
-2. Preserve system message (index 0) and the 6 most recent messages.
-3. Send older messages to the LLM for summarization with a structured prompt:
+1. Check anti-thrashing guard: skip if last 2 compactions each saved <10%.
+2. Check token budget: if `estimatedTokens <= ContextWindow * threshold`, return.
+3. Compute the preservation split via token budget + boundary alignment.
+4. Prune old messages via `pruneMessages()`.
+5. Send pruned history to the LLM summarizer with a structured prompt
+   (`## Goal`, `## Completed Work`, `## Active Work`, `## Pending Tasks`,
+   `## Key Decisions`, `## Files Modified`), capped at 4,096 output tokens
+   via `max_tokens`.
+6. On re-compaction (second+), passes the previous summary to the LLM and
+   asks it to **update** rather than re-summarize from scratch, preserving
+   continuity across multiple compactions.
+7. Replace old messages with a system message containing the summary.
+8. Track compaction effectiveness: if savings <10%, increment anti-thrashing
+   counter. After 2 consecutive ineffective compactions, skip further
+   compaction.
+9. If the LLM call fails or returns empty, fall back to `trimContext()`.
 
-```
-Summarize the following conversation excerpt.
-## Goal
-## Completed Work
-## Active Work
-## Pending Tasks
-## Key Decisions
-## Files Modified
-```
+### Inner executor loop summary cap
 
-4. Replace old messages with a system message containing the summary.
-5. If the LLM call fails or returns empty, fall back to `trimContext()`.
+The dual-loop architecture's inner executor appends a summary to the outer
+conversation each turn. These summaries are capped at 2,000 chars with
+head+tail preservation to prevent unbounded context growth from the inner
+loop.
+
+### Overflow recovery
+
+When the provider returns a context overflow error, the retry loop in
+`getAssistantMessage` triggers an aggressive compaction at 40% of the window
+(up to 3 attempts). A pre-flight guard also checks `LastPromptTokens >
+ContextWindow` before each LLM call as a last-resort safety net.
 
 ### Truncation fallback (`trimContext`)
 
-Removes oldest messages one at a time until the token budget is met. Always preserves the system message at index 0.
+Removes oldest messages one at a time until the token budget is met. Always
+preserves the system message at index 0.
 
 ---
 

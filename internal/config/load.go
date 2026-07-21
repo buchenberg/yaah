@@ -19,7 +19,7 @@ type Provider struct {
 	TimeoutSeconds int      `yaml:"timeout,omitempty"`
 }
 
-// Defaults hold the default model and agent loop settings.
+// Defaults hold the default agent model and loop settings.
 type Defaults struct {
 	Provider      string `yaml:"provider"`
 	Model         string `yaml:"model"`
@@ -27,14 +27,6 @@ type Defaults struct {
 	MaxIterations int    `yaml:"max_iterations"`
 	ContextWindow int    `yaml:"context_window"`
 	Approval      string `yaml:"approval"`
-
-	// FallbackProvider is the provider name to use when the primary
-	// provider returns auth, billing, or rate-limit errors.
-	FallbackProvider string `yaml:"fallback_provider"`
-
-	// FallbackModel is the model name to use with FallbackProvider.
-	// When empty, the default model is used.
-	FallbackModel string `yaml:"fallback_model"`
 }
 
 // Hooks holds configuration for external integrations via JSONL hook events.
@@ -48,10 +40,28 @@ type MiddlewareConfig struct {
 	Disabled []string `yaml:"disabled"`
 }
 
-// AgentConfig holds agent loop and middleware pipeline settings.
+// FallbackConfig configures the fallback provider/model used when the
+// primary provider returns auth, billing, or rate-limit errors.
+type FallbackConfig struct {
+	Provider string `yaml:"provider"`
+	Model    string `yaml:"model"`
+}
+
+// AgentConfig holds all agent-related configuration.
 type AgentConfig struct {
-	Middleware MiddlewareConfig `yaml:"middleware"`
+	Default    Defaults         `yaml:"default"`
+	Fallback   FallbackConfig   `yaml:"fallback"`
+	Executor   ExecutorConfig   `yaml:"executor"`
 	SubAgent   SubAgentConfig   `yaml:"subagent"`
+	Middleware MiddlewareConfig `yaml:"middleware"`
+}
+
+// ExecutorConfig configures the inner executor loop used by the dual-loop
+// architecture. When unset, the inner loop uses the main provider and model.
+type ExecutorConfig struct {
+	Provider      string `yaml:"provider"`       // provider name (default: main provider)
+	Model         string `yaml:"model"`          // model name
+	MaxIterations int    `yaml:"max_iterations"` // max inner rounds per outer turn (default: 10)
 }
 
 // SubAgentConfig configures the task tool's sub-agent lifecycle:
@@ -84,9 +94,8 @@ type RoleConfig struct {
 // Config is the full yaah configuration loaded from ~/.yaah/config.yaml.
 type Config struct {
 	Providers     map[string]Provider `yaml:"providers"`
-	Default       Defaults            `yaml:"default"`
+	Agent         AgentConfig         `yaml:"agents"`
 	Hooks         Hooks               `yaml:"hooks"`
-	Agent         AgentConfig         `yaml:"agent"`
 	Editor        string              `yaml:"editor"`
 	Observability ObservabilityConfig `yaml:"observability"`
 }
@@ -103,22 +112,31 @@ type OtelConfig struct {
 	ServiceName string `yaml:"service_name"` // displayed in the tracing UI
 	Traces      bool   `yaml:"traces"`       // enable trace spans
 	Metrics     bool   `yaml:"metrics"`      // enable OTLP metrics
+	// Verbose enables detailed span attributes/events: full model content,
+	// reasoning, tool-call arguments, conversation context, and dual-loop
+	// handoffs. Off by default to keep Jaeger payloads light; turn on when
+	// diagnosing agent-loop behaviour (e.g. the inner executor going off
+	// track). Only effective when Enabled is true.
+	Verbose bool `yaml:"verbose"`
 }
 
 // defaultConfig returns the built-in defaults used when no config file exists.
 func defaultConfig() *Config {
 	return &Config{
-		Default: Defaults{
-			Model:         "deepseek/deepseek-v4-pro",
-			SmallModel:    "deepseek/deepseek-v4-flash",
-			MaxIterations: 50,
-			ContextWindow: 128000,
-			Approval:      "ask",
-		},
 		Agent: AgentConfig{
+			Default: Defaults{
+				Model:         "deepseek/deepseek-v4-pro",
+				SmallModel:    "deepseek/deepseek-v4-flash",
+				MaxIterations: 50,
+				ContextWindow: 128000,
+				Approval:      "ask",
+			},
 			SubAgent: SubAgentConfig{
 				MaxDepth:       3,
 				MaxConcurrency: 3,
+			},
+			Executor: ExecutorConfig{
+				MaxIterations: 10,
 			},
 		},
 		Observability: ObservabilityConfig{
@@ -128,6 +146,7 @@ func defaultConfig() *Config {
 				ServiceName: "yaah",
 				Traces:      true,
 				Metrics:     false,
+				Verbose:     false,
 			},
 		},
 	}
@@ -178,6 +197,13 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// HasOldConfig checks a raw config file for old-style top-level "default:"
+// or singular "agent:" keys that need migration to "agents:".
+func HasOldConfig(data []byte) bool {
+	s := string(data)
+	return strings.Contains(s, "\ndefault:") || strings.Contains(s, "\nagent:")
 }
 
 // ResolveEditor returns the editor command to use, with this priority:

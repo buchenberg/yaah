@@ -16,17 +16,17 @@ func TestLoad_returnsDefaultsWhenFileMissing(t *testing.T) {
 	}
 
 	// Defaults from the plan §3.2
-	if cfg.Default.Model != "deepseek/deepseek-v4-pro" {
-		t.Errorf("Default.Model = %q, want %q", cfg.Default.Model, "deepseek/deepseek-v4-pro")
+	if cfg.Agent.Default.Model != "deepseek/deepseek-v4-pro" {
+		t.Errorf("Default.Model = %q, want %q", cfg.Agent.Default.Model, "deepseek/deepseek-v4-pro")
 	}
-	if cfg.Default.SmallModel != "deepseek/deepseek-v4-flash" {
-		t.Errorf("Default.SmallModel = %q, want %q", cfg.Default.SmallModel, "deepseek/deepseek-v4-flash")
+	if cfg.Agent.Default.SmallModel != "deepseek/deepseek-v4-flash" {
+		t.Errorf("Default.SmallModel = %q, want %q", cfg.Agent.Default.SmallModel, "deepseek/deepseek-v4-flash")
 	}
-	if cfg.Default.MaxIterations != 50 {
-		t.Errorf("Default.MaxIterations = %d, want 50", cfg.Default.MaxIterations)
+	if cfg.Agent.Default.MaxIterations != 50 {
+		t.Errorf("Default.MaxIterations = %d, want 50", cfg.Agent.Default.MaxIterations)
 	}
-	if cfg.Default.Approval != "ask" {
-		t.Errorf("Default.Approval = %q, want %q", cfg.Default.Approval, "ask")
+	if cfg.Agent.Default.Approval != "ask" {
+		t.Errorf("Default.Approval = %q, want %q", cfg.Agent.Default.Approval, "ask")
 	}
 }
 
@@ -44,11 +44,12 @@ providers:
     base_url: http://localhost:11434/v1
     api_key: ollama
 
-default:
-  model: openai/gpt-4o
-  small_model: openai/gpt-4o-mini
-  max_iterations: 25
-  approval: allow
+agents:
+  default:
+    model: openai/gpt-4o
+    small_model: openai/gpt-4o-mini
+    max_iterations: 25
+    approval: allow
 `
 	err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(configContent), 0o644)
 	if err != nil {
@@ -60,14 +61,14 @@ default:
 		t.Fatalf("Load() error: %v", err)
 	}
 
-	if cfg.Default.Model != "openai/gpt-4o" {
-		t.Errorf("Default.Model = %q, want %q", cfg.Default.Model, "openai/gpt-4o")
+	if cfg.Agent.Default.Model != "openai/gpt-4o" {
+		t.Errorf("Default.Model = %q, want %q", cfg.Agent.Default.Model, "openai/gpt-4o")
 	}
-	if cfg.Default.MaxIterations != 25 {
-		t.Errorf("Default.MaxIterations = %d, want 25", cfg.Default.MaxIterations)
+	if cfg.Agent.Default.MaxIterations != 25 {
+		t.Errorf("Default.MaxIterations = %d, want 25", cfg.Agent.Default.MaxIterations)
 	}
-	if cfg.Default.Approval != "allow" {
-		t.Errorf("Default.Approval = %q, want %q", cfg.Default.Approval, "allow")
+	if cfg.Agent.Default.Approval != "allow" {
+		t.Errorf("Default.Approval = %q, want %q", cfg.Agent.Default.Approval, "allow")
 	}
 
 	// Check providers
@@ -130,8 +131,9 @@ providers:
     base_url: http://localhost:11434/v1
     api_key: ollama
 
-default:
-  model: openai/gpt-4o-mini
+agents:
+  default:
+    model: openai/gpt-4o-mini
   small_model: openai/gpt-4o-mini
   max_iterations: 50
   approval: ask

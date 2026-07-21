@@ -16,7 +16,7 @@ import (
 // resolveApproval returns the effective approval mode.
 // Order: CLI --approval flag → YAAH_APPROVAL env var → config file → "ask" default.
 func resolveApproval(cfg *config.Config) string {
-	mode := cfg.Default.Approval
+	mode := cfg.Agent.Default.Approval
 	if v := os.Getenv("YAAH_APPROVAL"); v != "" {
 		mode = v
 	}
@@ -34,13 +34,13 @@ func resolveApproval(cfg *config.Config) string {
 // resolveProviderName extracts the provider name from the config.
 func resolveProviderName(cfg *config.Config) string {
 	// 1. Explicit default.provider setting
-	if cfg.Default.Provider != "" {
-		if _, ok := cfg.Providers[cfg.Default.Provider]; ok {
-			return cfg.Default.Provider
+	if cfg.Agent.Default.Provider != "" {
+		if _, ok := cfg.Providers[cfg.Agent.Default.Provider]; ok {
+			return cfg.Agent.Default.Provider
 		}
 	}
 	// 2. Provider/model prefix in default.model
-	if parts := strings.SplitN(cfg.Default.Model, "/", 2); len(parts) == 2 {
+	if parts := strings.SplitN(cfg.Agent.Default.Model, "/", 2); len(parts) == 2 {
 		if _, ok := cfg.Providers[parts[0]]; ok {
 			return parts[0]
 		}
@@ -62,13 +62,13 @@ func resolveProviderName(cfg *config.Config) string {
 // When the prefix before "/" is not a known provider, the full model name
 // is kept (e.g. "prism-ml/Bonsai-27B-gguf:Q1_0" stays intact).
 func resolveModel(cfg *config.Config) string {
-	parts := strings.SplitN(cfg.Default.Model, "/", 2)
+	parts := strings.SplitN(cfg.Agent.Default.Model, "/", 2)
 	if len(parts) == 2 {
 		if _, ok := cfg.Providers[parts[0]]; ok {
 			return parts[1]
 		}
 	}
-	return cfg.Default.Model
+	return cfg.Agent.Default.Model
 }
 
 // makeProvider returns a provider for the given config entry if it's usable
@@ -84,18 +84,18 @@ func makeProvider(p config.Provider) (agent.Provider, bool) {
 // Uses the configured small_model (no tools, fast summarization) if available,
 // otherwise falls back to the main provider and model.
 func resolveCompact(cfg *config.Config) (agent.Provider, string) {
-	if cfg.Default.SmallModel != "" {
+	if cfg.Agent.Default.SmallModel != "" {
 		compactProviderName, compactModel := "", ""
-		if parts := strings.SplitN(cfg.Default.SmallModel, "/", 2); len(parts) == 2 {
+		if parts := strings.SplitN(cfg.Agent.Default.SmallModel, "/", 2); len(parts) == 2 {
 			if _, ok := cfg.Providers[parts[0]]; ok {
 				compactProviderName = parts[0]
 				compactModel = parts[1]
 			} else {
-				compactModel = cfg.Default.SmallModel
+				compactModel = cfg.Agent.Default.SmallModel
 				compactProviderName = resolveProviderName(cfg)
 			}
 		} else {
-			compactModel = cfg.Default.SmallModel
+			compactModel = cfg.Agent.Default.SmallModel
 			compactProviderName = resolveProviderName(cfg)
 		}
 		if compactProviderName != "" {
@@ -113,12 +113,37 @@ func resolveCompact(cfg *config.Config) (agent.Provider, string) {
 // provider fails with auth, billing, or rate-limit errors.
 // Returns nil if no fallback is configured.
 func resolveFallback(cfg *config.Config) (agent.Provider, string) {
-	if cfg.Default.FallbackProvider == "" {
+	if cfg.Agent.Fallback.Provider == "" {
 		return nil, ""
 	}
-	if p, ok := cfg.Providers[cfg.Default.FallbackProvider]; ok {
+	if p, ok := cfg.Providers[cfg.Agent.Fallback.Provider]; ok {
 		if prov, ok2 := makeProvider(p); ok2 {
-			return prov, cfg.Default.FallbackModel
+			return prov, cfg.Agent.Fallback.Model
+		}
+	}
+	return nil, ""
+}
+
+// resolveExecutor returns the provider and model for the inner executor loop
+// used by the dual-loop architecture. Returns nil if no separate executor is
+// configured — the inner loop falls back to the main provider and model.
+//
+// Use agent.executor.provider to select a different provider. When only
+// model is set, the main provider is used.
+func resolveExecutor(cfg *config.Config) (agent.Provider, string) {
+	ec := cfg.Agent.Executor
+	if ec.Provider == "" && ec.Model == "" {
+		return nil, ""
+	}
+
+	providerName := ec.Provider
+	if providerName == "" {
+		providerName = resolveProviderName(cfg)
+	}
+
+	if p, ok := cfg.Providers[providerName]; ok {
+		if prov, ok2 := makeProvider(p); ok2 {
+			return prov, ec.Model
 		}
 	}
 	return nil, ""

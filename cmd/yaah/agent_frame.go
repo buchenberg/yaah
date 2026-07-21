@@ -208,12 +208,12 @@ func newAgentSession() (*agentSession, error) {
 	}
 
 	tracker := &tools.ConflictTracker{}
-	toolReg.Register(newTaskTool(provider, systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, tracker))
+	toolReg.Register(newTaskTool(provider, systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker))
 
 	// Wrap the provider with OTel instrumentation if enabled.
 	if cfg.Observability.Otel.Enabled {
 		if sp, ok := provider.(agent.StreamProvider); ok {
-			provider = &observability.InstrumentedProvider{Inner: sp}
+			provider = &observability.InstrumentedProvider{Inner: sp, Verbose: cfg.Observability.Otel.Verbose}
 		}
 	}
 
@@ -255,7 +255,7 @@ func (s *agentSession) compactContext() {
 		return
 	}
 
-	window := s.cfg.Default.ContextWindow
+	window := s.cfg.Agent.Default.ContextWindow
 	if window <= 0 {
 		window = 128000
 	}
@@ -328,19 +328,24 @@ func (s *agentSession) compactContext() {
 func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 	compactProvider, compactModel := resolveCompact(s.cfg)
 
+	executorProvider, executorModel := resolveExecutor(s.cfg)
+
 	fallbackProvider, fallbackModel := resolveFallback(s.cfg)
 
 	loop := &agent.Loop{
 		Provider:               s.provider,
 		CompactProvider:        compactProvider,
 		CompactModel:           compactModel,
+		ExecutorProvider:       executorProvider,
+		ExecutorModel:          executorModel,
+		MaxInnerIterations:     s.cfg.Agent.Executor.MaxIterations,
 		FallbackProvider:       fallbackProvider,
 		FallbackModel:          fallbackModel,
 		Registry:               s.toolReg,
 		Model:                  s.modelName,
 		SystemPrompt:           s.systemPrompt,
-		MaxIterations:          s.cfg.Default.MaxIterations,
-		ContextWindow:          s.cfg.Default.ContextWindow,
+		MaxIterations:          s.cfg.Agent.Default.MaxIterations,
+		ContextWindow:          s.cfg.Agent.Default.ContextWindow,
 		ApprovalMode:           resolveApproval(s.cfg),
 		Messages:               s.messages,
 		HookDir:                s.cfg.Hooks.Dir,
@@ -353,6 +358,7 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		MaxSubAgentConcurrency: s.cfg.Agent.SubAgent.MaxConcurrency,
 		MaxSubAgentDepthByRole: subAgentDepthByRole(s.cfg.Agent.SubAgent),
 		OtelEnabled:            s.cfg.Observability.Otel.Enabled,
+		OtelVerbose:            s.cfg.Observability.Otel.Verbose,
 		ConflictTracker:        s.tracker,
 	}
 

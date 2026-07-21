@@ -125,7 +125,7 @@ func readStdin(cmd *cobra.Command) string {
 		return ""
 	}
 	// Only read if stdin is a pipe or redirect (not a terminal)
-	if (stat.Mode()&os.ModeCharDevice) != 0 {
+	if (stat.Mode() & os.ModeCharDevice) != 0 {
 		return ""
 	}
 	var buf bytes.Buffer
