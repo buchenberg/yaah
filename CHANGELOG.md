@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.20.0](https://github.com/buchenberg/yaah/compare/v0.19.0...v0.20.0) (2026-07-21)
+
+
+### Features
+
+* dual-loop executor improvements and agent loop hardening ([41cf6b3](https://github.com/buchenberg/yaah/commit/41cf6b348a41a025869f581d29517595e495c16d))
+* dual-loop executor improvements and agent loop hardening ([03b2be3](https://github.com/buchenberg/yaah/commit/03b2be3dce5c50a95e4f6ef88821a5e328999582))
+
 ## [0.19.0](https://github.com/buchenberg/yaah/compare/v0.18.0...v0.19.0) (2026-07-21)
 
 
