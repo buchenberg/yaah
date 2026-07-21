@@ -737,6 +737,140 @@ func (l *Loop) applyDefaults() {
 	}
 }
 
+// runExecutor runs the tool-execution loop that OWNS tool selection for a
+// single delegated directive. It is the core of the executor-owns-tools
+// architecture: the planner hands it an intent-level directive (not
+// pre-formed tool calls), and the executor selects, runs, and chains tools
+// to accomplish it.
+//
+// Three properties distinguish it from the legacy innerLoop:
+//   - It uses a purpose-built executorSystemPrompt (NOT the planner identity),
+//     keeping its context small and stopping user-facing narration.
+//   - It receives the ORIGINAL user intent alongside the directive, fixing
+//     the "user is asking me to…" mischaracterization (the executor finally
+//     sees the real request, not a reframed subtask).
+//   - Tool selection happens here and ONLY here — the planner cannot name
+//     tools, so the decision is made once.
+//
+// Returns the executor's final summary and whether it exhausted its budget.
+func (l *Loop) runExecutor(ctx context.Context, directive, originalIntent string) (string, bool, error) {
+	var span trace.Span
+	if l.OtelEnabled {
+		ctx, span = observability.StartInnerLoop(ctx, directive)
+		defer span.End()
+	}
+
+	provider := l.ExecutorProvider
+	hasOwnProvider := provider != nil && provider != l.Provider
+	model := l.ExecutorModel
+	if model == "" {
+		model = l.Model
+	}
+	if span != nil {
+		span.SetAttributes(
+			attribute.String("inner.model", model),
+			attribute.Bool("inner.dedicated_provider", hasOwnProvider),
+		)
+		if l.Model != "" {
+			span.SetAttributes(attribute.String("outer.model", l.Model))
+		}
+	}
+
+	// Directive + original intent. Carrying the raw user request is the fix
+	// for intent loss in the legacy dual-loop.
+	payload := directive
+	if originalIntent != "" {
+		payload += "\n\n## Original user request\n" + originalIntent
+	}
+	messages := []types.Message{
+		types.SystemMsg(executorSystemPrompt),
+		types.UserMsg(payload),
+	}
+	if l.OtelVerbose && span != nil {
+		observability.RecordInnerTask(span, payload)
+		observability.RecordConversation(span, messages)
+	}
+	executorTools := l.buildExecutorToolDefs()
+
+	for iter := 0; iter < l.MaxInnerIterations; iter++ {
+		req := types.ChatRequest{Model: model, Messages: messages, Tools: executorTools}
+		msg, err := l.getExecutorMessage(ctx, provider, req)
+		if err != nil {
+			if span != nil {
+				observability.FinishInnerLoop(span, iter+1, false, err)
+			}
+			return "", false, fmt.Errorf("executor: %w", err)
+		}
+		messages = append(messages, msg)
+		if l.OtelVerbose && span != nil {
+			observability.RecordAssistantResponse(span, msg, "")
+		}
+
+		// No tool calls — executor is done, return the summary text.
+		if len(msg.ToolCalls) == 0 {
+			if span != nil {
+				observability.FinishInnerLoop(span, iter+1, false, nil)
+			}
+			return msg.Content, false, nil
+		}
+
+		// Execute the executor-selected tools and feed results back so it
+		// can chain based on outcomes.
+		for _, tc := range msg.ToolCalls {
+			abbr := abbreviateArgs(tc.Function.Arguments, 60)
+			if l.OnTool != nil {
+				l.OnTool(ToolInfo{Name: tc.Function.Name, Args: abbr})
+			}
+			result := l.executeOneTool(ctx, tc)
+			if l.OnTool != nil {
+				errMsg := ""
+				if result.err != nil {
+					errMsg = result.err.Error()
+				}
+				l.OnTool(ToolInfo{Name: tc.Function.Name, Args: abbr, Duration: result.dur, Result: result.content, Error: errMsg})
+			}
+			messages = append(messages, types.Message{
+				Role:       "tool",
+				Content:    result.content,
+				ToolCallID: tc.ID,
+				Name:       tc.Function.Name,
+			})
+			if result.err != nil {
+				if span != nil {
+					observability.FinishInnerLoop(span, iter+1, false, result.err)
+				}
+				return "", false, fmt.Errorf("executor tool %q: %w", tc.Function.Name, result.err)
+			}
+		}
+	}
+
+	if span != nil {
+		observability.FinishInnerLoop(span, l.MaxInnerIterations, true, nil)
+	}
+	return "", true, fmt.Errorf("executor exhausted after %d iterations", l.MaxInnerIterations)
+}
+
+// getExecutorMessage obtains one assistant message from the executor
+// provider, using streaming when available (reusing runStream so token
+// accounting and callbacks stay consistent with the main loop).
+func (l *Loop) getExecutorMessage(ctx context.Context, p Provider, req types.ChatRequest) (types.Message, error) {
+	if sp, ok := p.(StreamProvider); ok {
+		msg, err := l.runStream(ctx, sp, req)
+		if err != nil {
+			return types.Message{}, err
+		}
+		return msg, nil
+	}
+	resp, err := p.Send(ctx, req)
+	if err != nil {
+		return types.Message{}, err
+	}
+	if len(resp.Choices) == 0 {
+		return types.Message{}, fmt.Errorf("executor: no choices in response")
+	}
+	return resp.Choices[0].Message, nil
+}
+
 // innerLoop runs a lightweight tool-chaining loop using a potentially cheaper
 // executor model. Instead of returning every tool result to the outer loop,
 // the inner model sees tool results directly and can chain multiple tool calls

@@ -1778,3 +1778,127 @@ func TestPlannerToolSet_DelegateOnlyWhenActive(t *testing.T) {
 		t.Fatalf("active planner tools = %v, want [delegate]", names)
 	}
 }
+
+// --- executor-owns-tools architecture (Task 2) ------------------------------
+
+// TestExecutorReceivesOriginalIntent verifies runExecutor is given a
+// purpose-built system prompt (NOT the planner identity) and that the
+// original user intent reaches the executor. This is the fix for the
+// "user is asking me to…" mischaracterization: the executor finally sees
+// the real request instead of a reframed subtask.
+func TestExecutorReceivesOriginalIntent(t *testing.T) {
+	inner := &fakeProvider{responses: []*types.ChatResponse{
+		{Choices: []types.Choice{{
+			Message:      types.Message{Role: "assistant", Content: "read(f): 10B"},
+			FinishReason: "stop",
+		}}},
+	}}
+	reg := tools.NewEmptyRegistry()
+	reg.Register(&fakeTool{name: "read", result: "10B"})
+
+	loop := &Loop{
+		Provider:           &fakeProvider{},
+		ExecutorProvider:   inner,
+		Registry:           reg,
+		SystemPrompt:       "PLANNER-IDENTITY",
+		Model:              "m",
+		MaxInnerIterations: 5,
+	}
+
+	summary, exhausted, err := loop.runExecutor(
+		context.Background(),
+		"read the file and report its size", // directive
+		"tell me about f",                   // originalIntent
+	)
+	if err != nil {
+		t.Fatalf("runExecutor: %v", err)
+	}
+	if exhausted {
+		t.Fatalf("should not be exhausted for a one-shot read")
+	}
+	if summary != "read(f): 10B" {
+		t.Fatalf("summary = %q, want %q", summary, "read(f): 10B")
+	}
+
+	if len(inner.requests) != 1 {
+		t.Fatalf("expected exactly 1 executor request, got %d", len(inner.requests))
+	}
+	msgs := inner.requests[0].Messages
+
+	// The executor's system message must be its OWN prompt, not the planner
+	// identity — this is what keeps its context small and stops user-facing
+	// narration.
+	if len(msgs) == 0 || msgs[0].Role != "system" {
+		t.Fatalf("executor saw no leading system message: %+v", msgs)
+	}
+	if msgs[0].Content == "PLANNER-IDENTITY" {
+		t.Fatalf("executor reused the planner identity prompt — must use executorSystemPrompt")
+	}
+	if !strings.Contains(msgs[0].Content, "tool executor") {
+		t.Fatalf("executor system message does not look like the executor prompt: %q", msgs[0].Content)
+	}
+
+	// The user-message payload handed to the executor must carry the ORIGINAL
+	// intent so its reasoning reflects the real request.
+	var payload string
+	for _, m := range msgs {
+		if m.Role == "user" {
+			payload = m.Content
+			break
+		}
+	}
+	if !strings.Contains(payload, "tell me about f") {
+		t.Fatalf("executor payload missing original intent: %q", payload)
+	}
+	if !strings.Contains(payload, "read the file and report its size") {
+		t.Fatalf("executor payload missing the directive: %q", payload)
+	}
+}
+
+// TestExecutorChainsTools verifies the executor owns tool selection: given
+// a directive (not pre-formed tool calls), it selects and chains tools based
+// on results, then returns a summary. This is the capability the dual-loop
+// is supposed to buy.
+func TestExecutorChainsTools(t *testing.T) {
+	// Executor: iter 0 calls glob; iter 1 reads one match; iter 2 summarizes.
+	inner := &fakeProvider{responses: []*types.ChatResponse{
+		{Choices: []types.Choice{{
+			Message: types.Message{Role: "assistant", ToolCalls: []types.ToolCall{{
+				ID: "i1", Type: "function",
+				Function: types.ToolCallFn{Name: "glob", Arguments: `{"pattern":"*.go"}`},
+			}}},
+			FinishReason: "tool_calls",
+		}}},
+		{Choices: []types.Choice{{
+			Message: types.Message{Role: "assistant", ToolCalls: []types.ToolCall{{
+				ID: "i2", Type: "function",
+				Function: types.ToolCallFn{Name: "read", Arguments: `{"filePath":"a.go"}`},
+			}}},
+			FinishReason: "tool_calls",
+		}}},
+		{Choices: []types.Choice{{
+			Message:      types.Message{Role: "assistant", Content: "glob: 1 match; read(a.go): 50B"},
+			FinishReason: "stop",
+		}}},
+	}}
+	reg := tools.NewEmptyRegistry()
+	reg.Register(&fakeTool{name: "glob", result: "a.go"})
+	reg.Register(&fakeTool{name: "read", result: "50B"})
+
+	loop := &Loop{
+		Provider:           &fakeProvider{},
+		ExecutorProvider:   inner,
+		Registry:           reg,
+		MaxInnerIterations: 5,
+	}
+	summary, exhausted, err := loop.runExecutor(context.Background(), "find and read go files", "")
+	if err != nil {
+		t.Fatalf("runExecutor: %v", err)
+	}
+	if exhausted {
+		t.Fatalf("should not be exhausted")
+	}
+	if !strings.Contains(summary, "glob") || !strings.Contains(summary, "read") {
+		t.Fatalf("summary should name both chained tools: %q", summary)
+	}
+}
