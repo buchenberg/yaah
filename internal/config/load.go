@@ -21,12 +21,13 @@ type Provider struct {
 
 // Defaults hold the default agent model and loop settings.
 type Defaults struct {
-	Provider      string `yaml:"provider"`
-	Model         string `yaml:"model"`
-	SmallModel    string `yaml:"small_model"`
-	MaxIterations int    `yaml:"max_iterations"`
-	ContextWindow int    `yaml:"context_window"`
-	Approval      string `yaml:"approval"`
+	Provider              string `yaml:"provider"`
+	Model                 string `yaml:"model"`
+	SmallModel            string `yaml:"small_model"`
+	MaxIterations         int    `yaml:"max_iterations"`
+	ContextWindow         int    `yaml:"context_window"`
+	Approval              string `yaml:"approval"`
+	MaxInlineToolsPerTurn int    `yaml:"max_inline_tools_per_turn"` // 0 = unlimited
 }
 
 // Hooks holds configuration for external integrations via JSONL hook events.
@@ -65,8 +66,15 @@ type ExecutorConfig struct {
 }
 
 // SubAgentConfig configures the task tool's sub-agent lifecycle:
-// nesting depth, concurrency, default timeout, and per-role overrides.
+// nesting depth, concurrency, default timeout, provider/model, and
+// per-role overrides. When provider and model are unset, sub-agents
+// inherit the planner's provider and model.
 type SubAgentConfig struct {
+	// Provider selects which provider sub-agents use (default: main provider).
+	Provider string `yaml:"provider"`
+
+	// Model selects which model sub-agents use (default: main model).
+	Model string `yaml:"model"`
 	// MaxDepth is the global default for how many task calls a single
 	// Loop may issue. 0 means unlimited.
 	MaxDepth int `yaml:"max_depth"`

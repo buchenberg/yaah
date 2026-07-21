@@ -208,7 +208,8 @@ func newAgentSession() (*agentSession, error) {
 	}
 
 	tracker := &tools.ConflictTracker{}
-	toolReg.Register(newTaskTool(provider, systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker))
+	subAgentProvider, subAgentModel := resolveSubAgent(cfg)
+	toolReg.Register(newTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker))
 
 	// Wrap the provider with OTel instrumentation if enabled.
 	if cfg.Observability.Otel.Enabled {
@@ -344,6 +345,8 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		Registry:               s.toolReg,
 		Model:                  s.modelName,
 		SystemPrompt:           s.systemPrompt,
+		ExecutorSystemPrompt:   prompts.ExecutorIdentityPrompt,
+		MaxInlineToolsPerTurn:  s.cfg.Agent.Default.MaxInlineToolsPerTurn,
 		MaxIterations:          s.cfg.Agent.Default.MaxIterations,
 		ContextWindow:          s.cfg.Agent.Default.ContextWindow,
 		ApprovalMode:           resolveApproval(s.cfg),

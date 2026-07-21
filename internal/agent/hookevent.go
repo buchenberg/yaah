@@ -4,13 +4,14 @@ package agent
 type HookEventType string
 
 const (
-	SessionStart   HookEventType = "session.start"
-	SessionEnd     HookEventType = "session.end"
-	TurnStart      HookEventType = "turn.start"
-	ToolStart      HookEventType = "tool.start"
-	ToolEnd        HookEventType = "tool.end"
-	ConflictCheck  HookEventType = "conflict.check"
-	ConflictDetect HookEventType = "conflict.detect"
+	SessionStart     HookEventType = "session.start"
+	SessionEnd       HookEventType = "session.end"
+	TurnStart        HookEventType = "turn.start"
+	ToolStart        HookEventType = "tool.start"
+	ToolEnd          HookEventType = "tool.end"
+	ConflictCheck    HookEventType = "conflict.check"
+	ConflictDetect   HookEventType = "conflict.detect"
+	ExecutorFallback HookEventType = "executor.fallback"
 )
 
 // HookEvent is a structured event emitted to the hook directory as JSONL.
@@ -40,4 +41,7 @@ type HookEvent struct {
 
 	// conflict.check / conflict.detect
 	ConflictFiles int `json:"conflict_files,omitempty"`
+
+	// executor.fallback
+	FallbackReason string `json:"fallback_reason,omitempty"`
 }

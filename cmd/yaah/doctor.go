@@ -54,6 +54,8 @@ func runChecks() []check {
 		checkProvider(cfg, cfgErr),
 		checkModel(cfg, cfgErr),
 		checkExecutor(cfg, cfgErr),
+		checkSubAgents(cfg, cfgErr),
+		checkFallback(cfg, cfgErr),
 		checkOTel(cfg, cfgErr),
 		checkHomeWritable(),
 		checkPlatform(),
@@ -176,20 +178,76 @@ func checkExecutor(cfg *config.Config, cfgErr error) check {
 		return check{
 			Label:  "Dual-loop",
 			Status: "OK",
-			Detail: fmt.Sprintf("enabled (executor = default model: %s / %s)", providerName, model),
+			Detail: fmt.Sprintf("enabled — executor inherits planner model (%s / %s, fallback on error)", providerName, model),
 		}
 	}
 	if _, ok := cfg.Providers[providerName]; !ok {
 		return check{
 			Label:  "Dual-loop",
 			Status: "WARN",
-			Detail: fmt.Sprintf("enabled (executor = %s / %s, but provider %q not found — falling back to main)", providerName, model, ec.Provider),
+			Detail: fmt.Sprintf("provider %q not found for executor %s / %s — executor will fall back to planner model on error", ec.Provider, providerName, model),
 		}
 	}
 	return check{
 		Label:  "Dual-loop",
 		Status: "OK",
-		Detail: fmt.Sprintf("enabled (executor = %s / %s, max %d inner iterations)", providerName, model, ec.MaxIterations),
+		Detail: fmt.Sprintf("enabled — executor (%s / %s, max %d iterations, falls back to planner on error)", providerName, model, ec.MaxIterations),
+	}
+}
+
+// checkSubAgents reports the sub-agent provider/model configuration.
+func checkSubAgents(cfg *config.Config, cfgErr error) check {
+	if cfgErr != nil {
+		return check{Label: "Sub-agents", Status: "WARN", Detail: "config not loaded"}
+	}
+	sc := cfg.Agent.SubAgent
+	providerName := sc.Provider
+	model := sc.Model
+	if model == "" {
+		model = cfg.Agent.Default.Model
+	}
+	if providerName == "" {
+		providerName = resolveProviderName(cfg)
+		return check{
+			Label:  "Sub-agents",
+			Status: "OK",
+			Detail: fmt.Sprintf("enabled — inherit planner model (%s / %s, max depth %d, max concurrency %d)", providerName, model, sc.MaxDepth, sc.MaxConcurrency),
+		}
+	}
+	if _, ok := cfg.Providers[providerName]; !ok {
+		return check{
+			Label:  "Sub-agents",
+			Status: "WARN",
+			Detail: fmt.Sprintf("provider %q not found for sub-agents — falling back to planner (%s / %s)", sc.Provider, providerName, model),
+		}
+	}
+	return check{
+		Label:  "Sub-agents",
+		Status: "OK",
+		Detail: fmt.Sprintf("enabled — %s / %s, max depth %d, max concurrency %d", providerName, model, sc.MaxDepth, sc.MaxConcurrency),
+	}
+}
+
+// checkFallback reports the fallback provider/model configuration.
+func checkFallback(cfg *config.Config, cfgErr error) check {
+	if cfgErr != nil {
+		return check{Label: "Fallback", Status: "WARN", Detail: "config not loaded"}
+	}
+	fc := cfg.Agent.Fallback
+	if fc.Provider == "" {
+		return check{Label: "Fallback", Status: "OK", Detail: "not configured"}
+	}
+	if _, ok := cfg.Providers[fc.Provider]; !ok {
+		return check{
+			Label:  "Fallback",
+			Status: "WARN",
+			Detail: fmt.Sprintf("provider %q not found for fallback (%s / %s)", fc.Provider, fc.Provider, fc.Model),
+		}
+	}
+	return check{
+		Label:  "Fallback",
+		Status: "OK",
+		Detail: fmt.Sprintf("%s / %s", fc.Provider, fc.Model),
 	}
 }
 
@@ -207,11 +265,17 @@ func checkOTel(cfg *config.Config, cfgErr error) check {
 	if endpoint == "" {
 		return check{Label: "Observability", Status: "WARN", Detail: "OTel enabled but no endpoint set"}
 	}
-	detail := fmt.Sprintf("traces → %s", endpoint)
+	parts := []string{fmt.Sprintf("traces → %s", endpoint)}
 	if cfg.Observability.Otel.Verbose {
-		detail += " (verbose)"
+		parts = append(parts, "verbose")
 	}
-	return check{Label: "Observability", Status: "OK", Detail: detail}
+	if !cfg.Observability.Otel.Traces {
+		parts = append(parts, "traces: off")
+	}
+	if cfg.Observability.Otel.Metrics {
+		parts = append(parts, "metrics: on")
+	}
+	return check{Label: "Observability", Status: "OK", Detail: strings.Join(parts, ", ")}
 }
 
 func checkHomeWritable() check {

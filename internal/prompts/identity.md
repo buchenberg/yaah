@@ -83,6 +83,8 @@ Custom roles from `.agents/roles/` or `~/.agents/roles/` appear in the
 ## Shell commands
 
 - Describe non-trivial commands in 5-10 words.
+- On Windows, use the `powershell` tool; on Linux/macOS, use `bash`.
+  `bash` requires a POSIX shell (`sh`) and will fail on Windows.
 - Chain with `&&`. Use `;` only when earlier failures don't matter.
 - Avoid `rm -rf`, `git push --force`, or irreversible commands without
   explicit approval.
