@@ -54,13 +54,14 @@ var (
 
 // Message represents a chat message in the TUI.
 type Message struct {
-	Role      string
-	Content   string // glamour-rendered for assistant, raw for others
-	Raw       string // original markdown (for copy), same as Content for user/tool
-	ToolName  string // tool that produced this message (for tool result messages)
-	ToolArgs  string // tool arguments (for extracting descriptions)
-	Reasoning string // thinking/reasoning text (empty for non-assistant or normal responses)
-	SubRole   string // sub-agent role ("worker"/"reviewer"/"planner") for task tool messages
+	Role         string
+	Content      string // glamour-rendered for assistant, raw for others
+	Raw          string // original markdown (for copy), same as Content for user/tool
+	ToolName     string // tool that produced this message (for tool result messages)
+	ToolArgs     string // tool arguments (for extracting descriptions)
+	ToolDuration string // formatted duration string (e.g. "2.3s")
+	Reasoning    string // thinking/reasoning text (empty for non-assistant or normal responses)
+	SubRole      string // sub-agent role ("worker"/"reviewer"/"planner") for task tool messages
 }
 
 // AgentMsg is a message from the agent goroutine.
@@ -71,6 +72,7 @@ type AgentMsg struct {
 	ToolArgs       string // tool arguments (for display, e.g. task description)
 	ToolResult     string // tool result content
 	ToolResultName string // tool name for the result
+	ToolDuration   string // formatted duration string (e.g. "2.3s")
 	Flush          string // streamed content to commit before a tool call
 	Done           bool
 	Response       string
@@ -488,13 +490,14 @@ func (m *Model) AddMessage(role, content string) {
 
 // AddToolResult adds a tool result message. For todowrite, it renders the
 // formatted todo list. For other tools, it shows the raw result.
-func (m *Model) AddToolResult(toolName, content, toolArgs string) {
+func (m *Model) AddToolResult(toolName, content, toolArgs, duration string) {
 	m.messages = append(m.messages, Message{
-		Role:     "tool",
-		Content:  m.renderToolResult(toolName, content),
-		Raw:      content,
-		ToolName: toolName,
-		ToolArgs: toolArgs,
+		Role:         "tool",
+		Content:      m.renderToolResult(toolName, content),
+		Raw:          content,
+		ToolName:     toolName,
+		ToolArgs:     toolArgs,
+		ToolDuration: duration,
 	})
 	m.refreshViewport()
 	m.scrollToBottom()
@@ -746,7 +749,7 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 
 	if msg.ToolResult != "" || msg.ToolResultName != "" {
 		m.ClearToolCall() // tool finished — collapse progress label
-		m.AddToolResult(msg.ToolResultName, msg.ToolResult, msg.ToolArgs)
+		m.AddToolResult(msg.ToolResultName, msg.ToolResult, msg.ToolArgs, msg.ToolDuration)
 		return
 	}
 

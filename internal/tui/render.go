@@ -377,7 +377,7 @@ func (m *Model) renderMessages() string {
 				expanded = m.toolCall == msg.ToolName
 			}
 
-			b.WriteString(NewToolMessage(zoneID, msg.ToolName, msg.ToolArgs, msg.Content, m.width, m.viewport.Height(), expanded, m.toolCall == msg.ToolName).Render())
+			b.WriteString(NewToolMessage(zoneID, msg.ToolName, msg.ToolArgs, msg.Content, m.width, m.viewport.Height(), expanded, m.toolCall == msg.ToolName, msg.ToolDuration).Render())
 
 		default:
 			b.WriteString(NewSystemMessage(msg.Content, m.width).Render())

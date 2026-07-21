@@ -205,7 +205,11 @@ func checkOTel(cfg *config.Config, cfgErr error) check {
 	if endpoint == "" {
 		return check{Label: "Observability", Status: "WARN", Detail: "OTel enabled but no endpoint set"}
 	}
-	return check{Label: "Observability", Status: "OK", Detail: fmt.Sprintf("traces → %s", endpoint)}
+	detail := fmt.Sprintf("traces → %s", endpoint)
+	if cfg.Observability.Otel.Verbose {
+		detail += " (verbose)"
+	}
+	return check{Label: "Observability", Status: "OK", Detail: detail}
 }
 
 func checkHomeWritable() check {

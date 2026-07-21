@@ -745,7 +745,7 @@ func TestLoop_contextWindowTrimming(t *testing.T) {
 		t.Errorf("messages not trimmed: estimated %d tokens for %d chars in %d messages",
 			estimatedTokens, totalChars, len(loop.Messages))
 	}
-	// LLM compaction keeps sysMsg + summary + 6 recent messages + assistant response
+	// LLM compaction keeps sysMsg + summary + token-budget recent messages + assistant response
 	if len(loop.Messages) < 5 {
 		t.Errorf("expected some messages preserved, got %d", len(loop.Messages))
 	}
@@ -1558,3 +1558,149 @@ func TestConflictDetection_TrackerClearedAfterIteration(t *testing.T) {
 type fmtErrorf string
 
 func (e fmtErrorf) Error() string { return string(e) }
+
+// TestFormatToolCallsForExecutor_noInstructionsRefeed locks in fix 1: the
+// outer model's msg.Content (its reasoning/narrative prose) must NOT be
+// re-fed to the inner executor as "## Instructions". That re-feed caused
+// the inner model to re-interpret prose like "run a comprehensive
+// self-test of all tools" as its task scope and exhaust its iteration
+// budget. The task prompt should list only the required tool calls.
+func TestFormatToolCallsForExecutor_noInstructionsRefeed(t *testing.T) {
+	loop := &Loop{SystemPrompt: "sys"}
+	msg := types.Message{
+		Role:    "assistant",
+		Content: "Let me run a comprehensive self-test of all file-based tools.",
+		ToolCalls: []types.ToolCall{{
+			ID:   "call_1",
+			Type: "function",
+			Function: types.ToolCallFn{
+				Name:      "bash",
+				Arguments: `{"command":"mkdir -p .scratch/selftest"}`,
+			},
+		}},
+	}
+	task := loop.formatToolCallsForExecutor(msg)
+
+	if strings.Contains(task, "## Instructions") {
+		t.Errorf("task prompt re-feeds outer model prose as ## Instructions: %q", task)
+	}
+	if strings.Contains(task, "comprehensive self-test") {
+		t.Errorf("task prompt leaks outer model prose into inner task: %q", task)
+	}
+	if !strings.Contains(task, "## Required tool calls") {
+		t.Errorf("task prompt missing required tool calls section: %q", task)
+	}
+	if !strings.Contains(task, "bash") {
+		t.Errorf("task prompt missing the bash tool call: %q", task)
+	}
+}
+
+// TestDualLoop_summaryInjectedAsToolMessage locks in fix 2: the inner
+// executor's summary is carried by the final tool-result message, not by
+// a separate assistant message. Injecting it as an assistant message made
+// the outer model respond to its own inner summary ("Done. All tools
+// executed...") with a new narrative beat, producing a multi-turn
+// feedback loop for what should be one turn.
+func TestDualLoop_summaryInjectedAsToolMessage(t *testing.T) {
+	// Outer provider: turn 0 emits a bash tool call + prose; turn 1
+	// produces the final answer after seeing the inner executor's result.
+	outer := &fakeProvider{responses: []*types.ChatResponse{
+		{
+			Choices: []types.Choice{{
+				Message: types.Message{
+					Role:    "assistant",
+					Content: "Let me create the scratch dir.",
+					ToolCalls: []types.ToolCall{{
+						ID:   "call_outer_1",
+						Type: "function",
+						Function: types.ToolCallFn{
+							Name:      "bash",
+							Arguments: `{"command":"mkdir -p .scratch/selftest"}`,
+						},
+					}},
+				},
+				FinishReason: "tool_calls",
+			}},
+		},
+		{
+			Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant", Content: "Done."},
+				FinishReason: "stop",
+			}},
+		},
+	}}
+
+	// Inner executor: iteration 0 executes the bash call; iteration 1
+	// returns a terse structured summary.
+	inner := &fakeProvider{responses: []*types.ChatResponse{
+		{
+			Choices: []types.Choice{{
+				Message: types.Message{
+					Role: "assistant",
+					ToolCalls: []types.ToolCall{{
+						ID:   "call_inner_1",
+						Type: "function",
+						Function: types.ToolCallFn{
+							Name:      "bash",
+							Arguments: `{"command":"mkdir -p .scratch/selftest"}`,
+						},
+					}},
+				},
+				FinishReason: "tool_calls",
+			}},
+		},
+		{
+			Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant", Content: "bash(mkdir): exit 0"},
+				FinishReason: "stop",
+			}},
+		},
+	}}
+
+	bashTool := &fakeTool{name: "bash", result: "OK"}
+	reg := tools.NewRegistry()
+	reg.Register(bashTool)
+
+	loop := &Loop{
+		Provider:           outer,
+		ExecutorProvider:   inner,
+		Registry:           reg,
+		SystemPrompt:       "You are helpful.",
+		MaxIterations:      10,
+		MaxInnerIterations: 10,
+		// DisableInnerLoop defaults to false → dual-loop path runs.
+	}
+
+	resp, err := loop.Run(context.Background(), "self-test the bash tool")
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if resp != "Done." {
+		t.Errorf("response = %q, want %q", resp, "Done.")
+	}
+
+	// The summary must live in a tool message (the final one for the
+	// outer tool_call_id), not in a standalone assistant message.
+	var summaryToolMsg *types.Message
+	var assistantSummaryCount int
+	for i := range loop.Messages {
+		m := &loop.Messages[i]
+		if m.Role == "tool" && m.ToolCallID == "call_outer_1" {
+			if summaryToolMsg == nil || len(m.Content) > len(summaryToolMsg.Content) {
+				summaryToolMsg = m
+			}
+		}
+		if m.Role == "assistant" && strings.Contains(m.Content, "bash(mkdir): exit 0") {
+			assistantSummaryCount++
+		}
+	}
+	if summaryToolMsg == nil {
+		t.Fatalf("expected a tool message for call_outer_1 carrying the summary")
+	}
+	if !strings.Contains(summaryToolMsg.Content, "bash(mkdir): exit 0") {
+		t.Errorf("tool message content = %q, want it to carry the inner summary", summaryToolMsg.Content)
+	}
+	if assistantSummaryCount != 0 {
+		t.Errorf("inner summary was injected as an assistant message (%d found) — this is the feedback-loop bug", assistantSummaryCount)
+	}
+}

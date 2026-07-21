@@ -208,12 +208,12 @@ func newAgentSession() (*agentSession, error) {
 	}
 
 	tracker := &tools.ConflictTracker{}
-	toolReg.Register(newTaskTool(provider, systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, tracker))
+	toolReg.Register(newTaskTool(provider, systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker))
 
 	// Wrap the provider with OTel instrumentation if enabled.
 	if cfg.Observability.Otel.Enabled {
 		if sp, ok := provider.(agent.StreamProvider); ok {
-			provider = &observability.InstrumentedProvider{Inner: sp}
+			provider = &observability.InstrumentedProvider{Inner: sp, Verbose: cfg.Observability.Otel.Verbose}
 		}
 	}
 
@@ -358,6 +358,7 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		MaxSubAgentConcurrency: s.cfg.Agent.SubAgent.MaxConcurrency,
 		MaxSubAgentDepthByRole: subAgentDepthByRole(s.cfg.Agent.SubAgent),
 		OtelEnabled:            s.cfg.Observability.Otel.Enabled,
+		OtelVerbose:            s.cfg.Observability.Otel.Verbose,
 		ConflictTracker:        s.tracker,
 	}
 

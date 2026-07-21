@@ -294,7 +294,7 @@ func runTUI() error {
 	toolReg.Register(&tools.BackgroundProcessTool{Manager: procMgr})
 
 	conflictTracker := &tools.ConflictTracker{}
-	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, conflictTracker))
+	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, conflictTracker))
 
 	// Shared conversation history for the TUI session.
 	var messages []types.Message
@@ -494,7 +494,7 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 
 	if cfg.Observability.Otel.Enabled {
 		if sp, ok := provider.(agent.StreamProvider); ok {
-			provider = &observability.InstrumentedProvider{Inner: sp}
+			provider = &observability.InstrumentedProvider{Inner: sp, Verbose: cfg.Observability.Otel.Verbose}
 		}
 	}
 
@@ -511,6 +511,7 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 		ApprovalMode:       resolveApproval(cfg),
 		Messages:           *messages,
 		OtelEnabled:        cfg.Observability.Otel.Enabled,
+		OtelVerbose:        cfg.Observability.Otel.Verbose,
 		ConflictTracker:    conflictTracker,
 		ExecutorProvider:   executorProvider,
 		ExecutorModel:      executorModel,
@@ -539,6 +540,8 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 				ch <- tui.AgentMsg{
 					ToolResult:     info.Result,
 					ToolResultName: info.Name,
+					ToolArgs:       info.Args,
+					ToolDuration:   formatDuration(info.Duration),
 				}
 			}
 		},

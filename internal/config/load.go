@@ -112,6 +112,12 @@ type OtelConfig struct {
 	ServiceName string `yaml:"service_name"` // displayed in the tracing UI
 	Traces      bool   `yaml:"traces"`       // enable trace spans
 	Metrics     bool   `yaml:"metrics"`      // enable OTLP metrics
+	// Verbose enables detailed span attributes/events: full model content,
+	// reasoning, tool-call arguments, conversation context, and dual-loop
+	// handoffs. Off by default to keep Jaeger payloads light; turn on when
+	// diagnosing agent-loop behaviour (e.g. the inner executor going off
+	// track). Only effective when Enabled is true.
+	Verbose bool `yaml:"verbose"`
 }
 
 // defaultConfig returns the built-in defaults used when no config file exists.
@@ -140,6 +146,7 @@ func defaultConfig() *Config {
 				ServiceName: "yaah",
 				Traces:      true,
 				Metrics:     false,
+				Verbose:     false,
 			},
 		},
 	}

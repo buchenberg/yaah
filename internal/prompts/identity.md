@@ -110,7 +110,7 @@ The agent uses a two-tier execution model:
    high level and produce tool calls.
 2. **Inner loop (executor)** — chains your tool calls together, seeing results
    directly and making additional tool calls as needed without returning to
-   the outer loop. Returns a summary when done.
+   the outer loop. Returns a concise summary when done (capped at ~2K chars).
 
 This keeps the outer loop focused on planning while the inner loop handles
 mechanical work. The inner loop uses the same provider/model as the outer

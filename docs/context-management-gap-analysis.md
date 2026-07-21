@@ -2,6 +2,12 @@
 
 > Root cause investigation of context saturation failures (392K tokens against
 > a 128K window) and a phased plan to close gaps vs. hermes-agent and opencode.
+>
+> **Status: IMPLEMENTED (2025-07-20).** All five phases plus anchored
+> summarization, summary output budget, anti-thrashing guard, and inner loop
+> summary cap are in production. See `docs/architecture.md` for the current
+> design. A detailed cross-framework review of this plan is at
+> `docs/context-management-plan-review.md`.
 
 ## 1. The Problem: Real-World Failure Trace
 

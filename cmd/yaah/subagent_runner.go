@@ -16,7 +16,7 @@ import (
 	"github.com/buchenberg/yaah/internal/tools"
 )
 
-func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, tracker *tools.ConflictTracker) *tools.TaskTool {
+func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker) *tools.TaskTool {
 	// Map a config "0 = unlimited" MaxDepth to a sentinel so the
 	// structural nesting decrement in makeTaskRunner does not disable
 	// spawning for an "unlimited" setting.
@@ -34,6 +34,7 @@ func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 			subCfg:          subCfg,
 			SubToolCallback: subToolDisplay,
 			OtelEnabled:     otelEnabled,
+			OtelVerbose:     otelVerbose,
 			tracker:         tracker,
 		}, depth),
 		ResolveTimeout: subAgentTimeoutResolver(subCfg),
@@ -116,6 +117,11 @@ type taskRunnerOpts struct {
 	// so their tool calls appear as child spans in the trace waterfall.
 	OtelEnabled bool
 
+	// OtelVerbose propagates verbose trace recording to sub-agent loops
+	// so their model content/reasoning is captured when the parent has
+	// verbose tracing enabled.
+	OtelVerbose bool
+
 	// tracker records file operations from sub-agent write/edit/delete
 	// tools so the parent agent can detect parallel-worker conflicts.
 	tracker *tools.ConflictTracker
@@ -183,6 +189,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			MaxSubAgentConcurrency: opts.subCfg.MaxConcurrency,
 			MaxSubAgentDepthByRole: subAgentDepthByRole(opts.subCfg),
 			OtelEnabled:            opts.OtelEnabled,
+			OtelVerbose:            opts.OtelVerbose,
 			OnTool:                 opts.SubToolCallback,
 		}
 

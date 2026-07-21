@@ -23,6 +23,11 @@ type LLMProvider interface {
 // directly since the stream lifetime is managed by the agent loop.
 type InstrumentedProvider struct {
 	Inner LLMProvider
+	// Verbose enables recording the full response content, reasoning,
+	// and tool calls on the llm.chat span. Mirrors the Loop's OtelVerbose
+	// flag so the non-streaming fallback path is traced with the same
+	// detail as the streaming path.
+	Verbose bool
 }
 
 // Send wraps the inner Send call in an "llm.send" span with duration
@@ -48,6 +53,11 @@ func (p *InstrumentedProvider) Send(ctx context.Context, req types.ChatRequest) 
 		}
 	}
 	FinishLLM(span, len(req.Messages), sysLen, resp.Usage)
+
+	if p.Verbose && len(resp.Choices) > 0 {
+		c := resp.Choices[0]
+		RecordAssistantResponse(span, c.Message, c.FinishReason)
+	}
 
 	return resp, nil
 }
