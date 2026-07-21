@@ -1537,4 +1537,3 @@ func TestConflictDetection_TrackerClearedAfterIteration(t *testing.T) {
 type fmtErrorf string
 
 func (e fmtErrorf) Error() string { return string(e) }
-

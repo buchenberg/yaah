@@ -88,6 +88,63 @@ for iter := 0; iter < MaxIterations; iter++ {
 - `l.Messages` is updated inside `executeAndCollect` (tool results are appended) AND after `RunPostTool` (middleware may have modified `step.Messages`). Both copies are kept in sync so `CompactionMiddleware` sees the latest messages.
 - The `Step` struct is the mutable per-iteration state bag. Middleware reads and writes it freely.
 
+### Dual-loop executor (always-on delegate)
+
+File: `internal/agent/executor.go`, `internal/agent/agent.go`
+
+yaah uses a planner/executor dual-loop where the planner delegates tool-intensive work to a dedicated executor running on a potentially cheaper model. The architecture is always-on: the `delegate` tool is always present alongside the full tool set (additive, no config gate). The planner chooses per-action whether to work inline or delegate.
+
+**Key properties:**
+
+- **Additive tool set**: `buildPlannerToolDefs()` returns `buildToolDefs() + delegateToolDef()` — always. The planner sees every tool AND `delegate`.
+- **Per-action choice**: the planner decides whether to delegate a task or handle it inline. A single turn may contain both delegate and inline calls (mixed dispatch).
+- **Executor owns tool selection**: when the planner calls `delegate(task, executor_type?)`, the executor selects, runs, and chains tools to accomplish the directive. The planner never names specific tools in a delegate call.
+- **Recursion guard by schema**: `buildExecutorToolDefs()` returns `buildToolDefs()` only — `delegate` is never registered as a tool, so the executor structurally cannot delegate.
+- **Model tiering**: `resolveExecutor(executorType)` returns the dedicated `ExecutorProvider`/`ExecutorModel` if configured, else falls back to the main provider/model.
+- **Working directory injection**: the executor receives `## Working directory` via `os.Getwd()` in its payload, preventing the "different workspace" hallucination that caused wasted turns.
+- **Auto-approval**: the executor runs tools via `executeOneTool` which bypasses the approval pipeline — tools like `bash` run without user prompts when delegated.
+
+**Delegate call flow:**
+
+```
+1. Planner emits delegate(task="directive", executor_type="default")
+2. splitDelegateCalls(msg.ToolCalls) → delegateCalls, inlineCalls
+3. For each delegate call:
+   a. parseDelegateCall(args) → directive, executorType
+   b. lastUserMessage(messages) → originalIntent (forwarded to executor)
+   c. runExecutor(ctx, directive, originalIntent, executorType):
+      - resolveExecutor(executorType) → provider, model
+      - Build messages: executorSystemPrompt + UserMsg(directive + intent + workdir)
+      - Loop up to MaxInnerIterations:
+        * getExecutorMessage(ctx, provider, req) — streaming or REST
+        * Execute tools via executeOneTool (no approval checks)
+        * Feed results back to executor for chaining
+      - Return summary, exhausted, error
+   d. wrapExecutorResult(summary, exhausted, err, truncated) →
+      <executor_result state="completed|error|exhausted" truncated="true|false">…</executor_result>
+   e. Inject as tool message (Role=tool, Name=delegate, ToolCallID=delegateCall.ID)
+4. If only delegate calls (no inline): continue → next iteration (planner sees results)
+5. If inline calls exist: executeAndCollect → normal middleware pipeline
+```
+
+**Structured result envelope:**
+
+The executor's summary is wrapped in an XML envelope for programmatic state detection:
+
+```xml
+<executor_result state="completed" truncated="false">
+  glob: 47 files; bash(wc -l): 7452 lines
+</executor_result>
+```
+
+States: `completed`, `error` (executor hit a fatal error), `exhausted` (hit MaxInnerIterations). The `truncated` flag indicates the summary exceeded `maxInnerSummaryLen` (8000 chars) and was trimmed.
+
+**Token attribution:**
+
+Each inner.loop span carries `inner.prompt_tokens`, `inner.completion_tokens`, and `inner.iterations` — the executor's token usage, isolated from the planner. Each agent.turn span carries `turn.prompt_tokens` and `turn.completion_tokens` (per-turn deltas) alongside cumulative `llm.total_*`. Dispatch events (`dispatch.delegate`, `dispatch.inline`) log the tool names and counts at each routing decision.
+
+**Benchmarks documented in** [`docs/BENCHMARK.md`](./BENCHMARK.md). Complex tasks push ~65% of tokens to the executor on a 3x cheaper model.
+
 ### LLM call with retry (`getAssistantMessage`)
 
 Both paths use the same `getAssistantMessage` method, which:
