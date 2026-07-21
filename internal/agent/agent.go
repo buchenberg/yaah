@@ -84,6 +84,19 @@ const ToolResultMaxLen = 8192
 // unbounded context growth from the dual-loop architecture.
 const maxInnerSummaryLen = 8000
 
+// executorSystemPrompt is the purpose-built prompt for the inner executor.
+// It is deliberately NOT the planner's identity prompt: the executor does
+// tactical tool selection, not user-facing reasoning, so it gets only what
+// its responsibility requires. This keeps its context small and stops it
+// from narrating like a user-facing agent.
+const executorSystemPrompt = `You are a tool executor. You receive a task directive and the user's original request. Select and run the built-in tools needed to accomplish the directive; you may chain tools based on their results. When finished, respond with a terse structured summary: one line per tool executed naming the tool and its outcome (e.g. "write(path): wrote 138B", "bash(cmd): exit 0"). Do not write conversational prose, confirmations, or next-step plans.`
+
+// delegateToolName is the single tool the planner may call when the
+// dual-loop is active. Calling it hands an intent-level directive to the
+// executor. This is how the "one decision, one owner" boundary is enforced
+// by schema: the planner cannot name file/bash tools, only delegate.
+const delegateToolName = "delegate"
+
 // pruneMessageMaxLen is the threshold above which old messages are pruned
 // before being sent to the LLM summarizer during compaction.
 const pruneMessageMaxLen = 2000
@@ -1764,6 +1777,51 @@ func (l *Loop) assembleStreamed(content string, toolCalls map[int]*types.ToolCal
 	}
 	return msg
 }
+
+// dualLoopActive reports whether the executor-owns-tools dual-loop should
+// run. It is gated purely on an explicitly-configured executor provider so
+// that the default (no executor) — and all subagents, which never set an
+// ExecutorProvider — stay on the single-loop path. A subagent is already
+// an isolated executor; nesting another executor inside it is redundant.
+func (l *Loop) dualLoopActive() bool {
+	return l.ExecutorProvider != nil
+}
+
+// delegateToolDef returns the planner's sole tool when the dual-loop is
+// active. Its description instructs the model to use it for ANY tool work,
+// which is how the "one decision, one owner" boundary is enforced by schema
+// rather than convention — the planner structurally cannot name file/bash
+// tools, only hand an intent-level directive to the executor.
+func delegateToolDef() types.ToolDef {
+	return types.ToolDef{
+		Type: "function",
+		Function: types.ToolFn{
+			Name:        delegateToolName,
+			Description: "Delegate a tool-execution task to the executor. Use this for ANY task that requires running tools (read, write, bash, grep, etc.). Provide a concise intent-level directive describing what to accomplish, not which specific tools to call — the executor selects the tools.",
+			Parameters: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"task": {"type": "string", "description": "Intent-level directive: what to accomplish."}
+				},
+				"required": ["task"]
+			}`),
+		},
+	}
+}
+
+// buildPlannerToolDefs returns the tool set exposed to the planner. When the
+// dual-loop is active the planner gets only {delegate} (it cannot pick
+// file/bash tools — the executor owns tool selection). Otherwise it gets the
+// full set (the single-loop path used by default and by subagents).
+func (l *Loop) buildPlannerToolDefs() []types.ToolDef {
+	if l.dualLoopActive() {
+		return []types.ToolDef{delegateToolDef()}
+	}
+	return l.buildToolDefs()
+}
+
+// buildExecutorToolDefs returns the full tool set the executor may use.
+func (l *Loop) buildExecutorToolDefs() []types.ToolDef { return l.buildToolDefs() }
 
 // buildToolDefs builds the OpenAI-format tool definitions from the registry.
 func (l *Loop) buildToolDefs() []types.ToolDef {

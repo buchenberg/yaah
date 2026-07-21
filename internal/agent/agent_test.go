@@ -1704,3 +1704,77 @@ func TestDualLoop_summaryInjectedAsToolMessage(t *testing.T) {
 		t.Errorf("inner summary was injected as an assistant message (%d found) — this is the feedback-loop bug", assistantSummaryCount)
 	}
 }
+
+// --- executor-owns-tools architecture (Task 1) ------------------------------
+
+// toolDefNames returns the function names of a ToolDef slice, in order.
+func toolDefNames(defs []types.ToolDef) []string {
+	out := make([]string, 0, len(defs))
+	for _, d := range defs {
+		out = append(out, d.Function.Name)
+	}
+	return out
+}
+
+// sameSet reports whether two string slices hold the same elements ignoring
+// order (and ignoring duplicates).
+func sameSet(a, b []string) bool {
+	am := map[string]bool{}
+	for _, s := range a {
+		am[s] = true
+	}
+	for _, s := range b {
+		if !am[s] {
+			return false
+		}
+		delete(am, s)
+	}
+	return len(am) == 0
+}
+
+// TestDualLoopInactiveByDefault locks in the opt-in contract: with no
+// ExecutorProvider configured, the dual-loop must NOT engage. This is the
+// waste fix — the default path (and every subagent, which never sets an
+// ExecutorProvider) runs the single-loop path.
+func TestDualLoopInactiveByDefault(t *testing.T) {
+	loop := &Loop{Provider: &fakeProvider{}, Registry: tools.NewRegistry()}
+	if loop.dualLoopActive() {
+		t.Fatalf("dual-loop must be inactive when ExecutorProvider is nil")
+	}
+}
+
+// TestDualLoopActiveWhenExecutorConfigured: an explicitly configured
+// executor is the sole trigger for the dual-loop.
+func TestDualLoopActiveWhenExecutorConfigured(t *testing.T) {
+	loop := &Loop{
+		Provider:         &fakeProvider{},
+		ExecutorProvider: &fakeProvider{},
+		Registry:         tools.NewRegistry(),
+	}
+	if !loop.dualLoopActive() {
+		t.Fatalf("dual-loop must be active when ExecutorProvider is set")
+	}
+}
+
+// TestPlannerToolSet_DelegateOnlyWhenActive enforces the "one decision, one
+// owner" boundary by schema: when the dual-loop is active the planner may
+// only call `delegate`; it cannot see file/bash tools. When inactive, it
+// gets the full set (single-loop path).
+func TestPlannerToolSet_DelegateOnlyWhenActive(t *testing.T) {
+	reg := tools.NewEmptyRegistry()
+	reg.Register(&fakeTool{name: "bash", result: "ok"})
+	reg.Register(&fakeTool{name: "read", result: "ok"})
+
+	// Inactive → planner sees the full tool set.
+	inactive := &Loop{Registry: reg}
+	if got := inactive.buildPlannerToolDefs(); !sameSet(toolDefNames(got), []string{"bash", "read"}) {
+		t.Fatalf("inactive planner tools = %v, want [bash read]", toolDefNames(got))
+	}
+
+	// Active → planner sees only delegate.
+	active := &Loop{Registry: reg, ExecutorProvider: &fakeProvider{}}
+	got := active.buildPlannerToolDefs()
+	if names := toolDefNames(got); len(names) != 1 || names[0] != "delegate" {
+		t.Fatalf("active planner tools = %v, want [delegate]", names)
+	}
+}
