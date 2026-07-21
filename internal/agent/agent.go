@@ -1,15 +1,9 @@
 package agent
 
 import (
-	"bufio"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -17,7 +11,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/buchenberg/yaah/internal/agent/errorclassify"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/providers"
@@ -218,156 +211,80 @@ type Loop struct {
 	MaxSubAgentDepthByRole map[SubAgentRole]int
 
 	// MaxSubAgentConcurrency caps the number of task tool calls that may
-	// run simultaneously within a single iteration. It is a separate
-	// semaphore from MaxToolConcurrency so sub-agent fan-out can be
-	// bounded independently. 0 means unlimited.
+	// run simultaneously within a single outer-loop turn. 0 means unlimited.
 	MaxSubAgentConcurrency int
 
 	// PromptCaching enables Anthropic-style cache-control breakpoints on
-	// system messages and recent tool results. Has no effect for non-Anthropic providers.
+	// system prompt and recent messages.
 	PromptCaching bool
 
-	// PreviousSummary stores the last compaction summary for anchored
-	// (iterative) summarization. When non-empty, subsequent compactions
-	// update this summary rather than re-summarizing from scratch.
-	PreviousSummary string
-
-	// ConflictTracker records file operations from sub-agent
-	// write/edit/delete tools so the agent loop can detect when parallel
-	// workers touch the same files and inject a conflict report.
+	// ConflictTracker detects and reports external file modifications made
+	// outside the agent's own write/edit/replace/delete tools during a turn.
+	// When non-nil and conflicts are found, a user message describing them
+	// is appended at the end of the turn.
 	ConflictTracker *tools.ConflictTracker
 
-	// OtelEnabled enables OpenTelemetry spans for tool calls, sub-agent
-	// dispatch, and LLM provider calls (via InstrumentedProvider).
+	// OtelEnabled enables OpenTelemetry tracing and metrics collection.
+	// When true, each Run call creates a root span and child spans for
+	// each turn, tool execution, and provider call.
 	OtelEnabled bool
 
-	// OtelVerbose enables detailed span attributes/events: full model
-	// content, reasoning, tool-call arguments, conversation context, and
-	// dual-loop handoffs. Only effective when OtelEnabled is true. Off by
-	// default to keep Jaeger payloads light; turn on via
-	// observability.otel.verbose in config when diagnosing agent-loop
-	// behaviour.
+	// OtelVerbose enables verbose Jaeger trace recording of full assistant
+	// responses (including streamed messages) and per-turn conversation state.
+	// Useful for debugging the dual-loop planner-executor architecture.
 	OtelVerbose bool
 
-	// ApproveFn is an optional callback for tool approval in TUI contexts.
-	// When set, it is called instead of the default stdin/stderr approveTool.
-	// It receives the tool name and abbreviated args; returns true to approve.
-	ApproveFn func(name, args string) bool
+	// ApproveFn is an optional callback for custom approval UI (TUI/REPL/etc.).
+	// When set, approveTool delegates to this function; otherwise it uses
+	// the default stdin/stderr prompt.
+	ApproveFn func(name, args string) bool `json:"-"`
 
-	toolSem chan struct{}
-
-	// subAgentSem bounds concurrent task tool calls per iteration when
-	// MaxSubAgentConcurrency > 0. Initialised by buildPipeline().
-	subAgentSem chan struct{}
-
-	// SessionID is a stable identifier for the session, set by the caller.
-	// Used by emitHook to label events.
+	// SessionID identifies the conversation session for persistence and logging.
 	SessionID string
 
-	// HookDir is the directory where yaah writes JSONL hook event files.
-	// When set, structured events are appended to <HookDir>/<session-id>.jsonl
-	// on session boundaries, turn boundaries, and tool calls. Used by
-	// external agents (e.g. entire-agent-yaah) for checkpoint/transcript
-	// integration. Empty string means no hook events are written.
-	// Must be set before Run() is called; must not change after.
+	// HookDir is the directory for a best-effort JSONL event log.
 	HookDir string
 
-	hookOnce sync.Once
-	hookOK   bool
-	hookMu   sync.Mutex
+	// PreviousSummary stores the last LLM-generated conversation summary for
+	// incremental compaction, so each summarization only needs to cover new
+	// messages rather than re-summarizing the entire history.
+	PreviousSummary string
+
+	// SystemPromptOverride is an optional override for the system prompt.
+	// When set, the Loop will use this prompt instead of one assembled from
+	// instructions and provider defaults.
+	SystemPromptOverride string
+
+	// hookFile is the open file descriptor for JSONL event hooks.
 	hookFile *os.File
+
+	// hookOnce guards the one-time creation of the hook file.
+	hookOnce sync.Once
+
+	// hookOK is false if the hook file could not be opened.
+	hookOK bool
+
+	// hookMu serializes writes to the hook file.
+	hookMu sync.Mutex
+
+	// toolSem is a semaphore channel for limiting concurrent tool executions.
+	// Created by buildPipeline when MaxToolConcurrency > 0.
+	toolSem chan struct{}
+
+	// subAgentSem is a semaphore channel for limiting concurrent task calls.
+	// Created by buildPipeline when MaxSubAgentConcurrency > 0.
+	subAgentSem chan struct{}
+
+	// lastCompactionTokens tracks the estimated token count after the most
+	// recent compaction, used to prevent re-compacting too aggressively.
+	lastCompactionTokens int
+
+	// ineffectiveCompactions counts successive compactions that saved < 10%
+	// of tokens. When >= 2, compaction is skipped.
+	ineffectiveCompactions int
 
 	// loopHistory tracks recent tool call hashes for loop detection.
 	loopHistory []string
-
-	// compaction tracking for anti-thrashing guard.
-	ineffectiveCompactions int
-	lastCompactionTokens   int
-}
-
-// emitHook writes a structured JSONL line to the hook directory.
-// It is a no-op when HookDir is empty. Failures are silent — hook
-// emission must never break the agent loop.
-func (l *Loop) emitHook(event HookEvent) {
-	if l.HookDir == "" {
-		return
-	}
-	l.hookOnce.Do(func() {
-		if err := os.MkdirAll(l.HookDir, 0o755); err != nil {
-			return
-		}
-		path := filepath.Join(l.HookDir, l.SessionID+".jsonl")
-		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-		if err != nil {
-			return
-		}
-		l.hookFile = f
-		l.hookOK = true
-	})
-	if !l.hookOK {
-		return
-	}
-	event.SessionID = l.SessionID
-	if event.Timestamp == 0 {
-		event.Timestamp = time.Now().UnixMilli()
-	}
-	line, err := json.Marshal(event)
-	if err != nil {
-		return
-	}
-	l.hookMu.Lock()
-	l.hookFile.Write(append(line, '\n'))
-	l.hookMu.Unlock()
-}
-
-// closeHook closes the hook file if it was opened. Must be called after Run()
-// completes to flush and release the file descriptor.
-func (l *Loop) closeHook() {
-	if l.hookFile != nil {
-		l.hookFile.Close()
-		l.hookFile = nil
-	}
-}
-
-// persistMessage writes a single message to the database.
-// No-op if DB is nil. Errors are logged to stderr but never returned,
-// so the agent loop can continue even if the database is unavailable.
-func (l *Loop) persistMessage(msg types.Message) {
-	if l.DB == nil {
-		return
-	}
-	content := msg.Content
-	if content == "" {
-		var parts []string
-		for _, tc := range msg.ToolCalls {
-			parts = append(parts, fmt.Sprintf("[tool:%s] %s", tc.Function.Name, tc.Function.Arguments))
-		}
-		content = strings.Join(parts, "\n")
-	}
-	toolCallsJSON := ""
-	if len(msg.ToolCalls) > 0 {
-		data, _ := json.Marshal(msg.ToolCalls)
-		toolCallsJSON = string(data)
-	}
-	toolName := ""
-	if msg.Role == "tool" {
-		toolName = msg.Name
-	}
-	m := memory.Message{
-		SessionID:  l.SessionID,
-		Idx:        l.MsgIdx,
-		Role:       msg.Role,
-		Content:    content,
-		ToolName:   toolName,
-		ToolCallID: msg.ToolCallID,
-		ToolCalls:  toolCallsJSON,
-		Timestamp:  time.Now().Unix(),
-	}
-	if err := l.DB.AddMessage(m); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: db persist: %v\n", err)
-		return
-	}
-	l.MsgIdx++
 }
 
 // buildPipeline assembles the middleware pipeline from config.
@@ -587,7 +504,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			for _, tc := range delegateCalls {
 				directive, execType := parseDelegateCall(tc.Function.Arguments)
 				if l.OtelVerbose && turnSpan != nil {
-					turnSpan.AddEvent("dispatch.delegate.call", trace.WithAttributes(
+					turnSpan.AddEvent("delegate.call", trace.WithAttributes(
 						attribute.String("delegate.directive", abbreviateArgs(directive, 200)),
 						attribute.String("delegate.executor_type", execType),
 					))
@@ -616,36 +533,32 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			}
 		}
 
-		// Inline calls: direct execution on the full middleware path (approval,
-		// conflict tracking, loop detection). Skipped when there are no inline
-		// calls in this turn.
-		var toolResults []ToolResult
-		if len(inlineCalls) > 0 {
-			if l.OtelVerbose && turnSpan != nil {
-				names := make([]string, len(inlineCalls))
-				for i, tc := range inlineCalls {
-					names[i] = tc.Function.Name
-				}
-				turnSpan.AddEvent("dispatch.inline", trace.WithAttributes(
-					attribute.Int("inline.count", len(inlineCalls)),
-					attribute.String("inline.tool_names", strings.Join(names, ",")),
-				))
-			}
-			toolResults = l.executeAndCollect(turnCtx, inlineCalls, &messages)
-		}
-
+		// Delegate+inline mixed turn: run delegate summaries, then inline tools.
 		if len(delegateCalls) > 0 && len(inlineCalls) == 0 {
+			// Delegate-only turn: tool results are already in messages.
+			// Sync step.Messages so the next iteration sees them, then skip
+			// inline path (no tools to execute).
+			step.Messages = messages
 			if turnSpan != nil {
 				turnSpan.End()
 			}
 			continue
 		}
 
-		// Update step.Messages to reflect the tool results added by executeAndCollect
+		// Inline calls present (possibly alongside delegates): execute inline
+		// tools and run post-tool middleware.
+		if l.OtelVerbose && turnSpan != nil {
+			names := make([]string, len(inlineCalls))
+			for i, tc := range inlineCalls {
+				names[i] = tc.Function.Name
+			}
+			turnSpan.AddEvent("dispatch.inline", trace.WithAttributes(
+				attribute.Int("inline.count", len(inlineCalls)),
+				attribute.String("inline.tool_names", strings.Join(names, ",")),
+			))
+		}
+		toolResults := l.executeAndCollect(turnCtx, inlineCalls, &messages)
 		step.Messages = messages
-
-		// Update l.Messages so that CompactionMiddleware sees the latest messages
-		l.Messages = messages
 
 		if l.ConflictTracker != nil {
 			l.emitHook(HookEvent{
@@ -719,986 +632,4 @@ func (l *Loop) applyDefaults() {
 	if l.MaxInnerIterations <= 0 {
 		l.MaxInnerIterations = 10
 	}
-}
-
-// runExecutor runs the tool-execution loop that OWNS tool selection for a
-// single delegated directive. It is the core of the executor-owns-tools
-// architecture: the planner hands it an intent-level directive (not
-// pre-formed tool calls), and the executor selects, runs, and chains tools
-// to accomplish it.
-//
-// Key properties:
-//   - It uses a purpose-built executorSystemPrompt (NOT the planner identity),
-//     keeping its context small and stopping user-facing narration.
-//   - It receives the ORIGINAL user intent alongside the directive, fixing
-//     the "user is asking me to…" mischaracterization (the executor finally
-//     sees the real request, not a reframed subtask).
-//   - Tool selection happens here and ONLY here — the planner delegates
-//     intent, the executor selects tools.
-//
-// executeOneTool runs a single tool call synchronously. Used by the executor
-// loop which needs to append results to messages between model calls.
-func (l *Loop) executeOneTool(ctx context.Context, tc types.ToolCall) toolExecResult {
-	t := l.Registry.Get(tc.Function.Name)
-	if t == nil {
-		return toolExecResult{err: fmt.Errorf("tool %q not found", tc.Function.Name)}
-	}
-
-	var toolSpan trace.Span
-	if l.OtelEnabled {
-		ctx, toolSpan = observability.StartTool(ctx, tc.Function.Name, tc.Function.Arguments)
-		defer toolSpan.End()
-	}
-
-	start := time.Now()
-	result, err := t.Execute(ctx, tc.Function.Arguments)
-	dur := time.Since(start)
-
-	if toolSpan != nil {
-		observability.FinishTool(toolSpan, result, err)
-	}
-
-	return toolExecResult{
-		callID:  tc.ID,
-		name:    tc.Function.Name,
-		args:    tc.Function.Arguments,
-		content: result,
-		dur:     dur,
-		err:     err,
-	}
-}
-
-// executeAndCollect runs tool calls and returns ToolResult for middleware inspection.
-func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, messages *[]types.Message) []ToolResult {
-	results := make([]ToolResult, len(calls))
-	ordered := make([]toolExecResult, len(calls))
-	execResults := make(chan toolExecResult, len(calls))
-
-	for i, tc := range calls {
-		i, tc := i, tc
-
-		if l.ApprovalMode == "deny" && l.classifyDanger(tc.Function.Name, tc.Function.Arguments) {
-			errMsg := fmt.Sprintf("error: tool %q requires approval but approval mode is 'deny'", tc.Function.Name)
-			l.emitHook(HookEvent{Event: ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
-			l.emitHook(HookEvent{Event: ToolEnd, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, ToolError: fmt.Sprintf("tool %q requires approval but approval mode is 'deny'", tc.Function.Name), ToolResult: errMsg})
-			execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: errMsg, err: fmt.Errorf("tool denied")}
-			continue
-		}
-		if l.ApprovalMode == "ask" && l.classifyDanger(tc.Function.Name, tc.Function.Arguments) {
-			if !l.approveTool(tc.Function.Name, tc.Function.Arguments) {
-				errMsg := fmt.Sprintf("error: tool %q was denied by user", tc.Function.Name)
-				l.emitHook(HookEvent{Event: ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
-				l.emitHook(HookEvent{Event: ToolEnd, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, ToolError: fmt.Sprintf("tool %q was denied by user", tc.Function.Name), ToolResult: errMsg})
-				execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: errMsg, err: fmt.Errorf("tool denied")}
-				continue
-			}
-		}
-
-		go func() {
-			abbreviated := abbreviateArgs(tc.Function.Arguments, 80)
-
-			isTask := tc.Function.Name == "task"
-			var taskRole, taskPrompt string
-			if isTask && l.OnSubAgent != nil {
-				taskRole, taskPrompt = parseTaskArgs(tc.Function.Arguments)
-			}
-
-			var releaseSubAgent, releaseTool func()
-
-			if isTask && l.subAgentSem != nil {
-				select {
-				case l.subAgentSem <- struct{}{}:
-					releaseSubAgent = func() { <-l.subAgentSem }
-				case <-ctx.Done():
-					execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: "cancelled", err: ctx.Err()}
-					return
-				}
-			}
-			if l.toolSem != nil {
-				select {
-				case l.toolSem <- struct{}{}:
-					releaseTool = func() { <-l.toolSem }
-				case <-ctx.Done():
-					if releaseSubAgent != nil {
-						releaseSubAgent()
-					}
-					execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: "cancelled", err: ctx.Err()}
-					return
-				}
-			}
-			defer func() {
-				if releaseTool != nil {
-					releaseTool()
-				}
-				if releaseSubAgent != nil {
-					releaseSubAgent()
-				}
-			}()
-
-			if isTask && l.OnSubAgent != nil {
-				l.OnSubAgent(SubAgentInfo{Role: taskRole, Prompt: taskPrompt})
-			}
-
-			if l.OnTool != nil {
-				l.OnTool(ToolInfo{Name: tc.Function.Name, Args: abbreviated})
-			}
-
-			l.emitHook(HookEvent{
-				Event:    ToolStart,
-				ToolName: tc.Function.Name,
-				ToolArgs: tc.Function.Arguments,
-			})
-
-			start := time.Now()
-
-			runCtx := ctx
-			var toolSpan trace.Span
-			if l.OtelEnabled {
-				if isTask {
-					runCtx, toolSpan = observability.StartSubAgent(ctx, taskRole, taskPrompt)
-				} else {
-					runCtx, toolSpan = observability.StartTool(ctx, tc.Function.Name, tc.Function.Arguments)
-				}
-			}
-
-			res, err := l.Registry.Execute(runCtx, tc.Function.Name, tc.Function.Arguments)
-			if l.OtelEnabled && toolSpan != nil {
-				if isTask {
-					observability.FinishSubAgent(toolSpan, err)
-				} else {
-					observability.FinishTool(toolSpan, res, err)
-				}
-				toolSpan.End()
-			}
-			duration := time.Since(start)
-
-			errStr := ""
-			if err != nil {
-				errStr = err.Error()
-				res = fmt.Sprintf("error: %v", err)
-			} else if len(res) > ToolResultMaxLen {
-				res = res[:ToolResultMaxLen] + "\n...[truncated]..."
-			}
-
-			if isTask && l.OnSubAgent != nil {
-				l.OnSubAgent(SubAgentInfo{Role: taskRole, Prompt: taskPrompt, Duration: duration, Error: errStr})
-			}
-
-			if l.OnTool != nil {
-				info := ToolInfo{Name: tc.Function.Name, Args: abbreviated, Duration: duration, Result: res}
-				if err != nil {
-					info.Error = err.Error()
-				}
-				l.OnTool(info)
-			}
-
-			l.emitHook(HookEvent{
-				Event:      ToolEnd,
-				ToolName:   tc.Function.Name,
-				ToolArgs:   tc.Function.Arguments,
-				ToolResult: res,
-				DurationMs: duration.Milliseconds(),
-				ToolError:  errStr,
-			})
-
-			execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: res, dur: duration, err: err}
-		}()
-	}
-
-	for range len(calls) {
-		r := <-execResults
-		ordered[r.idx] = r
-	}
-
-	for i, r := range ordered {
-		results[i] = ToolResult{
-			Name:     r.name,
-			Args:     r.args,
-			Result:   r.content,
-			Error:    r.err,
-			Duration: r.dur,
-		}
-		*messages = append(*messages, types.ToolResultMsg(r.callID, r.name, r.content))
-		l.persistMessage((*messages)[len(*messages)-1])
-	}
-
-	return results
-}
-
-// runLegacy executes the original inline agent loop (backward compatible).
-// getAssistantMessage returns the next assistant message with retry logic.
-// If the response has finish_reason="length" and tool calls, it errors rather
-// than executing potentially truncated tool calls.
-// Uses the errorclassify package for structured classification and recovery hints.
-func (l *Loop) getAssistantMessage(ctx context.Context, req types.ChatRequest) (types.Message, bool, error) {
-	var lastMsg types.Message
-	var wasStreamed bool
-	var lastErr error
-	compactAttempts := 0
-	providerSwapped := false
-
-	for attempt := 0; attempt <= l.MaxRetries; attempt++ {
-		var msg types.Message
-		var streamed bool
-		var err error
-
-		if sp, ok := l.Provider.(StreamProvider); ok && l.OnToken != nil {
-			msg, err = l.runStream(ctx, sp, req)
-			streamed = true
-		} else {
-			var resp *types.ChatResponse
-			resp, err = l.Provider.Send(ctx, req)
-			if err == nil {
-				l.captureUsage(resp)
-				if len(resp.Choices) == 0 {
-					err = fmt.Errorf("no choices in response")
-				} else {
-					msg = resp.Choices[0].Message
-
-					// Surface model refusal as content so it is visible to the user.
-					if msg.Content == "" && msg.Refusal != "" {
-						msg.Content = msg.Refusal
-					}
-
-					// Fire the thinking callback for non-streaming reasoning content
-					// (streaming path handles this via StreamDelta in runStream).
-					if msg.ReasoningContent != "" && l.OnThinking != nil {
-						l.OnThinking(msg.ReasoningContent)
-					}
-
-					finish := resp.Choices[0].FinishReason
-					if finish == "content_filter" && msg.Content == "" {
-						err = fmt.Errorf("response blocked by content filter")
-						msg = types.Message{}
-					} else if finish == "length" && len(msg.ToolCalls) > 0 {
-						err = fmt.Errorf("response truncated (finish_reason=length), discarding %d tool calls", len(msg.ToolCalls))
-						msg = types.Message{}
-					} else if msg.Content == "" && len(msg.ToolCalls) == 0 {
-						err = fmt.Errorf("non-streaming response produced no content (finish_reason=%s)", finish)
-						msg = types.Message{}
-					}
-				}
-			}
-		}
-
-		if err == nil {
-			return msg, streamed, nil
-		}
-
-		lastMsg = msg
-		wasStreamed = streamed
-		lastErr = err
-
-		// ── Classify the error with structured recovery hints ──────
-		meta := errorclassify.ErrorMeta{
-			StatusCode:  httpStatusCode(err),
-			NumMessages: len(l.Messages),
-		}
-		classified := errorclassify.Classify(err, meta)
-
-		// ── Act on recovery hints ──────────────────────────────────
-		switch {
-		case classified.ShouldCompress && l.ContextWindow > 0 && compactAttempts < 3:
-			// Context overflow or payload too large: compact and retry.
-			beforeCount := len(l.Messages)
-			l.compactContext(ctx, 0.4) // aggressive 40% threshold
-			compactAttempts++
-			if len(l.Messages) < beforeCount {
-				req.Messages = l.Messages
-				attempt-- // don't count against MaxRetries
-				continue
-			}
-
-		case classified.ShouldRotateCred && l.FallbackProvider != nil && !providerSwapped:
-			// Auth, billing, or rate-limit: swap to fallback provider.
-			oldProvider := l.Provider
-			oldModel := l.Model
-			l.Provider = l.FallbackProvider
-			if l.FallbackModel != "" {
-				l.Model = l.FallbackModel
-				req.Model = l.FallbackModel
-			}
-			providerSwapped = true
-			// Keep the old provider as fallback for the next rotation.
-			l.FallbackProvider = oldProvider
-			l.FallbackModel = oldModel
-			attempt-- // don't count against MaxRetries
-			continue
-
-		case classified.ShouldAbort:
-			// Content policy, format error: surface immediately.
-			return types.Message{}, false, err
-		}
-
-		// ── Standard backoff for retryable errors ──────────────────
-		if classified.Retryable && attempt < l.MaxRetries {
-			backoff := l.RetryBackoff
-			if backoff == 0 {
-				backoff = time.Second
-			}
-			backoff *= time.Duration(1 << attempt)
-			select {
-			case <-time.After(backoff):
-			case <-ctx.Done():
-				return types.Message{}, false, ctx.Err()
-			}
-		} else if !classified.Retryable {
-			return types.Message{}, false, err
-		}
-	}
-	return lastMsg, wasStreamed, lastErr
-}
-
-// httpStatusCode extracts the HTTP status code from a provider error.
-// Parses the common "provider returned NNN: body" format used by OpenAIClient.
-func httpStatusCode(err error) int {
-	if err == nil {
-		return 0
-	}
-	msg := err.Error()
-	// Match "provider returned NNN: ..."
-	const prefix = "provider returned "
-	for i := 0; i+len(prefix) <= len(msg); i++ {
-		if msg[i:i+len(prefix)] == prefix {
-			rest := msg[i+len(prefix):]
-			end := 0
-			for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
-				end++
-			}
-			if end == 3 && rest[end] == ':' {
-				var code int
-				for j := 0; j < 3; j++ {
-					code = code*10 + int(rest[j]-'0')
-				}
-				return code
-			}
-			break
-		}
-	}
-	return 0
-}
-
-// captureUsage adds response token usage to the running total,
-// including detailed breakdowns (reasoning, cached) when provided.
-func (l *Loop) captureUsage(resp *types.ChatResponse) {
-	l.TotalTokens.PromptTokens += resp.Usage.PromptTokens
-	l.TotalTokens.CompletionTokens += resp.Usage.CompletionTokens
-	l.TotalTokens.TotalTokens += resp.Usage.TotalTokens
-	l.LastPromptTokens = resp.Usage.PromptTokens
-
-	if d := resp.Usage.CompletionTokensDetails; d != nil {
-		l.TotalReasoningTokens += d.ReasoningTokens
-	}
-	if d := resp.Usage.PromptTokensDetails; d != nil {
-		l.TotalCachedPromptTokens += d.CachedTokens
-	}
-}
-
-// captureStreamUsage accumulates token details from a streaming usage report
-// (sent by providers in the final SSE chunk when stream_options.include_usage is set).
-func (l *Loop) captureStreamUsage(u *types.Usage) {
-	l.TotalTokens.PromptTokens += u.PromptTokens
-	l.TotalTokens.CompletionTokens += u.CompletionTokens
-	l.TotalTokens.TotalTokens += u.TotalTokens
-	l.LastPromptTokens = u.PromptTokens
-	if d := u.CompletionTokensDetails; d != nil {
-		l.TotalReasoningTokens += d.ReasoningTokens
-	}
-	if d := u.PromptTokensDetails; d != nil {
-		l.TotalCachedPromptTokens += d.CachedTokens
-	}
-}
-
-// setStreamUsageAttrs enriches a stream span with token detail attributes.
-func (l *Loop) setStreamUsageAttrs(span trace.Span, u *types.Usage) {
-	span.SetAttributes(
-		attribute.Int("llm.prompt_tokens", u.PromptTokens),
-		attribute.Int("llm.completion_tokens", u.CompletionTokens),
-		attribute.Int("llm.total_tokens", u.TotalTokens),
-	)
-	if d := u.CompletionTokensDetails; d != nil && d.ReasoningTokens > 0 {
-		span.SetAttributes(attribute.Int("llm.reasoning_tokens", d.ReasoningTokens))
-	}
-	if d := u.PromptTokensDetails; d != nil && d.CachedTokens > 0 {
-		span.SetAttributes(attribute.Int("llm.cached_prompt_tokens", d.CachedTokens))
-	}
-}
-
-// EstimatedTokens returns the estimated token count for all messages.
-func (l *Loop) EstimatedTokens() int {
-	total := 0
-	for _, m := range l.Messages {
-		total += len(m.Content)
-		for _, tc := range m.ToolCalls {
-			total += len(tc.Function.Arguments) + len(tc.Function.Name)
-		}
-	}
-	return total / 4
-}
-
-// toolExecResult holds the outcome of a single tool execution.
-type toolExecResult struct {
-	idx     int
-	callID  string
-	name    string
-	args    string
-	content string
-	dur     time.Duration
-	err     error
-}
-
-// toolCallHash returns a SHA-256 hash of tool name, arguments, and result for loop detection.
-// Including args prevents false positives when the same tool returns identical success
-// messages for different inputs (e.g. writing different files).
-func toolCallHash(name, args, content string) string {
-	h := sha256.New()
-	h.Write([]byte(name))
-	h.Write([]byte{0})
-	h.Write([]byte(args))
-	h.Write([]byte{0})
-	h.Write([]byte(content))
-	return hex.EncodeToString(h.Sum(nil))
-}
-
-// parseTaskArgs extracts a display-friendly role and prompt from a task
-// tool's JSON arguments. Returns ("default", prompt-abbreviation) when
-// the role is empty or the JSON is unparseable.
-func parseTaskArgs(args string) (role, prompt string) {
-	var p struct {
-		Description string `json:"description"`
-		Prompt      string `json:"prompt"`
-		Role        string `json:"role"`
-	}
-	if err := json.Unmarshal([]byte(args), &p); err != nil {
-		return "default", ""
-	}
-	role = p.Role
-	if role == "" {
-		role = "default"
-	}
-	return role, abbreviateArgs(p.Description, 60)
-}
-
-// messageTokens estimates the token count of a single message using chars/4
-// for content plus tool-call arguments. Applies a 10-token floor for role/metadata.
-func messageTokens(m types.Message) int {
-	tokens := len(m.Content) / 4
-	for _, tc := range m.ToolCalls {
-		tokens += len(tc.Function.Arguments)/4 + len(tc.Function.Name)/4
-	}
-	if tokens < 10 {
-		tokens = 10
-	}
-	return tokens
-}
-
-// truncateRunes slices s to at most maxLen runes, preserving head and tail
-// with an ellipsis marker in between. Operates on rune boundaries to avoid
-// corrupting multi-byte UTF-8 characters.
-func truncateRunes(s string, maxLen int) string {
-	runes := []rune(s)
-	if len(runes) <= maxLen {
-		return s
-	}
-	headLen := maxLen * 2 / 3
-	tailLen := maxLen / 3
-	return string(runes[:headLen]) + "\n...[truncated]...\n" + string(runes[len(runes)-tailLen:])
-}
-
-// pruneMessages replaces large tool and assistant messages with abbreviated
-// markers to reduce token load before LLM summarization. Tool outputs (which
-// also carry inner-executor summaries in the dual-loop path) become compact
-// summary markers; assistant messages are truncated with rune-safe
-// head+tail preservation.
-func pruneMessages(msgs []types.Message, maxLen int) []types.Message {
-	out := make([]types.Message, len(msgs))
-	for i, m := range msgs {
-		out[i] = m
-		if len(m.Content) <= maxLen {
-			continue
-		}
-		switch m.Role {
-		case "tool":
-			lines := strings.Count(m.Content, "\n") + 1
-			chars := len(m.Content)
-			out[i].Content = fmt.Sprintf("[tool %s output — %d lines, %d chars]",
-				m.Name, lines, chars)
-		case "assistant":
-			if len(m.ToolCalls) > 0 {
-				continue
-			}
-			out[i].Content = truncateRunes(m.Content, maxLen)
-		}
-	}
-	return out
-}
-
-// compactContext checks if the estimated token count exceeds the given
-// fraction of ContextWindow. If threshold is 0, defaults to 0.5 (50%).
-// If over budget, it uses the LLM to summarize old messages into a
-// structured summary, preserving the system message and recent turns.
-// Falls back to simple trimming if the LLM call fails or returns empty.
-func (l *Loop) compactContext(ctx context.Context, threshold float64) {
-	if l.ineffectiveCompactions >= 2 {
-		return
-	}
-
-	if threshold <= 0 {
-		threshold = 0.5
-	}
-
-	target := int(float64(l.ContextWindow) * threshold)
-	if target < minContextFloor && l.ContextWindow >= minContextFloor {
-		target = minContextFloor
-	}
-
-	estimatedTokens := l.LastPromptTokens
-	if estimatedTokens <= 0 {
-		estimatedTokens = l.EstimatedTokens()
-	}
-	if estimatedTokens <= target {
-		return
-	}
-
-	sysMsg := l.Messages[0]
-	rest := l.Messages[1:]
-	if len(rest) <= 4 {
-		return
-	}
-
-	// Token-budget preservation: keep as many recent messages as fit in
-	// 20% of the context window, with a 2K floor that never exceeds half
-	// the window.
-	tokenBudget := l.ContextWindow / 5
-	if tokenBudget < 2000 {
-		tokenBudget = 2000
-	}
-	if tokenBudget > l.ContextWindow/2 {
-		tokenBudget = l.ContextWindow / 2
-	}
-
-	keepRecent := 0
-	keptTokens := 0
-	for i := len(rest) - 1; i >= 0; i-- {
-		msgTokens := messageTokens(rest[i])
-		if keptTokens+msgTokens > tokenBudget && keepRecent >= 4 {
-			break
-		}
-		keptTokens += msgTokens
-		keepRecent++
-	}
-	if keepRecent < 2 {
-		keepRecent = 2
-	}
-	if len(rest) <= keepRecent {
-		return
-	}
-
-	split := len(rest) - keepRecent
-
-	// Boundary alignment: don't split inside a tool-call/response group.
-	for split > 0 && rest[split].Role == "tool" {
-		split--
-	}
-	if split > 0 && rest[split].Role == "assistant" && len(rest[split].ToolCalls) > 0 {
-		split--
-	}
-
-	// Last-user-message anchor: ensure the active task is never lost.
-	lastUserIdx := -1
-	for i := len(rest) - 1; i >= 0; i-- {
-		if rest[i].Role == "user" {
-			lastUserIdx = i
-			break
-		}
-	}
-	if lastUserIdx >= 0 && lastUserIdx < split {
-		split = lastUserIdx
-	}
-	if split <= 0 {
-		return
-	}
-
-	oldMsgs := rest[:split]
-	keepMsgs := rest[split:]
-
-	// Prune large tool outputs and inner-loop summaries before summarization.
-	oldMsgs = pruneMessages(oldMsgs, pruneMessageMaxLen)
-
-	var sb strings.Builder
-	if l.PreviousSummary != "" {
-		sb.WriteString("You are updating a context compaction summary. A previous compaction produced the summary below. New conversation turns have occurred since then. PRESERVE all still-relevant information, ADD new actions, move completed items, remove obsolete info.\n\n")
-		sb.WriteString("PREVIOUS SUMMARY:\n")
-		sb.WriteString(l.PreviousSummary)
-		sb.WriteString("\n\nNEW TURNS TO INCORPORATE:\n\n")
-	} else {
-		sb.WriteString("Summarize the following conversation excerpt. Keep the structured format below.\n\n")
-	}
-	sb.WriteString("## Goal\n")
-	sb.WriteString("(what the user is working on)\n\n")
-	sb.WriteString("## Completed Work\n")
-	sb.WriteString("(what was accomplished)\n\n")
-	sb.WriteString("## Active Work\n")
-	sb.WriteString("(what is in progress)\n\n")
-	sb.WriteString("## Pending Tasks\n")
-	sb.WriteString("(what still needs to be done)\n\n")
-	sb.WriteString("## Key Decisions\n")
-	sb.WriteString("(important decisions made)\n\n")
-	sb.WriteString("## Files Modified\n")
-	sb.WriteString("(list of files that were read, edited, or created)\n\n")
-	sb.WriteString("---\n")
-	sb.WriteString("Conversation excerpt to summarize:\n\n")
-	for _, m := range oldMsgs {
-		if m.Content != "" {
-			sb.WriteString(fmt.Sprintf("%s: %s\n", m.Role, m.Content))
-		}
-		for _, tc := range m.ToolCalls {
-			sb.WriteString(fmt.Sprintf("[tool:%s] %s\n", tc.Function.Name, tc.Function.Arguments))
-		}
-	}
-
-	compactProvider := l.CompactProvider
-	if compactProvider == nil {
-		compactProvider = l.Provider
-	}
-	compactModel := l.CompactModel
-	if compactModel == "" {
-		compactModel = l.Model
-	}
-
-	req := types.ChatRequest{
-		Model:     compactModel,
-		MaxTokens: 4096,
-		Messages: []types.Message{
-			types.UserMsg(sb.String()),
-		},
-	}
-
-	beforeEstimate := l.EstimatedTokens()
-	resp, err := compactProvider.Send(ctx, req)
-	if err != nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
-		l.trimContext()
-		return
-	}
-
-	summary := resp.Choices[0].Message.Content
-	l.PreviousSummary = summary
-
-	newMsgs := []types.Message{sysMsg}
-	if l.SystemPrompt == "" {
-		newMsgs[0] = types.SystemMsg(summary)
-	} else {
-		newMsgs = append(newMsgs, types.SystemMsg("Previous conversation summary:\n"+summary))
-	}
-	newMsgs = append(newMsgs, keepMsgs...)
-	l.Messages = newMsgs
-
-	afterEstimate := l.EstimatedTokens()
-	if beforeEstimate > 0 {
-		savings := float64(beforeEstimate-afterEstimate) / float64(beforeEstimate)
-		if savings < 0.10 {
-			l.ineffectiveCompactions++
-		} else {
-			l.ineffectiveCompactions = 0
-		}
-	}
-	l.lastCompactionTokens = afterEstimate
-}
-
-// trimContext removes old messages when the estimated token count exceeds
-// 80% of ContextWindow. Preserves the system message and recent exchanges.
-// This is a fallback when LLM-powered compaction is unavailable.
-func (l *Loop) trimContext() {
-	target := l.ContextWindow * 4 / 5
-	totalChars := 0
-	for _, m := range l.Messages {
-		totalChars += len(m.Content)
-		for _, tc := range m.ToolCalls {
-			totalChars += len(tc.Function.Arguments) + len(tc.Function.Name)
-		}
-	}
-	if totalChars/4 <= target {
-		return
-	}
-
-	sysMsg := l.Messages[0]
-	rest := l.Messages[1:]
-	for len(rest) > 0 && totalChars/4 > target {
-		removed := len(rest[0].Content)
-		for _, tc := range rest[0].ToolCalls {
-			removed += len(tc.Function.Arguments) + len(tc.Function.Name)
-		}
-		totalChars -= removed
-		rest = rest[1:]
-	}
-
-	newMsgs := make([]types.Message, 1, len(rest)+1)
-	newMsgs[0] = sysMsg
-	newMsgs = append(newMsgs, rest...)
-	l.Messages = newMsgs
-}
-
-// runStream handles a streaming request and returns the assembled assistant
-// message (content + any tool calls). Tool calls accumulated from the stream
-// are returned to Run, which executes them exactly like the non-streaming
-// path. Content deltas are emitted via OnToken as they arrive.
-// If finish_reason is "length" and tool calls are present, returns an error
-// to prevent executing truncated tool calls.
-func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatRequest) (types.Message, error) {
-	var streamSpan trace.Span
-	if l.OtelEnabled {
-		ctx, streamSpan = observability.StartStream(ctx, req.Model)
-	}
-
-	start := time.Now()
-	chunks, errs := sp.SendStream(ctx, req)
-
-	var content strings.Builder
-	var reasoning strings.Builder
-	toolCallMap := make(map[int]*types.ToolCall)
-	var finishReason string
-	var firstToken bool
-	var tokenCount int
-	var usageCaptured bool
-
-	// recordVerbose captures the full streamed response (content +
-	// reasoning + tool calls) and the stream-termination path on the
-	// llm.stream span so the dual-loop conversation is visible in Jaeger.
-	// Gated on OtelVerbose — no work when verbose tracing is off.
-	recordVerbose := func(path string) {
-		if !l.OtelVerbose || streamSpan == nil {
-			return
-		}
-		msg := l.assembleStreamed(content.String(), toolCallMap)
-		msg.ReasoningContent = reasoning.String()
-		observability.RecordAssistantResponse(streamSpan, msg, finishReason)
-		observability.RecordStreamEnd(streamSpan, path, finishReason, usageCaptured, len(msg.Content), len(msg.ToolCalls))
-	}
-
-	for {
-		select {
-		case chunk, ok := <-chunks:
-			if !ok {
-				recordVerbose("channel_closed")
-				if streamSpan != nil {
-					observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
-					streamSpan.End()
-				}
-				return l.checkTruncatedStream(content.String(), toolCallMap, finishReason)
-			}
-
-			if !firstToken {
-				firstToken = true
-				if streamSpan != nil {
-					streamSpan.SetAttributes(attribute.Int64("llm.ttft_ms", time.Since(start).Milliseconds()))
-				}
-			}
-
-			if len(chunk.Choices) == 0 {
-				// The final chunk may carry usage with no choices (pure usage marker).
-				if chunk.Usage != nil {
-					usageCaptured = true
-					l.captureStreamUsage(chunk.Usage)
-					if streamSpan != nil {
-						l.setStreamUsageAttrs(streamSpan, chunk.Usage)
-					}
-				}
-				continue
-			}
-
-			delta := chunk.Choices[0].Delta
-
-			if delta.ReasoningContent != "" {
-				reasoning.WriteString(delta.ReasoningContent)
-				if l.OnThinking != nil {
-					l.OnThinking(delta.ReasoningContent)
-				}
-			}
-
-			if delta.Content != "" {
-				content.WriteString(delta.Content)
-				tokenCount++
-				if l.OnToken != nil {
-					l.OnToken(delta.Content)
-				}
-			}
-
-			for _, tc := range delta.ToolCalls {
-				idx := tc.Index
-				if existing, ok := toolCallMap[idx]; ok {
-					existing.Function.Arguments += tc.Function.Arguments
-					if tc.ID != "" {
-						existing.ID = tc.ID
-					}
-					if tc.Function.Name != "" {
-						existing.Function.Name = tc.Function.Name
-					}
-				} else {
-					newTC := types.ToolCall{
-						Index: idx,
-						ID:    tc.ID,
-						Type:  tc.Type,
-						Function: types.ToolCallFn{
-							Name:      tc.Function.Name,
-							Arguments: tc.Function.Arguments,
-						},
-					}
-					toolCallMap[idx] = &newTC
-				}
-			}
-
-			if chunk.Choices[0].FinishReason != nil {
-				finishReason = *chunk.Choices[0].FinishReason
-			}
-
-			if finishReason != "" {
-				// finish_reason received — capture usage from this chunk
-				// (providers like DeepSeek send usage in the same chunk as
-				// the finish_reason), then drain any remaining chunks.
-				if chunk.Usage != nil {
-					usageCaptured = true
-					l.captureStreamUsage(chunk.Usage)
-					if streamSpan != nil {
-						l.setStreamUsageAttrs(streamSpan, chunk.Usage)
-					}
-				}
-				for chunk := range chunks {
-					if chunk.Usage != nil {
-						usageCaptured = true
-						l.captureStreamUsage(chunk.Usage)
-						if streamSpan != nil {
-							l.setStreamUsageAttrs(streamSpan, chunk.Usage)
-						}
-					}
-				}
-				recordVerbose("finish_reason")
-				if streamSpan != nil {
-					observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
-					streamSpan.End()
-				}
-				return l.checkTruncatedStream(content.String(), toolCallMap, finishReason)
-			}
-
-		case err := <-errs:
-			if err != nil {
-				if streamSpan != nil {
-					observability.RecordError(streamSpan, err)
-					streamSpan.End()
-				}
-				return types.Message{}, err
-			}
-			recordVerbose("errs_nil")
-			if streamSpan != nil {
-				observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
-				streamSpan.End()
-			}
-			return l.checkTruncatedStream(content.String(), toolCallMap, finishReason)
-
-		case <-ctx.Done():
-			if streamSpan != nil {
-				observability.RecordError(streamSpan, ctx.Err())
-				streamSpan.End()
-			}
-			return types.Message{}, ctx.Err()
-		}
-	}
-}
-
-// checkTruncatedStream returns the assembled message or an error if the
-// stream was truncated (finish_reason=length) with pending tool calls,
-// or if the response was blocked by a content filter with no usable output.
-func (l *Loop) checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, finishReason string) (types.Message, error) {
-	msg := l.assembleStreamed(content, toolCallMap)
-	if finishReason == "content_filter" && content == "" && len(msg.ToolCalls) == 0 {
-		return types.Message{}, fmt.Errorf("streamed response blocked by content filter")
-	}
-	if finishReason == "length" && len(msg.ToolCalls) > 0 {
-		return types.Message{}, fmt.Errorf("streamed response truncated (finish_reason=length), discarding %d tool calls", len(msg.ToolCalls))
-	}
-	if content == "" && len(msg.ToolCalls) == 0 {
-		return types.Message{}, fmt.Errorf("streamed response produced no content (finish_reason=%s)", finishReason)
-	}
-	return msg, nil
-}
-
-// assembleStreamed builds the assistant message from accumulated stream state,
-// ordering tool calls by their delta index.
-func (l *Loop) assembleStreamed(content string, toolCalls map[int]*types.ToolCall) types.Message {
-	msg := types.Message{
-		Role:    "assistant",
-		Content: content,
-	}
-	if len(toolCalls) > 0 {
-		indices := make([]int, 0, len(toolCalls))
-		for idx := range toolCalls {
-			indices = append(indices, idx)
-		}
-		sort.Ints(indices)
-		for _, idx := range indices {
-			msg.ToolCalls = append(msg.ToolCalls, *toolCalls[idx])
-		}
-	}
-	return msg
-}
-
-// buildToolDefs builds the OpenAI-format tool definitions from the registry.
-func (l *Loop) buildToolDefs() []types.ToolDef {
-	toolNames := l.Registry.List()
-	toolDefs := make([]types.ToolDef, 0, len(toolNames))
-	for _, name := range toolNames {
-		t := l.Registry.Get(name)
-		if t == nil {
-			continue
-		}
-		toolDefs = append(toolDefs, types.ToolDef{
-			Type: "function",
-			Function: types.ToolFn{
-				Name:        t.Name(),
-				Description: t.Description(),
-				Parameters:  json.RawMessage(t.Schema()),
-			},
-		})
-	}
-	return toolDefs
-}
-
-// abbreviateArgs truncates JSON args to maxLen characters with ellipsis.
-// Handles multi-byte UTF-8 by counting runes, not bytes.
-func abbreviateArgs(args string, maxLen int) string {
-	runes := []rune(args)
-	if len(runes) <= maxLen {
-		return args
-	}
-	return string(runes[:maxLen-3]) + "..."
-}
-
-// classifyDanger returns true if the given tool+args combination requires
-// user approval. It first checks whether the tool implements tools.DangerClassifier
-// for argument-level classification; tools without that interface are never dangerous.
-func (l *Loop) classifyDanger(name, args string) bool {
-	if t := l.Registry.Get(name); t != nil {
-		if dc, ok := t.(tools.DangerClassifier); ok {
-			return dc.IsDangerous(args)
-		}
-	}
-	return false
-}
-
-// approveTool prompts the user on stderr/stdin to approve a tool call.
-// Returns true if the user approves. If ApproveFn is set, it delegates to that instead.
-func (l *Loop) approveTool(name, args string) bool {
-	abbr := abbreviateArgs(args, 120)
-	if l.ApproveFn != nil {
-		return l.ApproveFn(name, abbr)
-	}
-	fmt.Fprintf(os.Stderr, "\n  ⚠ Approve %s(%s)? [y/N]: ", name, abbr)
-	os.Stderr.Sync()
-
-	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Buffer(make([]byte, 0, 1024), 1024)
-	if scanner.Scan() {
-		input := strings.ToLower(strings.TrimSpace(scanner.Text()))
-		return input == "y" || input == "yes"
-	}
-	return false
 }

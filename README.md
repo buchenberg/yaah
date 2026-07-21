@@ -60,6 +60,7 @@ curl -fsSL https://raw.githubusercontent.com/buchenberg/yaah/main/install.sh | s
 ```powershell
 iwr -useb https://raw.githubusercontent.com/buchenberg/yaah/main/install.ps1 | iex
 ```
+
 ### From source (Go 1.25+ required)
 
 ```bash
@@ -70,184 +71,94 @@ go install github.com/buchenberg/yaah@latest
 
 A `Dockerfile` and `docker-compose.yml` are included for containerized use
 with Jaeger tracing. The `yaah` service is scoped behind the `cli` profile —
-add `--profile cli` to `docker compose up` and `run` commands, or `-p cli` to
-`docker compose exec`.
-
-Export your API keys, then build the image:
+add `--profile cli` to `docker compose up` and `run` commands.
 
 ```bash
 export DEEPSEEK_API_KEY=sk-...
-export ZAI_API_KEY=...
 docker compose --profile cli build
-```
-
-**Start both containers in the background:**
-
-```bash
-docker compose --profile cli up -d
-```
-
-This starts `yaah` and `jaeger`. Traces appear at http://localhost:16686.
-The yaah service mounts your `~/.yaah` config directory and enables
-OpenTelemetry via `YAAH_OTEL_ENABLED=true`.
-
-**Run a one-shot prompt:**
-
-```bash
+docker compose --profile cli up -d    # starts yaah + jaeger
 docker compose --profile cli run --rm yaah "explain this codebase"
 ```
 
-**Start an interactive REPL:**
-
-```bash
-docker compose --profile cli run --rm yaah
-```
-
-**Attach a shell to the running container:**
-
-```bash
-docker compose --profile cli exec yaah /bin/bash
-```
-
-**Run only the tracing backend:**
-
-```bash
-docker compose up -d jaeger
-```
-
-See [`docs/otel-setup.md`](./docs/otel-setup.md) for the full observability
-guide.
+Traces appear at http://localhost:16686. See [`docs/otel-setup.md`](./docs/otel-setup.md).
 
 ## Quick start
 
-Check your setup, then add a provider API key:
-
 ```bash
-yaah doctor
+yaah doctor              # check your setup
+yaah config edit         # add a provider API key
+yaah "explain this repo" # run a one-shot prompt
+yaah                     # start the interactive REPL
+yaah tui                 # launch the rich TUI
 ```
 
-```bash
-yaah config edit
-```
-
-Start chatting — interactive REPL, one-shot prompt, or the rich TUI:
+### One-shot options
 
 ```bash
-yaah
+yaah --approval allow "run the tests"       # auto-approve dangerous tools
+YAAH_APPROVAL=allow yaah "deploy"           # env-var equivalent
+yaah --resume <session-id> "continue"       # resume a saved session
 ```
 
-```bash
-yaah "explain this codebase"
+## Features
+
+### Dual-loop executor (delegate)
+
+yaah uses a planner/executor dual-loop where the planner delegates
+tool-intensive work to a dedicated executor running on a potentially cheaper
+model. The `delegate` tool is always available — the agent chooses per-action
+whether to work inline or delegate.
+
+- **Model tiering**: run the executor on a cheaper model (e.g. deepseek-v4-flash)
+  while the planner uses a stronger reasoning model (deepseek-v4-pro).
+- **Auto-approval**: the executor runs tools without user prompts — bash,
+  write, edit all auto-execute when delegated.
+- **Spontaneous delegation**: the agent is prompted to delegate batch work,
+  test runs, and multi-step tool sequences without being asked.
+- **Self-correcting**: the executor retries failed tools before reporting
+  errors to the planner.
+- **No gate**: delegate is always available alongside all tools (additive,
+  not substitutive). No config flag to turn it on.
+
 ```
-
-```bash
-yaah tui
+# Config (optional — executor falls back to main provider/model)
+agents:
+  executor:
+    provider: deepseek
+    model: deepseek-v4-flash
+    max_iterations: 10
 ```
+See [`docs/BENCHMARK.md`](./docs/BENCHMARK.md) for token/cost benchmarks —
+complex tasks push ~65% of tokens to the executor on the cheap model.
 
-Headless / CI (override approval), check for updates, or resume a session:
+### Sub-agents (`task` tool)
 
-```bash
-yaah --approval allow "write a script"
-```
+The `task` tool spawns isolated sub-agents with role-based tool sets,
+iteration budgets, and timeouts:
 
-```bash
-YAAH_APPROVAL=allow yaah "run the tests"
-```
+| Role | Tool set | Iterations | Timeout | Can spawn |
+|---|---|---|---|---|
+| `worker` | read, write, edit, delete, grep, glob, ls, bash, powershell, webfetch | 25 | 120s | no |
+| `reviewer` | read, grep, glob, ls | 10 | — | no |
+| `planner` | worker set + `task` | 50 | 300s | yes |
 
-```bash
-yaah update
-```
+Multiple `task` calls in one turn fan out in parallel (up to
+`agent.subagent.max_concurrency`, default 3). Nesting depth is bounded
+structurally — each level decrements a counter seeded from `max_depth`.
+Timeouts return structured JSON (`{"error":"timed out","partial":"..."}`).
 
-```bash
-yaah --resume <session-id> "continue where we left off"
-```
-
-```bash
-yaah session list
-```
-
-### MCP servers
-List, add (stdio or HTTP), and remove MCP servers:
-
-```bash
-yaah mcp list
-```
-
-```bash
-yaah mcp add <name> <command> [args...]
-```
-
-```bash
-yaah mcp add <name> --url http://localhost:3000
-```
-
-```bash
-yaah mcp remove <name>
-```
-
-### Persistent memory
-SQLite + FTS5 memory that persists across sessions:
-
-```bash
-yaah memory add "user prefers dark mode" --tags '["ui"]'
-```
-
-```bash
-yaah memory search "dark mode"
-```
-
-The agent can also use `memory_search` and `memory_add` tools during conversations.
-
-### Project instructions
-Project `AGENTS.md` / `CLAUDE.md` files are automatically loaded and injected into the system prompt. yaah walks up from the current directory to find them.
-
-### Todo lists
-The agent can create and manage task lists during conversations using the `todowrite` tool.
-
-### Sub-agents
-
-The `task` tool delegates isolated subtasks to a sub-agent running under a
-**role** that selects its tool set, iteration budget, and timeout:
-
-- **`worker`** — code changes, file edits, test runs. Has `read`, `write`,
-  `edit`, `delete`, `grep`, `glob`, `ls`, `bash`, `powershell`, `webfetch`.
-  Default: 25 iterations, 120s timeout.
-- **`reviewer`** — read-only analysis and code review. Has only `read`,
-  `grep`, `glob`, `ls`. Default: 10 iterations, no timeout.
-- **`planner`** — decomposition and coordination. Inherits the worker tool
-  set and can spawn further sub-agents via `task`. Default: 50 iterations,
-  300s timeout.
-
-Multiple `task` calls in one turn fan out in parallel up to the configured
-concurrency cap (`agent.subagent.max_concurrency`, default 3). Nesting depth
-is bounded structurally — each level decrements a counter seeded from
-`max_depth` — so planner → worker → [stop] chains terminate naturally.
-
-Sub-agents honour per-call overrides (`timeout_seconds`, `max_iterations`) or
-their role defaults. On timeout or cancellation the tool returns structured
-JSON (`{"error":"timed out","partial":"..."}`) so the parent can inspect
-partial output and decide whether to retry or continue.
-
-All `agent.subagent.*` settings in `config.yaml` are detailed in the
-[Config](#agent) section above.
+See the [Config](#config) section for all `agent.subagent.*` settings.
 
 ### Custom roles
 
-Define your own sub-agent roles by adding markdown files to `.agents/roles/`
-(project-level, walked up from cwd) or `~/.agents/roles/` (user-level). Each
-file is a YAML frontmatter block followed by the role's system guidance:
+Define your own sub-agent roles as markdown files in `.agents/roles/`
+(project-level) or `~/.agents/roles/` (user-level):
 
 ```markdown
 ---
-tools:
-  - read
-  - grep
-  - glob
-  - ls
-  - bash
+tools: [read, grep, glob, ls, bash]
 max_iterations: 30
 timeout: 180
-max_depth: 0
 ---
 
 You are a SECURITY AUDITOR. Find vulnerabilities, hardcoded secrets, and
@@ -256,9 +167,45 @@ unsafe patterns. Report findings with file paths, line numbers, and severity.
 
 The file name (without `.md`) becomes the role name. Built-in roles
 (`worker`, `reviewer`, `planner`) take precedence and cannot be overridden.
-New roles appear in the `task` tool's `role` enum automatically at startup.
-Per-role defaults can be tuned in `config.yaml` under
-`agent.subagent.roles.<name>`.
+
+### Todo lists
+
+The agent can create and manage task lists during conversations using the
+`todowrite` tool. Use `/compact` in the REPL or `:compact` in the TUI to
+summarize old messages and free up context.
+
+### Persistent memory
+
+SQLite + FTS5 memory persists across sessions:
+
+```bash
+yaah memory add "user prefers dark mode" --tags '["ui"]'
+yaah memory search "dark mode"
+```
+
+The agent uses `memory_search` and `memory_add` tools during conversations.
+
+### Session persistence
+
+Every message is persisted to SQLite in real time. Sessions survive crashes
+and process restarts:
+
+```bash
+yaah session list
+yaah session show <id>
+yaah --resume <id> "pick up where we left off"
+```
+
+### MCP servers
+
+List, add (stdio or HTTP), and remove Model Context Protocol servers:
+
+```bash
+yaah mcp list
+yaah mcp add <name> <command> [args...]
+yaah mcp add <name> --url http://localhost:3000
+yaah mcp remove <name>
+```
 
 ### REPL slash commands
 
@@ -281,70 +228,25 @@ In the TUI, type `:` to open the command palette:
 |---|---|
 | `:help` | Show available commands |
 | `:clear` | Clear chat history |
-| `:compact` | Summarize old messages to free context |
-| `:banner` | Toggle the ASCII art banner on/off |
-| `:model` | Search and switch the active model/provider |
+| `:compact` | Summarize old messages |
+| `:banner` | Toggle the ASCII art banner |
+| `:model` | Search and switch model/provider |
 | `:quit` | Exit the TUI |
 
-Type to filter the list after `:`. `:model` queries providers' model lists
-live. Press `Esc` to dismiss the palette.
+### Hook events
 
-### Session persistence
-
-Every message (user prompts, assistant responses, tool calls, and tool results)
-is persisted to SQLite in real time as the agent loop runs. If the process
-crashes mid-conversation, all messages up to that point are recoverable.
-
-```bash
-yaah session list
-```
-
-```bash
-yaah session show <id>
-```
-
-```bash
-yaah --resume <id> "pick up where we left off"
-```
-
-Sessions survive process restarts. Use `--resume` to continue a conversation
-exactly where it stopped — the agent has the full message history including
-tool call context.
-
-### Hook events (external integrations)
-
-When `hooks.dir` is set in `~/.yaah/config.yaml`, yaah appends structured JSONL
-events to `<hooks.dir>/<session-id>.jsonl` on session boundaries, turn
-boundaries, and tool calls. This enables external tools (e.g.
-[Entire.io](https://entire.io)) to track sessions for checkpoint/transcript
-integration.
+Set `hooks.dir` in config to emit structured JSONL events on session
+boundaries, turn boundaries, and tool calls:
 
 ```yaml
 hooks:
   dir: ~/.yaah/hooks
 ```
 
-Events are off by default — set `hooks.dir` to enable them.
-
-### Approval override
-
-The global approval mode can be overridden at runtime for headless or CI
-environments:
-
-```bash
-yaah --approval allow "run the tests"
-```
-
-```bash
-YAAH_APPROVAL=allow yaah "deploy"
-```
-
-Invalid values fall back to `ask` with a warning.
-
 ### OpenTelemetry observability
 
-yaah can emit traces to any OTLP-compatible backend
-(Jaeger, Grafana Tempo, OTel Collector). Enable in `config.yaml`:
+Enable in `config.yaml` to emit traces to any OTLP-compatible backend
+(Jaeger, Grafana Tempo, OTel Collector):
 
 ```yaml
 observability:
@@ -352,221 +254,96 @@ observability:
     enabled: true
 ```
 
-Every LLM call, tool execution, and sub-agent dispatch produces a span
-with duration, events, and attributes. Sub-agent internal tool calls
-appear as child spans in the trace waterfall. Jaeger setup is a single
-Docker command:
+Every LLM call, tool execution, inner loop, and sub-agent dispatch
+produces a span. Planner vs executor token attribution is included.
+Start Jaeger with `docker compose up -d jaeger`, then visit
+http://localhost:16686. Full guide at [`docs/otel-setup.md`](./docs/otel-setup.md).
+
+### Approval override
 
 ```bash
-docker compose up -d jaeger
+yaah --approval allow "run the tests"    # headless / CI
+YAAH_APPROVAL=allow yaah "deploy"        # env-var equivalent
 ```
-
-Or manually:
-
-```bash
-docker run -d --name jaeger \
-  -p 16686:16686 -p 4317:4317 \
-  cr.jaegertracing.io/jaegertracing/jaeger:2.19.0
-```
-
-Traces appear at http://localhost:16686. Dark mode is in the gear menu
-top-right. Full setup guide at [`docs/otel-setup.md`](./docs/otel-setup.md).
 
 ## Commands
 
-Start yaah — interactive REPL or one-shot:
-
 ```bash
-yaah
-```
+yaah                              # interactive REPL
+yaah "prompt"                     # one-shot
+yaah --approval allow "..."       # override approval
+yaah --resume <id> "..."          # resume session
 
-```bash
-yaah "prompt"
-```
+yaah config show                  # view config
+yaah config edit                  # edit config
+yaah doctor                       # diagnostics
 
-With approval override or session resume:
+yaah skill list                   # list skills
+yaah skill show <name>            # show a skill
 
-```bash
-yaah --approval allow "..."
-```
+yaah mcp list                     # list MCP servers
+yaah mcp add <name> <cmd> [args]  # add stdio MCP server
+yaah mcp add <name> --url <url>   # add HTTP MCP server
+yaah mcp remove <name>            # remove MCP server
 
-```bash
-yaah --resume <id> "..."
-```
+yaah memory add <text>            # store a fact
+yaah memory search <query>        # search memory
 
-Config and diagnostics:
+yaah session list                 # list sessions
+yaah session show <id>            # show session
 
-```bash
-yaah config show
-```
+yaah tui                          # launch the bubbletea TUI
 
-```bash
-yaah config edit
-```
-
-```bash
-yaah doctor
-```
-
-Skills:
-
-```bash
-yaah skill list
-```
-
-```bash
-yaah skill show <name>
-```
-
-MCP servers:
-
-```bash
-yaah mcp list
-```
-
-```bash
-yaah mcp add <name> <cmd> [args...]
-```
-
-```bash
-yaah mcp add <name> --url <url>
-```
-
-```bash
-yaah mcp remove <name>
-```
-
-Memory:
-
-```bash
-yaah memory add <text>
-```
-
-```bash
-yaah memory search <query>
-```
-
-Sessions:
-
-```bash
-yaah session list
-```
-
-```bash
-yaah session show <id>
-```
-
-TUI, updates, version:
-
-```bash
-yaah tui
-```
-
-```bash
-yaah update
-```
-
-```bash
-yaah update check
-```
-
-```bash
-yaah version
-```
-
-## Where things live
-
-```
-~/.yaah/                          # yaah-specific (minimal!)
-├── config.yaml                   #   providers, defaults
-├── AGENTS.md                     #   optional global instructions
-├── history                       #   plain-text REPL history
-├── state.db                      #   SQLite: sessions, memory
-└── mcp/<name>.json               #   MCP server manifests
-
-~/.agents/                        # cross-tool (shared with opencode, claude, hermes)
-├── AGENTS.md
-├── skills/<name>/SKILL.md
-├── agents/<name>.md
-├── commands/<name>.md
-└── mcp/<name>.json
-
-./.agents/                        # project-level (walked up from cwd)
-├── AGENTS.md
-├── skills/<name>/SKILL.md
-├── agents/<name>.md
-└── commands/<name>.md
+yaah update                       # update yaah
+yaah update check                 # check for new version
+yaah version                      # print version
 ```
 
 ## Config
 
 Edit `~/.yaah/config.yaml`. Environment variables referenced as `${VAR_NAME}`
-are substituted at load time. Missing sections fall back to built-in defaults
-so you only need to write what you're overriding.
+are substituted at load time. Missing sections fall back to defaults.
 
-### Providers
-
-At least one provider is required. Each provider has a `name` (shown in the
-UI), a `base_url` (OpenAI-compatible endpoint), and an `api_key`.
-Optionally, list `models` to restrict the model picker:
+### Full example
 
 ```yaml
 providers:
   deepseek:
-    name: DeepSeek
     base_url: https://api.deepseek.com/v1
     api_key: ${DEEPSEEK_API_KEY}
-
-  glm:
-    name: GLM
-    base_url: https://api.z.ai/api/paas/v4
-    api_key: ${ZAI_API_KEY}
-
   ollama:
-    name: Ollama
     base_url: http://localhost:11434/v1
     api_key: ollama
-```
 
-### Default
+agents:
+  default:
+    provider: deepseek
+    model: deepseek-v4-pro
+    small_model: deepseek-v4-flash
+    max_iterations: 50
+    context_window: 128000
+    approval: ask                    # ask | allow | deny
 
-Controls which provider and model are used, iteration and context budgets,
-and the approval mode:
+  executor:
+    provider: deepseek               # optional — defaults to main provider
+    model: deepseek-v4-flash         # optional — defaults to main model
+    max_iterations: 10               # inner executor iterations per turn
 
-```yaml
-default:
-  provider: deepseek
-  model: deepseek-v4-pro
-  small_model: deepseek-v4-flash
-  max_iterations: 50
-  context_window: 128000
-  approval: ask          # ask | allow | deny
-```
-
-The `provider` field is optional. When omitted, yaah picks the provider whose
-name prefix matches `model`, or the first provider alphabetically.
-
-### Agent
-
-Controls the agent loop's middleware pipeline and sub-agent lifecycle:
-
-```yaml
-agent:
   middleware:
-    enabled:             # explicit set (in order); overrides the default pipeline
+    enabled:                         # explicit set overrides default pipeline
       - steer
       - followup
       - compaction
       - approval
       - loop_detection
-    # disabled:          # remove specific middleware from the pipeline
+    # disabled:                      # remove specific middleware
     #   - approval
 
   subagent:
-    max_depth: 3         # max task calls per loop; 0 = unlimited
-    max_concurrency: 3   # simultaneous task calls per iteration; 0 = unlimited
-    default_timeout: 120 # seconds; used when no role default applies
-    roles:               # per-role overrides (all optional)
+    max_depth: 3                     # max task calls per loop
+    max_concurrency: 3               # simultaneous task calls per iteration
+    default_timeout: 120             # seconds
+    roles:
       worker:
         timeout: 120
         max_iterations: 25
@@ -578,66 +355,137 @@ agent:
         timeout: 300
         max_iterations: 50
         max_depth: 3
+      security_auditor:              # custom role — loaded from .agents/roles/
+        max_iterations: 30
+
+observability:
+  otel:
+    enabled: false
+    endpoint: localhost:4317
+    service_name: yaah
+    verbose: false                   # record full conversations in spans
+
+hooks:
+  dir: ~/.yaah/hooks                 # JSONL event log (off by default)
+
+editor: code --wait                  # config editor override
+log_level: INFO                      # DEBUG | INFO | WARN | ERROR
+
+# Optional — provider to try on primary provider failure
+fallback:
+  provider: ollama
+  model: llama3.2
 ```
 
-#### Middleware reference
+### Providers
 
-Nine middleware are available. The default pipeline (when `enabled` is unset)
-runs `steer` → `followup` → `compaction` → `approval` → `loop_detection`.
+At least one provider is required. Each has a `base_url` (OpenAI-compatible
+endpoint) and an `api_key`:
+
+```yaml
+providers:
+  deepseek:
+    base_url: https://api.deepseek.com/v1
+    api_key: ${DEEPSEEK_API_KEY}
+  ollama:
+    base_url: http://localhost:11434/v1
+    api_key: ollama
+```
+
+### Agents
+
+The `agents` block controls all agent behaviour including the planner, executor,
+middleware pipeline, and sub-agents.
+
+**`agents.default`** — the main planner loop:
+
+| Field | Default | Description |
+|---|---|---|
+| `provider` | (first alphabetically) | Provider name from `providers` |
+| `model` | — | Model name for the planner |
+| `small_model` | — | Cheaper model used for context compaction |
+| `max_iterations` | 50 | Safety cap on loop turns |
+| `context_window` | — | Token budget for compaction (0 = disabled) |
+| `approval` | `ask` | `allow`, `ask`, or `deny` for dangerous tools |
+
+**`agents.executor`** — the dual-loop tool-execution agent:
+
+| Field | Default | Description |
+|---|---|---|
+| `provider` | `default.provider` | Provider for the executor |
+| `model` | `default.model` | Model for the executor (tip: use a cheaper one) |
+| `max_iterations` | 10 | Inner executor iterations per delegation |
+
+**`agents.fallback`** — optional provider/model to use if the primary
+provider returns a transient error (429, 503):
+
+| Field | Default | Description |
+|---|---|---|
+| `provider` | — | Fallback provider name |
+| `model` | — | Fallback model name |
+
+### Middleware reference
+
+Nine middleware are available. The default pipeline runs
+`steer` → `followup` → `compaction` → `approval` → `loop_detection`.
 
 | Name | Default | Purpose |
 |---|---|---|
-| `steer` | on | High-priority mid-turn input injected before the next LLM call |
-| `followup` | on | Queued between-turn messages (e.g. from parallel agents) |
-| `compaction` | on | LLM-powered context summarization when `context_window` is exceeded |
-| `approval` | on | Gate on dangerous tools per `DangerClassifier` interface and `approval` mode |
-| `loop_detection` | on | Detect and halt stuck loops by hashing identical tool call chains |
-| `permission` | off | Path-pattern rules to allow/deny tools by file path glob |
-| `tool_concurrency` | off | Cap concurrent tool goroutines via `MaxToolConcurrency` |
+| `steer` | on | High-priority mid-turn input before the next LLM call |
+| `followup` | on | Queued between-turn messages |
+| `compaction` | on | LLM-powered context summarization |
+| `approval` | on | Gate on dangerous tools per `approval` mode |
+| `loop_detection` | on | Halt stuck loops via tool-call-chain hashing |
+| `permission` | off | Path-pattern rules to allow/deny tools by file path |
+| `tool_concurrency` | off | Cap concurrent tool goroutines |
 | `sub_agent` | off | Enforce per-role sub-agent depth caps |
-| `prompt_caching` | off | Inject Anthropic cache-control breakpoints on system/tool messages |
+| `prompt_caching` | off | Anthropic cache-control breakpoints |
 
-To enable an off-by-default middleware, list it in `enabled`. To disable a
-default middleware, list it in `disabled`. When `enabled` is set, only those
-middleware run (in the given order), minus any in `disabled`.
-
-The `permission` middleware accepts rules in the form `{tool, path, mode}`
-where `tool` and `path` are optional (empty = match all), and `mode` is
-`allow`, `ask`, or `deny`. Paths use `filepath.Match` globs. Rules are
-injected programmatically via `Loop.PermissionRules` — there is no YAML
-syntax for them currently.
+Set `enabled` to specify an explicit order. Set `disabled` to remove
+specific middleware from the default pipeline.
 
 ### Hooks
 
-JSONL event log for external integrations (e.g. session tracking,
-checkpointing). Off by default:
+JSONL event log for external integrations. Off by default:
 
 ```yaml
 hooks:
   dir: ~/.yaah/hooks
 ```
 
-Events are appended to `<dir>/<session-id>.jsonl` and include
-`session.start`, `session.end`, `turn.start`, `tool.start`, and `tool.end`
-with timestamps, model, tool results, and durations.
+Events include `session.start`, `session.end`, `turn.start`, `tool.start`,
+and `tool.end` with timestamps, model, tool results, and durations.
+
+### Observability
+
+```yaml
+observability:
+  otel:
+    enabled: false
+    endpoint: localhost:4317     # OTLP gRPC endpoint
+    service_name: yaah
+    verbose: false               # record full conversation + summaries
+```
+
+When enabled, every LLM call, tool execution, inner loop, and sub-agent
+dispatch produces a span with attributes. Planner vs executor token usage
+is tracked per-turn via `turn.prompt_tokens` / `inner.prompt_tokens`.
 
 ### Editor
 
-Editor for `yaah config edit`. Resolution order: `editor` field → `$EDITOR`
-env var → `$VISUAL` env var → `vi`. Run `yaah doctor` to see which editor is
-active.
-
 ```yaml
-editor: code --wait
+editor: code --wait              # overrides $EDITOR and $VISUAL
 ```
+
+Resolution order: `editor` field → `$EDITOR` → `$VISUAL` → `vi`.
 
 ### Log level
 
 ```yaml
-log_level: INFO           # DEBUG | INFO | WARN | ERROR
+log_level: INFO                  # DEBUG | INFO | WARN | ERROR
 ```
 
-Controls internal diagnostic output written to stderr. Agent responses and
+Controls internal diagnostics written to stderr. Agent responses and
 tool output are unaffected.
 
 ## Development
@@ -652,37 +500,9 @@ tool output are unaffected.
 
 ```bash
 go build .
-```
+go build -trimpath -ldflags '-s -w' -o yaah .    # optimized
 
-Optimized binary (stripped, no debug info):
-
-```bash
-go build -trimpath -ldflags '-s -w' -o yaah .
-```
-
-### Test
-
-```bash
-go test ./...
-```
-
-```bash
-go vet ./...
-```
-
-```bash
-gofmt -l .
-```
-
-### Lint
-
-```bash
-go run honnef.co/go/tools/cmd/staticcheck@latest ./...
-```
-
-### Cross-compile
-
-```bash
+# Cross-compile
 GOOS=darwin  GOARCH=arm64 go build -trimpath -ldflags '-s -w' -o dist/yaah-darwin-arm64  .
 GOOS=darwin  GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o dist/yaah-darwin-amd64  .
 GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o dist/yaah-linux-amd64   .
@@ -690,129 +510,111 @@ GOOS=linux   GOARCH=arm64 go build -trimpath -ldflags '-s -w' -o dist/yaah-linux
 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o dist/yaah-windows-amd64  .
 ```
 
+### Test & lint
+
+```bash
+go test ./...                                        # all tests
+go test -cover ./...                                 # with coverage
+go vet ./...                                         # vet
+gofmt -l .                                           # must be empty
+go run honnef.co/go/tools/cmd/staticcheck@latest ./.. # staticcheck
+```
+
 ### Install locally
 
 ```bash
 go build -trimpath -ldflags '-s -w' -o yaah .
-```
-
-On macOS use `ditto` instead of `cp` to avoid Gatekeeper quarantine:
-
-```bash
-ditto --norsrc yaah ~/.local/bin/yaah
+ditto --norsrc yaah ~/.local/bin/yaah  # macOS: avoids Gatekeeper quarantine
 ```
 
 ### Repo layout
 
 ```
 yaah/
-├── main.go                      # calls cmd/yaah.Execute()
-├── cmd/yaah/                    # cobra commands
-│   ├── root.go                  # build-time vars (version, commit, date)
-│   ├── root_cmd.go              # rootCmd, REPL, one-shot, agent wiring
-│   ├── version.go config.go     # CLI subcommands
+├── main.go                       # calls cmd/yaah.Execute()
+├── cmd/yaah/                     # cobra commands
+│   ├── root.go                   # build-time vars (version, commit, date)
+│   ├── root_cmd.go               # rootCmd, REPL, one-shot, agent wiring
+│   ├── version.go config.go      # CLI subcommands
 │   ├── doctor.go update.go
 │   ├── skill.go mcp.go memory.go session.go
-│   ├── tui.go                   # bubbletea TUI
-│   └── color.go                 # ANSI color helpers
+│   ├── tui.go                    # bubbletea TUI
+│   └── color.go                  # ANSI color helpers
 ├── internal/
-│   ├── agent/                   # agent loop, middleware pipeline, streaming, compaction
-│   ├── banner/                  # figlet + lolcat banner for TUI/REPL
-│   ├── config/                  # ~/.yaah/config.yaml loader
-│   ├── instructions/            # AGENTS.md/CLAUDE.md discovery
-│   ├── mcp/                     # MCP client (stdio + HTTP)
-│   ├── memory/                  # SQLite + FTS5 (sessions, messages, memory)
-│   ├── process/                 # background process manager
-│   ├── providers/               # OpenAI Chat Completions client
-│   ├── prompts/                 # system prompt assembly
-│   ├── repl/                    # REPL, history, slash commands
-│   ├── skills/                  # SKILL.md discovery
-│   ├── spinner/                 # animated thinking spinner
-│   ├── todo/                    # in-memory todo store
-│   ├── tools/                   # built-in tools (read, write, edit, replace, delete, json_query, grep, glob, ls, bash, powershell, git, calculate, http, go_outline, question, webfetch, task, background_process, memory, todo, plan, skill)
-│   ├── tui/                     # bubbletea TUI components
-│   ├── types/                   # OpenAI message types
-│   └── update/                  # GitHub release checking
+│   ├── agent/                    # agent loop, dual-loop executor, middleware
+│   │   └── errorclassify/        #   provider error classification
+│   ├── banner/                   # figlet + lolcat banner
+│   ├── config/                   # config loader + env subst
+│   ├── instructions/             # AGENTS.md/CLAUDE.md discovery
+│   ├── mcp/                      # MCP client (stdio + HTTP)
+│   ├── memory/                   # SQLite + FTS5
+│   ├── observability/            # OpenTelemetry tracing
+│   ├── plans/                    # PLAN.md plan files
+│   ├── process/                  # background process manager
+│   ├── prompts/                  # identity.md + system prompt assembly
+│   ├── providers/                # OpenAI Chat Completions client
+│   ├── repl/                     # interactive REPL
+│   ├── skills/                   # SKILL.md discovery
+│   ├── spinner/                  # animated thinking spinner
+│   ├── todo/                     # in-memory todo store
+│   ├── tools/                    # built-in tool implementations
+│   ├── tui/                      # bubbletea TUI components
+│   ├── types/                    # OpenAI message types
+│   └── update/                   # GitHub release checking
 ├── docs/
-│   ├── architecture.md          # detailed architecture documentation
-│   ├── tui-components.md        # TUI component system reference
-│   └── otel-setup.md            # OpenTelemetry/Jaeger setup guide
-├── AGENTS.md                    # coding assistant instructions
+│   ├── architecture.md           # detailed architecture
+│   ├── AGENT-LOOP-DIAGRAMS.md    # mermaid diagrams
+│   ├── BENCHMARK.md              # benchmark suite
+│   ├── tui-components.md         # TUI component reference
+│   └── otel-setup.md             # Jaeger setup guide
+├── AGENTS.md                     # coding assistant instructions
 ├── CONTRIBUTING.md
 └── SECURITY.md
 ```
 
 ### Architecture
 
-See [docs/architecture.md](./docs/architecture.md) for a detailed walkthrough of the
-agent loop, middleware pipeline, tool execution, streaming, and context compaction.
+See [`docs/architecture.md`](./docs/architecture.md) for a detailed
+walkthrough of the agent loop, dual-loop executor, middleware pipeline,
+tool execution, streaming, context compaction, and sub-agent lifecycle.
 
-### Tests
-
-```bash
-go test ./...
-```
-
-```bash
-go test -race ./...
-```
-
-```bash
-go test -v ./internal/agent/
-```
-
-```bash
-go test -cover ./...
-```
-
-Tests live next to the code they test (`foo.go` ↔ `foo_test.go`) and use
-`t.Run("name", func(t *testing.T) { ... })` for subtests.
+Diagrams are in [`docs/AGENT-LOOP-DIAGRAMS.md`](./docs/AGENT-LOOP-DIAGRAMS.md).
+Benchmarks and perf history are in [`docs/BENCHMARK.md`](./docs/BENCHMARK.md).
 
 ## Status
 
 yaah is in active development and is feature-complete for daily use.
 
-**Stable** — middleware pipeline, streaming LLM responses, tool execution,
-context compaction (token-budget preservation, anchored summarization, pre-compaction pruning, anti-thrashing guard, inner-loop summary capping),
-approval gates, loop detection, SQLite session and memory
+**Stable** — always-on dual-loop executor with spontaneous delegation,
+planner/executor token attribution, executor self-correction on tool errors,
+middleware pipeline, streaming LLM responses, structured result envelopes,
+context compaction, approval gates, loop detection, SQLite session and memory
 persistence, session resume, MCP integration (stdio + HTTP), bubbletea TUI,
 REPL with slash commands, hook events for external agents, sub-agent dispatch
-with roles/concurrency/timeouts, agent conflict reconciliation (detects when
-parallel workers touch the same files and injects a resolution report),
-context-aware sub-agent interrupt propagation.
+with roles/concurrency/timeouts, agent conflict reconciliation, context-aware
+sub-agent interrupt propagation.
 
 **Experimental** — `yaah update` (GitHub release check), `yaah tui`'s
 `:model` and `:provider` commands.
 
 ## Future improvements
 
+- **Named executor roster** — configure multiple executor types with
+  different models and tool sets, selectable per-delegate-call.
 - **Plugin system** — register custom Go tools and middleware without
-  recompiling, via a well-defined interface and a `plugins/` directory
-  convention.
+  recompiling.
 - **Declarative workflows** — define multi-step agent pipelines as DAGs
-  of role-typed tasks with dependencies and failure handlers, replacing
-  ad-hoc planner prompts with reproducible recipes.
-- **Inter-agent messaging** — direct messages between concurrently
-  running sub-agents so they can coordinate without routing through
-  the parent's context.
-- **Web UI** — a browser-based interface as an alternative to the terminal,
-  with session browsing, config editing, and real-time streaming.
-- **Prompt template library** — curated system prompts and skill packs
-  for common use cases (code review, PR triage, security audit,
-  documentation generation).
-- **Remote MCP gateway** — a thin sidecar that bridges local `yaah`
-  instances with remote MCP servers over HTTPS, enabling secure sharing
-  of tool servers across machines.
-- **Better MCP lifecycle** — health checks, auto-restart on crash,
-  graceful shutdown ordering, and `yaah mcp status` per-server.
-- **Session export / import** — dump a session transcript as JSONL or
-  Markdown, and replay or resume from a file.
-- **Chat completions streaming with tool use in one pass** — some
-  providers (Anthropic, Groq) support streaming tool calls alongside
-  content in a single response, reducing round-trips.
+  of role-typed tasks with dependencies.
+- **Web UI** — a browser-based interface with session browsing and
+  real-time streaming.
+- **Session export / import** — dump transcripts as JSONL or Markdown,
+  replay or resume from a file.
+- **Better MCP lifecycle** — health checks, auto-restart, graceful
+  shutdown ordering.
 - **Knowledge base from project files** — index the project tree (RAG)
-  into the SQLite FTS5 store so the model can ask about the codebase
-  without reading every file.
+  into the SQLite FTS5 store.
+- **Structured `task` results** — programmatic sub-agent state detection
+  in tool results (extend the `executor_result` XML envelope to `task`).
 
 ## License
 

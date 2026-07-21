@@ -23,7 +23,7 @@ const maxInnerSummaryLen = 8000
 // tactical tool selection, not user-facing reasoning, so it gets only what
 // its responsibility requires. This keeps its context small and stops it
 // from narrating like a user-facing agent.
-const executorSystemPrompt = `You are a tool executor. You receive a task directive, the user's original request, and the working directory. You run in the same filesystem as the planner — use absolute paths or paths relative to the working directory. Select and run the built-in tools needed to accomplish the directive; you may chain tools based on their results. When finished, respond with a terse structured summary: one line per tool executed naming the tool and its outcome (e.g. "write(path): wrote 138B", "bash(cmd): exit 0"). Do not write conversational prose, confirmations, or next-step plans.`
+const executorSystemPrompt = `You are a tool executor. You receive a task directive, the user's original request, and the working directory. You run in the same filesystem as the planner — use absolute paths or paths relative to the working directory. Select and run the built-in tools needed to accomplish the directive; you may chain tools based on their results. When finished, respond with a terse structured summary: one line per tool executed naming the tool and its outcome (e.g. "write(path): wrote 138B", "bash(cmd): exit 0"). Do not write conversational prose, confirmations, or next-step plans. If a tool fails, you will see the error and can retry with a corrected approach — do not give up after one failure.`
 
 // delegateToolName is the dispatch tool the planner may call to hand an
 // intent-level directive to the executor. The planner keeps its full tool
@@ -204,16 +204,11 @@ func (l *Loop) runExecutor(ctx context.Context, directive, originalIntent, execu
 				Name:       tc.Function.Name,
 			})
 			if result.err != nil {
-				if span != nil {
-					tokensAfter := l.TotalTokens
-					span.SetAttributes(
-						attribute.Int("inner.prompt_tokens", tokensAfter.PromptTokens-tokensBefore.PromptTokens),
-						attribute.Int("inner.completion_tokens", tokensAfter.CompletionTokens-tokensBefore.CompletionTokens),
-						attribute.Int("inner.iterations", iter+1),
-					)
-					observability.FinishInnerLoop(span, iter+1, false, result.err)
-				}
-				return "", false, fmt.Errorf("executor tool %q: %w", tc.Function.Name, result.err)
+				// Feed the error back to the executor so it can self-correct
+				// on the next iteration instead of failing to the planner.
+				// The executor sees the error as a tool result and can try
+				// a fixed command — no need for the planner to re-do inline.
+				continue
 			}
 		}
 	}
@@ -277,7 +272,7 @@ func delegateToolDef() types.ToolDef {
 		Type: "function",
 		Function: types.ToolFn{
 			Name:        delegateToolName,
-			Description: "Delegate a tool-execution task to the executor for context isolation, model tiering, and auto-approval. The executor runs tools without approval prompts — use this when inline tools like bash would be denied or when you need batch work (wc -l, grep -c, find, etc.). Use for multi-step tool work or work whose raw output you don't need in your own context. For a single cheap call (one read/glob/ls) prefer doing it inline. Provide an intent-level directive describing what to accomplish, not which tools to call — the executor selects tools.",
+			Description: "Delegate a tool-execution task to the executor for context isolation, model tiering, and auto-approval. The executor runs tools without approval prompts — use this when inline tools like bash would be denied or when you need batch work (wc -l, grep -c, find, etc.). Use for multi-step tool work or work whose raw output you don't need in your own context. For a single cheap call (one read/glob/ls) prefer doing it inline. Provide an intent-level directive describing what to accomplish, not which tools to call — the executor selects tools. DELEGATION IS ESPECIALLY VALUABLE FOR: running test suites and capturing results, searching across many files, making coordinated multi-file edits, and any task requiring more than 2 tools.",
 			Parameters: json.RawMessage(`{
 				"type": "object",
 				"properties": {
