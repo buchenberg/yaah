@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/instructions"
 	"github.com/buchenberg/yaah/internal/mcp"
@@ -86,14 +87,14 @@ func newAgentSession() (*agentSession, error) {
 
 	// Load sub-agent role definitions: built-in (embedded) +
 	// user-defined (~/.agents/roles/, ./.agents/roles/).
-	reg := agent.NewRoleRegistry()
+	reg := subagent.NewRoleRegistry()
 	if files := builtinRoleFiles(); files != nil {
 		reg.LoadBytes(files)
 	}
 	for _, dir := range roleSearchPaths(cwd) {
 		reg.LoadDir(dir)
 	}
-	agent.SetDefaultRoleRegistry(reg)
+	subagent.SetDefaultRoleRegistry(reg)
 
 	layers := prompts.Layers{
 		Identity:    prompts.IdentityPrompt,

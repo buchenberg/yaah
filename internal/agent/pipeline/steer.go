@@ -1,4 +1,4 @@
-package agent
+package pipeline
 
 import (
 	"context"
@@ -8,8 +8,8 @@ import (
 
 // SteerMiddleware drains high-priority mid-turn steering messages.
 type SteerMiddleware struct {
-	ch      <-chan string
-	compact func(ctx context.Context) // optional hook on injection
+	ch        <-chan string
+	compactor Compactor
 }
 
 func (m *SteerMiddleware) Name() string { return "steer" }
@@ -22,8 +22,8 @@ func (m *SteerMiddleware) PrepareStep(ctx context.Context, step *Step) (*Step, e
 	case msg, ok := <-m.ch:
 		if ok && msg != "" {
 			step.Messages = append(step.Messages, types.UserMsg("[STEER] "+msg))
-			if m.compact != nil {
-				m.compact(ctx)
+			if m.compactor != nil {
+				step.Messages = m.compactor.Compact(ctx, step.Messages, 0)
 			}
 		}
 	default:

@@ -7,45 +7,14 @@ import (
 
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-// executeOneTool runs a single tool call synchronously. Used by the executor
-// loop which needs to append results to messages between model calls.
-func (l *Loop) executeOneTool(ctx context.Context, tc types.ToolCall) toolExecResult {
-	t := l.Registry.Get(tc.Function.Name)
-	if t == nil {
-		return toolExecResult{err: fmt.Errorf("tool %q not found", tc.Function.Name)}
-	}
-
-	var toolSpan trace.Span
-	if l.OtelEnabled {
-		ctx, toolSpan = observability.StartTool(ctx, tc.Function.Name, tc.Function.Arguments)
-		defer toolSpan.End()
-	}
-
-	start := time.Now()
-	result, err := t.Execute(ctx, tc.Function.Arguments)
-	dur := time.Since(start)
-
-	if toolSpan != nil {
-		observability.FinishTool(toolSpan, result, err)
-	}
-
-	return toolExecResult{
-		callID:  tc.ID,
-		name:    tc.Function.Name,
-		args:    tc.Function.Arguments,
-		content: result,
-		dur:     dur,
-		err:     err,
-	}
-}
-
 // executeAndCollect runs tool calls concurrently and returns ToolResult for middleware inspection.
-func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, messages *[]types.Message) []ToolResult {
-	results := make([]ToolResult, len(calls))
+func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, messages *[]types.Message) []pipeline.ToolResult {
+	results := make([]pipeline.ToolResult, len(calls))
 	ordered := make([]toolExecResult, len(calls))
 	execResults := make(chan toolExecResult, len(calls))
 
@@ -186,7 +155,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 	}
 
 	for i, r := range ordered {
-		results[i] = ToolResult{
+		results[i] = pipeline.ToolResult{
 			Name:     r.name,
 			Args:     r.args,
 			Result:   r.content,

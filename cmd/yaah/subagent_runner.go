@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/prompts"
@@ -149,14 +150,14 @@ var subAgentSeq atomic.Int64
 // config MaxDepth is mapped to a sentinel so "unlimited" is preserved.
 func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 	return func(ctx context.Context, prompt string, params tools.SubAgentParams) (string, error) {
-		role := agent.SubAgentRole(params.Role)
-		profile := agent.RoleProfileFor(role)
+		role := subagent.SubAgentRole(params.Role)
+		profile := subagent.RoleProfileFor(role)
 
 		subReg := buildSubAgentRegistry(opts, profile, remainingDepth)
 
 		maxIter := resolveSubAgentIterations(params.MaxIterations, profile, opts.subCfg, role)
 		sysPrompt := opts.systemPrompt
-		if g := agent.RoleGuidance(role); g != "" {
+		if g := subagent.RoleGuidance(role); g != "" {
 			if sysPrompt != "" {
 				sysPrompt += "\n\n"
 			}
@@ -219,23 +220,23 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 // timeouts are honoured rather than a single construction-time default.
 func subAgentTimeoutResolver(subCfg config.SubAgentConfig) func(tools.SubAgentParams) time.Duration {
 	return func(p tools.SubAgentParams) time.Duration {
-		return resolveSubAgentTimeout(0, subCfg, agent.SubAgentRole(p.Role))
+		return resolveSubAgentTimeout(0, subCfg, subagent.SubAgentRole(p.Role))
 	}
 }
 
 // subAgentDepthByRole builds the per-role depth cap map from role
 // profile defaults, overridden by per-role config. Roles absent from
 // the map fall back to the global MaxDepth in the middleware.
-func subAgentDepthByRole(subCfg config.SubAgentConfig) map[agent.SubAgentRole]int {
-	out := make(map[agent.SubAgentRole]int)
-	for _, role := range []agent.SubAgentRole{agent.RoleWorker, agent.RoleReviewer, agent.RolePlanner} {
-		if d := agent.RoleProfileFor(role).MaxDepth; d > 0 {
+func subAgentDepthByRole(subCfg config.SubAgentConfig) map[subagent.SubAgentRole]int {
+	out := make(map[subagent.SubAgentRole]int)
+	for _, role := range []subagent.SubAgentRole{subagent.RoleWorker, subagent.RoleReviewer, subagent.RolePlanner} {
+		if d := subagent.RoleProfileFor(role).MaxDepth; d > 0 {
 			out[role] = d
 		}
 	}
 	for name, rc := range subCfg.Roles {
 		if rc.MaxDepth > 0 {
-			out[agent.SubAgentRole(name)] = rc.MaxDepth
+			out[subagent.SubAgentRole(name)] = rc.MaxDepth
 		}
 	}
 	if len(out) == 0 {
@@ -251,7 +252,7 @@ func subAgentDepthByRole(subCfg config.SubAgentConfig) map[agent.SubAgentRole]in
 //
 // The RoleDefault profile (empty Tools) falls back to the full built-in
 // tool set to preserve the legacy task tool behaviour.
-func buildSubAgentRegistry(opts taskRunnerOpts, profile agent.RoleProfile, remainingDepth int) *tools.Registry {
+func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, remainingDepth int) *tools.Registry {
 	resolveTimeout := subAgentTimeoutResolver(opts.subCfg)
 	registerTask := func(reg *tools.Registry) {
 		reg.Register(&tools.TaskTool{
@@ -317,14 +318,14 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile agent.RoleProfile, remai
 // sub-agent TaskTool. Precedence: per-call override (handled by the
 // TaskTool itself) > role-specific config > role profile default >
 // global subagent default_timeout.
-func resolveSubAgentTimeout(callSeconds int, subCfg config.SubAgentConfig, role agent.SubAgentRole) time.Duration {
+func resolveSubAgentTimeout(callSeconds int, subCfg config.SubAgentConfig, role subagent.SubAgentRole) time.Duration {
 	if callSeconds > 0 {
 		return time.Duration(callSeconds) * time.Second
 	}
 	if rc, ok := subCfg.Roles[string(role)]; ok && rc.Timeout > 0 {
 		return time.Duration(rc.Timeout) * time.Second
 	}
-	if d := agent.RoleProfileFor(role).Timeout; d > 0 {
+	if d := subagent.RoleProfileFor(role).Timeout; d > 0 {
 		return d
 	}
 	if subCfg.DefaultTimeout > 0 {
@@ -338,7 +339,7 @@ func resolveSubAgentTimeout(callSeconds int, subCfg config.SubAgentConfig, role 
 // default > a sane floor of 1. The result is never allowed to exceed the
 // role profile's MaxIterations ceiling, so a per-call override cannot
 // neutralize the role's cap.
-func resolveSubAgentIterations(callMax int, profile agent.RoleProfile, subCfg config.SubAgentConfig, role agent.SubAgentRole) int {
+func resolveSubAgentIterations(callMax int, profile subagent.RoleProfile, subCfg config.SubAgentConfig, role subagent.SubAgentRole) int {
 	var v int
 	switch {
 	case callMax > 0:

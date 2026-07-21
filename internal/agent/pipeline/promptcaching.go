@@ -1,4 +1,4 @@
-package agent
+package pipeline
 
 import (
 	"context"
@@ -6,9 +6,7 @@ import (
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-// PromptCachingMiddleware adds Anthropic cache-control breakpoints to messages
-// so that repeated system prompts and tool results are cached between turns.
-// This is a no-op for non-Anthropic providers.
+// PromptCachingMiddleware adds Anthropic cache-control breakpoints to messages.
 type PromptCachingMiddleware struct {
 	enabled bool
 }

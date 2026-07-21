@@ -11,26 +11,24 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/buchenberg/yaah/internal/agent/executor"
+	"github.com/buchenberg/yaah/internal/agent/llm"
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/observability"
-	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
 // Provider is the interface for model backends.
-type Provider interface {
-	Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error)
-}
+type Provider = llm.Provider
 
 // StreamProvider is a provider that supports streaming responses.
-type StreamProvider interface {
-	Provider
-	SendStream(ctx context.Context, req types.ChatRequest) (<-chan providers.StreamChunk, <-chan error)
-}
+type StreamProvider = llm.StreamProvider
 
 // TokenCallback is called for each streamed token.
-type TokenCallback func(token string)
+type TokenCallback = llm.TokenCallback
 
 // ToolInfo contains information about a tool call for display.
 type ToolInfo struct {
@@ -62,7 +60,7 @@ type SubAgentInfo struct {
 type SubAgentCallback func(info SubAgentInfo)
 
 // ThinkingCallback is called when the model outputs thinking/reasoning text.
-type ThinkingCallback func(text string)
+type ThinkingCallback = llm.ThinkingCallback
 
 // FlushCallback is called when the model finishes a streaming segment and
 // is about to start a tool call or a new iteration. The TUI uses this to
@@ -72,6 +70,10 @@ type FlushCallback func(content string)
 
 // ToolResultMaxLen is the maximum length of a tool result before truncation.
 const ToolResultMaxLen = 8192
+
+// maxInnerSummaryLen caps the inner executor loop's final summary to prevent
+// unbounded context growth from the dual-loop architecture.
+const maxInnerSummaryLen = 8000
 
 // pruneMessageMaxLen is the threshold above which old messages are pruned
 // before being sent to the LLM summarizer during compaction.
@@ -93,7 +95,13 @@ type Loop struct {
 	OnSubAgent    SubAgentCallback
 	OnThinking    ThinkingCallback
 	OnFlush       FlushCallback
-	Middleware    []Middleware // Optional custom middleware override
+	Middleware    []pipeline.Middleware // Optional custom middleware override
+
+	// LLM wraps the provider with streaming, retry, fallback, and compaction.
+	LLM *llm.Client
+
+	// Executor runs the tool-execution inner loop for delegated directives.
+	Executor *executor.Executor
 
 	// ContextWindow is the estimated token budget for the conversation.
 	// When the estimated tokens exceed the compaction threshold, old messages
@@ -208,14 +216,14 @@ type Loop struct {
 	MaxInlineToolsPerTurn int
 
 	// PermissionRules is the list of permission rules for the PermissionMiddleware.
-	PermissionRules []PermissionRule
+	PermissionRules []pipeline.PermissionRule
 
 	// MaxSubAgentDepth caps nested sub-agent calls. 0 means unlimited.
 	MaxSubAgentDepth int
 
 	// MaxSubAgentDepthByRole optionally caps task calls per sub-agent
 	// role. A role absent from the map falls back to MaxSubAgentDepth.
-	MaxSubAgentDepthByRole map[SubAgentRole]int
+	MaxSubAgentDepthByRole map[subagent.SubAgentRole]int
 
 	// MaxSubAgentConcurrency caps the number of task tool calls that may
 	// run simultaneously within a single outer-loop turn. 0 means unlimited.
@@ -279,11 +287,11 @@ type Loop struct {
 	hookMu sync.Mutex
 
 	// toolSem is a semaphore channel for limiting concurrent tool executions.
-	// Created by buildPipeline when MaxToolConcurrency > 0.
+	// Created in applyDefaults when MaxToolConcurrency > 0.
 	toolSem chan struct{}
 
 	// subAgentSem is a semaphore channel for limiting concurrent task calls.
-	// Created by buildPipeline when MaxSubAgentConcurrency > 0.
+	// Created in applyDefaults when MaxSubAgentConcurrency > 0.
 	subAgentSem chan struct{}
 
 	// lastCompactionTokens tracks the estimated token count after the most
@@ -293,30 +301,44 @@ type Loop struct {
 	// ineffectiveCompactions counts successive compactions that saved < 10%
 	// of tokens. When >= 2, compaction is skipped.
 	ineffectiveCompactions int
-
-	// loopHistory tracks recent tool call hashes for loop detection.
-	loopHistory []string
 }
 
 // buildPipeline assembles the middleware pipeline from config.
-func (l *Loop) buildPipeline() *Pipeline {
+func (l *Loop) buildPipeline() *pipeline.Pipeline {
 	if len(l.Middleware) > 0 {
-		return NewPipeline(l.Middleware...)
+		return pipeline.NewPipeline(l.Middleware...)
 	}
-	if l.MaxToolConcurrency > 0 {
-		l.toolSem = make(chan struct{}, l.MaxToolConcurrency)
+	return pipeline.NewFromConfig(l.toPipelineConfig())
+}
+
+// Compact satisfies the pipeline.Compactor interface by delegating to
+// the Loop's context compaction machinery. It syncs step messages into
+// l.Messages, compacts, and returns the result.
+func (l *Loop) Compact(ctx context.Context, messages []types.Message, threshold float64) []types.Message {
+	l.Messages = messages
+	l.compactContext(ctx, threshold)
+	return l.Messages
+}
+
+// toPipelineConfig builds a PipelineConfig from the Loop's current settings.
+func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
+	return pipeline.PipelineConfig{
+		Steer:                  l.Steer,
+		FollowUps:              l.FollowUps,
+		ContextWindow:          l.ContextWindow,
+		CompactionThreshold:    l.CompactionThreshold,
+		Compactor:              l,
+		ApprovalMode:           l.ApprovalMode,
+		PermissionRules:        l.PermissionRules,
+		LoopDetectCount:        l.LoopDetectCount,
+		LoopDetectWindow:       l.LoopDetectWindow,
+		MaxToolConcurrency:     l.MaxToolConcurrency,
+		MaxSubAgentDepth:       l.MaxSubAgentDepth,
+		MaxSubAgentDepthByRole: l.MaxSubAgentDepthByRole,
+		PromptCaching:          l.PromptCaching,
+		PipelineNames:          l.PipelineNames,
+		PipelineDisabled:       l.PipelineDisabled,
 	}
-	if l.MaxSubAgentConcurrency > 0 {
-		l.subAgentSem = make(chan struct{}, l.MaxSubAgentConcurrency)
-	}
-	names := resolvedPipelineNames(l.PipelineNames, l.PipelineDisabled)
-	mws := make([]Middleware, 0, len(names))
-	for _, name := range names {
-		if build, ok := builtinMiddleware[name]; ok {
-			mws = append(mws, build(l))
-		}
-	}
-	return NewPipeline(mws...)
 }
 
 // Run executes the full conversation loop for a single user message
@@ -369,7 +391,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 	}
 
 	messages := l.Messages
-	pipeline := l.buildPipeline()
+	pipe := l.buildPipeline()
 
 	for iter := 0; iter < l.MaxIterations; iter++ {
 		select {
@@ -392,7 +414,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			turnCtx, turnSpan = observability.StartTurn(ctx, iter, userInput)
 		}
 
-		step := &Step{
+		step := &pipeline.Step{
 			Messages:     messages,
 			Tools:        l.buildToolDefs(),
 			Iteration:    iter,
@@ -400,7 +422,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			SystemPrompt: l.SystemPrompt,
 		}
 
-		step, err := pipeline.RunPrepareStep(ctx, step)
+		step, err := pipe.RunPrepareStep(ctx, step)
 		if err != nil {
 			l.Messages = messages
 			return "", err
@@ -434,7 +456,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 
 		tokensBeforeTurn := l.TotalTokens
 
-		msg, streamed, err := l.getAssistantMessage(turnCtx, req)
+		msg, streamed, usage, err := l.LLM.Call(turnCtx, req)
 		if err != nil {
 			if turnSpan != nil {
 				observability.RecordError(turnSpan, err)
@@ -443,6 +465,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			l.Messages = messages
 			return "", fmt.Errorf("provider error: %w", err)
 		}
+		l.addUsage(usage)
 		messages = append(messages, msg)
 		l.persistMessage(msg)
 
@@ -491,7 +514,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			l.OnFlush(msg.Content)
 		}
 
-		step, err = pipeline.RunPostModel(ctx, &msg, step)
+		step, err = pipe.RunPostModel(ctx, &msg, step)
 		if err != nil {
 			l.Messages = messages
 			return "", err
@@ -504,7 +527,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		// for that directive. The executor's summary is the honest tool result of
 		// the planner's delegate call.
 		if len(delegateCalls) > 0 {
-			originalIntent := l.lastUserMessage(messages)
+			originalIntent := lastUserMessage(messages)
 			if l.OtelVerbose && turnSpan != nil {
 				turnSpan.AddEvent("dispatch.delegate", trace.WithAttributes(
 					attribute.Int("delegate.count", len(delegateCalls)),
@@ -520,7 +543,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 						attribute.String("delegate.executor_type", execType),
 					))
 				}
-				summary, exhausted, fellBack, innerErr := l.runExecutor(turnCtx, directive, originalIntent, execType)
+				summary, exhausted, fellBack, innerErr := l.Executor.Run(turnCtx, directive, originalIntent, execType)
 				truncated := false
 				switch {
 				case innerErr != nil:
@@ -618,7 +641,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			}
 		}
 
-		step, err = pipeline.RunPostTool(ctx, toolResults, step)
+		step, err = pipe.RunPostTool(ctx, toolResults, step)
 		if err != nil {
 			if turnSpan != nil {
 				turnSpan.End()
@@ -661,4 +684,108 @@ func (l *Loop) applyDefaults() {
 	if l.MaxInnerIterations <= 0 {
 		l.MaxInnerIterations = 10
 	}
+	if l.MaxToolConcurrency > 0 && l.toolSem == nil {
+		l.toolSem = make(chan struct{}, l.MaxToolConcurrency)
+	}
+	if l.MaxSubAgentConcurrency > 0 && l.subAgentSem == nil {
+		l.subAgentSem = make(chan struct{}, l.MaxSubAgentConcurrency)
+	}
+	if l.LLM == nil {
+		l.LLM = &llm.Client{
+			Provider:         l.Provider,
+			FallbackProvider: l.FallbackProvider,
+			Model:            l.Model,
+			FallbackModel:    l.FallbackModel,
+			MaxRetries:       l.MaxRetries,
+			RetryBackoff:     l.RetryBackoff,
+			ContextWindow:    l.ContextWindow,
+			OnToken:          l.OnToken,
+			OnThinking:       l.OnThinking,
+			Compact:          l.llmCompact,
+			OtelEnabled:      l.OtelEnabled,
+			OtelVerbose:      l.OtelVerbose,
+		}
+	}
+	if l.Executor == nil {
+		l.Executor = &executor.Executor{
+			Provider:         l.ExecutorProvider,
+			FallbackProvider: l.Provider,
+			Model:            l.ExecutorModel,
+			MaxIterations:    l.MaxInnerIterations,
+			SystemPrompt:     l.ExecutorSystemPrompt,
+			Registry:         l.Registry,
+			OnTool:           l.executorToolCallback,
+			OnUsage:          l.addUsage,
+			OnFallback:       l.executorFallbackCallback,
+			EmitHook:         l.executorEmitHook,
+			OtelEnabled:      l.OtelEnabled,
+			OtelVerbose:      l.OtelVerbose,
+			OuterModel:       l.Model,
+		}
+	}
+}
+
+func (l *Loop) addUsage(u types.Usage) {
+	l.TotalTokens.PromptTokens += u.PromptTokens
+	l.TotalTokens.CompletionTokens += u.CompletionTokens
+	l.TotalTokens.TotalTokens += u.TotalTokens
+	l.LastPromptTokens = u.PromptTokens
+	if d := u.CompletionTokensDetails; d != nil {
+		l.TotalReasoningTokens += d.ReasoningTokens
+	}
+	if d := u.PromptTokensDetails; d != nil {
+		l.TotalCachedPromptTokens += d.CachedTokens
+	}
+}
+
+func (l *Loop) llmCompact(ctx context.Context, messages []types.Message, threshold float64) []types.Message {
+	l.Messages = messages
+	l.compactContext(ctx, threshold)
+	return l.Messages
+}
+
+func (l *Loop) executorToolCallback(name string, args string, dur time.Duration, errMsg string) {
+	if l.OnTool == nil {
+		return
+	}
+	info := ToolInfo{Name: name, Args: args, Duration: dur}
+	if errMsg != "" {
+		info.Error = errMsg
+	}
+	l.OnTool(info)
+}
+
+func (l *Loop) executorFallbackCallback(reason string, model string) {
+	l.emitHook(HookEvent{
+		Event:          ExecutorFallback,
+		Model:          model,
+		FallbackReason: reason,
+	})
+}
+
+func (l *Loop) executorEmitHook(eventName string, model string, extra map[string]interface{}) {
+	l.emitHook(HookEvent{
+		Event:          HookEventType(eventName),
+		Model:          model,
+		FallbackReason: fmt.Sprint(extra["fallback_reason"]),
+	})
+}
+
+func (l *Loop) runExecutor(ctx context.Context, directive, originalIntent, executorType string) (string, bool, bool, error) {
+	if l.Executor == nil {
+		l.applyDefaults()
+	}
+	return l.Executor.Run(ctx, directive, originalIntent, executorType)
+}
+
+func (l *Loop) resolveExecutor(executorType string) (Provider, string) {
+	provider := l.ExecutorProvider
+	if provider == nil {
+		provider = l.Provider
+	}
+	model := l.ExecutorModel
+	if model == "" {
+		model = l.Model
+	}
+	return provider, model
 }

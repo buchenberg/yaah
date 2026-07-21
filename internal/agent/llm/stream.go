@@ -1,4 +1,4 @@
-package agent
+package llm
 
 import (
 	"context"
@@ -15,14 +15,10 @@ import (
 )
 
 // runStream handles a streaming request and returns the assembled assistant
-// message (content + any tool calls). Tool calls accumulated from the stream
-// are returned to Run, which executes them exactly like the non-streaming
-// path. Content deltas are emitted via OnToken as they arrive.
-// If finish_reason is "length" and tool calls are present, returns an error
-// to prevent executing truncated tool calls.
-func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatRequest) (types.Message, error) {
+// message, usage, and any error.
+func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.ChatRequest) (types.Message, types.Usage, error) {
 	var streamSpan trace.Span
-	if l.OtelEnabled {
+	if c.OtelEnabled {
 		ctx, streamSpan = observability.StartStream(ctx, req.Model)
 	}
 
@@ -35,17 +31,14 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 	var finishReason string
 	var firstToken bool
 	var tokenCount int
+	var totalUsage types.Usage
 	var usageCaptured bool
 
-	// recordVerbose captures the full streamed response (content +
-	// reasoning + tool calls) and the stream-termination path on the
-	// llm.stream span so the dual-loop conversation is visible in Jaeger.
-	// Gated on OtelVerbose — no work when verbose tracing is off.
 	recordVerbose := func(path string) {
-		if !l.OtelVerbose || streamSpan == nil {
+		if !c.OtelVerbose || streamSpan == nil {
 			return
 		}
-		msg := l.assembleStreamed(content.String(), toolCallMap, reasoning.String())
+		msg := assembleStreamed(content.String(), toolCallMap, reasoning.String())
 		observability.RecordAssistantResponse(streamSpan, msg, finishReason)
 		observability.RecordStreamEnd(streamSpan, path, finishReason, usageCaptured, len(msg.Content), len(msg.ToolCalls))
 	}
@@ -59,7 +52,7 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 					observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 					streamSpan.End()
 				}
-				return l.checkTruncatedStream(content.String(), toolCallMap, finishReason, reasoning.String())
+				return checkTruncatedStream(content.String(), toolCallMap, finishReason, reasoning.String(), totalUsage)
 			}
 
 			if !firstToken {
@@ -70,12 +63,11 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 			}
 
 			if len(chunk.Choices) == 0 {
-				// The final chunk may carry usage with no choices (pure usage marker).
 				if chunk.Usage != nil {
 					usageCaptured = true
-					l.captureStreamUsage(chunk.Usage)
+					addStreamUsage(&totalUsage, chunk.Usage)
 					if streamSpan != nil {
-						l.setStreamUsageAttrs(streamSpan, chunk.Usage)
+						setStreamUsageAttrs(streamSpan, chunk.Usage)
 					}
 				}
 				continue
@@ -85,16 +77,16 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 
 			if delta.ReasoningContent != "" {
 				reasoning.WriteString(delta.ReasoningContent)
-				if l.OnThinking != nil {
-					l.OnThinking(delta.ReasoningContent)
+				if c.OnThinking != nil {
+					c.OnThinking(delta.ReasoningContent)
 				}
 			}
 
 			if delta.Content != "" {
 				content.WriteString(delta.Content)
 				tokenCount++
-				if l.OnToken != nil {
-					l.OnToken(delta.Content)
+				if c.OnToken != nil {
+					c.OnToken(delta.Content)
 				}
 			}
 
@@ -127,22 +119,19 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 			}
 
 			if finishReason != "" {
-				// finish_reason received — capture usage from this chunk
-				// (providers like DeepSeek send usage in the same chunk as
-				// the finish_reason), then drain any remaining chunks.
 				if chunk.Usage != nil {
 					usageCaptured = true
-					l.captureStreamUsage(chunk.Usage)
+					addStreamUsage(&totalUsage, chunk.Usage)
 					if streamSpan != nil {
-						l.setStreamUsageAttrs(streamSpan, chunk.Usage)
+						setStreamUsageAttrs(streamSpan, chunk.Usage)
 					}
 				}
 				for chunk := range chunks {
 					if chunk.Usage != nil {
 						usageCaptured = true
-						l.captureStreamUsage(chunk.Usage)
+						addStreamUsage(&totalUsage, chunk.Usage)
 						if streamSpan != nil {
-							l.setStreamUsageAttrs(streamSpan, chunk.Usage)
+							setStreamUsageAttrs(streamSpan, chunk.Usage)
 						}
 					}
 				}
@@ -151,7 +140,7 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 					observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 					streamSpan.End()
 				}
-				return l.checkTruncatedStream(content.String(), toolCallMap, finishReason, reasoning.String())
+				return checkTruncatedStream(content.String(), toolCallMap, finishReason, reasoning.String(), totalUsage)
 			}
 
 		case err := <-errs:
@@ -160,45 +149,43 @@ func (l *Loop) runStream(ctx context.Context, sp StreamProvider, req types.ChatR
 					observability.RecordError(streamSpan, err)
 					streamSpan.End()
 				}
-				return types.Message{}, err
+				return types.Message{}, totalUsage, err
 			}
 			recordVerbose("errs_nil")
 			if streamSpan != nil {
 				observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 				streamSpan.End()
 			}
-			return l.checkTruncatedStream(content.String(), toolCallMap, finishReason, reasoning.String())
+			return checkTruncatedStream(content.String(), toolCallMap, finishReason, reasoning.String(), totalUsage)
 
 		case <-ctx.Done():
 			if streamSpan != nil {
 				observability.RecordError(streamSpan, ctx.Err())
 				streamSpan.End()
 			}
-			return types.Message{}, ctx.Err()
+			return types.Message{}, totalUsage, ctx.Err()
 		}
 	}
 }
 
-// checkTruncatedStream returns the assembled message or an error if the
-// stream was truncated (finish_reason=length) with pending tool calls,
-// or if the response was blocked by a content filter with no usable output.
-func (l *Loop) checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, finishReason string, reasoningContent string) (types.Message, error) {
-	msg := l.assembleStreamed(content, toolCallMap, reasoningContent)
+// checkTruncatedStream validates the assembled streamed message and returns it
+// with the accumulated usage, or an error if the stream was truncated or blocked.
+func checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, finishReason string, reasoningContent string, usage types.Usage) (types.Message, types.Usage, error) {
+	msg := assembleStreamed(content, toolCallMap, reasoningContent)
 	if finishReason == "content_filter" && content == "" && len(msg.ToolCalls) == 0 {
-		return types.Message{}, fmt.Errorf("streamed response blocked by content filter")
+		return types.Message{}, usage, fmt.Errorf("streamed response blocked by content filter")
 	}
 	if finishReason == "length" && len(msg.ToolCalls) > 0 {
-		return types.Message{}, fmt.Errorf("streamed response truncated (finish_reason=length), discarding %d tool calls", len(msg.ToolCalls))
+		return types.Message{}, usage, fmt.Errorf("streamed response truncated (finish_reason=length), discarding %d tool calls", len(msg.ToolCalls))
 	}
 	if content == "" && len(msg.ToolCalls) == 0 {
-		return types.Message{}, fmt.Errorf("streamed response produced no content (finish_reason=%s)", finishReason)
+		return types.Message{}, usage, fmt.Errorf("streamed response produced no content (finish_reason=%s)", finishReason)
 	}
-	return msg, nil
+	return msg, usage, nil
 }
 
-// assembleStreamed builds the assistant message from accumulated stream state,
-// ordering tool calls by their delta index.
-func (l *Loop) assembleStreamed(content string, toolCalls map[int]*types.ToolCall, reasoningContent string) types.Message {
+// assembleStreamed builds the assistant message from accumulated stream state.
+func assembleStreamed(content string, toolCalls map[int]*types.ToolCall, reasoningContent string) types.Message {
 	msg := types.Message{
 		Role:             "assistant",
 		Content:          content,
@@ -215,4 +202,26 @@ func (l *Loop) assembleStreamed(content string, toolCalls map[int]*types.ToolCal
 		}
 	}
 	return msg
+}
+
+// addStreamUsage accumulates streaming usage into a running total.
+func addStreamUsage(total *types.Usage, u *types.Usage) {
+	total.PromptTokens += u.PromptTokens
+	total.CompletionTokens += u.CompletionTokens
+	total.TotalTokens += u.TotalTokens
+}
+
+// setStreamUsageAttrs enriches a stream span with token detail attributes.
+func setStreamUsageAttrs(span trace.Span, u *types.Usage) {
+	span.SetAttributes(
+		attribute.Int("llm.prompt_tokens", u.PromptTokens),
+		attribute.Int("llm.completion_tokens", u.CompletionTokens),
+		attribute.Int("llm.total_tokens", u.TotalTokens),
+	)
+	if d := u.CompletionTokensDetails; d != nil && d.ReasoningTokens > 0 {
+		span.SetAttributes(attribute.Int("llm.reasoning_tokens", d.ReasoningTokens))
+	}
+	if d := u.PromptTokensDetails; d != nil && d.CachedTokens > 0 {
+		span.SetAttributes(attribute.Int("llm.cached_prompt_tokens", d.CachedTokens))
+	}
 }

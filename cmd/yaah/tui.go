@@ -14,6 +14,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/instructions"
 	"github.com/buchenberg/yaah/internal/mcp"
@@ -194,14 +195,14 @@ func runTUI() error {
 
 	// Load sub-agent role definitions: built-in (embedded) +
 	// user-defined (~/.agents/roles/, ./.agents/roles/).
-	reg := agent.NewRoleRegistry()
+	reg := subagent.NewRoleRegistry()
 	if files := builtinRoleFiles(); files != nil {
 		reg.LoadBytes(files)
 	}
 	for _, dir := range roleSearchPaths(cwd) {
 		reg.LoadDir(dir)
 	}
-	agent.SetDefaultRoleRegistry(reg)
+	subagent.SetDefaultRoleRegistry(reg)
 
 	instrFiles := instructions.Load(cwd, cwd)
 	systemPrompt := "You are yaah, a helpful AI assistant. Respond concisely."

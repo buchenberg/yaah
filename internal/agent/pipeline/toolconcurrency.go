@@ -1,4 +1,4 @@
-package agent
+package pipeline
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 )
 
 // ToolConcurrencyMiddleware limits the maximum number of concurrent tool goroutines.
-// When max is 0 or negative, no limit is enforced (all tools run concurrently).
 type ToolConcurrencyMiddleware struct {
 	max int
 	sem chan struct{}
