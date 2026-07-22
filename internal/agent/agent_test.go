@@ -248,7 +248,7 @@ func TestLoop_hitsMaxIterations(t *testing.T) {
 // --- Test: Tool result truncation ---
 
 func TestLoop_toolResultTruncation(t *testing.T) {
-	longText := strings.Repeat("x", 10000)
+	longText := strings.Repeat("x", 100000)
 
 	fp := &fakeProvider{
 		responses: []*types.ChatResponse{
@@ -305,11 +305,68 @@ func TestLoop_toolResultTruncation(t *testing.T) {
 		}
 	}
 
-	if len(toolResult) > 9000 {
-		t.Errorf("tool result not truncated: len=%d, content=%q...", len(toolResult), toolResult[:80])
+	if len(toolResult) >= len(longText) {
+		t.Errorf("tool result not truncated: len=%d", len(toolResult))
 	}
-	if !strings.Contains(toolResult, "[truncated]") {
-		t.Errorf("truncation marker missing from tool result: %q", toolResult)
+	if !strings.Contains(toolResult, "[output truncated at") {
+		t.Errorf("truncation marker missing from tool result: %q", toolResult[len(toolResult)-200:])
+	}
+}
+
+func TestLoop_toolResultNotTruncatedWithinLimits(t *testing.T) {
+	shortText := strings.Repeat("x", 10000)
+
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{
+			{
+				Choices: []types.Choice{{
+					Message: types.Message{
+						Role: "assistant",
+						ToolCalls: []types.ToolCall{{
+							ID:   "call_1",
+							Type: "function",
+							Function: types.ToolCallFn{
+								Name:      "echo",
+								Arguments: `{}`,
+							},
+						}},
+					},
+					FinishReason: "tool_calls",
+				}},
+			},
+			{
+				Choices: []types.Choice{{
+					Message:      types.Message{Role: "assistant", Content: "got it"},
+					FinishReason: "stop",
+				}},
+			},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	reg.Register(&fakeTool{name: "echo", result: shortText})
+	loop := &Loop{Provider: fp,
+		Registry:      reg,
+		SystemPrompt:  "test",
+		MaxIterations: 5,
+	}
+
+	_, err := loop.Run(context.Background(), "test")
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	lastUserMsg := fp.requests[1].Messages
+	var toolResult string
+	for _, m := range lastUserMsg {
+		if m.Role == "tool" {
+			toolResult = m.Content
+			break
+		}
+	}
+
+	if len(toolResult) != len(shortText) {
+		t.Errorf("tool result should not be truncated for small output within limits: len=%d", len(toolResult))
 	}
 }
 

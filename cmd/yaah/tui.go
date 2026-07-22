@@ -23,6 +23,7 @@ import (
 	processpkg "github.com/buchenberg/yaah/internal/process"
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/providers"
+	"github.com/buchenberg/yaah/internal/skills"
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/tui"
@@ -229,6 +230,12 @@ func runTUI() error {
 	var sessionID string
 	var msgIdx int
 	var persistedCount int
+
+	skillDirs := skillSearchPaths()
+	if discovered := skills.Discover(skillDirs); len(discovered) > 0 {
+		layers.Skills = prompts.BuildSkillsIndex(discovered)
+	}
+
 	systemPrompt := prompts.Build(layers)
 	if err == nil {
 		if entries, memErr := db.ListMemory(50); memErr == nil && len(entries) > 0 {
@@ -286,7 +293,6 @@ func runTUI() error {
 	}
 
 	// Register the skill-loading tool
-	skillDirs := skillSearchPaths()
 	toolReg.Register(&tools.SkillTool{Dirs: skillDirs})
 
 	planDirs := planSearchPaths()

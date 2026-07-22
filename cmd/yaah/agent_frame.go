@@ -18,6 +18,7 @@ import (
 	"github.com/buchenberg/yaah/internal/observability"
 	processpkg "github.com/buchenberg/yaah/internal/process"
 	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/buchenberg/yaah/internal/skills"
 	"github.com/buchenberg/yaah/internal/spinner"
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -135,6 +136,10 @@ func newAgentSession() (*agentSession, error) {
 
 	skillDirs := skillSearchPaths()
 	toolReg.Register(&tools.SkillTool{Dirs: skillDirs})
+
+	if discovered := skills.Discover(skillDirs); len(discovered) > 0 {
+		layers.Skills = prompts.BuildSkillsIndex(discovered)
+	}
 
 	planDirs := planSearchPaths()
 	toolReg.Register(&tools.PlanTool{Dirs: planDirs})
@@ -378,9 +383,7 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		PipelineDisabled:       s.cfg.Agent.Middleware.Disabled,
 		DB:                     s.db,
 		MsgIdx:                 s.msgIdx,
-		MaxSubAgentDepth:       s.cfg.Agent.SubAgent.MaxDepth,
 		MaxSubAgentConcurrency: s.cfg.Agent.SubAgent.MaxConcurrency,
-		MaxSubAgentDepthByRole: subAgentDepthByRole(s.cfg.Agent.SubAgent),
 		OtelEnabled:            s.cfg.Observability.Otel.Enabled,
 		OtelVerbose:            s.cfg.Observability.Otel.Verbose,
 		ConflictTracker:        s.tracker,

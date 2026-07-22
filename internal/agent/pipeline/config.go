@@ -3,7 +3,6 @@ package pipeline
 import (
 	"context"
 
-	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -31,8 +30,7 @@ type PipelineConfig struct {
 
 	MaxToolConcurrency int
 
-	MaxSubAgentDepth       int
-	MaxSubAgentDepthByRole map[subagent.SubAgentRole]int
+	MaxSubAgentConcurrency int
 
 	PromptCaching bool
 
@@ -75,7 +73,7 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 	"permission":       func(cfg PipelineConfig) Middleware { return &PermissionMiddleware{rules: cfg.PermissionRules} },
 	"tool_concurrency": func(cfg PipelineConfig) Middleware { return &ToolConcurrencyMiddleware{max: cfg.MaxToolConcurrency} },
 	"sub_agent": func(cfg PipelineConfig) Middleware {
-		return &SubAgentMiddleware{MaxDepth: cfg.MaxSubAgentDepth, MaxDepthByRole: cfg.MaxSubAgentDepthByRole}
+		return &SubAgentMiddleware{MaxDepth: 1}
 	},
 	"prompt_caching": func(cfg PipelineConfig) Middleware { return &PromptCachingMiddleware{enabled: cfg.PromptCaching} },
 	"soft_prune": func(cfg PipelineConfig) Middleware {
