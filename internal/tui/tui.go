@@ -17,6 +17,7 @@ import (
 	"charm.land/lipgloss/v2"
 	zone "github.com/lrstanley/bubblezone/v2"
 
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/banner"
 	"github.com/buchenberg/yaah/internal/todo"
 )
@@ -94,6 +95,7 @@ type AgentMsg struct {
 	SubAgentRole  string
 	SubAgentLabel string // description or prompt abbreviation
 	SubAgentEnd   bool
+	SubAgentModel string // model used by the sub-agent (empty on start)
 	SubAgentDur   string // formatted duration string
 	SubAgentErr   string
 }
@@ -707,9 +709,14 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 	}
 
 	if msg.SubAgentStart {
-		label := msg.SubAgentRole
+		displayName := subagent.RoleDisplayName(subagent.SubAgentRole(msg.SubAgentRole))
+		specialty := subagent.RoleSpecialty(subagent.SubAgentRole(msg.SubAgentRole))
+		label := displayName
+		if specialty != "" {
+			label += " — " + specialty
+		}
 		if msg.SubAgentLabel != "" {
-			label += " — " + msg.SubAgentLabel
+			label += " · " + msg.SubAgentLabel
 		}
 		m.messages = append(m.messages, Message{
 			Role:    "subagent-start",
@@ -721,11 +728,20 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 	}
 
 	if msg.SubAgentEnd {
+		displayName := subagent.RoleDisplayName(subagent.SubAgentRole(msg.SubAgentRole))
+		specialty := subagent.RoleSpecialty(subagent.SubAgentRole(msg.SubAgentRole))
+		label := displayName
+		if specialty != "" {
+			label += " — " + specialty
+		}
+		if msg.SubAgentModel != "" {
+			label += " [" + msg.SubAgentModel + "]"
+		}
 		status := "completed"
 		if msg.SubAgentErr != "" {
 			status = msg.SubAgentErr
 		}
-		label := msg.SubAgentRole + " — " + status
+		label += " · " + status
 		if msg.SubAgentDur != "" {
 			label += " (" + msg.SubAgentDur + ")"
 		}

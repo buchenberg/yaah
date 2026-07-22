@@ -8,6 +8,35 @@ import (
 	"time"
 )
 
+// subAgentModelKey stores the sub-agent's model name in the context so
+// the caller can read it after execution.
+const subAgentModelKey contextKey = "yaah-subagent-model"
+
+// SubAgentModelFromContext returns the model used by a completed sub-agent.
+func SubAgentModelFromContext(ctx context.Context) string {
+	if v := ctx.Value(subAgentModelKey); v != nil {
+		return v.(string)
+	}
+	return ""
+}
+
+// subAgentModelPtrKey is a context key for a *string the runner writes
+// the sub-agent's model into.
+type subAgentModelPtrKey struct{}
+
+// WithSubAgentModelPtr stores ptr in ctx so the sub-agent runner can write
+// the model name into it. Call after runner returns to read the value.
+func WithSubAgentModelPtr(ctx context.Context, ptr *string) context.Context {
+	return context.WithValue(ctx, subAgentModelPtrKey{}, ptr)
+}
+
+// WriteSubAgentModel writes model to the *string stored in ctx, if present.
+func WriteSubAgentModel(ctx context.Context, model string) {
+	if ptr, ok := ctx.Value(subAgentModelPtrKey{}).(*string); ok {
+		*ptr = model
+	}
+}
+
 // SubAgentParams carries the per-invocation sub-agent configuration that
 // the model may supply via the task tool arguments. It is passed through
 // to the TaskRunner so the runner can build a role-appropriate Loop.
@@ -59,9 +88,9 @@ type TaskTool struct {
 	Tracker *ConflictTracker
 }
 
-func (t *TaskTool) Name() string { return "task" }
+func (t *TaskTool) Name() string { return "spawn_subagent" }
 func (t *TaskTool) Description() string {
-	return "Launches a sub-agent with restricted tools to research or complete a subtask."
+	return "Spawns a sub-agent with a specific role and tool set to autonomously complete a subtask."
 }
 
 func (t *TaskTool) Schema() json.RawMessage {
@@ -73,7 +102,7 @@ func (t *TaskTool) Schema() json.RawMessage {
 		"properties": {
 			"description": {"type": "string", "description": "3-5 word description of the subtask"},
 			"prompt": {"type": "string", "description": "The task for the sub-agent to perform autonomously"},
-			"role": {"type": "string", "enum": ["worker", "reviewer", "planner"], "description": "Sub-agent role selecting its tool set and limits. worker = code changes and shell access; reviewer = read-only analysis; planner = can spawn workers via task. Omit for the legacy default tool set."},
+			"role": {"type": "string", "description": "Sub-agent role selecting its tool set and limits. Use list_subagents to see available roles. Omit for the default full-access role."},
 			"timeout_seconds": {"type": "integer", "minimum": 10, "maximum": 600, "description": "Optional wall-clock deadline for the sub-agent. Overrides the role default."},
 			"max_iterations": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Optional cap on sub-agent loop turns. Overrides the role default."}
 		},
@@ -132,14 +161,14 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 		MaxIterations  int    `json:"max_iterations"`
 	}
 	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("task: invalid arguments: %w", err)
+		return "", fmt.Errorf("spawn_subagent: invalid arguments: %w", err)
 	}
 	if params.Prompt == "" {
-		return "", fmt.Errorf("task: prompt is required")
+		return "", fmt.Errorf("spawn_subagent: prompt is required")
 	}
 
 	if t.Runner == nil {
-		return "", fmt.Errorf("task: sub-agent runner not configured")
+		return "", fmt.Errorf("spawn_subagent: sub-agent runner not configured")
 	}
 
 	// Clamp model-supplied overrides to the advertised schema bounds so a

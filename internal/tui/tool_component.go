@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	zone "github.com/lrstanley/bubblezone/v2"
 )
 
@@ -113,21 +114,27 @@ func (t ToolMessage) Render() string {
 // the tool name and arguments.
 func toolHeader(toolName, toolArgs string) string {
 	header := toolName
-	if toolName == "task" && toolArgs != "" {
+	if toolName == "spawn_subagent" && toolArgs != "" {
 		desc := matchJSONField(toolArgs, "description")
 		role := matchJSONField(toolArgs, "role")
+		displayName := subagent.RoleDisplayName(subagent.SubAgentRole(role))
+		specialty := subagent.RoleSpecialty(subagent.SubAgentRole(role))
+		roleLabel := displayName
+		if specialty != "" {
+			roleLabel += " — " + specialty
+		}
 		switch {
 		case role != "" && desc != "":
-			header = "sub-agent: " + role + " — " + desc
+			header = "sub-agent: " + roleLabel + " · " + desc
 		case desc != "":
-			header = "sub-agent — " + desc
+			header = "sub-agent · " + desc
 		case role != "":
-			header = "sub-agent: " + role
+			header = "sub-agent: " + roleLabel
 		default:
 			header = "sub-agent"
 		}
 	} else if toolName == "delegate" && toolArgs != "" {
-		desc := matchJSONField(toolArgs, "task")
+		desc := matchJSONField(toolArgs, "spawn_subagent")
 		if desc != "" {
 			header = "executor — " + desc
 		} else {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/observability"
+	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -41,7 +42,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 		go func() {
 			abbreviated := abbreviateArgs(tc.Function.Arguments, 80)
 
-			isTask := tc.Function.Name == "task"
+			isTask := tc.Function.Name == "spawn_subagent"
 			var taskRole, taskPrompt string
 			if isTask && l.OnSubAgent != nil {
 				taskRole, taskPrompt = parseTaskArgs(tc.Function.Arguments)
@@ -94,6 +95,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			})
 
 			start := time.Now()
+			var subAgentModel string
 
 			runCtx := ctx
 			var toolSpan trace.Span
@@ -103,6 +105,10 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 				} else {
 					runCtx, toolSpan = observability.StartTool(ctx, tc.Function.Name, tc.Function.Arguments)
 				}
+			}
+
+			if isTask {
+				runCtx = tools.WithSubAgentModelPtr(runCtx, &subAgentModel)
 			}
 
 			res, err := l.Registry.Execute(runCtx, tc.Function.Name, tc.Function.Arguments)
@@ -125,7 +131,11 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			}
 
 			if isTask && l.OnSubAgent != nil {
-				l.OnSubAgent(SubAgentInfo{Role: taskRole, Prompt: taskPrompt, Duration: duration, Error: errStr})
+				model := subAgentModel
+				if model == "" {
+					model = l.Model
+				}
+				l.OnSubAgent(SubAgentInfo{Role: taskRole, Model: model, Prompt: taskPrompt, Duration: duration, Error: errStr})
 			}
 
 			if l.OnTool != nil {

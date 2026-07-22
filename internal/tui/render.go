@@ -208,7 +208,7 @@ func (m *Model) renderToolResult(toolName, content string) string {
 		}
 		// No snapshot available — fall through to plain text.
 	}
-	if toolName == "task" {
+	if toolName == "spawn_subagent" {
 		return m.renderMarkdown(content)
 	}
 	if toolName == "delegate" {

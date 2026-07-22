@@ -48,6 +48,7 @@ type ToolCallback func(info ToolInfo)
 // task tool for display in the CLI/TUI.
 type SubAgentInfo struct {
 	Role     string        // worker, reviewer, planner, or custom
+	Model    string        // model used by the sub-agent
 	Prompt   string        // abbreviated task prompt
 	Duration time.Duration // how long the sub-agent ran (0 on start)
 	Error    string        // error or status message on completion
@@ -659,23 +660,25 @@ func (l *Loop) buildToolsForLevel() []types.ToolDef {
 }
 
 func (l *Loop) agentTools() []types.ToolDef {
+	agentToolNames := map[string]bool{"spawn_subagent": true, "list_subagents": true}
+	var defs []types.ToolDef
 	for _, name := range l.Registry.List() {
-		if name == "task" {
+		if agentToolNames[name] {
 			t := l.Registry.Get(name)
 			if t == nil {
 				continue
 			}
-			return []types.ToolDef{{
+			defs = append(defs, types.ToolDef{
 				Type: "function",
 				Function: types.ToolFn{
 					Name:        t.Name(),
 					Description: t.Description(),
 					Parameters:  json.RawMessage(t.Schema()),
 				},
-			}}
+			})
 		}
 	}
-	return nil
+	return defs
 }
 
 func (l *Loop) addUsage(u types.Usage) {
@@ -697,16 +700,4 @@ func (l *Loop) llmCompact(ctx context.Context, messages []types.Message, thresho
 	l.Messages = messages
 	l.compactContext(ctx, threshold)
 	return l.Messages
-}
-
-func (l *Loop) resolveExecutor(executorType string) (Provider, string) {
-	provider := l.ExecutorProvider
-	if provider == nil {
-		provider = l.Provider
-	}
-	model := l.ExecutorModel
-	if model == "" {
-		model = l.Model
-	}
-	return provider, model
 }

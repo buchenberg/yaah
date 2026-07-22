@@ -13,8 +13,8 @@ func TestRoleFromTaskArgs(t *testing.T) {
 		args string
 		want subagent.SubAgentRole
 	}{
-		{`{"role":"planner","prompt":"x"}`, subagent.RolePlanner},
-		{`{"role":"planner"}`, subagent.RolePlanner},
+		{`{"role":"developer","prompt":"x"}`, subagent.SubAgentRole("developer")},
+		{`{"role":"developer"}`, subagent.SubAgentRole("developer")},
 		{`{"prompt":"x"}`, subagent.RoleDefault},
 		{``, subagent.RoleDefault},
 		{`{not valid json`, subagent.RoleDefault},
@@ -42,11 +42,11 @@ func TestSubAgentMiddleware_roleDepthEnforcement(t *testing.T) {
 
 	t.Run("per-role limit", func(t *testing.T) {
 		m := &SubAgentMiddleware{
-			MaxDepthByRole: map[subagent.SubAgentRole]int{subagent.RolePlanner: 1},
+			MaxDepthByRole: map[subagent.SubAgentRole]int{subagent.SubAgentRole("developer"): 1},
 		}
 		calls := []types.ToolCall{
-			{ID: "1", Type: "function", Function: types.ToolCallFn{Name: "task", Arguments: `{"role":"planner","prompt":"a"}`}},
-			{ID: "2", Type: "function", Function: types.ToolCallFn{Name: "task", Arguments: `{"role":"planner","prompt":"b"}`}},
+			{ID: "1", Type: "function", Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"role":"developer","prompt":"a"}`}},
+			{ID: "2", Type: "function", Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"role":"developer","prompt":"b"}`}},
 		}
 		msg := &types.Message{ToolCalls: calls}
 		step := &Step{Messages: []types.Message{}}
@@ -63,8 +63,8 @@ func TestSubAgentMiddleware_roleDepthEnforcement(t *testing.T) {
 		m := &SubAgentMiddleware{MaxDepth: 1}
 		msg := &types.Message{ToolCalls: []types.ToolCall{
 			{ID: "1", Type: "function", Function: types.ToolCallFn{Name: "read", Arguments: `{}`}},
-			{ID: "2", Type: "function", Function: types.ToolCallFn{Name: "task", Arguments: `{"prompt":"a"}`}},
-			{ID: "3", Type: "function", Function: types.ToolCallFn{Name: "task", Arguments: `{"prompt":"b"}`}},
+			{ID: "2", Type: "function", Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"prompt":"a"}`}},
+			{ID: "3", Type: "function", Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"prompt":"b"}`}},
 		}}
 		step := &Step{Messages: []types.Message{}}
 		m.PostModel(context.Background(), msg, step)
@@ -90,7 +90,7 @@ func taskCallsN(n int) []types.ToolCall {
 		calls[i] = types.ToolCall{
 			ID:       "c" + string(rune('1'+i)),
 			Type:     "function",
-			Function: types.ToolCallFn{Name: "task", Arguments: `{"description":"x","prompt":"y"}`},
+			Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"x","prompt":"y"}`},
 		}
 	}
 	return calls

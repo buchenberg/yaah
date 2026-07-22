@@ -313,7 +313,7 @@ func TestLoop_subAgentInterruptPropagation(t *testing.T) {
 			{Choices: []types.Choice{{
 				Message: types.Message{
 					Role:      "assistant",
-					ToolCalls: []types.ToolCall{{ID: "c1", Type: "function", Function: types.ToolCallFn{Name: "task", Arguments: `{"description":"x","prompt":"y"}`}}},
+					ToolCalls: []types.ToolCall{{ID: "c1", Type: "function", Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"x","prompt":"y"}`}}},
 				},
 				FinishReason: "tool_calls",
 			}}},
@@ -344,15 +344,6 @@ func TestLoop_subAgentInterruptPropagation(t *testing.T) {
 
 // --- helpers ---
 
-func contains(slice []string, want string) bool {
-	for _, s := range slice {
-		if s == want {
-			return true
-		}
-	}
-	return false
-}
-
 // taskCallsN builds n task tool calls without a role.
 func taskCallsN(n int) []types.ToolCall {
 	calls := make([]types.ToolCall, n)
@@ -360,7 +351,7 @@ func taskCallsN(n int) []types.ToolCall {
 		calls[i] = types.ToolCall{
 			ID:       "c" + string(rune('1'+i)),
 			Type:     "function",
-			Function: types.ToolCallFn{Name: "task", Arguments: `{"description":"x","prompt":"y"}`},
+			Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"x","prompt":"y"}`},
 		}
 	}
 	return calls

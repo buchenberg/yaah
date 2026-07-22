@@ -45,7 +45,7 @@ func (m *SubAgentMiddleware) PostModel(ctx context.Context, msg *types.Message, 
 func (m *SubAgentMiddleware) filterTaskCalls(calls []types.ToolCall) (allowed []types.ToolCall, blocked int) {
 	allowed = make([]types.ToolCall, 0, len(calls))
 	for _, tc := range calls {
-		if tc.Function.Name != "task" {
+		if tc.Function.Name != "spawn_subagent" {
 			allowed = append(allowed, tc)
 			continue
 		}

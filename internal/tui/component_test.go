@@ -156,10 +156,10 @@ func TestToolMessage_Header(t *testing.T) {
 		want     string
 	}{
 		{"plain tool", "read", `{"path":"/x"}`, "read"},
-		{"task with role and desc", "task", `{"role":"worker","description":"list files","prompt":"y"}`, "sub-agent: worker — list files"},
-		{"task with desc only", "task", `{"description":"list files","prompt":"y"}`, "sub-agent — list files"},
-		{"task with role only", "task", `{"role":"worker","prompt":"y"}`, "sub-agent: worker"},
-		{"task bare", "task", `{"prompt":"y"}`, "sub-agent"},
+		{"spawn_subagent with role and desc", "spawn_subagent", `{"role":"developer","description":"list files","prompt":"y"}`, "sub-agent: developer · list files"},
+		{"spawn_subagent with desc only", "spawn_subagent", `{"description":"list files","prompt":"y"}`, "sub-agent · list files"},
+		{"spawn_subagent with role only", "spawn_subagent", `{"role":"developer","prompt":"y"}`, "sub-agent: developer"},
+		{"spawn_subagent bare", "spawn_subagent", `{"prompt":"y"}`, "sub-agent"},
 		{"webfetch with url", "webfetch", `{"url":"https://example.com"}`, "web_fetch → https://example.com"},
 		{"bash", "bash", `{"command":"ls"}`, "bash — {\"command\":\"ls\"}"},
 	}

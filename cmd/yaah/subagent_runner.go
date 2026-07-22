@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/tools"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker) *tools.TaskTool {
@@ -163,6 +166,17 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			}
 			sysPrompt += g
 		}
+		if profile.Contract.Heading != "" && len(profile.Contract.Fields) > 0 {
+			var b strings.Builder
+			b.WriteString("\n\n## Response contract\n\n")
+			b.WriteString("Always end your response with a structured block:\n\n```\n")
+			b.WriteString(profile.Contract.Heading + "\n")
+			for _, f := range profile.Contract.Fields {
+				b.WriteString("- **" + f + "**: <value>\n")
+			}
+			b.WriteString("```")
+			sysPrompt += b.String()
+		}
 
 		// Persist the sub-agent transcript under a child session. The ID
 		// combines wall-clock time with a process-wide atomic counter so
@@ -211,7 +225,19 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			OnTool:                 opts.SubToolCallback,
 		}
 
-		return subLoop.Run(ctx, prompt)
+		result, runErr := subLoop.Run(ctx, prompt)
+
+		tools.WriteSubAgentModel(ctx, subModel)
+
+		if span := trace.SpanFromContext(ctx); span.IsRecording() {
+			span.SetAttributes(
+				attribute.Int("subagent.prompt_tokens", subLoop.TotalTokens.PromptTokens),
+				attribute.Int("subagent.completion_tokens", subLoop.TotalTokens.CompletionTokens),
+				attribute.String("subagent.model", subModel),
+			)
+		}
+
+		return result, runErr
 	}
 }
 
@@ -229,9 +255,9 @@ func subAgentTimeoutResolver(subCfg config.SubAgentConfig) func(tools.SubAgentPa
 // the map fall back to the global MaxDepth in the middleware.
 func subAgentDepthByRole(subCfg config.SubAgentConfig) map[subagent.SubAgentRole]int {
 	out := make(map[subagent.SubAgentRole]int)
-	for _, role := range []subagent.SubAgentRole{subagent.RoleReviewer, subagent.RolePlanner} {
-		if d := subagent.RoleProfileFor(role).MaxDepth; d > 0 {
-			out[role] = d
+	for _, name := range subagent.Names() {
+		if d := subagent.RoleProfileFor(name).MaxDepth; d > 0 {
+			out[name] = d
 		}
 	}
 	for name, rc := range subCfg.Roles {
@@ -303,7 +329,7 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 
 	reg := tools.NewEmptyRegistry()
 	for _, name := range profile.Tools {
-		if name == "task" {
+		if name == "spawn_subagent" {
 			if remainingDepth > 0 {
 				registerTask(reg)
 			}

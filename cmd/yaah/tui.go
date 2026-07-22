@@ -298,6 +298,31 @@ func runTUI() error {
 	subAgentProvider, subAgentModel := resolveSubAgent(cfg)
 	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, conflictTracker))
 
+	toolReg.Register(&tools.ListSubAgentsTool{
+		Lister: func() []tools.SubAgentInfo {
+			defs := reg.List()
+			infos := make([]tools.SubAgentInfo, 0, len(defs))
+			for name, def := range defs {
+				desc := def.Body
+				if idx := strings.IndexByte(desc, '\n'); idx >= 0 {
+					desc = desc[:idx]
+				}
+				infos = append(infos, tools.SubAgentInfo{
+					Role:        string(name),
+					DisplayName: def.DisplayName,
+					Specialty:   def.Specialty,
+					Contract: tools.SubAgentContract{
+						Heading: def.Contract.Heading,
+						Fields:  def.Contract.Fields,
+					},
+					Description: desc,
+					Tools:       def.Tools,
+				})
+			}
+			return infos
+		},
+	})
+
 	// Shared conversation history for the TUI session.
 	var messages []types.Message
 
@@ -516,7 +541,7 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 		OtelEnabled:           cfg.Observability.Otel.Enabled,
 		OtelVerbose:           cfg.Observability.Otel.Verbose,
 		ConflictTracker:       conflictTracker,
-		ToolsLevel:            agent.SubAgentsOnly,
+		ToolsLevel:            agent.FullTools,
 		ExecutorProvider:      executorProvider,
 		ExecutorModel:         executorModel,
 		MaxInnerIterations:    cfg.Agent.Executor.MaxIterations,
@@ -563,10 +588,11 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 					errStr = info.Error
 				}
 				ch <- tui.AgentMsg{
-					SubAgentEnd:  true,
-					SubAgentRole: info.Role,
-					SubAgentDur:  dur,
-					SubAgentErr:  errStr,
+					SubAgentEnd:   true,
+					SubAgentRole:  info.Role,
+					SubAgentModel: info.Model,
+					SubAgentDur:   dur,
+					SubAgentErr:   errStr,
 				}
 			}
 		},

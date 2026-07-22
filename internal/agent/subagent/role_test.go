@@ -6,69 +6,51 @@ import (
 )
 
 func TestRoleProfileFor(t *testing.T) {
-	t.Run("reviewer is read-only", func(t *testing.T) {
-		p := RoleProfileFor(RoleReviewer)
-		for _, dangerous := range []string{"write", "edit", "delete", "bash", "powershell", "task"} {
-			if contains(p.Tools, dangerous) {
-				t.Errorf("reviewer profile must NOT include %q", dangerous)
-			}
+	t.Run("default has full tools and limits", func(t *testing.T) {
+		p := RoleProfileFor(RoleDefault)
+		if len(p.Tools) == 0 {
+			t.Error("RoleDefault should have tools")
 		}
-		if !contains(p.Tools, "read") || !contains(p.Tools, "grep") {
-			t.Error("reviewer profile must include read and grep")
+		if !contains(p.Tools, "read") || !contains(p.Tools, "write") {
+			t.Error("RoleDefault should include read and write")
 		}
-		if p.IsSpawnCapable() {
-			t.Error("reviewer should not be spawn-capable")
+		if !contains(p.Tools, "bash") || !contains(p.Tools, "powershell") {
+			t.Error("RoleDefault should include shell tools")
 		}
-		if p.Timeout != 0 {
-			t.Errorf("reviewer Timeout = %v, want 0 (unlimited)", p.Timeout)
-		}
-	})
-
-	t.Run("planner can spawn", func(t *testing.T) {
-		p := RoleProfileFor(RolePlanner)
-		if !contains(p.Tools, "task") {
-			t.Error("planner profile must include task")
+		if !contains(p.Tools, "spawn_subagent") {
+			t.Error("RoleDefault should include spawn_subagent")
 		}
 		if !p.IsSpawnCapable() {
-			t.Error("planner should be spawn-capable")
+			t.Error("RoleDefault should be spawn-capable")
 		}
-		if p.MaxIterations != 50 {
-			t.Errorf("planner MaxIterations = %d, want 50", p.MaxIterations)
+		if p.MaxIterations != 25 {
+			t.Errorf("RoleDefault MaxIterations = %d, want 25", p.MaxIterations)
 		}
-		if p.Timeout != 300*time.Second {
-			t.Errorf("planner Timeout = %v, want 300s", p.Timeout)
+		if p.Timeout != 180*time.Second {
+			t.Errorf("RoleDefault Timeout = %v, want 180s", p.Timeout)
 		}
-		if p.MaxDepth != 3 {
-			t.Errorf("planner MaxDepth = %d, want 3", p.MaxDepth)
-		}
-	})
-
-	t.Run("default is zero-value (legacy)", func(t *testing.T) {
-		p := RoleProfileFor(RoleDefault)
-		if len(p.Tools) != 0 {
-			t.Errorf("RoleDefault should have no tools, got %v", p.Tools)
-		}
-		if p.IsSpawnCapable() {
-			t.Error("RoleDefault should not be spawn-capable")
+		if p.MaxDepth != 0 {
+			t.Errorf("RoleDefault MaxDepth = %d, want 0", p.MaxDepth)
 		}
 	})
 
-	t.Run("unknown role falls back to default", func(t *testing.T) {
+	t.Run("unknown role is zero-value (no tools)", func(t *testing.T) {
 		p := RoleProfileFor(SubAgentRole("bogus"))
 		if len(p.Tools) != 0 {
-			t.Errorf("unknown role should fall back to zero-value profile")
+			t.Errorf("unknown role should fall back to zero-value profile, got %v", p.Tools)
+		}
+		if p.IsSpawnCapable() {
+			t.Error("unknown role should not be spawn-capable")
 		}
 	})
 }
 
 func TestRoleGuidance(t *testing.T) {
-	for _, role := range []SubAgentRole{RoleReviewer, RolePlanner} {
-		if g := RoleGuidance(role); g == "" {
-			t.Errorf("RoleGuidance(%q) returned empty", role)
-		}
+	if g := RoleGuidance(RoleDefault); g == "" {
+		t.Error("RoleGuidance(RoleDefault) should not be empty")
 	}
-	if g := RoleGuidance(RoleDefault); g != "" {
-		t.Errorf("RoleGuidance(RoleDefault) should be empty, got %q", g)
+	if g := RoleGuidance(SubAgentRole("bogus")); g != "" {
+		t.Errorf("RoleGuidance(bogus) should be empty, got %q", g)
 	}
 }
 
