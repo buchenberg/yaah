@@ -37,7 +37,6 @@ type Theme struct {
 	CmdDesc      string
 	PaletteTitle string
 	Notice       string
-	Executor     string
 }
 
 // Default dark theme — the original yaah palette.
@@ -65,7 +64,6 @@ var DarkTheme = Theme{
 	CmdDesc:      "243",
 	PaletteTitle: "99",
 	Notice:       "10",
-	Executor:     "39",
 }
 
 // Light theme — tuned for light terminal backgrounds.
@@ -94,7 +92,6 @@ var LightTheme = Theme{
 	// Light theme
 	PaletteTitle: "55",
 	Notice:       "10",
-	Executor:     "25",
 }
 
 // catppuccinMocha maps the Catppuccin Mocha palette to 256-color ANSI
@@ -123,7 +120,6 @@ var catppuccinMocha = Theme{
 	CmdDesc:      "244", // Overlay1
 	PaletteTitle: "183", // Mauve
 	Notice:       "114", // Green
-	Executor:     "33",  // Teal
 }
 
 // catppuccinLatte maps the Catppuccin Latte palette to 256-color ANSI
@@ -152,7 +148,6 @@ var catppuccinLatte = Theme{
 	CmdDesc:      "244", // Overlay1
 	PaletteTitle: "97",  // Mauve
 	Notice:       "35",  // Green
-	Executor:     "24",  // Deep blue
 }
 
 // namedThemes holds extra themes beyond the built-in dark/light.
@@ -268,11 +263,6 @@ func ApplyTheme(t Theme) {
 	toolBoxStyle = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colorOrNone(t.Tool)).
-		Padding(0, 1)
-
-	executorBoxStyle = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorOrNone(t.Executor)).
 		Padding(0, 1)
 
 	paletteTitleStyle = lipgloss.NewStyle().

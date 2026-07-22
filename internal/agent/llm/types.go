@@ -26,3 +26,8 @@ type ThinkingCallback func(text string)
 
 // CompactFunc is called to reduce context size when token overflow is detected.
 type CompactFunc func(ctx context.Context, messages []types.Message, threshold float64) []types.Message
+
+// TrimFunc is called with the current messages when a degenerate empty
+// stream is received. It should reduce the context deterministically
+// (no LLM call) so the next attempt has a smaller prompt.
+type TrimFunc func(ctx context.Context, messages []types.Message) []types.Message

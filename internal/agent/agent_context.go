@@ -44,9 +44,8 @@ func truncateRunes(s string, maxLen int) string {
 }
 
 // pruneMessages replaces large tool and assistant messages with abbreviated
-// markers to reduce token load before LLM summarization. Tool outputs (which
-// also carry inner-executor summaries in the dual-loop path) become compact
-// summary markers; assistant messages are truncated with rune-safe
+// markers to reduce token load before LLM summarization. Tool outputs become
+// compact summary markers; assistant messages are truncated with rune-safe
 // head+tail preservation.
 func pruneMessages(msgs []types.Message, maxLen int) []types.Message {
 	out := make([]types.Message, len(msgs))
@@ -82,7 +81,7 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	}
 
 	if threshold <= 0 {
-		threshold = 0.5
+		threshold = 0.25
 	}
 
 	target := int(float64(l.ContextWindow) * threshold)
@@ -169,6 +168,7 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	}
 	newMsgs = append(newMsgs, keepMsgs...)
 	l.Messages = newMsgs
+	l.resetPruner()
 
 	afterEstimate := l.EstimatedTokens()
 	if beforeEstimate > 0 {
@@ -213,4 +213,5 @@ func (l *Loop) trimContext() {
 	newMsgs[0] = sysMsg
 	newMsgs = append(newMsgs, rest...)
 	l.Messages = newMsgs
+	l.resetPruner()
 }

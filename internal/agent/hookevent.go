@@ -4,14 +4,14 @@ package agent
 type HookEventType string
 
 const (
-	SessionStart     HookEventType = "session.start"
-	SessionEnd       HookEventType = "session.end"
-	TurnStart        HookEventType = "turn.start"
-	ToolStart        HookEventType = "tool.start"
-	ToolEnd          HookEventType = "tool.end"
-	ConflictCheck    HookEventType = "conflict.check"
-	ConflictDetect   HookEventType = "conflict.detect"
-	ExecutorFallback HookEventType = "executor.fallback"
+	SessionStart   HookEventType = "session.start"
+	SessionEnd     HookEventType = "session.end"
+	TurnStart      HookEventType = "turn.start"
+	ToolStart      HookEventType = "tool.start"
+	ToolEnd        HookEventType = "tool.end"
+	ConflictCheck  HookEventType = "conflict.check"
+	ConflictDetect HookEventType = "conflict.detect"
+	ContextPrune   HookEventType = "context.prune"
 )
 
 // HookEvent is a structured event emitted to the hook directory as JSONL.
@@ -42,6 +42,13 @@ type HookEvent struct {
 	// conflict.check / conflict.detect
 	ConflictFiles int `json:"conflict_files,omitempty"`
 
-	// executor.fallback
-	FallbackReason string `json:"fallback_reason,omitempty"`
+	// context.prune — soft-prune outcome. Emitted on every PostTool mark,
+	// even when Committed is false (so "considered, decided not to" is visible).
+	PruneReason      string `json:"prune_reason,omitempty"`
+	PruneCandidates  int    `json:"prune_candidates,omitempty"`
+	PruneMarked      int    `json:"prune_marked,omitempty"`
+	PruneReclaimed   int    `json:"prune_reclaimed,omitempty"`
+	PruneProtected   int    `json:"prune_protected,omitempty"`
+	PruneCommitted   bool   `json:"prune_committed,omitempty"`
+	PruneTotalMarked int    `json:"prune_total_marked,omitempty"`
 }

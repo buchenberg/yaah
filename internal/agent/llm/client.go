@@ -22,6 +22,7 @@ type Client struct {
 	OnToken          TokenCallback
 	OnThinking       ThinkingCallback
 	Compact          CompactFunc
+	Trim             TrimFunc
 	OtelEnabled      bool
 	OtelVerbose      bool
 }
@@ -112,6 +113,15 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (types.Message
 		}
 
 		switch {
+		case classified.ShouldCompress && isDegenerateStream(err) && c.Trim != nil && compactAttempts < 3:
+			beforeCount := len(req.Messages)
+			req.Messages = c.Trim(ctx, req.Messages)
+			compactAttempts++
+			if len(req.Messages) < beforeCount {
+				attempt--
+				continue
+			}
+
 		case classified.ShouldCompress && c.Compact != nil && compactAttempts < 3:
 			beforeCount := len(req.Messages)
 			req.Messages = c.Compact(ctx, req.Messages, 0.4)

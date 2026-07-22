@@ -152,20 +152,6 @@ type Loop struct {
 	// CompactModel is the model to use for compaction. If empty, Model is used.
 	CompactModel string
 
-	// ExecutorProvider is used for the dual-loop executor.
-	// When configured, delegated tasks run on this provider; when nil, the
-	// main Provider is used (default-model fallback). Typically set to a
-	// cheaper/faster provider than the main loop for model tiering.
-	ExecutorProvider Provider
-
-	// ExecutorModel is the model to use for the inner executor loop.
-	// If empty, Model is used.
-	ExecutorModel string
-
-	// MaxInnerIterations caps the number of tool-chaining rounds the
-	// inner executor loop may run per outer-loop turn. Default 10.
-	MaxInnerIterations int
-
 	// FallbackProvider is an alternative model backend used when the
 	// primary provider returns auth, billing, or rate-limit errors.
 	// If nil, retries continue with the primary provider.
@@ -241,6 +227,11 @@ type Loop struct {
 	// system prompt and recent messages.
 	PromptCaching bool
 
+	// Pruner soft-prunes stale tool-result content from provider requests
+	// (Tier-0 context reclaim). Default-constructed in applyDefaults; disable
+	// via PipelineDisabled: ["soft_prune"].
+	Pruner *pipeline.Pruner
+
 	// ConflictTracker detects and reports external file modifications made
 	// outside the agent's own write/edit/replace/delete tools during a turn.
 	// When non-nil and conflicts are found, a user message describing them
@@ -254,7 +245,7 @@ type Loop struct {
 
 	// OtelVerbose enables verbose Jaeger trace recording of full assistant
 	// responses (including streamed messages) and per-turn conversation state.
-	// Useful for debugging the dual-loop planner-executor architecture.
+	// Useful for debugging the agent loop.
 	OtelVerbose bool
 
 	// ApproveFn is an optional callback for custom approval UI (TUI/REPL/etc.).
@@ -277,10 +268,6 @@ type Loop struct {
 	// When set, the Loop will use this prompt instead of one assembled from
 	// instructions and provider defaults.
 	SystemPromptOverride string
-
-	// ExecutorSystemPrompt is the system prompt for the dual-loop executor.
-	// When empty, the embedded identity-executor.md is used.
-	ExecutorSystemPrompt string
 
 	// hookFile is the open file descriptor for JSONL event hooks.
 	hookFile *os.File
@@ -347,6 +334,8 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 		MaxSubAgentDepth:       l.MaxSubAgentDepth,
 		MaxSubAgentDepthByRole: l.MaxSubAgentDepthByRole,
 		PromptCaching:          l.PromptCaching,
+		Pruner:                 l.Pruner,
+		PruneHooks:             l.pruneHooks(),
 		PipelineNames:          l.PipelineNames,
 		PipelineDisabled:       l.PipelineDisabled,
 	}
@@ -442,21 +431,19 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 
 		req := types.ChatRequest{
 			Model:    l.Model,
-			Messages: messages,
+			Messages: l.applyPruning(messages),
 			Tools:    l.buildToolsForLevel(),
 		}
 
-		// Verbose: record the conversation the outer model is about to see
-		// so the dual-loop "responds to its own summary" failure mode is
-		// visible in Jaeger (the assistant inner-summary message appears in
-		// the message list the model responds to).
+		// Verbose: record the conversation the model is about to see
+		// so the full message history is visible in Jaeger.
 		if l.OtelVerbose && turnSpan != nil {
 			observability.RecordConversation(turnSpan, messages)
 		}
 
 		// Pre-flight context guard: compact before sending if context has
 		// exceeded the absolute window (last-resort safety net for between-turn
-		// growth from inner-loop summaries and large tool results).
+		// growth from large tool results).
 		if l.ContextWindow > 0 && l.LastPromptTokens > l.ContextWindow {
 			l.compactContext(turnCtx, 0.5)
 			messages = l.Messages
@@ -608,6 +595,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 
 // applyDefaults sets default values for Loop fields.
 func (l *Loop) applyDefaults() {
+	l.ensurePruner()
 	if l.MaxIterations <= 0 {
 		l.MaxIterations = 50
 	}
@@ -622,9 +610,6 @@ func (l *Loop) applyDefaults() {
 	}
 	if l.LoopDetectWindow <= 0 {
 		l.LoopDetectWindow = 10
-	}
-	if l.MaxInnerIterations <= 0 {
-		l.MaxInnerIterations = 10
 	}
 	if l.MaxToolConcurrency > 0 && l.toolSem == nil {
 		l.toolSem = make(chan struct{}, l.MaxToolConcurrency)
@@ -644,6 +629,7 @@ func (l *Loop) applyDefaults() {
 			OnToken:          l.OnToken,
 			OnThinking:       l.OnThinking,
 			Compact:          l.llmCompact,
+			Trim:             l.llmTrim,
 			OtelEnabled:      l.OtelEnabled,
 			OtelVerbose:      l.OtelVerbose,
 		}
@@ -699,5 +685,14 @@ func (l *Loop) addUsage(u types.Usage) {
 func (l *Loop) llmCompact(ctx context.Context, messages []types.Message, threshold float64) []types.Message {
 	l.Messages = messages
 	l.compactContext(ctx, threshold)
+	return l.Messages
+}
+
+// llmTrim reduces context deterministically by removing the oldest
+// messages. It is used as a fallback when the LLM returns an empty
+// stream, indicating the context is too large even for summarization.
+func (l *Loop) llmTrim(ctx context.Context, messages []types.Message) []types.Message {
+	l.Messages = messages
+	l.trimContext()
 	return l.Messages
 }
