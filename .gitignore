@@ -53,3 +53,10 @@ go.work.sum
 **.dll~
 **.so~
 **.dylib~
+
+# Debug and test files
+debug*.log
+yaah_debug.log
+test_config.yaml
+state.db
+config.yaml
