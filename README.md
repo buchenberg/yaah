@@ -304,6 +304,7 @@ agents:
     max_iterations: 50
     context_window: 128000
     approval: ask                    # ask | allow | deny
+    estimate_factor: 1.3             # token estimate multiplier for preflight compaction (0 = default 1.3)
 
   subagent:
     provider: deepseek               # optional — defaults to main provider
@@ -408,6 +409,7 @@ middleware pipeline, and sub-agents.
 | `context_window` | — | Token budget for compaction (0 = disabled) |
 | `approval` | `ask` | `allow`, `ask`, or `deny` for dangerous tools |
 | `max_inline_tools_per_turn` | `0` (unlimited) | Caps inline tool calls per turn; warns when exceeded |
+| `estimate_factor` | `1.3` | Multiplier on chars/4 token estimate for preflight compaction (compensates for provider tokenizer undercounting on code/JSON). Set to `0` or omit for default. |
 
 **`agents.subagent`** — configures sub-agents spawned via `spawn_subagent`:
 

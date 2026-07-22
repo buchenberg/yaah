@@ -53,3 +53,7 @@ go.work.sum
 **.dll~
 **.so~
 **.dylib~
+
+# Debug and test files
+*.log
+state.db

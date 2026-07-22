@@ -15,3 +15,4 @@ Records are never overwritten — append a new row for every run.
 | 2026-07-22 00:33 | feature/pruning | a740911 | B4 Audit | 4 | 0 | 7 | 44.3s | 51,019 | 0 | 51,019 | 100% | 0% | 0 | Post executor cleanup |
 | 2026-07-22 01:07 | feature/pruning | a740911 | B5 Parallel | 14 | 3 | 21 | 26.2s | 108,800 | 90,538 | 199,338 | 55% | 45% | 0 | Parallel sub-agents, scoped to internal/agent/ |
 | 2026-07-22 10:17 | main | 7f43924 | B4 Audit | 4 | 0 | 8 | <time> | 43415 | 0 | 43415 | 100% | 0% | 0 | Baseline - main branch |
+| 2026-07-22 12:25 | feature/compaction-survival | 2d6f7b3 | B4 Audit (ctx=20K) | 9 | 2 | 14 | 54.7s | 93,688 | 65,503 | 159,191 | 59% | 41% | 0 | Token-budget compaction active — prompt oscillates 5.8K–15K vs monotonic 20.8K before; 2 sub-agents dispatched; 48K cached |

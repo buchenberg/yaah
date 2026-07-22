@@ -601,7 +601,18 @@ outcomes.
 ### Token estimation
 
 Primary: API-reported `LastPromptTokens` from the most recent model call.
-Fallback: `EstimatedTokens()` which uses a `len(content) / 4` heuristic.
+Fallback (first call, before any API response): `preflightTokens()` which
+uses a `len(content) / 4` heuristic with a configurable multiplier
+(`EstimateFactor`, default 1.3) to compensate for provider tokenizers
+systematically undercounting code and JSON payloads.
+
+### Continuation guard
+
+`compactContext` checks `isContinuation(messages)` before triggering
+compaction. A conversation is "continuing" when the last message is a tool
+result after the most recent user message — i.e., the model is mid-tool-loop.
+Compaction is skipped in this case because the model needs the full context
+to continue the tool loop; the next user message will re-evaluate.
 
 ### Pre-compaction pruning (`pruneMessages`)
 
@@ -619,24 +630,32 @@ information for a useful summary.
 ### Preservation budget
 
 Instead of a fixed message count, yaah uses a **token-budget approach**:
-keep as many recent messages as fit in 20% of the context window, with:
+keep as many recent turns as fit in 25% of the context window, with:
 
-- A 2K-token minimum floor (capped at half the window)
-- A 4-message hard minimum (always keep at least 2 exchanges)
-- **Boundary alignment**: never split inside a tool-call/response group
+- A 2K–8K clamp: `min(8000, max(2000, floor(window * 0.25)))` so huge
+  windows don't over-preserve and small windows keep a usable floor
+- **Boundary alignment**: the split lands on turn boundaries
+  (user → assistant → tool results), so a tool-call/response pair is never
+  split — walking backward over turns, and forward within an oversized turn
+  to find the earliest message that fits
 - **User-message anchor**: the most recent user message is always in the
-  tail, preventing the active task from being summarized away
+  tail (when its turn fits the budget), preventing the active task from
+  being summarized away
 
 ### LLM-powered compaction (`compactContext`)
 
 1. Check anti-thrashing guard: skip if last 2 compactions each saved <10%.
-2. Check token budget: if `estimatedTokens <= ContextWindow * threshold`, return.
+2. Check token budget: compute effective tokens — when cached prompt
+   tokens are reported (`LastCachedPromptTokens > 0`), subtract them from
+   `LastPromptTokens` so heavily-cached conversations don't over-trigger
+   compaction. If `effectiveTokens <= ContextWindow * threshold`, return.
 3. Compute the preservation split via token budget + boundary alignment.
 4. Prune old messages via `pruneMessages()`.
 5. Send pruned history to the LLM summarizer with a structured prompt
-   (`## Goal`, `## Completed Work`, `## Active Work`, `## Pending Tasks`,
-   `## Key Decisions`, `## Files Modified`), capped at 4,096 output tokens
-   via `max_tokens`.
+   (`## Goal`, `## Constraints & Preferences`, `## Progress` with
+   `### Done` / `### In Progress` / `### Blocked`, `## Key Decisions`,
+   `## Next Steps`, `## Critical Context`, `## Relevant Files`), capped at
+   4,096 output tokens via `max_tokens`.
 6. On re-compaction (second+), passes the previous summary to the LLM and
    asks it to **update** rather than re-summarize from scratch, preserving
    continuity across multiple compactions.
@@ -658,6 +677,11 @@ When the provider returns a context overflow error, the retry loop in
 `getAssistantMessage` triggers an aggressive compaction at 40% of the window
 (up to 3 attempts). A pre-flight guard also checks `LastPromptTokens >
 ContextWindow` before each LLM call as a last-resort safety net.
+
+The preflight compaction path uses `preflightTokens()` with the configurable
+`EstimateFactor` (default 1.3) to estimate tokens before the first API call
+(when `LastPromptTokens` is 0). This catches overflow earlier than waiting
+for a failed API call, avoiding wasted round-trips.
 
 ### Truncation fallback (`trimContext`)
 

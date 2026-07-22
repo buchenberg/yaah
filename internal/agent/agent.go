@@ -121,6 +121,12 @@ type Loop struct {
 	// compaction (e.g. 0.5 = 50%). Default 0 means 0.5.
 	CompactionThreshold float64
 
+	// EstimateFactor is the multiplier applied to the chars/4 token estimate
+	// for preflight compaction checks. Provider tokenizers systematically
+	// undercount code and JSON payloads; 1.3 compensates. 0 means use the
+	// default (1.3).
+	EstimateFactor float64
+
 	// MaxRetries is the number of retries on transient provider errors.
 	// Default 0 means no retries.
 	MaxRetries int
@@ -135,6 +141,12 @@ type Loop struct {
 	// API call — used for context compaction decisions (avoiding the
 	// inaccurate chars/4 estimate).
 	LastPromptTokens int
+
+	// LastCachedPromptTokens is the cached prompt token count from the most
+	// recent API call. Used to compute effective (non-cached) prompt tokens
+	// for compaction decisions so heavily-cached conversations don't
+	// over-trigger compaction. 0 means no caching (or first call).
+	LastCachedPromptTokens int
 
 	// TotalReasoningTokens accumulates reasoning token usage for observability.
 	TotalReasoningTokens int
@@ -679,6 +691,9 @@ func (l *Loop) addUsage(u types.Usage) {
 	}
 	if d := u.PromptTokensDetails; d != nil {
 		l.TotalCachedPromptTokens += d.CachedTokens
+		l.LastCachedPromptTokens = d.CachedTokens
+	} else {
+		l.LastCachedPromptTokens = 0
 	}
 }
 
