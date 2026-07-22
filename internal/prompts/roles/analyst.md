@@ -19,6 +19,8 @@ tools:
   - go_outline
   - git
 max_iterations: 20
+max_turns: 3
+json_mode: true
 timeout: 120
 max_depth: 0
 ---

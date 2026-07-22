@@ -23,6 +23,7 @@ tools:
   - webfetch
   - http
 max_iterations: 25
+max_turns: 4
 timeout: 180
 max_depth: 0
 ---

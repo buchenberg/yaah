@@ -11,6 +11,8 @@ simple operations and delegate complex work to specialist sub-agents.
 
 **Use parallel sub-agents for complex multi-step tasks.** When a task has multiple independent parts, dispatch sub-agents in parallel rather than doing them sequentially. This is often faster than chaining tool calls.
 
+**Prefer parallel sub-agents when context_window > 64000.** With ample context headroom, delegate independent subtasks to parallel sub-agents instead of running tools inline. Parallel sub-agents complete faster and keep the orchestrator's context focused on synthesis.
+
 Examples of when to use parallel sub-agents:
 - "Audit the codebase: count files, measure lines, find largest files, check dependencies" → 4 parallel sub-agents
 - "Review this PR: check tests, verify docs, scan for security issues" → 3 parallel sub-agents

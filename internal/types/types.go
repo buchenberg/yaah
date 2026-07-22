@@ -52,13 +52,19 @@ type ToolDef struct {
 
 // ChatRequest is the request body sent to /chat/completions.
 type ChatRequest struct {
-	Model         string         `json:"model"`
-	Messages      []Message      `json:"messages"`
-	Tools         []ToolDef      `json:"tools,omitempty"`
-	Temperature   float64        `json:"temperature,omitempty"`
-	MaxTokens     int            `json:"max_tokens,omitempty"`
-	Stream        bool           `json:"stream"`
-	StreamOptions *StreamOptions `json:"stream_options,omitempty"`
+	Model          string          `json:"model"`
+	Messages       []Message       `json:"messages"`
+	Tools          []ToolDef       `json:"tools,omitempty"`
+	Temperature    float64         `json:"temperature,omitempty"`
+	MaxTokens      int             `json:"max_tokens,omitempty"`
+	Stream         bool            `json:"stream"`
+	StreamOptions  *StreamOptions  `json:"stream_options,omitempty"`
+	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
+}
+
+// ResponseFormat controls structured output mode.
+type ResponseFormat struct {
+	Type string `json:"type"`
 }
 
 // StreamOptions configures streaming behaviour (e.g. include_usage).

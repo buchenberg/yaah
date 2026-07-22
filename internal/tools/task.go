@@ -71,6 +71,16 @@ type SubAgentParams struct {
 
 	// MaxIterations, when > 0, overrides the role's default iteration cap.
 	MaxIterations int
+
+	// MaxTurns, when > 0, overrides the soft turn cap for tool-using turns.
+	MaxTurns int
+
+	// JSONMode enables structured JSON output for this sub-agent.
+	JSONMode bool
+
+	// OutputLimit caps the sub-agent's final synthesized result in bytes.
+	// 0 means use the role/config default.
+	OutputLimit int
 }
 
 // TaskRunner runs a sub-agent for a given prompt and role configuration
@@ -125,7 +135,10 @@ func (t *TaskTool) Schema() json.RawMessage {
 			"prompt": {"type": "string", "description": "The task for the sub-agent to perform autonomously"},
 			"role": {"type": "string", "description": "Sub-agent role selecting its tool set and limits. Use list_subagents to see available roles. Omit for the default full-access role."},
 			"timeout_seconds": {"type": "integer", "minimum": 10, "maximum": 600, "description": "Optional wall-clock deadline for the sub-agent. Overrides the role default."},
-			"max_iterations": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Optional cap on sub-agent loop turns. Overrides the role default."}
+			"max_iterations": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Optional cap on sub-agent loop turns. Overrides the role default."},
+			"max_turns": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Optional soft cap on tool-using turns. Overrides the role default."},
+			"json_mode": {"type": "boolean", "description": "Request structured JSON output from the sub-agent."},
+			"output_limit": {"type": "integer", "minimum": 1024, "description": "Optional byte cap on the sub-agent's final report."}
 		},
 		"required": ["description", "prompt"]
 	}`)
@@ -166,6 +179,21 @@ func BuildTaskSchema(roleNames []string) json.RawMessage {
 				"maximum":     50,
 				"description": "Optional cap on sub-agent loop turns. Overrides the role default.",
 			},
+			"max_turns": map[string]any{
+				"type":        "integer",
+				"minimum":     1,
+				"maximum":     50,
+				"description": "Optional soft cap on tool-using turns. Overrides the role default.",
+			},
+			"json_mode": map[string]any{
+				"type":        "boolean",
+				"description": "Request structured JSON output from the sub-agent.",
+			},
+			"output_limit": map[string]any{
+				"type":        "integer",
+				"minimum":     1024,
+				"description": "Optional byte cap on the sub-agent's final report.",
+			},
 		},
 		"required": []string{"description", "prompt"},
 	}
@@ -180,6 +208,9 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 		Role           string `json:"role"`
 		TimeoutSeconds int    `json:"timeout_seconds"`
 		MaxIterations  int    `json:"max_iterations"`
+		MaxTurns       int    `json:"max_turns"`
+		JSONMode       bool   `json:"json_mode"`
+		OutputLimit    int    `json:"output_limit"`
 	}
 	if err := json.Unmarshal([]byte(args), &params); err != nil {
 		return "", fmt.Errorf("spawn_subagent: invalid arguments: %w", err)
@@ -202,6 +233,9 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 		Role:           params.Role,
 		TimeoutSeconds: clampedTimeout,
 		MaxIterations:  clampedIter,
+		MaxTurns:       params.MaxTurns,
+		JSONMode:       params.JSONMode,
+		OutputLimit:    params.OutputLimit,
 	}
 
 	timeout := resolveTaskTimeout(clampedTimeout, t.ResolveTimeout, subParams)

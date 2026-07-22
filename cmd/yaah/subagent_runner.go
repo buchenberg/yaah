@@ -20,7 +20,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker, estimateFactor float64) *tools.TaskTool {
+func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker, estimateFactor float64, subContextWindow int, outputLimit int) *tools.TaskTool {
 	// Sub-agent spawning depth is hard-coded at 1: the top-level agent
 	// can spawn one level of sub-agents; sub-agents cannot spawn further
 	// sub-agents (remainingDepth reaches 0).
@@ -40,6 +40,8 @@ func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 			OtelVerbose:      otelVerbose,
 			tracker:          tracker,
 			estimateFactor:   estimateFactor,
+			subContextWindow: subContextWindow,
+			outputLimit:      outputLimit,
 		}, depth),
 		ResolveTimeout: subAgentTimeoutResolver(subCfg),
 		RoleNames:      roleNames,
@@ -136,6 +138,13 @@ type taskRunnerOpts struct {
 	// tools so the parent agent can detect parallel-worker conflicts.
 	tracker *tools.ConflictTracker
 
+	// subContextWindow is the parent agent's context window halved for
+	// sub-agent use, with a floor of 32000. Zero disables compaction.
+	subContextWindow int
+
+	// outputLimit caps the final synthesized sub-agent result in bytes.
+	outputLimit int
+
 	// estimateFactor is the preflight token estimate multiplier inherited
 	// from the parent config.
 	estimateFactor float64
@@ -176,6 +185,26 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		subReg := buildSubAgentRegistry(opts, profile, remainingDepth)
 
 		maxIter := resolveSubAgentIterations(params.MaxIterations, profile, opts.subCfg, role)
+		maxTurns := resolveSubAgentTurns(params.MaxTurns, profile, opts.subCfg, role, maxIter)
+
+		effectiveCW := opts.subContextWindow
+		if rc, ok := opts.subCfg.Roles[string(role)]; ok && rc.ContextWindow > 0 {
+			effectiveCW = rc.ContextWindow
+		}
+
+		jsonMode := params.JSONMode
+		if !jsonMode && opts.subCfg.Roles[string(role)].JSONMode {
+			jsonMode = true
+		}
+		if !jsonMode && profile.JSONMode {
+			jsonMode = true
+		}
+		if !jsonMode && opts.subCfg.JSONMode {
+			jsonMode = true
+		}
+
+		outLimit := resolveOutputLimit(params.OutputLimit, opts.subCfg, role, opts.outputLimit)
+
 		sysPrompt := subagentEnvironmentHeader() + "\n\n" + opts.systemPrompt
 		if g := subagent.RoleGuidance(role); g != "" {
 			if sysPrompt != "" {
@@ -185,7 +214,11 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		}
 		if profile.Contract.Heading != "" && len(profile.Contract.Fields) > 0 {
 			var b strings.Builder
-			b.WriteString("\n\n## Response contract\n\n")
+			if jsonMode {
+				b.WriteString("\n\nRespond with a JSON object matching the contract below.\n\n")
+			} else {
+				b.WriteString("\n\n## Response contract\n\n")
+			}
 			b.WriteString("Always end your response with a structured block:\n\n```\n")
 			b.WriteString(profile.Contract.Heading + "\n")
 			for _, f := range profile.Contract.Fields {
@@ -230,6 +263,9 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			SystemPrompt:           sysPrompt,
 			Model:                  subModel,
 			MaxIterations:          maxIter,
+			MaxTurns:               maxTurns,
+			ContextWindow:          effectiveCW,
+			JSONMode:               jsonMode,
 			MaxRetries:             2,
 			EstimateFactor:         opts.estimateFactor,
 			ApprovalMode:           "allow",
@@ -242,6 +278,10 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		}
 
 		result, runErr := subLoop.Run(ctx, prompt)
+		if outLimit > 0 && len(result) > outLimit {
+			result = safeTruncateBytes(result, outLimit)
+			result += "\n...[sub-agent output capped at " + formatBytes(outLimit) + "]"
+		}
 
 		tools.WriteSubAgentModel(ctx, subModel)
 		tools.AddSubAgentUsage(ctx, subLoop.TotalTokens)
@@ -381,4 +421,88 @@ func resolveSubAgentIterations(callMax int, profile subagent.RoleProfile, subCfg
 		v = profile.MaxIterations
 	}
 	return v
+}
+
+// resolveSubAgentTurns picks the soft turn cap for a sub-agent Loop.
+// Precedence: per-call override > role-specific config > role profile
+// default > config-level default > hardcoded floor.
+// The result is clamped so it never reaches the MaxIterations ceiling,
+// guaranteeing at least one iteration for the forced-text turn.
+func resolveSubAgentTurns(
+	callMax int,
+	profile subagent.RoleProfile,
+	subCfg config.SubAgentConfig,
+	role subagent.SubAgentRole,
+	maxIter int,
+) int {
+	var v int
+	switch {
+	case callMax > 0:
+		v = callMax
+	case subCfg.Roles[string(role)].MaxTurns > 0:
+		v = subCfg.Roles[string(role)].MaxTurns
+	case profile.MaxTurns > 0:
+		v = profile.MaxTurns
+	case subCfg.DefaultMaxTurns > 0:
+		v = subCfg.DefaultMaxTurns
+	default:
+		v = 3
+	}
+	if maxIter > 0 && v >= maxIter {
+		v = maxIter - 1
+	}
+	if v < 1 {
+		v = 1
+	}
+	return v
+}
+
+// resolveOutputLimit picks the byte cap for sub-agent final output.
+// Precedence: per-call override > role-specific config > opts fallback > default 50KB.
+func resolveOutputLimit(callLimit int, subCfg config.SubAgentConfig, role subagent.SubAgentRole, optsDefault int) int {
+	if callLimit > 0 {
+		return callLimit
+	}
+	if rc, ok := subCfg.Roles[string(role)]; ok && rc.OutputLimit > 0 {
+		return rc.OutputLimit
+	}
+	if optsDefault > 0 {
+		return optsDefault
+	}
+	return 50 * 1024
+}
+
+func safeTruncateBytes(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	if maxBytes <= 0 {
+		return ""
+	}
+	i := maxBytes
+	if i > len(s) {
+		i = len(s)
+	}
+	for i > 0 && i < len(s) {
+		if s[i] < 0x80 || s[i]&0xC0 == 0xC0 {
+			break
+		}
+		i--
+	}
+	return s[:i]
+}
+
+func formatBytes(n int) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div := unit
+	exp := 0
+	for nn := n / unit; nn >= unit && exp < 3; nn /= unit {
+		div *= unit
+		exp++
+	}
+	prefix := []string{"KB", "MB", "GB"}[exp]
+	return fmt.Sprintf("%.1f %s", float64(n)/float64(div), prefix)
 }

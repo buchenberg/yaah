@@ -19,6 +19,7 @@ tools:
   - http
   - git
 max_iterations: 15
+max_turns: 3
 timeout: 120
 max_depth: 0
 ---
