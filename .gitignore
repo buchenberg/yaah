@@ -55,7 +55,5 @@ go.work.sum
 **.dylib~
 
 # Debug and test files
-debug*.log
-yaah_debug.log
-test_config.yaml
+*.log
 state.db
