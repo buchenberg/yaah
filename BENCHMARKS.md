@@ -26,6 +26,7 @@ Records are never overwritten — append a new row for every run.
 | 2026-07-22 16:22 | main | 1a85775 | B4 Audit (ctx=20K) | 22 | 4 | 37 | 86.2s | 183,392 | 174,936 | 358,328 | 51% | 49% | 0 | Model dispatched 4 analysts |
 | 2026-07-22 16:23 | main | 1a85775 | B4 Audit | 3 | 0 | 5 | 28.3s | 30,081 | 0 | 30,081 | 100% | 0% | 0 | Inline execution |
 | 2026-07-22 16:24 | subagent-efficiency | cc7cf8b | B4 Audit | 3 | 0 | 7 | 34.4s | 34,391 | 0 | 34,391 | 100% | 0% | 0 | Inline execution — parity with main |
+| 2026-07-22 16:34 | subagent-efficiency | 48a8753 | B4 Audit | 4 | 0 | 7 | 31.6s | 44,662 | 0 | 44,662 | 100% | 0% | 0 | "Prefer parallel subs when ctx > 64K" prompt — still ran inline |
 
 ## Analysis: Continuation Guard Impact
 
