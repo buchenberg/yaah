@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.22.0](https://github.com/buchenberg/yaah/compare/v0.21.0...v0.22.0) (2026-07-22)
+
+
+### Features
+
+* add soft-prune context management and remove executor cruft ([10296d3](https://github.com/buchenberg/yaah/commit/10296d3464e3d26b9c489dffd509bda8dbbaf9ab))
+* add soft-prune context management and remove executor cruft ([c48ce7e](https://github.com/buchenberg/yaah/commit/c48ce7e7c5ed05863c1bd49554a7fc2ed7a6bbea))
+
 ## [0.21.0](https://github.com/buchenberg/yaah/compare/v0.20.0...v0.21.0) (2026-07-22)
 
 
