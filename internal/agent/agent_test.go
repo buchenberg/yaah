@@ -709,30 +709,29 @@ func TestLoop_contextWindowTrimming(t *testing.T) {
 		Registry:      reg,
 		SystemPrompt:  "test",
 		MaxIterations: 1,
-		ContextWindow: 500,
+		ContextWindow: 10000,
 	}
 
 	loop.Messages = []types.Message{
 		types.SystemMsg("test prompt that is fairly long and takes up some token space"),
 	}
-	for i := 0; i < 20; i++ {
-		loop.Messages = append(loop.Messages, types.UserMsg("message number "+strings.Repeat("x", 100)))
-		loop.Messages = append(loop.Messages, types.AssistantMsg("response number "+strings.Repeat("y", 100), nil))
+	for i := 0; i < 40; i++ {
+		loop.Messages = append(loop.Messages, types.UserMsg("message number "+strings.Repeat("x", 200)))
+		loop.Messages = append(loop.Messages, types.AssistantMsg("response number "+strings.Repeat("y", 200), nil))
 	}
+
+	beforeTokens := preflightTokens(loop.Messages, nil, defaultEstimateFactor)
 
 	_, err := loop.Run(context.Background(), "new message")
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
 	}
 
-	totalChars := 0
-	for _, m := range loop.Messages {
-		totalChars += len(m.Content)
-	}
-	estimatedTokens := totalChars / 4
-	if estimatedTokens > 1000 {
-		t.Errorf("messages not trimmed: estimated %d tokens for %d chars in %d messages",
-			estimatedTokens, totalChars, len(loop.Messages))
+	afterTokens := preflightTokens(loop.Messages, nil, defaultEstimateFactor)
+	// Token-budgeted compaction must reduce the conversation when it exceeds
+	// the preserve budget (2500 tokens for a 10k window).
+	if afterTokens >= beforeTokens {
+		t.Errorf("compaction did not reduce tokens: before=%d after=%d", beforeTokens, afterTokens)
 	}
 	// LLM compaction keeps sysMsg + summary + token-budget recent messages + assistant response
 	if len(loop.Messages) < 5 {

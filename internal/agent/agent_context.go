@@ -11,6 +11,54 @@ import (
 
 const defaultEstimateFactor = 1.3
 
+// Token-budget clamp for the preserved tail after compaction. The budget is
+// 25% of the context window, clamped to [minPreserveTokens, maxPreserveTokens]
+// so huge windows don't over-preserve and small windows keep a usable floor.
+const (
+	minPreserveTokens = 2000
+	maxPreserveTokens = 8000
+)
+
+// summaryTemplate is the structured Markdown prompt sent to the compact
+// provider. Forcing a fixed section order keeps summaries actionable and
+// consistent across re-compactions. Ported from kilocode's anchored summary.
+const summaryTemplate = `Output exactly the Markdown structure shown inside <template> and keep the section order unchanged. Do not include the <template> tags in your response.
+<template>
+## Goal
+- [single-sentence task summary]
+
+## Constraints & Preferences
+- [user constraints, preferences, specs, or "(none)"]
+
+## Progress
+### Done
+- [completed work or "(none)"]
+
+### In Progress
+- [current work or "(none)"]
+
+### Blocked
+- [blockers or "(none)"]
+
+## Key Decisions
+- [decision and why, or "(none)"]
+
+## Next Steps
+- [ordered next actions or "(none)"]
+
+## Critical Context
+- [important technical facts, errors, open questions, or "(none)"]
+
+## Relevant Files
+- [file or directory path: why it matters, or "(none)"]
+</template>
+
+Rules:
+- Keep every section, even when empty.
+- Use terse bullets, not prose paragraphs.
+- Preserve exact file paths, commands, error strings, and identifiers when known.
+- Do not mention the summary process or that context was compacted.`
+
 // EstimatedTokens returns the estimated token count for all messages.
 func (l *Loop) EstimatedTokens() int {
 	total := 0
@@ -75,6 +123,110 @@ func isContinuation(messages []types.Message) bool {
 	return false
 }
 
+// turnRange identifies a contiguous turn: a user message followed by its
+// assistant response and any tool results, ending at the next user message
+// (or end of conversation).
+type turnRange struct {
+	start int // index of the user message that starts this turn
+	end   int // exclusive: index of the next user message or len(messages)
+}
+
+// turns segments messages into turn ranges starting at non-index-0 user
+// messages. A "user" message at index 0 is the system prompt, not a turn.
+// Messages before the first real user message are not in any turn.
+// Ported from kilocode compaction.ts:161-177.
+func turns(messages []types.Message) []turnRange {
+	var result []turnRange
+	for i, m := range messages {
+		if m.Role != "user" || i == 0 {
+			continue
+		}
+		result = append(result, turnRange{start: i, end: len(messages)})
+	}
+	for i := 0; i < len(result)-1; i++ {
+		result[i].end = result[i+1].start
+	}
+	return result
+}
+
+// preserveBudget returns the token budget for the preserved tail: 25% of the
+// context window, clamped to [minPreserveTokens, maxPreserveTokens]. Ported
+// from kilocode compaction.ts:152-158 (preserveRecentBudget).
+func preserveBudget(contextWindow int) int {
+	budget := contextWindow / 4 // 25%
+	if budget < minPreserveTokens {
+		budget = minPreserveTokens
+	}
+	if budget > maxPreserveTokens {
+		budget = maxPreserveTokens
+	}
+	return budget
+}
+
+// splitResult describes a compaction split: messages before keepStart are
+// summarized, messages from keepStart onward are preserved verbatim.
+type splitResult struct {
+	keepStart int // index into messages where the tail begins
+}
+
+// splitTail finds the split point that keeps the most recent turns within the
+// preserve budget, without splitting a tool-call/result pair. Walks backwards
+// over turns, accumulating token sizes until the budget is exceeded. If a
+// single turn exceeds the remaining budget, walks forward within that turn to
+// find the earliest message that fits. Ported from kilocode compaction.ts:179-202.
+func splitTail(messages []types.Message, budget int) splitResult {
+	allTurns := turns(messages)
+	if len(allTurns) == 0 {
+		return splitResult{keepStart: len(messages)} // nothing to split
+	}
+
+	// Walk backwards over the most recent turns.
+	total := 0
+	keepStart := len(messages)
+	for i := len(allTurns) - 1; i >= 0; i-- {
+		t := allTurns[i]
+		turnTokens := 0
+		for j := t.start; j < t.end; j++ {
+			turnTokens += messageTokens(messages[j])
+		}
+		if total+turnTokens <= budget {
+			total += turnTokens
+			keepStart = t.start
+			continue
+		}
+		// Turn doesn't fit entirely — try to split it.
+		if splitAt := splitTurn(messages, t, budget-total); splitAt >= 0 {
+			keepStart = splitAt
+		}
+		break
+	}
+
+	// Never summarize past the first message (system prompt protection).
+	if keepStart < 1 {
+		keepStart = 1
+	}
+	return splitResult{keepStart: keepStart}
+}
+
+// splitTurn finds the earliest message within a turn that fits within the
+// remaining budget. Returns -1 if no split is possible (entire turn is too
+// large or the turn has only one message). Ported from kilocode compaction.ts:203-218.
+func splitTurn(messages []types.Message, t turnRange, budget int) int {
+	if budget <= 0 || t.end-t.start <= 1 {
+		return -1
+	}
+	for start := t.start + 1; start < t.end; start++ {
+		size := 0
+		for j := start; j < t.end; j++ {
+			size += messageTokens(messages[j])
+		}
+		if size <= budget {
+			return start
+		}
+	}
+	return -1
+}
+
 // truncateRunes slices s to at most maxLen runes, preserving head and tail
 // with an ellipsis marker in between. Operates on rune boundaries to avoid
 // corrupting multi-byte UTF-8 characters.
@@ -116,15 +268,16 @@ func pruneMessages(msgs []types.Message, maxLen int) []types.Message {
 }
 
 // compactContext checks if the estimated token count exceeds the given
-// fraction of ContextWindow. If threshold is 0, defaults to 0.5 (50%).
+// fraction of ContextWindow. If threshold is 0, defaults to 0.25 (25%).
 // If over budget, it uses the LLM to summarize old messages into a
 // structured summary, preserving the system message and recent turns.
 // Falls back to simple trimming if the LLM call fails or returns empty.
 //
 // Preflight: when LastPromptTokens is 0 (first call), uses preflightTokens
 // with the configurable EstimateFactor (default 1.3) to estimate tokens.
-// Continuation guard: skips compaction mid-tool-loop so the model retains
-// the context needed to continue the tool loop.
+// Cache subtraction: when LastCachedPromptTokens > 0, it is subtracted from
+// LastPromptTokens so heavily-cached conversations don't over-trigger
+// compaction (cached tokens are effectively free at the provider).
 func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	if l.ineffectiveCompactions >= 2 {
 		return
@@ -140,16 +293,18 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	}
 
 	estimatedTokens := l.LastPromptTokens
+	// Subtract cached prompt tokens: a heavily-cached conversation's effective
+	// (non-cached) token cost is lower than raw prompt_tokens suggests, so
+	// without subtraction the compactor would over-trigger.
+	if estimatedTokens > 0 && l.LastCachedPromptTokens > 0 {
+		estimatedTokens -= l.LastCachedPromptTokens
+	}
 	if estimatedTokens <= 0 {
 		factor := l.EstimateFactor
 		if factor <= 0 {
 			factor = defaultEstimateFactor
 		}
 		estimatedTokens = preflightTokens(l.Messages, nil, factor)
-	}
-
-	if isContinuation(l.Messages) {
-		return
 	}
 
 	if estimatedTokens < target {
@@ -161,25 +316,44 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	}
 
 	sysMsg := l.Messages[0]
-	rest := l.Messages[1:]
 
-	keepCount := 8
-	if l.PreviousSummary != "" {
-		keepCount = 6
+	// Token-budgeted survival split (replaces fixed keepCount): keeps the
+	// most recent turns within the preserve budget without splitting a
+	// tool-call/result pair.
+	//
+	// messageTokens uses chars/4 which consistently undercounts relative to
+	// the actual tokenizer count (often by 2-4x for code/JSON-heavy payloads).
+	// The budget derived from preserveBudget(window) is in tokenizer units,
+	// while splitTail sums messageTokens (chars/4), so without scaling every
+	// conversation appears to fit. Scale the budget by the actual ratio of
+	// estimatedTokens (tokenizer) to total messageTokens (chars/4) so the
+	// compaction decision and the split decision use the same yardstick.
+	budget := preserveBudget(l.ContextWindow)
+	if estimatedTokens > 0 {
+		msgTotal := 0
+		for _, m := range l.Messages {
+			msgTotal += messageTokens(m)
+		}
+		if msgTotal > 0 {
+			scale := float64(estimatedTokens) / float64(msgTotal)
+			budget = int(float64(budget) / scale)
+		}
 	}
-	if keepCount > len(rest) {
-		keepCount = len(rest)
-	}
-
-	keepMsgs := rest[len(rest)-keepCount:]
-	oldMsgs := rest[:len(rest)-keepCount]
+	split := splitTail(l.Messages, budget)
+	keepMsgs := l.Messages[split.keepStart:]
+	oldMsgs := l.Messages[1:split.keepStart]
 	oldMsgs = pruneMessages(oldMsgs, pruneMessageMaxLen)
 
+	// Structured summary prompt with anchored-update behavior on re-compaction.
 	var sb strings.Builder
 	if l.PreviousSummary != "" {
-		sb.WriteString("Previous summary:\n")
+		sb.WriteString("Update the anchored summary below using the conversation history above.\n")
+		sb.WriteString("Preserve still-true details, remove stale details, and merge in the new facts.\n")
+		sb.WriteString("<previous-summary>\n")
 		sb.WriteString(l.PreviousSummary)
-		sb.WriteString("\n\n")
+		sb.WriteString("\n</previous-summary>\n\n")
+	} else {
+		sb.WriteString("Create a new anchored summary from the conversation history below.\n\n")
 	}
 	sb.WriteString("Conversation excerpt to summarize:\n\n")
 	for _, m := range oldMsgs {
@@ -190,6 +364,8 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 			sb.WriteString(fmt.Sprintf("[tool:%s] %s\n", tc.Function.Name, tc.Function.Arguments))
 		}
 	}
+	sb.WriteString("\n\n")
+	sb.WriteString(summaryTemplate)
 
 	compactProvider := l.CompactProvider
 	if compactProvider == nil {

@@ -142,6 +142,12 @@ type Loop struct {
 	// inaccurate chars/4 estimate).
 	LastPromptTokens int
 
+	// LastCachedPromptTokens is the cached prompt token count from the most
+	// recent API call. Used to compute effective (non-cached) prompt tokens
+	// for compaction decisions so heavily-cached conversations don't
+	// over-trigger compaction. 0 means no caching (or first call).
+	LastCachedPromptTokens int
+
 	// TotalReasoningTokens accumulates reasoning token usage for observability.
 	TotalReasoningTokens int
 
@@ -685,6 +691,9 @@ func (l *Loop) addUsage(u types.Usage) {
 	}
 	if d := u.PromptTokensDetails; d != nil {
 		l.TotalCachedPromptTokens += d.CachedTokens
+		l.LastCachedPromptTokens = d.CachedTokens
+	} else {
+		l.LastCachedPromptTokens = 0
 	}
 }
 
