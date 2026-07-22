@@ -210,7 +210,7 @@ func newAgentSession() (*agentSession, error) {
 
 	tracker := &tools.ConflictTracker{}
 	subAgentProvider, subAgentModel := resolveSubAgent(cfg)
-	toolReg.Register(newTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker))
+	toolReg.Register(newTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor))
 
 	toolReg.Register(&tools.ListSubAgentsTool{
 		Lister: func() []tools.SubAgentInfo {
@@ -369,6 +369,7 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		MaxInlineToolsPerTurn:  s.cfg.Agent.Default.MaxInlineToolsPerTurn,
 		MaxIterations:          s.cfg.Agent.Default.MaxIterations,
 		ContextWindow:          s.cfg.Agent.Default.ContextWindow,
+		EstimateFactor:         s.cfg.Agent.Default.EstimateFactor,
 		ApprovalMode:           resolveApproval(s.cfg),
 		Messages:               s.messages,
 		HookDir:                s.cfg.Hooks.Dir,

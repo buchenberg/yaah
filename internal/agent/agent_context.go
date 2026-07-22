@@ -3,10 +3,13 @@ package agent
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/types"
 )
+
+const defaultEstimateFactor = 1.3
 
 // EstimatedTokens returns the estimated token count for all messages.
 func (l *Loop) EstimatedTokens() int {
@@ -28,6 +31,48 @@ func messageTokens(m types.Message) int {
 		tokens = 10
 	}
 	return tokens
+}
+
+// preflightTokens estimates the token count for a request payload (messages +
+// tools) with a configurable multiplier to compensate for provider tokenizer
+// undercounting (especially for code and JSON). The factor parameter defaults
+// to 1.3 (defaultEstimateFactor) and is configurable via EstimateFactor on the
+// Loop. Ported from kilocode overflow.ts:8,71.
+func preflightTokens(messages []types.Message, tools []types.ToolDef, factor float64) int {
+	total := 0
+	for _, m := range messages {
+		total += messageTokens(m)
+	}
+	for _, t := range tools {
+		total += len(t.Function.Description)/4 + len(t.Function.Parameters)/4 + 10
+	}
+	if factor <= 0 {
+		factor = defaultEstimateFactor
+	}
+	return int(math.Ceil(float64(total) * factor))
+}
+
+// isContinuation returns true if the conversation is mid-tool-loop (there are
+// tool messages after the last user message). Compaction should be skipped in
+// this case — the model needs the context to continue the tool loop.
+// Ported from kilocode overflow.ts:17-20.
+func isContinuation(messages []types.Message) bool {
+	lastUserIdx := -1
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			lastUserIdx = i
+			break
+		}
+	}
+	if lastUserIdx < 0 {
+		return false
+	}
+	for i := lastUserIdx + 1; i < len(messages); i++ {
+		if messages[i].Role == "tool" {
+			return true
+		}
+	}
+	return false
 }
 
 // truncateRunes slices s to at most maxLen runes, preserving head and tail
@@ -75,6 +120,11 @@ func pruneMessages(msgs []types.Message, maxLen int) []types.Message {
 // If over budget, it uses the LLM to summarize old messages into a
 // structured summary, preserving the system message and recent turns.
 // Falls back to simple trimming if the LLM call fails or returns empty.
+//
+// Preflight: when LastPromptTokens is 0 (first call), uses preflightTokens
+// with the configurable EstimateFactor (default 1.3) to estimate tokens.
+// Continuation guard: skips compaction mid-tool-loop so the model retains
+// the context needed to continue the tool loop.
 func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	if l.ineffectiveCompactions >= 2 {
 		return
@@ -91,7 +141,15 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 
 	estimatedTokens := l.LastPromptTokens
 	if estimatedTokens <= 0 {
-		estimatedTokens = l.EstimatedTokens()
+		factor := l.EstimateFactor
+		if factor <= 0 {
+			factor = defaultEstimateFactor
+		}
+		estimatedTokens = preflightTokens(l.Messages, nil, factor)
+	}
+
+	if isContinuation(l.Messages) {
+		return
 	}
 
 	if estimatedTokens < target {

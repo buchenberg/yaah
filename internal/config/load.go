@@ -21,13 +21,14 @@ type Provider struct {
 
 // Defaults hold the default agent model and loop settings.
 type Defaults struct {
-	Provider              string `yaml:"provider"`
-	Model                 string `yaml:"model"`
-	SmallModel            string `yaml:"small_model"`
-	MaxIterations         int    `yaml:"max_iterations"`
-	ContextWindow         int    `yaml:"context_window"`
-	Approval              string `yaml:"approval"`
-	MaxInlineToolsPerTurn int    `yaml:"max_inline_tools_per_turn"` // 0 = unlimited
+	Provider              string  `yaml:"provider"`
+	Model                 string  `yaml:"model"`
+	SmallModel            string  `yaml:"small_model"`
+	MaxIterations         int     `yaml:"max_iterations"`
+	ContextWindow         int     `yaml:"context_window"`
+	Approval              string  `yaml:"approval"`
+	MaxInlineToolsPerTurn int     `yaml:"max_inline_tools_per_turn"` // 0 = unlimited
+	EstimateFactor        float64 `yaml:"estimate_factor"`           // 0 = default (1.3)
 }
 
 // Hooks holds configuration for external integrations via JSONL hook events.

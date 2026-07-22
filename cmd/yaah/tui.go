@@ -297,7 +297,7 @@ func runTUI() error {
 
 	conflictTracker := &tools.ConflictTracker{}
 	subAgentProvider, subAgentModel := resolveSubAgent(cfg)
-	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, conflictTracker))
+	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, conflictTracker, cfg.Agent.Default.EstimateFactor))
 
 	toolReg.Register(&tools.ListSubAgentsTool{
 		Lister: func() []tools.SubAgentInfo {
@@ -536,6 +536,7 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 		MaxInlineToolsPerTurn: cfg.Agent.Default.MaxInlineToolsPerTurn,
 		MaxIterations:         cfg.Agent.Default.MaxIterations,
 		ContextWindow:         cfg.Agent.Default.ContextWindow,
+		EstimateFactor:        cfg.Agent.Default.EstimateFactor,
 		ApprovalMode:          resolveApproval(cfg),
 		Messages:              *messages,
 		OtelEnabled:           cfg.Observability.Otel.Enabled,
