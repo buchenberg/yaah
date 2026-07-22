@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.25.0](https://github.com/buchenberg/yaah/compare/v0.24.0...v0.25.0) (2026-07-22)
+
+
+### Features
+
+* Phase 2 loop tuning — truncation, skill index, cost propagation, replay recovery, depth hard-code ([1e6ed63](https://github.com/buchenberg/yaah/commit/1e6ed638e292cdfceab8d2295f7ccef651c562e5))
+* Phase 2 loop tuning — truncation, skill index, cost propagation, replay recovery, depth hard-code ([a8bb0ff](https://github.com/buchenberg/yaah/commit/a8bb0ffe892b4c82e53de53afb53f80537c37e18))
+
 ## [0.24.0](https://github.com/buchenberg/yaah/compare/v0.23.0...v0.24.0) (2026-07-22)
 
 
