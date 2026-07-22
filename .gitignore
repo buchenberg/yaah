@@ -59,4 +59,3 @@ debug*.log
 yaah_debug.log
 test_config.yaml
 state.db
-config.yaml
