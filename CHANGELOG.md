@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.24.0](https://github.com/buchenberg/yaah/compare/v0.23.0...v0.24.0) (2026-07-22)
+
+
+### Features
+
+* token-budgeted compaction survival with boundary alignment ([4ac30fc](https://github.com/buchenberg/yaah/commit/4ac30fc0e9f2583c3363b214c7291d3b162e46dd))
+* token-budgeted compaction survival with boundary alignment ([e996b50](https://github.com/buchenberg/yaah/commit/e996b5090a6c32ec42c95b1331c94b75dc7e03f3))
+
 ## [0.23.0](https://github.com/buchenberg/yaah/compare/v0.22.0...v0.23.0) (2026-07-22)
 
 
