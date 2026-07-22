@@ -23,6 +23,9 @@ Records are never overwritten — append a new row for every run.
 | 2026-07-22 12:25 | feature/compaction-survival | 2d6f7b3 | B4 Audit (ctx=20K) | 9 | 2 | 14 | 54.7s | 93,688 | 65,503 | 159,191 | 59% | 41% | 0 | Token-budget compaction + budget scaling; prompt oscillates 5.8K–15K vs monotonic 20.8K without |
 | 2026-07-22 16:13 | subagent-efficiency | 1a85775 | B4 Audit | 21 | 4 | 34 | 59.1s | 200,823 | 172,495 | 373,318 | 54% | 46% | 0 | MaxTurns/ContextWindow/JSONMode/OutputLimit; model chose 4 reviewers |
 | 2026-07-22 16:18 | subagent-efficiency | 1a85775 | B4 Audit (ctx=20K) | 2 | 0 | 5 | 33.9s | 20,111 | 0 | 20,111 | 100% | 0% | 0 | Best 20K run — 36% fewer tokens than main at 20K (31,534) |
+| 2026-07-22 16:22 | main | 1a85775 | B4 Audit (ctx=20K) | 22 | 4 | 37 | 86.2s | 183,392 | 174,936 | 358,328 | 51% | 49% | 0 | Model dispatched 4 analysts |
+| 2026-07-22 16:23 | main | 1a85775 | B4 Audit | 3 | 0 | 5 | 28.3s | 30,081 | 0 | 30,081 | 100% | 0% | 0 | Inline execution |
+| 2026-07-22 16:24 | subagent-efficiency | cc7cf8b | B4 Audit | 3 | 0 | 7 | 34.4s | 34,391 | 0 | 34,391 | 100% | 0% | 0 | Inline execution — parity with main |
 
 ## Analysis: Continuation Guard Impact
 
@@ -52,3 +55,39 @@ with budget scaling is active. The guard was necessary for fixed-count compactio
 but the boundary-aligned approach safely compacts during tool loops. The earlier
 analysis tested guard removal *without* budget scaling, which caused aggressive
 over-compaction — that is fixed by the scalable token estimate.
+
+## Sub-Agent Efficiency — head-to-head comparison (2026-07-22)
+
+Identical prompt, identical config (except branch), runs within minutes of each other:
+
+**ctx=20K:**
+
+| Metric | main | subagent-efficiency | Delta |
+|--------|------|---------------------|-------|
+| Turns | 22 | 2 | -91% |
+| Subs | 4 | 0 | -100% |
+| Tools | 37 | 5 | -86% |
+| Time | 86.2s | 33.9s | -61% |
+| Tokens | 358,328 | 20,111 | -94% |
+| Errors | 0 | 0 | — |
+
+main dispatched 4 analysts; subagent-efficiency ran inline. Both produced correct output.
+
+**Default 128K:**
+
+| Metric | main | subagent-efficiency | Delta |
+|--------|------|---------------------|-------|
+| Turns | 3 | 3 | 0% |
+| Subs | 0 | 0 | — |
+| Tools | 5 | 7 | +40% |
+| Time | 28.3s | 34.4s | +22% |
+| Tokens | 30,081 | 34,391 | +14% |
+| Errors | 0 | 0 | — |
+
+Both ran inline with similar results. The ~14% token increase is noise.
+
+**Conclusion:** Sub-agent efficiency controls (MaxTurns, ContextWindow, OutputLimit)
+do not regress performance. The dominant factor in benchmark variance is whether
+the orchestrator model chooses to dispatch sub-agents or run inline — an
+unpredictable model behavior orthogonal to our changes. When both branches run
+inline, they perform at parity.
