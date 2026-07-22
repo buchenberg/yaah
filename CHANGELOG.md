@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.21.0](https://github.com/buchenberg/yaah/compare/v0.20.0...v0.21.0) (2026-07-22)
+
+
+### Features
+
+* FullTools mode, batching, contract auto-injection, TUI subagent parity ([a740911](https://github.com/buchenberg/yaah/commit/a740911bf4a6bf21c0d29e47046b44bf04a76268))
+
+
+### Code Refactoring
+
+* **subagents:** rename roles to analyst/developer/tester/reviewer, add custom role discovery ([c98bf61](https://github.com/buchenberg/yaah/commit/c98bf61da9fa1a699020ba75665985df7ca3004b))
+
 ## [0.20.0](https://github.com/buchenberg/yaah/compare/v0.19.0...v0.20.0) (2026-07-21)
 
 
