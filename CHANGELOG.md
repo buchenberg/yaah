@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.23.0](https://github.com/buchenberg/yaah/compare/v0.22.0...v0.23.0) (2026-07-22)
+
+
+### Features
+
+* **agent:** add preflight compaction with configurable estimate factor ([43152bb](https://github.com/buchenberg/yaah/commit/43152bb105bb54f6266b0020ae652dc4be2cc072))
+* **agent:** add preflight compaction with configurable estimate factor ([7f86ab5](https://github.com/buchenberg/yaah/commit/7f86ab5783efbcd8eeee4cf77778f3cddba96e75))
+
+
+### Documentation
+
+* add B4 benchmark results for preflight compaction ([686c237](https://github.com/buchenberg/yaah/commit/686c2371e15d00dfd116ed493d1ce2c6432911b5))
+
 ## [0.22.0](https://github.com/buchenberg/yaah/compare/v0.21.0...v0.22.0) (2026-07-22)
 
 
