@@ -18,6 +18,7 @@ Records are never overwritten — append a new row for every run.
 | 2026-07-22 10:17 | main | 7f43924 | B4 Audit | 4 | 0 | 8 | <time> | 43415 | 0 | 43415 | 100% | 0% | 0 | Baseline - main branch |
 | 2026-07-22 10:55 | main | 2d6f7b3 | B4 Audit (ctx=20k) | 3 | 0 | 6 | <time> | 31534 | 0 | 31534 | 100% | 0% | 0 | Low context window test |
 | 2026-07-22 10:58 | feat/preflight-compaction | 686c237 | B4 Audit (ctx=20k) | 7 | 3 | 5 | <time> | 32728 | 0 | 32728 | 100% | 0% | 0 | With continuation guard |
+| 2026-07-22 14:49 | feature/moar-loop-tuning | 9f26ccf | B4 Audit | 7 | 1 | 12 | 48.0s | 90,929 | 61,676 | 152,605 | 60% | 40% | 0 | Phase 2: truncation + skill index + cost propagation + replay recovery |
 | 2026-07-22 11:02 | feat/preflight-compaction | fd5eee0 | B4 Audit (ctx=20k) | 4 | 0 | 8 | <time> | 49720 | 0 | 49720 | 100% | 0% | 0 | Without continuation guard |
 | 2026-07-22 12:25 | feature/compaction-survival | 2d6f7b3 | B4 Audit (ctx=20K) | 9 | 2 | 14 | 54.7s | 93,688 | 65,503 | 159,191 | 59% | 41% | 0 | Token-budget compaction + budget scaling; prompt oscillates 5.8K–15K vs monotonic 20.8K without |
 

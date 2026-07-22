@@ -8,9 +8,11 @@ import (
 	"embed"
 	"fmt"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/instructions"
+	"github.com/buchenberg/yaah/internal/skills"
 )
 
 // IdentityPrompt is the default system identity shipped with the yaah
@@ -37,6 +39,7 @@ type Layers struct {
 	UserContext string // ~/.yaah/AGENTS.md (optional)
 	Project     string // walked-up AGENTS.md/CLAUDE.md from cwd
 	Memory      string // stored facts from SQLite
+	Skills      string // formatted skill index (name + description)
 }
 
 // Build assembles the full system prompt from the given layers by
@@ -64,7 +67,35 @@ func Build(l Layers) string {
 		parts = append(parts, "## Memory\n"+strings.TrimSpace(l.Memory))
 	}
 
+	if strings.TrimSpace(l.Skills) != "" {
+		parts = append(parts, l.Skills)
+	}
+
 	return strings.Join(parts, "\n\n")
+}
+
+// BuildSkillsIndex returns a formatted "## Available Skills" section
+// with name + description per skill. Returns "" if no skills found.
+func BuildSkillsIndex(skillList []skills.Skill) string {
+	if len(skillList) == 0 {
+		return ""
+	}
+	sorted := make([]skills.Skill, len(skillList))
+	copy(sorted, skillList)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Name < sorted[j].Name
+	})
+
+	var sb strings.Builder
+	sb.WriteString("## Available Skills\n")
+	for _, s := range sorted {
+		desc := s.Description
+		if desc == "" {
+			desc = s.Name
+		}
+		sb.WriteString(fmt.Sprintf("- **%s**: %s\n", s.Name, desc))
+	}
+	return sb.String()
 }
 
 // DetectEnvironment returns a human-readable string describing the

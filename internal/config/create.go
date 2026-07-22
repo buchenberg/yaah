@@ -34,7 +34,6 @@ agents:
   # subagent:
   #   provider: deepseek         # override provider (default: inherit from planner)
   #   model: deepseek-v4-flash   # override model (default: inherit from planner)
-  #   max_depth: 3
   #   max_concurrency: 3
   #   default_timeout: 120
 

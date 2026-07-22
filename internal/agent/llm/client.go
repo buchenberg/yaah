@@ -25,6 +25,7 @@ type Client struct {
 	Trim             TrimFunc
 	OtelEnabled      bool
 	OtelVerbose      bool
+	replayCount      int // tracks empty-response replays within a single Call
 }
 
 // Call sends a chat request and returns the assistant message, whether it
@@ -37,6 +38,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (types.Message
 	var totalUsage types.Usage
 	compactAttempts := 0
 	providerSwapped := false
+	c.replayCount = 0
 
 	for attempt := 0; attempt <= c.MaxRetries; attempt++ {
 		var msg types.Message
@@ -96,6 +98,12 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (types.Message
 			NumMessages: len(req.Messages),
 		}
 		classified := errorclassify.Classify(err, meta)
+
+		if isDegenerateStream(err) && c.replayCount < 2 {
+			c.replayCount++
+			attempt--
+			continue
+		}
 
 		if isDegenerateStream(err) && c.FallbackProvider != nil && !providerSwapped {
 			oldProvider := c.Provider
@@ -195,12 +203,14 @@ func httpStatusCode(err error) int {
 }
 
 // isDegenerateStream returns true if the error is from a model that produced
-// a stream with no content or tool calls.
+// a stream or non-streaming response with no content or tool calls.
 func isDegenerateStream(err error) bool {
 	if err == nil {
 		return false
 	}
-	return strings.Contains(err.Error(), "streamed response produced no content")
+	msg := err.Error()
+	return strings.Contains(msg, "streamed response produced no content") ||
+		strings.Contains(msg, "non-streaming response produced no content")
 }
 
 // captureUsage extracts token usage from a response.

@@ -109,6 +109,13 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 
 			if isTask {
 				runCtx = tools.WithSubAgentModelPtr(runCtx, &subAgentModel)
+				var subUsage types.Usage
+				runCtx = tools.WithSubAgentUsage(runCtx, &subUsage)
+				defer func() {
+					if subUsage.TotalTokens > 0 {
+						l.addUsage(subUsage)
+					}
+				}()
 			}
 
 			res, err := l.Registry.Execute(runCtx, tc.Function.Name, tc.Function.Arguments)
@@ -126,8 +133,8 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			if err != nil {
 				errStr = err.Error()
 				res = fmt.Sprintf("error: %v", err)
-			} else if len(res) > ToolResultMaxLen {
-				res = res[:ToolResultMaxLen] + "\n...[truncated]..."
+			} else {
+				res = truncateToolResult(res)
 			}
 
 			if l.OnTool != nil {

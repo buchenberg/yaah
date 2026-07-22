@@ -67,9 +67,6 @@ type SubAgentConfig struct {
 
 	// Model selects which model sub-agents use (default: main model).
 	Model string `yaml:"model"`
-	// MaxDepth is the global default for how many task calls a single
-	// Loop may issue. 0 means unlimited.
-	MaxDepth int `yaml:"max_depth"`
 
 	// MaxConcurrency caps simultaneous task tool calls per iteration.
 	// 0 means unlimited.
@@ -80,7 +77,7 @@ type SubAgentConfig struct {
 	DefaultTimeout int `yaml:"default_timeout"`
 
 	// Roles holds per-role overrides keyed by role name
-	// ("worker", "reviewer", "planner").
+	// ("analyst", "developer", "tester", "reviewer").
 	Roles map[string]RoleConfig `yaml:"roles"`
 }
 
@@ -88,7 +85,6 @@ type SubAgentConfig struct {
 type RoleConfig struct {
 	Timeout       int `yaml:"timeout"`        // seconds; 0 = use role default
 	MaxIterations int `yaml:"max_iterations"` // 0 = use role default
-	MaxDepth      int `yaml:"max_depth"`      // 0 = use global MaxDepth
 }
 
 // Config is the full yaah configuration loaded from ~/.yaah/config.yaml.
@@ -131,7 +127,6 @@ func defaultConfig() *Config {
 				Approval:      "ask",
 			},
 			SubAgent: SubAgentConfig{
-				MaxDepth:       3,
 				MaxConcurrency: 3,
 			},
 		},

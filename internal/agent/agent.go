@@ -14,7 +14,6 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
-	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -79,8 +78,10 @@ const (
 // next segment starts on a fresh line.
 type FlushCallback func(content string)
 
-// ToolResultMaxLen is the maximum length of a tool result before truncation.
-const ToolResultMaxLen = 8192
+// ToolResultMaxLen is a deprecated alias for truncateMaxBytes. Use
+// truncateToolResult() in agent_truncation.go for the line/byte dual-limit
+// truncation.
+const ToolResultMaxLen = truncateMaxBytes
 
 // pruneMessageMaxLen is the threshold above which old messages are pruned
 // before being sent to the LLM summarizer during compaction.
@@ -224,13 +225,6 @@ type Loop struct {
 	// PermissionRules is the list of permission rules for the PermissionMiddleware.
 	PermissionRules []pipeline.PermissionRule
 
-	// MaxSubAgentDepth caps nested sub-agent calls. 0 means unlimited.
-	MaxSubAgentDepth int
-
-	// MaxSubAgentDepthByRole optionally caps task calls per sub-agent
-	// role. A role absent from the map falls back to MaxSubAgentDepth.
-	MaxSubAgentDepthByRole map[subagent.SubAgentRole]int
-
 	// MaxSubAgentConcurrency caps the number of task tool calls that may
 	// run simultaneously within a single outer-loop turn. 0 means unlimited.
 	MaxSubAgentConcurrency int
@@ -343,8 +337,7 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 		LoopDetectCount:        l.LoopDetectCount,
 		LoopDetectWindow:       l.LoopDetectWindow,
 		MaxToolConcurrency:     l.MaxToolConcurrency,
-		MaxSubAgentDepth:       l.MaxSubAgentDepth,
-		MaxSubAgentDepthByRole: l.MaxSubAgentDepthByRole,
+		MaxSubAgentConcurrency: l.MaxSubAgentConcurrency,
 		PromptCaching:          l.PromptCaching,
 		Pruner:                 l.Pruner,
 		PruneHooks:             l.pruneHooks(),

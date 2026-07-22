@@ -3,7 +3,6 @@ package yaah
 import (
 	"context"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -22,13 +21,10 @@ import (
 )
 
 func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker, estimateFactor float64) *tools.TaskTool {
-	// Map a config "0 = unlimited" MaxDepth to a sentinel so the
-	// structural nesting decrement in makeTaskRunner does not disable
-	// spawning for an "unlimited" setting.
-	depth := subCfg.MaxDepth
-	if depth <= 0 {
-		depth = math.MaxInt32
-	}
+	// Sub-agent spawning depth is hard-coded at 1: the top-level agent
+	// can spawn one level of sub-agents; sub-agents cannot spawn further
+	// sub-agents (remainingDepth reaches 0).
+	depth := 1
 	return &tools.TaskTool{
 		Runner: makeTaskRunner(taskRunnerOpts{
 			provider:         provider,
@@ -239,9 +235,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			ApprovalMode:           "allow",
 			DB:                     subDB,
 			SessionID:              subSessionID,
-			MaxSubAgentDepth:       opts.subCfg.MaxDepth,
 			MaxSubAgentConcurrency: opts.subCfg.MaxConcurrency,
-			MaxSubAgentDepthByRole: subAgentDepthByRole(opts.subCfg),
 			OtelEnabled:            opts.OtelEnabled,
 			OtelVerbose:            opts.OtelVerbose,
 			OnTool:                 opts.SubToolCallback,
@@ -250,6 +244,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		result, runErr := subLoop.Run(ctx, prompt)
 
 		tools.WriteSubAgentModel(ctx, subModel)
+		tools.AddSubAgentUsage(ctx, subLoop.TotalTokens)
 
 		if span := trace.SpanFromContext(ctx); span.IsRecording() {
 			span.SetAttributes(
@@ -272,28 +267,6 @@ func subAgentTimeoutResolver(subCfg config.SubAgentConfig) func(tools.SubAgentPa
 	}
 }
 
-// subAgentDepthByRole builds the per-role depth cap map from role
-// profile defaults, overridden by per-role config. Roles absent from
-// the map fall back to the global MaxDepth in the middleware.
-func subAgentDepthByRole(subCfg config.SubAgentConfig) map[subagent.SubAgentRole]int {
-	out := make(map[subagent.SubAgentRole]int)
-	for _, name := range subagent.Names() {
-		if d := subagent.RoleProfileFor(name).MaxDepth; d > 0 {
-			out[name] = d
-		}
-	}
-	for name, rc := range subCfg.Roles {
-		if rc.MaxDepth > 0 {
-			out[subagent.SubAgentRole(name)] = rc.MaxDepth
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-// buildSubAgentRegistry constructs a tool registry for the given role
 // profile. If the profile includes the task tool and remainingDepth > 0,
 // a nested TaskTool is registered so the sub-agent can spawn further
 // workers. When remainingDepth == 0 the task tool is omitted entirely.

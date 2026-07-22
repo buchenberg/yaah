@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/buchenberg/yaah/internal/types"
 )
 
 // subAgentModelKey stores the sub-agent's model name in the context so
@@ -34,6 +36,25 @@ func WithSubAgentModelPtr(ctx context.Context, ptr *string) context.Context {
 func WriteSubAgentModel(ctx context.Context, model string) {
 	if ptr, ok := ctx.Value(subAgentModelPtrKey{}).(*string); ok {
 		*ptr = model
+	}
+}
+
+// subAgentUsageKey stores a *types.Usage pointer for accumulating
+// sub-agent token usage in the caller.
+type subAgentUsageKey struct{}
+
+// WithSubAgentUsage sets a usage accumulator in ctx so the caller can
+// collect sub-agent token counts.
+func WithSubAgentUsage(ctx context.Context, usage *types.Usage) context.Context {
+	return context.WithValue(ctx, subAgentUsageKey{}, usage)
+}
+
+// AddSubAgentUsage adds delta to the usage accumulator in ctx, if present.
+func AddSubAgentUsage(ctx context.Context, delta types.Usage) {
+	if acc, ok := ctx.Value(subAgentUsageKey{}).(*types.Usage); ok {
+		acc.PromptTokens += delta.PromptTokens
+		acc.CompletionTokens += delta.CompletionTokens
+		acc.TotalTokens += delta.TotalTokens
 	}
 }
 

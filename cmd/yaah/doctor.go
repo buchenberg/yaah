@@ -178,7 +178,7 @@ func checkSubAgents(cfg *config.Config, cfgErr error) check {
 		return check{
 			Label:  "Sub-agents",
 			Status: "OK",
-			Detail: fmt.Sprintf("enabled — inherit planner model (%s / %s, max depth %d, max concurrency %d)", providerName, model, sc.MaxDepth, sc.MaxConcurrency),
+			Detail: fmt.Sprintf("enabled — inherit planner model (%s / %s, max depth 1, max concurrency %d)", providerName, model, sc.MaxConcurrency),
 		}
 	}
 	if _, ok := cfg.Providers[providerName]; !ok {
@@ -191,7 +191,7 @@ func checkSubAgents(cfg *config.Config, cfgErr error) check {
 	return check{
 		Label:  "Sub-agents",
 		Status: "OK",
-		Detail: fmt.Sprintf("enabled — %s / %s, max depth %d, max concurrency %d", providerName, model, sc.MaxDepth, sc.MaxConcurrency),
+		Detail: fmt.Sprintf("enabled — %s / %s, max depth 1, max concurrency %d", providerName, model, sc.MaxConcurrency),
 	}
 }
 
