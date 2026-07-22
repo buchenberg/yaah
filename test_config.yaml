@@ -1,0 +1,14 @@
+providers:
+  deepseek:
+    base_url: https://api.deepseek.com/v1
+    api_key: ${DEEPSEEK_API_KEY}
+    name: Deepseek
+
+agents:
+  default:
+    provider: deepseek
+    model: deepseek-v4-flash
+    small_model: deepseek-v4-flash
+    max_iterations: 50
+    context_window: 50000
+    approval: allow
