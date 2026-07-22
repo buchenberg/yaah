@@ -14,3 +14,4 @@ Records are never overwritten — append a new row for every run.
 | 2026-07-22 00:04 | feature/pruning | a740911 | B4 Audit | 5 | 0 | 5 | 49.5s | 49,690 | 0 | 49,690 | 100% | 0% | 0 | |
 | 2026-07-22 00:33 | feature/pruning | a740911 | B4 Audit | 4 | 0 | 7 | 44.3s | 51,019 | 0 | 51,019 | 100% | 0% | 0 | Post executor cleanup |
 | 2026-07-22 01:07 | feature/pruning | a740911 | B5 Parallel | 14 | 3 | 21 | 26.2s | 108,800 | 90,538 | 199,338 | 55% | 45% | 0 | Parallel sub-agents, scoped to internal/agent/ |
+| 2026-07-22 10:12 | feat/preflight-compaction | 7f86ab5 | B4 Audit | 5 | 0 | 11 | <time> | 75553 | 0 | 75553 | 100% | 0% | 0 | Preflight compaction |
