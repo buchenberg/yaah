@@ -49,6 +49,7 @@ func (t *FileInfoTool) Execute(ctx context.Context, args string) (string, error)
 	if params.FilePath == "" {
 		return "", fmt.Errorf("file_info: filePath is required")
 	}
+	params.FilePath = expandHomeDir(params.FilePath)
 
 	info, err := os.Stat(params.FilePath)
 	if err != nil {

@@ -102,9 +102,6 @@ func (t ToolMessage) Render() string {
 		visible = indented
 	}
 	boxStyle := toolBoxStyle
-	if t.toolName == "delegate" {
-		boxStyle = executorBoxStyle
-	}
 	b.WriteString(boxStyle.Width(boxWidth).Render(visible))
 	b.WriteString("\n")
 	return b.String()
@@ -132,13 +129,6 @@ func toolHeader(toolName, toolArgs string) string {
 			header = "sub-agent: " + roleLabel
 		default:
 			header = "sub-agent"
-		}
-	} else if toolName == "delegate" && toolArgs != "" {
-		desc := matchJSONField(toolArgs, "spawn_subagent")
-		if desc != "" {
-			header = "executor — " + desc
-		} else {
-			header = "executor"
 		}
 	} else if toolName == "webfetch" && toolArgs != "" {
 		re := regexp.MustCompile(`"url"\s*:\s*"([^"]*)"`)
@@ -209,8 +199,6 @@ func toolSummary(toolName, toolArgs, content string) string {
 		return ""
 	case "replace":
 		return "replaced in " + extractFilePath(toolArgs)
-	case "delegate":
-		return delegateSummary(content)
 	default:
 		firstLine, _, _ := strings.Cut(strings.TrimSpace(content), "\n")
 		if len(firstLine) > 80 {
@@ -278,43 +266,4 @@ func formatNumber(n int) string {
 		result.WriteRune(c)
 	}
 	return result.String()
-}
-
-var delegateResultRE = regexp.MustCompile(`<executor_result\s+state="([^"]*)"(?:\s+truncated="([^"]*)")?>(.*)</executor_result>`)
-
-// delegateSummary parses the structured executor result envelope and returns
-// a one-line summary showing state and the first line of the executor's prose.
-func delegateSummary(content string) string {
-	m := delegateResultRE.FindStringSubmatch(content)
-	if m == nil {
-		return content
-	}
-	state := m[1]
-	truncated := m[2] == "true"
-	inner := strings.TrimSpace(m[3])
-	firstLine, _, _ := strings.Cut(inner, "\n")
-	if len(firstLine) > 60 {
-		firstLine = firstLine[:57] + "..."
-	}
-	suffix := ""
-	if truncated {
-		suffix = " (truncated)"
-	}
-	if state == "error" {
-		return "error — " + firstLine
-	}
-	if state == "exhausted" {
-		return "exhausted — " + firstLine
-	}
-	return firstLine + suffix
-}
-
-// stripExecutorEnvelope removes the <executor_result> XML wrapper and
-// returns the inner content, or the original string if no envelope found.
-func stripExecutorEnvelope(content string) string {
-	m := delegateResultRE.FindStringSubmatch(content)
-	if m == nil {
-		return content
-	}
-	return strings.TrimSpace(m[3])
 }

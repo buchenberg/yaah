@@ -204,11 +204,11 @@ func runTUI() error {
 	}
 	subagent.SetDefaultRoleRegistry(reg)
 
-	instrFiles := instructions.Load(cwd, cwd)
-	systemPrompt := "You are yaah, a helpful AI assistant. Respond concisely."
-	systemPrompt += "\n\n## Runtime Environment\n" + prompts.DetectEnvironment(cwd)
-	if formatted := instructions.FormatForSystem(instrFiles); formatted != "" {
-		systemPrompt += "\n\n" + formatted
+	layers := prompts.Layers{
+		Identity:    prompts.IdentityPrompt,
+		Environment: prompts.DetectEnvironment(cwd),
+		UserContext: prompts.LoadUserContext(config.HomeDir()),
+		Project:     instructions.FormatForSystem(instructions.Load(cwd, cwd)),
 	}
 
 	toolReg := tools.NewRegistry()
@@ -229,13 +229,14 @@ func runTUI() error {
 	var sessionID string
 	var msgIdx int
 	var persistedCount int
+	systemPrompt := prompts.Build(layers)
 	if err == nil {
 		if entries, memErr := db.ListMemory(50); memErr == nil && len(entries) > 0 {
 			var memLines []string
 			for _, entry := range entries {
 				memLines = append(memLines, "- "+entry.Text)
 			}
-			systemPrompt += "\n\n## Memory\nYou have the following stored information about the user and project:\n" + strings.Join(memLines, "\n")
+			systemPrompt += "\n\n## Memory\n" + strings.Join(memLines, "\n")
 		}
 		systemPrompt += "\n\n## Memory Guidelines\n- Use memory_search to find relevant memories before answering personal/project questions. Pass a tag to filter by category.\n- When the user asks about past conversations or session history, use memory_search_sessions with an empty query to list recent transcripts.\n- Use memory_add to save important facts. Always include a tags array (e.g., [\"user_info\"], [\"preferences\"], [\"project:yaah\"], [\"decision\"]).\n- Use memory_update to correct stale facts (requires the memory ID). Use memory_delete to remove incorrect memories.\n- At the end of a conversation or when the user says goodbye, use memory_add to save a 2-3 line summary of key discussion points with tag [\"session_summary\"]."
 
@@ -526,7 +527,6 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 	}
 
 	compactProvider, compactModel := resolveCompact(cfg)
-	executorProvider, executorModel := resolveExecutor(cfg)
 
 	loop := &agent.Loop{
 		Provider:              provider,
@@ -542,9 +542,6 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 		OtelVerbose:           cfg.Observability.Otel.Verbose,
 		ConflictTracker:       conflictTracker,
 		ToolsLevel:            agent.FullTools,
-		ExecutorProvider:      executorProvider,
-		ExecutorModel:         executorModel,
-		MaxInnerIterations:    cfg.Agent.Executor.MaxIterations,
 		CompactProvider:       compactProvider,
 		CompactModel:          compactModel,
 		ApproveFn: func(name, args string) bool {

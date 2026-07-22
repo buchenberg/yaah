@@ -124,31 +124,6 @@ func resolveFallback(cfg *config.Config) (agent.Provider, string) {
 	return nil, ""
 }
 
-// resolveExecutor returns the provider and model for the inner executor loop
-// used by the dual-loop architecture. Returns nil if no separate executor is
-// configured — the inner loop falls back to the main provider and model.
-//
-// Use agent.executor.provider to select a different provider. When only
-// model is set, the main provider is used.
-func resolveExecutor(cfg *config.Config) (agent.Provider, string) {
-	ec := cfg.Agent.Executor
-	if ec.Provider == "" && ec.Model == "" {
-		return nil, ""
-	}
-
-	providerName := ec.Provider
-	if providerName == "" {
-		providerName = resolveProviderName(cfg)
-	}
-
-	if p, ok := cfg.Providers[providerName]; ok {
-		if prov, ok2 := makeProvider(p); ok2 {
-			return prov, ec.Model
-		}
-	}
-	return nil, ""
-}
-
 // resolveSubAgent returns the provider and model to use for sub-agents
 // spawned via the task tool. When unconfigured, returns nil — sub-agents
 // fall back to the loop's provider and model (inherited from the planner).

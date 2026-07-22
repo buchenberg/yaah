@@ -52,17 +52,8 @@ type FallbackConfig struct {
 type AgentConfig struct {
 	Default    Defaults         `yaml:"default"`
 	Fallback   FallbackConfig   `yaml:"fallback"`
-	Executor   ExecutorConfig   `yaml:"executor"`
 	SubAgent   SubAgentConfig   `yaml:"subagent"`
 	Middleware MiddlewareConfig `yaml:"middleware"`
-}
-
-// ExecutorConfig configures the inner executor loop used by the dual-loop
-// architecture. When unset, the inner loop uses the main provider and model.
-type ExecutorConfig struct {
-	Provider      string `yaml:"provider"`       // provider name (default: main provider)
-	Model         string `yaml:"model"`          // model name
-	MaxIterations int    `yaml:"max_iterations"` // max inner rounds per outer turn (default: 10)
 }
 
 // SubAgentConfig configures the task tool's sub-agent lifecycle:
@@ -121,10 +112,9 @@ type OtelConfig struct {
 	Traces      bool   `yaml:"traces"`       // enable trace spans
 	Metrics     bool   `yaml:"metrics"`      // enable OTLP metrics
 	// Verbose enables detailed span attributes/events: full model content,
-	// reasoning, tool-call arguments, conversation context, and dual-loop
-	// handoffs. Off by default to keep Jaeger payloads light; turn on when
-	// diagnosing agent-loop behaviour (e.g. the inner executor going off
-	// track). Only effective when Enabled is true.
+	// reasoning, tool-call arguments, and conversation context. Off by
+	// default to keep Jaeger payloads light; turn on when diagnosing
+	// agent-loop behaviour. Only effective when Enabled is true.
 	Verbose bool `yaml:"verbose"`
 }
 
@@ -142,9 +132,6 @@ func defaultConfig() *Config {
 			SubAgent: SubAgentConfig{
 				MaxDepth:       3,
 				MaxConcurrency: 3,
-			},
-			Executor: ExecutorConfig{
-				MaxIterations: 10,
 			},
 		},
 		Observability: ObservabilityConfig{

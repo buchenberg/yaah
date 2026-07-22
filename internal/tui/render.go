@@ -211,12 +211,6 @@ func (m *Model) renderToolResult(toolName, content string) string {
 	if toolName == "spawn_subagent" {
 		return m.renderMarkdown(content)
 	}
-	if toolName == "delegate" {
-		inner := stripExecutorEnvelope(content)
-		if inner != content {
-			return m.renderMarkdown(inner)
-		}
-	}
 	if isTreeContent(content) {
 		return m.renderTree(content)
 	}

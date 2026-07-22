@@ -31,11 +31,6 @@ agents:
     approval: ask               # ask | allow | deny
     # max_inline_tools_per_turn: 12  # cap inline tools per turn; 0 = unlimited
 
-  # executor:
-  #   provider: deepseek         # override provider (default: inherit from planner)
-  #   model: deepseek-v4-flash   # override model (default: inherit from planner)
-  #   max_iterations: 10
-
   # subagent:
   #   provider: deepseek         # override provider (default: inherit from planner)
   #   model: deepseek-v4-flash   # override model (default: inherit from planner)

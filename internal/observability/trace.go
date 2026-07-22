@@ -71,6 +71,37 @@ func FinishTool(span trace.Span, result string, err error) {
 	}
 }
 
+// StartPrune creates a span for a soft-prune pass — the Tier-0 context
+// reclaim that elides stale tool-result content without an LLM call. The
+// reason ("post_tool" | "post_compaction" | "payload_limit") is recorded as
+// an attribute so Jaeger shows why the pass ran. FinishPrune ends the span.
+func StartPrune(ctx context.Context, reason string) (context.Context, trace.Span) {
+	ctx, span := tracer.Start(ctx, "prune")
+	span.SetAttributes(
+		attribute.String("prune.reason", safeString(reason)),
+	)
+	return ctx, span
+}
+
+// FinishPrune records the prune outcome as span attributes and ends the span.
+// It takes primitive fields rather than a pipeline.PruneStats so the
+// observability package stays free of an import on internal/agent/pipeline.
+func FinishPrune(span trace.Span, reason string, candidates, marked, reclaimed, protectedSkipped, totalMarked int, committed bool) {
+	if span == nil {
+		return
+	}
+	span.SetAttributes(
+		attribute.String("prune.reason", safeString(reason)),
+		attribute.Int("prune.candidates", candidates),
+		attribute.Int("prune.marked", marked),
+		attribute.Int("prune.reclaimed_tokens", reclaimed),
+		attribute.Int("prune.protected_skipped", protectedSkipped),
+		attribute.Bool("prune.committed", committed),
+		attribute.Int("prune.total_marked", totalMarked),
+	)
+	span.End()
+}
+
 // StartLLM creates a span for a single Chat Completions call. The
 // model name is an attribute; a completion event carries the prompt
 // size, response size, and duration.
@@ -162,18 +193,16 @@ func RecordError(span trace.Span, err error) {
 
 // ────────────────────────────────────────────────────────────────────
 // Verbose tracing helpers. These record full model content, reasoning,
-// tool-call payloads, conversation context, and dual-loop handoffs as
-// span attributes/events. They are gated on the Loop's OtelVerbose flag
-// at the call sites — when verbose tracing is off, the loop never calls
-// them, so there is zero overhead and Jaeger only sees the lightweight
-// span tree (turn/stream/tool/inner.loop) with token counts.
+// tool-call payloads, and conversation context as span attributes/events.
+// They are gated on the Loop's OtelVerbose flag at the call sites — when
+// verbose tracing is off, the loop never calls them, so there is zero
+// overhead and Jaeger only sees the lightweight span tree
+// (turn/stream/tool) with token counts.
 // ────────────────────────────────────────────────────────────────────
 
 // RecordAssistantResponse records the full model response on a span:
 // content, reasoning, refusal, and every tool call's name + arguments.
-// Used for both outer agent-turn responses and inner-loop iterations so
-// the dual-loop conversation is visible end-to-end in Jaeger. Pass the
-// finish_reason if known (empty string to omit).
+// Pass the finish_reason if known (empty string to omit).
 func RecordAssistantResponse(span trace.Span, msg types.Message, finishReason string) {
 	if span == nil {
 		return
@@ -202,36 +231,6 @@ func RecordAssistantResponse(span trace.Span, msg types.Message, finishReason st
 		)
 	}
 	span.AddEvent("assistant.response", trace.WithAttributes(attrs...))
-}
-
-// RecordInnerTask records the full task prompt handed to the inner
-// executor loop. This is the payload that reveals the dual-loop
-// confusion: when the outer model emits prose alongside its tool calls,
-// that prose is fed to the inner model as "## Instructions" and the inner
-// model re-interprets it as a new question.
-func RecordInnerTask(span trace.Span, taskPrompt string) {
-	if span == nil {
-		return
-	}
-	span.AddEvent("inner.task", trace.WithAttributes(
-		attribute.String("inner.task_full", truncate(safeString(taskPrompt), detailLen)),
-		attribute.Int("inner.task_len", len(taskPrompt)),
-	))
-}
-
-// RecordInnerSummary records the summary the inner loop produced and that
-// is injected back into the outer conversation as an assistant message.
-// Surfacing this in traces is what makes the "outer model responds to its
-// own inner summary" failure mode diagnosable.
-func RecordInnerSummary(span trace.Span, summary string, outerMsgCount int) {
-	if span == nil {
-		return
-	}
-	span.AddEvent("inner.summary_injected", trace.WithAttributes(
-		attribute.String("inner.summary_full", truncate(safeString(summary), detailLen)),
-		attribute.Int("inner.summary_len", len(summary)),
-		attribute.Int("outer.messages", outerMsgCount),
-	))
 }
 
 // RecordConversation records a compact overview of the message history on

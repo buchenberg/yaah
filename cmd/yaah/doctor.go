@@ -53,7 +53,6 @@ func runChecks() []check {
 		checkOldConfig(cfgPath),
 		checkProvider(cfg, cfgErr),
 		checkModel(cfg, cfgErr),
-		checkExecutor(cfg, cfgErr),
 		checkSubAgents(cfg, cfgErr),
 		checkFallback(cfg, cfgErr),
 		checkOTel(cfg, cfgErr),
@@ -161,38 +160,6 @@ func checkModel(cfg *config.Config, cfgErr error) check {
 		return check{Label: "Default model", Status: "FAIL", Detail: "default.model is not set"}
 	}
 	return check{Label: "Default model", Status: "OK", Detail: cfg.Agent.Default.Model}
-}
-
-func checkExecutor(cfg *config.Config, cfgErr error) check {
-	if cfgErr != nil {
-		return check{Label: "Dual-loop", Status: "WARN", Detail: "config not loaded"}
-	}
-	ec := cfg.Agent.Executor
-	providerName := ec.Provider
-	model := ec.Model
-	if model == "" {
-		model = cfg.Agent.Default.Model
-	}
-	if providerName == "" {
-		providerName = resolveProviderName(cfg)
-		return check{
-			Label:  "Dual-loop",
-			Status: "OK",
-			Detail: fmt.Sprintf("enabled — executor inherits planner model (%s / %s, fallback on error)", providerName, model),
-		}
-	}
-	if _, ok := cfg.Providers[providerName]; !ok {
-		return check{
-			Label:  "Dual-loop",
-			Status: "WARN",
-			Detail: fmt.Sprintf("provider %q not found for executor %s / %s — executor will fall back to planner model on error", ec.Provider, providerName, model),
-		}
-	}
-	return check{
-		Label:  "Dual-loop",
-		Status: "OK",
-		Detail: fmt.Sprintf("enabled — executor (%s / %s, max %d iterations, falls back to planner on error)", providerName, model, ec.MaxIterations),
-	}
 }
 
 // checkSubAgents reports the sub-agent provider/model configuration.

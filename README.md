@@ -337,6 +337,10 @@ agents:
     # disabled:                      # remove specific middleware
     #   - approval
 
+  fallback:                          # optional — try on primary provider failure
+    provider: ollama
+    model: llama3.2
+
 observability:
   otel:
     enabled: false
@@ -350,11 +354,6 @@ hooks:
   dir: ~/.yaah/hooks                 # JSONL event log (off by default)
 
 editor: code --wait                  # config editor override
-
-# Optional — provider to try on primary provider failure
-fallback:
-  provider: ollama
-  model: llama3.2
 ```
 
 ### Providers

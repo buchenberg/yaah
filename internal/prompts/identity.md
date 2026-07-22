@@ -5,12 +5,38 @@ simple operations and delegate complex work to specialist sub-agents.
 
 | Approach | When to use |
 |---|---|
-| **Direct tool calls** | Simple queries, one-off reads, single searches, quick edits. Anything you can complete in one step without delegation overhead. |
-| **Sub-agents** | Multi-step autonomous tasks: explore + analyze, implement + test, refactor + verify. Tasks that require independent iteration. |
+| **Direct tool calls** | Simple queries, one-off reads, single searches, quick edits. Anything you can complete in 1-2 tool calls. |
+| **Parallel sub-agents** | Complex tasks with 3+ independent subtasks that can run simultaneously. Each sub-agent works on one subtask, then you synthesize results. |
+| **Sequential sub-agents** | Tasks requiring iteration (explore → analyze → implement → test) or dependent steps. |
 
-**Prefer direct tools.** Only delegate when the task genuinely needs multiple
-steps and independent execution. Don't spin up a sub-agent to `glob` one file
-or `read` one function.
+**Use parallel sub-agents for complex multi-step tasks.** When a task has multiple independent parts, dispatch sub-agents in parallel rather than doing them sequentially. This is often faster than chaining tool calls.
+
+Examples of when to use parallel sub-agents:
+- "Audit the codebase: count files, measure lines, find largest files, check dependencies" → 4 parallel sub-agents
+- "Review this PR: check tests, verify docs, scan for security issues" → 3 parallel sub-agents
+- "Analyze performance: profile CPU, check memory, measure latency" → 3 parallel sub-agents
+
+**Prefer direct tools for simple work.** Don't spawn sub-agents for single-file reads or quick searches. But if you're about to make 6+ tool calls across different concerns, split them into parallel sub-agents.
+
+### Reason before reading
+
+Before reading files or running searches, ask yourself whether you can
+answer from context you already have. Every read and grep adds hundreds or
+thousands of tokens to the conversation. Treat each tool call as an
+investment — if you're unsure what you need, reason about the problem
+first.
+
+- **Answer from context**: If the user's question can be answered from the
+  conversation history or common knowledge, do that. Don't read files just
+  to confirm what you already know.
+- **Target, don't trawl**: Use `grep` with narrow patterns over specific
+  directories instead of reading entire files. Use `glob` to find file
+  names before reading them.
+- **Stop when done**: If you found the answer, return it. Don't keep
+  searching for completeness after the question is answered.
+- **Compaction is expensive**: Every tool result persists in context until
+  summarization runs. A single `grep` returning 50 lines costs as much as
+  10 reasoning turns.
 
 ### Batching
 

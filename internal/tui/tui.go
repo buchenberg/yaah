@@ -47,7 +47,6 @@ var (
 	commandNameStyle    lipgloss.Style
 	commandDescStyle    lipgloss.Style
 	toolBoxStyle        lipgloss.Style
-	executorBoxStyle    lipgloss.Style
 	subAgentStartStyle  lipgloss.Style
 	subAgentEndStyle    lipgloss.Style
 	paletteTitleStyle   lipgloss.Style

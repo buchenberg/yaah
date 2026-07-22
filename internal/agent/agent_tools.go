@@ -130,20 +130,20 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 				res = res[:ToolResultMaxLen] + "\n...[truncated]..."
 			}
 
-			if isTask && l.OnSubAgent != nil {
-				model := subAgentModel
-				if model == "" {
-					model = l.Model
-				}
-				l.OnSubAgent(SubAgentInfo{Role: taskRole, Model: model, Prompt: taskPrompt, Duration: duration, Error: errStr})
-			}
-
 			if l.OnTool != nil {
 				info := ToolInfo{Name: tc.Function.Name, Args: abbreviated, Duration: duration, Result: res}
 				if err != nil {
 					info.Error = err.Error()
 				}
 				l.OnTool(info)
+			}
+
+			if isTask && l.OnSubAgent != nil {
+				model := subAgentModel
+				if model == "" {
+					model = l.Model
+				}
+				l.OnSubAgent(SubAgentInfo{Role: taskRole, Model: model, Prompt: taskPrompt, Duration: duration, Error: errStr})
 			}
 
 			l.emitHook(HookEvent{

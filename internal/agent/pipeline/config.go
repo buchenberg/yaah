@@ -36,6 +36,13 @@ type PipelineConfig struct {
 
 	PromptCaching bool
 
+	// Pruner soft-prunes stale tool-result content from provider requests.
+	// When non-nil and soft_prune is in the pipeline, the SoftPruneMiddleware
+	// marks stale results after each tool batch; the Loop stubs them at
+	// request-build time. PruneHooks wires optional telemetry (nil-safe).
+	Pruner     *Pruner
+	PruneHooks PruneHooks
+
 	PipelineNames    []string
 	PipelineDisabled []string
 }
@@ -71,12 +78,16 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 		return &SubAgentMiddleware{MaxDepth: cfg.MaxSubAgentDepth, MaxDepthByRole: cfg.MaxSubAgentDepthByRole}
 	},
 	"prompt_caching": func(cfg PipelineConfig) Middleware { return &PromptCachingMiddleware{enabled: cfg.PromptCaching} },
+	"soft_prune": func(cfg PipelineConfig) Middleware {
+		return &SoftPruneMiddleware{pruner: cfg.Pruner, emit: cfg.PruneHooks.Emit, otel: cfg.PruneHooks.Otel}
+	},
 }
 
 var defaultPipelineNames = []string{
 	"steer",
 	"followup",
 	"compaction",
+	"soft_prune",
 	"approval",
 	"loop_detection",
 }

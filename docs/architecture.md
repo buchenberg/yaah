@@ -198,16 +198,17 @@ The pipeline is built in `buildPipeline()` with a config-driven order:
 
 1. `SteerMiddleware` — high-priority mid-turn messages
 2. `FollowupMiddleware` — queued between-turn messages
-3. `CompactionMiddleware` — context window enforcement
-4. `ApprovalMiddleware` — no-op placeholder (approval moved to `executeAndCollect`)
-5. `LoopDetectionMiddleware` — detect stuck loops
+3. `CompactionMiddleware` — context window enforcement (LLM summarization)
+4. `SoftPruneMiddleware` — tier-0 tool-output elision (non-LLM, reclaims context)
+5. `ApprovalMiddleware` — no-op placeholder (approval moved to `executeAndCollect`)
+6. `LoopDetectionMiddleware` — detect stuck loops
 
-The default set is defined in `defaultPipelineNames` in `middleware.go`. Users can override which middleware runs via `config.yaml`:
+The default set is defined in `defaultPipelineNames` in `config.go`. Users can override which middleware runs via `config.yaml`:
 
 ```yaml
 agent:
   middleware:
-    enabled: [steer, followup, compaction, loop_detection]
+    enabled: [steer, followup, compaction, soft_prune, loop_detection]
     disabled: [approval]
 ```
 
@@ -228,6 +229,33 @@ Drains the `Loop.FollowUps` channel in `PrepareStep`. Messages are injected as u
 #### CompactionMiddleware (`pipeline/compaction.go`)
 
 Triggers context compaction at both `PrepareStep` (preflight) and `PostTool` (post-iteration) hooks when `ContextWindow > 0`. Delegates to `Loop.compactContext(ctx, threshold)`. The `threshold` parameter (default 0.8) controls what fraction of the window triggers compaction. The middleware now accepts a configurable `CompactionThreshold` from the `Loop` struct.
+
+#### SoftPruneMiddleware (`pipeline/softprune.go`)
+
+Soft-prune is a tier-0, non-LLM context-reclaim step. After each tool batch (`PostTool`),
+it walks the message history backwards from the most recent, identifying stale
+tool-result messages whose output is large enough and old enough to safely elide.
+The tool-call IDs are recorded in an in-memory `Pruner` set (`pipeline/pruner.go`),
+and at request-build time `Loop.applyPruning` stubs those messages' content with a
+compact placeholder before the provider sees them.
+
+Key design points:
+
+- **Non-mutating:** `l.Messages` and the DB keep full original content. Only the
+  ephemeral `ChatRequest` sent to the provider carries stubs.
+- **Tool-call linkage preserved:** Tool messages are *never removed* — only
+  their `Content` string is replaced. The `tool_call_id` ↔ tool message
+  pairing remains intact, so the provider cannot 400.
+- **Protect window:** The last 40k tokens of recent tool output and the current
+  + previous user turn are always shielded (configurable via `PruneConfig`).
+- **Walk termination:** The backward walk stops at either a compaction-summary
+  system message or an already-pruned tool message, bounding the per-turn cost
+  to O(new messages).
+- **`skill` protection:** Tool results from the `skill` tool are never pruned,
+  since they carry instruction payloads the model may need again.
+
+`SoftPruneMiddleware` is on by default (after `compaction`, before `approval`).
+Disable via `PipelineDisabled: ["soft_prune"]`.
 
 #### ApprovalMiddleware (`pipeline/approval.go`)
 
@@ -518,14 +546,57 @@ in `helpers.go`. Shared tool utilities (`rgAvailable`, `commonIgnoreDirs`,
 
 ---
 
-## Context compaction
+## Context management
 
-File: `internal/agent/agent.go` (`compactContext`, `trimContext`, `pruneMessages`, `messageTokens`)
+### Three-tier architecture
 
-yaah uses a multi-layered context management system to prevent conversation
-history from exceeding the model's context window. Compaction is triggered
-proactively when estimated tokens reach 50% of `ContextWindow` (with a 64K
-minimum floor), or reactively when the provider signals context overflow.
+yaah uses a **three-tier** context management system to prevent conversation
+history from exceeding the model's context window:
+
+| Tier | Mechanism | Cost | When |
+|------|-----------|------|------|
+| 0 — Soft-prune | Elide stale tool-output content (no LLM call) | ~µs | After every tool batch (`PostTool`) |
+| 1 — Compaction | LLM-powered summarization of old messages | ~tokens | Proactive (50% window) or reactive (overflow) |
+| 2 — Trim | Deterministic oldest-message removal (no LLM) | ~µs | Fallback when LLM summarization fails |
+
+Compaction is triggered proactively when estimated tokens reach 50% of
+`ContextWindow` (with a 64K minimum floor), or reactively when the provider
+signals context overflow.
+
+**Files:** `internal/agent/pipeline/pruner.go`, `internal/agent/pipeline/softprune.go`,
+`internal/agent/agent_prune.go`, `internal/agent/agent_context.go`
+(`compactContext`, `trimContext`, `pruneMessages`, `messageTokens`).
+
+### Tier-0: Soft-prune (`Pruner`, `SoftPruneMiddleware`)
+
+Before compaction ever fires, the `SoftPruneMiddleware` reclaims context by
+eliding the *content* of stale tool-result messages. The tool message itself
+stays in the conversation (preserving the `tool_call_id` linkage required by
+the Chat Completions wire format), but its body is replaced with a compact
+placeholder:
+
+> `[output pruned — 12345 chars omitted to save context; re-run the tool if you need it again]`
+
+The algorithm (`Pruner.Mark`) walks messages backwards from the most recent,
+shielding:
+- The last `MinTurns` user turns (default 2)
+- The last `ProtectTokens` tokens of tool output (default 40k)
+- Results from `ProtectedTools` (default: `skill`)
+
+Walk termination boundaries (cheap per-turn cost):
+- A non-index-0 system message (compaction summary — older is already summarized)
+- An already-pruned tool message (avoids re-visiting previously evaluated history)
+
+After compaction rebuilds the message list, the pruned set is reset so the fresh
+tail is re-evaluated from scratch.
+
+`Pruner.Filter` produces a copy of the message slice with stubbed content at
+request-build time (before the provider call). When nothing is pruned (early
+session), the fast path returns the input slice unchanged — zero allocation.
+
+Observability: `context.prune` JSONL hook events and `prune` OTel spans (child of
+the turn span) record every Mark pass, including "considered, decided not to"
+outcomes.
 
 ### Token estimation
 
@@ -658,6 +729,7 @@ yaah emits structured JSONL events to `<HookDir>/<session-id>.jsonl` for externa
 | `turn.start` | Start of each iteration (with `turn` number) |
 | `tool.start` | Before each tool execution (with `tool_name`, `tool_args`) |
 | `tool.end` | After each tool execution (with `tool_result`, `duration_ms`, `tool_error`) |
+| `context.prune` | After each tool batch — soft-prune outcome (with `prune_reason`, `prune_candidates`, `prune_marked`, `prune_reclaimed`, `prune_protected`, `prune_committed`, `prune_total_marked`) |
 | `conflict.check` | Every turn when a `ConflictTracker` is present |
 | `conflict.detect` | When parallel workers touched the same files (with `conflict_files` count) |
 
@@ -678,6 +750,13 @@ type HookEvent struct {
     ToolError    string        `json:"tool_error,omitempty"`
     ExitReason   string        `json:"exit_reason,omitempty"`
     ConflictFiles int          `json:"conflict_files,omitempty"`
+    PruneReason   string        `json:"prune_reason,omitempty"`
+    PruneCandidates int         `json:"prune_candidates,omitempty"`
+    PruneMarked     int         `json:"prune_marked,omitempty"`
+    PruneReclaimed  int         `json:"prune_reclaimed,omitempty"`
+    PruneProtected  int         `json:"prune_protected,omitempty"`
+    PruneCommitted  bool        `json:"prune_committed,omitempty"`
+    PruneTotalMarked int        `json:"prune_total_marked,omitempty"`
 }
 ```
 
@@ -775,6 +854,7 @@ yaah emits traces via OTLP gRPC to any OpenTelemetry-compatible backend. Tracing
 | `subagent: <role> — <description>` | `executeAndCollect` in `agent.go` | Role + task description in the operation name. `dispatched` event with role and task text. `completed` / `failed` event on finish. |
 | `llm.chat` | `InstrumentedProvider.Send` in `observability/provider.go` | `tokens` event with `llm.prompt_tokens`, `llm.completion_tokens`, `llm.total_tokens`, `llm.messages`, and `llm.system_len`. `llm.duration_ms` attribute. |
 | `conflict.check` | `runMiddleware` in `agent.go` | Child of the turn span. `conflict.files` attribute. When conflicts are found, a `conflict.detected` event is added with the file count. |
+| `prune` | `SoftPruneMiddleware.PostTool` → `observability/trace.go` | `prune.reason`, `prune.candidates`, `prune.marked`, `prune.reclaimed_tokens`, `prune.protected_skipped`, `prune.committed`, `prune.total_marked`. Emitted after every tool batch, including non-committed passes. |
 
 ### Propagation to sub-agents
 
