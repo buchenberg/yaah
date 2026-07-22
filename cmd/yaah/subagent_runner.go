@@ -21,7 +21,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker) *tools.TaskTool {
+func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker, estimateFactor float64) *tools.TaskTool {
 	// Map a config "0 = unlimited" MaxDepth to a sentinel so the
 	// structural nesting decrement in makeTaskRunner does not disable
 	// spawning for an "unlimited" setting.
@@ -43,6 +43,7 @@ func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 			OtelEnabled:      otelEnabled,
 			OtelVerbose:      otelVerbose,
 			tracker:          tracker,
+			estimateFactor:   estimateFactor,
 		}, depth),
 		ResolveTimeout: subAgentTimeoutResolver(subCfg),
 		RoleNames:      roleNames,
@@ -138,6 +139,10 @@ type taskRunnerOpts struct {
 	// tracker records file operations from sub-agent write/edit/delete
 	// tools so the parent agent can detect parallel-worker conflicts.
 	tracker *tools.ConflictTracker
+
+	// estimateFactor is the preflight token estimate multiplier inherited
+	// from the parent config.
+	estimateFactor float64
 }
 
 // subAgentSeq guarantees unique sub-session IDs across concurrent
@@ -230,6 +235,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			Model:                  subModel,
 			MaxIterations:          maxIter,
 			MaxRetries:             2,
+			EstimateFactor:         opts.estimateFactor,
 			ApprovalMode:           "allow",
 			DB:                     subDB,
 			SessionID:              subSessionID,
