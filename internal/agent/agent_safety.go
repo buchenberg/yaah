@@ -2,8 +2,6 @@ package agent
 
 import (
 	"bufio"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -22,19 +20,6 @@ type toolExecResult struct {
 	content string
 	dur     time.Duration
 	err     error
-}
-
-// toolCallHash returns a SHA-256 hash of tool name, arguments, and result for loop detection.
-// Including args prevents false positives when the same tool returns identical success
-// messages for different inputs (e.g. writing different files).
-func toolCallHash(name, args, content string) string {
-	h := sha256.New()
-	h.Write([]byte(name))
-	h.Write([]byte{0})
-	h.Write([]byte(args))
-	h.Write([]byte{0})
-	h.Write([]byte(content))
-	return hex.EncodeToString(h.Sum(nil))
 }
 
 // parseTaskArgs extracts a display-friendly role and prompt from a task

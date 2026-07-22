@@ -20,13 +20,6 @@ import (
 //go:embed identity.md
 var IdentityPrompt string
 
-// ExecutorIdentityPrompt is the system prompt for the dual-loop executor.
-// It is a smaller, purpose-built prompt focused on tool execution rather
-// than user-facing reasoning, principles, memory, or skills.
-//
-//go:embed identity-executor.md
-var ExecutorIdentityPrompt string
-
 // BuiltinRolesFS embeds the built-in sub-agent role definitions under
 // roles/*.md. Each file is a YAML frontmatter block + markdown body
 // that together define a role's tool set, limits, and system guidance.

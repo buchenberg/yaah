@@ -42,7 +42,10 @@ yaah/
 │   ├── tui.go                   # yaah tui (bubbletea)
 │   └── color.go                 # ANSI color helpers
 ├── internal/
-│   ├── agent/                   # agent loop, dual-loop executor, middleware, streaming, compaction
+│   ├── agent/                   # agent loop, callbacks, tool dispatch, context, hooks, persistence
+│   │   ├── llm/                  #   LLM client wrapping (streaming, retry, fallback, usage)
+│   │   ├── pipeline/             #   middleware pipeline (compaction, approval, permissions, etc.)
+│   │   └── subagent/             #   sub-agent role definitions and registry
 │   ├── banner/                  # figlet + lolcat banner for the TUI/REPL
 │   ├── config/                  # load ~/.yaah/config.yaml, env subst
 │   ├── instructions/            # walk up cwd, load AGENTS.md/CLAUDE.md
@@ -62,8 +65,7 @@ yaah/
 ├── .github/workflows/ci.yml     # CI: test, vet, staticcheck, cross-compile
 ├── docs/
 │   ├── architecture.md          # detailed architecture documentation
-│   ├── AGENT-LOOP-DIAGRAMS.md   # mermaid diagrams of agent loop + dual-loop
-│   ├── BENCHMARK.md             # benchmark suite + metrics history
+│   ├── BENCHMARK-HISTORY.md     # historical benchmark data
 │   ├── tui-components.md        # TUI component system reference
 │   └── otel-setup.md            # OpenTelemetry/Jaeger setup guide
 ├── README.md

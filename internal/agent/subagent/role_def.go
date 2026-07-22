@@ -1,4 +1,4 @@
-package agent
+package subagent
 
 import (
 	"fmt"
@@ -13,12 +13,30 @@ import (
 
 // RoleDef is the persistent format for a sub-agent role definition,
 // loaded from a markdown file with YAML frontmatter. The file name
-// (minus extension) is the role name.
+// (minus extension) is the role identifier.
+
+// ContractDef describes the structured output block a sub-agent must
+// append to its response so the main agent can extract data reliably.
+type ContractDef struct {
+	Heading string   `yaml:"heading"` // e.g. "## Metrics"
+	Fields  []string `yaml:"fields"`  // e.g. ["files", "lines", "key_detail"]
+}
+
 type RoleDef struct {
-	Tools         []string `yaml:"tools"`
-	MaxIterations int      `yaml:"max_iterations"`
-	Timeout       int      `yaml:"timeout"` // seconds; 0 = no timeout
-	MaxDepth      int      `yaml:"max_depth"`
+	// DisplayName is an optional human-facing name for the role
+	// (e.g. "Jack"). When empty the role identifier is used.
+	DisplayName string `yaml:"name"`
+	// Specialty is a short label describing the role's function
+	// (e.g. "developer", "researcher"). Shown to the main agent.
+	Specialty string `yaml:"specialty"`
+	// Contract is the expected structured output the sub-agent appends
+	// to its response so the main agent can extract data without
+	// re-parsing prose.
+	Contract      ContractDef `yaml:"contract"`
+	Tools         []string    `yaml:"tools"`
+	MaxIterations int         `yaml:"max_iterations"`
+	Timeout       int         `yaml:"timeout"` // seconds; 0 = no timeout
+	MaxDepth      int         `yaml:"max_depth"`
 
 	// Body is the markdown content after the YAML frontmatter block.
 	// It is injected as role guidance into the sub-agent's system
@@ -30,6 +48,9 @@ type RoleDef struct {
 // RoleProfile used by the agent loop and sub-agent wiring.
 func (d RoleDef) ToProfile() RoleProfile {
 	p := RoleProfile{
+		DisplayName:   d.DisplayName,
+		Specialty:     d.Specialty,
+		Contract:      d.Contract,
 		Tools:         d.Tools,
 		MaxIterations: d.MaxIterations,
 		Timeout:       time.Duration(d.Timeout) * time.Second,
@@ -155,6 +176,18 @@ func (r *RoleRegistry) Names() []string {
 		names = append(names, string(name))
 	}
 	return names
+}
+
+// List returns all registered role definitions so external code can
+// enumerate role capabilities (names, descriptions, tool sets).
+func (r *RoleRegistry) List() map[SubAgentRole]RoleDef {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make(map[SubAgentRole]RoleDef, len(r.entries))
+	for name, def := range r.entries {
+		out[name] = def
+	}
+	return out
 }
 
 // parseRoleFile splits raw markdown content at the first YAML

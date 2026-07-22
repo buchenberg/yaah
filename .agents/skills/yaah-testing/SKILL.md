@@ -29,19 +29,19 @@ go build -trimpath -ldflags '-s -w' -o yaah .
 
 ## Sub-agent testing
 
-Test worker, reviewer, and planner roles end-to-end:
+Test analyst, developer, tester, and reviewer roles end-to-end:
 
 ```bash
-./yaah "use a worker sub-agent to list go files in internal/agent/"
+./yaah "use an analyst sub-agent to list go files in internal/agent/"
 ./yaah "use a reviewer sub-agent to read and summarize README.md"
-./yaah "use a planner sub-agent to read internal/agent/agent.go then dispatch a worker to count .go files"
+./yaah "use an analyst sub-agent to read internal/agent/agent.go then dispatch a developer to list .go files"
 ```
 
 Each test should show `╭─ sub-agent: <role>` and `╰─ sub-agent: <role>`
 brackets in the CLI output. Verify custom roles are discovered:
 
 ```bash
-./yaah "use a file-lister sub-agent to find all .md files"
+./yaah "use a developer sub-agent to find all .md files"
 ```
 
 ## OTel tracing tests
@@ -56,7 +56,7 @@ Run a prompt that exercises the full span hierarchy — streaming LLM, tools,
 and sub-agents:
 
 ```bash
-./yaah "use a worker sub-agent to count go files in internal/tools/"
+./yaah "use a developer sub-agent to count go files in internal/tools/"
 ```
 
 Check that spans appear in Jaeger. All three span types should be present:
@@ -77,7 +77,7 @@ for op, n in sorted(ops.items()):
 ```
 
 Expected output should include `prompt`, `agent.turn`, `llm.stream`,
-`subagent: worker`, and at least one tool span (`glob` or `ls`).
+`subagent: developer`, and at least one tool span (`glob` or `ls`).
 
 ## Trace analysis
 

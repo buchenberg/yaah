@@ -55,15 +55,15 @@ All other fields default as shown. The full reference:
 | `service_name` | `yaah` | Display name in the tracing UI |
 | `traces` | `true` | Emit trace spans |
 | `metrics` | `false` | Emit OTLP metrics (needs a metrics-capable backend) |
-| `verbose` | `false` | Record full model content, reasoning, tool-call arguments, conversation context, and dual-loop handoffs as span attributes/events. Off by default to keep Jaeger payloads light; turn on when diagnosing agent-loop behaviour (e.g. the inner executor going off track). Only effective when `enabled` is `true`. |
+| `verbose` | `false` | Record full model content, reasoning, tool-call arguments, and conversation context as span attributes/events. Off by default to keep Jaeger payloads light; turn on when diagnosing agent-loop behaviour (e.g. a sub-agent going off track). Only effective when `enabled` is `true`. |
 
 ## Verbose tracing
 
-The lightweight span tree (prompt → agent.turn → llm.stream / inner.loop /
-tool) plus token counts is always emitted when OTel is enabled. When you
+The lightweight span tree (prompt → agent.turn → llm.stream / subagent:*
+/ tool) plus token counts is always emitted when OTel is enabled. When you
 need to see *what the models actually said* — the assistant's prose, its
-reasoning, the task prompt handed to the inner executor, the summary
-injected back into the outer conversation, and the message history each
+reasoning, the task prompt handed to sub-agents, the summary
+injected back into the conversation, and the message history each
 turn responds to — enable verbose tracing:
 
 ```yaml
@@ -80,10 +80,10 @@ when off):
 |---|---|---|
 | `llm.stream` / `llm.chat` | `assistant.response` | Full content, reasoning, refusal, and every tool call's name + args. |
 | `llm.stream` | `stream_end` | How the stream terminated (`channel_closed`, `finish_reason`, `errs_nil`, `ctx_done`) and whether usage metadata was captured — surfaces the degenerate spans that show no token counts. |
-| `agent.turn` | `msg` (per message) | The conversation the outer model is about to see: role, content length, preview, tool-call names. Reveals when the model is responding to its own inner summary. |
-| `agent.turn` | `inner.summary_injected` | The full summary the inner loop produced and that is appended as an assistant message in the outer history. |
-| `inner.loop` | `inner.task` | The full task prompt handed to the inner executor — exposes the dual-loop confusion when the outer model's prose is fed back as `## Instructions`. |
-| `inner.loop` | `msg` (per message) + `assistant.response` (per iteration) | The inner loop's own message history and each round's model response. |
+| `agent.turn` | `msg` (per message) | The conversation the agent is about to see: role, content length, preview, tool-call names. |
+| `agent.turn` | `subagent.summary_injected` | The full summary a sub-agent produced and that is appended as a tool result message. |
+| `subagent:*` | `subagent.task` | The full prompt handed to the sub-agent. |
+| `subagent:*` | `msg` (per message) + `assistant.response` (per iteration) | The sub-agent's own message history and each round's model response. |
 
 Confirm verbose is active with `yaah doctor` — the Observability line shows
 `traces → <endpoint> (verbose)`.
@@ -101,7 +101,7 @@ dropdown. Each user prompt generates a trace waterfall showing:
 
 ## Traces example
 
-After running `yaah "use a worker sub-agent to list files"`:
+After running `yaah "use an analyst sub-agent to list files"`:
 
 ```
 agent.turn (8.2s)

@@ -1,4 +1,4 @@
-package agent
+package pipeline
 
 import (
 	"context"
@@ -18,7 +18,6 @@ func NewPipeline(middleware ...Middleware) *Pipeline {
 }
 
 // RunPrepareStep calls PrepareStep on every middleware in order.
-// It returns the (possibly modified) step.
 func (p *Pipeline) RunPrepareStep(ctx context.Context, step *Step) (*Step, error) {
 	var err error
 	for _, mw := range p.middleware {

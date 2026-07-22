@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/instructions"
 	"github.com/buchenberg/yaah/internal/mcp"
@@ -86,14 +87,14 @@ func newAgentSession() (*agentSession, error) {
 
 	// Load sub-agent role definitions: built-in (embedded) +
 	// user-defined (~/.agents/roles/, ./.agents/roles/).
-	reg := agent.NewRoleRegistry()
+	reg := subagent.NewRoleRegistry()
 	if files := builtinRoleFiles(); files != nil {
 		reg.LoadBytes(files)
 	}
 	for _, dir := range roleSearchPaths(cwd) {
 		reg.LoadDir(dir)
 	}
-	agent.SetDefaultRoleRegistry(reg)
+	subagent.SetDefaultRoleRegistry(reg)
 
 	layers := prompts.Layers{
 		Identity:    prompts.IdentityPrompt,
@@ -210,6 +211,31 @@ func newAgentSession() (*agentSession, error) {
 	tracker := &tools.ConflictTracker{}
 	subAgentProvider, subAgentModel := resolveSubAgent(cfg)
 	toolReg.Register(newTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker))
+
+	toolReg.Register(&tools.ListSubAgentsTool{
+		Lister: func() []tools.SubAgentInfo {
+			defs := reg.List()
+			infos := make([]tools.SubAgentInfo, 0, len(defs))
+			for name, def := range defs {
+				desc := def.Body
+				if idx := strings.IndexByte(desc, '\n'); idx >= 0 {
+					desc = desc[:idx]
+				}
+				infos = append(infos, tools.SubAgentInfo{
+					Role:        string(name),
+					DisplayName: def.DisplayName,
+					Specialty:   def.Specialty,
+					Contract: tools.SubAgentContract{
+						Heading: def.Contract.Heading,
+						Fields:  def.Contract.Fields,
+					},
+					Description: desc,
+					Tools:       def.Tools,
+				})
+			}
+			return infos
+		},
+	})
 
 	// Wrap the provider with OTel instrumentation if enabled.
 	if cfg.Observability.Otel.Enabled {
@@ -345,7 +371,6 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		Registry:               s.toolReg,
 		Model:                  s.modelName,
 		SystemPrompt:           s.systemPrompt,
-		ExecutorSystemPrompt:   prompts.ExecutorIdentityPrompt,
 		MaxInlineToolsPerTurn:  s.cfg.Agent.Default.MaxInlineToolsPerTurn,
 		MaxIterations:          s.cfg.Agent.Default.MaxIterations,
 		ContextWindow:          s.cfg.Agent.Default.ContextWindow,
@@ -363,6 +388,7 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		OtelEnabled:            s.cfg.Observability.Otel.Enabled,
 		OtelVerbose:            s.cfg.Observability.Otel.Verbose,
 		ConflictTracker:        s.tracker,
+		ToolsLevel:             agent.FullTools,
 	}
 
 	spin := spinner.New(nil, "Thinking...")
@@ -384,7 +410,7 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 			spin.Stop()
 			return
 		}
-		if info.Name == "task" {
+		if info.Name == "spawn_subagent" {
 			return // sub-agent lifecycle rendered by OnSubAgent
 		}
 
@@ -403,14 +429,24 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 	}
 
 	loop.OnSubAgent = func(info agent.SubAgentInfo) {
+		displayName := subagent.RoleDisplayName(subagent.SubAgentRole(info.Role))
+		specialty := subagent.RoleSpecialty(subagent.SubAgentRole(info.Role))
+		label := displayName
+		if specialty != "" {
+			label += " — " + specialty
+		}
 		if info.Duration == 0 {
-			fmt.Fprintf(os.Stderr, "\n╭─ sub-agent: %s — %s\n", Bold(info.Role), info.Prompt)
+			fmt.Fprintf(os.Stderr, "\n╭─ sub-agent: %s · %s\n", Bold(label), info.Prompt)
 		} else {
 			status := "completed"
 			if info.Error != "" {
 				status = replYellow(info.Error)
 			}
-			fmt.Fprintf(os.Stderr, "╰─ sub-agent: %s — %s (%s)\n", Bold(info.Role), status, Dim(formatDuration(info.Duration)))
+			modelStr := ""
+			if info.Model != "" {
+				modelStr = " [" + Dim(info.Model) + "]"
+			}
+			fmt.Fprintf(os.Stderr, "╰─ sub-agent: %s%s · %s (%s)\n", Bold(label), modelStr, status, Dim(formatDuration(info.Duration)))
 		}
 	}
 

@@ -102,72 +102,32 @@ yaah --resume <session-id> "continue"       # resume a saved session
 
 ## Features
 
-### Dual-loop executor (delegate)
+### Sub-agent team
 
-yaah uses a planner/executor dual-loop where the planner delegates
-tool-intensive work to a dedicated executor running on a potentially cheaper
-model. The `delegate` tool is always available — the agent chooses per-action
-whether to work inline or delegate.
+yaah uses a team-based architecture. The main agent coordinates via the
+`spawn_subagent` tool — it dispatches specialist sub-agents, each with a
+curated tool set and role-specific guidance. Sub-agents run tools directly
+on the filesystem.
 
-- **Model tiering**: run the executor on a cheaper model (e.g. deepseek-v4-flash)
-  while the planner uses a stronger reasoning model (deepseek-v4-pro).
-- **Cross-provider**: the executor can use a different provider than the planner.
-- **Auto-approval**: the executor runs tools without user prompts — bash,
-  write, edit all auto-execute when delegated.
-- **Fallback**: if the executor model fails (rate limit, auth, 5xx), the executor
-  gracefully falls back to the planner's model and continues. The `fellBack`
-  attribute is recorded in traces and the `executor_result` XML envelope.
-- **Self-correcting**: the executor retries failed tools before reporting
-  errors to the planner.
-- **No gate**: delegate is always available alongside all tools (additive,
-  not substitutive). No config flag to turn it on.
-- **Tool isolation**: the executor's tool set excludes `task` and `delegate`
-  — it cannot spawn sub-agents or recursively delegate. Those are the
-  planner's responsibilities.
+| Role | Tools | Iterations | Timeout |
+|---|---|---|---|
+| `analyst` | webfetch, http, read, grep, glob, ls, powershell, bash, json_query, calculate, file_info, go_outline, git | 20 | 120s |
+| `developer` | read, write, edit, delete, replace, grep, glob, ls, powershell, bash, json_query, git, go_outline, calculate, file_info, webfetch, http | 25 | 180s |
+| `tester` | read, powershell, bash, grep, glob, ls, go_outline, calculate, file_info, json_query, webfetch, http, git | 20 | 180s |
+| `reviewer` | read, grep, glob, ls, powershell, bash, calculate, file_info, go_outline, json_query, webfetch, http, git | 15 | 120s |
 
-```
-# Config (optional — executor falls back to main provider/model)
-agents:
-  executor:
-    provider: deepseek
-    model: deepseek-v4-flash
-    max_iterations: 10
-```
+Custom roles from `.agents/roles/` or `~/.agents/roles/` appear at startup.
 
-See [`docs/BENCHMARK.md`](./docs/BENCHMARK.md) for token/cost benchmarks —
-complex tasks push ~65% of tokens to the executor on the cheap model.
-See [`docs/PROMPT-INJECTION.md`](./docs/PROMPT-INJECTION.md) for the executor
-prompt architecture.
-
-### Sub-agents (`task` tool)
-
-The `task` tool spawns isolated sub-agents with role-based tool sets,
-iteration budgets, and timeouts:
-
-| Role | Tool set | Iterations | Timeout | Can spawn |
-|---|---|---|---|---|
-| `worker` | read, write, edit, delete, grep, glob, ls, bash, powershell, webfetch | 25 | 120s | no |
-| `reviewer` | read, grep, glob, ls | 10 | — | no |
-| `planner` | worker set + `task` | 50 | 300s | yes |
-
-Multiple `task` calls in one turn fan out in parallel (up to
-`agent.subagent.max_concurrency`, default 3). Nesting depth is bounded
-structurally — each level decrements a counter seeded from `max_depth`.
-Timeouts return structured JSON (`{"error":"timed out","partial":"..."}`).
-
-Sub-agents can be configured to use a different provider and model than the
-planner, similar to the executor:
+Multiple `spawn_subagent` calls in one turn fan out in parallel (up to
+`agent.subagent.max_concurrency`, default 3). Sub-agents can use a different
+provider and model than the main agent:
 
 ```yaml
 agents:
   subagent:
-    provider: deepseek               # optional — defaults to planner's provider
-    model: deepseek-v4-flash         # optional — defaults to planner's model
+    provider: deepseek
+    model: deepseek-v4-flash
 ```
-
-When unset, sub-agents inherit the planner's provider and model.
-
-See the [Config](#config) section for all `agent.subagent.*` settings.
 
 ### Custom roles
 
@@ -186,7 +146,8 @@ unsafe patterns. Report findings with file paths, line numbers, and severity.
 ```
 
 The file name (without `.md`) becomes the role name. Built-in roles
-(`worker`, `reviewer`, `planner`) take precedence and cannot be overridden.
+(`analyst`, `developer`, `tester`, `reviewer`) take precedence and cannot be
+overridden.
 
 ### Todo lists
 
@@ -275,7 +236,7 @@ observability:
 ```
 
 Every LLM call, tool execution, inner loop, and sub-agent dispatch
-produces a span. Planner vs executor token attribution is included.
+produces a span. Token attribution is tracked per-turn.
 Start Jaeger with `docker compose up -d jaeger`, then visit
 http://localhost:16686. Full guide at [`docs/otel-setup.md`](./docs/otel-setup.md).
 
@@ -344,31 +305,27 @@ agents:
     context_window: 128000
     approval: ask                    # ask | allow | deny
 
-  executor:
+  subagent:
     provider: deepseek               # optional — defaults to main provider
     model: deepseek-v4-flash         # optional — defaults to main model
-    max_iterations: 10               # inner executor iterations per delegation
-
-  subagent:
-    provider: deepseek               # optional — defaults to planner's provider
-    model: deepseek-v4-flash         # optional — defaults to planner's model
-    max_depth: 3                     # max task calls per loop
-    max_concurrency: 3               # simultaneous task calls per iteration
+    max_depth: 3                     # max spawn_subagent nesting depth
+    max_concurrency: 3               # simultaneous spawn_subagent calls per turn
     default_timeout: 120             # seconds
     roles:
-      worker:
+      analyst:
         timeout: 120
+        max_iterations: 20
+        max_depth: 0
+      developer:
+        timeout: 180
         max_iterations: 25
-        max_depth: 1
+        max_depth: 0
       reviewer:
-        timeout: 60
-        max_iterations: 10
-      planner:
-        timeout: 300
-        max_iterations: 50
-        max_depth: 3
-      security_auditor:              # custom role — loaded from .agents/roles/
-        max_iterations: 30
+        timeout: 120
+        max_iterations: 15
+      tester:
+        timeout: 180
+        max_iterations: 20
 
   middleware:
     enabled:                         # explicit set overrides default pipeline
@@ -438,40 +395,29 @@ Provider fields:
 
 ### Agents
 
-The `agents` block controls all agent behaviour including the planner, executor,
+The `agents` block controls all agent behaviour including the main agent,
 middleware pipeline, and sub-agents.
 
-**`agents.default`** — the main planner loop:
+**`agents.default`** — the main agent loop:
 
 | Field | Default | Description |
 |---|---|---|
 | `provider` | (first alphabetically) | Provider name from `providers` |
-| `model` | — | Model name for the planner |
+| `model` | — | Model name for the main agent |
 | `small_model` | — | Cheaper model used for context compaction |
 | `max_iterations` | 50 | Safety cap on loop turns |
 | `context_window` | — | Token budget for compaction (0 = disabled) |
 | `approval` | `ask` | `allow`, `ask`, or `deny` for dangerous tools |
 | `max_inline_tools_per_turn` | `0` (unlimited) | Caps inline tool calls per turn; warns when exceeded |
 
-**`agents.executor`** — the dual-loop tool-execution agent:
+**`agents.subagent`** — configures sub-agents spawned via `spawn_subagent`:
 
 | Field | Default | Description |
 |---|---|---|
-| `provider` | `default.provider` | Provider for the executor (can differ from planner) |
-| `model` | `default.model` | Model for the executor (tip: use a cheaper one) |
-| `max_iterations` | 10 | Inner executor iterations per delegation |
-
-When the executor model fails (rate limit, auth, 5xx), the executor
-falls back to the planner's model and records `fellBack=true` in traces.
-
-**`agents.subagent`** — configures sub-agents spawned via the `task` tool:
-
-| Field | Default | Description |
-|---|---|---|
-| `provider` | `default.provider` | Provider for sub-agents (can differ from planner) |
+| `provider` | `default.provider` | Provider for sub-agents (can differ from main agent) |
 | `model` | `default.model` | Model for sub-agents (tip: use a cheaper one) |
-| `max_depth` | — | Max total `task` calls per loop (0 = unlimited) |
-| `max_concurrency` | 3 | Simultaneous `task` calls per iteration |
+| `max_depth` | — | Max nesting depth for `spawn_subagent` chains (0 = unlimited) |
+| `max_concurrency` | 3 | Simultaneous `spawn_subagent` calls per turn |
 | `default_timeout` | — | Default seconds per sub-agent (0 = no timeout) |
 | `roles.<name>.timeout` | — | Per-role timeout override |
 | `roles.<name>.max_iterations` | — | Per-role iteration cap override |
@@ -515,9 +461,8 @@ hooks:
 ```
 
 Events include `session.start`, `session.end`, `turn.start`, `tool.start`,
-`tool.end`, and `executor.fallback` with timestamps, model, tool results,
-and durations. The `executor.fallback` event includes a `fallback_reason`
-field with the error that triggered the fallback.
+`tool.end`, and `conflict.detect` with timestamps, model, tool results,
+and durations.
 
 ### Observability
 
@@ -533,8 +478,8 @@ observability:
 ```
 
 When enabled, every LLM call, tool execution, inner loop, and sub-agent
-dispatch produces a span with attributes. Planner vs executor token usage
-is tracked per-turn via `turn.prompt_tokens` / `inner.prompt_tokens`.
+dispatch produces a span with attributes. Token usage
+is tracked per-turn via `turn.prompt_tokens` and `subagent.prompt_tokens`.
 
 ### Editor
 
@@ -597,8 +542,11 @@ yaah/
 │   ├── tui.go                    # bubbletea TUI
 │   └── color.go                  # ANSI color helpers
 ├── internal/
-│   ├── agent/                    # agent loop, dual-loop executor, middleware
-│   │   └── errorclassify/        #   provider error classification
+│   ├── agent/                    # agent loop, tool dispatch, middleware
+│   │   ├── llm/                   #   LLM client (streaming, retry, fallback)
+│   │   ├── pipeline/              #   middleware pipeline
+│   │   ├── subagent/              #   sub-agent role definitions and registry
+│   │   └── errorclassify/         #   provider error classification
 │   ├── banner/                   # figlet + lolcat banner
 │   ├── config/                   # config loader + env subst
 │   ├── instructions/             # AGENTS.md/CLAUDE.md discovery
@@ -619,12 +567,11 @@ yaah/
 │   └── update/                   # GitHub release checking
 ├── docs/
 │   ├── architecture.md           # detailed architecture
-│   ├── AGENT-LOOP-DIAGRAMS.md    # mermaid diagrams
-│   ├── BENCHMARK.md              # benchmark suite
+│   ├── BENCHMARK-HISTORY.md      # benchmark history
 │   ├── PROMPT-INJECTION.md       # prompt injection architecture map
-│   ├── EXECUTOR-FALLBACK-ANALYSIS.md # executor fallback analysis
 │   ├── tui-components.md         # TUI component reference
 │   └── otel-setup.md             # Jaeger setup guide
+├── BENCHMARKS.md                  # current benchmark suite
 ├── AGENTS.md                     # coding assistant instructions
 ├── CONTRIBUTING.md
 └── SECURITY.md
@@ -633,20 +580,20 @@ yaah/
 ### Architecture
 
 See [`docs/architecture.md`](./docs/architecture.md) for a detailed
-walkthrough of the agent loop, dual-loop executor, middleware pipeline,
+walkthrough of the agent loop, middleware pipeline,
 tool execution, streaming, context compaction, and sub-agent lifecycle.
 
-Diagrams are in [`docs/AGENT-LOOP-DIAGRAMS.md`](./docs/AGENT-LOOP-DIAGRAMS.md).
-Benchmarks and perf history are in [`docs/BENCHMARK.md`](./docs/BENCHMARK.md).
+Benchmarks and perf history are in [`docs/BENCHMARK-HISTORY.md`](./docs/BENCHMARK-HISTORY.md).
+Current benchmark results are in [`BENCHMARKS.md`](./BENCHMARKS.md).
 
 ## Status
 
 yaah is in active development and is feature-complete for daily use.
 
-**Stable** — always-on dual-loop executor with spontaneous delegation,
-planner/executor token attribution, executor self-correction on tool errors,
-middleware pipeline, streaming LLM responses, structured result envelopes,
-context compaction, approval gates, loop detection, SQLite session and memory
+**Stable** — two-layer agent→sub-agent architecture with FullTools mode,
+sub-agent batching and contract auto-injection, token attribution,
+middleware pipeline, streaming LLM responses, context compaction,
+approval gates, loop detection, SQLite session and memory
 persistence, session resume, MCP integration (stdio + HTTP), bubbletea TUI,
 REPL with slash commands, hook events for external agents, sub-agent dispatch
 with roles/concurrency/timeouts, agent conflict reconciliation, context-aware
@@ -657,8 +604,8 @@ sub-agent interrupt propagation.
 
 ## Future improvements
 
-- **Named executor roster** — configure multiple executor types with
-  different models and tool sets, selectable per-delegate-call.
+- **Named sub-agent roster** — configure multiple sub-agent roles with
+  different models and tool sets, selectable per dispatch.
 - **Plugin system** — register custom Go tools and middleware without
   recompiling.
 - **Declarative workflows** — define multi-step agent pipelines as DAGs
@@ -671,8 +618,8 @@ sub-agent interrupt propagation.
   shutdown ordering.
 - **Knowledge base from project files** — index the project tree (RAG)
   into the SQLite FTS5 store.
-- **Structured `task` results** — programmatic sub-agent state detection
-  in tool results (extend the `executor_result` XML envelope to `task`).
+- **Structured `spawn_subagent` results** — programmatic sub-agent state
+  detection in tool results.
 
 ## License
 

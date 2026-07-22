@@ -1,4 +1,4 @@
-package agent
+package pipeline
 
 import (
 	"context"
@@ -11,9 +11,9 @@ import (
 
 // PermissionRule matches a tool name and a path glob pattern against a permission mode.
 type PermissionRule struct {
-	Tool string `json:"tool"` // tool name (e.g. "bash", "write"); empty = all tools
-	Path string `json:"path"` // glob pattern (e.g. "/etc/*", "~/.ssh/**"); empty = all paths
-	Mode string `json:"mode"` // "allow", "ask", or "deny"
+	Tool string `json:"tool"`
+	Path string `json:"path"`
+	Mode string `json:"mode"`
 }
 
 // PermissionMiddleware filters tool calls based on path-pattern rules.

@@ -1,4 +1,4 @@
-package agent
+package pipeline
 
 import (
 	"context"
@@ -9,17 +9,15 @@ import (
 // CompactionMiddleware triggers context compaction when token limits are approached.
 type CompactionMiddleware struct {
 	window    int
-	threshold float64 // fraction of window that triggers compaction (0 = uses loop default)
-	loop      *Loop
+	threshold float64
+	compactor Compactor
 }
 
 func (m *CompactionMiddleware) Name() string { return "compaction" }
 
 func (m *CompactionMiddleware) PrepareStep(ctx context.Context, step *Step) (*Step, error) {
-	if m.window > 0 && m.loop != nil {
-		m.loop.Messages = step.Messages
-		m.loop.compactContext(ctx, m.threshold)
-		step.Messages = m.loop.Messages
+	if m.window > 0 && m.compactor != nil {
+		step.Messages = m.compactor.Compact(ctx, step.Messages, m.threshold)
 	}
 	return step, nil
 }
@@ -29,10 +27,8 @@ func (m *CompactionMiddleware) PostModel(ctx context.Context, msg *types.Message
 }
 
 func (m *CompactionMiddleware) PostTool(ctx context.Context, results []ToolResult, step *Step) (*Step, error) {
-	if m.window > 0 && m.loop != nil {
-		m.loop.Messages = step.Messages
-		m.loop.compactContext(ctx, m.threshold)
-		step.Messages = m.loop.Messages
+	if m.window > 0 && m.compactor != nil {
+		step.Messages = m.compactor.Compact(ctx, step.Messages, m.threshold)
 	}
 	return step, nil
 }

@@ -1,4 +1,4 @@
-package agent
+package subagent
 
 import (
 	"os"
@@ -74,10 +74,10 @@ func TestRoleDefToProfile(t *testing.T) {
 		t.Errorf("Tools len = %d", len(p.Tools))
 	}
 	if !p.IsSpawnCapable() {
-		// "task" is not in Tools, correct
-		defTask := RoleDef{Tools: []string{"read", "task"}}
+		// "spawn_subagent" is not in Tools, correct
+		defTask := RoleDef{Tools: []string{"read", "spawn_subagent"}}
 		if pt := defTask.ToProfile(); !pt.IsSpawnCapable() {
-			t.Error("profile with task tool should be spawn-capable")
+			t.Error("profile with spawn_subagent tool should be spawn-capable")
 		}
 	}
 }
@@ -196,10 +196,16 @@ Test guidance.`),
 		t.Errorf("global registry guidance: %q", g)
 	}
 
-	// Built-in roles without a registry fall back to legacy.
+	// Fallback when no registry is set: RoleDefault gets the full profile.
 	SetDefaultRoleRegistry(nil)
-	legacyWorker := RoleProfileFor(RoleWorker)
-	if !contains(legacyWorker.Tools, "bash") {
-		t.Error("legacy fallback: worker missing bash")
+	legacyDefault := RoleProfileFor(RoleDefault)
+	if !contains(legacyDefault.Tools, "bash") {
+		t.Error("legacy fallback: default missing bash")
+	}
+	if !contains(legacyDefault.Tools, "write") {
+		t.Error("legacy fallback: default missing write")
+	}
+	if legacyDefault.MaxIterations != 25 {
+		t.Errorf("legacy fallback: default MaxIterations = %d, want 25", legacyDefault.MaxIterations)
 	}
 }
