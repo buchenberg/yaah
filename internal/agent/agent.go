@@ -98,6 +98,8 @@ type Loop struct {
 	SystemPrompt  string
 	Model         string
 	MaxIterations int
+	MaxTurns      int
+	JSONMode      bool
 	OnToken       TokenCallback
 	OnTool        ToolCallback
 	OnSubAgent    SubAgentCallback
@@ -438,6 +440,20 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			Model:    l.Model,
 			Messages: l.applyPruning(messages),
 			Tools:    l.buildToolsForLevel(),
+		}
+
+		if l.MaxTurns > 0 {
+			effective := l.MaxTurns
+			if effective >= l.MaxIterations {
+				effective = l.MaxIterations - 1
+			}
+			if iter >= effective {
+				req.Tools = nil
+			}
+		}
+
+		if l.JSONMode {
+			req.ResponseFormat = &types.ResponseFormat{Type: "json_object"}
 		}
 
 		// Verbose: record the conversation the model is about to see

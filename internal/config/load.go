@@ -76,6 +76,18 @@ type SubAgentConfig struct {
 	// and the role profile has none. Seconds. 0 means no timeout.
 	DefaultTimeout int `yaml:"default_timeout"`
 
+	// DefaultMaxTurns is the fallback soft turn cap when no role-specific
+	// override is set. 0 means unlimited (off).
+	DefaultMaxTurns int `yaml:"default_max_turns"`
+
+	// JSONMode enables structured output via response_format json_object.
+	// Individual roles may override with their own json_mode setting.
+	JSONMode bool `yaml:"json_mode"`
+
+	// OutputLimit caps the final synthesized result from a sub-agent in
+	// bytes before it reaches the orchestrator. 0 means unlimited.
+	OutputLimit int `yaml:"output_limit"`
+
 	// Roles holds per-role overrides keyed by role name
 	// ("analyst", "developer", "tester", "reviewer").
 	Roles map[string]RoleConfig `yaml:"roles"`
@@ -83,8 +95,12 @@ type SubAgentConfig struct {
 
 // RoleConfig overrides a single role's default timeout and iteration cap.
 type RoleConfig struct {
-	Timeout       int `yaml:"timeout"`        // seconds; 0 = use role default
-	MaxIterations int `yaml:"max_iterations"` // 0 = use role default
+	Timeout       int  `yaml:"timeout"`        // seconds; 0 = use role default
+	MaxIterations int  `yaml:"max_iterations"` // 0 = use role default
+	MaxTurns      int  `yaml:"max_turns"`      // soft turn cap; 0 = use role default
+	JSONMode      bool `yaml:"json_mode"`      // structured output toggle
+	ContextWindow int  `yaml:"context_window"` // 0 = inherit halved parent default
+	OutputLimit   int  `yaml:"output_limit"`   // bytes; 0 = use config default
 }
 
 // Config is the full yaah configuration loaded from ~/.yaah/config.yaml.
@@ -128,6 +144,7 @@ func defaultConfig() *Config {
 			},
 			SubAgent: SubAgentConfig{
 				MaxConcurrency: 3,
+				OutputLimit:    51200,
 			},
 		},
 		Observability: ObservabilityConfig{

@@ -21,6 +21,8 @@ Records are never overwritten — append a new row for every run.
 | 2026-07-22 14:49 | feature/moar-loop-tuning | 9f26ccf | B4 Audit | 7 | 1 | 12 | 48.0s | 90,929 | 61,676 | 152,605 | 60% | 40% | 0 | Phase 2: truncation + skill index + cost propagation + replay recovery |
 | 2026-07-22 11:02 | feat/preflight-compaction | fd5eee0 | B4 Audit (ctx=20k) | 4 | 0 | 8 | <time> | 49720 | 0 | 49720 | 100% | 0% | 0 | Without continuation guard |
 | 2026-07-22 12:25 | feature/compaction-survival | 2d6f7b3 | B4 Audit (ctx=20K) | 9 | 2 | 14 | 54.7s | 93,688 | 65,503 | 159,191 | 59% | 41% | 0 | Token-budget compaction + budget scaling; prompt oscillates 5.8K–15K vs monotonic 20.8K without |
+| 2026-07-22 16:13 | subagent-efficiency | 1a85775 | B4 Audit | 21 | 4 | 34 | 59.1s | 200,823 | 172,495 | 373,318 | 54% | 46% | 0 | MaxTurns/ContextWindow/JSONMode/OutputLimit; model chose 4 reviewers |
+| 2026-07-22 16:18 | subagent-efficiency | 1a85775 | B4 Audit (ctx=20K) | 2 | 0 | 5 | 33.9s | 20,111 | 0 | 20,111 | 100% | 0% | 0 | Best 20K run — 36% fewer tokens than main at 20K (31,534) |
 
 ## Analysis: Continuation Guard Impact
 

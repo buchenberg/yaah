@@ -29,6 +29,8 @@ type RoleProfile struct {
 	Contract      ContractDef
 	Tools         []string
 	MaxIterations int
+	MaxTurns      int
+	JSONMode      bool
 	Timeout       time.Duration
 	MaxDepth      int
 }
@@ -143,6 +145,7 @@ func legacyProfileFor(role SubAgentRole) RoleProfile {
 				"memory_update", "memory_search_sessions",
 			},
 			MaxIterations: 25,
+			MaxTurns:      3,
 			Timeout:       180 * time.Second,
 			MaxDepth:      0,
 		}

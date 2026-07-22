@@ -303,7 +303,11 @@ func runTUI() error {
 
 	conflictTracker := &tools.ConflictTracker{}
 	subAgentProvider, subAgentModel := resolveSubAgent(cfg)
-	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, conflictTracker, cfg.Agent.Default.EstimateFactor))
+	subCW := cfg.Agent.Default.ContextWindow / 2
+	if subCW < 32000 {
+		subCW = 32000
+	}
+	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, conflictTracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit))
 
 	toolReg.Register(&tools.ListSubAgentsTool{
 		Lister: func() []tools.SubAgentInfo {
