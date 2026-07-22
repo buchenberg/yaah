@@ -65,8 +65,7 @@ yaah/
 ├── .github/workflows/ci.yml     # CI: test, vet, staticcheck, cross-compile
 ├── docs/
 │   ├── architecture.md          # detailed architecture documentation
-│   ├── AGENT-LOOP-DIAGRAMS.md   # mermaid diagrams of agent loop
-│   ├── BENCHMARK.md             # benchmark suite + metrics history
+│   ├── BENCHMARK-HISTORY.md     # historical benchmark data
 │   ├── tui-components.md        # TUI component system reference
 │   └── otel-setup.md            # OpenTelemetry/Jaeger setup guide
 ├── README.md

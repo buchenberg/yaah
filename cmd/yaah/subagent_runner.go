@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -143,6 +144,21 @@ type taskRunnerOpts struct {
 // goroutines without relying on wall-clock resolution.
 var subAgentSeq atomic.Int64
 
+// subagentEnvironmentHeader returns a concise environment block that
+// anchors shell choice for sub-agents. It is prepended to every sub-agent
+// system prompt so the model sees OS/shell info before role guidance.
+func subagentEnvironmentHeader() string {
+	shell := "bash"
+	if runtime.GOOS == "windows" {
+		shell = "powershell"
+	}
+	cwd, _ := os.Getwd()
+	return fmt.Sprintf(
+		"## Environment\nOS: %s/%s. Default shell: %s. Use %s for all shell commands. Working directory: %s.",
+		runtime.GOOS, runtime.GOARCH, shell, shell, cwd,
+	)
+}
+
 // makeTaskRunner creates a sub-agent runner that honours roles, timeouts,
 // iteration caps, and nesting depth.
 //
@@ -159,7 +175,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		subReg := buildSubAgentRegistry(opts, profile, remainingDepth)
 
 		maxIter := resolveSubAgentIterations(params.MaxIterations, profile, opts.subCfg, role)
-		sysPrompt := opts.systemPrompt
+		sysPrompt := subagentEnvironmentHeader() + "\n\n" + opts.systemPrompt
 		if g := subagent.RoleGuidance(role); g != "" {
 			if sysPrompt != "" {
 				sysPrompt += "\n\n"

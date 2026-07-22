@@ -39,9 +39,9 @@ If no roles are registered, use the default role (omit the `role` parameter).
 - **Sequential**: Wait for one sub-agent's results before dispatching the
   next. Review before implementing, test after building.
 - **Common chains**:
-  - Researcher finds external docs → Developer implements → Tester verifies
+  - Analyst researches → Developer implements → Tester verifies
   - Reviewer inspects → Developer fixes → Reviewer re-inspects
-  - Planner decomposes → workers run parallel → Planner synthesizes
+  - Analyst surveys codebase → Developer refactors → Reviewer audits
 
 ### Guidelines
 
@@ -59,3 +59,8 @@ If no roles are registered, use the default role (omit the `role` parameter).
   reading files.
 - **Optional overrides:** `timeout_seconds` (10-600), `max_iterations` (1-50).
   On timeout/cancellation: `{"error":"timed out","partial":"..."}`.
+- **Memory from findings:** Sub-agents include a `findings` field in their
+  response contract. Review it after every sub-agent completes. If a finding is
+  durable (a project convention, a learned pattern, a useful URL, a decision),
+  persist it with `memory_add` using an appropriate tag. Skip ephemeral or
+  task-specific details.
