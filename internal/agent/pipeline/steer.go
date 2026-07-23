@@ -18,17 +18,28 @@ func (m *SteerMiddleware) PrepareStep(ctx context.Context, step *Step) (*Step, e
 	if m.ch == nil {
 		return step, nil
 	}
-	select {
-	case msg, ok := <-m.ch:
-		if ok && msg != "" {
-			step.Messages = append(step.Messages, types.UserMsg("[STEER] "+msg))
-			if m.compactor != nil {
+	// Drain all queued steer messages to avoid wakeup lag.
+	drained := false
+	for {
+		select {
+		case msg, ok := <-m.ch:
+			if !ok {
+				if drained && m.compactor != nil {
+					step.Messages = m.compactor.Compact(ctx, step.Messages, 0)
+				}
+				return step, nil
+			}
+			if msg != "" {
+				step.Messages = append(step.Messages, types.UserMsg("[STEER] "+msg))
+				drained = true
+			}
+		default:
+			if drained && m.compactor != nil {
 				step.Messages = m.compactor.Compact(ctx, step.Messages, 0)
 			}
+			return step, nil
 		}
-	default:
 	}
-	return step, nil
 }
 
 func (m *SteerMiddleware) PostModel(ctx context.Context, msg *types.Message, step *Step) (*Step, error) {

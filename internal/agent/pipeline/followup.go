@@ -17,14 +17,20 @@ func (m *FollowupMiddleware) PrepareStep(ctx context.Context, step *Step) (*Step
 	if m.ch == nil {
 		return step, nil
 	}
-	select {
-	case msg, ok := <-m.ch:
-		if ok && msg != "" {
-			step.Messages = append(step.Messages, types.UserMsg(msg))
+	// Drain all queued follow-up messages to avoid wakeup lag.
+	for {
+		select {
+		case msg, ok := <-m.ch:
+			if !ok {
+				return step, nil
+			}
+			if msg != "" {
+				step.Messages = append(step.Messages, types.UserMsg(msg))
+			}
+		default:
+			return step, nil
 		}
-	default:
 	}
-	return step, nil
 }
 
 func (m *FollowupMiddleware) PostModel(ctx context.Context, msg *types.Message, step *Step) (*Step, error) {

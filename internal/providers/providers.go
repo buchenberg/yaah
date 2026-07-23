@@ -7,6 +7,8 @@ package providers
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -55,6 +57,7 @@ func (c *OpenAIClient) Send(ctx context.Context, req types.ChatRequest) (*types.
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	setSessionHeaders(httpReq, SessionIDFromContext(ctx))
 
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
@@ -120,6 +123,38 @@ func (c *OpenAIClient) ListModels(ctx context.Context) ([]string, error) {
 		}
 	}
 	return models, nil
+}
+
+// sessionIDKey is the context key for the session ID used in affinity headers.
+type sessionIDKey struct{}
+
+// SessionIDFromContext extracts the session ID from a context, or returns ""
+// if none is present.
+func SessionIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(sessionIDKey{}).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// WithSessionID returns a child context with the session ID set.
+func WithSessionID(ctx context.Context, sessionID string) context.Context {
+	if sessionID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, sessionIDKey{}, sessionID)
+}
+
+// setSessionHeaders adds session-affinity headers to an HTTP request.
+// Uses SHA-256 to produce a stable, fixed-length header value from the session ID.
+func setSessionHeaders(req *http.Request, sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	hash := sha256.Sum256([]byte(sessionID))
+	hexID := hex.EncodeToString(hash[:])
+	req.Header.Set("x-session-id", hexID)
+	req.Header.Set("x-session-affinity", hexID)
 }
 
 // EstimateTokens returns a rough token count using the char/4 heuristic.
