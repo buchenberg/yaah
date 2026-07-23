@@ -507,7 +507,17 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		if l.ContextWindow > 0 && l.LastPromptTokens > l.ContextWindow {
 			l.compactContext(turnCtx, 0.5)
 			messages = l.Messages
-			req.Messages = messages
+			req.Messages = l.prepareRequestMessages(messages)
+		}
+
+		// Payload-size guard: force compaction when the serialized request would
+		// exceed the byte threshold, regardless of token estimates. The chars/4
+		// token heuristic undercounts code/JSON by 2-4x, so a byte-level check
+		// catches oversized payloads the token trigger misses.
+		if l.ContextWindow > 0 && estimatePayloadBytes(req.Messages, req.Tools) > maxPayloadBytes {
+			l.compactContext(turnCtx, 0.5)
+			messages = l.Messages
+			req.Messages = l.prepareRequestMessages(messages)
 		}
 
 		tokensBeforeTurn := l.TotalTokens

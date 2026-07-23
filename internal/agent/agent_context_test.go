@@ -903,3 +903,77 @@ func TestCompactContext_rawThresholdConfigurable(t *testing.T) {
 			beforeHigh, len(highThreshold.Messages))
 	}
 }
+
+// --- estimatePayloadBytes() / payload-size guard ---
+
+func TestEstimatePayloadBytes_emptyIsZero(t *testing.T) {
+	if got := estimatePayloadBytes(nil, nil); got != 0 {
+		t.Errorf("estimatePayloadBytes(nil, nil) = %d, want 0", got)
+	}
+}
+
+func TestEstimatePayloadBytes_accountsForAllFields(t *testing.T) {
+	msgs := []types.Message{
+		{
+			Role:             "assistant",
+			Content:          strings.Repeat("x", 100),
+			ReasoningContent: strings.Repeat("x", 200),
+			ToolCalls: []types.ToolCall{{
+				ID:   "0123456789", // 10 chars
+				Type: "function",
+				Function: types.ToolCallFn{
+					Name:      "read", // 4 chars
+					Arguments: strings.Repeat("x", 50),
+				},
+			}},
+		},
+	}
+	tools := []types.ToolDef{{
+		Type: "function",
+		Function: types.ToolFn{
+			Name:        "read", // 4 chars
+			Description: strings.Repeat("x", 30),
+			Parameters:  json.RawMessage(strings.Repeat("x", 40)),
+		},
+	}}
+
+	got := estimatePayloadBytes(msgs, tools)
+	// message: 100 content + 200 reasoning + 50 args + 4 name + 10 id = 364
+	// tools:   30 description + 40 parameters + 4 name = 74
+	want := 364 + 74
+	if got != want {
+		t.Errorf("estimatePayloadBytes = %d, want %d", got, want)
+	}
+}
+
+func TestPayloadGuard_oversizedPayloadCompacts(t *testing.T) {
+	// Build a conversation whose serialized payload exceeds maxPayloadBytes,
+	// then verify compaction (the guard's remediation) brings it back under.
+	msgs := []types.Message{types.SystemMsg("sys")}
+	for i := 0; i < 40; i++ {
+		msgs = append(msgs, types.UserMsg(strings.Repeat("x", 40000)))
+		msgs = append(msgs, types.AssistantMsg(strings.Repeat("y", 1000), nil))
+	}
+
+	before := estimatePayloadBytes(msgs, nil)
+	if before <= maxPayloadBytes {
+		t.Fatalf("test setup: payload %d should exceed maxPayloadBytes %d", before, maxPayloadBytes)
+	}
+
+	loop := &Loop{
+		Provider:       summaryProvider(),
+		CompactModel:   "test",
+		ContextWindow:  200000,
+		EstimateFactor: 1.3,
+		Messages:       msgs,
+	}
+	loop.compactContext(context.Background(), 0.25)
+
+	after := estimatePayloadBytes(loop.Messages, nil)
+	if after >= before {
+		t.Errorf("compaction should reduce oversized payload: before=%d after=%d", before, after)
+	}
+	if after > maxPayloadBytes {
+		t.Errorf("post-compaction payload %d still exceeds maxPayloadBytes %d", after, maxPayloadBytes)
+	}
+}

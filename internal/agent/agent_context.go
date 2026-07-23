@@ -18,6 +18,13 @@ const defaultEstimateFactor = 1.3
 // effective-token trigger never fires. 0.5 matches hermes's 50% threshold.
 const defaultRawCompactionThreshold = 0.5
 
+// maxPayloadBytes is the serialized request size above which the payload-size
+// guard forces compaction regardless of token estimates. Token heuristics
+// (chars/4) can undercount code and JSON by 2-4x, so a byte-level check catches
+// oversized payloads the token trigger misses. ~1.25MB matches kilocode's
+// prompt.ts payload-limit prune threshold.
+const maxPayloadBytes = 1_250_000
+
 // Token-budget clamp for the preserved tail after compaction. The budget is
 // 25% of the context window, clamped to [minPreserveTokens, maxPreserveTokens]
 // so huge windows don't over-preserve and small windows keep a usable floor.
@@ -108,6 +115,24 @@ func preflightTokens(messages []types.Message, tools []types.ToolDef, factor flo
 		factor = defaultEstimateFactor
 	}
 	return int(math.Ceil(float64(total) * factor))
+}
+
+// estimatePayloadBytes estimates the serialized size of a chat request payload
+// (messages plus tool definitions) in bytes. It backs the payload-size guard: a
+// byte-level check catches oversized requests that the chars/4 token heuristic
+// misses, since that heuristic systematically undercounts code and JSON.
+func estimatePayloadBytes(messages []types.Message, tools []types.ToolDef) int {
+	total := 0
+	for _, m := range messages {
+		total += len(m.Content) + len(m.ReasoningContent)
+		for _, tc := range m.ToolCalls {
+			total += len(tc.Function.Arguments) + len(tc.Function.Name) + len(tc.ID)
+		}
+	}
+	for _, t := range tools {
+		total += len(t.Function.Description) + len(t.Function.Parameters) + len(t.Function.Name)
+	}
+	return total
 }
 
 // isContinuation returns true if the conversation is mid-tool-loop (there are
