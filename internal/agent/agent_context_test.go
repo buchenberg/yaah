@@ -89,90 +89,6 @@ func TestPreflightTokens_toolEstimate(t *testing.T) {
 	}
 }
 
-func TestIsContinuation_noMessages(t *testing.T) {
-	if isContinuation(nil) {
-		t.Error("isContinuation(nil) = true, want false")
-	}
-	if isContinuation([]types.Message{}) {
-		t.Error("isContinuation([]) = true, want false")
-	}
-}
-
-func TestIsContinuation_noUserMessage(t *testing.T) {
-	msgs := []types.Message{
-		{Role: "system", Content: "sys"},
-		{Role: "tool", Content: "result", ToolCallID: "c1"},
-	}
-	if isContinuation(msgs) {
-		t.Error("isContinuation with no user message = true, want false")
-	}
-}
-
-func TestIsContinuation_userThenAssistant(t *testing.T) {
-	msgs := []types.Message{
-		types.UserMsg("hello"),
-		{Role: "assistant", Content: "hi"},
-	}
-	if isContinuation(msgs) {
-		t.Error("isContinuation(user, assistant) = true, want false")
-	}
-}
-
-func TestIsContinuation_userThenTool(t *testing.T) {
-	msgs := []types.Message{
-		types.UserMsg("hello"),
-		{Role: "tool", Content: "result", ToolCallID: "c1"},
-	}
-	if !isContinuation(msgs) {
-		t.Error("isContinuation(user, tool) = false, want true")
-	}
-}
-
-func TestIsContinuation_userToolUser(t *testing.T) {
-	msgs := []types.Message{
-		types.UserMsg("first"),
-		{Role: "tool", Content: "result", ToolCallID: "c1"},
-		types.UserMsg("second"),
-	}
-	if isContinuation(msgs) {
-		t.Error("isContinuation(user, tool, user) = true, want false (last user has no tools after)")
-	}
-}
-
-func TestIsContinuation_userToolUserTool(t *testing.T) {
-	msgs := []types.Message{
-		types.UserMsg("first"),
-		{Role: "tool", Content: "result1", ToolCallID: "c1"},
-		types.UserMsg("second"),
-		{Role: "tool", Content: "result2", ToolCallID: "c2"},
-	}
-	if !isContinuation(msgs) {
-		t.Error("isContinuation(user, tool, user, tool) = false, want true")
-	}
-}
-
-func TestIsContinuation_multipleUsers(t *testing.T) {
-	msgs := []types.Message{
-		types.UserMsg("first"),
-		{Role: "assistant", Content: "response"},
-		types.UserMsg("second"),
-		{Role: "tool", Content: "result", ToolCallID: "c1"},
-	}
-	if !isContinuation(msgs) {
-		t.Error("isContinuation with tool after last user = false, want true")
-	}
-}
-
-func TestIsContinuation_toolBeforeUser(t *testing.T) {
-	msgs := []types.Message{
-		{Role: "tool", Content: "result", ToolCallID: "c1"},
-		types.UserMsg("hello"),
-	}
-	if isContinuation(msgs) {
-		t.Error("isContinuation(tool, user) = true, want false (no tool after last user)")
-	}
-}
-
 func TestCompactContext_continuationGuard(t *testing.T) {
 	fp := &fakeProvider{
 		responses: []*types.ChatResponse{{
@@ -806,5 +722,174 @@ func TestCompactContext_cacheSubtraction(t *testing.T) {
 	if len(withCache.Messages) != len(msgs) {
 		t.Errorf("cached loop should NOT have compacted: before=%d after=%d",
 			len(msgs), len(withCache.Messages))
+	}
+}
+
+// summaryProvider returns a fakeProvider that responds to compaction with a
+// fixed summary, used by the dual-trigger tests below.
+func summaryProvider() *fakeProvider {
+	return &fakeProvider{
+		responses: []*types.ChatResponse{{
+			Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant", Content: "summary"},
+				FinishReason: "stop",
+			}},
+		}},
+	}
+}
+
+func TestCompactContext_rawTriggerFires(t *testing.T) {
+	// A heavily-cached conversation: effective tokens (10k) are well under the
+	// cost target (64k floor), but raw tokens (60k) exceed the raw latency
+	// target (50k = 0.5 * 100k). The raw trigger must fire compaction.
+	msgs := largeConversation(30)
+	loop := &Loop{
+		Provider:               summaryProvider(),
+		CompactModel:           "test",
+		ContextWindow:          100000,
+		Messages:               append([]types.Message{}, msgs...),
+		LastPromptTokens:       60000,
+		LastCachedPromptTokens: 50000, // effective = 10000 < 64000 target
+	}
+
+	before := len(loop.Messages)
+	loop.compactContext(context.Background(), 0.25)
+
+	if len(loop.Messages) >= before {
+		t.Errorf("raw trigger should have compacted: before=%d after=%d", before, len(loop.Messages))
+	}
+}
+
+func TestCompactContext_bothTriggersUnderThreshold(t *testing.T) {
+	// Both effective tokens (5k) and raw tokens (40k) are under their targets
+	// (64k cost floor, 50k raw). Compaction must be skipped.
+	msgs := largeConversation(30)
+	loop := &Loop{
+		Provider:               summaryProvider(),
+		CompactModel:           "test",
+		ContextWindow:          100000,
+		Messages:               append([]types.Message{}, msgs...),
+		LastPromptTokens:       40000,
+		LastCachedPromptTokens: 35000, // effective = 5000
+	}
+
+	before := len(loop.Messages)
+	loop.compactContext(context.Background(), 0.25)
+
+	if len(loop.Messages) != before {
+		t.Errorf("neither trigger met; should NOT compact: before=%d after=%d", before, len(loop.Messages))
+	}
+}
+
+func TestCompactContext_rawThresholdConfigurable(t *testing.T) {
+	// Same raw token count (60k) with two different RawCompactionThreshold
+	// values. Default (0.5 -> target 50k) fires; a high threshold (0.9 ->
+	// target 90k) does not. This proves the field controls the raw trigger.
+	msgs := largeConversation(30)
+
+	defaultThreshold := &Loop{
+		Provider:               summaryProvider(),
+		CompactModel:           "test",
+		ContextWindow:          100000,
+		Messages:               append([]types.Message{}, msgs...),
+		LastPromptTokens:       60000,
+		LastCachedPromptTokens: 55000, // effective = 5000 < 64000
+	}
+	highThreshold := &Loop{
+		Provider:               summaryProvider(),
+		CompactModel:           "test",
+		ContextWindow:          100000,
+		RawCompactionThreshold: 0.9, // rawTarget = 90000
+		Messages:               append([]types.Message{}, msgs...),
+		LastPromptTokens:       60000,
+		LastCachedPromptTokens: 55000,
+	}
+
+	beforeDefault := len(defaultThreshold.Messages)
+	beforeHigh := len(highThreshold.Messages)
+	defaultThreshold.compactContext(context.Background(), 0.25)
+	highThreshold.compactContext(context.Background(), 0.25)
+
+	if len(defaultThreshold.Messages) >= beforeDefault {
+		t.Errorf("default raw threshold (0.5) should fire: before=%d after=%d",
+			beforeDefault, len(defaultThreshold.Messages))
+	}
+	if len(highThreshold.Messages) != beforeHigh {
+		t.Errorf("high raw threshold (0.9) should NOT fire: before=%d after=%d",
+			beforeHigh, len(highThreshold.Messages))
+	}
+}
+
+// --- estimatePayloadBytes() / payload-size guard ---
+
+func TestEstimatePayloadBytes_emptyIsZero(t *testing.T) {
+	if got := estimatePayloadBytes(nil, nil); got != 0 {
+		t.Errorf("estimatePayloadBytes(nil, nil) = %d, want 0", got)
+	}
+}
+
+func TestEstimatePayloadBytes_accountsForAllFields(t *testing.T) {
+	msgs := []types.Message{
+		{
+			Role:             "assistant",
+			Content:          strings.Repeat("x", 100),
+			ReasoningContent: strings.Repeat("x", 200),
+			ToolCalls: []types.ToolCall{{
+				ID:   "0123456789", // 10 chars
+				Type: "function",
+				Function: types.ToolCallFn{
+					Name:      "read", // 4 chars
+					Arguments: strings.Repeat("x", 50),
+				},
+			}},
+		},
+	}
+	tools := []types.ToolDef{{
+		Type: "function",
+		Function: types.ToolFn{
+			Name:        "read", // 4 chars
+			Description: strings.Repeat("x", 30),
+			Parameters:  json.RawMessage(strings.Repeat("x", 40)),
+		},
+	}}
+
+	got := estimatePayloadBytes(msgs, tools)
+	// message: 100 content + 200 reasoning + 50 args + 4 name + 10 id = 364
+	// tools:   30 description + 40 parameters + 4 name = 74
+	want := 364 + 74
+	if got != want {
+		t.Errorf("estimatePayloadBytes = %d, want %d", got, want)
+	}
+}
+
+func TestPayloadGuard_oversizedPayloadCompacts(t *testing.T) {
+	// Build a conversation whose serialized payload exceeds maxPayloadBytes,
+	// then verify compaction (the guard's remediation) brings it back under.
+	msgs := []types.Message{types.SystemMsg("sys")}
+	for i := 0; i < 40; i++ {
+		msgs = append(msgs, types.UserMsg(strings.Repeat("x", 40000)))
+		msgs = append(msgs, types.AssistantMsg(strings.Repeat("y", 1000), nil))
+	}
+
+	before := estimatePayloadBytes(msgs, nil)
+	if before <= maxPayloadBytes {
+		t.Fatalf("test setup: payload %d should exceed maxPayloadBytes %d", before, maxPayloadBytes)
+	}
+
+	loop := &Loop{
+		Provider:       summaryProvider(),
+		CompactModel:   "test",
+		ContextWindow:  200000,
+		EstimateFactor: 1.3,
+		Messages:       msgs,
+	}
+	loop.compactContext(context.Background(), 0.25)
+
+	after := estimatePayloadBytes(loop.Messages, nil)
+	if after >= before {
+		t.Errorf("compaction should reduce oversized payload: before=%d after=%d", before, after)
+	}
+	if after > maxPayloadBytes {
+		t.Errorf("post-compaction payload %d still exceeds maxPayloadBytes %d", after, maxPayloadBytes)
 	}
 }

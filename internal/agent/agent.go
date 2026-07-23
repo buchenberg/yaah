@@ -109,6 +109,15 @@ type Loop struct {
 	// compaction (e.g. 0.5 = 50%). Default 0 means 0.5.
 	CompactionThreshold float64
 
+	// RawCompactionThreshold is the fraction of ContextWindow at which
+	// compaction fires based on raw LastPromptTokens, independent of prompt
+	// cache subtraction. The cache-aware trigger (CompactionThreshold applied
+	// to effective, non-cached tokens) optimizes cost; this raw trigger guards
+	// latency, since serialization, network transfer, and provider-side cache
+	// lookup all scale with total context size even when most tokens are cached.
+	// Default 0 means 0.5.
+	RawCompactionThreshold float64
+
 	// EstimateFactor is the multiplier applied to the chars/4 token estimate
 	// for preflight compaction checks. Provider tokenizers systematically
 	// undercount code and JSON payloads; 1.3 compensates. 0 means use the
@@ -230,6 +239,14 @@ type Loop struct {
 	// via PipelineDisabled: ["soft_prune"].
 	Pruner *pipeline.Pruner
 
+	// ReasoningProtectTurns is the number of recent user-message turns whose
+	// assistant ReasoningContent is preserved in provider requests. Reasoning
+	// on older turns is stripped from the ephemeral request copy (the stored
+	// history is untouched) because models generate fresh reasoning each turn
+	// and re-sending accumulated reasoning bloats every request. Default 0
+	// means 2 (matching the pruner's MinTurns).
+	ReasoningProtectTurns int
+
 	// ConflictTracker detects and reports external file modifications made
 	// outside the agent's own write/edit/replace/delete tools during a turn.
 	// When non-nil and conflicts are found, a user message describing them
@@ -286,6 +303,13 @@ type Loop struct {
 	// subAgentSem is a semaphore channel for limiting concurrent task calls.
 	// Created in applyDefaults when MaxSubAgentConcurrency > 0.
 	subAgentSem chan struct{}
+
+	// toolDefsCache holds the most recently built OpenAI tool definitions, and
+	// toolDefsGen is the Registry.Generation() it was built from. buildToolDefs
+	// returns the cache when the generation is unchanged, avoiding a full
+	// schema re-read and re-allocation on every loop iteration.
+	toolDefsCache []types.ToolDef
+	toolDefsGen   int
 
 	// lastCompactionTokens tracks the estimated token count after the most
 	// recent compaction, used to prevent re-compacting too aggressively.
@@ -447,7 +471,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 
 		req := types.ChatRequest{
 			Model:    l.Model,
-			Messages: l.applyPruning(repairOrphans(messages)),
+			Messages: l.prepareRequestMessages(messages),
 			Tools:    l.buildToolsForLevel(),
 		}
 
@@ -483,7 +507,17 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		if l.ContextWindow > 0 && l.LastPromptTokens > l.ContextWindow {
 			l.compactContext(turnCtx, 0.5)
 			messages = l.Messages
-			req.Messages = messages
+			req.Messages = l.prepareRequestMessages(messages)
+		}
+
+		// Payload-size guard: force compaction when the serialized request would
+		// exceed the byte threshold, regardless of token estimates. The chars/4
+		// token heuristic undercounts code/JSON by 2-4x, so a byte-level check
+		// catches oversized payloads the token trigger misses.
+		if l.ContextWindow > 0 && estimatePayloadBytes(req.Messages, req.Tools) > maxPayloadBytes {
+			l.compactContext(turnCtx, 0.5)
+			messages = l.Messages
+			req.Messages = l.prepareRequestMessages(messages)
 		}
 
 		tokensBeforeTurn := l.TotalTokens
@@ -647,6 +681,9 @@ func (l *Loop) applyDefaults() {
 	}
 	if l.LoopDetectWindow <= 0 {
 		l.LoopDetectWindow = 10
+	}
+	if l.ReasoningProtectTurns <= 0 {
+		l.ReasoningProtectTurns = defaultReasoningProtectTurns
 	}
 	if l.MaxToolConcurrency > 0 && l.toolSem == nil {
 		l.toolSem = make(chan struct{}, l.MaxToolConcurrency)

@@ -98,6 +98,10 @@ type DangerClassifier interface {
 // Registry holds all available tools and dispatches by name.
 type Registry struct {
 	tools map[string]Tool
+	// generation increments on every Register so consumers (e.g. the agent
+	// loop's tool-definition cache) can detect mutations cheaply without
+	// re-reading the full tool set each turn.
+	generation int
 }
 
 // leafTools is the single source of truth for the names and
@@ -155,6 +159,15 @@ func NewLeafTool(name string) Tool {
 // Register adds a tool to the registry.
 func (r *Registry) Register(t Tool) {
 	r.tools[t.Name()] = t
+	r.generation++
+}
+
+// Generation returns a monotonically increasing counter that changes whenever
+// the registry is mutated via Register. Consumers cache derived data (e.g.
+// OpenAI tool definitions) keyed on this value to avoid rebuilding it every
+// turn when the tool set is unchanged.
+func (r *Registry) Generation() int {
+	return r.generation
 }
 
 // Get returns the tool with the given name, or nil if not found.

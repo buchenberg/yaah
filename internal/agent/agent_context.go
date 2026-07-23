@@ -12,6 +12,19 @@ import (
 
 const defaultEstimateFactor = 1.3
 
+// defaultRawCompactionThreshold is the fraction of ContextWindow at which
+// compaction fires based on raw (non-cache-adjusted) prompt tokens. It guards
+// against latency degradation in heavily-cached conversations where the
+// effective-token trigger never fires. 0.5 matches hermes's 50% threshold.
+const defaultRawCompactionThreshold = 0.5
+
+// maxPayloadBytes is the serialized request size above which the payload-size
+// guard forces compaction regardless of token estimates. Token heuristics
+// (chars/4) can undercount code and JSON by 2-4x, so a byte-level check catches
+// oversized payloads the token trigger misses. ~1.25MB matches kilocode's
+// prompt.ts payload-limit prune threshold.
+const maxPayloadBytes = 1_250_000
+
 // Token-budget clamp for the preserved tail after compaction. The budget is
 // 25% of the context window, clamped to [minPreserveTokens, maxPreserveTokens]
 // so huge windows don't over-preserve and small windows keep a usable floor.
@@ -70,9 +83,12 @@ func (l *Loop) EstimatedTokens() int {
 }
 
 // messageTokens estimates the token count of a single message using chars/4
-// for content plus tool-call arguments. Applies a 10-token floor for role/metadata.
+// for content, reasoning content, plus tool-call arguments. Applies a 10-token
+// floor for role/metadata. ReasoningContent is counted because it is serialized
+// in every provider request and contributes to the real prompt size; omitting it
+// causes token estimates (and therefore compaction triggers) to undercount.
 func messageTokens(m types.Message) int {
-	tokens := len(m.Content) / 4
+	tokens := len(m.Content)/4 + len(m.ReasoningContent)/4
 	for _, tc := range m.ToolCalls {
 		tokens += len(tc.Function.Arguments)/4 + len(tc.Function.Name)/4
 	}
@@ -101,27 +117,22 @@ func preflightTokens(messages []types.Message, tools []types.ToolDef, factor flo
 	return int(math.Ceil(float64(total) * factor))
 }
 
-// isContinuation returns true if the conversation is mid-tool-loop (there are
-// tool messages after the last user message). Compaction should be skipped in
-// this case — the model needs the context to continue the tool loop.
-// Ported from kilocode overflow.ts:17-20.
-func isContinuation(messages []types.Message) bool {
-	lastUserIdx := -1
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "user" {
-			lastUserIdx = i
-			break
+// estimatePayloadBytes estimates the serialized size of a chat request payload
+// (messages plus tool definitions) in bytes. It backs the payload-size guard: a
+// byte-level check catches oversized requests that the chars/4 token heuristic
+// misses, since that heuristic systematically undercounts code and JSON.
+func estimatePayloadBytes(messages []types.Message, tools []types.ToolDef) int {
+	total := 0
+	for _, m := range messages {
+		total += len(m.Content) + len(m.ReasoningContent)
+		for _, tc := range m.ToolCalls {
+			total += len(tc.Function.Arguments) + len(tc.Function.Name) + len(tc.ID)
 		}
 	}
-	if lastUserIdx < 0 {
-		return false
+	for _, t := range tools {
+		total += len(t.Function.Description) + len(t.Function.Parameters) + len(t.Function.Name)
 	}
-	for i := lastUserIdx + 1; i < len(messages); i++ {
-		if messages[i].Role == "tool" {
-			return true
-		}
-	}
-	return false
+	return total
 }
 
 // turnRange identifies a contiguous turn: a user message followed by its
@@ -303,22 +314,41 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 		target = minContextFloor
 	}
 
-	estimatedTokens := l.LastPromptTokens
-	// Subtract cached prompt tokens: a heavily-cached conversation's effective
-	// (non-cached) token cost is lower than raw prompt_tokens suggests, so
-	// without subtraction the compactor would over-trigger.
-	if estimatedTokens > 0 && l.LastCachedPromptTokens > 0 {
-		estimatedTokens -= l.LastCachedPromptTokens
+	// Raw prompt tokens from the most recent provider call — the total context
+	// size the provider actually processed, before any cache adjustment.
+	rawTokens := l.LastPromptTokens
+
+	// Effective tokens: subtract cached prompt tokens. A heavily-cached
+	// conversation's effective (non-cached) token cost is lower than raw
+	// prompt_tokens suggests, so without subtraction the cost-based trigger
+	// would over-compact.
+	effectiveTokens := rawTokens
+	if effectiveTokens > 0 && l.LastCachedPromptTokens > 0 {
+		effectiveTokens -= l.LastCachedPromptTokens
 	}
-	if estimatedTokens <= 0 {
+	if effectiveTokens <= 0 {
 		factor := l.EstimateFactor
 		if factor <= 0 {
 			factor = defaultEstimateFactor
 		}
-		estimatedTokens = preflightTokens(l.Messages, nil, factor)
+		effectiveTokens = preflightTokens(l.Messages, nil, factor)
+		// No reliable raw count on the first call; use the estimate for the
+		// raw trigger too so the latency guard still functions.
+		rawTokens = effectiveTokens
 	}
 
-	if estimatedTokens < target {
+	// Dual trigger: compact on either effective tokens (cost) exceeding the
+	// CompactionThreshold target, OR raw tokens (latency) exceeding the
+	// RawCompactionThreshold target. The raw guard prevents unbounded context
+	// growth in heavily-cached conversations where the effective trigger never
+	// fires because cached tokens keep the effective count artificially low.
+	rawThreshold := l.RawCompactionThreshold
+	if rawThreshold <= 0 {
+		rawThreshold = defaultRawCompactionThreshold
+	}
+	rawTarget := int(float64(l.ContextWindow) * rawThreshold)
+
+	if effectiveTokens < target && rawTokens < rawTarget {
 		return
 	}
 
@@ -337,16 +367,16 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	// The budget derived from preserveBudget(window) is in tokenizer units,
 	// while splitTail sums messageTokens (chars/4), so without scaling every
 	// conversation appears to fit. Scale the budget by the actual ratio of
-	// estimatedTokens (tokenizer) to total messageTokens (chars/4) so the
+	// rawTokens (tokenizer) to total messageTokens (chars/4) so the
 	// compaction decision and the split decision use the same yardstick.
 	budget := preserveBudget(l.ContextWindow)
-	if estimatedTokens > 0 {
+	if rawTokens > 0 {
 		msgTotal := 0
 		for _, m := range l.Messages {
 			msgTotal += messageTokens(m)
 		}
 		if msgTotal > 0 {
-			scale := float64(estimatedTokens) / float64(msgTotal)
+			scale := float64(rawTokens) / float64(msgTotal)
 			budget = int(float64(budget) / scale)
 		}
 	}
