@@ -80,11 +80,11 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 				}
 			}()
 
-			if isTask && l.Broker != nil {
-				l.Broker.PublishMustDeliver(&SubAgentStartEvent{Role: taskRole, Prompt: taskPrompt})
+			if isTask && l.broker != nil {
+				l.broker.PublishMustDeliver(&SubAgentStartEvent{Role: taskRole, Prompt: taskPrompt})
 			}
-			if l.Broker != nil {
-				l.Broker.PublishMustDeliver(&ToolStartEvent{Name: tc.Function.Name, Args: abbreviated})
+			if l.broker != nil {
+				l.broker.PublishMustDeliver(&ToolStartEvent{Name: tc.Function.Name, Args: abbreviated})
 			}
 
 			l.emitHook(HookEvent{
@@ -136,32 +136,32 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 				res = truncateToolResult(res)
 			}
 
-			if l.Broker != nil {
-				evt := &ToolEndEvent{
-					Name:     tc.Function.Name,
-					Args:     abbreviated,
-					Result:   res,
-					Duration: duration,
-				}
-				if err != nil {
-					evt.Error = err.Error()
-				}
-				l.Broker.PublishMustDeliver(evt)
+		if l.broker != nil {
+			evt := &ToolEndEvent{
+				Name:     tc.Function.Name,
+				Args:     abbreviated,
+				Result:   res,
+				Duration: duration,
 			}
+			if err != nil {
+				evt.Error = err.Error()
+			}
+			l.broker.PublishMustDeliver(evt)
+		}
 
-			if isTask && l.Broker != nil {
-				model := subAgentModel
-				if model == "" {
-					model = l.Model
-				}
-				l.Broker.PublishMustDeliver(&SubAgentEndEvent{
-					Role:     taskRole,
-					Model:    model,
-					Prompt:   taskPrompt,
-					Duration: duration,
-					Error:    errStr,
-				})
+		if isTask && l.broker != nil {
+			model := subAgentModel
+			if model == "" {
+				model = l.Model
 			}
+			l.broker.PublishMustDeliver(&SubAgentEndEvent{
+				Role:     taskRole,
+				Model:    model,
+				Prompt:   taskPrompt,
+				Duration: duration,
+				Error:    errStr,
+			})
+		}
 
 			l.emitHook(HookEvent{
 				Event:      ToolEnd,

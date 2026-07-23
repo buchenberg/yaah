@@ -13,7 +13,6 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/errorclassify"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/providers"
-	"github.com/buchenberg/yaah/internal/pubsub"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -811,30 +810,25 @@ func TestLoop_thinkingViaBroker(t *testing.T) {
 		},
 	}
 
-	broker := pubsub.NewBroker[Event]()
-	view := NewBrokerView(broker, &thinkingView{fn: func(evt Event) {
+	thinkingView := &thinkingView{fn: func(evt Event) {
 		if te, ok := evt.(*ThinkingEvent); ok {
 			mu.Lock()
 			thinkingText += te.Text
 			mu.Unlock()
 		}
-	}})
+	}}
 	reg := tools.NewRegistry()
 	loop := &Loop{Provider: bsp,
 		Registry:      reg,
 		SystemPrompt:  "test",
 		MaxIterations: 5,
-		Broker:        broker,
+		View:          thinkingView,
 	}
 
 	resp, err := loop.Run(context.Background(), "question")
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
 	}
-
-	// Close the broker and wait for the forwarder goroutine to drain
-	// all buffered events before checking thinkingText.
-	view.Close()
 
 	mu.Lock()
 	if thinkingText != "Let me think about this..." {
