@@ -18,7 +18,6 @@ tools:
   - json_query
 max_turns: 1
 timeout: 30
-max_depth: 0
 ---
 
 Count things. Use powershell for ALL file enumeration and counting —

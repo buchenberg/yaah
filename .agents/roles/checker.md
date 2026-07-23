@@ -13,7 +13,6 @@ tools:
   - bash
 max_turns: 1
 timeout: 60
-max_depth: 0
 ---
 
 Run a single check command and report pass or fail. Use the shell specified

@@ -20,7 +20,6 @@ tools:
   - git
 max_iterations: 30
 timeout: 180
-max_depth: 0
 ---
 
 You are a SECURITY AUDITOR sub-agent on yaah's team. Scan code for

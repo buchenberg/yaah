@@ -309,18 +309,15 @@ agents:
   subagent:
     provider: deepseek               # optional — defaults to main provider
     model: deepseek-v4-flash         # optional — defaults to main model
-    max_depth: 3                     # max spawn_subagent nesting depth
     max_concurrency: 3               # simultaneous spawn_subagent calls per turn
     default_timeout: 120             # seconds
     roles:
       analyst:
         timeout: 120
         max_iterations: 20
-        max_depth: 0
       developer:
         timeout: 180
         max_iterations: 25
-        max_depth: 0
       reviewer:
         timeout: 120
         max_iterations: 15
@@ -417,12 +414,10 @@ middleware pipeline, and sub-agents.
 |---|---|---|
 | `provider` | `default.provider` | Provider for sub-agents (can differ from main agent) |
 | `model` | `default.model` | Model for sub-agents (tip: use a cheaper one) |
-| `max_depth` | — | Max nesting depth for `spawn_subagent` chains (0 = unlimited) |
 | `max_concurrency` | 3 | Simultaneous `spawn_subagent` calls per turn |
 | `default_timeout` | — | Default seconds per sub-agent (0 = no timeout) |
 | `roles.<name>.timeout` | — | Per-role timeout override |
 | `roles.<name>.max_iterations` | — | Per-role iteration cap override |
-| `roles.<name>.max_depth` | — | Per-role depth cap override |
 
 **`agents.fallback`** — optional provider/model to use if the primary
 provider returns a transient error (429, 503):

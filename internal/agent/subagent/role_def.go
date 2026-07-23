@@ -59,7 +59,6 @@ type RoleDef struct {
 	MaxTurns      int         `yaml:"max_turns"`
 	JSONMode      bool        `yaml:"json_mode"`
 	Timeout       int         `yaml:"timeout"` // seconds; 0 = no timeout
-	MaxDepth      int         `yaml:"max_depth"`
 
 	Body string `yaml:"-"`
 }
@@ -77,7 +76,6 @@ func (d RoleDef) ToProfile() RoleProfile {
 		MaxTurns:      d.MaxTurns,
 		JSONMode:      d.JSONMode,
 		Timeout:       time.Duration(d.Timeout) * time.Second,
-		MaxDepth:      d.MaxDepth,
 	}
 	if p.Tools == nil {
 		p.Tools = []string{}
