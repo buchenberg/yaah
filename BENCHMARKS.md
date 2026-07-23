@@ -29,6 +29,8 @@ Records are never overwritten — append a new row for every run.
 | 2026-07-22 16:34 | subagent-efficiency | 48a8753 | B4 Audit | 4 | 0 | 7 | 31.6s | 44,662 | 0 | 44,662 | 100% | 0% | 0 | "Prefer parallel subs when ctx > 64K" prompt — still ran inline |
 | 2026-07-22 18:41 | per-role-overrides | 11e0da6 | B4 Audit | 12 | 4 | 7 | ~45s | 83,691 | 44,942 | 128,633 | 65% | 35% | 0 | Role descs in schema; evidence/interpretation guidance; 3 counters + 1 analyst; 0 re-verification |
 | 2026-07-22 18:52 | per-role-overrides | 11e0da6 | B4 Audit | 13 | 4 | 9 | ~60s | 98,552 | 65,774 | 164,326 | 60% | 40% | 0 | ContractField kind tags; counters use powershell Get-ChildItem; 1 counter output re-verified |
+| 2026-07-23 00:42 | main | 29234fd | B4 Audit | 8 | 2 | 23 | 113.4s | 91,109 | 47,702 | 138,811 | 66% | 34% | 0 | Pre-PR#62 baseline; model dispatched Counter + Jack |
+| 2026-07-23 00:43 | engine-view-separation-2-3 | fef70c0 | B4 Audit | 2 | 0 | 4 | 42.6s | 23,858 | 0 | 23,858 | 100% | 0% | 0 | PR#62 engine-view separation; model chose inline over sub-agents — strategy difference, not perf regression |
 
 ## Analysis: Continuation Guard Impact
 
