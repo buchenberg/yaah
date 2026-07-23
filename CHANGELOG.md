@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.0](https://github.com/buchenberg/yaah/compare/v0.30.0...v0.31.0) (2026-07-23)
+
+
+### Features
+
+* **agent:** engine-view separation — typed Event interface, View contract, remove callbacks ([#60](https://github.com/buchenberg/yaah/issues/60)) ([469476b](https://github.com/buchenberg/yaah/commit/469476b50e5b63fba7488f7656057ae2f6d71960))
+
 ## [0.30.0](https://github.com/buchenberg/yaah/compare/v0.29.0...v0.30.0) (2026-07-23)
 
 
