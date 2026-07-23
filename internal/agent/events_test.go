@@ -14,8 +14,8 @@ func TestTokenDeltaEvent(t *testing.T) {
 		t.Errorf("expected 'hello', got %q", e.Text)
 	}
 	var iface Event = e
-	if iface == nil {
-		t.Error("interface must be non-nil")
+	if _, ok := iface.(*TokenDeltaEvent); !ok {
+		t.Error("interface must hold *TokenDeltaEvent")
 	}
 }
 
@@ -113,41 +113,17 @@ func TestSubAgentEndEvent_WithError(t *testing.T) {
 // with pointer types — nil checks in type switches require pointer receivers.
 func TestEventPointerReceivers(t *testing.T) {
 	// All events use pointer receivers for eventMarker().
-	// Verify that passing a nil pointer still satisfies Event.
+	// A nil pointer stored in an interface produces a non-nil interface.
+	// This is standard Go behavior: the interface has a type tag even though
+	// the underlying pointer is nil.
 	var e Event = (*TokenDeltaEvent)(nil)
-	if e != nil {
-		// The interface itself is non-nil even though the underlying pointer is nil.
-		// This is standard Go interface behavior.
-		t.Log("nil pointer stored in interface is non-nil interface")
+	if _, ok := e.(*TokenDeltaEvent); !ok {
+		t.Error("nil *TokenDeltaEvent must satisfy Event and be type-assertable")
 	}
 
-	// But a nil interface value is different.
+	// But a nil interface value (no type, no value) is truly nil.
 	var e2 Event
-	if e2 != nil {
-		t.Error("uninitialized interface must be nil")
-	}
-}
-
-// TestLegacyTypesExist verifies the deprecated types still exist for Phase 1.
-func TestLegacyTypesExist(t *testing.T) {
-	evt := AgentEvent{Type: EventTokenDelta, Content: "test"}
-	if evt.Type != EventTokenDelta {
-		t.Errorf("expected EventTokenDelta, got %v", evt.Type)
-	}
-	if evt.Content != "test" {
-		t.Errorf("expected 'test', got %q", evt.Content)
-	}
-
-	// Verify all legacy constants are distinct.
-	constants := map[EventType]bool{}
-	constants[EventTokenDelta] = true
-	constants[EventThinking] = true
-	constants[EventFlush] = true
-	constants[EventToolStart] = true
-	constants[EventToolEnd] = true
-	constants[EventSubAgentStart] = true
-	constants[EventSubAgentEnd] = true
-	if len(constants) != 7 {
-		t.Errorf("expected 7 distinct event type constants, got %d", len(constants))
+	if _, ok := e2.(*TokenDeltaEvent); ok {
+		t.Error("nil interface must not satisfy type assertion")
 	}
 }

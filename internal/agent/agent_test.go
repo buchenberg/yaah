@@ -13,6 +13,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/errorclassify"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/providers"
+	"github.com/buchenberg/yaah/internal/pubsub"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -798,7 +799,7 @@ func TestLoop_contextWindowTrimming(t *testing.T) {
 
 // --- Test: Thinking/reasoning wiring ---
 
-func TestLoop_thinkingCallback(t *testing.T) {
+func TestLoop_thinkingViaBroker(t *testing.T) {
 	var thinkingText string
 	var mu sync.Mutex
 
@@ -810,23 +811,30 @@ func TestLoop_thinkingCallback(t *testing.T) {
 		},
 	}
 
+	broker := pubsub.NewBroker[Event]()
+	view := NewBrokerView(broker, &thinkingView{fn: func(evt Event) {
+		if te, ok := evt.(*ThinkingEvent); ok {
+			mu.Lock()
+			thinkingText += te.Text
+			mu.Unlock()
+		}
+	}})
 	reg := tools.NewRegistry()
 	loop := &Loop{Provider: bsp,
 		Registry:      reg,
 		SystemPrompt:  "test",
 		MaxIterations: 5,
-		OnToken:       func(token string) {},
-		OnThinking: func(text string) {
-			mu.Lock()
-			thinkingText += text
-			mu.Unlock()
-		},
+		Broker:        broker,
 	}
 
 	resp, err := loop.Run(context.Background(), "question")
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
 	}
+
+	// Close the broker and wait for the forwarder goroutine to drain
+	// all buffered events before checking thinkingText.
+	view.Close()
 
 	mu.Lock()
 	if thinkingText != "Let me think about this..." {
@@ -838,6 +846,13 @@ func TestLoop_thinkingCallback(t *testing.T) {
 		t.Errorf("response = %q", resp)
 	}
 }
+
+// thinkingView is a minimal View for capturing thinking events in tests.
+type thinkingView struct {
+	fn func(Event)
+}
+
+func (tv *thinkingView) HandleEvent(evt Event) { tv.fn(evt) }
 
 func strPtr(s string) *string { return &s }
 

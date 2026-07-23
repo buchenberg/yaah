@@ -543,7 +543,7 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 
 	compactProvider, compactModel := resolveCompact(cfg)
 
-	broker := pubsub.NewBroker[agent.AgentEvent]()
+	broker := pubsub.NewBroker[agent.Event]()
 	sub := broker.Subscribe("tui", 256)
 
 	var subWG sync.WaitGroup
@@ -608,36 +608,36 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 	}
 }
 
-func convertAgentEvent(evt agent.AgentEvent) tui.AgentMsg {
-	switch evt.Type {
-	case agent.EventTokenDelta:
-		return tui.AgentMsg{Token: evt.Content}
-	case agent.EventThinking:
-		return tui.AgentMsg{Thinking: evt.Content}
-	case agent.EventFlush:
-		return tui.AgentMsg{Flush: evt.Content}
-	case agent.EventToolStart:
-		return tui.AgentMsg{ToolName: evt.ToolName, ToolArgs: evt.ToolArgs}
-	case agent.EventToolEnd:
+func convertAgentEvent(evt agent.Event) tui.AgentMsg {
+	switch e := evt.(type) {
+	case *agent.TokenDeltaEvent:
+		return tui.AgentMsg{Token: e.Text}
+	case *agent.ThinkingEvent:
+		return tui.AgentMsg{Thinking: e.Text}
+	case *agent.FlushEvent:
+		return tui.AgentMsg{Flush: e.Content}
+	case *agent.ToolStartEvent:
+		return tui.AgentMsg{ToolName: e.Name, ToolArgs: e.Args}
+	case *agent.ToolEndEvent:
 		return tui.AgentMsg{
-			ToolResult:     evt.ToolResult,
-			ToolResultName: evt.ToolName,
-			ToolArgs:       evt.ToolArgs,
-			ToolDuration:   formatDuration(evt.ToolDuration),
+			ToolResult:     e.Result,
+			ToolResultName: e.Name,
+			ToolArgs:       e.Args,
+			ToolDuration:   formatDuration(e.Duration),
 		}
-	case agent.EventSubAgentStart:
+	case *agent.SubAgentStartEvent:
 		return tui.AgentMsg{
 			SubAgentStart: true,
-			SubAgentRole:  evt.SubAgentRole,
-			SubAgentLabel: evt.SubAgentPrompt,
+			SubAgentRole:  e.Role,
+			SubAgentLabel: e.Prompt,
 		}
-	case agent.EventSubAgentEnd:
+	case *agent.SubAgentEndEvent:
 		return tui.AgentMsg{
 			SubAgentEnd:   true,
-			SubAgentRole:  evt.SubAgentRole,
-			SubAgentModel: evt.SubAgentModel,
-			SubAgentDur:   formatDuration(evt.SubAgentDuration),
-			SubAgentErr:   evt.SubAgentError,
+			SubAgentRole:  e.Role,
+			SubAgentModel: e.Model,
+			SubAgentDur:   formatDuration(e.Duration),
+			SubAgentErr:   e.Error,
 		}
 	}
 	return tui.AgentMsg{}

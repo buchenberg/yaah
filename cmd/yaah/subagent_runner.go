@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/buchenberg/yaah/internal/pubsub"
 	"github.com/buchenberg/yaah/internal/tools"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -44,7 +46,6 @@ func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 			subCfg:           subCfg,
 			subAgentProvider: subAgentProvider,
 			subAgentModel:    subAgentModel,
-			SubToolCallback:  subToolDisplay,
 			OtelEnabled:      otelEnabled,
 			OtelVerbose:      otelVerbose,
 			tracker:          tracker,
@@ -62,21 +63,21 @@ func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 
 // subToolDisplay prints sub-agent tool calls indented under the
 // parent's sub-agent banner so they are visually distinct.
-func subToolDisplay(info agent.ToolInfo) {
-	if info.Duration == 0 {
+func subToolDisplay(name, args string, duration time.Duration, errStr string) {
+	if duration == 0 {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "    tool: %s", Bold(info.Name))
-	if info.Args != "" {
-		args := info.Args
-		if len(args) > 40 {
-			args = args[:37] + "..."
+	fmt.Fprintf(os.Stderr, "    tool: %s", Bold(name))
+	if args != "" {
+		a := args
+		if len(a) > 40 {
+			a = a[:37] + "..."
 		}
-		fmt.Fprintf(os.Stderr, "(%s)", Dim(args))
+		fmt.Fprintf(os.Stderr, "(%s)", Dim(a))
 	}
-	fmt.Fprintf(os.Stderr, " (%s)\n", Dim(formatDuration(info.Duration)))
-	if info.Error != "" {
-		fmt.Fprintf(os.Stderr, "      %s\n", replYellow("error: "+info.Error))
+	fmt.Fprintf(os.Stderr, " (%s)\n", Dim(formatDuration(duration)))
+	if errStr != "" {
+		fmt.Fprintf(os.Stderr, "      %s\n", replYellow("error: "+errStr))
 	}
 }
 
@@ -131,10 +132,6 @@ type taskRunnerOpts struct {
 	// inherit the planner's provider and model.
 	subAgentProvider agent.Provider
 	subAgentModel    string
-
-	// SubToolCallback is set on the sub-loop's OnTool so sub-agent
-	// tool calls can be rendered indented in the CLI.
-	SubToolCallback agent.ToolCallback
 
 	// OtelEnabled propagates OpenTelemetry tracing to sub-agent loops
 	// so their tool calls appear as child spans in the trace waterfall.
@@ -325,11 +322,25 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			MaxSubAgentConcurrency: resolveSubAgentConcurrency(opts.subCfg, role),
 			OtelEnabled:            opts.OtelEnabled,
 			OtelVerbose:            opts.OtelVerbose,
-			OnTool:                 opts.SubToolCallback,
-			OnToken:                func(token string) {},
 		}
 
+		broker := pubsub.NewBroker[agent.Event]()
+		subLoop.Broker = broker
+		sub := broker.Subscribe("subtool", 256)
+		var subwg sync.WaitGroup
+		subwg.Add(1)
+		go func() {
+			defer subwg.Done()
+			for evt := range sub {
+				if te, ok := evt.(*agent.ToolEndEvent); ok {
+					subToolDisplay(te.Name, te.Args, te.Duration, te.Error)
+				}
+			}
+		}()
+
 		result, runErr := subLoop.Run(ctx, prompt)
+		broker.Close()
+		subwg.Wait()
 		if outLimit > 0 && len(result) > outLimit {
 			result = safeTruncateBytes(result, outLimit)
 			result += "\n...[sub-agent output capped at " + formatBytes(outLimit) + "]"
