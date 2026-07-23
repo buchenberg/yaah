@@ -819,8 +819,6 @@ func TestLoop_thinkingViaBroker(t *testing.T) {
 			mu.Unlock()
 		}
 	}})
-	defer view.Close()
-
 	reg := tools.NewRegistry()
 	loop := &Loop{Provider: bsp,
 		Registry:      reg,
@@ -833,6 +831,10 @@ func TestLoop_thinkingViaBroker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
 	}
+
+	// Close the broker and wait for the forwarder goroutine to drain
+	// all buffered events before checking thinkingText.
+	view.Close()
 
 	mu.Lock()
 	if thinkingText != "Let me think about this..." {
