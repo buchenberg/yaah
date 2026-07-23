@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.1](https://github.com/buchenberg/yaah/compare/v0.31.0...v0.31.1) (2026-07-23)
+
+
+### Code Refactoring
+
+* engine-view separation phases 2-3 ([#62](https://github.com/buchenberg/yaah/issues/62)) ([bc76316](https://github.com/buchenberg/yaah/commit/bc7631624e28ef7a00da24883c286d426e14e28f))
+
 ## [0.31.0](https://github.com/buchenberg/yaah/compare/v0.30.0...v0.31.0) (2026-07-23)
 
 
