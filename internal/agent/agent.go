@@ -16,6 +16,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/observability"
+	"github.com/buchenberg/yaah/internal/pubsub"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -105,6 +106,13 @@ type Loop struct {
 	OnSubAgent    SubAgentCallback
 	OnThinking    ThinkingCallback
 	OnFlush       FlushCallback
+
+	// Broker decouples streaming from UI consumers via an in-process
+	// pub/sub channel. When set, OnToken/OnThinking/OnFlush/OnTool/
+	// OnSubAgent events are published to the broker in addition to
+	// the callback fields above.
+	Broker *pubsub.Broker[AgentEvent]
+
 	Middleware    []pipeline.Middleware // Optional custom middleware override
 
 	// LLM wraps the provider with streaming, retry, fallback, and compaction.
@@ -540,6 +548,9 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		if streamed && msg.Content != "" && l.OnFlush != nil {
 			l.OnFlush(msg.Content)
 		}
+		if streamed && msg.Content != "" && l.Broker != nil {
+			l.Broker.PublishMustDeliver(AgentEvent{Type: EventFlush, Content: msg.Content})
+		}
 
 		step, err = pipe.RunPostModel(ctx, &msg, step)
 		if err != nil {
@@ -657,6 +668,24 @@ func (l *Loop) applyDefaults() {
 		l.subAgentSem = make(chan struct{}, l.MaxSubAgentConcurrency)
 	}
 	if l.LLM == nil {
+		onToken := l.OnToken
+		onThinking := l.OnThinking
+		if l.Broker != nil {
+			innerToken := onToken
+			onToken = func(token string) {
+				l.Broker.Publish(AgentEvent{Type: EventTokenDelta, Content: token})
+				if innerToken != nil {
+					innerToken(token)
+				}
+			}
+			innerThinking := onThinking
+			onThinking = func(text string) {
+				l.Broker.Publish(AgentEvent{Type: EventThinking, Content: text})
+				if innerThinking != nil {
+					innerThinking(text)
+				}
+			}
+		}
 		l.LLM = &llm.Client{
 			Provider:         l.Provider,
 			FallbackProvider: l.FallbackProvider,
@@ -666,8 +695,8 @@ func (l *Loop) applyDefaults() {
 			RetryBackoff:     l.RetryBackoff,
 			ContextWindow:    l.ContextWindow,
 			SessionID:        l.SessionID,
-			OnToken:          l.OnToken,
-			OnThinking:       l.OnThinking,
+			OnToken:          onToken,
+			OnThinking:       onThinking,
 			Compact:          l.llmCompact,
 			Trim:             l.llmTrim,
 			OtelEnabled:      l.OtelEnabled,
