@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -283,6 +284,16 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 		return
 	}
 
+	if l.SessionID != "" && l.DB != nil {
+		cooldown, ineffective, err := l.DB.GetCompactionCooldown(l.SessionID)
+		if err == nil && cooldown > 0 && time.Now().Unix() < cooldown {
+			return
+		}
+		if err == nil && ineffective > l.ineffectiveCompactions {
+			l.ineffectiveCompactions = ineffective
+		}
+	}
+
 	if threshold <= 0 {
 		threshold = 0.25
 	}
@@ -414,6 +425,14 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 		}
 	}
 	l.lastCompactionTokens = afterEstimate
+
+	if l.SessionID != "" && l.DB != nil {
+		cooldown := int64(0)
+		if l.ineffectiveCompactions >= 2 {
+			cooldown = time.Now().Unix() + 600
+		}
+		l.DB.SetCompactionCooldown(l.SessionID, cooldown, l.ineffectiveCompactions)
+	}
 }
 
 // trimContext removes old messages when the estimated token count exceeds

@@ -192,6 +192,11 @@ type Loop struct {
 	// When nil, the loop runs entirely in memory.
 	DB *memory.DB
 
+	// WriteDebouncer coalesces rapid message writes to reduce SQLite write
+	// amplification from concurrent subagents and pipeline step bulk persistence.
+	// When nil, writes go directly to DB.
+	WriteDebouncer *memory.DebouncedWriter
+
 	// MsgIdx tracks the next message index for DB inserts.
 	MsgIdx int
 
@@ -367,6 +372,9 @@ func (l *Loop) Run(ctx context.Context, userInput string) (response string, runE
 // runMiddleware executes the agent loop using the middleware pipeline.
 func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response string, runErr error) {
 	defer func() {
+		if l.WriteDebouncer != nil {
+			l.WriteDebouncer.Flush()
+		}
 		l.closeHook()
 		reason := "completed"
 		if runErr != nil {
@@ -438,7 +446,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 
 		req := types.ChatRequest{
 			Model:    l.Model,
-			Messages: l.applyPruning(messages),
+			Messages: l.applyPruning(repairOrphans(messages)),
 			Tools:    l.buildToolsForLevel(),
 		}
 
