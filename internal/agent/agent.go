@@ -79,12 +79,16 @@ type Loop struct {
 	MaxIterations int
 	MaxTurns      int
 	JSONMode      bool
-	// Broker decouples streaming from UI consumers via an in-process
-	// pub/sub channel. When set, all agent events (tokens, thinking,
-	// flush, tool starts/ends, sub-agent starts/ends) are published
-	// via the typed Event interface. Consumers use BrokerView to
-	// subscribe.
-	Broker *pubsub.Broker[Event]
+	// View receives agent events (tokens, thinking, flush, tool starts/ends,
+	// sub-agent starts/ends, done). When set, the loop internally creates a
+	// pubsub.Broker and BrokerView adapter; callers should NOT set Broker.
+	View View
+
+	// broker is the internal pub/sub bus created from View in applyDefaults.
+	// No longer exported — callers provide a View, and the loop manages the
+	// broker lifecycle (create → publish → close) inside Run.
+	broker     *pubsub.Broker[Event]
+	brokerView *BrokerView
 
 	Middleware []pipeline.Middleware // Optional custom middleware override
 
@@ -353,6 +357,19 @@ func (l *Loop) Run(ctx context.Context, userInput string) (response string, runE
 // runMiddleware executes the agent loop using the middleware pipeline.
 func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response string, runErr error) {
 	defer func() {
+		if l.brokerView != nil {
+			var done DoneEvent
+			done.Response = response
+			if runErr != nil {
+				done.Error = runErr.Error()
+			}
+			done.ContextTokens = l.EstimatedTokens()
+			done.ContextWindow = l.ContextWindow
+			l.broker.PublishMustDeliver(&done)
+			l.brokerView.Close()
+		}
+	}()
+	defer func() {
 		if r := recover(); r != nil {
 			runErr = fmt.Errorf("panic: %v", r)
 		}
@@ -518,8 +535,8 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			return msg.Content, nil
 		}
 
-		if streamed && msg.Content != "" && l.Broker != nil {
-			l.Broker.PublishMustDeliver(&FlushEvent{Content: msg.Content})
+		if streamed && msg.Content != "" && l.broker != nil {
+			l.broker.PublishMustDeliver(&FlushEvent{Content: msg.Content})
 		}
 
 		step, err = pipe.RunPostModel(ctx, &msg, step)
@@ -638,14 +655,18 @@ func (l *Loop) applyDefaults() {
 		l.subAgentSem = make(chan struct{}, l.MaxSubAgentConcurrency)
 	}
 	if l.LLM == nil {
+		if l.View != nil {
+			l.broker = pubsub.NewBroker[Event]()
+			l.brokerView = NewBrokerView(l.broker, l.View)
+		}
 		var onToken llm.TokenCallback
 		var onThinking llm.ThinkingCallback
-		if l.Broker != nil {
+		if l.broker != nil {
 			onToken = func(token string) {
-				l.Broker.Publish(&TokenDeltaEvent{Text: token})
+				l.broker.Publish(&TokenDeltaEvent{Text: token})
 			}
 			onThinking = func(text string) {
-				l.Broker.Publish(&ThinkingEvent{Text: text})
+				l.broker.Publish(&ThinkingEvent{Text: text})
 			}
 		}
 		l.LLM = &llm.Client{

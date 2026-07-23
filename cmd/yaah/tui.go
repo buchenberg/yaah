@@ -23,7 +23,6 @@ import (
 	processpkg "github.com/buchenberg/yaah/internal/process"
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/providers"
-	"github.com/buchenberg/yaah/internal/pubsub"
 	"github.com/buchenberg/yaah/internal/skills"
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -216,15 +215,13 @@ func runTUI() error {
 
 	toolReg := tools.NewRegistry()
 
-	agentCh := make(chan tui.AgentMsg, 256)
+	controlCh := make(chan tui.ControlMsg, 64)
 
-	// Todo store for the session. OnWrite pushes the full list to the
-	// TUI so the todo panel stays current as the agent updates it.
 	todoStore := todo.NewStore()
 	toolReg.Register(&tools.TodoWriteTool{
 		Store: todoStore,
 		OnWrite: func() {
-			agentCh <- tui.AgentMsg{Todos: todoStore.List()}
+			controlCh <- tui.ControlMsg{Todos: todoStore.List()}
 		},
 	})
 
@@ -345,6 +342,7 @@ func runTUI() error {
 	// Shared mutable state for the current provider/model.
 	sm := &sessionModel{provider: providerName, model: resolveModel(cfg)}
 
+	var prog *tea.Program
 	m := tui.New(tui.Config{
 		Provider:      providerName,
 		Model:         modelName,
@@ -352,8 +350,7 @@ func runTUI() error {
 		ContextWindow: cfg.Agent.Default.ContextWindow,
 		OnSubmit: func(input string) {
 			pName, mName := sm.get()
-
-			go runAgentForTUI(input, agentCh, cfg, systemPrompt, mName, toolReg, &messages, db, sessionID, &msgIdx, &persistedCount, sm, conflictTracker)
+			go runAgentForTUI(input, controlCh, prog, cfg, systemPrompt, mName, toolReg, &messages, db, sessionID, &msgIdx, &persistedCount, sm, conflictTracker)
 			_ = pName
 		},
 		OnQuit: func() {},
@@ -364,7 +361,7 @@ func runTUI() error {
 					window = 128000
 				}
 				if len(messages) <= 4 {
-					agentCh <- tui.AgentMsg{Flush: "Context is already small enough."}
+					controlCh <- tui.ControlMsg{StatusMsg: "Context is already small enough."}
 					return
 				}
 				totalChars := 0
@@ -375,7 +372,7 @@ func runTUI() error {
 					}
 				}
 				if totalChars/4 <= window*4/5 {
-					agentCh <- tui.AgentMsg{Flush: fmt.Sprintf("Context is already compact enough (%d/%d tokens).", totalChars/4, window)}
+					controlCh <- tui.ControlMsg{StatusMsg: fmt.Sprintf("Context is already compact enough (%d/%d tokens).", totalChars/4, window)}
 					return
 				}
 
@@ -383,7 +380,7 @@ func runTUI() error {
 				rest := messages[1:]
 				keepRecent := 6
 				if len(rest) <= keepRecent {
-					agentCh <- tui.AgentMsg{Flush: "Not enough messages to compact."}
+					controlCh <- tui.ControlMsg{StatusMsg: "Not enough messages to compact."}
 					return
 				}
 				split := len(rest) - keepRecent
@@ -416,7 +413,7 @@ func runTUI() error {
 				if err != nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
 					// Fallback: trim oldest half
 					messages = append([]types.Message{sysMsg}, keepMsgs...)
-					agentCh <- tui.AgentMsg{Flush: "Compacted (trimmed)."}
+					controlCh <- tui.ControlMsg{StatusMsg: "Compacted (trimmed)."}
 					return
 				}
 				summary := resp.Choices[0].Message.Content
@@ -424,7 +421,7 @@ func runTUI() error {
 				newMsgs = append(newMsgs, types.SystemMsg("Previous conversation summary:\n"+summary))
 				newMsgs = append(newMsgs, keepMsgs...)
 				messages = newMsgs
-				agentCh <- tui.AgentMsg{Flush: "Compacted."}
+				controlCh <- tui.ControlMsg{StatusMsg: "Compacted."}
 			}()
 		},
 		OnModel: func(pName, mName string) {
@@ -475,7 +472,7 @@ func runTUI() error {
 	stopSignals := installSignalHandlers()
 	defer stopSignals()
 
-	p := tea.NewProgram(m)
+	prog = tea.NewProgram(m)
 
 	// Wire the question tool handler for TUI modal dialogs.
 	if qt := toolReg.Get("question"); qt != nil {
@@ -488,7 +485,7 @@ func runTUI() error {
 					for i, o := range e.Options {
 						opts[i] = tui.QuestionOption{Label: o.Label, Description: o.Description}
 					}
-					p.Send(tui.AgentMsg{Question: &tui.QuestionModal{
+					prog.Send(tui.ControlMsg{Question: &tui.QuestionModal{
 						Header:   e.Header,
 						Question: e.Question,
 						Options:  opts,
@@ -504,8 +501,8 @@ func runTUI() error {
 	}
 
 	go func() {
-		for msg := range agentCh {
-			p.Send(msg)
+		for msg := range controlCh {
+			prog.Send(msg)
 		}
 	}()
 
@@ -518,20 +515,30 @@ func runTUI() error {
 			}
 		}
 		models := fetchAllModels(context.Background(), cfg)
-		agentCh <- tui.AgentMsg{ModelList: models, ProviderNames: names}
+		controlCh <- tui.ControlMsg{ModelList: models, ProviderNames: names}
 	}()
 
-	if _, err := p.Run(); err != nil {
+	if _, err := prog.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)
 	}
 
 	return nil
 }
 
+// tuiEventForwarder implements agent.View and forwards events to a
+// bubbletea Program via Send, which is goroutine-safe.
+type tuiEventForwarder struct {
+	program *tea.Program
+}
+
+func (f *tuiEventForwarder) HandleEvent(evt agent.Event) {
+	f.program.Send(evt)
+}
+
 // runAgentForTUI runs the agent loop for a single prompt and sends messages
 // to the TUI channel. The channel is NOT closed here — it is shared across
 // multiple prompts for the lifetime of the TUI session.
-func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, systemPrompt, modelName string, toolReg *tools.Registry, messages *[]types.Message, db *memory.DB, sessionID string, msgIdx *int, persistedCount *int, sm *sessionModel, conflictTracker *tools.ConflictTracker) {
+func runAgentForTUI(prompt string, controlCh chan<- tui.ControlMsg, p *tea.Program, cfg *config.Config, systemPrompt, modelName string, toolReg *tools.Registry, messages *[]types.Message, db *memory.DB, sessionID string, msgIdx *int, persistedCount *int, sm *sessionModel, conflictTracker *tools.ConflictTracker) {
 	pName, _ := sm.get()
 	provider := providerFor(cfg, pName)
 
@@ -542,18 +549,7 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 	}
 
 	compactProvider, compactModel := resolveCompact(cfg)
-
-	broker := pubsub.NewBroker[agent.Event]()
-	sub := broker.Subscribe("tui", 256)
-
-	var subWG sync.WaitGroup
-	subWG.Add(1)
-	go func() {
-		defer subWG.Done()
-		for evt := range sub {
-			ch <- convertAgentEvent(evt)
-		}
-	}()
+	forwarder := &tuiEventForwarder{program: p}
 
 	loop := &agent.Loop{
 		Provider:              provider,
@@ -572,75 +568,32 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 		ToolsLevel:            agent.FullTools,
 		CompactProvider:       compactProvider,
 		CompactModel:          compactModel,
-		Broker:                broker,
+		View:                  forwarder,
 		ApproveFn: func(name, args string) bool {
 			respCh := make(chan bool, 1)
-			ch <- tui.AgentMsg{
+			p.Send(tui.ControlMsg{
 				ApproveChan: respCh,
 				ApproveName: name,
 				ApproveArgs: args,
-			}
+			})
 			return <-respCh
 		},
 	}
 
-	response, err := loop.Run(context.Background(), prompt)
-	broker.Close()
-	subWG.Wait()
+	_, err := loop.Run(context.Background(), prompt)
 
 	if err != nil {
-		ch <- tui.AgentMsg{
+		p.Send(tui.ControlMsg{
 			Err:           err,
 			ContextTokens: loop.EstimatedTokens(),
 			ContextWindow: loop.ContextWindow,
-		}
+		})
 		*messages = loop.Messages
 		return
 	}
 
 	*messages = loop.Messages
 	persistTUIMessages(db, sessionID, msgIdx, persistedCount, loop.Messages)
-	ch <- tui.AgentMsg{
-		Done:          true,
-		Response:      response,
-		ContextTokens: loop.EstimatedTokens(),
-		ContextWindow: loop.ContextWindow,
-	}
-}
-
-func convertAgentEvent(evt agent.Event) tui.AgentMsg {
-	switch e := evt.(type) {
-	case *agent.TokenDeltaEvent:
-		return tui.AgentMsg{Token: e.Text}
-	case *agent.ThinkingEvent:
-		return tui.AgentMsg{Thinking: e.Text}
-	case *agent.FlushEvent:
-		return tui.AgentMsg{Flush: e.Content}
-	case *agent.ToolStartEvent:
-		return tui.AgentMsg{ToolName: e.Name, ToolArgs: e.Args}
-	case *agent.ToolEndEvent:
-		return tui.AgentMsg{
-			ToolResult:     e.Result,
-			ToolResultName: e.Name,
-			ToolArgs:       e.Args,
-			ToolDuration:   formatDuration(e.Duration),
-		}
-	case *agent.SubAgentStartEvent:
-		return tui.AgentMsg{
-			SubAgentStart: true,
-			SubAgentRole:  e.Role,
-			SubAgentLabel: e.Prompt,
-		}
-	case *agent.SubAgentEndEvent:
-		return tui.AgentMsg{
-			SubAgentEnd:   true,
-			SubAgentRole:  e.Role,
-			SubAgentModel: e.Model,
-			SubAgentDur:   formatDuration(e.Duration),
-			SubAgentErr:   e.Error,
-		}
-	}
-	return tui.AgentMsg{}
 }
 
 func persistTUIMessages(db *memory.DB, sessionID string, msgIdx *int, persistedCount *int, messages []types.Message) {

@@ -81,6 +81,18 @@ type SubAgentEndEvent struct {
 
 func (*SubAgentEndEvent) eventMarker() {}
 
+// DoneEvent is emitted when the agent loop completes (success or error).
+// It carries the final response text (if any), error information, and
+// context window statistics for the status bar.
+type DoneEvent struct {
+	Response      string
+	Error         string
+	ContextTokens int
+	ContextWindow int
+}
+
+func (*DoneEvent) eventMarker() {}
+
 // Compile-time interface satisfaction checks.
 var (
 	_ Event = (*TokenDeltaEvent)(nil)
@@ -90,4 +102,5 @@ var (
 	_ Event = (*ToolEndEvent)(nil)
 	_ Event = (*SubAgentStartEvent)(nil)
 	_ Event = (*SubAgentEndEvent)(nil)
+	_ Event = (*DoneEvent)(nil)
 )

@@ -6,6 +6,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -17,6 +18,7 @@ import (
 	"charm.land/lipgloss/v2"
 	zone "github.com/lrstanley/bubblezone/v2"
 
+	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/banner"
 	"github.com/buchenberg/yaah/internal/todo"
@@ -665,57 +667,114 @@ func (m *Model) AppendToken(token string) {
 	}
 }
 
-// HandleAgentMsg processes messages from the agent goroutine.
+// HandleAgentMsg DEPRECATED: kept for compatibility during migration.
+// Use HandleEvent(agent.Event) for broker-delivered events.
 func (m *Model) HandleAgentMsg(msg AgentMsg) {
-	if msg.Todos != nil {
-		// Snapshot the latest todo list; rendered as a table when the
-		// todowrite tool result arrives (see renderToolResult).
-		m.todos = msg.Todos
-		return
+	if msg.Token != "" {
+		m.HandleEvent(&agent.TokenDeltaEvent{Text: msg.Token})
 	}
-	if msg.Err != nil {
-		m.AddMessage("assistant", fmt.Sprintf("Error: %v", msg.Err))
-		m.SetThinking(false)
-		m.streaming = false
-		m.streamContent = ""
-		return
+	if msg.Thinking != "" {
+		m.HandleEvent(&agent.ThinkingEvent{Text: msg.Thinking})
 	}
-
 	if msg.Flush != "" {
+		m.HandleEvent(&agent.FlushEvent{Content: msg.Flush})
+	}
+	if msg.ToolName != "" {
+		m.HandleEvent(&agent.ToolStartEvent{Name: msg.ToolName, Args: msg.ToolArgs})
+	}
+	if msg.ToolResult != "" || msg.ToolResultName != "" {
+		d, _ := time.ParseDuration("0" + msg.ToolDuration)
+		if d == 0 && msg.ToolDuration != "" {
+			d, _ = time.ParseDuration(msg.ToolDuration)
+		}
+		m.HandleEvent(&agent.ToolEndEvent{
+			Name:     msg.ToolResultName,
+			Result:   msg.ToolResult,
+			Args:     msg.ToolArgs,
+			Duration: d,
+		})
+	}
+	if msg.SubAgentStart {
+		m.HandleEvent(&agent.SubAgentStartEvent{Role: msg.SubAgentRole, Prompt: msg.SubAgentLabel})
+	}
+	if msg.SubAgentEnd {
+		d, _ := time.ParseDuration("0" + msg.SubAgentDur)
+		if d == 0 && msg.SubAgentDur != "" {
+			d, _ = time.ParseDuration(msg.SubAgentDur)
+		}
+		m.HandleEvent(&agent.SubAgentEndEvent{
+			Role:     msg.SubAgentRole,
+			Model:    msg.SubAgentModel,
+			Duration: d,
+			Error:    msg.SubAgentErr,
+		})
+	}
+	if msg.Done {
+		m.HandleEvent(&agent.DoneEvent{
+			Response:      msg.Response,
+			ContextTokens: msg.ContextTokens,
+			ContextWindow: msg.ContextWindow,
+		})
+	}
+	m.handleControlMsg(ControlMsg{
+		Todos:         msg.Todos,
+		Err:           msg.Err,
+		Question:      msg.Question,
+		ApproveChan:   msg.ApproveChan,
+		ApproveName:   msg.ApproveName,
+		ApproveArgs:   msg.ApproveArgs,
+		ModelList:     msg.ModelList,
+		ProviderNames: msg.ProviderNames,
+		ContextTokens: msg.ContextTokens,
+		ContextWindow: msg.ContextWindow,
+	})
+}
+
+// HandleEvent processes typed agent events from the broker.
+// Called from the bubbletea event loop via tea.Send in the forwarder goroutine.
+func (m *Model) HandleEvent(evt agent.Event) {
+	switch e := evt.(type) {
+	case *agent.TokenDeltaEvent:
+		m.AppendToken(e.Text)
+
+	case *agent.ThinkingEvent:
+		m.thinkContent += e.Text
+		m.refreshViewport()
+		m.scrollToBottom()
+
+	case *agent.FlushEvent:
 		haveReasoning := m.thinkContent != ""
 		m.streaming = false
 		m.streamContent = ""
 		if haveReasoning {
 			reasoning := m.thinkContent
 			m.thinkContent = ""
-			m.AddAssistantMessageWithReasoning(msg.Flush, reasoning)
+			m.AddAssistantMessageWithReasoning(e.Content, reasoning)
 		} else {
-			m.AddAssistantMessage(msg.Flush)
+			m.AddAssistantMessage(e.Content)
 		}
-		return
-	}
 
-	if msg.Token != "" {
-		m.AppendToken(msg.Token)
-		return
-	}
+	case *agent.ToolStartEvent:
+		if m.thinkContent != "" {
+			reasoning := m.thinkContent
+			m.thinkContent = ""
+			m.AddAssistantMessageWithReasoning("", reasoning)
+		}
+		m.SetToolCall(e.Name, e.Args)
 
-	if msg.Thinking != "" {
-		m.thinkContent += msg.Thinking
-		m.refreshViewport()
-		m.scrollToBottom()
-		return
-	}
+	case *agent.ToolEndEvent:
+		m.ClearToolCall()
+		m.AddToolResult(e.Name, e.Result, e.Args, formatDuration(e.Duration))
 
-	if msg.SubAgentStart {
-		displayName := subagent.RoleDisplayName(subagent.SubAgentRole(msg.SubAgentRole))
-		specialty := subagent.RoleSpecialty(subagent.SubAgentRole(msg.SubAgentRole))
+	case *agent.SubAgentStartEvent:
+		displayName := subagent.RoleDisplayName(subagent.SubAgentRole(e.Role))
+		specialty := subagent.RoleSpecialty(subagent.SubAgentRole(e.Role))
 		label := displayName
 		if specialty != "" {
-			label += " — " + specialty
+			label += " - " + specialty
 		}
-		if msg.SubAgentLabel != "" {
-			label += " · " + msg.SubAgentLabel
+		if e.Prompt != "" {
+			label += " · " + e.Prompt
 		}
 		m.messages = append(m.messages, Message{
 			Role:    "subagent-start",
@@ -723,26 +782,24 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 		})
 		m.refreshViewport()
 		m.scrollToBottom()
-		return
-	}
 
-	if msg.SubAgentEnd {
-		displayName := subagent.RoleDisplayName(subagent.SubAgentRole(msg.SubAgentRole))
-		specialty := subagent.RoleSpecialty(subagent.SubAgentRole(msg.SubAgentRole))
+	case *agent.SubAgentEndEvent:
+		displayName := subagent.RoleDisplayName(subagent.SubAgentRole(e.Role))
+		specialty := subagent.RoleSpecialty(subagent.SubAgentRole(e.Role))
 		label := displayName
 		if specialty != "" {
-			label += " — " + specialty
+			label += " - " + specialty
 		}
-		if msg.SubAgentModel != "" {
-			label += " [" + msg.SubAgentModel + "]"
+		if e.Model != "" {
+			label += " [" + e.Model + "]"
 		}
 		status := "completed"
-		if msg.SubAgentErr != "" {
-			status = msg.SubAgentErr
+		if e.Error != "" {
+			status = e.Error
 		}
 		label += " · " + status
-		if msg.SubAgentDur != "" {
-			label += " (" + msg.SubAgentDur + ")"
+		if e.Duration > 0 {
+			label += " (" + formatDuration(e.Duration) + ")"
 		}
 		m.messages = append(m.messages, Message{
 			Role:    "subagent-end",
@@ -750,26 +807,8 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 		})
 		m.refreshViewport()
 		m.scrollToBottom()
-		return
-	}
 
-	if msg.ToolName != "" {
-		if m.thinkContent != "" {
-			reasoning := m.thinkContent
-			m.thinkContent = ""
-			m.AddAssistantMessageWithReasoning("", reasoning)
-		}
-		m.SetToolCall(msg.ToolName, msg.ToolArgs)
-		return
-	}
-
-	if msg.ToolResult != "" || msg.ToolResultName != "" {
-		m.ClearToolCall() // tool finished — collapse progress label
-		m.AddToolResult(msg.ToolResultName, msg.ToolResult, msg.ToolArgs, msg.ToolDuration)
-		return
-	}
-
-	if msg.Done {
+	case *agent.DoneEvent:
 		m.SetThinking(false)
 		m.ClearToolCall()
 		haveReasoning := m.thinkContent != ""
@@ -784,23 +823,60 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 			} else {
 				m.AddAssistantMessage(content)
 			}
-		} else if msg.Response != "" {
+		} else if e.Response != "" {
 			if haveReasoning {
 				reasoning := m.thinkContent
 				m.thinkContent = ""
-				m.AddAssistantMessageWithReasoning(msg.Response, reasoning)
+				m.AddAssistantMessageWithReasoning(e.Response, reasoning)
 			} else {
-				m.AddAssistantMessage(msg.Response)
+				m.AddAssistantMessage(e.Response)
 			}
 		} else if haveReasoning {
-			// Model produced reasoning but no content — commit the
-			// reasoning as the message so it is not silently discarded.
 			reasoning := m.thinkContent
 			m.thinkContent = ""
 			m.AddAssistantMessageWithReasoning("", reasoning)
 		} else {
 			m.thinkContent = ""
 		}
+		if e.ContextWindow > 0 {
+			m.HandleContextInfo(e.ContextTokens, e.ContextWindow)
+		}
+
+	default:
+		// Unknown event — silently ignore for forward compatibility
+	}
+}
+
+// ControlMsg carries non-broker TUI control-plane messages.
+// These come from outside the agent loop (tool handlers, startup routines).
+type ControlMsg struct {
+	StatusMsg     string
+	Todos         []todo.Item
+	Err           error
+	Question      *QuestionModal
+	ApproveChan   chan bool
+	ApproveName   string
+	ApproveArgs   string
+	ModelList     []string
+	ProviderNames map[string]string
+	ContextTokens int
+	ContextWindow int
+}
+
+func (m *Model) handleControlMsg(msg ControlMsg) {
+	if msg.StatusMsg != "" {
+		m.AddMessage("system", msg.StatusMsg)
+	}
+	if msg.Todos != nil {
+		m.todos = msg.Todos
+		return
+	}
+	if msg.Err != nil {
+		m.AddMessage("assistant", fmt.Sprintf("Error: %v", msg.Err))
+		m.SetThinking(false)
+		m.streaming = false
+		m.streamContent = ""
+		return
 	}
 
 	if msg.Question != nil {
@@ -816,7 +892,7 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 	}
 
 	if msg.ApproveChan != nil {
-		m.approveModal = msg
+		m.approveModal = AgentMsg{ApproveChan: msg.ApproveChan}
 		ch := make(chan string, 1)
 		m.questionModal = QuestionModal{
 			Header:   "Approve",
@@ -835,7 +911,6 @@ func (m *Model) HandleAgentMsg(msg AgentMsg) {
 		m.input.Placeholder = ""
 		m.adjustViewport()
 		m.refreshViewport()
-		// Answer in the background so we don't block the event loop.
 		go func() {
 			answer := <-ch
 			msg.ApproveChan <- (answer == "Yes" || answer == "Yes, Yes")
@@ -866,6 +941,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case AgentMsg:
 		m.HandleAgentMsg(msg)
+		return m, nil
+
+	case agent.Event:
+		m.HandleEvent(msg)
+		return m, nil
+
+	case ControlMsg:
+		m.handleControlMsg(msg)
 		return m, nil
 
 	case cursorHoverMsg:
@@ -1716,4 +1799,12 @@ func (m *Model) HandleContextInfo(tokens, window int) {
 			m.contextPct = 100
 		}
 	}
+}
+
+// formatDuration returns a human-readable duration string.
+func formatDuration(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	return fmt.Sprintf("%.1fs", d.Seconds())
 }

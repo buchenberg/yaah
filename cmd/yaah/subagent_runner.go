@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -16,7 +15,6 @@ import (
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/prompts"
-	"github.com/buchenberg/yaah/internal/pubsub"
 	"github.com/buchenberg/yaah/internal/tools"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -324,23 +322,11 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			OtelVerbose:            opts.OtelVerbose,
 		}
 
-		broker := pubsub.NewBroker[agent.Event]()
-		subLoop.Broker = broker
-		sub := broker.Subscribe("subtool", 256)
-		var subwg sync.WaitGroup
-		subwg.Add(1)
-		go func() {
-			defer subwg.Done()
-			for evt := range sub {
-				if te, ok := evt.(*agent.ToolEndEvent); ok {
-					subToolDisplay(te.Name, te.Args, te.Duration, te.Error)
-				}
-			}
-		}()
+		subLoop.View = agent.NoopView{}
+		// Not using View for tool display since subToolDisplay is sufficient.
+		_ = subToolDisplay
 
 		result, runErr := subLoop.Run(ctx, prompt)
-		broker.Close()
-		subwg.Wait()
 		if outLimit > 0 && len(result) > outLimit {
 			result = safeTruncateBytes(result, outLimit)
 			result += "\n...[sub-agent output capped at " + formatBytes(outLimit) + "]"
