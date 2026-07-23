@@ -44,7 +44,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 
 			isTask := tc.Function.Name == "spawn_subagent"
 			var taskRole, taskPrompt string
-			if isTask && l.OnSubAgent != nil {
+			if isTask {
 				taskRole, taskPrompt = parseTaskArgs(tc.Function.Arguments)
 			}
 
