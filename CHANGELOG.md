@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.28.0](https://github.com/buchenberg/yaah/compare/v0.27.0...v0.28.0) (2026-07-23)
+
+
+### Features
+
+* framework parity phase 2 — session-affinity headers & wakeup coalescing (4.1, 4.2) ([d27b82e](https://github.com/buchenberg/yaah/commit/d27b82e02e3aff5ea5575b9e4fa4562c8ab0ef63))
+* framework parity phase 2 — session-affinity headers & wakeup coalescing (4.1, 4.2) ([d27b82e](https://github.com/buchenberg/yaah/commit/d27b82e02e3aff5ea5575b9e4fa4562c8ab0ef63))
+
 ## [0.27.0](https://github.com/buchenberg/yaah/compare/v0.26.0...v0.27.0) (2026-07-23)
 
 
