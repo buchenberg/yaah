@@ -15,7 +15,7 @@ var allowedGitActions = map[string]struct {
 }{
 	"status":      {"Working tree status", false},
 	"diff":        {"Show unstaged changes", false},
-	"diff_staged": {"Show staged changes", false},
+	"diff_cached": {"Show staged/index changes", false},
 	"log":         {"Show recent commit history", false},
 	"show":        {"Show details of a commit", false},
 	"branch":      {"List local branches", false},
@@ -42,7 +42,7 @@ func (t *GitTool) Schema() json.RawMessage {
 		"properties": {
 			"action": {
 				"type": "string",
-				"enum": ["status", "diff", "diff_staged", "log", "show", "branch", "add", "commit", "push", "pull", "fetch"],
+				"enum": ["status", "diff", "diff_cached", "log", "show", "branch", "add", "commit", "push", "pull", "fetch"],
 				"description": "The git action to perform"
 			},
 			"paths": {
@@ -118,7 +118,7 @@ func (t *GitTool) Execute(ctx context.Context, args string) (string, error) {
 	case "diff":
 		cmdArgs = []string{"diff"}
 		cmdArgs = append(cmdArgs, params.Paths...)
-	case "diff_staged":
+	case "diff_cached":
 		cmdArgs = []string{"diff", "--cached"}
 		cmdArgs = append(cmdArgs, params.Paths...)
 	case "log":

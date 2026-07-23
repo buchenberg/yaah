@@ -64,7 +64,7 @@ func TestGitTool_isDangerousForMutatingActions(t *testing.T) {
 	}{
 		{`{"action":"status"}`, false},
 		{`{"action":"diff"}`, false},
-		{`{"action":"diff_staged"}`, false},
+		{`{"action":"diff_cached"}`, false},
 		{`{"action":"log"}`, false},
 		{`{"action":"show"}`, false},
 		{`{"action":"branch"}`, false},
