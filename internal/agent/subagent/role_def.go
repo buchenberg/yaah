@@ -15,23 +15,44 @@ import (
 // loaded from a markdown file with YAML frontmatter. The file name
 // (minus extension) is the role identifier.
 
+// ContractField names a field in a sub-agent's response contract and
+// optionally classifies it as evidence (raw tool output, verifiable) or
+// interpretation (model synthesis, may need verification).
+type ContractField struct {
+	Name string `yaml:"name"`
+	Kind string `yaml:"kind"` // "evidence" or "interpretation"; empty = interpretation
+}
+
+// UnmarshalYAML accepts both string and map forms so existing role YAMLs
+// remain valid:
+//   - "fieldname"            → ContractField{Name: "fieldname"}
+//   - {name: field, kind: e} → ContractField{Name: "field", Kind: "e"}
+func (f *ContractField) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		f.Name = value.Value
+		return nil
+	case yaml.MappingNode:
+		type raw ContractField
+		return value.Decode((*raw)(f))
+	default:
+		return fmt.Errorf("contract field must be a string or map, got %v", value.Tag)
+	}
+}
+
 // ContractDef describes the structured output block a sub-agent must
 // append to its response so the main agent can extract data reliably.
 type ContractDef struct {
-	Heading string   `yaml:"heading"` // e.g. "## Metrics"
-	Fields  []string `yaml:"fields"`  // e.g. ["files", "lines", "key_detail"]
+	Heading string          `yaml:"heading"`
+	Fields  []ContractField `yaml:"fields"`
 }
 
 type RoleDef struct {
-	// DisplayName is an optional human-facing name for the role
-	// (e.g. "Jack"). When empty the role identifier is used.
 	DisplayName string `yaml:"name"`
-	// Specialty is a short label describing the role's function
-	// (e.g. "developer", "researcher"). Shown to the main agent.
-	Specialty string `yaml:"specialty"`
-	// Contract is the expected structured output the sub-agent appends
-	// to its response so the main agent can extract data without
-	// re-parsing prose.
+	Specialty   string `yaml:"specialty"`
+	// Description is a one-line summary shown to the orchestrator so
+	// it can choose the right role without calling list_subagents.
+	Description   string      `yaml:"description"`
 	Contract      ContractDef `yaml:"contract"`
 	Tools         []string    `yaml:"tools"`
 	MaxIterations int         `yaml:"max_iterations"`
@@ -40,9 +61,6 @@ type RoleDef struct {
 	Timeout       int         `yaml:"timeout"` // seconds; 0 = no timeout
 	MaxDepth      int         `yaml:"max_depth"`
 
-	// Body is the markdown content after the YAML frontmatter block.
-	// It is injected as role guidance into the sub-agent's system
-	// prompt so the sub-agent understands its constraints.
 	Body string `yaml:"-"`
 }
 
@@ -52,6 +70,7 @@ func (d RoleDef) ToProfile() RoleProfile {
 	p := RoleProfile{
 		DisplayName:   d.DisplayName,
 		Specialty:     d.Specialty,
+		Description:   d.Description,
 		Contract:      d.Contract,
 		Tools:         d.Tools,
 		MaxIterations: d.MaxIterations,

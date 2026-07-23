@@ -93,14 +93,18 @@ type SubAgentConfig struct {
 	Roles map[string]RoleConfig `yaml:"roles"`
 }
 
-// RoleConfig overrides a single role's default timeout and iteration cap.
+// RoleConfig overrides a single role's default timeout, iteration cap,
+// turn cap, provider, model, concurrency, and output format.
 type RoleConfig struct {
-	Timeout       int  `yaml:"timeout"`        // seconds; 0 = use role default
-	MaxIterations int  `yaml:"max_iterations"` // 0 = use role default
-	MaxTurns      int  `yaml:"max_turns"`      // soft turn cap; 0 = use role default
-	JSONMode      bool `yaml:"json_mode"`      // structured output toggle
-	ContextWindow int  `yaml:"context_window"` // 0 = inherit halved parent default
-	OutputLimit   int  `yaml:"output_limit"`   // bytes; 0 = use config default
+	Timeout        int    `yaml:"timeout"`         // seconds; 0 = use role default
+	MaxIterations  int    `yaml:"max_iterations"`  // 0 = use role default
+	MaxTurns       int    `yaml:"max_turns"`       // soft turn cap; 0 = use role default
+	JSONMode       bool   `yaml:"json_mode"`       // structured output toggle
+	ContextWindow  int    `yaml:"context_window"`  // 0 = inherit halved parent default
+	OutputLimit    int    `yaml:"output_limit"`    // bytes; 0 = use config default
+	Provider       string `yaml:"provider"`        // per-role provider override; "" = inherit
+	Model          string `yaml:"model"`           // per-role model override; "" = inherit
+	MaxConcurrency int    `yaml:"max_concurrency"` // per-role max sub-agent spawns; 0 = use config default
 }
 
 // Config is the full yaah configuration loaded from ~/.yaah/config.yaml.

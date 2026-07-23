@@ -34,12 +34,13 @@ var BuiltinRolesFS embed.FS
 // Layers holds the composable pieces of the system prompt assembled
 // from multiple sources.
 type Layers struct {
-	Identity    string // embedded identity (always present)
-	Environment string // runtime OS/arch/shell context
-	UserContext string // ~/.yaah/AGENTS.md (optional)
-	Project     string // walked-up AGENTS.md/CLAUDE.md from cwd
-	Memory      string // stored facts from SQLite
-	Skills      string // formatted skill index (name + description)
+	Identity               string // embedded identity (always present)
+	Environment            string // runtime OS/arch/shell context
+	UserContext            string // ~/.yaah/AGENTS.md (optional)
+	Project                string // walked-up AGENTS.md/CLAUDE.md from cwd
+	Memory                 string // stored facts from SQLite
+	Skills                 string // formatted skill index (name + description)
+	MaxSubAgentConcurrency int    // injected into prompt so the model knows the semaphore limit
 }
 
 // Build assembles the full system prompt from the given layers by
@@ -49,6 +50,15 @@ func Build(l Layers) string {
 
 	if strings.TrimSpace(l.Identity) != "" {
 		parts = append(parts, l.Identity)
+	}
+
+	if l.MaxSubAgentConcurrency > 0 {
+		parts = append(parts, fmt.Sprintf(
+			"Your sub-agent concurrency limit is %d. You can dispatch up to %d spawn_subagent calls "+
+				"per turn; additional calls queue behind the semaphore. Batch dispatches in waves of "+
+				"%d or fewer for optimal throughput.",
+			l.MaxSubAgentConcurrency, l.MaxSubAgentConcurrency, l.MaxSubAgentConcurrency,
+		))
 	}
 
 	if strings.TrimSpace(l.Environment) != "" {

@@ -1,9 +1,16 @@
 ---
 name: Jack
 specialty: analyst
+description: Finds and gathers information from web, docs, and code
 contract:
   heading: "## Summary"
-  fields: [source, finding, confidence, findings]
+  fields:
+    - { name: source,       kind: evidence }
+    - { name: tools_used,   kind: evidence }
+    - { name: methodology,  kind: evidence }
+    - { name: finding,      kind: interpretation }
+    - { name: confidence,   kind: interpretation }
+    - { name: findings,     kind: interpretation }
 tools:
   - webfetch
   - http
@@ -19,7 +26,7 @@ tools:
   - go_outline
   - git
 max_iterations: 20
-max_turns: 3
+max_turns: 2
 json_mode: true
 timeout: 120
 max_depth: 0

@@ -27,6 +27,8 @@ Records are never overwritten — append a new row for every run.
 | 2026-07-22 16:23 | main | 1a85775 | B4 Audit | 3 | 0 | 5 | 28.3s | 30,081 | 0 | 30,081 | 100% | 0% | 0 | Inline execution |
 | 2026-07-22 16:24 | subagent-efficiency | cc7cf8b | B4 Audit | 3 | 0 | 7 | 34.4s | 34,391 | 0 | 34,391 | 100% | 0% | 0 | Inline execution — parity with main |
 | 2026-07-22 16:34 | subagent-efficiency | 48a8753 | B4 Audit | 4 | 0 | 7 | 31.6s | 44,662 | 0 | 44,662 | 100% | 0% | 0 | "Prefer parallel subs when ctx > 64K" prompt — still ran inline |
+| 2026-07-22 18:41 | per-role-overrides | 11e0da6 | B4 Audit | 12 | 4 | 7 | ~45s | 83,691 | 44,942 | 128,633 | 65% | 35% | 0 | Role descs in schema; evidence/interpretation guidance; 3 counters + 1 analyst; 0 re-verification |
+| 2026-07-22 18:52 | per-role-overrides | 11e0da6 | B4 Audit | 13 | 4 | 9 | ~60s | 98,552 | 65,774 | 164,326 | 60% | 40% | 0 | ContractField kind tags; counters use powershell Get-ChildItem; 1 counter output re-verified |
 
 ## Analysis: Continuation Guard Impact
 

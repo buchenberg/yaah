@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/types"
@@ -113,6 +114,12 @@ type TaskTool struct {
 	// When empty the legacy static schema is used.
 	RoleNames []string
 
+	// RoleDescriptions maps role name to a one-line description of what
+	// the role does. Included in the spawn_subagent schema's role
+	// parameter so the orchestrator can choose roles without calling
+	// list_subagents. When empty no descriptions are appended.
+	RoleDescriptions map[string]string
+
 	// Tracker records file operations from sub-agent write/edit/delete
 	// tools so the parent agent can detect when parallel workers touch
 	// the same files. Nil means no tracking.
@@ -126,7 +133,7 @@ func (t *TaskTool) Description() string {
 
 func (t *TaskTool) Schema() json.RawMessage {
 	if len(t.RoleNames) > 0 {
-		return BuildTaskSchema(t.RoleNames)
+		return BuildTaskSchema(t.RoleNames, t.RoleDescriptions)
 	}
 	return json.RawMessage(`{
 		"type": "object",
@@ -147,9 +154,24 @@ func (t *TaskTool) Schema() json.RawMessage {
 // BuildTaskSchema returns a JSON Schema for the task tool whose role
 // enum is populated from the given list of role names, so user-defined
 // roles discovered at runtime are visible to the model.
-func BuildTaskSchema(roleNames []string) json.RawMessage {
+func BuildTaskSchema(roleNames []string, roleDescriptions map[string]string) json.RawMessage {
 	roles := make([]string, len(roleNames))
 	copy(roles, roleNames)
+
+	roleDesc := "Sub-agent role selecting its tool set and limits."
+	if len(roleDescriptions) > 0 {
+		var b strings.Builder
+		b.WriteString("Sub-agent role. Available:\n")
+		for _, name := range roles {
+			if d, ok := roleDescriptions[name]; ok && d != "" {
+				fmt.Fprintf(&b, "- %s: %s\n", name, d)
+			} else {
+				fmt.Fprintf(&b, "- %s\n", name)
+			}
+		}
+		b.WriteString("Omit for the legacy default tool set. Use list_subagents for full details.")
+		roleDesc = strings.TrimSpace(b.String())
+	}
 
 	schema := map[string]any{
 		"type": "object",
@@ -165,7 +187,7 @@ func BuildTaskSchema(roleNames []string) json.RawMessage {
 			"role": map[string]any{
 				"type":        "string",
 				"enum":        roles,
-				"description": "Sub-agent role selecting its tool set and limits. Omit for the legacy default tool set.",
+				"description": roleDesc,
 			},
 			"timeout_seconds": map[string]any{
 				"type":        "integer",

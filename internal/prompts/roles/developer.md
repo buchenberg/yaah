@@ -1,9 +1,16 @@
 ---
 name: Charley
 specialty: developer
+description: Implements features, fixes bugs, and makes code changes
 contract:
   heading: "## Changes"
-  fields: [files_modified, files_created, files_deleted, findings, summary]
+  fields:
+    - { name: files_modified, kind: evidence }
+    - { name: files_created,  kind: evidence }
+    - { name: files_deleted,  kind: evidence }
+    - { name: tools_used,     kind: evidence }
+    - { name: summary,        kind: interpretation }
+    - { name: findings,       kind: interpretation }
 tools:
   - read
   - write

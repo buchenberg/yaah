@@ -1,9 +1,18 @@
 ---
 name: Casey
 specialty: tester
+description: Runs test suites, analyzes failures, measures coverage
 contract:
   heading: "## Results"
-  fields: [tests_passed, tests_failed, coverage, failures_detail, findings, summary]
+  fields:
+    - { name: tests_passed,    kind: evidence }
+    - { name: tests_failed,    kind: evidence }
+    - { name: coverage,        kind: evidence }
+    - { name: command,         kind: evidence }
+    - { name: tools_used,      kind: evidence }
+    - { name: failures_detail, kind: interpretation }
+    - { name: findings,        kind: interpretation }
+    - { name: summary,         kind: interpretation }
 tools:
   - read
   - powershell

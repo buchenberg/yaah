@@ -206,10 +206,11 @@ func runTUI() error {
 	subagent.SetDefaultRoleRegistry(reg)
 
 	layers := prompts.Layers{
-		Identity:    prompts.IdentityPrompt,
-		Environment: prompts.DetectEnvironment(cwd),
-		UserContext: prompts.LoadUserContext(config.HomeDir()),
-		Project:     instructions.FormatForSystem(instructions.Load(cwd, cwd)),
+		Identity:               prompts.IdentityPrompt,
+		Environment:            prompts.DetectEnvironment(cwd),
+		UserContext:            prompts.LoadUserContext(config.HomeDir()),
+		Project:                instructions.FormatForSystem(instructions.Load(cwd, cwd)),
+		MaxSubAgentConcurrency: cfg.Agent.SubAgent.MaxConcurrency,
 	}
 
 	toolReg := tools.NewRegistry()
@@ -307,16 +308,19 @@ func runTUI() error {
 	if subCW < 32000 {
 		subCW = 32000
 	}
-	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, conflictTracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit))
+	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, conflictTracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers))
 
 	toolReg.Register(&tools.ListSubAgentsTool{
 		Lister: func() []tools.SubAgentInfo {
 			defs := reg.List()
 			infos := make([]tools.SubAgentInfo, 0, len(defs))
 			for name, def := range defs {
-				desc := def.Body
-				if idx := strings.IndexByte(desc, '\n'); idx >= 0 {
-					desc = desc[:idx]
+				desc := def.Description
+				if desc == "" {
+					desc = def.Body
+					if idx := strings.IndexByte(desc, '\n'); idx >= 0 {
+						desc = desc[:idx]
+					}
 				}
 				infos = append(infos, tools.SubAgentInfo{
 					Role:        string(name),

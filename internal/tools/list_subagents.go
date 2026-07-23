@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 )
 
 // SubAgentInfo describes a single sub-agent role for the list_subagents tool.
@@ -20,8 +22,8 @@ type SubAgentInfo struct {
 // SubAgentContract mirrors the YAML contract definition from role files
 // but uses simplified types for JSON serialization.
 type SubAgentContract struct {
-	Heading string   `json:"heading"`
-	Fields  []string `json:"fields"`
+	Heading string                   `json:"heading"`
+	Fields  []subagent.ContractField `json:"fields"`
 }
 
 // SubAgentLister returns role metadata so the agent can see available
@@ -64,7 +66,15 @@ func (t *ListSubAgentsTool) Execute(ctx context.Context, args string) (string, e
 		fmt.Fprintf(&b, "## %s\n", header)
 		fmt.Fprintf(&b, "Role ID: %s\n", r.Role)
 		if r.Contract.Heading != "" {
-			fmt.Fprintf(&b, "Contract: %s → %s\n", r.Contract.Heading, strings.Join(r.Contract.Fields, ", "))
+			var fieldStrs []string
+			for _, f := range r.Contract.Fields {
+				if f.Kind != "" {
+					fieldStrs = append(fieldStrs, fmt.Sprintf("%s (%s)", f.Name, f.Kind))
+				} else {
+					fieldStrs = append(fieldStrs, f.Name)
+				}
+			}
+			fmt.Fprintf(&b, "Contract: %s → %s\n", r.Contract.Heading, strings.Join(fieldStrs, ", "))
 		}
 		if r.Description != "" {
 			fmt.Fprintf(&b, "%s\n\n", r.Description)
