@@ -1,8 +1,6 @@
 package agent
 
 import (
-	"fmt"
-
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -39,7 +37,7 @@ func repairOrphans(messages []types.Message) []types.Message {
 	for _, tc := range pendingCalls {
 		out = append(out, types.ToolResultMsg(
 			tc.ID, tc.Function.Name,
-			fmt.Sprintf("[error: tool call was interrupted and did not produce a result. you may retry this call if the result is still needed.]"),
+			"[error: tool call was interrupted and did not produce a result. you may retry this call if the result is still needed.]",
 		))
 	}
 

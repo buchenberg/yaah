@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -31,9 +32,10 @@ func TestDebouncedWriter_Coalescing(t *testing.T) {
 	db := openTestDB(t)
 	dw := NewDebouncedWriter(db)
 
+	ctx := context.Background()
 	for i := 0; i < 5; i++ {
 		m := msg("msg-"+string(rune('a'+i)), "assistant", i)
-		if err := dw.Update(nil, m); err != nil {
+		if err := dw.Update(ctx, m); err != nil {
 			t.Fatalf("Update: %v", err)
 		}
 	}
@@ -53,13 +55,14 @@ func TestDebouncedWriter_UserMessageFlushes(t *testing.T) {
 	db := openTestDB(t)
 	dw := NewDebouncedWriter(db)
 
-	if err := dw.Update(nil, msg("a1", "assistant", 1)); err != nil {
+	ctx := context.Background()
+	if err := dw.Update(ctx, msg("a1", "assistant", 1)); err != nil {
 		t.Fatalf("Update assistant: %v", err)
 	}
-	if err := dw.Update(nil, msg("a2", "assistant", 2)); err != nil {
+	if err := dw.Update(ctx, msg("a2", "assistant", 2)); err != nil {
 		t.Fatalf("Update assistant: %v", err)
 	}
-	if err := dw.Update(nil, msg("u1", "user", 3)); err != nil {
+	if err := dw.Update(ctx, msg("u1", "user", 3)); err != nil {
 		t.Fatalf("Update user: %v", err)
 	}
 
@@ -76,10 +79,11 @@ func TestDebouncedWriter_FlushDrainsPending(t *testing.T) {
 	db := openTestDB(t)
 	dw := NewDebouncedWriter(db)
 
-	if err := dw.Update(nil, msg("a1", "assistant", 0)); err != nil {
+	ctx := context.Background()
+	if err := dw.Update(ctx, msg("a1", "assistant", 0)); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	if err := dw.Update(nil, msg("a2", "assistant", 1)); err != nil {
+	if err := dw.Update(ctx, msg("a2", "assistant", 1)); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	if err := dw.Flush(); err != nil {
