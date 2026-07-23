@@ -113,7 +113,7 @@ type Loop struct {
 	// the callback fields above.
 	Broker *pubsub.Broker[AgentEvent]
 
-	Middleware    []pipeline.Middleware // Optional custom middleware override
+	Middleware []pipeline.Middleware // Optional custom middleware override
 
 	// LLM wraps the provider with streaming, retry, fallback, and compaction.
 	LLM *llm.Client
