@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	zone "github.com/lrstanley/bubblezone/v2"
+
+	"github.com/buchenberg/yaah/internal/agent"
 )
 
 func TestMain(m *testing.M) {
@@ -847,7 +849,7 @@ func TestExitModelMode(t *testing.T) {
 
 func TestHandleModelList(t *testing.T) {
 	m := &Model{width: 80}
-	m.HandleAgentMsg(AgentMsg{ModelList: []string{"openai/gpt-4o", "ollama/llama3"}})
+	m.handleControlMsg(ControlMsg{ModelList: []string{"openai/gpt-4o", "ollama/llama3"}})
 
 	if len(m.modelItems) != 2 {
 		t.Fatalf("expected 2 modelItems, got %d", len(m.modelItems))
@@ -876,8 +878,8 @@ func assertEqual(t *testing.T, got, expected []string) {
 
 func TestReasoningPersistsAfterDone(t *testing.T) {
 	m := &Model{width: 80}
-	m.HandleAgentMsg(AgentMsg{Thinking: "step 1"})
-	m.HandleAgentMsg(AgentMsg{Thinking: " step 2"})
+	m.HandleEvent(&agent.ThinkingEvent{Text: "step 1"})
+	m.HandleEvent(&agent.ThinkingEvent{Text: " step 2"})
 
 	if m.thinkContent != "step 1 step 2" {
 		t.Errorf("expected thinkContent 'step 1 step 2', got %q", m.thinkContent)
@@ -885,7 +887,7 @@ func TestReasoningPersistsAfterDone(t *testing.T) {
 
 	m.streaming = true
 	m.streamContent = "the response"
-	m.HandleAgentMsg(AgentMsg{Done: true})
+	m.HandleEvent(&agent.DoneEvent{})
 
 	if m.thinkContent != "" {
 		t.Errorf("thinkContent should be cleared after Done, got %q", m.thinkContent)
@@ -900,11 +902,11 @@ func TestReasoningPersistsAfterDone(t *testing.T) {
 
 func TestReasoningTransferOnDone(t *testing.T) {
 	m := &Model{width: 80}
-	m.HandleAgentMsg(AgentMsg{Thinking: "reasoning"})
+	m.HandleEvent(&agent.ThinkingEvent{Text: "reasoning"})
 
 	m.streaming = true
 	m.streamContent = "the response"
-	m.HandleAgentMsg(AgentMsg{Done: true})
+	m.HandleEvent(&agent.DoneEvent{})
 
 	if m.thinkContent != "" {
 		t.Errorf("thinkContent should be cleared after Done with streaming, got %q", m.thinkContent)
@@ -919,9 +921,9 @@ func TestReasoningTransferOnDone(t *testing.T) {
 
 func TestReasoningTransferOnFlush(t *testing.T) {
 	m := &Model{width: 80}
-	m.HandleAgentMsg(AgentMsg{Thinking: "the reasoning"})
+	m.HandleEvent(&agent.ThinkingEvent{Text: "the reasoning"})
 
-	m.HandleAgentMsg(AgentMsg{Flush: "flushed content"})
+	m.HandleEvent(&agent.FlushEvent{Content: "flushed content"})
 
 	if m.thinkContent != "" {
 		t.Errorf("thinkContent should be cleared after Flush, got %q", m.thinkContent)
@@ -936,16 +938,16 @@ func TestReasoningTransferOnFlush(t *testing.T) {
 
 func TestReasoningNotDuplicatedAfterFlushAndDone(t *testing.T) {
 	m := &Model{width: 80}
-	m.HandleAgentMsg(AgentMsg{Thinking: "reasoning"})
+	m.HandleEvent(&agent.ThinkingEvent{Text: "reasoning"})
 
-	m.HandleAgentMsg(AgentMsg{Flush: "first part"})
+	m.HandleEvent(&agent.FlushEvent{Content: "first part"})
 	if m.thinkContent != "" {
 		t.Errorf("thinkContent should be cleared after Flush, got %q", m.thinkContent)
 	}
 
 	m.streaming = true
 	m.streamContent = "second part"
-	m.HandleAgentMsg(AgentMsg{Done: true})
+	m.HandleEvent(&agent.DoneEvent{})
 
 	if len(m.messages) != 2 {
 		t.Fatalf("expected 2 messages, got %d", len(m.messages))
@@ -960,11 +962,11 @@ func TestReasoningNotDuplicatedAfterFlushAndDone(t *testing.T) {
 
 func TestReasoningClearedOnNewSubmit(t *testing.T) {
 	m := &Model{width: 80}
-	m.HandleAgentMsg(AgentMsg{Thinking: "reasoning"})
+	m.HandleEvent(&agent.ThinkingEvent{Text: "reasoning"})
 
 	m.streaming = true
 	m.streamContent = "response"
-	m.HandleAgentMsg(AgentMsg{Done: true})
+	m.HandleEvent(&agent.DoneEvent{})
 
 	m.thinkContent = ""
 	m.reasoningExpanded = make(map[string]bool)
@@ -979,11 +981,11 @@ func TestReasoningClearedOnNewSubmit(t *testing.T) {
 
 func TestCTRLRTogglesReasoning(t *testing.T) {
 	m := &Model{width: 80, height: 40, reasoningExpanded: make(map[string]bool)}
-	m.HandleAgentMsg(AgentMsg{Thinking: "reasoning"})
+	m.HandleEvent(&agent.ThinkingEvent{Text: "reasoning"})
 
 	m.streaming = true
 	m.streamContent = "response"
-	m.HandleAgentMsg(AgentMsg{Done: true})
+	m.HandleEvent(&agent.DoneEvent{})
 
 	// Render to populate reasoningZones
 	m.renderMessages()
@@ -1035,14 +1037,14 @@ func TestHasReasoning(t *testing.T) {
 		t.Error("should not have reasoning initially")
 	}
 
-	m.HandleAgentMsg(AgentMsg{Thinking: "reasoning"})
+	m.HandleEvent(&agent.ThinkingEvent{Text: "reasoning"})
 	if !m.hasReasoning() {
 		t.Error("should have reasoning via thinkContent")
 	}
 
 	m.streaming = true
 	m.streamContent = "response"
-	m.HandleAgentMsg(AgentMsg{Done: true})
+	m.HandleEvent(&agent.DoneEvent{})
 	if !m.hasReasoning() {
 		t.Error("should have reasoning via message after transfer")
 	}
@@ -1058,7 +1060,7 @@ func TestHasReasoning(t *testing.T) {
 func TestReasoningNotClearedOnDoneWhenEmpty(t *testing.T) {
 	m := &Model{width: 80, reasoningExpanded: make(map[string]bool)}
 
-	m.HandleAgentMsg(AgentMsg{Done: true})
+	m.HandleEvent(&agent.DoneEvent{})
 
 	if len(m.reasoningExpanded) != 0 {
 		t.Error("reasoningExpanded should remain empty when thinkContent was empty")
@@ -1266,7 +1268,7 @@ func TestReasoningZonesClearedEachRender(t *testing.T) {
 func TestQuestionModeEnter(t *testing.T) {
 	m := &Model{width: 80}
 	ch := make(chan string, 1)
-	m.HandleAgentMsg(AgentMsg{Question: &QuestionModal{
+	m.handleControlMsg(ControlMsg{Question: &QuestionModal{
 		Header:   "Next step",
 		Question: "What should we do?",
 		Options:  []QuestionOption{{Label: "A", Description: "First"}, {Label: "B", Description: "Second"}},
@@ -1287,7 +1289,7 @@ func TestQuestionModeEnter(t *testing.T) {
 func TestQuestionModeSingleSelectAnswer(t *testing.T) {
 	m := &Model{width: 80}
 	ch := make(chan string, 1)
-	m.HandleAgentMsg(AgentMsg{Question: &QuestionModal{
+	m.handleControlMsg(ControlMsg{Question: &QuestionModal{
 		Header:   "Next step",
 		Question: "What?",
 		Options:  []QuestionOption{{Label: "A", Description: ""}, {Label: "B", Description: ""}},
@@ -1308,7 +1310,7 @@ func TestQuestionModeSingleSelectAnswer(t *testing.T) {
 func TestQuestionModeMultiSelectAnswer(t *testing.T) {
 	m := &Model{width: 80}
 	ch := make(chan string, 1)
-	m.HandleAgentMsg(AgentMsg{Question: &QuestionModal{
+	m.handleControlMsg(ControlMsg{Question: &QuestionModal{
 		Header:   "Choose",
 		Question: "Which?",
 		Options:  []QuestionOption{{Label: "A", Description: ""}, {Label: "B", Description: ""}, {Label: "C", Description: ""}},
@@ -1328,7 +1330,7 @@ func TestQuestionModeMultiSelectAnswer(t *testing.T) {
 func TestQuestionModeEscapeCancel(t *testing.T) {
 	m := &Model{width: 80}
 	ch := make(chan string, 1)
-	m.HandleAgentMsg(AgentMsg{Question: &QuestionModal{
+	m.handleControlMsg(ControlMsg{Question: &QuestionModal{
 		Header:   "Next step",
 		Question: "What?",
 		Options:  []QuestionOption{{Label: "A", Description: ""}},
@@ -1398,7 +1400,7 @@ func TestRenderQuestionModalMultiSelect(t *testing.T) {
 func TestQuestionModeResetsState(t *testing.T) {
 	m := &Model{width: 80}
 	ch := make(chan string, 1)
-	m.HandleAgentMsg(AgentMsg{Question: &QuestionModal{
+	m.handleControlMsg(ControlMsg{Question: &QuestionModal{
 		Header:   "Q",
 		Question: "A?",
 		Options:  []QuestionOption{{Label: "X", Description: ""}},

@@ -67,40 +67,6 @@ type Message struct {
 	SubRole      string // sub-agent role ("worker"/"reviewer"/"planner") for task tool messages
 }
 
-// AgentMsg is a message from the agent goroutine.
-type AgentMsg struct {
-	Token          string
-	Thinking       string // reasoning content from models like DeepSeek
-	ToolName       string
-	ToolArgs       string // tool arguments (for display, e.g. task description)
-	ToolResult     string // tool result content
-	ToolResultName string // tool name for the result
-	ToolDuration   string // formatted duration string (e.g. "2.3s")
-	Flush          string // streamed content to commit before a tool call
-	Done           bool
-	Response       string
-	Err            error
-	ContextTokens  int               // estimated tokens used, for status bar
-	ContextWindow  int               // context window size, for status bar
-	ModelList      []string          // models fetched from providers
-	ProviderNames  map[string]string // provider key → display name
-	Question       *QuestionModal    // non-nil when a question should be shown
-	ApproveChan    chan bool         // set when asking for tool approval; the TUI sends true/false
-	ApproveName    string            // tool name for approval display
-	ApproveArgs    string            // abbreviated tool args for approval display
-	MCPInfos       []ServerInfo      // MCP server status info (sent at startup)
-	Todos          []todo.Item       // current todo list (sent on every todowrite)
-
-	// Sub-agent lifecycle markers — sent by OnSubAgent.
-	SubAgentStart bool
-	SubAgentRole  string
-	SubAgentLabel string // description or prompt abbreviation
-	SubAgentEnd   bool
-	SubAgentModel string // model used by the sub-agent (empty on start)
-	SubAgentDur   string // formatted duration string
-	SubAgentErr   string
-}
-
 // ServerInfo holds status details about an MCP server (mirrors mcp.ServerInfo).
 type ServerInfo struct {
 	Name      string
@@ -202,8 +168,6 @@ type Model struct {
 	questionModal QuestionModal
 	questionIdx   int
 	questionMulti []bool
-	approveModal  AgentMsg // pending approval request (ApproveChan set)
-
 	// --- command mode ---
 	commandMode bool
 	commands    []Command
@@ -667,69 +631,6 @@ func (m *Model) AppendToken(token string) {
 	}
 }
 
-// HandleAgentMsg DEPRECATED: kept for compatibility during migration.
-// Use HandleEvent(agent.Event) for broker-delivered events.
-func (m *Model) HandleAgentMsg(msg AgentMsg) {
-	if msg.Token != "" {
-		m.HandleEvent(&agent.TokenDeltaEvent{Text: msg.Token})
-	}
-	if msg.Thinking != "" {
-		m.HandleEvent(&agent.ThinkingEvent{Text: msg.Thinking})
-	}
-	if msg.Flush != "" {
-		m.HandleEvent(&agent.FlushEvent{Content: msg.Flush})
-	}
-	if msg.ToolName != "" {
-		m.HandleEvent(&agent.ToolStartEvent{Name: msg.ToolName, Args: msg.ToolArgs})
-	}
-	if msg.ToolResult != "" || msg.ToolResultName != "" {
-		d, _ := time.ParseDuration("0" + msg.ToolDuration)
-		if d == 0 && msg.ToolDuration != "" {
-			d, _ = time.ParseDuration(msg.ToolDuration)
-		}
-		m.HandleEvent(&agent.ToolEndEvent{
-			Name:     msg.ToolResultName,
-			Result:   msg.ToolResult,
-			Args:     msg.ToolArgs,
-			Duration: d,
-		})
-	}
-	if msg.SubAgentStart {
-		m.HandleEvent(&agent.SubAgentStartEvent{Role: msg.SubAgentRole, Prompt: msg.SubAgentLabel})
-	}
-	if msg.SubAgentEnd {
-		d, _ := time.ParseDuration("0" + msg.SubAgentDur)
-		if d == 0 && msg.SubAgentDur != "" {
-			d, _ = time.ParseDuration(msg.SubAgentDur)
-		}
-		m.HandleEvent(&agent.SubAgentEndEvent{
-			Role:     msg.SubAgentRole,
-			Model:    msg.SubAgentModel,
-			Duration: d,
-			Error:    msg.SubAgentErr,
-		})
-	}
-	if msg.Done {
-		m.HandleEvent(&agent.DoneEvent{
-			Response:      msg.Response,
-			ContextTokens: msg.ContextTokens,
-			ContextWindow: msg.ContextWindow,
-		})
-	}
-	m.handleControlMsg(ControlMsg{
-		Todos:         msg.Todos,
-		Err:           msg.Err,
-		Question:      msg.Question,
-		ApproveChan:   msg.ApproveChan,
-		ApproveName:   msg.ApproveName,
-		ApproveArgs:   msg.ApproveArgs,
-		ModelList:     msg.ModelList,
-		ProviderNames: msg.ProviderNames,
-		ContextTokens: msg.ContextTokens,
-		ContextWindow: msg.ContextWindow,
-	})
-}
-
 // HandleEvent processes typed agent events from the broker.
 // Called from the bubbletea event loop via tea.Send in the forwarder goroutine.
 func (m *Model) HandleEvent(evt agent.Event) {
@@ -892,7 +793,6 @@ func (m *Model) handleControlMsg(msg ControlMsg) {
 	}
 
 	if msg.ApproveChan != nil {
-		m.approveModal = AgentMsg{ApproveChan: msg.ApproveChan}
 		ch := make(chan string, 1)
 		m.questionModal = QuestionModal{
 			Header:   "Approve",
@@ -939,10 +839,6 @@ func (m *Model) Init() tea.Cmd {
 // Update implements tea.Model.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case AgentMsg:
-		m.HandleAgentMsg(msg)
-		return m, nil
-
 	case agent.Event:
 		m.HandleEvent(msg)
 		return m, nil

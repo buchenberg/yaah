@@ -123,6 +123,54 @@ ditto --norsrc yaah ~/.local/bin/yaah  # macOS: avoids Gatekeeper quarantine
 - Tests live next to the code they test (`foo.go` ↔ `foo_test.go`).
 - Use `t.Run("name", func(t *testing.T) { ... })` for subtests.
 
+## Engine-View Architecture
+
+The agent loop (`internal/agent/`) communicates with consumers (TUI, REPL,
+sub-agent runner) through a single typed event interface. There are no
+callbacks on `agent.Loop` — everything flows through the broker.
+
+### Adding a new consumer
+
+Implement `agent.View`:
+
+```go
+type View interface {
+    HandleEvent(Event)
+}
+```
+
+The agent loop creates an internal `pubsub.Broker[Event]` and a `BrokerView`
+adapter. All events (token deltas, tool calls, sub-agent lifecycle, flush,
+done) are published as typed structs implementing the sealed `Event`
+interface. See `internal/agent/events.go` for the event types.
+
+### Adding a new event type
+
+1. Add a struct in `internal/agent/events.go` with an `eventMarker()` method
+2. Add a `case` to each `HandleEvent` implementation (the compiler will find
+   missing cases thanks to the exhaustiveness of type switches)
+3. Publish from the agent loop's internal broker
+
+### Consumers
+
+| Consumer | View impl | File |
+|----------|-----------|------|
+| TUI | `Model.HandleEvent` (type switch) | `internal/tui/tui.go` |
+| REPL | `terminalView` / `replView` | `cmd/yaah/agent_frame.go` |
+| Sub-agents | `agent.NoopView` | `cmd/yaah/subagent_runner.go` |
+
+Control-plane messages (todos, questions, approvals, model lists) use
+`tui.ControlMsg` — a separate channel from the broker events.
+
+### History
+
+The engine-view boundary was refactored in PRs #60 and #62 (plan:
+`.agents/plans/engine-view-separation/PLAN.md`). Before this, the agent
+loop had dual delivery (callbacks + broker) with a 25-field `AgentMsg`
+god struct and an 8-hop TUI delivery pipeline. The refactor removed
+callbacks entirely, internalized the broker, cut the pipeline to 4 hops,
+and replaced `AgentMsg` with compile-time-exhaustive typed events.
+
 ## Skills
 
 Project-level skills live in `.agents/skills/` and are tracked in git.
