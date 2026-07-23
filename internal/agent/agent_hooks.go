@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -81,6 +83,7 @@ func (l *Loop) persistMessage(msg types.Message) {
 		toolName = msg.Name
 	}
 	m := memory.Message{
+		ID:         newMessageID(),
 		SessionID:  l.SessionID,
 		Idx:        l.MsgIdx,
 		Role:       msg.Role,
@@ -90,9 +93,25 @@ func (l *Loop) persistMessage(msg types.Message) {
 		ToolCalls:  toolCallsJSON,
 		Timestamp:  time.Now().Unix(),
 	}
-	if err := l.DB.AddMessage(m); err != nil {
+	if err := l.writeMsg(m); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: db persist: %v\n", err)
 		return
 	}
 	l.MsgIdx++
+}
+
+func newMessageID() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+}
+
+func (l *Loop) writeMsg(m memory.Message) error {
+	if l.WriteDebouncer != nil {
+		return l.WriteDebouncer.Update(context.Background(), m)
+	}
+	if l.DB != nil {
+		return l.DB.AddMessage(m)
+	}
+	return nil
 }

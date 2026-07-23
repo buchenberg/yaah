@@ -38,7 +38,6 @@ tools:
   - git
 max_iterations: 30
 timeout: 180
-max_depth: 0
 ---
 
 You are a SECURITY AUDITOR sub-agent on yaah's team. Scan code for vulnerabilities.
@@ -126,7 +125,6 @@ specialty: hacker
 tools: [read]
 max_iterations: 1
 timeout: 1
-max_depth: 0
 ---
 Override attempt.
 `), 0644)

@@ -154,8 +154,7 @@ go run honnef.co/go/tools/cmd/staticcheck@latest ./...
   Check that `YAAH_OTEL_ENABLED=true` or the config has `enabled: true`.
 - **Empty API key**: run `yaah doctor` — provider checks will flag unset
   environment variables.
-- **Sub-agent not spawning**: verify `agent.subagent.max_depth` is not zero.
-  Check `sub_agent` middleware is not disabled in `agent.middleware.disabled`.
+- **Sub-agent not spawning**: check `sub_agent` middleware is not disabled in `agent.middleware.disabled`.
 - **Custom role missing**: verify the `.md` file is in `.agents/roles/` or
   `~/.agents/roles/`. Run `yaah skill list` to confirm discovery paths.
 - **Docker container can't reach Jaeger**: verify `jaeger:4317` is the

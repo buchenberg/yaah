@@ -29,9 +29,6 @@ func TestRoleProfileFor(t *testing.T) {
 		if p.Timeout != 180*time.Second {
 			t.Errorf("RoleDefault Timeout = %v, want 180s", p.Timeout)
 		}
-		if p.MaxDepth != 0 {
-			t.Errorf("RoleDefault MaxDepth = %d, want 0", p.MaxDepth)
-		}
 	})
 
 	t.Run("unknown role is zero-value (no tools)", func(t *testing.T) {

@@ -275,12 +275,7 @@ Limits concurrent tool goroutines via a buffered channel semaphore. When `MaxToo
 
 #### SubAgentMiddleware (`pipeline/subagent.go`)
 
-Enforces sub-agent depth limits and lifecycle tracking. Two depth mechanisms are supported:
-
-1. A legacy cumulative `MaxDepth` that caps the total number of `task` calls a single `Loop` may issue across its lifetime.
-2. An optional per-role `MaxDepthByRole` map that caps `task` calls per role independently. A role absent from the map falls back to `MaxDepth`.
-
-`PostModel` walks the assistant message's tool calls, parses each `task` call's `role` argument, and drops any `task` call whose role budget is exhausted (a system notice is injected). Non-task calls are always preserved.
+Enforces sub-agent depth limits. Depth is hardcoded to 1: at most one `spawn_subagent` call may pass through the middleware per `Loop` lifetime. `PostModel` walks the assistant message's tool calls, counts `spawn_subagent` calls, and drops any beyond the first (a system notice is injected). Non-task calls are always preserved.
 
 Actual nesting depth is bounded structurally rather than by this middleware alone: no sub-agent role registers the `spawn_subagent` tool, and `makeTaskRunner` decrements the remaining depth on each level so a sub-loop eventually loses its `spawn_subagent` tool entirely (see [Sub-Agent Lifecycle](#sub-agent-lifecycle)).
 
@@ -320,7 +315,7 @@ The `RoleRegistry` is the central store for role definitions. It holds built-in 
 
 **Core types:**
 
-- `RoleDef` — the persistent format for a role, parsed from YAML frontmatter: `Tools []string`, `MaxIterations`, `Timeout` (seconds), `MaxDepth`, and `Body` (the markdown guidance text). Its `ToProfile()` method converts to the runtime `RoleProfile` struct.
+- `RoleDef` — the persistent format for a role, parsed from YAML frontmatter: `Tools []string`, `MaxIterations`, `MaxTurns`, `Timeout` (seconds), `JSONMode`, and `Body` (the markdown guidance text). Its `ToProfile()` method converts to the runtime `RoleProfile` struct.
 - `RoleRegistry` — a `sync.RWMutex`-protected `map[SubAgentRole]RoleDef`. Thread-safe for concurrent reads during sub-agent dispatch.
 
 **Loading built-in roles:**
@@ -418,19 +413,16 @@ Semaphore acquisitions in `executeAndCollect` (`subAgentSem` and `toolSem`) use 
 
 ### Nesting depth
 
-Two mechanisms bound nesting:
+Two mechanisms bound nesting, both hardcoded to depth 1:
 
-1. **Structural**: no sub-agent role registers the `spawn_subagent` tool. A sub-agent physically cannot spawn further sub-agents unless the caller explicitly sets `max_depth > 0` and re-registers `spawn_subagent` on the inner loop.
-2. **Depth budget**: `makeTaskRunner` receives a `remainingDepth` counter (seeded from `subagent.max_depth`, default 3). Each nested `spawn_subagent` call is built with `remainingDepth-1`; when it reaches zero the tool is omitted from the sub-loop's registry entirely.
-
-The `SubAgentMiddleware` additionally caps the number of `task` calls a single `Loop` may issue (globally via `MaxSubAgentDepth`, or per-role via `MaxSubAgentDepthByRole`).
+1. **Structural**: no sub-agent role registers the `spawn_subagent` tool. A sub-agent physically cannot spawn further sub-agents because `buildSubAgentRegistry` omits `spawn_subagent` from the sub-loop's tool set when `remainingDepth` reaches 0.
+2. **Middleware**: the `SubAgentMiddleware` limits the main agent to at most one `spawn_subagent` call across its lifetime.
 
 ### Configuration
 
 ```yaml
 agent:
   subagent:
-    max_depth: 3          # global nesting depth (default)
     max_concurrency: 3    # simultaneous spawn_subagent calls per turn
     default_timeout: 120  # seconds; used when no role default applies
     roles:

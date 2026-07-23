@@ -33,7 +33,6 @@ type RoleProfile struct {
 	MaxTurns      int
 	JSONMode      bool
 	Timeout       time.Duration
-	MaxDepth      int
 }
 
 // IsSpawnCapable returns true if the role's profile includes the task
@@ -148,7 +147,6 @@ func legacyProfileFor(role SubAgentRole) RoleProfile {
 			MaxIterations: 25,
 			MaxTurns:      3,
 			Timeout:       180 * time.Second,
-			MaxDepth:      0,
 		}
 	default:
 		return RoleProfile{}

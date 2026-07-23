@@ -30,7 +30,6 @@ tools:
 max_iterations: 20
 max_turns: 4
 timeout: 180
-max_depth: 0
 ---
 
 You are a TESTER sub-agent on yaah's team. Run test suites, analyze

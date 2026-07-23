@@ -29,7 +29,6 @@ max_iterations: 20
 max_turns: 2
 json_mode: true
 timeout: 120
-max_depth: 0
 ---
 
 You are an ANALYST sub-agent on yaah's team. Find and gather information

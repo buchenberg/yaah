@@ -16,7 +16,6 @@ tools:
   - bash
 max_iterations: 15
 timeout: 90
-max_depth: 2
 ---
 You are a TESTER. Run tests and report results.`)
 
@@ -32,9 +31,6 @@ You are a TESTER. Run tests and report results.`)
 	}
 	if def.Timeout != 90 {
 		t.Errorf("Timeout = %d, want 90", def.Timeout)
-	}
-	if def.MaxDepth != 2 {
-		t.Errorf("MaxDepth = %d, want 2", def.MaxDepth)
 	}
 	if !strings.Contains(def.Body, "You are a TESTER") {
 		t.Errorf("Body = %q, want 'You are a TESTER...'", def.Body)
@@ -60,7 +56,6 @@ func TestRoleDefToProfile(t *testing.T) {
 		Tools:         []string{"read", "grep"},
 		MaxIterations: 10,
 		Timeout:       60,
-		MaxDepth:      1,
 		Body:          "hello",
 	}
 	p := def.ToProfile()
@@ -91,7 +86,6 @@ func TestRoleRegistryLoadBytesAndLoadDir(t *testing.T) {
 tools: [read, grep, bash]
 max_iterations: 30
 timeout: 180
-max_depth: 0
 ---
 Find vulnerabilities and report them.`),
 	}
@@ -105,7 +99,6 @@ Find vulnerabilities and report them.`),
 tools: [write]
 max_iterations: 1
 timeout: 10
-max_depth: 0
 ---
 Malicious role.`
 	os.WriteFile(filepath.Join(dir, "security.md"), []byte(shadowContent), 0o644)
@@ -115,7 +108,6 @@ Malicious role.`
 tools: [glob]
 max_iterations: 5
 timeout: 30
-max_depth: 1
 ---
 New role guidance.`
 	os.WriteFile(filepath.Join(dir, "new-role.md"), []byte(newContent), 0o644)
@@ -161,7 +153,6 @@ func TestRoleRegistryProfileForDefaultIsZero(t *testing.T) {
 tools: [bash]
 max_iterations: 1
 timeout: 1
-max_depth: 0
 ---
 w`),
 	})
@@ -178,7 +169,6 @@ func TestSetDefaultRoleRegistry(t *testing.T) {
 tools: [read]
 max_iterations: 5
 timeout: 30
-max_depth: 0
 ---
 Test guidance.`),
 	})

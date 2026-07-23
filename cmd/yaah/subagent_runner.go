@@ -191,8 +191,7 @@ func subagentEnvironmentHeader() string {
 // remainingDepth bounds how many levels of nested task calls the
 // returned runner may itself issue. When it reaches zero the task tool
 // is omitted from the sub-loop's registry, so nesting is bounded
-// structurally without relying on middleware alone. A zero/negative
-// config MaxDepth is mapped to a sentinel so "unlimited" is preserved.
+// structurally without relying on middleware alone. Depth is hardcoded to 1.
 func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 	return func(ctx context.Context, prompt string, params tools.SubAgentParams) (string, error) {
 		role := subagent.SubAgentRole(params.Role)
