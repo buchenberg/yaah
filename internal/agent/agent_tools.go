@@ -136,32 +136,32 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 				res = truncateToolResult(res)
 			}
 
-		if l.broker != nil {
-			evt := &ToolEndEvent{
-				Name:     tc.Function.Name,
-				Args:     abbreviated,
-				Result:   res,
-				Duration: duration,
+			if l.broker != nil {
+				evt := &ToolEndEvent{
+					Name:     tc.Function.Name,
+					Args:     abbreviated,
+					Result:   res,
+					Duration: duration,
+				}
+				if err != nil {
+					evt.Error = err.Error()
+				}
+				l.broker.PublishMustDeliver(evt)
 			}
-			if err != nil {
-				evt.Error = err.Error()
-			}
-			l.broker.PublishMustDeliver(evt)
-		}
 
-		if isTask && l.broker != nil {
-			model := subAgentModel
-			if model == "" {
-				model = l.Model
+			if isTask && l.broker != nil {
+				model := subAgentModel
+				if model == "" {
+					model = l.Model
+				}
+				l.broker.PublishMustDeliver(&SubAgentEndEvent{
+					Role:     taskRole,
+					Model:    model,
+					Prompt:   taskPrompt,
+					Duration: duration,
+					Error:    errStr,
+				})
 			}
-			l.broker.PublishMustDeliver(&SubAgentEndEvent{
-				Role:     taskRole,
-				Model:    model,
-				Prompt:   taskPrompt,
-				Duration: duration,
-				Error:    errStr,
-			})
-		}
 
 			l.emitHook(HookEvent{
 				Event:      ToolEnd,
