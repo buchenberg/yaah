@@ -23,6 +23,7 @@ import (
 	processpkg "github.com/buchenberg/yaah/internal/process"
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/providers"
+	"github.com/buchenberg/yaah/internal/pubsub"
 	"github.com/buchenberg/yaah/internal/skills"
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -542,6 +543,18 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 
 	compactProvider, compactModel := resolveCompact(cfg)
 
+	broker := pubsub.NewBroker[agent.AgentEvent]()
+	sub := broker.Subscribe("tui", 256)
+
+	var subWG sync.WaitGroup
+	subWG.Add(1)
+	go func() {
+		defer subWG.Done()
+		for evt := range sub {
+			ch <- convertAgentEvent(evt)
+		}
+	}()
+
 	loop := &agent.Loop{
 		Provider:              provider,
 		Registry:              toolReg,
@@ -559,6 +572,7 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 		ToolsLevel:            agent.FullTools,
 		CompactProvider:       compactProvider,
 		CompactModel:          compactModel,
+		Broker:                broker,
 		ApproveFn: func(name, args string) bool {
 			respCh := make(chan bool, 1)
 			ch <- tui.AgentMsg{
@@ -568,52 +582,12 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 			}
 			return <-respCh
 		},
-		OnToken: func(token string) {
-			ch <- tui.AgentMsg{Token: token}
-		},
-		OnFlush: func(content string) {
-			ch <- tui.AgentMsg{Flush: content}
-		},
-		OnTool: func(info agent.ToolInfo) {
-			if info.Duration == 0 {
-				ch <- tui.AgentMsg{ToolName: info.Name, ToolArgs: info.Args}
-			} else {
-				ch <- tui.AgentMsg{
-					ToolResult:     info.Result,
-					ToolResultName: info.Name,
-					ToolArgs:       info.Args,
-					ToolDuration:   formatDuration(info.Duration),
-				}
-			}
-		},
-		OnSubAgent: func(info agent.SubAgentInfo) {
-			if info.Duration == 0 {
-				ch <- tui.AgentMsg{
-					SubAgentStart: true,
-					SubAgentRole:  info.Role,
-					SubAgentLabel: info.Prompt,
-				}
-			} else {
-				dur := formatDuration(info.Duration)
-				errStr := ""
-				if info.Error != "" {
-					errStr = info.Error
-				}
-				ch <- tui.AgentMsg{
-					SubAgentEnd:   true,
-					SubAgentRole:  info.Role,
-					SubAgentModel: info.Model,
-					SubAgentDur:   dur,
-					SubAgentErr:   errStr,
-				}
-			}
-		},
-		OnThinking: func(text string) {
-			ch <- tui.AgentMsg{Thinking: text}
-		},
 	}
 
 	response, err := loop.Run(context.Background(), prompt)
+	broker.Close()
+	subWG.Wait()
+
 	if err != nil {
 		ch <- tui.AgentMsg{
 			Err:           err,
@@ -632,6 +606,41 @@ func runAgentForTUI(prompt string, ch chan<- tui.AgentMsg, cfg *config.Config, s
 		ContextTokens: loop.EstimatedTokens(),
 		ContextWindow: loop.ContextWindow,
 	}
+}
+
+func convertAgentEvent(evt agent.AgentEvent) tui.AgentMsg {
+	switch evt.Type {
+	case agent.EventTokenDelta:
+		return tui.AgentMsg{Token: evt.Content}
+	case agent.EventThinking:
+		return tui.AgentMsg{Thinking: evt.Content}
+	case agent.EventFlush:
+		return tui.AgentMsg{Flush: evt.Content}
+	case agent.EventToolStart:
+		return tui.AgentMsg{ToolName: evt.ToolName, ToolArgs: evt.ToolArgs}
+	case agent.EventToolEnd:
+		return tui.AgentMsg{
+			ToolResult:     evt.ToolResult,
+			ToolResultName: evt.ToolName,
+			ToolArgs:       evt.ToolArgs,
+			ToolDuration:   formatDuration(evt.ToolDuration),
+		}
+	case agent.EventSubAgentStart:
+		return tui.AgentMsg{
+			SubAgentStart: true,
+			SubAgentRole:  evt.SubAgentRole,
+			SubAgentLabel: evt.SubAgentPrompt,
+		}
+	case agent.EventSubAgentEnd:
+		return tui.AgentMsg{
+			SubAgentEnd:   true,
+			SubAgentRole:  evt.SubAgentRole,
+			SubAgentModel: evt.SubAgentModel,
+			SubAgentDur:   formatDuration(evt.SubAgentDuration),
+			SubAgentErr:   evt.SubAgentError,
+		}
+	}
+	return tui.AgentMsg{}
 }
 
 func persistTUIMessages(db *memory.DB, sessionID string, msgIdx *int, persistedCount *int, messages []types.Message) {
