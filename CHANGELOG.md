@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.26.0](https://github.com/buchenberg/yaah/compare/v0.25.0...v0.26.0) (2026-07-23)
+
+
+### Features
+
+* add parallel sub-agent preference hint to identity prompt ([985d482](https://github.com/buchenberg/yaah/commit/985d4823e801e9c6348a11044caa04db167698f7))
+* per-role overrides, role descriptions in schema, micro-agent roles, trace parity ([f1b48d9](https://github.com/buchenberg/yaah/commit/f1b48d9918fe99cf2a8a85e1cc6a1bcb763be5b4))
+* sub-agent efficiency — MaxTurns, ContextWindow, JSONMode, OutputLimit ([11e0da6](https://github.com/buchenberg/yaah/commit/11e0da68c97644feccb6a1e2cd88aef4e808014a))
+* sub-agent efficiency — MaxTurns, ContextWindow, JSONMode, OutputLimit ([cc7cf8b](https://github.com/buchenberg/yaah/commit/cc7cf8bd576818f059f415e16fee61a17c5562a7))
+
+
+### Documentation
+
+* add sub-agent efficiency head-to-head benchmark comparison ([48a8753](https://github.com/buchenberg/yaah/commit/48a87530d3f7185503bcadff873a86a88f64d3ec))
+
 ## [0.25.0](https://github.com/buchenberg/yaah/compare/v0.24.0...v0.25.0) (2026-07-22)
 
 
