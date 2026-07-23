@@ -109,6 +109,15 @@ type Loop struct {
 	// compaction (e.g. 0.5 = 50%). Default 0 means 0.5.
 	CompactionThreshold float64
 
+	// RawCompactionThreshold is the fraction of ContextWindow at which
+	// compaction fires based on raw LastPromptTokens, independent of prompt
+	// cache subtraction. The cache-aware trigger (CompactionThreshold applied
+	// to effective, non-cached tokens) optimizes cost; this raw trigger guards
+	// latency, since serialization, network transfer, and provider-side cache
+	// lookup all scale with total context size even when most tokens are cached.
+	// Default 0 means 0.5.
+	RawCompactionThreshold float64
+
 	// EstimateFactor is the multiplier applied to the chars/4 token estimate
 	// for preflight compaction checks. Provider tokenizers systematically
 	// undercount code and JSON payloads; 1.3 compensates. 0 means use the

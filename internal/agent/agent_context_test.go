@@ -808,3 +808,98 @@ func TestCompactContext_cacheSubtraction(t *testing.T) {
 			len(msgs), len(withCache.Messages))
 	}
 }
+
+// summaryProvider returns a fakeProvider that responds to compaction with a
+// fixed summary, used by the dual-trigger tests below.
+func summaryProvider() *fakeProvider {
+	return &fakeProvider{
+		responses: []*types.ChatResponse{{
+			Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant", Content: "summary"},
+				FinishReason: "stop",
+			}},
+		}},
+	}
+}
+
+func TestCompactContext_rawTriggerFires(t *testing.T) {
+	// A heavily-cached conversation: effective tokens (10k) are well under the
+	// cost target (64k floor), but raw tokens (60k) exceed the raw latency
+	// target (50k = 0.5 * 100k). The raw trigger must fire compaction.
+	msgs := largeConversation(30)
+	loop := &Loop{
+		Provider:               summaryProvider(),
+		CompactModel:           "test",
+		ContextWindow:          100000,
+		Messages:               append([]types.Message{}, msgs...),
+		LastPromptTokens:       60000,
+		LastCachedPromptTokens: 50000, // effective = 10000 < 64000 target
+	}
+
+	before := len(loop.Messages)
+	loop.compactContext(context.Background(), 0.25)
+
+	if len(loop.Messages) >= before {
+		t.Errorf("raw trigger should have compacted: before=%d after=%d", before, len(loop.Messages))
+	}
+}
+
+func TestCompactContext_bothTriggersUnderThreshold(t *testing.T) {
+	// Both effective tokens (5k) and raw tokens (40k) are under their targets
+	// (64k cost floor, 50k raw). Compaction must be skipped.
+	msgs := largeConversation(30)
+	loop := &Loop{
+		Provider:               summaryProvider(),
+		CompactModel:           "test",
+		ContextWindow:          100000,
+		Messages:               append([]types.Message{}, msgs...),
+		LastPromptTokens:       40000,
+		LastCachedPromptTokens: 35000, // effective = 5000
+	}
+
+	before := len(loop.Messages)
+	loop.compactContext(context.Background(), 0.25)
+
+	if len(loop.Messages) != before {
+		t.Errorf("neither trigger met; should NOT compact: before=%d after=%d", before, len(loop.Messages))
+	}
+}
+
+func TestCompactContext_rawThresholdConfigurable(t *testing.T) {
+	// Same raw token count (60k) with two different RawCompactionThreshold
+	// values. Default (0.5 -> target 50k) fires; a high threshold (0.9 ->
+	// target 90k) does not. This proves the field controls the raw trigger.
+	msgs := largeConversation(30)
+
+	defaultThreshold := &Loop{
+		Provider:               summaryProvider(),
+		CompactModel:           "test",
+		ContextWindow:          100000,
+		Messages:               append([]types.Message{}, msgs...),
+		LastPromptTokens:       60000,
+		LastCachedPromptTokens: 55000, // effective = 5000 < 64000
+	}
+	highThreshold := &Loop{
+		Provider:               summaryProvider(),
+		CompactModel:           "test",
+		ContextWindow:          100000,
+		RawCompactionThreshold: 0.9, // rawTarget = 90000
+		Messages:               append([]types.Message{}, msgs...),
+		LastPromptTokens:       60000,
+		LastCachedPromptTokens: 55000,
+	}
+
+	beforeDefault := len(defaultThreshold.Messages)
+	beforeHigh := len(highThreshold.Messages)
+	defaultThreshold.compactContext(context.Background(), 0.25)
+	highThreshold.compactContext(context.Background(), 0.25)
+
+	if len(defaultThreshold.Messages) >= beforeDefault {
+		t.Errorf("default raw threshold (0.5) should fire: before=%d after=%d",
+			beforeDefault, len(defaultThreshold.Messages))
+	}
+	if len(highThreshold.Messages) != beforeHigh {
+		t.Errorf("high raw threshold (0.9) should NOT fire: before=%d after=%d",
+			beforeHigh, len(highThreshold.Messages))
+	}
+}
