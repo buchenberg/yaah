@@ -135,29 +135,6 @@ func estimatePayloadBytes(messages []types.Message, tools []types.ToolDef) int {
 	return total
 }
 
-// isContinuation returns true if the conversation is mid-tool-loop (there are
-// tool messages after the last user message). Compaction should be skipped in
-// this case — the model needs the context to continue the tool loop.
-// Ported from kilocode overflow.ts:17-20.
-func isContinuation(messages []types.Message) bool {
-	lastUserIdx := -1
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "user" {
-			lastUserIdx = i
-			break
-		}
-	}
-	if lastUserIdx < 0 {
-		return false
-	}
-	for i := lastUserIdx + 1; i < len(messages); i++ {
-		if messages[i].Role == "tool" {
-			return true
-		}
-	}
-	return false
-}
-
 // turnRange identifies a contiguous turn: a user message followed by its
 // assistant response and any tool results, ending at the next user message
 // (or end of conversation).

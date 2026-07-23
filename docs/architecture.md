@@ -598,13 +598,14 @@ uses a `len(content) / 4` heuristic with a configurable multiplier
 (`EstimateFactor`, default 1.3) to compensate for provider tokenizers
 systematically undercounting code and JSON payloads.
 
-### Continuation guard
+### Mid-tool-loop compaction
 
-`compactContext` checks `isContinuation(messages)` before triggering
-compaction. A conversation is "continuing" when the last message is a tool
-result after the most recent user message — i.e., the model is mid-tool-loop.
-Compaction is skipped in this case because the model needs the full context
-to continue the tool loop; the next user message will re-evaluate.
+Compaction is safe to run even while the model is mid-tool-loop. The
+token-budgeted `splitTail` split is boundary-aligned: it never cuts a
+tool-call/result pair, so compacting during a tool loop preserves tool-call
+linkage and the model can continue without a bricked conversation. (An earlier
+`isContinuation` guard skipped compaction mid-loop; it was removed once
+boundary-aligned splitting made the guard unnecessary — see BENCHMARKS.md.)
 
 ### Pre-compaction pruning (`pruneMessages`)
 
