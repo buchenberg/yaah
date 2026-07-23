@@ -127,5 +127,3 @@ func TestEventPointerReceivers(t *testing.T) {
 		t.Error("uninitialized interface must be nil")
 	}
 }
-
-

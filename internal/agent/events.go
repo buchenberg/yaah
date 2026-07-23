@@ -91,5 +91,3 @@ var (
 	_ Event = (*SubAgentStartEvent)(nil)
 	_ Event = (*SubAgentEndEvent)(nil)
 )
-
-

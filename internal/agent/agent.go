@@ -57,8 +57,6 @@ const (
 	SubAgentsOnly
 )
 
-
-
 // ToolResultMaxLen is a deprecated alias for truncateMaxBytes. Use
 // truncateToolResult() in agent_truncation.go for the line/byte dual-limit
 // truncation.
