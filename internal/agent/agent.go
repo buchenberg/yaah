@@ -662,6 +662,7 @@ func (l *Loop) applyDefaults() {
 			MaxRetries:       l.MaxRetries,
 			RetryBackoff:     l.RetryBackoff,
 			ContextWindow:    l.ContextWindow,
+			SessionID:        l.SessionID,
 			OnToken:          l.OnToken,
 			OnThinking:       l.OnThinking,
 			Compact:          l.llmCompact,

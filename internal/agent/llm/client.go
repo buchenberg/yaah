@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent/errorclassify"
+	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -19,6 +20,7 @@ type Client struct {
 	MaxRetries       int
 	RetryBackoff     time.Duration
 	ContextWindow    int
+	SessionID        string
 	OnToken          TokenCallback
 	OnThinking       ThinkingCallback
 	Compact          CompactFunc
@@ -32,6 +34,9 @@ type Client struct {
 // was streamed, the provider usage, and any error. It handles retries,
 // provider rotation on credential errors, and context compaction on overflow.
 func (c *Client) Call(ctx context.Context, req types.ChatRequest) (types.Message, bool, types.Usage, error) {
+	// Inject session ID into context so providers can set affinity headers.
+	ctx = providers.WithSessionID(ctx, c.SessionID)
+
 	var lastMsg types.Message
 	var wasStreamed bool
 	var lastErr error

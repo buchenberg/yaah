@@ -64,6 +64,7 @@ func (c *OpenAIClient) SendStream(ctx context.Context, req types.ChatRequest) (<
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 		httpReq.Header.Set("Accept", "text/event-stream")
+		setSessionHeaders(httpReq, SessionIDFromContext(ctx))
 
 		resp, err := c.client.Do(httpReq)
 		if err != nil {
