@@ -76,9 +76,12 @@ func (l *Loop) EstimatedTokens() int {
 }
 
 // messageTokens estimates the token count of a single message using chars/4
-// for content plus tool-call arguments. Applies a 10-token floor for role/metadata.
+// for content, reasoning content, plus tool-call arguments. Applies a 10-token
+// floor for role/metadata. ReasoningContent is counted because it is serialized
+// in every provider request and contributes to the real prompt size; omitting it
+// causes token estimates (and therefore compaction triggers) to undercount.
 func messageTokens(m types.Message) int {
-	tokens := len(m.Content) / 4
+	tokens := len(m.Content)/4 + len(m.ReasoningContent)/4
 	for _, tc := range m.ToolCalls {
 		tokens += len(tc.Function.Arguments)/4 + len(tc.Function.Name)/4
 	}

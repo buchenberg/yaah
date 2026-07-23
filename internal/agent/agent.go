@@ -239,6 +239,14 @@ type Loop struct {
 	// via PipelineDisabled: ["soft_prune"].
 	Pruner *pipeline.Pruner
 
+	// ReasoningProtectTurns is the number of recent user-message turns whose
+	// assistant ReasoningContent is preserved in provider requests. Reasoning
+	// on older turns is stripped from the ephemeral request copy (the stored
+	// history is untouched) because models generate fresh reasoning each turn
+	// and re-sending accumulated reasoning bloats every request. Default 0
+	// means 2 (matching the pruner's MinTurns).
+	ReasoningProtectTurns int
+
 	// ConflictTracker detects and reports external file modifications made
 	// outside the agent's own write/edit/replace/delete tools during a turn.
 	// When non-nil and conflicts are found, a user message describing them
@@ -456,7 +464,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 
 		req := types.ChatRequest{
 			Model:    l.Model,
-			Messages: l.applyPruning(repairOrphans(messages)),
+			Messages: l.prepareRequestMessages(messages),
 			Tools:    l.buildToolsForLevel(),
 		}
 
@@ -656,6 +664,9 @@ func (l *Loop) applyDefaults() {
 	}
 	if l.LoopDetectWindow <= 0 {
 		l.LoopDetectWindow = 10
+	}
+	if l.ReasoningProtectTurns <= 0 {
+		l.ReasoningProtectTurns = defaultReasoningProtectTurns
 	}
 	if l.MaxToolConcurrency > 0 && l.toolSem == nil {
 		l.toolSem = make(chan struct{}, l.MaxToolConcurrency)
