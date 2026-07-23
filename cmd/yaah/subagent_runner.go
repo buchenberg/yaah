@@ -20,11 +20,20 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker, estimateFactor float64, subContextWindow int, outputLimit int) *tools.TaskTool {
+func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker, estimateFactor float64, subContextWindow int, outputLimit int, providerMap map[string]config.Provider) *tools.TaskTool {
 	// Sub-agent spawning depth is hard-coded at 1: the top-level agent
 	// can spawn one level of sub-agents; sub-agents cannot spawn further
 	// sub-agents (remainingDepth reaches 0).
 	depth := 1
+	roleDescs := make(map[string]string, len(roleNames))
+	for _, name := range roleNames {
+		p := subagent.RoleProfileFor(subagent.SubAgentRole(name))
+		if p.Description != "" {
+			roleDescs[name] = p.Description
+		} else if p.Specialty != "" {
+			roleDescs[name] = p.Specialty
+		}
+	}
 	return &tools.TaskTool{
 		Runner: makeTaskRunner(taskRunnerOpts{
 			provider:         provider,
@@ -42,10 +51,12 @@ func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 			estimateFactor:   estimateFactor,
 			subContextWindow: subContextWindow,
 			outputLimit:      outputLimit,
+			providerMap:      providerMap,
 		}, depth),
-		ResolveTimeout: subAgentTimeoutResolver(subCfg),
-		RoleNames:      roleNames,
-		Tracker:        tracker,
+		ResolveTimeout:   subAgentTimeoutResolver(subCfg),
+		RoleNames:        roleNames,
+		RoleDescriptions: roleDescs,
+		Tracker:          tracker,
 	}
 }
 
@@ -148,6 +159,11 @@ type taskRunnerOpts struct {
 	// estimateFactor is the preflight token estimate multiplier inherited
 	// from the parent config.
 	estimateFactor float64
+
+	// providerMap is the full set of configured providers, needed for
+	// per-role provider resolution by name. When nil/unset, per-role
+	// provider overrides fall through to the global override.
+	providerMap map[string]config.Provider
 }
 
 // subAgentSeq guarantees unique sub-session IDs across concurrent
@@ -216,16 +232,41 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			var b strings.Builder
 			if jsonMode {
 				b.WriteString("\n\nRespond with a JSON object matching the contract below.\n\n")
-			} else {
-				b.WriteString("\n\n## Response contract\n\n")
 			}
+			b.WriteString("## Contract Rules\n\n")
+			b.WriteString("Evidence fields (raw tool output: command, stdout, stderr, exit_code, ")
+			b.WriteString("file path, URL) must contain exact, unedited output from a specific ")
+			b.WriteString("tool call. Do NOT parse, summarize, or reinterpret raw tool output — ")
+			b.WriteString("report it verbatim.\n\n")
+			b.WriteString("Interpretation fields (your synthesis: finding, summary, recommendation, ")
+			b.WriteString("confidence) are your analysis. Mark confidence as high/medium/low ")
+			b.WriteString("based on whether evidence directly supports each finding.\n\n")
+			b.WriteString("## Response contract\n\n")
 			b.WriteString("Always end your response with a structured block:\n\n```\n")
 			b.WriteString(profile.Contract.Heading + "\n")
 			for _, f := range profile.Contract.Fields {
-				b.WriteString("- **" + f + "**: <value>\n")
+				if f.Kind != "" {
+					b.WriteString("- **" + f.Name + "** (" + f.Kind + "): <value>\n")
+				} else {
+					b.WriteString("- **" + f.Name + "**: <value>\n")
+				}
 			}
 			b.WriteString("```")
 			sysPrompt += b.String()
+		}
+		if roleHasShell(profile.Tools) {
+			shell := "bash"
+			if runtime.GOOS == "windows" {
+				shell = "powershell"
+			}
+			otherShell := "powershell"
+			if runtime.GOOS == "windows" {
+				otherShell = "bash, sh, or cmd"
+			}
+			sysPrompt += "\n\n## Available Shell\n"
+			sysPrompt += fmt.Sprintf("Your environment only has %s available. ", shell)
+			sysPrompt += fmt.Sprintf("Use %s for ALL command execution. ", shell)
+			sysPrompt += fmt.Sprintf("There is no %s.", otherShell)
 		}
 
 		// Persist the sub-agent transcript under a child session. The ID
@@ -249,10 +290,21 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		}
 
 		subProvider := opts.subAgentProvider
+		subModel := opts.subAgentModel
+		if rc, ok := opts.subCfg.Roles[string(role)]; ok {
+			if rc.Provider != "" {
+				subProvider = resolveProviderByName(opts.providerMap, rc.Provider)
+				if subProvider != nil {
+					subModel = ""
+				}
+			}
+			if rc.Model != "" {
+				subModel = rc.Model
+			}
+		}
 		if subProvider == nil {
 			subProvider = opts.provider
 		}
-		subModel := opts.subAgentModel
 		if subModel == "" {
 			subModel = opts.modelName
 		}
@@ -271,10 +323,11 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			ApprovalMode:           "allow",
 			DB:                     subDB,
 			SessionID:              subSessionID,
-			MaxSubAgentConcurrency: opts.subCfg.MaxConcurrency,
+			MaxSubAgentConcurrency: resolveSubAgentConcurrency(opts.subCfg, role),
 			OtelEnabled:            opts.OtelEnabled,
 			OtelVerbose:            opts.OtelVerbose,
 			OnTool:                 opts.SubToolCallback,
+			OnToken:                func(token string) {},
 		}
 
 		result, runErr := subLoop.Run(ctx, prompt)
@@ -490,6 +543,33 @@ func safeTruncateBytes(s string, maxBytes int) string {
 		i--
 	}
 	return s[:i]
+}
+
+// resolveSubAgentConcurrency picks the max concurrent sub-agent spawns for a
+// sub-loop. Precedence: per-role override > global config > default of 3.
+func resolveSubAgentConcurrency(subCfg config.SubAgentConfig, role subagent.SubAgentRole) int {
+	if rc, ok := subCfg.Roles[string(role)]; ok && rc.MaxConcurrency > 0 {
+		return rc.MaxConcurrency
+	}
+	if subCfg.MaxConcurrency > 0 {
+		return subCfg.MaxConcurrency
+	}
+	return 3
+}
+
+// roleHasShell reports whether the role's tool list includes a shell
+// (bash or powershell). Empty tool lists (legacy full-tool profile) are
+// considered to have all tools, including both shells.
+func roleHasShell(tools []string) bool {
+	if len(tools) == 0 {
+		return true
+	}
+	for _, t := range tools {
+		if t == "bash" || t == "powershell" {
+			return true
+		}
+	}
+	return false
 }
 
 func formatBytes(n int) string {

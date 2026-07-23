@@ -154,6 +154,18 @@ func resolveSubAgent(cfg *config.Config) (agent.Provider, string) {
 	return nil, ""
 }
 
+// resolveProviderByName looks up a provider by name from the config map.
+// Returns nil if the name is not found or the provider has no valid key/URL.
+// The caller falls through to the next step in the resolution chain.
+func resolveProviderByName(pmap map[string]config.Provider, name string) agent.Provider {
+	if p, ok := pmap[name]; ok {
+		if prov, ok2 := makeProvider(p); ok2 {
+			return prov
+		}
+	}
+	return nil
+}
+
 // resolveProvider picks the best available provider from the config.
 func resolveProvider(cfg *config.Config) agent.Provider {
 	providerName := resolveProviderName(cfg)

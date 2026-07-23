@@ -26,6 +26,7 @@ const (
 type RoleProfile struct {
 	DisplayName   string
 	Specialty     string
+	Description   string
 	Contract      ContractDef
 	Tools         []string
 	MaxIterations int

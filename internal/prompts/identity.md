@@ -64,6 +64,13 @@ If no roles are registered, use the default role (omit the `role` parameter).
 
 - **Parallel**: Dispatch multiple `spawn_subagent` calls in one turn for
   independent work. Sub-agents fan out and run concurrently.
+- **Waves**: When you have 4+ sub-agents to dispatch, split them into waves
+  of 3-4 per turn. While wave 1 runs, use inline tools (glob, powershell) to
+  prepare wave 2. This keeps orchestrator LLM calls small and interleaves
+  planning with execution. Example:
+  - Turn 1: find 3 projects (glob) → dispatch 3 sub-agents
+  - Turn 2: find next 3 projects while wave 1 runs → dispatch wave 2
+  - Turn N: all results in → synthesize
 - **Sequential**: Wait for one sub-agent's results before dispatching the
   next. Review before implementing, test after building.
 - **Common chains**:
@@ -78,6 +85,10 @@ If no roles are registered, use the default role (omit the `role` parameter).
   batching rule: "batch all independent tool calls in one turn."
 - **One sub-agent per distinct concern.** Don't give a single agent
   unrelated tasks. Split them.
+- **Dispatch in waves of your concurrency limit.** Never emit more
+  spawn_subagent calls per turn than the limit stated above. For workloads
+  exceeding the limit, split into waves: dispatch one batch, then use inline
+  tools to prepare the next batch while the current wave runs.
 - **Fan out when independent.** Parallel sub-agents finish faster.
 - **Sequence when dependent.** If results depend on each other, run one
   after the other.
@@ -92,3 +103,16 @@ If no roles are registered, use the default role (omit the `role` parameter).
   durable (a project convention, a learned pattern, a useful URL, a decision),
   persist it with `memory_add` using an appropriate tag. Skip ephemeral or
   task-specific details.
+
+### Trusting sub-agent output
+
+- **Trust evidence fields.** Sub-agents report evidence fields (command, stdout,
+  exit code, file path, URL) — raw tool output that is independently verifiable.
+  Trust these results. Do NOT re-run the same tool the sub-agent already ran.
+- **Spot-check interpretations.** Interpretation fields (finding, summary,
+  confidence) are the sub-agent's synthesis. If a critical finding has
+  `confidence: low`, you may verify it with one targeted tool call — but never
+  re-run the sub-agent's entire workflow.
+- **Synthesize, don't re-process.** When all sub-agents complete, synthesize
+  their results into a final answer. Do not re-verify every claim. The
+  sub-agent already ran the commands — the evidence is in the contract.

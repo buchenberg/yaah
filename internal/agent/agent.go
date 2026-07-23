@@ -449,6 +449,12 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			}
 			if iter >= effective {
 				req.Tools = nil
+				if l.OtelEnabled && turnSpan != nil {
+					turnSpan.AddEvent("maxturns.stripped", trace.WithAttributes(
+						attribute.Int("maxturns.limit", l.MaxTurns),
+						attribute.Int("maxturns.iteration", iter),
+					))
+				}
 			}
 		}
 
@@ -497,6 +503,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 				attribute.Int("turn.tool_calls", len(msg.ToolCalls)),
 				attribute.String("turn.tool_call_names", strings.Join(toolNames, ",")),
 				attribute.Int("turn.messages", len(messages)),
+				attribute.String("llm.model", l.Model),
 				attribute.Int("llm.total_prompt_tokens", l.TotalTokens.PromptTokens),
 				attribute.Int("llm.total_completion_tokens", l.TotalTokens.CompletionTokens),
 				attribute.Int("turn.prompt_tokens", l.TotalTokens.PromptTokens-tokensBeforeTurn.PromptTokens),

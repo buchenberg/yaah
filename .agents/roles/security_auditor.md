@@ -1,6 +1,7 @@
 ---
 name: Sam
 specialty: security
+description: Scans code for vulnerabilities, secrets, and unsafe patterns
 contract:
   heading: "## Audit"
   fields: [severity, files_scanned, issues_found, findings, summary]

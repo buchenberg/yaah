@@ -1,9 +1,17 @@
 ---
 name: Tim
 specialty: reviewer
+description: Inspects code, counts files, measures complexity, reports findings
 contract:
   heading: "## Metrics"
-  fields: [files, lines, complexity, issues_found, findings, key_detail]
+  fields:
+    - { name: files,          kind: evidence }
+    - { name: lines,          kind: evidence }
+    - { name: tools_used,     kind: evidence }
+    - { name: complexity,     kind: interpretation }
+    - { name: issues_found,   kind: interpretation }
+    - { name: key_detail,     kind: interpretation }
+    - { name: findings,       kind: interpretation }
 tools:
   - read
   - grep
@@ -19,7 +27,7 @@ tools:
   - http
   - git
 max_iterations: 15
-max_turns: 3
+max_turns: 2
 timeout: 120
 max_depth: 0
 ---
