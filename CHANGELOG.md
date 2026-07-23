@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.0](https://github.com/buchenberg/yaah/compare/v0.26.0...v0.27.0) (2026-07-23)
+
+
+### Features
+
+* framework parity phase 1 — correctness & durability ([#52](https://github.com/buchenberg/yaah/issues/52)) ([ccd7a57](https://github.com/buchenberg/yaah/commit/ccd7a570a267ca65925ae4e9057d1893fc900cec))
+
 ## [0.26.0](https://github.com/buchenberg/yaah/compare/v0.25.0...v0.26.0) (2026-07-23)
 
 
