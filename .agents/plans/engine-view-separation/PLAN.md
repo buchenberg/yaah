@@ -1,7 +1,7 @@
 ---
 name: engine-view-separation
 description: Refactor the engine-view boundary with clean interfaces, typed events, and single-delivery architecture
-status: draft
+status: completed
 ---
 
 ## Engine-View Separation: Analysis & Refactoring Plan

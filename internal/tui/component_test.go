@@ -447,12 +447,12 @@ func TestRenderToolResult_Todowrite(t *testing.T) {
 	}
 }
 
-func TestHandleAgentMsg_Todos(t *testing.T) {
+func TestHandleControlMsg_Todos(t *testing.T) {
 	m := &Model{width: 80, height: 30}
 	items := []todo.Item{
 		{ID: "td-1", Content: "do a thing", Status: "in_progress", Priority: "high"},
 	}
-	m.HandleAgentMsg(AgentMsg{Todos: items})
+	m.handleControlMsg(ControlMsg{Todos: items})
 	if len(m.todos) != 1 {
 		t.Fatalf("expected 1 todo stored, got %d", len(m.todos))
 	}
@@ -461,7 +461,7 @@ func TestHandleAgentMsg_Todos(t *testing.T) {
 	}
 
 	// Empty (non-nil) list clears the panel.
-	m.HandleAgentMsg(AgentMsg{Todos: []todo.Item{}})
+	m.handleControlMsg(ControlMsg{Todos: []todo.Item{}})
 	if len(m.todos) != 0 {
 		t.Errorf("expected todos cleared, got %d", len(m.todos))
 	}
