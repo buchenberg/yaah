@@ -26,7 +26,7 @@ func TestGitTool_status(t *testing.T) {
 
 func TestGitTool_rejectsUnsupportedAction(t *testing.T) {
 	gt := &GitTool{}
-	_, err := gt.Execute(context.Background(), `{"action":"push"}`)
+	_, err := gt.Execute(context.Background(), `{"action":"rebase"}`)
 	if err == nil {
 		t.Fatal("expected error for unsupported action")
 	}
@@ -70,6 +70,9 @@ func TestGitTool_isDangerousForMutatingActions(t *testing.T) {
 		{`{"action":"branch"}`, false},
 		{`{"action":"add"}`, true},
 		{`{"action":"commit"}`, true},
+		{`{"action":"push"}`, true},
+		{`{"action":"pull"}`, true},
+		{`{"action":"fetch"}`, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.args, func(t *testing.T) {
@@ -84,5 +87,45 @@ func TestGitTool_isNotDangerousForInvalidJSON(t *testing.T) {
 	gt := &GitTool{}
 	if gt.IsDangerous(`bad json`) {
 		t.Error("expected false for invalid JSON")
+	}
+}
+
+func TestGitTool_rejectsFlagInjectionViaPaths(t *testing.T) {
+	gt := &GitTool{}
+	tests := []struct {
+		args string
+		msg  string
+	}{
+		{`{"action":"diff","paths":["--help"]}`, "flag injection via diff paths"},
+		{`{"action":"push","paths":["--force"]}`, "flag injection via push paths"},
+		{`{"action":"pull","paths":["--rebase"]}`, "flag injection via pull paths"},
+		{`{"action":"fetch","paths":["--all"]}`, "flag injection via fetch paths"},
+		{`{"action":"add","paths":["-f"]}`, "flag injection via add paths"},
+		{`{"action":"status","paths":["--ignored"]}`, "flag injection via status paths"},
+		{`{"action":"diff","paths":["legit-file","--help"]}`, "flag injection mixed with valid path"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.msg, func(t *testing.T) {
+			_, err := gt.Execute(context.Background(), tt.args)
+			if err == nil {
+				t.Fatal("expected error for flag injection")
+			}
+			t.Logf("correctly rejected: %v", err)
+		})
+	}
+}
+
+func TestGitTool_allowsDotSlashDashFilenames(t *testing.T) {
+	// validatePaths allows ./-foo since it starts with '.', not '-'.
+	// This test just validates the guard logic — it doesn't need git.
+	gt := &GitTool{}
+	// status with ./-filename should pass validation (status is read-only, safe)
+	_, err := gt.Execute(context.Background(), `{"action":"status","paths":["./-foo","./-bar"]}`)
+	if err != nil && gitAvailable() {
+		// If git is available and we still get an error, it should NOT be
+		// the flag-injection error.
+		if err.Error() == "git: path \"./-foo\" starts with '-'; use '././-foo' instead to prevent flag injection" {
+			t.Fatalf("./-foo was incorrectly flagged: %v", err)
+		}
 	}
 }

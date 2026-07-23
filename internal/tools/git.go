@@ -21,6 +21,9 @@ var allowedGitActions = map[string]struct {
 	"branch":      {"List local branches", false},
 	"add":         {"Stage file(s) for commit", true},
 	"commit":      {"Create a new commit", true},
+	"push":        {"Push commits to remote", true},
+	"pull":        {"Pull commits from remote", true},
+	"fetch":       {"Fetch from remote (read-only)", false},
 }
 
 // GitTool runs git commands directly (not through a shell).
@@ -30,7 +33,7 @@ type GitTool struct{}
 
 func (t *GitTool) Name() string { return "git" }
 func (t *GitTool) Description() string {
-	return "Run a git command (status, diff, log, show, branch, add, commit)."
+	return "Run a git command (status, diff, log, show, branch, add, commit, push, pull, fetch)."
 }
 
 func (t *GitTool) Schema() json.RawMessage {
@@ -39,7 +42,7 @@ func (t *GitTool) Schema() json.RawMessage {
 		"properties": {
 			"action": {
 				"type": "string",
-				"enum": ["status", "diff", "diff_staged", "log", "show", "branch", "add", "commit"],
+				"enum": ["status", "diff", "diff_staged", "log", "show", "branch", "add", "commit", "push", "pull", "fetch"],
 				"description": "The git action to perform"
 			},
 			"paths": {
@@ -85,6 +88,10 @@ func (t *GitTool) Execute(ctx context.Context, args string) (string, error) {
 	}
 	if params.Action == "" {
 		return "", fmt.Errorf("git: action is required")
+	}
+
+	if err := validatePaths(params.Paths); err != nil {
+		return "", err
 	}
 
 	info, ok := allowedGitActions[params.Action]
@@ -133,6 +140,15 @@ func (t *GitTool) Execute(ctx context.Context, args string) (string, error) {
 			return "", fmt.Errorf("git: commit requires a message")
 		}
 		cmdArgs = []string{"commit", "-m", params.Message}
+	case "push":
+		cmdArgs = []string{"push"}
+		cmdArgs = append(cmdArgs, params.Paths...)
+	case "pull":
+		cmdArgs = []string{"pull"}
+		cmdArgs = append(cmdArgs, params.Paths...)
+	case "fetch":
+		cmdArgs = []string{"fetch"}
+		cmdArgs = append(cmdArgs, params.Paths...)
 	default:
 		return "", fmt.Errorf("git: unsupported action %q", params.Action)
 	}
@@ -147,6 +163,17 @@ func (t *GitTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", fmt.Errorf("%s\n%s: %w", string(output), info.description, err)
 	}
 	return strings.TrimSpace(string(output)), nil
+}
+
+// validatePaths rejects paths that start with "-" to prevent flag injection.
+// Use "./-filename" to reference files whose names begin with a hyphen.
+func validatePaths(paths []string) error {
+	for _, p := range paths {
+		if strings.HasPrefix(p, "-") {
+			return fmt.Errorf("git: path %q starts with '-'; use './%s' instead to prevent flag injection", p, p)
+		}
+	}
+	return nil
 }
 
 func allowedActionList() string {
