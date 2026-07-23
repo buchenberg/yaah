@@ -372,6 +372,9 @@ func (l *Loop) Run(ctx context.Context, userInput string) (response string, runE
 // runMiddleware executes the agent loop using the middleware pipeline.
 func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response string, runErr error) {
 	defer func() {
+		if r := recover(); r != nil {
+			runErr = fmt.Errorf("panic: %v", r)
+		}
 		if l.WriteDebouncer != nil {
 			l.WriteDebouncer.Flush()
 		}
