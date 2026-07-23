@@ -304,6 +304,13 @@ type Loop struct {
 	// Created in applyDefaults when MaxSubAgentConcurrency > 0.
 	subAgentSem chan struct{}
 
+	// toolDefsCache holds the most recently built OpenAI tool definitions, and
+	// toolDefsGen is the Registry.Generation() it was built from. buildToolDefs
+	// returns the cache when the generation is unchanged, avoiding a full
+	// schema re-read and re-allocation on every loop iteration.
+	toolDefsCache []types.ToolDef
+	toolDefsGen   int
+
 	// lastCompactionTokens tracks the estimated token count after the most
 	// recent compaction, used to prevent re-compacting too aggressively.
 	lastCompactionTokens int
