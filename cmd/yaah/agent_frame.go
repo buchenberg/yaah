@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
@@ -18,6 +19,7 @@ import (
 	"github.com/buchenberg/yaah/internal/observability"
 	processpkg "github.com/buchenberg/yaah/internal/process"
 	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/buchenberg/yaah/internal/pubsub"
 	"github.com/buchenberg/yaah/internal/skills"
 	"github.com/buchenberg/yaah/internal/spinner"
 	"github.com/buchenberg/yaah/internal/todo"
@@ -398,66 +400,78 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		ToolsLevel:             agent.FullTools,
 	}
 
+	broker := pubsub.NewBroker[agent.Event]()
+	loop.Broker = broker
+	sub := broker.Subscribe("terminal", 256)
+
 	spin := spinner.New(nil, "Thinking...")
 	fmt.Fprintln(os.Stderr)
 	spin.Start()
 
 	streamed := false
-	loop.OnToken = func(token string) {
-		if !streamed {
-			spin.Stop()
-			fmt.Fprintln(os.Stderr)
-			streamed = true
-		}
-		fmt.Fprint(os.Stderr, token)
-	}
-
-	loop.OnTool = func(info agent.ToolInfo) {
-		if info.Duration == 0 {
-			spin.Stop()
-			return
-		}
-		if info.Name == "spawn_subagent" {
-			return // sub-agent lifecycle rendered by OnSubAgent
-		}
-
-		fmt.Fprintf(os.Stderr, "\n  tool: %s", Bold(info.Name))
-		if info.Args != "" {
-			args := info.Args
-			if len(args) > 60 {
-				args = args[:57] + "..."
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for evt := range sub {
+			switch e := evt.(type) {
+			case *agent.TokenDeltaEvent:
+				if !streamed {
+					spin.Stop()
+					fmt.Fprintln(os.Stderr)
+					streamed = true
+				}
+				fmt.Fprint(os.Stderr, e.Text)
+			case *agent.ToolStartEvent:
+				spin.Stop()
+			case *agent.ToolEndEvent:
+				if e.Name == "spawn_subagent" {
+					continue // sub-agent lifecycle rendered by SubAgentStart/End
+				}
+				fmt.Fprintf(os.Stderr, "\n  tool: %s", Bold(e.Name))
+				if e.Args != "" {
+					args := e.Args
+					if len(args) > 60 {
+						args = args[:57] + "..."
+					}
+					fmt.Fprintf(os.Stderr, "(%s)", Dim(args))
+				}
+				fmt.Fprintf(os.Stderr, " (%s)\n", Dim(formatDuration(e.Duration)))
+				if e.Error != "" {
+					fmt.Fprintf(os.Stderr, "    %s\n", replYellow("error: "+e.Error))
+				}
+			case *agent.SubAgentStartEvent:
+				displayName := subagent.RoleDisplayName(subagent.SubAgentRole(e.Role))
+				specialty := subagent.RoleSpecialty(subagent.SubAgentRole(e.Role))
+				label := displayName
+				if specialty != "" {
+					label += " — " + specialty
+				}
+				fmt.Fprintf(os.Stderr, "\n╭─ sub-agent: %s · %s\n", Bold(label), e.Prompt)
+			case *agent.SubAgentEndEvent:
+				displayName := subagent.RoleDisplayName(subagent.SubAgentRole(e.Role))
+				specialty := subagent.RoleSpecialty(subagent.SubAgentRole(e.Role))
+				label := displayName
+				if specialty != "" {
+					label += " — " + specialty
+				}
+				status := "completed"
+				if e.Error != "" {
+					status = replYellow(e.Error)
+				}
+				modelStr := ""
+				if e.Model != "" {
+					modelStr = " [" + Dim(e.Model) + "]"
+				}
+				fmt.Fprintf(os.Stderr, "╰─ sub-agent: %s%s · %s (%s)\n", Bold(label), modelStr, status, Dim(formatDuration(e.Duration)))
 			}
-			fmt.Fprintf(os.Stderr, "(%s)", Dim(args))
 		}
-		fmt.Fprintf(os.Stderr, " (%s)\n", Dim(formatDuration(info.Duration)))
-		if info.Error != "" {
-			fmt.Fprintf(os.Stderr, "    %s\n", replYellow("error: "+info.Error))
-		}
-	}
-
-	loop.OnSubAgent = func(info agent.SubAgentInfo) {
-		displayName := subagent.RoleDisplayName(subagent.SubAgentRole(info.Role))
-		specialty := subagent.RoleSpecialty(subagent.SubAgentRole(info.Role))
-		label := displayName
-		if specialty != "" {
-			label += " — " + specialty
-		}
-		if info.Duration == 0 {
-			fmt.Fprintf(os.Stderr, "\n╭─ sub-agent: %s · %s\n", Bold(label), info.Prompt)
-		} else {
-			status := "completed"
-			if info.Error != "" {
-				status = replYellow(info.Error)
-			}
-			modelStr := ""
-			if info.Model != "" {
-				modelStr = " [" + Dim(info.Model) + "]"
-			}
-			fmt.Fprintf(os.Stderr, "╰─ sub-agent: %s%s · %s (%s)\n", Bold(label), modelStr, status, Dim(formatDuration(info.Duration)))
-		}
-	}
+	}()
 
 	response, err := loop.Run(context.Background(), prompt)
+	broker.Close()
+	wg.Wait()
+
 	if !streamed {
 		spin.Stop()
 	}

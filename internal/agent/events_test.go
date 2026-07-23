@@ -128,26 +128,4 @@ func TestEventPointerReceivers(t *testing.T) {
 	}
 }
 
-// TestLegacyTypesExist verifies the deprecated types still exist for Phase 1.
-func TestLegacyTypesExist(t *testing.T) {
-	evt := AgentEvent{Type: EventTokenDelta, Content: "test"}
-	if evt.Type != EventTokenDelta {
-		t.Errorf("expected EventTokenDelta, got %v", evt.Type)
-	}
-	if evt.Content != "test" {
-		t.Errorf("expected 'test', got %q", evt.Content)
-	}
 
-	// Verify all legacy constants are distinct.
-	constants := map[EventType]bool{}
-	constants[EventTokenDelta] = true
-	constants[EventThinking] = true
-	constants[EventFlush] = true
-	constants[EventToolStart] = true
-	constants[EventToolEnd] = true
-	constants[EventSubAgentStart] = true
-	constants[EventSubAgentEnd] = true
-	if len(constants) != 7 {
-		t.Errorf("expected 7 distinct event type constants, got %d", len(constants))
-	}
-}

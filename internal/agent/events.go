@@ -92,38 +92,4 @@ var (
 	_ Event = (*SubAgentEndEvent)(nil)
 )
 
-// =============================================================================
-// Legacy event types — deprecated, removed in Phase 2
-// =============================================================================
 
-// EventType is deprecated. Use the Event interface with type switches instead.
-type EventType int
-
-const (
-	EventTokenDelta EventType = iota
-	EventThinking
-	EventFlush
-	EventToolStart
-	EventToolEnd
-	EventSubAgentStart
-	EventSubAgentEnd
-)
-
-// AgentEvent is deprecated. Use the Event interface with concrete types instead.
-type AgentEvent struct {
-	Type EventType
-
-	Content string
-
-	ToolName     string
-	ToolArgs     string
-	ToolResult   string
-	ToolDuration time.Duration
-	ToolError    string
-
-	SubAgentRole     string
-	SubAgentModel    string
-	SubAgentPrompt   string
-	SubAgentDuration time.Duration
-	SubAgentError    string
-}

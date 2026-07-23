@@ -27,10 +27,8 @@ type Provider = llm.Provider
 // StreamProvider is a provider that supports streaming responses.
 type StreamProvider = llm.StreamProvider
 
-// TokenCallback is called for each streamed token.
-type TokenCallback = llm.TokenCallback
-
-// ToolInfo contains information about a tool call for display.
+// ToolInfo is a legacy type preserved for external reference.
+// New code should consume ToolStartEvent / ToolEndEvent via the Broker.
 type ToolInfo struct {
 	Name     string        // tool name
 	Args     string        // abbreviated arguments
@@ -39,13 +37,8 @@ type ToolInfo struct {
 	Error    string        // error message if the tool failed
 }
 
-// ToolCallback is called before and after each tool execution.
-// The first call (before) has Duration=0 and Error="".
-// The second call (after) has the actual Duration and any Error.
-type ToolCallback func(info ToolInfo)
-
-// SubAgentInfo contains information about a sub-agent dispatched by the
-// task tool for display in the CLI/TUI.
+// SubAgentInfo is a legacy type preserved for external reference.
+// New code should consume SubAgentStartEvent / SubAgentEndEvent via the Broker.
 type SubAgentInfo struct {
 	Role     string        // worker, reviewer, planner, or custom
 	Model    string        // model used by the sub-agent
@@ -53,15 +46,6 @@ type SubAgentInfo struct {
 	Duration time.Duration // how long the sub-agent ran (0 on start)
 	Error    string        // error or status message on completion
 }
-
-// SubAgentCallback is called when a sub-agent starts (Duration=0) and
-// when it completes (Duration set). Unlike ToolCallback, both calls are
-// emitted by executeAndCollect so the CLI can bracket the sub-agent
-// with visual markers independent of the task tool's own output.
-type SubAgentCallback func(info SubAgentInfo)
-
-// ThinkingCallback is called when the model outputs thinking/reasoning text.
-type ThinkingCallback = llm.ThinkingCallback
 
 // ToolsLevel controls which tools the agent sees.
 type ToolsLevel int
@@ -73,11 +57,7 @@ const (
 	SubAgentsOnly
 )
 
-// FlushCallback is called when the model finishes a streaming segment and
-// is about to start a tool call or a new iteration. The TUI uses this to
-// flush the accumulated streaming content into the message list so the
-// next segment starts on a fresh line.
-type FlushCallback func(content string)
+
 
 // ToolResultMaxLen is a deprecated alias for truncateMaxBytes. Use
 // truncateToolResult() in agent_truncation.go for the line/byte dual-limit
@@ -101,17 +81,12 @@ type Loop struct {
 	MaxIterations int
 	MaxTurns      int
 	JSONMode      bool
-	OnToken       TokenCallback
-	OnTool        ToolCallback
-	OnSubAgent    SubAgentCallback
-	OnThinking    ThinkingCallback
-	OnFlush       FlushCallback
-
 	// Broker decouples streaming from UI consumers via an in-process
-	// pub/sub channel. When set, OnToken/OnThinking/OnFlush/OnTool/
-	// OnSubAgent events are published to the broker in addition to
-	// the callback fields above.
-	Broker *pubsub.Broker[AgentEvent]
+	// pub/sub channel. When set, all agent events (tokens, thinking,
+	// flush, tool starts/ends, sub-agent starts/ends) are published
+	// via the typed Event interface. Consumers use BrokerView to
+	// subscribe.
+	Broker *pubsub.Broker[Event]
 
 	Middleware []pipeline.Middleware // Optional custom middleware override
 
@@ -545,11 +520,8 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			return msg.Content, nil
 		}
 
-		if streamed && msg.Content != "" && l.OnFlush != nil {
-			l.OnFlush(msg.Content)
-		}
 		if streamed && msg.Content != "" && l.Broker != nil {
-			l.Broker.PublishMustDeliver(AgentEvent{Type: EventFlush, Content: msg.Content})
+			l.Broker.PublishMustDeliver(&FlushEvent{Content: msg.Content})
 		}
 
 		step, err = pipe.RunPostModel(ctx, &msg, step)
@@ -668,22 +640,14 @@ func (l *Loop) applyDefaults() {
 		l.subAgentSem = make(chan struct{}, l.MaxSubAgentConcurrency)
 	}
 	if l.LLM == nil {
-		onToken := l.OnToken
-		onThinking := l.OnThinking
+		var onToken llm.TokenCallback
+		var onThinking llm.ThinkingCallback
 		if l.Broker != nil {
-			innerToken := onToken
 			onToken = func(token string) {
-				l.Broker.Publish(AgentEvent{Type: EventTokenDelta, Content: token})
-				if innerToken != nil {
-					innerToken(token)
-				}
+				l.Broker.Publish(&TokenDeltaEvent{Text: token})
 			}
-			innerThinking := onThinking
 			onThinking = func(text string) {
-				l.Broker.Publish(AgentEvent{Type: EventThinking, Content: text})
-				if innerThinking != nil {
-					innerThinking(text)
-				}
+				l.Broker.Publish(&ThinkingEvent{Text: text})
 			}
 		}
 		l.LLM = &llm.Client{

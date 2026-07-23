@@ -80,18 +80,11 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 				}
 			}()
 
-			if isTask && l.OnSubAgent != nil {
-				l.OnSubAgent(SubAgentInfo{Role: taskRole, Prompt: taskPrompt})
-			}
 			if isTask && l.Broker != nil {
-				l.Broker.PublishMustDeliver(AgentEvent{Type: EventSubAgentStart, SubAgentRole: taskRole, SubAgentPrompt: taskPrompt})
-			}
-
-			if l.OnTool != nil {
-				l.OnTool(ToolInfo{Name: tc.Function.Name, Args: abbreviated})
+				l.Broker.PublishMustDeliver(&SubAgentStartEvent{Role: taskRole, Prompt: taskPrompt})
 			}
 			if l.Broker != nil {
-				l.Broker.PublishMustDeliver(AgentEvent{Type: EventToolStart, ToolName: tc.Function.Name, ToolArgs: abbreviated})
+				l.Broker.PublishMustDeliver(&ToolStartEvent{Name: tc.Function.Name, Args: abbreviated})
 			}
 
 			l.emitHook(HookEvent{
@@ -143,46 +136,30 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 				res = truncateToolResult(res)
 			}
 
-			if l.OnTool != nil {
-				info := ToolInfo{Name: tc.Function.Name, Args: abbreviated, Duration: duration, Result: res}
-				if err != nil {
-					info.Error = err.Error()
-				}
-				l.OnTool(info)
-			}
 			if l.Broker != nil {
-				evt := AgentEvent{
-					Type:         EventToolEnd,
-					ToolName:     tc.Function.Name,
-					ToolArgs:     abbreviated,
-					ToolResult:   res,
-					ToolDuration: duration,
+				evt := &ToolEndEvent{
+					Name:     tc.Function.Name,
+					Args:     abbreviated,
+					Result:   res,
+					Duration: duration,
 				}
 				if err != nil {
-					evt.ToolError = err.Error()
+					evt.Error = err.Error()
 				}
 				l.Broker.PublishMustDeliver(evt)
 			}
 
-			if isTask && l.OnSubAgent != nil {
-				model := subAgentModel
-				if model == "" {
-					model = l.Model
-				}
-				l.OnSubAgent(SubAgentInfo{Role: taskRole, Model: model, Prompt: taskPrompt, Duration: duration, Error: errStr})
-			}
 			if isTask && l.Broker != nil {
 				model := subAgentModel
 				if model == "" {
 					model = l.Model
 				}
-				l.Broker.PublishMustDeliver(AgentEvent{
-					Type:             EventSubAgentEnd,
-					SubAgentRole:     taskRole,
-					SubAgentModel:    model,
-					SubAgentPrompt:   taskPrompt,
-					SubAgentDuration: duration,
-					SubAgentError:    errStr,
+				l.Broker.PublishMustDeliver(&SubAgentEndEvent{
+					Role:     taskRole,
+					Model:    model,
+					Prompt:   taskPrompt,
+					Duration: duration,
+					Error:    errStr,
 				})
 			}
 
