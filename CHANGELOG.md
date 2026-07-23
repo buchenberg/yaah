@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.0](https://github.com/buchenberg/yaah/compare/v0.29.0...v0.30.0) (2026-07-23)
+
+
+### Features
+
+* **agent:** add typed Event interface, View contract, and BrokerView adapter ([#58](https://github.com/buchenberg/yaah/issues/58)) ([de18682](https://github.com/buchenberg/yaah/commit/de1868295cbed76b25a8f2fc672b7e4ac3cbfbf0))
+
 ## [0.29.0](https://github.com/buchenberg/yaah/compare/v0.28.0...v0.29.0) (2026-07-23)
 
 
