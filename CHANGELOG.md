@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.0](https://github.com/buchenberg/yaah/compare/v0.28.0...v0.29.0) (2026-07-23)
+
+
+### Features
+
+* **agent:** add in-process pub/sub broker for decoupled streaming ([#56](https://github.com/buchenberg/yaah/issues/56)) ([db50e08](https://github.com/buchenberg/yaah/commit/db50e0826e64ab8ec3f8c9e66303261f0c2a8e59))
+
 ## [0.28.0](https://github.com/buchenberg/yaah/compare/v0.27.0...v0.28.0) (2026-07-23)
 
 
