@@ -584,59 +584,36 @@ func runAgentForTUI(prompt string, controlCh chan<- tui.ControlMsg, p *tea.Progr
 	fallbackProvider, fallbackModel := resolveFallback(cfg)
 	forwarder := &tuiEventForwarder{program: p}
 
-	loop := &agent.Loop{
-		Provider:               provider,
-		CompactProvider:        compactProvider,
-		CompactModel:           compactModel,
-		FallbackProvider:       fallbackProvider,
-		FallbackModel:          fallbackModel,
-		Registry:               toolReg,
-		Model:                  modelName,
-		SystemPrompt:           systemPrompt,
-		MaxInlineToolsPerTurn:  cfg.Agent.Default.MaxInlineToolsPerTurn,
-		MaxIterations:          cfg.Agent.Default.MaxIterations,
-		MaxTurns:               cfg.Agent.Default.MaxTurns,
-		MaxRetries:             cfg.Agent.Default.MaxRetries,
-		RetryBackoff:           time.Duration(cfg.Agent.Default.RetryBackoffSecs) * time.Second,
-		ContextWindow:          cfg.Agent.Default.ContextWindow,
-		CompactionThreshold:    cfg.Agent.Default.CompactionThreshold,
-		Steer:                  steerCh,
-		FollowUps:              followupCh,
-		RawCompactionThreshold: cfg.Agent.Default.RawCompactionThreshold,
-		EstimateFactor:         cfg.Agent.Default.EstimateFactor,
-		LoopDetectCount:        cfg.Agent.Default.LoopDetectCount,
-		LoopDetectWindow:       cfg.Agent.Default.LoopDetectWindow,
-		MaxToolConcurrency:     cfg.Agent.Default.MaxToolConcurrency,
-		PromptCaching:          cfg.Agent.Default.PromptCaching,
-		ReasoningProtectTurns:  cfg.Agent.Default.ReasoningProtect,
-		ToolResultMaxLines:     cfg.Agent.Default.ToolResultMaxLines,
-		ToolResultMaxBytes:     cfg.Agent.Default.ToolResultMaxBytes,
-		PruneProtectTokens:     cfg.Agent.Default.PruneProtectTokens,
-		PruneMinReclaim:        cfg.Agent.Default.PruneMinReclaim,
-		PruneMinTurns:          cfg.Agent.Default.PruneMinTurns,
-		ApprovalMode:           resolveApproval(cfg),
-		Messages:               *messages,
-		HookDir:                cfg.Hooks.Dir,
-		SessionID:              sessionID,
-		PipelineNames:          cfg.Agent.Middleware.Enabled,
-		PipelineDisabled:       cfg.Agent.Middleware.Disabled,
-		DB:                     db,
-		WriteDebouncer: func() *memory.DebouncedWriter {
+	loop := agent.NewLoop(provider, toolReg,
+		agent.WithModel(modelName),
+		agent.WithSystemPrompt(systemPrompt),
+		agent.WithView(forwarder),
+		agent.WithMessages(*messages),
+		agent.WithDB(db),
+		agent.WithWriteDebouncer(func() *memory.DebouncedWriter {
 			if db != nil {
 				return memory.NewDebouncedWriter(db)
 			}
 			return nil
-		}(),
-		MsgIdx:                 *msgIdx,
-		MaxSubAgentConcurrency: cfg.Agent.SubAgent.MaxConcurrency,
-		StuckChildTimeout:      time.Duration(cfg.Agent.SubAgent.StuckChildTimeout) * time.Second,
-		StuckChildTimeouts:     buildStuckChildTimeouts(cfg.Agent.SubAgent),
-		OtelEnabled:            cfg.Observability.Otel.Enabled,
-		OtelVerbose:            cfg.Observability.Otel.Verbose,
-		ConflictTracker:        conflictTracker,
-		ToolsLevel:             agent.FullTools,
-		View:                   forwarder,
-		ApproveFn: func(name, args string) bool {
+		}()),
+		agent.WithSessionID(sessionID),
+		agent.WithMsgIdx(*msgIdx),
+		agent.WithHookDir(cfg.Hooks.Dir),
+		agent.WithFallback(fallbackProvider, fallbackModel),
+		agent.WithCompactProvider(compactProvider, compactModel),
+		agent.WithApprovalMode(resolveApproval(cfg)),
+		agent.WithPipeline(cfg.Agent.Middleware.Enabled, cfg.Agent.Middleware.Disabled),
+		agent.WithSteer(steerCh),
+		agent.WithFollowUps(followupCh),
+		agent.WithConflictTracker(conflictTracker),
+		agent.WithToolsLevel(agent.FullTools),
+		agent.WithOtel(cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose),
+		agent.WithSubAgentConcurrency(
+			cfg.Agent.SubAgent.MaxConcurrency,
+			time.Duration(cfg.Agent.SubAgent.StuckChildTimeout)*time.Second,
+			buildStuckChildTimeouts(cfg.Agent.SubAgent),
+		),
+		agent.WithApproveFn(func(name, args string) bool {
 			respCh := make(chan bool, 1)
 			p.Send(tui.ControlMsg{
 				ApproveChan: respCh,
@@ -644,8 +621,29 @@ func runAgentForTUI(prompt string, controlCh chan<- tui.ControlMsg, p *tea.Progr
 				ApproveArgs: args,
 			})
 			return <-respCh
-		},
-	}
+		}),
+		agent.WithLoopConfig(agent.LoopConfig{
+			MaxIterations:          cfg.Agent.Default.MaxIterations,
+			MaxTurns:               cfg.Agent.Default.MaxTurns,
+			MaxRetries:             cfg.Agent.Default.MaxRetries,
+			RetryBackoffSecs:       cfg.Agent.Default.RetryBackoffSecs,
+			ContextWindow:          cfg.Agent.Default.ContextWindow,
+			CompactionThreshold:    cfg.Agent.Default.CompactionThreshold,
+			RawCompactionThreshold: cfg.Agent.Default.RawCompactionThreshold,
+			EstimateFactor:         cfg.Agent.Default.EstimateFactor,
+			LoopDetectCount:        cfg.Agent.Default.LoopDetectCount,
+			LoopDetectWindow:       cfg.Agent.Default.LoopDetectWindow,
+			MaxToolConcurrency:     cfg.Agent.Default.MaxToolConcurrency,
+			MaxInlineToolsPerTurn:  cfg.Agent.Default.MaxInlineToolsPerTurn,
+			PromptCaching:          cfg.Agent.Default.PromptCaching,
+			ReasoningProtectTurns:  cfg.Agent.Default.ReasoningProtect,
+			ToolResultMaxLines:     cfg.Agent.Default.ToolResultMaxLines,
+			ToolResultMaxBytes:     cfg.Agent.Default.ToolResultMaxBytes,
+			PruneProtectTokens:     cfg.Agent.Default.PruneProtectTokens,
+			PruneMinReclaim:        cfg.Agent.Default.PruneMinReclaim,
+			PruneMinTurns:          cfg.Agent.Default.PruneMinTurns,
+		}),
+	)
 
 	_, err := loop.Run(context.Background(), prompt)
 

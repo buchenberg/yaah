@@ -309,45 +309,45 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			subModel = opts.modelName
 		}
 
-		subLoop := &agent.Loop{
-			Provider:               subProvider,
-			Registry:               subReg,
-			SystemPrompt:           sysPrompt,
-			Model:                  subModel,
-			MaxIterations:          maxIter,
-			MaxTurns:               maxTurns,
-			ContextWindow:          effectiveCW,
-			CompactionThreshold:    opts.defaults.CompactionThreshold,
-			RawCompactionThreshold: opts.defaults.RawCompactionThreshold,
-			JSONMode:               jsonMode,
-			MaxRetries:             opts.defaults.MaxRetries,
-			RetryBackoff:           time.Duration(opts.defaults.RetryBackoffSecs) * time.Second,
-			EstimateFactor:         opts.estimateFactor,
-			LoopDetectCount:        opts.defaults.LoopDetectCount,
-			LoopDetectWindow:       opts.defaults.LoopDetectWindow,
-			MaxToolConcurrency:     opts.defaults.MaxToolConcurrency,
-			PromptCaching:          opts.defaults.PromptCaching,
-			ReasoningProtectTurns:  opts.defaults.ReasoningProtect,
-			ToolResultMaxLines:     opts.defaults.ToolResultMaxLines,
-			ToolResultMaxBytes:     opts.defaults.ToolResultMaxBytes,
-			PruneProtectTokens:     opts.defaults.PruneProtectTokens,
-			PruneMinReclaim:        opts.defaults.PruneMinReclaim,
-			PruneMinTurns:          opts.defaults.PruneMinTurns,
-			ApprovalMode:           "allow",
-			DB:                     subDB,
-			WriteDebouncer: func() *memory.DebouncedWriter {
+		subLoop := agent.NewLoop(subProvider, subReg,
+			agent.WithModel(subModel),
+			agent.WithSystemPrompt(sysPrompt),
+			agent.WithView(agent.NoopView{}),
+			agent.WithDB(subDB),
+			agent.WithWriteDebouncer(func() *memory.DebouncedWriter {
 				if subDB != nil {
 					return memory.NewDebouncedWriter(subDB)
 				}
 				return nil
-			}(),
-			SessionID:              subSessionID,
-			MaxSubAgentConcurrency: resolveSubAgentConcurrency(opts.subCfg, role),
-			OtelEnabled:            opts.OtelEnabled,
-			OtelVerbose:            opts.OtelVerbose,
-		}
-
-		subLoop.View = agent.NoopView{}
+			}()),
+			agent.WithSessionID(subSessionID),
+			agent.WithApprovalMode("allow"),
+			agent.WithOtel(opts.OtelEnabled, opts.OtelVerbose),
+			agent.WithSubAgentConcurrency(
+				resolveSubAgentConcurrency(opts.subCfg, role), 0, nil,
+			),
+			agent.WithLoopConfig(agent.LoopConfig{
+				MaxIterations:          maxIter,
+				MaxTurns:               maxTurns,
+				MaxRetries:             opts.defaults.MaxRetries,
+				RetryBackoffSecs:       opts.defaults.RetryBackoffSecs,
+				ContextWindow:          effectiveCW,
+				CompactionThreshold:    opts.defaults.CompactionThreshold,
+				RawCompactionThreshold: opts.defaults.RawCompactionThreshold,
+				EstimateFactor:         opts.estimateFactor,
+				LoopDetectCount:        opts.defaults.LoopDetectCount,
+				LoopDetectWindow:       opts.defaults.LoopDetectWindow,
+				MaxToolConcurrency:     opts.defaults.MaxToolConcurrency,
+				PromptCaching:          opts.defaults.PromptCaching,
+				ReasoningProtectTurns:  opts.defaults.ReasoningProtect,
+				ToolResultMaxLines:     opts.defaults.ToolResultMaxLines,
+				ToolResultMaxBytes:     opts.defaults.ToolResultMaxBytes,
+				PruneProtectTokens:     opts.defaults.PruneProtectTokens,
+				PruneMinReclaim:        opts.defaults.PruneMinReclaim,
+				PruneMinTurns:          opts.defaults.PruneMinTurns,
+				JSONMode:               jsonMode,
+			}),
+		)
 		// Not using View for tool display since subToolDisplay is sufficient.
 		_ = subToolDisplay
 
