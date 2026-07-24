@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.0](https://github.com/buchenberg/yaah/compare/v0.32.0...v0.33.0) (2026-07-24)
+
+
+### Features
+
+* **mcp:** agent-to-agent MCP server with framing auto-detection and OTel tracing ([#68](https://github.com/buchenberg/yaah/issues/68)) ([d8c8ca2](https://github.com/buchenberg/yaah/commit/d8c8ca2e0da7e757f3d3f4a7c418196f15d5a9c3))
+
 ## [0.32.0](https://github.com/buchenberg/yaah/compare/v0.31.1...v0.32.0) (2026-07-24)
 
 
