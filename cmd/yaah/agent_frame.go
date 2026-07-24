@@ -65,21 +65,31 @@ func newAgentSession() (*agentSession, error) {
 	modelName := resolveModel(cfg)
 	providerName := resolveProviderName(cfg)
 
-	// Initialise OpenTelemetry if configured.
+	// Initialise OpenTelemetry if configured. Serve mode injects
+	// extraOtelProcessors (an in-memory BufferingSpanProcessor) and sets
+	// otelInMemoryOnly so tracing activates without an OTLP endpoint.
 	otelShutdown := func(_ context.Context) error { return nil }
-	if cfg.Observability.Otel.Enabled {
+	otelActive := cfg.Observability.Otel.Enabled || len(extraOtelProcessors) > 0
+	if otelActive {
 		otelCfg := observability.Config{
-			Enabled:     true,
-			Endpoint:    cfg.Observability.Otel.Endpoint,
-			ServiceName: cfg.Observability.Otel.ServiceName,
-			Traces:      cfg.Observability.Otel.Traces,
-			Metrics:     cfg.Observability.Otel.Metrics,
+			Enabled:         true,
+			Endpoint:        cfg.Observability.Otel.Endpoint,
+			ServiceName:     cfg.Observability.Otel.ServiceName,
+			Traces:          true,
+			Metrics:         cfg.Observability.Otel.Metrics,
+			ExtraProcessors: extraOtelProcessors,
 		}
-		if otelCfg.Endpoint == "" {
-			otelCfg.Endpoint = "localhost:4317"
-		}
-		if ep := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); ep != "" {
-			otelCfg.Endpoint = ep
+		if otelInMemoryOnly {
+			// No OTLP exporter — spans flow only to the in-memory buffer.
+			otelCfg.Endpoint = ""
+			otelCfg.Metrics = false
+		} else {
+			if otelCfg.Endpoint == "" {
+				otelCfg.Endpoint = "localhost:4317"
+			}
+			if ep := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); ep != "" {
+				otelCfg.Endpoint = ep
+			}
 		}
 		if os.Getenv("YAAH_OTEL_ENABLED") == "true" {
 			otelCfg.Enabled = true
@@ -261,7 +271,7 @@ func newAgentSession() (*agentSession, error) {
 	})
 
 	// Wrap the provider with OTel instrumentation if enabled.
-	if cfg.Observability.Otel.Enabled {
+	if otelActive {
 		if sp, ok := provider.(agent.StreamProvider); ok {
 			provider = &observability.InstrumentedProvider{Inner: sp, Verbose: cfg.Observability.Otel.Verbose}
 		}

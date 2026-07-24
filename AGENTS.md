@@ -99,6 +99,36 @@ go build -trimpath -ldflags '-s -w' -o yaah .
 ditto --norsrc yaah ~/.local/bin/yaah  # macOS: avoids Gatekeeper quarantine
 ```
 
+## Dev loop (MCP hot-reload)
+
+When editing yaah source code, do **not** expect the user (or your own Kilo
+session) to restart to pick up the change. Use the HTTP+SSE MCP transport —
+`yaah serve --http 127.0.0.1:7333` — and let the host agent connect to the
+running yaah once. After that, every code change is just:
+
+```bash
+go build -o yaah.exe .
+# kill the running yaah process and start the new one with the same flags
+Get-Process yaah -ErrorAction SilentlyContinue | Stop-Process -Force
+./yaah.exe serve --http 127.0.0.1:7333 &
+```
+
+Total swap: ~1 s. The host agent reconnects on the next MCP request — no
+agent restart, no config reload, no Kilo exit/relaunch. Verify the swap took
+effect by calling `mcp__yaah__status` and checking the `pid` field.
+
+Use the same discipline as
+[karpathy/autoresearch](https://github.com/karpathy/autoresearch): one
+observable change per iteration; always check the trace data with
+`mcp__yaah__traces` (use `tree: true` on a known `trace_id`) before trusting
+the model's self-report; the cheapest signal (`status`) goes first.
+
+Full troubleshooting, comparison table, and sanity script are in
+`.agents/skills/yaah-dev-loop/SKILL.md`. The `cmd/yaah/serve.go` tool
+registration is shared between stdio and HTTP transports via
+`registerServeTools()` — changes there apply to both `yaah serve` (stdio) and
+`yaah serve --http`.
+
 ## Conventions
 
 - **Go 1.25+** (per `go.mod`).

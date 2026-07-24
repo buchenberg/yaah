@@ -11,6 +11,8 @@ import (
 	"testing"
 )
 
+func int64Ptr(v int64) *int64 { return &v }
+
 // TestFramedReader_parsesMessage — content-length framing (MCP spec default)
 func TestFramedReader_parsesMessage(t *testing.T) {
 	body := `{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05"}}`
@@ -22,8 +24,8 @@ func TestFramedReader_parsesMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadMessage() error: %v", err)
 	}
-	if msg.ID != 1 {
-		t.Errorf("ID = %d, want 1", msg.ID)
+	if msg.ID == nil || *msg.ID != 1 {
+		t.Errorf("ID = %v, want 1", msg.ID)
 	}
 	if msg.Result == nil {
 		t.Fatal("Result is nil")
@@ -48,7 +50,7 @@ func TestFramedWriter_writesFramedJSON(t *testing.T) {
 
 	msg := JSONRPCMessage{
 		JSONRPC: "2.0",
-		ID:      1,
+		ID:      int64Ptr(1),
 		Method:  "initialize",
 		Params:  json.RawMessage(`{"protocolVersion":"2024-11-05"}`),
 	}
@@ -76,7 +78,7 @@ func TestNewlineWriter_writesRawJSON(t *testing.T) {
 
 	msg := JSONRPCMessage{
 		JSONRPC: "2.0",
-		ID:      1,
+		ID:      int64Ptr(1),
 		Method:  "initialize",
 		Params:  json.RawMessage(`{"protocolVersion":"2024-11-05"}`),
 	}
@@ -107,8 +109,8 @@ func TestNewlineReader_parsesRawJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadMessage() error: %v", err)
 	}
-	if msg.ID != 7 {
-		t.Errorf("ID = %d, want 7", msg.ID)
+	if msg.ID == nil || *msg.ID != 7 {
+		t.Errorf("ID = %v, want 7", msg.ID)
 	}
 }
 
@@ -124,7 +126,7 @@ func TestNewlineWriter_concurrentSafe(t *testing.T) {
 			defer wg.Done()
 			_ = writer.WriteMessage(JSONRPCMessage{
 				JSONRPC: "2.0",
-				ID:      int64(i),
+				ID:      int64Ptr(int64(i)),
 				Method:  "ping",
 			})
 		}(i)

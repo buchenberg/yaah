@@ -706,6 +706,41 @@ go build -trimpath -ldflags '-s -w' -o yaah .
 ditto --norsrc yaah ~/.local/bin/yaah  # macOS: avoids Gatekeeper quarantine
 ```
 
+### MCP dev loop (hot-reload)
+
+When you are developing yaah itself (anything under `cmd/yaah/`, `internal/mcp/`,
+`internal/observability/`, etc.), the fastest iteration path is to expose yaah
+as an MCP server over HTTP and drive it from your AI coding agent
+(Kilo/Claude Code/Codex). The agent hosts the MCP client; you own the server
+process; rebuilds swap the server without restarting the agent.
+
+Inner loop (≈1 s per iteration, no agent restart):
+
+```bash
+# 1. configure once — add to ~/.config/kilo/kilo.json (or kilo.json at repo root)
+#    "yaah": { "type": "remote", "url": "http://127.0.0.1:7333/mcp" }
+
+# 2. start the dev server (keep this terminal open)
+yaah serve --http 127.0.0.1:7333
+
+# 3. swap on every code change
+go build -o yaah.exe . && \
+  (Get-Process yaah -ErrorAction SilentlyContinue | Stop-Process -Force) && \
+  ./yaah.exe serve --http 127.0.0.1:7333 &     # PowerShell
+# or:
+# pkill -f 'yaah serve --http' && ./yaah serve --http 127.0.0.1:7333 &   # bash
+
+# 4. exercise from the agent (no agent restart)
+#    mcp__yaah__status      → confirm `pid` matches the new build
+#    mcp__yaah__traces      → inspect the in-memory OTel ring (tree:true for hierarchy)
+#    mcp__yaah__prompt      → run a real multi-turn agent task
+```
+
+Full troubleshooting, the autoresearch-style discipline (one observable change
+per iteration, trust the trace data not the model narrative), and the
+sanity-check script live in the project skill:
+[`.agents/skills/yaah-dev-loop/SKILL.md`](./.agents/skills/yaah-dev-loop/SKILL.md).
+
 ### Repo layout
 
 ```

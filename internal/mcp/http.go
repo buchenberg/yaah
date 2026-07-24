@@ -44,7 +44,7 @@ func (c *HTTPClient) Initialize(ctx context.Context) error {
 
 	resp, err := c.sendRequest(ctx, JSONRPCMessage{
 		JSONRPC: "2.0",
-		ID:      id,
+		ID:      &id,
 		Method:  "initialize",
 		Params:  params,
 	})
@@ -69,7 +69,7 @@ func (c *HTTPClient) fetchTools(ctx context.Context) error {
 	id := c.nextID.Add(1)
 	resp, err := c.sendRequest(ctx, JSONRPCMessage{
 		JSONRPC: "2.0",
-		ID:      id,
+		ID:      &id,
 		Method:  "tools/list",
 	})
 	if err != nil {
@@ -106,7 +106,7 @@ func (c *HTTPClient) CallTool(ctx context.Context, name string, args json.RawMes
 
 	resp, err := c.sendRequest(ctx, JSONRPCMessage{
 		JSONRPC: "2.0",
-		ID:      id,
+		ID:      &id,
 		Method:  "tools/call",
 		Params:  params,
 	})
