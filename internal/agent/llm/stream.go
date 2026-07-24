@@ -27,6 +27,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 
 	var content strings.Builder
 	var reasoning strings.Builder
+	var dsmlFilter dsmlTokenFilter
 	toolCallMap := make(map[int]*types.ToolCall)
 	var finishReason string
 	var firstToken bool
@@ -86,7 +87,9 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 				content.WriteString(delta.Content)
 				tokenCount++
 				if c.OnToken != nil {
-					c.OnToken(delta.Content)
+					if clean := dsmlFilter.filterToken(delta.Content); clean != "" {
+						c.OnToken(clean)
+					}
 				}
 			}
 
