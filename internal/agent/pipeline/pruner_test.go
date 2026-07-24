@@ -425,4 +425,7 @@ func TestPruner_DefaultConfig(t *testing.T) {
 	if !p.cfg.ProtectedTools["skill"] {
 		t.Errorf("ProtectedTools default should include 'skill'")
 	}
+	if !p.cfg.ProtectedTools["spawn_subagent"] {
+		t.Errorf("ProtectedTools default should include 'spawn_subagent'")
+	}
 }

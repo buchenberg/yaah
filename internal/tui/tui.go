@@ -111,6 +111,7 @@ var defaultCommands = []Command{
 	{Name: ":compact", Description: "Summarize old messages"},
 	{Name: ":banner", Description: "Toggle ASCII art banner"},
 	{Name: ":model", Description: "Switch model"},
+	{Name: ":steer", Description: "Inject text into current turn before next provider call"},
 	{Name: ":quit", Description: "Exit the TUI"},
 }
 
@@ -544,6 +545,25 @@ func (m *Model) executeCommand(input string) {
 	case ":mcp":
 		m.AddMessage("system", m.renderMCPStatus())
 	default:
+		// :steer is the only command that takes an argument, so it
+		// doesn't fit cleanly into a static switch case. Match the
+		// prefix and handle it before falling through to unknown.
+		if strings.HasPrefix(cmd, ":steer") {
+			body := strings.TrimSpace(strings.TrimPrefix(cmd, ":steer"))
+			if body == "" {
+				m.AddMessage("system", "Usage: :steer <text to inject>")
+				return
+			}
+			if !m.thinking {
+				m.AddMessage("system", "Steer is only meaningful while the agent is running. Type and press Enter to send a new message instead.")
+				return
+			}
+			m.AddMessage("user", body+"  ⚡")
+			if m.onSteer != nil {
+				m.onSteer(body)
+			}
+			return
+		}
 		m.AddMessage("system", fmt.Sprintf("Unknown command: %s", cmd))
 	}
 }
