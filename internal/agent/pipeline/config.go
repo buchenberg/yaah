@@ -68,7 +68,20 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 	},
 	"approval": func(cfg PipelineConfig) Middleware { return &ApprovalMiddleware{mode: cfg.ApprovalMode} },
 	"loop_detection": func(cfg PipelineConfig) Middleware {
-		return &LoopDetectionMiddleware{count: cfg.LoopDetectCount, window: cfg.LoopDetectWindow}
+		count := cfg.LoopDetectCount
+		window := cfg.LoopDetectWindow
+		if count <= 0 {
+			count = 4
+		}
+		if window <= 0 {
+			window = 10
+		}
+		// window must hold at least count items, otherwise detection is
+		// trivially triggered or impossible (e.g. window=2, count=3).
+		if window < count {
+			window = count
+		}
+		return &LoopDetectionMiddleware{count: count, window: window}
 	},
 	"permission":       func(cfg PipelineConfig) Middleware { return &PermissionMiddleware{rules: cfg.PermissionRules} },
 	"tool_concurrency": func(cfg PipelineConfig) Middleware { return &ToolConcurrencyMiddleware{max: cfg.MaxToolConcurrency} },

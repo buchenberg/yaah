@@ -194,17 +194,14 @@ func TestLoopDetect_ExactHashHalt(t *testing.T) {
 	}
 	step := &Step{Messages: nil}
 
-	// Same tool+args+result three times → must halt.
+	// Same tool+args+result three times — the third call must halt
+	// (count=3 means 3 identical hashes in the window triggers the error).
 	same := ToolResult{Name: "bash", Args: `echo 1`, Result: "1\n"}
-	_, _ = m.PostTool(context.Background(), []ToolResult{same}, step)
-	_, _ = m.PostTool(context.Background(), []ToolResult{same}, step)
-	_, _ = m.PostTool(context.Background(), []ToolResult{same}, step)
-
-	// The third call should have returned (step, nil) — no error.
-	// A fourth identical call should error.
-	_, err := m.PostTool(context.Background(), []ToolResult{same}, step)
+	_, _ = m.PostTool(context.Background(), []ToolResult{same}, step) // call 1 — ok
+	_, _ = m.PostTool(context.Background(), []ToolResult{same}, step) // call 2 — ok
+	_, err := m.PostTool(context.Background(), []ToolResult{same}, step) // call 3 — halt!
 	if err == nil {
-		t.Fatal("exact-hash loop should halt on 4th identical result")
+		t.Fatal("exact-hash loop should halt on 3rd identical result with count=3")
 	}
 	if !strings.Contains(err.Error(), "loop detected") {
 		t.Errorf("unexpected error: %v", err)
