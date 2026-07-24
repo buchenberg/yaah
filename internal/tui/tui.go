@@ -1456,7 +1456,7 @@ func (m *Model) adjustViewport() {
 	if m.height == 0 {
 		return
 	}
-	chatHeight := m.height - m.headerHeight() - 3 // -3 for status line + footer
+	chatHeight := m.height - m.headerHeight() - 2 // -2 for status line
 	if m.ephemMsg != "" {
 		chatHeight-- // ephemeral message line
 	}
@@ -1581,7 +1581,7 @@ func (m *Model) View() tea.View {
 	}
 
 	// Header: figlet banner + provider/model line (or compact if hidden)
-	header := NewHeader(m.banner, m.provider, m.modelName, m.showBanner).Render()
+	header := NewHeader(m.banner, m.provider, m.modelName, m.showBanner, m.width).Render()
 
 	// Status bar (1 line): message count + context bar only.
 	// Provider/model is in the header; no need to duplicate.
@@ -1625,8 +1625,13 @@ func (m *Model) View() tea.View {
 	// Input (1 line)
 	inputView := m.input.View()
 
-	// Footer hint bar (1 line) — always visible with key shortcuts
-	footer := m.help.View(footerKeyMap{})
+	// Pink border around input area
+	inputView = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("205")).
+		Padding(0, 1).
+		Width(m.width - 4).
+		Render(inputView)
 
 	elements := []string{header, viewportView, status}
 	if ephemLine != "" {
@@ -1638,21 +1643,21 @@ func (m *Model) View() tea.View {
 	if searchLine != "" {
 		elements = append(elements, searchLine)
 	}
-	elements = append(elements, inputView, footer)
+	elements = append(elements, inputView)
 	body := lipgloss.JoinVertical(lipgloss.Left, elements...)
 
 	v := tea.NewView(zone.Scan(body))
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeAllMotion
 	// Position the terminal cursor at the textinput's location.
-	// The input line is above the footer (last line).
+	// The input line is the last element (bottom of screen).
 	if !m.input.VirtualCursor() {
 		if c := m.input.Cursor(); c != nil {
-			// input is the second-to-last element; footer is last.
-			// If ephemeral message is shown, input is third-to-last.
-			offset := 2
+			// input is the last element.
+			// If ephemeral message is shown, input is second-to-last.
+			offset := 1
 			if m.ephemMsg != "" {
-				offset = 3
+				offset = 2
 			}
 			c.Y = m.height - offset
 			v.Cursor = c

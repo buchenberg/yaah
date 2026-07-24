@@ -237,7 +237,7 @@ func TestStatusBar_Render(t *testing.T) {
 
 func TestHeader_Render(t *testing.T) {
 	t.Run("with banner", func(t *testing.T) {
-		out := NewHeader("YAHHH", "deepseek", "v4-pro", true).Render()
+		out := NewHeader("YAHHH", "deepseek", "v4-pro", true, 80).Render()
 		if !strings.Contains(out, "YAHHH") {
 			t.Errorf("expected banner, got %q", out)
 		}
@@ -247,7 +247,7 @@ func TestHeader_Render(t *testing.T) {
 	})
 
 	t.Run("banner hidden", func(t *testing.T) {
-		out := NewHeader("YAHHH", "deepseek", "v4-pro", false).Render()
+		out := NewHeader("YAHHH", "deepseek", "v4-pro", false, 80).Render()
 		if strings.Contains(out, "YAHHH") {
 			t.Errorf("banner should be hidden, got %q", out)
 		}
@@ -466,3 +466,4 @@ func TestHandleControlMsg_Todos(t *testing.T) {
 		t.Errorf("expected todos cleared, got %d", len(m.todos))
 	}
 }
+
