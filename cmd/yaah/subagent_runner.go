@@ -329,7 +329,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			PromptCaching:          opts.defaults.PromptCaching,
 			ReasoningProtectTurns:  opts.defaults.ReasoningProtect,
 			ApprovalMode:           "allow",
-			DB: subDB,
+			DB:                     subDB,
 			WriteDebouncer: func() *memory.DebouncedWriter {
 				if subDB != nil {
 					return memory.NewDebouncedWriter(subDB)
