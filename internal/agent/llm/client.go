@@ -28,6 +28,7 @@ type Client struct {
 	OtelEnabled      bool
 	OtelVerbose      bool
 	replayCount      int // tracks empty-response replays within a single Call
+	dsmlSeq          int // monotonic ID counter for DSML-recovered tool calls
 }
 
 // Call sends a chat request and returns the assistant message, whether it
@@ -75,7 +76,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (types.Message
 						c.OnThinking(msg.ReasoningContent)
 					}
 
-					if cleaned, dsmlCalls, ok := parseDSMLToolCalls(msg.Content); ok {
+					if cleaned, dsmlCalls, ok := parseDSMLToolCalls(msg.Content, &c.dsmlSeq); ok {
 						msg.Content = cleaned
 						msg.ToolCalls = append(msg.ToolCalls, dsmlCalls...)
 					}

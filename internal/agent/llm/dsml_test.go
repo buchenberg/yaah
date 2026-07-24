@@ -8,7 +8,7 @@ import (
 func TestParseDSMLToolCalls(t *testing.T) {
 	t.Run("no DSML", func(t *testing.T) {
 		content := "Here is the result of your request."
-		cleaned, calls, ok := parseDSMLToolCalls(content)
+		cleaned, calls, ok := parseDSMLToolCalls(content, new(int))
 		if ok {
 			t.Fatal("expected no DSML detected")
 		}
@@ -28,7 +28,7 @@ func TestParseDSMLToolCalls(t *testing.T) {
 			"</\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke>\n" +
 			"</\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls>"
 
-		cleaned, calls, ok := parseDSMLToolCalls(content)
+		cleaned, calls, ok := parseDSMLToolCalls(content, new(int))
 		if !ok {
 			t.Fatal("expected DSML detected")
 		}
@@ -66,7 +66,7 @@ func TestParseDSMLToolCalls(t *testing.T) {
 			"</\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls>\n" +
 			"Done."
 
-		cleaned, calls, ok := parseDSMLToolCalls(content)
+		cleaned, calls, ok := parseDSMLToolCalls(content, new(int))
 		if !ok {
 			t.Fatal("expected DSML detected")
 		}
@@ -91,7 +91,7 @@ func TestParseDSMLToolCalls(t *testing.T) {
 			"</\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke>\n" +
 			"</\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls>"
 
-		cleaned, calls, ok := parseDSMLToolCalls(content)
+		cleaned, calls, ok := parseDSMLToolCalls(content, new(int))
 		if !ok {
 			t.Fatal("expected DSML detected")
 		}
@@ -116,7 +116,7 @@ func TestParseDSMLToolCalls(t *testing.T) {
 			"</\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke>\n" +
 			"</\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls>"
 
-		_, calls, ok := parseDSMLToolCalls(content)
+		_, calls, ok := parseDSMLToolCalls(content, new(int))
 		if !ok {
 			t.Fatal("expected DSML detected")
 		}
@@ -142,7 +142,7 @@ func TestParseDSMLToolCalls(t *testing.T) {
 			"</\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke>\n" +
 			"</\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls>"
 
-		cleaned, calls, ok := parseDSMLToolCalls(content)
+		cleaned, calls, ok := parseDSMLToolCalls(content, new(int))
 		if !ok {
 			t.Fatal("expected DSML detected")
 		}
@@ -164,7 +164,7 @@ func TestParseDSMLToolCalls(t *testing.T) {
 			"<\uFF5C\uFF5CDSML\uFF5C\uFF5Cparameter name=\"command\" string=\"true\">go test</\uFF5C\uFF5CDSML\uFF5C\uFF5Cparameter>\n" +
 			"</\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_c"
 
-		cleaned, calls, ok := parseDSMLToolCalls(content)
+		cleaned, calls, ok := parseDSMLToolCalls(content, new(int))
 		if !ok {
 			t.Fatal("expected truncated DSML detected")
 		}
@@ -179,7 +179,7 @@ func TestParseDSMLToolCalls(t *testing.T) {
 	t.Run("truncated DSML with no complete invokes", func(t *testing.T) {
 		content := "Let me check.\n<\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls>\n<\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke name=\"grep\">\n<\uFF5C\uFF5CDSML\uFF5C\uFF5Cpar"
 
-		cleaned, calls, ok := parseDSMLToolCalls(content)
+		cleaned, calls, ok := parseDSMLToolCalls(content, new(int))
 		if !ok {
 			t.Fatal("expected truncated DSML detected")
 		}

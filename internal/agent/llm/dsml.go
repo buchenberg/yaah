@@ -116,27 +116,27 @@ func bytesIndex(data []byte, substr string) int {
 // where the stream was cut off mid-markup. In the truncated case, everything
 // from the opening tag onward is stripped and any complete invoke blocks
 // within are salvaged.
-func parseDSMLToolCalls(content string) (string, []types.ToolCall, bool) {
+func parseDSMLToolCalls(content string, dsmlSeq *int) (string, []types.ToolCall, bool) {
 	block := dsmlBlockRe.FindString(content)
 	if block == "" {
 		// Fallback: truncated DSML block (opening tag present, closing tag missing).
 		if loc := dsmlOpenRe.FindStringIndex(content); loc != nil {
 			cleaned := strings.TrimSpace(content[:loc[0]])
 			truncated := content[loc[1]:]
-			calls := parseDSMLInvokes(truncated)
+			calls := parseDSMLInvokes(truncated, dsmlSeq)
 			return cleaned, calls, true
 		}
 		return content, nil, false
 	}
 
 	cleaned := strings.TrimSpace(dsmlBlockRe.ReplaceAllString(content, ""))
-	calls := parseDSMLInvokes(block)
+	calls := parseDSMLInvokes(block, dsmlSeq)
 	return cleaned, calls, len(calls) > 0
 }
 
-func parseDSMLInvokes(block string) []types.ToolCall {
+func parseDSMLInvokes(block string, dsmlSeq *int) []types.ToolCall {
 	var calls []types.ToolCall
-	for i, m := range dsmlInvokeRe.FindAllStringSubmatch(block, -1) {
+	for _, m := range dsmlInvokeRe.FindAllStringSubmatch(block, -1) {
 		name := m[1]
 		body := m[2]
 
@@ -159,9 +159,12 @@ func parseDSMLInvokes(block string) []types.ToolCall {
 			argsJSON = []byte("{}")
 		}
 
+		id := fmt.Sprintf("dsml_%d", *dsmlSeq)
+		*dsmlSeq++
+
 		calls = append(calls, types.ToolCall{
-			ID:    fmt.Sprintf("dsml_%d", i),
-			Index: i,
+			ID:    id,
+			Index: len(calls),
 			Type:  "function",
 			Function: types.ToolCallFn{
 				Name:      name,
