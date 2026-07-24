@@ -84,8 +84,17 @@ func Build(l Layers) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// BuildSkillsIndex returns a formatted "## Available Skills" section
-// with name + description per skill. Returns "" if no skills found.
+// skillDescMaxChars caps each skill description inlined into the always-on
+// index. Full descriptions remain available via the on-demand skill tool.
+// Without a cap, a large skill set (200+) inlines tens of thousands of tokens
+// into the system prompt every turn — most of it wasted, since a session
+// typically loads 0–2 skills.
+const skillDescMaxChars = 120
+
+// BuildSkillsIndex returns a formatted "## Available Skills" section with the
+// name plus a one-line description per skill. Descriptions are capped (see
+// truncateSkillDesc); the full text is fetched on demand via the skill tool.
+// Returns "" if no skills found.
 func BuildSkillsIndex(skillList []skills.Skill) string {
 	if len(skillList) == 0 {
 		return ""
@@ -99,13 +108,36 @@ func BuildSkillsIndex(skillList []skills.Skill) string {
 	var sb strings.Builder
 	sb.WriteString("## Available Skills\n")
 	for _, s := range sorted {
-		desc := s.Description
-		if desc == "" {
-			desc = s.Name
-		}
+		desc := truncateSkillDesc(s.Description, s.Name)
 		sb.WriteString(fmt.Sprintf("- **%s**: %s\n", s.Name, desc))
 	}
 	return sb.String()
+}
+
+// truncateSkillDesc reduces a skill description to a single line of at most
+// skillDescMaxChars runes, breaking at a word boundary and appending an
+// ellipsis when shortened. It is rune-aware so multibyte characters (em-dashes,
+// etc.) are never split. The fallback is returned when desc is empty.
+func truncateSkillDesc(desc, fallback string) string {
+	desc = strings.TrimSpace(desc)
+	if desc == "" {
+		return fallback
+	}
+	if i := strings.IndexByte(desc, '\n'); i >= 0 {
+		desc = strings.TrimSpace(desc[:i]) // first line only
+	}
+	r := []rune(desc)
+	if len(r) <= skillDescMaxChars {
+		return desc
+	}
+	cut := skillDescMaxChars
+	for cut > 0 && r[cut-1] != ' ' {
+		cut--
+	}
+	if cut == 0 {
+		cut = skillDescMaxChars // no space within range; hard cut
+	}
+	return strings.TrimRight(string(r[:cut]), " ,;:-—") + "…"
 }
 
 // DetectEnvironment returns a human-readable string describing the

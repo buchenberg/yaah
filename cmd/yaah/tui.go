@@ -565,6 +565,8 @@ func runAgentForTUI(prompt string, controlCh chan<- tui.ControlMsg, p *tea.Progr
 		OtelEnabled:           cfg.Observability.Otel.Enabled,
 		OtelVerbose:           cfg.Observability.Otel.Verbose,
 		ConflictTracker:       conflictTracker,
+		StuckChildTimeout:     time.Duration(cfg.Agent.SubAgent.StuckChildTimeout) * time.Second,
+		StuckChildTimeouts:    buildStuckChildTimeouts(cfg.Agent.SubAgent),
 		ToolsLevel:            agent.FullTools,
 		CompactProvider:       compactProvider,
 		CompactModel:          compactModel,

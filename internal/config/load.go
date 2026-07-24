@@ -76,6 +76,12 @@ type SubAgentConfig struct {
 	// and the role profile has none. Seconds. 0 means no timeout.
 	DefaultTimeout int `yaml:"default_timeout"`
 
+	// StuckChildTimeout is the duration without a heartbeat before a
+	// sub-agent is declared stuck and force-cancelled. The timer resets
+	// on every iteration (heartbeat), so this is a per-iteration liveness
+	// guard, not a total budget. Seconds. 0 disables.
+	StuckChildTimeout int `yaml:"stuck_child_timeout"`
+
 	// DefaultMaxTurns is the fallback soft turn cap when no role-specific
 	// override is set. 0 means unlimited (off).
 	DefaultMaxTurns int `yaml:"default_max_turns"`
@@ -105,6 +111,7 @@ type RoleConfig struct {
 	Provider       string `yaml:"provider"`        // per-role provider override; "" = inherit
 	Model          string `yaml:"model"`           // per-role model override; "" = inherit
 	MaxConcurrency int    `yaml:"max_concurrency"` // per-role max sub-agent spawns; 0 = use config default
+	StuckChildTimeout int `yaml:"stuck_child_timeout"` // seconds; 0 = use global default
 }
 
 // Config is the full yaah configuration loaded from ~/.yaah/config.yaml.
@@ -147,8 +154,9 @@ func defaultConfig() *Config {
 				Approval:      "ask",
 			},
 			SubAgent: SubAgentConfig{
-				MaxConcurrency: 3,
-				OutputLimit:    51200,
+				MaxConcurrency:     3,
+				StuckChildTimeout:  60,
+				OutputLimit:        51200,
 			},
 		},
 		Observability: ObservabilityConfig{

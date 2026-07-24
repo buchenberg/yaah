@@ -350,6 +350,33 @@ func TestPruner_ConcurrentSafe(t *testing.T) {
 	// No panic / race under -race is the assertion.
 }
 
+// TestPruner_DefaultsPruneRealisticVolume reproduces the production slowdown:
+// a realistic session accumulates many moderate tool results (~25k tokens
+// across 10 turns). With the shipped defaults the pruner must actually commit
+// a prune — if it does not (candidates=0 / reclaimed=0 every call, as seen
+// across 407 prune spans in real traces), context grows unbounded. This test
+// pins the defaults low enough that realistic volume triggers a prune.
+func TestPruner_DefaultsPruneRealisticVolume(t *testing.T) {
+	p := NewPruner(DefaultPruneConfig())
+	var msgs []types.Message
+	msgs = append(msgs, types.SystemMsg("sys"))
+	for i := 0; i < 10; i++ {
+		msgs = append(msgs, turn(fmt.Sprintf("c%d", i), "read", 2500)...)
+	}
+	msgs = append(msgs, types.UserMsg("end"))
+
+	stats := p.Mark(msgs, "post_tool")
+	if !stats.Committed {
+		t.Fatalf("pruner should commit on realistic tool volume with defaults, got %+v", stats)
+	}
+	if stats.ReclaimedTokens == 0 {
+		t.Fatalf("pruner should reclaim tokens with defaults, got %+v", stats)
+	}
+	if stats.Marked == 0 {
+		t.Fatalf("expected at least one tool result marked, got %+v", stats)
+	}
+}
+
 func TestPruner_DefaultConfig(t *testing.T) {
 	p := NewPruner(PruneConfig{}) // all zero → defaults applied
 	if p.cfg.ProtectTokens != defaultPruneProtectTokens {

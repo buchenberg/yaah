@@ -106,6 +106,8 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 				}
 			}
 
+			var watchdogActive bool
+
 			if isTask {
 				runCtx = tools.WithSubAgentModelPtr(runCtx, &subAgentModel)
 				var subUsage types.Usage
@@ -115,9 +117,47 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 						l.addUsage(subUsage)
 					}
 				}()
+
+				childTimeout := l.StuckChildTimeout
+				if l.StuckChildTimeouts != nil {
+					if t, ok := l.StuckChildTimeouts[taskRole]; ok && t > 0 {
+						childTimeout = t
+					}
+				}
+				if childTimeout > 0 {
+					watchdogActive = true
+					hb := make(chan struct{}, 1)
+					runCtx = tools.WithSubAgentHeartbeat(runCtx, hb)
+					watchCtx, watchCancel := context.WithCancel(runCtx)
+					runCtx = watchCtx
+					defer watchCancel()
+					go func() {
+						timer := time.NewTimer(childTimeout)
+						defer timer.Stop()
+						for {
+							select {
+							case <-hb:
+								if !timer.Stop() {
+									<-timer.C
+								}
+								timer.Reset(childTimeout)
+							case <-timer.C:
+								watchCancel()
+								return
+							case <-watchCtx.Done():
+								return
+							}
+						}
+					}()
+				}
 			}
 
 			res, err := l.Registry.Execute(runCtx, tc.Function.Name, tc.Function.Arguments)
+
+			if isTask && watchdogActive && ctx.Err() == nil && runCtx.Err() == context.Canceled {
+				err = tools.StuckChildError
+				res = ""
+			}
 			if l.OtelEnabled && toolSpan != nil {
 				if isTask {
 					observability.FinishSubAgent(toolSpan, err)

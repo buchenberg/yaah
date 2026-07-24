@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/config"
@@ -209,4 +210,22 @@ type noProviderStub struct{}
 
 func (s *noProviderStub) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
 	return nil, fmt.Errorf("no provider configured — run 'yaah config edit' to add one")
+}
+
+// buildStuckChildTimeouts converts per-role StuckChildTimeout seconds from
+// config into a map of role name → time.Duration for the Loop.
+func buildStuckChildTimeouts(cfg config.SubAgentConfig) map[string]time.Duration {
+	if len(cfg.Roles) == 0 {
+		return nil
+	}
+	m := make(map[string]time.Duration, len(cfg.Roles))
+	for name, rc := range cfg.Roles {
+		if rc.StuckChildTimeout > 0 {
+			m[name] = time.Duration(rc.StuckChildTimeout) * time.Second
+		}
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	return m
 }

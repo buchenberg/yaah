@@ -462,6 +462,8 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		DB:                     s.db,
 		MsgIdx:                 s.msgIdx,
 		MaxSubAgentConcurrency: s.cfg.Agent.SubAgent.MaxConcurrency,
+		StuckChildTimeout:     time.Duration(s.cfg.Agent.SubAgent.StuckChildTimeout) * time.Second,
+		StuckChildTimeouts:    buildStuckChildTimeouts(s.cfg.Agent.SubAgent),
 		OtelEnabled:            s.cfg.Observability.Otel.Enabled,
 		OtelVerbose:            s.cfg.Observability.Otel.Verbose,
 		ConflictTracker:        s.tracker,

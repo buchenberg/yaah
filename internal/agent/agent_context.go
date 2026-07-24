@@ -291,6 +291,21 @@ func pruneMessages(msgs []types.Message, maxLen int) []types.Message {
 // LastPromptTokens so heavily-cached conversations don't over-trigger
 // compaction (cached tokens are effectively free at the provider).
 func (l *Loop) compactContext(ctx context.Context, threshold float64) {
+	// Self-reset: two successive low-savings compactions latch the guard off
+	// (ineffectiveCompactions >= 2). That verdict is only valid for the context
+	// size at the time of the last attempt. If the context has since grown by
+	// >= 50%, retry — otherwise compaction stays permanently disabled even as
+	// the conversation bloats (the catch-22 seen in long sessions where the
+	// pruner alone could not keep context bounded).
+	if l.ineffectiveCompactions >= 2 && l.lastCompactionTokens > 0 {
+		if est := l.EstimatedTokens(); est >= l.lastCompactionTokens*3/2 {
+			l.ineffectiveCompactions = 0
+			if l.SessionID != "" && l.DB != nil {
+				l.DB.SetCompactionCooldown(l.SessionID, 0, 0)
+			}
+		}
+	}
+
 	if l.ineffectiveCompactions >= 2 {
 		return
 	}

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -355,4 +356,169 @@ func taskCallsN(n int) []types.ToolCall {
 		}
 	}
 	return calls
+}
+
+// --- Stuck-child heartbeat detection ---
+
+func TestLoop_subAgentStuckChildTimeout(t *testing.T) {
+	// A hung sub-agent that blocks forever without sending heartbeats
+	// should be killed by the watchdog after StuckChildTimeout.
+	hangingRunner := func(ctx context.Context, prompt string, params tools.SubAgentParams) (string, error) {
+		<-ctx.Done()
+		return "partial", ctx.Err()
+	}
+
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{
+			{Choices: []types.Choice{{
+				Message: types.Message{
+					Role: "assistant",
+					ToolCalls: []types.ToolCall{{
+						ID:       "c1",
+						Type:     "function",
+						Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"hang","prompt":"do nothing"}`},
+					}},
+				},
+				FinishReason: "tool_calls",
+			}}},
+			{Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant", Content: "handled"},
+				FinishReason: "stop",
+			}}},
+		},
+	}
+
+	reg := tools.NewEmptyRegistry()
+	reg.Register(&tools.TaskTool{Runner: hangingRunner})
+
+	loop := &Loop{
+		Provider:          fp,
+		Registry:          reg,
+		SystemPrompt:      "test",
+		MaxIterations:     5,
+		StuckChildTimeout: 100 * time.Millisecond,
+	}
+
+	start := time.Now()
+	resp, err := loop.Run(context.Background(), "hang")
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	elapsed := time.Since(start)
+	if elapsed > 2*time.Second {
+		t.Fatalf("watchdog did not fire within 2s: elapsed=%v", elapsed)
+	}
+
+	if !strings.Contains(resp, "sub-agent stuck") && !strings.Contains(resp, "handled") {
+		t.Errorf("expected stuck-child handling, got: %q", resp)
+	}
+}
+
+func TestLoop_subAgentHeartbeatKeepsAlive(t *testing.T) {
+	// A sub-agent that emits heartbeats periodically should NOT be
+	// killed by the watchdog, even if it runs longer than the timeout.
+	beatingRunner := func(ctx context.Context, prompt string, params tools.SubAgentParams) (string, error) {
+		ticker := time.NewTicker(30 * time.Millisecond)
+		defer ticker.Stop()
+		for i := 0; i < 5; i++ {
+			select {
+			case <-ticker.C:
+				tools.SendHeartbeat(ctx)
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
+		return "completed normally", nil
+	}
+
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{
+			{Choices: []types.Choice{{
+				Message: types.Message{
+					Role: "assistant",
+					ToolCalls: []types.ToolCall{{
+						ID:       "c1",
+						Type:     "function",
+						Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"beat","prompt":"do work"}`},
+					}},
+				},
+				FinishReason: "tool_calls",
+			}}},
+			{Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant", Content: "done"},
+				FinishReason: "stop",
+			}}},
+		},
+	}
+
+	reg := tools.NewEmptyRegistry()
+	reg.Register(&tools.TaskTool{Runner: beatingRunner})
+
+	loop := &Loop{
+		Provider:          fp,
+		Registry:          reg,
+		SystemPrompt:      "test",
+		MaxIterations:     5,
+		StuckChildTimeout: 50 * time.Millisecond,
+	}
+
+	resp, err := loop.Run(context.Background(), "beat")
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if !strings.Contains(resp, "done") {
+		t.Errorf("expected normal completion, got: %q", resp)
+	}
+}
+
+func TestLoop_subAgentStuckChildDisabled(t *testing.T) {
+	// StuckChildTimeout == 0 should disable the watchdog entirely.
+	// A blocking sub-agent is only bounded by normal context cancellation.
+	hangingRunner := func(ctx context.Context, prompt string, params tools.SubAgentParams) (string, error) {
+		<-ctx.Done()
+		return "partial", ctx.Err()
+	}
+
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{
+			{Choices: []types.Choice{{
+				Message: types.Message{
+					Role: "assistant",
+					ToolCalls: []types.ToolCall{{
+						ID:       "c1",
+						Type:     "function",
+						Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"hang","prompt":"do nothing"}`},
+					}},
+				},
+				FinishReason: "tool_calls",
+			}}},
+			{Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant", Content: "handled"},
+				FinishReason: "stop",
+			}}},
+		},
+	}
+
+	reg := tools.NewEmptyRegistry()
+	reg.Register(&tools.TaskTool{Runner: hangingRunner})
+
+	loop := &Loop{
+		Provider:          fp,
+		Registry:          reg,
+		SystemPrompt:      "test",
+		MaxIterations:     5,
+		StuckChildTimeout: 0,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	_, err := loop.Run(ctx, "hang")
+	if err == nil {
+		t.Fatal("expected context cancellation, got nil")
+	}
+	if !strings.Contains(err.Error(), "canceled") && !strings.Contains(err.Error(), "deadline") {
+		t.Errorf("expected context error, got: %v", err)
+	}
 }

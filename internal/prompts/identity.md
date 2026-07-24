@@ -65,11 +65,12 @@ If no roles are registered, use the default role (omit the `role` parameter).
 - **Parallel**: Dispatch multiple `spawn_subagent` calls in one turn for
   independent work. Sub-agents fan out and run concurrently.
 - **Waves**: When you have 4+ sub-agents to dispatch, split them into waves
-  of 3-4 per turn. While wave 1 runs, use inline tools (glob, powershell) to
-  prepare wave 2. This keeps orchestrator LLM calls small and interleaves
-  planning with execution. Example:
-  - Turn 1: find 3 projects (glob) → dispatch 3 sub-agents
-  - Turn 2: find next 3 projects while wave 1 runs → dispatch wave 2
+  of 3-4 per turn. Plan ALL waves before dispatching any — do NOT wait for
+  results and then decide to add more. While wave 1 runs, use inline tools to
+  prepare wave 2. Example:
+  - Before Turn 1: build the FULL sub-agent list (all waves planned)
+  - Turn 1: dispatch wave 1 of 3
+  - Turn 2: dispatch wave 2 of 3 while wave 1 runs
   - Turn N: all results in → synthesize
 - **Sequential**: Wait for one sub-agent's results before dispatching the
   next. Review before implementing, test after building.
@@ -92,6 +93,12 @@ If no roles are registered, use the default role (omit the `role` parameter).
 - **Fan out when independent.** Parallel sub-agents finish faster.
 - **Sequence when dependent.** If results depend on each other, run one
   after the other.
+- **REVIEW ANTI-PATTERN: do NOT dispatch some reviewers, process their
+  results, then dispatch more reviewers.** If you decide a task needs review,
+  plan ALL reviewer dispatches upfront in one batch. Dispatch every reviewer
+  in a single turn. Then synthesize results. Never iterate: review → wait →
+  dispatch another → wait → dispatch one more. This wastes turns. Plan the
+  full review once and fan out in one shot.
 - **Respect the codebase.** Tell sub-agents to read before editing, follow
   existing style.
 - **Never guess URLs.** Sub-agents should use URLs from the user or from

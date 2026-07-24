@@ -230,6 +230,17 @@ type Loop struct {
 	// run simultaneously within a single outer-loop turn. 0 means unlimited.
 	MaxSubAgentConcurrency int
 
+	// StuckChildTimeout is the duration without a heartbeat before a
+	// sub-agent child is declared stuck and force-cancelled by a watchdog
+	// goroutine. 0 (default) disables heartbeat monitoring entirely.
+	StuckChildTimeout time.Duration
+
+	// StuckChildTimeouts maps sub-agent role names to per-role stuck-child
+	// timeouts. When non-nil and the task role matches a key, that timeout
+	// is used instead of StuckChildTimeout. Populated from config per-role
+	// overrides. 0 means use StuckChildTimeout.
+	StuckChildTimeouts map[string]time.Duration
+
 	// PromptCaching enables Anthropic-style cache-control breakpoints on
 	// system prompt and recent messages.
 	PromptCaching bool
@@ -441,6 +452,8 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		default:
 		}
 
+		tools.SendHeartbeat(ctx)
+
 		l.emitHook(HookEvent{
 			Event:  TurnStart,
 			Prompt: userInput,
@@ -455,11 +468,13 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		}
 
 		step := &pipeline.Step{
-			Messages:     messages,
-			Tools:        l.buildToolDefs(),
-			Iteration:    iter,
-			Model:        l.Model,
-			SystemPrompt: l.SystemPrompt,
+			Messages:      messages,
+			Tools:         l.buildToolDefs(),
+			Iteration:     iter,
+			MaxTurns:      l.MaxTurns,
+			MaxIterations: l.MaxIterations,
+			Model:         l.Model,
+			SystemPrompt:  l.SystemPrompt,
 		}
 
 		step, err := pipe.RunPrepareStep(ctx, step)

@@ -1,7 +1,7 @@
 ---
 name: context-degradation-fix
 description: Fix progressive output slowdown caused by unbounded context growth, unpruned reasoning content, and per-turn O(n) waste
-status: planned
+status: completed
 ---
 
 ## Context Degradation Fix: Analysis & Implementation Plan
@@ -95,11 +95,11 @@ compacts regardless of cache hit rate.
 
 | Task | Description | File | Completed | Date |
 |------|-------------|------|-----------|------|
-| TASK-001 | Add `RawCompactionThreshold` field to `Loop` struct (default 0.5). This is the fraction of `ContextWindow` at which compaction fires based on raw `LastPromptTokens`, independent of cache subtraction. | `agent.go` | | |
-| TASK-002 | Add `rawCompactionThreshold` constant (`0.5`) to `agent_context.go` as the default when the field is zero. | `agent_context.go` | | |
-| TASK-003 | Modify `compactContext` to use a dual trigger: compact if `effectiveTokens >= target` **OR** `LastPromptTokens >= rawTarget` where `rawTarget = ContextWindow * RawCompactionThreshold`. The cache subtraction still applies to the effective-tokens path (preserving the cost-optimization intent), but the raw path catches latency degradation. | `agent_context.go:306-323` | | |
-| TASK-004 | Wire `RawCompactionThreshold` through `PipelineConfig` and `CompactionMiddleware` so the middleware passes it to `Compact()`. Update the `Compactor` interface signature or add a `RawThreshold` field to `PipelineConfig`. | `pipeline/config.go`, `pipeline/compaction.go` | | |
-| TASK-005 | Add unit tests: (a) compaction fires when effective tokens are low but raw tokens exceed rawTarget; (b) compaction does NOT fire when both effective and raw tokens are under their respective targets; (c) the cache subtraction still works on the effective-tokens path. | `agent_context_test.go` | | |
+| TASK-001 | Add `RawCompactionThreshold` field to `Loop` struct (default 0.5). This is the fraction of `ContextWindow` at which compaction fires based on raw `LastPromptTokens`, independent of cache subtraction. | `agent.go` | ✅ | 2026-07-24 |
+| TASK-002 | Add `rawCompactionThreshold` constant (`0.5`) to `agent_context.go` as the default when the field is zero. | `agent_context.go` | ✅ | 2026-07-24 |
+| TASK-003 | Modify `compactContext` to use a dual trigger: compact if `effectiveTokens >= target` **OR** `LastPromptTokens >= rawTarget` where `rawTarget = ContextWindow * RawCompactionThreshold`. The cache subtraction still applies to the effective-tokens path (preserving the cost-optimization intent), but the raw path catches latency degradation. | `agent_context.go` | ✅ | 2026-07-24 |
+| TASK-004 | Wire `RawCompactionThreshold` through `PipelineConfig` and `CompactionMiddleware` so the middleware passes it to `Compact()`. Update the `Compactor` interface signature or add a `RawThreshold` field to `PipelineConfig`. | `pipeline/config.go`, `pipeline/compaction.go` | ✅ | 2026-07-24 |
+| TASK-005 | Add unit tests: (a) compaction fires when effective tokens are low but raw tokens exceed rawTarget; (b) compaction does NOT fire when both effective and raw tokens are under their respective targets; (c) the cache subtraction still works on the effective-tokens path. | `agent_context_test.go` | ✅ | 2026-07-24 |
 
 **Implementation detail for TASK-003:**
 
@@ -144,11 +144,11 @@ requests. Strip it from old messages while preserving it for recent turns.
 
 | Task | Description | File | Completed | Date |
 |------|-------------|------|-----------|------|
-| TASK-006 | Fix `messageTokens()` to include `ReasoningContent` in the token estimate: `tokens += len(m.ReasoningContent) / 4`. This makes all downstream estimates (preflight, EstimatedTokens, splitTail budget) accurate. | `agent_context.go:74-83` | | |
-| TASK-007 | Create `stripOldReasoning(messages []types.Message, protectTurns int) []types.Message` in a new file `agent_reasoning.go`. Walk messages backwards, count user-message turns, and for assistant messages older than `protectTurns` turns, set `ReasoningContent = ""` on the copy. Return the input slice unchanged (zero alloc) if nothing was stripped. | `agent_reasoning.go` (new) | | |
-| TASK-008 | Integrate reasoning stripping into the request-build path. Replace the inline call at `agent.go:450` with a new `prepareRequestMessages(messages)` method that chains: `repairOrphans` → `applyPruning` → `stripOldReasoning`. This keeps the stored `l.Messages` intact (reasoning is only stripped from the provider copy). | `agent.go:450`, `agent_reasoning.go` | | |
-| TASK-009 | Add `ReasoningProtectTurns` field to `Loop` (default 2, matching the pruner's `MinTurns`). Wire through `applyDefaults`. | `agent.go` | | |
-| TASK-010 | Add unit tests: (a) reasoning stripped from messages older than protect window; (b) reasoning preserved on recent messages; (c) tool-call/result pairs not split; (d) zero-alloc fast path when no reasoning content exists; (e) `messageTokens` now counts reasoning. | `agent_reasoning_test.go` (new), `agent_context_test.go` | | |
+| TASK-006 | Fix `messageTokens()` to include `ReasoningContent` in the token estimate: `tokens += len(m.ReasoningContent) / 4`. This makes all downstream estimates (preflight, EstimatedTokens, splitTail budget) accurate. | `agent_context.go` | ✅ | 2026-07-24 |
+| TASK-007 | Create `stripOldReasoning(messages []types.Message, protectTurns int) []types.Message` in a new file `agent_reasoning.go`. Walk messages backwards, count user-message turns, and for assistant messages older than `protectTurns` turns, set `ReasoningContent = ""` on the copy. Return the input slice unchanged (zero alloc) if nothing was stripped. | `agent_reasoning.go` (new) | ✅ | 2026-07-24 |
+| TASK-008 | Integrate reasoning stripping into the request-build path. Replace the inline call at `agent.go:450` with a new `prepareRequestMessages(messages)` method that chains: `repairOrphans` → `applyPruning` → `stripOldReasoning`. This keeps the stored `l.Messages` intact (reasoning is only stripped from the provider copy). | `agent.go`, `agent_reasoning.go` | ✅ | 2026-07-24 |
+| TASK-009 | Add `ReasoningProtectTurns` field to `Loop` (default 2, matching the pruner's `MinTurns`). Wire through `applyDefaults`. | `agent.go` | ✅ | 2026-07-24 |
+| TASK-010 | Add unit tests: (a) reasoning stripped from messages older than protect window; (b) reasoning preserved on recent messages; (c) tool-call/result pairs not split; (d) zero-alloc fast path when no reasoning content exists; (e) `messageTokens` now counts reasoning. | `agent_reasoning_test.go` (new), `agent_context_test.go` | ✅ | 2026-07-24 |
 
 **Implementation detail for TASK-007:**
 
@@ -210,9 +210,9 @@ and invalidating only when the registry changes.
 
 | Task | Description | File | Completed | Date |
 |------|-------------|------|-----------|------|
-| TASK-011 | Add a `generation int` field to `tools.Registry`. Increment it in `Register()`. Add a `Generation() int` accessor. | `tools/tools.go:99-101,156-158` | | |
-| TASK-012 | Add `toolDefsCache []types.ToolDef`, `toolDefsGen int` fields to `Loop`. In `buildToolDefs()`, return the cache if `l.toolDefsGen == l.Registry.Generation()`. Otherwise rebuild and update the cache. | `agent.go`, `agent_tooldefs.go:10-27` | | |
-| TASK-013 | Add unit test: register tools, call `buildToolDefs` twice, verify the second call returns the same slice (pointer equality). Register a new tool, verify the cache is invalidated. | `agent_tooldefs_test.go` (new) | | |
+| TASK-011 | Add a `generation int` field to `tools.Registry`. Increment it in `Register()`. Add a `Generation() int` accessor. | `tools/tools.go` | ✅ | 2026-07-24 |
+| TASK-012 | Add `toolDefsCache []types.ToolDef`, `toolDefsGen int` fields to `Loop`. In `buildToolDefs()`, return the cache if `l.toolDefsGen == l.Registry.Generation()`. Otherwise rebuild and update the cache. | `agent.go`, `agent_tooldefs.go` | ✅ | 2026-07-24 |
+| TASK-013 | Add unit test: register tools, call `buildToolDefs` twice, verify the second call returns the same slice (pointer equality). Register a new tool, verify the cache is invalidated. | `agent_tooldefs_test.go` (new) | ✅ | 2026-07-24 |
 
 **Implementation detail for TASK-012:**
 
@@ -253,9 +253,9 @@ request payload exceeds a threshold, regardless of token estimates.
 
 | Task | Description | File | Completed | Date |
 |------|-------------|------|-----------|------|
-| TASK-014 | Add `maxPayloadBytes` constant (1,250,000 = ~1.25MB, matching kilocode's `prompt.ts:107`) to `agent_context.go`. | `agent_context.go` | | |
-| TASK-015 | Add a payload-size pre-flight check in `runMiddleware` alongside the existing token pre-flight guard (`agent.go:483-487`). Estimate payload bytes by summing `len(Content) + len(ReasoningContent) + tool-call arg lengths` across all messages plus tool definition sizes. If over `maxPayloadBytes`, call `compactContext(turnCtx, 0.5)` and rebuild `req.Messages`. | `agent.go:483-487` | | |
-| TASK-016 | Add unit test: construct a message list whose estimated payload exceeds `maxPayloadBytes`, verify compaction is triggered. | `agent_context_test.go` | | |
+| TASK-014 | Add `maxPayloadBytes` constant (1,250,000 = ~1.25MB, matching kilocode's `prompt.ts:107`) to `agent_context.go`. | `agent_context.go` | ✅ | 2026-07-24 |
+| TASK-015 | Add a payload-size pre-flight check in `runMiddleware` alongside the existing token pre-flight guard. Estimate payload bytes by summing `len(Content) + len(ReasoningContent) + tool-call arg lengths` across all messages plus tool definition sizes. If over `maxPayloadBytes`, call `compactContext(turnCtx, 0.5)` and rebuild `req.Messages`. | `agent.go` | ✅ | 2026-07-24 |
+| TASK-016 | Add unit test: construct a message list whose estimated payload exceeds `maxPayloadBytes`, verify compaction is triggered. | `agent_context_test.go` | ✅ | 2026-07-24 |
 
 **Implementation detail for TASK-015:**
 
@@ -299,8 +299,8 @@ func estimatePayloadBytes(messages []types.Message, tools []types.ToolDef) int {
 
 | Task | Description | File | Completed | Date |
 |------|-------------|------|-----------|------|
-| TASK-017 | Remove `isContinuation()` function from `agent_context.go:104-125`. It is defined and tested but never called in production code. The BENCHMARKS.md analysis (lines 58-62) confirmed the guard is unnecessary with token-budgeted splitTail. | `agent_context.go` | | |
-| TASK-018 | Remove the `isContinuation` test cases from `agent_context_test.go:93-172`. | `agent_context_test.go` | | |
+| TASK-017 | Remove `isContinuation()` function from `agent_context.go:104-125`. It is defined and tested but never called in production code. The BENCHMARKS.md analysis (lines 58-62) confirmed the guard is unnecessary with token-budgeted splitTail. | `agent_context.go` | ✅ | 2026-07-24 |
+| TASK-018 | Remove the `isContinuation` test cases from `agent_context_test.go:93-172`. | `agent_context_test.go` | ✅ | 2026-07-24 |
 
 ---
 

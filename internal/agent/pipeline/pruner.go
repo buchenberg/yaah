@@ -18,14 +18,18 @@ import (
 )
 
 const (
-	defaultPruneProtectTokens = 40000
-	defaultPruneMinReclaim    = 20000
+	defaultPruneProtectTokens = 12000
+	defaultPruneMinReclaim    = 4000
 	defaultPruneMinTurns      = 2
 )
 
-// PruneConfig tunes soft-prune behaviour. Defaults mirror kilocode
-// (compaction.ts:47-53): protect 40k tokens of recent tool output, only
-// commit a prune if it reclaims > 20k tokens, always keep the last 2 turns.
+// PruneConfig tunes soft-prune behaviour. Defaults are tuned for yaah's
+// typical session size: protect 12k tokens of recent tool output and commit a
+// prune once it reclaims > 4k tokens, always keeping the last 2 turns. The
+// earlier kilocode-derived 40k/20k thresholds never fired in practice — real
+// traces showed 407 prune spans reclaiming 0 tokens because realistic tool
+// volume (~25k) never exceeded the 60k commit threshold (40k protect + 20k
+// min reclaim), so context grew unbounded.
 type PruneConfig struct {
 	ProtectTokens  int             // tokens of recent tool output shielded from pruning
 	MinReclaim     int             // minimum reclaim required to commit a prune

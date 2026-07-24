@@ -781,6 +781,36 @@ func TestCompactContext_bothTriggersUnderThreshold(t *testing.T) {
 	}
 }
 
+func TestCompactContext_latchSelfResetsOnGrowth(t *testing.T) {
+	// Two prior ineffective compactions latched the guard off, and the last
+	// attempt left context at lastCompactionTokens. The context has since
+	// grown well beyond 1.5x, so the latch must self-reset and compaction
+	// must proceed despite ineffectiveCompactions >= 2. Without the
+	// self-reset the guard returns early and compaction stays dead — the
+	// catch-22 seen in long sessions (0 compaction spans across 30 traces).
+	msgs := largeConversation(30) // ~3k estimated tokens
+	loop := &Loop{
+		Provider:               summaryProvider(),
+		CompactModel:           "test",
+		ContextWindow:          100000,
+		Messages:               append([]types.Message{}, msgs...),
+		LastPromptTokens:       70000, // effective/raw well above targets
+		LastCachedPromptTokens: 0,
+		ineffectiveCompactions: 2,
+		lastCompactionTokens:   1000, // grew from 1k -> ~3k (>= 1.5x) → self-reset
+	}
+
+	before := len(loop.Messages)
+	loop.compactContext(context.Background(), 0.25)
+
+	if len(loop.Messages) >= before {
+		t.Errorf("latch should self-reset on context growth and compact: before=%d after=%d", before, len(loop.Messages))
+	}
+	if loop.ineffectiveCompactions >= 2 {
+		t.Errorf("ineffectiveCompactions should have been cleared, still %d", loop.ineffectiveCompactions)
+	}
+}
+
 func TestCompactContext_rawThresholdConfigurable(t *testing.T) {
 	// Same raw token count (60k) with two different RawCompactionThreshold
 	// values. Default (0.5 -> target 50k) fires; a high threshold (0.9 ->

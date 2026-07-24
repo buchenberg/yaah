@@ -12,6 +12,8 @@ type Step struct {
 	Messages     []types.Message
 	Tools        []types.ToolDef
 	Iteration    int
+	MaxTurns      int // 0 = infinite; >0 = tools are stripped when Iteration >= MaxTurns
+	MaxIterations int // 0 = unlimited; >0 = hard loop exit when Iteration >= MaxIterations
 	Model        string
 	SystemPrompt string
 }
