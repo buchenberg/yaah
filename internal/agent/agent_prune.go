@@ -28,7 +28,17 @@ func (l *Loop) applyPruning(messages []types.Message) []types.Message {
 // so nothing is ever marked, so Filter stays identity.
 func (l *Loop) ensurePruner() {
 	if l.Pruner == nil {
-		l.Pruner = pipeline.NewPruner(pipeline.DefaultPruneConfig())
+		cfg := pipeline.DefaultPruneConfig()
+		if l.PruneProtectTokens > 0 {
+			cfg.ProtectTokens = l.PruneProtectTokens
+		}
+		if l.PruneMinReclaim > 0 {
+			cfg.MinReclaim = l.PruneMinReclaim
+		}
+		if l.PruneMinTurns > 0 {
+			cfg.MinTurns = l.PruneMinTurns
+		}
+		l.Pruner = pipeline.NewPruner(cfg)
 	}
 }
 

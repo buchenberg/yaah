@@ -18,9 +18,9 @@ import (
 )
 
 const (
-	defaultPruneProtectTokens = 3000
-	defaultPruneMinReclaim    = 500
-	defaultPruneMinTurns      = 2
+	defaultPruneProtectTokens = 2000
+	defaultPruneMinReclaim    = 400
+	defaultPruneMinTurns      = 1
 )
 
 // PruneConfig tunes soft-prune behaviour. Defaults are tuned for yaah's

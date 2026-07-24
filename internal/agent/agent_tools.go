@@ -171,7 +171,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 				errStr = err.Error()
 				res = fmt.Sprintf("error: %v", err)
 			} else {
-				res = truncateToolResult(res)
+				res = l.truncateToolResult(res)
 			}
 
 			if l.broker != nil {

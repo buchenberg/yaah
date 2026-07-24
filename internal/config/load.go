@@ -47,6 +47,15 @@ type Defaults struct {
 	MaxToolConcurrency int  `yaml:"max_tool_concurrency"`    // concurrent tool goroutines; 0 = unlimited
 	PromptCaching      bool `yaml:"prompt_caching"`          // inject Anthropic cache-control breakpoints
 	ReasoningProtect   int  `yaml:"reasoning_protect_turns"` // preserve reasoning in recent N turns; 0 = default (2)
+
+	// Tool result truncation caps.
+	ToolResultMaxLines int `yaml:"tool_result_max_lines"` // 0 = default (500)
+	ToolResultMaxBytes int `yaml:"tool_result_max_bytes"` // 0 = default (20480)
+
+	// Soft-prune tuning.
+	PruneProtectTokens int `yaml:"prune_protect_tokens"` // recent tool tokens shielded; 0 = default (2000)
+	PruneMinReclaim    int `yaml:"prune_min_reclaim"`    // min tokens to commit a prune; 0 = default (400)
+	PruneMinTurns      int `yaml:"prune_min_turns"`      // recent turns always kept; 0 = default (1)
 }
 
 // Hooks holds configuration for external integrations via JSONL hook events.

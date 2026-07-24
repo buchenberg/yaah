@@ -11,32 +11,41 @@ import (
 )
 
 const (
-	truncateMaxLines = 2000
-	truncateMaxBytes = 50 * 1024
+	defaultTruncateMaxLines = 500
+	defaultTruncateMaxBytes = 20 * 1024
 )
 
-func truncateToolResult(result string) string {
+func (l *Loop) truncateToolResult(result string) string {
+	maxLines := l.ToolResultMaxLines
+	if maxLines <= 0 {
+		maxLines = defaultTruncateMaxLines
+	}
+	maxBytes := l.ToolResultMaxBytes
+	if maxBytes <= 0 {
+		maxBytes = defaultTruncateMaxBytes
+	}
+
 	lines := strings.Split(result, "\n")
 	lineCount := len(lines)
 	byteCount := len(result)
 
-	if lineCount <= truncateMaxLines && byteCount <= truncateMaxBytes {
+	if lineCount <= maxLines && byteCount <= maxBytes {
 		return result
 	}
 
-	lineCapped := lineCount > truncateMaxLines
-	byteCapped := byteCount > truncateMaxBytes
+	lineCapped := lineCount > maxLines
+	byteCapped := byteCount > maxBytes
 
 	var cutIdx int
 	var truncated string
 	var truncatedLines int
 
-	if lineCapped && (!byteCapped || findLineCutBytePos(result, truncateMaxLines) <= truncateMaxBytes) {
-		cutIdx = findLineCutBytePos(result, truncateMaxLines)
+	if lineCapped && (!byteCapped || findLineCutBytePos(result, maxLines) <= maxBytes) {
+		cutIdx = findLineCutBytePos(result, maxLines)
 		truncated = result[:cutIdx]
-		truncatedLines = truncateMaxLines
+		truncatedLines = maxLines
 	} else {
-		cutIdx = truncateMaxBytes
+		cutIdx = maxBytes
 		if cutIdx < len(result) {
 			lastNL := strings.LastIndexByte(result[:cutIdx], '\n')
 			if lastNL > 0 {
