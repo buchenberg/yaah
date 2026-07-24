@@ -173,10 +173,10 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 func checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, finishReason string, reasoningContent string, usage types.Usage) (types.Message, types.Usage, error) {
 	msg := assembleStreamed(content, toolCallMap, reasoningContent)
 
-	if len(msg.ToolCalls) == 0 && msg.Content != "" {
+	if msg.Content != "" {
 		if cleaned, dsmlCalls, ok := parseDSMLToolCalls(msg.Content); ok {
 			msg.Content = cleaned
-			msg.ToolCalls = dsmlCalls
+			msg.ToolCalls = append(msg.ToolCalls, dsmlCalls...)
 		}
 	}
 
