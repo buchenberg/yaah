@@ -7,6 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -80,6 +84,17 @@ func (l *Loop) EstimatedTokens() int {
 		total += messageTokens(m)
 	}
 	return total
+}
+
+// lastUserPrompt returns the content of the most recent user message in the
+// slice, or "" if none exists. Used by compaction to preserve the active task.
+func lastUserPrompt(msgs []types.Message) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" && msgs[i].Content != "" {
+			return msgs[i].Content
+		}
+	}
+	return ""
 }
 
 // messageTokens estimates the token count of a single message using chars/4
@@ -371,6 +386,19 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 		return
 	}
 
+	if l.OtelEnabled {
+		_, span := otel.Tracer("yaah").Start(ctx, "compaction",
+			trace.WithAttributes(
+				attribute.Int("compaction.effective_tokens", effectiveTokens),
+				attribute.Int("compaction.raw_tokens", rawTokens),
+				attribute.Int("compaction.cached_tokens", l.LastCachedPromptTokens),
+				attribute.Int("compaction.target", target),
+				attribute.Int("compaction.raw_target", rawTarget),
+				attribute.Int("compaction.messages", len(l.Messages)),
+			))
+		defer span.End()
+	}
+
 	sysMsg := l.Messages[0]
 
 	// Token-budgeted survival split (replaces fixed keepCount): keeps the
@@ -456,6 +484,22 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	} else {
 		newMsgs = append(newMsgs, types.SystemMsg("Previous conversation summary:\n"+summary))
 	}
+
+	// Preserve the most recent user prompt verbatim so the model retains
+	// its active task even after compaction summarizes older context.
+	if lastUser := lastUserPrompt(oldMsgs); lastUser != "" {
+		alreadyKept := false
+		for _, m := range keepMsgs {
+			if m.Role == "user" && m.Content == lastUser {
+				alreadyKept = true
+				break
+			}
+		}
+		if !alreadyKept {
+			newMsgs = append(newMsgs, types.SystemMsg("Active task (preserve verbatim):\n"+lastUser))
+		}
+	}
+
 	newMsgs = append(newMsgs, keepMsgs...)
 	l.Messages = newMsgs
 	l.resetPruner()
