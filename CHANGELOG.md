@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.3](https://github.com/buchenberg/yaah/compare/v0.33.2...v0.33.3) (2026-07-24)
+
+
+### Code Refactoring
+
+* **agent:** engine DI — extract components, add constructor with functional options ([#76](https://github.com/buchenberg/yaah/issues/76)) ([0706c3b](https://github.com/buchenberg/yaah/commit/0706c3b01ba3f46534f1b729838336c63d8fec35))
+
 ## [0.33.2](https://github.com/buchenberg/yaah/compare/v0.33.1...v0.33.2) (2026-07-24)
 
 
