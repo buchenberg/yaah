@@ -10,7 +10,7 @@ import (
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-const dsmlOpenTag  = "<\uff5c\uff5cDSML\uff5c\uff5ctool_calls>"
+const dsmlOpenTag = "<\uff5c\uff5cDSML\uff5c\uff5ctool_calls>"
 const dsmlCloseTag = "</\uff5c\uff5cDSML\uff5c\uff5ctool_calls>"
 
 var (
