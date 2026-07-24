@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -184,15 +183,26 @@ type Loop struct {
 	// When non-nil, each message is persisted as it is appended to the
 	// conversation, enabling session resume across process restarts.
 	// When nil, the loop runs entirely in memory.
+	// Deprecated: set via NewSessionPersister or the Persister field.
 	DB *memory.DB
 
 	// WriteDebouncer coalesces rapid message writes to reduce SQLite write
 	// amplification from concurrent subagents and pipeline step bulk persistence.
 	// When nil, writes go directly to DB.
+	// Deprecated: set via NewSessionPersister or the Persister field.
 	WriteDebouncer *memory.DebouncedWriter
 
 	// MsgIdx tracks the next message index for DB inserts.
+	// Deprecated: use Persister.MsgIdx().
 	MsgIdx int
+
+	// Persister handles message persistence. Created in applyDefaults
+	// from DB/WriteDebouncer/SessionID if not set explicitly.
+	Persister *SessionPersister
+
+	// Hooks emits structured JSONL events to the hook directory.
+	// Created in applyDefaults from HookDir/SessionID if not set explicitly.
+	Hooks *HookEmitter
 
 	// FollowUps is an optional channel for queuing follow-up messages while
 	// the agent is running. Messages received are injected as user messages
@@ -248,25 +258,29 @@ type Loop struct {
 	// Pruner soft-prunes stale tool-result content from provider requests
 	// (Tier-0 context reclaim). Default-constructed in applyDefaults; disable
 	// via PipelineDisabled: ["soft_prune"].
+	// Deprecated: use CtxMgr.Pruner.
 	Pruner *pipeline.Pruner
 
 	// Tool result truncation caps. Zero values use built-in defaults
 	// (500 lines / 20 KiB).
+	// Deprecated: use CtxMgr.ToolResultMaxLines/ToolResultMaxBytes.
 	ToolResultMaxLines int
 	ToolResultMaxBytes int
 
 	// Soft-prune tuning. Zero values use built-in defaults.
+	// Deprecated: use CtxMgr.PruneProtectTokens/PruneMinReclaim/PruneMinTurns.
 	PruneProtectTokens int
 	PruneMinReclaim    int
 	PruneMinTurns      int
 
 	// ReasoningProtectTurns is the number of recent user-message turns whose
-	// assistant ReasoningContent is preserved in provider requests. Reasoning
-	// on older turns is stripped from the ephemeral request copy (the stored
-	// history is untouched) because models generate fresh reasoning each turn
-	// and re-sending accumulated reasoning bloats every request. Default 0
-	// means 2 (matching the pruner's MinTurns).
+	// assistant ReasoningContent is preserved in provider requests.
+	// Deprecated: use CtxMgr.ReasoningProtectTurns.
 	ReasoningProtectTurns int
+
+	// CtxMgr owns context-window policy: compaction, pruning, token tracking,
+	// and truncation. Created in applyDefaults from the Loop's config fields.
+	CtxMgr *ContextManager
 
 	// ConflictTracker detects and reports external file modifications made
 	// outside the agent's own write/edit/replace/delete tools during a turn.
@@ -293,6 +307,7 @@ type Loop struct {
 	SessionID string
 
 	// HookDir is the directory for a best-effort JSONL event log.
+	// Deprecated: set via NewHookEmitter or the Hooks field.
 	HookDir string
 
 	// PreviousSummary stores the last LLM-generated conversation summary for
@@ -304,18 +319,6 @@ type Loop struct {
 	// When set, the Loop will use this prompt instead of one assembled from
 	// instructions and provider defaults.
 	SystemPromptOverride string
-
-	// hookFile is the open file descriptor for JSONL event hooks.
-	hookFile *os.File
-
-	// hookOnce guards the one-time creation of the hook file.
-	hookOnce sync.Once
-
-	// hookOK is false if the hook file could not be opened.
-	hookOK bool
-
-	// hookMu serializes writes to the hook file.
-	hookMu sync.Mutex
 
 	// toolConcurrency is the tool_concurrency middleware instance, cached
 	// after buildPipeline so executeAndCollect can call its Acquire/Release
@@ -419,15 +422,13 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		if r := recover(); r != nil {
 			runErr = fmt.Errorf("panic: %v", r)
 		}
-		if l.WriteDebouncer != nil {
-			l.WriteDebouncer.Flush()
-		}
-		l.closeHook()
+		l.Persister.Flush()
+		l.Hooks.Close()
 		reason := "completed"
 		if runErr != nil {
 			reason = "error"
 		}
-		l.emitHook(HookEvent{
+		l.Hooks.Emit(HookEvent{
 			Event:      SessionEnd,
 			ExitReason: reason,
 			Model:      l.Model,
@@ -438,18 +439,18 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 
 	if l.Messages != nil {
 		l.Messages = append(l.Messages, types.UserMsg(userInput))
-		l.persistMessage(l.Messages[len(l.Messages)-1])
+		l.Persister.Persist(l.Messages[len(l.Messages)-1])
 	} else {
 		l.Messages = []types.Message{
 			types.SystemMsg(l.SystemPrompt),
 			types.UserMsg(userInput),
 		}
-		l.emitHook(HookEvent{
+		l.Hooks.Emit(HookEvent{
 			Event: SessionStart,
 			Model: l.Model,
 		})
-		l.persistMessage(l.Messages[0])
-		l.persistMessage(l.Messages[1])
+		l.Persister.Persist(l.Messages[0])
+		l.Persister.Persist(l.Messages[1])
 	}
 
 	messages := l.Messages
@@ -465,7 +466,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 
 		tools.SendHeartbeat(ctx)
 
-		l.emitHook(HookEvent{
+		l.Hooks.Emit(HookEvent{
 			Event:  TurnStart,
 			Prompt: userInput,
 			Turn:   iter,
@@ -559,7 +560,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		}
 		l.addUsage(usage)
 		messages = append(messages, msg)
-		l.persistMessage(msg)
+		l.Persister.Persist(msg)
 
 		if turnSpan != nil {
 			toolNames := make([]string, 0, len(msg.ToolCalls))
@@ -639,7 +640,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		step.Messages = messages
 
 		if l.ConflictTracker != nil {
-			l.emitHook(HookEvent{
+			l.Hooks.Emit(HookEvent{
 				Event: ConflictCheck,
 				Turn:  iter,
 				Model: l.Model,
@@ -647,7 +648,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 
 			if report := l.ConflictTracker.DetectAndReset(); report != "" {
 				fileCount := strings.Count(report, "File: ")
-				l.emitHook(HookEvent{
+				l.Hooks.Emit(HookEvent{
 					Event:         ConflictDetect,
 					Turn:          iter,
 					Model:         l.Model,
@@ -663,7 +664,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 				messages = append(messages, conflictMsg)
 				step.Messages = messages
 				l.Messages = messages
-				l.persistMessage(conflictMsg)
+				l.Persister.Persist(conflictMsg)
 			}
 		}
 
@@ -681,8 +682,8 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		}
 
 		messages = step.Messages
-		for i := l.MsgIdx; i < len(messages); i++ {
-			l.persistMessage(messages[i])
+		for i := l.Persister.MsgIdx(); i < len(messages); i++ {
+			l.Persister.Persist(messages[i])
 		}
 	}
 
@@ -692,6 +693,32 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 
 // applyDefaults sets default values for Loop fields.
 func (l *Loop) applyDefaults() {
+	if l.CtxMgr == nil {
+		l.CtxMgr = NewContextManager(l.Provider, l.Model)
+		l.CtxMgr.ContextWindow = l.ContextWindow
+		l.CtxMgr.CompactionThreshold = l.CompactionThreshold
+		l.CtxMgr.RawCompactionThreshold = l.RawCompactionThreshold
+		l.CtxMgr.EstimateFactor = l.EstimateFactor
+		l.CtxMgr.ReasoningProtectTurns = l.ReasoningProtectTurns
+		l.CtxMgr.ToolResultMaxLines = l.ToolResultMaxLines
+		l.CtxMgr.ToolResultMaxBytes = l.ToolResultMaxBytes
+		l.CtxMgr.PruneProtectTokens = l.PruneProtectTokens
+		l.CtxMgr.PruneMinReclaim = l.PruneMinReclaim
+		l.CtxMgr.PruneMinTurns = l.PruneMinTurns
+		l.CtxMgr.Pruner = l.Pruner
+		l.CtxMgr.PreviousSummary = l.PreviousSummary
+		l.CtxMgr.LastPromptTokens = l.LastPromptTokens
+		l.CtxMgr.LastCachedPromptTokens = l.LastCachedPromptTokens
+		l.CtxMgr.LastCompactionTokens = l.lastCompactionTokens
+		l.CtxMgr.IneffectiveCompactions = l.ineffectiveCompactions
+		l.CtxMgr.CompactProvider = l.CompactProvider
+		l.CtxMgr.CompactModel = l.CompactModel
+		l.CtxMgr.DB = l.DB
+		l.CtxMgr.SessionID = l.SessionID
+		l.CtxMgr.OtelEnabled = l.OtelEnabled
+	}
+	l.CtxMgr.EnsurePruner()
+	l.Pruner = l.CtxMgr.Pruner
 	l.ensurePruner()
 	if l.MaxIterations <= 0 {
 		l.MaxIterations = 50
@@ -716,6 +743,13 @@ func (l *Loop) applyDefaults() {
 	}
 	if l.MaxSubAgentConcurrency > 0 && l.subAgentSem == nil {
 		l.subAgentSem = make(chan struct{}, l.MaxSubAgentConcurrency)
+	}
+	if l.Hooks == nil {
+		l.Hooks = NewHookEmitter(l.HookDir, l.SessionID)
+	}
+	if l.Persister == nil {
+		l.Persister = NewSessionPersister(l.DB, l.WriteDebouncer, l.SessionID)
+		l.Persister.SetMsgIdx(l.MsgIdx)
 	}
 	if l.LLM == nil {
 		if l.View != nil {
