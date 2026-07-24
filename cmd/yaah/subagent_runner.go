@@ -20,7 +20,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker, estimateFactor float64, subContextWindow int, outputLimit int, providerMap map[string]config.Provider) *tools.TaskTool {
+func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker, estimateFactor float64, subContextWindow int, outputLimit int, providerMap map[string]config.Provider, defaults config.Defaults) *tools.TaskTool {
 	// Sub-agent spawning depth is hard-coded at 1: the top-level agent
 	// can spawn one level of sub-agents; sub-agents cannot spawn further
 	// sub-agents (remainingDepth reaches 0).
@@ -51,6 +51,7 @@ func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 			subContextWindow: subContextWindow,
 			outputLimit:      outputLimit,
 			providerMap:      providerMap,
+			defaults:         defaults,
 		}, depth),
 		ResolveTimeout:   subAgentTimeoutResolver(subCfg),
 		RoleNames:        roleNames,
@@ -159,6 +160,11 @@ type taskRunnerOpts struct {
 	// per-role provider resolution by name. When nil/unset, per-role
 	// provider overrides fall through to the global override.
 	providerMap map[string]config.Provider
+
+	// defaults carries the top-level agent defaults so sub-agent loops
+	// inherit loop-detection thresholds, retry policies, compaction
+	// tuning, and concurrency caps from the parent config.
+	defaults config.Defaults
 }
 
 // subAgentSeq guarantees unique sub-session IDs across concurrent
@@ -311,11 +317,25 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			MaxIterations:          maxIter,
 			MaxTurns:               maxTurns,
 			ContextWindow:          effectiveCW,
+			CompactionThreshold:    opts.defaults.CompactionThreshold,
+			RawCompactionThreshold: opts.defaults.RawCompactionThreshold,
 			JSONMode:               jsonMode,
-			MaxRetries:             2,
+			MaxRetries:             opts.defaults.MaxRetries,
+			RetryBackoff:           time.Duration(opts.defaults.RetryBackoffSecs) * time.Second,
 			EstimateFactor:         opts.estimateFactor,
+			LoopDetectCount:        opts.defaults.LoopDetectCount,
+			LoopDetectWindow:       opts.defaults.LoopDetectWindow,
+			MaxToolConcurrency:     opts.defaults.MaxToolConcurrency,
+			PromptCaching:          opts.defaults.PromptCaching,
+			ReasoningProtectTurns:  opts.defaults.ReasoningProtect,
 			ApprovalMode:           "allow",
 			DB:                     subDB,
+			WriteDebouncer: func() *memory.DebouncedWriter {
+				if subDB != nil {
+					return memory.NewDebouncedWriter(subDB)
+				}
+				return nil
+			}(),
 			SessionID:              subSessionID,
 			MaxSubAgentConcurrency: resolveSubAgentConcurrency(opts.subCfg, role),
 			OtelEnabled:            opts.OtelEnabled,

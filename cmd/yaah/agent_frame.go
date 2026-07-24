@@ -44,6 +44,15 @@ type agentSession struct {
 	msgIdx       int
 	otelShutdown func(context.Context) error
 	tracker      *tools.ConflictTracker
+
+	// steerCh carries high-priority mid-turn messages that should be
+	// injected immediately before the next provider call. Buffered so
+	// keystrokes typed during a slow turn are not silently dropped.
+	steerCh chan string
+	// followupCh carries queued messages to inject at the start of the
+	// next iteration. Larger buffer than steerCh because follow-ups
+	// tend to come in bursts (user types ahead while the model runs).
+	followupCh chan string
 }
 
 func newAgentSession() (*agentSession, error) {
@@ -221,7 +230,7 @@ func newAgentSession() (*agentSession, error) {
 	if subCW < 32000 {
 		subCW = 32000
 	}
-	toolReg.Register(newTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers))
+	toolReg.Register(newTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default))
 
 	toolReg.Register(&tools.ListSubAgentsTool{
 		Lister: func() []tools.SubAgentInfo {
@@ -273,11 +282,19 @@ func newAgentSession() (*agentSession, error) {
 		msgIdx:       msgIdx,
 		otelShutdown: otelShutdown,
 		tracker:      tracker,
+		steerCh:      make(chan string, 4),
+		followupCh:   make(chan string, 32),
 	}, nil
 }
 
 func (s *agentSession) close() {
 	ctx := context.Background()
+	if s.steerCh != nil {
+		close(s.steerCh)
+	}
+	if s.followupCh != nil {
+		close(s.followupCh)
+	}
 	if s.otelShutdown != nil {
 		s.otelShutdown(ctx)
 	}
@@ -451,17 +468,37 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		SystemPrompt:           s.systemPrompt,
 		MaxInlineToolsPerTurn:  s.cfg.Agent.Default.MaxInlineToolsPerTurn,
 		MaxIterations:          s.cfg.Agent.Default.MaxIterations,
+		MaxTurns:               s.cfg.Agent.Default.MaxTurns,
+		MaxRetries:             s.cfg.Agent.Default.MaxRetries,
+		RetryBackoff:           time.Duration(s.cfg.Agent.Default.RetryBackoffSecs) * time.Second,
 		ContextWindow:          s.cfg.Agent.Default.ContextWindow,
+		CompactionThreshold:    s.cfg.Agent.Default.CompactionThreshold,
+		RawCompactionThreshold: s.cfg.Agent.Default.RawCompactionThreshold,
 		EstimateFactor:         s.cfg.Agent.Default.EstimateFactor,
+		LoopDetectCount:        s.cfg.Agent.Default.LoopDetectCount,
+		LoopDetectWindow:       s.cfg.Agent.Default.LoopDetectWindow,
+		MaxToolConcurrency:     s.cfg.Agent.Default.MaxToolConcurrency,
+		PromptCaching:          s.cfg.Agent.Default.PromptCaching,
+		ReasoningProtectTurns:  s.cfg.Agent.Default.ReasoningProtect,
 		ApprovalMode:           resolveApproval(s.cfg),
 		Messages:               s.messages,
 		HookDir:                s.cfg.Hooks.Dir,
 		SessionID:              s.sessionID,
 		PipelineNames:          s.cfg.Agent.Middleware.Enabled,
 		PipelineDisabled:       s.cfg.Agent.Middleware.Disabled,
+		Steer:                  s.steerCh,
+		FollowUps:              s.followupCh,
 		DB:                     s.db,
+		WriteDebouncer: func() *memory.DebouncedWriter {
+			if s.db != nil {
+				return memory.NewDebouncedWriter(s.db)
+			}
+			return nil
+		}(),
 		MsgIdx:                 s.msgIdx,
 		MaxSubAgentConcurrency: s.cfg.Agent.SubAgent.MaxConcurrency,
+		StuckChildTimeout:      time.Duration(s.cfg.Agent.SubAgent.StuckChildTimeout) * time.Second,
+		StuckChildTimeouts:     buildStuckChildTimeouts(s.cfg.Agent.SubAgent),
 		OtelEnabled:            s.cfg.Observability.Otel.Enabled,
 		OtelVerbose:            s.cfg.Observability.Otel.Verbose,
 		ConflictTracker:        s.tracker,

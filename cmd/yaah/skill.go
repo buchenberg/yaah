@@ -150,11 +150,12 @@ func skillSearchPaths() []string {
 		}
 	}
 
-	// 2. Yaah-specific
-	yaahDir := filepath.Join(home, ".yaah", "skills")
+	// 2. Yaah-specific (home is already ~/.yaah/)
+	yaahDir := filepath.Join(home, "skills")
 
-	// 3. User-level cross-tool
-	userDir := filepath.Join(home, ".agents", "skills")
+	// 3. User-level cross-tool (uses real home, not ~/.yaah/)
+	userHome, _ := os.UserHomeDir()
+	userDir := filepath.Join(userHome, ".agents", "skills")
 
 	// Order: project → yaah → user (first wins)
 	var dirs []string

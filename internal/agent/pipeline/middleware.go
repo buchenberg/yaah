@@ -9,11 +9,13 @@ import (
 
 // Step is the mutable state passed through the pipeline at each iteration.
 type Step struct {
-	Messages     []types.Message
-	Tools        []types.ToolDef
-	Iteration    int
-	Model        string
-	SystemPrompt string
+	Messages      []types.Message
+	Tools         []types.ToolDef
+	Iteration     int
+	MaxTurns      int // 0 = infinite; >0 = tools are stripped when Iteration >= MaxTurns
+	MaxIterations int // 0 = unlimited; >0 = hard loop exit when Iteration >= MaxIterations
+	Model         string
+	SystemPrompt  string
 }
 
 // ToolResult holds the outcome of a single tool execution for middleware inspection.

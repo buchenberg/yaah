@@ -710,6 +710,52 @@ func TestExecuteCommand_CompactCallback(t *testing.T) {
 	}
 }
 
+func TestExecuteCommand_SteerInvokesCallback(t *testing.T) {
+	m := &Model{width: 80}
+	m.commands = defaultCommands
+	m.thinking = true
+	var got string
+	m.onSteer = func(text string) { got = text }
+	m.executeCommand(":steer urgent new instruction")
+	if got != "urgent new instruction" {
+		t.Errorf("onSteer got %q, want %q", got, "urgent new instruction")
+	}
+	// The user-facing render should also have been added.
+	if len(m.messages) == 0 || m.messages[len(m.messages)-1].Role != "user" {
+		t.Errorf("expected a user-facing message, got %+v", m.messages)
+	}
+}
+
+func TestExecuteCommand_SteerRequiresThinking(t *testing.T) {
+	m := &Model{width: 80}
+	m.commands = defaultCommands
+	m.thinking = false
+	called := false
+	m.onSteer = func(string) { called = true }
+	m.executeCommand(":steer hello")
+	if called {
+		t.Error("onSteer must not fire when the agent is not running")
+	}
+	if len(m.messages) != 1 || !strings.Contains(m.messages[0].Content, "running") {
+		t.Errorf("expected a system reminder about agent state, got %+v", m.messages)
+	}
+}
+
+func TestExecuteCommand_SteerEmptyBody(t *testing.T) {
+	m := &Model{width: 80}
+	m.commands = defaultCommands
+	m.thinking = true
+	called := false
+	m.onSteer = func(string) { called = true }
+	m.executeCommand(":steer ")
+	if called {
+		t.Error("onSteer must not fire on empty body")
+	}
+	if len(m.messages) != 1 || !strings.Contains(m.messages[0].Content, "Usage") {
+		t.Errorf("expected a usage message, got %+v", m.messages)
+	}
+}
+
 func TestCommandSuggestions(t *testing.T) {
 	m := &Model{width: 80}
 	m.commands = defaultCommands

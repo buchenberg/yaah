@@ -111,6 +111,7 @@ var defaultCommands = []Command{
 	{Name: ":compact", Description: "Summarize old messages"},
 	{Name: ":banner", Description: "Toggle ASCII art banner"},
 	{Name: ":model", Description: "Switch model"},
+	{Name: ":steer", Description: "Inject text into current turn before next provider call"},
 	{Name: ":quit", Description: "Exit the TUI"},
 }
 
@@ -135,6 +136,8 @@ type Model struct {
 	onQuit        func()
 	onCompact     func()
 	onModel       func(string, string)
+	onFollowUp    func(string)
+	onSteer       func(string)
 
 	// --- layout ---
 	width  int
@@ -209,6 +212,14 @@ type Config struct {
 	OnQuit        func()
 	OnCompact     func()
 	OnModel       func(string, string)
+	// OnFollowUp is invoked when the user submits text while the agent
+	// is already running. The text is queued for the next iteration
+	// rather than starting a new turn. May be nil.
+	OnFollowUp func(string)
+	// OnSteer is invoked when the user sends an immediate mid-turn
+	// interrupt (e.g. Ctrl-T). Injects before the next provider call.
+	// May be nil.
+	OnSteer func(string)
 }
 
 // New creates a new TUI model from a Config.
@@ -245,6 +256,8 @@ func New(cfg Config) *Model {
 		onQuit:            cfg.OnQuit,
 		onCompact:         cfg.OnCompact,
 		onModel:           cfg.OnModel,
+		onFollowUp:        cfg.OnFollowUp,
+		onSteer:           cfg.OnSteer,
 		commands:          defaultCommands,
 	}
 }
@@ -532,6 +545,25 @@ func (m *Model) executeCommand(input string) {
 	case ":mcp":
 		m.AddMessage("system", m.renderMCPStatus())
 	default:
+		// :steer is the only command that takes an argument, so it
+		// doesn't fit cleanly into a static switch case. Match the
+		// prefix and handle it before falling through to unknown.
+		if strings.HasPrefix(cmd, ":steer") {
+			body := strings.TrimSpace(strings.TrimPrefix(cmd, ":steer"))
+			if body == "" {
+				m.AddMessage("system", "Usage: :steer <text to inject>")
+				return
+			}
+			if !m.thinking {
+				m.AddMessage("system", "Steer is only meaningful while the agent is running. Type and press Enter to send a new message instead.")
+				return
+			}
+			m.AddMessage("user", body+"  ⚡")
+			if m.onSteer != nil {
+				m.onSteer(body)
+			}
+			return
+		}
 		m.AddMessage("system", fmt.Sprintf("Unknown command: %s", cmd))
 	}
 }
@@ -1164,15 +1196,24 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg) tea.Cmd {
 			m.executeCommand(value)
 			return nil
 		}
-		if m.thinking {
-			return nil
-		}
-		m.thinkContent = ""
-		m.reasoningExpanded = make(map[string]bool)
 		value := m.input.Value()
 		if strings.TrimSpace(value) == "" {
 			return nil
 		}
+		if m.thinking {
+			// Agent is running. Queue the text as a follow-up so it
+			// flows into the next iteration rather than being lost.
+			// Visually, render a pending-marker so the user can see
+			// their queued input.
+			m.AddMessage("user", value+"  ⏎")
+			m.input.SetValue("")
+			if m.onFollowUp != nil {
+				m.onFollowUp(value)
+			}
+			return nil
+		}
+		m.thinkContent = ""
+		m.reasoningExpanded = make(map[string]bool)
 		m.AddMessage("user", value)
 		m.SetThinking(true)
 		m.input.SetValue("")

@@ -25,10 +25,28 @@ type Defaults struct {
 	Model                 string  `yaml:"model"`
 	SmallModel            string  `yaml:"small_model"`
 	MaxIterations         int     `yaml:"max_iterations"`
+	MaxTurns              int     `yaml:"max_turns"` // soft cap on tool-using turns; 0 = off
 	ContextWindow         int     `yaml:"context_window"`
 	Approval              string  `yaml:"approval"`
 	MaxInlineToolsPerTurn int     `yaml:"max_inline_tools_per_turn"` // 0 = unlimited
 	EstimateFactor        float64 `yaml:"estimate_factor"`           // 0 = default (1.3)
+
+	// Compaction controls context summarisation behaviour.
+	CompactionThreshold    float64 `yaml:"compaction_threshold"`     // fraction of ContextWindow; 0 = 0.5
+	RawCompactionThreshold float64 `yaml:"raw_compaction_threshold"` // fraction ignoring cache; 0 = 0.5
+
+	// Loop detection governs when the agent halts on repeated tool calls.
+	LoopDetectCount  int `yaml:"loop_detect_count"`  // identical calls to trigger halt; 0 = default (5)
+	LoopDetectWindow int `yaml:"loop_detect_window"` // sliding window size; 0 = default (10)
+
+	// Provider resilience: retry on transient errors with backoff.
+	MaxRetries       int `yaml:"max_retries"`        // 0 = no retries (default)
+	RetryBackoffSecs int `yaml:"retry_backoff_secs"` // seconds; 0 = default (1)
+
+	// Concurrency and caching toggles.
+	MaxToolConcurrency int  `yaml:"max_tool_concurrency"`    // concurrent tool goroutines; 0 = unlimited
+	PromptCaching      bool `yaml:"prompt_caching"`          // inject Anthropic cache-control breakpoints
+	ReasoningProtect   int  `yaml:"reasoning_protect_turns"` // preserve reasoning in recent N turns; 0 = default (2)
 }
 
 // Hooks holds configuration for external integrations via JSONL hook events.
@@ -76,6 +94,12 @@ type SubAgentConfig struct {
 	// and the role profile has none. Seconds. 0 means no timeout.
 	DefaultTimeout int `yaml:"default_timeout"`
 
+	// StuckChildTimeout is the duration without a heartbeat before a
+	// sub-agent is declared stuck and force-cancelled. The timer resets
+	// on every iteration (heartbeat), so this is a per-iteration liveness
+	// guard, not a total budget. Seconds. 0 disables.
+	StuckChildTimeout int `yaml:"stuck_child_timeout"`
+
 	// DefaultMaxTurns is the fallback soft turn cap when no role-specific
 	// override is set. 0 means unlimited (off).
 	DefaultMaxTurns int `yaml:"default_max_turns"`
@@ -96,15 +120,16 @@ type SubAgentConfig struct {
 // RoleConfig overrides a single role's default timeout, iteration cap,
 // turn cap, provider, model, concurrency, and output format.
 type RoleConfig struct {
-	Timeout        int    `yaml:"timeout"`         // seconds; 0 = use role default
-	MaxIterations  int    `yaml:"max_iterations"`  // 0 = use role default
-	MaxTurns       int    `yaml:"max_turns"`       // soft turn cap; 0 = use role default
-	JSONMode       bool   `yaml:"json_mode"`       // structured output toggle
-	ContextWindow  int    `yaml:"context_window"`  // 0 = inherit halved parent default
-	OutputLimit    int    `yaml:"output_limit"`    // bytes; 0 = use config default
-	Provider       string `yaml:"provider"`        // per-role provider override; "" = inherit
-	Model          string `yaml:"model"`           // per-role model override; "" = inherit
-	MaxConcurrency int    `yaml:"max_concurrency"` // per-role max sub-agent spawns; 0 = use config default
+	Timeout           int    `yaml:"timeout"`             // seconds; 0 = use role default
+	MaxIterations     int    `yaml:"max_iterations"`      // 0 = use role default
+	MaxTurns          int    `yaml:"max_turns"`           // soft turn cap; 0 = use role default
+	JSONMode          bool   `yaml:"json_mode"`           // structured output toggle
+	ContextWindow     int    `yaml:"context_window"`      // 0 = inherit halved parent default
+	OutputLimit       int    `yaml:"output_limit"`        // bytes; 0 = use config default
+	Provider          string `yaml:"provider"`            // per-role provider override; "" = inherit
+	Model             string `yaml:"model"`               // per-role model override; "" = inherit
+	MaxConcurrency    int    `yaml:"max_concurrency"`     // per-role max sub-agent spawns; 0 = use config default
+	StuckChildTimeout int    `yaml:"stuck_child_timeout"` // seconds; 0 = use global default
 }
 
 // Config is the full yaah configuration loaded from ~/.yaah/config.yaml.
@@ -140,15 +165,22 @@ func defaultConfig() *Config {
 	return &Config{
 		Agent: AgentConfig{
 			Default: Defaults{
-				Model:         "deepseek/deepseek-v4-pro",
-				SmallModel:    "deepseek/deepseek-v4-flash",
-				MaxIterations: 50,
-				ContextWindow: 128000,
-				Approval:      "ask",
+				Model:                  "deepseek/deepseek-v4-pro",
+				SmallModel:             "deepseek/deepseek-v4-flash",
+				MaxIterations:          50,
+				ContextWindow:          128000,
+				Approval:               "ask",
+				CompactionThreshold:    0.5,
+				RawCompactionThreshold: 0.5,
+				LoopDetectCount:        5,
+				LoopDetectWindow:       10,
+				RetryBackoffSecs:       1,
+				ReasoningProtect:       2,
 			},
 			SubAgent: SubAgentConfig{
-				MaxConcurrency: 3,
-				OutputLimit:    51200,
+				MaxConcurrency:    3,
+				StuckChildTimeout: 60,
+				OutputLimit:       51200,
 			},
 		},
 		Observability: ObservabilityConfig{

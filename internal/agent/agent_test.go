@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -91,12 +93,14 @@ func (f *fakeStreamProvider) SendStream(ctx context.Context, req types.ChatReque
 
 // fakeTool is a configurable tool for testing.
 type fakeTool struct {
-	name    string
-	result  string
-	err     error
-	delay   time.Duration
-	callCnt *int
-	mu      *sync.Mutex
+	name       string
+	result     string
+	err        error
+	delay      time.Duration
+	callCnt    *int
+	mu         *sync.Mutex
+	concurrent *atomic.Int32
+	maxSeen    *atomic.Int32
 }
 
 func (t *fakeTool) Name() string        { return t.name }
@@ -106,6 +110,18 @@ func (t *fakeTool) Schema() json.RawMessage {
 }
 
 func (t *fakeTool) Execute(ctx context.Context, args string) (string, error) {
+	if t.concurrent != nil {
+		cur := t.concurrent.Add(1)
+		if t.maxSeen != nil {
+			for {
+				old := t.maxSeen.Load()
+				if cur <= old || t.maxSeen.CompareAndSwap(old, cur) {
+					break
+				}
+			}
+		}
+		defer t.concurrent.Add(-1)
+	}
 	if t.delay > 0 {
 		select {
 		case <-time.After(t.delay):
@@ -153,6 +169,100 @@ func TestLoop_plainTextResponse(t *testing.T) {
 	}
 	if len(fp.requests) != 1 {
 		t.Errorf("expected 1 request, got %d", len(fp.requests))
+	}
+}
+
+// TestLoop_followupChannelInjects verifies that messages placed on the
+// FollowUps channel before Run() starts are drained by the pipeline
+// middleware and included in the first request.
+func TestLoop_followupChannelInjects(t *testing.T) {
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{{
+			Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant", Content: "Got it."},
+				FinishReason: "stop",
+			}},
+		}},
+	}
+
+	followupCh := make(chan string, 4)
+	followupCh <- "queued follow-up message"
+
+	reg := tools.NewRegistry()
+	loop := &Loop{
+		Provider:      fp,
+		Registry:      reg,
+		SystemPrompt:  "You are helpful.",
+		MaxIterations: 10,
+		FollowUps:     followupCh,
+	}
+
+	resp, err := loop.Run(context.Background(), "Hi")
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if resp != "Got it." {
+		t.Errorf("response = %q", resp)
+	}
+	if len(fp.requests) != 1 {
+		t.Fatalf("expected 1 request, got %d", len(fp.requests))
+	}
+
+	// The follow-up should be present in the messages sent to the provider.
+	found := false
+	for _, m := range fp.requests[0].Messages {
+		if strings.Contains(m.Content, "queued follow-up message") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("follow-up message not found in provider request")
+	}
+}
+
+// TestLoop_steerChannelInjects verifies that messages placed on the
+// Steer channel are drained before the next provider call and prefixed
+// with the [STEER] marker so the model can recognise them.
+func TestLoop_steerChannelInjects(t *testing.T) {
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{{
+			Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant", Content: "Steered."},
+				FinishReason: "stop",
+			}},
+		}},
+	}
+
+	steerCh := make(chan string, 4)
+	steerCh <- "urgent new instruction"
+
+	reg := tools.NewRegistry()
+	loop := &Loop{
+		Provider:      fp,
+		Registry:      reg,
+		SystemPrompt:  "You are helpful.",
+		MaxIterations: 10,
+		Steer:         steerCh,
+	}
+
+	resp, err := loop.Run(context.Background(), "Hi")
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if resp != "Steered." {
+		t.Errorf("response = %q", resp)
+	}
+
+	found := false
+	for _, m := range fp.requests[0].Messages {
+		if strings.Contains(m.Content, "[STEER]") && strings.Contains(m.Content, "urgent new instruction") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("[STEER] message with body not found in provider request")
 	}
 }
 
@@ -659,6 +769,61 @@ func TestLoop_parallelToolExecution(t *testing.T) {
 	}
 	if toolResults[0] != "result1" || toolResults[1] != "result2" {
 		t.Errorf("tool result order wrong: %v", toolResults)
+	}
+}
+
+// --- Test: MaxToolConcurrency cap is enforced via tool_concurrency middleware ---
+
+func TestLoop_toolConcurrencyCapEnforced(t *testing.T) {
+	var concurrent atomic.Int32
+	var maxSeen atomic.Int32
+
+	const numTools = 6
+	const cap = 2
+	const toolDelay = 60 * time.Millisecond
+
+	calls := make([]types.ToolCall, numTools)
+	for i := range calls {
+		calls[i] = types.ToolCall{
+			ID:       "call_" + string(rune('1'+i)),
+			Type:     "function",
+			Function: types.ToolCallFn{Name: "slow", Arguments: fmt.Sprintf(`{"i":%d}`, i)},
+		}
+	}
+
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{
+			{Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant", ToolCalls: calls},
+				FinishReason: "tool_calls",
+			}}},
+			{Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant", Content: "all done"},
+				FinishReason: "stop",
+			}}},
+		},
+	}
+
+	reg := tools.NewRegistry()
+	reg.Register(&fakeTool{name: "slow", result: "ok", delay: toolDelay, concurrent: &concurrent, maxSeen: &maxSeen})
+
+	loop := &Loop{
+		Provider:           fp,
+		Registry:           reg,
+		SystemPrompt:       "test",
+		MaxIterations:      5,
+		MaxToolConcurrency: cap,
+	}
+
+	if _, err := loop.Run(context.Background(), "fan out"); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	if got := maxSeen.Load(); got > cap {
+		t.Errorf("observed %d concurrent tool goroutines, cap was %d", got, cap)
+	}
+	if got := maxSeen.Load(); got < cap {
+		t.Errorf("expected the cap (%d) to be reached, but only saw %d concurrent", cap, got)
 	}
 }
 

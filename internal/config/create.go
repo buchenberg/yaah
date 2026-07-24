@@ -29,7 +29,26 @@ agents:
     small_model: deepseek-v4-flash
     max_iterations: 50
     approval: ask               # ask | allow | deny
-    # max_inline_tools_per_turn: 12  # cap inline tools per turn; 0 = unlimited
+    # max_turns: 5              # soft cap on tool-using turns; 0 = off
+    # max_inline_tools_per_turn: 12
+    # estimate_factor: 1.3      # token-estimate multiplier for compaction
+
+    # compaction tuning — fractions of context_window that trigger summarisation
+    # compaction_threshold: 0.5
+    # raw_compaction_threshold: 0.5
+
+    # loop detection — halt on repeated identical tool calls
+    # loop_detect_count: 5
+    # loop_detect_window: 10
+
+    # provider resilience
+    # max_retries: 2
+    # retry_backoff_secs: 1
+
+    # concurrency and caching
+    # max_tool_concurrency: 8
+    # prompt_caching: false      # Anthropic cache-control breakpoints
+    # reasoning_protect_turns: 2
 
   # subagent:
   #   provider: deepseek         # override provider (default: inherit from planner)

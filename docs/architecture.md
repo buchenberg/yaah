@@ -48,11 +48,8 @@ The agent loop lives in `internal/agent/agent.go`. The entry point is `Loop.Run(
 | `ApprovalMode` | `"allow"`, `"ask"`, or `"deny"` for destructive tools |
 | `DB` | Optional SQLite database for per-message persistence (nil = in-memory only) |
 | `MsgIdx` | Next message index for DB inserts, initialized to `len(Messages)` on resume |
-| `OnToken` | Streaming token callback (set by CLI/TUI for display) |
-| `OnTool` | Before/after tool execution callback |
-| `OnSubAgent` | Sub-agent start/completion callback (fires for `task` tools) |
-| `OnThinking` | Reasoning/thinking text callback (DeepSeek, Claude) |
-| `OnFlush` | Callback when model finishes a streaming segment |
+| `View` | Consumer for typed events via `HandleEvent(Event)` — see Engine-View Architecture below |
+| `broker` | Internal pub/sub bus (created from `View` in `applyDefaults`; not set by callers) |
 | `MaxToolConcurrency` | Cap on concurrent tool goroutines (0 = unlimited) |
 | `MaxSubAgentConcurrency` | Cap on concurrent `spawn_subagent` calls (0 = unlimited, default 3) |
 | `MaxSubAgentDepth` | SubAgentMiddleware cap on task calls per Loop |
@@ -136,7 +133,7 @@ sub-agent (for multi-step autonomous work).
 
 Both paths use the same `getAssistantMessage` method, which:
 
-1. Checks if the provider implements `StreamProvider`. If so and `OnToken` is set, uses streaming via `runStream()`.
+1. Checks if the provider implements `StreamProvider`. If a `View` is configured (internal broker is active), uses streaming via `runStream()`.
 2. Otherwise uses synchronous `Provider.Send()`.
 3. On failure, retries with exponential backoff (`RetryBackoff * 2^attempt`) up to `MaxRetries`.
 4. Rejects responses where `finish_reason == "length"` and tool calls are present (truncated tool calls are unsafe to execute).
@@ -352,48 +349,27 @@ Wiring chain: `reg.Names()` → `newTaskTool(…, roleNames)` → `TaskTool.Role
 
 ### CLI lifecycle display
 
-Files: `internal/agent/agent.go`, `cmd/yaah/root_cmd.go`
+Files: `internal/agent/agent.go`, `internal/agent/events.go`, `cmd/yaah/agent_frame.go`
 
 Sub-agent activity is rendered with `╭─` / `╰─` box-drawing corners in the CLI, distinct from ordinary tool calls.
 
-**Callbacks:**
+**Events:** The agent loop publishes typed events to the internal broker: `SubAgentStartEvent` (role, model, prompt) when a sub-agent begins, and `SubAgentEndEvent` (role, duration, error) when it completes. The REPL's `terminalView.HandleEvent` type-switches on these to render the brackets:
 
-- `SubAgentInfo` struct — `Role`, `Prompt` (abbreviated description), `Duration` (0 = start), `Error`.
-- `SubAgentCallback` — `func(info SubAgentInfo)`. Set as `Loop.OnSubAgent`.
-- `OnTool` for `task` tools is suppressed (line 484-486 of `root_cmd.go`) — all task lifecycle rendering goes through `OnSubAgent`.
-
-**Emission:** In `executeAndCollect`, when a tool named `"task"` is about to run, `parseTaskArgs` extracts the `role` and `description` from tool arguments JSON. `OnSubAgent` fires with `Duration=0` (start marker). After execution, it fires again with the actual duration and any error.
-
-**Rendering:** The REPL's `runPrompt` sets `OnSubAgent` to print:
 ```
 ╭─ sub-agent: analyst — Research external docs
 ╰─ sub-agent: analyst — completed (6.8s)
 ```
-If a sub-agent errors, status shows the error string (styled in yellow) instead of "completed".
+If a sub-agent errors, the status shows the error string (styled in yellow) instead of "completed".
 
-### Sub-agent tool callbacks
-
-File: `cmd/yaah/root_cmd.go`
-
-Sub-agent tool calls are displayed indented beneath the parent's activity.
-
-**`taskRunnerOpts.SubToolCallback`** is a `ToolCallback` field captured in the `taskRunnerOpts` closure and set on every sub-loop's `OnTool` via `makeTaskRunner`. The callback, `subToolDisplay`, renders with 4-space indent (vs. the parent's 2-space) and 40-char arg abbreviation (vs. the parent's 60-char):
-
-```
-    tool: glob({"pattern": "**/*.go",...}) (19ms)
-```
-
-Since `taskRunnerOpts` is reused for all nesting levels, every sub-agent (regardless of depth) uses the same callback. The indentation is achieved by the callback itself, not by positional tracking.
+Sub-agent tool calls are displayed indented beneath the parent's activity via `ToolStartEvent` and `ToolEndEvent`. The `terminalView` renders tool events from sub-agents with 4-space indent (vs. the parent's 2-space) by inspecting the event's originating context depth.
 
 ### TUI lifecycle display
 
 Files: `cmd/yaah/tui.go`, `internal/tui/tui.go`, `internal/tui/render.go`
 
-The TUI mirrors the CLI's bracketed sub-agent display through its own event model.
+The TUI mirrors the CLI's bracketed sub-agent display through the same typed event interface.
 
-**Data flow:** `OnSubAgent` in `runAgentForTUI` translates `agent.SubAgentInfo` into `AgentMsg` fields (`SubAgentStart`/`SubAgentEnd`, `SubAgentRole`, `SubAgentLabel`, `SubAgentDur`, `SubAgentErr`). These are sent over the `agentCh` channel to the TUI event loop.
-
-**`HandleAgentMsg`** converts sub-agent events into `Message` entries: `"subagent-start"` role with the task label (e.g. `"analyst — Research docs"`), and `"subagent-end"` role with the completion label (e.g. `"analyst — completed (6.8s)"`). The `SubAgentBracket` component renders these as `╭─` / `╰─` container corners (see [TUI component system](./tui-components.md)).
+**Data flow:** `SubAgentStartEvent` and `SubAgentEndEvent` are published to the broker and delivered to `Model.HandleEvent`. The TUI converts them into `Message` entries: `"subagent-start"` role with the task label (e.g. `"analyst — Research docs"`), and `"subagent-end"` role with the completion label (e.g. `"analyst — completed (6.8s)"`). The `SubAgentBracket` component renders these as `╭─` / `╰─` container corners (see [TUI component system](./tui-components.md)).
 
 **`renderMessages`** handles `"subagent-start"` and `"subagent-end"` roles with `subAgentStartStyle` (bold tool color) and `subAgentEndStyle` (tool color). The task tool header in the `"tool"` case uses `matchJSONField` to extract `role` and `description` from tool args JSON, displaying e.g. `"sub-agent: analyst — Research docs"` instead of the generic `"sub-agent"`.
 
@@ -781,27 +757,30 @@ type HookEvent struct {
 
 ## Streaming
 
-File: `internal/agent/agent.go` (`runStream`, `assembleStreamed`)
+File: `internal/agent/agent.go` (`runStream`, `assembleStreamed`), `internal/agent/events.go`
 
-When the provider implements `StreamProvider` and `OnToken` is set, `getAssistantMessage` uses `runStream()`. The method:
+When the provider implements `StreamProvider` and a `View` is configured (internal broker is active), `getAssistantMessage` uses `runStream()`. The method:
 
 1. Reads from a `<-chan StreamChunk`.
-2. Accumulates `delta.Content` into a string builder, emitting each chunk via `OnToken`.
-3. Accumulates `delta.ReasoningContent` separately, emitting via `OnThinking`.
+2. Accumulates `delta.Content` into a string builder, publishing each chunk as a `TokenDeltaEvent` to the internal broker.
+3. Accumulates `delta.ReasoningContent` separately, publishing as `ThinkingEvent`.
 4. Assembles tool calls from streamed deltas (by index), ordering them before returning.
 5. Rejects truncated streams (`finish_reason == "length"` with pending tool calls).
 
-Callbacks available on `Loop`:
+**Event flow:** Instead of direct callbacks, streaming deltas and tool lifecycle events are published to the `pubsub.Broker[Event]`. Consumers (TUI, REPL) receive them via their `View.HandleEvent` implementation. The broker is created internally when `Loop.View` is set — callers never touch it.
 
-| Callback | Signature | Purpose |
+Events published during streaming and tool execution:
+
+| Event type | When | Fields |
 |---|---|---|
-| `OnToken` | `func(string)` | Each streamed content delta |
-| `OnThinking` | `func(string)` | Reasoning/thinking content deltas |
-| `OnTool` | `func(ToolInfo)` | Called twice per tool: before (Duration=0) and after |
-| `OnSubAgent` | `func(SubAgentInfo)` | Called twice per sub-agent: start (Duration=0) and completion |
-| `OnFlush` | `func(string)` | Flush accumulated streamed content before next tool/iteration |
-
----
+| `TokenDeltaEvent` | Each streamed content delta | `Text string` |
+| `ThinkingEvent` | Each reasoning/thinking delta | `Text string` |
+| `FlushEvent` | Model finishes a streaming segment | `Content string` |
+| `ToolStartEvent` | Before tool execution | `Name, Args string` |
+| `ToolEndEvent` | After tool execution | `Name, Args, Result, Error string`; `Duration time.Duration` |
+| `SubAgentStartEvent` | Sub-agent begins | `Role, Model, Prompt string` |
+| `SubAgentEndEvent` | Sub-agent completes | `Role, Duration time.Duration`; `Error string` |
+| `DoneEvent` | Agent loop finishes | `Response string`; `ContextTokens, ContextWindow int` |
 
 ## Provider interface
 
@@ -822,16 +801,73 @@ The `internal/providers/` package implements OpenAI Chat Completions-compatible 
 
 ---
 
-## Callback notification design
+## Engine-View architecture
 
-`OnTool` is called twice per tool execution (before and after), giving callers two opportunities:
+Files: `internal/agent/events.go`, `internal/agent/view.go`, `internal/pubsub/broker.go`
 
-1. **Before** (`Duration == 0`, `Error == ""`): The caller can display `"tool: bash(args...)"` while the tool runs.
-2. **After** (`Duration > 0`): The caller can display the duration and any error.
+The agent loop communicates with consumers (TUI, REPL, sub-agent runner) through a single typed event interface. There are no callbacks on `agent.Loop` — everything flows through the broker.
 
-The `ToolInfo.Duration == 0` check is the canonical way to distinguish before vs. after. The CLI uses this in `root_cmd.go` to show:
-- Before: `"  tool: bash(args)"`
-- After: `" (1.2s)\n"`
+### Event interface
+
+All events implement the sealed `Event` interface via an unexported `eventMarker()` method. This prevents external packages from adding new event types — the engine owns the event contract:
+
+```go
+type Event interface {
+    eventMarker()
+}
+```
+
+Concrete event types (all pointer receivers for clean nil checks in type switches):
+
+| Event | Description |
+|---|---|
+| `TokenDeltaEvent` | Streaming token delta from the model |
+| `ThinkingEvent` | Reasoning/thinking text (DeepSeek R1, Claude) |
+| `FlushEvent` | Streaming segment complete; content should be committed to the message list |
+| `ToolStartEvent` | Tool execution begins (name + args) |
+| `ToolEndEvent` | Tool execution completes (name, args, result, duration, error) |
+| `SubAgentStartEvent` | Sub-agent dispatch begins (role, model, prompt) |
+| `SubAgentEndEvent` | Sub-agent dispatch completes (role, duration, error) |
+| `DoneEvent` | Agent loop finishes (response, error, context stats) |
+
+### View interface
+
+Consumers implement `agent.View`:
+
+```go
+type View interface {
+    HandleEvent(Event)
+}
+```
+
+`HandleEvent` is called sequentially from a dedicated forwarder goroutine — implementations must be safe for use from a single goroutine. The agent loop does not call `HandleEvent` concurrently.
+
+### BrokerView adapter
+
+`BrokerView` adapts a `pubsub.Broker[Event]` subscription into a `View` by running a forwarder goroutine that reads from the subscription channel and calls `HandleEvent` on the target view.
+
+```go
+broker := pubsub.NewBroker[Event]()
+bv := agent.NewBrokerView(broker, myView)
+defer bv.Close()
+// ... publish to broker ...
+```
+
+The agent loop creates the broker and `BrokerView` internally in `applyDefaults` when `Loop.View` is set. Lifecycle: create in `applyDefaults` → publish events during `Run` → close broker on `Run` return.
+
+### Consumers
+
+| Consumer | View impl | File |
+|----------|-----------|------|
+| TUI | `Model.HandleEvent` (type switch) | `internal/tui/tui.go` |
+| REPL | `terminalView` / `replView` | `cmd/yaah/agent_frame.go` |
+| Sub-agents | `agent.NoopView` | `cmd/yaah/subagent_runner.go` |
+
+Control-plane messages (todos, questions, approvals, model lists) use `tui.ControlMsg` — a separate channel from the broker events.
+
+### History
+
+The engine-view boundary was refactored in PRs #60 and #62 (plan: `.agents/plans/engine-view-separation/PLAN.md`). Before this, the agent loop had dual delivery (callbacks + broker) with a 25-field `AgentMsg` god struct and an 8-hop TUI delivery pipeline. The refactor removed callbacks entirely, internalized the broker, cut the pipeline to 4 hops, and replaced `AgentMsg` with compile-time-exhaustive typed events.
 
 ---
 
@@ -839,9 +875,9 @@ The `ToolInfo.Duration == 0` check is the canonical way to distinguish before vs
 
 Files: `cmd/yaah/tui.go`, `internal/tui/`
 
-The TUI is a [bubbletea](https://github.com/charmbracelet/bubbletea) application running the agent loop in a background goroutine. Communication between the agent goroutine and the TUI model goes through a typed `chan AgentMsg` channel.
+The TUI is a [bubbletea](https://github.com/charmbracelet/bubbletea) application running the agent loop in a background goroutine. Communication from the agent goroutine to the TUI goes through the typed event broker — the agent loop publishes `Event` values to the internal `pubsub.Broker[Event]`, and the `BrokerView` forwarder delivers them to `Model.HandleEvent`.
 
-**Data flow:** Agent events (tokens, tool starts/results, sub-agent lifecycle, thinking text) are converted to `AgentMsg` values by the callbacks in `runAgentForTUI` and sent over the channel. The TUI's `HandleAgentMsg` maps each `AgentMsg` to state transitions on `Model`: appending `Message` entries, toggling spinner state, updating the status bar, or setting approval modals.
+**Data flow:** Agent events (tokens, tool starts/results, sub-agent lifecycle, thinking text, done) are published as typed structs to the broker. `Model.HandleEvent` type-switches on the concrete event type and maps each to state transitions: appending `Message` entries for tokens, tool results, and sub-agent brackets; toggling spinner state; updating the status bar; or setting approval modals via `ControlMsg`.
 
 **Message rendering:** `renderMessages` in `render.go` switches on `Message.Role` (`"user"`, `"assistant"`, `"tool"`, `"subagent-start"`, `"subagent-end"`, `"system"`). Tool messages are collapsible (▶/▼), styled by `toolStyle`, and display a header extracted from `ToolName` and `ToolArgs`. Sub-agent brackets use `subAgentStartStyle` (bold) and `subAgentEndStyle`.
 

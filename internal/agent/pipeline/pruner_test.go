@@ -124,10 +124,10 @@ func TestPruner_MinReclaim(t *testing.T) {
 }
 
 func TestPruner_MinTurns(t *testing.T) {
-	// The last MinTurns turns (by user message) are never marked, no matter
-	// how large. Here MinTurns=2 protects turns 2 and 3; only turn 1 (oldest)
-	// is eligible. Everything is huge (5000 tokens) so without MinTurns all
-	// would be pruned.
+	// The last MinTurns turn-units (user messages OR assistant messages with
+	// tool calls) are never marked. With MinTurns=2 and the new counting,
+	// the last iteration's user + assistant(tool_calls) = 2 units are
+	// protected. Older iterations' tool results are eligible.
 	p := NewPruner(PruneConfig{
 		ProtectTokens: 1, // tiny so everything would otherwise be eligible
 		MinReclaim:    1,
@@ -146,14 +146,16 @@ func TestPruner_MinTurns(t *testing.T) {
 	msgs = append(msgs, turn("c3", "read", 5000)[1:]...)
 
 	stats := p.Mark(msgs, "post_tool")
-	if stats.Marked != 1 {
-		t.Errorf("expected exactly 1 marked (only the oldest turn), got %d: %+v", stats.Marked, stats)
+	// MinTurns=2 protects the last 2 turn-units: user("u3") + assistant(c3).
+	// Turns 1 and 2 tool results are eligible → 2 marked.
+	if stats.Marked != 2 {
+		t.Errorf("expected 2 marked (turns 1 and 2), got %d: %+v", stats.Marked, stats)
 	}
-	if !p.IsPruned("c1") {
-		t.Errorf("oldest turn's tool result should be pruned")
+	if !p.IsPruned("c1") || !p.IsPruned("c2") {
+		t.Errorf("older turns' tool results should be pruned: c1=%v c2=%v", p.IsPruned("c1"), p.IsPruned("c2"))
 	}
-	if p.IsPruned("c2") || p.IsPruned("c3") {
-		t.Errorf("recent turns' tool results must be protected by MinTurns=2")
+	if p.IsPruned("c3") {
+		t.Errorf("most recent turn's tool result must be protected by MinTurns=2")
 	}
 }
 
@@ -350,6 +352,65 @@ func TestPruner_ConcurrentSafe(t *testing.T) {
 	// No panic / race under -race is the assertion.
 }
 
+// TestPruner_DefaultsPruneRealisticVolume reproduces the production slowdown:
+// a realistic session accumulates many moderate tool results (~25k tokens
+// across 10 turns). With the shipped defaults the pruner must actually commit
+// a prune — if it does not (candidates=0 / reclaimed=0 every call, as seen
+// across 407 prune spans in real traces), context grows unbounded. This test
+// pins the defaults low enough that realistic volume triggers a prune.
+func TestPruner_DefaultsPruneRealisticVolume(t *testing.T) {
+	p := NewPruner(DefaultPruneConfig())
+	var msgs []types.Message
+	msgs = append(msgs, types.SystemMsg("sys"))
+	for i := 0; i < 10; i++ {
+		msgs = append(msgs, turn(fmt.Sprintf("c%d", i), "read", 2500)...)
+	}
+	msgs = append(msgs, types.UserMsg("end"))
+
+	stats := p.Mark(msgs, "post_tool")
+	if !stats.Committed {
+		t.Fatalf("pruner should commit on realistic tool volume with defaults, got %+v", stats)
+	}
+	if stats.ReclaimedTokens == 0 {
+		t.Fatalf("pruner should reclaim tokens with defaults, got %+v", stats)
+	}
+	if stats.Marked == 0 {
+		t.Fatalf("expected at least one tool result marked, got %+v", stats)
+	}
+}
+
+// TestPruner_SinglePromptMultiIteration reproduces the TUI/one-shot bug:
+// a session with ONE user message followed by many assistant+tool iterations.
+// The old MinTurns logic counted only user messages, so the pruner never
+// activated (turns never reached 2). The fix counts assistant messages with
+// tool calls as turns too.
+func TestPruner_SinglePromptMultiIteration(t *testing.T) {
+	p := NewPruner(DefaultPruneConfig())
+	var msgs []types.Message
+	msgs = append(msgs, types.SystemMsg("sys"))
+	msgs = append(msgs, types.UserMsg("do the task"))
+	// Simulate 8 iterations: assistant(tool_calls) + tool_result, no new user msgs
+	for i := 0; i < 8; i++ {
+		msgs = append(msgs, types.AssistantMsg("", []types.ToolCall{{
+			ID:       fmt.Sprintf("c%d", i),
+			Type:     "function",
+			Function: types.ToolCallFn{Name: "read", Arguments: "{}"},
+		}}))
+		msgs = append(msgs, bigToolResult(fmt.Sprintf("c%d", i), "read", 2500))
+	}
+
+	stats := p.Mark(msgs, "post_tool")
+	if stats.Candidates == 0 {
+		t.Fatalf("single-prompt multi-iteration session must produce candidates, got %+v", stats)
+	}
+	if !stats.Committed {
+		t.Fatalf("pruner should commit in single-prompt session, got %+v", stats)
+	}
+	if stats.ReclaimedTokens == 0 {
+		t.Fatalf("pruner should reclaim tokens, got %+v", stats)
+	}
+}
+
 func TestPruner_DefaultConfig(t *testing.T) {
 	p := NewPruner(PruneConfig{}) // all zero → defaults applied
 	if p.cfg.ProtectTokens != defaultPruneProtectTokens {
@@ -363,5 +424,8 @@ func TestPruner_DefaultConfig(t *testing.T) {
 	}
 	if !p.cfg.ProtectedTools["skill"] {
 		t.Errorf("ProtectedTools default should include 'skill'")
+	}
+	if !p.cfg.ProtectedTools["spawn_subagent"] {
+		t.Errorf("ProtectedTools default should include 'spawn_subagent'")
 	}
 }

@@ -59,6 +59,33 @@ func AddSubAgentUsage(ctx context.Context, delta types.Usage) {
 	}
 }
 
+// subAgentHeartbeatKey is a context key for the per-sub-agent heartbeat
+// channel. The sub-agent loop non-blocking-sends on this channel each
+// iteration so a parent watchdog can detect stuck children.
+type subAgentHeartbeatKey struct{}
+
+// WithSubAgentHeartbeat stores hb in ctx so the sub-agent loop can emit
+// heartbeats. The caller should create a buffered channel (cap 1) so the
+// sub-agent never blocks on send.
+func WithSubAgentHeartbeat(ctx context.Context, hb chan struct{}) context.Context {
+	return context.WithValue(ctx, subAgentHeartbeatKey{}, hb)
+}
+
+// SendHeartbeat non-blocking-sends on the heartbeat channel stored in ctx,
+// if present. Designed to be called at the top of each agent loop iteration.
+func SendHeartbeat(ctx context.Context) {
+	if hb, ok := ctx.Value(subAgentHeartbeatKey{}).(chan struct{}); ok {
+		select {
+		case hb <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// ErrStuckChild is returned when a sub-agent is cancelled by the parent
+// watchdog after StuckChildTimeout elapses with no heartbeat.
+var ErrStuckChild = errors.New("sub-agent stuck: no heartbeat received within deadline")
+
 // SubAgentParams carries the per-invocation sub-agent configuration that
 // the model may supply via the task tool arguments. It is passed through
 // to the TaskRunner so the runner can build a role-appropriate Loop.
@@ -286,6 +313,8 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded), runCtx.Err() == context.DeadlineExceeded:
 			return structuredTaskResult("timed out", timeout, partial), nil
+		case errors.Is(err, ErrStuckChild):
+			return structuredTaskResult("stuck", timeout, partial), nil
 		case errors.Is(err, context.Canceled), runCtx.Err() == context.Canceled:
 			return structuredTaskResult("cancelled", timeout, partial), nil
 		default:
