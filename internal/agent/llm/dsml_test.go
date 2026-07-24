@@ -191,3 +191,112 @@ func TestParseDSMLToolCalls(t *testing.T) {
 		}
 	})
 }
+
+func TestDSMLTokenFilter(t *testing.T) {
+	open := "<\uff5c\uff5cDSML\uff5c\uff5ctool_calls>"
+	close := "</\uff5c\uff5cDSML\uff5c\uff5ctool_calls>"
+
+	t.Run("no DSML passes through", func(t *testing.T) {
+		var f dsmlTokenFilter
+		if got := f.filterToken("hello"); got != "hello" {
+			t.Errorf("expected hello, got %q", got)
+		}
+		if got := f.filterToken(" world"); got != " world" {
+			t.Errorf("expected ' world', got %q", got)
+		}
+	})
+
+	t.Run("complete DSML block suppressed", func(t *testing.T) {
+		var f dsmlTokenFilter
+		got := f.filterToken(open + "invoke stuff" + close)
+		if got != "" {
+			t.Errorf("expected empty, got %q", got)
+		}
+	})
+
+	t.Run("content before DSML forwarded", func(t *testing.T) {
+		var f dsmlTokenFilter
+		got := f.filterToken("before " + open + "invoke" + close)
+		if got != "before " {
+			t.Errorf("expected 'before ', got %q", got)
+		}
+	})
+
+	t.Run("content after DSML forwarded", func(t *testing.T) {
+		var f dsmlTokenFilter
+		f.filterToken(open + "invoke" + close)
+		got := f.filterToken(" after")
+		if got != " after" {
+			t.Errorf("expected ' after', got %q", got)
+		}
+	})
+
+	t.Run("DSML across chunks", func(t *testing.T) {
+		var f dsmlTokenFilter
+		if got := f.filterToken("pre "); got != "pre " {
+			t.Errorf("chunk 1: expected 'pre ', got %q", got)
+		}
+		if got := f.filterToken(open[:10]); got != "" {
+			t.Errorf("chunk 2 (partial open tag): expected '', got %q", got)
+		}
+		if got := f.filterToken(open[10:] + "foo"); got != "" {
+			t.Errorf("chunk 3 (rest of open tag): expected '', got %q", got)
+		}
+		if got := f.filterToken(close); got != "" {
+			t.Errorf("chunk 4 (close tag): expected '', got %q", got)
+		}
+		if got := f.filterToken(" post"); got != " post" {
+			t.Errorf("chunk 5: expected ' post', got %q", got)
+		}
+	})
+
+	t.Run("content + DSML + content single chunk", func(t *testing.T) {
+		var f dsmlTokenFilter
+		got := f.filterToken("hello" + open + "blah" + close + "world")
+		if got != "helloworld" {
+			t.Errorf("expected 'helloworld', got %q", got)
+		}
+		if got := f.filterToken("!!"); got != "!!" {
+			t.Errorf("expected '!!', got %q", got)
+		}
+	})
+
+	t.Run("multiple DSML blocks", func(t *testing.T) {
+		var f dsmlTokenFilter
+		if got := f.filterToken("a" + open + "x" + close + "b"); got != "ab" {
+			t.Errorf("expected 'ab', got %q", got)
+		}
+		if got := f.filterToken(open + "y" + close + "c"); got != "c" {
+			t.Errorf("expected 'c', got %q", got)
+		}
+		if got := f.filterToken("d"); got != "d" {
+			t.Errorf("expected 'd', got %q", got)
+		}
+	})
+
+	t.Run("partial close tag at end held back", func(t *testing.T) {
+		var f dsmlTokenFilter
+		f.filterToken(open + "invoke")
+		partial := close[:5]
+		if got := f.filterToken(partial); got != "" {
+			t.Errorf("expected '', got %q", got)
+		}
+		if got := f.filterToken(close[5:]); got != "" {
+			t.Errorf("expected '', got %q", got)
+		}
+		if got := f.filterToken("end"); got != "end" {
+			t.Errorf("expected 'end', got %q", got)
+		}
+	})
+
+	t.Run("close tag appears after content within DSML", func(t *testing.T) {
+		var f dsmlTokenFilter
+		f.filterToken(open + "invoke")
+		if got := f.filterToken(close + "after"); got != "after" {
+			t.Errorf("expected 'after', got %q", got)
+		}
+		if got := f.filterToken(" more"); got != " more" {
+			t.Errorf("expected ' more', got %q", got)
+		}
+	})
+}
