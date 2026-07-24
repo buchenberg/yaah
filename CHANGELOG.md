@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.2](https://github.com/buchenberg/yaah/compare/v0.33.1...v0.33.2) (2026-07-24)
+
+
+### Bug Fixes
+
+* **tools:** git flags whitelist + OS-aware shell registration ([#74](https://github.com/buchenberg/yaah/issues/74)) ([4e195e1](https://github.com/buchenberg/yaah/commit/4e195e102b2e4019da050c58db83253a23753c15))
+
 ## [0.33.1](https://github.com/buchenberg/yaah/compare/v0.33.0...v0.33.1) (2026-07-24)
 
 
