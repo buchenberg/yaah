@@ -65,22 +65,22 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (types.Message
 				if len(resp.Choices) == 0 {
 					err = fmt.Errorf("no choices in response")
 				} else {
-			msg = resp.Choices[0].Message
+					msg = resp.Choices[0].Message
 
-				if msg.Content == "" && msg.Refusal != "" {
-					msg.Content = msg.Refusal
-				}
+					if msg.Content == "" && msg.Refusal != "" {
+						msg.Content = msg.Refusal
+					}
 
-				if msg.ReasoningContent != "" && c.OnThinking != nil {
-					c.OnThinking(msg.ReasoningContent)
-				}
+					if msg.ReasoningContent != "" && c.OnThinking != nil {
+						c.OnThinking(msg.ReasoningContent)
+					}
 
-				if cleaned, dsmlCalls, ok := parseDSMLToolCalls(msg.Content); ok {
-					msg.Content = cleaned
-					msg.ToolCalls = append(msg.ToolCalls, dsmlCalls...)
-				}
+					if cleaned, dsmlCalls, ok := parseDSMLToolCalls(msg.Content); ok {
+						msg.Content = cleaned
+						msg.ToolCalls = append(msg.ToolCalls, dsmlCalls...)
+					}
 
-				finish := resp.Choices[0].FinishReason
+					finish := resp.Choices[0].FinishReason
 					if finish == "content_filter" && msg.Content == "" {
 						err = fmt.Errorf("response blocked by content filter")
 						msg = types.Message{}
