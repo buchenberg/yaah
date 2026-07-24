@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.1](https://github.com/buchenberg/yaah/compare/v0.33.0...v0.33.1) (2026-07-24)
+
+
+### Bug Fixes
+
+* **llm:** close DSML parser gaps in non-streaming and mixed-content paths ([#71](https://github.com/buchenberg/yaah/issues/71)) ([9d9a113](https://github.com/buchenberg/yaah/commit/9d9a113d4db3011d2c0faf3d8b825b528bfaa7a3))
+
 ## [0.33.0](https://github.com/buchenberg/yaah/compare/v0.32.0...v0.33.0) (2026-07-24)
 
 
