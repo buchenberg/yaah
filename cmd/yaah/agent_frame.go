@@ -221,7 +221,7 @@ func newAgentSession() (*agentSession, error) {
 	if subCW < 32000 {
 		subCW = 32000
 	}
-	toolReg.Register(newTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers))
+	toolReg.Register(newTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default))
 
 	toolReg.Register(&tools.ListSubAgentsTool{
 		Lister: func() []tools.SubAgentInfo {
@@ -451,8 +451,18 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		SystemPrompt:           s.systemPrompt,
 		MaxInlineToolsPerTurn:  s.cfg.Agent.Default.MaxInlineToolsPerTurn,
 		MaxIterations:          s.cfg.Agent.Default.MaxIterations,
+		MaxTurns:               s.cfg.Agent.Default.MaxTurns,
+		MaxRetries:             s.cfg.Agent.Default.MaxRetries,
+		RetryBackoff:           time.Duration(s.cfg.Agent.Default.RetryBackoffSecs) * time.Second,
 		ContextWindow:          s.cfg.Agent.Default.ContextWindow,
+		CompactionThreshold:    s.cfg.Agent.Default.CompactionThreshold,
+		RawCompactionThreshold: s.cfg.Agent.Default.RawCompactionThreshold,
 		EstimateFactor:         s.cfg.Agent.Default.EstimateFactor,
+		LoopDetectCount:        s.cfg.Agent.Default.LoopDetectCount,
+		LoopDetectWindow:       s.cfg.Agent.Default.LoopDetectWindow,
+		MaxToolConcurrency:     s.cfg.Agent.Default.MaxToolConcurrency,
+		PromptCaching:          s.cfg.Agent.Default.PromptCaching,
+		ReasoningProtectTurns:  s.cfg.Agent.Default.ReasoningProtect,
 		ApprovalMode:           resolveApproval(s.cfg),
 		Messages:               s.messages,
 		HookDir:                s.cfg.Hooks.Dir,
@@ -460,6 +470,12 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		PipelineNames:          s.cfg.Agent.Middleware.Enabled,
 		PipelineDisabled:       s.cfg.Agent.Middleware.Disabled,
 		DB:                     s.db,
+		WriteDebouncer: func() *memory.DebouncedWriter {
+			if s.db != nil {
+				return memory.NewDebouncedWriter(s.db)
+			}
+			return nil
+		}(),
 		MsgIdx:                 s.msgIdx,
 		MaxSubAgentConcurrency: s.cfg.Agent.SubAgent.MaxConcurrency,
 		StuckChildTimeout:     time.Duration(s.cfg.Agent.SubAgent.StuckChildTimeout) * time.Second,

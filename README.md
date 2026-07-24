@@ -472,11 +472,29 @@ agents:
     provider: deepseek
     model: deepseek-v4-pro
     small_model: deepseek-v4-flash    # cheaper model for compaction
-    max_iterations: 50
+    max_iterations: 50                # hard loop cap
+    max_turns: 5                      # soft cap that strips tools at N (0 = off)
     context_window: 128000
     approval: ask                     # ask | allow | deny
     max_inline_tools_per_turn: 0      # 0 = unlimited
     estimate_factor: 1.3              # token estimate multiplier (0 = default 1.3)
+
+    # Compaction tuning — fractions of context_window that trigger summarisation.
+    compaction_threshold: 0.5
+    raw_compaction_threshold: 0.5     # triggers on raw prompt tokens (ignores cache)
+
+    # Loop detection — halt when the same tool+args+result hash repeats.
+    loop_detect_count: 5              # identical calls to trigger halt
+    loop_detect_window: 10            # sliding window size
+
+    # Provider resilience — retry transient errors with backoff.
+    max_retries: 2                    # 0 = no retries
+    retry_backoff_secs: 1             # base backoff (exponential)
+
+    # Concurrency and caching.
+    max_tool_concurrency: 8           # 0 = unlimited
+    prompt_caching: false             # Anthropic cache-control breakpoints
+    reasoning_protect_turns: 2        # preserve reasoning in N recent turns
 
   subagent:                           # my team
     provider: deepseek                # override provider (default: inherit)
@@ -555,10 +573,24 @@ At least one provider is required. Each needs a `base_url`
 | `model` | — | Model for the main agent |
 | `small_model` | — | Cheaper model for context compaction |
 | `max_iterations` | 50 | Safety cap on loop turns |
+| `max_turns` | 0 (off) | Soft cap; tools are stripped at this iteration, forcing a final answer |
 | `context_window` | — | Token budget (0 = disabled) |
 | `approval` | `ask` | `allow`, `ask`, or `deny` |
 | `max_inline_tools_per_turn` | 0 (unlimited) | Cap inline tool calls per turn |
 | `estimate_factor` | 1.3 | Token estimate multiplier for preflight compaction |
+| `compaction_threshold` | 0.5 | Fraction of context_window that triggers LLM summarisation (effective tokens after cache subtraction) |
+| `raw_compaction_threshold` | 0.5 | Same as above but ignores cached tokens; guards latency |
+| `loop_detect_count` | 5 | Identical tool calls (hash) within the window that trigger a hard halt |
+| `loop_detect_window` | 10 | Sliding window size (in turns) for loop detection |
+| `max_retries` | 0 (off) | Retry count on transient provider errors |
+| `retry_backoff_secs` | 1 | Base backoff seconds (exponential growth) |
+| `max_tool_concurrency` | 0 (unlimited) | Cap concurrent tool goroutines per turn |
+| `prompt_caching` | `false` | Inject Anthropic `cache_control` breakpoints (Anthropic-only) |
+| `reasoning_protect_turns` | 2 | Preserve reasoning on N recent turns in provider requests |
+
+Sub-agents inherit all of the above (except `max_turns`, which they override via
+`default_max_turns` below) — making `compaction_threshold`, `loop_detect_count`,
+and `max_retries` consistent across the whole team.
 
 **`agents.subagent`** — team configuration:
 

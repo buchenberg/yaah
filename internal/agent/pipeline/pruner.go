@@ -25,14 +25,16 @@ const (
 
 // PruneConfig tunes soft-prune behaviour. Defaults are tuned for yaah's
 // typical session size: protect 3k tokens of recent tool output and commit a
-// prune once it reclaims > 1k tokens, always keeping the last 2 turns.
+// prune once it reclaims > 1k tokens, always keeping the last 2 turns
+// (counted as user messages OR assistant messages with tool calls, so
+// single-prompt multi-iteration sessions are handled correctly).
 // Earlier thresholds (40k/20k, then 12k/4k) never fired in practice because
 // realistic tool volume in short sessions (~5k) never exceeded the protect
 // window; context grew unbounded as a result.
 type PruneConfig struct {
 	ProtectTokens  int             // tokens of recent tool output shielded from pruning
 	MinReclaim     int             // minimum reclaim required to commit a prune
-	MinTurns       int             // number of recent turns (by user message) always kept
+	MinTurns       int             // number of recent turns (user msgs or assistant+tool_calls) always kept
 	ProtectedTools map[string]bool // tool names whose results are never pruned
 }
 
@@ -114,7 +116,8 @@ type pruneCandidate struct {
 // their tool-call IDs and returns stats. It does NOT mutate messages.
 //
 // Walk rules (see plan §3, §6.1):
-//   - The last MinTurns turns (counted by user messages) are always protected.
+//   - The last MinTurns turns (counted by user messages OR assistant messages
+//     with tool calls) are always protected.
 //   - A non-index-0 system message terminates the walk (compaction summary
 //     boundary — anything older is already summarized).
 //   - Reaching an already-pruned tool message terminates the walk, bounding
@@ -141,7 +144,7 @@ func (p *Pruner) Mark(messages []types.Message, reason string) PruneStats {
 
 	for i := len(messages) - 1; i >= 0; i-- {
 		m := messages[i]
-		if m.Role == "user" {
+		if m.Role == "user" || (m.Role == "assistant" && len(m.ToolCalls) > 0) {
 			turns++
 		}
 		if turns < p.cfg.MinTurns {
@@ -164,11 +167,21 @@ func (p *Pruner) Mark(messages []types.Message, reason string) PruneStats {
 			continue
 		}
 		est := estimateToolTokens(m)
+		prevTotal := total
 		total += est
 		if total <= p.cfg.ProtectTokens {
 			continue
 		}
-		reclaim += est
+		// Only count the portion that falls beyond the protect window.
+		// The first result that straddles the boundary contributes just
+		// its excess; every result after that contributes its full est.
+		var reclaimable int
+		if prevTotal >= p.cfg.ProtectTokens {
+			reclaimable = est
+		} else {
+			reclaimable = total - p.cfg.ProtectTokens
+		}
+		reclaim += reclaimable
 		candidates = append(candidates, pruneCandidate{id: m.ToolCallID, tokens: est})
 	}
 
