@@ -189,8 +189,8 @@ Test guidance.`),
 	// Fallback when no registry is set: RoleDefault gets the full profile.
 	SetDefaultRoleRegistry(nil)
 	legacyDefault := RoleProfileFor(RoleDefault)
-	if !contains(legacyDefault.Tools, "bash") {
-		t.Error("legacy fallback: default missing bash")
+	if !contains(legacyDefault.Tools, platformShell()) {
+		t.Error("legacy fallback: default missing platform shell")
 	}
 	if !contains(legacyDefault.Tools, "write") {
 		t.Error("legacy fallback: default missing write")

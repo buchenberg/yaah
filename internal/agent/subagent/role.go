@@ -1,9 +1,18 @@
 package subagent
 
 import (
+	"runtime"
 	"sync/atomic"
 	"time"
 )
+
+// platformShell returns the OS-appropriate shell tool name.
+func platformShell() string {
+	if runtime.GOOS == "windows" {
+		return "powershell"
+	}
+	return "bash"
+}
 
 // SubAgentRole identifies the profile a sub-agent runs under. The role
 // determines which tools the sub-agent has access to, its iteration
@@ -137,7 +146,7 @@ func legacyProfileFor(role SubAgentRole) RoleProfile {
 			Tools: []string{
 				"read", "write", "edit", "delete", "replace",
 				"json_query", "grep", "glob", "ls",
-				"bash", "powershell", "question", "webfetch",
+				platformShell(), "question", "webfetch",
 				"git", "http", "go_outline", "calculate", "file_info",
 				"spawn_subagent", "list_subagents", "todowrite",
 				"skill", "plan", "background_process",
