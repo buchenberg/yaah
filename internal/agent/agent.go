@@ -258,25 +258,29 @@ type Loop struct {
 	// Pruner soft-prunes stale tool-result content from provider requests
 	// (Tier-0 context reclaim). Default-constructed in applyDefaults; disable
 	// via PipelineDisabled: ["soft_prune"].
+	// Deprecated: use CtxMgr.Pruner.
 	Pruner *pipeline.Pruner
 
 	// Tool result truncation caps. Zero values use built-in defaults
 	// (500 lines / 20 KiB).
+	// Deprecated: use CtxMgr.ToolResultMaxLines/ToolResultMaxBytes.
 	ToolResultMaxLines int
 	ToolResultMaxBytes int
 
 	// Soft-prune tuning. Zero values use built-in defaults.
+	// Deprecated: use CtxMgr.PruneProtectTokens/PruneMinReclaim/PruneMinTurns.
 	PruneProtectTokens int
 	PruneMinReclaim    int
 	PruneMinTurns      int
 
 	// ReasoningProtectTurns is the number of recent user-message turns whose
-	// assistant ReasoningContent is preserved in provider requests. Reasoning
-	// on older turns is stripped from the ephemeral request copy (the stored
-	// history is untouched) because models generate fresh reasoning each turn
-	// and re-sending accumulated reasoning bloats every request. Default 0
-	// means 2 (matching the pruner's MinTurns).
+	// assistant ReasoningContent is preserved in provider requests.
+	// Deprecated: use CtxMgr.ReasoningProtectTurns.
 	ReasoningProtectTurns int
+
+	// CtxMgr owns context-window policy: compaction, pruning, token tracking,
+	// and truncation. Created in applyDefaults from the Loop's config fields.
+	CtxMgr *ContextManager
 
 	// ConflictTracker detects and reports external file modifications made
 	// outside the agent's own write/edit/replace/delete tools during a turn.
@@ -689,6 +693,32 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 
 // applyDefaults sets default values for Loop fields.
 func (l *Loop) applyDefaults() {
+	if l.CtxMgr == nil {
+		l.CtxMgr = NewContextManager(l.Provider, l.Model)
+		l.CtxMgr.ContextWindow = l.ContextWindow
+		l.CtxMgr.CompactionThreshold = l.CompactionThreshold
+		l.CtxMgr.RawCompactionThreshold = l.RawCompactionThreshold
+		l.CtxMgr.EstimateFactor = l.EstimateFactor
+		l.CtxMgr.ReasoningProtectTurns = l.ReasoningProtectTurns
+		l.CtxMgr.ToolResultMaxLines = l.ToolResultMaxLines
+		l.CtxMgr.ToolResultMaxBytes = l.ToolResultMaxBytes
+		l.CtxMgr.PruneProtectTokens = l.PruneProtectTokens
+		l.CtxMgr.PruneMinReclaim = l.PruneMinReclaim
+		l.CtxMgr.PruneMinTurns = l.PruneMinTurns
+		l.CtxMgr.Pruner = l.Pruner
+		l.CtxMgr.PreviousSummary = l.PreviousSummary
+		l.CtxMgr.LastPromptTokens = l.LastPromptTokens
+		l.CtxMgr.LastCachedPromptTokens = l.LastCachedPromptTokens
+		l.CtxMgr.LastCompactionTokens = l.lastCompactionTokens
+		l.CtxMgr.IneffectiveCompactions = l.ineffectiveCompactions
+		l.CtxMgr.CompactProvider = l.CompactProvider
+		l.CtxMgr.CompactModel = l.CompactModel
+		l.CtxMgr.DB = l.DB
+		l.CtxMgr.SessionID = l.SessionID
+		l.CtxMgr.OtelEnabled = l.OtelEnabled
+	}
+	l.CtxMgr.EnsurePruner()
+	l.Pruner = l.CtxMgr.Pruner
 	l.ensurePruner()
 	if l.MaxIterations <= 0 {
 		l.MaxIterations = 50
