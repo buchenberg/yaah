@@ -153,4 +153,41 @@ func TestParseDSMLToolCalls(t *testing.T) {
 			t.Fatalf("calls = %+v", calls)
 		}
 	})
+
+	t.Run("truncated DSML block with salvageable invoke", func(t *testing.T) {
+		content := "I'll write that file.\n" +
+			"<\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls>\n" +
+			"<\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke name=\"write\">\n" +
+			"<\uFF5C\uFF5CDSML\uFF5C\uFF5Cparameter name=\"filePath\" string=\"true\">test.go</\uFF5C\uFF5CDSML\uFF5C\uFF5Cparameter>\n" +
+			"</\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke>\n" +
+			"<\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke name=\"bash\">\n" +
+			"<\uFF5C\uFF5CDSML\uFF5C\uFF5Cparameter name=\"command\" string=\"true\">go test</\uFF5C\uFF5CDSML\uFF5C\uFF5Cparameter>\n" +
+			"</\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_c"
+
+		cleaned, calls, ok := parseDSMLToolCalls(content)
+		if !ok {
+			t.Fatal("expected truncated DSML detected")
+		}
+		if cleaned != "I'll write that file." {
+			t.Errorf("cleaned = %q", cleaned)
+		}
+		if len(calls) != 1 || calls[0].Function.Name != "write" {
+			t.Fatalf("expected 1 salvaged call (write), got %+v", calls)
+		}
+	})
+
+	t.Run("truncated DSML with no complete invokes", func(t *testing.T) {
+		content := "Let me check.\n<\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls>\n<\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke name=\"grep\">\n<\uFF5C\uFF5CDSML\uFF5C\uFF5Cpar"
+
+		cleaned, calls, ok := parseDSMLToolCalls(content)
+		if !ok {
+			t.Fatal("expected truncated DSML detected")
+		}
+		if cleaned != "Let me check." {
+			t.Errorf("cleaned = %q", cleaned)
+		}
+		if len(calls) != 0 {
+			t.Fatalf("expected 0 salvaged calls, got %+v", calls)
+		}
+	})
 }
