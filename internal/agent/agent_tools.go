@@ -59,17 +59,15 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 					return
 				}
 			}
-			if l.toolSem != nil {
-				select {
-				case l.toolSem <- struct{}{}:
-					releaseTool = func() { <-l.toolSem }
-				case <-ctx.Done():
+			if l.toolConcurrency != nil {
+				if err := l.toolConcurrency.Acquire(ctx); err != nil {
 					if releaseSubAgent != nil {
 						releaseSubAgent()
 					}
-					execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: "cancelled", err: ctx.Err()}
+					execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: "cancelled", err: err}
 					return
 				}
+				releaseTool = l.toolConcurrency.Release
 			}
 			defer func() {
 				if releaseTool != nil {

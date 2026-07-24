@@ -100,6 +100,7 @@ var defaultPipelineNames = []string{
 	"compaction",
 	"soft_prune",
 	"approval",
+	"tool_concurrency",
 	"loop_detection",
 }
 

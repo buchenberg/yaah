@@ -61,3 +61,17 @@ func (p *Pipeline) MiddlewareNames() []string {
 	}
 	return names
 }
+
+// Find returns the first middleware with the given name, or nil if the
+// pipeline doesn't contain one. Callers use this to locate middleware
+// that expose methods beyond the standard hook interface (e.g. the
+// tool_concurrency middleware's Acquire/Release used to gate per-tool
+// goroutines).
+func (p *Pipeline) Find(name string) Middleware {
+	for _, mw := range p.middleware {
+		if mw.Name() == name {
+			return mw
+		}
+	}
+	return nil
+}

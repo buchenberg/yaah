@@ -307,9 +307,10 @@ type Loop struct {
 	// hookMu serializes writes to the hook file.
 	hookMu sync.Mutex
 
-	// toolSem is a semaphore channel for limiting concurrent tool executions.
-	// Created in applyDefaults when MaxToolConcurrency > 0.
-	toolSem chan struct{}
+	// toolConcurrency is the tool_concurrency middleware instance, cached
+	// after buildPipeline so executeAndCollect can call its Acquire/Release
+	// to gate per-tool goroutines. nil when the cap is unlimited.
+	toolConcurrency *pipeline.ToolConcurrencyMiddleware
 
 	// subAgentSem is a semaphore channel for limiting concurrent task calls.
 	// Created in applyDefaults when MaxSubAgentConcurrency > 0.
@@ -700,8 +701,8 @@ func (l *Loop) applyDefaults() {
 	if l.ReasoningProtectTurns <= 0 {
 		l.ReasoningProtectTurns = defaultReasoningProtectTurns
 	}
-	if l.MaxToolConcurrency > 0 && l.toolSem == nil {
-		l.toolSem = make(chan struct{}, l.MaxToolConcurrency)
+	if l.MaxToolConcurrency > 0 && l.toolConcurrency == nil {
+		l.toolConcurrency = pipeline.NewToolConcurrencyMiddleware(l.MaxToolConcurrency)
 	}
 	if l.MaxSubAgentConcurrency > 0 && l.subAgentSem == nil {
 		l.subAgentSem = make(chan struct{}, l.MaxSubAgentConcurrency)
