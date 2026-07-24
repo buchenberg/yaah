@@ -75,6 +75,11 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (types.Message
 						c.OnThinking(msg.ReasoningContent)
 					}
 
+					if cleaned, dsmlCalls, ok := parseDSMLToolCalls(msg.Content); ok {
+						msg.Content = cleaned
+						msg.ToolCalls = append(msg.ToolCalls, dsmlCalls...)
+					}
+
 					finish := resp.Choices[0].FinishReason
 					if finish == "content_filter" && msg.Content == "" {
 						err = fmt.Errorf("response blocked by content filter")

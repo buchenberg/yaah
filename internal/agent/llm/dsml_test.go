@@ -133,4 +133,24 @@ func TestParseDSMLToolCalls(t *testing.T) {
 			t.Fatalf("expected %q, got %q", expected, args["command"])
 		}
 	})
+
+	t.Run("DSML mixed with existing tool calls", func(t *testing.T) {
+		content := "Let me help with that.\n" +
+			"<\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls>\n" +
+			"<\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke name=\"grep\">\n" +
+			"<\uFF5C\uFF5CDSML\uFF5C\uFF5Cparameter name=\"pattern\" string=\"true\">TODO</\uFF5C\uFF5CDSML\uFF5C\uFF5Cparameter>\n" +
+			"</\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke>\n" +
+			"</\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls>"
+
+		cleaned, calls, ok := parseDSMLToolCalls(content)
+		if !ok {
+			t.Fatal("expected DSML detected")
+		}
+		if cleaned != "Let me help with that." {
+			t.Errorf("cleaned = %q", cleaned)
+		}
+		if len(calls) != 1 || calls[0].Function.Name != "grep" {
+			t.Fatalf("calls = %+v", calls)
+		}
+	})
 }
