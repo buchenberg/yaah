@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.32.0](https://github.com/buchenberg/yaah/compare/v0.31.1...v0.32.0) (2026-07-24)
+
+
+### Features
+
+* **agent:** convergence steering, context-bloat fixes, stuck-child watchdog ([#67](https://github.com/buchenberg/yaah/issues/67)) ([6b158c5](https://github.com/buchenberg/yaah/commit/6b158c5460d1ea248e1edcbeee7f883cc3d9fde0))
+* **agent:** fix progressive context degradation (dual-trigger compaction, reasoning stripping, tool-def cache, payload guard) ([#65](https://github.com/buchenberg/yaah/issues/65)) ([e5f9a3e](https://github.com/buchenberg/yaah/commit/e5f9a3e17dcb4c15a1e4218be7d77f90aa65b3aa))
+
 ## [0.31.1](https://github.com/buchenberg/yaah/compare/v0.31.0...v0.31.1) (2026-07-23)
 
 
