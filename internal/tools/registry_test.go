@@ -3,13 +3,19 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"runtime"
 	"testing"
 )
 
 func TestRegistry_registersLeafTools(t *testing.T) {
 	r := NewRegistry()
 	names := r.List()
-	expected := []string{"read", "write", "edit", "delete", "grep", "glob", "ls", "bash", "powershell", "question", "webfetch", "git"}
+	expected := []string{"read", "write", "edit", "delete", "grep", "glob", "ls", "question", "webfetch", "git"}
+	if runtime.GOOS == "windows" {
+		expected = append(expected, "powershell")
+	} else {
+		expected = append(expected, "bash")
+	}
 	for _, name := range expected {
 		if r.Get(name) == nil {
 			t.Errorf("expected tool %q in registry", name)

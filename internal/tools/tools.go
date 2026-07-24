@@ -65,6 +65,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime"
 )
 
 // Tool is the interface that all tools (built-in and MCP) must satisfy.
@@ -131,9 +132,18 @@ var leafTools = map[string]func() Tool{
 }
 
 // NewRegistry creates a tool registry with yaah's built-in tools.
+// Only the platform-appropriate shell tool is registered: powershell
+// on Windows, bash elsewhere. Both implementations remain available
+// via NewLeafTool for explicit registration.
 func NewRegistry() *Registry {
 	r := NewEmptyRegistry()
-	for _, factory := range leafTools {
+	for name, factory := range leafTools {
+		if name == "bash" && runtime.GOOS == "windows" {
+			continue
+		}
+		if name == "powershell" && runtime.GOOS != "windows" {
+			continue
+		}
 		r.Register(factory())
 	}
 	return r

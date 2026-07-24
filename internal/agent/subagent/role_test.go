@@ -14,8 +14,8 @@ func TestRoleProfileFor(t *testing.T) {
 		if !contains(p.Tools, "read") || !contains(p.Tools, "write") {
 			t.Error("RoleDefault should include read and write")
 		}
-		if !contains(p.Tools, "bash") || !contains(p.Tools, "powershell") {
-			t.Error("RoleDefault should include shell tools")
+		if !contains(p.Tools, platformShell()) {
+			t.Error("RoleDefault should include the platform shell tool")
 		}
 		if !contains(p.Tools, "spawn_subagent") {
 			t.Error("RoleDefault should include spawn_subagent")
