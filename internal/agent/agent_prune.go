@@ -58,7 +58,7 @@ func (l *Loop) pruneHooks() pipeline.PruneHooks {
 
 // pruneEmit translates a prune outcome into a best-effort JSONL hook event.
 func (l *Loop) pruneEmit(s pipeline.PruneStats) {
-	l.emitHook(HookEvent{
+	l.Hooks.Emit(HookEvent{
 		Event:            ContextPrune,
 		PruneReason:      s.Reason,
 		PruneCandidates:  s.Candidates,

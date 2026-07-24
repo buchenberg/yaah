@@ -24,16 +24,16 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 
 		if l.ApprovalMode == "deny" && l.classifyDanger(tc.Function.Name, tc.Function.Arguments) {
 			errMsg := fmt.Sprintf("error: tool %q requires approval but approval mode is 'deny'", tc.Function.Name)
-			l.emitHook(HookEvent{Event: ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
-			l.emitHook(HookEvent{Event: ToolEnd, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, ToolError: fmt.Sprintf("tool %q requires approval but approval mode is 'deny'", tc.Function.Name), ToolResult: errMsg})
+			l.Hooks.Emit(HookEvent{Event: ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
+			l.Hooks.Emit(HookEvent{Event: ToolEnd, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, ToolError: fmt.Sprintf("tool %q requires approval but approval mode is 'deny'", tc.Function.Name), ToolResult: errMsg})
 			execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: errMsg, err: fmt.Errorf("tool denied")}
 			continue
 		}
 		if l.ApprovalMode == "ask" && l.classifyDanger(tc.Function.Name, tc.Function.Arguments) {
 			if !l.approveTool(tc.Function.Name, tc.Function.Arguments) {
 				errMsg := fmt.Sprintf("error: tool %q was denied by user", tc.Function.Name)
-				l.emitHook(HookEvent{Event: ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
-				l.emitHook(HookEvent{Event: ToolEnd, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, ToolError: fmt.Sprintf("tool %q was denied by user", tc.Function.Name), ToolResult: errMsg})
+				l.Hooks.Emit(HookEvent{Event: ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
+				l.Hooks.Emit(HookEvent{Event: ToolEnd, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, ToolError: fmt.Sprintf("tool %q was denied by user", tc.Function.Name), ToolResult: errMsg})
 				execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: errMsg, err: fmt.Errorf("tool denied")}
 				continue
 			}
@@ -85,7 +85,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 				l.broker.PublishMustDeliver(&ToolStartEvent{Name: tc.Function.Name, Args: abbreviated})
 			}
 
-			l.emitHook(HookEvent{
+			l.Hooks.Emit(HookEvent{
 				Event:    ToolStart,
 				ToolName: tc.Function.Name,
 				ToolArgs: tc.Function.Arguments,
@@ -201,7 +201,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 				})
 			}
 
-			l.emitHook(HookEvent{
+			l.Hooks.Emit(HookEvent{
 				Event:      ToolEnd,
 				ToolName:   tc.Function.Name,
 				ToolArgs:   tc.Function.Arguments,
@@ -228,7 +228,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			Duration: r.dur,
 		}
 		*messages = append(*messages, types.ToolResultMsg(r.callID, r.name, r.content))
-		l.persistMessage((*messages)[len(*messages)-1])
+		l.Persister.Persist((*messages)[len(*messages)-1])
 	}
 
 	return results
