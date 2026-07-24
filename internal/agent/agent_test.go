@@ -156,6 +156,100 @@ func TestLoop_plainTextResponse(t *testing.T) {
 	}
 }
 
+// TestLoop_followupChannelInjects verifies that messages placed on the
+// FollowUps channel before Run() starts are drained by the pipeline
+// middleware and included in the first request.
+func TestLoop_followupChannelInjects(t *testing.T) {
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{{
+			Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant", Content: "Got it."},
+				FinishReason: "stop",
+			}},
+		}},
+	}
+
+	followupCh := make(chan string, 4)
+	followupCh <- "queued follow-up message"
+
+	reg := tools.NewRegistry()
+	loop := &Loop{
+		Provider:      fp,
+		Registry:      reg,
+		SystemPrompt:  "You are helpful.",
+		MaxIterations: 10,
+		FollowUps:     followupCh,
+	}
+
+	resp, err := loop.Run(context.Background(), "Hi")
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if resp != "Got it." {
+		t.Errorf("response = %q", resp)
+	}
+	if len(fp.requests) != 1 {
+		t.Fatalf("expected 1 request, got %d", len(fp.requests))
+	}
+
+	// The follow-up should be present in the messages sent to the provider.
+	found := false
+	for _, m := range fp.requests[0].Messages {
+		if strings.Contains(m.Content, "queued follow-up message") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("follow-up message not found in provider request")
+	}
+}
+
+// TestLoop_steerChannelInjects verifies that messages placed on the
+// Steer channel are drained before the next provider call and prefixed
+// with the [STEER] marker so the model can recognise them.
+func TestLoop_steerChannelInjects(t *testing.T) {
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{{
+			Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant", Content: "Steered."},
+				FinishReason: "stop",
+			}},
+		}},
+	}
+
+	steerCh := make(chan string, 4)
+	steerCh <- "urgent new instruction"
+
+	reg := tools.NewRegistry()
+	loop := &Loop{
+		Provider:      fp,
+		Registry:      reg,
+		SystemPrompt:  "You are helpful.",
+		MaxIterations: 10,
+		Steer:         steerCh,
+	}
+
+	resp, err := loop.Run(context.Background(), "Hi")
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if resp != "Steered." {
+		t.Errorf("response = %q", resp)
+	}
+
+	found := false
+	for _, m := range fp.requests[0].Messages {
+		if strings.Contains(m.Content, "[STEER]") && strings.Contains(m.Content, "urgent new instruction") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("[STEER] message with body not found in provider request")
+	}
+}
+
 func TestLoop_toolCalling(t *testing.T) {
 	fp := &fakeProvider{
 		responses: []*types.ChatResponse{

@@ -216,6 +216,14 @@ func runTUI() error {
 
 	controlCh := make(chan tui.ControlMsg, 64)
 
+	// Steer/follow-up channels feed the agent's pipeline middleware.
+	// They live for the entire TUI session so queued messages can
+	// survive across multiple agent turns.
+	steerCh := make(chan string, 4)
+	followupCh := make(chan string, 32)
+	defer close(steerCh)
+	defer close(followupCh)
+
 	todoStore := todo.NewStore()
 	toolReg.Register(&tools.TodoWriteTool{
 		Store: todoStore,
@@ -349,8 +357,33 @@ func runTUI() error {
 		ContextWindow: cfg.Agent.Default.ContextWindow,
 		OnSubmit: func(input string) {
 			pName, mName := sm.get()
-			go runAgentForTUI(input, controlCh, prog, cfg, systemPrompt, mName, toolReg, &messages, db, sessionID, &msgIdx, &persistedCount, sm, conflictTracker)
+			go runAgentForTUI(input, controlCh, prog, cfg, systemPrompt, mName, toolReg, &messages, db, sessionID, &msgIdx, &persistedCount, sm, conflictTracker, steerCh, followupCh)
 			_ = pName
+		},
+		OnFollowUp: func(text string) {
+			// User hit Enter while the agent is thinking. Queue for the
+			// next iteration so they don't lose what they typed.
+			select {
+			case followupCh <- text:
+			default:
+				// Buffer full — the agent is falling behind. Surface a
+				// status message instead of silently dropping.
+				select {
+				case controlCh <- tui.ControlMsg{StatusMsg: "Follow-up queue full — type slower."}:
+				default:
+				}
+			}
+		},
+		OnSteer: func(text string) {
+			// Immediate, high-priority inject — interrupts current flow.
+			select {
+			case steerCh <- text:
+			default:
+				select {
+				case controlCh <- tui.ControlMsg{StatusMsg: "Steer queue full — agent is unresponsive."}:
+				default:
+				}
+			}
 		},
 		OnQuit: func() {},
 		OnCompact: func() {
@@ -537,7 +570,7 @@ func (f *tuiEventForwarder) HandleEvent(evt agent.Event) {
 // runAgentForTUI runs the agent loop for a single prompt and sends messages
 // to the TUI channel. The channel is NOT closed here — it is shared across
 // multiple prompts for the lifetime of the TUI session.
-func runAgentForTUI(prompt string, controlCh chan<- tui.ControlMsg, p *tea.Program, cfg *config.Config, systemPrompt, modelName string, toolReg *tools.Registry, messages *[]types.Message, db *memory.DB, sessionID string, msgIdx *int, persistedCount *int, sm *sessionModel, conflictTracker *tools.ConflictTracker) {
+func runAgentForTUI(prompt string, controlCh chan<- tui.ControlMsg, p *tea.Program, cfg *config.Config, systemPrompt, modelName string, toolReg *tools.Registry, messages *[]types.Message, db *memory.DB, sessionID string, msgIdx *int, persistedCount *int, sm *sessionModel, conflictTracker *tools.ConflictTracker, steerCh chan string, followupCh chan string) {
 	pName, _ := sm.get()
 	provider := providerFor(cfg, pName)
 
@@ -567,6 +600,8 @@ func runAgentForTUI(prompt string, controlCh chan<- tui.ControlMsg, p *tea.Progr
 		RetryBackoff:           time.Duration(cfg.Agent.Default.RetryBackoffSecs) * time.Second,
 		ContextWindow:          cfg.Agent.Default.ContextWindow,
 		CompactionThreshold:    cfg.Agent.Default.CompactionThreshold,
+		Steer:                  steerCh,
+		FollowUps:              followupCh,
 		RawCompactionThreshold: cfg.Agent.Default.RawCompactionThreshold,
 		EstimateFactor:         cfg.Agent.Default.EstimateFactor,
 		LoopDetectCount:        cfg.Agent.Default.LoopDetectCount,

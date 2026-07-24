@@ -19,13 +19,13 @@ import (
 
 const (
 	defaultPruneProtectTokens = 3000
-	defaultPruneMinReclaim    = 1000
+	defaultPruneMinReclaim    = 500
 	defaultPruneMinTurns      = 2
 )
 
 // PruneConfig tunes soft-prune behaviour. Defaults are tuned for yaah's
 // typical session size: protect 3k tokens of recent tool output and commit a
-// prune once it reclaims > 1k tokens, always keeping the last 2 turns
+// prune once it reclaims > 500 tokens, always keeping the last 2 turns
 // (counted as user messages OR assistant messages with tool calls, so
 // single-prompt multi-iteration sessions are handled correctly).
 // Earlier thresholds (40k/20k, then 12k/4k) never fired in practice because

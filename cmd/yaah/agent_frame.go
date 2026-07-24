@@ -44,6 +44,15 @@ type agentSession struct {
 	msgIdx       int
 	otelShutdown func(context.Context) error
 	tracker      *tools.ConflictTracker
+
+	// steerCh carries high-priority mid-turn messages that should be
+	// injected immediately before the next provider call. Buffered so
+	// keystrokes typed during a slow turn are not silently dropped.
+	steerCh chan string
+	// followupCh carries queued messages to inject at the start of the
+	// next iteration. Larger buffer than steerCh because follow-ups
+	// tend to come in bursts (user types ahead while the model runs).
+	followupCh chan string
 }
 
 func newAgentSession() (*agentSession, error) {
@@ -273,11 +282,19 @@ func newAgentSession() (*agentSession, error) {
 		msgIdx:       msgIdx,
 		otelShutdown: otelShutdown,
 		tracker:      tracker,
+		steerCh:      make(chan string, 4),
+		followupCh:   make(chan string, 32),
 	}, nil
 }
 
 func (s *agentSession) close() {
 	ctx := context.Background()
+	if s.steerCh != nil {
+		close(s.steerCh)
+	}
+	if s.followupCh != nil {
+		close(s.followupCh)
+	}
 	if s.otelShutdown != nil {
 		s.otelShutdown(ctx)
 	}
@@ -469,6 +486,8 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		SessionID:              s.sessionID,
 		PipelineNames:          s.cfg.Agent.Middleware.Enabled,
 		PipelineDisabled:       s.cfg.Agent.Middleware.Disabled,
+		Steer:                  s.steerCh,
+		FollowUps:              s.followupCh,
 		DB:                     s.db,
 		WriteDebouncer: func() *memory.DebouncedWriter {
 			if s.db != nil {

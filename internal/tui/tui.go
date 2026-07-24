@@ -135,6 +135,8 @@ type Model struct {
 	onQuit        func()
 	onCompact     func()
 	onModel       func(string, string)
+	onFollowUp    func(string)
+	onSteer       func(string)
 
 	// --- layout ---
 	width  int
@@ -209,6 +211,14 @@ type Config struct {
 	OnQuit        func()
 	OnCompact     func()
 	OnModel       func(string, string)
+	// OnFollowUp is invoked when the user submits text while the agent
+	// is already running. The text is queued for the next iteration
+	// rather than starting a new turn. May be nil.
+	OnFollowUp func(string)
+	// OnSteer is invoked when the user sends an immediate mid-turn
+	// interrupt (e.g. Ctrl-T). Injects before the next provider call.
+	// May be nil.
+	OnSteer func(string)
 }
 
 // New creates a new TUI model from a Config.
@@ -245,6 +255,8 @@ func New(cfg Config) *Model {
 		onQuit:            cfg.OnQuit,
 		onCompact:         cfg.OnCompact,
 		onModel:           cfg.OnModel,
+		onFollowUp:        cfg.OnFollowUp,
+		onSteer:           cfg.OnSteer,
 		commands:          defaultCommands,
 	}
 }
@@ -1164,15 +1176,24 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg) tea.Cmd {
 			m.executeCommand(value)
 			return nil
 		}
-		if m.thinking {
-			return nil
-		}
-		m.thinkContent = ""
-		m.reasoningExpanded = make(map[string]bool)
 		value := m.input.Value()
 		if strings.TrimSpace(value) == "" {
 			return nil
 		}
+		if m.thinking {
+			// Agent is running. Queue the text as a follow-up so it
+			// flows into the next iteration rather than being lost.
+			// Visually, render a pending-marker so the user can see
+			// their queued input.
+			m.AddMessage("user", value+"  ⏎")
+			m.input.SetValue("")
+			if m.onFollowUp != nil {
+				m.onFollowUp(value)
+			}
+			return nil
+		}
+		m.thinkContent = ""
+		m.reasoningExpanded = make(map[string]bool)
 		m.AddMessage("user", value)
 		m.SetThinking(true)
 		m.input.SetValue("")
