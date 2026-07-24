@@ -153,7 +153,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			res, err := l.Registry.Execute(runCtx, tc.Function.Name, tc.Function.Arguments)
 
 			if isTask && watchdogActive && ctx.Err() == nil && runCtx.Err() == context.Canceled {
-				err = tools.StuckChildError
+				err = tools.ErrStuckChild
 				res = ""
 			}
 			if l.OtelEnabled && toolSpan != nil {

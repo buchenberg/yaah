@@ -82,9 +82,9 @@ func SendHeartbeat(ctx context.Context) {
 	}
 }
 
-// StuckChildError is returned when a sub-agent is cancelled by the parent
+// ErrStuckChild is returned when a sub-agent is cancelled by the parent
 // watchdog after StuckChildTimeout elapses with no heartbeat.
-var StuckChildError = errors.New("sub-agent stuck: no heartbeat received within deadline")
+var ErrStuckChild = errors.New("sub-agent stuck: no heartbeat received within deadline")
 
 // SubAgentParams carries the per-invocation sub-agent configuration that
 // the model may supply via the task tool arguments. It is passed through
@@ -313,7 +313,7 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded), runCtx.Err() == context.DeadlineExceeded:
 			return structuredTaskResult("timed out", timeout, partial), nil
-		case errors.Is(err, StuckChildError):
+		case errors.Is(err, ErrStuckChild):
 			return structuredTaskResult("stuck", timeout, partial), nil
 		case errors.Is(err, context.Canceled), runCtx.Err() == context.Canceled:
 			return structuredTaskResult("cancelled", timeout, partial), nil
