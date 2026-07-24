@@ -57,10 +57,10 @@ const (
 	SubAgentsOnly
 )
 
-// ToolResultMaxLen is a deprecated alias for truncateMaxBytes. Use
-// truncateToolResult() in agent_truncation.go for the line/byte dual-limit
+// ToolResultMaxLen is a deprecated alias for defaultTruncateMaxBytes. Use
+// Loop.truncateToolResult() in agent_truncation.go for the line/byte dual-limit
 // truncation.
-const ToolResultMaxLen = truncateMaxBytes
+const ToolResultMaxLen = defaultTruncateMaxBytes
 
 // pruneMessageMaxLen is the threshold above which old messages are pruned
 // before being sent to the LLM summarizer during compaction.
@@ -249,6 +249,16 @@ type Loop struct {
 	// (Tier-0 context reclaim). Default-constructed in applyDefaults; disable
 	// via PipelineDisabled: ["soft_prune"].
 	Pruner *pipeline.Pruner
+
+	// Tool result truncation caps. Zero values use built-in defaults
+	// (500 lines / 20 KiB).
+	ToolResultMaxLines int
+	ToolResultMaxBytes int
+
+	// Soft-prune tuning. Zero values use built-in defaults.
+	PruneProtectTokens int
+	PruneMinReclaim    int
+	PruneMinTurns      int
 
 	// ReasoningProtectTurns is the number of recent user-message turns whose
 	// assistant ReasoningContent is preserved in provider requests. Reasoning

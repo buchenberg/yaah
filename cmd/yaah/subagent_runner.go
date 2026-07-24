@@ -328,6 +328,11 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			MaxToolConcurrency:     opts.defaults.MaxToolConcurrency,
 			PromptCaching:          opts.defaults.PromptCaching,
 			ReasoningProtectTurns:  opts.defaults.ReasoningProtect,
+			ToolResultMaxLines:     opts.defaults.ToolResultMaxLines,
+			ToolResultMaxBytes:     opts.defaults.ToolResultMaxBytes,
+			PruneProtectTokens:     opts.defaults.PruneProtectTokens,
+			PruneMinReclaim:        opts.defaults.PruneMinReclaim,
+			PruneMinTurns:          opts.defaults.PruneMinTurns,
 			ApprovalMode:           "allow",
 			DB:                     subDB,
 			WriteDebouncer: func() *memory.DebouncedWriter {

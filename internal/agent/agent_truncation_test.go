@@ -10,9 +10,11 @@ import (
 	"github.com/buchenberg/yaah/internal/config"
 )
 
+func testLoop() *Loop { return &Loop{} }
+
 func TestTruncateToolResult_shortResult(t *testing.T) {
 	result := "short output"
-	got := truncateToolResult(result)
+	got := testLoop().truncateToolResult(result)
 	if got != result {
 		t.Errorf("short result should be unchanged, got %q", got)
 	}
@@ -20,11 +22,11 @@ func TestTruncateToolResult_shortResult(t *testing.T) {
 
 func TestTruncateToolResult_lineCapped(t *testing.T) {
 	var sb strings.Builder
-	for i := 0; i < truncateMaxLines+100; i++ {
+	for i := 0; i < defaultTruncateMaxLines+100; i++ {
 		sb.WriteString("line\n")
 	}
 	result := sb.String()
-	got := truncateToolResult(result)
+	got := testLoop().truncateToolResult(result)
 
 	if !strings.Contains(got, "[output truncated at") {
 		t.Errorf("line-capped result missing truncation marker: %s", got[len(got)-200:])
@@ -58,10 +60,8 @@ func TestTruncateToolResult_byteCapped(t *testing.T) {
 		sb.WriteString(line)
 	}
 	result := sb.String()
-	// Force byte cap by using a small max
-	originalMaxBytes := truncateMaxBytes
 
-	got := truncateToolResult(result)
+	got := testLoop().truncateToolResult(result)
 
 	if len(got) > len(result) {
 		t.Errorf("byte-capped result should be shorter than input")
@@ -69,17 +69,16 @@ func TestTruncateToolResult_byteCapped(t *testing.T) {
 	if !strings.Contains(got, "[output truncated at") {
 		t.Errorf("byte-capped result missing truncation marker")
 	}
-	_ = originalMaxBytes
 }
 
 func TestTruncateToolResult_emptyResult(t *testing.T) {
-	got := truncateToolResult("")
+	got := testLoop().truncateToolResult("")
 	if got != "" {
 		t.Errorf("empty result should remain empty, got %q", got)
 	}
 
 	beforeEntries := countTruncatedFiles()
-	_ = truncateToolResult("")
+	_ = testLoop().truncateToolResult("")
 	afterEntries := countTruncatedFiles()
 	if afterEntries > beforeEntries {
 		t.Error("empty result should not create spillover file")
@@ -93,7 +92,7 @@ func TestTruncateToolResult_bothLimitsExceeded(t *testing.T) {
 		sb.WriteString(line)
 	}
 	result := sb.String()
-	got := truncateToolResult(result)
+	got := testLoop().truncateToolResult(result)
 
 	if !strings.Contains(got, "[output truncated at") {
 		t.Errorf("result missing truncation marker when both limits exceeded")
@@ -102,7 +101,7 @@ func TestTruncateToolResult_bothLimitsExceeded(t *testing.T) {
 
 func TestTruncateToolResult_binaryContent(t *testing.T) {
 	result := strings.Repeat("\x00\x01\x02\x03", 20000)
-	got := truncateToolResult(result)
+	got := testLoop().truncateToolResult(result)
 	if len(got) > len(result) {
 		t.Errorf("binary content should be truncated")
 	}
@@ -123,7 +122,7 @@ func TestTruncateToolResult_lazyDirCreation(t *testing.T) {
 	for i := 0; i < 2500; i++ {
 		sb.WriteString("line\n")
 	}
-	_ = truncateToolResult(sb.String())
+	_ = testLoop().truncateToolResult(sb.String())
 
 	if _, err := os.Stat(spillDir); err != nil {
 		t.Errorf("spill dir was not created lazily: %v", err)
