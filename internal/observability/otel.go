@@ -25,6 +25,14 @@ type Config struct {
 	ServiceName string
 	Traces      bool
 	Metrics     bool
+
+	// ExtraProcessors are additional span processors attached to the
+	// TracerProvider alongside the OTLP batcher. Used by serve mode to
+	// capture spans in-memory (BufferingSpanProcessor) for programmatic
+	// trace querying without an external backend. When Endpoint is empty,
+	// the OTLP exporter is skipped entirely and only these processors
+	// receive spans.
+	ExtraProcessors []sdktrace.SpanProcessor
 }
 
 // DefaultConfig returns sensible defaults for local development
@@ -65,17 +73,29 @@ func Setup(ctx context.Context, cfg Config) (shutdown func(context.Context) erro
 	var shutdowns []func(context.Context) error
 
 	if cfg.Traces {
-		exp, err := otlptracegrpc.New(ctx,
-			otlptracegrpc.WithEndpoint(cfg.Endpoint),
-			otlptracegrpc.WithInsecure(),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("otel trace exporter: %w", err)
-		}
-		tp := sdktrace.NewTracerProvider(
-			sdktrace.WithBatcher(exp),
+		tpOpts := []sdktrace.TracerProviderOption{
 			sdktrace.WithResource(res),
-		)
+		}
+
+		// Only create the OTLP exporter when an endpoint is configured.
+		// Serve mode leaves Endpoint empty so spans flow solely to the
+		// in-memory ExtraProcessors without a network dependency.
+		if cfg.Endpoint != "" {
+			exp, err := otlptracegrpc.New(ctx,
+				otlptracegrpc.WithEndpoint(cfg.Endpoint),
+				otlptracegrpc.WithInsecure(),
+			)
+			if err != nil {
+				return nil, fmt.Errorf("otel trace exporter: %w", err)
+			}
+			tpOpts = append(tpOpts, sdktrace.WithBatcher(exp))
+		}
+
+		for _, p := range cfg.ExtraProcessors {
+			tpOpts = append(tpOpts, sdktrace.WithSpanProcessor(p))
+		}
+
+		tp := sdktrace.NewTracerProvider(tpOpts...)
 		otel.SetTracerProvider(tp)
 		otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 			propagation.TraceContext{},
@@ -84,7 +104,7 @@ func Setup(ctx context.Context, cfg Config) (shutdown func(context.Context) erro
 		shutdowns = append(shutdowns, tp.Shutdown)
 	}
 
-	if cfg.Metrics {
+	if cfg.Metrics && cfg.Endpoint != "" {
 		exp, err := otlpmetricgrpc.New(ctx,
 			otlpmetricgrpc.WithEndpoint(cfg.Endpoint),
 			otlpmetricgrpc.WithInsecure(),

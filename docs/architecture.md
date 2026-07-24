@@ -899,6 +899,12 @@ yaah emits traces via OTLP gRPC to any OpenTelemetry-compatible backend. Tracing
 
 `observability.Setup(ctx, cfg)` in `internal/observability/otel.go` creates a `TracerProvider` (and optionally a `MeterProvider`) configured for the OTLP endpoint. It returns a `shutdown` function that the CLI (`root_cmd.go`) and TUI (`tui.go`) defer. Both entrypoints set `Loop.OtelEnabled` so individual spans are gated on the config flag.
 
+`Config.ExtraProcessors` allows injecting additional `sdktrace.SpanProcessor` instances alongside the OTLP batcher. Serve mode (`cmd/yaah/serve.go`) uses this to attach an in-memory `BufferingSpanProcessor` so traces can be queried via the `traces` MCP tool without an external backend. When `Endpoint` is empty, the OTLP exporter is skipped entirely and only the extra processors receive spans.
+
+### In-memory span buffer
+
+`BufferingSpanProcessor` in `internal/observability/buffer.go` collects completed spans in a ring buffer (capped at 10,000 spans). It supports flat queries (`Traces()`), hierarchical tree rendering (`TraceTree(traceID)`), and reset between benchmark runs. The `yaah serve` MCP server exposes this via the `traces` tool.
+
 ### Span hierarchy
 
 | Span type | Location | Contents |

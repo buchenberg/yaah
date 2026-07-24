@@ -175,7 +175,7 @@ func (c *Client) Initialize(ctx context.Context) error {
 
 	if err := c.writer.WriteMessage(JSONRPCMessage{
 		JSONRPC: "2.0",
-		ID:      id,
+		ID:      &id,
 		Method:  "initialize",
 		Params:  params,
 	}); err != nil {
@@ -206,7 +206,7 @@ func (c *Client) fetchTools(ctx context.Context) error {
 	id := c.nextID.Add(1)
 	if err := c.writer.WriteMessage(JSONRPCMessage{
 		JSONRPC: "2.0",
-		ID:      id,
+		ID:      &id,
 		Method:  "tools/list",
 	}); err != nil {
 		return fmt.Errorf("send tools/list: %w", err)
@@ -247,7 +247,7 @@ func (c *Client) CallTool(ctx context.Context, name string, args json.RawMessage
 
 	if err := c.writer.WriteMessage(JSONRPCMessage{
 		JSONRPC: "2.0",
-		ID:      id,
+		ID:      &id,
 		Method:  "tools/call",
 		Params:  params,
 	}); err != nil {

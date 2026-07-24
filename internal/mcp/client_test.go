@@ -143,8 +143,8 @@ func TestAutoDetectReader_picksNewline(t *testing.T) {
 		if err != nil {
 			t.Fatalf("msg %d: %v", i, err)
 		}
-		if msg.ID != int64(i) {
-			t.Errorf("msg %d: ID = %d, want %d", i, msg.ID, i)
+		if msg.ID == nil || *msg.ID != int64(i) {
+			t.Errorf("msg %d: ID = %v, want %d", i, msg.ID, i)
 		}
 	}
 }
@@ -158,8 +158,8 @@ func TestAutoDetectReader_picksFramed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadMessage: %v", err)
 	}
-	if msg.ID != 1 {
-		t.Errorf("ID = %d, want 1", msg.ID)
+	if msg.ID == nil || *msg.ID != 1 {
+		t.Errorf("ID = %v, want 1", msg.ID)
 	}
 }
 
