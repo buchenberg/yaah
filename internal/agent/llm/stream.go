@@ -172,13 +172,21 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 // with the accumulated usage, or an error if the stream was truncated or blocked.
 func checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, finishReason string, reasoningContent string, usage types.Usage) (types.Message, types.Usage, error) {
 	msg := assembleStreamed(content, toolCallMap, reasoningContent)
+
+	if len(msg.ToolCalls) == 0 && msg.Content != "" {
+		if cleaned, dsmlCalls, ok := parseDSMLToolCalls(msg.Content); ok {
+			msg.Content = cleaned
+			msg.ToolCalls = dsmlCalls
+		}
+	}
+
 	if finishReason == "content_filter" && content == "" && len(msg.ToolCalls) == 0 {
 		return types.Message{}, usage, fmt.Errorf("streamed response blocked by content filter")
 	}
 	if finishReason == "length" && len(msg.ToolCalls) > 0 {
 		return types.Message{}, usage, fmt.Errorf("streamed response truncated (finish_reason=length), discarding %d tool calls", len(msg.ToolCalls))
 	}
-	if content == "" && len(msg.ToolCalls) == 0 {
+	if msg.Content == "" && len(msg.ToolCalls) == 0 {
 		return types.Message{}, usage, fmt.Errorf("streamed response produced no content (finish_reason=%s)", finishReason)
 	}
 	return msg, usage, nil
