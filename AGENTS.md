@@ -31,6 +31,7 @@ yaah/
 ├── cmd/yaah/                    # cobra commands
 │   ├── root.go                  # build-time vars (version, commit, date)
 │   ├── root_cmd.go              # rootCmd, REPL, one-shot, agent wiring
+│   ├── serve.go                 # yaah serve — MCP tool server (stdio + HTTP)
 │   ├── version.go               # yaah version
 │   ├── config.go                # yaah config show/edit
 │   ├── doctor.go                # yaah doctor
@@ -49,8 +50,9 @@ yaah/
 │   ├── banner/                  # figlet + lolcat banner for the TUI/REPL
 │   ├── config/                  # load ~/.yaah/config.yaml, env subst
 │   ├── instructions/            # walk up cwd, load AGENTS.md/CLAUDE.md
-│   ├── mcp/                     # MCP client (stdio + HTTP), manifests
+│   ├── mcp/                     # MCP client + server (stdio + HTTP), manifests
 │   ├── memory/                  # SQLite + FTS5 (sessions, messages, memory)
+│   ├── observability/           # OpenTelemetry tracing, in-memory span buffer
 │   ├── process/                 # background process manager
 │   ├── providers/               # OpenAI Chat Completions client, streaming
 │   ├── prompts/                 # system prompt assembly (identity, env, memory, project)
@@ -110,7 +112,7 @@ running yaah once. After that, every code change is just:
 go build -o yaah.exe .
 # kill the running yaah process and start the new one with the same flags
 Get-Process yaah -ErrorAction SilentlyContinue | Stop-Process -Force
-./yaah.exe serve --http 127.0.0.1:7333 &
+Start-Process ./yaah.exe -ArgumentList 'serve','--http','127.0.0.1:7333' -NoNewWindow
 ```
 
 Total swap: ~1 s. The host agent reconnects on the next MCP request — no
@@ -135,7 +137,8 @@ registration is shared between stdio and HTTP transports via
 - **No codegen, no build tags, no `go generate`.**
 - **cobra + pflag** for CLI.
 - **`internal/` for everything private.** `pkg/` reserved for future exports.
-- **No globals except build-time vars** in `cmd/yaah/root.go`.
+- **No globals except build-time vars** in `cmd/yaah/root.go` and serve-mode
+  state (`extraOtelProcessors`, `otelInMemoryOnly`) in `cmd/yaah/serve.go`.
 - **Errors are values, not panics.**
 - **No third-party HTTP client.** Use `net/http` from stdlib.
 - **`gopkg.in/yaml.v3`** for config parsing.
@@ -188,6 +191,7 @@ interface. See `internal/agent/events.go` for the event types.
 | TUI | `Model.HandleEvent` (type switch) | `internal/tui/tui.go` |
 | REPL | `terminalView` / `replView` | `cmd/yaah/agent_frame.go` |
 | Sub-agents | `agent.NoopView` | `cmd/yaah/subagent_runner.go` |
+| MCP serve | `agent.NoopView` | `cmd/yaah/serve.go` |
 
 Control-plane messages (todos, questions, approvals, model lists) use
 `tui.ControlMsg` — a separate channel from the broker events.
@@ -213,6 +217,9 @@ Available skills:
 | Skill | When to load |
 |---|---|
 | `yaah-testing` | Smoke testing the CLI, sub-agents, OTel traces, Docker containers, or running CI checks |
+| `yaah-dev-loop` | Building, running, and iterating on the yaah MCP server from inside a Kilo session |
+| `yaah-jaeger` | Querying and analyzing yaah agent traces from Jaeger via the HTTP API |
+| `yaah-benchmark` | Running the standard multi-step benchmark and capturing metrics from Jaeger traces |
 
 ## What NOT to do
 

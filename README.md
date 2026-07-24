@@ -298,6 +298,22 @@ yaah mcp add <name> --url http://localhost:3000
 yaah mcp remove <name>
 ```
 
+### MCP tool server (agent-to-agent)
+
+I can also *be* an MCP server. `yaah serve` exposes my engine as three MCP
+tools — `prompt`, `traces`, and `status` — so other agents (Kilo, Claude
+Code, benchmarking harnesses) can drive multi-turn conversations and query
+in-process OpenTelemetry traces programmatically:
+
+```bash
+yaah serve                        # stdio (newline-delimited or Content-Length)
+yaah serve --http 127.0.0.1:7333  # HTTP+SSE (hot-reload dev loop)
+```
+
+The server auto-detects framing, lazily initializes the agent session for
+instant handshakes, and auto-registers stale sessions so server restarts
+are transparent to the client. See the dev loop section below.
+
 ### Skills
 
 I load `.agents/skills/` (project) and `~/.agents/skills/` (user) at
@@ -430,6 +446,9 @@ yaah session list                 # list sessions
 yaah session show <id>            # show session
 
 yaah tui                          # launch the rich terminal UI
+
+yaah serve                        # MCP tool server over stdio
+yaah serve --http 127.0.0.1:7333  # MCP tool server over HTTP+SSE
 
 yaah update                       # check for updates
 yaah update check                 # check without applying
@@ -726,7 +745,7 @@ yaah serve --http 127.0.0.1:7333
 # 3. swap on every code change
 go build -o yaah.exe . && \
   (Get-Process yaah -ErrorAction SilentlyContinue | Stop-Process -Force) && \
-  ./yaah.exe serve --http 127.0.0.1:7333 &     # PowerShell
+  Start-Process ./yaah.exe -ArgumentList 'serve','--http','127.0.0.1:7333' -NoNewWindow
 # or:
 # pkill -f 'yaah serve --http' && ./yaah serve --http 127.0.0.1:7333 &   # bash
 
@@ -749,6 +768,7 @@ yaah/
 ├── cmd/yaah/                     # cobra commands
 │   ├── root.go                   # build-time vars (version, commit, date)
 │   ├── root_cmd.go               # rootCmd, REPL, one-shot, agent wiring
+│   ├── serve.go                  # yaah serve — MCP tool server (stdio + HTTP)
 │   ├── version.go config.go      # CLI subcommands
 │   ├── doctor.go update.go
 │   ├── skill.go mcp.go memory.go session.go
@@ -763,9 +783,9 @@ yaah/
 │   ├── banner/                   # figlet + lolcat banner
 │   ├── config/                   # config loader + env subst
 │   ├── instructions/             # AGENTS.md/CLAUDE.md discovery
-│   ├── mcp/                      # MCP client (stdio + HTTP)
+│   ├── mcp/                      # MCP client + server (stdio + HTTP)
 │   ├── memory/                   # SQLite + FTS5
-│   ├── observability/            # OpenTelemetry tracing
+│   ├── observability/            # OpenTelemetry tracing, in-memory span buffer
 │   ├── plans/                    # PLAN.md plan files
 │   ├── process/                  # background process manager
 │   ├── prompts/                  # identity.md + system prompt assembly
@@ -806,14 +826,16 @@ I'm in active development and feature-complete for daily use.
 
 **Stable** — agent loop with streaming, context compaction, approval gates,
 loop detection, SQLite session and memory persistence, session resume,
-MCP integration (stdio + HTTP), REPL with slash commands and history,
-Bubble Tea TUI with streaming, tool call visualization, reasoning toggle,
-command palette, model switching, rich keybindings, mouse support, sub-agent
-team with 7 built-in roles, parallel dispatch with configurable concurrency,
-evidenced response contracts, custom role definitions from filesystem,
-middleware pipeline with 9 middleware, provider fallback, OpenTelemetry
-tracing with per-turn token attribution, plan management, background
-process management, and hook events.
+MCP integration (stdio + HTTP) as both client and server, MCP tool server
+for agent-to-agent coordination (`yaah serve`), REPL with slash commands
+and history, Bubble Tea TUI with streaming, tool call visualization,
+reasoning toggle, command palette, model switching, rich keybindings,
+mouse support, sub-agent team with 7 built-in roles, parallel dispatch
+with configurable concurrency, evidenced response contracts, custom role
+definitions from filesystem, middleware pipeline with 9 middleware,
+provider fallback, OpenTelemetry tracing with per-turn token attribution
+and in-memory span buffer, plan management, background process management,
+and hook events.
 
 **Experimental** — `yaah update` (GitHub release check).
 

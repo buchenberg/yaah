@@ -14,17 +14,17 @@ import (
 
 // RecordedSpan is a serializable snapshot of a completed span.
 type RecordedSpan struct {
-	Name       string                   `json:"name"`
-	TraceID    string                   `json:"trace_id"`
-	SpanID     string                   `json:"span_id"`
-	ParentID   string                   `json:"parent_id,omitempty"`
-	Start      time.Time                `json:"start"`
-	End        time.Time                `json:"end"`
-	DurationMs int64                    `json:"duration_ms"`
-	Attributes map[string]any           `json:"attributes,omitempty"`
-	Events     []RecordedEvent          `json:"events,omitempty"`
-	Status     string                   `json:"status,omitempty"`
-	StatusMsg  string                   `json:"status_message,omitempty"`
+	Name       string          `json:"name"`
+	TraceID    string          `json:"trace_id"`
+	SpanID     string          `json:"span_id"`
+	ParentID   string          `json:"parent_id,omitempty"`
+	Start      time.Time       `json:"start"`
+	End        time.Time       `json:"end"`
+	DurationMs int64           `json:"duration_ms"`
+	Attributes map[string]any  `json:"attributes,omitempty"`
+	Events     []RecordedEvent `json:"events,omitempty"`
+	Status     string          `json:"status,omitempty"`
+	StatusMsg  string          `json:"status_message,omitempty"`
 }
 
 // RecordedEvent is a serializable span event.

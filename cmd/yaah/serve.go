@@ -310,6 +310,7 @@ func registerServeTools(
 		},
 	})
 }
+
 // (NoopView) and no spinner, suitable for MCP serve mode. It accumulates
 // conversation state in the session so successive calls form a multi-turn
 // dialogue, and returns the response plus the loop's token usage.

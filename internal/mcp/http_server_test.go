@@ -206,17 +206,17 @@ func TestHTTPInitializeThenToolsList(t *testing.T) {
 	}
 }
 
-// TestHTTPUnknownSessionRejected verifies a request with a bogus
-// session ID is rejected with 404.
-func TestHTTPUnknownSessionRejected(t *testing.T) {
+// TestHTTPUnknownSessionAutoRegistered verifies a request with a stale
+// session ID is auto-registered (transparent server restart recovery).
+func TestHTTPUnknownSessionAutoRegistered(t *testing.T) {
 	base, stop := startHTTPTestServer(t)
 	defer stop()
 
 	status, body, _ := postJSON(t, base,
 		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
 		"deadbeefdeadbeefdeadbeefdeadbeef")
-	if status != http.StatusNotFound {
-		t.Fatalf("status = %d body=%s, want 404", status, body)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200 (auto-registered)", status, body)
 	}
 }
 
@@ -354,11 +354,12 @@ func TestHTTPDeleteClosesSession(t *testing.T) {
 		t.Errorf("delete status = %d, want 204", resp.StatusCode)
 	}
 
-	// Subsequent tools/list with the now-closed session must 404.
+	// Subsequent tools/list with the deleted session auto-registers
+	// a fresh session (transparent restart recovery), so it succeeds.
 	status, _, _ := postJSON(t, base,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`, sid)
-	if status != http.StatusNotFound {
-		t.Errorf("status after delete = %d, want 404", status)
+	if status != http.StatusOK {
+		t.Errorf("status after delete = %d, want 200 (auto-registered)", status)
 	}
 }
 
