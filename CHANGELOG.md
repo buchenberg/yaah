@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.33.4](https://github.com/buchenberg/yaah/compare/v0.33.3...v0.33.4) (2026-07-26)
+
+
+### Bug Fixes
+
+* **llm:** DSML ID collision + TUI header/footer redesign ([#80](https://github.com/buchenberg/yaah/issues/80)) ([fa912d2](https://github.com/buchenberg/yaah/commit/fa912d21b82a2ed8ab058f440f7b84b6c27b17b9))
+* **llm:** strip DSML markup from streaming tokens in real-time ([#78](https://github.com/buchenberg/yaah/issues/78)) ([35aac20](https://github.com/buchenberg/yaah/commit/35aac2087daa18bb0515bc11d441d20e8de4f60d))
+
 ## [0.33.3](https://github.com/buchenberg/yaah/compare/v0.33.2...v0.33.3) (2026-07-24)
 
 
