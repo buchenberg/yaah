@@ -101,40 +101,21 @@ func runTUI() error {
 
 	cfg := sess.cfg
 	cwd, _ := os.Getwd()
-	providerName := sess.providerName
-	modelName := sess.modelName
 
 	controlCh := make(chan types.CtrlMsg, 64)
 	sess.SetCtrlCh(controlCh)
 
-	// Override the todo tool to send via controlCh instead of stderr.
-	if tt := sess.toolReg.Get("todowrite"); tt != nil {
-		if ttp, ok := tt.(*tools.TodoWriteTool); ok {
-			tt := tt
-			ttp.OnWrite = func() {
-				// Use the tool's store to get the list — we don't
-				// need a separate todoStore reference.
-				if ft := sess.toolReg.Get("todowrite"); ft != nil {
-					if tp, ok := ft.(*tools.TodoWriteTool); ok {
-						controlCh <- &types.CtrlTodos{Items: tp.Store.List()}
-					}
-				}
-			}
-			_ = tt
-		}
-	}
-
-	tuiMCPInfos := sess.mcpInfos
+	tuiMCPInfos := sess.MCPInfos()
 
 	var prog *tea.Program
 	var cancelAgent context.CancelFunc // accessed only from bubbletea goroutine (OnSubmit/OnAbort) — no mutex needed
 	m := tui.New(tui.Config{
-		Provider:      providerName,
-		Model:         modelName,
+		Provider:      sess.ProviderName(),
+		Model:         sess.ModelName(),
 		CWD:           cwd,
 		ContextWindow: cfg.Agent.Default.ContextWindow,
 		OnSubmit: func(input string) {
-			_, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(context.Background())
 			cancelAgent = cancel
 			go func() {
 				defer func() {
@@ -147,28 +128,14 @@ func runTUI() error {
 				}()
 				fwd := &agentViewFwd{program: prog}
 				sess.SetView(fwd)
-				sess.runPrompt(input)
+				sess.RunPrompt(ctx, input)
 			}()
 		},
 		OnFollowUp: func(text string) {
-			select {
-			case sess.followupCh <- text:
-			default:
-				select {
-				case controlCh <- &types.CtrlStatus{Text: "Follow-up queue full — type slower."}:
-				default:
-				}
-			}
+			sess.FollowUp(text)
 		},
 		OnSteer: func(text string) {
-			select {
-			case sess.steerCh <- text:
-			default:
-				select {
-				case controlCh <- &types.CtrlStatus{Text: "Steer queue full — agent is unresponsive."}:
-				default:
-				}
-			}
+			sess.Steer(text)
 		},
 		OnQuit: func() {},
 		OnAbort: func() {
@@ -178,7 +145,7 @@ func runTUI() error {
 			}
 		},
 		OnCompact: func() {
-			go sess.compactContext()
+			go sess.Compact()
 		},
 		OnModel: func(pName, mName string) {
 			sess.SetModel(pName, mName)

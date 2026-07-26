@@ -1,5 +1,25 @@
 package yaah
 
+// UI Driver Pattern
+//
+// To attach a new UI to a session:
+//
+//  1. Create a chan types.CtrlMsg and call sess.SetCtrlCh(ch).
+//     This wires todos and status messages to your channel.
+//
+//  2. Implement agent.View (HandleEvent) and call sess.SetView(your view).
+//     Events: TokenDelta, Thinking, Flush, ToolStart, ToolEnd,
+//             SubAgentStart, SubAgentEnd, Done.
+//
+//  3. Read from the control channel in a goroutine and dispatch
+//     CtrlStatus, CtrlError, CtrlQuestion, CtrlApproval,
+//     CtrlModelList, CtrlTodos, CtrlContextInfo, CtrlDone.
+//
+//  4. Call sess.RunPrompt(ctx, text) for each turn.
+//     ctx cancellation aborts the in-flight agent loop.
+//
+// See: terminalView (REPL), agentViewFwd (Bubble Tea TUI).
+
 import (
 	"context"
 	"encoding/json"
@@ -25,6 +45,27 @@ import (
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
+
+// Session is the stable contract between UI drivers and the shared
+// agent session. Any driver (TUI, REPL, web, gRPC) should depend only
+// on this interface, not on *agentSession directly.
+type Session interface {
+	RunPrompt(ctx context.Context, prompt string, view ...agent.View) (string, bool, error)
+	Compact()
+	Steer(string)
+	FollowUp(string)
+	SetView(agent.View)
+	SetCtrlCh(chan<- types.CtrlMsg)
+	SetApproveFn(func(name, args string) bool)
+	SetModel(providerName, modelName string)
+	ProviderName() string
+	ModelName() string
+	MCPInfos() []mcp.ServerInfo
+	Close()
+}
+
+// Compile-time check: agentSession satisfies Session.
+var _ Session = (*agentSession)(nil)
 
 // agentSession holds the long-lived infrastructure shared across REPL and
 // one-shot prompts. Building it once avoids re-opening the database,
@@ -325,6 +366,44 @@ func (s *agentSession) close() {
 	}
 }
 
+func (s *agentSession) Close()                           { s.close() }
+func (s *agentSession) Compact()                         { s.compactContext() }
+func (s *agentSession) ProviderName() string             { s.mu.RLock(); defer s.mu.RUnlock(); return s.providerName }
+func (s *agentSession) ModelName() string                { s.mu.RLock(); defer s.mu.RUnlock(); return s.modelName }
+func (s *agentSession) MCPInfos() []mcp.ServerInfo       { return s.mcpInfos }
+func (s *agentSession) RunPrompt(ctx context.Context, prompt string, view ...agent.View) (string, bool, error) {
+	return s.runPrompt(ctx, prompt, view...)
+}
+
+func (s *agentSession) Steer(text string) {
+	select {
+	case s.steerCh <- text:
+	default:
+		s.sendCtrl(&types.CtrlStatus{Text: "steer queue full"})
+	}
+}
+
+func (s *agentSession) FollowUp(text string) {
+	select {
+	case s.followupCh <- text:
+	default:
+		s.sendCtrl(&types.CtrlStatus{Text: "follow-up queue full"})
+	}
+}
+
+func (s *agentSession) sendCtrl(msg types.CtrlMsg) {
+	s.mu.RLock()
+	ch := s.ctrlCh
+	s.mu.RUnlock()
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- msg:
+	default:
+	}
+}
+
 func (s *agentSession) SetView(v agent.View) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -335,6 +414,17 @@ func (s *agentSession) SetCtrlCh(ch chan<- types.CtrlMsg) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ctrlCh = ch
+
+	if tt := s.toolReg.Get("todowrite"); tt != nil {
+		if ttp, ok := tt.(*tools.TodoWriteTool); ok {
+			ttp.OnWrite = func() {
+				select {
+				case ch <- &types.CtrlTodos{Items: ttp.Store.List()}:
+				default:
+				}
+			}
+		}
+	}
 }
 
 func (s *agentSession) SetApproveFn(fn func(name, args string) bool) {
@@ -516,7 +606,7 @@ func (terminalView) HandleEvent(evt agent.Event) {
 // runPrompt executes a single agent prompt with the session's shared
 // infrastructure. The optional view argument overrides s.view; if both are
 // nil, terminalView is used (REPL behavior).
-func (s *agentSession) runPrompt(prompt string, view ...agent.View) (string, bool, error) {
+func (s *agentSession) runPrompt(ctx context.Context, prompt string, view ...agent.View) (string, bool, error) {
 	compactProvider, compactModel := resolveCompact(s.cfg)
 	fallbackProvider, fallbackModel := resolveFallback(s.cfg)
 
@@ -538,8 +628,9 @@ func (s *agentSession) runPrompt(prompt string, view ...agent.View) (string, boo
 		inner = view[0]
 	} else if v != nil {
 		inner = v
-	} else {
-		inner = terminalView{}
+	}
+	if inner == nil {
+		inner = agent.NoopView{}
 	}
 	var spinnerView agent.View = &replView{
 		inner:        inner,
@@ -608,7 +699,7 @@ func (s *agentSession) runPrompt(prompt string, view ...agent.View) (string, boo
 		loop.ApproveFn = appr
 	}
 
-	response, err := loop.Run(context.Background(), prompt)
+	response, err := loop.Run(ctx, prompt)
 
 	if !streamed {
 		spin.Stop()
