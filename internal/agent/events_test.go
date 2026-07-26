@@ -3,6 +3,8 @@ package agent
 import (
 	"testing"
 	"time"
+
+	"github.com/buchenberg/yaah/internal/types"
 )
 
 // TestEventInterfaceSatisfaction — the compile-time assertions in events.go
@@ -125,5 +127,76 @@ func TestEventPointerReceivers(t *testing.T) {
 	var e2 Event
 	if _, ok := e2.(*TokenDeltaEvent); ok {
 		t.Error("nil interface must not satisfy type assertion")
+	}
+}
+
+func TestDoneEvent(t *testing.T) {
+	e := &DoneEvent{
+		Response:      "Hello, world!",
+		Error:         "",
+		ContextTokens: 1234,
+		ContextWindow: 128000,
+		FinishReason:  "stop",
+		Usage: types.Usage{
+			PromptTokens:     500,
+			CompletionTokens: 300,
+			TotalTokens:      800,
+			CompletionTokensDetails: &types.CompletionTokensDetails{
+				ReasoningTokens: 100,
+			},
+			PromptTokensDetails: &types.PromptTokensDetails{
+				CachedTokens: 200,
+			},
+		},
+		ResponseModel: "gpt-4o-2024-11-20",
+	}
+	if e.Response != "Hello, world!" {
+		t.Errorf("expected 'Hello, world!', got %q", e.Response)
+	}
+	if e.FinishReason != "stop" {
+		t.Errorf("expected 'stop', got %q", e.FinishReason)
+	}
+	if e.Usage.TotalTokens != 800 {
+		t.Errorf("expected 800 total tokens, got %d", e.Usage.TotalTokens)
+	}
+	if e.Usage.CompletionTokensDetails.ReasoningTokens != 100 {
+		t.Errorf("expected 100 reasoning tokens, got %d", e.Usage.CompletionTokensDetails.ReasoningTokens)
+	}
+	if e.Usage.PromptTokensDetails.CachedTokens != 200 {
+		t.Errorf("expected 200 cached tokens, got %d", e.Usage.PromptTokensDetails.CachedTokens)
+	}
+	if e.ResponseModel != "gpt-4o-2024-11-20" {
+		t.Errorf("expected 'gpt-4o-2024-11-20', got %q", e.ResponseModel)
+	}
+	if e.ContextTokens != 1234 {
+		t.Errorf("expected 1234 context tokens, got %d", e.ContextTokens)
+	}
+	if e.ContextWindow != 128000 {
+		t.Errorf("expected 128000 context window, got %d", e.ContextWindow)
+	}
+	var iface Event = e
+	if _, ok := iface.(*DoneEvent); !ok {
+		t.Error("interface must hold *DoneEvent")
+	}
+}
+
+func TestDoneEventZeroValues(t *testing.T) {
+	e := &DoneEvent{
+		Response: "ok",
+	}
+	if e.FinishReason != "" {
+		t.Errorf("expected empty finish reason, got %q", e.FinishReason)
+	}
+	if e.Usage != (types.Usage{}) {
+		t.Errorf("expected zero-value Usage, got %+v", e.Usage)
+	}
+	if e.ResponseModel != "" {
+		t.Errorf("expected empty response model, got %q", e.ResponseModel)
+	}
+	if e.ContextTokens != 0 {
+		t.Errorf("expected 0 context tokens, got %d", e.ContextTokens)
+	}
+	if e.ContextWindow != 0 {
+		t.Errorf("expected 0 context window, got %d", e.ContextWindow)
 	}
 }

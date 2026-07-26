@@ -67,6 +67,8 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (types.Message
 					err = fmt.Errorf("no choices in response")
 				} else {
 					msg = resp.Choices[0].Message
+				msg.FinishReason = resp.Choices[0].FinishReason
+				msg.ResponseModel = resp.Model
 
 					if msg.Content == "" && msg.Refusal != "" {
 						msg.Content = msg.Refusal

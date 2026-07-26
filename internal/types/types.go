@@ -16,6 +16,8 @@ type Message struct {
 	ToolCallID       string        `json:"tool_call_id,omitempty"`
 	Name             string        `json:"name,omitempty"`
 	CacheControl     *CacheControl `json:"cache_control,omitempty"`
+	FinishReason     string        `json:"finish_reason,omitempty"`
+	ResponseModel    string        `json:"response_model,omitempty"`
 }
 
 // CacheControl marks a message for Anthropic prompt caching.

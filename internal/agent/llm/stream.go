@@ -30,6 +30,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 	var dsmlFilter dsmlTokenFilter
 	toolCallMap := make(map[int]*types.ToolCall)
 	var finishReason string
+	var responseModel string
 	var firstToken bool
 	var tokenCount int
 	var totalUsage types.Usage
@@ -53,7 +54,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 					observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 					streamSpan.End()
 				}
-				return checkTruncatedStream(content.String(), toolCallMap, finishReason, reasoning.String(), totalUsage, &c.dsmlSeq)
+				return checkTruncatedStream(content.String(), toolCallMap, finishReason, responseModel, reasoning.String(), totalUsage, &c.dsmlSeq)
 			}
 
 			if !firstToken {
@@ -61,6 +62,10 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 				if streamSpan != nil {
 					streamSpan.SetAttributes(attribute.Int64("llm.ttft_ms", time.Since(start).Milliseconds()))
 				}
+			}
+
+			if responseModel == "" && chunk.Model != "" {
+				responseModel = chunk.Model
 			}
 
 			if len(chunk.Choices) == 0 {
@@ -143,7 +148,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 					observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 					streamSpan.End()
 				}
-				return checkTruncatedStream(content.String(), toolCallMap, finishReason, reasoning.String(), totalUsage, &c.dsmlSeq)
+				return checkTruncatedStream(content.String(), toolCallMap, finishReason, responseModel, reasoning.String(), totalUsage, &c.dsmlSeq)
 			}
 
 		case err := <-errs:
@@ -159,7 +164,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 				observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 				streamSpan.End()
 			}
-			return checkTruncatedStream(content.String(), toolCallMap, finishReason, reasoning.String(), totalUsage, &c.dsmlSeq)
+			return checkTruncatedStream(content.String(), toolCallMap, finishReason, responseModel, reasoning.String(), totalUsage, &c.dsmlSeq)
 
 		case <-ctx.Done():
 			if streamSpan != nil {
@@ -173,8 +178,10 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 
 // checkTruncatedStream validates the assembled streamed message and returns it
 // with the accumulated usage, or an error if the stream was truncated or blocked.
-func checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, finishReason string, reasoningContent string, usage types.Usage, dsmlSeq *int) (types.Message, types.Usage, error) {
+func checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, finishReason string, responseModel string, reasoningContent string, usage types.Usage, dsmlSeq *int) (types.Message, types.Usage, error) {
 	msg := assembleStreamed(content, toolCallMap, reasoningContent)
+	msg.FinishReason = finishReason
+	msg.ResponseModel = responseModel
 
 	if msg.Content != "" {
 		if cleaned, dsmlCalls, ok := parseDSMLToolCalls(msg.Content, dsmlSeq); ok {
