@@ -74,6 +74,9 @@ func runOneShot(cmd *cobra.Command, prompt string) error {
 
 	cmd.Printf("\n  %s %s/%s\n\n", Dim("provider:"), sess.ProviderName(), sess.ModelName())
 
+	tv := newTerminalView()
+	tv.start()
+	sess.SetView(tv)
 	response, streamed, err := sess.RunPrompt(context.Background(), prompt)
 	if err != nil {
 		return fmt.Errorf("agent error: %w", err)

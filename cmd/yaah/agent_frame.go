@@ -50,7 +50,7 @@ import (
 // agent session. Any driver (TUI, REPL, web, gRPC) should depend only
 // on this interface, not on *agentSession directly.
 type Session interface {
-	RunPrompt(ctx context.Context, prompt string, view ...agent.View) (string, bool, error)
+	RunPrompt(ctx context.Context, prompt string) (string, bool, error)
 	Compact()
 	Steer(string)
 	FollowUp(string)
@@ -366,13 +366,17 @@ func (s *agentSession) close() {
 	}
 }
 
-func (s *agentSession) Close()                           { s.close() }
-func (s *agentSession) Compact()                         { s.compactContext() }
-func (s *agentSession) ProviderName() string             { s.mu.RLock(); defer s.mu.RUnlock(); return s.providerName }
-func (s *agentSession) ModelName() string                { s.mu.RLock(); defer s.mu.RUnlock(); return s.modelName }
-func (s *agentSession) MCPInfos() []mcp.ServerInfo       { return s.mcpInfos }
-func (s *agentSession) RunPrompt(ctx context.Context, prompt string, view ...agent.View) (string, bool, error) {
-	return s.runPrompt(ctx, prompt, view...)
+func (s *agentSession) Close()   { s.close() }
+func (s *agentSession) Compact() { s.compactContext() }
+func (s *agentSession) ProviderName() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.providerName
+}
+func (s *agentSession) ModelName() string          { s.mu.RLock(); defer s.mu.RUnlock(); return s.modelName }
+func (s *agentSession) MCPInfos() []mcp.ServerInfo { return s.mcpInfos }
+func (s *agentSession) RunPrompt(ctx context.Context, prompt string) (string, bool, error) {
+	return s.runPrompt(ctx, prompt)
 }
 
 func (s *agentSession) Steer(text string) {
@@ -550,13 +554,31 @@ func (s *agentSession) compactContext() {
 }
 
 // terminalView implements agent.View for REPL terminal output.
-// It prints tokens, tool calls, and sub-agent lifecycle events to stderr
-// using the same formatting as the previous callback-based REPL.
-type terminalView struct{}
+// It owns the spinner lifecycle and records whether streaming occurred.
+type terminalView struct {
+	spin     *spinner.Spinner
+	stopOnce sync.Once
+	streamed bool
+}
 
-func (terminalView) HandleEvent(evt agent.Event) {
+func newTerminalView() *terminalView {
+	return &terminalView{spin: spinner.New(nil, "Thinking...")}
+}
+
+// start begins the thinking indicator. Must be called before RunPrompt.
+func (v *terminalView) start() {
+	fmt.Fprintln(os.Stderr)
+	v.spin.Start()
+}
+
+func (v *terminalView) HandleEvent(evt agent.Event) {
 	switch e := evt.(type) {
 	case *agent.TokenDeltaEvent:
+		v.stopOnce.Do(func() {
+			v.spin.Stop()
+			fmt.Fprintln(os.Stderr)
+			v.streamed = true
+		})
 		fmt.Fprint(os.Stderr, e.Text)
 	case *agent.ToolStartEvent:
 		// handled on ToolEndEvent
@@ -600,13 +622,18 @@ func (terminalView) HandleEvent(evt agent.Event) {
 			modelStr = " [" + Dim(e.Model) + "]"
 		}
 		fmt.Fprintf(os.Stderr, "╰─ sub-agent: %s%s · %s (%s)\n", Bold(label), modelStr, status, Dim(formatDuration(e.Duration)))
+	case *agent.DoneEvent:
+		v.stopOnce.Do(v.spin.Stop)
+		if v.streamed {
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr)
+		}
 	}
 }
 
 // runPrompt executes a single agent prompt with the session's shared
-// infrastructure. The optional view argument overrides s.view; if both are
-// nil, terminalView is used (REPL behavior).
-func (s *agentSession) runPrompt(ctx context.Context, prompt string, view ...agent.View) (string, bool, error) {
+// infrastructure. The caller must set a view via SetView before calling.
+func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bool, error) {
 	compactProvider, compactModel := resolveCompact(s.cfg)
 	fallbackProvider, fallbackModel := resolveFallback(s.cfg)
 
@@ -618,35 +645,14 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string, view ...age
 	appr := s.approveFn
 	s.mu.RUnlock()
 
-	spin := spinner.New(nil, "Thinking...")
-	fmt.Fprintln(os.Stderr)
-	spin.Start()
-
-	streamed := false
-	var inner agent.View
-	if len(view) > 0 && view[0] != nil {
-		inner = view[0]
-	} else if v != nil {
-		inner = v
-	}
-	if inner == nil {
-		inner = agent.NoopView{}
-	}
-	var spinnerView agent.View = &replView{
-		inner:        inner,
-		onFirstToken: func() {
-			if !streamed {
-				streamed = true
-				spin.Stop()
-				fmt.Fprintln(os.Stderr)
-			}
-		},
+	if v == nil {
+		v = agent.NoopView{}
 	}
 
 	loop := agent.NewLoop(prov, s.toolReg,
 		agent.WithModel(mName),
 		agent.WithSystemPrompt(s.systemPrompt),
-		agent.WithView(spinnerView),
+		agent.WithView(v),
 		agent.WithMessages(s.messages),
 		agent.WithDB(s.db),
 		agent.WithWriteDebouncer(func() *memory.DebouncedWriter {
@@ -701,14 +707,6 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string, view ...age
 
 	response, err := loop.Run(ctx, prompt)
 
-	if !streamed {
-		spin.Stop()
-	}
-	if streamed {
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr)
-	}
-
 	s.messages = loop.Messages
 	s.msgIdx = loop.MsgIdx
 
@@ -728,19 +726,10 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string, view ...age
 		}
 	}
 
-	return response, streamed, err
-}
-
-// replView wraps a terminalView and triggers onFirstToken on the first token.
-type replView struct {
-	inner        agent.View
-	onFirstToken func()
-	firstOnce    sync.Once
-}
-
-func (v *replView) HandleEvent(evt agent.Event) {
-	if _, ok := evt.(*agent.TokenDeltaEvent); ok {
-		v.firstOnce.Do(v.onFirstToken)
+	streamed := false
+	if tv, ok := v.(*terminalView); ok {
+		streamed = tv.streamed
 	}
-	v.inner.HandleEvent(evt)
+
+	return response, streamed, err
 }

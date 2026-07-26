@@ -24,8 +24,6 @@ func startREPL() error {
 	}
 	defer sess.Close()
 
-	sess.SetView(terminalView{})
-
 	fmt.Fprintf(os.Stderr, "\n  %s %s/%s\n\n", Dim("provider:"), sess.ProviderName(), sess.ModelName())
 
 	scanner := bufio.NewScanner(os.Stdin)
@@ -62,7 +60,11 @@ func startREPL() error {
 			fmt.Fprintf(os.Stderr, "warning: could not save history: %v\n", err)
 		}
 
+		tv := newTerminalView()
+		tv.start()
+		sess.SetView(tv)
 		response, streamed, err := sess.RunPrompt(context.Background(), input)
+		// tv.HandleEvent(DoneEvent) already handled spinner + trailing newlines
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s\n", replYellow("error: "+err.Error()))
 		} else if !streamed && response != "" {

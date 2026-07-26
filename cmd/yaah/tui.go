@@ -107,7 +107,11 @@ func runTUI() error {
 
 	tuiMCPInfos := sess.MCPInfos()
 
+	// Create view once, fill program pointer after tea.NewProgram
 	var prog *tea.Program
+	fwd := &agentViewFwd{}
+	sess.SetView(fwd)
+
 	var cancelAgent context.CancelFunc // accessed only from bubbletea goroutine (OnSubmit/OnAbort) — no mutex needed
 	m := tui.New(tui.Config{
 		Provider:      sess.ProviderName(),
@@ -126,8 +130,6 @@ func runTUI() error {
 						}
 					}
 				}()
-				fwd := &agentViewFwd{program: prog}
-				sess.SetView(fwd)
 				sess.RunPrompt(ctx, input)
 			}()
 		},
@@ -201,6 +203,7 @@ func runTUI() error {
 	defer stopSignals()
 
 	prog = tea.NewProgram(m)
+	fwd.program = prog // fill program pointer before first RunPrompt
 
 	// Wire the question tool handler for TUI modal dialogs.
 	if qt := sess.toolReg.Get("question"); qt != nil {
