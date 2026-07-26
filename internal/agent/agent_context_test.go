@@ -923,3 +923,128 @@ func TestPayloadGuard_oversizedPayloadCompacts(t *testing.T) {
 		t.Errorf("post-compaction payload %d still exceeds maxPayloadBytes %d", after, maxPayloadBytes)
 	}
 }
+
+// --- prepareRequestMessages tests (merged from agent_reasoning_test.go) ---
+
+func assistantWithReasoning(content, reasoning string) types.Message {
+	return types.Message{Role: "assistant", Content: content, ReasoningContent: reasoning}
+}
+
+func TestPrepareRequestMessages_preservesReasoning(t *testing.T) {
+	loop := &Loop{}
+	loop.ensurePruner()
+
+	msgs := []types.Message{
+		types.SystemMsg("sys"),
+		types.UserMsg("u1"),
+		assistantWithReasoning("a1", "reason-1"),
+		types.UserMsg("u2"),
+		assistantWithReasoning("a2", "reason-2"),
+		types.UserMsg("u3"),
+		assistantWithReasoning("a3", "reason-3"),
+	}
+
+	expected := map[string]string{}
+	for _, m := range msgs {
+		if m.Role == "assistant" {
+			expected[m.Content] = m.ReasoningContent
+		}
+	}
+
+	out := loop.prepareRequestMessages(msgs)
+
+	for _, m := range out {
+		if m.Role == "assistant" {
+			want := expected[m.Content]
+			if m.ReasoningContent != want {
+				t.Errorf("assistant %q: reasoning = %q, want %q", m.Content, m.ReasoningContent, want)
+			}
+			delete(expected, m.Content)
+		}
+	}
+	if len(expected) > 0 {
+		t.Errorf("missing assistant messages in output: %v", contentKeys(expected))
+	}
+}
+
+func TestPrepareRequestMessages_doesNotMutateInput(t *testing.T) {
+	loop := &Loop{}
+	loop.ensurePruner()
+
+	msgs := []types.Message{
+		types.SystemMsg("sys"),
+		types.UserMsg("u1"),
+		assistantWithReasoning("a1", "reason-1"),
+	}
+
+	_ = loop.prepareRequestMessages(msgs)
+
+	if msgs[2].ReasoningContent != "reason-1" {
+		t.Errorf("stored history mutated: idx 2 reasoning = %q, want %q", msgs[2].ReasoningContent, "reason-1")
+	}
+}
+
+func TestPrepareRequestMessages_toolLinkageUntouched(t *testing.T) {
+	loop := &Loop{}
+	loop.ensurePruner()
+
+	msgs := []types.Message{
+		types.SystemMsg("sys"),
+		types.UserMsg("u1"),
+		types.Message{
+			Role:             "assistant",
+			ReasoningContent: "reason",
+			ToolCalls: []types.ToolCall{{
+				ID: "c1", Type: "function", Function: types.ToolCallFn{Name: "read"},
+			}},
+		},
+		{Role: "tool", ToolCallID: "c1", Name: "read", Content: "result"},
+		types.UserMsg("u2"),
+	}
+
+	out := loop.prepareRequestMessages(msgs)
+
+	if len(out) != len(msgs) {
+		t.Fatalf("message count changed: before=%d after=%d", len(msgs), len(out))
+	}
+	if out[2].ReasoningContent != "reason" {
+		t.Errorf("reasoning should be preserved, got %q", out[2].ReasoningContent)
+	}
+	if len(out[2].ToolCalls) != 1 || out[2].ToolCalls[0].ID != "c1" {
+		t.Errorf("tool call lost: %#v", out[2].ToolCalls)
+	}
+	if out[3].Role != "tool" || out[3].ToolCallID != "c1" {
+		t.Errorf("tool result lost: %#v", out[3])
+	}
+}
+
+func TestMessageTokens_countsReasoning(t *testing.T) {
+	withoutReasoning := types.Message{Role: "assistant", Content: ""}
+	withReasoning := types.Message{Role: "assistant", Content: "", ReasoningContent: repeatChars(400)}
+
+	base := messageTokens(withoutReasoning)
+	withR := messageTokens(withReasoning)
+
+	if withR <= base {
+		t.Errorf("messageTokens should count reasoning: without=%d with=%d", base, withR)
+	}
+	if withR != 100 {
+		t.Errorf("messageTokens with 400 chars reasoning = %d, want 100", withR)
+	}
+}
+
+func contentKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+func repeatChars(n int) string {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = 'x'
+	}
+	return string(b)
+}

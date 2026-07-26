@@ -2,12 +2,19 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	"charm.land/lipgloss/v2"
 )
 
+// keyHintLines are the stacked right-justified keybinding hints in the header.
+var keyHintLines = []string{
+	": commands  / search  ? help",
+	"ctrl+y copy  ctrl+c quit",
+}
+
 // Header renders the top-of-screen title block: the ASCII art banner
-// plus provider/model line with keybinding hints on the right side.
+// plus provider/model line with keybinding hints stacked on the right side.
 type Header struct {
 	banner     string
 	provider   string
@@ -27,25 +34,49 @@ func NewHeader(banner, provider, model string, showBanner bool, width int) Heade
 	}
 }
 
-// Render returns the header block with keybinding hints on the right.
+// Render returns the header block with stacked keybinding hints right-justified.
 func (h Header) Render() string {
-	keyHints := commandDescStyle.Render(": commands  / search  ? help  ctrl+y copy  ctrl+c quit")
-
 	if h.showBanner && h.banner != "" {
 		return h.banner + "\n\n" +
-			h.renderLine(titleStyle.Render(fmt.Sprintf("%s/%s", h.provider, h.model)), keyHints) + "\n"
+			h.renderStacked(titleStyle.Render(fmt.Sprintf("%s/%s", h.provider, h.model))) + "\n"
 	}
-	return h.renderLine(
+	return h.renderStacked(
 		titleStyle.Render(fmt.Sprintf("yaah · %s/%s", h.provider, h.model)),
-		keyHints,
 	) + "\n\n"
 }
 
-// renderLine creates a full-width line with left content and right-aligned hints.
-func (h Header) renderLine(left, right string) string {
+// renderStacked produces a text block where the left content sits on the first
+// line and key hints are right-aligned using plain spaces — no ANSI cursor
+// positioning (which can corrupt terminal state in the viewport below).
+func (h Header) renderStacked(left string) string {
 	if h.width <= 0 {
-		return left + "  " + right
+		var lines []string
+		lines = append(lines, left)
+		for _, hint := range keyHintLines {
+			lines = append(lines, commandDescStyle.Render(hint))
+		}
+		return strings.Join(lines, "\n")
 	}
-	rightAligned := lipgloss.NewStyle().Width(h.width - lipgloss.Width(left)).Align(lipgloss.Right).Render(right)
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, rightAligned)
+
+	leftWidth := lipgloss.Width(left)
+	rightWidth := h.width - leftWidth
+	if rightWidth < 0 {
+		rightWidth = 0
+	}
+
+	var lines []string
+	for i, hint := range keyHintLines {
+		styled := commandDescStyle.Render(hint)
+		hintWidth := lipgloss.Width(styled)
+		pad := rightWidth - hintWidth
+		if pad < 0 {
+			pad = 0
+		}
+		if i == 0 {
+			lines = append(lines, left+strings.Repeat(" ", pad)+styled)
+		} else {
+			lines = append(lines, strings.Repeat(" ", leftWidth+pad)+styled)
+		}
+	}
+	return strings.Join(lines, "\n")
 }

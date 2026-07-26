@@ -113,6 +113,25 @@ func messageTokens(m types.Message) int {
 	return tokens
 }
 
+// prepareRequestMessages builds the ephemeral message slice sent to the
+// provider for a single turn. It chains the request-time transformations that
+// must NOT mutate the stored conversation history (l.Messages):
+//
+//  1. repairOrphans — drop orphaned tool results, synthesize results for
+//     interrupted tool calls (allocates a fresh slice).
+//  2. applyPruning  — stub soft-pruned tool results (Tier-0 context reclaim).
+//
+// ReasoningContent is NOT stripped: thinking-mode providers (e.g. DeepSeek)
+// require it to be passed back in every assistant message. Stripping it
+// triggers a 400: "The reasoning_content in the thinking mode must be passed
+// back to the API."
+//
+// Because repairOrphans always returns a new slice, the stored history is never
+// mutated by any of these passes.
+func (l *Loop) prepareRequestMessages(messages []types.Message) []types.Message {
+	return l.applyPruning(repairOrphans(messages))
+}
+
 // preflightTokens estimates the token count for a request payload (messages +
 // tools) with a configurable multiplier to compensate for provider tokenizer
 // undercounting (especially for code and JSON). The factor parameter defaults

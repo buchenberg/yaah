@@ -736,7 +736,7 @@ func (l *Loop) applyDefaults() {
 		l.LoopDetectWindow = 10
 	}
 	if l.ReasoningProtectTurns <= 0 {
-		l.ReasoningProtectTurns = defaultReasoningProtectTurns
+		l.ReasoningProtectTurns = 2
 	}
 	if l.MaxToolConcurrency > 0 && l.toolConcurrency == nil {
 		l.toolConcurrency = pipeline.NewToolConcurrencyMiddleware(l.MaxToolConcurrency)
