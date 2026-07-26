@@ -273,6 +273,59 @@ func splitTurn(messages []types.Message, t turnRange, budget int) int {
 	return -1
 }
 
+// protectReasoningTurns ensures compaction does not remove assistant messages
+// that carry reasoning_content. Thinking-mode providers (e.g. DeepSeek) require
+// reasoning_content to be carried forward in every request; if compaction splits
+// before a reasoning-carrying assistant message, the next request gets a 400:
+// "The reasoning_content in the thinking mode must be passed back to the API."
+//
+// Walk backward from the end of the message list, counting reasoning-carrying
+// assistant messages. When the protectTurns-th one is found, walk back to the
+// enclosing user turn and return that index (or keepStart, whichever is earlier).
+// If fewer than protectTurns reasoning messages exist, protects whatever is
+// available by walking backward through oldMsgs.
+func protectReasoningTurns(messages []types.Message, keepStart, protectTurns int) int {
+	if protectTurns <= 0 || keepStart <= 1 {
+		return keepStart
+	}
+	// Walk backward from the end of the message list, counting the most recent
+	// reasoning-carrying assistant messages. Stop at the protectTurns-th one
+	// and walk back to its enclosing user message to protect the entire turn.
+	seen := 0
+	for i := len(messages) - 1; i >= 1; i-- {
+		if messages[i].Role == "assistant" && messages[i].ReasoningContent != "" {
+			seen++
+			if seen == protectTurns {
+				for j := i - 1; j >= 1; j-- {
+					if messages[j].Role == "user" {
+						if j < keepStart {
+							return j
+						}
+						return keepStart
+					}
+				}
+				return keepStart
+			}
+		}
+	}
+	// Fewer reasoning messages exist than protectTurns. Protect whatever we
+	// have: find the earliest reasoning-carrying assistant in oldMsgs and
+	// walk back to its enclosing user message.
+	for i := keepStart - 1; i >= 1; i-- {
+		if messages[i].Role == "assistant" && messages[i].ReasoningContent != "" {
+			for j := i - 1; j >= 1; j-- {
+				if messages[j].Role == "user" {
+					if j < keepStart {
+						return j
+					}
+					return keepStart
+				}
+			}
+		}
+	}
+	return keepStart
+}
+
 // truncateRunes slices s to at most maxLen runes, preserving head and tail
 // with an ellipsis marker in between. Operates on rune boundaries to avoid
 // corrupting multi-byte UTF-8 characters.
@@ -445,6 +498,17 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	split := splitTail(l.Messages, budget)
 	keepMsgs := l.Messages[split.keepStart:]
 	oldMsgs := l.Messages[1:split.keepStart]
+
+	// Protect assistant messages that carry reasoning_content: thinking-mode
+	// providers (e.g. DeepSeek) require reasoning_content to be passed back
+	// in every request for all assistant messages that have it. If compaction
+	// removes a reasoning-carrying message, the next request gets a 400:
+	// "The reasoning_content in the thinking mode must be passed back to the API."
+	if l.ReasoningProtectTurns > 0 {
+		split.keepStart = protectReasoningTurns(l.Messages, split.keepStart, l.ReasoningProtectTurns)
+		keepMsgs = l.Messages[split.keepStart:]
+		oldMsgs = l.Messages[1:split.keepStart]
+	}
 	oldMsgs = pruneMessages(oldMsgs, pruneMessageMaxLen)
 
 	// Structured summary prompt with anchored-update behavior on re-compaction.

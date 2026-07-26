@@ -466,4 +466,3 @@ func TestHandleControlMsg_Todos(t *testing.T) {
 		t.Errorf("expected todos cleared, got %d", len(m.todos))
 	}
 }
-

@@ -48,15 +48,21 @@ func (e ExpandableSection) AsPreWrapped() ExpandableSection {
 }
 
 // Render returns the zone-marked toggle header, and when expanded,
-// the wrapped content beneath it.
+// the wrapped content beneath it. When the header text contains ANSI
+// escape sequences (e.g. lolcat-styled), toggleStyle is skipped so the
+// pre-rendered colors are preserved.
 func (e ExpandableSection) Render() string {
 	var b strings.Builder
+	hdrStyle := toggleStyle
+	if strings.Contains(e.header, "\x1b[") {
+		hdrStyle = lipgloss.NewStyle()
+	}
 	if !e.expanded {
-		b.WriteString(zone.Mark(e.zoneID, toggleStyle.Render("  ▶ "+e.header)))
+		b.WriteString(zone.Mark(e.zoneID, hdrStyle.Render("  ▶ "+e.header)))
 		b.WriteString("\n")
 		return b.String()
 	}
-	b.WriteString(zone.Mark(e.zoneID, toggleStyle.Render("  ▼ "+e.header)))
+	b.WriteString(zone.Mark(e.zoneID, hdrStyle.Render("  ▼ "+e.header)))
 	b.WriteString("\n\n")
 	if e.preWrapped {
 		b.WriteString(e.bgStyle.Width(e.width).Render(e.fgStyle.Render(e.content)))

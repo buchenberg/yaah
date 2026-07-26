@@ -351,7 +351,7 @@ func (m *Model) renderMessages() string {
 				b.WriteString("\n")
 				zoneID := fmt.Sprintf("reasoning-%d", msgIdx)
 				m.reasoningZones = append(m.reasoningZones, zoneID)
-				b.WriteString(NewExpandableSection(zoneID, "Reasoning...", m.reasoningExpanded[zoneID], msg.Reasoning, m.width, reasoningBgStyle, thinkingStyle).AsPreWrapped().Render())
+				b.WriteString(NewExpandableSection(zoneID, lolcatRender("Reasoning..."), m.reasoningExpanded[zoneID], msg.Reasoning, m.width, reasoningBgStyle, thinkingStyle).AsPreWrapped().Render())
 			}
 			if msg.Content != "" {
 				b.WriteString("\n")
@@ -387,7 +387,7 @@ func (m *Model) renderMessages() string {
 	if m.thinkContent != "" {
 		b.WriteString("\n")
 		if m.thinking && !m.streaming {
-			rendered := spinnerStyle.Render(fmt.Sprintf("  %s Reasoning...", m.spinner.View()))
+			rendered := lolcatRender(fmt.Sprintf("  %s Reasoning...", stripANSI(m.spinner.View())))
 			b.WriteString(rendered)
 			b.WriteString("\n\n")
 			b.WriteString(reasoningBgStyle.Width(m.width).Render(
@@ -395,10 +395,10 @@ func (m *Model) renderMessages() string {
 		} else {
 			m.reasoningZones = append(m.reasoningZones, "reasoning-live")
 			if !m.reasoningExpanded["reasoning-live"] {
-				b.WriteString(zone.Mark("reasoning-live", toggleStyle.Render("  ▶ Reasoning...")))
+				b.WriteString(zone.Mark("reasoning-live", lolcatRender("  ▶ Reasoning...")))
 				b.WriteString("\n")
 			} else {
-				b.WriteString(zone.Mark("reasoning-live", toggleStyle.Render("  ▼ Reasoning...")))
+				b.WriteString(zone.Mark("reasoning-live", lolcatRender("  ▼ Reasoning...")))
 				b.WriteString("\n")
 				b.WriteString(reasoningBgStyle.Width(m.width).Render(
 					thinkingStyle.Render(m.thinkContent)))
@@ -417,7 +417,7 @@ func (m *Model) renderMessages() string {
 
 	if m.thinking && !m.streaming && m.thinkContent == "" {
 		b.WriteString("\n")
-		rendered := spinnerStyle.Render(fmt.Sprintf("  %s Thinking...", m.spinner.View()))
+		rendered := lolcatRender(fmt.Sprintf("  %s Thinking...", stripANSI(m.spinner.View())))
 		b.WriteString(rendered)
 		b.WriteString("\n\n")
 	}

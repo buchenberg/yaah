@@ -1048,3 +1048,127 @@ func repeatChars(n int) string {
 	}
 	return string(b)
 }
+
+func TestProtectReasoningTurns(t *testing.T) {
+	tests := []struct {
+		name          string
+		messages      []types.Message
+		keepStart     int
+		protectTurns  int
+		wantKeepStart int
+	}{
+		{
+			name: "no reasoning to protect",
+			messages: []types.Message{
+				types.SystemMsg("sys"),
+				types.UserMsg("u1"),
+				types.AssistantMsg("a1", nil),
+				types.UserMsg("u2"),
+				types.AssistantMsg("a2", nil),
+			},
+			keepStart:     3,
+			protectTurns:  2,
+			wantKeepStart: 3,
+		},
+		{
+			name: "protects one reasoning message in oldMsgs",
+			messages: []types.Message{
+				types.SystemMsg("sys"),
+				types.UserMsg("u1"),
+				assistantWithReasoning("a1", "reason-1"),
+				types.UserMsg("u2"),
+				types.AssistantMsg("a2", nil),
+			},
+			keepStart:     4, // only last user turn is kept, a1's reasoning would be lost
+			protectTurns:  1,
+			wantKeepStart: 1, // must include the u1→a1 turn
+		},
+		{
+			name: "already protected — reasoning in keepMsgs",
+			messages: []types.Message{
+				types.SystemMsg("sys"),
+				types.UserMsg("u1"),
+				assistantWithReasoning("a1", "reason-1"),
+				types.UserMsg("u2"),
+				assistantWithReasoning("a2", "reason-2"),
+			},
+			keepStart:     3, // u2→a2 turn is kept, includes reasoning
+			protectTurns:  1,
+			wantKeepStart: 3, // already have one reasoning message
+		},
+		{
+			name: "protectTurns=0 returns input unchanged",
+			messages: []types.Message{
+				types.SystemMsg("sys"),
+				types.UserMsg("u1"),
+				assistantWithReasoning("a1", "reason-1"),
+			},
+			keepStart:     2,
+			protectTurns:  0,
+			wantKeepStart: 2,
+		},
+		{
+			name: "protect multiple reasoning turns",
+			messages: []types.Message{
+				types.SystemMsg("sys"),
+				types.UserMsg("u1"),
+				assistantWithReasoning("a1", "reason-1"),
+				types.UserMsg("u2"),
+				assistantWithReasoning("a2", "reason-2"),
+				types.UserMsg("u3"),
+				types.AssistantMsg("a3", nil),
+			},
+			keepStart:     6, // only a3 is kept, no reasoning
+			protectTurns:  2,
+			wantKeepStart: 1, // both a1 and a2 have reasoning, must go back to u1
+		},
+		{
+			name: "protectTurns exceeds available reasoning",
+			messages: []types.Message{
+				types.SystemMsg("sys"),
+				types.UserMsg("u1"),
+				assistantWithReasoning("a1", "reason-1"),
+				types.UserMsg("u2"),
+				types.AssistantMsg("a2", nil),
+			},
+			keepStart:     4,
+			protectTurns:  5,
+			wantKeepStart: 1, // only one reasoning exists, protect it
+		},
+		{
+			name: "partial coverage — one in keepMsgs one in oldMsgs",
+			messages: []types.Message{
+				types.SystemMsg("sys"),
+				types.UserMsg("u1"),
+				assistantWithReasoning("a1", "reason-1"),
+				types.UserMsg("u2"),
+				assistantWithReasoning("a2", "reason-2"),
+				types.UserMsg("u3"),
+				types.AssistantMsg("a3", nil),
+			},
+			keepStart:     5, // u3→a3 in keepMsgs, no reasoning there
+			protectTurns:  2,
+			wantKeepStart: 1, // need 2 reasoning turns → pull in a1's and a2's turns
+		},
+		{
+			name: "keepStart at boundary — nothing to protect",
+			messages: []types.Message{
+				types.SystemMsg("sys"),
+				types.UserMsg("u1"),
+				assistantWithReasoning("a1", "reason-1"),
+			},
+			keepStart:     1,
+			protectTurns:  1,
+			wantKeepStart: 1, // already covers everything
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := protectReasoningTurns(tt.messages, tt.keepStart, tt.protectTurns)
+			if got != tt.wantKeepStart {
+				t.Errorf("protectReasoningTurns = %d, want %d", got, tt.wantKeepStart)
+			}
+		})
+	}
+}

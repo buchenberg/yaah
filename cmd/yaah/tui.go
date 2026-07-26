@@ -350,6 +350,7 @@ func runTUI() error {
 	sm := &sessionModel{provider: providerName, model: resolveModel(cfg)}
 
 	var prog *tea.Program
+	var cancelAgent context.CancelFunc // accessed only from bubbletea goroutine (OnSubmit/OnAbort) — no mutex needed
 	m := tui.New(tui.Config{
 		Provider:      providerName,
 		Model:         modelName,
@@ -357,7 +358,19 @@ func runTUI() error {
 		ContextWindow: cfg.Agent.Default.ContextWindow,
 		OnSubmit: func(input string) {
 			pName, mName := sm.get()
-			go runAgentForTUI(input, controlCh, prog, cfg, systemPrompt, mName, toolReg, &messages, db, sessionID, &msgIdx, &persistedCount, sm, conflictTracker, steerCh, followupCh)
+			ctx, cancel := context.WithCancel(context.Background())
+			cancelAgent = cancel
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Fprintf(os.Stderr, "agent panic: %v\n", r)
+						if prog != nil {
+							prog.Kill()
+						}
+					}
+				}()
+				runAgentForTUI(ctx, input, controlCh, prog, cfg, systemPrompt, mName, toolReg, &messages, db, sessionID, &msgIdx, &persistedCount, sm, conflictTracker, steerCh, followupCh)
+			}()
 			_ = pName
 		},
 		OnFollowUp: func(text string) {
@@ -386,6 +399,12 @@ func runTUI() error {
 			}
 		},
 		OnQuit: func() {},
+		OnAbort: func() {
+			if cancelAgent != nil {
+				cancelAgent()
+				cancelAgent = nil
+			}
+		},
 		OnCompact: func() {
 			go func() {
 				window := cfg.Agent.Default.ContextWindow
@@ -491,11 +510,16 @@ func runTUI() error {
 		m.AddMessage("system", statusMsg)
 	}
 
-	// Panic recovery: catch panics in the main goroutine so the terminal
-	// is restored. Note: panics in agent goroutines are not caught here.
+	// Panic recovery: catch panics in the main goroutine. When the TUI is
+	// running, trigger bubbletea's cleanup to restore the terminal (disable
+	// mouse reporting, raw mode, etc.). If the program hasn't started yet,
+	// there's nothing to clean up.
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(origStderr, "yaah panic: %v\n", r)
+			if prog != nil {
+				prog.Kill()
+			}
 			os.Exit(1)
 		}
 	}()
@@ -570,7 +594,7 @@ func (f *tuiEventForwarder) HandleEvent(evt agent.Event) {
 // runAgentForTUI runs the agent loop for a single prompt and sends messages
 // to the TUI channel. The channel is NOT closed here — it is shared across
 // multiple prompts for the lifetime of the TUI session.
-func runAgentForTUI(prompt string, controlCh chan<- tui.ControlMsg, p *tea.Program, cfg *config.Config, systemPrompt, modelName string, toolReg *tools.Registry, messages *[]types.Message, db *memory.DB, sessionID string, msgIdx *int, persistedCount *int, sm *sessionModel, conflictTracker *tools.ConflictTracker, steerCh chan string, followupCh chan string) {
+func runAgentForTUI(ctx context.Context, prompt string, controlCh chan<- tui.ControlMsg, p *tea.Program, cfg *config.Config, systemPrompt, modelName string, toolReg *tools.Registry, messages *[]types.Message, db *memory.DB, sessionID string, msgIdx *int, persistedCount *int, sm *sessionModel, conflictTracker *tools.ConflictTracker, steerCh chan string, followupCh chan string) {
 	pName, _ := sm.get()
 	provider := providerFor(cfg, pName)
 
@@ -645,7 +669,7 @@ func runAgentForTUI(prompt string, controlCh chan<- tui.ControlMsg, p *tea.Progr
 		}),
 	)
 
-	_, err := loop.Run(context.Background(), prompt)
+	_, err := loop.Run(ctx, prompt)
 
 	if err != nil {
 		p.Send(tui.ControlMsg{
