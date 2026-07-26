@@ -351,7 +351,7 @@ func (m *Model) renderMessages() string {
 				b.WriteString("\n")
 				zoneID := fmt.Sprintf("reasoning-%d", msgIdx)
 				m.reasoningZones = append(m.reasoningZones, zoneID)
-				b.WriteString(NewExpandableSection(zoneID, "Reasoning...", m.reasoningExpanded[zoneID], m.renderMarkdown(msg.Reasoning), m.width, reasoningBgStyle, thinkingStyle).AsPreWrapped().Render())
+				b.WriteString(NewExpandableSection(zoneID, "Reasoning...", m.reasoningExpanded[zoneID], msg.Reasoning, m.width, reasoningBgStyle, thinkingStyle).AsPreWrapped().Render())
 			}
 			if msg.Content != "" {
 				b.WriteString("\n")
@@ -391,7 +391,7 @@ func (m *Model) renderMessages() string {
 			b.WriteString(rendered)
 			b.WriteString("\n\n")
 			b.WriteString(reasoningBgStyle.Width(m.width).Render(
-				thinkingStyle.Render(m.renderMarkdown(m.thinkContent))))
+				thinkingStyle.Render(m.thinkContent)))
 		} else {
 			m.reasoningZones = append(m.reasoningZones, "reasoning-live")
 			if !m.reasoningExpanded["reasoning-live"] {
@@ -401,7 +401,7 @@ func (m *Model) renderMessages() string {
 				b.WriteString(zone.Mark("reasoning-live", toggleStyle.Render("  ▼ Reasoning...")))
 				b.WriteString("\n")
 				b.WriteString(reasoningBgStyle.Width(m.width).Render(
-					thinkingStyle.Render(m.renderMarkdown(m.thinkContent))))
+					thinkingStyle.Render(m.thinkContent)))
 			}
 			b.WriteString("\n")
 		}

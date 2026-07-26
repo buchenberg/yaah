@@ -390,21 +390,6 @@ func TestParseAndRenderTables_EmptyCells(t *testing.T) {
 
 // --- Integration: renderMarkdown with tables ---
 
-func stripANSI(s string) string {
-	var out strings.Builder
-	for i := 0; i < len(s); i++ {
-		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
-			i += 2
-			for i < len(s) && s[i] != 'm' {
-				i++
-			}
-			continue
-		}
-		out.WriteByte(s[i])
-	}
-	return out.String()
-}
-
 func TestRenderMarkdown_TableOnly(t *testing.T) {
 	m := &Model{width: 80}
 	m.createRenderer()
@@ -1157,7 +1142,7 @@ func TestRenderReasoningExpanded_MessageLevel(t *testing.T) {
 	}
 }
 
-func TestRenderReasoningMarkdownFormatted(t *testing.T) {
+func TestRenderReasoningPlainTextNotMarkdown(t *testing.T) {
 	m := &Model{width: 80, reasoningExpanded: map[string]bool{"reasoning-0": true}}
 	m.createRenderer()
 	m.messages = []Message{
@@ -1169,8 +1154,8 @@ func TestRenderReasoningMarkdownFormatted(t *testing.T) {
 	if !strings.Contains(output, "code here") {
 		t.Errorf("expected reasoning content in output, got: %q", output)
 	}
-	if strings.Contains(output, "```") {
-		t.Errorf("raw markdown fences should be rendered away, got: %q", output)
+	if !strings.Contains(output, "```") {
+		t.Errorf("code fences should be preserved as plain text (no glamour for reasoning), got: %q", output)
 	}
 }
 

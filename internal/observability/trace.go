@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -291,6 +292,30 @@ func truncate(s string, n int) string {
 		cut--
 	}
 	return s[:cut] + "..."
+}
+
+// RecordTUIView records the rendered TUI view as a span event. It creates
+// a short-lived span so the view is visible in Jaeger traces for debugging
+// rendering issues. The body is truncated to 32k to avoid overwhelming the
+// collector. If preScan and postScan differ, the delta helps pinpoint zone
+// marker corruption.
+func RecordTUIView(preScan, postScan string) {
+	ctx := context.Background()
+	tracer := otel.Tracer("yaah.tui")
+	_, span := tracer.Start(ctx, "tui.render")
+	defer span.End()
+
+	if len(preScan) > 32768 {
+		preScan = preScan[:32768] + "...[truncated]"
+	}
+	span.SetAttributes(attribute.String("tui.body", preScan))
+
+	if postScan != "" && postScan != preScan {
+		if len(postScan) > 32768 {
+			postScan = postScan[:32768] + "...[truncated]"
+		}
+		span.SetAttributes(attribute.String("tui.body_postscan", postScan))
+	}
 }
 
 // safeString replaces invalid UTF-8 byte sequences with the Unicode

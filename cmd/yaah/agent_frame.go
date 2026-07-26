@@ -203,9 +203,10 @@ func newAgentSession() (*agentSession, error) {
 		messages = make([]types.Message, 0, len(dbMsgs))
 		for _, m := range dbMsgs {
 			msg := types.Message{
-				Role:    m.Role,
-				Content: m.Content,
-				Name:    m.ToolName,
+				Role:       m.Role,
+				Content:    m.Content,
+				Name:       m.ToolName,
+				ToolCallID: m.ToolCallID,
 			}
 			if m.ToolCalls != "" {
 				json.Unmarshal([]byte(m.ToolCalls), &msg.ToolCalls)

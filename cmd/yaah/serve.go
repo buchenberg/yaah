@@ -172,6 +172,16 @@ func runServeHTTP(buf *observability.BufferingSpanProcessor) error {
 	srv := mcp.NewServer("yaah", version)
 	registerServeTools(srv, &mu, &totalTokens, &promptCount, buf, &sess, &sessErr, ensureSession)
 
+	// Warm up the agent session in the background so the first prompt
+	// call doesn't time out waiting for config/DB/skills/MCP clients.
+	go func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if err := ensureSession(); err != nil {
+			fmt.Fprintf(os.Stderr, "%s session warmup failed: %v\n", Dim("yaah serve:"), err)
+		}
+	}()
+
 	httpSrv := mcp.NewHTTPServer(srv, httpAddr)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

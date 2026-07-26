@@ -17,10 +17,12 @@ import (
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
 	zone "github.com/lrstanley/bubblezone/v2"
+	"github.com/atotto/clipboard"
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/banner"
+	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/todo"
 )
 
@@ -112,6 +114,7 @@ var defaultCommands = []Command{
 	{Name: ":banner", Description: "Toggle ASCII art banner"},
 	{Name: ":model", Description: "Switch model"},
 	{Name: ":steer", Description: "Inject text into current turn before next provider call"},
+	{Name: ":copyview", Description: "Copy rendered TUI view to clipboard"},
 	{Name: ":quit", Description: "Exit the TUI"},
 }
 
@@ -199,6 +202,8 @@ type Model struct {
 	needsRefresh bool
 	ephemMsg     string
 	ephemTimer   int
+	lastBody     string // last rendered body for :copyview
+	recordView   bool   // set by FlushEvent, triggers RecordTUIView in View()
 }
 
 // Config holds the immutable setup parameters for a TUI model.
@@ -445,11 +450,11 @@ func (m *Model) AddAssistantMessageWithReasoning(raw, reasoning string) {
 // provider line counts.
 func (m *Model) headerHeight() int {
 	if !m.showBanner || m.banner == "" {
-		return 2 // provider line + blank line
+		return 3 // provider line + stacked hint line + blank line
 	}
 	header := m.banner + "\n\n" +
 		titleStyle.Render(fmt.Sprintf("%s/%s", m.provider, m.modelName)) + "\n"
-	return len(strings.Split(header, "\n"))
+	return len(strings.Split(header, "\n")) + 1 // +1 for the second stacked hint line
 }
 
 // refreshViewport rebuilds the viewport content from the current message state.
@@ -544,6 +549,14 @@ func (m *Model) executeCommand(input string) {
 		return
 	case ":mcp":
 		m.AddMessage("system", m.renderMCPStatus())
+	case ":copyview":
+		scanned := zone.Scan(m.lastBody)
+		plain := stripANSI(scanned)
+		if err := clipboard.WriteAll(plain); err != nil {
+			m.SetEphemeral("Copy failed: " + err.Error())
+		} else {
+			m.SetEphemeral("View copied to clipboard.")
+		}
 	default:
 		// :steer is the only command that takes an argument, so it
 		// doesn't fit cleanly into a static switch case. Match the
@@ -679,6 +692,7 @@ func (m *Model) HandleEvent(evt agent.Event) {
 		haveReasoning := m.thinkContent != ""
 		m.streaming = false
 		m.streamContent = ""
+		m.recordView = true
 		if haveReasoning {
 			reasoning := m.thinkContent
 			m.thinkContent = ""
@@ -1456,7 +1470,7 @@ func (m *Model) adjustViewport() {
 	if m.height == 0 {
 		return
 	}
-	chatHeight := m.height - m.headerHeight() - 3 // -3 for status line + footer
+	chatHeight := m.height - m.headerHeight() - 4 // -4: status line + input border (top, content, bottom)
 	if m.ephemMsg != "" {
 		chatHeight-- // ephemeral message line
 	}
@@ -1581,7 +1595,7 @@ func (m *Model) View() tea.View {
 	}
 
 	// Header: figlet banner + provider/model line (or compact if hidden)
-	header := NewHeader(m.banner, m.provider, m.modelName, m.showBanner).Render()
+	header := NewHeader(m.banner, m.provider, m.modelName, m.showBanner, m.width).Render()
 
 	// Status bar (1 line): message count + context bar only.
 	// Provider/model is in the header; no need to duplicate.
@@ -1625,8 +1639,13 @@ func (m *Model) View() tea.View {
 	// Input (1 line)
 	inputView := m.input.View()
 
-	// Footer hint bar (1 line) — always visible with key shortcuts
-	footer := m.help.View(footerKeyMap{})
+	// Pink border around input area
+	inputView = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("205")).
+		Padding(0, 1).
+		Width(m.width - 4).
+		Render(inputView)
 
 	elements := []string{header, viewportView, status}
 	if ephemLine != "" {
@@ -1638,18 +1657,24 @@ func (m *Model) View() tea.View {
 	if searchLine != "" {
 		elements = append(elements, searchLine)
 	}
-	elements = append(elements, inputView, footer)
+	elements = append(elements, inputView)
 	body := lipgloss.JoinVertical(lipgloss.Left, elements...)
+	m.lastBody = body
+	scanned := zone.Scan(body)
+	if m.recordView {
+		m.recordView = false
+		observability.RecordTUIView(body, scanned)
+	}
 
-	v := tea.NewView(zone.Scan(body))
+	v := tea.NewView(scanned)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeAllMotion
 	// Position the terminal cursor at the textinput's location.
-	// The input line is above the footer (last line).
+	// The input line is the last element (bottom of screen).
 	if !m.input.VirtualCursor() {
 		if c := m.input.Cursor(); c != nil {
-			// input is the second-to-last element; footer is last.
-			// If ephemeral message is shown, input is third-to-last.
+			// input is the last element.
+			// If ephemeral message is shown, input is second-to-last.
 			offset := 2
 			if m.ephemMsg != "" {
 				offset = 3
@@ -1744,4 +1769,10 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dms", d.Milliseconds())
 	}
 	return fmt.Sprintf("%.1fs", d.Seconds())
+}
+
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b\[[0-9;]*m`)
+
+func stripANSI(s string) string {
+	return ansiRe.ReplaceAllString(s, "")
 }

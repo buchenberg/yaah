@@ -13,7 +13,7 @@ func repairOrphans(messages []types.Message) []types.Message {
 				callIDs[tc.ID] = true
 			}
 		}
-		if m.Role == "tool" && m.ToolCallID != "" {
+		if m.Role == "tool" {
 			resultIDs[m.ToolCallID] = true
 		}
 	}
@@ -21,7 +21,7 @@ func repairOrphans(messages []types.Message) []types.Message {
 	var pendingCalls []types.ToolCall
 	out := make([]types.Message, 0, len(messages))
 	for _, m := range messages {
-		if m.Role == "tool" && m.ToolCallID != "" && !callIDs[m.ToolCallID] {
+		if m.Role == "tool" && (m.ToolCallID == "" || !callIDs[m.ToolCallID]) {
 			continue
 		}
 		if m.Role == "assistant" && len(m.ToolCalls) > 0 {
