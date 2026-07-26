@@ -9,6 +9,7 @@ import (
 	zone "github.com/lrstanley/bubblezone/v2"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/types"
 )
 
 func TestMain(m *testing.M) {
@@ -899,7 +900,7 @@ func TestExitModelMode(t *testing.T) {
 
 func TestHandleModelList(t *testing.T) {
 	m := &Model{width: 80}
-	m.handleControlMsg(ControlMsg{ModelList: []string{"openai/gpt-4o", "ollama/llama3"}})
+	m.handleControlMsg(&types.CtrlModelList{Models: []string{"openai/gpt-4o", "ollama/llama3"}})
 
 	if len(m.modelItems) != 2 {
 		t.Fatalf("expected 2 modelItems, got %d", len(m.modelItems))
@@ -1322,12 +1323,12 @@ func TestReasoningZonesClearedEachRender(t *testing.T) {
 func TestQuestionModeEnter(t *testing.T) {
 	m := testModel(80)
 	ch := make(chan string, 1)
-	m.handleControlMsg(ControlMsg{Question: &QuestionModal{
+	m.handleControlMsg(&types.CtrlQuestion{
 		Header:   "Next step",
 		Question: "What should we do?",
-		Options:  []QuestionOption{{Label: "A", Description: "First"}, {Label: "B", Description: "Second"}},
+		Options:  []types.CtrlOption{{Label: "A", Description: "First"}, {Label: "B", Description: "Second"}},
 		AnswerCh: ch,
-	}})
+	})
 
 	if !m.questionMode {
 		t.Fatal("expected questionMode to be true")
@@ -1343,12 +1344,12 @@ func TestQuestionModeEnter(t *testing.T) {
 func TestQuestionModeSingleSelectAnswer(t *testing.T) {
 	m := testModel(80)
 	ch := make(chan string, 1)
-	m.handleControlMsg(ControlMsg{Question: &QuestionModal{
+	m.handleControlMsg(&types.CtrlQuestion{
 		Header:   "Next step",
 		Question: "What?",
-		Options:  []QuestionOption{{Label: "A", Description: ""}, {Label: "B", Description: ""}},
+		Options:  []types.CtrlOption{{Label: "A", Description: ""}, {Label: "B", Description: ""}},
 		AnswerCh: ch,
-	}})
+	})
 	m.questionIdx = 1
 	m.commitQuestionAnswer()
 
@@ -1364,13 +1365,13 @@ func TestQuestionModeSingleSelectAnswer(t *testing.T) {
 func TestQuestionModeMultiSelectAnswer(t *testing.T) {
 	m := testModel(80)
 	ch := make(chan string, 1)
-	m.handleControlMsg(ControlMsg{Question: &QuestionModal{
+	m.handleControlMsg(&types.CtrlQuestion{
 		Header:   "Choose",
 		Question: "Which?",
-		Options:  []QuestionOption{{Label: "A", Description: ""}, {Label: "B", Description: ""}, {Label: "C", Description: ""}},
+		Options:  []types.CtrlOption{{Label: "A", Description: ""}, {Label: "B", Description: ""}, {Label: "C", Description: ""}},
 		Multiple: true,
 		AnswerCh: ch,
-	}})
+	})
 	m.questionMulti[0] = true
 	m.questionMulti[2] = true
 	m.commitQuestionAnswer()
@@ -1384,12 +1385,12 @@ func TestQuestionModeMultiSelectAnswer(t *testing.T) {
 func TestQuestionModeEscapeCancel(t *testing.T) {
 	m := testModel(80)
 	ch := make(chan string, 1)
-	m.handleControlMsg(ControlMsg{Question: &QuestionModal{
+	m.handleControlMsg(&types.CtrlQuestion{
 		Header:   "Next step",
 		Question: "What?",
-		Options:  []QuestionOption{{Label: "A", Description: ""}},
+		Options:  []types.CtrlOption{{Label: "A", Description: ""}},
 		AnswerCh: ch,
-	}})
+	})
 	m.answerQuestion("")
 
 	answer := <-ch
@@ -1454,12 +1455,12 @@ func TestRenderQuestionModalMultiSelect(t *testing.T) {
 func TestQuestionModeResetsState(t *testing.T) {
 	m := testModel(80)
 	ch := make(chan string, 1)
-	m.handleControlMsg(ControlMsg{Question: &QuestionModal{
+	m.handleControlMsg(&types.CtrlQuestion{
 		Header:   "Q",
 		Question: "A?",
-		Options:  []QuestionOption{{Label: "X", Description: ""}},
+		Options:  []types.CtrlOption{{Label: "X", Description: ""}},
 		AnswerCh: ch,
-	}})
+	})
 	m.answerQuestion("X")
 
 	<-ch

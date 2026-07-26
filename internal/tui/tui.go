@@ -22,8 +22,10 @@ import (
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/banner"
+	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/todo"
+	"github.com/buchenberg/yaah/internal/types"
 )
 
 // Styles — declared here, initialized by ApplyTheme in theme.go.
@@ -70,15 +72,8 @@ type Message struct {
 }
 
 // ServerInfo holds status details about an MCP server (mirrors mcp.ServerInfo).
-type ServerInfo struct {
-	Name      string
-	Transport string
-	Command   string
-	URL       string
-	Connected bool
-	ToolCount int
-	Error     string
-}
+// Deprecated: use mcp.ServerInfo directly.
+type ServerInfo = mcp.ServerInfo
 
 // cursorHoverMsg is sent when the mouse moves over or leaves a clickable zone.
 type cursorHoverMsg struct {
@@ -86,19 +81,12 @@ type cursorHoverMsg struct {
 }
 
 // QuestionModal carries question data for the interactive modal dialog.
-type QuestionModal struct {
-	Header   string
-	Question string
-	Options  []QuestionOption
-	Multiple bool
-	AnswerCh chan<- string
-}
+// Deprecated: use types.CtrlQuestion directly.
+type QuestionModal = types.CtrlQuestion
 
 // QuestionOption is a single choice in a question modal.
-type QuestionOption struct {
-	Label       string
-	Description string
-}
+// Deprecated: use types.CtrlOption directly.
+type QuestionOption = types.CtrlOption
 
 // Command represents a slash command available in the TUI.
 type Command struct {
@@ -809,55 +797,41 @@ func (m *Model) HandleEvent(evt agent.Event) {
 	}
 }
 
-// ControlMsg carries non-broker TUI control-plane messages.
-// These come from outside the agent loop (tool handlers, startup routines).
-type ControlMsg struct {
-	StatusMsg     string
-	Todos         []todo.Item
-	Err           error
-	Question      *QuestionModal
-	ApproveChan   chan bool
-	ApproveName   string
-	ApproveArgs   string
-	ModelList     []string
-	ProviderNames map[string]string
-	ContextTokens int
-	ContextWindow int
-}
-
-func (m *Model) handleControlMsg(msg ControlMsg) {
-	if msg.StatusMsg != "" {
-		m.AddMessage("system", msg.StatusMsg)
-	}
-	if msg.Todos != nil {
-		m.todos = msg.Todos
-		return
-	}
-	if msg.Err != nil {
-		m.AddMessage("assistant", fmt.Sprintf("Error: %v", msg.Err))
+// handleControlMsg processes a control-plane message from the session.
+func (m *Model) handleControlMsg(msg types.CtrlMsg) {
+	switch ctrl := msg.(type) {
+	case *types.CtrlStatus:
+		m.AddMessage("system", ctrl.Text)
+	case *types.CtrlTodos:
+		m.todos = ctrl.Items
+	case *types.CtrlError:
+		m.AddMessage("assistant", fmt.Sprintf("Error: %v", ctrl.Err))
 		m.SetThinking(false)
 		m.streaming = false
 		m.streamContent = ""
-		return
-	}
-
-	if msg.Question != nil {
-		m.questionModal = *msg.Question
+	case *types.CtrlQuestion:
+		m.questionModal = QuestionModal{
+			Header:   ctrl.Header,
+			Question: ctrl.Question,
+			Options:  make([]QuestionOption, len(ctrl.Options)),
+			Multiple: ctrl.Multiple,
+			AnswerCh: ctrl.AnswerCh,
+		}
+		for i, o := range ctrl.Options {
+			m.questionModal.Options[i] = QuestionOption{Label: o.Label, Description: o.Description}
+		}
 		m.questionIdx = 0
-		m.questionMulti = make([]bool, len(msg.Question.Options))
+		m.questionMulti = make([]bool, len(ctrl.Options))
 		m.questionMode = true
 		m.input.SetValue("")
 		m.input.Placeholder = ""
 		m.adjustViewport()
 		m.refreshViewport()
-		return
-	}
-
-	if msg.ApproveChan != nil {
+	case *types.CtrlApproval:
 		ch := make(chan string, 1)
 		m.questionModal = QuestionModal{
 			Header:   "Approve",
-			Question: fmt.Sprintf("Run %s(%s)?", msg.ApproveName, msg.ApproveArgs),
+			Question: fmt.Sprintf("Run %s(%s)?", ctrl.Name, ctrl.Args),
 			Options: []QuestionOption{
 				{Label: "Yes", Description: "Approve this tool call"},
 				{Label: "No", Description: "Deny this tool call"},
@@ -874,21 +848,17 @@ func (m *Model) handleControlMsg(msg ControlMsg) {
 		m.refreshViewport()
 		go func() {
 			answer := <-ch
-			msg.ApproveChan <- (answer == "Yes" || answer == "Yes, Yes")
+			ctrl.ApproveCh <- (answer == "Yes" || answer == "Yes, Yes")
 		}()
-		return
-	}
-
-	if msg.ContextWindow > 0 {
-		m.HandleContextInfo(msg.ContextTokens, msg.ContextWindow)
-	}
-
-	if len(msg.ModelList) > 0 {
-		m.modelItems = msg.ModelList
-		if msg.ProviderNames != nil {
-			m.providerNames = msg.ProviderNames
+	case *types.CtrlContextInfo:
+		m.HandleContextInfo(ctrl.Tokens, ctrl.Window)
+	case *types.CtrlModelList:
+		m.modelItems = ctrl.Models
+		if ctrl.ProviderNames != nil {
+			m.providerNames = ctrl.ProviderNames
 		}
 		m.refreshViewport()
+	case *types.CtrlDone:
 	}
 }
 
@@ -913,7 +883,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.HandleEvent(msg)
 		return m, nil
 
-	case ControlMsg:
+	case types.CtrlMsg:
 		m.handleControlMsg(msg)
 		return m, nil
 

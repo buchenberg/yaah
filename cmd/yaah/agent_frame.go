@@ -38,6 +38,7 @@ type agentSession struct {
 	toolReg      *tools.Registry
 	db           *memory.DB
 	mcpClients   []mcp.MCPClient
+	mcpInfos     []mcp.ServerInfo
 	procMgr      *processpkg.Manager
 	messages     []types.Message
 	sessionID    string
@@ -45,13 +46,12 @@ type agentSession struct {
 	otelShutdown func(context.Context) error
 	tracker      *tools.ConflictTracker
 
-	// steerCh carries high-priority mid-turn messages that should be
-	// injected immediately before the next provider call. Buffered so
-	// keystrokes typed during a slow turn are not silently dropped.
-	steerCh chan string
-	// followupCh carries queued messages to inject at the start of the
-	// next iteration. Larger buffer than steerCh because follow-ups
-	// tend to come in bursts (user types ahead while the model runs).
+	view      agent.View
+	ctrlCh    chan<- types.CtrlMsg
+	approveFn func(name, args string) bool
+	mu        sync.RWMutex
+
+	steerCh    chan string
 	followupCh chan string
 }
 
@@ -145,9 +145,12 @@ func newAgentSession() (*agentSession, error) {
 	}
 
 	systemPrompt := prompts.Build(layers)
+	if err == nil {
+		systemPrompt += "\n\n## Memory Guidelines\n- Use memory_search to find relevant memories before answering personal/project questions. Pass a tag to filter by category.\n- When the user asks about past conversations or session history, use memory_search_sessions with an empty query to list recent transcripts.\n- Use memory_add to save important facts. Always include a tags array (e.g., [\"user_info\"], [\"preferences\"], [\"project:yaah\"], [\"decision\"]).\n- Use memory_update to correct stale facts (requires the memory ID). Use memory_delete to remove incorrect memories.\n- At the end of a conversation or when the user says goodbye, use memory_add to save a 2-3 line summary of key discussion points with tag [\"session_summary\"]."
+	}
 
 	mcpDirs := mcpSearchPaths(config.HomeDir())
-	mcpClients, mcpTools, _, mcpErr := mcp.StartMCPClientsWithStderr(context.Background(), mcpDirs, io.Discard)
+	mcpClients, mcpTools, mcpInfos, mcpErr := mcp.StartMCPClientsWithStderr(context.Background(), mcpDirs, io.Discard)
 	if mcpErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: MCP startup error: %v\n", mcpErr)
 	}
@@ -287,6 +290,7 @@ func newAgentSession() (*agentSession, error) {
 		toolReg:      toolReg,
 		db:           db,
 		mcpClients:   mcpClients,
+		mcpInfos:     mcpInfos,
 		procMgr:      procMgr,
 		sessionID:    sessionID,
 		messages:     messages,
@@ -306,6 +310,9 @@ func (s *agentSession) close() {
 	if s.followupCh != nil {
 		close(s.followupCh)
 	}
+	if s.ctrlCh != nil {
+		s.ctrlCh <- &types.CtrlDone{}
+	}
 	if s.otelShutdown != nil {
 		s.otelShutdown(ctx)
 	}
@@ -316,6 +323,44 @@ func (s *agentSession) close() {
 	for _, c := range s.mcpClients {
 		c.Close()
 	}
+}
+
+func (s *agentSession) SetView(v agent.View) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.view = v
+}
+
+func (s *agentSession) SetCtrlCh(ch chan<- types.CtrlMsg) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ctrlCh = ch
+}
+
+func (s *agentSession) SetApproveFn(fn func(name, args string) bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.approveFn = fn
+}
+
+func (s *agentSession) SetModel(providerName, modelName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prov := s.provider
+	if p, ok := s.cfg.Providers[providerName]; ok {
+		if pv, ok2 := makeProvider(p); ok2 {
+			prov = pv
+		}
+	}
+	s.provider = prov
+	s.providerName = providerName
+	s.modelName = modelName
+}
+
+func (s *agentSession) SetSystemPrompt(prompt string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.systemPrompt = prompt
 }
 
 func (s *agentSession) compactContext() {
@@ -447,18 +492,35 @@ func (terminalView) HandleEvent(evt agent.Event) {
 }
 
 // runPrompt executes a single agent prompt with the session's shared
-// infrastructure. Uses terminalView to render streaming output.
-func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
+// infrastructure. The optional view argument overrides s.view; if both are
+// nil, terminalView is used (REPL behavior).
+func (s *agentSession) runPrompt(prompt string, view ...agent.View) (string, bool, error) {
 	compactProvider, compactModel := resolveCompact(s.cfg)
 	fallbackProvider, fallbackModel := resolveFallback(s.cfg)
+
+	s.mu.RLock()
+	prov := s.provider
+	mName := s.modelName
+	v := s.view
+	ctrl := s.ctrlCh
+	appr := s.approveFn
+	s.mu.RUnlock()
 
 	spin := spinner.New(nil, "Thinking...")
 	fmt.Fprintln(os.Stderr)
 	spin.Start()
 
 	streamed := false
-	view := &replView{
-		inner: terminalView{},
+	var inner agent.View
+	if len(view) > 0 && view[0] != nil {
+		inner = view[0]
+	} else if v != nil {
+		inner = v
+	} else {
+		inner = terminalView{}
+	}
+	var spinnerView agent.View = &replView{
+		inner:        inner,
 		onFirstToken: func() {
 			if !streamed {
 				streamed = true
@@ -468,10 +530,10 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		},
 	}
 
-	loop := agent.NewLoop(s.provider, s.toolReg,
-		agent.WithModel(s.modelName),
+	loop := agent.NewLoop(prov, s.toolReg,
+		agent.WithModel(mName),
 		agent.WithSystemPrompt(s.systemPrompt),
-		agent.WithView(view),
+		agent.WithView(spinnerView),
 		agent.WithMessages(s.messages),
 		agent.WithDB(s.db),
 		agent.WithWriteDebouncer(func() *memory.DebouncedWriter {
@@ -485,7 +547,6 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		agent.WithHookDir(s.cfg.Hooks.Dir),
 		agent.WithFallback(fallbackProvider, fallbackModel),
 		agent.WithCompactProvider(compactProvider, compactModel),
-		agent.WithApprovalMode(resolveApproval(s.cfg)),
 		agent.WithPipeline(s.cfg.Agent.Middleware.Enabled, s.cfg.Agent.Middleware.Disabled),
 		agent.WithSteer(s.steerCh),
 		agent.WithFollowUps(s.followupCh),
@@ -518,7 +579,12 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 			PruneMinReclaim:        s.cfg.Agent.Default.PruneMinReclaim,
 			PruneMinTurns:          s.cfg.Agent.Default.PruneMinTurns,
 		}),
+		agent.WithApprovalMode(resolveApproval(s.cfg)),
 	)
+
+	if appr != nil {
+		loop.ApproveFn = appr
+	}
 
 	response, err := loop.Run(context.Background(), prompt)
 
@@ -533,12 +599,28 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 	s.messages = loop.Messages
 	s.msgIdx = loop.MsgIdx
 
+	if ctrl != nil {
+		if err != nil {
+			select {
+			case ctrl <- &types.CtrlError{Err: err}:
+			default:
+			}
+		}
+		select {
+		case ctrl <- &types.CtrlContextInfo{
+			Tokens: loop.EstimatedTokens(),
+			Window: loop.ContextWindow,
+		}:
+		default:
+		}
+	}
+
 	return response, streamed, err
 }
 
 // replView wraps a terminalView and triggers onFirstToken on the first token.
 type replView struct {
-	inner        terminalView
+	inner        agent.View
 	onFirstToken func()
 	firstOnce    sync.Once
 }
