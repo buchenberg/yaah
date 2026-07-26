@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"sort"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/buchenberg/yaah/internal/agent"
@@ -69,16 +68,6 @@ func fetchAllModels(ctx context.Context, cfg *config.Config) []string {
 	}
 
 	return all
-}
-
-// providerFor returns a provider client for the given provider name.
-func providerFor(cfg *config.Config, name string) agent.Provider {
-	if p, ok := cfg.Providers[name]; ok {
-		if prov, ok2 := makeProvider(p); ok2 {
-			return prov
-		}
-	}
-	return &noProviderStub{}
 }
 
 // runTUI starts the bubbletea TUI.
@@ -189,77 +178,7 @@ func runTUI() error {
 			}
 		},
 		OnCompact: func() {
-			go func() {
-				window := cfg.Agent.Default.ContextWindow
-				if window <= 0 {
-					window = 128000
-				}
-				msgs := sess.messages
-				if len(msgs) <= 4 {
-					controlCh <- &types.CtrlStatus{Text: "Context is already small enough."}
-					return
-				}
-				totalChars := 0
-				for _, m := range msgs {
-					totalChars += len(m.Content)
-					for _, tc := range m.ToolCalls {
-						totalChars += len(tc.Function.Arguments) + len(tc.Function.Name)
-					}
-				}
-				if totalChars/4 <= window*4/5 {
-					controlCh <- &types.CtrlStatus{Text: fmt.Sprintf("Context is already compact enough (%d/%d tokens).", totalChars/4, window)}
-					return
-				}
-
-				sysMsg := msgs[0]
-				rest := msgs[1:]
-				keepRecent := 6
-				if len(rest) <= keepRecent {
-					controlCh <- &types.CtrlStatus{Text: "Not enough messages to compact."}
-					return
-				}
-				split := len(rest) - keepRecent
-				oldMsgs := rest[:split]
-				keepMsgs := rest[split:]
-
-				var sb strings.Builder
-				sb.WriteString("Summarize the following conversation excerpt. Keep the structured format below.\n\n")
-				sb.WriteString("## Goal\n## Completed Work\n## Active Work\n## Pending Tasks\n## Key Decisions\n## Files Modified\n\n---\nConversation excerpt:\n\n")
-				for _, m := range oldMsgs {
-					if m.Content != "" {
-						sb.WriteString(fmt.Sprintf("%s: %s\n", m.Role, m.Content))
-					}
-					for _, tc := range m.ToolCalls {
-						sb.WriteString(fmt.Sprintf("[tool:%s] %s\n", tc.Function.Name, tc.Function.Arguments))
-					}
-				}
-
-				sess.mu.RLock()
-				pName := sess.providerName
-				mName := sess.modelName
-				sess.mu.RUnlock()
-				compactProv := providerFor(cfg, pName)
-				compactModel := cfg.Agent.Default.SmallModel
-				if compactModel == "" {
-					compactModel = mName
-				}
-				req := types.ChatRequest{
-					Model:    compactModel,
-					Messages: []types.Message{types.UserMsg(sb.String())},
-				}
-				resp, err := compactProv.Send(context.Background(), req)
-				if err != nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
-					sess.messages = append([]types.Message{sysMsg}, keepMsgs...)
-					controlCh <- &types.CtrlStatus{Text: "Compacted (trimmed)."}
-					return
-				}
-				summary := resp.Choices[0].Message.Content
-				newMsgs := []types.Message{sysMsg}
-				newMsgs = append(newMsgs, types.SystemMsg("Previous conversation summary:\n"+summary))
-				newMsgs = append(newMsgs, keepMsgs...)
-				sess.messages = newMsgs
-				controlCh <- &types.CtrlStatus{Text: "Compacted."}
-			}()
+			go sess.compactContext()
 		},
 		OnModel: func(pName, mName string) {
 			sess.SetModel(pName, mName)

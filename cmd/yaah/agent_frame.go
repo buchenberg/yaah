@@ -364,9 +364,19 @@ func (s *agentSession) SetSystemPrompt(prompt string) {
 }
 
 func (s *agentSession) compactContext() {
-	if len(s.messages) <= 4 {
-		fmt.Fprintf(os.Stderr, "  %s\n", Dim("context is already small enough"))
-		return
+	s.mu.RLock()
+	ch := s.ctrlCh
+	s.mu.RUnlock()
+
+	msg := func(text string) {
+		if ch != nil {
+			select {
+			case ch <- &types.CtrlStatus{Text: text}:
+			default:
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "  %s\n", Dim(text))
+		}
 	}
 
 	window := s.cfg.Agent.Default.ContextWindow
@@ -374,58 +384,71 @@ func (s *agentSession) compactContext() {
 		window = 128000
 	}
 
-	totalChars := 0
-	for _, m := range s.messages {
-		totalChars += len(m.Content)
-	}
-	estTokens := totalChars / 4
-	target := window * 4 / 5
-
-	if estTokens <= target {
-		fmt.Fprintf(os.Stderr, "  %s %d/%d tokens (%d%%)\n",
-			Dim("context:"), estTokens, window, estTokens*100/window)
+	msgs := s.messages
+	if len(msgs) <= 4 {
+		msg("context is already small enough")
 		return
 	}
 
-	fmt.Fprintf(os.Stderr, "  %s %d/%d tokens (%d%%) — compacting...\n",
-		Dim("context:"), estTokens, window, estTokens*100/window)
+	totalChars := 0
+	for _, m := range msgs {
+		totalChars += len(m.Content)
+		for _, tc := range m.ToolCalls {
+			totalChars += len(tc.Function.Arguments) + len(tc.Function.Name)
+		}
+	}
+	estTokens := totalChars / 4
+	target := window * 4 / 5
+	if estTokens <= target {
+		msg(fmt.Sprintf("context: %d/%d tokens (%d%%)", estTokens, window, estTokens*100/window))
+		return
+	}
 
-	sysMsg := s.messages[0]
-	rest := s.messages[1:]
+	msg(fmt.Sprintf("context: %d/%d tokens (%d%%) — compacting...", estTokens, window, estTokens*100/window))
 
-	split := len(rest) / 2
+	sysMsg := msgs[0]
+	rest := msgs[1:]
+	keepRecent := 6
+	if len(rest) <= keepRecent {
+		msg("not enough messages to compact")
+		return
+	}
+	split := len(rest) - keepRecent
 	oldMsgs := rest[:split]
 	keepMsgs := rest[split:]
 
 	var sb strings.Builder
-	sb.WriteString("Summarize the following conversation excerpt in 2-3 sentences. Be concise and factual.\n\n")
+	sb.WriteString("Summarize the following conversation excerpt. Keep the structured format below.\n\n")
+	sb.WriteString("## Goal\n## Completed Work\n## Active Work\n## Pending Tasks\n## Key Decisions\n## Files Modified\n\n---\nConversation excerpt:\n\n")
 	for _, m := range oldMsgs {
 		if m.Content != "" {
 			sb.WriteString(fmt.Sprintf("%s: %s\n", m.Role, m.Content))
 		}
+		for _, tc := range m.ToolCalls {
+			sb.WriteString(fmt.Sprintf("[tool:%s] %s\n", tc.Function.Name, tc.Function.Arguments))
+		}
+	}
+
+	compactModel := s.cfg.Agent.Default.SmallModel
+	if compactModel == "" {
+		compactModel = s.modelName
 	}
 
 	req := types.ChatRequest{
-		Model: s.modelName,
-		Messages: []types.Message{
-			types.UserMsg(sb.String()),
-		},
+		Model:    compactModel,
+		Messages: []types.Message{types.UserMsg(sb.String())},
 	}
 
 	resp, err := s.provider.Send(context.Background(), req)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "  %s\n", replYellow("compact failed: "+err.Error()))
-		return
-	}
-
-	if len(resp.Choices) == 0 {
-		fmt.Fprintf(os.Stderr, "  %s\n", replYellow("compact failed: no response"))
+	if err != nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+		s.messages = append([]types.Message{sysMsg}, keepMsgs...)
+		msg("compacted (trimmed)")
 		return
 	}
 
 	summary := resp.Choices[0].Message.Content
 	newMsgs := []types.Message{sysMsg}
-	newMsgs = append(newMsgs, types.SystemMsg("Previous conversation summary: "+summary))
+	newMsgs = append(newMsgs, types.SystemMsg("Previous conversation summary:\n"+summary))
 	newMsgs = append(newMsgs, keepMsgs...)
 	s.messages = newMsgs
 
@@ -433,8 +456,7 @@ func (s *agentSession) compactContext() {
 	for _, m := range s.messages {
 		newTokens += len(m.Content) / 4
 	}
-	fmt.Fprintf(os.Stderr, "  %s %d/%d tokens (%d%%)\n",
-		Dim("compacted:"), newTokens, window, newTokens*100/window)
+	msg(fmt.Sprintf("compacted: %d/%d tokens (%d%%)", newTokens, window, newTokens*100/window))
 }
 
 // terminalView implements agent.View for REPL terminal output.
