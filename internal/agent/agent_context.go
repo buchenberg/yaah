@@ -301,16 +301,16 @@ func splitTurn(messages []types.Message, t turnRange, budget int) int {
 // subsequent request. If compaction removes any, the next request gets a 400:
 // "The reasoning_content in the thinking mode must be passed back to the API."
 //
-// This function delegates to EarliestReasoningIndex for the actual logic.
-// The protectTurns parameter is accepted for API compatibility but is
-// effectively ignored: all reasoning-carrying messages are always protected,
-// regardless of the configured count.
+// protectTurns=0 disables protection entirely (explicit opt-out). Otherwise
+// ALL reasoning-carrying messages in oldMsgs are protected, regardless of
+// the configured count — DeepSeek requires every one.
 func ProtectReasoningTurns(messages []types.Message, keepStart, protectTurns int) int {
-	_ = protectTurns
-	if keepStart <= 1 {
+	if protectTurns <= 0 || keepStart <= 1 {
 		return keepStart
 	}
-	if idx := EarliestReasoningIndex(messages); idx > 0 && idx < keepStart {
+	// Only protect reasoning in oldMsgs (messages before keepStart).
+	// Reasoning already in keepMsgs is already preserved by compaction.
+	if idx := EarliestReasoningIndex(messages[:keepStart]); idx > 0 && idx < keepStart {
 		return idx
 	}
 	return keepStart
