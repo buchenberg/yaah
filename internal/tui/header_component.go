@@ -42,22 +42,6 @@ func NewHeader(banner, provider, model string, showBanner bool, width int, mcpIn
 	}
 }
 
-// outerBorder returns the lipgloss style for the outer header border.
-func outerBorder(w int) lipgloss.Style {
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("205")).
-		Width(w)
-}
-
-// ViewportBorder returns the lipgloss style for the viewport border.
-func ViewportBorder(w int) lipgloss.Style {
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("99")).
-		Width(w)
-}
-
 // Height returns the number of visual lines the rendered header occupies.
 func (h Header) Height() int {
 	outerOverhead := 0

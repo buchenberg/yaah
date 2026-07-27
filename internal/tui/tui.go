@@ -146,7 +146,7 @@ type Model struct {
 	compacting    bool   // currently running context compaction
 	streamContent string // accumulated streaming content
 	thinkContent  string // accumulated thinking/reasoning content
-	activePrompt string  // current prompt shown in info bar when active
+	activePrompt  string // current prompt shown in info bar when active
 
 	// --- reasoning ---
 	reasoningExpanded map[string]bool // zone ID → true if expanded
@@ -1638,7 +1638,7 @@ func (m *Model) View() tea.View {
 	// Viewport holds the scrollable chat history
 	viewportView := m.viewport.View()
 
-	viewportView = ViewportBorder(m.width).Render(viewportView)
+	viewportView = "\n" + viewportView + "\n"
 
 	// Search indicator line
 	var searchLine string

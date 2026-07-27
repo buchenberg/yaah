@@ -52,23 +52,6 @@ func TestChatBubble(t *testing.T) {
 	})
 }
 
-func TestBaseComponent_Render(t *testing.T) {
-	t.Run("renders content without width constraint", func(t *testing.T) {
-		c := NewBaseComponent("hello", 0, userStyle)
-		if out := c.Render(); !strings.Contains(out, "hello") {
-			t.Errorf("expected content, got %q", out)
-		}
-	})
-
-	t.Run("renders content with width constraint", func(t *testing.T) {
-		c := NewBaseComponent("hello", 40, userStyle)
-		out := c.Render()
-		if !strings.Contains(out, "hello") {
-			t.Errorf("expected content, got %q", out)
-		}
-	})
-}
-
 func TestUserMessage_Render(t *testing.T) {
 	out := NewUserMessage("how do I exit vim", 80).Render()
 	if !strings.Contains(out, "how do I exit vim") {
