@@ -37,7 +37,7 @@ func (b InfoBar) Height() int {
 // Render returns the info bar content with vertical padding.
 func (b InfoBar) Render() string {
 	if b.prompt == "" {
-		return ""
+		return "\n\n" // 3 lines of empty space to match Height()
 	}
 	var label string
 	if b.activeView != "" {
