@@ -15,6 +15,7 @@ import (
 // StreamChunk represents a single SSE chunk from a streaming response.
 type StreamChunk struct {
 	ID      string         `json:"id"`
+	Model   string         `json:"model"`
 	Choices []StreamChoice `json:"choices"`
 	Usage   *types.Usage   `json:"usage,omitempty"`
 }

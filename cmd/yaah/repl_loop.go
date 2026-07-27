@@ -2,6 +2,7 @@ package yaah
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -21,9 +22,9 @@ func startREPL() error {
 	if err != nil {
 		return err
 	}
-	defer sess.close()
+	defer sess.Close()
 
-	fmt.Fprintf(os.Stderr, "\n  %s %s/%s\n\n", Dim("provider:"), sess.providerName, sess.modelName)
+	fmt.Fprintf(os.Stderr, "\n  %s %s/%s\n\n", Dim("provider:"), sess.ProviderName(), sess.ModelName())
 
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -59,7 +60,11 @@ func startREPL() error {
 			fmt.Fprintf(os.Stderr, "warning: could not save history: %v\n", err)
 		}
 
-		response, streamed, err := sess.runPrompt(input)
+		tv := newTerminalView()
+		tv.start()
+		sess.SetView(tv)
+		response, streamed, err := sess.RunPrompt(context.Background(), input)
+		// tv.HandleEvent(DoneEvent) already handled spinner + trailing newlines
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s\n", replYellow("error: "+err.Error()))
 		} else if !streamed && response != "" {

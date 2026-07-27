@@ -1,6 +1,7 @@
 package yaah
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -71,9 +72,12 @@ func runOneShot(cmd *cobra.Command, prompt string) error {
 	}
 	defer sess.close()
 
-	cmd.Printf("\n  %s %s/%s\n\n", Dim("provider:"), sess.providerName, sess.modelName)
+	cmd.Printf("\n  %s %s/%s\n\n", Dim("provider:"), sess.ProviderName(), sess.ModelName())
 
-	response, streamed, err := sess.runPrompt(prompt)
+	tv := newTerminalView()
+	tv.start()
+	sess.SetView(tv)
+	response, streamed, err := sess.RunPrompt(context.Background(), prompt)
 	if err != nil {
 		return fmt.Errorf("agent error: %w", err)
 	}

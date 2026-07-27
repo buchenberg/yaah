@@ -1,6 +1,10 @@
 package agent
 
-import "time"
+import (
+	"time"
+
+	"github.com/buchenberg/yaah/internal/types"
+)
 
 // =============================================================================
 // Typed event system (Phase 1 — new API)
@@ -82,13 +86,17 @@ type SubAgentEndEvent struct {
 func (*SubAgentEndEvent) eventMarker() {}
 
 // DoneEvent is emitted when the agent loop completes (success or error).
-// It carries the final response text (if any), error information, and
-// context window statistics for the status bar.
+// It carries the final response text (if any), error information,
+// context window statistics for the status bar, finish reason from the last
+// turn, cumulative token usage, and the response model string.
 type DoneEvent struct {
 	Response      string
 	Error         string
 	ContextTokens int
 	ContextWindow int
+	FinishReason  string
+	Usage         types.Usage
+	ResponseModel string
 }
 
 func (*DoneEvent) eventMarker() {}

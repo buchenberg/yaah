@@ -4,9 +4,12 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textarea"
 	zone "github.com/lrstanley/bubblezone/v2"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/types"
 )
 
 func TestMain(m *testing.M) {
@@ -86,8 +89,19 @@ func TestSplitRow_TabsInCells(t *testing.T) {
 
 // testModel creates a minimal Model for testing renderCompactTable.
 func testModel(width int) *Model {
-	m := &Model{width: width}
-	return m
+	input := textarea.New()
+	input.SetWidth(width - 4)
+	input.Placeholder = "Type a message..."
+	input.DynamicHeight = true
+	input.MinHeight = 1
+	input.MaxHeight = 8
+	input.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("shift+enter"))
+	return &Model{
+		width:             width,
+		input:             input,
+		reasoningExpanded: make(map[string]bool),
+		toolExpanded:      make(map[string]bool),
+	}
 }
 
 // m is a default test model used by renderCompactTable tests.
@@ -744,27 +758,33 @@ func TestExecuteCommand_SteerEmptyBody(t *testing.T) {
 func TestCommandSuggestions(t *testing.T) {
 	m := &Model{width: 80}
 	m.commands = defaultCommands
-	m.updateCommandSuggestions()
 
-	suggestions := m.input.AvailableSuggestions()
-	if len(suggestions) != len(defaultCommands) {
-		t.Fatalf("expected %d suggestions, got %d", len(defaultCommands), len(suggestions))
-	}
-	names := make(map[string]bool)
-	for _, s := range suggestions {
-		names[s] = true
-	}
-	for _, c := range defaultCommands {
-		if !names[c.Name] {
-			t.Errorf("missing suggestion for command: %s", c.Name)
+	// Command palette renders matching commands based on input value.
+	// Verify all commands appear when no filter is applied.
+	palette := NewCommandPalette(m.commands, "", m.width)
+	output := palette.Render()
+	for _, c := range m.commands {
+		if !strings.Contains(output, c.Name) {
+			t.Errorf("command palette missing command: %s", c.Name)
 		}
+	}
+
+	// Verify filtering works.
+	m2 := &Model{width: 80}
+	m2.commands = defaultCommands
+	filtered := NewCommandPalette(m2.commands, ":quit", m2.width).Render()
+	if !strings.Contains(filtered, ":quit") {
+		t.Error("filtered palette missing :quit")
+	}
+	if strings.Contains(filtered, ":help") {
+		t.Error("filtered palette should not contain :help when filter is :quit")
 	}
 }
 
 // --- model mode tests ---
 
 func TestExecuteCommand_Model(t *testing.T) {
-	m := &Model{width: 80}
+	m := testModel(80)
 	m.commands = defaultCommands
 	m.modelItems = []string{"openai/gpt-4o", "openai/gpt-4o-mini", "ollama/llama3"}
 	m.executeCommand(":model")
@@ -777,7 +797,7 @@ func TestExecuteCommand_Model(t *testing.T) {
 }
 
 func TestExecuteCommand_ModelNoItems(t *testing.T) {
-	m := &Model{width: 80}
+	m := testModel(80)
 	m.commands = defaultCommands
 	m.modelItems = nil
 	m.executeCommand(":model")
@@ -793,7 +813,7 @@ func TestExecuteCommand_ModelNoItems(t *testing.T) {
 }
 
 func TestFilteredModels(t *testing.T) {
-	m := &Model{width: 80}
+	m := testModel(80)
 	m.modelItems = []string{"openai/gpt-4o", "openai/gpt-4o-mini", "ollama/llama3", "ollama/qwen2"}
 
 	all := m.filteredModels()
@@ -824,7 +844,7 @@ func TestFilteredModels(t *testing.T) {
 }
 
 func TestModelSelection_Callback(t *testing.T) {
-	m := &Model{width: 80}
+	m := testModel(80)
 	m.commands = defaultCommands
 	m.modelItems = []string{"openai/gpt-4o", "openai/gpt-4o-mini", "ollama/llama3"}
 
@@ -856,7 +876,7 @@ func TestModelSelection_Callback(t *testing.T) {
 }
 
 func TestExitModelMode(t *testing.T) {
-	m := &Model{width: 80}
+	m := testModel(80)
 	m.modelMode = true
 	m.modelSelected = 3
 	m.input.SetValue("search text")
@@ -880,7 +900,7 @@ func TestExitModelMode(t *testing.T) {
 
 func TestHandleModelList(t *testing.T) {
 	m := &Model{width: 80}
-	m.handleControlMsg(ControlMsg{ModelList: []string{"openai/gpt-4o", "ollama/llama3"}})
+	m.handleControlMsg(&types.CtrlModelList{Models: []string{"openai/gpt-4o", "ollama/llama3"}})
 
 	if len(m.modelItems) != 2 {
 		t.Fatalf("expected 2 modelItems, got %d", len(m.modelItems))
@@ -1106,15 +1126,16 @@ func TestRenderReasoningCollapsed_MessageLevel(t *testing.T) {
 	}
 
 	output := m.renderMessages()
+	stripped := stripANSI(output)
 
-	if !strings.Contains(output, "▶ Reasoning") {
-		t.Errorf("collapsed output should contain ▶ Reasoning... toggle, got: %q", output)
+	if !strings.Contains(stripped, "▶ Reasoning") {
+		t.Errorf("collapsed output should contain ▶ Reasoning... toggle, got: %q", stripped)
 	}
-	if strings.Contains(output, "the model's reasoning") {
+	if strings.Contains(stripped, "the model's reasoning") {
 		t.Error("collapsed output should NOT contain reasoning text")
 	}
-	posToggle := strings.Index(output, "▶ Reasoning")
-	posResponse := strings.Index(output, "response")
+	posToggle := strings.Index(stripped, "▶ Reasoning")
+	posResponse := strings.Index(stripped, "response")
 	if posToggle > posResponse {
 		t.Errorf("toggle should appear before response text, got toggle at %d, response at %d", posToggle, posResponse)
 	}
@@ -1128,15 +1149,16 @@ func TestRenderReasoningExpanded_MessageLevel(t *testing.T) {
 	}
 
 	output := m.renderMessages()
+	stripped := stripANSI(output)
 
-	if !strings.Contains(output, "▼ Reasoning") {
-		t.Errorf("expanded output should contain ▼ Reasoning... toggle, got: %q", output)
+	if !strings.Contains(stripped, "▼ Reasoning") {
+		t.Errorf("expanded output should contain ▼ Reasoning... toggle, got: %q", stripped)
 	}
-	if !strings.Contains(output, "the model's reasoning") {
+	if !strings.Contains(stripped, "the model's reasoning") {
 		t.Error("expanded output should contain the reasoning text")
 	}
-	posToggle := strings.Index(output, "▼ Reasoning")
-	posResponse := strings.Index(output, "response")
+	posToggle := strings.Index(stripped, "▼ Reasoning")
+	posResponse := strings.Index(stripped, "response")
 	if posToggle > posResponse {
 		t.Errorf("toggle should appear before response text, got toggle at %d, response at %d", posToggle, posResponse)
 	}
@@ -1179,14 +1201,15 @@ func TestRenderReasoningActiveThinking(t *testing.T) {
 	m.thinkContent = "thinking..."
 
 	output := m.renderMessages()
+	stripped := stripANSI(output)
 
-	if !strings.Contains(output, "Reasoning...") {
-		t.Errorf("active thinking should show spinner + Reasoning..., got: %q", output)
+	if !strings.Contains(stripped, "Reasoning...") {
+		t.Errorf("active thinking should show spinner + Reasoning..., got: %q", stripped)
 	}
-	if !strings.Contains(output, "thinking...") {
+	if !strings.Contains(stripped, "thinking...") {
 		t.Error("active thinking should show reasoning text inline")
 	}
-	if strings.Contains(output, "▶ Reasoning") || strings.Contains(output, "▼ Reasoning") {
+	if strings.Contains(stripped, "▶ Reasoning") || strings.Contains(stripped, "▼ Reasoning") {
 		t.Error("active thinking should NOT show collapse toggle")
 	}
 }
@@ -1198,11 +1221,12 @@ func TestRenderReasoningActiveThinkingNoContent(t *testing.T) {
 	m.thinkContent = ""
 
 	output := m.renderMessages()
+	stripped := stripANSI(output)
 
-	if !strings.Contains(output, "Thinking...") {
-		t.Errorf("active thinking without reasoning should show spinner: %q", output)
+	if !strings.Contains(stripped, "Thinking...") {
+		t.Errorf("active thinking without reasoning should show spinner: %q", stripped)
 	}
-	if strings.Contains(output, "▶ Reasoning") || strings.Contains(output, "▼ Reasoning") {
+	if strings.Contains(stripped, "▶ Reasoning") || strings.Contains(stripped, "▼ Reasoning") {
 		t.Error("no content means no toggle should appear")
 	}
 }
@@ -1297,14 +1321,14 @@ func TestReasoningZonesClearedEachRender(t *testing.T) {
 // --- question mode tests ---
 
 func TestQuestionModeEnter(t *testing.T) {
-	m := &Model{width: 80}
+	m := testModel(80)
 	ch := make(chan string, 1)
-	m.handleControlMsg(ControlMsg{Question: &QuestionModal{
+	m.handleControlMsg(&types.CtrlQuestion{
 		Header:   "Next step",
 		Question: "What should we do?",
-		Options:  []QuestionOption{{Label: "A", Description: "First"}, {Label: "B", Description: "Second"}},
+		Options:  []types.CtrlOption{{Label: "A", Description: "First"}, {Label: "B", Description: "Second"}},
 		AnswerCh: ch,
-	}})
+	})
 
 	if !m.questionMode {
 		t.Fatal("expected questionMode to be true")
@@ -1318,14 +1342,14 @@ func TestQuestionModeEnter(t *testing.T) {
 }
 
 func TestQuestionModeSingleSelectAnswer(t *testing.T) {
-	m := &Model{width: 80}
+	m := testModel(80)
 	ch := make(chan string, 1)
-	m.handleControlMsg(ControlMsg{Question: &QuestionModal{
+	m.handleControlMsg(&types.CtrlQuestion{
 		Header:   "Next step",
 		Question: "What?",
-		Options:  []QuestionOption{{Label: "A", Description: ""}, {Label: "B", Description: ""}},
+		Options:  []types.CtrlOption{{Label: "A", Description: ""}, {Label: "B", Description: ""}},
 		AnswerCh: ch,
-	}})
+	})
 	m.questionIdx = 1
 	m.commitQuestionAnswer()
 
@@ -1339,15 +1363,15 @@ func TestQuestionModeSingleSelectAnswer(t *testing.T) {
 }
 
 func TestQuestionModeMultiSelectAnswer(t *testing.T) {
-	m := &Model{width: 80}
+	m := testModel(80)
 	ch := make(chan string, 1)
-	m.handleControlMsg(ControlMsg{Question: &QuestionModal{
+	m.handleControlMsg(&types.CtrlQuestion{
 		Header:   "Choose",
 		Question: "Which?",
-		Options:  []QuestionOption{{Label: "A", Description: ""}, {Label: "B", Description: ""}, {Label: "C", Description: ""}},
+		Options:  []types.CtrlOption{{Label: "A", Description: ""}, {Label: "B", Description: ""}, {Label: "C", Description: ""}},
 		Multiple: true,
 		AnswerCh: ch,
-	}})
+	})
 	m.questionMulti[0] = true
 	m.questionMulti[2] = true
 	m.commitQuestionAnswer()
@@ -1359,14 +1383,14 @@ func TestQuestionModeMultiSelectAnswer(t *testing.T) {
 }
 
 func TestQuestionModeEscapeCancel(t *testing.T) {
-	m := &Model{width: 80}
+	m := testModel(80)
 	ch := make(chan string, 1)
-	m.handleControlMsg(ControlMsg{Question: &QuestionModal{
+	m.handleControlMsg(&types.CtrlQuestion{
 		Header:   "Next step",
 		Question: "What?",
-		Options:  []QuestionOption{{Label: "A", Description: ""}},
+		Options:  []types.CtrlOption{{Label: "A", Description: ""}},
 		AnswerCh: ch,
-	}})
+	})
 	m.answerQuestion("")
 
 	answer := <-ch
@@ -1429,14 +1453,14 @@ func TestRenderQuestionModalMultiSelect(t *testing.T) {
 }
 
 func TestQuestionModeResetsState(t *testing.T) {
-	m := &Model{width: 80}
+	m := testModel(80)
 	ch := make(chan string, 1)
-	m.handleControlMsg(ControlMsg{Question: &QuestionModal{
+	m.handleControlMsg(&types.CtrlQuestion{
 		Header:   "Q",
 		Question: "A?",
-		Options:  []QuestionOption{{Label: "X", Description: ""}},
+		Options:  []types.CtrlOption{{Label: "X", Description: ""}},
 		AnswerCh: ch,
-	}})
+	})
 	m.answerQuestion("X")
 
 	<-ch

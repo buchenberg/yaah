@@ -1,5 +1,25 @@
 package yaah
 
+// UI Driver Pattern
+//
+// To attach a new UI to a session:
+//
+//  1. Create a chan types.CtrlMsg and call sess.SetCtrlCh(ch).
+//     This wires todos and status messages to your channel.
+//
+//  2. Implement agent.View (HandleEvent) and call sess.SetView(your view).
+//     Events: TokenDelta, Thinking, Flush, ToolStart, ToolEnd,
+//             SubAgentStart, SubAgentEnd, Done.
+//
+//  3. Read from the control channel in a goroutine and dispatch
+//     CtrlStatus, CtrlError, CtrlQuestion, CtrlApproval,
+//     CtrlModelList, CtrlTodos, CtrlContextInfo, CtrlDone.
+//
+//  4. Call sess.RunPrompt(ctx, text) for each turn.
+//     ctx cancellation aborts the in-flight agent loop.
+//
+// See: terminalView (REPL), agentViewFwd (Bubble Tea TUI).
+
 import (
 	"context"
 	"encoding/json"
@@ -26,6 +46,27 @@ import (
 	"github.com/buchenberg/yaah/internal/types"
 )
 
+// Session is the stable contract between UI drivers and the shared
+// agent session. Any driver (TUI, REPL, web, gRPC) should depend only
+// on this interface, not on *agentSession directly.
+type Session interface {
+	RunPrompt(ctx context.Context, prompt string) (string, bool, error)
+	Compact()
+	Steer(string)
+	FollowUp(string)
+	SetView(agent.View)
+	SetCtrlCh(chan<- types.CtrlMsg)
+	SetApproveFn(func(name, args string) bool)
+	SetModel(providerName, modelName string)
+	ProviderName() string
+	ModelName() string
+	MCPInfos() []mcp.ServerInfo
+	Close()
+}
+
+// Compile-time check: agentSession satisfies Session.
+var _ Session = (*agentSession)(nil)
+
 // agentSession holds the long-lived infrastructure shared across REPL and
 // one-shot prompts. Building it once avoids re-opening the database,
 // re-spawning MCP servers, and re-discovering skills on every turn.
@@ -38,6 +79,7 @@ type agentSession struct {
 	toolReg      *tools.Registry
 	db           *memory.DB
 	mcpClients   []mcp.MCPClient
+	mcpInfos     []mcp.ServerInfo
 	procMgr      *processpkg.Manager
 	messages     []types.Message
 	sessionID    string
@@ -45,13 +87,12 @@ type agentSession struct {
 	otelShutdown func(context.Context) error
 	tracker      *tools.ConflictTracker
 
-	// steerCh carries high-priority mid-turn messages that should be
-	// injected immediately before the next provider call. Buffered so
-	// keystrokes typed during a slow turn are not silently dropped.
-	steerCh chan string
-	// followupCh carries queued messages to inject at the start of the
-	// next iteration. Larger buffer than steerCh because follow-ups
-	// tend to come in bursts (user types ahead while the model runs).
+	view      agent.View
+	ctrlCh    chan<- types.CtrlMsg
+	approveFn func(name, args string) bool
+	mu        sync.RWMutex
+
+	steerCh    chan string
 	followupCh chan string
 }
 
@@ -145,9 +186,12 @@ func newAgentSession() (*agentSession, error) {
 	}
 
 	systemPrompt := prompts.Build(layers)
+	if err == nil {
+		systemPrompt += "\n\n## Memory Guidelines\n- Use memory_search to find relevant memories before answering personal/project questions. Pass a tag to filter by category.\n- When the user asks about past conversations or session history, use memory_search_sessions with an empty query to list recent transcripts.\n- Use memory_add to save important facts. Always include a tags array (e.g., [\"user_info\"], [\"preferences\"], [\"project:yaah\"], [\"decision\"]).\n- Use memory_update to correct stale facts (requires the memory ID). Use memory_delete to remove incorrect memories.\n- At the end of a conversation or when the user says goodbye, use memory_add to save a 2-3 line summary of key discussion points with tag [\"session_summary\"]."
+	}
 
 	mcpDirs := mcpSearchPaths(config.HomeDir())
-	mcpClients, mcpTools, _, mcpErr := mcp.StartMCPClientsWithStderr(context.Background(), mcpDirs, io.Discard)
+	mcpClients, mcpTools, mcpInfos, mcpErr := mcp.StartMCPClientsWithStderr(context.Background(), mcpDirs, io.Discard)
 	if mcpErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: MCP startup error: %v\n", mcpErr)
 	}
@@ -287,6 +331,7 @@ func newAgentSession() (*agentSession, error) {
 		toolReg:      toolReg,
 		db:           db,
 		mcpClients:   mcpClients,
+		mcpInfos:     mcpInfos,
 		procMgr:      procMgr,
 		sessionID:    sessionID,
 		messages:     messages,
@@ -306,6 +351,9 @@ func (s *agentSession) close() {
 	if s.followupCh != nil {
 		close(s.followupCh)
 	}
+	if s.ctrlCh != nil {
+		s.ctrlCh <- &types.CtrlDone{}
+	}
 	if s.otelShutdown != nil {
 		s.otelShutdown(ctx)
 	}
@@ -318,10 +366,111 @@ func (s *agentSession) close() {
 	}
 }
 
-func (s *agentSession) compactContext() {
-	if len(s.messages) <= 4 {
-		fmt.Fprintf(os.Stderr, "  %s\n", Dim("context is already small enough"))
+func (s *agentSession) Close()   { s.close() }
+func (s *agentSession) Compact() { s.compactContext() }
+func (s *agentSession) ProviderName() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.providerName
+}
+func (s *agentSession) ModelName() string          { s.mu.RLock(); defer s.mu.RUnlock(); return s.modelName }
+func (s *agentSession) MCPInfos() []mcp.ServerInfo { return s.mcpInfos }
+func (s *agentSession) RunPrompt(ctx context.Context, prompt string) (string, bool, error) {
+	return s.runPrompt(ctx, prompt)
+}
+
+func (s *agentSession) Steer(text string) {
+	select {
+	case s.steerCh <- text:
+	default:
+		s.sendCtrl(&types.CtrlStatus{Text: "steer queue full"})
+	}
+}
+
+func (s *agentSession) FollowUp(text string) {
+	select {
+	case s.followupCh <- text:
+	default:
+		s.sendCtrl(&types.CtrlStatus{Text: "follow-up queue full"})
+	}
+}
+
+func (s *agentSession) sendCtrl(msg types.CtrlMsg) {
+	s.mu.RLock()
+	ch := s.ctrlCh
+	s.mu.RUnlock()
+	if ch == nil {
 		return
+	}
+	select {
+	case ch <- msg:
+	default:
+	}
+}
+
+func (s *agentSession) SetView(v agent.View) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.view = v
+}
+
+func (s *agentSession) SetCtrlCh(ch chan<- types.CtrlMsg) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ctrlCh = ch
+
+	if tt := s.toolReg.Get("todowrite"); tt != nil {
+		if ttp, ok := tt.(*tools.TodoWriteTool); ok {
+			ttp.OnWrite = func() {
+				select {
+				case ch <- &types.CtrlTodos{Items: ttp.Store.List()}:
+				default:
+				}
+			}
+		}
+	}
+}
+
+func (s *agentSession) SetApproveFn(fn func(name, args string) bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.approveFn = fn
+}
+
+func (s *agentSession) SetModel(providerName, modelName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prov := s.provider
+	if p, ok := s.cfg.Providers[providerName]; ok {
+		if pv, ok2 := makeProvider(p); ok2 {
+			prov = pv
+		}
+	}
+	s.provider = prov
+	s.providerName = providerName
+	s.modelName = modelName
+}
+
+func (s *agentSession) SetSystemPrompt(prompt string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.systemPrompt = prompt
+}
+
+func (s *agentSession) compactContext() {
+	s.mu.RLock()
+	ch := s.ctrlCh
+	s.mu.RUnlock()
+
+	msg := func(text string) {
+		if ch != nil {
+			select {
+			case ch <- &types.CtrlStatus{Text: text}:
+			default:
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "  %s\n", Dim(text))
+		}
 	}
 
 	window := s.cfg.Agent.Default.ContextWindow
@@ -329,58 +478,71 @@ func (s *agentSession) compactContext() {
 		window = 128000
 	}
 
-	totalChars := 0
-	for _, m := range s.messages {
-		totalChars += len(m.Content)
-	}
-	estTokens := totalChars / 4
-	target := window * 4 / 5
-
-	if estTokens <= target {
-		fmt.Fprintf(os.Stderr, "  %s %d/%d tokens (%d%%)\n",
-			Dim("context:"), estTokens, window, estTokens*100/window)
+	msgs := s.messages
+	if len(msgs) <= 4 {
+		msg("context is already small enough")
 		return
 	}
 
-	fmt.Fprintf(os.Stderr, "  %s %d/%d tokens (%d%%) — compacting...\n",
-		Dim("context:"), estTokens, window, estTokens*100/window)
+	totalChars := 0
+	for _, m := range msgs {
+		totalChars += len(m.Content)
+		for _, tc := range m.ToolCalls {
+			totalChars += len(tc.Function.Arguments) + len(tc.Function.Name)
+		}
+	}
+	estTokens := totalChars / 4
+	target := window * 4 / 5
+	if estTokens <= target {
+		msg(fmt.Sprintf("context: %d/%d tokens (%d%%)", estTokens, window, estTokens*100/window))
+		return
+	}
 
-	sysMsg := s.messages[0]
-	rest := s.messages[1:]
+	msg(fmt.Sprintf("context: %d/%d tokens (%d%%) — compacting...", estTokens, window, estTokens*100/window))
 
-	split := len(rest) / 2
+	sysMsg := msgs[0]
+	rest := msgs[1:]
+	keepRecent := 6
+	if len(rest) <= keepRecent {
+		msg("not enough messages to compact")
+		return
+	}
+	split := len(rest) - keepRecent
 	oldMsgs := rest[:split]
 	keepMsgs := rest[split:]
 
 	var sb strings.Builder
-	sb.WriteString("Summarize the following conversation excerpt in 2-3 sentences. Be concise and factual.\n\n")
+	sb.WriteString("Summarize the following conversation excerpt. Keep the structured format below.\n\n")
+	sb.WriteString("## Goal\n## Completed Work\n## Active Work\n## Pending Tasks\n## Key Decisions\n## Files Modified\n\n---\nConversation excerpt:\n\n")
 	for _, m := range oldMsgs {
 		if m.Content != "" {
 			sb.WriteString(fmt.Sprintf("%s: %s\n", m.Role, m.Content))
 		}
+		for _, tc := range m.ToolCalls {
+			sb.WriteString(fmt.Sprintf("[tool:%s] %s\n", tc.Function.Name, tc.Function.Arguments))
+		}
+	}
+
+	compactModel := s.cfg.Agent.Default.SmallModel
+	if compactModel == "" {
+		compactModel = s.modelName
 	}
 
 	req := types.ChatRequest{
-		Model: s.modelName,
-		Messages: []types.Message{
-			types.UserMsg(sb.String()),
-		},
+		Model:    compactModel,
+		Messages: []types.Message{types.UserMsg(sb.String())},
 	}
 
 	resp, err := s.provider.Send(context.Background(), req)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "  %s\n", replYellow("compact failed: "+err.Error()))
-		return
-	}
-
-	if len(resp.Choices) == 0 {
-		fmt.Fprintf(os.Stderr, "  %s\n", replYellow("compact failed: no response"))
+	if err != nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+		s.messages = append([]types.Message{sysMsg}, keepMsgs...)
+		msg("compacted (trimmed)")
 		return
 	}
 
 	summary := resp.Choices[0].Message.Content
 	newMsgs := []types.Message{sysMsg}
-	newMsgs = append(newMsgs, types.SystemMsg("Previous conversation summary: "+summary))
+	newMsgs = append(newMsgs, types.SystemMsg("Previous conversation summary:\n"+summary))
 	newMsgs = append(newMsgs, keepMsgs...)
 	s.messages = newMsgs
 
@@ -388,18 +550,35 @@ func (s *agentSession) compactContext() {
 	for _, m := range s.messages {
 		newTokens += len(m.Content) / 4
 	}
-	fmt.Fprintf(os.Stderr, "  %s %d/%d tokens (%d%%)\n",
-		Dim("compacted:"), newTokens, window, newTokens*100/window)
+	msg(fmt.Sprintf("compacted: %d/%d tokens (%d%%)", newTokens, window, newTokens*100/window))
 }
 
 // terminalView implements agent.View for REPL terminal output.
-// It prints tokens, tool calls, and sub-agent lifecycle events to stderr
-// using the same formatting as the previous callback-based REPL.
-type terminalView struct{}
+// It owns the spinner lifecycle and records whether streaming occurred.
+type terminalView struct {
+	spin     *spinner.Spinner
+	stopOnce sync.Once
+	streamed bool
+}
 
-func (terminalView) HandleEvent(evt agent.Event) {
+func newTerminalView() *terminalView {
+	return &terminalView{spin: spinner.New(nil, "Thinking...")}
+}
+
+// start begins the thinking indicator. Must be called before RunPrompt.
+func (v *terminalView) start() {
+	fmt.Fprintln(os.Stderr)
+	v.spin.Start()
+}
+
+func (v *terminalView) HandleEvent(evt agent.Event) {
 	switch e := evt.(type) {
 	case *agent.TokenDeltaEvent:
+		v.stopOnce.Do(func() {
+			v.spin.Stop()
+			fmt.Fprintln(os.Stderr)
+			v.streamed = true
+		})
 		fmt.Fprint(os.Stderr, e.Text)
 	case *agent.ToolStartEvent:
 		// handled on ToolEndEvent
@@ -443,35 +622,37 @@ func (terminalView) HandleEvent(evt agent.Event) {
 			modelStr = " [" + Dim(e.Model) + "]"
 		}
 		fmt.Fprintf(os.Stderr, "╰─ sub-agent: %s%s · %s (%s)\n", Bold(label), modelStr, status, Dim(formatDuration(e.Duration)))
+	case *agent.DoneEvent:
+		v.stopOnce.Do(v.spin.Stop)
+		if v.streamed {
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr)
+		}
 	}
 }
 
 // runPrompt executes a single agent prompt with the session's shared
-// infrastructure. Uses terminalView to render streaming output.
-func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
+// infrastructure. The caller must set a view via SetView before calling.
+func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bool, error) {
 	compactProvider, compactModel := resolveCompact(s.cfg)
 	fallbackProvider, fallbackModel := resolveFallback(s.cfg)
 
-	spin := spinner.New(nil, "Thinking...")
-	fmt.Fprintln(os.Stderr)
-	spin.Start()
+	s.mu.RLock()
+	prov := s.provider
+	mName := s.modelName
+	v := s.view
+	ctrl := s.ctrlCh
+	appr := s.approveFn
+	s.mu.RUnlock()
 
-	streamed := false
-	view := &replView{
-		inner: terminalView{},
-		onFirstToken: func() {
-			if !streamed {
-				streamed = true
-				spin.Stop()
-				fmt.Fprintln(os.Stderr)
-			}
-		},
+	if v == nil {
+		v = agent.NoopView{}
 	}
 
-	loop := agent.NewLoop(s.provider, s.toolReg,
-		agent.WithModel(s.modelName),
+	loop := agent.NewLoop(prov, s.toolReg,
+		agent.WithModel(mName),
 		agent.WithSystemPrompt(s.systemPrompt),
-		agent.WithView(view),
+		agent.WithView(v),
 		agent.WithMessages(s.messages),
 		agent.WithDB(s.db),
 		agent.WithWriteDebouncer(func() *memory.DebouncedWriter {
@@ -485,7 +666,6 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 		agent.WithHookDir(s.cfg.Hooks.Dir),
 		agent.WithFallback(fallbackProvider, fallbackModel),
 		agent.WithCompactProvider(compactProvider, compactModel),
-		agent.WithApprovalMode(resolveApproval(s.cfg)),
 		agent.WithPipeline(s.cfg.Agent.Middleware.Enabled, s.cfg.Agent.Middleware.Disabled),
 		agent.WithSteer(s.steerCh),
 		agent.WithFollowUps(s.followupCh),
@@ -518,34 +698,38 @@ func (s *agentSession) runPrompt(prompt string) (string, bool, error) {
 			PruneMinReclaim:        s.cfg.Agent.Default.PruneMinReclaim,
 			PruneMinTurns:          s.cfg.Agent.Default.PruneMinTurns,
 		}),
+		agent.WithApprovalMode(resolveApproval(s.cfg)),
 	)
 
-	response, err := loop.Run(context.Background(), prompt)
+	if appr != nil {
+		loop.ApproveFn = appr
+	}
 
-	if !streamed {
-		spin.Stop()
-	}
-	if streamed {
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr)
-	}
+	response, err := loop.Run(ctx, prompt)
 
 	s.messages = loop.Messages
 	s.msgIdx = loop.MsgIdx
 
-	return response, streamed, err
-}
-
-// replView wraps a terminalView and triggers onFirstToken on the first token.
-type replView struct {
-	inner        terminalView
-	onFirstToken func()
-	firstOnce    sync.Once
-}
-
-func (v *replView) HandleEvent(evt agent.Event) {
-	if _, ok := evt.(*agent.TokenDeltaEvent); ok {
-		v.firstOnce.Do(v.onFirstToken)
+	if ctrl != nil {
+		if err != nil {
+			select {
+			case ctrl <- &types.CtrlError{Err: err}:
+			default:
+			}
+		}
+		select {
+		case ctrl <- &types.CtrlContextInfo{
+			Tokens: loop.EstimatedTokens(),
+			Window: loop.ContextWindow,
+		}:
+		default:
+		}
 	}
-	v.inner.HandleEvent(evt)
+
+	streamed := false
+	if tv, ok := v.(*terminalView); ok {
+		streamed = tv.streamed
+	}
+
+	return response, streamed, err
 }

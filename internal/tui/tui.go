@@ -11,19 +11,21 @@ import (
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
-	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
-	zone "github.com/lrstanley/bubblezone/v2"
 	"github.com/atotto/clipboard"
+	zone "github.com/lrstanley/bubblezone/v2"
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/banner"
+	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/todo"
+	"github.com/buchenberg/yaah/internal/types"
 )
 
 // Styles — declared here, initialized by ApplyTheme in theme.go.
@@ -70,15 +72,8 @@ type Message struct {
 }
 
 // ServerInfo holds status details about an MCP server (mirrors mcp.ServerInfo).
-type ServerInfo struct {
-	Name      string
-	Transport string
-	Command   string
-	URL       string
-	Connected bool
-	ToolCount int
-	Error     string
-}
+// Deprecated: use mcp.ServerInfo directly.
+type ServerInfo = mcp.ServerInfo
 
 // cursorHoverMsg is sent when the mouse moves over or leaves a clickable zone.
 type cursorHoverMsg struct {
@@ -86,19 +81,12 @@ type cursorHoverMsg struct {
 }
 
 // QuestionModal carries question data for the interactive modal dialog.
-type QuestionModal struct {
-	Header   string
-	Question string
-	Options  []QuestionOption
-	Multiple bool
-	AnswerCh chan<- string
-}
+// Deprecated: use types.CtrlQuestion directly.
+type QuestionModal = types.CtrlQuestion
 
 // QuestionOption is a single choice in a question modal.
-type QuestionOption struct {
-	Label       string
-	Description string
-}
+// Deprecated: use types.CtrlOption directly.
+type QuestionOption = types.CtrlOption
 
 // Command represents a slash command available in the TUI.
 type Command struct {
@@ -116,6 +104,7 @@ var defaultCommands = []Command{
 	{Name: ":steer", Description: "Inject text into current turn before next provider call"},
 	{Name: ":copyview", Description: "Copy rendered TUI view to clipboard"},
 	{Name: ":quit", Description: "Exit the TUI"},
+	{Name: ":stop", Description: "Abort the running agent"},
 }
 
 // Model is the bubbletea model for the yaah TUI.
@@ -124,7 +113,7 @@ type Model struct {
 	// --- core widgets ---
 	messages   []Message
 	viewport   viewport.Model
-	input      textinput.Model
+	input      textarea.Model
 	spinner    spinner.Model
 	help       help.Model
 	mdRenderer *glamour.TermRenderer
@@ -141,6 +130,7 @@ type Model struct {
 	onModel       func(string, string)
 	onFollowUp    func(string)
 	onSteer       func(string)
+	onAbort       func()
 
 	// --- layout ---
 	width  int
@@ -225,15 +215,23 @@ type Config struct {
 	// interrupt (e.g. Ctrl-T). Injects before the next provider call.
 	// May be nil.
 	OnSteer func(string)
+	// OnAbort is invoked when the user requests to stop the running
+	// agent (Esc while thinking, or :stop command). May be nil.
+	OnAbort func()
 }
 
 // New creates a new TUI model from a Config.
 func New(cfg Config) *Model {
-	input := textinput.New()
+	input := textarea.New()
 	input.Placeholder = "Type a message..."
 	input.Focus()
 	input.CharLimit = 0
 	input.SetWidth(80)
+	input.DynamicHeight = true
+	input.MinHeight = 1
+	input.MaxHeight = 8
+	// Enter submits, Shift+Enter inserts newline.
+	input.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("shift+enter"))
 
 	sp := spinner.New(
 		spinner.WithSpinner(spinner.MiniDot),
@@ -263,6 +261,7 @@ func New(cfg Config) *Model {
 		onModel:           cfg.OnModel,
 		onFollowUp:        cfg.OnFollowUp,
 		onSteer:           cfg.OnSteer,
+		onAbort:           cfg.OnAbort,
 		commands:          defaultCommands,
 	}
 }
@@ -549,6 +548,15 @@ func (m *Model) executeCommand(input string) {
 		return
 	case ":mcp":
 		m.AddMessage("system", m.renderMCPStatus())
+	case ":stop":
+		if !m.thinking {
+			m.AddMessage("system", "No agent is running.")
+			return
+		}
+		if m.onAbort != nil {
+			m.onAbort()
+		}
+		m.SetEphemeral("Agent stopped.")
 	case ":copyview":
 		scanned := zone.Scan(m.lastBody)
 		plain := stripANSI(scanned)
@@ -581,14 +589,9 @@ func (m *Model) executeCommand(input string) {
 	}
 }
 
-// updateCommandSuggestions updates the textinput suggestions for command mode.
-func (m *Model) updateCommandSuggestions() {
-	var names []string
-	for _, c := range m.commands {
-		names = append(names, c.Name)
-	}
-	m.input.SetSuggestions(names)
-}
+// updateCommandSuggestions no longer relies on textinput suggestions.
+// Command matching is handled visually by the CommandPalette component.
+func (m *Model) updateCommandSuggestions() {}
 
 // selectModel applies the currently highlighted model and exits model mode.
 func (m *Model) selectModel() {
@@ -794,55 +797,41 @@ func (m *Model) HandleEvent(evt agent.Event) {
 	}
 }
 
-// ControlMsg carries non-broker TUI control-plane messages.
-// These come from outside the agent loop (tool handlers, startup routines).
-type ControlMsg struct {
-	StatusMsg     string
-	Todos         []todo.Item
-	Err           error
-	Question      *QuestionModal
-	ApproveChan   chan bool
-	ApproveName   string
-	ApproveArgs   string
-	ModelList     []string
-	ProviderNames map[string]string
-	ContextTokens int
-	ContextWindow int
-}
-
-func (m *Model) handleControlMsg(msg ControlMsg) {
-	if msg.StatusMsg != "" {
-		m.AddMessage("system", msg.StatusMsg)
-	}
-	if msg.Todos != nil {
-		m.todos = msg.Todos
-		return
-	}
-	if msg.Err != nil {
-		m.AddMessage("assistant", fmt.Sprintf("Error: %v", msg.Err))
+// handleControlMsg processes a control-plane message from the session.
+func (m *Model) handleControlMsg(msg types.CtrlMsg) {
+	switch ctrl := msg.(type) {
+	case *types.CtrlStatus:
+		m.AddMessage("system", ctrl.Text)
+	case *types.CtrlTodos:
+		m.todos = ctrl.Items
+	case *types.CtrlError:
+		m.AddMessage("assistant", fmt.Sprintf("Error: %v", ctrl.Err))
 		m.SetThinking(false)
 		m.streaming = false
 		m.streamContent = ""
-		return
-	}
-
-	if msg.Question != nil {
-		m.questionModal = *msg.Question
+	case *types.CtrlQuestion:
+		m.questionModal = QuestionModal{
+			Header:   ctrl.Header,
+			Question: ctrl.Question,
+			Options:  make([]QuestionOption, len(ctrl.Options)),
+			Multiple: ctrl.Multiple,
+			AnswerCh: ctrl.AnswerCh,
+		}
+		for i, o := range ctrl.Options {
+			m.questionModal.Options[i] = QuestionOption{Label: o.Label, Description: o.Description}
+		}
 		m.questionIdx = 0
-		m.questionMulti = make([]bool, len(msg.Question.Options))
+		m.questionMulti = make([]bool, len(ctrl.Options))
 		m.questionMode = true
 		m.input.SetValue("")
 		m.input.Placeholder = ""
 		m.adjustViewport()
 		m.refreshViewport()
-		return
-	}
-
-	if msg.ApproveChan != nil {
+	case *types.CtrlApproval:
 		ch := make(chan string, 1)
 		m.questionModal = QuestionModal{
 			Header:   "Approve",
-			Question: fmt.Sprintf("Run %s(%s)?", msg.ApproveName, msg.ApproveArgs),
+			Question: fmt.Sprintf("Run %s(%s)?", ctrl.Name, ctrl.Args),
 			Options: []QuestionOption{
 				{Label: "Yes", Description: "Approve this tool call"},
 				{Label: "No", Description: "Deny this tool call"},
@@ -859,37 +848,42 @@ func (m *Model) handleControlMsg(msg ControlMsg) {
 		m.refreshViewport()
 		go func() {
 			answer := <-ch
-			msg.ApproveChan <- (answer == "Yes" || answer == "Yes, Yes")
+			ctrl.ApproveCh <- (answer == "Yes" || answer == "Yes, Yes")
 		}()
-		return
-	}
-
-	if msg.ContextWindow > 0 {
-		m.HandleContextInfo(msg.ContextTokens, msg.ContextWindow)
-	}
-
-	if len(msg.ModelList) > 0 {
-		m.modelItems = msg.ModelList
-		if msg.ProviderNames != nil {
-			m.providerNames = msg.ProviderNames
+	case *types.CtrlContextInfo:
+		m.HandleContextInfo(ctrl.Tokens, ctrl.Window)
+	case *types.CtrlModelList:
+		m.modelItems = ctrl.Models
+		if ctrl.ProviderNames != nil {
+			m.providerNames = ctrl.ProviderNames
 		}
 		m.refreshViewport()
+	case *types.CtrlDone:
 	}
 }
 
 // Init implements tea.Model.
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(textinput.Blink, m.spinner.Tick)
+	return tea.Batch(textarea.Blink, m.spinner.Tick)
 }
 
 // Update implements tea.Model.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.InterruptMsg:
+		if m.onAbort != nil {
+			m.onAbort()
+		}
+		if m.onQuit != nil {
+			m.onQuit()
+		}
+		return m, tea.Quit
+
 	case agent.Event:
 		m.HandleEvent(msg)
 		return m, nil
 
-	case ControlMsg:
+	case types.CtrlMsg:
 		m.handleControlMsg(msg)
 		return m, nil
 
@@ -957,7 +951,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
+	oldHeight := m.input.Height()
 	m.input, cmd = m.input.Update(msg)
+	if m.input.Height() != oldHeight {
+		m.adjustViewport()
+	}
 	m.detectCommandMode()
 	return m, cmd
 }
@@ -1141,6 +1139,9 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg) tea.Cmd {
 		return tea.Quit
 
 	case key.Matches(msg, keys.Cancel):
+		if m.thinking && m.onAbort != nil {
+			m.onAbort()
+		}
 		if m.commandMode {
 			m.input.SetValue("")
 			m.clearCommandMode()
@@ -1245,7 +1246,11 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg) tea.Cmd {
 
 	// Key not consumed by any binding — forward to text input.
 	var cmd tea.Cmd
+	oldHeight := m.input.Height()
 	m.input, cmd = m.input.Update(msg)
+	if m.input.Height() != oldHeight {
+		m.adjustViewport()
+	}
 	m.detectCommandMode()
 	return cmd
 }
@@ -1258,8 +1263,6 @@ func (m *Model) detectCommandMode() {
 	if strings.HasPrefix(m.input.Value(), ":") {
 		if !m.commandMode {
 			m.commandMode = true
-			m.input.ShowSuggestions = true
-			m.updateCommandSuggestions()
 			m.adjustViewport()
 		}
 	} else {
@@ -1271,8 +1274,6 @@ func (m *Model) detectCommandMode() {
 
 func (m *Model) clearCommandMode() {
 	m.commandMode = false
-	m.input.ShowSuggestions = false
-	m.input.SetSuggestions(nil)
 	m.adjustViewport()
 }
 
@@ -1319,8 +1320,9 @@ func (m *Model) maxModelLines() int {
 	if m.height == 0 {
 		return 10
 	}
-	available := m.height - m.headerHeight() - 4 // status, input, border/padding
-	items := available - 4                       // border (2) + padding (2)
+	inputHeight := m.input.Height() + 2                        // content + border
+	available := m.height - m.headerHeight() - 1 - inputHeight // 1: status line
+	items := available - 4                                     // border (2) + padding (2)
 	if items < 1 {
 		items = 1
 	}
@@ -1340,7 +1342,7 @@ func (m *Model) paletteLines() int {
 		// Help overlay: title + 4 groups with headers + footer + border/padding
 		// Rough estimate: 22 content lines + 4 border/padding = 26.
 		// Cap at 80% of available terminal height.
-		available := m.height - m.headerHeight() - 5
+		available := m.height - m.headerHeight() - 1 - (m.input.Height() + 2) // status, dynamic input area
 		if available < 10 {
 			return 10
 		}
@@ -1465,23 +1467,37 @@ func (m *Model) scrollToMatch() {
 // --- layout ---
 
 // adjustViewport recalculates and applies the viewport height based on
-// current terminal dimensions and command mode state.
+// current terminal dimensions, overlay state, and dynamic input height.
 func (m *Model) adjustViewport() {
 	if m.height == 0 {
 		return
 	}
-	chatHeight := m.height - m.headerHeight() - 4 // -4: status line + input border (top, content, bottom)
+	// Reserve space for header, status line, minimum chat area, and overlays.
+	// Whatever is left is the maximum input height (including its border).
+	overhead := m.headerHeight() + 1 // header + status line
+	minChat := 5
 	if m.ephemMsg != "" {
-		chatHeight-- // ephemeral message line
+		overhead++
 	}
+	paletteH := 0
 	if m.commandMode || m.modelMode || m.questionMode || m.showHelp {
-		chatHeight -= m.paletteLines()
+		paletteH = m.paletteLines()
 	}
+	searchH := 0
 	if m.searchMode {
-		chatHeight -= 1 // search indicator line
+		searchH = 1
 	}
-	if chatHeight < 5 {
-		chatHeight = 5
+	maxInputContent := m.height - overhead - minChat - paletteH - searchH - 2 // -2: border
+	if maxInputContent < 1 {
+		maxInputContent = 1
+	}
+	m.input.MaxHeight = maxInputContent
+
+	// input area = content lines + top/bottom border (2 lines)
+	inputHeight := m.input.Height() + 2
+	chatHeight := m.height - overhead - inputHeight - paletteH - searchH
+	if chatHeight < minChat {
+		chatHeight = minChat
 	}
 	m.viewport.SetWidth(m.width)
 	m.viewport.SetHeight(chatHeight)
@@ -1669,20 +1685,6 @@ func (m *Model) View() tea.View {
 	v := tea.NewView(scanned)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeAllMotion
-	// Position the terminal cursor at the textinput's location.
-	// The input line is the last element (bottom of screen).
-	if !m.input.VirtualCursor() {
-		if c := m.input.Cursor(); c != nil {
-			// input is the last element.
-			// If ephemeral message is shown, input is second-to-last.
-			offset := 2
-			if m.ephemMsg != "" {
-				offset = 3
-			}
-			c.Y = m.height - offset
-			v.Cursor = c
-		}
-	}
 	// OSC 22: change terminal cursor to pointer when over a clickable zone.
 	// Supported by Kitty, WezTerm, foot, iTerm2, and others; ignored by terminals
 	// that don't understand it.
@@ -1769,6 +1771,10 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dms", d.Milliseconds())
 	}
 	return fmt.Sprintf("%.1fs", d.Seconds())
+}
+
+func lolcatRender(text string) string {
+	return strings.TrimRight(banner.Lolcat(text), "\n")
 }
 
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b\[[0-9;]*m`)

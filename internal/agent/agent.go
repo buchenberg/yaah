@@ -150,6 +150,12 @@ type Loop struct {
 	// TotalCachedPromptTokens accumulates cached prompt tokens for observability.
 	TotalCachedPromptTokens int
 
+	// lastFinishReason is the finish_reason from the most recent LLM call.
+	lastFinishReason string
+
+	// lastResponseModel is the response model string from the most recent LLM call.
+	lastResponseModel string
+
 	// Messages holds the conversation history across multiple Run calls.
 	Messages []types.Message
 
@@ -414,6 +420,19 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			}
 			done.ContextTokens = l.EstimatedTokens()
 			done.ContextWindow = l.ContextWindow
+			done.FinishReason = l.lastFinishReason
+			done.ResponseModel = l.lastResponseModel
+			done.Usage = l.TotalTokens
+			if l.TotalReasoningTokens > 0 {
+				done.Usage.CompletionTokensDetails = &types.CompletionTokensDetails{
+					ReasoningTokens: l.TotalReasoningTokens,
+				}
+			}
+			if l.TotalCachedPromptTokens > 0 {
+				done.Usage.PromptTokensDetails = &types.PromptTokensDetails{
+					CachedTokens: l.TotalCachedPromptTokens,
+				}
+			}
 			l.broker.PublishMustDeliver(&done)
 			l.brokerView.Close()
 		}
@@ -559,6 +578,8 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			return "", fmt.Errorf("provider error: %w", err)
 		}
 		l.addUsage(usage)
+		l.lastFinishReason = msg.FinishReason
+		l.lastResponseModel = msg.ResponseModel
 		messages = append(messages, msg)
 		l.Persister.Persist(msg)
 

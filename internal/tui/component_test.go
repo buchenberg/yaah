@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/buchenberg/yaah/internal/todo"
+	"github.com/buchenberg/yaah/internal/types"
 )
 
 func TestScrollWindow(t *testing.T) {
@@ -452,7 +453,7 @@ func TestHandleControlMsg_Todos(t *testing.T) {
 	items := []todo.Item{
 		{ID: "td-1", Content: "do a thing", Status: "in_progress", Priority: "high"},
 	}
-	m.handleControlMsg(ControlMsg{Todos: items})
+	m.handleControlMsg(&types.CtrlTodos{Items: items})
 	if len(m.todos) != 1 {
 		t.Fatalf("expected 1 todo stored, got %d", len(m.todos))
 	}
@@ -461,9 +462,8 @@ func TestHandleControlMsg_Todos(t *testing.T) {
 	}
 
 	// Empty (non-nil) list clears the panel.
-	m.handleControlMsg(ControlMsg{Todos: []todo.Item{}})
+	m.handleControlMsg(&types.CtrlTodos{Items: []todo.Item{}})
 	if len(m.todos) != 0 {
 		t.Errorf("expected todos cleared, got %d", len(m.todos))
 	}
 }
-

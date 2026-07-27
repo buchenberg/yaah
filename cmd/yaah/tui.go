@@ -3,27 +3,14 @@ package yaah
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"sort"
-	"strings"
-	"sync"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/buchenberg/yaah/internal/agent"
-	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/instructions"
-	"github.com/buchenberg/yaah/internal/mcp"
-	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/buchenberg/yaah/internal/observability"
-	processpkg "github.com/buchenberg/yaah/internal/process"
-	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/providers"
-	"github.com/buchenberg/yaah/internal/skills"
-	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/tui"
 	"github.com/buchenberg/yaah/internal/types"
@@ -44,27 +31,6 @@ var tuiCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(tuiCmd)
-}
-
-// sessionModel holds the current provider and model for the TUI session.
-// It is updated when the user switches models via /model.
-type sessionModel struct {
-	mu       sync.Mutex
-	provider string
-	model    string
-}
-
-func (s *sessionModel) get() (string, string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.provider, s.model
-}
-
-func (s *sessionModel) set(provider, model string) {
-	s.mu.Lock()
-	s.provider = provider
-	s.model = model
-	s.mu.Unlock()
 }
 
 // fetchAllModels gathers model IDs from all configured providers.
@@ -104,16 +70,6 @@ func fetchAllModels(ctx context.Context, cfg *config.Config) []string {
 	return all
 }
 
-// providerFor returns a provider client for the given provider name.
-func providerFor(cfg *config.Config, name string) agent.Provider {
-	if p, ok := cfg.Providers[name]; ok {
-		if prov, ok2 := makeProvider(p); ok2 {
-			return prov
-		}
-	}
-	return &noProviderStub{}
-}
-
 // runTUI starts the bubbletea TUI.
 func runTUI() error {
 	// Suppress stderr globally while the TUI is active. Anything written to
@@ -137,327 +93,64 @@ func runTUI() error {
 	// and terminal background).
 	tui.ApplyTheme(tui.DetectTheme())
 
-	cfg, err := config.Load()
-	if err != nil || cfg == nil {
-		cfg = &config.Config{
-			Agent: config.AgentConfig{
-				Default: config.Defaults{
-					Model:         "deepseek/deepseek-v4-pro",
-					SmallModel:    "deepseek/deepseek-v4-flash",
-					MaxIterations: 50,
-				},
-			},
-		}
+	sess, err := newAgentSession()
+	if err != nil {
+		return fmt.Errorf("session: %w", err)
 	}
-	providerName := "unknown"
-	modelName := "unknown"
-	if cfg != nil {
-		providerName = resolveProviderName(cfg)
-		modelName = resolveModel(cfg)
-	}
+	defer sess.close()
 
-	// Initialise OpenTelemetry if configured.
-	var otelShutdown func(context.Context) error
-	if cfg != nil && cfg.Observability.Otel.Enabled {
-		otelCfg := observability.Config{
-			Enabled:     true,
-			Endpoint:    cfg.Observability.Otel.Endpoint,
-			ServiceName: cfg.Observability.Otel.ServiceName,
-			Traces:      cfg.Observability.Otel.Traces,
-			Metrics:     cfg.Observability.Otel.Metrics,
-		}
-		if otelCfg.Endpoint == "" {
-			otelCfg.Endpoint = "localhost:4317"
-		}
-		if ep := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); ep != "" {
-			otelCfg.Endpoint = ep
-		}
-		if os.Getenv("YAAH_OTEL_ENABLED") == "true" {
-			otelCfg.Enabled = true
-		}
-		if otelCfg.ServiceName == "" {
-			otelCfg.ServiceName = "yaah"
-		}
-		sd, err := observability.Setup(context.Background(), otelCfg)
-		if err != nil {
-			return fmt.Errorf("otel: %w", err)
-		}
-		otelShutdown = sd
-	}
-	defer func() {
-		if otelShutdown != nil {
-			otelShutdown(context.Background())
-		}
-	}()
-
-	// --- One-time setup: load instructions, memory, MCP tools ---
+	cfg := sess.cfg
 	cwd, _ := os.Getwd()
 
-	// Load sub-agent role definitions: built-in (embedded) +
-	// user-defined (~/.agents/roles/, ./.agents/roles/).
-	reg := subagent.NewRoleRegistry()
-	if files := builtinRoleFiles(); files != nil {
-		reg.LoadBytes(files)
-	}
-	for _, dir := range roleSearchPaths(cwd) {
-		reg.LoadDir(dir)
-	}
-	subagent.SetDefaultRoleRegistry(reg)
+	controlCh := make(chan types.CtrlMsg, 64)
+	sess.SetCtrlCh(controlCh)
 
-	layers := prompts.Layers{
-		Identity:               prompts.IdentityPrompt,
-		Environment:            prompts.DetectEnvironment(cwd),
-		UserContext:            prompts.LoadUserContext(config.HomeDir()),
-		Project:                instructions.FormatForSystem(instructions.Load(cwd, cwd)),
-		MaxSubAgentConcurrency: cfg.Agent.SubAgent.MaxConcurrency,
-	}
+	tuiMCPInfos := sess.MCPInfos()
 
-	toolReg := tools.NewRegistry()
-
-	controlCh := make(chan tui.ControlMsg, 64)
-
-	// Steer/follow-up channels feed the agent's pipeline middleware.
-	// They live for the entire TUI session so queued messages can
-	// survive across multiple agent turns.
-	steerCh := make(chan string, 4)
-	followupCh := make(chan string, 32)
-	defer close(steerCh)
-	defer close(followupCh)
-
-	todoStore := todo.NewStore()
-	toolReg.Register(&tools.TodoWriteTool{
-		Store: todoStore,
-		OnWrite: func() {
-			controlCh <- tui.ControlMsg{Todos: todoStore.List()}
-		},
-	})
-
-	db, err := memory.OpenDefault()
-	var sessionID string
-	var msgIdx int
-	var persistedCount int
-
-	skillDirs := skillSearchPaths()
-	if discovered := skills.Discover(skillDirs); len(discovered) > 0 {
-		layers.Skills = prompts.BuildSkillsIndex(discovered)
-	}
-
-	systemPrompt := prompts.Build(layers)
-	if err == nil {
-		if entries, memErr := db.ListMemory(50); memErr == nil && len(entries) > 0 {
-			var memLines []string
-			for _, entry := range entries {
-				memLines = append(memLines, "- "+entry.Text)
-			}
-			systemPrompt += "\n\n## Memory\n" + strings.Join(memLines, "\n")
-		}
-		systemPrompt += "\n\n## Memory Guidelines\n- Use memory_search to find relevant memories before answering personal/project questions. Pass a tag to filter by category.\n- When the user asks about past conversations or session history, use memory_search_sessions with an empty query to list recent transcripts.\n- Use memory_add to save important facts. Always include a tags array (e.g., [\"user_info\"], [\"preferences\"], [\"project:yaah\"], [\"decision\"]).\n- Use memory_update to correct stale facts (requires the memory ID). Use memory_delete to remove incorrect memories.\n- At the end of a conversation or when the user says goodbye, use memory_add to save a 2-3 line summary of key discussion points with tag [\"session_summary\"]."
-
-		toolReg.Register(&tools.MemorySearchTool{DB: db})
-		toolReg.Register(&tools.MemoryAddTool{DB: db})
-		toolReg.Register(&tools.MemoryDeleteTool{DB: db})
-		toolReg.Register(&tools.MemoryUpdateTool{DB: db})
-		toolReg.Register(&tools.MemorySessionSearchTool{DB: db})
-
-		cwd, _ := os.Getwd()
-		sessionID = fmt.Sprintf("sess-%d", time.Now().UnixNano())
-		db.CreateSession(memory.Session{
-			ID:        sessionID,
-			StartedAt: time.Now().Unix(),
-			CWD:       cwd,
-			Model:     modelName,
-		})
-
-		defer func() {
-			db.EndSession(sessionID, time.Now().Unix())
-			db.Close()
-		}()
-	}
-
-	// Start MCP clients once for the entire TUI session.
-	mcpDirs := mcpSearchPaths(config.HomeDir())
-	mcpClients, mcpTools, mcpInfos, _ := mcp.StartMCPClientsWithStderr(context.Background(), mcpDirs, io.Discard)
-	for _, c := range mcpClients {
-		defer c.Close()
-	}
-	for _, t := range mcpTools {
-		toolReg.Register(t)
-	}
-
-	// Convert MCP server info for the TUI.
-	var tuiMCPInfos []tui.ServerInfo
-	for _, info := range mcpInfos {
-		tuiMCPInfos = append(tuiMCPInfos, tui.ServerInfo{
-			Name:      info.Name,
-			Transport: info.Transport,
-			Command:   info.Command,
-			URL:       info.URL,
-			Connected: info.Connected,
-			ToolCount: info.ToolCount,
-			Error:     info.Error,
-		})
-	}
-
-	// Register the skill-loading tool
-	toolReg.Register(&tools.SkillTool{Dirs: skillDirs})
-
-	planDirs := planSearchPaths()
-	toolReg.Register(&tools.PlanTool{Dirs: planDirs})
-
-	procMgr := processpkg.NewManager()
-	toolReg.Register(&tools.BackgroundProcessTool{Manager: procMgr})
-
-	conflictTracker := &tools.ConflictTracker{}
-	subAgentProvider, subAgentModel := resolveSubAgent(cfg)
-	subCW := cfg.Agent.Default.ContextWindow / 2
-	if subCW < 32000 {
-		subCW = 32000
-	}
-	toolReg.Register(newTaskTool(resolveProvider(cfg), systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, conflictTracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default))
-
-	toolReg.Register(&tools.ListSubAgentsTool{
-		Lister: func() []tools.SubAgentInfo {
-			defs := reg.List()
-			infos := make([]tools.SubAgentInfo, 0, len(defs))
-			for name, def := range defs {
-				desc := def.Description
-				if desc == "" {
-					desc = def.Body
-					if idx := strings.IndexByte(desc, '\n'); idx >= 0 {
-						desc = desc[:idx]
-					}
-				}
-				infos = append(infos, tools.SubAgentInfo{
-					Role:        string(name),
-					DisplayName: def.DisplayName,
-					Specialty:   def.Specialty,
-					Contract: tools.SubAgentContract{
-						Heading: def.Contract.Heading,
-						Fields:  def.Contract.Fields,
-					},
-					Description: desc,
-					Tools:       def.Tools,
-				})
-			}
-			return infos
-		},
-	})
-
-	// Shared conversation history for the TUI session.
-	var messages []types.Message
-
-	// Shared mutable state for the current provider/model.
-	sm := &sessionModel{provider: providerName, model: resolveModel(cfg)}
-
+	// Create view once, fill program pointer after tea.NewProgram
 	var prog *tea.Program
+	fwd := &agentViewFwd{}
+	sess.SetView(fwd)
+
+	var cancelAgent context.CancelFunc // accessed only from bubbletea goroutine (OnSubmit/OnAbort) — no mutex needed
 	m := tui.New(tui.Config{
-		Provider:      providerName,
-		Model:         modelName,
+		Provider:      sess.ProviderName(),
+		Model:         sess.ModelName(),
 		CWD:           cwd,
 		ContextWindow: cfg.Agent.Default.ContextWindow,
 		OnSubmit: func(input string) {
-			pName, mName := sm.get()
-			go runAgentForTUI(input, controlCh, prog, cfg, systemPrompt, mName, toolReg, &messages, db, sessionID, &msgIdx, &persistedCount, sm, conflictTracker, steerCh, followupCh)
-			_ = pName
-		},
-		OnFollowUp: func(text string) {
-			// User hit Enter while the agent is thinking. Queue for the
-			// next iteration so they don't lose what they typed.
-			select {
-			case followupCh <- text:
-			default:
-				// Buffer full — the agent is falling behind. Surface a
-				// status message instead of silently dropping.
-				select {
-				case controlCh <- tui.ControlMsg{StatusMsg: "Follow-up queue full — type slower."}:
-				default:
-				}
-			}
-		},
-		OnSteer: func(text string) {
-			// Immediate, high-priority inject — interrupts current flow.
-			select {
-			case steerCh <- text:
-			default:
-				select {
-				case controlCh <- tui.ControlMsg{StatusMsg: "Steer queue full — agent is unresponsive."}:
-				default:
-				}
-			}
-		},
-		OnQuit: func() {},
-		OnCompact: func() {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancelAgent = cancel
 			go func() {
-				window := cfg.Agent.Default.ContextWindow
-				if window <= 0 {
-					window = 128000
-				}
-				if len(messages) <= 4 {
-					controlCh <- tui.ControlMsg{StatusMsg: "Context is already small enough."}
-					return
-				}
-				totalChars := 0
-				for _, m := range messages {
-					totalChars += len(m.Content)
-					for _, tc := range m.ToolCalls {
-						totalChars += len(tc.Function.Arguments) + len(tc.Function.Name)
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Fprintf(os.Stderr, "agent panic: %v\n", r)
+						if prog != nil {
+							prog.Kill()
+						}
 					}
-				}
-				if totalChars/4 <= window*4/5 {
-					controlCh <- tui.ControlMsg{StatusMsg: fmt.Sprintf("Context is already compact enough (%d/%d tokens).", totalChars/4, window)}
-					return
-				}
-
-				sysMsg := messages[0]
-				rest := messages[1:]
-				keepRecent := 6
-				if len(rest) <= keepRecent {
-					controlCh <- tui.ControlMsg{StatusMsg: "Not enough messages to compact."}
-					return
-				}
-				split := len(rest) - keepRecent
-				oldMsgs := rest[:split]
-				keepMsgs := rest[split:]
-
-				var sb strings.Builder
-				sb.WriteString("Summarize the following conversation excerpt. Keep the structured format below.\n\n")
-				sb.WriteString("## Goal\n## Completed Work\n## Active Work\n## Pending Tasks\n## Key Decisions\n## Files Modified\n\n---\nConversation excerpt:\n\n")
-				for _, m := range oldMsgs {
-					if m.Content != "" {
-						sb.WriteString(fmt.Sprintf("%s: %s\n", m.Role, m.Content))
-					}
-					for _, tc := range m.ToolCalls {
-						sb.WriteString(fmt.Sprintf("[tool:%s] %s\n", tc.Function.Name, tc.Function.Arguments))
-					}
-				}
-
-				pName, mName := sm.get()
-				compactProv := providerFor(cfg, pName)
-				compactModel := cfg.Agent.Default.SmallModel
-				if compactModel == "" {
-					compactModel = mName
-				}
-				req := types.ChatRequest{
-					Model:    compactModel,
-					Messages: []types.Message{types.UserMsg(sb.String())},
-				}
-				resp, err := compactProv.Send(context.Background(), req)
-				if err != nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
-					// Fallback: trim oldest half
-					messages = append([]types.Message{sysMsg}, keepMsgs...)
-					controlCh <- tui.ControlMsg{StatusMsg: "Compacted (trimmed)."}
-					return
-				}
-				summary := resp.Choices[0].Message.Content
-				newMsgs := []types.Message{sysMsg}
-				newMsgs = append(newMsgs, types.SystemMsg("Previous conversation summary:\n"+summary))
-				newMsgs = append(newMsgs, keepMsgs...)
-				messages = newMsgs
-				controlCh <- tui.ControlMsg{StatusMsg: "Compacted."}
+				}()
+				sess.RunPrompt(ctx, input)
 			}()
 		},
+		OnFollowUp: func(text string) {
+			sess.FollowUp(text)
+		},
+		OnSteer: func(text string) {
+			sess.Steer(text)
+		},
+		OnQuit: func() {},
+		OnAbort: func() {
+			if cancelAgent != nil {
+				cancelAgent()
+				cancelAgent = nil
+			}
+		},
+		OnCompact: func() {
+			go sess.Compact()
+		},
 		OnModel: func(pName, mName string) {
-			sm.set(pName, mName)
+			sess.SetModel(pName, mName)
 		},
 	})
 
@@ -491,11 +184,16 @@ func runTUI() error {
 		m.AddMessage("system", statusMsg)
 	}
 
-	// Panic recovery: catch panics in the main goroutine so the terminal
-	// is restored. Note: panics in agent goroutines are not caught here.
+	// Panic recovery: catch panics in the main goroutine. When the TUI is
+	// running, trigger bubbletea's cleanup to restore the terminal (disable
+	// mouse reporting, raw mode, etc.). If the program hasn't started yet,
+	// there's nothing to clean up.
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(origStderr, "yaah panic: %v\n", r)
+			if prog != nil {
+				prog.Kill()
+			}
 			os.Exit(1)
 		}
 	}()
@@ -505,25 +203,26 @@ func runTUI() error {
 	defer stopSignals()
 
 	prog = tea.NewProgram(m)
+	fwd.program = prog // fill program pointer before first RunPrompt
 
 	// Wire the question tool handler for TUI modal dialogs.
-	if qt := toolReg.Get("question"); qt != nil {
+	if qt := sess.toolReg.Get("question"); qt != nil {
 		if qtp, ok := qt.(*tools.QuestionTool); ok {
 			qtp.Handler = func(entries []tools.QuestionEntry) []string {
 				var answers []string
 				for _, e := range entries {
 					ch := make(chan string, 1)
-					opts := make([]tui.QuestionOption, len(e.Options))
+					opts := make([]types.CtrlOption, len(e.Options))
 					for i, o := range e.Options {
-						opts[i] = tui.QuestionOption{Label: o.Label, Description: o.Description}
+						opts[i] = types.CtrlOption{Label: o.Label, Description: o.Description}
 					}
-					prog.Send(tui.ControlMsg{Question: &tui.QuestionModal{
+					prog.Send(&types.CtrlQuestion{
 						Header:   e.Header,
 						Question: e.Question,
 						Options:  opts,
 						Multiple: e.Multiple,
 						AnswerCh: ch,
-					}})
+					})
 					answer := <-ch
 					answers = append(answers, fmt.Sprintf("%s: %s", e.Header, answer))
 				}
@@ -547,7 +246,7 @@ func runTUI() error {
 			}
 		}
 		models := fetchAllModels(context.Background(), cfg)
-		controlCh <- tui.ControlMsg{ModelList: models, ProviderNames: names}
+		controlCh <- &types.CtrlModelList{Models: models, ProviderNames: names}
 	}()
 
 	if _, err := prog.Run(); err != nil {
@@ -557,107 +256,12 @@ func runTUI() error {
 	return nil
 }
 
-// tuiEventForwarder implements agent.View and forwards events to a
+// agentViewFwd implements agent.View and forwards events to a
 // bubbletea Program via Send, which is goroutine-safe.
-type tuiEventForwarder struct {
+type agentViewFwd struct {
 	program *tea.Program
 }
 
-func (f *tuiEventForwarder) HandleEvent(evt agent.Event) {
+func (f *agentViewFwd) HandleEvent(evt agent.Event) {
 	f.program.Send(evt)
-}
-
-// runAgentForTUI runs the agent loop for a single prompt and sends messages
-// to the TUI channel. The channel is NOT closed here — it is shared across
-// multiple prompts for the lifetime of the TUI session.
-func runAgentForTUI(prompt string, controlCh chan<- tui.ControlMsg, p *tea.Program, cfg *config.Config, systemPrompt, modelName string, toolReg *tools.Registry, messages *[]types.Message, db *memory.DB, sessionID string, msgIdx *int, persistedCount *int, sm *sessionModel, conflictTracker *tools.ConflictTracker, steerCh chan string, followupCh chan string) {
-	pName, _ := sm.get()
-	provider := providerFor(cfg, pName)
-
-	if cfg.Observability.Otel.Enabled {
-		if sp, ok := provider.(agent.StreamProvider); ok {
-			provider = &observability.InstrumentedProvider{Inner: sp, Verbose: cfg.Observability.Otel.Verbose}
-		}
-	}
-
-	compactProvider, compactModel := resolveCompact(cfg)
-	fallbackProvider, fallbackModel := resolveFallback(cfg)
-	forwarder := &tuiEventForwarder{program: p}
-
-	loop := agent.NewLoop(provider, toolReg,
-		agent.WithModel(modelName),
-		agent.WithSystemPrompt(systemPrompt),
-		agent.WithView(forwarder),
-		agent.WithMessages(*messages),
-		agent.WithDB(db),
-		agent.WithWriteDebouncer(func() *memory.DebouncedWriter {
-			if db != nil {
-				return memory.NewDebouncedWriter(db)
-			}
-			return nil
-		}()),
-		agent.WithSessionID(sessionID),
-		agent.WithMsgIdx(*msgIdx),
-		agent.WithHookDir(cfg.Hooks.Dir),
-		agent.WithFallback(fallbackProvider, fallbackModel),
-		agent.WithCompactProvider(compactProvider, compactModel),
-		agent.WithApprovalMode(resolveApproval(cfg)),
-		agent.WithPipeline(cfg.Agent.Middleware.Enabled, cfg.Agent.Middleware.Disabled),
-		agent.WithSteer(steerCh),
-		agent.WithFollowUps(followupCh),
-		agent.WithConflictTracker(conflictTracker),
-		agent.WithToolsLevel(agent.FullTools),
-		agent.WithOtel(cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose),
-		agent.WithSubAgentConcurrency(
-			cfg.Agent.SubAgent.MaxConcurrency,
-			time.Duration(cfg.Agent.SubAgent.StuckChildTimeout)*time.Second,
-			buildStuckChildTimeouts(cfg.Agent.SubAgent),
-		),
-		agent.WithApproveFn(func(name, args string) bool {
-			respCh := make(chan bool, 1)
-			p.Send(tui.ControlMsg{
-				ApproveChan: respCh,
-				ApproveName: name,
-				ApproveArgs: args,
-			})
-			return <-respCh
-		}),
-		agent.WithLoopConfig(agent.LoopConfig{
-			MaxIterations:          cfg.Agent.Default.MaxIterations,
-			MaxTurns:               cfg.Agent.Default.MaxTurns,
-			MaxRetries:             cfg.Agent.Default.MaxRetries,
-			RetryBackoffSecs:       cfg.Agent.Default.RetryBackoffSecs,
-			ContextWindow:          cfg.Agent.Default.ContextWindow,
-			CompactionThreshold:    cfg.Agent.Default.CompactionThreshold,
-			RawCompactionThreshold: cfg.Agent.Default.RawCompactionThreshold,
-			EstimateFactor:         cfg.Agent.Default.EstimateFactor,
-			LoopDetectCount:        cfg.Agent.Default.LoopDetectCount,
-			LoopDetectWindow:       cfg.Agent.Default.LoopDetectWindow,
-			MaxToolConcurrency:     cfg.Agent.Default.MaxToolConcurrency,
-			MaxInlineToolsPerTurn:  cfg.Agent.Default.MaxInlineToolsPerTurn,
-			PromptCaching:          cfg.Agent.Default.PromptCaching,
-			ReasoningProtectTurns:  cfg.Agent.Default.ReasoningProtect,
-			ToolResultMaxLines:     cfg.Agent.Default.ToolResultMaxLines,
-			ToolResultMaxBytes:     cfg.Agent.Default.ToolResultMaxBytes,
-			PruneProtectTokens:     cfg.Agent.Default.PruneProtectTokens,
-			PruneMinReclaim:        cfg.Agent.Default.PruneMinReclaim,
-			PruneMinTurns:          cfg.Agent.Default.PruneMinTurns,
-		}),
-	)
-
-	_, err := loop.Run(context.Background(), prompt)
-
-	if err != nil {
-		p.Send(tui.ControlMsg{
-			Err:           err,
-			ContextTokens: loop.EstimatedTokens(),
-			ContextWindow: loop.ContextWindow,
-		})
-		*messages = loop.Messages
-		return
-	}
-
-	*messages = loop.Messages
-	*msgIdx = loop.MsgIdx
-	*persistedCount = len(loop.Messages)
 }
