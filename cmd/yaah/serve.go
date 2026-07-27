@@ -384,7 +384,7 @@ func (s *agentSession) runHeadless(ctx context.Context, prompt string) (string, 
 	response, err := loop.Run(ctx, prompt)
 
 	s.messages = loop.Messages
-	s.msgIdx = loop.MsgIdx
+	s.msgIdx = loop.Persister.MsgIdx()
 
 	return response, loop.TotalTokens, err
 }

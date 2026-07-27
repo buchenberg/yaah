@@ -715,7 +715,7 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 	response, err := loop.Run(ctx, prompt)
 
 	s.messages = loop.Messages
-	s.msgIdx = loop.MsgIdx
+	s.msgIdx = loop.Persister.MsgIdx()
 
 	if ctrl != nil {
 		if err != nil {

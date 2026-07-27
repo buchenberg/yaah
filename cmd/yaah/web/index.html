@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>yaah</title>
+<link rel="stylesheet" href="pico.min.css">
+<script src="marked.min.js"></script>
+<script defer src="alpine.min.js"></script>
+<style>
+[x-cloak]{display:none!important}
+body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
+#log{flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;gap:.5rem}
+.msg{max-width:80%;padding:.6rem 1rem;border-radius:12px;line-height:1.4;white-space:pre-wrap;word-wrap:break-word;font-size:.875rem}
+.user{align-self:flex-end;background:var(--pico-primary);color:var(--pico-primary-inverse);border-bottom-right-radius:4px}
+.asst{align-self:flex-start;background:var(--pico-card-background-color);border-bottom-left-radius:4px}
+.err{align-self:flex-start;background:#dc2626;color:#fff}
+.msg :where(h1,h2,h3,h4,h5,h6){font-size:1em;margin:.4rem 0 .15rem;color:inherit}
+.msg :where(p){margin:.15rem 0}
+.msg :where(ul,ol){padding-left:1.5rem;margin:.15rem 0}
+.msg :where(li){margin:0}
+.msg :where(pre){margin:.3rem 0;padding:.5rem;font-size:.8em}
+.msg :where(code){font-size:.85em;padding:0;background:0}
+.msg :where(blockquote){margin:.3rem 0;padding:.2rem .8rem;border-left:3px solid var(--pico-muted-border-color)}
+.msg :where(table){font-size:.85em;margin:.3rem 0}
+.msg :where(th,td){padding:.15rem .4rem}
+.msg :where(hr){margin:.4rem 0}
+.msg :where(img){max-width:100%}
+#strip{display:flex;gap:.5rem;padding:.25rem 1rem;flex-wrap:wrap}
+.chip{font-size:.75rem;padding:.15rem .5rem;border-radius:999px;background:var(--pico-mark-background-color);color:var(--pico-mark-color);animation:pulse 1.5s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+#bar{display:flex;gap:.5rem;padding:.75rem 1rem;border-top:1px solid var(--pico-muted-border-color)}
+#prompt{flex:1;resize:none;min-height:44px;max-height:160px}
+#foot{display:flex;justify-content:space-between;align-items:center;padding:.25rem 1rem;font-size:.75rem;border-top:1px solid var(--pico-muted-border-color);color:var(--pico-muted-color)}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}
+.dot.on{background:#22c55e}
+.dot.off{background:#dc2626}
+.think{align-self:flex-start;padding:.6rem 1rem;border-radius:12px;border-bottom-left-radius:4px;font-size:.85rem;max-width:80%;background:var(--pico-card-background-color);color:var(--pico-muted-color)}
+.think .bounce span{display:inline-block;width:6px;height:6px;margin:0 2px;border-radius:50%;background:var(--pico-muted-color);animation:bounce .6s ease-in-out infinite}
+.think .bounce span:nth-child(2){animation-delay:.15s}
+.think .bounce span:nth-child(3){animation-delay:.3s}
+@keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+.reason{margin-top:.4rem;font-size:.8rem;max-height:120px;overflow-y:auto;white-space:pre-wrap;font-style:italic;color:var(--pico-muted-color)}
+dialog article{max-width:480px;min-width:320px}
+</style>
+</head>
+<body x-data="yaah" x-cloak>
+
+<div id="log" x-ref="log">
+  <template x-for="m in msgs" :key="m.id">
+    <div :class="'msg ' + classOf(m.role)" x-html="m.html"></div>
+  </template>
+  <div class="think" x-show="live && !stream && think">
+    <span class="bounce"><span></span><span></span><span></span></span>
+    <div class="reason" x-text="think" x-show="think"></div>
+  </div>
+  <div class="msg asst" x-show="stream" x-html="md(stream)"></div>
+</div>
+
+<div id="strip" x-show="tools.length">
+  <template x-for="t in tools" :key="t">
+    <span class="chip" x-text="t"></span>
+  </template>
+</div>
+
+<div id="bar">
+  <textarea id="prompt" rows="1" placeholder="Ask yaah…" x-ref="el"
+    :disabled="live"
+    @keydown.enter="!$event.shiftKey && ($event.preventDefault(), send())"
+    @input="$refs.el.style.height='auto';$refs.el.style.height=Math.min($refs.el.scrollHeight,160)+'px'"
+    autofocus></textarea>
+  <button :disabled="live" @click="send()">Send</button>
+  <button x-show="live" class="secondary" @click="stop()">Stop</button>
+</div>
+
+<div id="foot">
+  <span><span class="dot" :class="on?'on':'off'"></span><span x-text="status"></span></span>
+  <span x-text="ctx ? ctx + '% context' : ''"></span>
+</div>
+
+<dialog x-ref="dlg">
+  <article>
+    <header x-text="modal.title"></header>
+    <template x-if="modal.type === 'question'">
+      <div>
+        <p x-text="modal.q"></p>
+        <template x-for="(o, i) in modal.opts" :key="i">
+          <label>
+            <input :type="modal.multi ? 'checkbox' : 'radio'" name="qopt" :value="o.label">
+            <span x-text="o.label"></span>
+            <small x-show="o.description" x-text="' — ' + o.description"></small>
+          </label>
+        </template>
+      </div>
+    </template>
+    <template x-if="modal.type === 'approval'">
+      <div>
+        <p><strong x-text="modal.name"></strong></p>
+        <pre x-show="modal.args" x-text="modal.args"></pre>
+      </div>
+    </template>
+    <footer>
+      <template x-if="modal.type === 'question'">
+        <button class="contrast" @click="ask()">Confirm</button>
+      </template>
+      <template x-if="modal.type === 'approval'">
+        <div style="display:flex;gap:.5rem;justify-content:flex-end">
+          <button @click="allow(false)">Deny</button>
+          <button class="contrast" @click="allow(true)">Allow</button>
+        </div>
+      </template>
+    </footer>
+  </article>
+</dialog>
+
+<script>
+marked.setOptions({breaks:true,gfm:true})
+
+function esc(s) {
+  const d = document.createElement('div')
+  d.textContent = s
+  return d.innerHTML
+}
+
+document.addEventListener('alpine:init', () => {
+  Alpine.data('yaah', () => {
+    let _n = 0
+    return {
+      msgs: [], stream: '', think: '', tools: [],
+      live: false, on: false,
+      status: 'connecting…', ctx: null,
+      modal: {type:'',title:'',q:'',opts:[],multi:false,name:'',args:'',aid:null},
+      _es: null,
+
+      init() { this.connect() },
+      md(t) { return marked.parse(t) },
+      classOf(r) { return r === 'user' ? 'user' : r === 'error' ? 'err' : 'asst' },
+      add(role, text) { this.msgs.push({id: ++_n, role, html: role === 'asst' ? marked.parse(text) : esc(text)}) },
+      scroll() { this.$nextTick(() => { const l = this.$refs.log; if (l) l.scrollTop = l.scrollHeight }) },
+
+      connect() {
+        this._es = new EventSource('/api/stream')
+        this._es.onopen = () => { this.on = true; this.status = 'ready' }
+        this._es.onmessage = e => { try { this.onEvt(JSON.parse(e.data)) } catch (_) {} }
+        this._es.onerror = () => { this.on = false; this.status = 'reconnecting…' }
+      },
+
+      onEvt(d) {
+        switch (d.type) {
+          case 'token':      this.stream += d.text; this.scroll(); break
+          case 'thinking':   this.think += d.text; this.scroll(); break
+          case 'flush':
+            if (this.stream) { this.add('asst', this.stream); this.stream = '' }
+            if (d.content) this.add('asst', d.content)
+            this.scroll(); break
+          case 'tool.start': this.tools.push(d.name); break
+          case 'tool.end':
+            this.tools = this.tools.filter(t => t !== d.name)
+            if (d.error) { this.add('error', d.name + ': ' + d.error); this.scroll() }; break
+          case 'subagent.start': this.status = 'sub-agent: ' + d.role; break
+          case 'subagent.end':   this.status = 'ready'; break
+          case 'done':
+            if (this.stream) { this.add('asst', this.stream); this.stream = '' }
+            this.live = false; this.think = ''
+            if (d.error) this.add('error', d.error)
+            if (d.context_tokens && d.context_window) this.ctx = Math.round(d.context_tokens / d.context_window * 100)
+            this.status = 'ready'; this.scroll(); break
+          case 'ctrl.status': this.status = d.text; break
+          case 'ctrl.error':  this.add('error', d.error); this.scroll(); break
+          case 'ctrl.question':
+            this.modal = {type:'question', title:d.header||'Question', q:d.question, opts:d.options||[], multi:!!d.multi, name:'', args:'', aid:d.id}
+            this.$nextTick(() => this.$refs.dlg.showModal()); break
+          case 'ctrl.approval':
+            this.modal = {type:'approval', title:'Tool Approval', q:'', opts:[], multi:false, name:d.name, args:d.args||'', aid:d.id}
+            this.$nextTick(() => this.$refs.dlg.showModal()); break
+          case 'ctrl.context':
+            if (d.tokens && d.window) this.ctx = Math.round(d.tokens / d.window * 100); break
+          case 'ctrl.todos': case 'ctrl.models': break
+        }
+      },
+
+      ask() {
+        const c = this.$refs.dlg.querySelectorAll('input[name="qopt"]:checked')
+        const v = Array.from(c).map(c => c.value)
+        this.post({type:'answer', id:this.modal.aid, value: this.modal.multi ? v.join(',') : (v[0]||'')})
+        this.$refs.dlg.close()
+      },
+      allow(v) { this.post({type:'answer', id:this.modal.aid, value: String(v)}); this.$refs.dlg.close() },
+
+      send() {
+        const el = this.$refs.el, t = el.value.trim()
+        if (!t || this.live) return
+        this.add('user', t); el.value = ''; el.style.height = 'auto'
+        this.live = true; this.think = ''
+        this.post({type:'prompt', text: t}); this.scroll()
+      },
+
+      stop() { this.post({type:'abort'}) },
+      post(body) {
+        fetch('/api/action', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
+          .then(r => { if (r.status === 409) this.status = 'agent is busy' })
+      }
+    }
+  })
+})
+</script>
+</body>
+</html>
