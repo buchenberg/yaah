@@ -473,28 +473,7 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 
 	sysMsg := l.Messages[0]
 
-	// Token-budgeted survival split (replaces fixed keepCount): keeps the
-	// most recent turns within the preserve budget without splitting a
-	// tool-call/result pair.
-	//
-	// messageTokens uses chars/4 which consistently undercounts relative to
-	// the actual tokenizer count (often by 2-4x for code/JSON-heavy payloads).
-	// The budget derived from preserveBudget(window) is in tokenizer units,
-	// while splitTail sums messageTokens (chars/4), so without scaling every
-	// conversation appears to fit. Scale the budget by the actual ratio of
-	// rawTokens (tokenizer) to total messageTokens (chars/4) so the
-	// compaction decision and the split decision use the same yardstick.
 	budget := preserveBudget(l.ContextWindow)
-	if rawTokens > 0 {
-		msgTotal := 0
-		for _, m := range l.Messages {
-			msgTotal += messageTokens(m)
-		}
-		if msgTotal > 0 {
-			scale := float64(rawTokens) / float64(msgTotal)
-			budget = int(float64(budget) / scale)
-		}
-	}
 	split := splitTail(l.Messages, budget)
 	keepMsgs := l.Messages[split.keepStart:]
 	oldMsgs := l.Messages[1:split.keepStart]

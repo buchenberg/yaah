@@ -16,6 +16,7 @@ import (
 	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/observability"
+	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/types"
 	"github.com/spf13/cobra"
 )
@@ -362,7 +363,7 @@ func (s *agentSession) runHeadless(ctx context.Context, prompt string) (string, 
 			MaxTurns:               s.cfg.Agent.Default.MaxTurns,
 			MaxRetries:             s.cfg.Agent.Default.MaxRetries,
 			RetryBackoffSecs:       s.cfg.Agent.Default.RetryBackoffSecs,
-			ContextWindow:          s.cfg.Agent.Default.ContextWindow,
+			ContextWindow:          providers.ResolveWindow(s.modelName, s.cfg.Agent.Default.ContextWindow),
 			CompactionThreshold:    s.cfg.Agent.Default.CompactionThreshold,
 			RawCompactionThreshold: s.cfg.Agent.Default.RawCompactionThreshold,
 			EstimateFactor:         s.cfg.Agent.Default.EstimateFactor,
