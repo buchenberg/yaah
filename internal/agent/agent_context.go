@@ -273,7 +273,7 @@ func splitTurn(messages []types.Message, t turnRange, budget int) int {
 	return -1
 }
 
-// protectReasoningTurns ensures compaction does not remove assistant messages
+// ProtectReasoningTurns ensures compaction does not remove assistant messages
 // that carry reasoning_content. Thinking-mode providers (e.g. DeepSeek) require
 // reasoning_content to be carried forward in every request; if compaction splits
 // before a reasoning-carrying assistant message, the next request gets a 400:
@@ -368,7 +368,7 @@ func (l *Loop) trackCompactionSavings(savings float64) {
 	}
 }
 
-func protectReasoningTurns(messages []types.Message, keepStart, protectTurns int) int {
+func ProtectReasoningTurns(messages []types.Message, keepStart, protectTurns int) int {
 	if protectTurns <= 0 || keepStart <= 1 {
 		return keepStart
 	}
@@ -612,7 +612,7 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	// removes a reasoning-carrying message, the next request gets a 400:
 	// "The reasoning_content in the thinking mode must be passed back to the API."
 	if l.ReasoningProtectTurns > 0 {
-		split.keepStart = protectReasoningTurns(l.Messages, split.keepStart, l.ReasoningProtectTurns)
+		split.keepStart = ProtectReasoningTurns(l.Messages, split.keepStart, l.ReasoningProtectTurns)
 		keepMsgs = l.Messages[split.keepStart:]
 		oldMsgs = l.Messages[1:split.keepStart]
 	}
@@ -711,12 +711,13 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 
 // trimContext removes old messages when the estimated token count exceeds
 // 80% of ContextWindow. Preserves the system message and recent exchanges.
+// Reasoning-carrying assistant messages are protected via ProtectReasoningTurns.
 // This is a fallback when LLM-powered compaction is unavailable.
 func (l *Loop) trimContext() {
 	target := l.ContextWindow * 4 / 5
 	totalChars := 0
 	for _, m := range l.Messages {
-		totalChars += len(m.Content)
+		totalChars += len(m.Content) + len(m.ReasoningContent)
 		for _, tc := range m.ToolCalls {
 			totalChars += len(tc.Function.Arguments) + len(tc.Function.Name)
 		}
@@ -728,7 +729,7 @@ func (l *Loop) trimContext() {
 	sysMsg := l.Messages[0]
 	rest := l.Messages[1:]
 	for len(rest) > 0 && totalChars/4 > target {
-		removed := len(rest[0].Content)
+		removed := len(rest[0].Content) + len(rest[0].ReasoningContent)
 		for _, tc := range rest[0].ToolCalls {
 			removed += len(tc.Function.Arguments) + len(tc.Function.Name)
 		}
@@ -736,9 +737,14 @@ func (l *Loop) trimContext() {
 		rest = rest[1:]
 	}
 
-	newMsgs := make([]types.Message, 1, len(rest)+1)
-	newMsgs[0] = sysMsg
-	newMsgs = append(newMsgs, rest...)
+	keepStart := len(l.Messages) - len(rest)
+	if l.ReasoningProtectTurns > 0 {
+		keepStart = ProtectReasoningTurns(l.Messages, keepStart, l.ReasoningProtectTurns)
+	}
+
+	newMsgs := make([]types.Message, 0, len(l.Messages)-keepStart+1)
+	newMsgs = append(newMsgs, sysMsg)
+	newMsgs = append(newMsgs, l.Messages[keepStart:]...)
 	l.Messages = newMsgs
 	l.resetPruner()
 	if l.Pruner != nil {

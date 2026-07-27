@@ -3,7 +3,6 @@ package agent
 import (
 	"time"
 
-	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -136,16 +135,6 @@ func WithSubAgentConcurrency(max int, stuckTimeout time.Duration, stuckTimeouts 
 		l.StuckChildTimeout = stuckTimeout
 		l.StuckChildTimeouts = stuckTimeouts
 	}
-}
-
-// WithPermissionRules sets the permission rules for the permission middleware.
-func WithPermissionRules(rules []pipeline.PermissionRule) Option {
-	return func(l *Loop) { l.PermissionRules = rules }
-}
-
-// WithApproveFn sets a custom approval callback.
-func WithApproveFn(fn func(name, args string) bool) Option {
-	return func(l *Loop) { l.ApproveFn = fn }
 }
 
 // LoopConfig holds the full set of tuning parameters typically derived

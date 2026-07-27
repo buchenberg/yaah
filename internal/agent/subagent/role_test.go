@@ -20,7 +20,7 @@ func TestRoleProfileFor(t *testing.T) {
 		if !contains(p.Tools, "spawn_subagent") {
 			t.Error("RoleDefault should include spawn_subagent")
 		}
-		if !p.IsSpawnCapable() {
+		if !contains(p.Tools, "spawn_subagent") {
 			t.Error("RoleDefault should be spawn-capable")
 		}
 		if p.MaxIterations != 25 {
@@ -36,7 +36,7 @@ func TestRoleProfileFor(t *testing.T) {
 		if len(p.Tools) != 0 {
 			t.Errorf("unknown role should fall back to zero-value profile, got %v", p.Tools)
 		}
-		if p.IsSpawnCapable() {
+		if contains(p.Tools, "spawn_subagent") {
 			t.Error("unknown role should not be spawn-capable")
 		}
 	})

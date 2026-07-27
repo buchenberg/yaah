@@ -453,12 +453,6 @@ func (s *agentSession) SetModel(providerName, modelName string) {
 	s.modelName = modelName
 }
 
-func (s *agentSession) SetSystemPrompt(prompt string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.systemPrompt = prompt
-}
-
 func (s *agentSession) compactContext() {
 	s.mu.RLock()
 	ch := s.ctrlCh
@@ -488,7 +482,7 @@ func (s *agentSession) compactContext() {
 
 	totalChars := 0
 	for _, m := range msgs {
-		totalChars += len(m.Content)
+		totalChars += len(m.Content) + len(m.ReasoningContent)
 		for _, tc := range m.ToolCalls {
 			totalChars += len(tc.Function.Arguments) + len(tc.Function.Name)
 		}
@@ -510,6 +504,16 @@ func (s *agentSession) compactContext() {
 		return
 	}
 	split := len(rest) - keepRecent
+
+	if protect := s.cfg.Agent.Default.ReasoningProtect; protect > 0 {
+		if adj := agent.ProtectReasoningTurns(msgs, 1+split, protect); adj < 1+split {
+			split = adj - 1
+			if split < 0 {
+				split = 0
+			}
+		}
+	}
+
 	oldMsgs := rest[:split]
 	keepMsgs := rest[split:]
 
@@ -721,7 +725,7 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 	response, err := loop.Run(ctx, prompt)
 
 	s.messages = loop.Messages
-	s.msgIdx = loop.MsgIdx
+	s.msgIdx = loop.Persister.MsgIdx()
 
 	if ctrl != nil {
 		if err != nil {

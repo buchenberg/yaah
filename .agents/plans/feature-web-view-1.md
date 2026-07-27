@@ -1,6 +1,6 @@
 ---
 goal: Add a yaah web command that exposes the agent as a local HTTP server with a browser-based chat interface
-version: 1.0
+version: 1.1
 date_created: 2026-07-28
 owner: yaah
 status: Planned
@@ -13,7 +13,7 @@ tags: feature, web, http, sse, view
 
 The `agent.View` + `Session` interface established by the view/engine separation refactor maps cleanly to a browser-based chat interface. `TokenDeltaEvent` becomes an SSE chunk, `ToolStartEvent`/`ToolEndEvent` become activity cards, `CtrlQuestion`/`CtrlApproval` become blocking modal dialogs, and the final `DoneEvent` marks the end of a turn. No new abstractions are needed — a web driver is structurally identical to the TUI driver: create a session, implement `agent.View`, wire a control channel, run prompts.
 
-This plan adds a `yaah web` subcommand that starts a local HTTP server. The browser receives agent events over a **Server-Sent Events (SSE)** stream and sends commands (prompts, answers, model changes) via **HTTP POST**. All implementation is in pure Go stdlib (`net/http`, `encoding/json`, `embed`) with an embedded vanilla-JS single-page frontend — no new Go module dependencies, no npm build step.
+This plan adds a `yaah web` subcommand that starts a local HTTP server. The browser receives agent events over a **Server-Sent Events (SSE)** stream and sends commands (prompts, answers, model changes) via **HTTP POST**. All implementation is in pure Go stdlib (`net/http`, `encoding/json`, `embed`) with an embedded single-page frontend using [PicoCSS v2 classless](https://picocss.com/docs/classless) (inlined CSS, ~10KB) for styling and [Alpine.js](https://alpinejs.dev/) (inlined JS, ~5KB gzipped) for reactive DOM — no npm build step, no external CDN.
 
 ## 1. Requirements & Constraints
 
@@ -28,7 +28,7 @@ This plan adds a `yaah web` subcommand that starts a local HTTP server. The brow
 
 - **CON-001**: Single session per server instance. `yaah web` is a personal local tool, not a multi-user server. Concurrent prompts from different tabs are rejected with HTTP 409 Conflict.
 - **CON-002**: No WebSocket. SSE for server→browser and `POST /api/action` for browser→server avoids any WS library dependency while handling the `CtrlQuestion` synchronous roundtrip cleanly.
-- **CON-003**: No JS bundler, no npm, no external CDN. The entire frontend is one HTML file with inline CSS and JS, embedded via `//go:embed`.
+- **CON-003**: No JS bundler, no npm, no external CDN. The entire frontend is one HTML file with inline CSS (PicoCSS classless + ~50 lines chat-specific overrides) and inline JS (Alpine.js + ~90 lines reactive logic), embedded via `//go:embed`.
 - **CON-004**: The server binds to the loopback address by default. Users who pass `--addr 0.0.0.0:8080` accept the responsibility of exposing the agent to their network.
 - **CON-005**: Approval roundtrip uses the same `sess.SetApproveFn` hook as the TUI, not a separate channel. The approval function blocks waiting for a browser POST.
 
@@ -96,13 +96,85 @@ Browser                          yaah web server (Go)
 | `compact` | Call `sess.Compact()` |
 | `model` | Call `sess.SetModel(provider, model)` |
 
+### Frontend CSS: PicoCSS classless
+
+The UI uses [PicoCSS v2 classless](https://picocss.com/docs/classless) for all standard web concerns. This eliminates ~200 lines of custom CSS that would otherwise be needed for:
+
+- **Layout**: `<main>` acts as a centered container automatically
+- **Dark mode**: `data-theme="dark"` on `<html>` — automatic, respects `prefers-color-scheme`
+- **Typography**: Responsive type scale across 6 breakpoints
+- **Forms**: `<textarea>`, `<button>`, `<select>` styled automatically
+- **Modals**: `<dialog>` + `<article>` with header/footer — overlay, backdrop blur, animations, scroll-lock (`.modal-is-open`) built in
+- **Loading**: `aria-busy="true"` on buttons/divs shows an animated spinner
+
+Only ~50 lines of chat-specific CSS remain: message bubbles (`.msg.user` right-aligned, `.msg.assistant` left-aligned), `#messages` scroll container, `#tool-activity` strip, and `#status-bar` positioning.
+
+| Concern | Vanilla CSS | PicoCSS |
+|---|---|---|
+| Layout | Custom flexbox + centered container | `<main>` auto-container |
+| Dark mode | `prefers-color-scheme` media queries | `data-theme` attribute, automatic |
+| Forms | Custom textarea + button styles | Styled automatically |
+| Modals | Custom overlay + positioning + animations | `<dialog>` + `<article>`, built-in |
+| Spinner | Custom CSS keyframes | `aria-busy` attribute |
+| Typography | Manual font sizing, spacing | Responsive type scale |
+| Responsive | Custom media queries | 6 built-in breakpoints |
+
+### Frontend JS: Alpine.js reactive DOM
+
+The UI uses [Alpine.js](https://alpinejs.dev/) (~5KB gzipped, zero build step) for reactive DOM binding. This eliminates ~110 lines of imperative JS that would otherwise be needed for manual DOM query/update code. Alpine provides:
+
+- **`x-data`**: Single reactive state object (`{ messages: [], running: false, ... }`) — replaces manual `document.getElementById()` queries and ad-hoc JS state variables
+- **`x-model="prompt"`**: Two-way data binding on the textarea — no `input.value` reads
+- **`x-bind:disabled` / `x-bind:aria-busy`**: Reactive attribute binding on buttons — loading state in one attribute
+- **`x-show` / `x-if`**: Conditional visibility — replaces `element.style.display = 'none'`
+- **`x-html`**: Render markdown content into message bubbles
+- **`x-for="msg in messages"`**: Reactive message list — `messages.push(...)` auto-updates the DOM, no manual `createElement`/`appendChild`
+- **`@click`, `@submit.prevent`, `@keydown.enter.prevent`**: Event handling — replaces `addEventListener`
+- **`$refs.modal.showModal()` / `.close()`**: Direct access to the `<dialog>` element
+- **`$dispatch` / `x-on`**: Custom events for cross-component communication (status bar updates from SSE handler)
+
+**Example — what Alpine replaces:**
+
+```js
+// Vanilla JS: 7 lines of manual DOM manipulation
+const btn = document.getElementById('send-btn');
+btn.disabled = true;
+btn.setAttribute('aria-busy', 'true');
+const input = document.getElementById('prompt');
+input.disabled = true;
+input.value = '';
+const msgDiv = document.createElement('div');
+msgDiv.className = 'msg assistant';
+document.getElementById('messages').appendChild(msgDiv);
+```
+
+```html
+<!-- Alpine: 3 lines, declarative -->
+<textarea x-model="prompt" :disabled="running"></textarea>
+<button :disabled="running" :aria-busy="running">Send</button>
+<template x-for="msg in messages">
+  <div :class="'msg ' + msg.role" x-html="msg.content"></div>
+</template>
+```
+
+**Line count impact:**
+
+| | Vanilla JS | Alpine.js |
+|---|---|---|
+| JS logic | ~200 lines | ~90 lines |
+| HTML + directives | ~60 lines | ~70 lines |
+| CSS (Pico + chat) | ~50 lines | ~50 lines |
+| **Total frontend** | **~310 lines** | **~210 lines** |
+
+Alpine.js code (minified) is inlined in a `<script>` block alongside the application logic — no separate file, no CDN fetch.
+
 ## 3. New Files
 
 | File | Purpose |
 |---|---|
 | `cmd/yaah/web.go` | `webCmd` cobra command, HTTP server, request handlers, session lifecycle |
 | `cmd/yaah/web_view.go` | `sseView` (implements `agent.View`), `answerMap`, SSE helpers, wire-format structs |
-| `cmd/yaah/web/index.html` | Embedded single-page chat UI (vanilla HTML/CSS/JS, ~300 lines) |
+| `cmd/yaah/web/index.html` | Embedded single-page chat UI — PicoCSS classless (inlined) + Alpine.js (inlined) + ~90 lines reactive logic, ~210 lines total |
 
 Modified: `cmd/yaah/root.go` — register `webCmd` in `init()`.
 
@@ -110,20 +182,20 @@ Modified: `cmd/yaah/root.go` — register `webCmd` in `init()`.
 
 ### Phase 1 — Embedded frontend (`cmd/yaah/web/index.html`)
 
-The frontend is a self-contained HTML file. It renders a chat message list, a text input, a tool-activity panel, and modal dialogs for questions and approvals. It connects to `/api/stream` via `EventSource`, handles each event type via a dispatch table, and submits actions via `fetch('/api/action', {method:'POST',...})`.
+The frontend is a self-contained HTML file. PicoCSS v2 classless provides layout, dark mode, forms, modals, and spinners. Alpine.js provides reactive DOM binding — a single `x-data` state object drives all UI updates; no manual DOM queries. The JS logic (~90 lines) handles the SSE `EventSource` connection, appends events into the Alpine reactive array, and dispatches `fetch` actions. Message rendering, modal state, input enable/disable, and status bar are all bound declaratively via Alpine directives.
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-001 | Create `cmd/yaah/web/` directory and `index.html`. The file must be entirely self-contained (no CDN links). Structure: `<head>` with inline `<style>` for layout (dark sidebar, chat bubbles, spinner, modal overlay), `<body>` with `#messages`, `#input-form`, `#tool-activity`, `#modal`, `<script>` block. | | |
-| TASK-002 | Implement the JS `EventSource` connection to `/api/stream`. On `message` event: parse JSON, dispatch to a handler map keyed on `type`. | | |
-| TASK-003 | Implement the `token` handler: append text to the current `<div class="message assistant">` in the `#messages` list. If no current assistant message exists, create one. | | |
-| TASK-004 | Implement `tool.start` / `tool.end` handlers: add/remove a tool-activity indicator in `#tool-activity`. | | |
-| TASK-005 | Implement `done` handler: finalize the current assistant message div; re-enable the input; show error if `error` field set. | | |
-| TASK-006 | Implement `ctrl.question` handler: populate `#modal` with header text, question, radio/checkbox options, confirm button; disable input; on confirm, `fetch('/api/action', {type:'answer',id,value})`. | | |
-| TASK-007 | Implement `ctrl.approval` handler: populate `#modal` with tool name, args, Allow/Deny buttons; on selection, `fetch('/api/action', {type:'answer',id,value:'true'/'false'})`. | | |
-| TASK-008 | Implement `ctrl.status`, `ctrl.error`, `ctrl.todos`, `ctrl.context` handlers: update a status bar at the bottom of the UI. | | |
-| TASK-009 | Implement prompt submission: `#input-form` submit handler POSTs `{type:'prompt',text}`. Disable input on submit; re-enable on `done`. Handle 409 (already running) with a user-visible notice. | | |
-| TASK-010 | Handle SSE reconnect: `EventSource` auto-reconnects on drop; add a visual `connecting…` indicator while disconnected. | | |
+| TASK-001 | Create `cmd/yaah/web/` directory and `index.html`. Self-contained HTML file. `<style>` block: PicoCSS classless (inlined, minified) + ~50 lines chat-specific CSS (message bubbles `.msg.user` / `.msg.assistant`, scroll container, tool-activity strip). Body: Alpine `x-data="{ messages: [], running: false, toolActivity: [], statusText: '', connected: false }"` on `<body>`. Structure: `<main>` with `<template x-for="msg in messages">` message list, tool-activity strip (`x-show="toolActivity.length"`), `<form @submit.prevent="send">` with `<textarea x-model="prompt" :disabled="running">` + `<button :disabled="running" :aria-busy="running">`. `<dialog x-ref="modal">` with `<article>`. `<footer>` status bar (`x-text="statusText"`). `<script>` block: Alpine.js (inlined, minified) + ~90 lines app logic. | | |
+| TASK-002 | Implement Alpine `init()`: open `EventSource` to `/api/stream`. Set `connected = true`. On `message`: parse JSON, dispatch to handler functions that mutate the Alpine `$data` (e.g. `this.messages.push(...)`, `this.toolActivity.push(...)`, `this.running = true`). On `error`: set `connected = false`, let `EventSource` auto-reconnect. | | |
+| TASK-003 | Implement `token` handler: if no current assistant message in `messages` with `streaming: true`, push one (`{ role: 'assistant', content: '', streaming: true }`). Append `data.text` to `content`. | | |
+| TASK-004 | Implement `tool.start` handler: push `{ name, pending: true }` to `toolActivity` array. `tool.end` handler: remove entry by name. | | |
+| TASK-005 | Implement `done` handler: set `streaming: false` on the last assistant message, set `running = false`. If `data.error`, push an error message. | | |
+| TASK-006 | Implement `ctrl.question` handler: populate modal via `$refs` — set title text, build radio/checkbox `<input>` elements in `#modal-body`, confirm button in `#modal-footer`. Call `$refs.modal.showModal()`. On confirm: `fetch('/api/action', {type:'answer', id, value})`, close modal. | | |
+| TASK-007 | Implement `ctrl.approval` handler: populate modal with tool `name` + preformatted `args`, Allow/Deny buttons. Allow → `fetch` with `value: 'true'`, Deny → `value: 'false'`. | | |
+| TASK-008 | Implement `ctrl.status` / `ctrl.error` / `ctrl.todos` / `ctrl.context` handlers: write into Alpine `statusText` reactive string. Status bar updates automatically via `x-text`. | | |
+| TASK-009 | Implement `send()` function: POST `{type:'prompt', text: this.prompt}`. On success: `running = true`, `prompt = ''`. On 409: set `statusText` for 3 seconds. | | |
+| TASK-010 | Handle SSE reconnect: `connected` boolean drives a visual indicator (`<div x-show="!connected">`). `EventSource` auto-reconnects; on `open` event, set `connected = true`. | | |
 
 ### Phase 2 — SSE view (`cmd/yaah/web_view.go`)
 

@@ -44,35 +44,10 @@ type RoleProfile struct {
 	Timeout       time.Duration
 }
 
-// IsSpawnCapable returns true if the role's profile includes the task
-// tool and the role may therefore dispatch further sub-agents.
-func (p RoleProfile) IsSpawnCapable() bool {
-	for _, name := range p.Tools {
-		if name == "spawn_subagent" {
-			return true
-		}
-	}
-	return false
-}
-
 // defaultRoleReg is set at startup by the CLI layer after built-in and
 // user-defined role files have been loaded. When nil (e.g. in tests),
 // the legacy built-in profiles are used as a fallback.
 var defaultRoleReg atomic.Pointer[RoleRegistry]
-
-// Names returns the list of registered role names. Falls back to
-// [RoleDefault] when no registry has been set or it is empty.
-func Names() []SubAgentRole {
-	if r := defaultRoleReg.Load(); r != nil && len(r.Names()) > 0 {
-		names := r.Names()
-		out := make([]SubAgentRole, len(names))
-		for i, n := range names {
-			out[i] = SubAgentRole(n)
-		}
-		return out
-	}
-	return []SubAgentRole{RoleDefault}
-}
 
 // RoleDisplayName returns the human-facing name for a role. Falls back
 // to the role identifier when no display name has been set.

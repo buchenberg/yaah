@@ -3,7 +3,6 @@ package agent
 import (
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/buchenberg/yaah/internal/types"
 )
 
 // ContextManager owns context-window policy configuration and state:
@@ -74,20 +73,4 @@ func (cm *ContextManager) EnsurePruner() {
 		}
 		cm.Pruner = pipeline.NewPruner(cfg)
 	}
-}
-
-// ResetPruner clears the soft-prune set.
-func (cm *ContextManager) ResetPruner() {
-	if cm.Pruner != nil {
-		cm.Pruner.Reset()
-	}
-}
-
-// PruneFilter returns a copy of messages with pruned tool-result content
-// replaced by compact stubs.
-func (cm *ContextManager) PruneFilter(messages []types.Message) []types.Message {
-	if cm.Pruner == nil {
-		return messages
-	}
-	return cm.Pruner.Filter(messages)
 }
