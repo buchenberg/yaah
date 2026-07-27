@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.35.0](https://github.com/buchenberg/yaah/compare/v0.34.0...v0.35.0) (2026-07-27)
+
+
+### Features
+
+* web UI with Alpine.js + Pico CSS, plus reasoning_content fixes ([#84](https://github.com/buchenberg/yaah/issues/84)) ([adf9d97](https://github.com/buchenberg/yaah/commit/adf9d970817ad21bedaa4ddd2ac1eeb28e394f81))
+
 ## [0.34.0](https://github.com/buchenberg/yaah/compare/v0.33.4...v0.34.0) (2026-07-27)
 
 
