@@ -1094,7 +1094,7 @@ func TestProtectReasoningTurns(t *testing.T) {
 			},
 			keepStart:     3, // u2→a2 turn is kept, includes reasoning
 			protectTurns:  1,
-			wantKeepStart: 3, // already have one reasoning message
+			wantKeepStart: 1, // must also protect a1 — all reasoning is preserved
 		},
 		{
 			name: "protectTurns=0 returns input unchanged",

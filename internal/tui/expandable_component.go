@@ -65,7 +65,7 @@ func (e ExpandableSection) Render() string {
 	b.WriteString(zone.Mark(e.zoneID, hdrStyle.Render("  ▼ "+e.header)))
 	b.WriteString("\n\n")
 	if e.preWrapped {
-		b.WriteString(e.bgStyle.Width(e.width).Render(e.fgStyle.Render(e.content)))
+		b.WriteString(e.bgStyle.Width(e.width).PaddingLeft(4).Render(e.fgStyle.Render(e.content)))
 	} else {
 		b.WriteString(chatBubble(e.content, e.width, e.fgStyle, e.bgStyle))
 	}

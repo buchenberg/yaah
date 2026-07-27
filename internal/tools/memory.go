@@ -203,7 +203,7 @@ type MemorySessionSearchTool struct {
 
 func (t *MemorySessionSearchTool) Name() string { return "memory_search_sessions" }
 func (t *MemorySessionSearchTool) Description() string {
-	return "Searches past conversation session transcripts for specific topics or questions."
+	return "Searches past conversation sessions. With no query, lists recent sessions with their first prompt as a topic summary."
 }
 
 func (t *MemorySessionSearchTool) Schema() json.RawMessage {
@@ -254,7 +254,7 @@ func (t *MemorySessionSearchTool) Execute(ctx context.Context, args string) (str
 }
 
 func (t *MemorySessionSearchTool) listRecentMessages(limit int) (string, error) {
-	sessions, err := t.DB.ListSessions(5)
+	sessions, err := t.DB.ListSessions(10)
 	if err != nil {
 		return "", fmt.Errorf("memory_search_sessions: %w", err)
 	}
@@ -266,25 +266,38 @@ func (t *MemorySessionSearchTool) listRecentMessages(limit int) (string, error) 
 	count := 0
 	for _, s := range sessions {
 		msgs, err := t.DB.GetMessages(s.ID)
-		if err != nil {
+		if err != nil || len(msgs) == 0 {
 			continue
 		}
+		// Find the first user message as a topic indicator.
+		topic := ""
 		for _, m := range msgs {
-			if m.Role != "user" && m.Role != "assistant" {
-				continue
+			if m.Role == "user" {
+				topic = m.Content
+				if len(topic) > 120 {
+					topic = topic[:117] + "..."
+				}
+				break
 			}
-			if len(m.Content) > 200 {
-				m.Content = m.Content[:197] + "..."
-			}
-			output += fmt.Sprintf("[%s] %s: %s\n", s.ID[:12], m.Role, m.Content)
-			count++
-			if count >= limit {
-				return output, nil
-			}
+		}
+		status := "active"
+		if s.EndedAt > 0 {
+			status = time.Unix(s.EndedAt, 0).Format("Jan 2 15:04")
+		}
+		tokenInfo := ""
+		if s.TokensIn > 0 || s.TokensOut > 0 {
+			tokenInfo = fmt.Sprintf(" | %d in / %d out tokens", s.TokensIn, s.TokensOut)
+		}
+		output += fmt.Sprintf("[%s] %s | %s | %d msgs | model: %s%s\n  %s\n",
+			s.ID[:12], time.Unix(s.StartedAt, 0).Format("Jan 2 15:04"), status,
+			len(msgs), s.Model, tokenInfo, topic)
+		count++
+		if count >= limit {
+			return output, nil
 		}
 	}
 	if output == "" {
-		return "No recent messages found in sessions.", nil
+		return "No messages found in recent sessions.", nil
 	}
 	return output, nil
 }

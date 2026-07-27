@@ -270,7 +270,13 @@ func ApplyTheme(t Theme) {
 		Foreground(colorOrNone(t.PaletteTitle))
 
 	noticeStyle = lipgloss.NewStyle().
-		Foreground(colorOrNone(t.Notice)).
+		Foreground(colorOrNone(t.Notice))
+
+	mcpStatusConnected = lipgloss.NewStyle().
+		Foreground(colorOrNone(t.Notice))
+
+	mcpStatusDisconnect = lipgloss.NewStyle().
+		Foreground(colorOrNone(t.Tool)).
 		Background(colorOrNone(t.StatusBg)).
 		Padding(0, 1)
 }

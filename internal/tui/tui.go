@@ -57,6 +57,8 @@ var (
 	subAgentEndStyle    lipgloss.Style
 	paletteTitleStyle   lipgloss.Style
 	noticeStyle         lipgloss.Style
+	mcpStatusConnected  lipgloss.Style
+	mcpStatusDisconnect lipgloss.Style
 )
 
 // Message represents a chat message in the TUI.
@@ -144,6 +146,7 @@ type Model struct {
 	compacting    bool   // currently running context compaction
 	streamContent string // accumulated streaming content
 	thinkContent  string // accumulated thinking/reasoning content
+	activePrompt  string // current prompt shown in info bar when active
 
 	// --- reasoning ---
 	reasoningExpanded map[string]bool // zone ID → true if expanded
@@ -445,16 +448,16 @@ func (m *Model) AddAssistantMessageWithReasoning(raw, reasoning string) {
 // reRenderMessages re-renders all assistant messages through the current
 // glamour renderer (used on window resize when word-wrap width changes).
 
-// headerHeight returns the number of lines the banner + provider header
-// occupies. Used to size the viewport. When the banner is hidden, only the
-// provider line counts.
+// headerHeight returns the number of lines the header occupies.
+// Delegates to Header.Height() for dynamic two-column measurement.
 func (m *Model) headerHeight() int {
-	if !m.showBanner || m.banner == "" {
-		return 3 // provider line + stacked hint line + blank line
-	}
-	header := m.banner + "\n\n" +
-		titleStyle.Render(fmt.Sprintf("%s/%s", m.provider, m.modelName)) + "\n"
-	return len(strings.Split(header, "\n")) + 1 // +1 for the second stacked hint line
+	return NewHeader(m.banner, m.provider, m.modelName, m.showBanner, m.width, m.mcpInfos).Height()
+}
+
+// inputAreaHeight returns the number of lines the input area occupies
+// including its rounded border (1 content + 2 border = 3 for single-line).
+func (m *Model) inputAreaHeight() int {
+	return m.input.Height() + 2
 }
 
 // refreshViewport rebuilds the viewport content from the current message state.
@@ -1240,11 +1243,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg) tea.Cmd {
 			return nil
 		}
 		if m.thinking {
-			// Agent is running. Queue the text as a follow-up so it
-			// flows into the next iteration rather than being lost.
-			// Visually, render a pending-marker so the user can see
-			// their queued input.
-			m.AddMessage("user", value+"  ⏎")
+			m.activePrompt = value
 			m.input.SetValue("")
 			if m.onFollowUp != nil {
 				m.onFollowUp(value)
@@ -1253,8 +1252,8 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 		m.thinkContent = ""
 		m.reasoningExpanded = make(map[string]bool)
-		m.AddMessage("user", value)
 		m.SetThinking(true)
+		m.activePrompt = value
 		m.input.SetValue("")
 		if m.onSubmit != nil {
 			m.onSubmit(value)
@@ -1344,7 +1343,7 @@ func (m *Model) maxModelLines() int {
 	if m.height == 0 {
 		return 10
 	}
-	inputHeight := m.input.Height() + 2                        // content + border
+	inputHeight := m.inputAreaHeight()
 	available := m.height - m.headerHeight() - 1 - inputHeight // 1: status line
 	items := available - 4                                     // border (2) + padding (2)
 	if items < 1 {
@@ -1366,7 +1365,7 @@ func (m *Model) paletteLines() int {
 		// Help overlay: title + 4 groups with headers + footer + border/padding
 		// Rough estimate: 22 content lines + 4 border/padding = 26.
 		// Cap at 80% of available terminal height.
-		available := m.height - m.headerHeight() - 1 - (m.input.Height() + 2) // status, dynamic input area
+		available := m.height - m.headerHeight() - 1 - m.inputAreaHeight() // status, dynamic input area
 		if available < 10 {
 			return 10
 		}
@@ -1498,7 +1497,7 @@ func (m *Model) adjustViewport() {
 	}
 	// Reserve space for header, status line, minimum chat area, and overlays.
 	// Whatever is left is the maximum input height (including its border).
-	overhead := m.headerHeight() + 1 // header + status line
+	overhead := m.headerHeight() + NewInfoBar("", "", 0).Height() + NewStatusBar("", 0, 0, false, 0).Height()
 	minChat := 5
 	if m.ephemMsg != "" {
 		overhead++
@@ -1518,8 +1517,8 @@ func (m *Model) adjustViewport() {
 	m.input.MaxHeight = maxInputContent
 
 	// input area = content lines + top/bottom border (2 lines)
-	inputHeight := m.input.Height() + 2
-	chatHeight := m.height - overhead - inputHeight - paletteH - searchH
+	inputHeight := m.inputAreaHeight()
+	chatHeight := m.height - overhead - inputHeight - paletteH - searchH - 2 // -2: viewport border
 	if chatHeight < minChat {
 		chatHeight = minChat
 	}
@@ -1615,10 +1614,17 @@ func (m *Model) View() tea.View {
 	}
 
 	// Header: figlet banner + provider/model line (or compact if hidden)
-	header := NewHeader(m.banner, m.provider, m.modelName, m.showBanner, m.width).Render()
+	header := NewHeader(m.banner, m.provider, m.modelName, m.showBanner, m.width, m.mcpInfos).Render()
+
+	activeView := ""
+	if m.thinking || m.streaming {
+		activeView = stripANSI(m.spinner.View())
+	}
+
+	// Info bar (between header and viewport) — shows active prompt
+	infoBar := NewInfoBar(m.activePrompt, activeView, m.width).Render()
 
 	// Status bar (1 line): message count + context bar only.
-	// Provider/model is in the header; no need to duplicate.
 	status := NewStatusBar(m.cwd, len(m.messages), m.contextPct, m.contextWindow > 0, m.width).Render()
 
 	// Ephemeral message line (shown only when active, auto-clears)
@@ -1631,6 +1637,8 @@ func (m *Model) View() tea.View {
 
 	// Viewport holds the scrollable chat history
 	viewportView := m.viewport.View()
+
+	viewportView = "\n" + viewportView + "\n"
 
 	// Search indicator line
 	var searchLine string
@@ -1664,10 +1672,10 @@ func (m *Model) View() tea.View {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("205")).
 		Padding(0, 1).
-		Width(m.width - 4).
+		Width(m.width).
 		Render(inputView)
 
-	elements := []string{header, viewportView, status}
+	elements := []string{header, infoBar, viewportView, status}
 	if ephemLine != "" {
 		elements = append(elements, ephemLine)
 	}

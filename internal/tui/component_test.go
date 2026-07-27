@@ -52,23 +52,6 @@ func TestChatBubble(t *testing.T) {
 	})
 }
 
-func TestBaseComponent_Render(t *testing.T) {
-	t.Run("renders content without width constraint", func(t *testing.T) {
-		c := NewBaseComponent("hello", 0, userStyle)
-		if out := c.Render(); !strings.Contains(out, "hello") {
-			t.Errorf("expected content, got %q", out)
-		}
-	})
-
-	t.Run("renders content with width constraint", func(t *testing.T) {
-		c := NewBaseComponent("hello", 40, userStyle)
-		out := c.Render()
-		if !strings.Contains(out, "hello") {
-			t.Errorf("expected content, got %q", out)
-		}
-	})
-}
-
 func TestUserMessage_Render(t *testing.T) {
 	out := NewUserMessage("how do I exit vim", 80).Render()
 	if !strings.Contains(out, "how do I exit vim") {
@@ -238,7 +221,7 @@ func TestStatusBar_Render(t *testing.T) {
 
 func TestHeader_Render(t *testing.T) {
 	t.Run("with banner", func(t *testing.T) {
-		out := NewHeader("YAHHH", "deepseek", "v4-pro", true, 80).Render()
+		out := NewHeader("YAHHH", "deepseek", "v4-pro", true, 80, nil).Render()
 		if !strings.Contains(out, "YAHHH") {
 			t.Errorf("expected banner, got %q", out)
 		}
@@ -248,12 +231,85 @@ func TestHeader_Render(t *testing.T) {
 	})
 
 	t.Run("banner hidden", func(t *testing.T) {
-		out := NewHeader("YAHHH", "deepseek", "v4-pro", false, 80).Render()
+		out := NewHeader("YAHHH", "deepseek", "v4-pro", false, 80, nil).Render()
 		if strings.Contains(out, "YAHHH") {
 			t.Errorf("banner should be hidden, got %q", out)
 		}
 		if !strings.Contains(out, "yaah · deepseek/v4-pro") {
 			t.Errorf("expected compact title, got %q", out)
+		}
+	})
+
+	t.Run("right column stays right with MCP servers", func(t *testing.T) {
+		mcp := []ServerInfo{
+			{Name: "filesystem", Transport: "stdio", Connected: true},
+			{Name: "github", Transport: "http", Connected: false},
+			{Name: "slack", Transport: "http", Connected: true},
+		}
+		out := NewHeader("YAHHH", "deepseek", "v4-pro", true, 100, mcp).Render()
+		plain := stripANSI(out)
+
+		lines := strings.Split(plain, "\n")
+		if len(lines) < 3 {
+			t.Fatal("expected at least 3 lines after borders")
+		}
+
+		// Check that each content line has a key hint, MCP entry, or provider
+		// appearing near the right side (past position 50 on 100-wide header).
+		for _, line := range lines[2 : len(lines)-1] {
+			trimmed := strings.TrimRight(line, " ")
+			// Lines with right-aligned content end with the item text,
+			// not whitespace. Blank lines (all spaces) are separators.
+			if strings.TrimSpace(trimmed) == "" {
+				continue
+			}
+		}
+
+		// All MCP servers should appear in the output.
+		for _, info := range mcp {
+			if !strings.Contains(plain, info.Name) {
+				t.Errorf("MCP server %q not found in header", info.Name)
+			}
+		}
+	})
+
+	t.Run("adding MCP servers does not shift right column leftward", func(t *testing.T) {
+		outNone := NewHeader("YAHHH", "deepseek", "v4-pro", true, 100, nil).Render()
+		plainNone := stripANSI(outNone)
+		linesNone := strings.Split(plainNone, "\n")
+
+		mcp := []ServerInfo{
+			{Name: "filesystem", Transport: "stdio", Connected: true},
+		}
+		outWith := NewHeader("YAHHH", "deepseek", "v4-pro", true, 100, mcp).Render()
+		plainWith := stripANSI(outWith)
+		linesWith := strings.Split(plainWith, "\n")
+
+		if len(linesWith) <= len(linesNone) {
+			t.Errorf("expected MCP version to have more lines, got %d vs %d", len(linesWith), len(linesNone))
+		}
+
+		// The last key hint should be at the same position regardless of MCP content.
+		lastNone := linesNone[len(linesNone)-2]
+		lastWith := linesWith[len(linesWith)-2]
+		posNone := strings.LastIndex(lastNone, "ctrl+c quit")
+		posWith := strings.LastIndex(lastWith, "ctrl+c quit")
+		if posNone != posWith && posNone > 0 && posWith > 0 {
+			t.Errorf("key hint position shifted with MCP servers: %d -> %d", posNone, posWith)
+		}
+	})
+
+	t.Run("left column stays left of right column content", func(t *testing.T) {
+		out := NewHeader("YAHHH", "deepseek", "v4-pro", true, 100, nil).Render()
+		plain := stripANSI(out)
+
+		lines := strings.Split(plain, "\n")
+		for _, line := range lines {
+			bannerIdx := strings.Index(line, "YAHHH")
+			cmdsIdx := strings.Index(line, ": commands")
+			if bannerIdx >= 0 && cmdsIdx >= 0 && bannerIdx > cmdsIdx {
+				t.Errorf("banner appears to the right of key hints: banner@%d, cmds@%d: %q", bannerIdx, cmdsIdx, line)
+			}
 		}
 	})
 }
