@@ -89,26 +89,3 @@ var keys = keyMap{
 		key.WithHelp("esc", "cancel / back"),
 	),
 }
-
-// footerBindings returns the 5 most important bindings for the always-visible
-// footer hint bar. Ordered by priority.
-func footerBindings() []key.Binding {
-	return []key.Binding{
-		keys.Commands,
-		keys.Search,
-		keys.Help,
-		keys.Copy,
-		keys.Quit,
-	}
-}
-
-// footerKeyMap wraps the footer bindings to implement help.KeyMap.
-type footerKeyMap struct{}
-
-func (f footerKeyMap) ShortHelp() []key.Binding {
-	return footerBindings()
-}
-
-func (f footerKeyMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{footerBindings()}
-}

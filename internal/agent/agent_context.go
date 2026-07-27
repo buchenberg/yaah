@@ -601,7 +601,7 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 
 	sysMsg := l.Messages[0]
 
-	budget := int(float64(preserveBudget(l.ContextWindow)) * l.compactionBudgetMultiplier) / 4
+	budget := int(float64(preserveBudget(l.ContextWindow))*l.compactionBudgetMultiplier) / 4
 	split := splitTail(l.Messages, budget)
 	keepMsgs := l.Messages[split.keepStart:]
 	oldMsgs := l.Messages[1:split.keepStart]

@@ -15,8 +15,8 @@ var modelWindows = map[string]int{
 	"gpt-4":         8192,
 	"gpt-3.5-turbo": 16385,
 
-	"o1":        200000,
-	"o1-mini":   128000,
+	"o1":         200000,
+	"o1-mini":    128000,
 	"o1-preview": 128000,
 
 	"claude-3.5-sonnet": 200000,

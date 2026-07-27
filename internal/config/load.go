@@ -25,7 +25,7 @@ type Defaults struct {
 	Model                 string  `yaml:"model"`
 	SmallModel            string  `yaml:"small_model"`
 	MaxIterations         int     `yaml:"max_iterations"`
-	MaxTurns              int     `yaml:"max_turns"` // soft cap on tool-using turns; 0 = off
+	MaxTurns              int     `yaml:"max_turns"`      // soft cap on tool-using turns; 0 = off
 	ContextWindow         int     `yaml:"context_window"` // max context window; resolved window from model is capped by this value
 	Approval              string  `yaml:"approval"`
 	MaxInlineToolsPerTurn int     `yaml:"max_inline_tools_per_turn"` // 0 = unlimited

@@ -590,10 +590,6 @@ func (m *Model) executeCommand(input string) {
 	}
 }
 
-// updateCommandSuggestions no longer relies on textinput suggestions.
-// Command matching is handled visually by the CommandPalette component.
-func (m *Model) updateCommandSuggestions() {}
-
 // selectModel applies the currently highlighted model and exits model mode.
 func (m *Model) selectModel() {
 	filtered := m.filteredModels()
@@ -737,7 +733,7 @@ func (m *Model) HandleEvent(evt agent.Event) {
 			note = " ⚠ " + e.IneffectiveNote
 		}
 		m.messages = append(m.messages, Message{
-			Role:    "compaction",
+			Role: "compaction",
 			Content: fmt.Sprintf("Compacted %.1fK → %.1fK tokens (%.0f%% savings, %s) in %.1fs%s",
 				beforeK, afterK, pct, e.Method, e.ElapsedSeconds, note),
 		})
@@ -846,7 +842,7 @@ func (m *Model) handleControlMsg(msg types.CtrlMsg) {
 			AnswerCh: ctrl.AnswerCh,
 		}
 		for i, o := range ctrl.Options {
-			m.questionModal.Options[i] = QuestionOption{Label: o.Label, Description: o.Description}
+			m.questionModal.Options[i] = QuestionOption(o)
 		}
 		m.questionIdx = 0
 		m.questionMulti = make([]bool, len(ctrl.Options))
