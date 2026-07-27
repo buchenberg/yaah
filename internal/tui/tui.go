@@ -1615,7 +1615,11 @@ func (m *Model) View() tea.View {
 
 	// Status bar (1 line): message count + context bar only.
 	// Provider/model is in the header; no need to duplicate.
-	status := NewStatusBar(m.cwd, len(m.messages), m.contextPct, m.contextWindow > 0, m.width).Render()
+	activeView := ""
+	if m.thinking || m.streaming {
+		activeView = m.spinner.View()
+	}
+	status := NewStatusBar(m.cwd, len(m.messages), m.contextPct, m.contextWindow > 0, m.width, activeView).Render()
 
 	// Ephemeral message line (shown only when active, auto-clears)
 	var ephemLine string

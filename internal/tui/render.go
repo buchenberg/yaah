@@ -390,7 +390,7 @@ func (m *Model) renderMessages() string {
 			rendered := lolcatRender(fmt.Sprintf("  %s Reasoning...", stripANSI(m.spinner.View())))
 			b.WriteString(rendered)
 			b.WriteString("\n\n")
-			b.WriteString(reasoningBgStyle.Width(m.width).Render(
+			b.WriteString(reasoningBgStyle.Width(m.width).PaddingLeft(4).Render(
 				thinkingStyle.Render(m.thinkContent)))
 		} else {
 			m.reasoningZones = append(m.reasoningZones, "reasoning-live")
@@ -400,7 +400,7 @@ func (m *Model) renderMessages() string {
 			} else {
 				b.WriteString(zone.Mark("reasoning-live", lolcatRender("  ▼ Reasoning...")))
 				b.WriteString("\n")
-				b.WriteString(reasoningBgStyle.Width(m.width).Render(
+				b.WriteString(reasoningBgStyle.Width(m.width).PaddingLeft(4).Render(
 					thinkingStyle.Render(m.thinkContent)))
 			}
 			b.WriteString("\n")
