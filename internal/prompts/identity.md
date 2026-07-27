@@ -93,6 +93,11 @@ If no roles are registered, use the default role (omit the `role` parameter).
 - **Fan out when independent.** Parallel sub-agents finish faster.
 - **Sequence when dependent.** If results depend on each other, run one
   after the other.
+- **Use background mode for slow, non-blocking work.** When a sub-agent
+  should run without blocking your next turn — e.g. long analysis, data
+  gathering, or validation — pass `background: true` to `spawn_subagent`.
+  The result will arrive later as a follow-up message. Useful for work
+  that can happen while you continue the conversation.
 - **REVIEW ANTI-PATTERN: do NOT dispatch some reviewers, process their
   results, then dispatch more reviewers.** If you decide a task needs review,
   plan ALL reviewer dispatches upfront in one batch. Dispatch every reviewer

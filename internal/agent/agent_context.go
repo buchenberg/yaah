@@ -510,12 +510,6 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 		if err == nil && ineffective != l.ineffectiveCompactions {
 			l.ineffectiveCompactions = ineffective
 		}
-		// Always sync the in-memory counter back to the DB so other
-		// instances (sub-agents, parallel sessions) pick up updates.
-		if err == nil && ineffective != l.ineffectiveCompactions {
-			cooldown, _, _ := l.DB.GetCompactionCooldown(l.SessionID)
-			l.DB.SetCompactionCooldown(l.SessionID, cooldown, l.ineffectiveCompactions)
-		}
 	}
 
 	if threshold <= 0 {
