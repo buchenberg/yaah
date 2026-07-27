@@ -1165,9 +1165,9 @@ func TestProtectReasoningTurns(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := protectReasoningTurns(tt.messages, tt.keepStart, tt.protectTurns)
+			got := ProtectReasoningTurns(tt.messages, tt.keepStart, tt.protectTurns)
 			if got != tt.wantKeepStart {
-				t.Errorf("protectReasoningTurns = %d, want %d", got, tt.wantKeepStart)
+				t.Errorf("ProtectReasoningTurns = %d, want %d", got, tt.wantKeepStart)
 			}
 		})
 	}

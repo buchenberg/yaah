@@ -482,7 +482,7 @@ func (s *agentSession) compactContext() {
 
 	totalChars := 0
 	for _, m := range msgs {
-		totalChars += len(m.Content)
+		totalChars += len(m.Content) + len(m.ReasoningContent)
 		for _, tc := range m.ToolCalls {
 			totalChars += len(tc.Function.Arguments) + len(tc.Function.Name)
 		}
@@ -504,6 +504,16 @@ func (s *agentSession) compactContext() {
 		return
 	}
 	split := len(rest) - keepRecent
+
+	if protect := s.cfg.Agent.Default.ReasoningProtect; protect > 0 {
+		if adj := agent.ProtectReasoningTurns(msgs, 1+split, protect); adj < 1+split {
+			split = adj - 1
+			if split < 0 {
+				split = 0
+			}
+		}
+	}
+
 	oldMsgs := rest[:split]
 	keepMsgs := rest[split:]
 
