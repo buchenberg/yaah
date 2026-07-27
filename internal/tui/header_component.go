@@ -15,22 +15,7 @@ var keyHintLines = []string{
 	"ctrl+c quit",
 }
 
-// Header renders the top-of-screen title block as a two-column grid:
-//
-//	┌──────────────────────────┬──────────────┐
-//	│  Banner (optional)       │  : commands  │
-//	│                          │  / search    │
-//	│  provider/model          │  ? help      │
-//	│                          │  ctrl+y copy │
-//	│                          │  ctrl+c quit │
-//	└──────────────────────────┴──────────────┘
-//
-// Left column: banner (optional) + provider/model.
-// Right column: stacked keybinding hints, right-aligned within the column.
-//
-// Columns are independent — adding content to one side does not affect the
-// other. Vertical sizing is dynamic: the header height is
-// max(left_height, right_height).
+// Header renders the top-of-screen title block as a two-column grid.
 type Header struct {
 	banner     string
 	provider   string
@@ -50,46 +35,103 @@ func NewHeader(banner, provider, model string, showBanner bool, width int) Heade
 	}
 }
 
+// cellBorderStyle returns a lipgloss style for inner cell borders.
+func cellBorderStyle(w int) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		Width(w)
+}
+
+// outerBorderStyle returns the lipgloss style for the outer header border.
+func outerBorderStyle(w int) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("205")).
+		Width(w)
+}
+
+// viewportBorderStyle returns the lipgloss style for the viewport border.
+func viewportBorderStyle(w int) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("205")).
+		Width(w)
+}
+
 // Height returns the number of visual lines the rendered header occupies.
-// Used by the model to size the viewport.
 func (h Header) Height() int {
-	leftH := 0
+	// Inner cells each add 2 border + 2 padding = 4 lines overhead.
+	// Outer header adds another 2 border + 2 padding = 4 lines.
+	cellOverhead := 4
+	outerOverhead := 4
+
+	leftLines := h.leftContentLines()
+	rightLines := len(keyHintLines) + 1 // key hints + provider line
+	cellH := max(leftLines, rightLines) + cellOverhead
+	return cellH + outerOverhead
+}
+
+func (h Header) leftContentLines() int {
 	if h.showBanner && h.banner != "" {
 		bannerLines := len(strings.Split(strings.TrimRight(h.banner, "\n"), "\n"))
-		leftH += bannerLines + 1 // +1 for blank separator after banner
+		return bannerLines + 1 + 1 // banner + blank line + provider line
 	}
-	leftH++ // provider/model line
-	rightH := len(keyHintLines)
-	if leftH > rightH {
-		return leftH
-	}
-	return rightH
+	return 1 // provider line
 }
 
-// Render returns the header as a two-column grid. The left column holds the
-// banner and provider/model; the right column holds the stacked key hints.
-// No trailing whitespace or padding newlines are added.
+// Render returns the header as two bordered cells inside an outer border.
 func (h Header) Render() string {
-	leftContent := h.renderLeft()
-	leftWidth := lipgloss.Width(leftContent)
-
-	rightWidth := h.width - leftWidth
-	if rightWidth < 1 {
-		rightWidth = 1
+	if h.width < 10 {
+		h.width = 10
 	}
-	rightContent := h.renderRight(rightWidth)
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, leftContent, rightContent)
+	// Outer border consumes 4 chars width (2 border + 2 padding).
+	outerWidth := h.width - 4
+	// Gap between the two inner cells.
+	gap := 2
+	// Each inner cell border consumes 4 chars width (2 border + 2 padding).
+	cellBorderW := 4
+
+	cellTotal := outerWidth - gap
+	leftCellW := cellTotal * 2 / 3
+	rightCellW := cellTotal - leftCellW
+
+	rightInnerW := max(1, rightCellW-cellBorderW)
+
+	leftContent := h.renderLeft()
+	rightContent := h.renderRight(rightInnerW)
+
+	leftCell := cellBorderStyle(leftCellW).Render(leftContent)
+	rightCell := cellBorderStyle(rightCellW).Render(rightContent)
+
+	// Balance heights so cells stack evenly.
+	leftLines := strings.Split(leftCell, "\n")
+	rightLines := strings.Split(rightCell, "\n")
+	for len(rightLines) < len(leftLines) {
+		rightCell += "\n" + strings.Repeat(" ", rightCellW)
+		rightLines = append(rightLines, "")
+	}
+	for len(leftLines) < len(rightLines) {
+		leftCell += "\n" + strings.Repeat(" ", leftCellW)
+		leftLines = append(leftLines, "")
+	}
+
+	// Place cells side by side with plain-text concatenation.
+	var combined []string
+	for i := 0; i < len(leftLines); i++ {
+		combined = append(combined, leftLines[i]+strings.Repeat(" ", gap)+rightLines[i])
+	}
+
+	return outerBorderStyle(h.width).Render(strings.Join(combined, "\n"))
 }
 
-// renderLeft builds the left column: banner (if shown), blank separator,
-// and the provider/model line.
+// renderLeft builds the left column content (no borders).
 func (h Header) renderLeft() string {
 	var lines []string
 	if h.showBanner && h.banner != "" {
 		banner := strings.TrimRight(h.banner, "\n")
 		lines = append(lines, strings.Split(banner, "\n")...)
-		lines = append(lines, "") // visual separator
+		lines = append(lines, "") // separator
 		lines = append(lines, titleStyle.Render(h.provider+"/"+h.model))
 	} else {
 		lines = append(lines, titleStyle.Render("yaah · "+h.provider+"/"+h.model))
@@ -97,8 +139,7 @@ func (h Header) renderLeft() string {
 	return strings.Join(lines, "\n")
 }
 
-// renderRight builds the right column: each key hint right-aligned within
-// the given column width, stacked vertically.
+// renderRight builds the right column content (no borders).
 func (h Header) renderRight(width int) string {
 	aligner := lipgloss.NewStyle().Width(width).Align(lipgloss.Right)
 	var lines []string
