@@ -1594,26 +1594,6 @@ func wrapParagraph(line string, width int) string {
 // handing to the viewport. Width is m.width; callers must ensure
 // m.width is set.
 
-// Reasoning content (from models like DeepSeek)
-
-// Streaming content
-
-// Thinking indicator (only when no reasoning text to show)
-
-// renderModelPalette renders the model selection list above the input.
-
-// Build display rows: provider heading + model items
-
-// Find the display row index for the selected model
-
-// Window calculation over display rows
-
-// renderCommandPalette renders the command suggestion list above the input.
-
-// renderQuestionModal renders the interactive question dialog.
-
-// Window calculation: show options around the highlighted index
-
 // View implements tea.Model.
 func (m *Model) View() tea.View {
 	if m.width == 0 {
@@ -1719,8 +1699,6 @@ func (m *Model) View() tea.View {
 	}
 	return v
 }
-
-// renderHelpOverlay renders a full help screen with all keybindings.
 
 // shortenCWD returns the current working directory with $HOME replaced
 // by ~, truncated to maxLen if longer.

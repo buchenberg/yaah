@@ -7,12 +7,10 @@ import (
 )
 
 const (
-	ansiReset  = "\x1b[0m"
-	ansiBold   = "\x1b[1m"
-	ansiDim    = "\x1b[2m"
-	ansiCyan   = "\x1b[36m"
-	ansiGreen  = "\x1b[32m"
-	ansiYellow = "\x1b[33m"
+	ansiReset = "\x1b[0m"
+	ansiBold  = "\x1b[1m"
+	ansiDim   = "\x1b[2m"
+	ansiCyan  = "\x1b[36m"
 )
 
 var useColor = true
@@ -28,11 +26,9 @@ func wrap(prefix, text string) string {
 	return prefix + text + ansiReset
 }
 
-func Bold(text string) string   { return wrap(ansiBold, text) }
-func Dim(text string) string    { return wrap(ansiDim, text) }
-func Cyan(text string) string   { return wrap(ansiCyan, text) }
-func Green(text string) string  { return wrap(ansiGreen, text) }
-func Yellow(text string) string { return wrap(ansiYellow, text) }
+func Bold(text string) string { return wrap(ansiBold, text) }
+func Dim(text string) string  { return wrap(ansiDim, text) }
+func Cyan(text string) string { return wrap(ansiCyan, text) }
 
 // Banner returns the startup splash screen for the REPL.
 func Banner(version string) string {

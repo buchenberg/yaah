@@ -82,11 +82,6 @@ func (c *OpenAIClient) Send(ctx context.Context, req types.ChatRequest) (*types.
 	return &result, nil
 }
 
-// ModelLister is an optional interface for providers that can list available models.
-type ModelLister interface {
-	ListModels(ctx context.Context) ([]string, error)
-}
-
 // ListModels fetches the available model IDs from the provider's /v1/models endpoint.
 func (c *OpenAIClient) ListModels(ctx context.Context) ([]string, error) {
 	url := c.baseURL + "/models"
@@ -155,16 +150,4 @@ func setSessionHeaders(req *http.Request, sessionID string) {
 	hexID := hex.EncodeToString(hash[:])
 	req.Header.Set("x-session-id", hexID)
 	req.Header.Set("x-session-affinity", hexID)
-}
-
-// EstimateTokens returns a rough token count using the char/4 heuristic.
-// This is a fallback; when a proper tokenizer is available (e.g. tiktoken),
-// it will be used instead. Accurate to within ~20% for English text.
-func EstimateTokens(text string) int {
-	// Rough estimate: 1 token ≈ 4 characters for English text
-	n := len(text)
-	if n == 0 {
-		return 0
-	}
-	return (n + 3) / 4
 }

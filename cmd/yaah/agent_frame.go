@@ -453,12 +453,6 @@ func (s *agentSession) SetModel(providerName, modelName string) {
 	s.modelName = modelName
 }
 
-func (s *agentSession) SetSystemPrompt(prompt string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.systemPrompt = prompt
-}
-
 func (s *agentSession) compactContext() {
 	s.mu.RLock()
 	ch := s.ctrlCh

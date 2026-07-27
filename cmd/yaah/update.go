@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"runtime"
 	"time"
 
@@ -120,6 +119,3 @@ func init() {
 	updateCmd.AddCommand(updateCheckCmd)
 	rootCmd.AddCommand(updateCmd)
 }
-
-// Suppress unused import warning when os is only used in conditional builds
-var _ = os.Stdout
