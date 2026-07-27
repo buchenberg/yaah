@@ -114,12 +114,10 @@ func (h Header) Render() string {
 	leftLines := strings.Split(leftCell, "\n")
 	rightLines := strings.Split(rightCell, "\n")
 	for len(rightLines) < len(leftLines) {
-		rightCell += "\n" + strings.Repeat(" ", rightCellW)
-		rightLines = append(rightLines, "")
+		rightLines = append(rightLines, strings.Repeat(" ", rightCellW))
 	}
 	for len(leftLines) < len(rightLines) {
-		leftCell += "\n" + strings.Repeat(" ", leftCellW)
-		leftLines = append(leftLines, "")
+		leftLines = append(leftLines, strings.Repeat(" ", leftCellW))
 	}
 
 	var combined []string
@@ -147,9 +145,9 @@ func (h Header) renderRight(width int) string {
 
 	// Provider/model line
 	if h.showBanner && h.banner != "" {
-		lines = append(lines, titleStyle.Render(h.provider+"/"+h.model))
+		lines = append(lines, aligner.Render(titleStyle.Render(h.provider+"/"+h.model)))
 	} else {
-		lines = append(lines, titleStyle.Render("yaah · "+h.provider+"/"+h.model))
+		lines = append(lines, aligner.Render(titleStyle.Render("yaah · "+h.provider+"/"+h.model)))
 	}
 
 	// MCP server status
