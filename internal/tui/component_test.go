@@ -219,7 +219,7 @@ func TestToolMessage_Render(t *testing.T) {
 
 func TestStatusBar_Render(t *testing.T) {
 	t.Run("without context window", func(t *testing.T) {
-		out := NewStatusBar("/home/user/proj", 5, 0, false, 80, "").Render()
+		out := NewStatusBar("/home/user/proj", 5, 0, false, 80).Render()
 		if !strings.Contains(out, "messages: 5") {
 			t.Errorf("expected message count, got %q", out)
 		}
@@ -229,17 +229,9 @@ func TestStatusBar_Render(t *testing.T) {
 	})
 
 	t.Run("with context window", func(t *testing.T) {
-		out := NewStatusBar("/home/user/proj", 5, 42, true, 80, "").Render()
+		out := NewStatusBar("/home/user/proj", 5, 42, true, 80).Render()
 		if !strings.Contains(out, "42%]") {
 			t.Errorf("expected context bar with percentage, got %q", out)
-		}
-	})
-
-	t.Run("active indicator", func(t *testing.T) {
-		out := NewStatusBar("/home/user/proj", 5, 0, false, 80, "...").Render()
-		plain := stripANSI(out)
-		if !strings.Contains(plain, "...") {
-			t.Errorf("expected active indicator, got %q", plain)
 		}
 	})
 }

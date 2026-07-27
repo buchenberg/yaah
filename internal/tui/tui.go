@@ -146,6 +146,7 @@ type Model struct {
 	compacting    bool   // currently running context compaction
 	streamContent string // accumulated streaming content
 	thinkContent  string // accumulated thinking/reasoning content
+	activePrompt string  // current prompt shown in info bar when active
 
 	// --- reasoning ---
 	reasoningExpanded map[string]bool // zone ID → true if expanded
@@ -1242,11 +1243,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg) tea.Cmd {
 			return nil
 		}
 		if m.thinking {
-			// Agent is running. Queue the text as a follow-up so it
-			// flows into the next iteration rather than being lost.
-			// Visually, render a pending-marker so the user can see
-			// their queued input.
-			m.AddMessage("user", value+"  ⏎")
+			m.activePrompt = value
 			m.input.SetValue("")
 			if m.onFollowUp != nil {
 				m.onFollowUp(value)
@@ -1255,8 +1252,8 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 		m.thinkContent = ""
 		m.reasoningExpanded = make(map[string]bool)
-		m.AddMessage("user", value)
 		m.SetThinking(true)
+		m.activePrompt = value
 		m.input.SetValue("")
 		if m.onSubmit != nil {
 			m.onSubmit(value)
@@ -1500,7 +1497,7 @@ func (m *Model) adjustViewport() {
 	}
 	// Reserve space for header, status line, minimum chat area, and overlays.
 	// Whatever is left is the maximum input height (including its border).
-	overhead := m.headerHeight() + NewStatusBar("", 0, 0, false, 0, "").Height()
+	overhead := m.headerHeight() + NewInfoBar("", "", 0).Height() + NewStatusBar("", 0, 0, false, 0).Height()
 	minChat := 5
 	if m.ephemMsg != "" {
 		overhead++
@@ -1619,13 +1616,16 @@ func (m *Model) View() tea.View {
 	// Header: figlet banner + provider/model line (or compact if hidden)
 	header := NewHeader(m.banner, m.provider, m.modelName, m.showBanner, m.width, m.mcpInfos).Render()
 
-	// Status bar (1 line): message count + context bar only.
-	// Provider/model is in the header; no need to duplicate.
 	activeView := ""
 	if m.thinking || m.streaming {
 		activeView = stripANSI(m.spinner.View())
 	}
-	status := NewStatusBar(m.cwd, len(m.messages), m.contextPct, m.contextWindow > 0, m.width, activeView).Render()
+
+	// Info bar (between header and viewport) — shows active prompt
+	infoBar := NewInfoBar(m.activePrompt, activeView, m.width).Render()
+
+	// Status bar (1 line): message count + context bar only.
+	status := NewStatusBar(m.cwd, len(m.messages), m.contextPct, m.contextWindow > 0, m.width).Render()
 
 	// Ephemeral message line (shown only when active, auto-clears)
 	var ephemLine string
@@ -1675,7 +1675,7 @@ func (m *Model) View() tea.View {
 		Width(m.width).
 		Render(inputView)
 
-	elements := []string{header, viewportView, status}
+	elements := []string{header, infoBar, viewportView, status}
 	if ephemLine != "" {
 		elements = append(elements, ephemLine)
 	}
