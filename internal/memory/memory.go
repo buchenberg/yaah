@@ -87,11 +87,9 @@ func (d *DB) Close() error {
 // sanitizeFTSQuery escapes special FTS5 characters and wraps each word
 // in quotes for exact matching.
 func sanitizeFTSQuery(query string) string {
-	// Split on whitespace, quote each term
 	words := strings.Fields(query)
 	var quoted []string
 	for _, w := range words {
-		// Escape double quotes inside the term
 		w = strings.ReplaceAll(w, `"`, `""`)
 		quoted = append(quoted, `"`+w+`"`)
 	}
@@ -397,147 +395,6 @@ func (d *DB) ListMemory(limit int) ([]Entry, error) {
 			return nil, err
 		}
 		results = append(results, e)
-	}
-	return results, rows.Err()
-}
-
-// CreateSession inserts a new session.
-func (d *DB) CreateSession(s Session) error {
-	_, err := d.sql.Exec(
-		`INSERT INTO sessions (id, started_at, ended_at, cwd, model, tokens_in, tokens_out, system_prompt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		s.ID, s.StartedAt, s.EndedAt, s.CWD, s.Model, s.TokensIn, s.TokensOut, s.SystemPrompt,
-	)
-	return err
-}
-
-// GetSession retrieves a single session by ID.
-func (d *DB) GetSession(id string) (Session, error) {
-	row := d.sql.QueryRow(`
-		SELECT id, started_at, COALESCE(ended_at, 0), cwd, model, tokens_in, tokens_out,
-			COALESCE(system_prompt, ''), COALESCE(compacted_summary, '')
-		FROM sessions WHERE id = ?
-	`, id)
-	var s Session
-	err := row.Scan(&s.ID, &s.StartedAt, &s.EndedAt, &s.CWD, &s.Model, &s.TokensIn, &s.TokensOut,
-		&s.SystemPrompt, &s.CompactedSummary)
-	return s, err
-}
-
-// ListSessions returns recent sessions.
-func (d *DB) ListSessions(limit int) ([]Session, error) {
-	rows, err := d.sql.Query(`
-		SELECT id, started_at, COALESCE(ended_at, 0), cwd, model, tokens_in, tokens_out,
-			COALESCE(system_prompt, ''), COALESCE(compacted_summary, '')
-		FROM sessions
-		ORDER BY started_at DESC
-		LIMIT ?
-	`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var results []Session
-	for rows.Next() {
-		var s Session
-		if err := rows.Scan(&s.ID, &s.StartedAt, &s.EndedAt, &s.CWD, &s.Model, &s.TokensIn, &s.TokensOut, &s.SystemPrompt, &s.CompactedSummary); err != nil {
-			return nil, err
-		}
-		results = append(results, s)
-	}
-	return results, rows.Err()
-}
-
-// EndSession sets the ended_at timestamp and final token counts for a session.
-func (d *DB) EndSession(id string, endedAt int64, tokensIn int, tokensOut int) error {
-	_, err := d.sql.Exec(`UPDATE sessions SET ended_at = ?, tokens_in = ?, tokens_out = ? WHERE id = ?`, endedAt, tokensIn, tokensOut, id)
-	return err
-}
-
-// UpdateSessionSummary persists the most recent compaction summary for a session.
-func (d *DB) UpdateSessionSummary(id string, summary string) error {
-	_, err := d.sql.Exec(`UPDATE sessions SET compacted_summary = ? WHERE id = ?`, summary, id)
-	return err
-}
-
-// GetCompactionCooldown returns the compaction cooldown state for a session.
-func (d *DB) GetCompactionCooldown(sessionID string) (cooldownUntil int64, ineffective int, err error) {
-	row := d.sql.QueryRow(
-		`SELECT COALESCE(compaction_cooldown_until, 0), COALESCE(ineffective_compactions, 0) FROM sessions WHERE id = ?`,
-		sessionID,
-	)
-	err = row.Scan(&cooldownUntil, &ineffective)
-	if err != nil {
-		return 0, 0, err
-	}
-	return
-}
-
-// SetCompactionCooldown persists the compaction cooldown state for a session.
-func (d *DB) SetCompactionCooldown(sessionID string, cooldownUntil int64, ineffective int) error {
-	_, err := d.sql.Exec(
-		`UPDATE sessions SET compaction_cooldown_until = ?, ineffective_compactions = ? WHERE id = ?`,
-		cooldownUntil, ineffective, sessionID,
-	)
-	return err
-}
-
-// AddMessage inserts a message into a session.
-func (d *DB) AddMessage(m Message) error {
-	_, err := d.sql.Exec(
-		`INSERT INTO messages (session_id, idx, role, content, reasoning_content, tool_name, tool_call_id, tool_calls, ts, id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.SessionID, m.Idx, m.Role, m.Content, m.ReasoningContent, m.ToolName, m.ToolCallID, m.ToolCalls, m.Timestamp, m.ID,
-	)
-	return err
-}
-
-// GetMessages returns all messages for a session.
-func (d *DB) GetMessages(sessionID string) ([]Message, error) {
-	rows, err := d.sql.Query(`
-		SELECT session_id, idx, role, content, COALESCE(reasoning_content, ''), tool_name, COALESCE(tool_call_id, ''), tool_calls, ts, COALESCE(id, '')
-		FROM messages
-		WHERE session_id = ?
-		ORDER BY idx
-	`, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var results []Message
-	for rows.Next() {
-		var m Message
-		if err := rows.Scan(&m.SessionID, &m.Idx, &m.Role, &m.Content, &m.ReasoningContent, &m.ToolName, &m.ToolCallID, &m.ToolCalls, &m.Timestamp, &m.ID); err != nil {
-			return nil, err
-		}
-		results = append(results, m)
-	}
-	return results, rows.Err()
-}
-
-// SearchMessages searches past session messages using FTS5.
-func (d *DB) SearchMessages(query string, limit int) ([]Message, error) {
-	safeQuery := sanitizeFTSQuery(query)
-	rows, err := d.sql.Query(`
-		SELECT m.session_id, m.idx, m.role, m.content, COALESCE(m.reasoning_content, ''), m.tool_name, COALESCE(m.tool_call_id, ''), m.tool_calls, m.ts, COALESCE(m.id, '')
-		FROM messages m
-		JOIN messages_fts ON messages_fts.rowid = m.rowid
-		WHERE messages_fts MATCH ?
-		ORDER BY rank
-		LIMIT ?
-	`, safeQuery, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var results []Message
-	for rows.Next() {
-		var m Message
-		if err := rows.Scan(&m.SessionID, &m.Idx, &m.Role, &m.Content, &m.ReasoningContent, &m.ToolName, &m.ToolCallID, &m.ToolCalls, &m.Timestamp, &m.ID); err != nil {
-			return nil, err
-		}
-		results = append(results, m)
 	}
 	return results, rows.Err()
 }
