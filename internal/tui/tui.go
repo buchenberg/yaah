@@ -1626,6 +1626,12 @@ func (m *Model) View() tea.View {
 	// Viewport holds the scrollable chat history
 	viewportView := m.viewport.View()
 
+	viewportView = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("205")).
+		Width(m.width).
+		Render(viewportView)
+
 	// Search indicator line
 	var searchLine string
 	if m.searchMode {

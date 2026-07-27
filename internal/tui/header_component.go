@@ -15,22 +15,11 @@ var keyHintLines = []string{
 	"ctrl+c quit",
 }
 
-// Header renders the top-of-screen title block as a two-column grid:
-//
-//	┌──────────────────────────┬──────────────┐
-//	│  Banner (optional)       │  : commands  │
-//	│                          │  / search    │
-//	│  provider/model          │  ? help      │
-//	│                          │  ctrl+y copy │
-//	│                          │  ctrl+c quit │
-//	└──────────────────────────┴──────────────┘
-//
-// Left column: banner (optional) + provider/model.
-// Right column: stacked keybinding hints, right-aligned within the column.
+// Header renders the top-of-screen title block as a two-column grid.
+// Left: banner (when shown). Right: provider/model + keybinding hints.
 //
 // Columns are independent — adding content to one side does not affect the
-// other. Vertical sizing is dynamic: the header height is
-// max(left_height, right_height).
+// other. Vertical sizing is dynamic.
 type Header struct {
 	banner     string
 	provider   string
@@ -51,25 +40,24 @@ func NewHeader(banner, provider, model string, showBanner bool, width int) Heade
 }
 
 // Height returns the number of visual lines the rendered header occupies.
-// Used by the model to size the viewport. Includes 2 lines for the rounded
-// border (top + bottom).
+// Includes 2 lines for the rounded border (top + bottom).
 func (h Header) Height() int {
 	leftH := 0
 	if h.showBanner && h.banner != "" {
 		bannerLines := len(strings.Split(strings.TrimRight(h.banner, "\n"), "\n"))
-		leftH += bannerLines + 1 // +1 for blank separator after banner
+		leftH = bannerLines + 1 // +1 for blank separator after banner
 	}
-	leftH++ // provider/model line
-	rightH := len(keyHintLines)
+	// Right column: provider line + key hints
+	rightH := 1 + len(keyHintLines)
 	contentH := leftH
-	if rightH > leftH {
+	if rightH > contentH {
 		contentH = rightH
 	}
 	return contentH + 2 // +2 for top/bottom border
 }
 
 // Render returns the header as a two-column grid wrapped in a rounded pink
-// border (matching the input area). No trailing newline is added.
+// border. Left: banner. Right: provider/model + key hints.
 func (h Header) Render() string {
 	innerWidth := h.width - 4
 	if innerWidth < 1 {
@@ -85,9 +73,6 @@ func (h Header) Render() string {
 	}
 	rightContent := h.renderRight(rightWidth)
 
-	// Use plain-text concatenation with space padding to combine the two
-	// columns — no ANSI cursor positioning (which lipgloss.JoinHorizontal
-	// uses internally and corrupts terminal state).
 	content := h.renderStacked(leftContent, leftWidth, rightContent)
 
 	return lipgloss.NewStyle().
@@ -98,26 +83,29 @@ func (h Header) Render() string {
 		Render(content)
 }
 
-// renderLeft builds the left column: banner (if shown), blank separator,
-// and the provider/model line.
+// renderLeft builds the left column: banner (if shown).
 func (h Header) renderLeft() string {
-	var lines []string
 	if h.showBanner && h.banner != "" {
 		banner := strings.TrimRight(h.banner, "\n")
-		lines = append(lines, strings.Split(banner, "\n")...)
-		lines = append(lines, "") // visual separator
+		return strings.Join(strings.Split(banner, "\n"), "\n")
+	}
+	return "yaah"
+}
+
+// renderRight builds the right column: provider/model at the top,
+// followed by stacked keybinding hints, right-aligned.
+func (h Header) renderRight(width int) string {
+	aligner := lipgloss.NewStyle().Width(width).Align(lipgloss.Right)
+	var lines []string
+
+	// Provider/model line
+	if h.showBanner && h.banner != "" {
 		lines = append(lines, titleStyle.Render(h.provider+"/"+h.model))
 	} else {
 		lines = append(lines, titleStyle.Render("yaah · "+h.provider+"/"+h.model))
 	}
-	return strings.Join(lines, "\n")
-}
 
-// renderRight builds the right column: each key hint right-aligned within
-// the given column width, stacked vertically.
-func (h Header) renderRight(width int) string {
-	aligner := lipgloss.NewStyle().Width(width).Align(lipgloss.Right)
-	var lines []string
+	// Key hints
 	for _, hint := range keyHintLines {
 		styled := commandDescStyle.Render(hint)
 		lines = append(lines, aligner.Render(styled))
@@ -126,14 +114,11 @@ func (h Header) renderRight(width int) string {
 }
 
 // renderStacked composes the two columns using plain-text concatenation
-// with space padding. First line places left content and right-hint side
-// by side; subsequent lines pad the left area with spaces so the right
-// column aligns vertically. No ANSI cursor positioning — safe for viewport.
+// with space padding. No ANSI cursor positioning — safe for viewport.
 func (h Header) renderStacked(left string, leftWidth int, right string) string {
 	leftLines := strings.Split(left, "\n")
 	rightLines := strings.Split(right, "\n")
 
-	// If left is taller than right, pad right with empty lines.
 	for len(rightLines) < len(leftLines) {
 		rightLines = append(rightLines, "")
 	}
