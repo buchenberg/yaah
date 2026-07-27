@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.34.0](https://github.com/buchenberg/yaah/compare/v0.33.4...v0.34.0) (2026-07-27)
+
+
+### Features
+
+* **agent:** compaction optimizations — chunked fallback, overflow patterns, events, pruner improvements ([da14394](https://github.com/buchenberg/yaah/commit/da14394f9452b0a2b0b23b847060baf4b8ee60a5))
+* **providers:** resolve context window from model metadata with config cap ([af7e4c8](https://github.com/buchenberg/yaah/commit/af7e4c8aa0df07e3ff5aea040f9e52446ad07138))
+* **tui:** lolcat thinking, Esc/:stop abort, textarea, reasoning compaction, Session interface, and view layer refactor ([#81](https://github.com/buchenberg/yaah/issues/81)) ([c675b83](https://github.com/buchenberg/yaah/commit/c675b83de749ef688dc3357c54aa7750200150ae))
+
+
+### Bug Fixes
+
+* **persist:** store and restore reasoning_content across session resume ([c3e0c00](https://github.com/buchenberg/yaah/commit/c3e0c00c3555e3d6451df19c276a160dee2dd48e))
+
 ## [0.33.4](https://github.com/buchenberg/yaah/compare/v0.33.3...v0.33.4) (2026-07-26)
 
 
