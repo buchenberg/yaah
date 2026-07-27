@@ -418,9 +418,9 @@ func (d *DB) ListSessions(limit int) ([]Session, error) {
 	return results, rows.Err()
 }
 
-// EndSession sets the ended_at timestamp for a session.
-func (d *DB) EndSession(id string, endedAt int64) error {
-	_, err := d.sql.Exec(`UPDATE sessions SET ended_at = ? WHERE id = ?`, endedAt, id)
+// EndSession sets the ended_at timestamp and final token counts for a session.
+func (d *DB) EndSession(id string, endedAt int64, tokensIn int, tokensOut int) error {
+	_, err := d.sql.Exec(`UPDATE sessions SET ended_at = ?, tokens_in = ?, tokens_out = ? WHERE id = ?`, endedAt, tokensIn, tokensOut, id)
 	return err
 }
 

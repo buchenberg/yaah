@@ -375,7 +375,7 @@ func TestDB_EndSession(t *testing.T) {
 		ID: "sess-1", StartedAt: 1000, CWD: "/tmp", Model: "gpt-4o",
 	})
 
-	if err := db.EndSession("sess-1", 2000); err != nil {
+	if err := db.EndSession("sess-1", 2000, 500, 300); err != nil {
 		t.Fatalf("EndSession() error: %v", err)
 	}
 
@@ -385,6 +385,12 @@ func TestDB_EndSession(t *testing.T) {
 	}
 	if sessions[0].EndedAt != 2000 {
 		t.Errorf("expected ended_at=2000, got %d", sessions[0].EndedAt)
+	}
+	if sessions[0].TokensIn != 500 {
+		t.Errorf("expected tokens_in=500, got %d", sessions[0].TokensIn)
+	}
+	if sessions[0].TokensOut != 300 {
+		t.Errorf("expected tokens_out=300, got %d", sessions[0].TokensOut)
 	}
 }
 

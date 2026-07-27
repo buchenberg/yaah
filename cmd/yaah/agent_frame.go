@@ -95,6 +95,7 @@ type agentSession struct {
 
 	steerCh    chan string
 	followupCh chan string
+	totalUsage types.Usage
 }
 
 func newAgentSession() (*agentSession, error) {
@@ -375,7 +376,7 @@ func (s *agentSession) close() {
 		s.otelShutdown(ctx)
 	}
 	if s.db != nil {
-		s.db.EndSession(s.sessionID, time.Now().Unix())
+		s.db.EndSession(s.sessionID, time.Now().Unix(), s.totalUsage.PromptTokens, s.totalUsage.CompletionTokens)
 		s.db.Close()
 	}
 	for _, c := range s.mcpClients {
@@ -741,6 +742,12 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 
 	s.messages = loop.Messages
 	s.msgIdx = loop.Persister.MsgIdx()
+
+	s.mu.Lock()
+	s.totalUsage.PromptTokens += loop.TotalTokens.PromptTokens
+	s.totalUsage.CompletionTokens += loop.TotalTokens.CompletionTokens
+	s.totalUsage.TotalTokens += loop.TotalTokens.TotalTokens
+	s.mu.Unlock()
 
 	if ctrl != nil {
 		if err != nil {
