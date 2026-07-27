@@ -141,13 +141,25 @@ type RoleConfig struct {
 	StuckChildTimeout int    `yaml:"stuck_child_timeout"` // seconds; 0 = use global default
 }
 
+// MCPServerConfig holds the configuration for a single MCP server,
+// mirroring the fields of mcp.Manifest with yaml tags for config.yaml.
+type MCPServerConfig struct {
+	Command   string            `yaml:"command,omitempty"`
+	Args      []string          `yaml:"args,omitempty"`
+	Env       map[string]string `yaml:"env,omitempty"`
+	URL       string            `yaml:"url,omitempty"`
+	Transport string            `yaml:"transport,omitempty"` // "stdio" (default) or "http"
+	Framing   string            `yaml:"framing,omitempty"`   // stdio only: "" (auto), "newline", "framed"
+}
+
 // Config is the full yaah configuration loaded from ~/.yaah/config.yaml.
 type Config struct {
-	Providers     map[string]Provider `yaml:"providers"`
-	Agent         AgentConfig         `yaml:"agents"`
-	Hooks         Hooks               `yaml:"hooks"`
-	Editor        string              `yaml:"editor"`
-	Observability ObservabilityConfig `yaml:"observability"`
+	Providers     map[string]Provider        `yaml:"providers"`
+	Agent         AgentConfig                `yaml:"agents"`
+	MCPServers    map[string]MCPServerConfig `yaml:"mcp_servers"`
+	Hooks         Hooks                      `yaml:"hooks"`
+	Editor        string                     `yaml:"editor"`
+	Observability ObservabilityConfig        `yaml:"observability"`
 }
 
 // ObservabilityConfig holds OpenTelemetry tracing and metrics settings.
@@ -208,12 +220,24 @@ func defaultConfig() *Config {
 // envVarRe matches ${VAR_NAME} patterns for env substitution.
 var envVarRe = regexp.MustCompile(`\$\{([A-Z_][A-Z0-9_]*)\}`)
 
-// substituteEnvVars replaces ${VAR} patterns with the corresponding env var.
-func substituteEnvVars(s string) string {
+// SubstituteEnv replaces ${VAR} patterns with the corresponding env var.
+func SubstituteEnv(s string) string {
 	return envVarRe.ReplaceAllStringFunc(s, func(match string) string {
 		varName := match[2 : len(match)-1] // strip ${ and }
 		return os.Getenv(varName)
 	})
+}
+
+// Resolve returns a copy of the Provider with ${VAR} references
+// in APIKey and BaseURL substituted by environment variables.
+func Resolve(p Provider) Provider {
+	return Provider{
+		BaseURL:        SubstituteEnv(p.BaseURL),
+		APIKey:         SubstituteEnv(p.APIKey),
+		Name:           p.Name,
+		Models:         p.Models,
+		TimeoutSeconds: p.TimeoutSeconds,
+	}
 }
 
 // Load reads the config file from ConfigPath(). If the file doesn't exist,
@@ -236,13 +260,6 @@ func Load() (*Config, error) {
 	cfg := defaultConfig()
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("cannot parse config %s: %w", path, err)
-	}
-
-	// Substitute env vars in provider fields
-	for name, p := range cfg.Providers {
-		p.APIKey = substituteEnvVars(p.APIKey)
-		p.BaseURL = substituteEnvVars(p.BaseURL)
-		cfg.Providers[name] = p
 	}
 
 	if cfg.Hooks.Dir != "" {

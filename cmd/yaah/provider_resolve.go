@@ -75,8 +75,9 @@ func resolveModel(cfg *config.Config) string {
 // makeProvider returns a provider for the given config entry if it's usable
 // (has a real API key or a local base URL). Returns nil, false otherwise.
 func makeProvider(p config.Provider) (agent.Provider, bool) {
-	if isRealKey(p.APIKey) || p.BaseURL != "" {
-		return providers.NewOpenAIClient(p.BaseURL, p.APIKey, p.TimeoutSeconds), true
+	r := config.Resolve(p)
+	if isRealKey(r.APIKey) || r.BaseURL != "" {
+		return providers.NewOpenAIClient(r.BaseURL, r.APIKey, r.TimeoutSeconds), true
 	}
 	return nil, false
 }

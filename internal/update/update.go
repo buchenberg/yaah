@@ -1,7 +1,5 @@
 // Package update handles checking for and applying yaah updates from
-// GitHub Releases. In v0.1 only --check (read-only) is implemented;
-// the full download + verify + atomic-replace flow is wired but the
-// actual binary swap is a no-op until we have signed releases.
+// GitHub Releases.
 package update
 
 import (
@@ -54,4 +52,20 @@ func AssetName(goos, goarch string) string {
 		name += ".exe"
 	}
 	return name
+}
+
+// BinaryName returns the yaah binary filename for a given OS.
+func BinaryName(goos string) string {
+	if goos == "windows" {
+		return "yaah.exe"
+	}
+	return "yaah"
+}
+
+// OldName returns the backup filename for the replaced binary.
+func OldName(goos string) string {
+	if goos == "windows" {
+		return "yaah.old.exe"
+	}
+	return "yaah.old"
 }

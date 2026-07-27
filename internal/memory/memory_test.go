@@ -375,7 +375,7 @@ func TestDB_EndSession(t *testing.T) {
 		ID: "sess-1", StartedAt: 1000, CWD: "/tmp", Model: "gpt-4o",
 	})
 
-	if err := db.EndSession("sess-1", 2000); err != nil {
+	if err := db.EndSession("sess-1", 2000, 500, 300); err != nil {
 		t.Fatalf("EndSession() error: %v", err)
 	}
 
@@ -385,6 +385,12 @@ func TestDB_EndSession(t *testing.T) {
 	}
 	if sessions[0].EndedAt != 2000 {
 		t.Errorf("expected ended_at=2000, got %d", sessions[0].EndedAt)
+	}
+	if sessions[0].TokensIn != 500 {
+		t.Errorf("expected tokens_in=500, got %d", sessions[0].TokensIn)
+	}
+	if sessions[0].TokensOut != 300 {
+		t.Errorf("expected tokens_out=300, got %d", sessions[0].TokensOut)
 	}
 }
 
@@ -453,5 +459,95 @@ func TestDB_SearchMemory_TagNotFound(t *testing.T) {
 	results, _ := db.SearchMemory("", 10, "nonexistent")
 	if len(results) != 0 {
 		t.Errorf("expected 0 results for non-matching tag, got %d", len(results))
+	}
+}
+
+func TestDB_CreateSession_storesSystemPrompt(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	db.CreateSession(Session{
+		ID:           "sess-1",
+		StartedAt:    1000,
+		CWD:          "/tmp",
+		Model:        "gpt-4o",
+		SystemPrompt: "You are a helpful assistant.",
+	})
+
+	s, err := db.GetSession("sess-1")
+	if err != nil {
+		t.Fatalf("GetSession() error: %v", err)
+	}
+	if s.SystemPrompt != "You are a helpful assistant." {
+		t.Errorf("SystemPrompt = %q, want %q", s.SystemPrompt, "You are a helpful assistant.")
+	}
+}
+
+func TestDB_UpdateSessionSummary_persistsCorrectly(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	db.CreateSession(Session{ID: "sess-1", StartedAt: 1000})
+
+	if err := db.UpdateSessionSummary("sess-1", "Compacted context about file changes."); err != nil {
+		t.Fatalf("UpdateSessionSummary() error: %v", err)
+	}
+
+	s, err := db.GetSession("sess-1")
+	if err != nil {
+		t.Fatalf("GetSession() error: %v", err)
+	}
+	if s.CompactedSummary != "Compacted context about file changes." {
+		t.Errorf("CompactedSummary = %q, want %q", s.CompactedSummary, "Compacted context about file changes.")
+	}
+}
+
+func TestDB_ListSessions_returnsNewFields(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	db.CreateSession(Session{
+		ID: "sess-1", StartedAt: 1000, SystemPrompt: "System A",
+	})
+	db.UpdateSessionSummary("sess-1", "summary-A")
+
+	sessions, err := db.ListSessions(10)
+	if err != nil {
+		t.Fatalf("ListSessions() error: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(sessions))
+	}
+	if sessions[0].SystemPrompt != "System A" {
+		t.Errorf("SystemPrompt = %q, want %q", sessions[0].SystemPrompt, "System A")
+	}
+	if sessions[0].CompactedSummary != "summary-A" {
+		t.Errorf("CompactedSummary = %q, want %q", sessions[0].CompactedSummary, "summary-A")
+	}
+}
+
+func TestDB_GetSession_nonexistentReturnsError(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	_, err = db.GetSession("nonexistent")
+	if err == nil {
+		t.Error("expected error for nonexistent session")
 	}
 }

@@ -706,6 +706,7 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 			cooldown = time.Now().Unix() + 600
 		}
 		l.DB.SetCompactionCooldown(l.SessionID, cooldown, l.ineffectiveCompactions)
+		l.DB.UpdateSessionSummary(l.SessionID, summary)
 	}
 }
 

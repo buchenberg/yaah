@@ -32,16 +32,38 @@ try {
 $InstallDir = Join-Path $env:LOCALAPPDATA "yaah"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $Dest = Join-Path $InstallDir "yaah.exe"
+
+# Clean up leftover .old binary from a previous update.
+$OldDest = Join-Path $InstallDir "yaah.old.exe"
+if (Test-Path $OldDest) {
+    Remove-Item -Force $OldDest
+}
+
 Move-Item -Force $TmpFile $Dest
 
 Write-Host "  installed yaah to $Dest" -ForegroundColor Green
 
+# Check if install directory is in PATH and offer to add it.
 $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($UserPath -notlike "*$InstallDir*") {
-    Write-Host -ForegroundColor Yellow "  WARN $InstallDir is not in your user PATH"
-    Write-Host -ForegroundColor Yellow "  Add it in Settings > System > About > Advanced system settings > Environment Variables"
-    Write-Host -ForegroundColor Yellow "  Or run:"
-    Write-Host -ForegroundColor Yellow '    [Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";' + $InstallDir + '", "User")'
+    Write-Host -ForegroundColor Yellow "  WARN  $InstallDir is not in your user PATH."
+    Write-Host -ForegroundColor Yellow "         yaah won't be available from the terminal unless you add it."
+
+    $Choice = Read-Host "  Add $InstallDir to your user PATH? [Y/n]"
+    if ($Choice -eq '' -or $Choice -eq 'y' -or $Choice -eq 'Y') {
+        $NewPath = $UserPath
+        if ($NewPath -and (-not $NewPath.EndsWith(';'))) {
+            $NewPath += ';'
+        }
+        $NewPath += $InstallDir
+        [Environment]::SetEnvironmentVariable("Path", $NewPath, "User")
+        [Environment]::SetEnvironmentVariable("Path", $NewPath, "Process")
+        Write-Host -ForegroundColor Green "  Added $InstallDir to your user PATH."
+        Write-Host -ForegroundColor Green "  Restart your terminal for the change to take effect."
+    } else {
+        Write-Host -ForegroundColor Yellow "  To add it later, run:"
+        Write-Host -ForegroundColor Yellow '    [Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";' + "$InstallDir" + '", "User")'
+    }
 }
 
 Write-Host ""
