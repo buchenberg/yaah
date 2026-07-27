@@ -81,6 +81,18 @@ agents:
 #   dir: ~/.yaah/hooks
 
 # editor: code --wait
+
+# mcp_servers:
+#   filesystem:
+#     command: npx
+#     args:
+#       - -y
+#       - "@modelcontextprotocol/server-filesystem"
+#       - /tmp
+#     transport: stdio
+#   github:
+#     url: http://localhost:3333/mcp
+#     transport: http
 `
 
 // CreateDefault writes a scaffold config file to ConfigPath() if and only

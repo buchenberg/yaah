@@ -152,3 +152,58 @@ func StartMCPClientsWithStderr(ctx context.Context, dirs []string, stderr io.Wri
 
 	return clients, tools, infos, nil
 }
+
+// StartMCPClientsFromConfig starts MCP clients from a map of named Manifests
+// (e.g. from config.yaml's mcp_servers section). The stderr parameter controls
+// where stdio MCP server stderr is written; pass io.Discard for TUIs.
+func StartMCPClientsFromConfig(ctx context.Context, manifests map[string]*Manifest, stderr io.Writer) ([]MCPClient, []*MCPTool, []ServerInfo, error) {
+	var clients []MCPClient
+	var tools []*MCPTool
+	var infos []ServerInfo
+
+	for name, manifest := range manifests {
+		var client MCPClient
+		var err error
+
+		switch manifest.Transport {
+		case "http":
+			httpClient := NewHTTPClient(name, manifest.URL)
+			err = httpClient.Initialize(ctx)
+			client = httpClient
+		case "stdio":
+			stdioClient := NewClient(name, *manifest)
+			stdioClient.SetStderr(stderr)
+			err = stdioClient.Start(ctx)
+			if err == nil {
+				err = stdioClient.Initialize(ctx)
+			}
+			client = stdioClient
+		default:
+			continue
+		}
+
+		info := client.Info()
+		if err != nil {
+			info.Connected = false
+			info.Error = err.Error()
+			infos = append(infos, info)
+			continue
+		}
+
+		clients = append(clients, client)
+
+		// Wrap each tool
+		if httpC, ok := client.(*HTTPClient); ok {
+			for _, tool := range httpC.Tools() {
+				tools = append(tools, NewMCPTool(tool, client))
+			}
+		} else if stdioC, ok := client.(*Client); ok {
+			for _, tool := range stdioC.Tools() {
+				tools = append(tools, NewMCPTool(tool, client))
+			}
+		}
+		infos = append(infos, info)
+	}
+
+	return clients, tools, infos, nil
+}

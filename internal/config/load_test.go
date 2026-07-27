@@ -108,9 +108,16 @@ providers:
 		t.Fatalf("Load() error: %v", err)
 	}
 
-	if cfg.Providers["openai"].APIKey != "sk-from-env-456" {
-		t.Errorf("Providers[openai].APIKey = %q, want %q (env substitution failed)",
-			cfg.Providers["openai"].APIKey, "sk-from-env-456")
+	// Load preserves raw ${VAR} references — Resolve() substitutes them.
+	if cfg.Providers["openai"].APIKey != "${OPENAI_API_KEY}" {
+		t.Errorf("Providers[openai].APIKey = %q, want %q (raw ${VAR} not preserved)",
+			cfg.Providers["openai"].APIKey, "${OPENAI_API_KEY}")
+	}
+
+	resolved := Resolve(cfg.Providers["openai"])
+	if resolved.APIKey != "sk-from-env-456" {
+		t.Errorf("Resolve().APIKey = %q, want %q (env substitution failed)",
+			resolved.APIKey, "sk-from-env-456")
 	}
 }
 

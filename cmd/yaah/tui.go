@@ -56,7 +56,8 @@ func fetchAllModels(ctx context.Context, cfg *config.Config) []string {
 			continue
 		}
 
-		client := providers.NewOpenAIClient(p.BaseURL, p.APIKey, p.TimeoutSeconds)
+		r := config.Resolve(p)
+		client := providers.NewOpenAIClient(r.BaseURL, r.APIKey, r.TimeoutSeconds)
 		models, err := client.ListModels(ctx)
 		if err != nil {
 			log.Printf("fetch models from %s: %v", name, err)
