@@ -1658,7 +1658,7 @@ func (m *Model) View() tea.View {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("205")).
 		Padding(0, 1).
-		Width(m.width - 4).
+		Width(m.width).
 		Render(inputView)
 
 	elements := []string{header, viewportView, status}
