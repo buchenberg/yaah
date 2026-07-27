@@ -284,6 +284,51 @@ func splitTurn(messages []types.Message, t turnRange, budget int) int {
 // enclosing user turn and return that index (or keepStart, whichever is earlier).
 // If fewer than protectTurns reasoning messages exist, protects whatever is
 // available by walking backward through oldMsgs.
+// applyCompactedSummary replaces the message list with the compacted summary
+// plus kept messages. It is called by both the normal and chunked compaction
+// paths so they share the same post-compaction logic.
+func (l *Loop) applyCompactedSummary(summary string, sysMsg types.Message, oldMsgs, keepMsgs []types.Message) {
+	l.PreviousSummary = summary
+
+	newMsgs := []types.Message{sysMsg}
+	if l.SystemPrompt == "" {
+		newMsgs[0] = types.SystemMsg(summary)
+	} else {
+		newMsgs = append(newMsgs, types.SystemMsg("Previous conversation summary:\n"+summary))
+	}
+
+	// Preserve the most recent user prompt verbatim so the model retains
+	// its active task even after compaction summarizes older context.
+	if lastUser := lastUserPrompt(oldMsgs); lastUser != "" {
+		alreadyKept := false
+		for _, m := range keepMsgs {
+			if m.Role == "user" && m.Content == lastUser {
+				alreadyKept = true
+				break
+			}
+		}
+		if !alreadyKept {
+			newMsgs = append(newMsgs, types.SystemMsg("Active task (preserve verbatim):\n"+lastUser))
+		}
+	}
+
+	newMsgs = append(newMsgs, keepMsgs...)
+	beforeEstimate := l.EstimatedTokens()
+	l.Messages = newMsgs
+	l.resetPruner()
+
+	afterEstimate := l.EstimatedTokens()
+	if beforeEstimate > 0 {
+		savings := float64(beforeEstimate-afterEstimate) / float64(beforeEstimate)
+		if savings < 0.10 {
+			l.ineffectiveCompactions++
+		} else {
+			l.ineffectiveCompactions = 0
+		}
+	}
+	l.lastCompactionTokens = afterEstimate
+}
+
 func protectReasoningTurns(messages []types.Message, keepStart, protectTurns int) int {
 	if protectTurns <= 0 || keepStart <= 1 {
 		return keepStart
@@ -366,6 +411,27 @@ func pruneMessages(msgs []types.Message, maxLen int) []types.Message {
 	return out
 }
 
+// formatToolStub produces a compact, structured summary of a tool result
+// message for the compaction serializer. Instead of embedding the full output
+// (which can be thousands of lines of grep/cat/ls results), it emits a stub
+// with line count and the first meaningful snippet.
+func formatToolStub(m types.Message) string {
+	content := strings.TrimSpace(m.Content)
+	if content == "" {
+		return fmt.Sprintf("[tool:%s (empty output)]", m.Name)
+	}
+	lines := strings.Count(content, "\n") + 1
+	chars := len(content)
+	firstLine := content
+	if idx := strings.IndexByte(content, '\n'); idx > 0 {
+		firstLine = content[:idx]
+	}
+	if len(firstLine) > 120 {
+		firstLine = firstLine[:120] + "..."
+	}
+	return fmt.Sprintf("[tool:%s — %d lines, %d chars, starts: %q]", m.Name, lines, chars, firstLine)
+}
+
 // compactContext checks if the estimated token count exceeds the given
 // fraction of ContextWindow. If threshold is 0, defaults to 0.25 (25%).
 // If over budget, it uses the LLM to summarize old messages into a
@@ -404,6 +470,12 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 		}
 		if err == nil && ineffective > l.ineffectiveCompactions {
 			l.ineffectiveCompactions = ineffective
+		}
+		// Always sync the in-memory counter back to the DB so other
+		// instances (sub-agents, parallel sessions) pick up updates.
+		if err == nil && ineffective != l.ineffectiveCompactions {
+			cooldown, _, _ := l.DB.GetCompactionCooldown(l.SessionID)
+			l.DB.SetCompactionCooldown(l.SessionID, cooldown, l.ineffectiveCompactions)
 		}
 	}
 
@@ -458,6 +530,23 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 		return
 	}
 
+	// Determine compaction reason for event consumers.
+	compactReason := "threshold"
+	if l.compactionForcedByOverflow {
+		compactReason = "overflow"
+		l.compactionForcedByOverflow = false
+	}
+
+	if l.broker != nil {
+		l.broker.Publish(&CompactionStartedEvent{
+			BeforeTokens: rawTokens,
+			TargetTokens: target,
+			Reason:       compactReason,
+		})
+	}
+
+	startTime := time.Now()
+
 	if l.OtelEnabled {
 		_, span := otel.Tracer("yaah").Start(ctx, "compaction",
 			trace.WithAttributes(
@@ -473,7 +562,7 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 
 	sysMsg := l.Messages[0]
 
-	budget := preserveBudget(l.ContextWindow)
+	budget := preserveBudget(l.ContextWindow) / 4
 	split := splitTail(l.Messages, budget)
 	keepMsgs := l.Messages[split.keepStart:]
 	oldMsgs := l.Messages[1:split.keepStart]
@@ -504,7 +593,11 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	sb.WriteString("Conversation excerpt to summarize:\n\n")
 	for _, m := range oldMsgs {
 		if m.Content != "" {
-			sb.WriteString(fmt.Sprintf("%s: %s\n", m.Role, m.Content))
+			if m.Role == "tool" {
+				sb.WriteString(formatToolStub(m) + "\n")
+			} else {
+				sb.WriteString(fmt.Sprintf("%s: %s\n", m.Role, m.Content))
+			}
 		}
 		for _, tc := range m.ToolCalls {
 			sb.WriteString(fmt.Sprintf("[tool:%s] %s\n", tc.Function.Name, tc.Function.Arguments))
@@ -533,49 +626,40 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	beforeEstimate := l.EstimatedTokens()
 	resp, err := compactProvider.Send(ctx, req)
 	if err != nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+		// Primary compaction failed — try chunked fallback before giving up.
+		if len(oldMsgs) > minChunkTokens {
+			if chunkSummary, chunkErr := l.chunkedCompact(ctx, oldMsgs, compactModel); chunkErr == nil && chunkSummary != "" {
+				l.applyCompactedSummary(chunkSummary, sysMsg, oldMsgs, keepMsgs)
+				return
+			}
+		}
 		l.trimContext()
 		return
 	}
 
 	summary := resp.Choices[0].Message.Content
-	l.PreviousSummary = summary
-
-	newMsgs := []types.Message{sysMsg}
-	if l.SystemPrompt == "" {
-		newMsgs[0] = types.SystemMsg(summary)
-	} else {
-		newMsgs = append(newMsgs, types.SystemMsg("Previous conversation summary:\n"+summary))
-	}
-
-	// Preserve the most recent user prompt verbatim so the model retains
-	// its active task even after compaction summarizes older context.
-	if lastUser := lastUserPrompt(oldMsgs); lastUser != "" {
-		alreadyKept := false
-		for _, m := range keepMsgs {
-			if m.Role == "user" && m.Content == lastUser {
-				alreadyKept = true
-				break
-			}
-		}
-		if !alreadyKept {
-			newMsgs = append(newMsgs, types.SystemMsg("Active task (preserve verbatim):\n"+lastUser))
-		}
-	}
-
-	newMsgs = append(newMsgs, keepMsgs...)
-	l.Messages = newMsgs
-	l.resetPruner()
-
+	l.applyCompactedSummary(summary, sysMsg, oldMsgs, keepMsgs)
 	afterEstimate := l.EstimatedTokens()
+	savingsPct := 0.0
+	ineffectiveNote := ""
 	if beforeEstimate > 0 {
-		savings := float64(beforeEstimate-afterEstimate) / float64(beforeEstimate)
-		if savings < 0.10 {
-			l.ineffectiveCompactions++
-		} else {
-			l.ineffectiveCompactions = 0
-		}
+		savingsPct = float64(beforeEstimate-afterEstimate) / float64(beforeEstimate)
 	}
-	l.lastCompactionTokens = afterEstimate
+
+	if l.ineffectiveCompactions >= 2 {
+		ineffectiveNote = fmt.Sprintf("compaction ineffective %d times; cooldown active", l.ineffectiveCompactions)
+	}
+
+	if l.broker != nil {
+		l.broker.Publish(&CompactionDoneEvent{
+			BeforeTokens:    beforeEstimate,
+			AfterTokens:     afterEstimate,
+			SavingsPct:      savingsPct,
+			Method:          "single",
+			ElapsedSeconds:  time.Since(startTime).Seconds(),
+			IneffectiveNote: ineffectiveNote,
+		})
+	}
 
 	if l.SessionID != "" && l.DB != nil {
 		cooldown := int64(0)

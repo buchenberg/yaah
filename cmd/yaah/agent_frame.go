@@ -248,10 +248,11 @@ func newAgentSession() (*agentSession, error) {
 		messages = make([]types.Message, 0, len(dbMsgs))
 		for _, m := range dbMsgs {
 			msg := types.Message{
-				Role:       m.Role,
-				Content:    m.Content,
-				Name:       m.ToolName,
-				ToolCallID: m.ToolCallID,
+				Role:             m.Role,
+				Content:          m.Content,
+				ReasoningContent: m.ReasoningContent,
+				Name:             m.ToolName,
+				ToolCallID:       m.ToolCallID,
 			}
 			if m.ToolCalls != "" {
 				json.Unmarshal([]byte(m.ToolCalls), &msg.ToolCalls)
@@ -599,6 +600,17 @@ func (v *terminalView) HandleEvent(evt agent.Event) {
 		if e.Error != "" {
 			fmt.Fprintf(os.Stderr, "    %s\n", replYellow("error: "+e.Error))
 		}
+
+	case *agent.CompactionStartedEvent:
+		// No-op in terminal mode — spinner already implies activity.
+
+	case *agent.CompactionDoneEvent:
+		// Brief, unobtrusive report in terminal mode.
+		beforeK := float64(e.BeforeTokens) / 1000.0
+		afterK := float64(e.AfterTokens) / 1000.0
+		pct := e.SavingsPct * 100
+		fmt.Fprintf(os.Stderr, "\n  %s %.0f%% (%.1fK → %.1fK, %s)\n",
+			Dim("compacted"), pct, beforeK, afterK, Dim(e.Method))
 	case *agent.SubAgentStartEvent:
 		displayName := subagent.RoleDisplayName(subagent.SubAgentRole(e.Role))
 		specialty := subagent.RoleSpecialty(subagent.SubAgentRole(e.Role))

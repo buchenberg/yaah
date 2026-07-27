@@ -35,15 +35,16 @@ type Session struct {
 
 // Message represents a single message in a session.
 type Message struct {
-	ID         string `json:"id"`
-	SessionID  string `json:"session_id"`
-	Idx        int    `json:"idx"`
-	Role       string `json:"role"`
-	Content    string `json:"content"`
-	ToolName   string `json:"tool_name,omitempty"`
-	ToolCallID string `json:"tool_call_id,omitempty"`
-	ToolCalls  string `json:"tool_calls,omitempty"`
-	Timestamp  int64  `json:"ts"`
+	ID               string `json:"id"`
+	SessionID        string `json:"session_id"`
+	Idx              int    `json:"idx"`
+	Role             string `json:"role"`
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content,omitempty"`
+	ToolName         string `json:"tool_name,omitempty"`
+	ToolCallID       string `json:"tool_call_id,omitempty"`
+	ToolCalls        string `json:"tool_calls,omitempty"`
+	Timestamp        int64  `json:"ts"`
 }
 
 // DB is the yaah persistent database.
@@ -109,15 +110,16 @@ func (d *DB) migrate() error {
 	);
 
 	CREATE TABLE IF NOT EXISTS messages (
-		session_id   TEXT NOT NULL REFERENCES sessions(id),
-		idx          INTEGER NOT NULL,
-		role         TEXT NOT NULL,
-		content      TEXT NOT NULL,
-		tool_name    TEXT,
-		tool_call_id TEXT,
-		tool_calls   TEXT,
-		ts           INTEGER NOT NULL,
-		id           TEXT DEFAULT '',
+		session_id        TEXT NOT NULL REFERENCES sessions(id),
+		idx               INTEGER NOT NULL,
+		role              TEXT NOT NULL,
+		content           TEXT NOT NULL,
+		reasoning_content TEXT DEFAULT '',
+		tool_name         TEXT,
+		tool_call_id      TEXT,
+		tool_calls        TEXT,
+		ts                INTEGER NOT NULL,
+		id                TEXT DEFAULT '',
 		PRIMARY KEY (session_id, idx)
 	);
 
@@ -213,6 +215,13 @@ func (d *DB) migrate() error {
 	if !hasColumn {
 		d.sql.Exec("ALTER TABLE sessions ADD COLUMN compaction_cooldown_until INTEGER DEFAULT 0")
 		d.sql.Exec("ALTER TABLE sessions ADD COLUMN ineffective_compactions INTEGER DEFAULT 0")
+	}
+
+	// Migration: add reasoning_content column to messages (preserves DeepSeek thinking-mode history).
+	row = d.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'reasoning_content'")
+	row.Scan(&hasColumn)
+	if !hasColumn {
+		d.sql.Exec("ALTER TABLE messages ADD COLUMN reasoning_content TEXT DEFAULT ''")
 	}
 
 	return nil
@@ -440,8 +449,8 @@ func (d *DB) SetCompactionCooldown(sessionID string, cooldownUntil int64, ineffe
 // AddMessage inserts a message into a session.
 func (d *DB) AddMessage(m Message) error {
 	_, err := d.sql.Exec(
-		`INSERT INTO messages (session_id, idx, role, content, tool_name, tool_call_id, tool_calls, ts, id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.SessionID, m.Idx, m.Role, m.Content, m.ToolName, m.ToolCallID, m.ToolCalls, m.Timestamp, m.ID,
+		`INSERT INTO messages (session_id, idx, role, content, reasoning_content, tool_name, tool_call_id, tool_calls, ts, id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.SessionID, m.Idx, m.Role, m.Content, m.ReasoningContent, m.ToolName, m.ToolCallID, m.ToolCalls, m.Timestamp, m.ID,
 	)
 	return err
 }
@@ -449,7 +458,7 @@ func (d *DB) AddMessage(m Message) error {
 // GetMessages returns all messages for a session.
 func (d *DB) GetMessages(sessionID string) ([]Message, error) {
 	rows, err := d.sql.Query(`
-		SELECT session_id, idx, role, content, tool_name, COALESCE(tool_call_id, ''), tool_calls, ts, COALESCE(id, '')
+		SELECT session_id, idx, role, content, COALESCE(reasoning_content, ''), tool_name, COALESCE(tool_call_id, ''), tool_calls, ts, COALESCE(id, '')
 		FROM messages
 		WHERE session_id = ?
 		ORDER BY idx
@@ -462,7 +471,7 @@ func (d *DB) GetMessages(sessionID string) ([]Message, error) {
 	var results []Message
 	for rows.Next() {
 		var m Message
-		if err := rows.Scan(&m.SessionID, &m.Idx, &m.Role, &m.Content, &m.ToolName, &m.ToolCallID, &m.ToolCalls, &m.Timestamp, &m.ID); err != nil {
+		if err := rows.Scan(&m.SessionID, &m.Idx, &m.Role, &m.Content, &m.ReasoningContent, &m.ToolName, &m.ToolCallID, &m.ToolCalls, &m.Timestamp, &m.ID); err != nil {
 			return nil, err
 		}
 		results = append(results, m)
@@ -474,7 +483,7 @@ func (d *DB) GetMessages(sessionID string) ([]Message, error) {
 func (d *DB) SearchMessages(query string, limit int) ([]Message, error) {
 	safeQuery := sanitizeFTSQuery(query)
 	rows, err := d.sql.Query(`
-		SELECT m.session_id, m.idx, m.role, m.content, m.tool_name, COALESCE(m.tool_call_id, ''), m.tool_calls, m.ts, COALESCE(m.id, '')
+		SELECT m.session_id, m.idx, m.role, m.content, COALESCE(m.reasoning_content, ''), m.tool_name, COALESCE(m.tool_call_id, ''), m.tool_calls, m.ts, COALESCE(m.id, '')
 		FROM messages m
 		JOIN messages_fts ON messages_fts.rowid = m.rowid
 		WHERE messages_fts MATCH ?
@@ -489,7 +498,7 @@ func (d *DB) SearchMessages(query string, limit int) ([]Message, error) {
 	var results []Message
 	for rows.Next() {
 		var m Message
-		if err := rows.Scan(&m.SessionID, &m.Idx, &m.Role, &m.Content, &m.ToolName, &m.ToolCallID, &m.ToolCalls, &m.Timestamp, &m.ID); err != nil {
+		if err := rows.Scan(&m.SessionID, &m.Idx, &m.Role, &m.Content, &m.ReasoningContent, &m.ToolName, &m.ToolCallID, &m.ToolCalls, &m.Timestamp, &m.ID); err != nil {
 			return nil, err
 		}
 		results = append(results, m)

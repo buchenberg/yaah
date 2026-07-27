@@ -56,15 +56,16 @@ func (p *SessionPersister) Persist(msg types.Message) {
 		toolName = msg.Name
 	}
 	m := memory.Message{
-		ID:         newMessageID(),
-		SessionID:  p.sessionID,
-		Idx:        p.msgIdx,
-		Role:       msg.Role,
-		Content:    content,
-		ToolName:   toolName,
-		ToolCallID: msg.ToolCallID,
-		ToolCalls:  toolCallsJSON,
-		Timestamp:  time.Now().Unix(),
+		ID:               newMessageID(),
+		SessionID:        p.sessionID,
+		Idx:              p.msgIdx,
+		Role:             msg.Role,
+		Content:          content,
+		ReasoningContent: msg.ReasoningContent,
+		ToolName:         toolName,
+		ToolCallID:       msg.ToolCallID,
+		ToolCalls:        toolCallsJSON,
+		Timestamp:        time.Now().Unix(),
 	}
 	if err := p.writeMsg(m); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: db persist: %v\n", err)
