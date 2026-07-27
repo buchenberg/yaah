@@ -316,6 +316,9 @@ func (l *Loop) applyCompactedSummary(summary string, sysMsg types.Message, oldMs
 	beforeEstimate := l.EstimatedTokens()
 	l.Messages = newMsgs
 	l.resetPruner()
+	if l.Pruner != nil {
+		l.Pruner.Mark(l.Messages, "post_compaction")
+	}
 
 	afterEstimate := l.EstimatedTokens()
 	if beforeEstimate > 0 {
@@ -325,8 +328,44 @@ func (l *Loop) applyCompactedSummary(summary string, sysMsg types.Message, oldMs
 		} else {
 			l.ineffectiveCompactions = 0
 		}
+		l.trackCompactionSavings(savings)
 	}
 	l.lastCompactionTokens = afterEstimate
+}
+
+const adaptiveSavingsWindow = 5
+
+func (l *Loop) trackCompactionSavings(savings float64) {
+	l.compactionSavingsHistory = append(l.compactionSavingsHistory, savings)
+	if len(l.compactionSavingsHistory) > adaptiveSavingsWindow {
+		l.compactionSavingsHistory = l.compactionSavingsHistory[1:]
+	}
+
+	highCount := 0
+	lowCount := 0
+	for _, s := range l.compactionSavingsHistory {
+		if s > 0.4 {
+			highCount++
+		}
+		if s < 0.1 {
+			lowCount++
+		}
+	}
+
+	if highCount >= 3 {
+		l.compactionBudgetMultiplier *= 0.9
+		l.compactionSavingsHistory = nil
+	}
+	if lowCount >= 2 {
+		l.compactionBudgetMultiplier *= 1.2
+		l.compactionSavingsHistory = nil
+	}
+	if l.compactionBudgetMultiplier < 0.5 {
+		l.compactionBudgetMultiplier = 0.5
+	}
+	if l.compactionBudgetMultiplier > 2.0 {
+		l.compactionBudgetMultiplier = 2.0
+	}
 }
 
 func protectReasoningTurns(messages []types.Message, keepStart, protectTurns int) int {
@@ -468,7 +507,7 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 		if err == nil && cooldown > 0 && time.Now().Unix() < cooldown {
 			return
 		}
-		if err == nil && ineffective > l.ineffectiveCompactions {
+		if err == nil && ineffective != l.ineffectiveCompactions {
 			l.ineffectiveCompactions = ineffective
 		}
 		// Always sync the in-memory counter back to the DB so other
@@ -562,7 +601,7 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 
 	sysMsg := l.Messages[0]
 
-	budget := preserveBudget(l.ContextWindow) / 4
+	budget := int(float64(preserveBudget(l.ContextWindow)) * l.compactionBudgetMultiplier) / 4
 	split := splitTail(l.Messages, budget)
 	keepMsgs := l.Messages[split.keepStart:]
 	oldMsgs := l.Messages[1:split.keepStart]
@@ -702,4 +741,7 @@ func (l *Loop) trimContext() {
 	newMsgs = append(newMsgs, rest...)
 	l.Messages = newMsgs
 	l.resetPruner()
+	if l.Pruner != nil {
+		l.Pruner.Mark(l.Messages, "post_trim")
+	}
 }

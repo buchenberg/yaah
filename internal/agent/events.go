@@ -101,6 +101,27 @@ type DoneEvent struct {
 
 func (*DoneEvent) eventMarker() {}
 
+// CompactionStartedEvent is emitted when context compaction begins.
+type CompactionStartedEvent struct {
+	BeforeTokens int
+	TargetTokens int
+	Reason       string // "threshold", "overflow", "budget-only"
+}
+
+func (*CompactionStartedEvent) eventMarker() {}
+
+// CompactionDoneEvent is emitted when context compaction finishes.
+type CompactionDoneEvent struct {
+	BeforeTokens    int
+	AfterTokens     int
+	SavingsPct      float64
+	Method          string // "single", "chunked"
+	ElapsedSeconds  float64
+	IneffectiveNote string // non-empty when compaction was ineffective
+}
+
+func (*CompactionDoneEvent) eventMarker() {}
+
 // Compile-time interface satisfaction checks.
 var (
 	_ Event = (*TokenDeltaEvent)(nil)
@@ -111,4 +132,6 @@ var (
 	_ Event = (*SubAgentStartEvent)(nil)
 	_ Event = (*SubAgentEndEvent)(nil)
 	_ Event = (*DoneEvent)(nil)
+	_ Event = (*CompactionStartedEvent)(nil)
+	_ Event = (*CompactionDoneEvent)(nil)
 )

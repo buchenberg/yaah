@@ -38,6 +38,7 @@ type SoftPruneMiddleware struct {
 func (m *SoftPruneMiddleware) Name() string { return "soft_prune" }
 
 func (m *SoftPruneMiddleware) PrepareStep(ctx context.Context, step *Step) (*Step, error) {
+	m.doMark(ctx, step, "prepare")
 	return step, nil
 }
 
@@ -45,20 +46,24 @@ func (m *SoftPruneMiddleware) PostModel(ctx context.Context, msg *types.Message,
 	return step, nil
 }
 
-// PostTool inspects the post-tool conversation and asks the Pruner to mark
-// any stale tool results beyond the protect window. Telemetry (OTel span +
-// JSONL hook) is emitted unconditionally so analysts can see "considered
-// pruning, decided not to" events too.
-func (m *SoftPruneMiddleware) PostTool(ctx context.Context, results []ToolResult, step *Step) (*Step, error) {
+func (m *SoftPruneMiddleware) doMark(ctx context.Context, step *Step, reason string) {
 	if m.pruner == nil {
-		return step, nil
+		return
 	}
-	stats := m.pruner.Mark(step.Messages, "post_tool")
+	stats := m.pruner.Mark(step.Messages, reason)
 	if m.otel != nil {
 		m.otel(ctx, stats)
 	}
 	if m.emit != nil {
 		m.emit(stats)
 	}
+}
+
+// PostTool inspects the post-tool conversation and asks the Pruner to mark
+// any stale tool results beyond the protect window. Telemetry (OTel span +
+// JSONL hook) is emitted unconditionally so analysts can see "considered
+// pruning, decided not to" events too.
+func (m *SoftPruneMiddleware) PostTool(ctx context.Context, results []ToolResult, step *Step) (*Step, error) {
+	m.doMark(ctx, step, "post_tool")
 	return step, nil
 }

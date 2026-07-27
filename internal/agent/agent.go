@@ -350,6 +350,19 @@ type Loop struct {
 	// of tokens. When >= 2, compaction is skipped.
 	ineffectiveCompactions int
 
+	// compactionForcedByOverflow is set by the overflow recovery path
+	// before calling compactContext to indicate the reason for compaction.
+	compactionForcedByOverflow bool
+
+	// compactionBudgetMultiplier adjusts the preserve budget (25% of
+	// context window) based on historical compaction savings. Starts at
+	// 1.0; tightens when savings are consistently high, loosens when low.
+	compactionBudgetMultiplier float64
+
+	// compactionSavingsHistory tracks recent compaction savings for
+	// adaptive budget feedback. Circular buffer, oldest evicted at cap.
+	compactionSavingsHistory []float64
+
 	// usageMu serializes addUsage calls from concurrent delegate dispatches.
 	usageMu sync.Mutex
 }
@@ -741,6 +754,9 @@ func (l *Loop) applyDefaults() {
 	l.CtxMgr.EnsurePruner()
 	l.Pruner = l.CtxMgr.Pruner
 	l.ensurePruner()
+	if l.compactionBudgetMultiplier <= 0 {
+		l.compactionBudgetMultiplier = 1.0
+	}
 	if l.MaxIterations <= 0 {
 		l.MaxIterations = 50
 	}

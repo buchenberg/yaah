@@ -141,6 +141,7 @@ type Model struct {
 	toolCall      string
 	toolArgs      string // args for current tool call (e.g. task description)
 	streaming     bool   // currently streaming a response
+	compacting    bool   // currently running context compaction
 	streamContent string // accumulated streaming content
 	thinkContent  string // accumulated thinking/reasoning content
 
@@ -643,6 +644,13 @@ func (m *Model) SetThinking(thinking bool) {
 	m.refreshViewport()
 }
 
+// SetCompacting sets the compaction state. When true, displays a
+// compaction indicator in the status area.
+func (m *Model) SetCompacting(compacting bool) {
+	m.compacting = compacting
+	m.refreshViewport()
+}
+
 // SetToolCall sets the current tool call display.
 func (m *Model) SetToolCall(name, args string) {
 	m.toolCall = name
@@ -715,6 +723,26 @@ func (m *Model) HandleEvent(evt agent.Event) {
 	case *agent.ToolEndEvent:
 		m.ClearToolCall()
 		m.AddToolResult(e.Name, e.Result, e.Args, formatDuration(e.Duration))
+
+	case *agent.CompactionStartedEvent:
+		m.SetCompacting(true)
+
+	case *agent.CompactionDoneEvent:
+		m.SetCompacting(false)
+		beforeK := float64(e.BeforeTokens) / 1000.0
+		afterK := float64(e.AfterTokens) / 1000.0
+		pct := e.SavingsPct * 100
+		note := ""
+		if e.IneffectiveNote != "" {
+			note = " ⚠ " + e.IneffectiveNote
+		}
+		m.messages = append(m.messages, Message{
+			Role:    "compaction",
+			Content: fmt.Sprintf("Compacted %.1fK → %.1fK tokens (%.0f%% savings, %s) in %.1fs%s",
+				beforeK, afterK, pct, e.Method, e.ElapsedSeconds, note),
+		})
+		m.refreshViewport()
+		m.scrollToBottom()
 
 	case *agent.SubAgentStartEvent:
 		displayName := subagent.RoleDisplayName(subagent.SubAgentRole(e.Role))
