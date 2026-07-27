@@ -57,6 +57,8 @@ var (
 	subAgentEndStyle    lipgloss.Style
 	paletteTitleStyle   lipgloss.Style
 	noticeStyle         lipgloss.Style
+	mcpStatusConnected  lipgloss.Style
+	mcpStatusDisconnect lipgloss.Style
 )
 
 // Message represents a chat message in the TUI.
@@ -448,7 +450,7 @@ func (m *Model) AddAssistantMessageWithReasoning(raw, reasoning string) {
 // headerHeight returns the number of lines the header occupies.
 // Delegates to Header.Height() for dynamic two-column measurement.
 func (m *Model) headerHeight() int {
-	return NewHeader(m.banner, m.provider, m.modelName, m.showBanner, m.width).Height()
+	return NewHeader(m.banner, m.provider, m.modelName, m.showBanner, m.width, m.mcpInfos).Height()
 }
 
 // refreshViewport rebuilds the viewport content from the current message state.
@@ -1609,7 +1611,7 @@ func (m *Model) View() tea.View {
 	}
 
 	// Header: figlet banner + provider/model line (or compact if hidden)
-	header := NewHeader(m.banner, m.provider, m.modelName, m.showBanner, m.width).Render()
+	header := NewHeader(m.banner, m.provider, m.modelName, m.showBanner, m.width, m.mcpInfos).Render()
 
 	// Status bar (1 line): message count + context bar only.
 	// Provider/model is in the header; no need to duplicate.

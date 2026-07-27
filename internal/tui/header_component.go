@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/lipgloss/v2"
+
+	"github.com/buchenberg/yaah/internal/mcp"
 )
 
 // keyHintLines are the stacked right-justified keybinding hints in the header.
@@ -22,16 +25,18 @@ type Header struct {
 	model      string
 	showBanner bool
 	width      int
+	mcpInfos   []mcp.ServerInfo
 }
 
 // NewHeader creates a header component.
-func NewHeader(banner, provider, model string, showBanner bool, width int) Header {
+func NewHeader(banner, provider, model string, showBanner bool, width int, mcpInfos []mcp.ServerInfo) Header {
 	return Header{
 		banner:     banner,
 		provider:   provider,
 		model:      model,
 		showBanner: showBanner,
 		width:      width,
+		mcpInfos:   mcpInfos,
 	}
 }
 
@@ -54,19 +59,23 @@ func outerBorderStyle(w int) lipgloss.Style {
 func viewportBorderStyle(w int) lipgloss.Style {
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("205")).
+		BorderForeground(lipgloss.Color("99")).
 		Width(w)
 }
 
 // Height returns the number of visual lines the rendered header occupies.
 func (h Header) Height() int {
-	// Inner cells each add 2 border + 2 padding = 4 lines overhead.
-	// Outer header adds another 2 border + 2 padding = 4 lines.
 	cellOverhead := 4
 	outerOverhead := 4
 
 	leftLines := h.leftContentLines()
-	rightLines := len(keyHintLines) + 1 // key hints + provider line
+	rightLines := len(keyHintLines) + len(h.mcpInfos)
+	if len(h.mcpInfos) > 0 {
+		rightLines++ // blank separator above key hints
+	}
+	if !h.showBanner || h.banner == "" {
+		rightLines++ // provider line in right column
+	}
 	cellH := max(leftLines, rightLines) + cellOverhead
 	return cellH + outerOverhead
 }
@@ -74,9 +83,9 @@ func (h Header) Height() int {
 func (h Header) leftContentLines() int {
 	if h.showBanner && h.banner != "" {
 		bannerLines := len(strings.Split(strings.TrimRight(h.banner, "\n"), "\n"))
-		return bannerLines + 1 + 1 // banner + blank line + provider line
+		return bannerLines + 1 // just banner + blank separator
 	}
-	return 1 // provider line
+	return 0
 }
 
 // Render returns the header as two bordered cells inside an outer border.
@@ -85,11 +94,8 @@ func (h Header) Render() string {
 		h.width = 10
 	}
 
-	// Outer border consumes 4 chars width (2 border + 2 padding).
 	outerWidth := h.width - 4
-	// Gap between the two inner cells.
 	gap := 2
-	// Each inner cell border consumes 4 chars width (2 border + 2 padding).
 	cellBorderW := 4
 
 	cellTotal := outerWidth - gap
@@ -116,7 +122,6 @@ func (h Header) Render() string {
 		leftLines = append(leftLines, "")
 	}
 
-	// Place cells side by side with plain-text concatenation.
 	var combined []string
 	for i := 0; i < len(leftLines); i++ {
 		combined = append(combined, leftLines[i]+strings.Repeat(" ", gap)+rightLines[i])
@@ -127,22 +132,42 @@ func (h Header) Render() string {
 
 // renderLeft builds the left column content (no borders).
 func (h Header) renderLeft() string {
+	if !h.showBanner || h.banner == "" {
+		return ""
+	}
+	banner := strings.TrimRight(h.banner, "\n")
+	return strings.Join(strings.Split(banner, "\n"), "\n")
+}
+
+// renderRight builds the right column content (no borders).
+// Shows MCP server status above keybinding hints, right-aligned.
+func (h Header) renderRight(width int) string {
+	aligner := lipgloss.NewStyle().Width(width).Align(lipgloss.Right)
 	var lines []string
+
+	// Provider/model line
 	if h.showBanner && h.banner != "" {
-		banner := strings.TrimRight(h.banner, "\n")
-		lines = append(lines, strings.Split(banner, "\n")...)
-		lines = append(lines, "") // separator
 		lines = append(lines, titleStyle.Render(h.provider+"/"+h.model))
 	} else {
 		lines = append(lines, titleStyle.Render("yaah · "+h.provider+"/"+h.model))
 	}
-	return strings.Join(lines, "\n")
-}
 
-// renderRight builds the right column content (no borders).
-func (h Header) renderRight(width int) string {
-	aligner := lipgloss.NewStyle().Width(width).Align(lipgloss.Right)
-	var lines []string
+	// MCP server status
+	if len(h.mcpInfos) > 0 {
+		lines = append(lines, "")
+		for _, info := range h.mcpInfos {
+			status := "✓"
+			s := mcpStatusConnected
+			if !info.Connected {
+				status = "✗"
+				s = mcpStatusDisconnect
+			}
+			line := fmt.Sprintf("%s %s (%s)", status, info.Name, info.Transport)
+			lines = append(lines, aligner.Render(s.Render(line)))
+		}
+	}
+
+	// Keybinding hints
 	for _, hint := range keyHintLines {
 		styled := commandDescStyle.Render(hint)
 		lines = append(lines, aligner.Render(styled))
