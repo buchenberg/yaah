@@ -3,6 +3,7 @@ package agent
 import (
 	"time"
 
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -98,6 +99,12 @@ func WithPipeline(enabled, disabled []string) Option {
 		l.PipelineNames = enabled
 		l.PipelineDisabled = disabled
 	}
+}
+
+// WithPermissionRules sets the path-based permission rules for the
+// PermissionMiddleware. When nil, no path-filtering is applied.
+func WithPermissionRules(rules []pipeline.PermissionRule) Option {
+	return func(l *Loop) { l.PermissionRules = rules }
 }
 
 // WithSteer sets the mid-turn steering channel.

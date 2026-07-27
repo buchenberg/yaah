@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/memory"
@@ -20,7 +21,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker, estimateFactor float64, subContextWindow int, outputLimit int, providerMap map[string]config.Provider, defaults config.Defaults) *tools.TaskTool {
+func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker, estimateFactor float64, subContextWindow int, outputLimit int, providerMap map[string]config.Provider, defaults config.Defaults, parentPermissionRules []pipeline.PermissionRule) *tools.TaskTool {
 	// Sub-agent spawning depth is hard-coded at 1: the top-level agent
 	// can spawn one level of sub-agents; sub-agents cannot spawn further
 	// sub-agents (remainingDepth reaches 0).
@@ -36,22 +37,23 @@ func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 	}
 	return &tools.TaskTool{
 		Runner: makeTaskRunner(taskRunnerOpts{
-			provider:         provider,
-			systemPrompt:     systemPrompt,
-			modelName:        modelName,
-			db:               db,
-			parentSession:    sessionID,
-			subCfg:           subCfg,
-			subAgentProvider: subAgentProvider,
-			subAgentModel:    subAgentModel,
-			OtelEnabled:      otelEnabled,
-			OtelVerbose:      otelVerbose,
-			tracker:          tracker,
-			estimateFactor:   estimateFactor,
-			subContextWindow: subContextWindow,
-			outputLimit:      outputLimit,
-			providerMap:      providerMap,
-			defaults:         defaults,
+			provider:              provider,
+			systemPrompt:          systemPrompt,
+			modelName:             modelName,
+			db:                    db,
+			parentSession:         sessionID,
+			subCfg:                subCfg,
+			subAgentProvider:      subAgentProvider,
+			subAgentModel:         subAgentModel,
+			OtelEnabled:           otelEnabled,
+			OtelVerbose:           otelVerbose,
+			tracker:               tracker,
+			estimateFactor:        estimateFactor,
+			subContextWindow:      subContextWindow,
+			outputLimit:           outputLimit,
+			providerMap:           providerMap,
+			defaults:              defaults,
+			parentPermissionRules: parentPermissionRules,
 		}, depth),
 		ResolveTimeout:   subAgentTimeoutResolver(subCfg),
 		RoleNames:        roleNames,
@@ -165,6 +167,11 @@ type taskRunnerOpts struct {
 	// inherit loop-detection thresholds, retry policies, compaction
 	// tuning, and concurrency caps from the parent config.
 	defaults config.Defaults
+
+	// parentPermissionRules, when non-nil, are passed to the sub-agent's
+	// PermissionMiddleware so path-based deny rules from the parent
+	// session are enforced by child agents.
+	parentPermissionRules []pipeline.PermissionRule
 }
 
 // subAgentSeq guarantees unique sub-session IDs across concurrent
@@ -323,6 +330,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			agent.WithSessionID(subSessionID),
 			agent.WithApprovalMode("allow"),
 			agent.WithOtel(opts.OtelEnabled, opts.OtelVerbose),
+			agent.WithPermissionRules(opts.parentPermissionRules),
 			agent.WithSubAgentConcurrency(
 				resolveSubAgentConcurrency(opts.subCfg, role), 0, nil,
 			),
@@ -355,6 +363,15 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		if outLimit > 0 && len(result) > outLimit {
 			result = safeTruncateBytes(result, outLimit)
 			result += "\n...[sub-agent output capped at " + formatBytes(outLimit) + "]"
+		}
+
+		// Summary budgeting: if the result exceeds 25% of the sub-agent's
+		// context window, trim it to prevent sub-agent output from consuming
+		// the parent's entire context headroom.
+		if effectiveCW > 0 && len(result) > effectiveCW/4 {
+			budget := effectiveCW / 4
+			result = safeTruncateBytes(result, budget)
+			result += "\n...[sub-agent output trimmed to context budget " + formatBytes(budget) + "]"
 		}
 
 		tools.WriteSubAgentModel(ctx, subModel)

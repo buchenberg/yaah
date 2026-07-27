@@ -116,6 +116,11 @@ type SubAgentParams struct {
 // the role-specific tool registry and Loop.
 type TaskRunner func(ctx context.Context, prompt string, params SubAgentParams) (string, error)
 
+// BackgroundResultNotifier is called when a background sub-agent completes.
+// role is the sub-agent role name, description is the task description,
+// result is the final output, and err is any error from the runner.
+type BackgroundResultNotifier func(role, description, result string, err error)
+
 // TaskTool spawns a sub-agent with a restricted tool set to complete a task.
 //
 // The tool supports an optional role (worker/reviewer/planner) that
@@ -124,6 +129,10 @@ type TaskRunner func(ctx context.Context, prompt string, params SubAgentParams) 
 // role's defaults. When a sub-agent times out or is cancelled, the tool
 // returns a structured JSON result rather than a hard error so the
 // parent agent can decide whether to retry or move on.
+//
+// Background mode (background: true) dispatches the sub-agent in a
+// goroutine and returns immediately. Results are delivered via
+// BackgroundNotifier.
 type TaskTool struct {
 	Runner TaskRunner
 
@@ -151,6 +160,13 @@ type TaskTool struct {
 	// tools so the parent agent can detect when parallel workers touch
 	// the same files. Nil means no tracking.
 	Tracker *ConflictTracker
+
+	// BackgroundNotifier is called when a background sub-agent completes.
+	// The caller wires this to push results into the parent's follow-up
+	// channel so they appear as injected user messages. When nil,
+	// background mode is disabled (the tool will error if background
+	// is requested without a notifier).
+	BackgroundNotifier BackgroundResultNotifier
 }
 
 func (t *TaskTool) Name() string { return "spawn_subagent" }
@@ -172,7 +188,8 @@ func (t *TaskTool) Schema() json.RawMessage {
 			"max_iterations": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Optional cap on sub-agent loop turns. Overrides the role default."},
 			"max_turns": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Optional soft cap on tool-using turns. Overrides the role default."},
 			"json_mode": {"type": "boolean", "description": "Request structured JSON output from the sub-agent."},
-			"output_limit": {"type": "integer", "minimum": 1024, "description": "Optional byte cap on the sub-agent's final report."}
+			"output_limit": {"type": "integer", "minimum": 1024, "description": "Optional byte cap on the sub-agent's final report."},
+			"background": {"type": "boolean", "description": "When true, dispatch the sub-agent asynchronously and return immediately. Results arrive in a follow-up message."}
 		},
 		"required": ["description", "prompt"]
 	}`)
@@ -243,6 +260,10 @@ func BuildTaskSchema(roleNames []string, roleDescriptions map[string]string) jso
 				"minimum":     1024,
 				"description": "Optional byte cap on the sub-agent's final report.",
 			},
+			"background": map[string]any{
+				"type":        "boolean",
+				"description": "When true, dispatch the sub-agent asynchronously and return immediately. Results arrive in a follow-up message.",
+			},
 		},
 		"required": []string{"description", "prompt"},
 	}
@@ -260,6 +281,7 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 		MaxTurns       int    `json:"max_turns"`
 		JSONMode       bool   `json:"json_mode"`
 		OutputLimit    int    `json:"output_limit"`
+		Background     bool   `json:"background"`
 	}
 	if err := json.Unmarshal([]byte(args), &params); err != nil {
 		return "", fmt.Errorf("spawn_subagent: invalid arguments: %w", err)
@@ -270,6 +292,10 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 
 	if t.Runner == nil {
 		return "", fmt.Errorf("spawn_subagent: sub-agent runner not configured")
+	}
+
+	if params.Background && t.BackgroundNotifier == nil {
+		return "", fmt.Errorf("spawn_subagent: background mode requested but not available")
 	}
 
 	// Clamp model-supplied overrides to the advertised schema bounds so a
@@ -298,6 +324,31 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 	}
 
 	runCtx := WithConflictLabel(ctx, label)
+
+	if params.Background {
+		notifier := t.BackgroundNotifier
+		runner := t.Runner
+		role := params.Role
+		desc := params.Description
+		bgCtx := context.WithoutCancel(runCtx)
+		if timeout > 0 {
+			var cancel context.CancelFunc
+			bgCtx, cancel = context.WithTimeout(bgCtx, timeout)
+			go func() {
+				<-ctx.Done()
+				cancel()
+			}()
+		}
+		go func() {
+			result, err := runner(bgCtx, params.Prompt, subParams)
+			if bgCtx.Err() != nil && err == nil {
+				err = bgCtx.Err()
+			}
+			notifier(role, desc, result, err)
+		}()
+		return structuredBackgroundResult(label), nil
+	}
+
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		runCtx, cancel = context.WithTimeout(runCtx, timeout)
@@ -363,6 +414,24 @@ func resolveTaskTimeout(callSeconds int, resolveDefault func(SubAgentParams) tim
 		return resolveDefault(params)
 	}
 	return 0
+}
+
+// structuredBackgroundResult builds a JSON payload for background sub-agent
+// dispatch. The model sees this as the immediate tool result; the actual
+// sub-agent output arrives later via a follow-up message.
+func structuredBackgroundResult(label string) string {
+	out := struct {
+		Status string `json:"status"`
+		Label  string `json:"label"`
+	}{
+		Status: "running",
+		Label:  label,
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return `{"status":"running"}`
+	}
+	return string(data)
 }
 
 // structuredTaskResult builds the JSON payload returned to the parent

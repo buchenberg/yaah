@@ -314,7 +314,33 @@ func newAgentSession() (*agentSession, error) {
 	if subCW < 32000 {
 		subCW = 32000
 	}
-	toolReg.Register(newTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default))
+
+	followupCh := make(chan string, 32)
+
+	taskTool := newTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default, nil)
+
+	// Wire background sub-agent completion into the follow-up channel so
+	// results from async sub-agents appear as injected user messages.
+	taskTool.BackgroundNotifier = func(role, description, result string, err error) {
+		prefix := "[BACKGROUND"
+		if role != "" {
+			prefix += " " + role
+		}
+		prefix += "]"
+		if description != "" {
+			prefix += " " + description
+		}
+		text := result
+		if err != nil {
+			text = "error: " + err.Error()
+		}
+		select {
+		case followupCh <- prefix + " completed:\n" + text:
+		default:
+		}
+	}
+
+	toolReg.Register(taskTool)
 
 	toolReg.Register(&tools.ListSubAgentsTool{
 		Lister: func() []tools.SubAgentInfo {
@@ -368,7 +394,7 @@ func newAgentSession() (*agentSession, error) {
 		otelShutdown: otelShutdown,
 		tracker:      tracker,
 		steerCh:      make(chan string, 4),
-		followupCh:   make(chan string, 32),
+		followupCh:   followupCh,
 	}, nil
 }
 
