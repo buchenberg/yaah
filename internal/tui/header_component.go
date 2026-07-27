@@ -60,7 +60,7 @@ func ViewportBorder(w int) lipgloss.Style {
 
 // Height returns the number of visual lines the rendered header occupies.
 func (h Header) Height() int {
-	outerOverhead := 4 // 2 border + 2 padding
+	outerOverhead := 0
 
 	leftLines := h.leftContentLines()
 	rightLines := h.rightContentLines()
@@ -126,7 +126,7 @@ func (h Header) Render() string {
 		combined = append(combined, left+strings.Repeat(" ", pad)+right)
 	}
 
-	return outerBorder(h.width).Render(strings.Join(combined, "\n"))
+	return strings.Join(combined, "\n")
 }
 
 // renderLeft builds the left column content.

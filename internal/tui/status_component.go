@@ -2,16 +2,13 @@ package tui
 
 import (
 	"fmt"
-	"strings"
 
 	"charm.land/lipgloss/v2"
-
-	"github.com/buchenberg/yaah/internal/banner"
 )
 
 // StatusBar renders the one-line status strip between the chat
-// viewport and the input: shortened cwd, message count, context-window
-// fill bar, and a spinning rainbow indicator when the agent is active.
+// viewport and the input: a spinner indicator when active, shortened
+// cwd, message count, and context-window fill bar.
 type StatusBar struct {
 	cwd        string
 	messages   int
@@ -33,26 +30,29 @@ func NewStatusBar(cwd string, messages, contextPct int, hasContext bool, width i
 	}
 }
 
-// Render returns the styled status line.
+// Height returns the number of visual lines the rendered status bar occupies.
+// With a border: 1 content line + 2 border lines = 3.
+// Without a border (legacy): 1 content line.
+func (s StatusBar) Height() int {
+	return 3 // content (1) + border top (1) + border bottom (1)
+}
 func (s StatusBar) Render() string {
+	indicator := ""
+	if s.activeView != "" {
+		indicator = lolcatRender(s.activeView) + " "
+	}
+
 	ctxBar := ""
 	if s.hasContext {
 		ctxBar = " " + contextBar(s.contextPct)
 	}
 
-	left := fmt.Sprintf(" %s │ messages: %d │%s",
-		shortenCWD(s.cwd, s.width/3), s.messages, ctxBar)
+	text := fmt.Sprintf("%s%s │ messages: %d │%s",
+		indicator, shortenCWD(s.cwd, s.width/3), s.messages, ctxBar)
 
-	indicator := ""
-	if s.activeView != "" {
-		indicator = " " + banner.Lolcat(s.activeView)
-	}
-
-	leftW := lipgloss.Width(left)
-	suffixW := lipgloss.Width(indicator)
-	pad := s.width - leftW - suffixW
-	if pad < 0 {
-		pad = 0
-	}
-	return statusStyle.Width(s.width).Render(left + strings.Repeat(" ", pad) + indicator)
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("39")).
+		Width(s.width).
+		Render(statusStyle.Render(text))
 }

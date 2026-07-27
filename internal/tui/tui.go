@@ -453,6 +453,12 @@ func (m *Model) headerHeight() int {
 	return NewHeader(m.banner, m.provider, m.modelName, m.showBanner, m.width, m.mcpInfos).Height()
 }
 
+// inputAreaHeight returns the number of lines the input area occupies
+// including its rounded border (1 content + 2 border = 3 for single-line).
+func (m *Model) inputAreaHeight() int {
+	return m.input.Height() + 2
+}
+
 // refreshViewport rebuilds the viewport content from the current message state.
 func (m *Model) refreshViewport() {
 	m.viewport.SetContent(m.renderMessages())
@@ -1340,7 +1346,7 @@ func (m *Model) maxModelLines() int {
 	if m.height == 0 {
 		return 10
 	}
-	inputHeight := m.input.Height() + 2                        // content + border
+	inputHeight := m.inputAreaHeight()
 	available := m.height - m.headerHeight() - 1 - inputHeight // 1: status line
 	items := available - 4                                     // border (2) + padding (2)
 	if items < 1 {
@@ -1362,7 +1368,7 @@ func (m *Model) paletteLines() int {
 		// Help overlay: title + 4 groups with headers + footer + border/padding
 		// Rough estimate: 22 content lines + 4 border/padding = 26.
 		// Cap at 80% of available terminal height.
-		available := m.height - m.headerHeight() - 1 - (m.input.Height() + 2) // status, dynamic input area
+		available := m.height - m.headerHeight() - 1 - m.inputAreaHeight() // status, dynamic input area
 		if available < 10 {
 			return 10
 		}
@@ -1494,7 +1500,7 @@ func (m *Model) adjustViewport() {
 	}
 	// Reserve space for header, status line, minimum chat area, and overlays.
 	// Whatever is left is the maximum input height (including its border).
-	overhead := m.headerHeight() + 1 // header + status line
+	overhead := m.headerHeight() + NewStatusBar("", 0, 0, false, 0, "").Height()
 	minChat := 5
 	if m.ephemMsg != "" {
 		overhead++
@@ -1514,8 +1520,8 @@ func (m *Model) adjustViewport() {
 	m.input.MaxHeight = maxInputContent
 
 	// input area = content lines + top/bottom border (2 lines)
-	inputHeight := m.input.Height() + 2
-	chatHeight := m.height - overhead - inputHeight - paletteH - searchH
+	inputHeight := m.inputAreaHeight()
+	chatHeight := m.height - overhead - inputHeight - paletteH - searchH - 2 // -2: viewport border
 	if chatHeight < minChat {
 		chatHeight = minChat
 	}
@@ -1617,7 +1623,7 @@ func (m *Model) View() tea.View {
 	// Provider/model is in the header; no need to duplicate.
 	activeView := ""
 	if m.thinking || m.streaming {
-		activeView = m.spinner.View()
+		activeView = stripANSI(m.spinner.View())
 	}
 	status := NewStatusBar(m.cwd, len(m.messages), m.contextPct, m.contextWindow > 0, m.width, activeView).Render()
 
