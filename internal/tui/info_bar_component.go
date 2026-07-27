@@ -8,12 +8,15 @@ import (
 
 // InfoBar renders a bar between the header and viewport showing the
 // current active prompt with a rainbow spinner when the agent is busy.
-// When idle, the bar renders as an empty bordered box.
+// When idle, the prompt text is shown in blue.
 type InfoBar struct {
 	prompt     string
 	activeView string
 	width      int
 }
+
+var infoBarPromptStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("39"))
 
 // NewInfoBar creates an info bar component.
 func NewInfoBar(prompt, activeView string, width int) InfoBar {
@@ -25,26 +28,25 @@ func NewInfoBar(prompt, activeView string, width int) InfoBar {
 }
 
 // Height returns the number of visual lines the rendered bar occupies.
+// 3 lines: blank above, prompt, blank below — same spacing as the
+// bordered version but without visible borders.
 func (b InfoBar) Height() int {
-	return 3 // 1 content + 2 border
+	return 3
 }
 
-// Render returns the bordered info bar.
+// Render returns the info bar content with vertical padding.
 func (b InfoBar) Render() string {
-	label := ""
-	if b.prompt != "" {
-		if b.activeView != "" {
-			spinner := lolcatRender(b.activeView)
-			label = spinner + " " + truncatePrompt(b.prompt, b.width-6)
-		} else {
-			label = truncatePrompt(b.prompt, b.width-4)
-		}
+	if b.prompt == "" {
+		return ""
 	}
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("39")).
-		Width(b.width).
-		Render(label)
+	var label string
+	if b.activeView != "" {
+		spinner := lolcatRender(b.activeView)
+		label = spinner + " " + infoBarPromptStyle.Render(truncatePrompt(b.prompt, b.width-6))
+	} else {
+		label = infoBarPromptStyle.Render(truncatePrompt(b.prompt, b.width-4))
+	}
+	return "\n" + label + "\n"
 }
 
 // truncatePrompt shortens a prompt to fit within maxW, adding ellipsis.

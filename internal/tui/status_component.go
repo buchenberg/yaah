@@ -1,10 +1,6 @@
 package tui
 
-import (
-	"fmt"
-
-	"charm.land/lipgloss/v2"
-)
+import "fmt"
 
 // StatusBar renders the one-line status strip between the chat
 // viewport and the input: shortened cwd, message count, and
@@ -30,10 +26,10 @@ func NewStatusBar(cwd string, messages, contextPct int, hasContext bool, width i
 
 // Height returns the number of visual lines the rendered bar occupies.
 func (s StatusBar) Height() int {
-	return 3 // 1 content + 2 border
+	return 1
 }
 
-// Render returns the bordered status line.
+// Render returns the styled status line.
 func (s StatusBar) Render() string {
 	ctxBar := ""
 	if s.hasContext {
@@ -43,9 +39,5 @@ func (s StatusBar) Render() string {
 	text := fmt.Sprintf(" %s │ messages: %d │%s",
 		shortenCWD(s.cwd, s.width/3), s.messages, ctxBar)
 
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("39")).
-		Width(s.width).
-		Render(text)
+	return statusStyle.Width(s.width).Render(text)
 }
