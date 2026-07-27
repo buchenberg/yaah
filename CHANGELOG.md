@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.36.0](https://github.com/buchenberg/yaah/compare/v0.35.0...v0.36.0) (2026-07-27)
+
+
+### Features
+
+* **persist:** MCP config consolidation, session token tracking, update automation, session restoration, and repository pattern ([#86](https://github.com/buchenberg/yaah/issues/86)) ([92df0d9](https://github.com/buchenberg/yaah/commit/92df0d9b47f0e2bd545ab21b944650a0ea41045b))
+* **subagent:** background delegation, summary budgeting, permission inheritance ([#88](https://github.com/buchenberg/yaah/issues/88)) ([7efa5d8](https://github.com/buchenberg/yaah/commit/7efa5d84aea7982c5a99764b4903cebfcb811f87))
+
 ## [0.35.0](https://github.com/buchenberg/yaah/compare/v0.34.0...v0.35.0) (2026-07-27)
 
 
