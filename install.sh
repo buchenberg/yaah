@@ -48,14 +48,8 @@ else
     mkdir -p "$INSTALL_DIR"
 fi
 
-# check if INSTALL_DIR is in PATH
-case ":$PATH:" in
-    *:"$INSTALL_DIR":*) ;;
-    *)
-        warn "$INSTALL_DIR is not in your PATH. Add it to your shell config:"
-        warn "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-        ;;
-esac
+# Clean up leftover .old binary from a previous update.
+rm -f "${INSTALL_DIR}/yaah.old"
 
 # --- download ---
 DOWNLOAD_URL="https://github.com/${REPO}/releases/latest/download/${BINARY}"
@@ -84,10 +78,53 @@ fi
 
 info "installed yaah to ${INSTALL_DIR}/yaah"
 
+# --- PATH check and shell config update ---
+case ":$PATH:" in
+    *:"$INSTALL_DIR":*) ;;
+    *)
+        warn "$INSTALL_DIR is not in your PATH."
+        printf "  Add it to your shell config now? [Y/n] "
+        read -r choice
+        case "${choice:-y}" in
+            [Yy]*)
+                # Detect the best shell config file to update.
+                SHELL_RC=""
+                case "$(basename "${SHELL:-}")" in
+                    zsh)  SHELL_RC="$HOME/.zshrc" ;;
+                    bash) SHELL_RC="$HOME/.bashrc" ;;
+                    fish) SHELL_RC="$HOME/.config/fish/config.fish" ;;
+                esac
+                # Fallback: check common files.
+                if [ -z "$SHELL_RC" ] || [ ! -f "$SHELL_RC" ]; then
+                    for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile" "$HOME/.bash_profile"; do
+                        if [ -f "$rc" ]; then SHELL_RC="$rc"; break; fi
+                    done
+                fi
+                # If nothing found, default to .profile.
+                if [ -z "$SHELL_RC" ]; then
+                    SHELL_RC="$HOME/.profile"
+                fi
+
+                LINE="export PATH=\"$INSTALL_DIR:\$PATH\""
+                if ! grep -qxF "$LINE" "$SHELL_RC" 2>/dev/null; then
+                    echo "" >> "$SHELL_RC"
+                    echo "# Added by yaah installer" >> "$SHELL_RC"
+                    echo "$LINE" >> "$SHELL_RC"
+                    info "added to ${SHELL_RC}"
+                fi
+                ;;
+            *)
+                warn "To add it later, add this line to your shell config:"
+                warn "  export PATH=\"$INSTALL_DIR:\$PATH\""
+                ;;
+        esac
+        ;;
+esac
+
 # --- verify ---
 if ! command -v yaah >/dev/null 2>&1; then
     warn "yaah not found in PATH yet. You may need to restart your shell or run:"
-    warn "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    warn "  export PATH=\"$INSTALL_DIR:\$PATH\""
     YAAH_BIN="$INSTALL_DIR/yaah"
 else
     YAAH_BIN="yaah"

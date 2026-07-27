@@ -4,6 +4,8 @@ package yaah
 import (
 	"fmt"
 	"runtime/debug"
+
+	"github.com/spf13/cobra"
 )
 
 // Build-time variables. Override via -ldflags "-X github.com/buchenberg/yaah/cmd/yaah.version=..."
@@ -45,6 +47,9 @@ func init() {
 		}
 	}
 	rootCmd.Version = fmt.Sprintf("%s (commit %s, built %s)", version, commit, date)
+	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		CleanOldBinary()
+	}
 	rootCmd.PersistentFlags().StringVarP(&approvalOverride,
 		"approval", "a", "",
 		"override approval mode: allow, ask, or deny")
