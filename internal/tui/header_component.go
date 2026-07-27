@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -8,29 +9,12 @@ import (
 
 // keyHintLines are the stacked right-justified keybinding hints in the header.
 var keyHintLines = []string{
-	": commands",
-	"/ search",
-	"? help",
-	"ctrl+y copy",
-	"ctrl+c quit",
+	": commands  / search  ? help",
+	"ctrl+y copy  ctrl+c quit",
 }
 
-// Header renders the top-of-screen title block as a two-column grid:
-//
-//	┌──────────────────────────┬──────────────┐
-//	│  Banner (optional)       │  : commands  │
-//	│                          │  / search    │
-//	│  provider/model          │  ? help      │
-//	│                          │  ctrl+y copy │
-//	│                          │  ctrl+c quit │
-//	└──────────────────────────┴──────────────┘
-//
-// Left column: banner (optional) + provider/model.
-// Right column: stacked keybinding hints, right-aligned within the column.
-//
-// Columns are independent — adding content to one side does not affect the
-// other. Vertical sizing is dynamic: the header height is
-// max(left_height, right_height).
+// Header renders the top-of-screen title block: the ASCII art banner
+// plus provider/model line with keybinding hints stacked on the right side.
 type Header struct {
 	banner     string
 	provider   string
@@ -50,61 +34,49 @@ func NewHeader(banner, provider, model string, showBanner bool, width int) Heade
 	}
 }
 
-// Height returns the number of visual lines the rendered header occupies.
-// Used by the model to size the viewport.
-func (h Header) Height() int {
-	leftH := 0
-	if h.showBanner && h.banner != "" {
-		bannerLines := len(strings.Split(strings.TrimRight(h.banner, "\n"), "\n"))
-		leftH += bannerLines + 1 // +1 for blank separator after banner
-	}
-	leftH++ // provider/model line
-	rightH := len(keyHintLines)
-	if leftH > rightH {
-		return leftH
-	}
-	return rightH
-}
-
-// Render returns the header as a two-column grid. The left column holds the
-// banner and provider/model; the right column holds the stacked key hints.
-// No trailing whitespace or padding newlines are added.
+// Render returns the header block with stacked keybinding hints right-justified.
 func (h Header) Render() string {
-	leftContent := h.renderLeft()
-	leftWidth := lipgloss.Width(leftContent)
-
-	rightWidth := h.width - leftWidth
-	if rightWidth < 1 {
-		rightWidth = 1
-	}
-	rightContent := h.renderRight(rightWidth)
-
-	return lipgloss.JoinHorizontal(lipgloss.Top, leftContent, rightContent)
-}
-
-// renderLeft builds the left column: banner (if shown), blank separator,
-// and the provider/model line.
-func (h Header) renderLeft() string {
-	var lines []string
 	if h.showBanner && h.banner != "" {
-		banner := strings.TrimRight(h.banner, "\n")
-		lines = append(lines, strings.Split(banner, "\n")...)
-		lines = append(lines, "") // visual separator
-		lines = append(lines, titleStyle.Render(h.provider+"/"+h.model))
-	} else {
-		lines = append(lines, titleStyle.Render("yaah · "+h.provider+"/"+h.model))
+		return h.banner + "\n\n" +
+			h.renderStacked(titleStyle.Render(fmt.Sprintf("%s/%s", h.provider, h.model))) + "\n"
 	}
-	return strings.Join(lines, "\n")
+	return h.renderStacked(
+		titleStyle.Render(fmt.Sprintf("yaah · %s/%s", h.provider, h.model)),
+	) + "\n\n"
 }
 
-// renderRight builds the right column: each key hint right-aligned within
-// the given column width, stacked vertically.
-func (h Header) renderRight(width int) string {
-	aligner := lipgloss.NewStyle().Width(width).Align(lipgloss.Right)
+// renderStacked produces a text block where the left content sits on the first
+// line and key hints are right-aligned using plain spaces — no ANSI cursor
+// positioning (which can corrupt terminal state in the viewport below).
+func (h Header) renderStacked(left string) string {
+	if h.width <= 0 {
+		var lines []string
+		lines = append(lines, left)
+		for _, hint := range keyHintLines {
+			lines = append(lines, commandDescStyle.Render(hint))
+		}
+		return strings.Join(lines, "\n")
+	}
+
+	leftWidth := lipgloss.Width(left)
+	rightWidth := h.width - leftWidth
+	if rightWidth < 0 {
+		rightWidth = 0
+	}
+
 	var lines []string
-	for _, hint := range keyHintLines {
+	for i, hint := range keyHintLines {
 		styled := commandDescStyle.Render(hint)
-		lines = append(lines, aligner.Render(styled))
+		hintWidth := lipgloss.Width(styled)
+		pad := rightWidth - hintWidth
+		if pad < 0 {
+			pad = 0
+		}
+		if i == 0 {
+			lines = append(lines, left+strings.Repeat(" ", pad)+styled)
+		} else {
+			lines = append(lines, strings.Repeat(" ", leftWidth+pad)+styled)
+		}
 	}
 	return strings.Join(lines, "\n")
 }

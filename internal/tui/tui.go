@@ -445,10 +445,16 @@ func (m *Model) AddAssistantMessageWithReasoning(raw, reasoning string) {
 // reRenderMessages re-renders all assistant messages through the current
 // glamour renderer (used on window resize when word-wrap width changes).
 
-// headerHeight returns the number of lines the header occupies.
-// Delegates to Header.Height() for dynamic two-column measurement.
+// headerHeight returns the number of lines the banner + provider header
+// occupies. Used to size the viewport. When the banner is hidden, only the
+// provider line counts.
 func (m *Model) headerHeight() int {
-	return NewHeader(m.banner, m.provider, m.modelName, m.showBanner, m.width).Height()
+	if !m.showBanner || m.banner == "" {
+		return 3 // provider line + stacked hint line + blank line
+	}
+	header := m.banner + "\n\n" +
+		titleStyle.Render(fmt.Sprintf("%s/%s", m.provider, m.modelName)) + "\n"
+	return len(strings.Split(header, "\n")) + 1 // +1 for the second stacked hint line
 }
 
 // refreshViewport rebuilds the viewport content from the current message state.
@@ -1658,7 +1664,7 @@ func (m *Model) View() tea.View {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("205")).
 		Padding(0, 1).
-		Width(m.width).
+		Width(m.width - 4).
 		Render(inputView)
 
 	elements := []string{header, viewportView, status}

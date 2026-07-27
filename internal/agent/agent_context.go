@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log"
 	"math"
 	"strings"
 	"time"
@@ -129,7 +130,28 @@ func messageTokens(m types.Message) int {
 // Because repairOrphans always returns a new slice, the stored history is never
 // mutated by any of these passes.
 func (l *Loop) prepareRequestMessages(messages []types.Message) []types.Message {
-	return l.applyPruning(repairOrphans(messages))
+	out := l.applyPruning(repairOrphans(messages))
+
+	// Guard: verify no reasoning-carrying assistant messages were lost.
+	// The compaction/trim pipeline must either preserve every reasoning
+	// message or fold its content into a system message summary.
+	if src := countReasoningMessages(messages); countReasoningMessages(out) < src {
+		log.Printf("BUG: reasoning_content lost — %d reasoning msg(s) in source, %d in output (earliest idx: %d)", src, countReasoningMessages(out), EarliestReasoningIndex(messages))
+	}
+
+	return out
+}
+
+// countReasoningMessages returns the number of assistant messages that carry
+// reasoning_content. The result is an exact count, not a turn count.
+func countReasoningMessages(msgs []types.Message) int {
+	n := 0
+	for _, m := range msgs {
+		if m.Role == "assistant" && m.ReasoningContent != "" {
+			n++
+		}
+	}
+	return n
 }
 
 // preflightTokens estimates the token count for a request payload (messages +
@@ -275,15 +297,51 @@ func splitTurn(messages []types.Message, t turnRange, budget int) int {
 
 // ProtectReasoningTurns ensures compaction does not remove assistant messages
 // that carry reasoning_content. Thinking-mode providers (e.g. DeepSeek) require
-// reasoning_content to be carried forward in every request; if compaction splits
-// before a reasoning-carrying assistant message, the next request gets a 400:
+// EVERY reasoning-carrying assistant message to be passed back in every
+// subsequent request. If compaction removes any, the next request gets a 400:
 // "The reasoning_content in the thinking mode must be passed back to the API."
 //
-// Walk backward from the end of the message list, counting reasoning-carrying
-// assistant messages. When the protectTurns-th one is found, walk back to the
-// enclosing user turn and return that index (or keepStart, whichever is earlier).
-// If fewer than protectTurns reasoning messages exist, protects whatever is
-// available by walking backward through oldMsgs.
+// This function delegates to EarliestReasoningIndex for the actual logic.
+// The protectTurns parameter is accepted for API compatibility but is
+// effectively ignored: all reasoning-carrying messages are always protected,
+// regardless of the configured count.
+func ProtectReasoningTurns(messages []types.Message, keepStart, protectTurns int) int {
+	_ = protectTurns
+	if keepStart <= 1 {
+		return keepStart
+	}
+	if idx := EarliestReasoningIndex(messages); idx > 0 && idx < keepStart {
+		return idx
+	}
+	return keepStart
+}
+
+// EarliestReasoningIndex scans the message slice for assistant messages that
+// carry reasoning_content, finds the earliest (oldest) one, and returns the
+// index of its enclosing user message (or 1 if the user message is at index 0).
+// Returns 0 if no reasoning-carrying messages exist.
+//
+// This is the single source of truth for reasoning-content protection. Every
+// code path that removes messages from the conversation history must ensure
+// it preserves messages from this index onward, or the next request to a
+// thinking-mode provider will fail with a 400 error.
+func EarliestReasoningIndex(messages []types.Message) int {
+	for i := 1; i < len(messages); i++ {
+		if messages[i].Role == "assistant" && messages[i].ReasoningContent != "" {
+			for j := i - 1; j >= 0; j-- {
+				if messages[j].Role == "user" || j == 0 {
+					if j == 0 {
+						return 1
+					}
+					return j
+				}
+			}
+			return i
+		}
+	}
+	return 0
+}
+
 // applyCompactedSummary replaces the message list with the compacted summary
 // plus kept messages. It is called by both the normal and chunked compaction
 // paths so they share the same post-compaction logic.
@@ -366,48 +424,6 @@ func (l *Loop) trackCompactionSavings(savings float64) {
 	if l.compactionBudgetMultiplier > 2.0 {
 		l.compactionBudgetMultiplier = 2.0
 	}
-}
-
-func ProtectReasoningTurns(messages []types.Message, keepStart, protectTurns int) int {
-	if protectTurns <= 0 || keepStart <= 1 {
-		return keepStart
-	}
-	// Walk backward from the end of the message list, counting the most recent
-	// reasoning-carrying assistant messages. Stop at the protectTurns-th one
-	// and walk back to its enclosing user message to protect the entire turn.
-	seen := 0
-	for i := len(messages) - 1; i >= 1; i-- {
-		if messages[i].Role == "assistant" && messages[i].ReasoningContent != "" {
-			seen++
-			if seen == protectTurns {
-				for j := i - 1; j >= 1; j-- {
-					if messages[j].Role == "user" {
-						if j < keepStart {
-							return j
-						}
-						return keepStart
-					}
-				}
-				return keepStart
-			}
-		}
-	}
-	// Fewer reasoning messages exist than protectTurns. Protect whatever we
-	// have: find the earliest reasoning-carrying assistant in oldMsgs and
-	// walk back to its enclosing user message.
-	for i := keepStart - 1; i >= 1; i-- {
-		if messages[i].Role == "assistant" && messages[i].ReasoningContent != "" {
-			for j := i - 1; j >= 1; j-- {
-				if messages[j].Role == "user" {
-					if j < keepStart {
-						return j
-					}
-					return keepStart
-				}
-			}
-		}
-	}
-	return keepStart
 }
 
 // truncateRunes slices s to at most maxLen runes, preserving head and tail
