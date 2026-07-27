@@ -308,13 +308,13 @@ func RecordTUIView(preScan, postScan string) {
 	if len(preScan) > 32768 {
 		preScan = preScan[:32768] + "...[truncated]"
 	}
-	span.SetAttributes(attribute.String("tui.body", preScan))
+	span.SetAttributes(attribute.String("tui.body", safeString(preScan)))
 
 	if postScan != "" && postScan != preScan {
 		if len(postScan) > 32768 {
 			postScan = postScan[:32768] + "...[truncated]"
 		}
-		span.SetAttributes(attribute.String("tui.body_postscan", postScan))
+		span.SetAttributes(attribute.String("tui.body_postscan", safeString(postScan)))
 	}
 }
 
