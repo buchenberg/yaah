@@ -43,8 +43,21 @@ var sessionListCmd = &cobra.Command{
 			if model == "" {
 				model = "unknown"
 			}
+			status := "active"
+			if s.EndedAt > 0 {
+				status = fmt.Sprintf("ended %s", time.Unix(s.EndedAt, 0).Format("15:04"))
+			}
+			tokenInfo := ""
+			if s.TokensIn > 0 || s.TokensOut > 0 {
+				tokenInfo = fmt.Sprintf(" | tokens: %d in / %d out", s.TokensIn, s.TokensOut)
+			}
+			compactInfo := ""
+			if s.CompactedSummary != "" {
+				compactInfo = " | compacted"
+			}
 			cmd.Printf("  %s\n", Bold(s.ID))
-			cmd.Printf("        %s\n", Dim(fmt.Sprintf("started: %s | model: %s | cwd: %s", started, model, s.CWD)))
+			cmd.Printf("        %s\n", Dim(fmt.Sprintf("started: %s | %s | model: %s | cwd: %s%s%s",
+				started, status, model, s.CWD, tokenInfo, compactInfo)))
 		}
 		return nil
 	},
@@ -62,17 +75,47 @@ var sessionShowCmd = &cobra.Command{
 		}
 		defer db.Close()
 
+		sess, err := db.GetSession(args[0])
+		if err != nil {
+			return fmt.Errorf("session %s not found: %w", args[0], err)
+		}
+
 		msgs, err := db.GetMessages(args[0])
 		if err != nil {
 			return fmt.Errorf("get messages: %w", err)
 		}
 
+		started := time.Unix(sess.StartedAt, 0).Format("2006-01-02 15:04")
+		ended := "active"
+		if sess.EndedAt > 0 {
+			ended = time.Unix(sess.EndedAt, 0).Format("2006-01-02 15:04")
+		}
+		model := sess.Model
+		if model == "" {
+			model = "unknown"
+		}
+
+		cmd.Printf("Session %s\n\n", Bold(args[0]))
+		cmd.Printf("  Started:   %s\n", started)
+		cmd.Printf("  Ended:     %s\n", ended)
+		cmd.Printf("  Model:     %s\n", model)
+		cmd.Printf("  CWD:       %s\n", sess.CWD)
+		if sess.TokensIn > 0 || sess.TokensOut > 0 {
+			cmd.Printf("  Tokens:    %d in / %d out\n", sess.TokensIn, sess.TokensOut)
+		}
+		if sess.SystemPrompt != "" {
+			cmd.Printf("  Prompt:    stored (%d bytes)\n", len(sess.SystemPrompt))
+		}
+		if sess.CompactedSummary != "" {
+			cmd.Printf("  Compacted: %d bytes summary\n", len(sess.CompactedSummary))
+		}
+
 		if len(msgs) == 0 {
-			cmd.Printf("No messages in session %s\n", args[0])
+			cmd.Printf("\n  No messages.\n")
 			return nil
 		}
 
-		cmd.Printf("Session %s (%d messages):\n\n", args[0], len(msgs))
+		cmd.Printf("\n  %d messages:\n\n", len(msgs))
 		for _, m := range msgs {
 			ts := time.Unix(m.Timestamp, 0).Format("15:04:05")
 			switch m.Role {
