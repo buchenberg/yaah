@@ -41,16 +41,43 @@ func (t *TodoWriteTool) Schema() json.RawMessage {
 	}`)
 }
 
-func (t *TodoWriteTool) Execute(ctx context.Context, args string) (string, error) {
-	var params struct {
-		Todos []struct {
-			Content  string `json:"content"`
-			Status   string `json:"status"`
-			Priority string `json:"priority"`
-		} `json:"todos"`
+type todoParams struct {
+	Todos []struct {
+		Content  string `json:"content"`
+		Status   string `json:"status"`
+		Priority string `json:"priority"`
+	} `json:"todos"`
+}
+
+func parseTodoArgs(args string) (todoParams, error) {
+	var params todoParams
+	firstErr := json.Unmarshal([]byte(args), &params)
+	if firstErr == nil {
+		return params, nil
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
-		return "", fmt.Errorf("todowrite: invalid arguments: %w", err)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(args), &raw); err != nil {
+		return params, fmt.Errorf("todowrite: invalid arguments: %w", firstErr)
+	}
+	todosRaw, ok := raw["todos"]
+	if !ok {
+		return params, fmt.Errorf("todowrite: invalid arguments: %w", firstErr)
+	}
+	var todosStr string
+	if err := json.Unmarshal(todosRaw, &todosStr); err != nil {
+		return params, fmt.Errorf("todowrite: invalid arguments: %w", firstErr)
+	}
+	if err := json.Unmarshal([]byte(todosStr), &params.Todos); err != nil {
+		return params, fmt.Errorf("todowrite: invalid arguments: %w", err)
+	}
+	return params, nil
+}
+
+func (t *TodoWriteTool) Execute(ctx context.Context, args string) (string, error) {
+	params, err := parseTodoArgs(args)
+	if err != nil {
+		return "", err
 	}
 
 	items := make([]todo.Item, len(params.Todos))

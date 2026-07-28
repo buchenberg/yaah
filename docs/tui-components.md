@@ -52,7 +52,7 @@ case for trivial uses.
 | `ModelPalette` | `palette_component.go` | Provider-grouped model picker | `View()` |
 | `QuestionPalette` | `palette_component.go` | Interactive question modal | `View()` |
 | `HelpOverlay` | `palette_component.go` | Full keybinding help | `View()` |
-| `TodoTable` | `todo_component.go` | Todo list as a borderless table | `renderToolResult()` |
+| `TodoTable` | `todo_component.go` | Todo list as a bordered table with title, status-colored rows, and priority badges | `renderMessages()` |
 
 ## Rendering flow
 
@@ -197,20 +197,13 @@ Geometry clamps use the Go builtin `max()` (e.g. `max(width-4, 20)`).
 
 ### Embedded content
 
-`TodoTable` is rendered **inside** a `ToolMessage`'s bordered box, not as
-standalone chrome: the `todowrite` tool result renders the todo list as a
-borderless table at the call site, expanding while the tool runs and
-collapsing on completion like any other tool output. Two rules follow:
-
-- **Borderless** — the `ToolMessage` box provides the border; embedded
-  tables must use `Border(lipgloss.Border{})` so no nested box appears.
-- **Fit the inner width** — the component receives `m.width - 8` (the
-  box's inner content width) and truncates cell content so the box's
-  line wrapping never mangles table rows.
-
-The todo snapshot flows from `TodoWriteTool.OnWrite` → `AgentMsg.Todos` →
-`m.todos` ahead of the tool result message (channel-ordered, same
-goroutine), so the table always reflects the list as written by that call.
+`TodoTable` is rendered as a standalone component in the conversation view
+(not embedded inside a `ToolMessage`'s bordered box — the table carries its
+own rounded-border box and a "📋 Tasks" title). It receives `m.width` and
+truncates cell content so rows never wrap. The todo snapshot flows from
+`TodoWriteTool.OnWrite` → `AgentMsg.Todos` → `m.todos` ahead of the tool
+result message (channel-ordered, same goroutine), so the table always
+reflects the list as written by that call.
 
 ## Extending
 
