@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.36.3](https://github.com/buchenberg/yaah/compare/v0.36.2...v0.36.3) (2026-07-28)
+
+
+### Bug Fixes
+
+* **pubsub:** eliminate race in TestBroker_DefaultBufferSize ([76a6e3c](https://github.com/buchenberg/yaah/commit/76a6e3cead5bdf1b1be75cb04a5b0711c0f11344))
+* **pubsub:** eliminate race in TestBroker_DefaultBufferSize ([9d8410d](https://github.com/buchenberg/yaah/commit/9d8410d4b7a3ea069e9ecaf3a3340894a725afa1))
+
 ## [0.36.2](https://github.com/buchenberg/yaah/compare/v0.36.1...v0.36.2) (2026-07-28)
 
 
