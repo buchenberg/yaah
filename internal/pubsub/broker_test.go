@@ -187,14 +187,16 @@ func TestBroker_ConcurrentPublish(t *testing.T) {
 
 func TestBroker_DefaultBufferSize(t *testing.T) {
 	b := NewBroker[int]()
+	ch := b.Subscribe("t", 0)
+
+	done := make(chan struct{})
 	go func() {
 		for i := 0; i < defaultBufferSize; i++ {
 			b.Publish(i)
 		}
+		close(done)
 	}()
-
-	ch := b.Subscribe("t", 0)
-	time.Sleep(50 * time.Millisecond)
+	<-done
 
 	if b.Dropped() > 0 {
 		t.Errorf("expected no drops with default buffer, got %d", b.Dropped())
