@@ -92,6 +92,7 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 	"soft_prune": func(cfg PipelineConfig) Middleware {
 		return &SoftPruneMiddleware{pruner: cfg.Pruner, emit: cfg.PruneHooks.Emit, otel: cfg.PruneHooks.Otel}
 	},
+	"staleness": func(cfg PipelineConfig) Middleware { return &StalenessMiddleware{} },
 }
 
 var defaultPipelineNames = []string{
@@ -102,6 +103,7 @@ var defaultPipelineNames = []string{
 	"approval",
 	"tool_concurrency",
 	"loop_detection",
+	"staleness",
 }
 
 func resolvedPipelineNames(enabled, disabled []string) []string {

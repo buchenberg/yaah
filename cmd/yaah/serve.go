@@ -327,6 +327,11 @@ func registerServeTools(
 // dialogue, and returns the response plus the loop's token usage.
 func (s *agentSession) runHeadless(ctx context.Context, prompt string) (string, types.Usage, error) {
 	compactProvider, compactModel := resolveCompact(s.cfg)
+	if compactProvider != nil {
+		if sp, ok := compactProvider.(agent.StreamProvider); ok {
+			compactProvider = &observability.InstrumentedProvider{Inner: sp, Verbose: s.cfg.Observability.Otel.Verbose}
+		}
+	}
 	fallbackProvider, fallbackModel := resolveFallback(s.cfg)
 
 	loop := agent.NewLoop(s.provider, s.toolReg,
@@ -366,6 +371,7 @@ func (s *agentSession) runHeadless(ctx context.Context, prompt string) (string, 
 			ContextWindow:          providers.ResolveWindow(s.modelName, s.cfg.Agent.Default.ContextWindow),
 			CompactionThreshold:    s.cfg.Agent.Default.CompactionThreshold,
 			RawCompactionThreshold: s.cfg.Agent.Default.RawCompactionThreshold,
+			CompactMaxMessages:     s.cfg.Agent.Default.CompactMaxMessages,
 			EstimateFactor:         s.cfg.Agent.Default.EstimateFactor,
 			LoopDetectCount:        s.cfg.Agent.Default.LoopDetectCount,
 			LoopDetectWindow:       s.cfg.Agent.Default.LoopDetectWindow,

@@ -34,6 +34,7 @@ type Defaults struct {
 	// Compaction controls context summarisation behaviour.
 	CompactionThreshold    float64 `yaml:"compaction_threshold"`     // fraction of ContextWindow; 0 = 0.5
 	RawCompactionThreshold float64 `yaml:"raw_compaction_threshold"` // fraction ignoring cache; 0 = 0.5
+	CompactMaxMessages     int     `yaml:"compact_max_messages"`     // force compaction above N messages; 0 = off
 
 	// Loop detection governs when the agent halts on repeated tool calls.
 	LoopDetectCount  int `yaml:"loop_detect_count"`  // identical calls to trigger halt; 0 = default (5)

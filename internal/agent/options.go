@@ -154,6 +154,7 @@ type LoopConfig struct {
 	ContextWindow          int
 	CompactionThreshold    float64
 	RawCompactionThreshold float64
+	CompactMaxMessages     int
 	EstimateFactor         float64
 	LoopDetectCount        int
 	LoopDetectWindow       int
@@ -182,6 +183,7 @@ func WithLoopConfig(cfg LoopConfig) Option {
 		l.ContextWindow = cfg.ContextWindow
 		l.CompactionThreshold = cfg.CompactionThreshold
 		l.RawCompactionThreshold = cfg.RawCompactionThreshold
+		l.CompactMaxMessages = cfg.CompactMaxMessages
 		l.EstimateFactor = cfg.EstimateFactor
 		l.LoopDetectCount = cfg.LoopDetectCount
 		l.LoopDetectWindow = cfg.LoopDetectWindow

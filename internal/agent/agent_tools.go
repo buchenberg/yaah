@@ -152,6 +152,16 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 
 			res, err := l.Registry.Execute(runCtx, tc.Function.Name, tc.Function.Arguments)
 
+			// Parse structured escalation from raw sub-agent output before
+			// the result is truncated for display.
+			var escalation *tools.Escalation
+			if isTask && l.broker != nil {
+				output := tools.ParseSubAgentOutput(res, err)
+				if output.Escalation != nil {
+					escalation = output.Escalation
+				}
+			}
+
 			if isTask && watchdogActive && ctx.Err() == nil && runCtx.Err() == context.Canceled {
 				err = tools.ErrStuckChild
 				res = ""
@@ -199,6 +209,16 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 					Duration: duration,
 					Error:    errStr,
 				})
+				if escalation != nil {
+					l.broker.PublishMustDeliver(&EscalationEvent{
+						SubAgentRole:   taskRole,
+						SubAgentPrompt: taskPrompt,
+						Severity:       string(escalation.Severity),
+						Summary:        escalation.Summary,
+						Detail:         escalation.Detail,
+						Suggestion:     escalation.Suggestion,
+					})
+				}
 			}
 
 			l.Hooks.Emit(HookEvent{

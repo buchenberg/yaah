@@ -572,7 +572,9 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	rawTarget := int(float64(l.ContextWindow) * rawThreshold)
 
 	if effectiveTokens < target && rawTokens < rawTarget {
-		return
+		if l.CompactMaxMessages <= 0 || len(l.Messages) <= l.CompactMaxMessages {
+			return
+		}
 	}
 
 	if len(l.Messages) <= 4 {
@@ -584,6 +586,8 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	if l.compactionForcedByOverflow {
 		compactReason = "overflow"
 		l.compactionForcedByOverflow = false
+	} else if effectiveTokens < target && rawTokens < rawTarget {
+		compactReason = "message_count"
 	}
 
 	if l.broker != nil {

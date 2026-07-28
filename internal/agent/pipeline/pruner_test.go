@@ -184,29 +184,27 @@ func TestPruner_ProtectedTools(t *testing.T) {
 	}
 }
 
-func TestPruner_AlreadyPrunedBreaks(t *testing.T) {
-	// Pre-mark the oldest tool; the walk must stop at it and not visit
-	// (or re-mark) anything older. We detect over-walk by placing a
-	// sentinel very-old tool result BEFORE the pre-marked one and
-	// confirming it is NOT added.
+func TestPruner_AlreadyPrunedSkipped(t *testing.T) {
 	p := NewPruner(PruneConfig{
 		ProtectTokens: 1,
 		MinReclaim:    1,
 		MinTurns:      1,
 	})
-	// manually pre-mark c_old so the walk hits the boundary
 	p.pruned["c_boundary"] = true
 
 	var msgs []types.Message
 	msgs = append(msgs, types.SystemMsg("sys"))
-	msgs = append(msgs, turn("c_sentinel", "read", 5000)...) // older than boundary; must NOT be marked
+	msgs = append(msgs, turn("c_old", "read", 5000)...)
 	msgs = append(msgs, types.UserMsg("u"))
-	msgs = append(msgs, turn("c_boundary", "read", 5000)...) // already pruned → walk stops here
+	msgs = append(msgs, turn("c_boundary", "read", 5000)...)
 	msgs = append(msgs, types.UserMsg("end"))
 
 	stats := p.Mark(msgs, "post_tool")
-	if p.IsPruned("c_sentinel") {
-		t.Errorf("walk should stop at already-pruned boundary; sentinel was marked: %+v", stats)
+	if !p.IsPruned("c_boundary") {
+		t.Error("pre-marked boundary should remain pruned")
+	}
+	if !p.IsPruned("c_old") {
+		t.Errorf("walk should continue past already-pruned boundary; c_old should be marked: %+v", stats)
 	}
 }
 
