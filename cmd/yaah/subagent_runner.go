@@ -261,6 +261,22 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			b.WriteString("```")
 			sysPrompt += b.String()
 		}
+
+		// Escalation contract: all sub-agents must know how to raise
+		// structured escalations when they hit a blocker.
+		sysPrompt += "\n## Escalation\n\n"
+		sysPrompt += "If you encounter a blocker that prevents completing the task, "
+		sysPrompt += "end your final response with a fenced escalation block. "
+		sysPrompt += "Otherwise, omit the block entirely.\n\n"
+		sysPrompt += "```escalation\n"
+		sysPrompt += `{"severity":"blocker|critical|warning|info","summary":"one-line summary",` + "\n"
+		sysPrompt += ` "detail":"full explanation of the issue","suggestion":"recommended next step"}` + "\n"
+		sysPrompt += "```\n\n"
+		sysPrompt += "- **`blocker`**: A required file, dependency, or permission is missing. The task is impossible.\n"
+		sysPrompt += "- **`critical`**: You discovered a pre-existing bug, security issue, or data corruption.\n"
+		sysPrompt += "- **`warning`**: The task completed but with caveats, degraded results, or unverified assumptions.\n"
+		sysPrompt += "- **`info`**: Something the orchestrator should know but doesn't require action.\n"
+
 		if roleHasShell(profile.Tools) {
 			shell := "bash"
 			if runtime.GOOS == "windows" {

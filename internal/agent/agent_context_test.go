@@ -781,6 +781,48 @@ func TestCompactContext_bothTriggersUnderThreshold(t *testing.T) {
 	}
 }
 
+func TestCompactContext_messageCountTrigger(t *testing.T) {
+	// Token thresholds are NOT met, but message count exceeds
+	// CompactMaxMessages. Compaction must fire via the message-count guard.
+	msgs := largeConversation(60)
+	loop := &Loop{
+		Provider:           summaryProvider(),
+		CompactModel:       "test",
+		ContextWindow:      100000,
+		CompactMaxMessages: 50,
+		Messages:           append([]types.Message{}, msgs...),
+		LastPromptTokens:   10000, // well under target (25000)
+	}
+
+	before := len(loop.Messages)
+	loop.compactContext(context.Background(), 0.25)
+
+	if len(loop.Messages) >= before {
+		t.Errorf("message-count trigger should compact: before=%d after=%d", before, len(loop.Messages))
+	}
+}
+
+func TestCompactContext_messageCountDisabled(t *testing.T) {
+	// CompactMaxMessages=0 disables the message-count guard. Even with many
+	// messages, compaction must not fire when token thresholds are under.
+	msgs := largeConversation(60)
+	loop := &Loop{
+		Provider:           summaryProvider(),
+		CompactModel:       "test",
+		ContextWindow:      100000,
+		CompactMaxMessages: 0,
+		Messages:           append([]types.Message{}, msgs...),
+		LastPromptTokens:   10000,
+	}
+
+	before := len(loop.Messages)
+	loop.compactContext(context.Background(), 0.25)
+
+	if len(loop.Messages) != before {
+		t.Errorf("message-count disabled; should NOT compact: before=%d after=%d", before, len(loop.Messages))
+	}
+}
+
 func TestCompactContext_latchSelfResetsOnGrowth(t *testing.T) {
 	// Two prior ineffective compactions latched the guard off, and the last
 	// attempt left context at lastCompactionTokens. The context has since

@@ -692,6 +692,23 @@ func (v *terminalView) HandleEvent(evt agent.Event) {
 			modelStr = " [" + Dim(e.Model) + "]"
 		}
 		fmt.Fprintf(os.Stderr, "╰─ sub-agent: %s%s · %s (%s)\n", Bold(label), modelStr, status, Dim(formatDuration(e.Duration)))
+	case *agent.EscalationEvent:
+		severity := e.Severity
+		color := replYellow
+		switch severity {
+		case "blocker", "critical":
+			color = replRed
+		case "info":
+			color = Dim
+		}
+		fmt.Fprintf(os.Stderr, "\n  %s ESCALATION [%s] %s: %s\n", color("⚠"), severity, Bold(e.SubAgentRole), e.Summary)
+		if e.Detail != "" {
+			fmt.Fprintf(os.Stderr, "  %s\n", Dim(e.Detail))
+		}
+		if e.Suggestion != "" {
+			fmt.Fprintf(os.Stderr, "  %s %s\n", Dim("→"), e.Suggestion)
+		}
+		fmt.Fprintln(os.Stderr)
 	case *agent.DoneEvent:
 		v.stopOnce.Do(v.spin.Stop)
 		if v.streamed {
@@ -705,6 +722,11 @@ func (v *terminalView) HandleEvent(evt agent.Event) {
 // infrastructure. The caller must set a view via SetView before calling.
 func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bool, error) {
 	compactProvider, compactModel := resolveCompact(s.cfg)
+	if compactProvider != nil {
+		if sp, ok := compactProvider.(agent.StreamProvider); ok {
+			compactProvider = &observability.InstrumentedProvider{Inner: sp, Verbose: s.cfg.Observability.Otel.Verbose}
+		}
+	}
 	fallbackProvider, fallbackModel := resolveFallback(s.cfg)
 
 	s.mu.RLock()
@@ -755,6 +777,7 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 			ContextWindow:          providers.ResolveWindow(mName, s.cfg.Agent.Default.ContextWindow),
 			CompactionThreshold:    s.cfg.Agent.Default.CompactionThreshold,
 			RawCompactionThreshold: s.cfg.Agent.Default.RawCompactionThreshold,
+			CompactMaxMessages:     s.cfg.Agent.Default.CompactMaxMessages,
 			EstimateFactor:         s.cfg.Agent.Default.EstimateFactor,
 			LoopDetectCount:        s.cfg.Agent.Default.LoopDetectCount,
 			LoopDetectWindow:       s.cfg.Agent.Default.LoopDetectWindow,

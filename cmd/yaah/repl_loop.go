@@ -88,6 +88,13 @@ func replYellow(s string) string {
 	return s
 }
 
+func replRed(s string) string {
+	if os.Getenv("NO_COLOR") == "" {
+		return "\x1b[31m" + s + "\x1b[0m"
+	}
+	return s
+}
+
 func formatDuration(d time.Duration) string {
 	if d < time.Second {
 		return fmt.Sprintf("%dms", d.Milliseconds())

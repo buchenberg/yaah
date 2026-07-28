@@ -120,8 +120,11 @@ type pruneCandidate struct {
 //     with tool calls) are always protected.
 //   - A non-index-0 system message terminates the walk (compaction summary
 //     boundary — anything older is already summarized).
-//   - Reaching an already-pruned tool message terminates the walk, bounding
-//     per-turn cost to messages added since the last prune.
+//   - Already-pruned tool messages are skipped. The walk does not terminate
+//     here so that newer unpruned messages between the protected turn window
+//     and the first pruned block are still considered. The system-message
+//     boundary (compaction summary) is the walk's only hard termination
+//     guarantee; without a prior compaction the walk scans to index 0.
 //   - A candidate is only committed if total reclaim exceeds MinReclaim.
 func (p *Pruner) Mark(messages []types.Message, reason string) PruneStats {
 	p.mu.Lock()
@@ -160,7 +163,7 @@ func (p *Pruner) Mark(messages []types.Message, reason string) PruneStats {
 			continue
 		}
 		if p.pruned[m.ToolCallID] {
-			break
+			continue
 		}
 		if p.cfg.ProtectedTools[m.Name] {
 			stats.ProtectedSkipped++

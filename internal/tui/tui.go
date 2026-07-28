@@ -785,6 +785,29 @@ func (m *Model) HandleEvent(evt agent.Event) {
 		m.refreshViewport()
 		m.scrollToBottom()
 
+	case *agent.EscalationEvent:
+		severity := e.Severity
+		prefix := "⚠"
+		switch severity {
+		case "blocker", "critical":
+			prefix = "🛑"
+		case "info":
+			prefix = "ℹ"
+		}
+		content := prefix + " ESCALATION [" + severity + "] " + e.SubAgentRole + ": " + e.Summary
+		if e.Detail != "" {
+			content += "\n" + e.Detail
+		}
+		if e.Suggestion != "" {
+			content += "\n→ " + e.Suggestion
+		}
+		m.messages = append(m.messages, Message{
+			Role:    "escalation",
+			Content: content,
+		})
+		m.refreshViewport()
+		m.scrollToBottom()
+
 	case *agent.DoneEvent:
 		m.SetThinking(false)
 		m.ClearToolCall()

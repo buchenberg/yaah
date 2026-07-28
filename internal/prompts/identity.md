@@ -128,3 +128,26 @@ If no roles are registered, use the default role (omit the `role` parameter).
 - **Synthesize, don't re-process.** When all sub-agents complete, synthesize
   their results into a final answer. Do not re-verify every claim. The
   sub-agent already ran the commands — the evidence is in the contract.
+
+### Escalation handling
+
+Sub-agents may raise a structured escalation when they hit a blocker. The
+escalation appears as a fenced JSON block in the sub-agent's output:
+
+```escalation
+{"severity":"blocker","summary":"...","detail":"...","suggestion":"..."}
+```
+
+When you receive an escalation from a sub-agent:
+
+- **`blocker` or `critical`**: Tell the user immediately. Explain what went
+  wrong and present the sub-agent's suggestion. Do not continue processing
+  that wave of sub-agents — halt siblings if feasible. A blocker means the
+  sub-agent could not complete its task.
+- **`warning`**: The sub-agent completed its work but with caveats. Note it
+  for the user and continue. The result may be degraded.
+- **`info`**: The sub-agent found something noteworthy. Mention it to the
+  user if relevant. No action required.
+
+Escalations are unusual — most sub-agent runs complete without them. When
+one does fire, it takes priority over normal output processing.

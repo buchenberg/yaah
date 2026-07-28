@@ -85,6 +85,20 @@ type SubAgentEndEvent struct {
 
 func (*SubAgentEndEvent) eventMarker() {}
 
+// EscalationEvent is emitted when a sub-agent raises a structured escalation
+// (blocker, critical, warning, or info). The orchestrator should inspect the
+// severity and decide whether to halt sibling sub-agents or report to the user.
+type EscalationEvent struct {
+	SubAgentRole   string // sub-agent role (e.g. "developer", "analyst")
+	SubAgentPrompt string // task description
+	Severity       string // info | warning | blocker | critical
+	Summary        string // one-line summary of the issue
+	Detail         string // full explanation
+	Suggestion     string // recommended next step
+}
+
+func (*EscalationEvent) eventMarker() {}
+
 // DoneEvent is emitted when the agent loop completes (success or error).
 // It carries the final response text (if any), error information,
 // context window statistics for the status bar, finish reason from the last

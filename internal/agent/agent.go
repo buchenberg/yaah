@@ -117,6 +117,12 @@ type Loop struct {
 	// Default 0 means 0.5.
 	RawCompactionThreshold float64
 
+	// CompactMaxMessages forces compaction when the message count exceeds this
+	// value, regardless of token estimates. Guards against unbounded message
+	// accumulation when pruning keeps effective tokens below the token
+	// threshold. 0 disables the message-count trigger.
+	CompactMaxMessages int
+
 	// EstimateFactor is the multiplier applied to the chars/4 token estimate
 	// for preflight compaction checks. Provider tokenizers systematically
 	// undercount code and JSON payloads; 1.3 compensates. 0 means use the
