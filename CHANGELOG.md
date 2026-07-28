@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.36.2](https://github.com/buchenberg/yaah/compare/v0.36.1...v0.36.2) (2026-07-28)
+
+
+### Bug Fixes
+
+* **tools:** tolerate string-encoded JSON arrays in todowrite args ([631c917](https://github.com/buchenberg/yaah/commit/631c91755216ff5266140faad7eb44839bb0729b))
+* **tools:** tolerate string-encoded JSON arrays in todowrite args ([38471d0](https://github.com/buchenberg/yaah/commit/38471d0622b7576c6a0898122a2e6bfa74a907d8))
+
 ## [0.36.1](https://github.com/buchenberg/yaah/compare/v0.36.0...v0.36.1) (2026-07-27)
 
 
