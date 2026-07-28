@@ -317,7 +317,7 @@ func newAgentSession() (*agentSession, error) {
 
 	followupCh := make(chan string, 32)
 
-	taskTool := newTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default, nil)
+	taskTool := newTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default, nil, resolveDirectives(cfg))
 
 	// Wire background sub-agent completion into the follow-up channel so
 	// results from async sub-agents appear as injected user messages.
@@ -779,6 +779,8 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 			RawCompactionThreshold: s.cfg.Agent.Default.RawCompactionThreshold,
 			CompactMaxMessages:     s.cfg.Agent.Default.CompactMaxMessages,
 			EstimateFactor:         s.cfg.Agent.Default.EstimateFactor,
+			QualityGates:           s.cfg.Agent.QualityGates,
+			Directives:             resolveDirectives(s.cfg),
 			LoopDetectCount:        s.cfg.Agent.Default.LoopDetectCount,
 			LoopDetectWindow:       s.cfg.Agent.Default.LoopDetectWindow,
 			MaxToolConcurrency:     s.cfg.Agent.Default.MaxToolConcurrency,
