@@ -458,15 +458,16 @@ func TestTodoTable_Render(t *testing.T) {
 		}
 	})
 
-	t.Run("borderless for embedding in tool box", func(t *testing.T) {
+	t.Run("has border and title", func(t *testing.T) {
 		items := []todo.Item{
 			{ID: "td-1", Content: "task", Status: "pending", Priority: "medium"},
 		}
 		out := NewTodoTable(items, 72).Render()
-		for _, glyph := range []string{"╭", "╮", "╰", "╯", "│"} {
-			if strings.Contains(out, glyph) {
-				t.Errorf("expected borderless table, found %q in %q", glyph, out)
-			}
+		if !strings.Contains(out, "📋 Tasks") {
+			t.Errorf("expected title %q in table, got %q", "📋 Tasks", out)
+		}
+		if !strings.Contains(out, "TASK") {
+			t.Errorf("expected header %q in table, got %q", "TASK", out)
 		}
 	})
 
@@ -489,18 +490,20 @@ func TestRenderToolResult_Todowrite(t *testing.T) {
 		},
 	}
 	out := m.renderToolResult("todowrite", "Updated todo list: 1 total, 0 completed, 1 in progress, 0 pending")
-	if !strings.Contains(out, "ship the feature") {
-		t.Errorf("expected todo table in tool result, got %q", out)
+	if !strings.Contains(out, "✓ Todo list updated") {
+		t.Errorf("expected compact summary in tool result, got %q", out)
 	}
-	if !strings.Contains(out, "HIGH") {
-		t.Errorf("expected priority in tool result, got %q", out)
+	// The tool result should NOT contain a full table — the persistent
+	// todo table renders separately in renderMessages().
+	if strings.Contains(out, "ship the feature") {
+		t.Errorf("expected no full table in tool result, got %q", out)
 	}
 
 	// Without a snapshot, falls back to the plain summary text.
 	m.todos = nil
 	out = m.renderToolResult("todowrite", "Updated todo list: 1 total")
-	if !strings.Contains(out, "Updated todo list") {
-		t.Errorf("expected plain summary fallback, got %q", out)
+	if !strings.Contains(out, "✓ Todo list updated") {
+		t.Errorf("expected compact summary fallback, got %q", out)
 	}
 }
 

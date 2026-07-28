@@ -203,10 +203,8 @@ func (m *Model) renderToolResult(toolName, content string) string {
 		return ""
 	}
 	if toolName == "todowrite" {
-		if table := NewTodoTable(m.todos, m.width-8).Render(); table != "" {
-			return table
-		}
-		// No snapshot available — fall through to plain text.
+		// Compact one-line summary
+		return toolStyle.Render("✓ Todo list updated")
 	}
 	if toolName == "spawn_subagent" {
 		return m.renderMarkdown(content)
@@ -340,6 +338,13 @@ func (m *Model) renderMessages() string {
 
 	m.reasoningZones = m.reasoningZones[:0]
 	m.toolZones = m.toolZones[:0]
+
+	// Persistent todo list - always visible when there are tasks
+	if len(m.todos) > 0 {
+		todoTable := NewTodoTable(m.todos, m.width)
+		b.WriteString(todoTable.Render())
+		b.WriteString("\n\n")
+	}
 
 	for msgIdx, msg := range m.messages {
 		switch msg.Role {

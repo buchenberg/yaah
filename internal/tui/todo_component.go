@@ -35,29 +35,58 @@ func todoPriorityLabel(priority string) string {
 	}
 }
 
-// TodoTable renders a todo list as a borderless table for embedding
-// inside a ToolMessage's bordered output box — the box provides the
-// border, the collapse toggle, and the truncation budget. Task content
-// is truncated, never wrapped, so rows survive the box's inner-width
-// wrapping intact.
+// todoPriorityColor returns a colored style for the priority badge.
+func todoPriorityColor(priority string) lipgloss.Style {
+	s := lipgloss.NewStyle()
+	switch priority {
+	case "high":
+		return s.Foreground(lipgloss.Color("11")).Bold(true) // yellow/bold
+	case "medium":
+		return s.Foreground(lipgloss.Color("12")) // blue
+	case "low":
+		return s.Foreground(lipgloss.Color("10")) // green
+	default:
+		return s.Foreground(lipgloss.Color("15")) // white
+	}
+}
+
+// todoStatusStyle returns a row style based on the todo item's status.
+func todoStatusStyle(status string) lipgloss.Style {
+	s := lipgloss.NewStyle()
+	switch status {
+	case "completed":
+		return s.Faint(true).Foreground(lipgloss.Color("10")) // dimmed green
+	case "in_progress":
+		return s.Bold(true).Foreground(lipgloss.Color("11")) // yellow/bold
+	case "cancelled":
+		return s.Faint(true).Strikethrough(true) // dimmed strikethrough
+	default: // pending
+		return s.Foreground(lipgloss.Color("15")) // white
+	}
+}
+
+// TodoTable renders a todo list as a bordered table with a bold title,
+// status-colored rows, and colored priority badges. Rendered standalone
+// (not inside a ToolMessage box), so it carries its own border.
 type TodoTable struct {
 	items []todo.Item
 	width int
 }
 
 // NewTodoTable creates a todo table component. width should be the
-// available content width inside the tool box (m.width - 8).
+// available render width (e.g. m.width).
 func NewTodoTable(items []todo.Item, width int) TodoTable {
 	return TodoTable{items: items, width: width}
 }
 
-// Render returns the table, or "" when there are no todos.
+// Render returns the formatted table with a "📋 Tasks" title and border,
+// or "" when there are no items.
 func (t TodoTable) Render() string {
 	if len(t.items) == 0 {
 		return ""
 	}
 
-	taskWidth := max(t.width-24, 16)
+	taskWidth := max(t.width-28, 16)
 
 	rows := make([][]string, 0, len(t.items))
 	for _, it := range t.items {
@@ -69,18 +98,21 @@ func (t TodoTable) Render() string {
 	}
 
 	tbl := table.New().
-		Width(max(t.width, 24)).
-		Border(lipgloss.Border{}).
+		Width(max(t.width, 28)).
+		Border(lipgloss.RoundedBorder()).
 		StyleFunc(func(row, col int) lipgloss.Style {
 			if row == table.HeaderRow {
-				return paletteTitleStyle
+				return titleStyle
 			}
-			return listItemStyle
+			if col == 2 {
+				return todoPriorityColor(t.items[row].Priority)
+			}
+			return todoStatusStyle(t.items[row].Status)
 		}).
-		Headers("STATUS", "TASK", "PRIORITY").
+		Headers("", "TASK", "PRIORITY").
 		Rows(rows...)
 
-	return tbl.String()
+	return titleStyle.Render("📋 Tasks") + "\n" + tbl.String()
 }
 
 // truncateRunes shortens s to maxWidth display runes with an ellipsis.

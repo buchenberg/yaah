@@ -531,7 +531,7 @@ func TestRenderList_NestedContent_Flat(t *testing.T) {
 func TestRenderToolResult_ListContent(t *testing.T) {
 	m := &Model{width: 80}
 	content := "* Task 1\n* Task 2\n* Task 3"
-	got := m.renderToolResult("todowrite", content)
+	got := m.renderToolResult("bash", content)
 	if !strings.Contains(got, "\x1b[") {
 		t.Errorf("list should have ANSI styling: %q", got)
 	}
