@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.1](https://github.com/buchenberg/yaah/compare/v0.36.0...v0.36.1) (2026-07-27)
+
+
+### Bug Fixes
+
+* **agent:** harden reasoning-content preservation for thinking-mode providers ([#89](https://github.com/buchenberg/yaah/issues/89)) ([869a32b](https://github.com/buchenberg/yaah/commit/869a32b626c1d809f5bc416b7d7de560def0d84a))
+
 ## [0.36.0](https://github.com/buchenberg/yaah/compare/v0.35.0...v0.36.0) (2026-07-27)
 
 
