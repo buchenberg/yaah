@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.40.1](https://github.com/buchenberg/yaah/compare/v0.40.0...v0.40.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* sync Loop provider/model after LLM client fallback ([91e4729](https://github.com/buchenberg/yaah/commit/91e47291f680401526ea83b3c3d3a398f425f45d))
+* sync Loop provider/model after LLM client fallback ([41c2c1c](https://github.com/buchenberg/yaah/commit/41c2c1c1baf9ada7c628b20f131932db8c096967))
+
 ## [0.40.0](https://github.com/buchenberg/yaah/compare/v0.39.0...v0.40.0) (2026-07-29)
 
 
