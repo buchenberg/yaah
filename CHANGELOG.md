@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.37.0](https://github.com/buchenberg/yaah/compare/v0.36.3...v0.37.0) (2026-07-28)
+
+
+### Features
+
+* sub-agent escalation system, compaction fixes, and staleness middleware ([d7958c9](https://github.com/buchenberg/yaah/commit/d7958c9478006847e247fa0ce716acf88a1c29c4))
+* sub-agent escalation system, compaction fixes, and staleness middleware ([2b506a0](https://github.com/buchenberg/yaah/commit/2b506a0c93db3c8e3b9538c945444e68a5dabd25))
+
 ## [0.36.3](https://github.com/buchenberg/yaah/compare/v0.36.2...v0.36.3) (2026-07-28)
 
 
