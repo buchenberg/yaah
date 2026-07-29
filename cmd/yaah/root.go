@@ -6,6 +6,7 @@ import (
 	"runtime/debug"
 
 	"github.com/spf13/cobra"
+	"go.opentelemetry.io/otel"
 )
 
 // Build-time variables. Override via -ldflags "-X github.com/buchenberg/yaah/cmd/yaah.version=..."
@@ -49,6 +50,7 @@ func init() {
 	rootCmd.Version = fmt.Sprintf("%s (commit %s, built %s)", version, commit, date)
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
 		CleanOldBinary()
+		otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {}))
 	}
 	rootCmd.PersistentFlags().StringVarP(&approvalOverride,
 		"approval", "a", "",

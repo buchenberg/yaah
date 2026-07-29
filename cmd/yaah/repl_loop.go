@@ -66,7 +66,7 @@ func startREPL() error {
 		response, streamed, err := sess.RunPrompt(context.Background(), input)
 		// tv.HandleEvent(DoneEvent) already handled spinner + trailing newlines
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s\n", replYellow("error: "+err.Error()))
+			fmt.Fprintf(os.Stderr, "%s\n", replYellow("error: "+truncateError(err.Error())))
 		} else if !streamed && response != "" {
 			fmt.Println(response)
 			fmt.Println()
@@ -91,6 +91,13 @@ func replYellow(s string) string {
 func replRed(s string) string {
 	if os.Getenv("NO_COLOR") == "" {
 		return "\x1b[31m" + s + "\x1b[0m"
+	}
+	return s
+}
+
+func truncateError(s string) string {
+	if len(s) > 500 {
+		return s[:497] + "..."
 	}
 	return s
 }

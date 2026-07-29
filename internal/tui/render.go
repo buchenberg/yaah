@@ -384,6 +384,9 @@ func (m *Model) renderMessages() string {
 
 			b.WriteString(NewToolMessage(zoneID, msg.ToolName, msg.ToolArgs, msg.Content, m.width, m.viewport.Height(), expanded, m.toolCall == msg.ToolName, msg.ToolDuration).Render())
 
+		case "error":
+			b.WriteString(NewErrorMessage(msg.Content, m.width, m.viewport.Height()).Render())
+
 		default:
 			b.WriteString(NewSystemMessage(msg.Content, m.width).Render())
 		}
