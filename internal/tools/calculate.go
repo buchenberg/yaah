@@ -496,8 +496,8 @@ var calcBuiltins = map[string]calcBuiltin{
 	"asin":  calcArity1(math.Asin),
 	"acos":  calcArity1(math.Acos),
 	"atan":  calcArity1(math.Atan),
-	"min":   calcArity2(math.Min),
-	"max":   calcArity2(math.Max),
+	"min":   calcVariadic(math.Min),
+	"max":   calcVariadic(math.Max),
 	"pow":   calcArity2(math.Pow),
 }
 
@@ -524,6 +524,19 @@ func calcArity2(fn func(float64, float64) float64) calcBuiltin {
 			return 0, fmt.Errorf("expected 2 arguments, got %d", len(args))
 		}
 		return fn(args[0], args[1]), nil
+	}
+}
+
+func calcVariadic(fn func(float64, float64) float64) calcBuiltin {
+	return func(args []float64) (float64, error) {
+		if len(args) < 2 {
+			return 0, fmt.Errorf("expected at least 2 arguments, got %d", len(args))
+		}
+		result := args[0]
+		for _, v := range args[1:] {
+			result = fn(result, v)
+		}
+		return result, nil
 	}
 }
 
