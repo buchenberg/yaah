@@ -603,6 +603,10 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			l.Messages = messages
 			return "", fmt.Errorf("provider error: %w", err)
 		}
+		l.Provider = l.LLM.Provider
+		l.Model = l.LLM.Model
+		l.FallbackProvider = l.LLM.FallbackProvider
+		l.FallbackModel = l.LLM.FallbackModel
 		l.addUsage(usage)
 		l.lastFinishReason = msg.FinishReason
 		l.lastResponseModel = msg.ResponseModel
