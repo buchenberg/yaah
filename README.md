@@ -506,6 +506,7 @@ yaah web --addr :3000             # on a custom port
 
 yaah serve                        # MCP tool server over stdio
 yaah serve --http 127.0.0.1:7333  # MCP tool server over HTTP+SSE
+yaah acp-serve                    # ACP server over stdio (JSON-RPC 2.0, newline-delimited)
 
 yaah update                       # check for updates
 yaah update check                 # check without applying
@@ -843,6 +844,8 @@ yaah/
 │   ├── root.go                   # build-time vars (version, commit, date)
 │   ├── root_cmd.go               # rootCmd, REPL, one-shot, agent wiring
 │   ├── serve.go                  # yaah serve — MCP tool server (stdio + HTTP)
+│   ├── acp.go                    # yaah acp-serve — ACP server over stdio (JSON-RPC 2.0)
+│   ├── acp_view.go               # ACP event view (agent.View implementation)
 │   ├── version.go config.go      # CLI subcommands
 │   ├── doctor.go update.go
 │   ├── skill.go mcp.go memory.go session.go
@@ -902,7 +905,7 @@ I'm in active development and feature-complete for daily use.
 **Stable** — agent loop with streaming, context compaction, approval gates,
 loop detection, SQLite session and memory persistence, session resume,
 MCP integration (stdio + HTTP) as both client and server, MCP tool server
-for agent-to-agent coordination (`yaah serve`), REPL with slash commands
+for agent-to-agent coordination (`yaah serve`), ACP server for agent communication (`yaah acp-serve`), REPL with slash commands
 and history, Bubble Tea TUI with streaming, tool call visualization,
 reasoning toggle, command palette, model switching, rich keybindings,
 mouse support, sub-agent team with 7 built-in roles, parallel dispatch
