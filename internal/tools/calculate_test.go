@@ -131,6 +131,8 @@ func TestCalculateTool_Functions2Args(t *testing.T) {
 	}{
 		{"min(3, 7)", "3"},
 		{"max(3, 7)", "7"},
+		{"min(3, 7, 1, 9, 2)", "1"},
+		{"max(3, 7, 1, 9, 2)", "9"},
 		{"pow(2, 10)", "1024"},
 	}
 	for _, tt := range tests {
@@ -264,6 +266,8 @@ func TestCalculateTool_Errors(t *testing.T) {
 		`{"expr":"foo"}`,
 		`{}`,
 		`{"expr":""}`,
+		`{"expr":"min(5)"}`,
+		`{"expr":"max()"}`,
 		`not json`,
 	}
 	for _, tt := range tests {
