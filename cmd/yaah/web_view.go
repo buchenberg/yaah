@@ -73,6 +73,9 @@ type sseView struct {
 	w         http.ResponseWriter
 	mu        sync.Mutex
 	toolIDGen atomic.Int64
+	// curToolID tracks the most recent tool-start ID so tool-end
+	// events can carry the same ID for frontend matching.
+	curToolID atomic.Int64
 }
 
 func (v *sseView) HandleEvent(evt agent.Event) {
@@ -86,6 +89,7 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 		we = sseWireEvent{Type: "flush", Content: e.Content}
 	case *agent.ToolStartEvent:
 		id := v.toolIDGen.Add(1)
+		v.curToolID.Store(id)
 		we = sseWireEvent{
 			Type: "tool.start", ToolID: id,
 			Name: e.Name, Args: e.Args,
@@ -93,7 +97,7 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 		}
 	case *agent.ToolEndEvent:
 		we = sseWireEvent{
-			Type: "tool.end",
+			Type: "tool.end", ToolID: v.curToolID.Load(),
 			Name: e.Name, Args: e.Args,
 			Result: e.Result, Ms: e.Duration.Milliseconds(), Error: e.Error,
 			Summary: toolSummary(e.Name, e.Args, e.Result),
