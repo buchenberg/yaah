@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.40.0](https://github.com/buchenberg/yaah/compare/v0.39.0...v0.40.0) (2026-07-29)
+
+
+### Features
+
+* acp-serve command — Agent Communication Protocol server over stdio ([0a6ae17](https://github.com/buchenberg/yaah/commit/0a6ae172113684a9bcf66c223cf1f105145ff060))
+* add acp-serve command implementing Agent Communication Protocol ([66a76bd](https://github.com/buchenberg/yaah/commit/66a76bd9ebb6ed3a18c3c213a089eed331246813))
+
+
+### Bug Fixes
+
+* remove unused types and fields from acp-serve ([a3cb1fc](https://github.com/buchenberg/yaah/commit/a3cb1fc03a2de8b019b8f6862d306bf015a4fbd9))
+
+
+### Documentation
+
+* add acp-serve to command reference and architecture docs ([d67f3c3](https://github.com/buchenberg/yaah/commit/d67f3c39a1f539c8b72f442f77682499d01269bf))
+
 ## [0.39.0](https://github.com/buchenberg/yaah/compare/v0.38.0...v0.39.0) (2026-07-29)
 
 
