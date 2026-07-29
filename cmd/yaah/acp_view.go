@@ -2,7 +2,6 @@ package yaah
 
 import (
 	"fmt"
-	"sync"
 	"sync/atomic"
 
 	"github.com/buchenberg/yaah/internal/agent"
@@ -49,7 +48,6 @@ type acpSessionUpdateMsg struct {
 }
 
 type acpView struct {
-	mu        sync.Mutex
 	toolIDGen atomic.Int64
 	curToolID atomic.Int64
 }

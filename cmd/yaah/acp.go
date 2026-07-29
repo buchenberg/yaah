@@ -33,30 +33,6 @@ type acpError struct {
 	Message string `json:"message"`
 }
 
-type acpInitializeParams struct {
-	ProtocolVersion string        `json:"protocol_version"`
-	Capabilities    acpClientCaps `json:"capabilities"`
-	ClientInfo      acpClientInfo `json:"client_info"`
-}
-
-type acpClientCaps struct {
-	Tools     *acpToolsCaps     `json:"tools,omitempty"`
-	Resources *acpResourcesCaps `json:"resources,omitempty"`
-}
-
-type acpToolsCaps struct {
-	ListChanged bool `json:"listChanged,omitempty"`
-}
-
-type acpResourcesCaps struct {
-	ListChanged bool `json:"listChanged,omitempty"`
-}
-
-type acpClientInfo struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-}
-
 type acpInitializeResult struct {
 	ProtocolVersion string        `json:"protocol_version"`
 	Capabilities    acpServerCaps `json:"capabilities"`
@@ -67,6 +43,10 @@ type acpInitializeResult struct {
 type acpServerCaps struct {
 	Tools     *acpToolsCaps `json:"tools,omitempty"`
 	Resources *struct{}     `json:"resources,omitempty"`
+}
+
+type acpToolsCaps struct {
+	ListChanged bool `json:"listChanged,omitempty"`
 }
 
 type acpServerInfo struct {
@@ -91,22 +71,13 @@ type acpMode struct {
 }
 
 type acpPromptParams struct {
-	SessionID string           `json:"sessionId"`
+	SessionID string            `json:"sessionId"`
 	Prompt    []acpContentBlock `json:"prompt"`
 }
 
 type acpContentBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`
-}
-
-type acpCancelParams struct {
-	SessionID string `json:"sessionId"`
-}
-
-type acpSetModeParams struct {
-	SessionID string `json:"sessionId"`
-	ModeID   string `json:"modeId"`
 }
 
 type acpToolListEntry struct {
