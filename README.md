@@ -501,6 +501,8 @@ yaah session list                 # list sessions
 yaah session show <id>            # show session
 
 yaah tui                          # launch the rich terminal UI
+yaah web                          # start the browser-based chat UI
+yaah web --addr :3000             # on a custom port
 
 yaah serve                        # MCP tool server over stdio
 yaah serve --http 127.0.0.1:7333  # MCP tool server over HTTP+SSE
@@ -876,6 +878,7 @@ yaah/
 │   ├── BENCHMARK-HISTORY.md      # benchmark history
 │   ├── PROMPT-INJECTION.md       # prompt injection architecture map
 │   ├── tui-components.md         # TUI component reference
+│   ├── web-ui.md                 # web UI architecture and event reference
 │   └── otel-setup.md             # Jaeger setup guide
 ├── BENCHMARKS.md                  # current benchmark suite
 ├── AGENTS.md                     # coding assistant instructions

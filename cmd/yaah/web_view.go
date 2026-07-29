@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -29,11 +33,13 @@ type sseWireEvent struct {
 	Text    string `json:"text,omitempty"`
 	Content string `json:"content,omitempty"`
 
-	Name   string `json:"name,omitempty"`
-	Args   string `json:"args,omitempty"`
-	Result string `json:"result,omitempty"`
-	Ms     int64  `json:"ms,omitempty"`
-	Error  string `json:"error,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Args    string `json:"args,omitempty"`
+	Result  string `json:"result,omitempty"`
+	Ms      int64  `json:"ms,omitempty"`
+	Error   string `json:"error,omitempty"`
+	ToolID  int64  `json:"tool_id,omitempty"`
+	Summary string `json:"summary,omitempty"`
 
 	Role   string `json:"role,omitempty"`
 	Model  string `json:"model,omitempty"`
@@ -64,8 +70,9 @@ func marshalWire(we sseWireEvent) []byte {
 }
 
 type sseView struct {
-	w  http.ResponseWriter
-	mu sync.Mutex
+	w         http.ResponseWriter
+	mu        sync.Mutex
+	toolIDGen atomic.Int64
 }
 
 func (v *sseView) HandleEvent(evt agent.Event) {
@@ -78,10 +85,19 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 	case *agent.FlushEvent:
 		we = sseWireEvent{Type: "flush", Content: e.Content}
 	case *agent.ToolStartEvent:
-		we = sseWireEvent{Type: "tool.start", Name: e.Name, Args: e.Args}
+		id := v.toolIDGen.Add(1)
+		we = sseWireEvent{
+			Type: "tool.start", ToolID: id,
+			Name: e.Name, Args: e.Args,
+			Summary: toolStartSummary(e.Name, e.Args),
+		}
 	case *agent.ToolEndEvent:
-		we = sseWireEvent{Type: "tool.end", Name: e.Name, Args: e.Args,
-			Result: e.Result, Ms: e.Duration.Milliseconds(), Error: e.Error}
+		we = sseWireEvent{
+			Type: "tool.end",
+			Name: e.Name, Args: e.Args,
+			Result: e.Result, Ms: e.Duration.Milliseconds(), Error: e.Error,
+			Summary: toolSummary(e.Name, e.Args, e.Result),
+		}
 	case *agent.SubAgentStartEvent:
 		we = sseWireEvent{Type: "subagent.start", Role: e.Role, Model: e.Model, Prompt: e.Prompt}
 	case *agent.SubAgentEndEvent:
@@ -205,6 +221,230 @@ func forwardCtrl(ctx context.Context, ch <-chan types.CtrlMsg, v *sseView, am *a
 			return
 		}
 	}
+}
+
+// --- tool summary helpers (ported from internal/tui/tool_component.go) ---
+
+var (
+	grepMatchRe   = regexp.MustCompile(`^(\d+):`)
+	urlFieldRe    = regexp.MustCompile(`"url"\s*:\s*"([^"]*)"`)
+	urlsFieldRe   = regexp.MustCompile(`"urls"\s*:\s*\["([^"]*)"`)
+	actionFieldRe = regexp.MustCompile(`"action"\s*:\s*"([^"]*)"`)
+)
+
+// toolStartSummary returns a brief description of what a tool does,
+// based only on its name and arguments (before execution).
+func toolStartSummary(name, args string) string {
+	switch name {
+	case "bash":
+		return args
+	case "read":
+		return shortFile(args)
+	case "write":
+		return "→ " + shortFile(args)
+	case "edit":
+		return shortFile(args)
+	case "delete":
+		return shortFile(args)
+	case "grep":
+		return shortPattern(args)
+	case "glob":
+		return shortPattern(args)
+	case "http", "webfetch":
+		if u := extractURL(args); u != "" {
+			return u
+		}
+	case "git":
+		if a := extractAction(args); a != "" {
+			return a
+		}
+	case "spawn_subagent":
+		role := matchJSONFieldStr(args, "role")
+		desc := matchJSONFieldStr(args, "description")
+		return subagentSummary(role, desc)
+	}
+	return ""
+}
+
+// toolSummary returns a one-line description of a tool's result,
+// following the TUI's toolSummary patterns in internal/tui/tool_component.go.
+func toolSummary(name, args, content string) string {
+	switch name {
+	case "grep":
+		return grepSum(content)
+	case "glob":
+		return globSum(content)
+	case "ls":
+		return lsSum(content)
+	case "bash":
+		return bashSum(content)
+	case "read":
+		return fmt.Sprintf("read %s (%s chars)", shortFile(args), formatNum(len(content)))
+	case "write":
+		return fmt.Sprintf("wrote %s (%s chars)", shortFile(args), formatNum(len(content)))
+	case "edit":
+		return "edited " + shortFile(args)
+	case "delete":
+		return "deleted " + shortFile(args)
+	case "http":
+		if u := extractURL(args); u != "" {
+			return u
+		}
+	case "webfetch":
+		if u := extractURL(args); u != "" {
+			return u
+		}
+	case "git":
+		if a := extractAction(args); a != "" {
+			return a
+		}
+	case "replace":
+		return "replaced in " + shortFile(args)
+	case "spawn_subagent":
+		role := matchJSONFieldStr(args, "role")
+		desc := matchJSONFieldStr(args, "description")
+		return subagentSummary(role, desc)
+	default:
+		firstLine, _, _ := strings.Cut(strings.TrimSpace(content), "\n")
+		if len(firstLine) > 80 {
+			return firstLine[:77] + "..."
+		}
+		return firstLine
+	}
+	return ""
+}
+
+func grepSum(content string) string {
+	if content == "" {
+		return "0 matches"
+	}
+	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
+	totalLines := len(lines)
+	matches := 0
+	matchLines := 0
+	for _, line := range lines {
+		if grepMatchRe.MatchString(line) {
+			matchLines++
+			matches += strings.Count(line, "\x1b[31m")
+		}
+	}
+	if matches == 0 {
+		matches = matchLines
+	}
+	files := totalLines - matchLines
+	if files < 0 {
+		files = 0
+	}
+	return fmt.Sprintf("%d matches in %d files", matches, files)
+}
+
+func globSum(content string) string {
+	lines := strings.Count(strings.TrimRight(content, "\n"), "\n") + 1
+	if content == "" {
+		lines = 0
+	}
+	if lines == 0 {
+		return "0 files"
+	}
+	return fmt.Sprintf("%d files", lines)
+}
+
+func lsSum(content string) string {
+	lines := strings.Count(content, "\n")
+	if content == "" {
+		return "0 entries"
+	}
+	return fmt.Sprintf("%d entries", lines+1)
+}
+
+func bashSum(content string) string {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return ""
+	}
+	firstLine, _, _ := strings.Cut(trimmed, "\n")
+	if len(firstLine) > 60 {
+		return firstLine[:57] + "..."
+	}
+	return firstLine
+}
+
+func shortFile(args string) string {
+	fp := matchJSONFieldStr(args, "filePath")
+	if fp == "" {
+		fp = matchJSONFieldStr(args, "path")
+	}
+	if fp == "" {
+		return ""
+	}
+	parts := strings.Split(fp, "/")
+	return parts[len(parts)-1]
+}
+
+func shortPattern(args string) string {
+	if p := matchJSONFieldStr(args, "pattern"); p != "" {
+		return p
+	}
+	if p := matchJSONFieldStr(args, "path"); p != "" {
+		return p
+	}
+	return ""
+}
+
+func extractURL(args string) string {
+	if m := urlFieldRe.FindStringSubmatch(args); len(m) > 1 && m[1] != "" {
+		return m[1]
+	}
+	if m := urlsFieldRe.FindStringSubmatch(args); len(m) > 1 && m[1] != "" {
+		return m[1]
+	}
+	return ""
+}
+
+func extractAction(args string) string {
+	if m := actionFieldRe.FindStringSubmatch(args); len(m) > 1 && m[1] != "" {
+		return m[1]
+	}
+	return ""
+}
+
+func subagentSummary(role, desc string) string {
+	displayName := subagent.RoleDisplayName(subagent.SubAgentRole(role))
+	specialty := subagent.RoleSpecialty(subagent.SubAgentRole(role))
+	label := displayName
+	if specialty != "" {
+		label += " — " + specialty
+	}
+	switch {
+	case role != "" && desc != "":
+		return "sub-agent: " + label + " · " + desc
+	case desc != "":
+		return "sub-agent · " + desc
+	case role != "":
+		return "sub-agent: " + label
+	default:
+		return "sub-agent"
+	}
+}
+
+func matchJSONFieldStr(jsonStr, field string) string {
+	re := regexp.MustCompile(`"` + regexp.QuoteMeta(field) + `"\s*:\s*"([^"]*)"`)
+	if m := re.FindStringSubmatch(jsonStr); len(m) > 1 {
+		return m[1]
+	}
+	return ""
+}
+
+func formatNum(n int) string {
+	s := strconv.Itoa(n)
+	var result strings.Builder
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			result.WriteRune(',')
+		}
+		result.WriteRune(c)
+	}
+	return result.String()
 }
 
 var _ agent.View = (*sseView)(nil)

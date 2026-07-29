@@ -11,7 +11,7 @@
 <style>
 [x-cloak]{display:none!important}
 body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
-#log{flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;gap:.5rem}
+#log{flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;gap:.4rem}
 .msg{max-width:80%;padding:.6rem 1rem;border-radius:12px;line-height:1.4;white-space:pre-wrap;word-wrap:break-word;font-size:.875rem}
 .user{align-self:flex-end;background:var(--pico-primary);color:var(--pico-primary-inverse);border-bottom-right-radius:4px}
 .asst{align-self:flex-start;background:var(--pico-card-background-color);border-bottom-left-radius:4px}
@@ -27,21 +27,37 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 .msg :where(th,td){padding:.15rem .4rem}
 .msg :where(hr){margin:.4rem 0}
 .msg :where(img){max-width:100%}
-#strip{display:flex;gap:.5rem;padding:.25rem 1rem;flex-wrap:wrap}
-.chip{font-size:.75rem;padding:.15rem .5rem;border-radius:999px;background:var(--pico-mark-background-color);color:var(--pico-mark-color);animation:pulse 1.5s ease-in-out infinite}
+
+/* tool messages — inline collapsible, matching TUI style */
+.tool{align-self:flex-start;max-width:90%;font-size:.8rem;margin:.15rem 0;cursor:pointer;user-select:none}
+.tool-head{display:flex;align-items:baseline;gap:.35rem;padding:.25rem 0;color:var(--pico-muted-color);font-family:var(--pico-font-family-monospace,monospace)}
+.tool-icon{flex-shrink:0;font-size:.85em}
+.tool-name{font-weight:600;color:var(--pico-color)}
+.tool-summary{color:var(--pico-muted-color);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tool-head .tool-summary::before{content:'—';margin-right:.35rem;color:var(--pico-muted-border-color)}
+.tool-dur{flex-shrink:0;font-size:.75em;color:var(--pico-muted-color);margin-left:auto}
+.tool-err{color:#dc2626;font-weight:600}
+.tool-body{margin-top:.2rem}
+.tool-result{border:1px solid var(--pico-muted-border-color);border-radius:6px;padding:.5rem .65rem;font-size:.78rem;font-family:var(--pico-font-family-monospace,monospace);white-space:pre-wrap;word-wrap:break-word;max-height:280px;overflow-y:auto;background:var(--pico-card-background-color);line-height:1.35}
+
+/* running tool pulse */
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
-#bar{display:flex;gap:.5rem;padding:.75rem 1rem;border-top:1px solid var(--pico-muted-border-color)}
-#prompt{flex:1;resize:none;min-height:44px;max-height:160px}
-#foot{display:flex;justify-content:space-between;align-items:center;padding:.25rem 1rem;font-size:.75rem;border-top:1px solid var(--pico-muted-border-color);color:var(--pico-muted-color)}
-.dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}
-.dot.on{background:#22c55e}
-.dot.off{background:#dc2626}
+.tool-running .tool-icon{animation:pulse 1.2s ease-in-out infinite}
+
+/* thinking bounce */
 .think{align-self:flex-start;padding:.6rem 1rem;border-radius:12px;border-bottom-left-radius:4px;font-size:.85rem;max-width:80%;background:var(--pico-card-background-color);color:var(--pico-muted-color)}
 .think .bounce span{display:inline-block;width:6px;height:6px;margin:0 2px;border-radius:50%;background:var(--pico-muted-color);animation:bounce .6s ease-in-out infinite}
 .think .bounce span:nth-child(2){animation-delay:.15s}
 .think .bounce span:nth-child(3){animation-delay:.3s}
 @keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
 .reason{margin-top:.4rem;font-size:.8rem;max-height:120px;overflow-y:auto;white-space:pre-wrap;font-style:italic;color:var(--pico-muted-color)}
+
+#bar{display:flex;gap:.5rem;padding:.75rem 1rem;border-top:1px solid var(--pico-muted-border-color)}
+#prompt{flex:1;resize:none;min-height:44px;max-height:160px}
+#foot{display:flex;justify-content:space-between;align-items:center;padding:.25rem 1rem;font-size:.75rem;border-top:1px solid var(--pico-muted-border-color);color:var(--pico-muted-color)}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}
+.dot.on{background:#22c55e}
+.dot.off{background:#dc2626}
 dialog article{max-width:480px;min-width:320px}
 </style>
 </head>
@@ -49,19 +65,28 @@ dialog article{max-width:480px;min-width:320px}
 
 <div id="log" x-ref="log">
   <template x-for="m in msgs" :key="m.id">
-    <div :class="'msg ' + classOf(m.role)" x-html="m.html"></div>
+    <!-- assistant / user / error messages -->
+    <div x-show="m.role !== 'tool'" :class="'msg ' + classOf(m.role)" x-html="m.html"></div>
+    <!-- tool messages: inline collapsible -->
+    <div x-show="m.role === 'tool'" class="tool" :class="m.running && 'tool-running'"
+      @click="m.expanded = !m.expanded; scroll()">
+      <div class="tool-head">
+        <span class="tool-icon" x-text="m.running ? '⏳' : m.error ? '✗' : '✓'"></span>
+        <span class="tool-name" x-text="toolLabel(m)"></span>
+        <span class="tool-summary" x-show="m.summary" x-text="m.summary"></span>
+        <span class="tool-dur" x-show="!m.running && m.duration" x-text="m.duration"></span>
+        <span class="tool-err" x-show="m.error" x-text="m.error"></span>
+      </div>
+      <div class="tool-body" x-show="m.expanded && m.result">
+        <pre class="tool-result" x-text="m.result"></pre>
+      </div>
+    </div>
   </template>
   <div class="think" x-show="live && !stream && think">
     <span class="bounce"><span></span><span></span><span></span></span>
     <div class="reason" x-text="think" x-show="think"></div>
   </div>
   <div class="msg asst" x-show="stream" x-html="md(stream)"></div>
-</div>
-
-<div id="strip" x-show="tools.length">
-  <template x-for="t in tools" :key="t">
-    <span class="chip" x-text="t"></span>
-  </template>
 </div>
 
 <div id="bar">
@@ -123,21 +148,51 @@ function esc(s) {
   return d.innerHTML
 }
 
+function fmtMs(ms) {
+  if (ms < 1000) return ms + 'ms'
+  if (ms < 60000) return (ms / 1000).toFixed(1) + 's'
+  const m = Math.floor(ms / 60000)
+  const s = ((ms % 60000) / 1000).toFixed(0)
+  return m + 'm ' + s + 's'
+}
+
+// toolLabel builds a display header for a tool from its name + args.
+function toolLabel(m) {
+  if (m.name === 'bash') return 'bash — ' + (m.args || '')
+  if (m.name === 'spawn_subagent') {
+    // summary already has "sub-agent: role · desc" — just show name
+    return 'sub-agent'
+  }
+  if (m.name === 'webfetch' || m.name === 'http') return m.name
+  return m.name
+}
+
 document.addEventListener('alpine:init', () => {
   Alpine.data('yaah', () => {
     let _n = 0
     return {
-      msgs: [], stream: '', think: '', tools: [],
+      msgs: [], stream: '', think: '',
       live: false, on: false,
       status: 'connecting…', ctx: null,
       modal: {type:'',title:'',q:'',opts:[],multi:false,name:'',args:'',aid:null},
       _es: null,
+      // track running tool messages by tool_id for end-event update
+      _tools: {},
 
       init() { this.connect() },
       md(t) { return marked.parse(t) },
       classOf(r) { return r === 'user' ? 'user' : r === 'error' ? 'err' : 'asst' },
-      add(role, text) { this.msgs.push({id: ++_n, role, html: role === 'asst' ? marked.parse(text) : esc(text)}) },
+      add(role, text) { this.msgs.push({id: ++_n, role, html: role === 'asst' ? marked.parse(text) : esc(text), expanded: false, running: false}) },
+      addTool(id, name, args, summary) {
+        const m = {id: ++_n, role: 'tool', name, args, summary, result: '', duration: '', error: '', running: true, expanded: false}
+        this.msgs.push(m)
+        if (id != null) this._tools[id] = m
+        return m
+      },
       scroll() { this.$nextTick(() => { const l = this.$refs.log; if (l) l.scrollTop = l.scrollHeight }) },
+
+      // toolLabel exposed for template
+      toolLabel(m) { return toolLabel(m) },
 
       connect() {
         this._es = new EventSource('/api/stream')
@@ -154,10 +209,22 @@ document.addEventListener('alpine:init', () => {
             if (this.stream) { this.add('asst', this.stream); this.stream = '' }
             if (d.content) this.add('asst', d.content)
             this.scroll(); break
-          case 'tool.start': this.tools.push(d.name); break
+          case 'tool.start':
+            this.addTool(d.tool_id, d.name, d.args, d.summary);
+            this.scroll(); break
           case 'tool.end':
-            this.tools = this.tools.filter(t => t !== d.name)
-            if (d.error) { this.add('error', d.name + ': ' + d.error); this.scroll() }; break
+            var tm = d.tool_id != null ? this._tools[d.tool_id] : null
+            if (tm) {
+              tm.running = false
+              tm.result = d.result || ''
+              tm.duration = d.ms ? fmtMs(d.ms) : ''
+              tm.error = d.error || ''
+              tm.summary = d.summary || tm.summary
+              if (d.error) tm.expanded = true
+              delete this._tools[d.tool_id]
+            }
+            if (d.error) { this.add('error', d.name + ': ' + d.error) }
+            this.scroll(); break
           case 'subagent.start': this.status = 'sub-agent: ' + d.role; break
           case 'subagent.end':   this.status = 'ready'; break
           case 'done':
@@ -176,7 +243,12 @@ document.addEventListener('alpine:init', () => {
             this.$nextTick(() => this.$refs.dlg.showModal()); break
           case 'ctrl.context':
             if (d.tokens && d.window) this.ctx = Math.round(d.tokens / d.window * 100); break
-          case 'ctrl.todos': case 'ctrl.models': break
+          case 'ctrl.todos':
+            for (var i = 0; i < (d.items||[]).length; i++) {
+              var item = d.items[i]
+              this.add('asst', '[todo] ' + item.status.toUpperCase() + ': ' + item.content + (item.priority ? ' [P' + item.priority + ']' : ''))
+            }; break
+          case 'ctrl.models': break
         }
       },
 
