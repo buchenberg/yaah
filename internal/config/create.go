@@ -16,6 +16,12 @@ providers:
     name: DeepSeek
     base_url: https://api.deepseek.com/v1
     api_key: ${DEEPSEEK_API_KEY}
+    # api: openai               # default; set to "anthropic" for native Anthropic API
+  # anthropic:
+  #   api: anthropic
+  #   name: Anthropic
+  #   base_url: https://api.anthropic.com
+  #   api_key: ${ANTHROPIC_API_KEY}
   ollama:
     name: Ollama
     base_url: http://localhost:11434/v1

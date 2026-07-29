@@ -848,7 +848,7 @@ type StreamProvider interface {
 }
 ```
 
-The `internal/providers/` package implements OpenAI Chat Completions-compatible clients. Providers are resolved by the CLI layer from `~/.yaah/config.yaml` and passed to `Loop.Provider`.
+The `internal/providers/` package implements OpenAI Chat Completions and Anthropic Messages API clients. Providers are resolved by the CLI layer from `~/.yaah/config.yaml` and passed to `Loop.Provider`. The `Prov` struct's `api` field (`"openai"` or `"anthropic"`) determines which client is created — both implement the same `Provider` + `StreamProvider` interfaces.
 
 ---
 

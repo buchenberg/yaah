@@ -12,6 +12,7 @@ import (
 
 // Provider holds connection details for a model provider.
 type Provider struct {
+	API            string   `yaml:"api,omitempty"` // "openai" (default) or "anthropic"
 	BaseURL        string   `yaml:"base_url"`
 	APIKey         string   `yaml:"api_key"`
 	Name           string   `yaml:"name,omitempty"`
@@ -238,6 +239,7 @@ func SubstituteEnv(s string) string {
 // in APIKey and BaseURL substituted by environment variables.
 func Resolve(p Provider) Provider {
 	return Provider{
+		API:            p.API,
 		BaseURL:        SubstituteEnv(p.BaseURL),
 		APIKey:         SubstituteEnv(p.APIKey),
 		Name:           p.Name,

@@ -466,12 +466,13 @@ You can reorder, disable, or enable middleware in your config.
 
 ### Provider flexibility
 
-I work with any OpenAI-compatible API. Configure as many providers as you
-want — DeepSeek, OpenAI, Anthropic (via compatible proxy), Ollama,
-llama.cpp, OpenRouter. The really cool people run open-weight models
-locally, but I won't stop you from doing whatever. Set a fallback provider
-for when the primary one returns a transient error (429, 503). Sub-agents
-can use different providers and models than the main loop.
+I work with any OpenAI-compatible API, plus native Anthropic Messages API
+support (with prompt caching and extended thinking). Configure as many
+providers as you want — DeepSeek, OpenAI, Anthropic, Ollama, llama.cpp,
+OpenRouter. The really cool people run open-weight models locally, but I
+won't stop you from doing whatever. Set a fallback provider for when the
+primary one returns a transient error (429, 503). Sub-agents can use
+different providers and models than the main loop.
 
 ## Commands
 
@@ -527,6 +528,11 @@ providers:
     name: DeepSeek
     base_url: https://api.deepseek.com/v1
     api_key: ${DEEPSEEK_API_KEY}
+  anthropic:
+    api: anthropic                     # native Anthropic Messages API
+    name: Anthropic
+    base_url: https://api.anthropic.com
+    api_key: ${ANTHROPIC_API_KEY}
   ollama:
     name: Ollama
     base_url: http://localhost:11434/v1
@@ -633,15 +639,15 @@ editor: code --wait                   # overrides $EDITOR and $VISUAL
 
 ### Provider reference
 
-At least one provider is required. Each needs a `base_url`
-(OpenAI-compatible endpoint) and an `api_key`.
+At least one provider is required. Each needs a `base_url` and an `api_key`.
 
 | Field | Default | Description |
 |---|---|---|
-| `base_url` | (required) | OpenAI-compatible API endpoint |
+| `api` | `openai` | API protocol: `openai` (default) or `anthropic` (native Messages API) |
+| `base_url` | (required) | API endpoint (OpenAI-compatible or Anthropic Messages) |
 | `api_key` | — | Supports `${ENV_VAR}` substitution |
 | `name` | map key | Display name shown in CLI/TUI |
-| `models` | — | Limit available models (empty = all from `/models`) |
+| `models` | — | Limit available models (empty = all from `/models`; n/a for Anthropic) |
 | `timeout` | 120 | HTTP request timeout in seconds (0 = no timeout) |
 
 ### Agent reference
@@ -668,7 +674,7 @@ At least one provider is required. Each needs a `base_url`
 | `max_retries` | 0 (off) | Retry count on transient provider errors |
 | `retry_backoff_secs` | 1 | Base backoff seconds (exponential growth) |
 | `max_tool_concurrency` | 0 (unlimited) | Cap concurrent tool goroutines per turn |
-| `prompt_caching` | `false` | Inject Anthropic `cache_control` breakpoints (Anthropic-only) |
+| `prompt_caching` | `false` | Inject Anthropic `cache_control` breakpoints (requires `api: anthropic`) |
 | `reasoning_protect_turns` | 2 | Preserve reasoning on N recent turns in provider requests |
 
 Sub-agents inherit all of the above (except `max_turns`, which they override via
@@ -855,7 +861,7 @@ yaah/
 │   ├── plans/                    # PLAN.md plan files
 │   ├── process/                  # background process manager
 │   ├── prompts/                  # identity.md + system prompt assembly
-│   ├── providers/                # OpenAI Chat Completions client
+│   ├── providers/                # OpenAI + Anthropic API clients
 │   ├── pubsub/                   # in-process pub/sub broker
 │   ├── repl/                     # interactive REPL
 │   ├── skills/                   # SKILL.md discovery
