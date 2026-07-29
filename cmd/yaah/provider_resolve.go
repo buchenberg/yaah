@@ -76,10 +76,15 @@ func resolveModel(cfg *config.Config) string {
 // (has a real API key or a local base URL). Returns nil, false otherwise.
 func makeProvider(p config.Provider) (agent.Provider, bool) {
 	r := config.Resolve(p)
-	if isRealKey(r.APIKey) || r.BaseURL != "" {
+	if !isRealKey(r.APIKey) && r.BaseURL == "" {
+		return nil, false
+	}
+	switch r.API {
+	case "anthropic":
+		return providers.NewAnthropicClient(r.BaseURL, r.APIKey, r.TimeoutSeconds), true
+	default:
 		return providers.NewOpenAIClient(r.BaseURL, r.APIKey, r.TimeoutSeconds), true
 	}
-	return nil, false
 }
 
 // resolveCompact returns the provider and model to use for context compaction.

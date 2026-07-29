@@ -54,7 +54,7 @@ yaah/
 │   ├── memory/                  # SQLite + FTS5 (sessions, messages, memory)
 │   ├── observability/           # OpenTelemetry tracing, in-memory span buffer
 │   ├── process/                 # background process manager
-│   ├── providers/               # OpenAI Chat Completions client, streaming
+│   ├── providers/               # OpenAI & Anthropic API clients, streaming, model info
 │   ├── prompts/                 # system prompt assembly (identity, env, memory, project)
 │   ├── repl/                    # REPL, history, slash commands, colors, banner
 │   ├── skills/                  # SKILL.md discovery, frontmatter parsing
