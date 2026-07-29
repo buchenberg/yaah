@@ -32,6 +32,8 @@ yaah/
 │   ├── root.go                  # build-time vars (version, commit, date)
 │   ├── root_cmd.go              # rootCmd, REPL, one-shot, agent wiring
 │   ├── serve.go                 # yaah serve — MCP tool server (stdio + HTTP)
+│   ├── acp.go                   # yaah acp-serve — ACP server over stdio (JSON-RPC 2.0)
+│   ├── acp_view.go              # ACP event view (agent.View implementation)
 │   ├── version.go               # yaah version
 │   ├── config.go                # yaah config show/edit
 │   ├── doctor.go                # yaah doctor
@@ -192,6 +194,7 @@ interface. See `internal/agent/events.go` for the event types.
 | REPL | `terminalView` / `replView` | `cmd/yaah/agent_frame.go` |
 | Sub-agents | `agent.NoopView` | `cmd/yaah/subagent_runner.go` |
 | MCP serve | `agent.NoopView` | `cmd/yaah/serve.go` |
+| ACP serve | `acpView` + `acpViewWithWrite` | `cmd/yaah/acp.go`, `cmd/yaah/acp_view.go` |
 
 Control-plane messages (todos, questions, approvals, model lists) use
 `tui.ControlMsg` — a separate channel from the broker events.

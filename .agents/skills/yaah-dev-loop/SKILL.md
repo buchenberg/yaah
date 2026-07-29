@@ -1,6 +1,6 @@
 ---
 name: yaah-dev-loop
-description: Build, run, and iterate on the yaah MCP server from inside a Kilo session. Use when developing yaah itself (internal/mcp, cmd/yaah/serve, prompt/tools) and you want to exercise the change through a live MCP connection without restarting the host agent.
+description: Build, run, and iterate on yaah server modes (MCP, ACP) from inside a Kilo session or via stdio JSON-RPC. Use when developing yaah itself (internal/mcp, cmd/yaah/serve, cmd/yaah/acp.go, prompt/tools) and you want to exercise the change through a live connection without restarting the host agent.
 version: 1.0.0
 author: local
 license: MIT
@@ -302,3 +302,25 @@ try {
 ```
 
 If green, the dev loop is ready.
+
+### ACP dev loop variant
+
+`yaah acp-serve` runs over stdio with newline-delimited JSON-RPC 2.0. The
+swap cycle is the same (build → kill → restart) but you drive it from an
+ACP client (e.g. Gas Town's ACP proxy) rather than Kilo:
+
+```bash
+go build -o yaah . && pkill -f 'yaah acp-serve' 2>/dev/null
+yaah acp-serve &
+```
+
+Test the ACP initialize handshake by piping a JSON-RPC request:
+
+```bash
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol_version":"2024-11-05","capabilities":{},"client_info":{"name":"test","version":"1"}}}\n' | timeout 2 yaah acp-serve 2>/dev/null
+```
+
+Expected output:
+```json
+{"jsonrpc":"2.0","id":1,"result":{"protocol_version":"2024-11-05","capabilities":{"tools":{"listChanged":false}},"server_info":{"name":"yaah","version":"..."}}}
+```
