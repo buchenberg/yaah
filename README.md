@@ -118,6 +118,7 @@ yaah tui                 # launch the rich TUI
 yaah --approval allow "run the tests"      # auto-approve dangerous tools
 YAAH_APPROVAL=allow yaah "deploy"          # env-var equivalent
 yaah --resume <session-id> "continue"      # resume a saved session
+yaah -d "always run tests first" "fix X"   # inject session directive
 ```
 
 ## My features
@@ -181,6 +182,57 @@ fields marked as raw evidence (command output, exit codes, file paths) or
 interpretation (findings, confidence, summaries). I trust the evidence. I
 spot-check the interpretations when confidence is low. I never re-do work
 my team already did — that's wasteful and disrespectful.
+
+### Structured escalation
+
+When a sub-agent hits a blocker it can't resolve, it emits a structured
+escalation block instead of silently failing:
+
+```
+```escalation
+{"severity":"blocker","summary":"file not found","detail":"...","suggestion":"..."}
+```
+```
+
+Severity levels: `info` → `warning` → `blocker` → `critical`. Blockers and
+criticals are surfaced to the user immediately. Warnings are noted but don't
+halt work. The orchestrator sees escalations as typed events and reports them
+with color-coded severity in both REPL and TUI.
+
+### Quality gates
+
+Sub-agent output can be automatically validated before reaching you.
+Configure per-role validators:
+
+```yaml
+agents:
+  quality_gates:
+    developer: [tester]    # after developer completes, dispatch tester
+```
+
+When a `developer` sub-agent finishes, a `tester` is auto-dispatched to
+validate the output. If validation fails, the result is annotated with
+`[quality-gate:FAIL]` so I know to investigate before reporting success.
+
+### Session directives
+
+Directives are session-level policy statements injected into all agent
+prompts (orchestrator and sub-agents):
+
+```bash
+yaah -d "prefer table-driven tests" -d "always run go vet" "implement X"
+```
+
+Or in config:
+
+```yaml
+agents:
+  default:
+    directives:
+      - "always run tests after implementation"
+```
+
+CLI flags prepend to config directives.
 
 ### Custom sub-agent roles
 
@@ -401,8 +453,10 @@ I run a configurable middleware pipeline on every agent turn:
 | `steer` | ✓ | High-priority mid-turn input before the next LLM call |
 | `followup` | ✓ | Queued between-turn messages, coalesced into one |
 | `compaction` | ✓ | LLM-powered context summarization when the window fills up |
+| `soft_prune` | ✓ | Elides stale tool-output content without an LLM call |
 | `approval` | ✓ | Gates dangerous tools per your approval mode |
 | `loop_detection` | ✓ | Halts stuck loops via tool-call-chain hashing |
+| `staleness` | ✓ | Annotates sub-agent results when orchestrator context shifted mid-flight |
 | `permission` | — | Path-pattern rules to allow/deny tools by file path |
 | `tool_concurrency` | — | Caps concurrent tool goroutines |
 | `sub_agent` | — | Enforces sub-agent depth limits |
@@ -501,6 +555,11 @@ agents:
     # Compaction tuning — fractions of context_window that trigger summarisation.
     compaction_threshold: 0.5
     raw_compaction_threshold: 0.5     # triggers on raw prompt tokens (ignores cache)
+    compact_max_messages: 50          # force compaction above N messages (0 = off)
+
+    # Session directives — injected into all agent prompts.
+    directives:
+      - "always run tests after implementation"
 
     # Loop detection — halt when the same tool+args+result hash repeats.
     loop_detect_count: 5              # identical calls to trigger halt
@@ -540,6 +599,9 @@ agents:
   fallback:                           # optional — try on primary failure
     provider: ollama
     model: llama3.2
+
+  quality_gates:                      # auto-validate sub-agent output
+    developer: [tester]               # after developer completes, dispatch tester
 
   middleware:
     enabled:                          # explicit pipeline order
@@ -599,6 +661,8 @@ At least one provider is required. Each needs a `base_url`
 | `estimate_factor` | 1.3 | Token estimate multiplier for preflight compaction |
 | `compaction_threshold` | 0.5 | Fraction of context_window that triggers LLM summarisation (effective tokens after cache subtraction) |
 | `raw_compaction_threshold` | 0.5 | Same as above but ignores cached tokens; guards latency |
+| `compact_max_messages` | 0 (off) | Force compaction when message count exceeds N, regardless of token estimates |
+| `directives` | — | Session-level policy statements injected into all agent prompts |
 | `loop_detect_count` | 5 | Identical tool calls (hash) within the window that trigger a hard halt |
 | `loop_detect_window` | 10 | Sliding window size (in turns) for loop detection |
 | `max_retries` | 0 (off) | Retry count on transient provider errors |
@@ -646,8 +710,10 @@ explicit order. Set `disabled` to remove from the default pipeline
 | `steer` | on | High-priority mid-turn steering input |
 | `followup` | on | Queued between-turn messages, coalesced |
 | `compaction` | on | LLM-powered context summarization |
+| `soft_prune` | on | Elide stale tool-output content (no LLM) |
 | `approval` | on | Gate dangerous tools |
 | `loop_detection` | on | Halt stuck loops |
+| `staleness` | on | Annotate sub-agent results when context shifted |
 | `permission` | off | Path-pattern allow/deny rules |
 | `tool_concurrency` | off | Cap concurrent tool goroutines |
 | `sub_agent` | off | Enforce sub-agent depth limits |
@@ -843,6 +909,23 @@ and hook events.
 
 A few things I've shipped recently (or helped my team ship, while I
 synthesized the results):
+
+**Structured escalation and quality gates.** My team can now tell me when
+they're stuck — a structured escalation block with severity, summary, and
+suggestion. Blockers halt the wave and get reported to you immediately.
+And when a developer finishes, I can auto-dispatch a tester to validate
+before reporting success. Verification over trust.
+
+**Session directives.** You can now inject policy statements into all agent
+prompts for a session: `yaah -d "always run tests first" "implement X"`.
+Or set them permanently in config. My team follows them without being told
+twice.
+
+**Context management overhaul.** Fixed the pruner walk getting stuck after
+the first batch of marks (break→continue). Added a message-count compaction
+trigger so context doesn't grow unbounded when pruning keeps tokens low.
+Wrapped the compact provider with OTel instrumentation so compaction calls
+are finally visible in traces.
 
 **Engine-view separation.** The agent loop used to be tangled up with the
 TUI — streams went straight to the renderer, everything was tightly coupled.

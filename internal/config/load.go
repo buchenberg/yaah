@@ -57,6 +57,10 @@ type Defaults struct {
 	PruneProtectTokens int `yaml:"prune_protect_tokens"` // recent tool tokens shielded; 0 = default (2000)
 	PruneMinReclaim    int `yaml:"prune_min_reclaim"`    // min tokens to commit a prune; 0 = default (400)
 	PruneMinTurns      int `yaml:"prune_min_turns"`      // recent turns always kept; 0 = default (1)
+
+	// Directives are session-level policy statements injected into all
+	// agent prompts (orchestrator and sub-agents).
+	Directives []string `yaml:"directives"`
 }
 
 // Hooks holds configuration for external integrations via JSONL hook events.
@@ -79,10 +83,11 @@ type FallbackConfig struct {
 
 // AgentConfig holds all agent-related configuration.
 type AgentConfig struct {
-	Default    Defaults         `yaml:"default"`
-	Fallback   FallbackConfig   `yaml:"fallback"`
-	SubAgent   SubAgentConfig   `yaml:"subagent"`
-	Middleware MiddlewareConfig `yaml:"middleware"`
+	Default      Defaults            `yaml:"default"`
+	Fallback     FallbackConfig      `yaml:"fallback"`
+	SubAgent     SubAgentConfig      `yaml:"subagent"`
+	Middleware   MiddlewareConfig    `yaml:"middleware"`
+	QualityGates map[string][]string `yaml:"quality_gates"` // role → validator roles dispatched after completion
 }
 
 // SubAgentConfig configures the task tool's sub-agent lifecycle:

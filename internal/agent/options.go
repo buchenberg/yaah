@@ -156,6 +156,8 @@ type LoopConfig struct {
 	RawCompactionThreshold float64
 	CompactMaxMessages     int
 	EstimateFactor         float64
+	QualityGates           map[string][]string
+	Directives             []string
 	LoopDetectCount        int
 	LoopDetectWindow       int
 	MaxToolConcurrency     int
@@ -185,6 +187,8 @@ func WithLoopConfig(cfg LoopConfig) Option {
 		l.RawCompactionThreshold = cfg.RawCompactionThreshold
 		l.CompactMaxMessages = cfg.CompactMaxMessages
 		l.EstimateFactor = cfg.EstimateFactor
+		l.QualityGates = cfg.QualityGates
+		l.Directives = cfg.Directives
 		l.LoopDetectCount = cfg.LoopDetectCount
 		l.LoopDetectWindow = cfg.LoopDetectWindow
 		l.MaxToolConcurrency = cfg.MaxToolConcurrency

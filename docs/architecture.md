@@ -199,6 +199,7 @@ The pipeline is built in `buildPipeline()` with a config-driven order:
 4. `SoftPruneMiddleware` — tier-0 tool-output elision (non-LLM, reclaims context)
 5. `ApprovalMiddleware` — no-op placeholder (approval moved to `executeAndCollect`)
 6. `LoopDetectionMiddleware` — detect stuck loops
+7. `StalenessMiddleware` — annotates sub-agent results when orchestrator context shifted mid-flight
 
 The default set is defined in `defaultPipelineNames` in `config.go`. Users can override which middleware runs via `config.yaml`:
 
@@ -385,6 +386,50 @@ Multiple `spawn_subagent` tool calls issued in a single turn are dispatched conc
 
 The parent context flows through `executeAndCollect` → `TaskTool.Execute` → `Runner` → `subLoop.Run`. Cancelling the parent (e.g. Ctrl-C) propagates via the context: each sub-agent's `Loop.Run` checks `ctx.Done()` at the top of every iteration and the underlying provider HTTP call respects the context. A cancelled sub-agent returns the structured cancellation result described above rather than failing the parent turn.
 
+### Structured escalation
+
+Sub-agents can raise structured escalations when they hit a blocker. The
+escalation is a fenced JSON block in the sub-agent's final output:
+
+```
+```escalation
+{"severity":"blocker","summary":"...","detail":"...","suggestion":"..."}
+```
+```
+
+`ParseSubAgentOutput` (`internal/tools/task.go`) extracts the escalation via
+regex before the result is truncated. If found, `executeAndCollect` publishes
+an `EscalationEvent` to the broker. The REPL renders a color-coded banner
+(red for blocker/critical, yellow for warning, dim for info). The TUI injects
+an escalation message card into the conversation view.
+
+Severity routing: `blocker`/`critical` halt sibling sub-agents and signal the
+orchestrator. `warning`/`info` are advisory.
+
+### Quality gates
+
+After a sub-agent completes (without escalating), the orchestrator checks
+`Loop.QualityGates[role]` for configured validator roles. Each validator is
+dispatched as a new sub-agent with the original output as context. If the
+validator's verdict is FAIL (determined by last-occurrence heuristic —
+"PASS" appearing after the last "FAIL" means pass), the result is annotated
+with `[quality-gate:FAIL]` before reaching the orchestrator.
+
+Configuration:
+
+```yaml
+agents:
+  quality_gates:
+    developer: [tester]
+```
+
+### Session directives
+
+Directives are policy statements injected into all agent prompts. Sources:
+CLI `--directive` / `-d` flag (repeatable, prepended) and config
+`agents.default.directives`. Injected into sub-agent system prompts after
+the escalation block, and into the orchestrator prompt during assembly.
+
 Semaphore acquisitions in `executeAndCollect` (`subAgentSem` and `toolSem`) use `select` on `ctx.Done()` alongside the channel send, so goroutines queued on concurrency caps immediately return a cancellation result instead of blocking until a slot opens.
 
 ### Nesting depth
@@ -528,8 +573,11 @@ history from exceeding the model's context window:
 | 2 — Trim | Deterministic oldest-message removal (no LLM) | ~µs | Fallback when LLM summarization fails |
 
 Compaction is triggered proactively when estimated tokens reach 50% of
-`ContextWindow` (with a 64K minimum floor), or reactively when the provider
-signals context overflow.
+`ContextWindow` (with a 64K minimum floor), reactively when the provider
+signals context overflow, or when the message count exceeds
+`CompactMaxMessages` (regardless of token estimates — guards against
+unbounded message accumulation when pruning keeps effective tokens below
+the token threshold).
 
 **Files:** `internal/agent/pipeline/pruner.go`, `internal/agent/pipeline/softprune.go`,
 `internal/agent/agent_prune.go`, `internal/agent/agent_context.go`
@@ -553,7 +601,10 @@ shielding:
 
 Walk termination boundaries (cheap per-turn cost):
 - A non-index-0 system message (compaction summary — older is already summarized)
-- An already-pruned tool message (avoids re-visiting previously evaluated history)
+- Already-pruned tool messages are skipped (continue), allowing the walk to
+  find newer unpruned messages between the protected turn window and the
+  first pruned block. The system-message boundary is the walk's only hard
+  termination guarantee; without a prior compaction the walk scans to index 0.
 
 After compaction rebuilds the message list, the pruned set is reset so the fresh
 tail is re-evaluated from scratch.
@@ -828,6 +879,7 @@ Concrete event types (all pointer receivers for clean nil checks in type switche
 | `ToolEndEvent` | Tool execution completes (name, args, result, duration, error) |
 | `SubAgentStartEvent` | Sub-agent dispatch begins (role, model, prompt) |
 | `SubAgentEndEvent` | Sub-agent dispatch completes (role, duration, error) |
+| `EscalationEvent` | Sub-agent raises a structured escalation (severity, summary, detail, suggestion) |
 | `DoneEvent` | Agent loop finishes (response, error, context stats) |
 
 ### View interface

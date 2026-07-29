@@ -56,7 +56,11 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&resumeSessionID,
 		"resume", "",
 		"resume a previous session by ID")
+	rootCmd.PersistentFlags().StringArrayVarP(&directiveOverrides,
+		"directive", "d", nil,
+		"session directive injected into all agent prompts (repeatable)")
 }
 
 var approvalOverride string
 var resumeSessionID string
+var directiveOverrides []string

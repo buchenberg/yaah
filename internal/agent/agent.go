@@ -129,6 +129,13 @@ type Loop struct {
 	// default (1.3).
 	EstimateFactor float64
 
+	// QualityGates maps sub-agent roles to validator roles that are
+	// automatically dispatched after the sub-agent completes. nil disables.
+	QualityGates map[string][]string
+
+	// Directives are session-level policy statements injected into prompts.
+	Directives []string
+
 	// MaxRetries is the number of retries on transient provider errors.
 	// Default 0 means no retries.
 	MaxRetries int

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/trace"
@@ -219,6 +220,25 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 						Suggestion:     escalation.Suggestion,
 					})
 				}
+				if escalation == nil && len(l.QualityGates[taskRole]) > 0 {
+					for _, validatorRole := range l.QualityGates[taskRole] {
+						gatePrompt := fmt.Sprintf(
+							"Validate the following sub-agent output. Run relevant tests, "+
+								"check for errors, and report PASS or FAIL with details.\n\n"+
+								"## Sub-agent output (role: %s)\n\n%.8000s",
+							taskRole, res,
+						)
+						gateArgs := fmt.Sprintf(`{"prompt":%q,"role":%q,"description":"quality gate: %s"}`,
+							gatePrompt, validatorRole, taskRole)
+						gateRes, gateErr := l.Registry.Execute(ctx, "spawn_subagent", gateArgs)
+						if gateErr == nil && gateVerdictFail(gateRes) {
+							if len(gateRes) > 2000 {
+								gateRes = gateRes[:2000] + "\n...[truncated]"
+							}
+							res += "\n\n[quality-gate:FAIL] Validator " + validatorRole + " found issues:\n" + gateRes
+						}
+					}
+				}
 			}
 
 			l.Hooks.Emit(HookEvent{
@@ -252,4 +272,18 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 	}
 
 	return results
+}
+
+// gateVerdictFail determines whether a quality gate validator's output
+// indicates failure. Uses last-occurrence heuristic: if "PASS" appears
+// after the last "FAIL", the verdict is pass (avoids false positives from
+// test output that mentions both words).
+func gateVerdictFail(output string) bool {
+	upper := strings.ToUpper(output)
+	lastFail := strings.LastIndex(upper, "FAIL")
+	if lastFail < 0 {
+		return false
+	}
+	lastPass := strings.LastIndex(upper, "PASS")
+	return lastPass < lastFail
 }

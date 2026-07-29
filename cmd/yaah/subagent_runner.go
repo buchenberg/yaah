@@ -21,7 +21,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker, estimateFactor float64, subContextWindow int, outputLimit int, providerMap map[string]config.Provider, defaults config.Defaults, parentPermissionRules []pipeline.PermissionRule) *tools.TaskTool {
+func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker, estimateFactor float64, subContextWindow int, outputLimit int, providerMap map[string]config.Provider, defaults config.Defaults, parentPermissionRules []pipeline.PermissionRule, directives []string) *tools.TaskTool {
 	// Sub-agent spawning depth is hard-coded at 1: the top-level agent
 	// can spawn one level of sub-agents; sub-agents cannot spawn further
 	// sub-agents (remainingDepth reaches 0).
@@ -54,6 +54,7 @@ func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 			providerMap:           providerMap,
 			defaults:              defaults,
 			parentPermissionRules: parentPermissionRules,
+			directives:            directives,
 		}, depth),
 		ResolveTimeout:   subAgentTimeoutResolver(subCfg),
 		RoleNames:        roleNames,
@@ -150,6 +151,10 @@ type taskRunnerOpts struct {
 	// subContextWindow is the parent agent's context window halved for
 	// sub-agent use, with a floor of 32000. Zero disables compaction.
 	subContextWindow int
+
+	// directives are session-level policy statements injected into
+	// sub-agent system prompts.
+	directives []string
 
 	// outputLimit caps the final synthesized sub-agent result in bytes.
 	outputLimit int
@@ -276,6 +281,14 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		sysPrompt += "- **`critical`**: You discovered a pre-existing bug, security issue, or data corruption.\n"
 		sysPrompt += "- **`warning`**: The task completed but with caveats, degraded results, or unverified assumptions.\n"
 		sysPrompt += "- **`info`**: Something the orchestrator should know but doesn't require action.\n"
+
+		if len(opts.directives) > 0 {
+			sysPrompt += "\n## Session directives\n\n"
+			for _, d := range opts.directives {
+				sysPrompt += "- " + d + "\n"
+			}
+			sysPrompt += "\nThese directives apply to this session. Follow them.\n"
+		}
 
 		if roleHasShell(profile.Tools) {
 			shell := "bash"

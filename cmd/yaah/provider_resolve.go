@@ -230,3 +230,18 @@ func buildStuckChildTimeouts(cfg config.SubAgentConfig) map[string]time.Duration
 	}
 	return m
 }
+
+// resolveDirectives merges CLI --directive flags (prepended) with config
+// directives. CLI flags take positional priority.
+func resolveDirectives(cfg *config.Config) []string {
+	if len(directiveOverrides) == 0 {
+		return cfg.Agent.Default.Directives
+	}
+	if len(cfg.Agent.Default.Directives) == 0 {
+		return directiveOverrides
+	}
+	out := make([]string, 0, len(directiveOverrides)+len(cfg.Agent.Default.Directives))
+	out = append(out, directiveOverrides...)
+	out = append(out, cfg.Agent.Default.Directives...)
+	return out
+}
