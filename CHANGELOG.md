@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.0](https://github.com/buchenberg/yaah/compare/v0.37.0...v0.38.0) (2026-07-29)
+
+
+### Features
+
+* add quality gates and session directives ([d78c6e4](https://github.com/buchenberg/yaah/commit/d78c6e4775922fa75289a4a780c95913e8a72b39))
+
 ## [0.37.0](https://github.com/buchenberg/yaah/compare/v0.36.3...v0.37.0) (2026-07-28)
 
 
