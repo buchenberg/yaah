@@ -46,6 +46,15 @@ go.work.sum
 .pi/
 .opencode/
 
+# Gas Town runtime directories — never commit
+mayor/
+crew/
+witness/
+settings/
+polecats/
+.refinery/
+.runtime/
+
 # Local scratch / working dirs — never commit
 .scratch/
 
@@ -63,3 +72,5 @@ state.db
 *.db
 .beads-credential-key
 .beads/proxieddb/
+.beads/.gt-types-configured
+.beads/PRIME.md
