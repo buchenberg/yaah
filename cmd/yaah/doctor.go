@@ -54,6 +54,9 @@ func runChecks() []check {
 		checkProvider(cfg, cfgErr),
 		checkModel(cfg, cfgErr),
 		checkSubAgents(cfg, cfgErr),
+		checkQualityGates(cfg, cfgErr),
+		checkDirectives(cfg, cfgErr),
+		checkPipeline(cfg, cfgErr),
 		checkFallback(cfg, cfgErr),
 		checkOTel(cfg, cfgErr),
 		checkHomeWritable(),
@@ -216,6 +219,75 @@ func checkFallback(cfg *config.Config, cfgErr error) check {
 		Status: "OK",
 		Detail: fmt.Sprintf("%s / %s", fc.Provider, fc.Model),
 	}
+}
+
+// checkQualityGates reports configured quality gate validators.
+func checkQualityGates(cfg *config.Config, cfgErr error) check {
+	if cfgErr != nil {
+		return check{Label: "Quality gates", Status: "WARN", Detail: "config not loaded"}
+	}
+	gates := cfg.Agent.QualityGates
+	if len(gates) == 0 {
+		return check{Label: "Quality gates", Status: "OK", Detail: "not configured"}
+	}
+	var parts []string
+	for role, validators := range gates {
+		if len(validators) > 0 {
+			parts = append(parts, fmt.Sprintf("%s→[%s]", role, strings.Join(validators, ",")))
+		}
+	}
+	if len(parts) == 0 {
+		return check{Label: "Quality gates", Status: "OK", Detail: "configured but no active gates"}
+	}
+	return check{Label: "Quality gates", Status: "OK", Detail: strings.Join(parts, ", ")}
+}
+
+// checkDirectives reports active session directives from config.
+func checkDirectives(cfg *config.Config, cfgErr error) check {
+	if cfgErr != nil {
+		return check{Label: "Directives", Status: "WARN", Detail: "config not loaded"}
+	}
+	directives := cfg.Agent.Default.Directives
+	cliCount := len(directiveOverrides)
+	if len(directives) == 0 && cliCount == 0 {
+		return check{Label: "Directives", Status: "OK", Detail: "none configured"}
+	}
+	var detail string
+	if cliCount > 0 && len(directives) > 0 {
+		detail = fmt.Sprintf("%d from CLI, %d from config", cliCount, len(directives))
+	} else if cliCount > 0 {
+		detail = fmt.Sprintf("%d from CLI", cliCount)
+	} else {
+		detail = fmt.Sprintf("%d from config", len(directives))
+	}
+	return check{Label: "Directives", Status: "OK", Detail: detail}
+}
+
+// checkPipeline reports the active middleware pipeline.
+func checkPipeline(cfg *config.Config, cfgErr error) check {
+	if cfgErr != nil {
+		return check{Label: "Pipeline", Status: "WARN", Detail: "config not loaded"}
+	}
+	mc := cfg.Agent.Middleware
+	if len(mc.Enabled) > 0 {
+		return check{Label: "Pipeline", Status: "OK", Detail: fmt.Sprintf("explicit: %s", strings.Join(mc.Enabled, " → "))}
+	}
+	defaults := []string{"steer", "followup", "compaction", "soft_prune", "approval", "tool_concurrency", "loop_detection", "staleness"}
+	active := make([]string, 0, len(defaults))
+	disabled := make(map[string]bool, len(mc.Disabled))
+	for _, d := range mc.Disabled {
+		disabled[d] = true
+	}
+	for _, name := range defaults {
+		if !disabled[name] {
+			active = append(active, name)
+		}
+	}
+	detail := fmt.Sprintf("%d middleware active", len(active))
+	if len(mc.Disabled) > 0 {
+		detail += fmt.Sprintf(" (disabled: %s)", strings.Join(mc.Disabled, ", "))
+	}
+	return check{Label: "Pipeline", Status: "OK", Detail: detail}
 }
 
 func checkOTel(cfg *config.Config, cfgErr error) check {
