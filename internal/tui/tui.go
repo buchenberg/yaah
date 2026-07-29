@@ -59,6 +59,8 @@ var (
 	noticeStyle         lipgloss.Style
 	mcpStatusConnected  lipgloss.Style
 	mcpStatusDisconnect lipgloss.Style
+	errorStyle          lipgloss.Style
+	errorBoxStyle       lipgloss.Style
 )
 
 // Message represents a chat message in the TUI.
@@ -811,6 +813,9 @@ func (m *Model) HandleEvent(evt agent.Event) {
 	case *agent.DoneEvent:
 		m.SetThinking(false)
 		m.ClearToolCall()
+		if e.Error != "" {
+			m.AddMessage("error", e.Error)
+		}
 		haveReasoning := m.thinkContent != ""
 		if m.streaming && m.streamContent != "" {
 			content := m.streamContent
@@ -855,7 +860,7 @@ func (m *Model) handleControlMsg(msg types.CtrlMsg) {
 	case *types.CtrlTodos:
 		m.todos = ctrl.Items
 	case *types.CtrlError:
-		m.AddMessage("assistant", fmt.Sprintf("Error: %v", ctrl.Err))
+		m.AddMessage("error", fmt.Sprintf("%v", ctrl.Err))
 		m.SetThinking(false)
 		m.streaming = false
 		m.streamContent = ""
