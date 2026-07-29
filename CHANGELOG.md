@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.39.0](https://github.com/buchenberg/yaah/compare/v0.38.0...v0.39.0) (2026-07-29)
+
+
+### Features
+
+* variadic min/max in calculate tool ([c9e063e](https://github.com/buchenberg/yaah/commit/c9e063ed7138366b338282cd5dff8210a8a1d390))
+* variadic min/max in calculate tool ([a659c05](https://github.com/buchenberg/yaah/commit/a659c05d0aaafc4bba259ec866868a751dda5f14))
+
+
+### Bug Fixes
+
+* include tool_id in web UI tool.end events for frontend matching ([6a7df0c](https://github.com/buchenberg/yaah/commit/6a7df0cc0c20a4d39bf62bdcedfddac6137d3e83))
+
+
+### Documentation
+
+* add web UI architecture and event reference ([6ae2e23](https://github.com/buchenberg/yaah/commit/6ae2e23bdad557d8d17c517cc6f73509435fc114))
+
 ## [0.38.0](https://github.com/buchenberg/yaah/compare/v0.37.0...v0.38.0) (2026-07-29)
 
 
