@@ -25,8 +25,9 @@ tools:
   - file_info
   - go_outline
   - git
+  - sed
 max_iterations: 30
-max_turns: 3
+max_turns: 10
 json_mode: true
 timeout: 240
 ---

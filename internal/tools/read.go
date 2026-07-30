@@ -44,6 +44,14 @@ func (t *ReadTool) Execute(ctx context.Context, args string) (string, error) {
 	}
 	params.FilePath = expandHomeDir(params.FilePath)
 
+	info, err := os.Stat(params.FilePath)
+	if err != nil {
+		return "", fmt.Errorf("read: %w", err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("read: %s is a directory, use the ls tool to list its contents", params.FilePath)
+	}
+
 	data, err := os.ReadFile(params.FilePath)
 	if err != nil {
 		return "", fmt.Errorf("read: %w", err)

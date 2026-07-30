@@ -17,6 +17,8 @@ tools:
   - edit
   - delete
   - replace
+  - patch
+  - sed
   - grep
   - glob
   - ls
@@ -25,6 +27,7 @@ tools:
   - json_query
   - git
   - go_outline
+  - go_refactor
   - calculate
   - file_info
   - webfetch

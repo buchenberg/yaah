@@ -17,6 +17,7 @@ tools:
   - grep
   - glob
   - ls
+  - sed
   - powershell
   - bash
   - calculate
