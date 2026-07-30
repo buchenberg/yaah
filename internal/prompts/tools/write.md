@@ -1,0 +1,1 @@
+Writes content to a file on the local filesystem. Overwrites the file if it already exists. Creates parent directories as needed. Use this tool to create new files or completely replace existing ones. For targeted edits to existing files, prefer the edit tool.

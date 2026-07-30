@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // editEntry is a single edit operation within a multi-edit call.
@@ -19,9 +21,7 @@ type editEntry struct {
 type EditTool struct{}
 
 func (t *EditTool) Name() string { return "edit" }
-func (t *EditTool) Description() string {
-	return "Performs exact string replacements in an existing file with fuzzy matching fallback."
-}
+func (t *EditTool) Description() string { return prompts.ToolDescription("edit") }
 
 func (t *EditTool) Schema() json.RawMessage {
 	return json.RawMessage(`{

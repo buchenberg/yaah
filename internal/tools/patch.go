@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // PatchTool applies unified diff patches to files.
@@ -13,7 +15,7 @@ import (
 type PatchTool struct{}
 
 func (t *PatchTool) Name() string        { return "patch" }
-func (t *PatchTool) Description() string { return "Applies a unified diff patch to a file." }
+func (t *PatchTool) Description() string { return prompts.ToolDescription("patch") }
 func (t *PatchTool) IsDangerous(argsJSON string) bool { return true }
 
 func (t *PatchTool) Schema() json.RawMessage {

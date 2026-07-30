@@ -43,6 +43,9 @@ var steeringMessageRaw string
 //go:embed environment_header.md
 var environmentHeaderRaw string
 
+//go:embed tools/*.md
+var ToolsFS embed.FS
+
 // SummaryTemplate returns the anchored summary prompt template used during
 // context compaction. It instructs the model to produce a structured
 // Markdown summary with fixed sections.
@@ -55,6 +58,17 @@ func SummaryTemplate() string {
 // field contract that sub-agents must follow.
 func ContractRules() string {
 	return contractRules
+}
+
+// ToolDescription returns the human-readable description of a built-in tool
+// from the embedded tools/*.md directory. Returns an empty string if the
+// named tool has no description file.
+func ToolDescription(name string) string {
+	data, err := ToolsFS.ReadFile("tools/" + name + ".md")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // Escalation returns the escalation format block injected into

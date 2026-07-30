@@ -1,0 +1,1 @@
+Searches file contents using ripgrep. Returns file paths, line numbers, and matching lines. Supports full regex syntax. Use the include parameter to filter by file extension (e.g. "*.go", "*.{ts,tsx}"). Use the path parameter to narrow the search to a specific directory or file. Output is truncated to avoid overwhelming the context window.

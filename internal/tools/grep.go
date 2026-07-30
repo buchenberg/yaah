@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // grepMaxResultLen caps the total grep output length.
@@ -20,9 +22,7 @@ const grepMaxResultLen = 8192
 type GrepTool struct{}
 
 func (t *GrepTool) Name() string { return "grep" }
-func (t *GrepTool) Description() string {
-	return "Searches file contents using ripgrep. Returns file paths, line numbers, and matching lines."
-}
+func (t *GrepTool) Description() string { return prompts.ToolDescription("grep") }
 
 func (t *GrepTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
