@@ -134,6 +134,11 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (types.Message
 		}
 
 		switch {
+		case classified.ShouldStripReasoning:
+			req.Messages = stripReasoningContent(req.Messages)
+			c.replayCount = 0
+			attempt--
+
 		case classified.ShouldCompress && isDegenerateStream(err) && c.Trim != nil && compactAttempts < 3:
 			beforeCount := len(req.Messages)
 			req.Messages = c.Trim(ctx, req.Messages)
@@ -224,6 +229,17 @@ func isDegenerateStream(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "streamed response produced no content") ||
 		strings.Contains(msg, "non-streaming response produced no content")
+}
+
+func stripReasoningContent(messages []types.Message) []types.Message {
+	out := make([]types.Message, len(messages))
+	for i, m := range messages {
+		out[i] = m
+		if m.Role == "assistant" {
+			out[i].ReasoningContent = ""
+		}
+	}
+	return out
 }
 
 // captureUsage extracts token usage from a response.
