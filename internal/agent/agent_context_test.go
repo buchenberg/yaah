@@ -702,13 +702,14 @@ func TestCompactContext_cacheSubtraction(t *testing.T) {
 		Messages:         append([]types.Message{}, msgs...),
 		LastPromptTokens: 3000,
 	}
-	// Loop WITH cache: effective = 3000-1500 = 1500 < target(2500) -> skips.
+	// Loop WITH cache: effective = 2000-1500 = 500 < target(2500), and raw
+	// = 2000 < target(2500) -> both triggers under threshold, skips.
 	withCache := &Loop{
 		Provider:               &fakeProvider{responses: []*types.ChatResponse{summary()}},
 		CompactModel:           "test",
 		ContextWindow:          10000,
 		Messages:               append([]types.Message{}, msgs...),
-		LastPromptTokens:       3000,
+		LastPromptTokens:       2000,
 		LastCachedPromptTokens: 1500,
 	}
 
@@ -761,16 +762,16 @@ func TestCompactContext_rawTriggerFires(t *testing.T) {
 }
 
 func TestCompactContext_bothTriggersUnderThreshold(t *testing.T) {
-	// Both effective tokens (5k) and raw tokens (40k) are under their targets
-	// (64k cost floor, 50k raw). Compaction must be skipped.
+	// Both effective tokens (5k) and raw tokens (20k) are under their targets
+	// (64k cost floor, 25k raw = 0.25 * 100k). Compaction must be skipped.
 	msgs := largeConversation(30)
 	loop := &Loop{
 		Provider:               summaryProvider(),
 		CompactModel:           "test",
 		ContextWindow:          100000,
 		Messages:               append([]types.Message{}, msgs...),
-		LastPromptTokens:       40000,
-		LastCachedPromptTokens: 35000, // effective = 5000
+		LastPromptTokens:       20000,
+		LastCachedPromptTokens: 15000, // effective = 5000
 	}
 
 	before := len(loop.Messages)

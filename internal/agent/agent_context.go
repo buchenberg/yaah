@@ -22,7 +22,7 @@ const defaultEstimateFactor = 1.3
 // compaction fires based on raw (non-cache-adjusted) prompt tokens. It guards
 // against latency degradation in heavily-cached conversations where the
 // effective-token trigger never fires. 0.5 matches hermes's 50% threshold.
-const defaultRawCompactionThreshold = 0.5
+const defaultRawCompactionThreshold = 0.25
 
 // maxPayloadBytes is the serialized request size above which the payload-size
 // guard forces compaction regardless of token estimates. Token heuristics
