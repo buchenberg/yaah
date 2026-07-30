@@ -52,11 +52,20 @@ type wireRequest struct {
 
 // lowerMessages converts internal messages to wire format.
 //
-// thinkingMode controls reasoning_content serialization:
-//   - true:  reasoning_content is always present on assistant messages
-//     (even when empty). Required by DeepSeek and similar providers.
-//   - false: reasoning_content is omitted unless non-empty.
+// thinkingMode is resolved from the model registry or config override.
+// Additionally, if ANY assistant message in the conversation carries
+// reasoning content, thinking mode is forced on for the entire request —
+// this catches models not yet in the registry (e.g. new DeepSeek variants)
+// and ensures reasoning_content is always present on every assistant message.
 func lowerMessages(msgs []types.Message, thinkingMode bool) []wireMessage {
+	if !thinkingMode {
+		for _, m := range msgs {
+			if m.Role == "assistant" && m.ReasoningContent != "" {
+				thinkingMode = true
+				break
+			}
+		}
+	}
 	out := make([]wireMessage, len(msgs))
 	for i, m := range msgs {
 		out[i] = lowerMessage(m, thinkingMode)

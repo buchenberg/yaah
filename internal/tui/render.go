@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
 	"charm.land/glamour/v2"
@@ -462,14 +461,4 @@ func (m *Model) renderMCPStatus() string {
 		b.WriteString("\n")
 	}
 	return b.String()
-}
-
-// matchJSONField extracts a string field value from a JSON object.
-// Returns "" if the field is absent or unparseable.
-func matchJSONField(jsonStr, field string) string {
-	re := regexp.MustCompile(fmt.Sprintf(`"%s"\s*:\s*"([^"]*)"`, field))
-	if match := re.FindStringSubmatch(jsonStr); len(match) > 1 {
-		return match[1]
-	}
-	return ""
 }

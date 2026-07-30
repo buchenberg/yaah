@@ -6,19 +6,31 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/buchenberg/yaah/internal/agent"
-	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/buchenberg/yaah/internal/toolfmt"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
 type wireOption struct {
 	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`
+}
+
+type wireMCPServer struct {
+	Name      string `json:"name"`
+	Transport string `json:"transport"`
+	Connected bool   `json:"connected"`
+	ToolCount int    `json:"toolCount"`
+	Error     string `json:"error,omitempty"`
+}
+
+type wireHeaderMeta struct {
+	Provider   string          `json:"provider"`
+	Model      string          `json:"model"`
+	MCPServers []wireMCPServer `json:"mcpServers"`
 }
 
 type wireTodo struct {
@@ -55,6 +67,8 @@ type sseWireEvent struct {
 	Options  []wireOption `json:"options,omitempty"`
 	Multi    bool         `json:"multi,omitempty"`
 
+	Meta *wireHeaderMeta `json:"meta,omitempty"`
+
 	Items []wireTodo `json:"items,omitempty"`
 
 	Tokens int `json:"tokens,omitempty"`
@@ -69,6 +83,22 @@ func marshalWire(we sseWireEvent) []byte {
 	return data
 }
 
+// SendConnect sends the header info and current todo state to a newly
+// connected SSE client, catching it up to the current session state.
+func (v *sseView) SendConnect() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	h := &wireHeaderMeta{
+		Provider:   v.provider,
+		Model:      v.model,
+		MCPServers: v.mcpServers,
+	}
+	v.writeLocked(marshalWire(sseWireEvent{Type: "ctrl.header", Meta: h}))
+	if len(v.todos) > 0 {
+		v.writeLocked(marshalWire(sseWireEvent{Type: "ctrl.todos", Items: v.todos}))
+	}
+}
+
 type sseView struct {
 	w         http.ResponseWriter
 	mu        sync.Mutex
@@ -76,6 +106,14 @@ type sseView struct {
 	// curToolID tracks the most recent tool-start ID so tool-end
 	// events can carry the same ID for frontend matching.
 	curToolID atomic.Int64
+
+	// header info set from the session on SSE connect
+	provider   string
+	model      string
+	mcpServers []wireMCPServer
+
+	// current todo state — updated by forwardCtrl; sent on SSE connect
+	todos []wireTodo
 }
 
 func (v *sseView) HandleEvent(evt agent.Event) {
@@ -100,7 +138,7 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 			Type: "tool.end", ToolID: v.curToolID.Load(),
 			Name: e.Name, Args: e.Args,
 			Result: e.Result, Ms: e.Duration.Milliseconds(), Error: e.Error,
-			Summary: toolSummary(e.Name, e.Args, e.Result),
+			Summary:  toolfmt.Summary(e.Name, e.Args, e.Result),
 		}
 	case *agent.SubAgentStartEvent:
 		we = sseWireEvent{Type: "subagent.start", Role: e.Role, Model: e.Model, Prompt: e.Prompt}
@@ -122,6 +160,11 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 func (v *sseView) write(data []byte) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	v.writeLocked(data)
+}
+
+// writeLocked writes SSE data assuming v.mu is already held.
+func (v *sseView) writeLocked(data []byte) {
 	fmt.Fprintf(v.w, "data: %s\n\n", data)
 	if f, ok := v.w.(http.Flusher); ok {
 		f.Flush()
@@ -213,6 +256,9 @@ func forwardCtrl(ctx context.Context, ch <-chan types.CtrlMsg, v *sseView, am *a
 				for i, item := range m.Items {
 					items[i] = wireTodo{Content: item.Content, Status: item.Status, Priority: item.Priority}
 				}
+				v.mu.Lock()
+				v.todos = items
+				v.mu.Unlock()
 				v.write(marshalWire(sseWireEvent{Type: "ctrl.todos", Items: items}))
 			case *types.CtrlContextInfo:
 				v.write(marshalWire(sseWireEvent{Type: "ctrl.context", Tokens: m.Tokens, Window: m.Window}))
@@ -227,10 +273,9 @@ func forwardCtrl(ctx context.Context, ch <-chan types.CtrlMsg, v *sseView, am *a
 	}
 }
 
-// --- tool summary helpers (ported from internal/tui/tool_component.go) ---
+// --- tool summary helpers (shared helpers in internal/toolfmt) ---
 
 var (
-	grepMatchRe   = regexp.MustCompile(`^(\d+):`)
 	urlFieldRe    = regexp.MustCompile(`"url"\s*:\s*"([^"]*)"`)
 	urlsFieldRe   = regexp.MustCompile(`"urls"\s*:\s*\["([^"]*)"`)
 	actionFieldRe = regexp.MustCompile(`"action"\s*:\s*"([^"]*)"`)
@@ -243,13 +288,13 @@ func toolStartSummary(name, args string) string {
 	case "bash":
 		return args
 	case "read":
-		return shortFile(args)
+		return toolfmt.FilePath(args)
 	case "write":
-		return "→ " + shortFile(args)
+		return "→ " + toolfmt.FilePath(args)
 	case "edit":
-		return shortFile(args)
+		return toolfmt.FilePath(args)
 	case "delete":
-		return shortFile(args)
+		return toolfmt.FilePath(args)
 	case "grep":
 		return shortPattern(args)
 	case "glob":
@@ -263,133 +308,18 @@ func toolStartSummary(name, args string) string {
 			return a
 		}
 	case "spawn_subagent":
-		role := matchJSONFieldStr(args, "role")
-		desc := matchJSONFieldStr(args, "description")
-		return subagentSummary(role, desc)
+		role := toolfmt.MatchJSONField(args, "role")
+		desc := toolfmt.MatchJSONField(args, "description")
+		return toolfmt.SubagentLabel(role, desc)
 	}
 	return ""
-}
-
-// toolSummary returns a one-line description of a tool's result,
-// following the TUI's toolSummary patterns in internal/tui/tool_component.go.
-func toolSummary(name, args, content string) string {
-	switch name {
-	case "grep":
-		return grepSum(content)
-	case "glob":
-		return globSum(content)
-	case "ls":
-		return lsSum(content)
-	case "bash":
-		return bashSum(content)
-	case "read":
-		return fmt.Sprintf("read %s (%s chars)", shortFile(args), formatNum(len(content)))
-	case "write":
-		return fmt.Sprintf("wrote %s (%s chars)", shortFile(args), formatNum(len(content)))
-	case "edit":
-		return "edited " + shortFile(args)
-	case "delete":
-		return "deleted " + shortFile(args)
-	case "http":
-		if u := extractURL(args); u != "" {
-			return u
-		}
-	case "webfetch":
-		if u := extractURL(args); u != "" {
-			return u
-		}
-	case "git":
-		if a := extractAction(args); a != "" {
-			return a
-		}
-	case "replace":
-		return "replaced in " + shortFile(args)
-	case "spawn_subagent":
-		role := matchJSONFieldStr(args, "role")
-		desc := matchJSONFieldStr(args, "description")
-		return subagentSummary(role, desc)
-	default:
-		firstLine, _, _ := strings.Cut(strings.TrimSpace(content), "\n")
-		if len(firstLine) > 80 {
-			return firstLine[:77] + "..."
-		}
-		return firstLine
-	}
-	return ""
-}
-
-func grepSum(content string) string {
-	if content == "" {
-		return "0 matches"
-	}
-	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
-	totalLines := len(lines)
-	matches := 0
-	matchLines := 0
-	for _, line := range lines {
-		if grepMatchRe.MatchString(line) {
-			matchLines++
-			matches += strings.Count(line, "\x1b[31m")
-		}
-	}
-	if matches == 0 {
-		matches = matchLines
-	}
-	files := totalLines - matchLines
-	if files < 0 {
-		files = 0
-	}
-	return fmt.Sprintf("%d matches in %d files", matches, files)
-}
-
-func globSum(content string) string {
-	lines := strings.Count(strings.TrimRight(content, "\n"), "\n") + 1
-	if content == "" {
-		lines = 0
-	}
-	if lines == 0 {
-		return "0 files"
-	}
-	return fmt.Sprintf("%d files", lines)
-}
-
-func lsSum(content string) string {
-	lines := strings.Count(content, "\n")
-	if content == "" {
-		return "0 entries"
-	}
-	return fmt.Sprintf("%d entries", lines+1)
-}
-
-func bashSum(content string) string {
-	trimmed := strings.TrimSpace(content)
-	if trimmed == "" {
-		return ""
-	}
-	firstLine, _, _ := strings.Cut(trimmed, "\n")
-	if len(firstLine) > 60 {
-		return firstLine[:57] + "..."
-	}
-	return firstLine
-}
-
-func shortFile(args string) string {
-	fp := matchJSONFieldStr(args, "filePath")
-	if fp == "" {
-		fp = matchJSONFieldStr(args, "path")
-	}
-	if fp == "" {
-		return ""
-	}
-	parts := strings.Split(fp, "/")
-	return parts[len(parts)-1]
 }
 
 func shortPattern(args string) string {
-	if p := matchJSONFieldStr(args, "pattern"); p != "" {
+	if p := toolfmt.MatchJSONField(args, "pattern"); p != "" {
 		return p
 	}
-	if p := matchJSONFieldStr(args, "path"); p != "" {
+	if p := toolfmt.MatchJSONField(args, "path"); p != "" {
 		return p
 	}
 	return ""
@@ -410,45 +340,6 @@ func extractAction(args string) string {
 		return m[1]
 	}
 	return ""
-}
-
-func subagentSummary(role, desc string) string {
-	displayName := subagent.RoleDisplayName(subagent.SubAgentRole(role))
-	specialty := subagent.RoleSpecialty(subagent.SubAgentRole(role))
-	label := displayName
-	if specialty != "" {
-		label += " — " + specialty
-	}
-	switch {
-	case role != "" && desc != "":
-		return "sub-agent: " + label + " · " + desc
-	case desc != "":
-		return "sub-agent · " + desc
-	case role != "":
-		return "sub-agent: " + label
-	default:
-		return "sub-agent"
-	}
-}
-
-func matchJSONFieldStr(jsonStr, field string) string {
-	re := regexp.MustCompile(`"` + regexp.QuoteMeta(field) + `"\s*:\s*"([^"]*)"`)
-	if m := re.FindStringSubmatch(jsonStr); len(m) > 1 {
-		return m[1]
-	}
-	return ""
-}
-
-func formatNum(n int) string {
-	s := strconv.Itoa(n)
-	var result strings.Builder
-	for i, c := range s {
-		if i > 0 && (len(s)-i)%3 == 0 {
-			result.WriteRune(',')
-		}
-		result.WriteRune(c)
-	}
-	return result.String()
 }
 
 var _ agent.View = (*sseView)(nil)

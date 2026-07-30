@@ -6,6 +6,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/buchenberg/yaah/internal/toolfmt"
 )
 
 type acpUpdate struct {
@@ -95,7 +96,7 @@ func (v *acpView) sendTo(sessionID string, send func(string, acpUpdate), evt age
 				Result:  e.Result,
 				Error:   e.Error,
 				Ms:      e.Duration.Milliseconds(),
-				Summary: toolSummary(e.Name, e.Args, e.Result),
+				Summary: toolfmt.Summary(e.Name, e.Args, e.Result),
 			},
 		}
 	case *agent.SubAgentStartEvent:

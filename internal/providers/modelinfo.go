@@ -65,6 +65,7 @@ var thinkingModels = map[string]bool{
 var thinkingPrefixes = []string{
 	"o1-", "o3-", "o4-",
 	"deepseek-r1",
+	"deepseek-v4",
 	"qwq-",
 }
 

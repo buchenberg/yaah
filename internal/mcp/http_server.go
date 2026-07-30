@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -66,8 +67,18 @@ func (h *HTTPServer) Addr() string {
 	return h.addr
 }
 
-// Start blocks until the HTTP server stops or ctx is cancelled.
-// On cancellation it attempts a graceful shutdown.
+// Start binds the configured address and serves HTTP until the
+// server is shut down via ctx cancellation, Shutdown, or a fatal
+// listen error.
+//
+// The listener is bound explicitly before Serve so the caller can
+// detect readiness: once Start prints the "listening" line the port
+// is guaranteed to accept connections. This avoids ERR_CONNECTION_REFUSED
+// races during server restarts where clients reconnect before Listen
+// has completed.
+//
+// On ctx cancellation Start calls Shutdown to gracefully drain
+// active connections, then returns nil.
 func (h *HTTPServer) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mcp", h.handleMCP)
@@ -75,31 +86,65 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/messages", h.handlePost)
 	mux.HandleFunc("/health", h.handleHealth)
 
+	// Bind the listener explicitly so we can signal readiness before
+	// entering the blocking Serve loop. This eliminates the window
+	// between process start and port binding that causes
+	// ERR_CONNECTION_REFUSED on client reconnects.
+	ln, err := net.Listen("tcp", h.addr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", h.addr, err)
+	}
+
+	// Store the actual address (important when port 0 is requested).
+	h.addr = ln.Addr().String()
+
 	h.httpServer = &http.Server{
 		Addr:    h.addr,
 		Handler: mux,
 	}
 
+	// Readiness signal: the port is bound, connections will succeed.
+	fmt.Fprintf(os.Stderr, "[yaah-mcp] listening on %s\n", h.addr)
+
+	// Serve blocks until Shutdown or Close is called (or a fatal
+	// listener error occurs).
 	errCh := make(chan error, 1)
 	go func() {
-		var err error
-		if err = h.httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := h.httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 		close(errCh)
 	}()
 
+	// Wait for either context cancellation (shutdown signal) or a
+	// fatal serve error.
 	select {
 	case <-ctx.Done():
+		// Graceful shutdown: stop accepting new connections, wait
+		// for in-flight requests to complete, then return.
+		fmt.Fprintf(os.Stderr, "[yaah-mcp] shutting down...\n")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		return h.httpServer.Shutdown(shutdownCtx)
+		_ = h.httpServer.Shutdown(shutdownCtx)
+		<-errCh // wait for Serve to return
+		return nil
 	case err := <-errCh:
 		return err
 	}
 }
 
-// Close gracefully shuts down the HTTP server.
+// Shutdown gracefully shuts down the HTTP server without interrupting
+// active connections. It waits for in-flight requests to complete or
+// the context to expire, whichever comes first.
+func (h *HTTPServer) Shutdown(ctx context.Context) error {
+	if h.httpServer == nil {
+		return nil
+	}
+	return h.httpServer.Shutdown(ctx)
+}
+
+// Close immediately closes all active connections and the listener.
+// Prefer Shutdown for graceful connection draining.
 func (h *HTTPServer) Close() error {
 	if h.httpServer == nil {
 		return nil
@@ -162,6 +207,7 @@ func (h *HTTPServer) handleGetSSE(w http.ResponseWriter, r *http.Request) {
 
 	sid := newSessionID()
 	h.registerSession(sid)
+	defer h.unregisterSession(sid)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

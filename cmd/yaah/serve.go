@@ -191,9 +191,17 @@ func runServeHTTP(buf *observability.BufferingSpanProcessor) error {
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpSrv.Start(ctx) }()
 
+	// Start handles graceful shutdown (via Shutdown) when ctx is
+	// cancelled. We wait for it to return so active SSE connections
+	// are drained rather than abruptly broken — avoiding
+	// ERR_CONNECTION_REFUSED storms on reconnect.
 	select {
 	case <-ctx.Done():
 		fmt.Fprintf(os.Stderr, "%s signal received, shutting down\n", Dim("yaah serve:"))
+		// Wait for Start to finish its graceful shutdown.
+		if err := <-errCh; err != nil {
+			fmt.Fprintf(os.Stderr, "%s HTTP server shutdown: %v\n", Dim("yaah serve:"), err)
+		}
 	case err := <-errCh:
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s HTTP server error: %v\n", Dim("yaah serve:"), err)
