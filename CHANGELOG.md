@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.40.2](https://github.com/buchenberg/yaah/compare/v0.40.1...v0.40.2) (2026-07-30)
+
+
+### Bug Fixes
+
+* contain error rendering across TUI, REPL, and web UI ([5a37a84](https://github.com/buchenberg/yaah/commit/5a37a8423ca7d5072fd9428635424ebf527fca1a))
+* contain error rendering across TUI, REPL, and web UI ([6f94a2e](https://github.com/buchenberg/yaah/commit/6f94a2e535bde80c5354e38efd53229971bdb6bb))
+* TUI garbled output, reasoning_content error, tool improvements ([#110](https://github.com/buchenberg/yaah/issues/110)) ([60cbe48](https://github.com/buchenberg/yaah/commit/60cbe480ae51e1a6eb7a36478491a6c355837934))
+
 ## [0.40.1](https://github.com/buchenberg/yaah/compare/v0.40.0...v0.40.1) (2026-07-29)
 
 
