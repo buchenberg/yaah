@@ -32,44 +32,57 @@ type Client struct {
 	dsmlSeq          int    // monotonic ID counter for DSML-recovered tool calls
 }
 
-// Call sends a chat request and returns the assistant message, whether it
-// was streamed, the provider usage, and any error. It handles retries,
+// CallResult holds the outcome of a single LLM call. Response metadata
+// (FinishReason, ResponseModel) is kept separate from the message so it
+// never pollutes the conversation history or gets persisted to the DB.
+type CallResult struct {
+	Message       types.Message
+	Streamed      bool
+	Usage         types.Usage
+	FinishReason  string
+	ResponseModel string
+}
+
+// Call sends a chat request and returns the result. It handles retries,
 // provider rotation on credential errors, and context compaction on overflow.
-func (c *Client) Call(ctx context.Context, req types.ChatRequest) (types.Message, bool, types.Usage, error) {
+func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, error) {
 	// Inject session ID into context so providers can set affinity headers.
 	ctx = providers.WithSessionID(ctx, c.SessionID)
 
-	var lastMsg types.Message
-	var wasStreamed bool
+	var lastResult CallResult
 	var lastErr error
-	var totalUsage types.Usage
 	compactAttempts := 0
 	providerSwapped := false
 	c.replayCount = 0
 
 	for attempt := 0; attempt <= c.MaxRetries; attempt++ {
-		var msg types.Message
-		var streamed bool
+		var result CallResult
 		var err error
 
 		if sp, ok := c.Provider.(StreamProvider); ok && c.OnToken != nil {
+			var msg types.Message
+			var finishReason, responseModel string
 			var streamUsage types.Usage
-			msg, streamUsage, err = c.runStream(ctx, sp, req)
-			if err == nil {
-				totalUsage = streamUsage
+			msg, finishReason, responseModel, streamUsage, err = c.runStream(ctx, sp, req)
+			result = CallResult{
+				Message:       msg,
+				Streamed:      true,
+				Usage:         streamUsage,
+				FinishReason:  finishReason,
+				ResponseModel: responseModel,
 			}
-			streamed = true
 		} else {
 			var resp *types.ChatResponse
 			resp, err = c.Provider.Send(ctx, req)
 			if err == nil {
-				totalUsage = captureUsage(resp)
+				result.Usage = captureUsage(resp)
+				result.Streamed = false
 				if len(resp.Choices) == 0 {
 					err = fmt.Errorf("no choices in response")
 				} else {
-					msg = resp.Choices[0].Message
-					msg.FinishReason = resp.Choices[0].FinishReason
-					msg.ResponseModel = resp.Model
+					msg := resp.Choices[0].Message
+					result.FinishReason = resp.Choices[0].FinishReason
+					result.ResponseModel = resp.Model
 
 					if msg.Content == "" && msg.Refusal != "" {
 						msg.Content = msg.Refusal
@@ -87,24 +100,22 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (types.Message
 					finish := resp.Choices[0].FinishReason
 					if finish == "content_filter" && msg.Content == "" {
 						err = fmt.Errorf("response blocked by content filter")
-						msg = types.Message{}
 					} else if finish == "length" && len(msg.ToolCalls) > 0 {
 						err = fmt.Errorf("response truncated (finish_reason=length), discarding %d tool calls", len(msg.ToolCalls))
-						msg = types.Message{}
 					} else if msg.Content == "" && len(msg.ToolCalls) == 0 {
 						err = fmt.Errorf("non-streaming response produced no content (finish_reason=%s)", finish)
-						msg = types.Message{}
+					} else {
+						result.Message = msg
 					}
 				}
 			}
 		}
 
 		if err == nil {
-			return msg, streamed, totalUsage, nil
+			return result, nil
 		}
 
-		lastMsg = msg
-		wasStreamed = streamed
+		lastResult = result
 		lastErr = err
 
 		meta := errorclassify.ErrorMeta{
@@ -176,7 +187,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (types.Message
 			continue
 
 		case classified.ShouldAbort:
-			return types.Message{}, false, totalUsage, err
+			return CallResult{Usage: result.Usage}, err
 		}
 
 		if classified.Retryable && attempt < c.MaxRetries {
@@ -188,13 +199,13 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (types.Message
 			select {
 			case <-time.After(backoff):
 			case <-ctx.Done():
-				return types.Message{}, false, totalUsage, ctx.Err()
+				return CallResult{Usage: result.Usage}, ctx.Err()
 			}
 		} else if !classified.Retryable {
-			return types.Message{}, false, totalUsage, err
+			return CallResult{Usage: result.Usage}, err
 		}
 	}
-	return lastMsg, wasStreamed, totalUsage, lastErr
+	return lastResult, lastErr
 }
 
 // httpStatusCode extracts the HTTP status code from a provider error.

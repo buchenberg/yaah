@@ -23,6 +23,10 @@ type OpenAIClient struct {
 	baseURL string
 	apiKey  string
 	client  *http.Client
+
+	// ThinkingOverrides holds per-model thinking-mode overrides from config.
+	// When a model has an entry, that value wins over auto-detection.
+	ThinkingOverrides map[string]*bool
 }
 
 // NewOpenAIClient creates a new client targeting baseURL (e.g. "https://api.openai.com").
@@ -42,9 +46,23 @@ func NewOpenAIClient(baseURL, apiKey string, timeoutSeconds int) *OpenAIClient {
 	}
 }
 
+// resolveThinkingMode determines whether reasoning_content should always be
+// serialized on assistant messages. Resolution order:
+//  1. Per-model config override (ThinkingOverrides map)
+//  2. Auto-detection from the known thinking-model registry
+func (c *OpenAIClient) resolveThinkingMode(model string) bool {
+	name := sanitizeModelName(model)
+	if c.ThinkingOverrides != nil {
+		if v, ok := c.ThinkingOverrides[name]; ok && v != nil {
+			return *v
+		}
+	}
+	return IsThinkingModel(model)
+}
+
 // Send posts a ChatRequest to the provider and returns the parsed ChatResponse.
 func (c *OpenAIClient) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
-	body, err := json.Marshal(req)
+	body, err := json.Marshal(lowerRequest(req, c.resolveThinkingMode(req.Model)))
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}

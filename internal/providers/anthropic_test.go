@@ -19,7 +19,7 @@ func TestChatRequestToAnthropic_SystemMessages(t *testing.T) {
 		},
 	}
 
-	result := chatRequestToAnthropic(req)
+	result := lowerAnthropicRequest(req)
 
 	if len(result.System) != 1 {
 		t.Fatalf("expected 1 system block, got %d", len(result.System))
@@ -50,7 +50,7 @@ func TestChatRequestToAnthropic_Conversation(t *testing.T) {
 		},
 	}
 
-	result := chatRequestToAnthropic(req)
+	result := lowerAnthropicRequest(req)
 
 	if len(result.Messages) != 3 {
 		t.Fatalf("expected 3 messages, got %d", len(result.Messages))
@@ -76,7 +76,7 @@ func TestChatRequestToAnthropic_MergesConsecutiveUser(t *testing.T) {
 		},
 	}
 
-	result := chatRequestToAnthropic(req)
+	result := lowerAnthropicRequest(req)
 
 	if len(result.Messages) != 1 {
 		t.Fatalf("expected 1 merged message, got %d", len(result.Messages))
@@ -99,7 +99,7 @@ func TestChatRequestToAnthropic_ToolCalls(t *testing.T) {
 		},
 	}
 
-	result := chatRequestToAnthropic(req)
+	result := lowerAnthropicRequest(req)
 
 	if len(result.Messages) != 3 {
 		t.Fatalf("expected 3 messages (user, assistant, tool_result_user), got %d", len(result.Messages))
@@ -161,7 +161,7 @@ func TestChatRequestToAnthropic_Tools(t *testing.T) {
 		},
 	}
 
-	result := chatRequestToAnthropic(req)
+	result := lowerAnthropicRequest(req)
 
 	if len(result.Tools) != 1 {
 		t.Fatalf("expected 1 tool, got %d", len(result.Tools))
@@ -183,7 +183,7 @@ func TestChatRequestToAnthropic_MaxTokensDefault(t *testing.T) {
 		},
 	}
 
-	result := chatRequestToAnthropic(req)
+	result := lowerAnthropicRequest(req)
 
 	if result.MaxTokens != 4096 {
 		t.Errorf("expected MaxTokens 4096, got %d", result.MaxTokens)
@@ -199,7 +199,7 @@ func TestChatRequestToAnthropic_MaxTokensExplicit(t *testing.T) {
 		},
 	}
 
-	result := chatRequestToAnthropic(req)
+	result := lowerAnthropicRequest(req)
 
 	if result.MaxTokens != 8000 {
 		t.Errorf("expected MaxTokens 8000, got %d", result.MaxTokens)
@@ -216,7 +216,7 @@ func TestChatRequestToAnthropic_CacheControlPassthrough(t *testing.T) {
 		},
 	}
 
-	result := chatRequestToAnthropic(req)
+	result := lowerAnthropicRequest(req)
 
 	if result.System[0].CacheControl == nil {
 		t.Error("expected cache_control on system block")
@@ -241,7 +241,7 @@ func TestChatRequestToAnthropic_ReasoningContent(t *testing.T) {
 		},
 	}
 
-	result := chatRequestToAnthropic(req)
+	result := lowerAnthropicRequest(req)
 
 	blocks := result.Messages[0].Content
 	if len(blocks) != 2 {
@@ -258,7 +258,7 @@ func TestChatRequestToAnthropic_ReasoningContent(t *testing.T) {
 	}
 }
 
-func TestAnthropicResponseToChat(t *testing.T) {
+func TestRaiseAnthropicResponse(t *testing.T) {
 	resp := anthropicResponse{
 		ID:    "msg_123",
 		Model: "claude-3.5-sonnet",
@@ -276,7 +276,7 @@ func TestAnthropicResponseToChat(t *testing.T) {
 		},
 	}
 
-	result := anthropicResponseToChat(resp)
+	result := raiseAnthropicResponse(resp)
 
 	if result.ID != "msg_123" {
 		t.Errorf("expected ID 'msg_123', got %q", result.ID)
@@ -321,7 +321,7 @@ func TestAnthropicResponseToChat_ToolUseStopReason(t *testing.T) {
 		Usage:      anthropicUsage{InputTokens: 10, OutputTokens: 5},
 	}
 
-	result := anthropicResponseToChat(resp)
+	result := raiseAnthropicResponse(resp)
 
 	if result.Choices[0].FinishReason != "tool_calls" {
 		t.Errorf("expected finish_reason 'tool_calls' for tool_use stop, got %q", result.Choices[0].FinishReason)
@@ -340,7 +340,7 @@ func TestAnthropicResponseToChat_Thinking(t *testing.T) {
 		Usage:      anthropicUsage{InputTokens: 20, OutputTokens: 15},
 	}
 
-	result := anthropicResponseToChat(resp)
+	result := raiseAnthropicResponse(resp)
 
 	if result.Choices[0].Message.ReasoningContent != "Hmm, let me consider..." {
 		t.Errorf("expected reasoning content, got %q", result.Choices[0].Message.ReasoningContent)
@@ -361,7 +361,7 @@ func TestAnthropicResponseToChat_MaxTokensStop(t *testing.T) {
 		Usage:      anthropicUsage{InputTokens: 10, OutputTokens: 4096},
 	}
 
-	result := anthropicResponseToChat(resp)
+	result := raiseAnthropicResponse(resp)
 
 	if result.Choices[0].FinishReason != "length" {
 		t.Errorf("expected finish_reason 'length' for max_tokens stop, got %q", result.Choices[0].FinishReason)
@@ -535,7 +535,7 @@ func TestChatRequestToAnthropic_TemperaturePassthrough(t *testing.T) {
 		},
 	}
 
-	result := chatRequestToAnthropic(req)
+	result := lowerAnthropicRequest(req)
 
 	if result.Temperature != 0.7 {
 		t.Errorf("expected Temperature 0.7, got %f", result.Temperature)
@@ -551,7 +551,7 @@ func TestChatRequestToAnthropic_EmptySystem(t *testing.T) {
 		},
 	}
 
-	result := chatRequestToAnthropic(req)
+	result := lowerAnthropicRequest(req)
 
 	if len(result.System) != 0 {
 		t.Errorf("expected 0 system blocks, got %d", len(result.System))
@@ -582,7 +582,7 @@ func TestChatRequestToAnthropic_PreservesModel(t *testing.T) {
 		},
 	}
 
-	result := chatRequestToAnthropic(req)
+	result := lowerAnthropicRequest(req)
 
 	if result.Model != "claude-3-opus" {
 		t.Errorf("expected model 'claude-3-opus', got %q", result.Model)
@@ -602,7 +602,7 @@ func TestChatRequestToAnthropic_ToolResultWithoutUser(t *testing.T) {
 		},
 	}
 
-	result := chatRequestToAnthropic(req)
+	result := lowerAnthropicRequest(req)
 
 	lastMsg := result.Messages[len(result.Messages)-1]
 	if lastMsg.Role != "user" {
@@ -634,7 +634,7 @@ func TestAnthropicResponseToChat_Usage(t *testing.T) {
 		},
 	}
 
-	result := anthropicResponseToChat(resp)
+	result := raiseAnthropicResponse(resp)
 
 	if result.Usage.PromptTokens != 100 {
 		t.Errorf("expected PromptTokens 100, got %d", result.Usage.PromptTokens)
@@ -664,7 +664,7 @@ func TestChatRequestToAnthropic_UserWithToolResults(t *testing.T) {
 		},
 	}
 
-	result := chatRequestToAnthropic(req)
+	result := lowerAnthropicRequest(req)
 
 	secondUser := result.Messages[2]
 	if secondUser.Role != "user" {
@@ -698,7 +698,7 @@ func TestChatRequestToAnthropic_StreamFlag(t *testing.T) {
 		},
 	}
 
-	result := chatRequestToAnthropic(req)
+	result := lowerAnthropicRequest(req)
 
 	if !result.Stream {
 		t.Error("expected Stream to be true")

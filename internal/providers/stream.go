@@ -49,7 +49,7 @@ func (c *OpenAIClient) SendStream(ctx context.Context, req types.ChatRequest) (<
 		defer close(chunks)
 		defer close(errs)
 
-		body, err := json.Marshal(req)
+		body, err := json.Marshal(lowerRequest(req, c.resolveThinkingMode(req.Model)))
 		if err != nil {
 			errs <- fmt.Errorf("marshal request: %w", err)
 			return

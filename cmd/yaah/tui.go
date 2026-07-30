@@ -51,7 +51,7 @@ func fetchAllModels(ctx context.Context, cfg *config.Config) []string {
 
 		if len(p.Models) > 0 {
 			for _, m := range p.Models {
-				all = append(all, name+"/"+m)
+				all = append(all, name+"/"+m.Name)
 			}
 			continue
 		}

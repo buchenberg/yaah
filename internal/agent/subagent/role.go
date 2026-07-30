@@ -128,8 +128,8 @@ func legacyProfileFor(role SubAgentRole) RoleProfile {
 				"memory_search", "memory_add", "memory_delete",
 				"memory_update", "memory_search_sessions",
 			},
-			MaxIterations: 25,
-			MaxTurns:      3,
+			MaxIterations: 40,
+			MaxTurns:      5,
 			Timeout:       180 * time.Second,
 		}
 	default:

@@ -29,9 +29,9 @@ tools:
   - file_info
   - webfetch
   - http
-max_iterations: 25
-max_turns: 4
-timeout: 180
+max_iterations: 40
+max_turns: 6
+timeout: 300
 ---
 
 You are a DEVELOPER sub-agent on yaah's team. Implement features, fix bugs,

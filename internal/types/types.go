@@ -6,7 +6,10 @@ package types
 
 import "encoding/json"
 
-// Message represents a single chat message in OpenAI format.
+// Message represents a single chat message in the agent's internal
+// conversation history. It is NOT the wire format sent to providers — see
+// providers/wire.go for the lowering step that handles provider-specific
+// serialization (content nullability, reasoning_content presence, etc.).
 type Message struct {
 	Role             string        `json:"role"`
 	Content          string        `json:"content"`
@@ -16,8 +19,6 @@ type Message struct {
 	ToolCallID       string        `json:"tool_call_id,omitempty"`
 	Name             string        `json:"name,omitempty"`
 	CacheControl     *CacheControl `json:"cache_control,omitempty"`
-	FinishReason     string        `json:"finish_reason,omitempty"`
-	ResponseModel    string        `json:"response_model,omitempty"`
 }
 
 // CacheControl marks a message for Anthropic prompt caching.
@@ -54,14 +55,16 @@ type ToolDef struct {
 
 // ChatRequest is the request body sent to /chat/completions.
 type ChatRequest struct {
-	Model          string          `json:"model"`
-	Messages       []Message       `json:"messages"`
-	Tools          []ToolDef       `json:"tools,omitempty"`
-	Temperature    float64         `json:"temperature,omitempty"`
-	MaxTokens      int             `json:"max_tokens,omitempty"`
-	Stream         bool            `json:"stream"`
-	StreamOptions  *StreamOptions  `json:"stream_options,omitempty"`
-	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
+	Model           string          `json:"model"`
+	Messages        []Message       `json:"messages"`
+	Tools           []ToolDef       `json:"tools,omitempty"`
+	ToolChoice      any             `json:"tool_choice,omitempty"`
+	Temperature     float64         `json:"temperature,omitempty"`
+	MaxTokens       int             `json:"max_tokens,omitempty"`
+	Stream          bool            `json:"stream"`
+	StreamOptions   *StreamOptions  `json:"stream_options,omitempty"`
+	ResponseFormat  *ResponseFormat `json:"response_format,omitempty"`
+	ReasoningEffort string          `json:"reasoning_effort,omitempty"`
 }
 
 // ResponseFormat controls structured output mode.

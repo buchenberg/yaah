@@ -474,28 +474,27 @@ func resolveSubAgentTimeout(callSeconds int, subCfg config.SubAgentConfig, role 
 
 // resolveSubAgentIterations picks the iteration cap for a sub-agent Loop.
 // Precedence: per-call override > role-specific config > role profile
-// default > legacy hardcoded default. The result is never allowed to exceed
-// the role profile's MaxIterations ceiling, so a per-call override cannot
-// neutralize the role's cap.
+// default > legacy hardcoded default. The role profile's MaxIterations
+// acts as a ceiling only for per-call overrides (so a task call cannot
+// neutralize the role's cap). Config-level overrides are authoritative
+// and bypass the ceiling.
 func resolveSubAgentIterations(callMax int, profile subagent.RoleProfile, subCfg config.SubAgentConfig, role subagent.SubAgentRole) int {
 	var v int
 	switch {
 	case callMax > 0:
 		v = callMax
+		if profile.MaxIterations > 0 && v > profile.MaxIterations {
+			v = profile.MaxIterations
+		}
 	case subCfg.Roles[string(role)].MaxIterations > 0:
 		v = subCfg.Roles[string(role)].MaxIterations
 	case profile.MaxIterations > 0:
 		v = profile.MaxIterations
 	default:
-		// Fall back to the legacy hardcoded default for the role
-		// (e.g. 25 for RoleDefault).
 		v = subagent.RoleProfileFor(role).MaxIterations
 		if v <= 0 {
-			v = 25 // absolute floor
+			v = 25
 		}
-	}
-	if profile.MaxIterations > 0 && v > profile.MaxIterations {
-		v = profile.MaxIterations
 	}
 	return v
 }

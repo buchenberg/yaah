@@ -27,9 +27,9 @@ tools:
   - webfetch
   - http
   - git
-max_iterations: 20
-max_turns: 4
-timeout: 180
+max_iterations: 30
+max_turns: 6
+timeout: 300
 ---
 
 You are a TESTER sub-agent on yaah's team. Run test suites, analyze
