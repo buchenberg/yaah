@@ -212,6 +212,13 @@ func tryFuzzyMatch(content, oldStr string) (string, int) {
 			}
 			return strings.Join(lines, "\n")
 		}},
+		{"leading-whitespace-normalized", func(s string) string {
+			lines := strings.Split(s, "\n")
+			for i, l := range lines {
+				lines[i] = normalizeLeadingWS(l)
+			}
+			return strings.Join(lines, "\n")
+		}},
 	}
 
 	for _, st := range strategies {
@@ -241,13 +248,42 @@ func tryFuzzyMatch(content, oldStr string) (string, int) {
 	return oldStr, 0
 }
 
+// normalizeLeadingWS converts leading whitespace on each line to a canonical
+// space-based form. Tabs are replaced with spaces at tabstop=4 and trailing
+// whitespace within the leading prefix is trimmed. This allows fuzzy matching
+// when the model provides indentation in spaces but the file uses tabs
+// (or vice versa).
+func normalizeLeadingWS(line string) string {
+	if line == "" {
+		return line
+	}
+	bodyStart := 0
+	for bodyStart < len(line) && (line[bodyStart] == ' ' || line[bodyStart] == '\t') {
+		bodyStart++
+	}
+	if bodyStart == 0 {
+		return line
+	}
+	leading := line[:bodyStart]
+	rest := line[bodyStart:]
+
+	// Convert tabs to 4-space equivalent, strip trailing spaces from prefix.
+	normalized := strings.ReplaceAll(leading, "\t", "    ")
+	normalized = strings.TrimRight(normalized, " ")
+	if normalized == "" {
+		return rest
+	}
+	return normalized + rest
+}
+
+// contentBytePos returns the byte position in the original content
+// corresponding to the given normalized position, using the provided
+// normalizing function.
 func contentBytePos(content string, fn func(string) string, normPos int) int {
-	pos := 0
 	for i := range len(content) {
 		if len(fn(content[:i])) >= normPos {
-			return pos
+			return i
 		}
-		pos = i
 	}
 	return len(content)
 }
