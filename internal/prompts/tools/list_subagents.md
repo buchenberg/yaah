@@ -1,0 +1,1 @@
+Lists available sub-agent roles with their tool sets. Returns the name, description, default model, and available tools for each registered role (analyst, developer, tester, reviewer, checker, counter, security_auditor). Use before dispatching sub-agents to select the right role for the task. No parameters required.

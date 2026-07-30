@@ -1,0 +1,1 @@
+Parses a Go file with `go/ast` and returns either a structural outline of all declarations (functions, types, methods) with line ranges, or the source of a specific named symbol. For methods, use the form `(*Type).Method` or `Type.Method`. Read-only — safe for any Go file. Use before editing to understand file structure or extract symbol source for refactoring.

@@ -7,6 +7,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // JSONQueryTool reads, writes, and deletes values in JSON files using dot-notation paths.
@@ -15,7 +17,7 @@ type JSONQueryTool struct{}
 
 func (t *JSONQueryTool) Name() string { return "json_query" }
 func (t *JSONQueryTool) Description() string {
-	return "Read, write, or delete a value in a JSON file using a dot-notation path."
+	return prompts.ToolDescription("json_query")
 }
 
 func (t *JSONQueryTool) Schema() json.RawMessage {

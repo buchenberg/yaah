@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/buchenberg/yaah/internal/plans"
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // PlanTool creates, lists, shows, approves, edits, and deletes plans stored
@@ -19,7 +20,7 @@ type PlanTool struct {
 
 func (t *PlanTool) Name() string { return "plan" }
 func (t *PlanTool) Description() string {
-	return "Create, review, and manage plans stored as PLAN.md files in .agents/plans/. Plans have a status workflow: draft → approved → in_progress → completed."
+	return prompts.ToolDescription("plan")
 }
 
 func (t *PlanTool) Schema() json.RawMessage {

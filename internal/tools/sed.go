@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // SedTool performs regex search and replacement across files.
@@ -16,7 +18,7 @@ type SedTool struct{}
 
 func (t *SedTool) Name() string { return "sed" }
 func (t *SedTool) Description() string {
-	return "Regex find-and-replace across files. Supports multi-file glob patterns and dry-run mode."
+	return prompts.ToolDescription("sed")
 }
 func (t *SedTool) IsDangerous(argsJSON string) bool { return true }
 

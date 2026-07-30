@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 var allowedGitActions = map[string]struct {
@@ -33,7 +35,7 @@ type GitTool struct{}
 
 func (t *GitTool) Name() string { return "git" }
 func (t *GitTool) Description() string {
-	return "Run a git command (status, diff, log, show, branch, add, commit, push, pull, fetch)."
+	return prompts.ToolDescription("git")
 }
 
 func (t *GitTool) Schema() json.RawMessage {

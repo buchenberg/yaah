@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // SubAgentInfo describes a single sub-agent role for the list_subagents tool.
@@ -39,7 +40,7 @@ type ListSubAgentsTool struct {
 
 func (t *ListSubAgentsTool) Name() string { return "list_subagents" }
 func (t *ListSubAgentsTool) Description() string {
-	return "Lists available sub-agent roles with their tool sets. Use this to see what roles exist before dispatching work."
+	return prompts.ToolDescription("list_subagents")
 }
 func (t *ListSubAgentsTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{},"required":[]}`)

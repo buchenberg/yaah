@@ -1,0 +1,1 @@
+Regex find-and-replace across multiple files in a directory. Uses Go regex syntax. Specify `pattern` to match, `replacement` (with `$1`, `$2` capture groups), `path` as the search directory, and `include` as a file glob filter. Set `dry_run: true` to preview changes without modifying files. Destructive by default — use dry-run first to verify matches before applying.

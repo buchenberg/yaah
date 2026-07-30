@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -224,7 +225,7 @@ type TaskTool struct {
 
 func (t *TaskTool) Name() string { return "spawn_subagent" }
 func (t *TaskTool) Description() string {
-	return "Spawns a sub-agent with a specific role and tool set to autonomously complete a subtask."
+	return prompts.ToolDescription("task")
 }
 
 func (t *TaskTool) Schema() json.RawMessage {

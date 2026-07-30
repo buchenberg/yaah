@@ -1,0 +1,1 @@
+Structured Go code transformations using `golang.org/x/tools`. `action: "format"` runs `goimports` on a file (fixes imports and formatting); `action: "info"` loads a package and returns its symbol table. Operates at the AST level so cross-package references are handled correctly. Marked dangerous because it modifies files.

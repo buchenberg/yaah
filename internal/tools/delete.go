@@ -5,13 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // DeleteTool removes a file from the local filesystem.
 type DeleteTool struct{}
 
 func (t *DeleteTool) Name() string        { return "delete" }
-func (t *DeleteTool) Description() string { return "Deletes a file from the local filesystem." }
+func (t *DeleteTool) Description() string { return prompts.ToolDescription("delete") }
 
 func (t *DeleteTool) Schema() json.RawMessage {
 	return json.RawMessage(`{

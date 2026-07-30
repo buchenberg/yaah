@@ -1,0 +1,1 @@
+Deletes a stored memory entry by its ID. Use after confirming the entry is obsolete or incorrect. The ID can be found via `memory_search`. This is irreversible — consider `memory_update` to correct stale facts instead.

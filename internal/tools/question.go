@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // QuestionEntry represents a single question to ask the user.
@@ -34,7 +36,7 @@ type QuestionTool struct {
 
 func (t *QuestionTool) Name() string { return "question" }
 func (t *QuestionTool) Description() string {
-	return "Asks the user structured questions with multiple-choice options for interactive clarification."
+	return prompts.ToolDescription("question")
 }
 
 func (t *QuestionTool) Schema() json.RawMessage {

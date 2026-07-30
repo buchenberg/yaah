@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/todo"
 )
 
@@ -16,7 +17,7 @@ type TodoWriteTool struct {
 
 func (t *TodoWriteTool) Name() string { return "todowrite" }
 func (t *TodoWriteTool) Description() string {
-	return "Creates and manages a structured todo list for the current session."
+	return prompts.ToolDescription("todo")
 }
 
 func (t *TodoWriteTool) Schema() json.RawMessage {

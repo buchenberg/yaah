@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/buchenberg/yaah/internal/prompts"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/imports"
 )
@@ -18,7 +19,7 @@ import (
 type GoRefactorTool struct{}
 
 func (t *GoRefactorTool) Name() string        { return "go_refactor" }
-func (t *GoRefactorTool) Description() string { return "Structured Go code transformations: format with import management, load package info, or apply automated refactors." }
+func (t *GoRefactorTool) Description() string { return prompts.ToolDescription("go_refactor") }
 func (t *GoRefactorTool) IsDangerous(argsJSON string) bool { return true }
 
 func (t *GoRefactorTool) Schema() json.RawMessage {

@@ -107,7 +107,17 @@ func (l *Loop) prepareRequestMessages(messages []types.Message) []types.Message 
 	return out
 }
 
-// countReasoningMessages returns the number of assistant messages that carry
+// StripAllReasoning permanently removes ReasoningContent from every assistant
+// message in l.Messages. Called when a thinking-mode provider returns the
+// "reasoning_content must be passed back" 400 error — the session is no longer
+// in a valid thinking state and must continue without reasoning.
+func (l *Loop) StripAllReasoning() {
+	for i := range l.Messages {
+		if l.Messages[i].Role == "assistant" {
+			l.Messages[i].ReasoningContent = ""
+		}
+	}
+}
 // reasoning_content. The result is an exact count, not a turn count.
 func countReasoningMessages(msgs []types.Message) int {
 	n := 0

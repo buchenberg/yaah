@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // MemorySearchTool searches persistent memory using FTS5.
@@ -16,7 +17,7 @@ type MemorySearchTool struct {
 
 func (t *MemorySearchTool) Name() string { return "memory_search" }
 func (t *MemorySearchTool) Description() string {
-	return "Searches stored memory notes (user facts, preferences, project details)."
+	return prompts.ToolDescription("memory_search")
 }
 
 func (t *MemorySearchTool) Schema() json.RawMessage {
@@ -79,7 +80,7 @@ type MemoryAddTool struct {
 
 func (t *MemoryAddTool) Name() string { return "memory_add" }
 func (t *MemoryAddTool) Description() string {
-	return "Saves a fact, preference, or decision to persistent memory for future recall."
+	return prompts.ToolDescription("memory_add")
 }
 
 func (t *MemoryAddTool) Schema() json.RawMessage {
@@ -130,7 +131,7 @@ type MemoryDeleteTool struct {
 }
 
 func (t *MemoryDeleteTool) Name() string        { return "memory_delete" }
-func (t *MemoryDeleteTool) Description() string { return "Deletes a stored memory entry by its ID." }
+func (t *MemoryDeleteTool) Description() string { return prompts.ToolDescription("memory_delete") }
 
 func (t *MemoryDeleteTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
@@ -165,7 +166,7 @@ type MemoryUpdateTool struct {
 
 func (t *MemoryUpdateTool) Name() string { return "memory_update" }
 func (t *MemoryUpdateTool) Description() string {
-	return "Updates the text of an existing stored memory entry."
+	return prompts.ToolDescription("memory_update")
 }
 
 func (t *MemoryUpdateTool) Schema() json.RawMessage {
@@ -203,7 +204,7 @@ type MemorySessionSearchTool struct {
 
 func (t *MemorySessionSearchTool) Name() string { return "memory_search_sessions" }
 func (t *MemorySessionSearchTool) Description() string {
-	return "Searches past conversation sessions. With no query, lists recent sessions with their first prompt as a topic summary."
+	return prompts.ToolDescription("memory_session_search")
 }
 
 func (t *MemorySessionSearchTool) Schema() json.RawMessage {

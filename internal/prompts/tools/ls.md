@@ -1,0 +1,1 @@
+Lists directory contents with optional depth control. Shows files and subdirectories with human-readable sizes. Default depth is 1 (immediate children only); set `depth` up to 5 for recursive listing. Use to explore project structure, verify file locations, or survey a directory before targeted reads. Path defaults to the current working directory.

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/process"
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // BackgroundProcessTool manages long-running background processes.
@@ -16,7 +17,7 @@ type BackgroundProcessTool struct {
 
 func (t *BackgroundProcessTool) Name() string { return "background_process" }
 func (t *BackgroundProcessTool) Description() string {
-	return "Manages long-running background processes: start, list, check status, view logs, stop, restart."
+	return prompts.ToolDescription("background_process")
 }
 
 func (t *BackgroundProcessTool) Schema() json.RawMessage {
