@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel/trace"
@@ -41,6 +42,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 		}
 
 		go func() {
+			toolID := l.toolIDGen.Add(1)
 			abbreviated := abbreviateArgs(tc.Function.Arguments, 80)
 
 			isTask := tc.Function.Name == "spawn_subagent"
@@ -79,11 +81,19 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 				}
 			}()
 
-			if isTask && l.broker != nil {
-				l.broker.PublishMustDeliver(&SubAgentStartEvent{Role: taskRole, Prompt: taskPrompt})
-			}
 			if l.broker != nil {
-				l.broker.PublishMustDeliver(&ToolStartEvent{Name: tc.Function.Name, Args: abbreviated})
+				l.broker.PublishMustDeliver(&ToolStartEvent{ID: toolID, Name: tc.Function.Name, Args: abbreviated})
+			}
+
+			// The sub-agent start event is emitted by the runner (via the
+			// start notifier below) once the child's model is resolved, so
+			// views learn the role and model together. startOnce guards a
+			// post-execution fallback for runners that never announce.
+			var startOnce sync.Once
+			publishStart := func(model string) {
+				if l.broker != nil {
+					l.broker.PublishMustDeliver(&SubAgentStartEvent{Role: taskRole, Model: model, Prompt: taskPrompt})
+				}
 			}
 
 			l.Hooks.Emit(HookEvent{
@@ -109,6 +119,9 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 
 			if isTask {
 				runCtx = tools.WithSubAgentModelPtr(runCtx, &subAgentModel)
+				runCtx = tools.WithSubAgentStartNotifier(runCtx, func(model string) {
+					startOnce.Do(func() { publishStart(model) })
+				})
 				var subUsage types.Usage
 				runCtx = tools.WithSubAgentUsage(runCtx, &subUsage)
 				defer func() {
@@ -153,6 +166,19 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 
 			res, err := l.Registry.Execute(runCtx, tc.Function.Name, tc.Function.Arguments)
 
+			// Fallback for runners that never fired the start notifier:
+			// emit the start event with the final model so views still see
+			// the role/model pairing (arrives late but complete).
+			if isTask {
+				startOnce.Do(func() {
+					model := subAgentModel
+					if model == "" {
+						model = l.Model
+					}
+					publishStart(model)
+				})
+			}
+
 			// Parse structured escalation from raw sub-agent output before
 			// the result is truncated for display.
 			var escalation *tools.Escalation
@@ -187,6 +213,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 
 			if l.broker != nil {
 				evt := &ToolEndEvent{
+					ID:       toolID,
 					Name:     tc.Function.Name,
 					Args:     abbreviated,
 					Result:   res,

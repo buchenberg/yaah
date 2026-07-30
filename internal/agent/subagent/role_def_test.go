@@ -146,7 +146,7 @@ New role guidance.`
 	}
 }
 
-func TestRoleRegistryProfileForDefaultIsZero(t *testing.T) {
+func TestRoleRegistryProfileForUnknownIsZero(t *testing.T) {
 	reg := NewRoleRegistry()
 	reg.LoadBytes(map[string][]byte{
 		"worker.md": []byte(`---
@@ -156,9 +156,13 @@ timeout: 1
 ---
 w`),
 	})
-	p := reg.ProfileFor(RoleDefault)
-	if len(p.Tools) != 0 {
-		t.Error("RoleDefault should return zero-value profile")
+	for _, role := range []SubAgentRole{"", "nope"} {
+		if p := reg.ProfileFor(role); len(p.Tools) != 0 {
+			t.Errorf("ProfileFor(%q) should return zero-value profile, got %v", role, p.Tools)
+		}
+		if g := reg.Guidance(role); g != "" {
+			t.Errorf("Guidance(%q) should be empty, got %q", role, g)
+		}
 	}
 }
 
@@ -186,16 +190,10 @@ Test guidance.`),
 		t.Errorf("global registry guidance: %q", g)
 	}
 
-	// Fallback when no registry is set: RoleDefault gets the full profile.
+	// With no registry set, every role resolves to the zero-value
+	// profile — there is no legacy default role anymore.
 	SetDefaultRoleRegistry(nil)
-	legacyDefault := RoleProfileFor(RoleDefault)
-	if !contains(legacyDefault.Tools, platformShell()) {
-		t.Error("legacy fallback: default missing platform shell")
-	}
-	if !contains(legacyDefault.Tools, "write") {
-		t.Error("legacy fallback: default missing write")
-	}
-	if legacyDefault.MaxIterations != 40 {
-		t.Errorf("legacy fallback: default MaxIterations = %d, want 40", legacyDefault.MaxIterations)
+	if p := RoleProfileFor(SubAgentRole("tester")); len(p.Tools) != 0 {
+		t.Errorf("no registry: expected zero-value profile, got %v", p.Tools)
 	}
 }

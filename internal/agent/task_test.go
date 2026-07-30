@@ -35,7 +35,7 @@ func TestTaskToolTimeoutReturnsStructuredResult(t *testing.T) {
 			return 50 * time.Millisecond
 		},
 	}
-	result, err := tool.Execute(context.Background(), `{"description":"x","prompt":"y"}`)
+	result, err := tool.Execute(context.Background(), `{"description":"x","prompt":"y","role":"tester"}`)
 	if err != nil {
 		t.Fatalf("expected structured result on timeout, got error: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestTaskToolPerCallTimeoutOverridesDefault(t *testing.T) {
 		},
 	}
 	start := time.Now()
-	result, err := tool.Execute(context.Background(), `{"description":"x","prompt":"y","timeout_seconds":1}`)
+	result, err := tool.Execute(context.Background(), `{"description":"x","prompt":"y","role":"tester","timeout_seconds":1}`)
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -100,7 +100,7 @@ func TestTaskToolTimeoutClampedToMax(t *testing.T) {
 		}
 		return "ok", nil
 	}
-	tool.Execute(context.Background(), `{"description":"x","prompt":"y","timeout_seconds":999999999}`)
+	tool.Execute(context.Background(), `{"description":"x","prompt":"y","role":"tester","timeout_seconds":999999999}`)
 	select {
 	case d := <-seen:
 		if d > 605*time.Second || d < 595*time.Second {
@@ -142,7 +142,7 @@ func TestTaskToolCancellationReturnsStructuredResult(t *testing.T) {
 		cancel()
 	}()
 
-	result, err := tool.Execute(ctx, `{"description":"x","prompt":"y"}`)
+	result, err := tool.Execute(ctx, `{"description":"x","prompt":"y","role":"tester"}`)
 	if err != nil {
 		t.Fatalf("expected structured result on cancel, got error: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestTaskToolRejectsEmptyPrompt(t *testing.T) {
 
 func TestTaskToolNoRunnerConfigured(t *testing.T) {
 	tool := &tools.TaskTool{}
-	_, err := tool.Execute(context.Background(), `{"description":"x","prompt":"y"}`)
+	_, err := tool.Execute(context.Background(), `{"description":"x","prompt":"y","role":"tester"}`)
 	if err == nil {
 		t.Fatal("expected error when Runner is nil")
 	}
@@ -314,7 +314,7 @@ func TestLoop_subAgentInterruptPropagation(t *testing.T) {
 			{Choices: []types.Choice{{
 				Message: types.Message{
 					Role:      "assistant",
-					ToolCalls: []types.ToolCall{{ID: "c1", Type: "function", Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"x","prompt":"y"}`}}},
+					ToolCalls: []types.ToolCall{{ID: "c1", Type: "function", Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"x","prompt":"y","role":"tester"}`}}},
 				},
 				FinishReason: "tool_calls",
 			}}},
@@ -345,14 +345,14 @@ func TestLoop_subAgentInterruptPropagation(t *testing.T) {
 
 // --- helpers ---
 
-// taskCallsN builds n task tool calls without a role.
+// taskCallsN builds n task tool calls under the tester role.
 func taskCallsN(n int) []types.ToolCall {
 	calls := make([]types.ToolCall, n)
 	for i := range calls {
 		calls[i] = types.ToolCall{
 			ID:       "c" + string(rune('1'+i)),
 			Type:     "function",
-			Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"x","prompt":"y"}`},
+			Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"x","prompt":"y","role":"tester"}`},
 		}
 	}
 	return calls
@@ -376,7 +376,7 @@ func TestLoop_subAgentStuckChildTimeout(t *testing.T) {
 					ToolCalls: []types.ToolCall{{
 						ID:       "c1",
 						Type:     "function",
-						Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"hang","prompt":"do nothing"}`},
+						Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"hang","prompt":"do nothing","role":"tester"}`},
 					}},
 				},
 				FinishReason: "tool_calls",
@@ -440,7 +440,7 @@ func TestLoop_subAgentHeartbeatKeepsAlive(t *testing.T) {
 					ToolCalls: []types.ToolCall{{
 						ID:       "c1",
 						Type:     "function",
-						Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"beat","prompt":"do work"}`},
+						Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"beat","prompt":"do work","role":"tester"}`},
 					}},
 				},
 				FinishReason: "tool_calls",
@@ -488,7 +488,7 @@ func TestLoop_subAgentStuckChildDisabled(t *testing.T) {
 					ToolCalls: []types.ToolCall{{
 						ID:       "c1",
 						Type:     "function",
-						Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"hang","prompt":"do nothing"}`},
+						Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"hang","prompt":"do nothing","role":"tester"}`},
 					}},
 				},
 				FinishReason: "tool_calls",

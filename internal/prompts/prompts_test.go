@@ -1,6 +1,7 @@
 package prompts
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 
@@ -99,5 +100,92 @@ func TestBuildSkillsIndex_TruncatesEach(t *testing.T) {
 func TestBuildSkillsIndex_Empty(t *testing.T) {
 	if out := BuildSkillsIndex(nil); out != "" {
 		t.Errorf("expected empty string for no skills, got %q", out)
+	}
+}
+
+func TestFormatDirectives(t *testing.T) {
+	out := FormatDirectives([]string{"run tests", "say jimminy"})
+	if !strings.HasPrefix(out, "## Session directives\n\n") {
+		t.Errorf("missing section header, got %q", out)
+	}
+	if !strings.Contains(out, "- run tests\n") || !strings.Contains(out, "- say jimminy\n") {
+		t.Errorf("missing bullet entries, got %q", out)
+	}
+	if !strings.Contains(out, "MANDATORY") || !strings.Contains(out, "supersede any conflicting instructions") {
+		t.Errorf("missing precedence framing before the list, got %q", out)
+	}
+	if !strings.HasSuffix(out, "A response that ignores these directives is a failure, regardless of its other quality.") {
+		t.Errorf("missing consequence closing line, got %q", out)
+	}
+	// The precedence framing must prime the model before the list, not after.
+	if idx := strings.Index(out, "supersede"); idx > strings.Index(out, "- run tests") {
+		t.Errorf("precedence framing must appear before the directive list, got %q", out)
+	}
+}
+
+func TestInjectAfterIdentity_PlacedAfterIdentityBlock(t *testing.T) {
+	identity := strings.TrimSpace(IdentityPrompt)
+	prompt := identity + "\n\n## Environment\nOS: linux"
+	got := InjectAfterIdentity(prompt, []string{"always run tests"})
+
+	idxIdentity := strings.Index(got, identity)
+	idxDirectives := strings.Index(got, "## Session directives")
+	idxEnv := strings.Index(got, "## Environment")
+	if idxIdentity < 0 || idxDirectives < 0 || idxEnv < 0 {
+		t.Fatalf("missing expected sections in %q", got)
+	}
+	if !(idxIdentity < idxDirectives && idxDirectives < idxEnv) {
+		t.Errorf("directives must sit between identity and environment; order identity=%d directives=%d env=%d", idxIdentity, idxDirectives, idxEnv)
+	}
+}
+
+func TestInjectAfterIdentity_FallbackAppends(t *testing.T) {
+	got := InjectAfterIdentity("custom prompt without identity", []string{"d1"})
+	if !strings.HasSuffix(got, FormatDirectives([]string{"d1"})) {
+		t.Errorf("directives should be appended for non-identity prompts, got %q", got)
+	}
+	if !strings.HasPrefix(got, "custom prompt without identity\n\n") {
+		t.Errorf("original prompt must be preserved verbatim, got %q", got)
+	}
+}
+
+func TestInjectAfterIdentity_EmptyDirectivesNoop(t *testing.T) {
+	if got := InjectAfterIdentity("prompt", nil); got != "prompt" {
+		t.Errorf("nil directives should return prompt unchanged, got %q", got)
+	}
+	if got := InjectAfterIdentity("prompt", []string{}); got != "prompt" {
+		t.Errorf("empty directives should return prompt unchanged, got %q", got)
+	}
+}
+
+func TestInjectAfterIdentity_EmptyPrompt(t *testing.T) {
+	got := InjectAfterIdentity("", []string{"d1"})
+	if !strings.HasPrefix(got, "## Session directives") {
+		t.Errorf("empty prompt should yield just the directives block, got %q", got)
+	}
+}
+
+func TestDetectEnvironment_RendersSharedTemplate(t *testing.T) {
+	got := DetectEnvironment("/work/dir")
+	if !strings.HasPrefix(got, "## Environment\n") {
+		t.Errorf("environment block must carry the template heading, got %q", got)
+	}
+	for _, want := range []string{runtime.GOOS, runtime.GOARCH, "/work/dir", "use it for all shell commands"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("environment block missing %q, got %q", want, got)
+		}
+	}
+	if strings.Contains(got, "{{") {
+		t.Errorf("unreplaced template placeholders remain, got %q", got)
+	}
+}
+
+func TestBuild_EnvironmentNotDoubleWrapped(t *testing.T) {
+	out := Build(Layers{Identity: "I am yaah.", Environment: DetectEnvironment("/cwd")})
+	if strings.Contains(out, "## Runtime Environment") {
+		t.Errorf("Build must not add a second heading around the environment block, got %q", out)
+	}
+	if n := strings.Count(out, "## Environment"); n != 1 {
+		t.Errorf("expected exactly one environment heading, got %d in %q", n, out)
 	}
 }

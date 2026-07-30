@@ -77,6 +77,11 @@ type agentSession struct {
 	providerName string
 	modelName    string
 	systemPrompt string
+	// mainPrompt is systemPrompt plus the default-agent directives
+	// injected after the identity block. Only the top-level loop sees
+	// it; sub-agents receive systemPrompt as their base so default
+	// directives never leak into child prompts.
+	mainPrompt   string
 	toolReg      *tools.Registry
 	db           *memory.DB
 	mcpClients   []mcp.MCPClient
@@ -308,6 +313,11 @@ func newAgentSession() (*agentSession, error) {
 		}
 	}
 
+	// Default directives apply to the top-level agent only, injected
+	// right after the identity block. systemPrompt (the sub-agent base)
+	// stays clean so child prompts never inherit them.
+	mainPrompt := prompts.InjectAfterIdentity(systemPrompt, resolveDirectives(cfg))
+
 	tracker := &tools.ConflictTracker{}
 	subAgentProvider, subAgentModel := resolveSubAgent(cfg)
 	subCW := providers.ResolveWindow(modelName, cfg.Agent.Default.ContextWindow) / 2
@@ -317,7 +327,7 @@ func newAgentSession() (*agentSession, error) {
 
 	followupCh := make(chan string, 32)
 
-	taskTool := newTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default, nil, resolveDirectives(cfg))
+	taskTool := newTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default, nil)
 
 	// Wire background sub-agent completion into the follow-up channel so
 	// results from async sub-agents appear as injected user messages.
@@ -383,6 +393,7 @@ func newAgentSession() (*agentSession, error) {
 		providerName: providerName,
 		modelName:    modelName,
 		systemPrompt: systemPrompt,
+		mainPrompt:   mainPrompt,
 		toolReg:      toolReg,
 		db:           db,
 		mcpClients:   mcpClients,
@@ -484,6 +495,12 @@ func (s *agentSession) SetCtrlCh(ch chan<- types.CtrlMsg) {
 			}
 		}
 	}
+}
+
+func (s *agentSession) GetCtrlCh() chan<- types.CtrlMsg {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ctrlCh
 }
 
 func (s *agentSession) SetApproveFn(fn func(name, args string) bool) {
@@ -742,7 +759,7 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 
 	loop := agent.NewLoop(prov, s.toolReg,
 		agent.WithModel(mName),
-		agent.WithSystemPrompt(s.systemPrompt),
+		agent.WithSystemPrompt(s.mainPrompt),
 		agent.WithView(v),
 		agent.WithMessages(s.messages),
 		agent.WithDB(s.db),
@@ -779,10 +796,10 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 			CompactMaxMessages:     s.cfg.Agent.Default.CompactMaxMessages,
 			EstimateFactor:         s.cfg.Agent.Default.EstimateFactor,
 			QualityGates:           s.cfg.Agent.QualityGates,
-			Directives:             resolveDirectives(s.cfg),
 			LoopDetectCount:        s.cfg.Agent.Default.LoopDetectCount,
 			LoopDetectWindow:       s.cfg.Agent.Default.LoopDetectWindow,
 			MaxToolConcurrency:     s.cfg.Agent.Default.MaxToolConcurrency,
+			WrapUpAhead:            s.cfg.Agent.Default.WrapUpTurns,
 			MaxInlineToolsPerTurn:  s.cfg.Agent.Default.MaxInlineToolsPerTurn,
 			PromptCaching:          s.cfg.Agent.Default.PromptCaching,
 			ReasoningProtectTurns:  s.cfg.Agent.Default.ReasoningProtect,

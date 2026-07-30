@@ -154,14 +154,10 @@ func (r *RoleRegistry) LoadDir(dir string) error {
 	return nil
 }
 
-// ProfileFor returns the runtime profile for the given role. The
-// RoleDefault role (empty string) returns the zero-value profile,
-// signalling the caller to use the legacy full tool set. Unknown
-// roles also return the zero value.
+// ProfileFor returns the runtime profile for the given role. Unknown
+// roles return the zero-value profile, which callers treat as a
+// configuration error (no tools, no limits).
 func (r *RoleRegistry) ProfileFor(role SubAgentRole) RoleProfile {
-	if role == RoleDefault {
-		return RoleProfile{}
-	}
 	r.mu.RLock()
 	def, ok := r.entries[role]
 	r.mu.RUnlock()
@@ -172,11 +168,8 @@ func (r *RoleRegistry) ProfileFor(role SubAgentRole) RoleProfile {
 }
 
 // Guidance returns the role-specific system-prompt text for the given
-// role. Returns "" for RoleDefault or unknown roles.
+// role. Returns "" for unknown roles.
 func (r *RoleRegistry) Guidance(role SubAgentRole) string {
-	if role == RoleDefault {
-		return ""
-	}
 	r.mu.RLock()
 	def, ok := r.entries[role]
 	r.mu.RUnlock()

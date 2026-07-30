@@ -48,6 +48,7 @@ func (*FlushEvent) eventMarker() {}
 
 // ToolStartEvent is emitted before a tool begins execution.
 type ToolStartEvent struct {
+	ID   int64  // unique per-execution ID, shared with the matching ToolEndEvent
 	Name string // tool name (e.g. "read", "grep")
 	Args string // abbreviated arguments for display
 }
@@ -56,6 +57,7 @@ func (*ToolStartEvent) eventMarker() {}
 
 // ToolEndEvent is emitted after a tool completes execution.
 type ToolEndEvent struct {
+	ID       int64         // unique per-execution ID, shared with the matching ToolStartEvent
 	Name     string        // tool name
 	Args     string        // abbreviated arguments
 	Result   string        // truncated result

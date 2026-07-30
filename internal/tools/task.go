@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -39,6 +40,26 @@ func WithSubAgentModelPtr(ctx context.Context, ptr *string) context.Context {
 func WriteSubAgentModel(ctx context.Context, model string) {
 	if ptr, ok := ctx.Value(subAgentModelPtrKey{}).(*string); ok {
 		*ptr = model
+	}
+}
+
+// subAgentStartKey is a context key for the start notifier the runner
+// fires once the sub-agent's provider and model are resolved, just
+// before its loop begins.
+type subAgentStartKey struct{}
+
+// WithSubAgentStartNotifier stores fn in ctx so the sub-agent runner can
+// announce the resolved model at start time. The caller uses this to
+// emit a start event that already knows which model the child runs on.
+func WithSubAgentStartNotifier(ctx context.Context, fn func(model string)) context.Context {
+	return context.WithValue(ctx, subAgentStartKey{}, fn)
+}
+
+// NotifySubAgentStart invokes the start notifier stored in ctx, if
+// present. Call from the runner after the sub-agent model is resolved.
+func NotifySubAgentStart(ctx context.Context, model string) {
+	if fn, ok := ctx.Value(subAgentStartKey{}).(func(string)); ok {
+		fn(model)
 	}
 }
 
@@ -237,7 +258,7 @@ func (t *TaskTool) Schema() json.RawMessage {
 		"properties": {
 			"description": {"type": "string", "description": "3-5 word description of the subtask"},
 			"prompt": {"type": "string", "description": "The task for the sub-agent to perform autonomously"},
-			"role": {"type": "string", "description": "Sub-agent role selecting its tool set and limits. Use list_subagents to see available roles. Omit for the default full-access role."},
+			"role": {"type": "string", "description": "Sub-agent role selecting its tool set and limits. Required. Use list_subagents to see available roles."},
 			"timeout_seconds": {"type": "integer", "minimum": 10, "maximum": 600, "description": "Optional wall-clock deadline for the sub-agent. Overrides the role default."},
 			"max_iterations": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Optional cap on sub-agent loop turns. Overrides the role default."},
 			"max_turns": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Optional soft cap on tool-using turns. Overrides the role default."},
@@ -245,7 +266,7 @@ func (t *TaskTool) Schema() json.RawMessage {
 			"output_limit": {"type": "integer", "minimum": 1024, "description": "Optional byte cap on the sub-agent's final report."},
 			"background": {"type": "boolean", "description": "When true, dispatch the sub-agent asynchronously and return immediately. Results arrive in a follow-up message."}
 		},
-		"required": ["description", "prompt"]
+		"required": ["description", "prompt", "role"]
 	}`)
 }
 
@@ -267,7 +288,7 @@ func BuildTaskSchema(roleNames []string, roleDescriptions map[string]string) jso
 				fmt.Fprintf(&b, "- %s\n", name)
 			}
 		}
-		b.WriteString("Omit for the legacy default tool set. Use list_subagents for full details.")
+		b.WriteString("Required — use list_subagents for full details.")
 		roleDesc = strings.TrimSpace(b.String())
 	}
 
@@ -319,7 +340,7 @@ func BuildTaskSchema(roleNames []string, roleDescriptions map[string]string) jso
 				"description": "When true, dispatch the sub-agent asynchronously and return immediately. Results arrive in a follow-up message.",
 			},
 		},
-		"required": []string{"description", "prompt"},
+		"required": []string{"description", "prompt", "role"},
 	}
 	data, _ := json.Marshal(schema)
 	return json.RawMessage(data)
@@ -342,6 +363,16 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 	}
 	if params.Prompt == "" {
 		return "", fmt.Errorf("spawn_subagent: prompt is required")
+	}
+
+	// Role is required: there is no default role. Reject empty and
+	// unknown roles here so the model gets a self-correcting tool
+	// result instead of spawning an unconfigured sub-agent.
+	if params.Role == "" {
+		return "", fmt.Errorf("spawn_subagent: role is required — pick one of: %s (use list_subagents for details)", strings.Join(t.RoleNames, ", "))
+	}
+	if len(t.RoleNames) > 0 && !slices.Contains(t.RoleNames, params.Role) {
+		return "", fmt.Errorf("spawn_subagent: unknown role %q — valid roles: %s", params.Role, strings.Join(t.RoleNames, ", "))
 	}
 
 	if t.Runner == nil {
@@ -370,9 +401,6 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 	timeout := resolveTaskTimeout(clampedTimeout, t.ResolveTimeout, subParams)
 
 	label := params.Role
-	if label == "" {
-		label = "default"
-	}
 	if params.Description != "" {
 		label = label + " — " + params.Description
 	}

@@ -157,10 +157,10 @@ type LoopConfig struct {
 	CompactMaxMessages     int
 	EstimateFactor         float64
 	QualityGates           map[string][]string
-	Directives             []string
 	LoopDetectCount        int
 	LoopDetectWindow       int
 	MaxToolConcurrency     int
+	WrapUpAhead            int
 	MaxInlineToolsPerTurn  int
 	PromptCaching          bool
 	ReasoningProtectTurns  int
@@ -188,10 +188,10 @@ func WithLoopConfig(cfg LoopConfig) Option {
 		l.CompactMaxMessages = cfg.CompactMaxMessages
 		l.EstimateFactor = cfg.EstimateFactor
 		l.QualityGates = cfg.QualityGates
-		l.Directives = cfg.Directives
 		l.LoopDetectCount = cfg.LoopDetectCount
 		l.LoopDetectWindow = cfg.LoopDetectWindow
 		l.MaxToolConcurrency = cfg.MaxToolConcurrency
+		l.WrapUpAhead = cfg.WrapUpAhead
 		l.MaxInlineToolsPerTurn = cfg.MaxInlineToolsPerTurn
 		l.PromptCaching = cfg.PromptCaching
 		l.ReasoningProtectTurns = cfg.ReasoningProtectTurns

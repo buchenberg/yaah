@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -15,6 +16,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/observability"
+	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/pubsub"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -133,9 +135,6 @@ type Loop struct {
 	// automatically dispatched after the sub-agent completes. nil disables.
 	QualityGates map[string][]string
 
-	// Directives are session-level policy statements injected into prompts.
-	Directives []string
-
 	// MaxRetries is the number of retries on transient provider errors.
 	// Default 0 means no retries.
 	MaxRetries int
@@ -244,6 +243,13 @@ type Loop struct {
 	// MaxToolConcurrency caps concurrent tool goroutines. 0 means unlimited.
 	// When > 0, a buffered channel semaphore is created by buildPipeline().
 	MaxToolConcurrency int
+
+	// WrapUpAhead is the number of iterations before the turn cap (or
+	// the hard iteration limit when MaxTurns is 0) at which the loop
+	// starts injecting a wrap-up notice urging the model to finish and
+	// summarize before tools are stripped or the run ends. 0 applies
+	// the default (1); set negative to disable.
+	WrapUpAhead int
 
 	// MaxInlineToolsPerTurn caps the number of inline tool calls the
 	// planner may issue in a single turn. When exceeded, excess calls
@@ -378,6 +384,10 @@ type Loop struct {
 
 	// usageMu serializes addUsage calls from concurrent delegate dispatches.
 	usageMu sync.Mutex
+
+	// toolIDGen assigns unique IDs to tool executions so views can correlate
+	// ToolStartEvent/ToolEndEvent pairs across concurrently running tools.
+	toolIDGen atomic.Int64
 }
 
 // buildPipeline assembles the middleware pipeline from config.
@@ -560,7 +570,11 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 						attribute.Int("maxturns.iteration", iter),
 					))
 				}
+			} else if l.WrapUpAhead > 0 && iter >= effective-l.WrapUpAhead {
+				l.injectWrapUp(&req, turnSpan, effective-iter)
 			}
+		} else if l.WrapUpAhead > 0 && iter >= l.MaxIterations-l.WrapUpAhead {
+			l.injectWrapUp(&req, turnSpan, l.MaxIterations-iter)
 		}
 
 		if l.JSONMode {
@@ -743,6 +757,20 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 	return "", fmt.Errorf("max iterations (%d) reached", l.MaxIterations)
 }
 
+// injectWrapUp appends a transient wrap-up notice to the request,
+// warning the model that its iteration budget is nearly exhausted so it
+// finishes and summarizes before tools are stripped or the run ends.
+// The notice lives only in the request — it is never persisted to the
+// conversation history, and the countdown updates on each iteration.
+func (l *Loop) injectWrapUp(req *types.ChatRequest, turnSpan trace.Span, remaining int) {
+	req.Messages = append(req.Messages, types.UserMsg(prompts.WrapUpMessage(remaining)))
+	if l.OtelEnabled && turnSpan != nil {
+		turnSpan.AddEvent("maxturns.wrap_up", trace.WithAttributes(
+			attribute.Int("maxturns.remaining", remaining),
+		))
+	}
+}
+
 // applyDefaults sets default values for Loop fields.
 func (l *Loop) applyDefaults() {
 	if l.CtxMgr == nil {
@@ -777,6 +805,9 @@ func (l *Loop) applyDefaults() {
 	}
 	if l.MaxIterations <= 0 {
 		l.MaxIterations = 50
+	}
+	if l.WrapUpAhead == 0 {
+		l.WrapUpAhead = 1
 	}
 	if l.Model == "" {
 		l.Model = "deepseek-v4-pro"

@@ -46,17 +46,15 @@ func (p *InstrumentedProvider) Send(ctx context.Context, req types.ChatRequest) 
 		return nil, err
 	}
 
-	sysLen := 0
-	for _, m := range req.Messages {
-		if m.Role == "system" {
-			sysLen += len(m.Content)
-		}
-	}
-	FinishLLM(span, len(req.Messages), sysLen, resp.Usage)
+	system := SystemContent(req.Messages)
+	FinishLLM(span, len(req.Messages), len(system), resp.Usage)
 
-	if p.Verbose && len(resp.Choices) > 0 {
-		c := resp.Choices[0]
-		RecordAssistantResponse(span, c.Message, c.FinishReason)
+	if p.Verbose {
+		RecordSystemPrompt(span, system)
+		if len(resp.Choices) > 0 {
+			c := resp.Choices[0]
+			RecordAssistantResponse(span, c.Message, c.FinishReason)
+		}
 	}
 
 	return resp, nil
