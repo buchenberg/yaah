@@ -129,6 +129,7 @@ var leafTools = map[string]func() Tool{
 	"git":        func() Tool { return &GitTool{} },
 	"http":       func() Tool { return &HTTPTool{} },
 	"go_outline": func() Tool { return &GoOutlineTool{} },
+	"go_refactor": func() Tool { return &GoRefactorTool{} },
 	"calculate":  func() Tool { return &CalculateTool{} },
 	"file_info":  func() Tool { return &FileInfoTool{} },
 }
