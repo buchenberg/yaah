@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.40.3](https://github.com/buchenberg/yaah/compare/v0.40.2...v0.40.3) (2026-07-30)
+
+
+### Performance Improvements
+
+* promote batching to cardinal rule, halve raw compaction threshold, edit CRLF fix, web UI improvements ([#113](https://github.com/buchenberg/yaah/issues/113)) ([0d0b7df](https://github.com/buchenberg/yaah/commit/0d0b7dfd58dbbd9ca4c20e0c57660dbeb767b397))
+
+
+### Code Refactoring
+
+* clean messaging layer, fix DeepSeek reasoning_content 400, raise sub-agent defaults ([#111](https://github.com/buchenberg/yaah/issues/111)) ([78b1c08](https://github.com/buchenberg/yaah/commit/78b1c08096958503ed3f1129a4f50bc75f48de3a))
+
 ## [0.40.2](https://github.com/buchenberg/yaah/compare/v0.40.1...v0.40.2) (2026-07-30)
 
 
