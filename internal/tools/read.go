@@ -15,7 +15,7 @@ import (
 // the returned line count).
 type ReadTool struct{}
 
-func (t *ReadTool) Name() string { return "read" }
+func (t *ReadTool) Name() string        { return "read" }
 func (t *ReadTool) Description() string { return prompts.ToolDescription("read") }
 
 func (t *ReadTool) Schema() json.RawMessage {

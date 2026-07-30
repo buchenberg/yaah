@@ -118,6 +118,7 @@ func (l *Loop) StripAllReasoning() {
 		}
 	}
 }
+
 // reasoning_content. The result is an exact count, not a turn count.
 func countReasoningMessages(msgs []types.Message) int {
 	n := 0

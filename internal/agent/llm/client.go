@@ -28,8 +28,8 @@ type Client struct {
 	OtelEnabled      bool
 	OtelVerbose      bool
 	StripReasoning   func() // called to permanently strip reasoning from session history
-	replayCount      int // tracks empty-response replays within a single Call
-	dsmlSeq          int // monotonic ID counter for DSML-recovered tool calls
+	replayCount      int    // tracks empty-response replays within a single Call
+	dsmlSeq          int    // monotonic ID counter for DSML-recovered tool calls
 }
 
 // Call sends a chat request and returns the assistant message, whether it

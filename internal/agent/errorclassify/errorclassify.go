@@ -9,21 +9,21 @@ import "fmt"
 type ErrorReason int
 
 const (
-	ReasonUnknown               ErrorReason = iota // unclassifiable — retry with backoff
-	ReasonAuth                                     // 401/403 — refresh/rotate credentials
-	ReasonAuthPermanent                            // auth failed after rotation — abort
-	ReasonBilling                                  // 402/credit exhaustion — rotate immediately
-	ReasonRateLimit                                // 429/quota — backoff then rotate
-	ReasonOverloaded                               // 503/529 — provider overloaded, backoff
-	ReasonServerError                              // 500/502 — internal server error, retry
-	ReasonTimeout                                  // connection/read timeout — retry
-	ReasonContextOverflow                          // context window exceeded — compress
-	ReasonPayloadTooLarge                          // 413 — compress payload
-	ReasonModelNotFound                            // 404/invalid model — fallback to different model
-	ReasonContentPolicyBlocked                     // safety filter — do NOT retry unchanged
-	ReasonProviderPolicyBlocked                    // aggregator data/privacy block
-	ReasonFormatError                              // 400 bad request — abort or strip+retry
-	ReasonReasoningContentMissing                   // reasoning_content required but missing — strip and retry
+	ReasonUnknown                 ErrorReason = iota // unclassifiable — retry with backoff
+	ReasonAuth                                       // 401/403 — refresh/rotate credentials
+	ReasonAuthPermanent                              // auth failed after rotation — abort
+	ReasonBilling                                    // 402/credit exhaustion — rotate immediately
+	ReasonRateLimit                                  // 429/quota — backoff then rotate
+	ReasonOverloaded                                 // 503/529 — provider overloaded, backoff
+	ReasonServerError                                // 500/502 — internal server error, retry
+	ReasonTimeout                                    // connection/read timeout — retry
+	ReasonContextOverflow                            // context window exceeded — compress
+	ReasonPayloadTooLarge                            // 413 — compress payload
+	ReasonModelNotFound                              // 404/invalid model — fallback to different model
+	ReasonContentPolicyBlocked                       // safety filter — do NOT retry unchanged
+	ReasonProviderPolicyBlocked                      // aggregator data/privacy block
+	ReasonFormatError                                // 400 bad request — abort or strip+retry
+	ReasonReasoningContentMissing                    // reasoning_content required but missing — strip and retry
 )
 
 func (r ErrorReason) String() string {
@@ -79,11 +79,11 @@ type ClassifiedError struct {
 	Meta   ErrorMeta
 
 	// Recovery hints
-	Retryable        bool // can safely retry after backoff
-	ShouldCompress   bool // compress context before retrying
-	ShouldRotateCred bool // switch to a different credential / fallback provider
+	Retryable            bool // can safely retry after backoff
+	ShouldCompress       bool // compress context before retrying
+	ShouldRotateCred     bool // switch to a different credential / fallback provider
 	ShouldStripReasoning bool // strip ReasoningContent from all assistant messages and retry
-	ShouldAbort      bool // surface error to user immediately (no fallback)
+	ShouldAbort          bool // surface error to user immediately (no fallback)
 
 	Message string // human-readable classification summary (for logs)
 }

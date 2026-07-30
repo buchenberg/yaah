@@ -20,7 +20,7 @@ type editEntry struct {
 // when exact match fails. Supports multi-edit via an edits[] array.
 type EditTool struct{}
 
-func (t *EditTool) Name() string { return "edit" }
+func (t *EditTool) Name() string        { return "edit" }
 func (t *EditTool) Description() string { return prompts.ToolDescription("edit") }
 
 func (t *EditTool) Schema() json.RawMessage {

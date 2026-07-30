@@ -18,8 +18,8 @@ import (
 // text-level) so they handle cross-package references correctly.
 type GoRefactorTool struct{}
 
-func (t *GoRefactorTool) Name() string        { return "go_refactor" }
-func (t *GoRefactorTool) Description() string { return prompts.ToolDescription("go_refactor") }
+func (t *GoRefactorTool) Name() string                     { return "go_refactor" }
+func (t *GoRefactorTool) Description() string              { return prompts.ToolDescription("go_refactor") }
 func (t *GoRefactorTool) IsDangerous(argsJSON string) bool { return true }
 
 func (t *GoRefactorTool) Schema() json.RawMessage {

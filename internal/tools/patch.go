@@ -14,8 +14,8 @@ import (
 // Parses standard unified diff format and applies hunks sequentially.
 type PatchTool struct{}
 
-func (t *PatchTool) Name() string        { return "patch" }
-func (t *PatchTool) Description() string { return prompts.ToolDescription("patch") }
+func (t *PatchTool) Name() string                     { return "patch" }
+func (t *PatchTool) Description() string              { return prompts.ToolDescription("patch") }
 func (t *PatchTool) IsDangerous(argsJSON string) bool { return true }
 
 func (t *PatchTool) Schema() json.RawMessage {
@@ -125,9 +125,7 @@ func applyUnifiedDiff(content, patch string) (string, error) {
 		for i < len(lines) {
 			// Try to match the hunk context at this position.
 			if matchHunk(lines, i, hk) {
-				for _, c := range hk.context {
-					newlines = append(newlines, c)
-				}
+				newlines = append(newlines, hk.context...)
 				newlines = append(newlines, hk.plus...)
 				i += len(hk.context) + len(hk.minus)
 				break

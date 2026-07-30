@@ -168,7 +168,7 @@ func TestEditTool_fuzzyMultiLineTabNormalized(t *testing.T) {
 
 	// Model sends oldString with spaces instead of tabs for all lines
 	args, _ := json.Marshal(map[string]any{
-		"filePath": path,
+		"filePath":  path,
 		"oldString": "    x := 1\n    if x > 0 {\n        bar()\n    }",
 		"newString": "    x := 2\n    if x > 0 {\n        baz()\n    }",
 	})

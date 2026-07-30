@@ -21,7 +21,7 @@ const grepMaxResultLen = 8192
 // GrepTool searches file contents using ripgrep with a Go-native fallback.
 type GrepTool struct{}
 
-func (t *GrepTool) Name() string { return "grep" }
+func (t *GrepTool) Name() string        { return "grep" }
 func (t *GrepTool) Description() string { return prompts.ToolDescription("grep") }
 
 func (t *GrepTool) Schema() json.RawMessage {
