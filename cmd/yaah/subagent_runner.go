@@ -63,26 +63,6 @@ func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 	}
 }
 
-// subToolDisplay prints sub-agent tool calls indented under the
-// parent's sub-agent banner so they are visually distinct.
-func subToolDisplay(name, args string, duration time.Duration, errStr string) {
-	if duration == 0 {
-		return
-	}
-	fmt.Fprintf(os.Stderr, "    tool: %s", Bold(name))
-	if args != "" {
-		a := args
-		if len(a) > 40 {
-			a = a[:37] + "..."
-		}
-		fmt.Fprintf(os.Stderr, "(%s)", Dim(a))
-	}
-	fmt.Fprintf(os.Stderr, " (%s)\n", Dim(formatDuration(duration)))
-	if errStr != "" {
-		fmt.Fprintf(os.Stderr, "      %s\n", replYellow("error: "+errStr))
-	}
-}
-
 // builtinRoleFiles reads the embedded roles/*.md files shipped in the
 // binary and returns them keyed by file name (e.g. "worker.md").
 func builtinRoleFiles() map[string][]byte {
@@ -385,8 +365,6 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 				JSONMode:               jsonMode,
 			}),
 		)
-		// Not using View for tool display since subToolDisplay is sufficient.
-		_ = subToolDisplay
 
 		result, runErr := subLoop.Run(ctx, prompt)
 		if outLimit > 0 && len(result) > outLimit {
