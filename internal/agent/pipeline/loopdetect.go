@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
+	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -130,13 +131,7 @@ func (m *LoopDetectionMiddleware) PostTool(ctx context.Context, results []ToolRe
 			}
 		}
 		if m.categoryStrikes[dominant] >= m.categoryStrikeCap {
-			step.Messages = append(step.Messages, types.UserMsg(fmt.Sprintf(
-				"[STEER] You have called the %q tool heavily for %d consecutive turns. "+
-					"Apply the convergence rule: if you have enough information to decide, "+
-					"act on your findings now and stop searching. If you still need more, "+
-					"make EXACTLY ONE final targeted pass with a different approach. "+
-					"Do not repeat the same search pattern.",
-				dominant, m.categoryStrikeCap)))
+			step.Messages = append(step.Messages, types.UserMsg(prompts.SteeringMessage(dominant, m.categoryStrikeCap)))
 			clear(m.categoryStrikes)
 		}
 	} else {

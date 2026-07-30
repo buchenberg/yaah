@@ -571,8 +571,7 @@ func (s *agentSession) compactContext() {
 	keepMsgs := rest[split:]
 
 	var sb strings.Builder
-	sb.WriteString("Summarize the following conversation excerpt. Keep the structured format below.\n\n")
-	sb.WriteString("## Goal\n## Completed Work\n## Active Work\n## Pending Tasks\n## Key Decisions\n## Files Modified\n\n---\nConversation excerpt:\n\n")
+	sb.WriteString(prompts.ConversationSummaryPreamble())
 	for _, m := range oldMsgs {
 		if m.Content != "" {
 			sb.WriteString(fmt.Sprintf("%s: %s\n", m.Role, m.Content))

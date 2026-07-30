@@ -22,6 +22,120 @@ import (
 //go:embed identity.md
 var IdentityPrompt string
 
+//go:embed summary_template.md
+var summaryTemplate string
+
+//go:embed contract_rules.md
+var contractRules string
+
+//go:embed escalation.md
+var escalation string
+
+//go:embed chunk_summarizer.md
+var chunkSummarizerRaw string
+
+//go:embed conversation_summary_preamble.md
+var conversationSummaryPreamble string
+
+//go:embed steering_message.md
+var steeringMessageRaw string
+
+//go:embed environment_header.md
+var environmentHeaderRaw string
+
+// SummaryTemplate returns the anchored summary prompt template used during
+// context compaction. It instructs the model to produce a structured
+// Markdown summary with fixed sections.
+func SummaryTemplate() string {
+	return summaryTemplate
+}
+
+// ContractRules returns the Contract Rules preamble injected into
+// sub-agent system prompts. It defines the evidence/interpretation
+// field contract that sub-agents must follow.
+func ContractRules() string {
+	return contractRules
+}
+
+// Escalation returns the escalation format block injected into
+// sub-agent system prompts. It defines the fenced escalation block
+// and severity levels for structured error reporting.
+func Escalation() string {
+	return escalation
+}
+
+// --- Chunk summarizer helpers ---
+
+// chunkSummarizerSections holds the four prompt sections split from
+// chunk_summarizer.md by the "---" separator.
+var chunkSummarizerSections []string
+
+func init() {
+	chunkSummarizerSections = strings.Split(strings.TrimSpace(chunkSummarizerRaw), "\n---\n")
+	if len(chunkSummarizerSections) != 4 {
+		panic(fmt.Sprintf("chunk_summarizer.md: expected 4 sections, got %d", len(chunkSummarizerSections)))
+	}
+}
+
+// ChunkPreamble returns the "Summarize chunk X/Y…" prompt with the
+// given index and total substituted for {{NUM}} and {{TOTAL}}.
+func ChunkPreamble(num, total int) string {
+	s := chunkSummarizerSections[0]
+	s = strings.ReplaceAll(s, "{{NUM}}", fmt.Sprint(num))
+	s = strings.ReplaceAll(s, "{{TOTAL}}", fmt.Sprint(total))
+	return s
+}
+
+// ChunkSummarizerRole returns the system role for per-chunk
+// summarization.
+func ChunkSummarizerRole() string {
+	return chunkSummarizerSections[1]
+}
+
+// ChunkMergerPreamble returns the preamble for merging partial
+// summaries into one coherent summary.
+func ChunkMergerPreamble() string {
+	return chunkSummarizerSections[2]
+}
+
+// ChunkMergerRole returns the system role for meta-summarization
+// (merging partial summaries).
+func ChunkMergerRole() string {
+	return chunkSummarizerSections[3]
+}
+
+// --- Conversation summary ---
+
+// ConversationSummaryPreamble returns the preamble for the
+// conversation summarization prompt used during REPL compaction.
+func ConversationSummaryPreamble() string {
+	return conversationSummaryPreamble
+}
+
+// --- Steering message ---
+
+// SteeringMessage returns the loop-detection steering prompt with
+// {{TOOL}} and {{COUNT}} replaced by the given values.
+func SteeringMessage(tool string, count int) string {
+	s := steeringMessageRaw
+	s = strings.ReplaceAll(s, "{{TOOL}}", fmt.Sprintf("%q", tool))
+	s = strings.ReplaceAll(s, "{{COUNT}}", fmt.Sprint(count))
+	return s
+}
+
+// --- Environment header ---
+
+// EnvironmentHeader returns the sub-agent environment block with
+// {{OS}}, {{ARCH}}, {{SHELL}}, and {{CWD}} replaced by the given values.
+func EnvironmentHeader(os, arch, shell, cwd string) string {
+	s := environmentHeaderRaw
+	s = strings.ReplaceAll(s, "{{OS}}", os)
+	s = strings.ReplaceAll(s, "{{ARCH}}", arch)
+	s = strings.ReplaceAll(s, "{{SHELL}}", shell)
+	s = strings.ReplaceAll(s, "{{CWD}}", cwd)
+	return s
+}
+
 // BuiltinRolesFS embeds the built-in sub-agent role definitions under
 // roles/*.md. Each file is a YAML frontmatter block + markdown body
 // that together define a role's tool set, limits, and system guidance.

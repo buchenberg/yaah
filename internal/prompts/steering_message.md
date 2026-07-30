@@ -1,0 +1,1 @@
+[STEER] You have called the {{TOOL}} tool heavily for {{COUNT}} consecutive turns. Apply the convergence rule: if you have enough information to decide, act on your findings now and stop searching. If you still need more, make EXACTLY ONE final targeted pass with a different approach. Do not repeat the same search pattern.

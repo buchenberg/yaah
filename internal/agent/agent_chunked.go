@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -78,7 +79,7 @@ func (l *Loop) summarizeChunk(ctx context.Context, chunk []types.Message, chunkI
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Summarize chunk %d/%d of a longer conversation.\n\n", chunkIdx+1, total))
+	sb.WriteString(prompts.ChunkPreamble(chunkIdx+1, total) + "\n\n")
 	sb.WriteString("<conversation>\n")
 	for _, m := range chunk {
 		if m.Content != "" {
@@ -93,13 +94,13 @@ func (l *Loop) summarizeChunk(ctx context.Context, chunk []types.Message, chunkI
 		}
 	}
 	sb.WriteString("</conversation>\n\n")
-	sb.WriteString(summaryTemplate)
+	sb.WriteString(prompts.SummaryTemplate())
 
 	req := types.ChatRequest{
 		Model:     model,
 		MaxTokens: 4096,
 		Messages: []types.Message{
-			types.SystemMsg("You are a chunk summarizer. Extract the key facts from this conversation segment."),
+			types.SystemMsg(prompts.ChunkSummarizerRole()),
 			types.UserMsg(sb.String()),
 		},
 	}
@@ -200,17 +201,17 @@ func (l *Loop) reducePartialSummaries(ctx context.Context, partials []string, de
 	}
 
 	var sb strings.Builder
-	sb.WriteString("Merge the following partial conversation summaries into one coherent summary.\n\n")
+	sb.WriteString(prompts.ChunkMergerPreamble() + "\n\n")
 	for i, p := range partials {
 		sb.WriteString(fmt.Sprintf("<partial-summary-%d>\n%s\n</partial-summary-%d>\n\n", i+1, p, i+1))
 	}
-	sb.WriteString(summaryTemplate)
+	sb.WriteString(prompts.SummaryTemplate())
 
 	req := types.ChatRequest{
 		Model:     model,
 		MaxTokens: 4096,
 		Messages: []types.Message{
-			types.SystemMsg("You are a summary merger. Combine multiple partial conversation summaries into one."),
+			types.SystemMsg(prompts.ChunkMergerRole()),
 			types.UserMsg(sb.String()),
 		},
 	}
