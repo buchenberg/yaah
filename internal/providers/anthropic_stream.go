@@ -50,7 +50,7 @@ type anthropicSSEContentBlock struct {
 }
 
 func (c *AnthropicClient) SendStream(ctx context.Context, req types.ChatRequest) (<-chan StreamChunk, <-chan error) {
-	antReq := chatRequestToAnthropic(req)
+	antReq := lowerAnthropicRequest(req)
 	antReq.Stream = true
 
 	chunks := make(chan StreamChunk, 64)

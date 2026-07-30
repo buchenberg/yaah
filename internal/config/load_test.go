@@ -155,7 +155,7 @@ agents:
 		t.Fatalf("Load() error: %v", err)
 	}
 
-	openaiModels := cfg.Providers["openai"].Models
+	openaiModels := cfg.Providers["openai"].ModelNames()
 	if len(openaiModels) != 3 {
 		t.Fatalf("expected 3 openai models, got %d: %v", len(openaiModels), openaiModels)
 	}

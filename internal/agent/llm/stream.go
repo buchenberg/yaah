@@ -15,8 +15,8 @@ import (
 )
 
 // runStream handles a streaming request and returns the assembled assistant
-// message, usage, and any error.
-func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.ChatRequest) (types.Message, types.Usage, error) {
+// message, finish reason, response model, usage, and any error.
+func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.ChatRequest) (types.Message, string, string, types.Usage, error) {
 	var streamSpan trace.Span
 	if c.OtelEnabled {
 		ctx, streamSpan = observability.StartStream(ctx, req.Model)
@@ -157,7 +157,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 					observability.RecordError(streamSpan, err)
 					streamSpan.End()
 				}
-				return types.Message{}, totalUsage, err
+				return types.Message{}, "", "", totalUsage, err
 			}
 			recordVerbose("errs_nil")
 			if streamSpan != nil {
@@ -171,17 +171,16 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 				observability.RecordError(streamSpan, ctx.Err())
 				streamSpan.End()
 			}
-			return types.Message{}, totalUsage, ctx.Err()
+			return types.Message{}, "", "", totalUsage, ctx.Err()
 		}
 	}
 }
 
 // checkTruncatedStream validates the assembled streamed message and returns it
-// with the accumulated usage, or an error if the stream was truncated or blocked.
-func checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, finishReason string, responseModel string, reasoningContent string, usage types.Usage, dsmlSeq *int) (types.Message, types.Usage, error) {
+// with finish reason, response model, and accumulated usage, or an error if the
+// stream was truncated or blocked.
+func checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, finishReason string, responseModel string, reasoningContent string, usage types.Usage, dsmlSeq *int) (types.Message, string, string, types.Usage, error) {
 	msg := assembleStreamed(content, toolCallMap, reasoningContent)
-	msg.FinishReason = finishReason
-	msg.ResponseModel = responseModel
 
 	if msg.Content != "" {
 		if cleaned, dsmlCalls, ok := parseDSMLToolCalls(msg.Content, dsmlSeq); ok {
@@ -191,15 +190,15 @@ func checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, f
 	}
 
 	if finishReason == "content_filter" && content == "" && len(msg.ToolCalls) == 0 {
-		return types.Message{}, usage, fmt.Errorf("streamed response blocked by content filter")
+		return types.Message{}, finishReason, responseModel, usage, fmt.Errorf("streamed response blocked by content filter")
 	}
 	if finishReason == "length" && len(msg.ToolCalls) > 0 {
-		return types.Message{}, usage, fmt.Errorf("streamed response truncated (finish_reason=length), discarding %d tool calls", len(msg.ToolCalls))
+		return types.Message{}, finishReason, responseModel, usage, fmt.Errorf("streamed response truncated (finish_reason=length), discarding %d tool calls", len(msg.ToolCalls))
 	}
 	if msg.Content == "" && len(msg.ToolCalls) == 0 {
-		return types.Message{}, usage, fmt.Errorf("streamed response produced no content (finish_reason=%s)", finishReason)
+		return types.Message{}, finishReason, responseModel, usage, fmt.Errorf("streamed response produced no content (finish_reason=%s)", finishReason)
 	}
-	return msg, usage, nil
+	return msg, finishReason, responseModel, usage, nil
 }
 
 // assembleStreamed builds the assistant message from accumulated stream state.

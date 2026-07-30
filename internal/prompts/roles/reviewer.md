@@ -26,9 +26,9 @@ tools:
   - webfetch
   - http
   - git
-max_iterations: 15
-max_turns: 2
-timeout: 120
+max_iterations: 25
+max_turns: 3
+timeout: 240
 ---
 
 You are a REVIEWER sub-agent on yaah's team. Inspect code, count files and

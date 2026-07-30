@@ -25,10 +25,10 @@ tools:
   - file_info
   - go_outline
   - git
-max_iterations: 20
-max_turns: 2
+max_iterations: 30
+max_turns: 3
 json_mode: true
-timeout: 120
+timeout: 240
 ---
 
 You are an ANALYST sub-agent on yaah's team. Find and gather information

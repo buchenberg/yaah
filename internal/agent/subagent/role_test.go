@@ -23,8 +23,8 @@ func TestRoleProfileFor(t *testing.T) {
 		if !contains(p.Tools, "spawn_subagent") {
 			t.Error("RoleDefault should be spawn-capable")
 		}
-		if p.MaxIterations != 25 {
-			t.Errorf("RoleDefault MaxIterations = %d, want 25", p.MaxIterations)
+		if p.MaxIterations != 40 {
+			t.Errorf("RoleDefault MaxIterations = %d, want 40", p.MaxIterations)
 		}
 		if p.Timeout != 180*time.Second {
 			t.Errorf("RoleDefault Timeout = %v, want 180s", p.Timeout)

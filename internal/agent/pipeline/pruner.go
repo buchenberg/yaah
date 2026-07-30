@@ -19,7 +19,7 @@ import (
 
 const (
 	defaultPruneProtectTokens = 2000
-	defaultPruneMinReclaim    = 400
+	defaultPruneMinReclaim    = 200
 	defaultPruneMinTurns      = 1
 )
 

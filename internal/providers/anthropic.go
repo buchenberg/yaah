@@ -86,7 +86,7 @@ func NewAnthropicClient(baseURL, apiKey string, timeoutSeconds int) *AnthropicCl
 
 // Send translates a ChatRequest to the Anthropic Messages API format and returns the response.
 func (c *AnthropicClient) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
-	antReq := chatRequestToAnthropic(req)
+	antReq := lowerAnthropicRequest(req)
 	body, err := json.Marshal(antReq)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -123,7 +123,7 @@ func (c *AnthropicClient) Send(ctx context.Context, req types.ChatRequest) (*typ
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
 
-	return anthropicResponseToChat(antResp), nil
+	return raiseAnthropicResponse(antResp), nil
 }
 
 // ListModels is not supported by the Anthropic Messages API.
@@ -131,7 +131,7 @@ func (c *AnthropicClient) ListModels(ctx context.Context) ([]string, error) {
 	return nil, fmt.Errorf("anthropic Messages API does not support model listing")
 }
 
-func chatRequestToAnthropic(req types.ChatRequest) anthropicRequest {
+func lowerAnthropicRequest(req types.ChatRequest) anthropicRequest {
 	var sysBlocks []anthropicBlock
 	var convMessages []types.Message
 
@@ -231,7 +231,7 @@ func chatRequestToAnthropic(req types.ChatRequest) anthropicRequest {
 	}
 }
 
-func anthropicResponseToChat(resp anthropicResponse) *types.ChatResponse {
+func raiseAnthropicResponse(resp anthropicResponse) *types.ChatResponse {
 	var content strings.Builder
 	var reasoning strings.Builder
 	var toolCalls []types.ToolCall

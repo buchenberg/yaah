@@ -12,12 +12,59 @@ import (
 
 // Provider holds connection details for a model provider.
 type Provider struct {
-	API            string   `yaml:"api,omitempty"` // "openai" (default) or "anthropic"
-	BaseURL        string   `yaml:"base_url"`
-	APIKey         string   `yaml:"api_key"`
-	Name           string   `yaml:"name,omitempty"`
-	Models         []string `yaml:"models,omitempty"`
-	TimeoutSeconds int      `yaml:"timeout,omitempty"`
+	API            string       `yaml:"api,omitempty"` // "openai" (default) or "anthropic"
+	BaseURL        string       `yaml:"base_url"`
+	APIKey         string       `yaml:"api_key"`
+	Name           string       `yaml:"name,omitempty"`
+	Models         []ModelEntry `yaml:"models,omitempty"`
+	TimeoutSeconds int          `yaml:"timeout,omitempty"`
+}
+
+// ModelEntry is a single model in a provider's model list. It supports two
+// YAML forms for backward compatibility:
+//
+//	models:
+//	  - gpt-4o                          # plain string
+//	  - name: deepseek-r1              # structured entry
+//	    thinking: true
+type ModelEntry struct {
+	Name     string `yaml:"name"`
+	Thinking *bool  `yaml:"thinking,omitempty"` // override auto-detection; nil = use registry
+}
+
+// UnmarshalYAML accepts either a plain string or a structured mapping.
+func (m *ModelEntry) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		m.Name = value.Value
+		return nil
+	}
+	type raw ModelEntry
+	var r raw
+	if err := value.Decode(&r); err != nil {
+		return err
+	}
+	*m = ModelEntry(r)
+	return nil
+}
+
+// ModelNames returns the list of model name strings.
+func (p Provider) ModelNames() []string {
+	names := make([]string, len(p.Models))
+	for i, m := range p.Models {
+		names[i] = m.Name
+	}
+	return names
+}
+
+// ThinkingOverride returns the per-model thinking override for the given
+// model name, or nil if no override is configured.
+func (p Provider) ThinkingOverride(modelName string) *bool {
+	for _, m := range p.Models {
+		if m.Name == modelName {
+			return m.Thinking
+		}
+	}
+	return nil
 }
 
 // Defaults hold the default agent model and loop settings.

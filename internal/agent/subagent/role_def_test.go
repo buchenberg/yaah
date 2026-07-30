@@ -195,7 +195,7 @@ Test guidance.`),
 	if !contains(legacyDefault.Tools, "write") {
 		t.Error("legacy fallback: default missing write")
 	}
-	if legacyDefault.MaxIterations != 25 {
-		t.Errorf("legacy fallback: default MaxIterations = %d, want 25", legacyDefault.MaxIterations)
+	if legacyDefault.MaxIterations != 40 {
+		t.Errorf("legacy fallback: default MaxIterations = %d, want 40", legacyDefault.MaxIterations)
 	}
 }

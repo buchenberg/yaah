@@ -83,7 +83,17 @@ func makeProvider(p config.Provider) (agent.Provider, bool) {
 	case "anthropic":
 		return providers.NewAnthropicClient(r.BaseURL, r.APIKey, r.TimeoutSeconds), true
 	default:
-		return providers.NewOpenAIClient(r.BaseURL, r.APIKey, r.TimeoutSeconds), true
+		client := providers.NewOpenAIClient(r.BaseURL, r.APIKey, r.TimeoutSeconds)
+		overrides := make(map[string]*bool, len(r.Models))
+		for _, m := range r.Models {
+			if m.Thinking != nil {
+				overrides[m.Name] = m.Thinking
+			}
+		}
+		if len(overrides) > 0 {
+			client.ThinkingOverrides = overrides
+		}
+		return client, true
 	}
 }
 

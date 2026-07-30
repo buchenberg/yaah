@@ -594,7 +594,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 
 		tokensBeforeTurn := l.TotalTokens
 
-		msg, streamed, usage, err := l.LLM.Call(turnCtx, req)
+		result, err := l.LLM.Call(turnCtx, req)
 		if err != nil {
 			if turnSpan != nil {
 				observability.RecordError(turnSpan, err)
@@ -603,13 +603,14 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			l.Messages = messages
 			return "", fmt.Errorf("provider error: %w", err)
 		}
+		msg := result.Message
 		l.Provider = l.LLM.Provider
 		l.Model = l.LLM.Model
 		l.FallbackProvider = l.LLM.FallbackProvider
 		l.FallbackModel = l.LLM.FallbackModel
-		l.addUsage(usage)
-		l.lastFinishReason = msg.FinishReason
-		l.lastResponseModel = msg.ResponseModel
+		l.addUsage(result.Usage)
+		l.lastFinishReason = result.FinishReason
+		l.lastResponseModel = result.ResponseModel
 		messages = append(messages, msg)
 		l.Persister.Persist(msg)
 
@@ -619,7 +620,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 				toolNames = append(toolNames, tc.Function.Name)
 			}
 			turnAttrs := []attribute.KeyValue{
-				attribute.Bool("turn.streamed", streamed),
+				attribute.Bool("turn.streamed", result.Streamed),
 				attribute.Int("turn.iteration", iter),
 				attribute.Int("turn.tool_calls", len(msg.ToolCalls)),
 				attribute.String("turn.tool_call_names", strings.Join(toolNames, ",")),
@@ -647,7 +648,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			return msg.Content, nil
 		}
 
-		if streamed && msg.Content != "" && l.broker != nil {
+		if result.Streamed && msg.Content != "" && l.broker != nil {
 			l.broker.PublishMustDeliver(&FlushEvent{Content: msg.Content})
 		}
 

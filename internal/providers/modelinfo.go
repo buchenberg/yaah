@@ -40,12 +40,56 @@ var modelWindows = map[string]int{
 	"llama-3.3-70b":  131072,
 }
 
+// thinkingModels are models that use interleaved reasoning and require
+// reasoning_content to be passed back on every assistant message. Keyed by
+// sanitized model name (after the last "/"). Prefix matching is used for
+// model families (e.g. "deepseek-r1" matches "deepseek-r1-0528").
+var thinkingModels = map[string]bool{
+	"deepseek-r1":         true,
+	"deepseek-r1-0528":    true,
+	"deepseek-r1-distill": true,
+	"o1":                  true,
+	"o1-mini":             true,
+	"o1-preview":          true,
+	"o3":                  true,
+	"o3-mini":             true,
+	"o4-mini":             true,
+	"qwq-32b":             true,
+	"qwq-plus":            true,
+	"kimi-k1.5":           true,
+	"kimi-k2-thinking":    true,
+}
+
+// thinkingPrefixes matches model families where any variant is a thinking
+// model (e.g. "o3-" matches "o3-mini", "o3-pro", etc.).
+var thinkingPrefixes = []string{
+	"o1-", "o3-", "o4-",
+	"deepseek-r1",
+	"qwq-",
+}
+
 func sanitizeModelName(name string) string {
 	idx := strings.LastIndexByte(name, '/')
 	if idx >= 0 {
 		return name[idx+1:]
 	}
 	return name
+}
+
+// IsThinkingModel reports whether a model uses interleaved reasoning mode
+// and requires reasoning_content on all assistant messages.
+func IsThinkingModel(modelName string) bool {
+	name := sanitizeModelName(modelName)
+	name = strings.ToLower(name)
+	if thinkingModels[name] {
+		return true
+	}
+	for _, prefix := range thinkingPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func ResolveWindow(modelName string, configCap int) int {
