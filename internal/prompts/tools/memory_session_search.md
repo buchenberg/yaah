@@ -1,0 +1,1 @@
+Searches past conversation sessions. With no query, lists recent sessions with their first prompt as a topic summary. Provide a `query` for full-text search across session transcripts, and `top_k` to limit results (default 10). Use to find past discussions, recall previous work, or review conversation history across sessions.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/skills"
 )
 
@@ -15,7 +16,7 @@ type SkillTool struct {
 
 func (t *SkillTool) Name() string { return "skill" }
 func (t *SkillTool) Description() string {
-	return "Load, list, create, or edit skills. Skills are SKILL.md files with YAML frontmatter and markdown instructions."
+	return prompts.ToolDescription("skill")
 }
 
 func (t *SkillTool) Schema() json.RawMessage {

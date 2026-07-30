@@ -1,0 +1,1 @@
+Get file metadata (size, modification time, existence) without reading content. Accepts an absolute path (supports `~` expansion). Returns a JSON object with `exists`, `size_bytes`, `mod_time`, and `is_dir`. Use to check if a file already exists before writing, verify a write succeeded, or inspect file stats before deciding whether to read.

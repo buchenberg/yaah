@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // webFetchTimeout is the max time for a single fetch.
@@ -23,7 +25,7 @@ type WebFetchTool struct{}
 
 func (t *WebFetchTool) Name() string { return "webfetch" }
 func (t *WebFetchTool) Description() string {
-	return "Fetches content from a URL and returns it as markdown or text."
+	return prompts.ToolDescription("webfetch")
 }
 
 func (t *WebFetchTool) Schema() json.RawMessage {

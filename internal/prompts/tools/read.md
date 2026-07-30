@@ -1,0 +1,1 @@
+Reads a file from the local filesystem with optional offset and limit. The offset is 1-based (line 1 is the first line). The limit caps the number of returned lines. When a file is large, use offset and limit to read it in chunks rather than loading the entire file.

@@ -6,13 +6,15 @@ import (
 	"fmt"
 	"os/exec"
 	"time"
+
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // BashTool runs a shell command and returns its stdout.
 type BashTool struct{}
 
 func (t *BashTool) Name() string        { return "bash" }
-func (t *BashTool) Description() string { return "Executes a shell command and returns its output." }
+func (t *BashTool) Description() string { return prompts.ToolDescription("bash") }
 
 func (t *BashTool) Schema() json.RawMessage {
 	return json.RawMessage(`{

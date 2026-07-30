@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os/exec"
 	"time"
+
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // PowerShellTool runs a PowerShell command and returns its stdout.
@@ -15,7 +17,7 @@ type PowerShellTool struct{}
 
 func (t *PowerShellTool) Name() string { return "powershell" }
 func (t *PowerShellTool) Description() string {
-	return "Executes a PowerShell command and returns its output."
+	return prompts.ToolDescription("powershell")
 }
 
 func (t *PowerShellTool) Schema() json.RawMessage {

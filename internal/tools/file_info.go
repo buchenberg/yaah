@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // FileInfoTool returns file metadata without reading content.
@@ -15,7 +17,7 @@ type FileInfoTool struct{}
 
 func (t *FileInfoTool) Name() string { return "file_info" }
 func (t *FileInfoTool) Description() string {
-	return "Get file metadata (size, modtime, existence) without reading content. Use to check if a file already exists before writing, or to verify a write succeeded."
+	return prompts.ToolDescription("file_info")
 }
 func (t *FileInfoTool) Schema() json.RawMessage {
 	return json.RawMessage(`{

@@ -63,26 +63,6 @@ func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 	}
 }
 
-// subToolDisplay prints sub-agent tool calls indented under the
-// parent's sub-agent banner so they are visually distinct.
-func subToolDisplay(name, args string, duration time.Duration, errStr string) {
-	if duration == 0 {
-		return
-	}
-	fmt.Fprintf(os.Stderr, "    tool: %s", Bold(name))
-	if args != "" {
-		a := args
-		if len(a) > 40 {
-			a = a[:37] + "..."
-		}
-		fmt.Fprintf(os.Stderr, "(%s)", Dim(a))
-	}
-	fmt.Fprintf(os.Stderr, " (%s)\n", Dim(formatDuration(duration)))
-	if errStr != "" {
-		fmt.Fprintf(os.Stderr, "      %s\n", replYellow("error: "+errStr))
-	}
-}
-
 // builtinRoleFiles reads the embedded roles/*.md files shipped in the
 // binary and returns them keyed by file name (e.g. "worker.md").
 func builtinRoleFiles() map[string][]byte {
@@ -192,10 +172,7 @@ func subagentEnvironmentHeader() string {
 		shell = "powershell"
 	}
 	cwd, _ := os.Getwd()
-	return fmt.Sprintf(
-		"## Environment\nOS: %s/%s. Default shell: %s. Use %s for all shell commands. Working directory: %s.",
-		runtime.GOOS, runtime.GOARCH, shell, shell, cwd,
-	)
+	return prompts.EnvironmentHeader(runtime.GOOS, runtime.GOARCH, shell, cwd)
 }
 
 // makeTaskRunner creates a sub-agent runner that honours roles, timeouts,
@@ -245,15 +222,8 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			if jsonMode {
 				b.WriteString("\n\nRespond with a JSON object matching the contract below.\n\n")
 			}
-			b.WriteString("## Contract Rules\n\n")
-			b.WriteString("Evidence fields (raw tool output: command, stdout, stderr, exit_code, ")
-			b.WriteString("file path, URL) must contain exact, unedited output from a specific ")
-			b.WriteString("tool call. Do NOT parse, summarize, or reinterpret raw tool output — ")
-			b.WriteString("report it verbatim.\n\n")
-			b.WriteString("Interpretation fields (your synthesis: finding, summary, recommendation, ")
-			b.WriteString("confidence) are your analysis. Mark confidence as high/medium/low ")
-			b.WriteString("based on whether evidence directly supports each finding.\n\n")
-			b.WriteString("## Response contract\n\n")
+			b.WriteString(prompts.ContractRules())
+			b.WriteString("\n\n## Response contract\n\n")
 			b.WriteString("Always end your response with a structured block:\n\n```\n")
 			b.WriteString(profile.Contract.Heading + "\n")
 			for _, f := range profile.Contract.Fields {
@@ -269,18 +239,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 
 		// Escalation contract: all sub-agents must know how to raise
 		// structured escalations when they hit a blocker.
-		sysPrompt += "\n## Escalation\n\n"
-		sysPrompt += "If you encounter a blocker that prevents completing the task, "
-		sysPrompt += "end your final response with a fenced escalation block. "
-		sysPrompt += "Otherwise, omit the block entirely.\n\n"
-		sysPrompt += "```escalation\n"
-		sysPrompt += `{"severity":"blocker|critical|warning|info","summary":"one-line summary",` + "\n"
-		sysPrompt += ` "detail":"full explanation of the issue","suggestion":"recommended next step"}` + "\n"
-		sysPrompt += "```\n\n"
-		sysPrompt += "- **`blocker`**: A required file, dependency, or permission is missing. The task is impossible.\n"
-		sysPrompt += "- **`critical`**: You discovered a pre-existing bug, security issue, or data corruption.\n"
-		sysPrompt += "- **`warning`**: The task completed but with caveats, degraded results, or unverified assumptions.\n"
-		sysPrompt += "- **`info`**: Something the orchestrator should know but doesn't require action.\n"
+		sysPrompt += prompts.Escalation()
 
 		if len(opts.directives) > 0 {
 			sysPrompt += "\n## Session directives\n\n"
@@ -385,8 +344,6 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 				JSONMode:               jsonMode,
 			}),
 		)
-		// Not using View for tool display since subToolDisplay is sufficient.
-		_ = subToolDisplay
 
 		result, runErr := subLoop.Run(ctx, prompt)
 		if outLimit > 0 && len(result) > outLimit {

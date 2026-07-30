@@ -1,0 +1,1 @@
+Read, write, or delete a value in a JSON file using a dot-notation path. Supports objects and arrays: use `"store.books[0].title"` to access nested data, `action: "read"` to retrieve, `action: "write"` with `set` to modify, and `action: "delete"` to remove. Ideal for editing configuration files (package.json, tsconfig.json, etc.) without needing to parse/stringify manually.

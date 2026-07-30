@@ -200,6 +200,12 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 		c.Message = "content policy blocked — abort"
 		return c
 	}
+	if matchAny(msg, reasoningContentPatterns) {
+		c.Reason = ReasonReasoningContentMissing
+		c.ShouldStripReasoning = true
+		c.Message = "reasoning_content must be passed back — strip and retry"
+		return c
+	}
 	if matchAny(msg, providerPolicyPatterns) {
 		c.Reason = ReasonProviderPolicyBlocked
 		c.Retryable = false
@@ -416,6 +422,10 @@ var contentPolicyPatterns = []string{
 	"responses cannot be generated due to safety",
 	"content_filter",
 	"responsibleaipolicyviolation",
+}
+
+var reasoningContentPatterns = []string{
+	"reasoning_content in the thinking mode must be passed back",
 }
 
 var providerPolicyPatterns = []string{

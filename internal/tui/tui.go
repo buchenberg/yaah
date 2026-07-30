@@ -1812,7 +1812,7 @@ func formatDuration(d time.Duration) string {
 }
 
 func lolcatRender(text string) string {
-	return strings.TrimRight(banner.Lolcat(text), "\n")
+	return strings.ReplaceAll(banner.Lolcat(text), "\n", "")
 }
 
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b\[[0-9;]*m`)

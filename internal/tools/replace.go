@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // replaceMaxResultLen caps the per-file result message length.
@@ -20,7 +22,7 @@ type ReplaceTool struct{}
 
 func (t *ReplaceTool) Name() string { return "replace" }
 func (t *ReplaceTool) Description() string {
-	return "Regex find-and-replace across multiple files in a directory."
+	return prompts.ToolDescription("replace")
 }
 
 func (t *ReplaceTool) Schema() json.RawMessage {

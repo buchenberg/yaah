@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -39,44 +40,8 @@ const (
 )
 
 // summaryTemplate is the structured Markdown prompt sent to the compact
-// provider. Forcing a fixed section order keeps summaries actionable and
-// consistent across re-compactions. Ported from kilocode's anchored summary.
-const summaryTemplate = `Output exactly the Markdown structure shown inside <template> and keep the section order unchanged. Do not include the <template> tags in your response.
-<template>
-## Goal
-- [single-sentence task summary]
-
-## Constraints & Preferences
-- [user constraints, preferences, specs, or "(none)"]
-
-## Progress
-### Done
-- [completed work or "(none)"]
-
-### In Progress
-- [current work or "(none)"]
-
-### Blocked
-- [blockers or "(none)"]
-
-## Key Decisions
-- [decision and why, or "(none)"]
-
-## Next Steps
-- [ordered next actions or "(none)"]
-
-## Critical Context
-- [important technical facts, errors, open questions, or "(none)"]
-
-## Relevant Files
-- [file or directory path: why it matters, or "(none)"]
-</template>
-
-Rules:
-- Keep every section, even when empty.
-- Use terse bullets, not prose paragraphs.
-- Preserve exact file paths, commands, error strings, and identifiers when known.
-- Do not mention the summary process or that context was compacted.`
+// provider. It is loaded from the embedded prompts package.
+var summaryTemplate = prompts.SummaryTemplate()
 
 // EstimatedTokens returns the estimated token count for all messages.
 func (l *Loop) EstimatedTokens() int {
@@ -142,7 +107,18 @@ func (l *Loop) prepareRequestMessages(messages []types.Message) []types.Message 
 	return out
 }
 
-// countReasoningMessages returns the number of assistant messages that carry
+// StripAllReasoning permanently removes ReasoningContent from every assistant
+// message in l.Messages. Called when a thinking-mode provider returns the
+// "reasoning_content must be passed back" 400 error — the session is no longer
+// in a valid thinking state and must continue without reasoning.
+func (l *Loop) StripAllReasoning() {
+	for i := range l.Messages {
+		if l.Messages[i].Role == "assistant" {
+			l.Messages[i].ReasoningContent = ""
+		}
+	}
+}
+
 // reasoning_content. The result is an exact count, not a turn count.
 func countReasoningMessages(msgs []types.Message) int {
 	n := 0

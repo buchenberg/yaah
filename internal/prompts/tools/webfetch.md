@@ -1,0 +1,1 @@
+Fetches content from a URL and returns it as markdown (default), plain text, or raw HTML. Use to retrieve web pages, API responses, documentation, or any HTTP-accessible resource. Headers are stripped and content is cleaned for markdown output. Set `format` to `"text"` for minimal extraction or `"html"` for the raw response body.

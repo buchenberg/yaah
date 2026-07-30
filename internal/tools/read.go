@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // ReadTool reads a file and returns its contents. Offsets and limits are
@@ -13,10 +15,8 @@ import (
 // the returned line count).
 type ReadTool struct{}
 
-func (t *ReadTool) Name() string { return "read" }
-func (t *ReadTool) Description() string {
-	return "Reads a file from the local filesystem with optional offset and limit."
-}
+func (t *ReadTool) Name() string        { return "read" }
+func (t *ReadTool) Description() string { return prompts.ToolDescription("read") }
 
 func (t *ReadTool) Schema() json.RawMessage {
 	return json.RawMessage(`{

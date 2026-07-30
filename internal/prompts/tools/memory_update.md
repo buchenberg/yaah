@@ -1,0 +1,1 @@
+Updates the text of an existing stored memory entry. Provide the memory `id` (found via `memory_search`) and new `text`. Use to correct stale or incorrect facts without deleting and recreating. Tags remain unchanged — for tag changes, delete and re-add.

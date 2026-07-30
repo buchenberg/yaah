@@ -5,13 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // WriteTool writes content to a file, overwriting if it exists.
 type WriteTool struct{}
 
 func (t *WriteTool) Name() string        { return "write" }
-func (t *WriteTool) Description() string { return "Writes content to a file on the local filesystem." }
+func (t *WriteTool) Description() string { return prompts.ToolDescription("write") }
 
 func (t *WriteTool) Schema() json.RawMessage {
 	return json.RawMessage(`{

@@ -1,0 +1,1 @@
+Executes a PowerShell command and returns its output. Tries `pwsh` (PowerShell 7+, cross-platform) first, then falls back to `powershell` (Windows PowerShell 5.1). Use for Windows-specific system operations, registry queries, process management, and file operations on Windows hosts. Output is truncated if very large. Set `timeout` to control the maximum runtime (default 30s).

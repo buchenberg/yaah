@@ -1,0 +1,1 @@
+Make an HTTP request to a URL and return the response body. Supports all standard HTTP methods: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS. Provide custom `headers` as a JSON object and a `body` string for POST/PUT/PATCH. Default timeout is 30 seconds. Use for fetching API responses, checking endpoints, or retrieving remote resources. Response is returned as plain text.

@@ -833,6 +833,7 @@ func (l *Loop) applyDefaults() {
 			OnThinking:       onThinking,
 			Compact:          l.llmCompact,
 			Trim:             l.llmTrim,
+			StripReasoning:   l.StripAllReasoning,
 			OtelEnabled:      l.OtelEnabled,
 			OtelVerbose:      l.OtelVerbose,
 		}

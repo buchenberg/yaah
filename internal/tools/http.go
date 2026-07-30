@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // httpDefaultTimeout is the max time for a single HTTP call.
@@ -40,7 +42,7 @@ type HTTPTool struct{}
 
 func (t *HTTPTool) Name() string { return "http" }
 func (t *HTTPTool) Description() string {
-	return "Make an HTTP request to a URL. Supports GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS with custom headers and body."
+	return prompts.ToolDescription("http")
 }
 
 func (t *HTTPTool) Schema() json.RawMessage {

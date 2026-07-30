@@ -11,6 +11,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // GoOutlineTool parses Go source files using go/ast and returns structural
@@ -19,7 +21,7 @@ type GoOutlineTool struct{}
 
 func (t *GoOutlineTool) Name() string { return "go_outline" }
 func (t *GoOutlineTool) Description() string {
-	return "Parses a Go file with go/ast: outline its structure or extract a named symbol's source."
+	return prompts.ToolDescription("go_outline")
 }
 
 func (t *GoOutlineTool) Schema() json.RawMessage {

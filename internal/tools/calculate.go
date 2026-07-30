@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // CalculateTool evaluates mathematical expressions with zero external dependencies.
@@ -17,7 +19,7 @@ type CalculateTool struct{}
 
 func (t *CalculateTool) Name() string { return "calculate" }
 func (t *CalculateTool) Description() string {
-	return "Evaluates a mathematical expression (arithmetic, trig, log, bitwise, hex/binary/octal)."
+	return prompts.ToolDescription("calculate")
 }
 
 func (t *CalculateTool) Schema() json.RawMessage {

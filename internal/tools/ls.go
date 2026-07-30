@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // lsMaxResultLen caps directory listing output.
@@ -19,7 +21,7 @@ type LsTool struct{}
 
 func (t *LsTool) Name() string { return "ls" }
 func (t *LsTool) Description() string {
-	return "Lists directory contents with optional depth control."
+	return prompts.ToolDescription("ls")
 }
 
 func (t *LsTool) Schema() json.RawMessage {

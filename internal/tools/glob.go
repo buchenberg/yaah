@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // globMaxResultLen caps the total glob output length.
@@ -20,7 +22,7 @@ type GlobTool struct{}
 
 func (t *GlobTool) Name() string { return "glob" }
 func (t *GlobTool) Description() string {
-	return "Finds files matching a glob pattern. Returns sorted file paths."
+	return prompts.ToolDescription("glob")
 }
 
 func (t *GlobTool) Schema() json.RawMessage {

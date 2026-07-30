@@ -125,3 +125,60 @@ func TestEditTool_isDangerous(t *testing.T) {
 		t.Error("EditTool should be dangerous")
 	}
 }
+
+func TestEditTool_fuzzyTabNormalized(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "file.go")
+
+	// Write a Go source file with tab indentation (common in Go).
+	fileContent := "package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n\tfmt.Println(\"world\")\n}\n"
+	os.WriteFile(path, []byte(fileContent), 0o644)
+
+	et := &EditTool{}
+
+	// Model reads the file with Read tool (preserves tabs), but when it
+	// constructs oldString in JSON, it might use spaces instead of tabs.
+	// This is the common failure mode: oldString has 4-space indentation
+	// but the file has tabs.
+	args, _ := json.Marshal(map[string]any{
+		"filePath":  path,
+		"oldString": "    fmt.Println(\"hello\")",
+		"newString": "    fmt.Println(\"HELLO\")",
+	})
+	_, err := et.Execute(context.Background(), string(args))
+	if err != nil {
+		t.Fatalf("tab-normalized fuzzy match failed: %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	if !contains(string(data), "HELLO") {
+		t.Errorf("expected HELLO in file, got %q", string(data))
+	}
+}
+
+func TestEditTool_fuzzyMultiLineTabNormalized(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "file.go")
+
+	// Multi-line Go code block with tabs
+	fileContent := "func foo() {\n\tx := 1\n\tif x > 0 {\n\t\tbar()\n\t}\n}\n"
+	os.WriteFile(path, []byte(fileContent), 0o644)
+
+	et := &EditTool{}
+
+	// Model sends oldString with spaces instead of tabs for all lines
+	args, _ := json.Marshal(map[string]any{
+		"filePath":  path,
+		"oldString": "    x := 1\n    if x > 0 {\n        bar()\n    }",
+		"newString": "    x := 2\n    if x > 0 {\n        baz()\n    }",
+	})
+	_, err := et.Execute(context.Background(), string(args))
+	if err != nil {
+		t.Fatalf("multi-line tab-normalized fuzzy match failed: %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	if !contains(string(data), "baz()") {
+		t.Errorf("expected baz() in file, got %q", string(data))
+	}
+}
