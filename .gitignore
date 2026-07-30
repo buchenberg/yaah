@@ -21,6 +21,14 @@ go.work.sum
 .idea/
 *.swp
 *.swo
+*~
+
+# Scratch / sandbox directories
+.sandbox/
+.scratch/
+.idea/
+*.swp
+*.swo
 .DS_Store
 
 # Local env / secrets (never commit)
