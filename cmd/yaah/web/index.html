@@ -13,7 +13,7 @@
 body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 #log{flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;gap:.4rem}
 .msg{max-width:80%;padding:.6rem 1rem;border-radius:12px;line-height:1.4;white-space:pre-wrap;word-wrap:break-word;font-size:.875rem}
-.user{align-self:flex-end;background:var(--pico-primary);color:var(--pico-primary-inverse);border-bottom-right-radius:4px}
+.user{align-self:flex-end;background:var(--pico-muted-border-color);color:var(--pico-color);border-bottom-right-radius:4px}
 .asst{align-self:flex-start;background:var(--pico-card-background-color);border-bottom-left-radius:4px}
 .err{align-self:flex-start;background:#dc2626;color:#fff;max-height:120px;overflow-y:auto;white-space:pre-wrap;word-wrap:break-word}
 .msg :where(h1,h2,h3,h4,h5,h6){font-size:1em;margin:.4rem 0 .15rem;color:inherit}
@@ -29,6 +29,37 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 .msg :where(img){max-width:100%}
 
 /* tool messages — inline collapsible, matching TUI style */
+
+/* header bar */
+#head{display:flex;align-items:center;gap:1rem;padding:.5rem 1rem;background:var(--pico-card-background-color);border-bottom:1px solid var(--pico-muted-border-color);font-size:.85rem;font-family:var(--pico-font-family-monospace,monospace)}
+#head .brand{font-weight:700;color:var(--pico-primary)}
+#head .meta{color:var(--pico-muted-color);flex:1}
+#head .mcp-badge{background:var(--pico-primary);color:var(--pico-primary-inverse);padding:.15rem .5rem;border-radius:8px;font-size:.75rem;cursor:pointer}
+.mcp-wrap{position:relative}
+.mcp-drop{position:absolute;right:0;top:calc(100% + 6px);background:var(--pico-card-background-color);border:1px solid var(--pico-muted-border-color);border-radius:8px;padding:.5rem .75rem;min-width:220px;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,.25)}
+.mcp-item{display:flex;align-items:center;gap:.5rem;padding:.3rem 0;font-size:.8rem}
+.mcp-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.mcp-dot.on{background:#22c55e}
+.mcp-dot.off{background:#dc2626}
+.mcp-name{font-weight:600;color:var(--pico-color)}
+.mcp-detail{color:var(--pico-muted-color);margin-left:auto;font-size:.75rem}
+.mcp-err{color:#f87171;font-size:.7rem;width:100%}
+
+/* todo panel */
+#todos-wrap{border-bottom:1px solid var(--pico-muted-border-color);font-size:.8rem;font-family:var(--pico-font-family-monospace,monospace)}
+#todos-wrap .todos-head{display:flex;align-items:center;gap:.5rem;padding:.35rem 1rem;cursor:pointer;user-select:none;color:var(--pico-muted-color)}
+#todos-wrap .todos-head:hover{background:var(--pico-card-background-color)}
+#todos-wrap .todos-head .arrow{display:inline-block;transition:transform .2s}
+#todos-wrap .todos-head .arrow.open{transform:rotate(90deg)}
+#todos-body{padding:.3rem 1rem .5rem;display:flex;flex-direction:column;gap:.15rem}
+.todo-item{display:flex;align-items:baseline;gap:.35rem;padding:.15rem 0}
+.todo-status{flex-shrink:0;font-size:.9em;width:1.2em;text-align:center}
+.todo-prio{flex-shrink:0;font-size:.7em;padding:0 .25rem;border-radius:3px;text-transform:uppercase}
+.todo-prio.high{background:rgba(220,38,38,.2);color:#f87171}
+.todo-prio.medium{background:rgba(250,204,21,.2);color:#facc15}
+.todo-prio.low{background:rgba(156,163,175,.2);color:#9ca3af}
+.todo-content{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.todo-time{flex-shrink:0;font-size:.75em;color:var(--pico-muted-color)}
 .tool{align-self:flex-start;max-width:90%;font-size:.8rem;margin:.15rem 0;cursor:pointer;user-select:none}
 .tool-head{display:flex;align-items:baseline;gap:.35rem;padding:.25rem 0;color:var(--pico-muted-color);font-family:var(--pico-font-family-monospace,monospace)}
 .tool-icon{flex-shrink:0;font-size:.85em}
@@ -52,39 +83,82 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 @keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
 .reason{margin-top:.4rem;font-size:.8rem;max-height:120px;overflow-y:auto;white-space:pre-wrap;font-style:italic;color:var(--pico-muted-color)}
 
-#bar{display:flex;gap:.5rem;padding:.75rem 1rem;border-top:1px solid var(--pico-muted-border-color)}
+#bar{display:flex;gap:.5rem;padding:.75rem 1rem;border-top:1px solid var(--pico-muted-border-color);align-items:stretch}
 #prompt{flex:1;resize:none;min-height:44px;max-height:160px}
+#bar button{align-self:stretch;margin:0}
 #foot{display:flex;justify-content:space-between;align-items:center;padding:.25rem 1rem;font-size:.75rem;border-top:1px solid var(--pico-muted-border-color);color:var(--pico-muted-color)}
 .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}
 .dot.on{background:#22c55e}
 .dot.off{background:#dc2626}
+.led{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;background:#555;transition:background .2s}
+.led.active{background:#facc15;animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 dialog article{max-width:480px;min-width:320px}
 </style>
 </head>
 <body x-data="yaah" x-cloak>
 
+  <!-- header bar -->
+  <div id="head">
+    <span class="brand">yaah</span>
+    <span class="meta" x-text="head.provider ? head.provider + ' / ' + head.model : ''"></span>
+    <div class="mcp-wrap" x-show="head.mcpServers && head.mcpServers.length">
+      <span class="mcp-badge" @click="mcpOpen = !mcpOpen" x-text="head.mcpServers.length + ' MCP'"></span>
+      <div class="mcp-drop" x-show="mcpOpen" @click.outside="mcpOpen = false">
+        <template x-for="s in head.mcpServers" :key="s.name">
+          <div class="mcp-item">
+            <span class="mcp-dot" :class="s.connected ? 'on' : 'off'"></span>
+            <span class="mcp-name" x-text="s.name"></span>
+            <span class="mcp-detail" x-text="s.transport + ' · ' + s.toolCount + ' tools'"></span>
+            <span class="mcp-err" x-show="s.error" x-text="s.error"></span>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- todo panel -->
+  <div id="todos-wrap" x-show="todos.length">
+    <div class="todos-head" @click="todosOpen = !todosOpen">
+      <span class="arrow" :class="todosOpen && 'open'">▶</span>
+      <span x-text="todos.length + ' todo' + (todos.length !== 1 ? 's' : '')"></span>
+    </div>
+    <div id="todos-body" x-show="todosOpen">
+      <template x-for="t in todos" :key="t.id">
+        <div class="todo-item">
+          <span class="todo-status" :style="statusStyle(t.status)" x-text="statusIcon(t.status)"></span>
+          <span class="todo-prio" :class="t.priority" x-show="t.priority" x-text="t.priority"></span>
+          <span class="todo-content" x-text="t.content"></span>
+          <span class="todo-time" x-show="t.created_at" x-text="shortTime(t.created_at)"></span>
+        </div>
+      </template>
+    </div>
+  </div>
+
 <div id="log" x-ref="log">
   <template x-for="m in msgs" :key="m.id">
-    <!-- assistant / user / error messages -->
-    <div x-show="m.role !== 'tool'" :class="'msg ' + classOf(m.role)" x-html="m.html"></div>
-    <!-- tool messages: inline collapsible -->
-    <div x-show="m.role === 'tool'" class="tool" :class="m.running && 'tool-running'"
-      @click="m.expanded = !m.expanded; scroll()">
-      <div class="tool-head">
-        <span class="tool-icon" x-text="m.running ? '⏳' : m.error ? '✗' : '✓'"></span>
-        <span class="tool-name" x-text="toolLabel(m)"></span>
-        <span class="tool-summary" x-show="m.summary" x-text="m.summary"></span>
-        <span class="tool-dur" x-show="!m.running && m.duration" x-text="m.duration"></span>
-        <span class="tool-err" x-show="m.error" x-text="m.error"></span>
-      </div>
-      <div class="tool-body" x-show="m.expanded && m.result">
-        <pre class="tool-result" x-text="m.result"></pre>
+    <div>
+      <!-- assistant / user / error messages -->
+      <div x-show="m.role !== 'tool'" :class="'msg ' + classOf(m.role)" x-html="m.html"></div>
+      <!-- tool messages: inline collapsible -->
+      <div x-show="m.role === 'tool'" class="tool" :class="m.running && 'tool-running'"
+        @click="m.expanded = !m.expanded; scroll()">
+        <div class="tool-head">
+          <span class="tool-icon" x-text="m.running ? '⏳' : m.error ? '✗' : '✓'"></span>
+          <span class="tool-name" x-text="toolLabel(m)"></span>
+          <span class="tool-summary" x-show="m.summary" x-text="m.summary"></span>
+          <span class="tool-dur" x-show="!m.running && m.duration" x-text="m.duration"></span>
+          <span class="tool-err" x-show="m.error" x-text="m.error"></span>
+        </div>
+        <div class="tool-body" x-show="m.expanded && m.result">
+          <pre class="tool-result" x-text="m.result"></pre>
+        </div>
       </div>
     </div>
   </template>
   <div class="think" x-show="live && !stream && think">
     <span class="bounce"><span></span><span></span><span></span></span>
-    <div class="reason" x-text="think" x-show="think"></div>
+    <div class="reason" x-ref="reason" x-text="think" x-show="think"></div>
   </div>
   <div class="msg asst" x-show="stream" x-html="md(stream)"></div>
 </div>
@@ -100,7 +174,7 @@ dialog article{max-width:480px;min-width:320px}
 </div>
 
 <div id="foot">
-  <span><span class="dot" :class="on?'on':'off'"></span><span x-text="status"></span></span>
+  <span><span class="dot" :class="on?'on':'off'"></span><span class="led" :class="live && 'active'"></span><span x-text="status"></span></span>
   <span x-text="ctx ? ctx + '% context' : ''"></span>
 </div>
 
@@ -174,6 +248,7 @@ document.addEventListener('alpine:init', () => {
       msgs: [], stream: '', think: '',
       live: false, on: false,
       status: 'connecting…', ctx: null,
+      head: {}, todos: [], todosOpen: true, mcpOpen: false,
       modal: {type:'',title:'',q:'',opts:[],multi:false,name:'',args:'',aid:null},
       _es: null,
       // track running tool messages by tool_id for end-event update
@@ -195,6 +270,7 @@ document.addEventListener('alpine:init', () => {
       toolLabel(m) { return toolLabel(m) },
 
       connect() {
+        if (this._es) this._es.close()
         this._es = new EventSource('/api/stream')
         this._es.onopen = () => { this.on = true; this.status = 'ready' }
         this._es.onmessage = e => { try { this.onEvt(JSON.parse(e.data)) } catch (_) {} }
@@ -204,9 +280,9 @@ document.addEventListener('alpine:init', () => {
       onEvt(d) {
         switch (d.type) {
           case 'token':      this.stream += d.text; this.scroll(); break
-          case 'thinking':   this.think += d.text; this.scroll(); break
+          case 'thinking':   this.think += d.text; this.$nextTick(() => { const r = this.$refs.reason; if (r) r.scrollTop = r.scrollHeight }); this.scroll(); break
           case 'flush':
-            if (this.stream) { this.add('asst', this.stream); this.stream = '' }
+            this.stream = ''
             if (d.content) this.add('asst', d.content)
             this.scroll(); break
           case 'tool.start':
@@ -244,12 +320,28 @@ document.addEventListener('alpine:init', () => {
           case 'ctrl.context':
             if (d.tokens && d.window) this.ctx = Math.round(d.tokens / d.window * 100); break
           case 'ctrl.todos':
-            for (var i = 0; i < (d.items||[]).length; i++) {
-              var item = d.items[i]
-              this.add('asst', '[todo] ' + item.status.toUpperCase() + ': ' + item.content + (item.priority ? ' [P' + item.priority + ']' : ''))
-            }; break
+            this.todos = (d.items || []).map(function(item, idx) {
+              return {id: item.id || idx, status: item.status, priority: item.priority, content: item.content, created_at: item.created_at}
+            }); break
+          case 'ctrl.header':
+            this.head = d.meta || {}; break
           case 'ctrl.models': break
         }
+      },
+
+      // todo helpers for the template
+      statusIcon(s) {
+        return s === 'completed' ? '✓' : s === 'in_progress' ? '●' : s === 'cancelled' ? '✗' : '○'
+      },
+      statusStyle(s) {
+        var color = s === 'completed' ? '#4ade80' : s === 'in_progress' ? '#60a5fa' : s === 'cancelled' ? '#f87171' : '#9ca3af'
+        return 'color:' + color
+      },
+      shortTime(ts) {
+        if (!ts) return ''
+        var d = new Date(ts); if (isNaN(d.getTime())) return ''
+        var h = d.getHours(), m = String(d.getMinutes()).padStart(2, '0')
+        return h + ':' + m
       },
 
       ask() {

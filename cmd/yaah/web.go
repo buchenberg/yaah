@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -139,6 +140,13 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Require Accept: text/event-stream to prevent browsers from hanging
+	// when navigating directly to /api/stream.
+	if !strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+		http.Error(w, "use EventSource to connect — this endpoint requires Accept: text/event-stream", http.StatusNotAcceptable)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -146,6 +154,19 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 
 	v := &sseView{w: w}
+	v.provider = ws.sess.ProviderName()
+	v.model = ws.sess.ModelName()
+	infos := ws.sess.MCPInfos()
+	v.mcpServers = make([]wireMCPServer, len(infos))
+	for i, info := range infos {
+		v.mcpServers[i] = wireMCPServer{
+			Name:      info.Name,
+			Transport: info.Transport,
+			Connected: info.Connected,
+			ToolCount: info.ToolCount,
+			Error:     info.Error,
+		}
+	}
 	ctrlCh := make(chan types.CtrlMsg, 64)
 	done := make(chan struct{})
 
@@ -156,6 +177,9 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 
 	ws.sess.SetView(v)
 	ws.sess.SetCtrlCh(ctrlCh)
+
+	// Send meta and current todo state to the newly-connected client.
+	v.SendConnect()
 
 	streamCtx, streamCancel := context.WithCancel(r.Context())
 	defer streamCancel()

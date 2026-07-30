@@ -75,7 +75,11 @@ func (t *EditTool) executeSingleEdit(filePath, oldStr, newStr string, replaceAll
 		return "", fmt.Errorf("edit: %w", err)
 	}
 
-	content := string(data)
+	crlf := strings.Contains(string(data), "\r\n")
+	content := strings.ReplaceAll(string(data), "\r\n", "\n")
+	oldStr = strings.ReplaceAll(oldStr, "\r\n", "\n")
+	newStr = strings.ReplaceAll(newStr, "\r\n", "\n")
+
 	origLines := countLines(content)
 	count := strings.Count(content, oldStr)
 
@@ -96,6 +100,9 @@ func (t *EditTool) executeSingleEdit(filePath, oldStr, newStr string, replaceAll
 		content = strings.ReplaceAll(content, matched, newStr)
 	}
 
+	if crlf {
+		content = strings.ReplaceAll(content, "\n", "\r\n")
+	}
 	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
 		return "", fmt.Errorf("edit: %w", err)
 	}
@@ -114,7 +121,13 @@ func (t *EditTool) executeMultiEdit(filePath string, edits []editEntry) (string,
 		return "", fmt.Errorf("edit: %w", err)
 	}
 
-	content := string(data)
+	crlf := strings.Contains(string(data), "\r\n")
+	content := strings.ReplaceAll(string(data), "\r\n", "\n")
+	for i := range edits {
+		edits[i].OldString = strings.ReplaceAll(edits[i].OldString, "\r\n", "\n")
+		edits[i].NewString = strings.ReplaceAll(edits[i].NewString, "\r\n", "\n")
+	}
+
 	origLines := countLines(content)
 	totalReplaced := 0
 	var failures []string
@@ -147,6 +160,9 @@ func (t *EditTool) executeMultiEdit(filePath string, edits []editEntry) (string,
 		return "", fmt.Errorf("edit: all %d edits failed:\n%s", len(edits), strings.Join(failures, "\n"))
 	}
 
+	if crlf {
+		content = strings.ReplaceAll(content, "\n", "\r\n")
+	}
 	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
 		return "", fmt.Errorf("edit: %w", err)
 	}
