@@ -52,7 +52,7 @@ func (t *ListSubAgentsTool) Execute(ctx context.Context, args string) (string, e
 	}
 	roles := t.Lister()
 	if len(roles) == 0 {
-		return "No sub-agent roles registered. Use the default role for full tool access.", nil
+		return "No sub-agent roles registered. Add role definitions under .agents/roles/ or ~/.agents/roles/.", nil
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d sub-agent role(s) available:\n\n", len(roles))

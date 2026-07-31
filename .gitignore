@@ -11,6 +11,7 @@
 *.out
 coverage.txt
 coverage.html
+.playwright-mcp/
 
 # Go workspace files (we use a single module)
 go.work

@@ -1,0 +1,1 @@
+[system] Budget notice: {{COUNT}} working turn(s) remain before this run is force-ended. Stop opening new lines of work. Finish only what is essential, then produce your complete final report as your last response — it must be fully self-contained, since it is the only output the caller receives.

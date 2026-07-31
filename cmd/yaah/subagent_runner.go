@@ -21,7 +21,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker, estimateFactor float64, subContextWindow int, outputLimit int, providerMap map[string]config.Provider, defaults config.Defaults, parentPermissionRules []pipeline.PermissionRule, directives []string) *tools.TaskTool {
+func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker, estimateFactor float64, subContextWindow int, outputLimit int, providerMap map[string]config.Provider, defaults config.Defaults, parentPermissionRules []pipeline.PermissionRule) *tools.TaskTool {
 	// Sub-agent spawning depth is hard-coded at 1: the top-level agent
 	// can spawn one level of sub-agents; sub-agents cannot spawn further
 	// sub-agents (remainingDepth reaches 0).
@@ -54,7 +54,6 @@ func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 			providerMap:           providerMap,
 			defaults:              defaults,
 			parentPermissionRules: parentPermissionRules,
-			directives:            directives,
 		}, depth),
 		ResolveTimeout:   subAgentTimeoutResolver(subCfg),
 		RoleNames:        roleNames,
@@ -132,10 +131,6 @@ type taskRunnerOpts struct {
 	// sub-agent use, with a floor of 32000. Zero disables compaction.
 	subContextWindow int
 
-	// directives are session-level policy statements injected into
-	// sub-agent system prompts.
-	directives []string
-
 	// outputLimit caps the final synthesized sub-agent result in bytes.
 	outputLimit int
 
@@ -163,18 +158,6 @@ type taskRunnerOpts struct {
 // goroutines without relying on wall-clock resolution.
 var subAgentSeq atomic.Int64
 
-// subagentEnvironmentHeader returns a concise environment block that
-// anchors shell choice for sub-agents. It is prepended to every sub-agent
-// system prompt so the model sees OS/shell info before role guidance.
-func subagentEnvironmentHeader() string {
-	shell := "bash"
-	if runtime.GOOS == "windows" {
-		shell = "powershell"
-	}
-	cwd, _ := os.Getwd()
-	return prompts.EnvironmentHeader(runtime.GOOS, runtime.GOARCH, shell, cwd)
-}
-
 // makeTaskRunner creates a sub-agent runner that honours roles, timeouts,
 // iteration caps, and nesting depth.
 //
@@ -186,6 +169,13 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 	return func(ctx context.Context, prompt string, params tools.SubAgentParams) (string, error) {
 		role := subagent.SubAgentRole(params.Role)
 		profile := subagent.RoleProfileFor(role)
+
+		// Defensive guard: the task tool rejects unknown roles before
+		// dispatch, so a tool-less profile here means a misconfigured
+		// role definition rather than a request for a default role.
+		if len(profile.Tools) == 0 {
+			return "", fmt.Errorf("sub-agent role %q has no tools configured — add a tools list to its role definition", role)
+		}
 
 		subReg := buildSubAgentRegistry(opts, profile, remainingDepth)
 
@@ -210,58 +200,14 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 
 		outLimit := resolveOutputLimit(params.OutputLimit, opts.subCfg, role, opts.outputLimit)
 
-		sysPrompt := subagentEnvironmentHeader() + "\n\n" + opts.systemPrompt
-		if g := subagent.RoleGuidance(role); g != "" {
-			if sysPrompt != "" {
-				sysPrompt += "\n\n"
-			}
-			sysPrompt += g
-		}
-		if profile.Contract.Heading != "" && len(profile.Contract.Fields) > 0 {
-			var b strings.Builder
-			if jsonMode {
-				b.WriteString("\n\nRespond with a JSON object matching the contract below.\n\n")
-			}
-			b.WriteString(prompts.ContractRules())
-			b.WriteString("\n\n## Response contract\n\n")
-			b.WriteString("Always end your response with a structured block:\n\n```\n")
-			b.WriteString(profile.Contract.Heading + "\n")
-			for _, f := range profile.Contract.Fields {
-				if f.Kind != "" {
-					b.WriteString("- **" + f.Name + "** (" + f.Kind + "): <value>\n")
-				} else {
-					b.WriteString("- **" + f.Name + "**: <value>\n")
-				}
-			}
-			b.WriteString("```")
-			sysPrompt += b.String()
-		}
+		sysPrompt := buildSubAgentSysPrompt(opts, role, profile, jsonMode)
 
-		// Escalation contract: all sub-agents must know how to raise
-		// structured escalations when they hit a blocker.
-		sysPrompt += prompts.Escalation()
-
-		if len(opts.directives) > 0 {
-			sysPrompt += "\n## Session directives\n\n"
-			for _, d := range opts.directives {
-				sysPrompt += "- " + d + "\n"
+		// Record the role's directives on the sub-agent span so traces
+		// show which policy statements this child received (if any).
+		if ds := opts.subCfg.Roles[string(role)].Directives; len(ds) > 0 {
+			if span := trace.SpanFromContext(ctx); span.IsRecording() {
+				span.SetAttributes(attribute.String("subagent.directives", strings.Join(ds, " | ")))
 			}
-			sysPrompt += "\nThese directives apply to this session. Follow them.\n"
-		}
-
-		if roleHasShell(profile.Tools) {
-			shell := "bash"
-			if runtime.GOOS == "windows" {
-				shell = "powershell"
-			}
-			otherShell := "powershell"
-			if runtime.GOOS == "windows" {
-				otherShell = "bash, sh, or cmd"
-			}
-			sysPrompt += "\n\n## Available Shell\n"
-			sysPrompt += fmt.Sprintf("Your environment only has %s available. ", shell)
-			sysPrompt += fmt.Sprintf("Use %s for ALL command execution. ", shell)
-			sysPrompt += fmt.Sprintf("There is no %s.", otherShell)
 		}
 
 		// Persist the sub-agent transcript under a child session. The ID
@@ -304,6 +250,13 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			subModel = opts.modelName
 		}
 
+		// Announce the resolved model before the loop runs so the parent
+		// emits its sub-agent start event with the role/model pairing,
+		// and the model pointer carries the final value even when the
+		// loop errors early.
+		tools.WriteSubAgentModel(ctx, subModel)
+		tools.NotifySubAgentStart(ctx, subModel)
+
 		subLoop := agent.NewLoop(subProvider, subReg,
 			agent.WithModel(subModel),
 			agent.WithSystemPrompt(sysPrompt),
@@ -334,6 +287,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 				LoopDetectCount:        opts.defaults.LoopDetectCount,
 				LoopDetectWindow:       opts.defaults.LoopDetectWindow,
 				MaxToolConcurrency:     opts.defaults.MaxToolConcurrency,
+				WrapUpAhead:            opts.defaults.WrapUpTurns,
 				PromptCaching:          opts.defaults.PromptCaching,
 				ReasoningProtectTurns:  opts.defaults.ReasoningProtect,
 				ToolResultMaxLines:     opts.defaults.ToolResultMaxLines,
@@ -346,6 +300,15 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		)
 
 		result, runErr := subLoop.Run(ctx, prompt)
+
+		// Whitespace-only output is a silent failure (observed when a
+		// forced final turn degenerates after tools are stripped). Turn
+		// it into an explicit error so the orchestrator can retry with
+		// a narrower task instead of seeing an empty result.
+		if runErr == nil && strings.TrimSpace(result) == "" {
+			runErr = fmt.Errorf("sub-agent %s produced no output — its final turn returned empty content (likely hit its turn cap mid-task; consider raising max_turns)", role)
+		}
+
 		if outLimit > 0 && len(result) > outLimit {
 			result = safeTruncateBytes(result, outLimit)
 			result += "\n...[sub-agent output capped at " + formatBytes(outLimit) + "]"
@@ -360,7 +323,6 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			result += "\n...[sub-agent output trimmed to context budget " + formatBytes(budget) + "]"
 		}
 
-		tools.WriteSubAgentModel(ctx, subModel)
 		tools.AddSubAgentUsage(ctx, subLoop.TotalTokens)
 
 		if span := trace.SpanFromContext(ctx); span.IsRecording() {
@@ -375,6 +337,68 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 	}
 }
 
+// buildSubAgentSysPrompt assembles the full system prompt for a sub-agent
+// loop. Section order: environment header, identity-derived base prompt,
+// per-role directives (from agent.subagent.roles.<role>.directives), role
+// guidance, response contract, escalation format, and shell anchoring.
+// Directives sit immediately after the base prompt so they stay prominent
+// instead of being buried behind role guidance and format blocks.
+func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, profile subagent.RoleProfile, jsonMode bool) string {
+	cwd, _ := os.Getwd()
+	sysPrompt := prompts.DetectEnvironment(cwd) + "\n\n" + opts.systemPrompt
+
+	if ds := opts.subCfg.Roles[string(role)].Directives; len(ds) > 0 {
+		sysPrompt += "\n\n" + prompts.FormatDirectives(ds)
+	}
+
+	if g := subagent.RoleGuidance(role); g != "" {
+		if sysPrompt != "" {
+			sysPrompt += "\n\n"
+		}
+		sysPrompt += g
+	}
+	if profile.Contract.Heading != "" && len(profile.Contract.Fields) > 0 {
+		var b strings.Builder
+		if jsonMode {
+			b.WriteString("\n\nRespond with a JSON object matching the contract below.\n\n")
+		}
+		b.WriteString(prompts.ContractRules())
+		b.WriteString("\n\n## Response contract\n\n")
+		b.WriteString("Always end your response with a structured block:\n\n```\n")
+		b.WriteString(profile.Contract.Heading + "\n")
+		for _, f := range profile.Contract.Fields {
+			if f.Kind != "" {
+				b.WriteString("- **" + f.Name + "** (" + f.Kind + "): <value>\n")
+			} else {
+				b.WriteString("- **" + f.Name + "**: <value>\n")
+			}
+		}
+		b.WriteString("```")
+		sysPrompt += b.String()
+	}
+
+	// Escalation contract: all sub-agents must know how to raise
+	// structured escalations when they hit a blocker.
+	sysPrompt += prompts.Escalation()
+
+	if roleHasShell(profile.Tools) {
+		shell := "bash"
+		if runtime.GOOS == "windows" {
+			shell = "powershell"
+		}
+		otherShell := "powershell"
+		if runtime.GOOS == "windows" {
+			otherShell = "bash, sh, or cmd"
+		}
+		sysPrompt += "\n\n## Available Shell\n"
+		sysPrompt += fmt.Sprintf("Your environment only has %s available. ", shell)
+		sysPrompt += fmt.Sprintf("Use %s for ALL command execution. ", shell)
+		sysPrompt += fmt.Sprintf("There is no %s.", otherShell)
+	}
+
+	return sysPrompt
+}
+
 // subAgentTimeoutResolver returns a TaskTool timeout resolver that folds
 // in the actual per-call role, so role-profile and per-role config
 // timeouts are honoured rather than a single construction-time default.
@@ -384,12 +408,11 @@ func subAgentTimeoutResolver(subCfg config.SubAgentConfig) func(tools.SubAgentPa
 	}
 }
 
-// profile. If the profile includes the task tool and remainingDepth > 0,
-// a nested TaskTool is registered so the sub-agent can spawn further
-// workers. When remainingDepth == 0 the task tool is omitted entirely.
-//
-// The RoleDefault profile (empty Tools) falls back to the full built-in
-// tool set to preserve the legacy task tool behaviour.
+// buildSubAgentRegistry builds the tool registry for a sub-agent from
+// its role profile. If the profile includes the task tool and
+// remainingDepth > 0, a nested TaskTool is registered so the sub-agent
+// can spawn further workers. When remainingDepth == 0 the task tool is
+// omitted entirely.
 func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, remainingDepth int) *tools.Registry {
 	resolveTimeout := subAgentTimeoutResolver(opts.subCfg)
 	registerTask := func(reg *tools.Registry) {
@@ -422,21 +445,6 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 			return true
 		}
 		return false
-	}
-
-	if len(profile.Tools) == 0 {
-		reg := tools.NewRegistry()
-		if opts.tracker != nil {
-			for _, name := range []string{"write", "edit", "delete"} {
-				if t := tools.NewLeafTool(name); t != nil {
-					reg.Register(tools.NewRecordingTool(t, opts.tracker))
-				}
-			}
-		}
-		if remainingDepth > 0 {
-			registerTask(reg)
-		}
-		return reg
 	}
 
 	reg := tools.NewEmptyRegistry()

@@ -20,7 +20,7 @@ var allowedGitActions = map[string]struct {
 	"diff_cached": {"Show staged/index changes", false},
 	"log":         {"Show recent commit history", false},
 	"show":        {"Show details of a commit", false},
-	"branch":      {"List local branches", false},
+	"branch":      {"List, create, or delete branches. Branch names go in 'paths'.", false},
 	"add":         {"Stage file(s) for commit", true},
 	"commit":      {"Create a new commit", true},
 	"push":        {"Push commits to remote", true},
@@ -45,17 +45,17 @@ func (t *GitTool) Schema() json.RawMessage {
 			"action": {
 				"type": "string",
 				"enum": ["status", "diff", "diff_cached", "log", "show", "branch", "add", "commit", "push", "pull", "fetch"],
-				"description": "The git action to perform"
+				"description": "The git action to perform. For 'branch', pass branch names via the 'paths' parameter."
 			},
 			"flags": {
 				"type": "array",
 				"items": {"type": "string"},
-				"description": "Git flags for read-only commands, e.g. [\"--oneline\", \"-5\", \"--stat\"]. Only safe flags are allowed."
+				"description": "Safe git flags for read-only commands, e.g. [\"--oneline\", \"-5\", \"--stat\"]. MUST start with '-' or '--'. Do NOT put branch names, file paths, or revision specs here — use 'paths' for those."
 			},
 			"paths": {
 				"type": "array",
 				"items": {"type": "string"},
-				"description": "File paths or revision arguments for the git command (optional)"
+				"description": "File paths, branch names (for 'branch' action), or revision refs (for show/log/diff). Do NOT put dash-prefixed flags here — use 'flags' for those."
 			},
 			"message": {
 				"type": "string",

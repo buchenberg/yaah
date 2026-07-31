@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 	"github.com/spf13/cobra"
 )
@@ -52,6 +53,13 @@ type webServer struct {
 	running         atomic.Bool
 	sseDone         chan struct{}
 	mu              sync.Mutex
+	ctrlChMu        sync.Mutex
+	ctrlCh          chan<- types.CtrlMsg
+
+	// models caches the available model list ("provider/model" format)
+	// and provider display names, fetched once in the background.
+	models        []string
+	providerNames map[string]string
 }
 
 type actionRequest struct {
@@ -73,6 +81,81 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	ws := &webServer{
 		sess: sess,
 		am:   newAnswerMap(),
+	}
+
+	// Pre-fetch model lists from all providers in the background so the
+	// command palette can offer model switching without blocking startup.
+	go func() {
+		names := make(map[string]string)
+		for key, p := range sess.cfg.Providers {
+			if p.Name != "" {
+				names[key] = p.Name
+			}
+		}
+		models := fetchAllModels(context.Background(), sess.cfg)
+
+		ws.mu.Lock()
+		ws.models = models
+		ws.providerNames = names
+		v := ws.view
+		ws.mu.Unlock()
+
+		if v != nil {
+			v.write(marshalWire(sseWireEvent{Type: "ctrl.models", Models: models, Providers: names}))
+		}
+	}()
+
+	// Wire question tool handler so questions are sent as CtrlQuestion
+	// messages. forwardCtrl in web_view.go converts these to SSE events
+	// for the browser dialog.
+	if qt := sess.toolReg.Get("question"); qt != nil {
+		qtp := qt.(*tools.QuestionTool)
+		qtp.Handler = func(entries []tools.QuestionEntry) []string {
+			var answers []string
+			for _, e := range entries {
+				ws.ctrlChMu.Lock()
+				ch := ws.ctrlCh
+				ws.ctrlChMu.Unlock()
+				if ch == nil {
+					// No active stream — fall back to first option.
+					if len(e.Options) > 0 {
+						answers = append(answers, fmt.Sprintf("%s: %s", e.Header, e.Options[0].Label))
+					} else {
+						answers = append(answers, e.Header+": ")
+					}
+					continue
+				}
+				ansCh := make(chan string, 1)
+				opts := make([]types.CtrlOption, len(e.Options))
+				for i, o := range e.Options {
+					opts[i] = types.CtrlOption{Label: o.Label, Description: o.Description}
+				}
+				q := &types.CtrlQuestion{
+					Header:   e.Header,
+					Question: e.Question,
+					Options:  opts,
+					Multiple: e.Multiple,
+					AnswerCh: ansCh,
+				}
+				select {
+				case ch <- q:
+				case <-time.After(30 * time.Second):
+					if len(e.Options) > 0 {
+						answers = append(answers, fmt.Sprintf("%s: %s", e.Header, e.Options[0].Label))
+					}
+					continue
+				}
+				select {
+				case ans := <-ansCh:
+					answers = append(answers, fmt.Sprintf("%s: %s", e.Header, ans))
+				case <-time.After(5 * time.Minute):
+					if len(e.Options) > 0 {
+						answers = append(answers, fmt.Sprintf("%s: %s", e.Header, e.Options[0].Label))
+					}
+				}
+			}
+			return answers
+		}
 	}
 
 	sess.SetApproveFn(func(name, args string) bool {
@@ -178,8 +261,22 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	ws.sess.SetView(v)
 	ws.sess.SetCtrlCh(ctrlCh)
 
+	// Store ctrlCh for the question handler.
+	ws.ctrlChMu.Lock()
+	ws.ctrlCh = ctrlCh
+	ws.ctrlChMu.Unlock()
+
 	// Send meta and current todo state to the newly-connected client.
 	v.SendConnect()
+
+	// If the model list has already been fetched, deliver it immediately;
+	// otherwise the background fetch goroutine sends it when ready.
+	ws.mu.Lock()
+	models, names := ws.models, ws.providerNames
+	ws.mu.Unlock()
+	if len(models) > 0 {
+		v.write(marshalWire(sseWireEvent{Type: "ctrl.models", Models: models, Providers: names}))
+	}
 
 	streamCtx, streamCancel := context.WithCancel(r.Context())
 	defer streamCancel()
@@ -192,6 +289,11 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	ws.view = nil
 	close(done)
 	ws.mu.Unlock()
+
+	// Clear ctrlCh when stream disconnects.
+	ws.ctrlChMu.Lock()
+	ws.ctrlCh = nil
+	ws.ctrlChMu.Unlock()
 
 	ws.sess.SetView(agent.NoopView{})
 	ws.sess.SetCtrlCh(nil)
@@ -240,6 +342,12 @@ func (ws *webServer) handleAction(w http.ResponseWriter, r *http.Request) {
 
 	case "model":
 		ws.sess.SetModel(req.Provider, req.Model)
+		ws.mu.Lock()
+		v := ws.view
+		ws.mu.Unlock()
+		if v != nil {
+			v.SetHeader(req.Provider, req.Model)
+		}
 		w.WriteHeader(http.StatusOK)
 
 	default:

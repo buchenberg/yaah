@@ -20,6 +20,9 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 	var streamSpan trace.Span
 	if c.OtelEnabled {
 		ctx, streamSpan = observability.StartStream(ctx, req.Model)
+		if c.OtelVerbose {
+			observability.RecordSystemPrompt(streamSpan, observability.SystemContent(req.Messages))
+		}
 	}
 
 	start := time.Now()

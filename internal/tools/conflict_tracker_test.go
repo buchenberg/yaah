@@ -81,16 +81,16 @@ func TestConflictTracker_DeduplicatesTools(t *testing.T) {
 	}
 }
 
-func TestConflictTracker_DefaultRoleLabel(t *testing.T) {
+func TestConflictTracker_MixedRoleLabels(t *testing.T) {
 	ct := &ConflictTracker{}
-	ct.Record("default — list files", "/a.go", "write")
+	ct.Record("analyst — list files", "/a.go", "write")
 	ct.Record("worker — implement", "/a.go", "edit")
 
 	report := ct.DetectAndReset()
 	if report == "" {
 		t.Fatal("expected conflict report for mixed role labels, got empty")
 	}
-	if !strings.Contains(report, "default — list files") {
-		t.Errorf("report should contain default role label, got: %s", report)
+	if !strings.Contains(report, "analyst — list files") {
+		t.Errorf("report should contain the first role label, got: %s", report)
 	}
 }

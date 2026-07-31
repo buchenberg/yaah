@@ -2,35 +2,9 @@ package subagent
 
 import (
 	"testing"
-	"time"
 )
 
 func TestRoleProfileFor(t *testing.T) {
-	t.Run("default has full tools and limits", func(t *testing.T) {
-		p := RoleProfileFor(RoleDefault)
-		if len(p.Tools) == 0 {
-			t.Error("RoleDefault should have tools")
-		}
-		if !contains(p.Tools, "read") || !contains(p.Tools, "write") {
-			t.Error("RoleDefault should include read and write")
-		}
-		if !contains(p.Tools, platformShell()) {
-			t.Error("RoleDefault should include the platform shell tool")
-		}
-		if !contains(p.Tools, "spawn_subagent") {
-			t.Error("RoleDefault should include spawn_subagent")
-		}
-		if !contains(p.Tools, "spawn_subagent") {
-			t.Error("RoleDefault should be spawn-capable")
-		}
-		if p.MaxIterations != 40 {
-			t.Errorf("RoleDefault MaxIterations = %d, want 40", p.MaxIterations)
-		}
-		if p.Timeout != 180*time.Second {
-			t.Errorf("RoleDefault Timeout = %v, want 180s", p.Timeout)
-		}
-	})
-
 	t.Run("unknown role is zero-value (no tools)", func(t *testing.T) {
 		p := RoleProfileFor(SubAgentRole("bogus"))
 		if len(p.Tools) != 0 {
@@ -40,14 +14,29 @@ func TestRoleProfileFor(t *testing.T) {
 			t.Error("unknown role should not be spawn-capable")
 		}
 	})
+
+	t.Run("no registry is zero-value for every role", func(t *testing.T) {
+		SetDefaultRoleRegistry(nil)
+		if p := RoleProfileFor(SubAgentRole("analyst")); len(p.Tools) != 0 {
+			t.Errorf("no registry: expected zero-value profile, got %v", p.Tools)
+		}
+	})
 }
 
 func TestRoleGuidance(t *testing.T) {
-	if g := RoleGuidance(RoleDefault); g == "" {
-		t.Error("RoleGuidance(RoleDefault) should not be empty")
-	}
 	if g := RoleGuidance(SubAgentRole("bogus")); g != "" {
 		t.Errorf("RoleGuidance(bogus) should be empty, got %q", g)
+	}
+	SetDefaultRoleRegistry(nil)
+	if g := RoleGuidance(SubAgentRole("analyst")); g != "" {
+		t.Errorf("no registry: RoleGuidance should be empty, got %q", g)
+	}
+}
+
+func TestRoleDisplayNameFallback(t *testing.T) {
+	SetDefaultRoleRegistry(nil)
+	if got := RoleDisplayName(SubAgentRole("custom_role")); got != "custom_role" {
+		t.Errorf("display name should fall back to the role identifier, got %q", got)
 	}
 }
 

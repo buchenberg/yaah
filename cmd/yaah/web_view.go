@@ -99,13 +99,23 @@ func (v *sseView) SendConnect() {
 	}
 }
 
+// SetHeader updates the cached header meta and re-sends it to the
+// connected client, e.g. after a model switch.
+func (v *sseView) SetHeader(provider, model string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.provider = provider
+	v.model = model
+	v.writeLocked(marshalWire(sseWireEvent{Type: "ctrl.header", Meta: &wireHeaderMeta{
+		Provider:   provider,
+		Model:      model,
+		MCPServers: v.mcpServers,
+	}}))
+}
+
 type sseView struct {
-	w         http.ResponseWriter
-	mu        sync.Mutex
-	toolIDGen atomic.Int64
-	// curToolID tracks the most recent tool-start ID so tool-end
-	// events can carry the same ID for frontend matching.
-	curToolID atomic.Int64
+	w  http.ResponseWriter
+	mu sync.Mutex
 
 	// header info set from the session on SSE connect
 	provider   string
@@ -126,19 +136,17 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 	case *agent.FlushEvent:
 		we = sseWireEvent{Type: "flush", Content: e.Content}
 	case *agent.ToolStartEvent:
-		id := v.toolIDGen.Add(1)
-		v.curToolID.Store(id)
 		we = sseWireEvent{
-			Type: "tool.start", ToolID: id,
+			Type: "tool.start", ToolID: e.ID,
 			Name: e.Name, Args: e.Args,
 			Summary: toolStartSummary(e.Name, e.Args),
 		}
 	case *agent.ToolEndEvent:
 		we = sseWireEvent{
-			Type: "tool.end", ToolID: v.curToolID.Load(),
+			Type: "tool.end", ToolID: e.ID,
 			Name: e.Name, Args: e.Args,
 			Result: e.Result, Ms: e.Duration.Milliseconds(), Error: e.Error,
-			Summary:  toolfmt.Summary(e.Name, e.Args, e.Result),
+			Summary: toolfmt.Summary(e.Name, e.Args, e.Result),
 		}
 	case *agent.SubAgentStartEvent:
 		we = sseWireEvent{Type: "subagent.start", Role: e.Role, Model: e.Model, Prompt: e.Prompt}

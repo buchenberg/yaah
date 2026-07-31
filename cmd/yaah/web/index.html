@@ -45,6 +45,31 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 .mcp-detail{color:var(--pico-muted-color);margin-left:auto;font-size:.75rem}
 .mcp-err{color:#f87171;font-size:.7rem;width:100%}
 
+/* command palette */
+.pal-wrap{position:relative}
+.pal-btn{font-family:inherit;font-size:.75rem;line-height:1.2;margin:0;width:auto;padding:.2rem .55rem;border:1px solid var(--pico-muted-border-color);border-radius:6px;background:transparent;color:var(--pico-muted-color);cursor:pointer;box-shadow:none;transition:border-color .15s,color .15s,background-color .15s}
+.pal-btn:hover,.pal-btn:focus-visible{border-color:var(--pico-primary);color:var(--pico-primary);background:color-mix(in srgb,var(--pico-primary) 10%,transparent);box-shadow:none}
+.pal-drop{position:absolute;right:0;top:calc(100% + 6px);width:340px;background:var(--pico-card-background-color);border:1px solid var(--pico-muted-border-color);border-radius:10px;z-index:100;box-shadow:0 8px 24px rgba(0,0,0,.35);overflow:hidden;animation:pal-in .13s ease-out}
+@keyframes pal-in{from{opacity:0;transform:translateY(-4px) scale(.98)}to{opacity:1;transform:none}}
+.pal-input-wrap{display:flex;align-items:center;gap:.5rem;padding:.55rem .75rem;border-bottom:1px solid var(--pico-muted-border-color)}
+.pal-prompt{color:var(--pico-primary);font-weight:700}
+.pal-input-wrap input{flex:1;margin:0;padding:0;border:0;background:transparent;box-shadow:none;color:var(--pico-color);font-size:.85rem;font-family:inherit}
+.pal-input-wrap input:focus,.pal-input-wrap input:focus-visible{outline:none;border:0;box-shadow:none;background:transparent}
+.pal-list{max-height:320px;overflow-y:auto;padding:.35rem}
+.pal-group{font-size:.68rem;text-transform:uppercase;letter-spacing:.08em;color:var(--pico-muted-color);padding:.45rem .6rem .2rem}
+.pal-item{display:flex;align-items:center;gap:.5rem;padding:.4rem .6rem;border-radius:6px;cursor:pointer;font-size:.83rem}
+.pal-item.active,.pal-item:hover{background:color-mix(in srgb,var(--pico-primary) 16%,transparent)}
+.pal-icon{flex-shrink:0;width:1.1em;text-align:center;color:var(--pico-muted-color);font-size:.85em}
+.pal-item.current .pal-icon{color:var(--pico-primary)}
+.pal-label{color:var(--pico-color);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pal-item.current .pal-label{color:var(--pico-primary)}
+.pal-hint{margin-left:auto;color:var(--pico-muted-color);font-size:.72rem;flex-shrink:0}
+.pal-item.disabled{opacity:.4;cursor:default}
+.pal-item.disabled:hover{background:transparent}
+.pal-empty{padding:.8rem .6rem;color:var(--pico-muted-color);font-size:.8rem;text-align:center}
+.pal-foot{display:flex;gap:.9rem;align-items:center;padding:.4rem .75rem;border-top:1px solid var(--pico-muted-border-color);color:var(--pico-muted-color);font-size:.7rem}
+.pal-kbd{border:1px solid var(--pico-muted-border-color);border-bottom-width:2px;border-radius:4px;padding:0 .3rem;font-size:.68rem;font-family:inherit;margin-right:.15rem}
+
 /* todo panel */
 #todos-wrap{border-bottom:1px solid var(--pico-muted-border-color);font-size:.8rem;font-family:var(--pico-font-family-monospace,monospace)}
 #todos-wrap .todos-head{display:flex;align-items:center;gap:.5rem;padding:.35rem 1rem;cursor:pointer;user-select:none;color:var(--pico-muted-color)}
@@ -66,6 +91,7 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 .tool-name{font-weight:600;color:var(--pico-color)}
 .tool-summary{color:var(--pico-muted-color);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tool-head .tool-summary::before{content:'—';margin-right:.35rem;color:var(--pico-muted-border-color)}
+.tool-model{flex-shrink:0;font-size:.72em;color:var(--pico-muted-color);border:1px solid var(--pico-muted-border-color);border-radius:4px;padding:.05rem .35rem;white-space:nowrap}
 .tool-dur{flex-shrink:0;font-size:.75em;color:var(--pico-muted-color);margin-left:auto}
 .tool-err{color:#dc2626;font-weight:600}
 .tool-body{margin-top:.2rem}
@@ -87,10 +113,9 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 #prompt{flex:1;resize:none;min-height:44px;max-height:160px}
 #bar button{align-self:stretch;margin:0}
 #foot{display:flex;justify-content:space-between;align-items:center;padding:.25rem 1rem;font-size:.75rem;border-top:1px solid var(--pico-muted-border-color);color:var(--pico-muted-color)}
-.dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}
-.dot.on{background:#22c55e}
-.dot.off{background:#dc2626}
 .led{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;background:#555;transition:background .2s}
+.led.on{background:#22c55e}
+.led.off{background:#555}
 .led.active{background:#facc15;animation:pulse 1s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 dialog article{max-width:480px;min-width:320px}
@@ -102,6 +127,36 @@ dialog article{max-width:480px;min-width:320px}
   <div id="head">
     <span class="brand">yaah</span>
     <span class="meta" x-text="head.provider ? head.provider + ' / ' + head.model : ''"></span>
+    <div class="pal-wrap" @keydown.window="palKey($event)">
+      <button class="pal-btn" @click="palToggle()" :title="'Command palette (' + palKeyLabel + ')'" x-text="palKeyLabel"></button>
+      <div class="pal-drop" x-show="palOpen" @click.outside="palClose()">
+        <div class="pal-input-wrap">
+          <span class="pal-prompt">›</span>
+          <input x-ref="palInput" x-model="palQuery" @input="palIdx = palFirstEnabled()"
+            placeholder="Type a command…" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="pal-list" x-ref="palList">
+          <template x-for="(it, i) in palItems()" :key="it.id">
+            <div>
+              <div class="pal-group" x-show="it.first" x-text="palGroupLabel(it.group)"></div>
+              <div class="pal-item"
+                :class="{'active': i === palIdx, 'disabled': it.disabled, 'current': it.current}"
+                @click="palRun(i)" @mouseenter="!it.disabled && (palIdx = i)">
+                <span class="pal-icon" x-text="it.current ? '✓' : it.icon"></span>
+                <span class="pal-label" x-text="it.label"></span>
+                <span class="pal-hint" x-text="it.hint"></span>
+              </div>
+            </div>
+          </template>
+          <div class="pal-empty" x-show="!palItems().length" x-text="'no matches for “' + palQuery + '”'"></div>
+        </div>
+        <div class="pal-foot">
+          <span><span class="pal-kbd">↑</span><span class="pal-kbd">↓</span> navigate</span>
+          <span><span class="pal-kbd">↵</span> run</span>
+          <span><span class="pal-kbd">esc</span> close</span>
+        </div>
+      </div>
+    </div>
     <div class="mcp-wrap" x-show="head.mcpServers && head.mcpServers.length">
       <span class="mcp-badge" @click="mcpOpen = !mcpOpen" x-text="head.mcpServers.length + ' MCP'"></span>
       <div class="mcp-drop" x-show="mcpOpen" @click.outside="mcpOpen = false">
@@ -144,9 +199,10 @@ dialog article{max-width:480px;min-width:320px}
       <div x-show="m.role === 'tool'" class="tool" :class="m.running && 'tool-running'"
         @click="m.expanded = !m.expanded; scroll()">
         <div class="tool-head">
-          <span class="tool-icon" x-text="m.running ? '⏳' : m.error ? '✗' : '✓'"></span>
+          <span class="tool-icon" x-text="m.running ? (m.name === 'spawn_subagent' ? '🤖' : '⏳') : m.error ? '✗' : '✓'"></span>
           <span class="tool-name" x-text="toolLabel(m)"></span>
-          <span class="tool-summary" x-show="m.summary" x-text="m.summary"></span>
+          <span class="tool-summary" x-show="toolSummary(m)" x-text="toolSummary(m)"></span>
+          <span class="tool-model" x-show="m.subModel" x-text="modelLabel(m.subModel)"></span>
           <span class="tool-dur" x-show="!m.running && m.duration" x-text="m.duration"></span>
           <span class="tool-err" x-show="m.error" x-text="m.error"></span>
         </div>
@@ -174,7 +230,7 @@ dialog article{max-width:480px;min-width:320px}
 </div>
 
 <div id="foot">
-  <span><span class="dot" :class="on?'on':'off'"></span><span class="led" :class="live && 'active'"></span><span x-text="status"></span></span>
+  <span><span class="led" :class="live ? 'active' : (on ? 'on' : 'off')"></span><span x-text="status"></span></span>
   <span x-text="ctx ? ctx + '% context' : ''"></span>
 </div>
 
@@ -249,17 +305,22 @@ document.addEventListener('alpine:init', () => {
       live: false, on: false,
       status: 'connecting…', ctx: null,
       head: {}, todos: [], todosOpen: true, mcpOpen: false,
+      palOpen: false, palQuery: '', palIdx: 0, palKeyLabel: 'Ctrl+K',
+      models: [], providerNames: {},
       modal: {type:'',title:'',q:'',opts:[],multi:false,name:'',args:'',aid:null},
       _es: null,
       // track running tool messages by tool_id for end-event update
       _tools: {},
 
-      init() { this.connect() },
+      init() {
+        this.palKeyLabel = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl+K'
+        this.connect()
+      },
       md(t) { return marked.parse(t) },
       classOf(r) { return r === 'user' ? 'user' : r === 'error' ? 'err' : 'asst' },
-      add(role, text) { this.msgs.push({id: ++_n, role, html: role === 'asst' ? marked.parse(text) : esc(text), expanded: false, running: false}) },
+      add(role, text) { this.msgs.push({id: ++_n, role, raw: text, html: role === 'asst' ? marked.parse(text) : esc(text), expanded: false, running: false}) },
       addTool(id, name, args, summary) {
-        const m = {id: ++_n, role: 'tool', name, args, summary, result: '', duration: '', error: '', running: true, expanded: false}
+        const m = {id: ++_n, role: 'tool', name, args, summary, result: '', duration: '', error: '', running: true, expanded: false, subModel: ''}
         this.msgs.push(m)
         if (id != null) this._tools[id] = m
         return m
@@ -268,6 +329,42 @@ document.addEventListener('alpine:init', () => {
 
       // toolLabel exposed for template
       toolLabel(m) { return toolLabel(m) },
+      // toolSummary strips the "sub-agent" prefix the backend summary
+      // carries, since the name column already identifies the row.
+      toolSummary(m) {
+        if (m.name === 'spawn_subagent' && m.summary) {
+          if (m.summary.startsWith('sub-agent: ')) return m.summary.slice('sub-agent: '.length)
+          if (m.summary.startsWith('sub-agent · ')) return m.summary.slice('sub-agent · '.length)
+        }
+        return m.summary
+      },
+      // modelLabel resolves a bare model name to "Provider / model" using
+      // the catalog delivered via ctrl.models; falls back to the bare name.
+      modelLabel(model) {
+        for (const m of this.models) {
+          const i = m.indexOf('/')
+          if (i > 0 && m.slice(i + 1) === model) {
+            const pk = m.slice(0, i)
+            return (this.providerNames[pk] || pk) + ' / ' + model
+          }
+        }
+        return model
+      },
+      // matchSubRow finds the running spawn_subagent tool row a
+      // subagent.start/end event belongs to, by role + prompt. Truncated
+      // args (unparseable JSON) fall back to the first available row.
+      matchSubRow(role, prompt) {
+        let fallback = null
+        for (const id in this._tools) {
+          const t = this._tools[id]
+          if (t.name !== 'spawn_subagent' || t.subModel) continue
+          try {
+            const a = JSON.parse(t.args)
+            if ((!role || a.role === role) && (!prompt || !a.prompt || a.prompt === prompt)) return t
+          } catch (_) { if (!fallback) fallback = t }
+        }
+        return fallback
+      },
 
       connect() {
         if (this._es) this._es.close()
@@ -299,12 +396,26 @@ document.addEventListener('alpine:init', () => {
               if (d.error) tm.expanded = true
               delete this._tools[d.tool_id]
             }
-            if (d.error) { this.add('error', d.name + ': ' + d.error) }
+            if (tm && d.error) { this.add('error', d.name + ': ' + d.error) }
             this.scroll(); break
-          case 'subagent.start': this.status = 'sub-agent: ' + d.role; break
-          case 'subagent.end':   this.status = 'ready'; break
+          case 'subagent.start': {
+            const row = this.matchSubRow(d.role, d.prompt)
+            if (row && d.model) row.subModel = d.model
+            this.status = 'sub-agent: ' + d.role + (d.model ? ' · ' + d.model : ''); break
+          }
+          case 'subagent.end': {
+            const row = this.matchSubRow(d.role, d.prompt)
+            if (row && d.model) row.subModel = d.model
+            this.status = 'ready'; break
+          }
           case 'done':
             if (this.stream) { this.add('asst', this.stream); this.stream = '' }
+            for (const id in this._tools) {
+              const t = this._tools[id]
+              t.running = false
+              if (!t.error) t.error = 'interrupted'
+            }
+            this._tools = {}
             this.live = false; this.think = ''
             if (d.error) this.add('error', d.error)
             if (d.context_tokens && d.context_window) this.ctx = Math.round(d.context_tokens / d.context_window * 100)
@@ -325,7 +436,9 @@ document.addEventListener('alpine:init', () => {
             }); break
           case 'ctrl.header':
             this.head = d.meta || {}; break
-          case 'ctrl.models': break
+          case 'ctrl.models':
+            this.models = d.models || []
+            this.providerNames = d.providers || {}; break
         }
       },
 
@@ -342,6 +455,99 @@ document.addEventListener('alpine:init', () => {
         var d = new Date(ts); if (isNaN(d.getTime())) return ''
         var h = d.getHours(), m = String(d.getMinutes()).padStart(2, '0')
         return h + ':' + m
+      },
+
+      // command palette
+      palCommands() {
+        const cur = this.head.provider && this.head.model ? this.head.provider + '/' + this.head.model : ''
+        const cmds = [
+          {id:'compact', group:'session', icon:'⧗', label:'Compact context', hint:'free tokens', run: () => this.post({type:'compact'})},
+          {id:'stop', group:'session', icon:'■', label:'Stop agent', hint:'abort run', disabled: !this.live, run: () => this.stop()},
+          {id:'reconnect', group:'session', icon:'↻', label:'Reconnect stream', hint:'SSE', run: () => this.connect()},
+          {id:'copy', group:'view', icon:'⧉', label:'Copy last response', hint:'clipboard', disabled: !this.lastResponse(), run: () => this.copyLastResponse()},
+          {id:'clear', group:'view', icon:'⌫', label:'Clear conversation view', hint:'local only', run: () => { this.msgs = []; this._tools = {} }},
+        ]
+        for (const m of this.models) {
+          const i = m.indexOf('/')
+          const prov = i > 0 ? m.slice(0, i) : ''
+          const name = i > 0 ? m.slice(i + 1) : m
+          cmds.push({id:'model:' + m, group:'models', icon:'', label:name, hint:this.providerNames[prov] || prov, current: m === cur, run: () => this.post({type:'model', provider:prov, model:name})})
+        }
+        return cmds
+      },
+      palItems() {
+        const q = this.palQuery.trim().toLowerCase()
+        const all = this.palCommands()
+        const hit = q ? all.filter(c => (c.label + ' ' + c.hint + ' ' + c.id).toLowerCase().includes(q)) : all
+        const seen = {}
+        return hit.map(c => {
+          const first = !seen[c.group]
+          seen[c.group] = true
+          return Object.assign({}, c, {first})
+        })
+      },
+      palGroupLabel(g) { return g === 'models' ? 'switch model' : g },
+      palFirstEnabled() {
+        const items = this.palItems()
+        for (let i = 0; i < items.length; i++) if (!items[i].disabled) return i
+        return 0
+      },
+      palToggle() { this.palOpen ? this.palClose() : this.palShow() },
+      palShow() {
+        this.palOpen = true; this.palQuery = ''; this.palIdx = 0
+        this.$nextTick(() => { const i = this.$refs.palInput; if (i) i.focus() })
+      },
+      palClose() {
+        if (!this.palOpen) return
+        this.palOpen = false
+        if (this.$refs.el) this.$refs.el.focus()
+      },
+      palMove(d) {
+        const items = this.palItems()
+        if (!items.length) return
+        let i = this.palIdx
+        for (let n = 0; n < items.length; n++) {
+          i = (i + d + items.length) % items.length
+          if (!items[i].disabled) break
+        }
+        this.palIdx = i
+        this.$nextTick(() => {
+          const el = this.$refs.palList && this.$refs.palList.querySelector('.pal-item.active')
+          if (el) el.scrollIntoView({block:'nearest'})
+        })
+      },
+      palRun(i) {
+        const it = this.palItems()[i]
+        if (!it || it.disabled) return
+        this.palClose()
+        it.run()
+      },
+      palKey(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+          e.preventDefault()
+          this.palOpen ? this.palClose() : this.palShow()
+          return
+        }
+        if (!this.palOpen) return
+        if (e.key === 'Escape') { e.preventDefault(); this.palClose() }
+        else if (e.key === 'ArrowDown') { e.preventDefault(); this.palMove(1) }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); this.palMove(-1) }
+        else if (e.key === 'Enter') { e.preventDefault(); this.palRun(this.palIdx) }
+      },
+      lastResponse() {
+        for (let i = this.msgs.length - 1; i >= 0; i--) {
+          if (this.msgs[i].role === 'asst') return this.msgs[i].raw || ''
+        }
+        return ''
+      },
+      copyLastResponse() {
+        const t = this.lastResponse()
+        if (!t) return
+        navigator.clipboard.writeText(t).then(() => {
+          const prev = this.status
+          this.status = 'copied to clipboard'
+          setTimeout(() => { if (this.status === 'copied to clipboard') this.status = prev }, 1500)
+        })
       },
 
       ask() {

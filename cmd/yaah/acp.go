@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 	"github.com/spf13/cobra"
 )
@@ -137,6 +138,34 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("session: %w", err)
 	}
 	defer sess.Close()
+
+	// Wire question tool handler for ACP. Questions are formatted as
+	// agent_message_chunk text and auto-answered with the first option
+	// (ACP is a machine-to-machine protocol without interactive users).
+	if qt := sess.toolReg.Get("question"); qt != nil {
+		qtp := qt.(*tools.QuestionTool)
+		qtp.Handler = func(entries []tools.QuestionEntry) []string {
+			var answers []string
+			for _, e := range entries {
+				// Format question text for the ACP client.
+				msg := fmt.Sprintf("❓ %s\n\n%s\n\n", e.Header, e.Question)
+				for i, o := range e.Options {
+					msg += fmt.Sprintf("  [%d] %s — %s\n", i+1, o.Label, o.Description)
+				}
+				// Send as a status message so the client sees it.
+				if ch := sess.GetCtrlCh(); ch != nil {
+					ch <- &types.CtrlStatus{Text: msg}
+				}
+				// Auto-answer: pick the first option.
+				if len(e.Options) > 0 {
+					answers = append(answers, fmt.Sprintf("%s: %s", e.Header, e.Options[0].Label))
+				} else {
+					answers = append(answers, e.Header+": ")
+				}
+			}
+			return answers
+		}
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -401,6 +430,30 @@ func forwardACPCtrl(ctx context.Context, ch <-chan types.CtrlMsg, sessionID stri
 					SessionUpdate: "agent_message_chunk",
 					Content:       &acpContent{Type: "text", Text: fmt.Sprintf("[context: %d/%d tokens]", m.Tokens, m.Window)},
 				})
+			case *types.CtrlQuestion:
+				// Format and send the question text.
+				msg := fmt.Sprintf("❓ %s\n\n%s\n\n", m.Header, m.Question)
+				for i, o := range m.Options {
+					msg += fmt.Sprintf("  [%d] %s — %s\n", i+1, o.Label, o.Description)
+				}
+				send(sessionID, acpUpdate{
+					SessionUpdate: "agent_message_chunk",
+					Content:       &acpContent{Type: "text", Text: msg},
+				})
+				// Auto-answer with the first option.
+				if m.AnswerCh != nil {
+					if len(m.Options) > 0 {
+						select {
+						case m.AnswerCh <- m.Options[0].Label:
+						default:
+						}
+					} else {
+						select {
+						case m.AnswerCh <- "":
+						default:
+						}
+					}
+				}
 			}
 		case <-ctx.Done():
 			return

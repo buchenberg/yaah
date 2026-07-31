@@ -40,6 +40,9 @@ var conversationSummaryPreamble string
 //go:embed steering_message.md
 var steeringMessageRaw string
 
+//go:embed wrap_up.md
+var wrapUpMessageRaw string
+
 //go:embed environment_header.md
 var environmentHeaderRaw string
 
@@ -137,10 +140,22 @@ func SteeringMessage(tool string, count int) string {
 	return s
 }
 
+// --- Wrap-up notice ---
+
+// WrapUpMessage returns the iteration-budget warning injected when an
+// agent loop nears its turn cap, with {{COUNT}} replaced by the number
+// of working turns remaining before the run is force-ended.
+func WrapUpMessage(count int) string {
+	s := strings.TrimSpace(wrapUpMessageRaw)
+	return strings.ReplaceAll(s, "{{COUNT}}", fmt.Sprint(count))
+}
+
 // --- Environment header ---
 
-// EnvironmentHeader returns the sub-agent environment block with
-// {{OS}}, {{ARCH}}, {{SHELL}}, and {{CWD}} replaced by the given values.
+// EnvironmentHeader renders the embedded environment_header.md template
+// with {{OS}}, {{ARCH}}, {{SHELL}}, and {{CWD}} replaced by the given
+// values. It is the single source of truth for the environment block
+// shared by the main agent and sub-agents.
 func EnvironmentHeader(os, arch, shell, cwd string) string {
 	s := environmentHeaderRaw
 	s = strings.ReplaceAll(s, "{{OS}}", os)
@@ -158,6 +173,45 @@ func EnvironmentHeader(os, arch, shell, cwd string) string {
 //
 //go:embed roles/*.md
 var BuiltinRolesFS embed.FS
+
+// FormatDirectives renders a directive list as a markdown section
+// suitable for embedding in a system prompt. The framing deliberately
+// primes the model before the list (mandatory + precedence over
+// conflicting guidance) and closes with a consequence line, since
+// flatly-worded directives are routinely dropped by flash-tier models.
+func FormatDirectives(directives []string) string {
+	var b strings.Builder
+	b.WriteString("## Session directives\n\n")
+	b.WriteString("**MANDATORY — highest priority.** These directives supersede any conflicting instructions elsewhere in this prompt, including role guidance and default tone or style conventions. Apply every directive to every response, without exception.\n\n")
+	for _, d := range directives {
+		b.WriteString("- " + d + "\n")
+	}
+	b.WriteString("\nA response that ignores these directives is a failure, regardless of its other quality.")
+	return b.String()
+}
+
+// InjectAfterIdentity inserts the directives block immediately after the
+// embedded identity prompt inside prompt, so directives sit at the top
+// of the assembled system prompt rather than buried at the end. If the
+// identity block is not present (e.g. a custom system prompt override),
+// the block is appended at the end instead. Returns prompt unchanged
+// when directives is empty.
+func InjectAfterIdentity(prompt string, directives []string) string {
+	if len(directives) == 0 {
+		return prompt
+	}
+	block := FormatDirectives(directives)
+	if identity := strings.TrimSpace(IdentityPrompt); identity != "" {
+		if i := strings.Index(prompt, identity); i >= 0 {
+			pos := i + len(identity)
+			return prompt[:pos] + "\n\n" + block + prompt[pos:]
+		}
+	}
+	if prompt == "" {
+		return block
+	}
+	return prompt + "\n\n" + block
+}
 
 // Layers holds the composable pieces of the system prompt assembled
 // from multiple sources.
@@ -190,7 +244,9 @@ func Build(l Layers) string {
 	}
 
 	if strings.TrimSpace(l.Environment) != "" {
-		parts = append(parts, "## Runtime Environment\n"+strings.TrimSpace(l.Environment))
+		// The environment layer carries its own heading (rendered from
+		// environment_header.md); append it verbatim.
+		parts = append(parts, strings.TrimSpace(l.Environment))
 	}
 
 	if strings.TrimSpace(l.UserContext) != "" {
@@ -268,14 +324,16 @@ func truncateSkillDesc(desc, fallback string) string {
 	return strings.TrimRight(string(r[:cut]), " ,;:-—") + "…"
 }
 
-// DetectEnvironment returns a human-readable string describing the
+// DetectEnvironment returns the environment block describing the
 // current OS, architecture, default shell, and working directory.
+// It renders the embedded environment_header.md template so the main
+// agent and sub-agents share one source of truth.
 func DetectEnvironment(cwd string) string {
 	shell := "bash"
 	if runtime.GOOS == "windows" {
 		shell = "powershell (pwsh 7+ or Windows PowerShell)"
 	}
-	return fmt.Sprintf("OS: %s/%s. Default shell: %s. Working directory: %s.", runtime.GOOS, runtime.GOARCH, shell, cwd)
+	return EnvironmentHeader(runtime.GOOS, runtime.GOARCH, shell, cwd)
 }
 
 // LoadUserContext reads the user-level AGENTS.md from the yaah home

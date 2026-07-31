@@ -16,8 +16,17 @@ type ToolConcurrencyMiddleware struct {
 // number of in-flight tool goroutines at max. When max <= 0 the
 // middleware is a no-op and Acquire/Release do nothing — matching the
 // "0 = unlimited" convention used by Loop.MaxToolConcurrency.
+//
+// The semaphore channel is created here, not lazily in Acquire:
+// Acquire is called from concurrent tool goroutines, and lazy
+// initialization would race, letting multiple channels be created and
+// the cap to be exceeded.
 func NewToolConcurrencyMiddleware(max int) *ToolConcurrencyMiddleware {
-	return &ToolConcurrencyMiddleware{max: max}
+	m := &ToolConcurrencyMiddleware{max: max}
+	if max > 0 {
+		m.sem = make(chan struct{}, max)
+	}
+	return m
 }
 
 func (m *ToolConcurrencyMiddleware) Name() string { return "tool_concurrency" }
@@ -39,9 +48,6 @@ func (m *ToolConcurrencyMiddleware) PostTool(ctx context.Context, results []Tool
 func (m *ToolConcurrencyMiddleware) Acquire(ctx context.Context) error {
 	if m.max <= 0 {
 		return nil
-	}
-	if m.sem == nil {
-		m.sem = make(chan struct{}, m.max)
 	}
 	select {
 	case m.sem <- struct{}{}:

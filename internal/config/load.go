@@ -96,6 +96,7 @@ type Defaults struct {
 	MaxToolConcurrency int  `yaml:"max_tool_concurrency"`    // concurrent tool goroutines; 0 = unlimited
 	PromptCaching      bool `yaml:"prompt_caching"`          // inject Anthropic cache-control breakpoints
 	ReasoningProtect   int  `yaml:"reasoning_protect_turns"` // preserve reasoning in recent N turns; 0 = default (2)
+	WrapUpTurns        int  `yaml:"wrap_up_turns"`           // inject a wrap-up notice this many turns before the cap; 0 = default (1), negative = off
 
 	// Tool result truncation caps.
 	ToolResultMaxLines int `yaml:"tool_result_max_lines"` // 0 = default (500)
@@ -106,8 +107,10 @@ type Defaults struct {
 	PruneMinReclaim    int `yaml:"prune_min_reclaim"`    // min tokens to commit a prune; 0 = default (400)
 	PruneMinTurns      int `yaml:"prune_min_turns"`      // recent turns always kept; 0 = default (1)
 
-	// Directives are session-level policy statements injected into all
-	// agent prompts (orchestrator and sub-agents).
+	// Directives are session-level policy statements injected into the
+	// top-level agent's system prompt, immediately after the identity
+	// block. Sub-agents do NOT inherit these; they receive per-role
+	// directives via SubAgentConfig.Roles[name].Directives instead.
 	Directives []string `yaml:"directives"`
 }
 
@@ -181,18 +184,19 @@ type SubAgentConfig struct {
 }
 
 // RoleConfig overrides a single role's default timeout, iteration cap,
-// turn cap, provider, model, concurrency, and output format.
+// turn cap, provider, model, concurrency, output format, and directives.
 type RoleConfig struct {
-	Timeout           int    `yaml:"timeout"`             // seconds; 0 = use role default
-	MaxIterations     int    `yaml:"max_iterations"`      // 0 = use role default
-	MaxTurns          int    `yaml:"max_turns"`           // soft turn cap; 0 = use role default
-	JSONMode          bool   `yaml:"json_mode"`           // structured output toggle
-	ContextWindow     int    `yaml:"context_window"`      // 0 = inherit halved parent default
-	OutputLimit       int    `yaml:"output_limit"`        // bytes; 0 = use config default
-	Provider          string `yaml:"provider"`            // per-role provider override; "" = inherit
-	Model             string `yaml:"model"`               // per-role model override; "" = inherit
-	MaxConcurrency    int    `yaml:"max_concurrency"`     // per-role max sub-agent spawns; 0 = use config default
-	StuckChildTimeout int    `yaml:"stuck_child_timeout"` // seconds; 0 = use global default
+	Timeout           int      `yaml:"timeout"`             // seconds; 0 = use role default
+	MaxIterations     int      `yaml:"max_iterations"`      // 0 = use role default
+	MaxTurns          int      `yaml:"max_turns"`           // soft turn cap; 0 = use role default
+	JSONMode          bool     `yaml:"json_mode"`           // structured output toggle
+	ContextWindow     int      `yaml:"context_window"`      // 0 = inherit halved parent default
+	OutputLimit       int      `yaml:"output_limit"`        // bytes; 0 = use config default
+	Provider          string   `yaml:"provider"`            // per-role provider override; "" = inherit
+	Model             string   `yaml:"model"`               // per-role model override; "" = inherit
+	MaxConcurrency    int      `yaml:"max_concurrency"`     // per-role max sub-agent spawns; 0 = use config default
+	StuckChildTimeout int      `yaml:"stuck_child_timeout"` // seconds; 0 = use global default
+	Directives        []string `yaml:"directives"`          // injected into this role's sub-agent prompt; empty = none
 }
 
 // MCPServerConfig holds the configuration for a single MCP server,

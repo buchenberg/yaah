@@ -20,6 +20,12 @@ import (
 // keeping Jaeger attribute payloads reasonable.
 const detailLen = 8000
 
+// systemPromptLen caps the recorded system prompt. Larger than detailLen
+// because assembled prompts (identity + directives + project instructions
+// + skills) routinely exceed 8KB, and the diagnostic value is in seeing
+// the full prompt the model actually received. Matches the tui.body cap.
+const systemPromptLen = 32768
+
 // StartPrompt creates the root span for a single user-visible question-
 // to-answer interaction. All agent.turn spans for this prompt are
 // children of this span. The prompt text is truncated to 200 chars as
@@ -260,6 +266,36 @@ func RecordConversation(span trace.Span, messages []types.Message) {
 		}
 		span.AddEvent("msg", trace.WithAttributes(attrs...))
 	}
+}
+
+// SystemContent joins the content of all system messages in a request,
+// in order. Returns "" when there are none.
+func SystemContent(msgs []types.Message) string {
+	var b strings.Builder
+	for _, m := range msgs {
+		if m.Role != "system" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(m.Content)
+	}
+	return b.String()
+}
+
+// RecordSystemPrompt records the exact system prompt the model sees on
+// this call as a span event, so Jaeger shows what the agent (or sub-agent)
+// actually received — identity, directives, role guidance, and all.
+// Verbose-only; capped at systemPromptLen.
+func RecordSystemPrompt(span trace.Span, system string) {
+	if span == nil || system == "" {
+		return
+	}
+	span.AddEvent("system_prompt", trace.WithAttributes(
+		attribute.String("llm.system", truncate(safeString(system), systemPromptLen)),
+		attribute.Int("llm.system_len", len(system)),
+	))
 }
 
 // RecordStreamEnd records how a streaming LLM call terminated and whether

@@ -1,9 +1,72 @@
 package tools
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 )
+
+func TestExecute_RoleValidation(t *testing.T) {
+	var gotRole string
+	tt := &TaskTool{
+		RoleNames: []string{"analyst", "developer"},
+		Runner: func(ctx context.Context, prompt string, params SubAgentParams) (string, error) {
+			gotRole = params.Role
+			return "ok", nil
+		},
+	}
+
+	t.Run("empty role rejected with valid names", func(t *testing.T) {
+		_, err := tt.Execute(context.Background(), `{"description":"d","prompt":"p"}`)
+		if err == nil || !strings.Contains(err.Error(), "role is required") {
+			t.Fatalf("expected role-required error, got %v", err)
+		}
+		if !strings.Contains(err.Error(), "analyst, developer") {
+			t.Errorf("error should list valid roles, got %v", err)
+		}
+	})
+
+	t.Run("unknown role rejected", func(t *testing.T) {
+		_, err := tt.Execute(context.Background(), `{"description":"d","prompt":"p","role":"hacker"}`)
+		if err == nil || !strings.Contains(err.Error(), `unknown role "hacker"`) {
+			t.Fatalf("expected unknown-role error, got %v", err)
+		}
+	})
+
+	t.Run("valid role dispatches", func(t *testing.T) {
+		gotRole = ""
+		if _, err := tt.Execute(context.Background(), `{"description":"d","prompt":"p","role":"analyst"}`); err != nil {
+			t.Fatalf("valid role: unexpected error %v", err)
+		}
+		if gotRole != "analyst" {
+			t.Errorf("runner got role %q, want analyst", gotRole)
+		}
+	})
+}
+
+func TestSchema_RoleRequired(t *testing.T) {
+	requiredHasRole := func(t *testing.T, raw json.RawMessage) {
+		t.Helper()
+		var schema map[string]any
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			t.Fatalf("invalid schema JSON: %v", err)
+		}
+		req, _ := schema["required"].([]any)
+		for _, r := range req {
+			if r == "role" {
+				return
+			}
+		}
+		t.Errorf("schema required must include role, got %v", req)
+	}
+
+	// Enum schema (registry roles present).
+	requiredHasRole(t, (&TaskTool{RoleNames: []string{"analyst"}}).Schema())
+	// Fallback schema (no registry).
+	requiredHasRole(t, (&TaskTool{}).Schema())
+}
 
 func TestParseSubAgentOutput_NoEscalation(t *testing.T) {
 	out := ParseSubAgentOutput("task completed successfully", nil)

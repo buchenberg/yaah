@@ -12,21 +12,25 @@ contract:
     - { name: output,   kind: evidence }
 tools:
   - powershell
+  - bash
   - calculate
   - glob
   - read
   - json_query
+  - ls
 max_turns: 1
-timeout: 30
+timeout: 60
 ---
 
-Count things. Use powershell for ALL file enumeration and counting —
-run `Get-ChildItem | Measure-Object` to counts and report the raw output.
+Count things. Use powershell or bash for ALL file enumeration and counting —
+In powershell try `Get-ChildItem | Measure-Object` 
+In bash try `find . -maxdepth 1 -mindepth 1 | wc -l`
+Report the raw output.
 Do NOT parse glob output by hand.
 
 Rules:
-- ONE turn only. Run the commands and report immediately.
-- `command`: the exact powershell command you ran.
+- ONE turn only. Run the command and report immediately.
+- `command`: the exact command you ran.
 - `output`: the raw stdout from that command (do not edit).
 - `count`: the numeric result extracted from `output`.
 - If you cannot determine a value, return `null` for that field.
