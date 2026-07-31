@@ -90,7 +90,7 @@ go install github.com/buchenberg/yaah@latest
 ### Docker
 
 A `Dockerfile` and `docker-compose.yml` are included for containerized use
-with Jaeger tracing. The `yaah` service is scoped behind the `cli` profile —
+with OpenObserve tracing. The `yaah` service is scoped behind the `cli` profile —
 add `--profile cli` to `docker compose up` and `run` commands.
 
 ```bash
@@ -444,7 +444,7 @@ observability:
     enabled: true
 ```
 
-Token attribution is tracked per-turn. Fire up Jaeger with `docker compose
+Token attribution is tracked per-turn. Fire up OpenObserve with `docker compose
 up -d openobserve`, visit http://localhost:5080, and watch me work. Full guide
 at [`docs/otel-setup.md`](./docs/otel-setup.md).
 
@@ -910,7 +910,7 @@ yaah/
 │   ├── PROMPT-INJECTION.md       # prompt injection architecture map
 │   ├── tui-components.md         # TUI component reference
 │   ├── web-ui.md                 # web UI architecture and event reference
-│   └── otel-setup.md             # Jaeger setup guide
+│   └── otel-setup.md             # OpenObserve setup guide
 ├── BENCHMARKS.md                  # current benchmark suite
 ├── AGENTS.md                     # coding assistant instructions
 ├── CONTRIBUTING.md

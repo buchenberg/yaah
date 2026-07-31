@@ -82,7 +82,7 @@ yaah/
 │   ├── architecture.md          # detailed architecture documentation
 │   ├── BENCHMARK-HISTORY.md     # historical benchmark data
 │   ├── tui-components.md        # TUI component system reference
-│   └── otel-setup.md            # OpenTelemetry/Jaeger setup guide
+│   └── otel-setup.md            # OpenTelemetry/OpenObserve setup guide
 ├── README.md
 ├── CONTRIBUTING.md
 ├── SECURITY.md

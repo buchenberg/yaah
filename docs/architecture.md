@@ -991,7 +991,7 @@ observability:
 
 The OTel SDK also honours standard environment variables for sampling, TLS, and resource attributes (`OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER`, etc.).
 
-A Docker-based Jaeger setup and trace interpretation guide is at [`docs/otel-setup.md`](./otel-setup.md).
+A Docker-based OpenObserve setup and trace interpretation guide is at [`docs/otel-setup.md`](./otel-setup.md).
 
 ---
 
