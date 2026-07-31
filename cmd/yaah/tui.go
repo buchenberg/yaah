@@ -158,32 +158,6 @@ func runTUI() error {
 	// Show MCP server status.
 	m.SetMCPInfos(tuiMCPInfos)
 	m.RegisterCommand(":mcp", "Show MCP server status")
-	// Add an initial system message showing MCP status.
-	if len(tuiMCPInfos) > 0 {
-		var connected, failed int
-		for _, info := range tuiMCPInfos {
-			if info.Connected {
-				connected++
-			} else {
-				failed++
-			}
-		}
-		statusMsg := fmt.Sprintf("MCP: %d server", len(tuiMCPInfos))
-		if len(tuiMCPInfos) > 1 {
-			statusMsg += "s"
-		}
-		if connected > 0 {
-			statusMsg += fmt.Sprintf(" (%d connected", connected)
-			if failed > 0 {
-				statusMsg += fmt.Sprintf(", %d failed", failed)
-			}
-			statusMsg += ")"
-		} else {
-			statusMsg += " — all failed"
-		}
-		statusMsg += ". Type :mcp for details."
-		m.AddMessage("system", statusMsg)
-	}
 
 	// Panic recovery: catch panics in the main goroutine. When the TUI is
 	// running, trigger bubbletea's cleanup to restore the terminal (disable
