@@ -592,7 +592,7 @@ func (s *agentSession) SetModel(providerName, modelName string) {
 	defer s.mu.Unlock()
 	prov := s.provider
 	if p, ok := s.cfg.Providers[providerName]; ok {
-		if pv, ok2 := makeProvider(p); ok2 {
+		if pv, ok2 := makeProvider(providerName, p); ok2 {
 			prov = pv
 		}
 	}

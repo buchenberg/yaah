@@ -350,6 +350,14 @@ func (ws *webServer) handleAction(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusOK)
 
+	case "login":
+		go webLogin(ws)
+		w.WriteHeader(http.StatusAccepted)
+
+	case "logout":
+		go webLogout(ws)
+		w.WriteHeader(http.StatusAccepted)
+
 	default:
 		http.Error(w, "unknown action type", http.StatusBadRequest)
 	}
@@ -367,4 +375,50 @@ func (ws *webServer) runPrompt(text string) {
 	ws.promptCtxCancel = nil
 	ws.mu.Unlock()
 	ws.running.Store(false)
+}
+
+func webLogin(ws *webServer) {
+	send := func(text string) {
+		ws.mu.Lock()
+		v := ws.view
+		ws.mu.Unlock()
+		if v != nil {
+			v.write(marshalWire(sseWireEvent{Type: "ctrl.status", Text: text}))
+		}
+	}
+
+	cfg := ws.sess.(*agentSession).cfg
+	names := oauthProviderNames(cfg)
+	if len(names) == 0 {
+		send("No OAuth providers configured. Add auth: oauth to a provider in config.yaml.")
+		return
+	}
+	providerName := names[0]
+
+	if err := loginOAuth(cfg, providerName, send); err != nil {
+		send(fmt.Sprintf("Login failed: %v", err))
+	}
+}
+
+func webLogout(ws *webServer) {
+	send := func(text string) {
+		ws.mu.Lock()
+		v := ws.view
+		ws.mu.Unlock()
+		if v != nil {
+			v.write(marshalWire(sseWireEvent{Type: "ctrl.status", Text: text}))
+		}
+	}
+
+	cfg := ws.sess.(*agentSession).cfg
+	names := oauthProviderNames(cfg)
+	if len(names) == 0 {
+		send("No OAuth providers configured.")
+		return
+	}
+	providerName := names[0]
+
+	if err := logoutOAuth(cfg, providerName, send); err != nil {
+		send(fmt.Sprintf("Logout failed: %v", err))
+	}
 }

@@ -105,6 +105,8 @@ var defaultCommands = []Command{
 	{Name: ":compact", Description: "Summarize old messages"},
 	{Name: ":banner", Description: "Toggle ASCII art banner"},
 	{Name: ":model", Description: "Switch model"},
+	{Name: ":login", Description: "Authenticate with an OAuth provider"},
+	{Name: ":logout", Description: "Remove stored OAuth credentials"},
 	{Name: ":steer", Description: "Inject text into current turn before next provider call"},
 	{Name: ":copyview", Description: "Copy rendered TUI view to clipboard"},
 	{Name: ":quit", Description: "Exit the TUI"},
@@ -135,6 +137,8 @@ type Model struct {
 	onFollowUp    func(string)
 	onSteer       func(string)
 	onAbort       func()
+	onLogin       func()
+	onLogout      func()
 
 	// --- layout ---
 	width  int
@@ -224,6 +228,10 @@ type Config struct {
 	// OnAbort is invoked when the user requests to stop the running
 	// agent (Esc while thinking, or :stop command). May be nil.
 	OnAbort func()
+	// OnLogin is invoked when the user runs :login. May be nil.
+	OnLogin func()
+	// OnLogout is invoked when the user runs :logout. May be nil.
+	OnLogout func()
 }
 
 // New creates a new TUI model from a Config.
@@ -268,6 +276,8 @@ func New(cfg Config) *Model {
 		onFollowUp:        cfg.OnFollowUp,
 		onSteer:           cfg.OnSteer,
 		onAbort:           cfg.OnAbort,
+		onLogin:           cfg.OnLogin,
+		onLogout:          cfg.OnLogout,
 		commands:          defaultCommands,
 	}
 }
@@ -554,6 +564,18 @@ func (m *Model) executeCommand(input string) {
 		return
 	case ":mcp":
 		m.AddMessage("system", m.renderMCPStatus())
+	case ":login":
+		if m.onLogin != nil {
+			m.onLogin()
+		} else {
+			m.AddMessage("system", "Login not available in this mode.")
+		}
+	case ":logout":
+		if m.onLogout != nil {
+			m.onLogout()
+		} else {
+			m.AddMessage("system", "Logout not available in this mode.")
+		}
 	case ":stop":
 		if !m.thinking {
 			m.AddMessage("system", "No agent is running.")

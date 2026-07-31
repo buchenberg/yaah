@@ -73,9 +73,15 @@ func resolveModel(cfg *config.Config) string {
 }
 
 // makeProvider returns a provider for the given config entry if it's usable
-// (has a real API key or a local base URL). Returns nil, false otherwise.
-func makeProvider(p config.Provider) (agent.Provider, bool) {
+// (has a real API key, an OAuth token, or a local base URL). Returns nil, false otherwise.
+func makeProvider(name string, p config.Provider) (agent.Provider, bool) {
 	r := config.Resolve(p)
+
+	// OAuth-authenticated providers load their token from disk.
+	if r.Auth == "oauth" {
+		return makeOAuthProvider(name, r)
+	}
+
 	if !isRealKey(r.APIKey) && r.BaseURL == "" {
 		return nil, false
 	}
@@ -84,16 +90,45 @@ func makeProvider(p config.Provider) (agent.Provider, bool) {
 		return providers.NewAnthropicClient(r.BaseURL, r.APIKey, r.TimeoutSeconds), true
 	default:
 		client := providers.NewOpenAIClient(r.BaseURL, r.APIKey, r.TimeoutSeconds)
-		overrides := make(map[string]*bool, len(r.Models))
-		for _, m := range r.Models {
-			if m.Thinking != nil {
-				overrides[m.Name] = m.Thinking
-			}
-		}
-		if len(overrides) > 0 {
-			client.ThinkingOverrides = overrides
-		}
+		client.ExtraHeaders = r.Headers
+		applyThinkingOverrides(client, r)
 		return client, true
+	}
+}
+
+// makeOAuthProvider creates a provider using a stored OAuth token.
+// The token is used as a bearer key. If no token is stored, it returns
+// a stub that tells the user to run 'yaah login'.
+func makeOAuthProvider(name string, r config.Provider) (agent.Provider, bool) {
+	token, err := providers.LoadOAuthToken(name)
+	if err != nil {
+		return &oauthErrorStub{provider: name, err: err}, true
+	}
+	if token == nil {
+		return &oauthErrorStub{provider: name}, true
+	}
+
+	switch r.API {
+	case "anthropic":
+		return providers.NewAnthropicClient(r.BaseURL, token.AccessToken, r.TimeoutSeconds), true
+	default:
+		client := providers.NewOpenAIClient(r.BaseURL, token.AccessToken, r.TimeoutSeconds)
+		client.ExtraHeaders = r.Headers
+		applyThinkingOverrides(client, r)
+		return client, true
+	}
+}
+
+// applyThinkingOverrides sets per-model thinking overrides from config on an OpenAIClient.
+func applyThinkingOverrides(client *providers.OpenAIClient, r config.Provider) {
+	overrides := make(map[string]*bool, len(r.Models))
+	for _, m := range r.Models {
+		if m.Thinking != nil {
+			overrides[m.Name] = m.Thinking
+		}
+	}
+	if len(overrides) > 0 {
+		client.ThinkingOverrides = overrides
 	}
 }
 
@@ -117,7 +152,7 @@ func resolveCompact(cfg *config.Config) (agent.Provider, string) {
 		}
 		if compactProviderName != "" {
 			if p, ok := cfg.Providers[compactProviderName]; ok {
-				if prov, ok2 := makeProvider(p); ok2 {
+				if prov, ok2 := makeProvider(compactProviderName, p); ok2 {
 					return prov, compactModel
 				}
 			}
@@ -134,7 +169,7 @@ func resolveFallback(cfg *config.Config) (agent.Provider, string) {
 		return nil, ""
 	}
 	if p, ok := cfg.Providers[cfg.Agent.Fallback.Provider]; ok {
-		if prov, ok2 := makeProvider(p); ok2 {
+		if prov, ok2 := makeProvider(cfg.Agent.Fallback.Provider, p); ok2 {
 			return prov, cfg.Agent.Fallback.Model
 		}
 	}
@@ -164,7 +199,7 @@ func resolveSubAgent(cfg *config.Config) (agent.Provider, string) {
 	}
 
 	if p, ok := cfg.Providers[providerName]; ok {
-		if prov, ok2 := makeProvider(p); ok2 {
+		if prov, ok2 := makeProvider(providerName, p); ok2 {
 			return prov, model
 		}
 	}
@@ -176,7 +211,7 @@ func resolveSubAgent(cfg *config.Config) (agent.Provider, string) {
 // The caller falls through to the next step in the resolution chain.
 func resolveProviderByName(pmap map[string]config.Provider, name string) agent.Provider {
 	if p, ok := pmap[name]; ok {
-		if prov, ok2 := makeProvider(p); ok2 {
+		if prov, ok2 := makeProvider(name, p); ok2 {
 			return prov
 		}
 	}
@@ -187,7 +222,7 @@ func resolveProviderByName(pmap map[string]config.Provider, name string) agent.P
 func resolveProvider(cfg *config.Config) agent.Provider {
 	providerName := resolveProviderName(cfg)
 	if p, ok := cfg.Providers[providerName]; ok {
-		if prov, ok2 := makeProvider(p); ok2 {
+		if prov, ok2 := makeProvider(providerName, p); ok2 {
 			return prov
 		}
 	}
@@ -200,7 +235,7 @@ func resolveProvider(cfg *config.Config) agent.Provider {
 	sort.Strings(names)
 	for _, name := range names {
 		p := cfg.Providers[name]
-		if prov, ok := makeProvider(p); ok {
+		if prov, ok := makeProvider(name, p); ok {
 			return prov
 		}
 	}
@@ -226,6 +261,19 @@ type noProviderStub struct{}
 
 func (s *noProviderStub) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
 	return nil, fmt.Errorf("no provider configured — run 'yaah config edit' to add one")
+}
+
+// oauthErrorStub is returned when an OAuth provider has no stored token.
+type oauthErrorStub struct {
+	provider string
+	err      error
+}
+
+func (s *oauthErrorStub) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
+	if s.err != nil {
+		return nil, fmt.Errorf("provider %q: %w", s.provider, s.err)
+	}
+	return nil, fmt.Errorf("provider %q not authenticated — run 'yaah login %s'", s.provider, s.provider)
 }
 
 // buildStuckChildTimeouts converts per-role StuckChildTimeout seconds from

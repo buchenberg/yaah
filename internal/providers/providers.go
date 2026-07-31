@@ -27,6 +27,10 @@ type OpenAIClient struct {
 	// ThinkingOverrides holds per-model thinking-mode overrides from config.
 	// When a model has an entry, that value wins over auto-detection.
 	ThinkingOverrides map[string]*bool
+
+	// ExtraHeaders are additional headers applied to every request.
+	// Used by the Copilot client for API version, user-agent, etc.
+	ExtraHeaders map[string]string
 }
 
 // NewOpenAIClient creates a new client targeting baseURL (e.g. "https://api.openai.com").
@@ -75,6 +79,9 @@ func (c *OpenAIClient) Send(ctx context.Context, req types.ChatRequest) (*types.
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	for k, v := range c.ExtraHeaders {
+		httpReq.Header.Set(k, v)
+	}
 	setSessionHeaders(httpReq, SessionIDFromContext(ctx))
 
 	resp, err := c.client.Do(httpReq)
@@ -108,6 +115,9 @@ func (c *OpenAIClient) ListModels(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	for k, v := range c.ExtraHeaders {
+		httpReq.Header.Set(k, v)
+	}
 
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
