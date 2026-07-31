@@ -9,17 +9,8 @@ import (
 	"github.com/buchenberg/yaah/internal/mcp"
 )
 
-// keyHintLines are the stacked right-justified keybinding hints in the header.
-var keyHintLines = []string{
-	": commands",
-	"/ search",
-	"? help",
-	"ctrl+y copy",
-	"ctrl+c quit",
-}
-
 // Header renders the top-of-screen title block as a two-column grid.
-// Left: banner (when shown). Right: provider/model, MCP status, key hints.
+// Left: banner (when shown). Right: provider/model and MCP status.
 // The entire block is wrapped in a rounded pink border.
 type Header struct {
 	banner     string
@@ -64,7 +55,6 @@ func (h Header) rightContentLines() int {
 	if len(h.mcpInfos) > 0 {
 		lines += 1 + len(h.mcpInfos) // blank line + mcp entries
 	}
-	lines += len(keyHintLines)
 	return lines
 }
 
@@ -123,7 +113,7 @@ func (h Header) renderLeft() string {
 }
 
 // renderRight builds the right column content, right-aligned.
-// Order: provider/model, MCP server status, keybinding hints.
+// Order: provider/model, then MCP server status.
 func (h Header) renderRight(width int) string {
 	aligner := lipgloss.NewStyle().Width(width).Align(lipgloss.Right)
 	var lines []string
@@ -150,10 +140,5 @@ func (h Header) renderRight(width int) string {
 		}
 	}
 
-	// Keybinding hints
-	for _, hint := range keyHintLines {
-		styled := commandDescStyle.Render(hint)
-		lines = append(lines, aligner.Render(styled))
-	}
 	return strings.Join(lines, "\n")
 }

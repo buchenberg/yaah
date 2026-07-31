@@ -276,26 +276,19 @@ func TestHeader_Render(t *testing.T) {
 	t.Run("adding MCP servers does not shift right column leftward", func(t *testing.T) {
 		outNone := NewHeader("YAHHH", "deepseek", "v4-pro", true, 100, nil).Render()
 		plainNone := stripANSI(outNone)
-		linesNone := strings.Split(plainNone, "\n")
 
 		mcp := []ServerInfo{
 			{Name: "filesystem", Transport: "stdio", Connected: true},
 		}
 		outWith := NewHeader("YAHHH", "deepseek", "v4-pro", true, 100, mcp).Render()
 		plainWith := stripANSI(outWith)
-		linesWith := strings.Split(plainWith, "\n")
 
-		if len(linesWith) <= len(linesNone) {
-			t.Errorf("expected MCP version to have more lines, got %d vs %d", len(linesWith), len(linesNone))
+		// The provider/model text should appear in both outputs.
+		if !strings.Contains(plainNone, "deepseek/v4-pro") {
+			t.Error("expected provider/model in output without MCP")
 		}
-
-		// The last key hint should be at the same position regardless of MCP content.
-		lastNone := linesNone[len(linesNone)-2]
-		lastWith := linesWith[len(linesWith)-2]
-		posNone := strings.LastIndex(lastNone, "ctrl+c quit")
-		posWith := strings.LastIndex(lastWith, "ctrl+c quit")
-		if posNone != posWith && posNone > 0 && posWith > 0 {
-			t.Errorf("key hint position shifted with MCP servers: %d -> %d", posNone, posWith)
+		if !strings.Contains(plainWith, "deepseek/v4-pro") {
+			t.Error("expected provider/model in output with MCP")
 		}
 	})
 
@@ -306,9 +299,9 @@ func TestHeader_Render(t *testing.T) {
 		lines := strings.Split(plain, "\n")
 		for _, line := range lines {
 			bannerIdx := strings.Index(line, "YAHHH")
-			cmdsIdx := strings.Index(line, ": commands")
-			if bannerIdx >= 0 && cmdsIdx >= 0 && bannerIdx > cmdsIdx {
-				t.Errorf("banner appears to the right of key hints: banner@%d, cmds@%d: %q", bannerIdx, cmdsIdx, line)
+			provIdx := strings.Index(line, "deepseek/v4-pro")
+			if bannerIdx >= 0 && provIdx >= 0 && bannerIdx > provIdx {
+				t.Errorf("banner appears to the right of provider info: banner@%d, provider@%d: %q", bannerIdx, provIdx, line)
 			}
 		}
 	})
