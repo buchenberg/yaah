@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.42.0](https://github.com/buchenberg/yaah/compare/v0.41.0...v0.42.0) (2026-07-31)
+
+
+### Features
+
+* web UI session selection, SigNoz observability, 5 new tools, bash Windows fix ([#116](https://github.com/buchenberg/yaah/issues/116)) ([167a35d](https://github.com/buchenberg/yaah/commit/167a35d4d3153164b5cd9fdc7a2daa05777542ee))
+
+
+### Bug Fixes
+
+* **pubsub:** eliminate race in TestBroker_DefaultBufferSize ([#118](https://github.com/buchenberg/yaah/issues/118)) ([c045984](https://github.com/buchenberg/yaah/commit/c04598465d5cc532e8fdc3af39ee17f774f23ad8))
+
 ## [0.41.0](https://github.com/buchenberg/yaah/compare/v0.40.3...v0.41.0) (2026-07-31)
 
 
