@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,6 +57,12 @@ func startREPL() error {
 			continue
 		case repl.CmdReloadRoles:
 			sess.reloadRoles()
+			continue
+		case repl.CmdLogin:
+			replLogin(sess)
+			continue
+		case repl.CmdLogout:
+			replLogout(sess)
 			continue
 		}
 
@@ -117,6 +124,78 @@ func printHelp() {
 	fmt.Printf("  %s  %s\n", repl.Bold("/exit"), repl.Dim("quit yaah"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/clear"), repl.Dim("clear the screen"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/compact"), repl.Dim("summarize old messages to free context"))
+	fmt.Printf("  %s  %s\n", repl.Bold("/login"), repl.Dim("authenticate with an OAuth provider"))
+	fmt.Printf("  %s  %s\n", repl.Bold("/logout"), repl.Dim("remove stored OAuth credentials"))
 	fmt.Printf("  %s  %s\n", repl.Bold("/?"), repl.Dim("show this help"))
 	fmt.Println()
+}
+
+// replLogin handles the /login slash command in the REPL.
+func replLogin(sess *agentSession) {
+	names := oauthProviderNames(sess.cfg)
+	if len(names) == 0 {
+		fmt.Println("No OAuth providers configured. Add auth: oauth to a provider in ~/.yaah/config.yaml.")
+		return
+	}
+
+	var name string
+	if len(names) == 1 {
+		name = names[0]
+	} else {
+		fmt.Println("OAuth providers:")
+		for i, n := range names {
+			fmt.Printf("  %d) %s\n", i+1, n)
+		}
+		fmt.Print("Enter number: ")
+		scanner := bufio.NewScanner(os.Stdin)
+		if !scanner.Scan() {
+			return
+		}
+		input := strings.TrimSpace(scanner.Text())
+		idx, err := strconv.Atoi(input)
+		if err != nil || idx < 1 || idx > len(names) {
+			fmt.Printf("Invalid selection: %q\n", input)
+			return
+		}
+		name = names[idx-1]
+	}
+
+	if err := runInteractiveLogin(sess.cfg, name); err != nil {
+		fmt.Fprintf(os.Stderr, "%s\n", replYellow("error: "+err.Error()))
+	}
+}
+
+// replLogout handles the /logout slash command in the REPL.
+func replLogout(sess *agentSession) {
+	names := oauthProviderNames(sess.cfg)
+	if len(names) == 0 {
+		fmt.Println("No OAuth providers configured.")
+		return
+	}
+
+	var name string
+	if len(names) == 1 {
+		name = names[0]
+	} else {
+		fmt.Println("OAuth providers:")
+		for i, n := range names {
+			fmt.Printf("  %d) %s\n", i+1, n)
+		}
+		fmt.Print("Enter number: ")
+		scanner := bufio.NewScanner(os.Stdin)
+		if !scanner.Scan() {
+			return
+		}
+		input := strings.TrimSpace(scanner.Text())
+		idx, err := strconv.Atoi(input)
+		if err != nil || idx < 1 || idx > len(names) {
+			fmt.Printf("Invalid selection: %q\n", input)
+			return
+		}
+		name = names[idx-1]
+	}
+
+	if err := runInteractiveLogout(sess.cfg, name); err != nil {
+		fmt.Fprintf(os.Stderr, "%s\n", replYellow("error: "+err.Error()))
+	}
 }

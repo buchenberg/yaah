@@ -12,12 +12,19 @@ import (
 
 // Provider holds connection details for a model provider.
 type Provider struct {
-	API            string       `yaml:"api,omitempty"` // "openai" (default) or "anthropic"
-	BaseURL        string       `yaml:"base_url"`
-	APIKey         string       `yaml:"api_key"`
-	Name           string       `yaml:"name,omitempty"`
-	Models         []ModelEntry `yaml:"models,omitempty"`
-	TimeoutSeconds int          `yaml:"timeout,omitempty"`
+	API            string            `yaml:"api,omitempty"`  // "openai" (default) or "anthropic"
+	Auth           string            `yaml:"auth,omitempty"` // "api_key" (default) or "oauth"
+	BaseURL        string            `yaml:"base_url"`
+	APIKey         string            `yaml:"api_key"`
+	Name           string            `yaml:"name,omitempty"`
+	Models         []ModelEntry      `yaml:"models,omitempty"`
+	TimeoutSeconds int               `yaml:"timeout,omitempty"`
+	Headers        map[string]string `yaml:"headers,omitempty"` // extra headers sent on every request
+
+	// OAuth fields (used when auth: oauth).
+	OAuthClientID string `yaml:"oauth_client_id,omitempty"`
+	OAuthScope    string `yaml:"oauth_scope,omitempty"`
+	OAuthDomain   string `yaml:"oauth_domain,omitempty"` // authorization server domain
 }
 
 // ModelEntry is a single model in a provider's model list. It supports two
@@ -287,15 +294,20 @@ func SubstituteEnv(s string) string {
 }
 
 // Resolve returns a copy of the Provider with ${VAR} references
-// in APIKey and BaseURL substituted by environment variables.
+// in APIKey, BaseURL, and OAuth fields substituted by environment variables.
 func Resolve(p Provider) Provider {
 	return Provider{
 		API:            p.API,
+		Auth:           p.Auth,
 		BaseURL:        SubstituteEnv(p.BaseURL),
 		APIKey:         SubstituteEnv(p.APIKey),
 		Name:           p.Name,
 		Models:         p.Models,
 		TimeoutSeconds: p.TimeoutSeconds,
+		Headers:        p.Headers,
+		OAuthClientID:  SubstituteEnv(p.OAuthClientID),
+		OAuthScope:     p.OAuthScope,
+		OAuthDomain:    SubstituteEnv(p.OAuthDomain),
 	}
 }
 

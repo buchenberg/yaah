@@ -56,9 +56,17 @@ func fetchAllModels(ctx context.Context, cfg *config.Config) []string {
 			continue
 		}
 
-		r := config.Resolve(p)
-		client := providers.NewOpenAIClient(r.BaseURL, r.APIKey, r.TimeoutSeconds)
-		models, err := client.ListModels(ctx)
+		prov, ok := makeProvider(name, p)
+		if !ok {
+			continue
+		}
+		lister, ok := prov.(interface {
+			ListModels(ctx context.Context) ([]string, error)
+		})
+		if !ok {
+			continue
+		}
+		models, err := lister.ListModels(ctx)
 		if err != nil {
 			log.Printf("fetch models from %s: %v", name, err)
 			continue
@@ -152,6 +160,12 @@ func runTUI() error {
 		},
 		OnModel: func(pName, mName string) {
 			sess.SetModel(pName, mName)
+		},
+		OnLogin: func() {
+			go tuiLogin(sess.cfg, prog)
+		},
+		OnLogout: func() {
+			go tuiLogout(sess.cfg, prog)
 		},
 	})
 

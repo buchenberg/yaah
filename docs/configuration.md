@@ -32,6 +32,12 @@ providers:
     api_key: ${OPENROUTER_API_KEY}
     models:                          # limit available models
       - meta-llama/llama-4-maverick
+  copilot:
+    api: copilot                     # GitHub Copilot (OpenAI-compatible)
+    name: GitHub Copilot
+    api_key: ${GITHUB_TOKEN}
+    models:
+      - gpt-4o
 
 # ── Agents ─────────────────────────────────────────────────────
 agents:
@@ -131,7 +137,7 @@ At least one provider is required. Each needs a `base_url` and an `api_key`.
 
 | Field | Default | Description |
 |---|---|---|
-| `api` | `openai` | API protocol: `openai` (default) or `anthropic` (native Messages API) |
+| `api` | `openai` | API protocol: `openai` (default), `anthropic` (native Messages API), or `copilot` (GitHub Copilot, OpenAI-compatible) |
 | `base_url` | (required) | API endpoint (OpenAI-compatible or Anthropic Messages) |
 | `api_key` | — | Supports `${ENV_VAR}` substitution |
 | `name` | map key | Display name shown in CLI/TUI |

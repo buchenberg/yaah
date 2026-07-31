@@ -16,7 +16,7 @@ providers:
     name: DeepSeek
     base_url: https://api.deepseek.com/v1
     api_key: ${DEEPSEEK_API_KEY}
-    # api: openai               # default; set to "anthropic" for native Anthropic API
+    # api: openai               # default; also "anthropic" or "copilot"
   # anthropic:
   #   api: anthropic
   #   name: Anthropic
