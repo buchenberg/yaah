@@ -36,17 +36,22 @@ func (b InfoBar) Height() int {
 
 // Render returns the info bar content with vertical padding.
 func (b InfoBar) Render() string {
-	if b.prompt == "" {
-		return "\n\n" // 3 lines of empty space to match Height()
+	if b.width < 10 {
+		b.width = 10
 	}
-	var label string
-	if b.activeView != "" {
-		spinner := lolcatRender(b.activeView)
-		label = spinner + " " + infoBarPromptStyle.Render(truncatePrompt(b.prompt, b.width-6))
-	} else {
-		label = infoBarPromptStyle.Render(truncatePrompt(b.prompt, b.width-4))
+
+	var content string
+	if b.prompt != "" {
+		promptText := truncatePrompt(b.prompt, b.width)
+		if b.activeView != "" {
+			spinner := lolcatRender(b.activeView)
+			content = spinner + " " + infoBarPromptStyle.Render(promptText)
+		} else {
+			content = infoBarPromptStyle.Render(promptText)
+		}
 	}
-	return "\n" + label + "\n"
+
+	return "\n" + content + "\n"
 }
 
 // truncatePrompt shortens a prompt to fit within maxW, adding ellipsis.

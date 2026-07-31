@@ -1,6 +1,8 @@
 package tui
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // StatusBar renders the one-line status strip between the chat
 // viewport and the input: shortened cwd, message count, and
@@ -36,8 +38,8 @@ func (s StatusBar) Render() string {
 		ctxBar = " " + contextBar(s.contextPct)
 	}
 
-	text := fmt.Sprintf(" %s │ messages: %d │%s",
+	leftText := fmt.Sprintf(" %s │ messages: %d │%s",
 		shortenCWD(s.cwd, s.width/3), s.messages, ctxBar)
 
-	return statusStyle.Width(s.width).Render(text)
+	return statusStyle.Width(s.width).Render(leftText)
 }
