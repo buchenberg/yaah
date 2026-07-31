@@ -80,7 +80,6 @@ yaah/
 ├── .github/workflows/ci.yml     # CI: test, vet, staticcheck, cross-compile
 ├── docs/
 │   ├── architecture.md          # detailed architecture documentation
-│   ├── BENCHMARK-HISTORY.md     # historical benchmark data
 │   ├── tui-components.md        # TUI component system reference
 │   └── otel-setup.md            # OpenTelemetry/OpenObserve setup guide
 ├── README.md

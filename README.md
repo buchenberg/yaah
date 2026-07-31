@@ -906,7 +906,6 @@ yaah/
 │   └── update/                   # GitHub release checking
 ├── docs/
 │   ├── architecture.md           # detailed architecture
-│   ├── BENCHMARK-HISTORY.md      # benchmark history
 │   ├── PROMPT-INJECTION.md       # prompt injection architecture map
 │   ├── tui-components.md         # TUI component reference
 │   ├── web-ui.md                 # web UI architecture and event reference
@@ -923,7 +922,6 @@ See [`docs/architecture.md`](./docs/architecture.md) for a detailed
 walkthrough of the agent loop, middleware pipeline, tool execution,
 streaming, context compaction, and sub-agent lifecycle.
 
-Benchmarks and perf history are in [`docs/BENCHMARK-HISTORY.md`](./docs/BENCHMARK-HISTORY.md).
 Current benchmark results are in [`BENCHMARKS.md`](./BENCHMARKS.md).
 
 ## Status
