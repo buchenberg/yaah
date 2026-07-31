@@ -80,6 +80,9 @@ yaah/
 ├── .github/workflows/ci.yml     # CI: test, vet, staticcheck, cross-compile
 ├── docs/
 │   ├── architecture.md          # detailed architecture documentation
+│   ├── sub-agents.md            # sub-agent team, roles, escalation, contracts
+│   ├── features.md              # TUI, REPL, MCP, tools, observability, middleware
+│   ├── configuration.md         # full config reference
 │   ├── tui-components.md        # TUI component system reference
 │   └── otel-setup.md            # OpenTelemetry/OpenObserve setup guide
 ├── README.md
