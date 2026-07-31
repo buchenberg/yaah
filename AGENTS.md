@@ -221,7 +221,7 @@ Available skills:
 |---|---|
 | `yaah-testing` | Smoke testing the CLI, sub-agents, OTel traces, Docker containers, or running CI checks |
 | `yaah-dev-loop` | Building, running, and iterating on the yaah MCP server from inside a Kilo session |
-| `yaah-jaeger` | Querying and analyzing yaah agent traces from Jaeger via the HTTP API |
+| `yaah-openobserve` | Querying and analyzing yaah agent traces from OpenObserve via the HTTP API |
 | `yaah-benchmark` | Running the standard multi-step benchmark and capturing metrics from Jaeger traces |
 
 ## What NOT to do

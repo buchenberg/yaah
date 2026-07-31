@@ -1,0 +1,1 @@
+Runs `git diff` or unified `diff` between two files/refs and returns structured per-file statistics (insertions, deletions, files changed) plus the full unified diff. Use for reviewing changes before commits, comparing branches, or inspecting file differences.

@@ -28,6 +28,9 @@ tools:
   - webfetch
   - http
   - git
+  - go_test
+  - diff
+  - bisect
 max_iterations: 30
 max_turns: 6
 timeout: 300

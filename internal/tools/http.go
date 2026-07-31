@@ -103,6 +103,9 @@ func (t *HTTPTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.URL == "" {
 		return "", fmt.Errorf("http: url is required")
 	}
+	if err := validateURL(params.URL); err != nil {
+		return "", fmt.Errorf("http: %w", err)
+	}
 
 	method := strings.ToUpper(params.Method)
 	if method == "" {

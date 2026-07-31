@@ -105,7 +105,9 @@ func listDir(w io.Writer, root, prefix string, maxDepth, currentDepth int) error
 
 		if e.IsDir() && currentDepth < maxDepth {
 			childPath := filepath.Join(root, e.Name())
-			listDir(w, childPath, prefix+nextPrefix, maxDepth, currentDepth+1)
+			if err := listDir(w, childPath, prefix+nextPrefix, maxDepth, currentDepth+1); err != nil {
+				fmt.Fprintf(w, "%s%s[error: %v]\n", prefix+nextPrefix, connector, err)
+			}
 		}
 	}
 	return nil

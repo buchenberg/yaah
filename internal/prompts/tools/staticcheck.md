@@ -1,0 +1,1 @@
+Runs Go static analysis (`go vet` and/or `staticcheck`) on a package pattern and returns diagnostics grouped by file with severity (error/warning). Use for code review, catching bugs, and enforcing best practices. Zero diagnostics means clean code.

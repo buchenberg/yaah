@@ -259,7 +259,6 @@ func (t *TaskTool) Schema() json.RawMessage {
 			"description": {"type": "string", "description": "3-5 word description of the subtask"},
 			"prompt": {"type": "string", "description": "The task for the sub-agent to perform autonomously"},
 			"role": {"type": "string", "description": "Sub-agent role selecting its tool set and limits. Required. Use list_subagents to see available roles."},
-			"timeout_seconds": {"type": "integer", "minimum": 10, "maximum": 600, "description": "Optional wall-clock deadline for the sub-agent. Overrides the role default."},
 			"max_iterations": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Optional cap on sub-agent loop turns. Overrides the role default."},
 			"max_turns": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Optional soft cap on tool-using turns. Overrides the role default."},
 			"json_mode": {"type": "boolean", "description": "Request structured JSON output from the sub-agent."},
@@ -307,12 +306,6 @@ func BuildTaskSchema(roleNames []string, roleDescriptions map[string]string) jso
 				"type":        "string",
 				"enum":        roles,
 				"description": roleDesc,
-			},
-			"timeout_seconds": map[string]any{
-				"type":        "integer",
-				"minimum":     10,
-				"maximum":     600,
-				"description": "Optional wall-clock deadline for the sub-agent. Overrides the role default.",
 			},
 			"max_iterations": map[string]any{
 				"type":        "integer",

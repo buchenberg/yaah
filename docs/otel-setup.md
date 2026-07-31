@@ -1,39 +1,42 @@
 # OpenTelemetry Observability
 
 yaah can emit traces to any OpenTelemetry-compatible backend
-via OTLP gRPC. This document covers local development setup with
-[Jaeger](https://www.jaegertracing.io/) and production options.
+via OTLP HTTP. This document covers local development setup with
+[OpenObserve](https://openobserve.ai/) and production options.
 
 ## Quick start (Docker Compose)
 
 A `docker-compose.yml` is included in the repo root:
 
 ```bash
-docker compose up -d jaeger
+docker compose up -d openobserve
 ```
 
-This starts Jaeger v2 all-in-one. The UI has a settings gear icon in
-the top-right corner — toggle dark mode there. Ports:
+This starts OpenObserve. Ports:
 
-- `16686` — Jaeger UI (http://localhost:16686)
-- `4317` — OTLP gRPC (yaah sends traces here)
+- `5080` — OpenObserve UI + API + OTLP HTTP (yaah sends traces here)
 
-To run yaah in a container alongside Jaeger:
+Log in with `root@localhost` / `Complexpass#123`, then navigate to **Traces**.
+
+To run yaah in a container alongside OpenObserve:
 
 ```bash
 docker compose run --rm yaah "your prompt"
 ```
 
-When yaah runs inside Docker, set the OTel endpoint to `jaeger:4317`
+When yaah runs inside Docker, set the OTel endpoint to `openobserve:5080`
 (the Docker service name). When running yaah on the host, use
-`localhost:4317`.
+`localhost:5080`.
 
-## Manual Jaeger setup
+## Manual OpenObserve setup
 
 ```bash
-docker run -d --name jaeger \
-  -p 16686:16686 -p 4317:4317 \
-  cr.jaegertracing.io/jaegertracing/jaeger:2.19.0
+docker run -d --name openobserve \
+  -p 5080:5080 \
+  -e ZO_ROOT_USER_EMAIL=root@localhost \
+  -e ZO_ROOT_USER_PASSWORD=Complexpass#123 \
+  -v openobserve_data:/data \
+  public.ecr.aws/zinclabs/openobserve:latest
 ```
 
 ## Enable in yaah
@@ -42,7 +45,7 @@ docker run -d --name jaeger \
 observability:
   otel:
     enabled: true
-    endpoint: "localhost:4317"   # or "jaeger:4317" from Docker
+    endpoint: "localhost:5080"   # or "openobserve:5080" from Docker
     service_name: "yaah"
 ```
 
@@ -51,11 +54,11 @@ All other fields default as shown. The full reference:
 | Field | Default | Description |
 |---|---|---|
 | `enabled` | `false` | Set to `true` to activate |
-| `endpoint` | `localhost:4317` | OTLP gRPC collector address |
+| `endpoint` | `localhost:5080` | OTLP HTTP collector address |
 | `service_name` | `yaah` | Display name in the tracing UI |
 | `traces` | `true` | Emit trace spans |
 | `metrics` | `false` | Emit OTLP metrics (needs a metrics-capable backend) |
-| `verbose` | `false` | Record full model content, reasoning, tool-call arguments, and conversation context as span attributes/events. Off by default to keep Jaeger payloads light; turn on when diagnosing agent-loop behaviour (e.g. a sub-agent going off track). Only effective when `enabled` is `true`. |
+| `verbose` | `false` | Record full model content, reasoning, tool-call arguments, and conversation context as span attributes/events. Off by default to keep payloads light; turn on when diagnosing agent-loop behaviour (e.g. a sub-agent going off track). Only effective when `enabled` is `true`. |
 
 ## Verbose tracing
 
@@ -90,8 +93,9 @@ Confirm verbose is active with `yaah doctor` — the Observability line shows
 
 ## View traces
 
-Open http://localhost:16686 in a browser. Select the `yaah` service from the
-dropdown. Each user prompt generates a trace waterfall showing:
+Open http://localhost:5080 in a browser. Log in with `root@localhost` /
+`Complexpass#123`. Navigate to **Traces** in the sidebar. Each user
+prompt generates a trace waterfall showing:
 
 | Span | Description |
 |---|---|
@@ -141,7 +145,20 @@ observability:
     endpoint: "otel-collector:4317"
 ```
 
-### Environment variables
+### OpenObserve (self-hosted or cloud)
+
+OpenObserve supports OTLP HTTP natively. Point yaah directly at the
+OpenObserve instance:
+
+```yaml
+observability:
+  otel:
+    enabled: true
+    endpoint: "openobserve.example.com:5080"
+    service_name: "yaah-prod"
+```
+
+## Environment variables
 
 The OTel SDK also respects standard environment variables for advanced
 configuration (sampling, batch size, TLS, etc.):
@@ -154,11 +171,15 @@ export OTEL_TRACES_SAMPLER_ARG="0.1"
 
 ## Troubleshooting
 
-**"No traces in Jaeger"**: Verify the endpoint is reachable. The Jaeger
-container must have port 4317 mapped. Check yaah stderr for OTel errors.
+**"No traces in OpenObserve"**: Verify the endpoint is reachable. The
+OpenObserve container must have port 5080 mapped. Check yaah stderr for
+OTel errors.
 
-**"Spans appear but no waterfall"**: The default time range may filter them
-out — adjust the time picker in the Jaeger UI.
+**"Spans appear but empty"**: Ensure you're in the **Traces** tab (not Logs
+or Metrics). Refresh the time range if needed.
+
+**"Connection refused"**: OpenObserve uses HTTP for OTLP, not gRPC. Ensure
+the endpoint is `localhost:5080`, not `localhost:4317`.
 
 ## Disabling
 

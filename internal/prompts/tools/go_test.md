@@ -1,0 +1,1 @@
+Runs Go tests with structured JSON output. Pass a package pattern like `./...`, optional timeout, and extra `go test` flags. Returns pass/fail counts, per-package results, timing, and optionally coverage %. Use for running test suites and analyzing failures.

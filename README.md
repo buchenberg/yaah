@@ -96,11 +96,11 @@ add `--profile cli` to `docker compose up` and `run` commands.
 ```bash
 export DEEPSEEK_API_KEY=sk-...
 docker compose --profile cli build
-docker compose --profile cli up -d    # starts yaah + jaeger
+docker compose --profile cli up -d    # starts yaah + openobserve
 docker compose --profile cli run --rm yaah "explain this codebase"
 ```
 
-Traces appear at http://localhost:16686. See [`docs/otel-setup.md`](./docs/otel-setup.md).
+Traces appear at http://localhost:5080. See [`docs/otel-setup.md`](./docs/otel-setup.md).
 
 ## Quick start
 
@@ -424,7 +424,7 @@ observability:
 ```
 
 Token attribution is tracked per-turn. Fire up Jaeger with `docker compose
-up -d jaeger`, visit http://localhost:16686, and watch me work. Full guide
+up -d openobserve`, visit http://localhost:5080, and watch me work. Full guide
 at [`docs/otel-setup.md`](./docs/otel-setup.md).
 
 ### Hook events
