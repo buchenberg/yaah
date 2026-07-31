@@ -1,7 +1,7 @@
 ---
 name: role-hot-reload
 description: Wire ReloadDefaultRoles into the agent lifecycle so role definitions reload from disk without restart
-status: in_progress
+status: completed
 ---
 
 ## Problem

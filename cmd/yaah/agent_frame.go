@@ -337,6 +337,11 @@ func newAgentSession() (*agentSession, error) {
 
 	taskTool := newTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default, nil)
 
+	// RoleResolver provides a live role-name lookup so the spawn_subagent
+	// tool sees roles created via the role tool without a restart. The
+	// cached reg.Names() snapshot above is layered underneath.
+	taskTool.RoleResolver = func() []string { return subagent.DefaultRegistry().Names() }
+
 	// Wire background sub-agent completion into the follow-up channel so
 	// results from async sub-agents appear as injected user messages.
 	taskTool.BackgroundNotifier = func(role, description, result string, err error) {
@@ -362,7 +367,11 @@ func newAgentSession() (*agentSession, error) {
 
 	toolReg.Register(&tools.ListSubAgentsTool{
 		Lister: func() []tools.SubAgentInfo {
-			defs := reg.List()
+			r := subagent.DefaultRegistry()
+			if r == nil {
+				return nil
+			}
+			defs := r.List()
 			infos := make([]tools.SubAgentInfo, 0, len(defs))
 			for name, def := range defs {
 				desc := def.Description
