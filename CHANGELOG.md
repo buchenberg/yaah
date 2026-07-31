@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.44.0](https://github.com/buchenberg/yaah/compare/v0.43.0...v0.44.0) (2026-07-31)
+
+
+### Features
+
+* GitHub Copilot provider with OAuth device flow ([#122](https://github.com/buchenberg/yaah/issues/122)) ([830d36b](https://github.com/buchenberg/yaah/commit/830d36b5f81fd1a3b85f0b07a0f7817e223b9ff3))
+
 ## [0.43.0](https://github.com/buchenberg/yaah/compare/v0.42.0...v0.43.0) (2026-07-31)
 
 
