@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.43.0](https://github.com/buchenberg/yaah/compare/v0.42.0...v0.43.0) (2026-07-31)
+
+
+### Features
+
+* add Serina project config + finalize TUI MCP status line removal ([#120](https://github.com/buchenberg/yaah/issues/120)) ([c14d2cf](https://github.com/buchenberg/yaah/commit/c14d2cf4ed05b64bf7f594e8c642279e021bb258))
+
 ## [0.42.0](https://github.com/buchenberg/yaah/compare/v0.41.0...v0.42.0) (2026-07-31)
 
 
