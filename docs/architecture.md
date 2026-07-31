@@ -198,8 +198,9 @@ The pipeline is built in `buildPipeline()` with a config-driven order:
 3. `CompactionMiddleware` — context window enforcement (LLM summarization)
 4. `SoftPruneMiddleware` — tier-0 tool-output elision (non-LLM, reclaims context)
 5. `ApprovalMiddleware` — no-op placeholder (approval moved to `executeAndCollect`)
-6. `LoopDetectionMiddleware` — detect stuck loops
-7. `StalenessMiddleware` — annotates sub-agent results when orchestrator context shifted mid-flight
+6. `ToolConcurrencyMiddleware` — no-op hooks; semaphore lives on `Loop.toolSem`
+7. `LoopDetectionMiddleware` — detect stuck loops
+8. `StalenessMiddleware` — annotates sub-agent results when orchestrator context shifted mid-flight
 
 The default set is defined in `defaultPipelineNames` in `config.go`. Users can override which middleware runs via `config.yaml`:
 
@@ -226,7 +227,7 @@ Drains the `Loop.FollowUps` channel in `PrepareStep`. Messages are injected as u
 
 #### CompactionMiddleware (`pipeline/compaction.go`)
 
-Triggers context compaction at both `PrepareStep` (preflight) and `PostTool` (post-iteration) hooks when `ContextWindow > 0`. Delegates to `Loop.compactContext(ctx, threshold)`. The `threshold` parameter (default 0.8) controls what fraction of the window triggers compaction. The middleware now accepts a configurable `CompactionThreshold` from the `Loop` struct.
+Triggers context compaction at both `PrepareStep` (preflight) and `PostTool` (post-iteration) hooks when `ContextWindow > 0`. Delegates to `Loop.compactContext(ctx, threshold)`. The `threshold` parameter (default 0.5) controls what fraction of the window triggers compaction. The middleware now accepts a configurable `CompactionThreshold` from the `Loop` struct.
 
 #### SoftPruneMiddleware (`pipeline/softprune.go`)
 
@@ -295,15 +296,18 @@ The `spawn_subagent` tool spawns a sub-agent: a fresh `agent.Loop` with a curate
 
 Each sub-agent runs under a **role** that selects its tool set and default limits.
 
-| Role | Tools | Max iterations | Default timeout | Can spawn |
+| Role | Tools | Max iter | Turns | Timeout | Can spawn |
 |---|---|---|---|---|---|
-| `analyst` | webfetch, http, read, grep, glob, ls, powershell, bash, json_query, calculate, file_info, go_outline, git | 20 | 120s | no |
-| `developer` | analyst set + write, edit, delete, replace | 25 | 180s | no |
-| `tester` | read, powershell, bash, grep, glob, ls, go_outline, calculate, file_info, json_query, webfetch, http, git | 20 | 180s | no |
-| `reviewer` | read, grep, glob, ls, powershell, bash, calculate, file_info, go_outline, json_query, webfetch, http, git | 15 | 120s | no |
-| _(default)_ | full built-in set (legacy) | — | — | depth permitting |
+| `analyst` (Jack) | webfetch, http, read, grep, glob, ls, powershell, bash, json_query, calculate, file_info, go_outline, git, sed, diff | 30 | 10 | 240s | no |
+| `developer` (Charley) | search set + write, edit, delete, replace, patch, go_refactor, go_test, go_mod, bisect, staticcheck | 40 | 6 | 300s | no |
+| `tester` (Casey) | read, powershell, bash, grep, glob, sed, ls, go_outline, calculate, file_info, json_query, webfetch, http, git, go_test, diff, bisect | 30 | 6 | 300s | no |
+| `reviewer` (Tim) | read, grep, glob, ls, sed, powershell, bash, calculate, file_info, go_outline, json_query, webfetch, http, git, diff, staticcheck | 25 | 3 | 240s | no |
 
-`RoleProfileFor(role)` delegates to the global `RoleRegistry` if one has been installed via `SetDefaultRoleRegistry`; otherwise it falls back to hardcoded legacy profiles in `legacyProfileFor`. `RoleDefault` returns a zero-value profile, signalling `makeTaskRunner` to use the legacy full tool set.
+There is **no default role** and no full-tools fallback. `RoleProfileFor(role)`
+reads from the global `RoleRegistry` installed at startup via
+`SetDefaultRoleRegistry`. Unknown roles (or any role when no registry is set)
+return the zero-value profile, which `makeTaskRunner` rejects with an error
+("role has no tools configured") rather than granting a full tool set.
 
 ### RoleRegistry
 
