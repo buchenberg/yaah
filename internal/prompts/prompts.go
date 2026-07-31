@@ -7,6 +7,7 @@ package prompts
 import (
 	"embed"
 	"fmt"
+	"os"
 	"runtime"
 	"sort"
 	"strings"
@@ -90,7 +91,11 @@ var chunkSummarizerSections []string
 func init() {
 	chunkSummarizerSections = strings.Split(strings.TrimSpace(chunkSummarizerRaw), "\n---\n")
 	if len(chunkSummarizerSections) != 4 {
-		panic(fmt.Sprintf("chunk_summarizer.md: expected 4 sections, got %d", len(chunkSummarizerSections)))
+		// Embedded template is malformed — this is a build-time invariant
+		// violation. Using log.Fatal instead of panic to produce a clearer
+		// diagnostic message.
+		fmt.Fprintf(os.Stderr, "FATAL: chunk_summarizer.md: expected 4 sections, got %d\n", len(chunkSummarizerSections))
+		os.Exit(1)
 	}
 }
 

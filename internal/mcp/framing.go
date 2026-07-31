@@ -103,10 +103,12 @@ func (w *FramedWriter) WriteMessage(msg JSONRPCMessage) error {
 
 	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(body))
 	if _, err := w.writer.Write([]byte(header)); err != nil {
-		return err
+		return fmt.Errorf("write Content-Length header: %w", err)
 	}
-	_, err = w.writer.Write(body)
-	return err
+	if _, err := w.writer.Write(body); err != nil {
+		return fmt.Errorf("write framed body: %w", err)
+	}
+	return nil
 }
 
 // --- Newline-delimited framing -------------------------------------------
@@ -166,8 +168,10 @@ func (w *NewlineWriter) WriteMessage(msg JSONRPCMessage) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if _, err := w.writer.Write(body); err != nil {
-		return err
+		return fmt.Errorf("write newline-delimited body: %w", err)
 	}
-	_, err = w.writer.Write([]byte("\n"))
-	return err
+	if _, err := w.writer.Write([]byte("\n")); err != nil {
+		return fmt.Errorf("write trailing newline: %w", err)
+	}
+	return nil
 }

@@ -72,7 +72,6 @@ type bisectResult struct {
 
 var (
 	bisectRemainingRe = regexp.MustCompile(`Bisecting: (\d+) revision`)
-	bisectCurrentRe   = regexp.MustCompile(`remaining:\s*(\d+)`)
 	bisectFoundRe     = regexp.MustCompile(`([0-9a-f]{7,}) is the first bad commit`)
 )
 
