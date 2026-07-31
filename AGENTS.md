@@ -30,22 +30,29 @@ yaah/
 ├── go.mod                       # Go 1.25+, cobra, modernc.org/sqlite
 ├── cmd/yaah/                    # cobra commands
 │   ├── root.go                  # build-time vars (version, commit, date)
-│   ├── root_cmd.go              # rootCmd, REPL, one-shot, agent wiring
+│   ├── root_cmd.go              # rootCmd: REPL, one-shot, prompt dispatch
+│   ├── agent_frame.go           # agent wiring (providers, tools, middleware)
+│   ├── repl_loop.go             # interactive REPL loop + slash commands
+│   ├── subagent_runner.go       # sub-agent dispatch + role discovery
+│   ├── provider_resolve.go      # provider/model resolution helpers
 │   ├── serve.go                 # yaah serve — MCP tool server (stdio + HTTP)
 │   ├── acp.go                   # yaah acp-serve — ACP server over stdio (JSON-RPC 2.0)
 │   ├── acp_view.go              # ACP event view (agent.View implementation)
+│   ├── web.go web_view.go       # yaah web — browser UI + WebSocket view
+│   ├── tui.go                   # yaah tui (bubbletea) + tui_unix.go / tui_windows.go
+│   ├── plan.go                  # plan tool wiring
+│   ├── goat.go                  # easter-egg `yaah yaah` ASCII goat
 │   ├── version.go               # yaah version
 │   ├── config.go                # yaah config show/edit
 │   ├── doctor.go                # yaah doctor
 │   ├── update.go                # yaah update
-│   ├── skill.go                 # yaah skill list/show
+│   ├── skill.go                 # yaah skill list/show/create/edit
 │   ├── mcp.go                   # yaah mcp list/add/remove
 │   ├── memory.go                # yaah memory search/add
 │   ├── session.go               # yaah session list/show
-│   ├── tui.go                   # yaah tui (bubbletea)
 │   └── color.go                 # ANSI color helpers
 ├── internal/
-│   ├── agent/                   # agent loop, callbacks, tool dispatch, context, hooks, persistence
+│   ├── agent/                   # agent loop, typed events, tool dispatch, context, hooks, persistence
 │   │   ├── errorclassify/        #   structured LLM provider error classification
 │   │   ├── llm/                  #   LLM client wrapping (streaming, retry, fallback, usage)
 │   │   ├── pipeline/             #   middleware pipeline (compaction, approval, permissions, etc.)
@@ -66,7 +73,7 @@ yaah/
 │   ├── spinner/                 # animated thinking spinner
 │   ├── todo/                    # in-memory todo store
 │   ├── toolfmt/                 # shared tool result formatting (TUI + web views)
-│   ├── tools/                   # built-in tools (read, write, edit, replace, delete, json_query, grep, glob, ls, bash, powershell, git, question, webfetch, task, background_process, memory, todo, calculate, http, go_outline, plan, skill)
+│   ├── tools/                   # built-in tools (read, write, edit, replace, delete, patch, sed, json_query, grep, glob, ls, bash, powershell, git, question, webfetch, http, go_outline, go_refactor, go_test, go_mod, bisect, diff, staticcheck, calculate, file_info, task, background_process, memory, todo, plan, skill)
 │   ├── tui/                     # bubbletea TUI (component system: renderers in *_component.go, styled via theme.go)
 │   ├── types/                   # OpenAI message types
 │   └── update/                  # GitHub release checking
