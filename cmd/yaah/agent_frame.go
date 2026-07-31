@@ -93,6 +93,8 @@ type agentSession struct {
 	otelShutdown func(context.Context) error
 	tracker      *tools.ConflictTracker
 
+	cwd string
+
 	view      agent.View
 	ctrlCh    chan<- types.CtrlMsg
 	approveFn func(name, args string) bool
@@ -411,6 +413,7 @@ func newAgentSession() (*agentSession, error) {
 		msgIdx:       msgIdx,
 		otelShutdown: otelShutdown,
 		tracker:      tracker,
+		cwd:          cwd,
 		steerCh:      make(chan string, 4),
 		followupCh:   followupCh,
 	}, nil
@@ -686,6 +689,37 @@ func (s *agentSession) compactContext() {
 		newTokens += len(m.Content) / 4
 	}
 	msg(fmt.Sprintf("compacted: %d/%d tokens (%d%%)", newTokens, window, newTokens*100/window))
+}
+
+func (s *agentSession) reloadRoles() {
+	s.mu.RLock()
+	ch := s.ctrlCh
+	cwd := s.cwd
+	s.mu.RUnlock()
+
+	msg := func(text string) {
+		if ch != nil {
+			select {
+			case ch <- &types.CtrlStatus{Text: text}:
+			default:
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "  %s\n", Dim(text))
+		}
+	}
+
+	opts := subagent.ReloadDefaultRolesOptions{
+		BuiltinFiles: builtinRoleFiles(),
+		SearchDirs:   roleSearchPaths(cwd),
+	}
+	if err := subagent.ReloadDefaultRoles(opts); err != nil {
+		msg(fmt.Sprintf("role reload failed: %v", err))
+		return
+	}
+
+	reg := subagent.DefaultRegistry()
+	roles := reg.Names()
+	msg(fmt.Sprintf("reloaded %d roles (%d built-in + %d search dirs)", len(roles), len(opts.BuiltinFiles), len(opts.SearchDirs)))
 }
 
 // terminalView implements agent.View for REPL terminal output.
