@@ -135,7 +135,7 @@ At least one provider is required. Each needs a `base_url` and an `api_key`.
 | `base_url` | (required) | API endpoint (OpenAI-compatible or Anthropic Messages) |
 | `api_key` | — | Supports `${ENV_VAR}` substitution |
 | `name` | map key | Display name shown in CLI/TUI |
-| `models` | — | Limit available models (empty = all from `/models`; n/a for Anthropic) |
+| `models` | — | Limit available models. Each entry is a plain name or `{name: …, thinking: true/false}` to override thinking detection (empty = all from `/models`; n/a for Anthropic) |
 | `timeout` | 120 | HTTP request timeout in seconds (0 = no timeout) |
 
 ## Agent reference
@@ -149,7 +149,7 @@ At least one provider is required. Each needs a `base_url` and an `api_key`.
 | `small_model` | — | Cheaper model for context compaction |
 | `max_iterations` | 50 | Safety cap on loop turns |
 | `max_turns` | 0 (off) | Soft cap; tools are stripped at this iteration, forcing a final answer |
-| `context_window` | — | Token budget (0 = disabled) |
+| `context_window` | 128000 | Token budget; caps the model's resolved window (0 = disabled) |
 | `approval` | `ask` | `allow`, `ask`, or `deny` |
 | `max_inline_tools_per_turn` | 0 (unlimited) | Cap inline tool calls per turn |
 | `estimate_factor` | 1.3 | Token estimate multiplier for preflight compaction |
@@ -164,6 +164,12 @@ At least one provider is required. Each needs a `base_url` and an `api_key`.
 | `max_tool_concurrency` | 0 (unlimited) | Cap concurrent tool goroutines per turn |
 | `prompt_caching` | `false` | Inject Anthropic `cache_control` breakpoints (requires `api: anthropic`) |
 | `reasoning_protect_turns` | 2 | Preserve reasoning on N recent turns in provider requests |
+| `wrap_up_turns` | 1 | Inject a wrap-up notice N turns before the soft cap (negative = off) |
+| `tool_result_max_lines` | 500 | Truncate tool results to N lines |
+| `tool_result_max_bytes` | 20480 | Truncate tool results to N bytes |
+| `prune_protect_tokens` | 2000 | Recent tool-output tokens shielded from soft-prune |
+| `prune_min_reclaim` | 400 | Minimum tokens required to commit a soft-prune |
+| `prune_min_turns` | 1 | Recent turns always kept by soft-prune |
 
 Sub-agents inherit all of the above (except `max_turns`, which they override via
 `default_max_turns` below) — making `compaction_threshold`, `loop_detect_count`,
@@ -177,6 +183,7 @@ and `max_retries` consistent across the whole team.
 | `model` | `default.model` | Model for sub-agents |
 | `max_concurrency` | 3 | Max simultaneous `spawn_subagent` calls |
 | `default_timeout` | — | Default seconds per sub-agent (0 = none) |
+| `stuck_child_timeout` | 60 | Seconds without a heartbeat before a sub-agent is force-cancelled (0 = off) |
 | `default_max_turns` | 0 (unlimited) | Default soft turn cap |
 | `output_limit` | 51200 | Byte cap on sub-agent reports |
 | `json_mode` | false | Force structured JSON output |
@@ -187,6 +194,10 @@ and `max_retries` consistent across the whole team.
 | `roles.<name>.model` | — | Per-role model override |
 | `roles.<name>.context_window` | — | Per-role context window (halved from parent if unset) |
 | `roles.<name>.max_concurrency` | — | Per-role concurrency cap |
+| `roles.<name>.output_limit` | — | Per-role report byte cap |
+| `roles.<name>.json_mode` | — | Per-role structured-output toggle |
+| `roles.<name>.directives` | — | Per-role directives injected into that role's prompt |
+| `roles.<name>.stuck_child_timeout` | — | Per-role stuck-child timeout |
 
 **`agents.fallback`** — fallback on transient errors (429, 503):
 
@@ -209,7 +220,7 @@ explicit order. Set `disabled` to remove from the default pipeline
 | `loop_detection` | on | Halt stuck loops |
 | `staleness` | on | Annotate sub-agent results when context shifted |
 | `permission` | off | Path-pattern allow/deny rules |
-| `tool_concurrency` | off | Cap concurrent tool goroutines |
+| `tool_concurrency` | on | Cap concurrent tool goroutines |
 | `sub_agent` | off | Enforce sub-agent depth limits |
 | `prompt_caching` | off | Anthropic cache-control breakpoints |
 

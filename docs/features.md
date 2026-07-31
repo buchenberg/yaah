@@ -15,8 +15,8 @@ for configuration see [configuration.md](./configuration.md).
 - Inline tool call cards showing what I'm running, how long it took, and the
   result
 - Sub-agent dispatch cards with role, duration, and error status
-- A command palette (`:`) for model switching, help, compact, clear, banner
-  toggle, MCP status
+- A command palette (`:`) with `:help`, `:clear`, `:compact`, `:banner`,
+  `:model`, `:steer`, `:copyview`, `:quit`, and `:stop`
 - Search (`/`) through response history
 - `ctrl+y` to copy the last response
 - Mouse wheel, page up/down, home/end navigation
