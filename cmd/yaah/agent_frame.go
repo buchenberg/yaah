@@ -380,6 +380,13 @@ func newAgentSession() (*agentSession, error) {
 		},
 	})
 
+	// Build and inject a compact tool quick-reference card so the
+	// model has signature-first parameter info near the top of the
+	// prompt, rather than only verbose JSON schemas at the bottom.
+	if quickRef := buildToolQuickRef(toolReg); quickRef != "" {
+		mainPrompt += "\n\n" + quickRef
+	}
+
 	// Wrap the provider with OTel instrumentation if enabled.
 	if otelActive {
 		if sp, ok := provider.(agent.StreamProvider); ok {
@@ -430,6 +437,59 @@ func (s *agentSession) close() {
 	for _, c := range s.mcpClients {
 		c.Close()
 	}
+}
+
+// buildToolQuickRef iterates the tool registry and produces a compact
+// markdown quick-reference table. Each entry extracts the top-level
+// property names from the JSON Schema so the model can see parameter
+// names without parsing verbose schemas at the bottom of the prompt.
+func buildToolQuickRef(toolReg *tools.Registry) string {
+	names := toolReg.List()
+	entries := make([]prompts.QuickRefEntry, 0, len(names))
+	for _, name := range names {
+		t := toolReg.Get(name)
+		if t == nil {
+			continue
+		}
+		sig := schemaSignature(t.Schema())
+		entries = append(entries, prompts.QuickRefEntry{
+			Name:        name,
+			Signature:   sig,
+			Description: t.Description(),
+		})
+	}
+	return prompts.BuildToolQuickRef(entries)
+}
+
+// schemaSignature extracts a compact comma-separated parameter list
+// from a JSON Schema object. Optional properties get a "?" suffix.
+func schemaSignature(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+		Required   []string                   `json:"required"`
+	}
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return ""
+	}
+	if len(s.Properties) == 0 {
+		return ""
+	}
+	required := make(map[string]bool, len(s.Required))
+	for _, r := range s.Required {
+		required[r] = true
+	}
+	params := make([]string, 0, len(s.Properties))
+	for name := range s.Properties {
+		if required[name] {
+			params = append(params, name)
+		} else {
+			params = append(params, name+"?")
+		}
+	}
+	return strings.Join(params, ", ")
 }
 
 func (s *agentSession) Close()   { s.close() }

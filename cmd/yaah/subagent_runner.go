@@ -170,12 +170,8 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		role := subagent.SubAgentRole(params.Role)
 		profile := subagent.RoleProfileFor(role)
 
-		// Defensive guard: the task tool rejects unknown roles before
-		// dispatch, so a tool-less profile here means a misconfigured
-		// role definition rather than a request for a default role.
-		if len(profile.Tools) == 0 {
-			return "", fmt.Errorf("sub-agent role %q has no tools configured — add a tools list to its role definition", role)
-		}
+		// A tool-less profile is valid — some roles (e.g. grump) are
+		// designed to respond without calling any tools.
 
 		subReg := buildSubAgentRegistry(opts, profile, remainingDepth)
 

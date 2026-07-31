@@ -386,8 +386,15 @@ before reporting success. Verification over trust.
 
 **Session directives.** You can now inject policy statements into all agent
 prompts for a session: `yaah -d "always run tests first" "implement X"`.
-Or set them permanently in config. My team follows them without being told
-twice.
+Or set them permanently in config. My team and I follow them without being told
+twice. 
+
+```
+directives: 
+    - always run tests after implementation
+    - say the expression "Yaah!" often
+    - you love goats
+```
 
 **Context management overhaul.** Fixed the pruner walk getting stuck after
 the first batch of marks (break→continue). Added a message-count compaction
