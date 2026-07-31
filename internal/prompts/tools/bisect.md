@@ -1,0 +1,1 @@
+Runs guided `git bisect` to find which commit introduced a bug. Use `start` with good/bad refs and an optional test command to auto-bisect, or use `good`/`bad`/`skip` to manually guide the search. `log` shows progress and `reset` aborts. The test command must exit 0 for good and non-zero for bad.

@@ -145,12 +145,12 @@ func (c *HTTPClient) Close() error {
 func (c *HTTPClient) sendRequest(ctx context.Context, msg JSONRPCMessage) (*JSONRPCMessage, error) {
 	body, err := json.Marshal(msg)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", c.url, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
@@ -160,7 +160,7 @@ func (c *HTTPClient) sendRequest(ctx context.Context, msg JSONRPCMessage) (*JSON
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("send request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -171,7 +171,7 @@ func (c *HTTPClient) sendRequest(ctx context.Context, msg JSONRPCMessage) (*JSON
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read response: %w", err)
 	}
 
 	// Handle 202 Accepted (notification acknowledged, no body)

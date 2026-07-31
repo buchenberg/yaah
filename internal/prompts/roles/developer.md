@@ -32,6 +32,11 @@ tools:
   - file_info
   - webfetch
   - http
+  - go_test
+  - diff
+  - staticcheck
+  - go_mod
+  - bisect
 max_iterations: 40
 max_turns: 6
 timeout: 300

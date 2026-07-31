@@ -46,6 +46,7 @@ yaah/
 │   └── color.go                 # ANSI color helpers
 ├── internal/
 │   ├── agent/                   # agent loop, callbacks, tool dispatch, context, hooks, persistence
+│   │   ├── errorclassify/        #   structured LLM provider error classification
 │   │   ├── llm/                  #   LLM client wrapping (streaming, retry, fallback, usage)
 │   │   ├── pipeline/             #   middleware pipeline (compaction, approval, permissions, etc.)
 │   │   └── subagent/             #   sub-agent role definitions and registry
@@ -55,13 +56,16 @@ yaah/
 │   ├── mcp/                     # MCP client + server (stdio + HTTP), manifests
 │   ├── memory/                  # SQLite + FTS5 (sessions, messages, memory)
 │   ├── observability/           # OpenTelemetry tracing, in-memory span buffer
+│   ├── plans/                   # PLAN.md discovery/parsing (project + user, like skills + status)
 │   ├── process/                 # background process manager
 │   ├── providers/               # OpenAI & Anthropic API clients, streaming, model info
 │   ├── prompts/                 # system prompt assembly (identity, env, memory, project)
+│   ├── pubsub/                  # typed pub/sub broker (agent event fan-out)
 │   ├── repl/                    # REPL, history, slash commands, colors, banner
 │   ├── skills/                  # SKILL.md discovery, frontmatter parsing
 │   ├── spinner/                 # animated thinking spinner
 │   ├── todo/                    # in-memory todo store
+│   ├── toolfmt/                 # shared tool result formatting (TUI + web views)
 │   ├── tools/                   # built-in tools (read, write, edit, replace, delete, json_query, grep, glob, ls, bash, powershell, git, question, webfetch, task, background_process, memory, todo, calculate, http, go_outline, plan, skill)
 │   ├── tui/                     # bubbletea TUI (component system: renderers in *_component.go, styled via theme.go)
 │   ├── types/                   # OpenAI message types
@@ -221,7 +225,7 @@ Available skills:
 |---|---|
 | `yaah-testing` | Smoke testing the CLI, sub-agents, OTel traces, Docker containers, or running CI checks |
 | `yaah-dev-loop` | Building, running, and iterating on the yaah MCP server from inside a Kilo session |
-| `yaah-jaeger` | Querying and analyzing yaah agent traces from Jaeger via the HTTP API |
+| `yaah-openobserve` | Querying and analyzing yaah agent traces from OpenObserve via the HTTP API |
 | `yaah-benchmark` | Running the standard multi-step benchmark and capturing metrics from Jaeger traces |
 
 ## What NOT to do

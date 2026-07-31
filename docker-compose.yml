@@ -8,15 +8,23 @@ services:
       - ~/.yaah:/root/.yaah
     environment:
       - YAAH_OTEL_ENABLED=true
-      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
+      - OTEL_EXPORTER_OTLP_ENDPOINT=openobserve:5080
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - ZAI_API_KEY=${ZAI_API_KEY:-}
     depends_on:
-      - jaeger
+      - openobserve
     profiles: [cli]
 
-  jaeger:
-    image: cr.jaegertracing.io/jaegertracing/jaeger:2.19.0
+  openobserve:
+    image: public.ecr.aws/zinclabs/openobserve:latest
     ports:
-      - "16686:16686"  # Jaeger UI
-      - "4317:4317"    # OTLP gRPC
+      - "5080:5080"  # OpenObserve UI + API + OTLP HTTP
+    environment:
+      - ZO_ROOT_USER_EMAIL=root@localhost
+      - ZO_ROOT_USER_PASSWORD=Complexpass#123
+      - ZO_INGEST_ALLOWED_UPTO=120
+    volumes:
+      - openobserve_data:/data
+
+volumes:
+  openobserve_data:

@@ -294,14 +294,19 @@ func normalizeLeadingWS(line string) string {
 
 // contentBytePos returns the byte position in the original content
 // corresponding to the given normalized position, using the provided
-// normalizing function.
+// normalizing function. Uses binary search since len(fn(content[:i]))
+// is monotonically non-decreasing.
 func contentBytePos(content string, fn func(string) string, normPos int) int {
-	for i := range len(content) {
-		if len(fn(content[:i])) >= normPos {
-			return i
+	lo, hi := 0, len(content)
+	for lo < hi {
+		mid := (lo + hi) / 2
+		if len(fn(content[:mid])) >= normPos {
+			hi = mid
+		} else {
+			lo = mid + 1
 		}
 	}
-	return len(content)
+	return lo
 }
 
 // countLines returns the number of lines in a string.

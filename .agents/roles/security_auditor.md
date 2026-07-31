@@ -18,6 +18,7 @@ tools:
   - calculate
   - json_query
   - git
+  - diff
 max_iterations: 30
 timeout: 180
 ---

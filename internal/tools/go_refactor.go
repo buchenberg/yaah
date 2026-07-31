@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go/ast"
 	"os"
 	"path/filepath"
 	"strings"
@@ -122,15 +123,21 @@ func (t *GoRefactorTool) doInfo(dir string) (string, error) {
 		out.WriteString("\n## Functions\n")
 		for _, f := range pkg.Syntax {
 			for _, decl := range f.Decls {
-				if fd, ok := decl.(interface {
-					Name() string
-					Line() int
-				}); ok {
-					out.WriteString(fmt.Sprintf("  %s() (line %d)\n", fd.Name(), fd.Line()))
+				if fd, ok := decl.(*ast.FuncDecl); ok {
+					pos := pkg.Fset.Position(fd.Pos())
+					recv := ""
+					if fd.Recv != nil && len(fd.Recv.List) > 0 {
+						recv = " (method)"
+					}
+					out.WriteString(fmt.Sprintf("  %s%s (line %d)\n", fd.Name.Name, recv, pos.Line))
 				}
 			}
 		}
 
+		if pkg.TypesInfo == nil {
+			out.WriteString("\n  (type info unavailable — package has errors)\n")
+			continue
+		}
 		for name, obj := range pkg.TypesInfo.Defs {
 			if obj == nil || !obj.Pos().IsValid() {
 				continue

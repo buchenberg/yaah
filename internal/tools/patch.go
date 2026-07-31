@@ -91,14 +91,14 @@ func applyUnifiedDiff(content, patch string) (string, error) {
 			}
 			h = &hunk{}
 		} else if h != nil {
-			if strings.HasPrefix(pl, "-") {
-				h.minus = append(h.minus, pl[1:])
-			} else if strings.HasPrefix(pl, "+") {
-				h.plus = append(h.plus, pl[1:])
-			} else if strings.HasPrefix(pl, " ") {
-				h.context = append(h.context, pl[1:])
+			switch {
+			case strings.HasPrefix(pl, "-"):
+				h.ops = append(h.ops, hunkOp{kind: '-', text: pl[1:]})
+			case strings.HasPrefix(pl, "+"):
+				h.ops = append(h.ops, hunkOp{kind: '+', text: pl[1:]})
+			case strings.HasPrefix(pl, " "):
+				h.ops = append(h.ops, hunkOp{kind: ' ', text: pl[1:]})
 			}
-			// Skip header/comment lines (---, +++, etc.)
 		}
 	}
 	if h != nil {
@@ -106,8 +106,6 @@ func applyUnifiedDiff(content, patch string) (string, error) {
 	}
 
 	if len(hunks) == 0 {
-		// No hunks found — maybe the patch is just add/remove lines
-		// Try a simpler mode: apply add/remove lines to the entire file.
 		var result []string
 		for _, pl := range patchLines {
 			if strings.HasPrefix(pl, "+") {
@@ -120,20 +118,29 @@ func applyUnifiedDiff(content, patch string) (string, error) {
 	}
 
 	for _, hk := range hunks {
+		applied := false
 		var newlines []string
 		i := 0
 		for i < len(lines) {
-			// Try to match the hunk context at this position.
 			if matchHunk(lines, i, hk) {
-				newlines = append(newlines, hk.context...)
-				newlines = append(newlines, hk.plus...)
-				i += len(hk.context) + len(hk.minus)
+				for _, op := range hk.ops {
+					switch op.kind {
+					case ' ':
+						newlines = append(newlines, lines[i])
+						i++
+					case '-':
+						i++
+					case '+':
+						newlines = append(newlines, op.text)
+					}
+				}
+				applied = true
 				break
 			}
 			newlines = append(newlines, lines[i])
 			i++
 		}
-		if i >= len(lines) && len(newlines) < len(lines)+len(hk.plus) {
+		if !applied {
 			return "", fmt.Errorf("patch: hunk failed to apply near:\n%s", formatHunk(hk))
 		}
 		for i < len(lines) {
@@ -145,29 +152,32 @@ func applyUnifiedDiff(content, patch string) (string, error) {
 	return strings.Join(lines, "\n"), nil
 }
 
-type hunk struct {
-	context []string
-	minus   []string
-	plus    []string
+type hunkOp struct {
+	kind byte // ' ' context, '-' remove, '+' add
+	text string
 }
 
+type hunk struct {
+	ops []hunkOp
+}
+
+// matchHunk checks whether the hunk's context and removal lines match
+// the file starting at position start. Addition lines are skipped
+// (they don't consume input).
 func matchHunk(lines []string, start int, hk hunk) bool {
-	if start+len(hk.context)+len(hk.minus) > len(lines) {
-		return false
-	}
-	for j, c := range hk.context {
-		if lines[start+j] != c {
-			// Fuzzy: try trimmed comparison for whitespace differences
-			if strings.TrimSpace(lines[start+j]) != strings.TrimSpace(c) {
+	pos := start
+	for _, op := range hk.ops {
+		switch op.kind {
+		case ' ', '-':
+			if pos >= len(lines) {
 				return false
 			}
-		}
-	}
-	for j, m := range hk.minus {
-		if lines[start+len(hk.context)+j] != m {
-			if strings.TrimSpace(lines[start+len(hk.context)+j]) != strings.TrimSpace(m) {
+			if lines[pos] != op.text && strings.TrimSpace(lines[pos]) != strings.TrimSpace(op.text) {
 				return false
 			}
+			pos++
+		case '+':
+			// additions don't consume input
 		}
 	}
 	return true
@@ -175,14 +185,10 @@ func matchHunk(lines []string, start int, hk hunk) bool {
 
 func formatHunk(hk hunk) string {
 	var sb strings.Builder
-	for _, c := range hk.context {
-		sb.WriteString(" " + c + "\n")
-	}
-	for _, m := range hk.minus {
-		sb.WriteString("-" + m + "\n")
-	}
-	for _, p := range hk.plus {
-		sb.WriteString("+" + p + "\n")
+	for _, op := range hk.ops {
+		sb.WriteByte(op.kind)
+		sb.WriteString(op.text)
+		sb.WriteByte('\n')
 	}
 	return sb.String()
 }

@@ -174,7 +174,7 @@ func (t *GitTool) Execute(ctx context.Context, args string) (string, error) {
 		cmdArgs = append(cmdArgs, safeFlags...)
 		cmdArgs = append(cmdArgs, params.Paths...)
 	default:
-		return "", fmt.Errorf("git: unsupported action %q", params.Action)
+		return "", fmt.Errorf("git: action %q is recognized but not implemented — this is a bug, please report it", params.Action)
 	}
 
 	cmd := exec.CommandContext(ctx, "git", cmdArgs...)

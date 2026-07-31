@@ -1,0 +1,1 @@
+Performs Go module operations: tidy, verify, add/remove/upgrade dependencies, list modules, show dependency graph, or trace why a module is needed. Set `dry_run: true` to preview destructive operations (add, remove, upgrade, tidy) without modifying go.mod. All operations run in the current module directory. Use for dependency management and module inspection.

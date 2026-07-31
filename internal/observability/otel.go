@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdkresource "go.opentelemetry.io/otel/sdk/resource"
@@ -81,9 +81,9 @@ func Setup(ctx context.Context, cfg Config) (shutdown func(context.Context) erro
 		// Serve mode leaves Endpoint empty so spans flow solely to the
 		// in-memory ExtraProcessors without a network dependency.
 		if cfg.Endpoint != "" {
-			exp, err := otlptracegrpc.New(ctx,
-				otlptracegrpc.WithEndpoint(cfg.Endpoint),
-				otlptracegrpc.WithInsecure(),
+			exp, err := otlptracehttp.New(ctx,
+				otlptracehttp.WithEndpoint(cfg.Endpoint),
+				otlptracehttp.WithInsecure(),
 			)
 			if err != nil {
 				return nil, fmt.Errorf("otel trace exporter: %w", err)
@@ -105,9 +105,9 @@ func Setup(ctx context.Context, cfg Config) (shutdown func(context.Context) erro
 	}
 
 	if cfg.Metrics && cfg.Endpoint != "" {
-		exp, err := otlpmetricgrpc.New(ctx,
-			otlpmetricgrpc.WithEndpoint(cfg.Endpoint),
-			otlpmetricgrpc.WithInsecure(),
+		exp, err := otlpmetrichttp.New(ctx,
+			otlpmetrichttp.WithEndpoint(cfg.Endpoint),
+			otlpmetrichttp.WithInsecure(),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("otel metric exporter: %w", err)

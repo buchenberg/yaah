@@ -26,6 +26,7 @@ tools:
   - go_outline
   - git
   - sed
+  - diff
 max_iterations: 30
 max_turns: 10
 json_mode: true

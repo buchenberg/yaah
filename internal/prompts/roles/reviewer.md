@@ -27,6 +27,8 @@ tools:
   - webfetch
   - http
   - git
+  - diff
+  - staticcheck
 max_iterations: 25
 max_turns: 3
 timeout: 240

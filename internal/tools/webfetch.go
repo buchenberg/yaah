@@ -52,6 +52,9 @@ func (t *WebFetchTool) Execute(ctx context.Context, args string) (string, error)
 	if params.URL == "" {
 		return "", fmt.Errorf("webfetch: url is required")
 	}
+	if err := validateURL(params.URL); err != nil {
+		return "", fmt.Errorf("webfetch: %w", err)
+	}
 	if params.Format == "" {
 		params.Format = "markdown"
 	}

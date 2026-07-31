@@ -477,7 +477,7 @@ func applyBinary(op calcTokKind, a, b float64) (float64, error) {
 		}
 		return float64(int64(a) >> uint64(n)), nil
 	}
-	panic("unreachable")
+	return 0, fmt.Errorf("calculate: unknown operator (kind %d) — this is a bug", op)
 }
 
 type calcBuiltin func([]float64) (float64, error)

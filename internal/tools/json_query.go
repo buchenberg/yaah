@@ -222,8 +222,11 @@ func setJSONPath(root any, path string, value any) error {
 			}
 		case []any:
 			idx, err := strconv.Atoi(part)
-			if err != nil || idx < 0 || idx >= len(v) {
-				return fmt.Errorf("json_query: index %d out of bounds at %s", idx, pathPrefix(parts, i))
+			if err != nil {
+				return fmt.Errorf("json_query: expected numeric array index at %s, got %q", pathPrefix(parts, i), part)
+			}
+			if idx < 0 || idx >= len(v) {
+				return fmt.Errorf("json_query: index %d out of bounds (array length %d) at %s", idx, len(v), pathPrefix(parts, i))
 			}
 			current = v[idx]
 		default:

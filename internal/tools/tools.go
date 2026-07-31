@@ -132,6 +132,11 @@ var leafTools = map[string]func() Tool{
 	"go_refactor": func() Tool { return &GoRefactorTool{} },
 	"calculate":   func() Tool { return &CalculateTool{} },
 	"file_info":   func() Tool { return &FileInfoTool{} },
+	"go_test":     func() Tool { return NewGoTestTool() },
+	"diff":        func() Tool { return NewDiffTool() },
+	"staticcheck": func() Tool { return NewStaticcheckTool() },
+	"go_mod":      func() Tool { return NewGoModTool() },
+	"bisect":      func() Tool { return NewBisectTool() },
 }
 
 // NewRegistry creates a tool registry with yaah's built-in tools.

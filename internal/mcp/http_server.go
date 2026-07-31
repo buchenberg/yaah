@@ -129,7 +129,7 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 		<-errCh // wait for Serve to return
 		return nil
 	case err := <-errCh:
-		return err
+		return fmt.Errorf("serve MCP HTTP: %w", err)
 	}
 }
 
@@ -389,14 +389,14 @@ func decodeRequest(body []byte) ([]JSONRPCMessage, error) {
 	if len(trimmed) == 0 || trimmed[0] == '{' {
 		var msg JSONRPCMessage
 		if err := json.Unmarshal(body, &msg); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("decode single JSON-RPC message: %w", err)
 		}
 		return []JSONRPCMessage{msg}, nil
 	}
 	if trimmed[0] == '[' {
 		var batch []JSONRPCMessage
 		if err := json.Unmarshal(body, &batch); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("decode JSON-RPC batch: %w", err)
 		}
 		return batch, nil
 	}
@@ -502,11 +502,11 @@ func (h *HTTPServer) pushToStream(sid string, resp JSONRPCMessage) error {
 	}
 	body, err := json.Marshal(resp)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal SSE message for session %s: %w", sid, err)
 	}
 	if _, err := fmt.Fprintf(stream.writer, "event: message\ndata: %s\n\n", body); err != nil {
 		stream.closed = true
-		return err
+		return fmt.Errorf("write SSE message for session %s: %w", sid, err)
 	}
 	stream.flusher.Flush()
 	return nil
@@ -515,7 +515,7 @@ func (h *HTTPServer) pushToStream(sid string, resp JSONRPCMessage) error {
 // writeSSEEvent writes a single named SSE event and flushes.
 func writeSSEEvent(w io.Writer, flusher http.Flusher, event, data string) error {
 	if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data); err != nil {
-		return err
+		return fmt.Errorf("write SSE event %q: %w", event, err)
 	}
 	flusher.Flush()
 	return nil
