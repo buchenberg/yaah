@@ -84,6 +84,7 @@ All events use a single `sseWireEvent` struct with a `type` discriminator:
 | `ctrl.todos` | Agent → Browser | Todo list update |
 | `ctrl.context` | Agent → Browser | Context window fill percentage |
 | `ctrl.models` | Agent → Browser | Available model list |
+| `ctrl.header` | Agent → Browser | Header metadata: provider, model, and MCP server list |
 
 #### Tool summary engine
 
@@ -247,8 +248,6 @@ Right side: context window fill percentage.
 
 - **Single SSE client**: Only one browser tab can connect at a time.
   The `sseView` is a singleton on the `webServer`.
-- **No model switching in the UI**: The `POST /api/action` endpoint accepts
-  `type: "model"` but the HTML page has no control for it.
 - **No chat search**: Relies on the browser's built-in Ctrl+F.
 - **No copy button**: No clipboard integration (TUI has `Ctrl+Y`).
 - **No follow-up/steer**: Cannot send additional input while the agent is
@@ -268,18 +267,18 @@ closely on core functionality but trails on advanced features:
 | Tool approvals | ✅ | ✅ |
 | Context fill display | ✅ (fraction bar) | ✅ (percentage) |
 | Todo list | ✅ (persistent table) | ✅ (inline messages) |
-| Model switching UI | ✅ (searchable palette) | ✗ |
-| Commands (`:compact`, `:clear`, etc.) | ✅ | ✗ |
+| Model switching UI | ✅ (searchable palette) | ✅ (command palette) |
+| Commands (`:compact`, `:clear`, etc.) | ✅ | ✅ (command palette) |
 | Chat search (`/`) | ✅ | ✗ |
 | Copy to clipboard | ✅ (`Ctrl+Y`) | ✗ |
 | Sub-agent visual bracketing | ✅ (`╭─` / `╰─`) | ✗ |
-| Header with provider/model | ✅ | ✗ |
+| Header with provider/model | ✅ | ✅ |
 | Status bar (CWD, msg count) | ✅ | ✗ |
 | Theme switching | ✅ (5 themes) | ✗ (browser light/dark only) |
-| MCP server status | ✅ | ✗ |
+| MCP server status | ✅ | ✅ (badge) |
 | Follow-up / steer injection | ✅ | ✗ |
 | Ephemeral feedback messages | ✅ | ✗ |
-| Mid-turn compaction button | ✅ (`:compact`) | ✗ |
+| Mid-turn compaction button | ✅ (`:compact`) | ✅ (palette) |
 | Multiple clients | N/A | ✗ (single SSE) |
 
 ## Extending
