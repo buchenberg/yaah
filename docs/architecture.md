@@ -487,31 +487,28 @@ When an agent dispatches multiple parallel sub-agents in a single turn, those su
 
 File: `internal/tools/tools.go`
 
-`NewRegistry()` pre-registers 15 built-in tools:
+`NewRegistry()` pre-registers the built-in leaf tools. One shell tool is
+platform-selected (`powershell` on Windows, `bash` elsewhere), so 25 of the 26
+register on a given OS:
 
-| Tool | Category | Dangerous |
-|---|---|---|
-| `read` | Filesystem | No |
-| `write` | Filesystem | Always |
-| `edit` | Filesystem | Always |
-| `replace` | Filesystem | Always |
-| `delete` | Filesystem | Always |
-| `json_query` | Filesystem | Per-action |
-| `grep` | Search | No |
-| `glob` | Search | No |
-| `ls` | Filesystem | No |
-| `bash` | Shell | Always |
-| `powershell` | Shell | Always |
-| `git` | VCS | Per-action |
-| `question` | Interactive | No |
-| `webfetch` | Network | No |
+| Category | Tools |
+|---|---|
+| Filesystem (read) | `read`, `ls`, `file_info` |
+| Filesystem (mutate — always need approval) | `write`, `edit`, `replace`, `delete`, `patch`, `sed` |
+| Search | `grep`, `glob` |
+| Shell (always need approval) | `bash`, `powershell` |
+| VCS / data (per-action approval) | `git`, `json_query` |
+| Network | `webfetch` (read-only), `http` (per-action approval) |
+| Go / dev tooling | `go_outline`, `go_test`, `go_mod`, `diff`, `staticcheck`, `bisect`, `go_refactor` (needs approval) |
+| Utility | `calculate`, `question` |
 
 Additional tools are registered by the CLI layer after `NewRegistry()`:
 - `memory_search`, `memory_add`, `memory_delete`, `memory_update`, `memory_search_sessions`
 - `skill`
+- `plan`
 - `todowrite`
 - `background_process`
-- `task`
+- `spawn_subagent` (the task tool) and `list_subagents`
 - Any MCP tools from connected servers
 
 ### Tool execution flow (`executeAndCollect` — middleware path)
@@ -525,7 +522,7 @@ executeAndCollect(ctx, calls, messages):
        a. Call OnTool (before) — Duration=0
        b. emitHook(ToolStart)
        c. Registry.Execute(ctx, name, args)
-       d. Truncate result to ToolResultMaxLen (8192 chars) if needed
+       d. Truncate result to the configured caps (default 500 lines / 20480 bytes) if needed
        e. Call OnTool (after) — with Duration, Result, Error
        f. emitHook(ToolEnd)
        g. Send toolExecResult to channel
@@ -545,10 +542,12 @@ type DangerClassifier interface {
 }
 ```
 
-Tools that always require approval (`BashTool`, `PowerShellTool`, `WriteTool`,
-`EditTool`, `DeleteTool`, `ReplaceTool`) return `true` unconditionally. Tools with
-argument-level classification (`GitTool`) inspect their JSON arguments — `add`
-and `commit` are dangerous; `status`, `diff`, `log`, etc. are not. Tools that
+Tools that always require approval (the filesystem mutators `WriteTool`,
+`EditTool`, `ReplaceTool`, `DeleteTool`, `PatchTool`, `SedTool`, and the shells
+`BashTool`, `PowerShellTool`) return `true` unconditionally. `GitTool`,
+`JSONQueryTool`, and `HTTPTool` classify per-action by inspecting their JSON
+arguments — e.g. `git add`/`commit` are dangerous while `git status`/`diff` are
+not. `GoRefactorTool` and `PlanTool` also implement the classifier. Tools that
 are never dangerous (`ReadTool`, `GrepTool`, `GlobTool`, etc.) simply don't
 implement the interface.
 
@@ -885,6 +884,8 @@ Concrete event types (all pointer receivers for clean nil checks in type switche
 | `SubAgentEndEvent` | Sub-agent dispatch completes (role, duration, error) |
 | `EscalationEvent` | Sub-agent raises a structured escalation (severity, summary, detail, suggestion) |
 | `DoneEvent` | Agent loop finishes (response, error, context stats) |
+| `CompactionStartedEvent` | Context compaction begins (before/target tokens, reason) |
+| `CompactionDoneEvent` | Context compaction finishes (before/after tokens, savings %, method, elapsed) |
 
 ### View interface
 
@@ -1001,11 +1002,14 @@ File: `internal/types/types.go`
 
 ```go
 type Message struct {
-    Role       string     `json:"role"`
-    Content    string     `json:"content,omitempty"`
-    ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-    ToolCallID string     `json:"tool_call_id,omitempty"`
-    Name       string     `json:"name,omitempty"`
+    Role             string        `json:"role"`
+    Content          string        `json:"content"`
+    Refusal          string        `json:"refusal,omitempty"`
+    ReasoningContent string        `json:"reasoning_content,omitempty"`
+    ToolCalls        []ToolCall    `json:"tool_calls,omitempty"`
+    ToolCallID       string        `json:"tool_call_id,omitempty"`
+    Name             string        `json:"name,omitempty"`
+    CacheControl     *CacheControl `json:"cache_control,omitempty"`
 }
 ```
 
