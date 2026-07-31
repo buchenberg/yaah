@@ -136,41 +136,57 @@ a cheaper, faster model (`deepseek-v4-flash` by default), while I keep the
 good model for myself — the orchestration, the synthesis, the thinking. They
 don't complain. They just ship.
 
-Meet the crew:
+Four roles are baked into the binary — they work in any project with no
+setup:
 
 - **Charley** is my developer. Give him a feature spec or a bug report and
   he'll write the code, edit the files, and follow existing conventions. He
-  gets 180 seconds and 25 iterations — enough to build something real.
-  _Specialty: implementing features, fixing bugs, writing code._
+  gets 300 seconds, 40 iterations, and 6 turns — enough to build something
+  real. _Specialty: implementing features, fixing bugs, writing code._
 
 - **Jack** is my analyst. He researches. He reads docs, scrapes web pages,
   greps the codebase, and comes back with sourced, cited findings. He never
-  modifies files — he just finds answers. 120 seconds, 20 iterations.
-  _Specialty: research, information gathering, web and code search._
+  modifies files — he just finds answers. 240 seconds, 30 iterations, 10
+  turns. _Specialty: research, information gathering, web and code search._
 
 - **Casey** is my tester. She runs the test suite, analyzes failures,
   measures coverage, and reports what's broken. She doesn't touch source
-  code — she just tells you what to fix. 180 seconds, 20 iterations.
-  _Specialty: testing, failure analysis, coverage measurement._
+  code — she just tells you what to fix. 300 seconds, 30 iterations, 6
+  turns. _Specialty: testing, failure analysis, coverage measurement._
 
 - **Tim** is my reviewer. He counts files, measures lines, flags complexity,
-  and spots anti-patterns. He's fast and thorough — 120 seconds, 15
-  iterations. _Specialty: code review, metrics, complexity analysis._
+  and spots anti-patterns. He's fast and thorough — 240 seconds, 25
+  iterations, 3 turns. _Specialty: code review, metrics, complexity
+  analysis._
+
+This repo also ships ready-made **project-level** roles in `.agents/roles/`
+(copy them into your own project and adapt them):
 
 - **Sam** is my security auditor. She scans for hardcoded secrets, unsafe
   patterns, weak crypto, injection vectors. She's paranoid for good reason.
   180 seconds, 30 iterations. _Specialty: vulnerability scanning, secret
   detection, supply chain risks._
 
-- **Checker** runs a single check and reports pass or fail. One turn, one
-  command, one result. 60 seconds. _Specialty: binary pass/fail checks._
+- **Gordon** is my Go specialist. He implements Go features, runs
+  `go_test`/`staticcheck`, manages modules with `go_mod`, and refactors
+  safely with `go_refactor`. 600 seconds, 50 iterations, 8 turns.
+  _Specialty: Go development, testing, and dependency management._
+
+- **Gopher** is my Go tester. She runs Go test suites, measures coverage,
+  and diagnoses failures — source code stays untouched. 600 seconds, 8
+  turns. _Specialty: Go test execution and failure analysis._
+
+- **Checker** runs a single check command and reports pass or fail. Two
+  turns, 60 seconds. _Specialty: binary pass/fail checks._
 
 - **Counter** counts things and returns structured metrics. Files, lines,
-  functions, test cases — he counts it. One turn, 30 seconds.
+  functions, test cases — he counts it. Two turns, 60 seconds.
   _Specialty: structured counting and metrics._
 
-When no specific role fits, I have a fallback sub-agent named **Pat** with
-full tool access — a generalist who can handle whatever you throw at them.
+There's no catch-all generalist role: every sub-agent runs under an explicit
+role, and an unknown role name is rejected rather than silently falling
+back. Want a generalist? Define one in `.agents/roles/` (see [Custom
+sub-agent roles](#custom-sub-agent-roles)).
 
 Multiple `spawn_subagent` calls in one turn fan out in parallel (up to your
 configured `max_concurrency`, default 3). I dispatch them in waves:
@@ -270,8 +286,10 @@ unsafe patterns. Report findings with file paths, line numbers, and severity.
 Do NOT modify files.
 ```
 
-Built-in roles (Charley, Jack, Casey, Tim, Sam, Checker, Counter) take
-precedence — you can't shadow them, only add new ones.
+Built-in roles (Charley, Jack, Casey, Tim) take precedence — you can't
+shadow them, only add new ones. The roles shipped in this repo's
+`.agents/roles/` (Sam, Checker, Counter, Gordon, Gopher) are themselves
+project-level custom roles: copy and adapt them freely.
 
 ### Evidenced contracts
 
@@ -401,6 +419,9 @@ Here's what I can reach for directly:
 | `git` | Version control |
 | `http`, `webfetch` | Web requests and scraping |
 | `go_outline` | Parse Go source structure — this one comes in handy |
+| `patch`, `sed` | Apply unified diffs and stream-edit text |
+| `go_refactor`, `go_test`, `go_mod`, `bisect` | Go refactor, test, module, and git-bisect helpers |
+| `diff`, `staticcheck` | Diff output and static analysis |
 | `json_query` | Read/write/delete JSON values by path |
 | `calculate` | Math expressions — I'm a language model, give me a break |
 | `file_info` | File metadata without reading |
@@ -458,7 +479,7 @@ I run a configurable middleware pipeline on every agent turn:
 | `loop_detection` | ✓ | Halts stuck loops via tool-call-chain hashing |
 | `staleness` | ✓ | Annotates sub-agent results when orchestrator context shifted mid-flight |
 | `permission` | — | Path-pattern rules to allow/deny tools by file path |
-| `tool_concurrency` | — | Caps concurrent tool goroutines |
+| `tool_concurrency` | ✓ | Caps concurrent tool goroutines |
 | `sub_agent` | — | Enforces sub-agent depth limits |
 | `prompt_caching` | — | Anthropic cache-control breakpoints |
 
@@ -488,6 +509,8 @@ yaah doctor                       # diagnostics
 
 yaah skill list                   # list skills
 yaah skill show <name>            # show a skill
+yaah skill create <name> <desc>   # scaffold a new skill
+yaah skill edit <name>            # edit a skill in $EDITOR
 
 yaah mcp list                     # list MCP servers
 yaah mcp add <name> <cmd> [args]  # add stdio MCP server
@@ -591,19 +614,19 @@ agents:
     default_max_turns: 0              # 0 = unlimited
     output_limit: 51200               # bytes cap on sub-agent reports
     json_mode: false                  # force structured output
-    roles:                            # per-role overrides
+    roles:                            # per-role overrides (defaults live in the role files)
       analyst:
-        timeout: 120
-        max_iterations: 20
+        timeout: 240
+        max_iterations: 30
       developer:
-        timeout: 180
-        max_iterations: 25
+        timeout: 300
+        max_iterations: 40
       reviewer:
-        timeout: 120
-        max_iterations: 15
+        timeout: 240
+        max_iterations: 25
       tester:
-        timeout: 180
-        max_iterations: 20
+        timeout: 300
+        max_iterations: 30
 
   fallback:                           # optional — try on primary failure
     provider: ollama
@@ -712,7 +735,7 @@ and `max_retries` consistent across the whole team.
 
 **`agents.middleware`** — control the pipeline. Set `enabled` for an
 explicit order. Set `disabled` to remove from the default pipeline
-(`steer → followup → compaction → approval → loop_detection`).
+(`steer → followup → compaction → soft_prune → approval → tool_concurrency → loop_detection → staleness`).
 
 | Middleware | Default | Purpose |
 |---|---|---|
@@ -842,14 +865,19 @@ yaah/
 ├── main.go                       # calls cmd/yaah.Execute()
 ├── cmd/yaah/                     # cobra commands
 │   ├── root.go                   # build-time vars (version, commit, date)
-│   ├── root_cmd.go               # rootCmd, REPL, one-shot, agent wiring
+│   ├── root_cmd.go               # rootCmd: REPL, one-shot, prompt dispatch
+│   ├── agent_frame.go            # agent wiring (providers, tools, middleware)
+│   ├── repl_loop.go              # interactive REPL loop + slash commands
+│   ├── subagent_runner.go        # sub-agent dispatch + role discovery
+│   ├── provider_resolve.go       # provider/model resolution helpers
 │   ├── serve.go                  # yaah serve — MCP tool server (stdio + HTTP)
-│   ├── acp.go                    # yaah acp-serve — ACP server over stdio (JSON-RPC 2.0)
-│   ├── acp_view.go               # ACP event view (agent.View implementation)
-│   ├── version.go config.go      # CLI subcommands
-│   ├── doctor.go update.go
+│   ├── acp.go acp_view.go        # yaah acp-serve — ACP server (JSON-RPC 2.0)
+│   ├── web.go web_view.go        # yaah web — browser UI + WebSocket view
+│   ├── tui.go                    # bubbletea TUI (+ tui_unix.go / tui_windows.go)
+│   ├── plan.go                   # plan tool wiring
+│   ├── goat.go                   # easter-egg `yaah yaah` ASCII goat
+│   ├── version.go config.go doctor.go update.go
 │   ├── skill.go mcp.go memory.go session.go
-│   ├── tui.go                    # bubbletea TUI
 │   └── color.go                  # ANSI color helpers
 ├── internal/
 │   ├── agent/                    # agent loop, tool dispatch, middleware
@@ -908,9 +936,9 @@ MCP integration (stdio + HTTP) as both client and server, MCP tool server
 for agent-to-agent coordination (`yaah serve`), ACP server for agent communication (`yaah acp-serve`), REPL with slash commands
 and history, Bubble Tea TUI with streaming, tool call visualization,
 reasoning toggle, command palette, model switching, rich keybindings,
-mouse support, sub-agent team with 7 built-in roles, parallel dispatch
+mouse support, sub-agent team with 4 built-in roles (plus project-level custom roles), parallel dispatch
 with configurable concurrency, evidenced response contracts, custom role
-definitions from filesystem, middleware pipeline with 9 middleware,
+definitions from filesystem, middleware pipeline with 11 middleware (8 on by default), provider fallback,
 provider fallback, OpenTelemetry tracing with per-turn token attribution
 and in-memory span buffer, plan management, background process management,
 and hook events.
@@ -965,7 +993,7 @@ coalescing so I don't react to every individual follow-up message — I batch
 'em up and process once. Per-role provider and model overrides so I can run
 Charley on one provider and Jack on another.
 
-**Middle ground: 9 middleware and counting.** I've got a proper pipeline
+**Middle ground: 11 middleware and counting.** I've got a proper pipeline
 now: compaction (keeps context tidy), approval (double-checks risky ops),
 context window (enforces limits), loop detection (stops infinite loops),
 follow-up (automatically continues when the model calls for it), per-role
