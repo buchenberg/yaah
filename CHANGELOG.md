@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.41.0](https://github.com/buchenberg/yaah/compare/v0.40.3...v0.41.0) (2026-07-31)
+
+
+### Features
+
+* web UI command palette + sub-agent orchestration hardening ([#114](https://github.com/buchenberg/yaah/issues/114)) ([3881467](https://github.com/buchenberg/yaah/commit/3881467f1c7ad94365f4e7d1931682f8a78752e6))
+
 ## [0.40.3](https://github.com/buchenberg/yaah/compare/v0.40.2...v0.40.3) (2026-07-30)
 
 
