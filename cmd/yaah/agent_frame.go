@@ -233,6 +233,12 @@ func newAgentSession() (*agentSession, error) {
 	planDirs := planSearchPaths()
 	toolReg.Register(&tools.PlanTool{Dirs: planDirs})
 
+	roleDirs := roleSearchPaths(cwd)
+	toolReg.Register(&tools.RoleTool{
+		Dirs:         roleDirs,
+		BuiltinFiles: builtinRoleFiles(),
+	})
+
 	var todoStore *todo.Store
 	if db != nil {
 		todoStore = todo.NewStoreWithDB(db)
