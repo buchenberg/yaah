@@ -21,7 +21,7 @@ Log in with `root@localhost` / `Complexpass#123`, then navigate to **Traces**.
 To run yaah in a container alongside OpenObserve:
 
 ```bash
-docker compose run --rm yaah "your prompt"
+docker compose --profile cli run --rm yaah "your prompt"
 ```
 
 When yaah runs inside Docker, set the OTel endpoint to `openobserve:5080`
@@ -84,7 +84,6 @@ when off):
 | `llm.stream` / `llm.chat` | `assistant.response` | Full content, reasoning, refusal, and every tool call's name + args. |
 | `llm.stream` | `stream_end` | How the stream terminated (`channel_closed`, `finish_reason`, `errs_nil`, `ctx_done`) and whether usage metadata was captured — surfaces the degenerate spans that show no token counts. |
 | `agent.turn` | `msg` (per message) | The conversation the agent is about to see: role, content length, preview, tool-call names. |
-| `agent.turn` | `subagent.summary_injected` | The full summary a sub-agent produced and that is appended as a tool result message. |
 | `subagent:*` | `subagent.task` | The full prompt handed to the sub-agent. |
 | `subagent:*` | `msg` (per message) + `assistant.response` (per iteration) | The sub-agent's own message history and each round's model response. |
 
@@ -100,8 +99,8 @@ prompt generates a trace waterfall showing:
 | Span | Description |
 |---|---|
 | `tool.<name>` | One span per tool execution. Duration = tool run time. Errors are marked red. |
-| `subagent.<role>` | Sub-agent lifecycle. Spans are nested under the parent turn for waterfall display. |
-| `llm.send` | Provider API call. Attributes include `llm.model`, `llm.duration_ms`, and token counts (`llm.prompt_tokens`, `llm.completion_tokens`, `llm.total_tokens`). |
+| `subagent: <role> — <description>` | Sub-agent lifecycle. Spans are nested under the parent turn for waterfall display. |
+| `llm.chat` / `llm.stream` | Provider API call (sync vs streaming). Carries `llm.model` and a `tokens` event with `llm.prompt_tokens`, `llm.completion_tokens`, `llm.total_tokens`. |
 
 ## Traces example
 
@@ -109,14 +108,14 @@ After running `yaah "use an analyst sub-agent to list files"`:
 
 ```
 agent.turn (8.2s)
-├── llm.send (4.1s)              # model decides to dispatch a worker
+├── llm.chat (4.1s)              # model decides to dispatch a worker
 │   model=gpt-4o-mini
 │   prompt_tokens=1200 completion_tokens=45 total_tokens=1245
-├── subagent.worker (3.9s)       # sub-agent runs
+├── subagent: analyst — list files (3.9s)   # sub-agent runs
 │   ├── tool.ls (12ms)           #   sub-agent lists files
 │   ├── tool.glob (8ms)          #   sub-agent finds patterns
-│   └── llm.send (3.5s)          #   sub-agent summarises
-└── llm.send (0.2s)              # parent summarises result to user
+│   └── llm.chat (3.5s)          #   sub-agent summarises
+└── llm.chat (0.2s)              # parent summarises result to user
 ```
 
 ## Production setups

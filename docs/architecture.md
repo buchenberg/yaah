@@ -952,7 +952,7 @@ shared theme. Full reference: [TUI component system](./tui-components.md).
 
 Files: `internal/observability/`, `internal/agent/agent.go`, `internal/config/load.go`
 
-yaah emits traces via OTLP gRPC to any OpenTelemetry-compatible backend. Tracing is off by default; enable with `observability.otel.enabled: true` in `config.yaml`.
+yaah emits traces via OTLP HTTP to any OpenTelemetry-compatible backend. Tracing is off by default; enable with `observability.otel.enabled: true` in `config.yaml`.
 
 ### Initialisation
 

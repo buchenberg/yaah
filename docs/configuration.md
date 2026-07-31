@@ -111,7 +111,7 @@ agents:
 observability:
   otel:
     enabled: false
-    endpoint: localhost:4317          # OTLP gRPC endpoint
+    endpoint: localhost:4317          # OTLP HTTP endpoint (OpenObserve: localhost:5080 — see docs/otel-setup.md)
     service_name: yaah
     traces: true                      # emit trace spans
     metrics: false                    # emit OTLP metrics
@@ -230,7 +230,7 @@ explicit order. Set `disabled` to remove from the default pipeline
 observability:
   otel:
     enabled: false
-    endpoint: localhost:4317     # OTLP gRPC endpoint
+    endpoint: localhost:4317     # OTLP HTTP endpoint (OpenObserve: localhost:5080 — see docs/otel-setup.md)
     service_name: yaah
     traces: true                 # emit trace spans (default: true)
     metrics: false               # emit OTLP metrics (default: false)
