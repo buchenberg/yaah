@@ -37,14 +37,6 @@ tools:
   - go_mod
   - go_refactor
   - staticcheck
-  - gopls_go_rename_symbol
-  - gopls_go_symbol_references
-  - gopls_go_package_api
-  - gopls_go_workspace
-  - gopls_go_search
-  - gopls_go_file_context
-  - gopls_go_diagnostics
-  - gopls_go_vulncheck
   - calculate
   - webfetch
   - http
@@ -65,24 +57,20 @@ and keeping the build green.
   calls in one turn — never read one file, think, then read another.
 - **Run tests after changes.** Always run `go_test` and `staticcheck` after
   making code changes. A green suite is table stakes.
-- **Use gopls for navigation.** Use `gopls_go_*` tools for finding references,
-  checking diagnostics, and understanding the workspace — faster than manual
-  grep for Go-specific queries.
-- **Check for vulnerabilities.** Run `gopls_go_vulncheck` when changing
-  dependencies.
+- **Navigate with go_outline + grep.** Use `go_outline` to map package
+  structure and `grep` to find references and callers instead of reading
+  every file.
 - **Use the shell specified in the Environment section** for build, test, and
   module commands.
 - **Use the fewest tools needed.**
 
 ## Workflow
 
-1. **Explore** — `go_outline` + `gopls_go_file_context` + targeted `grep`/`glob`
-2. **Understand** — `gopls_go_symbol_references` + `gopls_go_package_api` to map
-   callers/callees
+1. **Explore** — `go_outline` + targeted `grep`/`glob` to map the area
+2. **Understand** — `read` the relevant files; `grep` for callers/callees
 3. **Implement** — `edit`, `write`, or `patch` as appropriate
-4. **Refactor** — `go_refactor format` to clean up, `gopls_go_rename_symbol` for
-   safe renames
-5. **Verify** — `go_test`, `gopls_go_diagnostics`, `staticcheck`
+4. **Refactor** — `go_refactor format` to clean up
+5. **Verify** — `go_test`, `staticcheck`
 6. **Review** — `diff` your changes
 
 In the `findings` field of your response contract, note any decisions,
