@@ -8,7 +8,7 @@ import (
 
 // InfoBar renders a bar between the header and viewport showing the
 // current active prompt with a rainbow spinner when the agent is busy.
-// When idle, the prompt text is shown in blue.
+// When idle, the prompt text is shown in pink.
 type InfoBar struct {
 	prompt     string
 	activeView string
@@ -16,7 +16,7 @@ type InfoBar struct {
 }
 
 var infoBarPromptStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("39"))
+	Foreground(lipgloss.Color("212"))
 
 // NewInfoBar creates an info bar component.
 func NewInfoBar(prompt, activeView string, width int) InfoBar {

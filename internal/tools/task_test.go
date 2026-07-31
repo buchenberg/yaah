@@ -46,6 +46,46 @@ func TestExecute_RoleValidation(t *testing.T) {
 	})
 }
 
+func TestExecute_RoleResolverLayersOverCached(t *testing.T) {
+	var gotRole string
+	tt := &TaskTool{
+		RoleNames:        []string{"a", "b"},
+		RoleResolver:     func() []string { return []string{"b", "c", "goat-jokes"} },
+		RoleDescriptions: map[string]string{"goat-jokes": "tells a joke"},
+		Runner: func(ctx context.Context, prompt string, params SubAgentParams) (string, error) {
+			gotRole = params.Role
+			return "ok", nil
+		},
+	}
+
+	t.Run("resolver-only role accepted", func(t *testing.T) {
+		gotRole = ""
+		if _, err := tt.Execute(context.Background(), `{"description":"d","prompt":"p","role":"goat-jokes"}`); err != nil {
+			t.Fatalf("resolver-only role: unexpected error %v", err)
+		}
+		if gotRole != "goat-jokes" {
+			t.Errorf("runner got role %q, want goat-jokes", gotRole)
+		}
+	})
+
+	t.Run("cached-only role accepted", func(t *testing.T) {
+		gotRole = ""
+		if _, err := tt.Execute(context.Background(), `{"description":"d","prompt":"p","role":"a"}`); err != nil {
+			t.Fatalf("cached-only role: unexpected error %v", err)
+		}
+		if gotRole != "a" {
+			t.Errorf("runner got role %q, want a", gotRole)
+		}
+	})
+
+	t.Run("unknown role rejected", func(t *testing.T) {
+		_, err := tt.Execute(context.Background(), `{"description":"d","prompt":"p","role":"unknown"}`)
+		if err == nil || !strings.Contains(err.Error(), `unknown role "unknown"`) {
+			t.Fatalf("expected unknown-role error, got %v", err)
+		}
+	})
+}
+
 func TestSchema_RoleRequired(t *testing.T) {
 	requiredHasRole := func(t *testing.T, raw json.RawMessage) {
 		t.Helper()

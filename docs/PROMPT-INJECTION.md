@@ -23,18 +23,18 @@ sub-agent dispatch.
                         ▼
             ┌───────────────────────────┐
             │ Sub-agent (isolated)       │
-            │ subagent_runner.go:181     │
+            │ subagent_runner.go         │
             │ System prompt + guidance   │
-            │ (inherits planner prompt)  │
+            │ (inherits orchestrator)    │
             └───────────────────────────┘
 ```
 
 ## Layer 1: System prompt assembly
 
-**File**: `cmd/yaah/agent_frame.go:124` / `cmd/yaah/tui.go:207`
+**File**: `cmd/yaah/agent_frame.go` (and `cmd/yaah/tui.go` for the TUI)
 
 The agent's full system prompt is assembled once at startup via
-`prompts.Build()` at `internal/prompts/prompts.go:44`:
+`prompts.Build()` (`internal/prompts/prompts.go`):
 
 ```go
 systemPrompt := prompts.Build(layers)
@@ -47,21 +47,24 @@ systemPrompt := prompts.Build(layers)
 | User context | `~/.yaah/AGENTS.md` | `<user-preferences>` block | Cross-project user preferences |
 | Project context | walked-up `AGENTS.md`/`CLAUDE.md` | Inlined | Project-specific instructions and conventions |
 | Memory | SQLite `memory_search` | `## Memory` | Stored facts from past sessions |
+| Skills | `prompts.BuildSkillsIndex` | `## Available Skills` | Name + one-line description per discovered skill |
 
 ### Where environment info goes
 
-`prompts.DetectEnvironment()` at `prompts/prompts.go:72` produces:
+`prompts.DetectEnvironment()` (`prompts/prompts.go`) renders the embedded
+`environment_header.md` template, producing e.g.:
 ```
 OS: windows/amd64. Default shell: powershell (pwsh 7+ or Windows PowerShell). Working directory: C:\Code\Personal\yaah.
 ```
 
 This is injected into the agent's system prompt via the `Environment` layer.
-It is NOT automatically injected into sub-agents — those have their
-own injection points (see below).
+Sub-agents receive the **same** environment block — `EnvironmentHeader` is the
+single source of truth shared by the main agent and sub-agents, which is why
+role guidance can refer to "the shell specified in the Environment section".
 
 ## Layer 2: Loop initialization
 
-**File**: `internal/agent/agent.go:344-352`
+**File**: `internal/agent/agent.go`
 
 ```go
 // Fresh session
@@ -81,16 +84,16 @@ l.Messages = append(l.Messages, types.UserMsg(userInput)) // [2]
 
 ## Layer 3: Middleware prepare step
 
-**File**: `internal/agent/agent.go:392-397`
+**File**: `internal/agent/agent.go` (middleware in `internal/agent/pipeline/`)
 
 Before each turn, middleware can inject or modify messages in `step.Messages`:
 
 | Middleware | File | Injects | When |
 |---|---|---|---|
-| `steer` | `middleware_steer.go:24` | `[STEER] <msg>` as user message | High-priority mid-turn input |
-| `followup` | `middleware_followup.go:23` | Queued follow-up as user message | Between-turn messages |
-| `compaction` | `agent_context.go:150-168` | Summary as system message | Context window overflow |
-| `sub_agent` | `middleware_subagent.go:58` | `[system] depth limit reached` | Sub-agent depth cap hit |
+| `steer` | `pipeline/steer.go` | `[STEER] <msg>` as user message | High-priority mid-turn input |
+| `followup` | `pipeline/followup.go` | Queued follow-up as user message | Between-turn messages |
+| `compaction` | `agent_context.go` | Summary as system message | Context window overflow |
+| `sub_agent` | `pipeline/subagent.go` | `[system] depth limit reached` | Sub-agent depth cap hit |
 
 ### Compaction details (`agent_context.go`)
 
@@ -106,7 +109,7 @@ messages in the LLM context.
 
 ## Layer 4: Chat request assembly
 
-**File**: `internal/agent/agent.go:401-404`
+**File**: `internal/agent/agent.go`
 
 Each turn, the chat request is assembled from the running message history plus
 tool definitions:
@@ -125,13 +128,13 @@ req := types.ChatRequest{
 
 After the model responds each turn, messages are appended to the history:
 
-### 5a. Assistant response (`agent.go:435`)
+### 5a. Assistant response (`agent.go`)
 
 ```go
 messages = append(messages, msg)  // model's response with content + tool calls
 ```
 
-### 5b. Tool results (`agent_tools.go:196`)
+### 5b. Tool results (`agent_tools.go`)
 
 Each tool executed produces a tool result message:
 
@@ -139,7 +142,7 @@ Each tool executed produces a tool result message:
 *messages = append(*messages, types.ToolResultMsg(callID, name, result))
 ```
 
-### 5c. Conflict detection (`agent.go:584`)
+### 5c. Conflict detection (`agent.go`)
 
 When external file modifications are detected, a user message is injected:
 
@@ -150,13 +153,13 @@ messages = append(messages, conflictMsg)
 
 ## Layer 6: Sub-agent prompt
 
-**File**: `cmd/yaah/subagent_runner.go:150-181`
+**File**: `cmd/yaah/subagent_runner.go`
 
-Sub-agents spawned via the `task` tool inherit the full planner system prompt plus
-a role guidance suffix:
+Sub-agents spawned via the `spawn_subagent` tool inherit the full orchestrator
+system prompt plus a role guidance suffix:
 
 ```go
-sysPrompt := opts.systemPrompt  // same as planner's l.SystemPrompt
+sysPrompt := opts.systemPrompt  // same as the orchestrator's l.SystemPrompt
 // plus role-specific guidance:
 Loop{
     SystemPrompt: sysPrompt + RoleGuidance(role),
@@ -164,15 +167,20 @@ Loop{
 }
 ```
 
-Role guidance examples (`agent/subagent.go:84-103`):
-| Role | Guidance |
-|---|---|
-| worker | "Implement the assigned task directly using filesystem and shell tools" |
-| reviewer | "You have read-only tools. Analyze, review, research and report" |
-| planner | "You may decompose the work and dispatch worker sub-agents" |
+Role guidance is the markdown body of each role definition
+(`internal/agent/subagent/role.go` → `RoleGuidance`, loaded from the embedded
+`internal/prompts/roles/*.md` and any `.agents/roles/*.md`). The built-in
+roles and their personas:
 
-Sub-agents are full agents with the planner's identity, just with restricted
-toolsets and role-specific guidance.
+| Role | Persona | Guidance (role markdown body) |
+|---|---|---|
+| `developer` | Charley | Implement features, fix bugs, make code changes; read before editing |
+| `analyst` | Jack | Research and gather information from web/docs/code; do not modify files |
+| `tester` | Casey | Run test suites, analyze failures, measure coverage; do not modify source |
+| `reviewer` | Tim | Inspect code, count files/lines, measure complexity; do not modify files |
+
+Sub-agents are full agents with the orchestrator's identity, just with
+restricted toolsets and role-specific guidance.
 
 ## Complete injection map
 
@@ -200,21 +208,24 @@ Loop.Run(userInput)
 ├── If conflict detected:
 │   └── [6] UserMsg(conflict report)
 │
-├── If task (sub-agent) calls:
+├── If spawn_subagent calls:
 │   └── subagent_runner
-│       └── [T1] SystemMsg(planner prompt + role guidance)
+│       └── [T1] SystemMsg(orchestrator prompt + role guidance)
 │
 └── Loop continues until model outputs no tool calls
 ```
 
 ## Key design decisions
 
-1. **Sub-agents inherit the planner prompt.** This means they carry the full
-   identity, principles, and tool knowledge — they are full agents with
-   restricted toolsets. Role guidance is appended to steer behavior.
+1. **Sub-agents inherit the orchestrator prompt.** This means they carry the
+   full identity, principles, and tool knowledge — they are full agents with
+   restricted toolsets. Role guidance (the role's markdown body) is appended to
+   steer behavior.
 
-2. **Agent gets environment once at startup.** `DetectEnvironment` runs once
-   and is embedded in the system prompt. It is not re-injected per-turn.
+2. **Environment is assembled from one shared template.** `DetectEnvironment`
+   renders `environment_header.md` once for the main agent's system prompt, and
+   sub-agents receive the same block via `EnvironmentHeader`. It is not
+   re-injected per-turn.
 
 3. **Tool set is consistent.** The agent gets the full tool set based on the
    current tool level. The model chooses per-action which tools to use.

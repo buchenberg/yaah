@@ -1,6 +1,7 @@
 package subagent
 
 import (
+	"os"
 	"sync/atomic"
 	"time"
 )
@@ -49,9 +50,17 @@ func RoleSpecialty(role SubAgentRole) string {
 }
 
 // SetDefaultRoleRegistry installs the global registry used by
-// RoleProfileFor and RoleGuidance. Call once at startup.
+// RoleProfileFor and RoleGuidance. Call once at startup and again
+// whenever roles are hot-reloaded from disk.
 func SetDefaultRoleRegistry(r *RoleRegistry) {
 	defaultRoleReg.Store(r)
+}
+
+// DefaultRegistry returns the current global role registry. May be nil
+// before initialisation. Callers that enumerate roles at runtime should
+// call this each time rather than caching a pointer.
+func DefaultRegistry() *RoleRegistry {
+	return defaultRoleReg.Load()
 }
 
 // RoleProfileFor returns the runtime profile for the given role.
@@ -72,4 +81,41 @@ func RoleGuidance(role SubAgentRole) string {
 		return r.Guidance(role)
 	}
 	return ""
+}
+
+// Roles returns the list of role names from the current default registry.
+func Roles() []string {
+	reg := defaultRoleReg.Load()
+	if reg == nil {
+		return nil
+	}
+	return reg.Names()
+}
+
+// ReloadDefaultRolesOptions holds the inputs needed to rebuild the
+// default role registry from disk.
+type ReloadDefaultRolesOptions struct {
+	BuiltinFiles map[string][]byte
+	SearchDirs   []string
+}
+
+// ReloadDefaultRoles rebuilds the default role registry from built-in
+// files and on-disk directories, then atomically swaps it in. New
+// sub-agent dispatches pick up the updated registry immediately;
+// in-flight sub-agents continue with their already-loaded profiles.
+func ReloadDefaultRoles(opts ReloadDefaultRolesOptions) error {
+	reg := NewRoleRegistry()
+	if err := reg.LoadBytes(opts.BuiltinFiles); err != nil {
+		return err
+	}
+	for _, dir := range opts.SearchDirs {
+		if err := reg.LoadDir(dir); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+	}
+	SetDefaultRoleRegistry(reg)
+	return nil
 }

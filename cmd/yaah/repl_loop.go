@@ -54,6 +54,9 @@ func startREPL() error {
 		case repl.CmdCompact:
 			sess.compactContext()
 			continue
+		case repl.CmdReloadRoles:
+			sess.reloadRoles()
+			continue
 		}
 
 		if err := repl.AppendHistory(input); err != nil {

@@ -93,6 +93,8 @@ type agentSession struct {
 	otelShutdown func(context.Context) error
 	tracker      *tools.ConflictTracker
 
+	cwd string
+
 	view      agent.View
 	ctrlCh    chan<- types.CtrlMsg
 	approveFn func(name, args string) bool
@@ -231,6 +233,12 @@ func newAgentSession() (*agentSession, error) {
 	planDirs := planSearchPaths()
 	toolReg.Register(&tools.PlanTool{Dirs: planDirs})
 
+	roleDirs := roleSearchPaths(cwd)
+	toolReg.Register(&tools.RoleTool{
+		Dirs:         roleDirs,
+		BuiltinFiles: builtinRoleFiles(),
+	})
+
 	var todoStore *todo.Store
 	if db != nil {
 		todoStore = todo.NewStoreWithDB(db)
@@ -329,6 +337,11 @@ func newAgentSession() (*agentSession, error) {
 
 	taskTool := newTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default, nil)
 
+	// RoleResolver provides a live role-name lookup so the spawn_subagent
+	// tool sees roles created via the role tool without a restart. The
+	// cached reg.Names() snapshot above is layered underneath.
+	taskTool.RoleResolver = func() []string { return subagent.DefaultRegistry().Names() }
+
 	// Wire background sub-agent completion into the follow-up channel so
 	// results from async sub-agents appear as injected user messages.
 	taskTool.BackgroundNotifier = func(role, description, result string, err error) {
@@ -354,7 +367,11 @@ func newAgentSession() (*agentSession, error) {
 
 	toolReg.Register(&tools.ListSubAgentsTool{
 		Lister: func() []tools.SubAgentInfo {
-			defs := reg.List()
+			r := subagent.DefaultRegistry()
+			if r == nil {
+				return nil
+			}
+			defs := r.List()
 			infos := make([]tools.SubAgentInfo, 0, len(defs))
 			for name, def := range defs {
 				desc := def.Description
@@ -380,6 +397,13 @@ func newAgentSession() (*agentSession, error) {
 		},
 	})
 
+	// Build and inject a compact tool quick-reference card so the
+	// model has signature-first parameter info near the top of the
+	// prompt, rather than only verbose JSON schemas at the bottom.
+	if quickRef := buildToolQuickRef(toolReg); quickRef != "" {
+		mainPrompt += "\n\n" + quickRef
+	}
+
 	// Wrap the provider with OTel instrumentation if enabled.
 	if otelActive {
 		if sp, ok := provider.(agent.StreamProvider); ok {
@@ -404,6 +428,7 @@ func newAgentSession() (*agentSession, error) {
 		msgIdx:       msgIdx,
 		otelShutdown: otelShutdown,
 		tracker:      tracker,
+		cwd:          cwd,
 		steerCh:      make(chan string, 4),
 		followupCh:   followupCh,
 	}, nil
@@ -430,6 +455,59 @@ func (s *agentSession) close() {
 	for _, c := range s.mcpClients {
 		c.Close()
 	}
+}
+
+// buildToolQuickRef iterates the tool registry and produces a compact
+// markdown quick-reference table. Each entry extracts the top-level
+// property names from the JSON Schema so the model can see parameter
+// names without parsing verbose schemas at the bottom of the prompt.
+func buildToolQuickRef(toolReg *tools.Registry) string {
+	names := toolReg.List()
+	entries := make([]prompts.QuickRefEntry, 0, len(names))
+	for _, name := range names {
+		t := toolReg.Get(name)
+		if t == nil {
+			continue
+		}
+		sig := schemaSignature(t.Schema())
+		entries = append(entries, prompts.QuickRefEntry{
+			Name:        name,
+			Signature:   sig,
+			Description: t.Description(),
+		})
+	}
+	return prompts.BuildToolQuickRef(entries)
+}
+
+// schemaSignature extracts a compact comma-separated parameter list
+// from a JSON Schema object. Optional properties get a "?" suffix.
+func schemaSignature(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+		Required   []string                   `json:"required"`
+	}
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return ""
+	}
+	if len(s.Properties) == 0 {
+		return ""
+	}
+	required := make(map[string]bool, len(s.Required))
+	for _, r := range s.Required {
+		required[r] = true
+	}
+	params := make([]string, 0, len(s.Properties))
+	for name := range s.Properties {
+		if required[name] {
+			params = append(params, name)
+		} else {
+			params = append(params, name+"?")
+		}
+	}
+	return strings.Join(params, ", ")
 }
 
 func (s *agentSession) Close()   { s.close() }
@@ -626,6 +704,37 @@ func (s *agentSession) compactContext() {
 		newTokens += len(m.Content) / 4
 	}
 	msg(fmt.Sprintf("compacted: %d/%d tokens (%d%%)", newTokens, window, newTokens*100/window))
+}
+
+func (s *agentSession) reloadRoles() {
+	s.mu.RLock()
+	ch := s.ctrlCh
+	cwd := s.cwd
+	s.mu.RUnlock()
+
+	msg := func(text string) {
+		if ch != nil {
+			select {
+			case ch <- &types.CtrlStatus{Text: text}:
+			default:
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "  %s\n", Dim(text))
+		}
+	}
+
+	opts := subagent.ReloadDefaultRolesOptions{
+		BuiltinFiles: builtinRoleFiles(),
+		SearchDirs:   roleSearchPaths(cwd),
+	}
+	if err := subagent.ReloadDefaultRoles(opts); err != nil {
+		msg(fmt.Sprintf("role reload failed: %v", err))
+		return
+	}
+
+	reg := subagent.DefaultRegistry()
+	roles := reg.Names()
+	msg(fmt.Sprintf("reloaded %d roles (%d built-in + %d search dirs)", len(roles), len(opts.BuiltinFiles), len(opts.SearchDirs)))
 }
 
 // terminalView implements agent.View for REPL terminal output.

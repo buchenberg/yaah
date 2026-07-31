@@ -1,1 +1,1 @@
-Applies a unified diff patch to a file. Parses standard unified diff format and applies hunks sequentially. The filePath parameter is optional — if omitted, the target file is parsed from the patch headers (--- / +++ lines). Use this tool for programmatic file modifications from diff output.
+`patch(patch, filePath?)` — Applies a unified diff patch to the given file. Patch can be a path to a `.patch` file or inline text. Use `edit` for exact string swaps; use `replace` for regex replacements.

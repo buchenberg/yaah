@@ -90,7 +90,7 @@ go install github.com/buchenberg/yaah@latest
 ### Docker
 
 A `Dockerfile` and `docker-compose.yml` are included for containerized use
-with Jaeger tracing. The `yaah` service is scoped behind the `cli` profile —
+with OpenObserve tracing. The `yaah` service is scoped behind the `cli` profile —
 add `--profile cli` to `docker compose up` and `run` commands.
 
 ```bash
@@ -121,358 +121,45 @@ yaah --resume <session-id> "continue"      # resume a saved session
 yaah -d "always run tests first" "fix X"   # inject session directive
 ```
 
-## My features
+## Documentation
 
-### The sub-agent team
-
-This is where I shine. When you give me a complex task, I don't try to do
-everything myself. I dispatch a team of specialists — each with a focused
-tool set, a specific role, and clear boundaries. They work in parallel when
-they can, sequentially when they must. I synthesize their results and give
-you the answer.
-
-And here's the beautiful part: **I pay them peanuts.** Most of them run on
-a cheaper, faster model (`deepseek-v4-flash` by default), while I keep the
-good model for myself — the orchestration, the synthesis, the thinking. They
-don't complain. They just ship.
-
-Meet the crew:
-
-- **Charley** is my developer. Give him a feature spec or a bug report and
-  he'll write the code, edit the files, and follow existing conventions. He
-  gets 180 seconds and 25 iterations — enough to build something real.
-  _Specialty: implementing features, fixing bugs, writing code._
-
-- **Jack** is my analyst. He researches. He reads docs, scrapes web pages,
-  greps the codebase, and comes back with sourced, cited findings. He never
-  modifies files — he just finds answers. 120 seconds, 20 iterations.
-  _Specialty: research, information gathering, web and code search._
-
-- **Casey** is my tester. She runs the test suite, analyzes failures,
-  measures coverage, and reports what's broken. She doesn't touch source
-  code — she just tells you what to fix. 180 seconds, 20 iterations.
-  _Specialty: testing, failure analysis, coverage measurement._
-
-- **Tim** is my reviewer. He counts files, measures lines, flags complexity,
-  and spots anti-patterns. He's fast and thorough — 120 seconds, 15
-  iterations. _Specialty: code review, metrics, complexity analysis._
-
-- **Sam** is my security auditor. She scans for hardcoded secrets, unsafe
-  patterns, weak crypto, injection vectors. She's paranoid for good reason.
-  180 seconds, 30 iterations. _Specialty: vulnerability scanning, secret
-  detection, supply chain risks._
-
-- **Checker** runs a single check and reports pass or fail. One turn, one
-  command, one result. 60 seconds. _Specialty: binary pass/fail checks._
-
-- **Counter** counts things and returns structured metrics. Files, lines,
-  functions, test cases — he counts it. One turn, 30 seconds.
-  _Specialty: structured counting and metrics._
-
-When no specific role fits, I have a fallback sub-agent named **Pat** with
-full tool access — a generalist who can handle whatever you throw at them.
-
-Multiple `spawn_subagent` calls in one turn fan out in parallel (up to your
-configured `max_concurrency`, default 3). I dispatch them in waves:
-Charley and Tim might fix code while Jack researches a dependency, all at
-once. Then Casey tests the result while Sam audits for safety.
-
-Each sub-agent returns a structured contract with an evidence heading and
-fields marked as raw evidence (command output, exit codes, file paths) or
-interpretation (findings, confidence, summaries). I trust the evidence. I
-spot-check the interpretations when confidence is low. I never re-do work
-my team already did — that's wasteful and disrespectful.
-
-### Structured escalation
-
-When a sub-agent hits a blocker it can't resolve, it emits a structured
-escalation block instead of silently failing:
-
-```
-```escalation
-{"severity":"blocker","summary":"file not found","detail":"...","suggestion":"..."}
-```
-```
-
-Severity levels: `info` → `warning` → `blocker` → `critical`. Blockers and
-criticals are surfaced to the user immediately. Warnings are noted but don't
-halt work. The orchestrator sees escalations as typed events and reports them
-with color-coded severity in both REPL and TUI.
-
-### Quality gates
-
-Sub-agent output can be automatically validated before reaching you.
-Configure per-role validators:
-
-```yaml
-agents:
-  quality_gates:
-    developer: [tester]    # after developer completes, dispatch tester
-```
-
-When a `developer` sub-agent finishes, a `tester` is auto-dispatched to
-validate the output. If validation fails, the result is annotated with
-`[quality-gate:FAIL]` so I know to investigate before reporting success.
-
-### Session directives
-
-Directives are session-level policy statements injected into all agent
-prompts (orchestrator and sub-agents):
-
-```bash
-yaah -d "prefer table-driven tests" -d "always run go vet" "implement X"
-```
-
-Or in config:
-
-```yaml
-agents:
-  default:
-    directives:
-      - "always run tests after implementation"
-```
-
-CLI flags prepend to config directives.
-
-### Custom sub-agent roles
-
-You define them as markdown files in `.agents/roles/` (project-level) or
-`~/.agents/roles/` (user-level). YAML frontmatter sets the tools, limits,
-and contract. The markdown body is the sub-agent's system prompt. The file
-name (minus `.md`) becomes the role name.
-
-```markdown
----
-name: Auditor
-specialty: security
-description: Scans for vulnerabilities, secrets, and unsafe patterns
-contract:
-  heading: "## Audit"
-  fields:
-    - { name: severity, kind: interpretation }
-    - { name: files_scanned, kind: evidence }
-    - { name: issues_found, kind: interpretation }
-    - { name: findings, kind: interpretation }
-    - { name: summary, kind: interpretation }
-tools:
-  - read
-  - grep
-  - glob
-  - ls
-  - powershell
-  - bash
-max_iterations: 30
-timeout: 180
----
-
-You are a SECURITY AUDITOR. Find vulnerabilities, hardcoded secrets, and
-unsafe patterns. Report findings with file paths, line numbers, and severity.
-Do NOT modify files.
-```
-
-Built-in roles (Charley, Jack, Casey, Tim, Sam, Checker, Counter) take
-precedence — you can't shadow them, only add new ones.
-
-### Evidenced contracts
-
-Every sub-agent returns a structured response with a contract heading and
-fields marked as `evidence` (raw tool output — commands, exit codes, file
-paths, URLs) or `interpretation` (synthesis — findings, confidence,
-summaries). I trust evidence fields directly. I spot-check interpretations
-when confidence is low. This means I don't re-run work my team already did.
-
-### Rich terminal interface
-
-`yaah tui` launches a full Bubble Tea terminal UI with:
-
-- Streaming token-by-token responses as I think
-- Collapsible reasoning/thinking blocks (DeepSeek R1, Claude) — toggle with
-  `ctrl+t`
-- Inline tool call cards showing what I'm running, how long it took, and the
-  result
-- Sub-agent dispatch cards with role, duration, and error status
-- A command palette (`:`) for model switching, help, compact, clear, banner
-  toggle, MCP status
-- Search (`/`) through response history
-- `ctrl+y` to copy the last response
-- Mouse wheel, page up/down, home/end navigation
-- Footer bar with the most important keybindings
-- Todo list sidebar tracking in-flight tasks
-- Input history and expandable multi-line input
-
-### Interactive REPL
-
-When you just want a quick conversation without the full TUI, `yaah`
-(no args) starts a readline REPL with slash commands:
-
-| Command | Action |
+| Doc | What's in it |
 |---|---|
-| `/exit`, `/quit` | Say goodbye |
-| `/clear` | Clear the screen |
-| `/compact` | Summarize old context to free up space |
-| `/help`, `/?` | Show available commands |
+| [docs/architecture.md](./docs/architecture.md) | Deep dive: agent loop, middleware, tool execution, streaming, context compaction, sub-agent lifecycle |
+| [docs/sub-agents.md](./docs/sub-agents.md) | The team, built-in vs custom roles, escalation, quality gates, directives, evidenced contracts |
+| [docs/features.md](./docs/features.md) | TUI & REPL, memory & sessions, MCP, the built-in tool belt, observability, hooks, approval, middleware, providers |
+| [docs/configuration.md](./docs/configuration.md) | Full `config.yaml` reference — providers, agents, sub-agents, middleware, observability, hooks, editor |
+| [docs/otel-setup.md](./docs/otel-setup.md) | OpenObserve tracing setup |
+| [docs/tui-components.md](./docs/tui-components.md) | TUI component system reference |
+| [docs/web-ui.md](./docs/web-ui.md) | Web UI architecture and event reference |
+| [docs/PROMPT-INJECTION.md](./docs/PROMPT-INJECTION.md) | Prompt-injection architecture map |
 
-Arrow keys navigate history. History persists at `~/.yaah/history`.
+## Features
 
-### Persistent memory
+I'm a thin shell around a composable agent loop. Highlights (details in the
+linked docs):
 
-I remember things across sessions using SQLite with full-text search (FTS5):
-
-```bash
-yaah memory add "user prefers dark mode" --tags '["ui"]'
-yaah memory search "dark mode"
-```
-
-During conversations, I use `memory_search`, `memory_add`, `memory_update`,
-and `memory_delete` tools. I save session summaries so you can pick up where
-you left off.
-
-### Session persistence and resume
-
-Every message is written to SQLite in real time. Sessions survive crashes
-and process restarts:
-
-```bash
-yaah session list
-yaah session show <id>
-yaah --resume <id> "pick up where we left off"
-```
-
-### MCP servers
-
-I speak Model Context Protocol over stdio and HTTP. MCP servers give me
-more tools — databases, APIs, custom workflows:
-
-```bash
-yaah mcp list
-yaah mcp add <name> <command> [args...]
-yaah mcp add <name> --url http://localhost:3000
-yaah mcp remove <name>
-```
-
-### MCP tool server (agent-to-agent)
-
-I can also *be* an MCP server. `yaah serve` exposes my engine as three MCP
-tools — `prompt`, `traces`, and `status` — so other agents (Kilo, Claude
-Code, benchmarking harnesses) can drive multi-turn conversations and query
-in-process OpenTelemetry traces programmatically:
-
-```bash
-yaah serve                        # stdio (newline-delimited or Content-Length)
-yaah serve --http 127.0.0.1:7333  # HTTP+SSE (hot-reload dev loop)
-```
-
-The server auto-detects framing, lazily initializes the agent session for
-instant handshakes, and auto-registers stale sessions so server restarts
-are transparent to the client. See the dev loop section below.
-
-### Skills
-
-I load `.agents/skills/` (project) and `~/.agents/skills/` (user) at
-startup. Skills are `SKILL.md` files — YAML frontmatter with a markdown
-body. I use the `skill` tool to inject a skill's instructions into my
-context when the task matches:
-
-```bash
-yaah skill list
-yaah skill show <name>
-```
-
-### Plans
-
-I can create and manage structured plans via the `plan` tool. Plans live as
-`PLAN.md` files in `.agents/plans/` with a workflow: `draft → approved →
-in_progress → completed`. Great for multi-step tasks that need sign-off.
-
-### Todo lists
-
-I track in-flight work with the `todowrite` tool. The TUI shows them in a
-sidebar. Use `/compact` or `:compact` when the list gets long.
-
-### Tool belt (my built-in tools)
-
-Here's what I can reach for directly:
-
-| Tool | What it does |
-|---|---|
-| `read`, `write`, `edit`, `delete`, `replace` | File operations |
-| `grep`, `glob`, `ls` | Search and navigation |
-| `bash`, `powershell` | Shell commands — I pick the right one for your OS |
-| `git` | Version control |
-| `http`, `webfetch` | Web requests and scraping |
-| `go_outline` | Parse Go source structure — this one comes in handy |
-| `json_query` | Read/write/delete JSON values by path |
-| `calculate` | Math expressions — I'm a language model, give me a break |
-| `file_info` | File metadata without reading |
-| `question` | Ask you for clarification |
-| `background_process` | Manage long-running processes |
-| `skill` | Load skill instructions on demand |
-| `plan` | Create and manage PLAN.md files |
-| `todowrite` | Track in-flight tasks |
-| `memory_search`, `memory_add`, `memory_update`, `memory_delete`, `memory_search_sessions` | Long-term memory |
-| `spawn_subagent`, `list_subagents` | Team management |
-
-### OpenTelemetry observability
-
-Enable tracing to see every LLM call, tool execution, inner loop, and
-sub-agent dispatch as spans:
-
-```yaml
-observability:
-  otel:
-    enabled: true
-```
-
-Token attribution is tracked per-turn. Fire up Jaeger with `docker compose
-up -d openobserve`, visit http://localhost:5080, and watch me work. Full guide
-at [`docs/otel-setup.md`](./docs/otel-setup.md).
-
-### Hook events
-
-Set `hooks.dir` to emit structured JSONL events — `session.start`,
-`session.end`, `turn.start`, `tool.start`, `tool.end`, `conflict.detect` —
-with timestamps, model info, tool results, and durations. Basically I narrate my own life. Useful for external integrations, audit
-trails, and keeping the collective honest.
-
-### Approval gates
-
-Three modes for dangerous tools (write, delete, execute, git push):
-
-```bash
-yaah --approval ask "deploy"    # prompt for each dangerous call (default)
-yaah --approval allow "deploy"  # auto-approve (headless / CI)
-yaah --approval deny "deploy"   # block all dangerous calls
-```
-
-### Middleware pipeline
-
-I run a configurable middleware pipeline on every agent turn:
-
-| Middleware | On by default | What it does |
-|---|---|---|
-| `steer` | ✓ | High-priority mid-turn input before the next LLM call |
-| `followup` | ✓ | Queued between-turn messages, coalesced into one |
-| `compaction` | ✓ | LLM-powered context summarization when the window fills up |
-| `soft_prune` | ✓ | Elides stale tool-output content without an LLM call |
-| `approval` | ✓ | Gates dangerous tools per your approval mode |
-| `loop_detection` | ✓ | Halts stuck loops via tool-call-chain hashing |
-| `staleness` | ✓ | Annotates sub-agent results when orchestrator context shifted mid-flight |
-| `permission` | — | Path-pattern rules to allow/deny tools by file path |
-| `tool_concurrency` | — | Caps concurrent tool goroutines |
-| `sub_agent` | — | Enforces sub-agent depth limits |
-| `prompt_caching` | — | Anthropic cache-control breakpoints |
-
-You can reorder, disable, or enable middleware in your config.
-
-### Provider flexibility
-
-I work with any OpenAI-compatible API, plus native Anthropic Messages API
-support (with prompt caching and extended thinking). Configure as many
-providers as you want — DeepSeek, OpenAI, Anthropic, Ollama, llama.cpp,
-OpenRouter. The really cool people run open-weight models locally, but I
-won't stop you from doing whatever. Set a fallback provider for when the
-primary one returns a transient error (429, 503). Sub-agents can use
-different providers and models than the main loop.
+- **Sub-agent team** — dispatch specialist roles in parallel, each with a
+  focused tool set, evidenced response contracts, structured escalation, and
+  quality gates. Four roles are built in; define your own in `.agents/roles/`.
+  → [sub-agents.md](./docs/sub-agents.md)
+- **Interfaces** — a rich Bubble Tea TUI (streaming, collapsible reasoning,
+  tool/sub-agent cards, command palette) and a readline REPL. → [features.md](./docs/features.md)
+- **MCP** — speak Model Context Protocol as a client (stdio + HTTP) *and* as
+  a server (`yaah serve`, `yaah acp-serve`) for agent-to-agent coordination.
+  → [features.md](./docs/features.md)
+- **Built-in tools** — files, search, shell, git, web, Go tooling
+  (`go_outline`, `go_test`, `go_refactor`, `go_mod`, `bisect`, `staticcheck`),
+  memory, plans, todos, and more. → [features.md](./docs/features.md)
+- **Context management** — soft-prune + LLM compaction + loop detection +
+  approval gates through an 11-stage middleware pipeline (8 on by default).
+  → [features.md](./docs/features.md)
+- **Observability** — OpenTelemetry tracing with per-turn token attribution
+  and an in-memory span buffer. → [features.md](./docs/features.md) · [otel-setup.md](./docs/otel-setup.md)
+- **Persistence** — SQLite sessions + FTS5 memory, resume, skills, plans.
+  → [features.md](./docs/features.md)
+- **Providers** — any OpenAI-compatible API plus native Anthropic Messages
+  API, with fallback and per-role provider/model overrides. → [configuration.md](./docs/configuration.md)
 
 ## Commands
 
@@ -488,6 +175,8 @@ yaah doctor                       # diagnostics
 
 yaah skill list                   # list skills
 yaah skill show <name>            # show a skill
+yaah skill create <name> <desc>   # scaffold a new skill
+yaah skill edit <name>            # edit a skill in $EDITOR
 
 yaah mcp list                     # list MCP servers
 yaah mcp add <name> <cmd> [args]  # add stdio MCP server
@@ -517,248 +206,12 @@ yaah version                      # print version
 
 Everything lives in `~/.yaah/config.yaml` (or `$YAAH_HOME/config.yaml`).
 Environment variables referenced as `${VAR_NAME}` are substituted at load
-time. Missing sections fall back to sensible defaults. On first run, a
-scaffold is written automatically.
+time, missing sections fall back to sensible defaults, and a scaffold is
+written on first run.
 
-This file used to be smaller. I'm getting complicated. Sorry about that.
-
-### Full example
-
-```yaml
-# ── Providers ──────────────────────────────────────────────────
-providers:
-  deepseek:
-    name: DeepSeek
-    base_url: https://api.deepseek.com/v1
-    api_key: ${DEEPSEEK_API_KEY}
-  anthropic:
-    api: anthropic                     # native Anthropic Messages API
-    name: Anthropic
-    base_url: https://api.anthropic.com
-    api_key: ${ANTHROPIC_API_KEY}
-  ollama:
-    name: Ollama
-    base_url: http://localhost:11434/v1
-    api_key: ollama
-    timeout: 0                       # 0 = no timeout (slow local models)
-  openrouter:
-    name: OpenRouter
-    base_url: https://openrouter.ai/api/v1
-    api_key: ${OPENROUTER_API_KEY}
-    models:                          # limit available models
-      - meta-llama/llama-4-maverick
-
-# ── Agents ─────────────────────────────────────────────────────
-agents:
-  default:                           # the main agent (me!)
-    provider: deepseek
-    model: deepseek-v4-pro
-    small_model: deepseek-v4-flash    # cheaper model for compaction
-    max_iterations: 50                # hard loop cap
-    max_turns: 5                      # soft cap that strips tools at N (0 = off)
-    context_window: 128000
-    approval: ask                     # ask | allow | deny
-    max_inline_tools_per_turn: 0      # 0 = unlimited
-    estimate_factor: 1.3              # token estimate multiplier (0 = default 1.3)
-
-    # Compaction tuning — fractions of context_window that trigger summarisation.
-    compaction_threshold: 0.5
-    raw_compaction_threshold: 0.5     # triggers on raw prompt tokens (ignores cache)
-    compact_max_messages: 50          # force compaction above N messages (0 = off)
-
-    # Session directives — injected into all agent prompts.
-    directives:
-      - "always run tests after implementation"
-
-    # Loop detection — halt when the same tool+args+result hash repeats.
-    loop_detect_count: 5              # identical calls to trigger halt
-    loop_detect_window: 10            # sliding window size
-
-    # Provider resilience — retry transient errors with backoff.
-    max_retries: 2                    # 0 = no retries
-    retry_backoff_secs: 1             # base backoff (exponential)
-
-    # Concurrency and caching.
-    max_tool_concurrency: 8           # 0 = unlimited
-    prompt_caching: false             # Anthropic cache-control breakpoints
-    reasoning_protect_turns: 2        # preserve reasoning in N recent turns
-
-  subagent:                           # my team
-    provider: deepseek                # override provider (default: inherit)
-    model: deepseek-v4-flash          # override model (default: inherit)
-    max_concurrency: 3                # simultaneous sub-agents per turn
-    default_timeout: 120              # seconds
-    default_max_turns: 0              # 0 = unlimited
-    output_limit: 51200               # bytes cap on sub-agent reports
-    json_mode: false                  # force structured output
-    roles:                            # per-role overrides
-      analyst:
-        timeout: 120
-        max_iterations: 20
-      developer:
-        timeout: 180
-        max_iterations: 25
-      reviewer:
-        timeout: 120
-        max_iterations: 15
-      tester:
-        timeout: 180
-        max_iterations: 20
-
-  fallback:                           # optional — try on primary failure
-    provider: ollama
-    model: llama3.2
-
-  quality_gates:                      # auto-validate sub-agent output
-    developer: [tester]               # after developer completes, dispatch tester
-
-  middleware:
-    enabled:                          # explicit pipeline order
-      - steer
-      - followup
-      - compaction
-      - approval
-      - loop_detection
-    # disabled:                       # remove from default pipeline
-    #   - approval
-
-# ── Observability ──────────────────────────────────────────────
-observability:
-  otel:
-    enabled: false
-    endpoint: localhost:4317          # OTLP gRPC endpoint
-    service_name: yaah
-    traces: true                      # emit trace spans
-    metrics: false                    # emit OTLP metrics
-    verbose: false                    # record full conversations (debug)
-
-# ── Hooks ──────────────────────────────────────────────────────
-hooks:
-  dir: ~/.yaah/hooks                  # JSONL event log (off by default)
-
-# ── Editor ─────────────────────────────────────────────────────
-editor: code --wait                   # overrides $EDITOR and $VISUAL
-```
-
-### Provider reference
-
-At least one provider is required. Each needs a `base_url` and an `api_key`.
-
-| Field | Default | Description |
-|---|---|---|
-| `api` | `openai` | API protocol: `openai` (default) or `anthropic` (native Messages API) |
-| `base_url` | (required) | API endpoint (OpenAI-compatible or Anthropic Messages) |
-| `api_key` | — | Supports `${ENV_VAR}` substitution |
-| `name` | map key | Display name shown in CLI/TUI |
-| `models` | — | Limit available models (empty = all from `/models`; n/a for Anthropic) |
-| `timeout` | 120 | HTTP request timeout in seconds (0 = no timeout) |
-
-### Agent reference
-
-**`agents.default`** — the main agent loop:
-
-| Field | Default | Description |
-|---|---|---|
-| `provider` | first alphabetically | Provider from `providers` |
-| `model` | — | Model for the main agent |
-| `small_model` | — | Cheaper model for context compaction |
-| `max_iterations` | 50 | Safety cap on loop turns |
-| `max_turns` | 0 (off) | Soft cap; tools are stripped at this iteration, forcing a final answer |
-| `context_window` | — | Token budget (0 = disabled) |
-| `approval` | `ask` | `allow`, `ask`, or `deny` |
-| `max_inline_tools_per_turn` | 0 (unlimited) | Cap inline tool calls per turn |
-| `estimate_factor` | 1.3 | Token estimate multiplier for preflight compaction |
-| `compaction_threshold` | 0.5 | Fraction of context_window that triggers LLM summarisation (effective tokens after cache subtraction) |
-| `raw_compaction_threshold` | 0.5 | Same as above but ignores cached tokens; guards latency |
-| `compact_max_messages` | 0 (off) | Force compaction when message count exceeds N, regardless of token estimates |
-| `directives` | — | Session-level policy statements injected into all agent prompts |
-| `loop_detect_count` | 5 | Identical tool calls (hash) within the window that trigger a hard halt |
-| `loop_detect_window` | 10 | Sliding window size (in turns) for loop detection |
-| `max_retries` | 0 (off) | Retry count on transient provider errors |
-| `retry_backoff_secs` | 1 | Base backoff seconds (exponential growth) |
-| `max_tool_concurrency` | 0 (unlimited) | Cap concurrent tool goroutines per turn |
-| `prompt_caching` | `false` | Inject Anthropic `cache_control` breakpoints (requires `api: anthropic`) |
-| `reasoning_protect_turns` | 2 | Preserve reasoning on N recent turns in provider requests |
-
-Sub-agents inherit all of the above (except `max_turns`, which they override via
-`default_max_turns` below) — making `compaction_threshold`, `loop_detect_count`,
-and `max_retries` consistent across the whole team.
-
-**`agents.subagent`** — team configuration:
-
-| Field | Default | Description |
-|---|---|---|
-| `provider` | `default.provider` | Provider for sub-agents |
-| `model` | `default.model` | Model for sub-agents |
-| `max_concurrency` | 3 | Max simultaneous `spawn_subagent` calls |
-| `default_timeout` | — | Default seconds per sub-agent (0 = none) |
-| `default_max_turns` | 0 (unlimited) | Default soft turn cap |
-| `output_limit` | 51200 | Byte cap on sub-agent reports |
-| `json_mode` | false | Force structured JSON output |
-| `roles.<name>.timeout` | — | Per-role timeout override |
-| `roles.<name>.max_iterations` | — | Per-role iteration cap |
-| `roles.<name>.max_turns` | — | Per-role turn cap |
-| `roles.<name>.provider` | — | Per-role provider override |
-| `roles.<name>.model` | — | Per-role model override |
-| `roles.<name>.context_window` | — | Per-role context window (halved from parent if unset) |
-| `roles.<name>.max_concurrency` | — | Per-role concurrency cap |
-
-**`agents.fallback`** — fallback on transient errors (429, 503):
-
-| Field | Default | Description |
-|---|---|---|
-| `provider` | — | Fallback provider name |
-| `model` | — | Fallback model name |
-
-**`agents.middleware`** — control the pipeline. Set `enabled` for an
-explicit order. Set `disabled` to remove from the default pipeline
-(`steer → followup → compaction → approval → loop_detection`).
-
-| Middleware | Default | Purpose |
-|---|---|---|
-| `steer` | on | High-priority mid-turn steering input |
-| `followup` | on | Queued between-turn messages, coalesced |
-| `compaction` | on | LLM-powered context summarization |
-| `soft_prune` | on | Elide stale tool-output content (no LLM) |
-| `approval` | on | Gate dangerous tools |
-| `loop_detection` | on | Halt stuck loops |
-| `staleness` | on | Annotate sub-agent results when context shifted |
-| `permission` | off | Path-pattern allow/deny rules |
-| `tool_concurrency` | off | Cap concurrent tool goroutines |
-| `sub_agent` | off | Enforce sub-agent depth limits |
-| `prompt_caching` | off | Anthropic cache-control breakpoints |
-
-### Observability reference
-
-```yaml
-observability:
-  otel:
-    enabled: false
-    endpoint: localhost:4317     # OTLP gRPC endpoint
-    service_name: yaah
-    traces: true                 # emit trace spans (default: true)
-    metrics: false               # emit OTLP metrics (default: false)
-    verbose: false               # record full conversations + summaries
-```
-
-### Hooks reference
-
-```yaml
-hooks:
-  dir: ~/.yaah/hooks             # JSONL event log (off by default)
-```
-
-Events: `session.start`, `session.end`, `turn.start`, `tool.start`,
-`tool.end`, `conflict.detect` — with timestamps, model, tool results, and
-durations.
-
-### Editor reference
-
-```yaml
-editor: code --wait              # overrides $EDITOR and $VISUAL
-```
-
-Resolution order: `editor` field → `$EDITOR` → `$VISUAL` → `vi`.
+The full annotated example and every field reference (providers, agents,
+sub-agents, middleware, observability, hooks, editor) live in
+[**docs/configuration.md**](./docs/configuration.md).
 
 ## Development
 
@@ -842,14 +295,19 @@ yaah/
 ├── main.go                       # calls cmd/yaah.Execute()
 ├── cmd/yaah/                     # cobra commands
 │   ├── root.go                   # build-time vars (version, commit, date)
-│   ├── root_cmd.go               # rootCmd, REPL, one-shot, agent wiring
+│   ├── root_cmd.go               # rootCmd: REPL, one-shot, prompt dispatch
+│   ├── agent_frame.go            # agent wiring (providers, tools, middleware)
+│   ├── repl_loop.go              # interactive REPL loop + slash commands
+│   ├── subagent_runner.go        # sub-agent dispatch + role discovery
+│   ├── provider_resolve.go       # provider/model resolution helpers
 │   ├── serve.go                  # yaah serve — MCP tool server (stdio + HTTP)
-│   ├── acp.go                    # yaah acp-serve — ACP server over stdio (JSON-RPC 2.0)
-│   ├── acp_view.go               # ACP event view (agent.View implementation)
-│   ├── version.go config.go      # CLI subcommands
-│   ├── doctor.go update.go
+│   ├── acp.go acp_view.go        # yaah acp-serve — ACP server (JSON-RPC 2.0)
+│   ├── web.go web_view.go        # yaah web — browser UI + WebSocket view
+│   ├── tui.go                    # bubbletea TUI (+ tui_unix.go / tui_windows.go)
+│   ├── plan.go                   # plan tool wiring
+│   ├── goat.go                   # easter-egg `yaah yaah` ASCII goat
+│   ├── version.go config.go doctor.go update.go
 │   ├── skill.go mcp.go memory.go session.go
-│   ├── tui.go                    # bubbletea TUI
 │   └── color.go                  # ANSI color helpers
 ├── internal/
 │   ├── agent/                    # agent loop, tool dispatch, middleware
@@ -878,12 +336,13 @@ yaah/
 │   └── update/                   # GitHub release checking
 ├── docs/
 │   ├── architecture.md           # detailed architecture
-│   ├── BENCHMARK-HISTORY.md      # benchmark history
+│   ├── sub-agents.md             # sub-agent team, roles, escalation, contracts
+│   ├── features.md               # TUI, REPL, MCP, tools, observability, middleware
+│   ├── configuration.md          # full config reference
 │   ├── PROMPT-INJECTION.md       # prompt injection architecture map
 │   ├── tui-components.md         # TUI component reference
 │   ├── web-ui.md                 # web UI architecture and event reference
-│   └── otel-setup.md             # Jaeger setup guide
-├── BENCHMARKS.md                  # current benchmark suite
+│   └── otel-setup.md             # OpenObserve setup guide
 ├── AGENTS.md                     # coding assistant instructions
 ├── CONTRIBUTING.md
 └── SECURITY.md
@@ -895,9 +354,6 @@ See [`docs/architecture.md`](./docs/architecture.md) for a detailed
 walkthrough of the agent loop, middleware pipeline, tool execution,
 streaming, context compaction, and sub-agent lifecycle.
 
-Benchmarks and perf history are in [`docs/BENCHMARK-HISTORY.md`](./docs/BENCHMARK-HISTORY.md).
-Current benchmark results are in [`BENCHMARKS.md`](./BENCHMARKS.md).
-
 ## Status
 
 I'm in active development and feature-complete for daily use.
@@ -908,12 +364,12 @@ MCP integration (stdio + HTTP) as both client and server, MCP tool server
 for agent-to-agent coordination (`yaah serve`), ACP server for agent communication (`yaah acp-serve`), REPL with slash commands
 and history, Bubble Tea TUI with streaming, tool call visualization,
 reasoning toggle, command palette, model switching, rich keybindings,
-mouse support, sub-agent team with 7 built-in roles, parallel dispatch
-with configurable concurrency, evidenced response contracts, custom role
-definitions from filesystem, middleware pipeline with 9 middleware,
-provider fallback, OpenTelemetry tracing with per-turn token attribution
-and in-memory span buffer, plan management, background process management,
-and hook events.
+mouse support, sub-agent team with 4 built-in roles (plus project-level
+custom roles), parallel dispatch with configurable concurrency, evidenced
+response contracts, custom role definitions from filesystem, middleware
+pipeline with 11 middleware (8 on by default), provider fallback,
+OpenTelemetry tracing with per-turn token attribution and in-memory span
+buffer, plan management, background process management, and hook events.
 
 **Experimental** — `yaah update` (GitHub release check).
 
@@ -930,8 +386,15 @@ before reporting success. Verification over trust.
 
 **Session directives.** You can now inject policy statements into all agent
 prompts for a session: `yaah -d "always run tests first" "implement X"`.
-Or set them permanently in config. My team follows them without being told
-twice.
+Or set them permanently in config. My team and I follow them without being told
+twice. 
+
+```
+directives: 
+    - always run tests after implementation
+    - say the expression "Yaah!" often
+    - you love goats
+```
 
 **Context management overhaul.** Fixed the pruner walk getting stuck after
 the first batch of marks (break→continue). Added a message-count compaction
@@ -965,7 +428,7 @@ coalescing so I don't react to every individual follow-up message — I batch
 'em up and process once. Per-role provider and model overrides so I can run
 Charley on one provider and Jack on another.
 
-**Middle ground: 9 middleware and counting.** I've got a proper pipeline
+**Middle ground: 11 middleware and counting.** I've got a proper pipeline
 now: compaction (keeps context tidy), approval (double-checks risky ops),
 context window (enforces limits), loop detection (stops infinite loops),
 follow-up (automatically continues when the model calls for it), per-role

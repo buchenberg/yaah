@@ -7,7 +7,7 @@ styling centralized in `theme.go`.
 ## Overview
 
 ```
-tui.go (Model, View, Update, HandleAgentMsg)
+tui.go (Model, View, Update, HandleEvent)
    │
    ├── View() ─────────► Header, StatusBar, palettes, viewport, input, footer
    │
@@ -23,18 +23,14 @@ mode flags). Components own **no** state — each is constructed from model
 state at render time and discarded. This keeps the bubbletea Elm loop intact
 while making every visual element independently testable.
 
-## The Component interface
+## The Component contract
 
-```go
-type Component interface {
-    Render() string
-}
-```
-
-Deliberately minimal. Components are mutable structs built per render pass;
-there is no builder chain and no children/composition tree. `BaseComponent`
-in `component.go` provides the shared "styled, width-constrained content"
-case for trivial uses.
+There is no declared interface — components are duck-typed. Every component
+is a struct with a `Render() string` method, built per render pass and
+discarded; there is no builder chain and no children/composition tree.
+`component.go` holds the shared `chatBubble(content, width, fg, bg)` helper
+(word-wrapped foreground on a width-constrained background) used by the
+message components.
 
 ## Component catalog
 
@@ -53,6 +49,8 @@ case for trivial uses.
 | `QuestionPalette` | `palette_component.go` | Interactive question modal | `View()` |
 | `HelpOverlay` | `palette_component.go` | Full keybinding help | `View()` |
 | `TodoTable` | `todo_component.go` | Todo list as a bordered table with title, status-colored rows, and priority badges | `renderMessages()` |
+| `InfoBar` | `info_bar_component.go` | Prompt / active-view info bar (3 lines, borderless) | `View()` |
+| `ErrorMessage` | `error_component.go` | Red-bordered error box, height-capped | `renderMessages()` |
 
 ## Rendering flow
 
@@ -201,7 +199,7 @@ Geometry clamps use the Go builtin `max()` (e.g. `max(width-4, 20)`).
 (not embedded inside a `ToolMessage`'s bordered box — the table carries its
 own rounded-border box and a "📋 Tasks" title). It receives `m.width` and
 truncates cell content so rows never wrap. The todo snapshot flows from
-`TodoWriteTool.OnWrite` → `AgentMsg.Todos` → `m.todos` ahead of the tool
+`TodoWriteTool.OnWrite` → a `ControlMsg` (carrying `Items`) → `m.todos` ahead of the tool
 result message (channel-ordered, same goroutine), so the table always
 reflects the list as written by that call.
 

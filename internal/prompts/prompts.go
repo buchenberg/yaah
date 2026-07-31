@@ -220,6 +220,14 @@ func InjectAfterIdentity(prompt string, directives []string) string {
 
 // Layers holds the composable pieces of the system prompt assembled
 // from multiple sources.
+// QuickRefEntry describes a single tool for the auto-generated
+// quick-reference card injected near the top of the system prompt.
+type QuickRefEntry struct {
+	Name        string // tool name, e.g. "edit"
+	Signature   string // compact param list, e.g. "filePath, oldString, newString, ..."
+	Description string // one-line purpose
+}
+
 type Layers struct {
 	Identity               string // embedded identity (always present)
 	Environment            string // runtime OS/arch/shell context
@@ -228,6 +236,36 @@ type Layers struct {
 	Memory                 string // stored facts from SQLite
 	Skills                 string // formatted skill index (name + description)
 	MaxSubAgentConcurrency int    // injected into prompt so the model knows the semaphore limit
+	ToolQuickRef           string // auto-generated tool quick-reference card
+}
+
+// BuildToolQuickRef generates a compact markdown quick-reference table
+// from tool entries. Tools are grouped logically and rendered as a
+// signature-first table for fast parameter lookup at inference time.
+func BuildToolQuickRef(entries []QuickRefEntry) string {
+	if len(entries) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Quick Reference\n\n")
+	b.WriteString("| Tool | Signature | Purpose |\n")
+	b.WriteString("|------|-----------|--------|\n")
+	for _, e := range entries {
+		sig := e.Signature
+		if sig == "" {
+			sig = "—"
+		} else {
+			sig = "(" + sig + ")"
+		}
+		b.WriteString("| ")
+		b.WriteString(e.Name)
+		b.WriteString(" | ")
+		b.WriteString(sig)
+		b.WriteString(" | ")
+		b.WriteString(e.Description)
+		b.WriteString(" |\n")
+	}
+	return b.String()
 }
 
 // Build assembles the full system prompt from the given layers by
@@ -246,6 +284,10 @@ func Build(l Layers) string {
 				"%d or fewer for optimal throughput.",
 			l.MaxSubAgentConcurrency, l.MaxSubAgentConcurrency, l.MaxSubAgentConcurrency,
 		))
+	}
+
+	if strings.TrimSpace(l.ToolQuickRef) != "" {
+		parts = append(parts, l.ToolQuickRef)
 	}
 
 	if strings.TrimSpace(l.Environment) != "" {

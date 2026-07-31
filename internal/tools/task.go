@@ -225,6 +225,11 @@ type TaskTool struct {
 	// When empty the legacy static schema is used.
 	RoleNames []string
 
+	// RoleResolver, when non-nil, provides a live role-name lookup.
+	// It is called at execution time to validate roles against the current
+	// registry, so the spawn_subagent tool sees newly created roles immediately.
+	RoleResolver func() []string
+
 	// RoleDescriptions maps role name to a one-line description of what
 	// the role does. Included in the spawn_subagent schema's role
 	// parameter so the orchestrator can choose roles without calling
@@ -250,8 +255,9 @@ func (t *TaskTool) Description() string {
 }
 
 func (t *TaskTool) Schema() json.RawMessage {
-	if len(t.RoleNames) > 0 {
-		return BuildTaskSchema(t.RoleNames, t.RoleDescriptions)
+	known := t.roleNames()
+	if len(known) > 0 {
+		return BuildTaskSchema(known, t.RoleDescriptions)
 	}
 	return json.RawMessage(`{
 		"type": "object",
@@ -267,6 +273,30 @@ func (t *TaskTool) Schema() json.RawMessage {
 		},
 		"required": ["description", "prompt", "role"]
 	}`)
+}
+
+// roleNames returns the known role names for validation and schema
+// generation: the cached startup snapshot layered with the live resolver
+// (if any) so role create/delete via the role tool takes immediate effect.
+func (t *TaskTool) roleNames() []string {
+	// Build the set of known roles: start with the cached snapshot,
+	// then layer on the live resolver so role create/delete takes
+	// immediate effect.
+	known := make(map[string]bool)
+	for _, n := range t.RoleNames {
+		known[n] = true
+	}
+	if t.RoleResolver != nil {
+		for _, n := range t.RoleResolver() {
+			known[n] = true
+		}
+	}
+	names := make([]string, 0, len(known))
+	for n := range known {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	return names
 }
 
 // BuildTaskSchema returns a JSON Schema for the task tool whose role
@@ -361,11 +391,12 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 	// Role is required: there is no default role. Reject empty and
 	// unknown roles here so the model gets a self-correcting tool
 	// result instead of spawning an unconfigured sub-agent.
+	known := t.roleNames()
 	if params.Role == "" {
-		return "", fmt.Errorf("spawn_subagent: role is required — pick one of: %s (use list_subagents for details)", strings.Join(t.RoleNames, ", "))
+		return "", fmt.Errorf("spawn_subagent: role is required — pick one of: %s (use list_subagents for details)", strings.Join(known, ", "))
 	}
-	if len(t.RoleNames) > 0 && !slices.Contains(t.RoleNames, params.Role) {
-		return "", fmt.Errorf("spawn_subagent: unknown role %q — valid roles: %s", params.Role, strings.Join(t.RoleNames, ", "))
+	if len(known) > 0 && !slices.Contains(known, params.Role) {
+		return "", fmt.Errorf("spawn_subagent: unknown role %q — valid roles: %s", params.Role, strings.Join(known, ", "))
 	}
 
 	if t.Runner == nil {

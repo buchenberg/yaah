@@ -412,7 +412,6 @@ func (m *Model) renderMessages() string {
 			}
 			b.WriteString("\n")
 		}
-		b.WriteString("\n\n")
 	}
 
 	if m.streaming && m.streamContent != "" {

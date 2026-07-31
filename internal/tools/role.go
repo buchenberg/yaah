@@ -1,0 +1,340 @@
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/buchenberg/yaah/internal/prompts"
+)
+
+// RoleTool lets the agent list, show, create, edit, and delete sub-agent role
+// definitions stored as .md files with YAML frontmatter in role search
+// directories. After every mutation the default role registry is reloaded so
+// list_subagents reflects the change immediately.
+type RoleTool struct {
+	Dirs         []string          // role search directories (project-first, then user)
+	BuiltinFiles map[string][]byte // built-in role files passed to ReloadDefaultRoles
+}
+
+// roleFrontmatter is the YAML frontmatter extracted from a role .md file.
+type roleFrontmatter struct {
+	Name          string   `yaml:"name"`
+	Description   string   `yaml:"description"`
+	Specialty     string   `yaml:"specialty"`
+	Tools         []string `yaml:"tools"`
+	MaxIterations int      `yaml:"max_iterations"`
+	MaxTurns      int      `yaml:"max_turns"`
+	JSONMode      bool     `yaml:"json_mode"`
+	Timeout       int      `yaml:"timeout"`
+}
+
+func (t *RoleTool) Name() string        { return "role" }
+func (t *RoleTool) Description() string { return prompts.ToolDescription("role") }
+
+func (t *RoleTool) Schema() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"action": {"type": "string", "enum": ["list", "show", "create", "edit", "delete"], "description": "Action to perform"},
+			"name": {"type": "string", "description": "Role name (required for show, create, edit, delete)"},
+			"description": {"type": "string", "description": "One-line role description (required for create, optional for edit)"},
+			"body": {"type": "string", "description": "Role system prompt body in markdown (required for create, optional for edit)"},
+			"tools": {"type": "string", "description": "JSON array or comma-separated tool names (optional)"},
+			"specialty": {"type": "string", "description": "Short specialty label (optional)"}
+		},
+		"required": ["action"]
+	}`)
+}
+
+func (t *RoleTool) Execute(ctx context.Context, args string) (string, error) {
+	var params struct {
+		Action      string `json:"action"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Body        string `json:"body"`
+		Tools       string `json:"tools"`
+		Specialty   string `json:"specialty"`
+	}
+	if err := json.Unmarshal([]byte(args), &params); err != nil {
+		return "", fmt.Errorf("role: invalid arguments: %w", err)
+	}
+
+	switch params.Action {
+	case "list", "":
+		return t.listRoles()
+	case "show":
+		if params.Name == "" {
+			return "", fmt.Errorf("role 'show' requires a 'name'")
+		}
+		return t.showRole(params.Name)
+	case "create":
+		if params.Name == "" {
+			return "", fmt.Errorf("role 'create' requires a 'name'")
+		}
+		return t.createRole(roleParams{
+			Name:        params.Name,
+			Description: params.Description,
+			Body:        params.Body,
+			Tools:       params.Tools,
+			Specialty:   params.Specialty,
+		})
+	case "edit":
+		if params.Name == "" {
+			return "", fmt.Errorf("role 'edit' requires a 'name'")
+		}
+		return t.editRole(roleParams{
+			Name:        params.Name,
+			Description: params.Description,
+			Body:        params.Body,
+			Tools:       params.Tools,
+			Specialty:   params.Specialty,
+		})
+	case "delete":
+		if params.Name == "" {
+			return "", fmt.Errorf("role 'delete' requires a 'name'")
+		}
+		return t.deleteRole(params.Name)
+	default:
+		return "", fmt.Errorf("unknown action %q (try list, show, create, edit, delete)", params.Action)
+	}
+}
+
+// listRoles returns all roles from the current default registry.
+func (t *RoleTool) listRoles() (string, error) {
+	reg := subagent.DefaultRegistry()
+	if reg == nil {
+		return "no role registry loaded", nil
+	}
+	entries := reg.List()
+	if len(entries) == 0 {
+		return "no roles defined", nil
+	}
+	names := make([]string, 0, len(entries))
+	for name := range entries {
+		names = append(names, string(name))
+	}
+	sort.Strings(names)
+	var b strings.Builder
+	for _, name := range names {
+		entry := entries[subagent.SubAgentRole(name)]
+		fmt.Fprintf(&b, "- **%s**: %s\n", name, entry.Description)
+	}
+	return strings.TrimSpace(b.String()), nil
+}
+
+// showRole reads and returns the full content of a role file.
+func (t *RoleTool) showRole(name string) (string, error) {
+	path, err := t.findRoleFile(name)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading %s: %w", path, err)
+	}
+	return string(data), nil
+}
+
+type roleParams struct {
+	Name        string
+	Description string
+	Body        string
+	Tools       string
+	Specialty   string
+}
+
+// createRole writes a new role .md file and reloads the registry.
+func (t *RoleTool) createRole(p roleParams) (string, error) {
+	dir := t.writeDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("creating role directory %s: %w", dir, err)
+	}
+
+	path := filepath.Join(dir, p.Name+".md")
+	if _, err := os.Stat(path); err == nil {
+		return "", fmt.Errorf("role %q already exists at %s (use 'edit' to modify)", p.Name, path)
+	}
+
+	fm := roleFrontmatter{
+		Name:        p.Name,
+		Description: p.Description,
+		Specialty:   p.Specialty,
+	}
+	fm.Tools = parseToolsList(p.Tools)
+
+	content, err := marshalRoleFile(fm, p.Body)
+	if err != nil {
+		return "", fmt.Errorf("marshaling role: %w", err)
+	}
+
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return "", fmt.Errorf("writing role file: %w", err)
+	}
+
+	if err := t.reloadRegistry(); err != nil {
+		return "", fmt.Errorf("role file written but reload failed: %w", err)
+	}
+
+	return fmt.Sprintf("created role %q at %s (%d bytes)", p.Name, path, len(content)), nil
+}
+
+// editRole modifies an existing role file in-place and reloads the registry.
+func (t *RoleTool) editRole(p roleParams) (string, error) {
+	path, err := t.findRoleFile(p.Name)
+	if err != nil {
+		return "", err
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading %s: %w", path, err)
+	}
+
+	existing, existingBody, err := parseRoleContent(string(data))
+	if err != nil {
+		return "", fmt.Errorf("parsing %s: %w", path, err)
+	}
+
+	if p.Description == "" && p.Body == "" && p.Specialty == "" && p.Tools == "" {
+		return "nothing to edit — no fields provided", nil
+	}
+	if p.Description != "" {
+		existing.Description = p.Description
+	}
+	if p.Specialty != "" {
+		existing.Specialty = p.Specialty
+	}
+	if p.Body != "" {
+		existingBody = strings.TrimSpace(p.Body)
+	}
+	if p.Tools != "" {
+		existing.Tools = parseToolsList(p.Tools)
+	}
+
+	content, err := marshalRoleFile(existing, existingBody)
+	if err != nil {
+		return "", fmt.Errorf("marshaling role: %w", err)
+	}
+
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return "", fmt.Errorf("writing role file: %w", err)
+	}
+
+	if err := t.reloadRegistry(); err != nil {
+		return "", fmt.Errorf("role file edited but reload failed: %w", err)
+	}
+
+	return fmt.Sprintf("edited role %q at %s (%d bytes)", p.Name, path, len(content)), nil
+}
+
+// deleteRole removes a role file and reloads the registry.
+func (t *RoleTool) deleteRole(name string) (string, error) {
+	path, err := t.findRoleFile(name)
+	if err != nil {
+		return "", err
+	}
+	if err := os.Remove(path); err != nil {
+		return "", fmt.Errorf("removing %s: %w", path, err)
+	}
+	if err := t.reloadRegistry(); err != nil {
+		return "", fmt.Errorf("role file deleted but reload failed: %w", err)
+	}
+	return fmt.Sprintf("deleted role %q (removed %s)", name, path), nil
+}
+
+// findRoleFile locates a role file by name across all search directories.
+func (t *RoleTool) findRoleFile(name string) (string, error) {
+	for _, dir := range t.Dirs {
+		path := filepath.Join(dir, name+".md")
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("role %q not found in any search directory", name)
+}
+
+// writeDir returns the directory where new roles should be created.
+func (t *RoleTool) writeDir() string {
+	if len(t.Dirs) > 0 {
+		return t.Dirs[0]
+	}
+	return ".agents/roles"
+}
+
+// reloadRegistry calls ReloadDefaultRoles to atomically swap in the latest
+// role definitions from disk.
+func (t *RoleTool) reloadRegistry() error {
+	return subagent.ReloadDefaultRoles(subagent.ReloadDefaultRolesOptions{
+		BuiltinFiles: t.BuiltinFiles,
+		SearchDirs:   t.Dirs,
+	})
+}
+
+// parseToolsList parses a tools string that can be a JSON array or
+// comma-separated list.
+func parseToolsList(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	if strings.HasPrefix(s, "[") {
+		var arr []string
+		if err := yaml.Unmarshal([]byte(s), &arr); err == nil && len(arr) > 0 {
+			return arr
+		}
+	}
+	var arr []string
+	for _, tok := range strings.Split(s, ",") {
+		tok = strings.TrimSpace(tok)
+		if tok != "" {
+			arr = append(arr, tok)
+		}
+	}
+	return arr
+}
+
+// parseRoleContent extracts the frontmatter and body from a role file's raw content.
+func parseRoleContent(content string) (roleFrontmatter, string, error) {
+	var fm roleFrontmatter
+	content = strings.TrimSpace(content)
+	if !strings.HasPrefix(content, "---") {
+		return fm, "", fmt.Errorf("role file must start with YAML frontmatter (---)")
+	}
+	rest := content[3:]
+	idx := strings.Index(rest, "\n---")
+	if idx < 0 {
+		idx = strings.Index(rest, "\r\n---")
+	}
+	if idx < 0 {
+		return fm, "", fmt.Errorf("role file has unclosed YAML frontmatter")
+	}
+	fmText := rest[:idx]
+	bodyText := strings.TrimSpace(rest[idx+4:])
+
+	if err := yaml.Unmarshal([]byte(fmText), &fm); err != nil {
+		return fm, "", fmt.Errorf("parsing frontmatter: %w", err)
+	}
+	return fm, bodyText, nil
+}
+
+// marshalRoleFile serializes a role into its .md file format.
+func marshalRoleFile(fm roleFrontmatter, body string) (string, error) {
+	fmBytes, err := yaml.Marshal(&fm)
+	if err != nil {
+		return "", err
+	}
+	fmText := strings.TrimRight(string(fmBytes), "\n")
+	if strings.TrimSpace(body) == "" {
+		return fmt.Sprintf("---\n%s\n---\n", fmText), nil
+	}
+	body = strings.TrimSpace(body)
+	return fmt.Sprintf("---\n%s\n---\n\n%s\n", fmText, body), nil
+}

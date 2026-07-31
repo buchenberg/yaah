@@ -198,8 +198,9 @@ The pipeline is built in `buildPipeline()` with a config-driven order:
 3. `CompactionMiddleware` — context window enforcement (LLM summarization)
 4. `SoftPruneMiddleware` — tier-0 tool-output elision (non-LLM, reclaims context)
 5. `ApprovalMiddleware` — no-op placeholder (approval moved to `executeAndCollect`)
-6. `LoopDetectionMiddleware` — detect stuck loops
-7. `StalenessMiddleware` — annotates sub-agent results when orchestrator context shifted mid-flight
+6. `ToolConcurrencyMiddleware` — no-op hooks; semaphore lives on `Loop.toolSem`
+7. `LoopDetectionMiddleware` — detect stuck loops
+8. `StalenessMiddleware` — annotates sub-agent results when orchestrator context shifted mid-flight
 
 The default set is defined in `defaultPipelineNames` in `config.go`. Users can override which middleware runs via `config.yaml`:
 
@@ -226,7 +227,7 @@ Drains the `Loop.FollowUps` channel in `PrepareStep`. Messages are injected as u
 
 #### CompactionMiddleware (`pipeline/compaction.go`)
 
-Triggers context compaction at both `PrepareStep` (preflight) and `PostTool` (post-iteration) hooks when `ContextWindow > 0`. Delegates to `Loop.compactContext(ctx, threshold)`. The `threshold` parameter (default 0.8) controls what fraction of the window triggers compaction. The middleware now accepts a configurable `CompactionThreshold` from the `Loop` struct.
+Triggers context compaction at both `PrepareStep` (preflight) and `PostTool` (post-iteration) hooks when `ContextWindow > 0`. Delegates to `Loop.compactContext(ctx, threshold)`. The `threshold` parameter (default 0.5) controls what fraction of the window triggers compaction. The middleware now accepts a configurable `CompactionThreshold` from the `Loop` struct.
 
 #### SoftPruneMiddleware (`pipeline/softprune.go`)
 
@@ -295,15 +296,18 @@ The `spawn_subagent` tool spawns a sub-agent: a fresh `agent.Loop` with a curate
 
 Each sub-agent runs under a **role** that selects its tool set and default limits.
 
-| Role | Tools | Max iterations | Default timeout | Can spawn |
+| Role | Tools | Max iter | Turns | Timeout | Can spawn |
 |---|---|---|---|---|---|
-| `analyst` | webfetch, http, read, grep, glob, ls, powershell, bash, json_query, calculate, file_info, go_outline, git | 20 | 120s | no |
-| `developer` | analyst set + write, edit, delete, replace | 25 | 180s | no |
-| `tester` | read, powershell, bash, grep, glob, ls, go_outline, calculate, file_info, json_query, webfetch, http, git | 20 | 180s | no |
-| `reviewer` | read, grep, glob, ls, powershell, bash, calculate, file_info, go_outline, json_query, webfetch, http, git | 15 | 120s | no |
-| _(default)_ | full built-in set (legacy) | — | — | depth permitting |
+| `analyst` (Jack) | webfetch, http, read, grep, glob, ls, powershell, bash, json_query, calculate, file_info, go_outline, git, sed, diff | 30 | 10 | 240s | no |
+| `developer` (Charley) | search set + write, edit, delete, replace, patch, go_refactor, go_test, go_mod, bisect, staticcheck | 40 | 6 | 300s | no |
+| `tester` (Casey) | read, powershell, bash, grep, glob, sed, ls, go_outline, calculate, file_info, json_query, webfetch, http, git, go_test, diff, bisect | 30 | 6 | 300s | no |
+| `reviewer` (Tim) | read, grep, glob, ls, sed, powershell, bash, calculate, file_info, go_outline, json_query, webfetch, http, git, diff, staticcheck | 25 | 3 | 240s | no |
 
-`RoleProfileFor(role)` delegates to the global `RoleRegistry` if one has been installed via `SetDefaultRoleRegistry`; otherwise it falls back to hardcoded legacy profiles in `legacyProfileFor`. `RoleDefault` returns a zero-value profile, signalling `makeTaskRunner` to use the legacy full tool set.
+There is **no default role** and no full-tools fallback. `RoleProfileFor(role)`
+reads from the global `RoleRegistry` installed at startup via
+`SetDefaultRoleRegistry`. Unknown roles (or any role when no registry is set)
+return the zero-value profile, which `makeTaskRunner` rejects with an error
+("role has no tools configured") rather than granting a full tool set.
 
 ### RoleRegistry
 
@@ -328,7 +332,7 @@ Built-in roles are embedded via `//go:embed roles/*.md` in `internal/prompts/pro
 
 **Atomic installation:**
 
-`SetDefaultRoleRegistry` stores the loaded registry in a package-level `atomic.Pointer[RoleRegistry]` in `role_def.go`. `RoleProfileFor` and `RoleGuidance` read from this pointer; when it's `nil` (e.g. in unit tests), they fall back to hardcoded `legacyProfileFor` / `legacyGuidance`.
+`SetDefaultRoleRegistry` stores the loaded registry in a package-level `atomic.Pointer[RoleRegistry]` in `role.go`. `RoleProfileFor` and `RoleGuidance` read from this pointer; when it's `nil` (e.g. in unit tests), or the role is unknown, they return the zero-value `RoleProfile` / empty string — there is no legacy fallback.
 
 **Key methods:**
 
@@ -336,7 +340,7 @@ Built-in roles are embedded via `//go:embed roles/*.md` in `internal/prompts/pro
 |---|---|
 | `LoadBytes(files map[string][]byte)` | Parse and register built-in roles (takes precedence) |
 | `LoadDir(dir string)` | Discover and register user-defined roles (skipped if name already registered) |
-| `ProfileFor(role SubAgentRole) RoleProfile` | Return runtime profile; zero-value for `RoleDefault` or unknown |
+| `ProfileFor(role SubAgentRole) RoleProfile` | Return runtime profile; zero-value for unknown roles |
 | `Guidance(role SubAgentRole) string` | Return role-specific system-prompt text (the markdown body) |
 | `Names() []string` | All registered role names, for dynamic schema generation |
 
@@ -483,31 +487,28 @@ When an agent dispatches multiple parallel sub-agents in a single turn, those su
 
 File: `internal/tools/tools.go`
 
-`NewRegistry()` pre-registers 15 built-in tools:
+`NewRegistry()` pre-registers the built-in leaf tools. One shell tool is
+platform-selected (`powershell` on Windows, `bash` elsewhere), so 25 of the 26
+register on a given OS:
 
-| Tool | Category | Dangerous |
-|---|---|---|
-| `read` | Filesystem | No |
-| `write` | Filesystem | Always |
-| `edit` | Filesystem | Always |
-| `replace` | Filesystem | Always |
-| `delete` | Filesystem | Always |
-| `json_query` | Filesystem | Per-action |
-| `grep` | Search | No |
-| `glob` | Search | No |
-| `ls` | Filesystem | No |
-| `bash` | Shell | Always |
-| `powershell` | Shell | Always |
-| `git` | VCS | Per-action |
-| `question` | Interactive | No |
-| `webfetch` | Network | No |
+| Category | Tools |
+|---|---|
+| Filesystem (read) | `read`, `ls`, `file_info` |
+| Filesystem (mutate — always need approval) | `write`, `edit`, `replace`, `delete`, `patch`, `sed` |
+| Search | `grep`, `glob` |
+| Shell (always need approval) | `bash`, `powershell` |
+| VCS / data (per-action approval) | `git`, `json_query` |
+| Network | `webfetch` (read-only), `http` (per-action approval) |
+| Go / dev tooling | `go_outline`, `go_test`, `go_mod`, `diff`, `staticcheck`, `bisect`, `go_refactor` (needs approval) |
+| Utility | `calculate`, `question` |
 
 Additional tools are registered by the CLI layer after `NewRegistry()`:
 - `memory_search`, `memory_add`, `memory_delete`, `memory_update`, `memory_search_sessions`
 - `skill`
+- `plan`
 - `todowrite`
 - `background_process`
-- `task`
+- `spawn_subagent` (the task tool) and `list_subagents`
 - Any MCP tools from connected servers
 
 ### Tool execution flow (`executeAndCollect` — middleware path)
@@ -521,7 +522,7 @@ executeAndCollect(ctx, calls, messages):
        a. Call OnTool (before) — Duration=0
        b. emitHook(ToolStart)
        c. Registry.Execute(ctx, name, args)
-       d. Truncate result to ToolResultMaxLen (8192 chars) if needed
+       d. Truncate result to the configured caps (default 500 lines / 20480 bytes) if needed
        e. Call OnTool (after) — with Duration, Result, Error
        f. emitHook(ToolEnd)
        g. Send toolExecResult to channel
@@ -541,10 +542,12 @@ type DangerClassifier interface {
 }
 ```
 
-Tools that always require approval (`BashTool`, `PowerShellTool`, `WriteTool`,
-`EditTool`, `DeleteTool`, `ReplaceTool`) return `true` unconditionally. Tools with
-argument-level classification (`GitTool`) inspect their JSON arguments — `add`
-and `commit` are dangerous; `status`, `diff`, `log`, etc. are not. Tools that
+Tools that always require approval (the filesystem mutators `WriteTool`,
+`EditTool`, `ReplaceTool`, `DeleteTool`, `PatchTool`, `SedTool`, and the shells
+`BashTool`, `PowerShellTool`) return `true` unconditionally. `GitTool`,
+`JSONQueryTool`, and `HTTPTool` classify per-action by inspecting their JSON
+arguments — e.g. `git add`/`commit` are dangerous while `git status`/`diff` are
+not. `GoRefactorTool` and `PlanTool` also implement the classifier. Tools that
 are never dangerous (`ReadTool`, `GrepTool`, `GlobTool`, etc.) simply don't
 implement the interface.
 
@@ -881,6 +884,8 @@ Concrete event types (all pointer receivers for clean nil checks in type switche
 | `SubAgentEndEvent` | Sub-agent dispatch completes (role, duration, error) |
 | `EscalationEvent` | Sub-agent raises a structured escalation (severity, summary, detail, suggestion) |
 | `DoneEvent` | Agent loop finishes (response, error, context stats) |
+| `CompactionStartedEvent` | Context compaction begins (before/target tokens, reason) |
+| `CompactionDoneEvent` | Context compaction finishes (before/after tokens, savings %, method, elapsed) |
 
 ### View interface
 
@@ -947,7 +952,7 @@ shared theme. Full reference: [TUI component system](./tui-components.md).
 
 Files: `internal/observability/`, `internal/agent/agent.go`, `internal/config/load.go`
 
-yaah emits traces via OTLP gRPC to any OpenTelemetry-compatible backend. Tracing is off by default; enable with `observability.otel.enabled: true` in `config.yaml`.
+yaah emits traces via OTLP HTTP to any OpenTelemetry-compatible backend. Tracing is off by default; enable with `observability.otel.enabled: true` in `config.yaml`.
 
 ### Initialisation
 
@@ -987,7 +992,7 @@ observability:
 
 The OTel SDK also honours standard environment variables for sampling, TLS, and resource attributes (`OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER`, etc.).
 
-A Docker-based Jaeger setup and trace interpretation guide is at [`docs/otel-setup.md`](./otel-setup.md).
+A Docker-based OpenObserve setup and trace interpretation guide is at [`docs/otel-setup.md`](./otel-setup.md).
 
 ---
 
@@ -997,11 +1002,14 @@ File: `internal/types/types.go`
 
 ```go
 type Message struct {
-    Role       string     `json:"role"`
-    Content    string     `json:"content,omitempty"`
-    ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-    ToolCallID string     `json:"tool_call_id,omitempty"`
-    Name       string     `json:"name,omitempty"`
+    Role             string        `json:"role"`
+    Content          string        `json:"content"`
+    Refusal          string        `json:"refusal,omitempty"`
+    ReasoningContent string        `json:"reasoning_content,omitempty"`
+    ToolCalls        []ToolCall    `json:"tool_calls,omitempty"`
+    ToolCallID       string        `json:"tool_call_id,omitempty"`
+    Name             string        `json:"name,omitempty"`
+    CacheControl     *CacheControl `json:"cache_control,omitempty"`
 }
 ```
 

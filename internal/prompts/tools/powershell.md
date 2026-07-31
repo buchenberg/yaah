@@ -1,1 +1,5 @@
-Executes a PowerShell command and returns its output. Tries `pwsh` (PowerShell 7+, cross-platform) first, then falls back to `powershell` (Windows PowerShell 5.1). Use for Windows-specific system operations, registry queries, process management, and file operations on Windows hosts. Output is truncated if very large. Set `timeout` to control the maximum runtime (default 30s).
+`powershell(command, timeout)` — Run a PowerShell command and capture its output.
+
+Executes the given command via PowerShell (pwsh). `timeout` is an optional duration in seconds to bound execution. Useful on Windows hosts for build, test, and scripting work.
+
+See also: `bash` for the Unix shell equivalent.

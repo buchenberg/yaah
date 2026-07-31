@@ -1,3 +1,5 @@
-Executes a shell command and returns its combined stdout/stderr. Use for CLI operations: file inspection, package management, build commands, git operations. Output is truncated if very large. Set `timeout` to control the maximum runtime (default 30s).
+`bash(command, timeout)` — Run a shell command and capture its output.
 
-**Dangerous commands** (rm, sudo, chmod, etc.) are pattern-blocked unless approval gating is enabled. Prefer safer alternatives (`git`, `read`, `write`, `ls`, `glob`) when available.
+Executes the given command in a Unix shell (sh/bash). `timeout` is an optional duration in seconds to bound execution; long-running or interactive commands may be killed when it elapses. Useful for building, testing, git operations, and any command-line work the host OS supports.
+
+See also: `powershell` for the Windows PowerShell equivalent.
