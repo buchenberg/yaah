@@ -332,7 +332,7 @@ Built-in roles are embedded via `//go:embed roles/*.md` in `internal/prompts/pro
 
 **Atomic installation:**
 
-`SetDefaultRoleRegistry` stores the loaded registry in a package-level `atomic.Pointer[RoleRegistry]` in `role_def.go`. `RoleProfileFor` and `RoleGuidance` read from this pointer; when it's `nil` (e.g. in unit tests), they fall back to hardcoded `legacyProfileFor` / `legacyGuidance`.
+`SetDefaultRoleRegistry` stores the loaded registry in a package-level `atomic.Pointer[RoleRegistry]` in `role.go`. `RoleProfileFor` and `RoleGuidance` read from this pointer; when it's `nil` (e.g. in unit tests), or the role is unknown, they return the zero-value `RoleProfile` / empty string — there is no legacy fallback.
 
 **Key methods:**
 
@@ -340,7 +340,7 @@ Built-in roles are embedded via `//go:embed roles/*.md` in `internal/prompts/pro
 |---|---|
 | `LoadBytes(files map[string][]byte)` | Parse and register built-in roles (takes precedence) |
 | `LoadDir(dir string)` | Discover and register user-defined roles (skipped if name already registered) |
-| `ProfileFor(role SubAgentRole) RoleProfile` | Return runtime profile; zero-value for `RoleDefault` or unknown |
+| `ProfileFor(role SubAgentRole) RoleProfile` | Return runtime profile; zero-value for unknown roles |
 | `Guidance(role SubAgentRole) string` | Return role-specific system-prompt text (the markdown body) |
 | `Names() []string` | All registered role names, for dynamic schema generation |
 
