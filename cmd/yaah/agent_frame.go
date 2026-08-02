@@ -872,7 +872,7 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 			compactProvider = &observability.InstrumentedProvider{Inner: sp, Verbose: s.cfg.Observability.Otel.Verbose}
 		}
 	}
-	fallbackProvider, fallbackModel := resolveFallback(s.cfg)
+	fallbackProvider, fallbackModel, fallbackProviderName := resolveFallback(s.cfg)
 
 	s.mu.RLock()
 	prov := s.provider
@@ -957,6 +957,12 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 	s.mu.Unlock()
 
 	if ctrl != nil {
+		if loop.Model != mName && fallbackProviderName != "" {
+			select {
+			case ctrl <- &types.CtrlFallback{Provider: fallbackProviderName, Model: loop.Model}:
+			default:
+			}
+		}
 		if err != nil {
 			select {
 			case ctrl <- &types.CtrlError{Err: err}:

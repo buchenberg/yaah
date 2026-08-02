@@ -340,7 +340,7 @@ func (s *agentSession) runHeadless(ctx context.Context, prompt string) (string, 
 			compactProvider = &observability.InstrumentedProvider{Inner: sp, Verbose: s.cfg.Observability.Otel.Verbose}
 		}
 	}
-	fallbackProvider, fallbackModel := resolveFallback(s.cfg)
+	fallbackProvider, fallbackModel, _ := resolveFallback(s.cfg)
 
 	loop := agent.NewLoop(s.provider, s.toolReg,
 		agent.WithModel(s.modelName),

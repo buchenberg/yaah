@@ -934,6 +934,9 @@ func (m *Model) handleControlMsg(msg types.CtrlMsg) {
 		}()
 	case *types.CtrlContextInfo:
 		m.HandleContextInfo(ctrl.Tokens, ctrl.Window)
+	case *types.CtrlFallback:
+		m.provider = ctrl.Provider
+		m.modelName = ctrl.Model
 	case *types.CtrlModelList:
 		m.modelItems = ctrl.Models
 		if ctrl.ProviderNames != nil {

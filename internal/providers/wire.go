@@ -57,7 +57,10 @@ type wireRequest struct {
 // reasoning content, thinking mode is forced on for the entire request —
 // this catches models not yet in the registry (e.g. new DeepSeek variants)
 // and ensures reasoning_content is always present on every assistant message.
-func lowerMessages(msgs []types.Message, thinkingMode bool) []wireMessage {
+func lowerMessages(msgs []types.Message, thinkingMode bool, copilotMode bool) []wireMessage {
+	if copilotMode {
+		msgs = mergeSystemMessages(msgs)
+	}
 	if !thinkingMode {
 		for _, m := range msgs {
 			if m.Role == "assistant" && m.ReasoningContent != "" {
@@ -69,6 +72,26 @@ func lowerMessages(msgs []types.Message, thinkingMode bool) []wireMessage {
 	out := make([]wireMessage, len(msgs))
 	for i, m := range msgs {
 		out[i] = lowerMessage(m, thinkingMode)
+	}
+	return out
+}
+
+func mergeSystemMessages(msgs []types.Message) []types.Message {
+	var out []types.Message
+	sysBuf := ""
+	for _, m := range msgs {
+		if m.Role == "system" {
+			sysBuf += m.Content + "\n\n"
+			continue
+		}
+		if sysBuf != "" {
+			m.Content = sysBuf + m.Content
+			sysBuf = ""
+		}
+		out = append(out, m)
+	}
+	if sysBuf != "" {
+		out = append(out, types.UserMsg(sysBuf))
 	}
 	return out
 }
@@ -127,11 +150,11 @@ func lowerToolCalls(calls []types.ToolCall) []wireToolCall {
 }
 
 // lowerRequest converts a types.ChatRequest into the wire-format request
-// body, applying message lowering with the given thinking mode.
-func lowerRequest(req types.ChatRequest, thinkingMode bool) wireRequest {
+// body, applying message lowering with the given thinking mode and copilot mode.
+func lowerRequest(req types.ChatRequest, thinkingMode bool, copilotMode bool) wireRequest {
 	return wireRequest{
 		Model:           req.Model,
-		Messages:        lowerMessages(req.Messages, thinkingMode),
+		Messages:        lowerMessages(req.Messages, thinkingMode, copilotMode),
 		Tools:           req.Tools,
 		ToolChoice:      req.ToolChoice,
 		Temperature:     req.Temperature,
