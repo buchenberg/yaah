@@ -97,7 +97,11 @@ func (c *OpenAIClient) Send(ctx context.Context, req types.ChatRequest) (*types.
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("provider returned %d: %s  [msgs=%d model=%s]", resp.StatusCode, strings.TrimSpace(string(respBody)), len(req.Messages), req.Model)
+		var roles []string
+		for _, m := range req.Messages {
+			roles = append(roles, m.Role)
+		}
+		return nil, fmt.Errorf("provider returned %d: %s  [msgs=%d roles=%s model=%s]", resp.StatusCode, strings.TrimSpace(string(respBody)), len(req.Messages), strings.Join(roles, ","), req.Model)
 	}
 
 	var result types.ChatResponse

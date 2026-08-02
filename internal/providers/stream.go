@@ -80,11 +80,12 @@ func (c *OpenAIClient) SendStream(ctx context.Context, req types.ChatRequest) (<
 
 		if resp.StatusCode != http.StatusOK {
 			respBody, _ := io.ReadAll(resp.Body)
-			bodyPreview := string(body)
-			if len(bodyPreview) > 2000 {
-				bodyPreview = bodyPreview[:2000]
+			var roles []string
+			for _, m := range req.Messages {
+				roles = append(roles, m.Role)
 			}
-			errs <- fmt.Errorf("provider returned %d: %s  [msgs=%d model=%s body=%.2000s]", resp.StatusCode, strings.TrimSpace(string(respBody)), len(req.Messages), req.Model, bodyPreview)
+			rolesStr := strings.Join(roles, ",")
+			errs <- fmt.Errorf("provider returned %d: %s  [msgs=%d roles=%s model=%s]", resp.StatusCode, strings.TrimSpace(string(respBody)), len(req.Messages), rolesStr, req.Model)
 			return
 		}
 
