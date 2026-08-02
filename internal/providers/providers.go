@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/types"
@@ -96,7 +97,7 @@ func (c *OpenAIClient) Send(ctx context.Context, req types.ChatRequest) (*types.
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("provider returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("provider returned %d: %s  [msgs=%d model=%s]", resp.StatusCode, strings.TrimSpace(string(respBody)), len(req.Messages), req.Model)
 	}
 
 	var result types.ChatResponse

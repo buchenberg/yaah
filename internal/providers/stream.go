@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -79,7 +80,7 @@ func (c *OpenAIClient) SendStream(ctx context.Context, req types.ChatRequest) (<
 
 		if resp.StatusCode != http.StatusOK {
 			respBody, _ := io.ReadAll(resp.Body)
-			errs <- fmt.Errorf("provider returned %d: %s", resp.StatusCode, string(respBody))
+			errs <- fmt.Errorf("provider returned %d: %s  [msgs=%d model=%s]", resp.StatusCode, strings.TrimSpace(string(respBody)), len(req.Messages), req.Model)
 			return
 		}
 
