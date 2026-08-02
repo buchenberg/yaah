@@ -127,6 +127,7 @@ func runTUI() error {
 		Model:         sess.ModelName(),
 		CWD:           cwd,
 		ContextWindow: providers.ResolveWindow(cfg.Agent.Default.Model, cfg.Agent.Default.ContextWindow),
+		Version:       version,
 		OnSubmit: func(input string) {
 			ctx, cancel := context.WithCancel(context.Background())
 			cancelAgent = cancel

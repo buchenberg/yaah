@@ -349,6 +349,7 @@ func (l *Loop) applyCompactedSummary(summary string, sysMsg types.Message, oldMs
 	newMsgs = append(newMsgs, keepMsgs...)
 	beforeEstimate := l.EstimatedTokens()
 	l.Messages = newMsgs
+	l.LastPromptTokens = l.EstimatedTokens()
 	l.resetPruner()
 	if l.Pruner != nil {
 		l.Pruner.Mark(l.Messages, "post_compaction")

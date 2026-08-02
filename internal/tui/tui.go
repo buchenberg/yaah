@@ -130,6 +130,7 @@ type Model struct {
 	modelName     string
 	cwd           string
 	contextWindow int
+	version       string
 	onSubmit      func(string)
 	onQuit        func()
 	onCompact     func()
@@ -213,6 +214,7 @@ type Config struct {
 	Model         string
 	CWD           string
 	ContextWindow int
+	Version       string
 	OnSubmit      func(string)
 	OnQuit        func()
 	OnCompact     func()
@@ -269,6 +271,7 @@ func New(cfg Config) *Model {
 		provider:          cfg.Provider,
 		modelName:         cfg.Model,
 		contextWindow:     cfg.ContextWindow,
+		version:           cfg.Version,
 		onSubmit:          cfg.OnSubmit,
 		onQuit:            cfg.OnQuit,
 		onCompact:         cfg.OnCompact,
@@ -463,7 +466,7 @@ func (m *Model) AddAssistantMessageWithReasoning(raw, reasoning string) {
 // headerHeight returns the number of lines the header occupies.
 // Delegates to Header.Height() for dynamic two-column measurement.
 func (m *Model) headerHeight() int {
-	return NewHeader(m.banner, m.provider, m.modelName, m.showBanner, m.width, m.mcpInfos).Height()
+	return NewHeader(m.banner, m.provider, m.modelName, m.showBanner, m.width, m.mcpInfos, m.version).Height()
 }
 
 // inputAreaHeight returns the number of lines the input area occupies
@@ -1665,7 +1668,7 @@ func (m *Model) View() tea.View {
 	}
 
 	// Header: figlet banner + provider/model line (or compact if hidden)
-	header := NewHeader(m.banner, m.provider, m.modelName, m.showBanner, m.width, m.mcpInfos).Render()
+	header := NewHeader(m.banner, m.provider, m.modelName, m.showBanner, m.width, m.mcpInfos, m.version).Render()
 
 	activeView := ""
 	if m.thinking || m.streaming {

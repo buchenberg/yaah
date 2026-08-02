@@ -19,10 +19,11 @@ type Header struct {
 	showBanner bool
 	width      int
 	mcpInfos   []mcp.ServerInfo
+	version    string
 }
 
 // NewHeader creates a header component.
-func NewHeader(banner, provider, model string, showBanner bool, width int, mcpInfos []mcp.ServerInfo) Header {
+func NewHeader(banner, provider, model string, showBanner bool, width int, mcpInfos []mcp.ServerInfo, version string) Header {
 	return Header{
 		banner:     banner,
 		provider:   provider,
@@ -30,6 +31,7 @@ func NewHeader(banner, provider, model string, showBanner bool, width int, mcpIn
 		showBanner: showBanner,
 		width:      width,
 		mcpInfos:   mcpInfos,
+		version:    version,
 	}
 }
 
@@ -52,6 +54,9 @@ func (h Header) leftContentLines() int {
 
 func (h Header) rightContentLines() int {
 	lines := 1 // provider/model
+	if h.version != "" {
+		lines += 1
+	}
 	if len(h.mcpInfos) > 0 {
 		lines += 1 + len(h.mcpInfos) // blank line + mcp entries
 	}
@@ -123,6 +128,11 @@ func (h Header) renderRight(width int) string {
 		lines = append(lines, aligner.Render(titleStyle.Render(h.provider+"/"+h.model)))
 	} else {
 		lines = append(lines, aligner.Render(titleStyle.Render("yaah · "+h.provider+"/"+h.model)))
+	}
+
+	// Version line
+	if h.version != "" {
+		lines = append(lines, aligner.Render(lipgloss.NewStyle().Faint(true).Render(h.version)))
 	}
 
 	// MCP server status
