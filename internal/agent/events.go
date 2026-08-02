@@ -134,6 +134,9 @@ type CompactionDoneEvent struct {
 	Method          string // "single", "chunked"
 	ElapsedSeconds  float64
 	IneffectiveNote string // non-empty when compaction was ineffective
+	OldMsgCount     int    // messages compacted (summarized or dropped)
+	KeepMsgCount    int    // messages preserved verbatim
+	Budget          int    // preserve-budget tokens for the tail
 }
 
 func (*CompactionDoneEvent) eventMarker() {}

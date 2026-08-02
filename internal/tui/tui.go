@@ -761,8 +761,9 @@ func (m *Model) HandleEvent(evt agent.Event) {
 		}
 		m.messages = append(m.messages, Message{
 			Role: "compaction",
-			Content: fmt.Sprintf("Compacted %.1fK → %.1fK tokens (%.0f%% savings, %s) in %.1fs%s",
-				beforeK, afterK, pct, e.Method, e.ElapsedSeconds, note),
+			Content: fmt.Sprintf("Compacted %.1fK → %.1fK tokens (%.0f%% savings, %s) in %.1fs%s  [old=%d keep=%d budget=%d]",
+				beforeK, afterK, pct, e.Method, e.ElapsedSeconds, note,
+				e.OldMsgCount, e.KeepMsgCount, e.Budget),
 		})
 		m.refreshViewport()
 		m.scrollToBottom()

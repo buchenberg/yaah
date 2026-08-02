@@ -687,6 +687,9 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 			Method:          "single",
 			ElapsedSeconds:  time.Since(startTime).Seconds(),
 			IneffectiveNote: ineffectiveNote,
+			OldMsgCount:     len(oldMsgs),
+			KeepMsgCount:    len(keepMsgs),
+			Budget:          budget,
 		})
 	}
 

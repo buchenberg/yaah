@@ -690,6 +690,16 @@ func (s *agentSession) compactContext() {
 	if err != nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
 		s.messages = append([]types.Message{sysMsg}, keepMsgs...)
 		msg("compacted (trimmed)")
+		if ch != nil {
+			t := 0
+			for _, m := range s.messages {
+				t += len(m.Content) / 4
+			}
+			select {
+			case ch <- &types.CtrlContextInfo{Tokens: t, Window: window}:
+			default:
+			}
+		}
 		return
 	}
 
@@ -699,11 +709,21 @@ func (s *agentSession) compactContext() {
 	newMsgs = append(newMsgs, keepMsgs...)
 	s.messages = newMsgs
 
-	newTokens := 0
-	for _, m := range s.messages {
-		newTokens += len(m.Content) / 4
+	newEstimate := 0
+	for _, m := range newMsgs {
+		newEstimate += len(m.Content) / 4
 	}
-	msg(fmt.Sprintf("compacted: %d/%d tokens (%d%%)", newTokens, window, newTokens*100/window))
+	if ch != nil {
+		select {
+		case ch <- &types.CtrlContextInfo{
+			Tokens: newEstimate,
+			Window: window,
+		}:
+		default:
+		}
+	}
+
+	msg(fmt.Sprintf("compacted: %d/%d tokens (%d%%)", newEstimate, window, newEstimate*100/window))
 }
 
 func (s *agentSession) reloadRoles() {
