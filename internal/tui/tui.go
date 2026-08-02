@@ -890,6 +890,7 @@ func (m *Model) handleControlMsg(msg types.CtrlMsg) {
 		m.SetThinking(false)
 		m.streaming = false
 		m.streamContent = ""
+		m.activePrompt = ""
 	case *types.CtrlQuestion:
 		m.questionModal = QuestionModal{
 			Header:   ctrl.Header,
