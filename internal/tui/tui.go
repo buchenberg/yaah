@@ -2,6 +2,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -492,12 +493,22 @@ func (m *Model) AddMessage(role, content string) {
 	m.scrollToBottom()
 }
 
-// AddToolResult adds a tool result message. For todowrite, it renders the
-// formatted todo list. For other tools, it shows the raw result.
+// AddToolResult adds a tool result message. For todowrite, it parses the
+// tool args and renders the todo table inline so it is always visible
+// regardless of CtrlTodos delivery timing.
 func (m *Model) AddToolResult(toolName, content, toolArgs, duration string) {
+	rendered := m.renderToolResult(toolName, content)
+
+	if toolName == "todowrite" && toolArgs != "" {
+		if items := parseTodosFromArgs(toolArgs); len(items) > 0 {
+			todoTable := NewTodoTable(items, m.width-8)
+			rendered = rendered + "\n\n" + todoTable.Render()
+		}
+	}
+
 	m.messages = append(m.messages, Message{
 		Role:         "tool",
-		Content:      m.renderToolResult(toolName, content),
+		Content:      rendered,
 		Raw:          content,
 		ToolName:     toolName,
 		ToolArgs:     toolArgs,
@@ -1844,6 +1855,33 @@ func formatDuration(d time.Duration) string {
 
 func lolcatRender(text string) string {
 	return strings.ReplaceAll(banner.Lolcat(text), "\n", "")
+}
+
+func parseTodosFromArgs(args string) []todo.Item {
+	type rawTodo struct {
+		Content  string `json:"content"`
+		Status   string `json:"status"`
+		Priority string `json:"priority"`
+	}
+	var params struct {
+		Todos []rawTodo `json:"todos"`
+	}
+	if err := json.Unmarshal([]byte(args), &params); err != nil {
+		return nil
+	}
+	items := make([]todo.Item, len(params.Todos))
+	for i, t := range params.Todos {
+		if t.Priority == "" {
+			t.Priority = "medium"
+		}
+		items[i] = todo.Item{
+			ID:       fmt.Sprintf("td-%d", i+1),
+			Content:  t.Content,
+			Status:   t.Status,
+			Priority: t.Priority,
+		}
+	}
+	return items
 }
 
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b\[[0-9;]*m`)
