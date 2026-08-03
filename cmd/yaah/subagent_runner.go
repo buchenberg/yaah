@@ -206,26 +206,6 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			}
 		}
 
-		// Persist the sub-agent transcript under a child session. The ID
-		// combines wall-clock time with a process-wide atomic counter so
-		// parallel task calls cannot collide; if session creation fails
-		// the sub-agent runs in-memory rather than polluting the parent
-		// transcript.
-		subDB := opts.db
-		subSessionID := opts.parentSession
-		if opts.db != nil {
-			subSessionID = fmt.Sprintf("%s-sub-%d-%d", opts.parentSession, time.Now().UnixNano(), subAgentSeq.Add(1))
-			cwd, _ := os.Getwd()
-			if err := opts.db.CreateSession(memory.Session{
-				ID:        subSessionID,
-				StartedAt: time.Now().Unix(),
-				CWD:       cwd,
-				Model:     opts.modelName,
-			}); err != nil {
-				subDB = nil
-			}
-		}
-
 		subProvider := opts.subAgentProvider
 		subModel := opts.subAgentModel
 		if rc, ok := opts.subCfg.Roles[string(role)]; ok {
@@ -253,47 +233,23 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		tools.WriteSubAgentModel(ctx, subModel)
 		tools.NotifySubAgentStart(ctx, subModel)
 
-		subLoop := agent.NewLoop(subProvider, subReg,
-			agent.WithModel(subModel),
-			agent.WithSystemPrompt(sysPrompt),
-			agent.WithView(agent.NoopView{}),
-			agent.WithDB(subDB),
-			agent.WithWriteDebouncer(func() *memory.DebouncedWriter {
-				if subDB != nil {
-					return memory.NewDebouncedWriter(subDB)
-				}
-				return nil
-			}()),
-			agent.WithSessionID(subSessionID),
-			agent.WithApprovalMode("allow"),
-			agent.WithOtel(opts.OtelEnabled, opts.OtelVerbose),
-			agent.WithPermissionRules(opts.parentPermissionRules),
-			agent.WithSubAgentConcurrency(
-				resolveSubAgentConcurrency(opts.subCfg, role), 0, nil,
-			),
-			agent.WithLoopConfig(agent.LoopConfig{
-				MaxIterations:          maxIter,
-				MaxTurns:               maxTurns,
-				MaxRetries:             opts.defaults.MaxRetries,
-				RetryBackoffSecs:       opts.defaults.RetryBackoffSecs,
-				ContextWindow:          effectiveCW,
-				CompactionThreshold:    opts.defaults.CompactionThreshold,
-				RawCompactionThreshold: opts.defaults.RawCompactionThreshold,
-				EstimateFactor:         opts.estimateFactor,
-				LoopDetectCount:        opts.defaults.LoopDetectCount,
-				LoopDetectWindow:       opts.defaults.LoopDetectWindow,
-				MaxToolConcurrency:     opts.defaults.MaxToolConcurrency,
-				WrapUpAhead:            opts.defaults.WrapUpTurns,
-				PromptCaching:          opts.defaults.PromptCaching,
-				ReasoningProtectTurns:  opts.defaults.ReasoningProtect,
-				ToolResultMaxLines:     opts.defaults.ToolResultMaxLines,
-				ToolResultMaxBytes:     opts.defaults.ToolResultMaxBytes,
-				PruneProtectTokens:     opts.defaults.PruneProtectTokens,
-				PruneMinReclaim:        opts.defaults.PruneMinReclaim,
-				PruneMinTurns:          opts.defaults.PruneMinTurns,
-				JSONMode:               jsonMode,
-			}),
-		)
+		subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{
+			MaxIterations:      maxIter,
+			MaxTurns:           maxTurns,
+			MaxRetries:         opts.defaults.MaxRetries,
+			RetryBackoffSecs:   opts.defaults.RetryBackoffSecs,
+			MaxToolConcurrency: opts.defaults.MaxToolConcurrency,
+			JSONMode:           jsonMode,
+			ToolResultMaxLines: opts.defaults.ToolResultMaxLines,
+			ToolResultMaxBytes: opts.defaults.ToolResultMaxBytes,
+			PruneProtectTokens: opts.defaults.PruneProtectTokens,
+			PruneMinReclaim:    opts.defaults.PruneMinReclaim,
+			PruneMinTurns:      opts.defaults.PruneMinTurns,
+			PermissionRules:    opts.parentPermissionRules,
+			ContextWindow:      effectiveCW,
+			OtelEnabled:        opts.OtelEnabled,
+			OtelVerbose:        opts.OtelVerbose,
+		})
 
 		result, runErr := subLoop.Run(ctx, prompt)
 
