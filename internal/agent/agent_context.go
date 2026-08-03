@@ -328,7 +328,8 @@ func (l *Loop) applyCompactedSummary(summary string, sysMsg types.Message, oldMs
 	if l.SystemPrompt == "" {
 		newMsgs[0] = types.SystemMsg(summary)
 	} else {
-		newMsgs = append(newMsgs, types.SystemMsg("Previous conversation summary:\n"+summary))
+		newMsgs = append(newMsgs, types.SystemMsg(
+			"You are continuing an ongoing conversation. Below is a summary of earlier discussion. Continue naturally — do not greet, reintroduce yourself, or act like the conversation is starting over.\n\nPrevious conversation summary:\n"+summary))
 	}
 
 	// Preserve the most recent user prompt verbatim so the model retains
