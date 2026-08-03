@@ -12,21 +12,21 @@ import (
 // sub-agent spawning, quality gates, and hooks — they are ephemeral
 // workers with a fixed turn budget.
 type SubAgentConfig struct {
-	MaxIterations         int
-	MaxTurns              int
-	MaxRetries            int
-	RetryBackoffSecs      int
-	MaxToolConcurrency    int
-	JSONMode              bool
-	ToolResultMaxLines    int
-	ToolResultMaxBytes    int
-	PruneProtectTokens    int
-	PruneMinReclaim       int
-	PruneMinTurns         int
-	PermissionRules       []pipeline.PermissionRule
-	ContextWindow         int
-	OtelEnabled           bool
-	OtelVerbose           bool
+	MaxIterations      int
+	MaxTurns           int
+	MaxRetries         int
+	RetryBackoffSecs   int
+	MaxToolConcurrency int
+	JSONMode           bool
+	ToolResultMaxLines int
+	ToolResultMaxBytes int
+	PruneProtectTokens int
+	PruneMinReclaim    int
+	PruneMinTurns      int
+	PermissionRules    []pipeline.PermissionRule
+	ContextWindow      int
+	OtelEnabled        bool
+	OtelVerbose        bool
 }
 
 // NewSubAgentLoop creates a Loop optimized for sub-agent execution.
@@ -48,11 +48,11 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 	}
 
 	l := &Loop{
-		Provider:    provider,
-		Registry:    registry,
-		Model:       model,
+		Provider:     provider,
+		Registry:     registry,
+		Model:        model,
 		SystemPrompt: systemPrompt,
-		View:        NoopView{},
+		View:         NoopView{},
 
 		MaxIterations:      cfg.MaxIterations,
 		MaxTurns:           cfg.MaxTurns,
@@ -61,15 +61,15 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 		MaxToolConcurrency: cfg.MaxToolConcurrency,
 		JSONMode:           cfg.JSONMode,
 
-		ToolResultMaxLines:  cfg.ToolResultMaxLines,
-		ToolResultMaxBytes:  cfg.ToolResultMaxBytes,
-		PruneProtectTokens:  cfg.PruneProtectTokens,
-		PruneMinReclaim:     cfg.PruneMinReclaim,
-		PruneMinTurns:       cfg.PruneMinTurns,
-		PermissionRules:     cfg.PermissionRules,
-		ContextWindow:       cfg.ContextWindow,
-		OtelEnabled:         cfg.OtelEnabled,
-		OtelVerbose:         cfg.OtelVerbose,
+		ToolResultMaxLines: cfg.ToolResultMaxLines,
+		ToolResultMaxBytes: cfg.ToolResultMaxBytes,
+		PruneProtectTokens: cfg.PruneProtectTokens,
+		PruneMinReclaim:    cfg.PruneMinReclaim,
+		PruneMinTurns:      cfg.PruneMinTurns,
+		PermissionRules:    cfg.PermissionRules,
+		ContextWindow:      cfg.ContextWindow,
+		OtelEnabled:        cfg.OtelEnabled,
+		OtelVerbose:        cfg.OtelVerbose,
 
 		ApprovalMode: "allow",
 		ToolsLevel:   FullTools,

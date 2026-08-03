@@ -112,12 +112,12 @@ func (t *TUI2) buildUI() {
 	bodyLeft := tview.NewFlex().
 		SetDirection(tview.FlexRow)
 	bodyLeft.AddItem(t.Messages, 0, 1, false) // messages fills (no focus)
-	bodyLeft.AddItem(t.Input, 3, 0, true)      // input fixed 3 (focused)
+	bodyLeft.AddItem(t.Input, 3, 0, true)     // input fixed 3 (focused)
 
 	body := tview.NewFlex().
 		SetDirection(tview.FlexColumn)
-	body.AddItem(bodyLeft, 0, 5, true)         // ~85% width, focus → bodyLeft → Input
-	body.AddItem(t.InfoPane, 0, 1, false)       // ~15% width
+	body.AddItem(bodyLeft, 0, 5, true)    // ~85% width, focus → bodyLeft → Input
+	body.AddItem(t.InfoPane, 0, 1, false) // ~15% width
 
 	// --- Overall layout: header-sticky-top / body-fills / footer-sticky-bottom ---
 	t.Root = tview.NewFlex().
@@ -125,9 +125,9 @@ func (t *TUI2) buildUI() {
 		SetFullScreen(true)
 
 	t.Root.AddItem(t.Header, totalRows, 0, false) // header: dynamic, no grow
-	t.Root.AddItem(t.InfoBar, 1, 0, false)          // infobar: fixed 1
-	t.Root.AddItem(body, 0, 1, true)                 // body: fills remaining, focus → Input
-	t.Root.AddItem(t.StatusBar, 1, 0, false)         // footer: fixed 1
+	t.Root.AddItem(t.InfoBar, 1, 0, false)        // infobar: fixed 1
+	t.Root.AddItem(body, 0, 1, true)              // body: fills remaining, focus → Input
+	t.Root.AddItem(t.StatusBar, 1, 0, false)      // footer: fixed 1
 
 	// --- Application setup ---
 	t.App.SetRoot(t.Root, true).
