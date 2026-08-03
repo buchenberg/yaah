@@ -885,6 +885,7 @@ func (m *Model) handleControlMsg(msg types.CtrlMsg) {
 		m.AddMessage("system", ctrl.Text)
 	case *types.CtrlTodos:
 		m.todos = ctrl.Items
+		m.refreshViewport()
 	case *types.CtrlError:
 		m.AddMessage("error", fmt.Sprintf("%v", ctrl.Err))
 		m.SetThinking(false)
