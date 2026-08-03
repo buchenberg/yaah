@@ -114,6 +114,7 @@ func makeOAuthProvider(name string, r config.Provider) (agent.Provider, bool) {
 	default:
 		client := providers.NewOpenAIClient(r.BaseURL, token.AccessToken, r.TimeoutSeconds)
 		client.ExtraHeaders = r.Headers
+		client.CopilotMode = r.API == "copilot" || strings.Contains(r.BaseURL, "githubcopilot.com")
 		applyThinkingOverrides(client, r)
 		return client, true
 	}
@@ -164,16 +165,16 @@ func resolveCompact(cfg *config.Config) (agent.Provider, string) {
 // resolveFallback returns the provider and model to use when the primary
 // provider fails with auth, billing, or rate-limit errors.
 // Returns nil if no fallback is configured.
-func resolveFallback(cfg *config.Config) (agent.Provider, string) {
+func resolveFallback(cfg *config.Config) (agent.Provider, string, string) {
 	if cfg.Agent.Fallback.Provider == "" {
-		return nil, ""
+		return nil, "", ""
 	}
 	if p, ok := cfg.Providers[cfg.Agent.Fallback.Provider]; ok {
 		if prov, ok2 := makeProvider(cfg.Agent.Fallback.Provider, p); ok2 {
-			return prov, cfg.Agent.Fallback.Model
+			return prov, cfg.Agent.Fallback.Model, cfg.Agent.Fallback.Provider
 		}
 	}
-	return nil, ""
+	return nil, "", ""
 }
 
 // resolveSubAgent returns the provider and model to use for sub-agents

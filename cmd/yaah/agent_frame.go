@@ -187,9 +187,14 @@ func newAgentSession() (*agentSession, error) {
 		if entries, memErr := db.ListMemory(50); memErr == nil && len(entries) > 0 {
 			var memLines []string
 			for _, entry := range entries {
+				if strings.Contains(entry.Tags, `"user_info"`) {
+					continue
+				}
 				memLines = append(memLines, "- "+entry.Text)
 			}
-			layers.Memory = "You have the following stored information about the user and project:\n" + strings.Join(memLines, "\n")
+			if len(memLines) > 0 {
+				layers.Memory = "You have the following stored information about the user and project:\n" + strings.Join(memLines, "\n")
+			}
 		}
 
 		toolReg.Register(&tools.MemorySearchTool{DB: db})
@@ -690,6 +695,16 @@ func (s *agentSession) compactContext() {
 	if err != nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
 		s.messages = append([]types.Message{sysMsg}, keepMsgs...)
 		msg("compacted (trimmed)")
+		if ch != nil {
+			t := 0
+			for _, m := range s.messages {
+				t += len(m.Content) / 4
+			}
+			select {
+			case ch <- &types.CtrlContextInfo{Tokens: t, Window: window}:
+			default:
+			}
+		}
 		return
 	}
 
@@ -699,11 +714,21 @@ func (s *agentSession) compactContext() {
 	newMsgs = append(newMsgs, keepMsgs...)
 	s.messages = newMsgs
 
-	newTokens := 0
-	for _, m := range s.messages {
-		newTokens += len(m.Content) / 4
+	newEstimate := 0
+	for _, m := range newMsgs {
+		newEstimate += len(m.Content) / 4
 	}
-	msg(fmt.Sprintf("compacted: %d/%d tokens (%d%%)", newTokens, window, newTokens*100/window))
+	if ch != nil {
+		select {
+		case ch <- &types.CtrlContextInfo{
+			Tokens: newEstimate,
+			Window: window,
+		}:
+		default:
+		}
+	}
+
+	msg(fmt.Sprintf("compacted: %d/%d tokens (%d%%)", newEstimate, window, newEstimate*100/window))
 }
 
 func (s *agentSession) reloadRoles() {
@@ -852,7 +877,7 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 			compactProvider = &observability.InstrumentedProvider{Inner: sp, Verbose: s.cfg.Observability.Otel.Verbose}
 		}
 	}
-	fallbackProvider, fallbackModel := resolveFallback(s.cfg)
+	fallbackProvider, fallbackModel, fallbackProviderName := resolveFallback(s.cfg)
 
 	s.mu.RLock()
 	prov := s.provider
@@ -937,6 +962,12 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 	s.mu.Unlock()
 
 	if ctrl != nil {
+		if loop.Model != mName && fallbackProviderName != "" {
+			select {
+			case ctrl <- &types.CtrlFallback{Provider: fallbackProviderName, Model: loop.Model}:
+			default:
+			}
+		}
 		if err != nil {
 			select {
 			case ctrl <- &types.CtrlError{Err: err}:

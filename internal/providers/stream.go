@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -49,7 +50,7 @@ func (c *OpenAIClient) SendStream(ctx context.Context, req types.ChatRequest) (<
 		defer close(chunks)
 		defer close(errs)
 
-		body, err := json.Marshal(lowerRequest(req, c.resolveThinkingMode(req.Model)))
+		body, err := json.Marshal(lowerRequest(req, c.resolveThinkingMode(req.Model), c.CopilotMode))
 		if err != nil {
 			errs <- fmt.Errorf("marshal request: %w", err)
 			return
@@ -79,7 +80,12 @@ func (c *OpenAIClient) SendStream(ctx context.Context, req types.ChatRequest) (<
 
 		if resp.StatusCode != http.StatusOK {
 			respBody, _ := io.ReadAll(resp.Body)
-			errs <- fmt.Errorf("provider returned %d: %s", resp.StatusCode, string(respBody))
+			var roles []string
+			for _, m := range req.Messages {
+				roles = append(roles, m.Role)
+			}
+			rolesStr := strings.Join(roles, ",")
+			errs <- fmt.Errorf("provider returned %d: %s  [msgs=%d roles=%s model=%s]", resp.StatusCode, strings.TrimSpace(string(respBody)), len(req.Messages), rolesStr, req.Model)
 			return
 		}
 

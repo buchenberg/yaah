@@ -328,7 +328,8 @@ func (l *Loop) applyCompactedSummary(summary string, sysMsg types.Message, oldMs
 	if l.SystemPrompt == "" {
 		newMsgs[0] = types.SystemMsg(summary)
 	} else {
-		newMsgs = append(newMsgs, types.SystemMsg("Previous conversation summary:\n"+summary))
+		newMsgs = append(newMsgs, types.SystemMsg(
+			"You are continuing an ongoing conversation. Below is a summary of earlier discussion. Continue naturally — do not greet, reintroduce yourself, or act like the conversation is starting over.\n\nPrevious conversation summary:\n"+summary))
 	}
 
 	// Preserve the most recent user prompt verbatim so the model retains
@@ -349,6 +350,7 @@ func (l *Loop) applyCompactedSummary(summary string, sysMsg types.Message, oldMs
 	newMsgs = append(newMsgs, keepMsgs...)
 	beforeEstimate := l.EstimatedTokens()
 	l.Messages = newMsgs
+	l.LastPromptTokens = l.EstimatedTokens()
 	l.resetPruner()
 	if l.Pruner != nil {
 		l.Pruner.Mark(l.Messages, "post_compaction")
@@ -687,6 +689,9 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 			Method:          "single",
 			ElapsedSeconds:  time.Since(startTime).Seconds(),
 			IneffectiveNote: ineffectiveNote,
+			OldMsgCount:     len(oldMsgs),
+			KeepMsgCount:    len(keepMsgs),
+			Budget:          budget,
 		})
 	}
 

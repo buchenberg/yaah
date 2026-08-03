@@ -70,7 +70,10 @@ var fonts = []string{
 
 // lolcatRGB maps a character index to an RGB triple using the same
 // sine-wave algorithm as gololcat / the original lolcat.
-func lolcatRGB(i int) (int, int, int) {
+// LolcatRGB maps a character index to a rainbow RGB triple (same algorithm
+// used by Lolcat). Useful for consumers that need to apply their own color
+// markup (e.g. tview color tags instead of ANSI escape codes).
+func LolcatRGB(i int) (int, int, int) {
 	f := 0.1
 	return int(math.Sin(f*float64(i)+0)*127 + 128),
 		int(math.Sin(f*float64(i)+2*math.Pi/3)*127 + 128),
@@ -91,7 +94,7 @@ func Lolcat(art string) string {
 			if noColor {
 				b.WriteRune(r)
 			} else {
-				cr, cg, cb := lolcatRGB(charIdx)
+				cr, cg, cb := LolcatRGB(charIdx)
 				fmt.Fprintf(&b, "\033[38;2;%d;%d;%dm%c\033[0m", cr, cg, cb, r)
 			}
 			charIdx++
@@ -138,6 +141,27 @@ func Generate() (string, int) {
 	b.WriteString(reset)
 
 	return b.String(), len(lines) + 3
+}
+
+// GeneratePlain renders "yaah" as plain figlet ASCII art (no ANSI coloring)
+// plus a random tagline. Returns the art, the tagline, and the line count.
+//
+// Use this when you need to apply your own color markup (e.g. tview color
+// tags) instead of ANSI escape codes — call LolcatRGB for each character
+// index to get the same rainbow gradient.
+func GeneratePlain() (art string, tagline string, lineCount int) {
+	font := "fonts/" + fonts[rand.IntN(len(fonts))]
+	art, err := figlet.Render(Title, figlet.WithFont(font))
+	if err != nil || strings.TrimSpace(art) == "" {
+		art, err = figlet.Render(Title, figlet.WithFont("fonts/standard"))
+		if err != nil || strings.TrimSpace(art) == "" {
+			return Title, "", 1
+		}
+	}
+
+	lines := strings.Split(strings.TrimRight(art, "\n"), "\n")
+	tagline = taglines[rand.IntN(len(taglines))]
+	return art, tagline, len(lines) + 3
 }
 
 // Render returns the full CLI startup banner: figlet art with subtitle,

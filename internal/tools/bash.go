@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/prompts"
@@ -54,7 +55,14 @@ func (t *BashTool) Execute(ctx context.Context, args string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", params.Command)
+	shell, shellArg := "sh", "-c"
+	if runtime.GOOS == "windows" {
+		shell, shellArg = "pwsh", "-Command"
+		if _, err := exec.LookPath("pwsh"); err != nil {
+			shell, shellArg = "powershell", "-Command"
+		}
+	}
+	cmd := exec.CommandContext(ctx, shell, shellArg, params.Command)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return "", fmt.Errorf("bash: timed out after %s", timeout)

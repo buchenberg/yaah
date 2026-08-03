@@ -88,6 +88,7 @@ func runTUI() error {
 	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err == nil {
 		os.Stderr = devNull
+		log.SetOutput(devNull)
 	}
 	defer func() {
 		os.Stderr = origStderr
@@ -127,6 +128,7 @@ func runTUI() error {
 		Model:         sess.ModelName(),
 		CWD:           cwd,
 		ContextWindow: providers.ResolveWindow(cfg.Agent.Default.Model, cfg.Agent.Default.ContextWindow),
+		Version:       version,
 		OnSubmit: func(input string) {
 			ctx, cancel := context.WithCancel(context.Background())
 			cancelAgent = cancel

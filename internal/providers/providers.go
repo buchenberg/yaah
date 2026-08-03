@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/types"
@@ -31,6 +32,10 @@ type OpenAIClient struct {
 	// ExtraHeaders are additional headers applied to every request.
 	// Used by the Copilot client for API version, user-agent, etc.
 	ExtraHeaders map[string]string
+
+	// CopilotMode enables transformations for the GitHub Copilot API
+	// which does not count system messages as valid messages.
+	CopilotMode bool
 }
 
 // NewOpenAIClient creates a new client targeting baseURL (e.g. "https://api.openai.com").
@@ -66,7 +71,7 @@ func (c *OpenAIClient) resolveThinkingMode(model string) bool {
 
 // Send posts a ChatRequest to the provider and returns the parsed ChatResponse.
 func (c *OpenAIClient) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
-	body, err := json.Marshal(lowerRequest(req, c.resolveThinkingMode(req.Model)))
+	body, err := json.Marshal(lowerRequest(req, c.resolveThinkingMode(req.Model), c.CopilotMode))
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
@@ -96,7 +101,11 @@ func (c *OpenAIClient) Send(ctx context.Context, req types.ChatRequest) (*types.
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("provider returned %d: %s", resp.StatusCode, string(respBody))
+		var roles []string
+		for _, m := range req.Messages {
+			roles = append(roles, m.Role)
+		}
+		return nil, fmt.Errorf("provider returned %d: %s  [msgs=%d roles=%s model=%s]", resp.StatusCode, strings.TrimSpace(string(respBody)), len(req.Messages), strings.Join(roles, ","), req.Model)
 	}
 
 	var result types.ChatResponse

@@ -70,6 +70,15 @@ type CtrlContextInfo struct {
 
 func (*CtrlContextInfo) ctrlMarker() {}
 
+// CtrlFallback is sent when the LLM client falls back to an alternative
+// provider. The TUI should update its header to reflect the new provider.
+type CtrlFallback struct {
+	Provider string
+	Model    string
+}
+
+func (*CtrlFallback) ctrlMarker() {}
+
 // CtrlDone is a sentinel sent once when the session closes.
 // The goroutine forwarding from controlCh to prog.Send must detect
 // this type and return to avoid a leaked goroutine after the TUI exits.

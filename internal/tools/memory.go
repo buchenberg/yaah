@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/memory"
@@ -255,7 +256,7 @@ func (t *MemorySessionSearchTool) Execute(ctx context.Context, args string) (str
 }
 
 func (t *MemorySessionSearchTool) listRecentMessages(limit int) (string, error) {
-	sessions, err := t.DB.ListSessions(10)
+	sessions, err := t.DB.ListSessions(limit + 10)
 	if err != nil {
 		return "", fmt.Errorf("memory_search_sessions: %w", err)
 	}
@@ -263,42 +264,80 @@ func (t *MemorySessionSearchTool) listRecentMessages(limit int) (string, error) 
 		return "No past sessions found.", nil
 	}
 
+	var mainSessions []memory.Session
+	var childSessions []memory.Session
+	for _, s := range sessions {
+		if strings.Contains(s.ID, "-sub-") {
+			childSessions = append(childSessions, s)
+		} else {
+			mainSessions = append(mainSessions, s)
+		}
+	}
+
 	var output string
 	count := 0
-	for _, s := range sessions {
-		msgs, err := t.DB.GetMessages(s.ID)
-		if err != nil || len(msgs) == 0 {
-			continue
-		}
-		// Find the first user message as a topic indicator.
-		topic := ""
-		for _, m := range msgs {
-			if m.Role == "user" {
-				topic = m.Content
-				if len(topic) > 120 {
-					topic = topic[:117] + "..."
-				}
-				break
+	// Show main sessions first, newest first.
+	for _, s := range mainSessions {
+		if summary := t.sessionSummary(s); summary != "" {
+			output += summary + "\n"
+			count++
+			if count >= limit {
+				goto done
 			}
 		}
-		status := "active"
-		if s.EndedAt > 0 {
-			status = time.Unix(s.EndedAt, 0).Format("Jan 2 15:04")
-		}
-		tokenInfo := ""
-		if s.TokensIn > 0 || s.TokensOut > 0 {
-			tokenInfo = fmt.Sprintf(" | %d in / %d out tokens", s.TokensIn, s.TokensOut)
-		}
-		output += fmt.Sprintf("[%s] %s | %s | %d msgs | model: %s%s\n  %s\n",
-			s.ID[:12], time.Unix(s.StartedAt, 0).Format("Jan 2 15:04"), status,
-			len(msgs), s.Model, tokenInfo, topic)
-		count++
-		if count >= limit {
-			return output, nil
+	}
+	// Fall back to child sessions if limit not yet met.
+	for _, s := range childSessions {
+		if summary := t.sessionSummary(s); summary != "" {
+			output += summary + "\n"
+			count++
+			if count >= limit {
+				goto done
+			}
 		}
 	}
-	if output == "" {
+done:
+	if count == 0 {
 		return "No messages found in recent sessions.", nil
 	}
+	if count == 1 {
+		output += "This is the most recent session stored in memory.\n"
+	}
 	return output, nil
+}
+
+func (t *MemorySessionSearchTool) sessionSummary(s memory.Session) string {
+	msgs, err := t.DB.GetMessages(s.ID)
+	if err != nil || len(msgs) == 0 {
+		return ""
+	}
+	topic := ""
+	for _, m := range msgs {
+		if m.Role == "user" {
+			topic = m.Content
+			if len(topic) > 120 {
+				topic = topic[:117] + "..."
+			}
+			break
+		}
+	}
+	status := "active"
+	if s.EndedAt > 0 {
+		status = time.Unix(s.EndedAt, 0).Format("Jan 2 15:04")
+	}
+	tokenInfo := ""
+	if s.TokensIn > 0 || s.TokensOut > 0 {
+		tokenInfo = fmt.Sprintf(" | %d in / %d out tokens", s.TokensIn, s.TokensOut)
+	}
+	compactNote := ""
+	if s.CompactedSummary != "" {
+		compactNote = " | compacted"
+	}
+	prefix := ""
+	if strings.Contains(s.ID, "-sub-") {
+		prefix = "[SUB] "
+	}
+	return fmt.Sprintf("%s[%s] %s | %s | %d msgs | model: %s%s%s\n  %s",
+		prefix, s.ID[:12], time.Unix(s.StartedAt, 0).Format("Jan 2 15:04"), status,
+		len(msgs), s.Model, tokenInfo, compactNote, topic)
 }

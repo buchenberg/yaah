@@ -221,7 +221,7 @@ func TestStatusBar_Render(t *testing.T) {
 
 func TestHeader_Render(t *testing.T) {
 	t.Run("with banner", func(t *testing.T) {
-		out := NewHeader("YAHHH", "deepseek", "v4-pro", true, 80, nil).Render()
+		out := NewHeader("YAHHH", "deepseek", "v4-pro", true, 80, nil, "test").Render()
 		if !strings.Contains(out, "YAHHH") {
 			t.Errorf("expected banner, got %q", out)
 		}
@@ -231,7 +231,7 @@ func TestHeader_Render(t *testing.T) {
 	})
 
 	t.Run("banner hidden", func(t *testing.T) {
-		out := NewHeader("YAHHH", "deepseek", "v4-pro", false, 80, nil).Render()
+		out := NewHeader("YAHHH", "deepseek", "v4-pro", false, 80, nil, "").Render()
 		if strings.Contains(out, "YAHHH") {
 			t.Errorf("banner should be hidden, got %q", out)
 		}
@@ -246,7 +246,7 @@ func TestHeader_Render(t *testing.T) {
 			{Name: "github", Transport: "http", Connected: false},
 			{Name: "slack", Transport: "http", Connected: true},
 		}
-		out := NewHeader("YAHHH", "deepseek", "v4-pro", true, 100, mcp).Render()
+		out := NewHeader("YAHHH", "deepseek", "v4-pro", true, 100, mcp, "").Render()
 		plain := stripANSI(out)
 
 		lines := strings.Split(plain, "\n")
@@ -274,13 +274,13 @@ func TestHeader_Render(t *testing.T) {
 	})
 
 	t.Run("adding MCP servers does not shift right column leftward", func(t *testing.T) {
-		outNone := NewHeader("YAHHH", "deepseek", "v4-pro", true, 100, nil).Render()
+		outNone := NewHeader("YAHHH", "deepseek", "v4-pro", true, 100, nil, "").Render()
 		plainNone := stripANSI(outNone)
 
 		mcp := []ServerInfo{
 			{Name: "filesystem", Transport: "stdio", Connected: true},
 		}
-		outWith := NewHeader("YAHHH", "deepseek", "v4-pro", true, 100, mcp).Render()
+		outWith := NewHeader("YAHHH", "deepseek", "v4-pro", true, 100, mcp, "").Render()
 		plainWith := stripANSI(outWith)
 
 		// The provider/model text should appear in both outputs.
@@ -293,7 +293,7 @@ func TestHeader_Render(t *testing.T) {
 	})
 
 	t.Run("left column stays left of right column content", func(t *testing.T) {
-		out := NewHeader("YAHHH", "deepseek", "v4-pro", true, 100, nil).Render()
+		out := NewHeader("YAHHH", "deepseek", "v4-pro", true, 100, nil, "").Render()
 		plain := stripANSI(out)
 
 		lines := strings.Split(plain, "\n")

@@ -101,7 +101,7 @@ func TestLowerRequest_ThinkingMode(t *testing.T) {
 		},
 	}
 
-	wire := lowerRequest(req, true)
+	wire := lowerRequest(req, true, false)
 
 	if wire.Messages[1].ReasoningContent == nil || *wire.Messages[1].ReasoningContent != "thinking..." {
 		t.Error("first assistant should preserve reasoning")
@@ -111,5 +111,110 @@ func TestLowerRequest_ThinkingMode(t *testing.T) {
 	}
 	if wire.Messages[2].Content != nil {
 		t.Error("second assistant should have null content (tool_calls only)")
+	}
+}
+
+func TestMergeSystemMessages(t *testing.T) {
+	msgs := []types.Message{
+		{Role: "system", Content: "sys1"},
+		{Role: "system", Content: "sys2"},
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "hi"},
+		{Role: "system", Content: "sys3"},
+		{Role: "user", Content: "next"},
+	}
+
+	out := mergeSystemMessages(msgs)
+
+	if len(out) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(out))
+	}
+	if out[0].Role != "user" || out[0].Content != "sys1\n\nsys2\n\nhello" {
+		t.Errorf("first user should have merged content, got role=%s content=%q", out[0].Role, out[0].Content)
+	}
+	if out[1].Role != "assistant" || out[1].Content != "hi" {
+		t.Errorf("second should be assistant, got role=%s", out[1].Role)
+	}
+	if out[2].Role != "user" || out[2].Content != "sys3\n\nnext" {
+		t.Errorf("third should be merged user, got role=%s content=%q", out[2].Role, out[2].Content)
+	}
+}
+
+func TestMergeSystemMessages_OnlySystem(t *testing.T) {
+	msgs := []types.Message{
+		{Role: "system", Content: "sys1"},
+		{Role: "system", Content: "sys2"},
+	}
+
+	out := mergeSystemMessages(msgs)
+
+	if len(out) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(out))
+	}
+	if out[0].Role != "user" {
+		t.Errorf("trailing system should become user, got %s", out[0].Role)
+	}
+}
+
+func TestMergeSystemMessages_NoSystem(t *testing.T) {
+	msgs := []types.Message{
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "hi"},
+	}
+
+	out := mergeSystemMessages(msgs)
+
+	if len(out) != len(msgs) {
+		t.Fatalf("no merge needed, expected %d got %d", len(msgs), len(out))
+	}
+}
+
+func TestCopilotMode_LowerMessages(t *testing.T) {
+	msgs := []types.Message{
+		{Role: "system", Content: "you are helpful"},
+		{Role: "user", Content: "hello"},
+	}
+
+	out := lowerMessages(msgs, false, true)
+
+	if len(out) != 1 {
+		t.Fatalf("Copilot mode should merge system into user, expected 1 msg got %d", len(out))
+	}
+	if out[0].Role != "user" {
+		t.Errorf("expected user role, got %s", out[0].Role)
+	}
+	want := "you are helpful\n\nhello"
+	if out[0].Content == nil || *out[0].Content != want {
+		t.Errorf("expected %q, got %v", want, out[0].Content)
+	}
+}
+
+func TestMergeSystemMessages_PreservesToolCalls(t *testing.T) {
+	msgs := []types.Message{
+		{Role: "system", Content: "sys1"},
+		{Role: "system", Content: "sys2"},
+		{Role: "assistant", Content: "", ToolCalls: []types.ToolCall{{ID: "c1", Type: "function", Function: types.ToolCallFn{Name: "read", Arguments: "{}"}}}},
+		{Role: "tool", Content: "result", ToolCallID: "c1"},
+	}
+
+	out := mergeSystemMessages(msgs)
+
+	if len(out) != 3 {
+		for i, m := range out {
+			t.Logf("out[%d] role=%s content=%q tool_calls=%d", i, m.Role, m.Content, len(m.ToolCalls))
+		}
+		t.Fatalf("expected 3 messages, got %d", len(out))
+	}
+	if out[0].Role != "user" {
+		t.Errorf("expected system buf as user msg, got %s", out[0].Role)
+	}
+	if out[1].Role != "assistant" {
+		t.Errorf("expected assistant, got %s", out[1].Role)
+	}
+	if len(out[1].ToolCalls) != 1 || out[1].ToolCalls[0].ID != "c1" {
+		t.Error("tool call should be preserved on assistant")
+	}
+	if out[2].Role != "tool" || out[2].ToolCallID != "c1" {
+		t.Error("tool result should be preserved")
 	}
 }

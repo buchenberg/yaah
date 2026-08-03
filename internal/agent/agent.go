@@ -606,6 +606,16 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			req.Messages = l.prepareRequestMessages(messages)
 		}
 
+		if len(req.Messages) == 0 {
+			err := fmt.Errorf("refusing to send empty message list to provider — %d messages after prepare, %d before compaction", len(req.Messages), len(messages))
+			if turnSpan != nil {
+				observability.RecordError(turnSpan, err)
+				turnSpan.End()
+			}
+			l.Messages = messages
+			return "", err
+		}
+
 		tokensBeforeTurn := l.TotalTokens
 
 		result, err := l.LLM.Call(turnCtx, req)

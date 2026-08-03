@@ -130,6 +130,7 @@ type Model struct {
 	modelName     string
 	cwd           string
 	contextWindow int
+	version       string
 	onSubmit      func(string)
 	onQuit        func()
 	onCompact     func()
@@ -213,6 +214,7 @@ type Config struct {
 	Model         string
 	CWD           string
 	ContextWindow int
+	Version       string
 	OnSubmit      func(string)
 	OnQuit        func()
 	OnCompact     func()
@@ -269,6 +271,7 @@ func New(cfg Config) *Model {
 		provider:          cfg.Provider,
 		modelName:         cfg.Model,
 		contextWindow:     cfg.ContextWindow,
+		version:           cfg.Version,
 		onSubmit:          cfg.OnSubmit,
 		onQuit:            cfg.OnQuit,
 		onCompact:         cfg.OnCompact,
@@ -463,7 +466,7 @@ func (m *Model) AddAssistantMessageWithReasoning(raw, reasoning string) {
 // headerHeight returns the number of lines the header occupies.
 // Delegates to Header.Height() for dynamic two-column measurement.
 func (m *Model) headerHeight() int {
-	return NewHeader(m.banner, m.provider, m.modelName, m.showBanner, m.width, m.mcpInfos).Height()
+	return NewHeader(m.banner, m.provider, m.modelName, m.showBanner, m.width, m.mcpInfos, m.version).Height()
 }
 
 // inputAreaHeight returns the number of lines the input area occupies
@@ -761,8 +764,9 @@ func (m *Model) HandleEvent(evt agent.Event) {
 		}
 		m.messages = append(m.messages, Message{
 			Role: "compaction",
-			Content: fmt.Sprintf("Compacted %.1fK → %.1fK tokens (%.0f%% savings, %s) in %.1fs%s",
-				beforeK, afterK, pct, e.Method, e.ElapsedSeconds, note),
+			Content: fmt.Sprintf("Compacted %.1fK → %.1fK tokens (%.0f%% savings, %s) in %.1fs%s  [old=%d keep=%d budget=%d]",
+				beforeK, afterK, pct, e.Method, e.ElapsedSeconds, note,
+				e.OldMsgCount, e.KeepMsgCount, e.Budget),
 		})
 		m.refreshViewport()
 		m.scrollToBottom()
@@ -881,11 +885,13 @@ func (m *Model) handleControlMsg(msg types.CtrlMsg) {
 		m.AddMessage("system", ctrl.Text)
 	case *types.CtrlTodos:
 		m.todos = ctrl.Items
+		m.refreshViewport()
 	case *types.CtrlError:
 		m.AddMessage("error", fmt.Sprintf("%v", ctrl.Err))
 		m.SetThinking(false)
 		m.streaming = false
 		m.streamContent = ""
+		m.activePrompt = ""
 	case *types.CtrlQuestion:
 		m.questionModal = QuestionModal{
 			Header:   ctrl.Header,
@@ -929,6 +935,9 @@ func (m *Model) handleControlMsg(msg types.CtrlMsg) {
 		}()
 	case *types.CtrlContextInfo:
 		m.HandleContextInfo(ctrl.Tokens, ctrl.Window)
+	case *types.CtrlFallback:
+		m.provider = ctrl.Provider
+		m.modelName = ctrl.Model
 	case *types.CtrlModelList:
 		m.modelItems = ctrl.Models
 		if ctrl.ProviderNames != nil {
@@ -1664,7 +1673,7 @@ func (m *Model) View() tea.View {
 	}
 
 	// Header: figlet banner + provider/model line (or compact if hidden)
-	header := NewHeader(m.banner, m.provider, m.modelName, m.showBanner, m.width, m.mcpInfos).Render()
+	header := NewHeader(m.banner, m.provider, m.modelName, m.showBanner, m.width, m.mcpInfos, m.version).Render()
 
 	activeView := ""
 	if m.thinking || m.streaming {
