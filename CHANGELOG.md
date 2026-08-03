@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.45.1](https://github.com/buchenberg/yaah/compare/v0.45.0...v0.45.1) (2026-08-03)
+
+
+### Bug Fixes
+
+* use PowerShell helper for self-update on Windows ([#126](https://github.com/buchenberg/yaah/issues/126)) ([83f8ebb](https://github.com/buchenberg/yaah/commit/83f8ebb4c33847eada03dd51d6142511745378a3))
+
 ## [0.45.0](https://github.com/buchenberg/yaah/compare/v0.44.0...v0.45.0) (2026-08-03)
 
 
