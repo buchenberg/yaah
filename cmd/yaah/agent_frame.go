@@ -571,10 +571,7 @@ func (s *agentSession) SetCtrlCh(ch chan<- types.CtrlMsg) {
 	if tt := s.toolReg.Get("todowrite"); tt != nil {
 		if ttp, ok := tt.(*tools.TodoWriteTool); ok {
 			ttp.OnWrite = func() {
-				select {
-				case ch <- &types.CtrlTodos{Items: ttp.Store.List()}:
-				default:
-				}
+				ch <- &types.CtrlTodos{Items: ttp.Store.List()}
 			}
 		}
 	}
