@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.45.0](https://github.com/buchenberg/yaah/compare/v0.44.0...v0.45.0) (2026-08-03)
+
+
+### Features
+
+* Copilot provider, OAuth device flow, compaction fixes, sub-agent refactor, and TUI improvements ([#124](https://github.com/buchenberg/yaah/issues/124)) ([e1271e4](https://github.com/buchenberg/yaah/commit/e1271e489989f10b12900a3e740b53f869ca07bd))
+
 ## [0.44.0](https://github.com/buchenberg/yaah/compare/v0.43.0...v0.44.0) (2026-07-31)
 
 
