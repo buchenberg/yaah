@@ -188,3 +188,33 @@ func TestCopilotMode_LowerMessages(t *testing.T) {
 		t.Errorf("expected %q, got %v", want, out[0].Content)
 	}
 }
+
+func TestMergeSystemMessages_PreservesToolCalls(t *testing.T) {
+	msgs := []types.Message{
+		{Role: "system", Content: "sys1"},
+		{Role: "system", Content: "sys2"},
+		{Role: "assistant", Content: "", ToolCalls: []types.ToolCall{{ID: "c1", Type: "function", Function: types.ToolCallFn{Name: "read", Arguments: "{}"}}}},
+		{Role: "tool", Content: "result", ToolCallID: "c1"},
+	}
+
+	out := mergeSystemMessages(msgs)
+
+	if len(out) != 3 {
+		for i, m := range out {
+			t.Logf("out[%d] role=%s content=%q tool_calls=%d", i, m.Role, m.Content, len(m.ToolCalls))
+		}
+		t.Fatalf("expected 3 messages, got %d", len(out))
+	}
+	if out[0].Role != "user" {
+		t.Errorf("expected system buf as user msg, got %s", out[0].Role)
+	}
+	if out[1].Role != "assistant" {
+		t.Errorf("expected assistant, got %s", out[1].Role)
+	}
+	if len(out[1].ToolCalls) != 1 || out[1].ToolCalls[0].ID != "c1" {
+		t.Error("tool call should be preserved on assistant")
+	}
+	if out[2].Role != "tool" || out[2].ToolCallID != "c1" {
+		t.Error("tool result should be preserved")
+	}
+}

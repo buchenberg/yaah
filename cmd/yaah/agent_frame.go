@@ -187,9 +187,14 @@ func newAgentSession() (*agentSession, error) {
 		if entries, memErr := db.ListMemory(50); memErr == nil && len(entries) > 0 {
 			var memLines []string
 			for _, entry := range entries {
+				if strings.Contains(entry.Tags, `"user_info"`) {
+					continue
+				}
 				memLines = append(memLines, "- "+entry.Text)
 			}
-			layers.Memory = "You have the following stored information about the user and project:\n" + strings.Join(memLines, "\n")
+			if len(memLines) > 0 {
+				layers.Memory = "You have the following stored information about the user and project:\n" + strings.Join(memLines, "\n")
+			}
 		}
 
 		toolReg.Register(&tools.MemorySearchTool{DB: db})

@@ -85,7 +85,11 @@ func mergeSystemMessages(msgs []types.Message) []types.Message {
 			continue
 		}
 		if sysBuf != "" {
-			m.Content = sysBuf + m.Content
+			if m.Role == "assistant" && len(m.ToolCalls) > 0 {
+				out = append(out, types.UserMsg(sysBuf))
+			} else {
+				m.Content = sysBuf + m.Content
+			}
 			sysBuf = ""
 		}
 		out = append(out, m)

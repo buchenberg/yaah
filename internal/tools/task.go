@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -370,6 +371,25 @@ func BuildTaskSchema(roleNames []string, roleDescriptions map[string]string) jso
 }
 
 func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(args), &raw); err != nil {
+		return "", fmt.Errorf("spawn_subagent: invalid arguments: %w", err)
+	}
+
+	for _, f := range []string{"timeout_seconds", "max_iterations", "max_turns", "output_limit"} {
+		if v, ok := raw[f]; ok {
+			switch vv := v.(type) {
+			case string:
+				if n, err := coerceInt(vv); err == nil {
+					raw[f] = n
+				}
+			case float64:
+				raw[f] = int(vv)
+			}
+		}
+	}
+
+	fixed, _ := json.Marshal(raw)
 	var params struct {
 		Description    string `json:"description"`
 		Prompt         string `json:"prompt"`
@@ -381,7 +401,7 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 		OutputLimit    int    `json:"output_limit"`
 		Background     bool   `json:"background"`
 	}
-	if err := json.Unmarshal([]byte(args), &params); err != nil {
+	if err := json.Unmarshal(fixed, &params); err != nil {
 		return "", fmt.Errorf("spawn_subagent: invalid arguments: %w", err)
 	}
 	if params.Prompt == "" {
@@ -563,4 +583,8 @@ func structuredTaskResult(reason string, timeout time.Duration, partial string) 
 		return fmt.Sprintf(`{"error":%q}`, reason)
 	}
 	return string(data)
+}
+
+func coerceInt(s string) (int, error) {
+	return strconv.Atoi(strings.TrimSpace(s))
 }
