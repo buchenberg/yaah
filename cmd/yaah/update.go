@@ -6,8 +6,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/update"
@@ -211,8 +213,15 @@ func downloadFile(url, path string) error {
 }
 
 // applyUpdate replaces the current running binary with the new one.
-// The current binary is renamed to .old, and the new binary takes its place.
-// The old binary is cleaned up on the next run via cleanOldBinary.
+//
+// On Unix, the running binary is renamed to .old and the new binary is
+// written in its place. The OS preserves the running process's inode
+// reference after the rename, so the replace is safe.
+//
+// On Windows, the running binary cannot be reliably replaced in-process.
+// Instead, the new binary is staged alongside as yaah.exe.next and a
+// detached PowerShell script is launched to swap it after this process
+// exits. The stale .next is cleaned up on the next startup.
 func applyUpdate(newPath string) error {
 	currentPath, err := os.Executable()
 	if err != nil {
@@ -221,38 +230,43 @@ func applyUpdate(newPath string) error {
 
 	binDir := filepath.Dir(currentPath)
 	binName := update.BinaryName(runtime.GOOS)
-	oldName := update.OldName(runtime.GOOS)
-
 	targetPath := filepath.Join(binDir, binName)
-	oldPath := filepath.Join(binDir, oldName)
 
-	// Verify we're replacing the same binary we're running.
 	if targetPath != currentPath {
-		// The executable path might be resolved via symlink.
-		// Follow the symlink to verify.
 		resolved, err := filepath.EvalSymlinks(currentPath)
 		if err == nil && resolved != currentPath {
 			binDir = filepath.Dir(resolved)
 			targetPath = filepath.Join(binDir, binName)
-			oldPath = filepath.Join(binDir, oldName)
 		}
 	}
 
-	// Check we can write to the directory.
-	testFile := filepath.Join(binDir, ".yaah-write-test")
+	if err := checkWriteAccess(binDir); err != nil {
+		return err
+	}
+
+	if runtime.GOOS == "windows" {
+		return applyUpdateWindows(newPath, targetPath)
+	}
+	return applyUpdateUnix(newPath, targetPath, binDir)
+}
+
+func checkWriteAccess(dir string) error {
+	testFile := filepath.Join(dir, ".yaah-write-test")
 	if err := os.WriteFile(testFile, []byte("ok"), 0o644); err != nil {
 		os.Remove(testFile)
-		return fmt.Errorf("cannot write to %s — you may need to re-run the install script or use sudo", binDir)
+		return fmt.Errorf("cannot write to %s — you may need to re-run the install script or use sudo", dir)
 	}
 	os.Remove(testFile)
+	return nil
+}
 
-	// Rename current → old (safe on all platforms; the OS preserves
-	// the running process's file handle even after rename).
+func applyUpdateUnix(newPath, targetPath, binDir string) error {
+	oldPath := filepath.Join(binDir, update.OldName(runtime.GOOS))
+
 	if err := os.Rename(targetPath, oldPath); err != nil {
 		return fmt.Errorf("backup current binary: %w", err)
 	}
 
-	// Copy new binary to target.
 	src, err := os.Open(newPath)
 	if err != nil {
 		return fmt.Errorf("open new binary: %w", err)
@@ -261,7 +275,6 @@ func applyUpdate(newPath string) error {
 
 	dst, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 	if err != nil {
-		// Try to restore the old binary.
 		os.Rename(oldPath, targetPath)
 		return fmt.Errorf("create new binary: %w", err)
 	}
@@ -277,15 +290,82 @@ func applyUpdate(newPath string) error {
 	return nil
 }
 
-// CleanOldBinary removes the .old backup binary if it exists.
-// Called at startup so the old binary doesn't accumulate.
+func applyUpdateWindows(newPath, targetPath string) error {
+	nextPath := targetPath + ".next"
+
+	if err := copyFileEx(newPath, nextPath); err != nil {
+		return fmt.Errorf("stage new binary: %w", err)
+	}
+
+	scriptPath := targetPath + ".update.ps1"
+	pid := os.Getpid()
+
+	script := fmt.Sprintf(
+		`$id = %d
+$timeout = 60
+while ($timeout -gt 0 -and (Get-Process -Id $id -ErrorAction SilentlyContinue)) {
+	Start-Sleep -Milliseconds 250
+	$timeout--
+}
+Start-Sleep -Milliseconds 500
+Move-Item -Force -LiteralPath "%s" -Destination "%s"
+Start-Sleep -Milliseconds 500
+Remove-Item -LiteralPath "%s" -Force -ErrorAction SilentlyContinue
+`,
+		pid,
+		escapePSPath(nextPath),
+		escapePSPath(targetPath),
+		escapePSPath(scriptPath),
+	)
+
+	if err := os.WriteFile(scriptPath, []byte(script), 0o644); err != nil {
+		return fmt.Errorf("write update script: %w", err)
+	}
+
+	cmd := exec.Command("powershell.exe",
+		"-WindowStyle", "Hidden",
+		"-ExecutionPolicy", "Bypass",
+		"-File", scriptPath,
+	)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("launch update script: %w", err)
+	}
+
+	return nil
+}
+
+func escapePSPath(p string) string {
+	return strings.ReplaceAll(p, "'", "''")
+}
+
+func copyFileEx(srcPath, dstPath string) error {
+	src, err := os.Open(srcPath)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	dst, err := os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+
+	_, err = io.Copy(dst, src)
+	return err
+}
+
+// CleanOldBinary removes leftover update artifacts (.old, .next, .update.ps1)
+// if they exist. Called at startup.
 func CleanOldBinary() {
 	exe, err := os.Executable()
 	if err != nil {
 		return
 	}
-	oldPath := filepath.Join(filepath.Dir(exe), update.OldName(runtime.GOOS))
-	os.Remove(oldPath)
+	dir := filepath.Dir(exe)
+	os.Remove(filepath.Join(dir, update.OldName(runtime.GOOS)))
+	os.Remove(filepath.Join(dir, update.BinaryName(runtime.GOOS)+".next"))
+	os.Remove(filepath.Join(dir, update.BinaryName(runtime.GOOS)+".update.ps1"))
 }
 
 // parseCurrentVersion extracts the clean semver from the build-time version string.
