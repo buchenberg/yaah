@@ -20,8 +20,3 @@ func (t *TUI2) appendMessage(text string) {
 	// Keep the input focused after appending
 	t.App.SetFocus(t.Input)
 }
-
-// clearMessages empties the conversation area.
-func (t *TUI2) clearMessages() {
-	t.Messages.SetText("")
-}

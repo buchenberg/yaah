@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
@@ -153,10 +152,6 @@ type taskRunnerOpts struct {
 	// session are enforced by child agents.
 	parentPermissionRules []pipeline.PermissionRule
 }
-
-// subAgentSeq guarantees unique sub-session IDs across concurrent
-// goroutines without relying on wall-clock resolution.
-var subAgentSeq atomic.Int64
 
 // makeTaskRunner creates a sub-agent runner that honours roles, timeouts,
 // iteration caps, and nesting depth.
@@ -526,18 +521,6 @@ func safeTruncateBytes(s string, maxBytes int) string {
 		i--
 	}
 	return s[:i]
-}
-
-// resolveSubAgentConcurrency picks the max concurrent sub-agent spawns for a
-// sub-loop. Precedence: per-role override > global config > default of 3.
-func resolveSubAgentConcurrency(subCfg config.SubAgentConfig, role subagent.SubAgentRole) int {
-	if rc, ok := subCfg.Roles[string(role)]; ok && rc.MaxConcurrency > 0 {
-		return rc.MaxConcurrency
-	}
-	if subCfg.MaxConcurrency > 0 {
-		return subCfg.MaxConcurrency
-	}
-	return 3
 }
 
 // roleHasShell reports whether the role's tool list includes a shell
