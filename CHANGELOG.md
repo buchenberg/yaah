@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.45.2](https://github.com/buchenberg/yaah/compare/v0.45.1...v0.45.2) (2026-08-03)
+
+
+### Bug Fixes
+
+* **tui:** restore inline todo table rendering from tool args ([#129](https://github.com/buchenberg/yaah/issues/129)) ([d66e312](https://github.com/buchenberg/yaah/commit/d66e312390923615366cbdbcd2e59aa87a053f3d))
+
 ## [0.45.1](https://github.com/buchenberg/yaah/compare/v0.45.0...v0.45.1) (2026-08-03)
 
 
