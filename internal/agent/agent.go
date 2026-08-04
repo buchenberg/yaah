@@ -223,66 +223,11 @@ func (l *Loop) Run(ctx context.Context, userInput string) (response string, runE
 
 // runMiddleware executes the agent loop using the middleware pipeline.
 func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response string, runErr error) {
-	defer func() {
-		if l.brokerView != nil {
-			var done DoneEvent
-			done.Response = response
-			if runErr != nil {
-				done.Error = runErr.Error()
-			}
-			done.ContextTokens = l.EstimatedTokens()
-			done.ContextWindow = l.Config.ContextWindow
-			done.FinishReason = l.State.LastFinishReason
-			done.ResponseModel = l.State.LastResponseModel
-			done.Usage = l.State.TotalTokens
-			if l.State.TotalReasoningTokens > 0 {
-				done.Usage.CompletionTokensDetails = &types.CompletionTokensDetails{
-					ReasoningTokens: l.State.TotalReasoningTokens,
-				}
-			}
-			if l.State.TotalCachedPromptTokens > 0 {
-				done.Usage.PromptTokensDetails = &types.PromptTokensDetails{
-					CachedTokens: l.State.TotalCachedPromptTokens,
-				}
-			}
-			l.broker.PublishMustDeliver(&done)
-			l.brokerView.Close()
-		}
-	}()
-	defer func() {
-		if r := recover(); r != nil {
-			runErr = fmt.Errorf("panic: %v", r)
-		}
-		l.Persister.Flush()
-		l.Hooks.Close()
-		reason := "completed"
-		if runErr != nil {
-			reason = "error"
-		}
-		l.Hooks.Emit(HookEvent{
-			Event:      SessionEnd,
-			ExitReason: reason,
-			Model:      l.Config.Model,
-		})
-	}()
+	defer l.publishDone(&response, &runErr)
+	defer l.teardown(&runErr)
 
 	l.applyDefaults()
-
-	if l.State.Messages != nil {
-		l.State.Messages = append(l.State.Messages, types.UserMsg(userInput))
-		l.Persister.Persist(l.State.Messages[len(l.State.Messages)-1])
-	} else {
-		l.State.Messages = []types.Message{
-			types.SystemMsg(l.Config.SystemPrompt),
-			types.UserMsg(userInput),
-		}
-		l.Hooks.Emit(HookEvent{
-			Event: SessionStart,
-			Model: l.Config.Model,
-		})
-		l.Persister.Persist(l.State.Messages[0])
-		l.Persister.Persist(l.State.Messages[1])
-	}
+	l.initMessages(userInput)
 
 	messages := l.State.Messages
 	pipe := l.buildPipeline()
@@ -310,85 +255,14 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			turnCtx, turnSpan = observability.StartTurn(ctx, iter, userInput)
 		}
 
-		step := &pipeline.Step{
-			Messages:      messages,
-			Tools:         l.buildToolDefs(),
-			Iteration:     iter,
-			MaxTurns:      l.Config.MaxTurns,
-			MaxIterations: l.Config.MaxIterations,
-			Model:         l.Config.Model,
-			SystemPrompt:  l.Config.SystemPrompt,
-		}
-
-		step, err := pipe.RunPrepareStep(ctx, step)
+		step, req, err := l.buildTurnRequest(ctx, iter, messages, pipe, turnSpan)
 		if err != nil {
 			l.State.Messages = messages
 			return "", err
 		}
 		messages = step.Messages
 
-		req := types.ChatRequest{
-			Model:    l.Config.Model,
-			Messages: l.prepareRequestMessages(messages),
-			Tools:    l.buildToolsForLevel(),
-		}
-
-		if l.Config.MaxTurns > 0 {
-			effective := l.Config.MaxTurns
-			if effective >= l.Config.MaxIterations {
-				effective = l.Config.MaxIterations - 1
-			}
-			if iter >= effective {
-				req.Tools = nil
-				if l.Config.OtelEnabled && turnSpan != nil {
-					turnSpan.AddEvent("maxturns.stripped", trace.WithAttributes(
-						attribute.Int("maxturns.limit", l.Config.MaxTurns),
-						attribute.Int("maxturns.iteration", iter),
-					))
-				}
-			} else if l.Config.WrapUpAhead > 0 && iter >= effective-l.Config.WrapUpAhead {
-				l.injectWrapUp(&req, turnSpan, effective-iter)
-			}
-		} else if l.Config.WrapUpAhead > 0 && iter >= l.Config.MaxIterations-l.Config.WrapUpAhead {
-			l.injectWrapUp(&req, turnSpan, l.Config.MaxIterations-iter)
-		}
-
-		if l.Config.JSONMode {
-			req.ResponseFormat = &types.ResponseFormat{Type: "json_object"}
-		}
-
-		// Verbose: record the conversation the model is about to see
-		// so the full message history is visible in Jaeger.
-		if l.Config.OtelVerbose && turnSpan != nil {
-			observability.RecordConversation(turnSpan, messages)
-		}
-
-		// Pre-flight context guard: compact before sending if context has
-		// exceeded the absolute window (last-resort safety net for between-turn
-		// growth from large tool results).
-		if l.Config.ContextWindow > 0 && l.State.LastPromptTokens > l.Config.ContextWindow {
-			l.compactContext(turnCtx, 0.5)
-			messages = l.State.Messages
-			req.Messages = l.prepareRequestMessages(messages)
-		}
-
-		// Payload-size guard: force compaction when the serialized request would
-		// exceed the byte threshold, regardless of token estimates. The chars/4
-		// token heuristic undercounts code/JSON by 2-4x, so a byte-level check
-		// catches oversized payloads the token trigger misses.
-		if l.Config.ContextWindow > 0 && estimatePayloadBytes(req.Messages, req.Tools) > maxPayloadBytes {
-			l.compactContext(turnCtx, 0.5)
-			messages = l.State.Messages
-			req.Messages = l.prepareRequestMessages(messages)
-		}
-
-		if len(req.Messages) == 0 {
-			err := fmt.Errorf("refusing to send empty message list to provider — %d messages after prepare, %d before compaction", len(req.Messages), len(messages))
-			if turnSpan != nil {
-				observability.RecordError(turnSpan, err)
-				turnSpan.End()
-			}
-			l.State.Messages = messages
+		if err := l.guardContextBeforeCall(turnCtx, &messages, &req, turnSpan); err != nil {
 			return "", err
 		}
 
@@ -415,29 +289,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		l.Persister.Persist(msg)
 
 		if turnSpan != nil {
-			toolNames := make([]string, 0, len(msg.ToolCalls))
-			for _, tc := range msg.ToolCalls {
-				toolNames = append(toolNames, tc.Function.Name)
-			}
-			turnAttrs := []attribute.KeyValue{
-				attribute.Bool("turn.streamed", result.Streamed),
-				attribute.Int("turn.iteration", iter),
-				attribute.Int("turn.tool_calls", len(msg.ToolCalls)),
-				attribute.String("turn.tool_call_names", strings.Join(toolNames, ",")),
-				attribute.Int("turn.messages", len(messages)),
-				attribute.String("llm.model", l.Config.Model),
-				attribute.Int("llm.total_prompt_tokens", l.State.TotalTokens.PromptTokens),
-				attribute.Int("llm.total_completion_tokens", l.State.TotalTokens.CompletionTokens),
-				attribute.Int("turn.prompt_tokens", l.State.TotalTokens.PromptTokens-tokensBeforeTurn.PromptTokens),
-				attribute.Int("turn.completion_tokens", l.State.TotalTokens.CompletionTokens-tokensBeforeTurn.CompletionTokens),
-			}
-			if l.State.TotalReasoningTokens > 0 {
-				turnAttrs = append(turnAttrs, attribute.Int("llm.total_reasoning_tokens", l.State.TotalReasoningTokens))
-			}
-			if l.State.TotalCachedPromptTokens > 0 {
-				turnAttrs = append(turnAttrs, attribute.Int("llm.total_cached_prompt_tokens", l.State.TotalCachedPromptTokens))
-			}
-			turnSpan.SetAttributes(turnAttrs...)
+			l.recordTurnSpanAttrs(turnSpan, messages, msg, tokensBeforeTurn, iter, result.Streamed)
 		}
 
 		if len(msg.ToolCalls) == 0 {
@@ -458,74 +310,8 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			return "", err
 		}
 
-		// Inline tool execution
-		calls := msg.ToolCalls
-		if l.Config.MaxInlineToolsPerTurn > 0 && len(calls) > l.Config.MaxInlineToolsPerTurn {
-			dropped := len(calls) - l.Config.MaxInlineToolsPerTurn
-			calls = calls[:l.Config.MaxInlineToolsPerTurn]
-			if dropped > 0 {
-				warning := fmt.Sprintf(
-					"[system] %d tool call(s) dropped — inline limit is %d per turn. "+
-						"Break large batches into smaller turns or use the delegate tool for batch work.",
-					dropped, l.Config.MaxInlineToolsPerTurn,
-				)
-				messages = append(messages, types.UserMsg(warning))
-				if l.Config.OtelVerbose && turnSpan != nil {
-					turnSpan.AddEvent("inline.truncated", trace.WithAttributes(
-						attribute.Int("inline.dropped", dropped),
-					))
-				}
-			}
-		}
-
-		if l.Config.OtelVerbose && turnSpan != nil {
-			names := make([]string, len(calls))
-			for i, tc := range calls {
-				names[i] = tc.Function.Name
-			}
-			turnSpan.AddEvent("dispatch.inline", trace.WithAttributes(
-				attribute.Int("inline.count", len(calls)),
-				attribute.String("inline.tool_names", strings.Join(names, ",")),
-			))
-		}
-		toolResults := l.executeAndCollect(turnCtx, calls, &messages)
-		step.Messages = messages
-
-		if l.ConflictTracker != nil {
-			l.Hooks.Emit(HookEvent{
-				Event: ConflictCheck,
-				Turn:  iter,
-				Model: l.Config.Model,
-			})
-
-			if report := l.ConflictTracker.DetectAndReset(); report != "" {
-				fileCount := strings.Count(report, "File: ")
-				l.Hooks.Emit(HookEvent{
-					Event:         ConflictDetect,
-					Turn:          iter,
-					Model:         l.Config.Model,
-					ConflictFiles: fileCount,
-				})
-				if turnSpan != nil {
-					turnSpan.SetAttributes(attribute.Int("conflict.files", fileCount))
-					turnSpan.AddEvent("conflict.detected", trace.WithAttributes(
-						attribute.Int("conflict.files", fileCount),
-					))
-				}
-				conflictMsg := types.UserMsg(report)
-				messages = append(messages, conflictMsg)
-				step.Messages = messages
-				l.State.Messages = messages
-				l.Persister.Persist(conflictMsg)
-			}
-		}
-
-		step, err = pipe.RunPostTool(ctx, toolResults, step)
+		err = l.executeToolPhase(turnCtx, iter, msg, &messages, &step, pipe, turnSpan)
 		if err != nil {
-			if turnSpan != nil {
-				turnSpan.End()
-			}
-			l.State.Messages = messages
 			return "", err
 		}
 
@@ -541,6 +327,268 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 
 	l.State.Messages = messages
 	return "", fmt.Errorf("max iterations (%d) reached", l.Config.MaxIterations)
+}
+
+// publishDone publishes the final DoneEvent to the broker view.
+func (l *Loop) publishDone(response *string, runErr *error) {
+	if l.brokerView == nil {
+		return
+	}
+	var done DoneEvent
+	done.Response = *response
+	if *runErr != nil {
+		done.Error = (*runErr).Error()
+	}
+	done.ContextTokens = l.EstimatedTokens()
+	done.ContextWindow = l.Config.ContextWindow
+	done.FinishReason = l.State.LastFinishReason
+	done.ResponseModel = l.State.LastResponseModel
+	done.Usage = l.State.TotalTokens
+	if l.State.TotalReasoningTokens > 0 {
+		done.Usage.CompletionTokensDetails = &types.CompletionTokensDetails{
+			ReasoningTokens: l.State.TotalReasoningTokens,
+		}
+	}
+	if l.State.TotalCachedPromptTokens > 0 {
+		done.Usage.PromptTokensDetails = &types.PromptTokensDetails{
+			CachedTokens: l.State.TotalCachedPromptTokens,
+		}
+	}
+	l.broker.PublishMustDeliver(&done)
+	l.brokerView.Close()
+}
+
+// teardown handles panic recovery, flushes the persister, closes hooks,
+// and emits the session-end event.
+func (l *Loop) teardown(runErr *error) {
+	if r := recover(); r != nil {
+		*runErr = fmt.Errorf("panic: %v", r)
+	}
+	l.Persister.Flush()
+	l.Hooks.Close()
+	reason := "completed"
+	if *runErr != nil {
+		reason = "error"
+	}
+	l.Hooks.Emit(HookEvent{
+		Event:      SessionEnd,
+		ExitReason: reason,
+		Model:      l.Config.Model,
+	})
+}
+
+// initMessages appends the user input to the conversation, persisting
+// messages and emitting session-start hooks for new conversations.
+func (l *Loop) initMessages(userInput string) {
+	if l.State.Messages != nil {
+		l.State.Messages = append(l.State.Messages, types.UserMsg(userInput))
+		l.Persister.Persist(l.State.Messages[len(l.State.Messages)-1])
+	} else {
+		l.State.Messages = []types.Message{
+			types.SystemMsg(l.Config.SystemPrompt),
+			types.UserMsg(userInput),
+		}
+		l.Hooks.Emit(HookEvent{
+			Event: SessionStart,
+			Model: l.Config.Model,
+		})
+		l.Persister.Persist(l.State.Messages[0])
+		l.Persister.Persist(l.State.Messages[1])
+	}
+}
+
+// buildTurnRequest runs PrepareStep middleware, builds the ChatRequest
+// with MaxTurns/WrapUp logic and JSONMode, and records verbosely if asked.
+func (l *Loop) buildTurnRequest(ctx context.Context, iter int, messages []types.Message, pipe *pipeline.Pipeline, turnSpan trace.Span) (*pipeline.Step, types.ChatRequest, error) {
+	step := &pipeline.Step{
+		Messages:      messages,
+		Tools:         l.buildToolDefs(),
+		Iteration:     iter,
+		MaxTurns:      l.Config.MaxTurns,
+		MaxIterations: l.Config.MaxIterations,
+		Model:         l.Config.Model,
+		SystemPrompt:  l.Config.SystemPrompt,
+	}
+
+	var err error
+	step, err = pipe.RunPrepareStep(ctx, step)
+	if err != nil {
+		return nil, types.ChatRequest{}, err
+	}
+	messages = step.Messages
+
+	req := types.ChatRequest{
+		Model:    l.Config.Model,
+		Messages: l.prepareRequestMessages(messages),
+		Tools:    l.buildToolsForLevel(),
+	}
+
+	if l.Config.MaxTurns > 0 {
+		effective := l.Config.MaxTurns
+		if effective >= l.Config.MaxIterations {
+			effective = l.Config.MaxIterations - 1
+		}
+		if iter >= effective {
+			req.Tools = nil
+			if l.Config.OtelEnabled && turnSpan != nil {
+				turnSpan.AddEvent("maxturns.stripped", trace.WithAttributes(
+					attribute.Int("maxturns.limit", l.Config.MaxTurns),
+					attribute.Int("maxturns.iteration", iter),
+				))
+			}
+		} else if l.Config.WrapUpAhead > 0 && iter >= effective-l.Config.WrapUpAhead {
+			l.injectWrapUp(&req, turnSpan, effective-iter)
+		}
+	} else if l.Config.WrapUpAhead > 0 && iter >= l.Config.MaxIterations-l.Config.WrapUpAhead {
+		l.injectWrapUp(&req, turnSpan, l.Config.MaxIterations-iter)
+	}
+
+	if l.Config.JSONMode {
+		req.ResponseFormat = &types.ResponseFormat{Type: "json_object"}
+	}
+
+	return step, req, nil
+}
+
+// guardContextBeforeCall applies pre-flight context compaction when the
+// estimated token count exceeds the context window or the serialized
+// request exceeds the payload byte limit. Returns an error when the
+// request ends up empty after compaction (unrecoverable).
+func (l *Loop) guardContextBeforeCall(turnCtx context.Context, messages *[]types.Message, req *types.ChatRequest, turnSpan trace.Span) error {
+	if l.Config.OtelVerbose && turnSpan != nil {
+		observability.RecordConversation(turnSpan, *messages)
+	}
+
+	if l.Config.ContextWindow > 0 && l.State.LastPromptTokens > l.Config.ContextWindow {
+		l.compactContext(turnCtx, 0.5)
+		*messages = l.State.Messages
+		req.Messages = l.prepareRequestMessages(*messages)
+	}
+
+	if l.Config.ContextWindow > 0 && estimatePayloadBytes(req.Messages, req.Tools) > maxPayloadBytes {
+		l.compactContext(turnCtx, 0.5)
+		*messages = l.State.Messages
+		req.Messages = l.prepareRequestMessages(*messages)
+	}
+
+	if len(req.Messages) == 0 {
+		err := fmt.Errorf("refusing to send empty message list to provider — %d messages after prepare", len(req.Messages))
+		if turnSpan != nil {
+			observability.RecordError(turnSpan, err)
+			turnSpan.End()
+		}
+		l.State.Messages = *messages
+		return err
+	}
+
+	return nil
+}
+
+// recordTurnSpanAttrs populates OTel span attributes for the current
+// turn: tool call counts, token usage, and model info.
+func (l *Loop) recordTurnSpanAttrs(turnSpan trace.Span, messages []types.Message, msg types.Message, tokensBeforeTurn types.Usage, iter int, streamed bool) {
+	toolNames := make([]string, 0, len(msg.ToolCalls))
+	for _, tc := range msg.ToolCalls {
+		toolNames = append(toolNames, tc.Function.Name)
+	}
+	turnAttrs := []attribute.KeyValue{
+		attribute.Bool("turn.streamed", streamed),
+		attribute.Int("turn.iteration", iter),
+		attribute.Int("turn.tool_calls", len(msg.ToolCalls)),
+		attribute.String("turn.tool_call_names", strings.Join(toolNames, ",")),
+		attribute.Int("turn.messages", len(messages)),
+		attribute.String("llm.model", l.Config.Model),
+		attribute.Int("llm.total_prompt_tokens", l.State.TotalTokens.PromptTokens),
+		attribute.Int("llm.total_completion_tokens", l.State.TotalTokens.CompletionTokens),
+		attribute.Int("turn.prompt_tokens", l.State.TotalTokens.PromptTokens-tokensBeforeTurn.PromptTokens),
+		attribute.Int("turn.completion_tokens", l.State.TotalTokens.CompletionTokens-tokensBeforeTurn.CompletionTokens),
+	}
+	if l.State.TotalReasoningTokens > 0 {
+		turnAttrs = append(turnAttrs, attribute.Int("llm.total_reasoning_tokens", l.State.TotalReasoningTokens))
+	}
+	if l.State.TotalCachedPromptTokens > 0 {
+		turnAttrs = append(turnAttrs, attribute.Int("llm.total_cached_prompt_tokens", l.State.TotalCachedPromptTokens))
+	}
+	turnSpan.SetAttributes(turnAttrs...)
+}
+
+// executeToolPhase truncates inline tools to MaxInlineToolsPerTurn,
+// executes them via executeAndCollect, runs conflict detection,
+// and invokes the PostTool middleware step.
+func (l *Loop) executeToolPhase(turnCtx context.Context, iter int, msg types.Message, messages *[]types.Message, step **pipeline.Step, pipe *pipeline.Pipeline, turnSpan trace.Span) error {
+	calls := msg.ToolCalls
+	if l.Config.MaxInlineToolsPerTurn > 0 && len(calls) > l.Config.MaxInlineToolsPerTurn {
+		dropped := len(calls) - l.Config.MaxInlineToolsPerTurn
+		calls = calls[:l.Config.MaxInlineToolsPerTurn]
+		if dropped > 0 {
+			warning := fmt.Sprintf(
+				"[system] %d tool call(s) dropped — inline limit is %d per turn. "+
+					"Break large batches into smaller turns or use the delegate tool for batch work.",
+				dropped, l.Config.MaxInlineToolsPerTurn,
+			)
+			*messages = append(*messages, types.UserMsg(warning))
+			if l.Config.OtelVerbose && turnSpan != nil {
+				turnSpan.AddEvent("inline.truncated", trace.WithAttributes(
+					attribute.Int("inline.dropped", dropped),
+				))
+			}
+		}
+	}
+
+	if l.Config.OtelVerbose && turnSpan != nil {
+		names := make([]string, len(calls))
+		for i, tc := range calls {
+			names[i] = tc.Function.Name
+		}
+		turnSpan.AddEvent("dispatch.inline", trace.WithAttributes(
+			attribute.Int("inline.count", len(calls)),
+			attribute.String("inline.tool_names", strings.Join(names, ",")),
+		))
+	}
+
+	toolResults := l.executeAndCollect(turnCtx, calls, messages)
+	(*step).Messages = *messages
+
+	if l.ConflictTracker != nil {
+		l.Hooks.Emit(HookEvent{
+			Event: ConflictCheck,
+			Turn:  iter,
+			Model: l.Config.Model,
+		})
+
+		if report := l.ConflictTracker.DetectAndReset(); report != "" {
+			fileCount := strings.Count(report, "File: ")
+			l.Hooks.Emit(HookEvent{
+				Event:         ConflictDetect,
+				Turn:          iter,
+				Model:         l.Config.Model,
+				ConflictFiles: fileCount,
+			})
+			if turnSpan != nil {
+				turnSpan.SetAttributes(attribute.Int("conflict.files", fileCount))
+				turnSpan.AddEvent("conflict.detected", trace.WithAttributes(
+					attribute.Int("conflict.files", fileCount),
+				))
+			}
+			conflictMsg := types.UserMsg(report)
+			*messages = append(*messages, conflictMsg)
+			(*step).Messages = *messages
+			l.State.Messages = *messages
+			l.Persister.Persist(conflictMsg)
+		}
+	}
+
+	var err error
+	*step, err = pipe.RunPostTool(turnCtx, toolResults, *step)
+	if err != nil {
+		if turnSpan != nil {
+			turnSpan.End()
+		}
+		l.State.Messages = *messages
+		return err
+	}
+
+	return nil
 }
 
 // injectWrapUp appends a transient wrap-up notice to the request,
