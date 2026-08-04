@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/tui2/colors"
 )
 
@@ -18,7 +19,8 @@ import (
 // Created on start, updated on end. There is no separate start/end component.
 type Block struct {
 	id           string
-	role         string // e.g. "analyst"
+	role         string // e.g. "checker"
+	displayName  string // e.g. "Chuck (checker)"
 	specialty    string // e.g. "Finds and gathers information"
 	task         string // the prompt description
 	model        string
@@ -28,6 +30,7 @@ type Block struct {
 	endTime      time.Time
 	err          string
 	blinkVisible bool // toggled by external timer for active blink
+	spinnerFrame int   // advances on each ticker tick while active
 }
 
 // State is the current state of a sub-agent block.
@@ -41,9 +44,15 @@ const (
 
 // New creates a sub-agent block in Active state.
 func New(id, role, specialty, task, model string) *Block {
+	name := subagent.RoleDisplayName(subagent.SubAgentRole(role))
+	label := name
+	if name != role {
+		label = fmt.Sprintf("%s (%s)", name, role)
+	}
 	return &Block{
 		id:           id,
 		role:         role,
+		displayName:  label,
 		specialty:    specialty,
 		task:         task,
 		model:        model,
@@ -53,12 +62,21 @@ func New(id, role, specialty, task, model string) *Block {
 	}
 }
 
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
 func (b *Block) ID() string       { return b.id }
 func (b *Block) Role() string     { return b.role }
 func (b *Block) S() State         { return b.state }
 func (b *Block) IsExpanded() bool { return b.expanded }
 func (b *Block) Toggle()          { b.expanded = !b.expanded }
 func (b *Block) ToggleBlink()     { b.blinkVisible = !b.blinkVisible }
+
+// AdvanceSpinner advances the spinner frame for active sub-agents.
+func (b *Block) AdvanceSpinner() {
+	if b.state == Active {
+		b.spinnerFrame = (b.spinnerFrame + 1) % len(spinnerFrames)
+	}
+}
 
 // Complete transitions the block to Done.
 func (b *Block) Complete() {
@@ -105,14 +123,14 @@ func (b *Block) renderCollapsed() string {
 	hex := b.roleHex()
 	switch b.state {
 	case Active:
-		return fmt.Sprintf(`  [%s]▶ %s %s[-] [%s]· %s[-]`,
-			hex, b.robot(), b.role, colors.Dim, b.task)
+		return fmt.Sprintf(`  [%s]%s %s %s[-] [%s]· %s[-]`,
+			hex, spinnerFrames[b.spinnerFrame], b.robot(), b.displayName, colors.Dim, b.task)
 	case Done:
 		return fmt.Sprintf(`  [%s]✓ %s %s[-] [%s]· %s (%s)[-]`,
-			hex, b.robot(), b.role, colors.Dim, b.task, b.durationStr())
+			hex, b.robot(), b.displayName, colors.Dim, b.task, b.durationStr())
 	case Error:
 		return fmt.Sprintf(`  [%s]✗ %s %s[-] [red]· %s (%s)[-]`,
-			hex, b.robot(), b.role, b.task, b.durationStr())
+			hex, b.robot(), b.displayName, b.task, b.durationStr())
 	default:
 		return ""
 	}
@@ -126,13 +144,13 @@ func (b *Block) renderExpanded() string {
 	// Header.
 	switch b.state {
 	case Active:
-		bld.WriteString(fmt.Sprintf(`  [%s]▶ %s %s[-]`, hex, b.robot(), b.role))
+		bld.WriteString(fmt.Sprintf(`  [%s]%s %s %s[-]`, hex, spinnerFrames[b.spinnerFrame], b.robot(), b.displayName))
 	case Done:
-		bld.WriteString(fmt.Sprintf(`  [%s]✓ %s %s[-]`, hex, b.robot(), b.role))
+		bld.WriteString(fmt.Sprintf(`  [%s]✓ %s %s[-]`, hex, b.robot(), b.displayName))
 	case Error:
-		bld.WriteString(fmt.Sprintf(`  [%s]✗ %s %s[-]`, hex, b.robot(), b.role))
+		bld.WriteString(fmt.Sprintf(`  [%s]✗ %s %s[-]`, hex, b.robot(), b.displayName))
 	}
-	fill := max(2, width-len(b.role)-2)
+	fill := max(2, width-len(b.displayName)-2)
 	bld.WriteString(fmt.Sprintf(`[%s] %s[-]`, colors.Dim, strings.Repeat("─", fill)))
 	bld.WriteString("\n")
 

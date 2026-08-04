@@ -4,6 +4,7 @@ package thinking
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	"github.com/buchenberg/yaah/internal/tui2/colors"
 	"github.com/buchenberg/yaah/internal/tui2/lolcat"
@@ -15,7 +16,7 @@ type Indicator struct {
 	frame   int
 	frames  []string
 	label   string
-	visible bool
+	visible atomic.Bool
 }
 
 // New creates a thinking indicator. Use "Reasoning..." for reasoning
@@ -35,17 +36,19 @@ func (i *Indicator) Advance() {
 }
 
 // Show makes the indicator visible.
-func (i *Indicator) Show() { i.visible = true }
+func (i *Indicator) Show() { i.visible.Store(true) }
 
 // Hide makes the indicator invisible.
-func (i *Indicator) Hide() { i.visible = false }
+func (i *Indicator) Hide() { i.visible.Store(false) }
 
-// Visible reports whether the indicator is currently shown.
-func (i *Indicator) Visible() bool { return i.visible }
+// Visible reports whether the indicator is currently shown. Race-safe:
+// read from the animation ticker goroutine while writers run on the app
+// goroutine via QueueUpdateDraw.
+func (i *Indicator) Visible() bool { return i.visible.Load() }
 
 // Spinner returns the current spinner frame character.
 func (i *Indicator) Spinner() string {
-	if i.visible {
+	if i.visible.Load() {
 		return i.frames[i.frame]
 	}
 	return " " // blank when hidden
@@ -53,7 +56,7 @@ func (i *Indicator) Spinner() string {
 
 // Render returns the full tview-tagged indicator line.
 func (i *Indicator) Render() string {
-	if !i.visible {
+	if !i.visible.Load() {
 		return ""
 	}
 	spinner := i.frames[i.frame]

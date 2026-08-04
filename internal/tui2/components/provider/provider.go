@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/buchenberg/yaah/internal/tui2/colors"
-	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
@@ -15,9 +14,6 @@ func Build() *tview.TextView {
 		SetTextAlign(tview.AlignRight).
 		SetDynamicColors(true).
 		SetWordWrap(false)
-	tv.SetBorder(true).
-		SetBorderColor(tcell.ColorGray).
-		SetTitle(" Provider ")
 
 	tv.SetText(
 		fmt.Sprintf("Provider: %s\nModel: %s\nAgent: yaah v0.7.0",

@@ -49,7 +49,7 @@ func DefaultBindings() []Binding {
 		{Key: tcell.KeyCtrlL, Action: ActionClear, Label: "Ctrl+L", HelpText: "clear screen"},
 		{Rune: '?', Action: ActionHelp, Label: "?", HelpText: "help"},
 		{Rune: '/', Action: ActionSearch, Label: "/", HelpText: "search in messages"},
-		{Rune: ':', Action: ActionCommand, Label: ":", HelpText: "command palette"},
+		{Key: tcell.KeyCtrlP, Action: ActionCommand, Label: "Ctrl+P", HelpText: "command palette"},
 		{Key: tcell.KeyCtrlR, Action: ActionToggleReasoning, Label: "Ctrl+R", HelpText: "toggle reasoning blocks"},
 		{Key: tcell.KeyCtrlT, Action: ActionToggleTools, Label: "Ctrl+T", HelpText: "toggle tool blocks"},
 		{Key: tcell.KeyCtrlS, Action: ActionToggleSubAgents, Label: "Ctrl+S", HelpText: "toggle sub-agent blocks"},
@@ -75,13 +75,17 @@ func (b Binding) Match(ev *tcell.EventKey) bool {
 		if b.Mod != 0 {
 			return ev.Modifiers() == b.Mod
 		}
-		return ev.Modifiers() == tcell.ModNone
+		// Key-based bindings (e.g., Ctrl+P, arrows) may arrive with
+		// ModCtrl on Windows where tcell reports the modifier explicitly.
+		return ev.Modifiers() == tcell.ModNone || ev.Modifiers() == tcell.ModCtrl
 	}
 	if b.Rune != 0 && ev.Rune() == b.Rune {
 		if b.Mod != 0 {
 			return ev.Modifiers() == b.Mod
 		}
-		return ev.Modifiers() == tcell.ModNone
+		// Printable characters like ':' or '?' require Shift on US keyboards,
+		// so accept Shift (or no modifier) for rune bindings without an explicit mod.
+		return ev.Modifiers() == tcell.ModNone || ev.Modifiers() == tcell.ModShift
 	}
 	return false
 }

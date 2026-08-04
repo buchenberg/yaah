@@ -106,6 +106,14 @@ type agentSession struct {
 }
 
 func newAgentSession() (*agentSession, error) {
+	return newAgentSessionWithOptions(true, true)
+}
+
+// newAgentSessionWithOptions creates an agent session. When skipMCP is true,
+// MCP server subprocesses are not started (they consume CPU and make tview
+// input sluggish on Windows). When skipOtel is true, OTel exporters are
+// not initialised.
+func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	// Migrate legacy ~/.yaah/mcp/*.json manifests into config.yaml.
 	if n, err := config.MigrateMCP(); err == nil && n > 0 {
 		fmt.Fprintf(os.Stderr, "%s migrated %d MCP server(s) from ~/.yaah/mcp/ to config.yaml\n", Dim("notice:"), n)
@@ -124,7 +132,7 @@ func newAgentSession() (*agentSession, error) {
 	// extraOtelProcessors (an in-memory BufferingSpanProcessor) and sets
 	// otelInMemoryOnly so tracing activates without an OTLP endpoint.
 	otelShutdown := func(_ context.Context) error { return nil }
-	otelActive := cfg.Observability.Otel.Enabled || len(extraOtelProcessors) > 0
+	otelActive := !skipOtel && (cfg.Observability.Otel.Enabled || len(extraOtelProcessors) > 0)
 	if otelActive {
 		otelCfg := observability.Config{
 			Enabled:         true,
@@ -209,23 +217,29 @@ func newAgentSession() (*agentSession, error) {
 		systemPrompt += "\n\n## Memory Guidelines\n- Use memory_search to find relevant memories before answering personal/project questions. Pass a tag to filter by category.\n- When the user asks about past conversations or session history, use memory_search_sessions with an empty query to list recent transcripts.\n- Use memory_add to save important facts. Always include a tags array (e.g., [\"user_info\"], [\"preferences\"], [\"project:yaah\"], [\"decision\"]).\n- Use memory_update to correct stale facts (requires the memory ID). Use memory_delete to remove incorrect memories.\n- At the end of a conversation or when the user says goodbye, use memory_add to save a 2-3 line summary of key discussion points with tag [\"session_summary\"]."
 	}
 
-	mcpManifests := make(map[string]*mcp.Manifest)
-	for name, s := range cfg.MCPServers {
-		mcpManifests[name] = &mcp.Manifest{
-			Command:   s.Command,
-			Args:      s.Args,
-			Env:       s.Env,
-			URL:       s.URL,
-			Transport: s.Transport,
-			Framing:   s.Framing,
+	var mcpClients []mcp.MCPClient
+	var mcpTools []*mcp.MCPTool
+	var mcpInfos []mcp.ServerInfo
+	var mcpErr error
+	if !skipMCP {
+		mcpManifests := make(map[string]*mcp.Manifest)
+		for name, s := range cfg.MCPServers {
+			mcpManifests[name] = &mcp.Manifest{
+				Command:   s.Command,
+				Args:      s.Args,
+				Env:       s.Env,
+				URL:       s.URL,
+				Transport: s.Transport,
+				Framing:   s.Framing,
+			}
 		}
-	}
-	mcpClients, mcpTools, mcpInfos, mcpErr := mcp.StartMCPClientsFromConfig(context.Background(), mcpManifests, io.Discard)
-	if mcpErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: MCP startup error: %v\n", mcpErr)
-	}
-	for _, t := range mcpTools {
-		toolReg.Register(t)
+		mcpClients, mcpTools, mcpInfos, mcpErr = mcp.StartMCPClientsFromConfig(context.Background(), mcpManifests, io.Discard)
+		if mcpErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: MCP startup error: %v\n", mcpErr)
+		}
+		for _, t := range mcpTools {
+			toolReg.Register(t)
+		}
 	}
 
 	skillDirs := skillSearchPaths()

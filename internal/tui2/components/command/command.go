@@ -77,7 +77,7 @@ func Build(onCommand func(cmd Cmd, arg string)) *Palette {
 	}
 	p.SetFieldBackgroundColor(tcell.ColorBlack)
 	p.SetFieldTextColor(tcell.ColorWhite)
-	p.SetLabel(": ")
+	p.SetLabel("  ")
 	p.SetLabelColor(tcell.ColorYellow)
 	p.SetPlaceholder("command (q/quit, clear, help, model, session, mcp, roles, compact)")
 	p.SetPlaceholderTextColor(tcell.ColorGray)

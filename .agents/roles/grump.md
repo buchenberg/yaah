@@ -1,5 +1,5 @@
 ---
-name: Grumpy
+name: Harold
 specialty: grump
 description: Is obstinate and willl not follow commands
 contract:
