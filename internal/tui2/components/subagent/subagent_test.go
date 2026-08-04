@@ -17,8 +17,8 @@ func TestNewBlock(t *testing.T) {
 	if b.S() != Active {
 		t.Errorf("S() = %v, want %v", b.S(), Active)
 	}
-	if !b.IsExpanded() {
-		t.Errorf("IsExpanded() = false, want true")
+	if b.IsExpanded() {
+		t.Errorf("IsExpanded() = true, want false for new block")
 	}
 }
 
@@ -103,8 +103,13 @@ func TestBlockRenderError(t *testing.T) {
 	if !strings.Contains(got, "✗") {
 		t.Errorf("Error block render should contain ✗, got %q", got)
 	}
-	if !strings.Contains(got, "something went wrong") {
-		t.Errorf("Error block render should contain error message, got %q", got)
+	if !strings.Contains(got, "analyst") {
+		t.Errorf("Error block render should contain role, got %q", got)
+	}
+	b.Toggle()
+	gotExpanded := b.Render()
+	if !strings.Contains(gotExpanded, "something went wrong") {
+		t.Errorf("Expanded error block render should contain error message, got %q", gotExpanded)
 	}
 }
 
