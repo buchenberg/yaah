@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.45.5](https://github.com/buchenberg/yaah/compare/v0.45.4...v0.45.5) (2026-08-04)
+
+
+### Code Refactoring
+
+* **pipeline:** remove sub-agent depth-limit middleware ([#137](https://github.com/buchenberg/yaah/issues/137)) ([31b572f](https://github.com/buchenberg/yaah/commit/31b572ff56f18ea57b10d464db192810d2fd3818))
+
 ## [0.45.4](https://github.com/buchenberg/yaah/compare/v0.45.3...v0.45.4) (2026-08-04)
 
 
