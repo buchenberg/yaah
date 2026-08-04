@@ -342,21 +342,22 @@ func (s *agentSession) runHeadless(ctx context.Context, prompt string) (string, 
 	}
 	fallbackProvider, fallbackModel, _ := resolveFallback(s.cfg)
 
+	var debouncer *memory.DebouncedWriter
+	if s.db != nil {
+		debouncer = memory.NewDebouncedWriter(s.db)
+	}
+	persister := agent.NewSessionPersister(s.db, debouncer, s.sessionID)
+	persister.SetMsgIdx(s.msgIdx)
+	hooks := agent.NewHookEmitter(s.cfg.Hooks.Dir, s.sessionID)
+
 	loop := agent.NewLoop(s.provider, s.toolReg,
 		agent.WithModel(s.modelName),
 		agent.WithSystemPrompt(s.mainPrompt),
 		agent.WithView(agent.NoopView{}),
 		agent.WithMessages(s.messages),
-		agent.WithDB(s.db),
-		agent.WithWriteDebouncer(func() *memory.DebouncedWriter {
-			if s.db != nil {
-				return memory.NewDebouncedWriter(s.db)
-			}
-			return nil
-		}()),
 		agent.WithSessionID(s.sessionID),
-		agent.WithMsgIdx(s.msgIdx),
-		agent.WithHookDir(s.cfg.Hooks.Dir),
+		agent.WithPersister(persister),
+		agent.WithHooks(hooks),
 		agent.WithFallback(fallbackProvider, fallbackModel),
 		agent.WithCompactProvider(compactProvider, compactModel),
 		agent.WithApprovalMode(resolveApproval(s.cfg)),

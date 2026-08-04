@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
-	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -47,29 +46,19 @@ func WithMessages(msgs []types.Message) Option {
 	return func(l *Loop) { l.Messages = msgs }
 }
 
-// WithDB sets the SQLite database for persistence.
-func WithDB(db *memory.DB) Option {
-	return func(l *Loop) { l.DB = db }
-}
-
-// WithWriteDebouncer sets the debounced writer for persistence.
-func WithWriteDebouncer(w *memory.DebouncedWriter) Option {
-	return func(l *Loop) { l.WriteDebouncer = w }
-}
-
 // WithSessionID sets the session identifier.
 func WithSessionID(id string) Option {
 	return func(l *Loop) { l.SessionID = id }
 }
 
-// WithMsgIdx sets the starting message index (for session resume).
-func WithMsgIdx(idx int) Option {
-	return func(l *Loop) { l.MsgIdx = idx }
+// WithPersister sets the session persister.
+func WithPersister(p *SessionPersister) Option {
+	return func(l *Loop) { l.Persister = p }
 }
 
-// WithHookDir sets the JSONL hook event directory.
-func WithHookDir(dir string) Option {
-	return func(l *Loop) { l.HookDir = dir }
+// WithHooks sets the hook emitter.
+func WithHooks(h *HookEmitter) Option {
+	return func(l *Loop) { l.Hooks = h }
 }
 
 // WithFallback sets the fallback provider and model.
@@ -194,12 +183,15 @@ func WithLoopConfig(cfg LoopConfig) Option {
 		l.WrapUpAhead = cfg.WrapUpAhead
 		l.MaxInlineToolsPerTurn = cfg.MaxInlineToolsPerTurn
 		l.PromptCaching = cfg.PromptCaching
-		l.ReasoningProtectTurns = cfg.ReasoningProtectTurns
-		l.ToolResultMaxLines = cfg.ToolResultMaxLines
-		l.ToolResultMaxBytes = cfg.ToolResultMaxBytes
-		l.PruneProtectTokens = cfg.PruneProtectTokens
-		l.PruneMinReclaim = cfg.PruneMinReclaim
-		l.PruneMinTurns = cfg.PruneMinTurns
 		l.JSONMode = cfg.JSONMode
+		if l.CtxMgr == nil {
+			l.CtxMgr = &ContextManager{}
+		}
+		l.CtxMgr.ReasoningProtectTurns = cfg.ReasoningProtectTurns
+		l.CtxMgr.ToolResultMaxLines = cfg.ToolResultMaxLines
+		l.CtxMgr.ToolResultMaxBytes = cfg.ToolResultMaxBytes
+		l.CtxMgr.PruneProtectTokens = cfg.PruneProtectTokens
+		l.CtxMgr.PruneMinReclaim = cfg.PruneMinReclaim
+		l.CtxMgr.PruneMinTurns = cfg.PruneMinTurns
 	}
 }

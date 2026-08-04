@@ -14,7 +14,6 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
-	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/pubsub"
@@ -197,25 +196,8 @@ type Loop struct {
 	// ApprovalMode controls per-tool approval behavior: "allow", "ask", or "deny".
 	ApprovalMode string
 
-	// DB is the optional SQLite database for per-message persistence.
-	// When non-nil, each message is persisted as it is appended to the
-	// conversation, enabling session resume across process restarts.
-	// When nil, the loop runs entirely in memory.
-	// Deprecated: set via NewSessionPersister or the Persister field.
-	DB *memory.DB
-
-	// WriteDebouncer coalesces rapid message writes to reduce SQLite write
-	// amplification from concurrent subagents and pipeline step bulk persistence.
-	// When nil, writes go directly to DB.
-	// Deprecated: set via NewSessionPersister or the Persister field.
-	WriteDebouncer *memory.DebouncedWriter
-
-	// MsgIdx tracks the next message index for DB inserts.
-	// Deprecated: use Persister.MsgIdx().
-	MsgIdx int
-
-	// Persister handles message persistence. Created in applyDefaults
-	// from DB/WriteDebouncer/SessionID if not set explicitly.
+	// Persister handles message persistence. Set via WithPersister or
+	// created as a no-op in applyDefaults.
 	Persister *SessionPersister
 
 	// Hooks emits structured JSONL events to the hook directory.
@@ -280,29 +262,6 @@ type Loop struct {
 	// system prompt and recent messages.
 	PromptCaching bool
 
-	// Pruner soft-prunes stale tool-result content from provider requests
-	// (Tier-0 context reclaim). Default-constructed in applyDefaults; disable
-	// via PipelineDisabled: ["soft_prune"].
-	// Deprecated: use CtxMgr.Pruner.
-	Pruner *pipeline.Pruner
-
-	// Tool result truncation caps. Zero values use built-in defaults
-	// (500 lines / 20 KiB).
-	// Deprecated: use CtxMgr.ToolResultMaxLines/ToolResultMaxBytes.
-	ToolResultMaxLines int
-	ToolResultMaxBytes int
-
-	// Soft-prune tuning. Zero values use built-in defaults.
-	// Deprecated: use CtxMgr.PruneProtectTokens/PruneMinReclaim/PruneMinTurns.
-	PruneProtectTokens int
-	PruneMinReclaim    int
-	PruneMinTurns      int
-
-	// ReasoningProtectTurns is the number of recent user-message turns whose
-	// assistant ReasoningContent is preserved in provider requests.
-	// Deprecated: use CtxMgr.ReasoningProtectTurns.
-	ReasoningProtectTurns int
-
 	// CtxMgr owns context-window policy: compaction, pruning, token tracking,
 	// and truncation. Created in applyDefaults from the Loop's config fields.
 	CtxMgr *ContextManager
@@ -330,10 +289,6 @@ type Loop struct {
 
 	// SessionID identifies the conversation session for persistence and logging.
 	SessionID string
-
-	// HookDir is the directory for a best-effort JSONL event log.
-	// Deprecated: set via NewHookEmitter or the Hooks field.
-	HookDir string
 
 	// PreviousSummary stores the last LLM-generated conversation summary for
 	// incremental compaction, so each summarization only needs to cover new
@@ -422,7 +377,7 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 		MaxToolConcurrency:     l.MaxToolConcurrency,
 		MaxSubAgentConcurrency: l.MaxSubAgentConcurrency,
 		PromptCaching:          l.PromptCaching,
-		Pruner:                 l.Pruner,
+		Pruner:                 l.CtxMgr.Pruner,
 		PruneHooks:             l.pruneHooks(),
 		PipelineNames:          l.PipelineNames,
 		PipelineDisabled:       l.PipelineDisabled,
@@ -781,6 +736,16 @@ func (l *Loop) injectWrapUp(req *types.ChatRequest, turnSpan trace.Span, remaini
 	}
 }
 
+// ctxMgr returns the CtxMgr, creating one lazily if needed.
+// This avoids nil panics when tests call context methods directly
+// without going through Run → applyDefaults.
+func (l *Loop) ctxMgr() *ContextManager {
+	if l.CtxMgr == nil {
+		l.CtxMgr = &ContextManager{}
+	}
+	return l.CtxMgr
+}
+
 // applyDefaults sets default values for Loop fields.
 func (l *Loop) applyDefaults() {
 	if l.CtxMgr == nil {
@@ -789,13 +754,6 @@ func (l *Loop) applyDefaults() {
 		l.CtxMgr.CompactionThreshold = l.CompactionThreshold
 		l.CtxMgr.RawCompactionThreshold = l.RawCompactionThreshold
 		l.CtxMgr.EstimateFactor = l.EstimateFactor
-		l.CtxMgr.ReasoningProtectTurns = l.ReasoningProtectTurns
-		l.CtxMgr.ToolResultMaxLines = l.ToolResultMaxLines
-		l.CtxMgr.ToolResultMaxBytes = l.ToolResultMaxBytes
-		l.CtxMgr.PruneProtectTokens = l.PruneProtectTokens
-		l.CtxMgr.PruneMinReclaim = l.PruneMinReclaim
-		l.CtxMgr.PruneMinTurns = l.PruneMinTurns
-		l.CtxMgr.Pruner = l.Pruner
 		l.CtxMgr.PreviousSummary = l.PreviousSummary
 		l.CtxMgr.LastPromptTokens = l.LastPromptTokens
 		l.CtxMgr.LastCachedPromptTokens = l.LastCachedPromptTokens
@@ -803,13 +761,13 @@ func (l *Loop) applyDefaults() {
 		l.CtxMgr.IneffectiveCompactions = l.ineffectiveCompactions
 		l.CtxMgr.CompactProvider = l.CompactProvider
 		l.CtxMgr.CompactModel = l.CompactModel
-		l.CtxMgr.DB = l.DB
 		l.CtxMgr.SessionID = l.SessionID
 		l.CtxMgr.OtelEnabled = l.OtelEnabled
 	}
+	if l.CtxMgr.ReasoningProtectTurns <= 0 {
+		l.CtxMgr.ReasoningProtectTurns = 2
+	}
 	l.CtxMgr.EnsurePruner()
-	l.Pruner = l.CtxMgr.Pruner
-	l.ensurePruner()
 	if l.compactionBudgetMultiplier <= 0 {
 		l.compactionBudgetMultiplier = 1.0
 	}
@@ -831,9 +789,6 @@ func (l *Loop) applyDefaults() {
 	if l.LoopDetectWindow <= 0 {
 		l.LoopDetectWindow = 10
 	}
-	if l.ReasoningProtectTurns <= 0 {
-		l.ReasoningProtectTurns = 2
-	}
 	if l.MaxToolConcurrency > 0 && l.toolConcurrency == nil {
 		l.toolConcurrency = pipeline.NewToolConcurrencyMiddleware(l.MaxToolConcurrency)
 	}
@@ -841,11 +796,10 @@ func (l *Loop) applyDefaults() {
 		l.subAgentSem = make(chan struct{}, l.MaxSubAgentConcurrency)
 	}
 	if l.Hooks == nil {
-		l.Hooks = NewHookEmitter(l.HookDir, l.SessionID)
+		l.Hooks = NewHookEmitter("", l.SessionID)
 	}
 	if l.Persister == nil {
-		l.Persister = NewSessionPersister(l.DB, l.WriteDebouncer, l.SessionID)
-		l.Persister.SetMsgIdx(l.MsgIdx)
+		l.Persister = NewSessionPersister(nil, nil, l.SessionID)
 	}
 	if l.LLM == nil {
 		if l.View != nil {

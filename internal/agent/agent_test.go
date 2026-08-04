@@ -1018,7 +1018,7 @@ func strPtr(s string) *string { return &s }
 // --- Test: Session persistence ---
 
 func TestLoop_persistMessageNilDB(t *testing.T) {
-	loop := &Loop{DB: nil, SessionID: "test"}
+	loop := &Loop{SessionID: "test"}
 	loop.persistMessage(types.Message{Role: "user", Content: "hello"})
 	// Should not panic
 }
@@ -1035,7 +1035,7 @@ func TestLoop_persistMessageToDB(t *testing.T) {
 		ID: "sess-1", StartedAt: time.Now().Unix(), CWD: "/tmp", Model: "test",
 	})
 
-	loop := &Loop{DB: db, SessionID: "sess-1"}
+	loop := &Loop{SessionID: "sess-1", Persister: NewSessionPersister(db, nil, "sess-1")}
 	loop.persistMessage(types.Message{Role: "system", Content: "you are a bot"})
 	loop.persistMessage(types.Message{Role: "user", Content: "hello"})
 
@@ -1072,7 +1072,7 @@ func TestLoop_persistMessageWithToolCall(t *testing.T) {
 		ID: "sess-1", StartedAt: time.Now().Unix(), CWD: "/tmp", Model: "test",
 	})
 
-	loop := &Loop{DB: db, SessionID: "sess-1"}
+	loop := &Loop{SessionID: "sess-1", Persister: NewSessionPersister(db, nil, "sess-1")}
 	assistantMsg := types.Message{
 		Role: "assistant",
 		ToolCalls: []types.ToolCall{{
@@ -1150,7 +1150,7 @@ func TestLoop_sessionPersistenceAcrossRunCalls(t *testing.T) {
 		Registry:      reg,
 		SystemPrompt:  "You are a test bot.",
 		SessionID:     sessionID,
-		DB:            db,
+		Persister:     NewSessionPersister(db, nil, sessionID),
 		MaxIterations: 5,
 	}
 
@@ -1225,7 +1225,7 @@ func TestLoop_sessionPersistenceWithToolCalls(t *testing.T) {
 		Registry:      reg,
 		SystemPrompt:  "You are a test bot.",
 		SessionID:     sessionID,
-		DB:            db,
+		Persister:     NewSessionPersister(db, nil, sessionID),
 		MaxIterations: 5,
 	}
 
@@ -1296,7 +1296,7 @@ func TestLoop_sessionPersistenceMultipleTurns(t *testing.T) {
 		Registry:      reg,
 		SystemPrompt:  "You are a test bot.",
 		SessionID:     sessionID,
-		DB:            db,
+		Persister:     NewSessionPersister(db, nil, sessionID),
 		MaxIterations: 5,
 	}
 
@@ -1338,13 +1338,9 @@ func TestLoop_sessionPersistenceMultipleTurns(t *testing.T) {
 }
 
 func TestLoop_persistMessageNoDB(t *testing.T) {
-	loop := &Loop{DB: nil, SessionID: "test"}
-	loop.MsgIdx = 5
+	loop := &Loop{SessionID: "test"}
 	loop.persistMessage(types.Message{Role: "user", Content: "hello"})
-	// Should be a no-op, not increment MsgIdx
-	if loop.MsgIdx != 5 {
-		t.Errorf("MsgIdx should not change when DB is nil, got %d", loop.MsgIdx)
-	}
+	// Should not panic with nil Persister
 }
 
 func TestLoop_persistMessageEmptyContent(t *testing.T) {
@@ -1359,7 +1355,7 @@ func TestLoop_persistMessageEmptyContent(t *testing.T) {
 		ID: "sess-1", StartedAt: time.Now().Unix(), CWD: "/tmp", Model: "test",
 	})
 
-	loop := &Loop{DB: db, SessionID: "sess-1"}
+	loop := &Loop{SessionID: "sess-1", Persister: NewSessionPersister(db, nil, "sess-1")}
 	assistantMsg := types.Message{
 		Role:    "assistant",
 		Content: "",

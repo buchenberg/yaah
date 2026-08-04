@@ -81,6 +81,11 @@ func (p *SessionPersister) Flush() {
 	}
 }
 
+// DB returns the underlying database, or nil if persistence is disabled.
+func (p *SessionPersister) DB() *memory.DB {
+	return p.db
+}
+
 // MsgIdx returns the next message index for DB inserts.
 func (p *SessionPersister) MsgIdx() int {
 	return p.msgIdx

@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -352,8 +353,8 @@ func (l *Loop) applyCompactedSummary(summary string, sysMsg types.Message, oldMs
 	l.Messages = newMsgs
 	l.LastPromptTokens = l.EstimatedTokens()
 	l.resetPruner()
-	if l.Pruner != nil {
-		l.Pruner.Mark(l.Messages, "post_compaction")
+	if l.CtxMgr.Pruner != nil {
+		l.CtxMgr.Pruner.Mark(l.Messages, "post_compaction")
 	}
 
 	afterEstimate := l.EstimatedTokens()
@@ -367,6 +368,15 @@ func (l *Loop) applyCompactedSummary(summary string, sysMsg types.Message, oldMs
 		l.trackCompactionSavings(savings)
 	}
 	l.lastCompactionTokens = afterEstimate
+}
+
+// persisterDB returns the underlying database from the Persister, or nil
+// when persistence is disabled or the Persister hasn't been created yet.
+func (l *Loop) persisterDB() *memory.DB {
+	if l.Persister == nil {
+		return nil
+	}
+	return l.Persister.DB()
 }
 
 const adaptiveSavingsWindow = 5
@@ -477,6 +487,9 @@ func formatToolStub(m types.Message) string {
 // LastPromptTokens so heavily-cached conversations don't over-trigger
 // compaction (cached tokens are effectively free at the provider).
 func (l *Loop) compactContext(ctx context.Context, threshold float64) {
+	if l.CtxMgr == nil {
+		l.CtxMgr = &ContextManager{}
+	}
 	// Self-reset: two successive low-savings compactions latch the guard off
 	// (ineffectiveCompactions >= 2). That verdict is only valid for the context
 	// size at the time of the last attempt. If the context has since grown by
@@ -486,8 +499,8 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	if l.ineffectiveCompactions >= 2 && l.lastCompactionTokens > 0 {
 		if est := l.EstimatedTokens(); est >= l.lastCompactionTokens*3/2 {
 			l.ineffectiveCompactions = 0
-			if l.SessionID != "" && l.DB != nil {
-				l.DB.SetCompactionCooldown(l.SessionID, 0, 0)
+			if db := l.persisterDB(); l.SessionID != "" && db != nil {
+				db.SetCompactionCooldown(l.SessionID, 0, 0)
 			}
 		}
 	}
@@ -496,8 +509,8 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 		return
 	}
 
-	if l.SessionID != "" && l.DB != nil {
-		cooldown, ineffective, err := l.DB.GetCompactionCooldown(l.SessionID)
+	if db := l.persisterDB(); l.SessionID != "" && db != nil {
+		cooldown, ineffective, err := db.GetCompactionCooldown(l.SessionID)
 		if err == nil && cooldown > 0 && time.Now().Unix() < cooldown {
 			return
 		}
@@ -603,8 +616,8 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	// in every request for all assistant messages that have it. If compaction
 	// removes a reasoning-carrying message, the next request gets a 400:
 	// "The reasoning_content in the thinking mode must be passed back to the API."
-	if l.ReasoningProtectTurns > 0 {
-		split.keepStart = ProtectReasoningTurns(l.Messages, split.keepStart, l.ReasoningProtectTurns)
+	if l.CtxMgr.ReasoningProtectTurns > 0 {
+		split.keepStart = ProtectReasoningTurns(l.Messages, split.keepStart, l.CtxMgr.ReasoningProtectTurns)
 		keepMsgs = l.Messages[split.keepStart:]
 		oldMsgs = l.Messages[1:split.keepStart]
 	}
@@ -695,13 +708,13 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 		})
 	}
 
-	if l.SessionID != "" && l.DB != nil {
+	if db := l.persisterDB(); l.SessionID != "" && db != nil {
 		cooldown := int64(0)
 		if l.ineffectiveCompactions >= 2 {
 			cooldown = time.Now().Unix() + 600
 		}
-		l.DB.SetCompactionCooldown(l.SessionID, cooldown, l.ineffectiveCompactions)
-		l.DB.UpdateSessionSummary(l.SessionID, summary)
+		db.SetCompactionCooldown(l.SessionID, cooldown, l.ineffectiveCompactions)
+		db.UpdateSessionSummary(l.SessionID, summary)
 	}
 }
 
@@ -734,8 +747,8 @@ func (l *Loop) trimContext() {
 	}
 
 	keepStart := len(l.Messages) - len(rest)
-	if l.ReasoningProtectTurns > 0 {
-		keepStart = ProtectReasoningTurns(l.Messages, keepStart, l.ReasoningProtectTurns)
+	if l.CtxMgr.ReasoningProtectTurns > 0 {
+		keepStart = ProtectReasoningTurns(l.Messages, keepStart, l.CtxMgr.ReasoningProtectTurns)
 	}
 
 	newMsgs := make([]types.Message, 0, len(l.Messages)-keepStart+1)
@@ -743,7 +756,7 @@ func (l *Loop) trimContext() {
 	newMsgs = append(newMsgs, l.Messages[keepStart:]...)
 	l.Messages = newMsgs
 	l.resetPruner()
-	if l.Pruner != nil {
-		l.Pruner.Mark(l.Messages, "post_trim")
+	if l.CtxMgr.Pruner != nil {
+		l.CtxMgr.Pruner.Mark(l.Messages, "post_trim")
 	}
 }

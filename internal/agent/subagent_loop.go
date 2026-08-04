@@ -61,15 +61,10 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 		MaxToolConcurrency: cfg.MaxToolConcurrency,
 		JSONMode:           cfg.JSONMode,
 
-		ToolResultMaxLines: cfg.ToolResultMaxLines,
-		ToolResultMaxBytes: cfg.ToolResultMaxBytes,
-		PruneProtectTokens: cfg.PruneProtectTokens,
-		PruneMinReclaim:    cfg.PruneMinReclaim,
-		PruneMinTurns:      cfg.PruneMinTurns,
-		PermissionRules:    cfg.PermissionRules,
-		ContextWindow:      cfg.ContextWindow,
-		OtelEnabled:        cfg.OtelEnabled,
-		OtelVerbose:        cfg.OtelVerbose,
+		PermissionRules: cfg.PermissionRules,
+		ContextWindow:   cfg.ContextWindow,
+		OtelEnabled:     cfg.OtelEnabled,
+		OtelVerbose:     cfg.OtelVerbose,
 
 		ApprovalMode: "allow",
 		ToolsLevel:   FullTools,
@@ -80,10 +75,19 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 		PipelineDisabled: nil,
 	}
 
+	l.CtxMgr = NewContextManager(provider, model)
+	l.CtxMgr.ToolResultMaxLines = cfg.ToolResultMaxLines
+	l.CtxMgr.ToolResultMaxBytes = cfg.ToolResultMaxBytes
+	l.CtxMgr.PruneProtectTokens = cfg.PruneProtectTokens
+	l.CtxMgr.PruneMinReclaim = cfg.PruneMinReclaim
+	l.CtxMgr.PruneMinTurns = cfg.PruneMinTurns
+	l.CtxMgr.ContextWindow = cfg.ContextWindow
+	l.CtxMgr.OtelEnabled = cfg.OtelEnabled
+	l.CtxMgr.EnsurePruner()
+
 	if l.MaxToolConcurrency > 0 {
 		l.toolConcurrency = pipeline.NewToolConcurrencyMiddleware(l.MaxToolConcurrency)
 	}
-	l.ensurePruner()
 
 	return l
 }

@@ -975,7 +975,8 @@ func assistantWithReasoning(content, reasoning string) types.Message {
 
 func TestPrepareRequestMessages_preservesReasoning(t *testing.T) {
 	loop := &Loop{}
-	loop.ensurePruner()
+	loop.CtxMgr = &ContextManager{}
+	loop.CtxMgr.EnsurePruner()
 
 	msgs := []types.Message{
 		types.SystemMsg("sys"),
@@ -1012,7 +1013,8 @@ func TestPrepareRequestMessages_preservesReasoning(t *testing.T) {
 
 func TestPrepareRequestMessages_doesNotMutateInput(t *testing.T) {
 	loop := &Loop{}
-	loop.ensurePruner()
+	loop.CtxMgr = &ContextManager{}
+	loop.CtxMgr.EnsurePruner()
 
 	msgs := []types.Message{
 		types.SystemMsg("sys"),
@@ -1029,7 +1031,8 @@ func TestPrepareRequestMessages_doesNotMutateInput(t *testing.T) {
 
 func TestPrepareRequestMessages_toolLinkageUntouched(t *testing.T) {
 	loop := &Loop{}
-	loop.ensurePruner()
+	loop.CtxMgr = &ContextManager{}
+	loop.CtxMgr.EnsurePruner()
 
 	msgs := []types.Message{
 		types.SystemMsg("sys"),

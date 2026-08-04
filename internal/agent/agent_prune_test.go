@@ -28,11 +28,13 @@ func prunableLoop(t *testing.T, fp *fakeProvider) *Loop {
 		Registry:      reg,
 		SystemPrompt:  "test",
 		MaxIterations: 10,
-		Pruner: pipeline.NewPruner(pipeline.PruneConfig{
-			ProtectTokens: 1000,
-			MinReclaim:    10,
-			MinTurns:      1,
-		}),
+		CtxMgr: &ContextManager{
+			Pruner: pipeline.NewPruner(pipeline.PruneConfig{
+				ProtectTokens: 1000,
+				MinReclaim:    10,
+				MinTurns:      1,
+			}),
+		},
 	}
 }
 
@@ -197,7 +199,9 @@ func TestLoop_Pruner_ResetOnCompaction(t *testing.T) {
 		SystemPrompt:  "test",
 		Model:         "test",
 		ContextWindow: 500, // small → compaction fires readily
-		Pruner:        pipeline.NewPruner(pipeline.PruneConfig{ProtectTokens: 1, MinReclaim: 1, MinTurns: 1}),
+		CtxMgr: &ContextManager{
+			Pruner: pipeline.NewPruner(pipeline.PruneConfig{ProtectTokens: 1, MinReclaim: 1, MinTurns: 1}),
+		},
 	}
 
 	// Pre-mark an ID so we can observe the reset.
@@ -207,8 +211,8 @@ func TestLoop_Pruner_ResetOnCompaction(t *testing.T) {
 		types.ToolResultMsg("old_call", "read", strings.Repeat("x", 100000)),
 		types.UserMsg("end"),
 	}
-	loop.Pruner.Mark(markMsgs, "setup")
-	if !loop.Pruner.IsPruned("old_call") {
+	loop.CtxMgr.Pruner.Mark(markMsgs, "setup")
+	if !loop.CtxMgr.Pruner.IsPruned("old_call") {
 		t.Fatalf("precondition: old_call should be marked before compaction")
 	}
 
@@ -220,7 +224,7 @@ func TestLoop_Pruner_ResetOnCompaction(t *testing.T) {
 
 	loop.compactContext(context.Background(), 0.5)
 
-	if loop.Pruner.IsPruned("old_call") {
+	if loop.CtxMgr.Pruner.IsPruned("old_call") {
 		t.Errorf("Pruner should be reset after compaction rebuilt messages")
 	}
 }
@@ -258,7 +262,7 @@ func TestLoop_Pruner_DisabledViaPipeline(t *testing.T) {
 	}
 
 	// With soft_prune disabled, the Pruner set must be empty.
-	if s := loop.Pruner.Stats(); s.TotalMarked != 0 {
+	if s := loop.CtxMgr.Pruner.Stats(); s.TotalMarked != 0 {
 		t.Errorf("disabled soft_prune should leave the pruned set empty, got TotalMarked=%d", s.TotalMarked)
 	}
 	// And every tool result in the final request must be the full content.
