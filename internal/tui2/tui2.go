@@ -45,6 +45,7 @@ type TUI2 struct {
 	Messages *tview.TextView
 	Input    *tview.TextArea
 	InfoPane *tview.TextView // right-side info panel
+	TodoPane *tview.TextView // right-side todo list
 
 	// Footer
 	StatusBar *tview.TextView
@@ -200,6 +201,7 @@ func (t *TUI2) buildUI() {
 			t.App.SetFocus(t.Input)
 		})
 	})
+	t.TodoPane = todo.Build(nil)
 
 	// --- Header: two-column grid (banner left | provider right) ---
 	// Size the header to exactly the banner height — no minimum floor.
@@ -222,15 +224,20 @@ func (t *TUI2) buildUI() {
 	// Provider info: cols 1-2, all rows (MCP moved to InfoPane)
 	t.Header.AddItem(t.ProviderInfo, 0, 1, headerRows, 2, 0, 0, false)
 
-	// --- Body: horizontal split — messages (3/4) | infopane (1/4) ---
+	// --- Body: horizontal split — messages (4/5) | infopane+todos (1/5) ---
 	messagesCol := tview.NewFlex().
 		SetDirection(tview.FlexRow).
 		AddItem(t.Messages, 0, 1, false)
 
+	rightPane := tview.NewFlex().
+		SetDirection(tview.FlexRow)
+	rightPane.AddItem(t.InfoPane, 0, 3, false)
+	rightPane.AddItem(t.TodoPane, 0, 1, false)
+
 	body := tview.NewFlex().
 		SetDirection(tview.FlexColumn).
 		AddItem(messagesCol, 0, 4, true). // ~80% width
-		AddItem(t.InfoPane, 0, 1, false)  // ~20% width
+		AddItem(rightPane, 0, 1, false)   // ~20% width
 
 	// --- Overall layout: header / infobar / body / input / footer ---
 	t.Root = tview.NewFlex().
@@ -528,9 +535,9 @@ func (t *TUI2) HandleCommand(cmd command.Cmd, arg string) {
 	}
 }
 
-// UpdateTodos updates the TODO list in the infopane.
+// UpdateTodos updates the TODO list in the right panel.
 func (t *TUI2) UpdateTodos(items []itodo.Item) {
-	t.InfoPane.SetText(todo.FormatList(items))
+	t.TodoPane.SetText(todo.FormatList(items))
 }
 
 // UpdateInfopane sets a specific infopane tab content.
