@@ -7,6 +7,8 @@
 **Lines of Code:** ~44,562 (Go)  
 **Version Reviewed:** v0.45.2 (commit 4ee7511)  
 
+> **Update 2026-08-03:** P0 items #1–2, P1 items #4 and #6 have been implemented on branch `refactor/complete-ctxmgr-migration`. P1 item #5 was already implemented. See the [Prioritized Action Items](#-prioritized-action-items) table for per-item status.
+
 ---
 
 ## 📚 Table of Contents
@@ -94,11 +96,14 @@ type Middleware interface {
 
 #### ❌ Violations & Code Smells
 
-**1. The `Loop` God Struct (agent.go:74-391)**
+**1. The `Loop` God Struct (agent.go:74-391) — ✅ Resolved (852a227)**
 
-- **50+ fields** spanning configuration, state, persistence, observability, middleware, compaction, fallback, usage tracking
-- **Multiple reasons to change**: Adding a feature often requires touching Loop
-- **Deprecated fields** still present: `DB`, `WriteDebouncer`, `MsgIdx`, `Pruner`, `ToolResultMaxLines`, `ToolResultMaxBytes`, `PruneProtectTokens`, `PruneMinReclaim`, `PruneMinTurns`, `ReasoningProtectTurns`, `HookDir`
+The `Loop` struct has been decomposed into:
+- `LoopConfig` (32 immutable config fields)
+- `LoopState` (14 mutable runtime fields)  
+- `Loop` (~28 dependency/internals)
+
+Original state:
 
 ```go
 // agent.go lines 74-391: This struct does TOO MUCH
@@ -584,19 +589,9 @@ type View interface {
 
 ### ⚠️ Issues & Anti-Patterns
 
-#### 1. Deprecated Code Not Removed (C-)
+#### 1. Deprecated Code Not Removed (C- → A)
 
-| Location | Deprecated Fields | Lines |
-|----------|------------------|-------|
-| agent.go | `DB`, `WriteDebouncer`, `MsgIdx` | 200-215 |
-| agent.go | `Pruner`, `ToolResultMaxLines`, `ToolResultMaxBytes` | 287-293 |
-| agent.go | `PruneProtectTokens`, `PruneMinReclaim`, `PruneMinTurns` | 295-299 |
-| agent.go | `ReasoningProtectTurns` | 301-304 |
-| agent.go | `HookDir` | 334-336 |
-
-**Impact:** Technical debt, confusion for contributors, larger binary.
-
-**Recommendation:** Run `grep -r "Deprecated:"` and schedule removal for v0.46.0 or v1.0.0.
+> ✅ **Resolved (e4fa6fd).** All 11 deprecated fields (`DB`, `WriteDebouncer`, `MsgIdx`, `Pruner`, `ToolResultMaxLines`, `ToolResultMaxBytes`, `PruneProtectTokens`, `PruneMinReclaim`, `PruneMinTurns`, `ReasoningProtectTurns`, `HookDir`) have been removed. Their functionality migrated to `SessionPersister` (`DB()`), `ContextManager` (prune/truncation/reasoning fields), and `HookEmitter`.
 
 #### 2. Magic Values (C)
 
@@ -1152,9 +1147,11 @@ internal/agent.Loop with:
 
 ### ⚠️ Weaknesses
 
-#### 1. The `Loop` God Struct (C-) — *Main Issue*
+#### 1. The `Loop` God Struct (C- → B+) — ✅ Resolved
 
-**~390 lines, ~50 fields, 20+ methods.**
+**~390 lines → decomposed into `LoopConfig` (32 fields), `LoopState` (14 fields), and `Loop` (~28 deps/internals).**
+
+Original symptoms:
 
 **SRP Violations:**
 - Configuration management
@@ -1538,33 +1535,33 @@ type ContextOverflowEvent struct {
 
 ### 🔴 P0: Critical (Blockers for maintainability)
 
-| # | Issue | File | Impact | Complexity | Risk | Benefit |
-|---|-------|------|--------|------------|------|---------|
-| 1 | Refactor `Loop` struct into composed types | agent.go | High | High | Medium | High |
-| 2 | Decompose `Run` method into smaller functions | agent.go | High | Medium | Low | High |
+| # | Issue | File | Impact | Complexity | Risk | Benefit | Status |
+|---|-------|------|--------|------------|------|---------|--------|
+| 1 | Refactor `Loop` struct into composed types | agent.go | High | High | Medium | High | ✅ Done (852a227) |
+| 2 | Decompose `Run` method into smaller functions | agent.go | High | Medium | Low | High | ✅ Done (37fff48) |
 
 ### 🟡 P1: High (Important improvements)
 
-| # | Issue | File | Impact | Complexity | Risk | Benefit |
-|---|-------|------|--------|------------|------|---------|
-| 3 | Extract compaction logic from Loop | agent.go | Medium | Medium | Low | Medium |
-| 4 | Clarify turn vs iteration semantics | agent.go | Medium | Low | Low | Medium |
-| 5 | Make middleware order configurable | agent.go, pipeline/ | Medium | Medium | Low | Medium |
-| 6 | Remove deprecated fields | agent.go | Medium | Low | Low | Low |
+| # | Issue | File | Impact | Complexity | Risk | Benefit | Status |
+|---|-------|------|--------|------------|------|---------|--------|
+| 3 | Extract compaction logic from Loop | agent.go | Medium | Medium | Low | Medium | ⏸️ Deferred — CtxMgr doesn't implement `pipeline.Compactor`; `compactContext` modifies too much Loop state |
+| 4 | Clarify turn vs iteration semantics | agent.go | Medium | Low | Low | Medium | ✅ Done (2341723) |
+| 5 | Make middleware order configurable | agent.go, pipeline/ | Medium | Medium | Low | Medium | ✅ Already existed — `PipelineNames` + `PipelineDisabled` respect any user order via `resolvedPipelineNames` |
+| 6 | Remove deprecated fields | agent.go | Medium | Low | Low | Low | ✅ Done (e4fa6fd) |
 
 ### 🟢 P2: Medium (Nice to have)
 
-| # | Issue | File | Impact | Complexity | Risk | Benefit |
-|---|-------|------|--------|------------|------|---------|
-| 7 | Add more event types (retry, fallback, overflow) | events.go | Low | Low | Low | Medium |
-| 8 | Inconsistent naming (camelCase vs PascalCase) | Various | Low | Low | Low | Low |
-| 9 | Magic values in defaults | agent.go, providers.go | Low | Low | Low | Low |
+| # | Issue | File | Impact | Complexity | Risk | Benefit | Status |
+|---|-------|------|--------|------------|------|---------|--------|
+| 7 | Add more event types (retry, fallback, overflow) | events.go | Low | Low | Low | Medium | — |
+| 8 | Inconsistent naming (camelCase vs PascalCase) | Various | Low | Low | Low | Low | — |
+| 9 | Magic values in defaults | agent.go, providers.go | Low | Low | Low | Low | — |
 
 ### 🔵 P3: Low (Future considerations)
 
-| # | Issue | File | Impact | Complexity | Risk | Benefit |
-|---|-------|------|--------|------------|------|---------|
-| 10 | Add streaming support to Tool interface | tools.go | Low | Medium | Low | Medium |
+| # | Issue | File | Impact | Complexity | Risk | Benefit | Status |
+|---|-------|------|--------|------------|------|---------|--------|
+| 10 | Add streaming support to Tool interface | tools.go | Low | Medium | Low | Medium | — |
 | 11 | Add progress reporting to Tool interface | tools.go | Low | Medium | Low | Medium |
 | 12 | Add rich metadata to Tool interface | tools.go | Low | Medium | Low | Medium |
 
@@ -1580,14 +1577,16 @@ type ContextOverflowEvent struct {
 4. **Dependency Injection** — Proper DIP throughout. No globals, explicit dependencies.
 5. **Context Management** — Good extraction of compaction logic.
 
-### What Needs Work (C-/C)
+### What Needs Work (Mostly resolved)
 
-1. **`Loop` God Struct** — ~50 fields, ~334-line `Run` method. Violates SRP.
-2. **Loop as its own Compactor** — Couples compaction logic to loop.
-3. **Complex `Run` Method** — Too many responsibilities, hard to test.
-4. **Hardcoded Middleware Config** — Not flexible enough.
-5. **Confusing Terminology** — Turn vs iteration semantics unclear.
-6. **Deprecated Code** — Technical debt accumulating.
+| Issue | Status |
+|---|---|
+| `Loop` God Struct | ✅ Decomposed into `LoopConfig` + `LoopState` |
+| Loop as its own Compactor | ⏸️ Deferred (CtxMgr doesn't implement `pipeline.Compactor`) |
+| Complex `Run` Method | ✅ Decomposed into 7 helpers |
+| Confusing Terminology | ✅ Renamed: `MaxLoopCycles`, `MaxToolTurns`, `WrapUpThreshold` |
+| Deprecated Code | ✅ Removed; migrated to Persister/CtxMgr/Hooks |
+| Hardcoded Middleware Config | ✅ Already configurable via `PipelineNames` |
 
 ### Final Assessment
 
