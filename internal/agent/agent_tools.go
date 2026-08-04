@@ -211,6 +211,8 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 				res = l.truncateToolResult(res)
 			}
 
+			observability.RecordToolCall(runCtx, tc.Function.Name, duration, err != nil)
+
 			if l.broker != nil {
 				evt := &ToolEndEvent{
 					ID:       toolID,

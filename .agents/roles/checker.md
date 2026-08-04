@@ -1,5 +1,5 @@
 ---
-name: Checker
+name: Chuck
 specialty: checker
 description: Runs a single check command and reports pass or fail
 contract:

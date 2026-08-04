@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.opentelemetry.io/otel/trace"
 
@@ -79,6 +80,8 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 	pipe := l.buildPipeline()
 
 	for iter := 0; iter < l.Config.MaxLoopCycles; iter++ {
+		turnStart := time.Now()
+
 		select {
 		case <-ctx.Done():
 			l.State.Messages = messages
@@ -113,6 +116,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		}
 
 		tokensBeforeTurn := l.State.TotalTokens
+		llmStart := time.Now()
 
 		result, err := l.LLM.Call(turnCtx, req)
 		if err != nil {
@@ -134,6 +138,8 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		messages = append(messages, msg)
 		l.Persister.Persist(msg)
 
+		observability.RecordLLMCall(turnCtx, time.Since(llmStart), result.Usage.PromptTokens, result.Usage.CompletionTokens)
+
 		if turnSpan != nil {
 			l.recordTurnSpanAttrs(turnSpan, messages, msg, tokensBeforeTurn, iter, result.Streamed)
 		}
@@ -143,6 +149,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 				turnSpan.End()
 			}
 			l.State.Messages = messages
+			observability.RecordAgentTurn(turnCtx, time.Since(turnStart))
 			return msg.Content, nil
 		}
 
@@ -164,6 +171,8 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		if turnSpan != nil {
 			turnSpan.End()
 		}
+
+		observability.RecordAgentTurn(turnCtx, time.Since(turnStart))
 
 		messages = step.Messages
 		for i := l.Persister.MsgIdx(); i < len(messages); i++ {

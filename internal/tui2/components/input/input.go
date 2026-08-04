@@ -9,11 +9,10 @@ import (
 // Build creates the multi-line text input area.
 func Build() *tview.TextArea {
 	ta := tview.NewTextArea().
-		SetPlaceholder("Type your message... (Ctrl+S to send, Ctrl+D to quit)").
+		SetPlaceholder("Type your message... (Enter to send, Ctrl+P for commands, Ctrl+C to quit)").
 		SetMaxLength(10000)
 	ta.SetBorder(true).
-		SetBorderColor(tcell.ColorGray).
-		SetTitle(" Input ")
+		SetBorderColor(tcell.ColorGray)
 
 	ta.SetPlaceholderStyle(
 		tcell.StyleDefault.Foreground(tcell.ColorGray),

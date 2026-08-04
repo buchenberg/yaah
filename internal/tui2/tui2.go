@@ -2,8 +2,11 @@ package tui2
 
 import (
 	"strings"
+	"sync/atomic"
+	"time"
 
 	itodo "github.com/buchenberg/yaah/internal/todo"
+	"github.com/buchenberg/yaah/internal/tui2/colors"
 	"github.com/buchenberg/yaah/internal/tui2/components/approval"
 	"github.com/buchenberg/yaah/internal/tui2/components/banner"
 	"github.com/buchenberg/yaah/internal/tui2/components/command"
@@ -17,12 +20,12 @@ import (
 	"github.com/buchenberg/yaah/internal/tui2/components/provider"
 	"github.com/buchenberg/yaah/internal/tui2/components/question"
 	"github.com/buchenberg/yaah/internal/tui2/components/reasoning"
-	"github.com/buchenberg/yaah/internal/tui2/components/separator"
 	"github.com/buchenberg/yaah/internal/tui2/components/statusbar"
 	"github.com/buchenberg/yaah/internal/tui2/components/subagent"
 	"github.com/buchenberg/yaah/internal/tui2/components/thinking"
 	"github.com/buchenberg/yaah/internal/tui2/components/todo"
 	"github.com/buchenberg/yaah/internal/tui2/components/toolblock"
+	"github.com/buchenberg/yaah/internal/types"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -35,7 +38,6 @@ type TUI2 struct {
 
 	// Header sub-components
 	Banner       *tview.TextView
-	BannerSep    *tview.TextView // dim separator rule below the tagline
 	ProviderInfo *tview.TextView
 
 	// Body components
@@ -53,10 +55,13 @@ type TUI2 struct {
 
 	// State
 	McpServers []mcpinfo.Server
-	PlanInfo   string
-	StatusInfo string
 
-	// Message blocks
+	// Conversation log — a single ordered list of renderable items so
+	// tool calls, sub-agent blocks, and text render chronologically
+	// (interleaved) instead of grouped by type.
+	conversationLog []convItem
+
+	// Message blocks (used for toggle/collapse operations)
 	reasoningBlocks []*reasoning.Block
 	toolBlocks      []*toolblock.Block
 	subagentBlocks  []*subagent.Block
@@ -64,6 +69,38 @@ type TUI2 struct {
 
 	// Plain text messages (non-block content)
 	plainMessages []string
+
+	// --- Agent callbacks (set by cmd/yaah before Run) ---
+	OnSubmit  func(prompt string)
+	OnAbort   func()
+	OnCompact func()
+	OnClear   func()
+
+	// --- Control channel (fed by agent frame) ---
+	ControlCh <-chan types.CtrlMsg
+
+	// --- Streaming / agent state ---
+	pendingTokens string
+	pendingThink  string
+	pendingTool   string
+	isStreaming   atomic.Bool
+	compacting    bool
+	contextTokens int
+	contextWindow int
+	lastProvider  string
+	lastModel     string
+	thinkingLabel string
+	todoItems     []itodo.Item
+
+	// Model picker state
+	availableModels []string
+	providerNames   map[string]string
+
+	// CmdPalette is the vim-style ":" command input.
+	CmdPalette *command.Palette
+
+	// OnModelSelect is called when a model is chosen from the picker.
+	OnModelSelect func(model string)
 }
 
 // New creates a new TUI2 application.
@@ -73,15 +110,15 @@ func New() *TUI2 {
 		thinkingInd: thinking.New("Reasoning..."),
 	}
 	t.buildUI()
-
-	// Populate sample data for visual testing
-	t.populateSampleData()
-
 	return t
 }
 
 // Run starts the tview event loop.
 func (t *TUI2) Run() error {
+	t.startControlLoop()
+	t.startSpinnerTicker()
+	t.App.SetFocus(t.Input)
+	t.renderInfoPane()
 	return t.App.Run()
 }
 
@@ -90,27 +127,87 @@ func (t *TUI2) Stop() {
 	t.App.Stop()
 }
 
+// SetProvider sets the provider display name.
+func (t *TUI2) SetProvider(name string) {
+	t.lastProvider = name
+	t.ProviderInfo.SetText(colors.Tag(colors.Accent, "Provider: ") + colors.Tag(colors.Dim, name))
+}
+
+// SetModel sets the model display name.
+func (t *TUI2) SetModel(name string) {
+	t.lastModel = name
+	current := t.ProviderInfo.GetText(true)
+	t.ProviderInfo.SetText(current + "\n" + colors.Tag(colors.Accent, "Model: ") + colors.Tag(colors.Dim, name))
+}
+
+func (t *TUI2) startControlLoop() {
+	go func() {
+		for msg := range t.ControlCh {
+			t.App.QueueUpdateDraw(func() {
+				t.handleControlMsg(msg)
+			})
+		}
+	}()
+}
+
+func (t *TUI2) startSpinnerTicker() {
+	go func() {
+		for range time.Tick(200 * time.Millisecond) {
+			// Run the ticker when the thinking spinner is visible OR any
+			// sub-agent block is active.
+			anyActive := t.thinkingInd.Visible()
+			if !anyActive {
+				for _, sb := range t.subagentBlocks {
+					if sb.S() == subagent.Active {
+						anyActive = true
+						break
+					}
+				}
+			}
+			if !anyActive {
+				continue
+			}
+			t.App.QueueUpdateDraw(func() {
+				if t.thinkingInd.Visible() {
+					t.thinkingInd.Advance()
+				}
+				for _, sb := range t.subagentBlocks {
+					sb.AdvanceSpinner()
+				}
+				t.refreshMessages()
+			})
+		}
+	}()
+}
+
 // buildUI wires the component tree and layout.
 func (t *TUI2) buildUI() {
 	// --- Leaf primitives (from sub-packages) ---
 	var bannerLines int
 	bannerLines, t.Banner = banner.Build()
 	t.ProviderInfo = provider.Build()
-	t.InfoBar, t.PlanInfo = infobar.Build()
+	t.InfoBar, _ = infobar.Build()
 	t.Messages = messages.Build()
 	t.Input = input.Build()
 	t.InfoPane = infopane.Build()
+	t.StatusBar, _ = statusbar.Build()
+
+	// Command palette (vim-style ":" input, shown as a Pages overlay).
+	cmdModalName := "cmdpalette_modal"
+	t.CmdPalette = command.Build(func(cmd command.Cmd, arg string) {
+		t.HandleCommand(cmd, arg)
+		t.App.QueueUpdateDraw(func() {
+			t.Pages.RemovePage(cmdModalName)
+			t.App.SetFocus(t.Input)
+		})
+	})
 	t.TodoPane = todo.Build(nil)
-	t.StatusBar, t.StatusInfo = statusbar.Build()
 
 	// --- Header: two-column grid (banner left | provider right) ---
+	// Size the header to exactly the banner height — no minimum floor.
 	headerRows := bannerLines
-	if headerRows < 10 {
-		headerRows = 10
-	}
 
-	// One extra row for the bottom separator
-	totalRows := headerRows + 1
+	totalRows := headerRows
 	rows := make([]int, totalRows)
 	for i := range rows {
 		rows[i] = 1
@@ -120,9 +217,6 @@ func (t *TUI2) buildUI() {
 		SetRows(rows...).
 		SetColumns(-2, -1, -1). // -X = proportional (2:1:1 → left 2/3, right 1/3)
 		SetBorders(false)
-	t.Header.SetBorder(true).
-		SetBorderColor(tcell.ColorGray).
-		SetTitle(" Header ")
 
 	// Banner spans all content rows in col 0 (left portion of width)
 	t.Header.AddItem(t.Banner, 0, 0, headerRows, 1, 0, 0, false)
@@ -130,43 +224,36 @@ func (t *TUI2) buildUI() {
 	// Provider info: cols 1-2, all rows (MCP moved to InfoPane)
 	t.Header.AddItem(t.ProviderInfo, 0, 1, headerRows, 2, 0, 0, false)
 
-	// Dim separator rule below the tagline (own grid row, no newlines)
-	t.BannerSep = separator.Build()
-	t.Header.AddItem(t.BannerSep, headerRows, 0, 1, 3, 0, 0, false)
-
-	// --- Body: horizontal split — messages+input (3/4) | infopane (1/4) ---
-	bodyLeft := tview.NewFlex().
-		SetDirection(tview.FlexRow)
-	bodyLeft.AddItem(t.Messages, 0, 1, false) // messages fills (no focus)
-	bodyLeft.AddItem(t.Input, 3, 0, true)     // input fixed 3 (focused)
-
-	body := tview.NewFlex().
-		SetDirection(tview.FlexColumn)
-	body.AddItem(bodyLeft, 0, 5, true) // ~85% width, focus → bodyLeft → Input
+	// --- Body: horizontal split — messages (4/5) | infopane+todos (1/5) ---
+	messagesCol := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(t.Messages, 0, 1, false)
 
 	rightPane := tview.NewFlex().
 		SetDirection(tview.FlexRow)
 	rightPane.AddItem(t.InfoPane, 0, 3, false)
 	rightPane.AddItem(t.TodoPane, 0, 1, false)
 
-	body.AddItem(rightPane, 0, 1, false) // ~15% width
+	body := tview.NewFlex().
+		SetDirection(tview.FlexColumn).
+		AddItem(messagesCol, 0, 4, true). // ~80% width
+		AddItem(rightPane, 0, 1, false)   // ~20% width
 
-	// --- Overall layout: header-sticky-top / body-fills / footer-sticky-bottom ---
+	// --- Overall layout: header / infobar / body / input / footer ---
 	t.Root = tview.NewFlex().
 		SetDirection(tview.FlexRow).
 		SetFullScreen(true)
 
 	t.Root.AddItem(t.Header, totalRows, 0, false) // header: dynamic, no grow
 	t.Root.AddItem(t.InfoBar, 1, 0, false)        // infobar: fixed 1
-	t.Root.AddItem(body, 0, 1, true)              // body: fills remaining, focus → Input
+	t.Root.AddItem(body, 0, 1, true)              // body: fills remaining
+	t.Root.AddItem(t.Input, 3, 0, false)          // input: full-width footer
 	t.Root.AddItem(t.StatusBar, 1, 0, false)      // footer: fixed 1
 
 	// --- Application setup ---
 	t.Pages = tview.NewPages()
 	t.Pages.AddPage("main", t.Root, true, true)
-	t.App.SetRoot(t.Pages, true).
-		EnableMouse(true).
-		EnablePaste(true)
+	t.App.SetRoot(t.Pages, true).EnableMouse(true)
 
 	// Global keybindings
 	t.App.SetInputCapture(t.globalInputCapture)
@@ -178,42 +265,54 @@ func (t *TUI2) buildUI() {
 	tview.Styles.TitleColor = tcell.ColorYellow
 }
 
+// convItem is a single entry in the chronological conversation log.
+// Only one of the fields is set.
+type convItem struct {
+	text           string           // plain text message
+	toolBlock      *toolblock.Block // tool call block
+	subBlock       *subagent.Block  // sub-agent block
+	reasoningBlock *reasoning.Block // reasoning block (persistent)
+}
+
 // refreshMessages rebuilds the messages TextView content from all
-// blocks and plain messages. Call after any state change.
+// conversation items in chronological order. Call after any state change.
 func (t *TUI2) refreshMessages() {
 	var b strings.Builder
 
-	// Plain messages first.
-	for _, m := range t.plainMessages {
-		b.WriteString(m)
+	for _, item := range t.conversationLog {
+		switch {
+		case item.text != "":
+			b.WriteString("\n")
+			b.WriteString(item.text)
+			b.WriteString("\n\n")
+		case item.toolBlock != nil:
+			b.WriteString(item.toolBlock.Render())
+			b.WriteString("\n")
+		case item.subBlock != nil:
+			b.WriteString(item.subBlock.Render())
+			b.WriteString("\n")
+		case item.reasoningBlock != nil:
+			b.WriteString("\n")
+			b.WriteString(item.reasoningBlock.Render())
+			b.WriteString("\n\n")
+		}
+	}
+
+	// Streaming text (accumulated tokens, not yet flushed).
+	if t.isStreaming.Load() && t.pendingTokens != "" {
+		b.WriteString(renderMarkdown(t.pendingTokens))
 		b.WriteString("\n")
 	}
 
-	// Thinking indicator.
+	// Spinner — inline at the bottom while thinking.
 	if t.thinkingInd.Visible() {
+		b.WriteString("\n")
 		b.WriteString(t.thinkingInd.Render())
 		b.WriteString("\n")
 	}
 
-	// Reasoning blocks.
-	for _, rb := range t.reasoningBlocks {
-		b.WriteString(rb.Render())
-		b.WriteString("\n")
-	}
-
-	// Tool blocks.
-	for _, tb := range t.toolBlocks {
-		b.WriteString(tb.Render())
-		b.WriteString("\n")
-	}
-
-	// Sub-agent blocks.
-	for _, sb := range t.subagentBlocks {
-		b.WriteString(sb.Render())
-		b.WriteString("\n")
-	}
-
 	t.Messages.SetText(b.String())
+	t.Messages.ScrollToEnd()
 }
 
 // AddReasoningBlock creates a reasoning block.
@@ -332,7 +431,15 @@ func (t *TUI2) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
 		help.Show(t.App, t.Pages, bindingsToHelpBindings(DefaultBindings()))
 		return nil
 	case ActionCommand:
-		// Show command palette component when wired.
+		const cmdModal = "cmdpalette_modal"
+		if t.Pages.HasPage(cmdModal) {
+			t.Pages.RemovePage(cmdModal)
+			t.App.SetFocus(t.Input)
+		} else {
+			t.CmdPalette.SetText("")
+			t.Pages.AddPage(cmdModal, t.CmdPalette, true, true)
+			t.App.SetFocus(t.CmdPalette)
+		}
 		return nil
 	case ActionClear:
 		t.plainMessages = nil
@@ -358,6 +465,28 @@ func (t *TUI2) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
 			sb.Toggle()
 		}
 		t.refreshMessages()
+		return nil
+	case ActionSend:
+		// Only treat Enter as submit when the input box is focused, so Enter
+		// still confirms modal dialogs (question/approval/model pickers).
+		if t.App.GetFocus() != t.Input {
+			return ev
+		}
+		if t.OnSubmit != nil {
+			text := t.Input.GetText()
+			if strings.TrimSpace(text) != "" {
+				t.Input.SetText("", false)
+				t.OnSubmit(text)
+			}
+		}
+		return nil
+	case ActionCancel:
+		if t.App.GetFocus() != t.Input {
+			return ev
+		}
+		if t.OnAbort != nil {
+			t.OnAbort()
+		}
 		return nil
 	}
 	return ev
@@ -395,6 +524,12 @@ func (t *TUI2) HandleCommand(cmd command.Cmd, arg string) {
 		help.Show(t.App, t.Pages, bindingsToHelpBindings(DefaultBindings()))
 	case command.CmdCompact:
 		t.CollapseAll()
+	case command.CmdModel:
+		t.ShowModelPicker(t.availableModels, t.providerNames, func(model string) {
+			if t.OnModelSelect != nil {
+				t.OnModelSelect(model)
+			}
+		})
 	default:
 		// Other commands handled by the agent frame.
 	}

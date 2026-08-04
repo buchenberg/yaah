@@ -1,15 +1,14 @@
-// Package statusbar builds the bottom status bar.
 package statusbar
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/buchenberg/yaah/internal/tui2/colors"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
-// Build creates the status bar and returns a format string for later updates.
 func Build() (*tview.TextView, string) {
 	tv := tview.NewTextView().
 		SetTextAlign(tview.AlignRight).
@@ -19,11 +18,21 @@ func Build() (*tview.TextView, string) {
 		SetBorderColor(tcell.ColorGray).
 		SetTitle(" Status ")
 
-	statusInfo := fmt.Sprintf("%s  %s  %s\n",
-		colors.Tag(colors.Dim, "Context: 12.4K/128K"),
-		colors.Tag(colors.Dim, "Model: gpt-4o"),
-		colors.Tag(colors.Dim, "$0.042"),
-	)
-	tv.SetText(statusInfo)
-	return tv, statusInfo
+	return tv, ""
+}
+
+func Update(tv *tview.TextView, provider, model string, contextTokens, contextWindow int) {
+	var b strings.Builder
+	if provider != "" {
+		b.WriteString(fmt.Sprintf("%s  ", colors.Tag(colors.Dim, provider)))
+	}
+	if model != "" {
+		b.WriteString(fmt.Sprintf("%s  ", colors.Tag(colors.Dim, model)))
+	}
+	if contextWindow > 0 {
+		b.WriteString(fmt.Sprintf("Context: %s  ",
+			colors.Tag(colors.Dim, fmt.Sprintf("%d/%d", contextTokens, contextWindow)),
+		))
+	}
+	tv.SetText(b.String())
 }

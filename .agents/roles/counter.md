@@ -1,5 +1,5 @@
 ---
-name: Counter
+name: Steve
 specialty: counter
 description: Counts things and returns structured metrics
 contract:

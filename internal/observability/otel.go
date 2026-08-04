@@ -119,6 +119,7 @@ func Setup(ctx context.Context, cfg Config) (shutdown func(context.Context) erro
 			sdkmetric.WithResource(res),
 		)
 		otel.SetMeterProvider(mp)
+		initMetrics()
 		shutdowns = append(shutdowns, mp.Shutdown)
 	}
 

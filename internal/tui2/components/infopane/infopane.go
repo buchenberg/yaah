@@ -1,4 +1,3 @@
-// Package infopane builds the right-side information panel.
 package infopane
 
 import (
@@ -12,12 +11,15 @@ import (
 	"github.com/rivo/tview"
 )
 
-// Build creates the right-side info pane with session, context, tasks, and MCP.
+// Build creates an empty right-side info pane with a subtle dark
+// background. Its content is populated at runtime from live
+// control-channel data by TUI2.renderInfoPane.
 func Build() *tview.TextView {
 	tv := tview.NewTextView().
 		SetTextAlign(tview.AlignLeft).
 		SetDynamicColors(true).
 		SetWordWrap(true)
+	tv.SetBackgroundColor(tcell.Color236) // dark gray-blue (#303030)
 	tv.SetBorder(true).
 		SetBorderColor(tcell.ColorGray).
 		SetTitle(" Info ")

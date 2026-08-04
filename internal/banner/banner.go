@@ -47,25 +47,13 @@ var taglines = []string{
 
 var fonts = []string{
 	"standard",
-	"big",
 	"slant",
-	"shadow",
 	"small",
-	"banner3-D",
-	"block",
-	"colossal",
-	"doom",
-	"epic",
-	"larry3d",
-	"rounded",
-	"bubble",
+	"mini",
 	"lean",
 	"digital",
-	"avatar",
-	"isometric1",
-	"mini",
-	"starwars",
-	"cyberlarge",
+	"larry3d",
+	"rounded",
 }
 
 // lolcatRGB maps a character index to an RGB triple using the same

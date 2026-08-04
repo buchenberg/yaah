@@ -2,7 +2,6 @@
 package messages
 
 import (
-	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 
 	"github.com/buchenberg/yaah/internal/tui2/components/messages/assistant"
@@ -15,15 +14,11 @@ import (
 
 // Build creates the scrollable conversation view.
 func Build() *tview.TextView {
-	tv := tview.NewTextView().
+	return tview.NewTextView().
 		SetDynamicColors(true).
 		SetScrollable(true).
 		SetWrap(true).
 		SetWordWrap(true)
-	tv.SetBorder(true).
-		SetBorderColor(tcell.ColorGray).
-		SetTitle(" Conversation ")
-	return tv
 }
 
 // AppendUser appends a styled user message to the TextView and scrolls.

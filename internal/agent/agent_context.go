@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -674,6 +675,12 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 		if len(oldMsgs) > minChunkTokens {
 			if chunkSummary, chunkErr := l.chunkedCompact(ctx, oldMsgs, compactModel); chunkErr == nil && chunkSummary != "" {
 				l.applyCompactedSummary(chunkSummary, sysMsg, oldMsgs, keepMsgs)
+				afterEstimate := l.EstimatedTokens()
+				savingsPct := 0.0
+				if beforeEstimate > 0 {
+					savingsPct = float64(beforeEstimate-afterEstimate) / float64(beforeEstimate)
+				}
+				observability.RecordCompaction(ctx, compactReason, time.Since(startTime), beforeEstimate, afterEstimate, savingsPct)
 				return
 			}
 		}
@@ -707,6 +714,8 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 			Budget:          budget,
 		})
 	}
+
+	observability.RecordCompaction(ctx, compactReason, time.Since(startTime), beforeEstimate, afterEstimate, savingsPct)
 
 	if db := l.persisterDB(); l.Config.SessionID != "" && db != nil {
 		cooldown := int64(0)

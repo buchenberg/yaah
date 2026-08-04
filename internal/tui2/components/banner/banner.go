@@ -1,4 +1,3 @@
-// Package banner builds the figlet/lolcat title banner.
 package banner
 
 import (
@@ -9,7 +8,7 @@ import (
 	"github.com/rivo/tview"
 )
 
-// Build creates the figlet/lolcat title banner and returns the total number
+// Build creates the figlet title banner and returns the total number
 // of lines so the caller can size the header dynamically.
 func Build() (lines int, tv *tview.TextView) {
 	tv = tview.NewTextView().
@@ -19,6 +18,9 @@ func Build() (lines int, tv *tview.TextView) {
 
 	art, tagline, _ := banner.GeneratePlain()
 
+	// Lolcat rainbow on the figlet art — per-character colors via the
+	// shared banner.LolcatRGB function. This is the same lolcat effect
+	// used in the original bubbletea TUI.
 	var b strings.Builder
 	charIdx := 0
 	for _, line := range strings.Split(art, "\n") {
@@ -31,8 +33,8 @@ func Build() (lines int, tv *tview.TextView) {
 		lines++
 	}
 
-	// Dim tagline below the art (inline hex to avoid bracket nesting).
-	b.WriteString(fmt.Sprintf("[#00afff::d]%s[-]", tagline))
+	// Tagline in dim gray (not blue).
+	b.WriteString(fmt.Sprintf("[#5f5f5f::d]%s[-]", tagline))
 	lines++
 
 	tv.SetText(b.String())
