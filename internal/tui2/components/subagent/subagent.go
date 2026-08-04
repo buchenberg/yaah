@@ -30,7 +30,7 @@ type Block struct {
 	endTime      time.Time
 	err          string
 	blinkVisible bool // toggled by external timer for active blink
-	spinnerFrame int   // advances on each ticker tick while active
+	spinnerFrame int  // advances on each ticker tick while active
 }
 
 // State is the current state of a sub-agent block.
