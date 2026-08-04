@@ -12,8 +12,8 @@ import (
 // sub-agent spawning, quality gates, and hooks — they are ephemeral
 // workers with a fixed turn budget.
 type SubAgentConfig struct {
-	MaxIterations      int
-	MaxTurns           int
+	MaxLoopCycles      int
+	MaxToolTurns       int
 	MaxRetries         int
 	RetryBackoffSecs   int
 	MaxToolConcurrency int
@@ -34,11 +34,11 @@ type SubAgentConfig struct {
 // skip persistence, compaction, sub-agent spawning, quality gates,
 // approval dialogs, and hook emission.
 func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemPrompt string, cfg SubAgentConfig) *Loop {
-	if cfg.MaxIterations <= 0 {
-		cfg.MaxIterations = 50
+	if cfg.MaxLoopCycles <= 0 {
+		cfg.MaxLoopCycles = 50
 	}
-	if cfg.MaxTurns <= 0 {
-		cfg.MaxTurns = cfg.MaxIterations
+	if cfg.MaxToolTurns <= 0 {
+		cfg.MaxToolTurns = cfg.MaxLoopCycles
 	}
 	if cfg.RetryBackoffSecs <= 0 {
 		cfg.RetryBackoffSecs = 5
@@ -48,42 +48,45 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 	}
 
 	l := &Loop{
-		Provider:     provider,
-		Registry:     registry,
-		Model:        model,
-		SystemPrompt: systemPrompt,
-		View:         NoopView{},
-
-		MaxIterations:      cfg.MaxIterations,
-		MaxTurns:           cfg.MaxTurns,
-		MaxRetries:         cfg.MaxRetries,
-		RetryBackoff:       time.Duration(cfg.RetryBackoffSecs) * time.Second,
-		MaxToolConcurrency: cfg.MaxToolConcurrency,
-		JSONMode:           cfg.JSONMode,
-
-		ToolResultMaxLines: cfg.ToolResultMaxLines,
-		ToolResultMaxBytes: cfg.ToolResultMaxBytes,
-		PruneProtectTokens: cfg.PruneProtectTokens,
-		PruneMinReclaim:    cfg.PruneMinReclaim,
-		PruneMinTurns:      cfg.PruneMinTurns,
-		PermissionRules:    cfg.PermissionRules,
-		ContextWindow:      cfg.ContextWindow,
-		OtelEnabled:        cfg.OtelEnabled,
-		OtelVerbose:        cfg.OtelVerbose,
-
-		ApprovalMode: "allow",
-		ToolsLevel:   FullTools,
+		Provider: provider,
+		Registry: registry,
+		View:     NoopView{},
+		Config: LoopConfig{
+			Model:              model,
+			SystemPrompt:       systemPrompt,
+			MaxLoopCycles:      cfg.MaxLoopCycles,
+			MaxToolTurns:       cfg.MaxToolTurns,
+			MaxRetries:         cfg.MaxRetries,
+			RetryBackoff:       time.Duration(cfg.RetryBackoffSecs) * time.Second,
+			MaxToolConcurrency: cfg.MaxToolConcurrency,
+			JSONMode:           cfg.JSONMode,
+			PermissionRules:    cfg.PermissionRules,
+			ContextWindow:      cfg.ContextWindow,
+			OtelEnabled:        cfg.OtelEnabled,
+			OtelVerbose:        cfg.OtelVerbose,
+			ApprovalMode:       "allow",
+			ToolsLevel:         FullTools,
+			PipelineNames:      nil,
+			PipelineDisabled:   nil,
+		},
 
 		// Sub-agents use an in-memory pruner only — no compaction pipeline.
-		Middleware:       nil,
-		PipelineNames:    nil,
-		PipelineDisabled: nil,
+		Middleware: nil,
 	}
 
-	if l.MaxToolConcurrency > 0 {
-		l.toolConcurrency = pipeline.NewToolConcurrencyMiddleware(l.MaxToolConcurrency)
+	l.CtxMgr = NewContextManager(provider, model)
+	l.CtxMgr.ToolResultMaxLines = cfg.ToolResultMaxLines
+	l.CtxMgr.ToolResultMaxBytes = cfg.ToolResultMaxBytes
+	l.CtxMgr.PruneProtectTokens = cfg.PruneProtectTokens
+	l.CtxMgr.PruneMinReclaim = cfg.PruneMinReclaim
+	l.CtxMgr.PruneMinTurns = cfg.PruneMinTurns
+	l.CtxMgr.ContextWindow = cfg.ContextWindow
+	l.CtxMgr.OtelEnabled = cfg.OtelEnabled
+	l.CtxMgr.EnsurePruner()
+
+	if l.Config.MaxToolConcurrency > 0 {
+		l.toolConcurrency = pipeline.NewToolConcurrencyMiddleware(l.Config.MaxToolConcurrency)
 	}
-	l.ensurePruner()
 
 	return l
 }

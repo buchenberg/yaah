@@ -342,21 +342,22 @@ func (s *agentSession) runHeadless(ctx context.Context, prompt string) (string, 
 	}
 	fallbackProvider, fallbackModel, _ := resolveFallback(s.cfg)
 
+	var debouncer *memory.DebouncedWriter
+	if s.db != nil {
+		debouncer = memory.NewDebouncedWriter(s.db)
+	}
+	persister := agent.NewSessionPersister(s.db, debouncer, s.sessionID)
+	persister.SetMsgIdx(s.msgIdx)
+	hooks := agent.NewHookEmitter(s.cfg.Hooks.Dir, s.sessionID)
+
 	loop := agent.NewLoop(s.provider, s.toolReg,
 		agent.WithModel(s.modelName),
 		agent.WithSystemPrompt(s.mainPrompt),
 		agent.WithView(agent.NoopView{}),
 		agent.WithMessages(s.messages),
-		agent.WithDB(s.db),
-		agent.WithWriteDebouncer(func() *memory.DebouncedWriter {
-			if s.db != nil {
-				return memory.NewDebouncedWriter(s.db)
-			}
-			return nil
-		}()),
 		agent.WithSessionID(s.sessionID),
-		agent.WithMsgIdx(s.msgIdx),
-		agent.WithHookDir(s.cfg.Hooks.Dir),
+		agent.WithPersister(persister),
+		agent.WithHooks(hooks),
 		agent.WithFallback(fallbackProvider, fallbackModel),
 		agent.WithCompactProvider(compactProvider, compactModel),
 		agent.WithApprovalMode(resolveApproval(s.cfg)),
@@ -371,9 +372,9 @@ func (s *agentSession) runHeadless(ctx context.Context, prompt string) (string, 
 			time.Duration(s.cfg.Agent.SubAgent.StuckChildTimeout)*time.Second,
 			buildStuckChildTimeouts(s.cfg.Agent.SubAgent),
 		),
-		agent.WithLoopConfig(agent.LoopConfig{
-			MaxIterations:          s.cfg.Agent.Default.MaxIterations,
-			MaxTurns:               s.cfg.Agent.Default.MaxTurns,
+		agent.WithAgentConfig(agent.AgentConfig{
+			MaxLoopCycles:          s.cfg.Agent.Default.MaxLoopCycles,
+			MaxToolTurns:           s.cfg.Agent.Default.MaxToolTurns,
 			MaxRetries:             s.cfg.Agent.Default.MaxRetries,
 			RetryBackoffSecs:       s.cfg.Agent.Default.RetryBackoffSecs,
 			ContextWindow:          providers.ResolveWindow(s.modelName, s.cfg.Agent.Default.ContextWindow),
@@ -385,7 +386,7 @@ func (s *agentSession) runHeadless(ctx context.Context, prompt string) (string, 
 			LoopDetectCount:        s.cfg.Agent.Default.LoopDetectCount,
 			LoopDetectWindow:       s.cfg.Agent.Default.LoopDetectWindow,
 			MaxToolConcurrency:     s.cfg.Agent.Default.MaxToolConcurrency,
-			WrapUpAhead:            s.cfg.Agent.Default.WrapUpTurns,
+			WrapUpThreshold:        s.cfg.Agent.Default.WrapUpThreshold,
 			MaxInlineToolsPerTurn:  s.cfg.Agent.Default.MaxInlineToolsPerTurn,
 			PromptCaching:          s.cfg.Agent.Default.PromptCaching,
 			ReasoningProtectTurns:  s.cfg.Agent.Default.ReasoningProtect,
@@ -399,10 +400,10 @@ func (s *agentSession) runHeadless(ctx context.Context, prompt string) (string, 
 
 	response, err := loop.Run(ctx, prompt)
 
-	s.messages = loop.Messages
+	s.messages = loop.State.Messages
 	s.msgIdx = loop.Persister.MsgIdx()
 
-	return response, loop.TotalTokens, err
+	return response, loop.State.TotalTokens, err
 }
 
 // marshalJSON encodes v as indented JSON for tool result payloads.

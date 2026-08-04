@@ -13,7 +13,7 @@ import (
 const (
 	defaultCategoryStrikeCap = 3   // consecutive turns of same-tool dominance
 	defaultCategoryMinCalls  = 5   // a tool is "dominant" if called ≥ this many times
-	defaultSteerThreshold    = 0.8 // fraction of MaxTurns at which steering begins
+	defaultSteerThreshold    = 0.8 // fraction of MaxToolTurns at which steering begins
 )
 
 // LoopDetectionMiddleware detects when the agent is stuck in a loop and either
@@ -38,25 +38,25 @@ type LoopDetectionMiddleware struct {
 func (m *LoopDetectionMiddleware) Name() string { return "loop_detection" }
 
 // PrepareStep injects a convergence hint when the agent is approaching
-// MaxIterations (the hard loop exit), following the autoresearch pattern of
+// MaxLoopCycles (the hard loop exit), following the autoresearch pattern of
 // "keep going but converge with purpose."
 func (m *LoopDetectionMiddleware) PrepareStep(ctx context.Context, step *Step) (*Step, error) {
-	if step.MaxIterations <= 0 || step.Iteration <= 0 {
+	if step.MaxLoopCycles <= 0 || step.Iteration <= 0 {
 		return step, nil
 	}
 	threshold := m.steerThreshold
 	if threshold <= 0 {
 		threshold = defaultSteerThreshold
 	}
-	boundary := int(float64(step.MaxIterations) * threshold)
+	boundary := int(float64(step.MaxLoopCycles) * threshold)
 	if step.Iteration >= boundary && boundary > m.lastSteerBoundary {
 		m.lastSteerBoundary = boundary
-		remaining := step.MaxIterations - step.Iteration
+		remaining := step.MaxLoopCycles - step.Iteration
 		step.Messages = append(step.Messages, types.UserMsg(fmt.Sprintf(
 			"[STEER] You are at iteration %d of %d — %d remain before the run is forced to exit. "+
 				"Converge on your findings and produce a final answer within the remaining iterations. "+
 				"Do not start new investigations.",
-			step.Iteration, step.MaxIterations, remaining)))
+			step.Iteration, step.MaxLoopCycles, remaining)))
 	}
 	return step, nil
 }

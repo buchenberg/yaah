@@ -34,7 +34,7 @@ var configShowCmd = &cobra.Command{
 		cmd.Println("[default]")
 		cmd.Printf("  model:          %s\n", cfg.Agent.Default.Model)
 		cmd.Printf("  small_model:    %s\n", cfg.Agent.Default.SmallModel)
-		cmd.Printf("  max_iterations: %d\n", cfg.Agent.Default.MaxIterations)
+		cmd.Printf("  max_iterations: %d\n", cfg.Agent.Default.MaxLoopCycles)
 		cmd.Printf("  approval:       %s\n", cfg.Agent.Default.Approval)
 		cmd.Println()
 

@@ -22,8 +22,8 @@ type RoleProfile struct {
 	Description   string
 	Contract      ContractDef
 	Tools         []string
-	MaxIterations int
-	MaxTurns      int
+	MaxLoopCycles int
+	MaxToolTurns  int
 	JSONMode      bool
 	Timeout       time.Duration
 }

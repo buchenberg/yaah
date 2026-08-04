@@ -73,9 +73,9 @@ func (l *Loop) summarizeChunk(ctx context.Context, chunk []types.Message, chunkI
 	if provider == nil {
 		provider = l.Provider
 	}
-	model := l.CompactModel
+	model := l.Config.CompactModel
 	if model == "" {
-		model = l.Model
+		model = l.Config.Model
 	}
 
 	var sb strings.Builder
@@ -126,7 +126,7 @@ func (l *Loop) chunkedCompact(ctx context.Context, oldMsgs []types.Message, comp
 		return "", nil
 	}
 
-	chunkBudget := int(float64(l.ContextWindow) * chunkBudgetFraction)
+	chunkBudget := int(float64(l.Config.ContextWindow) * chunkBudgetFraction)
 	if chunkBudget < minChunkTokens {
 		chunkBudget = minChunkTokens
 	}
@@ -195,9 +195,9 @@ func (l *Loop) reducePartialSummaries(ctx context.Context, partials []string, de
 	if provider == nil {
 		provider = l.Provider
 	}
-	model := l.CompactModel
+	model := l.Config.CompactModel
 	if model == "" {
-		model = l.Model
+		model = l.Config.Model
 	}
 
 	var sb strings.Builder

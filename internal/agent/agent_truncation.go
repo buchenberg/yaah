@@ -16,11 +16,11 @@ const (
 )
 
 func (l *Loop) truncateToolResult(result string) string {
-	maxLines := l.ToolResultMaxLines
+	maxLines := l.ctxMgr().ToolResultMaxLines
 	if maxLines <= 0 {
 		maxLines = defaultTruncateMaxLines
 	}
-	maxBytes := l.ToolResultMaxBytes
+	maxBytes := l.ctxMgr().ToolResultMaxBytes
 	if maxBytes <= 0 {
 		maxBytes = defaultTruncateMaxBytes
 	}

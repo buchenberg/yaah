@@ -24,14 +24,14 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 	for i, tc := range calls {
 		i, tc := i, tc
 
-		if l.ApprovalMode == "deny" && l.classifyDanger(tc.Function.Name, tc.Function.Arguments) {
+		if l.Config.ApprovalMode == "deny" && l.classifyDanger(tc.Function.Name, tc.Function.Arguments) {
 			errMsg := fmt.Sprintf("error: tool %q requires approval but approval mode is 'deny'", tc.Function.Name)
 			l.Hooks.Emit(HookEvent{Event: ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
 			l.Hooks.Emit(HookEvent{Event: ToolEnd, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, ToolError: fmt.Sprintf("tool %q requires approval but approval mode is 'deny'", tc.Function.Name), ToolResult: errMsg})
 			execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: errMsg, err: fmt.Errorf("tool denied")}
 			continue
 		}
-		if l.ApprovalMode == "ask" && l.classifyDanger(tc.Function.Name, tc.Function.Arguments) {
+		if l.Config.ApprovalMode == "ask" && l.classifyDanger(tc.Function.Name, tc.Function.Arguments) {
 			if !l.approveTool(tc.Function.Name, tc.Function.Arguments) {
 				errMsg := fmt.Sprintf("error: tool %q was denied by user", tc.Function.Name)
 				l.Hooks.Emit(HookEvent{Event: ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
@@ -107,7 +107,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 
 			runCtx := ctx
 			var toolSpan trace.Span
-			if l.OtelEnabled {
+			if l.Config.OtelEnabled {
 				if isTask {
 					runCtx, toolSpan = observability.StartSubAgent(ctx, taskRole, taskPrompt)
 				} else {
@@ -130,9 +130,9 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 					}
 				}()
 
-				childTimeout := l.StuckChildTimeout
-				if l.StuckChildTimeouts != nil {
-					if t, ok := l.StuckChildTimeouts[taskRole]; ok && t > 0 {
+				childTimeout := l.Config.StuckChildTimeout
+				if l.Config.StuckChildTimeouts != nil {
+					if t, ok := l.Config.StuckChildTimeouts[taskRole]; ok && t > 0 {
 						childTimeout = t
 					}
 				}
@@ -173,7 +173,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 				startOnce.Do(func() {
 					model := subAgentModel
 					if model == "" {
-						model = l.Model
+						model = l.Config.Model
 					}
 					publishStart(model)
 				})
@@ -193,7 +193,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 				err = tools.ErrStuckChild
 				res = ""
 			}
-			if l.OtelEnabled && toolSpan != nil {
+			if l.Config.OtelEnabled && toolSpan != nil {
 				if isTask {
 					observability.FinishSubAgent(toolSpan, err)
 				} else {
@@ -228,7 +228,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			if isTask && l.broker != nil {
 				model := subAgentModel
 				if model == "" {
-					model = l.Model
+					model = l.Config.Model
 				}
 				l.broker.PublishMustDeliver(&SubAgentEndEvent{
 					Role:     taskRole,
@@ -247,8 +247,8 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 						Suggestion:     escalation.Suggestion,
 					})
 				}
-				if escalation == nil && len(l.QualityGates[taskRole]) > 0 {
-					for _, validatorRole := range l.QualityGates[taskRole] {
+				if escalation == nil && len(l.Config.QualityGates[taskRole]) > 0 {
+					for _, validatorRole := range l.Config.QualityGates[taskRole] {
 						gatePrompt := fmt.Sprintf(
 							"Validate the following sub-agent output. Run relevant tests, "+
 								"check for errors, and report PASS or FAIL with details.\n\n"+

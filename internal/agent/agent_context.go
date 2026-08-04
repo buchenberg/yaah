@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -46,7 +47,7 @@ var summaryTemplate = prompts.SummaryTemplate()
 // EstimatedTokens returns the estimated token count for all messages.
 func (l *Loop) EstimatedTokens() int {
 	total := 0
-	for _, m := range l.Messages {
+	for _, m := range l.State.Messages {
 		total += messageTokens(m)
 	}
 	return total
@@ -81,7 +82,7 @@ func messageTokens(m types.Message) int {
 
 // prepareRequestMessages builds the ephemeral message slice sent to the
 // provider for a single turn. It chains the request-time transformations that
-// must NOT mutate the stored conversation history (l.Messages):
+// must NOT mutate the stored conversation history (l.State.Messages):
 //
 //  1. repairOrphans — drop orphaned tool results, synthesize results for
 //     interrupted tool calls (allocates a fresh slice).
@@ -108,13 +109,13 @@ func (l *Loop) prepareRequestMessages(messages []types.Message) []types.Message 
 }
 
 // StripAllReasoning permanently removes ReasoningContent from every assistant
-// message in l.Messages. Called when a thinking-mode provider returns the
+// message in l.State.Messages. Called when a thinking-mode provider returns the
 // "reasoning_content must be passed back" 400 error — the session is no longer
 // in a valid thinking state and must continue without reasoning.
 func (l *Loop) StripAllReasoning() {
-	for i := range l.Messages {
-		if l.Messages[i].Role == "assistant" {
-			l.Messages[i].ReasoningContent = ""
+	for i := range l.State.Messages {
+		if l.State.Messages[i].Role == "assistant" {
+			l.State.Messages[i].ReasoningContent = ""
 		}
 	}
 }
@@ -322,10 +323,10 @@ func EarliestReasoningIndex(messages []types.Message) int {
 // plus kept messages. It is called by both the normal and chunked compaction
 // paths so they share the same post-compaction logic.
 func (l *Loop) applyCompactedSummary(summary string, sysMsg types.Message, oldMsgs, keepMsgs []types.Message) {
-	l.PreviousSummary = summary
+	l.State.PreviousSummary = summary
 
 	newMsgs := []types.Message{sysMsg}
-	if l.SystemPrompt == "" {
+	if l.Config.SystemPrompt == "" {
 		newMsgs[0] = types.SystemMsg(summary)
 	} else {
 		newMsgs = append(newMsgs, types.SystemMsg(
@@ -349,37 +350,46 @@ func (l *Loop) applyCompactedSummary(summary string, sysMsg types.Message, oldMs
 
 	newMsgs = append(newMsgs, keepMsgs...)
 	beforeEstimate := l.EstimatedTokens()
-	l.Messages = newMsgs
-	l.LastPromptTokens = l.EstimatedTokens()
+	l.State.Messages = newMsgs
+	l.State.LastPromptTokens = l.EstimatedTokens()
 	l.resetPruner()
-	if l.Pruner != nil {
-		l.Pruner.Mark(l.Messages, "post_compaction")
+	if l.CtxMgr.Pruner != nil {
+		l.CtxMgr.Pruner.Mark(l.State.Messages, "post_compaction")
 	}
 
 	afterEstimate := l.EstimatedTokens()
 	if beforeEstimate > 0 {
 		savings := float64(beforeEstimate-afterEstimate) / float64(beforeEstimate)
 		if savings < 0.10 {
-			l.ineffectiveCompactions++
+			l.State.IneffectiveCompactions++
 		} else {
-			l.ineffectiveCompactions = 0
+			l.State.IneffectiveCompactions = 0
 		}
 		l.trackCompactionSavings(savings)
 	}
-	l.lastCompactionTokens = afterEstimate
+	l.State.LastCompactionTokens = afterEstimate
+}
+
+// persisterDB returns the underlying database from the Persister, or nil
+// when persistence is disabled or the Persister hasn't been created yet.
+func (l *Loop) persisterDB() *memory.DB {
+	if l.Persister == nil {
+		return nil
+	}
+	return l.Persister.DB()
 }
 
 const adaptiveSavingsWindow = 5
 
 func (l *Loop) trackCompactionSavings(savings float64) {
-	l.compactionSavingsHistory = append(l.compactionSavingsHistory, savings)
-	if len(l.compactionSavingsHistory) > adaptiveSavingsWindow {
-		l.compactionSavingsHistory = l.compactionSavingsHistory[1:]
+	l.State.CompactionSavingsHistory = append(l.State.CompactionSavingsHistory, savings)
+	if len(l.State.CompactionSavingsHistory) > adaptiveSavingsWindow {
+		l.State.CompactionSavingsHistory = l.State.CompactionSavingsHistory[1:]
 	}
 
 	highCount := 0
 	lowCount := 0
-	for _, s := range l.compactionSavingsHistory {
+	for _, s := range l.State.CompactionSavingsHistory {
 		if s > 0.4 {
 			highCount++
 		}
@@ -389,18 +399,18 @@ func (l *Loop) trackCompactionSavings(savings float64) {
 	}
 
 	if highCount >= 3 {
-		l.compactionBudgetMultiplier *= 0.9
-		l.compactionSavingsHistory = nil
+		l.State.CompactionBudgetMultiplier *= 0.9
+		l.State.CompactionSavingsHistory = nil
 	}
 	if lowCount >= 2 {
-		l.compactionBudgetMultiplier *= 1.2
-		l.compactionSavingsHistory = nil
+		l.State.CompactionBudgetMultiplier *= 1.2
+		l.State.CompactionSavingsHistory = nil
 	}
-	if l.compactionBudgetMultiplier < 0.5 {
-		l.compactionBudgetMultiplier = 0.5
+	if l.State.CompactionBudgetMultiplier < 0.5 {
+		l.State.CompactionBudgetMultiplier = 0.5
 	}
-	if l.compactionBudgetMultiplier > 2.0 {
-		l.compactionBudgetMultiplier = 2.0
+	if l.State.CompactionBudgetMultiplier > 2.0 {
+		l.State.CompactionBudgetMultiplier = 2.0
 	}
 }
 
@@ -477,32 +487,35 @@ func formatToolStub(m types.Message) string {
 // LastPromptTokens so heavily-cached conversations don't over-trigger
 // compaction (cached tokens are effectively free at the provider).
 func (l *Loop) compactContext(ctx context.Context, threshold float64) {
+	if l.CtxMgr == nil {
+		l.CtxMgr = &ContextManager{}
+	}
 	// Self-reset: two successive low-savings compactions latch the guard off
 	// (ineffectiveCompactions >= 2). That verdict is only valid for the context
 	// size at the time of the last attempt. If the context has since grown by
 	// >= 50%, retry — otherwise compaction stays permanently disabled even as
 	// the conversation bloats (the catch-22 seen in long sessions where the
 	// pruner alone could not keep context bounded).
-	if l.ineffectiveCompactions >= 2 && l.lastCompactionTokens > 0 {
-		if est := l.EstimatedTokens(); est >= l.lastCompactionTokens*3/2 {
-			l.ineffectiveCompactions = 0
-			if l.SessionID != "" && l.DB != nil {
-				l.DB.SetCompactionCooldown(l.SessionID, 0, 0)
+	if l.State.IneffectiveCompactions >= 2 && l.State.LastCompactionTokens > 0 {
+		if est := l.EstimatedTokens(); est >= l.State.LastCompactionTokens*3/2 {
+			l.State.IneffectiveCompactions = 0
+			if db := l.persisterDB(); l.Config.SessionID != "" && db != nil {
+				db.SetCompactionCooldown(l.Config.SessionID, 0, 0)
 			}
 		}
 	}
 
-	if l.ineffectiveCompactions >= 2 {
+	if l.State.IneffectiveCompactions >= 2 {
 		return
 	}
 
-	if l.SessionID != "" && l.DB != nil {
-		cooldown, ineffective, err := l.DB.GetCompactionCooldown(l.SessionID)
+	if db := l.persisterDB(); l.Config.SessionID != "" && db != nil {
+		cooldown, ineffective, err := db.GetCompactionCooldown(l.Config.SessionID)
 		if err == nil && cooldown > 0 && time.Now().Unix() < cooldown {
 			return
 		}
-		if err == nil && ineffective != l.ineffectiveCompactions {
-			l.ineffectiveCompactions = ineffective
+		if err == nil && ineffective != l.State.IneffectiveCompactions {
+			l.State.IneffectiveCompactions = ineffective
 		}
 	}
 
@@ -510,29 +523,29 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 		threshold = 0.25
 	}
 
-	target := int(float64(l.ContextWindow) * threshold)
-	if target < minContextFloor && l.ContextWindow >= minContextFloor {
+	target := int(float64(l.Config.ContextWindow) * threshold)
+	if target < minContextFloor && l.Config.ContextWindow >= minContextFloor {
 		target = minContextFloor
 	}
 
 	// Raw prompt tokens from the most recent provider call — the total context
 	// size the provider actually processed, before any cache adjustment.
-	rawTokens := l.LastPromptTokens
+	rawTokens := l.State.LastPromptTokens
 
 	// Effective tokens: subtract cached prompt tokens. A heavily-cached
 	// conversation's effective (non-cached) token cost is lower than raw
 	// prompt_tokens suggests, so without subtraction the cost-based trigger
 	// would over-compact.
 	effectiveTokens := rawTokens
-	if effectiveTokens > 0 && l.LastCachedPromptTokens > 0 {
-		effectiveTokens -= l.LastCachedPromptTokens
+	if effectiveTokens > 0 && l.State.LastCachedPromptTokens > 0 {
+		effectiveTokens -= l.State.LastCachedPromptTokens
 	}
 	if effectiveTokens <= 0 {
-		factor := l.EstimateFactor
+		factor := l.Config.EstimateFactor
 		if factor <= 0 {
 			factor = defaultEstimateFactor
 		}
-		effectiveTokens = preflightTokens(l.Messages, nil, factor)
+		effectiveTokens = preflightTokens(l.State.Messages, nil, factor)
 		// No reliable raw count on the first call; use the estimate for the
 		// raw trigger too so the latency guard still functions.
 		rawTokens = effectiveTokens
@@ -543,27 +556,27 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	// RawCompactionThreshold target. The raw guard prevents unbounded context
 	// growth in heavily-cached conversations where the effective trigger never
 	// fires because cached tokens keep the effective count artificially low.
-	rawThreshold := l.RawCompactionThreshold
+	rawThreshold := l.Config.RawCompactionThreshold
 	if rawThreshold <= 0 {
 		rawThreshold = defaultRawCompactionThreshold
 	}
-	rawTarget := int(float64(l.ContextWindow) * rawThreshold)
+	rawTarget := int(float64(l.Config.ContextWindow) * rawThreshold)
 
 	if effectiveTokens < target && rawTokens < rawTarget {
-		if l.CompactMaxMessages <= 0 || len(l.Messages) <= l.CompactMaxMessages {
+		if l.Config.CompactMaxMessages <= 0 || len(l.State.Messages) <= l.Config.CompactMaxMessages {
 			return
 		}
 	}
 
-	if len(l.Messages) <= 4 {
+	if len(l.State.Messages) <= 4 {
 		return
 	}
 
 	// Determine compaction reason for event consumers.
 	compactReason := "threshold"
-	if l.compactionForcedByOverflow {
+	if l.State.CompactionForcedByOverflow {
 		compactReason = "overflow"
-		l.compactionForcedByOverflow = false
+		l.State.CompactionForcedByOverflow = false
 	} else if effectiveTokens < target && rawTokens < rawTarget {
 		compactReason = "message_count"
 	}
@@ -578,45 +591,45 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 
 	startTime := time.Now()
 
-	if l.OtelEnabled {
+	if l.Config.OtelEnabled {
 		_, span := otel.Tracer("yaah").Start(ctx, "compaction",
 			trace.WithAttributes(
 				attribute.Int("compaction.effective_tokens", effectiveTokens),
 				attribute.Int("compaction.raw_tokens", rawTokens),
-				attribute.Int("compaction.cached_tokens", l.LastCachedPromptTokens),
+				attribute.Int("compaction.cached_tokens", l.State.LastCachedPromptTokens),
 				attribute.Int("compaction.target", target),
 				attribute.Int("compaction.raw_target", rawTarget),
-				attribute.Int("compaction.messages", len(l.Messages)),
+				attribute.Int("compaction.messages", len(l.State.Messages)),
 			))
 		defer span.End()
 	}
 
-	sysMsg := l.Messages[0]
+	sysMsg := l.State.Messages[0]
 
-	budget := int(float64(preserveBudget(l.ContextWindow))*l.compactionBudgetMultiplier) / 4
-	split := splitTail(l.Messages, budget)
-	keepMsgs := l.Messages[split.keepStart:]
-	oldMsgs := l.Messages[1:split.keepStart]
+	budget := int(float64(preserveBudget(l.Config.ContextWindow))*l.State.CompactionBudgetMultiplier) / 4
+	split := splitTail(l.State.Messages, budget)
+	keepMsgs := l.State.Messages[split.keepStart:]
+	oldMsgs := l.State.Messages[1:split.keepStart]
 
 	// Protect assistant messages that carry reasoning_content: thinking-mode
 	// providers (e.g. DeepSeek) require reasoning_content to be passed back
 	// in every request for all assistant messages that have it. If compaction
 	// removes a reasoning-carrying message, the next request gets a 400:
 	// "The reasoning_content in the thinking mode must be passed back to the API."
-	if l.ReasoningProtectTurns > 0 {
-		split.keepStart = ProtectReasoningTurns(l.Messages, split.keepStart, l.ReasoningProtectTurns)
-		keepMsgs = l.Messages[split.keepStart:]
-		oldMsgs = l.Messages[1:split.keepStart]
+	if l.CtxMgr.ReasoningProtectTurns > 0 {
+		split.keepStart = ProtectReasoningTurns(l.State.Messages, split.keepStart, l.CtxMgr.ReasoningProtectTurns)
+		keepMsgs = l.State.Messages[split.keepStart:]
+		oldMsgs = l.State.Messages[1:split.keepStart]
 	}
 	oldMsgs = pruneMessages(oldMsgs, pruneMessageMaxLen)
 
 	// Structured summary prompt with anchored-update behavior on re-compaction.
 	var sb strings.Builder
-	if l.PreviousSummary != "" {
+	if l.State.PreviousSummary != "" {
 		sb.WriteString("Update the anchored summary below using the conversation history above.\n")
 		sb.WriteString("Preserve still-true details, remove stale details, and merge in the new facts.\n")
 		sb.WriteString("<previous-summary>\n")
-		sb.WriteString(l.PreviousSummary)
+		sb.WriteString(l.State.PreviousSummary)
 		sb.WriteString("\n</previous-summary>\n\n")
 	} else {
 		sb.WriteString("Create a new anchored summary from the conversation history below.\n\n")
@@ -641,9 +654,9 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	if compactProvider == nil {
 		compactProvider = l.Provider
 	}
-	compactModel := l.CompactModel
+	compactModel := l.Config.CompactModel
 	if compactModel == "" {
-		compactModel = l.Model
+		compactModel = l.Config.Model
 	}
 
 	req := types.ChatRequest{
@@ -677,8 +690,8 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 		savingsPct = float64(beforeEstimate-afterEstimate) / float64(beforeEstimate)
 	}
 
-	if l.ineffectiveCompactions >= 2 {
-		ineffectiveNote = fmt.Sprintf("compaction ineffective %d times; cooldown active", l.ineffectiveCompactions)
+	if l.State.IneffectiveCompactions >= 2 {
+		ineffectiveNote = fmt.Sprintf("compaction ineffective %d times; cooldown active", l.State.IneffectiveCompactions)
 	}
 
 	if l.broker != nil {
@@ -695,13 +708,13 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 		})
 	}
 
-	if l.SessionID != "" && l.DB != nil {
+	if db := l.persisterDB(); l.Config.SessionID != "" && db != nil {
 		cooldown := int64(0)
-		if l.ineffectiveCompactions >= 2 {
+		if l.State.IneffectiveCompactions >= 2 {
 			cooldown = time.Now().Unix() + 600
 		}
-		l.DB.SetCompactionCooldown(l.SessionID, cooldown, l.ineffectiveCompactions)
-		l.DB.UpdateSessionSummary(l.SessionID, summary)
+		db.SetCompactionCooldown(l.Config.SessionID, cooldown, l.State.IneffectiveCompactions)
+		db.UpdateSessionSummary(l.Config.SessionID, summary)
 	}
 }
 
@@ -710,9 +723,9 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 // Reasoning-carrying assistant messages are protected via ProtectReasoningTurns.
 // This is a fallback when LLM-powered compaction is unavailable.
 func (l *Loop) trimContext() {
-	target := l.ContextWindow * 4 / 5
+	target := l.Config.ContextWindow * 4 / 5
 	totalChars := 0
-	for _, m := range l.Messages {
+	for _, m := range l.State.Messages {
 		totalChars += len(m.Content) + len(m.ReasoningContent)
 		for _, tc := range m.ToolCalls {
 			totalChars += len(tc.Function.Arguments) + len(tc.Function.Name)
@@ -722,8 +735,8 @@ func (l *Loop) trimContext() {
 		return
 	}
 
-	sysMsg := l.Messages[0]
-	rest := l.Messages[1:]
+	sysMsg := l.State.Messages[0]
+	rest := l.State.Messages[1:]
 	for len(rest) > 0 && totalChars/4 > target {
 		removed := len(rest[0].Content) + len(rest[0].ReasoningContent)
 		for _, tc := range rest[0].ToolCalls {
@@ -733,17 +746,17 @@ func (l *Loop) trimContext() {
 		rest = rest[1:]
 	}
 
-	keepStart := len(l.Messages) - len(rest)
-	if l.ReasoningProtectTurns > 0 {
-		keepStart = ProtectReasoningTurns(l.Messages, keepStart, l.ReasoningProtectTurns)
+	keepStart := len(l.State.Messages) - len(rest)
+	if l.CtxMgr.ReasoningProtectTurns > 0 {
+		keepStart = ProtectReasoningTurns(l.State.Messages, keepStart, l.CtxMgr.ReasoningProtectTurns)
 	}
 
-	newMsgs := make([]types.Message, 0, len(l.Messages)-keepStart+1)
+	newMsgs := make([]types.Message, 0, len(l.State.Messages)-keepStart+1)
 	newMsgs = append(newMsgs, sysMsg)
-	newMsgs = append(newMsgs, l.Messages[keepStart:]...)
-	l.Messages = newMsgs
+	newMsgs = append(newMsgs, l.State.Messages[keepStart:]...)
+	l.State.Messages = newMsgs
 	l.resetPruner()
-	if l.Pruner != nil {
-		l.Pruner.Mark(l.Messages, "post_trim")
+	if l.CtxMgr.Pruner != nil {
+		l.CtxMgr.Pruner.Mark(l.State.Messages, "post_trim")
 	}
 }

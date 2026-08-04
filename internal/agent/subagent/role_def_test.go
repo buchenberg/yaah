@@ -26,8 +26,8 @@ You are a TESTER. Run tests and report results.`)
 	if len(def.Tools) != 3 || def.Tools[0] != "read" || def.Tools[2] != "bash" {
 		t.Errorf("Tools = %v, want [read grep bash]", def.Tools)
 	}
-	if def.MaxIterations != 15 {
-		t.Errorf("MaxIterations = %d, want 15", def.MaxIterations)
+	if def.MaxLoopCycles != 15 {
+		t.Errorf("MaxLoopCycles = %d, want 15", def.MaxLoopCycles)
 	}
 	if def.Timeout != 90 {
 		t.Errorf("Timeout = %d, want 90", def.Timeout)
@@ -54,13 +54,13 @@ func TestParseRoleFileUnterminated(t *testing.T) {
 func TestRoleDefToProfile(t *testing.T) {
 	def := RoleDef{
 		Tools:         []string{"read", "grep"},
-		MaxIterations: 10,
+		MaxLoopCycles: 10,
 		Timeout:       60,
 		Body:          "hello",
 	}
 	p := def.ToProfile()
-	if p.MaxIterations != 10 {
-		t.Errorf("MaxIterations = %d", p.MaxIterations)
+	if p.MaxLoopCycles != 10 {
+		t.Errorf("MaxLoopCycles = %d", p.MaxLoopCycles)
 	}
 	if p.Timeout != 60*time.Second {
 		t.Errorf("Timeout = %v", p.Timeout)

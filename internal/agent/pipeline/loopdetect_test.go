@@ -123,7 +123,7 @@ func TestLoopDetect_SteerAtBoundary(t *testing.T) {
 	}
 	step := &Step{
 		Iteration:     8,
-		MaxIterations: 10,
+		MaxLoopCycles: 10,
 		Messages:      nil,
 	}
 	_, _ = m.PrepareStep(context.Background(), step)
@@ -148,12 +148,12 @@ func TestLoopDetect_NoSteerBelowBoundary(t *testing.T) {
 	}
 	step := &Step{
 		Iteration:     7,
-		MaxIterations: 10,
+		MaxLoopCycles: 10,
 		Messages:      nil,
 	}
 	_, _ = m.PrepareStep(context.Background(), step)
 	if len(step.Messages) > 0 {
-		t.Errorf("no steer expected at iteration %d of %d, got %d messages", step.Iteration, step.MaxIterations, len(step.Messages))
+		t.Errorf("no steer expected at iteration %d of %d, got %d messages", step.Iteration, step.MaxLoopCycles, len(step.Messages))
 	}
 }
 
@@ -161,13 +161,13 @@ func TestLoopDetect_SteerOnlyOnce(t *testing.T) {
 	m := &LoopDetectionMiddleware{
 		steerThreshold: 0.8,
 	}
-	step := &Step{Iteration: 8, MaxIterations: 10, Messages: nil}
+	step := &Step{Iteration: 8, MaxLoopCycles: 10, Messages: nil}
 	_, _ = m.PrepareStep(context.Background(), step)
 	if len(step.Messages) != 1 {
 		t.Fatalf("first call should inject, got %d", len(step.Messages))
 	}
 	// Same boundary, different iteration — must not re-inject.
-	step2 := &Step{Iteration: 9, MaxIterations: 10, Messages: nil}
+	step2 := &Step{Iteration: 9, MaxLoopCycles: 10, Messages: nil}
 	_, _ = m.PrepareStep(context.Background(), step2)
 	if len(step2.Messages) > 0 {
 		t.Errorf("deduplication failed: same boundary should not re-inject, got %d messages", len(step2.Messages))
@@ -178,7 +178,7 @@ func TestLoopDetect_NoSteerWhenUnlimited(t *testing.T) {
 	m := &LoopDetectionMiddleware{
 		steerThreshold: 0.8,
 	}
-	step := &Step{Iteration: 100, MaxIterations: 0, Messages: nil}
+	step := &Step{Iteration: 100, MaxLoopCycles: 0, Messages: nil}
 	_, _ = m.PrepareStep(context.Background(), step)
 	if len(step.Messages) > 0 {
 		t.Errorf("unlimited iterations should never trigger steer, got %d", len(step.Messages))
@@ -254,7 +254,7 @@ func TestLoopDetect_CategoryDoesNotHalt(t *testing.T) {
 func TestLoopDetect_DefaultsApplied(t *testing.T) {
 	// No fields set — defaults must be applied silently.
 	m := &LoopDetectionMiddleware{window: 5, count: 3}
-	step := &Step{Messages: nil, MaxIterations: 10, Iteration: 8}
+	step := &Step{Messages: nil, MaxLoopCycles: 10, Iteration: 8}
 	_, _ = m.PrepareStep(context.Background(), step)
 	// Should use defaultSteerThreshold (0.8 → boundary at 8).
 	if len(step.Messages) != 1 {

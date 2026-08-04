@@ -78,8 +78,8 @@ You are a SECURITY AUDITOR sub-agent on yaah's team. Scan code for vulnerabiliti
 		if profile.Specialty != "security" {
 			t.Errorf("Specialty = %q, want %q", profile.Specialty, "security")
 		}
-		if profile.MaxIterations != 30 {
-			t.Errorf("MaxIterations = %d, want 30", profile.MaxIterations)
+		if profile.MaxLoopCycles != 30 {
+			t.Errorf("MaxLoopCycles = %d, want 30", profile.MaxLoopCycles)
 		}
 		if profile.Timeout != 180_000_000_000 { // 180s in nanoseconds
 			t.Errorf("Timeout = %v, want 180s", profile.Timeout)

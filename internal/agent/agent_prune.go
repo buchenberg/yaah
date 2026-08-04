@@ -14,32 +14,10 @@ import (
 // nothing has been pruned — the Pruner.Filter fast path returns the same
 // backing array, so the common early-session case allocates nothing.
 func (l *Loop) applyPruning(messages []types.Message) []types.Message {
-	if l.Pruner == nil {
+	if l.CtxMgr.Pruner == nil {
 		return messages
 	}
-	return l.Pruner.Filter(messages)
-}
-
-// ensurePruner constructs a default Pruner when the Loop has none. Safe to
-// call unconditionally: an idle Pruner (one whose Mark is never invoked
-// because soft_prune is disabled) costs nothing — Filter's fast path is
-// identity on an empty pruned set. This also makes disabled-mode behave
-// identically to pre-change: the middleware is excluded by PipelineDisabled,
-// so nothing is ever marked, so Filter stays identity.
-func (l *Loop) ensurePruner() {
-	if l.Pruner == nil {
-		cfg := pipeline.DefaultPruneConfig()
-		if l.PruneProtectTokens > 0 {
-			cfg.ProtectTokens = l.PruneProtectTokens
-		}
-		if l.PruneMinReclaim > 0 {
-			cfg.MinReclaim = l.PruneMinReclaim
-		}
-		if l.PruneMinTurns > 0 {
-			cfg.MinTurns = l.PruneMinTurns
-		}
-		l.Pruner = pipeline.NewPruner(cfg)
-	}
+	return l.CtxMgr.Pruner.Filter(messages)
 }
 
 // pruneHooks wires the SoftPruneMiddleware telemetry callbacks. The JSONL
@@ -50,7 +28,7 @@ func (l *Loop) pruneHooks() pipeline.PruneHooks {
 	hooks := pipeline.PruneHooks{
 		Emit: l.pruneEmit,
 	}
-	if l.OtelEnabled {
+	if l.Config.OtelEnabled {
 		hooks.Otel = l.pruneOtel
 	}
 	return hooks
@@ -82,7 +60,7 @@ func (l *Loop) pruneOtel(ctx context.Context, s pipeline.PruneStats) {
 // both compaction rebuild sites (summary path and trim fallback). Cumulative
 // counters survive the reset for observability continuity.
 func (l *Loop) resetPruner() {
-	if l.Pruner != nil {
-		l.Pruner.Reset()
+	if l.CtxMgr.Pruner != nil {
+		l.CtxMgr.Pruner.Reset()
 	}
 }

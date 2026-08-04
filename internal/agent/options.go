@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
-	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -29,12 +28,12 @@ func NewLoop(provider Provider, registry *tools.Registry, opts ...Option) *Loop 
 
 // WithModel sets the model name.
 func WithModel(model string) Option {
-	return func(l *Loop) { l.Model = model }
+	return func(l *Loop) { l.Config.Model = model }
 }
 
 // WithSystemPrompt sets the system prompt.
 func WithSystemPrompt(prompt string) Option {
-	return func(l *Loop) { l.SystemPrompt = prompt }
+	return func(l *Loop) { l.Config.SystemPrompt = prompt }
 }
 
 // WithView sets the event view for TUI/REPL rendering.
@@ -44,32 +43,22 @@ func WithView(v View) Option {
 
 // WithMessages sets the initial conversation history (for session resume).
 func WithMessages(msgs []types.Message) Option {
-	return func(l *Loop) { l.Messages = msgs }
-}
-
-// WithDB sets the SQLite database for persistence.
-func WithDB(db *memory.DB) Option {
-	return func(l *Loop) { l.DB = db }
-}
-
-// WithWriteDebouncer sets the debounced writer for persistence.
-func WithWriteDebouncer(w *memory.DebouncedWriter) Option {
-	return func(l *Loop) { l.WriteDebouncer = w }
+	return func(l *Loop) { l.State.Messages = msgs }
 }
 
 // WithSessionID sets the session identifier.
 func WithSessionID(id string) Option {
-	return func(l *Loop) { l.SessionID = id }
+	return func(l *Loop) { l.Config.SessionID = id }
 }
 
-// WithMsgIdx sets the starting message index (for session resume).
-func WithMsgIdx(idx int) Option {
-	return func(l *Loop) { l.MsgIdx = idx }
+// WithPersister sets the session persister.
+func WithPersister(p *SessionPersister) Option {
+	return func(l *Loop) { l.Persister = p }
 }
 
-// WithHookDir sets the JSONL hook event directory.
-func WithHookDir(dir string) Option {
-	return func(l *Loop) { l.HookDir = dir }
+// WithHooks sets the hook emitter.
+func WithHooks(h *HookEmitter) Option {
+	return func(l *Loop) { l.Hooks = h }
 }
 
 // WithFallback sets the fallback provider and model.
@@ -84,27 +73,27 @@ func WithFallback(provider Provider, model string) Option {
 func WithCompactProvider(provider Provider, model string) Option {
 	return func(l *Loop) {
 		l.CompactProvider = provider
-		l.CompactModel = model
+		l.Config.CompactModel = model
 	}
 }
 
 // WithApprovalMode sets the tool approval mode.
 func WithApprovalMode(mode string) Option {
-	return func(l *Loop) { l.ApprovalMode = mode }
+	return func(l *Loop) { l.Config.ApprovalMode = mode }
 }
 
 // WithPipeline configures the middleware pipeline.
 func WithPipeline(enabled, disabled []string) Option {
 	return func(l *Loop) {
-		l.PipelineNames = enabled
-		l.PipelineDisabled = disabled
+		l.Config.PipelineNames = enabled
+		l.Config.PipelineDisabled = disabled
 	}
 }
 
 // WithPermissionRules sets the path-based permission rules for the
 // PermissionMiddleware. When nil, no path-filtering is applied.
 func WithPermissionRules(rules []pipeline.PermissionRule) Option {
-	return func(l *Loop) { l.PermissionRules = rules }
+	return func(l *Loop) { l.Config.PermissionRules = rules }
 }
 
 // WithSteer sets the mid-turn steering channel.
@@ -124,31 +113,31 @@ func WithConflictTracker(t *tools.ConflictTracker) Option {
 
 // WithToolsLevel sets the tool visibility level.
 func WithToolsLevel(level ToolsLevel) Option {
-	return func(l *Loop) { l.ToolsLevel = level }
+	return func(l *Loop) { l.Config.ToolsLevel = level }
 }
 
 // WithOtel enables OpenTelemetry tracing.
 func WithOtel(enabled, verbose bool) Option {
 	return func(l *Loop) {
-		l.OtelEnabled = enabled
-		l.OtelVerbose = verbose
+		l.Config.OtelEnabled = enabled
+		l.Config.OtelVerbose = verbose
 	}
 }
 
 // WithSubAgentConcurrency sets the sub-agent concurrency cap and timeouts.
 func WithSubAgentConcurrency(max int, stuckTimeout time.Duration, stuckTimeouts map[string]time.Duration) Option {
 	return func(l *Loop) {
-		l.MaxSubAgentConcurrency = max
-		l.StuckChildTimeout = stuckTimeout
-		l.StuckChildTimeouts = stuckTimeouts
+		l.Config.MaxSubAgentConcurrency = max
+		l.Config.StuckChildTimeout = stuckTimeout
+		l.Config.StuckChildTimeouts = stuckTimeouts
 	}
 }
 
-// LoopConfig holds the full set of tuning parameters typically derived
-// from config.yaml. Use WithLoopConfig to apply them all at once.
-type LoopConfig struct {
-	MaxIterations          int
-	MaxTurns               int
+// AgentConfig holds the full set of tuning parameters typically derived
+// from config.yaml. Use WithAgentConfig to apply them all at once.
+type AgentConfig struct {
+	MaxLoopCycles          int
+	MaxToolTurns           int
 	MaxRetries             int
 	RetryBackoffSecs       int
 	ContextWindow          int
@@ -160,7 +149,7 @@ type LoopConfig struct {
 	LoopDetectCount        int
 	LoopDetectWindow       int
 	MaxToolConcurrency     int
-	WrapUpAhead            int
+	WrapUpThreshold        int
 	MaxInlineToolsPerTurn  int
 	PromptCaching          bool
 	ReasoningProtectTurns  int
@@ -172,34 +161,37 @@ type LoopConfig struct {
 	JSONMode               bool
 }
 
-// WithLoopConfig applies all tuning parameters from a LoopConfig.
+// WithAgentConfig applies all tuning parameters from an AgentConfig.
 // Zero values are left unset (applyDefaults fills them later).
-func WithLoopConfig(cfg LoopConfig) Option {
+func WithAgentConfig(cfg AgentConfig) Option {
 	return func(l *Loop) {
-		l.MaxIterations = cfg.MaxIterations
-		l.MaxTurns = cfg.MaxTurns
-		l.MaxRetries = cfg.MaxRetries
+		l.Config.MaxLoopCycles = cfg.MaxLoopCycles
+		l.Config.MaxToolTurns = cfg.MaxToolTurns
+		l.Config.MaxRetries = cfg.MaxRetries
 		if cfg.RetryBackoffSecs > 0 {
-			l.RetryBackoff = time.Duration(cfg.RetryBackoffSecs) * time.Second
+			l.Config.RetryBackoff = time.Duration(cfg.RetryBackoffSecs) * time.Second
 		}
-		l.ContextWindow = cfg.ContextWindow
-		l.CompactionThreshold = cfg.CompactionThreshold
-		l.RawCompactionThreshold = cfg.RawCompactionThreshold
-		l.CompactMaxMessages = cfg.CompactMaxMessages
-		l.EstimateFactor = cfg.EstimateFactor
-		l.QualityGates = cfg.QualityGates
-		l.LoopDetectCount = cfg.LoopDetectCount
-		l.LoopDetectWindow = cfg.LoopDetectWindow
-		l.MaxToolConcurrency = cfg.MaxToolConcurrency
-		l.WrapUpAhead = cfg.WrapUpAhead
-		l.MaxInlineToolsPerTurn = cfg.MaxInlineToolsPerTurn
-		l.PromptCaching = cfg.PromptCaching
-		l.ReasoningProtectTurns = cfg.ReasoningProtectTurns
-		l.ToolResultMaxLines = cfg.ToolResultMaxLines
-		l.ToolResultMaxBytes = cfg.ToolResultMaxBytes
-		l.PruneProtectTokens = cfg.PruneProtectTokens
-		l.PruneMinReclaim = cfg.PruneMinReclaim
-		l.PruneMinTurns = cfg.PruneMinTurns
-		l.JSONMode = cfg.JSONMode
+		l.Config.ContextWindow = cfg.ContextWindow
+		l.Config.CompactionThreshold = cfg.CompactionThreshold
+		l.Config.RawCompactionThreshold = cfg.RawCompactionThreshold
+		l.Config.CompactMaxMessages = cfg.CompactMaxMessages
+		l.Config.EstimateFactor = cfg.EstimateFactor
+		l.Config.QualityGates = cfg.QualityGates
+		l.Config.LoopDetectCount = cfg.LoopDetectCount
+		l.Config.LoopDetectWindow = cfg.LoopDetectWindow
+		l.Config.MaxToolConcurrency = cfg.MaxToolConcurrency
+		l.Config.WrapUpThreshold = cfg.WrapUpThreshold
+		l.Config.MaxInlineToolsPerTurn = cfg.MaxInlineToolsPerTurn
+		l.Config.PromptCaching = cfg.PromptCaching
+		l.Config.JSONMode = cfg.JSONMode
+		if l.CtxMgr == nil {
+			l.CtxMgr = &ContextManager{}
+		}
+		l.CtxMgr.ReasoningProtectTurns = cfg.ReasoningProtectTurns
+		l.CtxMgr.ToolResultMaxLines = cfg.ToolResultMaxLines
+		l.CtxMgr.ToolResultMaxBytes = cfg.ToolResultMaxBytes
+		l.CtxMgr.PruneProtectTokens = cfg.PruneProtectTokens
+		l.CtxMgr.PruneMinReclaim = cfg.PruneMinReclaim
+		l.CtxMgr.PruneMinTurns = cfg.PruneMinTurns
 	}
 }
