@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.45.4](https://github.com/buchenberg/yaah/compare/v0.45.3...v0.45.4) (2026-08-04)
+
+
+### Code Refactoring
+
+* **agent:** split agent.go into focused files ([#134](https://github.com/buchenberg/yaah/issues/134)) ([5e63d37](https://github.com/buchenberg/yaah/commit/5e63d373bcc6bf18b19983ef2cef82fa414c2a31))
+
 ## [0.45.3](https://github.com/buchenberg/yaah/compare/v0.45.2...v0.45.3) (2026-08-04)
 
 
