@@ -4,12 +4,10 @@ package infopane
 import (
 	"strings"
 
-	itodo "github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tui2/colors"
 	"github.com/buchenberg/yaah/internal/tui2/components/contextinfo"
 	"github.com/buchenberg/yaah/internal/tui2/components/mcpinfo"
 	"github.com/buchenberg/yaah/internal/tui2/components/sessioninfo"
-	"github.com/buchenberg/yaah/internal/tui2/components/todo"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -45,16 +43,6 @@ func Build() *tview.TextView {
 		{Name: "github.com/modelcontextprotocol/servers", Connected: true},
 		{Name: "postgres", Connected: false},
 		{Name: "filesystem", Connected: false},
-	}))
-	b.WriteString("\n")
-
-	b.WriteString(colors.TagBold(colors.Accent, "Tasks\n"))
-	b.WriteString(todo.FormatList([]itodo.Item{
-		{Content: "Move TUI2 to own directory", Status: "completed"},
-		{Content: "Break into component files", Status: "completed"},
-		{Content: "Add right-side info pane", Status: "in_progress"},
-		{Content: "Wire to agent loop", Status: "pending"},
-		{Content: "Polish theme & colors", Status: "pending"},
 	}))
 
 	tv.SetText(b.String())
