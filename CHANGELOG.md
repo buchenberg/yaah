@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.46.0](https://github.com/buchenberg/yaah/compare/v0.45.5...v0.46.0) (2026-08-04)
+
+
+### Features
+
+* **tui2:** create message-type components as sub-packages under messages/ ([#139](https://github.com/buchenberg/yaah/issues/139)) ([db15b2a](https://github.com/buchenberg/yaah/commit/db15b2a8e5254a3fe2942dae3f7c5574a401fe91))
+* **tui2:** wire todo list into right panel as dynamic component ([#141](https://github.com/buchenberg/yaah/issues/141)) ([f167add](https://github.com/buchenberg/yaah/commit/f167add1bab27654f7e9ecc6909e3a1f5abdc5f0))
+
 ## [0.45.5](https://github.com/buchenberg/yaah/compare/v0.45.4...v0.45.5) (2026-08-04)
 
 
