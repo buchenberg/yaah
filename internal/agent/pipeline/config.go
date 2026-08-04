@@ -85,10 +85,7 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 	},
 	"permission":       func(cfg PipelineConfig) Middleware { return &PermissionMiddleware{rules: cfg.PermissionRules} },
 	"tool_concurrency": func(cfg PipelineConfig) Middleware { return &ToolConcurrencyMiddleware{max: cfg.MaxToolConcurrency} },
-	"sub_agent": func(cfg PipelineConfig) Middleware {
-		return &SubAgentMiddleware{}
-	},
-	"prompt_caching": func(cfg PipelineConfig) Middleware { return &PromptCachingMiddleware{enabled: cfg.PromptCaching} },
+	"prompt_caching":   func(cfg PipelineConfig) Middleware { return &PromptCachingMiddleware{enabled: cfg.PromptCaching} },
 	"soft_prune": func(cfg PipelineConfig) Middleware {
 		return &SoftPruneMiddleware{pruner: cfg.Pruner, emit: cfg.PruneHooks.Emit, otel: cfg.PruneHooks.Otel}
 	},

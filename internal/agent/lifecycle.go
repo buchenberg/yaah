@@ -92,20 +92,20 @@ func (l *Loop) ctxMgr() *ContextManager {
 func (l *Loop) applyDefaults() {
 	if l.CtxMgr == nil {
 		l.CtxMgr = NewContextManager(l.Provider, l.Config.Model)
-		l.CtxMgr.ContextWindow = l.Config.ContextWindow
-		l.CtxMgr.CompactionThreshold = l.Config.CompactionThreshold
-		l.CtxMgr.RawCompactionThreshold = l.Config.RawCompactionThreshold
-		l.CtxMgr.EstimateFactor = l.Config.EstimateFactor
 		l.CtxMgr.PreviousSummary = l.State.PreviousSummary
 		l.CtxMgr.LastPromptTokens = l.State.LastPromptTokens
 		l.CtxMgr.LastCachedPromptTokens = l.State.LastCachedPromptTokens
 		l.CtxMgr.LastCompactionTokens = l.State.LastCompactionTokens
 		l.CtxMgr.IneffectiveCompactions = l.State.IneffectiveCompactions
-		l.CtxMgr.CompactProvider = l.CompactProvider
-		l.CtxMgr.CompactModel = l.Config.CompactModel
-		l.CtxMgr.SessionID = l.Config.SessionID
-		l.CtxMgr.OtelEnabled = l.Config.OtelEnabled
 	}
+	l.CtxMgr.ContextWindow = l.Config.ContextWindow
+	l.CtxMgr.CompactionThreshold = l.Config.CompactionThreshold
+	l.CtxMgr.RawCompactionThreshold = l.Config.RawCompactionThreshold
+	l.CtxMgr.EstimateFactor = l.Config.EstimateFactor
+	l.CtxMgr.CompactProvider = l.CompactProvider
+	l.CtxMgr.CompactModel = l.Config.CompactModel
+	l.CtxMgr.SessionID = l.Config.SessionID
+	l.CtxMgr.OtelEnabled = l.Config.OtelEnabled
 	if l.CtxMgr.ReasoningProtectTurns <= 0 {
 		l.CtxMgr.ReasoningProtectTurns = 2
 	}
