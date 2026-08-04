@@ -24,7 +24,7 @@ func prunableLoop(t *testing.T, fp *fakeProvider) *Loop {
 	reg := tools.NewRegistry()
 	reg.Register(&fakeTool{name: "echo", result: big})
 	return &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations: 10}, Provider: fp,
+		MaxLoopCycles: 10}, Provider: fp,
 		Registry: reg,
 
 		CtxMgr: &ContextManager{
@@ -248,7 +248,7 @@ func TestLoop_Pruner_DisabledViaPipeline(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(&fakeTool{name: "echo", result: big})
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations:    10,
+		MaxLoopCycles:    10,
 		PipelineDisabled: []string{"soft_prune"}}, Provider: fp,
 		Registry: reg,
 	}

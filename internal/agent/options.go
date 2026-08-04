@@ -136,8 +136,8 @@ func WithSubAgentConcurrency(max int, stuckTimeout time.Duration, stuckTimeouts 
 // AgentConfig holds the full set of tuning parameters typically derived
 // from config.yaml. Use WithAgentConfig to apply them all at once.
 type AgentConfig struct {
-	MaxIterations          int
-	MaxTurns               int
+	MaxLoopCycles          int
+	MaxToolTurns           int
 	MaxRetries             int
 	RetryBackoffSecs       int
 	ContextWindow          int
@@ -149,7 +149,7 @@ type AgentConfig struct {
 	LoopDetectCount        int
 	LoopDetectWindow       int
 	MaxToolConcurrency     int
-	WrapUpAhead            int
+	WrapUpThreshold        int
 	MaxInlineToolsPerTurn  int
 	PromptCaching          bool
 	ReasoningProtectTurns  int
@@ -165,8 +165,8 @@ type AgentConfig struct {
 // Zero values are left unset (applyDefaults fills them later).
 func WithAgentConfig(cfg AgentConfig) Option {
 	return func(l *Loop) {
-		l.Config.MaxIterations = cfg.MaxIterations
-		l.Config.MaxTurns = cfg.MaxTurns
+		l.Config.MaxLoopCycles = cfg.MaxLoopCycles
+		l.Config.MaxToolTurns = cfg.MaxToolTurns
 		l.Config.MaxRetries = cfg.MaxRetries
 		if cfg.RetryBackoffSecs > 0 {
 			l.Config.RetryBackoff = time.Duration(cfg.RetryBackoffSecs) * time.Second
@@ -180,7 +180,7 @@ func WithAgentConfig(cfg AgentConfig) Option {
 		l.Config.LoopDetectCount = cfg.LoopDetectCount
 		l.Config.LoopDetectWindow = cfg.LoopDetectWindow
 		l.Config.MaxToolConcurrency = cfg.MaxToolConcurrency
-		l.Config.WrapUpAhead = cfg.WrapUpAhead
+		l.Config.WrapUpThreshold = cfg.WrapUpThreshold
 		l.Config.MaxInlineToolsPerTurn = cfg.MaxInlineToolsPerTurn
 		l.Config.PromptCaching = cfg.PromptCaching
 		l.Config.JSONMode = cfg.JSONMode

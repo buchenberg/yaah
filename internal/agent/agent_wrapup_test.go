@@ -50,7 +50,7 @@ func lastMessage(req types.ChatRequest) types.Message {
 	return req.Messages[len(req.Messages)-1]
 }
 
-// MaxTurns=2, WrapUpAhead=1: the nudge must appear on the last tool
+// MaxToolTurns=2, WrapUpThreshold=1: the nudge must appear on the last tool
 // iteration before the strip, be transient (absent from the stripped
 // turn's rebuilt request), and carry the correct countdown.
 func TestWrapUp_InjectedBeforeStrip(t *testing.T) {
@@ -60,9 +60,9 @@ func TestWrapUp_InjectedBeforeStrip(t *testing.T) {
 		textResponse("final report"),
 	}}
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "You are helpful.",
-		MaxIterations: 10,
-		MaxTurns:      2,
-		WrapUpAhead:   1}, Provider: fp,
+		MaxLoopCycles:   10,
+		MaxToolTurns:    2,
+		WrapUpThreshold: 1}, Provider: fp,
 		Registry: tools.NewRegistry(),
 	}
 
@@ -93,7 +93,7 @@ func TestWrapUp_InjectedBeforeStrip(t *testing.T) {
 	}
 }
 
-// A negative WrapUpAhead disables the notice entirely.
+// A negative WrapUpThreshold disables the notice entirely.
 func TestWrapUp_Disabled(t *testing.T) {
 	fp := &fakeProvider{responses: []*types.ChatResponse{
 		toolCallResponse("c1"),
@@ -101,9 +101,9 @@ func TestWrapUp_Disabled(t *testing.T) {
 		textResponse("done"),
 	}}
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "You are helpful.",
-		MaxIterations: 10,
-		MaxTurns:      2,
-		WrapUpAhead:   -1}, Provider: fp,
+		MaxLoopCycles:   10,
+		MaxToolTurns:    2,
+		WrapUpThreshold: -1}, Provider: fp,
 		Registry: tools.NewRegistry(),
 	}
 
@@ -112,12 +112,12 @@ func TestWrapUp_Disabled(t *testing.T) {
 	}
 	for i, req := range fp.requests {
 		if requestHasNudge(req) {
-			t.Errorf("request %d carries a nudge despite WrapUpAhead=-1", i)
+			t.Errorf("request %d carries a nudge despite WrapUpThreshold=-1", i)
 		}
 	}
 }
 
-// With MaxTurns off, the nudge fires before the hard iteration limit so
+// With MaxToolTurns off, the nudge fires before the hard iteration limit so
 // the run never ends without a warning.
 func TestWrapUp_HardIterationLimit(t *testing.T) {
 	fp := &fakeProvider{responses: []*types.ChatResponse{
@@ -126,9 +126,9 @@ func TestWrapUp_HardIterationLimit(t *testing.T) {
 		toolCallResponse("c3"),
 	}}
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "You are helpful.",
-		MaxIterations: 3,
-		MaxTurns:      0,
-		WrapUpAhead:   1}, Provider: fp,
+		MaxLoopCycles:   3,
+		MaxToolTurns:    0,
+		WrapUpThreshold: 1}, Provider: fp,
 		Registry: tools.NewRegistry(),
 	}
 

@@ -30,8 +30,8 @@ type roleFrontmatter struct {
 	Description   string   `yaml:"description"`
 	Specialty     string   `yaml:"specialty"`
 	Tools         []string `yaml:"tools"`
-	MaxIterations int      `yaml:"max_iterations"`
-	MaxTurns      int      `yaml:"max_turns"`
+	MaxLoopCycles int      `yaml:"max_iterations"`
+	MaxToolTurns  int      `yaml:"max_turns"`
 	JSONMode      bool     `yaml:"json_mode"`
 	Timeout       int      `yaml:"timeout"`
 }

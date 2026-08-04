@@ -79,8 +79,8 @@ type Defaults struct {
 	Provider              string  `yaml:"provider"`
 	Model                 string  `yaml:"model"`
 	SmallModel            string  `yaml:"small_model"`
-	MaxIterations         int     `yaml:"max_iterations"`
-	MaxTurns              int     `yaml:"max_turns"`      // soft cap on tool-using turns; 0 = off
+	MaxLoopCycles         int     `yaml:"max_iterations"`
+	MaxToolTurns          int     `yaml:"max_turns"`      // soft cap on tool-using turns; 0 = off
 	ContextWindow         int     `yaml:"context_window"` // max context window; resolved window from model is capped by this value
 	Approval              string  `yaml:"approval"`
 	MaxInlineToolsPerTurn int     `yaml:"max_inline_tools_per_turn"` // 0 = unlimited
@@ -103,7 +103,7 @@ type Defaults struct {
 	MaxToolConcurrency int  `yaml:"max_tool_concurrency"`    // concurrent tool goroutines; 0 = unlimited
 	PromptCaching      bool `yaml:"prompt_caching"`          // inject Anthropic cache-control breakpoints
 	ReasoningProtect   int  `yaml:"reasoning_protect_turns"` // preserve reasoning in recent N turns; 0 = default (2)
-	WrapUpTurns        int  `yaml:"wrap_up_turns"`           // inject a wrap-up notice this many turns before the cap; 0 = default (1), negative = off
+	WrapUpThreshold    int  `yaml:"wrap_up_turns"`           // inject a wrap-up notice this many turns before the cap; 0 = default (1), negative = off
 
 	// Tool result truncation caps.
 	ToolResultMaxLines int `yaml:"tool_result_max_lines"` // 0 = default (500)
@@ -175,7 +175,7 @@ type SubAgentConfig struct {
 
 	// DefaultMaxTurns is the fallback soft turn cap when no role-specific
 	// override is set. 0 means unlimited (off).
-	DefaultMaxTurns int `yaml:"default_max_turns"`
+	DefaultMaxToolTurns int `yaml:"default_max_turns"`
 
 	// JSONMode enables structured output via response_format json_object.
 	// Individual roles may override with their own json_mode setting.
@@ -194,8 +194,8 @@ type SubAgentConfig struct {
 // turn cap, provider, model, concurrency, output format, and directives.
 type RoleConfig struct {
 	Timeout           int      `yaml:"timeout"`             // seconds; 0 = use role default
-	MaxIterations     int      `yaml:"max_iterations"`      // 0 = use role default
-	MaxTurns          int      `yaml:"max_turns"`           // soft turn cap; 0 = use role default
+	MaxLoopCycles     int      `yaml:"max_iterations"`      // 0 = use role default
+	MaxToolTurns      int      `yaml:"max_turns"`           // soft turn cap; 0 = use role default
 	JSONMode          bool     `yaml:"json_mode"`           // structured output toggle
 	ContextWindow     int      `yaml:"context_window"`      // 0 = inherit halved parent default
 	OutputLimit       int      `yaml:"output_limit"`        // bytes; 0 = use config default
@@ -253,7 +253,7 @@ func defaultConfig() *Config {
 			Default: Defaults{
 				Model:                  "deepseek/deepseek-v4-pro",
 				SmallModel:             "deepseek/deepseek-v4-flash",
-				MaxIterations:          50,
+				MaxLoopCycles:          50,
 				ContextWindow:          128000,
 				Approval:               "ask",
 				CompactionThreshold:    0.5,

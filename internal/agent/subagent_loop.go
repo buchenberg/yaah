@@ -12,8 +12,8 @@ import (
 // sub-agent spawning, quality gates, and hooks — they are ephemeral
 // workers with a fixed turn budget.
 type SubAgentConfig struct {
-	MaxIterations      int
-	MaxTurns           int
+	MaxLoopCycles      int
+	MaxToolTurns       int
 	MaxRetries         int
 	RetryBackoffSecs   int
 	MaxToolConcurrency int
@@ -34,11 +34,11 @@ type SubAgentConfig struct {
 // skip persistence, compaction, sub-agent spawning, quality gates,
 // approval dialogs, and hook emission.
 func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemPrompt string, cfg SubAgentConfig) *Loop {
-	if cfg.MaxIterations <= 0 {
-		cfg.MaxIterations = 50
+	if cfg.MaxLoopCycles <= 0 {
+		cfg.MaxLoopCycles = 50
 	}
-	if cfg.MaxTurns <= 0 {
-		cfg.MaxTurns = cfg.MaxIterations
+	if cfg.MaxToolTurns <= 0 {
+		cfg.MaxToolTurns = cfg.MaxLoopCycles
 	}
 	if cfg.RetryBackoffSecs <= 0 {
 		cfg.RetryBackoffSecs = 5
@@ -54,8 +54,8 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 		Config: LoopConfig{
 			Model:              model,
 			SystemPrompt:       systemPrompt,
-			MaxIterations:      cfg.MaxIterations,
-			MaxTurns:           cfg.MaxTurns,
+			MaxLoopCycles:      cfg.MaxLoopCycles,
+			MaxToolTurns:       cfg.MaxToolTurns,
 			MaxRetries:         cfg.MaxRetries,
 			RetryBackoff:       time.Duration(cfg.RetryBackoffSecs) * time.Second,
 			MaxToolConcurrency: cfg.MaxToolConcurrency,

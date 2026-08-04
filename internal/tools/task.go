@@ -121,11 +121,11 @@ type SubAgentParams struct {
 	// TimeoutSeconds, when > 0, overrides the role's default timeout.
 	TimeoutSeconds int
 
-	// MaxIterations, when > 0, overrides the role's default iteration cap.
-	MaxIterations int
+	// MaxLoopCycles, when > 0, overrides the role's default iteration cap.
+	MaxLoopCycles int
 
-	// MaxTurns, when > 0, overrides the soft turn cap for tool-using turns.
-	MaxTurns int
+	// MaxToolTurns, when > 0, overrides the soft turn cap for tool-using turns.
+	MaxToolTurns int
 
 	// JSONMode enables structured JSON output for this sub-agent.
 	JSONMode bool
@@ -395,7 +395,7 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 		Prompt         string `json:"prompt"`
 		Role           string `json:"role"`
 		TimeoutSeconds int    `json:"timeout_seconds"`
-		MaxIterations  int    `json:"max_iterations"`
+		MaxLoopCycles  int    `json:"max_iterations"`
 		MaxTurns       int    `json:"max_turns"`
 		JSONMode       bool   `json:"json_mode"`
 		OutputLimit    int    `json:"output_limit"`
@@ -431,13 +431,13 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 	// runaway or injected value cannot neutralize the deadline or iterate
 	// forever. Values below the minimum fall back to the role default.
 	clampedTimeout := clampTimeoutSeconds(params.TimeoutSeconds)
-	clampedIter := clampMaxIterations(params.MaxIterations)
+	clampedIter := clampMaxLoopCycles(params.MaxLoopCycles)
 
 	subParams := SubAgentParams{
 		Role:           params.Role,
 		TimeoutSeconds: clampedTimeout,
-		MaxIterations:  clampedIter,
-		MaxTurns:       params.MaxTurns,
+		MaxLoopCycles:  clampedIter,
+		MaxToolTurns:   params.MaxTurns,
 		JSONMode:       params.JSONMode,
 		OutputLimit:    params.OutputLimit,
 	}
@@ -517,9 +517,9 @@ func clampTimeoutSeconds(v int) int {
 	return v
 }
 
-// clampMaxIterations enforces the schema's 1–50 window. Values above 50
+// clampMaxLoopCycles enforces the schema's 1–50 window. Values above 50
 // are capped; 0 is preserved (means "use the role default").
-func clampMaxIterations(v int) int {
+func clampMaxLoopCycles(v int) int {
 	if v > 50 {
 		return 50
 	}

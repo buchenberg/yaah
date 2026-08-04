@@ -170,8 +170,8 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 
 		subReg := buildSubAgentRegistry(opts, profile, remainingDepth)
 
-		maxIter := resolveSubAgentIterations(params.MaxIterations, profile, opts.subCfg, role)
-		maxTurns := resolveSubAgentTurns(params.MaxTurns, profile, opts.subCfg, role, maxIter)
+		maxIter := resolveSubAgentIterations(params.MaxLoopCycles, profile, opts.subCfg, role)
+		maxTurns := resolveSubAgentTurns(params.MaxToolTurns, profile, opts.subCfg, role, maxIter)
 
 		effectiveCW := opts.subContextWindow
 		if rc, ok := opts.subCfg.Roles[string(role)]; ok && rc.ContextWindow > 0 {
@@ -229,8 +229,8 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		tools.NotifySubAgentStart(ctx, subModel)
 
 		subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{
-			MaxIterations:      maxIter,
-			MaxTurns:           maxTurns,
+			MaxLoopCycles:      maxIter,
+			MaxToolTurns:       maxTurns,
 			MaxRetries:         opts.defaults.MaxRetries,
 			RetryBackoffSecs:   opts.defaults.RetryBackoffSecs,
 			MaxToolConcurrency: opts.defaults.MaxToolConcurrency,
@@ -438,15 +438,15 @@ func resolveSubAgentIterations(callMax int, profile subagent.RoleProfile, subCfg
 	switch {
 	case callMax > 0:
 		v = callMax
-		if profile.MaxIterations > 0 && v > profile.MaxIterations {
-			v = profile.MaxIterations
+		if profile.MaxLoopCycles > 0 && v > profile.MaxLoopCycles {
+			v = profile.MaxLoopCycles
 		}
-	case subCfg.Roles[string(role)].MaxIterations > 0:
-		v = subCfg.Roles[string(role)].MaxIterations
-	case profile.MaxIterations > 0:
-		v = profile.MaxIterations
+	case subCfg.Roles[string(role)].MaxLoopCycles > 0:
+		v = subCfg.Roles[string(role)].MaxLoopCycles
+	case profile.MaxLoopCycles > 0:
+		v = profile.MaxLoopCycles
 	default:
-		v = subagent.RoleProfileFor(role).MaxIterations
+		v = subagent.RoleProfileFor(role).MaxLoopCycles
 		if v <= 0 {
 			v = 25
 		}
@@ -470,12 +470,12 @@ func resolveSubAgentTurns(
 	switch {
 	case callMax > 0:
 		v = callMax
-	case subCfg.Roles[string(role)].MaxTurns > 0:
-		v = subCfg.Roles[string(role)].MaxTurns
-	case profile.MaxTurns > 0:
-		v = profile.MaxTurns
-	case subCfg.DefaultMaxTurns > 0:
-		v = subCfg.DefaultMaxTurns
+	case subCfg.Roles[string(role)].MaxToolTurns > 0:
+		v = subCfg.Roles[string(role)].MaxToolTurns
+	case profile.MaxToolTurns > 0:
+		v = profile.MaxToolTurns
+	case subCfg.DefaultMaxToolTurns > 0:
+		v = subCfg.DefaultMaxToolTurns
 	default:
 		v = 3
 	}

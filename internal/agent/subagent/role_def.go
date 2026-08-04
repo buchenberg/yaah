@@ -55,8 +55,8 @@ type RoleDef struct {
 	Description   string      `yaml:"description"`
 	Contract      ContractDef `yaml:"contract"`
 	Tools         []string    `yaml:"tools"`
-	MaxIterations int         `yaml:"max_iterations"`
-	MaxTurns      int         `yaml:"max_turns"`
+	MaxLoopCycles int         `yaml:"max_iterations"`
+	MaxToolTurns  int         `yaml:"max_turns"`
 	JSONMode      bool        `yaml:"json_mode"`
 	Timeout       int         `yaml:"timeout"` // seconds; 0 = no timeout
 
@@ -72,8 +72,8 @@ func (d RoleDef) ToProfile() RoleProfile {
 		Description:   d.Description,
 		Contract:      d.Contract,
 		Tools:         d.Tools,
-		MaxIterations: d.MaxIterations,
-		MaxTurns:      d.MaxTurns,
+		MaxLoopCycles: d.MaxLoopCycles,
+		MaxToolTurns:  d.MaxToolTurns,
 		JSONMode:      d.JSONMode,
 		Timeout:       time.Duration(d.Timeout) * time.Second,
 	}

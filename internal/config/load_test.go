@@ -22,8 +22,8 @@ func TestLoad_returnsDefaultsWhenFileMissing(t *testing.T) {
 	if cfg.Agent.Default.SmallModel != "deepseek/deepseek-v4-flash" {
 		t.Errorf("Default.SmallModel = %q, want %q", cfg.Agent.Default.SmallModel, "deepseek/deepseek-v4-flash")
 	}
-	if cfg.Agent.Default.MaxIterations != 50 {
-		t.Errorf("Default.MaxIterations = %d, want 50", cfg.Agent.Default.MaxIterations)
+	if cfg.Agent.Default.MaxLoopCycles != 50 {
+		t.Errorf("Default.MaxLoopCycles = %d, want 50", cfg.Agent.Default.MaxLoopCycles)
 	}
 	if cfg.Agent.Default.Approval != "ask" {
 		t.Errorf("Default.Approval = %q, want %q", cfg.Agent.Default.Approval, "ask")
@@ -64,8 +64,8 @@ agents:
 	if cfg.Agent.Default.Model != "openai/gpt-4o" {
 		t.Errorf("Default.Model = %q, want %q", cfg.Agent.Default.Model, "openai/gpt-4o")
 	}
-	if cfg.Agent.Default.MaxIterations != 25 {
-		t.Errorf("Default.MaxIterations = %d, want 25", cfg.Agent.Default.MaxIterations)
+	if cfg.Agent.Default.MaxLoopCycles != 25 {
+		t.Errorf("Default.MaxLoopCycles = %d, want 25", cfg.Agent.Default.MaxLoopCycles)
 	}
 	if cfg.Agent.Default.Approval != "allow" {
 		t.Errorf("Default.Approval = %q, want %q", cfg.Agent.Default.Approval, "allow")

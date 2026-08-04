@@ -176,8 +176,8 @@ func TestTaskToolPassesParamsToRunner(t *testing.T) {
 	if captured.TimeoutSeconds != 42 {
 		t.Errorf("TimeoutSeconds = %d, want 42", captured.TimeoutSeconds)
 	}
-	if captured.MaxIterations != 7 {
-		t.Errorf("MaxIterations = %d, want 7", captured.MaxIterations)
+	if captured.MaxLoopCycles != 7 {
+		t.Errorf("MaxLoopCycles = %d, want 7", captured.MaxLoopCycles)
 	}
 }
 
@@ -248,7 +248,7 @@ func TestLoop_subAgentConcurrencyCap(t *testing.T) {
 	reg.Register(&tools.TaskTool{Runner: runner})
 
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations:          5,
+		MaxLoopCycles:          5,
 		MaxSubAgentConcurrency: maxConc}, Provider: fp,
 		Registry: reg,
 	}
@@ -280,7 +280,7 @@ func TestLoop_subAgentParallelWithoutCap(t *testing.T) {
 	reg := tools.NewEmptyRegistry()
 	reg.Register(&tools.TaskTool{Runner: runner})
 
-	loop := &Loop{Config: LoopConfig{SystemPrompt: "test", MaxIterations: 5}, Provider: fp, Registry: reg}
+	loop := &Loop{Config: LoopConfig{SystemPrompt: "test", MaxLoopCycles: 5}, Provider: fp, Registry: reg}
 	start := time.Now()
 	if _, err := loop.Run(context.Background(), "fan out"); err != nil {
 		t.Fatalf("Run() error: %v", err)
@@ -324,7 +324,7 @@ func TestLoop_subAgentInterruptPropagation(t *testing.T) {
 	reg := tools.NewEmptyRegistry()
 	reg.Register(&tools.TaskTool{Runner: runner})
 
-	loop := &Loop{Config: LoopConfig{SystemPrompt: "test", MaxIterations: 5}, Provider: fp, Registry: reg}
+	loop := &Loop{Config: LoopConfig{SystemPrompt: "test", MaxLoopCycles: 5}, Provider: fp, Registry: reg}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -391,7 +391,7 @@ func TestLoop_subAgentStuckChildTimeout(t *testing.T) {
 	reg.Register(&tools.TaskTool{Runner: hangingRunner})
 
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations:     5,
+		MaxLoopCycles:     5,
 		StuckChildTimeout: 100 * time.Millisecond}, Provider: fp,
 		Registry: reg,
 	}
@@ -453,7 +453,7 @@ func TestLoop_subAgentHeartbeatKeepsAlive(t *testing.T) {
 	reg.Register(&tools.TaskTool{Runner: beatingRunner})
 
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations:     5,
+		MaxLoopCycles:     5,
 		StuckChildTimeout: 50 * time.Millisecond}, Provider: fp,
 		Registry: reg,
 	}
@@ -499,7 +499,7 @@ func TestLoop_subAgentStuckChildDisabled(t *testing.T) {
 	reg.Register(&tools.TaskTool{Runner: hangingRunner})
 
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations:     5,
+		MaxLoopCycles:     5,
 		StuckChildTimeout: 0}, Provider: fp,
 		Registry: reg,
 	}

@@ -154,7 +154,7 @@ func TestLoop_plainTextResponse(t *testing.T) {
 
 	reg := tools.NewRegistry()
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "You are helpful.",
-		MaxIterations: 10}, Provider: fp,
+		MaxLoopCycles: 10}, Provider: fp,
 		Registry: reg,
 	}
 
@@ -194,7 +194,7 @@ func TestLoop_followupChannelInjects(t *testing.T) {
 		FollowUps: followupCh,
 		Config: LoopConfig{
 			SystemPrompt:  "You are helpful.",
-			MaxIterations: 10,
+			MaxLoopCycles: 10,
 		},
 	}
 
@@ -240,7 +240,7 @@ func TestLoop_steerChannelInjects(t *testing.T) {
 
 	reg := tools.NewRegistry()
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "You are helpful.",
-		MaxIterations: 10}, Provider: fp,
+		MaxLoopCycles: 10}, Provider: fp,
 		Registry: reg,
 
 		Steer: steerCh,
@@ -298,7 +298,7 @@ func TestLoop_toolCalling(t *testing.T) {
 
 	reg := tools.NewRegistry()
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "You are helpful.",
-		MaxIterations: 10}, Provider: fp,
+		MaxLoopCycles: 10}, Provider: fp,
 		Registry: reg,
 	}
 
@@ -316,7 +316,7 @@ func TestLoop_toolCalling(t *testing.T) {
 	}
 }
 
-func TestLoop_hitsMaxIterations(t *testing.T) {
+func TestLoop_hitsMaxLoopCycles(t *testing.T) {
 	// Model keeps calling tools forever
 	fp := &fakeProvider{}
 	for i := 0; i < 20; i++ {
@@ -343,7 +343,7 @@ func TestLoop_hitsMaxIterations(t *testing.T) {
 		Registry: reg,
 		Config: LoopConfig{
 			SystemPrompt:  "You are helpful.",
-			MaxIterations: 3,
+			MaxLoopCycles: 3,
 		},
 	}
 
@@ -392,7 +392,7 @@ func TestLoop_toolResultTruncation(t *testing.T) {
 	// Add a tool that returns a long result
 	reg.Register(&fakeTool{name: "echo", result: longText})
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations: 5}, Provider: fp,
+		MaxLoopCycles: 5}, Provider: fp,
 		Registry: reg,
 	}
 
@@ -456,7 +456,7 @@ func TestLoop_toolResultNotTruncatedWithinLimits(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(&fakeTool{name: "echo", result: shortText})
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations: 5}, Provider: fp,
+		MaxLoopCycles: 5}, Provider: fp,
 		Registry: reg,
 	}
 
@@ -579,7 +579,7 @@ func TestLoop_loopDetection(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(&fakeTool{name: "echo", result: "same result"})
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations:    10,
+		MaxLoopCycles:    10,
 		LoopDetectCount:  3,
 		LoopDetectWindow: 5}, Provider: fp,
 		Registry: reg,
@@ -677,7 +677,7 @@ func TestLoop_noFalsePositiveOnDifferentArgs(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.Register(&fakeTool{name: "write", result: "File written successfully"})
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations:    10,
+		MaxLoopCycles:    10,
 		LoopDetectCount:  3,
 		LoopDetectWindow: 5}, Provider: fp,
 		Registry: reg,
@@ -729,7 +729,7 @@ func TestLoop_parallelToolExecution(t *testing.T) {
 	reg.Register(&fakeTool{name: "slow1", result: "result1", delay: 100 * time.Millisecond, callCnt: &cnt, mu: &mu})
 	reg.Register(&fakeTool{name: "slow2", result: "result2", delay: 100 * time.Millisecond, callCnt: &cnt, mu: &mu})
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations: 5}, Provider: fp,
+		MaxLoopCycles: 5}, Provider: fp,
 		Registry: reg,
 	}
 
@@ -804,7 +804,7 @@ func TestLoop_toolConcurrencyCapEnforced(t *testing.T) {
 	reg.Register(&fakeTool{name: "slow", result: "ok", delay: toolDelay, concurrent: &concurrent, maxSeen: &maxSeen})
 
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations:      5,
+		MaxLoopCycles:      5,
 		MaxToolConcurrency: cap}, Provider: fp,
 		Registry: reg,
 	}
@@ -837,7 +837,7 @@ func TestLoop_retryOnError(t *testing.T) {
 
 	reg := tools.NewRegistry()
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations: 5,
+		MaxLoopCycles: 5,
 		MaxRetries:    3}, Provider: fp,
 		Registry: reg,
 	}
@@ -863,7 +863,7 @@ func TestLoop_retryExceedsMax(t *testing.T) {
 
 	reg := tools.NewRegistry()
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations: 5,
+		MaxLoopCycles: 5,
 		MaxRetries:    2}, Provider: fp,
 		Registry: reg,
 	}
@@ -894,7 +894,7 @@ func TestLoop_tokenUsageTracking(t *testing.T) {
 
 	reg := tools.NewRegistry()
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations: 5}, Provider: fp,
+		MaxLoopCycles: 5}, Provider: fp,
 		Registry: reg,
 	}
 
@@ -919,7 +919,7 @@ func TestLoop_tokenUsageTracking(t *testing.T) {
 func TestLoop_contextWindowTrimming(t *testing.T) {
 	reg := tools.NewRegistry()
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations: 1,
+		MaxLoopCycles: 1,
 		ContextWindow: 10000}, Provider: &fakeProvider{},
 		Registry: reg,
 	}
@@ -974,7 +974,7 @@ func TestLoop_thinkingViaBroker(t *testing.T) {
 	}}
 	reg := tools.NewRegistry()
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations: 5}, Provider: bsp,
+		MaxLoopCycles: 5}, Provider: bsp,
 		Registry: reg,
 
 		View: thinkingView,
@@ -1139,7 +1139,7 @@ func TestLoop_sessionPersistenceAcrossRunCalls(t *testing.T) {
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "You are a test bot.",
 		SessionID: sessionID,
 
-		MaxIterations: 5}, Provider: fp,
+		MaxLoopCycles: 5}, Provider: fp,
 		Registry: reg,
 
 		Persister: NewSessionPersister(db, nil, sessionID),
@@ -1215,7 +1215,7 @@ func TestLoop_sessionPersistenceWithToolCalls(t *testing.T) {
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "You are a test bot.",
 		SessionID: sessionID,
 
-		MaxIterations: 5}, Provider: fp,
+		MaxLoopCycles: 5}, Provider: fp,
 		Registry: reg,
 
 		Persister: NewSessionPersister(db, nil, sessionID),
@@ -1287,7 +1287,7 @@ func TestLoop_sessionPersistenceMultipleTurns(t *testing.T) {
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "You are a test bot.",
 		SessionID: sessionID,
 
-		MaxIterations: 5}, Provider: fp,
+		MaxLoopCycles: 5}, Provider: fp,
 		Registry: reg,
 
 		Persister: NewSessionPersister(db, nil, sessionID),
@@ -1435,7 +1435,7 @@ func TestLoop_autoCompactOnContextOverflow(t *testing.T) {
 
 	reg := tools.NewRegistry()
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test prompt",
-		MaxIterations: 3,
+		MaxLoopCycles: 3,
 		MaxRetries:    0, // No regular retries — auto-compact handles it
 		ContextWindow: 1000,
 
@@ -1478,7 +1478,7 @@ func TestLoop_autoCompactDoesNotTriggerOnNonContextError(t *testing.T) {
 	}
 
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations: 3,
+		MaxLoopCycles: 3,
 		MaxRetries:    2,
 		ContextWindow: 1000}, Provider: fp,
 		Registry: reg,
@@ -1519,7 +1519,7 @@ func TestLoop_autoCompactCapped(t *testing.T) {
 
 	reg := tools.NewRegistry()
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations: 3,
+		MaxLoopCycles: 3,
 		MaxRetries:    2,
 		ContextWindow: 500,
 
@@ -1586,7 +1586,7 @@ func TestConflictDetection_ReportsConflictInConversation(t *testing.T) {
 	reg.Register(&fakeTool{name: "read", result: "file contents"})
 
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations: 10}, Provider: fp,
+		MaxLoopCycles: 10}, Provider: fp,
 		Registry: reg,
 
 		ConflictTracker: tracker,
@@ -1654,7 +1654,7 @@ func TestConflictDetection_NoConflictWhenTrackerEmpty(t *testing.T) {
 	reg.Register(&fakeTool{name: "read", result: "file contents"})
 
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations: 10}, Provider: fp,
+		MaxLoopCycles: 10}, Provider: fp,
 		Registry: reg,
 
 		ConflictTracker: tracker,
@@ -1735,7 +1735,7 @@ func TestConflictDetection_TrackerClearedAfterIteration(t *testing.T) {
 	reg.Register(&fakeTool{name: "read", result: "file contents"})
 
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxIterations: 10}, Provider: fp,
+		MaxLoopCycles: 10}, Provider: fp,
 		Registry: reg,
 
 		ConflictTracker: tracker,

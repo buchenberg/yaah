@@ -115,8 +115,8 @@ type Loop struct {
 // LoopConfig holds immutable configuration set once before Run.
 type LoopConfig struct {
 	Model                  string
-	MaxIterations          int
-	MaxTurns               int
+	MaxLoopCycles          int
+	MaxToolTurns           int
 	JSONMode               bool
 	ToolsLevel             ToolsLevel
 	ContextWindow          int
@@ -130,7 +130,7 @@ type LoopConfig struct {
 	LoopDetectCount        int
 	LoopDetectWindow       int
 	ApprovalMode           string
-	WrapUpAhead            int
+	WrapUpThreshold        int
 	MaxInlineToolsPerTurn  int
 	MaxToolConcurrency     int
 	MaxSubAgentConcurrency int
@@ -232,7 +232,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 	messages := l.State.Messages
 	pipe := l.buildPipeline()
 
-	for iter := 0; iter < l.Config.MaxIterations; iter++ {
+	for iter := 0; iter < l.Config.MaxLoopCycles; iter++ {
 		select {
 		case <-ctx.Done():
 			l.State.Messages = messages
@@ -326,7 +326,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 	}
 
 	l.State.Messages = messages
-	return "", fmt.Errorf("max iterations (%d) reached", l.Config.MaxIterations)
+	return "", fmt.Errorf("max iterations (%d) reached", l.Config.MaxLoopCycles)
 }
 
 // publishDone publishes the final DoneEvent to the broker view.
@@ -404,8 +404,8 @@ func (l *Loop) buildTurnRequest(ctx context.Context, iter int, messages []types.
 		Messages:      messages,
 		Tools:         l.buildToolDefs(),
 		Iteration:     iter,
-		MaxTurns:      l.Config.MaxTurns,
-		MaxIterations: l.Config.MaxIterations,
+		MaxToolTurns:  l.Config.MaxToolTurns,
+		MaxLoopCycles: l.Config.MaxLoopCycles,
 		Model:         l.Config.Model,
 		SystemPrompt:  l.Config.SystemPrompt,
 	}
@@ -423,24 +423,24 @@ func (l *Loop) buildTurnRequest(ctx context.Context, iter int, messages []types.
 		Tools:    l.buildToolsForLevel(),
 	}
 
-	if l.Config.MaxTurns > 0 {
-		effective := l.Config.MaxTurns
-		if effective >= l.Config.MaxIterations {
-			effective = l.Config.MaxIterations - 1
+	if l.Config.MaxToolTurns > 0 {
+		effective := l.Config.MaxToolTurns
+		if effective >= l.Config.MaxLoopCycles {
+			effective = l.Config.MaxLoopCycles - 1
 		}
 		if iter >= effective {
 			req.Tools = nil
 			if l.Config.OtelEnabled && turnSpan != nil {
 				turnSpan.AddEvent("maxturns.stripped", trace.WithAttributes(
-					attribute.Int("maxturns.limit", l.Config.MaxTurns),
+					attribute.Int("maxturns.limit", l.Config.MaxToolTurns),
 					attribute.Int("maxturns.iteration", iter),
 				))
 			}
-		} else if l.Config.WrapUpAhead > 0 && iter >= effective-l.Config.WrapUpAhead {
-			l.injectWrapUp(&req, turnSpan, effective-iter)
+		} else if l.Config.WrapUpThreshold > 0 && iter >= effective-l.Config.WrapUpThreshold {
+			l.injectWrapUpNotice(&req, turnSpan, effective-iter)
 		}
-	} else if l.Config.WrapUpAhead > 0 && iter >= l.Config.MaxIterations-l.Config.WrapUpAhead {
-		l.injectWrapUp(&req, turnSpan, l.Config.MaxIterations-iter)
+	} else if l.Config.WrapUpThreshold > 0 && iter >= l.Config.MaxLoopCycles-l.Config.WrapUpThreshold {
+		l.injectWrapUpNotice(&req, turnSpan, l.Config.MaxLoopCycles-iter)
 	}
 
 	if l.Config.JSONMode {
@@ -591,12 +591,12 @@ func (l *Loop) executeToolPhase(turnCtx context.Context, iter int, msg types.Mes
 	return nil
 }
 
-// injectWrapUp appends a transient wrap-up notice to the request,
+// injectWrapUpNotice appends a transient wrap-up notice to the request,
 // warning the model that its iteration budget is nearly exhausted so it
 // finishes and summarizes before tools are stripped or the run ends.
 // The notice lives only in the request — it is never persisted to the
 // conversation history, and the countdown updates on each iteration.
-func (l *Loop) injectWrapUp(req *types.ChatRequest, turnSpan trace.Span, remaining int) {
+func (l *Loop) injectWrapUpNotice(req *types.ChatRequest, turnSpan trace.Span, remaining int) {
 	req.Messages = append(req.Messages, types.UserMsg(prompts.WrapUpMessage(remaining)))
 	if l.Config.OtelEnabled && turnSpan != nil {
 		turnSpan.AddEvent("maxturns.wrap_up", trace.WithAttributes(
@@ -640,11 +640,11 @@ func (l *Loop) applyDefaults() {
 	if l.State.CompactionBudgetMultiplier <= 0 {
 		l.State.CompactionBudgetMultiplier = 1.0
 	}
-	if l.Config.MaxIterations <= 0 {
-		l.Config.MaxIterations = 50
+	if l.Config.MaxLoopCycles <= 0 {
+		l.Config.MaxLoopCycles = 50
 	}
-	if l.Config.WrapUpAhead == 0 {
-		l.Config.WrapUpAhead = 1
+	if l.Config.WrapUpThreshold == 0 {
+		l.Config.WrapUpThreshold = 1
 	}
 	if l.Config.Model == "" {
 		l.Config.Model = "deepseek-v4-pro"
