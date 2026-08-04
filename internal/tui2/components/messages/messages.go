@@ -40,19 +40,19 @@ func AppendAssistant(tv *tview.TextView, text string) {
 
 // AppendToolStart appends a tool start message to the TextView and scrolls.
 func AppendToolStart(tv *tview.TextView, name, args string) {
-	tv.SetText(tv.GetText(true) + tool.Render(name+" "+args))
+	tv.SetText(tv.GetText(true) + tool.Start(name, args))
 	tv.ScrollToEnd()
 }
 
 // AppendToolEnd appends a tool end message to the TextView and scrolls.
 func AppendToolEnd(tv *tview.TextView, name string) {
-	tv.SetText(tv.GetText(true) + tool.Render(name+" done"))
+	tv.SetText(tv.GetText(true) + tool.End(name))
 	tv.ScrollToEnd()
 }
 
 // AppendToolSummary appends a tool summary message to the TextView and scrolls.
 func AppendToolSummary(tv *tview.TextView, name, summary string) {
-	tv.SetText(tv.GetText(true) + tool.Render(name+": "+summary))
+	tv.SetText(tv.GetText(true) + tool.Summary(name, summary))
 	tv.ScrollToEnd()
 }
 
@@ -70,12 +70,12 @@ func AppendSystem(tv *tview.TextView, text string) {
 
 // AppendSubAgentStart appends a sub-agent start message to the TextView and scrolls.
 func AppendSubAgentStart(tv *tview.TextView, text string) {
-	tv.SetText(tv.GetText(true) + subagent.Render(text))
+	tv.SetText(tv.GetText(true) + subagent.Start(text))
 	tv.ScrollToEnd()
 }
 
 // AppendSubAgentEnd appends a sub-agent end message to the TextView and scrolls.
 func AppendSubAgentEnd(tv *tview.TextView, text string) {
-	tv.SetText(tv.GetText(true) + subagent.Render(text))
+	tv.SetText(tv.GetText(true) + subagent.End(text))
 	tv.ScrollToEnd()
 }
