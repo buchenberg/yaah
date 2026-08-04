@@ -23,11 +23,10 @@ func prunableLoop(t *testing.T, fp *fakeProvider) *Loop {
 	big := strings.Repeat("payload-", pruneBig/8)
 	reg := tools.NewRegistry()
 	reg.Register(&fakeTool{name: "echo", result: big})
-	return &Loop{
-		Provider:      fp,
-		Registry:      reg,
-		SystemPrompt:  "test",
-		MaxIterations: 10,
+	return &Loop{Config: LoopConfig{SystemPrompt: "test",
+		MaxIterations: 10}, Provider: fp,
+		Registry: reg,
+
 		CtxMgr: &ContextManager{
 			Pruner: pipeline.NewPruner(pipeline.PruneConfig{
 				ProtectTokens: 1000,
@@ -72,7 +71,7 @@ func TestLoop_Pruner_RequestSeesStubs(t *testing.T) {
 		},
 	}
 	loop := prunableLoop(t, fp)
-	loop.Messages = oldTurn()
+	loop.State.Messages = oldTurn()
 
 	if _, err := loop.Run(context.Background(), "do work"); err != nil {
 		t.Fatalf("Run error: %v", err)
@@ -126,13 +125,13 @@ func TestLoop_Pruner_MessagesIntact(t *testing.T) {
 		},
 	}
 	loop := prunableLoop(t, fp)
-	loop.Messages = oldTurn()
+	loop.State.Messages = oldTurn()
 
 	if _, err := loop.Run(context.Background(), "do work"); err != nil {
 		t.Fatalf("Run error: %v", err)
 	}
 
-	for _, m := range loop.Messages {
+	for _, m := range loop.State.Messages {
 		if m.Role == "tool" && (m.ToolCallID == "call_old" || m.ToolCallID == "call_new") {
 			if len(m.Content) != pruneBig {
 				t.Errorf("retained message %q content was mutated: len=%d want %d (stubbed? %v)",
@@ -160,7 +159,7 @@ func TestLoop_Pruner_ToolCallIDLinkagePreserved(t *testing.T) {
 		},
 	}
 	loop := prunableLoop(t, fp)
-	loop.Messages = oldTurn()
+	loop.State.Messages = oldTurn()
 
 	if _, err := loop.Run(context.Background(), "do work"); err != nil {
 		t.Fatalf("Run error: %v", err)
@@ -194,11 +193,11 @@ func TestLoop_Pruner_ResetOnCompaction(t *testing.T) {
 			}}},
 		},
 	}
-	loop := &Loop{
-		Provider:      compactFP,
-		SystemPrompt:  "test",
+	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
 		Model:         "test",
-		ContextWindow: 500, // small → compaction fires readily
+		ContextWindow: 500}, Provider: compactFP,
+
+		// small → compaction fires readily
 		CtxMgr: &ContextManager{
 			Pruner: pipeline.NewPruner(pipeline.PruneConfig{ProtectTokens: 1, MinReclaim: 1, MinTurns: 1}),
 		},
@@ -217,9 +216,9 @@ func TestLoop_Pruner_ResetOnCompaction(t *testing.T) {
 	}
 
 	// Build a large history that forces compaction: system + 13 big user msgs.
-	loop.Messages = []types.Message{types.SystemMsg("test")}
+	loop.State.Messages = []types.Message{types.SystemMsg("test")}
 	for i := 0; i < 13; i++ {
-		loop.Messages = append(loop.Messages, types.UserMsg(strings.Repeat("y", 10000)))
+		loop.State.Messages = append(loop.State.Messages, types.UserMsg(strings.Repeat("y", 10000)))
 	}
 
 	loop.compactContext(context.Background(), 0.5)
@@ -248,14 +247,12 @@ func TestLoop_Pruner_DisabledViaPipeline(t *testing.T) {
 	}
 	reg := tools.NewRegistry()
 	reg.Register(&fakeTool{name: "echo", result: big})
-	loop := &Loop{
-		Provider:         fp,
-		Registry:         reg,
-		SystemPrompt:     "test",
+	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
 		MaxIterations:    10,
-		PipelineDisabled: []string{"soft_prune"},
+		PipelineDisabled: []string{"soft_prune"}}, Provider: fp,
+		Registry: reg,
 	}
-	loop.Messages = oldTurn()
+	loop.State.Messages = oldTurn()
 
 	if _, err := loop.Run(context.Background(), "do work"); err != nil {
 		t.Fatalf("Run error: %v", err)

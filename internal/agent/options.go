@@ -28,12 +28,12 @@ func NewLoop(provider Provider, registry *tools.Registry, opts ...Option) *Loop 
 
 // WithModel sets the model name.
 func WithModel(model string) Option {
-	return func(l *Loop) { l.Model = model }
+	return func(l *Loop) { l.Config.Model = model }
 }
 
 // WithSystemPrompt sets the system prompt.
 func WithSystemPrompt(prompt string) Option {
-	return func(l *Loop) { l.SystemPrompt = prompt }
+	return func(l *Loop) { l.Config.SystemPrompt = prompt }
 }
 
 // WithView sets the event view for TUI/REPL rendering.
@@ -43,12 +43,12 @@ func WithView(v View) Option {
 
 // WithMessages sets the initial conversation history (for session resume).
 func WithMessages(msgs []types.Message) Option {
-	return func(l *Loop) { l.Messages = msgs }
+	return func(l *Loop) { l.State.Messages = msgs }
 }
 
 // WithSessionID sets the session identifier.
 func WithSessionID(id string) Option {
-	return func(l *Loop) { l.SessionID = id }
+	return func(l *Loop) { l.Config.SessionID = id }
 }
 
 // WithPersister sets the session persister.
@@ -73,27 +73,27 @@ func WithFallback(provider Provider, model string) Option {
 func WithCompactProvider(provider Provider, model string) Option {
 	return func(l *Loop) {
 		l.CompactProvider = provider
-		l.CompactModel = model
+		l.Config.CompactModel = model
 	}
 }
 
 // WithApprovalMode sets the tool approval mode.
 func WithApprovalMode(mode string) Option {
-	return func(l *Loop) { l.ApprovalMode = mode }
+	return func(l *Loop) { l.Config.ApprovalMode = mode }
 }
 
 // WithPipeline configures the middleware pipeline.
 func WithPipeline(enabled, disabled []string) Option {
 	return func(l *Loop) {
-		l.PipelineNames = enabled
-		l.PipelineDisabled = disabled
+		l.Config.PipelineNames = enabled
+		l.Config.PipelineDisabled = disabled
 	}
 }
 
 // WithPermissionRules sets the path-based permission rules for the
 // PermissionMiddleware. When nil, no path-filtering is applied.
 func WithPermissionRules(rules []pipeline.PermissionRule) Option {
-	return func(l *Loop) { l.PermissionRules = rules }
+	return func(l *Loop) { l.Config.PermissionRules = rules }
 }
 
 // WithSteer sets the mid-turn steering channel.
@@ -113,29 +113,29 @@ func WithConflictTracker(t *tools.ConflictTracker) Option {
 
 // WithToolsLevel sets the tool visibility level.
 func WithToolsLevel(level ToolsLevel) Option {
-	return func(l *Loop) { l.ToolsLevel = level }
+	return func(l *Loop) { l.Config.ToolsLevel = level }
 }
 
 // WithOtel enables OpenTelemetry tracing.
 func WithOtel(enabled, verbose bool) Option {
 	return func(l *Loop) {
-		l.OtelEnabled = enabled
-		l.OtelVerbose = verbose
+		l.Config.OtelEnabled = enabled
+		l.Config.OtelVerbose = verbose
 	}
 }
 
 // WithSubAgentConcurrency sets the sub-agent concurrency cap and timeouts.
 func WithSubAgentConcurrency(max int, stuckTimeout time.Duration, stuckTimeouts map[string]time.Duration) Option {
 	return func(l *Loop) {
-		l.MaxSubAgentConcurrency = max
-		l.StuckChildTimeout = stuckTimeout
-		l.StuckChildTimeouts = stuckTimeouts
+		l.Config.MaxSubAgentConcurrency = max
+		l.Config.StuckChildTimeout = stuckTimeout
+		l.Config.StuckChildTimeouts = stuckTimeouts
 	}
 }
 
-// LoopConfig holds the full set of tuning parameters typically derived
-// from config.yaml. Use WithLoopConfig to apply them all at once.
-type LoopConfig struct {
+// AgentConfig holds the full set of tuning parameters typically derived
+// from config.yaml. Use WithAgentConfig to apply them all at once.
+type AgentConfig struct {
 	MaxIterations          int
 	MaxTurns               int
 	MaxRetries             int
@@ -161,29 +161,29 @@ type LoopConfig struct {
 	JSONMode               bool
 }
 
-// WithLoopConfig applies all tuning parameters from a LoopConfig.
+// WithAgentConfig applies all tuning parameters from an AgentConfig.
 // Zero values are left unset (applyDefaults fills them later).
-func WithLoopConfig(cfg LoopConfig) Option {
+func WithAgentConfig(cfg AgentConfig) Option {
 	return func(l *Loop) {
-		l.MaxIterations = cfg.MaxIterations
-		l.MaxTurns = cfg.MaxTurns
-		l.MaxRetries = cfg.MaxRetries
+		l.Config.MaxIterations = cfg.MaxIterations
+		l.Config.MaxTurns = cfg.MaxTurns
+		l.Config.MaxRetries = cfg.MaxRetries
 		if cfg.RetryBackoffSecs > 0 {
-			l.RetryBackoff = time.Duration(cfg.RetryBackoffSecs) * time.Second
+			l.Config.RetryBackoff = time.Duration(cfg.RetryBackoffSecs) * time.Second
 		}
-		l.ContextWindow = cfg.ContextWindow
-		l.CompactionThreshold = cfg.CompactionThreshold
-		l.RawCompactionThreshold = cfg.RawCompactionThreshold
-		l.CompactMaxMessages = cfg.CompactMaxMessages
-		l.EstimateFactor = cfg.EstimateFactor
-		l.QualityGates = cfg.QualityGates
-		l.LoopDetectCount = cfg.LoopDetectCount
-		l.LoopDetectWindow = cfg.LoopDetectWindow
-		l.MaxToolConcurrency = cfg.MaxToolConcurrency
-		l.WrapUpAhead = cfg.WrapUpAhead
-		l.MaxInlineToolsPerTurn = cfg.MaxInlineToolsPerTurn
-		l.PromptCaching = cfg.PromptCaching
-		l.JSONMode = cfg.JSONMode
+		l.Config.ContextWindow = cfg.ContextWindow
+		l.Config.CompactionThreshold = cfg.CompactionThreshold
+		l.Config.RawCompactionThreshold = cfg.RawCompactionThreshold
+		l.Config.CompactMaxMessages = cfg.CompactMaxMessages
+		l.Config.EstimateFactor = cfg.EstimateFactor
+		l.Config.QualityGates = cfg.QualityGates
+		l.Config.LoopDetectCount = cfg.LoopDetectCount
+		l.Config.LoopDetectWindow = cfg.LoopDetectWindow
+		l.Config.MaxToolConcurrency = cfg.MaxToolConcurrency
+		l.Config.WrapUpAhead = cfg.WrapUpAhead
+		l.Config.MaxInlineToolsPerTurn = cfg.MaxInlineToolsPerTurn
+		l.Config.PromptCaching = cfg.PromptCaching
+		l.Config.JSONMode = cfg.JSONMode
 		if l.CtxMgr == nil {
 			l.CtxMgr = &ContextManager{}
 		}

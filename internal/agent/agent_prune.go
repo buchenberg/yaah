@@ -28,7 +28,7 @@ func (l *Loop) pruneHooks() pipeline.PruneHooks {
 	hooks := pipeline.PruneHooks{
 		Emit: l.pruneEmit,
 	}
-	if l.OtelEnabled {
+	if l.Config.OtelEnabled {
 		hooks.Otel = l.pruneOtel
 	}
 	return hooks

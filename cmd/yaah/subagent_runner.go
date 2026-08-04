@@ -270,12 +270,12 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			result += "\n...[sub-agent output trimmed to context budget " + formatBytes(budget) + "]"
 		}
 
-		tools.AddSubAgentUsage(ctx, subLoop.TotalTokens)
+		tools.AddSubAgentUsage(ctx, subLoop.State.TotalTokens)
 
 		if span := trace.SpanFromContext(ctx); span.IsRecording() {
 			span.SetAttributes(
-				attribute.Int("subagent.prompt_tokens", subLoop.TotalTokens.PromptTokens),
-				attribute.Int("subagent.completion_tokens", subLoop.TotalTokens.CompletionTokens),
+				attribute.Int("subagent.prompt_tokens", subLoop.State.TotalTokens.PromptTokens),
+				attribute.Int("subagent.completion_tokens", subLoop.State.TotalTokens.CompletionTokens),
 				attribute.String("subagent.model", subModel),
 			)
 		}

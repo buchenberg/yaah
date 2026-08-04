@@ -59,13 +59,11 @@ func TestWrapUp_InjectedBeforeStrip(t *testing.T) {
 		toolCallResponse("c2"),
 		textResponse("final report"),
 	}}
-	loop := &Loop{
-		Provider:      fp,
-		Registry:      tools.NewRegistry(),
-		SystemPrompt:  "You are helpful.",
+	loop := &Loop{Config: LoopConfig{SystemPrompt: "You are helpful.",
 		MaxIterations: 10,
 		MaxTurns:      2,
-		WrapUpAhead:   1,
+		WrapUpAhead:   1}, Provider: fp,
+		Registry: tools.NewRegistry(),
 	}
 
 	resp, err := loop.Run(context.Background(), "do the work")
@@ -102,13 +100,11 @@ func TestWrapUp_Disabled(t *testing.T) {
 		toolCallResponse("c2"),
 		textResponse("done"),
 	}}
-	loop := &Loop{
-		Provider:      fp,
-		Registry:      tools.NewRegistry(),
-		SystemPrompt:  "You are helpful.",
+	loop := &Loop{Config: LoopConfig{SystemPrompt: "You are helpful.",
 		MaxIterations: 10,
 		MaxTurns:      2,
-		WrapUpAhead:   -1,
+		WrapUpAhead:   -1}, Provider: fp,
+		Registry: tools.NewRegistry(),
 	}
 
 	if _, err := loop.Run(context.Background(), "do the work"); err != nil {
@@ -129,13 +125,11 @@ func TestWrapUp_HardIterationLimit(t *testing.T) {
 		toolCallResponse("c2"),
 		toolCallResponse("c3"),
 	}}
-	loop := &Loop{
-		Provider:      fp,
-		Registry:      tools.NewRegistry(),
-		SystemPrompt:  "You are helpful.",
+	loop := &Loop{Config: LoopConfig{SystemPrompt: "You are helpful.",
 		MaxIterations: 3,
 		MaxTurns:      0,
-		WrapUpAhead:   1,
+		WrapUpAhead:   1}, Provider: fp,
+		Registry: tools.NewRegistry(),
 	}
 
 	_, err := loop.Run(context.Background(), "run out the clock")

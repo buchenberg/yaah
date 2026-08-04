@@ -48,31 +48,30 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 	}
 
 	l := &Loop{
-		Provider:     provider,
-		Registry:     registry,
-		Model:        model,
-		SystemPrompt: systemPrompt,
-		View:         NoopView{},
-
-		MaxIterations:      cfg.MaxIterations,
-		MaxTurns:           cfg.MaxTurns,
-		MaxRetries:         cfg.MaxRetries,
-		RetryBackoff:       time.Duration(cfg.RetryBackoffSecs) * time.Second,
-		MaxToolConcurrency: cfg.MaxToolConcurrency,
-		JSONMode:           cfg.JSONMode,
-
-		PermissionRules: cfg.PermissionRules,
-		ContextWindow:   cfg.ContextWindow,
-		OtelEnabled:     cfg.OtelEnabled,
-		OtelVerbose:     cfg.OtelVerbose,
-
-		ApprovalMode: "allow",
-		ToolsLevel:   FullTools,
+		Provider: provider,
+		Registry: registry,
+		View:     NoopView{},
+		Config: LoopConfig{
+			Model:              model,
+			SystemPrompt:       systemPrompt,
+			MaxIterations:      cfg.MaxIterations,
+			MaxTurns:           cfg.MaxTurns,
+			MaxRetries:         cfg.MaxRetries,
+			RetryBackoff:       time.Duration(cfg.RetryBackoffSecs) * time.Second,
+			MaxToolConcurrency: cfg.MaxToolConcurrency,
+			JSONMode:           cfg.JSONMode,
+			PermissionRules:    cfg.PermissionRules,
+			ContextWindow:      cfg.ContextWindow,
+			OtelEnabled:        cfg.OtelEnabled,
+			OtelVerbose:        cfg.OtelVerbose,
+			ApprovalMode:       "allow",
+			ToolsLevel:         FullTools,
+			PipelineNames:      nil,
+			PipelineDisabled:   nil,
+		},
 
 		// Sub-agents use an in-memory pruner only — no compaction pipeline.
-		Middleware:       nil,
-		PipelineNames:    nil,
-		PipelineDisabled: nil,
+		Middleware: nil,
 	}
 
 	l.CtxMgr = NewContextManager(provider, model)
@@ -85,8 +84,8 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 	l.CtxMgr.OtelEnabled = cfg.OtelEnabled
 	l.CtxMgr.EnsurePruner()
 
-	if l.MaxToolConcurrency > 0 {
-		l.toolConcurrency = pipeline.NewToolConcurrencyMiddleware(l.MaxToolConcurrency)
+	if l.Config.MaxToolConcurrency > 0 {
+		l.toolConcurrency = pipeline.NewToolConcurrencyMiddleware(l.Config.MaxToolConcurrency)
 	}
 
 	return l

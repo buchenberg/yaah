@@ -372,7 +372,7 @@ func (s *agentSession) runHeadless(ctx context.Context, prompt string) (string, 
 			time.Duration(s.cfg.Agent.SubAgent.StuckChildTimeout)*time.Second,
 			buildStuckChildTimeouts(s.cfg.Agent.SubAgent),
 		),
-		agent.WithLoopConfig(agent.LoopConfig{
+		agent.WithAgentConfig(agent.AgentConfig{
 			MaxIterations:          s.cfg.Agent.Default.MaxIterations,
 			MaxTurns:               s.cfg.Agent.Default.MaxTurns,
 			MaxRetries:             s.cfg.Agent.Default.MaxRetries,
@@ -400,10 +400,10 @@ func (s *agentSession) runHeadless(ctx context.Context, prompt string) (string, 
 
 	response, err := loop.Run(ctx, prompt)
 
-	s.messages = loop.Messages
+	s.messages = loop.State.Messages
 	s.msgIdx = loop.Persister.MsgIdx()
 
-	return response, loop.TotalTokens, err
+	return response, loop.State.TotalTokens, err
 }
 
 // marshalJSON encodes v as indented JSON for tool result payloads.

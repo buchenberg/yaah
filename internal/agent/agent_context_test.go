@@ -98,12 +98,10 @@ func TestCompactContext_continuationGuard(t *testing.T) {
 			}},
 		}},
 	}
-	loop := &Loop{
-		Provider:        fp,
+	loop := &Loop{Config: LoopConfig{CompactModel: "test",
+		ContextWindow:  100,
+		EstimateFactor: 1.3}, Provider: fp,
 		CompactProvider: fp,
-		CompactModel:    "test",
-		ContextWindow:   100,
-		EstimateFactor:  1.3,
 	}
 
 	msgs := []types.Message{
@@ -121,7 +119,7 @@ func TestCompactContext_continuationGuard(t *testing.T) {
 		},
 	}}))
 	msgs = append(msgs, types.Message{Role: "tool", ToolCallID: "c1", Name: "read", Content: "result"})
-	loop.Messages = msgs
+	loop.State.Messages = msgs
 
 	loop.compactContext(context.Background(), 0.25)
 
@@ -132,12 +130,12 @@ func TestCompactContext_continuationGuard(t *testing.T) {
 	}
 	// Verify tool linkage: every assistant tool_call id has a matching tool result.
 	seen := make(map[string]bool)
-	for _, m := range loop.Messages {
+	for _, m := range loop.State.Messages {
 		if m.Role == "tool" {
 			seen[m.ToolCallID] = true
 		}
 	}
-	for _, m := range loop.Messages {
+	for _, m := range loop.State.Messages {
 		for _, tc := range m.ToolCalls {
 			if !seen[tc.ID] {
 				t.Errorf("orphaned tool call %q after compaction during continuation", tc.ID)
@@ -155,12 +153,10 @@ func TestCompactContext_preflightEstimate(t *testing.T) {
 			}},
 		}},
 	}
-	loop := &Loop{
-		Provider:        fp,
+	loop := &Loop{Config: LoopConfig{CompactModel: "test",
+		ContextWindow:  10000,
+		EstimateFactor: 1.3}, Provider: fp,
 		CompactProvider: fp,
-		CompactModel:    "test",
-		ContextWindow:   10000,
-		EstimateFactor:  1.3,
 	}
 
 	msgs := []types.Message{
@@ -170,17 +166,17 @@ func TestCompactContext_preflightEstimate(t *testing.T) {
 		msgs = append(msgs, types.UserMsg("msg "+strings.Repeat("x", 400)))
 	}
 	msgs = append(msgs, types.AssistantMsg("final response", nil))
-	loop.Messages = msgs
+	loop.State.Messages = msgs
 
-	if loop.LastPromptTokens != 0 {
+	if loop.State.LastPromptTokens != 0 {
 		t.Fatalf("expected LastPromptTokens=0 for preflight test")
 	}
 
-	before := len(loop.Messages)
+	before := len(loop.State.Messages)
 	loop.compactContext(context.Background(), 0.25)
 
-	if len(loop.Messages) >= before {
-		t.Errorf("compactContext should have compacted: before=%d, after=%d", before, len(loop.Messages))
+	if len(loop.State.Messages) >= before {
+		t.Errorf("compactContext should have compacted: before=%d, after=%d", before, len(loop.State.Messages))
 	}
 }
 
@@ -193,13 +189,10 @@ func TestCompactContext_actualTokensPreferred(t *testing.T) {
 			}},
 		}},
 	}
-	loop := &Loop{
-		Provider:         fp,
-		CompactProvider:  fp,
-		CompactModel:     "test",
-		ContextWindow:    100000,
-		EstimateFactor:   1.3,
-		LastPromptTokens: 500,
+	loop := &Loop{Config: LoopConfig{CompactModel: "test",
+		ContextWindow:  100000,
+		EstimateFactor: 1.3}, State: LoopState{LastPromptTokens: 500}, Provider: fp,
+		CompactProvider: fp,
 	}
 
 	msgs := []types.Message{
@@ -209,13 +202,13 @@ func TestCompactContext_actualTokensPreferred(t *testing.T) {
 		msgs = append(msgs, types.UserMsg("msg "+strings.Repeat("x", 50)))
 	}
 	msgs = append(msgs, types.AssistantMsg("final", nil))
-	loop.Messages = msgs
+	loop.State.Messages = msgs
 
-	before := len(loop.Messages)
+	before := len(loop.State.Messages)
 	loop.compactContext(context.Background(), 0.25)
 
-	if len(loop.Messages) != before {
-		t.Errorf("compactContext should NOT compact when LastPromptTokens (500) < target: before=%d, after=%d", before, len(loop.Messages))
+	if len(loop.State.Messages) != before {
+		t.Errorf("compactContext should NOT compact when LastPromptTokens (500) < target: before=%d, after=%d", before, len(loop.State.Messages))
 	}
 }
 
@@ -237,25 +230,19 @@ func TestCompactContext_customEstimateFactor(t *testing.T) {
 	}
 	msgs = append(msgs, types.AssistantMsg("final", nil))
 
-	factor1x := &Loop{
-		Provider:        fp,
+	factor1x := &Loop{Config: LoopConfig{CompactModel: "test",
+		ContextWindow:  500,
+		EstimateFactor: 1.0}, State: LoopState{Messages: append([]types.Message{}, msgs...)}, Provider: fp,
 		CompactProvider: fp,
-		CompactModel:    "test",
-		ContextWindow:   500,
-		EstimateFactor:  1.0,
-		Messages:        append([]types.Message{}, msgs...),
 	}
-	factor2x := &Loop{
-		Provider:        fp,
+	factor2x := &Loop{Config: LoopConfig{CompactModel: "test",
+		ContextWindow:  500,
+		EstimateFactor: 2.0}, State: LoopState{Messages: append([]types.Message{}, msgs...)}, Provider: fp,
 		CompactProvider: fp,
-		CompactModel:    "test",
-		ContextWindow:   500,
-		EstimateFactor:  2.0,
-		Messages:        append([]types.Message{}, msgs...),
 	}
 
-	est1x := preflightTokens(factor1x.Messages, nil, factor1x.EstimateFactor)
-	est2x := preflightTokens(factor2x.Messages, nil, factor2x.EstimateFactor)
+	est1x := preflightTokens(factor1x.State.Messages, nil, factor1x.Config.EstimateFactor)
+	est2x := preflightTokens(factor2x.State.Messages, nil, factor2x.Config.EstimateFactor)
 
 	if est2x <= est1x {
 		t.Errorf("2x factor estimate (%d) should be > 1x factor estimate (%d)", est2x, est1x)
@@ -541,13 +528,10 @@ func TestCompactContext_structuredSummary(t *testing.T) {
 			}},
 		}},
 	}
-	loop := &Loop{
-		Provider:        fp,
+	loop := &Loop{Config: LoopConfig{CompactModel: "test",
+		ContextWindow:  10000,
+		EstimateFactor: 1.3}, State: LoopState{Messages: largeConversation(30)}, Provider: fp,
 		CompactProvider: fp,
-		CompactModel:    "test",
-		ContextWindow:   10000,
-		EstimateFactor:  1.3,
-		Messages:        largeConversation(30),
 	}
 
 	loop.compactContext(context.Background(), 0.25)
@@ -573,26 +557,23 @@ func TestCompactContext_budgetSplit(t *testing.T) {
 		}},
 	}
 	msgs := largeConversation(30)
-	loop := &Loop{
-		Provider:        fp,
+	loop := &Loop{Config: LoopConfig{CompactModel: "test",
+		ContextWindow:  10000,       // preserveBudget = 2500
+		EstimateFactor: 1.3}, State: LoopState{Messages: msgs}, Provider: fp,
 		CompactProvider: fp,
-		CompactModel:    "test",
-		ContextWindow:   10000, // preserveBudget = 2500
-		EstimateFactor:  1.3,
-		Messages:        msgs,
 	}
 
-	before := len(loop.Messages)
+	before := len(loop.State.Messages)
 	loop.compactContext(context.Background(), 0.25)
 
 	// Token-budgeted split must reduce the message count (not a fixed keepCount).
-	if len(loop.Messages) >= before {
-		t.Errorf("expected compaction to reduce messages: before=%d after=%d", before, len(loop.Messages))
+	if len(loop.State.Messages) >= before {
+		t.Errorf("expected compaction to reduce messages: before=%d after=%d", before, len(loop.State.Messages))
 	}
 	// The preserved tail must be within the preserve budget (2500 tokens + overhead).
 	// Allow generous slack for the summary system message and message flooring.
 	tailTokens := 0
-	for _, m := range loop.Messages {
+	for _, m := range loop.State.Messages {
 		tailTokens += messageTokens(m)
 	}
 	if tailTokens > 4000 {
@@ -623,13 +604,10 @@ func TestCompactContext_toolLinkagePreserved(t *testing.T) {
 	}}))
 	msgs = append(msgs, types.Message{Role: "tool", ToolCallID: "t1", Name: "bash", Content: "all passed"})
 
-	loop := &Loop{
-		Provider:        fp,
+	loop := &Loop{Config: LoopConfig{CompactModel: "test",
+		ContextWindow:  10000,
+		EstimateFactor: 1.3}, State: LoopState{Messages: msgs}, Provider: fp,
 		CompactProvider: fp,
-		CompactModel:    "test",
-		ContextWindow:   10000,
-		EstimateFactor:  1.3,
-		Messages:        msgs,
 	}
 
 	loop.compactContext(context.Background(), 0.25)
@@ -637,12 +615,12 @@ func TestCompactContext_toolLinkagePreserved(t *testing.T) {
 	// Every assistant tool_call id in the compacted messages must have a
 	// matching tool result message after it.
 	seen := make(map[string]bool)
-	for _, m := range loop.Messages {
+	for _, m := range loop.State.Messages {
 		if m.Role == "tool" {
 			seen[m.ToolCallID] = true
 		}
 	}
-	for _, m := range loop.Messages {
+	for _, m := range loop.State.Messages {
 		for _, tc := range m.ToolCalls {
 			if !seen[tc.ID] {
 				t.Errorf("orphaned tool call %q: no matching tool result after compaction", tc.ID)
@@ -660,14 +638,11 @@ func TestCompactContext_recompaction(t *testing.T) {
 			}},
 		}},
 	}
-	loop := &Loop{
-		Provider:        fp,
+	loop := &Loop{Config: LoopConfig{CompactModel: "test",
+		ContextWindow:  10000,
+		EstimateFactor: 1.3}, State: LoopState{PreviousSummary: "## Goal\n- prior goal",
+		Messages: largeConversation(30)}, Provider: fp,
 		CompactProvider: fp,
-		CompactModel:    "test",
-		ContextWindow:   10000,
-		EstimateFactor:  1.3,
-		PreviousSummary: "## Goal\n- prior goal",
-		Messages:        largeConversation(30),
 	}
 
 	loop.compactContext(context.Background(), 0.25)
@@ -695,34 +670,28 @@ func TestCompactContext_cacheSubtraction(t *testing.T) {
 	msgs := largeConversation(30)
 
 	// Loop WITHOUT cache: LastPromptTokens=3000 > target(2500) -> compacts.
-	noCache := &Loop{
-		Provider:         &fakeProvider{responses: []*types.ChatResponse{summary()}},
-		CompactModel:     "test",
-		ContextWindow:    10000,
-		Messages:         append([]types.Message{}, msgs...),
-		LastPromptTokens: 3000,
+	noCache := &Loop{Config: LoopConfig{CompactModel: "test",
+		ContextWindow: 10000}, State: LoopState{Messages: append([]types.Message{}, msgs...),
+		LastPromptTokens: 3000}, Provider: &fakeProvider{responses: []*types.ChatResponse{summary()}},
 	}
 	// Loop WITH cache: effective = 2000-1500 = 500 < target(2500), and raw
 	// = 2000 < target(2500) -> both triggers under threshold, skips.
-	withCache := &Loop{
-		Provider:               &fakeProvider{responses: []*types.ChatResponse{summary()}},
-		CompactModel:           "test",
-		ContextWindow:          10000,
-		Messages:               append([]types.Message{}, msgs...),
+	withCache := &Loop{Config: LoopConfig{CompactModel: "test",
+		ContextWindow: 10000}, State: LoopState{Messages: append([]types.Message{}, msgs...),
 		LastPromptTokens:       2000,
-		LastCachedPromptTokens: 1500,
+		LastCachedPromptTokens: 1500}, Provider: &fakeProvider{responses: []*types.ChatResponse{summary()}},
 	}
 
 	noCache.compactContext(context.Background(), 0.25)
 	withCache.compactContext(context.Background(), 0.25)
 
-	if len(noCache.Messages) >= len(msgs) {
+	if len(noCache.State.Messages) >= len(msgs) {
 		t.Errorf("uncached loop should have compacted: before=%d after=%d",
-			len(msgs), len(noCache.Messages))
+			len(msgs), len(noCache.State.Messages))
 	}
-	if len(withCache.Messages) != len(msgs) {
+	if len(withCache.State.Messages) != len(msgs) {
 		t.Errorf("cached loop should NOT have compacted: before=%d after=%d",
-			len(msgs), len(withCache.Messages))
+			len(msgs), len(withCache.State.Messages))
 	}
 }
 
@@ -744,20 +713,19 @@ func TestCompactContext_rawTriggerFires(t *testing.T) {
 	// cost target (64k floor), but raw tokens (60k) exceed the raw latency
 	// target (50k = 0.5 * 100k). The raw trigger must fire compaction.
 	msgs := largeConversation(30)
-	loop := &Loop{
-		Provider:               summaryProvider(),
-		CompactModel:           "test",
-		ContextWindow:          100000,
-		Messages:               append([]types.Message{}, msgs...),
+	loop := &Loop{Config: LoopConfig{CompactModel: "test",
+		ContextWindow: 100000}, State: LoopState{Messages: append([]types.Message{}, msgs...),
 		LastPromptTokens:       60000,
-		LastCachedPromptTokens: 50000, // effective = 10000 < 64000 target
+		LastCachedPromptTokens: 50000}, Provider: summaryProvider(),
+
+	// effective = 10000 < 64000 target
 	}
 
-	before := len(loop.Messages)
+	before := len(loop.State.Messages)
 	loop.compactContext(context.Background(), 0.25)
 
-	if len(loop.Messages) >= before {
-		t.Errorf("raw trigger should have compacted: before=%d after=%d", before, len(loop.Messages))
+	if len(loop.State.Messages) >= before {
+		t.Errorf("raw trigger should have compacted: before=%d after=%d", before, len(loop.State.Messages))
 	}
 }
 
@@ -765,20 +733,19 @@ func TestCompactContext_bothTriggersUnderThreshold(t *testing.T) {
 	// Both effective tokens (5k) and raw tokens (20k) are under their targets
 	// (64k cost floor, 25k raw = 0.25 * 100k). Compaction must be skipped.
 	msgs := largeConversation(30)
-	loop := &Loop{
-		Provider:               summaryProvider(),
-		CompactModel:           "test",
-		ContextWindow:          100000,
-		Messages:               append([]types.Message{}, msgs...),
+	loop := &Loop{Config: LoopConfig{CompactModel: "test",
+		ContextWindow: 100000}, State: LoopState{Messages: append([]types.Message{}, msgs...),
 		LastPromptTokens:       20000,
-		LastCachedPromptTokens: 15000, // effective = 5000
+		LastCachedPromptTokens: 15000}, Provider: summaryProvider(),
+
+	// effective = 5000
 	}
 
-	before := len(loop.Messages)
+	before := len(loop.State.Messages)
 	loop.compactContext(context.Background(), 0.25)
 
-	if len(loop.Messages) != before {
-		t.Errorf("neither trigger met; should NOT compact: before=%d after=%d", before, len(loop.Messages))
+	if len(loop.State.Messages) != before {
+		t.Errorf("neither trigger met; should NOT compact: before=%d after=%d", before, len(loop.State.Messages))
 	}
 }
 
@@ -786,20 +753,19 @@ func TestCompactContext_messageCountTrigger(t *testing.T) {
 	// Token thresholds are NOT met, but message count exceeds
 	// CompactMaxMessages. Compaction must fire via the message-count guard.
 	msgs := largeConversation(60)
-	loop := &Loop{
-		Provider:           summaryProvider(),
-		CompactModel:       "test",
+	loop := &Loop{Config: LoopConfig{CompactModel: "test",
 		ContextWindow:      100000,
-		CompactMaxMessages: 50,
-		Messages:           append([]types.Message{}, msgs...),
-		LastPromptTokens:   10000, // well under target (25000)
+		CompactMaxMessages: 50}, State: LoopState{Messages: append([]types.Message{}, msgs...),
+		LastPromptTokens: 10000}, Provider: summaryProvider(),
+
+	// well under target (25000)
 	}
 
-	before := len(loop.Messages)
+	before := len(loop.State.Messages)
 	loop.compactContext(context.Background(), 0.25)
 
-	if len(loop.Messages) >= before {
-		t.Errorf("message-count trigger should compact: before=%d after=%d", before, len(loop.Messages))
+	if len(loop.State.Messages) >= before {
+		t.Errorf("message-count trigger should compact: before=%d after=%d", before, len(loop.State.Messages))
 	}
 }
 
@@ -807,20 +773,17 @@ func TestCompactContext_messageCountDisabled(t *testing.T) {
 	// CompactMaxMessages=0 disables the message-count guard. Even with many
 	// messages, compaction must not fire when token thresholds are under.
 	msgs := largeConversation(60)
-	loop := &Loop{
-		Provider:           summaryProvider(),
-		CompactModel:       "test",
+	loop := &Loop{Config: LoopConfig{CompactModel: "test",
 		ContextWindow:      100000,
-		CompactMaxMessages: 0,
-		Messages:           append([]types.Message{}, msgs...),
-		LastPromptTokens:   10000,
+		CompactMaxMessages: 0}, State: LoopState{Messages: append([]types.Message{}, msgs...),
+		LastPromptTokens: 10000}, Provider: summaryProvider(),
 	}
 
-	before := len(loop.Messages)
+	before := len(loop.State.Messages)
 	loop.compactContext(context.Background(), 0.25)
 
-	if len(loop.Messages) != before {
-		t.Errorf("message-count disabled; should NOT compact: before=%d after=%d", before, len(loop.Messages))
+	if len(loop.State.Messages) != before {
+		t.Errorf("message-count disabled; should NOT compact: before=%d after=%d", before, len(loop.State.Messages))
 	}
 }
 
@@ -832,25 +795,22 @@ func TestCompactContext_latchSelfResetsOnGrowth(t *testing.T) {
 	// self-reset the guard returns early and compaction stays dead — the
 	// catch-22 seen in long sessions (0 compaction spans across 30 traces).
 	msgs := largeConversation(30) // ~3k estimated tokens
-	loop := &Loop{
-		Provider:               summaryProvider(),
-		CompactModel:           "test",
-		ContextWindow:          100000,
-		Messages:               append([]types.Message{}, msgs...),
-		LastPromptTokens:       70000, // effective/raw well above targets
-		LastCachedPromptTokens: 0,
-		ineffectiveCompactions: 2,
-		lastCompactionTokens:   1000, // grew from 1k -> ~3k (>= 1.5x) → self-reset
+	loop := &Loop{Config: LoopConfig{CompactModel: "test",
+		ContextWindow: 100000}, State: LoopState{Messages: append([]types.Message{}, msgs...),
+		LastPromptTokens:       70000,                                                               // effective/raw well above targets
+		LastCachedPromptTokens: 0, IneffectiveCompactions: 2, LastCompactionTokens: 1000}, Provider: summaryProvider(),
+
+	// grew from 1k -> ~3k (>= 1.5x) → self-reset
 	}
 
-	before := len(loop.Messages)
+	before := len(loop.State.Messages)
 	loop.compactContext(context.Background(), 0.25)
 
-	if len(loop.Messages) >= before {
-		t.Errorf("latch should self-reset on context growth and compact: before=%d after=%d", before, len(loop.Messages))
+	if len(loop.State.Messages) >= before {
+		t.Errorf("latch should self-reset on context growth and compact: before=%d after=%d", before, len(loop.State.Messages))
 	}
-	if loop.ineffectiveCompactions >= 2 {
-		t.Errorf("ineffectiveCompactions should have been cleared, still %d", loop.ineffectiveCompactions)
+	if loop.State.IneffectiveCompactions >= 2 {
+		t.Errorf("ineffectiveCompactions should have been cleared, still %d", loop.State.IneffectiveCompactions)
 	}
 }
 
@@ -860,36 +820,33 @@ func TestCompactContext_rawThresholdConfigurable(t *testing.T) {
 	// target 90k) does not. This proves the field controls the raw trigger.
 	msgs := largeConversation(30)
 
-	defaultThreshold := &Loop{
-		Provider:               summaryProvider(),
-		CompactModel:           "test",
-		ContextWindow:          100000,
-		Messages:               append([]types.Message{}, msgs...),
+	defaultThreshold := &Loop{Config: LoopConfig{CompactModel: "test",
+		ContextWindow: 100000}, State: LoopState{Messages: append([]types.Message{}, msgs...),
 		LastPromptTokens:       60000,
-		LastCachedPromptTokens: 55000, // effective = 5000 < 64000
+		LastCachedPromptTokens: 55000}, Provider: summaryProvider(),
+
+	// effective = 5000 < 64000
 	}
-	highThreshold := &Loop{
-		Provider:               summaryProvider(),
-		CompactModel:           "test",
+	highThreshold := &Loop{Config: LoopConfig{CompactModel: "test",
 		ContextWindow:          100000,
-		RawCompactionThreshold: 0.9, // rawTarget = 90000
-		Messages:               append([]types.Message{}, msgs...),
+		RawCompactionThreshold: 0.9}, State: // rawTarget = 90000
+	LoopState{Messages: append([]types.Message{}, msgs...),
 		LastPromptTokens:       60000,
-		LastCachedPromptTokens: 55000,
+		LastCachedPromptTokens: 55000}, Provider: summaryProvider(),
 	}
 
-	beforeDefault := len(defaultThreshold.Messages)
-	beforeHigh := len(highThreshold.Messages)
+	beforeDefault := len(defaultThreshold.State.Messages)
+	beforeHigh := len(highThreshold.State.Messages)
 	defaultThreshold.compactContext(context.Background(), 0.25)
 	highThreshold.compactContext(context.Background(), 0.25)
 
-	if len(defaultThreshold.Messages) >= beforeDefault {
+	if len(defaultThreshold.State.Messages) >= beforeDefault {
 		t.Errorf("default raw threshold (0.5) should fire: before=%d after=%d",
-			beforeDefault, len(defaultThreshold.Messages))
+			beforeDefault, len(defaultThreshold.State.Messages))
 	}
-	if len(highThreshold.Messages) != beforeHigh {
+	if len(highThreshold.State.Messages) != beforeHigh {
 		t.Errorf("high raw threshold (0.9) should NOT fire: before=%d after=%d",
-			beforeHigh, len(highThreshold.Messages))
+			beforeHigh, len(highThreshold.State.Messages))
 	}
 }
 
@@ -949,16 +906,13 @@ func TestPayloadGuard_oversizedPayloadCompacts(t *testing.T) {
 		t.Fatalf("test setup: payload %d should exceed maxPayloadBytes %d", before, maxPayloadBytes)
 	}
 
-	loop := &Loop{
-		Provider:       summaryProvider(),
-		CompactModel:   "test",
+	loop := &Loop{Config: LoopConfig{CompactModel: "test",
 		ContextWindow:  200000,
-		EstimateFactor: 1.3,
-		Messages:       msgs,
+		EstimateFactor: 1.3}, State: LoopState{Messages: msgs}, Provider: summaryProvider(),
 	}
 	loop.compactContext(context.Background(), 0.25)
 
-	after := estimatePayloadBytes(loop.Messages, nil)
+	after := estimatePayloadBytes(loop.State.Messages, nil)
 	if after >= before {
 		t.Errorf("compaction should reduce oversized payload: before=%d after=%d", before, after)
 	}

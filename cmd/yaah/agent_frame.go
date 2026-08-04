@@ -920,7 +920,7 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 			time.Duration(s.cfg.Agent.SubAgent.StuckChildTimeout)*time.Second,
 			buildStuckChildTimeouts(s.cfg.Agent.SubAgent),
 		),
-		agent.WithLoopConfig(agent.LoopConfig{
+		agent.WithAgentConfig(agent.AgentConfig{
 			MaxIterations:          s.cfg.Agent.Default.MaxIterations,
 			MaxTurns:               s.cfg.Agent.Default.MaxTurns,
 			MaxRetries:             s.cfg.Agent.Default.MaxRetries,
@@ -953,19 +953,19 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 
 	response, err := loop.Run(ctx, prompt)
 
-	s.messages = loop.Messages
+	s.messages = loop.State.Messages
 	s.msgIdx = loop.Persister.MsgIdx()
 
 	s.mu.Lock()
-	s.totalUsage.PromptTokens += loop.TotalTokens.PromptTokens
-	s.totalUsage.CompletionTokens += loop.TotalTokens.CompletionTokens
-	s.totalUsage.TotalTokens += loop.TotalTokens.TotalTokens
+	s.totalUsage.PromptTokens += loop.State.TotalTokens.PromptTokens
+	s.totalUsage.CompletionTokens += loop.State.TotalTokens.CompletionTokens
+	s.totalUsage.TotalTokens += loop.State.TotalTokens.TotalTokens
 	s.mu.Unlock()
 
 	if ctrl != nil {
-		if loop.Model != mName && fallbackProviderName != "" {
+		if loop.Config.Model != mName && fallbackProviderName != "" {
 			select {
-			case ctrl <- &types.CtrlFallback{Provider: fallbackProviderName, Model: loop.Model}:
+			case ctrl <- &types.CtrlFallback{Provider: fallbackProviderName, Model: loop.Config.Model}:
 			default:
 			}
 		}
@@ -978,7 +978,7 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 		select {
 		case ctrl <- &types.CtrlContextInfo{
 			Tokens: loop.EstimatedTokens(),
-			Window: loop.ContextWindow,
+			Window: loop.Config.ContextWindow,
 		}:
 		default:
 		}
