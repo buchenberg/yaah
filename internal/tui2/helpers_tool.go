@@ -1,13 +1,21 @@
 package tui2
 
-import "github.com/buchenberg/yaah/internal/tui2/components/tool"
+import "github.com/buchenberg/yaah/internal/tui2/components/toolblock"
 
-// AddToolStart logs the start of a tool execution to the conversation.
-func (t *TUI2) AddToolStart(name, args string) {
-	t.appendMessage(tool.Start(name, args))
+// AddToolStart creates a tool block in Running state.
+func (t *TUI2) AddToolStart(id, name, args string) {
+	tb := toolblock.New(id, name, args)
+	t.toolBlocks = append(t.toolBlocks, tb)
+	t.refreshMessages()
 }
 
-// AddToolEnd logs the completion of a tool execution.
-func (t *TUI2) AddToolEnd(name, result string) {
-	t.appendMessage(tool.End(name, result))
+// AddToolEnd transitions a tool block to Done.
+func (t *TUI2) AddToolEnd(id, summary, result string) {
+	for _, tb := range t.toolBlocks {
+		if tb.ID() == id {
+			tb.Complete(summary, result)
+			t.refreshMessages()
+			return
+		}
+	}
 }
