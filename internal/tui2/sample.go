@@ -2,7 +2,6 @@ package tui2
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/buchenberg/yaah/internal/tui2/colors"
 )
@@ -14,17 +13,14 @@ func (t *TUI2) populateSampleData() {
 	t.addUserMessage("Can you help me refactor the TUI to use tview instead of Bubbletea?")
 	t.addAssistantResponse("I'll start by analyzing the current TUI structure.")
 
-	t.AddToolStart("read", `{"file": "internal/tui/tui.go"}`)
-	time.Sleep(600 * time.Millisecond)
-	t.AddToolEnd("read", "200 lines")
+	t.AddToolStart("1", "read", `{"file": "internal/tui/tui.go"}`)
+	t.AddToolEnd("1", "200 lines", "200 lines read successfully")
 
-	t.AddToolStart("grep", `{"pattern": "banner"}`)
-	time.Sleep(400 * time.Millisecond)
-	t.AddToolEnd("grep", "5 matches")
+	t.AddToolStart("2", "grep", `{"pattern": "banner"}`)
+	t.AddToolEnd("2", "5 matches", "5 matches found in 3 files")
 
-	t.AddSubAgentStart("analyst", "Audit TUI component structure")
-	time.Sleep(1 * time.Second)
-	t.AddSubAgentEnd("analyst", "Audit TUI component structure", "13 components; 4 candidates for extraction")
+	t.AddSubAgentStart("1", "analyst", "Finds and gathers information", "Audit TUI component structure", "claude-sonnet-4-20250514")
+	t.AddSubAgentEnd("1")
 
 	t.addAssistantResponse(
 		fmt.Sprintf("After %sanalysis%s, the TUI has 13 components. "+

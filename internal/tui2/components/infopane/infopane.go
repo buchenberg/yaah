@@ -4,6 +4,7 @@ package infopane
 import (
 	"strings"
 
+	itodo "github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tui2/colors"
 	"github.com/buchenberg/yaah/internal/tui2/components/contextinfo"
 	"github.com/buchenberg/yaah/internal/tui2/components/mcpinfo"
@@ -48,12 +49,12 @@ func Build() *tview.TextView {
 	b.WriteString("\n")
 
 	b.WriteString(colors.TagBold(colors.Accent, "Tasks\n"))
-	b.WriteString(todo.Format([]todo.Item{
-		{Text: "Move TUI2 to own directory", Done: true},
-		{Text: "Break into component files", Done: true},
-		{Text: "Add right-side info pane", Active: true},
-		{Text: "Wire to agent loop"},
-		{Text: "Polish theme & colors"},
+	b.WriteString(todo.FormatList([]itodo.Item{
+		{Content: "Move TUI2 to own directory", Status: "completed"},
+		{Content: "Break into component files", Status: "completed"},
+		{Content: "Add right-side info pane", Status: "in_progress"},
+		{Content: "Wire to agent loop", Status: "pending"},
+		{Content: "Polish theme & colors", Status: "pending"},
 	}))
 
 	tv.SetText(b.String())

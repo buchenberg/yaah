@@ -2,12 +2,32 @@ package tui2
 
 import "github.com/buchenberg/yaah/internal/tui2/components/subagent"
 
-// AddSubAgentStart logs the start of a sub-agent dispatch.
-func (t *TUI2) AddSubAgentStart(agentType, description string) {
-	t.appendMessage(subagent.Start(agentType, description))
+// AddSubAgentStart creates a new sub-agent block in Active state
+// and registers it for lifecycle tracking.
+func (t *TUI2) AddSubAgentStart(id, agentType, specialty, task, model string) {
+	block := subagent.New(id, agentType, specialty, task, model)
+	t.subagentBlocks = append(t.subagentBlocks, block)
+	t.refreshMessages()
 }
 
-// AddSubAgentEnd logs the completion of a sub-agent task.
-func (t *TUI2) AddSubAgentEnd(agentType, description, result string) {
-	t.appendMessage(subagent.End(agentType, description, result))
+// AddSubAgentEnd transitions the sub-agent block with the given id to Done.
+func (t *TUI2) AddSubAgentEnd(id string) {
+	for _, b := range t.subagentBlocks {
+		if b.ID() == id {
+			b.Complete()
+			t.refreshMessages()
+			return
+		}
+	}
+}
+
+// AddSubAgentError transitions the sub-agent block with the given id to Error.
+func (t *TUI2) AddSubAgentError(id, err string) {
+	for _, b := range t.subagentBlocks {
+		if b.ID() == id {
+			b.Fail(err)
+			t.refreshMessages()
+			return
+		}
+	}
 }
