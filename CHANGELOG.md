@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.45.3](https://github.com/buchenberg/yaah/compare/v0.45.2...v0.45.3) (2026-08-04)
+
+
+### Code Refactoring
+
+* complete Loop struct decomposition (P0 [#1](https://github.com/buchenberg/yaah/issues/1)-[#2](https://github.com/buchenberg/yaah/issues/2), P1 [#4](https://github.com/buchenberg/yaah/issues/4), P1 [#6](https://github.com/buchenberg/yaah/issues/6)) ([#131](https://github.com/buchenberg/yaah/issues/131)) ([b26e9e9](https://github.com/buchenberg/yaah/commit/b26e9e97b66ba7691138ade7074453ce856d1522))
+
 ## [0.45.2](https://github.com/buchenberg/yaah/compare/v0.45.1...v0.45.2) (2026-08-03)
 
 
