@@ -43,6 +43,7 @@ type TUI2 struct {
 	Messages *tview.TextView
 	Input    *tview.TextArea
 	InfoPane *tview.TextView // right-side info panel
+	TodoPane *tview.TextView // right-side todo list
 
 	// Footer
 	StatusBar *tview.TextView
@@ -99,6 +100,7 @@ func (t *TUI2) buildUI() {
 	t.Messages = messages.Build()
 	t.Input = input.Build()
 	t.InfoPane = infopane.Build()
+	t.TodoPane = todo.Build(nil)
 	t.StatusBar, t.StatusInfo = statusbar.Build()
 
 	// --- Header: two-column grid (banner left | provider right) ---
@@ -140,8 +142,14 @@ func (t *TUI2) buildUI() {
 
 	body := tview.NewFlex().
 		SetDirection(tview.FlexColumn)
-	body.AddItem(bodyLeft, 0, 5, true)    // ~85% width, focus → bodyLeft → Input
-	body.AddItem(t.InfoPane, 0, 1, false) // ~15% width
+	body.AddItem(bodyLeft, 0, 5, true) // ~85% width, focus → bodyLeft → Input
+
+	rightPane := tview.NewFlex().
+		SetDirection(tview.FlexRow)
+	rightPane.AddItem(t.InfoPane, 0, 3, false)
+	rightPane.AddItem(t.TodoPane, 0, 1, false)
+
+	body.AddItem(rightPane, 0, 1, false) // ~15% width
 
 	// --- Overall layout: header-sticky-top / body-fills / footer-sticky-bottom ---
 	t.Root = tview.NewFlex().
@@ -392,9 +400,9 @@ func (t *TUI2) HandleCommand(cmd command.Cmd, arg string) {
 	}
 }
 
-// UpdateTodos updates the TODO list in the infopane.
+// UpdateTodos updates the TODO list in the right panel.
 func (t *TUI2) UpdateTodos(items []itodo.Item) {
-	t.InfoPane.SetText(todo.FormatList(items))
+	t.TodoPane.SetText(todo.FormatList(items))
 }
 
 // UpdateInfopane sets a specific infopane tab content.
