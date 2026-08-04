@@ -142,7 +142,7 @@ func (t *TUI2) buildUI() {
 
 	body := tview.NewFlex().
 		SetDirection(tview.FlexColumn)
-	body.AddItem(bodyLeft, 0, 5, true)    // ~85% width, focus → bodyLeft → Input
+	body.AddItem(bodyLeft, 0, 5, true) // ~85% width, focus → bodyLeft → Input
 
 	rightPane := tview.NewFlex().
 		SetDirection(tview.FlexRow)
