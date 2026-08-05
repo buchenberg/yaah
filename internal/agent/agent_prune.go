@@ -54,4 +54,3 @@ func (l *Loop) pruneOtel(ctx context.Context, s pipeline.PruneStats) {
 	_, span := observability.StartPrune(ctx, s.Reason)
 	observability.FinishPrune(span, s.Reason, s.Candidates, s.Marked, s.ReclaimedTokens, s.ProtectedSkipped, s.TotalMarked, s.Committed)
 }
-

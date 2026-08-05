@@ -40,4 +40,3 @@ func chunkSplit(msgs []types.Message, budget int) [][]types.Message {
 	}
 	return chunks
 }
-
