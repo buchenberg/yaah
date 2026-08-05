@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.48.1](https://github.com/buchenberg/yaah/compare/v0.48.0...v0.48.1) (2026-08-05)
+
+
+### Code Refactoring
+
+* **tools:** split task.go into focused files ([#155](https://github.com/buchenberg/yaah/issues/155)) ([07ea13d](https://github.com/buchenberg/yaah/commit/07ea13d8f5bbbe3cf1031ef8fd7a608dcd401865))
+
 ## [0.48.0](https://github.com/buchenberg/yaah/compare/v0.47.3...v0.48.0) (2026-08-05)
 
 
