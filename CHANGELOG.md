@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.0](https://github.com/buchenberg/yaah/compare/v0.46.0...v0.47.0) (2026-08-04)
+
+
+### Features
+
+* **tui2:** wire to agent loop, break up god file, add OTel metrics ([#143](https://github.com/buchenberg/yaah/issues/143)) ([496d422](https://github.com/buchenberg/yaah/commit/496d422b519f8c3461fcbf864ba3b3ff3ca34352))
+
 ## [0.46.0](https://github.com/buchenberg/yaah/compare/v0.45.5...v0.46.0) (2026-08-04)
 
 
