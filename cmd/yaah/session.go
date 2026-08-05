@@ -1,140 +1,208 @@
 package yaah
 
+// UI Driver Pattern
+//
+// To attach a new UI to a session:
+//
+//  1. Create a chan types.CtrlMsg and call sess.SetCtrlCh(ch).
+//     This wires todos and status messages to your channel.
+//
+//  2. Implement agent.View (HandleEvent) and call sess.SetView(your view).
+//     Events: TokenDelta, Thinking, Flush, ToolStart, ToolEnd,
+//             SubAgentStart, SubAgentEnd, Done.
+//
+//  3. Read from the control channel in a goroutine and dispatch
+//     CtrlStatus, CtrlError, CtrlQuestion, CtrlApproval,
+//     CtrlModelList, CtrlTodos, CtrlContextInfo, CtrlDone.
+//
+//  4. Call sess.RunPrompt(ctx, text) for each turn.
+//     ctx cancellation aborts the in-flight agent loop.
+//
+// See: terminalView (REPL), agentViewFwd (Bubble Tea TUI).
+
 import (
-	"fmt"
+	"context"
+	"sync"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/spf13/cobra"
+	processpkg "github.com/buchenberg/yaah/internal/process"
+	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/buchenberg/yaah/internal/types"
 )
 
-// sessionCmd is the `yaah session` subcommand tree.
-var sessionCmd = &cobra.Command{
-	Use:   "session",
-	Short: "Manage conversation sessions",
+// Session is the stable contract between UI drivers and the shared
+
+// agent session. Any driver (TUI, REPL, web, gRPC) should depend only
+// on this interface, not on *agentSession directly.
+type Session interface {
+	RunPrompt(ctx context.Context, prompt string) (string, bool, error)
+	Compact()
+	Steer(string)
+	FollowUp(string)
+	SetView(agent.View)
+	SetCtrlCh(chan<- types.CtrlMsg)
+	SetApproveFn(func(name, args string) bool)
+	SetModel(providerName, modelName string)
+	ProviderName() string
+	ModelName() string
+	MCPInfos() []mcp.ServerInfo
+	Close()
 }
 
-// sessionListCmd lists recent sessions.
-var sessionListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List recent sessions",
-	Args:  cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := memory.OpenDefault()
-		if err != nil {
-			return fmt.Errorf("open database: %w", err)
-		}
-		defer db.Close()
+// Compile-time check: agentSession satisfies Session.
+var _ Session = (*agentSession)(nil)
 
-		sessions, err := db.ListSessions(10)
-		if err != nil {
-			return fmt.Errorf("list sessions: %w", err)
-		}
+// agentSession holds the long-lived infrastructure shared across REPL and
+// one-shot prompts. Building it once avoids re-opening the database,
+// re-spawning MCP servers, and re-discovering skills on every turn.
+type agentSession struct {
+	cfg          *config.Config
+	provider     agent.Provider
+	providerName string
+	modelName    string
+	systemPrompt string
+	// mainPrompt is systemPrompt plus the default-agent directives
+	// injected after the identity block. Only the top-level loop sees
+	// it; sub-agents receive systemPrompt as their base so default
+	// directives never leak into child prompts.
+	mainPrompt   string
+	toolReg      *tools.Registry
+	db           *memory.DB
+	mcpClients   []mcp.MCPClient
+	mcpInfos     []mcp.ServerInfo
+	procMgr      *processpkg.Manager
+	messages     []types.Message
+	sessionID    string
+	msgIdx       int
+	otelShutdown func(context.Context) error
+	tracker      *tools.ConflictTracker
 
-		if len(sessions) == 0 {
-			cmd.Println("No sessions found.")
-			return nil
-		}
+	cwd string
 
-		cmd.Printf("Recent sessions:\n\n")
-		for _, s := range sessions {
-			started := time.Unix(s.StartedAt, 0).Format("2006-01-02 15:04")
-			model := s.Model
-			if model == "" {
-				model = "unknown"
-			}
-			status := "active"
-			if s.EndedAt > 0 {
-				status = fmt.Sprintf("ended %s", time.Unix(s.EndedAt, 0).Format("15:04"))
-			}
-			tokenInfo := ""
-			if s.TokensIn > 0 || s.TokensOut > 0 {
-				tokenInfo = fmt.Sprintf(" | tokens: %d in / %d out", s.TokensIn, s.TokensOut)
-			}
-			compactInfo := ""
-			if s.CompactedSummary != "" {
-				compactInfo = " | compacted"
-			}
-			cmd.Printf("  %s\n", Bold(s.ID))
-			cmd.Printf("        %s\n", Dim(fmt.Sprintf("started: %s | %s | model: %s | cwd: %s%s%s",
-				started, status, model, s.CWD, tokenInfo, compactInfo)))
-		}
-		return nil
-	},
+	view      agent.View
+	ctrlCh    chan<- types.CtrlMsg
+	approveFn func(name, args string) bool
+	mu        sync.RWMutex
+
+	steerCh    chan string
+	followupCh chan string
+	totalUsage types.Usage
 }
 
-// sessionShowCmd shows messages in a session.
-var sessionShowCmd = &cobra.Command{
-	Use:   "show <session-id>",
-	Short: "Show messages in a session",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := memory.OpenDefault()
-		if err != nil {
-			return fmt.Errorf("open database: %w", err)
-		}
-		defer db.Close()
-
-		sess, err := db.GetSession(args[0])
-		if err != nil {
-			return fmt.Errorf("session %s not found: %w", args[0], err)
-		}
-
-		msgs, err := db.GetMessages(args[0])
-		if err != nil {
-			return fmt.Errorf("get messages: %w", err)
-		}
-
-		started := time.Unix(sess.StartedAt, 0).Format("2006-01-02 15:04")
-		ended := "active"
-		if sess.EndedAt > 0 {
-			ended = time.Unix(sess.EndedAt, 0).Format("2006-01-02 15:04")
-		}
-		model := sess.Model
-		if model == "" {
-			model = "unknown"
-		}
-
-		cmd.Printf("Session %s\n\n", Bold(args[0]))
-		cmd.Printf("  Started:   %s\n", started)
-		cmd.Printf("  Ended:     %s\n", ended)
-		cmd.Printf("  Model:     %s\n", model)
-		cmd.Printf("  CWD:       %s\n", sess.CWD)
-		if sess.TokensIn > 0 || sess.TokensOut > 0 {
-			cmd.Printf("  Tokens:    %d in / %d out\n", sess.TokensIn, sess.TokensOut)
-		}
-		if sess.SystemPrompt != "" {
-			cmd.Printf("  Prompt:    stored (%d bytes)\n", len(sess.SystemPrompt))
-		}
-		if sess.CompactedSummary != "" {
-			cmd.Printf("  Compacted: %d bytes summary\n", len(sess.CompactedSummary))
-		}
-
-		if len(msgs) == 0 {
-			cmd.Printf("\n  No messages.\n")
-			return nil
-		}
-
-		cmd.Printf("\n  %d messages:\n\n", len(msgs))
-		for _, m := range msgs {
-			ts := time.Unix(m.Timestamp, 0).Format("15:04:05")
-			switch m.Role {
-			case "user":
-				cmd.Printf("  %s %s\n", Dim(ts), Bold(m.Content))
-			case "assistant":
-				cmd.Printf("  %s %s\n", Dim(ts), m.Content)
-			case "tool":
-				cmd.Printf("  %s %s %s\n", Dim(ts), Dim("tool:"+m.ToolName), Dim(m.Content))
-			default:
-				cmd.Printf("  %s [%s] %s\n", Dim(ts), m.Role, m.Content)
-			}
-		}
-		return nil
-	},
+func (s *agentSession) close() {
+	ctx := context.Background()
+	if s.steerCh != nil {
+		close(s.steerCh)
+	}
+	if s.followupCh != nil {
+		close(s.followupCh)
+	}
+	s.mu.RLock()
+	ch := s.ctrlCh
+	s.mu.RUnlock()
+	if ch != nil {
+		ch <- &types.CtrlDone{}
+	}
+	if s.otelShutdown != nil {
+		s.otelShutdown(ctx)
+	}
+	if s.db != nil {
+		s.db.EndSession(s.sessionID, time.Now().Unix(), s.totalUsage.PromptTokens, s.totalUsage.CompletionTokens)
+		s.db.Close()
+	}
+	for _, c := range s.mcpClients {
+		c.Close()
+	}
 }
 
-func init() {
-	sessionCmd.AddCommand(sessionListCmd)
-	sessionCmd.AddCommand(sessionShowCmd)
-	rootCmd.AddCommand(sessionCmd)
+func (s *agentSession) Close()   { s.close() }
+func (s *agentSession) Compact() { s.compactContext() }
+func (s *agentSession) ProviderName() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.providerName
+}
+func (s *agentSession) ModelName() string          { s.mu.RLock(); defer s.mu.RUnlock(); return s.modelName }
+func (s *agentSession) MCPInfos() []mcp.ServerInfo { return s.mcpInfos }
+func (s *agentSession) RunPrompt(ctx context.Context, prompt string) (string, bool, error) {
+	return s.runPrompt(ctx, prompt)
+}
+
+func (s *agentSession) Steer(text string) {
+	select {
+	case s.steerCh <- text:
+	default:
+		s.sendCtrl(&types.CtrlStatus{Text: "steer queue full"})
+	}
+}
+
+func (s *agentSession) FollowUp(text string) {
+	select {
+	case s.followupCh <- text:
+	default:
+		s.sendCtrl(&types.CtrlStatus{Text: "follow-up queue full"})
+	}
+}
+
+func (s *agentSession) sendCtrl(msg types.CtrlMsg) {
+	s.mu.RLock()
+	ch := s.ctrlCh
+	s.mu.RUnlock()
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- msg:
+	default:
+	}
+}
+
+func (s *agentSession) SetView(v agent.View) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.view = v
+}
+
+func (s *agentSession) SetCtrlCh(ch chan<- types.CtrlMsg) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ctrlCh = ch
+
+	if tt := s.toolReg.Get("todowrite"); tt != nil {
+		if ttp, ok := tt.(*tools.TodoWriteTool); ok {
+			ttp.OnWrite = func() {
+				ch <- &types.CtrlTodos{Items: ttp.Store.List()}
+			}
+		}
+	}
+}
+
+func (s *agentSession) GetCtrlCh() chan<- types.CtrlMsg {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ctrlCh
+}
+
+func (s *agentSession) SetApproveFn(fn func(name, args string) bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.approveFn = fn
+}
+
+func (s *agentSession) SetModel(providerName, modelName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prov := s.provider
+	if p, ok := s.cfg.Providers[providerName]; ok {
+		if pv, ok2 := makeProvider(providerName, p); ok2 {
+			prov = pv
+		}
+	}
+	s.provider = prov
+	s.providerName = providerName
+	s.modelName = modelName
 }

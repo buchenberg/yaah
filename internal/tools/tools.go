@@ -41,7 +41,7 @@
 //	}
 //
 // Then add the tool to the leafTools map (for zero-dependency tools)
-// or register it at runtime in agent_frame.go (for tools needing wiring).
+// or register it at runtime in cmd/yaah/wiring.go (for tools needing wiring).
 //
 // For a tool that needs runtime wiring (e.g. a database handle):
 //
@@ -52,7 +52,7 @@
 //	func (t *MyWiredTool) Schema() json.RawMessage { ... }
 //	func (t *MyWiredTool) Execute(ctx context.Context, args string) (string, error) { ... }
 //
-// Then in agent_frame.go, after creating the database:
+// Then in cmd/yaah/wiring.go, after creating the database:
 //
 //	toolReg.Register(&MyWiredTool{DB: db})
 //
