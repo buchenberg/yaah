@@ -74,6 +74,15 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 	defer l.publishDone(&response, &runErr)
 	defer l.teardown(&runErr)
 
+	// Register the loop's broker event hooks on the session-scoped
+	// background manager so background sub-agents emit live
+	// SubAgentStart/End events while this loop is active. Cleared on
+	// return so jobs that finish between Runs do not publish to a
+	// retired broker. Usage attribution lives on the manager (session
+	// scope) and is therefore never lost.
+	l.wireBackgroundHooks()
+	defer l.unwireBackgroundHooks()
+
 	l.applyDefaults()
 	l.initMessages(userInput)
 
@@ -183,4 +192,35 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 
 	l.State.Messages = messages
 	return "", fmt.Errorf("max iterations (%d) reached", l.Config.MaxLoopCycles)
+}
+
+// wireBackgroundHooks registers the loop's broker as the event sink for
+// background sub-agent start/end events while this loop is active. It is
+// a no-op when no background manager is attached or no broker exists.
+func (l *Loop) wireBackgroundHooks() {
+	if l.BackgroundJobs == nil {
+		return
+	}
+	l.BackgroundJobs.OnStart = func(role, model, prompt string) {
+		if l.broker != nil {
+			l.broker.PublishMustDeliver(&SubAgentStartEvent{Role: role, Model: model, Prompt: prompt})
+		}
+	}
+	l.BackgroundJobs.OnEnd = func(role, model, prompt string, dur time.Duration, err string) {
+		if l.broker != nil {
+			l.broker.PublishMustDeliver(&SubAgentEndEvent{Role: role, Model: model, Prompt: prompt, Duration: dur, Error: err})
+		}
+	}
+}
+
+// unwireBackgroundHooks clears the loop-scoped event hooks so background
+// jobs finishing between Runs do not publish to a retired broker. Usage
+// attribution (OnUsage) is session-scoped on the manager and is left
+// intact.
+func (l *Loop) unwireBackgroundHooks() {
+	if l.BackgroundJobs == nil {
+		return
+	}
+	l.BackgroundJobs.OnStart = nil
+	l.BackgroundJobs.OnEnd = nil
 }

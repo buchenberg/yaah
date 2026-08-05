@@ -47,8 +47,9 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 
 			isTask := tc.Function.Name == "spawn_subagent"
 			var taskRole, taskPrompt string
+			isBackground := false
 			if isTask {
-				taskRole, taskPrompt = parseTaskArgs(tc.Function.Arguments)
+				taskRole, taskPrompt, isBackground = parseTaskArgs(tc.Function.Arguments)
 			}
 
 			var releaseSubAgent, releaseTool func()
@@ -108,8 +109,13 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			runCtx := ctx
 			var toolSpan trace.Span
 			if l.Config.OtelEnabled {
-				if isTask {
+				if isTask && !isBackground {
 					runCtx, toolSpan = observability.StartSubAgent(ctx, taskRole, taskPrompt)
+				} else if isTask && isBackground {
+					// A short span for the dispatch only; the background
+					// job owns its own long-lived sub-agent span (created
+					// by the BackgroundJobs manager as a child of this).
+					runCtx, toolSpan = observability.StartTool(ctx, "spawn_subagent:dispatch", tc.Function.Arguments)
 				} else {
 					runCtx, toolSpan = observability.StartTool(ctx, tc.Function.Name, tc.Function.Arguments)
 				}
@@ -117,7 +123,15 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 
 			var watchdogActive bool
 
-			if isTask {
+			// Foreground sub-agents get model/usage capture, start/end
+			// events, and the stuck-child watchdog wired here. Background
+			// sub-agents skip all of this: the BackgroundJobs manager owns
+			// their model/usage capture (via context pointers), emits
+			// their start/end events through loop-registered callbacks,
+			// and bounds them with their own timeout — none of which may
+			// be tied to this per-call context (which is cancelled the
+			// instant this goroutine returns).
+			if isTask && !isBackground {
 				runCtx = tools.WithSubAgentModelPtr(runCtx, &subAgentModel)
 				runCtx = tools.WithSubAgentStartNotifier(runCtx, func(model string) {
 					startOnce.Do(func() { publishStart(model) })
@@ -169,7 +183,9 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			// Fallback for runners that never fired the start notifier:
 			// emit the start event with the final model so views still see
 			// the role/model pairing (arrives late but complete).
-			if isTask {
+			// Background sub-agents are announced by the BackgroundJobs
+			// manager, not here.
+			if isTask && !isBackground {
 				startOnce.Do(func() {
 					model := subAgentModel
 					if model == "" {
@@ -180,21 +196,23 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			}
 
 			// Parse structured escalation from raw sub-agent output before
-			// the result is truncated for display.
+			// the result is truncated for display. Background dispatch
+			// returns a {"status":"running"} placeholder with no payload
+			// to parse.
 			var escalation *tools.Escalation
-			if isTask && l.broker != nil {
+			if isTask && !isBackground && l.broker != nil {
 				output := tools.ParseSubAgentOutput(res, err)
 				if output.Escalation != nil {
 					escalation = output.Escalation
 				}
 			}
 
-			if isTask && watchdogActive && ctx.Err() == nil && runCtx.Err() == context.Canceled {
+			if isTask && !isBackground && watchdogActive && ctx.Err() == nil && runCtx.Err() == context.Canceled {
 				err = tools.ErrStuckChild
 				res = ""
 			}
 			if l.Config.OtelEnabled && toolSpan != nil {
-				if isTask {
+				if isTask && !isBackground {
 					observability.FinishSubAgent(toolSpan, err)
 				} else {
 					observability.FinishTool(toolSpan, res, err)
@@ -227,7 +245,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 				l.broker.PublishMustDeliver(evt)
 			}
 
-			if isTask && l.broker != nil {
+			if isTask && !isBackground && l.broker != nil {
 				model := subAgentModel
 				if model == "" {
 					model = l.Config.Model

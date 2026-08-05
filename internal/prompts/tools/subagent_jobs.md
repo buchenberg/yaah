@@ -1,0 +1,1 @@
+Manage background sub-agent jobs dispatched via `spawn_subagent` with `background: true`. Provides `action: list` (all jobs), `status` (details for one `job_id`), `cancel` (abort a running job), and `wait` (block until a job finishes or `timeout_seconds` elapses — default 60s). Use `list` first to discover job ids and pending count.

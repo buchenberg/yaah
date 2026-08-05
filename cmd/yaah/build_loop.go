@@ -55,6 +55,7 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 		agent.WithPipeline(s.cfg.Agent.Middleware.Enabled, s.cfg.Agent.Middleware.Disabled),
 		agent.WithSteer(s.steerCh),
 		agent.WithFollowUps(s.followupCh),
+		agent.WithBackgroundJobs(s.backgroundJobs),
 		agent.WithConflictTracker(s.tracker),
 		agent.WithToolsLevel(agent.FullTools),
 		agent.WithOtel(s.cfg.Observability.Otel.Enabled, s.cfg.Observability.Otel.Verbose),

@@ -81,6 +81,12 @@ type agentSession struct {
 	otelShutdown func(context.Context) error
 	tracker      *tools.ConflictTracker
 
+	// backgroundJobs manages background sub-agents for this session:
+	// owns their session-rooted contexts, tracks them for status/cancel,
+	// attributes their usage to totalUsage, and delivers results as
+	// follow-ups. Cancelled at session close.
+	backgroundJobs *tools.BackgroundJobs
+
 	cwd string
 
 	view      agent.View
@@ -100,6 +106,11 @@ func (s *agentSession) close() {
 	}
 	if s.followupCh != nil {
 		close(s.followupCh)
+	}
+	// Cancel any still-running background sub-agents and unblock their
+	// result deliveries before tearing down the rest of the session.
+	if s.backgroundJobs != nil {
+		s.backgroundJobs.Close()
 	}
 	s.mu.RLock()
 	ch := s.ctrlCh

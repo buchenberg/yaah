@@ -181,6 +181,16 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 
 	followupCh := make(chan string, 32)
 
+	// Background sub-agents are managed session-wide: they derive
+	// cancellation from a session root (not the per-call context), so
+	// they survive the dispatching tool call and turn. Results are
+	// delivered as follow-ups; usage is attributed to totalUsage.
+	backgroundJobs := tools.NewBackgroundJobs()
+	backgroundJobs.MaxConcurrent = cfg.Agent.SubAgent.MaxConcurrency
+	if backgroundJobs.MaxConcurrent <= 0 {
+		backgroundJobs.MaxConcurrent = 4
+	}
+
 	taskTool := newTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default, nil)
 
 	// RoleResolver provides a live role-name lookup so the spawn_subagent
@@ -188,9 +198,17 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	// cached reg.Names() snapshot above is layered underneath.
 	taskTool.RoleResolver = func() []string { return subagent.DefaultRegistry().Names() }
 
-	// Wire background sub-agent completion into the follow-up channel so
-	// results from async sub-agents appear as injected user messages.
-	taskTool.BackgroundNotifier = func(role, description, result string, err error) {
+	// Hand the manager to the task tool so background:true dispatches go
+	// through it instead of the broken inline goroutine.
+	taskTool.BackgroundJobs = backgroundJobs
+
+	// Deliver completed background results as follow-up messages. This
+	// is a BLOCKING send (guarded by the manager's Done channel) so
+	// results are never dropped: a job whose result cannot be queued yet
+	// blocks in its own goroutine until the next turn drains the channel
+	// or the session closes.
+	bgDone := backgroundJobs.Done()
+	backgroundJobs.Deliver = func(role, description, result string, err error) {
 		prefix := "[BACKGROUND"
 		if role != "" {
 			prefix += " " + role
@@ -203,13 +221,16 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 		if err != nil {
 			text = "error: " + err.Error()
 		}
+		msg := prefix + " completed:\n" + text
 		select {
-		case followupCh <- prefix + " completed:\n" + text:
-		default:
+		case followupCh <- msg:
+		case <-bgDone:
 		}
 	}
 
 	toolReg.Register(taskTool)
+
+	toolReg.Register(&tools.SubAgentJobsTool{Jobs: backgroundJobs})
 
 	toolReg.Register(&tools.ListSubAgentsTool{
 		Lister: func() []tools.SubAgentInfo {
@@ -257,27 +278,40 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 		}
 	}
 
-	return &agentSession{
-		cfg:          cfg,
-		provider:     provider,
-		providerName: providerName,
-		modelName:    modelName,
-		systemPrompt: systemPrompt,
-		mainPrompt:   mainPrompt,
-		toolReg:      toolReg,
-		db:           db,
-		mcpClients:   mcpClients,
-		mcpInfos:     mcpInfos,
-		procMgr:      procMgr,
-		sessionID:    sessionID,
-		messages:     messages,
-		msgIdx:       msgIdx,
-		otelShutdown: otelShutdown,
-		tracker:      tracker,
-		cwd:          cwd,
-		steerCh:      make(chan string, 4),
-		followupCh:   followupCh,
-	}, nil
+	sess := &agentSession{
+		cfg:            cfg,
+		provider:       provider,
+		providerName:   providerName,
+		modelName:      modelName,
+		systemPrompt:   systemPrompt,
+		mainPrompt:     mainPrompt,
+		toolReg:        toolReg,
+		db:             db,
+		mcpClients:     mcpClients,
+		mcpInfos:       mcpInfos,
+		procMgr:        procMgr,
+		sessionID:      sessionID,
+		messages:       messages,
+		msgIdx:         msgIdx,
+		otelShutdown:   otelShutdown,
+		tracker:        tracker,
+		backgroundJobs: backgroundJobs,
+		cwd:            cwd,
+		steerCh:        make(chan string, 4),
+		followupCh:     followupCh,
+	}
+
+	// Attribute completed background sub-agent usage to the session
+	// total (session-scoped, so never lost across turns/runs).
+	backgroundJobs.OnUsage = func(u types.Usage) {
+		sess.mu.Lock()
+		sess.totalUsage.PromptTokens += u.PromptTokens
+		sess.totalUsage.CompletionTokens += u.CompletionTokens
+		sess.totalUsage.TotalTokens += u.TotalTokens
+		sess.mu.Unlock()
+	}
+
+	return sess, nil
 }
 
 // --- helpers ---------------------------------------------------------------

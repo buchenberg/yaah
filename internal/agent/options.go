@@ -106,6 +106,13 @@ func WithFollowUps(ch <-chan string) Option {
 	return func(l *Loop) { l.FollowUps = ch }
 }
 
+// WithBackgroundJobs attaches the session's background sub-agent manager
+// so the loop can register its broker event hooks for background jobs at
+// Run start.
+func WithBackgroundJobs(jobs *tools.BackgroundJobs) Option {
+	return func(l *Loop) { l.BackgroundJobs = jobs }
+}
+
 // WithConflictTracker sets the file conflict tracker.
 func WithConflictTracker(t *tools.ConflictTracker) Option {
 	return func(l *Loop) { l.ConflictTracker = t }

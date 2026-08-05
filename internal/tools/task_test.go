@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestExecute_RoleValidation(t *testing.T) {
@@ -157,5 +160,98 @@ func TestParseSubAgentOutput_WithError(t *testing.T) {
 	out := ParseSubAgentOutput("", errors.New("timeout"))
 	if out.Error != "timeout" {
 		t.Errorf("error = %q, want timeout", out.Error)
+	}
+}
+
+// TestExecute_BackgroundViaManager verifies the background:true path
+// dispatches through BackgroundJobs, returns immediately with a job id,
+// and the runner is invoked.
+func TestExecute_BackgroundViaManager(t *testing.T) {
+	mgr := NewBackgroundJobs()
+	defer mgr.Close()
+
+	var ran atomic.Bool
+	var mu sync.Mutex
+	var delivered string
+	mgr.Deliver = func(role, desc, res string, err error) {
+		mu.Lock()
+		delivered = res
+		mu.Unlock()
+	}
+
+	tt := &TaskTool{
+		RoleNames:      []string{"analyst"},
+		BackgroundJobs: mgr,
+		Runner: func(ctx context.Context, prompt string, params SubAgentParams) (string, error) {
+			ran.Store(true)
+			WriteSubAgentModel(ctx, "bg-model")
+			return "bg-result: " + prompt, nil
+		},
+	}
+
+	res, err := tt.Execute(context.Background(), `{"description":"d","prompt":"p","role":"analyst","background":true}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Immediate result is the running placeholder carrying a job id.
+	var parsed struct {
+		Status string `json:"status"`
+		JobID  string `json:"job_id"`
+		Label  string `json:"label"`
+	}
+	if err := json.Unmarshal([]byte(res), &parsed); err != nil {
+		t.Fatalf("parse result: %v\n%s", err, res)
+	}
+	if parsed.Status != "running" {
+		t.Errorf("status = %q, want running", parsed.Status)
+	}
+	if parsed.JobID == "" {
+		t.Error("expected non-empty job_id in background result")
+	}
+
+	// The runner must eventually run and deliver its result.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !ran.Load() {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !ran.Load() {
+		t.Fatal("background runner was never invoked")
+	}
+
+	// Wait for delivery.
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		d := delivered
+		mu.Unlock()
+		if d != "" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if delivered != "bg-result: p" {
+		t.Errorf("delivered = %q, want %q", delivered, "bg-result: p")
+	}
+}
+
+// TestExecute_BackgroundWithoutManagerErrors verifies that requesting
+// background mode without a manager yields a clear error (e.g. in a
+// context where background is unavailable).
+func TestExecute_BackgroundWithoutManagerErrors(t *testing.T) {
+	tt := &TaskTool{
+		RoleNames: []string{"analyst"},
+		Runner: func(ctx context.Context, prompt string, params SubAgentParams) (string, error) {
+			return "should not run", nil
+		},
+	}
+	_, err := tt.Execute(context.Background(), `{"description":"d","prompt":"p","role":"analyst","background":true}`)
+	if err == nil {
+		t.Fatal("expected error when background requested without a manager, got nil")
+	}
+	if !strings.Contains(err.Error(), "not available") {
+		t.Errorf("error = %q, want it to mention unavailability", err.Error())
 	}
 }

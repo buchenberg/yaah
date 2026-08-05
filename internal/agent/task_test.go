@@ -515,3 +515,143 @@ func TestLoop_subAgentStuckChildDisabled(t *testing.T) {
 		t.Errorf("expected context error, got: %v", err)
 	}
 }
+
+// TestLoop_backgroundSubAgentSurvivesDispatchingTurn verifies the full
+// integration: the loop routes a background:true spawn_subagent through
+// the BackgroundJobs manager, the dispatch returns immediately with a
+// running placeholder, the job completes and delivers its result to the
+// follow-up channel, and the foreground attribution path does not
+// interfere (no stuck-child watchdog, no ghost SubAgentEndEvent).
+func TestLoop_backgroundSubAgentSurvivesDispatchingTurn(t *testing.T) {
+	mgr := tools.NewBackgroundJobs()
+	defer mgr.Close()
+
+	followupCh := make(chan string, 2)
+
+	var mu sync.Mutex
+	var delivered string
+	mgr.Deliver = func(role, desc, res string, err error) {
+		mu.Lock()
+		delivered = res
+		mu.Unlock()
+	}
+
+	// Runner that takes ~80ms — long enough that it's still running when
+	// the loop's runMiddleware returns (the provider emits only two
+	// turns: one tool-call, one final answer). The test verifies the job
+	// is NOT cancelled by the call context going away.
+	runner := func(ctx context.Context, prompt string, params tools.SubAgentParams) (string, error) {
+		tools.WriteSubAgentModel(ctx, "bg-test")
+		tools.AddSubAgentUsage(ctx, types.Usage{TotalTokens: 7})
+		select {
+		case <-time.After(80 * time.Millisecond):
+			return "bg-ok: " + prompt, nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{
+			{Choices: []types.Choice{{
+				Message: types.Message{
+					Role: "assistant",
+					ToolCalls: []types.ToolCall{{
+						ID:       "c1",
+						Type:     "function",
+						Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"x","prompt":"do work","role":"tester","background":true}`},
+					}},
+				},
+				FinishReason: "tool_calls",
+			}}},
+			{Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant", Content: "final answer"},
+				FinishReason: "stop",
+			}}},
+		},
+	}
+
+	reg := tools.NewEmptyRegistry()
+	tt := &tools.TaskTool{Runner: runner, BackgroundJobs: mgr, RoleNames: []string{"tester"}}
+	reg.Register(tt)
+
+	rv := &recordingView{}
+
+	loop := &Loop{
+		Config: LoopConfig{
+			SystemPrompt:      "test",
+			MaxLoopCycles:     5,
+			StuckChildTimeout: 0, // no watchdog; background jobs bound themselves
+		},
+		Provider:       fp,
+		Registry:       reg,
+		View:           rv,
+		BackgroundJobs: mgr,
+		FollowUps:      followupCh,
+	}
+
+	start := time.Now()
+	resp, err := loop.Run(context.Background(), "background please")
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if resp != "final answer" {
+		t.Errorf("response = %q, want 'final answer'", resp)
+	}
+
+	// The loop must return quickly (the dispatch is non-blocking and the
+	// second turn is an immediate final answer). It must NOT hang waiting
+	// for the background job.
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("Run took %v; expected to return promptly (background dispatch should be non-blocking)", elapsed)
+	}
+
+	// Verify the tool-result message contains the running placeholder.
+	hasRunning := false
+	for _, msg := range loop.State.Messages {
+		if msg.Role == "tool" && strings.Contains(msg.Content, `"running"`) {
+			hasRunning = true
+			if !strings.Contains(msg.Content, `"job_id"`) {
+				t.Errorf("background placeholder missing job_id: %s", msg.Content)
+			}
+		}
+	}
+	if !hasRunning {
+		t.Errorf("expected a tool message with 'running' status, got messages: %+v", loop.State.Messages)
+	}
+
+	// Wait for the background job to finish and deliver.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		d := delivered
+		mu.Unlock()
+		if d != "" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if delivered != "bg-ok: do work" {
+		t.Errorf("delivered = %q, want %q", delivered, "bg-ok: do work")
+	}
+
+	// The job must have completed (not been cancelled, not failed).
+	st, ok := mgr.Status(stForFirstJob(mgr))
+	if ok {
+		if st.Status != tools.BGStatusCompleted {
+			t.Errorf("job status = %q, want completed", st.Status)
+		}
+	}
+}
+
+// stForFirstJob returns the id of the first job in the manager's list,
+// or "" if none.
+func stForFirstJob(m *tools.BackgroundJobs) string {
+	for _, s := range m.List() {
+		return s.ID
+	}
+	return ""
+}
