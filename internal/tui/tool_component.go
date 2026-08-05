@@ -72,7 +72,17 @@ func (t ToolMessage) Render() string {
 	b.WriteString(zone.Mark(t.zoneID, toolStyle.Render(line)))
 	b.WriteString("\n")
 
-	boxWidth := t.width - 4
+	b.WriteString(renderOutputBox(t.width, t.maxHeight, t.content))
+	b.WriteString("\n")
+	return b.String()
+}
+
+// renderOutputBox renders expanded tool/sub-agent output inside the
+// bordered box: wrapped to the inner width and capped at a viewport-based
+// truncation budget (clamped 4–24 lines), with a "more lines above" notice
+// when truncated.
+func renderOutputBox(width, maxHeight int, content string) string {
+	boxWidth := width - 4
 	if boxWidth < 20 {
 		boxWidth = 20
 	}
@@ -80,9 +90,9 @@ func (t ToolMessage) Render() string {
 	if innerWidth < 10 {
 		innerWidth = 10
 	}
-	indented := toolIndent(innerWidth, t.content)
+	indented := toolIndent(innerWidth, content)
 
-	maxLines := t.maxHeight/3 - 4
+	maxLines := maxHeight/3 - 4
 	if maxLines < 4 {
 		maxLines = 4
 	}
@@ -100,10 +110,7 @@ func (t ToolMessage) Render() string {
 	} else {
 		visible = indented
 	}
-	boxStyle := toolBoxStyle
-	b.WriteString(boxStyle.Width(boxWidth).Render(visible))
-	b.WriteString("\n")
-	return b.String()
+	return toolBoxStyle.Width(boxWidth).Render(visible)
 }
 
 // toolHeader builds the display header for a tool result message from

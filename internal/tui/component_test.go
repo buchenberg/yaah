@@ -69,18 +69,52 @@ func TestAssistantMessage_Render(t *testing.T) {
 	}
 }
 
-func TestSubAgentBracket_Render(t *testing.T) {
-	t.Run("start bracket opens a container corner", func(t *testing.T) {
-		out := NewSubAgentBracket("worker — list files", true).Render()
-		if !strings.Contains(out, "╭─ sub-agent: worker — list files") {
-			t.Errorf("expected opening corner with label, got %q", out)
+func TestSubAgentLine_Render(t *testing.T) {
+	t.Run("running shows hourglass, robot, role and task", func(t *testing.T) {
+		out := stripANSI(NewSubAgentLine("subagent-0", "developer", "fix the bug", true, "", "", "", 80, 20, false).Render())
+		if !strings.Contains(out, "⏳") || !strings.Contains(out, "🤖") {
+			t.Errorf("expected running icon and robot, got %q", out)
+		}
+		if !strings.Contains(out, "developer") || !strings.Contains(out, "fix the bug") {
+			t.Errorf("expected role and task, got %q", out)
 		}
 	})
 
-	t.Run("end bracket closes a container corner", func(t *testing.T) {
-		out := NewSubAgentBracket("worker — completed (1.2s)", false).Render()
-		if !strings.Contains(out, "╰─ sub-agent: worker — completed (1.2s)") {
-			t.Errorf("expected closing corner with label, got %q", out)
+	t.Run("done shows check and duration", func(t *testing.T) {
+		out := stripANSI(NewSubAgentLine("subagent-0", "developer", "fix the bug", false, "2.3s", "", "", 80, 20, false).Render())
+		if !strings.Contains(out, "✓") || !strings.Contains(out, "(2.3s)") {
+			t.Errorf("expected check icon and duration, got %q", out)
+		}
+		if !strings.Contains(out, "🤖") {
+			t.Errorf("expected robot icon, got %q", out)
+		}
+	})
+
+	t.Run("error shows cross and error text", func(t *testing.T) {
+		out := stripANSI(NewSubAgentLine("subagent-0", "reviewer", "review pr", false, "1.0s", "timed out", "", 80, 20, false).Render())
+		if !strings.Contains(out, "✗") || !strings.Contains(out, "timed out") {
+			t.Errorf("expected error icon and message, got %q", out)
+		}
+	})
+
+	t.Run("output is a single line", func(t *testing.T) {
+		out := NewSubAgentLine("subagent-0", "tester", "run tests", false, "500ms", "", "", 80, 20, false).Render()
+		if !strings.HasSuffix(out, "\n") {
+			t.Errorf("expected trailing newline, got %q", out)
+		}
+		if strings.Count(strings.TrimSuffix(out, "\n"), "\n") != 0 {
+			t.Errorf("expected exactly one line, got %q", out)
+		}
+	})
+
+	t.Run("result adds expand toggle; expanded shows output box", func(t *testing.T) {
+		collapsed := stripANSI(NewSubAgentLine("subagent-0", "checker", "verify", false, "1.0s", "", "all good", 80, 20, false).Render())
+		if !strings.Contains(collapsed, "▶") || strings.Contains(collapsed, "all good") {
+			t.Errorf("collapsed line should show toggle but hide result, got %q", collapsed)
+		}
+		expanded := stripANSI(NewSubAgentLine("subagent-0", "checker", "verify", false, "1.0s", "", "all good", 80, 20, true).Render())
+		if !strings.Contains(expanded, "▼") || !strings.Contains(expanded, "all good") {
+			t.Errorf("expanded line should show toggle open and result, got %q", expanded)
 		}
 	})
 }

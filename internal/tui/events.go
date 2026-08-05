@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
-	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -163,7 +162,11 @@ func (m *Model) HandleEvent(evt agent.Event) {
 
 	case *agent.ToolEndEvent:
 		m.ClearToolCall()
-		m.AddToolResult(e.Name, e.Result, e.Args, formatDuration(e.Duration))
+		if e.Name != "spawn_subagent" {
+			// spawn_subagent is represented by the sub-agent line; its
+			// result arrives on the SubAgentEndEvent instead.
+			m.AddToolResult(e.Name, e.Result, e.Args, formatDuration(e.Duration))
+		}
 
 	case *agent.CompactionStartedEvent:
 		m.SetCompacting(true)
@@ -187,44 +190,48 @@ func (m *Model) HandleEvent(evt agent.Event) {
 		m.scrollToBottom()
 
 	case *agent.SubAgentStartEvent:
-		displayName := subagent.RoleDisplayName(subagent.SubAgentRole(e.Role))
-		specialty := subagent.RoleSpecialty(subagent.SubAgentRole(e.Role))
-		label := displayName
-		if specialty != "" {
-			label += " - " + specialty
-		}
-		if e.Prompt != "" {
-			label += " · " + e.Prompt
-		}
 		m.messages = append(m.messages, Message{
-			Role:    "subagent-start",
-			Content: label,
+			Role:       "subagent",
+			Content:    e.Prompt,
+			SubRole:    e.Role,
+			SubID:      e.SubAgentID,
+			SubRunning: true,
 		})
 		m.refreshViewport()
 		m.scrollToBottom()
 
 	case *agent.SubAgentEndEvent:
-		displayName := subagent.RoleDisplayName(subagent.SubAgentRole(e.Role))
-		specialty := subagent.RoleSpecialty(subagent.SubAgentRole(e.Role))
-		label := displayName
-		if specialty != "" {
-			label += " - " + specialty
+		// One line per sub-agent: transition the matching running line in
+		// place, matched by sub-agent ID (role fallback for ID-less
+		// emitters).
+		idx := -1
+		for i := len(m.messages) - 1; i >= 0; i-- {
+			msg := &m.messages[i]
+			if msg.Role != "subagent" || !msg.SubRunning || msg.SubRole != e.Role {
+				continue
+			}
+			if e.SubAgentID != "" && msg.SubID != e.SubAgentID {
+				continue
+			}
+			idx = i
+			break
 		}
-		if e.Model != "" {
-			label += " [" + e.Model + "]"
+		if idx < 0 {
+			// Start event was never rendered (e.g. cleared history);
+			// append a completed line instead.
+			m.messages = append(m.messages, Message{
+				Role:    "subagent",
+				SubRole: e.Role,
+				SubID:   e.SubAgentID,
+			})
+			idx = len(m.messages) - 1
 		}
-		status := "completed"
-		if e.Error != "" {
-			status = e.Error
-		}
-		label += " · " + status
+		m.messages[idx].SubRunning = false
+		m.messages[idx].SubError = e.Error
+		m.messages[idx].SubResult = e.Result
 		if e.Duration > 0 {
-			label += " (" + formatDuration(e.Duration) + ")"
+			m.messages[idx].ToolDuration = formatDuration(e.Duration)
 		}
-		m.messages = append(m.messages, Message{
-			Role:    "subagent-end",
-			Content: label,
-		})
 		m.refreshViewport()
 		m.scrollToBottom()
 

@@ -144,6 +144,13 @@ func (m *Model) handleMouseClick(msg tea.MouseClickMsg) tea.Cmd {
 				return nil
 			}
 		}
+		for _, zoneID := range m.subagentZones {
+			if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
+				m.subagentExpanded[zoneID] = !m.subagentExpanded[zoneID]
+				m.refreshViewport()
+				return nil
+			}
+		}
 	}
 	return m.viewportUpdate(msg)
 }

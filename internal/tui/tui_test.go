@@ -3,12 +3,14 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	zone "github.com/lrstanley/bubblezone/v2"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -1541,5 +1543,164 @@ func TestViewCursorSequence_NotHovered(t *testing.T) {
 	v := m.View()
 	if !strings.Contains(v.Content, "\x1b]22;text\x07") {
 		t.Error("expected OSC 22 text cursor sequence when hoveredZone is false")
+	}
+}
+
+// --- sub-agent line tests ---
+
+func TestSubAgentLifecycle_SingleLine(t *testing.T) {
+	m := &Model{width: 80}
+	m.HandleEvent(&agent.SubAgentStartEvent{SubAgentID: "sa-1", Role: "developer", Prompt: "fix the bug"})
+
+	if len(m.messages) != 1 {
+		t.Fatalf("expected 1 message after start, got %d", len(m.messages))
+	}
+	if m.messages[0].Role != "subagent" || !m.messages[0].SubRunning || m.messages[0].SubID != "sa-1" {
+		t.Errorf("expected running subagent message with ID, got role=%q running=%v id=%q", m.messages[0].Role, m.messages[0].SubRunning, m.messages[0].SubID)
+	}
+	running := stripANSI(m.renderMessages())
+	if !strings.Contains(running, "⏳") || !strings.Contains(running, "🤖") || !strings.Contains(running, "fix the bug") {
+		t.Errorf("running line missing icon/robot/task, got %q", running)
+	}
+
+	m.HandleEvent(&agent.SubAgentEndEvent{SubAgentID: "sa-1", Role: "developer", Duration: 2 * time.Second, Model: "test-model"})
+
+	if len(m.messages) != 1 {
+		t.Fatalf("end event should transition the same message, got %d messages", len(m.messages))
+	}
+	if m.messages[0].SubRunning {
+		t.Error("subagent should no longer be running after end event")
+	}
+	if m.messages[0].ToolDuration != "2.0s" {
+		t.Errorf("expected duration 2.0s, got %q", m.messages[0].ToolDuration)
+	}
+	done := stripANSI(m.renderMessages())
+	if !strings.Contains(done, "✓") || !strings.Contains(done, "(2.0s)") {
+		t.Errorf("done line missing check/duration, got %q", done)
+	}
+	if strings.Contains(done, "⏳") {
+		t.Errorf("done line should not show running icon, got %q", done)
+	}
+}
+
+func TestSubAgentLifecycle_ParallelSameRoleMatchByID(t *testing.T) {
+	m := &Model{width: 80}
+	m.HandleEvent(&agent.SubAgentStartEvent{SubAgentID: "sa-1", Role: "developer", Prompt: "task A"})
+	m.HandleEvent(&agent.SubAgentStartEvent{SubAgentID: "sa-2", Role: "developer", Prompt: "task B"})
+	// B finishes before A — role-only matching would cross-wire them.
+	m.HandleEvent(&agent.SubAgentEndEvent{SubAgentID: "sa-2", Role: "developer", Duration: time.Second, Result: "result B"})
+	m.HandleEvent(&agent.SubAgentEndEvent{SubAgentID: "sa-1", Role: "developer", Duration: 2 * time.Second, Result: "result A"})
+
+	if len(m.messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(m.messages))
+	}
+	first, second := m.messages[0], m.messages[1]
+	if first.Content != "task A" || first.SubResult != "result A" || first.ToolDuration != "2.0s" || first.SubRunning {
+		t.Errorf("task A line mismatched: %+v", first)
+	}
+	if second.Content != "task B" || second.SubResult != "result B" || second.ToolDuration != "1.0s" || second.SubRunning {
+		t.Errorf("task B line mismatched: %+v", second)
+	}
+}
+
+func TestSubAgentLifecycle_ErrorState(t *testing.T) {
+	m := &Model{width: 80}
+	m.HandleEvent(&agent.SubAgentStartEvent{SubAgentID: "sa-1", Role: "tester", Prompt: "run tests"})
+	m.HandleEvent(&agent.SubAgentEndEvent{SubAgentID: "sa-1", Role: "tester", Error: "context canceled", Duration: time.Second})
+
+	if len(m.messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(m.messages))
+	}
+	if m.messages[0].SubError != "context canceled" {
+		t.Errorf("expected error captured, got %q", m.messages[0].SubError)
+	}
+	out := stripANSI(m.renderMessages())
+	if !strings.Contains(out, "✗") || !strings.Contains(out, "context canceled") {
+		t.Errorf("error line missing cross/error text, got %q", out)
+	}
+}
+
+func TestSubAgentEndWithoutStart_AppendsLine(t *testing.T) {
+	m := &Model{width: 80}
+	m.HandleEvent(&agent.SubAgentEndEvent{SubAgentID: "sa-1", Role: "developer", Duration: time.Second})
+
+	if len(m.messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(m.messages))
+	}
+	if m.messages[0].SubRunning {
+		t.Error("appended message should be completed, not running")
+	}
+}
+
+func TestSubAgentLine_DisplayNameAlongsideRole(t *testing.T) {
+	reg := subagent.NewRoleRegistry()
+	if err := reg.LoadBytes(map[string][]byte{
+		"checker.md": []byte("---\nname: Chuck\nspecialty: checker\n---\nBody."),
+	}); err != nil {
+		t.Fatalf("load test role: %v", err)
+	}
+	subagent.SetDefaultRoleRegistry(reg)
+	t.Cleanup(func() { subagent.SetDefaultRoleRegistry(nil) })
+
+	out := stripANSI(NewSubAgentLine("subagent-0", "checker", "verify build", false, "1.2s", "", "", 80, 20, false).Render())
+	if !strings.Contains(out, "Chuck (checker)") {
+		t.Errorf("expected display name alongside role, got %q", out)
+	}
+}
+
+func TestSubAgentResult_ArrivesOnEndEvent(t *testing.T) {
+	m := &Model{width: 80}
+	m.HandleEvent(&agent.SubAgentStartEvent{SubAgentID: "sa-1", Role: "developer", Prompt: "fix the bug"})
+	m.HandleEvent(&agent.SubAgentEndEvent{SubAgentID: "sa-1", Role: "developer", Duration: 2 * time.Second, Result: "the fix worked"})
+	// The spawn_subagent tool end must not add or alter anything.
+	m.HandleEvent(&agent.ToolEndEvent{ID: 7, Name: "spawn_subagent", Args: `{"role":"developer","prompt":"fix the bug"}`, Result: "the fix worked"})
+
+	if len(m.messages) != 1 {
+		t.Fatalf("spawn_subagent must not add a second message, got %d", len(m.messages))
+	}
+	if m.messages[0].Role != "subagent" {
+		t.Fatalf("expected the subagent message, got role %q", m.messages[0].Role)
+	}
+	if m.messages[0].SubResult != "the fix worked" {
+		t.Errorf("expected result attached to subagent line, got %q", m.messages[0].SubResult)
+	}
+
+	// Collapsed by default: result not visible.
+	collapsed := stripANSI(m.renderMessages())
+	if strings.Contains(collapsed, "the fix worked") {
+		t.Errorf("result should be hidden while collapsed, got %q", collapsed)
+	}
+	if !strings.Contains(collapsed, "▶") {
+		t.Errorf("result should add an expand toggle, got %q", collapsed)
+	}
+
+	// Expanded: result visible, registered as a clickable zone.
+	m.subagentExpanded = map[string]bool{"subagent-0": true}
+	expanded := stripANSI(m.renderMessages())
+	if !strings.Contains(expanded, "the fix worked") {
+		t.Errorf("expanded line should show the result, got %q", expanded)
+	}
+	if len(m.subagentZones) != 1 || m.subagentZones[0] != "subagent-0" {
+		t.Errorf("expected subagent-0 zone registered, got %v", m.subagentZones)
+	}
+}
+
+func TestSubAgentResult_OtherToolsStillRender(t *testing.T) {
+	m := &Model{width: 80}
+	m.HandleEvent(&agent.ToolEndEvent{Name: "bash", Args: `{"command":"ls"}`, Result: "file.txt"})
+
+	if len(m.messages) != 1 || m.messages[0].Role != "tool" {
+		t.Fatalf("non-subagent tools should still render as tool messages, got %+v", m.messages)
+	}
+}
+
+func TestRoleStyle_KnownAndUnknownRoles(t *testing.T) {
+	known := roleStyle("checker").Render("x")
+	if known == "x" {
+		t.Error("known role should be styled")
+	}
+	unknown := roleStyle("no-such-role").Render("x")
+	if !strings.Contains(stripANSI(unknown), "x") {
+		t.Errorf("unknown role should still render text, got %q", unknown)
 	}
 }

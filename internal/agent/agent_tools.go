@@ -90,10 +90,16 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			// start notifier below) once the child's model is resolved, so
 			// views learn the role and model together. startOnce guards a
 			// post-execution fallback for runners that never announce.
+			// subAgentID identifies the sub-agent itself across its start,
+			// end, and result events.
+			var subAgentID string
+			if isTask {
+				subAgentID = fmt.Sprintf("sa-%d", l.subAgentIDGen.Add(1))
+			}
 			var startOnce sync.Once
 			publishStart := func(model string) {
 				if l.broker != nil {
-					l.broker.PublishMustDeliver(&SubAgentStartEvent{Role: taskRole, Model: model, Prompt: taskPrompt})
+					l.broker.PublishMustDeliver(&SubAgentStartEvent{SubAgentID: subAgentID, Role: taskRole, Model: model, Prompt: taskPrompt})
 				}
 			}
 
@@ -250,13 +256,18 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 				if model == "" {
 					model = l.Config.Model
 				}
-				l.broker.PublishMustDeliver(&SubAgentEndEvent{
-					Role:     taskRole,
-					Model:    model,
-					Prompt:   taskPrompt,
-					Duration: duration,
-					Error:    errStr,
-				})
+				endEvt := &SubAgentEndEvent{
+					SubAgentID: subAgentID,
+					Role:       taskRole,
+					Model:      model,
+					Prompt:     taskPrompt,
+					Duration:   duration,
+					Error:      errStr,
+				}
+				if errStr == "" {
+					endEvt.Result = res
+				}
+				l.broker.PublishMustDeliver(endEvt)
 				if escalation != nil {
 					l.broker.PublishMustDeliver(&EscalationEvent{
 						SubAgentRole:   taskRole,

@@ -29,7 +29,11 @@ type Message struct {
 	ToolArgs     string // tool arguments (for extracting descriptions)
 	ToolDuration string // formatted duration string (e.g. "2.3s")
 	Reasoning    string // thinking/reasoning text (empty for non-assistant or normal responses)
-	SubRole      string // sub-agent role ("worker"/"reviewer"/"planner") for task tool messages
+	SubRole      string // sub-agent role key (e.g. "checker"); set on "subagent" messages
+	SubID        string // sub-agent identifier ("sa-N" / "bg-N"); correlates start/end events
+	SubRunning   bool   // sub-agent message: true between start and end events; Content is the task
+	SubError     string // sub-agent message: error text when the run failed
+	SubResult    string // sub-agent message: final result shown in the expanded box
 }
 
 // ServerInfo holds status details about an MCP server (mirrors mcp.ServerInfo).
@@ -116,6 +120,8 @@ type Model struct {
 	reasoningZones    []string        // active reasoning zone IDs
 	toolExpanded      map[string]bool // zone ID → true for expanded tool output
 	toolZones         []string        // active tool zone IDs
+	subagentExpanded  map[string]bool // zone ID → true for expanded sub-agent output
+	subagentZones     []string        // active sub-agent zone IDs
 
 	// --- overlays ---
 	showHelp   bool // help overlay visible
@@ -221,6 +227,7 @@ func New(cfg Config) *Model {
 		banner:            bn,
 		reasoningExpanded: make(map[string]bool),
 		toolExpanded:      make(map[string]bool),
+		subagentExpanded:  make(map[string]bool),
 		help:              help.New(),
 		showBanner:        true,
 		cwd:               cfg.CWD,
@@ -320,6 +327,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		for _, zoneID := range m.toolZones {
+			if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
+				if !m.hoveredZone {
+					return m, func() tea.Msg { return cursorHoverMsg{hovering: true} }
+				}
+				return m, m.viewportUpdate(msg)
+			}
+		}
+		for _, zoneID := range m.subagentZones {
 			if z := zone.Get(zoneID); z != nil && z.InBounds(msg) {
 				if !m.hoveredZone {
 					return m, func() tea.Msg { return cursorHoverMsg{hovering: true} }
