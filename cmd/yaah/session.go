@@ -101,8 +101,11 @@ func (s *agentSession) close() {
 	if s.followupCh != nil {
 		close(s.followupCh)
 	}
-	if s.ctrlCh != nil {
-		s.ctrlCh <- &types.CtrlDone{}
+	s.mu.RLock()
+	ch := s.ctrlCh
+	s.mu.RUnlock()
+	if ch != nil {
+		ch <- &types.CtrlDone{}
 	}
 	if s.otelShutdown != nil {
 		s.otelShutdown(ctx)
@@ -116,10 +119,6 @@ func (s *agentSession) close() {
 	}
 }
 
-// buildToolQuickRef iterates the tool registry and produces a compact
-// markdown quick-reference table. Each entry extracts the top-level
-// property names from the JSON Schema so the model can see parameter
-// names without parsing verbose schemas at the bottom of the prompt.
 func (s *agentSession) Close()   { s.close() }
 func (s *agentSession) Compact() { s.compactContext() }
 func (s *agentSession) ProviderName() string {

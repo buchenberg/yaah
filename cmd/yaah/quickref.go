@@ -8,6 +8,9 @@ import (
 	"github.com/buchenberg/yaah/internal/tools"
 )
 
+// buildToolQuickRef builds a compact tool reference string for the
+// system prompt. It lists every tool name, signature, and description
+// in a single block, mimicking the help text the user sees.
 func buildToolQuickRef(toolReg *tools.Registry) string {
 	names := toolReg.List()
 	entries := make([]prompts.QuickRefEntry, 0, len(names))
