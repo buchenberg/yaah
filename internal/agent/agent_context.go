@@ -318,7 +318,7 @@ func EarliestReasoningIndex(messages []types.Message) int {
 }
 
 func (l *Loop) applyCompactedSummary(summary string, sysMsg types.Message, oldMsgs, keepMsgs []types.Message, preRealTokens int) {
-	l.CtxMgr.applyCompactedSummary(summary, sysMsg, oldMsgs, keepMsgs, preRealTokens)
+	l.ctxMgr().applyCompactedSummary(summary, sysMsg, oldMsgs, keepMsgs, preRealTokens)
 	l.State.Messages = l.CtxMgr.Messages
 	l.State.PreviousSummary = l.CtxMgr.PreviousSummary
 	l.State.LastPromptTokens = l.CtxMgr.LastPromptTokens
@@ -329,7 +329,7 @@ func (l *Loop) applyCompactedSummary(summary string, sysMsg types.Message, oldMs
 }
 
 func (l *Loop) trackCompactionSavings(savings float64) {
-	l.CtxMgr.trackCompactionSavings(savings)
+	l.ctxMgr().trackCompactionSavings(savings)
 }
 
 // truncateRunes slices s to at most maxLen runes, preserving head and tail
@@ -405,15 +405,25 @@ func formatToolStub(m types.Message) string {
 // LastPromptTokens so heavily-cached conversations don't over-trigger
 // compaction (cached tokens are effectively free at the provider).
 func (l *Loop) compactContext(ctx context.Context, threshold float64) {
-	l.CtxMgr.compactContext(ctx, threshold)
-	l.State.Messages = l.CtxMgr.Messages
-	l.State.PreviousSummary = l.CtxMgr.PreviousSummary
-	l.State.LastPromptTokens = l.CtxMgr.LastPromptTokens
-	l.State.IneffectiveCompactions = l.CtxMgr.IneffectiveCompactions
-	l.State.LastCompactionTokens = l.CtxMgr.LastCompactionTokens
-	l.State.CompactionBudgetMultiplier = l.CtxMgr.CompactionBudgetMultiplier
-	l.State.CompactionSavingsHistory = l.CtxMgr.CompactionSavingsHistory
-	l.State.CompactionForcedByOverflow = l.CtxMgr.CompactionForcedByOverflow
+	cm := l.ctxMgr()
+	cm.Messages = l.State.Messages
+	cm.PreviousSummary = l.State.PreviousSummary
+	cm.LastPromptTokens = l.State.LastPromptTokens
+	cm.LastCachedPromptTokens = l.State.LastCachedPromptTokens
+	cm.IneffectiveCompactions = l.State.IneffectiveCompactions
+	cm.LastCompactionTokens = l.State.LastCompactionTokens
+	cm.CompactionBudgetMultiplier = l.State.CompactionBudgetMultiplier
+	cm.CompactionSavingsHistory = l.State.CompactionSavingsHistory
+	cm.CompactionForcedByOverflow = l.State.CompactionForcedByOverflow
+	cm.compactContext(ctx, threshold)
+	l.State.Messages = cm.Messages
+	l.State.PreviousSummary = cm.PreviousSummary
+	l.State.LastPromptTokens = cm.LastPromptTokens
+	l.State.IneffectiveCompactions = cm.IneffectiveCompactions
+	l.State.LastCompactionTokens = cm.LastCompactionTokens
+	l.State.CompactionBudgetMultiplier = cm.CompactionBudgetMultiplier
+	l.State.CompactionSavingsHistory = cm.CompactionSavingsHistory
+	l.State.CompactionForcedByOverflow = cm.CompactionForcedByOverflow
 }
 
 // trimContext removes old messages when the estimated token count exceeds
@@ -421,6 +431,8 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 // Reasoning-carrying assistant messages are protected via ProtectReasoningTurns.
 // This is a fallback when LLM-powered compaction is unavailable.
 func (l *Loop) trimContext() {
-	l.CtxMgr.trimContext()
-	l.State.Messages = l.CtxMgr.Messages
+	cm := l.ctxMgr()
+	cm.Messages = l.State.Messages
+	cm.trimContext()
+	l.State.Messages = cm.Messages
 }

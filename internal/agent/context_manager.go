@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/observability"
+	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/pubsub"
 	"github.com/buchenberg/yaah/internal/types"
 	"go.opentelemetry.io/otel"
@@ -93,9 +95,6 @@ type ContextManager struct {
 	// compactFn is set by the Loop to delegate compaction back through its
 	// own method while ContextManager satisfies the Compactor interface.
 	compactFn func(ctx context.Context, messages []types.Message, threshold float64) []types.Message
-
-	// chunkedCompactFn is set by the Loop to delegate chunked compaction.
-	chunkedCompactFn func(ctx context.Context, oldMsgs []types.Message, compactModel string) (string, error)
 }
 
 // Reset resets all compaction-tracking state to zero values.
@@ -418,17 +417,15 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	resp, err := compactProvider.Send(ctx, req)
 	if err != nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
 		if len(oldMsgs) > minChunkTokens {
-			if cm.chunkedCompactFn != nil {
-				if chunkSummary, chunkErr := cm.chunkedCompactFn(ctx, oldMsgs, compactModel); chunkErr == nil && chunkSummary != "" {
-					cm.applyCompactedSummary(chunkSummary, sysMsg, oldMsgs, keepMsgs, effectiveTokens)
-					afterEstimate := cm.estimatedTokens()
-					savingsPct := 0.0
-					if beforeEstimate > 0 {
-						savingsPct = float64(beforeEstimate-afterEstimate) / float64(beforeEstimate)
-					}
-					observability.RecordCompaction(ctx, compactReason, time.Since(startTime), beforeEstimate, afterEstimate, savingsPct)
-					return
+			if chunkSummary, chunkErr := cm.chunkedCompact(ctx, oldMsgs, compactModel); chunkErr == nil && chunkSummary != "" {
+				cm.applyCompactedSummary(chunkSummary, sysMsg, oldMsgs, keepMsgs, effectiveTokens)
+				afterEstimate := cm.estimatedTokens()
+				savingsPct := 0.0
+				if beforeEstimate > 0 {
+					savingsPct = float64(beforeEstimate-afterEstimate) / float64(beforeEstimate)
 				}
+				observability.RecordCompaction(ctx, compactReason, time.Since(startTime), beforeEstimate, afterEstimate, savingsPct)
+				return
 			}
 		}
 		cm.trimContext()
@@ -515,4 +512,171 @@ func (cm *ContextManager) trimContext() {
 	if cm.Pruner != nil {
 		cm.Pruner.Mark(cm.Messages, "post_trim")
 	}
+}
+
+// summarizeChunk sends a single chunk to the compact model for summarization.
+func (cm *ContextManager) summarizeChunk(ctx context.Context, chunk []types.Message, chunkIdx, total int) (string, error) {
+	if len(chunk) == 0 {
+		return "", nil
+	}
+
+	provider := cm.CompactProvider
+	if provider == nil {
+		provider = cm.Provider
+	}
+	model := cm.CompactModel
+	if model == "" {
+		model = cm.Model
+	}
+
+	var sb strings.Builder
+	sb.WriteString(prompts.ChunkPreamble(chunkIdx+1, total) + "\n\n")
+	sb.WriteString("<conversation>\n")
+	for _, m := range chunk {
+		if m.Content != "" {
+			if m.Role == "tool" {
+				sb.WriteString(formatToolStub(m) + "\n")
+			} else {
+				sb.WriteString(fmt.Sprintf("%s: %s\n", m.Role, m.Content))
+			}
+		}
+		for _, tc := range m.ToolCalls {
+			sb.WriteString(fmt.Sprintf("[tool_call:%s] %s\n", tc.Function.Name, tc.Function.Arguments))
+		}
+	}
+	sb.WriteString("</conversation>\n\n")
+	sb.WriteString(prompts.SummaryTemplate())
+
+	req := types.ChatRequest{
+		Model:     model,
+		MaxTokens: 4096,
+		Messages: []types.Message{
+			types.SystemMsg(prompts.ChunkSummarizerRole()),
+			types.UserMsg(sb.String()),
+		},
+	}
+
+	resp, err := provider.Send(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("chunk %d/%d summarization failed: %w", chunkIdx+1, total, err)
+	}
+	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+		return "", nil
+	}
+	return resp.Choices[0].Message.Content, nil
+}
+
+// chunkedCompact performs multi-pass chunked summarization of old messages.
+func (cm *ContextManager) chunkedCompact(ctx context.Context, oldMsgs []types.Message, compactModel string) (string, error) {
+	if len(oldMsgs) == 0 {
+		return "", nil
+	}
+
+	chunkBudget := int(float64(cm.ContextWindow) * chunkBudgetFraction)
+	if chunkBudget < minChunkTokens {
+		chunkBudget = minChunkTokens
+	}
+
+	chunks := chunkSplit(oldMsgs, chunkBudget)
+	if len(chunks) <= 1 {
+		return cm.summarizeChunk(ctx, oldMsgs, 0, 1)
+	}
+
+	sem := make(chan struct{}, maxChunkConcurrency)
+	var wg sync.WaitGroup
+	results := make([]string, len(chunks))
+	errors := make([]error, len(chunks))
+
+	for i, chunk := range chunks {
+		wg.Add(1)
+		go func(idx int, c []types.Message) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[idx], errors[idx] = cm.summarizeChunk(ctx, c, idx, len(chunks))
+		}(i, chunk)
+	}
+	wg.Wait()
+
+	var partials []string
+	for i, r := range results {
+		if errors[i] != nil {
+			continue
+		}
+		if strings.TrimSpace(r) != "" {
+			partials = append(partials, r)
+		}
+	}
+	if len(partials) == 0 {
+		return "", fmt.Errorf("all chunk summarizations failed")
+	}
+	if len(partials) == 1 {
+		return partials[0], nil
+	}
+	return cm.reducePartialSummaries(ctx, partials, 1, compactModel)
+}
+
+// reducePartialSummaries recursively merges partial summaries into one.
+func (cm *ContextManager) reducePartialSummaries(ctx context.Context, partials []string, depth int, compactModel string) (string, error) {
+	if len(partials) == 1 {
+		return partials[0], nil
+	}
+	if len(partials) == 0 {
+		return "", nil
+	}
+	if depth > maxReduceDepth {
+		return strings.Join(partials, "\n###\n"), nil
+	}
+
+	provider := cm.CompactProvider
+	if provider == nil {
+		provider = cm.Provider
+	}
+	model := cm.CompactModel
+	if model == "" {
+		model = cm.Model
+	}
+
+	var sb strings.Builder
+	sb.WriteString(prompts.ChunkMergerPreamble() + "\n\n")
+	for i, p := range partials {
+		sb.WriteString(fmt.Sprintf("<partial-summary-%d>\n%s\n</partial-summary-%d>\n\n", i+1, p, i+1))
+	}
+	sb.WriteString(prompts.SummaryTemplate())
+
+	req := types.ChatRequest{
+		Model:     model,
+		MaxTokens: 4096,
+		Messages: []types.Message{
+			types.SystemMsg(prompts.ChunkMergerRole()),
+			types.UserMsg(sb.String()),
+		},
+	}
+
+	resp, err := provider.Send(ctx, req)
+	if err != nil {
+		return strings.Join(partials, "\n###\n"), nil
+	}
+	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+		return strings.Join(partials, "\n###\n"), nil
+	}
+
+	merged := resp.Choices[0].Message.Content
+	combinedLen := 0
+	for _, p := range partials {
+		combinedLen += len(p)
+	}
+	if float64(len(merged)) > float64(combinedLen)*0.8 {
+		mid := len(partials) / 2
+		left, err := cm.reducePartialSummaries(ctx, partials[:mid], depth+1, compactModel)
+		if err != nil {
+			return merged, nil
+		}
+		right, err := cm.reducePartialSummaries(ctx, partials[mid:], depth+1, compactModel)
+		if err != nil {
+			return merged, nil
+		}
+		return cm.reducePartialSummaries(ctx, []string{left, right}, depth+1, compactModel)
+	}
+	return merged, nil
 }
