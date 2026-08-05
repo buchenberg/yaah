@@ -7,7 +7,7 @@ styling centralized in `theme.go`.
 ## Overview
 
 ```
-tui.go (Model, View, Update, HandleEvent)
+model.go (Model, Init, Update)   view.go (View)   events.go (HandleEvent)
    │
    ├── View() ─────────► Header, StatusBar, palettes, viewport, input, footer
    │
@@ -15,7 +15,7 @@ tui.go (Model, View, Update, HandleEvent)
    │        (render.go)
    │
    └── theme.go ────────► package-level lipgloss styles (single source
-                          of truth for colors)
+                           of truth for colors)
 ```
 
 The `Model` owns all state (messages, streaming buffers, expansion maps,
@@ -38,7 +38,7 @@ message components.
 |---|---|---|---|
 | `UserMessage` | `message_component.go` | Bold user text, wrapped, user background | `renderMessages()` |
 | `AssistantMessage` | `message_component.go` | Assistant-colored content | `renderMessages()` |
-| `SubAgentBracket` | `message_component.go` | `╭─` / `╰─` sub-agent container corners | `renderMessages()` |
+| `SubAgentLine` | `message_component.go` | One-line sub-agent lifecycle: robot icon, role-colored name, task, ⏳/✓/✗ status | `renderMessages()` |
 | `SystemMessage` | `message_component.go` | System text on system background | `renderMessages()` |
 | `ExpandableSection` | `expandable_component.go` | Zone-marked ▶/▼ toggle + content | `renderMessages()` |
 | `ToolMessage` | `tool_component.go` | Tool header, bordered output box, truncation | `renderMessages()` |
@@ -84,7 +84,7 @@ are intentionally **not** components — they are bound to spinner state and
 debounced refresh flags in `Model`, and forcing them into the component
 model would add indirection without test benefit.
 
-### Chrome (`View()` in tui.go)
+### Chrome (`View()` in view.go)
 
 `View()` composes header, viewport, status bar, optional ephemeral line,
 optional palette, search line, input, and footer with
@@ -95,8 +95,7 @@ bubbletea widgets (out of scope for the component system).
 ## Styling
 
 Components never define colors. They consume the package-level
-`lipgloss.Style` variables declared in `tui.go` and initialized by
-`ApplyTheme()` in `theme.go`. Layout properties (width, truncation budgets,
+`lipgloss.Style` variables declared and initialized in `theme.go`. Layout properties (width, truncation budgets,
 bordered-box geometry) live inside the components themselves.
 
 This split is deliberate:
@@ -175,7 +174,7 @@ border constrained to the terminal width. Inside the box:
 - **Selection** uses ` ▶ ` (with matching 3-space pad on unselected rows);
   multi-select rows use ` ☑ ` / ` ☐ ` in the same slot.
 - **Overflow** shows `commandDescStyle.Render("  (N-M of K)")` when the
-  list is scrolled; `paletteLines()` in `tui.go` must account for the
+  list is scrolled; `paletteLines()` in `view.go` must account for the
   extra line when computing palette height.
 - **Empty state** follows the mode's intent: transient typing aids
   (`CommandPalette`) return `""` to hide entirely; explicit modals

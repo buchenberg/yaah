@@ -29,7 +29,9 @@ type Message struct {
 	ToolArgs     string // tool arguments (for extracting descriptions)
 	ToolDuration string // formatted duration string (e.g. "2.3s")
 	Reasoning    string // thinking/reasoning text (empty for non-assistant or normal responses)
-	SubRole      string // sub-agent role ("worker"/"reviewer"/"planner") for task tool messages
+	SubRole      string // sub-agent role key (e.g. "checker"); set on "subagent" messages
+	SubRunning   bool   // sub-agent message: true between start and end events; Content is the task
+	SubError     string // sub-agent message: error text when the run failed
 }
 
 // ServerInfo holds status details about an MCP server (mirrors mcp.ServerInfo).

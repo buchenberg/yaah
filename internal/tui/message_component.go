@@ -1,5 +1,7 @@
 package tui
 
+import "github.com/buchenberg/yaah/internal/agent/subagent"
+
 // UserMessage renders a user chat message: bold user-colored text
 // wrapped to the terminal width on the user background.
 type UserMessage struct {
@@ -34,27 +36,50 @@ func (c AssistantMessage) Render() string {
 	return assistantStyle.Render(c.content)
 }
 
-// SubAgentBracket renders the box-drawing corners that bracket a
-// sub-agent's lifetime in the chat: ╭─ opens the block (bold) and
-// ╰─ closes it (plain), both in the tool color. The corners frame the
-// sub-agent's tool output between them like a container.
-type SubAgentBracket struct {
-	label string
-	start bool
+// SubAgentLine renders a sub-agent's whole lifetime on a single line,
+// tool-style: a status icon (⏳ running, ✓ done, ✗ error), a robot icon,
+// the role-colored display name, and the task. The start event renders
+// the running form; the end event updates the same message in place.
+type SubAgentLine struct {
+	role     string // role key used for color lookup (e.g. "checker")
+	task     string
+	running  bool
+	duration string // formatted duration (done/error only)
+	errMsg   string // error text (error state only)
 }
 
-// NewSubAgentBracket creates a sub-agent bracket component.
-// start=true renders the opening (bold) corner; false the closing one.
-func NewSubAgentBracket(label string, start bool) SubAgentBracket {
-	return SubAgentBracket{label: label, start: start}
+// NewSubAgentLine creates a sub-agent line component.
+func NewSubAgentLine(role, task string, running bool, duration, errMsg string) SubAgentLine {
+	return SubAgentLine{role: role, task: task, running: running, duration: duration, errMsg: errMsg}
 }
 
-// Render returns the styled bracket with a trailing newline.
-func (c SubAgentBracket) Render() string {
-	if c.start {
-		return subAgentStartStyle.Render("╭─ sub-agent: "+c.label) + "\n"
+// Render returns the styled line with a trailing newline.
+func (c SubAgentLine) Render() string {
+	name := subagent.RoleDisplayName(subagent.SubAgentRole(c.role))
+	label := name
+	if name != c.role {
+		label = name + " (" + c.role + ")"
 	}
-	return subAgentEndStyle.Render("╰─ sub-agent: "+c.label) + "\n"
+	styled := roleStyle(c.role).Render("🤖 " + label)
+
+	icon := "✓"
+	if c.running {
+		icon = "⏳"
+	} else if c.errMsg != "" {
+		icon = "✗"
+	}
+
+	line := "  " + icon + " " + styled
+	if c.task != "" {
+		line += toggleStyle.Render(" · " + c.task)
+	}
+	if !c.running && c.duration != "" {
+		line += toggleStyle.Render(" (" + c.duration + ")")
+	}
+	if c.errMsg != "" {
+		line += errorStyle.Render(" — " + c.errMsg)
+	}
+	return line + "\n"
 }
 
 // SystemMessage renders a system or other-role message: wrapped text

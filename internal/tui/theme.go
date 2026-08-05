@@ -210,8 +210,6 @@ var (
 	commandNameStyle    lipgloss.Style
 	commandDescStyle    lipgloss.Style
 	toolBoxStyle        lipgloss.Style
-	subAgentStartStyle  lipgloss.Style
-	subAgentEndStyle    lipgloss.Style
 	paletteTitleStyle   lipgloss.Style
 	noticeStyle         lipgloss.Style
 	mcpStatusConnected  lipgloss.Style
@@ -237,13 +235,6 @@ func ApplyTheme(t Theme) {
 		Foreground(colorOrNone(t.Assistant))
 
 	toolStyle = lipgloss.NewStyle().
-		Foreground(colorOrNone(t.Tool))
-
-	subAgentStartStyle = lipgloss.NewStyle().
-		Foreground(colorOrNone(t.Tool)).
-		Bold(true)
-
-	subAgentEndStyle = lipgloss.NewStyle().
 		Foreground(colorOrNone(t.Tool))
 
 	systemStyle = lipgloss.NewStyle().

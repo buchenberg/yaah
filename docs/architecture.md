@@ -370,13 +370,13 @@ Sub-agent tool calls are displayed indented beneath the parent's activity via `T
 
 ### TUI lifecycle display
 
-Files: `cmd/yaah/tui.go`, `internal/tui/tui.go`, `internal/tui/render.go`
+Files: `cmd/yaah/tui.go`, `internal/tui/events.go`, `internal/tui/render.go`, `internal/tui/message_component.go`
 
-The TUI mirrors the CLI's bracketed sub-agent display through the same typed event interface.
+The TUI renders each sub-agent's whole lifetime as a single tool-style line, distinct from the CLI's bracketed display.
 
-**Data flow:** `SubAgentStartEvent` and `SubAgentEndEvent` are published to the broker and delivered to `Model.HandleEvent`. The TUI converts them into `Message` entries: `"subagent-start"` role with the task label (e.g. `"analyst — Research docs"`), and `"subagent-end"` role with the completion label (e.g. `"analyst — completed (6.8s)"`). The `SubAgentBracket` component renders these as `╭─` / `╰─` container corners (see [TUI component system](./tui-components.md)).
+**Data flow:** `SubAgentStartEvent` and `SubAgentEndEvent` are published to the broker and delivered to `Model.HandleEvent`. The start event appends one `Message` with role `"subagent"` (`SubRole` = role key, `Content` = task prompt, `SubRunning` = true). The end event finds the most recent running message for that role and transitions it in place (`SubRunning` = false, duration, error) — no separate end message is appended (see [TUI component system](./tui-components.md)).
 
-**`renderMessages`** handles `"subagent-start"` and `"subagent-end"` roles with `subAgentStartStyle` (bold tool color) and `subAgentEndStyle` (tool color). The task tool header in the `"tool"` case uses `matchJSONField` to extract `role` and `description` from tool args JSON, displaying e.g. `"sub-agent: analyst — Research docs"` instead of the generic `"sub-agent"`.
+**`renderMessages`** handles the `"subagent"` role with the `SubAgentLine` component: a status icon (`⏳` running, `✓` done, `✗` error), a robot icon (🤖), the role-colored display name (per-role palette in `role_colors.go`, matching TUI2), the task, and the duration. The task tool header in the `"tool"` case uses `matchJSONField` to extract `role` and `description` from tool args JSON, displaying e.g. `"sub-agent: analyst — Research docs"` instead of the generic `"sub-agent"`.
 
 ### Timeout enforcement
 

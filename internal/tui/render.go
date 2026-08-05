@@ -365,11 +365,8 @@ func (m *Model) renderMessages() string {
 				b.WriteString("\n")
 			}
 
-		case "subagent-start":
-			b.WriteString(NewSubAgentBracket(msg.Content, true).Render())
-
-		case "subagent-end":
-			b.WriteString(NewSubAgentBracket(msg.Content, false).Render())
+		case "subagent":
+			b.WriteString(NewSubAgentLine(msg.SubRole, msg.Content, msg.SubRunning, msg.ToolDuration, msg.SubError).Render())
 
 		case "tool":
 			zoneID := fmt.Sprintf("tool-%d", msgIdx)
