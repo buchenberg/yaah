@@ -192,11 +192,6 @@ func ParseSubAgentOutput(output string, runErr error) *SubAgentOutput {
 // the role-specific tool registry and Loop.
 type TaskRunner func(ctx context.Context, prompt string, params SubAgentParams) (string, error)
 
-// BackgroundResultNotifier is called when a background sub-agent completes.
-// role is the sub-agent role name, description is the task description,
-// result is the final output, and err is any error from the runner.
-type BackgroundResultNotifier func(role, description, result string, err error)
-
 // TaskTool spawns a sub-agent with a restricted tool set to complete a task.
 //
 // The tool supports an optional role (worker/reviewer/planner) that
@@ -242,12 +237,13 @@ type TaskTool struct {
 	// the same files. Nil means no tracking.
 	Tracker *ConflictTracker
 
-	// BackgroundNotifier is called when a background sub-agent completes.
-	// The caller wires this to push results into the parent's follow-up
-	// channel so they appear as injected user messages. When nil,
-	// background mode is disabled (the tool will error if background
-	// is requested without a notifier).
-	BackgroundNotifier BackgroundResultNotifier
+	// BackgroundJobs, when non-nil, manages asynchronous (background:
+	// true) sub-agents: it owns the session-rooted context they derive
+	// cancellation from (so they outlive the dispatching tool call and
+	// turn), tracks them for status/cancel, attributes their usage, and
+	// delivers their results as follow-ups. When nil, background mode is
+	// unavailable and the tool errors if requested.
+	BackgroundJobs *BackgroundJobs
 }
 
 func (t *TaskTool) Name() string { return "spawn_subagent" }
@@ -270,7 +266,7 @@ func (t *TaskTool) Schema() json.RawMessage {
 			"max_turns": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Optional soft cap on tool-using turns. Overrides the role default."},
 			"json_mode": {"type": "boolean", "description": "Request structured JSON output from the sub-agent."},
 			"output_limit": {"type": "integer", "minimum": 1024, "description": "Optional byte cap on the sub-agent's final report."},
-			"background": {"type": "boolean", "description": "When true, dispatch the sub-agent asynchronously and return immediately. Results arrive in a follow-up message."}
+			"background": {"type": "boolean", "description": "When true, dispatch the sub-agent asynchronously and return immediately. Results arrive in a follow-up message. Returns a job_id you can use with subagent_jobs to check status, cancel, or wait."}
 		},
 		"required": ["description", "prompt", "role"]
 	}`)
@@ -361,7 +357,7 @@ func BuildTaskSchema(roleNames []string, roleDescriptions map[string]string) jso
 			},
 			"background": map[string]any{
 				"type":        "boolean",
-				"description": "When true, dispatch the sub-agent asynchronously and return immediately. Results arrive in a follow-up message.",
+				"description": "When true, dispatch the sub-agent asynchronously and return immediately. Results arrive in a follow-up message. Returns a job_id to use with subagent_jobs (status/cancel/wait).",
 			},
 		},
 		"required": []string{"description", "prompt", "role"},
@@ -423,10 +419,6 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", fmt.Errorf("spawn_subagent: sub-agent runner not configured")
 	}
 
-	if params.Background && t.BackgroundNotifier == nil {
-		return "", fmt.Errorf("spawn_subagent: background mode requested but not available")
-	}
-
 	// Clamp model-supplied overrides to the advertised schema bounds so a
 	// runaway or injected value cannot neutralize the deadline or iterate
 	// forever. Values below the minimum fall back to the role default.
@@ -452,27 +444,14 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 	runCtx := WithConflictLabel(ctx, label)
 
 	if params.Background {
-		notifier := t.BackgroundNotifier
-		runner := t.Runner
-		role := params.Role
-		desc := params.Description
-		bgCtx := context.WithoutCancel(runCtx)
-		if timeout > 0 {
-			var cancel context.CancelFunc
-			bgCtx, cancel = context.WithTimeout(bgCtx, timeout)
-			go func() {
-				<-ctx.Done()
-				cancel()
-			}()
+		if t.BackgroundJobs == nil {
+			return "", fmt.Errorf("spawn_subagent: background mode requested but not available")
 		}
-		go func() {
-			result, err := runner(bgCtx, params.Prompt, subParams)
-			if bgCtx.Err() != nil && err == nil {
-				err = bgCtx.Err()
-			}
-			notifier(role, desc, result, err)
-		}()
-		return structuredBackgroundResult(label), nil
+		jobID, err := t.BackgroundJobs.Launch(ctx, t.Runner, params.Role, params.Description, params.Prompt, subParams, timeout)
+		if err != nil {
+			return "", err
+		}
+		return structuredBackgroundResult(jobID, label), nil
 	}
 
 	if timeout > 0 {
@@ -543,14 +522,17 @@ func resolveTaskTimeout(callSeconds int, resolveDefault func(SubAgentParams) tim
 }
 
 // structuredBackgroundResult builds a JSON payload for background sub-agent
-// dispatch. The model sees this as the immediate tool result; the actual
+// dispatch. The model sees this as the immediate tool result carrying a job
+// id it can use with the subagent_jobs tool (status/cancel); the actual
 // sub-agent output arrives later via a follow-up message.
-func structuredBackgroundResult(label string) string {
+func structuredBackgroundResult(jobID, label string) string {
 	out := struct {
 		Status string `json:"status"`
+		JobID  string `json:"job_id"`
 		Label  string `json:"label"`
 	}{
 		Status: "running",
+		JobID:  jobID,
 		Label:  label,
 	}
 	data, err := json.Marshal(out)

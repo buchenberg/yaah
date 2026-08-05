@@ -89,6 +89,13 @@ type Loop struct {
 	FollowUps <-chan string
 	Steer     <-chan string
 
+	// BackgroundJobs, when set, is wired with the loop's broker callbacks
+	// (SubAgentStart/End events) at Run start so background sub-agents
+	// dispatching through the shared TaskTool emit live UI events while a
+	// loop is active. Usage attribution is session-scoped (on the manager)
+	// so it survives across Runs; only the event hooks are loop-scoped.
+	BackgroundJobs *tools.BackgroundJobs
+
 	ApproveFn       func(name, args string) bool `json:"-"`
 	ConflictTracker *tools.ConflictTracker
 	CtxMgr          *ContextManager

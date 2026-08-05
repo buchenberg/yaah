@@ -22,23 +22,24 @@ type toolExecResult struct {
 	err     error
 }
 
-// parseTaskArgs extracts a display-friendly role and prompt from a task
-// tool's JSON arguments. Returns ("default", prompt-abbreviation) when
-// the role is empty or the JSON is unparseable.
-func parseTaskArgs(args string) (role, prompt string) {
+// parseTaskArgs extracts a display-friendly role and prompt (and whether
+// the call requested background dispatch) from a task tool's JSON
+// arguments. Returns ("default", "", false) when the JSON is unparseable.
+func parseTaskArgs(args string) (role, prompt string, background bool) {
 	var p struct {
 		Description string `json:"description"`
 		Prompt      string `json:"prompt"`
 		Role        string `json:"role"`
+		Background  bool   `json:"background"`
 	}
 	if err := json.Unmarshal([]byte(args), &p); err != nil {
-		return "default", ""
+		return "default", "", false
 	}
 	role = p.Role
 	if role == "" {
 		role = "default"
 	}
-	return role, abbreviateArgs(p.Description, 60)
+	return role, abbreviateArgs(p.Description, 60), p.Background
 }
 
 // abbreviateArgs truncates JSON args to maxLen characters with ellipsis.

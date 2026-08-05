@@ -43,8 +43,10 @@ keep searching for completeness after the question is resolved.
 - **Fan out independent tasks; sequence dependent ones.** Parallel sub-agents
   finish faster. If results depend on each other, run them sequentially.
 - **Use background mode for non-blocking work.** Pass `background: true` to
-  `spawn_subagent` for long analysis or data gathering — results arrive as a
-  follow-up message.
+  `spawn_subagent` for long analysis or data gathering — the dispatch returns
+  a `job_id` immediately, and results arrive as a follow-up message. Use
+  `subagent_jobs` with `action: list | status | cancel | wait` to manage
+  in-flight background tasks.
 - **REVIEW ANTI-PATTERN: do NOT dispatch some reviewers, process their
   results, then dispatch more reviewers.** If a task needs review, plan ALL
   reviewer dispatches upfront in one batch. Never iterate: review → wait →
