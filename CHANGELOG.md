@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.48.0](https://github.com/buchenberg/yaah/compare/v0.47.3...v0.48.0) (2026-08-05)
+
+
+### Features
+
+* **tui:** single-line role-colored sub-agents with result expand toggle ([#153](https://github.com/buchenberg/yaah/issues/153)) ([1f5a9ff](https://github.com/buchenberg/yaah/commit/1f5a9ff4d5de71dd7fce03a0ffe3246a597cc0f7))
+
+
+### Code Refactoring
+
+* **tui:** break up tui.go god file into focused files ([#152](https://github.com/buchenberg/yaah/issues/152)) ([1e04f6c](https://github.com/buchenberg/yaah/commit/1e04f6c0c99acf4a22cf45eea10240125afbae1b))
+
 ## [0.47.3](https://github.com/buchenberg/yaah/compare/v0.47.2...v0.47.3) (2026-08-05)
 
 
