@@ -1550,20 +1550,20 @@ func TestViewCursorSequence_NotHovered(t *testing.T) {
 
 func TestSubAgentLifecycle_SingleLine(t *testing.T) {
 	m := &Model{width: 80}
-	m.HandleEvent(&agent.SubAgentStartEvent{Role: "developer", Prompt: "fix the bug"})
+	m.HandleEvent(&agent.SubAgentStartEvent{SubAgentID: "sa-1", Role: "developer", Prompt: "fix the bug"})
 
 	if len(m.messages) != 1 {
 		t.Fatalf("expected 1 message after start, got %d", len(m.messages))
 	}
-	if m.messages[0].Role != "subagent" || !m.messages[0].SubRunning {
-		t.Errorf("expected running subagent message, got role=%q running=%v", m.messages[0].Role, m.messages[0].SubRunning)
+	if m.messages[0].Role != "subagent" || !m.messages[0].SubRunning || m.messages[0].SubID != "sa-1" {
+		t.Errorf("expected running subagent message with ID, got role=%q running=%v id=%q", m.messages[0].Role, m.messages[0].SubRunning, m.messages[0].SubID)
 	}
 	running := stripANSI(m.renderMessages())
 	if !strings.Contains(running, "⏳") || !strings.Contains(running, "🤖") || !strings.Contains(running, "fix the bug") {
 		t.Errorf("running line missing icon/robot/task, got %q", running)
 	}
 
-	m.HandleEvent(&agent.SubAgentEndEvent{Role: "developer", Duration: 2 * time.Second, Model: "test-model"})
+	m.HandleEvent(&agent.SubAgentEndEvent{SubAgentID: "sa-1", Role: "developer", Duration: 2 * time.Second, Model: "test-model"})
 
 	if len(m.messages) != 1 {
 		t.Fatalf("end event should transition the same message, got %d messages", len(m.messages))
@@ -1583,10 +1583,30 @@ func TestSubAgentLifecycle_SingleLine(t *testing.T) {
 	}
 }
 
+func TestSubAgentLifecycle_ParallelSameRoleMatchByID(t *testing.T) {
+	m := &Model{width: 80}
+	m.HandleEvent(&agent.SubAgentStartEvent{SubAgentID: "sa-1", Role: "developer", Prompt: "task A"})
+	m.HandleEvent(&agent.SubAgentStartEvent{SubAgentID: "sa-2", Role: "developer", Prompt: "task B"})
+	// B finishes before A — role-only matching would cross-wire them.
+	m.HandleEvent(&agent.SubAgentEndEvent{SubAgentID: "sa-2", Role: "developer", Duration: time.Second, Result: "result B"})
+	m.HandleEvent(&agent.SubAgentEndEvent{SubAgentID: "sa-1", Role: "developer", Duration: 2 * time.Second, Result: "result A"})
+
+	if len(m.messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(m.messages))
+	}
+	first, second := m.messages[0], m.messages[1]
+	if first.Content != "task A" || first.SubResult != "result A" || first.ToolDuration != "2.0s" || first.SubRunning {
+		t.Errorf("task A line mismatched: %+v", first)
+	}
+	if second.Content != "task B" || second.SubResult != "result B" || second.ToolDuration != "1.0s" || second.SubRunning {
+		t.Errorf("task B line mismatched: %+v", second)
+	}
+}
+
 func TestSubAgentLifecycle_ErrorState(t *testing.T) {
 	m := &Model{width: 80}
-	m.HandleEvent(&agent.SubAgentStartEvent{Role: "tester", Prompt: "run tests"})
-	m.HandleEvent(&agent.SubAgentEndEvent{Role: "tester", Error: "context canceled", Duration: time.Second})
+	m.HandleEvent(&agent.SubAgentStartEvent{SubAgentID: "sa-1", Role: "tester", Prompt: "run tests"})
+	m.HandleEvent(&agent.SubAgentEndEvent{SubAgentID: "sa-1", Role: "tester", Error: "context canceled", Duration: time.Second})
 
 	if len(m.messages) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(m.messages))
@@ -1602,7 +1622,7 @@ func TestSubAgentLifecycle_ErrorState(t *testing.T) {
 
 func TestSubAgentEndWithoutStart_AppendsLine(t *testing.T) {
 	m := &Model{width: 80}
-	m.HandleEvent(&agent.SubAgentEndEvent{Role: "developer", Duration: time.Second})
+	m.HandleEvent(&agent.SubAgentEndEvent{SubAgentID: "sa-1", Role: "developer", Duration: time.Second})
 
 	if len(m.messages) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(m.messages))
@@ -1628,14 +1648,15 @@ func TestSubAgentLine_DisplayNameAlongsideRole(t *testing.T) {
 	}
 }
 
-func TestSubAgentResult_AttachesInsteadOfToolMessage(t *testing.T) {
+func TestSubAgentResult_ArrivesOnEndEvent(t *testing.T) {
 	m := &Model{width: 80}
-	m.HandleEvent(&agent.SubAgentStartEvent{Role: "developer", Prompt: "fix the bug"})
-	m.HandleEvent(&agent.SubAgentEndEvent{Role: "developer", Duration: 2 * time.Second})
-	m.HandleEvent(&agent.ToolEndEvent{Name: "spawn_subagent", Args: `{"role":"developer","prompt":"fix the bug"}`, Result: "the fix worked"})
+	m.HandleEvent(&agent.SubAgentStartEvent{SubAgentID: "sa-1", Role: "developer", Prompt: "fix the bug"})
+	m.HandleEvent(&agent.SubAgentEndEvent{SubAgentID: "sa-1", Role: "developer", Duration: 2 * time.Second, Result: "the fix worked"})
+	// The spawn_subagent tool end must not add or alter anything.
+	m.HandleEvent(&agent.ToolEndEvent{ID: 7, Name: "spawn_subagent", Args: `{"role":"developer","prompt":"fix the bug"}`, Result: "the fix worked"})
 
 	if len(m.messages) != 1 {
-		t.Fatalf("spawn_subagent result must not add a second message, got %d", len(m.messages))
+		t.Fatalf("spawn_subagent must not add a second message, got %d", len(m.messages))
 	}
 	if m.messages[0].Role != "subagent" {
 		t.Fatalf("expected the subagent message, got role %q", m.messages[0].Role)

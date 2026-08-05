@@ -129,11 +129,12 @@ type BackgroundJobs struct {
 
 	// OnStart / OnEnd are optional event hooks (e.g. publishing
 	// SubAgentStartEvent / SubAgentEndEvent to the live loop broker).
+	// The id is the background job's sub-agent identifier ("bg-N").
 	// Loop-scoped: the loop registers them at Run start and clears them
 	// at Run end, so events only fire while a loop is live. Nil between
 	// runs is fine — the job keeps running; only the UI event is skipped.
-	OnStart func(role, model, prompt string)
-	OnEnd   func(role, model, prompt string, dur time.Duration, err string)
+	OnStart func(id, role, model, prompt string)
+	OnEnd   func(id, role, model, prompt, result string, dur time.Duration, err string)
 }
 
 // NewBackgroundJobs creates a manager backed by context.Background().
@@ -224,7 +225,7 @@ func (m *BackgroundJobs) Launch(callCtx context.Context, runner TaskRunner, role
 	jobCtx = WithSubAgentStartNotifier(jobCtx, func(model string) {
 		job.model = model
 		if m.OnStart != nil {
-			m.OnStart(role, model, description)
+			m.OnStart(job.id, role, model, description)
 		}
 	})
 
@@ -279,7 +280,7 @@ func (m *BackgroundJobs) run(job *backgroundJob, jobCtx context.Context, jobCanc
 		if runErr != nil {
 			errStr = runErr.Error()
 		}
-		m.OnEnd(job.role, job.model, job.description, job.duration, errStr)
+		m.OnEnd(job.id, job.role, job.model, job.description, result, job.duration, errStr)
 	}
 	if m.Deliver != nil {
 		m.Deliver(job.role, job.description, result, runErr)

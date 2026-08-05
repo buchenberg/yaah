@@ -30,6 +30,7 @@ type Message struct {
 	ToolDuration string // formatted duration string (e.g. "2.3s")
 	Reasoning    string // thinking/reasoning text (empty for non-assistant or normal responses)
 	SubRole      string // sub-agent role key (e.g. "checker"); set on "subagent" messages
+	SubID        string // sub-agent identifier ("sa-N" / "bg-N"); correlates start/end events
 	SubRunning   bool   // sub-agent message: true between start and end events; Content is the task
 	SubError     string // sub-agent message: error text when the run failed
 	SubResult    string // sub-agent message: final result shown in the expanded box

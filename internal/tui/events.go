@@ -7,7 +7,6 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/todo"
-	"github.com/buchenberg/yaah/internal/toolfmt"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -163,11 +162,9 @@ func (m *Model) HandleEvent(evt agent.Event) {
 
 	case *agent.ToolEndEvent:
 		m.ClearToolCall()
-		if e.Name == "spawn_subagent" {
-			// The sub-agent line already represents this call; attach the
-			// result to it instead of rendering a second tool message.
-			m.attachSubAgentResult(e.Args, e.Result)
-		} else {
+		if e.Name != "spawn_subagent" {
+			// spawn_subagent is represented by the sub-agent line; its
+			// result arrives on the SubAgentEndEvent instead.
 			m.AddToolResult(e.Name, e.Result, e.Args, formatDuration(e.Duration))
 		}
 
@@ -197,20 +194,27 @@ func (m *Model) HandleEvent(evt agent.Event) {
 			Role:       "subagent",
 			Content:    e.Prompt,
 			SubRole:    e.Role,
+			SubID:      e.SubAgentID,
 			SubRunning: true,
 		})
 		m.refreshViewport()
 		m.scrollToBottom()
 
 	case *agent.SubAgentEndEvent:
-		// Find the matching running sub-agent line (most recent first)
-		// and transition it in place — one line per sub-agent, tool-style.
+		// One line per sub-agent: transition the matching running line in
+		// place, matched by sub-agent ID (role fallback for ID-less
+		// emitters).
 		idx := -1
 		for i := len(m.messages) - 1; i >= 0; i-- {
-			if m.messages[i].Role == "subagent" && m.messages[i].SubRunning && m.messages[i].SubRole == e.Role {
-				idx = i
-				break
+			msg := &m.messages[i]
+			if msg.Role != "subagent" || !msg.SubRunning || msg.SubRole != e.Role {
+				continue
 			}
+			if e.SubAgentID != "" && msg.SubID != e.SubAgentID {
+				continue
+			}
+			idx = i
+			break
 		}
 		if idx < 0 {
 			// Start event was never rendered (e.g. cleared history);
@@ -218,11 +222,13 @@ func (m *Model) HandleEvent(evt agent.Event) {
 			m.messages = append(m.messages, Message{
 				Role:    "subagent",
 				SubRole: e.Role,
+				SubID:   e.SubAgentID,
 			})
 			idx = len(m.messages) - 1
 		}
 		m.messages[idx].SubRunning = false
 		m.messages[idx].SubError = e.Error
+		m.messages[idx].SubResult = e.Result
 		if e.Duration > 0 {
 			m.messages[idx].ToolDuration = formatDuration(e.Duration)
 		}
@@ -362,26 +368,6 @@ func (m *Model) handleControlMsg(msg types.CtrlMsg) {
 		m.refreshViewport()
 	case *types.CtrlDone:
 	}
-}
-
-// attachSubAgentResult stores the spawn_subagent tool result on the
-// matching sub-agent message so it can be shown in the line's expanded
-// output box. Matches the most recent sub-agent message for the role in
-// the tool args that has no result yet; no-op when nothing matches
-// (e.g. background dispatch where the line appears later).
-func (m *Model) attachSubAgentResult(args, result string) {
-	role := toolfmt.MatchJSONField(args, "role")
-	for i := len(m.messages) - 1; i >= 0; i-- {
-		msg := &m.messages[i]
-		// Only completed lines are eligible: a running line is still
-		// waiting for its own end event + result.
-		if msg.Role == "subagent" && !msg.SubRunning && msg.SubResult == "" && (role == "" || msg.SubRole == role) {
-			msg.SubResult = result
-			break
-		}
-	}
-	m.refreshViewport()
-	m.scrollToBottom()
 }
 
 // HandleContextInfo updates the context window display.

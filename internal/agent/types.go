@@ -108,6 +108,11 @@ type Loop struct {
 
 	usageMu   sync.Mutex
 	toolIDGen atomic.Int64
+
+	// subAgentIDGen assigns each spawned sub-agent a unique identifier
+	// ("sa-N"), independent of tool-execution IDs, so views can correlate
+	// a sub-agent's start/end/result across events and with its tool call.
+	subAgentIDGen atomic.Int64
 }
 
 // LoopConfig holds immutable configuration set once before Run.

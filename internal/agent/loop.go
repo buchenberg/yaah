@@ -201,14 +201,14 @@ func (l *Loop) wireBackgroundHooks() {
 	if l.BackgroundJobs == nil {
 		return
 	}
-	l.BackgroundJobs.OnStart = func(role, model, prompt string) {
+	l.BackgroundJobs.OnStart = func(id, role, model, prompt string) {
 		if l.broker != nil {
-			l.broker.PublishMustDeliver(&SubAgentStartEvent{Role: role, Model: model, Prompt: prompt})
+			l.broker.PublishMustDeliver(&SubAgentStartEvent{SubAgentID: id, Role: role, Model: model, Prompt: prompt})
 		}
 	}
-	l.BackgroundJobs.OnEnd = func(role, model, prompt string, dur time.Duration, err string) {
+	l.BackgroundJobs.OnEnd = func(id, role, model, prompt, result string, dur time.Duration, err string) {
 		if l.broker != nil {
-			l.broker.PublishMustDeliver(&SubAgentEndEvent{Role: role, Model: model, Prompt: prompt, Duration: dur, Error: err})
+			l.broker.PublishMustDeliver(&SubAgentEndEvent{SubAgentID: id, Role: role, Model: model, Prompt: prompt, Duration: dur, Error: err, Result: result})
 		}
 	}
 }

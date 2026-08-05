@@ -69,20 +69,23 @@ func (*ToolEndEvent) eventMarker() {}
 
 // SubAgentStartEvent is emitted when a sub-agent (spawn_subagent) begins.
 type SubAgentStartEvent struct {
-	Role   string // sub-agent role (e.g. "developer", "analyst")
-	Model  string // model assigned to the sub-agent
-	Prompt string // abbreviated task description
+	SubAgentID string // unique sub-agent identifier ("sa-N" foreground, "bg-N" background)
+	Role       string // sub-agent role (e.g. "developer", "analyst")
+	Model      string // model assigned to the sub-agent
+	Prompt     string // abbreviated task description
 }
 
 func (*SubAgentStartEvent) eventMarker() {}
 
 // SubAgentEndEvent is emitted when a sub-agent completes.
 type SubAgentEndEvent struct {
-	Role     string        // sub-agent role
-	Model    string        // model used by the sub-agent
-	Prompt   string        // abbreviated task description
-	Duration time.Duration // total execution duration
-	Error    string        // error message (empty on success)
+	SubAgentID string        // matches the SubAgentStartEvent's SubAgentID
+	Role       string        // sub-agent role
+	Model      string        // model used by the sub-agent
+	Prompt     string        // abbreviated task description
+	Duration   time.Duration // total execution duration
+	Error      string        // error message (empty on success)
+	Result     string        // truncated final result (empty on error or background)
 }
 
 func (*SubAgentEndEvent) eventMarker() {}
