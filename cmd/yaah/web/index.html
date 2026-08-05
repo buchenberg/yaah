@@ -418,7 +418,7 @@ document.addEventListener('alpine:init', () => {
             this._tools = {}
             this.live = false; this.think = ''
             if (d.error) this.add('error', d.error)
-            if (d.context_tokens && d.context_window) this.ctx = Math.round(d.context_tokens / d.context_window * 100)
+            if (d.context_tokens && d.context_window) this.ctx = Math.min(Math.round(d.context_tokens / d.context_window * 100), 100)
             this.status = 'ready'; this.scroll(); break
           case 'ctrl.status': this.status = d.text; break
           case 'ctrl.error':  this.add('error', d.error); this.scroll(); break
@@ -429,7 +429,7 @@ document.addEventListener('alpine:init', () => {
             this.modal = {type:'approval', title:'Tool Approval', q:'', opts:[], multi:false, name:d.name, args:d.args||'', aid:d.id}
             this.$nextTick(() => this.$refs.dlg.showModal()); break
           case 'ctrl.context':
-            if (d.tokens && d.window) this.ctx = Math.round(d.tokens / d.window * 100); break
+            if (d.tokens && d.window) this.ctx = Math.min(Math.round(d.tokens / d.window * 100), 100); break
           case 'ctrl.todos':
             this.todos = (d.items || []).map(function(item, idx) {
               return {id: item.id || idx, status: item.status, priority: item.priority, content: item.content, created_at: item.created_at}

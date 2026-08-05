@@ -154,8 +154,14 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 		we = sseWireEvent{Type: "subagent.end", Role: e.Role, Model: e.Model,
 			Prompt: e.Prompt, Ms: e.Duration.Milliseconds(), Error: e.Error}
 	case *agent.DoneEvent:
+		// Prefer the real provider-reported token count over the
+		// char/4 estimate (which inflates with reasoning content).
+		ct := e.ContextTokens
+		if e.LastPromptTokens > 0 {
+			ct = e.LastPromptTokens
+		}
 		we = sseWireEvent{Type: "done", Response: e.Response, Error: e.Error,
-			ContextTokens: e.ContextTokens, ContextWindow: e.ContextWindow}
+			ContextTokens: ct, ContextWindow: e.ContextWindow}
 	case *agent.CompactionStartedEvent:
 		we = sseWireEvent{Type: "ctrl.status", Text: fmt.Sprintf("compacting (%d→%d tokens, %s)", e.BeforeTokens, e.TargetTokens, e.Reason)}
 	case *agent.CompactionDoneEvent:
@@ -269,7 +275,11 @@ func forwardCtrl(ctx context.Context, ch <-chan types.CtrlMsg, v *sseView, am *a
 				v.mu.Unlock()
 				v.write(marshalWire(sseWireEvent{Type: "ctrl.todos", Items: items}))
 			case *types.CtrlContextInfo:
-				v.write(marshalWire(sseWireEvent{Type: "ctrl.context", Tokens: m.Tokens, Window: m.Window}))
+				ct := m.Tokens
+				if m.LastPromptTokens > 0 {
+					ct = m.LastPromptTokens
+				}
+				v.write(marshalWire(sseWireEvent{Type: "ctrl.context", Tokens: ct, Window: m.Window}))
 			case *types.CtrlModelList:
 				v.write(marshalWire(sseWireEvent{Type: "ctrl.models", Models: m.Models, Providers: m.ProviderNames}))
 			case *types.CtrlDone:

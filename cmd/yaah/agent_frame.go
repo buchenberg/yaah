@@ -106,7 +106,7 @@ type agentSession struct {
 }
 
 func newAgentSession() (*agentSession, error) {
-	return newAgentSessionWithOptions(true, true)
+	return newAgentSessionWithOptions(true, false)
 }
 
 // newAgentSessionWithOptions creates an agent session. When skipMCP is true,
@@ -988,8 +988,9 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 		}
 		select {
 		case ctrl <- &types.CtrlContextInfo{
-			Tokens: loop.EstimatedTokens(),
-			Window: loop.Config.ContextWindow,
+			Tokens:           loop.EstimatedTokens(),
+			Window:           loop.Config.ContextWindow,
+			LastPromptTokens: loop.State.LastPromptTokens,
 		}:
 		default:
 		}

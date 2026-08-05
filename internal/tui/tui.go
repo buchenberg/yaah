@@ -881,7 +881,11 @@ func (m *Model) HandleEvent(evt agent.Event) {
 			m.thinkContent = ""
 		}
 		if e.ContextWindow > 0 {
-			m.HandleContextInfo(e.ContextTokens, e.ContextWindow)
+			ct := e.ContextTokens
+			if e.LastPromptTokens > 0 {
+				ct = e.LastPromptTokens
+			}
+			m.HandleContextInfo(ct, e.ContextWindow)
 		}
 
 	default:
@@ -945,7 +949,11 @@ func (m *Model) handleControlMsg(msg types.CtrlMsg) {
 			ctrl.ApproveCh <- (answer == "Yes" || answer == "Yes, Yes")
 		}()
 	case *types.CtrlContextInfo:
-		m.HandleContextInfo(ctrl.Tokens, ctrl.Window)
+		ct := ctrl.Tokens
+		if ctrl.LastPromptTokens > 0 {
+			ct = ctrl.LastPromptTokens
+		}
+		m.HandleContextInfo(ct, ctrl.Window)
 	case *types.CtrlFallback:
 		m.provider = ctrl.Provider
 		m.modelName = ctrl.Model

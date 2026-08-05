@@ -1,6 +1,6 @@
 ---
 name: break-up-tui-god-file
-description: Split the 1729-line monolithic tui.go into 5 focused files: model, view, input, events, utils + consolidate style vars into theme.go
+description: Break the 1891-line internal/tui/tui.go god file into focused per-concern files (model, events, input, modes, view, utils), consolidate styles into theme.go, move component helpers next to their sole consumers, and optionally extract interactive modes into stateful sub-models — mirroring the tui2 god-file breakup (PR #143).
 status: draft
 ---
 
@@ -8,159 +8,443 @@ status: draft
 
 ## Context
 
-`internal/tui/tui.go` is a 1729-line monolith containing the Model struct,
-the bubbletea View/Update/Init methods, all keyboard handling, agent-event
-dispatching, message management, view helpers, and text-processing utilities.
-The rest of the package is already well-factored into per-concern files
-(render.go, theme.go, component files), but tui.go remains the last god file.
+`internal/tui/tui.go` is the last god file in yaah: **1891 lines** containing
+the Model struct, all bubbletea lifecycle methods, agent-event dispatch,
+control-plane dispatch, keyboard/mouse handling, four interactive overlay
+modes (search, question, model picker, command palette), top-level view
+layout, palette height math, and ~15 text-processing utilities.
 
-This plan follows the blueprint in `docs/code-organization.md` (monolithic
-god-file candidates section), adjusted for the actual current state of
-the code and the existing `render.go`.
+```
+File                          Lines  Status
+────────────────────────────  ─────  ──────────────────────────
+internal/tui/tui.go           1891   🔴 must split (>800 rule)
+internal/tui/render.go         463   ✅ well-factored
+internal/tui/theme.go          323   ✅ gains style declarations
+internal/tui/palette_comp.     264   ✅ component
+internal/tui/tui_test.go      1400+  (tests may exceed file limit, exempt)
+```
 
-## Target file layout
+The guideline (`docs/code-organization.md`): files > 800 lines **must** be
+split; target < 500 lines per concern. Section 1 of that document already
+proposes this split; this plan is the detailed, line-verified version.
+
+### Precedent: the tui2 breakup
+
+PR #143 (`496d422`) broke up the tui2 god file the same way — a **file-level
+split into focused concerns inside the same package**, keeping `tui2.go` as a
+slim coordinator:
+
+```
+internal/tui2/
+├── tui2.go            492   coordinator: struct, layout, wiring
+├── control.go          65   control-plane (types.CtrlMsg) dispatch
+├── events.go          100   agent event (agent.Event) dispatch
+├── keymap.go           94   key bindings
+├── markdown.go         44   markdown helpers
+└── helpers_*.go      ~70    message/subagent/tool formatting
+```
+
+This plan applies the same shape to `internal/tui`.
+
+### What is already componentized
+
+The **rendering** layer is already broken into components and needs no work:
+
+| Concern | File |
+|---|---|
+| Per-message renderers (user, assistant, system, sub-agent brackets) | `message_component.go` |
+| Tool result box | `tool_component.go` |
+| Error box | `error_component.go` |
+| Expandable reasoning sections | `expandable_component.go` |
+| Header (banner + title + MCP status) | `header_component.go` |
+| Info bar | `info_bar_component.go` |
+| Status bar | `status_component.go` |
+| Todo table | `todo_component.go` |
+| Command/Model/Question palettes + Help overlay | `palette_component.go` |
+| Markdown/table/list/tree rendering pipeline | `render.go` |
+| Themes and styles | `theme.go` |
+| Key bindings | `keymap.go` |
+| Shared helpers (`chatBubble`, `scrollWindow`) | `component.go` |
+
+What remains in `tui.go` is **behavior, not rendering** — which is why this
+plan is a file split plus mode-submodel extraction rather than new render
+components (see `docs/tui-components.md`: "The Model owns all state.
+Components own no state.").
+
+## Constraints
+
+1. **Public API is frozen.** Exactly one external consumer: `cmd/yaah/tui.go`.
+   It uses only: `tui.New`, `tui.Config`, `*Model` as `tea.Model`,
+   `SetMCPInfos`, `RegisterCommand`, `ApplyTheme`, `DetectTheme`. Everything
+   else in the package is unexported or internal-only exported types
+   (`Message`, `Command`, deprecated aliases `ServerInfo`, `QuestionModal`,
+   `QuestionOption`).
+2. **Behavior-neutral.** No rendering or interaction changes. The 126
+   existing test results (`go test ./internal/tui/...`, including subtests)
+   must pass unchanged through Phase 1 with **zero test edits**.
+3. **Same-package move.** All new files stay in `package tui`, so symbol
+   moves are invisible to tests and the compiler catches mistakes at each
+   step.
+
+### Baseline (recorded 2026-08-05, main @ `496d422`)
+
+```
+go build ./...               → ok
+go test ./internal/tui/...   → ok (0.265s), 126 PASS/FAIL result lines
+go vet ./internal/tui/...    → clean
+```
+
+> Note: the working tree on main currently has unrelated uncommitted changes
+> (`cmd/yaah/agent_frame.go`, `internal/agent/*`). Branch for this work must
+> be cut from a clean base or stash those first.
+
+---
+
+## Symbol inventory (verified against tui.go line numbers)
+
+Every symbol in `tui.go` and its destination:
+
+### → theme.go (style declarations)
+
+Lines 33–65: the 31 style `var` declarations (`titleStyle` …
+`errorBoxStyle`). Declared in `tui.go`, initialized by `ApplyTheme()` in
+`theme.go` — move the declarations so both live together.
+
+### → model.go (coordinator)
+
+| Symbol | Lines | Notes |
+|---|---|---|
+| Package doc comment | 1 | Keep canonical doc on model.go |
+| `Message` struct | 68–77 | |
+| `ServerInfo` alias | 80–81 | Deprecated alias, keep |
+| `cursorHoverMsg` | 84–86 | |
+| `QuestionModal` / `QuestionOption` aliases | 89–94 | Deprecated aliases, keep |
+| `Command` struct | 97–100 | |
+| `defaultCommands` | 103–115 | |
+| `Model` struct | 119–209 | Drop duplicated doc comment (lines 117–118) |
+| `Config` struct | 213–238 | |
+| `New()` | 241–287 | |
+| `Init()` | 963–965 | |
+| `Update()` | 968–1058 | Main dispatcher |
+| `handleSpinnerTick()` | 1062–1080 | Update plumbing |
+| `headerHeight()` | 469–471 | Layout accessor |
+| `inputAreaHeight()` | 475–477 | Layout accessor |
+| `refreshViewport()` | 480–482 | |
+| `scrollToBottom()` | 485–487 | |
+
+### → events.go (agent events + control plane + message state)
+
+| Symbol | Lines | Notes |
+|---|---|---|
+| `AddAssistantMessage()` | 442–450 | |
+| `AddAssistantMessageWithReasoning()` | 453–462 | |
+| `AddMessage()` | 490–494 | |
+| `AddToolResult()` | 499–519 | |
+| `SetEphemeral()` | 523–526 | |
+| `SetMCPInfos()` | 535–537 | |
+| `SetThinking()` / `SetCompacting()` | 679–689 | |
+| `SetToolCall()` / `ClearToolCall()` | 692–703 | |
+| `AppendToken()` | 710–725 | Streaming debounce |
+| `HandleEvent()` | 729–890 | 12-case agent event switch |
+| `handleControlMsg()` | 893–960 | 8-case CtrlMsg switch |
+| `HandleContextInfo()` | 1837–1846 | |
+| `formatDuration()` | 1849–1854 | Only callers are HandleEvent cases |
+| `parseTodosFromArgs()` | 1860–1885 | Only caller is AddToolResult |
+
+### → input.go (normal-mode input routing + commands)
+
+| Symbol | Lines | Notes |
+|---|---|---|
+| `RegisterCommand()` | 530–532 | Public API |
+| `executeCommand()` | 541–632 | Colon-command dispatch |
+| `handleMouseClick()` | 1084–1116 | Zone clicks |
+| `viewportUpdate()` | 1118–1122 | |
+| `handleKeyPress()` | 1127–1144 | Top-level mode router |
+| `handleNormalKey()` | 1230–1349 | Largest handler |
+| `detectCommandMode()` | 1352–1366 | |
+| `clearCommandMode()` | 1368–1371 | |
+| `hasReasoning()` | 1373–1383 | Only caller is handleNormalKey |
+
+### → modes.go (overlay-mode logic: search, question, model picker)
+
+| Symbol | Lines | Notes |
+|---|---|---|
+| `selectModel()` | 635–652 | Model picker |
+| `filteredModels()` | 655–667 | |
+| `exitModelMode()` | 670–676 | |
+| `handleSearchKey()` | 1146–1175 | |
+| `handleQuestionKey()` | 1177–1205 | |
+| `handleModelKey()` | 1207–1228 | |
+| `answerQuestion()` | 1385–1392 | |
+| `commitQuestionAnswer()` | 1394–1406 | |
+| `buildSearchMatches()` | 1508–1526 | |
+| `searchNextMatch()` | 1529–1538 | |
+| `searchPrevMatch()` | 1541–1550 | |
+| `scrollToMatch()` | 1553–1558 | |
+
+### → view.go (top-level layout)
+
+| Symbol | Lines | Notes |
+|---|---|---|
+| `maxModelLines()` | 1412–1423 | Fix orphaned doc comment at 1408–1410 |
+| `maxQuestionLines()` | 1425–1431 | |
+| `paletteLines()` | 1433–1501 | Overlay height math |
+| `adjustViewport()` | 1564–1598 | |
+| `View()` | 1667–1779 | Top-level composition |
+| Delete orphan doc: reRenderMessages | 464–466 | Function lives in render.go |
+| Delete orphan doc: renderMessages | 1661–1664 | Function lives in render.go |
+
+### → utils.go (text processing, shared by render.go + components)
+
+| Symbol | Lines | Consumers |
+|---|---|---|
+| `mdLinkRe`, `autoLinkRe` | 290–292 | injectHyperlinks |
+| `osc8Link()` | 295–297 | injectHyperlinks |
+| `injectHyperlinks()` | 301–314 | render.go |
+| `textSegment` | 316–319 | render.go parseAndRenderTables |
+| `splitRow()` | 322–329 | render.go renderCompactTable |
+| `replacePattern()` | 331–347 | render.go renderInlineMarkdown |
+| `isWideRune()` | 349–360 | displayWidth |
+| `bulletPattern`, `isListContent()` | 365–370 | render.go renderList |
+| `treeLineRe`, `isTreeContent()` | 372–377 | render.go renderToolResult |
+| `splitTreePrefix()`, `treeDepth()` | 380–407 | render.go renderTree |
+| `displayWidth()` | 411–438 | wrapParagraph |
+| `chatWrap()`, `wrapText()`, `wrapParagraph()` | 1603–1659 | component.go, palette_component.go, tool_component.go |
+| `lolcatRender()` | 1856–1858 | render.go, info_bar_component.go |
+| `ansiRe`, `stripANSI()` | 1887–1891 | render.go, View(), executeCommand, component_test.go |
+
+### → next to their sole consumer (component files)
+
+| Symbol | Lines | Move to | Why |
+|---|---|---|---|
+| `shortenCWD()` | 1783–1793 | `status_component.go` | Sole consumer |
+| `contextBar()` | 1796–1819 | `status_component.go` | Sole consumer |
+| `toolIndent()` | 1822–1834 | `tool_component.go` | Sole consumer |
+
+### Resulting sizes (estimates)
 
 ```
 internal/tui/
-├── model.go         ~350 lines   Model, Config, types, structs, New(), Init(), Update()
-├── view.go          ~320 lines   View(), layout helpers, palette rendering, context bar
-├── render.go         ~409 lines  [EXISTING] Markdown/tool-content rendering pipeline
-├── input.go         ~350 lines   Keyboard/mouse handlers, command dispatch, model selector
-├── events.go        ~350 lines   HandleEvent(), handleControlMsg(), message-append methods (merged from the thin messages.go)
-├── utils.go         ~200 lines   Text processing, tree/list detection, search helpers
-└── theme.go          ~310 lines  [EXISTING] + migrate the 31 style var declarations from tui.go
+├── model.go            ~400   coordinator: types, Model, New, Init, Update
+├── events.go           ~420   agent/control events + message state
+├── input.go            ~330   key/mouse routing + command execution
+├── modes.go            ~230   search/question/model-picker logic
+├── view.go             ~280   View(), overlay height, adjustViewport
+├── utils.go            ~250   text/markdown/width helpers
+├── render.go            463   unchanged
+├── theme.go            ~360   + style declarations
+├── keymap.go             91   unchanged
+├── component.go          29   unchanged
+├── status_component.go  +47   + shortenCWD, contextBar
+├── tool_component.go    +13   + toolIndent
+└── tui.go              DELETED
 ```
 
-## Step-by-step
+Every file < 500 lines. ✅
 
-### Step 1: Move style var declarations into theme.go
+---
 
-**What:** The 31 package-level `var` declarations at the top of `tui.go`
-(normalStyle, thinkingStyle, toolStyle, etc.) are *declared* in `tui.go`
-but *initialized* by `ApplyTheme()` in `theme.go`. Move the declarations
-into `theme.go` so declaration and initialization live in the same file.
+## Phase 1 — Mechanical split (6 commits, zero behavior change)
 
-**Files touched:**
-- `internal/tui/theme.go` — add var block (31 declarations)
-- `internal/tui/tui.go` — remove var block
+Work on branch `break-up-tui-god-file`. **Build after every step**; each new
+file declares its own imports (same package, so no cross-file changes).
+Commit per step so any step can be reverted in isolation.
 
-**Risk:** None — same package, no import changes. `gofmt` afterward.
+### Step 0: Branch + baseline
 
-### Step 2: Extract model.go
-
-**Create:** `internal/tui/model.go`
-
-**Contents:**
-- Package declaration + imports
-- Types: `Message`, `ServerInfo`, `cursorHoverMsg`, `QuestionModal`, `QuestionOption`, `Command`
-- `defaultCommands` slice
-- `Model` struct with all fields
-- `Config` struct
-- `New()` constructor
-- `Init()` bubbletea method
-- `Update()` bubbletea method (~90 lines, the main orchestrator)
-- `handleSpinnerTick()` + spinner tick handler
-- Small accessors: `headerHeight()`, `inputAreaHeight()`, `refreshViewport()`, `scrollToBottom()`
-
-**Order of removal from tui.go:** Types first, then constructor, then
-Init/Update, then tick handlers, then accessors. Build after each move
-to catch any missing symbols.
-
-### Step 3: Extract view.go
-
-**Create:** `internal/tui/view.go`
-
-**Contents:**
-- `View()` — the top-level layout method (~112 lines)
-- `shortenCWD()`, `contextBar()`, `toolIndent()` — header/context helpers
-- `chatWrap()`, `wrapText()`, `wrapParagraph()` — line-wrapping
-- `paletteLines()` — model selector list rendering
-- `maxModelLines()`, `maxQuestionLines()` — height calculations
-- `lolcatRender()`, `formatDuration()`, `stripANSI()` — tiny rendering utils
-- `adjustViewport()` — viewport scrolling after content change
-
-**Note:** `render.go` already handles markdown/tool/message rendering.
-`view.go` is strictly the top-level layout container — it calls into
-`render.go` (e.g., `renderMessages()`).
-
-### Step 4: Extract input.go
-
-**Create:** `internal/tui/input.go`
-
-**Contents:**
-- `handleKeyPress()` — top-level key dispatcher
-- `handleSearchKey()`, `handleQuestionKey()`, `handleModelKey()`, `handleNormalKey()` — per-mode handlers
-- `handleMouseClick()`
-- `detectCommandMode()`, `clearCommandMode()`
-- `executeCommand()` — slash-command dispatch (~91 lines, the biggest)
-- `selectModel()`, `filteredModels()`, `exitModelMode()`
-- `RegisterCommand()`
-- `answerQuestion()`, `commitQuestionAnswer()`
-
-### Step 5: Extract events.go (includes messages.go content)
-
-**Create:** `internal/tui/events.go`
-
-**Contents:**
-- `HandleEvent()` — type-switch over all agent event types (~161 lines)
-- `handleControlMsg()` — todo/question/model/approval dispatch (~67 lines)
-- `HandleContextInfo()`
-- Message-append methods (merged from the originally-planned messages.go):
-  - `AddMessage()`, `AddToolResult()`
-  - `AddAssistantMessage()`, `AddAssistantMessageWithReasoning()`
-  - `AppendToken()`, `SetEphemeral()`
-- State setters: `SetThinking()`, `SetCompacting()`, `SetToolCall()`, `ClearToolCall()`, `SetMCPInfos()`
-
-**Why merge messages.go:** The ~105 line messages.go would have been
-the thinnest file in the package. HandleEvent already dispatches to all
-these methods — keeping them together is cohesive and produces a
-healthier ~350-line file instead of two anemic ones.
-
-### Step 6: Extract utils.go
-
-**Create:** `internal/tui/utils.go`
-
-**Contents:**
-- `textSegment` type + `splitRow()`, `replacePattern()`
-- `isWideRune()`, `displayWidth()`
-- `bulletPattern`, `isListContent()`, `treeLineRe`, `isTreeContent()`, `splitTreePrefix()`, `treeDepth()`
-- `buildSearchMatches()`, `searchNextMatch()`, `searchPrevMatch()`, `scrollToMatch()`
-- `parseTodosFromArgs()`, `injectHyperlinks()`
-- `osc8Link()`
-- `hasReasoning()`
-
-### Step 7: Delete tui.go + verify
-
-Once all symbols have been moved and the file is empty:
+```powershell
+git switch -c break-up-tui-god-file     # from clean main
+go build ./... ; go test ./internal/tui/... -count=1   # confirm baseline
 ```
-rm internal/tui/tui.go
+
+### Step 1: Move style declarations into theme.go
+
+- Cut lines 32–65 (the 31 `var` declarations) from `tui.go`, paste above
+  `ApplyTheme` in `theme.go`.
+- `go build ./internal/tui/` → commit `refactor(tui): move style declarations to theme.go`.
+
+Risk: none. Same package; gofmt only.
+
+### Step 2: Extract utils.go
+
+Move (per inventory): hyperlinks (`mdLinkRe`, `autoLinkRe`, `osc8Link`,
+`injectHyperlinks`), table helpers (`textSegment`, `splitRow`,
+`replacePattern`), width helpers (`isWideRune`, `displayWidth`), list/tree
+detection (`bulletPattern`, `isListContent`, `treeLineRe`, `isTreeContent`,
+`splitTreePrefix`, `treeDepth`), wrapping (`chatWrap`, `wrapText`,
+`wrapParagraph`), and ANSI/lolcat (`lolcatRender`, `ansiRe`, `stripANSI`).
+
+Required imports: `regexp`, `strings`, `"github.com/buchenberg/yaah/internal/banner"`.
+
+- `go build ./internal/tui/` → commit `refactor(tui): extract text helpers to utils.go`.
+
+Why before the method moves: utils are stateless leaf functions — the
+compiler verifies the move completely, and later steps can't strand a
+helper.
+
+### Step 3: Move component helpers to their consumers
+
+- `shortenCWD`, `contextBar` → `status_component.go`
+- `toolIndent` → `tool_component.go`
+
+- `go build ./internal/tui/` → commit `refactor(tui): co-locate component helpers`.
+
+### Step 4: Extract model.go
+
+Move: package doc, types (`Message`, `ServerInfo`, `cursorHoverMsg`,
+`QuestionModal`, `QuestionOption`, `Command`), `defaultCommands`, `Model`
+(delete the duplicated doc comment at lines 117–118), `Config`, `New()`,
+`Init()`, `Update()`, `handleSpinnerTick()`, and the four layout accessors
+(`headerHeight`, `inputAreaHeight`, `refreshViewport`, `scrollToBottom`).
+
+Required imports: bubbles (`help`, `key`, `spinner`, `textarea`,
+`viewport`), `tea`, `glamour`, `banner`, `todo` (for `todos []todo.Item`
+field type), `types`, `agent` (Update matches `agent.Event`), `mcp` (alias).
+
+- `go build ./internal/tui/` → commit `refactor(tui): extract model.go coordinator`.
+
+### Step 5: Extract events.go
+
+Move: all message-append methods, streaming setters, `HandleEvent()`,
+`handleControlMsg()`, `HandleContextInfo()`, `formatDuration()`,
+`parseTodosFromArgs()`, `SetMCPInfos()`. Also delete the orphaned
+`reRenderMessages` doc comment (lines 464–466).
+
+Required imports: `encoding/json`, `fmt`, `time`, `agent`, `subagent`,
+`todo`, `types`.
+
+- `go build ./internal/tui/` → commit `refactor(tui): extract event and control dispatch`.
+
+### Step 6: Extract input.go and modes.go
+
+- **input.go**: `RegisterCommand`, `executeCommand`, `handleMouseClick`,
+  `viewportUpdate`, `handleKeyPress`, `handleNormalKey`,
+  `detectCommandMode`, `clearCommandMode`, `hasReasoning`.
+  Imports: `fmt`, `strings`, `tea`, `key`, `zone`, `clipboard`.
+- **modes.go**: `selectModel`, `filteredModels`, `exitModelMode`,
+  `handleSearchKey`, `handleQuestionKey`, `handleModelKey`,
+  `answerQuestion`, `commitQuestionAnswer`, and the four search methods.
+  Imports: `fmt`, `strings`, `tea`, `key`, `zone`.
+
+- `go build ./internal/tui/` → commit `refactor(tui): extract input routing and overlay modes`.
+
+### Step 7: Extract view.go, delete tui.go
+
+Move: `maxModelLines`, `maxQuestionLines` (fix the orphaned doc comment at
+1408–1410 into proper per-function docs), `paletteLines`, `adjustViewport`,
+`View()`. Delete the orphaned `renderMessages` doc comment (1661–1664).
+`tui.go` must now be empty of symbols — **delete the file**.
+
+Imports: `fmt`, `lipgloss`, `zone`, `observability`.
+
+```powershell
+Remove-Item internal/tui/tui.go
+go build ./...
 ```
+
+- Commit `refactor(tui): extract view layout, delete tui.go`.
 
 ### Step 8: Quality gates
 
-```bash
-go build ./...                    # must compile
-go test ./internal/tui/...        # must pass (109 tests currently)
-go vet ./internal/tui/...         # must be clean
-staticcheck ./internal/tui/...    # must be clean
-gofmt -w internal/tui/            # normalize formatting
-go test ./...                     # full suite (1061 tests)
+```powershell
+gofmt -l internal/tui/                  # must be empty
+go vet ./internal/tui/...               # clean
+go run honnef.co/go/tools/cmd/staticcheck@latest ./internal/tui/...   # clean
+go test ./internal/tui/... -count=1     # 126 results, zero test edits
+go test ./... -count=1                  # full suite
+git diff --stat main -- internal/tui/   # sanity: only moved code
 ```
+
+Optional whitespace-only verification: `git diff main -w -- internal/tui`
+should show only the deliberate deletions (duplicate doc comments, orphaned
+comments), confirming no logic changed.
+
+---
+
+## Phase 2 — Mode sub-models (optional, separate PR)
+
+The file split solves the god-file problem; Phase 2 goes further toward the
+tui2 component ideal by giving each interactive overlay its own **stateful
+sub-model**, shrinking `Model` from ~60 fields to ~35 and making each mode
+independently testable.
+
+> Decision gate: Phase 2 churns `tui_test.go` (57 references to
+> `m.questionMode`, `m.modelSelected`, `m.searchQuery`, etc.). It is
+> recommended but separable; land Phase 1 first and decide per review
+> feedback.
+
+### Design
+
+Four sub-model structs, one file each, owned as fields on `Model`. Each
+owns its mode flag, per-mode state, key handler, height math, and the
+mouse/hover contract. Rendering still delegates to the existing stateless
+palette components (`docs/tui-components.md` contract preserved).
+
+| Sub-model | New file | Owns (moved from Model) | Key methods |
+|---|---|---|---|
+| `searchModel` | `search_model.go` | `searchMode`, `searchQuery`, `searchMatches`, `searchIdx` | `handleKey()`, `buildMatches(view)`, `next()`, `prev()`, `renderLine()`, `height()` |
+| `questionModel` | `question_model.go` | `questionMode`, `questionModal`, `questionIdx`, `questionMulti` | `openQuestion(*types.CtrlQuestion)`, `openApproval(*types.CtrlApproval)`, `handleKey()`, `handleClick(zone) bool`, `answer()`, `commit()`, `height(maxLines)` |
+| `pickerModel` | `picker_model.go` | `modelMode`, `modelItems`, `modelSelected`, `providerNames` | `open()`, `handleKey()`, `filtered(filter)`, `select() (provider, model, ok)`, `exit()`, `height()` |
+| `commandState` | `command_state.go` | `commandMode`, `commands` | `register()`, `detect(inputValue)`, `clear()`, `matchCount(filter)`, `height()` |
+
+- `handleKeyPress()` in `input.go` becomes a thin router over the
+  sub-models; `handleControlMsg()` delegates `CtrlQuestion`/`CtrlApproval`
+  to `questionModel.open*`.
+- `executeCommand()` **stays** a `Model` method in input.go: it touches too
+  many host concerns (banner toggle, compaction callback, clipboard, agent
+  abort) to decouple cleanly. `commandState` only owns palette state.
+- Side effects the sub-models need from the host (`refreshViewport`,
+  `adjustViewport`, `setEphemeral`, input placeholder reset) are passed as
+  callback fields set in `New()`, matching the `Config.On*` callback
+  convention already used for agent callbacks.
+- Zone IDs (`question-opt-%d`) stay stable so mouse handling and
+  `palette_component.go` render code are untouched.
+
+### Test migration (Phase 2 only)
+
+- 57 field references in `tui_test.go` become sub-model references
+  (`m.questionIdx` → `m.question.idx`, `m.modelMode` → `m.picker.active`).
+  Mechanical; keep assertions identical.
+- Add `modes_test.go` unit tests per sub-model (open → key sequence →
+  committed answer) that previously needed a full `Model`.
+
+### Phase 2 gates
+
+Same as Step 8, plus `go test ./internal/tui/... -count=1 -race` (question
+modal uses an answer channel with a goroutine).
+
+---
+
+## Documentation updates (with Phase 1)
+
+1. `docs/tui-components.md` — update references that name `tui.go`
+   ("paletteLines() in tui.go", styles "declared in tui.go") to the new
+   file names.
+2. `docs/code-organization.md` — mark the `internal/tui/tui.go` split
+   (section 1 + Future-Work item 2) as done; update the file-table row.
+3. `AGENTS.md` — no change needed (it lists the directory, not files).
 
 ## What does NOT change
 
-- `render.go` — stays as-is. It's already well-organized.
-- All component files — untouched.
-- `theme.go` — only gains the var block, no logic changes.
-- `keymap.go` — untouched.
-- `tui_test.go` — should need zero changes (symbols stay in same package).
-- Public API surface — unchanged.
+- Public API: `New`, `Config`, `Model`, `SetMCPInfos`, `RegisterCommand`,
+  `ApplyTheme`, `DetectTheme`, exported types and deprecated aliases.
+- All `*_component.go` renderers and their tests (`component_test.go`).
+- `render.go`, `keymap.go`, `component.go` logic.
+- Zone-ID scheme, key bindings, palette layouts, streaming debounce.
+- `cmd/yaah/tui.go`.
 
 ## Risks
 
 | Risk | Likelihood | Mitigation |
-|------|:---:|-----------|
-| Build break from missing import in new file | Medium | Build after each step; each new file must declare its own imports |
-| Accidental symbol duplication | Low | Go compiler catches redeclarations at build time |
-| Order-dependent test compilation | Low | Same package — test symbols remain visible |
-| Missed function during extraction | Low | Compiler catches missing methods on `*Model`
+|---|---|---|
+| Missing import in a new file breaks build | Medium | Build after every step; errors name the exact file/symbol |
+| Logic accidentally altered during move | Low | Moves are cut/paste only; `git diff main -w` must show only intentional deletions; 126 tests unchanged |
+| Orphaned/duplicated doc comments cause golint noise | Low | Inventory lists each one (lines 117–118, 464–466, 1408–1410, 1661–1664) |
+| Phase 2 test churn hides a behavior regression | Medium | Gate Phase 2 behind Phase 1 merge; compare test assertions line-by-line, add `-race` |
+| Dirty working tree on main conflicts with branch | Low | Step 0 requires a clean base (current uncommitted agent-context work must land or be stashed first) |
+
+## Rollback
+
+Each Phase-1 step is an independent commit; `git revert <sha>` in reverse
+order restores the monolith with no data loss. Phase 2 is reverted as a
+single PR.

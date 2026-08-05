@@ -41,9 +41,13 @@ func (t *TUI2) handleControlMsg(msg types.CtrlMsg) {
 		t.renderInfoPane()
 
 	case *types.CtrlContextInfo:
-		t.contextTokens = m.Tokens
+		ct := m.Tokens
+		if m.LastPromptTokens > 0 {
+			ct = m.LastPromptTokens
+		}
+		t.contextTokens = ct
 		t.contextWindow = m.Window
-		statusbar.Update(t.StatusBar, t.lastProvider, t.lastModel, t.contextTokens, t.contextWindow)
+		statusbar.Update(t.StatusBar, t.lastProvider, t.lastModel, ct, m.Window)
 		t.renderInfoPane()
 
 	case *types.CtrlFallback:
@@ -63,6 +67,9 @@ func (t *TUI2) renderInfoPane() {
 	b.WriteString(colors.TagBold(colors.Accent, "Context\n"))
 	if t.contextWindow > 0 {
 		pct := float64(t.contextTokens) * 100 / float64(t.contextWindow)
+		if pct > 100 {
+			pct = 100
+		}
 		b.WriteString(colors.Tag(colors.Dim,
 			fmt.Sprintf("  %d / %d (%.1f%%)\n", t.contextTokens, t.contextWindow, pct)))
 	} else {
