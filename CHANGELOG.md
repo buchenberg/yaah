@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.1](https://github.com/buchenberg/yaah/compare/v0.47.0...v0.47.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* compaction effectiveness, OTel wiring, and context % accuracy across all views ([#145](https://github.com/buchenberg/yaah/issues/145)) ([55b099c](https://github.com/buchenberg/yaah/commit/55b099cb4af4b2b0b0a7e5625621eafd072405c5))
+
 ## [0.47.0](https://github.com/buchenberg/yaah/compare/v0.46.0...v0.47.0) (2026-08-04)
 
 
