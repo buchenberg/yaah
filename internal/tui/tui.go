@@ -4,7 +4,6 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -1536,61 +1535,6 @@ func (m *Model) View() tea.View {
 		v.Content += "\x1b]22;text\x07"
 	}
 	return v
-}
-
-// shortenCWD returns the current working directory with $HOME replaced
-// by ~, truncated to maxLen if longer.
-func shortenCWD(cwd string, maxLen int) string {
-	home, _ := os.UserHomeDir()
-	s := cwd
-	if home != "" && strings.HasPrefix(s, home) {
-		s = "~" + s[len(home):]
-	}
-	if len(s) > maxLen && maxLen > 3 {
-		s = "..." + s[len(s)-(maxLen-3):]
-	}
-	return s
-}
-
-// contextBar returns a 10-segment bar showing fill percentage.
-func contextBar(pct int) string {
-	if pct < 0 {
-		pct = 0
-	}
-	if pct > 100 {
-		pct = 100
-	}
-	segments := 10
-	filled := (pct*segments + 50) / 100 // round to nearest
-	if filled == 0 && pct > 0 {
-		filled = 1 // show at least one segment for non-zero
-	}
-	if filled > segments {
-		filled = segments
-	}
-	empty := segments - filled
-	if filled >= 8 {
-		return fmt.Sprintf("[%s%s %d%%]", strings.Repeat("█", filled), strings.Repeat("░", empty), pct)
-	}
-	if filled >= 5 {
-		return fmt.Sprintf("[%s%s %d%%]", strings.Repeat("▓", filled), strings.Repeat("░", empty), pct)
-	}
-	return fmt.Sprintf("[%s%s %d%%]", strings.Repeat("█", filled), strings.Repeat("░", empty), pct)
-}
-
-// toolIndent wraps each line of content to fit within the given width.
-func toolIndent(width int, content string) string {
-	width = max(width, 20)
-
-	lines := strings.Split(content, "\n")
-	var result strings.Builder
-	for i, line := range lines {
-		if i > 0 {
-			result.WriteString("\n")
-		}
-		result.WriteString(wrapText(line, width))
-	}
-	return result.String()
 }
 
 // HandleContextInfo updates the context window display.

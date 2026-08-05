@@ -125,4 +125,19 @@ func toolHeader(toolName, toolArgs string) string {
 	return header
 }
 
+// toolIndent wraps each line of content to fit within the given width.
+func toolIndent(width int, content string) string {
+	width = max(width, 20)
+
+	lines := strings.Split(content, "\n")
+	var result strings.Builder
+	for i, line := range lines {
+		if i > 0 {
+			result.WriteString("\n")
+		}
+		result.WriteString(wrapText(line, width))
+	}
+	return result.String()
+}
+
 // --- shared helpers in internal/toolfmt ---
