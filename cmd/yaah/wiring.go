@@ -47,43 +47,12 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	modelName := resolveModel(cfg)
 	providerName := resolveProviderName(cfg)
 
-	// Initialise OpenTelemetry if configured. Serve mode injects
-	// extraOtelProcessors (an in-memory BufferingSpanProcessor) and sets
-	// otelInMemoryOnly so tracing activates without an OTLP endpoint.
-	otelShutdown := func(_ context.Context) error { return nil }
-	otelActive := !skipOtel && (cfg.Observability.Otel.Enabled || len(extraOtelProcessors) > 0)
-	if otelActive {
-		otelCfg := observability.Config{
-			Enabled:         true,
-			Endpoint:        cfg.Observability.Otel.Endpoint,
-			ServiceName:     cfg.Observability.Otel.ServiceName,
-			Traces:          true,
-			Metrics:         cfg.Observability.Otel.Metrics,
-			ExtraProcessors: extraOtelProcessors,
-		}
-		if otelInMemoryOnly {
-			// No OTLP exporter — spans flow only to the in-memory buffer.
-			otelCfg.Endpoint = ""
-			otelCfg.Metrics = false
-		} else {
-			if otelCfg.Endpoint == "" {
-				otelCfg.Endpoint = "localhost:4317"
-			}
-			if ep := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); ep != "" {
-				otelCfg.Endpoint = ep
-			}
-		}
-		if os.Getenv("YAAH_OTEL_ENABLED") == "true" {
-			otelCfg.Enabled = true
-		}
-		if otelCfg.ServiceName == "" {
-			otelCfg.ServiceName = "yaah"
-		}
-		sd, err := observability.Setup(context.Background(), otelCfg)
-		if err != nil {
-			return nil, fmt.Errorf("otel: %w", err)
-		}
-		otelShutdown = sd
+	// --- OpenTelemetry ---------------------------------------------------
+	var otelShutdown func(context.Context) error
+	var otelActive bool
+	otelShutdown, otelActive, err = initOtel(cfg, skipOtel)
+	if err != nil {
+		return nil, err
 	}
 
 	cwd, _ := os.Getwd()
@@ -136,30 +105,8 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 		systemPrompt += "\n\n## Memory Guidelines\n- Use memory_search to find relevant memories before answering personal/project questions. Pass a tag to filter by category.\n- When the user asks about past conversations or session history, use memory_search_sessions with an empty query to list recent transcripts.\n- Use memory_add to save important facts. Always include a tags array (e.g., [\"user_info\"], [\"preferences\"], [\"project:yaah\"], [\"decision\"]).\n- Use memory_update to correct stale facts (requires the memory ID). Use memory_delete to remove incorrect memories.\n- At the end of a conversation or when the user says goodbye, use memory_add to save a 2-3 line summary of key discussion points with tag [\"session_summary\"]."
 	}
 
-	var mcpClients []mcp.MCPClient
-	var mcpTools []*mcp.MCPTool
-	var mcpInfos []mcp.ServerInfo
-	var mcpErr error
-	if !skipMCP {
-		mcpManifests := make(map[string]*mcp.Manifest)
-		for name, s := range cfg.MCPServers {
-			mcpManifests[name] = &mcp.Manifest{
-				Command:   s.Command,
-				Args:      s.Args,
-				Env:       s.Env,
-				URL:       s.URL,
-				Transport: s.Transport,
-				Framing:   s.Framing,
-			}
-		}
-		mcpClients, mcpTools, mcpInfos, mcpErr = mcp.StartMCPClientsFromConfig(context.Background(), mcpManifests, io.Discard)
-		if mcpErr != nil {
-			fmt.Fprintf(os.Stderr, "warning: MCP startup error: %v\n", mcpErr)
-		}
-		for _, t := range mcpTools {
-			toolReg.Register(t)
-		}
-	}
+	// --- MCP servers ------------------------------------------------------
+	mcpClients, mcpInfos := initMCP(cfg, toolReg, skipMCP)
 
 	skillDirs := skillSearchPaths()
 	toolReg.Register(&tools.SkillTool{Dirs: skillDirs})
@@ -331,4 +278,74 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 		steerCh:      make(chan string, 4),
 		followupCh:   followupCh,
 	}, nil
+}
+
+// --- helpers ---------------------------------------------------------------
+
+// initOtel initialises OpenTelemetry when configured. Serve mode injects
+// extraOtelProcessors (an in-memory BufferingSpanProcessor) and sets
+// otelInMemoryOnly so tracing activates without an OTLP endpoint.
+func initOtel(cfg *config.Config, skipOtel bool) (func(context.Context) error, bool, error) {
+	noop := func(_ context.Context) error { return nil }
+	if skipOtel || (!cfg.Observability.Otel.Enabled && len(extraOtelProcessors) == 0) {
+		return noop, false, nil
+	}
+	otelCfg := observability.Config{
+		Enabled:         true,
+		Endpoint:        cfg.Observability.Otel.Endpoint,
+		ServiceName:     cfg.Observability.Otel.ServiceName,
+		Traces:          true,
+		Metrics:         cfg.Observability.Otel.Metrics,
+		ExtraProcessors: extraOtelProcessors,
+	}
+	if otelInMemoryOnly {
+		otelCfg.Endpoint = ""
+		otelCfg.Metrics = false
+	} else {
+		if otelCfg.Endpoint == "" {
+			otelCfg.Endpoint = "localhost:4317"
+		}
+		if ep := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); ep != "" {
+			otelCfg.Endpoint = ep
+		}
+	}
+	if os.Getenv("YAAH_OTEL_ENABLED") == "true" {
+		otelCfg.Enabled = true
+	}
+	if otelCfg.ServiceName == "" {
+		otelCfg.ServiceName = "yaah"
+	}
+	sd, err := observability.Setup(context.Background(), otelCfg)
+	if err != nil {
+		return nil, false, fmt.Errorf("otel: %w", err)
+	}
+	return sd, true, nil
+}
+
+// initMCP starts configured MCP servers, registers their tools into
+// toolReg, and returns client handles and server info. Start errors
+// are non-fatal and reported to stderr.
+func initMCP(cfg *config.Config, toolReg *tools.Registry, skipMCP bool) ([]mcp.MCPClient, []mcp.ServerInfo) {
+	if skipMCP {
+		return nil, nil
+	}
+	mcpManifests := make(map[string]*mcp.Manifest)
+	for name, s := range cfg.MCPServers {
+		mcpManifests[name] = &mcp.Manifest{
+			Command:   s.Command,
+			Args:      s.Args,
+			Env:       s.Env,
+			URL:       s.URL,
+			Transport: s.Transport,
+			Framing:   s.Framing,
+		}
+	}
+	clients, mcpTools, infos, err := mcp.StartMCPClientsFromConfig(context.Background(), mcpManifests, io.Discard)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: MCP startup error: %v\n", err)
+	}
+	for _, t := range mcpTools {
+		toolReg.Register(t)
+	}
+	return clients, infos
 }
