@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.3](https://github.com/buchenberg/yaah/compare/v0.47.2...v0.47.3) (2026-08-05)
+
+
+### Code Refactoring
+
+* break up agent_frame.go into focused files ([#149](https://github.com/buchenberg/yaah/issues/149)) ([d9c68e8](https://github.com/buchenberg/yaah/commit/d9c68e80a016fd02c1ae4b9f2579c29ace39deca))
+
 ## [0.47.2](https://github.com/buchenberg/yaah/compare/v0.47.1...v0.47.2) (2026-08-05)
 
 
