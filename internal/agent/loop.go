@@ -7,6 +7,7 @@ import (
 
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/buchenberg/yaah/internal/agent/events"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -102,7 +103,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		tools.SendHeartbeat(ctx)
 
 		l.Hooks.Emit(HookEvent{
-			Event:  TurnStart,
+			Event:  events.TurnStart,
 			Prompt: userInput,
 			Turn:   iter,
 			Model:  l.Config.Model,

@@ -1,4 +1,4 @@
-package agent
+package events
 
 // HookEventType identifies the kind of hook event emitted to the hook directory.
 type HookEventType string

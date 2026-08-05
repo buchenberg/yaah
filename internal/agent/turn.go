@@ -8,6 +8,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/buchenberg/yaah/internal/agent/events"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/prompts"
@@ -170,7 +171,7 @@ func (l *Loop) executeToolPhase(turnCtx context.Context, iter int, msg types.Mes
 
 	if l.ConflictTracker != nil {
 		l.Hooks.Emit(HookEvent{
-			Event: ConflictCheck,
+			Event: events.ConflictCheck,
 			Turn:  iter,
 			Model: l.Config.Model,
 		})
@@ -178,7 +179,7 @@ func (l *Loop) executeToolPhase(turnCtx context.Context, iter int, msg types.Mes
 		if report := l.ConflictTracker.DetectAndReset(); report != "" {
 			fileCount := strings.Count(report, "File: ")
 			l.Hooks.Emit(HookEvent{
-				Event:         ConflictDetect,
+				Event:         events.ConflictDetect,
 				Turn:          iter,
 				Model:         l.Config.Model,
 				ConflictFiles: fileCount,

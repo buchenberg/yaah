@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/agent/events"
 	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/memory"
@@ -55,7 +56,7 @@ func (l *Loop) teardown(runErr *error) {
 		reason = "error"
 	}
 	l.Hooks.Emit(HookEvent{
-		Event:      SessionEnd,
+		Event:      events.SessionEnd,
 		ExitReason: reason,
 		Model:      l.Config.Model,
 	})
@@ -73,7 +74,7 @@ func (l *Loop) initMessages(userInput string) {
 			types.UserMsg(userInput),
 		}
 		l.Hooks.Emit(HookEvent{
-			Event: SessionStart,
+			Event: events.SessionStart,
 			Model: l.Config.Model,
 		})
 		l.Persister.Persist(l.State.Messages[0])
@@ -187,7 +188,7 @@ func (l *Loop) applyDefaults() {
 		l.subAgentSem = make(chan struct{}, l.Config.MaxSubAgentConcurrency)
 	}
 	if l.Hooks == nil {
-		l.Hooks = NewHookEmitter("", l.Config.SessionID)
+		l.Hooks = events.NewHookEmitter("", l.Config.SessionID)
 	}
 	if l.Persister == nil {
 		l.Persister = NewSessionPersister(nil, nil, l.Config.SessionID)
