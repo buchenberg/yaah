@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -22,6 +23,7 @@ func (l *Loop) publishDone(response *string, runErr *error) {
 	}
 	done.ContextTokens = l.EstimatedTokens()
 	done.ContextWindow = l.Config.ContextWindow
+	done.LastPromptTokens = l.State.LastPromptTokens
 	done.FinishReason = l.State.LastFinishReason
 	done.ResponseModel = l.State.LastResponseModel
 	done.Usage = l.State.TotalTokens
@@ -110,6 +112,17 @@ func (l *Loop) applyDefaults() {
 		l.CtxMgr.ReasoningProtectTurns = 2
 	}
 	l.CtxMgr.EnsurePruner()
+
+	// Wire the internal compaction function so ContextManager can satisfy
+	// the pipeline.Compactor interface. compactContext mutates
+	// l.State.Messages in place; the wrapper syncs the caller's message
+	// view before and after.
+	l.CtxMgr.compactFn = func(ctx context.Context, msgs []types.Message, thresh float64) []types.Message {
+		l.State.Messages = msgs
+		l.compactContext(ctx, thresh)
+		return l.State.Messages
+	}
+
 	if l.State.CompactionBudgetMultiplier <= 0 {
 		l.State.CompactionBudgetMultiplier = 1.0
 	}

@@ -105,14 +105,20 @@ func (*EscalationEvent) eventMarker() {}
 // It carries the final response text (if any), error information,
 // context window statistics for the status bar, finish reason from the last
 // turn, cumulative token usage, and the response model string.
+//
+// ContextTokens is the char/4 estimate of the full conversation history.
+// LastPromptTokens is the REAL prompt token count reported by the provider
+// on the last turn — it is the authoritative context size. Views should
+// prefer LastPromptTokens when > 0 for accuracy.
 type DoneEvent struct {
-	Response      string
-	Error         string
-	ContextTokens int
-	ContextWindow int
-	FinishReason  string
-	Usage         types.Usage
-	ResponseModel string
+	Response         string
+	Error            string
+	ContextTokens    int // char/4 estimate of all messages
+	ContextWindow    int
+	LastPromptTokens int // real provider-reported prompt tokens from last turn
+	FinishReason     string
+	Usage            types.Usage
+	ResponseModel    string
 }
 
 func (*DoneEvent) eventMarker() {}

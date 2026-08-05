@@ -323,7 +323,13 @@ func EarliestReasoningIndex(messages []types.Message) int {
 // applyCompactedSummary replaces the message list with the compacted summary
 // plus kept messages. It is called by both the normal and chunked compaction
 // paths so they share the same post-compaction logic.
-func (l *Loop) applyCompactedSummary(summary string, sysMsg types.Message, oldMsgs, keepMsgs []types.Message) {
+//
+// preRealTokens is the provider-reported (or estimated) token count that
+// triggered the compaction. It is used alongside the char/4 estimate to
+// determine whether compaction was effective — switching from a relative
+// savings percentage (which broke on reasoning-heavy conversations where
+// char/4 inflates by 2-3x) to an absolute token reduction floor.
+func (l *Loop) applyCompactedSummary(summary string, sysMsg types.Message, oldMsgs, keepMsgs []types.Message, preRealTokens int) {
 	l.State.PreviousSummary = summary
 
 	newMsgs := []types.Message{sysMsg}
@@ -359,16 +365,30 @@ func (l *Loop) applyCompactedSummary(summary string, sysMsg types.Message, oldMs
 	}
 
 	afterEstimate := l.EstimatedTokens()
-	if beforeEstimate > 0 {
-		savings := float64(beforeEstimate-afterEstimate) / float64(beforeEstimate)
-		if savings < 0.10 {
-			l.State.IneffectiveCompactions++
-		} else {
-			l.State.IneffectiveCompactions = 0
-		}
-		l.trackCompactionSavings(savings)
+
+	// Use an absolute token reduction floor instead of a relative
+	// savings percentage. Relative savings breaks when char/4
+	// estimates (which include reasoning content) are 2-3x larger
+	// than real provider token counts — every compaction appears
+	// ineffective even when it substantially shrinks the prompt.
+	minReduction := l.Config.ContextWindow / 20
+	if minReduction < 2000 {
+		minReduction = 2000
 	}
+	if beforeEstimate-afterEstimate < minReduction {
+		l.State.IneffectiveCompactions++
+	} else {
+		l.State.IneffectiveCompactions = 0
+	}
+	l.trackCompactionSavings(float64(beforeEstimate-afterEstimate) / float64(beforeEstimate))
+
+	// LastCompactionTokens drives the cooldown self-reset (50% growth
+	// threshold). Anchor it to the larger of the real trigger count and
+	// the post-compaction estimate so the self-reset tracks reality.
 	l.State.LastCompactionTokens = afterEstimate
+	if preRealTokens > l.State.LastCompactionTokens {
+		l.State.LastCompactionTokens = preRealTokens
+	}
 }
 
 // persisterDB returns the underlying database from the Persister, or nil
@@ -674,7 +694,7 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 		// Primary compaction failed — try chunked fallback before giving up.
 		if len(oldMsgs) > minChunkTokens {
 			if chunkSummary, chunkErr := l.chunkedCompact(ctx, oldMsgs, compactModel); chunkErr == nil && chunkSummary != "" {
-				l.applyCompactedSummary(chunkSummary, sysMsg, oldMsgs, keepMsgs)
+				l.applyCompactedSummary(chunkSummary, sysMsg, oldMsgs, keepMsgs, effectiveTokens)
 				afterEstimate := l.EstimatedTokens()
 				savingsPct := 0.0
 				if beforeEstimate > 0 {
@@ -689,7 +709,7 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	}
 
 	summary := resp.Choices[0].Message.Content
-	l.applyCompactedSummary(summary, sysMsg, oldMsgs, keepMsgs)
+	l.applyCompactedSummary(summary, sysMsg, oldMsgs, keepMsgs, effectiveTokens)
 	afterEstimate := l.EstimatedTokens()
 	savingsPct := 0.0
 	ineffectiveNote := ""

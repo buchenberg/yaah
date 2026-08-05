@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/tui2/components/statusbar"
 )
 
 func (t *TUI2) HandleEvent(event agent.Event) {
@@ -77,10 +78,23 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 	case *agent.CompactionStartedEvent:
 		t.App.QueueUpdateDraw(func() {
 			t.compacting = true
+			t.plainMessages = append(t.plainMessages,
+				fmt.Sprintf("[#888888]compacting (%d→%d tokens, %s)[-]", e.BeforeTokens, e.TargetTokens, e.Reason))
+			t.refreshMessages()
 		})
 	case *agent.CompactionDoneEvent:
 		t.App.QueueUpdateDraw(func() {
 			t.compacting = false
+			pct := e.SavingsPct * 100
+			note := ""
+			if e.IneffectiveNote != "" {
+				note = " " + e.IneffectiveNote
+			}
+			t.plainMessages = append(t.plainMessages,
+				fmt.Sprintf("[#888888]compacted %.0f%% (%.1fK → %.1fK, %s) in %.1fs%s[-]",
+					pct, float64(e.BeforeTokens)/1000, float64(e.AfterTokens)/1000,
+					e.Method, e.ElapsedSeconds, note))
+			t.refreshMessages()
 		})
 	case *agent.DoneEvent:
 		t.App.QueueUpdateDraw(func() {
@@ -93,6 +107,19 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			t.pendingTool = ""
 			t.thinkingInd.Hide()
 			t.refreshMessages()
+
+			// Update context display from DoneEvent, preferring the real
+			// provider-reported token count over the char/4 estimate.
+			if e.ContextWindow > 0 {
+				ct := e.ContextTokens
+				if e.LastPromptTokens > 0 {
+					ct = e.LastPromptTokens
+				}
+				t.contextTokens = ct
+				t.contextWindow = e.ContextWindow
+				statusbar.Update(t.StatusBar, t.lastProvider, t.lastModel, ct, e.ContextWindow)
+				t.renderInfoPane()
+			}
 		})
 	}
 }

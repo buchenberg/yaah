@@ -1,8 +1,14 @@
 package agent
 
 import (
+	"context"
+
+	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/buchenberg/yaah/internal/pubsub"
+	"github.com/buchenberg/yaah/internal/types"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ContextManager owns context-window policy configuration and state:
@@ -32,11 +38,12 @@ type ContextManager struct {
 	PruneMinTurns      int
 
 	// Compaction state.
-	PreviousSummary        string
-	LastPromptTokens       int
-	LastCachedPromptTokens int
-	LastCompactionTokens   int
-	IneffectiveCompactions int
+	PreviousSummary          string
+	LastPromptTokens         int
+	LastCachedPromptTokens   int
+	LastCompactionTokens     int
+	IneffectiveCompactions   int
+	CompactionSavingsHistory []float64
 
 	// Injected dependencies for compaction LLM calls.
 	Provider        Provider
@@ -46,6 +53,60 @@ type ContextManager struct {
 	DB              *memory.DB
 	SessionID       string
 	OtelEnabled     bool
+
+	// --- Phase 2: compaction infrastructure ---
+
+	// LLMClient allows ContextManager to call LLMs for summarisation.
+	LLMClient *llm.Client
+
+	// CompactMaxMessages is the max messages to include in a compaction
+	// summary from the tail.
+	CompactMaxMessages int
+
+	// CompactionBudgetMultiplier grows when back-to-back overflows occur.
+	CompactionBudgetMultiplier float64
+
+	// CompactionForcedByOverflow is set when a forced-compaction due to
+	// context overflow occurred this turn.
+	CompactionForcedByOverflow bool
+
+	// Tracer for OpenTelemetry spans during compaction.
+	Tracer trace.Tracer
+
+	// Broker for publishing compaction lifecycle events.
+	Broker *pubsub.Broker[Event]
+
+	// CompactionHook is an optional callback invoked during compaction.
+	CompactionHook func(event any)
+
+	// Messages is a mutable snapshot of the current message list, used by
+	// compactFn to read/write the working set.
+	Messages []types.Message
+
+	// compactFn is set by the Loop to delegate compaction back through its
+	// own method while ContextManager satisfies the Compactor interface.
+	compactFn func(ctx context.Context, messages []types.Message, threshold float64) []types.Message
+}
+
+// Reset resets all compaction-tracking state to zero values.
+func (cm *ContextManager) Reset() {
+	cm.PreviousSummary = ""
+	cm.LastPromptTokens = 0
+	cm.LastCachedPromptTokens = 0
+	cm.LastCompactionTokens = 0
+	cm.IneffectiveCompactions = 0
+	cm.CompactionSavingsHistory = nil
+	cm.CompactionBudgetMultiplier = 1.0
+	cm.CompactionForcedByOverflow = false
+}
+
+// Compact implements pipeline.Compactor by delegating to the registered
+// compaction function.
+func (cm *ContextManager) Compact(ctx context.Context, messages []types.Message, threshold float64) []types.Message {
+	if cm.compactFn == nil {
+		return messages
+	}
+	return cm.compactFn(ctx, messages, threshold)
 }
 
 // NewContextManager creates a ContextManager with the given dependencies.

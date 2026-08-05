@@ -64,8 +64,9 @@ func (*CtrlTodos) ctrlMarker() {}
 
 // CtrlContextInfo carries context window usage statistics.
 type CtrlContextInfo struct {
-	Tokens int
-	Window int
+	Tokens           int
+	Window           int
+	LastPromptTokens int // real provider-reported prompt tokens from last turn
 }
 
 func (*CtrlContextInfo) ctrlMarker() {}

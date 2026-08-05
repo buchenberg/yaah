@@ -37,7 +37,7 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 		FollowUps:              l.FollowUps,
 		ContextWindow:          l.Config.ContextWindow,
 		CompactionThreshold:    l.Config.CompactionThreshold,
-		Compactor:              l,
+		Compactor:              l.CtxMgr,
 		ApprovalMode:           l.Config.ApprovalMode,
 		PermissionRules:        l.Config.PermissionRules,
 		LoopDetectCount:        l.Config.LoopDetectCount,
