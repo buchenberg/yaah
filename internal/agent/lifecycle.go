@@ -7,6 +7,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
+	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/pubsub"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -85,8 +86,44 @@ func (l *Loop) initMessages(userInput string) {
 // without going through Run → applyDefaults.
 func (l *Loop) ctxMgr() *ContextManager {
 	if l.CtxMgr == nil {
-		l.CtxMgr = &ContextManager{}
+		var db *memory.DB
+		if l.Persister != nil {
+			db = l.Persister.DB()
+		}
+		l.CtxMgr = &ContextManager{
+			ContextWindow:  l.Config.ContextWindow,
+			EstimateFactor: l.Config.EstimateFactor,
+			OtelEnabled:    l.Config.OtelEnabled,
+			SystemPrompt:   l.Config.SystemPrompt,
+			SessionID:      l.Config.SessionID,
+			DB:             db,
+		}
 	}
+	if l.CtxMgr.Provider == nil {
+		l.CtxMgr.Provider = l.Provider
+	}
+	if l.CtxMgr.CompactProvider == nil {
+		l.CtxMgr.CompactProvider = l.CompactProvider
+	}
+	if l.CtxMgr.Model == "" {
+		l.CtxMgr.Model = l.Config.Model
+	}
+	if l.CtxMgr.CompactModel == "" {
+		l.CtxMgr.CompactModel = l.Config.CompactModel
+	}
+	if l.CtxMgr.ContextWindow == 0 {
+		l.CtxMgr.ContextWindow = l.Config.ContextWindow
+	}
+	if l.CtxMgr.RawCompactionThreshold == 0 {
+		l.CtxMgr.RawCompactionThreshold = l.Config.RawCompactionThreshold
+	}
+	if l.CtxMgr.CompactMaxMessages == 0 {
+		l.CtxMgr.CompactMaxMessages = l.Config.CompactMaxMessages
+	}
+	if l.CtxMgr.ReasoningProtectTurns <= 0 {
+		l.CtxMgr.ReasoningProtectTurns = 2
+	}
+	l.CtxMgr.EnsurePruner()
 	return l.CtxMgr
 }
 
@@ -113,12 +150,11 @@ func (l *Loop) applyDefaults() {
 	}
 	l.CtxMgr.EnsurePruner()
 
-	// Wire the internal compaction function so ContextManager can satisfy
-	// the pipeline.Compactor interface. compactContext mutates
-	// l.State.Messages in place; the wrapper syncs the caller's message
-	// view before and after.
+	// Wire compaction functions so ContextManager can satisfy the
+	// pipeline.Compactor interface and handle chunked fallback.
 	l.CtxMgr.compactFn = func(ctx context.Context, msgs []types.Message, thresh float64) []types.Message {
 		l.State.Messages = msgs
+		l.CtxMgr.Messages = msgs
 		l.compactContext(ctx, thresh)
 		return l.State.Messages
 	}
