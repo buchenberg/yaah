@@ -77,12 +77,14 @@ func (l *Loop) guardContextBeforeCall(turnCtx context.Context, messages *[]types
 	}
 
 	if l.Config.ContextWindow > 0 && l.State.LastPromptTokens > l.Config.ContextWindow {
+		l.CtxMgr.Messages = l.State.Messages
 		l.compactContext(turnCtx, 0.5)
 		*messages = l.State.Messages
 		req.Messages = l.prepareRequestMessages(*messages)
 	}
 
 	if l.Config.ContextWindow > 0 && estimatePayloadBytes(req.Messages, req.Tools) > maxPayloadBytes {
+		l.CtxMgr.Messages = l.State.Messages
 		l.compactContext(turnCtx, 0.5)
 		*messages = l.State.Messages
 		req.Messages = l.prepareRequestMessages(*messages)

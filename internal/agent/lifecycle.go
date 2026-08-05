@@ -113,15 +113,14 @@ func (l *Loop) applyDefaults() {
 	}
 	l.CtxMgr.EnsurePruner()
 
-	// Wire the internal compaction function so ContextManager can satisfy
-	// the pipeline.Compactor interface. compactContext mutates
-	// l.State.Messages in place; the wrapper syncs the caller's message
-	// view before and after.
+	// Wire compaction functions so ContextManager can satisfy the
+	// pipeline.Compactor interface and handle chunked fallback.
 	l.CtxMgr.compactFn = func(ctx context.Context, msgs []types.Message, thresh float64) []types.Message {
-		l.State.Messages = msgs
-		l.compactContext(ctx, thresh)
-		return l.State.Messages
+		l.CtxMgr.Messages = msgs
+		l.CtxMgr.compactContext(ctx, thresh)
+		return l.CtxMgr.Messages
 	}
+	l.CtxMgr.chunkedCompactFn = l.chunkedCompact
 
 	if l.State.CompactionBudgetMultiplier <= 0 {
 		l.State.CompactionBudgetMultiplier = 1.0

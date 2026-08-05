@@ -26,6 +26,7 @@ func (l *Loop) buildPipeline() *pipeline.Pipeline {
 // l.State.Messages, compacts, and returns the result.
 func (l *Loop) Compact(ctx context.Context, messages []types.Message, threshold float64) []types.Message {
 	l.State.Messages = messages
+	l.CtxMgr.Messages = messages
 	l.compactContext(ctx, threshold)
 	return l.State.Messages
 }
