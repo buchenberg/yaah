@@ -11,8 +11,6 @@ import (
 	"github.com/buchenberg/yaah/internal/observability"
 )
 
-// paletteLines returns the number of terminal rows the command palette
-// occupies when visible. Includes the rounded border (2) and padding (2).
 // maxModelLines returns the maximum number of model items that can fit
 // in the terminal without pushing the input off-screen.
 func (m *Model) maxModelLines() int {
@@ -36,6 +34,8 @@ func (m *Model) maxQuestionLines() int {
 	return n
 }
 
+// paletteLines returns the number of terminal rows the command palette
+// occupies when visible. Includes the rounded border (2) and padding (2).
 func (m *Model) paletteLines() int {
 	if m.showHelp {
 		// Help overlay: title + 4 groups with headers + footer + border/padding
@@ -145,11 +145,6 @@ func (m *Model) adjustViewport() {
 	m.viewport.SetHeight(chatHeight)
 	m.refreshViewport()
 }
-
-// renderMessages produces the full chat content (messages, streaming,
-// thinking indicator, tool call) as a single string suitable for
-// handing to the viewport. Width is m.width; callers must ensure
-// m.width is set.
 
 // View implements tea.Model.
 func (m *Model) View() tea.View {
@@ -265,5 +260,3 @@ func (m *Model) View() tea.View {
 	}
 	return v
 }
-
-
