@@ -29,41 +29,6 @@ import (
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-// Styles — declared here, initialized by ApplyTheme in theme.go.
-var (
-	titleStyle          lipgloss.Style
-	userStyle           lipgloss.Style
-	userBgStyle         lipgloss.Style
-	assistantStyle      lipgloss.Style
-	toolStyle           lipgloss.Style
-	systemStyle         lipgloss.Style
-	systemBgStyle       lipgloss.Style
-	statusStyle         lipgloss.Style
-	spinnerStyle        lipgloss.Style
-	codeStyle           lipgloss.Style
-	boldStyle           lipgloss.Style
-	italicStyle         lipgloss.Style
-	thinkingStyle       lipgloss.Style
-	reasoningBgStyle    lipgloss.Style
-	toggleStyle         lipgloss.Style
-	listBulletStyle     lipgloss.Style
-	listItemStyle       lipgloss.Style
-	treeStyle           lipgloss.Style
-	treeItemStyle       lipgloss.Style
-	commandPaletteStyle lipgloss.Style
-	commandNameStyle    lipgloss.Style
-	commandDescStyle    lipgloss.Style
-	toolBoxStyle        lipgloss.Style
-	subAgentStartStyle  lipgloss.Style
-	subAgentEndStyle    lipgloss.Style
-	paletteTitleStyle   lipgloss.Style
-	noticeStyle         lipgloss.Style
-	mcpStatusConnected  lipgloss.Style
-	mcpStatusDisconnect lipgloss.Style
-	errorStyle          lipgloss.Style
-	errorBoxStyle       lipgloss.Style
-)
-
 // Message represents a chat message in the TUI.
 type Message struct {
 	Role         string
