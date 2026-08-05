@@ -55,12 +55,3 @@ func (l *Loop) pruneOtel(ctx context.Context, s pipeline.PruneStats) {
 	observability.FinishPrune(span, s.Reason, s.Candidates, s.Marked, s.ReclaimedTokens, s.ProtectedSkipped, s.TotalMarked, s.Committed)
 }
 
-// resetPruner clears the soft-prune set so the fresh conversation tail is
-// re-evaluated from scratch after compaction rebuilds l.Messages. Called at
-// both compaction rebuild sites (summary path and trim fallback). Cumulative
-// counters survive the reset for observability continuity.
-func (l *Loop) resetPruner() {
-	if l.CtxMgr.Pruner != nil {
-		l.CtxMgr.Pruner.Reset()
-	}
-}

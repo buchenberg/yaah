@@ -1,8 +1,6 @@
 package agent
 
 import (
-	"context"
-
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -43,17 +41,3 @@ func chunkSplit(msgs []types.Message, budget int) [][]types.Message {
 	return chunks
 }
 
-// summarizeChunk delegates to ContextManager.summarizeChunk.
-func (l *Loop) summarizeChunk(ctx context.Context, chunk []types.Message, chunkIdx, total int) (string, error) {
-	return l.CtxMgr.summarizeChunk(ctx, chunk, chunkIdx, total)
-}
-
-// chunkedCompact delegates to ContextManager.chunkedCompact.
-func (l *Loop) chunkedCompact(ctx context.Context, oldMsgs []types.Message, compactModel string) (string, error) {
-	return l.CtxMgr.chunkedCompact(ctx, oldMsgs, compactModel)
-}
-
-// reducePartialSummaries delegates to ContextManager.reducePartialSummaries.
-func (l *Loop) reducePartialSummaries(ctx context.Context, partials []string, depth int, compactModel string) (string, error) {
-	return l.CtxMgr.reducePartialSummaries(ctx, partials, depth, compactModel)
-}

@@ -317,21 +317,6 @@ func EarliestReasoningIndex(messages []types.Message) int {
 	return 0
 }
 
-func (l *Loop) applyCompactedSummary(summary string, sysMsg types.Message, oldMsgs, keepMsgs []types.Message, preRealTokens int) {
-	l.ctxMgr().applyCompactedSummary(summary, sysMsg, oldMsgs, keepMsgs, preRealTokens)
-	l.State.Messages = l.CtxMgr.Messages
-	l.State.PreviousSummary = l.CtxMgr.PreviousSummary
-	l.State.LastPromptTokens = l.CtxMgr.LastPromptTokens
-	l.State.IneffectiveCompactions = l.CtxMgr.IneffectiveCompactions
-	l.State.LastCompactionTokens = l.CtxMgr.LastCompactionTokens
-	l.State.CompactionBudgetMultiplier = l.CtxMgr.CompactionBudgetMultiplier
-	l.State.CompactionSavingsHistory = l.CtxMgr.CompactionSavingsHistory
-}
-
-func (l *Loop) trackCompactionSavings(savings float64) {
-	l.ctxMgr().trackCompactionSavings(savings)
-}
-
 // truncateRunes slices s to at most maxLen runes, preserving head and tail
 // with an ellipsis marker in between. Operates on rune boundaries to avoid
 // corrupting multi-byte UTF-8 characters.
