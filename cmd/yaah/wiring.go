@@ -2,7 +2,6 @@ package yaah
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -202,51 +201,12 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	var messages []types.Message
 	var sessionID string
 	var msgIdx int
-	if resumeSessionID != "" {
-		if db == nil {
-			return nil, fmt.Errorf("cannot resume session: no database available (run 'yaah doctor')")
-		}
-		restored, err := db.GetSession(resumeSessionID)
-		if err != nil {
-			return nil, fmt.Errorf("cannot resume session %s: %w", resumeSessionID, err)
-		}
-		dbMsgs, err := db.GetMessages(resumeSessionID)
-		if err != nil {
-			return nil, fmt.Errorf("cannot resume session %s: %w", resumeSessionID, err)
-		}
-		if len(dbMsgs) == 0 {
-			return nil, fmt.Errorf("session %s not found or has no messages", resumeSessionID)
-		}
-		messages = make([]types.Message, 0, len(dbMsgs)+1)
-		if restored.SystemPrompt != "" {
-			systemPrompt = restored.SystemPrompt
-		}
-		if restored.CompactedSummary != "" {
-			messages = append(messages, types.SystemMsg(restored.CompactedSummary))
-		}
-		for _, m := range dbMsgs {
-			msg := types.Message{
-				Role:             m.Role,
-				Content:          m.Content,
-				ReasoningContent: m.ReasoningContent,
-				Name:             m.ToolName,
-				ToolCallID:       m.ToolCallID,
-			}
-			if m.ToolCalls != "" {
-				json.Unmarshal([]byte(m.ToolCalls), &msg.ToolCalls)
-			}
-			messages = append(messages, msg)
-		}
-		if len(messages) > 0 {
-			last := messages[len(messages)-1]
-			if last.Role == "assistant" && len(last.ToolCalls) > 0 {
-				messages = append(messages, types.SystemMsg(
-					"Previous execution was interrupted. Please continue from where you left off."))
-			}
-		}
-		sessionID = resumeSessionID
-		msgIdx = len(dbMsgs)
-	} else {
+
+	messages, sessionID, msgIdx, systemPrompt, err = restoreSession(db, resumeSessionID, systemPrompt)
+	if err != nil {
+		return nil, err
+	}
+	if resumeSessionID == "" {
 		sessionID = fmt.Sprintf("sess-%d", time.Now().UnixNano())
 		if db != nil {
 			cwd, _ := os.Getwd()
@@ -372,4 +332,3 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 		followupCh:   followupCh,
 	}, nil
 }
-

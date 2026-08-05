@@ -93,7 +93,6 @@ type agentSession struct {
 	totalUsage types.Usage
 }
 
-
 func (s *agentSession) close() {
 	ctx := context.Background()
 	if s.steerCh != nil {
@@ -208,6 +207,3 @@ func (s *agentSession) SetModel(providerName, modelName string) {
 	s.providerName = providerName
 	s.modelName = modelName
 }
-
-
-
