@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.2](https://github.com/buchenberg/yaah/compare/v0.47.1...v0.47.2) (2026-08-05)
+
+
+### Code Refactoring
+
+* extract LLM compaction from Loop into ContextManager ([#147](https://github.com/buchenberg/yaah/issues/147)) ([e43f55b](https://github.com/buchenberg/yaah/commit/e43f55b0522a8fb194af84780d4b218295370608))
+
 ## [0.47.1](https://github.com/buchenberg/yaah/compare/v0.47.0...v0.47.1) (2026-08-05)
 
 
