@@ -1,6 +1,12 @@
 package tui
 
-import "github.com/buchenberg/yaah/internal/agent/subagent"
+import (
+	"strings"
+
+	zone "github.com/lrstanley/bubblezone/v2"
+
+	"github.com/buchenberg/yaah/internal/agent/subagent"
+)
 
 // UserMessage renders a user chat message: bold user-colored text
 // wrapped to the terminal width on the user background.
@@ -40,20 +46,39 @@ func (c AssistantMessage) Render() string {
 // tool-style: a status icon (⏳ running, ✓ done, ✗ error), a robot icon,
 // the role-colored display name, and the task. The start event renders
 // the running form; the end event updates the same message in place.
+// Once the sub-agent's result is attached, the line becomes a zone-marked
+// toggle that expands to show the result in a bordered box.
 type SubAgentLine struct {
-	role     string // role key used for color lookup (e.g. "checker")
-	task     string
-	running  bool
-	duration string // formatted duration (done/error only)
-	errMsg   string // error text (error state only)
+	zoneID    string
+	role      string // role key used for color lookup (e.g. "checker")
+	task      string
+	running   bool
+	duration  string // formatted duration (done/error only)
+	errMsg    string // error text (error state only)
+	result    string // final sub-agent result (enables the expand toggle)
+	width     int
+	maxHeight int // viewport height, used for the output box budget
+	expanded  bool
 }
 
 // NewSubAgentLine creates a sub-agent line component.
-func NewSubAgentLine(role, task string, running bool, duration, errMsg string) SubAgentLine {
-	return SubAgentLine{role: role, task: task, running: running, duration: duration, errMsg: errMsg}
+func NewSubAgentLine(zoneID, role, task string, running bool, duration, errMsg, result string, width, maxHeight int, expanded bool) SubAgentLine {
+	return SubAgentLine{
+		zoneID:    zoneID,
+		role:      role,
+		task:      task,
+		running:   running,
+		duration:  duration,
+		errMsg:    errMsg,
+		result:    result,
+		width:     width,
+		maxHeight: maxHeight,
+		expanded:  expanded,
+	}
 }
 
-// Render returns the styled line with a trailing newline.
+// Render returns the styled line with a trailing newline, plus the
+// expanded output box beneath it when open.
 func (c SubAgentLine) Render() string {
 	name := subagent.RoleDisplayName(subagent.SubAgentRole(c.role))
 	label := name
@@ -69,7 +94,15 @@ func (c SubAgentLine) Render() string {
 		icon = "✗"
 	}
 
-	line := "  " + icon + " " + styled
+	line := ""
+	if c.result != "" {
+		if c.expanded {
+			line += "▼ "
+		} else {
+			line += "▶ "
+		}
+	}
+	line += icon + " " + styled
 	if c.task != "" {
 		line += toggleStyle.Render(" · " + c.task)
 	}
@@ -79,7 +112,20 @@ func (c SubAgentLine) Render() string {
 	if c.errMsg != "" {
 		line += errorStyle.Render(" — " + c.errMsg)
 	}
-	return line + "\n"
+	line = "  " + line
+
+	var b strings.Builder
+	if c.result != "" {
+		b.WriteString(zone.Mark(c.zoneID, line))
+	} else {
+		b.WriteString(line)
+	}
+	b.WriteString("\n")
+	if c.expanded && c.result != "" {
+		b.WriteString(renderOutputBox(c.width, c.maxHeight, c.result))
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 // SystemMessage renders a system or other-role message: wrapped text

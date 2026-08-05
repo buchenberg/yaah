@@ -1622,9 +1622,54 @@ func TestSubAgentLine_DisplayNameAlongsideRole(t *testing.T) {
 	subagent.SetDefaultRoleRegistry(reg)
 	t.Cleanup(func() { subagent.SetDefaultRoleRegistry(nil) })
 
-	out := stripANSI(NewSubAgentLine("checker", "verify build", false, "1.2s", "").Render())
+	out := stripANSI(NewSubAgentLine("subagent-0", "checker", "verify build", false, "1.2s", "", "", 80, 20, false).Render())
 	if !strings.Contains(out, "Chuck (checker)") {
 		t.Errorf("expected display name alongside role, got %q", out)
+	}
+}
+
+func TestSubAgentResult_AttachesInsteadOfToolMessage(t *testing.T) {
+	m := &Model{width: 80}
+	m.HandleEvent(&agent.SubAgentStartEvent{Role: "developer", Prompt: "fix the bug"})
+	m.HandleEvent(&agent.SubAgentEndEvent{Role: "developer", Duration: 2 * time.Second})
+	m.HandleEvent(&agent.ToolEndEvent{Name: "spawn_subagent", Args: `{"role":"developer","prompt":"fix the bug"}`, Result: "the fix worked"})
+
+	if len(m.messages) != 1 {
+		t.Fatalf("spawn_subagent result must not add a second message, got %d", len(m.messages))
+	}
+	if m.messages[0].Role != "subagent" {
+		t.Fatalf("expected the subagent message, got role %q", m.messages[0].Role)
+	}
+	if m.messages[0].SubResult != "the fix worked" {
+		t.Errorf("expected result attached to subagent line, got %q", m.messages[0].SubResult)
+	}
+
+	// Collapsed by default: result not visible.
+	collapsed := stripANSI(m.renderMessages())
+	if strings.Contains(collapsed, "the fix worked") {
+		t.Errorf("result should be hidden while collapsed, got %q", collapsed)
+	}
+	if !strings.Contains(collapsed, "▶") {
+		t.Errorf("result should add an expand toggle, got %q", collapsed)
+	}
+
+	// Expanded: result visible, registered as a clickable zone.
+	m.subagentExpanded = map[string]bool{"subagent-0": true}
+	expanded := stripANSI(m.renderMessages())
+	if !strings.Contains(expanded, "the fix worked") {
+		t.Errorf("expanded line should show the result, got %q", expanded)
+	}
+	if len(m.subagentZones) != 1 || m.subagentZones[0] != "subagent-0" {
+		t.Errorf("expected subagent-0 zone registered, got %v", m.subagentZones)
+	}
+}
+
+func TestSubAgentResult_OtherToolsStillRender(t *testing.T) {
+	m := &Model{width: 80}
+	m.HandleEvent(&agent.ToolEndEvent{Name: "bash", Args: `{"command":"ls"}`, Result: "file.txt"})
+
+	if len(m.messages) != 1 || m.messages[0].Role != "tool" {
+		t.Fatalf("non-subagent tools should still render as tool messages, got %+v", m.messages)
 	}
 }
 

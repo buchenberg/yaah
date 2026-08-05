@@ -337,6 +337,7 @@ func (m *Model) renderMessages() string {
 
 	m.reasoningZones = m.reasoningZones[:0]
 	m.toolZones = m.toolZones[:0]
+	m.subagentZones = m.subagentZones[:0]
 
 	// Persistent todo list - always visible when there are tasks
 	if len(m.todos) > 0 {
@@ -366,7 +367,11 @@ func (m *Model) renderMessages() string {
 			}
 
 		case "subagent":
-			b.WriteString(NewSubAgentLine(msg.SubRole, msg.Content, msg.SubRunning, msg.ToolDuration, msg.SubError).Render())
+			zoneID := fmt.Sprintf("subagent-%d", msgIdx)
+			if msg.SubResult != "" {
+				m.subagentZones = append(m.subagentZones, zoneID)
+			}
+			b.WriteString(NewSubAgentLine(zoneID, msg.SubRole, msg.Content, msg.SubRunning, msg.ToolDuration, msg.SubError, msg.SubResult, m.width, m.viewport.Height(), m.subagentExpanded[zoneID]).Render())
 
 		case "tool":
 			zoneID := fmt.Sprintf("tool-%d", msgIdx)
