@@ -17,7 +17,11 @@ import (
 
 // GoOutlineTool parses Go source files using go/ast and returns structural
 // outlines or extracts specific symbols by name. Read-only — never dangerous.
-type GoOutlineTool struct{}
+type GoOutlineTool struct{ PV *PathValidator }
+
+var _ PathValidatorSetter = (*GoOutlineTool)(nil)
+
+func (t *GoOutlineTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
 
 func (t *GoOutlineTool) Name() string { return "go_outline" }
 func (t *GoOutlineTool) Description() string {
@@ -61,7 +65,11 @@ func (t *GoOutlineTool) Execute(ctx context.Context, args string) (string, error
 	if params.File == "" {
 		return "", fmt.Errorf("go_outline: file is required")
 	}
-	params.File = expandHomeDir(params.File)
+	resolved, err := resolvePathWithPV(t.PV, params.File)
+	if err != nil {
+		return "", err
+	}
+	params.File = resolved
 
 	if params.Action == "extract" && params.Name == "" {
 		return "", fmt.Errorf("go_outline: name is required for extract action")

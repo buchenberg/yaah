@@ -13,7 +13,11 @@ import (
 
 // JSONQueryTool reads, writes, and deletes values in JSON files using dot-notation paths.
 // Reading (no set value) is safe; writing and deleting are dangerous.
-type JSONQueryTool struct{}
+type JSONQueryTool struct{ PV *PathValidator }
+
+var _ PathValidatorSetter = (*JSONQueryTool)(nil)
+
+func (t *JSONQueryTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
 
 func (t *JSONQueryTool) Name() string { return "json_query" }
 func (t *JSONQueryTool) Description() string {
@@ -65,7 +69,11 @@ func (t *JSONQueryTool) Execute(ctx context.Context, args string) (string, error
 	if params.Path == "" && params.Action != "read" {
 		return "", fmt.Errorf("json_query: path is required for %s", params.Action)
 	}
-	params.File = expandHomeDir(params.File)
+	resolved, err := resolvePathWithPV(t.PV, params.File)
+	if err != nil {
+		return "", err
+	}
+	params.File = resolved
 
 	data, err := os.ReadFile(params.File)
 	if err != nil {

@@ -12,7 +12,11 @@ import (
 
 // PatchTool applies unified diff patches to files.
 // Parses standard unified diff format and applies hunks sequentially.
-type PatchTool struct{}
+type PatchTool struct{ PV *PathValidator }
+
+var _ PathValidatorSetter = (*PatchTool)(nil)
+
+func (t *PatchTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
 
 func (t *PatchTool) Name() string                     { return "patch" }
 func (t *PatchTool) Description() string              { return prompts.ToolDescription("patch") }
@@ -56,7 +60,11 @@ func (t *PatchTool) Execute(ctx context.Context, args string) (string, error) {
 	if target == "" {
 		return "", fmt.Errorf("patch: could not determine file path from patch headers; provide filePath parameter")
 	}
-	target = expandHomeDir(target)
+	resolved, err := resolvePathWithPV(t.PV, target)
+	if err != nil {
+		return "", err
+	}
+	target = resolved
 
 	data, err := os.ReadFile(target)
 	if err != nil {

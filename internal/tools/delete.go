@@ -10,7 +10,11 @@ import (
 )
 
 // DeleteTool removes a file from the local filesystem.
-type DeleteTool struct{}
+type DeleteTool struct{ PV *PathValidator }
+
+var _ PathValidatorSetter = (*DeleteTool)(nil)
+
+func (t *DeleteTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
 
 func (t *DeleteTool) Name() string        { return "delete" }
 func (t *DeleteTool) Description() string { return prompts.ToolDescription("delete") }
@@ -37,7 +41,11 @@ func (t *DeleteTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.FilePath == "" {
 		return "", fmt.Errorf("delete: filePath is required")
 	}
-	params.FilePath = expandHomeDir(params.FilePath)
+	resolved, err := resolvePathWithPV(t.PV, params.FilePath)
+	if err != nil {
+		return "", err
+	}
+	params.FilePath = resolved
 
 	if err := os.Remove(params.FilePath); err != nil {
 		return "", fmt.Errorf("delete: %w", err)

@@ -57,6 +57,36 @@ func TestRepairOrphans_OrphanedCall(t *testing.T) {
 	}
 }
 
+// TestRepairOrphans_SyntheticBeforeFollowingMessages verifies that the
+// synthesized result for an interrupted call is inserted directly after
+// the assistant message that owns the call, not at the end of the
+// history. Providers require tool messages to immediately follow the
+// tool_calls message; appending at the end would leave a user message
+// between them when the session continued after the interruption.
+func TestRepairOrphans_SyntheticBeforeFollowingMessages(t *testing.T) {
+	messages := []types.Message{
+		types.UserMsg("run tool"),
+		{
+			Role: "assistant",
+			ToolCalls: []types.ToolCall{
+				{ID: "call-1", Type: "function", Function: types.ToolCallFn{Name: "echo", Arguments: `{}`}},
+			},
+		},
+		types.UserMsg("next prompt after interruption"),
+		{Role: "assistant", Content: "continuing"},
+	}
+	result := repairOrphans(messages)
+	if len(result) != 5 {
+		t.Fatalf("expected 5 messages (user + assistant + synthetic + user + assistant), got %d", len(result))
+	}
+	if result[2].Role != "tool" || result[2].ToolCallID != "call-1" {
+		t.Errorf("expected synthetic result for call-1 at index 2, got role=%s id=%s", result[2].Role, result[2].ToolCallID)
+	}
+	if result[3].Role != "user" {
+		t.Errorf("expected following user message at index 3, got role=%s", result[3].Role)
+	}
+}
+
 func TestRepairOrphans_BothOrphaned(t *testing.T) {
 	messages := []types.Message{
 		types.UserMsg("run tool"),

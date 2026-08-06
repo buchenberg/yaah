@@ -33,6 +33,20 @@ func expandHomeDir(path string) string {
 	return path
 }
 
+// resolvePathWithPV resolves a user-supplied path through the PathValidator
+// when one is configured, falling back to expandHomeDir (legacy behaviour).
+// File-accessing tools should call this during Execute instead of
+// expandHomeDir directly.
+func resolvePathWithPV(pv *PathValidator, input string) (string, error) {
+	if pv != nil {
+		return pv.ResolvePath(input)
+	}
+	if input == "" {
+		return ".", nil
+	}
+	return expandHomeDir(input), nil
+}
+
 // truncateOutput caps a command's output to bashMaxOutput with a truncation marker.
 func truncateOutput(b []byte) []byte {
 	if len(b) <= bashMaxOutput {

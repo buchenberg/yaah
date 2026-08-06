@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,7 +20,11 @@ import (
 const grepMaxResultLen = 8192
 
 // GrepTool searches file contents using ripgrep with a Go-native fallback.
-type GrepTool struct{}
+type GrepTool struct{ PV *PathValidator }
+
+var _ PathValidatorSetter = (*GrepTool)(nil)
+
+func (t *GrepTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
 
 func (t *GrepTool) Name() string        { return "grep" }
 func (t *GrepTool) Description() string { return prompts.ToolDescription("grep") }
@@ -51,7 +56,11 @@ func (t *GrepTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.Path == "" {
 		params.Path = "."
 	}
-	params.Path = expandHomeDir(params.Path)
+	resolved, err := resolvePathWithPV(t.PV, params.Path)
+	if err != nil {
+		return "", err
+	}
+	params.Path = resolved
 
 	if rgAvailable() {
 		return t.execRipgrep(ctx, params.Pattern, params.Path, params.Include)
@@ -104,14 +113,17 @@ func (t *GrepTool) grepNative(ctx context.Context, pattern, path, include string
 	var buf bytes.Buffer
 	matchCount := 0
 
-	walkErr := filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
+	walkErr := filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		if info.IsDir() {
-			if commonIgnoreDirs[info.Name()] {
+		if d.IsDir() {
+			if commonIgnoreDirs[d.Name()] {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
 		if binaryExtensions[filepath.Ext(p)] {

@@ -49,6 +49,7 @@ agents:
     max_turns: 5                      # soft cap that strips tools at N (0 = off)
     context_window: 128000
     approval: ask                     # ask | allow | deny
+    workspace_ask: false              # with --workspace: prompt before denying out-of-bounds access
     max_inline_tools_per_turn: 0      # 0 = unlimited
     estimate_factor: 1.3              # token estimate multiplier (0 = default 1.3)
 
@@ -157,6 +158,7 @@ At least one provider is required. Each needs a `base_url` and an `api_key`.
 | `max_turns` | 0 (off) | Soft cap; tools are stripped at this iteration, forcing a final answer |
 | `context_window` | 128000 | Token budget; caps the model's resolved window (0 = disabled) |
 | `approval` | `ask` | `allow`, `ask`, or `deny` |
+| `workspace_ask` | `false` | With `--workspace`: prompt before denying out-of-bounds file access instead of hard-rejecting |
 | `max_inline_tools_per_turn` | 0 (unlimited) | Cap inline tool calls per turn |
 | `estimate_factor` | 1.3 | Token estimate multiplier for preflight compaction |
 | `compaction_threshold` | 0.5 | Fraction of context_window that triggers LLM summarisation (effective tokens after cache subtraction) |

@@ -21,7 +21,11 @@ package yaah
 // See: terminalView (REPL), agentViewFwd (Bubble Tea TUI).
 
 import (
+	"bufio"
 	"context"
+	"fmt"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -93,6 +97,8 @@ type agentSession struct {
 	ctrlCh    chan<- types.CtrlMsg
 	approveFn func(name, args string) bool
 	mu        sync.RWMutex
+
+	stdinMu sync.Mutex // serialises stdin reads for approve/prompt fallbacks
 
 	steerCh    chan string
 	followupCh chan string
@@ -202,6 +208,41 @@ func (s *agentSession) SetApproveFn(fn func(name, args string) bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.approveFn = fn
+}
+
+// promptWorkspaceAccess is the PathValidator's ask fallback: it routes
+// out-of-workspace access decisions through the driver's approval UI
+// when one is attached (TUI, web) and falls back to a stdin prompt
+// otherwise, mirroring the loop's approveTool behaviour.
+func (s *agentSession) promptWorkspaceAccess(path, reason string) bool {
+	s.mu.RLock()
+	fn := s.approveFn
+	s.mu.RUnlock()
+	if fn != nil {
+		return fn("workspace_access", fmt.Sprintf("%s (%s)", path, reason))
+	}
+
+	s.stdinMu.Lock()
+	defer s.stdinMu.Unlock()
+
+	fi, err := os.Stdin.Stat()
+	if err != nil || (fi.Mode()&os.ModeCharDevice) == 0 {
+		return false
+	}
+
+	fmt.Fprintf(os.Stderr, "\n  ⚠ Path %s is %s. Allow access? [y/N]: ", path, reason)
+	os.Stderr.Sync()
+
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Buffer(make([]byte, 0, 1024), 1024)
+	if scanner.Scan() {
+		input := strings.ToLower(strings.TrimSpace(scanner.Text()))
+		return input == "y" || input == "yes"
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "  read error: %v\n", err)
+	}
+	return false
 }
 
 func (s *agentSession) SetModel(providerName, modelName string) {

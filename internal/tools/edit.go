@@ -18,7 +18,11 @@ type editEntry struct {
 
 // EditTool performs exact string replacements in a file, with fuzzy fallback
 // when exact match fails. Supports multi-edit via an edits[] array.
-type EditTool struct{}
+type EditTool struct{ PV *PathValidator }
+
+var _ PathValidatorSetter = (*EditTool)(nil)
+
+func (t *EditTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
 
 func (t *EditTool) Name() string        { return "edit" }
 func (t *EditTool) Description() string { return prompts.ToolDescription("edit") }
@@ -53,7 +57,11 @@ func (t *EditTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.FilePath == "" {
 		return "", fmt.Errorf("edit: filePath is required")
 	}
-	params.FilePath = expandHomeDir(params.FilePath)
+	resolved, err := resolvePathWithPV(t.PV, params.FilePath)
+	if err != nil {
+		return "", err
+	}
+	params.FilePath = resolved
 
 	if len(params.Edits) > 0 {
 		return t.executeMultiEdit(params.FilePath, params.Edits)

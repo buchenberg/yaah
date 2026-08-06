@@ -26,6 +26,16 @@ func (rt *RecordingTool) Name() string            { return rt.inner.Name() }
 func (rt *RecordingTool) Description() string     { return rt.inner.Description() }
 func (rt *RecordingTool) Schema() json.RawMessage { return rt.inner.Schema() }
 
+var _ PathValidatorSetter = (*RecordingTool)(nil)
+
+// SetPathValidator forwards the validator to the wrapped tool so
+// registry auto-injection reaches tools registered through the wrapper.
+func (rt *RecordingTool) SetPathValidator(pv *PathValidator) {
+	if setter, ok := rt.inner.(PathValidatorSetter); ok {
+		setter.SetPathValidator(pv)
+	}
+}
+
 func (rt *RecordingTool) Execute(ctx context.Context, args string) (string, error) {
 	if rt.tracker != nil {
 		if label, ok := ctx.Value(conflictLabelKey).(string); ok && label != "" {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"io/fs"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -18,7 +18,11 @@ import (
 const globMaxResultLen = 8192
 
 // GlobTool finds files matching a glob pattern.
-type GlobTool struct{}
+type GlobTool struct{ PV *PathValidator }
+
+var _ PathValidatorSetter = (*GlobTool)(nil)
+
+func (t *GlobTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
 
 func (t *GlobTool) Name() string { return "glob" }
 func (t *GlobTool) Description() string {
@@ -50,7 +54,11 @@ func (t *GlobTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.Path == "" {
 		params.Path = "."
 	}
-	params.Path = expandHomeDir(params.Path)
+	resolved, err := resolvePathWithPV(t.PV, params.Path)
+	if err != nil {
+		return "", err
+	}
+	params.Path = resolved
 
 	if rgAvailable() {
 		return t.globRipgrep(ctx, params.Pattern, params.Path)
@@ -93,14 +101,17 @@ func (t *GlobTool) globNative(ctx context.Context, pattern, path string) (string
 
 	var matches []string
 	hasSeparator := strings.ContainsAny(pattern, "/\\")
-	walkErr := filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
+	walkErr := filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		if info.IsDir() {
-			if commonIgnoreDirs[info.Name()] {
+		if d.IsDir() {
+			if commonIgnoreDirs[d.Name()] {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
 		if binaryExtensions[filepath.Ext(p)] {

@@ -73,6 +73,14 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 
 	toolReg := tools.NewRegistry()
 
+	// Workspace containment: only enforced when --workspace is given.
+	// A nil validator keeps the legacy ~-expansion behaviour.
+	var pathValidator *tools.PathValidator
+	if workspaceRoot != "" {
+		pathValidator = tools.NewPathValidator(workspaceRoot, allowHomeAccess, nil)
+		toolReg.SetPathValidator(pathValidator)
+	}
+
 	db, err := memory.OpenDefault()
 	if err == nil {
 		if entries, memErr := db.ListMemory(50); memErr == nil && len(entries) > 0 {
@@ -186,7 +194,7 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 		backgroundJobs.MaxConcurrent = 4
 	}
 
-	taskTool := newTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default, nil)
+	taskTool := newTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default, nil, pathValidator)
 
 	// RoleResolver provides a live role-name lookup so the spawn_subagent
 	// tool sees roles created via the role tool without a restart. The
@@ -294,6 +302,12 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 		cwd:            cwd,
 		steerCh:        make(chan string, 4),
 		followupCh:     followupCh,
+	}
+
+	// Ask fallback for out-of-workspace access: prompts route through
+	// the session's approval UI (TUI/web) or stdin in plain REPL mode.
+	if pathValidator != nil && (workspaceAsk || cfg.Agent.Default.WorkspaceAsk) {
+		pathValidator.AskFn = sess.promptWorkspaceAccess
 	}
 
 	// Attribute completed background sub-agent usage to the session
