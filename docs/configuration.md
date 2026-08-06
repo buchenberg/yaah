@@ -47,7 +47,7 @@ agents:
     small_model: deepseek-v4-flash    # cheaper model for compaction
     max_iterations: 50                # hard loop cap
     max_turns: 5                      # soft cap that strips tools at N (0 = off)
-    context_window: 128000
+    context_window: 1048576
     approval: ask                     # ask | allow | deny
     workspace_ask: false              # with --workspace: prompt before denying out-of-bounds access
     max_inline_tools_per_turn: 0      # 0 = unlimited
@@ -156,7 +156,7 @@ At least one provider is required. Each needs a `base_url` and an `api_key`.
 | `small_model` | — | Cheaper model for context compaction |
 | `max_iterations` | 50 | Safety cap on loop turns |
 | `max_turns` | 0 (off) | Soft cap; tools are stripped at this iteration, forcing a final answer |
-| `context_window` | 128000 | Token budget; caps the model's resolved window (0 = disabled) |
+| `context_window` | 1048576 | Token budget; caps the model's resolved window (0 = disabled) |
 | `approval` | `ask` | `allow`, `ask`, or `deny` |
 | `workspace_ask` | `false` | With `--workspace`: prompt before denying out-of-bounds file access instead of hard-rejecting |
 | `max_inline_tools_per_turn` | 0 (unlimited) | Cap inline tool calls per turn |
