@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.49.0](https://github.com/buchenberg/yaah/compare/v0.48.1...v0.49.0) (2026-08-06)
+
+
+### Features
+
+* TUI MCP bridge and quiet mode ([#159](https://github.com/buchenberg/yaah/issues/159)) ([c56af0c](https://github.com/buchenberg/yaah/commit/c56af0c87f4608bb6be5c706f49ec002f858d45e))
+
+
+### Code Refactoring
+
+* **agent:** extract event types into events/ sub-package ([#157](https://github.com/buchenberg/yaah/issues/157)) ([8f47ce6](https://github.com/buchenberg/yaah/commit/8f47ce6d9cd8fb549446e3a43f791c50f9d9fa5c))
+
 ## [0.48.1](https://github.com/buchenberg/yaah/compare/v0.48.0...v0.48.1) (2026-08-05)
 
 
