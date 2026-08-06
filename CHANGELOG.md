@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.51.0](https://github.com/buchenberg/yaah/compare/v0.50.0...v0.51.0) (2026-08-06)
+
+
+### Features
+
+* **mcp:** load servers from config.yaml, add headers, remove legacy manifests ([#164](https://github.com/buchenberg/yaah/issues/164)) ([1d84e92](https://github.com/buchenberg/yaah/commit/1d84e92129e9235829e5f3111f8388565ab12129))
+* **tools:** workspace containment with ask fallback ([#163](https://github.com/buchenberg/yaah/issues/163)) ([b8f991a](https://github.com/buchenberg/yaah/commit/b8f991ab3043b16c1cafea263e090c59d20f6bd7))
+
+
+### Bug Fixes
+
+* **tui:** always show tool results collapsed when verbose is off ([#166](https://github.com/buchenberg/yaah/issues/166)) ([76e078d](https://github.com/buchenberg/yaah/commit/76e078d38976007ab2bf66400b68f4a83598d4aa))
+* **tui:** register mouse zones for tools even when verbose is off ([#167](https://github.com/buchenberg/yaah/issues/167)) ([aa570f7](https://github.com/buchenberg/yaah/commit/aa570f783adecaa95a92c56ced776c804ebe53f6))
+* update deepseek-v4 context window to 1M tokens ([#165](https://github.com/buchenberg/yaah/issues/165)) ([f03df31](https://github.com/buchenberg/yaah/commit/f03df315089ecf7e4a2def97bdd079334a676a1a))
+
+
+### Tests
+
+* add coverage for banner, observability, process, toolfmt ([#168](https://github.com/buchenberg/yaah/issues/168)) ([ec9f8a9](https://github.com/buchenberg/yaah/commit/ec9f8a9042d7f2225f17659f8052be7be58d09c6))
+
 ## [0.50.0](https://github.com/buchenberg/yaah/compare/v0.49.0...v0.50.0) (2026-08-06)
 
 
