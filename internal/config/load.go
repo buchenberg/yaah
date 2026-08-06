@@ -215,6 +215,7 @@ type MCPServerConfig struct {
 	URL       string            `yaml:"url,omitempty"`
 	Transport string            `yaml:"transport,omitempty"` // "stdio" (default) or "http"
 	Framing   string            `yaml:"framing,omitempty"`   // stdio only: "" (auto), "newline", "framed"
+	Headers   map[string]string `yaml:"headers,omitempty"`   // HTTP transport only
 }
 
 // Config is the full yaah configuration loaded from ~/.yaah/config.yaml.

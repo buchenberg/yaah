@@ -17,6 +17,7 @@ import (
 type HTTPClient struct {
 	name      string
 	url       string
+	headers   map[string]string
 	client    *http.Client
 	nextID    atomic.Int64
 	mu        sync.Mutex
@@ -24,12 +25,14 @@ type HTTPClient struct {
 	sessionID string
 }
 
-// NewHTTPClient creates a new MCP HTTP client.
-func NewHTTPClient(name, url string) *HTTPClient {
+// NewHTTPClient creates a new MCP HTTP client. headers are added to every
+// outgoing request (e.g. "Authorization" for bearer tokens).
+func NewHTTPClient(name, url string, headers map[string]string) *HTTPClient {
 	return &HTTPClient{
-		name:   name,
-		url:    url,
-		client: &http.Client{},
+		name:    name,
+		url:     url,
+		headers: headers,
+		client:  &http.Client{},
 	}
 }
 
@@ -156,6 +159,9 @@ func (c *HTTPClient) sendRequest(ctx context.Context, msg JSONRPCMessage) (*JSON
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	if c.sessionID != "" {
 		req.Header.Set("Mcp-Session-Id", c.sessionID)
+	}
+	for k, v := range c.headers {
+		req.Header.Set(k, v)
 	}
 
 	resp, err := c.client.Do(req)

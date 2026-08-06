@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -78,70 +77,6 @@ func RemoveMCPServer(path, name string) error {
 	}
 
 	return writeConfigNode(path, doc)
-}
-
-// MigrateMCP reads legacy ~/.yaah/mcp/*.json files and writes them into
-// config.yaml's mcp_servers section. Returns the count of migrated servers.
-// No-op if config.yaml already has an mcp_servers section or if no JSON
-// files need migrating.
-func MigrateMCP() (int, error) {
-	configPath, err := ConfigPath()
-	if err != nil {
-		return 0, err
-	}
-
-	existing, _ := Load()
-	if existing != nil && len(existing.MCPServers) > 0 {
-		return 0, nil
-	}
-
-	mcpDir := filepath.Join(HomeDir(), "mcp")
-	entries, err := os.ReadDir(mcpDir)
-	if err != nil {
-		return 0, nil // directory doesn't exist, nothing to migrate
-	}
-
-	var migrated int
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-
-		name := entry.Name()[:len(entry.Name())-5]
-		manifestPath := filepath.Join(mcpDir, entry.Name())
-		data, err := os.ReadFile(manifestPath)
-		if err != nil {
-			continue
-		}
-
-		var mj struct {
-			Command   string            `json:"command,omitempty"`
-			Args      []string          `json:"args,omitempty"`
-			Env       map[string]string `json:"env,omitempty"`
-			URL       string            `json:"url,omitempty"`
-			Transport string            `json:"transport,omitempty"`
-			Framing   string            `json:"framing,omitempty"`
-		}
-		if err := json.Unmarshal(data, &mj); err != nil {
-			continue
-		}
-
-		cfg := MCPServerConfig{
-			Command:   mj.Command,
-			Args:      mj.Args,
-			Env:       mj.Env,
-			URL:       mj.URL,
-			Transport: mj.Transport,
-			Framing:   mj.Framing,
-		}
-
-		if err := AddMCPServer(configPath, name, cfg); err != nil {
-			continue
-		}
-		migrated++
-	}
-
-	return migrated, nil
 }
 
 // readConfigNode reads a YAML file into a yaml.Node document.
