@@ -6,7 +6,6 @@ import (
 	"time"
 
 	itodo "github.com/buchenberg/yaah/internal/todo"
-	"github.com/buchenberg/yaah/internal/tui2/colors"
 	"github.com/buchenberg/yaah/internal/tui2/components/approval"
 	"github.com/buchenberg/yaah/internal/tui2/components/banner"
 	"github.com/buchenberg/yaah/internal/tui2/components/command"
@@ -17,7 +16,6 @@ import (
 	"github.com/buchenberg/yaah/internal/tui2/components/mcpinfo"
 	"github.com/buchenberg/yaah/internal/tui2/components/messages"
 	"github.com/buchenberg/yaah/internal/tui2/components/modelpicker"
-	"github.com/buchenberg/yaah/internal/tui2/components/provider"
 	"github.com/buchenberg/yaah/internal/tui2/components/question"
 	"github.com/buchenberg/yaah/internal/tui2/components/reasoning"
 	"github.com/buchenberg/yaah/internal/tui2/components/statusbar"
@@ -37,8 +35,7 @@ type TUI2 struct {
 	Root  *tview.Flex  // main content flex (a page within Pages)
 
 	// Header sub-components
-	Banner       *tview.TextView
-	ProviderInfo *tview.TextView
+	Banner *tview.TextView
 
 	// Body components
 	InfoBar  *tview.TextView
@@ -89,6 +86,7 @@ type TUI2 struct {
 	contextWindow int
 	lastProvider  string
 	lastModel     string
+	version       string
 	thinkingLabel string
 	todoItems     []itodo.Item
 
@@ -108,6 +106,7 @@ func New() *TUI2 {
 	t := &TUI2{
 		App:         tview.NewApplication(),
 		thinkingInd: thinking.New("Reasoning..."),
+		version:     "yaah",
 	}
 	t.buildUI()
 	return t
@@ -119,6 +118,7 @@ func (t *TUI2) Run() error {
 	t.startSpinnerTicker()
 	t.App.SetFocus(t.Input)
 	t.renderInfoPane()
+	t.renderTodoPane()
 	return t.App.Run()
 }
 
@@ -127,17 +127,16 @@ func (t *TUI2) Stop() {
 	t.App.Stop()
 }
 
-// SetProvider sets the provider display name.
+// SetProvider sets the provider display name and refreshes the info pane.
 func (t *TUI2) SetProvider(name string) {
 	t.lastProvider = name
-	t.ProviderInfo.SetText(colors.Tag(colors.Accent, "Provider: ") + colors.Tag(colors.Dim, name))
+	t.renderInfoPane()
 }
 
-// SetModel sets the model display name.
+// SetModel sets the model display name and refreshes the info pane.
 func (t *TUI2) SetModel(name string) {
 	t.lastModel = name
-	current := t.ProviderInfo.GetText(true)
-	t.ProviderInfo.SetText(current + "\n" + colors.Tag(colors.Accent, "Model: ") + colors.Tag(colors.Dim, name))
+	t.renderInfoPane()
 }
 
 func (t *TUI2) startControlLoop() {
@@ -185,7 +184,6 @@ func (t *TUI2) buildUI() {
 	// --- Leaf primitives (from sub-packages) ---
 	var bannerLines int
 	bannerLines, t.Banner = banner.Build()
-	t.ProviderInfo = provider.Build()
 	t.InfoBar, _ = infobar.Build()
 	t.Messages = messages.Build()
 	t.Input = input.Build()
@@ -215,14 +213,11 @@ func (t *TUI2) buildUI() {
 
 	t.Header = tview.NewGrid().
 		SetRows(rows...).
-		SetColumns(-2, -1, -1). // -X = proportional (2:1:1 → left 2/3, right 1/3)
+		SetColumns(-1). // full-width banner
 		SetBorders(false)
 
-	// Banner spans all content rows in col 0 (left portion of width)
+	// Banner spans all content rows
 	t.Header.AddItem(t.Banner, 0, 0, headerRows, 1, 0, 0, false)
-
-	// Provider info: cols 1-2, all rows (MCP moved to InfoPane)
-	t.Header.AddItem(t.ProviderInfo, 0, 1, headerRows, 2, 0, 0, false)
 
 	// --- Body: horizontal split — messages (4/5) | infopane+todos (1/5) ---
 	messagesCol := tview.NewFlex().

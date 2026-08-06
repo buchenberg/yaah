@@ -19,7 +19,7 @@ func Build() *tview.TextView {
 		SetTextAlign(tview.AlignLeft).
 		SetDynamicColors(true).
 		SetWordWrap(true)
-	tv.SetBackgroundColor(tcell.Color236) // dark gray-blue (#303030)
+	tv.SetBackgroundColor(tcell.ColorDefault) // inherit terminal background
 	tv.SetBorder(true).
 		SetBorderColor(tcell.ColorGray).
 		SetTitle(" Info ")
