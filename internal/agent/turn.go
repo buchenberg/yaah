@@ -118,6 +118,7 @@ func (l *Loop) recordTurnSpanAttrs(turnSpan trace.Span, messages []types.Message
 		attribute.String("turn.tool_call_names", strings.Join(toolNames, ",")),
 		attribute.Int("turn.messages", len(messages)),
 		attribute.String("llm.model", l.Config.Model),
+		attribute.Int("context.window", l.Config.ContextWindow),
 		attribute.Int("llm.total_prompt_tokens", l.State.TotalTokens.PromptTokens),
 		attribute.Int("llm.total_completion_tokens", l.State.TotalTokens.CompletionTokens),
 		attribute.Int("turn.prompt_tokens", l.State.TotalTokens.PromptTokens-tokensBeforeTurn.PromptTokens),

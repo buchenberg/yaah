@@ -47,9 +47,6 @@ func DefaultConfig() Config {
 	}
 }
 
-// tracer is the package-level tracer shared by middleware and wrappers.
-var tracer = otel.Tracer("yaah")
-
 // Setup initialises the global OpenTelemetry TracerProvider and
 // MeterProvider. Callers must defer the returned Shutdown.
 func Setup(ctx context.Context, cfg Config) (shutdown func(context.Context) error, err error) {
