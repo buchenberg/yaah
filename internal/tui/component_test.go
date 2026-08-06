@@ -478,7 +478,7 @@ func TestTodoTable_Render(t *testing.T) {
 			{ID: "td-3", Content: "refactor later", Status: "pending", Priority: "low"},
 		}
 		out := NewTodoTable(items, 72).Render()
-		for _, want := range []string{"✓", "→", "○", "HIGH", "MED", "LOW", "write tests", "fix the bug", "refactor later"} {
+		for _, want := range []string{"\u2705", "\U0001F504", "\u23F3", "HIGH", "MED", "LOW", "write tests", "fix the bug", "refactor later"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("expected %q in table, got %q", want, out)
 			}

@@ -261,7 +261,7 @@ func defaultConfig() *Config {
 				Model:                  "deepseek/deepseek-v4-pro",
 				SmallModel:             "deepseek/deepseek-v4-flash",
 				MaxLoopCycles:          50,
-				ContextWindow:          128000,
+				ContextWindow:          1048576,
 				Approval:               "ask",
 				CompactionThreshold:    0.5,
 				RawCompactionThreshold: 0.5,

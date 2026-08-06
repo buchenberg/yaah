@@ -37,7 +37,7 @@ func (s *agentSession) compactContext() {
 
 	window := s.cfg.Agent.Default.ContextWindow
 	if window <= 0 {
-		window = 128000
+		window = 1048576
 	}
 
 	msgs := s.messages

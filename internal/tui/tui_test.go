@@ -1705,7 +1705,7 @@ func TestRoleStyle_KnownAndUnknownRoles(t *testing.T) {
 	}
 }
 
-func TestQuietModeHidesReasoningAndTools(t *testing.T) {
+func TestQuietModeCollapsesReasoningAndTools(t *testing.T) {
 	m := &Model{width: 80, verbose: false, reasoningExpanded: make(map[string]bool)}
 	m.messages = []Message{
 		{Role: "user", Content: "hello"},
@@ -1716,11 +1716,11 @@ func TestQuietModeHidesReasoningAndTools(t *testing.T) {
 	output := m.renderMessages()
 	stripped := stripANSI(output)
 
-	if strings.Contains(stripped, "Reasoning") {
-		t.Error("quiet mode should not render reasoning toggle")
+	if !strings.Contains(stripped, "Reasoning") {
+		t.Error("quiet mode should render collapsed reasoning toggle")
 	}
 	if strings.Contains(stripped, "model reasoning") {
-		t.Error("quiet mode should not render reasoning content")
+		t.Error("quiet mode should not render reasoning content when collapsed")
 	}
 	if !strings.Contains(stripped, "bash") {
 		t.Error("quiet mode should render collapsed tool line with summary")
@@ -1734,8 +1734,8 @@ func TestQuietModeHidesReasoningAndTools(t *testing.T) {
 	if !strings.Contains(stripped, "response") {
 		t.Error("quiet mode should render assistant content")
 	}
-	if len(m.reasoningZones) != 0 {
-		t.Errorf("quiet mode should have 0 reasoning zones, got %d", len(m.reasoningZones))
+	if len(m.reasoningZones) != 1 {
+		t.Errorf("quiet mode should register 1 reasoning zone (click-expandable), got %d", len(m.reasoningZones))
 	}
 	if len(m.toolZones) != 1 {
 		t.Errorf("quiet mode should have 1 tool zone, got %d", len(m.toolZones))
@@ -1793,8 +1793,8 @@ func TestToggleVerbose(t *testing.T) {
 	}
 }
 
-func TestQuietModeHidesLiveThinking(t *testing.T) {
-	m := &Model{width: 80, verbose: false}
+func TestQuietModeCollapsesLiveThinking(t *testing.T) {
+	m := &Model{width: 80, verbose: false, reasoningExpanded: make(map[string]bool)}
 	m.thinking = true
 	m.streaming = false
 	m.thinkContent = "thinking..."
@@ -1805,8 +1805,11 @@ func TestQuietModeHidesLiveThinking(t *testing.T) {
 	if strings.Contains(stripped, "thinking...") {
 		t.Error("quiet mode should not render live thinking content")
 	}
-	if strings.Contains(stripped, "Reasoning...") {
-		t.Error("quiet mode should not render live reasoning toggle")
+	if !strings.Contains(stripped, "Reasoning...") {
+		t.Error("quiet mode should render collapsed live reasoning marker")
+	}
+	if len(m.reasoningZones) != 1 || m.reasoningZones[0] != "reasoning-live" {
+		t.Errorf("quiet mode should register the reasoning-live zone, got %v", m.reasoningZones)
 	}
 
 	m.verbose = true
@@ -1818,5 +1821,32 @@ func TestQuietModeHidesLiveThinking(t *testing.T) {
 	}
 	if !strings.Contains(stripped, "thinking...") {
 		t.Error("verbose mode should render live thinking content")
+	}
+}
+
+func TestRunningToolAutoExpandsOnlyInVerbose(t *testing.T) {
+	newModel := func(verbose bool) *Model {
+		m := &Model{width: 80, verbose: verbose, toolExpanded: make(map[string]bool)}
+		m.messages = []Message{
+			{Role: "tool", ToolName: "bash", ToolArgs: "run", Content: "cmd header\nrunning output line"},
+		}
+		m.toolCall = "bash"
+		return m
+	}
+
+	quiet := stripANSI(newModel(false).renderMessages())
+	if strings.Contains(quiet, "▼") {
+		t.Error("quiet mode should not auto-expand the running tool")
+	}
+	if strings.Contains(quiet, "running output line") {
+		t.Error("quiet mode should hide running tool output while collapsed")
+	}
+
+	verbose := stripANSI(newModel(true).renderMessages())
+	if !strings.Contains(verbose, "▼") {
+		t.Error("verbose mode should auto-expand the running tool")
+	}
+	if !strings.Contains(verbose, "running output line") {
+		t.Error("verbose mode should show running tool output")
 	}
 }

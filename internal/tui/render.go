@@ -352,7 +352,7 @@ func (m *Model) renderMessages() string {
 			b.WriteString(NewUserMessage(msg.Content, m.width).Render())
 
 		case "assistant":
-			if m.verbose && msg.Reasoning != "" {
+			if msg.Reasoning != "" {
 				b.WriteString("\n")
 				zoneID := fmt.Sprintf("reasoning-%d", msgIdx)
 				m.reasoningZones = append(m.reasoningZones, zoneID)
@@ -378,7 +378,10 @@ func (m *Model) renderMessages() string {
 			m.toolZones = append(m.toolZones, zoneID)
 			expanded, has := m.toolExpanded[zoneID]
 			if !has {
-				expanded = m.toolCall == msg.ToolName
+				// The running tool auto-expands in verbose mode only
+				// ("starts open, collapses when finished"); quiet mode
+				// never auto-expands. Manual clicks always win.
+				expanded = m.verbose && m.toolCall == msg.ToolName
 			}
 			b.WriteString(NewToolMessage(zoneID, msg.ToolName, msg.ToolArgs, msg.Content, m.width, m.viewport.Height(), expanded, m.toolCall == msg.ToolName, msg.ToolDuration).Render())
 
@@ -390,9 +393,12 @@ func (m *Model) renderMessages() string {
 		}
 	}
 
-	if m.verbose && m.thinkContent != "" {
+	if m.thinkContent != "" {
 		b.WriteString("\n")
-		if m.thinking && !m.streaming {
+		if m.verbose && m.thinking && !m.streaming {
+			// Verbose-only open box: reasoning streams expanded until the
+			// answer starts streaming, then collapses into the zone below.
+			// Non-verbose never auto-expands; it shows the collapsed marker.
 			rendered := lolcatRender(fmt.Sprintf("  %s Reasoning...", stripANSI(m.spinner.View())))
 			b.WriteString(rendered)
 			b.WriteString("\n\n")
@@ -400,11 +406,15 @@ func (m *Model) renderMessages() string {
 				thinkingStyle.Render(m.thinkContent)))
 		} else {
 			m.reasoningZones = append(m.reasoningZones, "reasoning-live")
+			header := "Reasoning..."
+			if m.thinking && !m.streaming {
+				header = fmt.Sprintf("%s Reasoning...", stripANSI(m.spinner.View()))
+			}
 			if !m.reasoningExpanded["reasoning-live"] {
-				b.WriteString(zone.Mark("reasoning-live", lolcatRender("  ▶ Reasoning...")))
+				b.WriteString(zone.Mark("reasoning-live", lolcatRender("  ▶ "+header)))
 				b.WriteString("\n")
 			} else {
-				b.WriteString(zone.Mark("reasoning-live", lolcatRender("  ▼ Reasoning...")))
+				b.WriteString(zone.Mark("reasoning-live", lolcatRender("  ▼ "+header)))
 				b.WriteString("\n")
 				b.WriteString(reasoningBgStyle.Width(m.width).PaddingLeft(4).Render(
 					thinkingStyle.Render(m.thinkContent)))

@@ -96,7 +96,8 @@ type Loop struct {
 	// so it survives across Runs; only the event hooks are loop-scoped.
 	BackgroundJobs *tools.BackgroundJobs
 
-	ApproveFn       func(name, args string) bool `json:"-"`
+	ApproveFn              func(name, args string) bool `json:"-"`
+	ContinueAfterMaxIter   func() bool                     `json:"-"`
 	ConflictTracker *tools.ConflictTracker
 	CtxMgr          *ContextManager
 

@@ -95,6 +95,22 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 		loop.ApproveFn = appr
 	}
 
+	// Wire continuation callback for max iterations (UI modes: TUI, Web, ACP).
+	// REPL mode handles this differently (inline prompt in repl_loop.go).
+	if v != nil && ctrl != nil {
+		loop.ContinueAfterMaxIter = func() bool {
+			maxIter := s.cfg.Agent.Default.MaxLoopCycles
+			ch := make(chan bool, 1)
+			select {
+			case ctrl <- &types.CtrlContinue{MaxIter: maxIter, AnswerCh: ch}:
+			default:
+				return false
+			}
+			answer, ok := <-ch
+			return ok && answer
+		}
+	}
+
 	response, err := loop.Run(ctx, prompt)
 
 	s.messages = loop.State.Messages

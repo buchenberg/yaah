@@ -70,7 +70,7 @@ var defaultCommands = []Command{
 	{Name: ":logout", Description: "Remove stored OAuth credentials"},
 	{Name: ":steer", Description: "Inject text into current turn before next provider call"},
 	{Name: ":copyview", Description: "Copy rendered TUI view to clipboard"},
-	{Name: ":verbose", Description: "Toggle reasoning and tool output visibility"},
+	{Name: ":verbose", Description: "Toggle expanded reasoning/tool output display"},
 	{Name: ":quit", Description: "Exit the TUI"},
 	{Name: ":stop", Description: "Abort the running agent"},
 }

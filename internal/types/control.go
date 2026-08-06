@@ -47,6 +47,16 @@ type CtrlApproval struct {
 
 func (*CtrlApproval) ctrlMarker() {}
 
+// CtrlContinue asks the host to prompt whether to continue after reaching
+// the maximum number of agent iterations. Write true (continue) or false
+// (stop) to AnswerCh.
+type CtrlContinue struct {
+	MaxIter  int
+	AnswerCh chan<- bool
+}
+
+func (*CtrlContinue) ctrlMarker() {}
+
 // CtrlModelList carries the set of available model identifiers.
 type CtrlModelList struct {
 	Models        []string
