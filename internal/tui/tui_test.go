@@ -1737,8 +1737,8 @@ func TestQuietModeHidesReasoningAndTools(t *testing.T) {
 	if len(m.reasoningZones) != 0 {
 		t.Errorf("quiet mode should have 0 reasoning zones, got %d", len(m.reasoningZones))
 	}
-	if len(m.toolZones) != 0 {
-		t.Errorf("quiet mode should have 0 tool zones, got %d", len(m.toolZones))
+	if len(m.toolZones) != 1 {
+		t.Errorf("quiet mode should have 1 tool zone, got %d", len(m.toolZones))
 	}
 }
 

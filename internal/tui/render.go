@@ -375,13 +375,10 @@ func (m *Model) renderMessages() string {
 
 		case "tool":
 			zoneID := fmt.Sprintf("tool-%d", msgIdx)
-			var expanded bool
-			if m.verbose {
-				m.toolZones = append(m.toolZones, zoneID)
-				expanded, _ = m.toolExpanded[zoneID]
-				if !expanded && m.toolCall == msg.ToolName {
-					expanded = true
-				}
+			m.toolZones = append(m.toolZones, zoneID)
+			expanded, has := m.toolExpanded[zoneID]
+			if !has {
+				expanded = m.toolCall == msg.ToolName
 			}
 			b.WriteString(NewToolMessage(zoneID, msg.ToolName, msg.ToolArgs, msg.Content, m.width, m.viewport.Height(), expanded, m.toolCall == msg.ToolName, msg.ToolDuration).Render())
 
