@@ -142,6 +142,8 @@ func (t *ReplaceTool) Execute(ctx context.Context, args string) (string, error) 
 		mode := os.FileMode(0o644)
 		if fi, err := d.Info(); err == nil {
 			mode = fi.Mode()
+		} else if st, err := os.Stat(p); err == nil {
+			mode = st.Mode()
 		}
 		if err := os.WriteFile(p, []byte(newContent), mode); err != nil {
 			results = append(results, fileResult{Path: p, Count: matchCount, Err: err})

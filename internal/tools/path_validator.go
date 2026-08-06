@@ -75,7 +75,7 @@ func (pv *PathValidator) ResolvePath(input string) (string, error) {
 	}
 
 	// ── 1. Home-directory expansion ──
-	if strings.HasPrefix(input, "~") {
+	if input == "~" || strings.HasPrefix(input, "~/") {
 		if !pv.AllowHomeAccess && !pv.ask("home:"+input, "home-directory access is not allowed in this session") {
 			return "", fmt.Errorf("home-directory access is not allowed in this session (use an absolute or relative path inside the workspace)")
 		}
@@ -139,22 +139,17 @@ func (pv *PathValidator) ask(path, reason string) bool {
 	}
 	key := path + "\x00" + reason
 	pv.mu.Lock()
+	defer pv.mu.Unlock()
 	if pv.approved[key] {
-		pv.mu.Unlock()
 		return true
 	}
-	pv.mu.Unlock()
-
 	if !pv.AskFn(path, reason) {
 		return false
 	}
-
-	pv.mu.Lock()
 	if pv.approved == nil {
 		pv.approved = make(map[string]bool)
 	}
 	pv.approved[key] = true
-	pv.mu.Unlock()
 	return true
 }
 

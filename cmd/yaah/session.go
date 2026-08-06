@@ -98,6 +98,8 @@ type agentSession struct {
 	approveFn func(name, args string) bool
 	mu        sync.RWMutex
 
+	stdinMu sync.Mutex // serialises stdin reads for approve/prompt fallbacks
+
 	steerCh    chan string
 	followupCh chan string
 	totalUsage types.Usage
@@ -219,6 +221,15 @@ func (s *agentSession) promptWorkspaceAccess(path, reason string) bool {
 	if fn != nil {
 		return fn("workspace_access", fmt.Sprintf("%s (%s)", path, reason))
 	}
+
+	s.stdinMu.Lock()
+	defer s.stdinMu.Unlock()
+
+	fi, err := os.Stdin.Stat()
+	if err != nil || (fi.Mode()&os.ModeCharDevice) == 0 {
+		return false
+	}
+
 	fmt.Fprintf(os.Stderr, "\n  ⚠ Path %s is %s. Allow access? [y/N]: ", path, reason)
 	os.Stderr.Sync()
 
@@ -227,6 +238,9 @@ func (s *agentSession) promptWorkspaceAccess(path, reason string) bool {
 	if scanner.Scan() {
 		input := strings.ToLower(strings.TrimSpace(scanner.Text()))
 		return input == "y" || input == "yes"
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "  read error: %v\n", err)
 	}
 	return false
 }
