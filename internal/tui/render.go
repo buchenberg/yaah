@@ -378,7 +378,10 @@ func (m *Model) renderMessages() string {
 			m.toolZones = append(m.toolZones, zoneID)
 			expanded, has := m.toolExpanded[zoneID]
 			if !has {
-				expanded = m.toolCall == msg.ToolName
+				// The running tool auto-expands in verbose mode only
+				// ("starts open, collapses when finished"); quiet mode
+				// never auto-expands. Manual clicks always win.
+				expanded = m.verbose && m.toolCall == msg.ToolName
 			}
 			b.WriteString(NewToolMessage(zoneID, msg.ToolName, msg.ToolArgs, msg.Content, m.width, m.viewport.Height(), expanded, m.toolCall == msg.ToolName, msg.ToolDuration).Render())
 

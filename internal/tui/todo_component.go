@@ -13,13 +13,13 @@ import (
 func todoStatusIcon(status string) string {
 	switch status {
 	case "completed":
-		return "✓"
+		return "\u2705" // ✅
 	case "in_progress":
-		return "→"
+		return "\U0001F504" // 🔄
 	case "cancelled":
-		return "✗"
-	default:
-		return "○"
+		return "\u274C" // ❌
+	default: // pending
+		return "\u23F3" // ⏳
 	}
 }
 

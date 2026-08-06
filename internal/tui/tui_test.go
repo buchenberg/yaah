@@ -1823,3 +1823,30 @@ func TestQuietModeCollapsesLiveThinking(t *testing.T) {
 		t.Error("verbose mode should render live thinking content")
 	}
 }
+
+func TestRunningToolAutoExpandsOnlyInVerbose(t *testing.T) {
+	newModel := func(verbose bool) *Model {
+		m := &Model{width: 80, verbose: verbose, toolExpanded: make(map[string]bool)}
+		m.messages = []Message{
+			{Role: "tool", ToolName: "bash", ToolArgs: "run", Content: "cmd header\nrunning output line"},
+		}
+		m.toolCall = "bash"
+		return m
+	}
+
+	quiet := stripANSI(newModel(false).renderMessages())
+	if strings.Contains(quiet, "▼") {
+		t.Error("quiet mode should not auto-expand the running tool")
+	}
+	if strings.Contains(quiet, "running output line") {
+		t.Error("quiet mode should hide running tool output while collapsed")
+	}
+
+	verbose := stripANSI(newModel(true).renderMessages())
+	if !strings.Contains(verbose, "▼") {
+		t.Error("verbose mode should auto-expand the running tool")
+	}
+	if !strings.Contains(verbose, "running output line") {
+		t.Error("verbose mode should show running tool output")
+	}
+}
