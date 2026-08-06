@@ -138,20 +138,26 @@ func (l *Loop) recordTurnSpanAttrs(turnSpan trace.Span, messages []types.Message
 func (l *Loop) executeToolPhase(turnCtx context.Context, iter int, msg types.Message, messages *[]types.Message, step **pipeline.Step, pipe *pipeline.Pipeline, turnSpan trace.Span) error {
 	calls := msg.ToolCalls
 	if l.Config.MaxInlineToolsPerTurn > 0 && len(calls) > l.Config.MaxInlineToolsPerTurn {
-		dropped := len(calls) - l.Config.MaxInlineToolsPerTurn
+		droppedCalls := calls[l.Config.MaxInlineToolsPerTurn:]
 		calls = calls[:l.Config.MaxInlineToolsPerTurn]
-		if dropped > 0 {
-			warning := fmt.Sprintf(
-				"[system] %d tool call(s) dropped — inline limit is %d per turn. "+
-					"Break large batches into smaller turns or use the delegate tool for batch work.",
-				dropped, l.Config.MaxInlineToolsPerTurn,
-			)
-			*messages = append(*messages, types.UserMsg(warning))
-			if l.Config.OtelVerbose && turnSpan != nil {
-				turnSpan.AddEvent("inline.truncated", trace.WithAttributes(
-					attribute.Int("inline.dropped", dropped),
-				))
-			}
+		// Every tool_call_id in the assistant message needs a tool result,
+		// and nothing but tool messages may come between the assistant
+		// message and its results. Synthesize a result per dropped call
+		// instead of appending a user/system notice here.
+		for _, tc := range droppedCalls {
+			*messages = append(*messages, types.ToolResultMsg(
+				tc.ID, tc.Function.Name,
+				fmt.Sprintf(
+					"[dropped: this call exceeded the inline tool limit (%d per turn) and was not executed. "+
+						"Break large batches into smaller turns or use the delegate tool for batch work.]",
+					l.Config.MaxInlineToolsPerTurn,
+				),
+			))
+		}
+		if l.Config.OtelVerbose && turnSpan != nil {
+			turnSpan.AddEvent("inline.truncated", trace.WithAttributes(
+				attribute.Int("inline.dropped", len(droppedCalls)),
+			))
 		}
 	}
 
