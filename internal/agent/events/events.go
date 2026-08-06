@@ -1,4 +1,7 @@
-package agent
+// Package events defines the typed event system for the agent loop. Each
+// event type satisfies the sealed Event interface and is delivered to
+// agent.View implementations and the internal pubsub broker.
+package events
 
 import (
 	"time"

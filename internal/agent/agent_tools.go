@@ -9,6 +9,7 @@ import (
 
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/buchenberg/yaah/internal/agent/events"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -26,16 +27,16 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 
 		if l.Config.ApprovalMode == "deny" && l.classifyDanger(tc.Function.Name, tc.Function.Arguments) {
 			errMsg := fmt.Sprintf("error: tool %q requires approval but approval mode is 'deny'", tc.Function.Name)
-			l.Hooks.Emit(HookEvent{Event: ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
-			l.Hooks.Emit(HookEvent{Event: ToolEnd, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, ToolError: fmt.Sprintf("tool %q requires approval but approval mode is 'deny'", tc.Function.Name), ToolResult: errMsg})
+			l.Hooks.Emit(HookEvent{Event: events.ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
+			l.Hooks.Emit(HookEvent{Event: events.ToolEnd, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, ToolError: fmt.Sprintf("tool %q requires approval but approval mode is 'deny'", tc.Function.Name), ToolResult: errMsg})
 			execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: errMsg, err: fmt.Errorf("tool denied")}
 			continue
 		}
 		if l.Config.ApprovalMode == "ask" && l.classifyDanger(tc.Function.Name, tc.Function.Arguments) {
 			if !l.approveTool(tc.Function.Name, tc.Function.Arguments) {
 				errMsg := fmt.Sprintf("error: tool %q was denied by user", tc.Function.Name)
-				l.Hooks.Emit(HookEvent{Event: ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
-				l.Hooks.Emit(HookEvent{Event: ToolEnd, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, ToolError: fmt.Sprintf("tool %q was denied by user", tc.Function.Name), ToolResult: errMsg})
+				l.Hooks.Emit(HookEvent{Event: events.ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
+				l.Hooks.Emit(HookEvent{Event: events.ToolEnd, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, ToolError: fmt.Sprintf("tool %q was denied by user", tc.Function.Name), ToolResult: errMsg})
 				execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: errMsg, err: fmt.Errorf("tool denied")}
 				continue
 			}
@@ -83,7 +84,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			}()
 
 			if l.broker != nil {
-				l.broker.PublishMustDeliver(&ToolStartEvent{ID: toolID, Name: tc.Function.Name, Args: abbreviated})
+				l.broker.PublishMustDeliver(&events.ToolStartEvent{ID: toolID, Name: tc.Function.Name, Args: abbreviated})
 			}
 
 			// The sub-agent start event is emitted by the runner (via the
@@ -104,7 +105,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			}
 
 			l.Hooks.Emit(HookEvent{
-				Event:    ToolStart,
+				Event:    events.ToolStart,
 				ToolName: tc.Function.Name,
 				ToolArgs: tc.Function.Arguments,
 			})
@@ -238,7 +239,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			observability.RecordToolCall(runCtx, tc.Function.Name, duration, err != nil)
 
 			if l.broker != nil {
-				evt := &ToolEndEvent{
+				evt := &events.ToolEndEvent{
 					ID:       toolID,
 					Name:     tc.Function.Name,
 					Args:     abbreviated,
@@ -300,7 +301,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			}
 
 			l.Hooks.Emit(HookEvent{
-				Event:      ToolEnd,
+				Event:      events.ToolEnd,
 				ToolName:   tc.Function.Name,
 				ToolArgs:   tc.Function.Arguments,
 				ToolResult: res,

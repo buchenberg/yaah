@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 
+	"github.com/buchenberg/yaah/internal/agent/events"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/types"
@@ -37,7 +38,7 @@ func (l *Loop) pruneHooks() pipeline.PruneHooks {
 // pruneEmit translates a prune outcome into a best-effort JSONL hook event.
 func (l *Loop) pruneEmit(s pipeline.PruneStats) {
 	l.Hooks.Emit(HookEvent{
-		Event:            ContextPrune,
+		Event:            events.ContextPrune,
 		PruneReason:      s.Reason,
 		PruneCandidates:  s.Candidates,
 		PruneMarked:      s.Marked,
