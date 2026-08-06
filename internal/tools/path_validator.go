@@ -95,9 +95,15 @@ func (pv *PathValidator) ResolvePath(input string) (string, error) {
 	// ── 3. Symlink resolution (best-effort) ──
 	realPath, err := filepath.EvalSymlinks(abs)
 	if err != nil {
-		// Fall back to the unresolved absolute path — we still do the
-		// containment check below.
-		realPath = abs
+		// The leaf may not exist yet (e.g. write tool targets).
+		// Fall back to resolving the nearest existing ancestor
+		// so symlinks like macOS /var → /private/var are handled.
+		parent := filepath.Dir(abs)
+		if realParent, parentErr := filepath.EvalSymlinks(parent); parentErr == nil {
+			realPath = filepath.Join(realParent, filepath.Base(abs))
+		} else {
+			realPath = abs
+		}
 	}
 
 	// ── 4. Workspace containment ──
