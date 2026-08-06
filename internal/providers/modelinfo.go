@@ -5,8 +5,8 @@ import (
 )
 
 var modelWindows = map[string]int{
-	"deepseek-v4-pro":   128000,
-	"deepseek-v4-flash": 128000,
+	"deepseek-v4-pro":   1048576,
+	"deepseek-v4-flash": 1048576,
 	"deepseek-v3":       65536,
 
 	"gpt-4o":        128000,

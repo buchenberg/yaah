@@ -5,15 +5,15 @@ import "testing"
 func TestResolveWindow(t *testing.T) {
 	t.Run("known model", func(t *testing.T) {
 		got := ResolveWindow("deepseek-v4-pro", 0)
-		if got != 128000 {
-			t.Errorf("ResolveWindow(deepseek-v4-pro, 0) = %d, want 128000", got)
+		if got != 1048576 {
+			t.Errorf("ResolveWindow(deepseek-v4-pro, 0) = %d, want 1048576", got)
 		}
 	})
 
 	t.Run("known model with provider prefix", func(t *testing.T) {
 		got := ResolveWindow("deepseek/deepseek-v4-pro", 0)
-		if got != 128000 {
-			t.Errorf("ResolveWindow(deepseek/deepseek-v4-pro, 0) = %d, want 128000", got)
+		if got != 1048576 {
+			t.Errorf("ResolveWindow(deepseek/deepseek-v4-pro, 0) = %d, want 1048576", got)
 		}
 	})
 
@@ -32,9 +32,9 @@ func TestResolveWindow(t *testing.T) {
 	})
 
 	t.Run("config cap is larger, discovered wins", func(t *testing.T) {
-		got := ResolveWindow("deepseek-v4-pro", 200000)
-		if got != 128000 {
-			t.Errorf("ResolveWindow(deepseek-v4-pro, 200000) = %d, want 128000", got)
+		got := ResolveWindow("deepseek-v4-pro", 2000000)
+		if got != 1048576 {
+			t.Errorf("ResolveWindow(deepseek-v4-pro, 2000000) = %d, want 1048576", got)
 		}
 	})
 
