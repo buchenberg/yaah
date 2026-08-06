@@ -1722,11 +1722,11 @@ func TestQuietModeHidesReasoningAndTools(t *testing.T) {
 	if strings.Contains(stripped, "model reasoning") {
 		t.Error("quiet mode should not render reasoning content")
 	}
-	if strings.Contains(stripped, "bash") {
-		t.Error("quiet mode should not render tool name")
+	if !strings.Contains(stripped, "bash") {
+		t.Error("quiet mode should render collapsed tool line with summary")
 	}
-	if strings.Contains(stripped, "tool output") {
-		t.Error("quiet mode should not render tool content")
+	if !strings.Contains(stripped, "tool output") {
+		t.Error("quiet mode should render tool summary")
 	}
 	if !strings.Contains(stripped, "hello") {
 		t.Error("quiet mode should render user message")

@@ -374,17 +374,16 @@ func (m *Model) renderMessages() string {
 			b.WriteString(NewSubAgentLine(zoneID, msg.SubRole, msg.Content, msg.SubRunning, msg.ToolDuration, msg.SubError, msg.SubResult, m.width, m.viewport.Height(), m.subagentExpanded[zoneID]).Render())
 
 		case "tool":
+			zoneID := fmt.Sprintf("tool-%d", msgIdx)
+			var expanded bool
 			if m.verbose {
-				zoneID := fmt.Sprintf("tool-%d", msgIdx)
 				m.toolZones = append(m.toolZones, zoneID)
-
-				expanded, has := m.toolExpanded[zoneID]
-				if !has {
-					expanded = m.toolCall == msg.ToolName
+				expanded, _ = m.toolExpanded[zoneID]
+				if !expanded && m.toolCall == msg.ToolName {
+					expanded = true
 				}
-
-				b.WriteString(NewToolMessage(zoneID, msg.ToolName, msg.ToolArgs, msg.Content, m.width, m.viewport.Height(), expanded, m.toolCall == msg.ToolName, msg.ToolDuration).Render())
 			}
+			b.WriteString(NewToolMessage(zoneID, msg.ToolName, msg.ToolArgs, msg.Content, m.width, m.viewport.Height(), expanded, m.toolCall == msg.ToolName, msg.ToolDuration).Render())
 
 		case "error":
 			b.WriteString(NewErrorMessage(msg.Content, m.width, m.viewport.Height()).Render())
