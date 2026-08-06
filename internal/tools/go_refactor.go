@@ -17,7 +17,11 @@ import (
 // GoRefactorTool provides AST-level Go code transformations using
 // golang.org/x/tools. Actions operate on the Go package level (not
 // text-level) so they handle cross-package references correctly.
-type GoRefactorTool struct{}
+type GoRefactorTool struct{ PV *PathValidator }
+
+var _ PathValidatorSetter = (*GoRefactorTool)(nil)
+
+func (t *GoRefactorTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
 
 func (t *GoRefactorTool) Name() string                     { return "go_refactor" }
 func (t *GoRefactorTool) Description() string              { return prompts.ToolDescription("go_refactor") }
@@ -69,7 +73,11 @@ func (t *GoRefactorTool) doFormat(file string) (string, error) {
 	if file == "" {
 		return "", fmt.Errorf("go_refactor format: file is required")
 	}
-	file = resolveRelative(file)
+	resolved, err := resolvePathWithPV(t.PV, file)
+	if err != nil {
+		return "", err
+	}
+	file = resolved
 	data, err := os.ReadFile(file)
 	if err != nil {
 		return "", fmt.Errorf("go_refactor format: %w", err)
@@ -96,7 +104,11 @@ func (t *GoRefactorTool) doInfo(dir string) (string, error) {
 	if dir == "" {
 		dir = "."
 	}
-	dir = resolveRelative(dir)
+	resolved, err := resolvePathWithPV(t.PV, dir)
+	if err != nil {
+		return "", err
+	}
+	dir = resolved
 
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedTypes |
@@ -156,15 +168,4 @@ func countDiff(original, modified, keyword string) int {
 	origCount := strings.Count(original, keyword)
 	modCount := strings.Count(modified, keyword)
 	return modCount - origCount
-}
-
-func resolveRelative(path string) string {
-	if filepath.IsAbs(path) {
-		return path
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return path
-	}
-	return filepath.Join(cwd, path)
 }

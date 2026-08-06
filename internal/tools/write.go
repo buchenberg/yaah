@@ -10,7 +10,11 @@ import (
 )
 
 // WriteTool writes content to a file, overwriting if it exists.
-type WriteTool struct{}
+type WriteTool struct{ PV *PathValidator }
+
+var _ PathValidatorSetter = (*WriteTool)(nil)
+
+func (t *WriteTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
 
 func (t *WriteTool) Name() string        { return "write" }
 func (t *WriteTool) Description() string { return prompts.ToolDescription("write") }
@@ -39,7 +43,11 @@ func (t *WriteTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.FilePath == "" {
 		return "", fmt.Errorf("write: filePath is required")
 	}
-	params.FilePath = expandHomeDir(params.FilePath)
+	resolved, err := resolvePathWithPV(t.PV, params.FilePath)
+	if err != nil {
+		return "", err
+	}
+	params.FilePath = resolved
 
 	if err := os.WriteFile(params.FilePath, []byte(params.Content), 0o644); err != nil {
 		return "", fmt.Errorf("write: %w", err)

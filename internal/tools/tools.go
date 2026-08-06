@@ -103,6 +103,12 @@ type Registry struct {
 	// loop's tool-definition cache) can detect mutations cheaply without
 	// re-reading the full tool set each turn.
 	generation int
+
+	// PathValidator is the workspace-containment gate shared by all
+	// file-accessing tools.  Set via SetPathValidator before tool
+	// execution begins.  When nil, tools fall back to legacy path
+	// resolution (~ expansion + Clean) for backward compatibility.
+	PathValidator *PathValidator
 }
 
 // leafTools is the single source of truth for the names and
@@ -174,10 +180,29 @@ func NewLeafTool(name string) Tool {
 	return nil
 }
 
-// Register adds a tool to the registry.
+// Register adds a tool to the registry. If the registry has a
+// PathValidator and the tool implements PathValidatorSetter, the
+// validator is injected automatically.
 func (r *Registry) Register(t Tool) {
 	r.tools[t.Name()] = t
 	r.generation++
+	// Auto-inject PathValidator if the tool wants one.
+	if r.PathValidator != nil {
+		if setter, ok := t.(PathValidatorSetter); ok {
+			setter.SetPathValidator(r.PathValidator)
+		}
+	}
+}
+
+// SetPathValidator sets the workspace-containment gate and backfills
+// any already-registered tools that implement PathValidatorSetter.
+func (r *Registry) SetPathValidator(pv *PathValidator) {
+	r.PathValidator = pv
+	for _, t := range r.tools {
+		if setter, ok := t.(PathValidatorSetter); ok {
+			setter.SetPathValidator(pv)
+		}
+	}
 }
 
 // Generation returns a monotonically increasing counter that changes whenever

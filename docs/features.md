@@ -172,6 +172,26 @@ yaah --approval allow "deploy"  # auto-approve (headless / CI)
 yaah --approval deny "deploy"   # block all dangerous calls
 ```
 
+## Workspace containment
+
+File-accessing tools (read, write, edit, delete, grep, glob, ls, sed,
+replace, patch, json_query, go_outline, go_refactor, file_info) can be
+confined to a directory:
+
+```bash
+yaah --workspace . "refactor this repo"          # confine to cwd
+yaah --workspace . --allow-home "..."            # also allow ~ paths
+yaah --workspace . --workspace-ask "..."         # prompt before denying out-of-bounds access
+```
+
+Without `--workspace`, access is unrestricted. With it, out-of-bounds
+paths are hard-rejected unless `--workspace-ask` (or
+`agent.default.workspace_ask: true`) is set — then each offending path
+prompts once through the approval UI (or stdin in the plain REPL), and
+grants are remembered for the session. Symlinks are resolved before the
+containment check, and approvals apply to the agent and its sub-agents
+alike.
+
 ## Middleware pipeline
 
 I run a configurable middleware pipeline on every agent turn:

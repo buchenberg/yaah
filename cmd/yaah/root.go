@@ -61,8 +61,20 @@ func init() {
 	rootCmd.PersistentFlags().StringArrayVarP(&directiveOverrides,
 		"directive", "d", nil,
 		"session directive injected into all agent prompts (repeatable)")
+	rootCmd.PersistentFlags().StringVar(&workspaceRoot,
+		"workspace", "",
+		"restrict file-accessing tools to this directory (default: unrestricted)")
+	rootCmd.PersistentFlags().BoolVar(&allowHomeAccess,
+		"allow-home", false,
+		"allow file-accessing tools to expand ~ paths (only meaningful with --workspace)")
+	rootCmd.PersistentFlags().BoolVar(&workspaceAsk,
+		"workspace-ask", false,
+		"prompt before denying out-of-workspace file access instead of hard-rejecting (only meaningful with --workspace)")
 }
 
 var approvalOverride string
 var resumeSessionID string
 var directiveOverrides []string
+var workspaceRoot string
+var allowHomeAccess bool
+var workspaceAsk bool

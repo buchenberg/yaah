@@ -17,7 +17,11 @@ import (
 const lsMaxResultLen = 8192
 
 // LsTool lists directory contents with depth control.
-type LsTool struct{}
+type LsTool struct{ PV *PathValidator }
+
+var _ PathValidatorSetter = (*LsTool)(nil)
+
+func (t *LsTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
 
 func (t *LsTool) Name() string { return "ls" }
 func (t *LsTool) Description() string {
@@ -45,7 +49,11 @@ func (t *LsTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.Path == "" {
 		params.Path = "."
 	}
-	params.Path = expandHomeDir(params.Path)
+	resolved, err := resolvePathWithPV(t.PV, params.Path)
+	if err != nil {
+		return "", err
+	}
+	params.Path = resolved
 	if params.Depth <= 0 {
 		params.Depth = 1
 	}
@@ -54,7 +62,7 @@ func (t *LsTool) Execute(ctx context.Context, args string) (string, error) {
 	}
 
 	var buf strings.Builder
-	err := listDir(&buf, params.Path, "", params.Depth, 0)
+	err = listDir(&buf, params.Path, "", params.Depth, 0)
 	if err != nil {
 		return "", fmt.Errorf("ls: %w", err)
 	}

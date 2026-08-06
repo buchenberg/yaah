@@ -13,7 +13,11 @@ import (
 // ReadTool reads a file and returns its contents. Offsets and limits are
 // applied to the split lines (zero-based for line-local offset, limit caps
 // the returned line count).
-type ReadTool struct{}
+type ReadTool struct{ PV *PathValidator }
+
+var _ PathValidatorSetter = (*ReadTool)(nil)
+
+func (t *ReadTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
 
 func (t *ReadTool) Name() string        { return "read" }
 func (t *ReadTool) Description() string { return prompts.ToolDescription("read") }
@@ -42,7 +46,11 @@ func (t *ReadTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.FilePath == "" {
 		return "", fmt.Errorf("read: filePath is required")
 	}
-	params.FilePath = expandHomeDir(params.FilePath)
+	resolved, err := resolvePathWithPV(t.PV, params.FilePath)
+	if err != nil {
+		return "", err
+	}
+	params.FilePath = resolved
 
 	info, err := os.Stat(params.FilePath)
 	if err != nil {

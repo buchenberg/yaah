@@ -20,7 +20,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker, estimateFactor float64, subContextWindow int, outputLimit int, providerMap map[string]config.Provider, defaults config.Defaults, parentPermissionRules []pipeline.PermissionRule) *tools.TaskTool {
+func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker, estimateFactor float64, subContextWindow int, outputLimit int, providerMap map[string]config.Provider, defaults config.Defaults, parentPermissionRules []pipeline.PermissionRule, pathValidator *tools.PathValidator) *tools.TaskTool {
 	// Sub-agent spawning depth is hard-coded at 1: the top-level agent
 	// can spawn one level of sub-agents; sub-agents cannot spawn further
 	// sub-agents (remainingDepth reaches 0).
@@ -53,6 +53,7 @@ func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 			providerMap:           providerMap,
 			defaults:              defaults,
 			parentPermissionRules: parentPermissionRules,
+			pathValidator:         pathValidator,
 		}, depth),
 		ResolveTimeout:   subAgentTimeoutResolver(subCfg),
 		RoleNames:        roleNames,
@@ -151,6 +152,11 @@ type taskRunnerOpts struct {
 	// PermissionMiddleware so path-based deny rules from the parent
 	// session are enforced by child agents.
 	parentPermissionRules []pipeline.PermissionRule
+
+	// pathValidator, when non-nil, confines the sub-agent's
+	// file-accessing tools to the session workspace, matching the
+	// parent session's --workspace policy.
+	pathValidator *tools.PathValidator
 }
 
 // makeTaskRunner creates a sub-agent runner that honours roles, timeouts,
@@ -395,6 +401,9 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 	}
 
 	reg := tools.NewEmptyRegistry()
+	if opts.pathValidator != nil {
+		reg.SetPathValidator(opts.pathValidator)
+	}
 	for _, name := range profile.Tools {
 		if name == "spawn_subagent" {
 			if remainingDepth > 0 {

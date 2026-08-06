@@ -14,7 +14,11 @@ import (
 )
 
 // SedTool performs regex search and replacement across files.
-type SedTool struct{}
+type SedTool struct{ PV *PathValidator }
+
+var _ PathValidatorSetter = (*SedTool)(nil)
+
+func (t *SedTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
 
 func (t *SedTool) Name() string { return "sed" }
 func (t *SedTool) Description() string {
@@ -55,6 +59,15 @@ func (t *SedTool) Execute(ctx context.Context, args string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("sed: invalid regex: %w", err)
 	}
+
+	if params.Path == "" {
+		return "", fmt.Errorf("sed: path is required")
+	}
+	resolved, err := resolvePathWithPV(t.PV, params.Path)
+	if err != nil {
+		return "", err
+	}
+	params.Path = resolved
 
 	files, err := collectFiles(params.Path, params.Include)
 	if err != nil {
@@ -126,6 +139,9 @@ func collectFiles(path, include string) ([]string, error) {
 			return err
 		}
 		if d.IsDir() {
+			return nil
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
 		if matched, _ := filepath.Match(include, filepath.Base(p)); matched {

@@ -13,7 +13,11 @@ import (
 // FileInfoTool returns file metadata without reading content.
 // Use before write/edit/delete to check existence, size, modtime — avoid
 // redundant work when another delegate already created or updated the file.
-type FileInfoTool struct{}
+type FileInfoTool struct{ PV *PathValidator }
+
+var _ PathValidatorSetter = (*FileInfoTool)(nil)
+
+func (t *FileInfoTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
 
 func (t *FileInfoTool) Name() string { return "file_info" }
 func (t *FileInfoTool) Description() string {
@@ -51,7 +55,11 @@ func (t *FileInfoTool) Execute(ctx context.Context, args string) (string, error)
 	if params.FilePath == "" {
 		return "", fmt.Errorf("file_info: filePath is required")
 	}
-	params.FilePath = expandHomeDir(params.FilePath)
+	resolved, err := resolvePathWithPV(t.PV, params.FilePath)
+	if err != nil {
+		return "", err
+	}
+	params.FilePath = resolved
 
 	info, err := os.Stat(params.FilePath)
 	if err != nil {

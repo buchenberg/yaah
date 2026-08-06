@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,7 +19,11 @@ const replaceMaxResultLen = 4096
 // ReplaceTool performs regex find-and-replace across multiple files.
 // It walks a directory tree, filters by include glob, and applies the
 // replacement to every matching file.
-type ReplaceTool struct{}
+type ReplaceTool struct{ PV *PathValidator }
+
+var _ PathValidatorSetter = (*ReplaceTool)(nil)
+
+func (t *ReplaceTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
 
 func (t *ReplaceTool) Name() string { return "replace" }
 func (t *ReplaceTool) Description() string {
@@ -58,7 +63,11 @@ func (t *ReplaceTool) Execute(ctx context.Context, args string) (string, error) 
 	if params.Path == "" {
 		params.Path = "."
 	}
-	params.Path = expandHomeDir(params.Path)
+	resolved, err := resolvePathWithPV(t.PV, params.Path)
+	if err != nil {
+		return "", err
+	}
+	params.Path = resolved
 
 	re, err := regexp.Compile(params.Pattern)
 	if err != nil {
@@ -86,14 +95,17 @@ func (t *ReplaceTool) Execute(ctx context.Context, args string) (string, error) 
 	totalMatches := 0
 	totalChanged := 0
 
-	walkErr := filepath.Walk(params.Path, func(p string, info os.FileInfo, err error) error {
+	walkErr := filepath.WalkDir(params.Path, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		if info.IsDir() {
-			if commonIgnoreDirs[info.Name()] {
+		if d.IsDir() {
+			if commonIgnoreDirs[d.Name()] {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
 		if binaryExtensions[filepath.Ext(p)] {
@@ -127,7 +139,11 @@ func (t *ReplaceTool) Execute(ctx context.Context, args string) (string, error) 
 			return nil
 		}
 
-		if err := os.WriteFile(p, []byte(newContent), info.Mode()); err != nil {
+		mode := os.FileMode(0o644)
+		if fi, err := d.Info(); err == nil {
+			mode = fi.Mode()
+		}
+		if err := os.WriteFile(p, []byte(newContent), mode); err != nil {
 			results = append(results, fileResult{Path: p, Count: matchCount, Err: err})
 			return nil
 		}
