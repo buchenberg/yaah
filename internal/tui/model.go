@@ -70,6 +70,7 @@ var defaultCommands = []Command{
 	{Name: ":logout", Description: "Remove stored OAuth credentials"},
 	{Name: ":steer", Description: "Inject text into current turn before next provider call"},
 	{Name: ":copyview", Description: "Copy rendered TUI view to clipboard"},
+	{Name: ":verbose", Description: "Toggle reasoning and tool output visibility"},
 	{Name: ":quit", Description: "Exit the TUI"},
 	{Name: ":stop", Description: "Abort the running agent"},
 }
@@ -162,6 +163,7 @@ type Model struct {
 
 	// --- misc UI ---
 	showBanner   bool
+	verbose      bool
 	needsRefresh bool
 	ephemMsg     string
 	ephemTimer   int
@@ -177,6 +179,7 @@ type Config struct {
 	CWD           string
 	ContextWindow int
 	Version       string
+	Verbose       bool
 	OnSubmit      func(string)
 	OnQuit        func()
 	OnCompact     func()
@@ -230,6 +233,7 @@ func New(cfg Config) *Model {
 		subagentExpanded:  make(map[string]bool),
 		help:              help.New(),
 		showBanner:        true,
+		verbose:           cfg.Verbose,
 		cwd:               cfg.CWD,
 		provider:          cfg.Provider,
 		modelName:         cfg.Model,
@@ -246,6 +250,16 @@ func New(cfg Config) *Model {
 		onLogout:          cfg.OnLogout,
 		commands:          defaultCommands,
 	}
+}
+
+func (m *Model) ToggleVerbose() {
+	m.verbose = !m.verbose
+	if m.verbose {
+		m.SetEphemeral("Verbose on.")
+	} else {
+		m.SetEphemeral("Verbose off.")
+	}
+	m.refreshViewport()
 }
 
 // headerHeight returns the number of lines the header occupies.

@@ -117,7 +117,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	srv := mcp.NewServer("yaah", version)
 	registerServeTools(srv, &mu, &totalTokens, &promptCount, buf, &sess, &sessErr, ensureSession)
-
 	// Graceful shutdown on SIGINT/SIGTERM. EOF on stdin (parent exit) also
 	// terminates Serve naturally.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -172,7 +171,6 @@ func runServeHTTP(buf *observability.BufferingSpanProcessor) error {
 
 	srv := mcp.NewServer("yaah", version)
 	registerServeTools(srv, &mu, &totalTokens, &promptCount, buf, &sess, &sessErr, ensureSession)
-
 	// Warm up the agent session in the background so the first prompt
 	// call doesn't time out waiting for config/DB/skills/MCP clients.
 	go func() {
@@ -214,123 +212,8 @@ func runServeHTTP(buf *observability.BufferingSpanProcessor) error {
 	return nil
 }
 
-// registerServeTools attaches the prompt, traces, and status tools to
-// srv. It is shared between the stdio and HTTP transports so the two
-// stay in lockstep.
-func registerServeTools(
-	srv *mcp.Server,
-	mu *sync.Mutex,
-	totalTokens *types.Usage,
-	promptCount *int,
-	buf *observability.BufferingSpanProcessor,
-	sessPtr **agentSession,
-	sessErrPtr *error,
-	ensureSession func() error,
-) {
-	srv.AddTool(mcp.ServerToolDef{
-		Name:        "prompt",
-		Description: "Run an agent prompt. Conversation state persists across calls, enabling multi-turn dialogue. Returns the assistant's final response text.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"message":{"type":"string","description":"The user prompt to send to the agent"}},"required":["message"]}`),
-		Handler: func(ctx context.Context, rawArgs json.RawMessage) (string, error) {
-			var p struct {
-				Message string `json:"message"`
-			}
-			if len(rawArgs) > 0 {
-				if err := json.Unmarshal(rawArgs, &p); err != nil {
-					return "", fmt.Errorf("invalid arguments: %w", err)
-				}
-			}
-			if p.Message == "" {
-				return "", fmt.Errorf("message is required")
-			}
-
-			mu.Lock()
-			defer mu.Unlock()
-			if err := ensureSession(); err != nil {
-				return "", fmt.Errorf("session init: %w", err)
-			}
-			sess := *sessPtr
-			start := time.Now()
-			resp, usage, err := sess.runHeadless(ctx, p.Message)
-			totalTokens.PromptTokens += usage.PromptTokens
-			totalTokens.CompletionTokens += usage.CompletionTokens
-			totalTokens.TotalTokens += usage.TotalTokens
-			*promptCount++
-			fmt.Fprintf(os.Stderr, "  %s prompt #%d (%s)\n", Dim("yaah serve:"), *promptCount, formatDuration(time.Since(start)))
-			if err != nil {
-				return "", err
-			}
-			return resp, nil
-		},
-	})
-
-	srv.AddTool(mcp.ServerToolDef{
-		Name:        "traces",
-		Description: "Query in-process OpenTelemetry spans captured during prompt execution. Optionally filter by trace_id and render as a parent-child tree.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"trace_id":{"type":"string","description":"Return only spans belonging to this trace ID"},"tree":{"type":"boolean","description":"When true (with trace_id), render spans as a nested parent-child tree"},"limit":{"type":"integer","description":"Return only the most recent N spans (flat mode)"}}}`),
-		Handler: func(ctx context.Context, rawArgs json.RawMessage) (string, error) {
-			var p struct {
-				TraceID string `json:"trace_id"`
-				Tree    bool   `json:"tree"`
-				Limit   int    `json:"limit"`
-			}
-			if len(rawArgs) > 0 {
-				if err := json.Unmarshal(rawArgs, &p); err != nil {
-					return "", fmt.Errorf("invalid arguments: %w", err)
-				}
-			}
-
-			if p.TraceID != "" && p.Tree {
-				nodes := buf.TraceTree(p.TraceID)
-				return marshalJSON(nodes)
-			}
-
-			spans := buf.Traces()
-			if p.TraceID != "" {
-				filtered := spans[:0]
-				for _, s := range spans {
-					if s.TraceID == p.TraceID {
-						filtered = append(filtered, s)
-					}
-				}
-				spans = filtered
-			}
-			if p.Limit > 0 && len(spans) > p.Limit {
-				spans = spans[len(spans)-p.Limit:]
-			}
-			return marshalJSON(spans)
-		},
-	})
-
-	srv.AddTool(mcp.ServerToolDef{
-		Name:        "status",
-		Description: "Report the server's provider, model, session ID, conversation length, cumulative token usage, and buffered span count.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
-		Handler: func(ctx context.Context, rawArgs json.RawMessage) (string, error) {
-			mu.Lock()
-			defer mu.Unlock()
-			status := map[string]any{
-				"prompts":           *promptCount,
-				"prompt_tokens":     totalTokens.PromptTokens,
-				"completion_tokens": totalTokens.CompletionTokens,
-				"total_tokens":      totalTokens.TotalTokens,
-				"spans_buffered":    len(buf.Traces()),
-				"session_ready":     *sessPtr != nil,
-				"pid":               os.Getpid(),
-			}
-			sess := *sessPtr
-			if sess != nil {
-				status["provider"] = sess.providerName
-				status["model"] = sess.modelName
-				status["session_id"] = sess.sessionID
-				status["messages"] = len(sess.messages)
-			}
-			return marshalJSON(status)
-		},
-	})
-}
-
-// (NoopView) and no spinner, suitable for MCP serve mode. It accumulates
+// runHeadless runs the agent with NoopView and no spinner, suitable for
+// MCP serve mode. It accumulates
 // conversation state in the session so successive calls form a multi-turn
 // dialogue, and returns the response plus the loop's token usage.
 func (s *agentSession) runHeadless(ctx context.Context, prompt string) (string, types.Usage, error) {

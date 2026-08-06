@@ -5,14 +5,26 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+
+	"github.com/buchenberg/yaah/internal/mcp"
+	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/tui2"
 	"github.com/buchenberg/yaah/internal/types"
 	"github.com/spf13/cobra"
 )
 
+var (
+	tui2MCP     bool
+	tui2MCPHTTP string
+)
+
 func init() {
+	tui2Cmd.Flags().BoolVar(&tui2MCP, "mcp", false, "expose TUI2 session as MCP server over stdio")
+	tui2Cmd.Flags().StringVar(&tui2MCPHTTP, "mcp-http", "", "expose TUI2 session as MCP server at this HTTP address (e.g. 127.0.0.1:7334)")
 	rootCmd.AddCommand(tui2Cmd)
 }
 
@@ -26,10 +38,17 @@ var tui2Cmd = &cobra.Command{
 }
 
 func runTUI2() error {
-	// tview's full-screen redraw is expensive on Windows when background
-	// subprocesses (MCP servers) are running. Skip MCP + OTel for tui2
-	// to keep the UI responsive. The agent loop still works; MCP tools
-	// are simply not available in this mode.
+	var tui2MCPBuf *observability.BufferingSpanProcessor
+	if tui2MCP || tui2MCPHTTP != "" {
+		tui2MCPBuf = observability.NewBufferingSpanProcessor()
+		extraOtelProcessors = []sdktrace.SpanProcessor{tui2MCPBuf}
+		otelInMemoryOnly = true
+		defer func() {
+			extraOtelProcessors = nil
+			otelInMemoryOnly = false
+		}()
+	}
+
 	sess, err := newAgentSessionWithOptions(false, false)
 	if err != nil {
 		return fmt.Errorf("session: %w", err)
@@ -124,6 +143,22 @@ func runTUI2() error {
 		}
 		os.Stderr = origStderr
 	}()
+
+	if tui2MCP || tui2MCPHTTP != "" {
+		srv := mcp.NewServer("yaah-tui2", version)
+		var mu sync.Mutex
+		var totalTokens types.Usage
+		var promptCount int
+		var sessPtr *agentSession = sess
+		registerServeTools(srv, &mu, &totalTokens, &promptCount, tui2MCPBuf, &sessPtr, nil, nil)
+
+		if tui2MCPHTTP != "" {
+			httpSrv := mcp.NewHTTPServer(srv, tui2MCPHTTP)
+			go func() { _ = httpSrv.Start(context.Background()) }()
+		} else {
+			go func() { _ = srv.Serve(context.Background(), os.Stdin, os.Stdout) }()
+		}
+	}
 
 	return app.Run()
 }

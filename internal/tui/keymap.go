@@ -19,6 +19,7 @@ type keyMap struct {
 	PrevMatch key.Binding
 	Copy      key.Binding
 	Reasoning key.Binding
+	Verbose   key.Binding
 	Submit    key.Binding
 	Cancel    key.Binding
 }
@@ -79,6 +80,10 @@ var keys = keyMap{
 	Reasoning: key.NewBinding(
 		key.WithKeys("ctrl+t"),
 		key.WithHelp("ctrl+t", "toggle reasoning"),
+	),
+	Verbose: key.NewBinding(
+		key.WithKeys("ctrl+g"),
+		key.WithHelp("ctrl+g", "toggle verbose"),
 	),
 	Submit: key.NewBinding(
 		key.WithKeys("enter"),

@@ -352,7 +352,7 @@ func (m *Model) renderMessages() string {
 			b.WriteString(NewUserMessage(msg.Content, m.width).Render())
 
 		case "assistant":
-			if msg.Reasoning != "" {
+			if m.verbose && msg.Reasoning != "" {
 				b.WriteString("\n")
 				zoneID := fmt.Sprintf("reasoning-%d", msgIdx)
 				m.reasoningZones = append(m.reasoningZones, zoneID)
@@ -374,16 +374,17 @@ func (m *Model) renderMessages() string {
 			b.WriteString(NewSubAgentLine(zoneID, msg.SubRole, msg.Content, msg.SubRunning, msg.ToolDuration, msg.SubError, msg.SubResult, m.width, m.viewport.Height(), m.subagentExpanded[zoneID]).Render())
 
 		case "tool":
-			zoneID := fmt.Sprintf("tool-%d", msgIdx)
-			m.toolZones = append(m.toolZones, zoneID)
+			if m.verbose {
+				zoneID := fmt.Sprintf("tool-%d", msgIdx)
+				m.toolZones = append(m.toolZones, zoneID)
 
-			// Default: collapsed when completed, expanded while running.
-			expanded, has := m.toolExpanded[zoneID]
-			if !has {
-				expanded = m.toolCall == msg.ToolName
+				expanded, has := m.toolExpanded[zoneID]
+				if !has {
+					expanded = m.toolCall == msg.ToolName
+				}
+
+				b.WriteString(NewToolMessage(zoneID, msg.ToolName, msg.ToolArgs, msg.Content, m.width, m.viewport.Height(), expanded, m.toolCall == msg.ToolName, msg.ToolDuration).Render())
 			}
-
-			b.WriteString(NewToolMessage(zoneID, msg.ToolName, msg.ToolArgs, msg.Content, m.width, m.viewport.Height(), expanded, m.toolCall == msg.ToolName, msg.ToolDuration).Render())
 
 		case "error":
 			b.WriteString(NewErrorMessage(msg.Content, m.width, m.viewport.Height()).Render())
@@ -393,7 +394,7 @@ func (m *Model) renderMessages() string {
 		}
 	}
 
-	if m.thinkContent != "" {
+	if m.verbose && m.thinkContent != "" {
 		b.WriteString("\n")
 		if m.thinking && !m.streaming {
 			rendered := lolcatRender(fmt.Sprintf("  %s Reasoning...", stripANSI(m.spinner.View())))

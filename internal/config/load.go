@@ -225,6 +225,11 @@ type Config struct {
 	Hooks         Hooks                      `yaml:"hooks"`
 	Editor        string                     `yaml:"editor"`
 	Observability ObservabilityConfig        `yaml:"observability"`
+	TUI           TUIConfig                  `yaml:"tui"`
+}
+
+type TUIConfig struct {
+	Verbose bool `yaml:"verbose"`
 }
 
 // ObservabilityConfig holds OpenTelemetry tracing and metrics settings.
