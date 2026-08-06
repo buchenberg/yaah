@@ -153,17 +153,24 @@ func GeneratePlain() (art string, tagline string, lineCount int) {
 }
 
 // Render returns the full CLI startup banner: figlet art with subtitle,
-// a dim version line, and trailing blank lines.
+// a dim version line, and trailing blank lines. Respects NO_COLOR.
 func Render(version string) string {
 	art, _ := Generate()
+
+	dim := "\033[2m"
+	reset := "\033[0m"
+	if os.Getenv("NO_COLOR") != "" {
+		dim, reset = "", ""
+	}
 
 	var b strings.Builder
 	b.WriteString("\n")
 	b.WriteString(art)
 	b.WriteString("\n\n")
-	b.WriteString("  \033[2m")
+	b.WriteString("  ")
+	b.WriteString(dim)
 	b.WriteString(version)
-	b.WriteString("\033[0m")
+	b.WriteString(reset)
 	b.WriteString("\n\n")
 	return b.String()
 }

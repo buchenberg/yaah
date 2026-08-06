@@ -26,12 +26,19 @@ const detailLen = 8000
 // the full prompt the model actually received. Matches the tui.body cap.
 const systemPromptLen = 32768
 
+// tracer returns the current tracer from the global provider.
+// It must be called lazily (not stored in a package-level var) because
+// the global TracerProvider may change after package init via Setup().
+func tracer() trace.Tracer {
+	return otel.Tracer("yaah")
+}
+
 // StartPrompt creates the root span for a single user-visible question-
 // to-answer interaction. All agent.turn spans for this prompt are
 // children of this span. The prompt text is truncated to 200 chars as
 // an attribute so traces are self-documenting.
 func StartPrompt(ctx context.Context, prompt string) (context.Context, trace.Span) {
-	ctx, span := tracer.Start(ctx, "prompt")
+	ctx, span := tracer().Start(ctx, "prompt")
 	if prompt != "" {
 		span.SetAttributes(attribute.String("prompt.text", truncate(safeString(prompt), 200)))
 	}
@@ -42,7 +49,7 @@ func StartPrompt(ctx context.Context, prompt string) (context.Context, trace.Spa
 // context should flow into the LLM call and tool execution for that
 // turn so nested spans are children.
 func StartTurn(ctx context.Context, turnNum int, prompt string) (context.Context, trace.Span) {
-	ctx, span := tracer.Start(ctx, "agent.turn")
+	ctx, span := tracer().Start(ctx, "agent.turn")
 	span.SetAttributes(
 		attribute.Int("turn.number", turnNum),
 	)
@@ -57,7 +64,7 @@ func StartTurn(ctx context.Context, turnNum int, prompt string) (context.Context
 // they are visible in the Jaeger detail panel without cluttering the
 // waterfall bars.
 func StartTool(ctx context.Context, name, argsJSON string) (context.Context, trace.Span) {
-	ctx, span := tracer.Start(ctx, name)
+	ctx, span := tracer().Start(ctx, name)
 	span.SetAttributes(
 		attribute.String("tool.name", name),
 		attribute.String("tool.args", truncate(safeString(argsJSON), 200)),
@@ -83,7 +90,7 @@ func FinishTool(span trace.Span, result string, err error) {
 // reason ("post_tool" | "post_compaction" | "payload_limit") is recorded as
 // an attribute so Jaeger shows why the pass ran. FinishPrune ends the span.
 func StartPrune(ctx context.Context, reason string) (context.Context, trace.Span) {
-	ctx, span := tracer.Start(ctx, "prune")
+	ctx, span := tracer().Start(ctx, "prune")
 	span.SetAttributes(
 		attribute.String("prune.reason", safeString(reason)),
 	)
@@ -113,7 +120,7 @@ func FinishPrune(span trace.Span, reason string, candidates, marked, reclaimed, 
 // model name is an attribute; a completion event carries the prompt
 // size, response size, and duration.
 func StartLLM(ctx context.Context, model string) (context.Context, trace.Span) {
-	ctx, span := tracer.Start(ctx, "llm.chat")
+	ctx, span := tracer().Start(ctx, "llm.chat")
 	span.SetAttributes(
 		attribute.String("llm.model", model),
 	)
@@ -142,7 +149,7 @@ func FinishLLM(span trace.Span, promptLen, systemLen int, usage types.Usage) {
 // context should flow into SendStream so the provider wrapper inherits
 // the span hierarchy.
 func StartStream(ctx context.Context, model string) (context.Context, trace.Span) {
-	ctx, span := tracer.Start(ctx, "llm.stream")
+	ctx, span := tracer().Start(ctx, "llm.stream")
 	span.SetAttributes(attribute.String("llm.model", model))
 	return ctx, span
 }
@@ -166,7 +173,7 @@ func StartSubAgent(ctx context.Context, role, description string) (context.Conte
 	if description != "" {
 		name += " — " + truncate(description, 60)
 	}
-	ctx, span := tracer.Start(ctx, name)
+	ctx, span := tracer().Start(ctx, name)
 	span.SetAttributes(
 		attribute.String("subagent.role", role),
 		attribute.String("subagent.description", safeString(description)),
@@ -187,6 +194,7 @@ func FinishSubAgent(span trace.Span, err error) {
 		RecordError(span, err)
 	} else {
 		span.AddEvent("completed")
+		span.SetStatus(codes.Ok, "")
 	}
 }
 
