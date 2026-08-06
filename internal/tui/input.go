@@ -88,6 +88,8 @@ func (m *Model) executeCommand(input string) {
 		} else {
 			m.SetEphemeral("View copied to clipboard.")
 		}
+	case ":verbose":
+		m.ToggleVerbose()
 	default:
 		// :steer is the only command that takes an argument, so it
 		// doesn't fit cleanly into a static switch case. Match the
@@ -239,6 +241,10 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg) tea.Cmd {
 			}
 			m.refreshViewport()
 		}
+		return nil
+
+	case key.Matches(msg, keys.Verbose):
+		m.ToggleVerbose()
 		return nil
 
 	case key.Matches(msg, keys.Top):

@@ -6,10 +6,15 @@ import (
 	"log"
 	"os"
 	"sort"
+	"sync"
 
 	tea "charm.land/bubbletea/v2"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/mcp"
+	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/tui"
@@ -18,7 +23,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// tuiCmd launches the TUI interface.
+var (
+	tuiMCP     bool
+	tuiMCPHTTP string
+	tuiMCPBuf  *observability.BufferingSpanProcessor
+)
+
 var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Launch the terminal UI",
@@ -30,6 +40,8 @@ var tuiCmd = &cobra.Command{
 }
 
 func init() {
+	tuiCmd.Flags().BoolVar(&tuiMCP, "mcp", false, "expose TUI session as MCP server over stdio")
+	tuiCmd.Flags().StringVar(&tuiMCPHTTP, "mcp-http", "", "expose TUI session as MCP server at this HTTP address (e.g. 127.0.0.1:7334)")
 	rootCmd.AddCommand(tuiCmd)
 }
 
@@ -103,6 +115,16 @@ func runTUI() error {
 	// and terminal background).
 	tui.ApplyTheme(tui.DetectTheme())
 
+	if tuiMCP || tuiMCPHTTP != "" {
+		tuiMCPBuf = observability.NewBufferingSpanProcessor()
+		extraOtelProcessors = []sdktrace.SpanProcessor{tuiMCPBuf}
+		otelInMemoryOnly = true
+		defer func() {
+			extraOtelProcessors = nil
+			otelInMemoryOnly = false
+		}()
+	}
+
 	sess, err := newAgentSession()
 	if err != nil {
 		return fmt.Errorf("session: %w", err)
@@ -129,6 +151,7 @@ func runTUI() error {
 		CWD:           cwd,
 		ContextWindow: providers.ResolveWindow(cfg.Agent.Default.Model, cfg.Agent.Default.ContextWindow),
 		Version:       version,
+		Verbose:       cfg.TUI.Verbose,
 		OnSubmit: func(input string) {
 			ctx, cancel := context.WithCancel(context.Background())
 			cancelAgent = cancel
@@ -227,6 +250,22 @@ func runTUI() error {
 			prog.Send(msg)
 		}
 	}()
+
+	if tuiMCP || tuiMCPHTTP != "" {
+		srv := mcp.NewServer("yaah-tui", version)
+		var mu sync.Mutex
+		var totalTokens types.Usage
+		var promptCount int
+		var sessPtr *agentSession = sess
+		registerServeTools(srv, &mu, &totalTokens, &promptCount, tuiMCPBuf, &sessPtr, nil, nil)
+
+		if tuiMCPHTTP != "" {
+			httpSrv := mcp.NewHTTPServer(srv, tuiMCPHTTP)
+			go func() { _ = httpSrv.Start(context.Background()) }()
+		} else {
+			go func() { _ = srv.Serve(context.Background(), os.Stdin, os.Stdout) }()
+		}
+	}
 
 	// Pre-fetch model lists from all providers in the background.
 	go func() {

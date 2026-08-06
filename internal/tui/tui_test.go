@@ -1033,7 +1033,7 @@ func TestReasoningClearedOnNewSubmit(t *testing.T) {
 }
 
 func TestCTRLRTogglesReasoning(t *testing.T) {
-	m := &Model{width: 80, height: 40, reasoningExpanded: make(map[string]bool)}
+	m := &Model{width: 80, verbose: true, height: 40, reasoningExpanded: make(map[string]bool)}
 	m.HandleEvent(&agent.ThinkingEvent{Text: "reasoning"})
 
 	m.streaming = true
@@ -1121,7 +1121,7 @@ func TestReasoningNotClearedOnDoneWhenEmpty(t *testing.T) {
 }
 
 func TestRenderReasoningCollapsed_MessageLevel(t *testing.T) {
-	m := &Model{width: 80, reasoningExpanded: make(map[string]bool)}
+	m := &Model{width: 80, verbose: true, reasoningExpanded: make(map[string]bool)}
 	m.messages = []Message{
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "response", Reasoning: "the model's reasoning"},
@@ -1144,7 +1144,7 @@ func TestRenderReasoningCollapsed_MessageLevel(t *testing.T) {
 }
 
 func TestRenderReasoningExpanded_MessageLevel(t *testing.T) {
-	m := &Model{width: 80, reasoningExpanded: map[string]bool{"reasoning-1": true}}
+	m := &Model{width: 80, verbose: true, reasoningExpanded: map[string]bool{"reasoning-1": true}}
 	m.messages = []Message{
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "response", Reasoning: "the model's reasoning"},
@@ -1167,7 +1167,7 @@ func TestRenderReasoningExpanded_MessageLevel(t *testing.T) {
 }
 
 func TestRenderReasoningPlainTextNotMarkdown(t *testing.T) {
-	m := &Model{width: 80, reasoningExpanded: map[string]bool{"reasoning-0": true}}
+	m := &Model{width: 80, verbose: true, reasoningExpanded: map[string]bool{"reasoning-0": true}}
 	m.createRenderer()
 	m.messages = []Message{
 		{Role: "assistant", Content: "response", Reasoning: "Let me think:\n\n```\ncode here\n```"},
@@ -1184,7 +1184,7 @@ func TestRenderReasoningPlainTextNotMarkdown(t *testing.T) {
 }
 
 func TestRenderReasoningMarkdownPreservedOnRaw(t *testing.T) {
-	m := &Model{width: 80, reasoningExpanded: map[string]bool{"reasoning-0": true}}
+	m := &Model{width: 80, verbose: true, reasoningExpanded: map[string]bool{"reasoning-0": true}}
 	m.messages = []Message{
 		{Role: "assistant", Content: "response", Reasoning: "step 1 step 2"},
 	}
@@ -1197,7 +1197,7 @@ func TestRenderReasoningMarkdownPreservedOnRaw(t *testing.T) {
 }
 
 func TestRenderReasoningActiveThinking(t *testing.T) {
-	m := &Model{width: 80}
+	m := &Model{width: 80, verbose: true}
 	m.thinking = true
 	m.streaming = false
 	m.thinkContent = "thinking..."
@@ -1236,7 +1236,7 @@ func TestRenderReasoningActiveThinkingNoContent(t *testing.T) {
 // --- zone + clipboard tests ---
 
 func TestReasoningZonesPopulated_MessageLevel(t *testing.T) {
-	m := &Model{width: 80, reasoningExpanded: make(map[string]bool)}
+	m := &Model{width: 80, verbose: true, reasoningExpanded: make(map[string]bool)}
 	m.messages = []Message{
 		{Role: "assistant", Content: "response", Reasoning: "the model's reasoning"},
 	}
@@ -1252,7 +1252,7 @@ func TestReasoningZonesPopulated_MessageLevel(t *testing.T) {
 }
 
 func TestReasoningZonesPopulated_ModelLevel(t *testing.T) {
-	m := &Model{width: 80, reasoningExpanded: make(map[string]bool)}
+	m := &Model{width: 80, verbose: true, reasoningExpanded: make(map[string]bool)}
 	m.thinkContent = "reasoning text"
 
 	m.renderMessages()
@@ -1266,7 +1266,7 @@ func TestReasoningZonesPopulated_ModelLevel(t *testing.T) {
 }
 
 func TestReasoningZonesMultipleMessages(t *testing.T) {
-	m := &Model{width: 80, reasoningExpanded: make(map[string]bool)}
+	m := &Model{width: 80, verbose: true, reasoningExpanded: make(map[string]bool)}
 	m.messages = []Message{
 		{Role: "assistant", Content: "response1", Reasoning: "reasoning1"},
 		{Role: "assistant", Content: "response2", Reasoning: "reasoning2"},
@@ -1300,7 +1300,7 @@ func TestReasoningZonesEmptyWhenNoReasoning(t *testing.T) {
 }
 
 func TestReasoningZonesClearedEachRender(t *testing.T) {
-	m := &Model{width: 80, reasoningExpanded: make(map[string]bool)}
+	m := &Model{width: 80, verbose: true, reasoningExpanded: make(map[string]bool)}
 	m.messages = []Message{
 		{Role: "assistant", Content: "response", Reasoning: "reasoning"},
 	}
@@ -1702,5 +1702,121 @@ func TestRoleStyle_KnownAndUnknownRoles(t *testing.T) {
 	unknown := roleStyle("no-such-role").Render("x")
 	if !strings.Contains(stripANSI(unknown), "x") {
 		t.Errorf("unknown role should still render text, got %q", unknown)
+	}
+}
+
+func TestQuietModeHidesReasoningAndTools(t *testing.T) {
+	m := &Model{width: 80, verbose: false, reasoningExpanded: make(map[string]bool)}
+	m.messages = []Message{
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "response", Reasoning: "model reasoning"},
+		{Role: "tool", ToolName: "bash", Content: "tool output"},
+	}
+
+	output := m.renderMessages()
+	stripped := stripANSI(output)
+
+	if strings.Contains(stripped, "Reasoning") {
+		t.Error("quiet mode should not render reasoning toggle")
+	}
+	if strings.Contains(stripped, "model reasoning") {
+		t.Error("quiet mode should not render reasoning content")
+	}
+	if strings.Contains(stripped, "bash") {
+		t.Error("quiet mode should not render tool name")
+	}
+	if strings.Contains(stripped, "tool output") {
+		t.Error("quiet mode should not render tool content")
+	}
+	if !strings.Contains(stripped, "hello") {
+		t.Error("quiet mode should render user message")
+	}
+	if !strings.Contains(stripped, "response") {
+		t.Error("quiet mode should render assistant content")
+	}
+	if len(m.reasoningZones) != 0 {
+		t.Errorf("quiet mode should have 0 reasoning zones, got %d", len(m.reasoningZones))
+	}
+	if len(m.toolZones) != 0 {
+		t.Errorf("quiet mode should have 0 tool zones, got %d", len(m.toolZones))
+	}
+}
+
+func TestVerboseShowsBlocks(t *testing.T) {
+	m := &Model{width: 80, verbose: true, reasoningExpanded: map[string]bool{"reasoning-1": true}}
+	m.messages = []Message{
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "response", Reasoning: "model reasoning"},
+		{Role: "tool", ToolName: "bash", Content: "tool output"},
+	}
+
+	output := m.renderMessages()
+	stripped := stripANSI(output)
+
+	if !strings.Contains(stripped, "Reasoning") {
+		t.Error("verbose mode should render reasoning toggle")
+	}
+	if !strings.Contains(stripped, "model reasoning") {
+		t.Error("verbose mode should render reasoning content")
+	}
+	if !strings.Contains(stripped, "bash") {
+		t.Error("verbose mode should render tool name")
+	}
+	if len(m.reasoningZones) != 1 {
+		t.Errorf("verbose mode should have 1 reasoning zone, got %d", len(m.reasoningZones))
+	}
+	if len(m.toolZones) != 1 {
+		t.Errorf("verbose mode should have 1 tool zone, got %d", len(m.toolZones))
+	}
+}
+
+func TestToggleVerbose(t *testing.T) {
+	m := &Model{width: 80, verbose: false}
+	if m.verbose {
+		t.Error("should start with verbose off")
+	}
+
+	m.ToggleVerbose()
+	if !m.verbose {
+		t.Error("should toggle verbose on")
+	}
+	if m.ephemMsg != "Verbose on." {
+		t.Errorf("expected ephemeral message 'Verbose on.', got %q", m.ephemMsg)
+	}
+
+	m.ToggleVerbose()
+	if m.verbose {
+		t.Error("should toggle verbose off")
+	}
+	if m.ephemMsg != "Verbose off." {
+		t.Errorf("expected ephemeral message 'Verbose off.', got %q", m.ephemMsg)
+	}
+}
+
+func TestQuietModeHidesLiveThinking(t *testing.T) {
+	m := &Model{width: 80, verbose: false}
+	m.thinking = true
+	m.streaming = false
+	m.thinkContent = "thinking..."
+
+	output := m.renderMessages()
+	stripped := stripANSI(output)
+
+	if strings.Contains(stripped, "thinking...") {
+		t.Error("quiet mode should not render live thinking content")
+	}
+	if strings.Contains(stripped, "Reasoning...") {
+		t.Error("quiet mode should not render live reasoning toggle")
+	}
+
+	m.verbose = true
+	output = m.renderMessages()
+	stripped = stripANSI(output)
+
+	if !strings.Contains(stripped, "Reasoning...") {
+		t.Error("verbose mode should render live thinking with 'Reasoning...' spinner")
+	}
+	if !strings.Contains(stripped, "thinking...") {
+		t.Error("verbose mode should render live thinking content")
 	}
 }
