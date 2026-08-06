@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.50.0](https://github.com/buchenberg/yaah/compare/v0.49.0...v0.50.0) (2026-08-06)
+
+
+### Features
+
+* **tui2:** separate task pane, move provider info to InfoPane ([#160](https://github.com/buchenberg/yaah/issues/160)) ([f28736b](https://github.com/buchenberg/yaah/commit/f28736b992d6782e1ecf935796ee328955b7fc12))
+* **web:** colon-commands, reasoning toggle, search, UX polish ([#162](https://github.com/buchenberg/yaah/issues/162)) ([abcea76](https://github.com/buchenberg/yaah/commit/abcea76c90d03b078ba9103e402ac46c08eeeea8))
+
 ## [0.49.0](https://github.com/buchenberg/yaah/compare/v0.48.1...v0.49.0) (2026-08-06)
 
 
