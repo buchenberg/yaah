@@ -100,6 +100,52 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 /* running tool pulse */
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 .tool-running .tool-icon{animation:pulse 1.2s ease-in-out infinite}
+.tool:hover{background:color-mix(in srgb,var(--pico-primary) 6%,transparent);border-radius:6px}
+
+/* scroll-to-bottom button */
+.scroll-btn{position:sticky;bottom:0;align-self:center;background:var(--pico-card-background-color);border:1px solid var(--pico-muted-border-color);border-radius:20px;padding:.25rem .75rem;font-size:.8rem;cursor:pointer;color:var(--pico-muted-color);box-shadow:0 2px 8px rgba(0,0,0,.18);margin-top:-2rem;z-index:10;transition:opacity .2s,transform .2s}
+.scroll-btn:hover{color:var(--pico-primary);border-color:var(--pico-primary)}
+
+/* smooth scrolling */
+#log{scroll-behavior:smooth}
+
+/* auto-resize transition */
+#prompt{transition:height .12s ease}
+
+/* colon-command dropdown */
+.cmd-wrap{position:relative;flex:1;display:flex;flex-direction:column-reverse}
+.cmd-drop{background:var(--pico-card-background-color);border:1px solid var(--pico-muted-border-color);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.25);max-height:260px;overflow-y:auto;margin-bottom:4px;animation:pal-in .12s ease-out;z-index:50}
+.cmd-drop .cmd-item{padding:.35rem .65rem;cursor:pointer;font-size:.8rem;font-family:var(--pico-font-family-monospace,monospace);display:flex;align-items:center;gap:.4rem}
+.cmd-drop .cmd-item.active,.cmd-drop .cmd-item:hover{background:color-mix(in srgb,var(--pico-primary) 16%,transparent)}
+.cmd-drop .cmd-desc{color:var(--pico-muted-color);font-size:.75rem;margin-left:auto;flex-shrink:0}
+.cmd-steer-wrap{display:flex;align-items:center;gap:.35rem;padding:.35rem .65rem;border-bottom:1px solid var(--pico-muted-border-color)}
+.cmd-steer-wrap .cmd-prefix{color:var(--pico-primary);font-weight:700;font-family:var(--pico-font-family-monospace,monospace);font-size:.8rem;white-space:nowrap}
+.cmd-steer-wrap input{flex:1;margin:0;padding:.15rem .3rem;border:1px solid var(--pico-muted-border-color);border-radius:4px;font-size:.8rem;font-family:inherit;background:transparent;color:var(--pico-color)}
+.cmd-steer-wrap input:focus{outline:none;border-color:var(--pico-primary)}
+
+/* search overlay */
+.search-overlay{position:fixed;top:0;left:0;right:0;z-index:200;background:var(--pico-card-background-color);border-bottom:2px solid var(--pico-primary);padding:.6rem 1rem;display:flex;align-items:center;gap:.5rem;box-shadow:0 4px 16px rgba(0,0,0,.3);animation:pal-in .15s ease-out}
+.search-overlay input{flex:1;margin:0;padding:.3rem 0;border:0;background:transparent;color:var(--pico-color);font-size:1rem;font-family:inherit;box-shadow:none}
+.search-overlay input:focus{outline:none;border:0;box-shadow:none;background:transparent}
+.search-overlay .search-info{color:var(--pico-muted-color);font-size:.8rem;white-space:nowrap}
+.search-overlay .search-kbd{border:1px solid var(--pico-muted-border-color);border-radius:3px;padding:0 .25rem;font-size:.7rem;font-family:inherit}
+
+/* help overlay */
+.help-overlay{position:fixed;top:0;left:0;right:0;bottom:0;z-index:200;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45)}
+.help-card{background:var(--pico-card-background-color);border:1px solid var(--pico-muted-border-color);border-radius:12px;padding:1.2rem 1.5rem;max-width:450px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.35);animation:pal-in .15s ease-out;max-height:80vh;overflow-y:auto}
+.help-card h3{margin:0 0 .8rem;font-size:1.1rem}
+.help-card .help-cmd{display:flex;align-items:baseline;gap:.5rem;padding:.3rem 0;font-size:.85rem;border-bottom:1px solid var(--pico-muted-border-color)}
+.help-card .help-cmd:last-child{border-bottom:0}
+.help-card .help-name{font-family:var(--pico-font-family-monospace,monospace);font-weight:600;color:var(--pico-primary);flex-shrink:0;min-width:7rem}
+.help-card .help-desc{color:var(--pico-muted-color)}
+.help-card .help-close{margin-top:.8rem}
+
+/* message search highlight */
+.msg.search-hit{outline:2px solid var(--pico-primary);outline-offset:2px;border-radius:4px}
+
+/* reasoning toggle */
+.reason-toggle{cursor:pointer;user-select:none;color:var(--pico-muted-color);font-size:.8rem;padding:.25rem 0}
+.reason-toggle:hover{color:var(--pico-color)}
 
 /* thinking bounce */
 .think{align-self:flex-start;padding:.6rem 1rem;border-radius:12px;border-bottom-left-radius:4px;font-size:.85rem;max-width:80%;background:var(--pico-card-background-color);color:var(--pico-muted-color)}
@@ -116,12 +162,12 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 .led{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;background:#555;transition:background .2s}
 .led.on{background:#22c55e}
 .led.off{background:#555}
-.led.active{background:#facc15;animation:pulse 1s ease-in-out infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.led.active{background:#facc15;animation:pulse-led 1s ease-in-out infinite}
+@keyframes pulse-led{0%,100%{opacity:1}50%{opacity:.3}}
 dialog article{max-width:480px;min-width:320px}
 </style>
 </head>
-<body x-data="yaah" x-cloak>
+<body x-data="yaah" x-cloak @keydown.window="globKey($event)">
 
   <!-- header bar -->
   <div id="head">
@@ -212,19 +258,49 @@ dialog article{max-width:480px;min-width:320px}
       </div>
     </div>
   </template>
+  <button class="scroll-btn" x-show="showScrollBtn" @click="scrollToBottom()">↓ Scroll to bottom</button>
   <div class="think" x-show="live && !stream && think">
     <span class="bounce"><span></span><span></span><span></span></span>
-    <div class="reason" x-ref="reason" x-text="think" x-show="think"></div>
+    <template x-if="!reasonExpanded">
+      <div class="reason-toggle" @click="reasonExpanded = true">▶ Reasoning…</div>
+    </template>
+    <template x-if="reasonExpanded">
+      <div class="reason" x-ref="reason" x-text="think" @click="reasonExpanded = false"></div>
+    </template>
   </div>
   <div class="msg asst" x-show="stream" x-html="md(stream)"></div>
 </div>
 
 <div id="bar">
-  <textarea id="prompt" rows="1" placeholder="Ask yaah…" x-ref="el"
-    :disabled="live"
-    @keydown.enter="!$event.shiftKey && ($event.preventDefault(), send())"
-    @input="$refs.el.style.height='auto';$refs.el.style.height=Math.min($refs.el.scrollHeight,160)+'px'"
-    autofocus></textarea>
+  <div class="cmd-wrap">
+    <div class="cmd-drop" x-show="cmdOpen" @click.outside="cmdDismiss()">
+      <template x-if="cmdSteerMode">
+        <div class="cmd-steer-wrap">
+          <span class="cmd-prefix">:steer</span>
+          <input x-ref="steerInput" x-model="cmdSteerText" placeholder="steering text…" autocomplete="off"
+            @keydown.enter.prevent="cmdRunSteer()"
+            @keydown.escape="$event.preventDefault(); cmdDismiss()">
+        </div>
+      </template>
+      <template x-if="!cmdSteerMode">
+        <template x-for="(c, i) in cmdFiltered()" :key="c.id">
+          <div class="cmd-item" :class="{'active': i === cmdIdx}"
+            @click="cmdSelect(i)" @mouseenter="cmdIdx = i">
+            <span x-text="c.label"></span>
+            <span class="cmd-desc" x-text="c.desc"></span>
+          </div>
+        </template>
+      </template>
+    </div>
+    <textarea id="prompt" rows="1" placeholder="Ask yaah…" x-ref="el"
+      :disabled="(live && !cmdOpen) || cmdSteerMode"
+      @keydown.enter="!$event.shiftKey && ($event.preventDefault(), cmdOpen ? cmdRun() : send())"
+      @keydown.escape="cmdOpen && ($event.preventDefault(), cmdDismiss())"
+      @keydown.up="cmdOpen && ($event.preventDefault(), cmdMove(-1))"
+      @keydown.down="cmdOpen && ($event.preventDefault(), cmdMove(1))"
+      @input="autoResize(); cmdDetect()"
+      autofocus></textarea>
+  </div>
   <button :disabled="live" @click="send()">Send</button>
   <button x-show="live" class="secondary" @click="stop()">Stop</button>
 </div>
@@ -232,6 +308,35 @@ dialog article{max-width:480px;min-width:320px}
 <div id="foot">
   <span><span class="led" :class="live ? 'active' : (on ? 'on' : 'off')"></span><span x-text="status"></span></span>
   <span x-text="ctx ? ctx + '% context' : ''"></span>
+</div>
+
+<!-- search overlay -->
+<div class="search-overlay" x-show="searchOpen" @keydown.window.escape="searchClose()">
+  <input x-ref="searchInput" x-model="searchQuery" placeholder="Search messages…"
+    @input="searchIdx = 0; searchFind()"
+    @keydown.enter.prevent="searchIdx++; searchFind()"
+    autocomplete="off" spellcheck="false">
+  <span class="search-info" x-show="searchTotal" x-text="searchInfo()"></span>
+  <span class="search-info"><span class="search-kbd">esc</span> close</span>
+</div>
+
+<!-- help overlay -->
+<div class="help-overlay" x-show="helpOpen" @click.outside="helpOpen = false" @keydown.window.escape="helpOpen = false">
+  <div class="help-card">
+    <h3>Colon Commands</h3>
+    <div class="help-cmd"><span class="help-name">:compact</span><span class="help-desc">Compact context / free tokens</span></div>
+    <div class="help-cmd"><span class="help-name">:model</span><span class="help-desc">Switch provider/model</span></div>
+    <div class="help-cmd"><span class="help-name">:steer &lt;text&gt;</span><span class="help-desc">Inject steering message (while running)</span></div>
+    <div class="help-cmd"><span class="help-name">:clear</span><span class="help-desc">Clear conversation view (local only)</span></div>
+    <div class="help-cmd"><span class="help-name">:stop</span><span class="help-desc">Abort running agent</span></div>
+    <div class="help-cmd"><span class="help-name">:login</span><span class="help-desc">Send yaah login request</span></div>
+    <div class="help-cmd"><span class="help-name">:logout</span><span class="help-desc">Send yaah logout request</span></div>
+    <h3 style="margin-top:1rem">Keyboard Shortcuts</h3>
+    <div class="help-cmd"><span class="help-name" x-text="palKeyLabel"></span><span class="help-desc">Command palette</span></div>
+    <div class="help-cmd"><span class="help-name">:</span><span class="help-desc">Colon-command typeahead</span></div>
+    <div class="help-cmd"><span class="help-name">/</span><span class="help-desc">Search messages</span></div>
+    <button class="help-close secondary" @click="helpOpen = false">Close</button>
+  </div>
 </div>
 
 <dialog x-ref="dlg">
@@ -309,12 +414,21 @@ document.addEventListener('alpine:init', () => {
       models: [], providerNames: {},
       modal: {type:'',title:'',q:'',opts:[],multi:false,name:'',args:'',aid:null},
       _es: null,
-      // track running tool messages by tool_id for end-event update
       _tools: {},
+      cmdOpen: false, cmdIdx: 0, cmdQuery: '', cmdSteerMode: false, cmdSteerText: '',
+      reasonExpanded: false, showScrollBtn: false,
+      searchOpen: false, searchQuery: '', searchIdx: 0, searchTotal: 0, searchHits: [],
+      helpOpen: false,
 
       init() {
         this.palKeyLabel = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl+K'
         this.connect()
+        this.$nextTick(() => {
+          const l = this.$refs.log
+          if (l) l.addEventListener('scroll', () => {
+            this.showScrollBtn = l.scrollTop < l.scrollHeight - l.clientHeight - 120
+          })
+        })
       },
       md(t) { return marked.parse(t) },
       classOf(r) { return r === 'user' ? 'user' : r === 'error' ? 'err' : 'asst' },
@@ -372,6 +486,7 @@ document.addEventListener('alpine:init', () => {
         this._es.onopen = () => { this.on = true; this.status = 'ready' }
         this._es.onmessage = e => { try { this.onEvt(JSON.parse(e.data)) } catch (_) {} }
         this._es.onerror = () => { this.on = false; this.status = 'reconnecting…' }
+        this.cmdOpen = false; this.searchClose()
       },
 
       onEvt(d) {
@@ -416,7 +531,7 @@ document.addEventListener('alpine:init', () => {
               if (!t.error) t.error = 'interrupted'
             }
             this._tools = {}
-            this.live = false; this.think = ''
+            this.live = false; this.think = ''; this.reasonExpanded = false
             if (d.error) this.add('error', d.error)
             if (d.context_tokens && d.context_window) this.ctx = Math.min(Math.round(d.context_tokens / d.context_window * 100), 100)
             this.status = 'ready'; this.scroll(); break
@@ -558,11 +673,145 @@ document.addEventListener('alpine:init', () => {
       },
       allow(v) { this.post({type:'answer', id:this.modal.aid, value: String(v)}); this.$refs.dlg.close() },
 
+      // colon-command typeahead
+      cmdList: [
+        {id:'compact', label:':compact', desc:'Compact context'},
+        {id:'model', label:':model', desc:'Switch provider/model'},
+        {id:'steer', label:':steer <text>', desc:'Inject steering message'},
+        {id:'clear', label:':clear', desc:'Clear conversation view'},
+        {id:'help', label:':help', desc:'Show command list'},
+        {id:'stop', label:':stop', desc:'Abort running agent'},
+        {id:'login', label:':login', desc:'Send login request'},
+        {id:'logout', label:':logout', desc:'Send logout request'},
+      ],
+      cmdFiltered() {
+        const q = (this.cmdQuery || '').toLowerCase()
+        if (!q) return this.cmdList
+        return this.cmdList.filter(c => c.label.toLowerCase().includes(q) || c.id.toLowerCase().includes(q))
+      },
+      cmdDetect() {
+        const v = this.$refs.el.value
+        if (v.startsWith(':')) {
+          this.cmdQuery = v.slice(1)
+          this.cmdOpen = true
+          this.cmdSteerMode = false
+          this.cmdIdx = 0
+        } else {
+          this.cmdOpen = false
+        }
+      },
+      cmdMove(d) {
+        const items = this.cmdFiltered()
+        if (!items.length) return
+        this.cmdIdx = (this.cmdIdx + d + items.length) % items.length
+      },
+      cmdSelect(i) {
+        this.cmdIdx = i
+        this.cmdRun()
+      },
+      cmdDismiss() {
+        this.cmdOpen = false
+        this.cmdSteerMode = false
+        this.cmdSteerText = ''
+        this.cmdQuery = ''
+        if (this.$refs.el) { this.$refs.el.value = ''; this.$refs.el.focus() }
+      },
+      cmdRun() {
+        if (this.cmdSteerMode) return
+        const items = this.cmdFiltered()
+        const c = items[this.cmdIdx]
+        if (!c) { this.cmdDismiss(); return }
+        if (c.id === 'steer') {
+          if (!this.live) { this.status = 'steer only works while running'; this.cmdDismiss(); return }
+          this.cmdSteerMode = true
+          this.$nextTick(() => { const i = this.$refs.steerInput; if (i) i.focus() })
+          return
+        }
+        this.cmdDismiss()
+        if (c.id === 'model') { this.palShow(); return }
+        if (c.id === 'clear') { this.msgs = []; this._tools = {}; return }
+        if (c.id === 'help') { this.helpOpen = true; return }
+        if (c.id === 'compact') { this.post({type:'compact'}); return }
+        if (c.id === 'stop') { this.stop(); return }
+        if (c.id === 'login') { this.post({type:'login'}); return }
+        if (c.id === 'logout') { this.post({type:'logout'}); return }
+      },
+      cmdRunSteer() {
+        const t = this.cmdSteerText.trim()
+        this.cmdDismiss()
+        if (t) this.post({type:'steer', text:t})
+      },
+
+      // auto-resize textarea
+      autoResize() {
+        const el = this.$refs.el
+        el.style.height = 'auto'
+        el.style.height = Math.min(el.scrollHeight, 160) + 'px'
+      },
+
+      // scroll to bottom
+      scrollToBottom() {
+        const l = this.$refs.log
+        if (l) { l.scrollTop = l.scrollHeight; this.showScrollBtn = false }
+      },
+
+      // global keyboard handler
+      globKey(e) {
+        // Ctrl+K handled by palKey via pal-wrap
+        // slash for search (only when not in input)
+        if (e.key === '/' && !this.searchOpen && !this.palOpen && !this.cmdOpen) {
+          const tag = e.target.tagName
+          if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+          e.preventDefault()
+          this.searchOpen = true
+          this.searchQuery = ''
+          this.searchIdx = 0
+          this.searchHits = []
+          this.searchTotal = 0
+          this.$nextTick(() => { const i = this.$refs.searchInput; if (i) i.focus() })
+        }
+      },
+
+      // search
+      searchFind() {
+        this.searchHits = []
+        const q = this.searchQuery.toLowerCase()
+        if (!q) { this.searchTotal = 0; return }
+        const els = this.$refs.log.querySelectorAll('.msg')
+        els.forEach(el => { el.classList.remove('search-hit') })
+        const hits = []
+        els.forEach(el => {
+          if (el.textContent.toLowerCase().includes(q)) hits.push(el)
+        })
+        this.searchHits = hits
+        this.searchTotal = hits.length
+        if (this.searchIdx >= hits.length) this.searchIdx = 0
+        if (hits.length) {
+          hits.forEach(el => el.classList.remove('search-hit'))
+          const idx = this.searchIdx % hits.length
+          hits[idx].classList.add('search-hit')
+          hits[idx].scrollIntoView({block:'center', behavior:'smooth'})
+        }
+      },
+      searchClose() {
+        this.searchOpen = false
+        this.searchQuery = ''
+        this.searchHits = []
+        this.searchTotal = 0
+        const els = this.$refs.log.querySelectorAll('.search-hit')
+        els.forEach(el => el.classList.remove('search-hit'))
+      },
+      searchInfo() {
+        if (!this.searchTotal) return ''
+        return ((this.searchIdx % this.searchTotal) + 1) + ' / ' + this.searchTotal
+      },
+
       send() {
         const el = this.$refs.el, t = el.value.trim()
-        if (!t || this.live) return
+        if (!t || (this.live && !this.cmdOpen)) return
+        this.cmdOpen = false
         this.add('user', t); el.value = ''; el.style.height = 'auto'
-        this.live = true; this.think = ''
+        this.live = true; this.think = ''; this.reasonExpanded = false
         this.post({type:'prompt', text: t}); this.scroll()
       },
 

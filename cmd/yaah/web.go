@@ -190,6 +190,7 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	mux.Handle("/", http.FileServer(http.FS(subFS)))
 	mux.HandleFunc("/api/stream", ws.handleStream)
 	mux.HandleFunc("/api/action", ws.handleAction)
+	mux.HandleFunc("/api/commands", ws.handleCommands)
 
 	srv := &http.Server{Addr: webAddr, Handler: mux}
 
@@ -358,6 +359,14 @@ func (ws *webServer) handleAction(w http.ResponseWriter, r *http.Request) {
 		go webLogout(ws)
 		w.WriteHeader(http.StatusAccepted)
 
+	case "steer":
+		if req.Text == "" {
+			http.Error(w, "text is required", http.StatusBadRequest)
+			return
+		}
+		ws.sess.Steer(req.Text)
+		w.WriteHeader(http.StatusOK)
+
 	default:
 		http.Error(w, "unknown action type", http.StatusBadRequest)
 	}
@@ -375,6 +384,26 @@ func (ws *webServer) runPrompt(text string) {
 	ws.promptCtxCancel = nil
 	ws.mu.Unlock()
 	ws.running.Store(false)
+}
+
+func (ws *webServer) handleCommands(w http.ResponseWriter, r *http.Request) {
+	type cmd struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Arg         bool   `json:"arg,omitempty"`
+	}
+	cmds := []cmd{
+		{Name: ":compact", Description: "Summarize old messages"},
+		{Name: ":model", Description: "Switch model"},
+		{Name: ":steer", Description: "Inject text into current turn", Arg: true},
+		{Name: ":clear", Description: "Clear chat history"},
+		{Name: ":help", Description: "Show available commands"},
+		{Name: ":stop", Description: "Abort the running agent"},
+		{Name: ":login", Description: "Authenticate with an OAuth provider"},
+		{Name: ":logout", Description: "Remove stored OAuth credentials"},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(cmds)
 }
 
 func webLogin(ws *webServer) {
