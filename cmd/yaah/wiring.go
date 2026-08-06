@@ -25,7 +25,7 @@ import (
 )
 
 func newAgentSession() (*agentSession, error) {
-	return newAgentSessionWithOptions(true, false)
+	return newAgentSessionWithOptions(false, false)
 }
 
 // newAgentSessionWithOptions creates an agent session. When skipMCP is true,
@@ -33,11 +33,6 @@ func newAgentSession() (*agentSession, error) {
 // input sluggish on Windows). When skipOtel is true, OTel exporters are
 // not initialised.
 func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
-	// Migrate legacy ~/.yaah/mcp/*.json manifests into config.yaml.
-	if n, err := config.MigrateMCP(); err == nil && n > 0 {
-		fmt.Fprintf(os.Stderr, "%s migrated %d MCP server(s) from ~/.yaah/mcp/ to config.yaml\n", Dim("notice:"), n)
-	}
-
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
@@ -372,6 +367,7 @@ func initMCP(cfg *config.Config, toolReg *tools.Registry, skipMCP bool) ([]mcp.M
 			URL:       s.URL,
 			Transport: s.Transport,
 			Framing:   s.Framing,
+			Headers:   s.Headers,
 		}
 	}
 	clients, mcpTools, infos, err := mcp.StartMCPClientsFromConfig(context.Background(), mcpManifests, io.Discard)

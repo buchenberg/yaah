@@ -437,7 +437,7 @@ func (m *Model) renderMessages() string {
 // renderMCPStatus builds a status string for all discovered MCP servers.
 func (m *Model) renderMCPStatus() string {
 	if len(m.mcpInfos) == 0 {
-		return "No MCP servers configured. Add manifests to ~/.yaah/mcp/"
+		return "No MCP servers configured. Add mcp_servers to config.yaml"
 	}
 	var b strings.Builder
 	b.WriteString("MCP Servers:\n")

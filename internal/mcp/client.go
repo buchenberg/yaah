@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,6 +21,7 @@ type Manifest struct {
 	URL       string            `json:"url,omitempty"`
 	Transport string            `json:"transport,omitempty"` // "stdio" (default) or "http"
 	Framing   string            `json:"framing,omitempty"`   // stdio only: "" (auto), "newline", or "framed"
+	Headers   map[string]string `json:"headers,omitempty"`   // HTTP transport only
 }
 
 // ServerTool represents a tool exposed by an MCP server.
@@ -312,74 +312,4 @@ func (c *Client) Close() error {
 		_ = c.cmd.Wait()
 	}
 	return nil
-}
-
-// LoadManifest reads an MCP manifest file from the given path.
-func LoadManifest(path string) (*Manifest, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var m Manifest
-	if err := json.Unmarshal(data, &m); err != nil {
-		return nil, fmt.Errorf("parse manifest %s: %w", path, err)
-	}
-
-	// Default transport
-	if m.Transport == "" {
-		if m.URL != "" {
-			m.Transport = "http"
-		} else {
-			m.Transport = "stdio"
-		}
-	}
-
-	// Validate
-	switch m.Transport {
-	case "stdio":
-		if m.Command == "" {
-			return nil, fmt.Errorf("manifest %s: command is required for stdio transport", path)
-		}
-	case "http":
-		if m.URL == "" {
-			return nil, fmt.Errorf("manifest %s: url is required for http transport", path)
-		}
-	default:
-		return nil, fmt.Errorf("manifest %s: unknown transport %q", path, m.Transport)
-	}
-
-	return &m, nil
-}
-
-// DiscoverManifests scans directories for MCP server manifest files.
-// Returns a map of server name → manifest.
-func DiscoverManifests(dirs []string) map[string]*Manifest {
-	seen := make(map[string]bool)
-	out := make(map[string]*Manifest)
-
-	for _, dir := range dirs {
-		if _, err := os.Stat(dir); err != nil {
-			continue
-		}
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-				continue
-			}
-			name := entry.Name()[:len(entry.Name())-5] // strip .json
-			if seen[name] {
-				continue
-			}
-			m, err := LoadManifest(filepath.Join(dir, entry.Name()))
-			if err != nil {
-				continue
-			}
-			seen[name] = true
-			out[name] = m
-		}
-	}
-	return out
 }

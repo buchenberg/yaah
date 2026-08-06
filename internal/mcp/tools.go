@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 )
 
 // MCPTool wraps an MCP server tool as a yaah Tool.
@@ -91,68 +90,6 @@ func (t *MCPTool) Execute(ctx context.Context, args string) (string, error) {
 	return string(result), nil
 }
 
-// StartMCPClients discovers MCP manifests and starts clients.
-// Returns a list of started clients, their tools, and status info.
-func StartMCPClients(ctx context.Context, dirs []string) ([]MCPClient, []*MCPTool, []ServerInfo, error) {
-	return StartMCPClientsWithStderr(ctx, dirs, os.Stderr)
-}
-
-// StartMCPClientsWithStderr is like StartMCPClients but redirects MCP server
-// stderr to the given writer. Pass io.Discard to suppress server log output
-// (e.g. when running inside a TUI that owns the terminal).
-func StartMCPClientsWithStderr(ctx context.Context, dirs []string, stderr io.Writer) ([]MCPClient, []*MCPTool, []ServerInfo, error) {
-	manifests := DiscoverManifests(dirs)
-	var clients []MCPClient
-	var tools []*MCPTool
-	var infos []ServerInfo
-
-	for name, manifest := range manifests {
-		var client MCPClient
-		var err error
-
-		switch manifest.Transport {
-		case "http":
-			httpClient := NewHTTPClient(name, manifest.URL)
-			err = httpClient.Initialize(ctx)
-			client = httpClient
-		case "stdio":
-			stdioClient := NewClient(name, *manifest)
-			stdioClient.SetStderr(stderr)
-			err = stdioClient.Start(ctx)
-			if err == nil {
-				err = stdioClient.Initialize(ctx)
-			}
-			client = stdioClient
-		default:
-			continue
-		}
-
-		info := client.Info()
-		if err != nil {
-			info.Connected = false
-			info.Error = err.Error()
-			infos = append(infos, info)
-			continue
-		}
-
-		clients = append(clients, client)
-
-		// Wrap each tool
-		if httpC, ok := client.(*HTTPClient); ok {
-			for _, tool := range httpC.Tools() {
-				tools = append(tools, NewMCPTool(tool, client))
-			}
-		} else if stdioC, ok := client.(*Client); ok {
-			for _, tool := range stdioC.Tools() {
-				tools = append(tools, NewMCPTool(tool, client))
-			}
-		}
-		infos = append(infos, info)
-	}
-
-	return clients, tools, infos, nil
-}
-
 // StartMCPClientsFromConfig starts MCP clients from a map of named Manifests
 // (e.g. from config.yaml's mcp_servers section). The stderr parameter controls
 // where stdio MCP server stderr is written; pass io.Discard for TUIs.
@@ -167,7 +104,7 @@ func StartMCPClientsFromConfig(ctx context.Context, manifests map[string]*Manife
 
 		switch manifest.Transport {
 		case "http":
-			httpClient := NewHTTPClient(name, manifest.URL)
+			httpClient := NewHTTPClient(name, manifest.URL, manifest.Headers)
 			err = httpClient.Initialize(ctx)
 			client = httpClient
 		case "stdio":

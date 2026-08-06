@@ -10,63 +10,6 @@ import (
 	"testing"
 )
 
-func TestLoadManifest_parsesValidFile(t *testing.T) {
-	tmp := t.TempDir()
-	path := filepath.Join(tmp, "fs.json")
-	os.WriteFile(path, []byte(`{
-		"command": "npx",
-		"args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
-		"env": {"NODE_ENV": "production"}
-	}`), 0o644)
-
-	m, err := LoadManifest(path)
-	if err != nil {
-		t.Fatalf("LoadManifest() error: %v", err)
-	}
-	if m.Command != "npx" {
-		t.Errorf("Command = %q, want npx", m.Command)
-	}
-	if len(m.Args) != 3 {
-		t.Errorf("Args len = %d, want 3", len(m.Args))
-	}
-	if m.Env["NODE_ENV"] != "production" {
-		t.Errorf("Env[NODE_ENV] = %q", m.Env["NODE_ENV"])
-	}
-}
-
-func TestLoadManifest_errorsOnMissingCommand(t *testing.T) {
-	tmp := t.TempDir()
-	path := filepath.Join(tmp, "bad.json")
-	os.WriteFile(path, []byte(`{"args": ["foo"]}`), 0o644)
-
-	_, err := LoadManifest(path)
-	if err == nil {
-		t.Error("expected error for missing command")
-	}
-}
-
-func TestLoadManifest_parsesFraming(t *testing.T) {
-	tmp := t.TempDir()
-	path := filepath.Join(tmp, "docker.json")
-	os.WriteFile(path, []byte(`{
-		"command": "docker",
-		"args": ["mcp", "gateway", "run"],
-		"framing": "newline"
-	}`), 0o644)
-
-	m, err := LoadManifest(path)
-	if err != nil {
-		t.Fatalf("LoadManifest() error: %v", err)
-	}
-	if m.Framing != "newline" {
-		t.Errorf("Framing = %q, want newline", m.Framing)
-	}
-	// Default transport should still be stdio
-	if m.Transport != "stdio" {
-		t.Errorf("Transport = %q, want stdio (default)", m.Transport)
-	}
-}
-
 // TestClient_newlineFraming_handshake — simulates a Docker MCP gateway that
 // speaks newline-delimited JSON, not Content-Length. This was the bug that
 // caused "invalid character 'C'" warnings and silently dropped the server.
@@ -118,20 +61,6 @@ done
 	}
 }
 
-func TestLoadManifest_defaultsFramingToEmpty(t *testing.T) {
-	tmp := t.TempDir()
-	path := filepath.Join(tmp, "fs.json")
-	os.WriteFile(path, []byte(`{"command": "npx"}`), 0o644)
-
-	m, err := LoadManifest(path)
-	if err != nil {
-		t.Fatalf("LoadManifest() error: %v", err)
-	}
-	if m.Framing != "" {
-		t.Errorf("Framing = %q, want empty (default = auto-detect)", m.Framing)
-	}
-}
-
 // TestAutoDetectReader_picksNewline — first byte '{' means newline framing
 func TestAutoDetectReader_picksNewline(t *testing.T) {
 	// Send two newline-delimited messages
@@ -160,30 +89,5 @@ func TestAutoDetectReader_picksFramed(t *testing.T) {
 	}
 	if msg.ID == nil || *msg.ID != 1 {
 		t.Errorf("ID = %v, want 1", msg.ID)
-	}
-}
-
-func TestDiscoverManifests_findsJsonFiles(t *testing.T) {
-	tmp := t.TempDir()
-	os.WriteFile(filepath.Join(tmp, "alpha.json"), []byte(`{"command":"echo"}`), 0o644)
-	os.WriteFile(filepath.Join(tmp, "beta.json"), []byte(`{"command":"cat"}`), 0o644)
-	os.WriteFile(filepath.Join(tmp, "readme.txt"), []byte(`not a manifest`), 0o644)
-
-	manifests := DiscoverManifests([]string{tmp})
-	if len(manifests) != 2 {
-		t.Fatalf("expected 2 manifests, got %d", len(manifests))
-	}
-	if manifests["alpha"] == nil || manifests["alpha"].Command != "echo" {
-		t.Errorf("alpha manifest missing or wrong")
-	}
-	if manifests["beta"] == nil || manifests["beta"].Command != "cat" {
-		t.Errorf("beta manifest missing or wrong")
-	}
-}
-
-func TestDiscoverManifests_skipsMissingDirs(t *testing.T) {
-	manifests := DiscoverManifests([]string{"/nonexistent"})
-	if len(manifests) != 0 {
-		t.Errorf("expected 0 manifests for missing dir, got %d", len(manifests))
 	}
 }
