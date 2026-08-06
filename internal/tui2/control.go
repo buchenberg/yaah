@@ -6,6 +6,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/tui2/colors"
 	"github.com/buchenberg/yaah/internal/tui2/components/question"
+	"github.com/buchenberg/yaah/internal/tui2/components/sessioninfo"
 	"github.com/buchenberg/yaah/internal/tui2/components/statusbar"
 	todoview "github.com/buchenberg/yaah/internal/tui2/components/todo"
 	"github.com/buchenberg/yaah/internal/types"
@@ -38,7 +39,7 @@ func (t *TUI2) handleControlMsg(msg types.CtrlMsg) {
 
 	case *types.CtrlTodos:
 		t.todoItems = m.Items
-		t.renderInfoPane()
+		t.renderTodoPane()
 
 	case *types.CtrlContextInfo:
 		ct := m.Tokens
@@ -54,16 +55,24 @@ func (t *TUI2) handleControlMsg(msg types.CtrlMsg) {
 		t.lastProvider = m.Provider
 		t.lastModel = m.Model
 		statusbar.Update(t.StatusBar, m.Provider, m.Model, t.contextTokens, t.contextWindow)
+		t.renderInfoPane()
 	}
 }
 
-// renderInfoPane rebuilds the right-side info pane from live state: the
-// context-window usage driven by CtrlContextInfo and the todo list driven
-// by CtrlTodos. It is invoked on Run() (empty initial state) and whenever
-// either control message arrives, so the pane always reflects real data.
+// renderInfoPane rebuilds the info pane from live state: session info
+// (provider/model/version), context token usage, and MCP server status.
 func (t *TUI2) renderInfoPane() {
 	var b strings.Builder
 
+	// Session section
+	b.WriteString(sessioninfo.Format(sessioninfo.Info{
+		Provider: t.lastProvider,
+		Model:    t.lastModel,
+		Version:  t.version,
+	}))
+	b.WriteString("\n\n")
+
+	// Context section
 	b.WriteString(colors.TagBold(colors.Accent, "Context\n"))
 	if t.contextWindow > 0 {
 		pct := float64(t.contextTokens) * 100 / float64(t.contextWindow)
@@ -77,8 +86,14 @@ func (t *TUI2) renderInfoPane() {
 	}
 	b.WriteString("\n")
 
-	b.WriteString(colors.TagBold(colors.Accent, "Tasks\n"))
-	b.WriteString(todoview.FormatList(t.todoItems))
+	// MCP section (placeholder for now)
+	b.WriteString(colors.TagBold(colors.Accent, "MCP\n"))
+	b.WriteString(colors.Tag(colors.Dim, "  \u2500\n"))
 
 	t.InfoPane.SetText(b.String())
+}
+
+// renderTodoPane rebuilds the dedicated task pane from live todo items.
+func (t *TUI2) renderTodoPane() {
+	t.TodoPane.SetText(todoview.FormatList(t.todoItems))
 }

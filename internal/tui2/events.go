@@ -124,8 +124,11 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 	}
 }
 
-func (t *TUI2) HandleContextInfo(tokens, _ int) {
+func (t *TUI2) HandleContextInfo(tokens, window int) {
 	t.App.QueueUpdateDraw(func() {
 		t.contextTokens = tokens
+		t.contextWindow = window
+		t.renderInfoPane()
+		statusbar.Update(t.StatusBar, t.lastProvider, t.lastModel, tokens, window)
 	})
 }
