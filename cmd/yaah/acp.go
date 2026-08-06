@@ -423,6 +423,19 @@ func forwardACPCtrl(ctx context.Context, ch <-chan types.CtrlMsg, sessionID stri
 					SessionUpdate: "agent_message_chunk",
 					Content:       &acpContent{Type: "text", Text: fmt.Sprintf("error: %v", m.Err)},
 				})
+			case *types.CtrlContinue:
+				// Inform the client and auto-continue.
+				msg := fmt.Sprintf("Max iterations (%d) reached — continuing.", m.MaxIter)
+				send(sessionID, acpUpdate{
+					SessionUpdate: "agent_message_chunk",
+					Content:       &acpContent{Type: "text", Text: msg},
+				})
+				if m.AnswerCh != nil {
+					select {
+					case m.AnswerCh <- true:
+					default:
+					}
+				}
 			case *types.CtrlDone:
 				return
 			case *types.CtrlContextInfo:

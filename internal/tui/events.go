@@ -360,6 +360,29 @@ func (m *Model) handleControlMsg(msg types.CtrlMsg) {
 	case *types.CtrlFallback:
 		m.provider = ctrl.Provider
 		m.modelName = ctrl.Model
+	case *types.CtrlContinue:
+		ch := make(chan string, 1)
+		m.questionModal = QuestionModal{
+			Header:   "Max iterations reached",
+			Question: fmt.Sprintf("The agent reached the iteration limit (%d). Continue?", ctrl.MaxIter),
+			Options: []QuestionOption{
+				{Label: "Yes", Description: "Let the agent keep working"},
+				{Label: "No", Description: "Stop the agent"},
+			},
+			Multiple: false,
+			AnswerCh: ch,
+		}
+		m.questionIdx = 0
+		m.questionMulti = make([]bool, 2)
+		m.questionMode = true
+		m.input.SetValue("")
+		m.input.Placeholder = ""
+		m.adjustViewport()
+		m.refreshViewport()
+		go func() {
+			answer := <-ch
+			ctrl.AnswerCh <- (answer == "Yes")
+		}()
 	case *types.CtrlModelList:
 		m.modelItems = ctrl.Models
 		if ctrl.ProviderNames != nil {

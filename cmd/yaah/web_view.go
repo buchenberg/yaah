@@ -69,7 +69,8 @@ type sseWireEvent struct {
 
 	Meta *wireHeaderMeta `json:"meta,omitempty"`
 
-	Items []wireTodo `json:"items,omitempty"`
+	Items  []wireTodo `json:"items,omitempty"`
+	MaxIter int       `json:"max_iter,omitempty"`
 
 	Tokens int `json:"tokens,omitempty"`
 	Window int `json:"window,omitempty"`
@@ -263,6 +264,23 @@ func forwardCtrl(ctx context.Context, ch <-chan types.CtrlMsg, v *sseView, am *a
 					case ans := <-ansCh:
 						m.ApproveCh <- (ans == "true")
 					case <-ctx.Done():
+					}
+				}()
+			case *types.CtrlContinue:
+				id := fmt.Sprintf("q%d", idGen.Add(1))
+				ansCh := make(chan string, 1)
+				am.register(id, ansCh)
+				v.write(marshalWire(sseWireEvent{
+					Type:    "ctrl.continue",
+					ID:      id,
+					MaxIter: m.MaxIter,
+				}))
+				go func() {
+					select {
+					case ans := <-ansCh:
+						m.AnswerCh <- (ans == "yes")
+					case <-ctx.Done():
+						m.AnswerCh <- false
 					}
 				}()
 			case *types.CtrlTodos:

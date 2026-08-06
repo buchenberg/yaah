@@ -33,6 +33,13 @@ func (t *TUI2) handleControlMsg(msg types.CtrlMsg) {
 			m.ApproveCh <- approved
 		})
 
+	case *types.CtrlContinue:
+		t.ShowApproval("Max iterations",
+			fmt.Sprintf("The agent reached the iteration limit (%d). Continue?", m.MaxIter),
+			func(approved bool) {
+				m.AnswerCh <- approved
+			})
+
 	case *types.CtrlModelList:
 		t.availableModels = m.Models
 		t.providerNames = m.ProviderNames

@@ -90,7 +90,8 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 	messages := l.State.Messages
 	pipe := l.buildPipeline()
 
-	for iter := 0; iter < l.Config.MaxLoopCycles; iter++ {
+	for {
+		for iter := 0; iter < l.Config.MaxLoopCycles; iter++ {
 		turnStart := time.Now()
 
 		select {
@@ -189,10 +190,13 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		for i := l.Persister.MsgIdx(); i < len(messages); i++ {
 			l.Persister.Persist(messages[i])
 		}
+		}
+		// max iterations reached — ask whether to continue
+		if l.ContinueAfterMaxIter == nil || !l.ContinueAfterMaxIter() {
+			l.State.Messages = messages
+			return "", fmt.Errorf("max iterations (%d) reached", l.Config.MaxLoopCycles)
+		}
 	}
-
-	l.State.Messages = messages
-	return "", fmt.Errorf("max iterations (%d) reached", l.Config.MaxLoopCycles)
 }
 
 // wireBackgroundHooks registers the loop's broker as the event sink for
