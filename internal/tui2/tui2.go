@@ -1,22 +1,18 @@
 package tui2
 
 import (
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	itodo "github.com/buchenberg/yaah/internal/todo"
-	"github.com/buchenberg/yaah/internal/tui2/components/approval"
 	"github.com/buchenberg/yaah/internal/tui2/components/banner"
 	"github.com/buchenberg/yaah/internal/tui2/components/command"
-	"github.com/buchenberg/yaah/internal/tui2/components/help"
 	"github.com/buchenberg/yaah/internal/tui2/components/infobar"
 	"github.com/buchenberg/yaah/internal/tui2/components/infopane"
 	"github.com/buchenberg/yaah/internal/tui2/components/input"
-	"github.com/buchenberg/yaah/internal/tui2/components/mcpinfo"
 	"github.com/buchenberg/yaah/internal/tui2/components/messages"
-	"github.com/buchenberg/yaah/internal/tui2/components/modelpicker"
-	"github.com/buchenberg/yaah/internal/tui2/components/question"
 	"github.com/buchenberg/yaah/internal/tui2/components/reasoning"
 	"github.com/buchenberg/yaah/internal/tui2/components/statusbar"
 	"github.com/buchenberg/yaah/internal/tui2/components/subagent"
@@ -31,52 +27,37 @@ import (
 // TUI2 is the tview-based terminal UI prototype.
 type TUI2 struct {
 	App   *tview.Application
-	Pages *tview.Pages // root for modal overlays
-	Root  *tview.Flex  // main content flex (a page within Pages)
+	Pages *tview.Pages
+	Root  *tview.Flex
 
-	// Header sub-components
 	Banner *tview.TextView
 
-	// Body components
 	InfoBar  *tview.TextView
 	Messages *tview.TextView
 	Input    *tview.TextArea
-	InfoPane *tview.TextView // right-side info panel
-	TodoPane *tview.TextView // right-side todo list
+	InfoPane *tview.TextView
+	TodoPane *tview.TextView
 
-	// Footer
 	StatusBar *tview.TextView
 
-	// Layout containers
 	Header *tview.Grid
 
-	// State
-	McpServers []mcpinfo.Server
+	conversation *Conversation
 
-	// Conversation log — a single ordered list of renderable items so
-	// tool calls, sub-agent blocks, and text render chronologically
-	// (interleaved) instead of grouped by type.
-	conversationLog []convItem
-
-	// Message blocks (used for toggle/collapse operations)
 	reasoningBlocks []*reasoning.Block
 	toolBlocks      []*toolblock.Block
 	subagentBlocks  []*subagent.Block
 	thinkingInd     *thinking.Indicator
 
-	// Plain text messages (non-block content)
-	plainMessages []string
+	theme *Theme
 
-	// --- Agent callbacks (set by cmd/yaah before Run) ---
 	OnSubmit  func(prompt string)
 	OnAbort   func()
 	OnCompact func()
 	OnClear   func()
 
-	// --- Control channel (fed by agent frame) ---
 	ControlCh <-chan types.CtrlMsg
 
-	// --- Streaming / agent state ---
 	pendingTokens string
 	pendingThink  string
 	pendingTool   string
@@ -90,23 +71,23 @@ type TUI2 struct {
 	thinkingLabel string
 	todoItems     []itodo.Item
 
-	// Model picker state
 	availableModels []string
 	providerNames   map[string]string
 
-	// CmdPalette is the vim-style ":" command input.
 	CmdPalette *command.Palette
 
-	// OnModelSelect is called when a model is chosen from the picker.
 	OnModelSelect func(model string)
 }
 
 // New creates a new TUI2 application.
 func New() *TUI2 {
+	th := DetectTheme()
 	t := &TUI2{
-		App:         tview.NewApplication(),
-		thinkingInd: thinking.New("Reasoning..."),
-		version:     "yaah",
+		App:           tview.NewApplication(),
+		thinkingInd:   thinking.New("Reasoning..."),
+		conversation:  &Conversation{},
+		theme:         &th,
+		version:       "yaah",
 	}
 	t.buildUI()
 	return t
@@ -122,18 +103,13 @@ func (t *TUI2) Run() error {
 	return t.App.Run()
 }
 
-// Stop gracefully shuts down the TUI.
-func (t *TUI2) Stop() {
-	t.App.Stop()
-}
+func (t *TUI2) Stop() { t.App.Stop() }
 
-// SetProvider sets the provider display name and refreshes the info pane.
 func (t *TUI2) SetProvider(name string) {
 	t.lastProvider = name
 	t.renderInfoPane()
 }
 
-// SetModel sets the model display name and refreshes the info pane.
 func (t *TUI2) SetModel(name string) {
 	t.lastModel = name
 	t.renderInfoPane()
@@ -152,8 +128,6 @@ func (t *TUI2) startControlLoop() {
 func (t *TUI2) startSpinnerTicker() {
 	go func() {
 		for range time.Tick(200 * time.Millisecond) {
-			// Run the ticker when the thinking spinner is visible OR any
-			// sub-agent block is active.
 			anyActive := t.thinkingInd.Visible()
 			if !anyActive {
 				for _, sb := range t.subagentBlocks {
@@ -181,7 +155,6 @@ func (t *TUI2) startSpinnerTicker() {
 
 // buildUI wires the component tree and layout.
 func (t *TUI2) buildUI() {
-	// --- Leaf primitives (from sub-packages) ---
 	var bannerLines int
 	bannerLines, t.Banner = banner.Build()
 	t.InfoBar, _ = infobar.Build()
@@ -190,7 +163,6 @@ func (t *TUI2) buildUI() {
 	t.InfoPane = infopane.Build()
 	t.StatusBar, _ = statusbar.Build()
 
-	// Command palette (vim-style ":" input, shown as a Pages overlay).
 	cmdModalName := "cmdpalette_modal"
 	t.CmdPalette = command.Build(func(cmd command.Cmd, arg string) {
 		t.HandleCommand(cmd, arg)
@@ -201,10 +173,7 @@ func (t *TUI2) buildUI() {
 	})
 	t.TodoPane = todo.Build(nil)
 
-	// --- Header: two-column grid (banner left | provider right) ---
-	// Size the header to exactly the banner height — no minimum floor.
 	headerRows := bannerLines
-
 	totalRows := headerRows
 	rows := make([]int, totalRows)
 	for i := range rows {
@@ -213,13 +182,11 @@ func (t *TUI2) buildUI() {
 
 	t.Header = tview.NewGrid().
 		SetRows(rows...).
-		SetColumns(-1). // full-width banner
+		SetColumns(-1).
 		SetBorders(false)
 
-	// Banner spans all content rows
 	t.Header.AddItem(t.Banner, 0, 0, headerRows, 1, 0, 0, false)
 
-	// --- Body: horizontal split — messages (4/5) | infopane+todos (1/5) ---
 	messagesCol := tview.NewFlex().
 		SetDirection(tview.FlexRow).
 		AddItem(t.Messages, 0, 1, false)
@@ -231,83 +198,39 @@ func (t *TUI2) buildUI() {
 
 	body := tview.NewFlex().
 		SetDirection(tview.FlexColumn).
-		AddItem(messagesCol, 0, 4, true). // ~80% width
-		AddItem(rightPane, 0, 1, false)   // ~20% width
+		AddItem(messagesCol, 0, 4, true).
+		AddItem(rightPane, 0, 1, false)
 
-	// --- Overall layout: header / infobar / body / input / footer ---
 	t.Root = tview.NewFlex().
 		SetDirection(tview.FlexRow).
 		SetFullScreen(true)
 
-	t.Root.AddItem(t.Header, totalRows, 0, false) // header: dynamic, no grow
-	t.Root.AddItem(t.InfoBar, 1, 0, false)        // infobar: fixed 1
-	t.Root.AddItem(body, 0, 1, true)              // body: fills remaining
-	t.Root.AddItem(t.Input, 3, 0, false)          // input: full-width footer
-	t.Root.AddItem(t.StatusBar, 1, 0, false)      // footer: fixed 1
+	t.Root.AddItem(t.Header, totalRows, 0, false)
+	t.Root.AddItem(t.InfoBar, 1, 0, false)
+	t.Root.AddItem(body, 0, 1, true)
+	t.Root.AddItem(t.Input, 3, 0, false)
+	t.Root.AddItem(t.StatusBar, 1, 0, false)
 
-	// --- Application setup ---
 	t.Pages = tview.NewPages()
 	t.Pages.AddPage("main", t.Root, true, true)
 	t.App.SetRoot(t.Pages, true).EnableMouse(true)
 
-	// Global keybindings
 	t.App.SetInputCapture(t.globalInputCapture)
 
-	// Style the application
 	tview.Styles.PrimitiveBackgroundColor = tcell.ColorDefault
 	tview.Styles.PrimaryTextColor = tcell.ColorWhite
 	tview.Styles.BorderColor = tcell.ColorGray
 	tview.Styles.TitleColor = tcell.ColorYellow
 }
 
-// convItem is a single entry in the chronological conversation log.
-// Only one of the fields is set.
-type convItem struct {
-	text           string           // plain text message
-	toolBlock      *toolblock.Block // tool call block
-	subBlock       *subagent.Block  // sub-agent block
-	reasoningBlock *reasoning.Block // reasoning block (persistent)
-}
-
-// refreshMessages rebuilds the messages TextView content from all
-// conversation items in chronological order. Call after any state change.
+// refreshMessages rebuilds the messages TextView from the conversation viewmodel.
 func (t *TUI2) refreshMessages() {
-	var b strings.Builder
-
-	for _, item := range t.conversationLog {
-		switch {
-		case item.text != "":
-			b.WriteString("\n")
-			b.WriteString(item.text)
-			b.WriteString("\n\n")
-		case item.toolBlock != nil:
-			b.WriteString(item.toolBlock.Render())
-			b.WriteString("\n")
-		case item.subBlock != nil:
-			b.WriteString(item.subBlock.Render())
-			b.WriteString("\n")
-		case item.reasoningBlock != nil:
-			b.WriteString("\n")
-			b.WriteString(item.reasoningBlock.Render())
-			b.WriteString("\n\n")
-		}
-	}
-
-	// Streaming text (accumulated tokens, not yet flushed).
-	if t.isStreaming.Load() && t.pendingTokens != "" {
-		w := messageWidth(t.Messages)
-		b.WriteString(renderMarkdown(t.pendingTokens, w))
-		b.WriteString("\n")
-	}
-
-	// Spinner — inline at the bottom while thinking.
+	ctx := newRenderCtx(messageWidth(t.Messages), 0, t.theme)
+	var spinner string
 	if t.thinkingInd.Visible() {
-		b.WriteString("\n")
-		b.WriteString(t.thinkingInd.Render())
-		b.WriteString("\n")
+		spinner = t.thinkingInd.Render()
 	}
-
-	t.Messages.SetText(b.String())
+	t.Messages.SetText(t.conversation.Render(ctx, t.pendingTokens, spinner, t.thinkingInd.Visible()))
 	t.Messages.ScrollToEnd()
 }
 
@@ -315,6 +238,7 @@ func (t *TUI2) refreshMessages() {
 func (t *TUI2) AddReasoningBlock(id, content string) {
 	rb := reasoning.New(id, content, 0)
 	t.reasoningBlocks = append(t.reasoningBlocks, rb)
+	t.conversation.AppendReasoning(rb)
 	t.refreshMessages()
 }
 
@@ -329,14 +253,12 @@ func (t *TUI2) AddToolError(id, summary, err string) {
 	}
 }
 
-// ToggleBlockByIndex finds the nth block (of any type) and toggles it.
+// ToggleBlockByIndex finds the nth block and toggles it.
 func (t *TUI2) ToggleBlockByIndex(n int) {
-	// Flatten all blocks in render order.
 	type block interface {
 		Toggle()
 		IsExpanded() bool
 	}
-
 	blocks := []block{}
 	for _, rb := range t.reasoningBlocks {
 		blocks = append(blocks, rb)
@@ -347,7 +269,6 @@ func (t *TUI2) ToggleBlockByIndex(n int) {
 	for _, sb := range t.subagentBlocks {
 		blocks = append(blocks, sb)
 	}
-
 	if n >= 0 && n < len(blocks) {
 		blocks[n].Toggle()
 		t.refreshMessages()
@@ -374,19 +295,9 @@ func (t *TUI2) CollapseAll() {
 	t.refreshMessages()
 }
 
-// ShowThinking shows the animated thinking indicator.
-func (t *TUI2) ShowThinking() {
-	t.thinkingInd.Show()
-	t.refreshMessages()
-}
+func (t *TUI2) ShowThinking()   { t.thinkingInd.Show(); t.refreshMessages() }
+func (t *TUI2) HideThinking()    { t.thinkingInd.Hide(); t.refreshMessages() }
 
-// HideThinking hides the animated thinking indicator.
-func (t *TUI2) HideThinking() {
-	t.thinkingInd.Hide()
-	t.refreshMessages()
-}
-
-// AdvanceThinking advances the thinking spinner and lolcat seed.
 func (t *TUI2) AdvanceThinking() {
 	if t.thinkingInd.Visible() {
 		t.thinkingInd.Advance()
@@ -394,7 +305,6 @@ func (t *TUI2) AdvanceThinking() {
 	}
 }
 
-// AdvanceReasoningSeeds advances lolcat seeds for all reasoning blocks.
 func (t *TUI2) AdvanceReasoningSeeds(seed float64) {
 	for _, rb := range t.reasoningBlocks {
 		rb.SetSeed(seed)
@@ -402,7 +312,6 @@ func (t *TUI2) AdvanceReasoningSeeds(seed float64) {
 	t.refreshMessages()
 }
 
-// BlinkSubAgents toggles blink visibility for all active sub-agent blocks.
 func (t *TUI2) BlinkSubAgents() {
 	needsRefresh := false
 	for _, sb := range t.subagentBlocks {
@@ -416,138 +325,48 @@ func (t *TUI2) BlinkSubAgents() {
 	}
 }
 
-// globalInputCapture handles global keybindings (before tview routing).
-func (t *TUI2) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
-	action := Translate(ev, DefaultBindings())
-	switch action {
-	case ActionQuit:
-		t.Stop()
-		return nil
-	case ActionHelp:
-		help.Show(t.App, t.Pages, bindingsToHelpBindings(DefaultBindings()))
-		return nil
-	case ActionCommand:
-		const cmdModal = "cmdpalette_modal"
-		if t.Pages.HasPage(cmdModal) {
-			t.Pages.RemovePage(cmdModal)
-			t.App.SetFocus(t.Input)
-		} else {
-			t.CmdPalette.SetText("")
-			t.Pages.AddPage(cmdModal, t.CmdPalette, true, true)
-			t.App.SetFocus(t.CmdPalette)
-		}
-		return nil
-	case ActionClear:
-		t.plainMessages = nil
-		t.reasoningBlocks = nil
-		t.toolBlocks = nil
-		t.subagentBlocks = nil
-		t.refreshMessages()
-		return nil
-	case ActionToggleReasoning:
-		for _, rb := range t.reasoningBlocks {
-			rb.Toggle()
-		}
-		t.refreshMessages()
-		return nil
-	case ActionToggleTools:
-		for _, tb := range t.toolBlocks {
-			tb.Toggle()
-		}
-		t.refreshMessages()
-		return nil
-	case ActionToggleSubAgents:
-		for _, sb := range t.subagentBlocks {
-			sb.Toggle()
-		}
-		t.refreshMessages()
-		return nil
-	case ActionSend:
-		// Only treat Enter as submit when the input box is focused, so Enter
-		// still confirms modal dialogs (question/approval/model pickers).
-		if t.App.GetFocus() != t.Input {
-			return ev
-		}
-		if t.OnSubmit != nil {
-			text := t.Input.GetText()
-			if strings.TrimSpace(text) != "" {
-				t.Input.SetText("", false)
-				t.OnSubmit(text)
-			}
-		}
-		return nil
-	case ActionCancel:
-		if t.App.GetFocus() != t.Input {
-			return ev
-		}
-		if t.OnAbort != nil {
-			t.OnAbort()
-		}
-		return nil
+// AddUserMessage appends a styled user message to the conversation.
+func (t *TUI2) AddUserMessage(text string) {
+	accent := "#00afff"
+	if t.theme != nil && t.theme.Accent != "" {
+		accent = t.theme.Accent
 	}
-	return ev
+	t.conversation.AppendText("[" + accent + "]You: [-]" + text + "\n")
+	t.refreshMessages()
+	t.App.SetFocus(t.Input)
 }
 
-// --- Modal dispatchers (called from the agent frame) ---
-
-// ShowQuestion displays a question modal and returns answers via channel.
-func (t *TUI2) ShowQuestion(header, questionText string, opts []struct{ Label, Description string }, multiple bool, onAnswer func(question.Answer)) {
-	question.Show(t.App, t.Pages, header, questionText, opts, multiple, onAnswer)
-}
-
-// ShowApproval displays an approval modal and returns via callback.
-func (t *TUI2) ShowApproval(name, args string, onAnswer func(bool)) {
-	approval.Show(t.App, t.Pages, name, args, onAnswer)
-}
-
-// ShowModelPicker displays a model picker modal.
-func (t *TUI2) ShowModelPicker(models []string, providerNames map[string]string, onSelect func(string)) {
-	modelpicker.Show(t.App, t.Pages, models, providerNames, onSelect)
-}
-
-// HandleCommand dispatches a colon command.
-func (t *TUI2) HandleCommand(cmd command.Cmd, arg string) {
-	switch cmd {
-	case command.CmdQuit:
-		t.Stop()
-	case command.CmdClear:
-		t.plainMessages = nil
-		t.reasoningBlocks = nil
-		t.toolBlocks = nil
-		t.subagentBlocks = nil
-		t.refreshMessages()
-	case command.CmdHelp:
-		help.Show(t.App, t.Pages, bindingsToHelpBindings(DefaultBindings()))
-	case command.CmdCompact:
-		t.CollapseAll()
-	case command.CmdModel:
-		t.ShowModelPicker(t.availableModels, t.providerNames, func(model string) {
-			if t.OnModelSelect != nil {
-				t.OnModelSelect(model)
-			}
-		})
-	default:
-		// Other commands handled by the agent frame.
+// addAssistantResponse appends a markdown-rendered assistant response.
+func (t *TUI2) addAssistantResponse(text string, width int) {
+	w := width
+	if w <= 0 {
+		w = messageWidth(t.Messages)
 	}
+	t.conversation.AppendText(renderMarkdown(text, w))
+	t.refreshMessages()
+	t.App.SetFocus(t.Input)
 }
 
-// UpdateTodos updates the TODO list in the right panel.
-func (t *TUI2) UpdateTodos(items []itodo.Item) {
-	t.TodoPane.SetText(todo.FormatList(items))
-}
-
-// UpdateInfopane sets a specific infopane tab content.
-// tab is one of: "subagent", "todos", "context", "mcp".
-func (t *TUI2) UpdateInfopane(tab, content string) {
-	_ = tab // TODO: wire infopane tabs
-	t.InfoPane.SetText(content)
-}
-
-// bindingsToHelpBindings converts internal bindings to the help package's format.
-func bindingsToHelpBindings(bindings []Binding) []help.Binding {
-	var out []help.Binding
-	for _, b := range bindings {
-		out = append(out, help.Binding{Label: b.Label, HelpText: b.HelpText})
+func (t *TUI2) renderInfoPane() {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("[#00afff::b]Session[-]\n"))
+	b.WriteString(fmt.Sprintf("[#5f5f5f::d]  %s / %s[-]\n", t.lastProvider, t.lastModel))
+	b.WriteString(fmt.Sprintf("[#5f5f5f::d]  %s[-]\n\n", t.version))
+	b.WriteString(fmt.Sprintf("[#00afff::b]Context[-]\n"))
+	if t.contextWindow > 0 {
+		pct := float64(t.contextTokens) * 100 / float64(t.contextWindow)
+		if pct > 100 {
+			pct = 100
+		}
+		b.WriteString(fmt.Sprintf("[#5f5f5f::d]  %d / %d (%.1f%%)[-]\n", t.contextTokens, t.contextWindow, pct))
+	} else {
+		b.WriteString(fmt.Sprintf("[#5f5f5f::d]  ─[-]\n"))
 	}
-	return out
+	b.WriteString(fmt.Sprintf("\n[#00afff::b]MCP[-]\n"))
+	b.WriteString(fmt.Sprintf("[#5f5f5f::d]  ─[-]\n"))
+	t.InfoPane.SetText(b.String())
+}
+
+func (t *TUI2) renderTodoPane() {
+	t.TodoPane.SetText(todo.FormatList(t.todoItems))
 }

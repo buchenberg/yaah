@@ -101,8 +101,8 @@ func runTUI2() error {
 		if cancelAgent != nil {
 			cancelAgent()
 			cancelAgent = nil
-			app.HideThinking()
 		}
+		app.HideThinking()
 	}
 	app.OnCompact = func() {
 		go sess.Compact()

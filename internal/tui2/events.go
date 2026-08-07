@@ -72,15 +72,13 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 		})
 	case *agent.EscalationEvent:
 		t.App.QueueUpdateDraw(func() {
-			t.plainMessages = append(t.plainMessages,
-				fmt.Sprintf("[#ff5555]\u26A0 %s[-]", e.Summary))
+			t.conversation.AppendText(fmt.Sprintf("[#ff5555]\u26A0 %s[-]", e.Summary))
 			t.refreshMessages()
 		})
 	case *agent.CompactionStartedEvent:
 		t.App.QueueUpdateDraw(func() {
 			t.compacting = true
-			t.plainMessages = append(t.plainMessages,
-				fmt.Sprintf("[#888888]compacting (%d→%d tokens, %s)[-]", e.BeforeTokens, e.TargetTokens, e.Reason))
+			t.conversation.AppendText(fmt.Sprintf("[#888888]compacting (%d→%d tokens, %s)[-]", e.BeforeTokens, e.TargetTokens, e.Reason))
 			t.refreshMessages()
 		})
 	case *agent.CompactionDoneEvent:
@@ -91,10 +89,9 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			if e.IneffectiveNote != "" {
 				note = " " + e.IneffectiveNote
 			}
-			t.plainMessages = append(t.plainMessages,
-				fmt.Sprintf("[#888888]compacted %.0f%% (%.1fK → %.1fK, %s) in %.1fs%s[-]",
-					pct, float64(e.BeforeTokens)/1000, float64(e.AfterTokens)/1000,
-					e.Method, e.ElapsedSeconds, note))
+			t.conversation.AppendText(fmt.Sprintf("[#888888]compacted %.0f%% (%.1fK → %.1fK, %s) in %.1fs%s[-]",
+				pct, float64(e.BeforeTokens)/1000, float64(e.AfterTokens)/1000,
+				e.Method, e.ElapsedSeconds, note))
 			t.refreshMessages()
 		})
 	case *agent.DoneEvent:

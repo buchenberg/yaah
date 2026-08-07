@@ -67,10 +67,3 @@ func (b *Block) renderExpanded() string {
 	bld.WriteString(fmt.Sprintf(`  [%s]╰%s[-]`, colors.Dim, strings.Repeat("─", 58)))
 	return bld.String()
 }
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
