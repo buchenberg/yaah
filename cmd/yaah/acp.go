@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/acp"
-	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 	"github.com/spf13/cobra"
@@ -48,18 +47,6 @@ Methods implemented:
 
 func init() {
 	rootCmd.AddCommand(acpServeCmd)
-}
-
-// acpViewWithWrite wraps acpView and sends session/update notifications
-// for each event, tagging them with the active session ID.
-type acpViewWithWrite struct {
-	av        *acpView
-	send      func(sessionID string, update acp.Update)
-	sessionID string
-}
-
-func (v *acpViewWithWrite) HandleEvent(evt agent.Event) {
-	v.av.sendTo(v.sessionID, v.send, evt)
 }
 
 func runACPServe(cmd *cobra.Command, args []string) error {
@@ -219,12 +206,7 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 				currentPromptCancel = promptCancel
 				promptMu.Unlock()
 
-				av := newACPView()
-				wrapped := &acpViewWithWrite{
-					av:        av,
-					send:      sendUpdate,
-					sessionID: sessionID,
-				}
+				wrapped := acp.NewViewWithWrite(sendUpdate, sessionID)
 
 				ctrlCh := make(chan types.CtrlMsg, 64)
 				sess.SetView(wrapped)
@@ -405,6 +387,3 @@ func forwardACPCtrl(ctx context.Context, ch <-chan types.CtrlMsg, sessionID stri
 		}
 	}
 }
-
-// compile-time check
-var _ agent.View = (*acpViewWithWrite)(nil)
