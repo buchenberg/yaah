@@ -69,7 +69,7 @@ func (t *PowerShellTool) Execute(ctx context.Context, args string) (string, erro
 	cmd := exec.CommandContext(ctx, exe, "-NoProfile", "-NonInteractive", "-Command", params.Command)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
-		return "", fmt.Errorf("powershell: timed out after %s", timeout)
+		return "", ToolTimeoutError{Tool: "powershell", Timeout: timeout.String()}
 	}
 	output = truncateOutput(output)
 	if err != nil {

@@ -7,10 +7,11 @@ package prompts
 import (
 	"embed"
 	"fmt"
-	"os"
+	"log/slog"
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/buchenberg/yaah/internal/instructions"
 	"github.com/buchenberg/yaah/internal/skills"
@@ -84,25 +85,37 @@ func Escalation() string {
 
 // --- Chunk summarizer helpers ---
 
-// chunkSummarizerSections holds the four prompt sections split from
-// chunk_summarizer.md by the "---" separator.
-var chunkSummarizerSections []string
+var (
+	chunkSummarizerSections []string
+	chunkSectionsErr        error
+	chunkSectionsOnce       sync.Once
+)
 
-func init() {
-	chunkSummarizerSections = strings.Split(strings.TrimSpace(chunkSummarizerRaw), "\n---\n")
-	if len(chunkSummarizerSections) != 4 {
-		// Embedded template is malformed — this is a build-time invariant
-		// violation. Using log.Fatal instead of panic to produce a clearer
-		// diagnostic message.
-		fmt.Fprintf(os.Stderr, "FATAL: chunk_summarizer.md: expected 4 sections, got %d\n", len(chunkSummarizerSections))
-		os.Exit(1)
+func initChunkSections() {
+	chunkSectionsOnce.Do(func() {
+		chunkSummarizerSections = strings.Split(strings.TrimSpace(chunkSummarizerRaw), "\n---\n")
+		if len(chunkSummarizerSections) != 4 {
+			chunkSectionsErr = fmt.Errorf("chunk_summarizer.md: expected 4 sections, got %d", len(chunkSummarizerSections))
+			slog.Error("embedded template malformed", "error", chunkSectionsErr)
+		}
+	})
+}
+
+func chunkSection(idx int) string {
+	initChunkSections()
+	if chunkSectionsErr != nil || idx >= len(chunkSummarizerSections) {
+		return ""
 	}
+	return chunkSummarizerSections[idx]
 }
 
 // ChunkPreamble returns the "Summarize chunk X/Y…" prompt with the
 // given index and total substituted for {{NUM}} and {{TOTAL}}.
 func ChunkPreamble(num, total int) string {
-	s := chunkSummarizerSections[0]
+	s := chunkSection(0)
+	if s == "" {
+		return ""
+	}
 	s = strings.ReplaceAll(s, "{{NUM}}", fmt.Sprint(num))
 	s = strings.ReplaceAll(s, "{{TOTAL}}", fmt.Sprint(total))
 	return s
@@ -111,19 +124,19 @@ func ChunkPreamble(num, total int) string {
 // ChunkSummarizerRole returns the system role for per-chunk
 // summarization.
 func ChunkSummarizerRole() string {
-	return chunkSummarizerSections[1]
+	return chunkSection(1)
 }
 
 // ChunkMergerPreamble returns the preamble for merging partial
 // summaries into one coherent summary.
 func ChunkMergerPreamble() string {
-	return chunkSummarizerSections[2]
+	return chunkSection(2)
 }
 
 // ChunkMergerRole returns the system role for meta-summarization
 // (merging partial summaries).
 func ChunkMergerRole() string {
-	return chunkSummarizerSections[3]
+	return chunkSection(3)
 }
 
 // --- Conversation summary ---

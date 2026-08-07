@@ -23,6 +23,9 @@ func TestPathValidator_NoRestriction(t *testing.T) {
 
 func TestPathValidator_ContainsWorkspace(t *testing.T) {
 	ws := t.TempDir()
+	if real, err := filepath.EvalSymlinks(ws); err == nil {
+		ws = real
+	}
 	pv := NewPathValidator(ws, false, nil)
 
 	inside := filepath.Join(ws, "sub", "file.txt")
@@ -119,7 +122,30 @@ func TestPathValidator_DenyPatterns(t *testing.T) {
 
 func TestPathValidator_AskGrantsException(t *testing.T) {
 	ws := t.TempDir()
-	outside := filepath.Join(t.TempDir(), "file.txt")
+	if real, err := filepath.EvalSymlinks(ws); err == nil {
+		ws = real
+	}
+	outsideDir := t.TempDir()
+	if real, err := filepath.EvalSymlinks(outsideDir); err == nil {
+		outsideDir = real
+	}
+	outside := filepath.Join(outsideDir, "file.txt")
+
+	// Resolve outside to its canonical form so the path comparison
+	// is stable across macOS /var→/private/var symlinks and Windows
+	// short-name→long-name resolution.
+	canonical := outside
+	if abs, err := filepath.Abs(outside); err == nil {
+		canonical = abs
+	}
+	if real, err := filepath.EvalSymlinks(canonical); err == nil {
+		canonical = real
+	} else {
+		parent := filepath.Dir(canonical)
+		if realParent, err := filepath.EvalSymlinks(parent); err == nil {
+			canonical = filepath.Join(realParent, filepath.Base(canonical))
+		}
+	}
 
 	var gotPath, gotReason string
 	pv := NewPathValidator(ws, false, nil)
@@ -131,8 +157,8 @@ func TestPathValidator_AskGrantsException(t *testing.T) {
 	if _, err := pv.ResolvePath(outside); err != nil {
 		t.Fatalf("ask-granted path still rejected: %v", err)
 	}
-	if gotPath != outside {
-		t.Errorf("AskFn path = %q, want %q", gotPath, outside)
+	if gotPath != canonical {
+		t.Errorf("AskFn path = %q, want %q", gotPath, canonical)
 	}
 	if !strings.Contains(gotReason, "outside the workspace") {
 		t.Errorf("AskFn reason = %q, want workspace mention", gotReason)
@@ -183,6 +209,9 @@ func TestPathValidator_AskHomeAccess(t *testing.T) {
 
 func TestPathValidator_AskDenyPattern(t *testing.T) {
 	ws := t.TempDir()
+	if real, err := filepath.EvalSymlinks(ws); err == nil {
+		ws = real
+	}
 	pv := NewPathValidator(ws, false, []string{".env"})
 	pv.AskFn = func(path, reason string) bool {
 		return strings.Contains(reason, "deny pattern")

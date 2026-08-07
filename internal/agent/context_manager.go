@@ -24,9 +24,11 @@ import (
 // limits. Extracted from the Loop to isolate context management concerns
 // and make them independently configurable and testable.
 //
-// Phase 1: holds config and state fields. Methods still live on Loop
-// (agent_context.go, agent_truncation.go, agent_reasoning.go) and read
-// from this struct. Phase 2 will migrate the methods here.
+// Methods live on both Loop (thin delegation shims in agent_context.go,
+// agent_truncation.go) and ContextManager (implementations here). The
+// Loop wrappers sync state from Loop.State to ContextManager fields
+// before each call and back after — eliminating this sync dance is
+// future work.
 type ContextManager struct {
 	// Context window and compaction thresholds.
 	ContextWindow          int

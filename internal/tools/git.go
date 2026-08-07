@@ -180,7 +180,7 @@ func (t *GitTool) Execute(ctx context.Context, args string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
-		return "", fmt.Errorf("git: timed out after %s", timeout)
+		return "", ToolTimeoutError{Tool: "git", Timeout: timeout.String()}
 	}
 	output = truncateOutput(output)
 	if err != nil {

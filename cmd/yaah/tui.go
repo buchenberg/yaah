@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"sort"
 	"sync"
@@ -80,7 +81,7 @@ func fetchAllModels(ctx context.Context, cfg *config.Config) []string {
 		}
 		models, err := lister.ListModels(ctx)
 		if err != nil {
-			log.Printf("fetch models from %s: %v", name, err)
+			slog.Warn("fetch models failed", "provider", name, "error", err)
 			continue
 		}
 		for _, m := range models {

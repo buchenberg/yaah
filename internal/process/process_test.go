@@ -23,21 +23,25 @@ func TestNewManager(t *testing.T) {
 func TestStartSimpleCommand(t *testing.T) {
 	m := NewManager()
 
-	info, err := m.Start("Write-Host hello", "test process")
+	info, err := m.Start("echo hello", "test process")
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 	if info == nil {
 		t.Fatal("Start returned nil info")
 	}
+	defer m.Stop(info.ID)
 	if info.ID == "" {
 		t.Error("info.ID should not be empty")
 	}
-	if info.Status != "running" {
-		t.Errorf("info.Status = %q; want %q", info.Status, "running")
+	info.mu.Lock()
+	status := info.Status
+	info.mu.Unlock()
+	if status != "running" && status != "finished" {
+		t.Errorf("info.Status = %q; want %q or %q", status, "running", "finished")
 	}
-	if info.Command != "Write-Host hello" {
-		t.Errorf("info.Command = %q; want %q", info.Command, "Write-Host hello")
+	if info.Command != "echo hello" {
+		t.Errorf("info.Command = %q; want %q", info.Command, "echo hello")
 	}
 	if info.Description != "test process" {
 		t.Errorf("info.Description = %q; want %q", info.Description, "test process")
@@ -70,30 +74,45 @@ func TestStartSimpleCommand(t *testing.T) {
 func TestStartEchoProducesOutput(t *testing.T) {
 	m := NewManager()
 
-	info, err := m.Start("Write-Host 'line1'; Write-Host 'line2'", "echo test")
+	info, err := m.Start("echo line1; echo line2", "echo test")
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-
-	// Wait for process to finish and logs to accumulate
-	time.Sleep(500 * time.Millisecond)
-
-	logs := info.Logs()
-	if logs == "" {
-		t.Error("Logs should not be empty after running echo")
+	if info == nil {
+		t.Fatal("Start returned nil info")
 	}
-	t.Logf("logs: %q", logs)
+	defer m.Stop(info.ID)
+
+	// Poll until the process finishes and logs accumulate.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		info.mu.Lock()
+		s := info.Status
+		info.mu.Unlock()
+		if s != "running" {
+			logs := info.Logs()
+			if logs != "" {
+				t.Logf("logs: %q", logs)
+				return
+			}
+			t.Error("Logs should not be empty after running echo")
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Error("echo process still running after 2s")
 }
 
 func TestMultipleProcesses(t *testing.T) {
 	m := NewManager()
 
-	// Start several quick processes
 	for i := 0; i < 3; i++ {
-		if _, err := m.Start(fmt.Sprintf("Write-Host 'proc%d'", i),
-			fmt.Sprintf("process %d", i)); err != nil {
+		info, err := m.Start(fmt.Sprintf("echo proc%d", i),
+			fmt.Sprintf("process %d", i))
+		if err != nil {
 			t.Fatalf("Start %d failed: %v", i, err)
 		}
+		defer m.Stop(info.ID)
 	}
 
 	list := m.List()
@@ -115,22 +134,36 @@ func TestStartFailingCommand(t *testing.T) {
 	m := NewManager()
 
 	info, err := m.Start("exit 1", "failing test")
-	// Start may or may not return an error depending on shell
-	_ = err
+	if info == nil {
+		t.Fatal("Start returned nil info")
+	}
+	defer m.Stop(info.ID)
 
-	// Wait for process to fail
-	time.Sleep(time.Second)
+	if err != nil {
+		t.Logf("Start returned error: %v (continuing)", err)
+	}
 
-	// The status should eventually be "error" since we exited with 1
+	// Poll for status change instead of a single sleep.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		info.mu.Lock()
+		status := info.Status
+		info.mu.Unlock()
+		if status != "running" {
+			if status != "error" {
+				t.Errorf("failing command status = %q; want %q", status, "error")
+			}
+			t.Logf("failing command status: %q, logs: %q", status, info.Logs())
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
 	info.mu.Lock()
 	status := info.Status
 	info.mu.Unlock()
-
 	t.Logf("failing command status: %q, logs: %q", status, info.Logs())
-	// Status should be "error" (or at least not "running" anymore)
-	if status == "running" {
-		t.Error("failing command status still 'running' after wait")
-	}
+	t.Error("failing command status still 'running' after 2s")
 }
 
 // ---------- Stop ----------

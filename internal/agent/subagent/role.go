@@ -1,10 +1,29 @@
 package subagent
 
 import (
+	"fmt"
 	"os"
 	"sync/atomic"
 	"time"
 )
+
+// RoleNotFoundError is returned when a sub-agent role name has no matching
+// definition in the built-in or filesystem role registries. Use errors.Is with
+// a zero value to match:
+//
+//	errors.Is(err, RoleNotFoundError{})
+type RoleNotFoundError struct {
+	Role string
+}
+
+func (e RoleNotFoundError) Error() string {
+	return fmt.Sprintf("role %q not found", e.Role)
+}
+
+func (e RoleNotFoundError) Is(target error) bool {
+	_, ok := target.(RoleNotFoundError)
+	return ok
+}
 
 // SubAgentRole identifies the profile a sub-agent runs under. The role
 // determines which tools the sub-agent has access to, its iteration

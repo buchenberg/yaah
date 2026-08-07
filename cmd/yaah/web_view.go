@@ -69,8 +69,8 @@ type sseWireEvent struct {
 
 	Meta *wireHeaderMeta `json:"meta,omitempty"`
 
-	Items  []wireTodo `json:"items,omitempty"`
-	MaxIter int       `json:"max_iter,omitempty"`
+	Items   []wireTodo `json:"items,omitempty"`
+	MaxIter int        `json:"max_iter,omitempty"`
 
 	Tokens int `json:"tokens,omitempty"`
 	Window int `json:"window,omitempty"`

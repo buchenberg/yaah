@@ -105,7 +105,6 @@ func (l *Loop) applyDefaults() {
 	// pipeline.Compactor interface and handle chunked fallback.
 	l.CtxMgr.compactFn = func(ctx context.Context, msgs []types.Message, thresh float64) []types.Message {
 		l.State.Messages = msgs
-		l.CtxMgr.Messages = msgs
 		l.compactContext(ctx, thresh)
 		return l.State.Messages
 	}

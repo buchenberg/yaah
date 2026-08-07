@@ -73,6 +73,7 @@ func (m *Manager) Start(command, description string) (*Info, error) {
 	}
 
 	cmd := exec.Command(shell, shellFlag, command)
+	cmd.Stdin = nil // close stdin so the child never blocks waiting for input
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
 

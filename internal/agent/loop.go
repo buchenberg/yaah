@@ -14,6 +14,24 @@ import (
 	"github.com/buchenberg/yaah/internal/types"
 )
 
+// MaxIterationsError is returned when the agent loop exhausts its configured
+// iteration budget without producing a text answer. Use errors.Is with a zero
+// value to match:
+//
+//	errors.Is(err, MaxIterationsError{})
+type MaxIterationsError struct {
+	MaxIter int
+}
+
+func (e MaxIterationsError) Error() string {
+	return fmt.Sprintf("max iterations (%d) reached", e.MaxIter)
+}
+
+func (e MaxIterationsError) Is(target error) bool {
+	_, ok := target.(MaxIterationsError)
+	return ok
+}
+
 // buildPipeline assembles the middleware pipeline from config.
 func (l *Loop) buildPipeline() *pipeline.Pipeline {
 	if len(l.Middleware) > 0 {
@@ -92,109 +110,109 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 
 	for {
 		for iter := 0; iter < l.Config.MaxLoopCycles; iter++ {
-		turnStart := time.Now()
+			turnStart := time.Now()
 
-		select {
-		case <-ctx.Done():
-			l.State.Messages = messages
-			return "", ctx.Err()
-		default:
-		}
+			select {
+			case <-ctx.Done():
+				l.State.Messages = messages
+				return "", ctx.Err()
+			default:
+			}
 
-		tools.SendHeartbeat(ctx)
+			tools.SendHeartbeat(ctx)
 
-		l.Hooks.Emit(HookEvent{
-			Event:  events.TurnStart,
-			Prompt: userInput,
-			Turn:   iter,
-			Model:  l.Config.Model,
-		})
+			l.Hooks.Emit(HookEvent{
+				Event:  events.TurnStart,
+				Prompt: userInput,
+				Turn:   iter,
+				Model:  l.Config.Model,
+			})
 
-		var turnSpan trace.Span
-		turnCtx := ctx
-		if l.Config.OtelEnabled {
-			turnCtx, turnSpan = observability.StartTurn(ctx, iter, userInput)
-		}
+			var turnSpan trace.Span
+			turnCtx := ctx
+			if l.Config.OtelEnabled {
+				turnCtx, turnSpan = observability.StartTurn(ctx, iter, userInput)
+			}
 
-		step, req, err := l.buildTurnRequest(ctx, iter, messages, pipe, turnSpan)
-		if err != nil {
-			l.State.Messages = messages
-			return "", err
-		}
-		messages = step.Messages
+			step, req, err := l.buildTurnRequest(ctx, iter, messages, pipe, turnSpan)
+			if err != nil {
+				l.State.Messages = messages
+				return "", err
+			}
+			messages = step.Messages
 
-		if err := l.guardContextBeforeCall(turnCtx, &messages, &req, turnSpan); err != nil {
-			return "", err
-		}
+			if err := l.guardContextBeforeCall(turnCtx, &messages, &req, turnSpan); err != nil {
+				return "", err
+			}
 
-		tokensBeforeTurn := l.State.TotalTokens
-		llmStart := time.Now()
+			tokensBeforeTurn := l.State.TotalTokens
+			llmStart := time.Now()
 
-		result, err := l.LLM.Call(turnCtx, req)
-		if err != nil {
+			result, err := l.LLM.Call(turnCtx, req)
+			if err != nil {
+				if turnSpan != nil {
+					observability.RecordError(turnSpan, err)
+					turnSpan.End()
+				}
+				l.State.Messages = messages
+				return "", fmt.Errorf("provider error: %w", err)
+			}
+			msg := result.Message
+			l.Provider = l.LLM.Provider
+			l.Config.Model = l.LLM.Model
+			l.FallbackProvider = l.LLM.FallbackProvider
+			l.FallbackModel = l.LLM.FallbackModel
+			l.addUsage(result.Usage)
+			l.State.LastFinishReason = result.FinishReason
+			l.State.LastResponseModel = result.ResponseModel
+			messages = append(messages, msg)
+			l.Persister.Persist(msg)
+
+			observability.RecordLLMCall(turnCtx, time.Since(llmStart), result.Usage.PromptTokens, result.Usage.CompletionTokens)
+
 			if turnSpan != nil {
-				observability.RecordError(turnSpan, err)
+				l.recordTurnSpanAttrs(turnSpan, messages, msg, tokensBeforeTurn, iter, result.Streamed)
+			}
+
+			if len(msg.ToolCalls) == 0 {
+				if turnSpan != nil {
+					turnSpan.End()
+				}
+				l.State.Messages = messages
+				observability.RecordAgentTurn(turnCtx, time.Since(turnStart))
+				return msg.Content, nil
+			}
+
+			if result.Streamed && msg.Content != "" && l.broker != nil {
+				l.broker.PublishMustDeliver(&FlushEvent{Content: msg.Content})
+			}
+
+			step, err = pipe.RunPostModel(ctx, &msg, step)
+			if err != nil {
+				l.State.Messages = messages
+				return "", err
+			}
+
+			err = l.executeToolPhase(turnCtx, iter, msg, &messages, &step, pipe, turnSpan)
+			if err != nil {
+				return "", err
+			}
+
+			if turnSpan != nil {
 				turnSpan.End()
 			}
-			l.State.Messages = messages
-			return "", fmt.Errorf("provider error: %w", err)
-		}
-		msg := result.Message
-		l.Provider = l.LLM.Provider
-		l.Config.Model = l.LLM.Model
-		l.FallbackProvider = l.LLM.FallbackProvider
-		l.FallbackModel = l.LLM.FallbackModel
-		l.addUsage(result.Usage)
-		l.State.LastFinishReason = result.FinishReason
-		l.State.LastResponseModel = result.ResponseModel
-		messages = append(messages, msg)
-		l.Persister.Persist(msg)
 
-		observability.RecordLLMCall(turnCtx, time.Since(llmStart), result.Usage.PromptTokens, result.Usage.CompletionTokens)
-
-		if turnSpan != nil {
-			l.recordTurnSpanAttrs(turnSpan, messages, msg, tokensBeforeTurn, iter, result.Streamed)
-		}
-
-		if len(msg.ToolCalls) == 0 {
-			if turnSpan != nil {
-				turnSpan.End()
-			}
-			l.State.Messages = messages
 			observability.RecordAgentTurn(turnCtx, time.Since(turnStart))
-			return msg.Content, nil
-		}
 
-		if result.Streamed && msg.Content != "" && l.broker != nil {
-			l.broker.PublishMustDeliver(&FlushEvent{Content: msg.Content})
-		}
-
-		step, err = pipe.RunPostModel(ctx, &msg, step)
-		if err != nil {
-			l.State.Messages = messages
-			return "", err
-		}
-
-		err = l.executeToolPhase(turnCtx, iter, msg, &messages, &step, pipe, turnSpan)
-		if err != nil {
-			return "", err
-		}
-
-		if turnSpan != nil {
-			turnSpan.End()
-		}
-
-		observability.RecordAgentTurn(turnCtx, time.Since(turnStart))
-
-		messages = step.Messages
-		for i := l.Persister.MsgIdx(); i < len(messages); i++ {
-			l.Persister.Persist(messages[i])
-		}
+			messages = step.Messages
+			for i := l.Persister.MsgIdx(); i < len(messages); i++ {
+				l.Persister.Persist(messages[i])
+			}
 		}
 		// max iterations reached — ask whether to continue
 		if l.ContinueAfterMaxIter == nil || !l.ContinueAfterMaxIter() {
 			l.State.Messages = messages
-			return "", fmt.Errorf("max iterations (%d) reached", l.Config.MaxLoopCycles)
+			return "", MaxIterationsError{MaxIter: l.Config.MaxLoopCycles}
 		}
 	}
 }

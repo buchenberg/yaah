@@ -3,12 +3,14 @@ package yaah
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/repl"
 )
 
@@ -76,7 +78,7 @@ func startREPL() error {
 		response, streamed, err := sess.RunPrompt(context.Background(), input)
 		// tv.HandleEvent(DoneEvent) already handled spinner + trailing newlines
 		if err != nil {
-			if strings.Contains(err.Error(), "max iterations") {
+			if errors.Is(err, agent.MaxIterationsError{}) {
 				fmt.Fprintf(os.Stderr, "%s\n", replYellow("max iterations reached."))
 				fmt.Fprint(os.Stderr, replYellow("continue? [Y/n]: "))
 				if scanner.Scan() {

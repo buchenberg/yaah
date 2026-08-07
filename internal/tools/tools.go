@@ -68,6 +68,41 @@ import (
 	"runtime"
 )
 
+// ToolTimeoutError is returned when a tool's context deadline expires before
+// the tool completes. Use errors.Is with a zero value to match:
+//
+//	errors.Is(err, ToolTimeoutError{})
+type ToolTimeoutError struct {
+	Tool    string
+	Timeout string
+}
+
+func (e ToolTimeoutError) Error() string {
+	return fmt.Sprintf("%s: timed out after %s", e.Tool, e.Timeout)
+}
+
+func (e ToolTimeoutError) Is(target error) bool {
+	_, ok := target.(ToolTimeoutError)
+	return ok
+}
+
+// ToolNotFoundError is returned when a tool name is not registered. Use
+// errors.Is with a zero value to match:
+//
+//	errors.Is(err, ToolNotFoundError{})
+type ToolNotFoundError struct {
+	Name string
+}
+
+func (e ToolNotFoundError) Error() string {
+	return fmt.Sprintf("unknown tool: %s", e.Name)
+}
+
+func (e ToolNotFoundError) Is(target error) bool {
+	_, ok := target.(ToolNotFoundError)
+	return ok
+}
+
 // Tool is the interface that all tools (built-in and MCP) must satisfy.
 type Tool interface {
 	// Name returns the tool name as it appears in the function call.
@@ -222,7 +257,7 @@ func (r *Registry) Get(name string) Tool {
 func (r *Registry) Execute(ctx context.Context, name, args string) (string, error) {
 	t := r.Get(name)
 	if t == nil {
-		return "", fmt.Errorf("unknown tool: %s", name)
+		return "", ToolNotFoundError{Name: name}
 	}
 	return t.Execute(ctx, args)
 }
