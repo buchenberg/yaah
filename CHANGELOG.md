@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.51.2](https://github.com/buchenberg/yaah/compare/v0.51.1...v0.51.2) (2026-08-07)
+
+
+### Code Refactoring
+
+* break tools→agent/subagent cycle, extract control types, unify compaction ([#176](https://github.com/buchenberg/yaah/issues/176)) ([bdd9122](https://github.com/buchenberg/yaah/commit/bdd9122f90395bad98295f4c2c30be189c5e006b))
+
 ## [0.51.1](https://github.com/buchenberg/yaah/compare/v0.51.0...v0.51.1) (2026-08-07)
 
 
