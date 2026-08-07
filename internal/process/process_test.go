@@ -34,8 +34,11 @@ func TestStartSimpleCommand(t *testing.T) {
 	if info.ID == "" {
 		t.Error("info.ID should not be empty")
 	}
-	if info.Status != "running" && info.Status != "finished" {
-		t.Errorf("info.Status = %q; want %q or %q", info.Status, "running", "finished")
+	info.mu.Lock()
+	status := info.Status
+	info.mu.Unlock()
+	if status != "running" && status != "finished" {
+		t.Errorf("info.Status = %q; want %q or %q", status, "running", "finished")
 	}
 	if info.Command != "echo hello" {
 		t.Errorf("info.Command = %q; want %q", info.Command, "echo hello")
@@ -71,7 +74,7 @@ func TestStartSimpleCommand(t *testing.T) {
 func TestStartEchoProducesOutput(t *testing.T) {
 	m := NewManager()
 
-	info, err := m.Start("echo line1 && echo line2", "echo test")
+	info, err := m.Start("echo line1; echo line2", "echo test")
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -137,6 +140,9 @@ func TestStartFailingCommand(t *testing.T) {
 		status := info.Status
 		info.mu.Unlock()
 		if status != "running" {
+			if status != "error" {
+				t.Errorf("failing command status = %q; want %q", status, "error")
+			}
 			t.Logf("failing command status: %q, logs: %q", status, info.Logs())
 			return
 		}
