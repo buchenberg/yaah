@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.51.1](https://github.com/buchenberg/yaah/compare/v0.51.0...v0.51.1) (2026-08-07)
+
+
+### Code Refactoring
+
+* architectural hardening — slog, sentinel errors, prompts init ([#171](https://github.com/buchenberg/yaah/issues/171)) ([a261b38](https://github.com/buchenberg/yaah/commit/a261b385e35c59d966c7188a308f6f6d5a7e26f8))
+
 ## [0.51.0](https://github.com/buchenberg/yaah/compare/v0.50.0...v0.51.0) (2026-08-06)
 
 
