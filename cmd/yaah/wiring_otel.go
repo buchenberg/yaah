@@ -15,7 +15,8 @@ import (
 // otelInMemoryOnly so tracing activates without an OTLP endpoint.
 func initOtel(cfg *config.Config, skipOtel bool) (func(context.Context) error, bool, error) {
 	noop := func(_ context.Context) error { return nil }
-	if skipOtel || (!cfg.Observability.Otel.Enabled && len(extraOtelProcessors) == 0) {
+	enabledByEnv := os.Getenv("YAAH_OTEL_ENABLED") == "true"
+	if skipOtel || (!cfg.Observability.Otel.Enabled && len(extraOtelProcessors) == 0 && !enabledByEnv) {
 		return noop, false, nil
 	}
 	otelCfg := observability.Config{
@@ -37,7 +38,7 @@ func initOtel(cfg *config.Config, skipOtel bool) (func(context.Context) error, b
 			otelCfg.Endpoint = ep
 		}
 	}
-	if os.Getenv("YAAH_OTEL_ENABLED") == "true" {
+	if enabledByEnv {
 		otelCfg.Enabled = true
 	}
 	if otelCfg.ServiceName == "" {

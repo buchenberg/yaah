@@ -54,6 +54,9 @@ func (l *Loop) ctxMgr() *ContextManager {
 	if l.CtxMgr.State == nil {
 		l.CtxMgr.State = &l.State
 	}
+	if l.State.CompactionBudgetMultiplier <= 0 {
+		l.State.CompactionBudgetMultiplier = 1.0
+	}
 	if l.CtxMgr.Provider == nil {
 		l.CtxMgr.Provider = l.Provider
 	}

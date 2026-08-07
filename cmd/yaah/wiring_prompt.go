@@ -10,16 +10,6 @@ import (
 	"github.com/buchenberg/yaah/internal/tools"
 )
 
-// memoryGuidelines is appended to the system prompt for fresh sessions
-// (not resumed) so the model knows how to use memory tools.
-const memoryGuidelines = `
-## Memory Guidelines
-- Use memory_search to find relevant memories before answering personal/project questions. Pass a tag to filter by category.
-- When the user asks about past conversations or session history, use memory_search_sessions with an empty query to list recent transcripts.
-- Use memory_add to save important facts. Always include a tags array (e.g., ["user_info"], ["preferences"], ["project:yaah"], ["decision"]).
-- Use memory_update to correct stale facts (requires the memory ID). Use memory_delete to remove incorrect memories.
-- At the end of a conversation or when the user says goodbye, use memory_add to save a 2-3 line summary of key discussion points with tag ["session_summary"].`
-
 // buildSystemPrompt assembles the system prompt from config, environment,
 // instructions, and memory. When db is non-nil, stored memories are loaded
 // into the prompt layers. Memory guidelines are appended for fresh sessions
@@ -54,7 +44,13 @@ func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSess
 
 	systemPrompt := prompts.Build(layers)
 	if db != nil && resumeSessionID == "" {
-		systemPrompt += memoryGuidelines
+		systemPrompt += `
+## Memory Guidelines
+- Use memory_search to find relevant memories before answering personal/project questions. Pass a tag to filter by category.
+- When the user asks about past conversations or session history, use memory_search_sessions with an empty query to list recent transcripts.
+- Use memory_add to save important facts. Always include a tags array (e.g., ["user_info"], ["preferences"], ["project:yaah"], ["decision"]).
+- Use memory_update to correct stale facts (requires the memory ID). Use memory_delete to remove incorrect memories.
+- At the end of a conversation or when the user says goodbye, use memory_add to save a 2-3 line summary of key discussion points with tag ["session_summary"].`
 	}
 
 	return systemPrompt
