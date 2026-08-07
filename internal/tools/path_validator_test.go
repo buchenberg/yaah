@@ -131,6 +131,22 @@ func TestPathValidator_AskGrantsException(t *testing.T) {
 	}
 	outside := filepath.Join(outsideDir, "file.txt")
 
+	// Resolve outside to its canonical form so the path comparison
+	// is stable across macOS /var→/private/var symlinks and Windows
+	// short-name→long-name resolution.
+	canonical := outside
+	if abs, err := filepath.Abs(outside); err == nil {
+		canonical = abs
+	}
+	if real, err := filepath.EvalSymlinks(canonical); err == nil {
+		canonical = real
+	} else {
+		parent := filepath.Dir(canonical)
+		if realParent, err := filepath.EvalSymlinks(parent); err == nil {
+			canonical = filepath.Join(realParent, filepath.Base(canonical))
+		}
+	}
+
 	var gotPath, gotReason string
 	pv := NewPathValidator(ws, false, nil)
 	pv.AskFn = func(path, reason string) bool {
@@ -141,8 +157,8 @@ func TestPathValidator_AskGrantsException(t *testing.T) {
 	if _, err := pv.ResolvePath(outside); err != nil {
 		t.Fatalf("ask-granted path still rejected: %v", err)
 	}
-	if gotPath == "" {
-		t.Error("AskFn not called (empty path)")
+	if gotPath != canonical {
+		t.Errorf("AskFn path = %q, want %q", gotPath, canonical)
 	}
 	if !strings.Contains(gotReason, "outside the workspace") {
 		t.Errorf("AskFn reason = %q, want workspace mention", gotReason)
