@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.52.0](https://github.com/buchenberg/yaah/compare/v0.51.2...v0.52.0) (2026-08-07)
+
+
+### Features
+
+* extract tviewmd markdown renderer and wire into tui2 ([#183](https://github.com/buchenberg/yaah/issues/183)) ([563b032](https://github.com/buchenberg/yaah/commit/563b03298aee467f1efad2c0c20ad00b5ff86607))
+
 ## [0.51.2](https://github.com/buchenberg/yaah/compare/v0.51.1...v0.51.2) (2026-08-07)
 
 
