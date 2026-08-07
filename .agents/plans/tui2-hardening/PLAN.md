@@ -178,9 +178,9 @@ Source of truth for tui1: `internal/tui/keymap.go`, `input.go`, `modes.go`, `mod
 | Scroll up/down | ↑/↓, j/k | ✅ | tui2 already has vim j/k |
 | Page up/down | PgUp/PgDn | ✅ | |
 | Top / bottom | Home/End, g/G | ✅ | tui2 has g/G |
-| Help | `?` | ✅ | |
-| Command palette | `:` (auto) | ⚠️ partial | tui2 uses Ctrl+P; tui1 auto-detects `:` prefix. Pick one model. |
-| **Search** | `/` n N | ❌ | `ActionSearch` declared, never handled. Build search mode. |
+| Help | `?` | ✅ | Should not be a hotkey but should be part of the command palette |
+| Command palette | `:` (auto) | ⚠️ partial | tui2 uses Ctrl+P; tui1 auto-detects `:` prefix. Will not be ported |
+| **Search** | `/` n N | ❌ | `ActionSearch` declared, never handled. Build search mode. This will need to be in the command palette and not a single key shortcut |
 | **Copy last response** | Ctrl+Y | ❌ | uses `tea.SetClipboard`; tui2 needs `atotto/clipboard`. |
 | Toggle reasoning | Ctrl+T | ⚠️ | tui2 binds Ctrl+T to *tools*; tui1 binds Ctrl+T to reasoning. **Conflict to resolve.** |
 | Toggle verbose | Ctrl+G | ❌ | no verbose concept yet. |
@@ -188,6 +188,8 @@ Source of truth for tui1: `internal/tui/keymap.go`, `input.go`, `modes.go`, `mod
 | Panel focus | (n/a) | ✅ (new) | Tab/Shift+Tab — tui2-only nicety, keep. |
 
 ## B.2 Commands (`:` palette)
+
+Note: tui2 will use a command palette via Ctrl+P for these commands
 
 | Command | tui1 | tui2 status | Notes |
 |---|---|---|---|
@@ -209,7 +211,7 @@ Source of truth for tui1: `internal/tui/keymap.go`, `input.go`, `modes.go`, `mod
 | Mode | tui1 | tui2 status |
 |---|---|---|
 | Normal | ✅ | ✅ |
-| Command (auto on `:`) | ✅ | ⚠️ Ctrl+P modal only |
+| Command (auto on `:`) | ✅ | ⚠️ Ctrl+P modal only. This modal needs to be the same size as the current help modal |
 | Search | ✅ (build matches, n/N, scroll-to-match) | ❌ |
 | Question modal | ✅ | ✅ |
 | Model picker | ✅ (filter + scroll window) | ⚠️ basic |
