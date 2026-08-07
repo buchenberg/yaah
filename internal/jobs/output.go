@@ -1,7 +1,7 @@
-// subagent_output.go defines the structured I/O contract between a
+// output.go defines the structured I/O contract between a
 // sub-agent and its caller: the per-invocation params, the escalation
 // system, and the parsed output wrapper.
-package tools
+package jobs
 
 import (
 	"encoding/json"

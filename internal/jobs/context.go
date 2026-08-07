@@ -1,8 +1,8 @@
-// subagent_ctx.go defines the context-key contract between the task tool,
+// context.go defines the context-key contract between the task tool,
 // the sub-agent runner, and the agent loop: model writeback, start
 // notification, usage accumulation, and stuck-child heartbeats. These
 // keys are set by the spawner and read/written by the runner and loop.
-package tools
+package jobs
 
 import (
 	"context"
@@ -10,6 +10,9 @@ import (
 
 	"github.com/buchenberg/yaah/internal/types"
 )
+
+// contextKey is the package-local context key type for string keys.
+type contextKey string
 
 // subAgentModelKey stores the sub-agent's model name in the context so
 // the caller can read it after execution.

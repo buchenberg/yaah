@@ -10,13 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/prompts"
 )
-
-// TaskRunner runs a sub-agent for a given prompt and role configuration
-// and returns its final response. The runner is responsible for building
-// the role-specific tool registry and Loop.
-type TaskRunner func(ctx context.Context, prompt string, params SubAgentParams) (string, error)
 
 // TaskTool spawns a sub-agent with a restricted tool set to complete a task.
 //
@@ -31,7 +27,7 @@ type TaskRunner func(ctx context.Context, prompt string, params SubAgentParams) 
 // goroutine and returns immediately. Results are delivered via
 // BackgroundNotifier.
 type TaskTool struct {
-	Runner TaskRunner
+	Runner jobs.TaskRunner
 
 	// ResolveTimeout returns the effective default deadline for a call
 	// when the model did not supply timeout_seconds. It receives the
@@ -39,7 +35,7 @@ type TaskTool struct {
 	// timeout). The caller is expected to fold in role/profile/config
 	// defaults; TaskTool clamps any per-call override to the schema
 	// bounds before this is consulted.
-	ResolveTimeout func(params SubAgentParams) time.Duration
+	ResolveTimeout func(params jobs.SubAgentParams) time.Duration
 
 	// RoleNames is the active set of sub-agent role names known to the
 	// registry. When non-empty the schema's role enum is built
@@ -136,7 +132,7 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 	clampedTimeout := clampTimeoutSeconds(params.TimeoutSeconds)
 	clampedIter := clampMaxLoopCycles(params.MaxLoopCycles)
 
-	subParams := SubAgentParams{
+	subParams := jobs.SubAgentParams{
 		Role:           params.Role,
 		TimeoutSeconds: clampedTimeout,
 		MaxLoopCycles:  clampedIter,
@@ -180,7 +176,7 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded), runCtx.Err() == context.DeadlineExceeded:
 			return structuredTaskResult("timed out", timeout, partial), nil
-		case errors.Is(err, ErrStuckChild):
+		case errors.Is(err, jobs.ErrStuckChild):
 			return structuredTaskResult("stuck", timeout, partial), nil
 		case errors.Is(err, context.Canceled), runCtx.Err() == context.Canceled:
 			return structuredTaskResult("cancelled", timeout, partial), nil
@@ -222,7 +218,7 @@ func clampMaxLoopCycles(v int) int {
 // resolveTaskTimeout picks the effective timeout. A clamped per-call
 // override wins; otherwise the role-aware resolver (if configured) is
 // consulted. 0 means no timeout.
-func resolveTaskTimeout(callSeconds int, resolveDefault func(SubAgentParams) time.Duration, params SubAgentParams) time.Duration {
+func resolveTaskTimeout(callSeconds int, resolveDefault func(jobs.SubAgentParams) time.Duration, params jobs.SubAgentParams) time.Duration {
 	if callSeconds > 0 {
 		return time.Duration(callSeconds) * time.Second
 	}
