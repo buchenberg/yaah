@@ -7,22 +7,24 @@ import (
 	"strings"
 	"time"
 
+	agentctx "github.com/buchenberg/yaah/internal/agent/context"
 	"github.com/buchenberg/yaah/internal/config"
 )
 
-const (
-	defaultTruncateMaxLines = 500
-	defaultTruncateMaxBytes = 20 * 1024
-)
+// Re-exports for backward compatibility within the agent package (tests
+// reference the historical unexported names).
+const defaultTruncateMaxLines = agentctx.DefaultTruncateMaxLines
+
+var cleanTruncatedDir = agentctx.CleanTruncatedDir
 
 func (l *Loop) truncateToolResult(result string) string {
 	maxLines := l.ctxMgr().ToolResultMaxLines
 	if maxLines <= 0 {
-		maxLines = defaultTruncateMaxLines
+		maxLines = agentctx.DefaultTruncateMaxLines
 	}
 	maxBytes := l.ctxMgr().ToolResultMaxBytes
 	if maxBytes <= 0 {
-		maxBytes = defaultTruncateMaxBytes
+		maxBytes = agentctx.DefaultTruncateMaxBytes
 	}
 
 	lines := strings.Split(result, "\n")
@@ -40,8 +42,8 @@ func (l *Loop) truncateToolResult(result string) string {
 	var truncated string
 	var truncatedLines int
 
-	if lineCapped && (!byteCapped || findLineCutBytePos(result, maxLines) <= maxBytes) {
-		cutIdx = findLineCutBytePos(result, maxLines)
+	if lineCapped && (!byteCapped || agentctx.FindLineCutBytePos(result, maxLines) <= maxBytes) {
+		cutIdx = agentctx.FindLineCutBytePos(result, maxLines)
 		truncated = result[:cutIdx]
 		truncatedLines = maxLines
 	} else {
@@ -62,7 +64,7 @@ func (l *Loop) truncateToolResult(result string) string {
 		filename := fmt.Sprintf("%d-tool.txt", ts)
 		fullPath := filepath.Join(spillDir, filename)
 		if writeErr := os.WriteFile(fullPath, []byte(result), 0o644); writeErr == nil {
-			cleanTruncatedDir(spillDir)
+			agentctx.CleanTruncatedDir(spillDir)
 			hint := fmt.Sprintf(
 				"\n...[output truncated at %d lines / %d bytes — full output at %s. To read portions, use the read tool with offset/limit or spawn a subagent for large analysis.]...",
 				truncatedLines, len(result), fullPath,
@@ -72,39 +74,4 @@ func (l *Loop) truncateToolResult(result string) string {
 	}
 
 	return truncated + "\n...[truncated]..."
-}
-
-func findLineCutBytePos(s string, maxLines int) int {
-	for i, n := 0, 0; i < len(s); {
-		if n >= maxLines {
-			return i
-		}
-		nl := strings.IndexByte(s[i:], '\n')
-		if nl < 0 {
-			return len(s)
-		}
-		i += nl + 1
-		n++
-	}
-	return len(s)
-}
-
-func cleanTruncatedDir(dir string) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	cutoff := time.Now().Add(-7 * 24 * time.Hour)
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if info.ModTime().Before(cutoff) {
-			os.Remove(filepath.Join(dir, e.Name()))
-		}
-	}
 }

@@ -405,7 +405,7 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	beforeEstimate := cm.estimatedTokens()
 	resp, err := compactProvider.Send(ctx, req)
 	if err != nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
-		if len(oldMsgs) > minChunkTokens {
+		if len(oldMsgs) > agentctx.MinChunkTokens {
 			if chunkSummary, chunkErr := cm.chunkedCompact(ctx, oldMsgs, compactModel); chunkErr == nil && chunkSummary != "" {
 				cm.applyCompactedSummary(chunkSummary, sysMsg, oldMsgs, keepMsgs, effectiveTokens)
 				afterEstimate := cm.estimatedTokens()
@@ -561,17 +561,17 @@ func (cm *ContextManager) chunkedCompact(ctx context.Context, oldMsgs []types.Me
 		return "", nil
 	}
 
-	chunkBudget := int(float64(cm.ContextWindow) * chunkBudgetFraction)
-	if chunkBudget < minChunkTokens {
-		chunkBudget = minChunkTokens
+	chunkBudget := int(float64(cm.ContextWindow) * agentctx.ChunkBudgetFraction)
+	if chunkBudget < agentctx.MinChunkTokens {
+		chunkBudget = agentctx.MinChunkTokens
 	}
 
-	chunks := chunkSplit(oldMsgs, chunkBudget)
+	chunks := agentctx.ChunkSplit(oldMsgs, chunkBudget)
 	if len(chunks) <= 1 {
 		return cm.summarizeChunk(ctx, oldMsgs, 0, 1)
 	}
 
-	sem := make(chan struct{}, maxChunkConcurrency)
+	sem := make(chan struct{}, agentctx.MaxChunkConcurrency)
 	var wg sync.WaitGroup
 	results := make([]string, len(chunks))
 	errors := make([]error, len(chunks))
@@ -613,7 +613,7 @@ func (cm *ContextManager) reducePartialSummaries(ctx context.Context, partials [
 	if len(partials) == 0 {
 		return "", nil
 	}
-	if depth > maxReduceDepth {
+	if depth > agentctx.MaxReduceDepth {
 		return strings.Join(partials, "\n###\n"), nil
 	}
 

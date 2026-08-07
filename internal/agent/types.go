@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	agentctx "github.com/buchenberg/yaah/internal/agent/context"
 	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/pubsub"
@@ -48,10 +49,10 @@ const (
 	SubAgentsOnly
 )
 
-// ToolResultMaxLen is a deprecated alias for defaultTruncateMaxBytes. Use
-// Loop.truncateToolResult() in agent_truncation.go for the line/byte dual-limit
-// truncation.
-const ToolResultMaxLen = defaultTruncateMaxBytes
+// ToolResultMaxLen is a deprecated alias for context.DefaultTruncateMaxBytes.
+// Use Loop.truncateToolResult() in agent_truncation.go for the line/byte
+// dual-limit truncation.
+const ToolResultMaxLen = agentctx.DefaultTruncateMaxBytes
 
 // Loop runs the agent conversation loop.
 type Loop struct {
