@@ -273,7 +273,7 @@ func TestTurns(t *testing.T) {
 				types.SystemMsg("sys"),
 				types.UserMsg("hi"),
 			},
-			want: []turnRange{{start: 1, end: 2}},
+			want: []turnRange{{Start: 1, End: 2}},
 		},
 		{
 			name: "multiple_users",
@@ -285,7 +285,7 @@ func TestTurns(t *testing.T) {
 				types.UserMsg("c"),
 				{Role: "assistant", Content: "d"},
 			},
-			want: []turnRange{{start: 1, end: 4}, {start: 4, end: 6}},
+			want: []turnRange{{Start: 1, End: 4}, {Start: 4, End: 6}},
 		},
 		{
 			name: "tool_results_grouped_in_turn",
@@ -300,7 +300,7 @@ func TestTurns(t *testing.T) {
 				{Role: "tool", ToolCallID: "c2", Content: "r2"},
 				types.UserMsg("b"),
 			},
-			want: []turnRange{{start: 1, end: 5}, {start: 5, end: 6}},
+			want: []turnRange{{Start: 1, End: 5}, {Start: 5, End: 6}},
 		},
 	}
 	for _, tt := range tests {
@@ -351,8 +351,8 @@ func TestSplitTail_keepsRecentTurns(t *testing.T) {
 	}
 	split := splitTail(msgs, 60) // fits 3 turns
 	// keepStart should land at the 3rd turn from the end: index 3.
-	if split.keepStart != 3 {
-		t.Errorf("keepStart = %d, want 3 (3 most recent turns preserved)", split.keepStart)
+	if split.KeepStart != 3 {
+		t.Errorf("keepStart = %d, want 3 (3 most recent turns preserved)", split.KeepStart)
 	}
 }
 
@@ -364,12 +364,12 @@ func TestSplitTail_budgetExceeded(t *testing.T) {
 		msgs = append(msgs, types.AssistantMsg(strings.Repeat("y", 400), nil)) // ~100 tokens
 	}
 	split := splitTail(msgs, 150)
-	if split.keepStart < 1 || split.keepStart >= len(msgs) {
-		t.Errorf("keepStart = %d out of expected range [1, %d)", split.keepStart, len(msgs))
+	if split.KeepStart < 1 || split.KeepStart >= len(msgs) {
+		t.Errorf("keepStart = %d out of expected range [1, %d)", split.KeepStart, len(msgs))
 	}
 	// The tail must be strictly smaller than the full conversation (something summarized).
-	if split.keepStart <= 1 {
-		t.Errorf("keepStart = %d, expected some turns summarized", split.keepStart)
+	if split.KeepStart <= 1 {
+		t.Errorf("keepStart = %d, expected some turns summarized", split.KeepStart)
 	}
 }
 
@@ -391,11 +391,11 @@ func TestSplitTail_toolCallLinkage(t *testing.T) {
 		{Role: "tool", ToolCallID: "c2", Content: "ok"}, // idx 6
 	}
 	split := splitTail(msgs, 100) // turn 2 (~30 tokens) fits, turn 1 (~300) does not
-	if split.keepStart != 4 {
-		t.Fatalf("keepStart = %d, want 4 (turn 2 boundary)", split.keepStart)
+	if split.KeepStart != 4 {
+		t.Fatalf("keepStart = %d, want 4 (turn 2 boundary)", split.KeepStart)
 	}
 	// Verify the kept tail has the tool-call AND its result together (no orphan).
-	tail := msgs[split.keepStart:]
+	tail := msgs[split.KeepStart:]
 	hasCall, hasResult := false, false
 	for _, m := range tail {
 		for _, tc := range m.ToolCalls {
@@ -422,9 +422,9 @@ func TestSplitTail_userAnchor(t *testing.T) {
 	}
 	lastUserIdx := len(msgs) - 2   // last user before final assistant
 	split := splitTail(msgs, 8000) // large budget keeps the last turn
-	if split.keepStart > lastUserIdx {
+	if split.KeepStart > lastUserIdx {
 		t.Errorf("keepStart = %d > lastUserIdx %d: most recent user summarized away",
-			split.keepStart, lastUserIdx)
+			split.KeepStart, lastUserIdx)
 	}
 }
 
@@ -440,8 +440,8 @@ func TestSplitTail_singleTurnTooLarge(t *testing.T) {
 		types.AssistantMsg(strings.Repeat("d", 400), nil), // idx 5 (~100)
 	}
 	split := splitTail(msgs, 250) // fits last ~2.5 assistant messages
-	if split.keepStart <= 1 {
-		t.Errorf("keepStart = %d, expected split within the oversized turn", split.keepStart)
+	if split.KeepStart <= 1 {
+		t.Errorf("keepStart = %d, expected split within the oversized turn", split.KeepStart)
 	}
 }
 
@@ -454,8 +454,8 @@ func TestSplitTail_systemProtection(t *testing.T) {
 		types.UserMsg("u2"),
 	}
 	split := splitTail(msgs, 0)
-	if split.keepStart < 1 {
-		t.Errorf("keepStart = %d, must be >= 1 (system protection)", split.keepStart)
+	if split.KeepStart < 1 {
+		t.Errorf("keepStart = %d, must be >= 1 (system protection)", split.KeepStart)
 	}
 }
 
@@ -467,8 +467,8 @@ func TestSplitTail_noUserMessages(t *testing.T) {
 		types.AssistantMsg("a2", nil),
 	}
 	split := splitTail(msgs, 1000)
-	if split.keepStart != len(msgs) {
-		t.Errorf("keepStart = %d, want %d (nothing to summarize)", split.keepStart, len(msgs))
+	if split.KeepStart != len(msgs) {
+		t.Errorf("keepStart = %d, want %d (nothing to summarize)", split.KeepStart, len(msgs))
 	}
 }
 
@@ -478,13 +478,13 @@ func TestSplitTurn_emptyOrSingleMessage(t *testing.T) {
 		types.UserMsg("u"),
 		types.AssistantMsg("a", nil),
 	}
-	if got := splitTurn(msgs, turnRange{start: 1, end: 1}, 100); got != -1 {
+	if got := splitTurn(msgs, turnRange{Start: 1, End: 1}, 100); got != -1 {
 		t.Errorf("splitTurn(empty turn) = %d, want -1", got)
 	}
-	if got := splitTurn(msgs, turnRange{start: 1, end: 2}, 100); got != -1 {
+	if got := splitTurn(msgs, turnRange{Start: 1, End: 2}, 100); got != -1 {
 		t.Errorf("splitTurn(single message turn) = %d, want -1", got)
 	}
-	if got := splitTurn(msgs, turnRange{start: 1, end: 3}, 0); got != -1 {
+	if got := splitTurn(msgs, turnRange{Start: 1, End: 3}, 0); got != -1 {
 		t.Errorf("splitTurn(zero budget) = %d, want -1", got)
 	}
 }
@@ -500,7 +500,7 @@ func TestSplitTurn_findsEarliestFittingSuffix(t *testing.T) {
 		types.AssistantMsg(strings.Repeat("d", 400), nil), // idx 5 (~100)
 	}
 	// Budget 300 fits exactly messages[3..6) (300 tokens) but not messages[2..6) (400).
-	got := splitTurn(msgs, turnRange{start: 1, end: 6}, 300)
+	got := splitTurn(msgs, turnRange{Start: 1, End: 6}, 300)
 	if got != 3 {
 		t.Errorf("splitTurn = %d, want 3 (earliest fitting suffix)", got)
 	}

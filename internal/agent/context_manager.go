@@ -347,17 +347,17 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 
 	sysMsg := cm.State.Messages[0]
 
-	budget := int(float64(preserveBudget(cm.ContextWindow))*cm.State.CompactionBudgetMultiplier) / 4
-	split := splitTail(cm.State.Messages, budget)
-	keepMsgs := cm.State.Messages[split.keepStart:]
-	oldMsgs := cm.State.Messages[1:split.keepStart]
+	budget := int(float64(agentctx.PreserveBudget(cm.ContextWindow))*cm.State.CompactionBudgetMultiplier) / 4
+	split := agentctx.SplitTail(cm.State.Messages, budget)
+	keepMsgs := cm.State.Messages[split.KeepStart:]
+	oldMsgs := cm.State.Messages[1:split.KeepStart]
 
 	if cm.ReasoningProtectTurns > 0 {
-		split.keepStart = ProtectReasoningTurns(cm.State.Messages, split.keepStart, cm.ReasoningProtectTurns)
-		keepMsgs = cm.State.Messages[split.keepStart:]
-		oldMsgs = cm.State.Messages[1:split.keepStart]
+		split.KeepStart = agentctx.ProtectReasoningTurns(cm.State.Messages, split.KeepStart, cm.ReasoningProtectTurns)
+		keepMsgs = cm.State.Messages[split.KeepStart:]
+		oldMsgs = cm.State.Messages[1:split.KeepStart]
 	}
-	oldMsgs = pruneMessages(oldMsgs, agentctx.PruneMessageMaxLen)
+	oldMsgs = agentctx.PruneMessages(oldMsgs, agentctx.PruneMessageMaxLen)
 
 	var sb strings.Builder
 	if cm.State.PreviousSummary != "" {
@@ -373,7 +373,7 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	for _, m := range oldMsgs {
 		if m.Content != "" {
 			if m.Role == "tool" {
-				sb.WriteString(formatToolStub(m) + "\n")
+				sb.WriteString(agentctx.FormatToolStub(m) + "\n")
 			} else {
 				sb.WriteString(fmt.Sprintf("%s: %s\n", m.Role, m.Content))
 			}
@@ -490,7 +490,7 @@ func (cm *ContextManager) trimContext() {
 
 	keepStart := len(cm.State.Messages) - len(rest)
 	if cm.ReasoningProtectTurns > 0 {
-		keepStart = ProtectReasoningTurns(cm.State.Messages, keepStart, cm.ReasoningProtectTurns)
+		keepStart = agentctx.ProtectReasoningTurns(cm.State.Messages, keepStart, cm.ReasoningProtectTurns)
 	}
 
 	newMsgs := make([]types.Message, 0, len(cm.State.Messages)-keepStart+1)
@@ -524,7 +524,7 @@ func (cm *ContextManager) summarizeChunk(ctx context.Context, chunk []types.Mess
 	for _, m := range chunk {
 		if m.Content != "" {
 			if m.Role == "tool" {
-				sb.WriteString(formatToolStub(m) + "\n")
+				sb.WriteString(agentctx.FormatToolStub(m) + "\n")
 			} else {
 				sb.WriteString(fmt.Sprintf("%s: %s\n", m.Role, m.Content))
 			}
