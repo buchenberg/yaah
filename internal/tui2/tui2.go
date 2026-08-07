@@ -328,7 +328,7 @@ func (t *TUI2) BlinkSubAgents() {
 func (t *TUI2) AddUserMessage(text string) {
 	noColor := t.theme != nil && t.theme.NoColor
 	if noColor {
-		t.conversation.AppendText(text + "\n")
+		t.conversation.AppendText("You: " + text + "\n")
 	} else {
 		accent := "#00afff"
 		if t.theme != nil && t.theme.Accent != "" {
