@@ -1,8 +1,6 @@
 package tui2
 
 import (
-	"fmt"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -83,11 +81,11 @@ type TUI2 struct {
 func New() *TUI2 {
 	th := DetectTheme()
 	t := &TUI2{
-		App:           tview.NewApplication(),
-		thinkingInd:   thinking.New("Reasoning..."),
-		conversation:  &Conversation{},
-		theme:         &th,
-		version:       "yaah",
+		App:          tview.NewApplication(),
+		thinkingInd:  thinking.New("Reasoning..."),
+		conversation: &Conversation{},
+		theme:        &th,
+		version:      "yaah",
 	}
 	t.buildUI()
 	return t
@@ -295,8 +293,8 @@ func (t *TUI2) CollapseAll() {
 	t.refreshMessages()
 }
 
-func (t *TUI2) ShowThinking()   { t.thinkingInd.Show(); t.refreshMessages() }
-func (t *TUI2) HideThinking()    { t.thinkingInd.Hide(); t.refreshMessages() }
+func (t *TUI2) ShowThinking() { t.thinkingInd.Show(); t.refreshMessages() }
+func (t *TUI2) HideThinking() { t.thinkingInd.Hide(); t.refreshMessages() }
 
 func (t *TUI2) AdvanceThinking() {
 	if t.thinkingInd.Visible() {
@@ -345,28 +343,4 @@ func (t *TUI2) addAssistantResponse(text string, width int) {
 	t.conversation.AppendText(renderMarkdown(text, w))
 	t.refreshMessages()
 	t.App.SetFocus(t.Input)
-}
-
-func (t *TUI2) renderInfoPane() {
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("[#00afff::b]Session[-]\n"))
-	b.WriteString(fmt.Sprintf("[#5f5f5f::d]  %s / %s[-]\n", t.lastProvider, t.lastModel))
-	b.WriteString(fmt.Sprintf("[#5f5f5f::d]  %s[-]\n\n", t.version))
-	b.WriteString(fmt.Sprintf("[#00afff::b]Context[-]\n"))
-	if t.contextWindow > 0 {
-		pct := float64(t.contextTokens) * 100 / float64(t.contextWindow)
-		if pct > 100 {
-			pct = 100
-		}
-		b.WriteString(fmt.Sprintf("[#5f5f5f::d]  %d / %d (%.1f%%)[-]\n", t.contextTokens, t.contextWindow, pct))
-	} else {
-		b.WriteString(fmt.Sprintf("[#5f5f5f::d]  ─[-]\n"))
-	}
-	b.WriteString(fmt.Sprintf("\n[#00afff::b]MCP[-]\n"))
-	b.WriteString(fmt.Sprintf("[#5f5f5f::d]  ─[-]\n"))
-	t.InfoPane.SetText(b.String())
-}
-
-func (t *TUI2) renderTodoPane() {
-	t.TodoPane.SetText(todo.FormatList(t.todoItems))
 }

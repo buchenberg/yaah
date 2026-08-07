@@ -17,11 +17,3 @@ func newRenderCtx(width, height int, t *Theme) RenderCtx {
 	}
 	return RenderCtx{Width: width, Height: height, Theme: t}
 }
-
-// themeOrDefault returns the context theme or a default if nil.
-func (c RenderCtx) themeOrDefault() Theme {
-	if c.Theme != nil {
-		return *c.Theme
-	}
-	return DefaultTheme()
-}
