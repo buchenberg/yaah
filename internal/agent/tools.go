@@ -60,11 +60,10 @@ func (l *Loop) addUsage(u types.Usage) {
 }
 
 // llmCompact satisfies the llm.Compactor interface by delegating to
-// the Loop's context compaction machinery. It syncs messages into
+// the Loop's context compaction machinery. It sets messages into
 // l.State.Messages, compacts, and returns the result.
 func (l *Loop) llmCompact(ctx context.Context, messages []types.Message, threshold float64) []types.Message {
 	l.State.Messages = messages
-	l.CtxMgr.Messages = messages
 	l.compactContext(ctx, threshold)
 	return l.State.Messages
 }
@@ -74,7 +73,6 @@ func (l *Loop) llmCompact(ctx context.Context, messages []types.Message, thresho
 // stream, indicating the context is too large even for summarization.
 func (l *Loop) llmTrim(ctx context.Context, messages []types.Message) []types.Message {
 	l.State.Messages = messages
-	l.CtxMgr.Messages = messages
 	l.trimContext()
 	return l.State.Messages
 }
