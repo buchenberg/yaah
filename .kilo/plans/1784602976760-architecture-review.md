@@ -67,7 +67,7 @@ User Input → Loop.Run()
 - Middleware is config-driven with enable/disable lists
 - `LoopConfig` uses functional options pattern (20+ options, replaces 30-field struct literal)
 
-**ContextManager**: The 682-line `context_manager.go` holds compaction thresholds, pruning tuning, token tracking, and truncation logic. Methods live on both Loop (thin delegation shims in `agent_context.go`) and ContextManager (implementations). Eliminating the state sync dance between Loop.State and ContextManager fields is future work.
+**ContextManager**: The 684-line `context_manager.go` holds compaction thresholds, pruning tuning, token tracking, and truncation logic. The state sync dance between `Loop.State` and `ContextManager` fields has been eliminated (PR #174): `ContextManager` now holds a `State *LoopState` pointer and reads/writes mutable state directly, removing 9 duplicate fields and the copy-in/copy-out sync in `Loop.compactContext`/`Loop.trimContext`.
 
 ---
 
@@ -75,17 +75,17 @@ User Input → Loop.Run()
 
 `cmd/yaah/` is 40 files totaling ~5,700 lines. It should be thin cobra command wiring, but contains substantial business logic:
 
-| File | Lines | Issue | Recommended Location |
-|---|---|---|---|
-| `subagent_runner.go` | 563 | Entire sub-agent construction engine (role resolution, tool registry, prompt assembly, result trimming) | `internal/agent/subagent/runner.go` |
-| `provider_resolve.go` | 311 | Provider creation, OAuth tokens, API key extraction, timeout mapping | `internal/providers/resolve.go` |
-| `wiring.go` | 395 | MCP init (`initMCP`), OTel init (`initOtel`), prompt layer assembly | Split into `internal/mcp/`, `internal/observability/`, `internal/prompts/` |
-| `doctor.go` | 416 | 40+ diagnostic checks | `internal/doctor/checks.go` |
-| `acp.go` | 478 | Full JSON-RPC 2.0 protocol server | `internal/acp/server.go` |
-| `login.go` | 265 | OAuth device flow, token persistence | `internal/providers/oauth.go` |
-| `compact_cmd.go` | 176 | Manual compaction parallel to agent loop's built-in compactor | Unify with `internal/agent/compactor.go` |
+| File | Lines | Issue | Recommended Location | Status |
+|---|---|---|---|---|
+| `subagent_runner.go` | 563 | Entire sub-agent construction engine (role resolution, tool registry, prompt assembly, result trimming) | `internal/agent/runner/runner.go` | ✅ Done (PR #173) |
+| `provider_resolve.go` | 311 | Provider creation, OAuth tokens, API key extraction, timeout mapping | `internal/providers/resolve.go` | |
+| `wiring.go` | 396 | MCP init (`initMCP`), OTel init (`initOtel`), prompt layer assembly | Split into `wiring_otel.go`, `wiring_mcp.go`, `wiring_prompt.go` | ✅ Done (PR #174) |
+| `doctor.go` | 416 | 40+ diagnostic checks | `internal/doctor/checks.go` | ✅ Done (PR #173) |
+| `acp.go` | 478 | Full JSON-RPC 2.0 protocol server | `internal/acp/server.go` | |
+| `login.go` | 265 | OAuth device flow, token persistence | `internal/providers/oauth.go` | |
+| `compact_cmd.go` | 176 | Manual compaction parallel to agent loop's built-in compactor | Unify with `internal/agent/compactor.go` | |
 
-**`agentSession` (260 lines)** is well-placed as a coordinator struct, but its constructor `newAgentSession` (300+ lines in `wiring.go`) mixes config reading, tool registration, prompt building, and MCP/OTel lifecycle initialization in a single procedural function.
+**`agentSession` (260 lines)** is well-placed as a coordinator struct, but its constructor `newAgentSession` (previously 300+ lines in `wiring.go`) has been split into focused builders (PR #174): `wiring_otel.go`, `wiring_mcp.go`, and `wiring_prompt.go` handle OTel init, MCP init, and prompt assembly respectively, slimming `wiring.go` to ~210 lines.
 
 ---
 
@@ -199,16 +199,22 @@ Role-based tool profiles (developer, analyst, reviewer, tester), timeout enforce
 6. **Fix process tests** — replaced PowerShell commands with POSIX `echo`/`exit`, added poll loop for status
 7. **Fix staticcheck SA5011** — moved nil guards before `defer m.Stop()`
 
+### ✅ Completed (PR #173)
+
+9. **Extract `subagent_runner.go`** → `internal/agent/runner/runner.go` — 563 lines of sub-agent composition logic moved out of `cmd/yaah` into a new `internal/agent/runner` package (placed in its own sibling package rather than `internal/agent/subagent` to avoid an import cycle: `subagent → tools → subagent`). `resolveProviderByName` injected as a parameter.
+10. **Extract `doctor.go`** → `internal/doctor/checks.go` — 429 lines of diagnostic logic separated from cobra command. `DirectiveOverrides` global replaced with `Options` struct parameter.
+
+### ✅ Completed (PR #174)
+
+11. **Split `wiring.go:newAgentSession`** — extracted focused builders: `wiring_otel.go` (initOtel + wrapProviderWithOtel), `wiring_mcp.go` (initMCP), `wiring_prompt.go` (buildSystemPrompt + buildMainPrompt). wiring.go slimmed from 396 to ~210 lines; removed dead `layers.Skills` assignment.
+12. **Complete `ContextManager` extraction** — eliminated state sync dance. Added `State *LoopState` pointer to `ContextManager`; removed 9 duplicate state fields. `Loop.compactContext` and `Loop.trimContext` now delegate directly (19-line and 3-line sync dances removed). Removed 5 redundant `CtxMgr.Messages` assignments across `loop.go`, `tools.go`, `turn.go`.
+
 ### 🔴 Remaining High Impact / Low Effort
 
 8. **Delete or deprecate `tui2/`** — pick one TUI framework and commit to it; stop maintaining both
 
 ### 🟡 Medium Impact
 
-9. **Extract `subagent_runner.go`** → `internal/agent/subagent/runner.go` — 563 lines of business logic moved out of `cmd/yaah`
-10. **Extract `doctor.go`** → `internal/doctor/checks.go` — diagnostic logic separated from cobra command
-11. **Split `wiring.go:newAgentSession`** — focused builders for MCP init, OTel init, and prompt assembly
-12. **Complete `ContextManager` extraction** — migrate methods from `Loop` to `ContextManager`, eliminate state sync dance
 13. **Implement sub-agent lifecycle** (from plan) — this is the most impactful missing feature
 
 ### 🟢 Low Priority

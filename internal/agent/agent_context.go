@@ -393,25 +393,7 @@ func formatToolStub(m types.Message) string {
 // LastPromptTokens so heavily-cached conversations don't over-trigger
 // compaction (cached tokens are effectively free at the provider).
 func (l *Loop) compactContext(ctx context.Context, threshold float64) {
-	cm := l.ctxMgr()
-	cm.Messages = l.State.Messages
-	cm.PreviousSummary = l.State.PreviousSummary
-	cm.LastPromptTokens = l.State.LastPromptTokens
-	cm.LastCachedPromptTokens = l.State.LastCachedPromptTokens
-	cm.IneffectiveCompactions = l.State.IneffectiveCompactions
-	cm.LastCompactionTokens = l.State.LastCompactionTokens
-	cm.CompactionBudgetMultiplier = l.State.CompactionBudgetMultiplier
-	cm.CompactionSavingsHistory = l.State.CompactionSavingsHistory
-	cm.CompactionForcedByOverflow = l.State.CompactionForcedByOverflow
-	cm.compactContext(ctx, threshold)
-	l.State.Messages = cm.Messages
-	l.State.PreviousSummary = cm.PreviousSummary
-	l.State.LastPromptTokens = cm.LastPromptTokens
-	l.State.IneffectiveCompactions = cm.IneffectiveCompactions
-	l.State.LastCompactionTokens = cm.LastCompactionTokens
-	l.State.CompactionBudgetMultiplier = cm.CompactionBudgetMultiplier
-	l.State.CompactionSavingsHistory = cm.CompactionSavingsHistory
-	l.State.CompactionForcedByOverflow = cm.CompactionForcedByOverflow
+	l.ctxMgr().compactContext(ctx, threshold)
 }
 
 // trimContext removes old messages when the estimated token count exceeds
@@ -419,8 +401,5 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 // Reasoning-carrying assistant messages are protected via ProtectReasoningTurns.
 // This is a fallback when LLM-powered compaction is unavailable.
 func (l *Loop) trimContext() {
-	cm := l.ctxMgr()
-	cm.Messages = l.State.Messages
-	cm.trimContext()
-	l.State.Messages = cm.Messages
+	l.ctxMgr().trimContext()
 }

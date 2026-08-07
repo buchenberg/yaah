@@ -1,25 +1,17 @@
 package yaah
 
 import (
-	"context"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/runner"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
-	"github.com/buchenberg/yaah/internal/instructions"
-	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
-	"github.com/buchenberg/yaah/internal/observability"
 	processpkg "github.com/buchenberg/yaah/internal/process"
-	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/providers"
-	"github.com/buchenberg/yaah/internal/skills"
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -44,9 +36,7 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	providerName := resolveProviderName(cfg)
 
 	// --- OpenTelemetry ---------------------------------------------------
-	var otelShutdown func(context.Context) error
-	var otelActive bool
-	otelShutdown, otelActive, err = initOtel(cfg, skipOtel)
+	otelShutdown, otelActive, err := initOtel(cfg, skipOtel)
 	if err != nil {
 		return nil, err
 	}
@@ -64,14 +54,6 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	}
 	subagent.SetDefaultRoleRegistry(reg)
 
-	layers := prompts.Layers{
-		Identity:               prompts.IdentityPrompt,
-		Environment:            prompts.DetectEnvironment(cwd),
-		UserContext:            prompts.LoadUserContext(config.HomeDir()),
-		Project:                instructions.FormatForSystem(instructions.Load(cwd, cwd)),
-		MaxSubAgentConcurrency: cfg.Agent.SubAgent.MaxConcurrency,
-	}
-
 	toolReg := tools.NewRegistry()
 
 	// Workspace containment: only enforced when --workspace is given.
@@ -83,20 +65,15 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	}
 
 	db, err := memory.OpenDefault()
-	if err == nil {
-		if entries, memErr := db.ListMemory(50); memErr == nil && len(entries) > 0 {
-			var memLines []string
-			for _, entry := range entries {
-				if strings.Contains(entry.Tags, `"user_info"`) {
-					continue
-				}
-				memLines = append(memLines, "- "+entry.Text)
-			}
-			if len(memLines) > 0 {
-				layers.Memory = "You have the following stored information about the user and project:\n" + strings.Join(memLines, "\n")
-			}
-		}
+	if err != nil {
+		db = nil
+	}
 
+	// --- Prompt assembly -------------------------------------------------
+	systemPrompt := buildSystemPrompt(cfg, cwd, db, resumeSessionID)
+
+	// Register memory tools (needs DB, not prompt logic).
+	if db != nil {
 		toolReg.Register(&tools.MemorySearchTool{DB: db})
 		toolReg.Register(&tools.MemoryAddTool{DB: db})
 		toolReg.Register(&tools.MemoryDeleteTool{DB: db})
@@ -104,20 +81,11 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 		toolReg.Register(&tools.MemorySessionSearchTool{DB: db})
 	}
 
-	systemPrompt := prompts.Build(layers)
-	if err == nil && resumeSessionID == "" {
-		systemPrompt += "\n\n## Memory Guidelines\n- Use memory_search to find relevant memories before answering personal/project questions. Pass a tag to filter by category.\n- When the user asks about past conversations or session history, use memory_search_sessions with an empty query to list recent transcripts.\n- Use memory_add to save important facts. Always include a tags array (e.g., [\"user_info\"], [\"preferences\"], [\"project:yaah\"], [\"decision\"]).\n- Use memory_update to correct stale facts (requires the memory ID). Use memory_delete to remove incorrect memories.\n- At the end of a conversation or when the user says goodbye, use memory_add to save a 2-3 line summary of key discussion points with tag [\"session_summary\"]."
-	}
-
 	// --- MCP servers ------------------------------------------------------
 	mcpClients, mcpInfos := initMCP(cfg, toolReg, skipMCP)
 
 	skillDirs := skillSearchPaths()
 	toolReg.Register(&tools.SkillTool{Dirs: skillDirs})
-
-	if discovered := skills.Discover(skillDirs); len(discovered) > 0 {
-		layers.Skills = prompts.BuildSkillsIndex(discovered)
-	}
 
 	planDirs := planSearchPaths()
 	toolReg.Register(&tools.PlanTool{Dirs: planDirs})
@@ -171,10 +139,10 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 		}
 	}
 
-	// Default directives apply to the top-level agent only, injected
-	// right after the identity block. systemPrompt (the sub-agent base)
-	// stays clean so child prompts never inherit them.
-	mainPrompt := prompts.InjectAfterIdentity(systemPrompt, resolveDirectives(cfg))
+	// Derive the top-level agent prompt (directives + quick-ref) from the
+	// clean system prompt. systemPrompt stays clean so child sub-agent
+	// prompts never inherit top-level directives.
+	mainPrompt := buildMainPrompt(cfg, systemPrompt, toolReg)
 
 	tracker := &tools.ConflictTracker{}
 	subAgentProvider, subAgentModel := resolveSubAgent(cfg)
@@ -268,19 +236,8 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 		},
 	})
 
-	// Build and inject a compact tool quick-reference card so the
-	// model has signature-first parameter info near the top of the
-	// prompt, rather than only verbose JSON schemas at the bottom.
-	if quickRef := buildToolQuickRef(toolReg); quickRef != "" {
-		mainPrompt += "\n\n" + quickRef
-	}
-
 	// Wrap the provider with OTel instrumentation if enabled.
-	if otelActive {
-		if sp, ok := provider.(agent.StreamProvider); ok {
-			provider = &observability.InstrumentedProvider{Inner: sp, Verbose: cfg.Observability.Otel.Verbose}
-		}
-	}
+	provider = wrapProviderWithOtel(provider, otelActive, cfg.Observability.Otel.Verbose)
 
 	sess := &agentSession{
 		cfg:            cfg,
@@ -322,75 +279,4 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	}
 
 	return sess, nil
-}
-
-// --- helpers ---------------------------------------------------------------
-
-// initOtel initialises OpenTelemetry when configured. Serve mode injects
-// extraOtelProcessors (an in-memory BufferingSpanProcessor) and sets
-// otelInMemoryOnly so tracing activates without an OTLP endpoint.
-func initOtel(cfg *config.Config, skipOtel bool) (func(context.Context) error, bool, error) {
-	noop := func(_ context.Context) error { return nil }
-	if skipOtel || (!cfg.Observability.Otel.Enabled && len(extraOtelProcessors) == 0) {
-		return noop, false, nil
-	}
-	otelCfg := observability.Config{
-		Enabled:         true,
-		Endpoint:        cfg.Observability.Otel.Endpoint,
-		ServiceName:     cfg.Observability.Otel.ServiceName,
-		Traces:          true,
-		Metrics:         cfg.Observability.Otel.Metrics,
-		ExtraProcessors: extraOtelProcessors,
-	}
-	if otelInMemoryOnly {
-		otelCfg.Endpoint = ""
-		otelCfg.Metrics = false
-	} else {
-		if otelCfg.Endpoint == "" {
-			otelCfg.Endpoint = "localhost:4317"
-		}
-		if ep := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); ep != "" {
-			otelCfg.Endpoint = ep
-		}
-	}
-	if os.Getenv("YAAH_OTEL_ENABLED") == "true" {
-		otelCfg.Enabled = true
-	}
-	if otelCfg.ServiceName == "" {
-		otelCfg.ServiceName = "yaah"
-	}
-	sd, err := observability.Setup(context.Background(), otelCfg)
-	if err != nil {
-		return nil, false, fmt.Errorf("otel: %w", err)
-	}
-	return sd, true, nil
-}
-
-// initMCP starts configured MCP servers, registers their tools into
-// toolReg, and returns client handles and server info. Start errors
-// are non-fatal and reported to stderr.
-func initMCP(cfg *config.Config, toolReg *tools.Registry, skipMCP bool) ([]mcp.MCPClient, []mcp.ServerInfo) {
-	if skipMCP {
-		return nil, nil
-	}
-	mcpManifests := make(map[string]*mcp.Manifest)
-	for name, s := range cfg.MCPServers {
-		mcpManifests[name] = &mcp.Manifest{
-			Command:   s.Command,
-			Args:      s.Args,
-			Env:       s.Env,
-			URL:       s.URL,
-			Transport: s.Transport,
-			Framing:   s.Framing,
-			Headers:   s.Headers,
-		}
-	}
-	clients, mcpTools, infos, err := mcp.StartMCPClientsFromConfig(context.Background(), mcpManifests, io.Discard)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: MCP startup error: %v\n", err)
-	}
-	for _, t := range mcpTools {
-		toolReg.Register(t)
-	}
-	return clients, infos
 }

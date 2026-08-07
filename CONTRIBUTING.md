@@ -236,12 +236,9 @@ This checklist is used by maintainers to review PRs. Contributors can use it to 
 
 yaah uses **Architecture Decision Records (ADRs)** to document significant architectural decisions.
 
-See [docs/adr/README.md](docs/adr/README.md) for a complete list:
+See [docs/adr/README.md](docs/adr/README.md) for ADR guidelines and the template.
 
-- [ADR-0001: Engine-View Separation](docs/adr/0001-engine-view-separation.md)
-- [ADR-0002: Middleware Pipeline Pattern](docs/adr/0002-middleware-pipeline.md)
-- [ADR-0003: Functional Options Pattern](docs/adr/0003-functional-options.md)
-- [ADR-0004: Event-Driven Architecture](docs/adr/0004-event-driven-architecture.md)
+Previous ADRs (engine-view separation, middleware pipeline, functional options, event-driven architecture) were fully implemented and are now documented in [architecture.md](docs/architecture.md).
 
 ---
 

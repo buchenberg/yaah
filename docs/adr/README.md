@@ -4,14 +4,9 @@ This directory contains Architecture Decision Records for the yaah project.
 
 ADRs document the "why" behind significant architectural decisions, providing context for future maintainers and helping avoid re-litigating past choices.
 
-## Active ADRs
+## ADRs
 
-| Number | Title | Status | Date |
-|--------|-------|--------|------|
-| [ADR-001](./0001-engine-view-separation.md) | Engine-View Separation | Accepted | 2026-08-03 |
-| [ADR-002](./0002-middleware-pipeline.md) | Middleware Pipeline Pattern | Accepted | 2026-08-03 |
-| [ADR-003](./0003-functional-options.md) | Functional Options Pattern for Loop Configuration | Accepted | 2026-08-03 |
-| [ADR-004](./0004-event-driven-architecture.md) | Event-Driven Architecture with Pub/Sub | Accepted | 2026-08-03 |
+No active ADRs. Previous ADRs (engine-view separation, middleware pipeline, functional options, event-driven architecture) were fully implemented and their content is now covered by [architecture.md](../architecture.md).
 
 ## Template
 
@@ -45,5 +40,4 @@ ADRs follow a modified [MADR](https://adr.github.io/madr/) format:
 ## Related Documentation
 
 - [Architecture Overview](../architecture.md)
-- [SOLID Principles Analysis](../solid-analysis.md) (generated from code review)
 - [CONTRIBUTING.md](../CONTRIBUTING.md)

@@ -24,11 +24,9 @@ import (
 // limits. Extracted from the Loop to isolate context management concerns
 // and make them independently configurable and testable.
 //
-// Methods live on both Loop (thin delegation shims in agent_context.go,
-// agent_truncation.go) and ContextManager (implementations here). The
-// Loop wrappers sync state from Loop.State to ContextManager fields
-// before each call and back after — eliminating this sync dance is
-// future work.
+// State points directly to the Loop's LoopState, so compaction methods
+// read and write mutable state (Messages, PreviousSummary, token counts,
+// compaction tracking) in place — no copy-in/copy-out sync dance.
 type ContextManager struct {
 	// Context window and compaction thresholds.
 	ContextWindow          int
@@ -47,13 +45,9 @@ type ContextManager struct {
 	PruneMinReclaim    int
 	PruneMinTurns      int
 
-	// Compaction state.
-	PreviousSummary          string
-	LastPromptTokens         int
-	LastCachedPromptTokens   int
-	LastCompactionTokens     int
-	IneffectiveCompactions   int
-	CompactionSavingsHistory []float64
+	// State points to the Loop's LoopState, providing direct read/write
+	// access to mutable compaction state without a sync dance.
+	State *LoopState
 
 	// Injected dependencies for compaction LLM calls.
 	Provider        Provider
@@ -74,13 +68,6 @@ type ContextManager struct {
 	// summary from the tail.
 	CompactMaxMessages int
 
-	// CompactionBudgetMultiplier grows when back-to-back overflows occur.
-	CompactionBudgetMultiplier float64
-
-	// CompactionForcedByOverflow is set when a forced-compaction due to
-	// context overflow occurred this turn.
-	CompactionForcedByOverflow bool
-
 	// Tracer for OpenTelemetry spans during compaction.
 	Tracer trace.Tracer
 
@@ -90,10 +77,6 @@ type ContextManager struct {
 	// CompactionHook is an optional callback invoked during compaction.
 	CompactionHook func(event any)
 
-	// Messages is a mutable snapshot of the current message list, used by
-	// compactFn to read/write the working set.
-	Messages []types.Message
-
 	// compactFn is set by the Loop to delegate compaction back through its
 	// own method while ContextManager satisfies the Compactor interface.
 	compactFn func(ctx context.Context, messages []types.Message, threshold float64) []types.Message
@@ -101,14 +84,17 @@ type ContextManager struct {
 
 // Reset resets all compaction-tracking state to zero values.
 func (cm *ContextManager) Reset() {
-	cm.PreviousSummary = ""
-	cm.LastPromptTokens = 0
-	cm.LastCachedPromptTokens = 0
-	cm.LastCompactionTokens = 0
-	cm.IneffectiveCompactions = 0
-	cm.CompactionSavingsHistory = nil
-	cm.CompactionBudgetMultiplier = 1.0
-	cm.CompactionForcedByOverflow = false
+	if cm.State == nil {
+		return
+	}
+	cm.State.PreviousSummary = ""
+	cm.State.LastPromptTokens = 0
+	cm.State.LastCachedPromptTokens = 0
+	cm.State.LastCompactionTokens = 0
+	cm.State.IneffectiveCompactions = 0
+	cm.State.CompactionSavingsHistory = nil
+	cm.State.CompactionBudgetMultiplier = 1.0
+	cm.State.CompactionForcedByOverflow = false
 }
 
 // Compact implements pipeline.Compactor by delegating to the registered
@@ -150,7 +136,7 @@ func (cm *ContextManager) EnsurePruner() {
 // estimatedTokens returns the char/4 token estimate for all messages.
 func (cm *ContextManager) estimatedTokens() int {
 	total := 0
-	for _, m := range cm.Messages {
+	for _, m := range cm.State.Messages {
 		total += messageTokens(m)
 	}
 	return total
@@ -173,7 +159,7 @@ func (cm *ContextManager) persisterDB() *memory.DB {
 // plus kept messages. It is called by both the normal and chunked compaction
 // paths so they share the same post-compaction logic.
 func (cm *ContextManager) applyCompactedSummary(summary string, sysMsg types.Message, oldMsgs, keepMsgs []types.Message, preRealTokens int) {
-	cm.PreviousSummary = summary
+	cm.State.PreviousSummary = summary
 
 	newMsgs := []types.Message{sysMsg}
 	if cm.SystemPrompt == "" {
@@ -198,11 +184,11 @@ func (cm *ContextManager) applyCompactedSummary(summary string, sysMsg types.Mes
 
 	newMsgs = append(newMsgs, keepMsgs...)
 	beforeEstimate := cm.estimatedTokens()
-	cm.Messages = newMsgs
-	cm.LastPromptTokens = cm.estimatedTokens()
+	cm.State.Messages = newMsgs
+	cm.State.LastPromptTokens = cm.estimatedTokens()
 	cm.resetPruner()
 	if cm.Pruner != nil {
-		cm.Pruner.Mark(cm.Messages, "post_compaction")
+		cm.Pruner.Mark(cm.State.Messages, "post_compaction")
 	}
 
 	afterEstimate := cm.estimatedTokens()
@@ -212,29 +198,29 @@ func (cm *ContextManager) applyCompactedSummary(summary string, sysMsg types.Mes
 		minReduction = 2000
 	}
 	if beforeEstimate-afterEstimate < minReduction {
-		cm.IneffectiveCompactions++
+		cm.State.IneffectiveCompactions++
 	} else {
-		cm.IneffectiveCompactions = 0
+		cm.State.IneffectiveCompactions = 0
 	}
 	cm.trackCompactionSavings(float64(beforeEstimate-afterEstimate) / float64(beforeEstimate))
 
-	cm.LastCompactionTokens = afterEstimate
-	if preRealTokens > cm.LastCompactionTokens {
-		cm.LastCompactionTokens = preRealTokens
+	cm.State.LastCompactionTokens = afterEstimate
+	if preRealTokens > cm.State.LastCompactionTokens {
+		cm.State.LastCompactionTokens = preRealTokens
 	}
 }
 
 const adaptiveSavingsWindow = 5
 
 func (cm *ContextManager) trackCompactionSavings(savings float64) {
-	cm.CompactionSavingsHistory = append(cm.CompactionSavingsHistory, savings)
-	if len(cm.CompactionSavingsHistory) > adaptiveSavingsWindow {
-		cm.CompactionSavingsHistory = cm.CompactionSavingsHistory[1:]
+	cm.State.CompactionSavingsHistory = append(cm.State.CompactionSavingsHistory, savings)
+	if len(cm.State.CompactionSavingsHistory) > adaptiveSavingsWindow {
+		cm.State.CompactionSavingsHistory = cm.State.CompactionSavingsHistory[1:]
 	}
 
 	highCount := 0
 	lowCount := 0
-	for _, s := range cm.CompactionSavingsHistory {
+	for _, s := range cm.State.CompactionSavingsHistory {
 		if s > 0.4 {
 			highCount++
 		}
@@ -244,18 +230,18 @@ func (cm *ContextManager) trackCompactionSavings(savings float64) {
 	}
 
 	if highCount >= 3 {
-		cm.CompactionBudgetMultiplier *= 0.9
-		cm.CompactionSavingsHistory = nil
+		cm.State.CompactionBudgetMultiplier *= 0.9
+		cm.State.CompactionSavingsHistory = nil
 	}
 	if lowCount >= 2 {
-		cm.CompactionBudgetMultiplier *= 1.2
-		cm.CompactionSavingsHistory = nil
+		cm.State.CompactionBudgetMultiplier *= 1.2
+		cm.State.CompactionSavingsHistory = nil
 	}
-	if cm.CompactionBudgetMultiplier < 0.5 {
-		cm.CompactionBudgetMultiplier = 0.5
+	if cm.State.CompactionBudgetMultiplier < 0.5 {
+		cm.State.CompactionBudgetMultiplier = 0.5
 	}
-	if cm.CompactionBudgetMultiplier > 2.0 {
-		cm.CompactionBudgetMultiplier = 2.0
+	if cm.State.CompactionBudgetMultiplier > 2.0 {
+		cm.State.CompactionBudgetMultiplier = 2.0
 	}
 }
 
@@ -265,16 +251,16 @@ func (cm *ContextManager) trackCompactionSavings(savings float64) {
 // structured summary, preserving the system message and recent turns.
 // Falls back to simple trimming if the LLM call fails or returns empty.
 func (cm *ContextManager) compactContext(ctx context.Context, threshold float64) {
-	if cm.IneffectiveCompactions >= 2 && cm.LastCompactionTokens > 0 {
-		if est := cm.estimatedTokens(); est >= cm.LastCompactionTokens*3/2 {
-			cm.IneffectiveCompactions = 0
+	if cm.State.IneffectiveCompactions >= 2 && cm.State.LastCompactionTokens > 0 {
+		if est := cm.estimatedTokens(); est >= cm.State.LastCompactionTokens*3/2 {
+			cm.State.IneffectiveCompactions = 0
 			if db := cm.persisterDB(); cm.SessionID != "" && db != nil {
 				db.SetCompactionCooldown(cm.SessionID, 0, 0)
 			}
 		}
 	}
 
-	if cm.IneffectiveCompactions >= 2 {
+	if cm.State.IneffectiveCompactions >= 2 {
 		return
 	}
 
@@ -283,8 +269,8 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 		if err == nil && cooldown > 0 && time.Now().Unix() < cooldown {
 			return
 		}
-		if err == nil && ineffective != cm.IneffectiveCompactions {
-			cm.IneffectiveCompactions = ineffective
+		if err == nil && ineffective != cm.State.IneffectiveCompactions {
+			cm.State.IneffectiveCompactions = ineffective
 		}
 	}
 
@@ -297,17 +283,17 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 		target = minContextFloor
 	}
 
-	rawTokens := cm.LastPromptTokens
+	rawTokens := cm.State.LastPromptTokens
 	effectiveTokens := rawTokens
-	if effectiveTokens > 0 && cm.LastCachedPromptTokens > 0 {
-		effectiveTokens -= cm.LastCachedPromptTokens
+	if effectiveTokens > 0 && cm.State.LastCachedPromptTokens > 0 {
+		effectiveTokens -= cm.State.LastCachedPromptTokens
 	}
 	if effectiveTokens <= 0 {
 		factor := cm.EstimateFactor
 		if factor <= 0 {
 			factor = defaultEstimateFactor
 		}
-		effectiveTokens = preflightTokens(cm.Messages, nil, factor)
+		effectiveTokens = preflightTokens(cm.State.Messages, nil, factor)
 		rawTokens = effectiveTokens
 	}
 
@@ -318,19 +304,19 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	rawTarget := int(float64(cm.ContextWindow) * rawThreshold)
 
 	if effectiveTokens < target && rawTokens < rawTarget {
-		if cm.CompactMaxMessages <= 0 || len(cm.Messages) <= cm.CompactMaxMessages {
+		if cm.CompactMaxMessages <= 0 || len(cm.State.Messages) <= cm.CompactMaxMessages {
 			return
 		}
 	}
 
-	if len(cm.Messages) <= 4 {
+	if len(cm.State.Messages) <= 4 {
 		return
 	}
 
 	compactReason := "threshold"
-	if cm.CompactionForcedByOverflow {
+	if cm.State.CompactionForcedByOverflow {
 		compactReason = "overflow"
-		cm.CompactionForcedByOverflow = false
+		cm.State.CompactionForcedByOverflow = false
 	} else if effectiveTokens < target && rawTokens < rawTarget {
 		compactReason = "message_count"
 	}
@@ -350,34 +336,34 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 			trace.WithAttributes(
 				attribute.Int("compaction.effective_tokens", effectiveTokens),
 				attribute.Int("compaction.raw_tokens", rawTokens),
-				attribute.Int("compaction.cached_tokens", cm.LastCachedPromptTokens),
+				attribute.Int("compaction.cached_tokens", cm.State.LastCachedPromptTokens),
 				attribute.Int("compaction.target", target),
 				attribute.Int("compaction.raw_target", rawTarget),
-				attribute.Int("compaction.messages", len(cm.Messages)),
+				attribute.Int("compaction.messages", len(cm.State.Messages)),
 			))
 		defer span.End()
 	}
 
-	sysMsg := cm.Messages[0]
+	sysMsg := cm.State.Messages[0]
 
-	budget := int(float64(preserveBudget(cm.ContextWindow))*cm.CompactionBudgetMultiplier) / 4
-	split := splitTail(cm.Messages, budget)
-	keepMsgs := cm.Messages[split.keepStart:]
-	oldMsgs := cm.Messages[1:split.keepStart]
+	budget := int(float64(preserveBudget(cm.ContextWindow))*cm.State.CompactionBudgetMultiplier) / 4
+	split := splitTail(cm.State.Messages, budget)
+	keepMsgs := cm.State.Messages[split.keepStart:]
+	oldMsgs := cm.State.Messages[1:split.keepStart]
 
 	if cm.ReasoningProtectTurns > 0 {
-		split.keepStart = ProtectReasoningTurns(cm.Messages, split.keepStart, cm.ReasoningProtectTurns)
-		keepMsgs = cm.Messages[split.keepStart:]
-		oldMsgs = cm.Messages[1:split.keepStart]
+		split.keepStart = ProtectReasoningTurns(cm.State.Messages, split.keepStart, cm.ReasoningProtectTurns)
+		keepMsgs = cm.State.Messages[split.keepStart:]
+		oldMsgs = cm.State.Messages[1:split.keepStart]
 	}
 	oldMsgs = pruneMessages(oldMsgs, pruneMessageMaxLen)
 
 	var sb strings.Builder
-	if cm.PreviousSummary != "" {
+	if cm.State.PreviousSummary != "" {
 		sb.WriteString("Update the anchored summary below using the conversation history above.\n")
 		sb.WriteString("Preserve still-true details, remove stale details, and merge in the new facts.\n")
 		sb.WriteString("<previous-summary>\n")
-		sb.WriteString(cm.PreviousSummary)
+		sb.WriteString(cm.State.PreviousSummary)
 		sb.WriteString("\n</previous-summary>\n\n")
 	} else {
 		sb.WriteString("Create a new anchored summary from the conversation history below.\n\n")
@@ -443,8 +429,8 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 		savingsPct = float64(beforeEstimate-afterEstimate) / float64(beforeEstimate)
 	}
 
-	if cm.IneffectiveCompactions >= 2 {
-		ineffectiveNote = fmt.Sprintf("compaction ineffective %d times; cooldown active", cm.IneffectiveCompactions)
+	if cm.State.IneffectiveCompactions >= 2 {
+		ineffectiveNote = fmt.Sprintf("compaction ineffective %d times; cooldown active", cm.State.IneffectiveCompactions)
 	}
 
 	if cm.Broker != nil {
@@ -465,10 +451,10 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 
 	if db := cm.persisterDB(); cm.SessionID != "" && db != nil {
 		cooldown := int64(0)
-		if cm.IneffectiveCompactions >= 2 {
+		if cm.State.IneffectiveCompactions >= 2 {
 			cooldown = time.Now().Unix() + 600
 		}
-		db.SetCompactionCooldown(cm.SessionID, cooldown, cm.IneffectiveCompactions)
+		db.SetCompactionCooldown(cm.SessionID, cooldown, cm.State.IneffectiveCompactions)
 		db.UpdateSessionSummary(cm.SessionID, summary)
 	}
 }
@@ -480,7 +466,7 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 func (cm *ContextManager) trimContext() {
 	target := cm.ContextWindow * 4 / 5
 	totalChars := 0
-	for _, m := range cm.Messages {
+	for _, m := range cm.State.Messages {
 		totalChars += len(m.Content) + len(m.ReasoningContent)
 		for _, tc := range m.ToolCalls {
 			totalChars += len(tc.Function.Arguments) + len(tc.Function.Name)
@@ -490,8 +476,8 @@ func (cm *ContextManager) trimContext() {
 		return
 	}
 
-	sysMsg := cm.Messages[0]
-	rest := cm.Messages[1:]
+	sysMsg := cm.State.Messages[0]
+	rest := cm.State.Messages[1:]
 	for len(rest) > 0 && totalChars/4 > target {
 		removed := len(rest[0].Content) + len(rest[0].ReasoningContent)
 		for _, tc := range rest[0].ToolCalls {
@@ -501,18 +487,18 @@ func (cm *ContextManager) trimContext() {
 		rest = rest[1:]
 	}
 
-	keepStart := len(cm.Messages) - len(rest)
+	keepStart := len(cm.State.Messages) - len(rest)
 	if cm.ReasoningProtectTurns > 0 {
-		keepStart = ProtectReasoningTurns(cm.Messages, keepStart, cm.ReasoningProtectTurns)
+		keepStart = ProtectReasoningTurns(cm.State.Messages, keepStart, cm.ReasoningProtectTurns)
 	}
 
-	newMsgs := make([]types.Message, 0, len(cm.Messages)-keepStart+1)
+	newMsgs := make([]types.Message, 0, len(cm.State.Messages)-keepStart+1)
 	newMsgs = append(newMsgs, sysMsg)
-	newMsgs = append(newMsgs, cm.Messages[keepStart:]...)
-	cm.Messages = newMsgs
+	newMsgs = append(newMsgs, cm.State.Messages[keepStart:]...)
+	cm.State.Messages = newMsgs
 	cm.resetPruner()
 	if cm.Pruner != nil {
-		cm.Pruner.Mark(cm.Messages, "post_trim")
+		cm.Pruner.Mark(cm.State.Messages, "post_trim")
 	}
 }
 

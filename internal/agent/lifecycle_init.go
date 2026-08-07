@@ -48,7 +48,14 @@ func (l *Loop) ctxMgr() *ContextManager {
 			SystemPrompt:   l.Config.SystemPrompt,
 			SessionID:      l.Config.SessionID,
 			DB:             db,
+			State:          &l.State,
 		}
+	}
+	if l.CtxMgr.State == nil {
+		l.CtxMgr.State = &l.State
+	}
+	if l.State.CompactionBudgetMultiplier <= 0 {
+		l.State.CompactionBudgetMultiplier = 1.0
 	}
 	if l.CtxMgr.Provider == nil {
 		l.CtxMgr.Provider = l.Provider
@@ -82,12 +89,8 @@ func (l *Loop) ctxMgr() *ContextManager {
 func (l *Loop) applyDefaults() {
 	if l.CtxMgr == nil {
 		l.CtxMgr = NewContextManager(l.Provider, l.Config.Model)
-		l.CtxMgr.PreviousSummary = l.State.PreviousSummary
-		l.CtxMgr.LastPromptTokens = l.State.LastPromptTokens
-		l.CtxMgr.LastCachedPromptTokens = l.State.LastCachedPromptTokens
-		l.CtxMgr.LastCompactionTokens = l.State.LastCompactionTokens
-		l.CtxMgr.IneffectiveCompactions = l.State.IneffectiveCompactions
 	}
+	l.CtxMgr.State = &l.State
 	l.CtxMgr.ContextWindow = l.Config.ContextWindow
 	l.CtxMgr.CompactionThreshold = l.Config.CompactionThreshold
 	l.CtxMgr.RawCompactionThreshold = l.Config.RawCompactionThreshold

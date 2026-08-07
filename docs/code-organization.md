@@ -449,8 +449,7 @@ golangci-lint run ./...
 - [Go Code Review Comments](https://github.com/golang/go/wiki/CodeReviewComments) - Official Go style guide
 - [Effective Go](https://go.dev/doc/effective_go) - Go best practices
 - [Go Project Layout](https://github.com/golang-standards/project-layout) - Standard project layout
-- [ADR-0001: Engine-View Separation](../adr/0001-engine-view-separation.md) - Architecture background
-- [ADR-0002: Middleware Pipeline Pattern](../adr/0002-middleware-pipeline.md) - Pipeline architecture
+- [Architecture Overview](../architecture.md) - Architecture background
 - [CONTRIBUTING.md](../CONTRIBUTING.md) - Contribution guidelines
 
 ---
