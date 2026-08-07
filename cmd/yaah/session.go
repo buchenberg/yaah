@@ -139,6 +139,9 @@ func (s *agentSession) close() {
 
 func (s *agentSession) Close()   { s.close() }
 func (s *agentSession) Compact() { s.compactContext() }
+
+// ToolReg returns the session's tool registry.
+func (s *agentSession) ToolReg() *tools.Registry { return s.toolReg }
 func (s *agentSession) ProviderName() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
