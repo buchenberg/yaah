@@ -193,7 +193,7 @@ func (t *TUI2) buildUI() {
 	bannerLines, t.Banner = banner.Build()
 	t.InfoBar, _ = infobar.Build()
 	t.Messages = messages.Build()
-	t.Input = input.Build()
+	t.Input = input.Build(t.Theme)
 	t.InfoPane = infopane.Build()
 	t.StatusBar, _ = statusbar.Build()
 

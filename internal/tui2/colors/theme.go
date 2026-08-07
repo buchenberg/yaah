@@ -6,28 +6,30 @@ import (
 )
 
 type Theme struct {
-	Accent  string
-	Dim     string
-	User    string
-	System  string
-	Error   string
-	ToolBg  string
-	CodeBg  string
-	NoColor bool
+	Accent      string
+	Dim         string
+	User        string
+	System      string
+	Error       string
+	ToolBg      string
+	CodeBg      string
+	InputBorder string
+	NoColor     bool
 
 	ToolColors map[string]string
 	RoleColors map[string]string
 }
 
 var DarkTheme = Theme{
-	Accent:  "#00afff",
-	Dim:     "#5f5f5f",
-	User:    "#00afff",
-	System:  "#888888",
-	Error:   "#ff5555",
-	ToolBg:  "#1a1a2e",
-	CodeBg:  "#1e1e2e",
-	NoColor: false,
+	Accent:      "#00afff",
+	Dim:         "#5f5f5f",
+	User:        "#00afff",
+	System:      "#888888",
+	Error:       "#ff5555",
+	ToolBg:      "#1a1a2e",
+	CodeBg:      "#1e1e2e",
+	InputBorder: "#ff87af",
+	NoColor:     false,
 	ToolColors: map[string]string{
 		"read":                   "#87afff",
 		"write":                  "#ffd700",
@@ -84,14 +86,15 @@ var DarkTheme = Theme{
 }
 
 var LightTheme = Theme{
-	Accent:  "#005faf",
-	Dim:     "#9e9e9e",
-	User:    "#005faf",
-	System:  "#666666",
-	Error:   "#d70000",
-	ToolBg:  "#eeeeee",
-	CodeBg:  "#f0f0f0",
-	NoColor: false,
+	Accent:      "#005faf",
+	Dim:         "#9e9e9e",
+	User:        "#005faf",
+	System:      "#666666",
+	Error:       "#d70000",
+	ToolBg:      "#eeeeee",
+	CodeBg:      "#f0f0f0",
+	InputBorder: "#d75f87",
+	NoColor:     false,
 }
 
 func init() {
