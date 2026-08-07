@@ -12,80 +12,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/acp"
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 	"github.com/spf13/cobra"
 )
-
-// === JSON-RPC types for ACP ===
-
-type acpMessage struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      any             `json:"id,omitempty"`
-	Method  string          `json:"method,omitempty"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *acpError       `json:"error,omitempty"`
-}
-
-type acpError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-type acpInitializeResult struct {
-	ProtocolVersion string        `json:"protocol_version"`
-	Capabilities    acpServerCaps `json:"capabilities"`
-	ServerInfo      acpServerInfo `json:"server_info"`
-	Instructions    string        `json:"instructions,omitempty"`
-}
-
-type acpServerCaps struct {
-	Tools     *acpToolsCaps `json:"tools,omitempty"`
-	Resources *struct{}     `json:"resources,omitempty"`
-}
-
-type acpToolsCaps struct {
-	ListChanged bool `json:"listChanged,omitempty"`
-}
-
-type acpServerInfo struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-}
-
-type acpSessionNewResult struct {
-	SessionID string        `json:"sessionId"`
-	Modes     *acpModeState `json:"modes,omitempty"`
-}
-
-type acpModeState struct {
-	CurrentModeID  string    `json:"currentModeId"`
-	AvailableModes []acpMode `json:"availableModes"`
-}
-
-type acpMode struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-}
-
-type acpPromptParams struct {
-	SessionID string            `json:"sessionId"`
-	Prompt    []acpContentBlock `json:"prompt"`
-}
-
-type acpContentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
-}
-
-type acpToolListEntry struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"input_schema,omitempty"`
-}
 
 // === ACP serve command ===
 
@@ -122,7 +54,7 @@ func init() {
 // for each event, tagging them with the active session ID.
 type acpViewWithWrite struct {
 	av        *acpView
-	send      func(sessionID string, update acpUpdate)
+	send      func(sessionID string, update acp.Update)
 	sessionID string
 }
 
@@ -175,7 +107,7 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 	// writeLock serializes writes to stdout so JSON-RPC messages don't
 	// interleave from multiple goroutines.
 	var writeLock sync.Mutex
-	writeMsg := func(msg acpMessage) {
+	writeMsg := func(msg acp.Message) {
 		data, _ := json.Marshal(msg)
 		writeLock.Lock()
 		fmt.Fprintln(os.Stdout, string(data))
@@ -188,11 +120,11 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 		writeLock.Unlock()
 	}
 
-	sendUpdate := func(sessionID string, update acpUpdate) {
-		msg := acpSessionUpdateMsg{
+	sendUpdate := func(sessionID string, update acp.Update) {
+		msg := acp.SessionUpdateMsg{
 			JSONRPC: "2.0",
 			Method:  "session/update",
-			Params: acpSessionUpdate{
+			Params: acp.SessionUpdate{
 				SessionID: sessionID,
 				Update:    update,
 			},
@@ -224,7 +156,7 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 				return
 			}
 
-			var msg acpMessage
+			var msg acp.Message
 			if err := json.Unmarshal([]byte(line), &msg); err != nil {
 				fmt.Fprintf(os.Stderr, "%s invalid JSON: %v\n", Dim("yaah acp-serve:"), err)
 				continue
@@ -232,29 +164,29 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 
 			switch msg.Method {
 			case "initialize":
-				result := acpInitializeResult{
+				result := acp.InitializeResult{
 					ProtocolVersion: "2024-11-05",
-					Capabilities: acpServerCaps{
-						Tools: &acpToolsCaps{ListChanged: false},
+					Capabilities: acp.ServerCaps{
+						Tools: &acp.ToolsCaps{ListChanged: false},
 					},
-					ServerInfo: acpServerInfo{
+					ServerInfo: acp.ServerInfo{
 						Name:    "yaah",
 						Version: version,
 					},
 				}
 				respData, _ := json.Marshal(result)
-				writeMsg(acpMessage{JSONRPC: "2.0", ID: msg.ID, Result: respData})
+				writeMsg(acp.Message{JSONRPC: "2.0", ID: msg.ID, Result: respData})
 
 			case "notifications/initialized":
 
 			case "session/new":
 				sessionID := fmt.Sprintf("sess-%d", time.Now().UnixNano())
-				result := acpSessionNewResult{SessionID: sessionID}
+				result := acp.SessionNewResult{SessionID: sessionID}
 				respData, _ := json.Marshal(result)
-				writeMsg(acpMessage{JSONRPC: "2.0", ID: msg.ID, Result: respData})
+				writeMsg(acp.Message{JSONRPC: "2.0", ID: msg.ID, Result: respData})
 
 			case "session/prompt":
-				var params acpPromptParams
+				var params acp.PromptParams
 				if len(msg.Params) > 0 {
 					json.Unmarshal(msg.Params, &params)
 				}
@@ -266,15 +198,15 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 					}
 				}
 				if promptText == "" {
-					writeMsg(acpMessage{
+					writeMsg(acp.Message{
 						JSONRPC: "2.0", ID: msg.ID,
-						Error: &acpError{Code: -32602, Message: "prompt must contain at least one text block"},
+						Error: &acp.Error{Code: -32602, Message: "prompt must contain at least one text block"},
 					})
 					continue
 				}
 
 				// Acknowledge the prompt immediately
-				writeMsg(acpMessage{JSONRPC: "2.0", ID: msg.ID, Result: json.RawMessage(`{}`)})
+				writeMsg(acp.Message{JSONRPC: "2.0", ID: msg.ID, Result: json.RawMessage(`{}`)})
 
 				sessionID := params.SessionID
 
@@ -313,10 +245,10 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 				promptMu.Unlock()
 
 			case "session/set_mode":
-				writeMsg(acpMessage{JSONRPC: "2.0", ID: msg.ID, Result: json.RawMessage(`{}`)})
+				writeMsg(acp.Message{JSONRPC: "2.0", ID: msg.ID, Result: json.RawMessage(`{}`)})
 
 			case "tools/list":
-				entries := make([]acpToolListEntry, 0)
+				entries := make([]acp.ToolListEntry, 0)
 				if sess != nil {
 					reg := sess.toolReg
 					if reg != nil {
@@ -332,7 +264,7 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 							} else {
 								schemaRaw = json.RawMessage(`{"type":"object","properties":{}}`)
 							}
-							entries = append(entries, acpToolListEntry{
+							entries = append(entries, acp.ToolListEntry{
 								Name:        t.Name(),
 								Description: t.Description(),
 								InputSchema: schemaRaw,
@@ -345,7 +277,7 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 					"nextCursor": "",
 				}
 				respData, _ := json.Marshal(result)
-				writeMsg(acpMessage{JSONRPC: "2.0", ID: msg.ID, Result: respData})
+				writeMsg(acp.Message{JSONRPC: "2.0", ID: msg.ID, Result: respData})
 
 			case "tools/call":
 				var params struct {
@@ -375,7 +307,7 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 				} else {
 					resultData = json.RawMessage(`{"content":[{"type":"text","text":"session not ready"}],"isError":true}`)
 				}
-				writeMsg(acpMessage{JSONRPC: "2.0", ID: msg.ID, Result: resultData})
+				writeMsg(acp.Message{JSONRPC: "2.0", ID: msg.ID, Result: resultData})
 			}
 		}
 	}()
@@ -405,7 +337,7 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func forwardACPCtrl(ctx context.Context, ch <-chan types.CtrlMsg, sessionID string, send func(string, acpUpdate)) {
+func forwardACPCtrl(ctx context.Context, ch <-chan types.CtrlMsg, sessionID string, send func(string, acp.Update)) {
 	for {
 		select {
 		case msg, ok := <-ch:
@@ -414,21 +346,21 @@ func forwardACPCtrl(ctx context.Context, ch <-chan types.CtrlMsg, sessionID stri
 			}
 			switch m := msg.(type) {
 			case *types.CtrlStatus:
-				send(sessionID, acpUpdate{
+				send(sessionID, acp.Update{
 					SessionUpdate: "agent_message_chunk",
-					Content:       &acpContent{Type: "text", Text: m.Text},
+					Content:       &acp.Content{Type: "text", Text: m.Text},
 				})
 			case *types.CtrlError:
-				send(sessionID, acpUpdate{
+				send(sessionID, acp.Update{
 					SessionUpdate: "agent_message_chunk",
-					Content:       &acpContent{Type: "text", Text: fmt.Sprintf("error: %v", m.Err)},
+					Content:       &acp.Content{Type: "text", Text: fmt.Sprintf("error: %v", m.Err)},
 				})
 			case *types.CtrlContinue:
 				// Inform the client and auto-continue.
 				msg := fmt.Sprintf("Max iterations (%d) reached — continuing.", m.MaxIter)
-				send(sessionID, acpUpdate{
+				send(sessionID, acp.Update{
 					SessionUpdate: "agent_message_chunk",
-					Content:       &acpContent{Type: "text", Text: msg},
+					Content:       &acp.Content{Type: "text", Text: msg},
 				})
 				if m.AnswerCh != nil {
 					select {
@@ -439,9 +371,9 @@ func forwardACPCtrl(ctx context.Context, ch <-chan types.CtrlMsg, sessionID stri
 			case *types.CtrlDone:
 				return
 			case *types.CtrlContextInfo:
-				send(sessionID, acpUpdate{
+				send(sessionID, acp.Update{
 					SessionUpdate: "agent_message_chunk",
-					Content:       &acpContent{Type: "text", Text: fmt.Sprintf("[context: %d/%d tokens]", m.Tokens, m.Window)},
+					Content:       &acp.Content{Type: "text", Text: fmt.Sprintf("[context: %d/%d tokens]", m.Tokens, m.Window)},
 				})
 			case *types.CtrlQuestion:
 				// Format and send the question text.
@@ -449,9 +381,9 @@ func forwardACPCtrl(ctx context.Context, ch <-chan types.CtrlMsg, sessionID stri
 				for i, o := range m.Options {
 					msg += fmt.Sprintf("  [%d] %s — %s\n", i+1, o.Label, o.Description)
 				}
-				send(sessionID, acpUpdate{
+				send(sessionID, acp.Update{
 					SessionUpdate: "agent_message_chunk",
-					Content:       &acpContent{Type: "text", Text: msg},
+					Content:       &acp.Content{Type: "text", Text: msg},
 				})
 				// Auto-answer with the first option.
 				if m.AnswerCh != nil {
