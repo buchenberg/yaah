@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/runner"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/types"
@@ -162,8 +163,8 @@ func (s *agentSession) reloadRoles() {
 	}
 
 	opts := subagent.ReloadDefaultRolesOptions{
-		BuiltinFiles: builtinRoleFiles(),
-		SearchDirs:   roleSearchPaths(cwd),
+		BuiltinFiles: runner.BuiltinRoleFiles(),
+		SearchDirs:   runner.RoleSearchPaths(cwd),
 	}
 	if err := subagent.ReloadDefaultRoles(opts); err != nil {
 		msg(fmt.Sprintf("role reload failed: %v", err))

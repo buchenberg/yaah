@@ -322,7 +322,7 @@ The `RoleRegistry` is the central store for role definitions. It holds built-in 
 
 **Loading built-in roles:**
 
-Built-in roles are embedded via `//go:embed roles/*.md` in `internal/prompts/prompts.go` as `BuiltinRolesFS` (an `embed.FS`). At startup, `builtinRoleFiles()` in `cmd/yaah/subagent_runner.go` reads the directory and passes each file's content to `reg.LoadBytes(files)`. The file name minus `.md` becomes the role name (e.g. `analyst.md` → `"analyst"`).
+Built-in roles are embedded via `//go:embed roles/*.md` in `internal/prompts/prompts.go` as `BuiltinRolesFS` (an `embed.FS`). At startup, `runner.BuiltinRoleFiles()` in `internal/agent/runner/runner.go` reads the directory and passes each file's content to `reg.LoadBytes(files)`. The file name minus `.md` becomes the role name (e.g. `analyst.md` → `"analyst"`).
 
 **Loading user-defined roles:**
 
@@ -350,7 +350,7 @@ File: `internal/tools/task.go`
 
 `BuildTaskSchema(roleNames []string) json.RawMessage` constructs the `spawn_subagent` tool's JSON Schema at startup from the active role list, using `encoding/json` marshalling to avoid injection. The `TaskTool.Schema()` method checks `RoleNames`: when non-empty it calls `BuildTaskSchema`; when empty it returns a legacy static schema with `["analyst", "developer", "tester", "reviewer"]`. This means user-defined roles are only visible to the model when a registry is configured (the default for both CLI and TUI sessions).
 
-Wiring chain: `reg.Names()` → `newTaskTool(…, roleNames)` → `TaskTool.RoleNames` → `TaskTool.Schema()`.
+Wiring chain: `reg.Names()` → `runner.NewTaskTool(…, roleNames)` → `TaskTool.RoleNames` → `TaskTool.Schema()`.
 
 ### CLI lifecycle display
 

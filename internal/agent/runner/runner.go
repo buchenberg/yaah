@@ -1,4 +1,15 @@
-package yaah
+// Package runner wires sub-agent execution: it builds the per-role tool
+// registries, resolves provider/model/timeout/iteration budgets, assembles
+// the sub-agent system prompt, and constructs the top-level TaskTool that
+// the planner uses to spawn sub-agents.
+//
+// This is a composition layer over the agent loop (internal/agent), the
+// tool registry (internal/tools), role profiles (internal/agent/subagent),
+// config, memory, and prompts. It lives in its own package rather than in
+// internal/agent/subagent because it imports internal/tools, which itself
+// imports internal/agent/subagent — placing it in the subagent package
+// would create an import cycle (subagent -> tools -> subagent).
+package runner
 
 import (
 	"context"
@@ -20,7 +31,14 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker, estimateFactor float64, subContextWindow int, outputLimit int, providerMap map[string]config.Provider, defaults config.Defaults, parentPermissionRules []pipeline.PermissionRule, pathValidator *tools.PathValidator) *tools.TaskTool {
+// NewTaskTool builds the planner's TaskTool: it resolves the advertised
+// role names/descriptions and returns a TaskTool whose Runner is a
+// makeTaskRunner closure bounded to one level of nesting.
+//
+// providerResolver translates a configured provider name into a live
+// agent.Provider. It is injected from the cmd layer because provider
+// construction (makeProvider) belongs with the rest of the CLI wiring.
+func NewTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker, estimateFactor float64, subContextWindow int, outputLimit int, providerMap map[string]config.Provider, defaults config.Defaults, parentPermissionRules []pipeline.PermissionRule, pathValidator *tools.PathValidator, providerResolver func(map[string]config.Provider, string) agent.Provider) *tools.TaskTool {
 	// Sub-agent spawning depth is hard-coded at 1: the top-level agent
 	// can spawn one level of sub-agents; sub-agents cannot spawn further
 	// sub-agents (remainingDepth reaches 0).
@@ -54,6 +72,7 @@ func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 			defaults:              defaults,
 			parentPermissionRules: parentPermissionRules,
 			pathValidator:         pathValidator,
+			resolveProviderByName: providerResolver,
 		}, depth),
 		ResolveTimeout:   subAgentTimeoutResolver(subCfg),
 		RoleNames:        roleNames,
@@ -62,9 +81,9 @@ func newTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 	}
 }
 
-// builtinRoleFiles reads the embedded roles/*.md files shipped in the
+// BuiltinRoleFiles reads the embedded roles/*.md files shipped in the
 // binary and returns them keyed by file name (e.g. "worker.md").
-func builtinRoleFiles() map[string][]byte {
+func BuiltinRoleFiles() map[string][]byte {
 	entries, err := prompts.BuiltinRolesFS.ReadDir("roles")
 	if err != nil {
 		return nil
@@ -80,10 +99,10 @@ func builtinRoleFiles() map[string][]byte {
 	return files
 }
 
-// roleSearchPaths returns directories to scan for user-defined role
+// RoleSearchPaths returns directories to scan for user-defined role
 // definitions. Mirrors the skill search hierarchy: project-level
 // (walked up from cwd) then user-level (~/.agents/roles/).
-func roleSearchPaths(cwd string) []string {
+func RoleSearchPaths(cwd string) []string {
 	home := config.HomeDir()
 	var dirs []string
 	for dir := cwd; ; dir = filepath.Dir(dir) {
@@ -99,7 +118,7 @@ func roleSearchPaths(cwd string) []string {
 
 // taskRunnerOpts holds the shared state needed to build sub-agent loops.
 // It is captured by every makeTaskRunner closure so nested sub-agents
-// (planner → worker) inherit the same provider, prompt base, and config.
+// (planner -> worker) inherit the same provider, prompt base, and config.
 type taskRunnerOpts struct {
 	provider      agent.Provider
 	systemPrompt  string
@@ -157,6 +176,13 @@ type taskRunnerOpts struct {
 	// file-accessing tools to the session workspace, matching the
 	// parent session's --workspace policy.
 	pathValidator *tools.PathValidator
+
+	// resolveProviderByName resolves a configured provider by name. It
+	// is injected from the cmd layer because provider construction
+	// (makeProvider) is CLI wiring that does not belong here. May be nil;
+	// a nil resolver means per-role provider overrides fall through to
+	// the planner's provider.
+	resolveProviderByName func(pmap map[string]config.Provider, name string) agent.Provider
 }
 
 // makeTaskRunner creates a sub-agent runner that honours roles, timeouts,
@@ -211,7 +237,9 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		subModel := opts.subAgentModel
 		if rc, ok := opts.subCfg.Roles[string(role)]; ok {
 			if rc.Provider != "" {
-				subProvider = resolveProviderByName(opts.providerMap, rc.Provider)
+				if opts.resolveProviderByName != nil {
+					subProvider = opts.resolveProviderByName(opts.providerMap, rc.Provider)
+				}
 				if subProvider != nil {
 					subModel = ""
 				}
