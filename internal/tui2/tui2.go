@@ -323,24 +323,39 @@ func (t *TUI2) BlinkSubAgents() {
 	}
 }
 
-// AddUserMessage appends a styled user message to the conversation.
+// AddUserMessage appends a styled user message to the conversation. When
+// the theme has NoColor set (NO_COLOR env detected), color tags are omitted.
 func (t *TUI2) AddUserMessage(text string) {
-	accent := "#00afff"
-	if t.theme != nil && t.theme.Accent != "" {
-		accent = t.theme.Accent
+	noColor := t.theme != nil && t.theme.NoColor
+	if noColor {
+		t.conversation.AppendText(text + "\n")
+	} else {
+		accent := "#00afff"
+		if t.theme != nil && t.theme.Accent != "" {
+			accent = t.theme.Accent
+		}
+		t.conversation.AppendText("[" + accent + "]You: [-]" + text + "\n")
 	}
-	t.conversation.AppendText("[" + accent + "]You: [-]" + text + "\n")
 	t.refreshMessages()
 	t.App.SetFocus(t.Input)
 }
 
-// addAssistantResponse appends a markdown-rendered assistant response.
+// addAssistantResponse stores raw assistant markdown text in the conversation.
+// The markdown is rendered at refresh-time with the current pane width so
+// terminal resizes reflow correctly.
 func (t *TUI2) addAssistantResponse(text string, width int) {
-	w := width
-	if w <= 0 {
-		w = messageWidth(t.Messages)
-	}
-	t.conversation.AppendText(renderMarkdown(text, w))
+	_ = width
+	t.conversation.AppendAssistant(text)
 	t.refreshMessages()
 	t.App.SetFocus(t.Input)
+}
+
+// flushPendingTokens commits accumulated streaming tokens to the conversation
+// as a permanent assistant item. Call this before appending tool, sub-agent,
+// or system events during streaming to preserve chronological order.
+func (t *TUI2) flushPendingTokens() {
+	if t.isStreaming.Load() && t.pendingTokens != "" {
+		t.conversation.AppendAssistant(t.pendingTokens)
+		t.pendingTokens = ""
+	}
 }

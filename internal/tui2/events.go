@@ -72,18 +72,21 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 		})
 	case *agent.EscalationEvent:
 		t.App.QueueUpdateDraw(func() {
+			t.flushPendingTokens()
 			t.conversation.AppendText(fmt.Sprintf("[#ff5555]\u26A0 %s[-]", e.Summary))
 			t.refreshMessages()
 		})
 	case *agent.CompactionStartedEvent:
 		t.App.QueueUpdateDraw(func() {
 			t.compacting = true
+			t.flushPendingTokens()
 			t.conversation.AppendText(fmt.Sprintf("[#888888]compacting (%d→%d tokens, %s)[-]", e.BeforeTokens, e.TargetTokens, e.Reason))
 			t.refreshMessages()
 		})
 	case *agent.CompactionDoneEvent:
 		t.App.QueueUpdateDraw(func() {
 			t.compacting = false
+			t.flushPendingTokens()
 			pct := e.SavingsPct * 100
 			note := ""
 			if e.IneffectiveNote != "" {

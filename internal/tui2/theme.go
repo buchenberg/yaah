@@ -7,11 +7,11 @@ import (
 )
 
 // Theme holds the terminal color scheme used by all TUI2 components.
-// When the zero value is used, components fall back to color defaults via the
-// colors package. Light-mode support gets a second Theme value later.
+// When NoColor is true, renderers must omit all color tags.
 type Theme struct {
-	Accent string
-	Dim    string
+	Accent  string
+	Dim     string
+	NoColor bool // set when NO_COLOR env is present
 }
 
 // DefaultTheme returns the dark-terminal theme used when no color overrides
@@ -24,11 +24,11 @@ func DefaultTheme() Theme {
 }
 
 // DetectTheme selects a Theme based on the current terminal environment.
-// Respects NO_COLOR by returning the zero theme (which means "use defaults,
-// no overrides"). Terminal background detection is a TODO for light-mode.
+// When NO_COLOR is set, NoColor is true and renderers must suppress all
+// color-tag output. Terminal background detection is a TODO for light-mode.
 func DetectTheme() Theme {
 	if os.Getenv("NO_COLOR") != "" {
-		return Theme{}
+		return Theme{NoColor: true}
 	}
 	return DefaultTheme()
 }

@@ -16,9 +16,14 @@ type Conversation struct {
 }
 
 // convItem is a single entry in the chronological conversation log.
-// Exactly one field is set.
+// Exactly one of text/isMarkdown/toolBlock/subBlock/reasoningBlock is set.
 type convItem struct {
-	text           string
+	text       string
+	isMarkdown bool // text is raw markdown, needs renderMarkdown at refresh time
+	// When streaming, Conversation.Render appends pendingTokens after stored
+	// items. Callers must flush pending tokens via TUI2.flushPendingTokens
+	// before appending a non-text item during streaming to preserve order.
+
 	toolBlock      *toolblock.Block
 	subBlock       *subagent.Block
 	reasoningBlock *reasoning.Block
@@ -27,6 +32,15 @@ type convItem struct {
 // AppendText adds a plain-text (user/system/compaction) message.
 func (c *Conversation) AppendText(text string) {
 	c.items = append(c.items, convItem{text: text})
+}
+
+// AppendAssistant appends raw markdown text. It is rendered at refresh-time
+// with the current pane width so that terminal resizes reflow correctly.
+func (c *Conversation) AppendAssistant(md string) {
+	if md == "" {
+		return
+	}
+	c.items = append(c.items, convItem{text: md, isMarkdown: true})
 }
 
 // AppendTool adds a tool call block to the conversation.
@@ -61,7 +75,11 @@ func (c *Conversation) Render(ctx RenderCtx, streamingTokens, spinner string, th
 		switch {
 		case item.text != "":
 			b.WriteString("\n")
-			b.WriteString(item.text)
+			if item.isMarkdown {
+				b.WriteString(renderMarkdown(item.text, ctx.Width))
+			} else {
+				b.WriteString(item.text)
+			}
 			b.WriteString("\n\n")
 		case item.toolBlock != nil:
 			b.WriteString(item.toolBlock.Render())
