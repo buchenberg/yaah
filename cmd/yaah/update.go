@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/doctor"
 	"github.com/buchenberg/yaah/internal/update"
 	"github.com/spf13/cobra"
 )
@@ -48,7 +49,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	latest, err := fetchLatestRelease(gitHubRepo)
 	if err != nil {
-		cmd.Printf("  %s  Could not check for updates: %v\n", statusLabel("WARN"), err)
+		cmd.Printf("  %s  Could not check for updates: %v\n", doctor.StatusLabel("WARN"), err)
 		cmd.Printf("         You can check manually at https://github.com/%s/releases\n", gitHubRepo)
 		return nil
 	}
@@ -61,14 +62,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	if !update.IsNewer(currentVersion, latestVersion) {
 		cmd.Println()
-		cmd.Printf("  %s  You're on the latest version.\n", statusLabel("OK"))
+		cmd.Printf("  %s  You're on the latest version.\n", doctor.StatusLabel("OK"))
 		return nil
 	}
 
 	assetName := update.AssetName(runtime.GOOS, runtime.GOARCH)
 	downloadURL := latest.assetURL(assetName)
 	if downloadURL == "" {
-		cmd.Printf("  %s  No asset found for %s/%s\n", statusLabel("FAIL"), runtime.GOOS, runtime.GOARCH)
+		cmd.Printf("  %s  No asset found for %s/%s\n", doctor.StatusLabel("FAIL"), runtime.GOOS, runtime.GOARCH)
 		cmd.Printf("         Available assets on the release page:\n")
 		cmd.Printf("         https://github.com/%s/releases/tag/%s\n", gitHubRepo, latest.TagName)
 		return nil
@@ -93,7 +94,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	cmd.Println()
-	cmd.Printf("  %s  Updated to %s\n", statusLabel("OK"), latestVersion)
+	cmd.Printf("  %s  Updated to %s\n", doctor.StatusLabel("OK"), latestVersion)
 	cmd.Println()
 	cmd.Printf("  Restart yaah to use the new version.\n")
 
@@ -105,7 +106,7 @@ func runUpdateCheck(cmd *cobra.Command, args []string) error {
 
 	latest, err := fetchLatestRelease(gitHubRepo)
 	if err != nil {
-		cmd.Printf("  %s  Could not check for updates: %v\n", statusLabel("WARN"), err)
+		cmd.Printf("  %s  Could not check for updates: %v\n", doctor.StatusLabel("WARN"), err)
 		cmd.Printf("         You can check manually at https://github.com/%s/releases\n", gitHubRepo)
 		return nil
 	}
@@ -118,7 +119,7 @@ func runUpdateCheck(cmd *cobra.Command, args []string) error {
 
 	if update.IsNewer(currentVersion, latestVersion) {
 		cmd.Println()
-		cmd.Printf("  %s  A newer version is available!\n", statusLabel("WARN"))
+		cmd.Printf("  %s  A newer version is available!\n", doctor.StatusLabel("WARN"))
 		cmd.Printf("         Asset for this machine: %s\n",
 			update.AssetName(runtime.GOOS, runtime.GOARCH))
 		cmd.Printf("         Download: https://github.com/%s/releases/tag/%s\n",
@@ -126,7 +127,7 @@ func runUpdateCheck(cmd *cobra.Command, args []string) error {
 		cmd.Printf("         Run 'yaah update' to apply it.\n")
 	} else {
 		cmd.Println()
-		cmd.Printf("  %s  You're on the latest version.\n", statusLabel("OK"))
+		cmd.Printf("  %s  You're on the latest version.\n", doctor.StatusLabel("OK"))
 	}
 
 	return nil

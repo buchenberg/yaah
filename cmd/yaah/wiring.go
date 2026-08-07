@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/runner"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/instructions"
@@ -55,10 +56,10 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	// Load sub-agent role definitions: built-in (embedded) +
 	// user-defined (~/.agents/roles/, ./.agents/roles/).
 	reg := subagent.NewRoleRegistry()
-	if files := builtinRoleFiles(); files != nil {
+	if files := runner.BuiltinRoleFiles(); files != nil {
 		reg.LoadBytes(files)
 	}
-	for _, dir := range roleSearchPaths(cwd) {
+	for _, dir := range runner.RoleSearchPaths(cwd) {
 		reg.LoadDir(dir)
 	}
 	subagent.SetDefaultRoleRegistry(reg)
@@ -121,10 +122,10 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	planDirs := planSearchPaths()
 	toolReg.Register(&tools.PlanTool{Dirs: planDirs})
 
-	roleDirs := roleSearchPaths(cwd)
+	roleDirs := runner.RoleSearchPaths(cwd)
 	toolReg.Register(&tools.RoleTool{
 		Dirs:         roleDirs,
-		BuiltinFiles: builtinRoleFiles(),
+		BuiltinFiles: runner.BuiltinRoleFiles(),
 	})
 
 	var todoStore *todo.Store
@@ -194,7 +195,7 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 		backgroundJobs.MaxConcurrent = 4
 	}
 
-	taskTool := newTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default, nil, pathValidator)
+	taskTool := runner.NewTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default, nil, pathValidator, resolveProviderByName)
 
 	// RoleResolver provides a live role-name lookup so the spawn_subagent
 	// tool sees roles created via the role tool without a restart. The

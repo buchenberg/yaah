@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/buchenberg/yaah/internal/agent/runner"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 )
 
@@ -47,7 +48,7 @@ You are a SECURITY AUDITOR sub-agent on yaah's team. Scan code for vulnerabiliti
 	}
 
 	t.Run("roleSearchPaths includes role dir", func(t *testing.T) {
-		dirs := roleSearchPaths(tmp)
+		dirs := runner.RoleSearchPaths(tmp)
 		found := false
 		for _, d := range dirs {
 			if d == roleDir {
@@ -112,7 +113,7 @@ You are a SECURITY AUDITOR sub-agent on yaah's team. Scan code for vulnerabiliti
 	t.Run("custom role does not override built-in", func(t *testing.T) {
 		reg := subagent.NewRoleRegistry()
 		// Load built-in analyst first
-		files := builtinRoleFiles()
+		files := runner.BuiltinRoleFiles()
 		if files != nil {
 			reg.LoadBytes(files)
 		}

@@ -1,4 +1,4 @@
-package yaah
+package runner
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 func initTestRoles(t *testing.T) {
 	t.Helper()
 	reg := subagent.NewRoleRegistry()
-	if files := builtinRoleFiles(); files != nil {
+	if files := BuiltinRoleFiles(); files != nil {
 		reg.LoadBytes(files)
 	}
 	subagent.SetDefaultRoleRegistry(reg)
@@ -117,7 +117,7 @@ func TestTaskRunnerEmptyResultError(t *testing.T) {
 // it), so catch silent regressions in the embedded role files here.
 func TestBuiltinRolesHaveTools(t *testing.T) {
 	reg := subagent.NewRoleRegistry()
-	files := builtinRoleFiles()
+	files := BuiltinRoleFiles()
 	if len(files) == 0 {
 		t.Fatal("no embedded role files found")
 	}
