@@ -19,7 +19,8 @@ const DefaultEstimateFactor = 1.3
 // DefaultRawCompactionThreshold is the fraction of ContextWindow at which
 // compaction fires based on raw (non-cache-adjusted) prompt tokens. It guards
 // against latency degradation in heavily-cached conversations where the
-// effective-token trigger never fires. 0.5 matches hermes's 50% threshold.
+// effective-token trigger never fires. 0.25 fires earlier than hermes's 50%
+// threshold.
 const DefaultRawCompactionThreshold = 0.25
 
 // MaxPayloadBytes is the serialized request size above which the payload-size
@@ -45,9 +46,9 @@ const PruneMessageMaxLen = 2000
 // over-aggressive compaction on small-window models.
 const MinContextFloor = 64000
 
-// SummaryTemplate is the structured Markdown prompt sent to the compact
+// SummaryTemplate returns the structured Markdown prompt sent to the compact
 // provider. It is loaded from the embedded prompts package.
-var SummaryTemplate = prompts.SummaryTemplate()
+func SummaryTemplate() string { return prompts.SummaryTemplate() }
 
 // MessageTokens estimates the token count of a single message using chars/4
 // for content, reasoning content, plus tool-call arguments. Applies a 10-token

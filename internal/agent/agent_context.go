@@ -17,15 +17,25 @@ const (
 
 type turnRange = agentctx.TurnRange
 
-var (
-	messageTokens        = agentctx.MessageTokens
-	preflightTokens      = agentctx.PreflightTokens
-	estimatePayloadBytes = agentctx.EstimatePayloadBytes
-	turns                = agentctx.Turns
-	preserveBudget       = agentctx.PreserveBudget
-	splitTail            = agentctx.SplitTail
-	splitTurn            = agentctx.SplitTurn
-)
+func messageTokens(m types.Message) int          { return agentctx.MessageTokens(m) }
+func turns(messages []types.Message) []turnRange { return agentctx.Turns(messages) }
+func preserveBudget(contextWindow int) int       { return agentctx.PreserveBudget(contextWindow) }
+
+func preflightTokens(messages []types.Message, tools []types.ToolDef, factor float64) int {
+	return agentctx.PreflightTokens(messages, tools, factor)
+}
+
+func estimatePayloadBytes(messages []types.Message, tools []types.ToolDef) int {
+	return agentctx.EstimatePayloadBytes(messages, tools)
+}
+
+func splitTail(messages []types.Message, budget int) agentctx.SplitResult {
+	return agentctx.SplitTail(messages, budget)
+}
+
+func splitTurn(messages []types.Message, t turnRange, budget int) int {
+	return agentctx.SplitTurn(messages, t, budget)
+}
 
 // ProtectReasoningTurns ensures compaction does not remove assistant messages
 // that carry reasoning_content. Thinking-mode providers (e.g. DeepSeek) require

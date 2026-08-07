@@ -3,7 +3,12 @@
 // compiling while the implementation lives in the jobs package.
 package tools
 
-import "github.com/buchenberg/yaah/internal/jobs"
+import (
+	"context"
+
+	"github.com/buchenberg/yaah/internal/jobs"
+	"github.com/buchenberg/yaah/internal/types"
+)
 
 type (
 	TaskRunner     = jobs.TaskRunner
@@ -15,16 +20,45 @@ const (
 	EscalationBlocker = jobs.EscalationBlocker
 )
 
-var (
-	ParseSubAgentOutput       = jobs.ParseSubAgentOutput
-	SubAgentModelFromContext  = jobs.SubAgentModelFromContext
-	WithSubAgentModelPtr      = jobs.WithSubAgentModelPtr
-	WriteSubAgentModel        = jobs.WriteSubAgentModel
-	WithSubAgentStartNotifier = jobs.WithSubAgentStartNotifier
-	NotifySubAgentStart       = jobs.NotifySubAgentStart
-	WithSubAgentUsage         = jobs.WithSubAgentUsage
-	AddSubAgentUsage          = jobs.AddSubAgentUsage
-	WithSubAgentHeartbeat     = jobs.WithSubAgentHeartbeat
-	SendHeartbeat             = jobs.SendHeartbeat
-	ErrStuckChild             = jobs.ErrStuckChild
-)
+// ErrStuckChild stays a variable alias so errors.Is identity is preserved.
+var ErrStuckChild = jobs.ErrStuckChild
+
+func ParseSubAgentOutput(output string, runErr error) *jobs.SubAgentOutput {
+	return jobs.ParseSubAgentOutput(output, runErr)
+}
+
+func SubAgentModelFromContext(ctx context.Context) string {
+	return jobs.SubAgentModelFromContext(ctx)
+}
+
+func WithSubAgentModelPtr(ctx context.Context, ptr *string) context.Context {
+	return jobs.WithSubAgentModelPtr(ctx, ptr)
+}
+
+func WriteSubAgentModel(ctx context.Context, model string) {
+	jobs.WriteSubAgentModel(ctx, model)
+}
+
+func WithSubAgentStartNotifier(ctx context.Context, fn func(model string)) context.Context {
+	return jobs.WithSubAgentStartNotifier(ctx, fn)
+}
+
+func NotifySubAgentStart(ctx context.Context, model string) {
+	jobs.NotifySubAgentStart(ctx, model)
+}
+
+func WithSubAgentUsage(ctx context.Context, usage *types.Usage) context.Context {
+	return jobs.WithSubAgentUsage(ctx, usage)
+}
+
+func AddSubAgentUsage(ctx context.Context, delta types.Usage) {
+	jobs.AddSubAgentUsage(ctx, delta)
+}
+
+func WithSubAgentHeartbeat(ctx context.Context, hb chan struct{}) context.Context {
+	return jobs.WithSubAgentHeartbeat(ctx, hb)
+}
+
+func SendHeartbeat(ctx context.Context) {
+	jobs.SendHeartbeat(ctx)
+}

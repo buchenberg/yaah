@@ -49,8 +49,8 @@ func FormatToolStub(m types.Message) string {
 	if idx := strings.IndexByte(content, '\n'); idx > 0 {
 		firstLine = content[:idx]
 	}
-	if len(firstLine) > 120 {
-		firstLine = firstLine[:120] + "..."
+	if r := []rune(firstLine); len(r) > 120 {
+		firstLine = string(r[:120]) + "..."
 	}
 	return fmt.Sprintf("[tool:%s — %d lines, %d chars, starts: %q]", m.Name, lines, chars, firstLine)
 }

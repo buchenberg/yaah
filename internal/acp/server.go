@@ -74,27 +74,28 @@ func (s *Server) Run(ctx context.Context) error {
 	// (ACP is a machine-to-machine protocol without interactive users).
 	if reg := s.sess.ToolReg(); reg != nil {
 		if qt := reg.Get("question"); qt != nil {
-			qtp := qt.(*tools.QuestionTool)
-			qtp.Handler = func(entries []tools.QuestionEntry) []string {
-				var answers []string
-				for _, e := range entries {
-					// Format question text for the ACP client.
-					msg := fmt.Sprintf("❓ %s\n\n%s\n\n", e.Header, e.Question)
-					for i, o := range e.Options {
-						msg += fmt.Sprintf("  [%d] %s — %s\n", i+1, o.Label, o.Description)
+			if qtp, ok := qt.(*tools.QuestionTool); ok {
+				qtp.Handler = func(entries []tools.QuestionEntry) []string {
+					var answers []string
+					for _, e := range entries {
+						// Format question text for the ACP client.
+						msg := fmt.Sprintf("❓ %s\n\n%s\n\n", e.Header, e.Question)
+						for i, o := range e.Options {
+							msg += fmt.Sprintf("  [%d] %s — %s\n", i+1, o.Label, o.Description)
+						}
+						// Send as a status message so the client sees it.
+						if ch := s.sess.GetCtrlCh(); ch != nil {
+							ch <- &types.CtrlStatus{Text: msg}
+						}
+						// Auto-answer: pick the first option.
+						if s.AutoAnswerQuestions && len(e.Options) > 0 {
+							answers = append(answers, fmt.Sprintf("%s: %s", e.Header, e.Options[0].Label))
+						} else {
+							answers = append(answers, e.Header+": ")
+						}
 					}
-					// Send as a status message so the client sees it.
-					if ch := s.sess.GetCtrlCh(); ch != nil {
-						ch <- &types.CtrlStatus{Text: msg}
-					}
-					// Auto-answer: pick the first option.
-					if len(e.Options) > 0 {
-						answers = append(answers, fmt.Sprintf("%s: %s", e.Header, e.Options[0].Label))
-					} else {
-						answers = append(answers, e.Header+": ")
-					}
+					return answers
 				}
-				return answers
 			}
 		}
 	}

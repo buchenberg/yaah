@@ -15,7 +15,7 @@ import (
 // reference the historical unexported names).
 const defaultTruncateMaxLines = agentctx.DefaultTruncateMaxLines
 
-var cleanTruncatedDir = agentctx.CleanTruncatedDir
+func cleanTruncatedDir(dir string) { agentctx.CleanTruncatedDir(dir) }
 
 func (l *Loop) truncateToolResult(result string) string {
 	maxLines := l.ctxMgr().ToolResultMaxLines
@@ -42,8 +42,9 @@ func (l *Loop) truncateToolResult(result string) string {
 	var truncated string
 	var truncatedLines int
 
-	if lineCapped && (!byteCapped || agentctx.FindLineCutBytePos(result, maxLines) <= maxBytes) {
-		cutIdx = agentctx.FindLineCutBytePos(result, maxLines)
+	lineCutPos := agentctx.FindLineCutBytePos(result, maxLines)
+	if lineCapped && (!byteCapped || lineCutPos <= maxBytes) {
+		cutIdx = lineCutPos
 		truncated = result[:cutIdx]
 		truncatedLines = maxLines
 	} else {

@@ -368,7 +368,7 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 		}
 	}
 	sb.WriteString("\n\n")
-	sb.WriteString(agentctx.SummaryTemplate)
+	sb.WriteString(agentctx.SummaryTemplate())
 
 	compactProvider := cm.CompactProvider
 	if compactProvider == nil {

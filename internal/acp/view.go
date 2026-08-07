@@ -2,20 +2,16 @@ package acp
 
 import (
 	"fmt"
-	"sync/atomic"
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/toolfmt"
 )
 
-// View translates agent events into ACP session/update payloads. It
-// assigns tool-call IDs monotonically so tool_call and tool_result
-// updates can be correlated.
-type View struct {
-	toolIDGen atomic.Int64
-	curToolID atomic.Int64
-}
+// View translates agent events into ACP session/update payloads.
+// tool_call and tool_result updates are correlated via the per-execution
+// ID carried on the events themselves.
+type View struct{}
 
 // NewView creates a View ready to translate agent events.
 func NewView() *View {
@@ -43,12 +39,10 @@ func (v *View) SendTo(sessionID string, send func(string, Update), evt agent.Eve
 			Content:       &Content{Type: "text", Text: "\n"},
 		}
 	case *agent.ToolStartEvent:
-		id := v.toolIDGen.Add(1)
-		v.curToolID.Store(id)
 		update = Update{
 			SessionUpdate: "tool_call",
 			ToolCall: &ToolCall{
-				ID:     id,
+				ID:     e.ID,
 				Name:   e.Name,
 				Args:   e.Args,
 				Status: "started",
@@ -58,7 +52,7 @@ func (v *View) SendTo(sessionID string, send func(string, Update), evt agent.Eve
 		update = Update{
 			SessionUpdate: "tool_result",
 			ToolResult: &ToolResult{
-				ID:      v.curToolID.Load(),
+				ID:      e.ID,
 				Name:    e.Name,
 				Result:  e.Result,
 				Error:   e.Error,
