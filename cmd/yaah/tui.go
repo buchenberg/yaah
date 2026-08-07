@@ -4,16 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"log/slog"
 	"os"
-	"sort"
 	"sync"
 
 	tea "charm.land/bubbletea/v2"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/buchenberg/yaah/internal/agent"
-	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/providers"
@@ -44,52 +41,6 @@ func init() {
 	tuiCmd.Flags().BoolVar(&tuiMCP, "mcp", false, "expose TUI session as MCP server over stdio")
 	tuiCmd.Flags().StringVar(&tuiMCPHTTP, "mcp-http", "", "expose TUI session as MCP server at this HTTP address (e.g. 127.0.0.1:7334)")
 	rootCmd.AddCommand(tuiCmd)
-}
-
-// fetchAllModels gathers model IDs from all configured providers.
-// If a provider has a models: override in config, those are used.
-// Otherwise, ListModels is called against the provider's /v1/models endpoint.
-// Results are returned in "provider/model" format, sorted.
-func fetchAllModels(ctx context.Context, cfg *config.Config) []string {
-	var all []string
-
-	names := make([]string, 0, len(cfg.Providers))
-	for name := range cfg.Providers {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	for _, name := range names {
-		p := cfg.Providers[name]
-
-		if len(p.Models) > 0 {
-			for _, m := range p.Models {
-				all = append(all, name+"/"+m.Name)
-			}
-			continue
-		}
-
-		prov, ok := makeProvider(name, p)
-		if !ok {
-			continue
-		}
-		lister, ok := prov.(interface {
-			ListModels(ctx context.Context) ([]string, error)
-		})
-		if !ok {
-			continue
-		}
-		models, err := lister.ListModels(ctx)
-		if err != nil {
-			slog.Warn("fetch models failed", "provider", name, "error", err)
-			continue
-		}
-		for _, m := range models {
-			all = append(all, name+"/"+m)
-		}
-	}
-
-	return all
 }
 
 // runTUI starts the bubbletea TUI.
@@ -276,7 +227,7 @@ func runTUI() error {
 				names[key] = p.Name
 			}
 		}
-		models := fetchAllModels(context.Background(), cfg)
+		models := providers.FetchAllModels(context.Background(), cfg, makeModelLister)
 		controlCh <- &types.CtrlModelList{Models: models, ProviderNames: names}
 	}()
 

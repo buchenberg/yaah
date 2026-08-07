@@ -242,6 +242,21 @@ func resolveProvider(cfg *config.Config) agent.Provider {
 	return &providers.NoProviderStub{}
 }
 
+// makeModelLister adapts makeProvider to the providers.ModelLister
+// capability for FetchAllModels. Returns nil, false when the provider is
+// unavailable or doesn't support model listing.
+func makeModelLister(name string, p config.Provider) (providers.ModelLister, bool) {
+	prov, ok := makeProvider(name, p)
+	if !ok {
+		return nil, false
+	}
+	ml, ok := prov.(providers.ModelLister)
+	if !ok {
+		return nil, false
+	}
+	return ml, true
+}
+
 // isRealKey returns true if the API key looks like a real key (not empty,
 // not a placeholder, not an unsubstituted env var).
 func isRealKey(key string) bool {
