@@ -918,7 +918,7 @@ The agent loop creates the broker and `BrokerView` internally in `applyDefaults`
 |----------|-----------|------|
 | TUI | `Model.HandleEvent` (type switch) | `internal/tui/tui.go` |
 | REPL | `terminalView` / `replView` | `cmd/yaah/agent_frame.go` |
-| Sub-agents | `agent.NoopView` | `cmd/yaah/subagent_runner.go` |
+| Sub-agents | `agent.NoopView` | `internal/agent/runner/runner.go` |
 | MCP serve | `agent.NoopView` | `cmd/yaah/serve.go` |
 | ACP serve | `acpView` + `acpViewWithWrite` | `cmd/yaah/acp.go`, `cmd/yaah/acp_view.go` |
 

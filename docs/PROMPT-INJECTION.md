@@ -23,7 +23,7 @@ sub-agent dispatch.
                         ▼
             ┌───────────────────────────┐
             │ Sub-agent (isolated)       │
-            │ subagent_runner.go         │
+            │ runner.go                 │
             │ System prompt + guidance   │
             │ (inherits orchestrator)    │
             └───────────────────────────┘
@@ -153,7 +153,7 @@ messages = append(messages, conflictMsg)
 
 ## Layer 6: Sub-agent prompt
 
-**File**: `cmd/yaah/subagent_runner.go`
+**File**: `internal/agent/runner/runner.go`
 
 Sub-agents spawned via the `spawn_subagent` tool inherit the full orchestrator
 system prompt plus a role guidance suffix:
