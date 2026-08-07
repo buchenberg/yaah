@@ -593,7 +593,7 @@ func (t *TUI2) ShowHelp() {
 type focusState int
 
 const (
-	focusNormal          focusState = iota
+	focusNormal focusState = iota
 	focusCommandPalette
 	focusModal
 )
