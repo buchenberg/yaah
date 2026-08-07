@@ -1,6 +1,3 @@
-// Package toolblock renders expandable tool call blocks for the TUI2
-// message stream. Each block shows the tool icon, name, arguments,
-// and result output. It transitions from "running" to "done/error" state.
 package toolblock
 
 import (
@@ -11,7 +8,6 @@ import (
 	"github.com/buchenberg/yaah/internal/tui2/colors"
 )
 
-// Icon returns the emoji icon for a tool name.
 func Icon(name string) string {
 	switch name {
 	case "read":
@@ -61,7 +57,6 @@ func Icon(name string) string {
 	}
 }
 
-// State is the current state of a tool block.
 type State int
 
 const (
@@ -70,22 +65,21 @@ const (
 	Error
 )
 
-// Block is an expandable tool call block in the message stream.
 type Block struct {
 	name      string
 	icon      string
 	args      string
 	result    string
-	tag       string // formatted summary line (collapsed view)
+	tag       string
 	state     State
 	expanded  bool
 	id        string
 	startTime time.Time
 	endTime   time.Time
+	theme     *colors.Theme
 }
 
-// New creates a tool block in Running state.
-func New(id, name, args string) *Block {
+func New(id, name, args string, th *colors.Theme) *Block {
 	icon := Icon(name)
 	return &Block{
 		id:        id,
@@ -94,6 +88,7 @@ func New(id, name, args string) *Block {
 		args:      args,
 		state:     Running,
 		startTime: time.Now(),
+		theme:     th,
 	}
 }
 
@@ -103,7 +98,6 @@ func (b *Block) S() State         { return b.state }
 func (b *Block) IsExpanded() bool { return b.expanded }
 func (b *Block) Toggle()          { b.expanded = !b.expanded }
 
-// Complete transitions the block to Done with a result summary.
 func (b *Block) Complete(summary, result string) {
 	b.endTime = time.Now()
 	b.state = Done
@@ -111,7 +105,6 @@ func (b *Block) Complete(summary, result string) {
 	b.result = result
 }
 
-// Fail transitions the block to Error state.
 func (b *Block) Fail(summary, err string) {
 	b.endTime = time.Now()
 	b.state = Error
@@ -119,12 +112,13 @@ func (b *Block) Fail(summary, err string) {
 	b.result = err
 }
 
-// Render returns the full tview-tagged text for the block.
-func (b *Block) Render() string {
+func (b *Block) Render() string { return b.RenderCtx(colors.RenderCtx{Theme: b.theme}) }
+
+func (b *Block) RenderCtx(ctx colors.RenderCtx) string {
 	if !b.expanded {
 		return b.renderCollapsed()
 	}
-	return b.renderExpanded()
+	return b.renderExpanded(ctx.Width)
 }
 
 func (b *Block) durationStr() string {
@@ -136,79 +130,76 @@ func (b *Block) durationStr() string {
 }
 
 func (b *Block) renderCollapsed() string {
-	hex := colors.ToolHex(b.name)
+	hex := b.theme.ToolHex(b.name)
 	switch b.state {
 	case Running:
-		return fmt.Sprintf(`  [%s]▶ %s %s[-] [%s]· %s[-]`, hex, b.icon, b.name, colors.Dim, b.args)
+		return fmt.Sprintf(`  %s▶ %s %s%s %s· %s%s`,
+			b.theme.ColorTag(hex), b.icon, b.name, b.theme.ResetTag(),
+			b.theme.DimTag(), b.args, b.theme.ResetTag())
 	case Done:
-		return fmt.Sprintf(`  [%s]✓ %s %s[-] [%s]· %s (%s)[-]`, hex, b.icon, b.name, colors.Dim, b.tag, b.durationStr())
+		return fmt.Sprintf(`  %s✓ %s %s%s %s· %s (%s)%s`,
+			b.theme.ColorTag(hex), b.icon, b.name, b.theme.ResetTag(),
+			b.theme.DimTag(), b.tag, b.durationStr(), b.theme.ResetTag())
 	case Error:
-		return fmt.Sprintf(`  [%s]✗ %s %s[-] [red]· %s (%s)[-]`, hex, b.icon, b.name, b.tag, b.durationStr())
+		return fmt.Sprintf(`  %s✗ %s %s%s [red]· %s (%s)[-]`,
+			b.theme.ColorTag(hex), b.icon, b.name, b.theme.ResetTag(), b.tag, b.durationStr())
 	default:
 		return ""
 	}
 }
 
-func (b *Block) renderExpanded() string {
-	hex := colors.ToolHex(b.name)
-	width := 58
+func (b *Block) renderExpanded(width int) string {
+	if width <= 0 {
+		width = 58
+	}
+	hex := b.theme.ToolHex(b.name)
 	var bld strings.Builder
 
-	// Header line.
 	var header string
 	switch b.state {
 	case Running:
-		header = fmt.Sprintf(`  [%s]▶ %s %s[-]`, hex, b.icon, b.name)
+		header = fmt.Sprintf(`  %s▶ %s %s%s`,
+			b.theme.ColorTag(hex), b.icon, b.name, b.theme.ResetTag())
 	case Done:
-		header = fmt.Sprintf(`  [%s]✓ %s %s[-]`, hex, b.icon, b.name)
+		header = fmt.Sprintf(`  %s✓ %s %s%s`,
+			b.theme.ColorTag(hex), b.icon, b.name, b.theme.ResetTag())
 	case Error:
-		header = fmt.Sprintf(`  [%s]✗ %s %s[-]`, hex, b.icon, b.name)
+		header = fmt.Sprintf(`  %s✗ %s %s%s`,
+			b.theme.ColorTag(hex), b.icon, b.name, b.theme.ResetTag())
 	}
 	fill := max(2, width-len(b.icon)-len(b.name)-2)
 	bld.WriteString(header)
-	bld.WriteString(fmt.Sprintf(`[%s] %s[-]`, colors.Dim, strings.Repeat("─", fill)))
+	bld.WriteString(fmt.Sprintf(`%s %s%s`, b.theme.DimTag(), strings.Repeat("─", fill), b.theme.ResetTag()))
 	bld.WriteString("\n")
 
-	// Args.
 	if b.args != "" {
-		bld.WriteString(fmt.Sprintf(`  [%s]│[-] Args: %s`, colors.Dim, b.args))
+		bld.WriteString(fmt.Sprintf(`  %s│%s Args: %s`, b.theme.DimTag(), b.theme.ResetTag(), b.args))
 		bld.WriteString("\n")
 	}
 
-	// Duration.
 	if b.state != Running {
-		bld.WriteString(fmt.Sprintf(`  [%s]│[-] Duration: %s`, colors.Dim, b.durationStr()))
+		bld.WriteString(fmt.Sprintf(`  %s│%s Duration: %s`, b.theme.DimTag(), b.theme.ResetTag(), b.durationStr()))
 		bld.WriteString("\n")
 	}
 
-	// Result (only when done and expanded).
 	if b.state == Done && b.result != "" {
-		bld.WriteString(fmt.Sprintf(`  [%s]│────[-]`, colors.Dim))
+		bld.WriteString(fmt.Sprintf(`  %s│────%s`, b.theme.DimTag(), b.theme.ResetTag()))
 		bld.WriteString("\n")
 		for _, line := range strings.Split(b.result, "\n") {
 			if line != "" {
-				bld.WriteString(fmt.Sprintf(`  [%s]│[-] %s`, colors.Dim, line))
+				bld.WriteString(fmt.Sprintf(`  %s│%s %s`, b.theme.DimTag(), b.theme.ResetTag(), line))
 			} else {
-				bld.WriteString(fmt.Sprintf(`  [%s]│[-]`, colors.Dim))
+				bld.WriteString(fmt.Sprintf(`  %s│%s`, b.theme.DimTag(), b.theme.ResetTag()))
 			}
 			bld.WriteString("\n")
 		}
 	}
 
-	// Error.
 	if b.state == Error && b.result != "" {
-		bld.WriteString(fmt.Sprintf(`  [%s]│[-] [red]%s[-]`, colors.Dim, b.result))
+		bld.WriteString(fmt.Sprintf(`  %s│%s [red]%s[-]`, b.theme.DimTag(), b.theme.ResetTag(), b.result))
 		bld.WriteString("\n")
 	}
 
-	// Footer.
-	bld.WriteString(fmt.Sprintf(`  [%s]╰%s[-]`, colors.Dim, strings.Repeat("─", width)))
+	bld.WriteString(fmt.Sprintf(`  %s╰%s%s`, b.theme.DimTag(), strings.Repeat("─", width), b.theme.ResetTag()))
 	return bld.String()
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

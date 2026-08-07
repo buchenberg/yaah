@@ -98,10 +98,10 @@ func runTUI2() error {
 		go sess.RunPrompt(ctx, input)
 	}
 	app.OnAbort = func() {
+		app.HideThinking()
 		if cancelAgent != nil {
 			cancelAgent()
 			cancelAgent = nil
-			app.HideThinking()
 		}
 	}
 	app.OnCompact = func() {

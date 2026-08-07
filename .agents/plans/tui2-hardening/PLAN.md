@@ -6,15 +6,15 @@
 > Depends on: the TUI decision (see `docs/architecture-review.md` §3). The markdown module
 > is independently shippable; the tui2 work only matters if tui2 is chosen as the UI.
 >
-> :white_check_mark: **Part A — tviewmd module** — published `github.com/buchenberg/tviewmd` v0.1.0
+> ✅ **Part A — tviewmd module** — published `github.com/buchenberg/tviewmd` v0.1.0
 > (14 files, 23 tests, fuzz-clean), wired into `internal/tui2/markdown.go`, zero-rewrite
 > extraction via committed module path.
 >
-> :black_square_button: **Part B — feature inventory** — documented below, not yet ported.
+> ☐ **Part B — feature inventory** — documented below, not yet ported.
 >
-> :black_square_button: **Part C — tui2 target architecture** — not yet implemented.
+> ☐ **Part C — tui2 target architecture** — not yet implemented.
 >
-> :black_square_button: **Part D — phased execution** — Phase 0-1 complete; Phases 2-4 pending.
+> ☐ **Part D — phased execution** — Phase 0-1 complete; Phases 2-4 pending.
 
 ## Goals
 
@@ -354,37 +354,79 @@ conflict explicitly in the binding table.
 
 Each phase is independently mergeable and leaves the build green.
 
-## Phase 0 — Prerequisites & decisions (no code) :white_check_mark:
+## Phase 0 — Prerequisites & decisions (no code) ✅
 
-- :white_check_mark: Module/OSS path: `github.com/buchenberg/tviewmd`.
-- :white_check_mark: Ctrl+T semantics and `` `: `` auto-detect: deferred to Phase 2 (design
+- ✅ Module/OSS path: `github.com/buchenberg/tviewmd`.
+- ✅ Ctrl+T semantics and `` `: `` auto-detect: deferred to Phase 2 (design
   discussion, no blocking dependency).
-- **Exit gate:** :white_check_mark: paths decided.
+- **Exit gate:** ✅ paths decided.
 
-## Phase 1 — Scaffold the `md/` module :white_check_mark: **Complete 2026-08-07**
+## Phase 1 — Scaffold the `md/` module ✅ **Complete 2026-08-07**
 
 *Exceeded plan:* shipped all GFM features (tables, task lists, strikethrough) in v0.1.0
 rather than deferring them.
 
-- :white_check_mark: `md/go.mod`, `go.work`, `LICENSE`, `ast.go`, `parse.go`, `render.go`,
+- ✅ `md/go.mod`, `go.work`, `LICENSE`, `ast.go`, `parse.go`, `render.go`,
   `render_tview.go` — full GFM support (tables, task lists, strikethrough) + chroma.
-- :white_check_mark: 23 table-driven parse tests + 14 render tests.
-- :white_check_mark: `FuzzParse` — 315k+ executions, 360 interesting inputs, zero panics.
-- :white_check_mark: Wired into `internal/tui2/markdown.go` (15-line shim, no glamour).
-- :white_check_mark: `go build`, `go vet`, `staticcheck`, `gofmt` all clean.
-- :white_check_mark: **Extraction executed** (A.6): published `github.com/buchenberg/tviewmd`
+- ✅ 23 table-driven parse tests + 14 render tests.
+- ✅ `FuzzParse` — 315k+ executions, 360 interesting inputs, zero panics.
+- ✅ Wired into `internal/tui2/markdown.go` (15-line shim, no glamour).
+- ✅ `go build`, `go vet`, `staticcheck`, `gofmt` all clean.
+- ✅ **Extraction executed** (A.6): published `github.com/buchenberg/tviewmd`
   v0.1.0, removed local `md/` + `go.work`, yaah now imports the published module.
-- **Exit gate:** :white_check_mark: module published, tests pass, zero import rewrites.
+- **Exit gate:** ✅ module published, tests pass, zero import rewrites.
 
 ## Phase 2 — tui2 architecture base (no new user features)
-- Introduce `Theme` + `DetectTheme()`; route all components through it.
-- Introduce `RenderCtx` + `Renderable`; thread width from `GetInnerRect()`.
-- Introduce `Conversation` viewmodel; delete `plainMessages`; make `refreshMessages()` the
-  single render pass over `Conversation`.
-- Move input dispatch to `dispatch.go`; resolve Ctrl+T / `:` decisions.
-- Mechanical cleanups (C.7).
+
+### 2.1 Theme + DetectTheme
+- Introduce `Theme` struct (mirror tui1's `theme.go`) with fields for Accent, Dim, User,
+  Assistant, System, Error, Tool map, ReasoningBg, CodeBg.
+- Add `Theme.NoColor` field + `DetectTheme()` respecting `NO_COLOR`, `$YAHH_THEME`, terminal bg.
+- Route all components through `*Theme`; replace scattered inline color tags
+  (`[red]`, `[#888888]`, `colors.Tag(...)`) with theme lookups.
+- Ensure `AddUserMessage` omits color tags when `Theme.NoColor` is active.
+
+### 2.2 Streaming ordering (flush pending tokens before blocks)
+- Extract `flushPendingTokens()` method from the duplicated inline logic in `FlushEvent`
+  (`events.go:26–33`) and `DoneEvent` (`events.go:101–108`).
+- Call `flushPendingTokens()` from `AddToolStart` (`helpers_tool.go:7–12`) before appending
+  the tool block.
+- Call `flushPendingTokens()` from `AddSubAgentStart` (`helpers_subagent.go:7–11`) before
+  appending the subagent block.
+- Call `flushPendingTokens()` from escalation/compaction handlers
+  (`events.go:73–99`) before appending plain text.
+
+### 2.3 RenderCtx + Renderable + width propagation
+- Introduce `RenderCtx` struct (`Width`, `Height`, `Theme`, `Expanded`).
+- Introduce `Renderable` interface: `Render(ctx RenderCtx) string`.
+- Content components (`reasoning`, `toolblock`, `subagent`, `messages`) implement `Renderable`.
+- Thread `RenderCtx.Width` from `GetInnerRect().Dx()` through every content render
+  (fix hardcoded `width := 58` in `toolblock.go:154`).
+
+### 2.4 Conversation viewmodel
+- Introduce `Conversation` struct as single source of truth; store raw markdown per block
+  (not just rendered text).
+- Delete `plainMessages []string`; `Conversation` is the sole store.
+- Make `refreshMessages()` the single render pass over `Conversation`, re-rendering
+  markdown with the current viewport width on every pass.
+- Resize reflow: a resize event triggers `refreshMessages()`, which re-renders all raw
+  markdown at the new width.
+
+### 2.5 Input dispatch
+- Move input dispatch from `tui2.go` to `dispatch.go`; own a small focus-state machine
+  (which panel is focused, which modal is open).
+- Resolve Ctrl+T reasoning-vs-tools conflict in the binding table
+  (recommend: Ctrl+T = reasoning; tools on Ctrl+Shift+T or `:tools`).
+
+### 2.6 Mechanical cleanups (C.7)
+- Delete the local `max()` in `toolblock.go:209` (Go 1.21+ builtin).
+- Centralize tool icon + tool color (split between `toolblock.go` `Icon()` and
+  `colors/rolecolors.go`).
+- `OnAbort` should always hide the thinking indicator, not only when `cancelAgent != nil`.
+- Finish `UpdateInfopane(tab,…)` (currently `_ = tab // TODO`).
+
 - **Exit gate:** tui2 still builds and runs with existing features; no behavior regressions;
-  `md/` replaces glamour in `internal/tui2/markdown.go`.
+  `tviewmd` renders all markdown in `internal/tui2/markdown.go`.
 
 ## Phase 3 — Feature parity port (the B-inventory)
 Port in priority order, each as its own small PR:
@@ -404,7 +446,7 @@ Port in priority order, each as its own small PR:
 
 ## Phase 4 — Decision & extraction
 
-- Extract `md/` to its OSS repo (A.6). :white_check_mark: **Done 2026-08-07**
+- Extract `md/` to its OSS repo (A.6). ✅ **Done 2026-08-07**
 - Run tui2 as the default `yaah tui` behind a flag (or swap) for a soak period.
   - Delete `internal/tui`, drop glamour + bubbletea/bubbles/lipgloss/bubblezone from
     `go.mod`, retire `tui2.go`-vs-`tui.go` duplication.
@@ -422,7 +464,7 @@ Port in priority order, each as its own small PR:
   behind a build tag or lazy-init only the lexers seen. Measure before Phase 4.
 - **tview mouse on Windows**: verify region-click works under the Windows tcell backend
   (yaah's primary platform) during Phase 3 item 5.
-- **Extraction timing**: :white_check_mark: **Resolved 2026-08-07** — `tviewmd` v0.1.0 published
+- **Extraction timing**: ✅ **Resolved 2026-08-07** — `tviewmd` v0.1.0 published
   and imported. The library stands alone; yaah imports it regardless of the TUI decision.
 
 ---
@@ -436,3 +478,4 @@ Port in priority order, each as its own small PR:
 | 2026-08-07 | A.6 | Extracted to GitHub `buchenberg/tviewmd` v0.1.0; local `md/` + `go.work` removed |
 | 2026-08-07 | — | yaah `go.mod` wired to published module; build/vet/test/staticcheck/gofmt all clean |
 | 2026-08-07 | — | Committed on branch `feat/tviewmd`
+| 2026-08-07 | 2 | Phase 2 plan expanded with sub-tasks (2.1–2.6); none implemented yet on main

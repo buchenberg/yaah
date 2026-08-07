@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/tui2/colors"
 	"github.com/buchenberg/yaah/internal/tui2/components/question"
 	"github.com/buchenberg/yaah/internal/tui2/components/sessioninfo"
 	"github.com/buchenberg/yaah/internal/tui2/components/statusbar"
@@ -80,22 +79,22 @@ func (t *TUI2) renderInfoPane() {
 	b.WriteString("\n\n")
 
 	// Context section
-	b.WriteString(colors.TagBold(colors.Accent, "Context\n"))
+	b.WriteString(t.Theme.TagBold(t.Theme.Accent, "Context\n"))
 	if t.contextWindow > 0 {
 		pct := float64(t.contextTokens) * 100 / float64(t.contextWindow)
 		if pct > 100 {
 			pct = 100
 		}
-		b.WriteString(colors.Tag(colors.Dim,
+		b.WriteString(t.Theme.Tag(t.Theme.Dim,
 			fmt.Sprintf("  %d / %d (%.1f%%)\n", t.contextTokens, t.contextWindow, pct)))
 	} else {
-		b.WriteString(colors.Tag(colors.Dim, "  \u2500\n"))
+		b.WriteString(t.Theme.Tag(t.Theme.Dim, "  \u2500\n"))
 	}
 	b.WriteString("\n")
 
 	// MCP section (placeholder for now)
-	b.WriteString(colors.TagBold(colors.Accent, "MCP\n"))
-	b.WriteString(colors.Tag(colors.Dim, "  \u2500\n"))
+	b.WriteString(t.Theme.TagBold(t.Theme.Accent, "MCP\n"))
+	b.WriteString(t.Theme.Tag(t.Theme.Dim, "  \u2500\n"))
 
 	t.InfoPane.SetText(b.String())
 }
