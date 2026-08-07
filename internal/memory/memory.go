@@ -1,3 +1,13 @@
+// Package memory provides the SQLite-backed persistence layer for yaah.
+// It manages three concerns over a single database file:
+//
+//   - Sessions: conversation sessions and their messages (session_repo.go,
+//     message_repo.go)
+//   - Long-term memory: searchable notes with FTS5 full-text indexing
+//     (memory.go, repository.go)
+//   - Todo persistence: saving/loading the in-memory todo store (todo.go)
+//
+// The DB type is the single entry point for all database operations.
 package memory
 
 import (

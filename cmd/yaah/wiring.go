@@ -30,6 +30,9 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
+	if verr := config.Validate(cfg); verr != nil {
+		return nil, fmt.Errorf("config: %w", verr)
+	}
 
 	provider := resolveProvider(cfg)
 	modelName := resolveModel(cfg)
@@ -66,6 +69,7 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 
 	db, err := memory.OpenDefault()
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: db open failed, persistence disabled: %v\n", err)
 		db = nil
 	}
 
@@ -94,6 +98,7 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	toolReg.Register(&tools.RoleTool{
 		Dirs:         roleDirs,
 		BuiltinFiles: runner.BuiltinRoleFiles(),
+		Resolver:     runner.SubAgentRoleResolver{},
 	})
 
 	var todoStore *todo.Store
@@ -226,7 +231,7 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 					Specialty:   def.Specialty,
 					Contract: tools.SubAgentContract{
 						Heading: def.Contract.Heading,
-						Fields:  def.Contract.Fields,
+						Fields:  runner.ConvertContractFields(def.Contract.Fields),
 					},
 					Description: desc,
 					Tools:       def.Tools,

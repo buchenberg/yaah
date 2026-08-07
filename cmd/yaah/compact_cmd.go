@@ -1,25 +1,45 @@
 package yaah
 
 // compact_cmd.go implements the interactive :compact command and role
-// hot-reload. NOTE: compactContext is a standalone summarizer that
-// predates the agent loop's compactor; it does NOT share cooldowns,
-// adaptive budgets, chunked fallback, or events with
-// agent.Loop.compactContext. Unification is tracked by the
-// agent-context-split plan (compaction sub-package phase).
+// hot-reload. The :compact command delegates to agent.Loop.ForceCompact,
+// sharing the same cooldowns, adaptive budgets, chunked fallback, and
+// events as the in-loop compactor.
 
 import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
+	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/runner"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
+// compactTimeout caps how long the :compact command waits for the
+// compaction provider to respond. Prevents an unresponsive provider
+// from blocking the interactive session indefinitely.
+const compactTimeout = 5 * time.Minute
+
+// estimateTokens approximates the token cost of a message slice using
+// the same formula as agent.messageTokens: chars/4 for content,
+// reasoning content, and tool-call arguments.
+func estimateTokens(msgs []types.Message) int {
+	n := 0
+	for _, m := range msgs {
+		n += len(m.Content)/4 + len(m.ReasoningContent)/4
+		for _, tc := range m.ToolCalls {
+			n += len(tc.Function.Arguments)/4 + len(tc.Function.Name)/4
+		}
+	}
+	return n
+}
+
+// compactContext runs the unified compaction path via a minimal agent.Loop.
+// It constructs a loop with the session's provider and messages, then calls
+// loop.ForceCompact() so compaction always runs (ForceCompact bypasses
+// cooldowns and threshold guards for the explicit user request).
 func (s *agentSession) compactContext() {
 	s.mu.RLock()
 	ch := s.ctrlCh
@@ -36,102 +56,43 @@ func (s *agentSession) compactContext() {
 		}
 	}
 
+	if len(s.messages) <= 4 {
+		msg("context is already small enough")
+		return
+	}
+
 	window := s.cfg.Agent.Default.ContextWindow
 	if window <= 0 {
 		window = 1048576
 	}
 
-	msgs := s.messages
-	if len(msgs) <= 4 {
-		msg("context is already small enough")
-		return
-	}
-
-	totalChars := 0
-	for _, m := range msgs {
-		totalChars += len(m.Content) + len(m.ReasoningContent)
-		for _, tc := range m.ToolCalls {
-			totalChars += len(tc.Function.Arguments) + len(tc.Function.Name)
-		}
-	}
-	estTokens := totalChars / 4
-	target := window * 4 / 5
-	if estTokens <= target {
-		msg(fmt.Sprintf("context: %d/%d tokens (%d%%)", estTokens, window, estTokens*100/window))
-		return
-	}
+	estTokens := estimateTokens(s.messages)
 
 	msg(fmt.Sprintf("context: %d/%d tokens (%d%%) — compacting...", estTokens, window, estTokens*100/window))
 
-	sysMsg := msgs[0]
-	rest := msgs[1:]
-	keepRecent := 6
-	if len(rest) <= keepRecent {
-		msg("not enough messages to compact")
-		return
-	}
-	split := len(rest) - keepRecent
+	rawCompactProvider, compactModel := resolveCompact(s.cfg)
+	compactProvider := agent.ResolveCompactProvider(rawCompactProvider, s.cfg.Observability.Otel.Verbose)
+	fallbackProvider, fallbackModel, _ := resolveFallback(s.cfg)
 
-	if protect := s.cfg.Agent.Default.ReasoningProtect; protect > 0 {
-		if adj := agent.ProtectReasoningTurns(msgs, 1+split, protect); adj < 1+split {
-			split = adj - 1
-			if split < 0 {
-				split = 0
-			}
-		}
-	}
+	b := s.loopBuilder(s.provider, s.modelName, compactProvider, compactModel, fallbackProvider, fallbackModel)
 
-	oldMsgs := rest[:split]
-	keepMsgs := rest[split:]
+	otelEnabled := s.cfg.Observability.Otel.Enabled
+	loop := b.Build(agent.LoopBuildOptions{
+		OtelEnabled: &otelEnabled,
+		OtelVerbose: s.cfg.Observability.Otel.Verbose,
+	})
 
-	var sb strings.Builder
-	sb.WriteString(prompts.ConversationSummaryPreamble())
-	for _, m := range oldMsgs {
-		if m.Content != "" {
-			sb.WriteString(fmt.Sprintf("%s: %s\n", m.Role, m.Content))
-		}
-		for _, tc := range m.ToolCalls {
-			sb.WriteString(fmt.Sprintf("[tool:%s] %s\n", tc.Function.Name, tc.Function.Arguments))
-		}
-	}
+	// ForceCompact bypasses cooldowns and threshold guards so the
+	// user's explicit :compact request always runs. Use a finite
+	// timeout so an unresponsive provider doesn't block indefinitely.
+	ctx, cancel := context.WithTimeout(context.Background(), compactTimeout)
+	defer cancel()
+	loop.ForceCompact(ctx, 0.0)
 
-	compactModel := s.cfg.Agent.Default.SmallModel
-	if compactModel == "" {
-		compactModel = s.modelName
-	}
+	s.messages = loop.State.Messages
 
-	req := types.ChatRequest{
-		Model:    compactModel,
-		Messages: []types.Message{types.UserMsg(sb.String())},
-	}
+	newEstimate := estimateTokens(s.messages)
 
-	resp, err := s.provider.Send(context.Background(), req)
-	if err != nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
-		s.messages = append([]types.Message{sysMsg}, keepMsgs...)
-		msg("compacted (trimmed)")
-		if ch != nil {
-			t := 0
-			for _, m := range s.messages {
-				t += len(m.Content) / 4
-			}
-			select {
-			case ch <- &types.CtrlContextInfo{Tokens: t, Window: window}:
-			default:
-			}
-		}
-		return
-	}
-
-	summary := resp.Choices[0].Message.Content
-	newMsgs := []types.Message{sysMsg}
-	newMsgs = append(newMsgs, types.SystemMsg("Previous conversation summary:\n"+summary))
-	newMsgs = append(newMsgs, keepMsgs...)
-	s.messages = newMsgs
-
-	newEstimate := 0
-	for _, m := range newMsgs {
-		newEstimate += len(m.Content) / 4
-	}
 	if ch != nil {
 		select {
 		case ch <- &types.CtrlContextInfo{
@@ -142,7 +103,11 @@ func (s *agentSession) compactContext() {
 		}
 	}
 
-	msg(fmt.Sprintf("compacted: %d/%d tokens (%d%%)", newEstimate, window, newEstimate*100/window))
+	if newEstimate < estTokens {
+		msg(fmt.Sprintf("compacted: %d/%d tokens (%d%%)", newEstimate, window, newEstimate*100/window))
+	} else {
+		msg("no messages were compacted (context too small or compaction ineffective)")
+	}
 }
 
 func (s *agentSession) reloadRoles() {

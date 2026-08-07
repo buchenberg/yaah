@@ -1,8 +1,6 @@
 package yaah
 
 import (
-	"context"
-	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -11,7 +9,6 @@ import (
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/providers"
-	"github.com/buchenberg/yaah/internal/types"
 )
 
 // resolveApproval returns the effective approval mode.
@@ -102,10 +99,10 @@ func makeProvider(name string, p config.Provider) (agent.Provider, bool) {
 func makeOAuthProvider(name string, r config.Provider) (agent.Provider, bool) {
 	token, err := providers.LoadOAuthToken(name)
 	if err != nil {
-		return &oauthErrorStub{provider: name, err: err}, true
+		return &providers.OAuthErrorStub{Provider: name, Err: err}, true
 	}
 	if token == nil {
-		return &oauthErrorStub{provider: name}, true
+		return &providers.OAuthErrorStub{Provider: name}, true
 	}
 
 	switch r.API {
@@ -242,7 +239,7 @@ func resolveProvider(cfg *config.Config) agent.Provider {
 	}
 
 	// Last resort: return a stub that explains the issue
-	return &noProviderStub{}
+	return &providers.NoProviderStub{}
 }
 
 // isRealKey returns true if the API key looks like a real key (not empty,
@@ -255,26 +252,6 @@ func isRealKey(key string) bool {
 		return false
 	}
 	return true
-}
-
-// noProviderStub is returned when no valid provider is configured.
-type noProviderStub struct{}
-
-func (s *noProviderStub) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
-	return nil, fmt.Errorf("no provider configured — run 'yaah config edit' to add one")
-}
-
-// oauthErrorStub is returned when an OAuth provider has no stored token.
-type oauthErrorStub struct {
-	provider string
-	err      error
-}
-
-func (s *oauthErrorStub) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
-	if s.err != nil {
-		return nil, fmt.Errorf("provider %q: %w", s.provider, s.err)
-	}
-	return nil, fmt.Errorf("provider %q not authenticated — run 'yaah login %s'", s.provider, s.provider)
 }
 
 // buildStuckChildTimeouts converts per-role StuckChildTimeout seconds from

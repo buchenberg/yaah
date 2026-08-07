@@ -75,7 +75,14 @@ var configEditCmd = &cobra.Command{
 			return err
 		}
 
-		cfg, _ := config.Load()
+		cfg, err := config.Load()
+		if err != nil {
+			// Log the error but still open the editor so the user can
+			// repair a broken config file via the very command designed
+			// for that purpose.
+			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+			cfg = nil
+		}
 		editor := config.ResolveEditor(cfg)
 
 		cmd.Printf("Opening %s with %s\n", path, editor)

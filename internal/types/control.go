@@ -1,98 +1,45 @@
 package types
 
-import (
-	"github.com/buchenberg/yaah/internal/todo"
-)
+// Control-plane message type aliases. The canonical definitions live in
+// internal/control. These aliases preserve backward compatibility for code
+// that still references types.CtrlMsg, types.CtrlStatus, etc.
+//
+// New code should import internal/control directly.
 
-// CtrlMsg is the sealed interface for control-plane messages sent from
-// tool handlers and session infrastructure to a UI consumer (TUI, REPL, etc.).
-// Each concrete type implements ctrlMarker().
-type CtrlMsg interface {
-	ctrlMarker()
-}
+import "github.com/buchenberg/yaah/internal/control"
 
-// CtrlStatus carries a notification string for display.
-type CtrlStatus struct{ Text string }
+// CtrlMsg is an alias for control.Msg.
+type CtrlMsg = control.Msg
 
-func (*CtrlStatus) ctrlMarker() {}
+// CtrlStatus is an alias for control.Status.
+type CtrlStatus = control.Status
 
-// CtrlError carries an error for display.
-type CtrlError struct{ Err error }
+// CtrlError is an alias for control.Error.
+type CtrlError = control.Error
 
-func (*CtrlError) ctrlMarker() {}
+// CtrlOption is an alias for control.Option.
+type CtrlOption = control.Option
 
-// CtrlOption is a single choice in a question or approval prompt.
-type CtrlOption struct {
-	Label       string
-	Description string
-}
+// CtrlQuestion is an alias for control.Question.
+type CtrlQuestion = control.Question
 
-// CtrlQuestion carries an interactive question to display.
-type CtrlQuestion struct {
-	Header   string
-	Question string
-	Options  []CtrlOption
-	Multiple bool
-	AnswerCh chan<- string
-}
+// CtrlApproval is an alias for control.Approval.
+type CtrlApproval = control.Approval
 
-func (*CtrlQuestion) ctrlMarker() {}
+// CtrlContinue is an alias for control.Continue.
+type CtrlContinue = control.Continue
 
-// CtrlApproval carries a tool approval prompt.
-type CtrlApproval struct {
-	Name      string
-	Args      string
-	ApproveCh chan<- bool
-}
+// CtrlModelList is an alias for control.ModelList.
+type CtrlModelList = control.ModelList
 
-func (*CtrlApproval) ctrlMarker() {}
+// CtrlTodos is an alias for control.Todos.
+type CtrlTodos = control.Todos
 
-// CtrlContinue asks the host to prompt whether to continue after reaching
-// the maximum number of agent iterations. Write true (continue) or false
-// (stop) to AnswerCh.
-type CtrlContinue struct {
-	MaxIter  int
-	AnswerCh chan<- bool
-}
+// CtrlContextInfo is an alias for control.ContextInfo.
+type CtrlContextInfo = control.ContextInfo
 
-func (*CtrlContinue) ctrlMarker() {}
+// CtrlFallback is an alias for control.Fallback.
+type CtrlFallback = control.Fallback
 
-// CtrlModelList carries the set of available model identifiers.
-type CtrlModelList struct {
-	Models        []string
-	ProviderNames map[string]string
-}
-
-func (*CtrlModelList) ctrlMarker() {}
-
-// CtrlTodos carries an updated todo list.
-type CtrlTodos struct {
-	Items []todo.Item
-}
-
-func (*CtrlTodos) ctrlMarker() {}
-
-// CtrlContextInfo carries context window usage statistics.
-type CtrlContextInfo struct {
-	Tokens           int
-	Window           int
-	LastPromptTokens int // real provider-reported prompt tokens from last turn
-}
-
-func (*CtrlContextInfo) ctrlMarker() {}
-
-// CtrlFallback is sent when the LLM client falls back to an alternative
-// provider. The TUI should update its header to reflect the new provider.
-type CtrlFallback struct {
-	Provider string
-	Model    string
-}
-
-func (*CtrlFallback) ctrlMarker() {}
-
-// CtrlDone is a sentinel sent once when the session closes.
-// The goroutine forwarding from controlCh to prog.Send must detect
-// this type and return to avoid a leaked goroutine after the TUI exits.
-type CtrlDone struct{}
-
-func (*CtrlDone) ctrlMarker() {}
+// CtrlDone is an alias for control.Done.
+type CtrlDone = control.Done

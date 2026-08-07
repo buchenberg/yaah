@@ -396,6 +396,58 @@ func (l *Loop) compactContext(ctx context.Context, threshold float64) {
 	l.ctxMgr().compactContext(ctx, threshold)
 }
 
+// ForceCompact runs a single compaction pass on the loop's current messages,
+// bypassing cooldowns and threshold guards so the user's explicit :compact
+// command always runs. It applies defaults first (without creating a broker
+// or forwarder goroutine) and flushes the persister on completion.
+//
+// ForceCompact must NOT be called concurrently with Run on the same Loop.
+// It temporarily sets l.View to nil so applyDefaults does not create a
+// broker/forwarder goroutine; callers must use a loop that is not running.
+//
+// The threshold parameter is forwarded to compactContext; pass 0 for the
+// default 25% threshold. Cooldowns and ineffective-compaction counters are
+// cleared before compaction so the guard at the top of compactContext does
+// not skip the pass.
+func (l *Loop) ForceCompact(ctx context.Context, threshold float64) {
+	// Temporarily nil out View so applyDefaults does not create a broker
+	// and forwarder goroutine — we never call Run(), so teardown would
+	// never close them, causing a goroutine leak.
+	savedView := l.View
+	l.View = nil
+	l.applyDefaults()
+	l.View = savedView
+
+	// Clear cooldown and ineffective-compaction state so the explicit
+	// user request is not skipped by guards designed for automatic
+	// in-loop compaction.
+	cm := l.ctxMgr()
+	cm.State.IneffectiveCompactions = 0
+	if cm.SessionID != "" && cm.DB != nil {
+		if err := cm.DB.SetCompactionCooldown(cm.SessionID, 0, 0); err != nil {
+			slog.Warn("ForceCompact: failed to clear compaction cooldown", "error", err)
+		}
+	}
+
+	// Force the token estimate high enough to bypass the threshold gate.
+	// compactContext checks effectiveTokens >= ContextWindow * threshold;
+	// setting LastPromptTokens to ContextWindow guarantees the gate fires.
+	// Save and restore so subsequent automatic checks see the real estimate.
+	savedLastPromptTokens := cm.State.LastPromptTokens
+	cm.State.LastPromptTokens = cm.ContextWindow
+
+	l.compactContext(ctx, threshold)
+
+	// Restore the real token estimate so the next automatic compaction
+	// check doesn't see an inflated value and compact without cause.
+	cm.State.LastPromptTokens = savedLastPromptTokens
+
+	// Flush any debounced writes from the persister so they are not lost.
+	if l.Persister != nil {
+		l.Persister.Flush()
+	}
+}
+
 // trimContext removes old messages when the estimated token count exceeds
 // 80% of ContextWindow. Preserves the system message and recent exchanges.
 // Reasoning-carrying assistant messages are protected via ProtectReasoningTurns.
