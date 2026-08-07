@@ -83,21 +83,6 @@ type ContextManager struct {
 	compactFn func(ctx context.Context, messages []types.Message, threshold float64) []types.Message
 }
 
-// Reset resets all compaction-tracking state to zero values.
-func (cm *ContextManager) Reset() {
-	if cm.State == nil {
-		return
-	}
-	cm.State.PreviousSummary = ""
-	cm.State.LastPromptTokens = 0
-	cm.State.LastCachedPromptTokens = 0
-	cm.State.LastCompactionTokens = 0
-	cm.State.IneffectiveCompactions = 0
-	cm.State.CompactionSavingsHistory = nil
-	cm.State.CompactionBudgetMultiplier = 1.0
-	cm.State.CompactionForcedByOverflow = false
-}
-
 // Compact implements pipeline.Compactor by delegating to the registered
 // compaction function.
 func (cm *ContextManager) Compact(ctx context.Context, messages []types.Message, threshold float64) []types.Message {
