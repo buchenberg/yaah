@@ -31,6 +31,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
 	processpkg "github.com/buchenberg/yaah/internal/process"
@@ -89,7 +90,7 @@ type agentSession struct {
 	// owns their session-rooted contexts, tracks them for status/cancel,
 	// attributes their usage to totalUsage, and delivers results as
 	// follow-ups. Cancelled at session close.
-	backgroundJobs *tools.BackgroundJobs
+	backgroundJobs *jobs.BackgroundJobs
 
 	cwd string
 
@@ -138,6 +139,9 @@ func (s *agentSession) close() {
 
 func (s *agentSession) Close()   { s.close() }
 func (s *agentSession) Compact() { s.compactContext() }
+
+// ToolReg returns the session's tool registry.
+func (s *agentSession) ToolReg() *tools.Registry { return s.toolReg }
 func (s *agentSession) ProviderName() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

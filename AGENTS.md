@@ -36,8 +36,7 @@ yaah/
 │   ├── subagent_runner.go       # sub-agent dispatch + role discovery
 │   ├── provider_resolve.go      # provider/model resolution helpers
 │   ├── serve.go                 # yaah serve — MCP tool server (stdio + HTTP)
-│   ├── acp.go                   # yaah acp-serve — ACP server over stdio (JSON-RPC 2.0)
-│   ├── acp_view.go              # ACP event view (agent.View implementation)
+│   ├── acp_cmd.go               # yaah acp-serve cobra shim (server in internal/acp)
 │   ├── web.go web_view.go       # yaah web — browser UI + WebSocket view
 │   ├── tui.go                   # yaah tui (bubbletea) + tui_unix.go / tui_windows.go
 │   ├── plan.go                  # plan tool wiring
@@ -52,7 +51,9 @@ yaah/
 │   ├── session.go               # yaah session list/show
 │   └── color.go                 # ANSI color helpers
 ├── internal/
+│   ├── acp/                     # ACP protocol server (JSON-RPC wire types, view, dispatch loop)
 │   ├── agent/                   # agent loop, typed events, tool dispatch, context, hooks, persistence
+│   │   ├── context/              #   pure context helpers (tokens, split, prune, chunk, truncation) — leaf
 │   │   ├── errorclassify/        #   structured LLM provider error classification
 │   │   ├── llm/                  #   LLM client wrapping (streaming, retry, fallback, usage)
 │   │   ├── pipeline/             #   middleware pipeline (compaction, approval, permissions, etc.)
@@ -61,6 +62,7 @@ yaah/
 │   ├── config/                  # load ~/.yaah/config.yaml, env subst, validate
 │   ├── control/                 # control-plane message types (CtrlMsg, approvals, questions, todos)
 │   ├── instructions/            # walk up cwd, load AGENTS.md/CLAUDE.md
+│   ├── jobs/                    # background sub-agent jobs (manager, TaskRunner, sub-agent I/O contract)
 │   ├── mcp/                     # MCP client + server (stdio + HTTP), manifests
 │   ├── memory/                  # SQLite + FTS5 (sessions, messages, memory)
 │   ├── observability/           # OpenTelemetry tracing, in-memory span buffer
@@ -213,7 +215,7 @@ interface. See `internal/agent/events.go` for the event types.
 | REPL | `terminalView` / `replView` | `cmd/yaah/agent_frame.go` |
 | Sub-agents | `agent.NoopView` | `cmd/yaah/subagent_runner.go` |
 | MCP serve | `agent.NoopView` | `cmd/yaah/serve.go` |
-| ACP serve | `acpView` + `acpViewWithWrite` | `cmd/yaah/acp.go`, `cmd/yaah/acp_view.go` |
+| ACP serve | `acp.View` + `acp.ViewWithWrite` | `internal/acp/view.go` |
 
 Control-plane messages (todos, questions, approvals, model lists) use
 `tui.ControlMsg` — a separate channel from the broker events.

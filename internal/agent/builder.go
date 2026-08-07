@@ -3,6 +3,7 @@ package agent
 import (
 	"time"
 
+	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -37,7 +38,7 @@ type LoopBuilder struct {
 	// FollowUps is the between-turn follow-up channel (nil = none).
 	FollowUps <-chan string
 	// BackgroundJobs manages background sub-agent dispatch.
-	BackgroundJobs *tools.BackgroundJobs
+	BackgroundJobs *jobs.BackgroundJobs
 	// ConflictTracker detects parallel sub-agent file conflicts.
 	ConflictTracker *tools.ConflictTracker
 	// Cfg holds the tuning parameters typically derived from config.yaml.

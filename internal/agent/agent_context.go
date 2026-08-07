@@ -2,41 +2,53 @@ package agent
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"math"
-	"strings"
 
-	"github.com/buchenberg/yaah/internal/prompts"
+	agentctx "github.com/buchenberg/yaah/internal/agent/context"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-const defaultEstimateFactor = 1.3
-
-// defaultRawCompactionThreshold is the fraction of ContextWindow at which
-// compaction fires based on raw (non-cache-adjusted) prompt tokens. It guards
-// against latency degradation in heavily-cached conversations where the
-// effective-token trigger never fires. 0.5 matches hermes's 50% threshold.
-const defaultRawCompactionThreshold = 0.25
-
-// maxPayloadBytes is the serialized request size above which the payload-size
-// guard forces compaction regardless of token estimates. Token heuristics
-// (chars/4) can undercount code and JSON by 2-4x, so a byte-level check catches
-// oversized payloads the token trigger misses. ~1.25MB matches kilocode's
-// prompt.ts payload-limit prune threshold.
-const maxPayloadBytes = 1_250_000
-
-// Token-budget clamp for the preserved tail after compaction. The budget is
-// 25% of the context window, clamped to [minPreserveTokens, maxPreserveTokens]
-// so huge windows don't over-preserve and small windows keep a usable floor.
+// Re-exports for backward compatibility within the agent package (tests
+// reference the historical unexported names).
 const (
-	minPreserveTokens = 2000
-	maxPreserveTokens = 8000
+	defaultEstimateFactor = agentctx.DefaultEstimateFactor
+	maxPayloadBytes       = agentctx.MaxPayloadBytes
 )
 
-// summaryTemplate is the structured Markdown prompt sent to the compact
-// provider. It is loaded from the embedded prompts package.
-var summaryTemplate = prompts.SummaryTemplate()
+type turnRange = agentctx.TurnRange
+
+func messageTokens(m types.Message) int          { return agentctx.MessageTokens(m) }
+func turns(messages []types.Message) []turnRange { return agentctx.Turns(messages) }
+func preserveBudget(contextWindow int) int       { return agentctx.PreserveBudget(contextWindow) }
+
+func preflightTokens(messages []types.Message, tools []types.ToolDef, factor float64) int {
+	return agentctx.PreflightTokens(messages, tools, factor)
+}
+
+func estimatePayloadBytes(messages []types.Message, tools []types.ToolDef) int {
+	return agentctx.EstimatePayloadBytes(messages, tools)
+}
+
+func splitTail(messages []types.Message, budget int) agentctx.SplitResult {
+	return agentctx.SplitTail(messages, budget)
+}
+
+func splitTurn(messages []types.Message, t turnRange, budget int) int {
+	return agentctx.SplitTurn(messages, t, budget)
+}
+
+// ProtectReasoningTurns ensures compaction does not remove assistant messages
+// that carry reasoning_content. Thinking-mode providers (e.g. DeepSeek) require
+// EVERY reasoning-carrying assistant message to be passed back in every
+// subsequent request. If compaction removes any, the next request gets a 400:
+// "The reasoning_content in the thinking mode must be passed back to the API."
+//
+// protectTurns=0 disables protection entirely (explicit opt-out). Otherwise
+// ALL reasoning-carrying messages in oldMsgs are protected, regardless of
+// the configured count — DeepSeek requires every one.
+func ProtectReasoningTurns(messages []types.Message, keepStart, protectTurns int) int {
+	return agentctx.ProtectReasoningTurns(messages, keepStart, protectTurns)
+}
 
 // EstimatedTokens returns the estimated token count for all messages
 // in the Loop's conversation history (l.State.Messages). This is the
@@ -46,36 +58,9 @@ var summaryTemplate = prompts.SummaryTemplate()
 func (l *Loop) EstimatedTokens() int {
 	total := 0
 	for _, m := range l.State.Messages {
-		total += messageTokens(m)
+		total += agentctx.MessageTokens(m)
 	}
 	return total
-}
-
-// lastUserPrompt returns the content of the most recent user message in the
-// slice, or "" if none exists. Used by compaction to preserve the active task.
-func lastUserPrompt(msgs []types.Message) string {
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == "user" && msgs[i].Content != "" {
-			return msgs[i].Content
-		}
-	}
-	return ""
-}
-
-// messageTokens estimates the token count of a single message using chars/4
-// for content, reasoning content, plus tool-call arguments. Applies a 10-token
-// floor for role/metadata. ReasoningContent is counted because it is serialized
-// in every provider request and contributes to the real prompt size; omitting it
-// causes token estimates (and therefore compaction triggers) to undercount.
-func messageTokens(m types.Message) int {
-	tokens := len(m.Content)/4 + len(m.ReasoningContent)/4
-	for _, tc := range m.ToolCalls {
-		tokens += len(tc.Function.Arguments)/4 + len(tc.Function.Name)/4
-	}
-	if tokens < 10 {
-		tokens = 10
-	}
-	return tokens
 }
 
 // prepareRequestMessages builds the ephemeral message slice sent to the
@@ -99,10 +84,10 @@ func (l *Loop) prepareRequestMessages(messages []types.Message) []types.Message 
 	// Guard: verify no reasoning-carrying assistant messages were lost.
 	// The compaction/trim pipeline must either preserve every reasoning
 	// message or fold its content into a system message summary.
-	if src := countReasoningMessages(messages); countReasoningMessages(out) < src {
+	if src := agentctx.CountReasoningMessages(messages); agentctx.CountReasoningMessages(out) < src {
 		slog.Error("reasoning_content lost — compaction or trim pipeline may have dropped reasoning-carrying messages",
-			"source_count", countReasoningMessages(messages),
-			"output_count", countReasoningMessages(out),
+			"source_count", agentctx.CountReasoningMessages(messages),
+			"output_count", agentctx.CountReasoningMessages(out),
 		)
 	}
 
@@ -119,266 +104,6 @@ func (l *Loop) StripAllReasoning() {
 			l.State.Messages[i].ReasoningContent = ""
 		}
 	}
-}
-
-// reasoning_content. The result is an exact count, not a turn count.
-func countReasoningMessages(msgs []types.Message) int {
-	n := 0
-	for _, m := range msgs {
-		if m.Role == "assistant" && m.ReasoningContent != "" {
-			n++
-		}
-	}
-	return n
-}
-
-// preflightTokens estimates the token count for a request payload (messages +
-// tools) with a configurable multiplier to compensate for provider tokenizer
-// undercounting (especially for code and JSON). The factor parameter defaults
-// to 1.3 (defaultEstimateFactor) and is configurable via EstimateFactor on the
-// Loop. Ported from kilocode overflow.ts:8,71.
-func preflightTokens(messages []types.Message, tools []types.ToolDef, factor float64) int {
-	total := 0
-	for _, m := range messages {
-		total += messageTokens(m)
-	}
-	for _, t := range tools {
-		total += len(t.Function.Description)/4 + len(t.Function.Parameters)/4 + 10
-	}
-	if factor <= 0 {
-		factor = defaultEstimateFactor
-	}
-	return int(math.Ceil(float64(total) * factor))
-}
-
-// estimatePayloadBytes estimates the serialized size of a chat request payload
-// (messages plus tool definitions) in bytes. It backs the payload-size guard: a
-// byte-level check catches oversized requests that the chars/4 token heuristic
-// misses, since that heuristic systematically undercounts code and JSON.
-func estimatePayloadBytes(messages []types.Message, tools []types.ToolDef) int {
-	total := 0
-	for _, m := range messages {
-		total += len(m.Content) + len(m.ReasoningContent)
-		for _, tc := range m.ToolCalls {
-			total += len(tc.Function.Arguments) + len(tc.Function.Name) + len(tc.ID)
-		}
-	}
-	for _, t := range tools {
-		total += len(t.Function.Description) + len(t.Function.Parameters) + len(t.Function.Name)
-	}
-	return total
-}
-
-// turnRange identifies a contiguous turn: a user message followed by its
-// assistant response and any tool results, ending at the next user message
-// (or end of conversation).
-type turnRange struct {
-	start int // index of the user message that starts this turn
-	end   int // exclusive: index of the next user message or len(messages)
-}
-
-// turns segments messages into turn ranges starting at non-index-0 user
-// messages. A "user" message at index 0 is the system prompt, not a turn.
-// Messages before the first real user message are not in any turn.
-// Ported from kilocode compaction.ts:161-177.
-func turns(messages []types.Message) []turnRange {
-	var result []turnRange
-	for i, m := range messages {
-		if m.Role != "user" || i == 0 {
-			continue
-		}
-		result = append(result, turnRange{start: i, end: len(messages)})
-	}
-	for i := 0; i < len(result)-1; i++ {
-		result[i].end = result[i+1].start
-	}
-	return result
-}
-
-// preserveBudget returns the token budget for the preserved tail: 25% of the
-// context window, clamped to [minPreserveTokens, maxPreserveTokens]. Ported
-// from kilocode compaction.ts:152-158 (preserveRecentBudget).
-func preserveBudget(contextWindow int) int {
-	budget := contextWindow / 4 // 25%
-	if budget < minPreserveTokens {
-		budget = minPreserveTokens
-	}
-	if budget > maxPreserveTokens {
-		budget = maxPreserveTokens
-	}
-	return budget
-}
-
-// splitResult describes a compaction split: messages before keepStart are
-// summarized, messages from keepStart onward are preserved verbatim.
-type splitResult struct {
-	keepStart int // index into messages where the tail begins
-}
-
-// splitTail finds the split point that keeps the most recent turns within the
-// preserve budget, without splitting a tool-call/result pair. Walks backwards
-// over turns, accumulating token sizes until the budget is exceeded. If a
-// single turn exceeds the remaining budget, walks forward within that turn to
-// find the earliest message that fits. Ported from kilocode compaction.ts:179-202.
-func splitTail(messages []types.Message, budget int) splitResult {
-	allTurns := turns(messages)
-	if len(allTurns) == 0 {
-		return splitResult{keepStart: len(messages)} // nothing to split
-	}
-
-	// Walk backwards over the most recent turns.
-	total := 0
-	keepStart := len(messages)
-	for i := len(allTurns) - 1; i >= 0; i-- {
-		t := allTurns[i]
-		turnTokens := 0
-		for j := t.start; j < t.end; j++ {
-			turnTokens += messageTokens(messages[j])
-		}
-		if total+turnTokens <= budget {
-			total += turnTokens
-			keepStart = t.start
-			continue
-		}
-		// Turn doesn't fit entirely — try to split it.
-		if splitAt := splitTurn(messages, t, budget-total); splitAt >= 0 {
-			keepStart = splitAt
-		}
-		break
-	}
-
-	// Never summarize past the first message (system prompt protection).
-	if keepStart < 1 {
-		keepStart = 1
-	}
-	return splitResult{keepStart: keepStart}
-}
-
-// splitTurn finds the earliest message within a turn that fits within the
-// remaining budget. Returns -1 if no split is possible (entire turn is too
-// large or the turn has only one message). Ported from kilocode compaction.ts:203-218.
-func splitTurn(messages []types.Message, t turnRange, budget int) int {
-	if budget <= 0 || t.end-t.start <= 1 {
-		return -1
-	}
-	for start := t.start + 1; start < t.end; start++ {
-		size := 0
-		for j := start; j < t.end; j++ {
-			size += messageTokens(messages[j])
-		}
-		if size <= budget {
-			return start
-		}
-	}
-	return -1
-}
-
-// ProtectReasoningTurns ensures compaction does not remove assistant messages
-// that carry reasoning_content. Thinking-mode providers (e.g. DeepSeek) require
-// EVERY reasoning-carrying assistant message to be passed back in every
-// subsequent request. If compaction removes any, the next request gets a 400:
-// "The reasoning_content in the thinking mode must be passed back to the API."
-//
-// protectTurns=0 disables protection entirely (explicit opt-out). Otherwise
-// ALL reasoning-carrying messages in oldMsgs are protected, regardless of
-// the configured count — DeepSeek requires every one.
-func ProtectReasoningTurns(messages []types.Message, keepStart, protectTurns int) int {
-	if protectTurns <= 0 || keepStart <= 1 {
-		return keepStart
-	}
-	// Only protect reasoning in oldMsgs (messages before keepStart).
-	// Reasoning already in keepMsgs is already preserved by compaction.
-	if idx := EarliestReasoningIndex(messages[:keepStart]); idx > 0 && idx < keepStart {
-		return idx
-	}
-	return keepStart
-}
-
-// EarliestReasoningIndex scans the message slice for assistant messages that
-// carry reasoning_content, finds the earliest (oldest) one, and returns the
-// index of its enclosing user message (or 1 if the user message is at index 0).
-// Returns 0 if no reasoning-carrying messages exist.
-//
-// This is the single source of truth for reasoning-content protection. Every
-// code path that removes messages from the conversation history must ensure
-// it preserves messages from this index onward, or the next request to a
-// thinking-mode provider will fail with a 400 error.
-func EarliestReasoningIndex(messages []types.Message) int {
-	for i := 1; i < len(messages); i++ {
-		if messages[i].Role == "assistant" && messages[i].ReasoningContent != "" {
-			for j := i - 1; j >= 0; j-- {
-				if messages[j].Role == "user" || j == 0 {
-					if j == 0 {
-						return 1
-					}
-					return j
-				}
-			}
-			return i
-		}
-	}
-	return 0
-}
-
-// truncateRunes slices s to at most maxLen runes, preserving head and tail
-// with an ellipsis marker in between. Operates on rune boundaries to avoid
-// corrupting multi-byte UTF-8 characters.
-func truncateRunes(s string, maxLen int) string {
-	runes := []rune(s)
-	if len(runes) <= maxLen {
-		return s
-	}
-	headLen := maxLen * 2 / 3
-	tailLen := maxLen / 3
-	return string(runes[:headLen]) + "\n...[truncated]...\n" + string(runes[len(runes)-tailLen:])
-}
-
-// pruneMessages replaces large tool and assistant messages with abbreviated
-// markers to reduce token load before LLM summarization. Tool outputs become
-// compact summary markers; assistant messages are truncated with rune-safe
-// head+tail preservation.
-func pruneMessages(msgs []types.Message, maxLen int) []types.Message {
-	out := make([]types.Message, len(msgs))
-	for i, m := range msgs {
-		out[i] = m
-		if len(m.Content) <= maxLen {
-			continue
-		}
-		switch m.Role {
-		case "tool":
-			lines := strings.Count(m.Content, "\n") + 1
-			chars := len(m.Content)
-			out[i].Content = fmt.Sprintf("[tool %s output — %d lines, %d chars]",
-				m.Name, lines, chars)
-		case "assistant":
-			if len(m.ToolCalls) > 0 {
-				continue
-			}
-			out[i].Content = truncateRunes(m.Content, maxLen)
-		}
-	}
-	return out
-}
-
-// formatToolStub produces a compact, structured summary of a tool result
-// message for the compaction serializer. Instead of embedding the full output
-// (which can be thousands of lines of grep/cat/ls results), it emits a stub
-// with line count and the first meaningful snippet.
-func formatToolStub(m types.Message) string {
-	content := strings.TrimSpace(m.Content)
-	if content == "" {
-		return fmt.Sprintf("[tool:%s (empty output)]", m.Name)
-	}
-	lines := strings.Count(content, "\n") + 1
-	chars := len(content)
-	firstLine := content
-	if idx := strings.IndexByte(content, '\n'); idx > 0 {
-		firstLine = content[:idx]
-	}
-	if len(firstLine) > 120 {
-		firstLine = firstLine[:120] + "..."
-	}
-	return fmt.Sprintf("[tool:%s — %d lines, %d chars, starts: %q]", m.Name, lines, chars, firstLine)
 }
 
 // compactContext checks if the estimated token count exceeds the given

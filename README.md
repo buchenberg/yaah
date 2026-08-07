@@ -301,7 +301,7 @@ yaah/
 │   ├── subagent_runner.go        # sub-agent dispatch + role discovery
 │   ├── provider_resolve.go       # provider/model resolution helpers
 │   ├── serve.go                  # yaah serve — MCP tool server (stdio + HTTP)
-│   ├── acp.go acp_view.go        # yaah acp-serve — ACP server (JSON-RPC 2.0)
+│   ├── acp_cmd.go                # yaah acp-serve cobra shim (server in internal/acp)
 │   ├── web.go web_view.go        # yaah web — browser UI + WebSocket view
 │   ├── tui.go                    # bubbletea TUI (+ tui_unix.go / tui_windows.go)
 │   ├── plan.go                   # plan tool wiring
@@ -310,7 +310,9 @@ yaah/
 │   ├── skill.go mcp.go memory.go session.go
 │   └── color.go                  # ANSI color helpers
 ├── internal/
+│   ├── acp/                      # ACP server (JSON-RPC wire types, view, dispatch loop)
 │   ├── agent/                    # agent loop, tool dispatch, middleware
+│   │   ├── context/               #   pure context helpers (tokens, split, prune, chunk, truncation)
 │   │   ├── llm/                   #   LLM client (streaming, retry, fallback)
 │   │   ├── pipeline/              #   middleware pipeline
 │   │   ├── subagent/              #   sub-agent role definitions and registry
@@ -318,6 +320,7 @@ yaah/
 │   ├── banner/                   # figlet + lolcat banner
 │   ├── config/                   # config loader + env subst
 │   ├── instructions/             # AGENTS.md/CLAUDE.md discovery
+│   ├── jobs/                     # background sub-agent jobs (manager, TaskRunner, I/O contract)
 │   ├── mcp/                      # MCP client + server (stdio + HTTP)
 │   ├── memory/                   # SQLite + FTS5
 │   ├── observability/            # OpenTelemetry tracing, in-memory span buffer

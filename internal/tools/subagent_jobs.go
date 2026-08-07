@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
@@ -14,7 +15,7 @@ import (
 // It is the lifecycle companion to the dispatch, analogous to the
 // background_process tool for shell processes.
 type SubAgentJobsTool struct {
-	Jobs *BackgroundJobs
+	Jobs *jobs.BackgroundJobs
 }
 
 func (*SubAgentJobsTool) Name() string        { return "subagent_jobs" }
@@ -88,13 +89,13 @@ func (t *SubAgentJobsTool) executeList() (string, error) {
 	}
 	pending := 0
 	for _, s := range list {
-		if s.Status == BGStatusRunning {
+		if s.Status == jobs.BGStatusRunning {
 			pending++
 		}
 	}
 	out := struct {
-		Jobs    []BackgroundJobStatus `json:"jobs"`
-		Pending int                   `json:"pending"`
+		Jobs    []jobs.BackgroundJobStatus `json:"jobs"`
+		Pending int                        `json:"pending"`
 	}{list, pending}
 	data, _ := json.Marshal(out)
 	return string(data), nil
@@ -115,10 +116,10 @@ func (t *SubAgentJobsTool) executeCancel(jobID string) (string, error) {
 	}
 	// Read back the status after cancellation for a clean response.
 	st, _ := t.Jobs.Status(jobID)
-	if st.Status == BGStatusRunning {
+	if st.Status == jobs.BGStatusRunning {
 		// The job hasn't observed cancellation yet; report it as
 		// cancelled with the running status.
-		st.Status = BGStatusCancelled
+		st.Status = jobs.BGStatusCancelled
 	}
 	data, _ := json.Marshal(st)
 	return string(data), nil
@@ -137,7 +138,7 @@ func (t *SubAgentJobsTool) executeWait(_ context.Context, jobID string, timeoutS
 	if !ok {
 		return "", fmt.Errorf("subagent_jobs: unknown job_id %q", jobID)
 	}
-	if st.Status == BGStatusRunning {
+	if st.Status == jobs.BGStatusRunning {
 		st.Status = "timed_out"
 	}
 	data, _ := json.Marshal(st)

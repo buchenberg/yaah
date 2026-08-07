@@ -9,6 +9,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/runner"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/memory"
 	processpkg "github.com/buchenberg/yaah/internal/process"
 	"github.com/buchenberg/yaah/internal/providers"
@@ -162,7 +163,7 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	// cancellation from a session root (not the per-call context), so
 	// they survive the dispatching tool call and turn. Results are
 	// delivered as follow-ups; usage is attributed to totalUsage.
-	backgroundJobs := tools.NewBackgroundJobs()
+	backgroundJobs := jobs.NewBackgroundJobs()
 	backgroundJobs.MaxConcurrent = cfg.Agent.SubAgent.MaxConcurrency
 	if backgroundJobs.MaxConcurrent <= 0 {
 		backgroundJobs.MaxConcurrent = 4

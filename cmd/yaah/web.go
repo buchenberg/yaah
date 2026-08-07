@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 	"github.com/spf13/cobra"
@@ -92,7 +93,7 @@ func runWeb(cmd *cobra.Command, args []string) error {
 				names[key] = p.Name
 			}
 		}
-		models := fetchAllModels(context.Background(), sess.cfg)
+		models := providers.FetchAllModels(context.Background(), sess.cfg, makeModelLister)
 
 		ws.mu.Lock()
 		ws.models = models

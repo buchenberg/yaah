@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	agentctx "github.com/buchenberg/yaah/internal/agent/context"
 	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/memory"
@@ -82,21 +83,6 @@ type ContextManager struct {
 	compactFn func(ctx context.Context, messages []types.Message, threshold float64) []types.Message
 }
 
-// Reset resets all compaction-tracking state to zero values.
-func (cm *ContextManager) Reset() {
-	if cm.State == nil {
-		return
-	}
-	cm.State.PreviousSummary = ""
-	cm.State.LastPromptTokens = 0
-	cm.State.LastCachedPromptTokens = 0
-	cm.State.LastCompactionTokens = 0
-	cm.State.IneffectiveCompactions = 0
-	cm.State.CompactionSavingsHistory = nil
-	cm.State.CompactionBudgetMultiplier = 1.0
-	cm.State.CompactionForcedByOverflow = false
-}
-
 // Compact implements pipeline.Compactor by delegating to the registered
 // compaction function.
 func (cm *ContextManager) Compact(ctx context.Context, messages []types.Message, threshold float64) []types.Message {
@@ -137,7 +123,7 @@ func (cm *ContextManager) EnsurePruner() {
 func (cm *ContextManager) estimatedTokens() int {
 	total := 0
 	for _, m := range cm.State.Messages {
-		total += messageTokens(m)
+		total += agentctx.MessageTokens(m)
 	}
 	return total
 }
@@ -169,7 +155,7 @@ func (cm *ContextManager) applyCompactedSummary(summary string, sysMsg types.Mes
 			"You are continuing an ongoing conversation. Below is a summary of earlier discussion. Continue naturally — do not greet, reintroduce yourself, or act like the conversation is starting over.\n\nPrevious conversation summary:\n"+summary))
 	}
 
-	if lastUser := lastUserPrompt(oldMsgs); lastUser != "" {
+	if lastUser := agentctx.LastUserPrompt(oldMsgs); lastUser != "" {
 		alreadyKept := false
 		for _, m := range keepMsgs {
 			if m.Role == "user" && m.Content == lastUser {
@@ -279,8 +265,8 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	}
 
 	target := int(float64(cm.ContextWindow) * threshold)
-	if target < minContextFloor && cm.ContextWindow >= minContextFloor {
-		target = minContextFloor
+	if target < agentctx.MinContextFloor && cm.ContextWindow >= agentctx.MinContextFloor {
+		target = agentctx.MinContextFloor
 	}
 
 	rawTokens := cm.State.LastPromptTokens
@@ -291,15 +277,15 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	if effectiveTokens <= 0 {
 		factor := cm.EstimateFactor
 		if factor <= 0 {
-			factor = defaultEstimateFactor
+			factor = agentctx.DefaultEstimateFactor
 		}
-		effectiveTokens = preflightTokens(cm.State.Messages, nil, factor)
+		effectiveTokens = agentctx.PreflightTokens(cm.State.Messages, nil, factor)
 		rawTokens = effectiveTokens
 	}
 
 	rawThreshold := cm.RawCompactionThreshold
 	if rawThreshold <= 0 {
-		rawThreshold = defaultRawCompactionThreshold
+		rawThreshold = agentctx.DefaultRawCompactionThreshold
 	}
 	rawTarget := int(float64(cm.ContextWindow) * rawThreshold)
 
@@ -346,17 +332,17 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 
 	sysMsg := cm.State.Messages[0]
 
-	budget := int(float64(preserveBudget(cm.ContextWindow))*cm.State.CompactionBudgetMultiplier) / 4
-	split := splitTail(cm.State.Messages, budget)
-	keepMsgs := cm.State.Messages[split.keepStart:]
-	oldMsgs := cm.State.Messages[1:split.keepStart]
+	budget := int(float64(agentctx.PreserveBudget(cm.ContextWindow))*cm.State.CompactionBudgetMultiplier) / 4
+	split := agentctx.SplitTail(cm.State.Messages, budget)
+	keepMsgs := cm.State.Messages[split.KeepStart:]
+	oldMsgs := cm.State.Messages[1:split.KeepStart]
 
 	if cm.ReasoningProtectTurns > 0 {
-		split.keepStart = ProtectReasoningTurns(cm.State.Messages, split.keepStart, cm.ReasoningProtectTurns)
-		keepMsgs = cm.State.Messages[split.keepStart:]
-		oldMsgs = cm.State.Messages[1:split.keepStart]
+		split.KeepStart = agentctx.ProtectReasoningTurns(cm.State.Messages, split.KeepStart, cm.ReasoningProtectTurns)
+		keepMsgs = cm.State.Messages[split.KeepStart:]
+		oldMsgs = cm.State.Messages[1:split.KeepStart]
 	}
-	oldMsgs = pruneMessages(oldMsgs, pruneMessageMaxLen)
+	oldMsgs = agentctx.PruneMessages(oldMsgs, agentctx.PruneMessageMaxLen)
 
 	var sb strings.Builder
 	if cm.State.PreviousSummary != "" {
@@ -372,7 +358,7 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	for _, m := range oldMsgs {
 		if m.Content != "" {
 			if m.Role == "tool" {
-				sb.WriteString(formatToolStub(m) + "\n")
+				sb.WriteString(agentctx.FormatToolStub(m) + "\n")
 			} else {
 				sb.WriteString(fmt.Sprintf("%s: %s\n", m.Role, m.Content))
 			}
@@ -382,7 +368,7 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 		}
 	}
 	sb.WriteString("\n\n")
-	sb.WriteString(summaryTemplate)
+	sb.WriteString(agentctx.SummaryTemplate())
 
 	compactProvider := cm.CompactProvider
 	if compactProvider == nil {
@@ -404,7 +390,7 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	beforeEstimate := cm.estimatedTokens()
 	resp, err := compactProvider.Send(ctx, req)
 	if err != nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
-		if len(oldMsgs) > minChunkTokens {
+		if len(oldMsgs) > agentctx.MinChunkTokens {
 			if chunkSummary, chunkErr := cm.chunkedCompact(ctx, oldMsgs, compactModel); chunkErr == nil && chunkSummary != "" {
 				cm.applyCompactedSummary(chunkSummary, sysMsg, oldMsgs, keepMsgs, effectiveTokens)
 				afterEstimate := cm.estimatedTokens()
@@ -489,7 +475,7 @@ func (cm *ContextManager) trimContext() {
 
 	keepStart := len(cm.State.Messages) - len(rest)
 	if cm.ReasoningProtectTurns > 0 {
-		keepStart = ProtectReasoningTurns(cm.State.Messages, keepStart, cm.ReasoningProtectTurns)
+		keepStart = agentctx.ProtectReasoningTurns(cm.State.Messages, keepStart, cm.ReasoningProtectTurns)
 	}
 
 	newMsgs := make([]types.Message, 0, len(cm.State.Messages)-keepStart+1)
@@ -523,7 +509,7 @@ func (cm *ContextManager) summarizeChunk(ctx context.Context, chunk []types.Mess
 	for _, m := range chunk {
 		if m.Content != "" {
 			if m.Role == "tool" {
-				sb.WriteString(formatToolStub(m) + "\n")
+				sb.WriteString(agentctx.FormatToolStub(m) + "\n")
 			} else {
 				sb.WriteString(fmt.Sprintf("%s: %s\n", m.Role, m.Content))
 			}
@@ -560,17 +546,17 @@ func (cm *ContextManager) chunkedCompact(ctx context.Context, oldMsgs []types.Me
 		return "", nil
 	}
 
-	chunkBudget := int(float64(cm.ContextWindow) * chunkBudgetFraction)
-	if chunkBudget < minChunkTokens {
-		chunkBudget = minChunkTokens
+	chunkBudget := int(float64(cm.ContextWindow) * agentctx.ChunkBudgetFraction)
+	if chunkBudget < agentctx.MinChunkTokens {
+		chunkBudget = agentctx.MinChunkTokens
 	}
 
-	chunks := chunkSplit(oldMsgs, chunkBudget)
+	chunks := agentctx.ChunkSplit(oldMsgs, chunkBudget)
 	if len(chunks) <= 1 {
 		return cm.summarizeChunk(ctx, oldMsgs, 0, 1)
 	}
 
-	sem := make(chan struct{}, maxChunkConcurrency)
+	sem := make(chan struct{}, agentctx.MaxChunkConcurrency)
 	var wg sync.WaitGroup
 	results := make([]string, len(chunks))
 	errors := make([]error, len(chunks))
@@ -612,7 +598,7 @@ func (cm *ContextManager) reducePartialSummaries(ctx context.Context, partials [
 	if len(partials) == 0 {
 		return "", nil
 	}
-	if depth > maxReduceDepth {
+	if depth > agentctx.MaxReduceDepth {
 		return strings.Join(partials, "\n###\n"), nil
 	}
 

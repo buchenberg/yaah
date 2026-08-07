@@ -288,7 +288,7 @@ Injects Anthropic `cache_control: {type: "ephemeral"}` breakpoints on system mes
 
 ## Sub-agent lifecycle
 
-Files: `internal/agent/pipeline/subagent.go`, `internal/agent/subagent/role_def.go`, `internal/tools/task.go`, `internal/agent/runner/runner.go`
+Files: `internal/agent/pipeline/subagent.go`, `internal/agent/subagent/role_def.go`, `internal/tools/task.go`, `internal/jobs/` (`TaskRunner`, `SubAgentParams`, escalation contract, context-key helpers, `BackgroundJobs` manager), `internal/agent/runner/runner.go`
 
 The `spawn_subagent` tool spawns a sub-agent: a fresh `agent.Loop` with a curated tool registry, its own iteration budget, deadline, and system prompt. Sub-agents let the main agent delegate isolated work and fan out independent subtasks in parallel.
 
@@ -401,7 +401,7 @@ escalation is a fenced JSON block in the sub-agent's final output:
 ```
 ```
 
-`ParseSubAgentOutput` (`internal/tools/task.go`) extracts the escalation via
+`ParseSubAgentOutput` (`internal/jobs/output.go`) extracts the escalation via
 regex before the result is truncated. If found, `executeAndCollect` publishes
 an `EscalationEvent` to the broker. The REPL renders a color-coded banner
 (red for blocker/critical, yellow for warning, dim for info). The TUI injects
@@ -583,8 +583,11 @@ unbounded message accumulation when pruning keeps effective tokens below
 the token threshold).
 
 **Files:** `internal/agent/pipeline/pruner.go`, `internal/agent/pipeline/softprune.go`,
-`internal/agent/agent_prune.go`, `internal/agent/agent_context.go`
-(`compactContext`, `trimContext`, `pruneMessages`, `messageTokens`).
+`internal/agent/agent_prune.go`, `internal/agent/agent_context.go` (`*Loop` methods:
+`compactContext`, `trimContext`, `ForceCompact`), `internal/agent/context_manager.go`
+(`ContextManager` — compaction/trim policy and state), `internal/agent/context/`
+(pure helpers: `MessageTokens`, `PreflightTokens`, `SplitTail`, `PruneMessages`,
+`ChunkSplit`, truncation) — a leaf package with no `internal/agent` imports.
 
 ### Tier-0: Soft-prune (`Pruner`, `SoftPruneMiddleware`)
 
@@ -623,7 +626,7 @@ outcomes.
 ### Token estimation
 
 Primary: API-reported `LastPromptTokens` from the most recent model call.
-Fallback (first call, before any API response): `preflightTokens()` which
+Fallback (first call, before any API response): `PreflightTokens()` which
 uses a `len(content) / 4` heuristic with a configurable multiplier
 (`EstimateFactor`, default 1.3) to compensate for provider tokenizers
 systematically undercounting code and JSON payloads.
@@ -631,13 +634,13 @@ systematically undercounting code and JSON payloads.
 ### Mid-tool-loop compaction
 
 Compaction is safe to run even while the model is mid-tool-loop. The
-token-budgeted `splitTail` split is boundary-aligned: it never cuts a
+token-budgeted `SplitTail` split (`internal/agent/context`) is boundary-aligned: it never cuts a
 tool-call/result pair, so compacting during a tool loop preserves tool-call
 linkage and the model can continue without a bricked conversation. (An earlier
 `isContinuation` guard skipped compaction mid-loop; it was removed once
 boundary-aligned splitting made the guard unnecessary — see BENCHMARKS.md.)
 
-### Pre-compaction pruning (`pruneMessages`)
+### Pre-compaction pruning (`PruneMessages`)
 
 Before the LLM summarizer call, old messages outside the preserved tail are
 pruned to reduce token load:
@@ -673,7 +676,7 @@ keep as many recent turns as fit in 25% of the context window, with:
    `LastPromptTokens` so heavily-cached conversations don't over-trigger
    compaction. If `effectiveTokens <= ContextWindow * threshold`, return.
 3. Compute the preservation split via token budget + boundary alignment.
-4. Prune old messages via `pruneMessages()`.
+4. Prune old messages via `PruneMessages()`.
 5. Send pruned history to the LLM summarizer with a structured prompt
    (`## Goal`, `## Constraints & Preferences`, `## Progress` with
    `### Done` / `### In Progress` / `### Blocked`, `## Key Decisions`,
@@ -701,7 +704,7 @@ When the provider returns a context overflow error, the retry loop in
 (up to 3 attempts). A pre-flight guard also checks `LastPromptTokens >
 ContextWindow` before each LLM call as a last-resort safety net.
 
-The preflight compaction path uses `preflightTokens()` with the configurable
+The preflight compaction path uses `PreflightTokens()` (`internal/agent/context`) with the configurable
 `EstimateFactor` (default 1.3) to estimate tokens before the first API call
 (when `LastPromptTokens` is 0). This catches overflow earlier than waiting
 for a failed API call, avoiding wasted round-trips.
@@ -920,7 +923,7 @@ The agent loop creates the broker and `BrokerView` internally in `applyDefaults`
 | REPL | `terminalView` / `replView` | `cmd/yaah/agent_frame.go` |
 | Sub-agents | `agent.NoopView` | `internal/agent/runner/runner.go` |
 | MCP serve | `agent.NoopView` | `cmd/yaah/serve.go` |
-| ACP serve | `acpView` + `acpViewWithWrite` | `cmd/yaah/acp.go`, `cmd/yaah/acp_view.go` |
+| ACP serve | `acp.View` + `acp.ViewWithWrite` | `internal/acp/view.go` |
 
 Control-plane messages (todos, questions, approvals, model lists) use `tui.ControlMsg` — a separate channel from the broker events.
 

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
+	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -109,8 +110,8 @@ func WithFollowUps(ch <-chan string) Option {
 // WithBackgroundJobs attaches the session's background sub-agent manager
 // so the loop can register its broker event hooks for background jobs at
 // Run start.
-func WithBackgroundJobs(jobs *tools.BackgroundJobs) Option {
-	return func(l *Loop) { l.BackgroundJobs = jobs }
+func WithBackgroundJobs(mgr *jobs.BackgroundJobs) Option {
+	return func(l *Loop) { l.BackgroundJobs = mgr }
 }
 
 // WithConflictTracker sets the file conflict tracker.

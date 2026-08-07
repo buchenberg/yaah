@@ -11,6 +11,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/observability"
+	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/tui2"
 	"github.com/buchenberg/yaah/internal/types"
@@ -72,7 +73,7 @@ func runTUI2() error {
 			names[key] = p.Name
 		}
 	}
-	controlCh <- &types.CtrlModelList{Models: fetchAllModels(context.Background(), cfg), ProviderNames: names}
+	controlCh <- &types.CtrlModelList{Models: providers.FetchAllModels(context.Background(), cfg, makeModelLister), ProviderNames: names}
 
 	app.OnModelSelect = func(model string) {
 		parts := strings.SplitN(model, "/", 2)

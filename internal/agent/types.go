@@ -5,8 +5,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	agentctx "github.com/buchenberg/yaah/internal/agent/context"
 	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
+	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/pubsub"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -48,18 +50,10 @@ const (
 	SubAgentsOnly
 )
 
-// ToolResultMaxLen is a deprecated alias for defaultTruncateMaxBytes. Use
-// Loop.truncateToolResult() in agent_truncation.go for the line/byte dual-limit
-// truncation.
-const ToolResultMaxLen = defaultTruncateMaxBytes
-
-// pruneMessageMaxLen is the threshold above which old messages are pruned
-// before being sent to the LLM summarizer during compaction.
-const pruneMessageMaxLen = 2000
-
-// minContextFloor is the minimum trigger threshold for compaction, preventing
-// over-aggressive compaction on small-window models.
-const minContextFloor = 64000
+// ToolResultMaxLen is a deprecated alias for context.DefaultTruncateMaxBytes.
+// Use Loop.truncateToolResult() in agent_truncation.go for the line/byte
+// dual-limit truncation.
+const ToolResultMaxLen = agentctx.DefaultTruncateMaxBytes
 
 // Loop runs the agent conversation loop.
 type Loop struct {
@@ -94,7 +88,7 @@ type Loop struct {
 	// dispatching through the shared TaskTool emit live UI events while a
 	// loop is active. Usage attribution is session-scoped (on the manager)
 	// so it survives across Runs; only the event hooks are loop-scoped.
-	BackgroundJobs *tools.BackgroundJobs
+	BackgroundJobs *jobs.BackgroundJobs
 
 	ApproveFn            func(name, args string) bool `json:"-"`
 	ContinueAfterMaxIter func() bool                  `json:"-"`
