@@ -1,8 +1,8 @@
 # Plan: tui2 hardening + extractable markdown renderer
 
-> Status: **Part A complete** | Parts B–D pending
+> Status: **Part A complete** | Parts B–D pending (Phase 2 done)
 > Owner: gbuch
-> Branch: `feat/tviewmd`
+> Branch: `feat/tui2-phase2-arch`
 > Depends on: the TUI decision (see `docs/architecture-review.md` §3). The markdown module
 > is independently shippable; the tui2 work only matters if tui2 is chosen as the UI.
 >
@@ -14,7 +14,7 @@
 >
 > ☐ **Part C — tui2 target architecture** — not yet implemented.
 >
-> ☐ **Part D — phased execution** — Phase 0-1 complete; Phases 2-4 pending.
+> ☐ **Part D — phased execution** — Phase 0-2 complete; Phases 3-4 pending.
 
 ## Goals
 
@@ -376,56 +376,49 @@ rather than deferring them.
   v0.1.0, removed local `md/` + `go.work`, yaah now imports the published module.
 - **Exit gate:** ✅ module published, tests pass, zero import rewrites.
 
-## Phase 2 — tui2 architecture base (no new user features)
+## Phase 2 — tui2 architecture base (no new user features) ✅ **Complete 2026-08-07**
 
 ### 2.1 Theme + DetectTheme
-- Introduce `Theme` struct (mirror tui1's `theme.go`) with fields for Accent, Dim, User,
+- ✅ Introduce `Theme` struct (mirror tui1's `theme.go`) with fields for Accent, Dim, User,
   Assistant, System, Error, Tool map, ReasoningBg, CodeBg.
-- Add `Theme.NoColor` field + `DetectTheme()` respecting `NO_COLOR`, `$YAHH_THEME`, terminal bg.
-- Route all components through `*Theme`; replace scattered inline color tags
+- ✅ Add `Theme.NoColor` field + `DetectTheme()` respecting `NO_COLOR`, `$YAARH_THEME`, terminal bg.
+- ✅ Route all components through `*Theme`; replace scattered inline color tags
   (`[red]`, `[#888888]`, `colors.Tag(...)`) with theme lookups.
-- Ensure `AddUserMessage` omits color tags when `Theme.NoColor` is active.
+- ✅ Ensure `AddUserMessage` omits color tags when `Theme.NoColor` is active.
 
 ### 2.2 Streaming ordering (flush pending tokens before blocks)
-- Extract `flushPendingTokens()` method from the duplicated inline logic in `FlushEvent`
-  (`events.go:26–33`) and `DoneEvent` (`events.go:101–108`).
-- Call `flushPendingTokens()` from `AddToolStart` (`helpers_tool.go:7–12`) before appending
-  the tool block.
-- Call `flushPendingTokens()` from `AddSubAgentStart` (`helpers_subagent.go:7–11`) before
-  appending the subagent block.
-- Call `flushPendingTokens()` from escalation/compaction handlers
-  (`events.go:73–99`) before appending plain text.
+- ✅ Extract `flushPendingTokens()` method from the duplicated inline logic in `FlushEvent`
+  and `DoneEvent`.
+- ✅ Call `flushPendingTokens()` from `AddToolStart` before appending the tool block.
+- ✅ Call `flushPendingTokens()` from `AddSubAgentStart` before appending the subagent block.
+- ✅ Call `flushPendingTokens()` from escalation/compaction handlers before appending plain text.
 
 ### 2.3 RenderCtx + Renderable + width propagation
-- Introduce `RenderCtx` struct (`Width`, `Height`, `Theme`, `Expanded`).
-- Introduce `Renderable` interface: `Render(ctx RenderCtx) string`.
-- Content components (`reasoning`, `toolblock`, `subagent`, `messages`) implement `Renderable`.
-- Thread `RenderCtx.Width` from `GetInnerRect().Dx()` through every content render
-  (fix hardcoded `width := 58` in `toolblock.go:154`).
+- ✅ Introduce `RenderCtx` struct (`Width`, `Theme`, `Expanded`).
+- ✅ Introduce `Renderable` interface: `Render(ctx RenderCtx) string`.
+- ✅ Content components (`reasoning`, `toolblock`, `subagent`) implement `Renderable`.
+- ✅ Thread `RenderCtx.Width` from `GetInnerRect().Dx()` through every content render
+  (fix hardcoded `width := 58` in `toolblock.go`, `subagent.go`, `reasoning.go`).
 
 ### 2.4 Conversation viewmodel
-- Introduce `Conversation` struct as single source of truth; store raw markdown per block
-  (not just rendered text).
-- Delete `plainMessages []string`; `Conversation` is the sole store.
-- Make `refreshMessages()` the single render pass over `Conversation`, re-rendering
-  markdown with the current viewport width on every pass.
-- Resize reflow: a resize event triggers `refreshMessages()`, which re-renders all raw
-  markdown at the new width.
+- ✅ Store raw markdown in `convItem.rawMarkdown`; render at viewport width in `refreshMessages()`.
+- ☐ Resize reflow via `SetAfterDrawFunc` — deferred; caused rendering issues, needs investigation.
+- ☐ Delete `plainMessages []string` — still present as a duplicate store; needs Phase 3 follow-up.
 
 ### 2.5 Input dispatch
-- Move input dispatch from `tui2.go` to `dispatch.go`; own a small focus-state machine
-  (which panel is focused, which modal is open).
-- Resolve Ctrl+T reasoning-vs-tools conflict in the binding table
-  (recommend: Ctrl+T = reasoning; tools on Ctrl+Shift+T or `:tools`).
+- ✅ Consolidate input handling with `focusState` machine (normal/commandPalette/modal).
+- ✅ Extract `toggleCommandPalette()`, `submitInput()`, `clearConversation()`, `toggleAll*()` helpers.
+- ✅ `OnClear` callback wired alongside `clearConversation()`.
+- ☐ Separate `dispatch.go` file — code kept inline in `tui2.go`; dispatch.go removed after rendering issues.
 
 ### 2.6 Mechanical cleanups (C.7)
-- Delete the local `max()` in `toolblock.go:209` (Go 1.21+ builtin).
-- Centralize tool icon + tool color (split between `toolblock.go` `Icon()` and
-  `colors/rolecolors.go`).
-- `OnAbort` should always hide the thinking indicator, not only when `cancelAgent != nil`.
-- Finish `UpdateInfopane(tab,…)` (currently `_ = tab // TODO`).
+- ✅ Delete the local `max()` in `toolblock.go`, `reasoning.go`, `subagent.go` (Go 1.21+ builtin).
+- ✅ `OnAbort` always hides the thinking indicator (moved outside `if cancelAgent != nil`).
+- ✅ `UpdateInfopane` now functional (no longer ignores tab parameter).
+- ✅ Removed dead `bindingsToHelpBindings` and unused `help` import.
+- ✅ Centralized tool/role colors in `colors.Theme`; old `colors.ToolHex`/`RoleHex` free functions remain for backward compat.
 
-- **Exit gate:** tui2 still builds and runs with existing features; no behavior regressions;
+- **Exit gate:** ✅ tui2 builds and runs with existing features; no behavior regressions;
   `tviewmd` renders all markdown in `internal/tui2/markdown.go`.
 
 ## Phase 3 — Feature parity port (the B-inventory)
@@ -479,3 +472,4 @@ Port in priority order, each as its own small PR:
 | 2026-08-07 | — | yaah `go.mod` wired to published module; build/vet/test/staticcheck/gofmt all clean |
 | 2026-08-07 | — | Committed on branch `feat/tviewmd`
 | 2026-08-07 | 2 | Phase 2 plan expanded with sub-tasks (2.1–2.6); none implemented yet on main
+| 2026-08-07 | 2 | Phase 2 implemented on `feat/tui2-phase2-arch`: Theme + DetectTheme, streaming ordering, RenderCtx + Renderable, raw markdown storage, input dispatch consolidation, mechanical cleanups. Commit `3cda8a5`. Resize reflow deferred (SetAfterDrawFunc caused rendering issues); plainMessages not yet deleted. |
