@@ -134,7 +134,7 @@ func TestWrapUp_HardIterationLimit(t *testing.T) {
 	}
 
 	_, err := loop.Run(context.Background(), "run out the clock")
-	if err == nil || !errors.Is(err, ErrMaxIterations) {
+	if err == nil || !errors.Is(err, MaxIterationsError{}) {
 		t.Fatalf("expected max iterations error, got %v", err)
 	}
 	if len(fp.requests) != 3 {

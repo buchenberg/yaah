@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -15,9 +14,23 @@ import (
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-// ErrMaxIterations is returned when the agent loop exhausts its configured
-// iteration budget without producing a text answer.
-var ErrMaxIterations = errors.New("max iterations reached")
+// MaxIterationsError is returned when the agent loop exhausts its configured
+// iteration budget without producing a text answer. Use errors.Is with a zero
+// value to match:
+//
+//	errors.Is(err, MaxIterationsError{})
+type MaxIterationsError struct {
+	MaxIter int
+}
+
+func (e MaxIterationsError) Error() string {
+	return fmt.Sprintf("max iterations (%d) reached", e.MaxIter)
+}
+
+func (e MaxIterationsError) Is(target error) bool {
+	_, ok := target.(MaxIterationsError)
+	return ok
+}
 
 // buildPipeline assembles the middleware pipeline from config.
 func (l *Loop) buildPipeline() *pipeline.Pipeline {
@@ -199,7 +212,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		// max iterations reached — ask whether to continue
 		if l.ContinueAfterMaxIter == nil || !l.ContinueAfterMaxIter() {
 			l.State.Messages = messages
-			return "", fmt.Errorf("%w (%d)", ErrMaxIterations, l.Config.MaxLoopCycles)
+			return "", MaxIterationsError{MaxIter: l.Config.MaxLoopCycles}
 		}
 	}
 }

@@ -4,16 +4,32 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-// ErrLoopDetected is returned when the loop-detection middleware halts
-// the agent after the same tool produced identical results repeatedly.
-var ErrLoopDetected = errors.New("loop detected")
+// LoopDetectedError is returned when the loop-detection middleware halts the
+// agent after the same tool produced identical results repeatedly. Use
+// errors.Is with a zero value to match:
+//
+//	errors.Is(err, LoopDetectedError{})
+type LoopDetectedError struct {
+	Tool   string
+	Count  int
+	Window int
+}
+
+func (e LoopDetectedError) Error() string {
+	return fmt.Sprintf("loop detected: tool %q produced the same result %d times in the last %d steps — halting to prevent stuck agent",
+		e.Tool, e.Count, e.Window)
+}
+
+func (e LoopDetectedError) Is(target error) bool {
+	_, ok := target.(LoopDetectedError)
+	return ok
+}
 
 const (
 	defaultCategoryStrikeCap = 3   // consecutive turns of same-tool dominance
@@ -104,8 +120,7 @@ func (m *LoopDetectionMiddleware) PostTool(ctx context.Context, results []ToolRe
 		}
 	}
 	if haltedTool != "" {
-		return step, fmt.Errorf("%w: tool %q produced the same result %d times in the last %d steps — halting to prevent stuck agent",
-			ErrLoopDetected, haltedTool, m.count, len(m.history))
+		return step, LoopDetectedError{Tool: haltedTool, Count: m.count, Window: len(m.history)}
 	}
 
 	// --- category repetition (convergence nudge) ---

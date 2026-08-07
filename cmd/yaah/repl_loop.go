@@ -78,7 +78,7 @@ func startREPL() error {
 		response, streamed, err := sess.RunPrompt(context.Background(), input)
 		// tv.HandleEvent(DoneEvent) already handled spinner + trailing newlines
 		if err != nil {
-			if errors.Is(err, agent.ErrMaxIterations) {
+			if errors.Is(err, agent.MaxIterationsError{}) {
 				fmt.Fprintf(os.Stderr, "%s\n", replYellow("max iterations reached."))
 				fmt.Fprint(os.Stderr, replYellow("continue? [Y/n]: "))
 				if scanner.Scan() {
