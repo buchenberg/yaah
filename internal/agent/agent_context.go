@@ -4,39 +4,24 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"math"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/prompts"
+	agentctx "github.com/buchenberg/yaah/internal/agent/context"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-const defaultEstimateFactor = 1.3
-
-// defaultRawCompactionThreshold is the fraction of ContextWindow at which
-// compaction fires based on raw (non-cache-adjusted) prompt tokens. It guards
-// against latency degradation in heavily-cached conversations where the
-// effective-token trigger never fires. 0.5 matches hermes's 50% threshold.
-const defaultRawCompactionThreshold = 0.25
-
-// maxPayloadBytes is the serialized request size above which the payload-size
-// guard forces compaction regardless of token estimates. Token heuristics
-// (chars/4) can undercount code and JSON by 2-4x, so a byte-level check catches
-// oversized payloads the token trigger misses. ~1.25MB matches kilocode's
-// prompt.ts payload-limit prune threshold.
-const maxPayloadBytes = 1_250_000
-
-// Token-budget clamp for the preserved tail after compaction. The budget is
-// 25% of the context window, clamped to [minPreserveTokens, maxPreserveTokens]
-// so huge windows don't over-preserve and small windows keep a usable floor.
+// Re-exports for backward compatibility within the agent package (tests
+// reference the historical unexported names).
 const (
-	minPreserveTokens = 2000
-	maxPreserveTokens = 8000
+	defaultEstimateFactor = agentctx.DefaultEstimateFactor
+	maxPayloadBytes       = agentctx.MaxPayloadBytes
 )
 
-// summaryTemplate is the structured Markdown prompt sent to the compact
-// provider. It is loaded from the embedded prompts package.
-var summaryTemplate = prompts.SummaryTemplate()
+var (
+	messageTokens        = agentctx.MessageTokens
+	preflightTokens      = agentctx.PreflightTokens
+	estimatePayloadBytes = agentctx.EstimatePayloadBytes
+)
 
 // EstimatedTokens returns the estimated token count for all messages
 // in the Loop's conversation history (l.State.Messages). This is the
@@ -46,36 +31,9 @@ var summaryTemplate = prompts.SummaryTemplate()
 func (l *Loop) EstimatedTokens() int {
 	total := 0
 	for _, m := range l.State.Messages {
-		total += messageTokens(m)
+		total += agentctx.MessageTokens(m)
 	}
 	return total
-}
-
-// lastUserPrompt returns the content of the most recent user message in the
-// slice, or "" if none exists. Used by compaction to preserve the active task.
-func lastUserPrompt(msgs []types.Message) string {
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == "user" && msgs[i].Content != "" {
-			return msgs[i].Content
-		}
-	}
-	return ""
-}
-
-// messageTokens estimates the token count of a single message using chars/4
-// for content, reasoning content, plus tool-call arguments. Applies a 10-token
-// floor for role/metadata. ReasoningContent is counted because it is serialized
-// in every provider request and contributes to the real prompt size; omitting it
-// causes token estimates (and therefore compaction triggers) to undercount.
-func messageTokens(m types.Message) int {
-	tokens := len(m.Content)/4 + len(m.ReasoningContent)/4
-	for _, tc := range m.ToolCalls {
-		tokens += len(tc.Function.Arguments)/4 + len(tc.Function.Name)/4
-	}
-	if tokens < 10 {
-		tokens = 10
-	}
-	return tokens
 }
 
 // prepareRequestMessages builds the ephemeral message slice sent to the
@@ -99,10 +57,10 @@ func (l *Loop) prepareRequestMessages(messages []types.Message) []types.Message 
 	// Guard: verify no reasoning-carrying assistant messages were lost.
 	// The compaction/trim pipeline must either preserve every reasoning
 	// message or fold its content into a system message summary.
-	if src := countReasoningMessages(messages); countReasoningMessages(out) < src {
+	if src := agentctx.CountReasoningMessages(messages); agentctx.CountReasoningMessages(out) < src {
 		slog.Error("reasoning_content lost — compaction or trim pipeline may have dropped reasoning-carrying messages",
-			"source_count", countReasoningMessages(messages),
-			"output_count", countReasoningMessages(out),
+			"source_count", agentctx.CountReasoningMessages(messages),
+			"output_count", agentctx.CountReasoningMessages(out),
 		)
 	}
 
@@ -119,54 +77,6 @@ func (l *Loop) StripAllReasoning() {
 			l.State.Messages[i].ReasoningContent = ""
 		}
 	}
-}
-
-// reasoning_content. The result is an exact count, not a turn count.
-func countReasoningMessages(msgs []types.Message) int {
-	n := 0
-	for _, m := range msgs {
-		if m.Role == "assistant" && m.ReasoningContent != "" {
-			n++
-		}
-	}
-	return n
-}
-
-// preflightTokens estimates the token count for a request payload (messages +
-// tools) with a configurable multiplier to compensate for provider tokenizer
-// undercounting (especially for code and JSON). The factor parameter defaults
-// to 1.3 (defaultEstimateFactor) and is configurable via EstimateFactor on the
-// Loop. Ported from kilocode overflow.ts:8,71.
-func preflightTokens(messages []types.Message, tools []types.ToolDef, factor float64) int {
-	total := 0
-	for _, m := range messages {
-		total += messageTokens(m)
-	}
-	for _, t := range tools {
-		total += len(t.Function.Description)/4 + len(t.Function.Parameters)/4 + 10
-	}
-	if factor <= 0 {
-		factor = defaultEstimateFactor
-	}
-	return int(math.Ceil(float64(total) * factor))
-}
-
-// estimatePayloadBytes estimates the serialized size of a chat request payload
-// (messages plus tool definitions) in bytes. It backs the payload-size guard: a
-// byte-level check catches oversized requests that the chars/4 token heuristic
-// misses, since that heuristic systematically undercounts code and JSON.
-func estimatePayloadBytes(messages []types.Message, tools []types.ToolDef) int {
-	total := 0
-	for _, m := range messages {
-		total += len(m.Content) + len(m.ReasoningContent)
-		for _, tc := range m.ToolCalls {
-			total += len(tc.Function.Arguments) + len(tc.Function.Name) + len(tc.ID)
-		}
-	}
-	for _, t := range tools {
-		total += len(t.Function.Description) + len(t.Function.Parameters) + len(t.Function.Name)
-	}
-	return total
 }
 
 // turnRange identifies a contiguous turn: a user message followed by its
@@ -200,11 +110,11 @@ func turns(messages []types.Message) []turnRange {
 // from kilocode compaction.ts:152-158 (preserveRecentBudget).
 func preserveBudget(contextWindow int) int {
 	budget := contextWindow / 4 // 25%
-	if budget < minPreserveTokens {
-		budget = minPreserveTokens
+	if budget < agentctx.MinPreserveTokens {
+		budget = agentctx.MinPreserveTokens
 	}
-	if budget > maxPreserveTokens {
-		budget = maxPreserveTokens
+	if budget > agentctx.MaxPreserveTokens {
+		budget = agentctx.MaxPreserveTokens
 	}
 	return budget
 }

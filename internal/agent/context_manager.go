@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	agentctx "github.com/buchenberg/yaah/internal/agent/context"
 	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/memory"
@@ -137,7 +138,7 @@ func (cm *ContextManager) EnsurePruner() {
 func (cm *ContextManager) estimatedTokens() int {
 	total := 0
 	for _, m := range cm.State.Messages {
-		total += messageTokens(m)
+		total += agentctx.MessageTokens(m)
 	}
 	return total
 }
@@ -169,7 +170,7 @@ func (cm *ContextManager) applyCompactedSummary(summary string, sysMsg types.Mes
 			"You are continuing an ongoing conversation. Below is a summary of earlier discussion. Continue naturally — do not greet, reintroduce yourself, or act like the conversation is starting over.\n\nPrevious conversation summary:\n"+summary))
 	}
 
-	if lastUser := lastUserPrompt(oldMsgs); lastUser != "" {
+	if lastUser := agentctx.LastUserPrompt(oldMsgs); lastUser != "" {
 		alreadyKept := false
 		for _, m := range keepMsgs {
 			if m.Role == "user" && m.Content == lastUser {
@@ -279,8 +280,8 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	}
 
 	target := int(float64(cm.ContextWindow) * threshold)
-	if target < minContextFloor && cm.ContextWindow >= minContextFloor {
-		target = minContextFloor
+	if target < agentctx.MinContextFloor && cm.ContextWindow >= agentctx.MinContextFloor {
+		target = agentctx.MinContextFloor
 	}
 
 	rawTokens := cm.State.LastPromptTokens
@@ -291,15 +292,15 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	if effectiveTokens <= 0 {
 		factor := cm.EstimateFactor
 		if factor <= 0 {
-			factor = defaultEstimateFactor
+			factor = agentctx.DefaultEstimateFactor
 		}
-		effectiveTokens = preflightTokens(cm.State.Messages, nil, factor)
+		effectiveTokens = agentctx.PreflightTokens(cm.State.Messages, nil, factor)
 		rawTokens = effectiveTokens
 	}
 
 	rawThreshold := cm.RawCompactionThreshold
 	if rawThreshold <= 0 {
-		rawThreshold = defaultRawCompactionThreshold
+		rawThreshold = agentctx.DefaultRawCompactionThreshold
 	}
 	rawTarget := int(float64(cm.ContextWindow) * rawThreshold)
 
@@ -356,7 +357,7 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 		keepMsgs = cm.State.Messages[split.keepStart:]
 		oldMsgs = cm.State.Messages[1:split.keepStart]
 	}
-	oldMsgs = pruneMessages(oldMsgs, pruneMessageMaxLen)
+	oldMsgs = pruneMessages(oldMsgs, agentctx.PruneMessageMaxLen)
 
 	var sb strings.Builder
 	if cm.State.PreviousSummary != "" {
@@ -382,7 +383,7 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 		}
 	}
 	sb.WriteString("\n\n")
-	sb.WriteString(summaryTemplate)
+	sb.WriteString(agentctx.SummaryTemplate)
 
 	compactProvider := cm.CompactProvider
 	if compactProvider == nil {

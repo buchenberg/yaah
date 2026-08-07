@@ -53,14 +53,6 @@ const (
 // truncation.
 const ToolResultMaxLen = defaultTruncateMaxBytes
 
-// pruneMessageMaxLen is the threshold above which old messages are pruned
-// before being sent to the LLM summarizer during compaction.
-const pruneMessageMaxLen = 2000
-
-// minContextFloor is the minimum trigger threshold for compaction, preventing
-// over-aggressive compaction on small-window models.
-const minContextFloor = 64000
-
 // Loop runs the agent conversation loop.
 type Loop struct {
 	Config LoopConfig
