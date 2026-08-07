@@ -8,6 +8,7 @@ import (
 	agentctx "github.com/buchenberg/yaah/internal/agent/context"
 	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
+	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/pubsub"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -87,7 +88,7 @@ type Loop struct {
 	// dispatching through the shared TaskTool emit live UI events while a
 	// loop is active. Usage attribution is session-scoped (on the manager)
 	// so it survives across Runs; only the event hooks are loop-scoped.
-	BackgroundJobs *tools.BackgroundJobs
+	BackgroundJobs *jobs.BackgroundJobs
 
 	ApproveFn            func(name, args string) bool `json:"-"`
 	ContinueAfterMaxIter func() bool                  `json:"-"`

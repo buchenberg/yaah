@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -523,7 +524,7 @@ func TestLoop_subAgentStuckChildDisabled(t *testing.T) {
 // follow-up channel, and the foreground attribution path does not
 // interfere (no stuck-child watchdog, no ghost SubAgentEndEvent).
 func TestLoop_backgroundSubAgentSurvivesDispatchingTurn(t *testing.T) {
-	mgr := tools.NewBackgroundJobs()
+	mgr := jobs.NewBackgroundJobs()
 	defer mgr.Close()
 
 	followupCh := make(chan string, 2)
@@ -641,7 +642,7 @@ func TestLoop_backgroundSubAgentSurvivesDispatchingTurn(t *testing.T) {
 	// The job must have completed (not been cancelled, not failed).
 	st, ok := mgr.Status(stForFirstJob(mgr))
 	if ok {
-		if st.Status != tools.BGStatusCompleted {
+		if st.Status != jobs.BGStatusCompleted {
 			t.Errorf("job status = %q, want completed", st.Status)
 		}
 	}
@@ -649,7 +650,7 @@ func TestLoop_backgroundSubAgentSurvivesDispatchingTurn(t *testing.T) {
 
 // stForFirstJob returns the id of the first job in the manager's list,
 // or "" if none.
-func stForFirstJob(m *tools.BackgroundJobs) string {
+func stForFirstJob(m *jobs.BackgroundJobs) string {
 	for _, s := range m.List() {
 		return s.ID
 	}

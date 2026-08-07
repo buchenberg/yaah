@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/buchenberg/yaah/internal/jobs"
 )
 
 func TestExecute_RoleValidation(t *testing.T) {
@@ -167,7 +169,7 @@ func TestParseSubAgentOutput_WithError(t *testing.T) {
 // dispatches through BackgroundJobs, returns immediately with a job id,
 // and the runner is invoked.
 func TestExecute_BackgroundViaManager(t *testing.T) {
-	mgr := NewBackgroundJobs()
+	mgr := jobs.NewBackgroundJobs()
 	defer mgr.Close()
 
 	var ran atomic.Bool
