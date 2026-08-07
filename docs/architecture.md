@@ -288,7 +288,7 @@ Injects Anthropic `cache_control: {type: "ephemeral"}` breakpoints on system mes
 
 ## Sub-agent lifecycle
 
-Files: `internal/agent/pipeline/subagent.go`, `internal/agent/subagent/role_def.go`, `internal/tools/task.go`, `cmd/yaah/subagent_runner.go`
+Files: `internal/agent/pipeline/subagent.go`, `internal/agent/subagent/role_def.go`, `internal/tools/task.go`, `internal/agent/runner/runner.go`
 
 The `spawn_subagent` tool spawns a sub-agent: a fresh `agent.Loop` with a curated tool registry, its own iteration budget, deadline, and system prompt. Sub-agents let the main agent delegate isolated work and fan out independent subtasks in parallel.
 
@@ -326,7 +326,7 @@ Built-in roles are embedded via `//go:embed roles/*.md` in `internal/prompts/pro
 
 **Loading user-defined roles:**
 
-`roleSearchPaths(cwd)` returns directories to scan: every `.agents/roles/` directory walked up from `cwd`, then `~/.agents/roles/`. `reg.LoadDir(dir)` reads every `.md` file in each directory, parses it with `parseRoleFile`, and adds the role — but only if the role name isn't already registered (built-in always wins).
+`runner.RoleSearchPaths(cwd)` returns directories to scan: every `.agents/roles/` directory walked up from `cwd`, then `~/.agents/roles/`. `reg.LoadDir(dir)` reads every `.md` file in each directory, parses it with `parseRoleFile`, and adds the role — but only if the role name isn't already registered (built-in always wins).
 
 **Parsing: `parseRoleFile`** splits the markdown at the first `---\n...\n---` YAML frontmatter block, unmarshals the YAML portion into `RoleDef`, and stores the remaining markdown in `Body`. It returns an error on missing or unterminated frontmatter.
 

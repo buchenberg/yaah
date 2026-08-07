@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/config"
@@ -17,11 +18,17 @@ type Check struct {
 	Status string // "OK", "WARN", "FAIL"
 }
 
+// Options holds configuration for RunChecks. Provides explicit state
+// that was previously passed via package-level globals.
+type Options struct {
+	DirectiveOverrides []string
+}
+
 // doctorUseColor is set based on NO_COLOR environment variable.
 var doctorUseColor = os.Getenv("NO_COLOR") == ""
 
 // RunChecks executes all diagnostic checks and returns the results.
-func RunChecks() []Check {
+func RunChecks(opts Options) []Check {
 	cfg, cfgErr := config.Load()
 	cfgPath, pathErr := config.ConfigPath()
 
@@ -31,8 +38,9 @@ func RunChecks() []Check {
 		CheckProvider(cfg, cfgErr),
 		CheckModel(cfg, cfgErr),
 		CheckSubAgents(cfg, cfgErr),
+		CheckFallback(cfg, cfgErr),
 		CheckQualityGates(cfg, cfgErr),
-		CheckDirectives(cfg, cfgErr),
+		CheckDirectives(cfg, cfgErr, opts.DirectiveOverrides),
 		CheckPipeline(cfg, cfgErr),
 		CheckOTel(cfg, cfgErr),
 		CheckHomeWritable(),
@@ -77,7 +85,7 @@ func CheckOldConfig(path string) Check {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Check{Label: "Config format", Status: "OK", Detail: "cannot read"}
+		return Check{Label: "Config format", Status: "WARN", Detail: fmt.Sprintf("cannot read: %v", err)}
 	}
 	if config.HasOldConfig(data) {
 		return Check{
@@ -217,6 +225,7 @@ func CheckQualityGates(cfg *config.Config, cfgErr error) Check {
 			parts = append(parts, fmt.Sprintf("%s→[%s]", role, strings.Join(validators, ",")))
 		}
 	}
+	sort.Strings(parts)
 	if len(parts) == 0 {
 		return Check{Label: "Quality gates", Status: "OK", Detail: "configured but no active gates"}
 	}
@@ -224,12 +233,12 @@ func CheckQualityGates(cfg *config.Config, cfgErr error) Check {
 }
 
 // CheckDirectives reports active session directives from config.
-func CheckDirectives(cfg *config.Config, cfgErr error) Check {
+func CheckDirectives(cfg *config.Config, cfgErr error, overrides []string) Check {
 	if cfgErr != nil {
 		return Check{Label: "Directives", Status: "WARN", Detail: "config not loaded"}
 	}
 	directives := cfg.Agent.Default.Directives
-	cliCount := len(DirectiveOverrides)
+	cliCount := len(overrides)
 	if len(directives) == 0 && cliCount == 0 {
 		return Check{Label: "Directives", Status: "OK", Detail: "none configured"}
 	}
@@ -286,11 +295,13 @@ func CheckOTel(cfg *config.Config, cfgErr error) Check {
 	if endpoint == "" {
 		return Check{Label: "Observability", Status: "WARN", Detail: "OTel enabled but no endpoint set"}
 	}
-	parts := []string{fmt.Sprintf("traces → %s", endpoint)}
+	parts := []string{fmt.Sprintf("endpoint → %s", endpoint)}
 	if cfg.Observability.Otel.Verbose {
 		parts = append(parts, "verbose")
 	}
-	if !cfg.Observability.Otel.Traces {
+	if cfg.Observability.Otel.Traces {
+		parts = append(parts, "traces: on")
+	} else {
 		parts = append(parts, "traces: off")
 	}
 	if cfg.Observability.Otel.Metrics {
@@ -356,10 +367,6 @@ func CheckEditor(cfg *config.Config) Check {
 	return Check{Label: "Editor", Status: "OK", Detail: fmt.Sprintf("%s (via %s)", editor, source)}
 }
 
-// DirectiveOverrides is set by the CLI to pass directive overrides to checks.
-// This allows the check functions to report on CLI-provided directives.
-var DirectiveOverrides []string
-
 // resolveProviderName extracts the provider name from the config.
 // This is a helper function used by multiple check functions.
 func resolveProviderName(cfg *config.Config) string {
@@ -380,6 +387,7 @@ func resolveProviderName(cfg *config.Config) string {
 	for name := range cfg.Providers {
 		names = append(names, name)
 	}
+	sort.Strings(names)
 	if len(names) > 0 {
 		return names[0]
 	}
