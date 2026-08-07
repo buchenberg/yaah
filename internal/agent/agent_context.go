@@ -40,19 +40,6 @@ func ProtectReasoningTurns(messages []types.Message, keepStart, protectTurns int
 	return agentctx.ProtectReasoningTurns(messages, keepStart, protectTurns)
 }
 
-// EarliestReasoningIndex scans the message slice for assistant messages that
-// carry reasoning_content, finds the earliest (oldest) one, and returns the
-// index of its enclosing user message (or 1 if the user message is at index 0).
-// Returns 0 if no reasoning-carrying messages exist.
-//
-// This is the single source of truth for reasoning-content protection. Every
-// code path that removes messages from the conversation history must ensure
-// it preserves messages from this index onward, or the next request to a
-// thinking-mode provider will fail with a 400 error.
-func EarliestReasoningIndex(messages []types.Message) int {
-	return agentctx.EarliestReasoningIndex(messages)
-}
-
 // EstimatedTokens returns the estimated token count for all messages
 // in the Loop's conversation history (l.State.Messages). This is the
 // canonical estimate used by lifecycle events and control messages.
