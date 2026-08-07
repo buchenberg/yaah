@@ -65,7 +65,7 @@ type TaskTool struct {
 	// turn), tracks them for status/cancel, attributes their usage, and
 	// delivers their results as follow-ups. When nil, background mode is
 	// unavailable and the tool errors if requested.
-	BackgroundJobs *BackgroundJobs
+	BackgroundJobs *jobs.BackgroundJobs
 }
 
 func (t *TaskTool) Name() string { return "spawn_subagent" }

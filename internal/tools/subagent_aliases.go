@@ -6,11 +6,13 @@ package tools
 import "github.com/buchenberg/yaah/internal/jobs"
 
 type (
-	TaskRunner         = jobs.TaskRunner
-	SubAgentParams     = jobs.SubAgentParams
-	SubAgentOutput     = jobs.SubAgentOutput
-	Escalation         = jobs.Escalation
-	EscalationSeverity = jobs.EscalationSeverity
+	TaskRunner          = jobs.TaskRunner
+	SubAgentParams      = jobs.SubAgentParams
+	SubAgentOutput      = jobs.SubAgentOutput
+	Escalation          = jobs.Escalation
+	EscalationSeverity  = jobs.EscalationSeverity
+	BackgroundJobs      = jobs.BackgroundJobs
+	BackgroundJobStatus = jobs.BackgroundJobStatus
 )
 
 const (
@@ -18,6 +20,11 @@ const (
 	EscalationWarning  = jobs.EscalationWarning
 	EscalationBlocker  = jobs.EscalationBlocker
 	EscalationCritical = jobs.EscalationCritical
+
+	BGStatusRunning   = jobs.BGStatusRunning
+	BGStatusCompleted = jobs.BGStatusCompleted
+	BGStatusFailed    = jobs.BGStatusFailed
+	BGStatusCancelled = jobs.BGStatusCancelled
 )
 
 var (
@@ -31,5 +38,6 @@ var (
 	AddSubAgentUsage          = jobs.AddSubAgentUsage
 	WithSubAgentHeartbeat     = jobs.WithSubAgentHeartbeat
 	SendHeartbeat             = jobs.SendHeartbeat
+	NewBackgroundJobs         = jobs.NewBackgroundJobs
 	ErrStuckChild             = jobs.ErrStuckChild
 )
