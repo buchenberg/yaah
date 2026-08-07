@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -133,7 +134,7 @@ func TestWrapUp_HardIterationLimit(t *testing.T) {
 	}
 
 	_, err := loop.Run(context.Background(), "run out the clock")
-	if err == nil || !strings.Contains(err.Error(), "max iterations") {
+	if err == nil || !errors.Is(err, ErrMaxIterations) {
 		t.Fatalf("expected max iterations error, got %v", err)
 	}
 	if len(fp.requests) != 3 {

@@ -65,7 +65,7 @@ func (t *BashTool) Execute(ctx context.Context, args string) (string, error) {
 	cmd := exec.CommandContext(ctx, shell, shellArg, params.Command)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
-		return "", fmt.Errorf("bash: timed out after %s", timeout)
+		return "", fmt.Errorf("%w: bash timed out after %s", ErrToolTimeout, timeout)
 	}
 	output = truncateOutput(output)
 	if err != nil {

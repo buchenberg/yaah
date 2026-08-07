@@ -258,7 +258,7 @@ func (t *RoleTool) findRoleFile(name string) (string, error) {
 			return path, nil
 		}
 	}
-	return "", fmt.Errorf("role %q not found in any search directory", name)
+	return "", fmt.Errorf("%w: role %q not found in any search directory", subagent.ErrRoleNotFound, name)
 }
 
 // writeDir returns the directory where new roles should be created.

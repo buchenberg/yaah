@@ -64,9 +64,17 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"runtime"
 )
+
+// ErrToolTimeout is returned when a tool's context deadline expires
+// before the tool completes.
+var ErrToolTimeout = errors.New("tool timed out")
+
+// ErrToolNotFound is returned when a tool name is not registered.
+var ErrToolNotFound = errors.New("unknown tool")
 
 // Tool is the interface that all tools (built-in and MCP) must satisfy.
 type Tool interface {
@@ -222,7 +230,7 @@ func (r *Registry) Get(name string) Tool {
 func (r *Registry) Execute(ctx context.Context, name, args string) (string, error) {
 	t := r.Get(name)
 	if t == nil {
-		return "", fmt.Errorf("unknown tool: %s", name)
+		return "", fmt.Errorf("%w: %s", ErrToolNotFound, name)
 	}
 	return t.Execute(ctx, args)
 }

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
@@ -123,7 +124,7 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", fmt.Errorf("spawn_subagent: role is required — pick one of: %s (use list_subagents for details)", strings.Join(known, ", "))
 	}
 	if len(known) > 0 && !slices.Contains(known, params.Role) {
-		return "", fmt.Errorf("spawn_subagent: unknown role %q — valid roles: %s", params.Role, strings.Join(known, ", "))
+		return "", fmt.Errorf("%w: unknown role %q — valid roles: %s", subagent.ErrRoleNotFound, params.Role, strings.Join(known, ", "))
 	}
 
 	if t.Runner == nil {

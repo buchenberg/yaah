@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"strings"
 
@@ -100,7 +100,10 @@ func (l *Loop) prepareRequestMessages(messages []types.Message) []types.Message 
 	// The compaction/trim pipeline must either preserve every reasoning
 	// message or fold its content into a system message summary.
 	if src := countReasoningMessages(messages); countReasoningMessages(out) < src {
-		log.Printf("BUG: reasoning_content lost — %d reasoning msg(s) in source, %d in output (earliest idx: %d)", src, countReasoningMessages(out), EarliestReasoningIndex(messages))
+		slog.Error("reasoning_content lost — compaction or trim pipeline may have dropped reasoning-carrying messages",
+			"source_count", countReasoningMessages(messages),
+			"output_count", countReasoningMessages(out),
+		)
 	}
 
 	return out
