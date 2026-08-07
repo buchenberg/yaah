@@ -83,14 +83,24 @@ func TestStartEchoProducesOutput(t *testing.T) {
 	}
 	defer m.Stop(info.ID)
 
-	// Wait for process to finish and logs to accumulate
-	time.Sleep(500 * time.Millisecond)
-
-	logs := info.Logs()
-	if logs == "" {
-		t.Error("Logs should not be empty after running echo")
+	// Poll until the process finishes and logs accumulate.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		info.mu.Lock()
+		s := info.Status
+		info.mu.Unlock()
+		if s != "running" {
+			logs := info.Logs()
+			if logs != "" {
+				t.Logf("logs: %q", logs)
+				return
+			}
+			t.Error("Logs should not be empty after running echo")
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	t.Logf("logs: %q", logs)
+	t.Error("echo process still running after 2s")
 }
 
 func TestMultipleProcesses(t *testing.T) {
