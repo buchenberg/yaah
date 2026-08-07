@@ -5,10 +5,10 @@
 //
 // This is a composition layer over the agent loop (internal/agent), the
 // tool registry (internal/tools), role profiles (internal/agent/subagent),
-// config, memory, and prompts. It lives in its own package rather than in
-// internal/agent/subagent because it imports internal/tools, which itself
-// imports internal/agent/subagent — placing it in the subagent package
-// would create an import cycle (subagent -> tools -> subagent).
+// config, memory, and prompts. It also provides the SubAgentRoleResolver
+// adapter that bridges agent/subagent's RoleRegistry to the
+// tools.RoleResolver interface, so the tools package never needs to import
+// agent/subagent directly.
 package runner
 
 import (

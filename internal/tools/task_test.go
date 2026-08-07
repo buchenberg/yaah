@@ -9,8 +9,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/buchenberg/yaah/internal/agent/subagent"
 )
 
 func TestExecute_RoleValidation(t *testing.T) {
@@ -35,7 +33,7 @@ func TestExecute_RoleValidation(t *testing.T) {
 
 	t.Run("unknown role rejected", func(t *testing.T) {
 		_, err := tt.Execute(context.Background(), `{"description":"d","prompt":"p","role":"hacker"}`)
-		if err == nil || !errors.Is(err, subagent.RoleNotFoundError{}) {
+		if err == nil || !IsRoleNotFound(err) {
 			t.Fatalf("expected unknown-role error, got %v", err)
 		}
 	})
@@ -85,7 +83,7 @@ func TestExecute_RoleResolverLayersOverCached(t *testing.T) {
 
 	t.Run("unknown role rejected", func(t *testing.T) {
 		_, err := tt.Execute(context.Background(), `{"description":"d","prompt":"p","role":"unknown"}`)
-		if err == nil || !errors.Is(err, subagent.RoleNotFoundError{}) {
+		if err == nil || !IsRoleNotFound(err) {
 			t.Fatalf("expected unknown-role error, got %v", err)
 		}
 	})

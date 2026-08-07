@@ -96,6 +96,16 @@ func (p *SessionPersister) SetMsgIdx(idx int) {
 	p.msgIdx = idx
 }
 
+// persistMessage persists a message through the Loop's persister.
+// It is a thin convenience method so callers don't need to nil-check
+// the persister before calling Persist.
+func (l *Loop) persistMessage(msg types.Message) {
+	if l.Persister == nil {
+		return
+	}
+	l.Persister.Persist(msg)
+}
+
 func (p *SessionPersister) writeMsg(m memory.Message) error {
 	if p.debouncer != nil {
 		return p.debouncer.Update(context.Background(), m)

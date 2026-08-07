@@ -58,7 +58,8 @@ yaah/
 │   │   ├── pipeline/             #   middleware pipeline (compaction, approval, permissions, etc.)
 │   │   └── subagent/             #   sub-agent role definitions and registry
 │   ├── banner/                  # figlet + lolcat banner for the TUI/REPL
-│   ├── config/                  # load ~/.yaah/config.yaml, env subst
+│   ├── config/                  # load ~/.yaah/config.yaml, env subst, validate
+│   ├── control/                 # control-plane message types (CtrlMsg, approvals, questions, todos)
 │   ├── instructions/            # walk up cwd, load AGENTS.md/CLAUDE.md
 │   ├── mcp/                     # MCP client + server (stdio + HTTP), manifests
 │   ├── memory/                  # SQLite + FTS5 (sessions, messages, memory)
@@ -152,8 +153,13 @@ registration is shared between stdio and HTTP transports via
 - **No codegen, no build tags, no `go generate`.**
 - **cobra + pflag** for CLI.
 - **`internal/` for everything private.** `pkg/` reserved for future exports.
-- **No globals except build-time vars** in `cmd/yaah/root.go` and serve-mode
-  state (`extraOtelProcessors`, `otelInMemoryOnly`) in `cmd/yaah/serve.go`.
+- **No globals except** build-time vars in `cmd/yaah/root.go`, serve-mode
+  state (`extraOtelProcessors`, `otelInMemoryOnly`, `tuiMCPBuf`) in
+  `cmd/yaah/serve.go`, and the atomic role registry
+  (`defaultRoleReg` in `internal/agent/subagent/role.go`, set at startup
+  via `SetDefaultRoleRegistry` for hot-reloadable role profiles).
+  OTel metric instruments in `internal/observability/metrics.go` are
+  initialised once by `initMetrics()` and are effectively const after setup.
 - **Errors are values, not panics.**
 - **No third-party HTTP client.** Use `net/http` from stdlib.
 - **`gopkg.in/yaml.v3`** for config parsing.

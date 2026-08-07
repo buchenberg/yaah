@@ -325,7 +325,9 @@ func (h *HTTPServer) handlePost(w http.ResponseWriter, r *http.Request) {
 		// other methods with id=0 are treated as notifications
 		// per the JSON-RPC convention.
 		if msg.ID == nil && !isInitialize(msg) {
-			_, _ = h.server.dispatch(r.Context(), msg)
+			if _, derr := h.server.dispatch(r.Context(), msg); derr != nil {
+				fmt.Fprintf(os.Stderr, "mcp notification dispatch error: %v\n", derr)
+			}
 			continue
 		}
 

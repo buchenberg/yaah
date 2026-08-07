@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
@@ -23,8 +22,8 @@ type SubAgentInfo struct {
 // SubAgentContract mirrors the YAML contract definition from role files
 // but uses simplified types for JSON serialization.
 type SubAgentContract struct {
-	Heading string                   `json:"heading"`
-	Fields  []subagent.ContractField `json:"fields"`
+	Heading string          `json:"heading"`
+	Fields  []ContractField `json:"fields"`
 }
 
 // SubAgentLister returns role metadata so the agent can see available

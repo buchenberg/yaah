@@ -11,7 +11,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
@@ -21,7 +20,8 @@ import (
 // list_subagents reflects the change immediately.
 type RoleTool struct {
 	Dirs         []string          // role search directories (project-first, then user)
-	BuiltinFiles map[string][]byte // built-in role files passed to ReloadDefaultRoles
+	BuiltinFiles map[string][]byte // built-in role files passed to ReloadRoles
+	Resolver     RoleResolver      // role registry access (injected by agent/runner)
 }
 
 // roleFrontmatter is the YAML frontmatter extracted from a role .md file.
@@ -109,23 +109,26 @@ func (t *RoleTool) Execute(ctx context.Context, args string) (string, error) {
 
 // listRoles returns all roles from the current default registry.
 func (t *RoleTool) listRoles() (string, error) {
-	reg := subagent.DefaultRegistry()
-	if reg == nil {
+	if t.Resolver == nil {
 		return "no role registry loaded", nil
 	}
-	entries := reg.List()
-	if len(entries) == 0 {
+	roles := t.Resolver.ListRoles()
+	if len(roles) == 0 {
 		return "no roles defined", nil
 	}
-	names := make([]string, 0, len(entries))
-	for name := range entries {
-		names = append(names, string(name))
+	names := make([]string, 0, len(roles))
+	for _, r := range roles {
+		names = append(names, r.Name)
 	}
 	sort.Strings(names)
+	// Build a name→description map for sorted output.
+	desc := make(map[string]string, len(roles))
+	for _, r := range roles {
+		desc[r.Name] = r.Description
+	}
 	var b strings.Builder
 	for _, name := range names {
-		entry := entries[subagent.SubAgentRole(name)]
-		fmt.Fprintf(&b, "- **%s**: %s\n", name, entry.Description)
+		fmt.Fprintf(&b, "- **%s**: %s\n", name, desc[name])
 	}
 	return strings.TrimSpace(b.String()), nil
 }
@@ -258,7 +261,7 @@ func (t *RoleTool) findRoleFile(name string) (string, error) {
 			return path, nil
 		}
 	}
-	return "", fmt.Errorf("%w: not found in any search directory", subagent.RoleNotFoundError{Role: name})
+	return "", fmt.Errorf("%w: not found in any search directory", RoleNotFoundError{Role: name})
 }
 
 // writeDir returns the directory where new roles should be created.
@@ -269,13 +272,13 @@ func (t *RoleTool) writeDir() string {
 	return ".agents/roles"
 }
 
-// reloadRegistry calls ReloadDefaultRoles to atomically swap in the latest
+// reloadRegistry calls the resolver to atomically swap in the latest
 // role definitions from disk.
 func (t *RoleTool) reloadRegistry() error {
-	return subagent.ReloadDefaultRoles(subagent.ReloadDefaultRolesOptions{
-		BuiltinFiles: t.BuiltinFiles,
-		SearchDirs:   t.Dirs,
-	})
+	if t.Resolver == nil {
+		return nil
+	}
+	return t.Resolver.ReloadRoles(t.BuiltinFiles, t.Dirs)
 }
 
 // parseToolsList parses a tools string that can be a JSON array or

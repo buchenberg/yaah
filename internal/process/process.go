@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -62,14 +63,19 @@ func NewManager() *Manager {
 
 // Start launches a command as a tracked background process.
 func (m *Manager) Start(command, description string) (*Info, error) {
-	// Use powershell on Windows, sh on Unix for the shell wrapper
+	// Use powershell on Windows, sh on Unix for the shell wrapper.
+	// On Unix we must NOT prefer pwsh even if it is on PATH (GitHub Actions
+	// ubuntu runners include pwsh, whose startup is ~1-2s and causes
+	// trivial commands like `echo` to blow past test timeouts).
 	shell, shellFlag := "sh", "-c"
-	if _, err := exec.LookPath("pwsh"); err == nil {
-		shell = "pwsh"
-		shellFlag = "-Command"
-	} else if _, err := exec.LookPath("powershell"); err == nil {
-		shell = "powershell"
-		shellFlag = "-Command"
+	if runtime.GOOS == "windows" {
+		if _, err := exec.LookPath("pwsh"); err == nil {
+			shell = "pwsh"
+			shellFlag = "-Command"
+		} else if _, err := exec.LookPath("powershell"); err == nil {
+			shell = "powershell"
+			shellFlag = "-Command"
+		}
 	}
 
 	cmd := exec.Command(shell, shellFlag, command)

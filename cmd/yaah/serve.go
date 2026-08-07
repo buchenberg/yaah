@@ -8,15 +8,12 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
-	"time"
 
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/mcp"
-	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/observability"
-	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/types"
 	"github.com/spf13/cobra"
 )
@@ -217,70 +214,25 @@ func runServeHTTP(buf *observability.BufferingSpanProcessor) error {
 // conversation state in the session so successive calls form a multi-turn
 // dialogue, and returns the response plus the loop's token usage.
 func (s *agentSession) runHeadless(ctx context.Context, prompt string) (string, types.Usage, error) {
-	compactProvider, compactModel := resolveCompact(s.cfg)
-	if compactProvider != nil {
-		if sp, ok := compactProvider.(agent.StreamProvider); ok {
-			compactProvider = &observability.InstrumentedProvider{Inner: sp, Verbose: s.cfg.Observability.Otel.Verbose}
-		}
-	}
+	rawCompactProvider, compactModel := resolveCompact(s.cfg)
+	compactProvider := agent.ResolveCompactProvider(rawCompactProvider, s.cfg.Observability.Otel.Verbose)
 	fallbackProvider, fallbackModel, _ := resolveFallback(s.cfg)
 
-	var debouncer *memory.DebouncedWriter
-	if s.db != nil {
-		debouncer = memory.NewDebouncedWriter(s.db)
-	}
-	persister := agent.NewSessionPersister(s.db, debouncer, s.sessionID)
-	persister.SetMsgIdx(s.msgIdx)
-	hooks := agent.NewHookEmitter(s.cfg.Hooks.Dir, s.sessionID)
+	// Snapshot session state under the mutex, mirroring runPrompt's pattern.
+	s.mu.RLock()
+	prov := s.provider
+	mName := s.modelName
+	s.mu.RUnlock()
 
-	loop := agent.NewLoop(s.provider, s.toolReg,
-		agent.WithModel(s.modelName),
-		agent.WithSystemPrompt(s.mainPrompt),
-		agent.WithView(agent.NoopView{}),
-		agent.WithMessages(s.messages),
-		agent.WithSessionID(s.sessionID),
-		agent.WithPersister(persister),
-		agent.WithHooks(hooks),
-		agent.WithFallback(fallbackProvider, fallbackModel),
-		agent.WithCompactProvider(compactProvider, compactModel),
-		agent.WithApprovalMode(resolveApproval(s.cfg)),
-		agent.WithPipeline(s.cfg.Agent.Middleware.Enabled, s.cfg.Agent.Middleware.Disabled),
-		agent.WithSteer(s.steerCh),
-		agent.WithFollowUps(s.followupCh),
-		agent.WithBackgroundJobs(s.backgroundJobs),
-		agent.WithConflictTracker(s.tracker),
-		agent.WithToolsLevel(agent.FullTools),
-		agent.WithOtel(true, s.cfg.Observability.Otel.Verbose),
-		agent.WithSubAgentConcurrency(
-			s.cfg.Agent.SubAgent.MaxConcurrency,
-			time.Duration(s.cfg.Agent.SubAgent.StuckChildTimeout)*time.Second,
-			buildStuckChildTimeouts(s.cfg.Agent.SubAgent),
-		),
-		agent.WithAgentConfig(agent.AgentConfig{
-			MaxLoopCycles:          s.cfg.Agent.Default.MaxLoopCycles,
-			MaxToolTurns:           s.cfg.Agent.Default.MaxToolTurns,
-			MaxRetries:             s.cfg.Agent.Default.MaxRetries,
-			RetryBackoffSecs:       s.cfg.Agent.Default.RetryBackoffSecs,
-			ContextWindow:          providers.ResolveWindow(s.modelName, s.cfg.Agent.Default.ContextWindow),
-			CompactionThreshold:    s.cfg.Agent.Default.CompactionThreshold,
-			RawCompactionThreshold: s.cfg.Agent.Default.RawCompactionThreshold,
-			CompactMaxMessages:     s.cfg.Agent.Default.CompactMaxMessages,
-			EstimateFactor:         s.cfg.Agent.Default.EstimateFactor,
-			QualityGates:           s.cfg.Agent.QualityGates,
-			LoopDetectCount:        s.cfg.Agent.Default.LoopDetectCount,
-			LoopDetectWindow:       s.cfg.Agent.Default.LoopDetectWindow,
-			MaxToolConcurrency:     s.cfg.Agent.Default.MaxToolConcurrency,
-			WrapUpThreshold:        s.cfg.Agent.Default.WrapUpThreshold,
-			MaxInlineToolsPerTurn:  s.cfg.Agent.Default.MaxInlineToolsPerTurn,
-			PromptCaching:          s.cfg.Agent.Default.PromptCaching,
-			ReasoningProtectTurns:  s.cfg.Agent.Default.ReasoningProtect,
-			ToolResultMaxLines:     s.cfg.Agent.Default.ToolResultMaxLines,
-			ToolResultMaxBytes:     s.cfg.Agent.Default.ToolResultMaxBytes,
-			PruneProtectTokens:     s.cfg.Agent.Default.PruneProtectTokens,
-			PruneMinReclaim:        s.cfg.Agent.Default.PruneMinReclaim,
-			PruneMinTurns:          s.cfg.Agent.Default.PruneMinTurns,
-		}),
-	)
+	b := s.loopBuilder(prov, mName, compactProvider, compactModel, fallbackProvider, fallbackModel)
+
+	// Headless serve mode always forces OTel on (in-memory tracing).
+	otelForced := true
+	loop := b.Build(agent.LoopBuildOptions{
+		ApprovalMode: resolveApproval(s.cfg),
+		OtelEnabled:  &otelForced,
+		OtelVerbose:  s.cfg.Observability.Otel.Verbose,
+	})
 
 	response, err := loop.Run(ctx, prompt)
 
