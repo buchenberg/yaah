@@ -47,8 +47,6 @@ func DefaultBindings() []Binding {
 		{Key: tcell.KeyCtrlC, Action: ActionQuit, Label: "Ctrl+C", HelpText: "quit"},
 		{Key: tcell.KeyEscape, Action: ActionCancel, Label: "Esc", HelpText: "cancel / back"},
 		{Key: tcell.KeyCtrlL, Action: ActionClear, Label: "Ctrl+L", HelpText: "clear screen"},
-		{Rune: '?', Action: ActionHelp, Label: "?", HelpText: "help"},
-		{Rune: '/', Action: ActionSearch, Label: "/", HelpText: "search in messages"},
 		{Key: tcell.KeyCtrlP, Action: ActionCommand, Label: "Ctrl+P", HelpText: "command palette"},
 		{Key: tcell.KeyCtrlR, Action: ActionToggleReasoning, Label: "Ctrl+R", HelpText: "toggle reasoning blocks"},
 		{Key: tcell.KeyCtrlT, Action: ActionToggleTools, Label: "Ctrl+T", HelpText: "toggle tool blocks"},
