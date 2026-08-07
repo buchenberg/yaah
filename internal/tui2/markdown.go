@@ -1,49 +1,32 @@
 package tui2
 
 import (
-	"strings"
-	"sync"
-
-	"charm.land/glamour/v2"
+	"github.com/buchenberg/tviewmd"
 	"github.com/rivo/tview"
 )
 
-var (
-	rendererOnce sync.Once
-	renderer     *glamour.TermRenderer
-)
-
-// initRenderer lazily creates a glamour renderer on first use. We use
-// terminal256 formatting; the ANSI output is translated to tview color
-// tags via tview.TranslateANSI at render time.
-func initRenderer() {
-	rendererOnce.Do(func() {
-		r, err := glamour.NewTermRenderer(
-			glamour.WithStandardStyle("dark"),
-			glamour.WithWordWrap(80),
-			glamour.WithEmoji(),
-			glamour.WithChromaFormatter("terminal256"),
-			glamour.WithPreservedNewLines(),
-		)
-		if err == nil {
-			renderer = r
-		}
-	})
+// renderMarkdown converts markdown to tview color-tagged text using the
+// tviewmd native renderer (goldmark parser + tview tag backend). The
+// output is suitable for a tview.TextView with SetWrap(true).
+func renderMarkdown(md string, width int) string {
+	if md == "" {
+		return ""
+	}
+	if width <= 0 {
+		width = 80
+	}
+	return tviewmd.Render(md, tviewmd.Options{Width: width})
 }
 
-// renderMarkdown converts markdown to tview color-tagged text using
-// glamour for formatting and tview.TranslateANSI to convert the ANSI
-// output into tview's native color tags. Falls back to the raw text if
-// the renderer is unavailable.
-func renderMarkdown(md string) string {
-	initRenderer()
-	if renderer == nil {
-		return md
+// messageWidth returns a usable width for markdown rendering from the
+// messages pane, defaulting to 80 if the pane hasn't been laid out yet.
+func messageWidth(tv *tview.TextView) int {
+	if tv == nil {
+		return 80
 	}
-	out, err := renderer.Render(md)
-	if err != nil {
-		return md
+	_, _, w, _ := tv.GetInnerRect()
+	if w <= 0 {
+		return 80
 	}
-	out = strings.TrimSpace(out)
-	return tview.TranslateANSI(out)
+	return w
 }

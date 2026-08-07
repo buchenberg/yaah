@@ -8,8 +8,8 @@ func (t *TUI2) AddUserMessage(text string) {
 }
 
 // addAssistantResponse appends a markdown-rendered assistant response.
-func (t *TUI2) addAssistantResponse(text string) {
-	t.appendMessage(renderMarkdown(text))
+func (t *TUI2) addAssistantResponse(text string, width int) {
+	t.appendMessage(renderMarkdown(text, width))
 }
 
 // appendMessage adds raw text to the conversation log and refreshes.
