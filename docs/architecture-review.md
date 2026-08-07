@@ -71,7 +71,7 @@ micro-optimization.
 | Maturity | **Production** | Prototype |
 | Component model | Monolithic `Model` + 22 files; manual layout math | 22 component subpackages; native Flex/Grid/Pages |
 | Rendering | Full re-render of viewport string each tick | `QueueUpdateDraw` per widget |
-| Markdown | glamour + custom table/tree/list rendering | glamour (single path) |
+| Markdown | glamour + custom table/tree/list rendering | tviewmd (native tview tags) |
 | Modals | In-model state + manual palette-line math | `tview.Pages` overlays (cleaner) |
 | Conversation model | `[]Message` with role-switch render | `conversationLog []convItem` (chronological, interleaved) |
 
@@ -82,8 +82,8 @@ Grep confirms `tui2` is **missing or has unwired**: in-message **search**
 **follow-up** queuing, **steer** (Ctrl-T), **`:login`/`:logout`** (declared in
 `command.go:25-26` but `HandleCommand` only handles Quit/Clear/Help/Compact/Model),
 **`:verbose`** toggle, **`:copyview`**, **`:banner`** toggle, **mouse hover zones** with
-OSC 22 pointer cursor, the OTel `RecordTUIView` instrumentation, and a complete **model
-picker** wired to a populated list.
+OSC 22 pointer cursor, the OTel `RecordTUIView` instrumentation, and a **model
+picker** (list-population wired, but filter/scrolling UI needs work).
 
 `tui` has all of the above (`internal/tui/model.go:63` commands, `view.go:253` OSC 22,
 `render.go` glamour-rich rendering, `events.go:358` context info).

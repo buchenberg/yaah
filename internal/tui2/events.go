@@ -25,7 +25,8 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 	case *agent.FlushEvent:
 		t.App.QueueUpdateDraw(func() {
 			if t.isStreaming.Load() && t.pendingTokens != "" {
-				t.addAssistantResponse(t.pendingTokens)
+				w := messageWidth(t.Messages)
+				t.addAssistantResponse(t.pendingTokens, w)
 				t.pendingTokens = ""
 				t.isStreaming.Store(false)
 			}
@@ -99,7 +100,8 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 	case *agent.DoneEvent:
 		t.App.QueueUpdateDraw(func() {
 			if t.isStreaming.Load() && t.pendingTokens != "" {
-				t.addAssistantResponse(t.pendingTokens)
+				w := messageWidth(t.Messages)
+				t.addAssistantResponse(t.pendingTokens, w)
 			}
 			t.isStreaming.Store(false)
 			t.pendingTokens = ""

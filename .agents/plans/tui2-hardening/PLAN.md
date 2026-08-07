@@ -40,7 +40,7 @@
 Separate Go module living inside the repo, resolved locally via a committed `go.work`. The
 module path is the **final OSS path from day one** so extraction never rewrites imports.
 
-```
+```text
 yaah/
 ├── go.mod          module github.com/buchenberg/yaah
 ├── go.work         (NEW, committed)
@@ -263,7 +263,7 @@ principles must be in place *before* the feature port so features land on a soun
 
 Separate three concerns that tui2 currently muddles in `tui2.go`:
 
-```
+```text
 agent events ──► ViewModel (single source of truth) ──► Render pass ──► widgets
                         ▲
 control msgs ───────────┘
