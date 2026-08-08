@@ -318,7 +318,9 @@ func (t *TUI2) refreshMessages() {
 
 	// Streaming text (accumulated tokens, not yet flushed).
 	if t.isStreaming.Load() && t.pendingTokens != "" {
+		b.WriteString("\n")
 		b.WriteString(t.pendingTokens)
+		b.WriteString("\n")
 		b.WriteString("\n")
 	}
 
