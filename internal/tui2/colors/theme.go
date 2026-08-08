@@ -20,17 +20,8 @@ type Theme struct {
 	RoleColors map[string]string
 }
 
-var DarkTheme = Theme{
-	Accent:      "#00afff",
-	Dim:         "#5f5f5f",
-	User:        "#00afff",
-	System:      "#888888",
-	Error:       "#ff5555",
-	ToolBg:      "#1a1a2e",
-	CodeBg:      "#1e1e2e",
-	InputBorder: "#ff87af",
-	NoColor:     false,
-	ToolColors: map[string]string{
+func newToolColors() map[string]string {
+	return map[string]string{
 		"read":                   "#87afff",
 		"write":                  "#ffd700",
 		"edit":                   "#ffd700",
@@ -69,8 +60,11 @@ var DarkTheme = Theme{
 		"memory_search_sessions": "#ff87af",
 		"background_process":     "#afafaf",
 		"task":                   "#5fafd7",
-	},
-	RoleColors: map[string]string{
+	}
+}
+
+func newRoleColors() map[string]string {
+	return map[string]string{
 		"analyst":          "#00afff",
 		"developer":        "#00d700",
 		"reviewer":         "#ffd700",
@@ -82,38 +76,49 @@ var DarkTheme = Theme{
 		"golang-developer": "#00af87",
 		"golang-tester":    "#87ff00",
 		"grump":            "#808080",
-	},
+	}
 }
 
-var LightTheme = Theme{
-	Accent:      "#005faf",
-	Dim:         "#9e9e9e",
-	User:        "#005faf",
-	System:      "#666666",
-	Error:       "#d70000",
-	ToolBg:      "#eeeeee",
-	CodeBg:      "#f0f0f0",
-	InputBorder: "#d75f87",
-	NoColor:     false,
+func NewDarkTheme() Theme {
+	return Theme{
+		Accent:      "#00afff",
+		Dim:         "#5f5f5f",
+		User:        "#00afff",
+		System:      "#888888",
+		Error:       "#ff5555",
+		ToolBg:      "#1a1a2e",
+		CodeBg:      "#1e1e2e",
+		InputBorder: "#ff87af",
+		ToolColors:  newToolColors(),
+		RoleColors:  newRoleColors(),
+	}
 }
 
-func init() {
-	LightTheme.ToolColors = DarkTheme.ToolColors
-	LightTheme.RoleColors = DarkTheme.RoleColors
+func NewLightTheme() Theme {
+	return Theme{
+		Accent:      "#005faf",
+		Dim:         "#9e9e9e",
+		User:        "#005faf",
+		System:      "#666666",
+		Error:       "#d70000",
+		ToolBg:      "#eeeeee",
+		CodeBg:      "#f0f0f0",
+		InputBorder: "#d75f87",
+		ToolColors:  newToolColors(),
+		RoleColors:  newRoleColors(),
+	}
 }
 
 func DetectTheme() Theme {
-	th := DarkTheme
+	var th Theme
+	switch strings.ToLower(os.Getenv("YAARH_THEME")) {
+	case "light":
+		th = NewLightTheme()
+	default:
+		th = NewDarkTheme()
+	}
 	if _, ok := os.LookupEnv("NO_COLOR"); ok {
 		th.NoColor = true
-	}
-	if v, ok := os.LookupEnv("YAARH_THEME"); ok {
-		switch strings.ToLower(v) {
-		case "light":
-			return LightTheme
-		case "dark":
-			return th
-		}
 	}
 	return th
 }

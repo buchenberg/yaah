@@ -121,8 +121,8 @@ func (b *Block) renderCollapsed() string {
 			b.theme.ColorTag(hex), b.robot(), b.displayName, b.theme.ResetTag(),
 			b.theme.DimTag(), b.task, b.durationStr(), b.theme.ResetTag())
 	case Error:
-		return fmt.Sprintf(`  %s✗ %s %s%s [red]· %s (%s)[-]`,
-			b.theme.ColorTag(hex), b.robot(), b.displayName, b.theme.ResetTag(), b.task, b.durationStr())
+		return fmt.Sprintf(`  %s✗ %s %s%s %s· %s (%s)%s`,
+			b.theme.ColorTag(hex), b.robot(), b.displayName, b.theme.ResetTag(), b.theme.DimTag(), b.theme.Tag(b.theme.Error, b.task), b.durationStr(), b.theme.ResetTag())
 	default:
 		return ""
 	}
@@ -135,15 +135,17 @@ func (b *Block) renderExpanded(width int) string {
 	hex := b.roleHex()
 	var bld strings.Builder
 
+	var header string
 	switch b.state {
 	case Active:
-		bld.WriteString(fmt.Sprintf(`  %s%s %s %s%s`, b.theme.ColorTag(hex), spinnerFrames[b.spinnerFrame], b.robot(), b.displayName, b.theme.ResetTag()))
+		header = fmt.Sprintf(`  %s%s %s %s%s`, b.theme.ColorTag(hex), spinnerFrames[b.spinnerFrame], b.robot(), b.displayName, b.theme.ResetTag())
 	case Done:
-		bld.WriteString(fmt.Sprintf(`  %s✓ %s %s%s`, b.theme.ColorTag(hex), b.robot(), b.displayName, b.theme.ResetTag()))
+		header = fmt.Sprintf(`  %s✓ %s %s%s`, b.theme.ColorTag(hex), b.robot(), b.displayName, b.theme.ResetTag())
 	case Error:
-		bld.WriteString(fmt.Sprintf(`  %s✗ %s %s%s`, b.theme.ColorTag(hex), b.robot(), b.displayName, b.theme.ResetTag()))
+		header = fmt.Sprintf(`  %s✗ %s %s%s`, b.theme.ColorTag(hex), b.robot(), b.displayName, b.theme.ResetTag())
 	}
-	fill := max(2, width-len(b.displayName)-2)
+	bld.WriteString(header)
+	fill := max(2, width-colors.TaggedStringWidth(header)-2)
 	bld.WriteString(fmt.Sprintf(`%s %s%s`, b.theme.DimTag(), strings.Repeat("─", fill), b.theme.ResetTag()))
 	bld.WriteString("\n")
 
@@ -164,7 +166,7 @@ func (b *Block) renderExpanded(width int) string {
 	}
 
 	if b.state == Error && b.err != "" {
-		bld.WriteString(fmt.Sprintf(`  %s│%s [red]%s[-]`, b.theme.DimTag(), b.theme.ResetTag(), b.err))
+		bld.WriteString(fmt.Sprintf(`  %s│%s %s`, b.theme.DimTag(), b.theme.ResetTag(), b.theme.Tag(b.theme.Error, b.err)))
 		bld.WriteString("\n")
 	}
 

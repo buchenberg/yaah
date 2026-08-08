@@ -444,10 +444,7 @@ func (t *TUI2) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
 		t.toggleCommandPalette()
 		return nil
 	case ActionClear:
-		if t.OnClear != nil {
-			t.OnClear()
-		}
-		t.clearConversation()
+		t.doClear()
 		return nil
 	case ActionToggleReasoning:
 		t.toggleAllReasoning()
@@ -497,7 +494,7 @@ func (t *TUI2) HandleCommand(cmd command.Cmd, arg string) {
 	case command.CmdQuit:
 		t.Stop()
 	case command.CmdClear:
-		t.clearConversation()
+		t.doClear()
 	case command.CmdHelp:
 		t.ShowHelp()
 	case command.CmdCompact:
@@ -554,6 +551,13 @@ func (t *TUI2) clearConversation() {
 	t.toolBlocks = nil
 	t.subagentBlocks = nil
 	t.refreshMessages()
+}
+
+func (t *TUI2) doClear() {
+	if t.OnClear != nil {
+		t.OnClear()
+	}
+	t.clearConversation()
 }
 
 func (t *TUI2) toggleAllReasoning() {

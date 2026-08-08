@@ -30,9 +30,3 @@ type RenderCtx struct {
 	Theme    *Theme
 	Expanded bool
 }
-
-// Renderable is a content component that produces tagged text for the
-// message stream.
-type Renderable interface {
-	Render(ctx RenderCtx) string
-}

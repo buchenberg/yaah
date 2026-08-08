@@ -35,7 +35,7 @@ func (b *Block) RenderCtx(ctx colors.RenderCtx) string {
 }
 
 func (b *Block) renderCollapsed() string {
-	label := lolcat.Rainbow("Reasoning...", b.seed)
+	label := b.reasoningLabel()
 	return fmt.Sprintf(`  %s▶ %s%s`, b.theme.DimTag(), label, b.theme.ResetTag())
 }
 
@@ -43,7 +43,7 @@ func (b *Block) renderExpanded(width int) string {
 	if width <= 0 {
 		width = 60
 	}
-	label := lolcat.Rainbow("Reasoning...", b.seed)
+	label := b.reasoningLabel()
 	labelLen := len(lolcat.StripTags(label))
 	dashLen := max(4, width-labelLen-4)
 	header := fmt.Sprintf(`  %s▼ %s %s%s%s`, b.theme.DimTag(), label, b.theme.DimTag(),
@@ -57,4 +57,11 @@ func (b *Block) renderExpanded(width int) string {
 	}
 	bld.WriteString(fmt.Sprintf(`  %s╰%s%s`, b.theme.DimTag(), strings.Repeat("─", width), b.theme.ResetTag()))
 	return bld.String()
+}
+
+func (b *Block) reasoningLabel() string {
+	if b.theme != nil && b.theme.NoColor {
+		return "Reasoning..."
+	}
+	return lolcat.Rainbow("Reasoning...", b.seed)
 }

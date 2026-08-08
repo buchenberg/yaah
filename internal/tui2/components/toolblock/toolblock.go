@@ -141,8 +141,8 @@ func (b *Block) renderCollapsed() string {
 			b.theme.ColorTag(hex), b.icon, b.name, b.theme.ResetTag(),
 			b.theme.DimTag(), b.tag, b.durationStr(), b.theme.ResetTag())
 	case Error:
-		return fmt.Sprintf(`  %s✗ %s %s%s [red]· %s (%s)[-]`,
-			b.theme.ColorTag(hex), b.icon, b.name, b.theme.ResetTag(), b.tag, b.durationStr())
+		return fmt.Sprintf(`  %s✗ %s %s%s %s· %s (%s)%s`,
+			b.theme.ColorTag(hex), b.icon, b.name, b.theme.ResetTag(), b.theme.DimTag(), b.theme.Tag(b.theme.Error, b.tag), b.durationStr(), b.theme.ResetTag())
 	default:
 		return ""
 	}
@@ -167,7 +167,7 @@ func (b *Block) renderExpanded(width int) string {
 		header = fmt.Sprintf(`  %s✗ %s %s%s`,
 			b.theme.ColorTag(hex), b.icon, b.name, b.theme.ResetTag())
 	}
-	fill := max(2, width-len(b.icon)-len(b.name)-2)
+	fill := max(2, width-colors.TaggedStringWidth(header)-2)
 	bld.WriteString(header)
 	bld.WriteString(fmt.Sprintf(`%s %s%s`, b.theme.DimTag(), strings.Repeat("─", fill), b.theme.ResetTag()))
 	bld.WriteString("\n")
@@ -196,7 +196,7 @@ func (b *Block) renderExpanded(width int) string {
 	}
 
 	if b.state == Error && b.result != "" {
-		bld.WriteString(fmt.Sprintf(`  %s│%s [red]%s[-]`, b.theme.DimTag(), b.theme.ResetTag(), b.result))
+		bld.WriteString(fmt.Sprintf(`  %s│%s %s`, b.theme.DimTag(), b.theme.ResetTag(), b.theme.Tag(b.theme.Error, b.result)))
 		bld.WriteString("\n")
 	}
 
