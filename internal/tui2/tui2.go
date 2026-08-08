@@ -211,6 +211,20 @@ func (t *TUI2) buildUI() {
 	bannerLines, t.Banner = banner.Build()
 	t.InfoBar, _ = infobar.Build()
 	t.Messages = messages.Build()
+	t.Messages.SetMouseCapture(func(action tview.MouseAction, event *tcell.EventMouse) (tview.MouseAction, *tcell.EventMouse) {
+		switch action {
+		case tview.MouseScrollUp:
+			t.userScrolled = true
+		case tview.MouseScrollDown:
+			_, _, _, h := t.Messages.GetInnerRect()
+			row, _ := t.Messages.GetScrollOffset()
+			totalLines := len(strings.Split(t.Messages.GetText(true), "\n"))
+			if row+h >= totalLines {
+				t.userScrolled = false
+			}
+		}
+		return action, event
+	})
 	t.Input = input.Build(t.Theme)
 	t.InfoPane = infopane.Build()
 	t.StatusBar, _ = statusbar.Build()
