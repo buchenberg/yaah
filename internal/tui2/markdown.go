@@ -5,6 +5,25 @@ import (
 	"github.com/rivo/tview"
 )
 
+// mdTheme is the tviewmd rendering theme. Headings use bold rather than
+// underline to prevent style leakage across paragraphs in tview TextViews.
+var mdTheme = tviewmd.Theme{
+	Heading: [6]string{
+		"#00afff",
+		"#00afff",
+		"#00afff",
+		"#00afff",
+		"#00afff",
+		"#00afff",
+	},
+	Link:         "#00afff",
+	InlineCodeFG: "#5f5f5f",
+	InlineCodeBG: "default",
+	CodeBlockFG:  "#5f5f5f",
+	QuoteFG:      "#5f5f5f",
+	Hr:           "#5f5f5f",
+}
+
 // renderMarkdown converts markdown to tview color-tagged text. Width
 // controls table column sizing. The output uses valid tview tags — no
 // raw brackets remain, so SetDynamicColors won't consume them as directives.
@@ -15,7 +34,7 @@ func renderMarkdown(md string, width int) string {
 	if width <= 0 {
 		width = 80
 	}
-	return tviewmd.Render(md, tviewmd.Options{Width: width})
+	return tviewmd.Render(md, tviewmd.Options{Width: width, Theme: mdTheme})
 }
 
 // messageWidth returns the inner width of the messages pane, defaulting

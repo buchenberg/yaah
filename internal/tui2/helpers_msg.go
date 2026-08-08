@@ -1,7 +1,5 @@
 package tui2
 
-import "strings"
-
 // AddUserMessage appends a styled user message to the conversation.
 func (t *TUI2) AddUserMessage(text string) {
 	t.appendMessage(t.Theme.Tag(t.Theme.User, "You: ") + text + "\n")
@@ -23,11 +21,4 @@ func (t *TUI2) appendMessage(text string) {
 	t.conversationLog = append(t.conversationLog, convItem{text: text})
 	t.refreshMessages()
 	t.App.SetFocus(t.Input)
-}
-
-// escapeBrackets escapes literal '[' for tview SetDynamicColors.
-// Raw text with [...] patterns (links, code refs) gets consumed as
-// color directives. Streaming tokens call this before Write().
-func escapeBrackets(s string) string {
-	return strings.ReplaceAll(s, "[", "[[]")
 }
