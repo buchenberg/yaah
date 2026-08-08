@@ -188,7 +188,12 @@ func (t *TUI2) startSpinnerTicker() {
 				for _, sb := range t.subagentBlocks {
 					sb.AdvanceSpinner()
 				}
-				t.refreshMessages()
+				// During streaming, content arrives via Write() — don't
+				// rebuild the entire buffer with SetText() every 200ms.
+				// Only refresh for spinner/subagent animation.
+				if !t.isStreaming.Load() {
+					t.refreshMessages()
+				}
 			})
 		}
 	}()
