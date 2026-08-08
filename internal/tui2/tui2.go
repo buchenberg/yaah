@@ -29,6 +29,8 @@ import (
 	"github.com/rivo/tview"
 )
 
+const cmdListModal = "cmdlist_modal"
+
 // TUI2 is the tview-based terminal UI prototype.
 //
 // Concurrency: fields are grouped into three categories:
@@ -115,7 +117,6 @@ type TUI2 struct {
 	version string
 
 	// --- Palettes & callbacks (set before Run()) ---
-	CmdPalette    *command.Palette
 	OnModelSelect func(model string)
 }
 
@@ -228,16 +229,6 @@ func (t *TUI2) buildUI() {
 	t.Input = input.Build(t.Theme)
 	t.InfoPane = infopane.Build(t.Theme)
 	t.StatusBar, _ = statusbar.Build()
-
-	// Command palette (vim-style ":" input, shown as a Pages overlay).
-	cmdModalName := "cmdpalette_modal"
-	t.CmdPalette = command.Build(func(cmd command.Cmd, arg string) {
-		t.HandleCommand(cmd, arg)
-		t.App.QueueUpdateDraw(func() {
-			t.Pages.RemovePage(cmdModalName)
-			t.App.SetFocus(t.Input)
-		})
-	})
 	t.TodoPane = todo.Build(nil)
 
 	// --- Header: two-column grid (banner left | provider right) ---
@@ -578,8 +569,6 @@ func (t *TUI2) HandleCommand(cmd command.Cmd, arg string) {
 }
 
 func (t *TUI2) showCommandList() {
-	const modalName = "cmdlist_modal"
-
 	entries := []struct {
 		label string
 		desc  string
@@ -606,7 +595,7 @@ func (t *TUI2) showCommandList() {
 
 	for _, e := range entries {
 		list.AddItem(e.label, e.desc, 0, func() {
-			t.Pages.RemovePage(modalName)
+			t.Pages.RemovePage(cmdListModal)
 			t.App.SetFocus(t.Input)
 			t.focus = focusNormal
 			t.HandleCommand(e.cmd, "")
@@ -619,7 +608,7 @@ func (t *TUI2) showCommandList() {
 
 	list.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
 		if ev.Key() == tcell.KeyEscape {
-			t.Pages.RemovePage(modalName)
+			t.Pages.RemovePage(cmdListModal)
 			t.App.SetFocus(t.Input)
 			t.focus = focusNormal
 			return nil
@@ -635,7 +624,7 @@ func (t *TUI2) showCommandList() {
 			AddItem(nil, 0, 1, false), 0, 3, true).
 		AddItem(nil, 0, 1, false)
 
-	t.Pages.AddPage(modalName, flex, true, true)
+	t.Pages.AddPage(cmdListModal, flex, true, true)
 	t.App.SetFocus(list)
 	t.focus = focusCommandPalette
 }
@@ -652,9 +641,8 @@ func (t *TUI2) UpdateInfopane(tab, content string) {
 }
 
 func (t *TUI2) toggleCommandPalette() {
-	const cmdModal = "cmdpalette_modal"
-	if t.Pages.HasPage(cmdModal) {
-		t.Pages.RemovePage(cmdModal)
+	if t.Pages.HasPage(cmdListModal) {
+		t.Pages.RemovePage(cmdListModal)
 		t.App.SetFocus(t.Input)
 		t.focus = focusNormal
 	} else {
