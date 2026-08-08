@@ -14,7 +14,7 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			t.isStreaming.Store(true)
 			t.pendingTokens += e.Text
 			t.thinkingInd.Hide()
-			t.Messages.Write([]byte(e.Text))
+			t.Messages.Write([]byte(escapeBrackets(e.Text)))
 		})
 	case *agent.ThinkingEvent:
 		t.App.QueueUpdateDraw(func() {
