@@ -5,10 +5,13 @@ func (t *TUI2) AddUserMessage(text string) {
 	t.appendMessage(t.Theme.Tag(t.Theme.User, "You: ") + text + "\n")
 }
 
-// addAssistantResponse renders markdown once and stores the result.
-// The rendered text is reused on every refresh — no re-rendering needed.
+// addAssistantResponse stores raw markdown in the conversation log.
+// Rendering is lazy: done once on first display, cached by viewport width.
 func (t *TUI2) addAssistantResponse(md string) {
-	t.appendMessage(renderMarkdown(md))
+	t.plainMessages = append(t.plainMessages, md)
+	t.conversationLog = append(t.conversationLog, convItem{text: md, isMarkdown: true})
+	t.refreshMessages()
+	t.App.SetFocus(t.Input)
 }
 
 // appendMessage adds plain text to the conversation log and refreshes.

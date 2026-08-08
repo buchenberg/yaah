@@ -276,9 +276,12 @@ func (t *TUI2) buildUI() {
 }
 
 // convItem is a single entry in the chronological conversation log.
-// Only one of the fields is set.
+// Only one of the content fields is set.
 type convItem struct {
-	text           string           // rendered text (user messages, system notices, assistant responses)
+	text           string           // raw text (markdown for assistant, plain for others)
+	isMarkdown     bool             // true if text is markdown needing renderMarkdown()
+	cached         string           // rendered output (lazy, invalidated on width change)
+	cachedWidth    int              // width at which cached was produced
 	toolBlock      *toolblock.Block // tool call block
 	subBlock       *subagent.Block  // sub-agent block
 	reasoningBlock *reasoning.Block // reasoning block (persistent)
@@ -291,11 +294,20 @@ func (t *TUI2) refreshMessages() {
 	w := messageWidth(t.Messages)
 	ctx := colors.RenderCtx{Width: w, Theme: t.Theme}
 
-	for _, item := range t.conversationLog {
+	for i := range t.conversationLog {
+		item := &t.conversationLog[i]
 		switch {
 		case item.text != "":
 			b.WriteString("\n")
-			b.WriteString(item.text)
+			if item.isMarkdown {
+				if item.cached == "" || item.cachedWidth != w {
+					item.cached = renderMarkdown(item.text)
+					item.cachedWidth = w
+				}
+				b.WriteString(item.cached)
+			} else {
+				b.WriteString(item.text)
+			}
 			b.WriteString("\n\n")
 		case item.toolBlock != nil:
 			b.WriteString(item.toolBlock.RenderCtx(ctx))
