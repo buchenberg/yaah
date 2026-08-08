@@ -121,7 +121,7 @@ func New(version string) *TUI2 {
 	t := &TUI2{
 		App:         tview.NewApplication(),
 		Theme:       &th,
-		thinkingInd: thinking.New("Reasoning..."),
+		thinkingInd: thinking.New("Thinking..."),
 		version:     "yaah " + version,
 		showBanner:  true,
 	}
