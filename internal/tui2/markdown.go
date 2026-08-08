@@ -6,19 +6,18 @@ import (
 )
 
 // renderMarkdown converts markdown to tview color-tagged text using the
-// tviewmd native renderer (goldmark parser + tview tag backend). The
-// output is suitable for a tview.TextView with SetWrap(true).
-func renderMarkdown(md string, width int) string {
+// tviewmd native renderer (goldmark parser + tview tag backend). tview's
+// SetWrap(true) + SetWordWrap(true) on the Messages TextView handles all
+// line wrapping; tviewmd only uses Width for table column math and
+// horizontal-rule length.
+func renderMarkdown(md string) string {
 	if md == "" {
 		return ""
 	}
-	if width <= 0 {
-		width = 80
-	}
-	return tviewmd.Render(md, tviewmd.Options{Width: width})
+	return tviewmd.Render(md, tviewmd.Options{})
 }
 
-// messageWidth returns a usable width for markdown rendering from the
+// messageWidth returns a usable width for component rendering from the
 // messages pane, defaulting to 80 if the pane hasn't been laid out yet.
 func messageWidth(tv *tview.TextView) int {
 	if tv == nil {

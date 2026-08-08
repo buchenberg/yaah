@@ -300,7 +300,7 @@ func (t *TUI2) refreshMessages() {
 			b.WriteString("\n\n")
 		case item.rawMarkdown != "":
 			b.WriteString("\n")
-			b.WriteString(renderMarkdown(item.rawMarkdown, w))
+			b.WriteString(renderMarkdown(item.rawMarkdown))
 			b.WriteString("\n\n")
 		case item.toolBlock != nil:
 			b.WriteString(item.toolBlock.RenderCtx(ctx))
@@ -317,8 +317,7 @@ func (t *TUI2) refreshMessages() {
 
 	// Streaming text (accumulated tokens, not yet flushed).
 	if t.isStreaming.Load() && t.pendingTokens != "" {
-		w := messageWidth(t.Messages)
-		b.WriteString(renderMarkdown(t.pendingTokens, w))
+		b.WriteString(renderMarkdown(t.pendingTokens))
 		b.WriteString("\n")
 	}
 
@@ -561,10 +560,29 @@ func (t *TUI2) toggleCommandPalette() {
 	if t.Pages.HasPage(cmdModal) {
 		t.Pages.RemovePage(cmdModal)
 		t.App.SetFocus(t.Input)
-		t.focus = focusCommandPalette
+		t.focus = focusNormal
 	} else {
 		t.CmdPalette.SetText("")
-		t.Pages.AddPage(cmdModal, t.CmdPalette, true, true)
+		t.CmdPalette.SetBorder(true).
+			SetTitle(" Command ").
+			SetTitleColor(tcell.ColorYellow)
+		flex := tview.NewFlex().
+			AddItem(nil, 0, 1, false).
+			AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
+				AddItem(nil, 0, 1, false).
+				AddItem(t.CmdPalette, 3, 0, true).
+				AddItem(nil, 0, 1, false), 0, 3, true).
+			AddItem(nil, 0, 1, false)
+		flex.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
+			if ev.Key() == tcell.KeyEscape {
+				t.Pages.RemovePage(cmdModal)
+				t.App.SetFocus(t.Input)
+				t.focus = focusNormal
+				return nil
+			}
+			return ev
+		})
+		t.Pages.AddPage(cmdModal, flex, true, true)
 		t.App.SetFocus(t.CmdPalette)
 		t.focus = focusCommandPalette
 	}
@@ -628,16 +646,52 @@ func (t *TUI2) toggleAllSubAgents() {
 }
 
 func (t *TUI2) ShowHelp() {
-	p := tview.NewPages()
-	m := tview.NewModal().
-		SetText("Help: TUI2 keybindings").
-		AddButtons([]string{"OK"}).
-		SetDoneFunc(func(_ int, _ string) {
-			t.Pages.RemovePage("help_modal")
+	const helpModal = "help_modal"
+	var lines []string
+	lines = append(lines, "[yellow]Keyboard Shortcuts[-]\n\n")
+	for _, b := range DefaultBindings() {
+		lines = append(lines, fmt.Sprintf("  [white]%-12s[-] [dim]%s[-]", b.Label, b.HelpText))
+	}
+	lines = append(lines, "\n[yellow]Commands (Ctrl+P → :command)[-]\n")
+	lines = append(lines, "  :help          Show this help")
+	lines = append(lines, "  :clear         Clear conversation")
+	lines = append(lines, "  :compact       Compact context")
+	lines = append(lines, "  :stop          Stop running agent")
+	lines = append(lines, "  :steer <text>  Inject steering text")
+	lines = append(lines, "  :model <name>  Switch model")
+	lines = append(lines, "  :search <q>    Search messages")
+	lines = append(lines, "  :verbose       Toggle verbose mode")
+	lines = append(lines, "  :banner        Toggle banner")
+	lines = append(lines, "  :top/:bottom   Scroll to top/bottom")
+	lines = append(lines, "  :quit          Exit")
+
+	textView := tview.NewTextView().
+		SetDynamicColors(true).
+		SetText(strings.Join(lines, "\n"))
+	textView.SetBorder(true).
+		SetTitle(" Help ").
+		SetTitleColor(tcell.ColorYellow)
+
+	flex := tview.NewFlex().
+		AddItem(nil, 0, 1, false).
+		AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(nil, 0, 1, false).
+			AddItem(textView, 0, 3, false).
+			AddItem(nil, 0, 1, false), 0, 3, true).
+		AddItem(nil, 0, 1, false)
+
+	flex.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
+		if ev.Key() == tcell.KeyEscape || ev.Key() == tcell.KeyEnter {
+			t.Pages.RemovePage(helpModal)
 			t.App.SetFocus(t.Input)
-		})
-	p.AddPage("inner", m, true, true)
-	t.Pages.AddPage("help_modal", p, true, true)
+			t.focus = focusNormal
+			return nil
+		}
+		return ev
+	})
+
+	t.Pages.AddPage(helpModal, flex, true, true)
+	t.App.SetFocus(textView)
 }
 
 type focusState int
