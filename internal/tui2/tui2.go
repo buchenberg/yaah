@@ -1,10 +1,15 @@
 package tui2
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	itodo "github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tui2/colors"
@@ -99,6 +104,9 @@ type TUI2 struct {
 	verbose       bool
 	showBanner    bool
 	ephemeralMsg  string
+	tokensRx      atomic.Int64
+	charsWritten  atomic.Int64
+	charsRendered atomic.Int64
 
 	// --- Atomic fields (safe from any goroutine) ---
 	isStreaming atomic.Bool
@@ -298,6 +306,10 @@ func (t *TUI2) refreshMessages() {
 	var b strings.Builder
 	w := messageWidth(t.Messages)
 	ctx := colors.RenderCtx{Width: w, Theme: t.Theme}
+
+	_, span := otel.Tracer("yaah").Start(context.Background(), "tui2.refresh",
+		trace.WithAttributes(attribute.Int("items", len(t.conversationLog))))
+	defer span.End()
 
 	for i := range t.conversationLog {
 		item := &t.conversationLog[i]
