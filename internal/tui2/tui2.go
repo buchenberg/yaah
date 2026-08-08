@@ -6,8 +6,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/buchenberg/tviewmd"
-
 	itodo "github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tui2/colors"
 	"github.com/buchenberg/yaah/internal/tui2/components/approval"
@@ -104,6 +102,7 @@ type TUI2 struct {
 	tokensRx      atomic.Int64
 	charsWritten  atomic.Int64
 	charsRendered atomic.Int64
+	userScrolled  bool
 
 	// --- Atomic fields (safe from any goroutine) ---
 	isStreaming atomic.Bool
@@ -333,15 +332,6 @@ func (t *TUI2) refreshMessages() {
 		}
 	}
 
-	// Streaming text — RenderPartial renders complete lines, holds back
-	// the last incomplete line as raw text for tview safety.
-	if t.isStreaming.Load() && t.pendingTokens.Len() > 0 {
-		b.WriteString("\n")
-		b.WriteString(tviewmd.RenderPartial(t.pendingTokens.String(), tviewmd.Options{Width: w, Theme: mdTheme}))
-		b.WriteString("\n")
-		b.WriteString("\n")
-	}
-
 	// Spinner — inline at the bottom while thinking.
 	if t.thinkingInd.Visible() {
 		b.WriteString("\n")
@@ -352,7 +342,12 @@ func (t *TUI2) refreshMessages() {
 	msg := b.String()
 	t.charsRendered.Store(int64(len(msg)))
 	t.Messages.SetText(msg)
-	t.Messages.ScrollToEnd()
+	// Only auto-scroll if user was already at the bottom before this update.
+	if t.userScrolled {
+		t.userScrolled = false
+	} else {
+		t.Messages.ScrollToEnd()
+	}
 }
 
 // AddReasoningBlock creates a reasoning block.
@@ -500,6 +495,10 @@ func (t *TUI2) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
 			t.OnAbort()
 		}
 		return nil
+	case ActionScrollUp, ActionPageUp, ActionTop:
+		t.userScrolled = true
+	case ActionScrollDown, ActionPageDown, ActionBottom:
+		t.userScrolled = false
 	}
 	return ev
 }
@@ -678,6 +677,7 @@ func (t *TUI2) clearConversation() {
 	t.reasoningBlocks = nil
 	t.toolBlocks = nil
 	t.subagentBlocks = nil
+	t.userScrolled = false
 	t.refreshMessages()
 }
 
