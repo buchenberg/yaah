@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/buchenberg/yaah/internal/tools"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/buchenberg/yaah/internal/observability"
@@ -46,6 +48,14 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 		msg := assembleStreamed(content.String(), toolCallMap, reasoning.String())
 		observability.RecordAssistantResponse(streamSpan, msg, finishReason)
 		observability.RecordStreamEnd(streamSpan, path, finishReason, usageCaptured, len(msg.Content), len(msg.ToolCalls))
+	}
+
+	var lastHeartbeat time.Time
+	emitHeartbeat := func() {
+		if time.Since(lastHeartbeat) > 5*time.Second {
+			tools.SendHeartbeat(ctx)
+			lastHeartbeat = time.Now()
+		}
 	}
 
 	for {
@@ -94,6 +104,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 			if delta.Content != "" {
 				content.WriteString(delta.Content)
 				tokenCount++
+				emitHeartbeat()
 				if c.OnToken != nil {
 					if clean := dsmlFilter.filterToken(delta.Content); clean != "" {
 						c.OnToken(clean)
