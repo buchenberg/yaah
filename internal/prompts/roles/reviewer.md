@@ -19,6 +19,8 @@ tools:
   - ls
   - sed
   - calculate
+  - powershell
+  - bash
   - file_info
   - go_outline
   - json_query
