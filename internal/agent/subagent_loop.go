@@ -27,6 +27,7 @@ type SubAgentConfig struct {
 	ContextWindow      int
 	OtelEnabled        bool
 	OtelVerbose        bool
+	WrapUpThreshold    int
 }
 
 // NewSubAgentLoop creates a Loop optimized for sub-agent execution.
@@ -45,6 +46,9 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 	}
 	if cfg.MaxToolConcurrency <= 0 {
 		cfg.MaxToolConcurrency = 5
+	}
+	if cfg.WrapUpThreshold <= 0 {
+		cfg.WrapUpThreshold = 5
 	}
 
 	l := &Loop{
@@ -68,6 +72,7 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 			ToolsLevel:         FullTools,
 			PipelineNames:      nil,
 			PipelineDisabled:   nil,
+			WrapUpThreshold:    cfg.WrapUpThreshold,
 		},
 
 		// Sub-agents use an in-memory pruner only — no compaction pipeline.
