@@ -2,6 +2,7 @@ package tui2
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/tui2/components/statusbar"
@@ -14,6 +15,11 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			t.isStreaming.Store(true)
 			t.pendingTokens += e.Text
 			t.thinkingInd.Hide()
+			now := time.Now()
+			if now.Sub(t.lastRefresh) > 150*time.Millisecond {
+				t.lastRefresh = now
+				t.refreshMessages()
+			}
 		})
 	case *agent.ThinkingEvent:
 		t.App.QueueUpdateDraw(func() {

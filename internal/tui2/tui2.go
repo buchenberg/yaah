@@ -101,6 +101,7 @@ type TUI2 struct {
 	verbose       bool
 	showBanner    bool
 	ephemeralMsg  string
+	lastRefresh   time.Time
 
 	// Model picker state
 	availableModels []string
@@ -167,31 +168,37 @@ func (t *TUI2) startControlLoop() {
 func (t *TUI2) startSpinnerTicker() {
 	go func() {
 		for range time.Tick(200 * time.Millisecond) {
-			// Run the ticker when the thinking spinner is visible OR any
-			// sub-agent block is active.
-			anyActive := t.thinkingInd.Visible()
-			if !anyActive {
-				for _, sb := range t.subagentBlocks {
-					if sb.S() == subagent.Active {
-						anyActive = true
-						break
+			t.App.QueueUpdateDraw(func() {
+				anyActive := t.thinkingInd.Visible()
+				if !anyActive {
+					for _, sb := range t.subagentBlocks {
+						if sb.S() == subagent.Active {
+							anyActive = true
+							break
+						}
 					}
 				}
-			}
-			if !anyActive {
-				continue
-			}
-			t.App.QueueUpdateDraw(func() {
+				if !anyActive {
+					return
+				}
 				if t.thinkingInd.Visible() {
 					t.thinkingInd.Advance()
 				}
 				for _, sb := range t.subagentBlocks {
 					sb.AdvanceSpinner()
 				}
-				t.refreshMessages()
+				t.updateInfoBar()
 			})
 		}
 	}()
+}
+
+func (t *TUI2) updateInfoBar() {
+	if t.thinkingInd.Visible() {
+		t.InfoBar.SetText(t.thinkingInd.Render())
+	} else {
+		t.InfoBar.SetText("")
+	}
 }
 
 // buildUI wires the component tree and layout.
@@ -301,7 +308,7 @@ func (t *TUI2) refreshMessages() {
 			b.WriteString("\n")
 			if item.isMarkdown {
 				if item.cached == "" || item.cachedWidth != w {
-					item.cached = renderMarkdown(item.text)
+					item.cached = renderMarkdown(item.text, w)
 					item.cachedWidth = w
 				}
 				b.WriteString(item.cached)
@@ -324,14 +331,7 @@ func (t *TUI2) refreshMessages() {
 
 	// Streaming text (accumulated tokens, not yet flushed).
 	if t.isStreaming.Load() && t.pendingTokens != "" {
-		b.WriteString(renderMarkdown(t.pendingTokens))
-		b.WriteString("\n")
-	}
-
-	// Spinner — inline at the bottom while thinking.
-	if t.thinkingInd.Visible() {
-		b.WriteString("\n")
-		b.WriteString(t.thinkingInd.Render())
+		b.WriteString(renderMarkdown(t.pendingTokens, w))
 		b.WriteString("\n")
 	}
 
@@ -500,7 +500,7 @@ func (t *TUI2) ShowApproval(name, args string, onAnswer func(bool)) {
 
 // ShowModelPicker displays a model picker modal.
 func (t *TUI2) ShowModelPicker(models []string, providerNames map[string]string, onSelect func(string)) {
-	modelpicker.Show(t.App, t.Pages, models, providerNames, onSelect)
+	modelpicker.Show(t.App, t.Pages, models, providerNames, onSelect, t.Input)
 }
 
 // HandleCommand dispatches a colon command.
@@ -589,7 +589,7 @@ func (t *TUI2) toggleCommandPalette() {
 			}
 			return ev
 		})
-		t.Pages.AddPage(cmdModal, flex, true, true)
+		t.Pages.AddPage(cmdModal, flex, false, true)
 		t.App.SetFocus(t.CmdPalette)
 		t.focus = focusCommandPalette
 	}
@@ -697,7 +697,7 @@ func (t *TUI2) ShowHelp() {
 		return ev
 	})
 
-	t.Pages.AddPage(helpModal, flex, true, true)
+	t.Pages.AddPage(helpModal, flex, false, true)
 	t.App.SetFocus(textView)
 }
 

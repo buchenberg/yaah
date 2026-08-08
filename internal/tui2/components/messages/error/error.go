@@ -9,5 +9,5 @@ import (
 
 // Render formats an error message in red and dim styling.
 func Render(msg string) string {
-	return fmt.Sprintf("%s[red]✗ Error:%s %s\n", colors.Dim, colors.Reset, msg)
+	return fmt.Sprintf("[%s][red]✗ Error:%s %s\n", colors.Dim, colors.Reset, msg)
 }
