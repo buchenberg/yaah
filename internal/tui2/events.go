@@ -15,7 +15,7 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 	switch e := event.(type) {
 	case *agent.TokenDeltaEvent:
 		t.tokensRx.Add(1)
-		t.App.QueueUpdateDraw(func() {
+		t.App.QueueUpdate(func() {
 			_, span := otel.Tracer("yaah").Start(context.Background(), "tui2.token")
 			span.SetAttributes(attribute.String("text", e.Text))
 			defer span.End()
