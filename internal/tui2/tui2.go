@@ -86,7 +86,7 @@ type TUI2 struct {
 	ControlCh <-chan types.CtrlMsg
 
 	// --- Streaming state (QueueUpdateDraw only, except isStreaming which is atomic) ---
-	pendingTokens string
+	pendingTokens strings.Builder
 	pendingThink  string
 	pendingTool   string
 	compacting    bool
@@ -328,9 +328,9 @@ func (t *TUI2) refreshMessages() {
 	}
 
 	// Streaming text (accumulated tokens, not yet flushed).
-	if t.isStreaming.Load() && t.pendingTokens != "" {
+	if t.isStreaming.Load() && t.pendingTokens.Len() > 0 {
 		b.WriteString("\n")
-		b.WriteString(renderMarkdown(t.pendingTokens, w))
+		b.WriteString(renderMarkdown(t.pendingTokens.String(), w))
 		b.WriteString("\n")
 		b.WriteString("\n")
 	}

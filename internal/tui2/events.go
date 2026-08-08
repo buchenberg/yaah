@@ -12,9 +12,8 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 	case *agent.TokenDeltaEvent:
 		t.App.QueueUpdateDraw(func() {
 			t.isStreaming.Store(true)
-			t.pendingTokens += e.Text
+			t.pendingTokens.WriteString(e.Text)
 			t.thinkingInd.Hide()
-			t.Messages.Write([]byte(e.Text))
 		})
 	case *agent.ThinkingEvent:
 		t.App.QueueUpdateDraw(func() {
@@ -118,11 +117,11 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 }
 
 func (t *TUI2) flushPendingTokens() {
-	if !t.isStreaming.Load() || t.pendingTokens == "" {
+	if !t.isStreaming.Load() || t.pendingTokens.Len() == 0 {
 		return
 	}
-	t.addAssistantResponse(t.pendingTokens)
-	t.pendingTokens = ""
+	t.addAssistantResponse(t.pendingTokens.String())
+	t.pendingTokens.Reset()
 	t.isStreaming.Store(false)
 }
 
