@@ -356,10 +356,7 @@ func (t *TUI2) refreshMessages() {
 	msg := b.String()
 	t.charsRendered.Store(int64(len(msg)))
 	t.Messages.SetText(msg)
-	// Only auto-scroll if user was already at the bottom before this update.
-	if t.userScrolled {
-		t.userScrolled = false
-	} else {
+	if !t.userScrolled {
 		t.Messages.ScrollToEnd()
 	}
 }

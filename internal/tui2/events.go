@@ -57,14 +57,14 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 		})
 	case *agent.SubAgentStartEvent:
 		t.App.QueueUpdateDraw(func() {
-			t.AddSubAgentStart(e.Role, e.Role, "", e.Prompt, e.Model)
+			t.AddSubAgentStart(e.SubAgentID, e.Role, "", e.Prompt, e.Model)
 		})
 	case *agent.SubAgentEndEvent:
 		t.App.QueueUpdateDraw(func() {
 			if e.Error != "" {
-				t.AddSubAgentError(e.Role, e.Error)
+				t.AddSubAgentError(e.SubAgentID, e.Error)
 			} else {
-				t.AddSubAgentEnd(e.Role)
+				t.AddSubAgentEnd(e.SubAgentID)
 			}
 		})
 	case *agent.EscalationEvent:
