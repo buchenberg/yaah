@@ -19,7 +19,6 @@ func Build() *tview.TextView {
 		SetScrollable(true).
 		SetWrap(true).
 		SetWordWrap(true)
-	tv.SetBorder(true).SetTitle(" Conversation ")
 	return tv
 }
 

@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/todo"
-	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
@@ -67,9 +66,6 @@ func Build(items []Item) *tview.TextView {
 		SetTextAlign(tview.AlignLeft).
 		SetDynamicColors(true).
 		SetWordWrap(true)
-	tv.SetBorder(true).
-		SetBorderColor(tcell.ColorGray).
-		SetTitle(" Tasks ")
 
 	tv.SetText(FormatList(internal))
 	return tv
