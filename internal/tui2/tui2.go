@@ -226,7 +226,7 @@ func (t *TUI2) buildUI() {
 		return action, event
 	})
 	t.Input = input.Build(t.Theme)
-	t.InfoPane = infopane.Build()
+	t.InfoPane = infopane.Build(t.Theme)
 	t.StatusBar, _ = statusbar.Build()
 
 	// Command palette (vim-style ":" input, shown as a Pages overlay).

@@ -14,6 +14,7 @@ type Theme struct {
 	ToolBg      string
 	CodeBg      string
 	InputBorder string
+	PaneBorder  string
 	NoColor     bool
 
 	ToolColors map[string]string
@@ -89,6 +90,7 @@ func NewDarkTheme() Theme {
 		ToolBg:      "#1a1a2e",
 		CodeBg:      "#1e1e2e",
 		InputBorder: "#ff87af",
+		PaneBorder:  "#af5fff",
 		ToolColors:  newToolColors(),
 		RoleColors:  newRoleColors(),
 	}
@@ -104,6 +106,7 @@ func NewLightTheme() Theme {
 		ToolBg:      "#eeeeee",
 		CodeBg:      "#f0f0f0",
 		InputBorder: "#d75f87",
+		PaneBorder:  "#7f3faf",
 		ToolColors:  newToolColors(),
 		RoleColors:  newRoleColors(),
 	}
@@ -148,7 +151,7 @@ func (th *Theme) TagBold(color, text string) string {
 	if th.NoColor {
 		return text
 	}
-	return "[" + color + "::b]" + text + "[-]"
+	return "[" + color + "::b]" + text + "[-:-:-]"
 }
 
 func (th *Theme) DimTag() string {
