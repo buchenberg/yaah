@@ -1,7 +1,12 @@
 package tui2
 
 import (
+	"context"
 	"fmt"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/tui2/components/statusbar"
@@ -123,7 +128,18 @@ func (t *TUI2) flushPendingTokens() {
 	if !t.isStreaming.Load() || t.pendingTokens.Len() == 0 {
 		return
 	}
-	t.addAssistantResponse(t.pendingTokens.String())
+	raw := t.pendingTokens.String()
+
+	_, span := otel.Tracer("yaah").Start(context.Background(), "tui2.flush",
+		trace.WithAttributes(
+			attribute.Int64("tokens_rx", t.tokensRx.Load()),
+			attribute.Int64("chars_written", t.charsWritten.Load()),
+			attribute.Int64("chars_rendered", t.charsRendered.Load()),
+			attribute.Int("pending_len", len(raw)),
+		))
+	span.End()
+
+	t.addAssistantResponse(raw)
 	t.pendingTokens.Reset()
 	t.isStreaming.Store(false)
 }
