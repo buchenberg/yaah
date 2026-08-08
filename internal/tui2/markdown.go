@@ -5,9 +5,28 @@ import (
 	"github.com/rivo/tview"
 )
 
-// renderMarkdown converts markdown to tview color-tagged text using the
-// tviewmd native renderer (goldmark parser + tview tag backend). The
-// output is suitable for a tview.TextView with SetWrap(true).
+// mdTheme is the tviewmd rendering theme. Headings use bold rather than
+// underline to prevent style leakage across paragraphs in tview TextViews.
+var mdTheme = tviewmd.Theme{
+	Heading: [6]string{
+		"#00afff",
+		"#00afff",
+		"#00afff",
+		"#00afff",
+		"#00afff",
+		"#00afff",
+	},
+	Link:         "#00afff",
+	InlineCodeFG: "#5f5f5f",
+	InlineCodeBG: "",
+	CodeBlockFG:  "#5f5f5f",
+	QuoteFG:      "#5f5f5f",
+	Hr:           "#5f5f5f",
+}
+
+// renderMarkdown converts markdown to tview color-tagged text. Width
+// controls table column sizing. The output uses valid tview tags — no
+// raw brackets remain, so SetDynamicColors won't consume them as directives.
 func renderMarkdown(md string, width int) string {
 	if md == "" {
 		return ""
@@ -15,11 +34,16 @@ func renderMarkdown(md string, width int) string {
 	if width <= 0 {
 		width = 80
 	}
-	return tviewmd.Render(md, tviewmd.Options{Width: width})
+	// Reduce width slightly so horizontal rules and tables don't
+	// bleed into adjacent panes or trigger tview wrapping artifacts.
+	if width > 2 {
+		width -= 2
+	}
+	return tviewmd.Render(md, tviewmd.Options{Width: width, Theme: mdTheme})
 }
 
-// messageWidth returns a usable width for markdown rendering from the
-// messages pane, defaulting to 80 if the pane hasn't been laid out yet.
+// messageWidth returns the inner width of the messages pane, defaulting
+// to 80 if the pane hasn't been laid out yet.
 func messageWidth(tv *tview.TextView) int {
 	if tv == nil {
 		return 80

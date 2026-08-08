@@ -21,6 +21,14 @@ const (
 	CmdClear
 	CmdHelp
 	CmdCompact
+	CmdStop
+	CmdSteer
+	CmdFollowUp
+	CmdVerbose
+	CmdSearch
+	CmdTop
+	CmdBottom
+	CmdBanner
 	CmdReloadRoles
 	CmdLogin
 	CmdLogout
@@ -41,6 +49,22 @@ func Parse(input string) Cmd {
 		return CmdHelp
 	case input == "compact":
 		return CmdCompact
+	case input == "stop":
+		return CmdStop
+	case strings.HasPrefix(input, "steer "):
+		return CmdSteer
+	case strings.HasPrefix(input, "followup "):
+		return CmdFollowUp
+	case input == "verbose":
+		return CmdVerbose
+	case strings.HasPrefix(input, "search "):
+		return CmdSearch
+	case input == "top":
+		return CmdTop
+	case input == "bottom":
+		return CmdBottom
+	case input == "banner":
+		return CmdBanner
 	case input == "roles":
 		return CmdReloadRoles
 	case input == "login":
@@ -51,7 +75,7 @@ func Parse(input string) Cmd {
 		return CmdSession
 	case input == "mcp":
 		return CmdMCP
-	case strings.HasPrefix(input, "model "):
+	case strings.HasPrefix(input, "model"):
 		return CmdModel
 	default:
 		return CmdNone
@@ -79,7 +103,7 @@ func Build(onCommand func(cmd Cmd, arg string)) *Palette {
 	p.SetFieldTextColor(tcell.ColorWhite)
 	p.SetLabel("  ")
 	p.SetLabelColor(tcell.ColorYellow)
-	p.SetPlaceholder("command (q/quit, clear, help, model, session, mcp, roles, compact)")
+	p.SetPlaceholder("command (help, clear, compact, stop, steer, model, mcp, verbose, search...)")
 	p.SetPlaceholderTextColor(tcell.ColorGray)
 
 	p.SetDoneFunc(func(key tcell.Key) {
@@ -92,8 +116,15 @@ func Build(onCommand func(cmd Cmd, arg string)) *Palette {
 
 		cmd := Parse(input)
 		arg := ""
-		if cmd == CmdModel && strings.HasPrefix(input, "model ") {
+		switch {
+		case cmd == CmdModel && strings.HasPrefix(input, "model "):
 			arg = strings.TrimPrefix(input, "model ")
+		case cmd == CmdSteer && strings.HasPrefix(input, "steer "):
+			arg = strings.TrimPrefix(input, "steer ")
+		case cmd == CmdFollowUp && strings.HasPrefix(input, "followup "):
+			arg = strings.TrimPrefix(input, "followup ")
+		case cmd == CmdSearch && strings.HasPrefix(input, "search "):
+			arg = strings.TrimPrefix(input, "search ")
 		}
 		if cmd != CmdNone {
 			p.onCommand(cmd, arg)

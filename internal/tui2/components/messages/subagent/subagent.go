@@ -10,5 +10,5 @@ import (
 // Render formats a sub-agent start/end message with a robot icon
 // and role-based accent coloring.
 func Render(msg string) string {
-	return fmt.Sprintf("%s🤖 %s%s\n", colors.Dim, msg, colors.Reset)
+	return fmt.Sprintf("[%s]🤖 %s%s\n", colors.Dim, msg, colors.Reset)
 }

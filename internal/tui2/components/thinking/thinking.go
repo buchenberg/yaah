@@ -3,10 +3,8 @@
 package thinking
 
 import (
-	"fmt"
 	"sync/atomic"
 
-	"github.com/buchenberg/yaah/internal/tui2/colors"
 	"github.com/buchenberg/yaah/internal/tui2/lolcat"
 )
 
@@ -60,6 +58,6 @@ func (i *Indicator) Render() string {
 		return ""
 	}
 	spinner := i.frames[i.frame]
-	label := lolcat.Rainbow(i.label, i.seed)
-	return fmt.Sprintf(`[%s]  %s %s[-]`, colors.Dim, spinner, label)
+	full := "  " + spinner + " " + i.label
+	return lolcat.Rainbow(full, i.seed)
 }

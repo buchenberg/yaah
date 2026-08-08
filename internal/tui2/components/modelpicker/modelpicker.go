@@ -1,7 +1,3 @@
-// Package modelpicker renders an interactive model picker overlay.
-//
-// Dispatched from CtrlModelList events, it shows a filterable list of
-// available models. Selection is returned via a callback.
 package modelpicker
 
 import (
@@ -13,29 +9,33 @@ import (
 
 const modalPageName = "modelpicker_modal"
 
-// Show displays the model picker modal.
-func Show(app *tview.Application, pages *tview.Pages, models []string, providerNames map[string]string, onSelect func(model string)) {
+func Show(app *tview.Application, pages *tview.Pages, models []string, providerNames map[string]string, onSelect func(model string), focusAfter tview.Primitive) {
+	dismiss := func() {
+		pages.RemovePage(modalPageName)
+		if focusAfter != nil {
+			app.SetFocus(focusAfter)
+		}
+	}
+
 	list := tview.NewList().
 		ShowSecondaryText(true)
 
 	for _, m := range models {
 		model := m
 		provider := ""
-		// Format: "provider/model" — extract provider for display.
 		if idx := strings.Index(model, "/"); idx >= 0 {
 			provider = model[:idx]
 		}
 		if name, ok := providerNames[model]; ok {
 			provider = name
 		}
-
 		desc := provider
 		if desc == "" {
 			desc = "model"
 		}
 
 		list.AddItem(model, desc, 0, func() {
-			pages.RemovePage(modalPageName)
+			dismiss()
 			if onSelect != nil {
 				onSelect(model)
 			}
@@ -49,13 +49,12 @@ func Show(app *tview.Application, pages *tview.Pages, models []string, providerN
 	list.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
 		switch ev.Key() {
 		case tcell.KeyEscape:
-			pages.RemovePage(modalPageName)
+			dismiss()
 			return nil
 		}
 		return ev
 	})
 
-	// Filter input.
 	filter := tview.NewInputField().
 		SetFieldBackgroundColor(tcell.ColorBlack).
 		SetPlaceholder("filter models...").
@@ -87,7 +86,7 @@ func Show(app *tview.Application, pages *tview.Pages, models []string, providerN
 		for _, item := range allItems {
 			if text == "" || strings.Contains(strings.ToLower(item.model), text) || strings.Contains(strings.ToLower(item.desc), text) {
 				list.AddItem(item.model, item.desc, 0, func() {
-					pages.RemovePage(modalPageName)
+					dismiss()
 					if onSelect != nil {
 						onSelect(item.model)
 					}
@@ -106,4 +105,5 @@ func Show(app *tview.Application, pages *tview.Pages, models []string, providerN
 		SetTitleColor(tcell.ColorYellow)
 
 	pages.AddPage(modalPageName, flex, true, true)
+	app.SetFocus(list)
 }

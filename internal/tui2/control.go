@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/buchenberg/yaah/internal/tui2/components/mcpinfo"
 	"github.com/buchenberg/yaah/internal/tui2/components/question"
 	"github.com/buchenberg/yaah/internal/tui2/components/sessioninfo"
 	"github.com/buchenberg/yaah/internal/tui2/components/statusbar"
@@ -92,9 +93,24 @@ func (t *TUI2) renderInfoPane() {
 	}
 	b.WriteString("\n")
 
-	// MCP section (placeholder for now)
+	// MCP section
 	b.WriteString(t.Theme.TagBold(t.Theme.Accent, "MCP\n"))
-	b.WriteString(t.Theme.Tag(t.Theme.Dim, "  \u2500\n"))
+	b.WriteString(mcpinfo.Format(t.McpServers))
+
+	// Ephemeral messages (search results, notices)
+	rx := t.tokensRx.Load()
+	if rx > 0 {
+		b.WriteString("\n")
+		b.WriteString(t.Theme.Tag(t.Theme.Dim,
+			fmt.Sprintf("tokens: rx %d  wr %d  rn %d",
+				rx, t.charsWritten.Load(), t.charsRendered.Load())))
+	}
+
+	if t.ephemeralMsg != "" {
+		b.WriteString("\n")
+		b.WriteString(t.Theme.Tag(t.Theme.Accent, t.ephemeralMsg))
+		b.WriteString("\n")
+	}
 
 	t.InfoPane.SetText(b.String())
 }

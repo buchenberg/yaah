@@ -1,7 +1,12 @@
 package tui2
 
 import (
+	"context"
 	"fmt"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/tui2/components/statusbar"
@@ -10,9 +15,10 @@ import (
 func (t *TUI2) HandleEvent(event agent.Event) {
 	switch e := event.(type) {
 	case *agent.TokenDeltaEvent:
-		t.App.QueueUpdateDraw(func() {
+		t.tokensRx.Add(1)
+		t.App.QueueUpdate(func() {
 			t.isStreaming.Store(true)
-			t.pendingTokens += e.Text
+			t.pendingTokens.WriteString(e.Text)
 			t.thinkingInd.Hide()
 		})
 	case *agent.ThinkingEvent:
@@ -51,14 +57,14 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 		})
 	case *agent.SubAgentStartEvent:
 		t.App.QueueUpdateDraw(func() {
-			t.AddSubAgentStart(e.Role, e.Role, "", e.Prompt, e.Model)
+			t.AddSubAgentStart(e.SubAgentID, e.Role, "", e.Prompt, e.Model)
 		})
 	case *agent.SubAgentEndEvent:
 		t.App.QueueUpdateDraw(func() {
 			if e.Error != "" {
-				t.AddSubAgentError(e.Role, e.Error)
+				t.AddSubAgentError(e.SubAgentID, e.Error)
 			} else {
-				t.AddSubAgentEnd(e.Role)
+				t.AddSubAgentEnd(e.SubAgentID)
 			}
 		})
 	case *agent.EscalationEvent:
@@ -117,11 +123,22 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 }
 
 func (t *TUI2) flushPendingTokens() {
-	if !t.isStreaming.Load() || t.pendingTokens == "" {
+	if !t.isStreaming.Load() || t.pendingTokens.Len() == 0 {
 		return
 	}
-	t.addAssistantResponse(t.pendingTokens)
-	t.pendingTokens = ""
+	raw := t.pendingTokens.String()
+
+	_, span := otel.Tracer("yaah").Start(context.Background(), "tui2.flush",
+		trace.WithAttributes(
+			attribute.Int64("tokens_rx", t.tokensRx.Load()),
+			attribute.Int64("chars_written", t.charsWritten.Load()),
+			attribute.Int64("chars_rendered", t.charsRendered.Load()),
+			attribute.Int("pending_len", len(raw)),
+		))
+	span.End()
+
+	t.addAssistantResponse(raw)
+	t.pendingTokens.Reset()
 	t.isStreaming.Store(false)
 }
 

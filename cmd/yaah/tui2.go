@@ -59,7 +59,7 @@ func runTUI2() error {
 	controlCh := make(chan types.CtrlMsg, 64)
 	sess.SetCtrlCh(controlCh)
 
-	app := tui2.New()
+	app := tui2.New(version)
 
 	app.SetProvider(sess.ProviderName())
 	app.SetModel(sess.ModelName())
@@ -108,6 +108,19 @@ func runTUI2() error {
 		go sess.Compact()
 	}
 	app.OnClear = func() {}
+	app.OnSteer = func(text string) {
+		sess.Steer(text)
+	}
+	app.OnFollowUp = func(text string) {
+		sess.FollowUp(text)
+	}
+	app.OnStop = func() {
+		app.HideThinking()
+		if cancelAgent != nil {
+			cancelAgent()
+			cancelAgent = nil
+		}
+	}
 
 	app.ControlCh = controlCh
 	sess.SetView(app)

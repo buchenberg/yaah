@@ -77,18 +77,9 @@ func (l *Loop) guardContextBeforeCall(turnCtx context.Context, messages *[]types
 		observability.RecordConversation(turnSpan, *messages)
 	}
 
-	if l.Config.ContextWindow > 0 && l.State.LastPromptTokens > l.Config.ContextWindow {
-		l.compactContext(turnCtx, 0.5)
-		*messages = l.State.Messages
-		req.Messages = l.prepareRequestMessages(*messages)
-	}
-
-	if l.Config.ContextWindow > 0 && estimatePayloadBytes(req.Messages, req.Tools) > maxPayloadBytes {
-		l.compactContext(turnCtx, 0.5)
-		*messages = l.State.Messages
-		req.Messages = l.prepareRequestMessages(*messages)
-	}
-
+	// Compaction is handled by the middleware pipeline (CompactionMiddleware.
+	// PrepareStep). guardContextBeforeCall only validates that the request
+	// is not empty — it does not trigger compaction.
 	if len(req.Messages) == 0 {
 		err := fmt.Errorf("refusing to send empty message list to provider — %d messages after prepare", len(req.Messages))
 		if turnSpan != nil {
@@ -98,7 +89,6 @@ func (l *Loop) guardContextBeforeCall(turnCtx context.Context, messages *[]types
 		l.State.Messages = *messages
 		return err
 	}
-
 	return nil
 }
 

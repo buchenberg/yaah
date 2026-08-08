@@ -39,5 +39,6 @@ func Show(app *tview.Application, pages *tview.Pages, name, args string, onAnswe
 		SetTitleColor(tcell.ColorYellow).
 		SetBackgroundColor(tcell.ColorDefault)
 
-	pages.AddPage(modalPageName, modal, true, true)
+	pages.AddPage(modalPageName, modal, false, true)
+	app.SetFocus(modal)
 }
