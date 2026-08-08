@@ -99,7 +99,6 @@ type TUI2 struct {
 	verbose       bool
 	showBanner    bool
 	ephemeralMsg  string
-	lastRefresh   time.Time
 
 	// --- Atomic fields (safe from any goroutine) ---
 	isStreaming atomic.Bool
@@ -171,7 +170,7 @@ func (t *TUI2) startSpinnerTicker() {
 	go func() {
 		for range time.Tick(200 * time.Millisecond) {
 			t.App.QueueUpdateDraw(func() {
-				anyActive := t.thinkingInd.Visible()
+				anyActive := t.thinkingInd.Visible() || t.isStreaming.Load()
 				if !anyActive {
 					for _, sb := range t.subagentBlocks {
 						if sb.S() == subagent.Active {
@@ -189,18 +188,10 @@ func (t *TUI2) startSpinnerTicker() {
 				for _, sb := range t.subagentBlocks {
 					sb.AdvanceSpinner()
 				}
-				t.updateInfoBar()
+				t.refreshMessages()
 			})
 		}
 	}()
-}
-
-func (t *TUI2) updateInfoBar() {
-	if t.thinkingInd.Visible() {
-		t.InfoBar.SetText(t.thinkingInd.Render())
-	} else {
-		t.InfoBar.SetText("")
-	}
 }
 
 // buildUI wires the component tree and layout.
@@ -288,9 +279,7 @@ func (t *TUI2) buildUI() {
 // Only one of the content fields is set.
 type convItem struct {
 	text           string           // raw text (markdown for assistant, plain for others)
-	isMarkdown     bool             // true if text is markdown needing renderMarkdown()
-	cached         string           // rendered output (lazy, invalidated on width change)
-	cachedWidth    int              // width at which cached was produced
+	isMarkdown     bool             // true if text is markdown (currently unused; raw text displayed)
 	toolBlock      *toolblock.Block // tool call block
 	subBlock       *subagent.Block  // sub-agent block
 	reasoningBlock *reasoning.Block // reasoning block (persistent)
@@ -309,11 +298,7 @@ func (t *TUI2) refreshMessages() {
 		case item.text != "":
 			b.WriteString("\n")
 			if item.isMarkdown {
-				if item.cached == "" || item.cachedWidth != w {
-					item.cached = renderMarkdown(item.text, w)
-					item.cachedWidth = w
-				}
-				b.WriteString(item.cached)
+				b.WriteString(item.text)
 			} else {
 				b.WriteString(item.text)
 			}
@@ -333,7 +318,14 @@ func (t *TUI2) refreshMessages() {
 
 	// Streaming text (accumulated tokens, not yet flushed).
 	if t.isStreaming.Load() && t.pendingTokens != "" {
-		b.WriteString(renderMarkdown(t.pendingTokens, w))
+		b.WriteString(t.pendingTokens)
+		b.WriteString("\n")
+	}
+
+	// Spinner — inline at the bottom while thinking.
+	if t.thinkingInd.Visible() {
+		b.WriteString("\n")
+		b.WriteString(t.thinkingInd.Render())
 		b.WriteString("\n")
 	}
 
