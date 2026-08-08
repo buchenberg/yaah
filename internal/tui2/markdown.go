@@ -1,9 +1,25 @@
 package tui2
 
-import "github.com/rivo/tview"
+import (
+	"github.com/buchenberg/tviewmd"
+	"github.com/rivo/tview"
+)
 
-// messageWidth returns a usable width for component rendering from the
-// messages pane, defaulting to 80 if the pane hasn't been laid out yet.
+// renderMarkdown converts markdown to tview color-tagged text. Width
+// controls table column sizing. The output uses valid tview tags — no
+// raw brackets remain, so SetDynamicColors won't consume them as directives.
+func renderMarkdown(md string, width int) string {
+	if md == "" {
+		return ""
+	}
+	if width <= 0 {
+		width = 80
+	}
+	return tviewmd.Render(md, tviewmd.Options{Width: width})
+}
+
+// messageWidth returns the inner width of the messages pane, defaulting
+// to 80 if the pane hasn't been laid out yet.
 func messageWidth(tv *tview.TextView) int {
 	if tv == nil {
 		return 80

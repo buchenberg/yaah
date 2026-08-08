@@ -284,7 +284,9 @@ func (t *TUI2) buildUI() {
 // Only one of the content fields is set.
 type convItem struct {
 	text           string           // raw text (markdown for assistant, plain for others)
-	isMarkdown     bool             // true if text is markdown (currently unused; raw text displayed)
+	isMarkdown     bool             // true if text is markdown needing renderMarkdown()
+	cached         string           // rendered output (lazy, invalidated on width change)
+	cachedWidth    int              // width at which cached was produced
 	toolBlock      *toolblock.Block // tool call block
 	subBlock       *subagent.Block  // sub-agent block
 	reasoningBlock *reasoning.Block // reasoning block (persistent)
@@ -303,7 +305,11 @@ func (t *TUI2) refreshMessages() {
 		case item.text != "":
 			b.WriteString("\n")
 			if item.isMarkdown {
-				b.WriteString(item.text)
+				if item.cached == "" || item.cachedWidth != w {
+					item.cached = renderMarkdown(item.text, w)
+					item.cachedWidth = w
+				}
+				b.WriteString(item.cached)
 			} else {
 				b.WriteString(item.text)
 			}
@@ -324,7 +330,7 @@ func (t *TUI2) refreshMessages() {
 	// Streaming text (accumulated tokens, not yet flushed).
 	if t.isStreaming.Load() && t.pendingTokens != "" {
 		b.WriteString("\n")
-		b.WriteString(t.pendingTokens)
+		b.WriteString(renderMarkdown(t.pendingTokens, w))
 		b.WriteString("\n")
 		b.WriteString("\n")
 	}
