@@ -547,6 +547,69 @@ func (t *TUI2) HandleCommand(cmd command.Cmd, arg string) {
 	}
 }
 
+func (t *TUI2) showCommandList() {
+	const modalName = "cmdlist_modal"
+
+	entries := []struct {
+		label string
+		desc  string
+		cmd   command.Cmd
+	}{
+		{"help", "Show keybindings and commands", command.CmdHelp},
+		{"clear", "Clear conversation", command.CmdClear},
+		{"compact", "Compact context window", command.CmdCompact},
+		{"stop", "Abort running agent", command.CmdStop},
+		{"steer", "Inject steering text (requires arg)", command.CmdSteer},
+		{"model", "Switch model", command.CmdModel},
+		{"search", "Search messages (requires arg)", command.CmdSearch},
+		{"verbose", "Toggle verbose mode", command.CmdVerbose},
+		{"banner", "Toggle banner", command.CmdBanner},
+		{"top", "Scroll to top", command.CmdTop},
+		{"bottom", "Scroll to bottom", command.CmdBottom},
+		{"quit", "Exit yaah", command.CmdQuit},
+	}
+
+	list := tview.NewList().
+		ShowSecondaryText(true).
+		SetHighlightFullLine(true).
+		SetWrapAround(false)
+
+	for _, e := range entries {
+		list.AddItem(e.label, e.desc, 0, func() {
+			t.Pages.RemovePage(modalName)
+			t.App.SetFocus(t.Input)
+			t.focus = focusNormal
+			t.HandleCommand(e.cmd, "")
+		})
+	}
+
+	list.SetBorder(true).
+		SetTitle(" Commands ").
+		SetTitleColor(tcell.ColorYellow)
+
+	list.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
+		if ev.Key() == tcell.KeyEscape {
+			t.Pages.RemovePage(modalName)
+			t.App.SetFocus(t.Input)
+			t.focus = focusNormal
+			return nil
+		}
+		return ev
+	})
+
+	flex := tview.NewFlex().
+		AddItem(nil, 0, 1, false).
+		AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(nil, 0, 1, false).
+			AddItem(list, 0, 3, false).
+			AddItem(nil, 0, 1, false), 0, 3, true).
+		AddItem(nil, 0, 1, false)
+
+	t.Pages.AddPage(modalName, flex, true, true)
+	t.App.SetFocus(list)
+	t.focus = focusCommandPalette
+}
+
 // UpdateTodos updates the TODO list in the right panel.
 func (t *TUI2) UpdateTodos(items []itodo.Item) {
 	t.TodoPane.SetText(todo.FormatList(items))
@@ -565,29 +628,7 @@ func (t *TUI2) toggleCommandPalette() {
 		t.App.SetFocus(t.Input)
 		t.focus = focusNormal
 	} else {
-		t.CmdPalette.SetText("")
-		t.CmdPalette.SetBorder(true).
-			SetTitle(" Command ").
-			SetTitleColor(tcell.ColorYellow)
-		flex := tview.NewFlex().
-			AddItem(nil, 0, 1, false).
-			AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
-				AddItem(nil, 0, 1, false).
-				AddItem(t.CmdPalette, 3, 0, true).
-				AddItem(nil, 0, 1, false), 0, 3, true).
-			AddItem(nil, 0, 1, false)
-		flex.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
-			if ev.Key() == tcell.KeyEscape {
-				t.Pages.RemovePage(cmdModal)
-				t.App.SetFocus(t.Input)
-				t.focus = focusNormal
-				return nil
-			}
-			return ev
-		})
-		t.Pages.AddPage(cmdModal, flex, true, true)
-		t.App.SetFocus(t.CmdPalette)
-		t.focus = focusCommandPalette
+		t.showCommandList()
 	}
 }
 
