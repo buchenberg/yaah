@@ -59,6 +59,11 @@ keep searching for completeness after the question is resolved.
   using an appropriate tag. Skip ephemeral details.
 - **Optional overrides:** `timeout_seconds` (10-600), `max_iterations` (1-50).
   On timeout/cancellation: `{"error":"timed out","partial":"..."}`.
+- **Scope review tasks to fit.** Reviewers have limited iteration budgets
+  (typically 25-50). If a task requires reviewing many files, split it into
+  smaller focused reviews: "Review theme.go and colors/ sub-package" rather
+  than "Review all of tui2." A reviewer that hits its iteration cap provides
+  incomplete results — subdivide the work to avoid this.
 
 ### Trusting sub-agent output
 
