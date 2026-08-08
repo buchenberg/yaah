@@ -30,50 +30,50 @@ import (
 )
 
 // TUI2 is the tview-based terminal UI prototype.
+//
+// Concurrency: fields are grouped into three categories:
+//   - Set before Run() — safe to read from any goroutine after setup
+//   - QueueUpdateDraw only — MUST only be accessed inside QueueUpdateDraw/QueueUpdate callbacks
+//   - Atomic / immutable — safe to access from any goroutine
 type TUI2 struct {
+	// --- tview infrastructure (set before Run, reads ok from any goroutine) ---
 	App   *tview.Application
-	Pages *tview.Pages // root for modal overlays
-	Root  *tview.Flex  // main content flex (a page within Pages)
+	Pages *tview.Pages
+	Root  *tview.Flex
 
-	// Theme controls all visual styling.
+	// --- Immutable after New() ---
 	Theme *colors.Theme
 
-	// Header sub-components
-	Banner *tview.TextView
-
-	// Body components
-	InfoBar  *tview.TextView
-	Messages *tview.TextView
-	Input    *tview.TextArea
-	InfoPane *tview.TextView // right-side info panel
-	TodoPane *tview.TextView // right-side todo list
-
-	// Footer
+	// --- tview widgets (set before Run; must use QueueUpdateDraw for SetText etc.) ---
+	Banner    *tview.TextView
+	InfoBar   *tview.TextView
+	Messages  *tview.TextView
+	Input     *tview.TextArea
+	InfoPane  *tview.TextView
+	TodoPane  *tview.TextView
 	StatusBar *tview.TextView
+	Header    *tview.Grid
 
-	// Layout containers
-	Header *tview.Grid
-
-	// State
+	// --- State (read-only after init, rare updates via QueueUpdateDraw) ---
 	McpServers []mcpinfo.Server
 
-	// Conversation log — a single ordered list of renderable items so
-	// tool calls, sub-agent blocks, and text render chronologically
-	// (interleaved) instead of grouped by type.
-	conversationLog []convItem
+	// ═══════════════════════════════════════════════════════════
+	// QueueUpdateDraw ONLY — all reads and writes to fields below
+	// this line must happen inside QueueUpdateDraw or QueueUpdate.
+	// Exception: callbacks below are set before Run() and read-only
+	// thereafter, so calling them from any goroutine is safe.
+	// ═══════════════════════════════════════════════════════════
 
-	// Message blocks (used for toggle/collapse operations)
+	// --- Conversation state (QueueUpdateDraw only) ---
+	conversationLog []convItem
+	plainMessages   []string
 	reasoningBlocks []*reasoning.Block
 	toolBlocks      []*toolblock.Block
 	subagentBlocks  []*subagent.Block
 	thinkingInd     *thinking.Indicator
+	focus           focusState
 
-	// Plain text messages (non-block content)
-	plainMessages []string
-
-	focus focusState
-
-	// --- Agent callbacks (set by cmd/yaah before Run) ---
+	// --- Agent callbacks (set before Run(); calling is safe from any goroutine) ---
 	OnSubmit   func(prompt string)
 	OnAbort    func()
 	OnCompact  func()
@@ -82,20 +82,18 @@ type TUI2 struct {
 	OnFollowUp func(text string)
 	OnStop     func()
 
-	// --- Control channel (fed by agent frame) ---
+	// --- Control channel (receive-only; goroutine-safe) ---
 	ControlCh <-chan types.CtrlMsg
 
-	// --- Streaming / agent state ---
+	// --- Streaming state (QueueUpdateDraw only, except isStreaming which is atomic) ---
 	pendingTokens string
 	pendingThink  string
 	pendingTool   string
-	isStreaming   atomic.Bool
 	compacting    bool
 	contextTokens int
 	contextWindow int
 	lastProvider  string
 	lastModel     string
-	version       string
 	thinkingLabel string
 	todoItems     []itodo.Item
 	verbose       bool
@@ -103,14 +101,18 @@ type TUI2 struct {
 	ephemeralMsg  string
 	lastRefresh   time.Time
 
-	// Model picker state
+	// --- Atomic fields (safe from any goroutine) ---
+	isStreaming atomic.Bool
+
+	// --- Model picker state (QueueUpdateDraw only) ---
 	availableModels []string
 	providerNames   map[string]string
 
-	// CmdPalette is the vim-style ":" command input.
-	CmdPalette *command.Palette
+	// --- Version (set before Run(), immutable) ---
+	version string
 
-	// OnModelSelect is called when a model is chosen from the picker.
+	// --- Palettes & callbacks (set before Run()) ---
+	CmdPalette    *command.Palette
 	OnModelSelect func(model string)
 }
 
