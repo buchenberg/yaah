@@ -104,6 +104,6 @@ func Show(app *tview.Application, pages *tview.Pages, models []string, providerN
 		SetTitle(" Model Picker ").
 		SetTitleColor(tcell.ColorYellow)
 
-	pages.AddPage(modalPageName, flex, false, true)
+	pages.AddPage(modalPageName, flex, true, true)
 	app.SetFocus(list)
 }

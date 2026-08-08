@@ -55,7 +55,7 @@ func Show(app *tview.Application, pages *tview.Pages, header, questionText strin
 	}
 
 	m.build()
-	pages.AddPage(modalPageName, m.flex, false, true)
+	pages.AddPage(modalPageName, m.flex, true, true)
 	app.SetFocus(m.list)
 }
 

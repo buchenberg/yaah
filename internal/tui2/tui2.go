@@ -591,7 +591,7 @@ func (t *TUI2) toggleCommandPalette() {
 			}
 			return ev
 		})
-		t.Pages.AddPage(cmdModal, flex, false, true)
+		t.Pages.AddPage(cmdModal, flex, true, true)
 		t.App.SetFocus(t.CmdPalette)
 		t.focus = focusCommandPalette
 	}
@@ -699,7 +699,7 @@ func (t *TUI2) ShowHelp() {
 		return ev
 	})
 
-	t.Pages.AddPage(helpModal, flex, false, true)
+	t.Pages.AddPage(helpModal, flex, true, true)
 	t.App.SetFocus(textView)
 }
 
