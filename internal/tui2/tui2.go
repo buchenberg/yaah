@@ -308,7 +308,12 @@ func (t *TUI2) refreshMessages() {
 	ctx := colors.RenderCtx{Width: w, Theme: t.Theme}
 
 	_, span := otel.Tracer("yaah").Start(context.Background(), "tui2.refresh",
-		trace.WithAttributes(attribute.Int("items", len(t.conversationLog))))
+		trace.WithAttributes(
+			attribute.Int("items", len(t.conversationLog)),
+			attribute.Int64("tokens_rx", t.tokensRx.Load()),
+			attribute.Int64("chars_written", t.charsWritten.Load()),
+			attribute.Int64("chars_rendered", t.charsRendered.Load()),
+		))
 	defer span.End()
 
 	for i := range t.conversationLog {
@@ -354,7 +359,9 @@ func (t *TUI2) refreshMessages() {
 		b.WriteString("\n")
 	}
 
-	t.Messages.SetText(b.String())
+	msg := b.String()
+	t.charsRendered.Store(int64(len(msg)))
+	t.Messages.SetText(msg)
 	t.Messages.ScrollToEnd()
 }
 

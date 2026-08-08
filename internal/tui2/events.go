@@ -1,11 +1,7 @@
 package tui2
 
 import (
-	"context"
 	"fmt"
-
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/tui2/components/statusbar"
@@ -16,10 +12,6 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 	case *agent.TokenDeltaEvent:
 		t.tokensRx.Add(1)
 		t.App.QueueUpdate(func() {
-			_, span := otel.Tracer("yaah").Start(context.Background(), "tui2.token")
-			span.SetAttributes(attribute.String("text", e.Text))
-			defer span.End()
-
 			t.isStreaming.Store(true)
 			t.pendingTokens.WriteString(e.Text)
 			t.thinkingInd.Hide()
