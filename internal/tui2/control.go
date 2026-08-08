@@ -97,6 +97,14 @@ func (t *TUI2) renderInfoPane() {
 	b.WriteString(t.Theme.Tag(t.Theme.Dim, "  \u2500\n"))
 
 	// Ephemeral messages (search results, notices)
+	rx := t.tokensRx.Load()
+	if rx > 0 {
+		b.WriteString("\n")
+		b.WriteString(t.Theme.Tag(t.Theme.Dim,
+			fmt.Sprintf("tokens: rx %d  wr %d  rn %d",
+				rx, t.charsWritten.Load(), t.charsRendered.Load())))
+	}
+
 	if t.ephemeralMsg != "" {
 		b.WriteString("\n")
 		b.WriteString(t.Theme.Tag(t.Theme.Accent, t.ephemeralMsg))
