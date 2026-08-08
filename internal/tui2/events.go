@@ -20,7 +20,7 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			t.isStreaming.Store(true)
 			t.pendingTokens.WriteString(e.Text)
 			t.thinkingInd.Hide()
-			n, _ := t.Messages.Write([]byte(e.Text))
+			n, _ := t.Messages.Write([]byte(escapeBrackets(e.Text)))
 			t.charsWritten.Add(int64(n))
 		})
 	case *agent.ThinkingEvent:
