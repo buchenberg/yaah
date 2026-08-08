@@ -18,7 +18,7 @@ var mdTheme = tviewmd.Theme{
 	},
 	Link:         "#00afff",
 	InlineCodeFG: "#5f5f5f",
-	InlineCodeBG: "default",
+	InlineCodeBG: "",
 	CodeBlockFG:  "#5f5f5f",
 	QuoteFG:      "#5f5f5f",
 	Hr:           "#5f5f5f",
@@ -33,6 +33,11 @@ func renderMarkdown(md string, width int) string {
 	}
 	if width <= 0 {
 		width = 80
+	}
+	// Reduce width slightly so horizontal rules and tables don't
+	// bleed into adjacent panes or trigger tview wrapping artifacts.
+	if width > 2 {
+		width -= 2
 	}
 	return tviewmd.Render(md, tviewmd.Options{Width: width, Theme: mdTheme})
 }
