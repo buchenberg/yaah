@@ -1,6 +1,7 @@
 package tui2
 
 import (
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -73,10 +74,13 @@ type TUI2 struct {
 	focus focusState
 
 	// --- Agent callbacks (set by cmd/yaah before Run) ---
-	OnSubmit  func(prompt string)
-	OnAbort   func()
-	OnCompact func()
-	OnClear   func()
+	OnSubmit   func(prompt string)
+	OnAbort    func()
+	OnCompact  func()
+	OnClear    func()
+	OnSteer    func(text string)
+	OnFollowUp func(text string)
+	OnStop     func()
 
 	// --- Control channel (fed by agent frame) ---
 	ControlCh <-chan types.CtrlMsg
@@ -94,6 +98,9 @@ type TUI2 struct {
 	version       string
 	thinkingLabel string
 	todoItems     []itodo.Item
+	verbose       bool
+	showBanner    bool
+	ephemeralMsg  string
 
 	// Model picker state
 	availableModels []string
@@ -114,6 +121,7 @@ func New() *TUI2 {
 		Theme:       &th,
 		thinkingInd: thinking.New("Reasoning..."),
 		version:     "yaah",
+		showBanner:  true,
 	}
 	t.buildUI()
 	return t
@@ -437,9 +445,6 @@ func (t *TUI2) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
 	case ActionQuit:
 		t.Stop()
 		return nil
-	case ActionHelp:
-		t.ShowHelp()
-		return nil
 	case ActionCommand:
 		t.toggleCommandPalette()
 		return nil
@@ -459,7 +464,11 @@ func (t *TUI2) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
 		if t.App.GetFocus() != t.Input {
 			return ev
 		}
-		t.submitInput()
+		if t.isStreaming.Load() {
+			t.submitFollowUp()
+		} else {
+			t.submitInput()
+		}
 		return nil
 	case ActionCancel:
 		if t.App.GetFocus() != t.Input {
@@ -498,13 +507,40 @@ func (t *TUI2) HandleCommand(cmd command.Cmd, arg string) {
 	case command.CmdHelp:
 		t.ShowHelp()
 	case command.CmdCompact:
-		t.CollapseAll()
+		if t.OnCompact != nil {
+			t.OnCompact()
+		}
+	case command.CmdStop:
+		if t.OnStop != nil {
+			t.OnStop()
+		} else if t.OnAbort != nil {
+			t.OnAbort()
+		}
+	case command.CmdSteer:
+		if t.OnSteer != nil && arg != "" {
+			t.OnSteer(arg)
+		}
+	case command.CmdFollowUp:
+		if t.OnFollowUp != nil && arg != "" {
+			t.OnFollowUp(arg)
+		}
+	case command.CmdVerbose:
+		t.verbose = !t.verbose
+		t.refreshMessages()
+	case command.CmdTop:
+		t.Messages.ScrollTo(0, 0)
+	case command.CmdBottom:
+		t.Messages.ScrollToEnd()
+	case command.CmdBanner:
+		t.toggleBanner()
 	case command.CmdModel:
 		t.ShowModelPicker(t.availableModels, t.providerNames, func(model string) {
 			if t.OnModelSelect != nil {
 				t.OnModelSelect(model)
 			}
 		})
+	case command.CmdSearch:
+		t.searchMessages(arg)
 	default:
 	}
 }
@@ -540,6 +576,16 @@ func (t *TUI2) submitInput() {
 		if text != "" {
 			t.Input.SetText("", false)
 			t.OnSubmit(text)
+		}
+	}
+}
+
+func (t *TUI2) submitFollowUp() {
+	if t.OnFollowUp != nil {
+		text := t.Input.GetText()
+		if text != "" {
+			t.Input.SetText("", false)
+			t.OnFollowUp(text)
 		}
 	}
 }
@@ -601,3 +647,51 @@ const (
 	focusCommandPalette
 	focusModal
 )
+
+func (t *TUI2) toggleBanner() {
+	t.showBanner = !t.showBanner
+	if t.showBanner {
+		t.Root.RemoveItem(t.Header)
+		t.Root.AddItem(t.Header, t.headerHeight(), 0, false)
+	} else {
+		t.Root.RemoveItem(t.Header)
+	}
+}
+
+func (t *TUI2) headerHeight() int {
+	if !t.showBanner {
+		return 0
+	}
+	_, _, _, h := t.Banner.GetInnerRect()
+	if h <= 0 {
+		return 8
+	}
+	return h
+}
+
+func (t *TUI2) searchMessages(query string) {
+	if query == "" {
+		return
+	}
+	text := t.Messages.GetText(true)
+	idx := strings.Index(strings.ToLower(text), strings.ToLower(query))
+	if idx >= 0 {
+		line := strings.Count(text[:idx], "\n")
+		t.Messages.ScrollTo(line, 0)
+		t.SetEphemeral(fmt.Sprintf("Found at line %d", line+1))
+	} else {
+		t.SetEphemeral("No matches found")
+	}
+}
+
+func (t *TUI2) SetEphemeral(msg string) {
+	t.ephemeralMsg = msg
+	t.renderInfoPane()
+	go func() {
+		time.Sleep(3 * time.Second)
+		t.App.QueueUpdateDraw(func() {
+			t.ephemeralMsg = ""
+			t.renderInfoPane()
+		})
+	}()
+}

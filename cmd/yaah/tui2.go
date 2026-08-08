@@ -108,6 +108,19 @@ func runTUI2() error {
 		go sess.Compact()
 	}
 	app.OnClear = func() {}
+	app.OnSteer = func(text string) {
+		sess.Steer(text)
+	}
+	app.OnFollowUp = func(text string) {
+		sess.FollowUp(text)
+	}
+	app.OnStop = func() {
+		app.HideThinking()
+		if cancelAgent != nil {
+			cancelAgent()
+			cancelAgent = nil
+		}
+	}
 
 	app.ControlCh = controlCh
 	sess.SetView(app)

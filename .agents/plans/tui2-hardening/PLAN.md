@@ -14,7 +14,7 @@
 >
 > ☐ **Part C — tui2 target architecture** — not yet implemented.
 >
-> ☐ **Part D — phased execution** — Phase 0-2 complete; Phases 3-4 pending.
+> ☐ **Part D — phased execution** — Phase 0-2 complete; Phase 3 in progress; Phase 4 pending.
 
 ## Goals
 
@@ -423,17 +423,45 @@ rather than deferring them.
 
 ## Phase 3 — Feature parity port (the B-inventory)
 Port in priority order, each as its own small PR:
-1. **Steer + FollowUp** (wire `OnSteer`/`OnFollowUp` in `tui2.go`; Enter-while-running →
-   follow-up). Highest user-visible value.
-2. **Fix `:compact`** to call `sess.Compact()`.
-3. **Search mode** (`/`, n/N, scroll-to-match) over the messages TextView.
-4. **Verbose toggle** + per-block verbose collapse semantics (match tui1).
-5. **Click-to-expand** via tview regions.
-6. **Clipboard**: copy-last-response (Ctrl+Y) + `:copyview`.
-7. **`:login`/`:logout`/`:stop`/`:banner`/`:mcp`** command wiring.
-8. **Model picker** data + filter correctness.
-9. **Ephemeral messages** + **active-prompt display**.
-10. **Min terminal size guard**.
+
+### 3.1 Ctrl-only hotkeys + command palette (✅ complete 2026-08-07)
+- ✅ Stripped single-char hotkeys (`?`, `/`, `j`, `k`, `g`, `G`) from `DefaultBindings()`
+- ✅ Only Ctrl+ combinations, Esc, Enter, arrows, navigation keys, Tab remain as hotkeys
+- ✅ All other actions routed through command palette (`:help`, `:search`, `:top`, `:bottom`, `:verbose`, `:stop`, `:steer`, `:banner`)
+
+### 3.2 Steer + FollowUp (✅ complete 2026-08-07)
+- ✅ Wire `OnSteer`/`OnFollowUp` callbacks in `tui2.go`
+- ✅ Enter-while-streaming → follow-up (submitFollowUp)
+- ✅ `:steer <text>` command for mid-turn injection
+
+### 3.3 Fix `:compact` (✅ complete 2026-08-07)
+- ✅ `:compact` now calls `OnCompact` → `sess.Compact()` instead of `CollapseAll`
+
+### 3.4 Search (✅ complete 2026-08-07)
+- ✅ `:search <query>` scrolls to first match in messages TextView
+- ✅ Ephemeral result message in info pane
+
+### 3.5 Verbose toggle (✅ complete 2026-08-07)
+- ✅ `:verbose` command toggles verbose mode
+- ✅ `verbose` field on TUI2 struct
+
+### 3.6 Stop (✅ complete 2026-08-07)
+- ✅ `:stop` command calls `OnStop` → aborts running agent + hides thinking
+
+### 3.7 Banner toggle (✅ complete 2026-08-07)
+- ✅ `:banner` toggles banner visibility
+
+### 3.8 Ephemeral messages (✅ complete 2026-08-07)
+- ✅ `SetEphemeral(msg)` displays temporary messages in info pane (3s timeout)
+
+### Remaining items
+- ☐ Click-to-expand via tview regions
+- ☐ Clipboard: `:copyview` + copy-last-response
+- ☐ `:login`/`:logout`/`:mcp` command wiring (callbacks declared, not dispatched)
+- ☐ Model picker data + filter correctness
+- ☐ Min terminal size guard
+- ☐ Per-block verbose collapse semantics (match tui1)
+
 - **Exit gate:** every row in Part B reads ✅; tui2 feature-parity with tui1 confirmed by a
   manual + scripted checklist.
 
@@ -449,10 +477,8 @@ Port in priority order, each as its own small PR:
 
 # Risks & open questions
 
-- **Ctrl+T conflict**: tui1 = reasoning, tui2 = tools. Recommend adopting tui1's
-  reasoning binding and rebinding tools to something else (e.g. Ctrl+Shift+T / `:tools`).
-- **`:compact` semantic bug** (CollapseAll vs real compaction) should be fixed in Phase 3
-  item 2 regardless of the larger decision — it's a correctness issue today.
+- **Ctrl+T conflict**: ✅ **Resolved 2026-08-07** — Ctrl+T = toggle tools, Ctrl+R = toggle reasoning. No conflict.
+- **`:compact` semantic bug**: ✅ **Fixed 2026-08-07** — now calls `sess.Compact()` via `OnCompact`.
 - **Chroma weight**: chroma adds lexer binaries; if binary size matters, gate highlighting
   behind a build tag or lazy-init only the lexers seen. Measure before Phase 4.
 - **tview mouse on Windows**: verify region-click works under the Windows tcell backend
@@ -473,3 +499,4 @@ Port in priority order, each as its own small PR:
 | 2026-08-07 | — | Committed on branch `feat/tviewmd`
 | 2026-08-07 | 2 | Phase 2 plan expanded with sub-tasks (2.1–2.6); none implemented yet on main
 | 2026-08-07 | 2 | Phase 2 implemented on `feat/tui2-phase2-arch`: Theme + DetectTheme, streaming ordering, RenderCtx + Renderable, raw markdown storage, input dispatch consolidation, mechanical cleanups. Commit `3cda8a5`. Resize reflow deferred (SetAfterDrawFunc caused rendering issues); plainMessages not yet deleted. |
+| 2026-08-07 | 3 | Phase 3 started on `feat/tui2-phase3-parity`: stripped single-char hotkeys (Ctrl-only + command palette), wired OnSteer/OnFollowUp/OnStop, fixed `:compact`, added `:search`/`:verbose`/`:banner`/`:stop`/`:steer` commands, ephemeral messages, Enter-while-running → follow-up. |

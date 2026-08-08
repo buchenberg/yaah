@@ -96,6 +96,13 @@ func (t *TUI2) renderInfoPane() {
 	b.WriteString(t.Theme.TagBold(t.Theme.Accent, "MCP\n"))
 	b.WriteString(t.Theme.Tag(t.Theme.Dim, "  \u2500\n"))
 
+	// Ephemeral messages (search results, notices)
+	if t.ephemeralMsg != "" {
+		b.WriteString("\n")
+		b.WriteString(t.Theme.Tag(t.Theme.Accent, t.ephemeralMsg))
+		b.WriteString("\n")
+	}
+
 	t.InfoPane.SetText(b.String())
 }
 
