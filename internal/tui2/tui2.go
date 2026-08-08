@@ -201,6 +201,7 @@ func (t *TUI2) startSpinnerTicker() {
 				// Only refresh for spinner/subagent animation.
 				if !t.isStreaming.Load() {
 					t.refreshMessages()
+					statusbar.UpdateDiagnostic(t.StatusBar, t.tokensRx.Load(), t.charsWritten.Load(), t.charsRendered.Load())
 				}
 			})
 		}

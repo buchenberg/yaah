@@ -36,3 +36,16 @@ func Update(tv *tview.TextView, provider, model string, contextTokens, contextWi
 	}
 	tv.SetText(b.String())
 }
+
+func UpdateDiagnostic(tv *tview.TextView, tokensRx, charsWritten, charsRendered int64) {
+	if tokensRx == 0 && charsWritten == 0 && charsRendered == 0 {
+		return
+	}
+	existing := tv.GetText(true)
+	var b strings.Builder
+	b.WriteString(existing)
+	b.WriteString(fmt.Sprintf(" | %s",
+		colors.Tag(colors.Dim,
+			fmt.Sprintf("rx:%d wr:%d rn:%d", tokensRx, charsWritten, charsRendered))))
+	tv.SetText(b.String())
+}
