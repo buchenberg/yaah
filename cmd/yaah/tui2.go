@@ -59,7 +59,7 @@ func runTUI2() error {
 	controlCh := make(chan types.CtrlMsg, 64)
 	sess.SetCtrlCh(controlCh)
 
-	app := tui2.New()
+	app := tui2.New(version)
 
 	app.SetProvider(sess.ProviderName())
 	app.SetModel(sess.ModelName())

@@ -14,11 +14,13 @@ import (
 
 // Build creates the scrollable conversation view.
 func Build() *tview.TextView {
-	return tview.NewTextView().
+	tv := tview.NewTextView().
 		SetDynamicColors(true).
 		SetScrollable(true).
 		SetWrap(true).
 		SetWordWrap(true)
+	tv.SetBorder(true).SetTitle(" Conversation ")
+	return tv
 }
 
 // AppendUser appends a styled user message to the TextView and scrolls.

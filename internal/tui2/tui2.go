@@ -114,13 +114,13 @@ type TUI2 struct {
 }
 
 // New creates a new TUI2 application.
-func New() *TUI2 {
+func New(version string) *TUI2 {
 	th := colors.DetectTheme()
 	t := &TUI2{
 		App:         tview.NewApplication(),
 		Theme:       &th,
 		thinkingInd: thinking.New("Reasoning..."),
-		version:     "yaah",
+		version:     "yaah " + version,
 		showBanner:  true,
 	}
 	t.buildUI()
@@ -278,8 +278,7 @@ func (t *TUI2) buildUI() {
 // convItem is a single entry in the chronological conversation log.
 // Only one of the fields is set.
 type convItem struct {
-	text           string           // plain text (user messages, system notices)
-	rawMarkdown    string           // raw markdown (assistant responses)
+	text           string           // rendered text (user messages, system notices, assistant responses)
 	toolBlock      *toolblock.Block // tool call block
 	subBlock       *subagent.Block  // sub-agent block
 	reasoningBlock *reasoning.Block // reasoning block (persistent)
@@ -297,10 +296,6 @@ func (t *TUI2) refreshMessages() {
 		case item.text != "":
 			b.WriteString("\n")
 			b.WriteString(item.text)
-			b.WriteString("\n\n")
-		case item.rawMarkdown != "":
-			b.WriteString("\n")
-			b.WriteString(renderMarkdown(item.rawMarkdown))
 			b.WriteString("\n\n")
 		case item.toolBlock != nil:
 			b.WriteString(item.toolBlock.RenderCtx(ctx))
