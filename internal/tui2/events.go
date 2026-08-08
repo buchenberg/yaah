@@ -24,20 +24,12 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 		})
 	case *agent.FlushEvent:
 		t.App.QueueUpdateDraw(func() {
-			if t.isStreaming.Load() && t.pendingTokens != "" {
-				w := messageWidth(t.Messages)
-				t.addAssistantResponse(t.pendingTokens, w)
-				t.pendingTokens = ""
-				t.isStreaming.Store(false)
-			}
+			t.flushPendingTokens()
 		})
 	case *agent.ToolStartEvent:
 		t.App.QueueUpdateDraw(func() {
 			t.thinkingInd.Hide()
 			t.pendingTool = e.Name
-			// Skip the tool block for spawn_subagent — the SubAgentStart/End
-			// events render the sub-agent block instead, so showing both
-			// would duplicate the entry in the conversation.
 			if e.Name == "spawn_subagent" {
 				return
 			}
@@ -47,7 +39,6 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 	case *agent.ToolEndEvent:
 		t.App.QueueUpdateDraw(func() {
 			t.pendingTool = ""
-			// Skip the tool block for spawn_subagent (see ToolStartEvent).
 			if e.Name == "spawn_subagent" {
 				return
 			}
@@ -72,46 +63,45 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 		})
 	case *agent.EscalationEvent:
 		t.App.QueueUpdateDraw(func() {
-			t.plainMessages = append(t.plainMessages,
-				fmt.Sprintf("[#ff5555]\u26A0 %s[-]", e.Summary))
+			t.flushPendingTokens()
+			msg := fmt.Sprintf("[#ff5555]\u26A0 %s[-]", e.Summary)
+			t.plainMessages = append(t.plainMessages, msg)
+			t.conversationLog = append(t.conversationLog, convItem{text: msg})
 			t.refreshMessages()
 		})
 	case *agent.CompactionStartedEvent:
 		t.App.QueueUpdateDraw(func() {
+			t.flushPendingTokens()
 			t.compacting = true
-			t.plainMessages = append(t.plainMessages,
-				fmt.Sprintf("[#888888]compacting (%d→%d tokens, %s)[-]", e.BeforeTokens, e.TargetTokens, e.Reason))
+			msg := fmt.Sprintf("[#888888]compacting (%d→%d tokens, %s)[-]", e.BeforeTokens, e.TargetTokens, e.Reason)
+			t.plainMessages = append(t.plainMessages, msg)
+			t.conversationLog = append(t.conversationLog, convItem{text: msg})
 			t.refreshMessages()
 		})
 	case *agent.CompactionDoneEvent:
 		t.App.QueueUpdateDraw(func() {
+			t.flushPendingTokens()
 			t.compacting = false
 			pct := e.SavingsPct * 100
 			note := ""
 			if e.IneffectiveNote != "" {
 				note = " " + e.IneffectiveNote
 			}
-			t.plainMessages = append(t.plainMessages,
-				fmt.Sprintf("[#888888]compacted %.0f%% (%.1fK → %.1fK, %s) in %.1fs%s[-]",
-					pct, float64(e.BeforeTokens)/1000, float64(e.AfterTokens)/1000,
-					e.Method, e.ElapsedSeconds, note))
+			msg := fmt.Sprintf("[#888888]compacted %.0f%% (%.1fK → %.1fK, %s) in %.1fs%s[-]",
+				pct, float64(e.BeforeTokens)/1000, float64(e.AfterTokens)/1000,
+				e.Method, e.ElapsedSeconds, note)
+			t.plainMessages = append(t.plainMessages, msg)
+			t.conversationLog = append(t.conversationLog, convItem{text: msg})
 			t.refreshMessages()
 		})
 	case *agent.DoneEvent:
 		t.App.QueueUpdateDraw(func() {
-			if t.isStreaming.Load() && t.pendingTokens != "" {
-				w := messageWidth(t.Messages)
-				t.addAssistantResponse(t.pendingTokens, w)
-			}
-			t.isStreaming.Store(false)
-			t.pendingTokens = ""
+			t.flushPendingTokens()
 			t.pendingThink = ""
 			t.pendingTool = ""
 			t.thinkingInd.Hide()
 			t.refreshMessages()
 
-			// Update context display from DoneEvent, preferring the real
-			// provider-reported token count over the char/4 estimate.
 			if e.ContextWindow > 0 {
 				ct := e.ContextTokens
 				if e.LastPromptTokens > 0 {
@@ -124,6 +114,15 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			}
 		})
 	}
+}
+
+func (t *TUI2) flushPendingTokens() {
+	if !t.isStreaming.Load() || t.pendingTokens == "" {
+		return
+	}
+	t.addAssistantResponse(t.pendingTokens)
+	t.pendingTokens = ""
+	t.isStreaming.Store(false)
 }
 
 func (t *TUI2) HandleContextInfo(tokens, window int) {

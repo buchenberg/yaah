@@ -6,10 +6,10 @@ import (
 	"time"
 
 	itodo "github.com/buchenberg/yaah/internal/todo"
+	"github.com/buchenberg/yaah/internal/tui2/colors"
 	"github.com/buchenberg/yaah/internal/tui2/components/approval"
 	"github.com/buchenberg/yaah/internal/tui2/components/banner"
 	"github.com/buchenberg/yaah/internal/tui2/components/command"
-	"github.com/buchenberg/yaah/internal/tui2/components/help"
 	"github.com/buchenberg/yaah/internal/tui2/components/infobar"
 	"github.com/buchenberg/yaah/internal/tui2/components/infopane"
 	"github.com/buchenberg/yaah/internal/tui2/components/input"
@@ -33,6 +33,9 @@ type TUI2 struct {
 	App   *tview.Application
 	Pages *tview.Pages // root for modal overlays
 	Root  *tview.Flex  // main content flex (a page within Pages)
+
+	// Theme controls all visual styling.
+	Theme *colors.Theme
 
 	// Header sub-components
 	Banner *tview.TextView
@@ -66,6 +69,8 @@ type TUI2 struct {
 
 	// Plain text messages (non-block content)
 	plainMessages []string
+
+	focus focusState
 
 	// --- Agent callbacks (set by cmd/yaah before Run) ---
 	OnSubmit  func(prompt string)
@@ -103,8 +108,10 @@ type TUI2 struct {
 
 // New creates a new TUI2 application.
 func New() *TUI2 {
+	th := colors.DetectTheme()
 	t := &TUI2{
 		App:         tview.NewApplication(),
+		Theme:       &th,
 		thinkingInd: thinking.New("Reasoning..."),
 		version:     "yaah",
 	}
@@ -186,7 +193,7 @@ func (t *TUI2) buildUI() {
 	bannerLines, t.Banner = banner.Build()
 	t.InfoBar, _ = infobar.Build()
 	t.Messages = messages.Build()
-	t.Input = input.Build()
+	t.Input = input.Build(t.Theme)
 	t.InfoPane = infopane.Build()
 	t.StatusBar, _ = statusbar.Build()
 
@@ -263,7 +270,8 @@ func (t *TUI2) buildUI() {
 // convItem is a single entry in the chronological conversation log.
 // Only one of the fields is set.
 type convItem struct {
-	text           string           // plain text message
+	text           string           // plain text (user messages, system notices)
+	rawMarkdown    string           // raw markdown (assistant responses)
 	toolBlock      *toolblock.Block // tool call block
 	subBlock       *subagent.Block  // sub-agent block
 	reasoningBlock *reasoning.Block // reasoning block (persistent)
@@ -273,6 +281,8 @@ type convItem struct {
 // conversation items in chronological order. Call after any state change.
 func (t *TUI2) refreshMessages() {
 	var b strings.Builder
+	w := messageWidth(t.Messages)
+	ctx := colors.RenderCtx{Width: w, Theme: t.Theme}
 
 	for _, item := range t.conversationLog {
 		switch {
@@ -280,15 +290,19 @@ func (t *TUI2) refreshMessages() {
 			b.WriteString("\n")
 			b.WriteString(item.text)
 			b.WriteString("\n\n")
+		case item.rawMarkdown != "":
+			b.WriteString("\n")
+			b.WriteString(renderMarkdown(item.rawMarkdown, w))
+			b.WriteString("\n\n")
 		case item.toolBlock != nil:
-			b.WriteString(item.toolBlock.Render())
+			b.WriteString(item.toolBlock.RenderCtx(ctx))
 			b.WriteString("\n")
 		case item.subBlock != nil:
-			b.WriteString(item.subBlock.Render())
+			b.WriteString(item.subBlock.RenderCtx(ctx))
 			b.WriteString("\n")
 		case item.reasoningBlock != nil:
 			b.WriteString("\n")
-			b.WriteString(item.reasoningBlock.Render())
+			b.WriteString(item.reasoningBlock.RenderCtx(ctx))
 			b.WriteString("\n\n")
 		}
 	}
@@ -313,7 +327,7 @@ func (t *TUI2) refreshMessages() {
 
 // AddReasoningBlock creates a reasoning block.
 func (t *TUI2) AddReasoningBlock(id, content string) {
-	rb := reasoning.New(id, content, 0)
+	rb := reasoning.New(id, content, 0, t.Theme)
 	t.reasoningBlocks = append(t.reasoningBlocks, rb)
 	t.refreshMessages()
 }
@@ -424,57 +438,28 @@ func (t *TUI2) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
 		t.Stop()
 		return nil
 	case ActionHelp:
-		help.Show(t.App, t.Pages, bindingsToHelpBindings(DefaultBindings()))
+		t.ShowHelp()
 		return nil
 	case ActionCommand:
-		const cmdModal = "cmdpalette_modal"
-		if t.Pages.HasPage(cmdModal) {
-			t.Pages.RemovePage(cmdModal)
-			t.App.SetFocus(t.Input)
-		} else {
-			t.CmdPalette.SetText("")
-			t.Pages.AddPage(cmdModal, t.CmdPalette, true, true)
-			t.App.SetFocus(t.CmdPalette)
-		}
+		t.toggleCommandPalette()
 		return nil
 	case ActionClear:
-		t.plainMessages = nil
-		t.reasoningBlocks = nil
-		t.toolBlocks = nil
-		t.subagentBlocks = nil
-		t.refreshMessages()
+		t.doClear()
 		return nil
 	case ActionToggleReasoning:
-		for _, rb := range t.reasoningBlocks {
-			rb.Toggle()
-		}
-		t.refreshMessages()
+		t.toggleAllReasoning()
 		return nil
 	case ActionToggleTools:
-		for _, tb := range t.toolBlocks {
-			tb.Toggle()
-		}
-		t.refreshMessages()
+		t.toggleAllTools()
 		return nil
 	case ActionToggleSubAgents:
-		for _, sb := range t.subagentBlocks {
-			sb.Toggle()
-		}
-		t.refreshMessages()
+		t.toggleAllSubAgents()
 		return nil
 	case ActionSend:
-		// Only treat Enter as submit when the input box is focused, so Enter
-		// still confirms modal dialogs (question/approval/model pickers).
 		if t.App.GetFocus() != t.Input {
 			return ev
 		}
-		if t.OnSubmit != nil {
-			text := t.Input.GetText()
-			if strings.TrimSpace(text) != "" {
-				t.Input.SetText("", false)
-				t.OnSubmit(text)
-			}
-		}
+		t.submitInput()
 		return nil
 	case ActionCancel:
 		if t.App.GetFocus() != t.Input {
@@ -487,8 +472,6 @@ func (t *TUI2) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
 	}
 	return ev
 }
-
-// --- Modal dispatchers (called from the agent frame) ---
 
 // ShowQuestion displays a question modal and returns answers via channel.
 func (t *TUI2) ShowQuestion(header, questionText string, opts []struct{ Label, Description string }, multiple bool, onAnswer func(question.Answer)) {
@@ -511,13 +494,9 @@ func (t *TUI2) HandleCommand(cmd command.Cmd, arg string) {
 	case command.CmdQuit:
 		t.Stop()
 	case command.CmdClear:
-		t.plainMessages = nil
-		t.reasoningBlocks = nil
-		t.toolBlocks = nil
-		t.subagentBlocks = nil
-		t.refreshMessages()
+		t.doClear()
 	case command.CmdHelp:
-		help.Show(t.App, t.Pages, bindingsToHelpBindings(DefaultBindings()))
+		t.ShowHelp()
 	case command.CmdCompact:
 		t.CollapseAll()
 	case command.CmdModel:
@@ -527,7 +506,6 @@ func (t *TUI2) HandleCommand(cmd command.Cmd, arg string) {
 			}
 		})
 	default:
-		// Other commands handled by the agent frame.
 	}
 }
 
@@ -539,15 +517,87 @@ func (t *TUI2) UpdateTodos(items []itodo.Item) {
 // UpdateInfopane sets a specific infopane tab content.
 // tab is one of: "subagent", "todos", "context", "mcp".
 func (t *TUI2) UpdateInfopane(tab, content string) {
-	_ = tab // TODO: wire infopane tabs
 	t.InfoPane.SetText(content)
 }
 
-// bindingsToHelpBindings converts internal bindings to the help package's format.
-func bindingsToHelpBindings(bindings []Binding) []help.Binding {
-	var out []help.Binding
-	for _, b := range bindings {
-		out = append(out, help.Binding{Label: b.Label, HelpText: b.HelpText})
+func (t *TUI2) toggleCommandPalette() {
+	const cmdModal = "cmdpalette_modal"
+	if t.Pages.HasPage(cmdModal) {
+		t.Pages.RemovePage(cmdModal)
+		t.App.SetFocus(t.Input)
+		t.focus = focusCommandPalette
+	} else {
+		t.CmdPalette.SetText("")
+		t.Pages.AddPage(cmdModal, t.CmdPalette, true, true)
+		t.App.SetFocus(t.CmdPalette)
+		t.focus = focusCommandPalette
 	}
-	return out
 }
+
+func (t *TUI2) submitInput() {
+	if t.OnSubmit != nil {
+		text := t.Input.GetText()
+		if text != "" {
+			t.Input.SetText("", false)
+			t.OnSubmit(text)
+		}
+	}
+}
+
+func (t *TUI2) clearConversation() {
+	t.plainMessages = nil
+	t.conversationLog = nil
+	t.reasoningBlocks = nil
+	t.toolBlocks = nil
+	t.subagentBlocks = nil
+	t.refreshMessages()
+}
+
+func (t *TUI2) doClear() {
+	if t.OnClear != nil {
+		t.OnClear()
+	}
+	t.clearConversation()
+}
+
+func (t *TUI2) toggleAllReasoning() {
+	for _, rb := range t.reasoningBlocks {
+		rb.Toggle()
+	}
+	t.refreshMessages()
+}
+
+func (t *TUI2) toggleAllTools() {
+	for _, tb := range t.toolBlocks {
+		tb.Toggle()
+	}
+	t.refreshMessages()
+}
+
+func (t *TUI2) toggleAllSubAgents() {
+	for _, sb := range t.subagentBlocks {
+		sb.Toggle()
+	}
+	t.refreshMessages()
+}
+
+func (t *TUI2) ShowHelp() {
+	p := tview.NewPages()
+	m := tview.NewModal().
+		SetText("Help: TUI2 keybindings").
+		AddButtons([]string{"OK"}).
+		SetDoneFunc(func(_ int, _ string) {
+			t.Pages.RemovePage("help_modal")
+			t.App.SetFocus(t.Input)
+		})
+	p.AddPage("inner", m, true, true)
+	t.Pages.AddPage("help_modal", p, true, true)
+}
+
+type focusState int
+
+const (
+	focusNormal focusState = iota
+	focusCommandPalette
+	focusModal
+)

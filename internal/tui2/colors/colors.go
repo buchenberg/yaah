@@ -23,3 +23,10 @@ func TagBold(color, text string) string { return "[" + color + "::b]" + text + R
 // TaggedStringWidth is an alias for tview.TaggedStringWidth, used when
 // computing column widths for tag-stripped strings.
 var TaggedStringWidth = tview.TaggedStringWidth
+
+// RenderCtx carries the rendering environment to content components.
+type RenderCtx struct {
+	Width    int
+	Theme    *Theme
+	Expanded bool
+}
