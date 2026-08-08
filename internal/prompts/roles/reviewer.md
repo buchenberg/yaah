@@ -19,13 +19,9 @@ tools:
   - ls
   - sed
   - calculate
-  - powershell
-  - bash
   - file_info
   - go_outline
   - json_query
-  - webfetch
-  - http
   - git
   - diff
   - staticcheck
@@ -41,10 +37,7 @@ timeout: 480
 
 **Tool selection**: Prefer `read`, `grep`, `glob`, `ls`, and `file_info`
 for all file inspection. These tools are optimized for context efficiency
-and produce chunked/deduplicated output. Avoid `powershell` and `bash` for
-file reading — they spawn subprocesses, inflate context, and trigger
-crippling prune overhead. Reserve shell tools for commands that have no
-dedicated equivalent (e.g., running tests, staticcheck).
+and produce chunked/deduplicated output.
 
 Synthesize results concisely. Use the fewest
 tools needed. Batch independent tool calls in one turn: fire all reads,
