@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/buchenberg/tviewmd"
+
 	itodo "github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tui2/colors"
 	"github.com/buchenberg/yaah/internal/tui2/components/approval"
@@ -331,10 +333,11 @@ func (t *TUI2) refreshMessages() {
 		}
 	}
 
-	// Streaming text (accumulated tokens, not yet flushed).
+	// Streaming text — RenderPartial renders complete lines, holds back
+	// the last incomplete line as raw text for tview safety.
 	if t.isStreaming.Load() && t.pendingTokens.Len() > 0 {
 		b.WriteString("\n")
-		b.WriteString(renderMarkdown(t.pendingTokens.String(), w))
+		b.WriteString(tviewmd.RenderPartial(t.pendingTokens.String(), tviewmd.Options{Width: w, Theme: mdTheme}))
 		b.WriteString("\n")
 		b.WriteString("\n")
 	}

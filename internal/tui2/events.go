@@ -8,8 +8,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/buchenberg/tviewmd"
-
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/tui2/components/statusbar"
 )
@@ -22,7 +20,7 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			t.isStreaming.Store(true)
 			t.pendingTokens.WriteString(e.Text)
 			t.thinkingInd.Hide()
-			n, _ := t.Messages.Write([]byte(tviewmd.RenderPartial(t.pendingTokens.String(), tviewmd.Options{Width: messageWidth(t.Messages)})))
+			n, _ := t.Messages.Write([]byte(e.Text))
 			t.charsWritten.Add(int64(n))
 		})
 	case *agent.ThinkingEvent:
