@@ -574,9 +574,9 @@ func TestDB_SearchMemoryVector(t *testing.T) {
 	e1 := Entry{ID: "v1", Text: "Postgres connection pooling", Source: "agent", CreatedAt: 1}
 	e2 := Entry{ID: "v2", Text: "database setup", Source: "agent", CreatedAt: 2}
 	e3 := Entry{ID: "v3", Text: "unrelated topic about llamas", Source: "agent", CreatedAt: 3}
-	db.AddMemory(e1)
-	db.AddMemory(e2)
-	db.AddMemory(e3)
+	addMemoryAndWait(t, db, e1)
+	addMemoryAndWait(t, db, e2)
+	addMemoryAndWait(t, db, e3)
 
 	results, err := db.SearchMemoryVector(context.Background(), "sql database", 2)
 	if err != nil {
@@ -662,7 +662,7 @@ func TestDB_Migration_AddsEmbeddingColumn(t *testing.T) {
 	defer db2.Close()
 
 	db2.SetEmbedder(stubEmbedder{})
-	db2.AddMemory(Entry{ID: "m1", Text: "after migration", Source: "agent", CreatedAt: 1})
+	addMemoryAndWait(t, db2, Entry{ID: "m1", Text: "after migration", Source: "agent", CreatedAt: 1})
 
 	results, err := db2.SearchMemoryVector(context.Background(), "migration", 5)
 	if err != nil {
@@ -690,10 +690,10 @@ func TestDB_SearchMessagesVector(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	db.AddMessage(Message{SessionID: sid, Idx: 0, Role: "user", Content: "how to pool DB connections", Timestamp: 1, ID: "m1"})
-	db.AddMessage(Message{SessionID: sid, Idx: 1, Role: "assistant", Content: "use PgBouncer", Timestamp: 2, ID: "m2"})
-	db.AddMessage(Message{SessionID: sid, Idx: 2, Role: "tool", Content: "tool output", Timestamp: 3, ID: "m3"})
-	db.AddMessage(Message{SessionID: sid, Idx: 3, Role: "user", Content: "llamas are great", Timestamp: 4, ID: "m4"})
+	addMessageAndWait(t, db, Message{SessionID: sid, Idx: 0, Role: "user", Content: "how to pool DB connections", Timestamp: 1, ID: "m1"})
+	addMessageAndWait(t, db, Message{SessionID: sid, Idx: 1, Role: "assistant", Content: "use PgBouncer", Timestamp: 2, ID: "m2"})
+	addMessageAndWait(t, db, Message{SessionID: sid, Idx: 2, Role: "tool", Content: "tool output", Timestamp: 3, ID: "m3"})
+	addMessageAndWait(t, db, Message{SessionID: sid, Idx: 3, Role: "user", Content: "llamas are great", Timestamp: 4, ID: "m4"})
 
 	results, err := db.SearchMessagesVector(context.Background(), "database connection", 2)
 	if err != nil {
@@ -711,4 +711,46 @@ func TestDB_SearchMessagesVector(t *testing.T) {
 			t.Error("tool messages should not have embeddings")
 		}
 	}
+}
+
+func addMemoryAndWait(t *testing.T, db *DB, e Entry) {
+	t.Helper()
+	if err := db.AddMemory(e); err != nil {
+		t.Fatalf("AddMemory: %v", err)
+	}
+	if db.Embedder() == nil {
+		return
+	}
+	// Poll until the background embed finishes.
+	for i := 0; i < 50; i++ {
+		var emb []byte
+		db.sql.QueryRow(`SELECT COALESCE(embedding, '') FROM memory WHERE id = ?`, e.ID).Scan(&emb)
+		if len(emb) > 0 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for embedding of memory %s", e.ID)
+}
+
+func addMessageAndWait(t *testing.T, db *DB, m Message) {
+	t.Helper()
+	if err := db.AddMessage(m); err != nil {
+		t.Fatalf("AddMessage: %v", err)
+	}
+	if db.Embedder() == nil {
+		return
+	}
+	if m.Role != "user" && m.Role != "assistant" {
+		return
+	}
+	for i := 0; i < 50; i++ {
+		var emb []byte
+		db.sql.QueryRow(`SELECT COALESCE(embedding, '') FROM messages WHERE id = ?`, m.ID).Scan(&emb)
+		if len(emb) > 0 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for embedding of message %s", m.ID)
 }

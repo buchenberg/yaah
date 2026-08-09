@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -64,6 +65,7 @@ type Message struct {
 type DB struct {
 	sql      *sql.DB
 	embedder Embedder // optional; set via SetEmbedder
+	embMu    sync.Mutex
 }
 
 // SetEmbedder configures the embedding model used for semantic search.
@@ -274,25 +276,39 @@ func (d *DB) migrate() error {
 	return nil
 }
 
-// AddMemory inserts a new memory entry. When an embedder is configured,
-// the text is embedded synchronously and stored alongside the entry.
+// AddMemory inserts a new memory entry. Embedding happens in a
+// background goroutine so the caller is not blocked on the model.
 func (d *DB) AddMemory(e Entry) error {
-	if d.embedder != nil {
-		emb, err := d.embedder.Embed(context.Background(), e.Text)
-		if err == nil {
-			_, execErr := d.sql.Exec(
-				`INSERT INTO memory (id, text, tags, source, created_at, embedding) VALUES (?, ?, ?, ?, ?, ?)`,
-				e.ID, e.Text, e.Tags, e.Source, e.CreatedAt, EncodeEmbedding(emb),
-			)
-			return execErr
-		}
-		// Embedding failed — store without embedding; reconciler will retry.
-	}
 	_, err := d.sql.Exec(
 		`INSERT INTO memory (id, text, tags, source, created_at) VALUES (?, ?, ?, ?, ?)`,
 		e.ID, e.Text, e.Tags, e.Source, e.CreatedAt,
 	)
+	if err == nil {
+		d.embedMemoryAsync(e.ID, e.Text)
+	}
 	return err
+}
+
+// embedMemoryAsync embeds the text in a background goroutine and stores
+// the result. Returns a channel that closes when the embed completes, or
+// nil when no embedder is configured. Callers that need to wait for the
+// embedding (e.g. tests) can read from the channel.
+func (d *DB) embedMemoryAsync(id, text string) <-chan struct{} {
+	if d.embedder == nil {
+		return nil
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		emb, err := d.embedder.Embed(context.Background(), text)
+		if err != nil {
+			return
+		}
+		d.embMu.Lock()
+		d.sql.Exec(`UPDATE memory SET embedding = ? WHERE id = ?`, EncodeEmbedding(emb), id)
+		d.embMu.Unlock()
+	}()
+	return done
 }
 
 // AddMemoryDedup adds a memory entry, skipping if text is identical to an

@@ -4,24 +4,37 @@ import "context"
 
 // AddMessage inserts a message into a session. When an embedder is
 // configured and the role is "user" or "assistant", the content is
-// embedded synchronously and stored alongside the row.
+// embedded in a background goroutine so the caller is not blocked.
 func (d *DB) AddMessage(m Message) error {
-	if d.embedder != nil && (m.Role == "user" || m.Role == "assistant") && m.Content != "" {
-		emb, err := d.embedder.Embed(context.Background(), m.Role+": "+m.Content)
-		if err == nil {
-			_, execErr := d.sql.Exec(
-				`INSERT INTO messages (session_id, idx, role, content, reasoning_content, tool_name, tool_call_id, tool_calls, ts, id, embedding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				m.SessionID, m.Idx, m.Role, m.Content, m.ReasoningContent, m.ToolName, m.ToolCallID, m.ToolCalls, m.Timestamp, m.ID, EncodeEmbedding(emb),
-			)
-			return execErr
-		}
-		// Embedding failed — store without embedding; reconciler will retry.
-	}
 	_, err := d.sql.Exec(
 		`INSERT INTO messages (session_id, idx, role, content, reasoning_content, tool_name, tool_call_id, tool_calls, ts, id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.SessionID, m.Idx, m.Role, m.Content, m.ReasoningContent, m.ToolName, m.ToolCallID, m.ToolCalls, m.Timestamp, m.ID,
 	)
+	if err == nil {
+		d.embedMessageAsync(m.ID, m.Role, m.Content)
+	}
 	return err
+}
+
+// embedMessageAsync embeds the content in a background goroutine and
+// stores the result. Tool messages are skipped. Returns a channel that
+// closes when the embed completes, or nil when no embedder is configured.
+func (d *DB) embedMessageAsync(id, role, content string) <-chan struct{} {
+	if d.embedder == nil || role != "user" && role != "assistant" || content == "" {
+		return nil
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		emb, err := d.embedder.Embed(context.Background(), role+": "+content)
+		if err != nil {
+			return
+		}
+		d.embMu.Lock()
+		d.sql.Exec(`UPDATE messages SET embedding = ? WHERE id = ?`, EncodeEmbedding(emb), id)
+		d.embMu.Unlock()
+	}()
+	return done
 }
 
 // GetMessages returns all messages for a session.
