@@ -2,6 +2,7 @@ package tui2
 
 import (
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/buchenberg/yaah/internal/todo"
@@ -48,6 +49,12 @@ type TUI2 struct {
 	// Usage tracking
 	cumulativeUsage cumulativeUsage
 
+	// Protects pendingTokens during concurrent writes from the
+	// forwarder goroutine (HandleEvent) and reads on the main
+	// thread (flushPendingTokens).
+	tokenMu       sync.Mutex
+	pendingTokens strings.Builder
+
 	OnSubmit   func(prompt string)
 	OnAbort    func()
 	OnCompact  func()
@@ -56,9 +63,12 @@ type TUI2 struct {
 	OnFollowUp func(text string)
 	OnStop     func()
 
+	// ShowApprovalFn overrides the approval modal for testing.
+	// If nil (default), the tview-based approval.Show modal is used.
+	ShowApprovalFn func(name, args string, onAnswer func(bool))
+
 	ControlCh <-chan types.CtrlMsg
 
-	pendingTokens        strings.Builder
 	pendingThink         string
 	pendingTool          string
 	compacting           bool

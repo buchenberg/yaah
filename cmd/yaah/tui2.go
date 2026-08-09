@@ -159,6 +159,16 @@ func runTUI2() error {
 		}
 	}
 
+	sess.SetApproveFn(func(name, args string) bool {
+		ch := make(chan bool, 1)
+		controlCh <- &types.CtrlApproval{
+			Name:      name,
+			Args:      args,
+			ApproveCh: ch,
+		}
+		return <-ch
+	})
+
 	origStderr := os.Stderr
 	defer func() {
 		if r := recover(); r != nil {

@@ -407,6 +407,20 @@ func RecordToolDispatchDone(ctx context.Context, resultCount int, dispatchErr er
 	}
 }
 
+// RecordToolGoroutine records a checkpoint inside the tool execution
+// goroutine. The span is ended immediately (no defer) so it is exported
+// even if the goroutine later blocks.  Without this, a blocked goroutine
+// would leave the span dangling and invisible in traces.
+// phase is one of: "spawned", "acquire_concurrency", "publish_start", "published".
+func RecordToolGoroutine(ctx context.Context, toolName, phase string) {
+	_, span := tracer().Start(ctx, "tool.goroutine")
+	span.SetAttributes(
+		attribute.String("tool.name", toolName),
+		attribute.String("tool.phase", phase),
+	)
+	span.End()
+}
+
 // safeString replaces invalid UTF-8 byte sequences with the Unicode
 // replacement character so the result is safe for protobuf string fields
 // (which require valid UTF-8).

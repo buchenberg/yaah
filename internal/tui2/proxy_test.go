@@ -43,21 +43,17 @@ func TestHandleEvent_DoesNotBlock(t *testing.T) {
 func TestHandleEvent_TokenDeltaIncrementsCounter(t *testing.T) {
 	ui := New("test")
 
-	// TokenDeltaEvent increments tokensRx atomically before the
-	// (blocking) QueueUpdate call. Verify this happens.
 	before := ui.tokensRx.Load()
 
-	// Fire from a goroutine because the sync QueueUpdate blocks
-	// without a running app. We only care about the atomic counter.
+	// TokenDeltaEvent is async now. The goroutine spawns and the
+	// atomic counter is incremented before any QueueUpdate blocks.
 	done := make(chan struct{})
 	go func() {
 		ui.HandleEvent(&agent.TokenDeltaEvent{Text: "hello"})
 		close(done)
 	}()
 
-	// Wait for the goroutine to reach QueueUpdate (which blocks).
-	// The atomic counter is incremented before QueueUpdate.
-	time.Sleep(100 * time.Millisecond)
+	<-done
 
 	after := ui.tokensRx.Load()
 	if after <= before {
@@ -68,11 +64,9 @@ func TestHandleEvent_TokenDeltaIncrementsCounter(t *testing.T) {
 func TestHandleEvent_TokenDeltaPreservesOrder(t *testing.T) {
 	ui := New("test")
 
-	// TokenDeltaEvent uses synchronous QueueUpdate. The first call
-	// blocks (no running app), so only one token counter increment
-	// succeeds before the goroutine stalls. This is the intended
-	// behavior: tokens are processed in strict order, and the
-	// forwarder is blocked until the main thread processes each one.
+	// TokenDeltaEvent is now async (go QueueUpdate). All tokens are
+	// dispatched to goroutines before any QueueUpdate blocks. The
+	// atomic counter is incremented for each event synchronously.
 
 	done := make(chan struct{})
 	go func() {
@@ -82,11 +76,11 @@ func TestHandleEvent_TokenDeltaPreservesOrder(t *testing.T) {
 		close(done)
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	<-done
 
-	// Only the first token was processed before QueueUpdate blocked.
-	if got := ui.tokensRx.Load(); got != 1 {
-		t.Errorf("expected 1 token processed (sync QueueUpdate blocks), got %d", got)
+	// All 5 tokens were dispatched asynchronously.
+	if got := ui.tokensRx.Load(); got != 5 {
+		t.Errorf("expected 5 tokens dispatched, got %d", got)
 	}
 }
 

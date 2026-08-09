@@ -14,15 +14,12 @@ import (
 func (t *TUI2) HandleEvent(event agent.Event) {
 	switch e := event.(type) {
 	case *agent.TokenDeltaEvent:
-		// Sync: must preserve token ordering. Callback is lightweight
-		// (WriteString + two atomics) so blocking the forwarder is
-		// acceptable.
 		t.tokensRx.Add(1)
-		t.App.QueueUpdate(func() {
-			t.isStreaming.Store(true)
-			t.pendingTokens.WriteString(e.Text)
-			t.thinkingInd.Hide()
-		})
+		t.tokenMu.Lock()
+		t.pendingTokens.WriteString(e.Text)
+		t.isStreaming.Store(true)
+		t.tokenMu.Unlock()
+		t.thinkingInd.Hide()
 	case *agent.ThinkingEvent:
 		go t.App.QueueUpdateDraw(func() {
 			if !t.thinkingInd.Visible() {
@@ -130,10 +127,17 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 }
 
 func (t *TUI2) flushPendingTokens() bool {
-	if !t.isStreaming.Load() || t.pendingTokens.Len() == 0 {
+	if !t.isStreaming.Load() {
+		return false
+	}
+	t.tokenMu.Lock()
+	if t.pendingTokens.Len() == 0 {
+		t.tokenMu.Unlock()
 		return false
 	}
 	raw := t.pendingTokens.String()
+	t.pendingTokens.Reset()
+	t.tokenMu.Unlock()
 
 	_, span := otel.Tracer("yaah").Start(context.Background(), "tui2.flush",
 		trace.WithAttributes(
@@ -151,7 +155,7 @@ func (t *TUI2) flushPendingTokens() bool {
 }
 
 func (t *TUI2) HandleContextInfo(tokens, window int) {
-	t.App.QueueUpdateDraw(func() {
+	go t.App.QueueUpdateDraw(func() {
 		t.contextTokens = tokens
 		t.contextWindow = window
 		t.renderInfoPane()

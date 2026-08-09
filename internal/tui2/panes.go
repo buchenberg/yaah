@@ -26,7 +26,7 @@ func (t *TUI2) SetEphemeral(msg string) {
 	t.renderInfoPane()
 	go func() {
 		time.Sleep(3 * time.Second)
-		t.App.QueueUpdateDraw(func() {
+		go t.App.QueueUpdateDraw(func() {
 			t.ephemeralMsg = ""
 			t.renderInfoPane()
 		})

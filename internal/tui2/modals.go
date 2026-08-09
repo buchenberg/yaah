@@ -16,6 +16,10 @@ func (t *TUI2) ShowQuestion(header, questionText string, opts []struct{ Label, D
 
 // ShowApproval displays an approval modal and returns via callback.
 func (t *TUI2) ShowApproval(name, args string, onAnswer func(bool)) {
+	if t.ShowApprovalFn != nil {
+		t.ShowApprovalFn(name, args, onAnswer)
+		return
+	}
 	approval.Show(t.App, t.Pages, name, args, onAnswer)
 }
 
