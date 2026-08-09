@@ -228,6 +228,20 @@ type Config struct {
 	Editor        string                     `yaml:"editor"`
 	Observability ObservabilityConfig        `yaml:"observability"`
 	TUI           TUIConfig                  `yaml:"tui"`
+	Embedding     EmbeddingConfig            `yaml:"embedding"`
+}
+
+// EmbeddingConfig configures semantic memory search via an embedding model.
+// The provider is resolved from the providers map to obtain the base URL.
+type EmbeddingConfig struct {
+	// Provider is the provider name (key in the providers map) whose
+	// base URL hosts the embeddings endpoint. When empty, semantic
+	// search is disabled.
+	Provider string `yaml:"provider"`
+
+	// Model is the embedding model name sent to the /v1/embeddings
+	// endpoint. Required when Provider is set.
+	Model string `yaml:"model"`
 }
 
 type TUIConfig struct {

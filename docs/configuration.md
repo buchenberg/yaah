@@ -129,7 +129,12 @@ hooks:
   dir: ~/.yaah/hooks                  # JSONL event log (off by default)
 
 # ── Editor ─────────────────────────────────────────────────────
-editor: code --wait                   # overrides $EDITOR and $VISUAL
+  editor: code --wait                   # overrides $EDITOR and $VISUAL
+
+# ── Embeddings ───────────────────────────────────────────────────
+embedding:
+  provider: lmstudio                    # provider from the providers map
+  model: text-embedding-nomic-embed-text-v1.5  # embedding model name
 ```
 
 ## Provider reference
@@ -255,6 +260,24 @@ hooks:
 Events: `session.start`, `session.end`, `turn.start`, `tool.start`,
 `tool.end`, `conflict.detect` — with timestamps, model, tool results, and
 durations.
+
+## Embeddings reference
+
+Semantic memory search uses vector embeddings via any OpenAI-compatible
+`/v1/embeddings` endpoint (LM Studio, Ollama, llama.cpp, or cloud providers).
+
+| Field | Default | Description |
+|---|---|---|
+| `provider` | — | Provider name from the `providers` map. Its `base_url` is used for the embeddings endpoint. When empty, semantic search is disabled. |
+| `model` | — | Embedding model name sent to `/v1/embeddings` (e.g. `text-embedding-nomic-embed-text-v1.5` for LM Studio, `nomic-embed-text:latest` for Ollama, `local` for llama-server) |
+
+Each `memory_add` embeds synchronously so entries are searchable immediately.
+Messages are embedded asynchronously during the agent loop so persist never
+blocks. A startup reconciler backfills embeddings for any entries created
+before the embedding provider was configured.
+
+Memory search tries cosine-similarity vector search first and falls back to
+FTS5 keyword search. Results are scored and sorted.
 
 ## Editor reference
 

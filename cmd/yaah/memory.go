@@ -2,8 +2,10 @@ package yaah
 
 import (
 	"fmt"
+	"os"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/spf13/cobra"
 )
@@ -26,6 +28,21 @@ var memorySearchCmd = &cobra.Command{
 			return fmt.Errorf("open database: %w", err)
 		}
 		defer db.Close()
+		initDBEmbedder(db)
+
+		// Try vector search first, fall back to FTS5.
+		if vecResults, vErr := db.SearchMemoryVector(cmd.Context(), query, 10); vErr == nil && len(vecResults) > 0 {
+			cmd.Printf("Found %d result(s):\n\n", len(vecResults))
+			for _, r := range vecResults {
+				cmd.Printf("  %s  (score: %.2f)\n", Bold(r.Text), r.Score)
+				if r.Tags != "" && r.Tags != "null" {
+					cmd.Printf("        tags: %s\n", Dim(r.Tags))
+				}
+				cmd.Printf("        %s\n", Dim(fmt.Sprintf("source: %s | created: %s", r.Source,
+					time.Unix(r.CreatedAt, 0).Format("2006-01-02 15:04"))))
+			}
+			return nil
+		}
 
 		results, err := db.SearchMemory(query, 10)
 		if err != nil {
@@ -64,6 +81,7 @@ var memoryAddCmd = &cobra.Command{
 			return fmt.Errorf("open database: %w", err)
 		}
 		defer db.Close()
+		initDBEmbedder(db)
 
 		id := fmt.Sprintf("mem-%d", time.Now().UnixNano())
 		entry := memory.Entry{
@@ -78,9 +96,38 @@ var memoryAddCmd = &cobra.Command{
 			return fmt.Errorf("add memory: %w", err)
 		}
 
+		// Embed synchronously so the entry is immediately searchable.
+		if ch := db.EmbedMemoryAsync(entry.ID, entry.Text); ch != nil {
+			<-ch
+		}
+
 		cmd.Printf("Added memory: %s\n", text)
 		return nil
 	},
+}
+
+// attachEmbedder resolves the configured embedding provider and sets the
+// embedder on db. It reports configuration mistakes on stderr.
+func attachEmbedder(db *memory.DB, cfg *config.Config) bool {
+	if cfg.Embedding.Provider == "" || cfg.Embedding.Model == "" {
+		return false
+	}
+	p, ok := cfg.Providers[cfg.Embedding.Provider]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "warning: embedding provider %q not found in providers\n", cfg.Embedding.Provider)
+		return false
+	}
+	db.SetEmbedder(memory.NewEmbedder(p.BaseURL, cfg.Embedding.Model, p.APIKey, nil))
+	return true
+}
+
+// initDBEmbedder loads config and attaches the embedder for CLI commands.
+func initDBEmbedder(db *memory.DB) {
+	cfg, err := config.Load()
+	if err != nil {
+		return
+	}
+	attachEmbedder(db, cfg)
 }
 
 func init() {

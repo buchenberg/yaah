@@ -764,6 +764,89 @@ returns them. The agent loop continues even if the database is unavailable.
 
 ---
 
+---
+
+## Semantic memory search
+
+Files: `internal/memory/vector.go`, `internal/memory/memory.go`,
+`internal/memory/message_repo.go`, `internal/tools/memory.go`
+
+yaah optionally stores vector embeddings alongside memory entries and session
+messages, enabling semantic search via cosine similarity. The system works in
+five stages:
+
+### 1. Embedding model (`Embedder` interface)
+
+```go
+type Embedder interface {
+    Embed(ctx context.Context, text string) (Embedding, error)
+}
+```
+
+`HTTPEmbedder` implements this by calling an OpenAI-compatible
+`/v1/embeddings` endpoint — this works with LM Studio, Ollama, llama.cpp,
+and any cloud provider. The model is configured via the `embedding` config
+stanza, which references a provider's `base_url` (e.g. `lmstudio` →
+`http://127.0.0.1:1234/v1`).
+
+### 2. Storage (`embedding` BLOB column)
+
+Both the `memory` and `messages` tables carry an optional `embedding BLOB`
+column (added via a migration). Embeddings are serialized as little-endian
+float32 arrays. At startup, `ReconcileEmbeddings` backfills entries that
+were created before the embedding provider was configured.
+
+### 3. Embed-on-save
+
+- **memory**: `MemoryAddTool.Execute` calls `EmbedMemoryAsync` after
+  `AddMemory`, waits on the done channel, and returns to the caller only
+  after the embedding is stored — so new entries are immediately
+  searchable. The underlying `EmbedMemoryAsync` runs in a goroutine with
+  a serializing mutex (`embMu`) to prevent SQLITE_BUSY under concurrent
+  writes.
+
+- **messages**: `AddMessage` fires `embedMessageAsync` in a background
+  goroutine (user and assistant messages only; tool results are skipped).
+  The agent loop never blocks on embedding — the DB stays open for the
+  life of the serve process, so goroutines complete naturally.
+
+### 4. Search (`SearchMemoryVector` / `SearchMessagesVector`)
+
+1. Embed the query via `d.embedder.Embed(ctx, query)`
+2. Scan all rows with non-null `embedding`
+3. Compute `CosineSimilarity` between the query embedding and each stored
+   embedding (brute-force — sub-millisecond at yaah's scale of hundreds to
+   low thousands of entries)
+4. Sort descending by score, return top-K
+
+### 5. Tool dispatch
+
+Both `memory_search` and `memory_search_sessions` try vector search first.
+If the embedder is nil, the embedding call fails, or no vector results are
+found, they fall back to FTS5 keyword search. The CLI memory commands
+(`yaah memory add` / `yaah memory search`) load config and set the embedder
+independently (they open their own short-lived DB connections).
+
+### Cosine similarity
+
+```go
+func CosineSimilarity(a, b []float32) float32 {
+    var dot, normA, normB float32
+    for i := range a {
+        dot += a[i] * b[i]
+        normA += a[i] * a[i]
+        normB += b[i] * b[i]
+    }
+    if normA == 0 || normB == 0 {
+        return 0
+    }
+    return dot / (float32(math.Sqrt(float64(normA))) * float32(math.Sqrt(float64(normB))))
+}
+```
+
+With a 768-dimension embedding (nomic-embed-text) and hundreds of entries,
+a full scan completes in under a millisecond — no ANN index needed.
+
 ## Hook events
 
 File: `internal/agent/hookevent.go`

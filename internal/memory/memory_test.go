@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -549,5 +550,220 @@ func TestDB_GetSession_nonexistentReturnsError(t *testing.T) {
 	_, err = db.GetSession("nonexistent")
 	if err == nil {
 		t.Error("expected error for nonexistent session")
+	}
+}
+
+// stubEmbedder returns fixed embeddings for testing.
+type stubEmbedder struct{}
+
+func (s stubEmbedder) Embed(_ context.Context, text string) (Embedding, error) {
+	// Simple hash: length determines vector values.
+	return Embedding{float32(len(text)) / 100, 0.5, -float32(len(text)) / 200}, nil
+}
+
+func TestDB_SearchMemoryVector(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	db.SetEmbedder(stubEmbedder{})
+
+	e1 := Entry{ID: "v1", Text: "Postgres connection pooling", Source: "agent", CreatedAt: 1}
+	e2 := Entry{ID: "v2", Text: "database setup", Source: "agent", CreatedAt: 2}
+	e3 := Entry{ID: "v3", Text: "unrelated topic about llamas", Source: "agent", CreatedAt: 3}
+	addMemoryAndWait(t, db, e1)
+	addMemoryAndWait(t, db, e2)
+	addMemoryAndWait(t, db, e3)
+
+	results, err := db.SearchMemoryVector(context.Background(), "sql database", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected vector results")
+	}
+	if len(results) > 2 {
+		t.Fatalf("got %d results, want <= 2", len(results))
+	}
+	// "llamas" should score lowest (different text -> embedding math differs most)
+	if results[0].ID == "v3" {
+		t.Errorf("expected database-related entry first, got %q", results[0].ID)
+	}
+}
+
+func TestDB_SearchMemoryVectorNoEmbedder(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	db.AddMemory(Entry{ID: "x1", Text: "test", Source: "agent", CreatedAt: 1})
+	results, err := db.SearchMemoryVector(context.Background(), "query", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected empty when embedder is nil, got %d results", len(results))
+	}
+}
+
+func TestDB_ReconcileEmbeddings(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// Insert entries WITHOUT embedder — they'll have NULL embedding.
+	db.AddMemory(Entry{ID: "r1", Text: "reconcile me", Source: "agent", CreatedAt: 1})
+	db.AddMemory(Entry{ID: "r2", Text: "reconcile me too", Source: "agent", CreatedAt: 2})
+
+	// Now set the embedder and reconcile.
+	db.SetEmbedder(stubEmbedder{})
+	updated, err := db.ReconcileEmbeddings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated != 2 {
+		t.Fatalf("ReconcileEmbeddings updated %d, want 2", updated)
+	}
+
+	// Verify they were embedded by searching.
+	results, err := db.SearchMemoryVector(context.Background(), "test", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 vector results, got %d", len(results))
+	}
+}
+
+func TestDB_Migration_AddsEmbeddingColumn(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "test.db")
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	// Re-open — the migration should be idempotent.
+	db2, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db2.Close()
+
+	db2.SetEmbedder(stubEmbedder{})
+	addMemoryAndWait(t, db2, Entry{ID: "m1", Text: "after migration", Source: "agent", CreatedAt: 1})
+
+	results, err := db2.SearchMemoryVector(context.Background(), "migration", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result after migration, got %d", len(results))
+	}
+}
+
+func TestDB_SearchMessagesVector(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	db.SetEmbedder(stubEmbedder{})
+
+	// Create a session
+	sid := "test-session"
+	_, err = db.sql.Exec(`INSERT INTO sessions (id, started_at) VALUES (?, ?)`, sid, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addMessageAndWait(t, db, Message{SessionID: sid, Idx: 0, Role: "user", Content: "how to pool DB connections", Timestamp: 1, ID: "m1"})
+	addMessageAndWait(t, db, Message{SessionID: sid, Idx: 1, Role: "assistant", Content: "use PgBouncer", Timestamp: 2, ID: "m2"})
+	addMessageAndWait(t, db, Message{SessionID: sid, Idx: 2, Role: "tool", Content: "tool output", Timestamp: 3, ID: "m3"})
+	addMessageAndWait(t, db, Message{SessionID: sid, Idx: 3, Role: "user", Content: "llamas are great", Timestamp: 4, ID: "m4"})
+
+	results, err := db.SearchMessagesVector(context.Background(), "database connection", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected results")
+	}
+	if len(results) > 2 {
+		t.Fatalf("got %d, want <= 2", len(results))
+	}
+	// Tool messages are not embedded, so "m3" should not appear.
+	for _, r := range results {
+		if r.ID == "m3" {
+			t.Error("tool messages should not have embeddings")
+		}
+	}
+}
+
+func addMemoryAndWait(t *testing.T, db *DB, e Entry) {
+	t.Helper()
+	if err := db.AddMemory(e); err != nil {
+		t.Fatalf("AddMemory: %v", err)
+	}
+	if ch := db.EmbedMemoryAsync(e.ID, e.Text); ch != nil {
+		<-ch
+	}
+}
+
+func addMessageAndWait(t *testing.T, db *DB, m Message) {
+	t.Helper()
+	if err := db.AddMessage(m); err != nil {
+		t.Fatalf("AddMessage: %v", err)
+	}
+	if db.Embedder() == nil {
+		return
+	}
+	if m.Role != "user" && m.Role != "assistant" {
+		return
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		var emb []byte
+		db.sql.QueryRow(`SELECT COALESCE(embedding, '') FROM messages WHERE id = ?`, m.ID).Scan(&emb)
+		if len(emb) > 0 {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for embedding of message %s", m.ID)
+}
+
+func TestDB_SearchMessagesVectorNoEmbedder(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	_, err = db.sql.Exec(`INSERT INTO sessions (id, started_at) VALUES ('s1', 1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.AddMessage(Message{SessionID: "s1", Idx: 0, Role: "user", Content: "test", Timestamp: 1, ID: "x1"})
+	results, err := db.SearchMessagesVector(context.Background(), "query", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected empty when embedder is nil, got %d results", len(results))
 	}
 }

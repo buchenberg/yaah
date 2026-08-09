@@ -1,6 +1,7 @@
 package yaah
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -72,6 +73,25 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: db open failed, persistence disabled: %v\n", err)
 		db = nil
+	}
+
+	// --- Embedding server ------------------------------------------------
+	if db != nil {
+		attachEmbedder(db, cfg)
+		if db.Embedder() != nil {
+			// Backfill embeddings for any memory entries created before the
+			// embedding server was configured.
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				n, err := db.ReconcileEmbeddings(ctx)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "warning: embedding backfill: %v\n", err)
+				} else if n > 0 {
+					fmt.Fprintf(os.Stderr, "embedded %d existing memory entries\n", n)
+				}
+			}()
+		}
 	}
 
 	// --- Prompt assembly -------------------------------------------------
