@@ -19,206 +19,191 @@ concern, no monoliths.
 tui2 codebase has been reorganized with:
 - Split monolithic `tui2.go` (~700 → 140 lines) into focused files
 - Single source of truth: `conversationLog` with inline block references
-- Duplicate state eliminated: removed `plainMessages`, `toolBlocks`, `reasoningBlocks`, `subagentBlocks`
+- Duplicate state eliminated: removed `toolBlocks`, `reasoningBlocks`, `subagentBlocks` slices
 - New files: `proxy.go`, `usage.go`, `blocks.go`, `components/error/error.go`
-- 29+ new unit tests covering usage, blocks, and error components
-- All bugs fixed (prefix matching, empty tool results, goroutine leaks)
+- 50+ unit tests across `proxy_test.go`, `usage_test.go`, `blocks_test.go`, `error_test.go`, `approval_test.go`, `agent_safety_test.go`
 
-Feature completeness: ~75-80% vs tui. Cleaner layout (tview flex/grid) and plugin
-system are in place. Cumulative usage/cost tracking and error overlay are now
-implemented. Remaining gaps: some keybindings, search, multi-line input.
+**Phase 1.5 (Threading fixes) — COMPLETE ✅**
+
+Critical threading and UX issues discovered through SigNoz OTel trace analysis:
+
+- **Approval never wired**: `SetApproveFn` was only called in `web.go`. When bash
+  required approval, `approveTool()` fell through to `bufio.Scanner(os.Stdin)` —
+  but tview captures stdin for keypresses, so it blocked the agent goroutine forever.
+  Fixed by wiring `SetApproveFn` in `cmd/yaah/tui2.go` using the `CtrlApproval` →
+  control channel → `ShowApproval` modal pattern.
+
+- **tview `QueueUpdate()` blocks the forwarder**: Every `HandleEvent` call blocked
+  the forwarder goroutine in `BrokerView.forward()`. During an LLM stream at 50+
+  tokens/sec, the 100-slot tview updates channel flooded and the main thread was
+  pinned in `draw()` between callbacks. Fixed by writing TokenDeltaEvent directly
+  to `pendingTokens` from the forwarder goroutine via mutex (zero `QueueUpdate`
+  calls during streaming). All other event types use `go QueueUpdate(Draw)`.
+
+- **Goroutine dispatch invisible in traces**: When a tool goroutine blocked before
+  reaching `Registry.Execute()`, no OTel span was exported because `defer span.End()`
+  only runs when the goroutine returns. Fixed by adding `RecordToolGoroutine`
+  checkpoint spans with explicit `span.End()` (no defer).
+
+- **Diagnostic tracing**: Added `RecordTurnResponse`, `RecordToolDispatch`,
+  `RecordToolDispatchDone`, and `RecordToolGoroutine` short-lived spans for
+  crash/block diagnostics. Added `tui2.refresh` span with timing breakdown.
+
+Feature completeness: ~85% vs tui. Cleaner layout (tview flex/grid) and plugin
+system are in place. Cumulative usage/cost tracking and error overlay are
+implemented. Approval flow properly wired with modal. Streaming is non-blocking.
+Remaining gaps: some keybindings, search, multi-line input.
 
 ## Progress
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| Phase 1: Code reorganization | ✅ COMPLETE | Monolith split, duplicate state eliminated, new files created, 29+ unit tests added |
+| Phase 1: Code reorganization | ✅ COMPLETE | Monolith split, duplicate state eliminated, `events.go` → `proxy.go` |
+| Phase 1.5: Threading fixes | ✅ COMPLETE | Async dispatch, approval wiring, direct token write, goroutine diagnostics |
 | Phase 2: Usage & cost tracking | ✅ COMPLETE | Implemented in `usage.go` with model pricing table |
-| Phase 3: Error overlay | ✅ COMPLETE | Implemented in `components/error/` with auto-dismiss |
+| Phase 3: Error overlay | ✅ COMPLETE | Implemented in `components/error/` with auto-dismiss and timer management |
 | Phase 4: Keybinding completion | ⏳ TODO | 10 actions need handlers |
 | Phase 5: Component health | ⏳ TODO | Messages dual-implementation, question selection, multi-line input |
 | Phase 6: Polish | ⏳ TODO | Theme consolidation, lolcat refactor, scroll improvements |
-| Phase 7: Testing | ✅ COMPLETE | Unit tests added; integration tests still TODO |
+| Phase 7: Testing | 🔄 IN PROGRESS | Unit tests added; integration tests still TODO |
 
 ### Latest Commit
 
 ```
-4535c85 tui2: complete Phase 1 reorganization with bug fixes and unit tests
+5afa9fe fix(tui2): wire approval function, async token dispatch, goroutine diagnostics
 ```
 
-- Bug fixes: prefix matching randomness, empty tool result as failure, goroutine leak in error auto-dismiss, model drift in cost estimate
-- New files: proxy.go, usage.go, blocks.go, components/error/error.go
-- Tests: usage_test.go (6), blocks_test.go (14), error/error_test.go (14)
+- Approval wired via `SetApproveFn` → `CtrlApproval` → `ShowApproval` modal
+- TokenDeltaEvent writes directly to `pendingTokens` via mutex (zero QueueUpdate during streaming)
+- `RecordToolGoroutine` diagnostic spans with explicit `span.End()`
+- `ShowApprovalFn` override field for testability
+- Tests: 3 approval/continue, 4 approveTool integration, 6 async dispatch
 
 ## Phase 1: Code reorganization (foundation)
 
-### 1.1 Split monolithic `tui2.go` (~700 lines, 38-field `App` struct)
+### 1.1 Split monolithic `tui2.go` (~700 lines)
 
-Current file does: App struct definition, constructor, all helpers, input routing,
-mode switching, action dispatch, keybinding, banner init, resize handling, streaming
-delta handling, follow-up logic. This must be split:
-
-**Target file layout** (one file per concern):
+**Done.** Current file layout:
 
 ```
 internal/tui2/
-├── tui2.go              # App struct + constructor ONLY (no helpers)
-├── run.go               # Run(), ticker lifecycle, shutdown
-├── view.go              # View() layout assembly (pages/flex/grid)
-├── input.go             # inputCapture, globalInputCapture, mode switching, focus
-├── state.go             # conversationLog, mode, dims — all pure state
-├── proxy.go             # agent.View bridge: HandleEvent + QueueUpdateDispatch
-├── commands.go          # command palette (:foo) dispatch table
-├── events.go            # event handling (keep, clean up duplicate-state writes)
-├── control.go           # resize/tick tracking (keep existing)
-├── keymap.go            # key bindings (keep)
-├── markdown.go          # tviewmd fork (keep)
-├── theme.go             # CENTRALIZE all colors here from colors/colors.go
-├── usage.go             # cumulative token/cost tracking (NEW — see Phase 3)
-├── helpers_msg.go       # message rendering helpers (keep, refactor)
-├── helpers_tool.go      # tool result helpers (keep, refactor)
-├── helpers_subagent.go  # sub-agent helpers (keep, refactor)
-├── followup.go          # follow-up/cancel-reprompt logic (extract from tui2.go)
-├── scroll.go            # scroll-preserving render logic (extract from tui2.go)
-├── colors/              # delete; merge into theme.go
-├── lolcat/              # delete; use internal/banner package directly
-├── components/          # (keep existing, add missing)
-│   ├── messages/
-│   ├── subagent/
-│   ├── toolblock/
-│   ├── reasoning/
-│   ├── thinking/
-│   ├── todo/
-│   ├── approval/
-│   ├── question/
-│   ├── input/
-│   ├── infopane/
-│   ├── banner/
-│   ├── help/
-│   ├── error/           # NEW: error overlay modal
-│   └── spinner/
-└── plugins/             # (keep)
+├── tui2.go              # TUI2 struct + constructor
+├── run.go               # Run(), control loop, debounce timer
+├── input.go             # Input capture, global input, mode switching
+├── state.go             # Search state
+├── proxy.go             # agent.View bridge: HandleEvent + HandleContextInfo
+├── commands.go          # Command palette dispatch
+├── control.go           # Control message handling (CtrlQuestion, CtrlApproval, etc.)
+├── modals.go            # Modal wrappers (ShowQuestion, ShowApproval, ShowHelp, etc.)
+├── followup.go          # Follow-up / cancel-reprompt logic
+├── scroll.go            # Scroll-preserving render + refreshMessages
+├── thinking.go          # Thinking indicator lifecycle
+├── blocks.go            # All block management (reasoning, tool, sub-agent)
+├── usage.go             # Cumulative token/cost tracking
+├── helpers_msg.go       # Message rendering helpers
+├── markdown.go          # tviewmd fork
+├── panes.go             # Right-pane update methods
+├── banner.go            # Banner display
+├── colors/              # Theme colors (authoritative source)
+├── lolcat/              # Rainbow text rendering
+└── components/
+    ├── messages/
+    ├── subagent/
+    ├── toolblock/
+    ├── reasoning/
+    ├── thinking/
+    ├── todo/
+    ├── approval/
+    ├── question/
+    ├── input/
+    ├── infopane/
+    ├── banner/
+    ├── help/
+    ├── error/
+    ├── contextinfo/
+    ├── mcpinfo/
+    ├── sessioninfo/
+    ├── command/
+    ├── modal/
+    ├── modelpicker/
+    ├── backgroundjobs/
+    └── spinner/
 ```
 
-### 1.2 Group `App` struct fields into sub-structs
+### 1.2 Group struct fields into sub-structs
 
-```go
-type App struct {
-    // tview plumbing
-    app    *tview.Application
-    pages  *tview.Pages
-    flex   *tview.Flex
-
-    // UI components (grouped)
-    ui struct {
-        messages   *messages.Messages
-        subagent   *subagent.SubAgent
-        toolblock  *toolblock.ToolBlock
-        reasoning  *reasoning.Reasoning
-        thinking   *thinking.Thinking
-        todo       *todo.Todo
-        banner     *banner.Banner
-        infopane   *infopane.InfoPane
-        input      *input.Input
-        modal      *modal.Manager // approval, question, help, error — all modals
-    }
-
-    // UI state
-    state struct {
-        mode      Mode // Insert, Normal
-        width     int
-        height    int
-        scrolled  bool // user manually scrolled up
-    }
-
-    // Agent integration
-    agent struct {
-        presenter agent.Presenter
-        abortFunc context.CancelFunc
-        onAbort   func()
-        cancelFn  context.CancelFunc
-    }
-
-    // Conversation — single source of truth
-    conversation struct {
-        items []convItem // THE canonical list; all renderers derive from this
-    }
-
-    // Input history
-    history struct {
-        items []string
-        index int
-    }
-}
-```
+**Deferred.** Grouping `t.ui.conversation`, `t.state.mode`, etc. would require
+updating ~60+ field accesses across all files with low value relative to the risk.
 
 ### 1.3 Eliminate duplicated state
 
-- **Delete `plainMessages`.** It is never read — dead code.
-- **Ensure `conversationLog` is the SINGLE source of truth.** All render passes
-  (conversation view, tool blocks, reasoning blocks, subagent blocks) derive from it.
-  No separate `toolBlocks`/`reasoningBlocks`/`subagentBlocks` slices.
-- **Add a `conversation.RenderKey()` method** that returns a hash of the current state
-  so the view can skip re-rendering when nothing changed (replaces `lastRenderKey`).
+**Done.** Removed `toolBlocks`, `reasoningBlocks`, `subagentBlocks` slices.
+`conversationLog` is the single source of truth. All block operations now
+iterate `conversationLog` directly via inline `convItem` references.
+
+## Phase 1.5: Threading & event dispatch fixes
+
+### Async event dispatch
+
+tview's `QueueUpdate()` is fundamentally blocking — it writes to a 100-slot
+channel and blocks on a `done` channel until the main thread finishes the
+callback + `draw()`. The forwarder goroutine in `BrokerView.forward()` calls
+`HandleEvent()` synchronously. Every event type blocked the forwarder.
+
+**Fixes applied:**
+
+| Event type | Before | After | Rationale |
+|---|---|---|---|
+| TokenDeltaEvent | `QueueUpdate` (sync) | Direct write via mutex | Eliminates all QueueUpdate calls during streaming. Debounce timer handles rendering. |
+| All other events | `QueueUpdate(Draw)` (sync) | `go QueueUpdate(Draw)` | Forwarder returns immediately. tview serializes callbacks on main thread. |
+| Control loop messages | `QueueUpdateDraw` (sync) | Same (sync) | Must preserve message ordering for approval question/answer pairs. |
+| Debounce timer | `QueueUpdateDraw` (sync) | Same (sync) | Must preserve tick pacing. |
+
+### Approval function wiring
+
+`SetApproveFn` was only called in `cmd/yaah/web.go`. For tui2, it was nil,
+causing `approveTool()` to fall through to a blocking `os.Stdin` read.
+tview captures stdin for keypress handling, so `scanner.Scan()` blocked
+the agent goroutine forever. The TUI never showed an approval modal.
+
+**Fix:** Wire `SetApproveFn` in `runTUI2()` using the `CtrlApproval` →
+control channel → `ShowApproval` modal pattern, identical to the existing
+question tool wiring.
+
+### Goroutine diagnostic spans
+
+Tool goroutine checkpoints (`spawned`, `acquire_concurrency`, `publish_start`,
+`published`) use explicit `span.End()` (no defer) so spans are exported even
+when the goroutine blocks. Turn-level diagnostic spans (`turn.response`,
+`turn.dispatch_tools`, `turn.dispatch_done`) are short-lived child spans
+that survive parent crashes.
 
 ## Phase 2: Cumulative usage & cost tracking
 
-### 2.1 Add cumulative usage tracking to the info pane
+**Done.** Implemented in `usage.go`:
 
-The `DoneEvent` already carries a `.Usage` field (`types.Usage`) with
-`PromptTokens`, `CompletionTokens`, and `TotalTokens`. tui2 currently ignores it
-— only `ContextTokens` and `ContextWindow` are captured.
-
-**New file `usage.go`:**
-- Accumulate `PromptTokens`, `CompletionTokens` across all turns
-- Derive cost from token counts × model pricing table
-- Store in `App` as `cumulativeUsage types.Usage` and `cumulativeCost float64`
-- Update on each `DoneEvent`
-
-**Wire into info pane:**
-- Add a "Usage" section to the infopane showing:
-  - Total prompt tokens
-  - Total completion tokens
-  - Estimated cost (USD)
-- Update via `t.renderInfoPane()` call which already fires on DoneEvent
-
-### 2.2 Model pricing table
-
-Add a lookup in `usage.go`:
-
-```go
-var modelPrices = map[string]struct{ input, output float64 }{
-    "claude-sonnet-4-20250514": {3.00, 15.00},  // per 1M tokens
-    "claude-opus-4-20250514":  {15.00, 75.00},
-    "gpt-4o":                   {2.50, 10.00},
-    "gpt-4o-mini":              {0.15, 0.60},
-    // ... extend as needed
-}
-```
-
-Prices come from provider docs; display is an estimate only.
+- `cumulativeUsage` struct tracking prompt/completion tokens across turns
+- `calculateCost()` with longest-match prefix lookup in model pricing table
+- Displayed in infopane as "Prompt: N / Completion: N / Cost: $X.XXXX"
+- Annotated "(at current model rates)" to indicate cost is per-model
+- `resetUsage()` called on conversation clear
 
 ## Phase 3: Error overlay component
 
-### 3.1 Create `components/error/` 
+**Done.** Implemented in `components/error/`:
 
-Replace the ephemeral `app.QueueUpdateDraw` error text (currently inline in
-the event handler) with a proper modal overlay:
+- `Manager` with error stack and count display
+- Auto-dismiss after 5 seconds for non-retryable errors (via `time.AfterFunc`)
+- Timer properly stopped on manual dismiss / dismiss-all
+- `Dismiss()` and `DismissAll()` methods with render refresh
+- `ShowRetryable` for errors that offer a retry path
 
-- Display error title + detail with error color styling
-- [Dismiss] button (`Esc` or `Enter`)
-- [Retry] button if the error is retryable
-- [Copy] button to copy error text to clipboard
-- Auto-dismiss after 5 seconds for transient errors
-- Stack multiple errors (show count: "3 errors — [View] [Dismiss All]")
-
-### 3.2 Wire into HandleEvent
-
-Replace the inline error handling in `events.go` with `t.ui.modal.ShowError(...)`.
+**Not yet wired** into `HandleEvent`. The error component is ready but
+no agent events trigger it yet.
 
 ## Phase 4: Keybinding completion
 
-Wire the 10 declared-but-unhandled actions in `keymap.go`:
+⏳ TODO — 10 actions need handlers:
 
 | Action | Binding | Handler |
 |---|---|---|
@@ -233,18 +218,15 @@ Wire the 10 declared-but-unhandled actions in `keymap.go`:
 | `NewSession` | `Ctrl+N` | Start a new conversation |
 | `Interrupt` | `Ctrl+C` (double-tap) | Force-quit agent loop |
 
-### Add keybinding conflict detection
-
-In `keymap.go` init, validate that no two actions share the same key combination.
-Panic at startup if a conflict is found — fail fast.
-
 ## Phase 5: Component health
+
+⏳ TODO:
 
 ### 5.1 Fix the `messages/` dual-implementation
 
-The `components/messages/` subpackage exists but `App` maintains `conversationLog`
-separately. After Phase 1.3 (single source of truth), ensure `messages.Messages`
-is THE renderer and `App.conversation.items` is THE data source.
+The `components/messages/` subpackage exists but `TUI2` maintains `conversationLog`
+separately. After Phase 1.3 (single source of truth), ensure `messages.Format`
+is THE renderer and `conversationLog` is THE data source.
 
 ### 5.2 Complete question selection flow
 
@@ -264,6 +246,8 @@ Enhance `components/input/`:
 
 ## Phase 6: Polish & cross-cutting
 
+⏳ TODO:
+
 ### 6.1 Unify color system
 
 - Delete `colors/colors.go` — merge constants into `theme.go`
@@ -271,13 +255,10 @@ Enhance `components/input/`:
 - Add light/dark mode detection via `$TERM_BG` or config
 - Define semantic color roles: `ColorUser`, `ColorAssistant`, `ColorTool`, `ColorError`, etc.
 
-### 6.2 Add scroll-preserving render (extract from tui2.go into `scroll.go`)
+### 6.2 Add scroll-preserving render
 
-Currently `TextView.ScrollToEnd()` is called on every append, preventing the user from
-scrolling back during streaming. Fix:
-- Track `state.scrolled` flag (set when user scrolls up, cleared on `ScrollToEnd` action)
-- Only auto-scroll when `!state.scrolled`
-- Add `G`/`gg` keys for bottom/top
+Done (`scroll.go`). Tracks `userScrolled` flag. Only auto-scrolls to end when
+user hasn't scrolled up. `G`/`gg` keys for bottom/top.
 
 ### 6.3 Add virtual scrolling consideration
 
@@ -301,13 +282,24 @@ File bugs for any rendering gaps found.
 
 ### 7.1 Unit tests
 
-- Theme: color constants are valid hex, no duplicates
-- Keymap: no conflicting bindings, all actions reachable
-- State: `conversation` append/render/clear cycle
-- Usage: accumulation math, cost calculation
+**Done.** Current test coverage:
+
+| File | Tests | Covers |
+|---|---|---|
+| `proxy_test.go` | 6 | Async dispatch, token ordering, counter increments |
+| `blocks_test.go` | 14 | Block lifecycle, add/end/toggle/blink |
+| `usage_test.go` | 6 | Cost calculation, prefix matching, accumulation |
+| `approval_test.go` | 3 | CtrlApproval/CtrlContinue round-trip |
+| `error_test.go` | 14 | Error stack, dismiss/dismiss-all, timer management |
+| `agent_safety_test.go` | 4 | ApproveFn propagation, deny, arg abbreviation |
+
+Component-level tests also exist for `backgroundjobs`, `command`, `contextinfo`,
+`infopane`, `mcpinfo`, `messages`, `reasoning`, `sessioninfo`, `subagent`,
+`thinking`, `todo`, `toolblock`.
 
 ### 7.2 Integration tests
 
+⏳ TODO:
 - Run tui2 headless, send event sequence, verify render output
 - Resize: 80×24 → 120×40 → 80×24, verify layout correct
 - Long conversation: 500 messages, verify no OOM or degradation
@@ -315,27 +307,29 @@ File bugs for any rendering gaps found.
 ## Execution order
 
 ```
-Phase 1 (organization)  ← START HERE
+Phase 1 (organization)  ✅ COMPLETE
   ↓
-Phase 2 (cumulative usage/cost)   ← small, low-risk
+Phase 1.5 (threading)   ✅ COMPLETE
   ↓
-Phase 3 (error overlay)           ← small, isolated
+Phase 2 (cumulative usage/cost)   ✅ COMPLETE
   ↓
-Phase 4 (keybinding completion)   ← independent tasks
-  ↓                              can fan out across sub-agents
+Phase 3 (error overlay)           ✅ COMPLETE
+  ↓
+Phase 4 (keybinding completion)   ← NEXT
+  ↓
 Phase 5 (component health)
   ↓
 Phase 6 (polish)
   ↓
-Phase 7 (testing)
+Phase 7 (testing)                 ← IN PROGRESS (unit tests done)
 ```
 
 Each phase produces a compilable, runnable TUI. No phase should leave the build broken.
 
 ## Risk: Don't break tui while fixing tui2
 
-Both TUIs share the forwarder goroutine in `cmd/yaah/tui.go`. Changes to the
-`agent.View` interface or event types affect both. Rule:
+Both TUIs share the forwarder goroutine in `BrokerView` (`internal/agent/view.go`).
+Changes to the `agent.View` interface or event types affect both. Rule:
 - **Never change the `agent.Event` sealed interface** as part of this plan.
 - **Never change `cmd/yaah/tui.go`** wiring unless adding a new event type
   that both TUIs handle (add a no-op case in the old tui).

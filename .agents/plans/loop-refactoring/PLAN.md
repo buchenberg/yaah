@@ -1,4 +1,17 @@
+---
+name: loop-refactoring
+description: Architectural refactoring of the agent loop to eliminate god-object anti-patterns, shared mutable state, and token estimation inefficiencies.
+status: not-started
+---
+
 # Agent Loop Architectural Refactoring Plan
+
+## Note
+
+This plan has not yet started. Diagnostic spans (`RecordTurnResponse`,
+`RecordToolDispatch`, `RecordToolGoroutine`) were added to `loop.go` and
+`agent_tools.go` during tui2 debugging sessions but these are additive
+instrumentation, not refactoring. The architectural issues below remain.
 
 ## Architectural Anti-Patterns & Deficiencies Identified
 
