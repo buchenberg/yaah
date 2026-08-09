@@ -169,6 +169,15 @@ func TestHTTPEmbedderURL(t *testing.T) {
 	if got := e2.url("/v1/embeddings"); got != "http://localhost:7334/v1/embeddings" {
 		t.Errorf("url = %q", got)
 	}
+	// Provider-style base URLs with trailing /v1 (e.g. LM Studio, ollama)
+	e3 := &HTTPEmbedder{BaseURL: "http://localhost:1234/v1"}
+	if got := e3.url("/v1/embeddings"); got != "http://localhost:1234/v1/embeddings" {
+		t.Errorf("url with trailing /v1 = %q, want no double /v1", got)
+	}
+	e4 := &HTTPEmbedder{BaseURL: "http://localhost:1234/v1/"}
+	if got := e4.url("/v1/embeddings"); got != "http://localhost:1234/v1/embeddings" {
+		t.Errorf("url with trailing /v1/ = %q", got)
+	}
 }
 
 func TestHTTPEmbedderContextCancellation(t *testing.T) {
@@ -189,7 +198,7 @@ func TestHTTPEmbedderContextCancellation(t *testing.T) {
 }
 
 func TestNewEmbedder(t *testing.T) {
-	e := NewEmbedder("http://localhost:7334", nil)
+	e := NewEmbedder("http://localhost:7334", "", nil)
 	if e == nil {
 		t.Fatal("NewEmbedder returned nil")
 	}
@@ -199,11 +208,14 @@ func TestNewEmbedder(t *testing.T) {
 	if e.Client != nil {
 		t.Error("expected nil Client when none provided")
 	}
+	if e.Model != "local" {
+		t.Errorf("Model = %q, want local", e.Model)
+	}
 }
 
 func TestNewEmbedderWithClient(t *testing.T) {
 	c := &http.Client{}
-	e := NewEmbedder("http://localhost:7335", c)
+	e := NewEmbedder("http://localhost:7335", "custom-model", c)
 	if e.Client != c {
 		t.Error("expected provided client")
 	}

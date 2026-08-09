@@ -150,6 +150,15 @@ func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error
 	if dupID != "" {
 		return fmt.Sprintf("Memory already exists (id: %s): %s\nUse memory_search to retrieve this fact when relevant.", dupID[:12], params.Text), nil
 	}
+
+	// Embed the new entry synchronously so it is searchable immediately.
+	if ch := t.DB.EmbedMemoryAsync(entry.ID, entry.Text); ch != nil {
+		select {
+		case <-ch:
+		case <-ctx.Done():
+		}
+	}
+
 	return fmt.Sprintf("Memory saved (id: %s): %s. This fact is now in persistent memory — use memory_search to recall it when relevant.", entry.ID[:12], params.Text), nil
 }
 

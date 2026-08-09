@@ -231,22 +231,17 @@ type Config struct {
 	Embedding     EmbeddingConfig            `yaml:"embedding"`
 }
 
-// EmbeddingConfig configures the local embedding model for semantic memory search.
+// EmbeddingConfig configures semantic memory search via an embedding model.
+// The provider is resolved from the providers map to obtain the base URL.
 type EmbeddingConfig struct {
-	// BaseURL is the embeddings endpoint, e.g. "http://127.0.0.1:7334".
-	// When empty, semantic search is disabled.
-	BaseURL string `yaml:"base_url"`
+	// Provider is the provider name (key in the providers map) whose
+	// base URL hosts the embeddings endpoint. When empty, semantic
+	// search is disabled.
+	Provider string `yaml:"provider"`
 
-	// Port is the TCP port for the embedding server when auto-started.
-	// Default 7334.
-	Port int `yaml:"port"`
-
-	// ModelURL is the download URL for the GGUF embedding model.
-	ModelURL string `yaml:"model_url"`
-
-	// ModelPath is the local path to the GGUF file. Defaults to
-	// ~/.yaah/models/all-MiniLM-L6-v2-Q4_K_M.gguf.
-	ModelPath string `yaml:"model_path"`
+	// Model is the embedding model name sent to the /v1/embeddings
+	// endpoint. Required when Provider is set.
+	Model string `yaml:"model"`
 }
 
 type TUIConfig struct {

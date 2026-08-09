@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -26,6 +27,10 @@ type Embedder interface {
 type HTTPEmbedder struct {
 	// BaseURL is the embeddings endpoint base, e.g. "http://127.0.0.1:7334".
 	BaseURL string
+	// Model is the model name sent to the embeddings endpoint.
+	// Defaults to "local" (works for llama-server). Set to an ollama model
+	// name (e.g. "nomic-embed-text:latest") for ollama.
+	Model string
 	// Client is the HTTP client used. When nil, a default client with a
 	// 30-second timeout is used.
 	Client *http.Client
@@ -34,10 +39,14 @@ type HTTPEmbedder struct {
 // DefaultEmbeddingTimeout is the HTTP request timeout used when Client is nil.
 const DefaultEmbeddingTimeout = 30 * time.Second
 
-// NewEmbedder creates an HTTPEmbedder for the given base URL.
+// NewEmbedder creates an HTTPEmbedder for the given base URL and optional
+// model name. When model is empty, defaults to "local".
 // When client is nil, a default client with a 30-second timeout is used.
-func NewEmbedder(baseURL string, client *http.Client) *HTTPEmbedder {
-	return &HTTPEmbedder{BaseURL: baseURL, Client: client}
+func NewEmbedder(baseURL string, model string, client *http.Client) *HTTPEmbedder {
+	if model == "" {
+		model = "local"
+	}
+	return &HTTPEmbedder{BaseURL: baseURL, Model: model, Client: client}
 }
 
 func (e *HTTPEmbedder) client() *http.Client {
@@ -47,10 +56,21 @@ func (e *HTTPEmbedder) client() *http.Client {
 	return &http.Client{Timeout: DefaultEmbeddingTimeout}
 }
 
+func (e *HTTPEmbedder) model() string {
+	if e.Model == "" {
+		return "local"
+	}
+	return e.Model
+}
+
 func (e *HTTPEmbedder) url(path string) string {
 	base := e.BaseURL
 	for len(base) > 0 && base[len(base)-1] == '/' {
 		base = base[:len(base)-1]
+	}
+	// Strip trailing /v1 so we don't double it when appending /v1/embeddings.
+	if strings.HasSuffix(base, "/v1") {
+		base = base[:len(base)-3]
 	}
 	return base + path
 }
@@ -62,7 +82,7 @@ func (e *HTTPEmbedder) Embed(ctx context.Context, text string) (Embedding, error
 		Model string `json:"model"`
 		Input string `json:"input"`
 	}{
-		Model: "local",
+		Model: e.model(),
 		Input: text,
 	}
 	b, err := json.Marshal(body)

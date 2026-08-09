@@ -276,24 +276,21 @@ func (d *DB) migrate() error {
 	return nil
 }
 
-// AddMemory inserts a new memory entry. Embedding happens in a
-// background goroutine so the caller is not blocked on the model.
+// AddMemory inserts a new memory entry. The caller should separately call
+// EmbedMemoryAsync to produce the embedding vector.
 func (d *DB) AddMemory(e Entry) error {
 	_, err := d.sql.Exec(
 		`INSERT INTO memory (id, text, tags, source, created_at) VALUES (?, ?, ?, ?, ?)`,
 		e.ID, e.Text, e.Tags, e.Source, e.CreatedAt,
 	)
-	if err == nil {
-		d.embedMemoryAsync(e.ID, e.Text)
-	}
 	return err
 }
 
-// embedMemoryAsync embeds the text in a background goroutine and stores
+// EmbedMemoryAsync embeds the text in a background goroutine and stores
 // the result. Returns a channel that closes when the embed completes, or
 // nil when no embedder is configured. Callers that need to wait for the
-// embedding (e.g. tests) can read from the channel.
-func (d *DB) embedMemoryAsync(id, text string) <-chan struct{} {
+// embedding (e.g. the memory_add tool) can read from the channel.
+func (d *DB) EmbedMemoryAsync(id, text string) <-chan struct{} {
 	if d.embedder == nil {
 		return nil
 	}

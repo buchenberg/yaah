@@ -3,13 +3,7 @@ package yaah
 import (
 	"context"
 	"fmt"
-	"net"
-	"net/http"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -82,22 +76,26 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	}
 
 	// --- Embedding server ------------------------------------------------
-	if db != nil && cfg.Embedding.BaseURL != "" {
-		embedder := startEmbeddingServer(cfg.Embedding)
-		db.SetEmbedder(embedder)
+	if db != nil && cfg.Embedding.Provider != "" && cfg.Embedding.Model != "" {
+		if p, ok := cfg.Providers[cfg.Embedding.Provider]; ok {
+			embedder := memory.NewEmbedder(p.BaseURL, cfg.Embedding.Model, nil)
+			db.SetEmbedder(embedder)
 
-		// Backfill embeddings for any memory entries created before the
-		// embedding server was configured.
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			n, err := db.ReconcileEmbeddings(ctx)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "warning: embedding backfill: %v\n", err)
-			} else if n > 0 {
-				fmt.Fprintf(os.Stderr, "embedded %d existing memory entries\n", n)
-			}
-		}()
+			// Backfill embeddings for any memory entries created before the
+			// embedding server was configured.
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				n, err := db.ReconcileEmbeddings(ctx)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "warning: embedding backfill: %v\n", err)
+				} else if n > 0 {
+					fmt.Fprintf(os.Stderr, "embedded %d existing memory entries\n", n)
+				}
+			}()
+		} else {
+			fmt.Fprintf(os.Stderr, "warning: embedding provider %q not found in providers\n", cfg.Embedding.Provider)
+		}
 	}
 
 	// --- Prompt assembly -------------------------------------------------
@@ -313,119 +311,4 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	return sess, nil
 }
 
-// startEmbeddingServer creates an embedding client, optionally starting the
-// embedding server process if it is not already reachable.
-func startEmbeddingServer(cfg config.EmbeddingConfig) *memory.HTTPEmbedder {
-	ec := memory.NewEmbedder(cfg.BaseURL, nil)
 
-	// Health check: if the server is already running, use it.
-	if healthCheckEndpoint(cfg.BaseURL) {
-		return ec
-	}
-
-	port := embeddingPort(cfg)
-	modelPath := resolveModelPath(cfg.ModelPath)
-
-	if modelPath == "" {
-		fmt.Fprintf(os.Stderr, "warning: embedding server unreachable and no model configured; semantic search disabled\n")
-		return ec
-	}
-	if _, err := os.Stat(modelPath); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: embedding model not found at %s; start the embedding server manually or set embedding.model_path\n", modelPath)
-		return ec
-	}
-
-	// Build and start the embedding server process.
-	bin := "llama-server"
-	if runtime.GOOS == "windows" {
-		bin = "llama-server.exe"
-	}
-	cmdStr := fmt.Sprintf("%s -m %s --embeddings --port %d", bin, modelPath, port)
-	fmt.Fprintf(os.Stderr, "starting embedding server: %s\n", cmdStr)
-
-	// Use exec.Command directly (not the process manager) so the server
-	// process is independent of yaah sessions. Stdout/stderr go to the
-	// parent process (visible in the terminal or system logs).
-	c := exec.Command(bin, "-m", modelPath, "--embeddings", "--port", strconv.Itoa(port))
-	c.Stdout = os.Stderr
-	c.Stderr = os.Stderr
-	if err := c.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to start embedding server: %v\n", err)
-		return ec
-	}
-
-	// Wait for the server to accept TCP connections.
-	if !waitForPort(port, 10*time.Second) {
-		fmt.Fprintf(os.Stderr, "warning: embedding server did not become ready within 10s; semantic search may not work\n")
-		return ec
-	}
-
-	// Health-check again after the server is up.
-	if healthCheckEndpoint(cfg.BaseURL) {
-		return ec
-	}
-	fmt.Fprintf(os.Stderr, "warning: embedding server started but health check failed; verify it is serving /v1/embeddings\n")
-	return ec
-}
-
-// healthCheckEndpoint returns true if the embedding server responds.
-func healthCheckEndpoint(baseURL string) bool {
-	u := baseURL
-	for len(u) > 0 && u[len(u)-1] == '/' {
-		u = u[:len(u)-1]
-	}
-	resp, err := http.Get(u + "/v1/embeddings")
-	if err != nil {
-		return false
-	}
-	resp.Body.Close()
-	return resp.StatusCode < 500
-}
-
-// embeddingPort returns the configured port, extracting it from base_url
-// when not explicitly set.
-func embeddingPort(cfg config.EmbeddingConfig) int {
-	if cfg.Port > 0 {
-		return cfg.Port
-	}
-	// Fall back to extracting from the base URL.
-	hostPort := cfg.BaseURL
-	for _, prefix := range []string{"http://", "https://"} {
-		hostPort = strings.TrimPrefix(hostPort, prefix)
-	}
-	if idx := strings.LastIndex(hostPort, ":"); idx > 0 {
-		if p, err := strconv.Atoi(hostPort[idx+1:]); err == nil {
-			return p
-		}
-	}
-	return 7334
-}
-
-// resolveModelPath expands ~ to the home directory.
-func resolveModelPath(p string) string {
-	if p == "" {
-		return ""
-	}
-	if strings.HasPrefix(p, "~/") {
-		if home, err := os.UserHomeDir(); err == nil {
-			return filepath.Join(home, p[2:])
-		}
-	}
-	return p
-}
-
-// waitForPort blocks until the port accepts a TCP connection or timeout
-// expires. Returns true if the port became ready.
-func waitForPort(port int, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
-		if err == nil {
-			conn.Close()
-			return true
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return false
-}

@@ -718,19 +718,9 @@ func addMemoryAndWait(t *testing.T, db *DB, e Entry) {
 	if err := db.AddMemory(e); err != nil {
 		t.Fatalf("AddMemory: %v", err)
 	}
-	if db.Embedder() == nil {
-		return
+	if ch := db.EmbedMemoryAsync(e.ID, e.Text); ch != nil {
+		<-ch
 	}
-	// Poll until the background embed finishes.
-	for i := 0; i < 50; i++ {
-		var emb []byte
-		db.sql.QueryRow(`SELECT COALESCE(embedding, '') FROM memory WHERE id = ?`, e.ID).Scan(&emb)
-		if len(emb) > 0 {
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for embedding of memory %s", e.ID)
 }
 
 func addMessageAndWait(t *testing.T, db *DB, m Message) {
