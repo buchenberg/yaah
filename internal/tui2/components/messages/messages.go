@@ -1,16 +1,32 @@
-// Package messages builds the conversation message area.
+// Package messages builds and renders the conversation message area.
 package messages
 
 import (
-	"github.com/rivo/tview"
+	"strings"
 
-	"github.com/buchenberg/yaah/internal/tui2/components/messages/assistant"
-	"github.com/buchenberg/yaah/internal/tui2/components/messages/error"
-	"github.com/buchenberg/yaah/internal/tui2/components/messages/subagent"
-	"github.com/buchenberg/yaah/internal/tui2/components/messages/system"
-	"github.com/buchenberg/yaah/internal/tui2/components/messages/tool"
-	"github.com/buchenberg/yaah/internal/tui2/components/messages/user"
+	"github.com/buchenberg/yaah/internal/tui2/colors"
+	"github.com/buchenberg/yaah/internal/tui2/components/reasoning"
+	"github.com/buchenberg/yaah/internal/tui2/components/subagent"
+	"github.com/buchenberg/yaah/internal/tui2/components/toolblock"
+	"github.com/rivo/tview"
 )
+
+// Item is a single entry in the chronological conversation log.
+// Exactly one of the fields is set — Text for plain/markdown content,
+// ToolBlock for tool calls, SubBlock for sub-agent rows, or ReasBlock for
+// reasoning sections.
+type Item struct {
+	Text      string
+	ToolBlock *toolblock.Block
+	SubBlock  *subagent.Block
+	ReasBlock *reasoning.Block
+}
+
+// Content carries rendering context.
+type Content struct {
+	Width int
+	Theme *colors.Theme
+}
 
 // Build creates the scrollable conversation view.
 func Build() *tview.TextView {
@@ -22,56 +38,38 @@ func Build() *tview.TextView {
 	return tv
 }
 
-// AppendUser appends a styled user message to the TextView and scrolls.
-func AppendUser(tv *tview.TextView, text string) {
-	tv.SetText(tv.GetText(true) + user.Render(text))
-	tv.ScrollToEnd()
-}
+// Format renders a list of conversation items with optional thinking
+// indicator text. Callers include the thinking spinner by passing a
+// non-empty thinkingText.
+func Format(items []Item, thinkingText string, ctx Content) string {
+	var b strings.Builder
+	rctx := colors.RenderCtx{Width: ctx.Width, Theme: ctx.Theme}
 
-// AppendAssistant appends a styled assistant message to the TextView and scrolls.
-func AppendAssistant(tv *tview.TextView, text string) {
-	tv.SetText(tv.GetText(true) + assistant.Render(text))
-	tv.ScrollToEnd()
-}
+	for i := range items {
+		item := &items[i]
+		switch {
+		case item.Text != "":
+			b.WriteString("\n")
+			b.WriteString(item.Text)
+			b.WriteString("\n\n")
+		case item.ToolBlock != nil:
+			b.WriteString(item.ToolBlock.RenderCtx(rctx))
+			b.WriteString("\n")
+		case item.SubBlock != nil:
+			b.WriteString(item.SubBlock.RenderCtx(rctx))
+			b.WriteString("\n")
+		case item.ReasBlock != nil:
+			b.WriteString("\n")
+			b.WriteString(item.ReasBlock.RenderCtx(rctx))
+			b.WriteString("\n\n")
+		}
+	}
 
-// AppendToolStart appends a tool start message to the TextView and scrolls.
-func AppendToolStart(tv *tview.TextView, name, args string) {
-	tv.SetText(tv.GetText(true) + tool.Render(name+" "+args))
-	tv.ScrollToEnd()
-}
+	if thinkingText != "" {
+		b.WriteString("\n")
+		b.WriteString(thinkingText)
+		b.WriteString("\n")
+	}
 
-// AppendToolEnd appends a tool end message to the TextView and scrolls.
-func AppendToolEnd(tv *tview.TextView, name string) {
-	tv.SetText(tv.GetText(true) + tool.Render(name+" done"))
-	tv.ScrollToEnd()
-}
-
-// AppendToolSummary appends a tool summary message to the TextView and scrolls.
-func AppendToolSummary(tv *tview.TextView, name, summary string) {
-	tv.SetText(tv.GetText(true) + tool.Render(name+": "+summary))
-	tv.ScrollToEnd()
-}
-
-// AppendError appends an error message to the TextView and scrolls.
-func AppendError(tv *tview.TextView, text string) {
-	tv.SetText(tv.GetText(true) + error.Render(text))
-	tv.ScrollToEnd()
-}
-
-// AppendSystem appends a system message to the TextView and scrolls.
-func AppendSystem(tv *tview.TextView, text string) {
-	tv.SetText(tv.GetText(true) + system.Render(text))
-	tv.ScrollToEnd()
-}
-
-// AppendSubAgentStart appends a sub-agent start message to the TextView and scrolls.
-func AppendSubAgentStart(tv *tview.TextView, text string) {
-	tv.SetText(tv.GetText(true) + subagent.Render(text))
-	tv.ScrollToEnd()
-}
-
-// AppendSubAgentEnd appends a sub-agent end message to the TextView and scrolls.
-func AppendSubAgentEnd(tv *tview.TextView, text string) {
-	tv.SetText(tv.GetText(true) + subagent.Render(text))
-	tv.ScrollToEnd()
+	return b.String()
 }

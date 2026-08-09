@@ -18,8 +18,7 @@ func (m *Model) AddAssistantMessage(raw string) {
 		Content: m.renderMarkdown(raw),
 		Raw:     raw,
 	})
-	m.refreshViewport()
-	m.scrollToBottom()
+	m.markDirty()
 }
 
 // AddAssistantMessageWithReasoning adds an assistant message with attached reasoning text.
@@ -30,15 +29,13 @@ func (m *Model) AddAssistantMessageWithReasoning(raw, reasoning string) {
 		Raw:       raw,
 		Reasoning: reasoning,
 	})
-	m.refreshViewport()
-	m.scrollToBottom()
+	m.markDirty()
 }
 
 // AddMessage adds a message to the chat history.
 func (m *Model) AddMessage(role, content string) {
 	m.messages = append(m.messages, Message{Role: role, Content: content, Raw: content})
-	m.refreshViewport()
-	m.scrollToBottom()
+	m.markDirty()
 }
 
 // AddToolResult adds a tool result message. For todowrite, it parses the
@@ -62,8 +59,7 @@ func (m *Model) AddToolResult(toolName, content, toolArgs, duration string) {
 		ToolArgs:     toolArgs,
 		ToolDuration: duration,
 	})
-	m.refreshViewport()
-	m.scrollToBottom()
+	m.markDirty()
 }
 
 // SetEphemeral sets a transient status message that auto-clears after
@@ -81,28 +77,28 @@ func (m *Model) SetMCPInfos(infos []ServerInfo) {
 // SetThinking sets the thinking state.
 func (m *Model) SetThinking(thinking bool) {
 	m.thinking = thinking
-	m.refreshViewport()
+	m.markDirty()
 }
 
 // SetCompacting sets the compaction state. When true, displays a
 // compaction indicator in the status area.
 func (m *Model) SetCompacting(compacting bool) {
 	m.compacting = compacting
-	m.refreshViewport()
+	m.markDirty()
 }
 
 // SetToolCall sets the current tool call display.
 func (m *Model) SetToolCall(name, args string) {
 	m.toolCall = name
 	m.toolArgs = args
-	m.refreshViewport()
+	m.markDirty()
 }
 
 // ClearToolCall clears the tool call display.
 func (m *Model) ClearToolCall() {
 	m.toolCall = ""
 	m.toolArgs = ""
-	m.refreshViewport()
+	m.markDirty()
 }
 
 // AppendToken appends a streaming token to the current response.
@@ -136,8 +132,6 @@ func (m *Model) HandleEvent(evt agent.Event) {
 
 	case *agent.ThinkingEvent:
 		m.thinkContent += e.Text
-		m.refreshViewport()
-		m.scrollToBottom()
 
 	case *agent.FlushEvent:
 		haveReasoning := m.thinkContent != ""
@@ -163,8 +157,6 @@ func (m *Model) HandleEvent(evt agent.Event) {
 	case *agent.ToolEndEvent:
 		m.ClearToolCall()
 		if e.Name != "spawn_subagent" {
-			// spawn_subagent is represented by the sub-agent line; its
-			// result arrives on the SubAgentEndEvent instead.
 			m.AddToolResult(e.Name, e.Result, e.Args, formatDuration(e.Duration))
 		}
 
@@ -186,8 +178,7 @@ func (m *Model) HandleEvent(evt agent.Event) {
 				beforeK, afterK, pct, e.Method, e.ElapsedSeconds, note,
 				e.OldMsgCount, e.KeepMsgCount, e.Budget),
 		})
-		m.refreshViewport()
-		m.scrollToBottom()
+		m.markDirty()
 
 	case *agent.SubAgentStartEvent:
 		m.messages = append(m.messages, Message{
@@ -197,13 +188,9 @@ func (m *Model) HandleEvent(evt agent.Event) {
 			SubID:      e.SubAgentID,
 			SubRunning: true,
 		})
-		m.refreshViewport()
-		m.scrollToBottom()
+		m.markDirty()
 
 	case *agent.SubAgentEndEvent:
-		// One line per sub-agent: transition the matching running line in
-		// place, matched by sub-agent ID (role fallback for ID-less
-		// emitters).
 		idx := -1
 		for i := len(m.messages) - 1; i >= 0; i-- {
 			msg := &m.messages[i]
@@ -217,8 +204,6 @@ func (m *Model) HandleEvent(evt agent.Event) {
 			break
 		}
 		if idx < 0 {
-			// Start event was never rendered (e.g. cleared history);
-			// append a completed line instead.
 			m.messages = append(m.messages, Message{
 				Role:    "subagent",
 				SubRole: e.Role,
@@ -232,8 +217,7 @@ func (m *Model) HandleEvent(evt agent.Event) {
 		if e.Duration > 0 {
 			m.messages[idx].ToolDuration = formatDuration(e.Duration)
 		}
-		m.refreshViewport()
-		m.scrollToBottom()
+		m.markDirty()
 
 	case *agent.EscalationEvent:
 		severity := e.Severity
@@ -255,8 +239,7 @@ func (m *Model) HandleEvent(evt agent.Event) {
 			Role:    "escalation",
 			Content: content,
 		})
-		m.refreshViewport()
-		m.scrollToBottom()
+		m.markDirty()
 
 	case *agent.DoneEvent:
 		m.SetThinking(false)
@@ -307,7 +290,7 @@ func (m *Model) handleControlMsg(msg types.CtrlMsg) {
 		m.AddMessage("system", ctrl.Text)
 	case *types.CtrlTodos:
 		m.todos = ctrl.Items
-		m.refreshViewport()
+		m.markDirty()
 	case *types.CtrlError:
 		m.AddMessage("error", fmt.Sprintf("%v", ctrl.Err))
 		m.SetThinking(false)
@@ -388,7 +371,7 @@ func (m *Model) handleControlMsg(msg types.CtrlMsg) {
 		if ctrl.ProviderNames != nil {
 			m.providerNames = ctrl.ProviderNames
 		}
-		m.refreshViewport()
+		m.markDirty()
 	case *types.CtrlDone:
 	}
 }

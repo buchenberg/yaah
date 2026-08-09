@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/todo"
+	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
@@ -55,8 +56,8 @@ func FormatList(items []todo.Item) string {
 	return b.String()
 }
 
-// Build creates a scrollable, bordered TextView for the todo list.
-func Build(items []Item) *tview.TextView {
+// Build creates a bordered TextView for the todo list.
+func Build(items []Item, borderColor string) *tview.TextView {
 	internal := make([]todo.Item, len(items))
 	for i, it := range items {
 		internal[i] = it.Item
@@ -66,6 +67,12 @@ func Build(items []Item) *tview.TextView {
 		SetTextAlign(tview.AlignLeft).
 		SetDynamicColors(true).
 		SetWordWrap(true)
+	tv.SetBorder(true)
+	tv.SetTitle(" Tasks ")
+	if borderColor != "" {
+		tv.SetBorderColor(tcell.GetColor(borderColor))
+		tv.SetTitleColor(tcell.GetColor(borderColor))
+	}
 
 	tv.SetText(FormatList(internal))
 	return tv

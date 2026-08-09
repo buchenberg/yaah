@@ -10,7 +10,7 @@ import (
 
 // Build creates the figlet title banner and returns the total number
 // of lines so the caller can size the header dynamically.
-func Build() (lines int, tv *tview.TextView) {
+func Build(dimColor string) (lines int, tv *tview.TextView) {
 	tv = tview.NewTextView().
 		SetTextAlign(tview.AlignLeft).
 		SetDynamicColors(true).
@@ -34,7 +34,7 @@ func Build() (lines int, tv *tview.TextView) {
 	}
 
 	// Tagline in dim gray (not blue).
-	b.WriteString(fmt.Sprintf("[#5f5f5f::d]%s[-]", tagline))
+	b.WriteString(fmt.Sprintf("[%s::d]%s[-]", dimColor, tagline))
 	lines++
 
 	tv.SetText(b.String())

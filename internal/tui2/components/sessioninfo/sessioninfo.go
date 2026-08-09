@@ -16,11 +16,18 @@ type Info struct {
 }
 
 // Format returns a formatted session info block.
-func Format(s Info) string {
+func Format(s Info, th *colors.Theme) string {
 	var b strings.Builder
-	b.WriteString(colors.TagBold(colors.Accent, "Session\n"))
-	b.WriteString(fmt.Sprintf("  Model:    %s\n", colors.Tag(colors.Accent, s.Model)))
-	b.WriteString(fmt.Sprintf("  Provider: %s\n", colors.Tag(colors.Accent, s.Provider)))
-	b.WriteString(fmt.Sprintf("  Agent:    %s\n", colors.Tag(colors.Accent, s.Version)))
+	b.WriteString(th.TagBold(th.Heading, "Session\n"))
+	b.WriteString(fmt.Sprintf("  Provider: %s\n", th.Tag(th.Detail, s.Provider)))
+	b.WriteString(fmt.Sprintf("  Model: %s\n", th.Tag(th.Detail, s.Model)))
+	b.WriteString(fmt.Sprintf("  Agent: %s\n", th.Tag(th.Detail, shortVersion(s.Version))))
 	return b.String()
+}
+
+func shortVersion(v string) string {
+	if idx := strings.IndexByte(v, '-'); idx > 0 {
+		return v[:idx]
+	}
+	return v
 }

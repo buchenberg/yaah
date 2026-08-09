@@ -8,6 +8,7 @@ package question
 import (
 	"fmt"
 
+	"github.com/buchenberg/yaah/internal/tui2/components/modal"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -72,6 +73,10 @@ func (m *Modal) build() {
 
 	m.list = tview.NewList().
 		ShowSecondaryText(true)
+	m.list.SetMainTextColor(tcell.ColorWhite).
+		SetSecondaryTextColor(tcell.ColorGray).
+		SetSelectedTextColor(tcell.ColorWhite).
+		SetSelectedBackgroundColor(tcell.ColorDarkCyan)
 
 	for i, o := range m.options {
 		idx := i
@@ -94,6 +99,11 @@ func (m *Modal) build() {
 		case tcell.KeyEscape:
 			m.dismiss(nil)
 			return nil
+		case tcell.KeyEnter:
+			if m.multiple {
+				m.dismiss(nil)
+				return nil
+			}
 		case tcell.KeyRune:
 			if ev.Rune() == ' ' && m.multiple {
 				idx := m.list.GetCurrentItem()
@@ -104,13 +114,15 @@ func (m *Modal) build() {
 		return ev
 	})
 
-	m.flex = tview.NewFlex().
+	inner := tview.NewFlex().
 		SetDirection(tview.FlexRow).
 		AddItem(title, 0, 1, false).
 		AddItem(m.list, 0, 3, true)
-	m.flex.SetBorder(true).
+	inner.SetBorder(true).
 		SetTitle(" Question ").
 		SetTitleColor(tcell.ColorYellow)
+
+	m.flex = modal.Wrap(inner)
 }
 
 func (m *Modal) toggle(idx int) {

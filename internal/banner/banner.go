@@ -63,9 +63,19 @@ var fonts = []string{
 // markup (e.g. tview color tags instead of ANSI escape codes).
 func LolcatRGB(i int) (int, int, int) {
 	f := 0.1
-	return int(math.Sin(f*float64(i)+0)*127 + 128),
-		int(math.Sin(f*float64(i)+2*math.Pi/3)*127 + 128),
-		int(math.Sin(f*float64(i)+4*math.Pi/3)*127 + 128)
+	r := int(math.Sin(f*float64(i)+0)*255 + 255)
+	g := int(math.Sin(f*float64(i)+2*math.Pi/3)*255 + 255)
+	b := int(math.Sin(f*float64(i)+4*math.Pi/3)*255 + 255)
+	if r > 255 {
+		r = 255
+	}
+	if g > 255 {
+		g = 255
+	}
+	if b > 255 {
+		b = 255
+	}
+	return r, g, b
 }
 
 // Lolcat applies lolcat rainbow coloring to arbitrary ASCII art text.

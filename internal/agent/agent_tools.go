@@ -56,6 +56,8 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 		}
 
 		go func() {
+			observability.RecordToolGoroutine(ctx, tc.Function.Name, "spawned")
+
 			toolID := l.toolIDGen.Add(1)
 			abbreviated := abbreviateArgs(tc.Function.Arguments, 80)
 
@@ -78,6 +80,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 				}
 			}
 			if l.toolConcurrency != nil {
+				observability.RecordToolGoroutine(ctx, tc.Function.Name, "acquire_concurrency")
 				if err := l.toolConcurrency.Acquire(ctx); err != nil {
 					if releaseSubAgent != nil {
 						releaseSubAgent()
@@ -97,7 +100,9 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			}()
 
 			if l.broker != nil {
+				observability.RecordToolGoroutine(ctx, tc.Function.Name, "publish_start")
 				l.broker.PublishMustDeliver(&events.ToolStartEvent{ID: toolID, Name: tc.Function.Name, Args: abbreviated})
+				observability.RecordToolGoroutine(ctx, tc.Function.Name, "published")
 			}
 
 			// The sub-agent start event is emitted by the runner (via the

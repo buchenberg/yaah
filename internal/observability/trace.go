@@ -362,6 +362,65 @@ func RecordTUIView(preScan, postScan string) {
 	}
 }
 
+// RecordTurnResponse records the LLM response on a short-lived child span
+// that is ended immediately. This span survives parent crashes — even if
+// the parent turn span is never ended, the OTel SDK exports independently
+// ended child spans, making them visible in traces for crash diagnostics.
+func RecordTurnResponse(ctx context.Context, contentLen, toolCallCount int, toolNames []string, finishReason string) {
+	_, span := tracer().Start(ctx, "turn.response")
+	defer span.End()
+	span.SetAttributes(
+		attribute.Int("response.content_len", contentLen),
+		attribute.Int("response.tool_calls", toolCallCount),
+		attribute.String("response.finish_reason", finishReason),
+	)
+	if len(toolNames) > 0 {
+		span.SetAttributes(attribute.StringSlice("response.tool_names", toolNames))
+	}
+}
+
+// RecordToolDispatch records tool execution start on a short-lived child
+// span. The span ends immediately so it is exported regardless of whether
+// the parent turn span or individual tool spans are later lost.
+func RecordToolDispatch(ctx context.Context, toolCount int, toolNames []string) {
+	_, span := tracer().Start(ctx, "turn.dispatch_tools")
+	defer span.End()
+	span.SetAttributes(
+		attribute.Int("dispatch.count", toolCount),
+	)
+	if len(toolNames) > 0 {
+		span.SetAttributes(attribute.StringSlice("dispatch.tool_names", toolNames))
+	}
+}
+
+// RecordToolDispatchDone records tool execution completion on a short-lived
+// child span. It captures the number of results and any error encountered
+// during the dispatch phase (not individual tool errors).
+func RecordToolDispatchDone(ctx context.Context, resultCount int, dispatchErr error) {
+	_, span := tracer().Start(ctx, "turn.dispatch_done")
+	defer span.End()
+	span.SetAttributes(
+		attribute.Int("dispatch.results", resultCount),
+	)
+	if dispatchErr != nil {
+		RecordError(span, dispatchErr)
+	}
+}
+
+// RecordToolGoroutine records a checkpoint inside the tool execution
+// goroutine. The span is ended immediately (no defer) so it is exported
+// even if the goroutine later blocks.  Without this, a blocked goroutine
+// would leave the span dangling and invisible in traces.
+// phase is one of: "spawned", "acquire_concurrency", "publish_start", "published".
+func RecordToolGoroutine(ctx context.Context, toolName, phase string) {
+	_, span := tracer().Start(ctx, "tool.goroutine")
+	span.SetAttributes(
+		attribute.String("tool.name", toolName),
+		attribute.String("tool.phase", phase),
+	)
+	span.End()
+}
+
 // safeString replaces invalid UTF-8 byte sequences with the Unicode
 // replacement character so the result is safe for protobuf string fields
 // (which require valid UTF-8).

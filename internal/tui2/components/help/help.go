@@ -1,4 +1,4 @@
-// Package help renders the help overlay showing all keybindings.
+// Package help renders the help overlay showing keybindings and commands.
 //
 // Triggered by "?" or ":help".
 package help
@@ -7,11 +7,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/buchenberg/yaah/internal/tui2/components/modal"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
-// Binding is a simplified keybinding entry for the help overlay.
+// Binding is a keybinding entry for the help overlay.
 type Binding struct {
 	Label    string
 	HelpText string
@@ -19,50 +20,45 @@ type Binding struct {
 
 const modalPageName = "help_modal"
 
-// Show displays the help overlay.
-func Show(app *tview.Application, pages *tview.Pages, bindings []Binding) {
-	// Group by category.
+// Show displays the help overlay with keybindings and command reference.
+// onDismiss is called when the overlay is dismissed (Escape or Enter).
+func Show(app *tview.Application, pages *tview.Pages, bindings []Binding, onDismiss func()) {
 	var lines []string
-	lines = append(lines, "[yellow]Keyboard Shortcuts[-]\n")
-
-	maxLabel := 0
+	lines = append(lines, "[yellow]Keyboard Shortcuts[-]\n\n")
 	for _, b := range bindings {
-		if len(b.Label) > maxLabel {
-			maxLabel = len(b.Label)
-		}
+		lines = append(lines, fmt.Sprintf("  [white]%-12s[-] [dim]%s[-]", b.Label, b.HelpText))
 	}
-
-	for _, b := range bindings {
-		pad := strings.Repeat(" ", maxLabel-len(b.Label)+2)
-		lines = append(lines, fmt.Sprintf("  [white]%s[-]%s[dim]%s[-]", b.Label, pad, b.HelpText))
-	}
-
-	text := strings.Join(lines, "\n")
+	lines = append(lines, "\n[yellow]Commands (Ctrl+P → :command)[-]\n")
+	lines = append(lines, "  :help          Show this help")
+	lines = append(lines, "  :clear         Clear conversation")
+	lines = append(lines, "  :compact       Compact context")
+	lines = append(lines, "  :stop          Stop running agent")
+	lines = append(lines, "  :steer <text>  Inject steering text")
+	lines = append(lines, "  :model <name>  Switch model")
+	lines = append(lines, "  :search <q>    Search messages")
+	lines = append(lines, "  :verbose       Toggle verbose mode")
+	lines = append(lines, "  :banner        Toggle banner")
+	lines = append(lines, "  :top/:bottom   Scroll to top/bottom")
+	lines = append(lines, "  :quit          Exit")
 
 	textView := tview.NewTextView().
 		SetDynamicColors(true).
-		SetText(text)
-
+		SetText(strings.Join(lines, "\n"))
 	textView.SetBorder(true).
 		SetTitle(" Help ").
 		SetTitleColor(tcell.ColorYellow)
 
-	// Wrap in a flex for padding.
-	flex := tview.NewFlex().
-		AddItem(nil, 0, 1, false).
-		AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
-			AddItem(nil, 0, 1, false).
-			AddItem(textView, 0, 3, false).
-			AddItem(nil, 0, 1, false), 0, 3, true).
-		AddItem(nil, 0, 1, false)
+	flex := modal.Wrap(textView)
 
 	flex.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
-		if ev.Key() == tcell.KeyEscape || (ev.Key() == tcell.KeyRune && ev.Rune() == '?') {
+		if ev.Key() == tcell.KeyEscape || ev.Key() == tcell.KeyEnter {
 			pages.RemovePage(modalPageName)
+			onDismiss()
 			return nil
 		}
 		return ev
 	})
 
 	pages.AddPage(modalPageName, flex, true, true)
+	app.SetFocus(textView)
 }
