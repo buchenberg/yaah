@@ -46,7 +46,7 @@ func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSess
 	if db != nil && resumeSessionID == "" {
 		systemPrompt += `
 ## Memory Guidelines
-- Use memory_search to find relevant memories before answering personal/project questions. Pass a tag to filter by category.
+- Use memory_search to find relevant memories before answering personal/project questions. This uses semantic vector search (understands paraphrases and meaning, not just keywords). Pass a tag to filter by category.
 - When the user asks about past conversations or session history, use memory_search_sessions with an empty query to list recent transcripts.
 - Use memory_add to save important facts. Always include a tags array (e.g., ["user_info"], ["preferences"], ["project:yaah"], ["decision"]).
 - Use memory_update to correct stale facts (requires the memory ID). Use memory_delete to remove incorrect memories.

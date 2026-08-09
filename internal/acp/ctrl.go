@@ -42,7 +42,13 @@ func (s *Server) forwardCtrl(ctx context.Context, ch <-chan types.CtrlMsg, sessi
 					}
 				}
 			case *types.CtrlDone:
-				return
+				for {
+					select {
+					case <-ch:
+					case <-ctx.Done():
+						return
+					}
+				}
 			case *types.CtrlContextInfo:
 				send(sessionID, Update{
 					SessionUpdate: "agent_message_chunk",

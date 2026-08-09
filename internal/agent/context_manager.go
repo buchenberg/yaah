@@ -390,7 +390,11 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	beforeEstimate := cm.estimatedTokens()
 	resp, err := compactProvider.Send(ctx, req)
 	if err != nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
-		if len(oldMsgs) > agentctx.MinChunkTokens {
+		factor := cm.EstimateFactor
+		if factor <= 0 {
+			factor = agentctx.DefaultEstimateFactor
+		}
+		if agentctx.PreflightTokens(oldMsgs, nil, factor) > agentctx.MinChunkTokens {
 			if chunkSummary, chunkErr := cm.chunkedCompact(ctx, oldMsgs, compactModel); chunkErr == nil && chunkSummary != "" {
 				cm.applyCompactedSummary(chunkSummary, sysMsg, oldMsgs, keepMsgs, effectiveTokens)
 				afterEstimate := cm.estimatedTokens()

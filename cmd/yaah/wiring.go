@@ -110,7 +110,11 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	mcpClients, mcpInfos := initMCP(cfg, toolReg, skipMCP)
 
 	skillDirs := skillSearchPaths()
-	toolReg.Register(&tools.SkillTool{Dirs: skillDirs})
+	skillTool := &tools.SkillTool{Dirs: skillDirs}
+	if db != nil {
+		skillTool.Embedder = db.Embedder()
+	}
+	toolReg.Register(skillTool)
 
 	planDirs := planSearchPaths()
 	toolReg.Register(&tools.PlanTool{Dirs: planDirs})
