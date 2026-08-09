@@ -310,5 +310,3 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 
 	return sess, nil
 }
-
-
