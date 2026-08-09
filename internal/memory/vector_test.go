@@ -187,3 +187,72 @@ func TestHTTPEmbedderContextCancellation(t *testing.T) {
 		t.Fatal("expected context cancellation error")
 	}
 }
+
+func TestNewEmbedder(t *testing.T) {
+	e := NewEmbedder("http://localhost:7334", nil)
+	if e == nil {
+		t.Fatal("NewEmbedder returned nil")
+	}
+	if e.BaseURL != "http://localhost:7334" {
+		t.Errorf("BaseURL = %q", e.BaseURL)
+	}
+	if e.Client != nil {
+		t.Error("expected nil Client when none provided")
+	}
+}
+
+func TestNewEmbedderWithClient(t *testing.T) {
+	c := &http.Client{}
+	e := NewEmbedder("http://localhost:7335", c)
+	if e.Client != c {
+		t.Error("expected provided client")
+	}
+}
+
+func TestHTTPEmbedderClientDefault(t *testing.T) {
+	e := &HTTPEmbedder{}
+	c := e.client()
+	if c == nil {
+		t.Fatal("expected default client")
+	}
+	if c.Timeout != DefaultEmbeddingTimeout {
+		t.Errorf("timeout = %v, want %v", c.Timeout, DefaultEmbeddingTimeout)
+	}
+}
+
+func TestHTTPEmbedderClientExplicit(t *testing.T) {
+	e := &HTTPEmbedder{Client: &http.Client{}}
+	c := e.client()
+	if c != e.Client {
+		t.Error("expected explicit client")
+	}
+}
+
+func TestHTTPEmbedderEmbedMalformedJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`not json`))
+	}))
+	defer srv.Close()
+
+	e := &HTTPEmbedder{BaseURL: srv.URL}
+	_, err := e.Embed(context.Background(), "test")
+	if err == nil {
+		t.Fatal("expected decode error")
+	}
+}
+
+func TestHTTPEmbedderEmbedEmptyEmbedding(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"embedding": []float64{}}},
+		})
+	}))
+	defer srv.Close()
+
+	e := &HTTPEmbedder{BaseURL: srv.URL}
+	_, err := e.Embed(context.Background(), "test")
+	if err == nil {
+		t.Fatal("expected error for zero-length embedding")
+	}
+}

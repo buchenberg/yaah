@@ -754,3 +754,25 @@ func addMessageAndWait(t *testing.T, db *DB, m Message) {
 	}
 	t.Fatalf("timed out waiting for embedding of message %s", m.ID)
 }
+
+func TestDB_SearchMessagesVectorNoEmbedder(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	_, err = db.sql.Exec(`INSERT INTO sessions (id, started_at) VALUES ('s1', 1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.AddMessage(Message{SessionID: "s1", Idx: 0, Role: "user", Content: "test", Timestamp: 1, ID: "x1"})
+	results, err := db.SearchMessagesVector(context.Background(), "query", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected empty when embedder is nil, got %d results", len(results))
+	}
+}
