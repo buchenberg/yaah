@@ -8,23 +8,7 @@ services:
       - ~/.yaah:/root/.yaah
     environment:
       - YAAH_OTEL_ENABLED=true
-      - OTEL_EXPORTER_OTLP_ENDPOINT=openobserve:5080
+      - OTEL_EXPORTER_OTLP_ENDPOINT=host.docker.internal:4318
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - ZAI_API_KEY=${ZAI_API_KEY:-}
-    depends_on:
-      - openobserve
     profiles: [cli]
-
-  openobserve:
-    image: public.ecr.aws/zinclabs/openobserve:latest
-    ports:
-      - "5080:5080"  # OpenObserve UI + API + OTLP HTTP
-    environment:
-      - ZO_ROOT_USER_EMAIL=root@localhost
-      - ZO_ROOT_USER_PASSWORD=Complexpass#123
-      - ZO_INGEST_ALLOWED_UPTO=120
-    volumes:
-      - openobserve_data:/data
-
-volumes:
-  openobserve_data:

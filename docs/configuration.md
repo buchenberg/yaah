@@ -118,7 +118,7 @@ agents:
 observability:
   otel:
     enabled: false
-    endpoint: localhost:4317          # OTLP HTTP endpoint (OpenObserve: localhost:5080 — see docs/otel-setup.md)
+    endpoint: localhost:4318          # OTLP HTTP endpoint (SigNoz: localhost:4318)
     service_name: yaah
     traces: true                      # emit trace spans
     metrics: false                    # emit OTLP metrics

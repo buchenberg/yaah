@@ -87,7 +87,7 @@ yaah/
 │   ├── features.md              # TUI, REPL, MCP, tools, observability, middleware
 │   ├── configuration.md         # full config reference
 │   ├── tui-components.md        # TUI component system reference
-│   └── otel-setup.md            # OpenTelemetry/OpenObserve setup guide
+│   └── otel-setup.md            # OpenTelemetry/SigNoz setup guide
 ├── README.md
 ├── CONTRIBUTING.md
 ├── SECURITY.md
@@ -242,7 +242,6 @@ Available skills:
 |---|---|
 | `yaah-testing` | Smoke testing the CLI, sub-agents, OTel traces, Docker containers, or running CI checks |
 | `yaah-dev-loop` | Building, running, and iterating on the yaah MCP server from inside a Kilo session |
-| `yaah-openobserve` | Querying and analyzing yaah agent traces from OpenObserve via the HTTP API |
 | `yaah-benchmark` | Running the standard multi-step benchmark and capturing metrics from Jaeger traces |
 
 ## What NOT to do

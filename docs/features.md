@@ -162,9 +162,9 @@ observability:
     enabled: true
 ```
 
-Token attribution is tracked per-turn. Fire up OpenObserve with `docker compose
-up -d openobserve`, visit http://localhost:5080, and watch me work. Full guide
-at [`docs/otel-setup.md`](./otel-setup.md).
+Token attribution is tracked per-turn. Fire up SigNoz (https://signoz.io/docs/install/docker/),
+visit http://localhost:8080, and watch me work. Full guide at
+[`docs/otel-setup.md`](./otel-setup.md).
 
 ## Hook events
 

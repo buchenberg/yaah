@@ -91,17 +91,18 @@ go install github.com/buchenberg/yaah@latest
 ### Docker
 
 A `Dockerfile` and `docker-compose.yml` are included for containerized use
-with OpenObserve tracing. The `yaah` service is scoped behind the `cli` profile —
+with SigNoz tracing. The `yaah` service is scoped behind the `cli` profile —
 add `--profile cli` to `docker compose up` and `run` commands.
+
+Set up SigNoz first: https://signoz.io/docs/install/docker/
 
 ```bash
 export DEEPSEEK_API_KEY=sk-...
 docker compose --profile cli build
-docker compose --profile cli up -d    # starts yaah + openobserve
 docker compose --profile cli run --rm yaah "explain this codebase"
 ```
 
-Traces appear at http://localhost:5080. See [`docs/otel-setup.md`](./docs/otel-setup.md).
+Traces appear at http://localhost:8080. See [`docs/otel-setup.md`](./docs/otel-setup.md).
 
 ## Quick start
 
@@ -130,7 +131,7 @@ yaah -d "always run tests first" "fix X"   # inject session directive
 | [docs/sub-agents.md](./docs/sub-agents.md) | The team, built-in vs custom roles, escalation, quality gates, directives, evidenced contracts |
 | [docs/features.md](./docs/features.md) | TUI & REPL, memory & sessions, MCP, the built-in tool belt, observability, hooks, approval, middleware, providers |
 | [docs/configuration.md](./docs/configuration.md) | Full `config.yaml` reference — providers, agents, sub-agents, middleware, observability, hooks, editor, embeddings |
-| [docs/otel-setup.md](./docs/otel-setup.md) | OpenObserve tracing setup |
+| [docs/otel-setup.md](./docs/otel-setup.md) | SigNoz tracing setup |
 | [docs/tui-components.md](./docs/tui-components.md) | TUI component system reference |
 | [docs/web-ui.md](./docs/web-ui.md) | Web UI architecture and event reference |
 | [docs/PROMPT-INJECTION.md](./docs/PROMPT-INJECTION.md) | Prompt-injection architecture map |
