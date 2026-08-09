@@ -101,11 +101,14 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 		})
 	case *agent.DoneEvent:
 		t.App.QueueUpdateDraw(func() {
-			t.flushPendingTokens()
+			flushed := t.flushPendingTokens()
 			t.pendingThink = ""
 			t.pendingTool = ""
 			t.agentActive = false
 			t.thinkingInd.Hide()
+			if !flushed && e.Response != "" {
+				t.addAssistantResponse(e.Response)
+			}
 			t.refreshMessages()
 
 			if e.ContextWindow > 0 {
@@ -121,9 +124,9 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 	}
 }
 
-func (t *TUI2) flushPendingTokens() {
+func (t *TUI2) flushPendingTokens() bool {
 	if !t.isStreaming.Load() || t.pendingTokens.Len() == 0 {
-		return
+		return false
 	}
 	raw := t.pendingTokens.String()
 
@@ -139,6 +142,7 @@ func (t *TUI2) flushPendingTokens() {
 	t.addAssistantResponse(raw)
 	t.pendingTokens.Reset()
 	t.isStreaming.Store(false)
+	return true
 }
 
 func (t *TUI2) HandleContextInfo(tokens, window int) {
