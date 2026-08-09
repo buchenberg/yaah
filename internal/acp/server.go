@@ -135,6 +135,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	var currentPromptCancel context.CancelFunc
+	var currentPromptDone chan struct{}
 	var promptMu sync.Mutex
 
 	// promptResults carries results from completed prompt runs
@@ -217,8 +218,14 @@ func (s *Server) Run(ctx context.Context) error {
 				if currentPromptCancel != nil {
 					currentPromptCancel()
 				}
+				done := currentPromptDone
+				currentPromptDone = make(chan struct{}, 1)
 				currentPromptCancel = promptCancel
 				promptMu.Unlock()
+
+				if done != nil {
+					<-done
+				}
 
 				wrapped := NewViewWithWrite(sendUpdate, sessionID)
 
@@ -229,6 +236,7 @@ func (s *Server) Run(ctx context.Context) error {
 				go s.forwardCtrl(promptCtx, ctrlCh, sessionID, sendUpdate)
 
 				go func(sID string) {
+					defer func() { currentPromptDone <- struct{}{} }()
 					resp, _, runErr := s.sess.RunPrompt(promptCtx, promptText)
 					promptResults <- promptResult{sessionID: sID, response: resp, err: runErr}
 				}(sessionID)
@@ -281,29 +289,43 @@ func (s *Server) Run(ctx context.Context) error {
 					Arguments map[string]any `json:"arguments"`
 				}
 				if len(msg.Params) > 0 {
-					json.Unmarshal(msg.Params, &params)
+					if err := json.Unmarshal(msg.Params, &params); err != nil {
+						writeMsg(Message{
+							JSONRPC: "2.0", ID: msg.ID,
+							Error: &Error{Code: -32602, Message: "invalid params: " + err.Error()},
+						})
+						continue
+					}
 				}
 
-				var resultData json.RawMessage
-				if reg := s.sess.ToolReg(); reg != nil {
-					argsJSON, _ := json.Marshal(params.Arguments)
-					r, err := reg.Execute(ctx, params.Name, string(argsJSON))
+				reg := s.sess.ToolReg()
+				if reg == nil {
+					resultData := json.RawMessage(`{"content":[{"type":"text","text":"session not ready"}],"isError":true}`)
+					writeMsg(Message{JSONRPC: "2.0", ID: msg.ID, Result: resultData})
+					continue
+				}
+
+				go func(id any, name string, args map[string]any) {
+					callCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+					defer cancel()
+
+					var resultData json.RawMessage
+					argsJSON, _ := json.Marshal(args)
+					r, execErr := reg.Execute(callCtx, name, string(argsJSON))
 					blocks := []map[string]any{
 						{"type": "text", "text": r},
 					}
-					isErr := err != nil
+					isErr := execErr != nil
 					if isErr {
-						blocks[0]["text"] = err.Error()
+						blocks[0]["text"] = execErr.Error()
 					}
 					result := map[string]any{
 						"content": blocks,
 						"isError": isErr,
 					}
 					resultData, _ = json.Marshal(result)
-				} else {
-					resultData = json.RawMessage(`{"content":[{"type":"text","text":"session not ready"}],"isError":true}`)
-				}
-				writeMsg(Message{JSONRPC: "2.0", ID: msg.ID, Result: resultData})
+					writeMsg(Message{JSONRPC: "2.0", ID: id, Result: resultData})
+				}(msg.ID, params.Name, params.Arguments)
 			}
 		}
 	}()
