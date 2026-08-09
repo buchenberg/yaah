@@ -64,9 +64,42 @@ func runTUI2() error {
 	app.SetProvider(sess.ProviderName())
 	app.SetModel(sess.ModelName())
 
-	// Fetch available models and send as CtrlModelList so the model picker
-	// (triggered via ":model") has data to display.
+	// Pass config details for the info pane.
 	cfg := sess.cfg
+	subModel := cfg.Agent.SubAgent.Model
+	if subModel == "" {
+		subModel = cfg.Agent.Default.Model
+	}
+	subProvider := cfg.Agent.SubAgent.Provider
+	if subProvider == "" {
+		subProvider = sess.ProviderName()
+	}
+	mc := cfg.Agent.Middleware
+	var pipeline []string
+	if len(mc.Enabled) > 0 {
+		pipeline = mc.Enabled
+	} else {
+		defaults := []string{"steer", "followup", "compaction", "soft_prune", "approval", "tool_concurrency", "loop_detection", "staleness"}
+		disabled := make(map[string]bool, len(mc.Disabled))
+		for _, d := range mc.Disabled {
+			disabled[d] = true
+		}
+		for _, name := range defaults {
+			if !disabled[name] {
+				pipeline = append(pipeline, name)
+			}
+		}
+	}
+	app.SetConfig(
+		cfg.Agent.SubAgent.Provider != "" || cfg.Agent.SubAgent.Model != "",
+		subProvider,
+		cfg.Agent.SubAgent.MaxConcurrency,
+		subModel,
+		cfg.Embedding.Provider != "" && cfg.Embedding.Model != "",
+		cfg.Embedding.Model,
+		pipeline,
+	)
+
 	names := make(map[string]string)
 	for key, p := range cfg.Providers {
 		if p.Name != "" {

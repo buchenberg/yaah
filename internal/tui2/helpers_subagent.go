@@ -10,6 +10,7 @@ func (t *TUI2) AddSubAgentStart(id, agentType, specialty, task, model string) {
 	t.subagentBlocks = append(t.subagentBlocks, block)
 	t.conversationLog = append(t.conversationLog, convItem{subBlock: block})
 	t.refreshMessages()
+	t.renderBackgroundJobsPane()
 }
 
 // AddSubAgentEnd transitions the sub-agent block with the given id to Done.
@@ -18,6 +19,7 @@ func (t *TUI2) AddSubAgentEnd(id string) {
 		if b.ID() == id {
 			b.Complete()
 			t.refreshMessages()
+			t.renderBackgroundJobsPane()
 			return
 		}
 	}
@@ -29,6 +31,7 @@ func (t *TUI2) AddSubAgentError(id, err string) {
 		if b.ID() == id {
 			b.Fail(err)
 			t.refreshMessages()
+			t.renderBackgroundJobsPane()
 			return
 		}
 	}

@@ -9,7 +9,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/buchenberg/yaah/internal/agent"
-	"github.com/buchenberg/yaah/internal/tui2/components/statusbar"
 )
 
 func (t *TUI2) HandleEvent(event agent.Event) {
@@ -70,7 +69,7 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 	case *agent.EscalationEvent:
 		t.App.QueueUpdateDraw(func() {
 			t.flushPendingTokens()
-			msg := fmt.Sprintf("[#ff5555]\u26A0 %s[-]", e.Summary)
+			msg := fmt.Sprintf("[%s]\u26A0 %s[-]", t.Theme.Error, e.Summary)
 			t.plainMessages = append(t.plainMessages, msg)
 			t.conversationLog = append(t.conversationLog, convItem{text: msg})
 			t.refreshMessages()
@@ -79,7 +78,7 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 		t.App.QueueUpdateDraw(func() {
 			t.flushPendingTokens()
 			t.compacting = true
-			msg := fmt.Sprintf("[#888888]compacting (%d→%d tokens, %s)[-]", e.BeforeTokens, e.TargetTokens, e.Reason)
+			msg := fmt.Sprintf("[%s]compacting (%d→%d tokens, %s)[-]", t.Theme.Dim, e.BeforeTokens, e.TargetTokens, e.Reason)
 			t.plainMessages = append(t.plainMessages, msg)
 			t.conversationLog = append(t.conversationLog, convItem{text: msg})
 			t.refreshMessages()
@@ -93,7 +92,7 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			if e.IneffectiveNote != "" {
 				note = " " + e.IneffectiveNote
 			}
-			msg := fmt.Sprintf("[#888888]compacted %.0f%% (%.1fK → %.1fK, %s) in %.1fs%s[-]",
+			msg := fmt.Sprintf("[%s]compacted %.0f%% (%.1fK → %.1fK, %s) in %.1fs%s[-]", t.Theme.Dim,
 				pct, float64(e.BeforeTokens)/1000, float64(e.AfterTokens)/1000,
 				e.Method, e.ElapsedSeconds, note)
 			t.plainMessages = append(t.plainMessages, msg)
@@ -115,7 +114,6 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 				}
 				t.contextTokens = ct
 				t.contextWindow = e.ContextWindow
-				statusbar.Update(t.StatusBar, t.lastProvider, t.lastModel, ct, e.ContextWindow)
 				t.renderInfoPane()
 			}
 		})
@@ -147,6 +145,5 @@ func (t *TUI2) HandleContextInfo(tokens, window int) {
 		t.contextTokens = tokens
 		t.contextWindow = window
 		t.renderInfoPane()
-		statusbar.Update(t.StatusBar, t.lastProvider, t.lastModel, tokens, window)
 	})
 }

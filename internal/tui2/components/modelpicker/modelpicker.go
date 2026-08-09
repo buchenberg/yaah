@@ -3,6 +3,7 @@ package modelpicker
 import (
 	"strings"
 
+	"github.com/buchenberg/yaah/internal/tui2/components/modal"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -19,6 +20,10 @@ func Show(app *tview.Application, pages *tview.Pages, models []string, providerN
 
 	list := tview.NewList().
 		ShowSecondaryText(true)
+	list.SetMainTextColor(tcell.ColorWhite).
+		SetSecondaryTextColor(tcell.ColorGray).
+		SetSelectedTextColor(tcell.ColorWhite).
+		SetSelectedBackgroundColor(tcell.ColorDarkCyan)
 
 	for _, m := range models {
 		model := m
@@ -95,15 +100,15 @@ func Show(app *tview.Application, pages *tview.Pages, models []string, providerN
 		}
 	})
 
-	flex := tview.NewFlex().
+	inner := tview.NewFlex().
 		SetDirection(tview.FlexRow).
 		AddItem(filter, 1, 0, false).
 		AddItem(list, 0, 1, true)
 
-	flex.SetBorder(true).
+	inner.SetBorder(true).
 		SetTitle(" Model Picker ").
 		SetTitleColor(tcell.ColorYellow)
 
-	pages.AddPage(modalPageName, flex, true, true)
+	pages.AddPage(modalPageName, modal.Wrap(inner), true, true)
 	app.SetFocus(list)
 }

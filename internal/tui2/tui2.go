@@ -11,7 +11,7 @@ import (
 	"github.com/buchenberg/yaah/internal/tui2/components/approval"
 	"github.com/buchenberg/yaah/internal/tui2/components/banner"
 	"github.com/buchenberg/yaah/internal/tui2/components/command"
-	"github.com/buchenberg/yaah/internal/tui2/components/infobar"
+	"github.com/buchenberg/yaah/internal/tui2/components/help"
 	"github.com/buchenberg/yaah/internal/tui2/components/infopane"
 	"github.com/buchenberg/yaah/internal/tui2/components/input"
 	"github.com/buchenberg/yaah/internal/tui2/components/mcpinfo"
@@ -19,7 +19,6 @@ import (
 	"github.com/buchenberg/yaah/internal/tui2/components/modelpicker"
 	"github.com/buchenberg/yaah/internal/tui2/components/question"
 	"github.com/buchenberg/yaah/internal/tui2/components/reasoning"
-	"github.com/buchenberg/yaah/internal/tui2/components/statusbar"
 	"github.com/buchenberg/yaah/internal/tui2/components/subagent"
 	"github.com/buchenberg/yaah/internal/tui2/components/thinking"
 	"github.com/buchenberg/yaah/internal/tui2/components/todo"
@@ -28,8 +27,6 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
-
-const cmdListModal = "cmdlist_modal"
 
 // TUI2 is the tview-based terminal UI prototype.
 //
@@ -48,12 +45,12 @@ type TUI2 struct {
 
 	// --- tview widgets (set before Run; must use QueueUpdateDraw for SetText etc.) ---
 	Banner    *tview.TextView
-	InfoBar   *tview.TextView
 	Messages  *tview.TextView
 	Input     *tview.TextArea
 	InfoPane  *tview.TextView
 	TodoPane  *tview.TextView
-	StatusBar *tview.TextView
+	BackgroundJobsPane *tview.TextView
+	rightPane *tview.Flex
 	Header    *tview.Grid
 
 	// --- State (read-only after init, rare updates via QueueUpdateDraw) ---
@@ -101,6 +98,13 @@ type TUI2 struct {
 	verbose       bool
 	showBanner    bool
 	ephemeralMsg  string
+	subAgentsEnabled bool
+	subAgentsProvider string
+	subAgentsConcurrency int
+	subAgentsModel string
+	embeddingEnabled bool
+	embeddingModel string
+	middlewarePipeline []string
 	tokensRx      atomic.Int64
 	charsWritten  atomic.Int64
 	charsRendered atomic.Int64
@@ -127,7 +131,7 @@ func New(version string) *TUI2 {
 		App:         tview.NewApplication(),
 		Theme:       &th,
 		thinkingInd: thinking.New("Thinking..."),
-		version:     "yaah " + version,
+		version:     version,
 		showBanner:  true,
 	}
 	t.buildUI()
@@ -158,6 +162,18 @@ func (t *TUI2) SetProvider(name string) {
 // SetModel sets the model display name and refreshes the info pane.
 func (t *TUI2) SetModel(name string) {
 	t.lastModel = name
+	t.renderInfoPane()
+}
+
+// SetConfig stores display-level configuration for the info pane.
+func (t *TUI2) SetConfig(subAgentsEnabled bool, subAgentsProvider string, subAgentsConcurrency int, subAgentsModel string, embeddingEnabled bool, embeddingModel string, pipeline []string) {
+	t.subAgentsEnabled = subAgentsEnabled
+	t.subAgentsProvider = subAgentsProvider
+	t.subAgentsConcurrency = subAgentsConcurrency
+	t.subAgentsModel = subAgentsModel
+	t.embeddingEnabled = embeddingEnabled
+	t.embeddingModel = embeddingModel
+	t.middlewarePipeline = pipeline
 	t.renderInfoPane()
 }
 
@@ -209,8 +225,7 @@ func (t *TUI2) startSpinnerTicker() {
 func (t *TUI2) buildUI() {
 	// --- Leaf primitives (from sub-packages) ---
 	var bannerLines int
-	bannerLines, t.Banner = banner.Build()
-	t.InfoBar, _ = infobar.Build()
+	bannerLines, t.Banner = banner.Build(t.Theme.Dim)
 	t.Messages = messages.Build()
 	t.Messages.SetMouseCapture(func(action tview.MouseAction, event *tcell.EventMouse) (tview.MouseAction, *tcell.EventMouse) {
 		switch action {
@@ -227,9 +242,15 @@ func (t *TUI2) buildUI() {
 		return action, event
 	})
 	t.Input = input.Build(t.Theme)
-	t.InfoPane = infopane.Build(t.Theme)
-	t.StatusBar, _ = statusbar.Build()
-	t.TodoPane = todo.Build(nil)
+	t.InfoPane = infopane.Build(t.Theme.InfoPaneBorder)
+	t.TodoPane = todo.Build(nil, t.Theme.TasksPaneBorder)
+	t.BackgroundJobsPane = tview.NewTextView().
+		SetDynamicColors(true).
+		SetWordWrap(true)
+	t.BackgroundJobsPane.SetBorder(true)
+	t.BackgroundJobsPane.SetTitle(" Subagents ")
+	t.BackgroundJobsPane.SetBorderColor(tcell.GetColor(t.Theme.SubAgentsBorder))
+	t.BackgroundJobsPane.SetTitleColor(tcell.GetColor(t.Theme.SubAgentsBorder))
 
 	// --- Header: two-column grid (banner left | provider right) ---
 	// Size the header to exactly the banner height — no minimum floor.
@@ -249,7 +270,7 @@ func (t *TUI2) buildUI() {
 	// Banner spans all content rows
 	t.Header.AddItem(t.Banner, 0, 0, headerRows, 1, 0, 0, false)
 
-	// --- Body: horizontal split — messages (4/5) | infopane+todos (1/5) ---
+	// --- Body: horizontal split — messages (4/5) | info+todos+background (1/5) ---
 	messagesCol := tview.NewFlex().
 		SetDirection(tview.FlexRow).
 		AddItem(t.Messages, 0, 1, false)
@@ -257,7 +278,9 @@ func (t *TUI2) buildUI() {
 	rightPane := tview.NewFlex().
 		SetDirection(tview.FlexRow)
 	rightPane.AddItem(t.InfoPane, 0, 3, false)
+	rightPane.AddItem(t.BackgroundJobsPane, 0, 0, false)
 	rightPane.AddItem(t.TodoPane, 0, 1, false)
+	t.rightPane = rightPane
 
 	body := tview.NewFlex().
 		SetDirection(tview.FlexColumn).
@@ -269,11 +292,9 @@ func (t *TUI2) buildUI() {
 		SetDirection(tview.FlexRow).
 		SetFullScreen(true)
 
-	t.Root.AddItem(t.Header, totalRows, 0, false) // header: dynamic, no grow
-	t.Root.AddItem(t.InfoBar, 1, 0, false)        // infobar: fixed 1
-	t.Root.AddItem(body, 0, 1, true)              // body: fills remaining
-	t.Root.AddItem(t.Input, 3, 0, false)          // input: full-width footer
-	t.Root.AddItem(t.StatusBar, 1, 0, false)      // footer: fixed 1
+	t.Root.AddItem(t.Header, headerRows, 0, false) // header
+	t.Root.AddItem(body, 0, 1, true)               // body: fills remaining
+	t.Root.AddItem(t.Input, 3, 0, false)           // input
 
 	// --- Application setup ---
 	t.Pages = tview.NewPages()
@@ -288,6 +309,9 @@ func (t *TUI2) buildUI() {
 	tview.Styles.PrimaryTextColor = tcell.ColorWhite
 	tview.Styles.BorderColor = tcell.ColorGray
 	tview.Styles.TitleColor = tcell.ColorYellow
+	tview.Styles.ContrastBackgroundColor = tcell.ColorDarkCyan
+	tview.Styles.MoreContrastBackgroundColor = tcell.ColorDarkCyan
+	tview.Styles.ContrastSecondaryTextColor = tcell.ColorWhite
 }
 
 // convItem is a single entry in the chronological conversation log.
@@ -305,46 +329,40 @@ type convItem struct {
 // refreshMessages rebuilds the messages TextView content from all
 // conversation items in chronological order. Call after any state change.
 func (t *TUI2) refreshMessages() {
-	var b strings.Builder
 	w := messageWidth(t.Messages)
-	ctx := colors.RenderCtx{Width: w, Theme: t.Theme}
 
+	items := make([]messages.Item, len(t.conversationLog))
 	for i := range t.conversationLog {
-		item := &t.conversationLog[i]
-		switch {
-		case item.text != "":
-			b.WriteString("\n")
-			if item.isMarkdown {
-				if item.cached == "" || item.cachedWidth != w {
-					item.cached = renderMarkdown(item.text, w)
-					item.cachedWidth = w
+		ci := &t.conversationLog[i]
+		var text string
+		if ci.text != "" {
+			if ci.isMarkdown {
+				if ci.cached == "" || ci.cachedWidth != w {
+					ci.cached = renderMarkdown(ci.text, w, t.Theme)
+					ci.cachedWidth = w
 				}
-				b.WriteString(item.cached)
+				text = ci.cached
 			} else {
-				b.WriteString(item.text)
+				text = ci.text
 			}
-			b.WriteString("\n\n")
-		case item.toolBlock != nil:
-			b.WriteString(item.toolBlock.RenderCtx(ctx))
-			b.WriteString("\n")
-		case item.subBlock != nil:
-			b.WriteString(item.subBlock.RenderCtx(ctx))
-			b.WriteString("\n")
-		case item.reasoningBlock != nil:
-			b.WriteString("\n")
-			b.WriteString(item.reasoningBlock.RenderCtx(ctx))
-			b.WriteString("\n\n")
+		}
+		items[i] = messages.Item{
+			Text:      text,
+			ToolBlock: ci.toolBlock,
+			SubBlock:  ci.subBlock,
+			ReasBlock: ci.reasoningBlock,
 		}
 	}
 
-	// Spinner — inline at the bottom while thinking.
+	var spinText string
 	if t.thinkingInd.Visible() {
-		b.WriteString("\n")
-		b.WriteString(t.thinkingInd.Render())
-		b.WriteString("\n")
+		spinText = t.thinkingInd.Render()
 	}
 
-	msg := b.String()
+	msg := messages.Format(items, spinText, messages.Content{
+		Width: w,
+		Theme: t.Theme,
+	})
 	t.charsRendered.Store(int64(len(msg)))
 	t.Messages.SetText(msg)
 	if !t.userScrolled {
@@ -569,69 +587,25 @@ func (t *TUI2) HandleCommand(cmd command.Cmd, arg string) {
 }
 
 func (t *TUI2) showCommandList() {
-	entries := []struct {
-		label string
-		desc  string
-		cmd   command.Cmd
-	}{
-		{"help", "Show keybindings and commands", command.CmdHelp},
-		{"clear", "Clear conversation", command.CmdClear},
-		{"compact", "Compact context window", command.CmdCompact},
-		{"stop", "Abort running agent", command.CmdStop},
-		{"steer", "Inject steering text (requires arg)", command.CmdSteer},
-		{"model", "Switch model", command.CmdModel},
-		{"search", "Search messages (requires arg)", command.CmdSearch},
-		{"verbose", "Toggle verbose mode", command.CmdVerbose},
-		{"banner", "Toggle banner", command.CmdBanner},
-		{"top", "Scroll to top", command.CmdTop},
-		{"bottom", "Scroll to bottom", command.CmdBottom},
-		{"quit", "Exit yaah", command.CmdQuit},
+	var entries []command.Entry
+	for _, e := range command.DefaultEntries() {
+		entries = append(entries, e)
 	}
-
-	list := tview.NewList().
-		ShowSecondaryText(true).
-		SetHighlightFullLine(true).
-		SetWrapAround(false)
-
-	for _, e := range entries {
-		list.AddItem(e.label, e.desc, 0, func() {
-			t.Pages.RemovePage(cmdListModal)
-			t.App.SetFocus(t.Input)
-			t.focus = focusNormal
-			t.HandleCommand(e.cmd, "")
-		})
-	}
-
-	list.SetBorder(true).
-		SetTitle(" Commands ").
-		SetTitleColor(tcell.ColorYellow)
-
-	list.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
-		if ev.Key() == tcell.KeyEscape {
-			t.Pages.RemovePage(cmdListModal)
-			t.App.SetFocus(t.Input)
-			t.focus = focusNormal
-			return nil
-		}
-		return ev
+	command.ShowList(t.App, t.Pages, entries, func(cmd command.Cmd) {
+		t.App.SetFocus(t.Input)
+		t.focus = focusNormal
+		t.HandleCommand(cmd, "")
+	}, func() {
+		t.App.SetFocus(t.Input)
+		t.focus = focusNormal
 	})
-
-	flex := tview.NewFlex().
-		AddItem(nil, 0, 1, false).
-		AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
-			AddItem(nil, 0, 1, false).
-			AddItem(list, 0, 3, false).
-			AddItem(nil, 0, 1, false), 0, 3, true).
-		AddItem(nil, 0, 1, false)
-
-	t.Pages.AddPage(cmdListModal, flex, true, true)
-	t.App.SetFocus(list)
 	t.focus = focusCommandPalette
 }
 
 // UpdateTodos updates the TODO list in the right panel.
 func (t *TUI2) UpdateTodos(items []itodo.Item) {
-	t.TodoPane.SetText(todo.FormatList(items))
+	t.todoItems = items
+	t.renderTodoPane()
 }
 
 // UpdateInfopane sets a specific infopane tab content.
@@ -641,8 +615,8 @@ func (t *TUI2) UpdateInfopane(tab, content string) {
 }
 
 func (t *TUI2) toggleCommandPalette() {
-	if t.Pages.HasPage(cmdListModal) {
-		t.Pages.RemovePage(cmdListModal)
+	if t.Pages.HasPage(command.PageName) {
+		t.Pages.RemovePage(command.PageName)
 		t.App.SetFocus(t.Input)
 		t.focus = focusNormal
 	} else {
@@ -709,52 +683,14 @@ func (t *TUI2) toggleAllSubAgents() {
 }
 
 func (t *TUI2) ShowHelp() {
-	const helpModal = "help_modal"
-	var lines []string
-	lines = append(lines, "[yellow]Keyboard Shortcuts[-]\n\n")
+	var bindings []help.Binding
 	for _, b := range DefaultBindings() {
-		lines = append(lines, fmt.Sprintf("  [white]%-12s[-] [dim]%s[-]", b.Label, b.HelpText))
+		bindings = append(bindings, help.Binding{Label: b.Label, HelpText: b.HelpText})
 	}
-	lines = append(lines, "\n[yellow]Commands (Ctrl+P → :command)[-]\n")
-	lines = append(lines, "  :help          Show this help")
-	lines = append(lines, "  :clear         Clear conversation")
-	lines = append(lines, "  :compact       Compact context")
-	lines = append(lines, "  :stop          Stop running agent")
-	lines = append(lines, "  :steer <text>  Inject steering text")
-	lines = append(lines, "  :model <name>  Switch model")
-	lines = append(lines, "  :search <q>    Search messages")
-	lines = append(lines, "  :verbose       Toggle verbose mode")
-	lines = append(lines, "  :banner        Toggle banner")
-	lines = append(lines, "  :top/:bottom   Scroll to top/bottom")
-	lines = append(lines, "  :quit          Exit")
-
-	textView := tview.NewTextView().
-		SetDynamicColors(true).
-		SetText(strings.Join(lines, "\n"))
-	textView.SetBorder(true).
-		SetTitle(" Help ").
-		SetTitleColor(tcell.ColorYellow)
-
-	flex := tview.NewFlex().
-		AddItem(nil, 0, 1, false).
-		AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
-			AddItem(nil, 0, 1, false).
-			AddItem(textView, 0, 3, false).
-			AddItem(nil, 0, 1, false), 0, 3, true).
-		AddItem(nil, 0, 1, false)
-
-	flex.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
-		if ev.Key() == tcell.KeyEscape || ev.Key() == tcell.KeyEnter {
-			t.Pages.RemovePage(helpModal)
-			t.App.SetFocus(t.Input)
-			t.focus = focusNormal
-			return nil
-		}
-		return ev
+	help.Show(t.App, t.Pages, bindings, func() {
+		t.App.SetFocus(t.Input)
+		t.focus = focusNormal
 	})
-
-	t.Pages.AddPage(helpModal, flex, true, true)
-	t.App.SetFocus(textView)
 }
 
 type focusState int

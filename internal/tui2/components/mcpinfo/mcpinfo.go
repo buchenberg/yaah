@@ -15,22 +15,22 @@ type Server struct {
 }
 
 // Format returns a formatted MCP server status block.
-func Format(servers []Server) string {
+func Format(servers []Server, th *colors.Theme) string {
 	if len(servers) == 0 {
-		return colors.Tag(colors.Dim, "  (no servers)\n")
+		return th.Tag(th.Dim, "  (no servers)\n")
 	}
 
 	var b strings.Builder
 	for _, s := range servers {
 		if s.Connected {
 			b.WriteString(fmt.Sprintf("  %s %s\n",
-				colors.Tag("#00d787", "●"),
-				colors.Tag(colors.Accent, s.Name),
+				th.Tag(th.Connected, "●"),
+				th.Tag(th.Detail, s.Name),
 			))
 		} else {
 			b.WriteString(fmt.Sprintf("  %s %s\n",
-				colors.Tag(colors.Dim, "●"),
-				colors.Tag(colors.Dim, s.Name),
+				th.Tag(th.Dim, "●"),
+				th.Tag(th.Dim, s.Name),
 			))
 		}
 	}

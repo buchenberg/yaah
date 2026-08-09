@@ -1,13 +1,13 @@
-// Package command implements the vim-style ":" command palette for TUI2.
+// Package command implements the colon command parser and command palette for TUI2.
 //
-// Pressing ":" slides a single-line input up from the bottom of the screen.
-// Commands mirror the REPL slash commands (/exit, /clear, etc.) with
-// additional TUI-specific commands.
+// Pressing Ctrl+P shows a list-based command palette. Commands mirror the
+// REPL slash commands with additional TUI-specific commands.
 package command
 
 import (
 	"strings"
 
+	"github.com/buchenberg/yaah/internal/tui2/components/modal"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -82,78 +82,70 @@ func Parse(input string) Cmd {
 	}
 }
 
-// Palette is a vim-style ":" command input that appears at the bottom of the
-// TUI when the user presses ":". It handles completion, history, and
-// dispatches recognized commands via a callback.
-type Palette struct {
-	*tview.InputField
-
-	onCommand func(cmd Cmd, arg string)
-	history   []string
-	histIdx   int
+// Entry is a labelled command with description shown in the palette.
+type Entry struct {
+	Label string
+	Desc  string
+	Cmd   Cmd
 }
 
-// Build creates the command palette input field.
-func Build(onCommand func(cmd Cmd, arg string)) *Palette {
-	p := &Palette{
-		InputField: tview.NewInputField(),
-		onCommand:  onCommand,
+// DefaultEntries returns the standard command palette entries.
+func DefaultEntries() []Entry {
+	return []Entry{
+		{"help", "Show keybindings and commands", CmdHelp},
+		{"clear", "Clear conversation", CmdClear},
+		{"compact", "Compact context window", CmdCompact},
+		{"stop", "Abort running agent", CmdStop},
+		{"steer", "Inject steering text (requires arg)", CmdSteer},
+		{"model", "Switch model", CmdModel},
+		{"search", "Search messages (requires arg)", CmdSearch},
+		{"verbose", "Toggle verbose mode", CmdVerbose},
+		{"banner", "Toggle banner", CmdBanner},
+		{"top", "Scroll to top", CmdTop},
+		{"bottom", "Scroll to bottom", CmdBottom},
+		{"quit", "Exit yaah", CmdQuit},
 	}
-	p.SetFieldBackgroundColor(tcell.ColorBlack)
-	p.SetFieldTextColor(tcell.ColorWhite)
-	p.SetLabel("  ")
-	p.SetLabelColor(tcell.ColorYellow)
-	p.SetPlaceholder("command (help, clear, compact, stop, steer, model, mcp, verbose, search...)")
-	p.SetPlaceholderTextColor(tcell.ColorGray)
+}
 
-	p.SetDoneFunc(func(key tcell.Key) {
-		input := strings.TrimSpace(p.GetText())
-		if input == "" {
-			return
-		}
-		p.history = append(p.history, input)
-		p.histIdx = len(p.history)
+// PageName is the tview Pages name used for the command list modal.
+const PageName = "cmdlist_modal"
 
-		cmd := Parse(input)
-		arg := ""
-		switch {
-		case cmd == CmdModel && strings.HasPrefix(input, "model "):
-			arg = strings.TrimPrefix(input, "model ")
-		case cmd == CmdSteer && strings.HasPrefix(input, "steer "):
-			arg = strings.TrimPrefix(input, "steer ")
-		case cmd == CmdFollowUp && strings.HasPrefix(input, "followup "):
-			arg = strings.TrimPrefix(input, "followup ")
-		case cmd == CmdSearch && strings.HasPrefix(input, "search "):
-			arg = strings.TrimPrefix(input, "search ")
-		}
-		if cmd != CmdNone {
-			p.onCommand(cmd, arg)
-		}
-	})
+// ShowList displays the command palette as a list-based modal.
+// onSelect is called with the chosen command when an entry is selected.
+// onDismiss is called when the modal is dismissed with Escape.
+func ShowList(app *tview.Application, pages *tview.Pages, entries []Entry, onSelect func(Cmd), onDismiss func()) {
+	list := tview.NewList().
+		ShowSecondaryText(true).
+		SetHighlightFullLine(true).
+		SetWrapAround(false)
+	list.SetMainTextColor(tcell.ColorWhite).
+		SetSecondaryTextColor(tcell.ColorGray).
+		SetSelectedTextColor(tcell.ColorWhite).
+		SetSelectedBackgroundColor(tcell.ColorDarkCyan)
 
-	p.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
-		switch ev.Key() {
-		case tcell.KeyUp:
-			if len(p.history) > 0 && p.histIdx > 0 {
-				p.histIdx--
-				p.SetText(p.history[p.histIdx])
-			}
-			return nil
-		case tcell.KeyDown:
-			if p.histIdx < len(p.history)-1 {
-				p.histIdx++
-				p.SetText(p.history[p.histIdx])
-			} else if p.histIdx == len(p.history)-1 {
-				p.histIdx = len(p.history)
-				p.SetText("")
-			}
-			return nil
-		case tcell.KeyEscape:
-			p.SetText("")
+	for _, e := range entries {
+		e := e
+		list.AddItem(e.Label, e.Desc, 0, func() {
+			pages.RemovePage(PageName)
+			onSelect(e.Cmd)
+		})
+	}
+
+	list.SetBorder(true).
+		SetTitle(" Commands ").
+		SetTitleColor(tcell.ColorYellow)
+
+	list.SetInputCapture(func(ev *tcell.EventKey) *tcell.EventKey {
+		if ev.Key() == tcell.KeyEscape {
+			pages.RemovePage(PageName)
+			onDismiss()
 			return nil
 		}
 		return ev
 	})
 
-	return p
+	flex := modal.Wrap(list)
+
+	pages.AddPage(PageName, flex, true, true)
+	app.SetFocus(list)
 }

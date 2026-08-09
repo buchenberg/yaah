@@ -2,12 +2,11 @@ package tui2
 
 import (
 	"fmt"
-	"strings"
 
-	"github.com/buchenberg/yaah/internal/tui2/components/mcpinfo"
+	"github.com/buchenberg/yaah/internal/tui2/components/backgroundjobs"
+	"github.com/buchenberg/yaah/internal/tui2/components/infopane"
 	"github.com/buchenberg/yaah/internal/tui2/components/question"
-	"github.com/buchenberg/yaah/internal/tui2/components/sessioninfo"
-	"github.com/buchenberg/yaah/internal/tui2/components/statusbar"
+	subagent "github.com/buchenberg/yaah/internal/tui2/components/subagent"
 	todoview "github.com/buchenberg/yaah/internal/tui2/components/todo"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -55,67 +54,64 @@ func (t *TUI2) handleControlMsg(msg types.CtrlMsg) {
 		}
 		t.contextTokens = ct
 		t.contextWindow = m.Window
-		statusbar.Update(t.StatusBar, t.lastProvider, t.lastModel, ct, m.Window)
 		t.renderInfoPane()
 
 	case *types.CtrlFallback:
 		t.lastProvider = m.Provider
 		t.lastModel = m.Model
-		statusbar.Update(t.StatusBar, m.Provider, m.Model, t.contextTokens, t.contextWindow)
 		t.renderInfoPane()
 	}
 }
 
-// renderInfoPane rebuilds the info pane from live state: session info
-// (provider/model/version), context token usage, and MCP server status.
+// renderInfoPane rebuilds the info pane from live state.
 func (t *TUI2) renderInfoPane() {
-	var b strings.Builder
-
-	// Session section
-	b.WriteString(sessioninfo.Format(sessioninfo.Info{
-		Provider: t.lastProvider,
-		Model:    t.lastModel,
-		Version:  t.version,
-	}))
-	b.WriteString("\n\n")
-
-	// Context section
-	b.WriteString(t.Theme.TagBold(t.Theme.Accent, "Context\n"))
-	if t.contextWindow > 0 {
-		pct := float64(t.contextTokens) * 100 / float64(t.contextWindow)
-		if pct > 100 {
-			pct = 100
-		}
-		b.WriteString(t.Theme.Tag(t.Theme.Dim,
-			fmt.Sprintf("  %d / %d (%.1f%%)\n", t.contextTokens, t.contextWindow, pct)))
-	} else {
-		b.WriteString(t.Theme.Tag(t.Theme.Dim, "  \u2500\n"))
-	}
-	b.WriteString("\n")
-
-	// MCP section
-	b.WriteString(t.Theme.TagBold(t.Theme.Accent, "MCP\n"))
-	b.WriteString(mcpinfo.Format(t.McpServers))
-
-	// Ephemeral messages (search results, notices)
-	rx := t.tokensRx.Load()
-	if rx > 0 {
-		b.WriteString("\n")
-		b.WriteString(t.Theme.Tag(t.Theme.Dim,
-			fmt.Sprintf("tokens: rx %d  wr %d  rn %d",
-				rx, t.charsWritten.Load(), t.charsRendered.Load())))
-	}
-
-	if t.ephemeralMsg != "" {
-		b.WriteString("\n")
-		b.WriteString(t.Theme.Tag(t.Theme.Accent, t.ephemeralMsg))
-		b.WriteString("\n")
-	}
-
-	t.InfoPane.SetText(b.String())
+	t.InfoPane.SetText(infopane.Format(infopane.State{
+		Provider:      t.lastProvider,
+		Model:         t.lastModel,
+		Version:       t.version,
+		ContextTokens: t.contextTokens,
+		ContextWindow: t.contextWindow,
+		McpServers:    t.McpServers,
+		EphemeralMsg:  t.ephemeralMsg,
+		SubAgents: infopane.SubAgentInfo{
+			Enabled:     t.subAgentsEnabled,
+			Provider:    t.subAgentsProvider,
+			Concurrency: t.subAgentsConcurrency,
+			Model:       t.subAgentsModel,
+		},
+		Embedding: infopane.EmbeddingInfo{
+			Enabled: t.embeddingEnabled,
+			Model:   t.embeddingModel,
+		},
+		Pipeline: t.middlewarePipeline,
+	}, t.Theme))
 }
 
 // renderTodoPane rebuilds the dedicated task pane from live todo items.
+// The pane is hidden when the list is empty and sized proportionally to
+// the item count when active.
 func (t *TUI2) renderTodoPane() {
-	t.TodoPane.SetText(todoview.FormatList(t.todoItems))
+	text := todoview.FormatList(t.todoItems)
+	t.TodoPane.SetText(text)
+	if len(t.todoItems) == 0 {
+		t.rightPane.ResizeItem(t.TodoPane, 0, 0)
+	} else {
+		t.rightPane.ResizeItem(t.TodoPane, len(t.todoItems)+2, 0)
+	}
+}
+
+func (t *TUI2) renderBackgroundJobsPane() {
+	text := backgroundjobs.Format(t.subagentBlocks, t.Theme)
+	t.BackgroundJobsPane.SetText(text)
+	if text == "" {
+		t.rightPane.ResizeItem(t.BackgroundJobsPane, 0, 0)
+	} else {
+		height := 0
+		for _, b := range t.subagentBlocks {
+			if b.S() == subagent.Active {
+				height++
+			}
+		}
+		t.rightPane.ResizeItem(t.BackgroundJobsPane, height+3, 0) // +1 header +2 border
+	}
 }

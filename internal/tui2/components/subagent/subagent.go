@@ -56,12 +56,15 @@ func New(id, role, specialty, task, model string, th *colors.Theme) *Block {
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
-func (b *Block) ID() string       { return b.id }
-func (b *Block) Role() string     { return b.role }
-func (b *Block) S() State         { return b.state }
-func (b *Block) IsExpanded() bool { return b.expanded }
-func (b *Block) Toggle()          { b.expanded = !b.expanded }
-func (b *Block) ToggleBlink()     { b.blinkVisible = !b.blinkVisible }
+func (b *Block) ID() string             { return b.id }
+func (b *Block) Role() string           { return b.role }
+func (b *Block) S() State               { return b.state }
+func (b *Block) Task() string           { return b.task }
+func (b *Block) DisplayName() string    { return b.displayName }
+func (b *Block) Elapsed() time.Duration { return time.Since(b.startTime) }
+func (b *Block) IsExpanded() bool       { return b.expanded }
+func (b *Block) Toggle()                { b.expanded = !b.expanded }
+func (b *Block) ToggleBlink()           { b.blinkVisible = !b.blinkVisible }
 
 func (b *Block) AdvanceSpinner() {
 	if b.state == Active {
@@ -115,11 +118,11 @@ func (b *Block) renderCollapsed() string {
 	case Active:
 		return fmt.Sprintf(`  %s%s %s %s%s %s· %s%s`,
 			b.theme.ColorTag(hex), spinnerFrames[b.spinnerFrame], b.robot(), b.displayName, b.theme.ResetTag(),
-			b.theme.DimTag(), b.task, b.theme.ResetTag())
+			b.theme.SecondaryTag(), b.task, b.theme.ResetTag())
 	case Done:
 		return fmt.Sprintf(`  %s✓ %s %s%s %s· %s (%s)%s`,
 			b.theme.ColorTag(hex), b.robot(), b.displayName, b.theme.ResetTag(),
-			b.theme.DimTag(), b.task, b.durationStr(), b.theme.ResetTag())
+			b.theme.SecondaryTag(), b.task, b.durationStr(), b.theme.ResetTag())
 	case Error:
 		return fmt.Sprintf(`  %s✗ %s %s%s %s· %s (%s)%s`,
 			b.theme.ColorTag(hex), b.robot(), b.displayName, b.theme.ResetTag(), b.theme.DimTag(), b.theme.Tag(b.theme.Error, b.task), b.durationStr(), b.theme.ResetTag())

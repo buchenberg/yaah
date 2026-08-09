@@ -90,6 +90,12 @@ func (j *backgroundJob) snapshot() BackgroundJobStatus {
 // instant Execute returned, killing the "detached" job almost
 // immediately.
 //
+// The agent controls background job lifecycle via the subagent_jobs tool
+// (list, status, cancel, wait). Jobs that finish between turns publish
+// no UI event (the loop's broker is closed), but their state is preserved
+// for status lookups. CancelPending() is available for callers that need
+// explicit bulk cancellation.
+//
 // Trace parentage is preserved: each job's sub-agent span is created as a
 // child of the dispatching call's span (while that span is still alive),
 // then carried on the job's context via trace.ContextWithSpan, so the
@@ -367,6 +373,22 @@ func (m *BackgroundJobs) Cancel(id string) bool {
 	}
 	j.cancel()
 	return true
+}
+
+// CancelPending cancels all currently running (unfinished) background
+// jobs. Returns immediately — callers should not wait for job completion.
+// Use this at turn boundaries to prevent orphaned background work from
+// surviving the agent loop that dispatched it.
+func (m *BackgroundJobs) CancelPending() {
+	m.mu.Lock()
+	for _, j := range m.jobs {
+		j.mu.Lock()
+		if !j.finished {
+			j.cancel()
+		}
+		j.mu.Unlock()
+	}
+	m.mu.Unlock()
 }
 
 // Wait blocks until the job with the given id finishes or ctx is
