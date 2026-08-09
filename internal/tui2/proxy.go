@@ -49,7 +49,7 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			}
 			id := fmt.Sprintf("%d", e.ID)
 			if e.Error != "" {
-				t.AddToolEnd(id, e.Name+" \u274C", e.Error)
+				t.AddToolError(id, e.Name+" \u274C", e.Error)
 			} else {
 				t.AddToolEnd(id, e.Name, e.Result)
 			}
@@ -107,6 +107,11 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 				t.addAssistantResponse(e.Response)
 			}
 			t.markDirty()
+
+			// Accumulate usage tracking
+			if e.Usage.PromptTokens > 0 || e.Usage.CompletionTokens > 0 {
+				t.accumulateUsage(e.Usage)
+			}
 
 			if e.ContextWindow > 0 {
 				ct := e.ContextTokens

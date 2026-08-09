@@ -65,6 +65,12 @@ func (t *TUI2) handleControlMsg(msg types.CtrlMsg) {
 
 // renderInfoPane rebuilds the info pane from live state.
 func (t *TUI2) renderInfoPane() {
+	promptTokens, completionTokens := t.GetCumulativeUsage()
+	costEstimate := ""
+	if t.lastModel != "" && (promptTokens > 0 || completionTokens > 0) {
+		costEstimate = t.calculateCost(t.lastModel) + " (at current model rates)"
+	}
+
 	t.InfoPane.SetText(infopane.Format(infopane.State{
 		Provider:      t.lastProvider,
 		Model:         t.lastModel,
@@ -83,8 +89,11 @@ func (t *TUI2) renderInfoPane() {
 			Enabled: t.embeddingEnabled,
 			Model:   t.embeddingModel,
 		},
-		Pipeline:    t.middlewarePipeline,
-		AgentActive: t.agentActive,
+		Pipeline:         t.middlewarePipeline,
+		AgentActive:      t.agentActive,
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		CostEstimate:     costEstimate,
 	}, t.Theme))
 }
 
@@ -101,14 +110,26 @@ func (t *TUI2) renderTodoPane() {
 	}
 }
 
+// collectSubagentBlocks returns all subagent blocks from conversationLog.
+func (t *TUI2) collectSubagentBlocks() []*subagent.Block {
+	var blocks []*subagent.Block
+	for _, ci := range t.conversationLog {
+		if ci.subBlock != nil {
+			blocks = append(blocks, ci.subBlock)
+		}
+	}
+	return blocks
+}
+
 func (t *TUI2) renderBackgroundJobsPane() {
-	text := backgroundjobs.Format(t.subagentBlocks, t.Theme)
+	subagentBlocks := t.collectSubagentBlocks()
+	text := backgroundjobs.Format(subagentBlocks, t.Theme)
 	t.BackgroundJobsPane.SetText(text)
 	if text == "" {
 		t.rightPane.ResizeItem(t.BackgroundJobsPane, 0, 0)
 	} else {
 		height := 0
-		for _, b := range t.subagentBlocks {
+		for _, b := range subagentBlocks {
 			if b.S() == subagent.Active {
 				height++
 			}

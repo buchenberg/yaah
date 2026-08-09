@@ -27,10 +27,8 @@ func (t *TUI2) submitFollowUp() {
 // clearConversation resets all conversation state and re-renders the view.
 func (t *TUI2) clearConversation() {
 	t.conversationLog = nil
-	t.reasoningBlocks = nil
-	t.toolBlocks = nil
-	t.subagentBlocks = nil
 	t.userScrolled = false
+	t.resetUsage()
 	t.refreshMessages()
 }
 

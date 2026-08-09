@@ -14,17 +14,20 @@ import (
 
 // State carries live data for the info pane.
 type State struct {
-	Provider      string
-	Model         string
-	Version       string
-	ContextTokens int
-	ContextWindow int
-	McpServers    []mcpinfo.Server
-	EphemeralMsg  string
-	SubAgents     SubAgentInfo
-	Embedding     EmbeddingInfo
-	Pipeline      []string
-	AgentActive   bool
+	Provider         string
+	Model            string
+	Version          string
+	ContextTokens    int
+	ContextWindow    int
+	McpServers       []mcpinfo.Server
+	EphemeralMsg     string
+	SubAgents        SubAgentInfo
+	Embedding        EmbeddingInfo
+	Pipeline         []string
+	AgentActive      bool
+	PromptTokens     int
+	CompletionTokens int
+	CostEstimate     string
 }
 
 // SubAgentInfo holds sub-agent configuration for display.
@@ -79,6 +82,16 @@ func Format(s State, th *colors.Theme) string {
 
 	b.WriteString(contextinfo.Format(s.ContextTokens, s.ContextWindow, th))
 	b.WriteString("\n")
+
+	if s.PromptTokens > 0 || s.CompletionTokens > 0 {
+		b.WriteString(th.TagBold(th.Heading, "Usage\n"))
+		b.WriteString(fmt.Sprintf("  Prompt: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.PromptTokens))))
+		b.WriteString(fmt.Sprintf("  Completion: %s\n", th.Tag(th.Detail, fmt.Sprintf("%d", s.CompletionTokens))))
+		if s.CostEstimate != "" {
+			b.WriteString(fmt.Sprintf("  Cost: %s\n", th.Tag(th.Detail, s.CostEstimate)))
+		}
+		b.WriteString("\n")
+	}
 
 	b.WriteString(th.TagBold(th.Heading, "MCP\n"))
 	b.WriteString(mcpinfo.Format(s.McpServers, th))

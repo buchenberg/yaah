@@ -42,11 +42,11 @@ type TUI2 struct {
 	// --- QueueUpdateDraw ONLY fields below ---
 
 	conversationLog []convItem
-	reasoningBlocks []*reasoning.Block
-	toolBlocks      []*toolblock.Block
-	subagentBlocks  []*subagent.Block
 	thinkingInd     *thinking.Indicator
 	focus           focusState
+
+	// Usage tracking
+	cumulativeUsage cumulativeUsage
 
 	OnSubmit   func(prompt string)
 	OnAbort    func()
