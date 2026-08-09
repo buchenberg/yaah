@@ -157,6 +157,11 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 				return "", fmt.Errorf("provider error: %w", err)
 			}
 			msg := result.Message
+
+			// Short-lived diagnostic span — survives parent crash.
+			observability.RecordTurnResponse(turnCtx, len(msg.Content), len(msg.ToolCalls),
+				toolCallNames(msg.ToolCalls), result.FinishReason)
+
 			l.Provider = l.LLM.Provider
 			l.Config.Model = l.LLM.Model
 			l.FallbackProvider = l.LLM.FallbackProvider
@@ -192,7 +197,11 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 				return "", err
 			}
 
+			observability.RecordToolDispatch(turnCtx, len(msg.ToolCalls),
+				toolCallNames(msg.ToolCalls))
+
 			err = l.executeToolPhase(turnCtx, iter, msg, &messages, &step, pipe, turnSpan)
+			observability.RecordToolDispatchDone(turnCtx, len(msg.ToolCalls), err)
 			if err != nil {
 				return "", err
 			}
@@ -233,6 +242,15 @@ func (l *Loop) wireBackgroundHooks() {
 			l.broker.PublishMustDeliver(&SubAgentEndEvent{SubAgentID: id, Role: role, Model: model, Prompt: prompt, Duration: dur, Error: err, Result: result})
 		}
 	}
+}
+
+// toolCallNames extracts the function names from a slice of tool calls.
+func toolCallNames(calls []types.ToolCall) []string {
+	names := make([]string, len(calls))
+	for i, tc := range calls {
+		names[i] = tc.Function.Name
+	}
+	return names
 }
 
 // unwireBackgroundHooks clears the loop-scoped event hooks so background

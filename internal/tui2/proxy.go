@@ -14,6 +14,9 @@ import (
 func (t *TUI2) HandleEvent(event agent.Event) {
 	switch e := event.(type) {
 	case *agent.TokenDeltaEvent:
+		// Sync: must preserve token ordering. Callback is lightweight
+		// (WriteString + two atomics) so blocking the forwarder is
+		// acceptable.
 		t.tokensRx.Add(1)
 		t.App.QueueUpdate(func() {
 			t.isStreaming.Store(true)
@@ -21,18 +24,18 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			t.thinkingInd.Hide()
 		})
 	case *agent.ThinkingEvent:
-		t.App.QueueUpdateDraw(func() {
+		go t.App.QueueUpdateDraw(func() {
 			if !t.thinkingInd.Visible() {
 				t.thinkingInd.Show()
 			}
 			t.thinkingLabel = e.Text
 		})
 	case *agent.FlushEvent:
-		t.App.QueueUpdate(func() {
+		go t.App.QueueUpdate(func() {
 			t.flushPendingTokens()
 		})
 	case *agent.ToolStartEvent:
-		t.App.QueueUpdate(func() {
+		go t.App.QueueUpdate(func() {
 			t.thinkingInd.Hide()
 			t.pendingTool = e.Name
 			if e.Name == "spawn_subagent" {
@@ -42,7 +45,7 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			t.AddToolStart(id, e.Name, e.Args)
 		})
 	case *agent.ToolEndEvent:
-		t.App.QueueUpdate(func() {
+		go t.App.QueueUpdate(func() {
 			t.pendingTool = ""
 			if e.Name == "spawn_subagent" {
 				return
@@ -55,11 +58,11 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			}
 		})
 	case *agent.SubAgentStartEvent:
-		t.App.QueueUpdateDraw(func() {
+		go t.App.QueueUpdateDraw(func() {
 			t.AddSubAgentStart(e.SubAgentID, e.Role, "", e.Prompt, e.Model)
 		})
 	case *agent.SubAgentEndEvent:
-		t.App.QueueUpdateDraw(func() {
+		go t.App.QueueUpdateDraw(func() {
 			if e.Error != "" {
 				t.AddSubAgentError(e.SubAgentID, e.Error)
 			} else {
@@ -67,14 +70,14 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			}
 		})
 	case *agent.EscalationEvent:
-		t.App.QueueUpdate(func() {
+		go t.App.QueueUpdate(func() {
 			t.flushPendingTokens()
 			msg := fmt.Sprintf("[%s]\u26A0 %s[-]", t.Theme.Error, e.Summary)
 			t.conversationLog = append(t.conversationLog, convItem{text: msg})
 			t.markDirty()
 		})
 	case *agent.CompactionStartedEvent:
-		t.App.QueueUpdate(func() {
+		go t.App.QueueUpdate(func() {
 			t.flushPendingTokens()
 			t.compacting = true
 			msg := fmt.Sprintf("[%s]compacting (%d→%d tokens, %s)[-]", t.Theme.Dim, e.BeforeTokens, e.TargetTokens, e.Reason)
@@ -82,7 +85,7 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			t.markDirty()
 		})
 	case *agent.CompactionDoneEvent:
-		t.App.QueueUpdate(func() {
+		go t.App.QueueUpdate(func() {
 			t.flushPendingTokens()
 			t.compacting = false
 			pct := e.SavingsPct * 100
@@ -97,7 +100,7 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			t.markDirty()
 		})
 	case *agent.DoneEvent:
-		t.App.QueueUpdateDraw(func() {
+		go t.App.QueueUpdateDraw(func() {
 			flushed := t.flushPendingTokens()
 			t.pendingThink = ""
 			t.pendingTool = ""
