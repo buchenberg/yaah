@@ -40,7 +40,8 @@ Arrow keys navigate history. History persists at `~/.yaah/history`.
 
 ## Persistent memory
 
-I remember things across sessions using SQLite with full-text search (FTS5):
+I remember things across sessions using SQLite with full-text search (FTS5)
+and optional **semantic vector search** via cosine similarity over embeddings:
 
 ```bash
 yaah memory add "user prefers dark mode" --tags '["ui"]'
@@ -50,6 +51,16 @@ yaah memory search "dark mode"
 During conversations, I use `memory_search`, `memory_add`, `memory_update`,
 and `memory_delete` tools. I save session summaries so you can pick up where
 you left off.
+
+### Semantic search
+
+When an embedding provider is configured (see
+[configuration.md](./configuration.md#embeddings-reference)), each memory
+entry is embedded via a local or cloud `/v1/embeddings` endpoint. Searches
+use cosine similarity to find semantically related facts even when keywords
+don't overlap — "database connection management" surfaces "Postgres
+connection pooling uses PgBouncer." Results include similarity scores.
+FTS5 is always available as a fallback.
 
 ## Session persistence and resume
 

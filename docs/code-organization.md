@@ -13,22 +13,32 @@ yaah has a **well-structured codebase** with clear separation of concerns at the
 ```
 yaah/
 ├── cmd/yaah/                    # CLI commands (cobra-based)
-│   ├── agent_frame.go           # 990 lines - Session management
+│   ├── agent_frame.go           # Agent wiring and tool construction
 │   ├── repl_loop.go             # REPL interaction
+│   ├── wiring.go                # Dependency injection + session setup
 │   └── ... (20+ files)
 │
 ├── internal/
+│   ├── acp/                     # ACP JSON-RPC server (wire types, view, dispatch)
 │   ├── agent/                   # Core agent loop
-│   │   ├── agent.go             # 770 lines - Main Loop type and methods
+│   │   ├── agent.go             # Loop type and turn processing
 │   │   ├── options.go           # Functional options for Loop
 │   │   ├── events.go            # Typed event system
 │   │   ├── view.go              # View interface
+│   │   ├── context/             # Pure context helpers (leaf, no agent imports)
+│   │   │   ├── tokens.go        #   Token estimation and constants
+│   │   │   ├── split.go         #   Turn splitting and preservation budget
+│   │   │   ├── prune.go         #   Pre-compaction message pruning
+│   │   │   ├── chunked.go       #   Chunked compaction
+│   │   │   └── truncation.go    #   Tool-result truncation
 │   │   ├── pipeline/            # Middleware pipeline
 │   │   │   ├── middleware.go    # Middleware interface
 │   │   │   ├── pipeline.go      # Pipeline execution
-│   │   │   ├── config.go        # Pipeline configuration
 │   │   │   └── ... (15+ middleware files)
 │   │   └── ... (25+ files total)
+│   │
+│   ├── jobs/                    # Background sub-agent jobs (manager, TaskRunner, I/O contract)
+│   ├── memory/                  # SQLite persistence, FTS5, and vector embeddings
 │   │
 │   ├── tui/                     # Bubble Tea TUI
 │   │   └── tui.go               # 1891 lines - Main TUI model and rendering
@@ -48,8 +58,8 @@ yaah/
 |------|-------|--------------------------|
 | `internal/tui/tui.go` | ~1891 | TUI Model struct, View rendering, Input handling, Event handling |
 | `internal/agent/agent.go` | ~770 | Loop struct, Run() method, Turn processing, Compaction |
-| `cmd/yaah/agent_frame.go` | ~990 | Session management, Loop construction, Tool wiring |
-| `internal/agent/agent_context.go` | ~725 | Context management, Pruning, Compaction |
+| `cmd/yaah/agent_frame.go` | ~350 | Loop construction, Tool wiring (session in session.go, wiring in wiring.go) |
+| `internal/agent/agent_context.go` | ~200 | `*Loop` methods: `compactContext`, `trimContext`, `ForceCompact`, `EstimatedTokens` (pure helpers extracted to `agent/context/`) |
 | `internal/agent/agent_tools.go` | ~250 | Tool execution, Result collection |
 
 ---
@@ -426,13 +436,13 @@ golangci-lint run ./...
 ### High Priority (Should Do)
 
 1. ✅ **Documentation** - ADRs and code organization guidelines (DONE)
-2. ⏳ **Split `internal/tui/tui.go`** - Largest file, most in need of splitting
-3. ⏳ **Split `internal/agent/agent.go`** - Core file, but well-structured
-4. ⏳ **Split `cmd/yaah/agent_frame.go`** - Large, but functional
+2. ✅ **Extract `internal/agent/context/`** — Pure helpers moved to a leaf package (DONE, Phase 2A)
+3. ⏳ **Split `internal/tui/tui.go`** - Largest file, most in need of splitting
+4. ⏳ **Split `internal/agent/agent.go`** - Core file, but well-structured
+5. ⏳ **Split `cmd/yaah/agent_frame.go`** - Already partially split (session in session.go, wiring in wiring.go)
 
 ### Medium Priority (Nice to Have)
 
-5. **Split `internal/agent/agent_context.go`** - 725 lines
 6. **Review `internal/agent/pipeline/config.go`** - Could be split
 7. **Review test files** - Some test files are large (> 500 lines)
 

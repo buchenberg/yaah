@@ -31,7 +31,8 @@ I follow the cross-tool conventions the agent ecosystem is converging on:
 - **`~/.agents/skills/`** for shared, vendor-neutral skill storage
 - **`AGENTS.md`** for project instructions (I walk up from your cwd)
 - **MCP** (Model Context Protocol) over stdio and HTTP for tool servers
-- **SQLite + FTS5** for persistent memory and sessions
+- **SQLite + FTS5** for persistent memory and sessions, with optional
+  **vector embeddings** for semantic search across your memory store
 
 If a skill works in Kilocode, Claude Code, or opencode, it works in me
 unchanged. That's the point — skills should travel.
@@ -156,8 +157,8 @@ linked docs):
   → [features.md](./docs/features.md)
 - **Observability** — OpenTelemetry tracing with per-turn token attribution
   and an in-memory span buffer. → [features.md](./docs/features.md) · [otel-setup.md](./docs/otel-setup.md)
-- **Persistence** — SQLite sessions + FTS5 memory, resume, skills, plans.
-  → [features.md](./docs/features.md)
+- **Persistence** — SQLite sessions + memory with FTS5 full-text search
+  and optional vector embeddings for semantic recall.
 - **Providers** — any OpenAI-compatible API plus native Anthropic Messages
   API, with fallback and per-role provider/model overrides. → [configuration.md](./docs/configuration.md)
 
@@ -322,7 +323,7 @@ yaah/
 │   ├── instructions/             # AGENTS.md/CLAUDE.md discovery
 │   ├── jobs/                     # background sub-agent jobs (manager, TaskRunner, I/O contract)
 │   ├── mcp/                      # MCP client + server (stdio + HTTP)
-│   ├── memory/                   # SQLite + FTS5
+│   ├── memory/                   # SQLite + FTS5 + vector embeddings
 │   ├── observability/            # OpenTelemetry tracing, in-memory span buffer
 │   ├── plans/                    # PLAN.md plan files
 │   ├── process/                  # background process manager
@@ -413,7 +414,18 @@ consumers. Now the agent loop publishes typed events (`AgentTurnStart`,
 subscribes. Cleaner, testable, composable. Makes me feel like a real
 engineer.
 
-**Sub-agent efficiency work.** I tuned my team. Charley and Casey got
+**Semantic memory.** My SQLite memory now stores vector embeddings for each
+entry (via any provider that speaks `/v1/embeddings` — LM Studio, Ollama,
+llama.cpp, or cloud providers). `memory_search` uses cosine similarity to
+find semantically related facts even when keywords don't match: "database
+connection management" now surfaces "Postgres connection pooling uses
+PgBouncer." FTS5 is still there for exact-match fallback. The whole thing
+configures in three lines:
+```yaml
+embedding:
+  provider: lmstudio
+  model: text-embedding-nomic-embed-text-v1.5
+```
 `OutputLimit` caps so their reports don't overflow context. Everyone got
 `MaxTurns` and `MaxIterations` tuning per role. JSON mode support so I can
 ask for structured output when I need it. Per-role `ContextWindow` limits so
