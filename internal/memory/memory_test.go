@@ -672,3 +672,43 @@ func TestDB_Migration_AddsEmbeddingColumn(t *testing.T) {
 		t.Fatalf("expected 1 result after migration, got %d", len(results))
 	}
 }
+
+func TestDB_SearchMessagesVector(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	db.SetEmbedder(stubEmbedder{})
+
+	// Create a session
+	sid := "test-session"
+	_, err = db.sql.Exec(`INSERT INTO sessions (id, started_at) VALUES (?, ?)`, sid, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	db.AddMessage(Message{SessionID: sid, Idx: 0, Role: "user", Content: "how to pool DB connections", Timestamp: 1, ID: "m1"})
+	db.AddMessage(Message{SessionID: sid, Idx: 1, Role: "assistant", Content: "use PgBouncer", Timestamp: 2, ID: "m2"})
+	db.AddMessage(Message{SessionID: sid, Idx: 2, Role: "tool", Content: "tool output", Timestamp: 3, ID: "m3"})
+	db.AddMessage(Message{SessionID: sid, Idx: 3, Role: "user", Content: "llamas are great", Timestamp: 4, ID: "m4"})
+
+	results, err := db.SearchMessagesVector(context.Background(), "database connection", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected results")
+	}
+	if len(results) > 2 {
+		t.Fatalf("got %d, want <= 2", len(results))
+	}
+	// Tool messages are not embedded, so "m3" should not appear.
+	for _, r := range results {
+		if r.ID == "m3" {
+			t.Error("tool messages should not have embeddings")
+		}
+	}
+}

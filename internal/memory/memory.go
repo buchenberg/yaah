@@ -264,6 +264,13 @@ func (d *DB) migrate() error {
 		d.sql.Exec("ALTER TABLE memory ADD COLUMN embedding BLOB")
 	}
 
+	// Migration: add embedding column to messages for vector search.
+	row = d.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'embedding'")
+	row.Scan(&hasColumn)
+	if !hasColumn {
+		d.sql.Exec("ALTER TABLE messages ADD COLUMN embedding BLOB")
+	}
+
 	return nil
 }
 
@@ -413,8 +420,8 @@ func (d *DB) SearchMemoryVector(ctx context.Context, query string, limit int) ([
 	defer rows.Close()
 
 	type candidate struct {
-		e     Entry
-		blob  []byte
+		e    Entry
+		blob []byte
 	}
 	var candidates []candidate
 	for rows.Next() {

@@ -266,6 +266,14 @@ func (t *MemorySessionSearchTool) Execute(ctx context.Context, args string) (str
 		return t.listRecentMessages(params.TopK)
 	}
 
+	if vecResults, err := t.DB.SearchMessagesVector(context.Background(), params.Query, params.TopK); err == nil && len(vecResults) > 0 {
+		var output string
+		for _, r := range vecResults {
+			output += fmt.Sprintf("[semantic] %s  (score: %.2f)\n", r.Text, r.Score)
+		}
+		return output, nil
+	}
+
 	results, err := t.DB.SearchMessages(params.Query, params.TopK)
 	if err != nil {
 		return "", fmt.Errorf("memory_search_sessions: %w", err)

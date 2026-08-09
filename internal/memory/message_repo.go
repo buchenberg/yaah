@@ -1,7 +1,22 @@
 package memory
 
-// AddMessage inserts a message into a session.
+import "context"
+
+// AddMessage inserts a message into a session. When an embedder is
+// configured and the role is "user" or "assistant", the content is
+// embedded synchronously and stored alongside the row.
 func (d *DB) AddMessage(m Message) error {
+	if d.embedder != nil && (m.Role == "user" || m.Role == "assistant") && m.Content != "" {
+		emb, err := d.embedder.Embed(context.Background(), m.Role+": "+m.Content)
+		if err == nil {
+			_, execErr := d.sql.Exec(
+				`INSERT INTO messages (session_id, idx, role, content, reasoning_content, tool_name, tool_call_id, tool_calls, ts, id, embedding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				m.SessionID, m.Idx, m.Role, m.Content, m.ReasoningContent, m.ToolName, m.ToolCallID, m.ToolCalls, m.Timestamp, m.ID, EncodeEmbedding(emb),
+			)
+			return execErr
+		}
+		// Embedding failed — store without embedding; reconciler will retry.
+	}
 	_, err := d.sql.Exec(
 		`INSERT INTO messages (session_id, idx, role, content, reasoning_content, tool_name, tool_call_id, tool_calls, ts, id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.SessionID, m.Idx, m.Role, m.Content, m.ReasoningContent, m.ToolName, m.ToolCallID, m.ToolCalls, m.Timestamp, m.ID,
@@ -58,4 +73,70 @@ func (d *DB) SearchMessages(query string, limit int) ([]Message, error) {
 		results = append(results, m)
 	}
 	return results, rows.Err()
+}
+
+// SearchMessagesVector embeds the query, scans messages with non-null
+// embeddings, and returns the top-K by cosine similarity. Falls back
+// to empty when no embedder is configured.
+func (d *DB) SearchMessagesVector(ctx context.Context, query string, limit int) ([]VectorResult, error) {
+	if d.embedder == nil {
+		return nil, nil
+	}
+	qEmb, err := d.embedder.Embed(ctx, query)
+	if err != nil {
+		return nil, nil
+	}
+
+	rows, err := d.sql.Query(`
+		SELECT id, content, embedding
+		FROM messages
+		WHERE embedding IS NOT NULL
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type candidate struct {
+		id      string
+		content string
+		blob    []byte
+	}
+	var candidates []candidate
+	for rows.Next() {
+		var c candidate
+		if err := rows.Scan(&c.id, &c.content, &c.blob); err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	var results []VectorResult
+	for _, c := range candidates {
+		if len(c.blob) == 0 {
+			continue
+		}
+		emb := DecodeEmbedding(c.blob)
+		score := CosineSimilarity(qEmb, emb)
+		results = append(results, VectorResult{
+			Entry: Entry{ID: c.id, Text: c.content},
+			Score: score,
+		})
+	}
+
+	// Sort descending.
+	for i := 0; i < len(results)-1; i++ {
+		for j := i + 1; j < len(results); j++ {
+			if results[j].Score > results[i].Score {
+				results[i], results[j] = results[j], results[i]
+			}
+		}
+	}
+	if limit > 0 && len(results) > limit {
+		results = results[:limit]
+	}
+	return results, nil
 }
