@@ -11,6 +11,7 @@
 package memory
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -61,8 +62,16 @@ type Message struct {
 
 // DB is the yaah persistent database.
 type DB struct {
-	sql *sql.DB
+	sql      *sql.DB
+	embedder Embedder // optional; set via SetEmbedder
 }
+
+// SetEmbedder configures the embedding model used for semantic search.
+// When nil, vector search is disabled.
+func (d *DB) SetEmbedder(e Embedder) { d.embedder = e }
+
+// Embedder returns the configured embedding model, or nil.
+func (d *DB) Embedder() Embedder { return d.embedder }
 
 // Open opens (or creates) the yaah database at the given path.
 func Open(path string) (*DB, error) {
@@ -248,11 +257,30 @@ func (d *DB) migrate() error {
 		d.sql.Exec("ALTER TABLE sessions ADD COLUMN compacted_summary TEXT DEFAULT ''")
 	}
 
+	// Migration: add embedding column to memory for vector search.
+	row = d.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('memory') WHERE name = 'embedding'")
+	row.Scan(&hasColumn)
+	if !hasColumn {
+		d.sql.Exec("ALTER TABLE memory ADD COLUMN embedding BLOB")
+	}
+
 	return nil
 }
 
-// AddMemory inserts a new memory entry.
+// AddMemory inserts a new memory entry. When an embedder is configured,
+// the text is embedded synchronously and stored alongside the entry.
 func (d *DB) AddMemory(e Entry) error {
+	if d.embedder != nil {
+		emb, err := d.embedder.Embed(context.Background(), e.Text)
+		if err == nil {
+			_, execErr := d.sql.Exec(
+				`INSERT INTO memory (id, text, tags, source, created_at, embedding) VALUES (?, ?, ?, ?, ?, ?)`,
+				e.ID, e.Text, e.Tags, e.Source, e.CreatedAt, EncodeEmbedding(emb),
+			)
+			return execErr
+		}
+		// Embedding failed — store without embedding; reconciler will retry.
+	}
 	_, err := d.sql.Exec(
 		`INSERT INTO memory (id, text, tags, source, created_at) VALUES (?, ?, ?, ?, ?)`,
 		e.ID, e.Text, e.Tags, e.Source, e.CreatedAt,
@@ -353,6 +381,129 @@ func (d *DB) SearchMemory(query string, limit int, tag ...string) ([]Entry, erro
 	}
 
 	return results, nil
+}
+
+// VectorResult is a memory entry with its cosine similarity score.
+type VectorResult struct {
+	Entry
+	Score float32
+}
+
+// SearchMemoryVector embeds the query, scans all rows with non-null
+// embedding, and returns the top-K sorted by cosine similarity
+// (descending). Falls back to an empty result when no embedder is
+// configured or the embedding call fails.
+func (d *DB) SearchMemoryVector(ctx context.Context, query string, limit int) ([]VectorResult, error) {
+	if d.embedder == nil {
+		return nil, nil
+	}
+	qEmb, err := d.embedder.Embed(ctx, query)
+	if err != nil {
+		return nil, nil
+	}
+
+	rows, err := d.sql.Query(`
+		SELECT id, text, tags, source, created_at, COALESCE(accessed_at, 0), access_count, COALESCE(embedding, '')
+		FROM memory
+		WHERE embedding IS NOT NULL
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type candidate struct {
+		e     Entry
+		blob  []byte
+	}
+	var candidates []candidate
+	for rows.Next() {
+		var e Entry
+		var blob []byte
+		if err := rows.Scan(&e.ID, &e.Text, &e.Tags, &e.Source, &e.CreatedAt, &e.AccessedAt, &e.AccessCount, &blob); err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, candidate{e, blob})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	var results []VectorResult
+	for _, c := range candidates {
+		if len(c.blob) == 0 {
+			continue
+		}
+		emb := DecodeEmbedding(c.blob)
+		score := CosineSimilarity(qEmb, emb)
+		results = append(results, VectorResult{Entry: c.e, Score: score})
+	}
+
+	// Sort descending by score.
+	for i := 0; i < len(results)-1; i++ {
+		for j := i + 1; j < len(results); j++ {
+			if results[j].Score > results[i].Score {
+				results[i], results[j] = results[j], results[i]
+			}
+		}
+	}
+
+	if limit > 0 && len(results) > limit {
+		results = results[:limit]
+	}
+
+	now := time.Now().Unix()
+	for i := range results {
+		d.sql.Exec(`UPDATE memory SET access_count = access_count + 1, accessed_at = ? WHERE id = ?`, now, results[i].ID)
+		results[i].AccessCount++
+		results[i].AccessedAt = now
+	}
+
+	return results, nil
+}
+
+// ReconcileEmbeddings finds memory rows with NULL embedding, embeds their
+// text using the configured embedder, and stores the results. It returns
+// the number of rows updated. An error from any single embed does not stop
+// the reconciliation.
+func (d *DB) ReconcileEmbeddings(ctx context.Context) (int, error) {
+	if d.embedder == nil {
+		return 0, nil
+	}
+	rows, err := d.sql.Query(`SELECT id, text FROM memory WHERE embedding IS NULL`)
+	if err != nil {
+		return 0, fmt.Errorf("reconcile: query: %w", err)
+	}
+	defer rows.Close()
+
+	type row struct {
+		id, text string
+	}
+	var pending []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.text); err != nil {
+			return 0, err
+		}
+		pending = append(pending, r)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	updated := 0
+	for _, r := range pending {
+		emb, err := d.embedder.Embed(ctx, r.text)
+		if err != nil {
+			continue
+		}
+		_, err = d.sql.Exec(`UPDATE memory SET embedding = ? WHERE id = ?`, EncodeEmbedding(emb), r.id)
+		if err != nil {
+			continue
+		}
+		updated++
+	}
+	return updated, nil
 }
 
 // GetMemory retrieves a single memory entry by ID.
