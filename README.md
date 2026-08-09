@@ -129,7 +129,7 @@ yaah -d "always run tests first" "fix X"   # inject session directive
 | [docs/architecture.md](./docs/architecture.md) | Deep dive: agent loop, middleware, tool execution, streaming, context compaction, sub-agent lifecycle |
 | [docs/sub-agents.md](./docs/sub-agents.md) | The team, built-in vs custom roles, escalation, quality gates, directives, evidenced contracts |
 | [docs/features.md](./docs/features.md) | TUI & REPL, memory & sessions, MCP, the built-in tool belt, observability, hooks, approval, middleware, providers |
-| [docs/configuration.md](./docs/configuration.md) | Full `config.yaml` reference — providers, agents, sub-agents, middleware, observability, hooks, editor |
+| [docs/configuration.md](./docs/configuration.md) | Full `config.yaml` reference — providers, agents, sub-agents, middleware, observability, hooks, editor, embeddings |
 | [docs/otel-setup.md](./docs/otel-setup.md) | OpenObserve tracing setup |
 | [docs/tui-components.md](./docs/tui-components.md) | TUI component system reference |
 | [docs/web-ui.md](./docs/web-ui.md) | Web UI architecture and event reference |
@@ -211,7 +211,7 @@ time, missing sections fall back to sensible defaults, and a scaffold is
 written on first run.
 
 The full annotated example and every field reference (providers, agents,
-sub-agents, middleware, observability, hooks, editor) live in
+sub-agents, middleware, observability, hooks, editor, embeddings) live in
 [**docs/configuration.md**](./docs/configuration.md).
 
 ## Development
