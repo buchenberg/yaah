@@ -74,6 +74,12 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 		db = nil
 	}
 
+	// --- Embedding server ------------------------------------------------
+	if db != nil && cfg.Embedding.BaseURL != "" {
+		embedder := memory.NewEmbedder(cfg.Embedding.BaseURL, nil)
+		db.SetEmbedder(embedder)
+	}
+
 	// --- Prompt assembly -------------------------------------------------
 	systemPrompt := buildSystemPrompt(cfg, cwd, db, resumeSessionID)
 

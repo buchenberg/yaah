@@ -228,6 +228,25 @@ type Config struct {
 	Editor        string                     `yaml:"editor"`
 	Observability ObservabilityConfig        `yaml:"observability"`
 	TUI           TUIConfig                  `yaml:"tui"`
+	Embedding     EmbeddingConfig            `yaml:"embedding"`
+}
+
+// EmbeddingConfig configures the local embedding model for semantic memory search.
+type EmbeddingConfig struct {
+	// BaseURL is the embeddings endpoint, e.g. "http://127.0.0.1:7334".
+	// When empty, semantic search is disabled.
+	BaseURL string `yaml:"base_url"`
+
+	// Port is the TCP port for the embedding server when auto-started.
+	// Default 7334.
+	Port int `yaml:"port"`
+
+	// ModelURL is the download URL for the GGUF embedding model.
+	ModelURL string `yaml:"model_url"`
+
+	// ModelPath is the local path to the GGUF file. Defaults to
+	// ~/.yaah/models/all-MiniLM-L6-v2-Q4_K_M.gguf.
+	ModelPath string `yaml:"model_path"`
 }
 
 type TUIConfig struct {

@@ -34,6 +34,12 @@ type HTTPEmbedder struct {
 // DefaultEmbeddingTimeout is the HTTP request timeout used when Client is nil.
 const DefaultEmbeddingTimeout = 30 * time.Second
 
+// NewEmbedder creates an HTTPEmbedder for the given base URL.
+// When client is nil, a default client with a 30-second timeout is used.
+func NewEmbedder(baseURL string, client *http.Client) *HTTPEmbedder {
+	return &HTTPEmbedder{BaseURL: baseURL, Client: client}
+}
+
 func (e *HTTPEmbedder) client() *http.Client {
 	if e.Client != nil {
 		return e.Client
