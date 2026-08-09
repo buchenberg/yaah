@@ -69,9 +69,7 @@ func (e *HTTPEmbedder) url(path string) string {
 		base = base[:len(base)-1]
 	}
 	// Strip trailing /v1 so we don't double it when appending /v1/embeddings.
-	if strings.HasSuffix(base, "/v1") {
-		base = base[:len(base)-3]
-	}
+	base = strings.TrimSuffix(base, "/v1")
 	return base + path
 }
 
