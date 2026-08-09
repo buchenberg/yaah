@@ -11,7 +11,8 @@ import (
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
-// MemorySearchTool searches persistent memory using FTS5.
+// MemorySearchTool searches persistent memory using FTS5 and, when
+// configured, vector embeddings for semantic search.
 type MemorySearchTool struct {
 	DB *memory.DB
 }
@@ -50,16 +51,26 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 		params.TopK = 10
 	}
 
-	results, err := t.DB.SearchMemory(params.Query, params.TopK, params.Tag)
+	if params.Query != "" {
+		if vecResults, err := t.DB.SearchMemoryVector(context.Background(), params.Query, params.TopK); err == nil && len(vecResults) > 0 {
+			return vectorResultsJSON(vecResults), nil
+		}
+	}
+
+	ftsResults, err := t.DB.SearchMemory(params.Query, params.TopK, params.Tag)
 	if err != nil {
 		return "", fmt.Errorf("memory_search: %w", err)
 	}
 
-	if len(results) == 0 {
+	if len(ftsResults) == 0 {
 		return "No matching memories found.", nil
 	}
 
-	var output string
+	return entryListJSON(ftsResults), nil
+}
+
+func vectorResultsJSON(results []memory.VectorResult) string {
+	var lines []string
 	for _, r := range results {
 		id := r.ID
 		if len(id) > 12 {
@@ -69,9 +80,25 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 		if r.Tags != "" && r.Tags != "null" {
 			tag = " " + r.Tags
 		}
-		output += fmt.Sprintf("- [%s]%s %s\n", id, tag, r.Text)
+		lines = append(lines, fmt.Sprintf("- [%s]%s %s  (score: %.2f)", id, tag, r.Text, r.Score))
 	}
-	return output, nil
+	return strings.Join(lines, "\n")
+}
+
+func entryListJSON(results []memory.Entry) string {
+	var lines []string
+	for _, r := range results {
+		id := r.ID
+		if len(id) > 12 {
+			id = id[:12]
+		}
+		tag := ""
+		if r.Tags != "" && r.Tags != "null" {
+			tag = " " + r.Tags
+		}
+		lines = append(lines, fmt.Sprintf("- [%s]%s %s", id, tag, r.Text))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // MemoryAddTool adds a new memory entry.
