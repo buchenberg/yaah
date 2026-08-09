@@ -104,6 +104,7 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			t.flushPendingTokens()
 			t.pendingThink = ""
 			t.pendingTool = ""
+			t.agentActive = false
 			t.thinkingInd.Hide()
 			t.refreshMessages()
 
@@ -114,8 +115,8 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 				}
 				t.contextTokens = ct
 				t.contextWindow = e.ContextWindow
-				t.renderInfoPane()
 			}
+			t.renderInfoPane()
 		})
 	}
 }

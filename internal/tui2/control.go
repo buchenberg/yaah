@@ -83,7 +83,8 @@ func (t *TUI2) renderInfoPane() {
 			Enabled: t.embeddingEnabled,
 			Model:   t.embeddingModel,
 		},
-		Pipeline: t.middlewarePipeline,
+		Pipeline:    t.middlewarePipeline,
+		AgentActive: t.agentActive,
 	}, t.Theme))
 }
 
@@ -112,6 +113,10 @@ func (t *TUI2) renderBackgroundJobsPane() {
 				height++
 			}
 		}
-		t.rightPane.ResizeItem(t.BackgroundJobsPane, height+3, 0) // +1 header +2 border
+		rows := height*2 + 2 // header + 2 rows per agent (name line + task line) + border
+		if rows > 8 {
+			rows = 8
+		}
+		t.rightPane.ResizeItem(t.BackgroundJobsPane, rows, 0)
 	}
 }

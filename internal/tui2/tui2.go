@@ -105,6 +105,7 @@ type TUI2 struct {
 	embeddingEnabled bool
 	embeddingModel string
 	middlewarePipeline []string
+	agentActive   bool
 	tokensRx      atomic.Int64
 	charsWritten  atomic.Int64
 	charsRendered atomic.Int64
@@ -435,14 +436,18 @@ func (t *TUI2) CollapseAll() {
 
 // ShowThinking shows the animated thinking indicator.
 func (t *TUI2) ShowThinking() {
+	t.agentActive = true
 	t.thinkingInd.Show()
 	t.refreshMessages()
+	t.renderInfoPane()
 }
 
 // HideThinking hides the animated thinking indicator.
 func (t *TUI2) HideThinking() {
+	t.agentActive = false
 	t.thinkingInd.Hide()
 	t.refreshMessages()
+	t.renderInfoPane()
 }
 
 // AdvanceThinking advances the thinking spinner and lolcat seed.

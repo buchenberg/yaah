@@ -24,6 +24,7 @@ type State struct {
 	SubAgents     SubAgentInfo
 	Embedding     EmbeddingInfo
 	Pipeline      []string
+	AgentActive   bool
 }
 
 // SubAgentInfo holds sub-agent configuration for display.
@@ -68,6 +69,14 @@ func Format(s State, th *colors.Theme) string {
 	}, th))
 	b.WriteString("\n\n")
 
+	b.WriteString(th.TagBold(th.Heading, "Agent\n"))
+	if s.AgentActive {
+		b.WriteString(fmt.Sprintf("  Status: %s\n", th.Tag(th.Connected, "active")))
+	} else {
+		b.WriteString(fmt.Sprintf("  Status: %s\n", th.Tag(th.Dim, "idle")))
+	}
+	b.WriteString("\n")
+
 	b.WriteString(contextinfo.Format(s.ContextTokens, s.ContextWindow, th))
 	b.WriteString("\n")
 
@@ -88,7 +97,7 @@ func Format(s State, th *colors.Theme) string {
 
 	if s.Embedding.Enabled {
 		b.WriteString(th.TagBold(th.Heading, "Embedding\n"))
-		b.WriteString(fmt.Sprintf("  Status: %s\n", th.Tag(th.Connected, "active")))
+		b.WriteString(fmt.Sprintf("  Status: %s\n", th.Tag(th.Detail, "active")))
 	} else {
 		b.WriteString(th.TagBold(th.Heading, "Embedding\n"))
 		b.WriteString(th.Tag(th.Dim, "  (inactive)\n"))
