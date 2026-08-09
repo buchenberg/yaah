@@ -39,7 +39,7 @@ type BrokerView struct {
 // starts a forwarder goroutine that delivers events to target.HandleEvent.
 // Call Close() to stop forwarding and release resources.
 func NewBrokerView(broker *pubsub.Broker[Event], target View) *BrokerView {
-	sub := broker.Subscribe("view", 256)
+	sub := broker.Subscribe("view", 4096)
 	bv := &BrokerView{
 		broker: broker,
 		sub:    sub,

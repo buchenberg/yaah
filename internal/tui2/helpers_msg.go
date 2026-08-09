@@ -10,13 +10,13 @@ func (t *TUI2) AddUserMessage(text string) {
 // valid tview tags — no raw brackets survive to confuse SetDynamicColors.
 func (t *TUI2) addAssistantResponse(md string) {
 	t.conversationLog = append(t.conversationLog, convItem{text: md, isMarkdown: true})
-	t.refreshMessages()
+	t.markDirty()
 	t.App.SetFocus(t.Input)
 }
 
 // appendMessage adds plain text to the conversation log and refreshes.
 func (t *TUI2) appendMessage(text string) {
 	t.conversationLog = append(t.conversationLog, convItem{text: text})
-	t.refreshMessages()
+	t.markDirty()
 	t.App.SetFocus(t.Input)
 }

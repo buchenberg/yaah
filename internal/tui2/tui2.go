@@ -77,15 +77,15 @@ type TUI2 struct {
 	subAgentsModel       string
 	embeddingEnabled     bool
 	embeddingModel       string
-	middlewarePipeline    []string
+	middlewarePipeline   []string
 	agentActive          bool
 	tokensRx             atomic.Int64
 	charsWritten         atomic.Int64
 	charsRendered        atomic.Int64
 	userScrolled         bool
-	conversationCache    string
 
-	isStreaming atomic.Bool
+	isStreaming  atomic.Bool
+	needsRefresh atomic.Bool
 
 	availableModels []string
 	providerNames   map[string]string

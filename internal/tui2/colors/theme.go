@@ -108,22 +108,22 @@ func newRoleColors() map[string]string {
 
 func NewDarkTheme() Theme {
 	return Theme{
-		Heading:      "#00ffff",
-		Detail:       "#cc99ff",
-		Secondary:   "#9988bb",
-		Dim:         "#888888",
-		User:        "#ff00ff",
-		System:      "#888888",
-		Error:       "#ff5555",
-		Connected:   "#00ffff",
-		ToolBg:      "#1a1a2e",
-		CodeBg:      "#1e1e2e",
+		Heading:         "#00ffff",
+		Detail:          "#cc99ff",
+		Secondary:       "#9988bb",
+		Dim:             "#888888",
+		User:            "#ff00ff",
+		System:          "#888888",
+		Error:           "#ff5555",
+		Connected:       "#00ffff",
+		ToolBg:          "#1a1a2e",
+		CodeBg:          "#1e1e2e",
 		InputBorder:     "#ff00ff",
 		InfoPaneBorder:  "#00ffff",
 		TasksPaneBorder: "#ffff00",
 		SubAgentsBorder: "#cc99ff",
-		ToolColors:  newToolColors(),
-		RoleColors:  newRoleColors(),
+		ToolColors:      newToolColors(),
+		RoleColors:      newRoleColors(),
 		MDHeading: [6]string{
 			"#00ffff", "#00ffff", "#00ffff",
 			"#00ffff", "#00ffff", "#00ffff",
@@ -137,8 +137,8 @@ func NewDarkTheme() Theme {
 
 func NewLightTheme() Theme {
 	return Theme{
-		Heading:          "#005faf",
-		Detail:           "#af005f",
+		Heading:         "#005faf",
+		Detail:          "#af005f",
 		Secondary:       "#775588",
 		Dim:             "#9e9e9e",
 		User:            "#005faf",
@@ -151,8 +151,8 @@ func NewLightTheme() Theme {
 		InfoPaneBorder:  "#005faf",
 		TasksPaneBorder: "#7f6f00",
 		SubAgentsBorder: "#7f3faf",
-		ToolColors:  newToolColors(),
-		RoleColors:  newRoleColors(),
+		ToolColors:      newToolColors(),
+		RoleColors:      newRoleColors(),
 		MDHeading: [6]string{
 			"#005faf", "#005faf", "#005faf",
 			"#005faf", "#005faf", "#005faf",

@@ -6,7 +6,7 @@ package tui2
 func (t *TUI2) ShowThinking() {
 	t.agentActive = true
 	t.thinkingInd.Show()
-	t.refreshMessages()
+	t.markDirty()
 	t.renderInfoPane()
 }
 
@@ -14,7 +14,7 @@ func (t *TUI2) ShowThinking() {
 func (t *TUI2) HideThinking() {
 	t.agentActive = false
 	t.thinkingInd.Hide()
-	t.refreshMessages()
+	t.markDirty()
 	t.renderInfoPane()
 }
 
@@ -22,6 +22,6 @@ func (t *TUI2) HideThinking() {
 func (t *TUI2) AdvanceThinking() {
 	if t.thinkingInd.Visible() {
 		t.thinkingInd.Advance()
-		t.refreshMessages()
+		t.markDirty()
 	}
 }

@@ -2,14 +2,12 @@ package tui2
 
 import (
 	"time"
-
-	"github.com/buchenberg/yaah/internal/tui2/components/subagent"
 )
 
 // Run starts the tview event loop.
 func (t *TUI2) Run() error {
 	t.startControlLoop()
-	t.startSpinnerTicker()
+	t.startDebounceTimer()
 	t.App.SetFocus(t.Input)
 	t.renderInfoPane()
 	t.renderTodoPane()
@@ -31,31 +29,12 @@ func (t *TUI2) startControlLoop() {
 	}()
 }
 
-func (t *TUI2) startSpinnerTicker() {
+func (t *TUI2) startDebounceTimer() {
 	go func() {
-		for range time.Tick(200 * time.Millisecond) {
+		for range time.Tick(100 * time.Millisecond) {
 			t.App.QueueUpdateDraw(func() {
-				anyActive := t.thinkingInd.Visible() || t.isStreaming.Load()
-				if !anyActive {
-					for _, sb := range t.subagentBlocks {
-						if sb.S() == subagent.Active {
-							anyActive = true
-							break
-						}
-					}
-				}
-				if !anyActive {
-					return
-				}
-				if t.thinkingInd.Visible() {
-					t.thinkingInd.Advance()
-				}
-				for _, sb := range t.subagentBlocks {
-					sb.AdvanceSpinner()
-				}
-				t.renderInfoPane()
-				if t.thinkingInd.Visible() && t.conversationCache != "" {
-					t.Messages.SetText(t.conversationCache + "\n  " + t.thinkingInd.Render())
+				if t.needsRefresh.Swap(false) {
+					t.refreshMessages()
 				}
 			})
 		}

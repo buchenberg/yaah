@@ -53,10 +53,7 @@ func (t *TUI2) HandleCommand(cmd command.Cmd, arg string) {
 }
 
 func (t *TUI2) showCommandList() {
-	var entries []command.Entry
-	for _, e := range command.DefaultEntries() {
-		entries = append(entries, e)
-	}
+	entries := append([]command.Entry{}, command.DefaultEntries()...)
 	command.ShowList(t.App, t.Pages, entries, func(cmd command.Cmd) {
 		t.App.SetFocus(t.Input)
 		t.focus = focusNormal

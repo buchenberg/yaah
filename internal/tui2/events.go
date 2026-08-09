@@ -28,11 +28,11 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			t.thinkingLabel = e.Text
 		})
 	case *agent.FlushEvent:
-		t.App.QueueUpdateDraw(func() {
+		t.App.QueueUpdate(func() {
 			t.flushPendingTokens()
 		})
 	case *agent.ToolStartEvent:
-		t.App.QueueUpdateDraw(func() {
+		t.App.QueueUpdate(func() {
 			t.thinkingInd.Hide()
 			t.pendingTool = e.Name
 			if e.Name == "spawn_subagent" {
@@ -42,7 +42,7 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			t.AddToolStart(id, e.Name, e.Args)
 		})
 	case *agent.ToolEndEvent:
-		t.App.QueueUpdateDraw(func() {
+		t.App.QueueUpdate(func() {
 			t.pendingTool = ""
 			if e.Name == "spawn_subagent" {
 				return
@@ -67,22 +67,22 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			}
 		})
 	case *agent.EscalationEvent:
-		t.App.QueueUpdateDraw(func() {
+		t.App.QueueUpdate(func() {
 			t.flushPendingTokens()
 			msg := fmt.Sprintf("[%s]\u26A0 %s[-]", t.Theme.Error, e.Summary)
 			t.conversationLog = append(t.conversationLog, convItem{text: msg})
-			t.refreshMessages()
+			t.markDirty()
 		})
 	case *agent.CompactionStartedEvent:
-		t.App.QueueUpdateDraw(func() {
+		t.App.QueueUpdate(func() {
 			t.flushPendingTokens()
 			t.compacting = true
 			msg := fmt.Sprintf("[%s]compacting (%d→%d tokens, %s)[-]", t.Theme.Dim, e.BeforeTokens, e.TargetTokens, e.Reason)
 			t.conversationLog = append(t.conversationLog, convItem{text: msg})
-			t.refreshMessages()
+			t.markDirty()
 		})
 	case *agent.CompactionDoneEvent:
-		t.App.QueueUpdateDraw(func() {
+		t.App.QueueUpdate(func() {
 			t.flushPendingTokens()
 			t.compacting = false
 			pct := e.SavingsPct * 100
@@ -94,7 +94,7 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 				pct, float64(e.BeforeTokens)/1000, float64(e.AfterTokens)/1000,
 				e.Method, e.ElapsedSeconds, note)
 			t.conversationLog = append(t.conversationLog, convItem{text: msg})
-			t.refreshMessages()
+			t.markDirty()
 		})
 	case *agent.DoneEvent:
 		t.App.QueueUpdateDraw(func() {
@@ -106,7 +106,7 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			if !flushed && e.Response != "" {
 				t.addAssistantResponse(e.Response)
 			}
-			t.refreshMessages()
+			t.markDirty()
 
 			if e.ContextWindow > 0 {
 				ct := e.ContextTokens

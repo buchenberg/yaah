@@ -333,6 +333,11 @@ func (m *Model) reRenderMessages() {
 // handing to the viewport. Width is m.width; callers must ensure
 // m.width is set.
 func (m *Model) renderMessages() string {
+	expandState := len(m.subagentExpanded)*1000000 + len(m.toolExpanded)*1000 + len(m.reasoningExpanded)
+	if !m.thinking && !m.streaming && m.cachedGeneration == m.renderGeneration && m.cachedMsgCount == len(m.messages) && m.cachedExpandState == expandState && m.cachedMessages != "" && len(m.todos) == 0 {
+		return m.cachedMessages
+	}
+
 	var b strings.Builder
 
 	m.reasoningZones = m.reasoningZones[:0]
@@ -437,7 +442,14 @@ func (m *Model) renderMessages() string {
 		b.WriteString("\n\n")
 	}
 
-	return b.String()
+	result := b.String()
+	if !m.thinking && !m.streaming && len(m.todos) == 0 {
+		m.cachedMessages = result
+		m.cachedGeneration = m.renderGeneration
+		m.cachedMsgCount = len(m.messages)
+		m.cachedExpandState = expandState
+	}
+	return result
 }
 
 // renderMCPStatus builds a status string for all discovered MCP servers.

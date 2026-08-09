@@ -9,7 +9,7 @@ func (t *TUI2) AddToolStart(id, name, args string) {
 	tb := toolblock.New(id, name, args, t.Theme)
 	t.toolBlocks = append(t.toolBlocks, tb)
 	t.conversationLog = append(t.conversationLog, convItem{toolBlock: tb})
-	t.refreshMessages()
+	t.markDirty()
 }
 
 // AddToolEnd transitions a tool block to Done.
@@ -17,7 +17,7 @@ func (t *TUI2) AddToolEnd(id, summary, result string) {
 	for _, tb := range t.toolBlocks {
 		if tb.ID() == id {
 			tb.Complete(summary, result)
-			t.refreshMessages()
+			t.markDirty()
 			return
 		}
 	}

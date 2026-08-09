@@ -11,7 +11,7 @@ import (
 func (t *TUI2) AddReasoningBlock(id, content string) {
 	rb := reasoning.New(id, content, 0, t.Theme)
 	t.reasoningBlocks = append(t.reasoningBlocks, rb)
-	t.refreshMessages()
+	t.markDirty()
 }
 
 // AddToolError transitions a tool block to Error.
@@ -19,7 +19,7 @@ func (t *TUI2) AddToolError(id, summary, err string) {
 	for _, tb := range t.toolBlocks {
 		if tb.ID() == id {
 			tb.Fail(summary, err)
-			t.refreshMessages()
+			t.markDirty()
 			return
 		}
 	}
@@ -100,7 +100,7 @@ func (t *TUI2) BlinkSubAgents() {
 		}
 	}
 	if needsRefresh {
-		t.refreshMessages()
+		t.markDirty()
 	}
 }
 
@@ -109,5 +109,5 @@ func (t *TUI2) AdvanceReasoningSeeds(seed float64) {
 	for _, rb := range t.reasoningBlocks {
 		rb.SetSeed(seed)
 	}
-	t.refreshMessages()
+	t.markDirty()
 }

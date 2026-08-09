@@ -5,6 +5,7 @@ func (t *TUI2) submitInput() {
 	if t.OnSubmit != nil {
 		text := t.Input.GetText()
 		if text != "" {
+			t.flushRefresh()
 			t.Input.SetText("", false)
 			t.OnSubmit(text)
 		}
@@ -16,6 +17,7 @@ func (t *TUI2) submitFollowUp() {
 	if t.OnFollowUp != nil {
 		text := t.Input.GetText()
 		if text != "" {
+			t.flushRefresh()
 			t.Input.SetText("", false)
 			t.OnFollowUp(text)
 		}

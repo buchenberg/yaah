@@ -9,7 +9,7 @@ func (t *TUI2) AddSubAgentStart(id, agentType, specialty, task, model string) {
 	block := subagent.New(id, agentType, specialty, task, model, t.Theme)
 	t.subagentBlocks = append(t.subagentBlocks, block)
 	t.conversationLog = append(t.conversationLog, convItem{subBlock: block})
-	t.refreshMessages()
+	t.markDirty()
 	t.renderBackgroundJobsPane()
 }
 
@@ -18,7 +18,7 @@ func (t *TUI2) AddSubAgentEnd(id string) {
 	for _, b := range t.subagentBlocks {
 		if b.ID() == id {
 			b.Complete()
-			t.refreshMessages()
+			t.markDirty()
 			t.renderBackgroundJobsPane()
 			return
 		}
@@ -30,7 +30,7 @@ func (t *TUI2) AddSubAgentError(id, err string) {
 	for _, b := range t.subagentBlocks {
 		if b.ID() == id {
 			b.Fail(err)
-			t.refreshMessages()
+			t.markDirty()
 			t.renderBackgroundJobsPane()
 			return
 		}

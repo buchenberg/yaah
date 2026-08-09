@@ -162,13 +162,19 @@ type Model struct {
 	hoveredZone bool // true when mouse is over a clickable zone (pointer cursor)
 
 	// --- misc UI ---
-	showBanner   bool
-	verbose      bool
-	needsRefresh bool
-	ephemMsg     string
-	ephemTimer   int
-	lastBody     string // last rendered body for :copyview
-	recordView   bool   // set by FlushEvent, triggers RecordTUIView in View()
+	showBanner        bool
+	verbose           bool
+	needsRefresh      bool
+	pendingRefresh    bool
+	renderGeneration  int
+	cachedMessages    string
+	cachedGeneration  int
+	cachedMsgCount    int
+	cachedExpandState int
+	ephemMsg          string
+	ephemTimer        int
+	lastBody          string // last rendered body for :copyview
+	recordView        bool   // set by FlushEvent, triggers RecordTUIView in View()
 }
 
 // Config holds the immutable setup parameters for a TUI model.
@@ -279,9 +285,26 @@ func (m *Model) refreshViewport() {
 	m.viewport.SetContent(m.renderMessages())
 }
 
+// markDirty flags the viewport as needing a refresh and invalidates
+// the render cache.
+func (m *Model) markDirty() {
+	m.pendingRefresh = true
+	m.renderGeneration++
+}
+
 // scrollToBottom programmatically scrolls the viewport to the end.
 func (m *Model) scrollToBottom() {
 	m.viewport.GotoBottom()
+}
+
+// flushPendingRefresh runs the deferred viewport refresh if any events
+// were batched since the last flush.
+func (m *Model) flushPendingRefresh() {
+	if m.pendingRefresh {
+		m.pendingRefresh = false
+		m.refreshViewport()
+		m.scrollToBottom()
+	}
 }
 
 // Init implements tea.Model.
@@ -395,14 +418,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) handleSpinnerTick(msg spinner.TickMsg) tea.Cmd {
 	var spinCmd tea.Cmd
 	m.spinner, spinCmd = m.spinner.Update(msg)
-	if m.thinking {
+	if m.thinking && m.needsRefresh {
 		m.refreshViewport()
+		m.scrollToBottom()
+		m.needsRefresh = false
 	}
 	if m.needsRefresh && m.streaming {
 		m.refreshViewport()
 		m.scrollToBottom()
 		m.needsRefresh = false
 	}
+	m.flushPendingRefresh()
 	if m.ephemTimer > 0 {
 		m.ephemTimer--
 		if m.ephemTimer == 0 {
