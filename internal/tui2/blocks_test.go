@@ -219,28 +219,3 @@ func TestToggleAllSubAgents(t *testing.T) {
 		t.Errorf("Expected 2 items in conversationLog, got %d", len(ui.conversationLog))
 	}
 }
-
-func TestBlinkSubAgents(t *testing.T) {
-	ui := New("test")
-
-	// Add sub-agent blocks
-	ui.AddSubAgentStart("sub-1", "analyst", "", "Task 1", "model")
-
-	// Blink should not panic
-	ui.BlinkSubAgents()
-}
-
-func TestAdvanceReasoningSeeds(t *testing.T) {
-	ui := New("test")
-
-	// Add reasoning blocks
-	ui.AddReasoningBlock("reason-1", "Thinking...")
-	ui.AddReasoningBlock("reason-2", "More thinking...")
-
-	// Advance seeds
-	ui.AdvanceReasoningSeeds(1.0)
-
-	if len(ui.conversationLog) != 2 {
-		t.Errorf("Expected 2 items in conversationLog, got %d", len(ui.conversationLog))
-	}
-}

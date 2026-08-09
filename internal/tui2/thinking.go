@@ -18,10 +18,4 @@ func (t *TUI2) HideThinking() {
 	t.renderInfoPane()
 }
 
-// AdvanceThinking advances the thinking spinner and lolcat seed.
-func (t *TUI2) AdvanceThinking() {
-	if t.thinkingInd.Visible() {
-		t.thinkingInd.Advance()
-		t.markDirty()
-	}
-}
+

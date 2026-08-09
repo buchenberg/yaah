@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/observability"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -15,7 +16,26 @@ import (
 // markDirty sets the refresh flag. Call instead of refreshMessages()
 // to coalesce multiple rapid updates into a single render pass.
 func (t *TUI2) markDirty() {
-	t.needsRefresh.Store(true)
+	if !t.needsRefresh.Swap(true) {
+		t.requestRefresh()
+	}
+}
+
+// requestRefresh enqueues a single refresh callback. If refresh work is
+// already queued, this is a no-op. If new updates arrive while a refresh
+// callback is running, another callback is scheduled after it completes.
+func (t *TUI2) requestRefresh() {
+	if !t.refreshQueued.CompareAndSwap(false, true) {
+		return
+	}
+
+	t.queueUpdateDraw(func() {
+		t.flushRefresh()
+		t.refreshQueued.Store(false)
+		if t.needsRefresh.Load() {
+			t.requestRefresh()
+		}
+	})
 }
 
 // flushRefresh performs the actual render if dirty, then clears the flag.
@@ -78,6 +98,12 @@ func (t *TUI2) refreshMessages() {
 	}
 
 	totalDur := time.Since(start)
+	now := time.Now()
+	var cadence time.Duration
+	if prev := t.lastRefreshUnixNano.Swap(now.UnixNano()); prev > 0 {
+		cadence = now.Sub(time.Unix(0, prev))
+	}
+	queueDepth := t.uiQueueDepth()
 
 	_, span := otel.Tracer("yaah").Start(context.Background(), "tui2.refresh",
 		trace.WithAttributes(
@@ -86,8 +112,12 @@ func (t *TUI2) refreshMessages() {
 			attribute.Int64("dur_total_us", totalDur.Microseconds()),
 			attribute.Int64("dur_format_us", formatDur.Microseconds()),
 			attribute.Int64("dur_settext_us", setDur.Microseconds()),
+			attribute.Int("queue_depth", queueDepth),
+			attribute.Int64("ui_event_drops", t.uiEventDrops.Load()),
+			attribute.Int64("ui_event_fallbacks", t.uiEventFallbacks.Load()),
 		))
 	span.End()
+	observability.RecordTUIRefresh(context.Background(), totalDur, cadence, queueDepth)
 
 	if totalDur > 50*time.Millisecond {
 		log.Printf("SLOW refreshMessages: %d items, %d bytes, total=%v format=%v settext=%v",

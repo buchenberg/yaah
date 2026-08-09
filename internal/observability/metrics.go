@@ -31,6 +31,12 @@ var (
 
 	agentTurns        metric.Int64Counter
 	agentTurnDuration metric.Int64Histogram
+
+	tuiQueueEvents  metric.Int64Counter
+	tuiQueueDepth   metric.Int64Histogram
+	tuiRefreshCount metric.Int64Counter
+	tuiRefreshDur   metric.Int64Histogram
+	tuiRefreshCad   metric.Int64Histogram
 )
 
 func initMetrics() {
@@ -106,6 +112,29 @@ func initMetrics() {
 		metric.WithDescription("Agent turn duration in milliseconds"),
 		metric.WithUnit("ms"),
 	)
+
+	tuiQueueEvents, _ = meter.Int64Counter(
+		"yaah.tui2.ui_queue.events",
+		metric.WithDescription("TUI2 UI queue events by outcome and type"),
+	)
+	tuiQueueDepth, _ = meter.Int64Histogram(
+		"yaah.tui2.ui_queue.depth",
+		metric.WithDescription("Sampled TUI2 UI queue depth"),
+	)
+	tuiRefreshCount, _ = meter.Int64Counter(
+		"yaah.tui2.refresh.count",
+		metric.WithDescription("Number of TUI2 refresh renders"),
+	)
+	tuiRefreshDur, _ = meter.Int64Histogram(
+		"yaah.tui2.refresh.duration_ms",
+		metric.WithDescription("TUI2 refresh duration in milliseconds"),
+		metric.WithUnit("ms"),
+	)
+	tuiRefreshCad, _ = meter.Int64Histogram(
+		"yaah.tui2.refresh.cadence_ms",
+		metric.WithDescription("Milliseconds since previous TUI2 refresh"),
+		metric.WithUnit("ms"),
+	)
 }
 
 // RecordToolCall records a tool execution outcome.
@@ -162,4 +191,34 @@ func RecordAgentTurn(ctx context.Context, duration time.Duration) {
 	}
 	agentTurns.Add(ctx, 1)
 	agentTurnDuration.Record(ctx, duration.Milliseconds())
+}
+
+// RecordTUIQueueEvent records a queue event outcome and queue depth sample.
+func RecordTUIQueueEvent(ctx context.Context, eventType, outcome string, depth int) {
+	if tuiQueueEvents == nil {
+		return
+	}
+	attrs := metric.WithAttributes(
+		attribute.String("event_type", eventType),
+		attribute.String("outcome", outcome),
+	)
+	tuiQueueEvents.Add(ctx, 1, attrs)
+	if depth >= 0 {
+		tuiQueueDepth.Record(ctx, int64(depth), attrs)
+	}
+}
+
+// RecordTUIRefresh records refresh count, duration, cadence, and queue depth.
+func RecordTUIRefresh(ctx context.Context, duration time.Duration, cadence time.Duration, queueDepth int) {
+	if tuiRefreshCount == nil {
+		return
+	}
+	tuiRefreshCount.Add(ctx, 1)
+	tuiRefreshDur.Record(ctx, duration.Milliseconds())
+	if cadence > 0 {
+		tuiRefreshCad.Record(ctx, cadence.Milliseconds())
+	}
+	if queueDepth >= 0 {
+		tuiQueueDepth.Record(ctx, int64(queueDepth), metric.WithAttributes(attribute.String("event_type", "refresh"), attribute.String("outcome", "sample")))
+	}
 }

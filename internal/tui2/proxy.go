@@ -21,18 +21,13 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 		t.tokenMu.Unlock()
 		t.thinkingInd.Hide()
 	case *agent.ThinkingEvent:
-		go t.App.QueueUpdateDraw(func() {
-			if !t.thinkingInd.Visible() {
-				t.thinkingInd.Show()
-			}
-			t.thinkingLabel = e.Text
-		})
+		t.queueThinkingUpdate(e.Text)
 	case *agent.FlushEvent:
-		go t.App.QueueUpdate(func() {
+		t.queueUpdate(func() {
 			t.flushPendingTokens()
 		})
 	case *agent.ToolStartEvent:
-		go t.App.QueueUpdate(func() {
+		t.queueUpdateCritical(func() {
 			t.thinkingInd.Hide()
 			t.pendingTool = e.Name
 			if e.Name == "spawn_subagent" {
@@ -42,7 +37,7 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			t.AddToolStart(id, e.Name, e.Args)
 		})
 	case *agent.ToolEndEvent:
-		go t.App.QueueUpdate(func() {
+		t.queueUpdateCritical(func() {
 			t.pendingTool = ""
 			if e.Name == "spawn_subagent" {
 				return
@@ -55,11 +50,11 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			}
 		})
 	case *agent.SubAgentStartEvent:
-		go t.App.QueueUpdateDraw(func() {
+		t.queueUpdateDrawCritical(func() {
 			t.AddSubAgentStart(e.SubAgentID, e.Role, "", e.Prompt, e.Model)
 		})
 	case *agent.SubAgentEndEvent:
-		go t.App.QueueUpdateDraw(func() {
+		t.queueUpdateDrawCritical(func() {
 			if e.Error != "" {
 				t.AddSubAgentError(e.SubAgentID, e.Error)
 			} else {
@@ -67,14 +62,14 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			}
 		})
 	case *agent.EscalationEvent:
-		go t.App.QueueUpdate(func() {
+		t.queueUpdateCritical(func() {
 			t.flushPendingTokens()
 			msg := fmt.Sprintf("[%s]\u26A0 %s[-]", t.Theme.Error, e.Summary)
 			t.conversationLog = append(t.conversationLog, convItem{text: msg})
 			t.markDirty()
 		})
 	case *agent.CompactionStartedEvent:
-		go t.App.QueueUpdate(func() {
+		t.queueUpdateCritical(func() {
 			t.flushPendingTokens()
 			t.compacting = true
 			msg := fmt.Sprintf("[%s]compacting (%d→%d tokens, %s)[-]", t.Theme.Dim, e.BeforeTokens, e.TargetTokens, e.Reason)
@@ -82,7 +77,7 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			t.markDirty()
 		})
 	case *agent.CompactionDoneEvent:
-		go t.App.QueueUpdate(func() {
+		t.queueUpdateCritical(func() {
 			t.flushPendingTokens()
 			t.compacting = false
 			pct := e.SavingsPct * 100
@@ -97,7 +92,7 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			t.markDirty()
 		})
 	case *agent.DoneEvent:
-		go t.App.QueueUpdateDraw(func() {
+		t.queueUpdateDrawCritical(func() {
 			flushed := t.flushPendingTokens()
 			t.pendingThink = ""
 			t.pendingTool = ""
@@ -149,15 +144,10 @@ func (t *TUI2) flushPendingTokens() bool {
 	span.End()
 
 	t.addAssistantResponse(raw)
-	t.pendingTokens.Reset()
 	t.isStreaming.Store(false)
 	return true
 }
 
 func (t *TUI2) HandleContextInfo(tokens, window int) {
-	go t.App.QueueUpdateDraw(func() {
-		t.contextTokens = tokens
-		t.contextWindow = window
-		t.renderInfoPane()
-	})
+	t.queueContextInfoUpdate(tokens, window)
 }

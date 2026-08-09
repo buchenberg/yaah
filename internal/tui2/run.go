@@ -1,42 +1,60 @@
 package tui2
 
-import (
-	"time"
-)
-
 // Run starts the tview event loop.
 func (t *TUI2) Run() error {
-	t.startControlLoop()
-	t.startDebounceTimer()
+	done := t.startBackgroundLoops()
+	t.startUIEventLoop(done)
+	t.startControlLoop(done)
 	t.App.SetFocus(t.Input)
 	t.renderInfoPane()
 	t.renderTodoPane()
-	return t.App.Run()
+	err := t.App.Run()
+	t.stopBackgroundLoops()
+	return err
 }
 
 // Stop gracefully shuts down the TUI.
 func (t *TUI2) Stop() {
+	t.stopBackgroundLoops()
 	t.App.Stop()
 }
 
-func (t *TUI2) startControlLoop() {
-	go func() {
-		for msg := range t.ControlCh {
-			t.App.QueueUpdateDraw(func() {
-				t.handleControlMsg(msg)
-			})
-		}
-	}()
+func (t *TUI2) startBackgroundLoops() <-chan struct{} {
+	t.bgMu.Lock()
+	defer t.bgMu.Unlock()
+	if t.bgDone != nil {
+		close(t.bgDone)
+	}
+	t.bgDone = make(chan struct{})
+	t.uiEventCh = make(chan uiEvent, uiEventQueueSize)
+	return t.bgDone
 }
 
-func (t *TUI2) startDebounceTimer() {
+func (t *TUI2) stopBackgroundLoops() {
+	t.bgMu.Lock()
+	defer t.bgMu.Unlock()
+	if t.bgDone == nil {
+		return
+	}
+	close(t.bgDone)
+	t.bgDone = nil
+	t.uiEventCh = nil
+}
+
+func (t *TUI2) startControlLoop(done <-chan struct{}) {
 	go func() {
-		for range time.Tick(100 * time.Millisecond) {
-			t.App.QueueUpdateDraw(func() {
-				if t.needsRefresh.Swap(false) {
-					t.refreshMessages()
+		for {
+			select {
+			case <-done:
+				return
+			case msg, ok := <-t.ControlCh:
+				if !ok {
+					return
 				}
-			})
+				t.App.QueueUpdateDraw(func() {
+					t.handleControlMsg(msg)
+				})
+			}
 		}
 	}()
 }

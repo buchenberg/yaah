@@ -169,27 +169,3 @@ func (t *TUI2) toggleAllSubAgents() {
 	}
 	t.refreshMessages()
 }
-
-// BlinkSubAgents toggles blink visibility for all active sub-agent blocks.
-func (t *TUI2) BlinkSubAgents() {
-	needsRefresh := false
-	for _, ci := range t.conversationLog {
-		if ci.subBlock != nil && ci.subBlock.S() == subagent.Active {
-			ci.subBlock.ToggleBlink()
-			needsRefresh = true
-		}
-	}
-	if needsRefresh {
-		t.markDirty()
-	}
-}
-
-// AdvanceReasoningSeeds advances lolcat seeds for all reasoning blocks.
-func (t *TUI2) AdvanceReasoningSeeds(seed float64) {
-	for _, ci := range t.conversationLog {
-		if ci.reasoningBlock != nil {
-			ci.reasoningBlock.SetSeed(seed)
-		}
-	}
-	t.markDirty()
-}

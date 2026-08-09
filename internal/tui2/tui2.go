@@ -69,6 +69,19 @@ type TUI2 struct {
 
 	ControlCh <-chan types.CtrlMsg
 
+	bgMu      sync.Mutex
+	bgDone    chan struct{}
+	uiEventCh chan uiEvent
+
+	coalesceMu           sync.Mutex
+	thinkingQueued       bool
+	thinkingSeq          uint64
+	pendingThinkingLabel string
+	contextQueued        bool
+	contextSeq           uint64
+	pendingContextTokens int
+	pendingContextWindow int
+
 	pendingThink         string
 	pendingTool          string
 	compacting           bool
@@ -93,9 +106,13 @@ type TUI2 struct {
 	charsWritten         atomic.Int64
 	charsRendered        atomic.Int64
 	userScrolled         bool
+	uiEventDrops         atomic.Int64
+	uiEventFallbacks     atomic.Int64
+	lastRefreshUnixNano  atomic.Int64
 
-	isStreaming  atomic.Bool
-	needsRefresh atomic.Bool
+	isStreaming   atomic.Bool
+	needsRefresh  atomic.Bool
+	refreshQueued atomic.Bool
 
 	availableModels []string
 	providerNames   map[string]string

@@ -60,6 +60,7 @@ Remaining gaps: some keybindings, search, multi-line input.
 |-------|--------|-------|
 | Phase 1: Code reorganization | ✅ COMPLETE | Monolith split, duplicate state eliminated, `events.go` → `proxy.go` |
 | Phase 1.5: Threading fixes | ✅ COMPLETE | Async dispatch, approval wiring, direct token write, goroutine diagnostics |
+| Phase 1.6: Nonblocking architecture hardening | ✅ COMPLETE | queue/lifecycle hardening, bounded queue, coalescing, observability, and tests |
 | Phase 2: Usage & cost tracking | ✅ COMPLETE | Implemented in `usage.go` with model pricing table |
 | Phase 3: Error overlay | ✅ COMPLETE | Implemented in `components/error/` with auto-dismiss and timer management |
 | Phase 4: Keybinding completion | ⏳ TODO | 10 actions need handlers |
@@ -177,6 +178,195 @@ Tool goroutine checkpoints (`spawned`, `acquire_concurrency`, `publish_start`,
 when the goroutine blocks. Turn-level diagnostic spans (`turn.response`,
 `turn.dispatch_tools`, `turn.dispatch_done`) are short-lived child spans
 that survive parent crashes.
+
+## Phase 1.6: Nonblocking architecture hardening
+
+⏳ TODO:
+
+### Why this phase exists
+
+Phase 1.5 solved the major forwarder stall by moving token streaming off
+`QueueUpdate`. However, the current design still has three structural risks:
+
+- **Unsafe token buffer mutation**: `flushPendingTokens()` resets
+  `pendingTokens` once under lock and again outside the lock.
+- **Unbounded goroutine fan-out**: non-token events use `go QueueUpdate...`
+  per event, which can accumulate blocked goroutines if draw throughput drops.
+- **Always-on tick scheduling**: the 100ms `time.Tick` loop continuously calls
+  `QueueUpdateDraw`, even when idle.
+
+### Design target
+
+Keep the broker forwarder nonblocking while making UI scheduling bounded,
+predictable, and race-free.
+
+### 1.6.1 Fix correctness first (race + lifecycle)
+
+✅ COMPLETE (implemented and validated)
+
+Files:
+- `internal/tui2/proxy.go`
+- `internal/tui2/run.go`
+
+Actions:
+- Remove the second `pendingTokens.Reset()` in `flushPendingTokens()` so all
+  `pendingTokens` mutation occurs under `tokenMu`.
+- Replace `time.Tick` with a stoppable `time.NewTicker` managed by `Run()/Stop()`
+  lifecycle.
+- Add a `done` channel for background loops (`control` and `debounce`) so
+  shutdown is explicit and tests can assert clean exit.
+
+Acceptance criteria:
+- `go test -race ./internal/tui2/...` reports no race involving
+  `pendingTokens`.
+- No goroutine leak in repeated start/stop tests.
+
+Validation run:
+- `go test ./internal/tui2/...` ✅
+- `go test -race ./internal/tui2/...` ✅
+- `go build ./...` ✅
+
+### 1.6.2 Replace goroutine-per-event with bounded UI event queue
+
+✅ COMPLETE (implemented and validated)
+
+Files:
+- `internal/tui2/proxy.go`
+- `internal/tui2/run.go`
+- (new) `internal/tui2/event_queue.go`
+
+Actions:
+- Introduce a bounded `uiEventCh` owned by TUI2 (single consumer worker).
+- `HandleEvent` should enqueue lightweight closures/messages instead of
+  spawning a new goroutine per non-token event.
+- Worker serially invokes `QueueUpdate`/`QueueUpdateDraw`, preserving order and
+  naturally applying backpressure to `uiEventCh` instead of runtime goroutine
+  growth.
+- Define overflow behavior explicitly (drop/coalesce low-priority events; never
+  drop terminal events like `DoneEvent`).
+
+Acceptance criteria:
+- Under synthetic high event rate, goroutine count remains bounded.
+- Forwarder stays responsive (no long `HandleEvent` stalls).
+
+Implementation notes:
+- Added `internal/tui2/event_queue.go` with bounded queue (`uiEventCh`) and
+  single consumer worker.
+- `HandleEvent` now routes non-token events through queue helpers instead of
+  spawning a goroutine per event.
+- Non-critical events drop on queue overflow; critical events wait briefly and
+  then fall back to direct async dispatch so they are not dropped.
+
+Validation run:
+- `go test ./internal/tui2/...` ✅
+- `go test -race ./internal/tui2/...` ✅
+- `go build ./...` ✅
+
+### 1.6.3 Edge-triggered refresh scheduling
+
+✅ COMPLETE (implemented and validated)
+
+Files:
+- `internal/tui2/scroll.go`
+- `internal/tui2/run.go`
+
+Actions:
+- Convert periodic polling refresh to edge-triggered scheduling:
+  - `markDirty()` requests a refresh only on transition false→true.
+  - UI worker batches multiple updates into one `refreshMessages()` call.
+- Keep a low-frequency safety tick only if needed (debug fallback), disabled by
+  default.
+
+Acceptance criteria:
+- Idle UI performs zero redraw callbacks.
+- During streaming/tool bursts, redraw frequency is capped and stable.
+
+Implementation notes:
+- Removed periodic debounce polling from `Run()`.
+- `markDirty()` now schedules refresh only on false→true dirty transitions.
+- Added queued refresh guard to prevent duplicate refresh callbacks while one
+  is already queued.
+
+Validation run:
+- `go test ./internal/tui2/...` ✅
+- `go test -race ./internal/tui2/...` ✅
+- `go build ./...` ✅
+
+### 1.6.4 Coalescing policy (throughput without loss of meaning)
+
+✅ COMPLETE (implemented and validated)
+
+Files:
+- `internal/tui2/event_queue.go`
+- `internal/tui2/proxy.go`
+
+Actions:
+- Coalesce repetitive transient events:
+  - Multiple `ThinkingEvent` updates collapse to latest label.
+  - Multiple context info updates collapse to latest snapshot.
+- Preserve strict ordering for semantic events:
+  - `ToolStart`/`ToolEnd`
+  - `SubAgentStart`/`SubAgentEnd`
+  - `DoneEvent`
+
+Acceptance criteria:
+- No malformed block lifecycle in conversation log.
+- Info/thinking panes remain current without flooding queue.
+
+Implementation notes:
+- Added coalesced scheduling helpers for high-frequency updates:
+  - `ThinkingEvent` collapses to latest label.
+  - context info updates collapse to latest token/window snapshot.
+- Preserved strict ordering for semantic lifecycle events (`ToolStart/End`,
+  `SubAgentStart/End`, `DoneEvent`) by keeping those on critical queue paths.
+
+Validation run:
+- `go test ./internal/tui2/...` ✅
+- `go test -race ./internal/tui2/...` ✅
+- `go build ./...` ✅
+
+### 1.6.5 Observability and test gates
+
+✅ COMPLETE (implemented and validated)
+
+Files:
+- `internal/tui2/proxy_test.go`
+- (new) `internal/tui2/event_queue_test.go`
+- `internal/tui2/run_test.go`
+
+Actions:
+- Add tests for:
+  - bounded queue behavior and overflow policy
+  - event ordering guarantees for start/end/done
+  - start/stop lifecycle with no goroutine leaks
+  - race-focused token flush regression
+- Add OTel counters/gauges:
+  - queue depth
+  - dropped/coalesced events by type
+  - refresh cadence and duration
+
+Progress update:
+- Added `internal/tui2/event_queue_test.go` covering:
+  - non-critical overflow drop behavior
+  - critical overflow fallback behavior
+  - thinking coalescing to latest
+  - context-info coalescing to latest
+- Existing lifecycle/race validations continue to pass.
+- Added queue ordering and lifecycle start/stop tests.
+- Added OTel-backed queue/refresh metrics for:
+  - queue depth samples
+  - dropped/fallback/coalesced queue event outcomes
+  - refresh duration and cadence
+
+Validation run:
+- `go test ./internal/tui2/...` ✅
+- `go test -race ./internal/tui2/...` ✅
+- `go build ./...` ✅
+
+Acceptance criteria:
+- `go test ./internal/tui2/...` green.
+- `go test -race ./internal/tui2/...` green.
+- `go build ./...` green.
 
 ## Phase 2: Cumulative usage & cost tracking
 
@@ -311,11 +501,13 @@ Phase 1 (organization)  ✅ COMPLETE
   ↓
 Phase 1.5 (threading)   ✅ COMPLETE
   ↓
+Phase 1.6 (nonblocking hardening)  ← NEXT
+  ↓
 Phase 2 (cumulative usage/cost)   ✅ COMPLETE
   ↓
 Phase 3 (error overlay)           ✅ COMPLETE
   ↓
-Phase 4 (keybinding completion)   ← NEXT
+Phase 4 (keybinding completion)
   ↓
 Phase 5 (component health)
   ↓
