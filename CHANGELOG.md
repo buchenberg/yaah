@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.52.1](https://github.com/buchenberg/yaah/compare/v0.52.0...v0.52.1) (2026-08-09)
+
+
+### Bug Fixes
+
+* ACP bugs [#179](https://github.com/buchenberg/yaah/issues/179)-[#182](https://github.com/buchenberg/yaah/issues/182), add semantic skill search, update prompt descriptions ([#189](https://github.com/buchenberg/yaah/issues/189)) ([de501d9](https://github.com/buchenberg/yaah/commit/de501d94b8a92d10da2253660ee8f514bfef6910))
+
 ## [0.52.0](https://github.com/buchenberg/yaah/compare/v0.51.2...v0.52.0) (2026-08-07)
 
 
