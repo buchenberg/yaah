@@ -70,7 +70,6 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 		t.App.QueueUpdateDraw(func() {
 			t.flushPendingTokens()
 			msg := fmt.Sprintf("[%s]\u26A0 %s[-]", t.Theme.Error, e.Summary)
-			t.plainMessages = append(t.plainMessages, msg)
 			t.conversationLog = append(t.conversationLog, convItem{text: msg})
 			t.refreshMessages()
 		})
@@ -79,7 +78,6 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			t.flushPendingTokens()
 			t.compacting = true
 			msg := fmt.Sprintf("[%s]compacting (%d→%d tokens, %s)[-]", t.Theme.Dim, e.BeforeTokens, e.TargetTokens, e.Reason)
-			t.plainMessages = append(t.plainMessages, msg)
 			t.conversationLog = append(t.conversationLog, convItem{text: msg})
 			t.refreshMessages()
 		})
@@ -95,7 +93,6 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 			msg := fmt.Sprintf("[%s]compacted %.0f%% (%.1fK → %.1fK, %s) in %.1fs%s[-]", t.Theme.Dim,
 				pct, float64(e.BeforeTokens)/1000, float64(e.AfterTokens)/1000,
 				e.Method, e.ElapsedSeconds, note)
-			t.plainMessages = append(t.plainMessages, msg)
 			t.conversationLog = append(t.conversationLog, convItem{text: msg})
 			t.refreshMessages()
 		})
