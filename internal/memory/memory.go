@@ -69,11 +69,20 @@ type DB struct {
 }
 
 // SetEmbedder configures the embedding model used for semantic search.
-// When nil, vector search is disabled.
-func (d *DB) SetEmbedder(e Embedder) { d.embedder = e }
+// When nil, vector search is disabled. Safe for concurrent use.
+func (d *DB) SetEmbedder(e Embedder) {
+	d.embMu.Lock()
+	defer d.embMu.Unlock()
+	d.embedder = e
+}
 
 // Embedder returns the configured embedding model, or nil.
-func (d *DB) Embedder() Embedder { return d.embedder }
+// Safe for concurrent use.
+func (d *DB) Embedder() Embedder {
+	d.embMu.Lock()
+	defer d.embMu.Unlock()
+	return d.embedder
+}
 
 // Open opens (or creates) the yaah database at the given path.
 func Open(path string) (*DB, error) {

@@ -76,11 +76,9 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	}
 
 	// --- Embedding server ------------------------------------------------
-	if db != nil && cfg.Embedding.Provider != "" && cfg.Embedding.Model != "" {
-		if p, ok := cfg.Providers[cfg.Embedding.Provider]; ok {
-			embedder := memory.NewEmbedder(p.BaseURL, cfg.Embedding.Model, nil)
-			db.SetEmbedder(embedder)
-
+	if db != nil {
+		attachEmbedder(db, cfg)
+		if db.Embedder() != nil {
 			// Backfill embeddings for any memory entries created before the
 			// embedding server was configured.
 			go func() {
@@ -93,8 +91,6 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 					fmt.Fprintf(os.Stderr, "embedded %d existing memory entries\n", n)
 				}
 			}()
-		} else {
-			fmt.Fprintf(os.Stderr, "warning: embedding provider %q not found in providers\n", cfg.Embedding.Provider)
 		}
 	}
 

@@ -51,8 +51,8 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 		params.TopK = 10
 	}
 
-	if params.Query != "" {
-		if vecResults, err := t.DB.SearchMemoryVector(context.Background(), params.Query, params.TopK); err == nil && len(vecResults) > 0 {
+	if params.Query != "" && params.Tag == "" {
+		if vecResults, err := t.DB.SearchMemoryVector(ctx, params.Query, params.TopK); err == nil && len(vecResults) > 0 {
 			return vectorResultsJSON(vecResults), nil
 		}
 	}
@@ -275,7 +275,7 @@ func (t *MemorySessionSearchTool) Execute(ctx context.Context, args string) (str
 		return t.listRecentMessages(params.TopK)
 	}
 
-	if vecResults, err := t.DB.SearchMessagesVector(context.Background(), params.Query, params.TopK); err == nil && len(vecResults) > 0 {
+	if vecResults, err := t.DB.SearchMessagesVector(ctx, params.Query, params.TopK); err == nil && len(vecResults) > 0 {
 		var output string
 		for _, r := range vecResults {
 			output += fmt.Sprintf("[semantic] %s  (score: %.2f)\n", r.Text, r.Score)

@@ -57,17 +57,10 @@ func TestCosineSimilarityZeroVector(t *testing.T) {
 }
 
 func TestCosineSimilarityMismatchedLength(t *testing.T) {
-	defer func() {
-		// CosineSimilarity does index-out-of-range if lengths differ; this
-		// is a programming error (caller's responsibility), not a recoverable
-		// condition.
-		if r := recover(); r != nil {
-			t.Log("expected panic on mismatched lengths:", r)
-		} else {
-			t.Error("expected panic")
-		}
-	}()
-	CosineSimilarity(Embedding{1, 2}, Embedding{1})
+	s := CosineSimilarity(Embedding{1, 2}, Embedding{1})
+	if s != 0 {
+		t.Errorf("CosineSimilarity(mismatched) = %f, want 0", s)
+	}
 }
 
 func TestEncodeEmbeddingDeterministic(t *testing.T) {
@@ -198,7 +191,7 @@ func TestHTTPEmbedderContextCancellation(t *testing.T) {
 }
 
 func TestNewEmbedder(t *testing.T) {
-	e := NewEmbedder("http://localhost:7334", "", nil)
+	e := NewEmbedder("http://localhost:7334", "", "", nil)
 	if e == nil {
 		t.Fatal("NewEmbedder returned nil")
 	}
@@ -215,7 +208,7 @@ func TestNewEmbedder(t *testing.T) {
 
 func TestNewEmbedderWithClient(t *testing.T) {
 	c := &http.Client{}
-	e := NewEmbedder("http://localhost:7335", "custom-model", c)
+	e := NewEmbedder("http://localhost:7335", "", "custom-model", c)
 	if e.Client != c {
 		t.Error("expected provided client")
 	}
@@ -266,5 +259,45 @@ func TestHTTPEmbedderEmbedEmptyEmbedding(t *testing.T) {
 	_, err := e.Embed(context.Background(), "test")
 	if err == nil {
 		t.Fatal("expected error for zero-length embedding")
+	}
+}
+
+func TestHTTPEmbedderAPIKeySent(t *testing.T) {
+	var gotKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotKey = r.Header.Get("Authorization")
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"embedding": []float64{0.1}}},
+		})
+	}))
+	defer srv.Close()
+
+	e := NewEmbedder(srv.URL, "sk-test", "local", nil)
+	_, err := e.Embed(context.Background(), "hi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotKey != "Bearer sk-test" {
+		t.Errorf("Authorization = %q, want 'Bearer sk-test'", gotKey)
+	}
+}
+
+func TestHTTPEmbedderNoAPIKey(t *testing.T) {
+	var gotKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotKey = r.Header.Get("Authorization")
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"embedding": []float64{0.1}}},
+		})
+	}))
+	defer srv.Close()
+
+	e := NewEmbedder(srv.URL, "", "local", nil)
+	_, err := e.Embed(context.Background(), "hi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotKey != "" {
+		t.Errorf("Authorization = %q, want empty", gotKey)
 	}
 }

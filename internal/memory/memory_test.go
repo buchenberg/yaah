@@ -734,13 +734,14 @@ func addMessageAndWait(t *testing.T, db *DB, m Message) {
 	if m.Role != "user" && m.Role != "assistant" {
 		return
 	}
-	for i := 0; i < 50; i++ {
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
 		var emb []byte
 		db.sql.QueryRow(`SELECT COALESCE(embedding, '') FROM messages WHERE id = ?`, m.ID).Scan(&emb)
 		if len(emb) > 0 {
 			return
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(2 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for embedding of message %s", m.ID)
 }

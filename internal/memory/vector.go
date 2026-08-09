@@ -27,6 +27,9 @@ type Embedder interface {
 type HTTPEmbedder struct {
 	// BaseURL is the embeddings endpoint base, e.g. "http://127.0.0.1:7334".
 	BaseURL string
+	// APIKey, when non-empty, is sent as a Bearer token. Local servers
+	// such as llama-server do not need it.
+	APIKey string
 	// Model is the model name sent to the embeddings endpoint.
 	// Defaults to "local" (works for llama-server). Set to an ollama model
 	// name (e.g. "nomic-embed-text:latest") for ollama.
@@ -39,14 +42,16 @@ type HTTPEmbedder struct {
 // DefaultEmbeddingTimeout is the HTTP request timeout used when Client is nil.
 const DefaultEmbeddingTimeout = 30 * time.Second
 
-// NewEmbedder creates an HTTPEmbedder for the given base URL and optional
-// model name. When model is empty, defaults to "local".
-// When client is nil, a default client with a 30-second timeout is used.
-func NewEmbedder(baseURL string, model string, client *http.Client) *HTTPEmbedder {
+// NewEmbedder creates an HTTPEmbedder for the given base URL, API key,
+// model name, and HTTP client. When apiKey is empty, no Authorization
+// header is sent (local servers). When model is empty, defaults to
+// "local". When client is nil, a default client with a 30-second
+// timeout is used.
+func NewEmbedder(baseURL, apiKey, model string, client *http.Client) *HTTPEmbedder {
 	if model == "" {
 		model = "local"
 	}
-	return &HTTPEmbedder{BaseURL: baseURL, Model: model, Client: client}
+	return &HTTPEmbedder{BaseURL: baseURL, APIKey: apiKey, Model: model, Client: client}
 }
 
 func (e *HTTPEmbedder) client() *http.Client {
@@ -93,6 +98,9 @@ func (e *HTTPEmbedder) Embed(ctx context.Context, text string) (Embedding, error
 		return nil, fmt.Errorf("embed: new request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if e.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+e.APIKey)
+	}
 
 	resp, err := e.client().Do(req)
 	if err != nil {
@@ -125,10 +133,12 @@ func (e *HTTPEmbedder) Embed(ctx context.Context, text string) (Embedding, error
 	return emb, nil
 }
 
-// CosineSimilarity returns the cosine similarity between a and b. Both
-// slices must be the same length and non-zero. Returns 0 if either
-// vector has zero magnitude.
+// CosineSimilarity returns the cosine similarity between a and b. Returns
+// 0 if the lengths differ or if either vector has zero magnitude.
 func CosineSimilarity(a, b []float32) float32 {
+	if len(a) != len(b) {
+		return 0
+	}
 	var dot, normA, normB float32
 	for i := range a {
 		dot += a[i] * b[i]

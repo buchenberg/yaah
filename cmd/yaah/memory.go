@@ -2,6 +2,7 @@ package yaah
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/config"
@@ -105,17 +106,28 @@ var memoryAddCmd = &cobra.Command{
 	},
 }
 
-// initDBEmbedder loads the embedding config and sets the embedder on the DB.
-func initDBEmbedder(db *memory.DB) {
-	cfg, err := config.Load()
-	if err != nil || cfg.Embedding.Provider == "" || cfg.Embedding.Model == "" {
-		return
+// attachEmbedder resolves the configured embedding provider and sets the
+// embedder on db. It reports configuration mistakes on stderr.
+func attachEmbedder(db *memory.DB, cfg *config.Config) bool {
+	if cfg.Embedding.Provider == "" || cfg.Embedding.Model == "" {
+		return false
 	}
 	p, ok := cfg.Providers[cfg.Embedding.Provider]
 	if !ok {
+		fmt.Fprintf(os.Stderr, "warning: embedding provider %q not found in providers\n", cfg.Embedding.Provider)
+		return false
+	}
+	db.SetEmbedder(memory.NewEmbedder(p.BaseURL, cfg.Embedding.Model, p.APIKey, nil))
+	return true
+}
+
+// initDBEmbedder loads config and attaches the embedder for CLI commands.
+func initDBEmbedder(db *memory.DB) {
+	cfg, err := config.Load()
+	if err != nil {
 		return
 	}
-	db.SetEmbedder(memory.NewEmbedder(p.BaseURL, cfg.Embedding.Model, nil))
+	attachEmbedder(db, cfg)
 }
 
 func init() {

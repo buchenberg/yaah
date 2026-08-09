@@ -20,13 +20,13 @@ func (d *DB) AddMessage(m Message) error {
 // stores the result. Tool messages are skipped. Returns a channel that
 // closes when the embed completes, or nil when no embedder is configured.
 func (d *DB) embedMessageAsync(id, role, content string) <-chan struct{} {
-	if d.embedder == nil || role != "user" && role != "assistant" || content == "" {
+	if d.embedder == nil || role != "user" && role != "assistant" || content == "" || id == "" {
 		return nil
 	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		emb, err := d.embedder.Embed(context.Background(), role+": "+content)
+		emb, err := d.embedder.Embed(context.Background(), content)
 		if err != nil {
 			return
 		}
