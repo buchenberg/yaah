@@ -17,5 +17,3 @@ func (t *TUI2) HideThinking() {
 	t.markDirty()
 	t.renderInfoPane()
 }
-
-

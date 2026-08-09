@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -161,12 +162,21 @@ func runTUI2() error {
 
 	sess.SetApproveFn(func(name, args string) bool {
 		ch := make(chan bool, 1)
-		controlCh <- &types.CtrlApproval{
+		select {
+		case controlCh <- &types.CtrlApproval{
 			Name:      name,
 			Args:      args,
 			ApproveCh: ch,
+		}:
+		default:
+			return false
 		}
-		return <-ch
+		select {
+		case approved := <-ch:
+			return approved
+		case <-time.After(30 * time.Second):
+			return false
+		}
 	})
 
 	origStderr := os.Stderr
