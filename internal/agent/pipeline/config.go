@@ -109,12 +109,12 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 			traceDir = filepath.Join(home, ".yaah", "traces")
 		}
 		if err := os.MkdirAll(traceDir, 0o755); err != nil {
-			slog.Error("shepherd_trace: mkdir failed (disabled)", "dir", traceDir, "err", err)
+			slog.Debug("shepherd_trace: mkdir failed (disabled)", "dir", traceDir, "err", err)
 			return &noopShepherdTraceMiddleware{}
 		}
 		store, err := NewShepherdTraceStore(filepath.Join(traceDir, "trace.sqlite"))
 		if err != nil {
-			slog.Error("shepherd_trace: open failed (disabled)", "dir", traceDir, "err", err)
+			slog.Debug("shepherd_trace: open failed (disabled)", "dir", traceDir, "err", err)
 			return &noopShepherdTraceMiddleware{}
 		}
 

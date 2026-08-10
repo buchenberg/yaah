@@ -87,7 +87,7 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 			}},
 		})
 		if err != nil {
-			slog.Error("shepherd_trace: declaration failed", "err", err)
+			slog.Debug("shepherd_trace: declaration failed", "err", err)
 			continue
 		}
 
@@ -115,7 +115,7 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 			}},
 		})
 		if err != nil {
-			slog.Error("shepherd_trace: capture failed", "err", err)
+			slog.Debug("shepherd_trace: capture failed", "err", err)
 		}
 
 		m.lastFactIDs = captureReceipt.FactIDs
@@ -155,7 +155,7 @@ func (m *ShepherdTraceMiddleware) StartTurn(turnNumber int, model string, prompt
 		}},
 	})
 	if err != nil {
-		slog.Error("shepherd_trace: turn start failed", "err", err)
+		slog.Debug("shepherd_trace: turn start failed", "err", err)
 		return
 	}
 
@@ -180,7 +180,7 @@ func (m *ShepherdTraceMiddleware) StartTurn(turnNumber int, model string, prompt
 		}},
 	})
 	if err != nil {
-		slog.Error("shepherd_trace: turn start capture failed", "err", err)
+		slog.Debug("shepherd_trace: turn start capture failed", "err", err)
 	} else {
 		m.lastFactIDs = captureReceipt.FactIDs
 	}
@@ -215,7 +215,7 @@ func (m *ShepherdTraceMiddleware) EndTurn(turnNumber int, promptTokens, completi
 		}},
 	})
 	if err != nil {
-		slog.Error("shepherd_trace: turn complete failed", "err", err)
+		slog.Debug("shepherd_trace: turn complete failed", "err", err)
 	} else {
 		m.lastFactIDs = receipt.FactIDs
 	}
@@ -251,7 +251,7 @@ func (m *ShepherdTraceMiddleware) FailTurn(turnNumber int, err error) {
 		}},
 	})
 	if aerr != nil {
-		slog.Error("shepherd_trace: turn fail recording failed", "err", aerr)
+		slog.Debug("shepherd_trace: turn fail recording failed", "err", aerr)
 	} else {
 		m.lastFactIDs = receipt.FactIDs
 	}
@@ -274,7 +274,7 @@ func (m *ShepherdTraceMiddleware) publishFrontier(turnNumber int) {
 	}
 	_, err := m.store.PublishFrontier(shepherd.TrustedAppendContext, spec)
 	if err != nil {
-		slog.Error("shepherd_trace: frontier publish failed", "err", err)
+		slog.Debug("shepherd_trace: frontier publish failed", "err", err)
 	}
 }
 
