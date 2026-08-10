@@ -234,11 +234,6 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 
 	toolReg.Register(&tools.SubAgentJobsTool{Jobs: backgroundJobs})
 
-	// Supervisor tool for sub-agent supervision (fork/merge/discard/inject/halt).
-	if cfg.Agent.Default.ShepherdTraceDir != "" {
-		toolReg.Register(&tools.SupervisorTool{TraceDir: cfg.Agent.Default.ShepherdTraceDir})
-	}
-
 	toolReg.Register(&tools.ListSubAgentsTool{
 		Lister: func() []tools.SubAgentInfo {
 			r := subagent.DefaultRegistry()
