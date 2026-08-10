@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.53.0](https://github.com/buchenberg/yaah/compare/v0.52.1...v0.53.0) (2026-08-10)
+
+
+### Features
+
+* add SupervisorTool for sub-agent supervision ([7f4bcd4](https://github.com/buchenberg/yaah/commit/7f4bcd444e3ecd4ec0434cae006f8e934f731961))
+
 ## [0.52.1](https://github.com/buchenberg/yaah/compare/v0.52.0...v0.52.1) (2026-08-09)
 
 
