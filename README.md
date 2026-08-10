@@ -157,7 +157,9 @@ linked docs):
   approval gates through an 11-stage middleware pipeline (8 on by default).
   → [features.md](./docs/features.md)
 - **Observability** — OpenTelemetry tracing with per-turn token attribution
-  and an in-memory span buffer. → [features.md](./docs/features.md) · [otel-setup.md](./docs/otel-setup.md)
+  and an in-memory span buffer. Plus Shepherd execution traces: every tool
+  call and turn boundary recorded to a durable, inspectable, content-addressed
+  store. → [features.md](./docs/features.md) · [otel-setup.md](./docs/otel-setup.md)
 - **Persistence** — SQLite sessions + memory with FTS5 full-text search
   and optional vector embeddings for semantic recall.
 - **Providers** — any OpenAI-compatible API plus native Anthropic Messages
@@ -190,6 +192,11 @@ yaah memory search <query>        # search memory
 
 yaah session list                 # list sessions
 yaah session show <id>            # show session
+
+yaah shepherd-trace list           # list trace sessions
+yaah shepherd-trace show <id>      # show tool calls in a session
+yaah shepherd-trace show --latest  # show the most recent session
+yaah shepherd-trace profile <id>   # execution profile: turns, tokens, tools
 
 yaah tui                          # launch the rich terminal UI
 yaah web                          # start the browser-based chat UI

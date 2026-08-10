@@ -2,6 +2,9 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -40,6 +43,12 @@ type PipelineConfig struct {
 	// request-build time. PruneHooks wires optional telemetry (nil-safe).
 	Pruner     *Pruner
 	PruneHooks PruneHooks
+
+	// ShepherdTraceDir is the directory for the Shepherd trace store
+	// (default ~/.yaah/traces/). SessionID scopes records. Tracing is
+	// active when "shepherd_trace" is in the pipeline names.
+	ShepherdTraceDir string
+	SessionID        string
 
 	PipelineNames    []string
 	PipelineDisabled []string
@@ -90,6 +99,37 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 		return &SoftPruneMiddleware{pruner: cfg.Pruner, emit: cfg.PruneHooks.Emit, otel: cfg.PruneHooks.Otel}
 	},
 	"staleness": func(cfg PipelineConfig) Middleware { return &StalenessMiddleware{} },
+	"shepherd_trace": func(cfg PipelineConfig) Middleware {
+		traceDir := cfg.ShepherdTraceDir
+		if traceDir == "" {
+			home, _ := os.UserHomeDir()
+			traceDir = filepath.Join(home, ".yaah", "traces")
+		}
+		if err := os.MkdirAll(traceDir, 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "shepherd_trace: mkdir %s: %v (disabled)\n", traceDir, err)
+			return &noopShepherdTraceMiddleware{}
+		}
+		store, err := NewShepherdTraceStore(filepath.Join(traceDir, "trace.sqlite"))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "shepherd_trace: open %s: %v (disabled)\n", traceDir, err)
+			return &noopShepherdTraceMiddleware{}
+		}
+		return NewShepherdTraceMiddleware(store, cfg.SessionID)
+	},
+}
+
+// noopShepherdTraceMiddleware is a placeholder returned when shepherd_trace is disabled.
+type noopShepherdTraceMiddleware struct{}
+
+func (m *noopShepherdTraceMiddleware) Name() string { return "shepherd_trace" }
+func (m *noopShepherdTraceMiddleware) PrepareStep(ctx context.Context, step *Step) (*Step, error) {
+	return step, nil
+}
+func (m *noopShepherdTraceMiddleware) PostModel(ctx context.Context, msg *types.Message, step *Step) (*Step, error) {
+	return step, nil
+}
+func (m *noopShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolResult, step *Step) (*Step, error) {
+	return step, nil
 }
 
 var defaultPipelineNames = []string{
@@ -101,6 +141,7 @@ var defaultPipelineNames = []string{
 	"tool_concurrency",
 	"loop_detection",
 	"staleness",
+	"shepherd_trace",
 }
 
 func resolvedPipelineNames(enabled, disabled []string) []string {

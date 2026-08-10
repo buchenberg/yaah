@@ -68,6 +68,8 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 		PruneHooks:             l.pruneHooks(),
 		PipelineNames:          l.Config.PipelineNames,
 		PipelineDisabled:       l.Config.PipelineDisabled,
+		ShepherdTraceDir:       l.Config.ShepherdTraceDir,
+		SessionID:              l.Config.SessionID,
 	}
 }
 
@@ -106,14 +108,21 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 
 	messages := l.State.Messages
 	pipe := l.buildPipeline()
+	traceMw := pipe.ShepherdTraceMiddleware()
 
 	for {
 		for iter := 0; iter < l.Config.MaxLoopCycles; iter++ {
 			turnStart := time.Now()
+			if traceMw != nil {
+				traceMw.StartTurn(iter, l.Config.Model, userInput)
+			}
 
 			select {
 			case <-ctx.Done():
 				l.State.Messages = messages
+				if traceMw != nil {
+					traceMw.FailTurn(iter, ctx.Err())
+				}
 				return "", ctx.Err()
 			default:
 			}
@@ -136,11 +145,17 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			step, req, err := l.buildTurnRequest(ctx, iter, messages, pipe, turnSpan)
 			if err != nil {
 				l.State.Messages = messages
+				if traceMw != nil {
+					traceMw.FailTurn(iter, err)
+				}
 				return "", err
 			}
 			messages = step.Messages
 
 			if err := l.guardContextBeforeCall(turnCtx, &messages, &req, turnSpan); err != nil {
+				if traceMw != nil {
+					traceMw.FailTurn(iter, err)
+				}
 				return "", err
 			}
 
@@ -154,6 +169,9 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 					turnSpan.End()
 				}
 				l.State.Messages = messages
+				if traceMw != nil {
+					traceMw.FailTurn(iter, err)
+				}
 				return "", fmt.Errorf("provider error: %w", err)
 			}
 			msg := result.Message
@@ -184,6 +202,9 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 				}
 				l.State.Messages = messages
 				observability.RecordAgentTurn(turnCtx, time.Since(turnStart))
+				if traceMw != nil {
+					traceMw.EndTurn(iter, result.Usage.PromptTokens, result.Usage.CompletionTokens)
+				}
 				return msg.Content, nil
 			}
 
@@ -194,6 +215,9 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			step, err = pipe.RunPostModel(ctx, &msg, step)
 			if err != nil {
 				l.State.Messages = messages
+				if traceMw != nil {
+					traceMw.FailTurn(iter, err)
+				}
 				return "", err
 			}
 
@@ -203,6 +227,9 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			err = l.executeToolPhase(turnCtx, iter, msg, &messages, &step, pipe, turnSpan)
 			observability.RecordToolDispatchDone(turnCtx, len(msg.ToolCalls), err)
 			if err != nil {
+				if traceMw != nil {
+					traceMw.FailTurn(iter, err)
+				}
 				return "", err
 			}
 
@@ -220,7 +247,11 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		// max iterations reached — ask whether to continue
 		if l.ContinueAfterMaxIter == nil || !l.ContinueAfterMaxIter() {
 			l.State.Messages = messages
-			return "", MaxIterationsError{MaxIter: l.Config.MaxLoopCycles}
+			err := MaxIterationsError{MaxIter: l.Config.MaxLoopCycles}
+			if traceMw != nil {
+				traceMw.FailTurn(l.Config.MaxLoopCycles, err)
+			}
+			return "", err
 		}
 	}
 }

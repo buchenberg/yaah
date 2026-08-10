@@ -169,3 +169,43 @@ agents:
 		t.Errorf("ollama models should be empty, got %v", ollamaModels)
 	}
 }
+
+func TestLoad_shepherdTraceDirExpandsTilde(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("YAAH_HOME", tmp)
+
+	configContent := `
+agents:
+  default:
+    shepherd_trace_dir: ~/custom-traces
+    model: test/model
+`
+	if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(configContent), 0o644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	home, _ := os.UserHomeDir()
+	expected := filepath.Join(home, "custom-traces")
+	if cfg.Agent.Default.ShepherdTraceDir != expected {
+		t.Errorf("ShepherdTraceDir = %q, want %q (tilde expanded)", cfg.Agent.Default.ShepherdTraceDir, expected)
+	}
+}
+
+func TestLoad_shepherdTraceDirEmptyByDefault(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("YAAH_HOME", tmp)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if cfg.Agent.Default.ShepherdTraceDir != "" {
+		t.Errorf("ShepherdTraceDir should be empty by default, got %q", cfg.Agent.Default.ShepherdTraceDir)
+	}
+}

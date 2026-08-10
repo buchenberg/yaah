@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	shepherd "github.com/buchenberg/shepherd-kernel-go"
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
@@ -183,6 +184,11 @@ type taskRunnerOpts struct {
 	// a nil resolver means per-role provider overrides fall through to
 	// the planner's provider.
 	resolveProviderByName func(pmap map[string]config.Provider, name string) agent.Provider
+
+	// traceDir, when set, enables Shepherd tracing for sub-agents so
+	// the parent can inspect their execution history on failure.
+	traceDir  string
+	tracePath string
 }
 
 // makeTaskRunner creates a sub-agent runner that honours roles, timeouts,
@@ -262,6 +268,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		tools.WriteSubAgentModel(ctx, subModel)
 		tools.NotifySubAgentStart(ctx, subModel)
 
+		subTraceID := fmt.Sprintf("sub-%s-%s-%d", role, opts.parentSession, time.Now().UnixNano())
 		subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{
 			MaxLoopCycles:      maxIter,
 			MaxToolTurns:       maxTurns,
@@ -278,6 +285,8 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			ContextWindow:      effectiveCW,
 			OtelEnabled:        opts.OtelEnabled,
 			OtelVerbose:        opts.OtelVerbose,
+			TraceDir:           opts.defaults.ShepherdTraceDir,
+			TraceSessionID:     subTraceID,
 		})
 
 		result, runErr := subLoop.Run(ctx, prompt)
@@ -288,6 +297,15 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// a narrower task instead of seeing an empty result.
 		if runErr == nil && strings.TrimSpace(result) == "" {
 			runErr = fmt.Errorf("sub-agent %s produced no output — its final turn returned empty content (likely hit its turn cap mid-task; consider raising max_turns)", role)
+		}
+
+		// Enrich errors with the sub-agent's trace so the orchestrator
+		// can see exactly which tool calls led to the failure.
+		if runErr != nil && opts.defaults.ShepherdTraceDir != "" {
+			tracePath := filepath.Join(opts.defaults.ShepherdTraceDir, "trace.sqlite")
+			if profile := subagentTraceProfile(tracePath, subTraceID); profile != "" {
+				runErr = fmt.Errorf("%w\n\nSubagent trace:\n%s", runErr, profile)
+			}
 		}
 
 		if outLimit > 0 && len(result) > outLimit {
@@ -588,4 +606,74 @@ func formatBytes(n int) string {
 	}
 	prefix := []string{"KB", "MB", "GB"}[exp]
 	return fmt.Sprintf("%.1f %s", float64(n)/float64(div), prefix)
+}
+
+func subagentTraceProfile(tracePath, sessionID string) string {
+	store, err := shepherd.NewSQLiteTraceStore(tracePath)
+	if err != nil {
+		return ""
+	}
+	defer store.Close()
+
+	slice, err := store.ReadOwnerPrefix(shepherd.TrustedReadContext, sessionID, 99999, "both")
+	if err != nil || len(slice.FactIDs()) == 0 {
+		return ""
+	}
+
+	captureByParent := make(map[string]struct {
+		success bool
+		errMsg  string
+	})
+	for _, factID := range slice.FactIDs() {
+		fact := slice.FactsByID[factID]
+		if fact.GetEnvelope().Mode != shepherd.Capture {
+			continue
+		}
+		causedBy := fact.GetEnvelope().CausedByIDs
+		if len(causedBy) == 0 {
+			continue
+		}
+		parentID := causedBy[0]
+		if _, exists := captureByParent[parentID]; exists {
+			continue
+		}
+		rec, ok := fact.(shepherd.Record)
+		if !ok {
+			continue
+		}
+		success, _ := rec.Body.Payload["success"].(bool)
+		errMsg := ""
+		if e, ok2 := rec.Body.Payload["error"].(string); ok2 {
+			errMsg = e
+		}
+		captureByParent[parentID] = struct {
+			success bool
+			errMsg  string
+		}{success, errMsg}
+	}
+
+	var lines []string
+	seq := 0
+	for _, factID := range slice.FactIDs() {
+		fact := slice.FactsByID[factID]
+		if fact.GetEnvelope().Mode != shepherd.Declaration {
+			continue
+		}
+		kind := fact.GetView().KindLabel
+		if kind == "turn:created" || kind == "turn:started" || kind == "turn:completed" || kind == "turn:failed" {
+			continue
+		}
+		seq++
+		cap := captureByParent[factID]
+		status := "ok"
+		if cap.errMsg != "" {
+			status = "error: " + cap.errMsg
+		}
+		lines = append(lines, fmt.Sprintf("  T%d %s  %s", seq, kind, status))
+	}
+
+	if len(lines) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d tool calls:\n%s", seq, strings.Join(lines, "\n"))
 }
