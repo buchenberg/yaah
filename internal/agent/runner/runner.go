@@ -269,6 +269,13 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		tools.NotifySubAgentStart(ctx, subModel)
 
 		subTraceID := fmt.Sprintf("sub-%s-%s-%d", role, opts.parentSession, time.Now().UnixNano())
+
+		// Create a scope for this sub-agent so the supervisor can
+		// inject guidance or halt it during execution.
+		if mgr := tools.SharedScopeManager; mgr != nil {
+			mgr.Create(subTraceID)
+		}
+
 		subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{
 			MaxLoopCycles:      maxIter,
 			MaxToolTurns:       maxTurns,

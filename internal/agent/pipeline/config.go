@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -122,6 +123,11 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 		bus := shepherd.NewEffectBus(cfg.ShepherdBusBuffer)
 		store.WithBus(bus)
 		scopeMgr := shepherd.NewScopeManager(store)
+
+		// Share the ScopeManager with the SupervisorTool so it uses
+		// the same store connection (avoids SQLITE_BUSY) and keeps
+		// scopes in memory across tool calls.
+		tools.SharedScopeManager = scopeMgr
 
 		return &ShepherdTraceMiddleware{
 			store:        store,

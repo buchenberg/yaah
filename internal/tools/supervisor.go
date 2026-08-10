@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
 )
@@ -17,8 +16,9 @@ import (
 // on the real filesystem without sandbox isolation. Those operations
 // exist in shepherd-kernel-go for when sandboxed execution is added.
 //
-// The tool opens the trace store directly and creates a scope manager
-// on each call.
+// The tool uses SharedScopeManager (set by the shepherd_trace pipeline
+// builder) so it shares the same store connection and in-memory scope
+// registry as the trace middleware.
 type SupervisorTool struct {
 	TraceDir string
 }
@@ -51,10 +51,6 @@ func (*SupervisorTool) Schema() json.RawMessage {
 }
 
 func (t *SupervisorTool) Execute(_ context.Context, args string) (string, error) {
-	if t.TraceDir == "" {
-		return "", fmt.Errorf("supervisor: shepherd tracing not enabled (set shepherd_trace_dir in config)")
-	}
-
 	var raw struct {
 		Action   string `json:"action"`
 		ScopeID  string `json:"scope_id"`
@@ -64,13 +60,10 @@ func (t *SupervisorTool) Execute(_ context.Context, args string) (string, error)
 		return "", fmt.Errorf("supervisor: invalid arguments: %w", err)
 	}
 
-	store, err := shepherd.NewSQLiteTraceStore(filepath.Join(t.TraceDir, "trace.sqlite"))
-	if err != nil {
-		return "", fmt.Errorf("supervisor: cannot open trace store: %w", err)
+	mgr := SharedScopeManager
+	if mgr == nil {
+		return "", fmt.Errorf("supervisor: shepherd tracing not enabled (set shepherd_trace_dir in config)")
 	}
-	defer store.Close()
-
-	mgr := shepherd.NewScopeManager(store)
 
 	switch raw.Action {
 	case "list_scopes":
