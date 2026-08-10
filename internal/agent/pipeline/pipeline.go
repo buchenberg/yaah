@@ -75,3 +75,13 @@ func (p *Pipeline) Find(name string) Middleware {
 	}
 	return nil
 }
+
+// ShepherdTraceMiddleware returns the ShepherdTraceMiddleware in this
+// pipeline, or nil if tracing is not configured.
+func (p *Pipeline) ShepherdTraceMiddleware() *ShepherdTraceMiddleware {
+	mw := p.Find("shepherd_trace")
+	if t, ok := mw.(*ShepherdTraceMiddleware); ok {
+		return t
+	}
+	return nil
+}

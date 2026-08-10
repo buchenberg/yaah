@@ -120,6 +120,12 @@ type Defaults struct {
 	// block. Sub-agents do NOT inherit these; they receive per-role
 	// directives via SubAgentConfig.Roles[name].Directives instead.
 	Directives []string `yaml:"directives"`
+
+	// ShepherdTraceDir is the directory for the Shepherd trace store
+	// (default ~/.yaah/traces/). Tracing is enabled when "shepherd_trace"
+	// is present in the middleware pipeline (either via defaults or
+	// middleware.enabled).
+	ShepherdTraceDir string `yaml:"shepherd_trace_dir"`
 }
 
 // Hooks holds configuration for external integrations via JSONL hook events.
@@ -356,6 +362,9 @@ func Load() (*Config, error) {
 
 	if cfg.Hooks.Dir != "" {
 		cfg.Hooks.Dir = expandHomeDir(cfg.Hooks.Dir)
+	}
+	if cfg.Agent.Default.ShepherdTraceDir != "" {
+		cfg.Agent.Default.ShepherdTraceDir = expandHomeDir(cfg.Agent.Default.ShepherdTraceDir)
 	}
 
 	return cfg, nil

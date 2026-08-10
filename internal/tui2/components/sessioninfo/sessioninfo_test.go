@@ -21,8 +21,8 @@ func TestFormat(t *testing.T) {
 func TestFormat_Version(t *testing.T) {
 	th := colors.NewDarkTheme()
 	out := Format(Info{Provider: "openai", Model: "gpt-4", Version: "1.2.3"}, &th)
-	if !strings.Contains(out, "Agent:") {
-		t.Errorf("should contain Agent label, got %q", out)
+	if !strings.Contains(out, "Version:") {
+		t.Errorf("should contain Version label, got %q", out)
 	}
 }
 

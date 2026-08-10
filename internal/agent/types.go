@@ -144,6 +144,7 @@ type LoopConfig struct {
 	OtelVerbose            bool
 	SystemPrompt           string
 	SystemPromptOverride   string
+	ShepherdTraceDir       string
 }
 
 // LoopState holds mutable runtime state modified during Run.

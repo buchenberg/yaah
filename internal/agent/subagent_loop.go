@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"path/filepath"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
@@ -28,6 +29,13 @@ type SubAgentConfig struct {
 	OtelEnabled        bool
 	OtelVerbose        bool
 	WrapUpThreshold    int
+
+	// TraceDir, when set, enables Shepherd tracing for this sub-agent.
+	// Facts are recorded under a unique trace owner derived from
+	// TraceSessionID so the parent can inspect the sub-agent's execution
+	// history on failure.
+	TraceDir       string
+	TraceSessionID string
 }
 
 // NewSubAgentLoop creates a Loop optimized for sub-agent execution.
@@ -91,6 +99,14 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 
 	if l.Config.MaxToolConcurrency > 0 {
 		l.toolConcurrency = pipeline.NewToolConcurrencyMiddleware(l.Config.MaxToolConcurrency)
+	}
+
+	if cfg.TraceDir != "" {
+		store, err := pipeline.NewShepherdTraceStore(filepath.Join(cfg.TraceDir, "trace.sqlite"))
+		if err == nil {
+			traceMw := pipeline.NewShepherdTraceMiddleware(store, cfg.TraceSessionID)
+			l.Middleware = append(l.Middleware, traceMw)
+		}
 	}
 
 	return l

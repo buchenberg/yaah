@@ -65,19 +65,16 @@ func Build(borderColor string) *tview.TextView {
 func Format(s State, th *colors.Theme) string {
 	var b strings.Builder
 
+	status := "idle"
+	if s.AgentActive {
+		status = "active"
+	}
 	b.WriteString(sessioninfo.Format(sessioninfo.Info{
 		Provider: s.Provider,
 		Model:    s.Model,
 		Version:  s.Version,
+		Status:   status,
 	}, th))
-	b.WriteString("\n\n")
-
-	b.WriteString(th.TagBold(th.Heading, "Agent\n"))
-	if s.AgentActive {
-		b.WriteString(fmt.Sprintf("  Status: %s\n", th.Tag(th.Connected, "active")))
-	} else {
-		b.WriteString(fmt.Sprintf("  Status: %s\n", th.Tag(th.Dim, "idle")))
-	}
 	b.WriteString("\n")
 
 	b.WriteString(contextinfo.Format(s.ContextTokens, s.ContextWindow, th))

@@ -62,6 +62,10 @@ agents:
     directives:
       - "always run tests after implementation"
 
+    # Execution tracing via Shepherd — records every tool call to a durable,
+    # inspectable trace store. Active when shepherd_trace is in the pipeline.
+    shepherd_trace_dir: ~/.yaah/traces   # default, optional
+
     # Loop detection — halt when the same tool+args+result hash repeats.
     loop_detect_count: 5              # identical calls to trigger halt
     loop_detect_window: 10            # sliding window size

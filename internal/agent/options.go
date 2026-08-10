@@ -167,6 +167,7 @@ type AgentConfig struct {
 	PruneMinReclaim        int
 	PruneMinTurns          int
 	JSONMode               bool
+	ShepherdTraceDir       string
 }
 
 // WithAgentConfig applies all tuning parameters from an AgentConfig.
@@ -192,6 +193,7 @@ func WithAgentConfig(cfg AgentConfig) Option {
 		l.Config.MaxInlineToolsPerTurn = cfg.MaxInlineToolsPerTurn
 		l.Config.PromptCaching = cfg.PromptCaching
 		l.Config.JSONMode = cfg.JSONMode
+		l.Config.ShepherdTraceDir = cfg.ShepherdTraceDir
 		if l.CtxMgr == nil {
 			l.CtxMgr = &ContextManager{}
 		}
