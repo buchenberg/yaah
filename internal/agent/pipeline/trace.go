@@ -50,7 +50,7 @@ func (m *ShepherdTraceMiddleware) PostModel(ctx context.Context, msg *types.Mess
 }
 
 func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolResult, step *Step) (*Step, error) {
-	if m.store == nil {
+	if m.store == nil || m.sessionID == "" {
 		return step, nil
 	}
 
@@ -60,9 +60,17 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 		intentID := fmt.Sprintf("%s:tool:%d", m.sessionID, m.ordinal)
 		schemaRef := fmt.Sprintf("yaah.tool.%s.v1", r.Name)
 
+		// Wrap args as RawMessage only if valid JSON; otherwise store as string.
+		var argsJSON json.RawMessage
+		if json.Valid([]byte(r.Args)) {
+			argsJSON = json.RawMessage(r.Args)
+		} else {
+			argsJSON, _ = json.Marshal(r.Args)
+		}
+
 		payload := map[string]any{
 			"tool": r.Name,
-			"args": json.RawMessage(r.Args),
+			"args": argsJSON,
 		}
 
 		receipt, err := m.store.Append(shepherd.TrustedAppendContext, shepherd.AppendBatch{
@@ -119,7 +127,7 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 // StartTurn records an execution-lifecycle declaration+capture pair marking
 // the start of a turn. Returns the ordinal of the created record.
 func (m *ShepherdTraceMiddleware) StartTurn(turnNumber int, model string, prompt string) {
-	if m.store == nil {
+	if m.store == nil || m.sessionID == "" {
 		return
 	}
 	m.ordinal++
@@ -180,7 +188,7 @@ func (m *ShepherdTraceMiddleware) StartTurn(turnNumber int, model string, prompt
 
 // EndTurn records a turn completion capture.
 func (m *ShepherdTraceMiddleware) EndTurn(turnNumber int, promptTokens, completionTokens int) {
-	if m.store == nil {
+	if m.store == nil || m.sessionID == "" {
 		return
 	}
 	m.ordinal++
@@ -217,7 +225,7 @@ func (m *ShepherdTraceMiddleware) EndTurn(turnNumber int, promptTokens, completi
 
 // FailTurn records a turn failure capture.
 func (m *ShepherdTraceMiddleware) FailTurn(turnNumber int, err error) {
-	if m.store == nil {
+	if m.store == nil || m.sessionID == "" {
 		return
 	}
 	m.ordinal++
