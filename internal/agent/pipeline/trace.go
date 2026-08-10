@@ -20,6 +20,8 @@ func NewShepherdTraceStore(path string) (*shepherd.SQLiteTraceStore, error) {
 // and capture (observation) in a Shepherd trace store.
 type ShepherdTraceMiddleware struct {
 	store           *shepherd.SQLiteTraceStore
+	bus             *shepherd.EffectBus
+	scopeManager    *shepherd.ScopeManager
 	sessionID       string
 	ordinal         int
 	lastFactIDs     []string
@@ -287,4 +289,16 @@ func (m *ShepherdTraceMiddleware) Store() *shepherd.SQLiteTraceStore {
 // SessionID returns the session identifier for this trace.
 func (m *ShepherdTraceMiddleware) SessionID() string {
 	return m.sessionID
+}
+
+// Bus returns the effect bus for real-time event subscription.
+// Returns nil if supervision is not enabled.
+func (m *ShepherdTraceMiddleware) Bus() *shepherd.EffectBus {
+	return m.bus
+}
+
+// ScopeManager returns the scope manager for fork/merge/discard operations.
+// Returns nil if supervision is not enabled.
+func (m *ShepherdTraceMiddleware) ScopeManager() *shepherd.ScopeManager {
+	return m.scopeManager
 }
