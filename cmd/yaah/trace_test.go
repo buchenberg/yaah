@@ -85,7 +85,7 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 	store.Append(shepherd.TrustedAppendContext, shepherd.AppendBatch{
 		AppendIntentID: owner + ":turn:0:done",
 		Groups: []shepherd.AppendGroup{{
-			TraceOwnerID: owner,
+			TraceOwnerID:  owner,
 			CausalParents: lastFactIDs,
 			FactDrafts: []shepherd.RecordDraft{{
 				Mode:      shepherd.Capture,

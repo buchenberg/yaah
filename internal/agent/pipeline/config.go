@@ -2,7 +2,7 @@ package pipeline
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -106,12 +106,12 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 			traceDir = filepath.Join(home, ".yaah", "traces")
 		}
 		if err := os.MkdirAll(traceDir, 0o755); err != nil {
-			fmt.Fprintf(os.Stderr, "shepherd_trace: mkdir %s: %v (disabled)\n", traceDir, err)
+			slog.Error("shepherd_trace: mkdir failed (disabled)", "dir", traceDir, "err", err)
 			return &noopShepherdTraceMiddleware{}
 		}
 		store, err := NewShepherdTraceStore(filepath.Join(traceDir, "trace.sqlite"))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "shepherd_trace: open %s: %v (disabled)\n", traceDir, err)
+			slog.Error("shepherd_trace: open failed (disabled)", "dir", traceDir, "err", err)
 			return &noopShepherdTraceMiddleware{}
 		}
 		return NewShepherdTraceMiddleware(store, cfg.SessionID)

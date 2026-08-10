@@ -4,7 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"log/slog"
+	"sync/atomic"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
 	"github.com/buchenberg/yaah/internal/types"
@@ -25,11 +26,14 @@ type ShepherdTraceMiddleware struct {
 	turnRootFactIDs []string
 }
 
+var nextOrdinal atomic.Int64
+
 // NewShepherdTraceMiddleware creates a trace middleware backed by the given store.
 func NewShepherdTraceMiddleware(store *shepherd.SQLiteTraceStore, sessionID string) *ShepherdTraceMiddleware {
 	return &ShepherdTraceMiddleware{
 		store:     store,
 		sessionID: sessionID,
+		ordinal:   int(nextOrdinal.Add(1 << 20)),
 	}
 }
 
@@ -73,7 +77,7 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 			}},
 		})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "shepherd_trace: declaration failed: %v\n", err)
+			slog.Error("shepherd_trace: declaration failed", "err", err)
 			continue
 		}
 
@@ -101,7 +105,7 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 			}},
 		})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "shepherd_trace: capture failed: %v\n", err)
+			slog.Error("shepherd_trace: capture failed", "err", err)
 		}
 
 		m.lastFactIDs = captureReceipt.FactIDs
@@ -141,7 +145,7 @@ func (m *ShepherdTraceMiddleware) StartTurn(turnNumber int, model string, prompt
 		}},
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "shepherd_trace: turn start failed: %v\n", err)
+		slog.Error("shepherd_trace: turn start failed", "err", err)
 		return
 	}
 
@@ -166,7 +170,7 @@ func (m *ShepherdTraceMiddleware) StartTurn(turnNumber int, model string, prompt
 		}},
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "shepherd_trace: turn start capture failed: %v\n", err)
+		slog.Error("shepherd_trace: turn start capture failed", "err", err)
 	} else {
 		m.lastFactIDs = captureReceipt.FactIDs
 	}
@@ -201,7 +205,7 @@ func (m *ShepherdTraceMiddleware) EndTurn(turnNumber int, promptTokens, completi
 		}},
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "shepherd_trace: turn complete failed: %v\n", err)
+		slog.Error("shepherd_trace: turn complete failed", "err", err)
 	} else {
 		m.lastFactIDs = receipt.FactIDs
 	}
@@ -237,7 +241,7 @@ func (m *ShepherdTraceMiddleware) FailTurn(turnNumber int, err error) {
 		}},
 	})
 	if aerr != nil {
-		fmt.Fprintf(os.Stderr, "shepherd_trace: turn fail recording failed: %v\n", aerr)
+		slog.Error("shepherd_trace: turn fail recording failed", "err", aerr)
 	} else {
 		m.lastFactIDs = receipt.FactIDs
 	}
@@ -260,7 +264,7 @@ func (m *ShepherdTraceMiddleware) publishFrontier(turnNumber int) {
 	}
 	_, err := m.store.PublishFrontier(shepherd.TrustedAppendContext, spec)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "shepherd_trace: frontier publish failed: %v\n", err)
+		slog.Error("shepherd_trace: frontier publish failed", "err", err)
 	}
 }
 

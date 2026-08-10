@@ -71,13 +71,15 @@ func TestTraceMiddleware_PostToolRecordsDeclaration(t *testing.T) {
 	step := &Step{}
 	results := []ToolResult{{Name: "ls", Args: `{"path":"."}`, Error: nil}}
 
+	startOrdinal := m.ordinal
+
 	_, err := m.PostTool(context.Background(), results, step)
 	if err != nil {
 		t.Fatalf("PostTool error: %v", err)
 	}
 
-	if m.ordinal != 1 {
-		t.Fatalf("ordinal = %d, want 1", m.ordinal)
+	if m.ordinal != startOrdinal+1 {
+		t.Fatalf("ordinal = %d, want %d", m.ordinal, startOrdinal+1)
 	}
 
 	slice, err := m.store.ReadOwnerPrefix(shepherd.TrustedReadContext, "test-session", 999, "both")
@@ -164,14 +166,16 @@ func TestTraceMiddleware_CausalChaining(t *testing.T) {
 func TestTraceMiddleware_MultipleToolsPerCall(t *testing.T) {
 	m := newTestTraceMiddleware(t)
 
+	startOrdinal := m.ordinal
+
 	_, _ = m.PostTool(context.Background(), []ToolResult{
 		{Name: "read", Args: `{"file":"a"}`},
 		{Name: "read", Args: `{"file":"b"}`},
 		{Name: "read", Args: `{"file":"c"}`},
 	}, &Step{})
 
-	if m.ordinal != 3 {
-		t.Fatalf("ordinal = %d, want 3", m.ordinal)
+	if m.ordinal != startOrdinal+3 {
+		t.Fatalf("ordinal = %d, want %d", m.ordinal, startOrdinal+3)
 	}
 
 	slice, _ := m.store.ReadOwnerPrefix(shepherd.TrustedReadContext, "test-session", 999, "both")
@@ -182,10 +186,12 @@ func TestTraceMiddleware_MultipleToolsPerCall(t *testing.T) {
 
 func TestTraceMiddleware_StartTurn(t *testing.T) {
 	m := newTestTraceMiddleware(t)
+
+	startOrdinal := m.ordinal
 	m.StartTurn(0, "deepseek-v4", "hello")
 
-	if m.ordinal != 1 {
-		t.Fatalf("ordinal = %d, want 1", m.ordinal)
+	if m.ordinal != startOrdinal+1 {
+		t.Fatalf("ordinal = %d, want %d", m.ordinal, startOrdinal+1)
 	}
 	if len(m.turnRootFactIDs) == 0 {
 		t.Fatal("turnRootFactIDs should be set")
@@ -297,13 +303,17 @@ func TestTraceMiddleware_Close(t *testing.T) {
 
 func TestTraceMiddleware_Ordinal(t *testing.T) {
 	m := newTestTraceMiddleware(t)
-	if m.Ordinal() != 0 {
-		t.Errorf("initial ordinal = %d, want 0", m.Ordinal())
-	}
+	startOrdinal := m.Ordinal()
 
 	m.StartTurn(0, "m", "p")
-	if m.Ordinal() != 1 {
-		t.Errorf("ordinal after start = %d, want 1", m.Ordinal())
+	if m.Ordinal() != startOrdinal+1 {
+		t.Errorf("ordinal after start = %d, want %d", m.Ordinal(), startOrdinal+1)
+	}
+
+	// Verify that a second instance gets a different base ordinal
+	m2 := newTestTraceMiddleware(t)
+	if m2.Ordinal() == startOrdinal {
+		t.Errorf("second instance ordinal = %d, should differ from first instance ordinal = %d", m2.Ordinal(), startOrdinal)
 	}
 }
 

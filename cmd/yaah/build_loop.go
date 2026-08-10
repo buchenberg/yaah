@@ -165,7 +165,7 @@ func (s *agentSession) loopBuilder(
 			PruneProtectTokens:     s.cfg.Agent.Default.PruneProtectTokens,
 			PruneMinReclaim:        s.cfg.Agent.Default.PruneMinReclaim,
 			PruneMinTurns:          s.cfg.Agent.Default.PruneMinTurns,
-			ShepherdTraceDir:      s.cfg.Agent.Default.ShepherdTraceDir,
+			ShepherdTraceDir:       s.cfg.Agent.Default.ShepherdTraceDir,
 		},
 	}
 }
