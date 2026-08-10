@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	shepherd "github.com/buchenberg/shepherd-kernel-go"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -47,8 +48,9 @@ type PipelineConfig struct {
 	// ShepherdTraceDir is the directory for the Shepherd trace store
 	// (default ~/.yaah/traces/). SessionID scopes records. Tracing is
 	// active when "shepherd_trace" is in the pipeline names.
-	ShepherdTraceDir string
-	SessionID        string
+	ShepherdTraceDir  string
+	ShepherdBusBuffer int // per-subscriber buffer size (default 64)
+	SessionID         string
 
 	PipelineNames    []string
 	PipelineDisabled []string
@@ -114,7 +116,20 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 			slog.Error("shepherd_trace: open failed (disabled)", "dir", traceDir, "err", err)
 			return &noopShepherdTraceMiddleware{}
 		}
-		return NewShepherdTraceMiddleware(store, cfg.SessionID)
+
+		// Create bus and scope manager for supervision.
+		// The bus is attached to the store so Append publishes events.
+		bus := shepherd.NewEffectBus(cfg.ShepherdBusBuffer)
+		store.WithBus(bus)
+		scopeMgr := shepherd.NewScopeManager(store)
+
+		return &ShepherdTraceMiddleware{
+			store:        store,
+			bus:          bus,
+			scopeManager: scopeMgr,
+			sessionID:    cfg.SessionID,
+			ordinal:      int(nextOrdinal.Add(1 << 20)),
+		}
 	},
 }
 
