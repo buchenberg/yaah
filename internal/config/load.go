@@ -376,6 +376,9 @@ func Load() (*Config, error) {
 	if cfg.Agent.Default.ShepherdTraceDir != "" {
 		cfg.Agent.Default.ShepherdTraceDir = expandHomeDir(cfg.Agent.Default.ShepherdTraceDir)
 	}
+	if cfg.Agent.Default.SupervisedRepoPath != "" {
+		cfg.Agent.Default.SupervisedRepoPath = expandHomeDir(cfg.Agent.Default.SupervisedRepoPath)
+	}
 
 	return cfg, nil
 }

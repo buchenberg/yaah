@@ -24,6 +24,8 @@ github.com/buchenberg/shepherd-kernel-go v0.1.1 h1:z7tjqzJOD15Okux3dPvFunaI+CQ+0
 github.com/buchenberg/shepherd-kernel-go v0.1.1/go.mod h1:N5a+B07Lm4xmc4ubCc83Rw4hDWuvbgKUJDSd6N7nrs4=
 github.com/buchenberg/shepherd-kernel-go v0.2.0 h1:+sugYinMohtRbpLYtaN34sTzbBfhKYkNHiJZefr0EPY=
 github.com/buchenberg/shepherd-kernel-go v0.2.0/go.mod h1:N5a+B07Lm4xmc4ubCc83Rw4hDWuvbgKUJDSd6N7nrs4=
+github.com/buchenberg/shepherd-kernel-go v0.2.1 h1:P1xLWnlWIAJ8FCvMoZbv8UjGSrTVXfD1Vc1lAQjJMjo=
+github.com/buchenberg/shepherd-kernel-go v0.2.1/go.mod h1:N5a+B07Lm4xmc4ubCc83Rw4hDWuvbgKUJDSd6N7nrs4=
 github.com/buchenberg/tviewmd v0.2.0 h1:GEbCcQqgSdi6WafPsBPeXSkkcqrnKI7D1hdytIc+Ofg=
 github.com/buchenberg/tviewmd v0.2.0/go.mod h1:NSvcH2laSSUg/+4jVj/M3/NzviJ9UE16me0zlulM35w=
 github.com/cenkalti/backoff/v5 v5.0.3 h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1xcsSM=

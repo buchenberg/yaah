@@ -105,7 +105,10 @@ func (t *SubagentTraceTool) executeProfile(store *shepherd.SQLiteTraceStore, ses
 		return "", fmt.Errorf("subagent_trace: no facts found for session %q", sessionID)
 	}
 
-	captureByParent := make(map[string]struct{ success bool; errMsg string })
+	captureByParent := make(map[string]struct {
+		success bool
+		errMsg  string
+	})
 	for _, factID := range slice.FactIDs() {
 		fact := slice.FactsByID[factID]
 		if fact.GetEnvelope().Mode != shepherd.Capture {
@@ -124,7 +127,10 @@ func (t *SubagentTraceTool) executeProfile(store *shepherd.SQLiteTraceStore, ses
 		if e, ok2 := rec.Body.Payload["error"].(string); ok2 {
 			errMsg = e
 		}
-		captureByParent[causedBy[0]] = struct{ success bool; errMsg string }{success, errMsg}
+		captureByParent[causedBy[0]] = struct {
+			success bool
+			errMsg  string
+		}{success, errMsg}
 	}
 
 	var sb strings.Builder
