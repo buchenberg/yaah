@@ -26,16 +26,23 @@ type ShepherdTraceMiddleware struct {
 	ordinal         int
 	lastFactIDs     []string
 	turnRootFactIDs []string
+
+	// ownsStore controls whether Close closes the backing store.
+	// Middleware built on the session-shared store (sub-agent pipelines)
+	// must not close it — the store outlives any single sub-agent loop.
+	ownsStore bool
 }
 
 var nextOrdinal atomic.Int64
 
-// NewShepherdTraceMiddleware creates a trace middleware backed by the given store.
+// NewShepherdTraceMiddleware creates a trace middleware that owns the
+// given store — Close will close it.
 func NewShepherdTraceMiddleware(store *shepherd.SQLiteTraceStore, sessionID string) *ShepherdTraceMiddleware {
 	return &ShepherdTraceMiddleware{
 		store:     store,
 		sessionID: sessionID,
 		ordinal:   int(nextOrdinal.Add(1 << 20)),
+		ownsStore: true,
 	}
 }
 
@@ -283,7 +290,7 @@ func (m *ShepherdTraceMiddleware) Ordinal() int {
 	return m.ordinal
 }
 func (m *ShepherdTraceMiddleware) Close() error {
-	if m.store != nil {
+	if m.store != nil && m.ownsStore {
 		return m.store.Close()
 	}
 	return nil

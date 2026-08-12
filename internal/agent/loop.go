@@ -32,10 +32,12 @@ func (e MaxIterationsError) Is(target error) bool {
 	return ok
 }
 
-// buildPipeline assembles the middleware pipeline from config.
+// buildPipeline assembles the middleware pipeline from config. Sub-agent
+// loops get the curated sub-agent pipeline; the orchestrator gets the
+// full default pipeline.
 func (l *Loop) buildPipeline() *pipeline.Pipeline {
-	if len(l.Middleware) > 0 {
-		return pipeline.NewPipeline(l.Middleware...)
+	if l.Config.IsSubAgent {
+		return pipeline.NewSubAgentPipeline(l.toPipelineConfig())
 	}
 	return pipeline.NewFromConfig(l.toPipelineConfig())
 }
@@ -68,7 +70,6 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 		PruneHooks:             l.pruneHooks(),
 		PipelineNames:          l.Config.PipelineNames,
 		PipelineDisabled:       l.Config.PipelineDisabled,
-		ShepherdTraceDir:       l.Config.ShepherdTraceDir,
 		SessionID:              l.Config.SessionID,
 	}
 }

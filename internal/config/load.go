@@ -121,11 +121,21 @@ type Defaults struct {
 	// directives via SubAgentConfig.Roles[name].Directives instead.
 	Directives []string `yaml:"directives"`
 
-	// ShepherdTraceDir is the directory for the Shepherd trace store
-	// (default ~/.yaah/traces/). Tracing is enabled when "shepherd_trace"
-	// is present in the middleware pipeline (either via defaults or
-	// middleware.enabled).
+	// ShepherdTraceDir is the directory for the Shepherd trace store.
+	// When set, Shepherd tracing is enabled: sub-agent tool calls are
+	// recorded, the supervisor tool is registered, and the supervised
+	// task tool (checkpoint/rollback/retry) becomes available.
 	ShepherdTraceDir string `yaml:"shepherd_trace_dir"`
+
+	// SupervisedMaxRetries caps the rollback-and-retry cycles of the
+	// supervised_task tool after the initial attempt. 0 (unset) defaults
+	// to 1 — one rollback-and-retry.
+	SupervisedMaxRetries int `yaml:"supervised_max_retries"`
+
+	// SupervisedRepoPath is the git repository the supervised_task tool
+	// checkpoints and rolls back. Empty (unset) defaults to the working
+	// directory at execution time.
+	SupervisedRepoPath string `yaml:"supervised_repo_path"`
 }
 
 // Hooks holds configuration for external integrations via JSONL hook events.

@@ -70,8 +70,7 @@ type Loop struct {
 	broker     *pubsub.Broker[Event]
 	brokerView *BrokerView
 
-	Middleware []pipeline.Middleware
-	LLM        *llm.Client
+	LLM *llm.Client
 
 	CompactProvider  Provider
 	FallbackProvider Provider
@@ -144,7 +143,11 @@ type LoopConfig struct {
 	OtelVerbose            bool
 	SystemPrompt           string
 	SystemPromptOverride   string
-	ShepherdTraceDir       string
+
+	// IsSubAgent marks loops created by NewSubAgentLoop. Sub-agent loops
+	// build the curated sub-agent middleware pipeline instead of the
+	// orchestrator default.
+	IsSubAgent bool
 }
 
 // LoopState holds mutable runtime state modified during Run.

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/runner"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
@@ -234,9 +235,41 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 
 	toolReg.Register(&tools.SubAgentJobsTool{Jobs: backgroundJobs})
 
-	// Supervisor tool for sub-agent supervision (fork/merge/discard/inject/halt).
+	// Shepherd infrastructure: session-shared trace store, effect bus, and
+	// scope manager. The orchestrator pipeline no longer hosts shepherd_trace,
+	// so this is the single initialization point for the supervisor tools,
+	// the supervised task tool, and sub-agent trace middleware.
 	if cfg.Agent.Default.ShepherdTraceDir != "" {
-		toolReg.Register(&tools.SupervisorTool{TraceDir: cfg.Agent.Default.ShepherdTraceDir})
+		store, _, scopeMgr, serr := pipeline.InitShepherdInfrastructure(cfg.Agent.Default.ShepherdTraceDir, 0)
+		if serr != nil {
+			fmt.Fprintf(os.Stderr, "warning: shepherd tracing disabled: %v\n", serr)
+		} else {
+			tools.SharedTraceStore = store
+			tools.SharedScopeManager = scopeMgr
+
+			// Supervisor tool for sub-agent supervision (list_scopes/inject/halt/status).
+			toolReg.Register(&tools.SupervisorTool{TraceDir: cfg.Agent.Default.ShepherdTraceDir})
+
+			// Supervised task tool — blocking sub-agent execution with
+			// checkpoint/rollback/retry. Shares the runner, role resolver,
+			// and timeout logic with the task tool, but runs synchronously
+			// and wraps each attempt in a git checkpoint. Only registered
+			// when tracing is on: checkpoint/rollback needs the shared
+			// scope manager.
+			maxRetries := cfg.Agent.Default.SupervisedMaxRetries
+			if maxRetries <= 0 {
+				maxRetries = 1
+			}
+			toolReg.Register(&tools.SupervisedTaskTool{
+				Runner:           taskTool.Runner,
+				ResolveTimeout:   taskTool.ResolveTimeout,
+				RoleNames:        taskTool.RoleNames,
+				RoleResolver:     taskTool.RoleResolver,
+				RoleDescriptions: taskTool.RoleDescriptions,
+				RepoPath:         cfg.Agent.Default.SupervisedRepoPath,
+				MaxRetries:       maxRetries,
+			})
+		}
 	}
 
 	toolReg.Register(&tools.ListSubAgentsTool{

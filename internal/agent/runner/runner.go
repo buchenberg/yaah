@@ -184,11 +184,6 @@ type taskRunnerOpts struct {
 	// a nil resolver means per-role provider overrides fall through to
 	// the planner's provider.
 	resolveProviderByName func(pmap map[string]config.Provider, name string) agent.Provider
-
-	// traceDir, when set, enables Shepherd tracing for sub-agents so
-	// the parent can inspect their execution history on failure.
-	traceDir  string
-	tracePath string
 }
 
 // makeTaskRunner creates a sub-agent runner that honours roles, timeouts,
@@ -292,8 +287,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			ContextWindow:      effectiveCW,
 			OtelEnabled:        opts.OtelEnabled,
 			OtelVerbose:        opts.OtelVerbose,
-			TraceDir:           opts.defaults.ShepherdTraceDir,
-			TraceSessionID:     subTraceID,
+			SessionID:          subTraceID,
 		})
 
 		result, runErr := subLoop.Run(ctx, prompt)
