@@ -158,6 +158,7 @@ func (t *SupervisedTaskTool) Execute(ctx context.Context, args string) (string, 
 	}
 
 	currentPrompt := params.Prompt
+	lastPartial := ""
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		runCtx := ctx
@@ -169,33 +170,36 @@ func (t *SupervisedTaskTool) Execute(ctx context.Context, args string) (string, 
 		if cancel != nil {
 			cancel()
 		}
+		if strings.TrimSpace(result) != "" {
+			lastPartial = result
+		}
 
 		if runErr == nil && strings.TrimSpace(result) != "" {
 			if attempt > 0 {
-				return result + fmt.Sprintf(" (succeeded on attempt %d after rollback)", attempt+1), nil
+				result += fmt.Sprintf(" (succeeded on attempt %d after rollback)", attempt+1)
 			}
-			return result, nil
+			return completedSupervisedResult(attempt+1, result), nil
 		}
 
 		// The parent cancelled the whole tool call — rolling back and
 		// retrying would fight the cancellation. Report and stop.
 		if ctx.Err() != nil {
-			return structuredSupervisedResult("cancelled", attempt+1, result, runErr), nil
+			return structuredSupervisedResult("cancelled", attempt+1, lastPartial, runErr), nil
 		}
 
 		if attempt == maxRetries {
-			return structuredSupervisedResult("failed", attempt+1, result, runErr), nil
+			return structuredSupervisedResult("failed", attempt+1, lastPartial, runErr), nil
 		}
 
 		// Checkpoints are single-use: restore consumes the current one,
 		// so a fresh checkpoint is taken before the next attempt.
 		if _, restoreErr := mgr.RestoreCheckpoint(cp.ID); restoreErr != nil {
-			return structuredSupervisedResult("rollback_failed", attempt+1, result, restoreErr), nil
+			return structuredSupervisedResult("rollback_failed", attempt+1, lastPartial, restoreErr), nil
 		}
 
 		cp, err = mgr.CreateCheckpoint(scope.ID(), repoPath, nil)
 		if err != nil {
-			return structuredSupervisedResult("recheckpoint_failed", attempt+1, result, err), nil
+			return structuredSupervisedResult("recheckpoint_failed", attempt+1, lastPartial, err), nil
 		}
 
 		currentPrompt = buildRetryPrompt(params.Prompt, attempt, result, runErr)
@@ -250,28 +254,46 @@ func buildRetryPrompt(originalPrompt string, attempt int, result string, runErr 
 	return sb.String()
 }
 
-// structuredSupervisedResult builds a JSON payload for non-success
-// outcomes. Returned as a successful tool result (not a Go error) so the
-// model can decide whether to retry, continue, or report.
+// supervisedTaskResult is the uniform, always-JSON envelope returned for every
+// outcome of supervised_task. A single shape lets the caller distinguish a
+// successful run from a failed-and-rolled-back run at a glance without
+// re-inspecting the working tree. Returned as a successful tool result (not a
+// Go error) so the model can decide whether to retry, continue, or report.
+type supervisedTaskResult struct {
+	Status   string `json:"status"`
+	Attempts int    `json:"attempts"`
+	Result   string `json:"result,omitempty"`
+	Error    string `json:"error,omitempty"`
+	Partial  string `json:"partial,omitempty"`
+}
+
+// completedSupervisedResult builds the envelope for a successful run.
+func completedSupervisedResult(attempts int, result string) string {
+	return marshalSupervisedResult(supervisedTaskResult{
+		Status:   "completed",
+		Attempts: attempts,
+		Result:   result,
+	})
+}
+
+// structuredSupervisedResult builds the envelope for a failed/cancelled run.
 func structuredSupervisedResult(status string, attempts int, partial string, runErr error) string {
 	errMsg := ""
 	if runErr != nil {
 		errMsg = runErr.Error()
 	}
-	out := struct {
-		Status   string `json:"status"`
-		Attempts int    `json:"attempts"`
-		Error    string `json:"error,omitempty"`
-		Partial  string `json:"partial,omitempty"`
-	}{
+	return marshalSupervisedResult(supervisedTaskResult{
 		Status:   status,
 		Attempts: attempts,
 		Error:    errMsg,
 		Partial:  partial,
-	}
+	})
+}
+
+func marshalSupervisedResult(out supervisedTaskResult) string {
 	data, err := json.Marshal(out)
 	if err != nil {
-		return fmt.Sprintf(`{"status":%q}`, status)
+		return fmt.Sprintf(`{"status":%q}`, out.Status)
 	}
 	return string(data)
 }

@@ -57,6 +57,29 @@ func (f *fakeRunner) callCount() int {
 	return f.calls
 }
 
+// decodeSupervisedResult unmarshals the uniform tool envelope and fails the
+// test if the result is not valid JSON.
+func decodeSupervisedResult(t *testing.T, result string) struct {
+	Status   string `json:"status"`
+	Attempts int    `json:"attempts"`
+	Result   string `json:"result"`
+	Error    string `json:"error"`
+	Partial  string `json:"partial"`
+} {
+	t.Helper()
+	var out struct {
+		Status   string `json:"status"`
+		Attempts int    `json:"attempts"`
+		Result   string `json:"result"`
+		Error    string `json:"error"`
+		Partial  string `json:"partial"`
+	}
+	if err := json.Unmarshal([]byte(result), &out); err != nil {
+		t.Fatalf("result is not JSON: %v\n%s", err, result)
+	}
+	return out
+}
+
 func (f *fakeRunner) promptFor(t *testing.T, call int) string {
 	t.Helper()
 	f.mu.Lock()
@@ -136,8 +159,15 @@ func TestSupervisedTask_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if result != "all done" {
-		t.Errorf("result = %q, want %q (no retry suffix on first-attempt success)", result, "all done")
+	out := decodeSupervisedResult(t, result)
+	if out.Status != "completed" {
+		t.Errorf("status = %q, want completed", out.Status)
+	}
+	if out.Attempts != 1 {
+		t.Errorf("attempts = %d, want 1", out.Attempts)
+	}
+	if out.Result != "all done" {
+		t.Errorf("result = %q, want %q (no retry suffix on first-attempt success)", out.Result, "all done")
 	}
 	if runner.callCount() != 1 {
 		t.Errorf("runner called %d times, want 1 (no rollback on success)", runner.callCount())
@@ -156,11 +186,18 @@ func TestSupervisedTask_RetrySucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.HasPrefix(result, "fixed it") {
-		t.Errorf("result = %q, want prefix %q", result, "fixed it")
+	out := decodeSupervisedResult(t, result)
+	if out.Status != "completed" {
+		t.Errorf("status = %q, want completed", out.Status)
 	}
-	if !strings.Contains(result, "attempt 2") {
-		t.Errorf("result should mention the retry attempt, got %q", result)
+	if out.Attempts != 2 {
+		t.Errorf("attempts = %d, want 2", out.Attempts)
+	}
+	if !strings.HasPrefix(out.Result, "fixed it") {
+		t.Errorf("result = %q, want prefix %q", out.Result, "fixed it")
+	}
+	if !strings.Contains(out.Result, "attempt 2") {
+		t.Errorf("result should mention the retry attempt, got %q", out.Result)
 	}
 	if runner.callCount() != 2 {
 		t.Errorf("runner called %d times, want 2", runner.callCount())
@@ -189,14 +226,7 @@ func TestSupervisedTask_AllRetriesFail(t *testing.T) {
 		t.Fatalf("Execute should return a structured result, not a Go error: %v", err)
 	}
 
-	var out struct {
-		Status   string `json:"status"`
-		Attempts int    `json:"attempts"`
-		Error    string `json:"error"`
-	}
-	if err := json.Unmarshal([]byte(result), &out); err != nil {
-		t.Fatalf("result is not JSON: %v\n%s", err, result)
-	}
+	out := decodeSupervisedResult(t, result)
 	if out.Status != "failed" {
 		t.Errorf("status = %q, want failed", out.Status)
 	}
@@ -205,6 +235,9 @@ func TestSupervisedTask_AllRetriesFail(t *testing.T) {
 	}
 	if out.Error == "" {
 		t.Error("error should carry the last failure")
+	}
+	if out.Partial == "" {
+		t.Errorf("partial output should carry %q, got empty", "partial work")
 	}
 	if runner.callCount() != 2 {
 		t.Errorf("runner called %d times, want 2", runner.callCount())
@@ -236,8 +269,15 @@ func TestSupervisedTask_RollbackRestoresWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.HasPrefix(result, "clean success") {
-		t.Errorf("result = %q, want prefix %q", result, "clean success")
+	out := decodeSupervisedResult(t, result)
+	if out.Status != "completed" {
+		t.Errorf("status = %q, want completed", out.Status)
+	}
+	if out.Attempts != 2 {
+		t.Errorf("attempts = %d, want 2", out.Attempts)
+	}
+	if !strings.HasPrefix(out.Result, "clean success") {
+		t.Errorf("result = %q, want prefix %q", out.Result, "clean success")
 	}
 
 	// The rollback must have removed the first attempt's file before the

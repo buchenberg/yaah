@@ -128,6 +128,10 @@ type LoopConfig struct {
 	LoopDetectWindow       int
 	ApprovalMode           string
 	WrapUpThreshold        int
+	// Turn checkpointing for sub-agent loops only.
+	TurnCheckpointer       TurnCheckpointer
+	TurnCheckpointEnabled  bool
+	TurnCheckpointMax      int
 	MaxInlineToolsPerTurn  int
 	MaxToolConcurrency     int
 	MaxSubAgentConcurrency int
