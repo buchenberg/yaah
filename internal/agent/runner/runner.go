@@ -44,15 +44,6 @@ func NewTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 	// can spawn one level of sub-agents; sub-agents cannot spawn further
 	// sub-agents (remainingDepth reaches 0).
 	depth := 1
-	roleDescs := make(map[string]string, len(roleNames))
-	for _, name := range roleNames {
-		p := subagent.RoleProfileFor(subagent.SubAgentRole(name))
-		if p.Description != "" {
-			roleDescs[name] = p.Description
-		} else if p.Specialty != "" {
-			roleDescs[name] = p.Specialty
-		}
-	}
 	return &tools.TaskTool{
 		Runner: makeTaskRunner(taskRunnerOpts{
 			provider:              provider,
@@ -77,9 +68,27 @@ func NewTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 		}, depth),
 		ResolveTimeout:   subAgentTimeoutResolver(subCfg),
 		RoleNames:        roleNames,
-		RoleDescriptions: roleDescs,
+		RoleDescriptions: RoleDescriptionsFor(roleNames),
 		Tracker:          tracker,
 	}
+}
+
+// RoleDescriptionsFor maps each role name to a one-line description (or
+// specialty fallback) drawn from the role registry. Used to populate the
+// role parameter descriptions of the spawn_subagent and supervised_task
+// schemas so the orchestrator can choose roles without calling
+// list_subagents.
+func RoleDescriptionsFor(roleNames []string) map[string]string {
+	descs := make(map[string]string, len(roleNames))
+	for _, name := range roleNames {
+		p := subagent.RoleProfileFor(subagent.SubAgentRole(name))
+		if p.Description != "" {
+			descs[name] = p.Description
+		} else if p.Specialty != "" {
+			descs[name] = p.Specialty
+		}
+	}
+	return descs
 }
 
 // BuiltinRoleFiles reads the embedded roles/*.md files shipped in the
@@ -272,11 +281,12 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			subScope, _ = mgr.Create(subTraceID)
 		}
 
-		// Per-turn checkpointing: when enabled, the checkpointer lives on
-		// this sub-agent's own scope so turn rewinds never touch the
-		// supervised tool's attempt-level checkpoints.
+		// Per-turn checkpointing is enabled per role (subagent.roles.<name>.
+		// turn_checkpoints). When active, the checkpointer lives on this
+		// sub-agent's own scope so turn rewinds never touch the supervised
+		// tool's attempt-level checkpoints.
 		var turnCk agent.TurnCheckpointer
-		if opts.defaults.TurnCheckpoint && subScope != nil {
+		if opts.subCfg.Roles[string(role)].TurnCheckpoints && subScope != nil {
 			repoPath := opts.defaults.SupervisedRepoPath
 			if repoPath == "" {
 				repoPath, _ = os.Getwd()

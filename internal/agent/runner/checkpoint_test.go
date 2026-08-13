@@ -81,32 +81,35 @@ func TestShepherdTurnCheckpointer_RestoreRevertsWorkspace(t *testing.T) {
 	}
 }
 
-func newRunnerTestGitRepo(t *testing.T) string {
-	t.Helper()
+// newRunnerTestGitRepo creates a temp git repo with an initial commit,
+// isolated from the developer's global/system git config. Accepts
+// testing.TB so both tests and benchmarks can use it.
+func newRunnerTestGitRepo(tb testing.TB) string {
+	tb.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git binary not available")
+		tb.Skip("git binary not available")
 	}
-	dir := t.TempDir()
-	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "gitconfig"))
-	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "gitconfig-system"))
-	mustRunnerGit(t, dir, "init")
-	mustRunnerGit(t, dir, "config", "user.email", "test@test.com")
-	mustRunnerGit(t, dir, "config", "user.name", "Test")
+	dir := tb.TempDir()
+	tb.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(tb.TempDir(), "gitconfig"))
+	tb.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(tb.TempDir(), "gitconfig-system"))
+	mustRunnerGit(tb, dir, "init")
+	mustRunnerGit(tb, dir, "config", "user.email", "test@test.com")
+	mustRunnerGit(tb, dir, "config", "user.name", "Test")
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Test"), 0o644); err != nil {
-		t.Fatalf("write README: %v", err)
+		tb.Fatalf("write README: %v", err)
 	}
-	mustRunnerGit(t, dir, "add", "-A")
-	mustRunnerGit(t, dir, "commit", "-m", "init")
+	mustRunnerGit(tb, dir, "add", "-A")
+	mustRunnerGit(tb, dir, "commit", "-m", "init")
 	return dir
 }
 
-func mustRunnerGit(t *testing.T, dir string, args ...string) {
-	t.Helper()
+func mustRunnerGit(tb testing.TB, dir string, args ...string) {
+	tb.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("git %s in %s: %v\n%s", args[0], dir, err, out)
+		tb.Fatalf("git %s in %s: %v\n%s", args[0], dir, err, out)
 	}
 }

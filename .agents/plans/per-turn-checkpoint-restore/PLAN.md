@@ -170,6 +170,46 @@ try multiple alternatives, rather than one-shot restore.
 - Add config knobs (`turn_checkpoint`, `turn_checkpoint_max`,
   `max_turn_restores`) to `config.yaml` and `SubAgentParams` so callers opt in.
 
+#### Phase 9 results (2026-08-12)
+
+Benchmarked in `internal/agent/runner/checkpoint_bench_test.go`
+(Intel Core Ultra 7 265H, Windows, Go 1.25.8, `-benchtime=10x`):
+
+| Operation | 50 files | 500 files |
+|---|---|---|
+| Checkpoint, clean tree | ~241 ms/op | ~320 ms/op |
+| Checkpoint, dirty tree | ~304 ms/op | ~385 ms/op |
+| Restore cycle | ~447 ms/op | ~1542 ms/op |
+
+Cost is dominated by spawning three git subprocesses per checkpoint
+(Windows process creation is expensive), not by git's work — the clean
+50-file case is almost all startup. Restore is rarer (failed turns only)
+but 2–4× the checkpoint cost and grows sharply with repo size.
+
+**Decision: keep turn checkpointing OFF by default.** Frequency stays
+"before each turn" (the simpler policy); a 240–385 ms checkpoint per turn
+is a meaningful fraction of a fast turn and the restore path can exceed a
+second on medium repos. It is deliberately NOT exposed as a per-call tool
+parameter, so the model cannot over-enable an expensive feature.
+Revisit the default only if a lower-overhead backend lands (in-process
+libgit2, or collapsing the three subprocesses into one `git stash`
+invocation) or on Linux, where git spawns are several times cheaper.
+
+#### Config model update (2026-08-12): per-role shepherding
+
+The global `turn_checkpoint` boolean was replaced by **per-role**
+shepherding in `agents.subagent.roles.<name>`:
+
+- `supervised` (default false) — routes the role exclusively through
+  `supervised_task` (attempt checkpointing always on) when true; plain
+  `spawn_subagent` (no checkpoints) when false. Routing is exclusive.
+- `turn_checkpoints` (default false) — enables the loop-level per-turn
+  checkpoint/restore for that role.
+
+The global numeric knobs (`supervised_max_retries`, `turn_checkpoint_max`,
+`max_turn_restores`) and `supervised_repo_path` remain global. A per-call
+`SubAgentParams` override is still intentionally deferred.
+
 ## 5. Risks & mitigations
 
 | Risk | Mitigation |
@@ -183,9 +223,10 @@ try multiple alternatives, rather than one-shot restore.
 
 ## 6. Rollout
 
-1. Phases 1–5 behind `TurnCheckpointEnabled` (default false).
-2. Land unit + integration tests (phase 6).
-3. Benchmark (phase 9); enable default only if overhead acceptable.
-4. Docs + tool description (phase 8).
-5. Fork branching (phase 7) as a separate follow-up.
+1. ✅ Phases 1–5 behind `TurnCheckpointEnabled` (default false).
+2. ✅ Land unit + integration tests (phase 6).
+3. ✅ Benchmark (phase 9). Decision: keep off by default (see phase 9
+   results); overhead too high for default-on on Windows.
+4. ✅ Docs + tool description (phase 8).
+5. ⬜ Fork branching (phase 7) as a separate follow-up.
 

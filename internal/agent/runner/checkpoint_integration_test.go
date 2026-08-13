@@ -95,8 +95,12 @@ func TestSupervisedTask_TurnRestoreIntegration(t *testing.T) {
 		provider:     provider,
 		systemPrompt: "BASE",
 		modelName:    "test-model",
+		subCfg: config.SubAgentConfig{
+			Roles: map[string]config.RoleConfig{
+				"developer": {TurnCheckpoints: true},
+			},
+		},
 		defaults: config.Defaults{
-			TurnCheckpoint:     true,
 			SupervisedRepoPath: repo,
 		},
 	}
@@ -146,5 +150,76 @@ func TestSupervisedTask_TurnRestoreIntegration(t *testing.T) {
 	}
 	if string(got) != "v1" {
 		t.Errorf("work.txt = %q, want %q (turn-2 write should have been rewound)", string(got), "v1")
+	}
+}
+
+// TestSupervisedTask_TurnCheckpointsOffByDefault verifies the per-role
+// gate: when the role does NOT set turn_checkpoints, the loop takes no
+// turn checkpoints, so an exhausted attempt fails outright with zero
+// turn restores (instead of rewinding and retrying). This is the
+// default-off guarantee from the phase-9 benchmark decision.
+func TestSupervisedTask_TurnCheckpointsOffByDefault(t *testing.T) {
+	initTestRoles(t)
+
+	store, err := shepherd.NewSQLiteTraceStore(":memory:")
+	if err != nil {
+		t.Fatalf("open test store: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	prevMgr := tools.SharedScopeManager
+	prevStore := tools.SharedTraceStore
+	tools.SharedScopeManager = shepherd.NewScopeManager(store)
+	tools.SharedTraceStore = store
+	t.Cleanup(func() {
+		tools.SharedScopeManager = prevMgr
+		tools.SharedTraceStore = prevStore
+	})
+
+	repo := newRunnerTestGitRepo(t)
+	workFile := filepath.Join(repo, "work.txt")
+
+	// Two write turns then exhaustion; with no turn checkpoints there is
+	// nothing to restore, so the attempt fails.
+	provider := &scriptedProvider{responses: []*types.ChatResponse{
+		writeToolCallResponse("tc1", workFile, "v1"),
+		writeToolCallResponse("tc2", workFile, "corrupted"),
+	}}
+
+	opts := taskRunnerOpts{
+		provider:     provider,
+		systemPrompt: "BASE",
+		modelName:    "test-model",
+		// No Roles["developer"].TurnCheckpoints — gate must stay closed.
+		defaults: config.Defaults{SupervisedRepoPath: repo},
+	}
+
+	tool := &tools.SupervisedTaskTool{
+		Runner:     makeTaskRunner(opts, 1),
+		RoleNames:  []string{"developer"},
+		RepoPath:   repo,
+		MaxRetries: 0,
+	}
+
+	result, err := tool.Execute(context.Background(),
+		`{"prompt":"do the work","role":"developer","max_iterations":2}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var out struct {
+		Status   string `json:"status"`
+		Attempts int    `json:"attempts"`
+		Restores int    `json:"restores"`
+	}
+	if err := json.Unmarshal([]byte(result), &out); err != nil {
+		t.Fatalf("result is not JSON: %v\n%s", err, result)
+	}
+
+	if out.Restores != 0 {
+		t.Errorf("restores = %d, want 0 (turn_checkpoints not set for role)", out.Restores)
+	}
+	if out.Status != "failed" {
+		t.Errorf("status = %q, want failed (exhaustion with no turn restore)", out.Status)
 	}
 }

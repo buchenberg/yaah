@@ -1026,7 +1026,7 @@ the attempt already made.
 | Restore trigger | Sub-agent run failed → retry | Hard tool-phase error, or iteration exhaustion |
 | Restore effect | Reverts files; conversation restarts fresh from the retry prompt | Reverts files **and** rewinds conversation to the pre-turn state, then appends guidance |
 | Visibility | The orchestrator sees attempts in the envelope | Invisible to the orchestrator except via `restores`/`restored_from` envelope fields |
-| Default | On (when `shepherd_trace_dir` is set) | Off (`turn_checkpoint: false`) |
+| Gating | Role `supervised: true` (attempt checkpointing always on for supervised roles) | Role `turn_checkpoints: true` (default false) |
 
 ## Restore policy and triggers
 
@@ -1074,16 +1074,45 @@ These flow from `LoopState` through the context
 uniform JSON envelope, keeping the `status`/`attempts`/`result`/`error`/
 `partial` shape intact.
 
-## Configuration
+## Configuration (per-role shepherding)
+
+Shepherding is configured **per role** under `agents.subagent.roles.<name>`
+(except the trace directory, which stays global). Two booleans control it:
 
 ```yaml
 agents:
   default:
-    turn_checkpoint: false       # enable per-turn checkpointing (default off)
-    turn_checkpoint_max: 0       # live checkpoint cap; 0 = unlimited
-    max_turn_restores: 3         # restores per run; 0 = default (3)
+    shepherd_trace_dir: ~/.yaah/traces/   # global — shared store location
+    supervised_max_retries: 1             # global — attempt retries
+    supervised_repo_path: ""              # global — repo to checkpoint
+    turn_checkpoint_max: 0                # global — live turn-checkpoint cap; 0 = unlimited
+    max_turn_restores: 3                  # global — turn restores per run; 0 = default (3)
+  subagent:
+    roles:
+      developer:
+        supervised: true          # → supervised_task ONLY; attempt checkpointing ON
+        turn_checkpoints: false   # per-turn checkpoint/restore (default false)
+      counter:
+        supervised: false         # → spawn_subagent ONLY; no checkpoints (default)
 ```
 
-Per-turn checkpointing runs `git stash create` before every turn, so it
-is off by default pending benchmarks (plan phase 9). Enable only on
-repos where that overhead is acceptable.
+**Routing is exclusive.** A role dispatches through exactly one tool:
+
+- `supervised: false` (default) — plain sub-agent via `spawn_subagent`, no
+  checkpointing. Hidden from `supervised_task`. (e.g. `counter`)
+- `supervised: true` — routed only through `supervised_task`, which always
+  applies attempt-level checkpoint/rollback/retry. Hidden from
+  `spawn_subagent`. (e.g. `developer`)
+
+`turn_checkpoints` (default `false`) additionally enables the loop-level
+per-turn checkpoint/restore for that role. Numeric tuning
+(`supervised_max_retries`, `turn_checkpoint_max`, `max_turn_restores`) and
+`supervised_repo_path` remain global.
+
+Per-turn checkpointing runs `git stash create` before every turn. It is
+off by default because the measured overhead is significant (plan phase
+9): on Windows, ~240–385 ms per checkpoint and up to ~1.5 s for a
+restore on a 500-file repo, dominated by spawning three git subprocesses
+per checkpoint. Enable only on repos where correctness outweighs that
+throughput cost. See `internal/agent/runner/checkpoint_bench_test.go`
+for the numbers.

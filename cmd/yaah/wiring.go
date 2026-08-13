@@ -194,12 +194,30 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 		backgroundJobs.MaxConcurrent = 4
 	}
 
-	taskTool := runner.NewTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default, nil, pathValidator, resolveProviderByName)
+	// Role routing: each role dispatches through exactly one sub-agent
+	// tool, selected by the per-role `supervised` flag
+	// (subagent.roles.<name>.supervised).
+	//   supervised: false (default) → plain sub-agent via spawn_subagent,
+	//     no checkpointing.
+	//   supervised: true            → routed exclusively through
+	//     supervised_task with attempt-level checkpoint/rollback/retry.
+	// splitRoles partitions a role-name list by that flag.
+	isSupervisedRole := func(name string) bool {
+		return cfg.Agent.SubAgent.Roles[name].Supervised
+	}
+	plainRoles, supervisedRoles := splitRolesBySupervised(reg.Names(), isSupervisedRole)
+
+	taskTool := runner.NewTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, plainRoles, cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default, nil, pathValidator, resolveProviderByName)
 
 	// RoleResolver provides a live role-name lookup so the spawn_subagent
-	// tool sees roles created via the role tool without a restart. The
-	// cached reg.Names() snapshot above is layered underneath.
-	taskTool.RoleResolver = func() []string { return subagent.DefaultRegistry().Names() }
+	// tool sees roles created via the role tool without a restart, and so
+	// a role whose `supervised` flag changes is re-routed. Only plain
+	// (non-supervised) roles are offered here; supervised roles belong to
+	// supervised_task exclusively.
+	taskTool.RoleResolver = func() []string {
+		plain, _ := splitRolesBySupervised(subagent.DefaultRegistry().Names(), isSupervisedRole)
+		return plain
+	}
 
 	// Hand the manager to the task tool so background:true dispatches go
 	// through it instead of the broken inline goroutine.
@@ -251,21 +269,25 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 			toolReg.Register(&tools.SupervisorTool{TraceDir: cfg.Agent.Default.ShepherdTraceDir})
 
 			// Supervised task tool — blocking sub-agent execution with
-			// checkpoint/rollback/retry. Shares the runner, role resolver,
-			// and timeout logic with the task tool, but runs synchronously
-			// and wraps each attempt in a git checkpoint. Only registered
-			// when tracing is on: checkpoint/rollback needs the shared
-			// scope manager.
+			// checkpoint/rollback/retry. Shares the runner and timeout
+			// logic with the task tool, but runs synchronously and wraps
+			// each attempt in a git checkpoint. Only registered when
+			// tracing is on: checkpoint/rollback needs the shared scope
+			// manager. It offers only roles flagged `supervised`; plain
+			// roles stay with spawn_subagent.
 			maxRetries := cfg.Agent.Default.SupervisedMaxRetries
 			if maxRetries <= 0 {
 				maxRetries = 1
 			}
 			toolReg.Register(&tools.SupervisedTaskTool{
-				Runner:           taskTool.Runner,
-				ResolveTimeout:   taskTool.ResolveTimeout,
-				RoleNames:        taskTool.RoleNames,
-				RoleResolver:     taskTool.RoleResolver,
-				RoleDescriptions: taskTool.RoleDescriptions,
+				Runner:         taskTool.Runner,
+				ResolveTimeout: taskTool.ResolveTimeout,
+				RoleNames:      supervisedRoles,
+				RoleResolver: func() []string {
+					_, supervised := splitRolesBySupervised(subagent.DefaultRegistry().Names(), isSupervisedRole)
+					return supervised
+				},
+				RoleDescriptions: runner.RoleDescriptionsFor(supervisedRoles),
 				RepoPath:         cfg.Agent.Default.SupervisedRepoPath,
 				MaxRetries:       maxRetries,
 			})
@@ -347,4 +369,20 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	}
 
 	return sess, nil
+}
+
+// splitRolesBySupervised partitions role names into plain and supervised
+// sets using the supplied predicate (the per-role `supervised` flag). A
+// role dispatches through exactly one sub-agent tool: plain roles via
+// spawn_subagent, supervised roles via supervised_task. Order within each
+// set preserves the input order.
+func splitRolesBySupervised(names []string, isSupervised func(string) bool) (plain, supervised []string) {
+	for _, n := range names {
+		if isSupervised(n) {
+			supervised = append(supervised, n)
+		} else {
+			plain = append(plain, n)
+		}
+	}
+	return plain, supervised
 }

@@ -138,15 +138,10 @@ type Defaults struct {
 	// directory at execution time.
 	SupervisedRepoPath string `yaml:"supervised_repo_path"`
 
-	// TurnCheckpoint enables per-turn git checkpointing inside sub-agent
-	// loops: a checkpoint is taken before each model turn and a failed
-	// turn (hard tool error, iteration exhaustion) is rewound and retried
-	// with guidance. Default off — benchmark before enabling (see
-	// .agents/plans/per-turn-checkpoint-restore).
-	TurnCheckpoint bool `yaml:"turn_checkpoint"`
-
 	// TurnCheckpointMax caps live turn checkpoints per sub-agent run;
 	// the oldest are pruned when the cap is reached. 0 = unlimited.
+	// (Per-turn checkpointing itself is enabled per role via
+	// subagent.roles.<name>.turn_checkpoints.)
 	TurnCheckpointMax int `yaml:"turn_checkpoint_max"`
 
 	// MaxTurnRestores caps turn-level restores per sub-agent run so a
@@ -224,7 +219,8 @@ type SubAgentConfig struct {
 }
 
 // RoleConfig overrides a single role's default timeout, iteration cap,
-// turn cap, provider, model, concurrency, output format, and directives.
+// turn cap, provider, model, concurrency, output format, directives, and
+// shepherding (supervised dispatch + per-turn checkpointing).
 type RoleConfig struct {
 	Timeout           int      `yaml:"timeout"`             // seconds; 0 = use role default
 	MaxLoopCycles     int      `yaml:"max_iterations"`      // 0 = use role default
@@ -237,6 +233,16 @@ type RoleConfig struct {
 	MaxConcurrency    int      `yaml:"max_concurrency"`     // per-role max sub-agent spawns; 0 = use config default
 	StuckChildTimeout int      `yaml:"stuck_child_timeout"` // seconds; 0 = use global default
 	Directives        []string `yaml:"directives"`          // injected into this role's sub-agent prompt; empty = none
+
+	// Supervised routes the role exclusively through the supervised_task
+	// tool (attempt-level git checkpoint + rollback + retry) and hides it
+	// from spawn_subagent. Default false: the role is a plain sub-agent
+	// dispatched via spawn_subagent with no checkpointing.
+	Supervised bool `yaml:"supervised"`
+	// TurnCheckpoints enables per-turn checkpoint/restore inside this
+	// role's sub-agent loop. Default false. Independent of Supervised, but
+	// only meaningful where a shared shepherd scope manager is configured.
+	TurnCheckpoints bool `yaml:"turn_checkpoints"`
 }
 
 // MCPServerConfig holds the configuration for a single MCP server,
