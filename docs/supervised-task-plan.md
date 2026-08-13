@@ -999,4 +999,91 @@ Phase 4: tests
   sub-agent's conversation history across retries — the retry prompt
   carries the failure context. This is simpler and avoids serialization
   complexity. If needed later, `CreateCheckpoint` already accepts a
-  `[]byte` snapshot.
+  `[]byte` snapshot. (Superseded for turn-level restores: see the
+  per-turn checkpoint appendix below, which does restore conversation
+  snapshots — but only within an attempt, not across attempt retries.)
+
+---
+
+# Appendix: Per-Turn Checkpoint & Restore
+
+Added on top of the attempt-level design above. Plan of record:
+`.agents/plans/per-turn-checkpoint-restore/PLAN.md`.
+
+Attempt-level rollback (above) rewinds the whole sub-agent run when the
+run fails. Per-turn checkpointing adds a finer granularity: the loop
+snapshots the workspace **and** the conversation before each model turn,
+so a single failed turn can be rewound without discarding the progress
+the attempt already made.
+
+## Per-attempt vs per-turn
+
+| | Per-attempt (supervised_task) | Per-turn (loop) |
+|---|---|---|
+| Scope | `supervised:<role>:<nanos>` | `sub-<role>-<session>-<nanos>` |
+| Checkpoint taken | Once, before the retry loop | Before every model turn |
+| Snapshot payload | `nil` (files only) | Serialized conversation (`LoopState.Messages`) |
+| Restore trigger | Sub-agent run failed → retry | Hard tool-phase error, or iteration exhaustion |
+| Restore effect | Reverts files; conversation restarts fresh from the retry prompt | Reverts files **and** rewinds conversation to the pre-turn state, then appends guidance |
+| Visibility | The orchestrator sees attempts in the envelope | Invisible to the orchestrator except via `restores`/`restored_from` envelope fields |
+| Default | On (when `shepherd_trace_dir` is set) | Off (`turn_checkpoint: false`) |
+
+## Restore policy and triggers
+
+Conservative, automatic restore fires only on:
+
+1. **Hard `executeToolPhase` error** — e.g. a PostTool middleware
+   failure such as loop detection halting on repeated identical calls.
+   The loop restores the last checkpoint, appends guidance ("the
+   previous turn failed... take a different approach"), and continues.
+2. **Iteration exhaustion** — the inner loop hits `MaxLoopCycles` with
+   no final answer and no continuation. The loop restores the last
+   checkpoint, appends wrap-up guidance, and retries with a fresh
+   budget.
+
+Silent textual failure (a sub-agent that merely *says* it failed) never
+triggers a restore — that is a normal result the orchestrator handles.
+
+## Guards
+
+- `MaxTurnRestores` (default 3, `max_turn_restores`) bounds restores per
+  run so a deterministically broken turn cannot rewind forever.
+- `TurnCheckpointMax` (`turn_checkpoint_max`, 0 = unlimited) caps live
+  checkpoints; when reached, the loop prunes the scope before taking a
+  new checkpoint (v1 only ever restores the most recent checkpoint, so
+  older ones are dead weight).
+- Unconsumed checkpoints are pruned when the run ends.
+
+## Single-use semantics
+
+Git checkpoints are single-use (a restore consumes the checkpoint). This
+matches "rewind once, re-run the turn." Branching — trying several
+alternatives from the same pre-turn snapshot via `Scope.Fork` — is
+deferred (plan phase 7).
+
+## Envelope diagnostics
+
+`supervised_task` now returns these additional optional fields:
+
+- `restores` — number of turn-level restores performed across all
+  attempts (0 when turn checkpointing is off).
+- `restored_from` — the checkpoint ID of the most recent restore.
+
+These flow from `LoopState` through the context
+(`jobs.WithTurnRestoreStats` / `jobs.RecordTurnRestore`) into the
+uniform JSON envelope, keeping the `status`/`attempts`/`result`/`error`/
+`partial` shape intact.
+
+## Configuration
+
+```yaml
+agents:
+  default:
+    turn_checkpoint: false       # enable per-turn checkpointing (default off)
+    turn_checkpoint_max: 0       # live checkpoint cap; 0 = unlimited
+    max_turn_restores: 3         # restores per run; 0 = default (3)
+```
+
+Per-turn checkpointing runs `git stash create` before every turn, so it
+is off by default pending benchmarks (plan phase 9). Enable only on
+repos where that overhead is acceptable.

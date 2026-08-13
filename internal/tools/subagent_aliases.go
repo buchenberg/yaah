@@ -11,9 +11,10 @@ import (
 )
 
 type (
-	TaskRunner     = jobs.TaskRunner
-	SubAgentParams = jobs.SubAgentParams
-	Escalation     = jobs.Escalation
+	TaskRunner       = jobs.TaskRunner
+	SubAgentParams   = jobs.SubAgentParams
+	Escalation       = jobs.Escalation
+	TurnRestoreStats = jobs.TurnRestoreStats
 )
 
 const (
@@ -61,4 +62,12 @@ func WithSubAgentHeartbeat(ctx context.Context, hb chan struct{}) context.Contex
 
 func SendHeartbeat(ctx context.Context) {
 	jobs.SendHeartbeat(ctx)
+}
+
+func WithTurnRestoreStats(ctx context.Context, stats *jobs.TurnRestoreStats) context.Context {
+	return jobs.WithTurnRestoreStats(ctx, stats)
+}
+
+func RecordTurnRestore(ctx context.Context, restoredFrom string) {
+	jobs.RecordTurnRestore(ctx, restoredFrom)
 }

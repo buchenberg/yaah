@@ -18,4 +18,8 @@ type TurnCheckpointer interface {
 	// Restore rewinds the workspace to the checkpoint and returns the
 	// snapshot stored at Checkpoint time. The checkpoint is consumed.
 	Restore(ctx context.Context, id string) (snapshot []byte, err error)
+	// Prune discards every live checkpoint on the underlying scope. The
+	// loop uses it to bound accumulation when TurnCheckpointMax is set
+	// and to clean up checkpoints a run never consumed.
+	Prune(ctx context.Context) error
 }

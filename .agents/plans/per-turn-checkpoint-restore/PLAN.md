@@ -1,7 +1,7 @@
 ---
 name: per-turn-checkpoint-restore
 description: Add per-turn checkpoint/restore (and optional fork) to sub-agent loops so an ill-advised turn can be rewound without restarting the whole attempt.
-status: draft
+status: in_progress
 ---
 
 # Per-Turn Checkpoint & Restore for Sub-Agents

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"go.opentelemetry.io/otel/trace"
@@ -104,6 +105,17 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 	l.wireBackgroundHooks()
 	defer l.unwireBackgroundHooks()
 
+	// Release unused turn checkpoints when the Run ends, success or
+	// failure — restores consume their own checkpoints as they happen.
+	if l.turnCheckpointActive() {
+		defer func() {
+			if err := l.Config.TurnCheckpointer.Prune(ctx); err != nil {
+				slog.Debug("turn_checkpoint: final prune failed", "err", err)
+			}
+			l.State.TurnCheckpoints = nil
+		}()
+	}
+
 	l.applyDefaults()
 	l.initMessages(userInput)
 
@@ -129,6 +141,10 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			}
 
 			tools.SendHeartbeat(ctx)
+
+			// Snapshot workspace + conversation before the model turn so
+			// a failed turn can be rewound to this point.
+			l.checkpointTurn(ctx, messages)
 
 			l.Hooks.Emit(HookEvent{
 				Event:  events.TurnStart,
@@ -231,6 +247,13 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 				if traceMw != nil {
 					traceMw.FailTurn(iter, err)
 				}
+				guidance := fmt.Sprintf(turnFailureGuidanceFormat, err)
+				if l.restoreLastTurnCheckpoint(ctx, &messages, guidance) {
+					if turnSpan != nil {
+						turnSpan.End()
+					}
+					continue
+				}
 				return "", err
 			}
 
@@ -247,6 +270,11 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		}
 		// max iterations reached — ask whether to continue
 		if l.ContinueAfterMaxIter == nil || !l.ContinueAfterMaxIter() {
+			// Rewind the last turn and retry with a fresh budget until
+			// the restore cap is hit; then fall through to the error.
+			if l.restoreLastTurnCheckpoint(ctx, &messages, exhaustionGuidance) {
+				continue
+			}
 			l.State.Messages = messages
 			err := MaxIterationsError{MaxIter: l.Config.MaxLoopCycles}
 			if traceMw != nil {

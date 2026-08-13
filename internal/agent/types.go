@@ -129,9 +129,13 @@ type LoopConfig struct {
 	ApprovalMode           string
 	WrapUpThreshold        int
 	// Turn checkpointing for sub-agent loops only.
-	TurnCheckpointer       TurnCheckpointer
-	TurnCheckpointEnabled  bool
-	TurnCheckpointMax      int
+	TurnCheckpointer      TurnCheckpointer
+	TurnCheckpointEnabled bool
+	TurnCheckpointMax     int
+	// MaxTurnRestores caps turn-level checkpoint restores per Run so a
+	// deterministically failing turn cannot rewind forever. Values <= 0
+	// fall back to defaultMaxTurnRestores.
+	MaxTurnRestores        int
 	MaxInlineToolsPerTurn  int
 	MaxToolConcurrency     int
 	MaxSubAgentConcurrency int
@@ -170,4 +174,13 @@ type LoopState struct {
 	CompactionForcedByOverflow bool
 	CompactionBudgetMultiplier float64
 	CompactionSavingsHistory   []float64
+
+	// TurnCheckpoints holds the IDs of live turn checkpoints in creation
+	// order. Only populated when turn checkpointing is active.
+	TurnCheckpoints []string
+	// TurnRestores counts turn-level checkpoint restores performed during
+	// this Run (diagnostic for supervised-task envelopes).
+	TurnRestores int
+	// RestoredFrom is the checkpoint ID of the most recent turn restore.
+	RestoredFrom string
 }

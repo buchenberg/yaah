@@ -28,14 +28,18 @@ type SubAgentConfig struct {
 	OtelEnabled        bool
 	OtelVerbose        bool
 	WrapUpThreshold    int
-	// TurnCheckpointer, when non-nil and TurnCheckpointEnabled is set, is
-	// plumbed into the loop config so a future loop integration can record a
-	// single-use checkpoint before each model turn. TurnCheckpointMax caps the
-	// number of live turn checkpoints (0 = unlimited). The checkpoint/restore
-	// loop integration is not wired yet (see .agents/plans/per-turn-checkpoint-restore).
+	// TurnCheckpointer, when non-nil and TurnCheckpointEnabled is set,
+	// records a single-use git checkpoint before each model turn; on a
+	// failed turn (hard tool-phase error, iteration exhaustion) the loop
+	// rewinds workspace and conversation to the last checkpoint and
+	// retries with guidance. TurnCheckpointMax caps the number of live
+	// turn checkpoints (0 = unlimited). MaxTurnRestores bounds restores
+	// per run (0 = default 3). See
+	// .agents/plans/per-turn-checkpoint-restore.
 	TurnCheckpointer      TurnCheckpointer
 	TurnCheckpointEnabled bool
 	TurnCheckpointMax     int
+	MaxTurnRestores       int
 
 	// SessionID is the trace owner ID for this sub-agent's Shepherd
 	// trace records (e.g. "sub-worker-sess-...-123"). The sub-agent
@@ -95,6 +99,7 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 			TurnCheckpointer:      cfg.TurnCheckpointer,
 			TurnCheckpointEnabled: cfg.TurnCheckpointEnabled,
 			TurnCheckpointMax:     cfg.TurnCheckpointMax,
+			MaxTurnRestores:       cfg.MaxTurnRestores,
 		},
 	}
 

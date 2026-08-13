@@ -36,6 +36,9 @@ func TestConfigAgentConfigParity(t *testing.T) {
 		"ShepherdTraceDir":     true, // → session-level shepherd init in wiring
 		"SupervisedMaxRetries": true, // → supervised_task tool registration in wiring
 		"SupervisedRepoPath":   true, // → supervised_task tool registration in wiring
+		"TurnCheckpoint":       true, // → sub-agent runner turn checkpointer
+		"TurnCheckpointMax":    true, // → sub-agent runner turn checkpointer
+		"MaxTurnRestores":      true, // → sub-agent runner turn checkpointer
 	}
 
 	// Fields in agent.AgentConfig that come from other config sections

@@ -160,12 +160,18 @@ func (t *SupervisedTaskTool) Execute(ctx context.Context, args string) (string, 
 	currentPrompt := params.Prompt
 	lastPartial := ""
 
+	// Turn-level restores inside a sub-agent attempt are recorded into
+	// restoreStats by the loop (via the context) and surfaced in the
+	// envelope for diagnostics.
+	var restoreStats jobs.TurnRestoreStats
+
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		runCtx := ctx
 		var cancel context.CancelFunc
 		if timeout > 0 {
 			runCtx, cancel = context.WithTimeout(ctx, timeout)
 		}
+		runCtx = jobs.WithTurnRestoreStats(runCtx, &restoreStats)
 		result, runErr := t.Runner(runCtx, currentPrompt, subParams)
 		if cancel != nil {
 			cancel()
@@ -178,34 +184,34 @@ func (t *SupervisedTaskTool) Execute(ctx context.Context, args string) (string, 
 			if attempt > 0 {
 				result += fmt.Sprintf(" (succeeded on attempt %d after rollback)", attempt+1)
 			}
-			return completedSupervisedResult(attempt+1, result), nil
+			return completedSupervisedResult(attempt+1, result, &restoreStats), nil
 		}
 
 		// The parent cancelled the whole tool call — rolling back and
 		// retrying would fight the cancellation. Report and stop.
 		if ctx.Err() != nil {
-			return structuredSupervisedResult("cancelled", attempt+1, lastPartial, runErr), nil
+			return structuredSupervisedResult("cancelled", attempt+1, lastPartial, runErr, &restoreStats), nil
 		}
 
 		if attempt == maxRetries {
-			return structuredSupervisedResult("failed", attempt+1, lastPartial, runErr), nil
+			return structuredSupervisedResult("failed", attempt+1, lastPartial, runErr, &restoreStats), nil
 		}
 
 		// Checkpoints are single-use: restore consumes the current one,
 		// so a fresh checkpoint is taken before the next attempt.
 		if _, restoreErr := mgr.RestoreCheckpoint(cp.ID); restoreErr != nil {
-			return structuredSupervisedResult("rollback_failed", attempt+1, lastPartial, restoreErr), nil
+			return structuredSupervisedResult("rollback_failed", attempt+1, lastPartial, restoreErr, &restoreStats), nil
 		}
 
 		cp, err = mgr.CreateCheckpoint(scope.ID(), repoPath, nil)
 		if err != nil {
-			return structuredSupervisedResult("recheckpoint_failed", attempt+1, lastPartial, err), nil
+			return structuredSupervisedResult("recheckpoint_failed", attempt+1, lastPartial, err, &restoreStats), nil
 		}
 
 		currentPrompt = buildRetryPrompt(params.Prompt, attempt, result, runErr)
 	}
 
-	return structuredSupervisedResult("exhausted", maxRetries+1, "", nil), nil
+	return structuredSupervisedResult("exhausted", maxRetries+1, "", nil, &restoreStats), nil
 }
 
 // roleNames returns the known role names for validation and schema
@@ -259,34 +265,55 @@ func buildRetryPrompt(originalPrompt string, attempt int, result string, runErr 
 // successful run from a failed-and-rolled-back run at a glance without
 // re-inspecting the working tree. Returned as a successful tool result (not a
 // Go error) so the model can decide whether to retry, continue, or report.
+//
+// Restores/RestoredFrom are turn-level diagnostics: how many times the
+// sub-agent loop rewound a failed turn via its turn checkpoints (0 when
+// turn checkpointing is off).
 type supervisedTaskResult struct {
-	Status   string `json:"status"`
-	Attempts int    `json:"attempts"`
-	Result   string `json:"result,omitempty"`
-	Error    string `json:"error,omitempty"`
-	Partial  string `json:"partial,omitempty"`
+	Status       string `json:"status"`
+	Attempts     int    `json:"attempts"`
+	Result       string `json:"result,omitempty"`
+	Error        string `json:"error,omitempty"`
+	Partial      string `json:"partial,omitempty"`
+	Restores     int    `json:"restores,omitempty"`
+	RestoredFrom string `json:"restored_from,omitempty"`
+}
+
+// restoreFields copies the turn-restore diagnostics into the envelope.
+// Nil stats contribute nothing.
+func restoreFields(stats *jobs.TurnRestoreStats) (int, string) {
+	if stats == nil {
+		return 0, ""
+	}
+	return stats.Restores, stats.RestoredFrom
 }
 
 // completedSupervisedResult builds the envelope for a successful run.
-func completedSupervisedResult(attempts int, result string) string {
+func completedSupervisedResult(attempts int, result string, stats *jobs.TurnRestoreStats) string {
+	restores, restoredFrom := restoreFields(stats)
 	return marshalSupervisedResult(supervisedTaskResult{
-		Status:   "completed",
-		Attempts: attempts,
-		Result:   result,
+		Status:       "completed",
+		Attempts:     attempts,
+		Result:       result,
+		Restores:     restores,
+		RestoredFrom: restoredFrom,
 	})
 }
 
 // structuredSupervisedResult builds the envelope for a failed/cancelled run.
-func structuredSupervisedResult(status string, attempts int, partial string, runErr error) string {
+func structuredSupervisedResult(status string, attempts int, partial string, runErr error, stats *jobs.TurnRestoreStats) string {
 	errMsg := ""
 	if runErr != nil {
 		errMsg = runErr.Error()
 	}
+	restores, restoredFrom := restoreFields(stats)
 	return marshalSupervisedResult(supervisedTaskResult{
-		Status:   status,
-		Attempts: attempts,
-		Error:    errMsg,
-		Partial:  partial,
+		Status:       status,
+		Attempts:     attempts,
+		Error:        errMsg,
+		Partial:      partial,
+		Restores:     restores,
+		RestoredFrom: restoredFrom,
 	})
 }
 

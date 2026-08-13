@@ -60,19 +60,23 @@ func (f *fakeRunner) callCount() int {
 // decodeSupervisedResult unmarshals the uniform tool envelope and fails the
 // test if the result is not valid JSON.
 func decodeSupervisedResult(t *testing.T, result string) struct {
-	Status   string `json:"status"`
-	Attempts int    `json:"attempts"`
-	Result   string `json:"result"`
-	Error    string `json:"error"`
-	Partial  string `json:"partial"`
+	Status       string `json:"status"`
+	Attempts     int    `json:"attempts"`
+	Result       string `json:"result"`
+	Error        string `json:"error"`
+	Partial      string `json:"partial"`
+	Restores     int    `json:"restores"`
+	RestoredFrom string `json:"restored_from"`
 } {
 	t.Helper()
 	var out struct {
-		Status   string `json:"status"`
-		Attempts int    `json:"attempts"`
-		Result   string `json:"result"`
-		Error    string `json:"error"`
-		Partial  string `json:"partial"`
+		Status       string `json:"status"`
+		Attempts     int    `json:"attempts"`
+		Result       string `json:"result"`
+		Error        string `json:"error"`
+		Partial      string `json:"partial"`
+		Restores     int    `json:"restores"`
+		RestoredFrom string `json:"restored_from"`
 	}
 	if err := json.Unmarshal([]byte(result), &out); err != nil {
 		t.Fatalf("result is not JSON: %v\n%s", err, result)
@@ -372,6 +376,36 @@ func TestSupervisedTask_BuildRetryPrompt(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "...[truncated]") {
 		t.Error("truncated output should carry a truncation marker")
+	}
+}
+
+// TestSupervisedTask_EnvelopeCarriesRestoreStats verifies that turn-level
+// restores recorded by the sub-agent loop (via the context) surface in the
+// tool's envelope diagnostics.
+func TestSupervisedTask_EnvelopeCarriesRestoreStats(t *testing.T) {
+	tool, _ := newSupervisedTestEnv(t)
+
+	// A runner that simulates a loop performing two turn restores by
+	// recording them through the context, exactly as the real loop does.
+	tool.Runner = func(ctx context.Context, prompt string, params SubAgentParams) (string, error) {
+		RecordTurnRestore(ctx, "cp-1")
+		RecordTurnRestore(ctx, "cp-2")
+		return "done after rewinds", nil
+	}
+
+	result, err := tool.Execute(context.Background(), `{"prompt":"fix the bug","role":"worker"}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	out := decodeSupervisedResult(t, result)
+	if out.Status != "completed" {
+		t.Errorf("status = %q, want completed", out.Status)
+	}
+	if out.Restores != 2 {
+		t.Errorf("restores = %d, want 2", out.Restores)
+	}
+	if out.RestoredFrom != "cp-2" {
+		t.Errorf("restored_from = %q, want cp-2", out.RestoredFrom)
 	}
 }
 

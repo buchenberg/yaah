@@ -133,9 +133,25 @@ type Defaults struct {
 	SupervisedMaxRetries int `yaml:"supervised_max_retries"`
 
 	// SupervisedRepoPath is the git repository the supervised_task tool
-	// checkpoints and rolls back. Empty (unset) defaults to the working
+	// checkpoints and rolls back. It is also the repository per-turn
+	// checkpoints operate on. Empty (unset) defaults to the working
 	// directory at execution time.
 	SupervisedRepoPath string `yaml:"supervised_repo_path"`
+
+	// TurnCheckpoint enables per-turn git checkpointing inside sub-agent
+	// loops: a checkpoint is taken before each model turn and a failed
+	// turn (hard tool error, iteration exhaustion) is rewound and retried
+	// with guidance. Default off — benchmark before enabling (see
+	// .agents/plans/per-turn-checkpoint-restore).
+	TurnCheckpoint bool `yaml:"turn_checkpoint"`
+
+	// TurnCheckpointMax caps live turn checkpoints per sub-agent run;
+	// the oldest are pruned when the cap is reached. 0 = unlimited.
+	TurnCheckpointMax int `yaml:"turn_checkpoint_max"`
+
+	// MaxTurnRestores caps turn-level restores per sub-agent run so a
+	// deterministically failing turn cannot rewind forever. 0 = default (3).
+	MaxTurnRestores int `yaml:"max_turn_restores"`
 }
 
 // Hooks holds configuration for external integrations via JSONL hook events.

@@ -267,8 +267,21 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 
 		// Create a scope for this sub-agent so the supervisor can
 		// inject guidance or halt it during execution.
+		var subScope *shepherd.Scope
 		if mgr := tools.SharedScopeManager; mgr != nil {
-			mgr.Create(subTraceID)
+			subScope, _ = mgr.Create(subTraceID)
+		}
+
+		// Per-turn checkpointing: when enabled, the checkpointer lives on
+		// this sub-agent's own scope so turn rewinds never touch the
+		// supervised tool's attempt-level checkpoints.
+		var turnCk agent.TurnCheckpointer
+		if opts.defaults.TurnCheckpoint && subScope != nil {
+			repoPath := opts.defaults.SupervisedRepoPath
+			if repoPath == "" {
+				repoPath, _ = os.Getwd()
+			}
+			turnCk = NewShepherdTurnCheckpointer(tools.SharedScopeManager, subScope.ID(), repoPath)
 		}
 
 		subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{
@@ -288,6 +301,11 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			OtelEnabled:        opts.OtelEnabled,
 			OtelVerbose:        opts.OtelVerbose,
 			SessionID:          subTraceID,
+
+			TurnCheckpointer:      turnCk,
+			TurnCheckpointEnabled: turnCk != nil,
+			TurnCheckpointMax:     opts.defaults.TurnCheckpointMax,
+			MaxTurnRestores:       opts.defaults.MaxTurnRestores,
 		})
 
 		result, runErr := subLoop.Run(ctx, prompt)
