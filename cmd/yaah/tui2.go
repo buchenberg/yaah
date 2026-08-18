@@ -56,7 +56,7 @@ func runTUI2() error {
 	if len(mc.Enabled) > 0 {
 		pipeline = mc.Enabled
 	} else {
-		defaults := []string{"steer", "followup", "compaction", "soft_prune", "approval", "tool_concurrency", "loop_detection", "staleness", "shepherd_trace"}
+		defaults := []string{"steer", "followup", "compaction", "soft_prune", "approval", "tool_concurrency", "loop_detection", "staleness"}
 		disabled := make(map[string]bool, len(mc.Disabled))
 		for _, d := range mc.Disabled {
 			disabled[d] = true

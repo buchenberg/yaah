@@ -7,12 +7,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/runner"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/memory"
 	processpkg "github.com/buchenberg/yaah/internal/process"
+	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -193,11 +195,22 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 		backgroundJobs.MaxConcurrent = 4
 	}
 
+	// Role routing: each role dispatches through exactly one sub-agent
+	// tool, selected by the per-role `supervised` flag
+	// (subagent.roles.<name>.supervised). Start with every role on
+	// spawn_subagent; supervised roles are moved to supervised_task only
+	// after shepherd infrastructure initializes successfully, so a role is
+	// never unreachable when tracing is unset or init fails.
+	isSupervisedRole := func(name string) bool {
+		return cfg.Agent.SubAgent.Roles[name].Supervised
+	}
+
 	taskTool := runner.NewTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default, nil, pathValidator, resolveProviderByName)
 
 	// RoleResolver provides a live role-name lookup so the spawn_subagent
-	// tool sees roles created via the role tool without a restart. The
-	// cached reg.Names() snapshot above is layered underneath.
+	// tool sees roles created via the role tool without a restart. Until
+	// supervised_task is registered it returns every role; it is narrowed
+	// to the non-supervised roles after successful shepherd init below.
 	taskTool.RoleResolver = func() []string { return subagent.DefaultRegistry().Names() }
 
 	// Hand the manager to the task tool so background:true dispatches go
@@ -233,6 +246,64 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	toolReg.Register(taskTool)
 
 	toolReg.Register(&tools.SubAgentJobsTool{Jobs: backgroundJobs})
+
+	// Shepherd infrastructure: session-shared trace store, effect bus, and
+	// scope manager. The orchestrator pipeline no longer hosts shepherd_trace,
+	// so this is the single initialization point for the supervisor tools,
+	// the supervised task tool, and sub-agent trace middleware.
+	if cfg.Agent.Default.ShepherdTraceDir != "" {
+		store, _, scopeMgr, serr := pipeline.InitShepherdInfrastructure(cfg.Agent.Default.ShepherdTraceDir, 0)
+		if serr != nil {
+			fmt.Fprintf(os.Stderr, "warning: shepherd tracing disabled: %v\n", serr)
+		} else {
+			tools.SharedTraceStore = store
+			tools.SharedScopeManager = scopeMgr
+
+			// Supervised roles move from spawn_subagent to supervised_task
+			// now that the shared scope manager is actually available.
+			plainRoles, supervisedRoles := splitRolesBySupervised(reg.Names(), isSupervisedRole)
+			taskTool.RoleNames = plainRoles
+			taskTool.RoleResolver = func() []string {
+				plain, _ := splitRolesBySupervised(subagent.DefaultRegistry().Names(), isSupervisedRole)
+				return plain
+			}
+			taskTool.RoleDescriptions = runner.RoleDescriptionsFor(plainRoles)
+
+			// Supervisor tool for sub-agent supervision (list_scopes/inject/halt/status).
+			toolReg.Register(&tools.SupervisorTool{TraceDir: cfg.Agent.Default.ShepherdTraceDir})
+
+			// Supervised task tool — blocking sub-agent execution with
+			// checkpoint/rollback/retry. Shares the runner and timeout
+			// logic with the task tool, but runs synchronously and wraps
+			// each attempt in a git checkpoint. Only registered when
+			// tracing is on: checkpoint/rollback needs the shared scope
+			// manager. It offers only roles flagged `supervised`; plain
+			// roles stay with spawn_subagent.
+			maxRetries := cfg.Agent.Default.SupervisedMaxRetries
+			if maxRetries <= 0 {
+				maxRetries = 1
+			}
+			toolReg.Register(&tools.SupervisedTaskTool{
+				Runner:         taskTool.Runner,
+				ResolveTimeout: taskTool.ResolveTimeout,
+				RoleNames:      supervisedRoles,
+				RoleResolver: func() []string {
+					_, supervised := splitRolesBySupervised(subagent.DefaultRegistry().Names(), isSupervisedRole)
+					return supervised
+				},
+				RoleDescriptions: runner.RoleDescriptionsFor(supervisedRoles),
+				RepoPath:         cfg.Agent.Default.SupervisedRepoPath,
+				MaxRetries:       maxRetries,
+			})
+		}
+	}
+
+	// Advertise supervised_task only when it was actually registered (the
+	// shared scope manager is set exclusively on successful init), so the
+	// prompt never references a tool that init failure left unavailable.
+	if tools.SharedScopeManager != nil {
+		mainPrompt += "\n\n" + prompts.SubAgentToolsGuidance()
+	}
 
 	toolReg.Register(&tools.ListSubAgentsTool{
 		Lister: func() []tools.SubAgentInfo {
@@ -309,4 +380,20 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	}
 
 	return sess, nil
+}
+
+// splitRolesBySupervised partitions role names into plain and supervised
+// sets using the supplied predicate (the per-role `supervised` flag). A
+// role dispatches through exactly one sub-agent tool: plain roles via
+// spawn_subagent, supervised roles via supervised_task. Order within each
+// set preserves the input order.
+func splitRolesBySupervised(names []string, isSupervised func(string) bool) (plain, supervised []string) {
+	for _, n := range names {
+		if isSupervised(n) {
+			supervised = append(supervised, n)
+		} else {
+			plain = append(plain, n)
+		}
+	}
+	return plain, supervised
 }

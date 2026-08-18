@@ -4,92 +4,159 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
+	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-func TestShepherdTraceBuilder_NoDirDefaultsToHome(t *testing.T) {
-	cfg := PipelineConfig{
-		ShepherdTraceDir: "",
-		SessionID:        "test",
+func TestPipeline_OrchestratorNoTraceBuilder(t *testing.T) {
+	if _, ok := builtinBuilders["shepherd_trace"]; ok {
+		t.Error("builtinBuilders still contains shepherd_trace — orchestrator tracing was removed")
 	}
-
-	mw := builtinBuilders["shepherd_trace"](cfg)
-	if mw == nil {
-		t.Fatal("builder should return a middleware")
-	}
-	if mw.Name() != "shepherd_trace" {
-		t.Errorf("Name() = %q, want shepherd_trace", mw.Name())
-	}
-
-	// With empty dir, the builder falls back to ~/.yaah/traces/.
-	// If that directory exists and is writable, a real middleware is built.
-	// If not, a noop is returned. Both outcomes are valid.
-	switch m := mw.(type) {
-	case *ShepherdTraceMiddleware:
-		m.Close()
-	case *noopShepherdTraceMiddleware:
-		// acceptable
-	default:
-		t.Errorf("unexpected type: %T", mw)
+	if slices.Contains(defaultPipelineNames, "shepherd_trace") {
+		t.Error("defaultPipelineNames still contains shepherd_trace")
 	}
 }
 
-func TestShepherdTraceBuilder_WithDirBuildsRealMiddleware(t *testing.T) {
-	dir := t.TempDir()
-	cfg := PipelineConfig{
-		ShepherdTraceDir: dir,
-		SessionID:        "test-session",
+func TestPipeline_SubAgentPipelineNames(t *testing.T) {
+	names := SubAgentPipelineNames(nil)
+	want := []string{"tool_concurrency", "shepherd_trace"}
+	if len(names) != len(want) {
+		t.Fatalf("SubAgentPipelineNames(nil) = %v, want %v", names, want)
 	}
-
-	mw := builtinBuilders["shepherd_trace"](cfg)
-	if mw == nil {
-		t.Fatal("builder should return a middleware")
-	}
-
-	tm, ok := mw.(*ShepherdTraceMiddleware)
-	if !ok {
-		t.Fatalf("expected *ShepherdTraceMiddleware, got %T", mw)
-	}
-	defer tm.Close()
-
-	if tm.SessionID() != "test-session" {
-		t.Errorf("SessionID = %q, want test-session", tm.SessionID())
-	}
-
-	_, err := os.Stat(filepath.Join(dir, "trace.sqlite"))
-	if err != nil {
-		t.Errorf("trace store not created: %v", err)
-	}
-}
-
-func TestShepherdTraceBuilder_UnwritableDirBuildsNoop(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "readonly")
-	if err := os.Mkdir(dir, 0o000); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	t.Cleanup(func() { os.Chmod(dir, 0o755) })
-
-	cfg := PipelineConfig{
-		ShepherdTraceDir: dir,
-		SessionID:        "test",
-	}
-
-	mw := builtinBuilders["shepherd_trace"](cfg)
-	_, ok := mw.(*noopShepherdTraceMiddleware)
-	if !ok {
-		t.Error("unwritable dir should fall back to noop")
-	}
-}
-
-func TestShepherdTraceBuilder_IsInDefaultPipeline(t *testing.T) {
-	for _, name := range defaultPipelineNames {
-		if name == "shepherd_trace" {
-			return
+	for i, name := range want {
+		if names[i] != name {
+			t.Errorf("SubAgentPipelineNames(nil)[%d] = %q, want %q", i, names[i], name)
 		}
 	}
-	t.Error("shepherd_trace is not in defaultPipelineNames")
+}
+
+func TestPipeline_SubAgentExcludesOrchestrator(t *testing.T) {
+	names := SubAgentPipelineNames(nil)
+	excluded := []string{"steer", "followup", "approval", "compaction", "loop_detection", "staleness", "soft_prune"}
+	for _, name := range excluded {
+		if slices.Contains(names, name) {
+			t.Errorf("sub-agent pipeline should not contain orchestrator middleware %q", name)
+		}
+	}
+}
+
+func TestPipeline_SubAgentNamesHonourDisabled(t *testing.T) {
+	names := SubAgentPipelineNames([]string{"shepherd_trace"})
+	if slices.Contains(names, "shepherd_trace") {
+		t.Error("disabled shepherd_trace should be excluded")
+	}
+	if !slices.Contains(names, "tool_concurrency") {
+		t.Error("tool_concurrency should remain when only shepherd_trace is disabled")
+	}
+}
+
+func TestSubAgentTrace_UsesSharedStore(t *testing.T) {
+	store, err := shepherd.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	if err != nil {
+		t.Fatalf("open test store: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	prev := tools.SharedTraceStore
+	tools.SharedTraceStore = store
+	t.Cleanup(func() { tools.SharedTraceStore = prev })
+
+	pipe := NewSubAgentPipeline(PipelineConfig{SessionID: "sub-test"})
+	tmw := pipe.ShepherdTraceMiddleware()
+	if tmw == nil {
+		t.Fatal("expected a real ShepherdTraceMiddleware when the shared store is set")
+	}
+	if tmw.Store() != store {
+		t.Error("sub-agent trace middleware should use the session-shared store")
+	}
+	if tmw.SessionID() != "sub-test" {
+		t.Errorf("SessionID = %q, want sub-test", tmw.SessionID())
+	}
+
+	// The middleware must NOT close the shared store — closing it would
+	// kill tracing for every other consumer in the session.
+	if err := tmw.Close(); err != nil {
+		t.Fatalf("Close on shared-store middleware: %v", err)
+	}
+	if _, err := store.FactCount(); err != nil {
+		t.Errorf("shared store unusable after middleware Close: %v", err)
+	}
+}
+
+func TestSubAgentTrace_NoSharedManager(t *testing.T) {
+	prev := tools.SharedTraceStore
+	tools.SharedTraceStore = nil
+	t.Cleanup(func() { tools.SharedTraceStore = prev })
+
+	pipe := NewSubAgentPipeline(PipelineConfig{SessionID: "sub-test"})
+
+	if pipe.ShepherdTraceMiddleware() != nil {
+		t.Error("expected no real trace middleware without a shared store")
+	}
+	mw := pipe.Find("shepherd_trace")
+	if mw == nil {
+		t.Fatal("pipeline should still contain the shepherd_trace slot (noop)")
+	}
+	if _, ok := mw.(*noopShepherdTraceMiddleware); !ok {
+		t.Errorf("expected noop trace middleware, got %T", mw)
+	}
+}
+
+func TestSubAgentTrace_EmptySessionIDIsNoop(t *testing.T) {
+	store, err := shepherd.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	if err != nil {
+		t.Fatalf("open test store: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	prev := tools.SharedTraceStore
+	tools.SharedTraceStore = store
+	t.Cleanup(func() { tools.SharedTraceStore = prev })
+
+	pipe := NewSubAgentPipeline(PipelineConfig{SessionID: ""})
+	if _, ok := pipe.Find("shepherd_trace").(*noopShepherdTraceMiddleware); !ok {
+		t.Error("empty session ID should fall back to the noop trace middleware")
+	}
+}
+
+func TestInitShepherdInfrastructure(t *testing.T) {
+	dir := t.TempDir()
+
+	store, bus, mgr, err := InitShepherdInfrastructure(dir, 0)
+	if err != nil {
+		t.Fatalf("InitShepherdInfrastructure: %v", err)
+	}
+	defer store.Close()
+
+	if store == nil || bus == nil || mgr == nil {
+		t.Fatal("store, bus, and manager must all be non-nil")
+	}
+
+	// The scope manager creates scopes over the initialized store.
+	scope, err := mgr.Create("init-test")
+	if err != nil {
+		t.Fatalf("mgr.Create: %v", err)
+	}
+	if scope.OwnerID() != "init-test" {
+		t.Errorf("scope owner = %q, want init-test", scope.OwnerID())
+	}
+}
+
+func TestInitShepherdInfrastructure_UnwritableDir(t *testing.T) {
+	// A path that cannot be created (a regular file blocks the directory).
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write blocker file: %v", err)
+	}
+
+	_, _, _, err := InitShepherdInfrastructure(filepath.Join(blocker, "traces"), 0)
+	if err == nil {
+		t.Error("expected an error when the trace directory cannot be created")
+	}
 }
 
 func TestNoopShepherdTraceMiddleware(t *testing.T) {
@@ -116,28 +183,15 @@ func TestNoopShepherdTraceMiddleware(t *testing.T) {
 	}
 }
 
-func TestNewFromConfig_IncludesShepherdTrace(t *testing.T) {
-	dir := t.TempDir()
-	cfg := PipelineConfig{
-		ShepherdTraceDir: dir,
-		SessionID:        "test-session",
-	}
-	pipe := NewFromConfig(cfg)
-	tmw := pipe.ShepherdTraceMiddleware()
-	if tmw == nil {
-		t.Fatal("ShepherdTraceMiddleware() should return non-nil when shepherd_trace is in default pipeline")
-	}
-	tmw.Close()
-}
-
-func TestNewFromConfig_SkipsShepherdTraceWhenDisabled(t *testing.T) {
-	cfg := PipelineConfig{
-		ShepherdTraceDir: "",
-		SessionID:        "test-session",
-		PipelineDisabled: []string{"shepherd_trace"},
-	}
-	pipe := NewFromConfig(cfg)
+func TestNewFromConfig_NoShepherdTrace(t *testing.T) {
+	pipe := NewFromConfig(PipelineConfig{SessionID: "test-session"})
 	if tmw := pipe.ShepherdTraceMiddleware(); tmw != nil {
-		t.Error("ShepherdTraceMiddleware() should be nil when shepherd_trace is disabled")
+		t.Error("orchestrator pipeline must not contain shepherd_trace")
+	}
+	// The rest of the default pipeline is intact.
+	for _, name := range []string{"steer", "followup", "compaction", "approval", "tool_concurrency", "loop_detection", "staleness"} {
+		if pipe.Find(name) == nil {
+			t.Errorf("default pipeline lost middleware %q", name)
+		}
 	}
 }

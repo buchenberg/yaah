@@ -70,8 +70,7 @@ type Loop struct {
 	broker     *pubsub.Broker[Event]
 	brokerView *BrokerView
 
-	Middleware []pipeline.Middleware
-	LLM        *llm.Client
+	LLM *llm.Client
 
 	CompactProvider  Provider
 	FallbackProvider Provider
@@ -129,6 +128,14 @@ type LoopConfig struct {
 	LoopDetectWindow       int
 	ApprovalMode           string
 	WrapUpThreshold        int
+	// Turn checkpointing for sub-agent loops only.
+	TurnCheckpointer      TurnCheckpointer
+	TurnCheckpointEnabled bool
+	TurnCheckpointMax     int
+	// MaxTurnRestores caps turn-level checkpoint restores per Run so a
+	// deterministically failing turn cannot rewind forever. Values <= 0
+	// fall back to defaultMaxTurnRestores.
+	MaxTurnRestores        int
 	MaxInlineToolsPerTurn  int
 	MaxToolConcurrency     int
 	MaxSubAgentConcurrency int
@@ -144,7 +151,17 @@ type LoopConfig struct {
 	OtelVerbose            bool
 	SystemPrompt           string
 	SystemPromptOverride   string
-	ShepherdTraceDir       string
+
+	// InitialMessages seeds the conversation when State.Messages is
+	// empty at Run start. The user input is appended as a new user
+	// message after the seed. Used by supervised review sessions to
+	// continue a sub-agent from its prior conversation.
+	InitialMessages []types.Message
+
+	// IsSubAgent marks loops created by NewSubAgentLoop. Sub-agent loops
+	// build the curated sub-agent middleware pipeline instead of the
+	// orchestrator default.
+	IsSubAgent bool
 }
 
 // LoopState holds mutable runtime state modified during Run.
@@ -163,4 +180,13 @@ type LoopState struct {
 	CompactionForcedByOverflow bool
 	CompactionBudgetMultiplier float64
 	CompactionSavingsHistory   []float64
+
+	// TurnCheckpoints holds the IDs of live turn checkpoints in creation
+	// order. Only populated when turn checkpointing is active.
+	TurnCheckpoints []string
+	// TurnRestores counts turn-level checkpoint restores performed during
+	// this Run (diagnostic for supervised-task envelopes).
+	TurnRestores int
+	// RestoredFrom is the checkpoint ID of the most recent turn restore.
+	RestoredFrom string
 }

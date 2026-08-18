@@ -6,6 +6,8 @@ package jobs
 import (
 	"encoding/json"
 	"regexp"
+
+	"github.com/buchenberg/yaah/internal/types"
 )
 
 // SubAgentParams carries the per-invocation sub-agent configuration that
@@ -31,6 +33,13 @@ type SubAgentParams struct {
 	// OutputLimit caps the sub-agent's final synthesized result in bytes.
 	// 0 means use the role/config default.
 	OutputLimit int
+
+	// SeedMessages, when non-empty, seeds the sub-agent loop's
+	// conversation with prior history so a follow-up dispatch continues
+	// from the same point instead of starting fresh. Used by the
+	// supervised review session to carry sub-agent context across work
+	// units. The prompt is appended as a new user message after the seed.
+	SeedMessages []types.Message
 }
 
 // EscalationSeverity classifies how serious a sub-agent escalation is.

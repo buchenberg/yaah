@@ -15,6 +15,11 @@ import (
 // initMessages appends the user input to the conversation, persisting
 // messages and emitting session-start hooks for new conversations.
 func (l *Loop) initMessages(userInput string) {
+	// Seed continuation history (supervised review sessions) before the
+	// append below, so the user input lands after the seeded turns.
+	if len(l.State.Messages) == 0 && len(l.Config.InitialMessages) > 0 {
+		l.State.Messages = append(l.State.Messages, l.Config.InitialMessages...)
+	}
 	if l.State.Messages != nil {
 		l.State.Messages = append(l.State.Messages, types.UserMsg(userInput))
 		l.Persister.Persist(l.State.Messages[len(l.State.Messages)-1])

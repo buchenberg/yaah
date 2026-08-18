@@ -25,6 +25,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -44,15 +45,6 @@ func NewTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 	// can spawn one level of sub-agents; sub-agents cannot spawn further
 	// sub-agents (remainingDepth reaches 0).
 	depth := 1
-	roleDescs := make(map[string]string, len(roleNames))
-	for _, name := range roleNames {
-		p := subagent.RoleProfileFor(subagent.SubAgentRole(name))
-		if p.Description != "" {
-			roleDescs[name] = p.Description
-		} else if p.Specialty != "" {
-			roleDescs[name] = p.Specialty
-		}
-	}
 	return &tools.TaskTool{
 		Runner: makeTaskRunner(taskRunnerOpts{
 			provider:              provider,
@@ -77,9 +69,27 @@ func NewTaskTool(provider agent.Provider, systemPrompt, modelName string, db *me
 		}, depth),
 		ResolveTimeout:   subAgentTimeoutResolver(subCfg),
 		RoleNames:        roleNames,
-		RoleDescriptions: roleDescs,
+		RoleDescriptions: RoleDescriptionsFor(roleNames),
 		Tracker:          tracker,
 	}
+}
+
+// RoleDescriptionsFor maps each role name to a one-line description (or
+// specialty fallback) drawn from the role registry. Used to populate the
+// role parameter descriptions of the spawn_subagent and supervised_task
+// schemas so the orchestrator can choose roles without calling
+// list_subagents.
+func RoleDescriptionsFor(roleNames []string) map[string]string {
+	descs := make(map[string]string, len(roleNames))
+	for _, name := range roleNames {
+		p := subagent.RoleProfileFor(subagent.SubAgentRole(name))
+		if p.Description != "" {
+			descs[name] = p.Description
+		} else if p.Specialty != "" {
+			descs[name] = p.Specialty
+		}
+	}
+	return descs
 }
 
 // BuiltinRoleFiles reads the embedded roles/*.md files shipped in the
@@ -184,11 +194,6 @@ type taskRunnerOpts struct {
 	// a nil resolver means per-role provider overrides fall through to
 	// the planner's provider.
 	resolveProviderByName func(pmap map[string]config.Provider, name string) agent.Provider
-
-	// traceDir, when set, enables Shepherd tracing for sub-agents so
-	// the parent can inspect their execution history on failure.
-	traceDir  string
-	tracePath string
 }
 
 // makeTaskRunner creates a sub-agent runner that honours roles, timeouts,
@@ -269,6 +274,27 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		tools.NotifySubAgentStart(ctx, subModel)
 
 		subTraceID := fmt.Sprintf("sub-%s-%s-%d", role, opts.parentSession, time.Now().UnixNano())
+
+		// Create a scope for this sub-agent so the supervisor can
+		// inject guidance or halt it during execution.
+		var subScope *shepherd.Scope
+		if mgr := tools.SharedScopeManager; mgr != nil {
+			subScope, _ = mgr.Create(subTraceID)
+		}
+
+		// Per-turn checkpointing is enabled per role (subagent.roles.<name>.
+		// turn_checkpoints). When active, the checkpointer lives on this
+		// sub-agent's own scope so turn rewinds never touch the supervised
+		// tool's attempt-level checkpoints.
+		var turnCk agent.TurnCheckpointer
+		if opts.subCfg.Roles[string(role)].TurnCheckpoints && subScope != nil {
+			repoPath := opts.defaults.SupervisedRepoPath
+			if repoPath == "" {
+				repoPath, _ = os.Getwd()
+			}
+			turnCk = NewShepherdTurnCheckpointer(tools.SharedScopeManager, subScope.ID(), repoPath)
+		}
+
 		subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{
 			MaxLoopCycles:      maxIter,
 			MaxToolTurns:       maxTurns,
@@ -285,11 +311,22 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			ContextWindow:      effectiveCW,
 			OtelEnabled:        opts.OtelEnabled,
 			OtelVerbose:        opts.OtelVerbose,
-			TraceDir:           opts.defaults.ShepherdTraceDir,
-			TraceSessionID:     subTraceID,
+			SessionID:          subTraceID,
+
+			TurnCheckpointer:      turnCk,
+			TurnCheckpointEnabled: turnCk != nil,
+			TurnCheckpointMax:     opts.defaults.TurnCheckpointMax,
+			MaxTurnRestores:       opts.defaults.MaxTurnRestores,
+
+			InitialMessages: params.SeedMessages,
 		})
 
 		result, runErr := subLoop.Run(ctx, prompt)
+
+		// Hand the final conversation to the spawner's capture pointer (set
+		// via jobs.WithConversationCapture) so supervised review sessions can
+		// seed the next dispatch from this history.
+		jobs.WriteConversationCapture(ctx, subLoop.State.Messages)
 
 		// Whitespace-only output is a silent failure (observed when a
 		// forced final turn degenerates after tools are stripped). Turn

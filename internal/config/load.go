@@ -121,11 +121,32 @@ type Defaults struct {
 	// directives via SubAgentConfig.Roles[name].Directives instead.
 	Directives []string `yaml:"directives"`
 
-	// ShepherdTraceDir is the directory for the Shepherd trace store
-	// (default ~/.yaah/traces/). Tracing is enabled when "shepherd_trace"
-	// is present in the middleware pipeline (either via defaults or
-	// middleware.enabled).
+	// ShepherdTraceDir is the directory for the Shepherd trace store.
+	// When set, Shepherd tracing is enabled: sub-agent tool calls are
+	// recorded, the supervisor tool is registered, and the supervised
+	// task tool (checkpoint/rollback/retry) becomes available.
 	ShepherdTraceDir string `yaml:"shepherd_trace_dir"`
+
+	// SupervisedMaxRetries caps the rollback-and-retry cycles of the
+	// supervised_task tool after the initial attempt. 0 (unset) defaults
+	// to 1 — one rollback-and-retry.
+	SupervisedMaxRetries int `yaml:"supervised_max_retries"`
+
+	// SupervisedRepoPath is the git repository the supervised_task tool
+	// checkpoints and rolls back. It is also the repository per-turn
+	// checkpoints operate on. Empty (unset) defaults to the working
+	// directory at execution time.
+	SupervisedRepoPath string `yaml:"supervised_repo_path"`
+
+	// TurnCheckpointMax caps live turn checkpoints per sub-agent run;
+	// the oldest are pruned when the cap is reached. 0 = unlimited.
+	// (Per-turn checkpointing itself is enabled per role via
+	// subagent.roles.<name>.turn_checkpoints.)
+	TurnCheckpointMax int `yaml:"turn_checkpoint_max"`
+
+	// MaxTurnRestores caps turn-level restores per sub-agent run so a
+	// deterministically failing turn cannot rewind forever. 0 = default (3).
+	MaxTurnRestores int `yaml:"max_turn_restores"`
 }
 
 // Hooks holds configuration for external integrations via JSONL hook events.
@@ -198,7 +219,8 @@ type SubAgentConfig struct {
 }
 
 // RoleConfig overrides a single role's default timeout, iteration cap,
-// turn cap, provider, model, concurrency, output format, and directives.
+// turn cap, provider, model, concurrency, output format, directives, and
+// shepherding (supervised dispatch + per-turn checkpointing).
 type RoleConfig struct {
 	Timeout           int      `yaml:"timeout"`             // seconds; 0 = use role default
 	MaxLoopCycles     int      `yaml:"max_iterations"`      // 0 = use role default
@@ -211,6 +233,16 @@ type RoleConfig struct {
 	MaxConcurrency    int      `yaml:"max_concurrency"`     // per-role max sub-agent spawns; 0 = use config default
 	StuckChildTimeout int      `yaml:"stuck_child_timeout"` // seconds; 0 = use global default
 	Directives        []string `yaml:"directives"`          // injected into this role's sub-agent prompt; empty = none
+
+	// Supervised routes the role exclusively through the supervised_task
+	// tool (attempt-level git checkpoint + rollback + retry) and hides it
+	// from spawn_subagent. Default false: the role is a plain sub-agent
+	// dispatched via spawn_subagent with no checkpointing.
+	Supervised bool `yaml:"supervised"`
+	// TurnCheckpoints enables per-turn checkpoint/restore inside this
+	// role's sub-agent loop. Default false. Independent of Supervised, but
+	// only meaningful where a shared shepherd scope manager is configured.
+	TurnCheckpoints bool `yaml:"turn_checkpoints"`
 }
 
 // MCPServerConfig holds the configuration for a single MCP server,
@@ -365,6 +397,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.Agent.Default.ShepherdTraceDir != "" {
 		cfg.Agent.Default.ShepherdTraceDir = expandHomeDir(cfg.Agent.Default.ShepherdTraceDir)
+	}
+	if cfg.Agent.Default.SupervisedRepoPath != "" {
+		cfg.Agent.Default.SupervisedRepoPath = expandHomeDir(cfg.Agent.Default.SupervisedRepoPath)
 	}
 
 	return cfg, nil

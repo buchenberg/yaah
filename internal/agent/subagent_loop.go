@@ -1,11 +1,11 @@
 package agent
 
 import (
-	"path/filepath"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/buchenberg/yaah/internal/types"
 )
 
 // SubAgentConfig holds the tuning parameters for a sub-agent loop.
@@ -29,13 +29,31 @@ type SubAgentConfig struct {
 	OtelEnabled        bool
 	OtelVerbose        bool
 	WrapUpThreshold    int
+	// TurnCheckpointer, when non-nil and TurnCheckpointEnabled is set,
+	// records a single-use git checkpoint before each model turn; on a
+	// failed turn (hard tool-phase error, iteration exhaustion) the loop
+	// rewinds workspace and conversation to the last checkpoint and
+	// retries with guidance. TurnCheckpointMax caps the number of live
+	// turn checkpoints (0 = unlimited). MaxTurnRestores bounds restores
+	// per run (0 = default 3). See
+	// .agents/plans/per-turn-checkpoint-restore.
+	TurnCheckpointer      TurnCheckpointer
+	TurnCheckpointEnabled bool
+	TurnCheckpointMax     int
+	MaxTurnRestores       int
 
-	// TraceDir, when set, enables Shepherd tracing for this sub-agent.
-	// Facts are recorded under a unique trace owner derived from
-	// TraceSessionID so the parent can inspect the sub-agent's execution
-	// history on failure.
-	TraceDir       string
-	TraceSessionID string
+	// InitialMessages, when non-empty, seeds the loop's conversation so
+	// this dispatch continues from prior history. See LoopConfig.
+	// InitialMessages.
+	InitialMessages []types.Message
+
+	// SessionID is the trace owner ID for this sub-agent's Shepherd
+	// trace records (e.g. "sub-worker-sess-...-123"). The sub-agent
+	// pipeline's shepherd_trace middleware records under this owner via
+	// the session-shared store, so the parent can inspect the sub-agent's
+	// execution history on failure. When empty, or when no shared store
+	// is configured, tracing is a no-op.
+	SessionID string
 }
 
 // NewSubAgentLoop creates a Loop optimized for sub-agent execution.
@@ -81,10 +99,15 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 			PipelineNames:      nil,
 			PipelineDisabled:   nil,
 			WrapUpThreshold:    cfg.WrapUpThreshold,
-		},
+			SessionID:          cfg.SessionID,
+			IsSubAgent:         true,
 
-		// Sub-agents use an in-memory pruner only — no compaction pipeline.
-		Middleware: nil,
+			TurnCheckpointer:      cfg.TurnCheckpointer,
+			TurnCheckpointEnabled: cfg.TurnCheckpointEnabled,
+			TurnCheckpointMax:     cfg.TurnCheckpointMax,
+			MaxTurnRestores:       cfg.MaxTurnRestores,
+			InitialMessages:       cfg.InitialMessages,
+		},
 	}
 
 	l.CtxMgr = NewContextManager(provider, model)
@@ -99,14 +122,6 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 
 	if l.Config.MaxToolConcurrency > 0 {
 		l.toolConcurrency = pipeline.NewToolConcurrencyMiddleware(l.Config.MaxToolConcurrency)
-	}
-
-	if cfg.TraceDir != "" {
-		store, err := pipeline.NewShepherdTraceStore(filepath.Join(cfg.TraceDir, "trace.sqlite"))
-		if err == nil {
-			traceMw := pipeline.NewShepherdTraceMiddleware(store, cfg.TraceSessionID)
-			l.Middleware = append(l.Middleware, traceMw)
-		}
 	}
 
 	return l

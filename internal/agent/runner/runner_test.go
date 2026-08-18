@@ -157,30 +157,6 @@ roles:
 	}
 }
 
-func seedSubagentTraceStore(t *testing.T, store *shepherd.SQLiteTraceStore, owner string, tools []string, failures []int) {
-	t.Helper()
-	for i, name := range tools {
-		intentID := owner + ":tool:" + string(rune('a'+i))
-		payload := map[string]any{"tool": name, "args": "{}"}
-		mode := shepherd.Declaration
-		if i%2 == 1 {
-			mode = shepherd.Capture
-		}
-		store.Append(shepherd.TrustedAppendContext, shepherd.AppendBatch{
-			AppendIntentID: intentID,
-			Groups: []shepherd.AppendGroup{{
-				TraceOwnerID: owner,
-				FactDrafts: []shepherd.RecordDraft{{
-					Mode:      mode,
-					SchemaRef: "yaah.tool." + name + ".v1",
-					KindLabel: name,
-					Payload:   payload,
-				}},
-			}},
-		})
-	}
-}
-
 func TestSubagentTraceProfile(t *testing.T) {
 	dir := t.TempDir()
 	tracePath := filepath.Join(dir, "trace.sqlite")

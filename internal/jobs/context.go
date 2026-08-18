@@ -82,6 +82,57 @@ func AddSubAgentUsage(ctx context.Context, delta types.Usage) {
 	}
 }
 
+// TurnRestoreStats reports turn-level checkpoint restores performed by a
+// sub-agent loop. The spawner stores a pointer in the context
+// (WithTurnRestoreStats); the loop records each restore into it
+// (RecordTurnRestore); the spawner reads it after the run to enrich its
+// result envelope.
+type TurnRestoreStats struct {
+	Restores     int
+	RestoredFrom string
+}
+
+type turnRestoreStatsKey struct{}
+
+// WithTurnRestoreStats stores stats in ctx so the sub-agent loop can
+// record turn restores into it. Read stats after the runner returns.
+func WithTurnRestoreStats(ctx context.Context, stats *TurnRestoreStats) context.Context {
+	return context.WithValue(ctx, turnRestoreStatsKey{}, stats)
+}
+
+// RecordTurnRestore increments the restore counter stored in ctx, if
+// present, and records the checkpoint ID restored from.
+func RecordTurnRestore(ctx context.Context, restoredFrom string) {
+	if s, ok := ctx.Value(turnRestoreStatsKey{}).(*TurnRestoreStats); ok {
+		s.Restores++
+		s.RestoredFrom = restoredFrom
+	}
+}
+
+// conversationCaptureKey is a context key for the *[]types.Message the
+// sub-agent runner writes the loop's final conversation into. The
+// spawner (supervised review session) stores a pointer in the context,
+// passes it to the runner, and reads the captured history after the
+// runner returns to seed the next dispatch.
+type conversationCaptureKey struct{}
+
+// WithConversationCapture stores ptr in ctx so the sub-agent runner can
+// write the loop's final messages into it. Read *ptr after the runner
+// returns.
+func WithConversationCapture(ctx context.Context, ptr *[]types.Message) context.Context {
+	return context.WithValue(ctx, conversationCaptureKey{}, ptr)
+}
+
+// WriteConversationCapture writes msgs to the *[]types.Message stored in
+// ctx, if present. Returns true when a capture pointer was found.
+func WriteConversationCapture(ctx context.Context, msgs []types.Message) bool {
+	if ptr, ok := ctx.Value(conversationCaptureKey{}).(*[]types.Message); ok {
+		*ptr = msgs
+		return true
+	}
+	return false
+}
+
 // subAgentHeartbeatKey is a context key for the per-sub-agent heartbeat
 // channel. The sub-agent loop non-blocking-sends on this channel each
 // iteration so a parent watchdog can detect stuck children.

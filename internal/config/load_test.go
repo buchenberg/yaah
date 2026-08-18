@@ -209,3 +209,49 @@ func TestLoad_shepherdTraceDirEmptyByDefault(t *testing.T) {
 		t.Errorf("ShepherdTraceDir should be empty by default, got %q", cfg.Agent.Default.ShepherdTraceDir)
 	}
 }
+
+func TestLoad_roleShepherdingFlags(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("YAAH_HOME", tmp)
+
+	configContent := `
+agents:
+  default:
+    model: test/model
+  subagent:
+    roles:
+      developer:
+        supervised: true
+        turn_checkpoints: true
+      counter:
+        supervised: false
+`
+	if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(configContent), 0o644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	dev := cfg.Agent.SubAgent.Roles["developer"]
+	if !dev.Supervised {
+		t.Error("developer.Supervised = false, want true")
+	}
+	if !dev.TurnCheckpoints {
+		t.Error("developer.TurnCheckpoints = false, want true")
+	}
+
+	counter := cfg.Agent.SubAgent.Roles["counter"]
+	if counter.Supervised {
+		t.Error("counter.Supervised = true, want false")
+	}
+
+	// A role with no shepherding keys defaults both flags to false.
+	other := cfg.Agent.SubAgent.Roles["unset-role"]
+	if other.Supervised || other.TurnCheckpoints {
+		t.Errorf("unset role shepherding flags = (%v, %v), want (false, false)",
+			other.Supervised, other.TurnCheckpoints)
+	}
+}

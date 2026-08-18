@@ -26,13 +26,18 @@ func TestConfigAgentConfigParity(t *testing.T) {
 	// Fields in config.Defaults that are handled outside AgentConfig
 	// (provider resolution, approval resolution, prompt assembly, etc.).
 	allowedMissingInAgent := map[string]bool{
-		"SmallModel":       true, // → compact provider resolution
-		"Approval":         true, // → WithApprovalMode
-		"Provider":         true, // → provider resolution
-		"WorkspaceAsk":     true, // → path validator
-		"Model":            true, // → WithModel
-		"Directives":       true, // → prompt assembly
-		"ReasoningProtect": true, // → AgentConfig.ReasoningProtectTurns (renamed)
+		"SmallModel":           true, // → compact provider resolution
+		"Approval":             true, // → WithApprovalMode
+		"Provider":             true, // → provider resolution
+		"WorkspaceAsk":         true, // → path validator
+		"Model":                true, // → WithModel
+		"Directives":           true, // → prompt assembly
+		"ReasoningProtect":     true, // → AgentConfig.ReasoningProtectTurns (renamed)
+		"ShepherdTraceDir":     true, // → session-level shepherd init in wiring
+		"SupervisedMaxRetries": true, // → supervised_task tool registration in wiring
+		"SupervisedRepoPath":   true, // → supervised_task tool registration in wiring
+		"TurnCheckpointMax":    true, // → sub-agent runner turn checkpointer
+		"MaxTurnRestores":      true, // → sub-agent runner turn checkpointer
 	}
 
 	// Fields in agent.AgentConfig that come from other config sections

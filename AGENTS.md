@@ -76,7 +76,7 @@ yaah/
 │   ├── spinner/                 # animated thinking spinner
 │   ├── todo/                    # in-memory todo store
 │   ├── toolfmt/                 # shared tool result formatting (TUI + web views)
-│   ├── tools/                   # built-in tools (read, write, edit, replace, delete, patch, sed, json_query, grep, glob, ls, bash, powershell, git, question, webfetch, http, go_outline, go_refactor, go_test, go_mod, bisect, diff, staticcheck, calculate, file_info, task, background_process, memory, todo, plan, skill)
+│   ├── tools/                   # built-in tools (read, write, edit, replace, delete, patch, sed, json_query, grep, glob, ls, bash, powershell, git, question, webfetch, http, go_outline, go_refactor, go_test, go_mod, bisect, diff, staticcheck, calculate, file_info, task, background_process, memory, todo, plan, skill, supervisor, supervised_task)
 │   ├── tui/                     # bubbletea TUI (component system: renderers in *_component.go, styled via theme.go)
 │   ├── types/                   # OpenAI message types
 │   └── update/                  # GitHub release checking

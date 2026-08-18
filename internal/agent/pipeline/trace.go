@@ -20,20 +20,29 @@ func NewShepherdTraceStore(path string) (*shepherd.SQLiteTraceStore, error) {
 // and capture (observation) in a Shepherd trace store.
 type ShepherdTraceMiddleware struct {
 	store           *shepherd.SQLiteTraceStore
+	bus             *shepherd.EffectBus
+	scopeManager    *shepherd.ScopeManager
 	sessionID       string
 	ordinal         int
 	lastFactIDs     []string
 	turnRootFactIDs []string
+
+	// ownsStore controls whether Close closes the backing store.
+	// Middleware built on the session-shared store (sub-agent pipelines)
+	// must not close it — the store outlives any single sub-agent loop.
+	ownsStore bool
 }
 
 var nextOrdinal atomic.Int64
 
-// NewShepherdTraceMiddleware creates a trace middleware backed by the given store.
+// NewShepherdTraceMiddleware creates a trace middleware that owns the
+// given store — Close will close it.
 func NewShepherdTraceMiddleware(store *shepherd.SQLiteTraceStore, sessionID string) *ShepherdTraceMiddleware {
 	return &ShepherdTraceMiddleware{
 		store:     store,
 		sessionID: sessionID,
 		ordinal:   int(nextOrdinal.Add(1 << 20)),
+		ownsStore: true,
 	}
 }
 
@@ -48,7 +57,7 @@ func (m *ShepherdTraceMiddleware) PostModel(ctx context.Context, msg *types.Mess
 }
 
 func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolResult, step *Step) (*Step, error) {
-	if m.store == nil {
+	if m.store == nil || m.sessionID == "" {
 		return step, nil
 	}
 
@@ -58,9 +67,17 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 		intentID := fmt.Sprintf("%s:tool:%d", m.sessionID, m.ordinal)
 		schemaRef := fmt.Sprintf("yaah.tool.%s.v1", r.Name)
 
+		// Wrap args as RawMessage only if valid JSON; otherwise store as string.
+		var argsJSON json.RawMessage
+		if json.Valid([]byte(r.Args)) {
+			argsJSON = json.RawMessage(r.Args)
+		} else {
+			argsJSON, _ = json.Marshal(r.Args)
+		}
+
 		payload := map[string]any{
 			"tool": r.Name,
-			"args": json.RawMessage(r.Args),
+			"args": argsJSON,
 		}
 
 		receipt, err := m.store.Append(shepherd.TrustedAppendContext, shepherd.AppendBatch{
@@ -77,7 +94,7 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 			}},
 		})
 		if err != nil {
-			slog.Error("shepherd_trace: declaration failed", "err", err)
+			slog.Debug("shepherd_trace: declaration failed", "err", err)
 			continue
 		}
 
@@ -105,7 +122,7 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 			}},
 		})
 		if err != nil {
-			slog.Error("shepherd_trace: capture failed", "err", err)
+			slog.Debug("shepherd_trace: capture failed", "err", err)
 		}
 
 		m.lastFactIDs = captureReceipt.FactIDs
@@ -117,7 +134,7 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 // StartTurn records an execution-lifecycle declaration+capture pair marking
 // the start of a turn. Returns the ordinal of the created record.
 func (m *ShepherdTraceMiddleware) StartTurn(turnNumber int, model string, prompt string) {
-	if m.store == nil {
+	if m.store == nil || m.sessionID == "" {
 		return
 	}
 	m.ordinal++
@@ -145,7 +162,7 @@ func (m *ShepherdTraceMiddleware) StartTurn(turnNumber int, model string, prompt
 		}},
 	})
 	if err != nil {
-		slog.Error("shepherd_trace: turn start failed", "err", err)
+		slog.Debug("shepherd_trace: turn start failed", "err", err)
 		return
 	}
 
@@ -170,7 +187,7 @@ func (m *ShepherdTraceMiddleware) StartTurn(turnNumber int, model string, prompt
 		}},
 	})
 	if err != nil {
-		slog.Error("shepherd_trace: turn start capture failed", "err", err)
+		slog.Debug("shepherd_trace: turn start capture failed", "err", err)
 	} else {
 		m.lastFactIDs = captureReceipt.FactIDs
 	}
@@ -178,7 +195,7 @@ func (m *ShepherdTraceMiddleware) StartTurn(turnNumber int, model string, prompt
 
 // EndTurn records a turn completion capture.
 func (m *ShepherdTraceMiddleware) EndTurn(turnNumber int, promptTokens, completionTokens int) {
-	if m.store == nil {
+	if m.store == nil || m.sessionID == "" {
 		return
 	}
 	m.ordinal++
@@ -205,7 +222,7 @@ func (m *ShepherdTraceMiddleware) EndTurn(turnNumber int, promptTokens, completi
 		}},
 	})
 	if err != nil {
-		slog.Error("shepherd_trace: turn complete failed", "err", err)
+		slog.Debug("shepherd_trace: turn complete failed", "err", err)
 	} else {
 		m.lastFactIDs = receipt.FactIDs
 	}
@@ -215,7 +232,7 @@ func (m *ShepherdTraceMiddleware) EndTurn(turnNumber int, promptTokens, completi
 
 // FailTurn records a turn failure capture.
 func (m *ShepherdTraceMiddleware) FailTurn(turnNumber int, err error) {
-	if m.store == nil {
+	if m.store == nil || m.sessionID == "" {
 		return
 	}
 	m.ordinal++
@@ -241,7 +258,7 @@ func (m *ShepherdTraceMiddleware) FailTurn(turnNumber int, err error) {
 		}},
 	})
 	if aerr != nil {
-		slog.Error("shepherd_trace: turn fail recording failed", "err", aerr)
+		slog.Debug("shepherd_trace: turn fail recording failed", "err", aerr)
 	} else {
 		m.lastFactIDs = receipt.FactIDs
 	}
@@ -264,7 +281,7 @@ func (m *ShepherdTraceMiddleware) publishFrontier(turnNumber int) {
 	}
 	_, err := m.store.PublishFrontier(shepherd.TrustedAppendContext, spec)
 	if err != nil {
-		slog.Error("shepherd_trace: frontier publish failed", "err", err)
+		slog.Debug("shepherd_trace: frontier publish failed", "err", err)
 	}
 }
 
@@ -273,7 +290,7 @@ func (m *ShepherdTraceMiddleware) Ordinal() int {
 	return m.ordinal
 }
 func (m *ShepherdTraceMiddleware) Close() error {
-	if m.store != nil {
+	if m.store != nil && m.ownsStore {
 		return m.store.Close()
 	}
 	return nil
@@ -287,4 +304,16 @@ func (m *ShepherdTraceMiddleware) Store() *shepherd.SQLiteTraceStore {
 // SessionID returns the session identifier for this trace.
 func (m *ShepherdTraceMiddleware) SessionID() string {
 	return m.sessionID
+}
+
+// Bus returns the effect bus for real-time event subscription.
+// Returns nil if supervision is not enabled.
+func (m *ShepherdTraceMiddleware) Bus() *shepherd.EffectBus {
+	return m.bus
+}
+
+// ScopeManager returns the scope manager for fork/merge/discard operations.
+// Returns nil if supervision is not enabled.
+func (m *ShepherdTraceMiddleware) ScopeManager() *shepherd.ScopeManager {
+	return m.scopeManager
 }

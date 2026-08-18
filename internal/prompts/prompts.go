@@ -48,6 +48,9 @@ var wrapUpMessageRaw string
 //go:embed environment_header.md
 var environmentHeaderRaw string
 
+//go:embed subagent_tools.md
+var subAgentToolsRaw string
+
 //go:embed tools/*.md
 var ToolsFS embed.FS
 
@@ -81,6 +84,14 @@ func ToolDescription(name string) string {
 // and severity levels for structured error reporting.
 func Escalation() string {
 	return escalation
+}
+
+// SubAgentToolsGuidance returns the orchestrator guidance block that
+// explains when to use spawn_subagent vs supervised_task. Injected into
+// the top-level prompt only when supervised_task is registered (i.e.
+// Shepherd tracing is enabled).
+func SubAgentToolsGuidance() string {
+	return strings.TrimSpace(subAgentToolsRaw)
 }
 
 // --- Chunk summarizer helpers ---

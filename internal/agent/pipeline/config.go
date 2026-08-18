@@ -2,10 +2,8 @@ package pipeline
 
 import (
 	"context"
-	"log/slog"
-	"os"
-	"path/filepath"
 
+	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -44,11 +42,10 @@ type PipelineConfig struct {
 	Pruner     *Pruner
 	PruneHooks PruneHooks
 
-	// ShepherdTraceDir is the directory for the Shepherd trace store
-	// (default ~/.yaah/traces/). SessionID scopes records. Tracing is
-	// active when "shepherd_trace" is in the pipeline names.
-	ShepherdTraceDir string
-	SessionID        string
+	// SessionID scopes Shepherd trace records. The sub-agent pipeline's
+	// shepherd_trace middleware records under this owner using the
+	// session-shared store (tools.SharedTraceStore).
+	SessionID string
 
 	PipelineNames    []string
 	PipelineDisabled []string
@@ -99,22 +96,25 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 		return &SoftPruneMiddleware{pruner: cfg.Pruner, emit: cfg.PruneHooks.Emit, otel: cfg.PruneHooks.Otel}
 	},
 	"staleness": func(cfg PipelineConfig) Middleware { return &StalenessMiddleware{} },
+}
+
+var subAgentBuilders = map[string]func(PipelineConfig) Middleware{
+	"tool_concurrency": func(cfg PipelineConfig) Middleware {
+		return &ToolConcurrencyMiddleware{max: cfg.MaxToolConcurrency}
+	},
 	"shepherd_trace": func(cfg PipelineConfig) Middleware {
-		traceDir := cfg.ShepherdTraceDir
-		if traceDir == "" {
-			home, _ := os.UserHomeDir()
-			traceDir = filepath.Join(home, ".yaah", "traces")
-		}
-		if err := os.MkdirAll(traceDir, 0o755); err != nil {
-			slog.Error("shepherd_trace: mkdir failed (disabled)", "dir", traceDir, "err", err)
+		// Sub-agents write through the session-shared store instead of
+		// opening their own SQLite connection — concurrent writers on
+		// the same trace.sqlite stall on busy_timeout.
+		store := tools.SharedTraceStore
+		if store == nil || cfg.SessionID == "" {
 			return &noopShepherdTraceMiddleware{}
 		}
-		store, err := NewShepherdTraceStore(filepath.Join(traceDir, "trace.sqlite"))
-		if err != nil {
-			slog.Error("shepherd_trace: open failed (disabled)", "dir", traceDir, "err", err)
-			return &noopShepherdTraceMiddleware{}
+		return &ShepherdTraceMiddleware{
+			store:     store,
+			sessionID: cfg.SessionID,
+			ordinal:   int(nextOrdinal.Add(1 << 20)),
 		}
-		return NewShepherdTraceMiddleware(store, cfg.SessionID)
 	},
 }
 
@@ -141,7 +141,57 @@ var defaultPipelineNames = []string{
 	"tool_concurrency",
 	"loop_detection",
 	"staleness",
+}
+
+// subAgentPipelineNames is the curated middleware pipeline for sub-agent
+// loops. Sub-agents are ephemeral workers with fixed turn budgets — they
+// don't need orchestrator-level middleware.
+//
+// Deliberately excluded:
+// - steer/followup: orchestrator REPL channels, sub-agents never receive them
+// - approval: sub-agents auto-approve (the orchestrator gates dispatch)
+// - compaction: sub-agents use CtxMgr pruning internally, not pipeline compaction
+// - loop_detection: redundant with MaxLoopCycles/MaxToolTurns/WrapUpThreshold/ErrStuckChild
+// - staleness: orchestrator-specific (tracks steer/followup context shifts)
+// - soft_prune: CtxMgr.EnsurePruner() already handles context for short-lived loops
+//
+// Included:
+// - tool_concurrency: prevents uncontrolled parallel tool dispatch
+// - shepherd_trace: records tool calls for error enrichment and supervised rollback
+var subAgentPipelineNames = []string{
+	"tool_concurrency",
 	"shepherd_trace",
+}
+
+// SubAgentPipelineNames returns the middleware names for a sub-agent loop,
+// honouring the disabled list (for opt-out of specific middleware).
+func SubAgentPipelineNames(disabled []string) []string {
+	disabledSet := make(map[string]bool, len(disabled))
+	for _, name := range disabled {
+		disabledSet[name] = true
+	}
+	names := make([]string, 0, len(subAgentPipelineNames))
+	for _, name := range subAgentPipelineNames {
+		if !disabledSet[name] {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// NewSubAgentPipeline builds the middleware pipeline for a sub-agent loop
+// from config. It uses subAgentPipelineNames instead of the orchestrator
+// defaults; the shepherd_trace builder writes through the session-shared
+// store (set by InitShepherdInfrastructure during wiring).
+func NewSubAgentPipeline(cfg PipelineConfig) *Pipeline {
+	names := SubAgentPipelineNames(cfg.PipelineDisabled)
+	mws := make([]Middleware, 0, len(names))
+	for _, name := range names {
+		if build, ok := subAgentBuilders[name]; ok {
+			mws = append(mws, build(cfg))
+		}
+	}
+	return NewPipeline(mws...)
 }
 
 func resolvedPipelineNames(enabled, disabled []string) []string {
