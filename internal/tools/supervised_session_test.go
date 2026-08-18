@@ -555,6 +555,40 @@ func TestReviewSession_ChooseRequiresFork(t *testing.T) {
 	}
 }
 
+func TestReviewSession_ChooseRejectsNilTree(t *testing.T) {
+	tool, sup, repo := newReviewTestEnv(t)
+	runner := &sessionRunner{
+		repoPath: repo,
+		responses: []runnerResponse{
+			{result: "unit one"},
+			{result: "A"},
+			{result: "B"},
+		},
+	}
+	tool.Runner = runner.run()
+
+	sid := startTestReviewSession(t, tool, "prepare")
+	mustSupervisorExecute(t, sup, `{"action":"fork","session_id":`+jsonString(sid)+`,"prompt_a":"A","prompt_b":"B"}`)
+
+	// Simulate a failed tree capture on the winner: choose must reject it
+	// with a clear error rather than attempting ApplyTree(nil).
+	sess, err := getReviewSession(sid)
+	if err != nil {
+		t.Fatalf("getReviewSession: %v", err)
+	}
+	sess.mu.Lock()
+	sess.varA.Tree = nil
+	sess.mu.Unlock()
+
+	_, err = sup.Execute(context.Background(), `{"action":"choose","session_id":`+jsonString(sid)+`,"winner":"a"}`)
+	if err == nil {
+		t.Fatal("choose with a nil captured tree must fail")
+	}
+	if !strings.Contains(err.Error(), "no captured tree") {
+		t.Errorf("error = %q, want mention of missing captured tree", err.Error())
+	}
+}
+
 func TestReviewSession_RollbackRequiresGuidance(t *testing.T) {
 	tool, sup, repo := newReviewTestEnv(t)
 	runner := &sessionRunner{repoPath: repo, responses: []runnerResponse{{result: "done"}}}

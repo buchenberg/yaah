@@ -125,3 +125,40 @@ func TestLoop_InitialMessages_NoSeedUnchanged(t *testing.T) {
 		t.Errorf("first message = %q/%q, want system/sp", got[0].Role, got[0].Content)
 	}
 }
+
+// TestLoop_InitialMessages_SeedsEmptyNonNilState verifies seeding also
+// applies when State.Messages is a non-nil empty slice, not just nil.
+func TestLoop_InitialMessages_SeedsEmptyNonNilState(t *testing.T) {
+	seed := []types.Message{
+		types.SystemMsg("seed system"),
+		types.UserMsg("first task"),
+	}
+	fp := &fakeProvider{responses: []*types.ChatResponse{
+		turnCkTextResponse("done"),
+	}}
+
+	loop := &Loop{
+		Provider: fp,
+		State:    LoopState{Messages: []types.Message{}},
+		Config: LoopConfig{
+			SystemPrompt:    "sp",
+			MaxLoopCycles:   10,
+			InitialMessages: seed,
+		},
+	}
+
+	if _, err := loop.Run(t.Context(), "next"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	got := fp.requests[0].Messages
+	if len(got) != 3 {
+		t.Fatalf("message count = %d, want 3 (seed system + seed user + new user)", len(got))
+	}
+	if got[0].Content != "seed system" {
+		t.Errorf("first message = %q, want seeded system", got[0].Content)
+	}
+	if got[2].Role != "user" || got[2].Content != "next" {
+		t.Errorf("last message = %q/%q, want user/next", got[2].Role, got[2].Content)
+	}
+}

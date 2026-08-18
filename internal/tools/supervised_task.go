@@ -128,7 +128,11 @@ func (t *SupervisedTaskTool) Execute(ctx context.Context, args string) (string, 
 
 	repoPath := t.RepoPath
 	if repoPath == "" {
-		repoPath, _ = os.Getwd()
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("supervised_task: resolve repo path: %w", err)
+		}
+		repoPath = wd
 	}
 
 	clampedTimeout := clampTimeoutSeconds(params.TimeoutSeconds)

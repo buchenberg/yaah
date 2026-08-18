@@ -316,9 +316,9 @@ func (s *supervisedSession) dispatchLocked(ctx context.Context, prompt string, s
 	return marshalReviewEnvelope(env), nil
 }
 
-// runUnitLocked invokes the sub-agent runner, releasing the session
-// mutex for the (long) call. The mutex is re-acquired via defer so a
-// runner panic cannot leave the session permanently unlocked.
+// runUnitLocked invokes the sub-agent runner. The session mutex is held
+// for the duration of the call: a concurrent verdict action blocks on the
+// mutex instead of rewinding a workspace under active modification.
 func (s *supervisedSession) runUnitLocked(ctx context.Context, prompt string, seed []types.Message) (result string, captured []types.Message, restores int, runErr error) {
 	var restoreStats jobs.TurnRestoreStats
 	runCtx := jobs.WithConversationCapture(ctx, &captured)
@@ -328,9 +328,6 @@ func (s *supervisedSession) runUnitLocked(ctx context.Context, prompt string, se
 	if s.timeout > 0 {
 		runCtx, cancel = context.WithTimeout(runCtx, s.timeout)
 	}
-
-	s.mu.Unlock()
-	defer s.mu.Lock()
 
 	subParams := s.subBase
 	subParams.SeedMessages = seed
@@ -542,11 +539,8 @@ func (s *supervisedSession) forkVariants(ctx context.Context, promptA, promptB s
 
 // runVariant dispatches one fork variant and captures its tree state,
 // diff, and conversation. It must be called with s.mu held; the lock is
-// released around the runner call and re-acquired before returning.
+// held across the runner call so concurrent verdicts serialize.
 func (s *supervisedSession) runVariant(ctx context.Context, scope *shepherd.Scope, prompt string, forkConv []types.Message) *reviewVariant {
-	s.mu.Unlock()
-	defer s.mu.Lock()
-
 	// Seed with the fork-point conversation only. The prompt is passed
 	// as the runner's user input and appended by the loop's
 	// initMessages — appending it here too would duplicate it.
@@ -575,7 +569,11 @@ func (s *supervisedSession) runVariant(ctx context.Context, scope *shepherd.Scop
 	if runErr != nil {
 		v.RunErr = runErr.Error()
 	}
-	if tree, err := scope.CaptureTree(s.runtime.RepoPath); err == nil {
+	if tree, err := scope.CaptureTree(s.runtime.RepoPath); err != nil {
+		if v.RunErr == "" {
+			v.RunErr = "capture tree: " + err.Error()
+		}
+	} else {
 		v.Tree = tree
 	}
 	if diff, files, err := shepherd.DiffSince(s.runtime.RepoPath, s.forkTree.HeadSHA, reviewDiffMaxLines); err == nil {
@@ -608,6 +606,9 @@ func (s *supervisedSession) chooseVariant(winner string) (string, error) {
 	}
 	if v == nil {
 		return "", fmt.Errorf("supervisor: variant %q missing — fork did not complete", winner)
+	}
+	if v.Tree == nil {
+		return "", fmt.Errorf("supervisor: choose: variant %q has no captured tree (capture failed: %s) — cannot apply its files", winner, v.RunErr)
 	}
 
 	mgr := SharedScopeManager

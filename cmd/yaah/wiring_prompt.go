@@ -65,11 +65,5 @@ func buildMainPrompt(cfg *config.Config, systemPrompt string, toolReg *tools.Reg
 	if quickRef := buildToolQuickRef(toolReg); quickRef != "" {
 		mainPrompt += "\n\n" + quickRef
 	}
-	// supervised_task is registered exactly when Shepherd tracing is
-	// configured; the guidance block ships with it so the orchestrator
-	// knows when to prefer it over spawn_subagent.
-	if cfg.Agent.Default.ShepherdTraceDir != "" {
-		mainPrompt += "\n\n" + prompts.SubAgentToolsGuidance()
-	}
 	return mainPrompt
 }

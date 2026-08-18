@@ -17,7 +17,7 @@ import (
 func (l *Loop) initMessages(userInput string) {
 	// Seed continuation history (supervised review sessions) before the
 	// append below, so the user input lands after the seeded turns.
-	if l.State.Messages == nil && len(l.Config.InitialMessages) > 0 {
+	if len(l.State.Messages) == 0 && len(l.Config.InitialMessages) > 0 {
 		l.State.Messages = append(l.State.Messages, l.Config.InitialMessages...)
 	}
 	if l.State.Messages != nil {

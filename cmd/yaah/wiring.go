@@ -14,6 +14,7 @@ import (
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/memory"
 	processpkg "github.com/buchenberg/yaah/internal/process"
+	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -196,28 +197,21 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 
 	// Role routing: each role dispatches through exactly one sub-agent
 	// tool, selected by the per-role `supervised` flag
-	// (subagent.roles.<name>.supervised).
-	//   supervised: false (default) → plain sub-agent via spawn_subagent,
-	//     no checkpointing.
-	//   supervised: true            → routed exclusively through
-	//     supervised_task with attempt-level checkpoint/rollback/retry.
-	// splitRoles partitions a role-name list by that flag.
+	// (subagent.roles.<name>.supervised). Start with every role on
+	// spawn_subagent; supervised roles are moved to supervised_task only
+	// after shepherd infrastructure initializes successfully, so a role is
+	// never unreachable when tracing is unset or init fails.
 	isSupervisedRole := func(name string) bool {
 		return cfg.Agent.SubAgent.Roles[name].Supervised
 	}
-	plainRoles, supervisedRoles := splitRolesBySupervised(reg.Names(), isSupervisedRole)
 
-	taskTool := runner.NewTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, plainRoles, cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default, nil, pathValidator, resolveProviderByName)
+	taskTool := runner.NewTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default, nil, pathValidator, resolveProviderByName)
 
 	// RoleResolver provides a live role-name lookup so the spawn_subagent
-	// tool sees roles created via the role tool without a restart, and so
-	// a role whose `supervised` flag changes is re-routed. Only plain
-	// (non-supervised) roles are offered here; supervised roles belong to
-	// supervised_task exclusively.
-	taskTool.RoleResolver = func() []string {
-		plain, _ := splitRolesBySupervised(subagent.DefaultRegistry().Names(), isSupervisedRole)
-		return plain
-	}
+	// tool sees roles created via the role tool without a restart. Until
+	// supervised_task is registered it returns every role; it is narrowed
+	// to the non-supervised roles after successful shepherd init below.
+	taskTool.RoleResolver = func() []string { return subagent.DefaultRegistry().Names() }
 
 	// Hand the manager to the task tool so background:true dispatches go
 	// through it instead of the broken inline goroutine.
@@ -265,6 +259,16 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 			tools.SharedTraceStore = store
 			tools.SharedScopeManager = scopeMgr
 
+			// Supervised roles move from spawn_subagent to supervised_task
+			// now that the shared scope manager is actually available.
+			plainRoles, supervisedRoles := splitRolesBySupervised(reg.Names(), isSupervisedRole)
+			taskTool.RoleNames = plainRoles
+			taskTool.RoleResolver = func() []string {
+				plain, _ := splitRolesBySupervised(subagent.DefaultRegistry().Names(), isSupervisedRole)
+				return plain
+			}
+			taskTool.RoleDescriptions = runner.RoleDescriptionsFor(plainRoles)
+
 			// Supervisor tool for sub-agent supervision (list_scopes/inject/halt/status).
 			toolReg.Register(&tools.SupervisorTool{TraceDir: cfg.Agent.Default.ShepherdTraceDir})
 
@@ -292,6 +296,13 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 				MaxRetries:       maxRetries,
 			})
 		}
+	}
+
+	// Advertise supervised_task only when it was actually registered (the
+	// shared scope manager is set exclusively on successful init), so the
+	// prompt never references a tool that init failure left unavailable.
+	if tools.SharedScopeManager != nil {
+		mainPrompt += "\n\n" + prompts.SubAgentToolsGuidance()
 	}
 
 	toolReg.Register(&tools.ListSubAgentsTool{
