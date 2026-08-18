@@ -8,7 +8,7 @@ require (
 	charm.land/glamour/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.5
 	github.com/atotto/clipboard v0.1.4
-	github.com/buchenberg/shepherd-kernel-go v0.3.1
+	github.com/buchenberg/shepherd-kernel-go v0.3.2
 	github.com/buchenberg/tviewmd v0.2.0
 	github.com/gdamore/tcell/v2 v2.8.1
 	github.com/lrstanley/bubblezone/v2 v2.0.0
