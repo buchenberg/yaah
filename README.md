@@ -2,8 +2,8 @@
 
 ```
 yaah> Hello. I'm yaah. You call me from the command line, I spin up a team
-yaah> of specialist sub-agents, and we get things done — together.
-yaah> One static Go binary. No accounts. No telemetry. No paywalls.
+      of specialist sub-agents, and we get things done — together.
+      One static Go binary. No accounts. No telemetry. No paywalls.
 ```
 
 ---
