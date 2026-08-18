@@ -109,6 +109,30 @@ func RecordTurnRestore(ctx context.Context, restoredFrom string) {
 	}
 }
 
+// conversationCaptureKey is a context key for the *[]types.Message the
+// sub-agent runner writes the loop's final conversation into. The
+// spawner (supervised review session) stores a pointer in the context,
+// passes it to the runner, and reads the captured history after the
+// runner returns to seed the next dispatch.
+type conversationCaptureKey struct{}
+
+// WithConversationCapture stores ptr in ctx so the sub-agent runner can
+// write the loop's final messages into it. Read *ptr after the runner
+// returns.
+func WithConversationCapture(ctx context.Context, ptr *[]types.Message) context.Context {
+	return context.WithValue(ctx, conversationCaptureKey{}, ptr)
+}
+
+// WriteConversationCapture writes msgs to the *[]types.Message stored in
+// ctx, if present. Returns true when a capture pointer was found.
+func WriteConversationCapture(ctx context.Context, msgs []types.Message) bool {
+	if ptr, ok := ctx.Value(conversationCaptureKey{}).(*[]types.Message); ok {
+		*ptr = msgs
+		return true
+	}
+	return false
+}
+
 // subAgentHeartbeatKey is a context key for the per-sub-agent heartbeat
 // channel. The sub-agent loop non-blocking-sends on this channel each
 // iteration so a parent watchdog can detect stuck children.

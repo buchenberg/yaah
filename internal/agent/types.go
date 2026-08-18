@@ -152,6 +152,12 @@ type LoopConfig struct {
 	SystemPrompt           string
 	SystemPromptOverride   string
 
+	// InitialMessages seeds the conversation when State.Messages is
+	// empty at Run start. The user input is appended as a new user
+	// message after the seed. Used by supervised review sessions to
+	// continue a sub-agent from its prior conversation.
+	InitialMessages []types.Message
+
 	// IsSubAgent marks loops created by NewSubAgentLoop. Sub-agent loops
 	// build the curated sub-agent middleware pipeline instead of the
 	// orchestrator default.

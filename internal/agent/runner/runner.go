@@ -25,6 +25,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -316,9 +317,16 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			TurnCheckpointEnabled: turnCk != nil,
 			TurnCheckpointMax:     opts.defaults.TurnCheckpointMax,
 			MaxTurnRestores:       opts.defaults.MaxTurnRestores,
+
+			InitialMessages: params.SeedMessages,
 		})
 
 		result, runErr := subLoop.Run(ctx, prompt)
+
+		// Hand the final conversation to the spawner's capture pointer (set
+		// via jobs.WithConversationCapture) so supervised review sessions can
+		// seed the next dispatch from this history.
+		jobs.WriteConversationCapture(ctx, subLoop.State.Messages)
 
 		// Whitespace-only output is a silent failure (observed when a
 		// forced final turn degenerates after tools are stripped). Turn

@@ -67,7 +67,8 @@ func (t *SupervisedTaskTool) Schema() json.RawMessage {
 			"prompt": {"type": "string", "description": "The task for the sub-agent to accomplish"},
 			"role": {"type": "string", "description": "Sub-agent role selecting its tool set and limits. Required. Use list_subagents to see available roles."},
 			"timeout_seconds": {"type": "integer", "minimum": 10, "maximum": 600, "description": "Per-attempt timeout"},
-			"max_iterations": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Cap on sub-agent loop turns"}
+			"max_iterations": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Cap on sub-agent loop turns"},
+			"review": {"type": "boolean", "default": false, "description": "Run in supervised review mode: complete one work unit, then return its diff and report for your verdict. Drive the verdict cycle (continue/rollback/fork/choose/accept/abort) via the supervisor tool."}
 		},
 		"required": ["prompt", "role"]
 	}`)
@@ -99,6 +100,7 @@ func (t *SupervisedTaskTool) Execute(ctx context.Context, args string) (string, 
 		Role           string `json:"role"`
 		TimeoutSeconds int    `json:"timeout_seconds"`
 		MaxLoopCycles  int    `json:"max_iterations"`
+		Review         bool   `json:"review"`
 	}
 	if err := json.Unmarshal(fixed, &params); err != nil {
 		return "", fmt.Errorf("supervised_task: invalid arguments: %w", err)
@@ -139,6 +141,17 @@ func (t *SupervisedTaskTool) Execute(ctx context.Context, args string) (string, 
 	}
 
 	timeout := resolveTaskTimeout(clampedTimeout, t.ResolveTimeout, subParams)
+
+	// Review mode: run ONE work unit and hand the diff + report back for
+	// orchestrator review instead of auto-retrying. The verdict cycle
+	// (continue/rollback/fork/choose/accept/abort) lives in the
+	// supervisor tool.
+	if params.Review {
+		return startReviewSession(ctx, supervisedSessionRuntime{
+			Runner:   t.Runner,
+			RepoPath: repoPath,
+		}, params.Prompt, params.Role, subParams, timeout)
+	}
 
 	scopeID := fmt.Sprintf("supervised:%s:%d", params.Role, time.Now().UnixNano())
 	scope, err := mgr.Create(scopeID)
@@ -376,6 +389,11 @@ func BuildSupervisedTaskSchema(roleNames []string, roleDescriptions map[string]s
 				"minimum":     1,
 				"maximum":     50,
 				"description": "Cap on sub-agent loop turns",
+			},
+			"review": map[string]any{
+				"type":        "boolean",
+				"default":     false,
+				"description": "Run in supervised review mode: complete one work unit, then return its diff and report for your verdict. Drive the verdict cycle (continue/rollback/fork/choose/accept/abort) via the supervisor tool.",
 			},
 		},
 		"required": []string{"prompt", "role"},

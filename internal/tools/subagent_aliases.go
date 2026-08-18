@@ -71,3 +71,11 @@ func WithTurnRestoreStats(ctx context.Context, stats *jobs.TurnRestoreStats) con
 func RecordTurnRestore(ctx context.Context, restoredFrom string) {
 	jobs.RecordTurnRestore(ctx, restoredFrom)
 }
+
+func WithConversationCapture(ctx context.Context, ptr *[]types.Message) context.Context {
+	return jobs.WithConversationCapture(ctx, ptr)
+}
+
+func WriteConversationCapture(ctx context.Context, msgs []types.Message) bool {
+	return jobs.WriteConversationCapture(ctx, msgs)
+}

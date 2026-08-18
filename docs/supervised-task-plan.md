@@ -1116,3 +1116,66 @@ restore on a 500-file repo, dominated by spawning three git subprocesses
 per checkpoint. Enable only on repos where correctness outweighs that
 throughput cost. See `internal/agent/runner/checkpoint_bench_test.go`
 for the numbers.
+
+---
+
+# Appendix: Supervised Review Sessions
+
+Interactive orchestrator-driven supervision on top of the attempt-level
+tool. Plan of record: `.kilo/plans/1786988112765-supervised-review-fork.md`.
+
+## What it adds
+
+`supervised_task` gains `review: true`: instead of the automatic
+rollback+retry loop, the tool runs ONE work unit and returns a **review
+envelope** (bounded diff, sub-agent report, `session_id`, allowed
+verdicts). The orchestrating agent then drives the verdict cycle via the
+`supervisor` tool:
+
+| Action | Effect |
+|---|---|
+| `continue` | Accept the unit; run the next one. Optional `guidance` becomes the next prompt. Conversation is seeded from the prior unit. |
+| `rollback` | Restore the unit-start checkpoint — files **and** conversation rewind — then run the next unit from `guidance` (the more specific prompt). |
+| `fork` | Restore the unit-start checkpoint, run `prompt_a` and `prompt_b` as two competing variants from that exact tree, capture both trees + diffs. |
+| `choose` | Apply the winning variant's tree + conversation (`winner: "a"\|"b"`), discard the loser, resume the review cycle from a fresh checkpoint. |
+| `review_diff` | Re-fetch the current diff/report without running anything. |
+| `accept` | Keep the work, prune checkpoints, close the session. |
+| `abort` | Rewind the unaccepted unit (or the fork), close the session. |
+
+## Mechanics
+
+- **Continuation is conversation-seeded.** Each dispatch carries the
+  prior unit's message history via `jobs.SubAgentParams.SeedMessages`
+  (runner → `LoopConfig.InitialMessages`). Rollback restores the
+  checkpoint's serialized conversation, so a corrected unit continues
+  from the last good point with full fidelity.
+- **Tree states are non-consuming.** shepherd-kernel-go v0.3.x adds
+  `Scope.CaptureTree` / `Scope.ApplyTree` (reusable stash+HEAD pairs)
+  and `DiffSince` — fork/choose does not consume checkpoints the way
+  restore does.
+- **One session at a time.** Starting a second review session while one
+  is open returns an error naming the active session. This matches the
+  blocking-tool guarantee that supervised execution is sequential.
+- **Cancellation is resumable.** A cancelled unit reports
+  `status: "cancelled"` but keeps the session and checkpoint registered;
+  the orchestrator can roll back or continue later.
+- **Review mode never auto-retries.** A hard unit error or empty result
+  surfaces in the envelope (`error` / `status: "empty"`) for the
+  orchestrator to judge.
+
+## Workspace custody
+
+While a review session is open, the session owns the working tree:
+`rollback` and `choose` overwrite it. Do not interleave unrelated edits
+between verdicts — they will be clobbered. Accept or abort to release
+custody.
+
+## Config
+
+No new config: review mode is a per-call `review: true` boolean on
+`supervised_task`. Role routing (`supervised: true`) is unchanged.
+
+## Kernel dependency
+
+Requires shepherd-kernel-go ≥ v0.3.1 (TreeState/DiffSince + unique
+trace intent IDs).

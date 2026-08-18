@@ -228,5 +228,8 @@ The global numeric knobs (`supervised_max_retries`, `turn_checkpoint_max`,
 3. ✅ Benchmark (phase 9). Decision: keep off by default (see phase 9
    results); overhead too high for default-on on Windows.
 4. ✅ Docs + tool description (phase 8).
-5. ⬜ Fork branching (phase 7) as a separate follow-up.
+5. ⬜ Fork branching (phase 7) — delivered as part of the supervised
+   review sessions plan (`.kilo/plans/1786988112765-supervised-review-fork.md`):
+   `supervisor` fork/choose runs two prompt variants from one checkpoint
+   via shepherd-kernel-go TreeState capture/apply (v0.3.1+).
 

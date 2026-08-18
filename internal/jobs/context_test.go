@@ -3,6 +3,8 @@ package jobs
 import (
 	"context"
 	"testing"
+
+	"github.com/buchenberg/yaah/internal/types"
 )
 
 func TestTurnRestoreStats_RecordedThroughContext(t *testing.T) {
@@ -23,4 +25,24 @@ func TestTurnRestoreStats_RecordedThroughContext(t *testing.T) {
 func TestTurnRestoreStats_NoopWithoutContextValue(t *testing.T) {
 	// Must not panic when no stats pointer was stored.
 	RecordTurnRestore(context.Background(), "cp-1")
+}
+
+func TestConversationCapture_WriteThroughContext(t *testing.T) {
+	var captured []types.Message
+	ctx := WithConversationCapture(context.Background(), &captured)
+
+	msgs := []types.Message{types.SystemMsg("sp"), types.UserMsg("work")}
+	if ok := WriteConversationCapture(ctx, msgs); !ok {
+		t.Fatal("WriteConversationCapture = false, want true with pointer stored")
+	}
+	if len(captured) != 2 || captured[1].Content != "work" {
+		t.Errorf("captured = %v, want seeded msgs", captured)
+	}
+}
+
+func TestConversationCapture_NoopWithoutContextValue(t *testing.T) {
+	// Must not panic and must report false when no pointer was stored.
+	if ok := WriteConversationCapture(context.Background(), nil); ok {
+		t.Error("WriteConversationCapture = true, want false without pointer")
+	}
 }
