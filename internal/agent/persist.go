@@ -2,7 +2,8 @@ package agent
 
 import (
 	"context"
-	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -56,7 +57,7 @@ func (p *SessionPersister) Persist(msg types.Message) {
 		toolName = msg.Name
 	}
 	m := memory.Message{
-		ID:               newMessageID(),
+		ID:               messageID(p.sessionID, p.msgIdx, msg.Role, content, msg.ReasoningContent, toolName, msg.ToolCallID, toolCallsJSON),
 		SessionID:        p.sessionID,
 		Idx:              p.msgIdx,
 		Role:             msg.Role,
@@ -116,8 +117,16 @@ func (p *SessionPersister) writeMsg(m memory.Message) error {
 	return nil
 }
 
-func newMessageID() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+// messageID derives a stable, deterministic ID from all immutable persisted
+// message fields. This makes persistence idempotent: the debounced writer
+// coalesces a re-submitted message by ID, and the embedding goroutine targets
+// a stable row. Position-keyed (session + idx) so identical content at
+// different positions stays distinct; content-keyed (all remaining fields) so
+// a changed message at the same position gets a different fingerprint.
+func messageID(sessionID string, idx int, role, content, reasoning, toolName, toolCallID, toolCalls string) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf(
+		"%s\x00%d\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s",
+		sessionID, idx, role, content, reasoning, toolName, toolCallID, toolCalls,
+	)))
+	return hex.EncodeToString(sum[:])
 }

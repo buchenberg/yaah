@@ -12,7 +12,9 @@ package memory
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -90,7 +92,7 @@ func Open(path string) (*DB, error) {
 		return nil, fmt.Errorf("create db dir: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", sqliteDSN(path))
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
@@ -112,6 +114,20 @@ func Open(path string) (*DB, error) {
 // Close closes the database connection.
 func (d *DB) Close() error {
 	return d.sql.Close()
+}
+
+// sqliteDSN appends per-connection pragmas to the SQLite DSN. The
+// modernc.org/sqlite driver applies `_pragma` query parameters to every new
+// pooled connection (busy_timeout first), unlike a one-off `PRAGMA` Exec
+// which only affects a single connection. Existing query parameters are
+// preserved. `_txlock=immediate` makes Begin() take the write lock up front,
+// so the AddMemoryDedup lookup+insert transaction is atomic.
+func sqliteDSN(path string) string {
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	return path + sep + "_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate"
 }
 
 // sanitizeFTSQuery escapes special FTS5 characters and wraps each word
@@ -160,7 +176,8 @@ func (d *DB) migrate() error {
 		source      TEXT,
 		created_at  INTEGER NOT NULL,
 		accessed_at INTEGER,
-		access_count INTEGER DEFAULT 0
+		access_count INTEGER DEFAULT 0,
+		digest      TEXT
 	);
 
 	CREATE TABLE IF NOT EXISTS todos (
@@ -275,6 +292,17 @@ func (d *DB) migrate() error {
 		d.sql.Exec("ALTER TABLE memory ADD COLUMN embedding BLOB")
 	}
 
+	// Migration: add digest column to memory for exact content dedup.
+	row = d.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('memory') WHERE name = 'digest'")
+	if err := row.Scan(&hasColumn); err != nil {
+		return fmt.Errorf("check memory.digest column: %w", err)
+	}
+	if !hasColumn {
+		if _, err := d.sql.Exec("ALTER TABLE memory ADD COLUMN digest TEXT"); err != nil {
+			return fmt.Errorf("add memory.digest column: %w", err)
+		}
+	}
+
 	// Migration: add embedding column to messages for vector search.
 	row = d.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'embedding'")
 	row.Scan(&hasColumn)
@@ -282,15 +310,28 @@ func (d *DB) migrate() error {
 		d.sql.Exec("ALTER TABLE messages ADD COLUMN embedding BLOB")
 	}
 
+	// Backfill digests for memory rows created before the digest migration.
+	if _, err := d.ReconcileMemoryDigests(); err != nil {
+		return fmt.Errorf("reconcile memory digests: %w", err)
+	}
+
 	return nil
+}
+
+// memoryDigest returns the exact content digest for a memory entry's text.
+// Used for exact dedup; a plain SHA-256 suffices because memory text is a
+// plain string (no need for shepherd's canonical-JSON key sorting).
+func memoryDigest(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
 }
 
 // AddMemory inserts a new memory entry. The caller should separately call
 // EmbedMemoryAsync to produce the embedding vector.
 func (d *DB) AddMemory(e Entry) error {
 	_, err := d.sql.Exec(
-		`INSERT INTO memory (id, text, tags, source, created_at) VALUES (?, ?, ?, ?, ?)`,
-		e.ID, e.Text, e.Tags, e.Source, e.CreatedAt,
+		`INSERT INTO memory (id, text, tags, source, created_at, digest) VALUES (?, ?, ?, ?, ?, ?)`,
+		e.ID, e.Text, e.Tags, e.Source, e.CreatedAt, memoryDigest(e.Text),
 	)
 	return err
 }
@@ -319,19 +360,38 @@ func (d *DB) EmbedMemoryAsync(id, text string) <-chan struct{} {
 
 // AddMemoryDedup adds a memory entry, skipping if text is identical to an
 // existing entry. Returns the ID of the duplicate if found, or empty string
-// if the entry was added.
+// if the entry was added. The lookup and insert run in a single write
+// transaction (the DSN sets _txlock=immediate) so concurrent dedup calls
+// cannot both observe "no match" and insert duplicate rows.
 func (d *DB) AddMemoryDedup(e Entry) (string, error) {
-	safeQuery := sanitizeFTSQuery(e.Text)
-	row := d.sql.QueryRow(`
-		SELECT m.id FROM memory m
-		JOIN memory_fts ON memory_fts.rowid = m.rowid
-		WHERE memory_fts MATCH ? LIMIT 1
-	`, safeQuery)
+	digest := memoryDigest(e.Text)
+
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
 	var dupID string
-	if err := row.Scan(&dupID); err == nil {
+	err = tx.QueryRow(`SELECT id FROM memory WHERE digest = ? LIMIT 1`, digest).Scan(&dupID)
+	if err == nil {
 		return dupID, nil
 	}
-	return "", d.AddMemory(e)
+	if err != sql.ErrNoRows {
+		return "", err
+	}
+
+	if _, err := tx.Exec(
+		`INSERT INTO memory (id, text, tags, source, created_at, digest) VALUES (?, ?, ?, ?, ?, ?)`,
+		e.ID, e.Text, e.Tags, e.Source, e.CreatedAt, digest,
+	); err != nil {
+		return "", err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return "", nil
 }
 
 // SearchMemory searches memory entries using FTS5 and bumps access counters
@@ -554,7 +614,7 @@ func (d *DB) DeleteMemory(id string) error {
 
 // UpdateMemory updates the text of an existing memory entry.
 func (d *DB) UpdateMemory(id string, text string) error {
-	result, err := d.sql.Exec(`UPDATE memory SET text = ? WHERE id = ?`, text, id)
+	result, err := d.sql.Exec(`UPDATE memory SET text = ?, digest = ? WHERE id = ?`, text, memoryDigest(text), id)
 	if err != nil {
 		return err
 	}
@@ -563,6 +623,41 @@ func (d *DB) UpdateMemory(id string, text string) error {
 		return fmt.Errorf("memory not found: %s", id)
 	}
 	return nil
+}
+
+// ReconcileMemoryDigests backfills the digest column for rows where it is
+// NULL (e.g. entries added before the digest migration). Returns the number
+// of rows updated.
+func (d *DB) ReconcileMemoryDigests() (int, error) {
+	rows, err := d.sql.Query(`SELECT id, text FROM memory WHERE digest IS NULL`)
+	if err != nil {
+		return 0, fmt.Errorf("reconcile digests: query: %w", err)
+	}
+	defer rows.Close()
+
+	type row struct {
+		id, text string
+	}
+	var pending []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.text); err != nil {
+			return 0, err
+		}
+		pending = append(pending, r)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	updated := 0
+	for _, r := range pending {
+		if _, err := d.sql.Exec(`UPDATE memory SET digest = ? WHERE id = ?`, memoryDigest(r.text), r.id); err != nil {
+			return updated, fmt.Errorf("reconcile digests: update %s: %w", r.id, err)
+		}
+		updated++
+	}
+	return updated, nil
 }
 
 // ListMemory returns the most recent memory entries.

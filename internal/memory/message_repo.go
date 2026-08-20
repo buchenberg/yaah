@@ -1,19 +1,43 @@
 package memory
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // AddMessage inserts a message into a session. When an embedder is
 // configured and the role is "user" or "assistant", the content is
 // embedded in a background goroutine so the caller is not blocked.
 func (d *DB) AddMessage(m Message) error {
-	_, err := d.sql.Exec(
-		`INSERT INTO messages (session_id, idx, role, content, reasoning_content, tool_name, tool_call_id, tool_calls, ts, id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	res, err := d.sql.Exec(
+		`INSERT INTO messages (session_id, idx, role, content, reasoning_content, tool_name, tool_call_id, tool_calls, ts, id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(session_id, idx) DO NOTHING`,
 		m.SessionID, m.Idx, m.Role, m.Content, m.ReasoningContent, m.ToolName, m.ToolCallID, m.ToolCalls, m.Timestamp, m.ID,
 	)
-	if err == nil {
-		d.embedMessageAsync(m.ID, m.Role, m.Content)
+	if err != nil {
+		return err
 	}
-	return err
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 1 {
+		d.embedMessageAsync(m.ID, m.Role, m.Content)
+		return nil
+	}
+
+	// The position is already occupied. Treat it as an idempotent retry only
+	// when the stored row carries the same content fingerprint (the
+	// deterministic ID covers all immutable fields); otherwise it is a
+	// different message and must not be silently dropped.
+	var existingID string
+	if err := d.sql.QueryRow(`SELECT id FROM messages WHERE session_id = ? AND idx = ?`, m.SessionID, m.Idx).Scan(&existingID); err != nil {
+		return err
+	}
+	if existingID != m.ID {
+		return fmt.Errorf("message conflict at (%s, %d): stored content differs", m.SessionID, m.Idx)
+	}
+	return nil
 }
 
 // embedMessageAsync embeds the content in a background goroutine and
