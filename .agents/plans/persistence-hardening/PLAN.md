@@ -61,16 +61,19 @@ applied first by the driver).
 **Change** — `internal/memory/memory.go` `Open()` (currently `sql.Open("sqlite", path)`):
 
 ```go
-dsn := path
-if !strings.Contains(dsn, "?") {
-    dsn += "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+sep := "?"
+if strings.Contains(path, "?") {
+    sep = "&"
 }
+dsn := path + sep + "_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate"
 db, err := sql.Open("sqlite", dsn)
 ```
 
 Notes:
 - `busy_timeout(5000)` mirrors shepherd (`store.go:72`).
 - `foreign_keys(1)` enables enforcement of the already-declared FK.
+- Existing query parameters are preserved (separator is `&` when a `?` is already present).
+- `_txlock=immediate` makes `Begin()` take the write lock up front, so the `AddMemoryDedup` transaction (Item 2) is atomic.
 - Leave the connection pool at its default; do **not** copy `SetMaxOpenConns(1)` (see Open Questions).
 
 **Files**: `internal/memory/memory.go`.
@@ -91,11 +94,17 @@ idempotent dedup like shepherd's content-addressed records.
 **Changes**:
 
 1. **Schema**: add a nullable `digest` column (no unique index — soft dedup via
-   `AddMemoryDedup` keeps `AddMemory`/`UpdateMemory` semantics unchanged):
+   `AddMemoryDedup` keeps `AddMemory`/`UpdateMemory` semantics unchanged). The
+   migration is guarded so repeated `Open()` is idempotent, and returns errors:
 
    ```go
    // in migrate(), alongside the existing embedding migration
-   ALTER TABLE memory ADD COLUMN digest TEXT;
+   row := d.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('memory') WHERE name = 'digest'")
+   var hasDigest bool
+   if err := row.Scan(&hasDigest); err != nil { return err }
+   if !hasDigest {
+       if _, err := d.sql.Exec("ALTER TABLE memory ADD COLUMN digest TEXT"); err != nil { return err }
+   }
    ```
 
 2. **Digest helper** in `internal/memory/memory.go`:
@@ -110,21 +119,23 @@ idempotent dedup like shepherd's content-addressed records.
    (yaah's memory text is a plain string, so a plain SHA-256 suffices — no need
    for shepherd's canonical-JSON key-sorting, which exists only for `map[string]any` payloads.)
 
-3. **`AddMemory`** stores the digest; **`AddMemoryDedup`** becomes an exact lookup:
+3. **`AddMemory`** stores the digest; **`AddMemoryDedup`** does an atomic
+   lookup+insert inside one write transaction (the DSN's `_txlock=immediate`
+   makes `Begin()` take the write lock, so concurrent dedup calls serialize):
 
    ```go
    func (d *DB) AddMemoryDedup(e Entry) (string, error) {
        digest := memoryDigest(e.Text)
+       tx, err := d.sql.Begin()
+       if err != nil { return "", err }
+       defer tx.Rollback()
        var dupID string
-       err := d.sql.QueryRow(`SELECT id FROM memory WHERE digest = ? LIMIT 1`, digest).Scan(&dupID)
-       if err == nil {
-           return dupID, nil
-       }
-       if err != sql.ErrNoRows {
-           return "", err
-       }
-       e.Digest = digest
-       return "", d.AddMemory(e)
+       err = tx.QueryRow(`SELECT id FROM memory WHERE digest = ? LIMIT 1`, digest).Scan(&dupID)
+       if err == nil { return dupID, nil }
+       if err != sql.ErrNoRows { return "", err }
+       if _, err := tx.Exec(`INSERT INTO memory (...) VALUES (...)`, ...); err != nil { return "", err }
+       if err := tx.Commit(); err != nil { return "", err }
+       return "", nil
    }
    ```
 
@@ -133,9 +144,10 @@ idempotent dedup like shepherd's content-addressed records.
 5. **Backfill** existing rows (mirrors `ReconcileEmbeddings`): a
    `ReconcileMemoryDigests` pass that sets `digest` for rows where it is `NULL`.
 
-**Normalization**: decide whether `digest` is over the raw text or
-`strings.TrimSpace(text)` — see Open Questions. Recommend `TrimSpace` to match
-"identical text" intent while tolerating trailing whitespace.
+**Normalization**: `memoryDigest` hashes the raw text exactly as stored (no
+`TrimSpace`). Every digest producer (`AddMemory`, `AddMemoryDedup`,
+`UpdateMemory`, `ReconcileMemoryDigests`) calls the same `memoryDigest` helper,
+so the rule is applied consistently.
 
 **Files**: `internal/memory/memory.go`.
 
@@ -162,23 +174,28 @@ Two consequences:
    ON CONFLICT(session_id, idx) DO NOTHING
    ```
 
-   Semantics: first write to a position wins; a retry is a no-op (matches
-   shepherd's "return prior receipt, no new records"). Skip the background
-   embed when `RowsAffected() == 0`.
+   Semantics: a retry with the same deterministic ID is a no-op; a different
+   message at the same position returns a conflict error (never silently
+   dropped). Only a newly inserted row starts background embedding.
 
 2. **ID layer — stable message ID** in `persist.go`: replace `newMessageID()`
-   with a deterministic ID derived from position + content, e.g.
+   with a deterministic ID over **all** immutable persisted fields (session,
+   position, role, content, reasoning, tool name, tool-call ID, tool-calls):
 
    ```go
-   func messageID(sessionID string, idx int, role, content string) string {
-       h := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%s\x00%s", sessionID, idx, role, content)))
+   func messageID(sessionID string, idx int, role, content, reasoning, toolName, toolCallID, toolCalls string) string {
+       h := sha256.Sum256([]byte(fmt.Sprintf(
+           "%s\x00%d\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s",
+           sessionID, idx, role, content, reasoning, toolName, toolCallID, toolCalls)))
        return hex.EncodeToString(h[:])
    }
    ```
 
    Benefits: the debouncer's `pending[m.ID]` map now coalesces a re-submitted
    message before flush, and the embedding goroutine's
-   `UPDATE messages SET embedding = ? WHERE id = ?` targets a stable row.
+   `UPDATE messages SET embedding = ? WHERE id = ?` targets a stable row. The ID
+   doubles as a content fingerprint, so `AddMessage` can detect a *different*
+   message occupying the same position (compare stored `id` on conflict).
 
    Historical rows keep their existing random IDs; no backfill required
    (ID is not part of any uniqueness constraint — `(session_id, idx)` is).
@@ -206,9 +223,9 @@ content at different turns/positions is legitimate, so dedup is position-keyed
 
 | File | Change |
 |------|--------|
-| `internal/memory/memory.go` | `_pragma` DSN (busy_timeout, foreign_keys); `digest` column + helper; `AddMemory`/`AddMemoryDedup`/`UpdateMemory` digest support; `ReconcileMemoryDigests` (wired into `migrate`) |
-| `internal/memory/message_repo.go` | `AddMessage` → `ON CONFLICT(session_id, idx) DO NOTHING`; skip embed on no-op |
-| `internal/agent/persist.go` | deterministic `messageID(...)` replacing `newMessageID()` |
+| `internal/memory/memory.go` | `_pragma` + `_txlock` DSN (preserving existing params); guarded `digest` migration with error handling; `AddMemory`/`AddMemoryDedup`/`UpdateMemory` digest support; atomic transactional dedup; `ReconcileMemoryDigests` (wired into `migrate`) |
+| `internal/memory/message_repo.go` | `AddMessage` → idempotent `ON CONFLICT(session_id, idx) DO NOTHING` with conflict validation; embed only on insert |
+| `internal/agent/persist.go` | deterministic `messageID(...)` over all immutable fields, replacing `newMessageID()` |
 
 No new dependencies (`crypto/sha256`, `encoding/hex` are stdlib).
 
@@ -217,10 +234,11 @@ No new dependencies (`crypto/sha256`, `encoding/hex` are stdlib).
 ## Testing Strategy
 
 ### Unit
-1. **Pragmas**: open a DB, assert `PRAGMA foreign_keys` is 1 and `PRAGMA busy_timeout` is 5000 from a *freshly pooled* connection (not just the `Open` caller's connection).
+1. **Pragmas**: open a DB, assert `PRAGMA foreign_keys` is 1 and `PRAGMA busy_timeout` is 5000 from a *freshly pooled* connection (not just the `Open` caller's connection); `sqliteDSN` preserves existing query params and appends the pragmas.
 2. **FK enforcement**: inserting a `messages` row for a missing session now errors.
 3. **Digest dedup**: `AddMemoryDedup` returns the existing ID for identical text; adds when text differs; `UpdateMemory` re-dedups correctly; backfill sets digests.
-4. **Message idempotency**: calling `AddMessage` twice with the same `(session_id, idx)` yields one row and no error; the debouncer coalesces a re-submitted message with the same deterministic ID.
+4. **Message idempotency**: calling `AddMessage` twice with the same `(session_id, idx)` and content yields one row and no error; a different message at the same position returns a conflict error; the debouncer coalesces a re-submitted message with the same deterministic ID.
+5. **Migration idempotency**: `Open()` twice on the same file succeeds (guarded digest column add).
 
 ### Integration
 - Run a short agent session; confirm messages persist, `yaah session show` unchanged, and `yaah memory` dedup still works.
@@ -232,9 +250,9 @@ No new dependencies (`crypto/sha256`, `encoding/hex` are stdlib).
 - Item 1: drop the `_pragma` query param to revert to WAL-only (no data change).
 - Item 2: the `digest` column is additive; revert the `AddMemoryDedup` path to
   FTS if the exact-match semantics regress any workflow.
-- Item 3: `ON CONFLICT DO NOTHING` is strictly safer than the current
-  error-on-conflict; revert to bare `INSERT` if position-overwrite semantics are
-  ever required.
+- Item 3: reverting `AddMessage` to a bare `INSERT` restores uniqueness errors
+  on conflict (not position-overwrite). If overwrite-on-conflict is ever
+  required, use an explicit `ON CONFLICT(session_id, idx) DO UPDATE` policy.
 
 ---
 
@@ -244,8 +262,7 @@ No new dependencies (`crypto/sha256`, `encoding/hex` are stdlib).
    writes + concurrent search reads suggest keeping a small pool under WAL with
    `busy_timeout`. Confirm via a quick concurrency smoke test. *Recommendation*:
    keep default pool, rely on `_pragma busy_timeout`.
-2. **Digest normalization**: raw text vs `TrimSpace`? *Recommendation*:
-   `TrimSpace` (matches "identical text" intent).
+2. **Digest normalization**: raw text (as stored) — resolved; no `TrimSpace`.
 3. **Deterministic message ID length**: full SHA-256 hex (64 chars) vs truncated
    (e.g. 32 chars)? Purely cosmetic; *Recommendation*: keep full hex, consistent
    with `memory.digest`.

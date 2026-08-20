@@ -119,12 +119,15 @@ func (d *DB) Close() error {
 // sqliteDSN appends per-connection pragmas to the SQLite DSN. The
 // modernc.org/sqlite driver applies `_pragma` query parameters to every new
 // pooled connection (busy_timeout first), unlike a one-off `PRAGMA` Exec
-// which only affects a single connection.
+// which only affects a single connection. Existing query parameters are
+// preserved. `_txlock=immediate` makes Begin() take the write lock up front,
+// so the AddMemoryDedup lookup+insert transaction is atomic.
 func sqliteDSN(path string) string {
+	sep := "?"
 	if strings.Contains(path, "?") {
-		return path
+		sep = "&"
 	}
-	return path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+	return path + sep + "_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate"
 }
 
 // sanitizeFTSQuery escapes special FTS5 characters and wraps each word
@@ -291,9 +294,13 @@ func (d *DB) migrate() error {
 
 	// Migration: add digest column to memory for exact content dedup.
 	row = d.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('memory') WHERE name = 'digest'")
-	row.Scan(&hasColumn)
+	if err := row.Scan(&hasColumn); err != nil {
+		return fmt.Errorf("check memory.digest column: %w", err)
+	}
 	if !hasColumn {
-		d.sql.Exec("ALTER TABLE memory ADD COLUMN digest TEXT")
+		if _, err := d.sql.Exec("ALTER TABLE memory ADD COLUMN digest TEXT"); err != nil {
+			return fmt.Errorf("add memory.digest column: %w", err)
+		}
 	}
 
 	// Migration: add embedding column to messages for vector search.
@@ -304,7 +311,9 @@ func (d *DB) migrate() error {
 	}
 
 	// Backfill digests for memory rows created before the digest migration.
-	d.ReconcileMemoryDigests()
+	if _, err := d.ReconcileMemoryDigests(); err != nil {
+		return fmt.Errorf("reconcile memory digests: %w", err)
+	}
 
 	return nil
 }
@@ -351,18 +360,38 @@ func (d *DB) EmbedMemoryAsync(id, text string) <-chan struct{} {
 
 // AddMemoryDedup adds a memory entry, skipping if text is identical to an
 // existing entry. Returns the ID of the duplicate if found, or empty string
-// if the entry was added.
+// if the entry was added. The lookup and insert run in a single write
+// transaction (the DSN sets _txlock=immediate) so concurrent dedup calls
+// cannot both observe "no match" and insert duplicate rows.
 func (d *DB) AddMemoryDedup(e Entry) (string, error) {
 	digest := memoryDigest(e.Text)
+
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
 	var dupID string
-	err := d.sql.QueryRow(`SELECT id FROM memory WHERE digest = ? LIMIT 1`, digest).Scan(&dupID)
+	err = tx.QueryRow(`SELECT id FROM memory WHERE digest = ? LIMIT 1`, digest).Scan(&dupID)
 	if err == nil {
 		return dupID, nil
 	}
 	if err != sql.ErrNoRows {
 		return "", err
 	}
-	return "", d.AddMemory(e)
+
+	if _, err := tx.Exec(
+		`INSERT INTO memory (id, text, tags, source, created_at, digest) VALUES (?, ?, ?, ?, ?, ?)`,
+		e.ID, e.Text, e.Tags, e.Source, e.CreatedAt, digest,
+	); err != nil {
+		return "", err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return "", nil
 }
 
 // SearchMemory searches memory entries using FTS5 and bumps access counters

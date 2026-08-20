@@ -769,12 +769,13 @@ func TestDB_SearchMessagesVectorNoEmbedder(t *testing.T) {
 }
 
 func TestDB_SQLiteDSN(t *testing.T) {
-	want := "/tmp/a.db?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+	want := "/tmp/a.db?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate"
 	if got := sqliteDSN("/tmp/a.db"); got != want {
 		t.Errorf("sqliteDSN(plain) = %q, want %q", got, want)
 	}
-	if got := sqliteDSN("/tmp/a.db?cache=shared"); got != "/tmp/a.db?cache=shared" {
-		t.Errorf("sqliteDSN(existing query) = %q", got)
+	wantQ := "/tmp/a.db?cache=shared&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_txlock=immediate"
+	if got := sqliteDSN("/tmp/a.db?cache=shared"); got != wantQ {
+		t.Errorf("sqliteDSN(existing query) = %q, want %q", got, wantQ)
 	}
 }
 
@@ -843,6 +844,39 @@ func TestDB_AddMessage_IdempotentOnSamePosition(t *testing.T) {
 	}
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message after duplicate insert, got %d", len(msgs))
+	}
+}
+
+func TestDB_AddMessage_ConflictWithDifferentContent(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := db.CreateSession(Session{ID: "sess-1", StartedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.AddMessage(Message{SessionID: "sess-1", Idx: 0, Role: "user", Content: "hello", Timestamp: 1, ID: "id-a"}); err != nil {
+		t.Fatalf("first AddMessage: %v", err)
+	}
+	// A different message at the same position must not be silently dropped.
+	err = db.AddMessage(Message{SessionID: "sess-1", Idx: 0, Role: "user", Content: "world", Timestamp: 2, ID: "id-b"})
+	if err == nil {
+		t.Fatal("expected conflict error for different content at the same position")
+	}
+
+	msgs, err := db.GetMessages("sess-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if msgs[0].Content != "hello" {
+		t.Errorf("expected first write to win, got %q", msgs[0].Content)
 	}
 }
 

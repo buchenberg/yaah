@@ -1,6 +1,9 @@
 package memory
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // AddMessage inserts a message into a session. When an embedder is
 // configured and the role is "user" or "assistant", the content is
@@ -14,10 +17,26 @@ func (d *DB) AddMessage(m Message) error {
 	if err != nil {
 		return err
 	}
-	if n, err := res.RowsAffected(); err == nil && n == 0 {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 1 {
+		d.embedMessageAsync(m.ID, m.Role, m.Content)
 		return nil
 	}
-	d.embedMessageAsync(m.ID, m.Role, m.Content)
+
+	// The position is already occupied. Treat it as an idempotent retry only
+	// when the stored row carries the same content fingerprint (the
+	// deterministic ID covers all immutable fields); otherwise it is a
+	// different message and must not be silently dropped.
+	var existingID string
+	if err := d.sql.QueryRow(`SELECT id FROM messages WHERE session_id = ? AND idx = ?`, m.SessionID, m.Idx).Scan(&existingID); err != nil {
+		return err
+	}
+	if existingID != m.ID {
+		return fmt.Errorf("message conflict at (%s, %d): stored content differs", m.SessionID, m.Idx)
+	}
 	return nil
 }
 

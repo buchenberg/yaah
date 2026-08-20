@@ -17,7 +17,7 @@ Reduce redundancy across yaah's four persistence/observability systems by consol
 
 ## Problem Statement
 
-Currently yaah maintains **two separate SQLite databases** (`~/.yaah/state.db` and `~/.yaah/traces/trace.sqlite`) that store overlapping data about tool executions, token usage, and session metadata. This creates:
+Currently yaah maintains **two separate SQLite databases** (`~/.yaah/state.db` and a Shepherd trace store at `<shepherd_trace_dir>/trace.sqlite` — configurable, opt-in, empty by default) that store overlapping data about tool executions, token usage, and session metadata. This creates:
 
 - **Storage fragmentation**: Two files to backup/migrate/manage
 - **Query fragmentation**: Different CLIs for similar data (`yaah session` vs `yaah shepherd-trace`)
@@ -53,7 +53,7 @@ Currently yaah maintains **two separate SQLite databases** (`~/.yaah/state.db` a
 
 **Location**: `internal/agent/pipeline/trace.go` + `shepherd-kernel-go`
 
-**Storage**: Separate SQLite file at `~/.yaah/traces/trace.sqlite`
+**Storage**: Separate SQLite file at `filepath.Join(shepherd_trace_dir, "trace.sqlite")` — the directory is configurable (`cfg.Agent.Default.ShepherdTraceDir`) and tracing is opt-in (empty by default).
 
 **Data Model**:
 - Facts with Declaration/Capture modes
@@ -199,11 +199,11 @@ When `OtelVerbose` is on, `RecordAssistantResponse`, `RecordConversation`, `Reco
 
 > ⚠ **Superseded.** The implementation below assumes a `shepherd.TraceStore` interface and a `facts`/`frontiers` schema that do not exist (Finding F1). Keep this section as reference only. The revised approach is:
 >
-> - **Option A — `ATTACH DATABASE`**: one connection, still two files (cosmetic only).
+> - **Option A — `ATTACH DATABASE`**: `ATTACH` is scoped to a single SQLite connection, but `NewSQLiteTraceStore` opens and owns its own `*sql.DB`, so it cannot reach an attachment on yaah's connection. This requires an upstream connection-injection API or a fork, so it is not viable as-is.
 > - **Option B — fork/vendor the store**: single file, but re-implements digest/idempotency/witness/scope; violates Non-Goals.
 > - **Option C — keep separate + Phase 0 linkage (recommended)**: two files, joined via `session_id`/`trace_id`; no schema risk.
 >
-> **Recommendation**: drop the "single file" goal; pursue Phase 0. If a single file is later required, Option A is the only change that respects the upstream schema.
+> **Recommendation**: drop the "single file" goal; pursue Phase 0. A single file would require an upstream connection-injection API or a fork (Option B); keep Option C unless that dependency change is made.
 
 **Goal (original)**: Move Shepherd trace store from separate `trace.sqlite` into the existing `state.db`.
 
@@ -431,54 +431,21 @@ yaah shepherd-trace show <id> # alias for yaah session show <id>
     └── trace.sqlite   # DEPRECATED - read-only for backward compat
 ```
 
-**Migration on first run**:
-```go
-// In memory.Open() or separate migration function
-func (d *DB) MigrateShepherdIfNeeded() error {
-    oldPath := filepath.Join(filepath.Dir(d.path), "traces", "trace.sqlite")
-    if _, err := os.Stat(oldPath); err == nil {
-        // Migrate data from old trace.sqlite to shepherd_* tables
-        oldDB, err := sql.Open("sqlite", oldPath)
-        if err != nil {
-            return err
-        }
-        defer oldDB.Close()
-        
-        // Copy facts
-        rows, err := oldDB.Query("SELECT * FROM facts")
-        // ... insert into d.sql shepherd_facts
-        
-        // Copy frontiers
-        // ...
-        
-        // Rename old file
-        os.Rename(oldPath, oldPath+".migrated")
-    }
-    return nil
-}
-```
+**Migration on first run**: not applicable — there is no `facts`/`frontiers`
+schema to migrate (the real store uses `records`/`path_entries`/`record_edges`/
+`contexts`/`append_intents`/`owner_ordinals`/`meta`/`frontiers`). No
+`MigrateShepherdIfNeeded` step is planned.
 
 ---
 
 ## File Change Summary
 
-### New Files
-| File | Purpose |
-|------|---------|
-| `internal/memory/shepherd_store.go` | SQLiteTraceStore wrapper using shared DB |
-
-### Modified Files
-| File | Changes |
-|------|---------|
-| `internal/memory/memory.go` | Add Shepherd tables to migration, MigrateShepherdIfNeeded |
-| `internal/memory/session_repo.go` | Add SessionTokenStats() method |
-| `internal/agent/pipeline/scope_init.go` | Accept *memory.DB instead of traceDir |
-| `cmd/yaah/wiring.go` | Pass memory DB to shepherd init |
-| `cmd/yaah/trace.go` | Use unified DB, update openShepherdTraceStore() |
-| `internal/agent/pipeline/config_test.go` | Update tests for new init signature |
-| `internal/agent/runner/checkpoint_integration_test.go` | Update tests for new init signature |
-
-> **Note**: the above reflects the original Phase 1/2. After revision, the concrete changes are Phase 0 files: `internal/observability/trace.go`, `internal/agent/persist.go`, `internal/memory/memory.go`, `internal/agent/pipeline/trace.go`.
+> The original Phase 1/2 file list (a `shepherd_store.go` wrapper,
+> `MigrateShepherdIfNeeded`, `SessionTokenStats`, and their tests) is
+> **non-actionable** — it depends on a `shepherd.TraceStore` interface and a
+> `facts`/`frontiers` schema that do not exist (F1). The revised Phase 0 scope
+> touches: `internal/observability/trace.go`, `internal/agent/persist.go`,
+> `internal/memory/memory.go`, `internal/agent/pipeline/trace.go`.
 
 ### Deprecated (future cleanup)
 | File/Feature | Status |
@@ -490,19 +457,13 @@ func (d *DB) MigrateShepherdIfNeeded() error {
 
 ## Testing Strategy
 
-### Unit Tests
-1. **Shepherd store wrapper**: Verify all `shepherd.TraceStore` interface methods work against `memory.DB`
-2. **Migration**: Test data migration from old `trace.sqlite` to new tables
-3. **Token stats**: Verify `SessionTokenStats()` correctly sums from Shepherd facts
+The original Phase 1/2 test plan (a `shepherd.TraceStore` wrapper test, a
+`trace.sqlite` migration test, and `SessionTokenStats()` tests) is
+**non-actionable** (F1). The revised Phase 0 scope is:
 
-### Integration Tests
-1. **End-to-end**: Run yaah session, verify data appears in both session tables and Shepherd tables
-2. **CLI**: Verify `yaah session show` displays combined data correctly
-3. **Backward compat**: Verify old `trace.sqlite` is migrated and new code works with migrated data
-
-### Performance Tests
-1. **Concurrent writes**: Verify no SQLite contention between session writes and Shepherd fact writes
-2. **Query performance**: Verify joined queries across sessions + Shepherd tables perform acceptably
+1. Root OTel span carries `session_id`; `messages` carry `trace_id`/`turn_id`.
+2. `subTraceID → parentSession` mapping is joinable.
+3. `yaah session` / `yaah shepherd-trace` still resolve a conversation end-to-end.
 
 ---
 
@@ -510,17 +471,9 @@ func (d *DB) MigrateShepherdIfNeeded() error {
 
 If issues arise during migration:
 
-1. **Phase 1 rollback**: Revert to opening separate `trace.sqlite` if migration fails
-   ```go
-   // In InitShepherdInfrastructure, fallback:
-   if migrationFailed {
-       return oldInitShepherdInfrastructure(traceDir, busBuffer)
-   }
-   ```
-
-2. **Data rollback**: Restore `trace.sqlite` from `.migrated` backup if needed
-
-3. **Feature flags**: Keep old token columns readable for fallback
+There is no data migration to roll back — the two files stay separate
+(Option C). The only reversible change is the Phase 0 linkage columns, which
+are additive.
 
 ---
 

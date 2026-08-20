@@ -57,7 +57,7 @@ func (p *SessionPersister) Persist(msg types.Message) {
 		toolName = msg.Name
 	}
 	m := memory.Message{
-		ID:               messageID(p.sessionID, p.msgIdx, msg.Role, content),
+		ID:               messageID(p.sessionID, p.msgIdx, msg.Role, content, msg.ReasoningContent, toolName, msg.ToolCallID, toolCallsJSON),
 		SessionID:        p.sessionID,
 		Idx:              p.msgIdx,
 		Role:             msg.Role,
@@ -117,12 +117,16 @@ func (p *SessionPersister) writeMsg(m memory.Message) error {
 	return nil
 }
 
-// messageID derives a stable, deterministic ID from a message's session,
-// position, role, and content. This makes persistence idempotent: the
-// debounced writer coalesces a re-submitted message by ID, and the embedding
-// goroutine targets a stable row. Position-keyed (not content-keyed) so
-// identical content at different positions stays distinct.
-func messageID(sessionID string, idx int, role, content string) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%s\x00%s", sessionID, idx, role, content)))
+// messageID derives a stable, deterministic ID from all immutable persisted
+// message fields. This makes persistence idempotent: the debounced writer
+// coalesces a re-submitted message by ID, and the embedding goroutine targets
+// a stable row. Position-keyed (session + idx) so identical content at
+// different positions stays distinct; content-keyed (all remaining fields) so
+// a changed message at the same position gets a different fingerprint.
+func messageID(sessionID string, idx int, role, content, reasoning, toolName, toolCallID, toolCalls string) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf(
+		"%s\x00%d\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s",
+		sessionID, idx, role, content, reasoning, toolName, toolCallID, toolCalls,
+	)))
 	return hex.EncodeToString(sum[:])
 }
