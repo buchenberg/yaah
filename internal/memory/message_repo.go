@@ -6,14 +6,19 @@ import "context"
 // configured and the role is "user" or "assistant", the content is
 // embedded in a background goroutine so the caller is not blocked.
 func (d *DB) AddMessage(m Message) error {
-	_, err := d.sql.Exec(
-		`INSERT INTO messages (session_id, idx, role, content, reasoning_content, tool_name, tool_call_id, tool_calls, ts, id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	res, err := d.sql.Exec(
+		`INSERT INTO messages (session_id, idx, role, content, reasoning_content, tool_name, tool_call_id, tool_calls, ts, id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(session_id, idx) DO NOTHING`,
 		m.SessionID, m.Idx, m.Role, m.Content, m.ReasoningContent, m.ToolName, m.ToolCallID, m.ToolCalls, m.Timestamp, m.ID,
 	)
-	if err == nil {
-		d.embedMessageAsync(m.ID, m.Role, m.Content)
+	if err != nil {
+		return err
 	}
-	return err
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return nil
+	}
+	d.embedMessageAsync(m.ID, m.Role, m.Content)
+	return nil
 }
 
 // embedMessageAsync embeds the content in a background goroutine and

@@ -14,6 +14,10 @@ func openTestDB(t *testing.T) *DB {
 		t.Fatalf("Open() error: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
+	// Foreign keys are now enforced, so messages need a parent session.
+	if err := db.CreateSession(Session{ID: "ses-test", StartedAt: time.Now().Unix()}); err != nil {
+		t.Fatalf("CreateSession() error: %v", err)
+	}
 	return db
 }
 

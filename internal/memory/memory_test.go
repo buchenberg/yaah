@@ -767,3 +767,162 @@ func TestDB_SearchMessagesVectorNoEmbedder(t *testing.T) {
 		t.Fatalf("expected empty when embedder is nil, got %d results", len(results))
 	}
 }
+
+func TestDB_SQLiteDSN(t *testing.T) {
+	want := "/tmp/a.db?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+	if got := sqliteDSN("/tmp/a.db"); got != want {
+		t.Errorf("sqliteDSN(plain) = %q, want %q", got, want)
+	}
+	if got := sqliteDSN("/tmp/a.db?cache=shared"); got != "/tmp/a.db?cache=shared" {
+		t.Errorf("sqliteDSN(existing query) = %q", got)
+	}
+}
+
+func TestDB_PragmasApplied(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	var fk int
+	if err := db.sql.QueryRow(`PRAGMA foreign_keys`).Scan(&fk); err != nil {
+		t.Fatal(err)
+	}
+	if fk != 1 {
+		t.Errorf("foreign_keys = %d, want 1", fk)
+	}
+
+	var bt int
+	if err := db.sql.QueryRow(`PRAGMA busy_timeout`).Scan(&bt); err != nil {
+		t.Fatal(err)
+	}
+	if bt != 5000 {
+		t.Errorf("busy_timeout = %d, want 5000", bt)
+	}
+}
+
+func TestDB_ForeignKeysEnforced(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	m := Message{SessionID: "missing-session", Idx: 0, Role: "user", Content: "hi", Timestamp: 1, ID: "m1"}
+	if err := db.AddMessage(m); err == nil {
+		t.Fatal("expected foreign key error for message with no parent session")
+	}
+}
+
+func TestDB_AddMessage_IdempotentOnSamePosition(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := db.CreateSession(Session{ID: "sess-1", StartedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	m := Message{SessionID: "sess-1", Idx: 0, Role: "user", Content: "hello", Timestamp: 1, ID: "m1"}
+	if err := db.AddMessage(m); err != nil {
+		t.Fatalf("first AddMessage: %v", err)
+	}
+	if err := db.AddMessage(m); err != nil {
+		t.Fatalf("second AddMessage (idempotent) should not error: %v", err)
+	}
+
+	msgs, err := db.GetMessages("sess-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message after duplicate insert, got %d", len(msgs))
+	}
+}
+
+func TestDB_AddMemoryDedup_ExactOnly(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := db.AddMemory(Entry{ID: "mem-1", Text: "User prefers dark mode", Source: "agent", CreatedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	// Near-duplicate (trailing punctuation) must NOT be deduped: dedup is exact.
+	dupID, err := db.AddMemoryDedup(Entry{ID: "mem-2", Text: "User prefers dark mode!", Source: "agent", CreatedAt: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dupID != "" {
+		t.Errorf("near-duplicate text should not be deduped, got %q", dupID)
+	}
+	all, _ := db.ListMemory(10)
+	if len(all) != 2 {
+		t.Errorf("expected 2 memories, got %d", len(all))
+	}
+}
+
+func TestDB_UpdateMemory_RecomputesDigest(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := db.AddMemory(Entry{ID: "mem-1", Text: "alpha", Source: "agent", CreatedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AddMemory(Entry{ID: "mem-2", Text: "beta", Source: "agent", CreatedAt: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateMemory("mem-2", "gamma"); err != nil {
+		t.Fatal(err)
+	}
+
+	dupID, err := db.AddMemoryDedup(Entry{ID: "mem-3", Text: "gamma", Source: "agent", CreatedAt: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dupID != "mem-2" {
+		t.Errorf("expected dedup against updated mem-2, got %q", dupID)
+	}
+}
+
+func TestDB_ReconcileMemoryDigests(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if _, err := db.sql.Exec(`INSERT INTO memory (id, text, tags, source, created_at) VALUES ('legacy-1', 'legacy text', NULL, 'agent', 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := db.ReconcileMemoryDigests()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 backfilled row, got %d", n)
+	}
+
+	var digest string
+	if err := db.sql.QueryRow(`SELECT digest FROM memory WHERE id = 'legacy-1'`).Scan(&digest); err != nil {
+		t.Fatal(err)
+	}
+	if digest != memoryDigest("legacy text") {
+		t.Errorf("digest = %q, want %q", digest, memoryDigest("legacy text"))
+	}
+}
