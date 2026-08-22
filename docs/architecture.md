@@ -370,9 +370,9 @@ Sub-agent tool calls are displayed indented beneath the parent's activity via `T
 
 ### TUI lifecycle display
 
-Files: `cmd/yaah/tui.go`, `internal/tui/events.go`, `internal/tui/render.go`, `internal/tui/message_component.go`
+Files: `cmd/yaah/tui.go`, `internal/tui/proxy.go`, `internal/tui/components/subagent/`, `internal/tui/components/messages/`
 
-The TUI renders each sub-agent's whole lifetime as a single tool-style line, distinct from the CLI's bracketed display.
+The TUI renders each sub-agent's whole lifetime as a single collapsible block in the conversation view, distinct from ordinary tool blocks.
 
 **Data flow:** `SubAgentStartEvent` and `SubAgentEndEvent` are published to the broker and delivered to `Model.HandleEvent`. The start event appends one `Message` with role `"subagent"` (`SubRole` = role key, `SubID` = sub-agent ID, `Content` = task prompt, `SubRunning` = true). The end event finds the matching running line by sub-agent ID (`SubAgentID` field, correlated across spawns), transitions it in place (`SubRunning` = false, duration, error), and stores the result (`SubResult`, from the end event's `Result` field), displayed via the line's expand toggle. No separate end message is appended, and the `spawn_subagent` tool result is suppressed — only the single sub-agent line carries the lifecycle (see [TUI component system](./tui-components.md)).
 
@@ -1002,8 +1002,8 @@ The agent loop creates the broker and `BrokerView` internally in `applyDefaults`
 
 | Consumer | View impl | File |
 |----------|-----------|------|
-| TUI | `Model.HandleEvent` (type switch) | `internal/tui/tui.go` |
-| REPL | `terminalView` / `replView` | `cmd/yaah/agent_frame.go` |
+| TUI | `App.HandleEvent` (type switch, via `tui.Proxy`) | `internal/tui/proxy.go` |
+| REPL | `terminalView` / `replView` | `cmd/yaah/view_terminal.go` |
 | Sub-agents | `agent.NoopView` | `internal/agent/runner/runner.go` |
 | MCP serve | `agent.NoopView` | `cmd/yaah/serve.go` |
 | ACP serve | `acp.View` + `acp.ViewWithWrite` | `internal/acp/view.go` |
@@ -1020,17 +1020,13 @@ The engine-view boundary was refactored in PRs #60 and #62 (plan: `.agents/plans
 
 Files: `cmd/yaah/tui.go`, `internal/tui/`
 
-The TUI is a [bubbletea](https://github.com/charmbracelet/bubbletea) application running the agent loop in a background goroutine. Communication from the agent goroutine to the TUI goes through the typed event broker — the agent loop publishes `Event` values to the internal `pubsub.Broker[Event]`, and the `BrokerView` forwarder delivers them to `Model.HandleEvent`.
+The TUI is a [tview](https://github.com/rivo/tview)/[tcell](https://github.com/gdamore/tcell) application running the agent loop in a background goroutine. Communication from the agent goroutine to the TUI goes through the typed event broker — the agent loop publishes `Event` values to the internal `pubsub.Broker[Event]`, and a forwarder delivers them to the app's `agent.View` implementation (`tui.Proxy`), which funnels mutations through an event queue onto the tview main goroutine (`QueueUpdate` for plain updates, debounced direct writes for streaming token deltas).
 
-**Data flow:** Agent events (tokens, tool starts/results, sub-agent lifecycle, thinking text, done) are published as typed structs to the broker. `Model.HandleEvent` type-switches on the concrete event type and maps each to state transitions: appending `Message` entries for tokens, tool results, and sub-agent brackets; toggling spinner state; updating the status bar; or setting approval modals via `ControlMsg`.
+**Layout:** Pages → Flex hierarchy with a conversation view (collapsible tool/reasoning/sub-agent blocks rendered by components under `internal/tui/components/`), an info pane (session/context/MCP/config sections), a todo sidebar, a background-jobs pane, and a multi-line input. All colors come from the shared theme in `internal/tui/colors/theme.go`.
 
-**Message rendering:** `renderMessages` in `render.go` switches on `Message.Role` (`"user"`, `"assistant"`, `"tool"`, `"subagent-start"`, `"subagent-end"`, `"system"`). Tool messages are collapsible (▶/▼), styled by `toolStyle`, and display a header extracted from `ToolName` and `ToolArgs`. Sub-agent brackets use `subAgentStartStyle` (bold) and `subAgentEndStyle`.
+**Command palette:** `ctrl+p` (or typing `:`) opens a command palette (`:help`, `:clear`, `:compact`, `:banner`, `:model`, `:search`, `:steer`, `:verbose`, `:stop`, `:quit`). `:model` queries providers' model lists and filters live; selection swaps provider/model mid-session.
 
-**Command palette:** Typing `:` in the TUI opens a command palette (`:help`, `:clear`, `:compact`, `:banner`, `:model`, `:quit`). `:model` queries providers' model lists and filters live.
-
-The TUI renders through a component system — stateless renderers for
-messages, expandables, palettes, header, and status bar, all styled from the
-shared theme. Full reference: [TUI component system](./tui-components.md).
+Component inventory and rendering rules: [TUI component system](./tui-components.md).
 
 ---
 

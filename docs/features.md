@@ -7,22 +7,23 @@ for configuration see [configuration.md](./configuration.md).
 
 ## Rich terminal interface
 
-`yaah tui` launches a full Bubble Tea terminal UI with:
+`yaah tui` launches a full-screen tview-based terminal UI with:
 
 - Streaming token-by-token responses as I think
-- Collapsible reasoning/thinking blocks (DeepSeek R1, Claude) — toggle with
-  `ctrl+t`
-- Inline tool call cards showing what I'm running, how long it took, and the
-  result
+- Collapsible reasoning/thinking blocks — toggle with `ctrl+r`
+- Collapsible tool call cards showing what I'm running, how long it took, and
+  the result (`ctrl+t` toggles all tool blocks)
 - Sub-agent dispatch cards with role, duration, and error status
-- A command palette (`:`) with `:help`, `:clear`, `:compact`, `:banner`,
-  `:model`, `:steer`, `:copyview`, `:quit`, and `:stop`
-- Search (`/`) through response history
-- `ctrl+y` to copy the last response
-- Mouse wheel, page up/down, home/end navigation
-- Footer bar with the most important keybindings
-- Todo list sidebar tracking in-flight tasks
+- A command palette (`ctrl+p` or `:`) with `:help`, `:clear`, `:compact`,
+  `:banner`, `:model`, `:search`, `:steer`, `:verbose`, `:quit`, and `:stop`
+- Search (`:search <query>`) through response history
+- Paned layout: conversation, info pane (session/context/MCP/config), todo
+  sidebar, and background sub-agent jobs
+- Mouse wheel and keyboard navigation throughout
 - Input history and expandable multi-line input
+
+See [architecture.md](./architecture.md) for how the UI consumes typed agent
+events, and `internal/tui/components/` for the component inventory.
 
 ## Interactive REPL
 

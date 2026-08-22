@@ -265,7 +265,6 @@ type Config struct {
 	Hooks         Hooks                      `yaml:"hooks"`
 	Editor        string                     `yaml:"editor"`
 	Observability ObservabilityConfig        `yaml:"observability"`
-	TUI           TUIConfig                  `yaml:"tui"`
 	Embedding     EmbeddingConfig            `yaml:"embedding"`
 }
 
@@ -280,10 +279,6 @@ type EmbeddingConfig struct {
 	// Model is the embedding model name sent to the /v1/embeddings
 	// endpoint. Required when Provider is set.
 	Model string `yaml:"model"`
-}
-
-type TUIConfig struct {
-	Verbose bool `yaml:"verbose"`
 }
 
 // ObservabilityConfig holds OpenTelemetry tracing and metrics settings.
@@ -390,6 +385,15 @@ func Load() (*Config, error) {
 	cfg := defaultConfig()
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("cannot parse config %s: %w", path, err)
+	}
+
+	// The `tui:` stanza was removed with the bubbletea TUI (2026-08-21);
+	// warn once so upgraded configs know the key is dead.
+	var rawKeys map[string]yaml.Node
+	if err := yaml.Unmarshal(data, &rawKeys); err == nil {
+		if _, ok := rawKeys["tui"]; ok {
+			fmt.Fprintf(os.Stderr, "warning: config key `tui:` is no longer used; toggle verbosity inside the TUI with :verbose\n")
+		}
 	}
 
 	if cfg.Hooks.Dir != "" {

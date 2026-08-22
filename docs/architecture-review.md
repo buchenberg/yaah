@@ -1,5 +1,11 @@
 # yaah — Architectural Review
 
+> **SUPERSEDED 2026-08-21:** the recommendation below was revisited and reversed —
+> `tui2` was promoted to be THE `yaah tui` (package renamed `internal/tui`, type
+> `App`, bubbletea stack removed from go.mod). See
+> `.kilo/plans/1787751687000-tui2-promotion.md`. The comparison and tui2 deep-dive
+> below are preserved as historical record.
+
 > Review date: 2026-08-07
 > Scope: full codebase, ~51.7k LOC across 345 Go files (89 test files), Go 1.25.
 > State at review: builds clean (`go build ./...`), `go vet ./...` clean, on commit `dd3ef72`.

@@ -18,3 +18,13 @@ func TestTuiCmd_isRegistered(t *testing.T) {
 		t.Errorf("tui command not registered with rootCmd; got commands: %v", rootCmd.Commands())
 	}
 }
+
+// TestTui2Cmd_removed ensures the legacy experimental command name is gone
+// after tui2 was promoted to `yaah tui`.
+func TestTui2Cmd_removed(t *testing.T) {
+	for _, c := range rootCmd.Commands() {
+		if c.Name() == "tui2" {
+			t.Errorf("tui2 command still registered with rootCmd; it must be removed after promotion")
+		}
+	}
+}

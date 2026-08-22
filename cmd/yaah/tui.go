@@ -5,27 +5,31 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"sync"
+	"strings"
+	"time"
 
-	tea "charm.land/bubbletea/v2"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-
-	"github.com/buchenberg/yaah/internal/agent"
-	"github.com/buchenberg/yaah/internal/mcp"
-	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/tui"
 	"github.com/buchenberg/yaah/internal/types"
-	zone "github.com/lrstanley/bubblezone/v2"
 	"github.com/spf13/cobra"
 )
 
+// Removed with the bubbletea TUI: the TUI session is no longer exposed as
+// an MCP server. The flags remain (hidden) as deprecation stubs so scripts
+// get a migration hint instead of "unknown flag".
 var (
-	tuiMCP     bool
-	tuiMCPHTTP string
-	tuiMCPBuf  *observability.BufferingSpanProcessor
+	tuiMCPDeprecated     bool
+	tuiMCPHTTPDeprecated string
 )
+
+func init() {
+	rootCmd.AddCommand(tuiCmd)
+	tuiCmd.Flags().BoolVar(&tuiMCPDeprecated, "mcp", false, "removed: use `yaah serve` for MCP over stdio")
+	tuiCmd.Flags().StringVar(&tuiMCPHTTPDeprecated, "mcp-http", "", "removed: use `yaah serve --http <addr>`")
+	_ = tuiCmd.Flags().MarkHidden("mcp")
+	_ = tuiCmd.Flags().MarkHidden("mcp-http")
+}
 
 var tuiCmd = &cobra.Command{
 	Use:   "tui",
@@ -33,145 +37,129 @@ var tuiCmd = &cobra.Command{
 	Long:  `Launch the interactive terminal UI with rich chat display, streaming, and tool call visualization.`,
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if tuiMCPDeprecated {
+			return fmt.Errorf("tui --mcp was removed; use `yaah serve` for MCP over stdio")
+		}
+		if tuiMCPHTTPDeprecated != "" {
+			return fmt.Errorf("tui --mcp-http was removed; use `yaah serve --http %s`", tuiMCPHTTPDeprecated)
+		}
 		return runTUI()
 	},
 }
 
-func init() {
-	tuiCmd.Flags().BoolVar(&tuiMCP, "mcp", false, "expose TUI session as MCP server over stdio")
-	tuiCmd.Flags().StringVar(&tuiMCPHTTP, "mcp-http", "", "expose TUI session as MCP server at this HTTP address (e.g. 127.0.0.1:7334)")
-	rootCmd.AddCommand(tuiCmd)
-}
-
-// runTUI starts the bubbletea TUI.
 func runTUI() error {
-	// Suppress stderr globally while the TUI is active. Anything written to
-	// stderr (MCP warnings, tool prompts, etc.) would bleed through the
-	// alt-screen and break the layout. We restore stderr on exit.
-	origStderr := os.Stderr
-	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
-	if err == nil {
-		os.Stderr = devNull
-		log.SetOutput(devNull)
-	}
-	defer func() {
-		os.Stderr = origStderr
-		if devNull != nil {
-			devNull.Close()
-		}
-	}()
-
-	zone.NewGlobal()
-
-	// Detect and apply the theme (respects NO_COLOR, YAah_THEME env var,
-	// and terminal background).
-	tui.ApplyTheme(tui.DetectTheme())
-
-	if tuiMCP || tuiMCPHTTP != "" {
-		tuiMCPBuf = observability.NewBufferingSpanProcessor()
-		extraOtelProcessors = []sdktrace.SpanProcessor{tuiMCPBuf}
-		otelInMemoryOnly = true
-		defer func() {
-			extraOtelProcessors = nil
-			otelInMemoryOnly = false
-		}()
-	}
-
 	sess, err := newAgentSession()
 	if err != nil {
 		return fmt.Errorf("session: %w", err)
 	}
 	defer sess.close()
 
-	cfg := sess.cfg
-	cwd, _ := os.Getwd()
-
 	controlCh := make(chan types.CtrlMsg, 64)
 	sess.SetCtrlCh(controlCh)
 
-	tuiMCPInfos := sess.MCPInfos()
+	app := tui.New(version)
 
-	// Create view once, fill program pointer after tea.NewProgram
-	var prog *tea.Program
-	fwd := &agentViewFwd{}
-	sess.SetView(fwd)
+	app.SetProvider(sess.ProviderName())
+	app.SetModel(sess.ModelName())
 
-	var cancelAgent context.CancelFunc // accessed only from bubbletea goroutine (OnSubmit/OnAbort) — no mutex needed
-	m := tui.New(tui.Config{
-		Provider:      sess.ProviderName(),
-		Model:         sess.ModelName(),
-		CWD:           cwd,
-		ContextWindow: providers.ResolveWindow(cfg.Agent.Default.Model, cfg.Agent.Default.ContextWindow),
-		Version:       version,
-		Verbose:       cfg.TUI.Verbose,
-		OnSubmit: func(input string) {
-			ctx, cancel := context.WithCancel(context.Background())
-			cancelAgent = cancel
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-						fmt.Fprintf(os.Stderr, "agent panic: %v\n", r)
-						if prog != nil {
-							prog.Kill()
-						}
-					}
-				}()
-				sess.RunPrompt(ctx, input)
-			}()
-		},
-		OnFollowUp: func(text string) {
-			sess.FollowUp(text)
-		},
-		OnSteer: func(text string) {
-			sess.Steer(text)
-		},
-		OnQuit: func() {},
-		OnAbort: func() {
-			if cancelAgent != nil {
-				cancelAgent()
-				cancelAgent = nil
-			}
-		},
-		OnCompact: func() {
-			go sess.Compact()
-		},
-		OnModel: func(pName, mName string) {
-			sess.SetModel(pName, mName)
-		},
-		OnLogin: func() {
-			go tuiLogin(sess.cfg, prog)
-		},
-		OnLogout: func() {
-			go tuiLogout(sess.cfg, prog)
-		},
-	})
-
-	// Show MCP server status.
-	m.SetMCPInfos(tuiMCPInfos)
-	m.RegisterCommand(":mcp", "Show MCP server status")
-
-	// Panic recovery: catch panics in the main goroutine. When the TUI is
-	// running, trigger bubbletea's cleanup to restore the terminal (disable
-	// mouse reporting, raw mode, etc.). If the program hasn't started yet,
-	// there's nothing to clean up.
-	defer func() {
-		if r := recover(); r != nil {
-			fmt.Fprintf(origStderr, "yaah panic: %v\n", r)
-			if prog != nil {
-				prog.Kill()
-			}
-			os.Exit(1)
+	cfg := sess.cfg
+	subModel := cfg.Agent.SubAgent.Model
+	if subModel == "" {
+		subModel = cfg.Agent.Default.Model
+	}
+	subProvider := cfg.Agent.SubAgent.Provider
+	if subProvider == "" {
+		subProvider = sess.ProviderName()
+	}
+	mc := cfg.Agent.Middleware
+	var pipeline []string
+	if len(mc.Enabled) > 0 {
+		pipeline = mc.Enabled
+	} else {
+		defaults := []string{"steer", "followup", "compaction", "soft_prune", "approval", "tool_concurrency", "loop_detection", "staleness"}
+		disabled := make(map[string]bool, len(mc.Disabled))
+		for _, d := range mc.Disabled {
+			disabled[d] = true
 		}
+		for _, name := range defaults {
+			if !disabled[name] {
+				pipeline = append(pipeline, name)
+			}
+		}
+	}
+	app.SetConfig(
+		cfg.Agent.SubAgent.Provider != "" || cfg.Agent.SubAgent.Model != "",
+		subProvider,
+		cfg.Agent.SubAgent.MaxConcurrency,
+		subModel,
+		cfg.Embedding.Provider != "" && cfg.Embedding.Model != "",
+		cfg.Embedding.Model,
+		pipeline,
+	)
+
+	names := make(map[string]string)
+	for key, p := range cfg.Providers {
+		if p.Name != "" {
+			names[key] = p.Name
+		}
+	}
+	// Fetch model lists in the background so a slow or unreachable
+	// provider endpoint never delays TUI launch; the control channel is
+	// buffered and the control loop starts inside app.Run().
+	go func() {
+		controlCh <- &types.CtrlModelList{Models: providers.FetchAllModels(context.Background(), cfg, makeModelLister), ProviderNames: names}
 	}()
 
-	// Install suspend/resume signal handlers (no-op on Windows).
-	stopSignals := installSignalHandlers()
-	defer stopSignals()
+	app.OnModelSelect = func(model string) {
+		parts := strings.SplitN(model, "/", 2)
+		var providerName, modelName string
+		if len(parts) == 2 {
+			providerName = parts[0]
+			modelName = parts[1]
+		} else {
+			providerName = parts[0]
+		}
+		sess.SetModel(providerName, modelName)
+		app.SetProvider(providerName)
+		app.SetModel(modelName)
+	}
 
-	prog = tea.NewProgram(m)
-	fwd.program = prog // fill program pointer before first RunPrompt
+	var cancelAgent context.CancelFunc
+	app.OnSubmit = func(input string) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancelAgent = cancel
+		app.AddUserMessage(input)
+		app.ShowThinking()
+		go sess.RunPrompt(ctx, input)
+	}
+	app.OnAbort = func() {
+		app.HideThinking()
+		if cancelAgent != nil {
+			cancelAgent()
+			cancelAgent = nil
+		}
+	}
+	app.OnCompact = func() {
+		go sess.Compact()
+	}
+	app.OnClear = func() {}
+	app.OnSteer = func(text string) {
+		sess.Steer(text)
+	}
+	app.OnFollowUp = func(text string) {
+		sess.FollowUp(text)
+	}
+	app.OnStop = func() {
+		app.HideThinking()
+		if cancelAgent != nil {
+			cancelAgent()
+			cancelAgent = nil
+		}
+	}
 
-	// Wire the question tool handler for TUI modal dialogs.
+	app.ControlCh = controlCh
+	sess.SetView(app)
+
 	if qt := sess.toolReg.Get("question"); qt != nil {
 		if qtp, ok := qt.(*tools.QuestionTool); ok {
 			qtp.Handler = func(entries []tools.QuestionEntry) []string {
@@ -182,13 +170,13 @@ func runTUI() error {
 					for i, o := range e.Options {
 						opts[i] = types.CtrlOption{Label: o.Label, Description: o.Description}
 					}
-					prog.Send(&types.CtrlQuestion{
+					controlCh <- &types.CtrlQuestion{
 						Header:   e.Header,
 						Question: e.Question,
 						Options:  opts,
 						Multiple: e.Multiple,
 						AnswerCh: ch,
-					})
+					}
 					answer := <-ch
 					answers = append(answers, fmt.Sprintf("%s: %s", e.Header, answer))
 				}
@@ -197,53 +185,46 @@ func runTUI() error {
 		}
 	}
 
-	go func() {
-		for msg := range controlCh {
-			prog.Send(msg)
+	sess.SetApproveFn(func(name, args string) bool {
+		ch := make(chan bool, 1)
+		select {
+		case controlCh <- &types.CtrlApproval{
+			Name:      name,
+			Args:      args,
+			ApproveCh: ch,
+		}:
+		default:
+			return false
+		}
+		select {
+		case approved := <-ch:
+			return approved
+		case <-time.After(30 * time.Second):
+			return false
+		}
+	})
+
+	// Suppress stderr while the TUI is on the alt screen. Anything written
+	// to stderr (slow-refresh logs, MCP warnings, tool output) would bleed
+	// through and corrupt the layout.
+	origStderr := os.Stderr
+	devNull, devNullErr := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if devNullErr == nil {
+		os.Stderr = devNull
+		log.SetOutput(devNull)
+	}
+	defer func() {
+		os.Stderr = origStderr
+		log.SetOutput(origStderr)
+		if devNull != nil {
+			devNull.Close()
+		}
+	}()
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(origStderr, "TUI panic: %v\n", r)
 		}
 	}()
 
-	if tuiMCP || tuiMCPHTTP != "" {
-		srv := mcp.NewServer("yaah-tui", version)
-		var mu sync.Mutex
-		var totalTokens types.Usage
-		var promptCount int
-		var sessPtr *agentSession = sess
-		registerServeTools(srv, &mu, &totalTokens, &promptCount, tuiMCPBuf, &sessPtr, nil, nil)
-
-		if tuiMCPHTTP != "" {
-			httpSrv := mcp.NewHTTPServer(srv, tuiMCPHTTP)
-			go func() { _ = httpSrv.Start(context.Background()) }()
-		} else {
-			go func() { _ = srv.Serve(context.Background(), os.Stdin, os.Stdout) }()
-		}
-	}
-
-	// Pre-fetch model lists from all providers in the background.
-	go func() {
-		names := make(map[string]string)
-		for key, p := range cfg.Providers {
-			if p.Name != "" {
-				names[key] = p.Name
-			}
-		}
-		models := providers.FetchAllModels(context.Background(), cfg, makeModelLister)
-		controlCh <- &types.CtrlModelList{Models: models, ProviderNames: names}
-	}()
-
-	if _, err := prog.Run(); err != nil {
-		return fmt.Errorf("TUI error: %w", err)
-	}
-
-	return nil
-}
-
-// agentViewFwd implements agent.View and forwards events to a
-// bubbletea Program via Send, which is goroutine-safe.
-type agentViewFwd struct {
-	program *tea.Program
-}
-
-func (f *agentViewFwd) HandleEvent(evt agent.Event) {
-	f.program.Send(evt)
+	return app.Run()
 }

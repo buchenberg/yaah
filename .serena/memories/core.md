@@ -9,7 +9,7 @@ Config at `~/.yaah/`, skills at `./.agents/` (project) and `~/.agents/` (user).
 - `cmd/yaah/` — cobra CLI commands (root, serve, tui, web, acp, config, doctor, etc.)
 - `internal/agent/` — agent loop, typed events, tool dispatch, context, hooks, persistence
 - `internal/tools/` — all built-in tools (read, write, edit, grep, glob, bash, powershell, git, etc.)
-- `internal/tui/` — bubbletea TUI (component system)
+- `internal/tui/` — tview TUI (paned layout, components/ subpackages)
 - `internal/mcp/` — MCP client + server (stdio + HTTP)
 - `internal/memory/` — SQLite + FTS5 (sessions, messages, memory store)
 - `internal/providers/` — OpenAI & Anthropic API clients

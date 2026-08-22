@@ -40,8 +40,8 @@ yaah/
 │   ├── jobs/                    # Background sub-agent jobs (manager, TaskRunner, I/O contract)
 │   ├── memory/                  # SQLite persistence, FTS5, and vector embeddings
 │   │
-│   ├── tui/                     # Bubble Tea TUI
-│   │   └── tui.go               # 1891 lines - Main TUI model and rendering
+│   ├── tui/                     # tview TUI
+│   │   └── app.go               # App struct, event queue, refresh loop (+ components/)
 │   │
 │   ├── tools/                   # Built-in tools (30+ tools)
 │   │   ├── tools.go            # Tool interface and registry
@@ -56,9 +56,9 @@ yaah/
 
 | File | Lines | Primary Responsibilities |
 |------|-------|--------------------------|
-| `internal/tui/tui.go` | ~1891 | TUI Model struct, View rendering, Input handling, Event handling |
+| `internal/tui/app.go` | ~440 | App struct, event queue, layout, refresh loop |
 | `internal/agent/agent.go` | ~770 | Loop struct, Run() method, Turn processing, Compaction |
-| `cmd/yaah/agent_frame.go` | ~350 | Loop construction, Tool wiring (session in session.go, wiring in wiring.go) |
+| `cmd/yaah/wiring.go` | ~400 | Session construction, tool registration (composition root) |
 | `internal/agent/agent_context.go` | ~200 | `*Loop` methods: `compactContext`, `trimContext`, `ForceCompact`, `EstimatedTokens` (pure helpers extracted to `agent/context/`) |
 | `internal/agent/agent_tools.go` | ~250 | Tool execution, Result collection |
 
@@ -104,60 +104,13 @@ yaah follows these **general guidelines** for file organization:
 
 ## Proposed File Splits
 
-### 1. `internal/tui/tui.go` → Split into 4-5 files
+### 1. ~~`internal/tui/tui.go` → Split into 4-5 files~~ ✅ Done differently
 
-**Current:** 1891 lines with Model struct, View rendering, Input handling, Event handling, Utility functions
-
-**Proposed Structure:**
-
-```
-internal/tui/
-├── model.go              # Model struct definition (~200 lines)
-│                           # - Type definition
-│                           # - Config struct
-│                           # - New() constructor
-│                           # - Basic getters/setters
-│
-├── view.go               # View rendering (~500 lines)
-│                           # - View() method (main render)
-│                           # - Helper rendering functions
-│                           # - Layout calculations
-│
-├── messages.go           # Message handling (~400 lines)
-│                           # - AddMessage()
-│                           # - AddAssistantMessage()
-│                           # - AddToolResult()
-│                           # - Message formatting
-│
-├── input.go              # Input handling (~300 lines)
-│                           # - handleKeyPress()
-│                           # - handleMouseClick()
-│                           # - Command mode handling
-│                           # - Search mode handling
-│
-├── events.go             # Agent event handling (~400 lines)
-│                           # - HandleEvent() method
-│                           # - Event-specific handlers
-│                           # - Control message handling
-│
-├── utils.go              # Utility functions (~200 lines)
-│                           # - osc8Link()
-│                           # - injectHyperlinks()
-│                           # - splitRow()
-│                           # - isWideRune()
-│                           # - Tree rendering helpers
-│
-└── theme.go              # Already separate - styling
-```
-
-**Dependencies:** All files in same package, no circular dependencies
-
-**Migration Steps:**
-1. Create new files with appropriate code sections
-2. Update imports in each file (none needed - same package)
-3. Run `go build ./internal/tui/` to verify
-4. Run tests: `go test ./internal/tui/...`
-5. Commit each split as separate PR for easier review
+The old bubbletea TUI was removed on 2026-08-21; the tview TUI (promoted from
+`tui2`) already follows the one-concern-per-file layout this split proposed:
+`app.go` (App struct + refresh loop), `proxy.go` (agent.View adapter),
+`event_queue.go`, `panes.go`, `view.go`, `state.go`, `commands.go`,
+`input.go`, plus per-component packages under `internal/tui/components/`.
 
 ### 2. `internal/agent/agent.go` → Split into 5-6 files
 
@@ -437,9 +390,9 @@ golangci-lint run ./...
 
 1. ✅ **Documentation** - ADRs and code organization guidelines (DONE)
 2. ✅ **Extract `internal/agent/context/`** — Pure helpers moved to a leaf package (DONE, Phase 2A)
-3. ⏳ **Split `internal/tui/tui.go`** - Largest file, most in need of splitting
+3. ✅ **Split `internal/tui/tui.go`** - Resolved by TUI replacement (tview app already decomposed)
 4. ⏳ **Split `internal/agent/agent.go`** - Core file, but well-structured
-5. ⏳ **Split `cmd/yaah/agent_frame.go`** - Already partially split (session in session.go, wiring in wiring.go)
+5. ⏳ **Split `cmd/yaah/wiring.go`** - Composition root, partially split (session.go, wiring*.go)
 
 ### Medium Priority (Nice to Have)
 

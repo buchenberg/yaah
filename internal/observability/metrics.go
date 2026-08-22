@@ -114,25 +114,25 @@ func initMetrics() {
 	)
 
 	tuiQueueEvents, _ = meter.Int64Counter(
-		"yaah.tui2.ui_queue.events",
-		metric.WithDescription("TUI2 UI queue events by outcome and type"),
+		"yaah.tui.ui_queue.events",
+		metric.WithDescription("TUI UI queue events by outcome and type"),
 	)
 	tuiQueueDepth, _ = meter.Int64Histogram(
-		"yaah.tui2.ui_queue.depth",
-		metric.WithDescription("Sampled TUI2 UI queue depth"),
+		"yaah.tui.ui_queue.depth",
+		metric.WithDescription("Sampled TUI UI queue depth"),
 	)
 	tuiRefreshCount, _ = meter.Int64Counter(
-		"yaah.tui2.refresh.count",
-		metric.WithDescription("Number of TUI2 refresh renders"),
+		"yaah.tui.refresh.count",
+		metric.WithDescription("Number of TUI refresh renders"),
 	)
 	tuiRefreshDur, _ = meter.Int64Histogram(
-		"yaah.tui2.refresh.duration_ms",
-		metric.WithDescription("TUI2 refresh duration in milliseconds"),
+		"yaah.tui.refresh.duration_ms",
+		metric.WithDescription("TUI refresh duration in milliseconds"),
 		metric.WithUnit("ms"),
 	)
 	tuiRefreshCad, _ = meter.Int64Histogram(
-		"yaah.tui2.refresh.cadence_ms",
-		metric.WithDescription("Milliseconds since previous TUI2 refresh"),
+		"yaah.tui.refresh.cadence_ms",
+		metric.WithDescription("Milliseconds since previous TUI refresh"),
 		metric.WithUnit("ms"),
 	)
 }
