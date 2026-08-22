@@ -2,7 +2,7 @@ package tui
 
 // AddUserMessage appends a styled user message to the conversation.
 func (t *App) AddUserMessage(text string) {
-	t.appendMessage(t.Theme.Tag(t.Theme.User, "You: ") + text + "\n")
+	t.appendMessage(t.Theme.Tag(t.Theme.User, "🍖 ") + text + "\n")
 }
 
 // addAssistantResponse stores raw markdown in the conversation log.
