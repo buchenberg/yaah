@@ -147,7 +147,3 @@ func (t *App) flushPendingTokens() bool {
 	t.isStreaming.Store(false)
 	return true
 }
-
-func (t *App) HandleContextInfo(tokens, window int) {
-	t.queueContextInfoUpdate(tokens, window)
-}

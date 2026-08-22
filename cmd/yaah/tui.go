@@ -3,6 +3,7 @@ package yaah
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -14,8 +15,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Removed with the bubbletea TUI: the TUI session is no longer exposed as
+// an MCP server. The flags remain (hidden) as deprecation stubs so scripts
+// get a migration hint instead of "unknown flag".
+var (
+	tuiMCPDeprecated     bool
+	tuiMCPHTTPDeprecated string
+)
+
 func init() {
 	rootCmd.AddCommand(tuiCmd)
+	tuiCmd.Flags().BoolVar(&tuiMCPDeprecated, "mcp", false, "removed: use `yaah serve` for MCP over stdio")
+	tuiCmd.Flags().StringVar(&tuiMCPHTTPDeprecated, "mcp-http", "", "removed: use `yaah serve --http <addr>`")
+	_ = tuiCmd.Flags().MarkHidden("mcp")
+	_ = tuiCmd.Flags().MarkHidden("mcp-http")
 }
 
 var tuiCmd = &cobra.Command{
@@ -24,6 +37,12 @@ var tuiCmd = &cobra.Command{
 	Long:  `Launch the interactive terminal UI with rich chat display, streaming, and tool call visualization.`,
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if tuiMCPDeprecated {
+			return fmt.Errorf("tui --mcp was removed; use `yaah serve` for MCP over stdio")
+		}
+		if tuiMCPHTTPDeprecated != "" {
+			return fmt.Errorf("tui --mcp-http was removed; use `yaah serve --http %s`", tuiMCPHTTPDeprecated)
+		}
 		return runTUI()
 	},
 }
@@ -84,7 +103,12 @@ func runTUI() error {
 			names[key] = p.Name
 		}
 	}
-	controlCh <- &types.CtrlModelList{Models: providers.FetchAllModels(context.Background(), cfg, makeModelLister), ProviderNames: names}
+	// Fetch model lists in the background so a slow or unreachable
+	// provider endpoint never delays TUI launch; the control channel is
+	// buffered and the control loop starts inside app.Run().
+	go func() {
+		controlCh <- &types.CtrlModelList{Models: providers.FetchAllModels(context.Background(), cfg, makeModelLister), ProviderNames: names}
+	}()
 
 	app.OnModelSelect = func(model string) {
 		parts := strings.SplitN(model, "/", 2)
@@ -180,9 +204,21 @@ func runTUI() error {
 		}
 	})
 
+	// Suppress stderr while the TUI is on the alt screen. Anything written
+	// to stderr (slow-refresh logs, MCP warnings, tool output) would bleed
+	// through and corrupt the layout.
 	origStderr := os.Stderr
+	devNull, devNullErr := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if devNullErr == nil {
+		os.Stderr = devNull
+		log.SetOutput(devNull)
+	}
 	defer func() {
 		os.Stderr = origStderr
+		log.SetOutput(origStderr)
+		if devNull != nil {
+			devNull.Close()
+		}
 	}()
 	defer func() {
 		if r := recover(); r != nil {

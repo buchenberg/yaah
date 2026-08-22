@@ -387,6 +387,15 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("cannot parse config %s: %w", path, err)
 	}
 
+	// The `tui:` stanza was removed with the bubbletea TUI (2026-08-21);
+	// warn once so upgraded configs know the key is dead.
+	var rawKeys map[string]yaml.Node
+	if err := yaml.Unmarshal(data, &rawKeys); err == nil {
+		if _, ok := rawKeys["tui"]; ok {
+			fmt.Fprintf(os.Stderr, "warning: config key `tui:` is no longer used; toggle verbosity inside the TUI with :verbose\n")
+		}
+	}
+
 	if cfg.Hooks.Dir != "" {
 		cfg.Hooks.Dir = expandHomeDir(cfg.Hooks.Dir)
 	}

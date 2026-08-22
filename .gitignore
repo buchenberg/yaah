@@ -83,3 +83,6 @@ state.db
 .beads/proxieddb/
 .beads/.gt-types-configured
 .beads/PRIME.md
+
+# signoz
+pours/

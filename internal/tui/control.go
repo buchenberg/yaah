@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/buchenberg/yaah/internal/tui/components/backgroundjobs"
 	"github.com/buchenberg/yaah/internal/tui/components/infopane"
@@ -24,7 +25,10 @@ func (t *App) handleControlMsg(msg types.CtrlMsg) {
 		}
 		t.ShowQuestion(m.Header, m.Question, opts, m.Multiple,
 			func(answer question.Answer) {
-				m.AnswerCh <- answer.Selected[0]
+				// Selected is nil on Esc/cancel and on an empty
+				// multi-select confirm; send an empty answer instead
+				// of panicking on the index.
+				m.AnswerCh <- strings.Join(answer.Selected, ", ")
 			})
 
 	case *types.CtrlApproval:
