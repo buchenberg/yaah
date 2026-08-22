@@ -1,96 +1,81 @@
-package tui
+package tui2
 
-import "charm.land/bubbles/v2/key"
+import "github.com/gdamore/tcell/v2"
 
-// keyMap holds all declarative key bindings for the TUI.
-// It powers both the input handler and the auto-generated help footer.
-type keyMap struct {
-	Up        key.Binding
-	Down      key.Binding
-	PageUp    key.Binding
-	PageDown  key.Binding
-	Top       key.Binding
-	Bottom    key.Binding
-	Quit      key.Binding
-	Help      key.Binding
-	Search    key.Binding
-	Commands  key.Binding
-	NextMatch key.Binding
-	PrevMatch key.Binding
-	Copy      key.Binding
-	Reasoning key.Binding
-	Verbose   key.Binding
-	Submit    key.Binding
-	Cancel    key.Binding
+// Action is a named user action dispatched by the keymap.
+type Action int
+
+const (
+	ActionNone Action = iota
+	ActionQuit
+	ActionClear
+	ActionCommand
+	ActionToggleReasoning
+	ActionToggleTools
+	ActionToggleSubAgents
+	ActionSend
+	ActionCancel
+	ActionScrollUp
+	ActionScrollDown
+	ActionPageUp
+	ActionPageDown
+	ActionTop
+	ActionBottom
+	ActionNextPanel
+	ActionPrevPanel
+)
+
+// Binding maps a tcell key event to an Action with a display label and help
+// text (used for the auto-generated help overlay).
+type Binding struct {
+	Key      tcell.Key
+	Mod      tcell.ModMask
+	Action   Action
+	Label    string
+	HelpText string
 }
 
-var keys = keyMap{
-	Up: key.NewBinding(
-		key.WithKeys("up"),
-		key.WithHelp("↑", "scroll up"),
-	),
-	Down: key.NewBinding(
-		key.WithKeys("down"),
-		key.WithHelp("↓", "scroll down"),
-	),
-	PageUp: key.NewBinding(
-		key.WithKeys("pgup"),
-		key.WithHelp("PgUp", "page up"),
-	),
-	PageDown: key.NewBinding(
-		key.WithKeys("pgdown"),
-		key.WithHelp("PgDn", "page down"),
-	),
-	Top: key.NewBinding(
-		key.WithKeys("home"),
-		key.WithHelp("Home", "jump to top"),
-	),
-	Bottom: key.NewBinding(
-		key.WithKeys("end"),
-		key.WithHelp("End", "jump to bottom"),
-	),
-	Quit: key.NewBinding(
-		key.WithKeys("ctrl+c"),
-		key.WithHelp("ctrl+c", "quit"),
-	),
-	Help: key.NewBinding(
-		key.WithKeys("?"),
-		key.WithHelp("?", "help"),
-	),
-	Search: key.NewBinding(
-		key.WithKeys("/"),
-		key.WithHelp("/", "search"),
-	),
-	Commands: key.NewBinding(
-		key.WithKeys(":"),
-		key.WithHelp(":", "commands"),
-	),
-	NextMatch: key.NewBinding(
-		key.WithKeys("n"),
-		key.WithHelp("n", "next match"),
-	),
-	PrevMatch: key.NewBinding(
-		key.WithKeys("N"),
-		key.WithHelp("N", "prev match"),
-	),
-	Copy: key.NewBinding(
-		key.WithKeys("ctrl+y"),
-		key.WithHelp("ctrl+y", "copy last response"),
-	),
-	Reasoning: key.NewBinding(
-		key.WithKeys("ctrl+t"),
-		key.WithHelp("ctrl+t", "toggle reasoning"),
-	),
-	Verbose: key.NewBinding(
-		key.WithKeys("ctrl+g"),
-		key.WithHelp("ctrl+g", "toggle verbose"),
-	),
-	Submit: key.NewBinding(
-		key.WithKeys("enter"),
-		key.WithHelp("enter", "send message"),
-	),
-	Cancel: key.NewBinding(
-		key.WithKeys("esc"),
-		key.WithHelp("esc", "cancel / back"),
-	),
+// DefaultBindings returns the standard keybindings for the TUI.
+// Only Ctrl+ combinations, Esc, Enter, arrows, navigation keys, and Tab
+// are bound. All other actions go through the command palette (Ctrl+P).
+func DefaultBindings() []Binding {
+	return []Binding{
+		{Key: tcell.KeyCtrlC, Action: ActionQuit, Label: "Ctrl+C", HelpText: "quit"},
+		{Key: tcell.KeyEscape, Action: ActionCancel, Label: "Esc", HelpText: "cancel / back"},
+		{Key: tcell.KeyCtrlL, Action: ActionClear, Label: "Ctrl+L", HelpText: "clear screen"},
+		{Key: tcell.KeyCtrlP, Action: ActionCommand, Label: "Ctrl+P", HelpText: "command palette"},
+		{Key: tcell.KeyCtrlR, Action: ActionToggleReasoning, Label: "Ctrl+R", HelpText: "toggle reasoning blocks"},
+		{Key: tcell.KeyCtrlT, Action: ActionToggleTools, Label: "Ctrl+T", HelpText: "toggle tool blocks"},
+		{Key: tcell.KeyCtrlS, Action: ActionToggleSubAgents, Label: "Ctrl+S", HelpText: "toggle sub-agent blocks"},
+		{Key: tcell.KeyEnter, Action: ActionSend, Label: "Enter", HelpText: "send message / follow-up"},
+		{Key: tcell.KeyUp, Action: ActionScrollUp, Label: "↑", HelpText: "scroll up"},
+		{Key: tcell.KeyDown, Action: ActionScrollDown, Label: "↓", HelpText: "scroll down"},
+		{Key: tcell.KeyPgUp, Action: ActionPageUp, Label: "PgUp", HelpText: "page up"},
+		{Key: tcell.KeyPgDn, Action: ActionPageDown, Label: "PgDn", HelpText: "page down"},
+		{Key: tcell.KeyHome, Action: ActionTop, Label: "Home", HelpText: "jump to top"},
+		{Key: tcell.KeyEnd, Action: ActionBottom, Label: "End", HelpText: "jump to bottom"},
+		{Key: tcell.KeyTab, Action: ActionNextPanel, Label: "Tab", HelpText: "next panel"},
+		{Key: tcell.KeyBacktab, Action: ActionPrevPanel, Label: "Shift+Tab", HelpText: "previous panel"},
+	}
+}
+
+// Match reports whether a tcell key event matches this binding.
+func (b Binding) Match(ev *tcell.EventKey) bool {
+	if b.Key != 0 && ev.Key() == b.Key {
+		if b.Mod != 0 {
+			return ev.Modifiers() == b.Mod
+		}
+		return ev.Modifiers() == tcell.ModNone || ev.Modifiers() == tcell.ModCtrl
+	}
+	return false
+}
+
+// Translate looks up the Action for a tcell key event.
+func Translate(ev *tcell.EventKey, bindings []Binding) Action {
+	for _, b := range bindings {
+		if b.Match(ev) {
+			return b.Action
+		}
+	}
+	return ActionNone
 }
