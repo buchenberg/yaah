@@ -1,4 +1,4 @@
-// Package command implements the colon command parser and command palette for TUI2.
+// Package command implements the colon command parser and command palette for the TUI.
 //
 // Pressing Ctrl+P shows a list-based command palette. Commands mirror the
 // REPL slash commands with additional TUI-specific commands.
@@ -7,7 +7,7 @@ package command
 import (
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/tui2/components/modal"
+	"github.com/buchenberg/yaah/internal/tui/components/modal"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )

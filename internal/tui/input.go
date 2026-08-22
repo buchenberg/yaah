@@ -1,11 +1,11 @@
-package tui2
+package tui
 
 import (
 	"github.com/gdamore/tcell/v2"
 )
 
 // globalInputCapture handles global keybindings (before tview routing).
-func (t *TUI2) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
+func (t *App) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
 	action := Translate(ev, DefaultBindings())
 	switch action {
 	case ActionQuit:

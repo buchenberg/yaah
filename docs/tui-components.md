@@ -1,225 +1,67 @@
 # TUI Component System
 
-How the yaah TUI (`internal/tui/`) renders its visual elements through a
-React-like component system: stateless renderers, one per UI element, with
-styling centralized in `theme.go`.
+How the yaah TUI (`internal/tui/`, tview-based) composes its visual elements
+through focused component packages, all styled from the shared theme.
 
-## Overview
+> Rewritten 2026-08-21 when the tview TUI (formerly `tui2`) became the one and
+> only `yaah tui`; the previous bubbletea component system was removed.
+
+## Layout
+
+The app is a `Pages → Flex` hierarchy owned by the `App` struct in
+`internal/tui/app.go`:
 
 ```
-model.go (Model, Init, Update)   view.go (View)   events.go (HandleEvent)
-   │
-   ├── View() ─────────► Header, StatusBar, palettes, viewport, input, footer
-   │
-   ├── renderMessages() ► per-message components (user, assistant, tool, …)
-   │        (render.go)
-   │
-   └── theme.go ────────► package-level lipgloss styles (single source
-                           of truth for colors)
+┌──────────────────────────────────────────────┐
+│ Header (banner, provider/model info)         │
+├───────────────────────────┬──────────────────┤
+│ Conversation              │ Info pane        │
+│ (messages / tool blocks / │ (session, context│
+│  reasoning / sub-agents)  │  MCP, config)    │
+│                           ├──────────────────┤
+│                           │ Todo sidebar     │
+├───────────────────────────┴──────────────────┤
+│ Background jobs · Input (multi-line)         │
+└──────────────────────────────────────────────┘
 ```
 
-The `Model` owns all state (messages, streaming buffers, expansion maps,
-mode flags). Components own **no** state — each is constructed from model
-state at render time and discarded. This keeps the bubbletea Elm loop intact
-while making every visual element independently testable.
+## Component packages
 
-## The Component contract
+| Package | Responsibility |
+|---|---|
+| `components/messages` | Conversation view composition; delegates to the block components |
+| `components/toolblock` | Collapsible tool-call card: header summary, duration, result body |
+| `components/reasoning` | Collapsible thinking/reasoning block with lolcat styling |
+| `components/subagent` | Sub-agent lifecycle card: role, task, model, duration, expandable result |
+| `components/approval` | Modal for dangerous-tool approval requests |
+| `components/question` | Modal for `question` tool prompts with selectable options |
+| `components/command` | Colon-command parser + Ctrl+P command palette |
+| `components/modal` | Shared modal wrapper for consistent sizing/centering |
+| `components/modelpicker` | Live-filtered provider/model picker |
+| `components/help` | Keybinding reference overlay |
+| `components/banner` | Figlet+lolcat banner rendering |
+| `components/infopane` | Info pane container; embeds the four sections below |
+| `components/sessioninfo` | Session ID, cwd, uptime section |
+| `components/contextinfo` | Context window usage section |
+| `components/mcpinfo` | Connected MCP servers section |
+| `components/backgroundjobs` | Running/completed background sub-agent jobs |
+| `components/todo` | Todo list sidebar |
+| `components/error` | Error card rendering |
+| `colors` | Theme tokens (single source of truth: `colors/theme.go`) |
+| `lolcat` | Rainbow color tags for banner/thinking |
 
-There is no declared interface — components are duck-typed. Every component
-is a struct with a `Render() string` method, built per render pass and
-discarded; there is no builder chain and no children/composition tree.
-`component.go` holds the shared `chatBubble(content, width, fg, bg)` helper
-(word-wrapped foreground on a width-constrained background) used by the
-message components.
+## Event flow
 
-## Component catalog
+Agent events arrive on one goroutine via the broker forwarder
+(`proxy.go` implements `agent.View`). Streaming token deltas bypass the queue
+(direct write to a mutex-guarded pending buffer) and are flushed by a debounce
+timer; every other mutation is funneled through an ordered event queue onto the
+tview main goroutine (`QueueUpdate` / `QueueUpdateDraw`). Refresh renders are
+debounced and instrumented (`tui.refresh.*` spans, `yaah.tui.*` metrics).
 
-| Component | File | Renders | Constructed in |
-|---|---|---|---|
-| `UserMessage` | `message_component.go` | Bold user text, wrapped, user background | `renderMessages()` |
-| `AssistantMessage` | `message_component.go` | Assistant-colored content | `renderMessages()` |
-| `SubAgentLine` | `message_component.go` | One-line sub-agent lifecycle: robot icon, role-colored name, task, ⏳/✓/✗ status; zone-marked toggle expands the final result | `renderMessages()` |
-| `SystemMessage` | `message_component.go` | System text on system background | `renderMessages()` |
-| `ExpandableSection` | `expandable_component.go` | Zone-marked ▶/▼ toggle + content | `renderMessages()` |
-| `ToolMessage` | `tool_component.go` | Tool header, bordered output box, truncation | `renderMessages()` |
-| `Header` | `header_component.go` | ASCII banner + provider/model title | `View()` |
-| `StatusBar` | `status_component.go` | cwd, message count, context bar | `View()` |
-| `CommandPalette` | `palette_component.go` | Colon-command suggestions | `View()` |
-| `ModelPalette` | `palette_component.go` | Provider-grouped model picker | `View()` |
-| `QuestionPalette` | `palette_component.go` | Interactive question modal | `View()` |
-| `HelpOverlay` | `palette_component.go` | Full keybinding help | `View()` |
-| `TodoTable` | `todo_component.go` | Todo list as a bordered table with title, status-colored rows, and priority badges | `renderMessages()` |
-| `InfoBar` | `info_bar_component.go` | Prompt / active-view info bar (3 lines, borderless) | `View()` |
-| `ErrorMessage` | `error_component.go` | Red-bordered error box, height-capped | `renderMessages()` |
+## Conventions
 
-## Rendering flow
-
-### Messages (`renderMessages()` in render.go)
-
-The message loop keeps the two pieces of cross-render state components
-cannot own: the zone-ID registries (`m.reasoningZones`, `m.toolZones`,
-`m.subagentZones`) and the expansion maps (`m.reasoningExpanded`,
-`m.toolExpanded`, `m.subagentExpanded`). Each iteration
-generates the zone ID, appends it to the registry, resolves the expansion
-state, then delegates rendering:
-
-```go
-case "tool":
-    zoneID := fmt.Sprintf("tool-%d", msgIdx)
-    m.toolZones = append(m.toolZones, zoneID)
-
-    expanded, has := m.toolExpanded[zoneID]
-    if !has {
-        expanded = m.toolCall == msg.ToolName // running tools start expanded
-    }
-
-    b.WriteString(NewToolMessage(
-        zoneID, msg.ToolName, msg.ToolArgs, msg.Content,
-        m.width, m.viewport.Height(), expanded,
-        m.toolCall == msg.ToolName,
-    ).Render())
-```
-
-The live thinking/streaming sections at the bottom of `renderMessages()`
-are intentionally **not** components — they are bound to spinner state and
-debounced refresh flags in `Model`, and forcing them into the component
-model would add indirection without test benefit.
-
-### Chrome (`View()` in view.go)
-
-`View()` composes header, viewport, status bar, optional ephemeral line,
-optional palette, search line, input, and footer with
-`lipgloss.JoinVertical`. The header, status bar, and palettes are
-components; the viewport, text input, spinner, and help footer remain
-bubbletea widgets (out of scope for the component system).
-
-## Styling
-
-Components never define colors. They consume the package-level
-`lipgloss.Style` variables declared and initialized in `theme.go`. Layout properties (width, truncation budgets,
-bordered-box geometry) live inside the components themselves.
-
-This split is deliberate:
-
-- **Colors/themes** — `theme.go`, one place, theme-switchable at runtime.
-- **Layout/geometry** — the component file, next to the rendering logic
-  that depends on it.
-
-## ToolMessage specifics
-
-`ToolMessage` is the most involved component. It encapsulates three
-previously scattered behaviors:
-
-1. **Header construction** (`toolHeader`) — translates `(toolName, toolArgs)`
-   into a display label: `task` calls become `sub-agent: <role> — <desc>`,
-   `webfetch` becomes `web_fetch → <url>`, `bash` becomes `bash — <args>`.
-2. **Running/completed icon** — `⏳` while executing, `✓` when done.
-3. **Truncation budget** — expanded output is wrapped to the inner box
-   width and capped at `viewport.Height()/3` (clamped 4–24 lines), with a
-   `··· N more lines above ···` notice when truncated.
-
-## ExpandableSection and zones
-
-Expandable content (reasoning blocks) uses `ExpandableSection`, which wraps
-its toggle header in `zone.Mark(zoneID, …)`. The zone ID is **generated by
-the caller** (from the message index) and registered in `m.reasoningZones` /
-`m.toolZones` / `m.subagentZones` — the component only marks; the model
-keeps the registry used by the mouse-click and hover handlers in `Update()`.
-Sub-agent lines follow the same pattern via `SubAgentLine` once a result is
-attached.
-
-## Testing
-
-`internal/tui/component_test.go` tests each component in isolation with
-plain constructor arguments — no `Model`, no viewport, no agent goroutine.
-This is the property the whole refactor exists for: e.g.
-`TestToolMessage_Header` table-tests 7 header variants that were previously
-untestable inline code.
-
-Model-level behavior (message handling, mode transitions, key dispatch)
-remains covered by `tui_test.go`.
-
-## Contracts & conventions
-
-These conventions keep the component set visually consistent. Follow them
-when adding components.
-
-### Block vs fragment
-
-- **Block components** self-terminate: `Render()` output ends with exactly
-  one `\n`. All message components except `AssistantMessage` are blocks.
-- **Fragment components** return content with no trailing newline;
-  the caller owns line breaks. `AssistantMessage` is a fragment because it
-  composes with reasoning sections and streaming output.
-
-### Shared shapes
-
-- **Chat bubble** — user messages, system messages, and expandable-section
-  content all render through `chatBubble(content, width, fg, bg)`:
-  word-wrapped foreground on a width-constrained background. Never hand-roll
-  `bg.Width(w).Render(fg.Render(chatWrap(...)))`.
-- **Pre-wrapped content** — glamour-rendered markdown (assistant responses,
-  reasoning text) must NOT go through `chatBubble`: `chatWrap` collapses
-  code-block indentation and splits ANSI escape runs. Render it directly
-  (`fg.Render(content)` on a bg style) or, for `ExpandableSection`, chain
-  `.AsPreWrapped()`.
-- **Scroll window** — scrollable palettes compute their visible range with
-  `scrollWindow(selected, maxVisible, total)`, centered on the selection
-  and clamped to both ends.
-
-### Palette chrome
-
-Every palette renders inside `commandPaletteStyle.Width(w)` — a rounded
-border constrained to the terminal width. Inside the box:
-
-- **Titles** use `paletteTitleStyle` (bold, `PaletteTitle` theme token):
-  palette headers, provider headings, help-overlay group titles.
-- **Selection** uses ` ▶ ` (with matching 3-space pad on unselected rows);
-  multi-select rows use ` ☑ ` / ` ☐ ` in the same slot.
-- **Overflow** shows `commandDescStyle.Render("  (N-M of K)")` when the
-  list is scrolled; `paletteLines()` in `view.go` must account for the
-  extra line when computing palette height.
-- **Empty state** follows the mode's intent: transient typing aids
-  (`CommandPalette`) return `""` to hide entirely; explicit modals
-  (`ModelPalette`) show a boxed "No matching …" notice.
-
-### Theme tokens
-
-Components never hardcode colors or build styles at render time. Colors
-come from `Theme` fields in `theme.go`, applied by `ApplyTheme()`:
-
-| Style var | Theme token | Used for |
-|---|---|---|
-| `paletteTitleStyle` | `PaletteTitle` | Palette headers, provider/group headings |
-| `noticeStyle` | `Notice` | Ephemeral status line (auto-clearing notices) |
-
-Geometry clamps use the Go builtin `max()` (e.g. `max(width-4, 20)`).
-
-### Embedded content
-
-`TodoTable` is rendered as a standalone component in the conversation view
-(not embedded inside a `ToolMessage`'s bordered box — the table carries its
-own rounded-border box and a "📋 Tasks" title). It receives `m.width` and
-truncates cell content so rows never wrap. The todo snapshot flows from
-`TodoWriteTool.OnWrite` → a `ControlMsg` (carrying `Items`) → `m.todos` ahead of the tool
-result message (channel-ordered, same goroutine), so the table always
-reflects the list as written by that call.
-
-## Extending
-
-- **New message role**: create a component struct in `message_component.go`
-  (or its own file), add one `case` in `renderMessages()`.
-- **New palette**: create a component in `palette_component.go`, add one
-  branch in `View()` and, if it consumes vertical space, a sizing case in
-  `paletteLines()`.
-- **New theme**: add a `Theme` value in `theme.go` and register it in
-  `namedThemes`. No component changes — colors flow through the shared
-  style variables.
-
-## Non-goals
-
-- Replacing bubbletea widgets (viewport, textinput, spinner, help) with
-  components. They are stateful widgets, not renderers.
-- A component tree or layout engine. `View()` composes a fixed vertical
-  stack; there is no generic composition API because the TUI has exactly
-  one layout.
+- Components are plain structs wrapping tview primitives; no global state.
+- All colors come from `colors/theme.go` tokens — never hardcode hex values.
+- One file per concern inside each package.
+- Tests live next to the code (`*_test.go`), using tview's test screen.

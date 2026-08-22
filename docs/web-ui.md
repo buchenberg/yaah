@@ -89,7 +89,7 @@ All events use a single `sseWireEvent` struct with a `type` discriminator:
 #### Tool summary engine
 
 The server computes one-line tool summaries that match the TUI's
-`internal/tui/tool_component.go` patterns:
+tool summary patterns (shared engine in `internal/toolfmt`):
 
 | Tool | Summary format | Example |
 |---|---|---|

@@ -1,4 +1,4 @@
-package tui2
+package tui
 
 import (
 	"context"
@@ -18,7 +18,7 @@ type uiEvent struct {
 }
 
 // startUIEventLoop starts a single consumer that serializes UI updates.
-func (t *TUI2) startUIEventLoop(done <-chan struct{}) {
+func (t *App) startUIEventLoop(done <-chan struct{}) {
 	go func() {
 		for {
 			select {
@@ -38,23 +38,23 @@ func (t *TUI2) startUIEventLoop(done <-chan struct{}) {
 	}()
 }
 
-func (t *TUI2) queueUpdate(fn func()) {
+func (t *App) queueUpdate(fn func()) {
 	t.enqueueUIEvent(false, fn, false)
 }
 
-func (t *TUI2) queueUpdateDraw(fn func()) {
+func (t *App) queueUpdateDraw(fn func()) {
 	t.enqueueUIEvent(true, fn, false)
 }
 
-func (t *TUI2) queueUpdateCritical(fn func()) {
+func (t *App) queueUpdateCritical(fn func()) {
 	t.enqueueUIEvent(false, fn, true)
 }
 
-func (t *TUI2) queueUpdateDrawCritical(fn func()) {
+func (t *App) queueUpdateDrawCritical(fn func()) {
 	t.enqueueUIEvent(true, fn, true)
 }
 
-func (t *TUI2) queueThinkingUpdate(text string) {
+func (t *App) queueThinkingUpdate(text string) {
 	t.coalesceMu.Lock()
 	t.pendingThinkingLabel = text
 	t.thinkingSeq++
@@ -71,7 +71,7 @@ func (t *TUI2) queueThinkingUpdate(text string) {
 	})
 }
 
-func (t *TUI2) runThinkingUpdate() {
+func (t *App) runThinkingUpdate() {
 	t.coalesceMu.Lock()
 	label := t.pendingThinkingLabel
 	seq := t.thinkingSeq
@@ -95,7 +95,7 @@ func (t *TUI2) runThinkingUpdate() {
 	})
 }
 
-func (t *TUI2) queueContextInfoUpdate(tokens, window int) {
+func (t *App) queueContextInfoUpdate(tokens, window int) {
 	t.coalesceMu.Lock()
 	t.pendingContextTokens = tokens
 	t.pendingContextWindow = window
@@ -113,7 +113,7 @@ func (t *TUI2) queueContextInfoUpdate(tokens, window int) {
 	})
 }
 
-func (t *TUI2) runContextInfoUpdate() {
+func (t *App) runContextInfoUpdate() {
 	t.coalesceMu.Lock()
 	tokens := t.pendingContextTokens
 	window := t.pendingContextWindow
@@ -140,7 +140,7 @@ func (t *TUI2) runContextInfoUpdate() {
 // enqueueUIEvent sends event work into a bounded queue. Non-critical events
 // are dropped when full. Critical events wait briefly, then fall back to
 // direct async QueueUpdate/QueueUpdateDraw so they are not dropped.
-func (t *TUI2) enqueueUIEvent(draw bool, fn func(), critical bool) {
+func (t *App) enqueueUIEvent(draw bool, fn func(), critical bool) {
 	if fn == nil {
 		return
 	}
@@ -194,7 +194,7 @@ func (t *TUI2) enqueueUIEvent(draw bool, fn func(), critical bool) {
 	}
 }
 
-func (t *TUI2) enqueueUIEventDirect(draw bool, fn func()) {
+func (t *App) enqueueUIEventDirect(draw bool, fn func()) {
 	if draw {
 		go t.App.QueueUpdateDraw(fn)
 	} else {
@@ -202,7 +202,7 @@ func (t *TUI2) enqueueUIEventDirect(draw bool, fn func()) {
 	}
 }
 
-func (t *TUI2) uiQueueDepth() int {
+func (t *App) uiQueueDepth() int {
 	t.bgMu.Lock()
 	defer t.bgMu.Unlock()
 	if t.uiEventCh == nil {

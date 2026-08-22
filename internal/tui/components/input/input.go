@@ -1,7 +1,7 @@
 package input
 
 import (
-	"github.com/buchenberg/yaah/internal/tui2/colors"
+	"github.com/buchenberg/yaah/internal/tui/colors"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )

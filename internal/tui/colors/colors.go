@@ -1,5 +1,5 @@
 // Package colors provides shared tview color tokens and helpers used by all
-// TUI2 component packages.
+// TUI component packages.
 package colors
 
 import "github.com/rivo/tview"

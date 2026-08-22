@@ -1,16 +1,16 @@
-package tui2
+package tui
 
 import (
-	"github.com/buchenberg/yaah/internal/tui2/components/reasoning"
-	"github.com/buchenberg/yaah/internal/tui2/components/subagent"
-	"github.com/buchenberg/yaah/internal/tui2/components/toolblock"
+	"github.com/buchenberg/yaah/internal/tui/components/reasoning"
+	"github.com/buchenberg/yaah/internal/tui/components/subagent"
+	"github.com/buchenberg/yaah/internal/tui/components/toolblock"
 )
 
 // blocks.go — block operations (reasoning, tool, sub-agent).
 // All blocks are now stored inline in conversationLog via convItem.
 
 // AddReasoningBlock creates a reasoning block and adds it to conversationLog.
-func (t *TUI2) AddReasoningBlock(id, content string) {
+func (t *App) AddReasoningBlock(id, content string) {
 	rb := reasoning.New(id, content, 0, t.Theme)
 	t.conversationLog = append(t.conversationLog, convItem{
 		reasoningBlock: rb,
@@ -19,7 +19,7 @@ func (t *TUI2) AddReasoningBlock(id, content string) {
 }
 
 // AddToolError finds a tool block in conversationLog by ID and transitions it to Error.
-func (t *TUI2) AddToolError(id, summary, err string) {
+func (t *App) AddToolError(id, summary, err string) {
 	for i := range t.conversationLog {
 		ci := &t.conversationLog[i]
 		if ci.toolBlock != nil && ci.toolBlock.ID() == id {
@@ -32,7 +32,7 @@ func (t *TUI2) AddToolError(id, summary, err string) {
 
 // AddToolStart adds a tool block to conversationLog.
 // Note: flushes any pending streaming tokens first.
-func (t *TUI2) AddToolStart(id, name, args string) {
+func (t *App) AddToolStart(id, name, args string) {
 	t.flushPendingTokens()
 	tb := toolblock.New(id, name, args, t.Theme)
 	t.conversationLog = append(t.conversationLog, convItem{
@@ -44,7 +44,7 @@ func (t *TUI2) AddToolStart(id, name, args string) {
 // AddToolEnd updates a tool block in conversationLog with result.
 // The caller (proxy.go) is responsible for routing errors via AddToolError.
 // Tools may legitimately return empty results (e.g., successful delete with no output).
-func (t *TUI2) AddToolEnd(id, summary, result string) {
+func (t *App) AddToolEnd(id, summary, result string) {
 	for i := range t.conversationLog {
 		ci := &t.conversationLog[i]
 		if ci.toolBlock != nil && ci.toolBlock.ID() == id {
@@ -57,7 +57,7 @@ func (t *TUI2) AddToolEnd(id, summary, result string) {
 
 // AddSubAgentStart adds a sub-agent start entry to conversationLog.
 // Note: flushes any pending streaming tokens first and triggers background jobs pane update.
-func (t *TUI2) AddSubAgentStart(id, role, specialty, task, model string) {
+func (t *App) AddSubAgentStart(id, role, specialty, task, model string) {
 	t.flushPendingTokens()
 	sb := subagent.New(id, role, specialty, task, model, t.Theme)
 	t.conversationLog = append(t.conversationLog, convItem{
@@ -69,7 +69,7 @@ func (t *TUI2) AddSubAgentStart(id, role, specialty, task, model string) {
 
 // AddSubAgentEnd marks a sub-agent block as completed.
 // Note: triggers background jobs pane update.
-func (t *TUI2) AddSubAgentEnd(id string) {
+func (t *App) AddSubAgentEnd(id string) {
 	for i := range t.conversationLog {
 		ci := &t.conversationLog[i]
 		if ci.subBlock != nil && ci.subBlock.ID() == id {
@@ -83,7 +83,7 @@ func (t *TUI2) AddSubAgentEnd(id string) {
 
 // AddSubAgentError marks a sub-agent block as failed.
 // Note: triggers background jobs pane update.
-func (t *TUI2) AddSubAgentError(id, err string) {
+func (t *App) AddSubAgentError(id, err string) {
 	for i := range t.conversationLog {
 		ci := &t.conversationLog[i]
 		if ci.subBlock != nil && ci.subBlock.ID() == id {
@@ -96,7 +96,7 @@ func (t *TUI2) AddSubAgentError(id, err string) {
 }
 
 // ToggleBlockByIndex finds the nth block (of any type) and toggles it.
-func (t *TUI2) ToggleBlockByIndex(n int) {
+func (t *App) ToggleBlockByIndex(n int) {
 	type block interface {
 		Toggle()
 		IsExpanded() bool
@@ -122,7 +122,7 @@ func (t *TUI2) ToggleBlockByIndex(n int) {
 }
 
 // CollapseAll collapses all expandable blocks.
-func (t *TUI2) CollapseAll() {
+func (t *App) CollapseAll() {
 	for _, ci := range t.conversationLog {
 		if ci.reasoningBlock != nil {
 			for ci.reasoningBlock.IsExpanded() {
@@ -143,7 +143,7 @@ func (t *TUI2) CollapseAll() {
 	t.refreshMessages()
 }
 
-func (t *TUI2) toggleAllReasoning() {
+func (t *App) toggleAllReasoning() {
 	for _, ci := range t.conversationLog {
 		if ci.reasoningBlock != nil {
 			ci.reasoningBlock.Toggle()
@@ -152,7 +152,7 @@ func (t *TUI2) toggleAllReasoning() {
 	t.refreshMessages()
 }
 
-func (t *TUI2) toggleAllTools() {
+func (t *App) toggleAllTools() {
 	for _, ci := range t.conversationLog {
 		if ci.toolBlock != nil {
 			ci.toolBlock.Toggle()
@@ -161,7 +161,7 @@ func (t *TUI2) toggleAllTools() {
 	t.refreshMessages()
 }
 
-func (t *TUI2) toggleAllSubAgents() {
+func (t *App) toggleAllSubAgents() {
 	for _, ci := range t.conversationLog {
 		if ci.subBlock != nil {
 			ci.subBlock.Toggle()

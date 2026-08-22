@@ -1,4 +1,4 @@
-package tui2
+package tui
 
 import (
 	"context"
@@ -10,12 +10,12 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/buchenberg/yaah/internal/tui2/components/messages"
+	"github.com/buchenberg/yaah/internal/tui/components/messages"
 )
 
 // markDirty sets the refresh flag. Call instead of refreshMessages()
 // to coalesce multiple rapid updates into a single render pass.
-func (t *TUI2) markDirty() {
+func (t *App) markDirty() {
 	if !t.needsRefresh.Swap(true) {
 		t.requestRefresh()
 	}
@@ -24,7 +24,7 @@ func (t *TUI2) markDirty() {
 // requestRefresh enqueues a single refresh callback. If refresh work is
 // already queued, this is a no-op. If new updates arrive while a refresh
 // callback is running, another callback is scheduled after it completes.
-func (t *TUI2) requestRefresh() {
+func (t *App) requestRefresh() {
 	if !t.refreshQueued.CompareAndSwap(false, true) {
 		return
 	}
@@ -39,7 +39,7 @@ func (t *TUI2) requestRefresh() {
 }
 
 // flushRefresh performs the actual render if dirty, then clears the flag.
-func (t *TUI2) flushRefresh() {
+func (t *App) flushRefresh() {
 	if t.needsRefresh.Swap(false) {
 		t.refreshMessages()
 	}
@@ -49,7 +49,7 @@ func (t *TUI2) flushRefresh() {
 // conversation log. If the user has not scrolled up (t.userScrolled is
 // false), it auto-scrolls to the end; otherwise it preserves the current
 // viewport position.
-func (t *TUI2) refreshMessages() {
+func (t *App) refreshMessages() {
 	start := time.Now()
 	w := messageWidth(t.Messages)
 	n := len(t.conversationLog)
@@ -105,7 +105,7 @@ func (t *TUI2) refreshMessages() {
 	}
 	queueDepth := t.uiQueueDepth()
 
-	_, span := otel.Tracer("yaah").Start(context.Background(), "tui2.refresh",
+	_, span := otel.Tracer("yaah").Start(context.Background(), "tui.refresh",
 		trace.WithAttributes(
 			attribute.Int("items", n),
 			attribute.Int("msg_bytes", len(msg)),

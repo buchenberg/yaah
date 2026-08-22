@@ -1,4 +1,4 @@
-package tui2
+package tui
 
 import (
 	"testing"
@@ -7,7 +7,7 @@ import (
 )
 
 func TestCalculateCost_ExactMatch(t *testing.T) {
-	// Create a TUI2 instance to access calculateCost
+	// Create a App instance to access calculateCost
 	ui := New("test")
 
 	// Test exact model match

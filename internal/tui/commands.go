@@ -1,11 +1,11 @@
-package tui2
+package tui
 
 import (
-	"github.com/buchenberg/yaah/internal/tui2/components/command"
+	"github.com/buchenberg/yaah/internal/tui/components/command"
 )
 
 // HandleCommand dispatches a colon command.
-func (t *TUI2) HandleCommand(cmd command.Cmd, arg string) {
+func (t *App) HandleCommand(cmd command.Cmd, arg string) {
 	switch cmd {
 	case command.CmdQuit:
 		t.Stop()
@@ -52,7 +52,7 @@ func (t *TUI2) HandleCommand(cmd command.Cmd, arg string) {
 	}
 }
 
-func (t *TUI2) showCommandList() {
+func (t *App) showCommandList() {
 	entries := append([]command.Entry{}, command.DefaultEntries()...)
 	command.ShowList(t.App, t.Pages, entries, func(cmd command.Cmd) {
 		t.App.SetFocus(t.Input)
@@ -65,7 +65,7 @@ func (t *TUI2) showCommandList() {
 	t.focus = focusCommandPalette
 }
 
-func (t *TUI2) toggleCommandPalette() {
+func (t *App) toggleCommandPalette() {
 	if t.Pages.HasPage(command.PageName) {
 		t.Pages.RemovePage(command.PageName)
 		t.App.SetFocus(t.Input)

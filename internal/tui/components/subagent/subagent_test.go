@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/tui2/colors"
+	"github.com/buchenberg/yaah/internal/tui/colors"
 )
 
 func TestNew_ActiveState(t *testing.T) {

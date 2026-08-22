@@ -1,4 +1,4 @@
-package tui2
+package tui
 
 import (
 	"fmt"
@@ -55,18 +55,18 @@ type cumulativeUsage struct {
 	completionTokens int
 }
 
-func (t *TUI2) accumulateUsage(usage types.Usage) {
+func (t *App) accumulateUsage(usage types.Usage) {
 	t.cumulativeUsage.promptTokens += usage.PromptTokens
 	t.cumulativeUsage.completionTokens += usage.CompletionTokens
 }
 
-func (t *TUI2) resetUsage() {
+func (t *App) resetUsage() {
 	t.cumulativeUsage = cumulativeUsage{}
 }
 
 // calculateCost estimates the cost in USD for the accumulated usage.
 // Returns the total cost as a formatted string.
-func (t *TUI2) calculateCost(modelName string) string {
+func (t *App) calculateCost(modelName string) string {
 	prices, ok := modelPrices[modelName]
 	if !ok {
 		// Try to find the longest matching prefix.
@@ -96,6 +96,6 @@ func (t *TUI2) calculateCost(modelName string) string {
 }
 
 // GetCumulativeUsage returns the accumulated usage statistics.
-func (t *TUI2) GetCumulativeUsage() (promptTokens, completionTokens int) {
+func (t *App) GetCumulativeUsage() (promptTokens, completionTokens int) {
 	return t.cumulativeUsage.promptTokens, t.cumulativeUsage.completionTokens
 }

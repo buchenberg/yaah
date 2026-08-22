@@ -1,7 +1,7 @@
-package tui2
+package tui
 
 // Run starts the tview event loop.
-func (t *TUI2) Run() error {
+func (t *App) Run() error {
 	done := t.startBackgroundLoops()
 	t.startUIEventLoop(done)
 	t.startControlLoop(done)
@@ -14,12 +14,12 @@ func (t *TUI2) Run() error {
 }
 
 // Stop gracefully shuts down the TUI.
-func (t *TUI2) Stop() {
+func (t *App) Stop() {
 	t.stopBackgroundLoops()
 	t.App.Stop()
 }
 
-func (t *TUI2) startBackgroundLoops() <-chan struct{} {
+func (t *App) startBackgroundLoops() <-chan struct{} {
 	t.bgMu.Lock()
 	defer t.bgMu.Unlock()
 	if t.bgDone != nil {
@@ -30,7 +30,7 @@ func (t *TUI2) startBackgroundLoops() <-chan struct{} {
 	return t.bgDone
 }
 
-func (t *TUI2) stopBackgroundLoops() {
+func (t *App) stopBackgroundLoops() {
 	t.bgMu.Lock()
 	defer t.bgMu.Unlock()
 	if t.bgDone == nil {
@@ -41,7 +41,7 @@ func (t *TUI2) stopBackgroundLoops() {
 	t.uiEventCh = nil
 }
 
-func (t *TUI2) startControlLoop(done <-chan struct{}) {
+func (t *App) startControlLoop(done <-chan struct{}) {
 	go func() {
 		for {
 			select {

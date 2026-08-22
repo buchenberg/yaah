@@ -1,5 +1,5 @@
 // Package modal provides a common modal wrapper for consistent sizing and
-// centering across all TUI2 overlays.
+// centering across all TUI overlays.
 package modal
 
 import "github.com/rivo/tview"

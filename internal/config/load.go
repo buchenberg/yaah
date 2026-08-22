@@ -265,7 +265,6 @@ type Config struct {
 	Hooks         Hooks                      `yaml:"hooks"`
 	Editor        string                     `yaml:"editor"`
 	Observability ObservabilityConfig        `yaml:"observability"`
-	TUI           TUIConfig                  `yaml:"tui"`
 	Embedding     EmbeddingConfig            `yaml:"embedding"`
 }
 
@@ -280,10 +279,6 @@ type EmbeddingConfig struct {
 	// Model is the embedding model name sent to the /v1/embeddings
 	// endpoint. Required when Provider is set.
 	Model string `yaml:"model"`
-}
-
-type TUIConfig struct {
-	Verbose bool `yaml:"verbose"`
 }
 
 // ObservabilityConfig holds OpenTelemetry tracing and metrics settings.

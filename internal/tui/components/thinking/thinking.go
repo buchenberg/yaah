@@ -5,7 +5,7 @@ package thinking
 import (
 	"sync/atomic"
 
-	"github.com/buchenberg/yaah/internal/tui2/lolcat"
+	"github.com/buchenberg/yaah/internal/tui/lolcat"
 )
 
 // Indicator renders a lolcat-colored spinner with a label.

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/tui2/colors"
+	"github.com/buchenberg/yaah/internal/tui/colors"
 )
 
 type Block struct {

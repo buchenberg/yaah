@@ -1,5 +1,5 @@
 // state.go — focus state and query helpers.
-package tui2
+package tui
 
 import (
 	"fmt"
@@ -14,7 +14,7 @@ const (
 	focusModal
 )
 
-func (t *TUI2) searchMessages(query string) {
+func (t *App) searchMessages(query string) {
 	if query == "" {
 		return
 	}

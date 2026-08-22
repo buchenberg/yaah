@@ -4,10 +4,10 @@ package messages
 import (
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/tui2/colors"
-	"github.com/buchenberg/yaah/internal/tui2/components/reasoning"
-	"github.com/buchenberg/yaah/internal/tui2/components/subagent"
-	"github.com/buchenberg/yaah/internal/tui2/components/toolblock"
+	"github.com/buchenberg/yaah/internal/tui/colors"
+	"github.com/buchenberg/yaah/internal/tui/components/reasoning"
+	"github.com/buchenberg/yaah/internal/tui/components/subagent"
+	"github.com/buchenberg/yaah/internal/tui/components/toolblock"
 	"github.com/rivo/tview"
 )
 

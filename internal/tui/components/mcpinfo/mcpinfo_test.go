@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/tui2/colors"
+	"github.com/buchenberg/yaah/internal/tui/colors"
 )
 
 func TestFormat_Empty(t *testing.T) {

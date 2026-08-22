@@ -1,17 +1,17 @@
-package tui2
+package tui
 
 import (
 	"fmt"
 
-	"github.com/buchenberg/yaah/internal/tui2/components/backgroundjobs"
-	"github.com/buchenberg/yaah/internal/tui2/components/infopane"
-	"github.com/buchenberg/yaah/internal/tui2/components/question"
-	subagent "github.com/buchenberg/yaah/internal/tui2/components/subagent"
-	todoview "github.com/buchenberg/yaah/internal/tui2/components/todo"
+	"github.com/buchenberg/yaah/internal/tui/components/backgroundjobs"
+	"github.com/buchenberg/yaah/internal/tui/components/infopane"
+	"github.com/buchenberg/yaah/internal/tui/components/question"
+	subagent "github.com/buchenberg/yaah/internal/tui/components/subagent"
+	todoview "github.com/buchenberg/yaah/internal/tui/components/todo"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-func (t *TUI2) handleControlMsg(msg types.CtrlMsg) {
+func (t *App) handleControlMsg(msg types.CtrlMsg) {
 	switch m := msg.(type) {
 	case *types.CtrlQuestion:
 		opts := make([]struct {
@@ -64,7 +64,7 @@ func (t *TUI2) handleControlMsg(msg types.CtrlMsg) {
 }
 
 // renderInfoPane rebuilds the info pane from live state.
-func (t *TUI2) renderInfoPane() {
+func (t *App) renderInfoPane() {
 	promptTokens, completionTokens := t.GetCumulativeUsage()
 	costEstimate := ""
 	if t.lastModel != "" && (promptTokens > 0 || completionTokens > 0) {
@@ -100,7 +100,7 @@ func (t *TUI2) renderInfoPane() {
 // renderTodoPane rebuilds the dedicated task pane from live todo items.
 // The pane is hidden when the list is empty and sized proportionally to
 // the item count when active.
-func (t *TUI2) renderTodoPane() {
+func (t *App) renderTodoPane() {
 	text := todoview.FormatList(t.todoItems)
 	t.TodoPane.SetText(text)
 	if len(t.todoItems) == 0 {
@@ -111,7 +111,7 @@ func (t *TUI2) renderTodoPane() {
 }
 
 // collectSubagentBlocks returns all subagent blocks from conversationLog.
-func (t *TUI2) collectSubagentBlocks() []*subagent.Block {
+func (t *App) collectSubagentBlocks() []*subagent.Block {
 	var blocks []*subagent.Block
 	for _, ci := range t.conversationLog {
 		if ci.subBlock != nil {
@@ -121,7 +121,7 @@ func (t *TUI2) collectSubagentBlocks() []*subagent.Block {
 	return blocks
 }
 
-func (t *TUI2) renderBackgroundJobsPane() {
+func (t *App) renderBackgroundJobsPane() {
 	subagentBlocks := t.collectSubagentBlocks()
 	text := backgroundjobs.Format(subagentBlocks, t.Theme)
 	t.BackgroundJobsPane.SetText(text)

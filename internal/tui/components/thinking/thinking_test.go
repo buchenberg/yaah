@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/tui2/lolcat"
+	"github.com/buchenberg/yaah/internal/tui/lolcat"
 )
 
 func TestNew(t *testing.T) {

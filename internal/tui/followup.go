@@ -1,7 +1,7 @@
-package tui2
+package tui
 
 // submitInput sends the current input text as a new prompt, if any.
-func (t *TUI2) submitInput() {
+func (t *App) submitInput() {
 	if t.OnSubmit != nil {
 		text := t.Input.GetText()
 		if text != "" {
@@ -13,7 +13,7 @@ func (t *TUI2) submitInput() {
 }
 
 // submitFollowUp sends the current input text as a follow-up, if any.
-func (t *TUI2) submitFollowUp() {
+func (t *App) submitFollowUp() {
 	if t.OnFollowUp != nil {
 		text := t.Input.GetText()
 		if text != "" {
@@ -25,7 +25,7 @@ func (t *TUI2) submitFollowUp() {
 }
 
 // clearConversation resets all conversation state and re-renders the view.
-func (t *TUI2) clearConversation() {
+func (t *App) clearConversation() {
 	t.conversationLog = nil
 	t.userScrolled = false
 	t.resetUsage()
@@ -33,7 +33,7 @@ func (t *TUI2) clearConversation() {
 }
 
 // doClear clears the conversation and invokes the OnClear callback, if set.
-func (t *TUI2) doClear() {
+func (t *App) doClear() {
 	if t.OnClear != nil {
 		t.OnClear()
 	}

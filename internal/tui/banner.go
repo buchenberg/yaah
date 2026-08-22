@@ -1,8 +1,8 @@
-package tui2
+package tui
 
 // banner.go — banner toggle and sizing.
 
-func (t *TUI2) toggleBanner() {
+func (t *App) toggleBanner() {
 	t.showBanner = !t.showBanner
 	if t.showBanner {
 		t.Root.RemoveItem(t.Header)
@@ -12,7 +12,7 @@ func (t *TUI2) toggleBanner() {
 	}
 }
 
-func (t *TUI2) headerHeight() int {
+func (t *App) headerHeight() int {
 	if !t.showBanner {
 		return 0
 	}

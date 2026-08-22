@@ -1,21 +1,21 @@
-package tui2
+package tui
 
 import (
-	"github.com/buchenberg/yaah/internal/tui2/components/approval"
-	"github.com/buchenberg/yaah/internal/tui2/components/help"
-	"github.com/buchenberg/yaah/internal/tui2/components/modelpicker"
-	"github.com/buchenberg/yaah/internal/tui2/components/question"
+	"github.com/buchenberg/yaah/internal/tui/components/approval"
+	"github.com/buchenberg/yaah/internal/tui/components/help"
+	"github.com/buchenberg/yaah/internal/tui/components/modelpicker"
+	"github.com/buchenberg/yaah/internal/tui/components/question"
 )
 
 // Modals — modal dialog wrappers.
 
 // ShowQuestion displays a question modal and returns answers via channel.
-func (t *TUI2) ShowQuestion(header, questionText string, opts []struct{ Label, Description string }, multiple bool, onAnswer func(question.Answer)) {
+func (t *App) ShowQuestion(header, questionText string, opts []struct{ Label, Description string }, multiple bool, onAnswer func(question.Answer)) {
 	question.Show(t.App, t.Pages, header, questionText, opts, multiple, onAnswer)
 }
 
 // ShowApproval displays an approval modal and returns via callback.
-func (t *TUI2) ShowApproval(name, args string, onAnswer func(bool)) {
+func (t *App) ShowApproval(name, args string, onAnswer func(bool)) {
 	if t.ShowApprovalFn != nil {
 		t.ShowApprovalFn(name, args, onAnswer)
 		return
@@ -24,12 +24,12 @@ func (t *TUI2) ShowApproval(name, args string, onAnswer func(bool)) {
 }
 
 // ShowModelPicker displays a model picker modal.
-func (t *TUI2) ShowModelPicker(models []string, providerNames map[string]string, onSelect func(string)) {
+func (t *App) ShowModelPicker(models []string, providerNames map[string]string, onSelect func(string)) {
 	modelpicker.Show(t.App, t.Pages, models, providerNames, onSelect, t.Input)
 }
 
 // ShowHelp displays the help overlay.
-func (t *TUI2) ShowHelp() {
+func (t *App) ShowHelp() {
 	var bindings []help.Binding
 	for _, b := range DefaultBindings() {
 		bindings = append(bindings, help.Binding{Label: b.Label, HelpText: b.HelpText})

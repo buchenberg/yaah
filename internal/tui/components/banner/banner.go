@@ -20,7 +20,7 @@ func Build(dimColor string) (lines int, tv *tview.TextView) {
 
 	// Lolcat rainbow on the figlet art — per-character colors via the
 	// shared banner.LolcatRGB function. This is the same lolcat effect
-	// used in the original bubbletea TUI.
+	// used by the REPL banner renderer.
 	var b strings.Builder
 	charIdx := 0
 	for _, line := range strings.Split(art, "\n") {

@@ -1,4 +1,4 @@
-// Package lolcat provides tview-compatible rainbow coloring for TUI2.
+// Package lolcat provides tview-compatible rainbow coloring for the TUI.
 //
 // The rainbow algorithm is ported from internal/banner (which itself is
 // vendored from github.com/flaviocopes/gololcat). Instead of ANSI escape

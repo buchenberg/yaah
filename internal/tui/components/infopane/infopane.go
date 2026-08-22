@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/tui2/colors"
-	"github.com/buchenberg/yaah/internal/tui2/components/contextinfo"
-	"github.com/buchenberg/yaah/internal/tui2/components/mcpinfo"
-	"github.com/buchenberg/yaah/internal/tui2/components/sessioninfo"
+	"github.com/buchenberg/yaah/internal/tui/colors"
+	"github.com/buchenberg/yaah/internal/tui/components/contextinfo"
+	"github.com/buchenberg/yaah/internal/tui/components/mcpinfo"
+	"github.com/buchenberg/yaah/internal/tui/components/sessioninfo"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )

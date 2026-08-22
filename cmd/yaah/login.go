@@ -10,10 +10,8 @@ import (
 	"strings"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/providers"
-	"github.com/buchenberg/yaah/internal/types"
 	"github.com/spf13/cobra"
 )
 
@@ -224,42 +222,4 @@ func runInteractiveLogin(cfg *config.Config, providerName string) error {
 
 func runInteractiveLogout(cfg *config.Config, providerName string) error {
 	return logoutOAuth(cfg, providerName, func(msg string) { fmt.Println(msg) })
-}
-
-func tuiLogin(cfg *config.Config, prog *tea.Program) {
-	send := func(text string) {
-		if prog != nil {
-			prog.Send(&types.CtrlStatus{Text: text})
-		}
-	}
-
-	names := oauthProviderNames(cfg)
-	if len(names) == 0 {
-		send("No OAuth providers configured. Add auth: oauth to a provider in config.yaml.")
-		return
-	}
-	providerName := names[0]
-
-	if err := loginOAuth(cfg, providerName, send); err != nil {
-		send(fmt.Sprintf("Login failed: %v", err))
-	}
-}
-
-func tuiLogout(cfg *config.Config, prog *tea.Program) {
-	send := func(text string) {
-		if prog != nil {
-			prog.Send(&types.CtrlStatus{Text: text})
-		}
-	}
-
-	names := oauthProviderNames(cfg)
-	if len(names) == 0 {
-		send("No OAuth providers configured.")
-		return
-	}
-	providerName := names[0]
-
-	if err := logoutOAuth(cfg, providerName, send); err != nil {
-		send(fmt.Sprintf("Logout failed: %v", err))
-	}
 }

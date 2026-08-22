@@ -38,7 +38,7 @@ yaah/
 │   ├── serve.go                 # yaah serve — MCP tool server (stdio + HTTP)
 │   ├── acp_cmd.go               # yaah acp-serve cobra shim (server in internal/acp)
 │   ├── web.go web_view.go       # yaah web — browser UI + WebSocket view
-│   ├── tui.go                   # yaah tui (bubbletea) + tui_unix.go / tui_windows.go
+│   ├── tui.go                   # yaah tui (tview terminal UI)
 │   ├── plan.go                  # plan tool wiring
 │   ├── goat.go                  # easter-egg `yaah yaah` ASCII goat
 │   ├── version.go               # yaah version
@@ -77,7 +77,7 @@ yaah/
 │   ├── todo/                    # in-memory todo store
 │   ├── toolfmt/                 # shared tool result formatting (TUI + web views)
 │   ├── tools/                   # built-in tools (read, write, edit, replace, delete, patch, sed, json_query, grep, glob, ls, bash, powershell, git, question, webfetch, http, go_outline, go_refactor, go_test, go_mod, bisect, diff, staticcheck, calculate, file_info, task, background_process, memory, todo, plan, skill, supervisor, supervised_task)
-│   ├── tui/                     # bubbletea TUI (component system: renderers in *_component.go, styled via theme.go)
+│   ├── tui/                     # tview TUI (App in app.go, agent.View adapter in proxy.go, components/ subpackages, theme in colors/theme.go)
 │   ├── types/                   # OpenAI message types
 │   └── update/                  # GitHub release checking
 ├── .github/workflows/ci.yml     # CI: test, vet, staticcheck, cross-compile
@@ -211,9 +211,9 @@ interface. See `internal/agent/events.go` for the event types.
 
 | Consumer | View impl | File |
 |----------|-----------|------|
-| TUI | `Model.HandleEvent` (type switch) | `internal/tui/tui.go` |
-| REPL | `terminalView` / `replView` | `cmd/yaah/agent_frame.go` |
-| Sub-agents | `agent.NoopView` | `cmd/yaah/subagent_runner.go` |
+| TUI | `App.HandleEvent` (type switch, via `tui.Proxy`) | `internal/tui/proxy.go` |
+| REPL | `terminalView` / `replView` | `cmd/yaah/view_terminal.go` |
+| Sub-agents | `agent.NoopView` | `internal/agent/runner/runner.go` |
 | MCP serve | `agent.NoopView` | `cmd/yaah/serve.go` |
 | ACP serve | `acp.View` + `acp.ViewWithWrite` | `internal/acp/view.go` |
 

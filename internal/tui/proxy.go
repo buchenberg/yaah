@@ -1,4 +1,4 @@
-package tui2
+package tui
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent"
 )
 
-func (t *TUI2) HandleEvent(event agent.Event) {
+func (t *App) HandleEvent(event agent.Event) {
 	switch e := event.(type) {
 	case *agent.TokenDeltaEvent:
 		t.tokensRx.Add(1)
@@ -121,7 +121,7 @@ func (t *TUI2) HandleEvent(event agent.Event) {
 	}
 }
 
-func (t *TUI2) flushPendingTokens() bool {
+func (t *App) flushPendingTokens() bool {
 	if !t.isStreaming.Load() {
 		return false
 	}
@@ -134,7 +134,7 @@ func (t *TUI2) flushPendingTokens() bool {
 	t.pendingTokens.Reset()
 	t.tokenMu.Unlock()
 
-	_, span := otel.Tracer("yaah").Start(context.Background(), "tui2.flush",
+	_, span := otel.Tracer("yaah").Start(context.Background(), "tui.flush",
 		trace.WithAttributes(
 			attribute.Int64("tokens_rx", t.tokensRx.Load()),
 			attribute.Int64("chars_written", t.charsWritten.Load()),
@@ -148,6 +148,6 @@ func (t *TUI2) flushPendingTokens() bool {
 	return true
 }
 
-func (t *TUI2) HandleContextInfo(tokens, window int) {
+func (t *App) HandleContextInfo(tokens, window int) {
 	t.queueContextInfoUpdate(tokens, window)
 }

@@ -1,4 +1,4 @@
-package tui2
+package tui
 
 import (
 	"time"
@@ -9,19 +9,19 @@ import (
 // Panes — right-pane update methods.
 
 // UpdateTodos updates the TODO list in the right panel.
-func (t *TUI2) UpdateTodos(items []todo.Item) {
+func (t *App) UpdateTodos(items []todo.Item) {
 	t.todoItems = items
 	t.renderTodoPane()
 }
 
 // UpdateInfopane sets a specific infopane tab content.
-func (t *TUI2) UpdateInfopane(tab, content string) {
+func (t *App) UpdateInfopane(tab, content string) {
 	t.InfoPane.SetText(content)
 }
 
 // SetEphemeral shows a transient status message in the info pane for 3
 // seconds, then clears it.
-func (t *TUI2) SetEphemeral(msg string) {
+func (t *App) SetEphemeral(msg string) {
 	t.ephemeralMsg = msg
 	t.renderInfoPane()
 	go func() {

@@ -7,7 +7,7 @@
 //
 // A tool is a struct that implements the four-method Tool interface.
 // Tools that need runtime wiring (database handles, process managers)
-// are registered at startup in agent_frame.go; tools with no
+// are registered at startup in cmd/yaah/wiring.go; tools with no
 // dependencies are registered here via the leafTools map.
 //
 // The canonical form for a simple leaf tool:

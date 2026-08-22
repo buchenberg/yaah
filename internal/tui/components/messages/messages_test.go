@@ -4,11 +4,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/yaah/internal/tui2/colors"
-	"github.com/buchenberg/yaah/internal/tui2/components/reasoning"
-	"github.com/buchenberg/yaah/internal/tui2/components/subagent"
-	"github.com/buchenberg/yaah/internal/tui2/components/toolblock"
-	"github.com/buchenberg/yaah/internal/tui2/lolcat"
+	"github.com/buchenberg/yaah/internal/tui/colors"
+	"github.com/buchenberg/yaah/internal/tui/components/reasoning"
+	"github.com/buchenberg/yaah/internal/tui/components/subagent"
+	"github.com/buchenberg/yaah/internal/tui/components/toolblock"
+	"github.com/buchenberg/yaah/internal/tui/lolcat"
 )
 
 func TestFormat_Empty(t *testing.T) {

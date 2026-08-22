@@ -1,18 +1,18 @@
-package tui2
+package tui
 
 import (
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/tui2/components/banner"
-	"github.com/buchenberg/yaah/internal/tui2/components/infopane"
-	"github.com/buchenberg/yaah/internal/tui2/components/input"
-	localTodo "github.com/buchenberg/yaah/internal/tui2/components/todo"
+	"github.com/buchenberg/yaah/internal/tui/components/banner"
+	"github.com/buchenberg/yaah/internal/tui/components/infopane"
+	"github.com/buchenberg/yaah/internal/tui/components/input"
+	localTodo "github.com/buchenberg/yaah/internal/tui/components/todo"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
 // buildUI wires the component tree and layout.
-func (t *TUI2) buildUI() {
+func (t *App) buildUI() {
 	var bannerLines int
 	bannerLines, t.Banner = banner.Build(t.Theme.Dim)
 	t.Messages = tview.NewTextView().

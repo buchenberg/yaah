@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/buchenberg/yaah/internal/tui2/components/modal"
+	"github.com/buchenberg/yaah/internal/tui/components/modal"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )

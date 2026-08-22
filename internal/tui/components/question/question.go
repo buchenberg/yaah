@@ -1,4 +1,4 @@
-// Package question renders interactive question modals in TUI2.
+// Package question renders interactive question modals in the TUI.
 //
 // Dispatched from CtrlQuestion events, the modal shows a question header,
 // body text, and a list of selectable options. Answers are returned via
@@ -8,7 +8,7 @@ package question
 import (
 	"fmt"
 
-	"github.com/buchenberg/yaah/internal/tui2/components/modal"
+	"github.com/buchenberg/yaah/internal/tui/components/modal"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
