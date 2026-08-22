@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.54.0](https://github.com/buchenberg/yaah/compare/v0.53.0...v0.54.0) (2026-08-20)
+
+
+### Features
+
+* harden SQLite persistence ([#198](https://github.com/buchenberg/yaah/issues/198)) ([fff8aca](https://github.com/buchenberg/yaah/commit/fff8aca96ec9e280b35f54a16553fcc57a9532b3))
+
 ## [0.53.0](https://github.com/buchenberg/yaah/compare/v0.52.1...v0.53.0) (2026-08-10)
 
 
