@@ -64,6 +64,26 @@ func (t *App) handleControlMsg(msg types.CtrlMsg) {
 		t.lastProvider = m.Provider
 		t.lastModel = m.Model
 		t.renderInfoPane()
+
+	case *types.CtrlStatus:
+		t.SetEphemeral(m.Text)
+
+	case *types.CtrlError:
+		errText := ""
+		if m.Err != nil {
+			errText = m.Err.Error()
+		}
+		t.flushPendingTokens()
+		t.pendingThink = ""
+		t.pendingTool = ""
+		t.agentActive = false
+		if t.thinkingInd.Hide() {
+			t.needsFullRender.Store(true)
+		}
+		t.conversationLog = append(t.conversationLog, convItem{
+			text: fmt.Sprintf("[%s]error: %s[-]", t.Theme.Error, errText),
+		})
+		t.markDirty()
 	}
 }
 

@@ -24,6 +24,7 @@ func (t *App) AddToolError(id, summary, err string) {
 		ci := &t.conversationLog[i]
 		if ci.toolBlock != nil && ci.toolBlock.ID() == id {
 			ci.toolBlock.Fail(summary, err)
+			t.needsFullRender.Store(true)
 			t.markDirty()
 			return
 		}
@@ -49,6 +50,7 @@ func (t *App) AddToolEnd(id, summary, result string) {
 		ci := &t.conversationLog[i]
 		if ci.toolBlock != nil && ci.toolBlock.ID() == id {
 			ci.toolBlock.Complete(summary, result)
+			t.needsFullRender.Store(true)
 			t.markDirty()
 			return
 		}
@@ -74,6 +76,7 @@ func (t *App) AddSubAgentEnd(id string) {
 		ci := &t.conversationLog[i]
 		if ci.subBlock != nil && ci.subBlock.ID() == id {
 			ci.subBlock.Complete()
+			t.needsFullRender.Store(true)
 			t.markDirty()
 			t.renderBackgroundJobsPane()
 			return
@@ -88,6 +91,7 @@ func (t *App) AddSubAgentError(id, err string) {
 		ci := &t.conversationLog[i]
 		if ci.subBlock != nil && ci.subBlock.ID() == id {
 			ci.subBlock.Fail(err)
+			t.needsFullRender.Store(true)
 			t.markDirty()
 			t.renderBackgroundJobsPane()
 			return
@@ -117,12 +121,14 @@ func (t *App) ToggleBlockByIndex(n int) {
 
 	if n >= 0 && n < len(blocks) {
 		blocks[n].Toggle()
+		t.needsFullRender.Store(true)
 		t.refreshMessages()
 	}
 }
 
 // CollapseAll collapses all expandable blocks.
 func (t *App) CollapseAll() {
+	t.needsFullRender.Store(true)
 	for _, ci := range t.conversationLog {
 		if ci.reasoningBlock != nil {
 			for ci.reasoningBlock.IsExpanded() {
@@ -144,6 +150,7 @@ func (t *App) CollapseAll() {
 }
 
 func (t *App) toggleAllReasoning() {
+	t.needsFullRender.Store(true)
 	for _, ci := range t.conversationLog {
 		if ci.reasoningBlock != nil {
 			ci.reasoningBlock.Toggle()
@@ -153,6 +160,7 @@ func (t *App) toggleAllReasoning() {
 }
 
 func (t *App) toggleAllTools() {
+	t.needsFullRender.Store(true)
 	for _, ci := range t.conversationLog {
 		if ci.toolBlock != nil {
 			ci.toolBlock.Toggle()
@@ -162,6 +170,7 @@ func (t *App) toggleAllTools() {
 }
 
 func (t *App) toggleAllSubAgents() {
+	t.needsFullRender.Store(true)
 	for _, ci := range t.conversationLog {
 		if ci.subBlock != nil {
 			ci.subBlock.Toggle()

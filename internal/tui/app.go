@@ -108,14 +108,30 @@ type App struct {
 	userScrolled         bool
 	uiEventDrops         atomic.Int64
 	uiEventFallbacks     atomic.Int64
+	uiEventFallbackSat   atomic.Int64
 	lastRefreshUnixNano  atomic.Int64
 
 	isStreaming   atomic.Bool
 	needsRefresh  atomic.Bool
 	refreshQueued atomic.Bool
 
+	// needsFullRender forces refreshMessages to rebuild the entire
+	// conversation text instead of appending only new items. Set when an
+	// existing item mutates (block transitions, toggles), on clear, or when
+	// the thinking indicator enters/leaves the rendered buffer. Atomic
+	// because it is also written from the event-forwarder goroutine.
+	needsFullRender atomic.Bool
+
+	fallbackSem chan struct{}
+
 	availableModels []string
 	providerNames   map[string]string
+
+	// Render tracking for the incremental append fast path in
+	// refreshMessages: how many convItems are already reflected in the
+	// Messages text view, and at which width they were formatted.
+	renderedItems int
+	renderedWidth int
 
 	version string
 
@@ -140,6 +156,7 @@ func New(version string) *App {
 		thinkingInd: thinking.New("Thinking..."),
 		version:     version,
 		showBanner:  true,
+		fallbackSem: make(chan struct{}, uiMaxDirectFallbacks),
 	}
 	t.buildUI()
 	return t

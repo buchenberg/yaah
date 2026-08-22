@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"io"
 	"log"
 	"time"
 
@@ -45,17 +46,11 @@ func (t *App) flushRefresh() {
 	}
 }
 
-// refreshMessages re-renders the conversation text view from the current
-// conversation log. If the user has not scrolled up (t.userScrolled is
-// false), it auto-scrolls to the end; otherwise it preserves the current
-// viewport position.
-func (t *App) refreshMessages() {
-	start := time.Now()
-	w := messageWidth(t.Messages)
-	n := len(t.conversationLog)
-
-	items := make([]messages.Item, n)
-	for i := range t.conversationLog {
+// buildItems materializes conversationLog[from:to] into render items,
+// rendering markdown lazily with per-item width caching.
+func (t *App) buildItems(from, to, w int) []messages.Item {
+	items := make([]messages.Item, to-from)
+	for i := from; i < to; i++ {
 		ci := &t.conversationLog[i]
 		var text string
 		if ci.text != "" {
@@ -69,29 +64,84 @@ func (t *App) refreshMessages() {
 				text = ci.text
 			}
 		}
-		items[i] = messages.Item{
+		items[i-from] = messages.Item{
 			Text:      text,
 			ToolBlock: ci.toolBlock,
 			SubBlock:  ci.subBlock,
 			ReasBlock: ci.reasoningBlock,
 		}
 	}
+	return items
+}
 
-	formatStart := time.Now()
-	msg := messages.Format(items, "", messages.Content{
-		Width: w,
-		Theme: t.Theme,
-	})
-	formatDur := time.Since(formatStart)
+// canAppend reports whether the conversation view is eligible for the
+// incremental fast path: only new items at the tail, nothing mutated in
+// place, same width, no thinking-indicator line to reconcile.
+func (t *App) canAppend(w, n int) bool {
+	return !t.needsFullRender.Load() &&
+		t.renderedWidth == w &&
+		n > t.renderedItems &&
+		t.renderedItems > 0 &&
+		!t.thinkingInd.Visible()
+}
 
-	if t.thinkingInd.Visible() {
-		msg += "\n  " + t.thinkingInd.Render()
+// refreshMessages updates the conversation text view. When only new items
+// were appended to the log since the last render, it formats just those and
+// writes them incrementally; otherwise it rebuilds the full buffer. This
+// keeps per-refresh work O(new content) during long streaming sessions
+// instead of O(entire conversation). If the user has not scrolled up
+// (t.userScrolled is false), it auto-scrolls to the end; otherwise it
+// preserves the current viewport position.
+func (t *App) refreshMessages() {
+	start := time.Now()
+	w := messageWidth(t.Messages)
+	n := len(t.conversationLog)
+
+	appended := false
+	var formatDur, writeDur time.Duration
+	var msgLen int
+
+	if t.canAppend(w, n) {
+		formatStart := time.Now()
+		chunk := messages.Format(t.buildItems(t.renderedItems, n, w), "", messages.Content{
+			Width: w,
+			Theme: t.Theme,
+		})
+		formatDur = time.Since(formatStart)
+
+		writeStart := time.Now()
+		io.WriteString(t.Messages, chunk)
+		writeDur = time.Since(writeStart)
+
+		t.renderedItems = n
+		msgLen = len(chunk)
+		appended = true
+	} else {
+		items := t.buildItems(0, n, w)
+
+		thinkingText := ""
+		if t.thinkingInd.Visible() {
+			thinkingText = "\n  " + t.thinkingInd.Render()
+		}
+
+		formatStart := time.Now()
+		msg := messages.Format(items, thinkingText, messages.Content{
+			Width: w,
+			Theme: t.Theme,
+		})
+		formatDur = time.Since(formatStart)
+
+		writeStart := time.Now()
+		t.Messages.SetText(msg)
+		writeDur = time.Since(writeStart)
+
+		t.renderedItems = n
+		t.renderedWidth = w
+		t.needsFullRender.Store(false)
+		msgLen = len(msg)
 	}
-	t.charsRendered.Store(int64(len(msg)))
 
-	setStart := time.Now()
-	t.Messages.SetText(msg)
-	setDur := time.Since(setStart)
+	t.charsRendered.Store(int64(msgLen))
 
 	if !t.userScrolled {
 		t.Messages.ScrollToEnd()
@@ -108,19 +158,21 @@ func (t *App) refreshMessages() {
 	_, span := otel.Tracer("yaah").Start(context.Background(), "tui.refresh",
 		trace.WithAttributes(
 			attribute.Int("items", n),
-			attribute.Int("msg_bytes", len(msg)),
+			attribute.Int("msg_bytes", msgLen),
+			attribute.Bool("appended", appended),
 			attribute.Int64("dur_total_us", totalDur.Microseconds()),
 			attribute.Int64("dur_format_us", formatDur.Microseconds()),
-			attribute.Int64("dur_settext_us", setDur.Microseconds()),
+			attribute.Int64("dur_settext_us", writeDur.Microseconds()),
 			attribute.Int("queue_depth", queueDepth),
 			attribute.Int64("ui_event_drops", t.uiEventDrops.Load()),
 			attribute.Int64("ui_event_fallbacks", t.uiEventFallbacks.Load()),
+			attribute.Int64("ui_event_fallback_saturated", t.uiEventFallbackSat.Load()),
 		))
 	span.End()
 	observability.RecordTUIRefresh(context.Background(), totalDur, cadence, queueDepth)
 
 	if totalDur > 50*time.Millisecond {
-		log.Printf("SLOW refreshMessages: %d items, %d bytes, total=%v format=%v settext=%v",
-			n, len(msg), totalDur, formatDur, setDur)
+		log.Printf("SLOW refreshMessages: %d items, %d bytes, appended=%v total=%v format=%v write=%v",
+			n, msgLen, appended, totalDur, formatDur, writeDur)
 	}
 }

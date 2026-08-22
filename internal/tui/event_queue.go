@@ -10,6 +10,12 @@ import (
 const (
 	uiEventQueueSize         = 512
 	uiEventCriticalWaitLimit = 10 * time.Millisecond
+
+	// uiMaxDirectFallbacks caps goroutines spawned by enqueueUIEventDirect.
+	// tview's QueueUpdate/QueueUpdateDraw block until the main loop services
+	// them, so uncapped spawning piles up blocked goroutines whenever the UI
+	// thread stalls, and any straggler after App.Run returns blocks forever.
+	uiMaxDirectFallbacks = 8
 )
 
 type uiEvent struct {
@@ -79,6 +85,7 @@ func (t *App) runThinkingUpdate() {
 
 	if !t.thinkingInd.Visible() {
 		t.thinkingInd.Show()
+		t.needsFullRender.Store(true)
 	}
 	t.thinkingLabel = label
 
@@ -194,12 +201,46 @@ func (t *App) enqueueUIEvent(draw bool, fn func(), critical bool) {
 	}
 }
 
+// enqueueUIEventDirect runs an event outside the managed queue. It is the
+// critical-path fallback when the queue is saturated, or the path before
+// Run() starts the consumer. Concurrency is capped by uiMaxDirectFallbacks
+// (see the const comment) and in-flight work is abandoned at shutdown so
+// goroutines never block forever on a stopped application.
 func (t *App) enqueueUIEventDirect(draw bool, fn func()) {
-	if draw {
-		go t.App.QueueUpdateDraw(fn)
-	} else {
-		go t.App.QueueUpdate(fn)
+	t.bgMu.Lock()
+	done := t.bgDone
+	t.bgMu.Unlock()
+
+	timer := time.NewTimer(uiEventCriticalWaitLimit)
+	defer timer.Stop()
+	select {
+	case t.fallbackSem <- struct{}{}:
+	case <-done:
+		return
+	case <-timer.C:
+		t.uiEventFallbackSat.Add(1)
+		observability.RecordTUIQueueEvent(context.Background(), "fallback", "saturated", -1)
+		return
 	}
+
+	go func() {
+		defer func() { <-t.fallbackSem }()
+
+		// Best-effort shutdown check: shrinks the window in which a
+		// straggler blocks forever on QueueUpdate after App.Run returns.
+		if done != nil {
+			select {
+			case <-done:
+				return
+			default:
+			}
+		}
+		if draw {
+			t.App.QueueUpdateDraw(fn)
+		} else {
+			t.App.QueueUpdate(fn)
+		}
+	}()
 }
 
 func (t *App) uiQueueDepth() int {

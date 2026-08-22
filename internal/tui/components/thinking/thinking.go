@@ -33,11 +33,14 @@ func (i *Indicator) Advance() {
 	i.seed++
 }
 
-// Show makes the indicator visible.
-func (i *Indicator) Show() { i.visible.Store(true) }
+// Show makes the indicator visible and reports whether this call caused
+// a hidden→visible transition.
+func (i *Indicator) Show() bool { return i.visible.Swap(true) }
 
-// Hide makes the indicator invisible.
-func (i *Indicator) Hide() { i.visible.Store(false) }
+// Hide makes the indicator invisible and reports whether this call caused
+// a visible→hidden transition. Callers use the result to invalidate any
+// rendered output that embedded the indicator line.
+func (i *Indicator) Hide() bool { return i.visible.Swap(false) }
 
 // Visible reports whether the indicator is currently shown. Race-safe:
 // read from the animation ticker goroutine while writers run on the app

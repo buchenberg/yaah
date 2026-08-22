@@ -19,7 +19,11 @@ func (t *App) HandleEvent(event agent.Event) {
 		t.pendingTokens.WriteString(e.Text)
 		t.isStreaming.Store(true)
 		t.tokenMu.Unlock()
-		t.thinkingInd.Hide()
+		// Transition-only invalidation: the indicator line may be baked
+		// into the last full render, so removing it requires a rebuild.
+		if t.thinkingInd.Hide() {
+			t.needsFullRender.Store(true)
+		}
 	case *agent.ThinkingEvent:
 		t.queueThinkingUpdate(e.Text)
 	case *agent.FlushEvent:
@@ -28,7 +32,9 @@ func (t *App) HandleEvent(event agent.Event) {
 		})
 	case *agent.ToolStartEvent:
 		t.queueUpdateCritical(func() {
-			t.thinkingInd.Hide()
+			if t.thinkingInd.Hide() {
+				t.needsFullRender.Store(true)
+			}
 			t.pendingTool = e.Name
 			if e.Name == "spawn_subagent" {
 				return
@@ -97,7 +103,9 @@ func (t *App) HandleEvent(event agent.Event) {
 			t.pendingThink = ""
 			t.pendingTool = ""
 			t.agentActive = false
-			t.thinkingInd.Hide()
+			if t.thinkingInd.Hide() {
+				t.needsFullRender.Store(true)
+			}
 			if !flushed && e.Response != "" {
 				t.addAssistantResponse(e.Response)
 			}
