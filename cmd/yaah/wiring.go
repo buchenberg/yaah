@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -23,6 +24,15 @@ import (
 
 func newAgentSession() (*agentSession, error) {
 	return newAgentSessionWithOptions(sessionOptionsFromFlags(), false, false)
+}
+
+// toolSpillDir is the single source for the tool-result spill directory.
+// Both the parent loop (build_loop.go) and every sub-agent loop inherit
+// it so oversized tool results land in one place. Sub-agents receive it
+// via TaskToolOpts.ToolSpillDir — internal/agent never reads config
+// paths directly (finding C4).
+func toolSpillDir() string {
+	return filepath.Join(config.HomeDir(), "truncated")
 }
 
 // newAgentSessionWithOptions creates an agent session. All CLI-flag and
@@ -224,6 +234,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		OutputLimit:           cfg.Agent.SubAgent.OutputLimit,
 		ProviderMap:           cfg.Providers,
 		Defaults:              cfg.Agent.Default,
+		ToolSpillDir:          toolSpillDir(),
 		PathValidator:         pathValidator,
 		ResolveProviderByName: resolveProviderByName,
 	})

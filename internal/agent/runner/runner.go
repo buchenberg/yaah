@@ -56,7 +56,13 @@ type TaskToolOpts struct {
 	ProviderMap           map[string]config.Provider
 	Defaults              config.Defaults
 	ParentPermissionRules []pipeline.PermissionRule
-	PathValidator         *tools.PathValidator
+
+	// ToolSpillDir is where oversized sub-agent tool results spill to
+	// disk. The composition root passes the same directory it injected
+	// into the parent loop's LoopConfig so both share one spill home.
+	ToolSpillDir string
+
+	PathValidator *tools.PathValidator
 
 	// ResolveProviderByName translates a configured provider name into a
 	// live agent.Provider. Injected from the cmd layer because provider
@@ -91,6 +97,7 @@ func NewTaskTool(opts TaskToolOpts) *tools.TaskTool {
 			providerMap:           opts.ProviderMap,
 			defaults:              opts.Defaults,
 			parentPermissionRules: opts.ParentPermissionRules,
+			toolSpillDir:          opts.ToolSpillDir,
 			pathValidator:         opts.PathValidator,
 			resolveProviderByName: opts.ResolveProviderByName,
 		}, depth),
@@ -209,6 +216,12 @@ type taskRunnerOpts struct {
 	// PermissionMiddleware so path-based deny rules from the parent
 	// session are enforced by child agents.
 	parentPermissionRules []pipeline.PermissionRule
+
+	// toolSpillDir is the directory where oversized sub-agent tool
+	// results are spilled to disk. Injected from the composition root so
+	// sub-agents inherit the parent's spill directory instead of reaching
+	// into config for paths. Empty disables spilling.
+	toolSpillDir string
 
 	// pathValidator, when non-nil, confines the sub-agent's
 	// file-accessing tools to the session workspace, matching the
@@ -340,7 +353,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			JSONMode:           jsonMode,
 			ToolResultMaxLines: opts.defaults.ToolResultMaxLines,
 			ToolResultMaxBytes: opts.defaults.ToolResultMaxBytes,
-			ToolSpillDir:       filepath.Join(config.HomeDir(), "truncated"),
+			ToolSpillDir:       opts.toolSpillDir,
 			PruneProtectTokens: opts.defaults.PruneProtectTokens,
 			PruneMinReclaim:    opts.defaults.PruneMinReclaim,
 			PruneMinTurns:      opts.defaults.PruneMinTurns,
