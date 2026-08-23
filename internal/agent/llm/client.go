@@ -43,6 +43,12 @@ type CallResult struct {
 	ResponseModel string
 }
 
+// maxStripReasoningAttempts bounds how many times Call strips reasoning
+// content and replays the request. A provider that keeps rejecting the
+// stripped payload falls through to the classified retry path (bounded by
+// MaxRetries) instead of spinning forever (finding A2).
+const maxStripReasoningAttempts = 3
+
 // Call sends a chat request and returns the result. It handles retries,
 // provider rotation on credential errors, and context compaction on overflow.
 func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, error) {
@@ -52,6 +58,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 	var lastResult CallResult
 	var lastErr error
 	compactAttempts := 0
+	stripAttempts := 0
 	providerSwapped := false
 	c.replayCount = 0
 
@@ -146,13 +153,17 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		}
 
 		switch {
-		case classified.ShouldStripReasoning:
+		case classified.ShouldStripReasoning && stripAttempts < maxStripReasoningAttempts:
 			req.Messages = stripReasoningContent(req.Messages)
 			if c.StripReasoning != nil {
 				c.StripReasoning()
 			}
 			c.replayCount = 0
+			stripAttempts++
 			attempt--
+			// Continue immediately: attempt is now negative, so the
+			// exponential backoff below (1 << attempt) must not run.
+			continue
 
 		case classified.ShouldCompress && isDegenerateStream(err) && c.Trim != nil && compactAttempts < 3:
 			beforeCount := len(req.Messages)
