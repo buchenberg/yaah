@@ -304,16 +304,18 @@ func (l *Loop) wireBackgroundHooks() {
 	if l.BackgroundJobs == nil {
 		return
 	}
-	l.BackgroundJobs.OnStart = func(id, role, model, prompt string) {
-		if l.broker != nil {
-			l.broker.PublishMustDeliver(&SubAgentStartEvent{SubAgentID: id, Role: role, Model: model, Prompt: prompt})
-		}
-	}
-	l.BackgroundJobs.OnEnd = func(id, role, model, prompt, result string, dur time.Duration, err string) {
-		if l.broker != nil {
-			l.broker.PublishMustDeliver(&SubAgentEndEvent{SubAgentID: id, Role: role, Model: model, Prompt: prompt, Duration: dur, Error: err, Result: result})
-		}
-	}
+	l.BackgroundJobs.SetLoopHooks(
+		func(id, role, model, prompt string) {
+			if l.broker != nil {
+				l.broker.PublishMustDeliver(&SubAgentStartEvent{SubAgentID: id, Role: role, Model: model, Prompt: prompt})
+			}
+		},
+		func(id, role, model, prompt, result string, dur time.Duration, err string) {
+			if l.broker != nil {
+				l.broker.PublishMustDeliver(&SubAgentEndEvent{SubAgentID: id, Role: role, Model: model, Prompt: prompt, Duration: dur, Error: err, Result: result})
+			}
+		},
+	)
 }
 
 // toolCallNames extracts the function names from a slice of tool calls.
@@ -333,6 +335,5 @@ func (l *Loop) unwireBackgroundHooks() {
 	if l.BackgroundJobs == nil {
 		return
 	}
-	l.BackgroundJobs.OnStart = nil
-	l.BackgroundJobs.OnEnd = nil
+	l.BackgroundJobs.SetLoopHooks(nil, nil)
 }

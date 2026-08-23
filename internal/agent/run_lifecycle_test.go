@@ -14,7 +14,6 @@ import (
 // of the first Run and never recreated (finding A4), so events on later
 // Runs are silently dropped.
 func TestLoop_secondRunDeliversEvents(t *testing.T) {
-	t.Skip("A4: broker not recreated across Runs — fixed in Phase 1 Task 1.3")
 
 	fp := &fakeProvider{responses: []*types.ChatResponse{
 		{Choices: []types.Choice{{

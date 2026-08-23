@@ -67,8 +67,10 @@ type Loop struct {
 	// pubsub.Broker and BrokerView adapter; callers should NOT set Broker.
 	View View
 
-	broker     *pubsub.Broker[Event]
-	brokerView *BrokerView
+	broker       *pubsub.Broker[Event]
+	brokerView   *BrokerView
+	brokerClosed bool       // true once publishDone closed the broker; applyDefaults re-arms
+	ctxMgrMu     sync.Mutex // guards lazy CtxMgr fills from concurrent tool goroutines
 
 	LLM *llm.Client
 

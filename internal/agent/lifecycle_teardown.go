@@ -35,6 +35,9 @@ func (l *Loop) publishDone(response *string, runErr *error) {
 	}
 	l.broker.PublishMustDeliver(&done)
 	l.brokerView.Close()
+	// Mark eventing as retired: applyDefaults re-arms the broker on the
+	// next Run so a reused Loop keeps delivering events (finding A4).
+	l.brokerClosed = true
 }
 
 // teardown handles panic recovery, flushes the persister, closes hooks,

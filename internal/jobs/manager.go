@@ -137,10 +137,34 @@ type BackgroundJobs struct {
 	// SubAgentStartEvent / SubAgentEndEvent to the live loop broker).
 	// The id is the background job's sub-agent identifier ("bg-N").
 	// Loop-scoped: the loop registers them at Run start and clears them
-	// at Run end, so events only fire while a loop is live. Nil between
-	// runs is fine — the job keeps running; only the UI event is skipped.
+	// at Run end via SetLoopHooks, so events only fire while a loop is
+	// live. Nil between runs is fine — the job keeps running; only the
+	// UI event is skipped. Guarded by hookMu; read via loopHooks().
 	OnStart func(id, role, model, prompt string)
 	OnEnd   func(id, role, model, prompt, result string, dur time.Duration, err string)
+
+	// hookMu guards OnStart/OnEnd against Run-boundary writes racing
+	// with reads from completing job goroutines (finding D3).
+	hookMu sync.RWMutex
+}
+
+// SetLoopHooks installs (or clears, when both nil) the loop-scoped
+// OnStart/OnEnd hooks. Safe to call while jobs are running.
+func (m *BackgroundJobs) SetLoopHooks(
+	onStart func(id, role, model, prompt string),
+	onEnd func(id, role, model, prompt, result string, dur time.Duration, err string),
+) {
+	m.hookMu.Lock()
+	m.OnStart = onStart
+	m.OnEnd = onEnd
+	m.hookMu.Unlock()
+}
+
+// loopHooks snapshots the current loop-scoped hooks.
+func (m *BackgroundJobs) loopHooks() (onStart func(id, role, model, prompt string), onEnd func(id, role, model, prompt, result string, dur time.Duration, err string)) {
+	m.hookMu.RLock()
+	defer m.hookMu.RUnlock()
+	return m.OnStart, m.OnEnd
 }
 
 // NewBackgroundJobs creates a manager backed by context.Background().
@@ -226,12 +250,20 @@ func (m *BackgroundJobs) Launch(callCtx context.Context, runner TaskRunner, role
 		done:        make(chan struct{}),
 	}
 	// Let the runner closure report its model and usage back into the job.
-	jobCtx = WithSubAgentModelPtr(jobCtx, &job.model)
+	// The model writer is mutex-guarded because snapshot() may read
+	// job.model concurrently from Status calls (finding D3).
+	setJobModel := func(model string) {
+		job.mu.Lock()
+		job.model = model
+		job.mu.Unlock()
+	}
+	jobCtx = WithSubAgentModelWriter(jobCtx, setJobModel)
 	jobCtx = WithSubAgentUsage(jobCtx, &job.usage)
 	jobCtx = WithSubAgentStartNotifier(jobCtx, func(model string) {
-		job.model = model
-		if m.OnStart != nil {
-			m.OnStart(job.id, role, model, description)
+		setJobModel(model)
+		onStart, _ := m.loopHooks()
+		if onStart != nil {
+			onStart(job.id, role, model, description)
 		}
 	})
 
@@ -281,12 +313,13 @@ func (m *BackgroundJobs) run(job *backgroundJob, jobCtx context.Context, jobCanc
 	if m.OnUsage != nil && (job.usage.TotalTokens > 0 || job.usage.PromptTokens > 0 || job.usage.CompletionTokens > 0) {
 		m.OnUsage(job.usage)
 	}
-	if m.OnEnd != nil {
+	_, onEnd := m.loopHooks()
+	if onEnd != nil {
 		errStr := ""
 		if runErr != nil {
 			errStr = runErr.Error()
 		}
-		m.OnEnd(job.id, job.role, job.model, job.description, result, job.duration, errStr)
+		onEnd(job.id, job.role, job.model, job.description, result, job.duration, errStr)
 	}
 	if m.Deliver != nil {
 		m.Deliver(job.role, job.description, result, runErr)

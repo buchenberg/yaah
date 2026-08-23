@@ -26,20 +26,33 @@ func SubAgentModelFromContext(ctx context.Context) string {
 	return ""
 }
 
-// subAgentModelPtrKey is a context key for a *string the runner writes
-// the sub-agent's model into.
-type subAgentModelPtrKey struct{}
+// subAgentModelWriterKey is a context key for the closure the runner
+// calls to report the sub-agent's model name. Background jobs install a
+// mutex-guarded writer; foreground callers may adapt a *string.
+type subAgentModelWriterKey struct{}
+
+// WithSubAgentModelWriter stores write in ctx so the sub-agent runner
+// can report the model name through it. The writer must be safe for the
+// runner's goroutine only — synchronization with concurrent readers is
+// the installer's responsibility.
+func WithSubAgentModelWriter(ctx context.Context, write func(string)) context.Context {
+	return context.WithValue(ctx, subAgentModelWriterKey{}, write)
+}
 
 // WithSubAgentModelPtr stores ptr in ctx so the sub-agent runner can write
 // the model name into it. Call after runner returns to read the value.
+// Only safe when the caller reads *ptr after joining the runner (e.g. a
+// foreground dispatch collected via a channel); use
+// WithSubAgentModelWriter for shared targets.
 func WithSubAgentModelPtr(ctx context.Context, ptr *string) context.Context {
-	return context.WithValue(ctx, subAgentModelPtrKey{}, ptr)
+	return WithSubAgentModelWriter(ctx, func(model string) { *ptr = model })
 }
 
-// WriteSubAgentModel writes model to the *string stored in ctx, if present.
+// WriteSubAgentModel reports model through the writer stored in ctx, if
+// present.
 func WriteSubAgentModel(ctx context.Context, model string) {
-	if ptr, ok := ctx.Value(subAgentModelPtrKey{}).(*string); ok {
-		*ptr = model
+	if write, ok := ctx.Value(subAgentModelWriterKey{}).(func(string)); ok && write != nil {
+		write(model)
 	}
 }
 
