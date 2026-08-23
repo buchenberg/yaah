@@ -7,10 +7,17 @@ import (
 )
 
 // SteerMiddleware drains high-priority mid-turn steering messages.
+// It does NOT own a Compactor: when steering messages were drained, it
+// invokes the OnDrain hook (wired at pipeline-assembly time to the
+// compaction middleware), keeping steer→compaction knowledge out of
+// this file (finding D4).
 type SteerMiddleware struct {
-	ch        <-chan string
-	compactor Compactor
+	ch      <-chan string
+	onDrain DrainFunc
 }
+
+// DrainFunc is invoked after at least one steering message was drained.
+type DrainFunc func(ctx context.Context, messages []types.Message) []types.Message
 
 func (m *SteerMiddleware) Name() string { return "steer" }
 
@@ -24,8 +31,8 @@ func (m *SteerMiddleware) PrepareStep(ctx context.Context, step *Step) (*Step, e
 		select {
 		case msg, ok := <-m.ch:
 			if !ok {
-				if drained && m.compactor != nil {
-					step.Messages = m.compactor.Compact(ctx, step.Messages, 0)
+				if drained && m.onDrain != nil {
+					step.Messages = m.onDrain(ctx, step.Messages)
 				}
 				return step, nil
 			}
@@ -34,8 +41,8 @@ func (m *SteerMiddleware) PrepareStep(ctx context.Context, step *Step) (*Step, e
 				drained = true
 			}
 		default:
-			if drained && m.compactor != nil {
-				step.Messages = m.compactor.Compact(ctx, step.Messages, 0)
+			if drained && m.onDrain != nil {
+				step.Messages = m.onDrain(ctx, step.Messages)
 			}
 			return step, nil
 		}

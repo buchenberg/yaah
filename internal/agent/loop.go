@@ -55,11 +55,14 @@ func (l *Loop) Compact(ctx context.Context, messages []types.Message, threshold 
 // toPipelineConfig builds a PipelineConfig from the Loop's current settings.
 func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 	return pipeline.PipelineConfig{
-		Steer:                  l.Steer,
-		FollowUps:              l.FollowUps,
-		ContextWindow:          l.Config.ContextWindow,
-		CompactionThreshold:    l.Config.CompactionThreshold,
-		Compactor:              l.CtxMgr,
+		Steer:               l.Steer,
+		FollowUps:           l.FollowUps,
+		ContextWindow:       l.Config.ContextWindow,
+		CompactionThreshold: l.Config.CompactionThreshold,
+		Compactor:           l.CtxMgr,
+		SteerDrain: func(ctx context.Context, messages []types.Message) []types.Message {
+			return l.Compact(ctx, messages, 0)
+		},
 		ApprovalMode:           l.Config.ApprovalMode,
 		PermissionRules:        l.Config.PermissionRules,
 		LoopDetectCount:        l.Config.LoopDetectCount,

@@ -24,6 +24,11 @@ type PipelineConfig struct {
 	CompactionThreshold float64
 	Compactor           Compactor
 
+	// SteerDrain is invoked by the steer middleware after draining
+	// steering messages. The composition site wires it to compaction,
+	// keeping steer→compaction knowledge out of the steer middleware.
+	SteerDrain DrainFunc
+
 	ApprovalMode    string
 	PermissionRules []PermissionRule
 
@@ -67,7 +72,7 @@ func NewFromConfig(cfg PipelineConfig) *Pipeline {
 
 var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 	"steer": func(cfg PipelineConfig) Middleware {
-		return &SteerMiddleware{ch: cfg.Steer, compactor: cfg.Compactor}
+		return &SteerMiddleware{ch: cfg.Steer, onDrain: cfg.SteerDrain}
 	},
 	"followup": func(cfg PipelineConfig) Middleware { return &FollowupMiddleware{ch: cfg.FollowUps} },
 	"compaction": func(cfg PipelineConfig) Middleware {
