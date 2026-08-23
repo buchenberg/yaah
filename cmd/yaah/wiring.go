@@ -206,7 +206,27 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		return cfg.Agent.SubAgent.Roles[name].Supervised
 	}
 
-	taskTool := runner.NewTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default, nil, pathValidator, resolveProviderByName)
+	taskTool := runner.NewTaskTool(runner.TaskToolOpts{
+		Provider:              provider,
+		SystemPrompt:          systemPrompt,
+		ModelName:             modelName,
+		DB:                    db,
+		SessionID:             sessionID,
+		SubAgentProvider:      subAgentProvider,
+		SubAgentModel:         subAgentModel,
+		SubCfg:                cfg.Agent.SubAgent,
+		RoleNames:             reg.Names(),
+		OtelEnabled:           cfg.Observability.Otel.Enabled,
+		OtelVerbose:           cfg.Observability.Otel.Verbose,
+		Tracker:               tracker,
+		EstimateFactor:        cfg.Agent.Default.EstimateFactor,
+		SubContextWindow:      subCW,
+		OutputLimit:           cfg.Agent.SubAgent.OutputLimit,
+		ProviderMap:           cfg.Providers,
+		Defaults:              cfg.Agent.Default,
+		PathValidator:         pathValidator,
+		ResolveProviderByName: resolveProviderByName,
+	})
 
 	// RoleResolver provides a live role-name lookup so the spawn_subagent
 	// tool sees roles created via the role tool without a restart. Until

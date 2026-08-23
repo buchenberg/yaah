@@ -34,44 +34,70 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// TaskToolOpts carries everything NewTaskTool needs. A struct beats a
+// 20-parameter constructor: new sub-agent knobs no longer grow the
+// signature, and call sites read as keyed literals (finding C3).
+type TaskToolOpts struct {
+	Provider              agent.Provider
+	SystemPrompt          string
+	ModelName             string
+	DB                    *memory.DB
+	SessionID             string
+	SubAgentProvider      agent.Provider
+	SubAgentModel         string
+	SubCfg                config.SubAgentConfig
+	RoleNames             []string
+	OtelEnabled           bool
+	OtelVerbose           bool
+	Tracker               *tools.ConflictTracker
+	EstimateFactor        float64
+	SubContextWindow      int
+	OutputLimit           int
+	ProviderMap           map[string]config.Provider
+	Defaults              config.Defaults
+	ParentPermissionRules []pipeline.PermissionRule
+	PathValidator         *tools.PathValidator
+
+	// ResolveProviderByName translates a configured provider name into a
+	// live agent.Provider. Injected from the cmd layer because provider
+	// construction (makeProvider) belongs with the rest of the CLI wiring.
+	ResolveProviderByName func(map[string]config.Provider, string) agent.Provider
+}
+
 // NewTaskTool builds the planner's TaskTool: it resolves the advertised
 // role names/descriptions and returns a TaskTool whose Runner is a
 // makeTaskRunner closure bounded to one level of nesting.
-//
-// providerResolver translates a configured provider name into a live
-// agent.Provider. It is injected from the cmd layer because provider
-// construction (makeProvider) belongs with the rest of the CLI wiring.
-func NewTaskTool(provider agent.Provider, systemPrompt, modelName string, db *memory.DB, sessionID string, subAgentProvider agent.Provider, subAgentModel string, subCfg config.SubAgentConfig, roleNames []string, otelEnabled bool, otelVerbose bool, tracker *tools.ConflictTracker, estimateFactor float64, subContextWindow int, outputLimit int, providerMap map[string]config.Provider, defaults config.Defaults, parentPermissionRules []pipeline.PermissionRule, pathValidator *tools.PathValidator, providerResolver func(map[string]config.Provider, string) agent.Provider) *tools.TaskTool {
+func NewTaskTool(opts TaskToolOpts) *tools.TaskTool {
 	// Sub-agent spawning depth is hard-coded at 1: the top-level agent
 	// can spawn one level of sub-agents; sub-agents cannot spawn further
 	// sub-agents (remainingDepth reaches 0).
 	depth := 1
 	return &tools.TaskTool{
 		Runner: makeTaskRunner(taskRunnerOpts{
-			provider:              provider,
-			systemPrompt:          systemPrompt,
-			modelName:             modelName,
-			db:                    db,
-			parentSession:         sessionID,
-			subCfg:                subCfg,
-			subAgentProvider:      subAgentProvider,
-			subAgentModel:         subAgentModel,
-			OtelEnabled:           otelEnabled,
-			OtelVerbose:           otelVerbose,
-			tracker:               tracker,
-			estimateFactor:        estimateFactor,
-			subContextWindow:      subContextWindow,
-			outputLimit:           outputLimit,
-			providerMap:           providerMap,
-			defaults:              defaults,
-			parentPermissionRules: parentPermissionRules,
-			pathValidator:         pathValidator,
-			resolveProviderByName: providerResolver,
+			provider:              opts.Provider,
+			systemPrompt:          opts.SystemPrompt,
+			modelName:             opts.ModelName,
+			db:                    opts.DB,
+			parentSession:         opts.SessionID,
+			subCfg:                opts.SubCfg,
+			subAgentProvider:      opts.SubAgentProvider,
+			subAgentModel:         opts.SubAgentModel,
+			OtelEnabled:           opts.OtelEnabled,
+			OtelVerbose:           opts.OtelVerbose,
+			tracker:               opts.Tracker,
+			estimateFactor:        opts.EstimateFactor,
+			subContextWindow:      opts.SubContextWindow,
+			outputLimit:           opts.OutputLimit,
+			providerMap:           opts.ProviderMap,
+			defaults:              opts.Defaults,
+			parentPermissionRules: opts.ParentPermissionRules,
+			pathValidator:         opts.PathValidator,
+			resolveProviderByName: opts.ResolveProviderByName,
 		}, depth),
-		ResolveTimeout:   subAgentTimeoutResolver(subCfg),
-		RoleNames:        roleNames,
-		RoleDescriptions: RoleDescriptionsFor(roleNames),
-		Tracker:          tracker,
+		ResolveTimeout:   subAgentTimeoutResolver(opts.SubCfg),
+		RoleNames:        opts.RoleNames,
+		RoleDescriptions: RoleDescriptionsFor(opts.RoleNames),
+		Tracker:          opts.Tracker,
 	}
 }
 
