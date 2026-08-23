@@ -61,6 +61,8 @@ type Message struct {
 	ToolCallID       string `json:"tool_call_id,omitempty"`
 	ToolCalls        string `json:"tool_calls,omitempty"`
 	Timestamp        int64  `json:"ts"`
+	TraceID          string `json:"trace_id,omitempty"`
+	TurnID           string `json:"turn_id,omitempty"`
 }
 
 // DB is the yaah persistent database.
@@ -166,8 +168,19 @@ func (d *DB) migrate() error {
 		tool_calls        TEXT,
 		ts                INTEGER NOT NULL,
 		id                TEXT DEFAULT '',
+		trace_id          TEXT DEFAULT '',
+		turn_id           TEXT DEFAULT '',
 		PRIMARY KEY (session_id, idx)
 	);
+
+	CREATE TABLE IF NOT EXISTS trace_owners (
+		owner_id       TEXT PRIMARY KEY,
+		parent_session TEXT NOT NULL,
+		role           TEXT DEFAULT '',
+		created_at     INTEGER NOT NULL
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_trace_owners_parent ON trace_owners(parent_session);
 
 	CREATE TABLE IF NOT EXISTS memory (
 		id          TEXT PRIMARY KEY,
@@ -269,6 +282,26 @@ func (d *DB) migrate() error {
 	row.Scan(&hasColumn)
 	if !hasColumn {
 		d.sql.Exec("ALTER TABLE messages ADD COLUMN reasoning_content TEXT DEFAULT ''")
+	}
+
+	// Migration: add trace_id / turn_id cross-link columns to messages so a
+	// message row joins to its OTel span tree and turn (consolidate-persistence Phase 0).
+	row = d.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'trace_id'")
+	row.Scan(&hasColumn)
+	if !hasColumn {
+		d.sql.Exec("ALTER TABLE messages ADD COLUMN trace_id TEXT DEFAULT ''")
+	}
+	row = d.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'turn_id'")
+	row.Scan(&hasColumn)
+	if !hasColumn {
+		d.sql.Exec("ALTER TABLE messages ADD COLUMN turn_id TEXT DEFAULT ''")
+	}
+
+	// Index on the turn cross-link must be created after the column
+	// migration above — on a legacy database the column does not exist
+	// while the base schema still executes.
+	if _, err := d.sql.Exec("CREATE INDEX IF NOT EXISTS idx_messages_turn ON messages(turn_id)"); err != nil {
+		return fmt.Errorf("create idx_messages_turn: %w", err)
 	}
 
 	// Migration: add system_prompt column to sessions (session restoration).

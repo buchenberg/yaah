@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -22,6 +23,12 @@ type SessionPersister struct {
 	debouncer *memory.DebouncedWriter
 	sessionID string
 	msgIdx    int
+
+	// Cross-link IDs for the current interaction: traceID joins a message
+	// row to its OTel span tree, turnID to the Shepherd turn facts. Both
+	// empty when OTel is disabled / before the first Run of a prompt.
+	traceID string
+	turnID  string
 }
 
 // NewSessionPersister creates a SessionPersister. Pass nil for db to
@@ -32,6 +39,13 @@ func NewSessionPersister(db *memory.DB, debouncer *memory.DebouncedWriter, sessi
 		debouncer: debouncer,
 		sessionID: sessionID,
 	}
+}
+
+// SetTurnContext records the cross-link IDs stamped onto every message
+// persisted until the next call. Called by the loop once per Run.
+func (p *SessionPersister) SetTurnContext(traceID, turnID string) {
+	p.traceID = traceID
+	p.turnID = turnID
 }
 
 // Persist writes a single message to the database.
@@ -67,6 +81,8 @@ func (p *SessionPersister) Persist(msg types.Message) {
 		ToolCallID:       msg.ToolCallID,
 		ToolCalls:        toolCallsJSON,
 		Timestamp:        time.Now().Unix(),
+		TraceID:          p.traceID,
+		TurnID:           p.turnID,
 	}
 	if err := p.writeMsg(m); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: db persist: %v\n", err)
@@ -129,4 +145,15 @@ func messageID(sessionID string, idx int, role, content, reasoning, toolName, to
 		sessionID, idx, role, content, reasoning, toolName, toolCallID, toolCalls,
 	)))
 	return hex.EncodeToString(sum[:])
+}
+
+// newTurnID returns a random 128-bit hex ID that identifies one
+// prompt-to-answer interaction across OTel spans, persisted messages, and
+// Shepherd turn facts.
+func newTurnID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("turn-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
 }

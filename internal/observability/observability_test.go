@@ -168,7 +168,7 @@ func TestStartPrompt(t *testing.T) {
 	bp, cleanup := setupTestTracer(t)
 	defer cleanup()
 
-	ctx, span := StartPrompt(context.Background(), "What is 2+2?")
+	ctx, span := StartPrompt(context.Background(), "sess-1", "turn-abc", "What is 2+2?")
 	span.End()
 
 	traces := bp.Traces()
@@ -180,6 +180,10 @@ func TestStartPrompt(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, v, "2+2")
 
+	// Cross-link attributes (consolidate-persistence Phase 0).
+	assert.Equal(t, "sess-1", traces[0].Attributes["session.id"])
+	assert.Equal(t, "turn-abc", traces[0].Attributes["turn.id"])
+
 	// ctx should have the span embedded.
 	require.NotNil(t, trace.SpanFromContext(ctx))
 }
@@ -188,7 +192,7 @@ func TestStartPrompt_Empty(t *testing.T) {
 	bp, cleanup := setupTestTracer(t)
 	defer cleanup()
 
-	_, span := StartPrompt(context.Background(), "")
+	_, span := StartPrompt(context.Background(), "", "", "")
 	span.End()
 
 	traces := bp.Traces()
@@ -196,13 +200,17 @@ func TestStartPrompt_Empty(t *testing.T) {
 	// No prompt.text attribute when prompt is empty.
 	_, ok := traces[0].Attributes["prompt.text"]
 	assert.False(t, ok)
+	_, ok = traces[0].Attributes["session.id"]
+	assert.False(t, ok)
+	_, ok = traces[0].Attributes["turn.id"]
+	assert.False(t, ok)
 }
 
 func TestStartTurn(t *testing.T) {
 	bp, cleanup := setupTestTracer(t)
 	defer cleanup()
 
-	ctx, span := StartTurn(context.Background(), 3, "user prompt")
+	ctx, span := StartTurn(context.Background(), 3, "turn-xyz", "user prompt")
 	span.End()
 
 	traces := bp.Traces()
@@ -211,6 +219,7 @@ func TestStartTurn(t *testing.T) {
 
 	assert.Equal(t, int64(3), traces[0].Attributes["turn.number"])
 	assert.Equal(t, "user prompt", traces[0].Attributes["turn.prompt"])
+	assert.Equal(t, "turn-xyz", traces[0].Attributes["turn.id"])
 
 	_ = ctx
 }
@@ -621,8 +630,8 @@ func TestTraceTree(t *testing.T) {
 	defer cleanup()
 
 	// Create a parent-child span hierarchy within the same trace.
-	ctx, parent := StartPrompt(context.Background(), "test")
-	_, child := StartTurn(ctx, 1, "")
+	ctx, parent := StartPrompt(context.Background(), "", "", "test")
+	_, child := StartTurn(ctx, 1, "", "")
 	child.End()
 	parent.End()
 
@@ -653,11 +662,11 @@ func TestFullConversationTrace(t *testing.T) {
 	defer cleanup()
 
 	// 1. Start prompt
-	_, promptSpan := StartPrompt(context.Background(), "What is the weather in Berlin?")
+	_, promptSpan := StartPrompt(context.Background(), "", "", "What is the weather in Berlin?")
 	promptSpan.End()
 
 	// 2. Turn 1 with LLM
-	_, turnSpan := StartTurn(context.Background(), 1, "")
+	_, turnSpan := StartTurn(context.Background(), 1, "", "")
 	_, llmSpan := StartLLM(context.Background(), "gpt-4")
 	FinishLLM(llmSpan, 3, 800, types.Usage{PromptTokens: 30, CompletionTokens: 20, TotalTokens: 50})
 	llmSpan.End()
@@ -669,7 +678,7 @@ func TestFullConversationTrace(t *testing.T) {
 	toolSpan.End()
 
 	// 4. Turn 2 with LLM
-	_, turn2Span := StartTurn(context.Background(), 2, "")
+	_, turn2Span := StartTurn(context.Background(), 2, "", "")
 	_, llm2Span := StartLLM(context.Background(), "gpt-4")
 	FinishLLM(llm2Span, 3, 800, types.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15})
 	llm2Span.End()
