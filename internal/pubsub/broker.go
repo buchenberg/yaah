@@ -49,28 +49,25 @@ func (b *Broker[T]) Publish(event T) {
 
 // PublishMustDeliver delivers the event to every subscriber, waiting up
 // to mustDeliverTimeout per subscriber before counting it as dropped.
-// Subscribers are snapshotted under the read lock and delivered to
-// WITHOUT holding it, so slow consumers never block Subscribe,
-// Unsubscribe, or Close (finding D2). Ordering across concurrent
-// publishers is not globally serialized.
+//
+// It holds the read lock for the duration of delivery on purpose: the
+// write-lock holders (Close, Unsubscribe) close subscriber channels, and
+// the read lock guarantees no channel is closed while a send is in
+// flight. Publishers use the read lock too, so concurrent Publish and
+// PublishMustDeliver calls never block each other — only teardown waits
+// for in-flight delivery (bounded by mustDeliverTimeout per subscriber).
 func (b *Broker[T]) PublishMustDeliver(event T) {
 	if b.closed.Load() {
 		return
 	}
 	b.mu.RLock()
-	subs := make([]subscriber[T], len(b.subs))
-	copy(subs, b.subs)
+	defer b.mu.RUnlock()
 	timeout := b.mustDeliverTimeout
-	b.mu.RUnlock()
-
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	for _, s := range subs {
-		timer.Reset(timeout)
+	for _, s := range b.subs {
 		select {
 		case s.ch <- event:
 			b.delivered.Add(1)
-		case <-timer.C:
+		case <-time.After(timeout):
 			b.dropped.Add(1)
 		}
 	}

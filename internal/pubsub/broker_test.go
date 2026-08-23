@@ -240,38 +240,26 @@ func TestBroker_MultipleSubscribers(t *testing.T) {
 	b.Unsubscribe("b")
 }
 
-// TestPublishMustDeliver_doesNotBlockSubscribe verifies a slow
-// subscriber's wait happens outside the broker lock, so Subscribe and
-// Unsubscribe complete while delivery is stalled (finding D2).
-func TestPublishMustDeliver_doesNotBlockSubscribe(t *testing.T) {
-	b := NewBroker[int]()
-	slow := b.Subscribe("slow", 1)
-	b.Publish(7) // fills the cap-1 buffer; nobody reads it
-	_ = slow
+// TestPublishMustDeliver_concurrentCloseDoesNotPanic pins the safety
+// invariant that delivery holds the read lock while Close holds the write
+// lock, so a send can never race a channel close (send-on-closed-channel
+// panic). Exercise it repeatedly with a slow subscriber to widen the
+// interleaving window.
+func TestPublishMustDeliver_concurrentCloseDoesNotPanic(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		b := NewBroker[int]()
+		b.Subscribe("slow", 1) // nobody reads; fills so MustDeliver waits
 
-	done := make(chan struct{})
-	go func() {
-		start := time.Now()
-		b.PublishMustDeliver(42) // blocks ~timeout on slow subscriber
-		elapsed := time.Now().Sub(start)
-		if elapsed < 20*time.Millisecond {
-			t.Errorf("expected PublishMustDeliver to wait for slow subscriber, returned in %v", elapsed)
-		}
-		close(done)
-	}()
-
-	subscribeDone := make(chan struct{})
-	go func() {
-		time.Sleep(5 * time.Millisecond) // let MustDeliver start waiting
-		b.Subscribe("fast", 16)
-		b.Unsubscribe("fast")
-		close(subscribeDone)
-	}()
-
-	select {
-	case <-subscribeDone:
-	case <-time.After(time.Second):
-		t.Fatal("Subscribe/Unsubscribe blocked behind slow MustDeliver (head-of-line blocking)")
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			b.PublishMustDeliver(42)
+		}()
+		go func() {
+			defer wg.Done()
+			b.Close()
+		}()
+		wg.Wait() // a panic in either goroutine fails the test
 	}
-	<-done
 }

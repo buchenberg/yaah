@@ -340,6 +340,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			JSONMode:           jsonMode,
 			ToolResultMaxLines: opts.defaults.ToolResultMaxLines,
 			ToolResultMaxBytes: opts.defaults.ToolResultMaxBytes,
+			ToolSpillDir:       filepath.Join(config.HomeDir(), "truncated"),
 			PruneProtectTokens: opts.defaults.PruneProtectTokens,
 			PruneMinReclaim:    opts.defaults.PruneMinReclaim,
 			PruneMinTurns:      opts.defaults.PruneMinTurns,

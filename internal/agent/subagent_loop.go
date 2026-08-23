@@ -21,6 +21,12 @@ type SubAgentConfig struct {
 	JSONMode           bool
 	ToolResultMaxLines int
 	ToolResultMaxBytes int
+
+	// ToolSpillDir is the directory where oversized tool results are
+	// spilled to disk (mirrors LoopConfig.ToolSpillDir). Empty disables
+	// spilling; the truncation hint then carries no file path.
+	ToolSpillDir string
+
 	PruneProtectTokens int
 	PruneMinReclaim    int
 	PruneMinTurns      int
@@ -90,6 +96,7 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 			RetryBackoff:       time.Duration(cfg.RetryBackoffSecs) * time.Second,
 			MaxToolConcurrency: cfg.MaxToolConcurrency,
 			JSONMode:           cfg.JSONMode,
+			ToolSpillDir:       cfg.ToolSpillDir,
 			PermissionRules:    cfg.PermissionRules,
 			ContextWindow:      cfg.ContextWindow,
 			OtelEnabled:        cfg.OtelEnabled,
