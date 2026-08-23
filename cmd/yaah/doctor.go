@@ -11,7 +11,7 @@ var doctorCmd = &cobra.Command{
 	Short: "Diagnose config, environment, and system health",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		checks := doctor.RunChecks(doctor.Options{DirectiveOverrides: directiveOverrides})
+		checks := doctor.RunChecks(doctor.Options{DirectiveOverrides: sessionOptionsFromFlags().DirectiveOverrides})
 		for _, c := range checks {
 			cmd.Printf("  [%s]  %s\n", doctor.StatusLabel(c.Status), c.Label)
 			if c.Detail != "" {

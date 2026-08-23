@@ -10,13 +10,14 @@ import (
 	"github.com/buchenberg/yaah/internal/observability"
 )
 
-// initOtel initialises OpenTelemetry when configured. Serve mode injects
-// extraOtelProcessors (an in-memory BufferingSpanProcessor) and sets
-// otelInMemoryOnly so tracing activates without an OTLP endpoint.
-func initOtel(cfg *config.Config, skipOtel bool) (func(context.Context) error, bool, error) {
+// initOtel initialises OpenTelemetry when configured. Serve mode passes
+// extra processors (an in-memory BufferingSpanProcessor) and the
+// in-memory-only mode via opts so tracing activates without an OTLP
+// endpoint.
+func initOtel(cfg *config.Config, opts SessionOptions, skipOtel bool) (func(context.Context) error, bool, error) {
 	noop := func(_ context.Context) error { return nil }
 	enabledByEnv := os.Getenv("YAAH_OTEL_ENABLED") == "true"
-	if skipOtel || (!cfg.Observability.Otel.Enabled && len(extraOtelProcessors) == 0 && !enabledByEnv) {
+	if skipOtel || (!cfg.Observability.Otel.Enabled && len(opts.OtelProcessors) == 0 && !enabledByEnv) {
 		return noop, false, nil
 	}
 	otelCfg := observability.Config{
@@ -25,9 +26,9 @@ func initOtel(cfg *config.Config, skipOtel bool) (func(context.Context) error, b
 		ServiceName:     cfg.Observability.Otel.ServiceName,
 		Traces:          true,
 		Metrics:         cfg.Observability.Otel.Metrics,
-		ExtraProcessors: extraOtelProcessors,
+		ExtraProcessors: opts.OtelProcessors,
 	}
-	if otelInMemoryOnly {
+	if opts.OtelInMemoryOnly {
 		otelCfg.Endpoint = ""
 		otelCfg.Metrics = false
 	} else {

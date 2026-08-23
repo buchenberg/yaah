@@ -34,7 +34,7 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 	otelEnabled := s.cfg.Observability.Otel.Enabled
 	loop := b.Build(agent.LoopBuildOptions{
 		View:         v,
-		ApprovalMode: resolveApproval(s.cfg),
+		ApprovalMode: resolveApproval(s.cfg, s.opts),
 		OtelEnabled:  &otelEnabled,
 		OtelVerbose:  s.cfg.Observability.Otel.Verbose,
 	})

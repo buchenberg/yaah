@@ -60,8 +60,8 @@ func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSess
 // by injecting session directives after the identity block and appending the
 // tool quick-reference card. The systemPrompt stays clean so child sub-agent
 // prompts never inherit top-level directives.
-func buildMainPrompt(cfg *config.Config, systemPrompt string, toolReg *tools.Registry) string {
-	mainPrompt := prompts.InjectAfterIdentity(systemPrompt, resolveDirectives(cfg))
+func buildMainPrompt(cfg *config.Config, opts SessionOptions, systemPrompt string, toolReg *tools.Registry) string {
+	mainPrompt := prompts.InjectAfterIdentity(systemPrompt, resolveDirectives(cfg, opts))
 	if quickRef := buildToolQuickRef(toolReg); quickRef != "" {
 		mainPrompt += "\n\n" + quickRef
 	}

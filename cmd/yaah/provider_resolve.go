@@ -13,13 +13,13 @@ import (
 
 // resolveApproval returns the effective approval mode.
 // Order: CLI --approval flag → YAAH_APPROVAL env var → config file → "ask" default.
-func resolveApproval(cfg *config.Config) string {
+func resolveApproval(cfg *config.Config, opts SessionOptions) string {
 	mode := cfg.Agent.Default.Approval
 	if v := os.Getenv("YAAH_APPROVAL"); v != "" {
 		mode = v
 	}
-	if approvalOverride != "" {
-		mode = approvalOverride
+	if opts.ApprovalOverride != "" {
+		mode = opts.ApprovalOverride
 	}
 	switch mode {
 	case "allow", "ask", "deny":
@@ -289,15 +289,15 @@ func buildStuckChildTimeouts(cfg config.SubAgentConfig) map[string]time.Duration
 
 // resolveDirectives merges CLI --directive flags (prepended) with config
 // directives. CLI flags take positional priority.
-func resolveDirectives(cfg *config.Config) []string {
-	if len(directiveOverrides) == 0 {
+func resolveDirectives(cfg *config.Config, opts SessionOptions) []string {
+	if len(opts.DirectiveOverrides) == 0 {
 		return cfg.Agent.Default.Directives
 	}
 	if len(cfg.Agent.Default.Directives) == 0 {
-		return directiveOverrides
+		return opts.DirectiveOverrides
 	}
-	out := make([]string, 0, len(directiveOverrides)+len(cfg.Agent.Default.Directives))
-	out = append(out, directiveOverrides...)
+	out := make([]string, 0, len(opts.DirectiveOverrides)+len(cfg.Agent.Default.Directives))
+	out = append(out, opts.DirectiveOverrides...)
 	out = append(out, cfg.Agent.Default.Directives...)
 	return out
 }

@@ -65,7 +65,10 @@ var _ Session = (*agentSession)(nil)
 // one-shot prompts. Building it once avoids re-opening the database,
 // re-spawning MCP servers, and re-discovering skills on every turn.
 type agentSession struct {
-	cfg          *config.Config
+	cfg *config.Config
+	// opts snapshots the CLI-flag inputs used at construction time so
+	// later per-turn helpers (approval resolution) never read globals.
+	opts         SessionOptions
 	provider     agent.Provider
 	providerName string
 	modelName    string
