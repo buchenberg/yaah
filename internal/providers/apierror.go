@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // APIError is a structured non-2xx response from a provider API.
@@ -55,10 +56,7 @@ func (e *APIError) ProviderCode() string { return e.Code }
 // used by OpenAI-compatible and Anthropic APIs and falls back to the
 // truncated raw body.
 func newAPIError(statusCode int, body []byte) *APIError {
-	e := &APIError{StatusCode: statusCode, Message: strings.TrimSpace(string(body))}
-	if len(e.Message) > 512 {
-		e.Message = e.Message[:512]
-	}
+	e := &APIError{StatusCode: statusCode, Message: truncateRunes(strings.TrimSpace(string(body)), 512)}
 
 	var parsed struct {
 		Error struct {
@@ -77,6 +75,18 @@ func newAPIError(statusCode int, body []byte) *APIError {
 		}
 	}
 	return e
+}
+
+// truncateRunes caps s at max bytes without splitting a UTF-8 rune.
+func truncateRunes(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
 }
 
 // withRequestDetail appends request context ("msgs=... roles=... model=...")
