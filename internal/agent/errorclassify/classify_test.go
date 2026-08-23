@@ -2,6 +2,7 @@ package errorclassify
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -309,5 +310,51 @@ func TestClassifiedError_Error(t *testing.T) {
 	ce := ClassifiedError{Reason: ReasonBilling, Message: "out of credits"}
 	if ce.Error() != "billing: out of credits" {
 		t.Errorf("Error() = %q, want %q", ce.Error(), "billing: out of credits")
+	}
+}
+
+// fakeAPIError mirrors providers.APIError's typed surface without
+// importing it — this package stays dependency-free.
+type fakeAPIError struct {
+	status int
+	code   string
+}
+
+func (e *fakeAPIError) Error() string        { return "provider returned trouble" }
+func (e *fakeAPIError) HTTPStatus() int      { return e.status }
+func (e *fakeAPIError) ProviderCode() string { return e.code }
+
+// TestClassify_typedStatusBeatsStringParsing verifies a structured error
+// is classified by its HTTP status even when the message text would
+// classify differently (or not at all).
+func TestClassify_typedStatusBeatsStringParsing(t *testing.T) {
+	// Message text says nothing classifiable; the typed 401 must win.
+	err := &fakeAPIError{status: 401, code: "invalid_api_key"}
+	c := Classify(err, ErrorMeta{})
+	if c.Reason != ReasonAuth {
+		t.Errorf("Reason = %v, want auth", c.Reason)
+	}
+	if !c.ShouldRotateCred {
+		t.Error("expected ShouldRotateCred for typed 401")
+	}
+
+	// Wrapped typed errors must be found through errors.As.
+	wrapped := fmt.Errorf("call failed: %w", &fakeAPIError{status: 429})
+	c = Classify(wrapped, ErrorMeta{})
+	if c.Reason != ReasonRateLimit {
+		t.Errorf("Reason = %v, want rate_limit", c.Reason)
+	}
+}
+
+// TestClassify_providerCodeIsSearchable verifies a structured code that
+// previously only lived inside raw response bodies still drives
+// classification when the rendered message omits it.
+func TestClassify_providerCodeIsSearchable(t *testing.T) {
+	// Status 0 (transport-level): message patterns decide, so the
+	// appended provider code must be searchable.
+	err := &fakeAPIError{status: 0, code: "insufficient_quota"}
+	c := Classify(err, ErrorMeta{})
+	if c.Reason != ReasonBilling {
+		t.Errorf("Reason = %v, want billing from provider code", c.Reason)
 	}
 }

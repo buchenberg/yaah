@@ -115,7 +115,7 @@ func (c *AnthropicClient) Send(ctx context.Context, req types.ChatRequest) (*typ
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("provider returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, newAPIError(resp.StatusCode, respBody)
 	}
 
 	var antResp anthropicResponse

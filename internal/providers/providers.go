@@ -105,7 +105,8 @@ func (c *OpenAIClient) Send(ctx context.Context, req types.ChatRequest) (*types.
 		for _, m := range req.Messages {
 			roles = append(roles, m.Role)
 		}
-		return nil, fmt.Errorf("provider returned %d: %s  [msgs=%d roles=%s model=%s]", resp.StatusCode, strings.TrimSpace(string(respBody)), len(req.Messages), strings.Join(roles, ","), req.Model)
+		return nil, newAPIError(resp.StatusCode, respBody).
+			withRequestDetail(len(req.Messages), strings.Join(roles, ","), req.Model)
 	}
 
 	var result types.ChatResponse

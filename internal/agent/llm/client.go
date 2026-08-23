@@ -125,8 +125,9 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		lastResult = result
 		lastErr = err
 
+		// StatusCode is extracted inside Classify from typed provider
+		// errors (providers.APIError); string parsing is gone.
 		meta := errorclassify.ErrorMeta{
-			StatusCode:  httpStatusCode(err),
 			NumMessages: len(req.Messages),
 		}
 		classified := errorclassify.Classify(err, meta)
@@ -217,33 +218,6 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		}
 	}
 	return lastResult, lastErr
-}
-
-// httpStatusCode extracts the HTTP status code from a provider error.
-func httpStatusCode(err error) int {
-	if err == nil {
-		return 0
-	}
-	msg := err.Error()
-	const prefix = "provider returned "
-	for i := 0; i+len(prefix) <= len(msg); i++ {
-		if msg[i:i+len(prefix)] == prefix {
-			rest := msg[i+len(prefix):]
-			end := 0
-			for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
-				end++
-			}
-			if end == 3 && rest[end] == ':' {
-				var code int
-				for j := 0; j < 3; j++ {
-					code = code*10 + int(rest[j]-'0')
-				}
-				return code
-			}
-			break
-		}
-	}
-	return 0
 }
 
 // isDegenerateStream returns true if the error is from a model that produced

@@ -85,7 +85,8 @@ func (c *OpenAIClient) SendStream(ctx context.Context, req types.ChatRequest) (<
 				roles = append(roles, m.Role)
 			}
 			rolesStr := strings.Join(roles, ",")
-			errs <- fmt.Errorf("provider returned %d: %s  [msgs=%d roles=%s model=%s]", resp.StatusCode, strings.TrimSpace(string(respBody)), len(req.Messages), rolesStr, req.Model)
+			errs <- newAPIError(resp.StatusCode, respBody).
+				withRequestDetail(len(req.Messages), rolesStr, req.Model)
 			return
 		}
 
