@@ -78,9 +78,13 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 // Run executes the full conversation loop for a single user message
 // using the middleware pipeline.
 func (l *Loop) Run(ctx context.Context, userInput string) (response string, runErr error) {
+	// turnID is the stable per-interaction cross-link shared by the OTel
+	// spans, the persisted messages, and the Shepherd turn facts of this
+	// prompt-to-answer exchange.
+	turnID := newTurnID()
 	if l.Config.OtelEnabled {
 		var rootSpan trace.Span
-		ctx, rootSpan = observability.StartPrompt(ctx, userInput)
+		ctx, rootSpan = observability.StartPrompt(ctx, l.Config.SessionID, turnID, userInput)
 		defer func() {
 			if runErr != nil {
 				observability.RecordError(rootSpan, runErr)
@@ -88,11 +92,18 @@ func (l *Loop) Run(ctx context.Context, userInput string) (response string, runE
 			rootSpan.End()
 		}()
 	}
-	return l.runMiddleware(ctx, userInput)
+	if l.Persister != nil {
+		traceID := ""
+		if l.Config.OtelEnabled {
+			traceID = observability.TraceIDFromContext(ctx)
+		}
+		l.Persister.SetTurnContext(traceID, turnID)
+	}
+	return l.runMiddleware(ctx, userInput, turnID)
 }
 
 // runMiddleware executes the agent loop using the middleware pipeline.
-func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response string, runErr error) {
+func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (response string, runErr error) {
 	defer l.publishDone(&response, &runErr)
 	defer l.teardown(&runErr)
 
@@ -127,6 +138,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 		for iter := 0; iter < l.Config.MaxLoopCycles; iter++ {
 			turnStart := time.Now()
 			if traceMw != nil {
+				traceMw.SetTurnContext(turnID)
 				traceMw.StartTurn(iter, l.Config.Model, userInput)
 			}
 
@@ -156,7 +168,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput string) (response st
 			var turnSpan trace.Span
 			turnCtx := ctx
 			if l.Config.OtelEnabled {
-				turnCtx, turnSpan = observability.StartTurn(ctx, iter, userInput)
+				turnCtx, turnSpan = observability.StartTurn(ctx, iter, turnID, userInput)
 			}
 
 			step, req, err := l.buildTurnRequest(ctx, iter, messages, pipe, turnSpan)

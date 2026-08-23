@@ -14,6 +14,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -274,6 +275,15 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		tools.NotifySubAgentStart(ctx, subModel)
 
 		subTraceID := fmt.Sprintf("sub-%s-%s-%d", role, opts.parentSession, time.Now().UnixNano())
+
+		// Persist the trace-owner mapping so Shepherd facts recorded under
+		// the synthetic sub-ID remain joinable to the parent session
+		// (consolidate-persistence Phase 0 / finding F4).
+		if opts.db != nil {
+			if err := opts.db.RecordTraceOwner(subTraceID, opts.parentSession, string(role)); err != nil {
+				slog.Debug("trace_owner: record failed", "owner", subTraceID, "err", err)
+			}
+		}
 
 		// Create a scope for this sub-agent so the supervisor can
 		// inject guidance or halt it during execution.

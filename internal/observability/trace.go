@@ -36,27 +36,52 @@ func tracer() trace.Tracer {
 // StartPrompt creates the root span for a single user-visible question-
 // to-answer interaction. All agent.turn spans for this prompt are
 // children of this span. The prompt text is truncated to 200 chars as
-// an attribute so traces are self-documenting.
-func StartPrompt(ctx context.Context, prompt string) (context.Context, trace.Span) {
+// an attribute so traces are self-documenting. sessionID and turnID
+// cross-link the span tree to `sessions`/`messages` rows and Shepherd
+// turn facts carrying the same turn_id.
+func StartPrompt(ctx context.Context, sessionID, turnID, prompt string) (context.Context, trace.Span) {
 	ctx, span := tracer().Start(ctx, "prompt")
-	if prompt != "" {
-		span.SetAttributes(attribute.String("prompt.text", truncate(safeString(prompt), 200)))
+	attrs := []attribute.KeyValue{}
+	if sessionID != "" {
+		attrs = append(attrs, attribute.String("session.id", sessionID))
 	}
+	if turnID != "" {
+		attrs = append(attrs, attribute.String("turn.id", turnID))
+	}
+	if prompt != "" {
+		attrs = append(attrs, attribute.String("prompt.text", truncate(safeString(prompt), 200)))
+	}
+	span.SetAttributes(attrs...)
 	return ctx, span
 }
 
 // StartTurn creates a span for one agent loop iteration. The returned
 // context should flow into the LLM call and tool execution for that
-// turn so nested spans are children.
-func StartTurn(ctx context.Context, turnNum int, prompt string) (context.Context, trace.Span) {
+// turn so nested spans are children. turnID is the stable per-prompt ID
+// shared with the messages rows and Shepherd facts for this interaction.
+func StartTurn(ctx context.Context, turnNum int, turnID, prompt string) (context.Context, trace.Span) {
 	ctx, span := tracer().Start(ctx, "agent.turn")
-	span.SetAttributes(
+	attrs := []attribute.KeyValue{
 		attribute.Int("turn.number", turnNum),
-	)
-	if prompt != "" {
-		span.SetAttributes(attribute.String("turn.prompt", truncate(safeString(prompt), 200)))
 	}
+	if turnID != "" {
+		attrs = append(attrs, attribute.String("turn.id", turnID))
+	}
+	if prompt != "" {
+		attrs = append(attrs, attribute.String("turn.prompt", truncate(safeString(prompt), 200)))
+	}
+	span.SetAttributes(attrs...)
 	return ctx, span
+}
+
+// TraceIDFromContext returns the hex W3C trace ID of the current span in
+// ctx, or "" when tracing is disabled or no valid span context exists.
+func TraceIDFromContext(ctx context.Context) string {
+	sc := trace.SpanContextFromContext(ctx)
+	if !sc.IsValid() {
+		return ""
+	}
+	return sc.TraceID().String()
 }
 
 // StartTool creates a span for a single tool execution. The operation
