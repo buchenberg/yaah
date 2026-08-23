@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.55.0](https://github.com/buchenberg/yaah/compare/v0.54.0...v0.55.0) (2026-08-23)
+
+
+### Features
+
+* **persistence:** cross-link sessions, OTel traces, and Shepherd fac… ([#201](https://github.com/buchenberg/yaah/issues/201)) ([c18263c](https://github.com/buchenberg/yaah/commit/c18263c2f477422898feb65064d1d5c2821e10ab))
+
 ## [0.54.0](https://github.com/buchenberg/yaah/compare/v0.53.0...v0.54.0) (2026-08-20)
 
 
