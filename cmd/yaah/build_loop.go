@@ -2,9 +2,11 @@ package yaah
 
 import (
 	"context"
+	"path/filepath"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/providers"
@@ -159,6 +161,7 @@ func (s *agentSession) loopBuilder(
 			WrapUpThreshold:        s.cfg.Agent.Default.WrapUpThreshold,
 			MaxInlineToolsPerTurn:  s.cfg.Agent.Default.MaxInlineToolsPerTurn,
 			PromptCaching:          s.cfg.Agent.Default.PromptCaching,
+			ToolSpillDir:           filepath.Join(config.HomeDir(), "truncated"),
 			ReasoningProtectTurns:  s.cfg.Agent.Default.ReasoningProtect,
 			ToolResultMaxLines:     s.cfg.Agent.Default.ToolResultMaxLines,
 			ToolResultMaxBytes:     s.cfg.Agent.Default.ToolResultMaxBytes,

@@ -97,7 +97,7 @@ func makeProvider(name string, p config.Provider) (agent.Provider, bool) {
 // The token is used as a bearer key. If no token is stored, it returns
 // a stub that tells the user to run 'yaah login'.
 func makeOAuthProvider(name string, r config.Provider) (agent.Provider, bool) {
-	token, err := providers.LoadOAuthToken(name)
+	token, err := oauthTokenStore().Load(name)
 	if err != nil {
 		return &providers.OAuthErrorStub{Provider: name, Err: err}, true
 	}

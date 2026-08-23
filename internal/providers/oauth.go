@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/config"
 )
 
 // pollingSafetyMargin is added to the server-specified polling interval
@@ -68,15 +67,16 @@ type DeviceFlowHooks struct {
 // DeviceFlow runs the full device-code login for providerName:
 // existing-token check → start → user-code presentation → polling →
 // token persistence. The cmd layer resolves and validates the provider
-// config; everything with protocol or token-store side effects happens
-// here so login logic is not duplicated across REPL/TUI/web surfaces.
-func DeviceFlow(ctx context.Context, providerName string, cfg OAuthConfig, hooks DeviceFlowHooks) error {
+// config and supplies the token store; everything with protocol or
+// token-store side effects happens here so login logic is not
+// duplicated across REPL/TUI/web surfaces.
+func DeviceFlow(ctx context.Context, providerName string, cfg OAuthConfig, store OAuthTokenStore, hooks DeviceFlowHooks) error {
 	status := hooks.Status
 	if status == nil {
 		status = func(string) {}
 	}
 
-	existing, err := LoadOAuthToken(providerName)
+	existing, err := store.Load(providerName)
 	if err != nil {
 		return fmt.Errorf("check existing token: %w", err)
 	}
@@ -103,7 +103,7 @@ func DeviceFlow(ctx context.Context, providerName string, cfg OAuthConfig, hooks
 		Scope:           tr.Scope,
 		AuthenticatedAt: time.Now(),
 	}
-	if err := SaveOAuthToken(providerName, token); err != nil {
+	if err := store.Save(providerName, token); err != nil {
 		return fmt.Errorf("save token: %w", err)
 	}
 
@@ -231,14 +231,21 @@ func PollForToken(ctx context.Context, cfg OAuthConfig, dcr *DeviceCodeResponse)
 
 // --- Token persistence ---
 
-// OAuthTokenPath returns the path to the stored OAuth token for a provider.
-func OAuthTokenPath(providerName string) string {
-	return filepath.Join(config.HomeDir(), fmt.Sprintf("oauth-%s.json", providerName))
+// OAuthTokenStore persists OAuth tokens under Dir (typically the yaah
+// config directory, injected by the composition root so this package
+// does not reach into config for paths — finding C4).
+type OAuthTokenStore struct {
+	Dir string
 }
 
-// SaveOAuthToken persists an OAuth token for the named provider.
-func SaveOAuthToken(providerName string, token *OAuthToken) error {
-	path := OAuthTokenPath(providerName)
+// Path returns the stored-token path for a provider.
+func (s OAuthTokenStore) Path(providerName string) string {
+	return filepath.Join(s.Dir, fmt.Sprintf("oauth-%s.json", providerName))
+}
+
+// Save persists an OAuth token for the named provider.
+func (s OAuthTokenStore) Save(providerName string, token *OAuthToken) error {
+	path := s.Path(providerName)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
@@ -249,10 +256,10 @@ func SaveOAuthToken(providerName string, token *OAuthToken) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
-// LoadOAuthToken reads the stored OAuth token for the named provider.
+// Load reads the stored OAuth token for the named provider.
 // Returns nil, nil if no token file exists.
-func LoadOAuthToken(providerName string) (*OAuthToken, error) {
-	path := OAuthTokenPath(providerName)
+func (s OAuthTokenStore) Load(providerName string) (*OAuthToken, error) {
+	path := s.Path(providerName)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -270,10 +277,10 @@ func LoadOAuthToken(providerName string) (*OAuthToken, error) {
 	return &token, nil
 }
 
-// DeleteOAuthToken removes the stored token for the named provider.
-func DeleteOAuthToken(providerName string) error {
-	path := OAuthTokenPath(providerName)
-	err := os.Remove(path)
+// Delete removes the stored token for the named provider. Missing files
+// are not an error.
+func (s OAuthTokenStore) Delete(providerName string) error {
+	err := os.Remove(s.Path(providerName))
 	if os.IsNotExist(err) {
 		return nil
 	}

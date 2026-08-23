@@ -160,13 +160,16 @@ type AgentConfig struct {
 	WrapUpThreshold        int
 	MaxInlineToolsPerTurn  int
 	PromptCaching          bool
-	ReasoningProtectTurns  int
-	ToolResultMaxLines     int
-	ToolResultMaxBytes     int
-	PruneProtectTokens     int
-	PruneMinReclaim        int
-	PruneMinTurns          int
-	JSONMode               bool
+
+	// ToolSpillDir is injected straight into LoopConfig.ToolSpillDir.
+	ToolSpillDir          string
+	ReasoningProtectTurns int
+	ToolResultMaxLines    int
+	ToolResultMaxBytes    int
+	PruneProtectTokens    int
+	PruneMinReclaim       int
+	PruneMinTurns         int
+	JSONMode              bool
 }
 
 // WithAgentConfig applies all tuning parameters from an AgentConfig.
@@ -191,6 +194,7 @@ func WithAgentConfig(cfg AgentConfig) Option {
 		l.Config.WrapUpThreshold = cfg.WrapUpThreshold
 		l.Config.MaxInlineToolsPerTurn = cfg.MaxInlineToolsPerTurn
 		l.Config.PromptCaching = cfg.PromptCaching
+		l.Config.ToolSpillDir = cfg.ToolSpillDir
 		l.Config.JSONMode = cfg.JSONMode
 		if l.CtxMgr == nil {
 			l.CtxMgr = &ContextManager{}

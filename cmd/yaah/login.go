@@ -48,6 +48,13 @@ var logoutCmd = &cobra.Command{
 	RunE:  runLogout,
 }
 
+// oauthTokenStore builds the token store rooted at the yaah config
+// directory. The composition root owns path resolution so the providers
+// package never imports config (finding C4).
+func oauthTokenStore() providers.OAuthTokenStore {
+	return providers.OAuthTokenStore{Dir: config.HomeDir()}
+}
+
 func oauthProviderNames(cfg *config.Config) []string {
 	var names []string
 	for name, p := range cfg.Providers {
@@ -138,14 +145,14 @@ func loginOAuth(cfg *config.Config, providerName string, status func(string)) er
 		ClientID: r.OAuthClientID,
 		Scope:    r.OAuthScope,
 		Domain:   r.OAuthDomain,
-	}, providers.DeviceFlowHooks{Status: status})
+	}, oauthTokenStore(), providers.DeviceFlowHooks{Status: status})
 }
 
 func logoutOAuth(cfg *config.Config, providerName string, status func(string)) error {
 	if _, ok := cfg.Providers[providerName]; !ok {
 		return fmt.Errorf("provider %q not found in config", providerName)
 	}
-	if err := providers.DeleteOAuthToken(providerName); err != nil {
+	if err := oauthTokenStore().Delete(providerName); err != nil {
 		return fmt.Errorf("logout failed: %w", err)
 	}
 	status(fmt.Sprintf("Logged out — stored token for %q removed.", providerName))

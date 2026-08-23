@@ -129,7 +129,13 @@ type LoopConfig struct {
 	LoopDetectCount        int
 	LoopDetectWindow       int
 	ApprovalMode           string
-	WrapUpThreshold        int
+	// ToolSpillDir is the directory where oversized tool results are
+	// spilled to disk. Injected by the composition root (the yaah config
+	// dir); empty disables spilling and the truncation hint carries no
+	// file path.
+	ToolSpillDir string
+
+	WrapUpThreshold int
 	// Turn checkpointing for sub-agent loops only.
 	TurnCheckpointer      TurnCheckpointer
 	TurnCheckpointEnabled bool

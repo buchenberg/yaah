@@ -394,7 +394,7 @@ func TestLoop_toolResultTruncation(t *testing.T) {
 	// Add a tool that returns a long result
 	reg.Register(&fakeTool{name: "echo", result: longText})
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
-		MaxLoopCycles: 5}, Provider: fp,
+		MaxLoopCycles: 5, ToolSpillDir: t.TempDir()}, Provider: fp,
 		Registry: reg,
 	}
 
