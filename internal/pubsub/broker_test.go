@@ -239,3 +239,39 @@ func TestBroker_MultipleSubscribers(t *testing.T) {
 	b.Unsubscribe("a")
 	b.Unsubscribe("b")
 }
+
+// TestPublishMustDeliver_doesNotBlockSubscribe verifies a slow
+// subscriber's wait happens outside the broker lock, so Subscribe and
+// Unsubscribe complete while delivery is stalled (finding D2).
+func TestPublishMustDeliver_doesNotBlockSubscribe(t *testing.T) {
+	b := NewBroker[int]()
+	slow := b.Subscribe("slow", 1)
+	b.Publish(7) // fills the cap-1 buffer; nobody reads it
+	_ = slow
+
+	done := make(chan struct{})
+	go func() {
+		start := time.Now()
+		b.PublishMustDeliver(42) // blocks ~timeout on slow subscriber
+		elapsed := time.Now().Sub(start)
+		if elapsed < 20*time.Millisecond {
+			t.Errorf("expected PublishMustDeliver to wait for slow subscriber, returned in %v", elapsed)
+		}
+		close(done)
+	}()
+
+	subscribeDone := make(chan struct{})
+	go func() {
+		time.Sleep(5 * time.Millisecond) // let MustDeliver start waiting
+		b.Subscribe("fast", 16)
+		b.Unsubscribe("fast")
+		close(subscribeDone)
+	}()
+
+	select {
+	case <-subscribeDone:
+	case <-time.After(time.Second):
+		t.Fatal("Subscribe/Unsubscribe blocked behind slow MustDeliver (head-of-line blocking)")
+	}
+	<-done
+}
