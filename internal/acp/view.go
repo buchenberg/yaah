@@ -106,6 +106,9 @@ func (v *View) SendTo(sessionID string, send func(string, Update), evt agent.Eve
 			SessionUpdate: "agent_message_chunk",
 			Content:       &Content{Type: "text", Text: fmt.Sprintf("[compacted %.0f%% (%d→%d)]", pct, e.BeforeTokens, e.AfterTokens)},
 		}
+	case *agent.DoneEvent:
+		// Intentionally ignored: ACP signals turn completion via the
+		// session/update stop reason, not the agent's DoneEvent.
 	default:
 		return
 	}

@@ -37,6 +37,12 @@ func (v *terminalView) HandleEvent(evt agent.Event) {
 			v.streamed = true
 		})
 		fmt.Fprint(os.Stderr, e.Text)
+	case *agent.ThinkingEvent:
+		// Intentionally ignored: terminal mode does not render
+		// reasoning streams; tokens carry the visible output.
+	case *agent.FlushEvent:
+		// Intentionally ignored: TokenDeltaEvent already streams
+		// content directly to stderr; no buffered flush needed.
 	case *agent.ToolStartEvent:
 		// handled on ToolEndEvent
 	case *agent.ToolEndEvent:
