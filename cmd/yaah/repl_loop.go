@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -164,21 +163,12 @@ func replLogin(sess *agentSession) {
 		name = names[0]
 	} else {
 		fmt.Println("OAuth providers:")
-		for i, n := range names {
-			fmt.Printf("  %d) %s\n", i+1, n)
-		}
-		fmt.Print("Enter number: ")
-		scanner := bufio.NewScanner(os.Stdin)
-		if !scanner.Scan() {
+		picked, err := pickProviderNumber(names)
+		if err != nil {
+			fmt.Printf("%s\n", err)
 			return
 		}
-		input := strings.TrimSpace(scanner.Text())
-		idx, err := strconv.Atoi(input)
-		if err != nil || idx < 1 || idx > len(names) {
-			fmt.Printf("Invalid selection: %q\n", input)
-			return
-		}
-		name = names[idx-1]
+		name = picked
 	}
 
 	if err := runInteractiveLogin(sess.cfg, name); err != nil {
@@ -199,21 +189,12 @@ func replLogout(sess *agentSession) {
 		name = names[0]
 	} else {
 		fmt.Println("OAuth providers:")
-		for i, n := range names {
-			fmt.Printf("  %d) %s\n", i+1, n)
-		}
-		fmt.Print("Enter number: ")
-		scanner := bufio.NewScanner(os.Stdin)
-		if !scanner.Scan() {
+		picked, err := pickProviderNumber(names)
+		if err != nil {
+			fmt.Printf("%s\n", err)
 			return
 		}
-		input := strings.TrimSpace(scanner.Text())
-		idx, err := strconv.Atoi(input)
-		if err != nil || idx < 1 || idx > len(names) {
-			fmt.Printf("Invalid selection: %q\n", input)
-			return
-		}
-		name = names[idx-1]
+		name = picked
 	}
 
 	if err := runInteractiveLogout(sess.cfg, name); err != nil {

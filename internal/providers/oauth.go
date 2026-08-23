@@ -58,6 +58,59 @@ type OAuthToken struct {
 	AuthenticatedAt time.Time `json:"authenticated_at"`
 }
 
+// DeviceFlowHooks carries the presentation callbacks for DeviceFlow.
+// All are optional; nil hooks produce silent execution (useful in tests).
+type DeviceFlowHooks struct {
+	// Status reports progress and results as human-readable text.
+	Status func(msg string)
+}
+
+// DeviceFlow runs the full device-code login for providerName:
+// existing-token check → start → user-code presentation → polling →
+// token persistence. The cmd layer resolves and validates the provider
+// config; everything with protocol or token-store side effects happens
+// here so login logic is not duplicated across REPL/TUI/web surfaces.
+func DeviceFlow(ctx context.Context, providerName string, cfg OAuthConfig, hooks DeviceFlowHooks) error {
+	status := hooks.Status
+	if status == nil {
+		status = func(string) {}
+	}
+
+	existing, err := LoadOAuthToken(providerName)
+	if err != nil {
+		return fmt.Errorf("check existing token: %w", err)
+	}
+	if existing != nil {
+		status(fmt.Sprintf("Already authenticated with %q (since %s). Log out first to re-authenticate.", providerName, existing.AuthenticatedAt.Format("2006-01-02 15:04")))
+		return nil
+	}
+
+	status(fmt.Sprintf("Starting OAuth authentication with %q...", providerName))
+	dcr, err := StartDeviceFlow(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("start device flow: %w", err)
+	}
+
+	status(fmt.Sprintf("Open %s and enter code: %s", dcr.VerificationURI, dcr.UserCode))
+
+	tr, err := PollForToken(ctx, cfg, dcr)
+	if err != nil {
+		return fmt.Errorf("authorization failed: %w", err)
+	}
+
+	token := &OAuthToken{
+		AccessToken:     tr.AccessToken,
+		Scope:           tr.Scope,
+		AuthenticatedAt: time.Now(),
+	}
+	if err := SaveOAuthToken(providerName, token); err != nil {
+		return fmt.Errorf("save token: %w", err)
+	}
+
+	status(fmt.Sprintf("✓ Authenticated with %q.", providerName))
+	return nil
+}
+
 // StartDeviceFlow initiates the OAuth 2.0 Device Authorization Grant.
 // It returns the device code response containing the verification URI
 // and user code that the user must enter in their browser.
