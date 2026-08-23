@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-
 )
 
 // pollingSafetyMargin is added to the server-specified polling interval
