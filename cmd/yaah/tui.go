@@ -166,19 +166,13 @@ func runTUI() error {
 				var answers []string
 				for _, e := range entries {
 					ch := make(chan string, 1)
-					opts := make([]types.CtrlOption, len(e.Options))
-					for i, o := range e.Options {
-						opts[i] = types.CtrlOption{Label: o.Label, Description: o.Description}
+					select {
+					case controlCh <- buildCtrlQuestion(e, ch):
+					case <-time.After(ctrlSendTimeout):
+						answers = append(answers, fallbackCtrlAnswer(e))
+						continue
 					}
-					controlCh <- &types.CtrlQuestion{
-						Header:   e.Header,
-						Question: e.Question,
-						Options:  opts,
-						Multiple: e.Multiple,
-						AnswerCh: ch,
-					}
-					answer := <-ch
-					answers = append(answers, fmt.Sprintf("%s: %s", e.Header, answer))
+					answers = append(answers, awaitCtrlAnswer(e, ch))
 				}
 				return answers
 			}

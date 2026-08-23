@@ -119,41 +119,18 @@ func runWeb(cmd *cobra.Command, args []string) error {
 				ws.ctrlChMu.Unlock()
 				if ch == nil {
 					// No active stream — fall back to first option.
-					if len(e.Options) > 0 {
-						answers = append(answers, fmt.Sprintf("%s: %s", e.Header, e.Options[0].Label))
-					} else {
-						answers = append(answers, e.Header+": ")
-					}
+					answers = append(answers, fallbackCtrlAnswer(e))
 					continue
 				}
 				ansCh := make(chan string, 1)
-				opts := make([]types.CtrlOption, len(e.Options))
-				for i, o := range e.Options {
-					opts[i] = types.CtrlOption{Label: o.Label, Description: o.Description}
-				}
-				q := &types.CtrlQuestion{
-					Header:   e.Header,
-					Question: e.Question,
-					Options:  opts,
-					Multiple: e.Multiple,
-					AnswerCh: ansCh,
-				}
+				q := buildCtrlQuestion(e, ansCh)
 				select {
 				case ch <- q:
-				case <-time.After(30 * time.Second):
-					if len(e.Options) > 0 {
-						answers = append(answers, fmt.Sprintf("%s: %s", e.Header, e.Options[0].Label))
-					}
+				case <-time.After(ctrlSendTimeout):
+					answers = append(answers, fallbackCtrlAnswer(e))
 					continue
 				}
-				select {
-				case ans := <-ansCh:
-					answers = append(answers, fmt.Sprintf("%s: %s", e.Header, ans))
-				case <-time.After(5 * time.Minute):
-					if len(e.Options) > 0 {
-						answers = append(answers, fmt.Sprintf("%s: %s", e.Header, e.Options[0].Label))
-					}
-				}
+				answers = append(answers, awaitCtrlAnswer(e, ansCh))
 			}
 			return answers
 		}
