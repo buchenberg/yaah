@@ -46,6 +46,7 @@ func TestConfigAgentConfigParity(t *testing.T) {
 		"ReasoningProtectTurns": true, // ← Defaults.ReasoningProtect (renamed)
 		"JSONMode":              true, // ← AgentConfig.JSONMode (separate config section)
 		"QualityGates":          true, // ← AgentConfig.QualityGates (separate config section)
+		"ToolSpillDir":          true, // ← derived from config.HomeDir() at wiring time
 	}
 
 	// Check every Defaults field has a matching AgentConfig field.
