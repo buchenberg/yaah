@@ -127,12 +127,3 @@ func TestSteerMiddleware_CompactsOnce(t *testing.T) {
 		t.Errorf("compact called %d times, want 1 (once after draining all)", compactCalled)
 	}
 }
-
-// testCompactor is a simple Compactor implementation for testing.
-type testCompactor struct {
-	fn func(context.Context, []types.Message, float64) []types.Message
-}
-
-func (c *testCompactor) Compact(ctx context.Context, msgs []types.Message, threshold float64) []types.Message {
-	return c.fn(ctx, msgs, threshold)
-}

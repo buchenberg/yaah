@@ -16,19 +16,6 @@ import (
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-// ToolDeniedError is returned when a tool call is denied by approval policy or
-// by the user. Use errors.Is with a zero value to match:
-//
-//	errors.Is(err, ToolDeniedError{})
-type ToolDeniedError struct{}
-
-func (e ToolDeniedError) Error() string { return "tool denied" }
-
-func (e ToolDeniedError) Is(target error) bool {
-	_, ok := target.(ToolDeniedError)
-	return ok
-}
-
 // executeAndCollect runs tool calls concurrently and returns ToolResult for middleware inspection.
 func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, messages *[]types.Message) []pipeline.ToolResult {
 	results := make([]pipeline.ToolResult, len(calls))
@@ -37,23 +24,6 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 
 	for i, tc := range calls {
 		i, tc := i, tc
-
-		if l.Config.ApprovalMode == "deny" && l.classifyDanger(tc.Function.Name, tc.Function.Arguments) {
-			errMsg := fmt.Sprintf("error: tool %q requires approval but approval mode is 'deny'", tc.Function.Name)
-			l.Hooks.Emit(HookEvent{Event: events.ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
-			l.Hooks.Emit(HookEvent{Event: events.ToolEnd, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, ToolError: fmt.Sprintf("tool %q requires approval but approval mode is 'deny'", tc.Function.Name), ToolResult: errMsg})
-			execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: errMsg, err: ToolDeniedError{}}
-			continue
-		}
-		if l.Config.ApprovalMode == "ask" && l.classifyDanger(tc.Function.Name, tc.Function.Arguments) {
-			if !l.approveTool(tc.Function.Name, tc.Function.Arguments) {
-				errMsg := fmt.Sprintf("error: tool %q was denied by user", tc.Function.Name)
-				l.Hooks.Emit(HookEvent{Event: events.ToolStart, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments})
-				l.Hooks.Emit(HookEvent{Event: events.ToolEnd, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, ToolError: fmt.Sprintf("tool %q was denied by user", tc.Function.Name), ToolResult: errMsg})
-				execResults <- toolExecResult{idx: i, callID: tc.ID, name: tc.Function.Name, args: tc.Function.Arguments, content: errMsg, err: ToolDeniedError{}}
-				continue
-			}
-		}
 
 		go func() {
 			observability.RecordToolGoroutine(ctx, tc.Function.Name, "spawned")

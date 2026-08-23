@@ -4,7 +4,9 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/buchenberg/yaah/internal/agent/events"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
+	"github.com/buchenberg/yaah/internal/tools"
 )
 
 func TestBuildPipeline_SubAgentUsesSubAgentPipeline(t *testing.T) {
@@ -25,10 +27,45 @@ func TestBuildPipeline_SubAgentUsesSubAgentPipeline(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"steer", "followup", "approval", "compaction", "loop_detection", "staleness"} {
+	for _, name := range []string{"steer", "followup", "approval", "compaction", "loop_detection", "staleness", "conflict_detect"} {
 		if slices.Contains(names, name) {
 			t.Errorf("sub-agent pipeline should not contain orchestrator middleware %q", name)
 		}
+	}
+}
+
+func TestBuildPipeline_SharesToolConcurrencyInstance(t *testing.T) {
+	l := &Loop{
+		CtxMgr: &ContextManager{},
+		Config: LoopConfig{MaxToolConcurrency: 4},
+	}
+	l.applyDefaults()
+	if l.toolConcurrency == nil {
+		t.Fatal("applyDefaults did not create toolConcurrency")
+	}
+	p := l.buildPipeline()
+	mw := p.Find("tool_concurrency")
+	if mw == nil {
+		t.Fatal("pipeline missing tool_concurrency")
+	}
+	if mw != pipeline.Middleware(l.toolConcurrency) {
+		t.Error("pipeline tool_concurrency is not the Loop's semaphore instance")
+	}
+}
+
+func TestToPipelineConfig_ApprovalHooksWired(t *testing.T) {
+	l := &Loop{
+		CtxMgr:   &ContextManager{},
+		Registry: tools.NewRegistry(),
+		Config:   LoopConfig{ApprovalMode: "ask"},
+	}
+	l.Hooks = events.NewHookEmitter("", "")
+	cfg := l.toPipelineConfig()
+	if cfg.ApprovalClassify == nil || cfg.ApprovalApprove == nil || cfg.ApprovalEmitDeny == nil {
+		t.Fatal("approval callbacks not wired into PipelineConfig")
+	}
+	if !cfg.ApprovalClassify("bash", "{}") {
+		t.Error("classify should flag bash (implements DangerClassifier)")
 	}
 }
 
@@ -40,7 +77,7 @@ func TestBuildPipeline_OrchestratorUsesDefault(t *testing.T) {
 	if slices.Contains(names, "shepherd_trace") {
 		t.Error("orchestrator pipeline must not contain shepherd_trace")
 	}
-	for _, name := range []string{"steer", "followup", "compaction", "approval", "tool_concurrency", "loop_detection", "staleness"} {
+	for _, name := range []string{"steer", "followup", "compaction", "approval", "inline_limit", "tool_concurrency", "loop_detection", "staleness", "conflict_detect"} {
 		if !slices.Contains(names, name) {
 			t.Errorf("orchestrator pipeline missing default middleware %q", name)
 		}

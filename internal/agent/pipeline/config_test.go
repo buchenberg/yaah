@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -211,13 +212,58 @@ func TestNoopShepherdTraceMiddleware(t *testing.T) {
 	}
 }
 
+func TestBuilders_SharedEntriesProduceSameTypes(t *testing.T) {
+	cfg := PipelineConfig{
+		PermissionRules:    []PermissionRule{{Tool: "bash", Mode: "deny"}},
+		MaxToolConcurrency: 3,
+	}
+	for _, name := range []string{"permission", "tool_concurrency"} {
+		builtin, okB := builtinBuilders[name]
+		sub, okS := subAgentBuilders[name]
+		if !okB || !okS {
+			t.Fatalf("builder %q missing from one of the maps", name)
+		}
+		if reflect.TypeOf(builtin(cfg)) != reflect.TypeOf(sub(cfg)) {
+			t.Errorf("builder %q produces different types across maps", name)
+		}
+	}
+}
+
+func TestPipeline_ToolConcurrencySharesInstance(t *testing.T) {
+	shared := NewToolConcurrencyMiddleware(2)
+	p := NewFromConfig(PipelineConfig{ToolConc: shared, MaxToolConcurrency: 2})
+	mw := p.Find("tool_concurrency")
+	if mw == nil {
+		t.Fatal("pipeline missing tool_concurrency")
+	}
+	got, ok := mw.(*ToolConcurrencyMiddleware)
+	if !ok {
+		t.Fatalf("tool_concurrency is %T, want *ToolConcurrencyMiddleware", mw)
+	}
+	if got != shared {
+		t.Error("pipeline built a second ToolConcurrencyMiddleware instead of sharing the Loop's instance")
+	}
+}
+
+func TestPipeline_ToolConcurrencyNilFallsBackToConfig(t *testing.T) {
+	p := NewFromConfig(PipelineConfig{MaxToolConcurrency: 3})
+	mw := p.Find("tool_concurrency")
+	got, ok := mw.(*ToolConcurrencyMiddleware)
+	if !ok {
+		t.Fatalf("tool_concurrency = %v, want *ToolConcurrencyMiddleware", mw)
+	}
+	if got.max != 3 {
+		t.Errorf("tool_concurrency max = %d, want 3", got.max)
+	}
+}
+
 func TestNewFromConfig_NoShepherdTrace(t *testing.T) {
 	pipe := NewFromConfig(PipelineConfig{SessionID: "test-session"})
 	if tmw := pipe.ShepherdTraceMiddleware(); tmw != nil {
 		t.Error("orchestrator pipeline must not contain shepherd_trace")
 	}
 	// The rest of the default pipeline is intact.
-	for _, name := range []string{"steer", "followup", "compaction", "approval", "tool_concurrency", "loop_detection", "staleness"} {
+	for _, name := range []string{"steer", "followup", "compaction", "approval", "inline_limit", "tool_concurrency", "loop_detection", "staleness", "conflict_detect"} {
 		if pipe.Find(name) == nil {
 			t.Errorf("default pipeline lost middleware %q", name)
 		}

@@ -32,12 +32,41 @@ type PipelineConfig struct {
 	ApprovalMode    string
 	PermissionRules []PermissionRule
 
+	// Approval callbacks injected by the composition site. classify and
+	// approve gate dangerous tool calls in deny/ask modes; emitDeny fires
+	// hook events for stripped calls. When classify is nil the approval
+	// middleware is inert regardless of mode.
+	ApprovalClassify func(name, args string) bool
+	ApprovalApprove  func(name, args string) bool
+	ApprovalEmitDeny func(name, args, errMsg string)
+
 	LoopDetectCount  int
 	LoopDetectWindow int
 
 	MaxToolConcurrency int
 
+	// MaxInlineToolsPerTurn caps tool calls dispatched per turn; 0 =
+	// unlimited. Enforced by the inline_limit middleware, which
+	// synthesizes drop results for calls beyond the cap.
+	MaxInlineToolsPerTurn int
+
+	// ToolConc, when non-nil, is the Loop-owned semaphore instance.
+	// Both orchestrator and sub-agent pipelines reuse it so there is
+	// exactly one live ToolConcurrencyMiddleware per loop — the pipeline's
+	// own Acquire/Release are never called by the pipeline; the Loop's
+	// executeAndCollect drives the semaphore directly.
+	ToolConc *ToolConcurrencyMiddleware
+
 	MaxSubAgentConcurrency int
+
+	// Conflict detection: tracker owned by the composition site; the
+	// callbacks fire hook events, decorate the turn span, and persist
+	// the injected report message. When ConflictTracker is nil the
+	// middleware is inert.
+	ConflictTracker *tools.ConflictTracker
+	ConflictOnCheck func(ctx context.Context, model string, turn int)
+	ConflictOnFound func(ctx context.Context, model string, turn int, report string, fileCount int)
+	ConflictPersist func(msg types.Message)
 
 	PromptCaching bool
 
@@ -70,6 +99,21 @@ func NewFromConfig(cfg PipelineConfig) *Pipeline {
 	return NewPipeline(mws...)
 }
 
+// buildPermission is shared by the orchestrator and sub-agent pipelines.
+func buildPermission(cfg PipelineConfig) Middleware {
+	return &PermissionMiddleware{rules: cfg.PermissionRules}
+}
+
+// buildToolConcurrency is shared by the orchestrator and sub-agent
+// pipelines. When cfg.ToolConc carries the Loop-owned instance, both
+// share it instead of allocating a second semaphore.
+func buildToolConcurrency(cfg PipelineConfig) Middleware {
+	if cfg.ToolConc != nil {
+		return cfg.ToolConc
+	}
+	return NewToolConcurrencyMiddleware(cfg.MaxToolConcurrency)
+}
+
 var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 	"steer": func(cfg PipelineConfig) Middleware {
 		return &SteerMiddleware{ch: cfg.Steer, onDrain: cfg.SteerDrain}
@@ -78,7 +122,17 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 	"compaction": func(cfg PipelineConfig) Middleware {
 		return &CompactionMiddleware{window: cfg.ContextWindow, threshold: cfg.CompactionThreshold, compactor: cfg.Compactor}
 	},
-	"approval": func(cfg PipelineConfig) Middleware { return &ApprovalMiddleware{mode: cfg.ApprovalMode} },
+	"approval": func(cfg PipelineConfig) Middleware {
+		return &ApprovalMiddleware{
+			mode:     cfg.ApprovalMode,
+			classify: cfg.ApprovalClassify,
+			approve:  cfg.ApprovalApprove,
+			emitDeny: cfg.ApprovalEmitDeny,
+		}
+	},
+	"inline_limit": func(cfg PipelineConfig) Middleware {
+		return NewInlineLimitMiddleware(cfg.MaxInlineToolsPerTurn)
+	},
 	"loop_detection": func(cfg PipelineConfig) Middleware {
 		count := cfg.LoopDetectCount
 		window := cfg.LoopDetectWindow
@@ -95,22 +149,21 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 		}
 		return &LoopDetectionMiddleware{count: count, window: window}
 	},
-	"permission":       func(cfg PipelineConfig) Middleware { return &PermissionMiddleware{rules: cfg.PermissionRules} },
-	"tool_concurrency": func(cfg PipelineConfig) Middleware { return &ToolConcurrencyMiddleware{max: cfg.MaxToolConcurrency} },
+	"permission":       buildPermission,
+	"tool_concurrency": buildToolConcurrency,
 	"prompt_caching":   func(cfg PipelineConfig) Middleware { return &PromptCachingMiddleware{enabled: cfg.PromptCaching} },
 	"soft_prune": func(cfg PipelineConfig) Middleware {
 		return &SoftPruneMiddleware{pruner: cfg.Pruner, emit: cfg.PruneHooks.Emit, otel: cfg.PruneHooks.Otel}
 	},
 	"staleness": func(cfg PipelineConfig) Middleware { return &StalenessMiddleware{} },
+	"conflict_detect": func(cfg PipelineConfig) Middleware {
+		return NewConflictDetectMiddleware(cfg.ConflictTracker, cfg.ConflictOnCheck, cfg.ConflictOnFound, cfg.ConflictPersist)
+	},
 }
 
 var subAgentBuilders = map[string]func(PipelineConfig) Middleware{
-	"permission": func(cfg PipelineConfig) Middleware {
-		return &PermissionMiddleware{rules: cfg.PermissionRules}
-	},
-	"tool_concurrency": func(cfg PipelineConfig) Middleware {
-		return &ToolConcurrencyMiddleware{max: cfg.MaxToolConcurrency}
-	},
+	"permission":       buildPermission,
+	"tool_concurrency": buildToolConcurrency,
 	"shepherd_trace": func(cfg PipelineConfig) Middleware {
 		// Sub-agents write through the session-shared store instead of
 		// opening their own SQLite connection — concurrent writers on
@@ -146,10 +199,14 @@ var defaultPipelineNames = []string{
 	"followup",
 	"compaction",
 	"soft_prune",
+	// approval runs before inline_limit so denial synthesis happens on
+	// the full batch and only approved calls count against the cap.
 	"approval",
+	"inline_limit",
 	"tool_concurrency",
 	"loop_detection",
 	"staleness",
+	"conflict_detect",
 }
 
 // subAgentPipelineNames is the curated base middleware pipeline for
