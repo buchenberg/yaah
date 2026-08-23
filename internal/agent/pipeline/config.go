@@ -160,9 +160,9 @@ var defaultPipelineNames = []string{
 // - soft_prune: CtxMgr.EnsurePruner() already handles context for short-lived loops
 //
 // Included (conditionally, by NewSubAgentPipeline):
-// - permission: when the orchestrator passed parent permission rules they are
-//   enforced inside the sub-agent loop, filtering denied tool calls before
-//   concurrency gating or tracing (finding A1)
+//   - permission: when the orchestrator passed parent permission rules they are
+//     enforced inside the sub-agent loop, filtering denied tool calls before
+//     concurrency gating or tracing (finding A1)
 //
 // Included always:
 // - tool_concurrency: prevents uncontrolled parallel tool dispatch

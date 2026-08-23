@@ -73,7 +73,7 @@ func TestPipeline_SubAgentOmitsPermissionWithoutRules(t *testing.T) {
 
 func TestPipeline_SubAgentPermissionHonoursDisabled(t *testing.T) {
 	cfg := PipelineConfig{
-		PermissionRules: []PermissionRule{{Tool: "bash", Mode: "deny"}},
+		PermissionRules:  []PermissionRule{{Tool: "bash", Mode: "deny"}},
 		PipelineDisabled: []string{"permission"},
 	}
 	p := NewSubAgentPipeline(cfg)
