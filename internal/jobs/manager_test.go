@@ -163,6 +163,22 @@ func TestBackgroundJobs_TimeoutBounds(t *testing.T) {
 	if stillNil {
 		t.Error("expected a timeout error, got nil")
 	}
+
+	// The status must read failed, not just "some error happened" —
+	// snapshot may run before or after Deliver, so poll briefly for the
+	// terminal state rather than asserting immediately.
+	deadlineStatus := time.Now().Add(2 * time.Second)
+	for {
+		st, _ := m.Status(id)
+		if st.Status == BGStatusFailed {
+			break
+		}
+		if !time.Now().Before(deadlineStatus) {
+			t.Errorf("status = %q, want failed (timeout)", st.Status)
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
 }
 
 // TestBackgroundJobs_Cancel verifies explicit cancellation via Cancel.
