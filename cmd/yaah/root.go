@@ -49,7 +49,6 @@ func init() {
 	}
 	rootCmd.Version = fmt.Sprintf("%s (commit %s, built %s)", version, commit, date)
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
-		CleanOldBinary()
 		otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {}))
 	}
 	rootCmd.PersistentFlags().StringVarP(&approvalOverride,

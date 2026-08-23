@@ -18,18 +18,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// extraOtelProcessors holds span processors injected into the
-// observability.Setup call made by newAgentSession. Serve mode uses this to
-// attach an in-memory BufferingSpanProcessor so traces can be queried via
-// the `traces` MCP tool without an external Jaeger/OTLP backend.
-var extraOtelProcessors []sdktrace.SpanProcessor
-
-// otelInMemoryOnly, when true, tells newAgentSession to activate tracing
-// with no OTLP endpoint — spans flow only to extraOtelProcessors. Set by
-// serve mode so it captures traces regardless of the user's otel config and
-// without requiring a collector to be running.
-var otelInMemoryOnly bool
-
 // serveCmd exposes the yaah engine as an MCP tool server over stdio so other
 // agents (or benchmarking harnesses) can drive multi-turn conversations and
 // query in-process OpenTelemetry traces programmatically.
@@ -72,13 +60,12 @@ func init() {
 func runServe(cmd *cobra.Command, args []string) error {
 	// Activate in-memory tracing before the session is built so the
 	// BufferingSpanProcessor is attached to the global TracerProvider.
+	// Serve-mode OTel inputs travel via SessionOptions instead of
+	// package globals (finding B1).
 	buf := observability.NewBufferingSpanProcessor()
-	extraOtelProcessors = []sdktrace.SpanProcessor{buf}
-	otelInMemoryOnly = true
-	defer func() {
-		extraOtelProcessors = nil
-		otelInMemoryOnly = false
-	}()
+	serveOpts := sessionOptionsFromFlags()
+	serveOpts.OtelProcessors = []sdktrace.SpanProcessor{buf}
+	serveOpts.OtelInMemoryOnly = true
 
 	if httpAddr != "" {
 		fmt.Fprintf(os.Stderr, "%s starting MCP tool server (HTTP at %s/mcp)...\n", Dim("yaah serve:"), httpAddr)
@@ -103,7 +90,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		if sess != nil {
 			return nil
 		}
-		sess, sessErr = newAgentSession()
+		sess, sessErr = newAgentSessionWithOptions(serveOpts, false, false)
 		if sessErr != nil {
 			return sessErr
 		}
@@ -147,6 +134,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 // are intentional: a developer can rebuild yaah, kill the previous
 // process, and re-run without restarting the MCP client (Kilo).
 func runServeHTTP(buf *observability.BufferingSpanProcessor) error {
+	// Mirror runServe's OTel inputs: serve always captures traces
+	// in-memory regardless of the user's otel config.
+	httpOpts := sessionOptionsFromFlags()
+	httpOpts.OtelProcessors = []sdktrace.SpanProcessor{buf}
+	httpOpts.OtelInMemoryOnly = true
+
 	var mu sync.Mutex
 	var totalTokens types.Usage
 	promptCount := 0
@@ -157,7 +150,7 @@ func runServeHTTP(buf *observability.BufferingSpanProcessor) error {
 		if sess != nil {
 			return nil
 		}
-		sess, sessErr = newAgentSession()
+		sess, sessErr = newAgentSessionWithOptions(httpOpts, false, false)
 		if sessErr != nil {
 			return sessErr
 		}
@@ -229,7 +222,7 @@ func (s *agentSession) runHeadless(ctx context.Context, prompt string) (string, 
 	// Headless serve mode always forces OTel on (in-memory tracing).
 	otelForced := true
 	loop := b.Build(agent.LoopBuildOptions{
-		ApprovalMode: resolveApproval(s.cfg),
+		ApprovalMode: resolveApproval(s.cfg, s.opts),
 		OtelEnabled:  &otelForced,
 		OtelVerbose:  s.cfg.Observability.Otel.Verbose,
 	})

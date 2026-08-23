@@ -6,15 +6,21 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/buchenberg/yaah/internal/config"
 )
 
 func testLoop() *Loop { return &Loop{} }
 
+// testLoopWithSpill returns a Loop whose tool-result spill directory is
+// an isolated temp dir (the composition root injects ToolSpillDir in
+// production; tests own their directories).
+func testLoopWithSpill(t *testing.T) *Loop {
+	t.Helper()
+	return &Loop{Config: LoopConfig{ToolSpillDir: t.TempDir()}}
+}
+
 func TestTruncateToolResult_shortResult(t *testing.T) {
 	result := "short output"
-	got := testLoop().truncateToolResult(result)
+	got := testLoopWithSpill(t).truncateToolResult(result)
 	if got != result {
 		t.Errorf("short result should be unchanged, got %q", got)
 	}
@@ -26,7 +32,8 @@ func TestTruncateToolResult_lineCapped(t *testing.T) {
 		sb.WriteString("line\n")
 	}
 	result := sb.String()
-	got := testLoop().truncateToolResult(result)
+	loop := testLoopWithSpill(t)
+	got := loop.truncateToolResult(result)
 
 	if !strings.Contains(got, "[output truncated at") {
 		t.Errorf("line-capped result missing truncation marker: %s", got[len(got)-200:])
@@ -35,7 +42,7 @@ func TestTruncateToolResult_lineCapped(t *testing.T) {
 		t.Errorf("line-capped result missing recovery hint")
 	}
 
-	truncatedDir := filepath.Join(config.HomeDir(), "truncated")
+	truncatedDir := loop.Config.ToolSpillDir
 	entries, _ := os.ReadDir(truncatedDir)
 	if len(entries) == 0 {
 		t.Error("expected spillover file in truncated dir")
@@ -61,7 +68,7 @@ func TestTruncateToolResult_byteCapped(t *testing.T) {
 	}
 	result := sb.String()
 
-	got := testLoop().truncateToolResult(result)
+	got := testLoopWithSpill(t).truncateToolResult(result)
 
 	if len(got) > len(result) {
 		t.Errorf("byte-capped result should be shorter than input")
@@ -72,16 +79,28 @@ func TestTruncateToolResult_byteCapped(t *testing.T) {
 }
 
 func TestTruncateToolResult_emptyResult(t *testing.T) {
-	got := testLoop().truncateToolResult("")
+	loop := testLoopWithSpill(t)
+	got := loop.truncateToolResult("")
 	if got != "" {
 		t.Errorf("empty result should remain empty, got %q", got)
 	}
 
-	beforeEntries := countTruncatedFiles()
-	_ = testLoop().truncateToolResult("")
-	afterEntries := countTruncatedFiles()
+	beforeEntries := countFiles(loop.Config.ToolSpillDir)
+	_ = loop.truncateToolResult("")
+	afterEntries := countFiles(loop.Config.ToolSpillDir)
 	if afterEntries > beforeEntries {
 		t.Error("empty result should not create spillover file")
+	}
+}
+
+func TestTruncateToolResult_noSpillDirFallsBack(t *testing.T) {
+	var sb strings.Builder
+	for i := 0; i < defaultTruncateMaxLines+100; i++ {
+		sb.WriteString("line\n")
+	}
+	got := testLoop().truncateToolResult(sb.String())
+	if !strings.Contains(got, "[truncated]") {
+		t.Error("loop without ToolSpillDir should fall back to bare truncation marker")
 	}
 }
 
@@ -92,7 +111,7 @@ func TestTruncateToolResult_bothLimitsExceeded(t *testing.T) {
 		sb.WriteString(line)
 	}
 	result := sb.String()
-	got := testLoop().truncateToolResult(result)
+	got := testLoopWithSpill(t).truncateToolResult(result)
 
 	if !strings.Contains(got, "[output truncated at") {
 		t.Errorf("result missing truncation marker when both limits exceeded")
@@ -101,7 +120,7 @@ func TestTruncateToolResult_bothLimitsExceeded(t *testing.T) {
 
 func TestTruncateToolResult_binaryContent(t *testing.T) {
 	result := strings.Repeat("\x00\x01\x02\x03", 20000)
-	got := testLoop().truncateToolResult(result)
+	got := testLoopWithSpill(t).truncateToolResult(result)
 	if len(got) > len(result) {
 		t.Errorf("binary content should be truncated")
 	}
@@ -111,8 +130,8 @@ func TestTruncateToolResult_binaryContent(t *testing.T) {
 }
 
 func TestTruncateToolResult_lazyDirCreation(t *testing.T) {
-	spillDir := filepath.Join(config.HomeDir(), "truncated")
-	os.RemoveAll(spillDir)
+	spillDir := filepath.Join(t.TempDir(), "nested", "spill")
+	loop := &Loop{Config: LoopConfig{ToolSpillDir: spillDir}}
 
 	if _, err := os.Stat(spillDir); err == nil {
 		t.Fatal("spill dir should not exist before test")
@@ -122,7 +141,7 @@ func TestTruncateToolResult_lazyDirCreation(t *testing.T) {
 	for i := 0; i < 2500; i++ {
 		sb.WriteString("line\n")
 	}
-	_ = testLoop().truncateToolResult(sb.String())
+	_ = loop.truncateToolResult(sb.String())
 
 	if _, err := os.Stat(spillDir); err != nil {
 		t.Errorf("spill dir was not created lazily: %v", err)
@@ -130,8 +149,7 @@ func TestTruncateToolResult_lazyDirCreation(t *testing.T) {
 }
 
 func TestCleanTruncatedDir(t *testing.T) {
-	spillDir := filepath.Join(config.HomeDir(), "truncated")
-	os.MkdirAll(spillDir, 0o755)
+	spillDir := t.TempDir()
 
 	oldFile := filepath.Join(spillDir, "old.txt")
 	newFile := filepath.Join(spillDir, "new.txt")
@@ -152,8 +170,7 @@ func TestCleanTruncatedDir(t *testing.T) {
 	}
 }
 
-func countTruncatedFiles() int {
-	dir := filepath.Join(config.HomeDir(), "truncated")
+func countFiles(dir string) int {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return 0

@@ -69,6 +69,13 @@ type Loop struct {
 
 	broker     *pubsub.Broker[Event]
 	brokerView *BrokerView
+	// brokerClosed is true once publishDone closed the broker;
+	// applyDefaults re-arms it on the next Run (finding A4). It is
+	// unsynchronized BY DESIGN: Runs on one Loop must be sequential —
+	// Run → publishDone sets it, the next Run's applyDefaults clears it.
+	// Concurrent Runs on a single Loop are not supported.
+	brokerClosed bool
+	ctxMgrMu     sync.Mutex // guards lazy CtxMgr fills from concurrent tool goroutines
 
 	LLM *llm.Client
 
@@ -127,7 +134,13 @@ type LoopConfig struct {
 	LoopDetectCount        int
 	LoopDetectWindow       int
 	ApprovalMode           string
-	WrapUpThreshold        int
+	// ToolSpillDir is the directory where oversized tool results are
+	// spilled to disk. Injected by the composition root (the yaah config
+	// dir); empty disables spilling and the truncation hint carries no
+	// file path.
+	ToolSpillDir string
+
+	WrapUpThreshold int
 	// Turn checkpointing for sub-agent loops only.
 	TurnCheckpointer      TurnCheckpointer
 	TurnCheckpointEnabled bool

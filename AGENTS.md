@@ -29,13 +29,20 @@ yaah/
 ├── main.go                      # calls cmd/yaah.Execute()
 ├── go.mod                       # Go 1.25+, cobra, modernc.org/sqlite
 ├── cmd/yaah/                    # cobra commands
-│   ├── root.go                  # build-time vars (version, commit, date)
+│   ├── root.go                  # build-time vars + persistent flags (parse targets only)
 │   ├── root_cmd.go              # rootCmd: REPL, one-shot, prompt dispatch
-│   ├── agent_frame.go           # agent wiring (providers, tools, middleware)
+│   ├── session.go               # agentSession: view/ctrl-ch/approval plumbing
+│   ├── session_options.go       # SessionOptions: CLI inputs as explicit data
+│   ├── wiring.go                # composition root: providers, tools, jobs → session
+│   ├── wiring_otel.go           # OTel init from SessionOptions
+│   ├── wiring_prompt.go         # system prompt assembly
+│   ├── build_loop.go            # per-turn LoopBuilder population + runPrompt
+│   ├── provider_resolve.go      # provider/model/fallback resolution chain
 │   ├── repl_loop.go             # interactive REPL loop + slash commands
+│   ├── view_terminal.go         # terminal agent.View (plain REPL output)
+│   ├── control_driver.go        # shared question/approval control-plane helpers
 │   ├── subagent_runner.go       # sub-agent dispatch + role discovery
-│   ├── provider_resolve.go      # provider/model resolution helpers
-│   ├── serve.go                 # yaah serve — MCP tool server (stdio + HTTP)
+│   ├── serve.go serve_tools.go  # yaah serve — MCP tool server (stdio + HTTP)
 │   ├── acp_cmd.go               # yaah acp-serve cobra shim (server in internal/acp)
 │   ├── web.go web_view.go       # yaah web — browser UI + WebSocket view
 │   ├── tui.go                   # yaah tui (tview terminal UI)
@@ -44,11 +51,14 @@ yaah/
 │   ├── version.go               # yaah version
 │   ├── config.go                # yaah config show/edit
 │   ├── doctor.go                # yaah doctor
-│   ├── update.go                # yaah update
+│   ├── login.go                 # yaah login/logout (OAuth device flow via providers)
+│   ├── update.go                # yaah update (mechanics in internal/update)
 │   ├── skill.go                 # yaah skill list/show/create/edit
 │   ├── mcp.go                   # yaah mcp list/add/remove
 │   ├── memory.go                # yaah memory search/add
 │   ├── session.go               # yaah session list/show
+│   ├── trace.go                 # yaah shepherd-trace list/show/profile
+│   ├── compact_cmd.go resume.go quickref.go   # /compact, session restore, prompt quick-ref
 │   └── color.go                 # ANSI color helpers
 ├── internal/
 │   ├── acp/                     # ACP protocol server (JSON-RPC wire types, view, dispatch loop)
@@ -155,9 +165,10 @@ registration is shared between stdio and HTTP transports via
 - **No codegen, no build tags, no `go generate`.**
 - **cobra + pflag** for CLI.
 - **`internal/` for everything private.** `pkg/` reserved for future exports.
-- **No globals except** build-time vars in `cmd/yaah/root.go`, serve-mode
-  state (`extraOtelProcessors`, `otelInMemoryOnly`, `tuiMCPBuf`) in
-  `cmd/yaah/serve.go`, and the atomic role registry
+- **No globals except** build-time vars and persistent-flag parse
+  targets in `cmd/yaah/root.go` (read only via `sessionOptionsFromFlags`),
+  the `httpAddr` flag target in `cmd/yaah/serve.go`, the embedded web FS
+  in `cmd/yaah/web.go`, and the atomic role registry
   (`defaultRoleReg` in `internal/agent/subagent/role.go`, set at startup
   via `SetDefaultRoleRegistry` for hot-reloadable role profiles).
   OTel metric instruments in `internal/observability/metrics.go` are
@@ -203,8 +214,9 @@ interface. See `internal/agent/events.go` for the event types.
 ### Adding a new event type
 
 1. Add a struct in `internal/agent/events.go` with an `eventMarker()` method
-2. Add a `case` to each `HandleEvent` implementation (the compiler will find
-   missing cases thanks to the exhaustiveness of type switches)
+2. Add the event to `allEvents()` in `internal/agent/events/exhaustive_test.go`
+   — the exhaustive tests then FAIL until every consumer's `HandleEvent`
+   type switch has a case for it (explicit "intentionally ignored" cases count)
 3. Publish from the agent loop's internal broker
 
 ### Consumers

@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/tools"
-	"github.com/buchenberg/yaah/internal/types"
 )
 
 // Session is the narrow capability the ACP server needs from an agent
@@ -22,8 +22,8 @@ import (
 type Session interface {
 	RunPrompt(ctx context.Context, prompt string) (string, bool, error)
 	SetView(agent.View)
-	SetCtrlCh(chan<- types.CtrlMsg)
-	GetCtrlCh() chan<- types.CtrlMsg
+	SetCtrlCh(chan<- control.Msg)
+	GetCtrlCh() chan<- control.Msg
 	Close()
 	ToolReg() *tools.Registry
 }
@@ -85,7 +85,7 @@ func (s *Server) Run(ctx context.Context) error {
 						}
 						// Send as a status message so the client sees it.
 						if ch := s.sess.GetCtrlCh(); ch != nil {
-							ch <- &types.CtrlStatus{Text: msg}
+							ch <- &control.Status{Text: msg}
 						}
 						// Auto-answer: pick the first option.
 						if s.AutoAnswerQuestions && len(e.Options) > 0 {
@@ -229,7 +229,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 				wrapped := NewViewWithWrite(sendUpdate, sessionID)
 
-				ctrlCh := make(chan types.CtrlMsg, 64)
+				ctrlCh := make(chan control.Msg, 64)
 				s.sess.SetView(wrapped)
 				s.sess.SetCtrlCh(ctrlCh)
 

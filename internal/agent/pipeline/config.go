@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"slices"
 
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -22,6 +23,11 @@ type PipelineConfig struct {
 	ContextWindow       int
 	CompactionThreshold float64
 	Compactor           Compactor
+
+	// SteerDrain is invoked by the steer middleware after draining
+	// steering messages. The composition site wires it to compaction,
+	// keeping steer→compaction knowledge out of the steer middleware.
+	SteerDrain DrainFunc
 
 	ApprovalMode    string
 	PermissionRules []PermissionRule
@@ -66,7 +72,7 @@ func NewFromConfig(cfg PipelineConfig) *Pipeline {
 
 var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 	"steer": func(cfg PipelineConfig) Middleware {
-		return &SteerMiddleware{ch: cfg.Steer, compactor: cfg.Compactor}
+		return &SteerMiddleware{ch: cfg.Steer, onDrain: cfg.SteerDrain}
 	},
 	"followup": func(cfg PipelineConfig) Middleware { return &FollowupMiddleware{ch: cfg.FollowUps} },
 	"compaction": func(cfg PipelineConfig) Middleware {
@@ -99,6 +105,9 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 }
 
 var subAgentBuilders = map[string]func(PipelineConfig) Middleware{
+	"permission": func(cfg PipelineConfig) Middleware {
+		return &PermissionMiddleware{rules: cfg.PermissionRules}
+	},
 	"tool_concurrency": func(cfg PipelineConfig) Middleware {
 		return &ToolConcurrencyMiddleware{max: cfg.MaxToolConcurrency}
 	},
@@ -143,8 +152,8 @@ var defaultPipelineNames = []string{
 	"staleness",
 }
 
-// subAgentPipelineNames is the curated middleware pipeline for sub-agent
-// loops. Sub-agents are ephemeral workers with fixed turn budgets — they
+// subAgentPipelineNames is the curated base middleware pipeline for
+// sub-agent loops. Sub-agents are ephemeral workers with fixed turn budgets — they
 // don't need orchestrator-level middleware.
 //
 // Deliberately excluded:
@@ -155,7 +164,12 @@ var defaultPipelineNames = []string{
 // - staleness: orchestrator-specific (tracks steer/followup context shifts)
 // - soft_prune: CtxMgr.EnsurePruner() already handles context for short-lived loops
 //
-// Included:
+// Included (conditionally, by NewSubAgentPipeline):
+//   - permission: when the orchestrator passed parent permission rules they are
+//     enforced inside the sub-agent loop, filtering denied tool calls before
+//     concurrency gating or tracing (finding A1)
+//
+// Included always:
 // - tool_concurrency: prevents uncontrolled parallel tool dispatch
 // - shepherd_trace: records tool calls for error enrichment and supervised rollback
 var subAgentPipelineNames = []string{
@@ -183,8 +197,15 @@ func SubAgentPipelineNames(disabled []string) []string {
 // from config. It uses subAgentPipelineNames instead of the orchestrator
 // defaults; the shepherd_trace builder writes through the session-shared
 // store (set by InitShepherdInfrastructure during wiring).
+//
+// When cfg carries parent permission rules, the permission middleware is
+// prepended so denied tool calls are stripped before any other middleware
+// observes them. Opting out via PipelineDisabled is honoured.
 func NewSubAgentPipeline(cfg PipelineConfig) *Pipeline {
 	names := SubAgentPipelineNames(cfg.PipelineDisabled)
+	if len(cfg.PermissionRules) > 0 && !slices.Contains(cfg.PipelineDisabled, "permission") {
+		names = append([]string{"permission"}, names...)
+	}
 	mws := make([]Middleware, 0, len(names))
 	for _, name := range names {
 		if build, ok := subAgentBuilders[name]; ok {

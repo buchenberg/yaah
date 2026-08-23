@@ -47,6 +47,15 @@ func (b *Broker[T]) Publish(event T) {
 	}
 }
 
+// PublishMustDeliver delivers the event to every subscriber, waiting up
+// to mustDeliverTimeout per subscriber before counting it as dropped.
+//
+// It holds the read lock for the duration of delivery on purpose: the
+// write-lock holders (Close, Unsubscribe) close subscriber channels, and
+// the read lock guarantees no channel is closed while a send is in
+// flight. Publishers use the read lock too, so concurrent Publish and
+// PublishMustDeliver calls never block each other — only teardown waits
+// for in-flight delivery (bounded by mustDeliverTimeout per subscriber).
 func (b *Broker[T]) PublishMustDeliver(event T) {
 	if b.closed.Load() {
 		return

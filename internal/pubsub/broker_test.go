@@ -239,3 +239,27 @@ func TestBroker_MultipleSubscribers(t *testing.T) {
 	b.Unsubscribe("a")
 	b.Unsubscribe("b")
 }
+
+// TestPublishMustDeliver_concurrentCloseDoesNotPanic pins the safety
+// invariant that delivery holds the read lock while Close holds the write
+// lock, so a send can never race a channel close (send-on-closed-channel
+// panic). Exercise it repeatedly with a slow subscriber to widen the
+// interleaving window.
+func TestPublishMustDeliver_concurrentCloseDoesNotPanic(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		b := NewBroker[int]()
+		b.Subscribe("slow", 1) // nobody reads; fills so MustDeliver waits
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			b.PublishMustDeliver(42)
+		}()
+		go func() {
+			defer wg.Done()
+			b.Close()
+		}()
+		wg.Wait() // a panic in either goroutine fails the test
+	}
+}

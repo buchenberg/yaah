@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/buchenberg/yaah/internal/types"
+	"github.com/buchenberg/yaah/internal/control"
 )
 
 // forwardCtrl translates control-channel messages into session/update
 // notifications. Question and continue policies are governed by the
 // Server's AutoAnswerQuestions and AutoContinue fields.
-func (s *Server) forwardCtrl(ctx context.Context, ch <-chan types.CtrlMsg, sessionID string, send func(string, Update)) {
+func (s *Server) forwardCtrl(ctx context.Context, ch <-chan control.Msg, sessionID string, send func(string, Update)) {
 	for {
 		select {
 		case msg, ok := <-ch:
@@ -18,17 +18,17 @@ func (s *Server) forwardCtrl(ctx context.Context, ch <-chan types.CtrlMsg, sessi
 				return
 			}
 			switch m := msg.(type) {
-			case *types.CtrlStatus:
+			case *control.Status:
 				send(sessionID, Update{
 					SessionUpdate: "agent_message_chunk",
 					Content:       &Content{Type: "text", Text: m.Text},
 				})
-			case *types.CtrlError:
+			case *control.Error:
 				send(sessionID, Update{
 					SessionUpdate: "agent_message_chunk",
 					Content:       &Content{Type: "text", Text: fmt.Sprintf("error: %v", m.Err)},
 				})
-			case *types.CtrlContinue:
+			case *control.Continue:
 				// Inform the client and auto-continue.
 				msg := fmt.Sprintf("Max iterations (%d) reached — continuing.", m.MaxIter)
 				send(sessionID, Update{
@@ -41,7 +41,7 @@ func (s *Server) forwardCtrl(ctx context.Context, ch <-chan types.CtrlMsg, sessi
 					default:
 					}
 				}
-			case *types.CtrlDone:
+			case *control.Done:
 				for {
 					select {
 					case <-ch:
@@ -49,12 +49,12 @@ func (s *Server) forwardCtrl(ctx context.Context, ch <-chan types.CtrlMsg, sessi
 						return
 					}
 				}
-			case *types.CtrlContextInfo:
+			case *control.ContextInfo:
 				send(sessionID, Update{
 					SessionUpdate: "agent_message_chunk",
 					Content:       &Content{Type: "text", Text: fmt.Sprintf("[context: %d/%d tokens]", m.Tokens, m.Window)},
 				})
-			case *types.CtrlQuestion:
+			case *control.Question:
 				// Format and send the question text.
 				msg := fmt.Sprintf("❓ %s\n\n%s\n\n", m.Header, m.Question)
 				for i, o := range m.Options {

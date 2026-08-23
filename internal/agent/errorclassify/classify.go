@@ -1,12 +1,39 @@
 package errorclassify
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 )
 
+// statusCoder is implemented by structured provider errors (notably
+// providers.APIError). Classification reads these typed fields instead
+// of parsing Error() strings, so reworded provider messages can never
+// silently break retry/fallback classification. Defined consumer-side
+// to keep this package dependency-free.
+type statusCoder interface {
+	HTTPStatus() int
+	ProviderCode() string
+}
+
+func statusCodeFrom(err error) int {
+	var sc statusCoder
+	if errors.As(err, &sc) {
+		return sc.HTTPStatus()
+	}
+	return 0
+}
+
+func providerCode(err error) string {
+	var sc statusCoder
+	if errors.As(err, &sc) {
+		return sc.ProviderCode()
+	}
+	return ""
+}
+
 // Classify maps a provider error to a ClassifiedError with recovery hints.
-// Priority order: status code → error-code string → message patterns → transport heuristics → unknown.
+// Priority order: typed status/code → status code → error-code string → message patterns → transport heuristics → unknown.
 func Classify(err error, meta ErrorMeta) ClassifiedError {
 	if err == nil {
 		return ClassifiedError{
@@ -17,7 +44,19 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 		}
 	}
 
+	// Typed provider errors carry the structured status — prefer it over
+	// whatever the caller extracted from strings.
+	if sc := statusCodeFrom(err); sc != 0 {
+		meta.StatusCode = sc
+	}
+
 	msg := strings.ToLower(err.Error())
+	// Structured codes previously only appeared inside raw response bodies
+	// embedded in the error string; keep them searchable now that the
+	// rendered message carries the parsed text instead.
+	if code := providerCode(err); code != "" {
+		msg += " " + strings.ToLower(code)
+	}
 
 	c := ClassifiedError{
 		Meta:      meta,

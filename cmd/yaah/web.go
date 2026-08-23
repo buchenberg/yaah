@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"
-	"github.com/buchenberg/yaah/internal/types"
 	"github.com/spf13/cobra"
 )
 
@@ -55,7 +55,7 @@ type webServer struct {
 	sseDone         chan struct{}
 	mu              sync.Mutex
 	ctrlChMu        sync.Mutex
-	ctrlCh          chan<- types.CtrlMsg
+	ctrlCh          chan<- control.Msg
 
 	// models caches the available model list ("provider/model" format)
 	// and provider display names, fetched once in the background.
@@ -119,41 +119,18 @@ func runWeb(cmd *cobra.Command, args []string) error {
 				ws.ctrlChMu.Unlock()
 				if ch == nil {
 					// No active stream — fall back to first option.
-					if len(e.Options) > 0 {
-						answers = append(answers, fmt.Sprintf("%s: %s", e.Header, e.Options[0].Label))
-					} else {
-						answers = append(answers, e.Header+": ")
-					}
+					answers = append(answers, fallbackCtrlAnswer(e))
 					continue
 				}
 				ansCh := make(chan string, 1)
-				opts := make([]types.CtrlOption, len(e.Options))
-				for i, o := range e.Options {
-					opts[i] = types.CtrlOption{Label: o.Label, Description: o.Description}
-				}
-				q := &types.CtrlQuestion{
-					Header:   e.Header,
-					Question: e.Question,
-					Options:  opts,
-					Multiple: e.Multiple,
-					AnswerCh: ansCh,
-				}
+				q := buildCtrlQuestion(e, ansCh)
 				select {
 				case ch <- q:
-				case <-time.After(30 * time.Second):
-					if len(e.Options) > 0 {
-						answers = append(answers, fmt.Sprintf("%s: %s", e.Header, e.Options[0].Label))
-					}
+				case <-time.After(ctrlSendTimeout):
+					answers = append(answers, fallbackCtrlAnswer(e))
 					continue
 				}
-				select {
-				case ans := <-ansCh:
-					answers = append(answers, fmt.Sprintf("%s: %s", e.Header, ans))
-				case <-time.After(5 * time.Minute):
-					if len(e.Options) > 0 {
-						answers = append(answers, fmt.Sprintf("%s: %s", e.Header, e.Options[0].Label))
-					}
-				}
+				answers = append(answers, awaitCtrlAnswer(e, ansCh))
 			}
 			return answers
 		}
@@ -252,7 +229,7 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 			Error:     info.Error,
 		}
 	}
-	ctrlCh := make(chan types.CtrlMsg, 64)
+	ctrlCh := make(chan control.Msg, 64)
 	done := make(chan struct{})
 
 	ws.mu.Lock()

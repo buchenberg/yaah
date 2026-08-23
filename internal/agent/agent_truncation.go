@@ -8,7 +8,6 @@ import (
 	"time"
 
 	agentctx "github.com/buchenberg/yaah/internal/agent/context"
-	"github.com/buchenberg/yaah/internal/config"
 )
 
 // Re-exports for backward compatibility within the agent package (tests
@@ -59,7 +58,9 @@ func (l *Loop) truncateToolResult(result string) string {
 		truncatedLines = strings.Count(truncated, "\n") + 1
 	}
 
-	spillDir := filepath.Join(config.HomeDir(), "truncated")
+	// Spill directory is injected via LoopConfig.ToolSpillDir by the
+	// composition root; empty disables spilling (finding C4).
+	spillDir := l.Config.ToolSpillDir
 	if err := os.MkdirAll(spillDir, 0o755); err == nil {
 		ts := time.Now().UnixNano()
 		filename := fmt.Sprintf("%d-tool.txt", ts)

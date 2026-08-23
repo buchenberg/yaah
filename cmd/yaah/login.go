@@ -48,6 +48,13 @@ var logoutCmd = &cobra.Command{
 	RunE:  runLogout,
 }
 
+// oauthTokenStore builds the token store rooted at the yaah config
+// directory. The composition root owns path resolution so the providers
+// package never imports config (finding C4).
+func oauthTokenStore() providers.OAuthTokenStore {
+	return providers.OAuthTokenStore{Dir: config.HomeDir()}
+}
+
 func oauthProviderNames(cfg *config.Config) []string {
 	var names []string
 	for name, p := range cfg.Providers {
@@ -82,9 +89,17 @@ func pickOAuthProvider(cfg *config.Config, arg string) (string, error) {
 	}
 }
 
+// promptProviderChoice prints a numbered picker for multiple providers.
 func promptProviderChoice(names []string) (string, error) {
 	fmt.Println("Multiple OAuth providers configured. Choose one:")
 	fmt.Println()
+	return pickProviderNumber(names)
+}
+
+// pickProviderNumber renders a numbered list and reads a selection from
+// stdin. Shared by the login/logout CLI commands and REPL slash
+// commands — previously copy-pasted four times (finding B3-adjacent).
+func pickProviderNumber(names []string) (string, error) {
 	for i, name := range names {
 		fmt.Printf("  %d) %s\n", i+1, name)
 	}
@@ -104,6 +119,9 @@ func promptProviderChoice(names []string) (string, error) {
 	return names[idx-1], nil
 }
 
+// loginOAuth validates the provider's OAuth config and delegates the
+// device-code flow to providers.DeviceFlow. Presentation flows back via
+// the status callback.
 func loginOAuth(cfg *config.Config, providerName string, status func(string)) error {
 	p, ok := cfg.Providers[providerName]
 	if !ok {
@@ -120,55 +138,21 @@ func loginOAuth(cfg *config.Config, providerName string, status func(string)) er
 		return fmt.Errorf("provider %q missing oauth_domain in config", providerName)
 	}
 
-	existing, err := providers.LoadOAuthToken(providerName)
-	if err != nil {
-		return fmt.Errorf("check existing token: %w", err)
-	}
-	if existing != nil {
-		status(fmt.Sprintf("Already authenticated with %q (since %s). Run 'yaah logout %s' first to re-authenticate.", providerName, existing.AuthenticatedAt.Format("2006-01-02 15:04"), providerName))
-		return nil
-	}
-
-	oauthCfg := providers.OAuthConfig{
-		ClientID: r.OAuthClientID,
-		Scope:    r.OAuthScope,
-		Domain:   r.OAuthDomain,
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	status(fmt.Sprintf("Starting OAuth authentication with %q...", providerName))
-	dcr, err := providers.StartDeviceFlow(ctx, oauthCfg)
-	if err != nil {
-		return fmt.Errorf("start device flow: %w", err)
-	}
-
-	status(fmt.Sprintf("Open %s and enter code: %s", dcr.VerificationURI, dcr.UserCode))
-
-	tr, err := providers.PollForToken(ctx, oauthCfg, dcr)
-	if err != nil {
-		return fmt.Errorf("authorization failed: %w", err)
-	}
-
-	token := &providers.OAuthToken{
-		AccessToken:     tr.AccessToken,
-		Scope:           tr.Scope,
-		AuthenticatedAt: time.Now(),
-	}
-	if err := providers.SaveOAuthToken(providerName, token); err != nil {
-		return fmt.Errorf("save token: %w", err)
-	}
-
-	status(fmt.Sprintf("✓ Authenticated with %q.", providerName))
-	return nil
+	return providers.DeviceFlow(ctx, providerName, providers.OAuthConfig{
+		ClientID: r.OAuthClientID,
+		Scope:    r.OAuthScope,
+		Domain:   r.OAuthDomain,
+	}, oauthTokenStore(), providers.DeviceFlowHooks{Status: status})
 }
 
 func logoutOAuth(cfg *config.Config, providerName string, status func(string)) error {
 	if _, ok := cfg.Providers[providerName]; !ok {
 		return fmt.Errorf("provider %q not found in config", providerName)
 	}
-	if err := providers.DeleteOAuthToken(providerName); err != nil {
+	if err := oauthTokenStore().Delete(providerName); err != nil {
 		return fmt.Errorf("logout failed: %w", err)
 	}
 	status(fmt.Sprintf("Logged out — stored token for %q removed.", providerName))

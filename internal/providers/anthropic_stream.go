@@ -82,7 +82,7 @@ func (c *AnthropicClient) SendStream(ctx context.Context, req types.ChatRequest)
 
 		if resp.StatusCode != http.StatusOK {
 			respBody, _ := io.ReadAll(resp.Body)
-			errs <- fmt.Errorf("provider returned %d: %s", resp.StatusCode, string(respBody))
+			errs <- newAPIError(resp.StatusCode, respBody)
 			return
 		}
 

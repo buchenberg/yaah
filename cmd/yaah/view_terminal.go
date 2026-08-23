@@ -6,8 +6,8 @@ import (
 	"sync"
 
 	"github.com/buchenberg/yaah/internal/agent"
-	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/spinner"
+	"github.com/buchenberg/yaah/internal/toolfmt"
 )
 
 // terminalView implements agent.View for REPL terminal output.
@@ -37,6 +37,12 @@ func (v *terminalView) HandleEvent(evt agent.Event) {
 			v.streamed = true
 		})
 		fmt.Fprint(os.Stderr, e.Text)
+	case *agent.ThinkingEvent:
+		// Intentionally ignored: terminal mode does not render
+		// reasoning streams; tokens carry the visible output.
+	case *agent.FlushEvent:
+		// Intentionally ignored: TokenDeltaEvent already streams
+		// content directly to stderr; no buffered flush needed.
 	case *agent.ToolStartEvent:
 		// handled on ToolEndEvent
 	case *agent.ToolEndEvent:
@@ -66,20 +72,10 @@ func (v *terminalView) HandleEvent(evt agent.Event) {
 		fmt.Fprintf(os.Stderr, "\n  %s %.0f%% (%.1fK → %.1fK, %s)\n",
 			Dim("compacted"), pct, beforeK, afterK, Dim(e.Method))
 	case *agent.SubAgentStartEvent:
-		displayName := subagent.RoleDisplayName(subagent.SubAgentRole(e.Role))
-		specialty := subagent.RoleSpecialty(subagent.SubAgentRole(e.Role))
-		label := displayName
-		if specialty != "" {
-			label += " — " + specialty
-		}
+		label := toolfmt.SubagentRoleLabel(e.Role)
 		fmt.Fprintf(os.Stderr, "\n╭─ sub-agent: %s · %s\n", Bold(label), e.Prompt)
 	case *agent.SubAgentEndEvent:
-		displayName := subagent.RoleDisplayName(subagent.SubAgentRole(e.Role))
-		specialty := subagent.RoleSpecialty(subagent.SubAgentRole(e.Role))
-		label := displayName
-		if specialty != "" {
-			label += " — " + specialty
-		}
+		label := toolfmt.SubagentRoleLabel(e.Role)
 		status := "completed"
 		if e.Error != "" {
 			status = replYellow(e.Error)

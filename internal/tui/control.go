@@ -4,17 +4,17 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/tui/components/backgroundjobs"
 	"github.com/buchenberg/yaah/internal/tui/components/infopane"
 	"github.com/buchenberg/yaah/internal/tui/components/question"
 	subagent "github.com/buchenberg/yaah/internal/tui/components/subagent"
 	todoview "github.com/buchenberg/yaah/internal/tui/components/todo"
-	"github.com/buchenberg/yaah/internal/types"
 )
 
-func (t *App) handleControlMsg(msg types.CtrlMsg) {
+func (t *App) handleControlMsg(msg control.Msg) {
 	switch m := msg.(type) {
-	case *types.CtrlQuestion:
+	case *control.Question:
 		opts := make([]struct {
 			Label       string
 			Description string
@@ -31,27 +31,27 @@ func (t *App) handleControlMsg(msg types.CtrlMsg) {
 				m.AnswerCh <- strings.Join(answer.Selected, ", ")
 			})
 
-	case *types.CtrlApproval:
+	case *control.Approval:
 		t.ShowApproval(m.Name, m.Args, func(approved bool) {
 			m.ApproveCh <- approved
 		})
 
-	case *types.CtrlContinue:
+	case *control.Continue:
 		t.ShowApproval("Max iterations",
 			fmt.Sprintf("The agent reached the iteration limit (%d). Continue?", m.MaxIter),
 			func(approved bool) {
 				m.AnswerCh <- approved
 			})
 
-	case *types.CtrlModelList:
+	case *control.ModelList:
 		t.availableModels = m.Models
 		t.providerNames = m.ProviderNames
 
-	case *types.CtrlTodos:
+	case *control.Todos:
 		t.todoItems = m.Items
 		t.renderTodoPane()
 
-	case *types.CtrlContextInfo:
+	case *control.ContextInfo:
 		ct := m.Tokens
 		if m.LastPromptTokens > 0 {
 			ct = m.LastPromptTokens
@@ -60,15 +60,15 @@ func (t *App) handleControlMsg(msg types.CtrlMsg) {
 		t.contextWindow = m.Window
 		t.renderInfoPane()
 
-	case *types.CtrlFallback:
+	case *control.Fallback:
 		t.lastProvider = m.Provider
 		t.lastModel = m.Model
 		t.renderInfoPane()
 
-	case *types.CtrlStatus:
+	case *control.Status:
 		t.SetEphemeral(m.Text)
 
-	case *types.CtrlError:
+	case *control.Error:
 		errText := ""
 		if m.Err != nil {
 			errText = m.Err.Error()

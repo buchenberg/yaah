@@ -39,8 +39,12 @@ func (l *Loop) initMessages(userInput string) {
 
 // ctxMgr returns the CtxMgr, creating one lazily if needed.
 // This avoids nil panics when tests call context methods directly
-// without going through Run → applyDefaults.
+// without going through Run → applyDefaults. It is called from
+// concurrent tool goroutines (truncateToolResult), so the lazy fill
+// is mutex-guarded.
 func (l *Loop) ctxMgr() *ContextManager {
+	l.ctxMgrMu.Lock()
+	defer l.ctxMgrMu.Unlock()
 	if l.CtxMgr == nil {
 		var db *memory.DB
 		if l.Persister != nil {
@@ -150,20 +154,20 @@ func (l *Loop) applyDefaults() {
 	if l.Persister == nil {
 		l.Persister = NewSessionPersister(nil, nil, l.Config.SessionID)
 	}
+	// (Re)create the event broker for this Run. publishDone closes the
+	// broker at the end of every Run; a reused Loop re-arms eventing here
+	// instead of silently dropping events on later Runs (finding A4).
+	if l.View != nil && (l.broker == nil || l.brokerClosed) {
+		l.broker = pubsub.NewBroker[Event]()
+		l.brokerView = NewBrokerView(l.broker, l.View)
+		l.brokerClosed = false
+	}
 	if l.LLM == nil {
-		if l.View != nil {
-			l.broker = pubsub.NewBroker[Event]()
-			l.brokerView = NewBrokerView(l.broker, l.View)
-		}
 		var onToken llm.TokenCallback
 		var onThinking llm.ThinkingCallback
 		if l.broker != nil {
-			onToken = func(token string) {
-				l.broker.Publish(&TokenDeltaEvent{Text: token})
-			}
-			onThinking = func(text string) {
-				l.broker.Publish(&ThinkingEvent{Text: text})
-			}
+			onToken = l.publishTokenDelta
+			onThinking = l.publishThinking
 		}
 		l.LLM = &llm.Client{
 			Provider:         l.Provider,
@@ -182,5 +186,24 @@ func (l *Loop) applyDefaults() {
 			OtelEnabled:      l.Config.OtelEnabled,
 			OtelVerbose:      l.Config.OtelVerbose,
 		}
+	} else if l.broker != nil {
+		// Rebind the streaming callbacks to the current broker — closures
+		// captured by a previous Run reference a closed broker.
+		l.LLM.OnToken = l.publishTokenDelta
+		l.LLM.OnThinking = l.publishThinking
+	}
+}
+
+// publishTokenDelta and publishThinking are method values so rebinding
+// across broker generations always targets the live l.broker field.
+func (l *Loop) publishTokenDelta(token string) {
+	if l.broker != nil {
+		l.broker.Publish(&TokenDeltaEvent{Text: token})
+	}
+}
+
+func (l *Loop) publishThinking(text string) {
+	if l.broker != nil {
+		l.broker.Publish(&ThinkingEvent{Text: text})
 	}
 }

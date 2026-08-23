@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -22,14 +23,24 @@ import (
 )
 
 func newAgentSession() (*agentSession, error) {
-	return newAgentSessionWithOptions(false, false)
+	return newAgentSessionWithOptions(sessionOptionsFromFlags(), false, false)
 }
 
-// newAgentSessionWithOptions creates an agent session. When skipMCP is true,
-// MCP server subprocesses are not started (they consume CPU and make tview
-// input sluggish on Windows). When skipOtel is true, OTel exporters are
-// not initialised.
-func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
+// toolSpillDir is the single source for the tool-result spill directory.
+// Both the parent loop (build_loop.go) and every sub-agent loop inherit
+// it so oversized tool results land in one place. Sub-agents receive it
+// via TaskToolOpts.ToolSpillDir — internal/agent never reads config
+// paths directly (finding C4).
+func toolSpillDir() string {
+	return filepath.Join(config.HomeDir(), "truncated")
+}
+
+// newAgentSessionWithOptions creates an agent session. All CLI-flag and
+// serve-mode inputs arrive via opts — no hidden package state. When
+// skipMCP is true, MCP server subprocesses are not started (they consume
+// CPU and make tview input sluggish on Windows). When skipOtel is true,
+// OTel exporters are not initialised.
+func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*agentSession, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
@@ -43,7 +54,7 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	providerName := resolveProviderName(cfg)
 
 	// --- OpenTelemetry ---------------------------------------------------
-	otelShutdown, otelActive, err := initOtel(cfg, skipOtel)
+	otelShutdown, otelActive, err := initOtel(cfg, opts, skipOtel)
 	if err != nil {
 		return nil, err
 	}
@@ -66,8 +77,8 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	// Workspace containment: only enforced when --workspace is given.
 	// A nil validator keeps the legacy ~-expansion behaviour.
 	var pathValidator *tools.PathValidator
-	if workspaceRoot != "" {
-		pathValidator = tools.NewPathValidator(workspaceRoot, allowHomeAccess, nil)
+	if opts.WorkspaceRoot != "" {
+		pathValidator = tools.NewPathValidator(opts.WorkspaceRoot, opts.AllowHomeAccess, nil)
 		toolReg.SetPathValidator(pathValidator)
 	}
 
@@ -97,7 +108,7 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	}
 
 	// --- Prompt assembly -------------------------------------------------
-	systemPrompt := buildSystemPrompt(cfg, cwd, db, resumeSessionID)
+	systemPrompt := buildSystemPrompt(cfg, cwd, db, opts.ResumeSessionID)
 
 	// Register memory tools (needs DB, not prompt logic).
 	if db != nil {
@@ -153,11 +164,11 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	var sessionID string
 	var msgIdx int
 
-	messages, sessionID, msgIdx, systemPrompt, err = restoreSession(db, resumeSessionID, systemPrompt)
+	messages, sessionID, msgIdx, systemPrompt, err = restoreSession(db, opts.ResumeSessionID, systemPrompt)
 	if err != nil {
 		return nil, err
 	}
-	if resumeSessionID == "" {
+	if opts.ResumeSessionID == "" {
 		sessionID = fmt.Sprintf("sess-%d", time.Now().UnixNano())
 		if db != nil {
 			cwd, _ := os.Getwd()
@@ -174,7 +185,7 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 	// Derive the top-level agent prompt (directives + quick-ref) from the
 	// clean system prompt. systemPrompt stays clean so child sub-agent
 	// prompts never inherit top-level directives.
-	mainPrompt := buildMainPrompt(cfg, systemPrompt, toolReg)
+	mainPrompt := buildMainPrompt(cfg, opts, systemPrompt, toolReg)
 
 	tracker := &tools.ConflictTracker{}
 	subAgentProvider, subAgentModel := resolveSubAgent(cfg)
@@ -205,7 +216,28 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 		return cfg.Agent.SubAgent.Roles[name].Supervised
 	}
 
-	taskTool := runner.NewTaskTool(provider, systemPrompt, modelName, db, sessionID, subAgentProvider, subAgentModel, cfg.Agent.SubAgent, reg.Names(), cfg.Observability.Otel.Enabled, cfg.Observability.Otel.Verbose, tracker, cfg.Agent.Default.EstimateFactor, subCW, cfg.Agent.SubAgent.OutputLimit, cfg.Providers, cfg.Agent.Default, nil, pathValidator, resolveProviderByName)
+	taskTool := runner.NewTaskTool(runner.TaskToolOpts{
+		Provider:              provider,
+		SystemPrompt:          systemPrompt,
+		ModelName:             modelName,
+		DB:                    db,
+		SessionID:             sessionID,
+		SubAgentProvider:      subAgentProvider,
+		SubAgentModel:         subAgentModel,
+		SubCfg:                cfg.Agent.SubAgent,
+		RoleNames:             reg.Names(),
+		OtelEnabled:           cfg.Observability.Otel.Enabled,
+		OtelVerbose:           cfg.Observability.Otel.Verbose,
+		Tracker:               tracker,
+		EstimateFactor:        cfg.Agent.Default.EstimateFactor,
+		SubContextWindow:      subCW,
+		OutputLimit:           cfg.Agent.SubAgent.OutputLimit,
+		ProviderMap:           cfg.Providers,
+		Defaults:              cfg.Agent.Default,
+		ToolSpillDir:          toolSpillDir(),
+		PathValidator:         pathValidator,
+		ResolveProviderByName: resolveProviderByName,
+	})
 
 	// RoleResolver provides a live role-name lookup so the spawn_subagent
 	// tool sees roles created via the role tool without a restart. Until
@@ -342,6 +374,7 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 
 	sess := &agentSession{
 		cfg:            cfg,
+		opts:           opts,
 		provider:       provider,
 		providerName:   providerName,
 		modelName:      modelName,
@@ -365,7 +398,7 @@ func newAgentSessionWithOptions(skipMCP, skipOtel bool) (*agentSession, error) {
 
 	// Ask fallback for out-of-workspace access: prompts route through
 	// the session's approval UI (TUI/web) or stdin in plain REPL mode.
-	if pathValidator != nil && (workspaceAsk || cfg.Agent.Default.WorkspaceAsk) {
+	if pathValidator != nil && (opts.WorkspaceAsk || cfg.Agent.Default.WorkspaceAsk) {
 		pathValidator.AskFn = sess.promptWorkspaceAccess
 	}
 

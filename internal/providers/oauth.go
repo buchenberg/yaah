@@ -10,8 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-
-	"github.com/buchenberg/yaah/internal/config"
 )
 
 // pollingSafetyMargin is added to the server-specified polling interval
@@ -56,6 +54,60 @@ type OAuthToken struct {
 	AccessToken     string    `json:"access_token"`
 	Scope           string    `json:"scope,omitempty"`
 	AuthenticatedAt time.Time `json:"authenticated_at"`
+}
+
+// DeviceFlowHooks carries the presentation callbacks for DeviceFlow.
+// All are optional; nil hooks produce silent execution (useful in tests).
+type DeviceFlowHooks struct {
+	// Status reports progress and results as human-readable text.
+	Status func(msg string)
+}
+
+// DeviceFlow runs the full device-code login for providerName:
+// existing-token check → start → user-code presentation → polling →
+// token persistence. The cmd layer resolves and validates the provider
+// config and supplies the token store; everything with protocol or
+// token-store side effects happens here so login logic is not
+// duplicated across REPL/TUI/web surfaces.
+func DeviceFlow(ctx context.Context, providerName string, cfg OAuthConfig, store OAuthTokenStore, hooks DeviceFlowHooks) error {
+	status := hooks.Status
+	if status == nil {
+		status = func(string) {}
+	}
+
+	existing, err := store.Load(providerName)
+	if err != nil {
+		return fmt.Errorf("check existing token: %w", err)
+	}
+	if existing != nil {
+		status(fmt.Sprintf("Already authenticated with %q (since %s). Log out first to re-authenticate.", providerName, existing.AuthenticatedAt.Format("2006-01-02 15:04")))
+		return nil
+	}
+
+	status(fmt.Sprintf("Starting OAuth authentication with %q...", providerName))
+	dcr, err := StartDeviceFlow(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("start device flow: %w", err)
+	}
+
+	status(fmt.Sprintf("Open %s and enter code: %s", dcr.VerificationURI, dcr.UserCode))
+
+	tr, err := PollForToken(ctx, cfg, dcr)
+	if err != nil {
+		return fmt.Errorf("authorization failed: %w", err)
+	}
+
+	token := &OAuthToken{
+		AccessToken:     tr.AccessToken,
+		Scope:           tr.Scope,
+		AuthenticatedAt: time.Now(),
+	}
+	if err := store.Save(providerName, token); err != nil {
+		return fmt.Errorf("save token: %w", err)
+	}
+
+	status(fmt.Sprintf("✓ Authenticated with %q.", providerName))
+	return nil
 }
 
 // StartDeviceFlow initiates the OAuth 2.0 Device Authorization Grant.
@@ -178,14 +230,21 @@ func PollForToken(ctx context.Context, cfg OAuthConfig, dcr *DeviceCodeResponse)
 
 // --- Token persistence ---
 
-// OAuthTokenPath returns the path to the stored OAuth token for a provider.
-func OAuthTokenPath(providerName string) string {
-	return filepath.Join(config.HomeDir(), fmt.Sprintf("oauth-%s.json", providerName))
+// OAuthTokenStore persists OAuth tokens under Dir (typically the yaah
+// config directory, injected by the composition root so this package
+// does not reach into config for paths — finding C4).
+type OAuthTokenStore struct {
+	Dir string
 }
 
-// SaveOAuthToken persists an OAuth token for the named provider.
-func SaveOAuthToken(providerName string, token *OAuthToken) error {
-	path := OAuthTokenPath(providerName)
+// Path returns the stored-token path for a provider.
+func (s OAuthTokenStore) Path(providerName string) string {
+	return filepath.Join(s.Dir, fmt.Sprintf("oauth-%s.json", providerName))
+}
+
+// Save persists an OAuth token for the named provider.
+func (s OAuthTokenStore) Save(providerName string, token *OAuthToken) error {
+	path := s.Path(providerName)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
@@ -196,10 +255,10 @@ func SaveOAuthToken(providerName string, token *OAuthToken) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
-// LoadOAuthToken reads the stored OAuth token for the named provider.
+// Load reads the stored OAuth token for the named provider.
 // Returns nil, nil if no token file exists.
-func LoadOAuthToken(providerName string) (*OAuthToken, error) {
-	path := OAuthTokenPath(providerName)
+func (s OAuthTokenStore) Load(providerName string) (*OAuthToken, error) {
+	path := s.Path(providerName)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -217,10 +276,10 @@ func LoadOAuthToken(providerName string) (*OAuthToken, error) {
 	return &token, nil
 }
 
-// DeleteOAuthToken removes the stored token for the named provider.
-func DeleteOAuthToken(providerName string) error {
-	path := OAuthTokenPath(providerName)
-	err := os.Remove(path)
+// Delete removes the stored token for the named provider. Missing files
+// are not an error.
+func (s OAuthTokenStore) Delete(providerName string) error {
+	err := os.Remove(s.Path(providerName))
 	if os.IsNotExist(err) {
 		return nil
 	}

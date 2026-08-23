@@ -108,15 +108,13 @@ func TestSteerMiddleware_CompactsOnce(t *testing.T) {
 	ch <- "steer-b"
 
 	compactCalled := 0
-	compactor := &testCompactor{
-		fn: func(ctx context.Context, msgs []types.Message, threshold float64) []types.Message {
-			compactCalled++
-			// Return the same messages (no-op for test).
-			return msgs
-		},
+	drain := func(ctx context.Context, msgs []types.Message) []types.Message {
+		compactCalled++
+		// Return the same messages (no-op for test).
+		return msgs
 	}
 
-	m := &SteerMiddleware{ch: ch, compactor: compactor}
+	m := &SteerMiddleware{ch: ch, onDrain: drain}
 	step := &Step{Messages: []types.Message{types.UserMsg("initial")}}
 
 	_, err := m.PrepareStep(context.Background(), step)

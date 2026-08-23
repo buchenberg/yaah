@@ -131,8 +131,13 @@ func TestBackgroundJobs_TimeoutBounds(t *testing.T) {
 	m := newTestManager()
 	defer m.Close()
 
+	var errMu sync.Mutex
 	var gotErr error
-	m.Deliver = func(role, desc, res string, err error) { gotErr = err }
+	m.Deliver = func(role, desc, res string, err error) {
+		errMu.Lock()
+		gotErr = err
+		errMu.Unlock()
+	}
 
 	runner := func(ctx context.Context, prompt string, p SubAgentParams) (string, error) {
 		<-ctx.Done()
@@ -145,12 +150,34 @@ func TestBackgroundJobs_TimeoutBounds(t *testing.T) {
 	}
 	waitForJob(t, m, id, 2*time.Second)
 
-	st, _ := m.Status(id)
-	if st.Status != BGStatusFailed {
-		t.Errorf("status = %q, want failed (timeout)", st.Status)
+	// Deliver runs after the finished flag flips; drain it before asserting.
+	deadline := time.Now().Add(2 * time.Second)
+	errMu.Lock()
+	for gotErr == nil && time.Now().Before(deadline) {
+		errMu.Unlock()
+		time.Sleep(2 * time.Millisecond)
+		errMu.Lock()
 	}
-	if gotErr == nil {
+	stillNil := gotErr == nil
+	errMu.Unlock()
+	if stillNil {
 		t.Error("expected a timeout error, got nil")
+	}
+
+	// The status must read failed, not just "some error happened" —
+	// snapshot may run before or after Deliver, so poll briefly for the
+	// terminal state rather than asserting immediately.
+	deadlineStatus := time.Now().Add(2 * time.Second)
+	for {
+		st, _ := m.Status(id)
+		if st.Status == BGStatusFailed {
+			break
+		}
+		if !time.Now().Before(deadlineStatus) {
+			t.Errorf("status = %q, want failed (timeout)", st.Status)
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/buchenberg/yaah/internal/agent"
-	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/toolfmt"
 )
 
@@ -61,23 +60,13 @@ func (v *View) SendTo(sessionID string, send func(string, Update), evt agent.Eve
 			},
 		}
 	case *agent.SubAgentStartEvent:
-		displayName := subagent.RoleDisplayName(subagent.SubAgentRole(e.Role))
-		specialty := subagent.RoleSpecialty(subagent.SubAgentRole(e.Role))
-		label := displayName
-		if specialty != "" {
-			label += " — " + specialty
-		}
+		label := toolfmt.SubagentRoleLabel(e.Role)
 		update = Update{
 			SessionUpdate: "agent_message_chunk",
 			Content:       &Content{Type: "text", Text: fmt.Sprintf("\n[sub-agent: %s] %s\n", label, e.Prompt)},
 		}
 	case *agent.SubAgentEndEvent:
-		displayName := subagent.RoleDisplayName(subagent.SubAgentRole(e.Role))
-		specialty := subagent.RoleSpecialty(subagent.SubAgentRole(e.Role))
-		label := displayName
-		if specialty != "" {
-			label += " — " + specialty
-		}
+		label := toolfmt.SubagentRoleLabel(e.Role)
 		status := "completed"
 		if e.Error != "" {
 			status = e.Error
@@ -106,6 +95,9 @@ func (v *View) SendTo(sessionID string, send func(string, Update), evt agent.Eve
 			SessionUpdate: "agent_message_chunk",
 			Content:       &Content{Type: "text", Text: fmt.Sprintf("[compacted %.0f%% (%d→%d)]", pct, e.BeforeTokens, e.AfterTokens)},
 		}
+	case *agent.DoneEvent:
+		// Intentionally ignored: ACP signals turn completion via the
+		// session/update stop reason, not the agent's DoneEvent.
 	default:
 		return
 	}

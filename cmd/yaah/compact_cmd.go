@@ -14,6 +14,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/runner"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -48,7 +49,7 @@ func (s *agentSession) compactContext() {
 	msg := func(text string) {
 		if ch != nil {
 			select {
-			case ch <- &types.CtrlStatus{Text: text}:
+			case ch <- &control.Status{Text: text}:
 			default:
 			}
 		} else {
@@ -95,7 +96,7 @@ func (s *agentSession) compactContext() {
 
 	if ch != nil {
 		select {
-		case ch <- &types.CtrlContextInfo{
+		case ch <- &control.ContextInfo{
 			Tokens: newEstimate,
 			Window: window,
 		}:
@@ -119,7 +120,7 @@ func (s *agentSession) reloadRoles() {
 	msg := func(text string) {
 		if ch != nil {
 			select {
-			case ch <- &types.CtrlStatus{Text: text}:
+			case ch <- &control.Status{Text: text}:
 			default:
 			}
 		} else {

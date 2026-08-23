@@ -1,6 +1,9 @@
 // Package toolfmt provides shared tool result formatting helpers used
-// by both the TUI and web views.  These were previously duplicated between
-// internal/tui/tool_component.go and cmd/yaah/web_view.go.
+// by the ACP view, the REPL terminal view, and the web view. These were
+// previously duplicated between those surfaces.
+//
+// The tview TUI does NOT use this package: its summaries are rendered
+// by internal/tui/components/toolblock.
 package toolfmt
 
 import (
@@ -167,13 +170,21 @@ func MatchJSONField(jsonStr, field string) string {
 
 // SubagentLabel builds a display label for a sub-agent from its role
 // and description fields.
-func SubagentLabel(role, desc string) string {
+// SubagentRoleLabel renders the display name and specialty for a role
+// (e.g. "Researcher — web"), without any "sub-agent" prefix. This is
+// the single source for the role label; previously copy-pasted in the
+// ACP view and the terminal view.
+func SubagentRoleLabel(role string) string {
 	displayName := subagent.RoleDisplayName(subagent.SubAgentRole(role))
 	specialty := subagent.RoleSpecialty(subagent.SubAgentRole(role))
-	label := displayName
 	if specialty != "" {
-		label += " — " + specialty
+		return displayName + " — " + specialty
 	}
+	return displayName
+}
+
+func SubagentLabel(role, desc string) string {
+	label := SubagentRoleLabel(role)
 	switch {
 	case role != "" && desc != "":
 		return "sub-agent: " + label + " · " + desc

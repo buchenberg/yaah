@@ -229,7 +229,12 @@ func (h *HTTPServer) handleGetSSE(w http.ResponseWriter, r *http.Request) {
 	// against the request URL.
 	endpoint := "/mcp/messages?sessionId=" + sid
 	fmt.Fprintf(os.Stderr, "[yaah-mcp] GET /mcp from %s: opened SSE stream sid=%s endpoint=%s\n", r.RemoteAddr, sid, endpoint)
-	if err := writeSSEEvent(w, flusher, "endpoint", endpoint); err != nil {
+	// A POST can race us as soon as the stream is registered — take the
+	// stream mutex so the announcement cannot interleave with pushToStream.
+	stream.mu.Lock()
+	err := writeSSEEvent(w, flusher, "endpoint", endpoint)
+	stream.mu.Unlock()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "[yaah-mcp] SSE write endpoint failed: %v\n", err)
 		return
 	}
