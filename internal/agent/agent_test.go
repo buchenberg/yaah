@@ -17,6 +17,8 @@ import (
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 // fakeProvider implements Provider for testing.
@@ -1168,6 +1170,68 @@ func TestLoop_sessionPersistenceAcrossRunCalls(t *testing.T) {
 	}
 	if msgs[2].Role != "assistant" || msgs[2].Content != "Hello from first run" {
 		t.Errorf("msg[2] = role=%s content=%s", msgs[2].Role, msgs[2].Content)
+	}
+}
+
+func TestLoop_runStampsTraceIDOnPersistedMessages(t *testing.T) {
+	tp := sdktrace.NewTracerProvider()
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(prev)
+		_ = tp.Shutdown(context.Background())
+	})
+
+	tmp := t.TempDir()
+	db, err := memory.Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	sessionID := "sess-trace"
+	db.CreateSession(memory.Session{
+		ID: sessionID, StartedAt: time.Now().Unix(), CWD: "/tmp", Model: "test",
+	})
+
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{{
+			Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant", Content: "traced answer"},
+				FinishReason: "stop",
+			}},
+		}},
+	}
+
+	loop := &Loop{Config: LoopConfig{
+		SystemPrompt:  "You are a test bot.",
+		SessionID:     sessionID,
+		MaxLoopCycles: 5,
+		OtelEnabled:   true,
+	}, Provider: fp,
+		Registry:  tools.NewRegistry(),
+		Persister: NewSessionPersister(db, nil, sessionID),
+	}
+
+	if _, err := loop.Run(context.Background(), "trace me"); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	loop.Persister.Flush()
+
+	msgs, err := db.GetMessages(sessionID)
+	if err != nil {
+		t.Fatalf("GetMessages() error: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	}
+	for i, m := range msgs {
+		if m.TraceID == "" {
+			t.Errorf("msgs[%d] (%s) has empty trace_id; SetTurnContext ran before StartPrompt", i, m.Role)
+		}
+	}
+	if msgs[1].TurnID == "" || msgs[1].TurnID != msgs[2].TurnID {
+		t.Errorf("user/assistant turn_id mismatch: %q vs %q", msgs[1].TurnID, msgs[2].TurnID)
 	}
 }
 

@@ -82,13 +82,6 @@ func (l *Loop) Run(ctx context.Context, userInput string) (response string, runE
 	// spans, the persisted messages, and the Shepherd turn facts of this
 	// prompt-to-answer exchange.
 	turnID := newTurnID()
-	if l.Persister != nil {
-		traceID := ""
-		if l.Config.OtelEnabled {
-			traceID = observability.TraceIDFromContext(ctx)
-		}
-		l.Persister.SetTurnContext(traceID, turnID)
-	}
 	if l.Config.OtelEnabled {
 		var rootSpan trace.Span
 		ctx, rootSpan = observability.StartPrompt(ctx, l.Config.SessionID, turnID, userInput)
@@ -98,6 +91,13 @@ func (l *Loop) Run(ctx context.Context, userInput string) (response string, runE
 			}
 			rootSpan.End()
 		}()
+	}
+	if l.Persister != nil {
+		traceID := ""
+		if l.Config.OtelEnabled {
+			traceID = observability.TraceIDFromContext(ctx)
+		}
+		l.Persister.SetTurnContext(traceID, turnID)
 	}
 	return l.runMiddleware(ctx, userInput, turnID)
 }
