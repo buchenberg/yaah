@@ -4,7 +4,7 @@ package yaah
 //
 // To attach a new UI to a session:
 //
-//  1. Create a chan types.CtrlMsg and call sess.SetCtrlCh(ch).
+//  1. Create a chan control.Msg and call sess.SetCtrlCh(ch).
 //     This wires todos and status messages to your channel.
 //
 //  2. Implement agent.View (HandleEvent) and call sess.SetView(your view).
@@ -31,6 +31,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
@@ -49,7 +50,7 @@ type Session interface {
 	Steer(string)
 	FollowUp(string)
 	SetView(agent.View)
-	SetCtrlCh(chan<- types.CtrlMsg)
+	SetCtrlCh(chan<- control.Msg)
 	SetApproveFn(func(name, args string) bool)
 	SetModel(providerName, modelName string)
 	ProviderName() string
@@ -98,7 +99,7 @@ type agentSession struct {
 	cwd string
 
 	view      agent.View
-	ctrlCh    chan<- types.CtrlMsg
+	ctrlCh    chan<- control.Msg
 	approveFn func(name, args string) bool
 	mu        sync.RWMutex
 
@@ -126,7 +127,7 @@ func (s *agentSession) close() {
 	ch := s.ctrlCh
 	s.mu.RUnlock()
 	if ch != nil {
-		ch <- &types.CtrlDone{}
+		ch <- &control.Done{}
 	}
 	if s.otelShutdown != nil {
 		s.otelShutdown(ctx)
@@ -160,7 +161,7 @@ func (s *agentSession) Steer(text string) {
 	select {
 	case s.steerCh <- text:
 	default:
-		s.sendCtrl(&types.CtrlStatus{Text: "steer queue full"})
+		s.sendCtrl(&control.Status{Text: "steer queue full"})
 	}
 }
 
@@ -168,11 +169,11 @@ func (s *agentSession) FollowUp(text string) {
 	select {
 	case s.followupCh <- text:
 	default:
-		s.sendCtrl(&types.CtrlStatus{Text: "follow-up queue full"})
+		s.sendCtrl(&control.Status{Text: "follow-up queue full"})
 	}
 }
 
-func (s *agentSession) sendCtrl(msg types.CtrlMsg) {
+func (s *agentSession) sendCtrl(msg control.Msg) {
 	s.mu.RLock()
 	ch := s.ctrlCh
 	s.mu.RUnlock()
@@ -191,7 +192,7 @@ func (s *agentSession) SetView(v agent.View) {
 	s.view = v
 }
 
-func (s *agentSession) SetCtrlCh(ch chan<- types.CtrlMsg) {
+func (s *agentSession) SetCtrlCh(ch chan<- control.Msg) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ctrlCh = ch
@@ -199,13 +200,13 @@ func (s *agentSession) SetCtrlCh(ch chan<- types.CtrlMsg) {
 	if tt := s.toolReg.Get("todowrite"); tt != nil {
 		if ttp, ok := tt.(*tools.TodoWriteTool); ok {
 			ttp.OnWrite = func() {
-				ch <- &types.CtrlTodos{Items: ttp.Store.List()}
+				ch <- &control.Todos{Items: ttp.Store.List()}
 			}
 		}
 	}
 }
 
-func (s *agentSession) GetCtrlCh() chan<- types.CtrlMsg {
+func (s *agentSession) GetCtrlCh() chan<- control.Msg {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.ctrlCh

@@ -12,8 +12,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/tools"
-	"github.com/buchenberg/yaah/internal/types"
 )
 
 const (
@@ -29,12 +29,12 @@ const (
 
 // buildCtrlQuestion maps a question-tool entry onto the control-plane
 // message shape consumed by every UI.
-func buildCtrlQuestion(e tools.QuestionEntry, ch chan string) *types.CtrlQuestion {
-	opts := make([]types.CtrlOption, len(e.Options))
+func buildCtrlQuestion(e tools.QuestionEntry, ch chan string) *control.Question {
+	opts := make([]control.Option, len(e.Options))
 	for i, o := range e.Options {
-		opts[i] = types.CtrlOption{Label: o.Label, Description: o.Description}
+		opts[i] = control.Option{Label: o.Label, Description: o.Description}
 	}
-	return &types.CtrlQuestion{
+	return &control.Question{
 		Header:   e.Header,
 		Question: e.Question,
 		Options:  opts,

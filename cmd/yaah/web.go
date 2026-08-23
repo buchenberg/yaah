@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"
-	"github.com/buchenberg/yaah/internal/types"
 	"github.com/spf13/cobra"
 )
 
@@ -55,7 +55,7 @@ type webServer struct {
 	sseDone         chan struct{}
 	mu              sync.Mutex
 	ctrlChMu        sync.Mutex
-	ctrlCh          chan<- types.CtrlMsg
+	ctrlCh          chan<- control.Msg
 
 	// models caches the available model list ("provider/model" format)
 	// and provider display names, fetched once in the background.
@@ -229,7 +229,7 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 			Error:     info.Error,
 		}
 	}
-	ctrlCh := make(chan types.CtrlMsg, 64)
+	ctrlCh := make(chan control.Msg, 64)
 	done := make(chan struct{})
 
 	ws.mu.Lock()

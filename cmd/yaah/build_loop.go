@@ -5,9 +5,9 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/providers"
-	"github.com/buchenberg/yaah/internal/types"
 )
 
 // runPrompt executes a single agent prompt with the session's shared
@@ -50,7 +50,7 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 			maxIter := s.cfg.Agent.Default.MaxLoopCycles
 			ch := make(chan bool, 1)
 			select {
-			case ctrl <- &types.CtrlContinue{MaxIter: maxIter, AnswerCh: ch}:
+			case ctrl <- &control.Continue{MaxIter: maxIter, AnswerCh: ch}:
 			default:
 				return false
 			}
@@ -73,18 +73,18 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 	if ctrl != nil {
 		if loop.Config.Model != mName && fallbackProviderName != "" {
 			select {
-			case ctrl <- &types.CtrlFallback{Provider: fallbackProviderName, Model: loop.Config.Model}:
+			case ctrl <- &control.Fallback{Provider: fallbackProviderName, Model: loop.Config.Model}:
 			default:
 			}
 		}
 		if err != nil {
 			select {
-			case ctrl <- &types.CtrlError{Err: err}:
+			case ctrl <- &control.Error{Err: err}:
 			default:
 			}
 		}
 		select {
-		case ctrl <- &types.CtrlContextInfo{
+		case ctrl <- &control.ContextInfo{
 			Tokens:           loop.EstimatedTokens(),
 			Window:           loop.Config.ContextWindow,
 			LastPromptTokens: loop.State.LastPromptTokens,

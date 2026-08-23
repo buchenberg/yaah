@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/tui"
-	"github.com/buchenberg/yaah/internal/types"
 	"github.com/spf13/cobra"
 )
 
@@ -54,7 +54,7 @@ func runTUI() error {
 	}
 	defer sess.close()
 
-	controlCh := make(chan types.CtrlMsg, 64)
+	controlCh := make(chan control.Msg, 64)
 	sess.SetCtrlCh(controlCh)
 
 	app := tui.New(version)
@@ -107,7 +107,7 @@ func runTUI() error {
 	// provider endpoint never delays TUI launch; the control channel is
 	// buffered and the control loop starts inside app.Run().
 	go func() {
-		controlCh <- &types.CtrlModelList{Models: providers.FetchAllModels(context.Background(), cfg, makeModelLister), ProviderNames: names}
+		controlCh <- &control.ModelList{Models: providers.FetchAllModels(context.Background(), cfg, makeModelLister), ProviderNames: names}
 	}()
 
 	app.OnModelSelect = func(model string) {
@@ -182,7 +182,7 @@ func runTUI() error {
 	sess.SetApproveFn(func(name, args string) bool {
 		ch := make(chan bool, 1)
 		select {
-		case controlCh <- &types.CtrlApproval{
+		case controlCh <- &control.Approval{
 			Name:      name,
 			Args:      args,
 			ApproveCh: ch,

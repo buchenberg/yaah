@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/toolfmt"
-	"github.com/buchenberg/yaah/internal/types"
 )
 
 type wireOption struct {
@@ -219,7 +219,7 @@ func (am *answerMap) cancel(id string) {
 	delete(am.pending, id)
 }
 
-func forwardCtrl(ctx context.Context, ch <-chan types.CtrlMsg, v *sseView, am *answerMap, idGen *atomic.Int64) {
+func forwardCtrl(ctx context.Context, ch <-chan control.Msg, v *sseView, am *answerMap, idGen *atomic.Int64) {
 	for {
 		select {
 		case msg, ok := <-ch:
@@ -227,11 +227,11 @@ func forwardCtrl(ctx context.Context, ch <-chan types.CtrlMsg, v *sseView, am *a
 				return
 			}
 			switch m := msg.(type) {
-			case *types.CtrlStatus:
+			case *control.Status:
 				v.write(marshalWire(sseWireEvent{Type: "ctrl.status", Text: m.Text}))
-			case *types.CtrlError:
+			case *control.Error:
 				v.write(marshalWire(sseWireEvent{Type: "ctrl.error", Error: m.Err.Error()}))
-			case *types.CtrlQuestion:
+			case *control.Question:
 				id := fmt.Sprintf("q%d", idGen.Add(1))
 				ansCh := make(chan string, 1)
 				am.register(id, ansCh)
@@ -251,7 +251,7 @@ func forwardCtrl(ctx context.Context, ch <-chan types.CtrlMsg, v *sseView, am *a
 					case <-ctx.Done():
 					}
 				}()
-			case *types.CtrlApproval:
+			case *control.Approval:
 				id := fmt.Sprintf("q%d", idGen.Add(1))
 				ansCh := make(chan string, 1)
 				am.register(id, ansCh)
@@ -266,7 +266,7 @@ func forwardCtrl(ctx context.Context, ch <-chan types.CtrlMsg, v *sseView, am *a
 					case <-ctx.Done():
 					}
 				}()
-			case *types.CtrlContinue:
+			case *control.Continue:
 				id := fmt.Sprintf("q%d", idGen.Add(1))
 				ansCh := make(chan string, 1)
 				am.register(id, ansCh)
@@ -283,7 +283,7 @@ func forwardCtrl(ctx context.Context, ch <-chan types.CtrlMsg, v *sseView, am *a
 						m.AnswerCh <- false
 					}
 				}()
-			case *types.CtrlTodos:
+			case *control.Todos:
 				items := make([]wireTodo, len(m.Items))
 				for i, item := range m.Items {
 					items[i] = wireTodo{Content: item.Content, Status: item.Status, Priority: item.Priority}
@@ -292,15 +292,15 @@ func forwardCtrl(ctx context.Context, ch <-chan types.CtrlMsg, v *sseView, am *a
 				v.todos = items
 				v.mu.Unlock()
 				v.write(marshalWire(sseWireEvent{Type: "ctrl.todos", Items: items}))
-			case *types.CtrlContextInfo:
+			case *control.ContextInfo:
 				ct := m.Tokens
 				if m.LastPromptTokens > 0 {
 					ct = m.LastPromptTokens
 				}
 				v.write(marshalWire(sseWireEvent{Type: "ctrl.context", Tokens: ct, Window: m.Window}))
-			case *types.CtrlModelList:
+			case *control.ModelList:
 				v.write(marshalWire(sseWireEvent{Type: "ctrl.models", Models: m.Models, Providers: m.ProviderNames}))
-			case *types.CtrlDone:
+			case *control.Done:
 				return
 			}
 		case <-ctx.Done():

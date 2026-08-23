@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tui/colors"
 	"github.com/buchenberg/yaah/internal/tui/components/mcpinfo"
@@ -12,7 +13,6 @@ import (
 	"github.com/buchenberg/yaah/internal/tui/components/subagent"
 	"github.com/buchenberg/yaah/internal/tui/components/thinking"
 	"github.com/buchenberg/yaah/internal/tui/components/toolblock"
-	"github.com/buchenberg/yaah/internal/types"
 	"github.com/rivo/tview"
 )
 
@@ -67,7 +67,7 @@ type App struct {
 	// If nil (default), the tview-based approval.Show modal is used.
 	ShowApprovalFn func(name, args string, onAnswer func(bool))
 
-	ControlCh <-chan types.CtrlMsg
+	ControlCh <-chan control.Msg
 
 	bgMu      sync.Mutex
 	bgDone    chan struct{}
