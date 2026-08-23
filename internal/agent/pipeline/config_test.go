@@ -54,6 +54,34 @@ func TestPipeline_SubAgentNamesHonourDisabled(t *testing.T) {
 	}
 }
 
+func TestPipeline_SubAgentIncludesPermissionWhenRulesPresent(t *testing.T) {
+	cfg := PipelineConfig{
+		PermissionRules: []PermissionRule{{Tool: "bash", Path: "/etc/*", Mode: "deny"}},
+	}
+	p := NewSubAgentPipeline(cfg)
+	if p.Find("permission") == nil {
+		t.Fatal("sub-agent pipeline has no permission middleware despite PermissionRules being set (A1)")
+	}
+}
+
+func TestPipeline_SubAgentOmitsPermissionWithoutRules(t *testing.T) {
+	p := NewSubAgentPipeline(PipelineConfig{})
+	if p.Find("permission") != nil {
+		t.Error("sub-agent pipeline built permission middleware with no rules — should be opt-in")
+	}
+}
+
+func TestPipeline_SubAgentPermissionHonoursDisabled(t *testing.T) {
+	cfg := PipelineConfig{
+		PermissionRules: []PermissionRule{{Tool: "bash", Mode: "deny"}},
+		PipelineDisabled: []string{"permission"},
+	}
+	p := NewSubAgentPipeline(cfg)
+	if p.Find("permission") != nil {
+		t.Error("permission middleware present despite being in PipelineDisabled")
+	}
+}
+
 func TestSubAgentTrace_UsesSharedStore(t *testing.T) {
 	store, err := shepherd.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
