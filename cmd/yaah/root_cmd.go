@@ -13,8 +13,7 @@ import (
 
 // rootCmd is the top-level `yaah` command. When invoked with no
 // subcommand and no positional arguments, it starts the interactive REPL.
-// When invoked with one positional argument, it runs a one-shot prompt
-// (one-shot lands in M2 with the agent loop; for now it prints a notice).
+// With one positional argument, it runs a one-shot prompt.
 var rootCmd = &cobra.Command{
 	Use:   "yaah",
 	Short: "Yet Another Agent Harness — a vendor-free, open-source AI agent CLI",

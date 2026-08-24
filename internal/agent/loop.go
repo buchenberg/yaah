@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/buchenberg/yaah/internal/agent/events"
@@ -63,18 +64,53 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 		SteerDrain: func(ctx context.Context, messages []types.Message) []types.Message {
 			return l.Compact(ctx, messages, 0)
 		},
-		ApprovalMode:           l.Config.ApprovalMode,
+		ApprovalMode:     l.Config.ApprovalMode,
+		ApprovalClassify: l.classifyDanger,
+		ApprovalApprove:  func(name, args string) bool { return l.approveTool(name, abbreviateArgs(args, 120)) },
+		ApprovalEmitDeny: func(name, args, errMsg string) {
+			if l.Hooks == nil {
+				return
+			}
+			l.Hooks.Emit(HookEvent{Event: events.ToolStart, ToolName: name, ToolArgs: args})
+			l.Hooks.Emit(HookEvent{Event: events.ToolEnd, ToolName: name, ToolArgs: args, ToolError: errMsg, ToolResult: errMsg})
+		},
 		PermissionRules:        l.Config.PermissionRules,
 		LoopDetectCount:        l.Config.LoopDetectCount,
 		LoopDetectWindow:       l.Config.LoopDetectWindow,
 		MaxToolConcurrency:     l.Config.MaxToolConcurrency,
+		MaxInlineToolsPerTurn:  l.Config.MaxInlineToolsPerTurn,
+		ToolConc:               l.toolConcurrency,
 		MaxSubAgentConcurrency: l.Config.MaxSubAgentConcurrency,
 		PromptCaching:          l.Config.PromptCaching,
 		Pruner:                 l.CtxMgr.Pruner,
 		PruneHooks:             l.pruneHooks(),
 		PipelineNames:          l.Config.PipelineNames,
 		PipelineDisabled:       l.Config.PipelineDisabled,
-		SessionID:              l.Config.SessionID,
+		ConflictTracker:        l.ConflictTracker,
+		ConflictOnCheck: func(ctx context.Context, model string, turn int) {
+			if l.Hooks == nil {
+				return
+			}
+			l.Hooks.Emit(HookEvent{Event: events.ConflictCheck, Turn: turn, Model: model})
+		},
+		ConflictOnFound: func(ctx context.Context, model string, turn int, report string, fileCount int) {
+			if l.Hooks != nil {
+				l.Hooks.Emit(HookEvent{Event: events.ConflictDetect, Turn: turn, Model: model, ConflictFiles: fileCount})
+			}
+			if span := trace.SpanFromContext(ctx); span.IsRecording() {
+				span.SetAttributes(attribute.Int("conflict.files", fileCount))
+				span.AddEvent("conflict.detected", trace.WithAttributes(
+					attribute.Int("conflict.files", fileCount),
+				))
+			}
+		},
+		ConflictPersist: func(msg types.Message) {
+			if l.Persister != nil {
+				l.Persister.Persist(msg)
+			}
+		},
+
+		SessionID: l.Config.SessionID,
 	}
 }
 

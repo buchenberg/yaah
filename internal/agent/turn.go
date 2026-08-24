@@ -8,7 +8,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/buchenberg/yaah/internal/agent/events"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/prompts"
@@ -121,33 +120,20 @@ func (l *Loop) recordTurnSpanAttrs(turnSpan trace.Span, messages []types.Message
 	turnSpan.SetAttributes(turnAttrs...)
 }
 
-// executeToolPhase truncates inline tools to MaxInlineToolsPerTurn,
-// executes them via executeAndCollect, runs conflict detection,
-// and invokes the PostTool middleware step.
+// executeToolPhase merges middleware-synthesized tool results (approval
+// denials, inline-limit drops), executes the remaining calls via
+// executeAndCollect, and invokes the PostTool middleware step.
+// Call filtering itself lives in the pipeline (approval / inline_limit).
 func (l *Loop) executeToolPhase(turnCtx context.Context, iter int, msg types.Message, messages *[]types.Message, step **pipeline.Step, pipe *pipeline.Pipeline, turnSpan trace.Span) error {
+	// MaxInlineToolsPerTurn truncation and approval denials are applied
+	// by the pipeline's PostModel middleware (inline_limit / approval),
+	// which synthesizes results for stripped calls on step.SynthesizedResults.
 	calls := msg.ToolCalls
-	if l.Config.MaxInlineToolsPerTurn > 0 && len(calls) > l.Config.MaxInlineToolsPerTurn {
-		droppedCalls := calls[l.Config.MaxInlineToolsPerTurn:]
-		calls = calls[:l.Config.MaxInlineToolsPerTurn]
-		// Every tool_call_id in the assistant message needs a tool result,
-		// and nothing but tool messages may come between the assistant
-		// message and its results. Synthesize a result per dropped call
-		// instead of appending a user/system notice here.
-		for _, tc := range droppedCalls {
-			*messages = append(*messages, types.ToolResultMsg(
-				tc.ID, tc.Function.Name,
-				fmt.Sprintf(
-					"[dropped: this call exceeded the inline tool limit (%d per turn) and was not executed. "+
-						"Break large batches into smaller turns or use the delegate tool for batch work.]",
-					l.Config.MaxInlineToolsPerTurn,
-				),
-			))
-		}
-		if l.Config.OtelVerbose && turnSpan != nil {
-			turnSpan.AddEvent("inline.truncated", trace.WithAttributes(
-				attribute.Int("inline.dropped", len(droppedCalls)),
-			))
-		}
+
+	if l.Config.OtelVerbose && turnSpan != nil && (*step).InlineDropped > 0 {
+		turnSpan.AddEvent("inline.truncated", trace.WithAttributes(
+			attribute.Int("inline.dropped", (*step).InlineDropped),
+		))
 	}
 
 	if l.Config.OtelVerbose && turnSpan != nil {
@@ -161,37 +147,18 @@ func (l *Loop) executeToolPhase(turnCtx context.Context, iter int, msg types.Mes
 		))
 	}
 
+	// Middleware (approval, inline_limit) may have stripped tool calls
+	// before dispatch; their synthesized results must enter the
+	// conversation ahead of the executed-call results so every
+	// tool_call_id on the assistant message is answered.
+	for _, m := range (*step).SynthesizedResults {
+		*messages = append(*messages, m)
+		l.Persister.Persist(m)
+	}
+	(*step).SynthesizedResults = nil
+
 	toolResults := l.executeAndCollect(turnCtx, calls, messages)
 	(*step).Messages = *messages
-
-	if l.ConflictTracker != nil {
-		l.Hooks.Emit(HookEvent{
-			Event: events.ConflictCheck,
-			Turn:  iter,
-			Model: l.Config.Model,
-		})
-
-		if report := l.ConflictTracker.DetectAndReset(); report != "" {
-			fileCount := strings.Count(report, "File: ")
-			l.Hooks.Emit(HookEvent{
-				Event:         events.ConflictDetect,
-				Turn:          iter,
-				Model:         l.Config.Model,
-				ConflictFiles: fileCount,
-			})
-			if turnSpan != nil {
-				turnSpan.SetAttributes(attribute.Int("conflict.files", fileCount))
-				turnSpan.AddEvent("conflict.detected", trace.WithAttributes(
-					attribute.Int("conflict.files", fileCount),
-				))
-			}
-			conflictMsg := types.UserMsg(report)
-			*messages = append(*messages, conflictMsg)
-			(*step).Messages = *messages
-			l.State.Messages = *messages
-			l.Persister.Persist(conflictMsg)
-		}
-	}
 
 	var err error
 	*step, err = pipe.RunPostTool(turnCtx, toolResults, *step)

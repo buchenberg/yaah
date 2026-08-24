@@ -9,7 +9,14 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 )
+
+// mcpHTTPTimeout bounds each HTTP transport round-trip. Generous by
+// design: MCP tool calls can legitimately run long, but a hung server
+// must not stall the caller forever (requests may carry a bare
+// background context with no deadline of its own).
+const mcpHTTPTimeout = 5 * time.Minute
 
 // HTTPClient implements the MCP protocol over HTTP (Streamable HTTP transport).
 // Requests are sent as HTTP POST to the server URL; responses come back as
@@ -32,7 +39,7 @@ func NewHTTPClient(name, url string, headers map[string]string) *HTTPClient {
 		name:    name,
 		url:     url,
 		headers: headers,
-		client:  &http.Client{},
+		client:  &http.Client{Timeout: mcpHTTPTimeout},
 	}
 }
 
@@ -42,7 +49,7 @@ func (c *HTTPClient) Initialize(ctx context.Context) error {
 	params, _ := json.Marshal(map[string]any{
 		"protocolVersion": "2024-11-05",
 		"capabilities":    map[string]any{},
-		"clientInfo":      map[string]string{"name": "yaah", "version": "0.3.0"},
+		"clientInfo":      map[string]string{"name": "yaah", "version": clientVersion},
 	})
 
 	resp, err := c.sendRequest(ctx, JSONRPCMessage{

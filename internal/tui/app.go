@@ -82,18 +82,21 @@ type App struct {
 	pendingContextTokens int
 	pendingContextWindow int
 
-	pendingThink         string
-	pendingTool          string
-	compacting           bool
-	contextTokens        int
-	contextWindow        int
-	lastProvider         string
-	lastModel            string
-	thinkingLabel        string
-	todoItems            []todo.Item
-	verbose              bool
-	showBanner           bool
-	ephemeralMsg         string
+	pendingThink  string
+	pendingTool   string
+	compacting    bool
+	contextTokens int
+	contextWindow int
+	lastProvider  string
+	lastModel     string
+	thinkingLabel string
+	todoItems     []todo.Item
+	verbose       bool
+	showBanner    bool
+	ephemeralMsg  string
+	// ephemeralGen guards SetEphemeral: each call invalidates the
+	// previous timer so a stale clear cannot stomp a newer message.
+	ephemeralGen         atomic.Int64
 	subAgentsEnabled     bool
 	subAgentsProvider    string
 	subAgentsConcurrency int

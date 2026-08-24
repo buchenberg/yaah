@@ -121,6 +121,19 @@ providers:
 	}
 }
 
+func TestResolve_oauthScopeEnvSubstitution(t *testing.T) {
+	t.Setenv("YAAH_TEST_OAUTH_SCOPE", "openid profile")
+
+	got := Resolve(Provider{
+		Auth:       "oauth",
+		OAuthScope: "${YAAH_TEST_OAUTH_SCOPE}",
+	}).OAuthScope
+
+	if got != "openid profile" {
+		t.Errorf("Resolve().OAuthScope = %q, want %q (scope not env-substituted)", got, "openid profile")
+	}
+}
+
 func TestLoad_providerModelsOverride(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("YAAH_HOME", tmp)

@@ -185,6 +185,8 @@ yaah --approval allow "deploy"  # auto-approve (headless / CI)
 yaah --approval deny "deploy"   # block all dangerous calls
 ```
 
+The policy is enforced by the `approval` middleware in the pipeline: dangerous calls are stripped before dispatch and answered with a synthesized error tool result, so the model always sees a response for every call it made. Sub-agents run in `allow` mode; parent path rules (the `permission` middleware) are evaluated first.
+
 ## Workspace containment
 
 File-accessing tools (read, write, edit, delete, grep, glob, ls, sed,
@@ -207,7 +209,7 @@ alike.
 
 ## Middleware pipeline
 
-I run a configurable middleware pipeline on every agent turn:
+Every agent turn runs through a configurable middleware pipeline:
 
 | Middleware | On by default | What it does |
 |---|---|---|
@@ -216,6 +218,8 @@ I run a configurable middleware pipeline on every agent turn:
 | `compaction` | ✓ | LLM-powered context summarization when the window fills up |
 | `soft_prune` | ✓ | Elides stale tool-output content without an LLM call |
 | `approval` | ✓ | Gates dangerous tools per your approval mode |
+| `inline_limit` | ✓ | Caps tool calls per turn; dropped calls get synthesized results |
+| `conflict_detect` | ✓ | Flags files touched by multiple sub-agents after each batch |
 | `loop_detection` | ✓ | Halts stuck loops via tool-call-chain hashing |
 | `staleness` | ✓ | Annotates sub-agent results when orchestrator context shifted mid-flight |
 | `permission` | — | Path-pattern rules to allow/deny tools by file path |

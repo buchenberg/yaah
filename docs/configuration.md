@@ -225,7 +225,7 @@ and `max_retries` consistent across the whole team.
 
 **`agents.middleware`** — control the pipeline. Set `enabled` for an
 explicit order. Set `disabled` to remove from the default pipeline
-(`steer → followup → compaction → soft_prune → approval → tool_concurrency → loop_detection → staleness`).
+(`steer → followup → compaction → soft_prune → approval → inline_limit → tool_concurrency → loop_detection → staleness → conflict_detect`).
 
 | Middleware | Default | Purpose |
 |---|---|---|
@@ -234,8 +234,10 @@ explicit order. Set `disabled` to remove from the default pipeline
 | `compaction` | on | LLM-powered context summarization |
 | `soft_prune` | on | Elide stale tool-output content (no LLM) |
 | `approval` | on | Gate dangerous tools |
+| `inline_limit` | on | Cap tool calls dispatched per turn (0 = unlimited) |
 | `loop_detection` | on | Halt stuck loops |
 | `staleness` | on | Annotate sub-agent results when context shifted |
+| `conflict_detect` | on | Flag files touched by multiple sub-agents |
 | `permission` | off | Path-pattern allow/deny rules |
 | `tool_concurrency` | on | Cap concurrent tool goroutines |
 | `sub_agent` | off | Enforce sub-agent depth limits |
