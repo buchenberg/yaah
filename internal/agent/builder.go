@@ -52,6 +52,10 @@ type LoopBuilder struct {
 	// PipelineEnabled / PipelineDisabled configure the middleware chain.
 	PipelineEnabled  []string
 	PipelineDisabled []string
+	// MCPApproval gates MCP-served tools ("ask", "allow", "deny");
+	// MCPToolNames carries the names they registered under.
+	MCPApproval  string
+	MCPToolNames map[string]bool
 	// SubAgentMaxConcurrency caps simultaneous sub-agent dispatches.
 	SubAgentMaxConcurrency int
 	// SubAgentStuckChildTimeout is the per-role stuck-child deadline.
@@ -116,6 +120,9 @@ func (b *LoopBuilder) Build(opts LoopBuildOptions) *Loop {
 
 	if opts.ApprovalMode != "" {
 		optsList = append(optsList, WithApprovalMode(opts.ApprovalMode))
+	}
+	if b.MCPApproval != "" {
+		optsList = append(optsList, WithMCPApproval(b.MCPApproval, b.MCPToolNames))
 	}
 
 	return NewLoop(b.Provider, b.Registry, optsList...)

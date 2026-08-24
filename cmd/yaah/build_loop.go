@@ -139,6 +139,8 @@ func (s *agentSession) loopBuilder(
 		FallbackModel:              fallbackModel,
 		PipelineEnabled:            s.cfg.Agent.Middleware.Enabled,
 		PipelineDisabled:           s.cfg.Agent.Middleware.Disabled,
+		MCPApproval:                resolveMCPApproval(s.cfg),
+		MCPToolNames:               s.mcpToolNames,
 		SubAgentMaxConcurrency:     s.cfg.Agent.SubAgent.MaxConcurrency,
 		SubAgentStuckChildTimeout:  time.Duration(s.cfg.Agent.SubAgent.StuckChildTimeout) * time.Second,
 		SubAgentStuckChildTimeouts: buildStuckChildTimeouts(s.cfg.Agent.SubAgent),

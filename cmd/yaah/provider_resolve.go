@@ -29,6 +29,19 @@ func resolveApproval(cfg *config.Config, opts SessionOptions) string {
 	}
 }
 
+// resolveMCPApproval returns the effective approval policy for
+// MCP-served tools: config file → "ask" default. Remote tools cannot
+// classify their own danger, so the default gates them behind user
+// approval (review finding S3).
+func resolveMCPApproval(cfg *config.Config) string {
+	switch cfg.Agent.Default.MCPApproval {
+	case "allow", "ask", "deny":
+		return cfg.Agent.Default.MCPApproval
+	default:
+		return "ask"
+	}
+}
+
 // resolveProviderName extracts the provider name from the config.
 func resolveProviderName(cfg *config.Config) string {
 	// 1. Explicit default.provider setting

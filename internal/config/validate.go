@@ -49,6 +49,15 @@ func Validate(cfg *Config) error {
 			cfg.Agent.Default.Approval))
 	}
 
+	// MCP approval policy follows the same enum.
+	switch cfg.Agent.Default.MCPApproval {
+	case "", "allow", "ask", "deny":
+	default:
+		errs = append(errs, fmt.Sprintf(
+			"agents.default.mcp_approval %q is invalid (must be allow, ask, or deny)",
+			cfg.Agent.Default.MCPApproval))
+	}
+
 	// Compaction threshold must be in [0, 1]. Zero means "use default"
 	// and is accepted; only negative values or values > 1 are rejected.
 	if t := cfg.Agent.Default.CompactionThreshold; t < 0 || t > 1 {

@@ -83,6 +83,15 @@ func WithApprovalMode(mode string) Option {
 	return func(l *Loop) { l.Config.ApprovalMode = mode }
 }
 
+// WithMCPApproval sets the approval policy for MCP-served tools and
+// the set of names they registered under.
+func WithMCPApproval(mode string, names map[string]bool) Option {
+	return func(l *Loop) {
+		l.Config.MCPApproval = mode
+		l.Config.MCPToolNames = names
+	}
+}
+
 // WithPipeline configures the middleware pipeline.
 func WithPipeline(enabled, disabled []string) Option {
 	return func(l *Loop) {

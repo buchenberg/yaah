@@ -66,7 +66,9 @@ var alwaysDangerous = map[string]bool{
 // user approval. It first checks whether the tool implements tools.DangerClassifier
 // for argument-level classification; registered tools without that interface
 // are never dangerous. Names in alwaysDangerous are gated even when not
-// registered on this platform.
+// registered on this platform. MCP-served tools cannot implement
+// DangerClassifier (they are remote), so they are gated by the
+// MCPApproval policy — default "ask" (review finding S3).
 func (l *Loop) classifyDanger(name, args string) bool {
 	if t := l.Registry.Get(name); t != nil {
 		if dc, ok := t.(tools.DangerClassifier); ok {
@@ -74,7 +76,20 @@ func (l *Loop) classifyDanger(name, args string) bool {
 		}
 		return false
 	}
-	return alwaysDangerous[name]
+	if alwaysDangerous[name] {
+		return true
+	}
+	if l.Config.MCPToolNames[name] {
+		switch l.Config.MCPApproval {
+		case "allow":
+			return false
+		case "deny":
+			return true
+		default: // "ask" and unset
+			return true
+		}
+	}
+	return false
 }
 
 // approveTool prompts the user on stderr/stdin to approve a tool call.

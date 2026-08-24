@@ -120,6 +120,73 @@ func TestPathValidator_DenyPatterns(t *testing.T) {
 	}
 }
 
+// TestPathValidator_DenyPatternRelativePath pins that deny patterns can
+// address path segments inside the workspace, not only basenames
+// (review finding S6 — "config/*.secret" was previously unrepresentable).
+func TestPathValidator_DenyPatternRelativePath(t *testing.T) {
+	ws := t.TempDir()
+	if real, err := filepath.EvalSymlinks(ws); err == nil {
+		ws = real
+	}
+	if err := os.MkdirAll(filepath.Join(ws, "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	denied := filepath.Join(ws, "config", "db.secret")
+	if err := os.WriteFile(denied, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	allowed := filepath.Join(ws, "other", "db.secret")
+	if err := os.MkdirAll(filepath.Join(ws, "other"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(allowed, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	pv := NewPathValidator(ws, false, []string{"config/*.secret"})
+
+	if _, err := pv.ResolvePath(denied); err == nil {
+		t.Error("config/db.secret must be denied by relative pattern")
+	}
+	if _, err := pv.ResolvePath(allowed); err != nil {
+		t.Errorf("other/db.secret wrongly denied: %v", err)
+	}
+}
+
+// TestPathValidator_NonexistentLeafResolvesViaAncestor pins that a path
+// whose leaf does not exist yet (write-tool targets) resolves through
+// its deepest existing ancestor instead of being rejected.
+func TestPathValidator_NonexistentLeafResolvesViaAncestor(t *testing.T) {
+	ws := t.TempDir()
+	if real, err := filepath.EvalSymlinks(ws); err == nil {
+		ws = real
+	}
+	pv := NewPathValidator(ws, false, nil)
+
+	got, err := pv.ResolvePath(filepath.Join(ws, "does-not-exist-yet.txt"))
+	if err != nil {
+		t.Fatalf("nonexistent leaf rejected: %v", err)
+	}
+	if want := filepath.Join(ws, "does-not-exist-yet.txt"); got != want {
+		t.Errorf("ResolvePath = %q; want %q", got, want)
+	}
+}
+
+func TestResolveExistingAncestor(t *testing.T) {
+	ws := t.TempDir()
+	if real, err := filepath.EvalSymlinks(ws); err == nil {
+		ws = real
+	}
+
+	got, err := resolveExistingAncestor(filepath.Join(ws, "a", "b", "c.txt"))
+	if err != nil {
+		t.Fatalf("resolveExistingAncestor: %v", err)
+	}
+	if want := filepath.Join(ws, "a", "b", "c.txt"); got != want {
+		t.Errorf("resolved = %q; want %q", got, want)
+	}
+}
+
 func TestPathValidator_AskGrantsException(t *testing.T) {
 	ws := t.TempDir()
 	if real, err := filepath.EvalSymlinks(ws); err == nil {
