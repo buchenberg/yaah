@@ -53,8 +53,19 @@ func init() {
 // Empty (default) preserves the stdio-only behavior.
 var httpAddr string
 
+// serveToken authenticates the HTTP transport. Empty generates a
+// random token at startup and prints it once.
+var serveToken string
+
+// serveAllowUnknownSessions keeps the historical restart-transparency
+// behavior (stale session IDs are re-registered). Strict validation is
+// one flag away; the bearer token is the real gate.
+var serveAllowUnknownSessions bool
+
 func init() {
 	serveCmd.Flags().StringVar(&httpAddr, "http", "", "expose MCP over Streamable HTTP at this address (e.g. 127.0.0.1:7333); empty keeps stdio transport")
+	serveCmd.Flags().StringVar(&serveToken, "token", "", "bearer token required by --http endpoints (randomly generated when empty)")
+	serveCmd.Flags().BoolVar(&serveAllowUnknownSessions, "allow-unknown-sessions", true, "--http: accept stale/unknown Mcp-Session-Id values (server restart transparency)")
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
@@ -172,6 +183,22 @@ func runServeHTTP(buf *observability.BufferingSpanProcessor) error {
 	}()
 
 	httpSrv := mcp.NewHTTPServer(srv, httpAddr)
+
+	// Auth gate: every --http endpoint except /health requires the
+	// bearer token. Generate one when the operator did not pin it so
+	// `yaah serve --http` is never accidentally unauthenticated.
+	token := serveToken
+	if token == "" {
+		var err error
+		token, err = newWebToken()
+		if err != nil {
+			return fmt.Errorf("generate serve auth token: %w", err)
+		}
+	}
+	httpSrv.SetAuthToken(token)
+	httpSrv.SetAllowUnknownSessions(serveAllowUnknownSessions)
+	fmt.Fprintf(os.Stderr, "%s bearer token: %s\n", Dim("yaah serve:"), token)
+	fmt.Fprintf(os.Stderr, "%s clients send it as %s\n", Dim("yaah serve:"), `Authorization: Bearer <token>`)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

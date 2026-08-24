@@ -7,6 +7,7 @@
 <title>yaah</title>
 <link rel="stylesheet" href="pico.min.css">
 <script src="marked.min.js"></script>
+<script src="purify.min.js"></script>
 <script defer src="alpine.min.js"></script>
 <style>
 [x-cloak]{display:none!important}
@@ -377,6 +378,16 @@ dialog article{max-width:480px;min-width:320px}
 <script>
 marked.setOptions({breaks:true,gfm:true})
 
+// Auth token handed to the page via ?t=… (see `yaah web` startup
+// banner). Sent as X-Yaah-Token on API calls and as ?t= on the SSE
+// stream (EventSource cannot set headers).
+const _token = new URLSearchParams(location.search).get('t') || ''
+
+// render converts assistant markdown to sanitized HTML. DOMPurify
+// strips script/event-handler injection from model- or tool-sourced
+// content before it reaches x-html (review finding S1).
+function render(t) { return DOMPurify.sanitize(marked.parse(t)) }
+
 function esc(s) {
   const d = document.createElement('div')
   d.textContent = s
@@ -430,9 +441,9 @@ document.addEventListener('alpine:init', () => {
           })
         })
       },
-      md(t) { return marked.parse(t) },
+      md(t) { return render(t) },
       classOf(r) { return r === 'user' ? 'user' : r === 'error' ? 'err' : 'asst' },
-      add(role, text) { this.msgs.push({id: ++_n, role, raw: text, html: role === 'asst' ? marked.parse(text) : esc(text), expanded: false, running: false}) },
+      add(role, text) { this.msgs.push({id: ++_n, role, raw: text, html: role === 'asst' ? render(text) : esc(text), expanded: false, running: false}) },
       addTool(id, name, args, summary) {
         const m = {id: ++_n, role: 'tool', name, args, summary, result: '', duration: '', error: '', running: true, expanded: false, subModel: ''}
         this.msgs.push(m)
@@ -482,7 +493,7 @@ document.addEventListener('alpine:init', () => {
 
       connect() {
         if (this._es) this._es.close()
-        this._es = new EventSource('/api/stream')
+        this._es = new EventSource('/api/stream' + (_token ? '?t=' + encodeURIComponent(_token) : ''))
         this._es.onopen = () => { this.on = true; this.status = 'ready' }
         this._es.onmessage = e => { try { this.onEvt(JSON.parse(e.data)) } catch (_) {} }
         this._es.onerror = () => { this.on = false; this.status = 'reconnecting…' }
@@ -817,8 +828,11 @@ document.addEventListener('alpine:init', () => {
 
       stop() { this.post({type:'abort'}) },
       post(body) {
-        fetch('/api/action', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
-          .then(r => { if (r.status === 409) this.status = 'agent is busy' })
+        fetch('/api/action', {method:'POST', headers:{'Content-Type':'application/json', 'X-Yaah-Token': _token}, body:JSON.stringify(body)})
+          .then(r => {
+            if (r.status === 409) this.status = 'agent is busy'
+            else if (r.status === 401) this.status = 'unauthorized — reload with the token URL from the terminal'
+          })
       }
     }
   })

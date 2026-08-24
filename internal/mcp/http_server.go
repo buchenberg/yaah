@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -32,6 +33,16 @@ import (
 type HTTPServer struct {
 	server *Server
 	addr   string
+
+	// authToken, when non-empty, requires every MCP request to carry
+	// "Authorization: Bearer <token>" (or a ?token= query parameter).
+	// /health stays open for readiness probes.
+	authToken string
+	// allowUnknownSessions controls whether POSTs with an unrecognized
+	// Mcp-Session-Id — or non-initialize POSTs without one — are
+	// accepted. Strict by default; serve mode enables it so client
+	// reconnects survive server restarts.
+	allowUnknownSessions bool
 
 	mu       sync.RWMutex
 	sessions map[string]struct{}
@@ -67,6 +78,41 @@ func (h *HTTPServer) Addr() string {
 	return h.addr
 }
 
+// SetAuthToken enables bearer-token authentication. An empty token
+// disables authentication (not recommended for non-loopback binds).
+func (h *HTTPServer) SetAuthToken(token string) {
+	h.authToken = token
+}
+
+// SetAllowUnknownSessions controls whether requests with unrecognized
+// or missing session IDs are accepted. See HTTPServer.allowUnknownSessions.
+func (h *HTTPServer) SetAllowUnknownSessions(allow bool) {
+	h.allowUnknownSessions = allow
+}
+
+// authorized reports whether r carries a valid auth token. When no
+// token is configured every request is authorized.
+func (h *HTTPServer) authorized(r *http.Request) bool {
+	if h.authToken == "" {
+		return true
+	}
+	var presented string
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		presented = strings.TrimPrefix(auth, "Bearer ")
+	} else if t := r.URL.Query().Get("token"); t != "" {
+		presented = t
+	}
+	if presented == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(presented), []byte(h.authToken)) == 1
+}
+
+func (h *HTTPServer) unauthorized(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(os.Stderr, "[yaah-mcp] %s %s from %s: unauthorized\n", r.Method, r.URL.Path, r.RemoteAddr)
+	http.Error(w, "unauthorized: missing or invalid bearer token", http.StatusUnauthorized)
+}
+
 // Start binds the configured address and serves HTTP until the
 // server is shut down via ctx cancellation, Shutdown, or a fatal
 // listen error.
@@ -99,8 +145,9 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 	h.addr = ln.Addr().String()
 
 	h.httpServer = &http.Server{
-		Addr:    h.addr,
-		Handler: mux,
+		Addr:              h.addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	// Readiness signal: the port is bound, connections will succeed.
@@ -172,6 +219,10 @@ func (h *HTTPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 // POST processes JSON-RPC messages and also pushes responses to any
 // open SSE stream for the same session; DELETE closes the session.
 func (h *HTTPServer) handleMCP(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		h.unauthorized(w, r)
+		return
+	}
 	switch r.Method {
 	case http.MethodPost:
 		h.handlePost(w, r)
@@ -273,6 +324,10 @@ func (h *HTTPServer) handleGetSSE(w http.ResponseWriter, r *http.Request) {
 // dispatches each, and writes the response. Notifications (messages
 // without an ID) produce no output.
 func (h *HTTPServer) handlePost(w http.ResponseWriter, r *http.Request) {
+	if !h.authorized(r) {
+		h.unauthorized(w, r)
+		return
+	}
 	if r.Header.Get("Content-Type") != "" && !isJSONContentType(r.Header.Get("Content-Type")) {
 		fmt.Fprintf(os.Stderr, "[yaah-mcp] POST /mcp: unsupported content type %q from %s\n", r.Header.Get("Content-Type"), r.RemoteAddr)
 		http.Error(w, "unsupported content type: "+r.Header.Get("Content-Type"), http.StatusUnsupportedMediaType)
@@ -303,16 +358,34 @@ func (h *HTTPServer) handlePost(w http.ResponseWriter, r *http.Request) {
 	// after a session is established the client MUST echo the ID.
 	// The HTTP+SSE transport carries the session in the URL query
 	// string; the Streamable HTTP transport uses the header.
-	// Unknown sessions are auto-registered so server restarts are
-	// transparent to the client (no Kilo restart needed).
 	wantSession := r.Header.Get("Mcp-Session-Id")
 	if wantSession == "" {
 		wantSession = r.URL.Query().Get("sessionId")
 	}
-	if wantSession != "" {
-		if !h.sessionExists(wantSession) {
-			h.registerSession(wantSession)
-			fmt.Fprintf(os.Stderr, "[yaah-mcp] POST /mcp: auto-registered stale session %s (server restart?)\n", wantSession)
+	if wantSession != "" && !h.sessionExists(wantSession) {
+		if !h.allowUnknownSessions {
+			fmt.Fprintf(os.Stderr, "[yaah-mcp] POST /mcp: rejecting unknown session %q from %s\n", wantSession, r.RemoteAddr)
+			http.Error(w, "unknown session: "+wantSession, http.StatusNotFound)
+			return
+		}
+		// Auto-registration makes server restarts transparent to the
+		// client (no reconnect handshake needed). Only enabled when
+		// the operator opts in — sessions are bookkeeping, and this
+		// mode trusts the auth token as the real gate.
+		h.registerSession(wantSession)
+		fmt.Fprintf(os.Stderr, "[yaah-mcp] POST /mcp: auto-registered stale session %s (server restart?)\n", wantSession)
+	}
+	if wantSession == "" && !h.allowUnknownSessions {
+		hasInit := false
+		for _, msg := range messages {
+			if isInitialize(msg) {
+				hasInit = true
+				break
+			}
+		}
+		if !hasInit {
+			http.Error(w, "missing Mcp-Session-Id", http.StatusNotFound)
+			return
 		}
 	}
 

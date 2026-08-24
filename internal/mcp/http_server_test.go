@@ -18,6 +18,13 @@ import (
 // cancel func that stops the server.
 func startHTTPTestServer(t *testing.T) (string, func()) {
 	t.Helper()
+	return startHTTPTestServerWith(t, nil)
+}
+
+// startHTTPTestServerWith is startHTTPTestServer with a hook to
+// configure the HTTPServer (auth token, session policy) before start.
+func startHTTPTestServerWith(t *testing.T, configure func(*HTTPServer)) (string, func()) {
+	t.Helper()
 
 	srv := NewServer("test-http", "1.0.0")
 	srv.AddTool(ServerToolDef{
@@ -41,6 +48,9 @@ func startHTTPTestServer(t *testing.T) (string, func()) {
 	_ = ln.Close() // close so HTTPServer can bind the same port
 
 	httpSrv := NewHTTPServer(srv, addr)
+	if configure != nil {
+		configure(httpSrv)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
@@ -206,10 +216,28 @@ func TestHTTPInitializeThenToolsList(t *testing.T) {
 	}
 }
 
-// TestHTTPUnknownSessionAutoRegistered verifies a request with a stale
-// session ID is auto-registered (transparent server restart recovery).
-func TestHTTPUnknownSessionAutoRegistered(t *testing.T) {
+// TestHTTPUnknownSessionRejected verifies the strict default: a request
+// with a stale session ID is rejected. Servers opt into auto-registration
+// via SetAllowUnknownSessions (see TestHTTPUnknownSessionAutoRegistered).
+func TestHTTPUnknownSessionRejected(t *testing.T) {
 	base, stop := startHTTPTestServer(t)
+	defer stop()
+
+	status, body, _ := postJSON(t, base,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
+		"deadbeefdeadbeefdeadbeefdeadbeef")
+	if status != http.StatusNotFound {
+		t.Fatalf("status = %d body=%s, want 404 (strict session policy)", status, body)
+	}
+}
+
+// TestHTTPUnknownSessionAutoRegistered verifies a request with a stale
+// session ID is auto-registered when the operator opted in
+// (transparent server restart recovery).
+func TestHTTPUnknownSessionAutoRegistered(t *testing.T) {
+	base, stop := startHTTPTestServerWith(t, func(h *HTTPServer) {
+		h.SetAllowUnknownSessions(true)
+	})
 	defer stop()
 
 	status, body, _ := postJSON(t, base,
@@ -354,12 +382,12 @@ func TestHTTPDeleteClosesSession(t *testing.T) {
 		t.Errorf("delete status = %d, want 204", resp.StatusCode)
 	}
 
-	// Subsequent tools/list with the deleted session auto-registers
-	// a fresh session (transparent restart recovery), so it succeeds.
+	// Subsequent tools/list with the deleted session is rejected
+	// under the strict default session policy.
 	status, _, _ := postJSON(t, base,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`, sid)
-	if status != http.StatusOK {
-		t.Errorf("status after delete = %d, want 200 (auto-registered)", status)
+	if status != http.StatusNotFound {
+		t.Errorf("status after delete = %d, want 404 (session closed)", status)
 	}
 }
 
@@ -410,17 +438,98 @@ func TestHTTPPostInvalidJSON(t *testing.T) {
 	}
 }
 
-// TestHTTPNonInitializeNoSessionAllowed verifies that tools/list
-// without any session ID is accepted (since we don't strictly require
-// sessions — initialize is the only method that issues one).
-func TestHTTPNonInitializeNoSessionAllowed(t *testing.T) {
+// TestHTTPNonInitializeNoSessionRejected verifies that a non-initialize
+// POST without any session ID is rejected under the strict default, and
+// accepted when unknown sessions are allowed.
+func TestHTTPNonInitializeNoSessionRejected(t *testing.T) {
 	base, stop := startHTTPTestServer(t)
+	defer stop()
+
+	status, body, _ := postJSON(t, base,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`, "")
+	if status != http.StatusNotFound {
+		t.Errorf("status = %d body=%s, want 404 (strict session policy)", status, body)
+	}
+}
+
+func TestHTTPNonInitializeNoSessionAllowedWhenOptedIn(t *testing.T) {
+	base, stop := startHTTPTestServerWith(t, func(h *HTTPServer) {
+		h.SetAllowUnknownSessions(true)
+	})
 	defer stop()
 
 	status, body, _ := postJSON(t, base,
 		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`, "")
 	if status != 200 {
 		t.Errorf("status = %d body=%s, want 200", status, body)
+	}
+}
+
+// TestHTTPAuthToken verifies bearer-token authentication: requests
+// without a valid token get 401 on MCP endpoints, /health stays open,
+// and both the Authorization header and ?token= forms work.
+func TestHTTPAuthToken(t *testing.T) {
+	base, stop := startHTTPTestServerWith(t, func(h *HTTPServer) {
+		h.SetAuthToken("sekrit")
+	})
+	defer stop()
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}`
+
+	// No token → 401.
+	status, respBody, _ := postJSON(t, base, body, "")
+	if status != http.StatusUnauthorized {
+		t.Fatalf("no token: status = %d body=%s, want 401", status, respBody)
+	}
+
+	// Wrong token → 401.
+	req, _ := http.NewRequest(http.MethodPost, base+"/mcp", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer wrong")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("wrong token: status = %d, want 401", resp.StatusCode)
+	}
+
+	// Correct token via Authorization header → 200.
+	req, _ = http.NewRequest(http.MethodPost, base+"/mcp", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer sekrit")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("valid token: status = %d, want 200", resp.StatusCode)
+	}
+
+	// Correct token via query parameter → 200.
+	req, _ = http.NewRequest(http.MethodPost, base+"/mcp?token=sekrit", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("query token: status = %d, want 200", resp.StatusCode)
+	}
+
+	// /health stays open without a token.
+	hresp, err := http.Get(base + "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hresp.Body.Close()
+	if hresp.StatusCode != http.StatusOK {
+		t.Fatalf("health: status = %d, want 200", hresp.StatusCode)
 	}
 }
 
