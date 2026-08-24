@@ -83,8 +83,10 @@ func TestStartEchoProducesOutput(t *testing.T) {
 	}
 	defer m.Stop(info.ID)
 
-	// Poll until the process finishes and logs accumulate.
-	deadline := time.Now().Add(2 * time.Second)
+	// Poll until the process finishes and logs accumulate. The generous
+	// deadline tolerates slow shell startup on loaded CI runners
+	// (pwsh cold start can exceed 2s on Windows).
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		info.mu.Lock()
 		s := info.Status
@@ -100,7 +102,7 @@ func TestStartEchoProducesOutput(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Error("echo process still running after 2s")
+	t.Error("echo process still running after 10s")
 }
 
 func TestMultipleProcesses(t *testing.T) {
@@ -143,8 +145,9 @@ func TestStartFailingCommand(t *testing.T) {
 		t.Logf("Start returned error: %v (continuing)", err)
 	}
 
-	// Poll for status change instead of a single sleep.
-	deadline := time.Now().Add(2 * time.Second)
+	// Poll for status change instead of a single sleep. The generous
+	// deadline tolerates slow shell startup on loaded CI runners.
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		info.mu.Lock()
 		status := info.Status
@@ -163,7 +166,7 @@ func TestStartFailingCommand(t *testing.T) {
 	status := info.Status
 	info.mu.Unlock()
 	t.Logf("failing command status: %q, logs: %q", status, info.Logs())
-	t.Error("failing command status still 'running' after 2s")
+	t.Error("failing command status still 'running' after 10s")
 }
 
 // ---------- Stop ----------

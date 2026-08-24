@@ -40,14 +40,15 @@ func (l *Loop) publishDone(response *string, runErr *error) {
 	l.brokerClosed = true
 }
 
-// teardown handles panic recovery, flushes the persister, closes hooks,
-// and emits the session-end event.
+// teardown handles panic recovery, flushes the persister, emits the
+// session-end event, and closes hooks. SessionEnd must be emitted
+// BEFORE Close: Close releases the hook file descriptor, and emitting
+// after it landed on a nil file and was silently dropped.
 func (l *Loop) teardown(runErr *error) {
 	if r := recover(); r != nil {
 		*runErr = fmt.Errorf("panic: %v", r)
 	}
 	l.Persister.Flush()
-	l.Hooks.Close()
 	reason := "completed"
 	if *runErr != nil {
 		reason = "error"
@@ -57,4 +58,5 @@ func (l *Loop) teardown(runErr *error) {
 		ExitReason: reason,
 		Model:      l.Config.Model,
 	})
+	l.Hooks.Close()
 }

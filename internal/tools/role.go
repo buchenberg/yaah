@@ -24,16 +24,49 @@ type RoleTool struct {
 	Resolver     RoleResolver      // role registry access (injected by agent/runner)
 }
 
+// roleContractField mirrors agent/subagent.ContractField so role file
+// round-trips preserve the response contract (tools must not import
+// agent/subagent). Keep the yaml tags in sync with the canonical type.
+type roleContractField struct {
+	Name string `yaml:"name"`
+	Kind string `yaml:"kind"`
+}
+
+// UnmarshalYAML accepts both the string form ("fieldname") and the map
+// form ({name: ..., kind: ...}), matching the canonical parser.
+func (f *roleContractField) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		f.Name = value.Value
+		return nil
+	case yaml.MappingNode:
+		type raw roleContractField
+		return value.Decode((*raw)(f))
+	default:
+		return fmt.Errorf("contract field must be a string or map, got %v", value.Tag)
+	}
+}
+
+// roleContractDef mirrors agent/subagent.ContractDef.
+type roleContractDef struct {
+	Heading string              `yaml:"heading"`
+	Fields  []roleContractField `yaml:"fields"`
+}
+
 // roleFrontmatter is the YAML frontmatter extracted from a role .md file.
+// It must stay field-for-field compatible with agent/subagent.RoleDef:
+// any field missing here is silently dropped when the role tool rewrites
+// a file (the contract block was previously lost this way).
 type roleFrontmatter struct {
-	Name          string   `yaml:"name"`
-	Description   string   `yaml:"description"`
-	Specialty     string   `yaml:"specialty"`
-	Tools         []string `yaml:"tools"`
-	MaxLoopCycles int      `yaml:"max_iterations"`
-	MaxToolTurns  int      `yaml:"max_turns"`
-	JSONMode      bool     `yaml:"json_mode"`
-	Timeout       int      `yaml:"timeout"`
+	Name          string          `yaml:"name"`
+	Description   string          `yaml:"description"`
+	Specialty     string          `yaml:"specialty"`
+	Contract      roleContractDef `yaml:"contract,omitempty"`
+	Tools         []string        `yaml:"tools"`
+	MaxLoopCycles int             `yaml:"max_iterations"`
+	MaxToolTurns  int             `yaml:"max_turns"`
+	JSONMode      bool            `yaml:"json_mode"`
+	Timeout       int             `yaml:"timeout"`
 }
 
 func (t *RoleTool) Name() string        { return "role" }

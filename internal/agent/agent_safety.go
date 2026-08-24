@@ -52,16 +52,29 @@ func abbreviateArgs(args string, maxLen int) string {
 	return string(runes[:maxLen-3]) + "..."
 }
 
+// alwaysDangerous lists tool names that require approval even when they
+// are absent from the registry. Shell tools are platform-gated out of the
+// registry (bash on Windows, powershell elsewhere), and classifying them
+// via registry lookup alone made the approval gate platform-dependent.
+// Unknown names stay ungated here; MCP-tool policy is handled separately.
+var alwaysDangerous = map[string]bool{
+	"bash":       true,
+	"powershell": true,
+}
+
 // classifyDanger returns true if the given tool+args combination requires
 // user approval. It first checks whether the tool implements tools.DangerClassifier
-// for argument-level classification; tools without that interface are never dangerous.
+// for argument-level classification; registered tools without that interface
+// are never dangerous. Names in alwaysDangerous are gated even when not
+// registered on this platform.
 func (l *Loop) classifyDanger(name, args string) bool {
 	if t := l.Registry.Get(name); t != nil {
 		if dc, ok := t.(tools.DangerClassifier); ok {
 			return dc.IsDangerous(args)
 		}
+		return false
 	}
-	return false
+	return alwaysDangerous[name]
 }
 
 // approveTool prompts the user on stderr/stdin to approve a tool call.
