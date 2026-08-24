@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -47,6 +48,15 @@ func Validate(cfg *Config) error {
 		errs = append(errs, fmt.Sprintf(
 			"agents.default.approval %q is invalid (must be allow, ask, or deny)",
 			cfg.Agent.Default.Approval))
+	}
+
+	// MCP approval policy follows the same enum.
+	switch cfg.Agent.Default.MCPApproval {
+	case "", "allow", "ask", "deny":
+	default:
+		errs = append(errs, fmt.Sprintf(
+			"agents.default.mcp_approval %q is invalid (must be allow, ask, or deny)",
+			cfg.Agent.Default.MCPApproval))
 	}
 
 	// Compaction threshold must be in [0, 1]. Zero means "use default"
@@ -106,6 +116,17 @@ func Validate(cfg *Config) error {
 			errs = append(errs, fmt.Sprintf(
 				"agents.quality_gates.%s has no validator roles",
 				role))
+		}
+	}
+
+	// Workspace deny patterns must be valid filepath.Match globs — a
+	// malformed pattern would otherwise fail open at match time and
+	// leave the files the operator meant to protect accessible.
+	for i, pattern := range cfg.Agent.Default.WorkspaceDenyPatterns {
+		if _, err := filepath.Match(pattern, "probe"); err != nil {
+			errs = append(errs, fmt.Sprintf(
+				"agents.default.workspace_deny_patterns[%d] %q is not a valid glob pattern",
+				i, pattern))
 		}
 	}
 

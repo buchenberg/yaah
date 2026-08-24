@@ -134,6 +134,13 @@ type LoopConfig struct {
 	LoopDetectCount        int
 	LoopDetectWindow       int
 	ApprovalMode           string
+	// MCPApproval gates tools served by MCP servers. Remote tools
+	// cannot implement tools.DangerClassifier, so classifyDanger
+	// applies this policy to them: "ask" (default), "allow", "deny".
+	MCPApproval string
+	// MCPToolNames lists tool names registered from MCP servers so
+	// classifyDanger can apply MCPApproval to them.
+	MCPToolNames map[string]bool
 	// ToolSpillDir is the directory where oversized tool results are
 	// spilled to disk. Injected by the composition root (the yaah config
 	// dir); empty disables spilling and the truncation hint carries no

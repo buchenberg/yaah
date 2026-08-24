@@ -81,8 +81,31 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	defer os.RemoveAll(tmpDir)
 
 	tmpPath := filepath.Join(tmpDir, assetName)
-	if err := update.Download(downloadURL, tmpPath); err != nil {
+	if err := update.Download(cmd.Context(), downloadURL, tmpPath); err != nil {
 		return fmt.Errorf("download: %w", err)
+	}
+
+	// Integrity gate (review finding S5): apply only when the release
+	// publishes checksums.txt and the digest matches. Releases without
+	// checksums are refused unless the operator explicitly opts out —
+	// self-updates must fail closed.
+	if checksumsURL := latest.AssetURL("checksums.txt"); checksumsURL != "" {
+		checksumsPath := filepath.Join(tmpDir, "checksums.txt")
+		if err := update.Download(cmd.Context(), checksumsURL, checksumsPath); err != nil {
+			return fmt.Errorf("download checksums: %w", err)
+		}
+		checksums, err := os.ReadFile(checksumsPath)
+		if err != nil {
+			return fmt.Errorf("read checksums: %w", err)
+		}
+		if err := update.VerifyChecksum(tmpPath, checksums); err != nil {
+			return fmt.Errorf("integrity check failed: %w", err)
+		}
+		cmd.Printf("  %s  SHA-256 verified\n", doctor.StatusLabel("OK"))
+	} else if os.Getenv("YAAH_UPDATE_SKIP_VERIFY") == "1" {
+		cmd.Printf("  %s  Release has no checksums.txt — applying UNVERIFIED (YAAH_UPDATE_SKIP_VERIFY=1)\n", doctor.StatusLabel("WARN"))
+	} else {
+		return fmt.Errorf("release %s publishes no checksums.txt; refusing to self-update without integrity verification (set YAAH_UPDATE_SKIP_VERIFY=1 to override)", latest.TagName)
 	}
 
 	if err := update.Apply(tmpPath); err != nil {

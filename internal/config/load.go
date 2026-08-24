@@ -76,16 +76,22 @@ func (p Provider) ThinkingOverride(modelName string) *bool {
 
 // Defaults hold the default agent model and loop settings.
 type Defaults struct {
-	Provider              string  `yaml:"provider"`
-	Model                 string  `yaml:"model"`
-	SmallModel            string  `yaml:"small_model"`
-	MaxLoopCycles         int     `yaml:"max_iterations"`
-	MaxToolTurns          int     `yaml:"max_turns"`      // soft cap on tool-using turns; 0 = off
-	ContextWindow         int     `yaml:"context_window"` // max context window; resolved window from model is capped by this value
-	Approval              string  `yaml:"approval"`
-	WorkspaceAsk          bool    `yaml:"workspace_ask"`             // prompt before denying out-of-workspace access (with --workspace)
-	MaxInlineToolsPerTurn int     `yaml:"max_inline_tools_per_turn"` // 0 = unlimited
-	EstimateFactor        float64 `yaml:"estimate_factor"`           // 0 = default (1.3)
+	Provider      string `yaml:"provider"`
+	Model         string `yaml:"model"`
+	SmallModel    string `yaml:"small_model"`
+	MaxLoopCycles int    `yaml:"max_iterations"`
+	MaxToolTurns  int    `yaml:"max_turns"`      // soft cap on tool-using turns; 0 = off
+	ContextWindow int    `yaml:"context_window"` // max context window; resolved window from model is capped by this value
+	Approval      string `yaml:"approval"`
+	MCPApproval   string `yaml:"mcp_approval"`  // approval policy for MCP-served tools: ask (default), allow, deny
+	WorkspaceAsk  bool   `yaml:"workspace_ask"` // prompt before denying out-of-workspace access (with --workspace)
+	// WorkspaceDenyPatterns are globs denied even inside the workspace
+	// (with --workspace). When unset, a built-in secret-file default
+	// applies (.env, *.pem, private keys). Set explicitly to override,
+	// or to an empty list []... to disable.
+	WorkspaceDenyPatterns []string `yaml:"workspace_deny_patterns"`
+	MaxInlineToolsPerTurn int      `yaml:"max_inline_tools_per_turn"` // 0 = unlimited
+	EstimateFactor        float64  `yaml:"estimate_factor"`           // 0 = default (1.3)
 
 	// Compaction controls context summarisation behaviour.
 	CompactionThreshold    float64 `yaml:"compaction_threshold"`     // fraction of ContextWindow; 0 = 0.5
@@ -310,6 +316,7 @@ func defaultConfig() *Config {
 				MaxLoopCycles:          50,
 				ContextWindow:          1048576,
 				Approval:               "ask",
+				MCPApproval:            "ask",
 				CompactionThreshold:    0.5,
 				RawCompactionThreshold: 0.5,
 				LoopDetectCount:        5,

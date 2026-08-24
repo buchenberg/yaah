@@ -120,6 +120,73 @@ func TestPathValidator_DenyPatterns(t *testing.T) {
 	}
 }
 
+// TestPathValidator_DenyPatternRelativePath pins that deny patterns can
+// address path segments inside the workspace, not only basenames
+// (review finding S6 — "config/*.secret" was previously unrepresentable).
+func TestPathValidator_DenyPatternRelativePath(t *testing.T) {
+	ws := t.TempDir()
+	if real, err := filepath.EvalSymlinks(ws); err == nil {
+		ws = real
+	}
+	if err := os.MkdirAll(filepath.Join(ws, "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	denied := filepath.Join(ws, "config", "db.secret")
+	if err := os.WriteFile(denied, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	allowed := filepath.Join(ws, "other", "db.secret")
+	if err := os.MkdirAll(filepath.Join(ws, "other"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(allowed, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	pv := NewPathValidator(ws, false, []string{"config/*.secret"})
+
+	if _, err := pv.ResolvePath(denied); err == nil {
+		t.Error("config/db.secret must be denied by relative pattern")
+	}
+	if _, err := pv.ResolvePath(allowed); err != nil {
+		t.Errorf("other/db.secret wrongly denied: %v", err)
+	}
+}
+
+// TestPathValidator_NonexistentLeafResolvesViaAncestor pins that a path
+// whose leaf does not exist yet (write-tool targets) resolves through
+// its deepest existing ancestor instead of being rejected.
+func TestPathValidator_NonexistentLeafResolvesViaAncestor(t *testing.T) {
+	ws := t.TempDir()
+	if real, err := filepath.EvalSymlinks(ws); err == nil {
+		ws = real
+	}
+	pv := NewPathValidator(ws, false, nil)
+
+	got, err := pv.ResolvePath(filepath.Join(ws, "does-not-exist-yet.txt"))
+	if err != nil {
+		t.Fatalf("nonexistent leaf rejected: %v", err)
+	}
+	if want := filepath.Join(ws, "does-not-exist-yet.txt"); got != want {
+		t.Errorf("ResolvePath = %q; want %q", got, want)
+	}
+}
+
+func TestResolveExistingAncestor(t *testing.T) {
+	ws := t.TempDir()
+	if real, err := filepath.EvalSymlinks(ws); err == nil {
+		ws = real
+	}
+
+	got, err := resolveExistingAncestor(filepath.Join(ws, "a", "b", "c.txt"))
+	if err != nil {
+		t.Fatalf("resolveExistingAncestor: %v", err)
+	}
+	if want := filepath.Join(ws, "a", "b", "c.txt"); got != want {
+		t.Errorf("resolved = %q; want %q", got, want)
+	}
+}
+
 func TestPathValidator_AskGrantsException(t *testing.T) {
 	ws := t.TempDir()
 	if real, err := filepath.EvalSymlinks(ws); err == nil {
@@ -223,6 +290,80 @@ func TestPathValidator_AskDenyPattern(t *testing.T) {
 	// Other deny-pattern paths still prompt independently.
 	if _, err := pv.ResolvePath(filepath.Join(ws, "sub", ".env")); err != nil {
 		t.Fatalf("second .env path should prompt and pass: %v", err)
+	}
+}
+
+// TestPathValidator_DanglingSymlinkRejected pins that a symlink whose
+// target does not exist is rejected instead of being re-appended
+// unresolved: os.WriteFile would follow it and create the target
+// outside the workspace, defeating containment.
+func TestPathValidator_DanglingSymlinkRejected(t *testing.T) {
+	ws := t.TempDir()
+	if real, err := filepath.EvalSymlinks(ws); err == nil {
+		ws = real
+	}
+	outsideDir := t.TempDir()
+	if real, err := filepath.EvalSymlinks(outsideDir); err == nil {
+		outsideDir = real
+	}
+
+	link := filepath.Join(ws, "link")
+	if err := os.Symlink(filepath.Join(outsideDir, "newfile"), link); err != nil {
+		t.Skipf("symlinks unavailable on this platform: %v", err)
+	}
+
+	pv := NewPathValidator(ws, false, nil)
+	if _, err := pv.ResolvePath(link); err == nil {
+		t.Fatal("dangling symlink accepted: a write would follow it outside the workspace")
+	}
+	// The containment message must point at the symlink, and the outside
+	// target must not have been created by resolution.
+	if _, err := os.Stat(filepath.Join(outsideDir, "newfile")); !os.IsNotExist(err) {
+		t.Error("resolving the dangling symlink created its outside target")
+	}
+}
+
+// TestPathValidator_ResolvedSymlinkLeafStillAllowed guards the companion
+// case: a symlink that resolves to an existing directory is fine as an
+// ancestor of a not-yet-existing leaf — the dangling check must not
+// over-reject legitimate write targets behind links.
+func TestPathValidator_ResolvedSymlinkLeafStillAllowed(t *testing.T) {
+	ws := t.TempDir()
+	if real, err := filepath.EvalSymlinks(ws); err == nil {
+		ws = real
+	}
+	inner := filepath.Join(ws, "realdir")
+	if err := os.MkdirAll(inner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	link := filepath.Join(ws, "linkdir")
+	if err := os.Symlink(inner, link); err != nil {
+		t.Skipf("symlinks unavailable on this platform: %v", err)
+	}
+
+	pv := NewPathValidator(ws, false, nil)
+	got, err := pv.ResolvePath(filepath.Join(link, "newfile.txt"))
+	if err != nil {
+		t.Fatalf("write target behind resolving symlink rejected: %v", err)
+	}
+	if want := filepath.Join(inner, "newfile.txt"); got != want {
+		t.Errorf("ResolvePath = %q; want %q", got, want)
+	}
+}
+
+// TestPathValidator_MalformedDenyPatternFailsClosed pins that an invalid
+// glob denies rather than silently matching nothing — discarding the
+// filepath.Match error would leave the protected files accessible.
+func TestPathValidator_MalformedDenyPatternFailsClosed(t *testing.T) {
+	ws := t.TempDir()
+	if real, err := filepath.EvalSymlinks(ws); err == nil {
+		ws = real
+	}
+	pv := NewPathValidator(ws, false, []string{"["})
+
+	if _, err := pv.ResolvePath(filepath.Join(ws, "anything.txt")); err == nil {
+		t.Error("malformed deny pattern must fail closed (deny access)")
 	}
 }
 

@@ -65,7 +65,7 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 			return l.Compact(ctx, messages, 0)
 		},
 		ApprovalMode:     l.Config.ApprovalMode,
-		ApprovalClassify: l.classifyDanger,
+		ApprovalClassify: l.classifyGate,
 		ApprovalApprove:  func(name, args string) bool { return l.approveTool(name, abbreviateArgs(args, 120)) },
 		ApprovalEmitDeny: func(name, args, errMsg string) {
 			if l.Hooks == nil {
@@ -230,6 +230,11 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 			tokensBeforeTurn := l.State.TotalTokens
 			llmStart := time.Now()
 
+			// Snapshot the State.Messages header so we can detect an
+			// overflow-recovery compaction inside Call (llmCompact/llmTrim
+			// replace it wholesale).
+			preCallState := l.State.Messages
+
 			result, err := l.LLM.Call(turnCtx, req)
 			if err != nil {
 				if turnSpan != nil {
@@ -243,6 +248,15 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 				return "", fmt.Errorf("provider error: %w", err)
 			}
 			msg := result.Message
+
+			// If Call's overflow recovery replaced the conversation, adopt
+			// the compacted baseline before appending the response — the
+			// local slice predates the replacement and would resurrect the
+			// messages compaction removed (review findings B6/B7).
+			if len(l.State.Messages) != len(preCallState) ||
+				(len(preCallState) > 0 && &preCallState[0] != &l.State.Messages[0]) {
+				messages = l.State.Messages
+			}
 
 			// Short-lived diagnostic span — survives parent crash.
 			observability.RecordTurnResponse(turnCtx, len(msg.Content), len(msg.ToolCalls),

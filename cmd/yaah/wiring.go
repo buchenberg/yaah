@@ -26,6 +26,20 @@ func newAgentSession() (*agentSession, error) {
 	return newAgentSessionWithOptions(sessionOptionsFromFlags(), false, false)
 }
 
+// defaultWorkspaceDenyPatterns blocks common secret files inside the
+// workspace when agents.default.workspace_deny_patterns is unset
+// (review finding S6). An explicit config list overrides this; an
+// explicit empty list disables deny patterns entirely.
+var defaultWorkspaceDenyPatterns = []string{
+	".env",
+	".env.*",
+	"*.pem",
+	"*.key",
+	"id_rsa*",
+	"id_ed25519*",
+	"id_ecdsa*",
+}
+
 // toolSpillDir is the single source for the tool-result spill directory.
 // Both the parent loop (build_loop.go) and every sub-agent loop inherit
 // it so oversized tool results land in one place. Sub-agents receive it
@@ -78,7 +92,13 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// A nil validator keeps the legacy ~-expansion behaviour.
 	var pathValidator *tools.PathValidator
 	if opts.WorkspaceRoot != "" {
-		pathValidator = tools.NewPathValidator(opts.WorkspaceRoot, opts.AllowHomeAccess, nil)
+		// Deny patterns: explicit config wins; unset falls back to the
+		// built-in secret-file defaults; an explicit empty list disables.
+		deny := cfg.Agent.Default.WorkspaceDenyPatterns
+		if deny == nil {
+			deny = defaultWorkspaceDenyPatterns
+		}
+		pathValidator = tools.NewPathValidator(opts.WorkspaceRoot, opts.AllowHomeAccess, deny)
 		toolReg.SetPathValidator(pathValidator)
 	}
 
@@ -120,7 +140,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	}
 
 	// --- MCP servers ------------------------------------------------------
-	mcpClients, mcpInfos := initMCP(cfg, toolReg, skipMCP)
+	mcpClients, mcpInfos, mcpToolNames := initMCP(cfg, toolReg, skipMCP)
 
 	skillDirs := skillSearchPaths()
 	skillTool := &tools.SkillTool{Dirs: skillDirs}
@@ -384,6 +404,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		db:             db,
 		mcpClients:     mcpClients,
 		mcpInfos:       mcpInfos,
+		mcpToolNames:   mcpToolNames,
 		procMgr:        procMgr,
 		sessionID:      sessionID,
 		messages:       messages,

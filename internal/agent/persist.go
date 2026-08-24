@@ -113,6 +113,56 @@ func (p *SessionPersister) SetMsgIdx(idx int) {
 	p.msgIdx = idx
 }
 
+// TruncateFrom deletes persisted rows at idx >= n and resets the cursor
+// to n. Used by turn restore so rolled-back messages cannot resurrect
+// when the session resumes (review finding B7).
+//
+// Fail-safe: when the delete fails the cursor is NOT reset. Orphaned
+// rows at idx >= n remain, and resetting the cursor onto them would make
+// the next append write rows that collide with the stale ones (duplicate
+// idx values / resurrection on resume) — corrupting rather than
+// degrading the session. Leaving the cursor past the orphans keeps
+// persistence consistent; the stale rows stay until a later successful
+// truncation or rebase removes them.
+func (p *SessionPersister) TruncateFrom(n int) {
+	if p.db == nil {
+		p.msgIdx = n
+		return
+	}
+	if err := p.db.DeleteMessagesFrom(p.sessionID, n); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: truncate persisted messages failed (cursor left at %d): %v\n", p.msgIdx, err)
+		return
+	}
+	p.msgIdx = n
+}
+
+// Rebase resynchronizes persistence after the conversation was replaced
+// wholesale (compaction): pending debounced writes are flushed, all of
+// the session's rows are deleted, and the new baseline is re-persisted
+// from idx 0. Without this the cursor pointed past the shortened slice
+// and tail persistence silently no-opped (review finding B7). Message
+// IDs are deterministic, so re-persisting an unchanged prefix is
+// idempotent in principle — the delete keeps positions unambiguous.
+func (p *SessionPersister) Rebase(msgs []types.Message) {
+	if p.db == nil {
+		p.msgIdx = len(msgs)
+		return
+	}
+	p.Flush()
+	if err := p.db.DeleteMessagesFrom(p.sessionID, 0); err != nil {
+		// Fail-safe: re-persisting over rows the delete failed to remove
+		// would create duplicate idx values with conflicting content.
+		// Keep the existing rows and cursor instead — the pre-compaction
+		// history stays persisted and new messages append past it.
+		fmt.Fprintf(os.Stderr, "warning: rebase persisted messages failed (keeping existing rows): %v\n", err)
+		return
+	}
+	p.msgIdx = 0
+	for _, m := range msgs {
+		p.Persist(m)
+	}
+}
+
 // persistMessage persists a message through the Loop's persister.
 // It is a thin convenience method so callers don't need to nil-check
 // the persister before calling Persist.
@@ -121,6 +171,16 @@ func (l *Loop) persistMessage(msg types.Message) {
 		return
 	}
 	l.Persister.Persist(msg)
+}
+
+// rebasePersistence resynchronizes the persisted session after
+// compaction replaced the message list wholesale (review finding B7).
+// Wired as ContextManager.OnMessagesReplaced.
+func (l *Loop) rebasePersistence(msgs []types.Message) {
+	if l.Persister == nil {
+		return
+	}
+	l.Persister.Rebase(msgs)
 }
 
 func (p *SessionPersister) writeMsg(m memory.Message) error {

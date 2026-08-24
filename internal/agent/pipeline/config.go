@@ -32,11 +32,14 @@ type PipelineConfig struct {
 	ApprovalMode    string
 	PermissionRules []PermissionRule
 
-	// Approval callbacks injected by the composition site. classify and
-	// approve gate dangerous tool calls in deny/ask modes; emitDeny fires
-	// hook events for stripped calls. When classify is nil the approval
-	// middleware is inert regardless of mode.
-	ApprovalClassify func(name, args string) bool
+	// Approval callbacks injected by the composition site. classify
+	// returns a GateDecision (pass / ask / deny / defer to global mode)
+	// so origin-specific policies like mcp_approval apply even when the
+	// global ApprovalMode would not gate them; approve prompts the
+	// user; emitDeny fires hook events for stripped calls. When
+	// classify is nil the approval middleware is inert regardless of
+	// mode.
+	ApprovalClassify func(name, args string) GateDecision
 	ApprovalApprove  func(name, args string) bool
 	ApprovalEmitDeny func(name, args, errMsg string)
 

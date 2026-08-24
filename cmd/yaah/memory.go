@@ -106,18 +106,34 @@ var memoryAddCmd = &cobra.Command{
 	},
 }
 
-// attachEmbedder resolves the configured embedding provider and sets the
-// embedder on db. It reports configuration mistakes on stderr.
-func attachEmbedder(db *memory.DB, cfg *config.Config) bool {
+// embedderFor builds the configured embedder without touching a DB.
+// Separated from attachEmbedder so the provider→embedder field mapping
+// can be tested directly (it was once shipped with model and API key
+// swapped, silently breaking semantic search).
+func embedderFor(cfg *config.Config) (*memory.HTTPEmbedder, bool) {
 	if cfg.Embedding.Provider == "" || cfg.Embedding.Model == "" {
-		return false
+		return nil, false
 	}
 	p, ok := cfg.Providers[cfg.Embedding.Provider]
 	if !ok {
 		fmt.Fprintf(os.Stderr, "warning: embedding provider %q not found in providers\n", cfg.Embedding.Provider)
+		return nil, false
+	}
+	// Resolve ${VAR} placeholders — provider_resolve does this for LLM
+	// providers; the embedder path must too or literal placeholders
+	// reach the endpoint.
+	p = config.Resolve(p)
+	return memory.NewEmbedder(p.BaseURL, p.APIKey, cfg.Embedding.Model, nil), true
+}
+
+// attachEmbedder resolves the configured embedding provider and sets the
+// embedder on db. It reports configuration mistakes on stderr.
+func attachEmbedder(db *memory.DB, cfg *config.Config) bool {
+	e, ok := embedderFor(cfg)
+	if !ok {
 		return false
 	}
-	db.SetEmbedder(memory.NewEmbedder(p.BaseURL, cfg.Embedding.Model, p.APIKey, nil))
+	db.SetEmbedder(e)
 	return true
 }
 

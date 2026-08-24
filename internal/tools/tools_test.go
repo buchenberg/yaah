@@ -96,8 +96,12 @@ func TestMemoryAddTool_DedupAllowsUniqueText(t *testing.T) {
 	db := newTestDB(t)
 	add := &MemoryAddTool{DB: db}
 
-	add.Execute(context.Background(), `{"text":"User's name is Greg"}`)
-	add.Execute(context.Background(), `{"text":"Project uses Go for backend"}`)
+	if _, err := add.Execute(context.Background(), `{"text":"User's name is Greg"}`); err != nil {
+		t.Fatalf("first add error: %v", err)
+	}
+	if _, err := add.Execute(context.Background(), `{"text":"Project uses Go for backend"}`); err != nil {
+		t.Fatalf("second add error: %v", err)
+	}
 
 	all, _ := db.ListMemory(10)
 	if len(all) != 2 {

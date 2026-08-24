@@ -22,8 +22,10 @@ const httpDefaultTimeout = 30 * time.Second
 // let tool traffic mutate global transport state. No client-level
 // Timeout is set because every request already carries a per-call
 // context deadline (httpDefaultTimeout or the caller's Timeout param),
-// which must remain able to exceed any fixed ceiling.
-var toolHTTPClient = &http.Client{}
+// which must remain able to exceed any fixed ceiling. The client is
+// SSRF-guarded: redirect targets are re-validated and the dialer only
+// connects to IPs that pass the blocked-range check (see urlguard.go).
+var toolHTTPClient = newGuardedHTTPClient()
 
 // httpMaxResponseBody caps the response body size.
 const httpMaxResponseBody = 2 << 20 // 2 MiB

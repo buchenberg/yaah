@@ -2,11 +2,15 @@ package yaah
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -26,6 +30,7 @@ import (
 var webFS embed.FS
 
 var webAddr string
+var webToken string
 
 var webCmd = &cobra.Command{
 	Use:   "web",
@@ -33,7 +38,11 @@ var webCmd = &cobra.Command{
 	Long: `web starts an HTTP server with a browser-based chat interface.
 The agent session persists across prompts for the lifetime of the server.
 Events stream to the browser via Server-Sent Events (SSE); commands are
-sent via HTTP POST. Binds to loopback by default.`,
+sent via HTTP POST. Binds to loopback by default.
+
+Every request must carry the auth token (X-Yaah-Token header, ?t= query
+parameter, or yaah_token cookie). With --token empty a random token is
+generated and printed at startup.`,
 	SilenceErrors: true,
 	SilenceUsage:  true,
 	Args:          cobra.NoArgs,
@@ -42,13 +51,65 @@ sent via HTTP POST. Binds to loopback by default.`,
 
 func init() {
 	webCmd.Flags().StringVar(&webAddr, "addr", "127.0.0.1:8080", "listen address")
+	webCmd.Flags().StringVar(&webToken, "token", "", "auth token for the web UI (randomly generated when empty)")
 	rootCmd.AddCommand(webCmd)
+}
+
+// webTokenFromRequest extracts the presented auth token: X-Yaah-Token
+// header first, then the ?t= query parameter (EventSource cannot set
+// headers), then the yaah_token cookie.
+func webTokenFromRequest(r *http.Request) string {
+	if t := r.Header.Get("X-Yaah-Token"); t != "" {
+		return t
+	}
+	if t := r.URL.Query().Get("t"); t != "" {
+		return t
+	}
+	if c, err := r.Cookie("yaah_token"); err == nil && c.Value != "" {
+		return c.Value
+	}
+	return ""
+}
+
+// tokenValid reports whether presented matches expected in constant
+// time. Empty tokens never validate.
+func tokenValid(expected, presented string) bool {
+	if expected == "" || presented == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(presented)) == 1
+}
+
+// originAllowed is the CSRF guard for state-changing endpoints: when a
+// browser sends an Origin header it must match the request's Host.
+// Requests without an Origin header (curl, same-origin fetch in some
+// modes) pass; the token check is the primary gate.
+func originAllowed(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return u.Host == r.Host
+}
+
+// newWebToken generates a random 32-byte hex auth token.
+func newWebToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 type webServer struct {
 	sess            Session
 	view            *sseView
 	am              *answerMap
+	token           string
 	idGen           atomic.Int64
 	promptCtxCancel context.CancelFunc
 	running         atomic.Bool
@@ -61,6 +122,37 @@ type webServer struct {
 	// and provider display names, fetched once in the background.
 	models        []string
 	providerNames map[string]string
+}
+
+// requireAuth rejects requests that do not carry a valid token. A valid
+// ?t= query token is additionally persisted as a yaah_token cookie so
+// subsequent requests that cannot carry the query param (relative
+// stylesheet/script assets, fetch, EventSource) authenticate; the
+// navigational GET that carried it is redirected to the clean URL so
+// the token does not linger in the address bar and history.
+func (ws *webServer) requireAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		presented := webTokenFromRequest(r)
+		if !tokenValid(ws.token, presented) {
+			http.Error(w, "unauthorized: token missing or invalid", http.StatusUnauthorized)
+			return
+		}
+		if q := r.URL.Query().Get("t"); q != "" && q == presented {
+			http.SetCookie(w, &http.Cookie{
+				Name:     "yaah_token",
+				Value:    presented,
+				Path:     "/",
+				HttpOnly: true,
+				SameSite: http.SameSiteLaxMode,
+			})
+			if r.Method == http.MethodGet && r.URL.Path == "/" {
+				w.Header().Set("Cache-Control", "no-store")
+				http.Redirect(w, r, "/", http.StatusFound)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 type actionRequest struct {
@@ -79,9 +171,18 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	}
 	defer sess.Close()
 
+	token := webToken
+	if token == "" {
+		token, err = newWebToken()
+		if err != nil {
+			return fmt.Errorf("generate auth token: %w", err)
+		}
+	}
+
 	ws := &webServer{
-		sess: sess,
-		am:   newAnswerMap(),
+		sess:  sess,
+		am:    newAnswerMap(),
+		token: token,
 	}
 
 	// Pre-fetch model lists from all providers in the background so the
@@ -165,12 +266,12 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("embed: %w", err)
 	}
-	mux.Handle("/", http.FileServer(http.FS(subFS)))
-	mux.HandleFunc("/api/stream", ws.handleStream)
-	mux.HandleFunc("/api/action", ws.handleAction)
-	mux.HandleFunc("/api/commands", ws.handleCommands)
+	mux.Handle("/", ws.requireAuth(http.FileServer(http.FS(subFS))))
+	mux.Handle("/api/stream", ws.requireAuth(http.HandlerFunc(ws.handleStream)))
+	mux.Handle("/api/action", ws.requireAuth(http.HandlerFunc(ws.handleAction)))
+	mux.Handle("/api/commands", ws.requireAuth(http.HandlerFunc(ws.handleCommands)))
 
-	srv := &http.Server{Addr: webAddr, Handler: mux}
+	srv := &http.Server{Addr: webAddr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -180,6 +281,7 @@ func runWeb(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "%s listening on %s%s\n",
 		Bold("yaah web"), "http://"+webAddr, Dim(" (Ctrl-C to stop)"))
+	fmt.Fprintf(os.Stderr, "%s http://%s/?t=%s\n", Dim("open:"), webAddr, token)
 
 	select {
 	case <-ctx.Done():
@@ -281,6 +383,18 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 func (ws *webServer) handleAction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// CSRF hardening: reject cross-origin requests (a browser always
+	// sends Origin on cross-origin POSTs) and non-JSON content types
+	// (text/plain posts skip the CORS preflight).
+	if !originAllowed(r) {
+		http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+		return
+	}
+	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
 		return
 	}
 

@@ -63,6 +63,9 @@ func (l *Loop) ctxMgr() *ContextManager {
 	if l.CtxMgr.State == nil {
 		l.CtxMgr.State = &l.State
 	}
+	if l.CtxMgr.OnMessagesReplaced == nil {
+		l.CtxMgr.OnMessagesReplaced = l.rebasePersistence
+	}
 	if l.State.CompactionBudgetMultiplier <= 0 {
 		l.State.CompactionBudgetMultiplier = 1.0
 	}
@@ -100,6 +103,7 @@ func (l *Loop) applyDefaults() {
 		l.CtxMgr = NewContextManager(l.Provider, l.Config.Model)
 	}
 	l.CtxMgr.State = &l.State
+	l.CtxMgr.OnMessagesReplaced = l.rebasePersistence
 	l.CtxMgr.ContextWindow = l.Config.ContextWindow
 	l.CtxMgr.CompactionThreshold = l.Config.CompactionThreshold
 	l.CtxMgr.RawCompactionThreshold = l.Config.RawCompactionThreshold

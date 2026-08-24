@@ -67,18 +67,20 @@ func (m *Manager) Start(command, description string) (*Info, error) {
 	// On Unix we must NOT prefer pwsh even if it is on PATH (GitHub Actions
 	// ubuntu runners include pwsh, whose startup is ~1-2s and causes
 	// trivial commands like `echo` to blow past test timeouts).
-	shell, shellFlag := "sh", "-c"
+	// On Windows -NoProfile skips profile scripts: startup is faster and
+	// deterministic regardless of the user's profile contents.
+	shell, shellArgs := "sh", []string{"-c", command}
 	if runtime.GOOS == "windows" {
 		if _, err := exec.LookPath("pwsh"); err == nil {
 			shell = "pwsh"
-			shellFlag = "-Command"
+			shellArgs = []string{"-NoProfile", "-Command", command}
 		} else if _, err := exec.LookPath("powershell"); err == nil {
 			shell = "powershell"
-			shellFlag = "-Command"
+			shellArgs = []string{"-NoProfile", "-Command", command}
 		}
 	}
 
-	cmd := exec.Command(shell, shellFlag, command)
+	cmd := exec.Command(shell, shellArgs...)
 	cmd.Stdin = nil // close stdin so the child never blocks waiting for input
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()

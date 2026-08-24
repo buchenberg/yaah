@@ -21,9 +21,12 @@ type PathValidator struct {
 	// ~ are rejected outright.
 	AllowHomeAccess bool
 
-	// DenyPatterns are filepath.Match globs matched against the base name
-	// of the resolved path.  Useful for blocking sensitive files that might
-	// exist inside the workspace (e.g. ".env", "*.pem").
+	// DenyPatterns are filepath.Match globs matched against the base
+	// name of the resolved path and, when the path is inside the
+	// workspace, against its slash-separated workspace-relative path
+	// (so "config/*.secret" is expressible). Useful for blocking
+	// sensitive files that might exist inside the workspace
+	// (e.g. ".env", "*.pem").
 	DenyPatterns []string
 
 	// AskFn, when non-nil, converts a hard rejection into an interactive
@@ -92,21 +95,27 @@ func (pv *PathValidator) ResolvePath(input string) (string, error) {
 		return "", fmt.Errorf("cannot resolve path %q: %w", input, err)
 	}
 
-	// ── 3. Symlink resolution (best-effort) ──
+	// ── 3. Symlink resolution ──
+	// Fails CLOSED: when no ancestor resolves, the path is rejected
+	// rather than used unresolved (the old fallback let an unresolved
+	// path through, which containment then validated against the
+	// wrong tree). A not-yet-existing leaf is fine — its nearest
+	// existing ancestor resolves and the tail is re-appended, which
+	// also handles symlinks like macOS /var → /private/var.
 	realPath, err := filepath.EvalSymlinks(abs)
 	if err != nil {
-		// The leaf may not exist yet (e.g. write tool targets).
-		// Fall back to resolving the nearest existing ancestor
-		// so symlinks like macOS /var → /private/var are handled.
-		parent := filepath.Dir(abs)
-		if realParent, parentErr := filepath.EvalSymlinks(parent); parentErr == nil {
-			realPath = filepath.Join(realParent, filepath.Base(abs))
-		} else {
-			realPath = abs
+		resolved, resolveErr := resolveExistingAncestor(abs)
+		if resolveErr != nil {
+			return "", fmt.Errorf("cannot resolve path %q: %w", abs, resolveErr)
 		}
+		realPath = resolved
 	}
 
 	// ── 4. Workspace containment ──
+	// relInWorkspace is the slash-separated workspace-relative path when
+	// the resolved path is inside the workspace; empty otherwise. Deny
+	// patterns use it for path-segment globs (step 5).
+	var relInWorkspace string
 	if pv.WorkspaceRoot != "" {
 		// Canonicalise the root one more time in case it changed since
 		// construction.  Fast path if already canonicalised.
@@ -116,24 +125,78 @@ func (pv *PathValidator) ResolvePath(input string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("cannot compute relative path: %w", err)
 		}
-		if (strings.HasPrefix(rel, "..") || filepath.IsAbs(rel)) &&
-			!pv.ask(realPath, fmt.Sprintf("outside the workspace (%s)", root)) {
-			return "", fmt.Errorf("path %q is outside the workspace (%s)", realPath, root)
+		if strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+			if !pv.ask(realPath, fmt.Sprintf("outside the workspace (%s)", root)) {
+				return "", fmt.Errorf("path %q is outside the workspace (%s)", realPath, root)
+			}
+		} else {
+			relInWorkspace = filepath.ToSlash(rel)
 		}
 	}
 
-	// ── 5. Deny patterns (basename match) ──
+	// ── 5. Deny patterns ──
+	// Every pattern is tried against the basename and, when the path is
+	// inside the workspace, against its workspace-relative path so both
+	// "*.pem" and "config/*.secret" styles work. A malformed pattern
+	// fails CLOSED (deny): discarding the error would silently disable
+	// the protection the operator configured.
 	base := filepath.Base(realPath)
 	for _, pattern := range pv.DenyPatterns {
-		if matched, _ := filepath.Match(pattern, base); matched {
-			if pv.ask("deny:"+realPath, fmt.Sprintf("matches deny pattern %q", pattern)) {
-				continue
-			}
-			return "", fmt.Errorf("access to %q files is forbidden", base)
+		baseMatched, baseErr := filepath.Match(pattern, base)
+		relMatched := false
+		if relInWorkspace != "" {
+			relMatched, _ = filepath.Match(pattern, relInWorkspace)
 		}
+		if baseErr == nil && !baseMatched && !relMatched {
+			continue
+		}
+		reason := fmt.Sprintf("matches deny pattern %q", pattern)
+		if baseErr != nil {
+			reason = fmt.Sprintf("deny pattern %q is invalid (%v)", pattern, baseErr)
+		}
+		if pv.ask("deny:"+realPath, reason) {
+			continue
+		}
+		return "", fmt.Errorf("access to %q is forbidden (deny pattern %q)", base, pattern)
 	}
 
 	return realPath, nil
+}
+
+// resolveExistingAncestor resolves the deepest existing ancestor of abs
+// via EvalSymlinks and re-appends the unresolved tail, so paths whose
+// leaf does not exist yet still get their ancestor symlinks resolved.
+// Returns an error when nothing along the path resolves — callers must
+// reject such paths rather than use them unresolved. A tail component
+// that exists as a symlink EvalSymlinks cannot resolve is dangling: it
+// is rejected rather than re-appended, because a later write would
+// follow it outside the workspace.
+func resolveExistingAncestor(abs string) (string, error) {
+	cur := abs
+	var tail []string
+	for i := 0; i < 64; i++ {
+		if real, err := filepath.EvalSymlinks(cur); err == nil {
+			out := real
+			for j := len(tail) - 1; j >= 0; j-- {
+				out = filepath.Join(out, tail[j])
+			}
+			return out, nil
+		}
+		// EvalSymlinks failed on cur. If cur itself exists, it is a
+		// symlink whose target does not resolve — dangling. Re-appending
+		// it would pass containment on the link path while the write
+		// lands at the (missing, outside) target.
+		if fi, err := os.Lstat(cur); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("dangling symlink %q (target does not resolve)", cur)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			break
+		}
+		tail = append(tail, filepath.Base(cur))
+		cur = parent
+	}
+	return "", fmt.Errorf("no existing path component resolves")
 }
 
 // ask consults AskFn for an exception to a rejection, caching grants so

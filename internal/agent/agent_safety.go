@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/tools"
 )
 
@@ -52,16 +53,53 @@ func abbreviateArgs(args string, maxLen int) string {
 	return string(runes[:maxLen-3]) + "..."
 }
 
-// classifyDanger returns true if the given tool+args combination requires
-// user approval. It first checks whether the tool implements tools.DangerClassifier
-// for argument-level classification; tools without that interface are never dangerous.
-func (l *Loop) classifyDanger(name, args string) bool {
-	if t := l.Registry.Get(name); t != nil {
-		if dc, ok := t.(tools.DangerClassifier); ok {
-			return dc.IsDangerous(args)
+// alwaysDangerous lists tool names that require approval even when they
+// are absent from the registry. Shell tools are platform-gated out of the
+// registry (bash on Windows, powershell elsewhere), and classifying them
+// via registry lookup alone made the approval gate platform-dependent.
+// Unknown names stay ungated here; MCP-tool policy is handled separately.
+var alwaysDangerous = map[string]bool{
+	"bash":       true,
+	"powershell": true,
+}
+
+// classifyGate returns the approval gate decision for a tool call.
+//
+// MCP-served tools are checked FIRST: they are registered in the
+// registry as *mcp.MCPTool wrappers that cannot implement
+// tools.DangerClassifier (they are remote), so the registry path below
+// would return GatePass for them and fail open. The mcp_approval policy
+// therefore applies regardless of registry presence and independently of
+// the global approval mode (review finding S3).
+//
+// Registered tools with a DangerClassifier defer to it; alwaysDangerous
+// names gate even when not registered on this platform. Both map to
+// GateGlobal — the global ApprovalMode decides what "dangerous" means
+// (ask prompts, deny strips, allow passes).
+func (l *Loop) classifyGate(name, args string) pipeline.GateDecision {
+	if l.Config.MCPToolNames[name] {
+		switch l.Config.MCPApproval {
+		case "allow":
+			return pipeline.GatePass
+		case "deny":
+			return pipeline.GateDeny
+		default: // "ask" and unset
+			return pipeline.GateAsk
 		}
 	}
-	return false
+	if t := l.Registry.Get(name); t != nil {
+		if dc, ok := t.(tools.DangerClassifier); ok {
+			if dc.IsDangerous(args) {
+				return pipeline.GateGlobal
+			}
+			return pipeline.GatePass
+		}
+		return pipeline.GatePass
+	}
+	if alwaysDangerous[name] {
+		return pipeline.GateGlobal
+	}
+	return pipeline.GatePass
 }
 
 // approveTool prompts the user on stderr/stdin to approve a tool call.

@@ -78,11 +78,15 @@ type agentSession struct {
 	// injected after the identity block. Only the top-level loop sees
 	// it; sub-agents receive systemPrompt as their base so default
 	// directives never leak into child prompts.
-	mainPrompt   string
-	toolReg      *tools.Registry
-	db           *memory.DB
-	mcpClients   []mcp.MCPClient
-	mcpInfos     []mcp.ServerInfo
+	mainPrompt string
+	toolReg    *tools.Registry
+	db         *memory.DB
+	mcpClients []mcp.MCPClient
+	mcpInfos   []mcp.ServerInfo
+	// mcpToolNames lists tool names registered from MCP servers so the
+	// loop can apply the mcp_approval policy to them (remote tools
+	// cannot implement tools.DangerClassifier).
+	mcpToolNames map[string]bool
 	procMgr      *processpkg.Manager
 	messages     []types.Message
 	sessionID    string
