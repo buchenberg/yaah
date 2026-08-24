@@ -254,93 +254,39 @@ func (d *DB) migrate() error {
 		return fmt.Errorf("create triggers: %w", err)
 	}
 
-	// Migration: add tool_call_id column for existing databases
-	var hasColumn bool
-	row := d.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'tool_call_id'")
-	row.Scan(&hasColumn)
-	if !hasColumn {
-		d.sql.Exec("ALTER TABLE messages ADD COLUMN tool_call_id TEXT")
-	}
+	// Column migrations for existing databases. Every step is checked:
+	// a failed ALTER must abort startup rather than leave the schema
+	// silently missing a column that later queries expect.
 
-	// Migration: add id column to messages
-	row = d.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'id'")
-	row.Scan(&hasColumn)
-	if !hasColumn {
-		d.sql.Exec("ALTER TABLE messages ADD COLUMN id TEXT DEFAULT ''")
+	steps := []struct {
+		table  string
+		column string
+		ddl    string
+	}{
+		{"messages", "tool_call_id", "ALTER TABLE messages ADD COLUMN tool_call_id TEXT"},
+		{"messages", "id", "ALTER TABLE messages ADD COLUMN id TEXT DEFAULT ''"},
+		{"sessions", "compaction_cooldown_until", "ALTER TABLE sessions ADD COLUMN compaction_cooldown_until INTEGER DEFAULT 0"},
+		{"sessions", "ineffective_compactions", "ALTER TABLE sessions ADD COLUMN ineffective_compactions INTEGER DEFAULT 0"},
+		{"messages", "reasoning_content", "ALTER TABLE messages ADD COLUMN reasoning_content TEXT DEFAULT ''"},
+		{"messages", "trace_id", "ALTER TABLE messages ADD COLUMN trace_id TEXT DEFAULT ''"},
+		{"messages", "turn_id", "ALTER TABLE messages ADD COLUMN turn_id TEXT DEFAULT ''"},
+		{"sessions", "system_prompt", "ALTER TABLE sessions ADD COLUMN system_prompt TEXT DEFAULT ''"},
+		{"sessions", "compacted_summary", "ALTER TABLE sessions ADD COLUMN compacted_summary TEXT DEFAULT ''"},
+		{"memory", "embedding", "ALTER TABLE memory ADD COLUMN embedding BLOB"},
+		{"memory", "digest", "ALTER TABLE memory ADD COLUMN digest TEXT"},
+		{"messages", "embedding", "ALTER TABLE messages ADD COLUMN embedding BLOB"},
 	}
-
-	// Migration: add compaction cooldown columns to sessions
-	row = d.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'compaction_cooldown_until'")
-	row.Scan(&hasColumn)
-	if !hasColumn {
-		d.sql.Exec("ALTER TABLE sessions ADD COLUMN compaction_cooldown_until INTEGER DEFAULT 0")
-		d.sql.Exec("ALTER TABLE sessions ADD COLUMN ineffective_compactions INTEGER DEFAULT 0")
-	}
-
-	// Migration: add reasoning_content column to messages (preserves DeepSeek thinking-mode history).
-	row = d.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'reasoning_content'")
-	row.Scan(&hasColumn)
-	if !hasColumn {
-		d.sql.Exec("ALTER TABLE messages ADD COLUMN reasoning_content TEXT DEFAULT ''")
-	}
-
-	// Migration: add trace_id / turn_id cross-link columns to messages so a
-	// message row joins to its OTel span tree and turn (consolidate-persistence Phase 0).
-	row = d.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'trace_id'")
-	row.Scan(&hasColumn)
-	if !hasColumn {
-		d.sql.Exec("ALTER TABLE messages ADD COLUMN trace_id TEXT DEFAULT ''")
-	}
-	row = d.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'turn_id'")
-	row.Scan(&hasColumn)
-	if !hasColumn {
-		d.sql.Exec("ALTER TABLE messages ADD COLUMN turn_id TEXT DEFAULT ''")
-	}
-
-	// Index on the turn cross-link must be created after the column
-	// migration above — on a legacy database the column does not exist
-	// while the base schema still executes.
-	if _, err := d.sql.Exec("CREATE INDEX IF NOT EXISTS idx_messages_turn ON messages(turn_id)"); err != nil {
-		return fmt.Errorf("create idx_messages_turn: %w", err)
-	}
-
-	// Migration: add system_prompt column to sessions (session restoration).
-	row = d.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'system_prompt'")
-	row.Scan(&hasColumn)
-	if !hasColumn {
-		d.sql.Exec("ALTER TABLE sessions ADD COLUMN system_prompt TEXT DEFAULT ''")
-	}
-
-	// Migration: add compacted_summary column to sessions (compaction preservation).
-	row = d.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'compacted_summary'")
-	row.Scan(&hasColumn)
-	if !hasColumn {
-		d.sql.Exec("ALTER TABLE sessions ADD COLUMN compacted_summary TEXT DEFAULT ''")
-	}
-
-	// Migration: add embedding column to memory for vector search.
-	row = d.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('memory') WHERE name = 'embedding'")
-	row.Scan(&hasColumn)
-	if !hasColumn {
-		d.sql.Exec("ALTER TABLE memory ADD COLUMN embedding BLOB")
-	}
-
-	// Migration: add digest column to memory for exact content dedup.
-	row = d.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('memory') WHERE name = 'digest'")
-	if err := row.Scan(&hasColumn); err != nil {
-		return fmt.Errorf("check memory.digest column: %w", err)
-	}
-	if !hasColumn {
-		if _, err := d.sql.Exec("ALTER TABLE memory ADD COLUMN digest TEXT"); err != nil {
-			return fmt.Errorf("add memory.digest column: %w", err)
+	for _, s := range steps {
+		if err := d.ensureColumn(s.table, s.column, s.ddl); err != nil {
+			return err
 		}
 	}
 
-	// Migration: add embedding column to messages for vector search.
-	row = d.sql.QueryRow("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'embedding'")
-	row.Scan(&hasColumn)
-	if !hasColumn {
-		d.sql.Exec("ALTER TABLE messages ADD COLUMN embedding BLOB")
+	// Index on the turn cross-link must be created after the turn_id
+	// column migration above — on a legacy database the column does not
+	// exist while the base schema still executes.
+	if _, err := d.sql.Exec("CREATE INDEX IF NOT EXISTS idx_messages_turn ON messages(turn_id)"); err != nil {
+		return fmt.Errorf("create idx_messages_turn: %w", err)
 	}
 
 	// Backfill digests for memory rows created before the digest migration.
@@ -348,6 +294,27 @@ func (d *DB) migrate() error {
 		return fmt.Errorf("reconcile memory digests: %w", err)
 	}
 
+	return nil
+}
+
+// ensureColumn adds column to table via ddl when the column is missing,
+// returning any error from the pragma lookup or the ALTER. Migrations
+// must never silently no-op: a schema missing a column fails later
+// queries with confusing errors far from the root cause.
+func (d *DB) ensureColumn(table, column, ddl string) error {
+	var has int
+	err := d.sql.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", table, column,
+	).Scan(&has)
+	if err != nil {
+		return fmt.Errorf("check %s.%s: %w", table, column, err)
+	}
+	if has == 1 {
+		return nil
+	}
+	if _, err := d.sql.Exec(ddl); err != nil {
+		return fmt.Errorf("add %s.%s: %w", table, column, err)
+	}
 	return nil
 }
 

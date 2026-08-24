@@ -242,8 +242,10 @@ var safeGitFlags = map[string]bool{
 	"--histogram": true, "--anchored": true, "--diff-algorithm": true,
 	"--stat-count": true, "--stat-width": true, "--stat-name-width": true,
 	"--stat-graph-width": true, "--inter-hunk-context": true,
-	"--output": true, "--output-indicator-new": true, "--output-indicator-old": true,
-	"--output-indicator-context": true, "--break-rewrites": true,
+	// NOTE: --output / --output=<file> are deliberately NOT whitelisted:
+	// they make read-only actions like `git diff` write to an arbitrary
+	// filesystem path, bypassing path validation and approval gating.
+	"--break-rewrites": true,
 	"--detect-renames": true, "--no-renames": true, "--pickaxe-all": true,
 	"--pickaxe-regex": true, "--relative": true, "--no-relative": true,
 	"--text": true, "--ignore-submodules": true, "--submodule": true,
@@ -256,12 +258,12 @@ var safeGitFlags = map[string]bool{
 }
 
 // safeGitFlagPrefixes allows flags with values (e.g. -5, --format=%h).
+// NOTE: no "--output=" prefix — see the safeGitFlags comment.
 var safeGitFlagPrefixes = []string{
 	"--format=", "--pretty=", "--date=", "--encoding=", "--diff-filter=",
 	"--find-renames=", "--find-copies=", "--stat-count=", "--stat-width=",
 	"--stat-name-width=", "--stat-graph-width=", "--inter-hunk-context=",
-	"--output=", "--output-indicator-new=", "--output-indicator-old=",
-	"--output-indicator-context=", "--break-rewrites=", "--detect-renames=",
+	"--break-rewrites=", "--detect-renames=",
 	"--max-count=", "--skip=", "--since=", "--until=", "--after=", "--before=",
 	"--author=", "--committer=", "--grep=", "--remotes=", "--branches=",
 	"--tags=", "--sort=", "--contains=", "--no-contains=", "--merged=",

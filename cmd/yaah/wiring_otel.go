@@ -24,6 +24,7 @@ func initOtel(cfg *config.Config, opts SessionOptions, skipOtel bool) (func(cont
 		Enabled:         true,
 		Endpoint:        cfg.Observability.Otel.Endpoint,
 		ServiceName:     cfg.Observability.Otel.ServiceName,
+		ServiceVersion:  version,
 		Traces:          true,
 		Metrics:         cfg.Observability.Otel.Metrics,
 		ExtraProcessors: opts.OtelProcessors,

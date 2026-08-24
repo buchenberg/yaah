@@ -17,6 +17,14 @@ import (
 // httpDefaultTimeout is the max time for a single HTTP call.
 const httpDefaultTimeout = 30 * time.Second
 
+// toolHTTPClient is the shared client for tool-issued requests. It is
+// deliberately NOT http.DefaultClient: sharing the default client would
+// let tool traffic mutate global transport state. No client-level
+// Timeout is set because every request already carries a per-call
+// context deadline (httpDefaultTimeout or the caller's Timeout param),
+// which must remain able to exceed any fixed ceiling.
+var toolHTTPClient = &http.Client{}
+
 // httpMaxResponseBody caps the response body size.
 const httpMaxResponseBody = 2 << 20 // 2 MiB
 
@@ -138,7 +146,7 @@ func (t *HTTPTool) Execute(ctx context.Context, args string) (string, error) {
 		req.Header.Set(k, v)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := toolHTTPClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("http: %w", err)
 	}

@@ -68,7 +68,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, args string) (string, error)
 	}
 	req.Header.Set("User-Agent", "yaah/1.0")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := toolHTTPClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("webfetch: %w", err)
 	}

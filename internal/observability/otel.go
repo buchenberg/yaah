@@ -23,8 +23,12 @@ type Config struct {
 	Enabled     bool
 	Endpoint    string // OTLP gRPC endpoint (e.g. "localhost:4317")
 	ServiceName string
-	Traces      bool
-	Metrics     bool
+	// ServiceVersion is reported as the service.version resource
+	// attribute. Empty falls back to "dev" so unversioned builds stay
+	// honest in traces.
+	ServiceVersion string
+	Traces         bool
+	Metrics        bool
 
 	// ExtraProcessors are additional span processors attached to the
 	// TracerProvider alongside the OTLP batcher. Used by serve mode to
@@ -54,13 +58,18 @@ func Setup(ctx context.Context, cfg Config) (shutdown func(context.Context) erro
 		return func(_ context.Context) error { return nil }, nil
 	}
 
+	serviceVersion := cfg.ServiceVersion
+	if serviceVersion == "" {
+		serviceVersion = "dev"
+	}
+
 	res, err := sdkresource.New(ctx,
 		sdkresource.WithFromEnv(),
 		sdkresource.WithTelemetrySDK(),
 		sdkresource.WithHost(),
 		sdkresource.WithAttributes(
 			semconv.ServiceName(cfg.ServiceName),
-			semconv.ServiceVersion("0.11.0"),
+			semconv.ServiceVersion(serviceVersion),
 		),
 	)
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -72,18 +73,19 @@ func runTUI() error {
 		subProvider = sess.ProviderName()
 	}
 	mc := cfg.Agent.Middleware
-	var pipeline []string
+	var pipelineList []string
 	if len(mc.Enabled) > 0 {
-		pipeline = mc.Enabled
+		pipelineList = mc.Enabled
 	} else {
-		defaults := []string{"steer", "followup", "compaction", "soft_prune", "approval", "tool_concurrency", "loop_detection", "staleness"}
+		// Source the canonical list from the pipeline package so this
+		// pane cannot drift from the real default composition.
 		disabled := make(map[string]bool, len(mc.Disabled))
 		for _, d := range mc.Disabled {
 			disabled[d] = true
 		}
-		for _, name := range defaults {
+		for _, name := range pipeline.DefaultPipelineNames() {
 			if !disabled[name] {
-				pipeline = append(pipeline, name)
+				pipelineList = append(pipelineList, name)
 			}
 		}
 	}
@@ -94,7 +96,7 @@ func runTUI() error {
 		subModel,
 		cfg.Embedding.Provider != "" && cfg.Embedding.Model != "",
 		cfg.Embedding.Model,
-		pipeline,
+		pipelineList,
 	)
 
 	names := make(map[string]string)

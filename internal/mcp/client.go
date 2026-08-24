@@ -32,6 +32,20 @@ type ServerTool struct {
 	ServerName  string          `json:"-"` // which server owns this tool
 }
 
+// clientVersion is reported as the MCP clientInfo version during the
+// initialize handshake. It is set at startup from the build version via
+// SetClientVersion; the fallback keeps unversioned builds honest.
+var clientVersion = "dev"
+
+// SetClientVersion sets the version string reported in the MCP
+// initialize handshake by every stdio and HTTP client. Call once at
+// startup with the ldflags-injected build version.
+func SetClientVersion(v string) {
+	if v != "" {
+		clientVersion = v
+	}
+}
+
 // Client represents a connected MCP server process.
 type Client struct {
 	name     string
@@ -170,7 +184,7 @@ func (c *Client) Initialize(ctx context.Context) error {
 	params, _ := json.Marshal(map[string]any{
 		"protocolVersion": "2024-11-05",
 		"capabilities":    map[string]any{},
-		"clientInfo":      map[string]string{"name": "yaah", "version": "0.3.0"},
+		"clientInfo":      map[string]string{"name": "yaah", "version": clientVersion},
 	})
 
 	if err := c.writer.WriteMessage(JSONRPCMessage{

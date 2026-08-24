@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -36,6 +37,12 @@ func (m *PermissionMiddleware) PostModel(ctx context.Context, msg *types.Message
 	for _, tc := range msg.ToolCalls {
 		paths := extractPaths(tc.Function.Name, tc.Function.Arguments)
 		if m.matchRules(tc.Function.Name, paths) == "deny" {
+			// Every tool_call_id on the assistant message needs a
+			// result; synthesize a denial so the provider does not
+			// reject the next request over a dangling ID.
+			step.SynthesizedResults = append(step.SynthesizedResults,
+				types.ToolResultMsg(tc.ID, tc.Function.Name,
+					fmt.Sprintf("error: tool %q denied by permission rule", tc.Function.Name)))
 			continue
 		}
 		filtered = append(filtered, tc)

@@ -234,6 +234,14 @@ var subAgentPipelineNames = []string{
 	"shepherd_trace",
 }
 
+// DefaultPipelineNames returns a copy of the orchestrator's default
+// middleware names (before disabled-list filtering). Consumers such as
+// the TUI info pane use this instead of keeping their own copy of the
+// list, which historically drifted out of sync.
+func DefaultPipelineNames() []string {
+	return slices.Clone(defaultPipelineNames)
+}
+
 // SubAgentPipelineNames returns the middleware names for a sub-agent loop,
 // honouring the disabled list (for opt-out of specific middleware).
 func SubAgentPipelineNames(disabled []string) []string {

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -87,6 +88,28 @@ func TestGitTool_isNotDangerousForInvalidJSON(t *testing.T) {
 	gt := &GitTool{}
 	if gt.IsDangerous(`bad json`) {
 		t.Error("expected false for invalid JSON")
+	}
+}
+
+func TestGitTool_rejectsOutputFlag(t *testing.T) {
+	gt := &GitTool{}
+	tests := []struct {
+		args string
+		msg  string
+	}{
+		{`{"action":"diff","flags":["--output=/tmp/pwned.diff"]}`, "--output= form"},
+		{`{"action":"diff","flags":["--output","/tmp/pwned.diff"]}`, "bare --output flag"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.msg, func(t *testing.T) {
+			_, err := gt.Execute(context.Background(), tt.args)
+			if err == nil {
+				t.Fatalf("expected rejection for %s", tt.msg)
+			}
+			if !strings.Contains(err.Error(), "not in the safe whitelist") {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
 	}
 }
 

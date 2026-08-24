@@ -360,7 +360,7 @@ func Resolve(p Provider) Provider {
 		TimeoutSeconds: p.TimeoutSeconds,
 		Headers:        p.Headers,
 		OAuthClientID:  SubstituteEnv(p.OAuthClientID),
-		OAuthScope:     p.OAuthScope,
+		OAuthScope:     SubstituteEnv(p.OAuthScope),
 		OAuthDomain:    SubstituteEnv(p.OAuthDomain),
 	}
 }

@@ -3,8 +3,10 @@ package yaah
 
 import (
 	"fmt"
+	"log/slog"
 	"runtime/debug"
 
+	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel"
 )
@@ -48,8 +50,11 @@ func init() {
 		}
 	}
 	rootCmd.Version = fmt.Sprintf("%s (commit %s, built %s)", version, commit, date)
+	mcp.SetClientVersion(version)
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
-		otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {}))
+		otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+			slog.Debug("otel export error", "err", err)
+		}))
 	}
 	rootCmd.PersistentFlags().StringVarP(&approvalOverride,
 		"approval", "a", "",
