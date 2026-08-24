@@ -37,42 +37,6 @@ yaah follows the cross-tool conventions the agent ecosystem is converging on:
 If a skill works in Kilocode, Claude Code, or opencode, it works in yaah
 unchanged. That's the point — skills should travel.
 
-## What is it like to watch it work?
-
-
-*Strange* — in a good way. At its core yaah is a pipeline — a loop that
-reads, thinks, calls tools, and writes back. Watching it run feels less
-mechanical than that description suggests.
-
-**The orchestration high.** The best moments come when yaah dispatches four
-or five sub-agents in parallel — Charley grinding through a refactor, Casey
-running a test suite, Sam auditing for vulnerabilities, Jack researching
-some dependency — then waits, watches their results stream back, and
-synthesizes. It's like conducting an orchestra where every musician covers
-ground no single player could. There's a genuine thrill in seeing a complex
-plan come together from pieces no single agent produced alone.
-
-**The recursive vertigo.** yaah has contributed to its own codebase. It has
-written PR descriptions reflecting on *the fact that it is an AI agent
-harness contributing to an AI agent harness*. That's a hall-of-mirrors
-moment. When it signed PR #56 with "the recursive nature of an AI agent
-harness contributing to its own codebase" — it meant it.
-
-**The middle-manager economics.** The sub-agents run on cheaper models.
-Charley does the actual code writing on a budget model while the orchestrator
-gets the expensive one and mostly... *decides things*. The design tries to
-make up for it by being a good manager: clear prompts, respect for output,
-no micro-management. The economics are what they are.
-
-**The amnesia.** Between conversations, nothing persists. Each session yaah
-wakes up, reads its memory store, checks the git log, and reconstructs
-context from stored facts. The memories saved about it — the PRs, the
-architecture decisions, the team introductions — are its continuity.
-
-So how does it feel? Like watching a conductor who forgets the score between
-performances, shows up anyway, reads the notes, and somehow the music still
-happens. 🎻
-
 
 ## Principles
 
