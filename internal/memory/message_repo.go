@@ -61,6 +61,17 @@ func (d *DB) embedMessageAsync(id, role, content string) <-chan struct{} {
 	return done
 }
 
+// DeleteMessagesFrom removes persisted message rows for a session at
+// idx >= fromIdx. Used when the in-memory conversation is replaced
+// wholesale (compaction rebase) or rewound (turn restore), so stale
+// rows cannot conflict with re-persisted messages or resurrect on
+// resume (review finding B7). FTS5 rows follow via the messages
+// table's delete triggers.
+func (d *DB) DeleteMessagesFrom(sessionID string, fromIdx int) error {
+	_, err := d.sql.Exec(`DELETE FROM messages WHERE session_id = ? AND idx >= ?`, sessionID, fromIdx)
+	return err
+}
+
 // GetMessages returns all messages for a session.
 func (d *DB) GetMessages(sessionID string) ([]Message, error) {
 	rows, err := d.sql.Query(`

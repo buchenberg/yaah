@@ -8,59 +8,53 @@ import (
 	"sync"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"github.com/buchenberg/yaah/internal/rolefile"
 )
 
 // RoleDef is the persistent format for a sub-agent role definition,
 // loaded from a markdown file with YAML frontmatter. The file name
 // (minus extension) is the role identifier.
 
-// ContractField names a field in a sub-agent's response contract and
-// optionally classifies it as evidence (raw tool output, verifiable) or
-// interpretation (model synthesis, may need verification).
-type ContractField struct {
-	Name string `yaml:"name"`
-	Kind string `yaml:"kind"` // "evidence" or "interpretation"; empty = interpretation
-}
-
-// UnmarshalYAML accepts both string and map forms so existing role YAMLs
-// remain valid:
-//   - "fieldname"            → ContractField{Name: "fieldname"}
-//   - {name: field, kind: e} → ContractField{Name: "field", Kind: "e"}
-func (f *ContractField) UnmarshalYAML(value *yaml.Node) error {
-	switch value.Kind {
-	case yaml.ScalarNode:
-		f.Name = value.Value
-		return nil
-	case yaml.MappingNode:
-		type raw ContractField
-		return value.Decode((*raw)(f))
-	default:
-		return fmt.Errorf("contract field must be a string or map, got %v", value.Tag)
-	}
-}
-
-// ContractDef describes the structured output block a sub-agent must
-// append to its response so the main agent can extract data reliably.
-type ContractDef struct {
-	Heading string          `yaml:"heading"`
-	Fields  []ContractField `yaml:"fields"`
-}
+// ContractField and ContractDef live in rolefile — the single role-file
+// format shared with the role tool. The aliases keep existing references
+// compiling.
+type (
+	ContractField = rolefile.ContractField
+	ContractDef   = rolefile.ContractDef
+)
 
 type RoleDef struct {
-	DisplayName string `yaml:"name"`
-	Specialty   string `yaml:"specialty"`
+	DisplayName string
+	Specialty   string
 	// Description is a one-line summary shown to the orchestrator so
 	// it can choose the right role without calling list_subagents.
-	Description   string      `yaml:"description"`
-	Contract      ContractDef `yaml:"contract"`
-	Tools         []string    `yaml:"tools"`
-	MaxLoopCycles int         `yaml:"max_iterations"`
-	MaxToolTurns  int         `yaml:"max_turns"`
-	JSONMode      bool        `yaml:"json_mode"`
-	Timeout       int         `yaml:"timeout"` // seconds; 0 = no timeout
+	Description   string
+	Contract      ContractDef
+	Tools         []string
+	MaxLoopCycles int
+	MaxToolTurns  int
+	JSONMode      bool
+	Timeout       int // seconds; 0 = no timeout
 
-	Body string `yaml:"-"`
+	Body string
+}
+
+// roleDefFrom converts the shared rolefile frontmatter into the runtime
+// RoleDef. It is the only Frontmatter→RoleDef mapping, so the registry
+// and the role tool cannot parse the same file differently (review B3).
+func roleDefFrom(fm rolefile.Frontmatter, body string) RoleDef {
+	return RoleDef{
+		DisplayName:   fm.Name,
+		Specialty:     fm.Specialty,
+		Description:   fm.Description,
+		Contract:      fm.Contract,
+		Tools:         fm.Tools,
+		MaxLoopCycles: fm.MaxLoopCycles,
+		MaxToolTurns:  fm.MaxToolTurns,
+		JSONMode:      fm.JSONMode,
+		Timeout:       fm.Timeout,
+		Body:          body,
+	}
 }
 
 // ToProfile converts a parsed role definition into the runtime
@@ -205,34 +199,13 @@ func (r *RoleRegistry) List() map[SubAgentRole]RoleDef {
 }
 
 // parseRoleFile splits raw markdown content at the first YAML
-// frontmatter block (delimited by "---" lines) and unmarshals the
-// YAML portion into a RoleDef. The remaining markdown is stored in
-// the Body field.
+// frontmatter block (delimited by "---" lines) and converts the
+// frontmatter into a RoleDef via the shared rolefile parser. The
+// remaining markdown is stored in the Body field.
 func parseRoleFile(data []byte) (RoleDef, error) {
-	text := string(data)
-	var def RoleDef
-
-	text = strings.TrimSpace(text)
-	if !strings.HasPrefix(text, "---") {
-		return def, fmt.Errorf("missing YAML frontmatter (file must start with ---)")
+	fm, body, err := rolefile.Parse(string(data))
+	if err != nil {
+		return RoleDef{}, err
 	}
-
-	text = text[3:] // strip opening ---
-	idx := strings.Index(text, "\n---")
-	if idx < 0 {
-		// Single-line: "---\nkey: value\n---\nbody..."
-		idx = strings.Index(text, "\n---\n")
-	}
-	if idx < 0 {
-		return def, fmt.Errorf("unterminated YAML frontmatter (missing closing ---)")
-	}
-
-	yamlBlock := text[:idx]
-	body := strings.TrimSpace(text[idx+4:]) // strip "\n---" + newline
-
-	if err := yaml.Unmarshal([]byte(yamlBlock), &def); err != nil {
-		return def, fmt.Errorf("invalid YAML frontmatter: %w", err)
-	}
-	def.Body = body
-	return def, nil
+	return roleDefFrom(fm, body), nil
 }

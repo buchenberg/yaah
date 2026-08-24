@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/buchenberg/yaah/internal/prompts"
+	"github.com/buchenberg/yaah/internal/rolefile"
 )
 
 // RoleTool lets the agent list, show, create, edit, and delete sub-agent role
@@ -22,51 +23,6 @@ type RoleTool struct {
 	Dirs         []string          // role search directories (project-first, then user)
 	BuiltinFiles map[string][]byte // built-in role files passed to ReloadRoles
 	Resolver     RoleResolver      // role registry access (injected by agent/runner)
-}
-
-// roleContractField mirrors agent/subagent.ContractField so role file
-// round-trips preserve the response contract (tools must not import
-// agent/subagent). Keep the yaml tags in sync with the canonical type.
-type roleContractField struct {
-	Name string `yaml:"name"`
-	Kind string `yaml:"kind"`
-}
-
-// UnmarshalYAML accepts both the string form ("fieldname") and the map
-// form ({name: ..., kind: ...}), matching the canonical parser.
-func (f *roleContractField) UnmarshalYAML(value *yaml.Node) error {
-	switch value.Kind {
-	case yaml.ScalarNode:
-		f.Name = value.Value
-		return nil
-	case yaml.MappingNode:
-		type raw roleContractField
-		return value.Decode((*raw)(f))
-	default:
-		return fmt.Errorf("contract field must be a string or map, got %v", value.Tag)
-	}
-}
-
-// roleContractDef mirrors agent/subagent.ContractDef.
-type roleContractDef struct {
-	Heading string              `yaml:"heading"`
-	Fields  []roleContractField `yaml:"fields"`
-}
-
-// roleFrontmatter is the YAML frontmatter extracted from a role .md file.
-// It must stay field-for-field compatible with agent/subagent.RoleDef:
-// any field missing here is silently dropped when the role tool rewrites
-// a file (the contract block was previously lost this way).
-type roleFrontmatter struct {
-	Name          string          `yaml:"name"`
-	Description   string          `yaml:"description"`
-	Specialty     string          `yaml:"specialty"`
-	Contract      roleContractDef `yaml:"contract,omitempty"`
-	Tools         []string        `yaml:"tools"`
-	MaxLoopCycles int             `yaml:"max_iterations"`
-	MaxToolTurns  int             `yaml:"max_turns"`
-	JSONMode      bool            `yaml:"json_mode"`
-	Timeout       int             `yaml:"timeout"`
 }
 
 func (t *RoleTool) Name() string        { return "role" }
@@ -199,14 +155,14 @@ func (t *RoleTool) createRole(p roleParams) (string, error) {
 		return "", fmt.Errorf("role %q already exists at %s (use 'edit' to modify)", p.Name, path)
 	}
 
-	fm := roleFrontmatter{
+	fm := rolefile.Frontmatter{
 		Name:        p.Name,
 		Description: p.Description,
 		Specialty:   p.Specialty,
 	}
 	fm.Tools = parseToolsList(p.Tools)
 
-	content, err := marshalRoleFile(fm, p.Body)
+	content, err := rolefile.Marshal(fm, p.Body)
 	if err != nil {
 		return "", fmt.Errorf("marshaling role: %w", err)
 	}
@@ -234,7 +190,7 @@ func (t *RoleTool) editRole(p roleParams) (string, error) {
 		return "", fmt.Errorf("reading %s: %w", path, err)
 	}
 
-	existing, existingBody, err := parseRoleContent(string(data))
+	existing, existingBody, err := rolefile.Parse(string(data))
 	if err != nil {
 		return "", fmt.Errorf("parsing %s: %w", path, err)
 	}
@@ -255,7 +211,7 @@ func (t *RoleTool) editRole(p roleParams) (string, error) {
 		existing.Tools = parseToolsList(p.Tools)
 	}
 
-	content, err := marshalRoleFile(existing, existingBody)
+	content, err := rolefile.Marshal(existing, existingBody)
 	if err != nil {
 		return "", fmt.Errorf("marshaling role: %w", err)
 	}
@@ -335,42 +291,4 @@ func parseToolsList(s string) []string {
 		}
 	}
 	return arr
-}
-
-// parseRoleContent extracts the frontmatter and body from a role file's raw content.
-func parseRoleContent(content string) (roleFrontmatter, string, error) {
-	var fm roleFrontmatter
-	content = strings.TrimSpace(content)
-	if !strings.HasPrefix(content, "---") {
-		return fm, "", fmt.Errorf("role file must start with YAML frontmatter (---)")
-	}
-	rest := content[3:]
-	idx := strings.Index(rest, "\n---")
-	if idx < 0 {
-		idx = strings.Index(rest, "\r\n---")
-	}
-	if idx < 0 {
-		return fm, "", fmt.Errorf("role file has unclosed YAML frontmatter")
-	}
-	fmText := rest[:idx]
-	bodyText := strings.TrimSpace(rest[idx+4:])
-
-	if err := yaml.Unmarshal([]byte(fmText), &fm); err != nil {
-		return fm, "", fmt.Errorf("parsing frontmatter: %w", err)
-	}
-	return fm, bodyText, nil
-}
-
-// marshalRoleFile serializes a role into its .md file format.
-func marshalRoleFile(fm roleFrontmatter, body string) (string, error) {
-	fmBytes, err := yaml.Marshal(&fm)
-	if err != nil {
-		return "", err
-	}
-	fmText := strings.TrimRight(string(fmBytes), "\n")
-	if strings.TrimSpace(body) == "" {
-		return fmt.Sprintf("---\n%s\n---\n", fmText), nil
-	}
-	body = strings.TrimSpace(body)
-	return fmt.Sprintf("---\n%s\n---\n\n%s\n", fmText, body), nil
 }

@@ -78,6 +78,12 @@ type ContextManager struct {
 	// CompactionHook is an optional callback invoked during compaction.
 	CompactionHook func(event any)
 
+	// OnMessagesReplaced, when non-nil, is invoked immediately after
+	// compaction or trimming replaces State.Messages wholesale, with the
+	// new slice. The Loop wires this to persistence rebasing so the DB
+	// baseline tracks the post-compaction conversation (review B7).
+	OnMessagesReplaced func(msgs []types.Message)
+
 	// compactFn is set by the Loop to delegate compaction back through its
 	// own method while ContextManager satisfies the Compactor interface.
 	compactFn func(ctx context.Context, messages []types.Message, threshold float64) []types.Message
@@ -171,6 +177,9 @@ func (cm *ContextManager) applyCompactedSummary(summary string, sysMsg types.Mes
 	newMsgs = append(newMsgs, keepMsgs...)
 	beforeEstimate := cm.estimatedTokens()
 	cm.State.Messages = newMsgs
+	if cm.OnMessagesReplaced != nil {
+		cm.OnMessagesReplaced(newMsgs)
+	}
 	cm.State.LastPromptTokens = cm.estimatedTokens()
 	cm.resetPruner()
 	if cm.Pruner != nil {
@@ -486,6 +495,9 @@ func (cm *ContextManager) trimContext() {
 	newMsgs = append(newMsgs, sysMsg)
 	newMsgs = append(newMsgs, cm.State.Messages[keepStart:]...)
 	cm.State.Messages = newMsgs
+	if cm.OnMessagesReplaced != nil {
+		cm.OnMessagesReplaced(newMsgs)
+	}
 	cm.resetPruner()
 	if cm.Pruner != nil {
 		cm.Pruner.Mark(cm.State.Messages, "post_trim")

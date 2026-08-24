@@ -3,14 +3,10 @@ package yaah
 import (
 	"os"
 	"path/filepath"
-
-	"github.com/buchenberg/yaah/internal/config"
 )
 
 // planSearchPaths returns the directories to scan for plans, in order.
 func planSearchPaths() []string {
-	home := config.HomeDir()
-
 	// 1. Project-level (walk up from cwd)
 	cwd, _ := os.Getwd()
 	var projectDirs []string
@@ -22,8 +18,11 @@ func planSearchPaths() []string {
 		}
 	}
 
-	// 2. User-level cross-tool
-	userDir := filepath.Join(home, ".agents", "plans")
+	// 2. User-level cross-tool — the REAL home dir, not config.HomeDir()
+	// (which is ~/.yaah). Plans live at ~/.agents/plans per the
+	// cross-tool convention, mirroring skillSearchPaths (review B5).
+	userHome, _ := os.UserHomeDir()
+	userDir := filepath.Join(userHome, ".agents", "plans")
 
 	var dirs []string
 	dirs = append(dirs, projectDirs...)

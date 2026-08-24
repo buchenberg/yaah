@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/buchenberg/yaah/internal/rolefile"
 )
 
 const roleWithContract = `---
@@ -69,7 +71,7 @@ func TestRoleTool_editPreservesContract(t *testing.T) {
 	}
 
 	// The rewritten file must still parse, with the contract intact.
-	fm, body, err := parseRoleContent(content)
+	fm, body, err := rolefile.Parse(content)
 	if err != nil {
 		t.Fatalf("edited file no longer parses: %v", err)
 	}

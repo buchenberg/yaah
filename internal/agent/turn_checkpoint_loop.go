@@ -121,6 +121,9 @@ func (l *Loop) restoreLastTurnCheckpoint(ctx context.Context, messages *[]types.
 
 	*messages = append(*messages, types.UserMsg(guidance))
 	l.State.Messages = *messages
-	l.Persister.SetMsgIdx(len(*messages))
+	// Delete the rolled-back rows before resetting the cursor, so a
+	// resumed session cannot resurrect the failed turn's messages
+	// (review finding B7).
+	l.Persister.TruncateFrom(len(*messages))
 	return true
 }
