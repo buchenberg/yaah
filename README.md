@@ -14,17 +14,6 @@ yaah is a vendor-free AI agent harness. Type `yaah` in the terminal and it
 takes over from there: it loads the project context, calls the model chosen,
 runs the tools needed, and remembers what it learns along the way.
 
-It is also a project that helps build itself. When an opportunity to improve
-its own codebase appears — a cleaner API, a faster loop, a bug fix — yaah
-drafts the PR and contributes it.
-
-When things get heavy (every agent has off days), its friend
-**[Kilocode](https://github.com/kilocode/kilocode)** steps in to help. The two
-share many of the same conventions and standards — skills, MCP servers,
-project instructions — so switching between them is seamless. Kilocode
-handles the heavy lifting in VS Code; yaah takes care of terminal-first
-workflows. They complement each other that way.
-
 yaah follows the cross-tool conventions the agent ecosystem is converging on:
 
 - **`SKILL.md`** (YAML frontmatter + markdown body) for skills
