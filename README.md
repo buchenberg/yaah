@@ -1,14 +1,6 @@
 # yaah — Yet Another Agent Harness
 
-```
-yaah> Yaah! Call it from the command line and it spins up a team of
-      specialist sub-agents to get things done — together.
-      One static Go binary. No accounts. No telemetry. No paywalls.
-```
-
----
-
-## What is yaah?
+## Summary
 
 yaah is a vendor-free AI agent harness. Type `yaah` in the terminal and it
 takes over from there: it loads the project context, calls the model chosen,
@@ -37,8 +29,7 @@ unchanged. That's the point — skills should travel.
    Everything else lives in `~/.agents/` or in your project.
 4. **Local-first.** No telemetry, no phone-home, no required accounts.
    SQLite + filesystem is the default persistence layer.
-5. **Hackable.** Every component is replaceable. yaah is a thin shell around
-   a composable agent loop.
+5. **Hackable.** Every component is replaceable. yaah is a thin shell around a composable agent loop.
 
 ## Install
 
@@ -117,9 +108,8 @@ linked docs):
   focused tool set, evidenced response contracts, structured escalation, and
   quality gates. Four roles are built in; define your own in `.agents/roles/`.
   → [sub-agents.md](./docs/sub-agents.md)
-- **Interfaces** — a rich Bubble Tea TUI (streaming, collapsible reasoning,
-  tool/sub-agent cards, command palette) and a readline REPL. → [features.md](./docs/features.md)
-- **MCP** — speak Model Context Protocol as a client (stdio + HTTP) *and* as
+- **Interfaces** — a rich TUI and a readline REPL. → [features.md](./docs/features.md)
+- **MCP** — speaks Model Context Protocol as a client (stdio + HTTP) *and* as
   a server (`yaah serve`, `yaah acp-serve`) for agent-to-agent coordination.
   → [features.md](./docs/features.md)
 - **Built-in tools** — files, search, shell, git, web, Go tooling
@@ -415,13 +405,13 @@ output, exit codes, file paths) vs. interpretation (findings, confidence,
 summaries). Trust the evidence; spot-check only low-confidence
 interpretations.
 
-**Framework parity with the other guys.** Session-affinity headers so
+**Framework improvements.** Session-affinity headers so
 providers route a full conversation to the same backend. Wakeup coalescing
 so individual follow-up messages are batched and processed once. Per-role
 provider and model overrides so Charley runs on one provider and Jack on
 another.
 
-**Middle ground: 13 middleware and counting.** A proper middleware pipeline:
+**13 middleware and counting.** A proper middleware pipeline:
 compaction (keeps context tidy), approval (gates risky ops), inline limiting
 (caps calls per turn), conflict detection (flags files touched by multiple
 sub-agents), loop detection (stops infinite loops), follow-up (continues
