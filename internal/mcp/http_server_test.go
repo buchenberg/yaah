@@ -231,6 +231,33 @@ func TestHTTPUnknownSessionRejected(t *testing.T) {
 	}
 }
 
+// TestHTTPSessionlessBatchWithInitializeBypassRejected pins the strict
+// no-session rule against batch smuggling: a sessionless batch mixing
+// initialize with other methods must be rejected wholesale, not
+// accepted because one element is initialize (which would create a
+// session and let the remaining elements dispatch past the rule).
+func TestHTTPSessionlessBatchWithInitializeBypassRejected(t *testing.T) {
+	base, stop := startHTTPTestServer(t)
+	defer stop()
+
+	batch := `[` +
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"0"}}},` +
+		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}` +
+		`]`
+	status, body, _ := postJSON(t, base, batch, "")
+	if status != http.StatusNotFound {
+		t.Fatalf("status = %d body=%s, want 404 (initialize must not unlock a sessionless batch)", status, body)
+	}
+
+	// Control: a lone sessionless initialize still succeeds.
+	status, body, _ = postJSON(t, base,
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}`,
+		"")
+	if status != http.StatusOK {
+		t.Fatalf("lone initialize: status = %d body=%s, want 200", status, body)
+	}
+}
+
 // TestHTTPUnknownSessionAutoRegistered verifies a request with a stale
 // session ID is auto-registered when the operator opted in
 // (transparent server restart recovery).

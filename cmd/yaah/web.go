@@ -124,12 +124,32 @@ type webServer struct {
 	providerNames map[string]string
 }
 
-// requireAuth rejects requests that do not carry a valid token.
+// requireAuth rejects requests that do not carry a valid token. A valid
+// ?t= query token is additionally persisted as a yaah_token cookie so
+// subsequent requests that cannot carry the query param (relative
+// stylesheet/script assets, fetch, EventSource) authenticate; the
+// navigational GET that carried it is redirected to the clean URL so
+// the token does not linger in the address bar and history.
 func (ws *webServer) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !tokenValid(ws.token, webTokenFromRequest(r)) {
+		presented := webTokenFromRequest(r)
+		if !tokenValid(ws.token, presented) {
 			http.Error(w, "unauthorized: token missing or invalid", http.StatusUnauthorized)
 			return
+		}
+		if q := r.URL.Query().Get("t"); q != "" && q == presented {
+			http.SetCookie(w, &http.Cookie{
+				Name:     "yaah_token",
+				Value:    presented,
+				Path:     "/",
+				HttpOnly: true,
+				SameSite: http.SameSiteLaxMode,
+			})
+			if r.Method == http.MethodGet && r.URL.Path == "/" {
+				w.Header().Set("Cache-Control", "no-store")
+				http.Redirect(w, r, "/", http.StatusFound)
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})

@@ -114,8 +114,51 @@ func TestRequireAuth(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "http://h/?t=good-token", nil)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, r)
+		if rec.Code != http.StatusFound {
+			t.Errorf("status = %d; want %d (navigational query-token GET redirects to clean URL)", rec.Code, http.StatusFound)
+		}
+		if loc := rec.Header().Get("Location"); loc != "/" {
+			t.Errorf("Location = %q; want %q", loc, "/")
+		}
+		var cookie *http.Cookie
+		for _, c := range rec.Result().Cookies() {
+			if c.Name == "yaah_token" {
+				cookie = c
+			}
+		}
+		if cookie == nil || cookie.Value != "good-token" {
+			t.Errorf("yaah_token cookie = %+v; want value good-token so assets authenticate", cookie)
+		}
+		if !cookie.HttpOnly {
+			t.Error("yaah_token cookie must be HttpOnly")
+		}
+	})
+
+	t.Run("query token on asset path sets cookie without redirect", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "http://h/app.js?t=good-token", nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
 		if rec.Code != http.StatusOK {
-			t.Errorf("status = %d; want %d", rec.Code, http.StatusOK)
+			t.Errorf("status = %d; want %d (non-navigational paths serve directly)", rec.Code, http.StatusOK)
+		}
+		found := false
+		for _, c := range rec.Result().Cookies() {
+			if c.Name == "yaah_token" && c.Value == "good-token" {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("expected yaah_token cookie on asset response")
+		}
+	})
+
+	t.Run("cookie token authenticates assets", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "http://h/app.js", nil)
+		r.AddCookie(&http.Cookie{Name: "yaah_token", Value: "good-token"})
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		if rec.Code != http.StatusOK {
+			t.Errorf("status = %d; want %d (cookie set by query-token login)", rec.Code, http.StatusOK)
 		}
 	})
 }

@@ -293,6 +293,80 @@ func TestPathValidator_AskDenyPattern(t *testing.T) {
 	}
 }
 
+// TestPathValidator_DanglingSymlinkRejected pins that a symlink whose
+// target does not exist is rejected instead of being re-appended
+// unresolved: os.WriteFile would follow it and create the target
+// outside the workspace, defeating containment.
+func TestPathValidator_DanglingSymlinkRejected(t *testing.T) {
+	ws := t.TempDir()
+	if real, err := filepath.EvalSymlinks(ws); err == nil {
+		ws = real
+	}
+	outsideDir := t.TempDir()
+	if real, err := filepath.EvalSymlinks(outsideDir); err == nil {
+		outsideDir = real
+	}
+
+	link := filepath.Join(ws, "link")
+	if err := os.Symlink(filepath.Join(outsideDir, "newfile"), link); err != nil {
+		t.Skipf("symlinks unavailable on this platform: %v", err)
+	}
+
+	pv := NewPathValidator(ws, false, nil)
+	if _, err := pv.ResolvePath(link); err == nil {
+		t.Fatal("dangling symlink accepted: a write would follow it outside the workspace")
+	}
+	// The containment message must point at the symlink, and the outside
+	// target must not have been created by resolution.
+	if _, err := os.Stat(filepath.Join(outsideDir, "newfile")); !os.IsNotExist(err) {
+		t.Error("resolving the dangling symlink created its outside target")
+	}
+}
+
+// TestPathValidator_ResolvedSymlinkLeafStillAllowed guards the companion
+// case: a symlink that resolves to an existing directory is fine as an
+// ancestor of a not-yet-existing leaf — the dangling check must not
+// over-reject legitimate write targets behind links.
+func TestPathValidator_ResolvedSymlinkLeafStillAllowed(t *testing.T) {
+	ws := t.TempDir()
+	if real, err := filepath.EvalSymlinks(ws); err == nil {
+		ws = real
+	}
+	inner := filepath.Join(ws, "realdir")
+	if err := os.MkdirAll(inner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	link := filepath.Join(ws, "linkdir")
+	if err := os.Symlink(inner, link); err != nil {
+		t.Skipf("symlinks unavailable on this platform: %v", err)
+	}
+
+	pv := NewPathValidator(ws, false, nil)
+	got, err := pv.ResolvePath(filepath.Join(link, "newfile.txt"))
+	if err != nil {
+		t.Fatalf("write target behind resolving symlink rejected: %v", err)
+	}
+	if want := filepath.Join(inner, "newfile.txt"); got != want {
+		t.Errorf("ResolvePath = %q; want %q", got, want)
+	}
+}
+
+// TestPathValidator_MalformedDenyPatternFailsClosed pins that an invalid
+// glob denies rather than silently matching nothing — discarding the
+// filepath.Match error would leave the protected files accessible.
+func TestPathValidator_MalformedDenyPatternFailsClosed(t *testing.T) {
+	ws := t.TempDir()
+	if real, err := filepath.EvalSymlinks(ws); err == nil {
+		ws = real
+	}
+	pv := NewPathValidator(ws, false, []string{"["})
+
+	if _, err := pv.ResolvePath(filepath.Join(ws, "anything.txt")); err == nil {
+		t.Error("malformed deny pattern must fail closed (deny access)")
+	}
+}
+
 func TestRegistry_SetPathValidatorBackfills(t *testing.T) {
 	reg := NewRegistry()
 	ws := t.TempDir()

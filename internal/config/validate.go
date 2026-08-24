@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -115,6 +116,17 @@ func Validate(cfg *Config) error {
 			errs = append(errs, fmt.Sprintf(
 				"agents.quality_gates.%s has no validator roles",
 				role))
+		}
+	}
+
+	// Workspace deny patterns must be valid filepath.Match globs — a
+	// malformed pattern would otherwise fail open at match time and
+	// leave the files the operator meant to protect accessible.
+	for i, pattern := range cfg.Agent.Default.WorkspaceDenyPatterns {
+		if _, err := filepath.Match(pattern, "probe"); err != nil {
+			errs = append(errs, fmt.Sprintf(
+				"agents.default.workspace_deny_patterns[%d] %q is not a valid glob pattern",
+				i, pattern))
 		}
 	}
 

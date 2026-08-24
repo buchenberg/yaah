@@ -122,6 +122,58 @@ func TestSessionPersister_TruncateFrom(t *testing.T) {
 	}
 }
 
+// TestSessionPersister_TruncateFromDeleteFailureKeepsCursor pins the
+// fail-safe: when the row delete fails the cursor is NOT reset onto the
+// orphaned rows — the next append must continue past them instead of
+// colliding with stale rows (duplicate idx / resurrection on resume).
+func TestSessionPersister_TruncateFromDeleteFailureKeepsCursor(t *testing.T) {
+	db := newPersistTestDB(t, "sess-tr-fail")
+	p := NewSessionPersister(db, nil, "sess-tr-fail")
+
+	for _, c := range []string{"a", "b", "c", "d"} {
+		p.Persist(types.Message{Role: "user", Content: c})
+	}
+	if p.MsgIdx() != 4 {
+		t.Fatalf("MsgIdx after 4 persists = %d", p.MsgIdx())
+	}
+
+	// Force the delete to fail by closing the underlying DB.
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
+	p.TruncateFrom(2)
+
+	if p.MsgIdx() != 4 {
+		t.Errorf("MsgIdx after failed truncate = %d; want 4 (cursor must not reset onto orphaned rows)", p.MsgIdx())
+	}
+}
+
+// TestSessionPersister_RebaseDeleteFailureKeepsRows pins the fail-safe:
+// when the full delete fails, rebase must not re-persist over the old
+// rows (which would create duplicate idx rows) and must leave the
+// cursor alone.
+func TestSessionPersister_RebaseDeleteFailureKeepsRows(t *testing.T) {
+	db := newPersistTestDB(t, "sess-rb-fail")
+	p := NewSessionPersister(db, nil, "sess-rb-fail")
+
+	for _, c := range []string{"one", "two", "three"} {
+		p.Persist(types.Message{Role: "user", Content: c})
+	}
+	if p.MsgIdx() != 3 {
+		t.Fatalf("MsgIdx after 3 persists = %d", p.MsgIdx())
+	}
+
+	// Force the delete to fail by closing the underlying DB.
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
+	p.Rebase([]types.Message{types.SystemMsg("new baseline")})
+
+	if p.MsgIdx() != 3 {
+		t.Errorf("MsgIdx after failed rebase = %d; want 3 (cursor must stay past existing rows)", p.MsgIdx())
+	}
+}
+
 // TestLoop_applyDefaultsWiresRebase pins that the Loop wires the
 // ContextManager replacement hook to persistence rebasing.
 func TestLoop_applyDefaultsWiresRebase(t *testing.T) {

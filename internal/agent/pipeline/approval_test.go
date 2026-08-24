@@ -11,8 +11,11 @@ func TestApprovalMiddleware_DenyModeStripsDangerousCalls(t *testing.T) {
 	var deniedArgs string
 	m := &ApprovalMiddleware{
 		mode: "deny",
-		classify: func(name, args string) bool {
-			return name == "bash"
+		classify: func(name, args string) GateDecision {
+			if name == "bash" {
+				return GateGlobal
+			}
+			return GatePass
 		},
 		approve: func(name, args string) bool {
 			t.Fatal("approve must not run in deny mode")
@@ -50,7 +53,7 @@ func TestApprovalMiddleware_AskModeHonoursApprove(t *testing.T) {
 	calls := 0
 	m := &ApprovalMiddleware{
 		mode:     "ask",
-		classify: func(name, args string) bool { return true },
+		classify: func(name, args string) GateDecision { return GateGlobal },
 		approve:  func(name, args string) bool { calls++; return true },
 		emitDeny: func(name, args, errMsg string) {},
 	}
@@ -76,7 +79,7 @@ func TestApprovalMiddleware_AskModeUserDenial(t *testing.T) {
 	var emittedErr string
 	m := &ApprovalMiddleware{
 		mode:     "ask",
-		classify: func(name, args string) bool { return true },
+		classify: func(name, args string) GateDecision { return GateGlobal },
 		approve:  func(name, args string) bool { return false },
 		emitDeny: func(name, args, errMsg string) { emittedErr = errMsg },
 	}
@@ -101,21 +104,79 @@ func TestApprovalMiddleware_AskModeUserDenial(t *testing.T) {
 	}
 }
 
-func TestApprovalMiddleware_AllowModeIsNoop(t *testing.T) {
-	called := false
+// TestApprovalMiddleware_GlobalAllowPassesGateGlobal pins that built-in
+// dangerous tools (GateGlobal) stay ungated under global "allow" mode —
+// the historical behaviour now expressed via the gate decision.
+func TestApprovalMiddleware_GlobalAllowPassesGateGlobal(t *testing.T) {
 	m := &ApprovalMiddleware{
 		mode:     "allow",
-		classify: func(name, args string) bool { called = true; return true },
+		classify: func(name, args string) GateDecision { return GateGlobal },
+		approve:  func(name, args string) bool { t.Fatal("approve must not run in allow mode"); return false },
+		emitDeny: func(name, args, errMsg string) {},
 	}
-	msg := &types.Message{ToolCalls: []types.ToolCall{{ID: "1"}}}
+	msg := &types.Message{ToolCalls: []types.ToolCall{{ID: "1", Function: types.ToolCallFn{Name: "bash"}}}}
 	if _, err := m.PostModel(context.Background(), msg, &Step{}); err != nil {
 		t.Fatal(err)
 	}
-	if called {
-		t.Error("classify invoked despite allow mode")
-	}
 	if len(msg.ToolCalls) != 1 {
-		t.Error("allow mode stripped a call")
+		t.Error("global allow must not strip GateGlobal calls")
+	}
+}
+
+// TestApprovalMiddleware_MCPDenyIndependentOfGlobalMode pins review
+// finding S3: mcp_approval "deny" strips MCP tool calls even when the
+// global approval mode is "allow" — the per-origin policy cannot be
+// downgraded by the global mode.
+func TestApprovalMiddleware_MCPDenyIndependentOfGlobalMode(t *testing.T) {
+	m := &ApprovalMiddleware{
+		mode:     "allow",
+		classify: func(name, args string) GateDecision { return GateDeny },
+		approve: func(name, args string) bool {
+			t.Fatal("GateDeny must not consult the user")
+			return false
+		},
+		emitDeny: func(name, args, errMsg string) {},
+	}
+	msg := &types.Message{ToolCalls: []types.ToolCall{{ID: "1", Function: types.ToolCallFn{Name: "github_create_issue"}}}}
+	step := &Step{}
+	if _, err := m.PostModel(context.Background(), msg, step); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.ToolCalls) != 0 {
+		t.Error("GateDeny call survived under global allow mode")
+	}
+	if len(step.SynthesizedResults) != 1 || !contains(step.SynthesizedResults[0].Content, "mcp_approval 'deny'") {
+		t.Errorf("synthesized results = %+v, want mcp_approval denial", step.SynthesizedResults)
+	}
+}
+
+// TestApprovalMiddleware_MCPAskIndependentOfGlobalMode pins that
+// mcp_approval "ask" prompts even when the global approval mode is
+// "allow", and honours the user's answer.
+func TestApprovalMiddleware_MCPAskIndependentOfGlobalMode(t *testing.T) {
+	asked := 0
+	m := &ApprovalMiddleware{
+		mode:     "allow",
+		classify: func(name, args string) GateDecision { return GateAsk },
+		approve:  func(name, args string) bool { asked++; return asked == 1 },
+		emitDeny: func(name, args, errMsg string) {},
+	}
+	msg := &types.Message{ToolCalls: []types.ToolCall{
+		{ID: "1", Function: types.ToolCallFn{Name: "mcp_one"}},
+		{ID: "2", Function: types.ToolCallFn{Name: "mcp_two"}},
+	}}
+	step := &Step{}
+	if _, err := m.PostModel(context.Background(), msg, step); err != nil {
+		t.Fatal(err)
+	}
+	if asked != 2 {
+		t.Errorf("approve invoked %d times, want 2 (GateAsk prompts under global allow)", asked)
+	}
+	if len(msg.ToolCalls) != 1 || msg.ToolCalls[0].Function.Name != "mcp_one" {
+		t.Errorf("surviving calls = %+v, want only the approved mcp_one", msg.ToolCalls)
+	}
+	if len(step.SynthesizedResults) != 1 || !contains(step.SynthesizedResults[0].Content, "denied by user") {
+		t.Errorf("synthesized results = %+v, want one user-denial", step.SynthesizedResults)
 	}
 }
 

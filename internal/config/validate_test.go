@@ -54,6 +54,21 @@ func TestValidateNegativeContextWindow(t *testing.T) {
 	}
 }
 
+// TestValidateMalformedDenyPattern pins that invalid workspace deny
+// globs are rejected at startup: a malformed pattern fails open at
+// match time and would silently disable the protection it configured.
+func TestValidateMalformedDenyPattern(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Agent.Default.WorkspaceDenyPatterns = []string{"*.pem", "["}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("malformed deny pattern should fail validation")
+	}
+	if !strings.Contains(err.Error(), "workspace_deny_patterns") {
+		t.Errorf("expected workspace_deny_patterns error, got %v", err)
+	}
+}
+
 func TestValidateFallbackProviderMissing(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Agent.Fallback.Provider = "nonexistent"

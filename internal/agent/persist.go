@@ -116,11 +116,22 @@ func (p *SessionPersister) SetMsgIdx(idx int) {
 // TruncateFrom deletes persisted rows at idx >= n and resets the cursor
 // to n. Used by turn restore so rolled-back messages cannot resurrect
 // when the session resumes (review finding B7).
+//
+// Fail-safe: when the delete fails the cursor is NOT reset. Orphaned
+// rows at idx >= n remain, and resetting the cursor onto them would make
+// the next append write rows that collide with the stale ones (duplicate
+// idx values / resurrection on resume) — corrupting rather than
+// degrading the session. Leaving the cursor past the orphans keeps
+// persistence consistent; the stale rows stay until a later successful
+// truncation or rebase removes them.
 func (p *SessionPersister) TruncateFrom(n int) {
-	if p.db != nil {
-		if err := p.db.DeleteMessagesFrom(p.sessionID, n); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: truncate persisted messages: %v\n", err)
-		}
+	if p.db == nil {
+		p.msgIdx = n
+		return
+	}
+	if err := p.db.DeleteMessagesFrom(p.sessionID, n); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: truncate persisted messages failed (cursor left at %d): %v\n", p.msgIdx, err)
+		return
 	}
 	p.msgIdx = n
 }
@@ -139,7 +150,12 @@ func (p *SessionPersister) Rebase(msgs []types.Message) {
 	}
 	p.Flush()
 	if err := p.db.DeleteMessagesFrom(p.sessionID, 0); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: rebase persisted messages: %v\n", err)
+		// Fail-safe: re-persisting over rows the delete failed to remove
+		// would create duplicate idx values with conflicting content.
+		// Keep the existing rows and cursor instead — the pre-compaction
+		// history stays persisted and new messages append past it.
+		fmt.Fprintf(os.Stderr, "warning: rebase persisted messages failed (keeping existing rows): %v\n", err)
+		return
 	}
 	p.msgIdx = 0
 	for _, m := range msgs {

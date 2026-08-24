@@ -376,16 +376,15 @@ func (h *HTTPServer) handlePost(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(os.Stderr, "[yaah-mcp] POST /mcp: auto-registered stale session %s (server restart?)\n", wantSession)
 	}
 	if wantSession == "" && !h.allowUnknownSessions {
-		hasInit := false
+		// Every message in a sessionless batch must be an initialize:
+		// accepting a batch when ANY element is initialize and then
+		// dispatching the rest after the session is created would let a
+		// caller smuggle tools/call past the no-session rule.
 		for _, msg := range messages {
-			if isInitialize(msg) {
-				hasInit = true
-				break
+			if !isInitialize(msg) {
+				http.Error(w, "missing Mcp-Session-Id (initialize must not be batched with other requests)", http.StatusNotFound)
+				return
 			}
-		}
-		if !hasInit {
-			http.Error(w, "missing Mcp-Session-Id", http.StatusNotFound)
-			return
 		}
 	}
 

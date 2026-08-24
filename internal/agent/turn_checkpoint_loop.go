@@ -119,11 +119,23 @@ func (l *Loop) restoreLastTurnCheckpoint(ctx context.Context, messages *[]types.
 		}
 	}
 
+	// Snapshot the restored length BEFORE appending guidance. The stale
+	// row at that index belongs to the failed turn (or a prior retry's
+	// guidance) and must be deleted; truncating from the post-append
+	// length would leave it in place while skipping the new guidance.
+	restoredLen := len(*messages)
+	if l.Persister != nil {
+		l.Persister.TruncateFrom(restoredLen)
+	}
+
 	*messages = append(*messages, types.UserMsg(guidance))
 	l.State.Messages = *messages
-	// Delete the rolled-back rows before resetting the cursor, so a
-	// resumed session cannot resurrect the failed turn's messages
-	// (review finding B7).
-	l.Persister.TruncateFrom(len(*messages))
+
+	// The loop persists messages as it processes them, but the injected
+	// guidance never flows through that path — persist it explicitly so
+	// the DB row at the guidance index matches the in-memory list.
+	if l.Persister != nil {
+		l.Persister.Persist(types.UserMsg(guidance))
+	}
 	return true
 }

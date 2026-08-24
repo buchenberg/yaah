@@ -65,7 +65,7 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 			return l.Compact(ctx, messages, 0)
 		},
 		ApprovalMode:     l.Config.ApprovalMode,
-		ApprovalClassify: l.classifyDanger,
+		ApprovalClassify: l.classifyGate,
 		ApprovalApprove:  func(name, args string) bool { return l.approveTool(name, abbreviateArgs(args, 120)) },
 		ApprovalEmitDeny: func(name, args, errMsg string) {
 			if l.Hooks == nil {

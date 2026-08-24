@@ -1,8 +1,11 @@
 package agent
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/tools"
 )
 
@@ -75,12 +78,12 @@ func TestApproveTool_NilApproveFn(t *testing.T) {
 func TestClassifyDanger_ShellToolsPlatformIndependent(t *testing.T) {
 	l := &Loop{Registry: tools.NewEmptyRegistry()}
 	for _, name := range []string{"bash", "powershell"} {
-		if !l.classifyDanger(name, "{}") {
-			t.Errorf("classifyDanger(%q) = false on empty registry; shell tools must always gate", name)
+		if got := l.classifyGate(name, "{}"); got != pipeline.GateGlobal {
+			t.Errorf("classifyGate(%q) = %v on empty registry; shell tools must always gate", name, got)
 		}
 	}
 	// Unknown non-shell names stay ungated.
-	if l.classifyDanger("mystery", "{}") {
+	if got := l.classifyGate("mystery", "{}"); got != pipeline.GatePass {
 		t.Error("unknown tool names should not be gated")
 	}
 }
@@ -88,11 +91,17 @@ func TestClassifyDanger_ShellToolsPlatformIndependent(t *testing.T) {
 // TestClassifyDanger_MCPToolsGatedByPolicy pins the MCP approval policy:
 // remote tools cannot implement tools.DangerClassifier, so they are
 // gated by mcp_approval — "ask"/unset gates, "allow" passes, "deny"
-// blocks (review finding S3).
+// blocks (review finding S3). The MCP check runs BEFORE the registry
+// path, so a registered MCP tool (which would otherwise classify as
+// GatePass via the registry early-return) is still gated.
 func TestClassifyDanger_MCPToolsGatedByPolicy(t *testing.T) {
-	newLoop := func(policy string) *Loop {
+	newLoop := func(policy string, registerFake bool) *Loop {
+		reg := tools.NewEmptyRegistry()
+		if registerFake {
+			reg.Register(&fakeRemoteTool{name: "github_create_issue"})
+		}
 		return &Loop{
-			Registry: tools.NewEmptyRegistry(),
+			Registry: reg,
 			Config: LoopConfig{
 				MCPApproval:  policy,
 				MCPToolNames: map[string]bool{"github_create_issue": true},
@@ -100,21 +109,36 @@ func TestClassifyDanger_MCPToolsGatedByPolicy(t *testing.T) {
 		}
 	}
 
-	if !newLoop("").classifyDanger("github_create_issue", "{}") {
-		t.Error("unset mcp_approval should gate MCP tools (default ask)")
-	}
-	if !newLoop("ask").classifyDanger("github_create_issue", "{}") {
-		t.Error("mcp_approval=ask should gate MCP tools")
-	}
-	if newLoop("allow").classifyDanger("github_create_issue", "{}") {
-		t.Error("mcp_approval=allow should pass MCP tools")
-	}
-	if !newLoop("deny").classifyDanger("github_create_issue", "{}") {
-		t.Error("mcp_approval=deny should gate MCP tools")
+	for _, registered := range []bool{false, true} {
+		if got := newLoop("", registered).classifyGate("github_create_issue", "{}"); got != pipeline.GateAsk {
+			t.Errorf("unset mcp_approval should gate MCP tools (default ask, registered=%v); got %v", registered, got)
+		}
+		if got := newLoop("ask", registered).classifyGate("github_create_issue", "{}"); got != pipeline.GateAsk {
+			t.Errorf("mcp_approval=ask should gate MCP tools (registered=%v); got %v", registered, got)
+		}
+		if got := newLoop("allow", registered).classifyGate("github_create_issue", "{}"); got != pipeline.GatePass {
+			t.Errorf("mcp_approval=allow should pass MCP tools (registered=%v); got %v", registered, got)
+		}
+		if got := newLoop("deny", registered).classifyGate("github_create_issue", "{}"); got != pipeline.GateDeny {
+			t.Errorf("mcp_approval=deny should gate MCP tools (registered=%v); got %v", registered, got)
+		}
 	}
 	// A name that is neither registered nor MCP-known stays ungated even
 	// under deny — the policy applies to identified MCP tools only.
-	if newLoop("deny").classifyDanger("unknown_tool", "{}") {
+	if got := newLoop("deny", false).classifyGate("unknown_tool", "{}"); got != pipeline.GatePass {
 		t.Error("deny policy must not gate unknown non-MCP names")
 	}
 }
+
+// fakeRemoteTool mimics an MCP-served tool as registered by initMCP: it
+// satisfies tools.Tool but deliberately does NOT implement
+// tools.DangerClassifier — the exact shape that made the registry path
+// fail open before the MCP check was moved first.
+type fakeRemoteTool struct {
+	name string
+}
+
+func (f *fakeRemoteTool) Name() string                                             { return f.name }
+func (f *fakeRemoteTool) Description() string                                      { return "fake remote tool" }
+func (f *fakeRemoteTool) Schema() json.RawMessage                                  { return json.RawMessage(`{}`) }
+func (f *fakeRemoteTool) Execute(ctx context.Context, args string) (string, error) { return "", nil }

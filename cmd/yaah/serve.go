@@ -57,15 +57,16 @@ var httpAddr string
 // random token at startup and prints it once.
 var serveToken string
 
-// serveAllowUnknownSessions keeps the historical restart-transparency
-// behavior (stale session IDs are re-registered). Strict validation is
-// one flag away; the bearer token is the real gate.
+// serveAllowUnknownSessions opts into restart-transparency: stale
+// session IDs are re-registered instead of rejected. Strict validation
+// is the default; the bearer token plus a fresh initialize handshake
+// cover the restart case for spec-compliant clients.
 var serveAllowUnknownSessions bool
 
 func init() {
 	serveCmd.Flags().StringVar(&httpAddr, "http", "", "expose MCP over Streamable HTTP at this address (e.g. 127.0.0.1:7333); empty keeps stdio transport")
 	serveCmd.Flags().StringVar(&serveToken, "token", "", "bearer token required by --http endpoints (randomly generated when empty)")
-	serveCmd.Flags().BoolVar(&serveAllowUnknownSessions, "allow-unknown-sessions", true, "--http: accept stale/unknown Mcp-Session-Id values (server restart transparency)")
+	serveCmd.Flags().BoolVar(&serveAllowUnknownSessions, "allow-unknown-sessions", false, "--http: accept stale/unknown Mcp-Session-Id values (server restart transparency); rejected by default")
 }
 
 func runServe(cmd *cobra.Command, args []string) error {

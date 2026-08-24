@@ -137,20 +137,27 @@ func (pv *PathValidator) ResolvePath(input string) (string, error) {
 	// ── 5. Deny patterns ──
 	// Every pattern is tried against the basename and, when the path is
 	// inside the workspace, against its workspace-relative path so both
-	// "*.pem" and "config/*.secret" styles work.
+	// "*.pem" and "config/*.secret" styles work. A malformed pattern
+	// fails CLOSED (deny): discarding the error would silently disable
+	// the protection the operator configured.
 	base := filepath.Base(realPath)
 	for _, pattern := range pv.DenyPatterns {
-		baseMatched, _ := filepath.Match(pattern, base)
+		baseMatched, baseErr := filepath.Match(pattern, base)
 		relMatched := false
 		if relInWorkspace != "" {
 			relMatched, _ = filepath.Match(pattern, relInWorkspace)
 		}
-		if baseMatched || relMatched {
-			if pv.ask("deny:"+realPath, fmt.Sprintf("matches deny pattern %q", pattern)) {
-				continue
-			}
-			return "", fmt.Errorf("access to %q is forbidden (deny pattern %q)", base, pattern)
+		if baseErr == nil && !baseMatched && !relMatched {
+			continue
 		}
+		reason := fmt.Sprintf("matches deny pattern %q", pattern)
+		if baseErr != nil {
+			reason = fmt.Sprintf("deny pattern %q is invalid (%v)", pattern, baseErr)
+		}
+		if pv.ask("deny:"+realPath, reason) {
+			continue
+		}
+		return "", fmt.Errorf("access to %q is forbidden (deny pattern %q)", base, pattern)
 	}
 
 	return realPath, nil
@@ -160,7 +167,10 @@ func (pv *PathValidator) ResolvePath(input string) (string, error) {
 // via EvalSymlinks and re-appends the unresolved tail, so paths whose
 // leaf does not exist yet still get their ancestor symlinks resolved.
 // Returns an error when nothing along the path resolves — callers must
-// reject such paths rather than use them unresolved.
+// reject such paths rather than use them unresolved. A tail component
+// that exists as a symlink EvalSymlinks cannot resolve is dangling: it
+// is rejected rather than re-appended, because a later write would
+// follow it outside the workspace.
 func resolveExistingAncestor(abs string) (string, error) {
 	cur := abs
 	var tail []string
@@ -171,6 +181,13 @@ func resolveExistingAncestor(abs string) (string, error) {
 				out = filepath.Join(out, tail[j])
 			}
 			return out, nil
+		}
+		// EvalSymlinks failed on cur. If cur itself exists, it is a
+		// symlink whose target does not resolve — dangling. Re-appending
+		// it would pass containment on the link path while the write
+		// lands at the (missing, outside) target.
+		if fi, err := os.Lstat(cur); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("dangling symlink %q (target does not resolve)", cur)
 		}
 		parent := filepath.Dir(cur)
 		if parent == cur {
