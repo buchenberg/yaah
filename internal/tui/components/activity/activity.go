@@ -79,13 +79,13 @@ func NewRow(th *colors.Theme) *Row {
 		SetDynamicColors(true).
 		SetWrap(false).
 		SetWordWrap(false)
-	lbl.SetBackgroundColor(tcell.ColorDefault)
+	lbl.SetBackgroundColor(tcell.ColorBlack)
 
 	flex := tview.NewFlex().
 		AddItem(sp, spinnerW, 0, false).
 		AddItem(gauge, 0, 0, false).
 		AddItem(lbl, 0, 1, false)
-	flex.SetBackgroundColor(tcell.ColorDefault)
+	flex.SetBackgroundColor(tcell.ColorBlack)
 
 	r := &Row{
 		Flex:    flex,

@@ -36,9 +36,9 @@ func (t *App) buildUI() {
 		return action, event
 	})
 
-	// Prompt line: single borderless row (glyph + TextArea).
+	// Prompt input: bordered TextArea with pink border (same as original).
 	prompt := input.BuildPrompt(t.Theme)
-	t.Input = prompt.Area
+	t.Input = prompt.TextArea
 
 	// Activity line: spinner/gauge + state label, always reserved.
 	t.activityLine = activity.NewRow(t.Theme)
@@ -49,7 +49,7 @@ func (t *App) buildUI() {
 		SetDynamicColors(true).
 		SetWrap(false).
 		SetWordWrap(false)
-	t.promptEcho.SetBackgroundColor(tcell.ColorDefault)
+	t.promptEcho.SetBackgroundColor(tcell.ColorBlack)
 
 	t.InfoPane = infopane.Build(t.Theme.InfoPaneBorder)
 	t.TodoPane = localTodo.Build(nil, t.Theme.TasksPaneBorder)
@@ -99,7 +99,7 @@ func (t *App) buildUI() {
 	t.Root.AddItem(t.Header, headerRows, 0, false)
 	t.Root.AddItem(body, 0, 1, true)
 	t.Root.AddItem(t.activityLine, 1, 0, false)
-	t.Root.AddItem(prompt, 1, 0, true)
+	t.Root.AddItem(prompt, 3, 0, true)
 
 	t.Pages = tview.NewPages()
 	t.Pages.AddPage("main", t.Root, true, true)
