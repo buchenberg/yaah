@@ -13,7 +13,7 @@ func (t *App) AddUserMessage(text string) {
 	if idx := strings.IndexByte(text, '\n'); idx >= 0 {
 		echo = text[:idx] + "…"
 	}
-	t.promptEcho.SetText(t.Theme.Tag(t.Theme.User, "❯ ") + echo)
+	t.promptEcho.SetText(t.Theme.Tag(t.Theme.User, "🍖: " + echo))
 	t.App.SetFocus(t.Input)
 }
 
