@@ -1,12 +1,12 @@
 ---
 name: subagent-turn-budget-floors
 description: Add per-role minimum turn/iteration floors so an orchestrator's per-call override cannot starve a sub-agent of its tool budget
-status: draft
+status: approved
 ---
 
 # Sub-agent turn budget floors (`min_turns` / `min_iterations`)
 
-**Status:** draft
+**Status:** approved
 **Owner:** TBD
 **Related:** `internal/agent/runner/runner.go`, `internal/agent/budget` (new), `internal/rolefile`, `internal/config`
 
@@ -470,17 +470,15 @@ rebuild, restart on `127.0.0.1:7333`, confirm `pid` changed via
 | Adding fields to `Frontmatter` and forgetting a hop silently drops them | Explicit round-trip test in Phase 3; the three hops are enumerated in §4.5. |
 | Orchestrator keeps setting low `max_turns` out of habit | Floors make it harmless; §4.8 wording removes the incentive. |
 
-## 10. Open questions
+## 10. Decisions
 
-1. Should `min_turns` in `config.yaml` be allowed to *exceed* a role
-   file's `max_turns`? Proposed: yes — operator config outranks role
-   authorship, consistent with the existing comment that
-   "config-level overrides are authoritative and bypass the ceiling".
-2. Should there be a global `min_iterations` default alongside
-   `default_min_turns`? Proposed: defer until asked; `min_turns` is the
-   binding dimension.
-3. Should exceeding a floor emit a warning to the orchestrator's
-   transcript (visible feedback that its override was overruled), or
-   stay trace-only? Proposed: trace-only first, revisit if the model
-   keeps fighting the floor.
+1. `min_turns` in `config.yaml` **may exceed** a role file's `max_turns`.
+   Operator config outranks role authorship (consistent with the existing
+   "config-level overrides are authoritative and bypass the ceiling"
+   behaviour).
+2. **Defer** a global `min_iterations` default until asked; `min_turns` is
+   the binding dimension.
+3. Exceeding a floor is **trace-only first**. Revisit adding an
+   orchestrator-transcript warning only if the model keeps fighting the
+   floor in practice.
 

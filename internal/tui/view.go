@@ -36,19 +36,24 @@ func (t *App) buildUI() {
 		return action, event
 	})
 
-	// Prompt input: bordered TextArea with pink border (same as original).
+	// Prompt input: bordered TextArea with pink border. Grows up to
+	// promptMaxContentLines content rows as the user types, then the
+	// TextArea scrolls internally.
 	prompt := input.BuildPrompt(t.Theme)
 	t.Input = prompt.TextArea
+	t.prompt = prompt
+	prompt.TextArea.SetChangedFunc(t.growPromptInput)
 
 	// Activity line: spinner/gauge + state label, always reserved.
 	t.activityLine = activity.NewRow(t.Theme)
 
 	// Sticky prompt echo: shows the current user prompt at the top of
-	// the messages pane so it never scrolls away.
+	// the messages pane so it never scrolls away. Wraps up to
+	// promptEchoMaxLines rows; longer prompts truncate with "…".
 	t.promptEcho = tview.NewTextView().
 		SetDynamicColors(true).
-		SetWrap(false).
-		SetWordWrap(false)
+		SetWrap(true).
+		SetWordWrap(true)
 	t.promptEcho.SetBackgroundColor(tcell.ColorBlack)
 
 	t.InfoPane = infopane.Build(t.Theme.InfoPaneBorder)
@@ -79,6 +84,7 @@ func (t *App) buildUI() {
 		SetDirection(tview.FlexRow).
 		AddItem(t.promptEcho, 1, 0, false).
 		AddItem(t.Messages, 0, 1, false)
+	t.messagesCol = messagesCol
 
 	rightPane := tview.NewFlex().
 		SetDirection(tview.FlexRow)

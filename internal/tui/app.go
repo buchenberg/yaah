@@ -9,6 +9,7 @@ import (
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tui/colors"
 	"github.com/buchenberg/yaah/internal/tui/components/activity"
+	"github.com/buchenberg/yaah/internal/tui/components/input"
 	"github.com/buchenberg/yaah/internal/tui/components/mcpinfo"
 	"github.com/buchenberg/yaah/internal/tui/components/reasoning"
 	"github.com/buchenberg/yaah/internal/tui/components/subagent"
@@ -33,6 +34,8 @@ type App struct {
 	Messages           *tview.TextView
 	Input              *tview.TextArea
 	promptEcho         *tview.TextView
+	prompt             *input.Prompt
+	messagesCol        *tview.Flex
 	InfoPane           *tview.TextView
 	TodoPane           *tview.TextView
 	BackgroundJobsPane *tview.TextView

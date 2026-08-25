@@ -98,3 +98,28 @@ func TestEnqueueUIEventDirect_AbandonsAtShutdown(t *testing.T) {
 		t.Fatalf("fallback work executed after shutdown")
 	}
 }
+
+// TestAddUserMessage_EchoWrapsAndTruncates pins the prompt echo
+// behavior: short prompts fit on one row, long prompts truncate with
+// an ellipsis instead of growing past promptEchoMaxLines.
+func TestAddUserMessage_EchoWrapsAndTruncates(t *testing.T) {
+	ui := New("test")
+
+	ui.AddUserMessage("short prompt")
+	short := ui.promptEcho.GetText(true)
+	if !strings.Contains(short, "short prompt") {
+		t.Fatalf("echo missing text: %q", short)
+	}
+	if strings.Contains(short, "…") {
+		t.Errorf("short prompt should not truncate: %q", short)
+	}
+
+	ui.AddUserMessage(strings.Repeat("x", 500))
+	long := ui.promptEcho.GetText(true)
+	if !strings.HasSuffix(long, "…") {
+		t.Errorf("long prompt should end with ellipsis: %q", long)
+	}
+	if got := len([]rune(strings.TrimSuffix(long, "…"))); got > 500 {
+		t.Errorf("truncated echo unexpectedly long: %d runes", got)
+	}
+}
