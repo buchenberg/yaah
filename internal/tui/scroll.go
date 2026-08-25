@@ -81,8 +81,7 @@ func (t *App) canAppend(w, n int) bool {
 	return !t.needsFullRender.Load() &&
 		t.renderedWidth == w &&
 		n > t.renderedItems &&
-		t.renderedItems > 0 &&
-		!t.thinkingInd.Visible()
+		t.renderedItems > 0
 }
 
 // refreshMessages updates the conversation text view. When only new items
@@ -103,7 +102,7 @@ func (t *App) refreshMessages() {
 
 	if t.canAppend(w, n) {
 		formatStart := time.Now()
-		chunk := messages.Format(t.buildItems(t.renderedItems, n, w), "", messages.Content{
+		chunk := messages.Format(t.buildItems(t.renderedItems, n, w), messages.Content{
 			Width: w,
 			Theme: t.Theme,
 		})
@@ -119,13 +118,8 @@ func (t *App) refreshMessages() {
 	} else {
 		items := t.buildItems(0, n, w)
 
-		thinkingText := ""
-		if t.thinkingInd.Visible() {
-			thinkingText = "\n  " + t.thinkingInd.Render()
-		}
-
 		formatStart := time.Now()
-		msg := messages.Format(items, thinkingText, messages.Content{
+		msg := messages.Format(items, messages.Content{
 			Width: w,
 			Theme: t.Theme,
 		})

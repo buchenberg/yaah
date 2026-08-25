@@ -5,7 +5,7 @@ go 1.25.8
 require (
 	github.com/buchenberg/shepherd-kernel-go v0.3.2
 	github.com/buchenberg/tviewmd v0.2.0
-	github.com/gdamore/tcell/v2 v2.8.1
+	github.com/gdamore/tcell/v2 v2.13.10
 	github.com/lsferreira42/figlet-go v0.0.2-beta
 	github.com/rivo/tview v0.42.0
 	github.com/spf13/cobra v1.10.2
@@ -37,6 +37,7 @@ require (
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
+	github.com/navidys/tvxwidgets v0.14.0 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect

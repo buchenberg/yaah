@@ -8,10 +8,10 @@ import (
 	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tui/colors"
+	"github.com/buchenberg/yaah/internal/tui/components/activity"
 	"github.com/buchenberg/yaah/internal/tui/components/mcpinfo"
 	"github.com/buchenberg/yaah/internal/tui/components/reasoning"
 	"github.com/buchenberg/yaah/internal/tui/components/subagent"
-	"github.com/buchenberg/yaah/internal/tui/components/thinking"
 	"github.com/buchenberg/yaah/internal/tui/components/toolblock"
 	"github.com/rivo/tview"
 )
@@ -32,6 +32,7 @@ type App struct {
 	Banner             *tview.TextView
 	Messages           *tview.TextView
 	Input              *tview.TextArea
+	promptEcho         *tview.TextView
 	InfoPane           *tview.TextView
 	TodoPane           *tview.TextView
 	BackgroundJobsPane *tview.TextView
@@ -43,7 +44,7 @@ type App struct {
 	// --- QueueUpdateDraw ONLY fields below ---
 
 	conversationLog []convItem
-	thinkingInd     *thinking.Indicator
+	activityLine    *activity.Row
 	focus           focusState
 
 	// Usage tracking
@@ -82,14 +83,12 @@ type App struct {
 	pendingContextTokens int
 	pendingContextWindow int
 
-	pendingThink  string
 	pendingTool   string
 	compacting    bool
 	contextTokens int
 	contextWindow int
 	lastProvider  string
 	lastModel     string
-	thinkingLabel string
 	todoItems     []todo.Item
 	verbose       bool
 	showBanner    bool
@@ -105,6 +104,8 @@ type App struct {
 	embeddingModel       string
 	middlewarePipeline   []string
 	agentActive          bool
+	activeSubAgents      int
+	activityBusy         atomic.Bool
 	tokensRx             atomic.Int64
 	charsWritten         atomic.Int64
 	charsRendered        atomic.Int64
@@ -120,9 +121,8 @@ type App struct {
 
 	// needsFullRender forces refreshMessages to rebuild the entire
 	// conversation text instead of appending only new items. Set when an
-	// existing item mutates (block transitions, toggles), on clear, or when
-	// the thinking indicator enters/leaves the rendered buffer. Atomic
-	// because it is also written from the event-forwarder goroutine.
+	// existing item mutates (block transitions, toggles) or on clear.
+	// Atomic because it is also written from the event-forwarder goroutine.
 	needsFullRender atomic.Bool
 
 	fallbackSem chan struct{}
@@ -156,7 +156,6 @@ func New(version string) *App {
 	t := &App{
 		App:         tview.NewApplication(),
 		Theme:       &th,
-		thinkingInd: thinking.New("Thinking..."),
 		version:     version,
 		showBanner:  true,
 		fallbackSem: make(chan struct{}, uiMaxDirectFallbacks),

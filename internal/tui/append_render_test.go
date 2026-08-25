@@ -12,7 +12,7 @@ import (
 func TestRefreshMessages_AppendsNewTailOnly(t *testing.T) {
 	ui := New("test")
 
-	ui.AddUserMessage("hello there")
+	ui.appendMessage("hello there")
 	ui.refreshMessages()
 	if ui.renderedItems != 1 {
 		t.Fatalf("expected renderedItems=1 after first render, got %d", ui.renderedItems)
@@ -45,7 +45,7 @@ func TestRefreshMessages_AppendsNewTailOnly(t *testing.T) {
 func TestAddToolEnd_ForcesFullRender(t *testing.T) {
 	ui := New("test")
 
-	ui.AddUserMessage("run something")
+	ui.appendMessage("run something")
 	ui.refreshMessages()
 
 	ui.AddToolStart("42", "bash", "ls")

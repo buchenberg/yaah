@@ -2,6 +2,7 @@ package tui
 
 import (
 	"github.com/buchenberg/yaah/internal/tui/components/approval"
+	"github.com/buchenberg/yaah/internal/tui/components/errdialog"
 	"github.com/buchenberg/yaah/internal/tui/components/help"
 	"github.com/buchenberg/yaah/internal/tui/components/modelpicker"
 	"github.com/buchenberg/yaah/internal/tui/components/question"
@@ -37,5 +38,17 @@ func (t *App) ShowHelp() {
 	help.Show(t.App, t.Pages, bindings, func() {
 		t.App.SetFocus(t.Input)
 		t.focus = focusNormal
+	})
+}
+
+// showErrorDialog displays an error dialog using tvxwidgets.MessageDialog.
+// The conversation log line (if any) should be appended separately — the
+// dialog is the user-visible notification, the log line is the durable
+// record.
+func (t *App) showErrorDialog(title, msg string) {
+	t.focus = focusModal
+	errdialog.Show(t.App, t.Pages, title, msg, func() {
+		t.focus = focusNormal
+		t.App.SetFocus(t.Input)
 	})
 }

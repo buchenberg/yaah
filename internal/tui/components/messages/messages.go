@@ -38,10 +38,10 @@ func Build() *tview.TextView {
 	return tv
 }
 
-// Format renders a list of conversation items with optional thinking
-// indicator text. Callers include the thinking spinner by passing a
-// non-empty thinkingText.
-func Format(items []Item, thinkingText string, ctx Content) string {
+// Format renders a list of conversation items into the messages pane
+// buffer. The thinking indicator is no longer embedded here — it lives
+// in the dedicated activity line widget.
+func Format(items []Item, ctx Content) string {
 	var b strings.Builder
 	rctx := colors.RenderCtx{Width: ctx.Width, Theme: ctx.Theme}
 
@@ -63,12 +63,6 @@ func Format(items []Item, thinkingText string, ctx Content) string {
 			b.WriteString(item.ReasBlock.RenderCtx(rctx))
 			b.WriteString("\n\n")
 		}
-	}
-
-	if thinkingText != "" {
-		b.WriteString("\n")
-		b.WriteString(thinkingText)
-		b.WriteString("\n")
 	}
 
 	return b.String()
