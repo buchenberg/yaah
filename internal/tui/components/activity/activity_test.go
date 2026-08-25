@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/tui/colors"
+	"github.com/buchenberg/yaah/internal/tui/lolcat"
 )
 
 func newTestRow() *Row {
@@ -170,8 +171,9 @@ func TestRow_LabelTextThinking(t *testing.T) {
 	r := newTestRow()
 	r.SetState(Thinking, "")
 	r.renderLabel()
-	if !strings.Contains(r.lastLabel, "Thinking") {
-		t.Errorf("label = %q; want Thinking", r.lastLabel)
+	plain := lolcat.StripTags(r.lastLabel)
+	if !strings.Contains(plain, "Thinking") {
+		t.Errorf("label = %q; want Thinking", plain)
 	}
 }
 
@@ -179,8 +181,9 @@ func TestRow_LabelTextTool(t *testing.T) {
 	r := newTestRow()
 	r.SetState(Tool, "bash")
 	r.renderLabel()
-	if !strings.Contains(r.lastLabel, "Running bash") {
-		t.Errorf("label = %q; want Running bash", r.lastLabel)
+	plain := lolcat.StripTags(r.lastLabel)
+	if !strings.Contains(plain, "Running bash") {
+		t.Errorf("label = %q; want Running bash", plain)
 	}
 }
 
@@ -188,8 +191,9 @@ func TestRow_LabelTextCompacting(t *testing.T) {
 	r := newTestRow()
 	r.SetState(Compacting, "12.3K→4.0K")
 	r.renderLabel()
-	if !strings.Contains(r.lastLabel, "Compacting 12.3K→4.0K") {
-		t.Errorf("label = %q; want Compacting detail", r.lastLabel)
+	plain := lolcat.StripTags(r.lastLabel)
+	if !strings.Contains(plain, "Compacting 12.3K→4.0K") {
+		t.Errorf("label = %q; want Compacting detail", plain)
 	}
 }
 

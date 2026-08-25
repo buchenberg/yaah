@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/tui/colors"
+	"github.com/buchenberg/yaah/internal/tui/lolcat"
 	"github.com/gdamore/tcell/v2"
 	"github.com/navidys/tvxwidgets"
 	"github.com/rivo/tview"
@@ -61,6 +62,7 @@ type Row struct {
 	prevDetail string
 	enteredAt  time.Time
 	lastLabel  string
+	seed       float64
 	th         *colors.Theme
 }
 
@@ -168,9 +170,10 @@ func (r *Row) Pulse() bool {
 	if r.state == Idle {
 		return false
 	}
+	r.seed++
 	if r.state == Compacting {
 		r.gauge.Pulse()
-		r.applyChrome() // recompute gauge width if layout changed
+		r.applyChrome()
 	} else {
 		r.spinner.Pulse()
 	}
@@ -239,8 +242,8 @@ func (r *Row) renderLabel() {
 func (r *Row) formatBusyLabel() string {
 	var b strings.Builder
 
-	// State label
-	b.WriteString(r.th.Tag(r.th.Heading, r.stateLabel()))
+	// State label with lolcat rainbow
+	b.WriteString(lolcat.Rainbow(r.stateLabel(), r.seed))
 
 	// Elapsed
 	elapsed := time.Since(r.enteredAt).Truncate(time.Second)
