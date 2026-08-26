@@ -7,6 +7,7 @@ package tui
 
 import (
 	"github.com/buchenberg/yaah/internal/tui/components/activity"
+	"github.com/rivo/tview"
 )
 
 // setActivity transitions the activity line to a new state and updates
@@ -40,4 +41,11 @@ func (t *App) HideThinking() {
 // ActivityState returns the current activity state (test hook).
 func (t *App) ActivityState() activity.State {
 	return t.activityLine.State()
+}
+
+// SetCurrentPrompt shows the user's prompt in the prompt echo area.
+func (t *App) SetCurrentPrompt(text string) {
+	t.promptEcho.SetText(t.Theme.Tag(t.Theme.User, text))
+	t.resizePromptEcho(len(tview.WordWrap(text, t.echoWidth())))
+	t.App.SetFocus(t.Input)
 }

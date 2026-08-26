@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -195,6 +196,17 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 // stream was truncated or blocked.
 func checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, finishReason string, responseModel string, reasoningContent string, usage types.Usage, dsmlSeq *int) (types.Message, string, string, types.Usage, error) {
 	msg := assembleStreamed(content, toolCallMap, reasoningContent)
+
+	// Filter out tool calls with invalid JSON arguments. Anthropic will
+	// reject requests containing tool calls with invalid JSON in their
+	// arguments field.
+	var validToolCalls []types.ToolCall
+	for _, tc := range msg.ToolCalls {
+		if json.Valid([]byte(tc.Function.Arguments)) {
+			validToolCalls = append(validToolCalls, tc)
+		}
+	}
+	msg.ToolCalls = validToolCalls
 
 	if msg.Content != "" {
 		if cleaned, dsmlCalls, ok := parseDSMLToolCalls(msg.Content, dsmlSeq); ok {
