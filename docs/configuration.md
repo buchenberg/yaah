@@ -223,9 +223,11 @@ and `max_retries` consistent across the whole team.
 | `provider` | — | Fallback provider name |
 | `model` | — | Fallback model name |
 
-**`agents.middleware`** — control the pipeline. Set `enabled` for an
-explicit order. Set `disabled` to remove from the default pipeline
-(`steer → followup → compaction → soft_prune → approval → inline_limit → tool_concurrency → loop_detection → staleness → conflict_detect`).
+**`agents.middleware`** — control the pipeline. `enabled` is
+**additive**: listed middleware are added to the default pipeline
+(duplicates are collapsed). `disabled` removes middleware from the
+union. The default pipeline is
+`steer → followup → compaction → soft_prune → approval → inline_limit → tool_concurrency → loop_detection → conflict_detect`.
 
 | Middleware | Default | Purpose |
 |---|---|---|
@@ -236,12 +238,10 @@ explicit order. Set `disabled` to remove from the default pipeline
 | `approval` | on | Gate dangerous tools |
 | `inline_limit` | on | Cap tool calls dispatched per turn (0 = unlimited) |
 | `loop_detection` | on | Halt stuck loops |
-| `staleness` | on | Annotate sub-agent results when context shifted |
 | `conflict_detect` | on | Flag files touched by multiple sub-agents |
-| `permission` | off | Path-pattern allow/deny rules |
+| `permission` | off | Path-pattern allow/deny rules (auto-added when parent rules exist for sub-agents) |
 | `tool_concurrency` | on | Cap concurrent tool goroutines |
-| `sub_agent` | off | Enforce sub-agent depth limits |
-| `prompt_caching` | off | Anthropic cache-control breakpoints |
+| `prompt_caching` | off | Anthropic cache-control breakpoints — include via `agents.default.prompt_caching: true`; naming it in `enabled` also works |
 
 ## Observability reference
 

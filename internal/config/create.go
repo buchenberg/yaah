@@ -67,13 +67,9 @@ agents:
   #   model: meta-llama/llama-4-maverick
 
   # middleware:
-  #   enabled:
-  #     - steer
-  #     - followup
-  #     - compaction
-  #     - approval
-  #     - loop_detection
-  #   # disabled:
+  #   enabled:                    # additive over the built-in defaults
+  #     - shepherd_trace
+  #   # disabled:                 # remove middleware from the pipeline
   #   #   - approval
 
 # observability:

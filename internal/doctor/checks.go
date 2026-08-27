@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/config"
 )
 
@@ -253,27 +254,17 @@ func CheckDirectives(cfg *config.Config, cfgErr error, overrides []string) Check
 	return Check{Label: "Directives", Status: "OK", Detail: detail}
 }
 
-// CheckPipeline reports the active middleware pipeline.
+// CheckPipeline reports the active middleware pipeline. The default
+// set is read from the pipeline package instead of maintaining a local
+// copy that drifted out of sync (review B10e). middleware.enabled is
+// additive over the defaults; disabled removes from the union.
 func CheckPipeline(cfg *config.Config, cfgErr error) Check {
 	if cfgErr != nil {
 		return Check{Label: "Pipeline", Status: "WARN", Detail: "config not loaded"}
 	}
 	mc := cfg.Agent.Middleware
-	if len(mc.Enabled) > 0 {
-		return Check{Label: "Pipeline", Status: "OK", Detail: fmt.Sprintf("explicit: %s", strings.Join(mc.Enabled, " → "))}
-	}
-	defaults := []string{"steer", "followup", "compaction", "soft_prune", "approval", "tool_concurrency", "loop_detection", "staleness"}
-	active := make([]string, 0, len(defaults))
-	disabled := make(map[string]bool, len(mc.Disabled))
-	for _, d := range mc.Disabled {
-		disabled[d] = true
-	}
-	for _, name := range defaults {
-		if !disabled[name] {
-			active = append(active, name)
-		}
-	}
-	detail := fmt.Sprintf("%d middleware active", len(active))
+	active := pipeline.ResolvedPipelineNames(mc.Enabled, mc.Disabled)
+	detail := fmt.Sprintf("%d middleware active: %s", len(active), strings.Join(active, " → "))
 	if len(mc.Disabled) > 0 {
 		detail += fmt.Sprintf(" (disabled: %s)", strings.Join(mc.Disabled, ", "))
 	}

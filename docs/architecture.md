@@ -205,19 +205,18 @@ The pipeline is built in `buildPipeline()` with a config-driven order:
 6. `InlineLimitMiddleware` - caps calls dispatched per turn in `PostModel`, synthesizing drop results for calls beyond `MaxInlineToolsPerTurn`
 7. `ToolConcurrencyMiddleware` - shares the Loop-owned semaphore (`PipelineConfig.ToolConc`); one live instance per loop
 8. `LoopDetectionMiddleware` - detect stuck loops
-9. `StalenessMiddleware` - annotates sub-agent results when orchestrator context shifted mid-flight
-10. `ConflictDetectMiddleware` - `PostTool` conflict reports driven by the injected tracker via `DetectAndReset()`
+9. `ConflictDetectMiddleware` - `PostTool` conflict reports driven by the injected tracker via `DetectAndReset()`
 
 The default set is defined in `defaultPipelineNames` in `config.go`. Users can override which middleware runs via `config.yaml`:
 
 ```yaml
 agent:
   middleware:
-    enabled: [steer, followup, compaction, soft_prune, loop_detection]
+    enabled: [shepherd_trace]
     disabled: [approval]
 ```
 
-If `enabled` is set, only those middleware run (in the specified order). If `enabled` is empty, the default set runs minus any names in `disabled`. Middleware not registered in `builtinBuilders` is silently skipped.
+`enabled` is additive: listed middleware are added to the default set (duplicates collapse). `disabled` removes names from the union. Middleware not registered in `builtinBuilders` is silently skipped.
 
 Custom middleware can be injected via `Loop.Middleware`. If set, `buildPipeline()` uses the custom list instead of the config-driven chain.
 
