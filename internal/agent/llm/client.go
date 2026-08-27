@@ -35,12 +35,20 @@ type Client struct {
 // CallResult holds the outcome of a single LLM call. Response metadata
 // (FinishReason, ResponseModel) is kept separate from the message so it
 // never pollutes the conversation history or gets persisted to the DB.
+//
+// Compacted/CompactedMessages carry overflow-recovery compaction (or
+// trimming) performed by the CompactFunc/TrimFunc during Call back to
+// the loop, so it can adopt the compacted conversation at the iteration
+// boundary instead of the compaction mutating loop state from inside
+// Call (review finding B6).
 type CallResult struct {
-	Message       types.Message
-	Streamed      bool
-	Usage         types.Usage
-	FinishReason  string
-	ResponseModel string
+	Message           types.Message
+	Streamed          bool
+	Usage             types.Usage
+	FinishReason      string
+	ResponseModel     string
+	Compacted         bool
+	CompactedMessages []types.Message
 }
 
 // maxStripReasoningAttempts bounds how many times Call strips reasoning
@@ -61,6 +69,17 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 	stripAttempts := 0
 	providerSwapped := false
 	c.replayCount = 0
+
+	// Overflow-recovery compaction/trim replaces req.Messages in place;
+	// the final slice is attached to every CallResult (success or error)
+	// so the loop adopts it at its defined compaction point (B6).
+	var compactedMessages []types.Message
+	compacted := false
+	attach := func(r CallResult) CallResult {
+		r.Compacted = compacted
+		r.CompactedMessages = compactedMessages
+		return r
+	}
 
 	for attempt := 0; attempt <= c.MaxRetries; attempt++ {
 		var result CallResult
@@ -119,7 +138,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		}
 
 		if err == nil {
-			return result, nil
+			return attach(result), nil
 		}
 
 		lastResult = result
@@ -169,6 +188,8 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		case classified.ShouldCompress && isDegenerateStream(err) && c.Trim != nil && compactAttempts < 3:
 			beforeCount := len(req.Messages)
 			req.Messages = c.Trim(ctx, req.Messages)
+			compacted = true
+			compactedMessages = req.Messages
 			compactAttempts++
 			if len(req.Messages) < beforeCount {
 				attempt--
@@ -178,6 +199,8 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		case classified.ShouldCompress && c.Compact != nil && compactAttempts < 3:
 			beforeCount := len(req.Messages)
 			req.Messages = c.Compact(ctx, req.Messages, 0.4)
+			compacted = true
+			compactedMessages = req.Messages
 			compactAttempts++
 			if len(req.Messages) < beforeCount {
 				attempt--
@@ -199,7 +222,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 			continue
 
 		case classified.ShouldAbort:
-			return CallResult{Usage: result.Usage}, err
+			return attach(CallResult{Usage: result.Usage}), err
 		}
 
 		if classified.Retryable && attempt < c.MaxRetries {
@@ -211,13 +234,13 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 			select {
 			case <-time.After(backoff):
 			case <-ctx.Done():
-				return CallResult{Usage: result.Usage}, ctx.Err()
+				return attach(CallResult{Usage: result.Usage}), ctx.Err()
 			}
 		} else if !classified.Retryable {
-			return CallResult{Usage: result.Usage}, err
+			return attach(CallResult{Usage: result.Usage}), err
 		}
 	}
-	return lastResult, lastErr
+	return attach(lastResult), lastErr
 }
 
 // isDegenerateStream returns true if the error is from a model that produced

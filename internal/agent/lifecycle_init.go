@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent/events"
@@ -118,12 +117,10 @@ func (l *Loop) applyDefaults() {
 	l.CtxMgr.EnsurePruner()
 
 	// Wire compaction functions so ContextManager can satisfy the
-	// pipeline.Compactor interface and handle chunked fallback.
-	l.CtxMgr.compactFn = func(ctx context.Context, msgs []types.Message, thresh float64) []types.Message {
-		l.State.Messages = msgs
-		l.compactContext(ctx, thresh)
-		return l.State.Messages
-	}
+	// pipeline.Compactor interface and handle chunked fallback. Both
+	// paths run against an isolated state view and return the compacted
+	// slice — the loop's message state has a single writer (B6).
+	l.CtxMgr.compactFn = l.compactMessagesIsolated
 
 	if l.State.CompactionBudgetMultiplier <= 0 {
 		l.State.CompactionBudgetMultiplier = 1.0
