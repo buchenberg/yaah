@@ -37,7 +37,7 @@ func TestPipeline_SubAgentPipelineNames(t *testing.T) {
 
 func TestPipeline_SubAgentExcludesOrchestrator(t *testing.T) {
 	names := SubAgentPipelineNames(nil)
-	excluded := []string{"steer", "followup", "approval", "compaction", "loop_detection", "staleness", "soft_prune"}
+	excluded := []string{"steer", "followup", "approval", "compaction", "loop_detection", "soft_prune"}
 	for _, name := range excluded {
 		if slices.Contains(names, name) {
 			t.Errorf("sub-agent pipeline should not contain orchestrator middleware %q", name)
@@ -263,7 +263,7 @@ func TestNewFromConfig_NoShepherdTrace(t *testing.T) {
 		t.Error("orchestrator pipeline must not contain shepherd_trace")
 	}
 	// The rest of the default pipeline is intact.
-	for _, name := range []string{"steer", "followup", "compaction", "approval", "inline_limit", "tool_concurrency", "loop_detection", "staleness", "conflict_detect"} {
+	for _, name := range []string{"steer", "followup", "compaction", "approval", "inline_limit", "tool_concurrency", "loop_detection", "conflict_detect"} {
 		if pipe.Find(name) == nil {
 			t.Errorf("default pipeline lost middleware %q", name)
 		}

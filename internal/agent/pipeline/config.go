@@ -158,7 +158,6 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 	"soft_prune": func(cfg PipelineConfig) Middleware {
 		return &SoftPruneMiddleware{pruner: cfg.Pruner, emit: cfg.PruneHooks.Emit, otel: cfg.PruneHooks.Otel}
 	},
-	"staleness": func(cfg PipelineConfig) Middleware { return &StalenessMiddleware{} },
 	"conflict_detect": func(cfg PipelineConfig) Middleware {
 		return NewConflictDetectMiddleware(cfg.ConflictTracker, cfg.ConflictOnCheck, cfg.ConflictOnFound, cfg.ConflictPersist)
 	},
@@ -208,7 +207,6 @@ var defaultPipelineNames = []string{
 	"inline_limit",
 	"tool_concurrency",
 	"loop_detection",
-	"staleness",
 	"conflict_detect",
 }
 
@@ -221,7 +219,6 @@ var defaultPipelineNames = []string{
 // - approval: sub-agents auto-approve (the orchestrator gates dispatch)
 // - compaction: sub-agents use CtxMgr pruning internally, not pipeline compaction
 // - loop_detection: redundant with MaxLoopCycles/MaxToolTurns/WrapUpThreshold/ErrStuckChild
-// - staleness: orchestrator-specific (tracks steer/followup context shifts)
 // - soft_prune: CtxMgr.EnsurePruner() already handles context for short-lived loops
 //
 // Included (conditionally, by NewSubAgentPipeline):
