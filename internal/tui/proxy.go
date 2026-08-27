@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/tui/components/activity"
 )
 
 func (t *App) HandleEvent(event agent.Event) {
@@ -17,12 +18,12 @@ func (t *App) HandleEvent(event agent.Event) {
 		t.tokensRx.Add(1)
 		t.tokenMu.Lock()
 		t.pendingTokens.WriteString(e.Text)
-		t.isStreaming.Store(true)
+		first := !t.isStreaming.Swap(true)
 		t.tokenMu.Unlock()
-		// Transition-only invalidation: the indicator line may be baked
-		// into the last full render, so removing it requires a rebuild.
-		if t.thinkingInd.Hide() {
-			t.needsFullRender.Store(true)
+		if first {
+			t.queueUpdateDrawCritical(func() {
+				t.setActivity(activity.Responding, "")
+			})
 		}
 	case *agent.ThinkingEvent:
 		t.queueThinkingUpdate(e.Text)
@@ -32,13 +33,11 @@ func (t *App) HandleEvent(event agent.Event) {
 		})
 	case *agent.ToolStartEvent:
 		t.queueUpdateCritical(func() {
-			if t.thinkingInd.Hide() {
-				t.needsFullRender.Store(true)
-			}
 			t.pendingTool = e.Name
 			if e.Name == "spawn_subagent" {
 				return
 			}
+			t.setActivity(activity.Tool, e.Name)
 			id := fmt.Sprintf("%d", e.ID)
 			t.AddToolStart(id, e.Name, e.Args)
 		})
@@ -54,10 +53,13 @@ func (t *App) HandleEvent(event agent.Event) {
 			} else {
 				t.AddToolEnd(id, e.Name, e.Result)
 			}
+			t.restoreActivity()
 		})
 	case *agent.SubAgentStartEvent:
 		t.queueUpdateDrawCritical(func() {
+			t.activeSubAgents++
 			t.AddSubAgentStart(e.SubAgentID, e.Role, "", e.Prompt, e.Model)
+			t.setActivity(activity.SubAgent, activity.FormatSubAgentDetail(e.Role, t.activeSubAgents))
 		})
 	case *agent.SubAgentEndEvent:
 		t.queueUpdateDrawCritical(func() {
@@ -65,6 +67,14 @@ func (t *App) HandleEvent(event agent.Event) {
 				t.AddSubAgentError(e.SubAgentID, e.Error)
 			} else {
 				t.AddSubAgentEnd(e.SubAgentID)
+			}
+			if t.activeSubAgents > 0 {
+				t.activeSubAgents--
+			}
+			if t.activeSubAgents > 0 {
+				t.activityLine.SetState(activity.SubAgent, activity.FormatSubAgentDetail(e.Role, t.activeSubAgents))
+			} else {
+				t.restoreActivity()
 			}
 		})
 	case *agent.EscalationEvent:
@@ -78,7 +88,9 @@ func (t *App) HandleEvent(event agent.Event) {
 		t.queueUpdateCritical(func() {
 			t.flushPendingTokens()
 			t.compacting = true
-			msg := fmt.Sprintf("[%s]compacting (%d→%d tokens, %s)[-]", t.Theme.Dim, e.BeforeTokens, e.TargetTokens, e.Reason)
+			detail := fmt.Sprintf("%.1fK\u2192%.1fK", float64(e.BeforeTokens)/1000, float64(e.TargetTokens)/1000)
+			t.setActivity(activity.Compacting, detail)
+			msg := fmt.Sprintf("[%s]compacting (%d\u2192%d tokens, %s)[-]", t.Theme.Dim, e.BeforeTokens, e.TargetTokens, e.Reason)
 			t.conversationLog = append(t.conversationLog, convItem{text: msg})
 			t.markDirty()
 		})
@@ -86,12 +98,13 @@ func (t *App) HandleEvent(event agent.Event) {
 		t.queueUpdateCritical(func() {
 			t.flushPendingTokens()
 			t.compacting = false
+			t.restoreActivity()
 			pct := e.SavingsPct * 100
 			note := ""
 			if e.IneffectiveNote != "" {
 				note = " " + e.IneffectiveNote
 			}
-			msg := fmt.Sprintf("[%s]compacted %.0f%% (%.1fK → %.1fK, %s) in %.1fs%s[-]", t.Theme.Dim,
+			msg := fmt.Sprintf("[%s]compacted %.0f%% (%.1fK \u2192 %.1fK, %s) in %.1fs%s[-]", t.Theme.Dim,
 				pct, float64(e.BeforeTokens)/1000, float64(e.AfterTokens)/1000,
 				e.Method, e.ElapsedSeconds, note)
 			t.conversationLog = append(t.conversationLog, convItem{text: msg})
@@ -100,18 +113,17 @@ func (t *App) HandleEvent(event agent.Event) {
 	case *agent.DoneEvent:
 		t.queueUpdateDrawCritical(func() {
 			flushed := t.flushPendingTokens()
-			t.pendingThink = ""
 			t.pendingTool = ""
-			t.agentActive = false
-			if t.thinkingInd.Hide() {
-				t.needsFullRender.Store(true)
-			}
+			t.activeSubAgents = 0
+			t.setActivity(activity.Idle, "")
 			if !flushed && e.Response != "" {
 				t.addAssistantResponse(e.Response)
 			}
+			if e.Error != "" {
+				t.showErrorDialog("Error", e.Error)
+			}
 			t.markDirty()
 
-			// Accumulate usage tracking
 			if e.Usage.PromptTokens > 0 || e.Usage.CompletionTokens > 0 {
 				t.accumulateUsage(e.Usage)
 			}

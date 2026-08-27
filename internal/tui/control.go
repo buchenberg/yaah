@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/control"
+	"github.com/buchenberg/yaah/internal/tui/components/activity"
 	"github.com/buchenberg/yaah/internal/tui/components/backgroundjobs"
 	"github.com/buchenberg/yaah/internal/tui/components/infopane"
 	"github.com/buchenberg/yaah/internal/tui/components/question"
@@ -23,23 +24,26 @@ func (t *App) handleControlMsg(msg control.Msg) {
 			opts[i].Label = o.Label
 			opts[i].Description = o.Description
 		}
+		t.setActivity(activity.Asking, "")
 		t.ShowQuestion(m.Header, m.Question, opts, m.Multiple,
 			func(answer question.Answer) {
-				// Selected is nil on Esc/cancel and on an empty
-				// multi-select confirm; send an empty answer instead
-				// of panicking on the index.
+				t.restoreActivity()
 				m.AnswerCh <- strings.Join(answer.Selected, ", ")
 			})
 
 	case *control.Approval:
+		t.setActivity(activity.Approving, "")
 		t.ShowApproval(m.Name, m.Args, func(approved bool) {
+			t.restoreActivity()
 			m.ApproveCh <- approved
 		})
 
 	case *control.Continue:
+		t.setActivity(activity.Approving, "")
 		t.ShowApproval("Max iterations",
 			fmt.Sprintf("The agent reached the iteration limit (%d). Continue?", m.MaxIter),
 			func(approved bool) {
+				t.restoreActivity()
 				m.AnswerCh <- approved
 			})
 
@@ -74,16 +78,14 @@ func (t *App) handleControlMsg(msg control.Msg) {
 			errText = m.Err.Error()
 		}
 		t.flushPendingTokens()
-		t.pendingThink = ""
 		t.pendingTool = ""
-		t.agentActive = false
-		if t.thinkingInd.Hide() {
-			t.needsFullRender.Store(true)
-		}
+		t.activeSubAgents = 0
+		t.setActivity(activity.Idle, "")
 		t.conversationLog = append(t.conversationLog, convItem{
 			text: fmt.Sprintf("[%s]error: %s[-]", t.Theme.Error, errText),
 		})
 		t.markDirty()
+		t.showErrorDialog("Error", errText)
 	}
 }
 

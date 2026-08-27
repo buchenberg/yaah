@@ -5,8 +5,9 @@ go 1.25.8
 require (
 	github.com/buchenberg/shepherd-kernel-go v0.3.2
 	github.com/buchenberg/tviewmd v0.2.0
-	github.com/gdamore/tcell/v2 v2.8.1
+	github.com/gdamore/tcell/v2 v2.13.10
 	github.com/lsferreira42/figlet-go v0.0.2-beta
+	github.com/navidys/tvxwidgets v0.14.0
 	github.com/rivo/tview v0.42.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1

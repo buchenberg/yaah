@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/observability"
+	"github.com/buchenberg/yaah/internal/tui/components/activity"
 )
 
 const (
@@ -83,11 +84,8 @@ func (t *App) runThinkingUpdate() {
 	seq := t.thinkingSeq
 	t.coalesceMu.Unlock()
 
-	if !t.thinkingInd.Visible() {
-		t.thinkingInd.Show()
-		t.needsFullRender.Store(true)
-	}
-	t.thinkingLabel = label
+	t.setActivity(activity.Reasoning, "")
+	t.activityLine.SetPreview(label)
 
 	t.coalesceMu.Lock()
 	if seq == t.thinkingSeq {

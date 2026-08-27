@@ -243,6 +243,11 @@ func raiseAnthropicResponse(resp anthropicResponse) *types.ChatResponse {
 		case "thinking":
 			reasoning.WriteString(block.Thinking)
 		case "tool_use":
+			// Validate that the tool input is valid JSON before storing.
+			// Anthropic will reject requests with invalid JSON in tool_use.input.
+			if !json.Valid(block.Input) {
+				continue
+			}
 			toolCalls = append(toolCalls, types.ToolCall{
 				ID:   block.ID,
 				Type: "function",
