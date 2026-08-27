@@ -182,3 +182,60 @@ func TestEditTool_fuzzyMultiLineTabNormalized(t *testing.T) {
 		t.Errorf("expected baz() in file, got %q", string(data))
 	}
 }
+
+// TestEditTool_fuzzyFailsWhenMappedMatchNotUnique verifies that when
+// exact match finds multiple matches, it errors before trying fuzzy match.
+func TestEditTool_fuzzyFailsWhenMappedMatchNotUnique(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "file.txt")
+
+	// File has two similar regions where exact match finds both
+	fileContent := "func foo() {\n    x := 1\n}\n\nfunc bar() {\n    x := 1 \n}\n"
+	os.WriteFile(path, []byte(fileContent), 0o644)
+
+	et := &EditTool{}
+
+	// oldString with no trailing space - matches both exactly
+	args, _ := json.Marshal(map[string]any{
+		"filePath":  path,
+		"oldString": "    x := 1",
+		"newString": "    x := 2",
+	})
+	_, err := et.Execute(context.Background(), string(args))
+	if err == nil {
+		t.Fatal("expected error when exact match finds multiple")
+	}
+	if !contains(err.Error(), "found 2 matches") {
+		t.Errorf("expected multiple matches error, got %q", err.Error())
+	}
+}
+
+// TestEditTool_fuzzyFailsWhenMappedMatchNotFound verifies that fuzzy
+// matching fails when the mapped-back candidate doesn't actually exist
+// in the original content (contentBytePos returned wrong location).
+func TestEditTool_fuzzyFailsWhenMappedMatchNotFound(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "file.txt")
+
+	// File content where normalization creates a false positive match
+	// that doesn't map back to a real occurrence
+	fileContent := "alpha\nbeta\ngamma\n"
+	os.WriteFile(path, []byte(fileContent), 0o644)
+
+	et := &EditTool{}
+
+	// oldString that's close but not exact - normalization might find
+	// a match but the byte position mapping fails
+	args, _ := json.Marshal(map[string]any{
+		"filePath":  path,
+		"oldString": "alp ha", // close to "alpha" but not exact
+		"newString": "ALPHA",
+	})
+	_, err := et.Execute(context.Background(), string(args))
+	if err == nil {
+		t.Fatal("expected error when fuzzy match maps to non-existent location")
+	}
+	if !contains(err.Error(), "oldString not found") {
+		t.Errorf("expected oldString not found error, got %q", err.Error())
+	}
+}

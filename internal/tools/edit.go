@@ -92,11 +92,27 @@ func (t *EditTool) executeSingleEdit(filePath, oldStr, newStr string, replaceAll
 	count := strings.Count(content, oldStr)
 
 	matched := oldStr
+	usedFuzzy := false
 	if count == 0 {
 		matched, count = tryFuzzyMatch(content, oldStr)
+		usedFuzzy = true
 		if count == 0 {
 			return "", fmt.Errorf("edit: oldString not found in %s", filePath)
 		}
+	}
+
+	// If fuzzy matching was used, verify the mapped-back match actually
+	// exists in the original content the expected number of times.
+	// This prevents silent corruption when fuzzy match maps to wrong location.
+	if usedFuzzy {
+		actualCount := strings.Count(content, matched)
+		if actualCount == 0 {
+			return "", fmt.Errorf("edit: fuzzy match found candidate but it does not exist in original file (oldString: %q)", oldStr)
+		}
+		if !replaceAll && actualCount > 1 {
+			return "", fmt.Errorf("edit: fuzzy match produced %d matches in original file; use replaceAll or provide more context (oldString: %q)", actualCount, oldStr)
+		}
+		count = actualCount
 	}
 
 	if !replaceAll {
@@ -148,13 +164,31 @@ func (t *EditTool) executeMultiEdit(filePath string, edits []editEntry) (string,
 
 		matched := e.OldString
 		count := strings.Count(content, matched)
+		usedFuzzy := false
 		if count == 0 {
 			matched, count = tryFuzzyMatch(content, e.OldString)
+			usedFuzzy = true
 		}
 		if count == 0 {
 			failures = append(failures, fmt.Sprintf("edit #%d: oldString not found", i))
 			continue
 		}
+
+		// If fuzzy matching was used, verify the mapped-back match actually
+		// exists in the original content the expected number of times.
+		if usedFuzzy {
+			actualCount := strings.Count(content, matched)
+			if actualCount == 0 {
+				failures = append(failures, fmt.Sprintf("edit #%d: fuzzy match found candidate but it does not exist in original file", i))
+				continue
+			}
+			if actualCount > 1 {
+				failures = append(failures, fmt.Sprintf("edit #%d: fuzzy match produced %d matches — use more context for disambiguation", i, actualCount))
+				continue
+			}
+			count = actualCount
+		}
+
 		if count > 1 {
 			failures = append(failures, fmt.Sprintf("edit #%d: found %d matches — use more context for disambiguation", i, count))
 			continue
