@@ -71,9 +71,7 @@ func (s *agentSession) compactContext() {
 
 	msg(fmt.Sprintf("context: %d/%d tokens (%d%%) — compacting...", estTokens, window, estTokens*100/window))
 
-	rawCompactProvider, compactModel := resolveCompact(s.cfg)
-	compactProvider := agent.ResolveCompactProvider(rawCompactProvider, s.cfg.Observability.Otel.Verbose)
-	fallbackProvider, fallbackModel, _ := resolveFallback(s.cfg)
+	compactProvider, compactModel, fallbackProvider, fallbackModel, _ := s.auxProviders()
 
 	b := s.loopBuilder(s.provider, s.modelName, compactProvider, compactModel, fallbackProvider, fallbackModel)
 

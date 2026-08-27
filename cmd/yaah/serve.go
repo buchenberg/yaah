@@ -235,9 +235,7 @@ func runServeHTTP(buf *observability.BufferingSpanProcessor) error {
 // conversation state in the session so successive calls form a multi-turn
 // dialogue, and returns the response plus the loop's token usage.
 func (s *agentSession) runHeadless(ctx context.Context, prompt string) (string, types.Usage, error) {
-	rawCompactProvider, compactModel := resolveCompact(s.cfg)
-	compactProvider := agent.ResolveCompactProvider(rawCompactProvider, s.cfg.Observability.Otel.Verbose)
-	fallbackProvider, fallbackModel, _ := resolveFallback(s.cfg)
+	compactProvider, compactModel, fallbackProvider, fallbackModel, _ := s.auxProviders()
 
 	// Snapshot session state under the mutex, mirroring runPrompt's pattern.
 	s.mu.RLock()

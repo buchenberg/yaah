@@ -13,9 +13,7 @@ import (
 // runPrompt executes a single agent prompt with the session's shared
 // infrastructure. The caller must set a view via SetView before calling.
 func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bool, error) {
-	rawCompactProvider, compactModel := resolveCompact(s.cfg)
-	compactProvider := agent.ResolveCompactProvider(rawCompactProvider, s.cfg.Observability.Otel.Verbose)
-	fallbackProvider, fallbackModel, fallbackProviderName := resolveFallback(s.cfg)
+	compactProvider, compactModel, fallbackProvider, fallbackModel, fallbackProviderName := s.auxProviders()
 
 	s.mu.RLock()
 	prov := s.provider
