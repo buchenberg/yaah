@@ -69,9 +69,9 @@ func TestCall_compactionAdoptedOnSuccess(t *testing.T) {
 	long := types.Message{Role: "user", Content: strings.Repeat("x", 400)}
 	short := []types.Message{{Role: "system", Content: "compacted"}}
 	c := &Client{
-		Provider:     p,
-		Model:        "test-model",
-		MaxRetries:   0,
+		Provider:      p,
+		Model:         "test-model",
+		MaxRetries:    0,
 		ContextWindow: 1000,
 		Compact: func(ctx context.Context, messages []types.Message, threshold float64) []types.Message {
 			return short
