@@ -8,13 +8,14 @@ import (
 	"strings"
 	"testing"
 
+	agentctx "github.com/buchenberg/yaah/internal/agent/context"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
 func TestPreflightTokens_emptyMessages(t *testing.T) {
-	got := preflightTokens(nil, nil, defaultEstimateFactor)
+	got := agentctx.PreflightTokens(nil, nil, agentctx.DefaultEstimateFactor)
 	if got != 0 {
-		t.Errorf("preflightTokens(nil, nil) = %d, want 0", got)
+		t.Errorf("agentctx.PreflightTokens(nil, nil) = %d, want 0", got)
 	}
 }
 
@@ -22,7 +23,7 @@ func TestPreflightTokens_messagesOnly(t *testing.T) {
 	msgs := []types.Message{
 		types.UserMsg("hello world"),
 	}
-	got := preflightTokens(msgs, nil, defaultEstimateFactor)
+	got := agentctx.PreflightTokens(msgs, nil, agentctx.DefaultEstimateFactor)
 	if got <= 0 {
 		t.Errorf("preflightTokens with messages = %d, want > 0", got)
 	}
@@ -42,8 +43,8 @@ func TestPreflightTokens_withTools(t *testing.T) {
 			},
 		},
 	}
-	withTools := preflightTokens(msgs, tools, defaultEstimateFactor)
-	withoutTools := preflightTokens(msgs, nil, defaultEstimateFactor)
+	withTools := agentctx.PreflightTokens(msgs, tools, agentctx.DefaultEstimateFactor)
+	withoutTools := agentctx.PreflightTokens(msgs, nil, agentctx.DefaultEstimateFactor)
 	if withTools <= withoutTools {
 		t.Errorf("preflightTokens with tools (%d) should be > without tools (%d)", withTools, withoutTools)
 	}
@@ -53,11 +54,11 @@ func TestPreflightTokens_1_3xMultiplier(t *testing.T) {
 	msgs := []types.Message{
 		types.UserMsg("hello world this is a test message with some content"),
 	}
-	raw := float64(messageTokens(msgs[0]))
-	got := preflightTokens(msgs, nil, defaultEstimateFactor)
-	expected := int(math.Ceil(raw * defaultEstimateFactor))
+	raw := float64(agentctx.MessageTokens(msgs[0]))
+	got := agentctx.PreflightTokens(msgs, nil, agentctx.DefaultEstimateFactor)
+	expected := int(math.Ceil(raw * agentctx.DefaultEstimateFactor))
 	if got != expected {
-		t.Errorf("preflightTokens = %d, want %d (raw=%v * factor=%v)", got, expected, raw, defaultEstimateFactor)
+		t.Errorf("preflightTokens = %d, want %d (raw=%v * factor=%v)", got, expected, raw, agentctx.DefaultEstimateFactor)
 	}
 }
 
@@ -65,8 +66,8 @@ func TestPreflightTokens_customFactor(t *testing.T) {
 	msgs := []types.Message{
 		types.UserMsg("hello"),
 	}
-	f1x := preflightTokens(msgs, nil, 1.0)
-	f2x := preflightTokens(msgs, nil, 2.0)
+	f1x := agentctx.PreflightTokens(msgs, nil, 1.0)
+	f2x := agentctx.PreflightTokens(msgs, nil, 2.0)
 	if f2x <= f1x {
 		t.Errorf("2x factor (%d) should be > 1x factor (%d)", f2x, f1x)
 	}
@@ -83,7 +84,7 @@ func TestPreflightTokens_toolEstimate(t *testing.T) {
 			},
 		},
 	}
-	got := preflightTokens(nil, tools, 1.0)
+	got := agentctx.PreflightTokens(nil, tools, 1.0)
 	if got <= 0 {
 		t.Errorf("preflightTokens for tools = %d, want > 0", got)
 	}
@@ -241,21 +242,21 @@ func TestCompactContext_customEstimateFactor(t *testing.T) {
 		CompactProvider: fp,
 	}
 
-	est1x := preflightTokens(factor1x.State.Messages, nil, factor1x.Config.EstimateFactor)
-	est2x := preflightTokens(factor2x.State.Messages, nil, factor2x.Config.EstimateFactor)
+	est1x := agentctx.PreflightTokens(factor1x.State.Messages, nil, factor1x.Config.EstimateFactor)
+	est2x := agentctx.PreflightTokens(factor2x.State.Messages, nil, factor2x.Config.EstimateFactor)
 
 	if est2x <= est1x {
 		t.Errorf("2x factor estimate (%d) should be > 1x factor estimate (%d)", est2x, est1x)
 	}
 }
 
-// --- turns() ---
+// --- agentctx.Turns() ---
 
 func TestTurns(t *testing.T) {
 	tests := []struct {
 		name     string
 		messages []types.Message
-		want     []turnRange
+		want     []agentctx.TurnRange
 	}{
 		{
 			name:     "empty",
@@ -273,7 +274,7 @@ func TestTurns(t *testing.T) {
 				types.SystemMsg("sys"),
 				types.UserMsg("hi"),
 			},
-			want: []turnRange{{Start: 1, End: 2}},
+			want: []agentctx.TurnRange{{Start: 1, End: 2}},
 		},
 		{
 			name: "multiple_users",
@@ -285,7 +286,7 @@ func TestTurns(t *testing.T) {
 				types.UserMsg("c"),
 				{Role: "assistant", Content: "d"},
 			},
-			want: []turnRange{{Start: 1, End: 4}, {Start: 4, End: 6}},
+			want: []agentctx.TurnRange{{Start: 1, End: 4}, {Start: 4, End: 6}},
 		},
 		{
 			name: "tool_results_grouped_in_turn",
@@ -300,20 +301,20 @@ func TestTurns(t *testing.T) {
 				{Role: "tool", ToolCallID: "c2", Content: "r2"},
 				types.UserMsg("b"),
 			},
-			want: []turnRange{{Start: 1, End: 5}, {Start: 5, End: 6}},
+			want: []agentctx.TurnRange{{Start: 1, End: 5}, {Start: 5, End: 6}},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := turns(tt.messages)
+			got := agentctx.Turns(tt.messages)
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("turns() = %#v, want %#v", got, tt.want)
+				t.Errorf("agentctx.Turns() = %#v, want %#v", got, tt.want)
 			}
 		})
 	}
 }
 
-// --- preserveBudget() ---
+// --- agentctx.PreserveBudget() ---
 
 func TestPreserveBudget(t *testing.T) {
 	tests := []struct {
@@ -329,14 +330,14 @@ func TestPreserveBudget(t *testing.T) {
 		{0, 2000},       // zero window -> min floor
 	}
 	for _, tt := range tests {
-		got := preserveBudget(tt.window)
+		got := agentctx.PreserveBudget(tt.window)
 		if got != tt.want {
-			t.Errorf("preserveBudget(%d) = %d, want %d", tt.window, got, tt.want)
+			t.Errorf("agentctx.PreserveBudget(%d) = %d, want %d", tt.window, got, tt.want)
 		}
 	}
 }
 
-// --- splitTail() / splitTurn() ---
+// --- agentctx.SplitTail() / agentctx.SplitTurn() ---
 
 func bigUserMsg(label string) types.Message {
 	// ~100 tokens (400 chars / 4)
@@ -349,7 +350,7 @@ func TestSplitTail_keepsRecentTurns(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		msgs = append(msgs, types.UserMsg("u"+strings.Repeat("x", 76))) // ~19 tokens
 	}
-	split := splitTail(msgs, 60) // fits 3 turns
+	split := agentctx.SplitTail(msgs, 60) // fits 3 turns
 	// keepStart should land at the 3rd turn from the end: index 3.
 	if split.KeepStart != 3 {
 		t.Errorf("keepStart = %d, want 3 (3 most recent turns preserved)", split.KeepStart)
@@ -363,7 +364,7 @@ func TestSplitTail_budgetExceeded(t *testing.T) {
 		msgs = append(msgs, bigUserMsg("u"))                                   // ~100 tokens
 		msgs = append(msgs, types.AssistantMsg(strings.Repeat("y", 400), nil)) // ~100 tokens
 	}
-	split := splitTail(msgs, 150)
+	split := agentctx.SplitTail(msgs, 150)
 	if split.KeepStart < 1 || split.KeepStart >= len(msgs) {
 		t.Errorf("keepStart = %d out of expected range [1, %d)", split.KeepStart, len(msgs))
 	}
@@ -390,7 +391,7 @@ func TestSplitTail_toolCallLinkage(t *testing.T) {
 		}}),
 		{Role: "tool", ToolCallID: "c2", Content: "ok"}, // idx 6
 	}
-	split := splitTail(msgs, 100) // turn 2 (~30 tokens) fits, turn 1 (~300) does not
+	split := agentctx.SplitTail(msgs, 100) // turn 2 (~30 tokens) fits, turn 1 (~300) does not
 	if split.KeepStart != 4 {
 		t.Fatalf("keepStart = %d, want 4 (turn 2 boundary)", split.KeepStart)
 	}
@@ -421,7 +422,7 @@ func TestSplitTail_userAnchor(t *testing.T) {
 		msgs = append(msgs, types.AssistantMsg("ok", nil))
 	}
 	lastUserIdx := len(msgs) - 2   // last user before final assistant
-	split := splitTail(msgs, 8000) // large budget keeps the last turn
+	split := agentctx.SplitTail(msgs, 8000) // large budget keeps the last turn
 	if split.KeepStart > lastUserIdx {
 		t.Errorf("keepStart = %d > lastUserIdx %d: most recent user summarized away",
 			split.KeepStart, lastUserIdx)
@@ -439,7 +440,7 @@ func TestSplitTail_singleTurnTooLarge(t *testing.T) {
 		types.AssistantMsg(strings.Repeat("c", 400), nil), // idx 4 (~100)
 		types.AssistantMsg(strings.Repeat("d", 400), nil), // idx 5 (~100)
 	}
-	split := splitTail(msgs, 250) // fits last ~2.5 assistant messages
+	split := agentctx.SplitTail(msgs, 250) // fits last ~2.5 assistant messages
 	if split.KeepStart <= 1 {
 		t.Errorf("keepStart = %d, expected split within the oversized turn", split.KeepStart)
 	}
@@ -453,7 +454,7 @@ func TestSplitTail_systemProtection(t *testing.T) {
 		types.AssistantMsg("a1", nil),
 		types.UserMsg("u2"),
 	}
-	split := splitTail(msgs, 0)
+	split := agentctx.SplitTail(msgs, 0)
 	if split.KeepStart < 1 {
 		t.Errorf("keepStart = %d, must be >= 1 (system protection)", split.KeepStart)
 	}
@@ -466,7 +467,7 @@ func TestSplitTail_noUserMessages(t *testing.T) {
 		types.AssistantMsg("a1", nil),
 		types.AssistantMsg("a2", nil),
 	}
-	split := splitTail(msgs, 1000)
+	split := agentctx.SplitTail(msgs, 1000)
 	if split.KeepStart != len(msgs) {
 		t.Errorf("keepStart = %d, want %d (nothing to summarize)", split.KeepStart, len(msgs))
 	}
@@ -478,14 +479,14 @@ func TestSplitTurn_emptyOrSingleMessage(t *testing.T) {
 		types.UserMsg("u"),
 		types.AssistantMsg("a", nil),
 	}
-	if got := splitTurn(msgs, turnRange{Start: 1, End: 1}, 100); got != -1 {
-		t.Errorf("splitTurn(empty turn) = %d, want -1", got)
+	if got := agentctx.SplitTurn(msgs, agentctx.TurnRange{Start: 1, End: 1}, 100); got != -1 {
+		t.Errorf("agentctx.SplitTurn(empty turn) = %d, want -1", got)
 	}
-	if got := splitTurn(msgs, turnRange{Start: 1, End: 2}, 100); got != -1 {
-		t.Errorf("splitTurn(single message turn) = %d, want -1", got)
+	if got := agentctx.SplitTurn(msgs, agentctx.TurnRange{Start: 1, End: 2}, 100); got != -1 {
+		t.Errorf("agentctx.SplitTurn(single message turn) = %d, want -1", got)
 	}
-	if got := splitTurn(msgs, turnRange{Start: 1, End: 3}, 0); got != -1 {
-		t.Errorf("splitTurn(zero budget) = %d, want -1", got)
+	if got := agentctx.SplitTurn(msgs, agentctx.TurnRange{Start: 1, End: 3}, 0); got != -1 {
+		t.Errorf("agentctx.SplitTurn(zero budget) = %d, want -1", got)
 	}
 }
 
@@ -500,7 +501,7 @@ func TestSplitTurn_findsEarliestFittingSuffix(t *testing.T) {
 		types.AssistantMsg(strings.Repeat("d", 400), nil), // idx 5 (~100)
 	}
 	// Budget 300 fits exactly messages[3..6) (300 tokens) but not messages[2..6) (400).
-	got := splitTurn(msgs, turnRange{Start: 1, End: 6}, 300)
+	got := agentctx.SplitTurn(msgs, agentctx.TurnRange{Start: 1, End: 6}, 300)
 	if got != 3 {
 		t.Errorf("splitTurn = %d, want 3 (earliest fitting suffix)", got)
 	}
@@ -574,7 +575,7 @@ func TestCompactContext_budgetSplit(t *testing.T) {
 	// Allow generous slack for the summary system message and message flooring.
 	tailTokens := 0
 	for _, m := range loop.State.Messages {
-		tailTokens += messageTokens(m)
+		tailTokens += agentctx.MessageTokens(m)
 	}
 	if tailTokens > 4000 {
 		t.Errorf("preserved tail too large: %d tokens (budget 2500)", tailTokens)
@@ -850,11 +851,11 @@ func TestCompactContext_rawThresholdConfigurable(t *testing.T) {
 	}
 }
 
-// --- estimatePayloadBytes() / payload-size guard ---
+// --- agentctx.EstimatePayloadBytes() / payload-size guard ---
 
 func TestEstimatePayloadBytes_emptyIsZero(t *testing.T) {
-	if got := estimatePayloadBytes(nil, nil); got != 0 {
-		t.Errorf("estimatePayloadBytes(nil, nil) = %d, want 0", got)
+	if got := agentctx.EstimatePayloadBytes(nil, nil); got != 0 {
+		t.Errorf("agentctx.EstimatePayloadBytes(nil, nil) = %d, want 0", got)
 	}
 }
 
@@ -883,7 +884,7 @@ func TestEstimatePayloadBytes_accountsForAllFields(t *testing.T) {
 		},
 	}}
 
-	got := estimatePayloadBytes(msgs, tools)
+	got := agentctx.EstimatePayloadBytes(msgs, tools)
 	// message: 100 content + 200 reasoning + 50 args + 4 name + 10 id = 364
 	// tools:   30 description + 40 parameters + 4 name = 74
 	want := 364 + 74
@@ -893,7 +894,7 @@ func TestEstimatePayloadBytes_accountsForAllFields(t *testing.T) {
 }
 
 func TestPayloadGuard_oversizedPayloadCompacts(t *testing.T) {
-	// Build a conversation whose serialized payload exceeds maxPayloadBytes,
+	// Build a conversation whose serialized payload exceeds agentctx.MaxPayloadBytes,
 	// then verify compaction (the guard's remediation) brings it back under.
 	msgs := []types.Message{types.SystemMsg("sys")}
 	for i := 0; i < 40; i++ {
@@ -901,9 +902,9 @@ func TestPayloadGuard_oversizedPayloadCompacts(t *testing.T) {
 		msgs = append(msgs, types.AssistantMsg(strings.Repeat("y", 1000), nil))
 	}
 
-	before := estimatePayloadBytes(msgs, nil)
-	if before <= maxPayloadBytes {
-		t.Fatalf("test setup: payload %d should exceed maxPayloadBytes %d", before, maxPayloadBytes)
+	before := agentctx.EstimatePayloadBytes(msgs, nil)
+	if before <= agentctx.MaxPayloadBytes {
+		t.Fatalf("test setup: payload %d should exceed agentctx.MaxPayloadBytes %d", before, agentctx.MaxPayloadBytes)
 	}
 
 	loop := &Loop{Config: LoopConfig{CompactModel: "test",
@@ -912,12 +913,12 @@ func TestPayloadGuard_oversizedPayloadCompacts(t *testing.T) {
 	}
 	loop.compactContext(context.Background(), 0.25)
 
-	after := estimatePayloadBytes(loop.State.Messages, nil)
+	after := agentctx.EstimatePayloadBytes(loop.State.Messages, nil)
 	if after >= before {
 		t.Errorf("compaction should reduce oversized payload: before=%d after=%d", before, after)
 	}
-	if after > maxPayloadBytes {
-		t.Errorf("post-compaction payload %d still exceeds maxPayloadBytes %d", after, maxPayloadBytes)
+	if after > agentctx.MaxPayloadBytes {
+		t.Errorf("post-compaction payload %d still exceeds agentctx.MaxPayloadBytes %d", after, agentctx.MaxPayloadBytes)
 	}
 }
 
@@ -1022,8 +1023,8 @@ func TestMessageTokens_countsReasoning(t *testing.T) {
 	withoutReasoning := types.Message{Role: "assistant", Content: ""}
 	withReasoning := types.Message{Role: "assistant", Content: "", ReasoningContent: repeatChars(400)}
 
-	base := messageTokens(withoutReasoning)
-	withR := messageTokens(withReasoning)
+	base := agentctx.MessageTokens(withoutReasoning)
+	withR := agentctx.MessageTokens(withReasoning)
 
 	if withR <= base {
 		t.Errorf("messageTokens should count reasoning: without=%d with=%d", base, withR)
@@ -1165,7 +1166,7 @@ func TestProtectReasoningTurns(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ProtectReasoningTurns(tt.messages, tt.keepStart, tt.protectTurns)
+			got := agentctx.ProtectReasoningTurns(tt.messages, tt.keepStart, tt.protectTurns)
 			if got != tt.wantKeepStart {
 				t.Errorf("ProtectReasoningTurns = %d, want %d", got, tt.wantKeepStart)
 			}
