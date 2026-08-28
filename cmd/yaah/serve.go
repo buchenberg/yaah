@@ -69,52 +69,63 @@ func init() {
 	serveCmd.Flags().BoolVar(&serveAllowUnknownSessions, "allow-unknown-sessions", false, "--http: accept stale/unknown Mcp-Session-Id values (server restart transparency); rejected by default")
 }
 
-func runServe(cmd *cobra.Command, args []string) error {
-	// Activate in-memory tracing before the session is built so the
-	// BufferingSpanProcessor is attached to the global TracerProvider.
-	// Serve-mode OTel inputs travel via SessionOptions instead of
-	// package globals (finding B1).
-	buf := observability.NewBufferingSpanProcessor()
-	serveOpts := sessionOptionsFromFlags()
-	serveOpts.OtelProcessors = []sdktrace.SpanProcessor{buf}
-	serveOpts.OtelInMemoryOnly = true
+// serveState bundles the state shared by both serve transports: the
+// serialized tool-handler mutex, usage counters, and the lazy agent
+// session (review A2).
+type serveState struct {
+	opts        SessionOptions
+	buf         *observability.BufferingSpanProcessor
+	mu          sync.Mutex
+	totalTokens types.Usage
+	promptCount int
+	sess        *agentSession
+	sessErr     error
+}
 
-	if httpAddr != "" {
-		fmt.Fprintf(os.Stderr, "%s starting MCP tool server (HTTP at %s/mcp)...\n", Dim("yaah serve:"), httpAddr)
-		return runServeHTTP(buf)
-	}
-
-	fmt.Fprintf(os.Stderr, "%s starting MCP tool server (stdio)...\n", Dim("yaah serve:"))
-
-	// mu serializes tool handlers against the shared session state. The MCP
-	// server dispatches serially today, but the guard keeps serve correct if
-	// dispatch ever becomes concurrent.
-	var mu sync.Mutex
-	var totalTokens types.Usage
-	promptCount := 0
-
-	// Lazy session: the MCP server starts immediately so the initialize
-	// handshake completes instantly. The heavy agent session (config, DB,
-	// skills, MCP clients) is built on the first prompt call.
-	var sess *agentSession
-	var sessErr error
-	ensureSession := func() error {
-		if sess != nil {
-			return nil
-		}
-		sess, sessErr = newAgentSessionWithOptions(serveOpts, false, false)
-		if sessErr != nil {
-			return sessErr
-		}
-		fmt.Fprintf(os.Stderr, "  %s %s/%s\n", Dim("provider:"), sess.providerName, sess.modelName)
-		fmt.Fprintf(os.Stderr, "  %s %s\n", Dim("session:"), sess.sessionID)
+// ensureSession lazily builds the heavy agent session (config, DB,
+// skills, MCP clients) on first use so the MCP initialize handshake
+// completes instantly.
+func (st *serveState) ensureSession() error {
+	if st.sess != nil {
 		return nil
 	}
+	st.sess, st.sessErr = newAgentSessionWithOptions(st.opts, false, false)
+	if st.sessErr != nil {
+		return st.sessErr
+	}
+	fmt.Fprintf(os.Stderr, "  %s %s/%s\n", Dim("provider:"), st.sess.providerName, st.sess.modelName)
+	fmt.Fprintf(os.Stderr, "  %s %s\n", Dim("session:"), st.sess.sessionID)
+	return nil
+}
+
+// runServeTransport builds the shared MCP bootstrap — in-memory tracing
+// inputs, serve session options, lazy session, and tool registration —
+// then hands the server to the transport-specific start function. Only
+// the listener setup differs between transports (review A2).
+func runServeTransport(start func(st *serveState, srv *mcp.Server) error) error {
+	buf := observability.NewBufferingSpanProcessor()
+	opts := sessionOptionsFromFlags()
+	opts.OtelProcessors = []sdktrace.SpanProcessor{buf}
+	opts.OtelInMemoryOnly = true
+	st := &serveState{opts: opts, buf: buf}
 
 	srv := mcp.NewServer("yaah", version)
-	registerServeTools(srv, &mu, &totalTokens, &promptCount, buf, &sess, &sessErr, ensureSession)
-	// Graceful shutdown on SIGINT/SIGTERM. EOF on stdin (parent exit) also
-	// terminates Serve naturally.
+	registerServeTools(srv, &st.mu, &st.totalTokens, &st.promptCount, buf, &st.sess, &st.sessErr, st.ensureSession)
+	return start(st, srv)
+}
+
+func runServe(cmd *cobra.Command, args []string) error {
+	if httpAddr != "" {
+		fmt.Fprintf(os.Stderr, "%s starting MCP tool server (HTTP at %s/mcp)...\n", Dim("yaah serve:"), httpAddr)
+		return runServeTransport(serveHTTPTransport)
+	}
+	fmt.Fprintf(os.Stderr, "%s starting MCP tool server (stdio)...\n", Dim("yaah serve:"))
+	return runServeTransport(serveStdioTransport)
+}
+
+// serveStdioTransport runs the MCP server on newline-delimited JSON-RPC
+// over stdin/stdout with graceful shutdown on SIGINT/SIGTERM.
+func serveStdioTransport(st *serveState, srv *mcp.Server) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -134,51 +145,23 @@ func runServe(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "%s signal received, shutting down\n", Dim("yaah serve:"))
 	}
 
-	if sess != nil {
-		sess.close()
+	if st.sess != nil {
+		st.sess.close()
 	}
 	return runErr
 }
 
-// runServeHTTP exposes the MCP server over Streamable HTTP. It
-// mirrors runServe's tool registration but listens on a TCP port
-// instead of speaking JSON-RPC on stdio. The dev-loop ergonomics
-// are intentional: a developer can rebuild yaah, kill the previous
-// process, and re-run without restarting the MCP client (Kilo).
-func runServeHTTP(buf *observability.BufferingSpanProcessor) error {
-	// Mirror runServe's OTel inputs: serve always captures traces
-	// in-memory regardless of the user's otel config.
-	httpOpts := sessionOptionsFromFlags()
-	httpOpts.OtelProcessors = []sdktrace.SpanProcessor{buf}
-	httpOpts.OtelInMemoryOnly = true
-
-	var mu sync.Mutex
-	var totalTokens types.Usage
-	promptCount := 0
-
-	var sess *agentSession
-	var sessErr error
-	ensureSession := func() error {
-		if sess != nil {
-			return nil
-		}
-		sess, sessErr = newAgentSessionWithOptions(httpOpts, false, false)
-		if sessErr != nil {
-			return sessErr
-		}
-		fmt.Fprintf(os.Stderr, "  %s %s/%s\n", Dim("provider:"), sess.providerName, sess.modelName)
-		fmt.Fprintf(os.Stderr, "  %s %s\n", Dim("session:"), sess.sessionID)
-		return nil
-	}
-
-	srv := mcp.NewServer("yaah", version)
-	registerServeTools(srv, &mu, &totalTokens, &promptCount, buf, &sess, &sessErr, ensureSession)
+// serveHTTPTransport exposes the MCP server over Streamable HTTP. The
+// dev-loop ergonomics are intentional: a developer can rebuild yaah,
+// kill the previous process, and re-run without restarting the MCP
+// client (Kilo).
+func serveHTTPTransport(st *serveState, srv *mcp.Server) error {
 	// Warm up the agent session in the background so the first prompt
 	// call doesn't time out waiting for config/DB/skills/MCP clients.
 	go func() {
-		mu.Lock()
-		defer mu.Unlock()
-		if err := ensureSession(); err != nil {
+		st.mu.Lock()
+		defer st.mu.Unlock()
+		if err := st.ensureSession(); err != nil {
 			fmt.Fprintf(os.Stderr, "%s session warmup failed: %v\n", Dim("yaah serve:"), err)
 		}
 	}()
@@ -224,8 +207,8 @@ func runServeHTTP(buf *observability.BufferingSpanProcessor) error {
 		}
 	}
 
-	if sess != nil {
-		sess.close()
+	if st.sess != nil {
+		st.sess.close()
 	}
 	return nil
 }
