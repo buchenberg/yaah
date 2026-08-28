@@ -78,14 +78,14 @@ func (l *Loop) guardContextBeforeCall(turnCtx context.Context, messages *[]types
 
 	// Compaction is handled by the middleware pipeline (CompactionMiddleware.
 	// PrepareStep). guardContextBeforeCall only validates that the request
-	// is not empty — it does not trigger compaction.
+	// is not empty — it does not trigger compaction. Loop state is synced
+	// by runMiddleware's single-writer path (B6); no write here.
 	if len(req.Messages) == 0 {
 		err := fmt.Errorf("refusing to send empty message list to provider — %d messages after prepare", len(req.Messages))
 		if turnSpan != nil {
 			observability.RecordError(turnSpan, err)
 			turnSpan.End()
 		}
-		l.State.Messages = *messages
 		return err
 	}
 	return nil

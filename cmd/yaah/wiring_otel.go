@@ -21,11 +21,13 @@ func initOtel(cfg *config.Config, opts SessionOptions, skipOtel bool) (func(cont
 		return noop, false, nil
 	}
 	otelCfg := observability.Config{
-		Enabled:         true,
-		Endpoint:        cfg.Observability.Otel.Endpoint,
-		ServiceName:     cfg.Observability.Otel.ServiceName,
-		ServiceVersion:  version,
-		Traces:          true,
+		Enabled:        true,
+		Endpoint:       cfg.Observability.Otel.Endpoint,
+		ServiceName:    cfg.Observability.Otel.ServiceName,
+		ServiceVersion: version,
+		// Honor the observability.otel.traces knob (review B10c). Serve
+		// mode's in-memory tracing stays forced on regardless.
+		Traces:          cfg.Observability.Otel.Traces || opts.OtelInMemoryOnly,
 		Metrics:         cfg.Observability.Otel.Metrics,
 		ExtraProcessors: opts.OtelProcessors,
 	}

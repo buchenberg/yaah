@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"slices"
+	"sort"
 
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -92,7 +93,16 @@ type PipelineConfig struct {
 // NewFromConfig builds the default pipeline from config, honouring
 // enabled/disabled name lists.
 func NewFromConfig(cfg PipelineConfig) *Pipeline {
-	names := resolvedPipelineNames(cfg.PipelineNames, cfg.PipelineDisabled)
+	names := ResolvedPipelineNames(cfg.PipelineNames, cfg.PipelineDisabled)
+	// The prompt_caching boolean knob is honored independently of the
+	// name lists (review B10b): when set, the middleware is appended
+	// idempotently so `prompt_caching: true` works without naming it.
+	// An explicit `disabled` entry always wins over the boolean knob.
+	if cfg.PromptCaching &&
+		!slices.Contains(cfg.PipelineDisabled, "prompt_caching") &&
+		!slices.Contains(names, "prompt_caching") {
+		names = append(names, "prompt_caching")
+	}
 	mws := make([]Middleware, 0, len(names))
 	for _, name := range names {
 		if build, ok := builtinBuilders[name]; ok {
@@ -140,7 +150,7 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 		count := cfg.LoopDetectCount
 		window := cfg.LoopDetectWindow
 		if count <= 0 {
-			count = 4
+			count = 5
 		}
 		if window <= 0 {
 			window = 10
@@ -158,7 +168,6 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 	"soft_prune": func(cfg PipelineConfig) Middleware {
 		return &SoftPruneMiddleware{pruner: cfg.Pruner, emit: cfg.PruneHooks.Emit, otel: cfg.PruneHooks.Otel}
 	},
-	"staleness": func(cfg PipelineConfig) Middleware { return &StalenessMiddleware{} },
 	"conflict_detect": func(cfg PipelineConfig) Middleware {
 		return NewConflictDetectMiddleware(cfg.ConflictTracker, cfg.ConflictOnCheck, cfg.ConflictOnFound, cfg.ConflictPersist)
 	},
@@ -208,7 +217,6 @@ var defaultPipelineNames = []string{
 	"inline_limit",
 	"tool_concurrency",
 	"loop_detection",
-	"staleness",
 	"conflict_detect",
 }
 
@@ -221,7 +229,6 @@ var defaultPipelineNames = []string{
 // - approval: sub-agents auto-approve (the orchestrator gates dispatch)
 // - compaction: sub-agents use CtxMgr pruning internally, not pipeline compaction
 // - loop_detection: redundant with MaxLoopCycles/MaxToolTurns/WrapUpThreshold/ErrStuckChild
-// - staleness: orchestrator-specific (tracks steer/followup context shifts)
 // - soft_prune: CtxMgr.EnsurePruner() already handles context for short-lived loops
 //
 // Included (conditionally, by NewSubAgentPipeline):
@@ -235,6 +242,19 @@ var defaultPipelineNames = []string{
 var subAgentPipelineNames = []string{
 	"tool_concurrency",
 	"shepherd_trace",
+}
+
+// RegisteredOrchestratorNames returns the middleware names that have
+// builders in builtinBuilders. Names resolved by ResolvedPipelineNames
+// without a builder are silently skipped at pipeline build time; the
+// doctor uses this to surface such stale config entries honestly.
+func RegisteredOrchestratorNames() []string {
+	names := make([]string, 0, len(builtinBuilders))
+	for name := range builtinBuilders {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // DefaultPipelineNames returns a copy of the orchestrator's default
@@ -283,25 +303,30 @@ func NewSubAgentPipeline(cfg PipelineConfig) *Pipeline {
 	return NewPipeline(mws...)
 }
 
-func resolvedPipelineNames(enabled, disabled []string) []string {
+// ResolvedPipelineNames resolves the orchestrator pipeline from the
+// config name lists. middleware.enabled is ADDITIVE: it extends the
+// built-in defaults rather than replacing them — replacement semantics
+// silently disabled inline_limit and conflict_detect for any config
+// that listed custom middleware (review B10a). middleware.disabled
+// removes names from the union. Defaults keep their order; extra
+// enabled names follow.
+func ResolvedPipelineNames(enabled, disabled []string) []string {
 	disabledSet := make(map[string]bool, len(disabled))
 	for _, name := range disabled {
 		disabledSet[name] = true
 	}
-	if len(enabled) > 0 {
-		names := make([]string, 0, len(enabled))
-		for _, name := range enabled {
-			if !disabledSet[name] {
-				names = append(names, name)
+	names := make([]string, 0, len(defaultPipelineNames)+len(enabled))
+	seen := make(map[string]bool, len(defaultPipelineNames)+len(enabled))
+	add := func(list []string) {
+		for _, name := range list {
+			if disabledSet[name] || seen[name] {
+				continue
 			}
-		}
-		return names
-	}
-	names := make([]string, 0, len(defaultPipelineNames))
-	for _, name := range defaultPipelineNames {
-		if !disabledSet[name] {
+			seen[name] = true
 			names = append(names, name)
 		}
 	}
+	add(defaultPipelineNames)
+	add(enabled)
 	return names
 }

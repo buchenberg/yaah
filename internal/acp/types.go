@@ -26,9 +26,9 @@ type Error struct {
 
 // InitializeResult is the result of the initialize handshake.
 type InitializeResult struct {
-	ProtocolVersion string     `json:"protocol_version"`
+	ProtocolVersion string     `json:"protocolVersion"`
 	Capabilities    ServerCaps `json:"capabilities"`
-	ServerInfo      ServerInfo `json:"server_info"`
+	ServerInfo      ServerInfo `json:"serverInfo"`
 	Instructions    string     `json:"instructions,omitempty"`
 }
 
@@ -84,15 +84,23 @@ type ContentBlock struct {
 type ToolListEntry struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"input_schema,omitempty"`
+	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
 }
 
-// Update is a session/update notification payload.
+// Update is a session/update notification payload. All field names use
+// camelCase to match the broader ACP ecosystem (review B11: the wire
+// format previously mixed snake_case and camelCase). The sessionUpdate
+// VALUE "tool_call" is the ACP variant name and intentionally stays
+// snake_case — only field names are unified.
 type Update struct {
 	SessionUpdate string      `json:"sessionUpdate"`
 	Content       *Content    `json:"content,omitempty"`
-	ToolCall      *ToolCall   `json:"tool_call,omitempty"`
-	ToolResult    *ToolResult `json:"tool_result,omitempty"`
+	ToolCall      *ToolCall   `json:"toolCall,omitempty"`
+	ToolResult    *ToolResult `json:"toolResult,omitempty"`
+	// StopReason is set on the turn-completion update ("end_turn",
+	// "cancelled"). Emitted when a prompt run finishes because ACP
+	// clients key follow-up behaviour on it (review B11).
+	StopReason string `json:"stopReason,omitempty"`
 }
 
 // Content is text content carried by an update.

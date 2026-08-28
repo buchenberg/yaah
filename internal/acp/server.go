@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -138,6 +139,11 @@ func (s *Server) Run(ctx context.Context) error {
 	var currentPromptDone chan struct{}
 	var promptMu sync.Mutex
 
+	// sessions holds the IDs issued by session/new; session/prompt
+	// validates against it (review B11).
+	sessions := make(map[string]bool)
+	var sessionsMu sync.Mutex
+
 	// promptResults carries results from completed prompt runs
 	type promptResult struct {
 		sessionID string
@@ -183,6 +189,9 @@ func (s *Server) Run(ctx context.Context) error {
 
 			case "session/new":
 				sessionID := fmt.Sprintf("sess-%d", time.Now().UnixNano())
+				sessionsMu.Lock()
+				sessions[sessionID] = true
+				sessionsMu.Unlock()
 				result := SessionNewResult{SessionID: sessionID}
 				respData, _ := json.Marshal(result)
 				writeMsg(Message{JSONRPC: "2.0", ID: msg.ID, Result: respData})
@@ -191,6 +200,17 @@ func (s *Server) Run(ctx context.Context) error {
 				var params PromptParams
 				if len(msg.Params) > 0 {
 					json.Unmarshal(msg.Params, &params)
+				}
+
+				sessionsMu.Lock()
+				known := sessions[params.SessionID]
+				sessionsMu.Unlock()
+				if !known {
+					writeMsg(Message{
+						JSONRPC: "2.0", ID: msg.ID,
+						Error: &Error{Code: -32602, Message: "unknown session id (call session/new first)"},
+					})
+					continue
 				}
 
 				promptText := ""
@@ -207,7 +227,10 @@ func (s *Server) Run(ctx context.Context) error {
 					continue
 				}
 
-				// Acknowledge the prompt immediately
+				// Acknowledge the prompt immediately. The read goroutine
+				// must never block on a prompt's completion — a blocked
+				// reader stalled session/cancel and every other method
+				// (review B11).
 				writeMsg(Message{JSONRPC: "2.0", ID: msg.ID, Result: json.RawMessage(`{}`)})
 
 				sessionID := params.SessionID
@@ -218,28 +241,35 @@ func (s *Server) Run(ctx context.Context) error {
 				if currentPromptCancel != nil {
 					currentPromptCancel()
 				}
-				done := currentPromptDone
-				currentPromptDone = make(chan struct{}, 1)
+				prevDone := currentPromptDone
+				myDone := make(chan struct{})
+				currentPromptDone = myDone
 				currentPromptCancel = promptCancel
 				promptMu.Unlock()
 
-				if done != nil {
-					<-done
-				}
+				go func(sID string, myDone, prevDone chan struct{}) {
+					// Serialize prompts: wait for the previous run to
+					// finish swapping session state before starting.
+					// The read goroutine is never blocked by this. The
+					// view/ctrl swap happens HERE — inside the
+					// serialized region — so a rapidly following prompt
+					// cannot overwrite this prompt's view and ctrl
+					// channel before RunPrompt captures them (review:
+					// view/ctrl swap race).
+					if prevDone != nil {
+						<-prevDone
+					}
+					defer close(myDone)
 
-				wrapped := NewViewWithWrite(sendUpdate, sessionID)
+					wrapped := NewViewWithWrite(sendUpdate, sID)
+					ctrlCh := make(chan control.Msg, 64)
+					s.sess.SetView(wrapped)
+					s.sess.SetCtrlCh(ctrlCh)
+					go s.forwardCtrl(promptCtx, ctrlCh, sID, sendUpdate)
 
-				ctrlCh := make(chan control.Msg, 64)
-				s.sess.SetView(wrapped)
-				s.sess.SetCtrlCh(ctrlCh)
-
-				go s.forwardCtrl(promptCtx, ctrlCh, sessionID, sendUpdate)
-
-				go func(sID string) {
-					defer func() { currentPromptDone <- struct{}{} }()
 					resp, _, runErr := s.sess.RunPrompt(promptCtx, promptText)
 					promptResults <- promptResult{sessionID: sID, response: resp, err: runErr}
-				}(sessionID)
+				}(sessionID, myDone, prevDone)
 
 			case "session/cancel":
 				promptMu.Lock()
@@ -326,20 +356,37 @@ func (s *Server) Run(ctx context.Context) error {
 					resultData, _ = json.Marshal(result)
 					writeMsg(Message{JSONRPC: "2.0", ID: id, Result: resultData})
 				}(msg.ID, params.Name, params.Arguments)
+
+			default:
+				// Unknown methods must not be silently dropped (review
+				// B11): JSON-RPC requires -32601 for unresolvable
+				// requests. Unknown notifications are dropped.
+				if msg.ID != nil {
+					writeMsg(Message{
+						JSONRPC: "2.0", ID: msg.ID,
+						Error: &Error{Code: -32601, Message: "method not found: " + msg.Method},
+					})
+				}
 			}
 		}
 	}()
 
-	// Background goroutine to clean up after completed prompts
+	// Background goroutine to clean up after completed prompts and
+	// signal turn completion with a stop-reason update (review B11).
 	go func() {
 		for {
 			select {
 			case pr := <-promptResults:
+				reason := "end_turn"
 				if pr.err != nil {
 					s.logf("prompt error: %v", pr.err)
+					if ctx.Err() != nil || errors.Is(pr.err, context.Canceled) {
+						reason = "cancelled"
+					}
 				} else {
 					s.logf("prompt completed")
 				}
+				sendUpdate(pr.sessionID, Update{SessionUpdate: "stop_reason", StopReason: reason})
 			case <-ctx.Done():
 				return
 			}

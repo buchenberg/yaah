@@ -92,7 +92,7 @@ func (t *GoRefactorTool) doFormat(file string) (string, error) {
 		return fmt.Sprintf("%s: already formatted", filepath.Base(file)), nil
 	}
 
-	if err := os.WriteFile(file, formatted, 0o644); err != nil {
+	if err := atomicWriteFile(file, formatted, 0o644); err != nil {
 		return "", fmt.Errorf("go_refactor format: write: %w", err)
 	}
 

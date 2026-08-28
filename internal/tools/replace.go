@@ -145,7 +145,7 @@ func (t *ReplaceTool) Execute(ctx context.Context, args string) (string, error) 
 		} else if st, err := os.Stat(p); err == nil {
 			mode = st.Mode()
 		}
-		if err := os.WriteFile(p, []byte(newContent), mode); err != nil {
+		if err := atomicWriteFile(p, []byte(newContent), mode); err != nil {
 			results = append(results, fileResult{Path: p, Count: matchCount, Err: err})
 			return nil
 		}

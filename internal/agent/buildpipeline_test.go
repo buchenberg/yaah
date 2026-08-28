@@ -27,7 +27,7 @@ func TestBuildPipeline_SubAgentUsesSubAgentPipeline(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"steer", "followup", "approval", "compaction", "loop_detection", "staleness", "conflict_detect"} {
+	for _, name := range []string{"steer", "followup", "approval", "compaction", "loop_detection", "conflict_detect"} {
 		if slices.Contains(names, name) {
 			t.Errorf("sub-agent pipeline should not contain orchestrator middleware %q", name)
 		}
@@ -80,7 +80,7 @@ func TestBuildPipeline_OrchestratorUsesDefault(t *testing.T) {
 	if slices.Contains(names, "shepherd_trace") {
 		t.Error("orchestrator pipeline must not contain shepherd_trace")
 	}
-	for _, name := range []string{"steer", "followup", "compaction", "approval", "inline_limit", "tool_concurrency", "loop_detection", "staleness", "conflict_detect"} {
+	for _, name := range []string{"steer", "followup", "compaction", "approval", "inline_limit", "tool_concurrency", "loop_detection", "conflict_detect"} {
 		if !slices.Contains(names, name) {
 			t.Errorf("orchestrator pipeline missing default middleware %q", name)
 		}

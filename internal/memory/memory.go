@@ -16,14 +16,38 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
+
+// currentSchemaVersion is the schema version this binary writes and
+// understands. A database stamped with a higher version was created by
+// a newer yaah and is refused at open (review A6). Stored in
+// schema_meta as a decimal string; compared numerically.
+const currentSchemaVersion = 1
+
+// maxSessionPromptBytes caps the persisted system_prompt and
+// compacted_summary columns so unbounded prompts cannot bloat the DB
+// (review A6 / S7). Overlong content is truncated with a marker.
+const maxSessionPromptBytes = 64 * 1024
+
+// truncateWithMarker caps s at max bytes, replacing any partial UTF-8
+// sequence at the cut point and appending a truncation marker when cut.
+func truncateWithMarker(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	cut := strings.ToValidUTF8(s[:max], "")
+	return cut + "\n…[truncated]"
+}
 
 // Entry represents a long-term memory note.
 type Entry struct {
@@ -146,6 +170,36 @@ func sanitizeFTSQuery(query string) string {
 
 // migrate creates the schema if it doesn't exist.
 func (d *DB) migrate() error {
+	// Fail fast when the database was written by a newer yaah whose
+	// schema this binary cannot understand (review A6): an older binary
+	// must not silently run half-supported queries against it.
+	if _, err := d.sql.Exec(`
+	CREATE TABLE IF NOT EXISTS schema_meta (
+		key   TEXT PRIMARY KEY,
+		value TEXT NOT NULL
+	);
+	`); err != nil {
+		return fmt.Errorf("create schema_meta: %w", err)
+	}
+	var version string
+	err := d.sql.QueryRow(`SELECT value FROM schema_meta WHERE key = 'version'`).Scan(&version)
+	switch {
+	case err == nil:
+		// Numeric comparison — lexicographic ordering breaks at
+		// multi-digit versions ("10" < "2" as strings).
+		dbVersion, convErr := strconv.Atoi(version)
+		if convErr != nil {
+			return fmt.Errorf("invalid memory db schema version %q", version)
+		}
+		if dbVersion > currentSchemaVersion {
+			return fmt.Errorf(
+				"memory db schema version %d is newer than this binary supports (%d); upgrade yaah",
+				dbVersion, currentSchemaVersion)
+		}
+	case err != nil && err != sql.ErrNoRows:
+		return fmt.Errorf("read schema version: %w", err)
+	}
+
 	schema := `
 	CREATE TABLE IF NOT EXISTS sessions (
 		id         TEXT PRIMARY KEY,
@@ -223,10 +277,6 @@ func (d *DB) migrate() error {
 	}
 
 	triggers := `
-	CREATE TABLE IF NOT EXISTS schema_meta (
-		key   TEXT PRIMARY KEY,
-		value TEXT NOT NULL
-	);
 	INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('version', '1');
 	CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
 		INSERT INTO messages_fts(rowid, content, tool_name) VALUES (new.rowid, new.content, new.tool_name);
@@ -464,10 +514,14 @@ func (d *DB) SearchMemory(query string, limit int, tag ...string) ([]Entry, erro
 	}
 
 	for i := range results {
-		d.sql.Exec(`UPDATE memory SET access_count = access_count + 1, accessed_at = ? WHERE id = ?`, now, results[i].ID)
 		results[i].AccessCount++
 		results[i].AccessedAt = now
 	}
+	ids := make([]string, len(results))
+	for i, e := range results {
+		ids[i] = e.ID
+	}
+	d.bumpAccessCountIDs(ids, now)
 
 	return results, nil
 }
@@ -528,27 +582,47 @@ func (d *DB) SearchMemoryVector(ctx context.Context, query string, limit int) ([
 		results = append(results, VectorResult{Entry: c.e, Score: score})
 	}
 
-	// Sort descending by score.
-	for i := 0; i < len(results)-1; i++ {
-		for j := i + 1; j < len(results); j++ {
-			if results[j].Score > results[i].Score {
-				results[i], results[j] = results[j], results[i]
-			}
-		}
-	}
+	// Sort descending by score (sort.Slice — the hand-rolled bubble
+	// sort was O(n²) on every vector search, review A6).
+	sort.Slice(results, func(i, j int) bool { return results[i].Score > results[j].Score })
 
 	if limit > 0 && len(results) > limit {
 		results = results[:limit]
 	}
 
 	now := time.Now().Unix()
+	ids := make([]string, len(results))
 	for i := range results {
-		d.sql.Exec(`UPDATE memory SET access_count = access_count + 1, accessed_at = ? WHERE id = ?`, now, results[i].ID)
 		results[i].AccessCount++
 		results[i].AccessedAt = now
+		ids[i] = results[i].ID
 	}
+	d.bumpAccessCountIDs(ids, now)
 
 	return results, nil
+}
+
+// bumpAccessCountIDs records one access for every id in a single
+// statement — the previous per-row UPDATE loop issued N round-trips
+// per search (review A6).
+func (d *DB) bumpAccessCountIDs(ids []string, now int64) {
+	if len(ids) == 0 {
+		return
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, now)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	if _, err := d.sql.Exec(
+		`UPDATE memory SET access_count = access_count + 1, accessed_at = ? WHERE id IN (`+placeholders+`)`,
+		args...); err != nil {
+		// Best-effort bookkeeping: a failure only means access stats
+		// drift, so the search result is still returned — but the drift
+		// must not be silent.
+		slog.Warn("memory: access-count bump failed", "ids", len(ids), "err", err)
+	}
 }
 
 // ReconcileEmbeddings finds memory rows with NULL embedding, embeds their

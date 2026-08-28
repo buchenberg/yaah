@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	agentctx "github.com/buchenberg/yaah/internal/agent/context"
 	"github.com/buchenberg/yaah/internal/agent/errorclassify"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/providers"
@@ -934,14 +935,14 @@ func TestLoop_contextWindowTrimming(t *testing.T) {
 		loop.State.Messages = append(loop.State.Messages, types.AssistantMsg("response number "+strings.Repeat("y", 200), nil))
 	}
 
-	beforeTokens := preflightTokens(loop.State.Messages, nil, defaultEstimateFactor)
+	beforeTokens := agentctx.PreflightTokens(loop.State.Messages, nil, agentctx.DefaultEstimateFactor)
 
 	_, err := loop.Run(context.Background(), "new message")
 	if err != nil {
 		t.Fatalf("Run() error: %v", err)
 	}
 
-	afterTokens := preflightTokens(loop.State.Messages, nil, defaultEstimateFactor)
+	afterTokens := agentctx.PreflightTokens(loop.State.Messages, nil, agentctx.DefaultEstimateFactor)
 	// Token-budgeted compaction must reduce the conversation when it exceeds
 	// the preserve budget (2500 tokens for a 10k window).
 	if afterTokens >= beforeTokens {

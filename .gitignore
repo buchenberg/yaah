@@ -54,6 +54,7 @@ go.work.sum
 .kilo/
 .pi/
 .opencode/
+.codex/
 
 # Gas Town runtime directories — never commit
 mayor/

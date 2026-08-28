@@ -81,3 +81,44 @@ func TestLoad_prioritizesAgentsMdOverClaudeMd(t *testing.T) {
 		t.Errorf("expected AGENTS.md first, got %q", files[0])
 	}
 }
+
+func TestWorktreeRoot_findsGitMarker(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "a", "b", "c")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: elsewhere"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := WorktreeRoot(nested); got != root {
+		t.Errorf("WorktreeRoot = %q, want %q", got, root)
+	}
+}
+
+func TestWorktreeRoot_fallsBackToCwd(t *testing.T) {
+	cwd := t.TempDir()
+	if got := WorktreeRoot(cwd); got != cwd {
+		t.Errorf("WorktreeRoot = %q, want cwd fallback %q", got, cwd)
+	}
+}
+
+func TestLoad_truncatesOversizedInstructions(t *testing.T) {
+	prev := MaxFileBytes
+	MaxFileBytes = 1024
+	t.Cleanup(func() { MaxFileBytes = prev })
+
+	tmp := t.TempDir()
+	os.WriteFile(filepath.Join(tmp, "AGENTS.md"), []byte(strings.Repeat("x", 4096)), 0o644)
+
+	files := Load(tmp, tmp)
+	if len(files) != 1 {
+		t.Fatalf("files = %d, want 1", len(files))
+	}
+	if len(files[0]) > 1024+100 {
+		t.Errorf("file not truncated: %d bytes", len(files[0]))
+	}
+	if !strings.Contains(files[0], "truncated") {
+		t.Error("truncation notice missing")
+	}
+}

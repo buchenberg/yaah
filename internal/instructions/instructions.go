@@ -10,6 +10,42 @@ import (
 	"strings"
 )
 
+// DefaultMaxFileBytes caps each injected instruction file. A runaway
+// AGENTS.md would otherwise inflate every prompt of every session
+// (review A5); overlong files are truncated with a notice.
+const DefaultMaxFileBytes = 64 * 1024
+
+// MaxFileBytes is the per-file cap; overridable for tests.
+var MaxFileBytes = DefaultMaxFileBytes
+
+// truncateWithNotice caps s at MaxFileBytes with a trailing notice.
+func truncateWithNotice(s string) string {
+	if len(s) <= MaxFileBytes {
+		return s
+	}
+	cut := strings.ToValidUTF8(s[:MaxFileBytes], "")
+	return cut + "\n\n…[instructions truncated — trim the file]"
+}
+
+// WorktreeRoot returns the enclosing git worktree root for cwd by
+// walking up to the nearest directory containing a .git entry,
+// falling back to cwd when no repository marker is found. Load's
+// only call site previously passed cwd as the worktree root, making
+// the walk-up discovery dead code (review A5).
+func WorktreeRoot(cwd string) string {
+	dir := cwd
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return cwd // filesystem root reached; no repo marker
+		}
+		dir = parent
+	}
+}
+
 // instructionFileNames are the files we look for, in priority order.
 // AGENTS.md is preferred; CLAUDE.md is accepted for cross-tool compatibility.
 var instructionFileNames = []string{
@@ -52,7 +88,7 @@ func Load(cwd, worktreeRoot string) []string {
 			}
 
 			seen[path] = true
-			files = append(files, string(data))
+			files = append(files, truncateWithNotice(string(data)))
 		}
 
 		// Stop at the worktree root

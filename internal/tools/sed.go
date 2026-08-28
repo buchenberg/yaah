@@ -101,7 +101,7 @@ func (t *SedTool) Execute(ctx context.Context, args string) (string, error) {
 		}
 
 		replaced := re.ReplaceAllString(content, params.Replacement)
-		if err := os.WriteFile(fp, []byte(replaced), 0o644); err != nil {
+		if err := atomicWriteFile(fp, []byte(replaced), 0o644); err != nil {
 			results = append(results, fmt.Sprintf("%s: write error: %v", fp, err))
 			continue
 		}

@@ -87,13 +87,12 @@ func (v *View) SendTo(sessionID string, send func(string, Update), evt agent.Eve
 	case *agent.CompactionStartedEvent:
 		update = Update{
 			SessionUpdate: "agent_message_chunk",
-			Content:       &Content{Type: "text", Text: fmt.Sprintf("[compacting %d→%d tokens]", e.BeforeTokens, e.TargetTokens)},
+			Content:       &Content{Type: "text", Text: "[" + e.StartedSummary() + "]"},
 		}
 	case *agent.CompactionDoneEvent:
-		pct := e.SavingsPct * 100
 		update = Update{
 			SessionUpdate: "agent_message_chunk",
-			Content:       &Content{Type: "text", Text: fmt.Sprintf("[compacted %.0f%% (%d→%d)]", pct, e.BeforeTokens, e.AfterTokens)},
+			Content:       &Content{Type: "text", Text: "[" + e.DoneSummary() + "]"},
 		}
 	case *agent.DoneEvent:
 		// Intentionally ignored: ACP signals turn completion via the

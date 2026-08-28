@@ -161,6 +161,8 @@ type Hooks struct {
 }
 
 // MiddlewareConfig controls which middleware runs in the agent pipeline.
+// Enabled is additive over the built-in defaults (it extends rather than
+// replaces them); Disabled removes names from the union.
 type MiddlewareConfig struct {
 	Enabled  []string `yaml:"enabled"`
 	Disabled []string `yaml:"disabled"`

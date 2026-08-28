@@ -59,20 +59,49 @@ func (l *Loop) addUsage(u types.Usage) {
 	}
 }
 
-// llmCompact satisfies the llm.Compactor interface by delegating to
-// the Loop's context compaction machinery. It sets messages into
-// l.State.Messages, compacts, and returns the result.
-func (l *Loop) llmCompact(ctx context.Context, messages []types.Message, threshold float64) []types.Message {
-	l.State.Messages = messages
+// compactMessagesIsolated runs context compaction against an isolated
+// LoopState view so overflow recovery triggered from inside LLM.Call —
+// and the pipeline's compaction drains — never mutate the loop's live
+// message state (single-writer invariant, review finding B6). The
+// runMiddleware loop owns l.State.Messages and adopts the returned
+// slice at its defined compaction point. Compaction bookkeeping
+// (budget adaptation, ineffective-compaction counters, persistence
+// rebasing via OnMessagesReplaced) is preserved across the isolation.
+func (l *Loop) compactMessagesIsolated(ctx context.Context, messages []types.Message, threshold float64) []types.Message {
+	saved := l.State
+	isolated := saved
+	isolated.Messages = messages
+	l.State = isolated
+	defer func() {
+		adopted := l.State
+		adopted.Messages = saved.Messages // caller owns the slice; it adopts the return value
+		l.State = adopted
+	}()
 	l.compactContext(ctx, threshold)
 	return l.State.Messages
+}
+
+// llmCompact satisfies the llm.Compactor interface. It runs compaction
+// against an isolated state view and returns the compacted slice; it
+// never writes l.State.Messages directly (B6).
+func (l *Loop) llmCompact(ctx context.Context, messages []types.Message, threshold float64) []types.Message {
+	return l.compactMessagesIsolated(ctx, messages, threshold)
 }
 
 // llmTrim reduces context deterministically by removing the oldest
 // messages. It is used as a fallback when the LLM returns an empty
 // stream, indicating the context is too large even for summarization.
+// Like llmCompact it runs against an isolated state view (B6).
 func (l *Loop) llmTrim(ctx context.Context, messages []types.Message) []types.Message {
-	l.State.Messages = messages
+	saved := l.State
+	isolated := saved
+	isolated.Messages = messages
+	l.State = isolated
+	defer func() {
+		adopted := l.State
+		adopted.Messages = saved.Messages
+		l.State = adopted
+	}()
 	l.trimContext()
 	return l.State.Messages
 }

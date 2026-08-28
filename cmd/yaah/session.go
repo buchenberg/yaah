@@ -112,6 +112,17 @@ type agentSession struct {
 	steerCh    chan string
 	followupCh chan string
 	totalUsage types.Usage
+
+	// Compact/fallback providers resolved once per session and reused
+	// across turns — resolving them per prompt constructed fresh HTTP
+	// clients every turn (review B15). auxResolved guards lazy fill;
+	// SetModel invalidates the cache so a provider switch re-resolves.
+	compactProvider  agent.Provider
+	compactModel     string
+	fallbackProvider agent.Provider
+	fallbackModel    string
+	fallbackName     string
+	auxResolved      bool
 }
 
 func (s *agentSession) close() {
@@ -269,4 +280,21 @@ func (s *agentSession) SetModel(providerName, modelName string) {
 	s.provider = prov
 	s.providerName = providerName
 	s.modelName = modelName
+	s.auxResolved = false
+}
+
+// auxProviders returns the session-cached compact and fallback
+// providers, resolving them on first use and again after a /model
+// switch invalidates the cache (review B15).
+func (s *agentSession) auxProviders() (compact agent.Provider, compactModel string, fb agent.Provider, fbModel, fbName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.auxResolved {
+		rawCompact, cm := resolveCompact(s.cfg)
+		s.compactProvider = agent.ResolveCompactProvider(rawCompact, s.cfg.Observability.Otel.Verbose)
+		s.compactModel = cm
+		s.fallbackProvider, s.fallbackModel, s.fallbackName = resolveFallback(s.cfg)
+		s.auxResolved = true
+	}
+	return s.compactProvider, s.compactModel, s.fallbackProvider, s.fallbackModel, s.fallbackName
 }

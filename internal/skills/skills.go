@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Skill represents a discovered skill with its metadata and body.
@@ -71,7 +73,9 @@ func Discover(dirs []string) []Skill {
 
 // ParseFrontmatter parses YAML frontmatter (between --- markers) and the
 // markdown body from a SKILL.md file. Returns an error if the frontmatter
-// is missing or unparseable.
+// is missing or unparseable. The block is decoded with yaml.v3 — the
+// line-by-line parser it replaces broke on quoted or wrapped values
+// (review A5).
 func ParseFrontmatter(data []byte) (*Skill, error) {
 	s := string(data)
 
@@ -94,18 +98,15 @@ func ParseFrontmatter(data []byte) (*Skill, error) {
 		Body: strings.TrimSpace(body),
 	}
 
-	// Simple line-by-line parser (avoids yaml.v3 dependency for now)
-	for _, line := range strings.Split(frontmatter, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, "name:") {
-			skill.Name = strings.TrimSpace(strings.TrimPrefix(line, "name:"))
-		} else if strings.HasPrefix(line, "description:") {
-			skill.Description = strings.TrimSpace(strings.TrimPrefix(line, "description:"))
-		}
+	var fm struct {
+		Name        string `yaml:"name"`
+		Description string `yaml:"description"`
 	}
+	if err := yaml.Unmarshal([]byte(frontmatter), &fm); err != nil {
+		return nil, fmt.Errorf("parse frontmatter: %w", err)
+	}
+	skill.Name = strings.TrimSpace(fm.Name)
+	skill.Description = strings.TrimSpace(fm.Description)
 
 	if skill.Name == "" {
 		return nil, fmt.Errorf("frontmatter missing 'name' field")

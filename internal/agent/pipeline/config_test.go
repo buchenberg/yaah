@@ -37,7 +37,7 @@ func TestPipeline_SubAgentPipelineNames(t *testing.T) {
 
 func TestPipeline_SubAgentExcludesOrchestrator(t *testing.T) {
 	names := SubAgentPipelineNames(nil)
-	excluded := []string{"steer", "followup", "approval", "compaction", "loop_detection", "staleness", "soft_prune"}
+	excluded := []string{"steer", "followup", "approval", "compaction", "loop_detection", "soft_prune"}
 	for _, name := range excluded {
 		if slices.Contains(names, name) {
 			t.Errorf("sub-agent pipeline should not contain orchestrator middleware %q", name)
@@ -263,9 +263,104 @@ func TestNewFromConfig_NoShepherdTrace(t *testing.T) {
 		t.Error("orchestrator pipeline must not contain shepherd_trace")
 	}
 	// The rest of the default pipeline is intact.
-	for _, name := range []string{"steer", "followup", "compaction", "approval", "inline_limit", "tool_concurrency", "loop_detection", "staleness", "conflict_detect"} {
+	for _, name := range []string{"steer", "followup", "compaction", "approval", "inline_limit", "tool_concurrency", "loop_detection", "conflict_detect"} {
 		if pipe.Find(name) == nil {
 			t.Errorf("default pipeline lost middleware %q", name)
 		}
+	}
+}
+
+// TestResolvedPipelineNames_Additive pins the additive enabled-list
+// semantics (review B10a): middleware.enabled extends the defaults and
+// disabled removes from the union; it no longer replaces the default
+// set (which silently dropped inline_limit and conflict_detect).
+func TestResolvedPipelineNames_Additive(t *testing.T) {
+	t.Run("empty lists yield defaults", func(t *testing.T) {
+		got := ResolvedPipelineNames(nil, nil)
+		if !reflect.DeepEqual(got, defaultPipelineNames) {
+			t.Errorf("ResolvedPipelineNames(nil, nil) = %v, want %v", got, defaultPipelineNames)
+		}
+	})
+
+	t.Run("enabled extends defaults", func(t *testing.T) {
+		got := ResolvedPipelineNames([]string{"shepherd_trace"}, nil)
+		if !slices.Contains(got, "shepherd_trace") {
+			t.Errorf("extra enabled entry missing: %v", got)
+		}
+		for _, d := range defaultPipelineNames {
+			if !slices.Contains(got, d) {
+				t.Errorf("default %q dropped by additive enabled list: %v", d, got)
+			}
+		}
+	})
+
+	t.Run("enabled deduplicates against defaults", func(t *testing.T) {
+		got := ResolvedPipelineNames([]string{"steer", "approval"}, nil)
+		count := 0
+		for _, n := range got {
+			if n == "steer" {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Errorf("steer appears %d times, want 1: %v", count, got)
+		}
+	})
+
+	t.Run("disabled removes from the union", func(t *testing.T) {
+		got := ResolvedPipelineNames([]string{"shepherd_trace"}, []string{"approval", "shepherd_trace"})
+		if slices.Contains(got, "approval") || slices.Contains(got, "shepherd_trace") {
+			t.Errorf("disabled entries still active: %v", got)
+		}
+		if !slices.Contains(got, "inline_limit") {
+			t.Errorf("inline_limit must survive a custom enabled list: %v", got)
+		}
+	})
+}
+
+// TestNewFromConfig_PromptCachingKnob pins the boolean prompt_caching
+// knob (review B10b): setting it includes the middleware without the
+// name list, and it stays a single instance.
+func TestNewFromConfig_PromptCachingKnob(t *testing.T) {
+	pipe := NewFromConfig(PipelineConfig{PromptCaching: true})
+	if pipe.Find("prompt_caching") == nil {
+		t.Fatal("prompt_caching: true did not include the middleware")
+	}
+	count := 0
+	for _, name := range pipe.MiddlewareNames() {
+		if name == "prompt_caching" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("prompt_caching included %d times, want 1", count)
+	}
+	pipe2 := NewFromConfig(PipelineConfig{})
+	if pipe2.Find("prompt_caching") != nil {
+		t.Error("prompt_caching middleware present with knob unset")
+	}
+}
+
+// TestNewFromConfig_PromptCachingDisabledWins pins precedence: an
+// explicit disabled entry beats the boolean knob (review: the knob
+// used to re-append middleware the user explicitly disabled).
+func TestNewFromConfig_PromptCachingDisabledWins(t *testing.T) {
+	pipe := NewFromConfig(PipelineConfig{
+		PromptCaching:    true,
+		PipelineDisabled: []string{"prompt_caching"},
+	})
+	if pipe.Find("prompt_caching") != nil {
+		t.Error("disabled list must take precedence over the prompt_caching knob")
+	}
+}
+
+// TestNewFromConfig_ShippedDefaultsParity asserts that an empty config
+// resolves to exactly the documented default pipeline — the parity
+// gate for the enabled-semantics change.
+func TestNewFromConfig_ShippedDefaultsParity(t *testing.T) {
+	pipe := NewFromConfig(PipelineConfig{})
+	got := pipe.MiddlewareNames()
+	if !reflect.DeepEqual(got, defaultPipelineNames) {
+		t.Errorf("shipped default pipeline = %v, want %v", got, defaultPipelineNames)
 	}
 }

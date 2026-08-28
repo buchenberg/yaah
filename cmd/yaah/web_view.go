@@ -154,6 +154,9 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 	case *agent.SubAgentEndEvent:
 		we = sseWireEvent{Type: "subagent.end", Role: e.Role, Model: e.Model,
 			Prompt: e.Prompt, Ms: e.Duration.Milliseconds(), Error: e.Error}
+	case *agent.EscalationEvent:
+		we = sseWireEvent{Type: "ctrl.status",
+			Text: fmt.Sprintf("ESCALATION [%s] %s: %s", e.Severity, e.SubAgentRole, e.Summary)}
 	case *agent.DoneEvent:
 		// Prefer the real provider-reported token count over the
 		// char/4 estimate (which inflates with reasoning content).
@@ -164,10 +167,14 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 		we = sseWireEvent{Type: "done", Response: e.Response, Error: e.Error,
 			ContextTokens: ct, ContextWindow: e.ContextWindow}
 	case *agent.CompactionStartedEvent:
-		we = sseWireEvent{Type: "ctrl.status", Text: fmt.Sprintf("compacting (%d→%d tokens, %s)", e.BeforeTokens, e.TargetTokens, e.Reason)}
+		we = sseWireEvent{Type: "ctrl.status", Text: e.StartedSummary()}
 	case *agent.CompactionDoneEvent:
-		we = sseWireEvent{Type: "ctrl.status", Text: fmt.Sprintf("compacted %.0f%% (%d→%d, %s, %.1fs)",
-			e.SavingsPct*100, e.BeforeTokens, e.AfterTokens, e.Method, e.ElapsedSeconds)}
+		we = sseWireEvent{Type: "ctrl.status", Text: e.DoneSummary()}
+	default:
+		// Deliberately unmatched events emit no wire frame — the
+		// previous fallthrough wrote an empty {"type":""} SSE event
+		// for anything new (review B12).
+		return
 	}
 	v.write(marshalWire(we))
 }

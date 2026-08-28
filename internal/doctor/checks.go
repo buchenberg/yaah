@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/config"
 )
 
@@ -253,29 +254,48 @@ func CheckDirectives(cfg *config.Config, cfgErr error, overrides []string) Check
 	return Check{Label: "Directives", Status: "OK", Detail: detail}
 }
 
-// CheckPipeline reports the active middleware pipeline.
+// CheckPipeline reports the active middleware pipeline. The default
+// set is read from the pipeline package instead of maintaining a local
+// copy that drifted out of sync (review B10e). middleware.enabled is
+// additive over the defaults; disabled removes from the union. Names
+// without a registered builder (e.g. deleted middleware still listed
+// in config) are flagged — the pipeline silently skips them at build
+// time, so reporting them as active would be dishonest.
 func CheckPipeline(cfg *config.Config, cfgErr error) Check {
 	if cfgErr != nil {
 		return Check{Label: "Pipeline", Status: "WARN", Detail: "config not loaded"}
 	}
 	mc := cfg.Agent.Middleware
-	if len(mc.Enabled) > 0 {
-		return Check{Label: "Pipeline", Status: "OK", Detail: fmt.Sprintf("explicit: %s", strings.Join(mc.Enabled, " → "))}
+	active := pipeline.ResolvedPipelineNames(mc.Enabled, mc.Disabled)
+
+	registered := make(map[string]bool)
+	for _, name := range pipeline.RegisteredOrchestratorNames() {
+		registered[name] = true
 	}
-	defaults := []string{"steer", "followup", "compaction", "soft_prune", "approval", "tool_concurrency", "loop_detection", "staleness"}
-	active := make([]string, 0, len(defaults))
-	disabled := make(map[string]bool, len(mc.Disabled))
-	for _, d := range mc.Disabled {
-		disabled[d] = true
-	}
-	for _, name := range defaults {
-		if !disabled[name] {
-			active = append(active, name)
+	var unknown []string
+	unknownSet := make(map[string]bool)
+	for _, name := range active {
+		if !registered[name] && !unknownSet[name] {
+			unknownSet[name] = true
+			unknown = append(unknown, name)
 		}
 	}
-	detail := fmt.Sprintf("%d middleware active", len(active))
+
+	// The honest active list only carries registered middleware.
+	reported := make([]string, 0, len(active))
+	for _, name := range active {
+		if !unknownSet[name] {
+			reported = append(reported, name)
+		}
+	}
+
+	detail := fmt.Sprintf("%d middleware active: %s", len(reported), strings.Join(reported, " → "))
 	if len(mc.Disabled) > 0 {
 		detail += fmt.Sprintf(" (disabled: %s)", strings.Join(mc.Disabled, ", "))
+	}
+	if len(unknown) > 0 {
+		detail += fmt.Sprintf(" — WARN: config names unregistered middleware (silently skipped): %s", strings.Join(unknown, ", "))
+		return Check{Label: "Pipeline", Status: "WARN", Detail: detail}
 	}
 	return Check{Label: "Pipeline", Status: "OK", Detail: detail}
 }

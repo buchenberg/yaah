@@ -8,48 +8,6 @@ import (
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-// Re-exports for backward compatibility within the agent package (tests
-// reference the historical unexported names).
-const (
-	defaultEstimateFactor = agentctx.DefaultEstimateFactor
-	maxPayloadBytes       = agentctx.MaxPayloadBytes
-)
-
-type turnRange = agentctx.TurnRange
-
-func messageTokens(m types.Message) int          { return agentctx.MessageTokens(m) }
-func turns(messages []types.Message) []turnRange { return agentctx.Turns(messages) }
-func preserveBudget(contextWindow int) int       { return agentctx.PreserveBudget(contextWindow) }
-
-func preflightTokens(messages []types.Message, tools []types.ToolDef, factor float64) int {
-	return agentctx.PreflightTokens(messages, tools, factor)
-}
-
-func estimatePayloadBytes(messages []types.Message, tools []types.ToolDef) int {
-	return agentctx.EstimatePayloadBytes(messages, tools)
-}
-
-func splitTail(messages []types.Message, budget int) agentctx.SplitResult {
-	return agentctx.SplitTail(messages, budget)
-}
-
-func splitTurn(messages []types.Message, t turnRange, budget int) int {
-	return agentctx.SplitTurn(messages, t, budget)
-}
-
-// ProtectReasoningTurns ensures compaction does not remove assistant messages
-// that carry reasoning_content. Thinking-mode providers (e.g. DeepSeek) require
-// EVERY reasoning-carrying assistant message to be passed back in every
-// subsequent request. If compaction removes any, the next request gets a 400:
-// "The reasoning_content in the thinking mode must be passed back to the API."
-//
-// protectTurns=0 disables protection entirely (explicit opt-out). Otherwise
-// ALL reasoning-carrying messages in oldMsgs are protected, regardless of
-// the configured count — DeepSeek requires every one.
-func ProtectReasoningTurns(messages []types.Message, keepStart, protectTurns int) int {
-	return agentctx.ProtectReasoningTurns(messages, keepStart, protectTurns)
-}
-
 // EstimatedTokens returns the estimated token count for all messages
 // in the Loop's conversation history (l.State.Messages). This is the
 // canonical estimate used by lifecycle events and control messages.

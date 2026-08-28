@@ -27,6 +27,7 @@ type ServerInfo struct {
 // MCPClient is the interface for calling tools on an MCP server.
 type MCPClient interface {
 	CallTool(ctx context.Context, name string, args json.RawMessage) (json.RawMessage, error)
+	Tools() []ServerTool
 	Close() error
 	Info() ServerInfo
 }
@@ -129,15 +130,10 @@ func StartMCPClientsFromConfig(ctx context.Context, manifests map[string]*Manife
 
 		clients = append(clients, client)
 
-		// Wrap each tool
-		if httpC, ok := client.(*HTTPClient); ok {
-			for _, tool := range httpC.Tools() {
-				tools = append(tools, NewMCPTool(tool, client))
-			}
-		} else if stdioC, ok := client.(*Client); ok {
-			for _, tool := range stdioC.Tools() {
-				tools = append(tools, NewMCPTool(tool, client))
-			}
+		// Wrap each tool. Tools() is part of the MCPClient interface, so
+		// no per-transport type assertion is needed here (review B13).
+		for _, tool := range client.Tools() {
+			tools = append(tools, NewMCPTool(tool, client))
 		}
 		infos = append(infos, info)
 	}

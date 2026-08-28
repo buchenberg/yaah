@@ -1,10 +1,11 @@
 package memory
 
-// CreateSession inserts a new session.
+// CreateSession inserts a new session. The system_prompt column is
+// capped so an unbounded prompt cannot bloat the database (review A6/S7).
 func (d *DB) CreateSession(s Session) error {
 	_, err := d.sql.Exec(
 		`INSERT INTO sessions (id, started_at, ended_at, cwd, model, tokens_in, tokens_out, system_prompt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		s.ID, s.StartedAt, s.EndedAt, s.CWD, s.Model, s.TokensIn, s.TokensOut, s.SystemPrompt,
+		s.ID, s.StartedAt, s.EndedAt, s.CWD, s.Model, s.TokensIn, s.TokensOut, truncateWithMarker(s.SystemPrompt, maxSessionPromptBytes),
 	)
 	return err
 }
@@ -53,9 +54,11 @@ func (d *DB) EndSession(id string, endedAt int64, tokensIn int, tokensOut int) e
 	return err
 }
 
-// UpdateSessionSummary persists the most recent compaction summary for a session.
+// UpdateSessionSummary persists the most recent compaction summary for
+// a session, capped like system_prompt (review A6/S7).
 func (d *DB) UpdateSessionSummary(id string, summary string) error {
-	_, err := d.sql.Exec(`UPDATE sessions SET compacted_summary = ? WHERE id = ?`, summary, id)
+	_, err := d.sql.Exec(`UPDATE sessions SET compacted_summary = ? WHERE id = ?`,
+		truncateWithMarker(summary, maxSessionPromptBytes), id)
 	return err
 }
 

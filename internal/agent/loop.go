@@ -44,13 +44,13 @@ func (l *Loop) buildPipeline() *pipeline.Pipeline {
 	return pipeline.NewFromConfig(l.toPipelineConfig())
 }
 
-// Compact satisfies the pipeline.Compactor interface by delegating to
-// the Loop's context compaction machinery. It sets step messages into
-// l.State.Messages, compacts, and returns the result.
+// Compact satisfies the pipeline.Compactor interface (steer-drain
+// path). It runs compaction against an isolated state view and returns
+// the compacted slice; the middleware assigns it to step.Messages and
+// runMiddleware adopts it — l.State.Messages is never written here
+// (single-writer invariant, review finding B6).
 func (l *Loop) Compact(ctx context.Context, messages []types.Message, threshold float64) []types.Message {
-	l.State.Messages = messages
-	l.compactContext(ctx, threshold)
-	return l.State.Messages
+	return l.compactMessagesIsolated(ctx, messages, threshold)
 }
 
 // toPipelineConfig builds a PipelineConfig from the Loop's current settings.
@@ -169,7 +169,14 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 	l.applyDefaults()
 	l.initMessages(userInput)
 
+	// messages is the authoritative working copy of the conversation for
+	// this Run. l.State.Messages has exactly two writers: the deferred
+	// sync below (every exit path) and the end-of-iteration sync so
+	// mid-run readers (diagnostics, UI usage, checkpoints) see fresh
+	// state. Compaction results are adopted explicitly from the LLM
+	// client's return path (review finding B6).
 	messages := l.State.Messages
+	defer func() { l.State.Messages = messages }()
 	pipe := l.buildPipeline()
 	traceMw := pipe.ShepherdTraceMiddleware()
 
@@ -183,7 +190,6 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 
 			select {
 			case <-ctx.Done():
-				l.State.Messages = messages
 				if traceMw != nil {
 					traceMw.FailTurn(iter, ctx.Err())
 				}
@@ -212,7 +218,6 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 
 			step, req, err := l.buildTurnRequest(ctx, iter, messages, pipe, turnSpan)
 			if err != nil {
-				l.State.Messages = messages
 				if traceMw != nil {
 					traceMw.FailTurn(iter, err)
 				}
@@ -230,18 +235,18 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 			tokensBeforeTurn := l.State.TotalTokens
 			llmStart := time.Now()
 
-			// Snapshot the State.Messages header so we can detect an
-			// overflow-recovery compaction inside Call (llmCompact/llmTrim
-			// replace it wholesale).
-			preCallState := l.State.Messages
-
 			result, err := l.LLM.Call(turnCtx, req)
 			if err != nil {
 				if turnSpan != nil {
 					observability.RecordError(turnSpan, err)
 					turnSpan.End()
 				}
-				l.State.Messages = messages
+				// Adopt overflow-recovery compaction even on failure: the
+				// compacted baseline was already persistence-rebased, so
+				// the in-memory state must match it (B6).
+				if result.Compacted {
+					messages = result.CompactedMessages
+				}
 				if traceMw != nil {
 					traceMw.FailTurn(iter, err)
 				}
@@ -249,13 +254,11 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 			}
 			msg := result.Message
 
-			// If Call's overflow recovery replaced the conversation, adopt
-			// the compacted baseline before appending the response — the
-			// local slice predates the replacement and would resurrect the
-			// messages compaction removed (review findings B6/B7).
-			if len(l.State.Messages) != len(preCallState) ||
-				(len(preCallState) > 0 && &preCallState[0] != &l.State.Messages[0]) {
-				messages = l.State.Messages
+			// Adopt overflow-recovery compaction (or trimming) at the
+			// defined compaction point — Call never mutates loop state
+			// directly (B6).
+			if result.Compacted {
+				messages = result.CompactedMessages
 			}
 
 			// Short-lived diagnostic span — survives parent crash.
@@ -282,7 +285,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 				if turnSpan != nil {
 					turnSpan.End()
 				}
-				l.State.Messages = messages
+				l.State.Messages = messages // end-of-iteration sync; the deferred write covers the return
 				observability.RecordAgentTurn(turnCtx, time.Since(turnStart))
 				if traceMw != nil {
 					traceMw.EndTurn(iter, result.Usage.PromptTokens, result.Usage.CompletionTokens)
@@ -296,7 +299,6 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 
 			step, err = pipe.RunPostModel(ctx, &msg, step)
 			if err != nil {
-				l.State.Messages = messages
 				if traceMw != nil {
 					traceMw.FailTurn(iter, err)
 				}
@@ -332,6 +334,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 			for i := l.Persister.MsgIdx(); i < len(messages); i++ {
 				l.Persister.Persist(messages[i])
 			}
+			l.State.Messages = messages // end-of-iteration sync (single deferred write covers exits)
 		}
 		// max iterations reached — ask whether to continue
 		if l.ContinueAfterMaxIter == nil || !l.ContinueAfterMaxIter() {
@@ -340,7 +343,6 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 			if l.restoreLastTurnCheckpoint(ctx, &messages, exhaustionGuidance) {
 				continue
 			}
-			l.State.Messages = messages
 			err := MaxIterationsError{MaxIter: l.Config.MaxLoopCycles}
 			if traceMw != nil {
 				traceMw.FailTurn(l.Config.MaxLoopCycles, err)
