@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/agent/errorclassify"
 	agentctx "github.com/buchenberg/yaah/internal/agent/context"
+	"github.com/buchenberg/yaah/internal/agent/errorclassify"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"

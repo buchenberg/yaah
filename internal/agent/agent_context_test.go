@@ -421,7 +421,7 @@ func TestSplitTail_userAnchor(t *testing.T) {
 		msgs = append(msgs, bigUserMsg("u"))
 		msgs = append(msgs, types.AssistantMsg("ok", nil))
 	}
-	lastUserIdx := len(msgs) - 2   // last user before final assistant
+	lastUserIdx := len(msgs) - 2            // last user before final assistant
 	split := agentctx.SplitTail(msgs, 8000) // large budget keeps the last turn
 	if split.KeepStart > lastUserIdx {
 		t.Errorf("keepStart = %d > lastUserIdx %d: most recent user summarized away",
