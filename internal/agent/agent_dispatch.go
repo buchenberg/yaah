@@ -218,6 +218,10 @@ func (d *toolDispatch) acquire(ctx context.Context) error {
 	if l.toolConcurrency != nil {
 		observability.RecordToolGoroutine(ctx, d.call.Function.Name, "acquire_concurrency")
 		if err := l.toolConcurrency.Acquire(ctx); err != nil {
+			// Release the sub-agent slot already taken above — run()'s
+			// deferred release is not registered yet when acquire fails
+			// (review: semaphore leak).
+			d.release()
 			return err
 		}
 		d.releaseTool = l.toolConcurrency.Release
@@ -225,13 +229,16 @@ func (d *toolDispatch) acquire(ctx context.Context) error {
 	return nil
 }
 
-// release frees the concurrency slots held by the dispatch.
+// release frees the concurrency slots held by the dispatch. Idempotent
+// so the acquire-failure path and the deferred cleanup can both call it.
 func (d *toolDispatch) release() {
 	if d.releaseTool != nil {
 		d.releaseTool()
+		d.releaseTool = nil
 	}
 	if d.releaseSubAgent != nil {
 		d.releaseSubAgent()
+		d.releaseSubAgent = nil
 	}
 }
 

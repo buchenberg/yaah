@@ -341,6 +341,19 @@ func TestNewFromConfig_PromptCachingKnob(t *testing.T) {
 	}
 }
 
+// TestNewFromConfig_PromptCachingDisabledWins pins precedence: an
+// explicit disabled entry beats the boolean knob (review: the knob
+// used to re-append middleware the user explicitly disabled).
+func TestNewFromConfig_PromptCachingDisabledWins(t *testing.T) {
+	pipe := NewFromConfig(PipelineConfig{
+		PromptCaching:    true,
+		PipelineDisabled: []string{"prompt_caching"},
+	})
+	if pipe.Find("prompt_caching") != nil {
+		t.Error("disabled list must take precedence over the prompt_caching knob")
+	}
+}
+
 // TestNewFromConfig_ShippedDefaultsParity asserts that an empty config
 // resolves to exactly the documented default pipeline — the parity
 // gate for the enabled-semantics change.

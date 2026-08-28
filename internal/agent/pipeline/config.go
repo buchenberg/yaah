@@ -97,7 +97,10 @@ func NewFromConfig(cfg PipelineConfig) *Pipeline {
 	// The prompt_caching boolean knob is honored independently of the
 	// name lists (review B10b): when set, the middleware is appended
 	// idempotently so `prompt_caching: true` works without naming it.
-	if cfg.PromptCaching && !slices.Contains(names, "prompt_caching") {
+	// An explicit `disabled` entry always wins over the boolean knob.
+	if cfg.PromptCaching &&
+		!slices.Contains(cfg.PipelineDisabled, "prompt_caching") &&
+		!slices.Contains(names, "prompt_caching") {
 		names = append(names, "prompt_caching")
 	}
 	mws := make([]Middleware, 0, len(names))

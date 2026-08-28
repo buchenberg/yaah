@@ -7,24 +7,64 @@ import (
 
 // TestMigrate_rejectsNewerSchema pins the fail-fast rule: a database
 // stamped by a newer yaah must be refused at open, not silently
-// queried with half-supported SQL (review A6).
+// queried with half-supported SQL (review A6). The multi-digit case
+// guards the numeric comparison — lexicographic ordering would accept
+// version "10" against a binary at version "2".
 func TestMigrate_rejectsNewerSchema(t *testing.T) {
-	path := t.TempDir() + "/future.db"
+	t.Run("single digit", func(t *testing.T) {
+		path := t.TempDir() + "/future.db"
 
-	db, err := Open(path)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	if _, err := db.sql.Exec(`UPDATE schema_meta SET value = '999' WHERE key = 'version'`); err != nil {
-		t.Fatalf("stamp version: %v", err)
-	}
-	db.Close()
+		db, err := Open(path)
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		if _, err := db.sql.Exec(`UPDATE schema_meta SET value = '999' WHERE key = 'version'`); err != nil {
+			t.Fatalf("stamp version: %v", err)
+		}
+		db.Close()
 
-	if _, err := Open(path); err == nil {
-		t.Fatal("Open on a newer-schema database should fail")
-	} else if !strings.Contains(err.Error(), "newer than this binary supports") {
-		t.Fatalf("error = %v, want newer-schema message", err)
-	}
+		if _, err := Open(path); err == nil {
+			t.Fatal("Open on a newer-schema database should fail")
+		} else if !strings.Contains(err.Error(), "newer than this binary supports") {
+			t.Fatalf("error = %v, want newer-schema message", err)
+		}
+	})
+
+	t.Run("multi digit numeric compare", func(t *testing.T) {
+		path := t.TempDir() + "/future10.db"
+
+		db, err := Open(path)
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		if _, err := db.sql.Exec(`UPDATE schema_meta SET value = '10' WHERE key = 'version'`); err != nil {
+			t.Fatalf("stamp version: %v", err)
+		}
+		db.Close()
+
+		// "10" sorts before "2" lexicographically; the numeric compare
+		// must still refuse it.
+		if _, err := Open(path); err == nil {
+			t.Fatal("Open on schema version 10 should fail against a version-1 binary")
+		}
+	})
+
+	t.Run("invalid version refuses", func(t *testing.T) {
+		path := t.TempDir() + "/badversion.db"
+
+		db, err := Open(path)
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		if _, err := db.sql.Exec(`UPDATE schema_meta SET value = 'not-a-number' WHERE key = 'version'`); err != nil {
+			t.Fatalf("stamp version: %v", err)
+		}
+		db.Close()
+
+		if _, err := Open(path); err == nil || !strings.Contains(err.Error(), "invalid memory db schema version") {
+			t.Fatalf("error = %v, want invalid-version message", err)
+		}
+	})
 }
 
 // TestCreateSession_capsSystemPrompt pins the system_prompt cap

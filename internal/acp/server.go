@@ -247,22 +247,26 @@ func (s *Server) Run(ctx context.Context) error {
 				currentPromptCancel = promptCancel
 				promptMu.Unlock()
 
-				wrapped := NewViewWithWrite(sendUpdate, sessionID)
-
-				ctrlCh := make(chan control.Msg, 64)
-				s.sess.SetView(wrapped)
-				s.sess.SetCtrlCh(ctrlCh)
-
-				go s.forwardCtrl(promptCtx, ctrlCh, sessionID, sendUpdate)
-
 				go func(sID string, myDone, prevDone chan struct{}) {
 					// Serialize prompts: wait for the previous run to
 					// finish swapping session state before starting.
-					// The read goroutine is never blocked by this.
+					// The read goroutine is never blocked by this. The
+					// view/ctrl swap happens HERE — inside the
+					// serialized region — so a rapidly following prompt
+					// cannot overwrite this prompt's view and ctrl
+					// channel before RunPrompt captures them (review:
+					// view/ctrl swap race).
 					if prevDone != nil {
 						<-prevDone
 					}
 					defer close(myDone)
+
+					wrapped := NewViewWithWrite(sendUpdate, sID)
+					ctrlCh := make(chan control.Msg, 64)
+					s.sess.SetView(wrapped)
+					s.sess.SetCtrlCh(ctrlCh)
+					go s.forwardCtrl(promptCtx, ctrlCh, sID, sendUpdate)
+
 					resp, _, runErr := s.sess.RunPrompt(promptCtx, promptText)
 					promptResults <- promptResult{sessionID: sID, response: resp, err: runErr}
 				}(sessionID, myDone, prevDone)

@@ -89,12 +89,14 @@ type ToolListEntry struct {
 
 // Update is a session/update notification payload. All field names use
 // camelCase to match the broader ACP ecosystem (review B11: the wire
-// format previously mixed snake_case and camelCase).
+// format previously mixed snake_case and camelCase). The sessionUpdate
+// VALUE "tool_call" is the ACP variant name and intentionally stays
+// snake_case — only field names are unified.
 type Update struct {
 	SessionUpdate string      `json:"sessionUpdate"`
 	Content       *Content    `json:"content,omitempty"`
-	ToolCall      *ToolCall   `json:"tool_call,omitempty"`
-	ToolResult    *ToolResult `json:"tool_result,omitempty"`
+	ToolCall      *ToolCall   `json:"toolCall,omitempty"`
+	ToolResult    *ToolResult `json:"toolResult,omitempty"`
 	// StopReason is set on the turn-completion update ("end_turn",
 	// "cancelled"). Emitted when a prompt run finishes because ACP
 	// clients key follow-up behaviour on it (review B11).

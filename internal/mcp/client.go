@@ -187,12 +187,22 @@ func (c *Client) handleNotification(msg JSONRPCMessage) {
 	}
 }
 
-// failAllPending resolves every in-flight call with an error.
+// failAllPending resolves every in-flight call with an error. Each
+// entry is claimed with LoadAndDelete before sending so a concurrent
+// dispatch cannot deliver the real response between the claim and the
+// send (the buffered-1 channel would then block this loop forever).
 func (c *Client) failAllPending(cause error) {
 	c.pending.Range(func(key, value any) bool {
+		if _, ok := c.pending.LoadAndDelete(key); !ok {
+			return true // already claimed by dispatch
+		}
 		ch := value.(chan *JSONRPCMessage)
-		ch <- &JSONRPCMessage{Error: &JSONRPCError{Code: -32000, Message: "mcp server connection lost: " + cause.Error()}}
-		c.pending.Delete(key)
+		select {
+		case ch <- &JSONRPCMessage{Error: &JSONRPCError{Code: -32000, Message: "mcp server connection lost: " + cause.Error()}}:
+		default:
+			// Unreachable after a successful claim (buffered 1, single
+			// claimed sender); guard against blocking Close regardless.
+		}
 		return true
 	})
 }
@@ -359,15 +369,17 @@ func (c *Client) Tools() []ServerTool {
 // Info returns server status details. Connected reflects the completed
 // handshake, not merely a spawned process (review B13).
 func (c *Client) Info() ServerInfo {
+	c.mu.Lock()
+	initialized, closed := c.initialized, c.closed
+	toolCount := len(c.tools)
+	c.mu.Unlock()
+
 	info := ServerInfo{
 		Name:      c.name,
 		Transport: "stdio",
 		Command:   c.manifest.Command + " " + joinArgs(c.manifest.Args),
-		ToolCount: len(c.tools),
+		ToolCount: toolCount,
 	}
-	c.mu.Lock()
-	initialized, closed := c.initialized, c.closed
-	c.mu.Unlock()
 	if initialized && !closed && c.cmd != nil && c.cmd.Process != nil {
 		info.Connected = true
 	}

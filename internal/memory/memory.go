@@ -16,9 +16,11 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,8 +30,9 @@ import (
 
 // currentSchemaVersion is the schema version this binary writes and
 // understands. A database stamped with a higher version was created by
-// a newer yaah and is refused at open (review A6).
-const currentSchemaVersion = "1"
+// a newer yaah and is refused at open (review A6). Stored in
+// schema_meta as a decimal string; compared numerically.
+const currentSchemaVersion = 1
 
 // maxSessionPromptBytes caps the persisted system_prompt and
 // compacted_summary columns so unbounded prompts cannot bloat the DB
@@ -181,10 +184,18 @@ func (d *DB) migrate() error {
 	var version string
 	err := d.sql.QueryRow(`SELECT value FROM schema_meta WHERE key = 'version'`).Scan(&version)
 	switch {
-	case err == nil && version > currentSchemaVersion:
-		return fmt.Errorf(
-			"memory db schema version %s is newer than this binary supports (%s); upgrade yaah",
-			version, currentSchemaVersion)
+	case err == nil:
+		// Numeric comparison — lexicographic ordering breaks at
+		// multi-digit versions ("10" < "2" as strings).
+		dbVersion, convErr := strconv.Atoi(version)
+		if convErr != nil {
+			return fmt.Errorf("invalid memory db schema version %q", version)
+		}
+		if dbVersion > currentSchemaVersion {
+			return fmt.Errorf(
+				"memory db schema version %d is newer than this binary supports (%d); upgrade yaah",
+				dbVersion, currentSchemaVersion)
+		}
 	case err != nil && err != sql.ErrNoRows:
 		return fmt.Errorf("read schema version: %w", err)
 	}
@@ -604,9 +615,14 @@ func (d *DB) bumpAccessCountIDs(ids []string, now int64) {
 	for _, id := range ids {
 		args = append(args, id)
 	}
-	_, _ = d.sql.Exec(
+	if _, err := d.sql.Exec(
 		`UPDATE memory SET access_count = access_count + 1, accessed_at = ? WHERE id IN (`+placeholders+`)`,
-		args...)
+		args...); err != nil {
+		// Best-effort bookkeeping: a failure only means access stats
+		// drift, so the search result is still returned — but the drift
+		// must not be silent.
+		slog.Warn("memory: access-count bump failed", "ids", len(ids), "err", err)
+	}
 }
 
 // ReconcileEmbeddings finds memory rows with NULL embedding, embeds their
