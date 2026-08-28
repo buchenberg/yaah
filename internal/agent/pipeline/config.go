@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"slices"
+	"sort"
 
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -238,6 +239,19 @@ var defaultPipelineNames = []string{
 var subAgentPipelineNames = []string{
 	"tool_concurrency",
 	"shepherd_trace",
+}
+
+// RegisteredOrchestratorNames returns the middleware names that have
+// builders in builtinBuilders. Names resolved by ResolvedPipelineNames
+// without a builder are silently skipped at pipeline build time; the
+// doctor uses this to surface such stale config entries honestly.
+func RegisteredOrchestratorNames() []string {
+	names := make([]string, 0, len(builtinBuilders))
+	for name := range builtinBuilders {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // DefaultPipelineNames returns a copy of the orchestrator's default
