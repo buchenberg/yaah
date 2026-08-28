@@ -77,7 +77,7 @@ func (t *PatchTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", fmt.Errorf("patch: %w", err)
 	}
 
-	if err := os.WriteFile(target, []byte(applied), 0o644); err != nil {
+	if err := atomicWriteFile(target, []byte(applied), 0o644); err != nil {
 		return "", fmt.Errorf("patch: %w", err)
 	}
 

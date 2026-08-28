@@ -132,7 +132,7 @@ func (t *JSONQueryTool) doWrite(filePath string, data []byte, root any, path, se
 	newData, _ := json.MarshalIndent(root, "", "  ")
 	newData = append(newData, '\n')
 
-	if err := os.WriteFile(filePath, newData, 0o644); err != nil {
+	if err := atomicWriteFile(filePath, newData, 0o644); err != nil {
 		return "", fmt.Errorf("json_query: write file: %w", err)
 	}
 
@@ -151,7 +151,7 @@ func (t *JSONQueryTool) doDelete(filePath string, data []byte, root any, path st
 	newData, _ := json.MarshalIndent(root, "", "  ")
 	newData = append(newData, '\n')
 
-	if err := os.WriteFile(filePath, newData, 0o644); err != nil {
+	if err := atomicWriteFile(filePath, newData, 0o644); err != nil {
 		return "", fmt.Errorf("json_query: write file: %w", err)
 	}
 

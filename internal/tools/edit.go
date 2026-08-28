@@ -127,7 +127,7 @@ func (t *EditTool) executeSingleEdit(filePath, oldStr, newStr string, replaceAll
 	if crlf {
 		content = strings.ReplaceAll(content, "\n", "\r\n")
 	}
-	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+	if err := atomicWriteFile(filePath, []byte(content), 0o644); err != nil {
 		return "", fmt.Errorf("edit: %w", err)
 	}
 
@@ -205,7 +205,7 @@ func (t *EditTool) executeMultiEdit(filePath string, edits []editEntry) (string,
 	if crlf {
 		content = strings.ReplaceAll(content, "\n", "\r\n")
 	}
-	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+	if err := atomicWriteFile(filePath, []byte(content), 0o644); err != nil {
 		return "", fmt.Errorf("edit: %w", err)
 	}
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/buchenberg/yaah/internal/prompts"
 )
@@ -49,7 +48,7 @@ func (t *WriteTool) Execute(ctx context.Context, args string) (string, error) {
 	}
 	params.FilePath = resolved
 
-	if err := os.WriteFile(params.FilePath, []byte(params.Content), 0o644); err != nil {
+	if err := atomicWriteFile(params.FilePath, []byte(params.Content), 0o644); err != nil {
 		return "", fmt.Errorf("write: %w", err)
 	}
 	return fmt.Sprintf("Wrote %d bytes to %s", len(params.Content), params.FilePath), nil
