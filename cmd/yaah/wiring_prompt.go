@@ -23,7 +23,7 @@ func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSess
 		Identity:               prompts.IdentityPrompt,
 		Environment:            prompts.DetectEnvironment(cwd),
 		UserContext:            prompts.LoadUserContext(config.HomeDir()),
-		Project:                instructions.FormatForSystem(instructions.Load(cwd, cwd)),
+		Project:                instructions.FormatForSystem(instructions.Load(cwd, instructions.WorktreeRoot(cwd))),
 		MaxSubAgentConcurrency: cfg.Agent.SubAgent.MaxConcurrency,
 	}
 
