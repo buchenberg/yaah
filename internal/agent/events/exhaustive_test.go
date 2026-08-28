@@ -73,6 +73,7 @@ func TestConsumersHandleEveryEvent(t *testing.T) {
 		"../../tui/proxy.go",
 		"../../acp/view.go",
 		"../../../cmd/yaah/view_terminal.go",
+		"../../../cmd/yaah/web_view.go",
 	}
 	for _, rel := range consumers {
 		src := readFile(t, rel)

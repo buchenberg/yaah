@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/toolfmt"
 	"github.com/buchenberg/yaah/internal/tui/components/activity"
 )
 
@@ -51,7 +52,7 @@ func (t *App) HandleEvent(event agent.Event) {
 			if e.Error != "" {
 				t.AddToolError(id, e.Name+" \u274C", e.Error)
 			} else {
-				t.AddToolEnd(id, e.Name, e.Result)
+				t.AddToolEnd(id, toolfmt.Summary(e.Name, e.Args, e.Result), e.Result)
 			}
 			t.restoreActivity()
 		})
@@ -90,7 +91,7 @@ func (t *App) HandleEvent(event agent.Event) {
 			t.compacting = true
 			detail := fmt.Sprintf("%.1fK\u2192%.1fK", float64(e.BeforeTokens)/1000, float64(e.TargetTokens)/1000)
 			t.setActivity(activity.Compacting, detail)
-			msg := fmt.Sprintf("[%s]compacting (%d\u2192%d tokens, %s)[-]", t.Theme.Dim, e.BeforeTokens, e.TargetTokens, e.Reason)
+			msg := fmt.Sprintf("[%s]%s[-]", t.Theme.Dim, e.StartedSummary())
 			t.conversationLog = append(t.conversationLog, convItem{text: msg})
 			t.markDirty()
 		})
@@ -99,14 +100,7 @@ func (t *App) HandleEvent(event agent.Event) {
 			t.flushPendingTokens()
 			t.compacting = false
 			t.restoreActivity()
-			pct := e.SavingsPct * 100
-			note := ""
-			if e.IneffectiveNote != "" {
-				note = " " + e.IneffectiveNote
-			}
-			msg := fmt.Sprintf("[%s]compacted %.0f%% (%.1fK \u2192 %.1fK, %s) in %.1fs%s[-]", t.Theme.Dim,
-				pct, float64(e.BeforeTokens)/1000, float64(e.AfterTokens)/1000,
-				e.Method, e.ElapsedSeconds, note)
+			msg := fmt.Sprintf("[%s]%s[-]", t.Theme.Dim, e.DoneSummary())
 			t.conversationLog = append(t.conversationLog, convItem{text: msg})
 			t.markDirty()
 		})

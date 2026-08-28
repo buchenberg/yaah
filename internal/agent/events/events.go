@@ -4,6 +4,7 @@
 package events
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/types"
@@ -152,6 +153,24 @@ type CompactionDoneEvent struct {
 }
 
 func (*CompactionDoneEvent) eventMarker() {}
+
+// StartedSummary renders the single shared compaction-start line used
+// by every view. Views previously formatted three divergent variants
+// of this message (review B12).
+func (e *CompactionStartedEvent) StartedSummary() string {
+	return fmt.Sprintf("compacting (%d→%d tokens, %s)", e.BeforeTokens, e.TargetTokens, e.Reason)
+}
+
+// DoneSummary renders the single shared compaction-done line used by
+// every view (review B12).
+func (e *CompactionDoneEvent) DoneSummary() string {
+	note := ""
+	if e.IneffectiveNote != "" {
+		note = " " + e.IneffectiveNote
+	}
+	return fmt.Sprintf("compacted %.0f%% (%d→%d tokens, %s, %.1fs)%s",
+		e.SavingsPct*100, e.BeforeTokens, e.AfterTokens, e.Method, e.ElapsedSeconds, note)
+}
 
 // Compile-time interface satisfaction checks.
 var (
