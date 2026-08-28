@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
-	"sync/atomic"
 )
 
 // Manifest represents an MCP server configuration file.
@@ -46,7 +46,7 @@ func SetClientVersion(v string) {
 	}
 }
 
-// Client represents a connected MCP server process.
+// Client represents a connected MCP server process over stdio.
 type Client struct {
 	name     string
 	manifest Manifest
@@ -54,10 +54,21 @@ type Client struct {
 	writer   messageWriter
 	reader   messageReader
 	stderr   io.Writer // destination for server stderr; defaults to io.Discard
-	nextID   atomic.Int64
-	mu       sync.Mutex
-	tools    []ServerTool
-	closed   bool
+
+	core rpcCore
+
+	// pending maps in-flight request IDs to their response channels.
+	// The read loop routes responses here; interleaved server
+	// notifications no longer corrupt a concurrent call (review B13).
+	pending sync.Map // int64 -> chan *JSONRPCMessage (buffered 1)
+
+	writeMu sync.Mutex // serialises writer access
+	mu      sync.Mutex // guards tools/closed/initialized
+	tools   []ServerTool
+	closed  bool
+	// initialized is set once the handshake completed; Info reports
+	// Connected from this, not from "the process struct exists" (B13).
+	initialized bool
 }
 
 // messageWriter is the interface satisfied by both FramedWriter and NewlineWriter.
@@ -72,13 +83,16 @@ type messageReader interface {
 
 // NewClient creates a new MCP client from a manifest.
 func NewClient(name string, manifest Manifest) *Client {
-	return &Client{
+	c := &Client{
 		name:     name,
 		manifest: manifest,
 	}
+	c.core.tx = c
+	return c
 }
 
-// Start spawns the MCP server process and initializes the connection.
+// Start spawns the MCP server process, initializes the connection, and
+// starts the read loop that dispatches responses to pending calls.
 func (c *Client) Start(ctx context.Context) error {
 	c.cmd = exec.CommandContext(ctx, c.manifest.Command, c.manifest.Args...)
 	c.cmd.Env = os.Environ()
@@ -110,8 +124,125 @@ func (c *Client) Start(ctx context.Context) error {
 
 	c.writer = newWriter(stdin, c.manifest.Framing)
 	c.reader = newReader(stdout, c.manifest.Framing)
-
+	go c.readLoop()
 	return nil
+}
+
+// readLoop continuously reads server messages and routes them:
+// responses to pending calls, notifications to their handlers.
+// Everything else is logged and dropped.
+func (c *Client) readLoop() {
+	for {
+		msg, err := c.reader.ReadMessage()
+		if err != nil {
+			// Stream closed or reader failure: fail every pending call
+			// so waiters do not block forever on a dead server (B13).
+			c.failAllPending(err)
+			return
+		}
+		c.dispatch(msg)
+	}
+}
+
+// dispatch routes one inbound message. Responses (non-nil id) resolve
+// the matching pending call; notifications go to their handlers.
+func (c *Client) dispatch(msg JSONRPCMessage) {
+	if msg.ID != nil {
+		chAny, ok := c.pending.LoadAndDelete(*msg.ID)
+		if !ok {
+			slog.Debug("mcp: response for unknown request id", "server", c.name, "id", *msg.ID)
+			return
+		}
+		ch := chAny.(chan *JSONRPCMessage)
+		ch <- &msg
+		return
+	}
+	c.handleNotification(msg)
+}
+
+// handleNotification processes server-initiated notifications. Only
+// tools/list_changed has an effect (re-fetch tools); the rest are
+// logged and dropped.
+func (c *Client) handleNotification(msg JSONRPCMessage) {
+	switch msg.Method {
+	case "notifications/tools/list_changed":
+		slog.Debug("mcp: tools changed, re-fetching", "server", c.name)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), mcpHTTPTimeout)
+			defer cancel()
+			tools, err := c.core.fetchTools(ctx)
+			if err != nil {
+				slog.Debug("mcp: tools re-fetch failed", "server", c.name, "err", err)
+				return
+			}
+			for i := range tools {
+				tools[i].ServerName = c.name
+			}
+			c.mu.Lock()
+			c.tools = tools
+			c.mu.Unlock()
+		}()
+	default:
+		slog.Debug("mcp: dropping notification", "server", c.name, "method", msg.Method)
+	}
+}
+
+// failAllPending resolves every in-flight call with an error.
+func (c *Client) failAllPending(cause error) {
+	c.pending.Range(func(key, value any) bool {
+		ch := value.(chan *JSONRPCMessage)
+		ch <- &JSONRPCMessage{Error: &JSONRPCError{Code: -32000, Message: "mcp server connection lost: " + cause.Error()}}
+		c.pending.Delete(key)
+		return true
+	})
+}
+
+// roundTrip implements rpcTransport for the stdio transport: register a
+// waiter, write the request, and wait for the read loop to route the
+// response (or the context to end). Requests are serialized on writeMu;
+// responses may interleave freely — correlation is by id (B13).
+func (c *Client) roundTrip(ctx context.Context, id int64, method string, params json.RawMessage) (*JSONRPCMessage, error) {
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return nil, fmt.Errorf("client closed")
+	}
+
+	ch := make(chan *JSONRPCMessage, 1)
+	c.pending.Store(id, ch)
+	defer c.pending.Delete(id)
+
+	c.writeMu.Lock()
+	err := c.writer.WriteMessage(JSONRPCMessage{
+		JSONRPC: "2.0",
+		ID:      &id,
+		Method:  method,
+		Params:  params,
+	})
+	c.writeMu.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("send %s: %w", method, err)
+	}
+
+	select {
+	case resp := <-ch:
+		return resp, nil
+	case <-ctx.Done():
+		c.pending.Delete(id)
+		return nil, ctx.Err()
+	}
+}
+
+// notify implements rpcTransport for stdio.
+func (c *Client) notify(_ context.Context, method string, params json.RawMessage) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return c.writer.WriteMessage(JSONRPCMessage{
+		JSONRPC: "2.0",
+		Method:  method,
+		Params:  params,
+	})
 }
 
 // SetStderr sets the writer for MCP server stderr output.
@@ -158,133 +289,75 @@ func (a *autoDetectReader) ReadMessage() (JSONRPCMessage, error) {
 	if a.framed != nil {
 		return a.framed.ReadMessage()
 	}
-	// Peek up to 16 bytes to find the first non-whitespace byte
-	peek, _ := a.reader.Peek(16)
-	for _, b := range peek {
+	// Consume leading whitespace until the first meaningful byte — the
+	// previous 16-byte peek returned EOF on streams that began with
+	// more whitespace than the peek window (review B13).
+	for {
+		b, err := a.reader.ReadByte()
+		if err != nil {
+			return JSONRPCMessage{}, err
+		}
 		switch b {
-		case ' ', '	', '\r', '\n':
+		case ' ', '\t', '\r', '\n':
 			continue
 		case '{':
-			// Spec-compliant newline-delimited JSON
+			if err := a.reader.UnreadByte(); err != nil {
+				return JSONRPCMessage{}, err
+			}
 			a.framed = NewNewlineReader(a.reader)
-			return a.framed.ReadMessage()
 		default:
-			// Assume Content-Length framing
+			if err := a.reader.UnreadByte(); err != nil {
+				return JSONRPCMessage{}, err
+			}
 			a.framed = NewFramedReader(a.reader)
-			return a.framed.ReadMessage()
 		}
+		return a.framed.ReadMessage()
 	}
-	// Empty stream
-	return JSONRPCMessage{}, io.EOF
 }
 
 // Initialize performs the MCP initialize handshake and fetches tools.
 func (c *Client) Initialize(ctx context.Context) error {
-	id := c.nextID.Add(1)
-	params, _ := json.Marshal(map[string]any{
-		"protocolVersion": "2024-11-05",
-		"capabilities":    map[string]any{},
-		"clientInfo":      map[string]string{"name": "yaah", "version": clientVersion},
-	})
-
-	if err := c.writer.WriteMessage(JSONRPCMessage{
-		JSONRPC: "2.0",
-		ID:      &id,
-		Method:  "initialize",
-		Params:  params,
-	}); err != nil {
-		return fmt.Errorf("send initialize: %w", err)
+	if _, err := c.core.initialize(ctx); err != nil {
+		return err
 	}
-
-	resp, err := c.reader.ReadMessage()
-	if err != nil {
-		return fmt.Errorf("read initialize response: %w", err)
+	if err := c.refetchTools(ctx); err != nil {
+		return err
 	}
-	if resp.Error != nil {
-		return fmt.Errorf("initialize error: %s", resp.Error.Message)
-	}
-
-	// Send initialized notification
-	if err := c.writer.WriteMessage(JSONRPCMessage{
-		JSONRPC: "2.0",
-		Method:  "notifications/initialized",
-	}); err != nil {
-		return fmt.Errorf("send initialized: %w", err)
-	}
-
-	// Fetch tools
-	return c.fetchTools(ctx)
+	c.mu.Lock()
+	c.initialized = true
+	c.mu.Unlock()
+	return nil
 }
 
-func (c *Client) fetchTools(ctx context.Context) error {
-	id := c.nextID.Add(1)
-	if err := c.writer.WriteMessage(JSONRPCMessage{
-		JSONRPC: "2.0",
-		ID:      &id,
-		Method:  "tools/list",
-	}); err != nil {
-		return fmt.Errorf("send tools/list: %w", err)
-	}
-
-	resp, err := c.reader.ReadMessage()
+// refetchTools lists tools through the shared core and caches them.
+func (c *Client) refetchTools(ctx context.Context) error {
+	tools, err := c.core.fetchTools(ctx)
 	if err != nil {
-		return fmt.Errorf("read tools/list: %w", err)
+		return err
 	}
-	if resp.Error != nil {
-		return fmt.Errorf("tools/list error: %s", resp.Error.Message)
+	for i := range tools {
+		tools[i].ServerName = c.name
 	}
-
-	var result struct {
-		Tools []ServerTool `json:"tools"`
-	}
-	if err := json.Unmarshal(resp.Result, &result); err != nil {
-		return fmt.Errorf("parse tools: %w", err)
-	}
-
-	for i := range result.Tools {
-		result.Tools[i].ServerName = c.name
-	}
-	c.tools = result.Tools
+	c.mu.Lock()
+	c.tools = tools
+	c.mu.Unlock()
 	return nil
 }
 
 // CallTool invokes a tool on the MCP server.
 func (c *Client) CallTool(ctx context.Context, name string, args json.RawMessage) (json.RawMessage, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	id := c.nextID.Add(1)
-	params, _ := json.Marshal(map[string]any{
-		"name":      name,
-		"arguments": json.RawMessage(args),
-	})
-
-	if err := c.writer.WriteMessage(JSONRPCMessage{
-		JSONRPC: "2.0",
-		ID:      &id,
-		Method:  "tools/call",
-		Params:  params,
-	}); err != nil {
-		return nil, fmt.Errorf("send tools/call: %w", err)
-	}
-
-	resp, err := c.reader.ReadMessage()
-	if err != nil {
-		return nil, fmt.Errorf("read tools/call: %w", err)
-	}
-	if resp.Error != nil {
-		return nil, fmt.Errorf("tools/call error: %s", resp.Error.Message)
-	}
-
-	return resp.Result, nil
+	return c.core.callTool(ctx, name, args)
 }
 
 // Tools returns the tools discovered from this server.
 func (c *Client) Tools() []ServerTool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.tools
 }
 
-// Info returns server status details.
+// Info returns server status details. Connected reflects the completed
+// handshake, not merely a spawned process (review B13).
 func (c *Client) Info() ServerInfo {
 	info := ServerInfo{
 		Name:      c.name,
@@ -292,7 +365,10 @@ func (c *Client) Info() ServerInfo {
 		Command:   c.manifest.Command + " " + joinArgs(c.manifest.Args),
 		ToolCount: len(c.tools),
 	}
-	if c.cmd != nil && c.cmd.Process != nil {
+	c.mu.Lock()
+	initialized, closed := c.initialized, c.closed
+	c.mu.Unlock()
+	if initialized && !closed && c.cmd != nil && c.cmd.Process != nil {
 		info.Connected = true
 	}
 	return info
@@ -316,11 +392,13 @@ func joinArgs(args []string) string {
 // Close shuts down the MCP server process.
 func (c *Client) Close() error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.closed {
+		c.mu.Unlock()
 		return nil
 	}
 	c.closed = true
+	c.mu.Unlock()
+	c.failAllPending(fmt.Errorf("client closed"))
 	if c.cmd != nil && c.cmd.Process != nil {
 		_ = c.cmd.Process.Kill()
 		_ = c.cmd.Wait()

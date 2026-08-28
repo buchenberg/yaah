@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -26,117 +26,60 @@ type HTTPClient struct {
 	url       string
 	headers   map[string]string
 	client    *http.Client
-	nextID    atomic.Int64
 	mu        sync.Mutex
 	tools     []ServerTool
 	sessionID string
+
+	core rpcCore
 }
 
 // NewHTTPClient creates a new MCP HTTP client. headers are added to every
 // outgoing request (e.g. "Authorization" for bearer tokens).
 func NewHTTPClient(name, url string, headers map[string]string) *HTTPClient {
-	return &HTTPClient{
+	c := &HTTPClient{
 		name:    name,
 		url:     url,
 		headers: headers,
 		client:  &http.Client{Timeout: mcpHTTPTimeout},
 	}
+	c.core.tx = c
+	return c
 }
 
 // Initialize performs the MCP initialize handshake over HTTP.
 func (c *HTTPClient) Initialize(ctx context.Context) error {
-	id := c.nextID.Add(1)
-	params, _ := json.Marshal(map[string]any{
-		"protocolVersion": "2024-11-05",
-		"capabilities":    map[string]any{},
-		"clientInfo":      map[string]string{"name": "yaah", "version": clientVersion},
-	})
-
-	resp, err := c.sendRequest(ctx, JSONRPCMessage{
-		JSONRPC: "2.0",
-		ID:      &id,
-		Method:  "initialize",
-		Params:  params,
-	})
+	if _, err := c.core.initialize(ctx); err != nil {
+		return err
+	}
+	tools, err := c.core.fetchTools(ctx)
 	if err != nil {
-		return fmt.Errorf("initialize: %w", err)
+		return err
 	}
-	if resp.Error != nil {
-		return fmt.Errorf("initialize error: %s", resp.Error.Message)
+	for i := range tools {
+		tools[i].ServerName = c.name
 	}
-
-	// Send initialized notification
-	_, _ = c.sendRequest(ctx, JSONRPCMessage{
-		JSONRPC: "2.0",
-		Method:  "notifications/initialized",
-	})
-
-	// Fetch tools
-	return c.fetchTools(ctx)
-}
-
-func (c *HTTPClient) fetchTools(ctx context.Context) error {
-	id := c.nextID.Add(1)
-	resp, err := c.sendRequest(ctx, JSONRPCMessage{
-		JSONRPC: "2.0",
-		ID:      &id,
-		Method:  "tools/list",
-	})
-	if err != nil {
-		return fmt.Errorf("tools/list: %w", err)
-	}
-	if resp.Error != nil {
-		return fmt.Errorf("tools/list error: %s", resp.Error.Message)
-	}
-
-	var result struct {
-		Tools []ServerTool `json:"tools"`
-	}
-	if err := json.Unmarshal(resp.Result, &result); err != nil {
-		return fmt.Errorf("parse tools: %w", err)
-	}
-
-	for i := range result.Tools {
-		result.Tools[i].ServerName = c.name
-	}
-	c.tools = result.Tools
+	c.mu.Lock()
+	c.tools = tools
+	c.mu.Unlock()
 	return nil
 }
 
 // CallTool invokes a tool on the MCP server over HTTP.
 func (c *HTTPClient) CallTool(ctx context.Context, name string, args json.RawMessage) (json.RawMessage, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	id := c.nextID.Add(1)
-	params, _ := json.Marshal(map[string]any{
-		"name":      name,
-		"arguments": json.RawMessage(args),
-	})
-
-	resp, err := c.sendRequest(ctx, JSONRPCMessage{
-		JSONRPC: "2.0",
-		ID:      &id,
-		Method:  "tools/call",
-		Params:  params,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("tools/call: %w", err)
-	}
-	if resp.Error != nil {
-		return nil, fmt.Errorf("tools/call error: %s", resp.Error.Message)
-	}
-
-	return resp.Result, nil
+	return c.core.callTool(ctx, name, args)
 }
 
 // Tools returns the tools discovered from this server.
 func (c *HTTPClient) Tools() []ServerTool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.tools
 }
 
 // Info returns server status details.
 func (c *HTTPClient) Info() ServerInfo {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return ServerInfo{
 		Name:      c.name,
 		Transport: "http",
@@ -146,26 +89,78 @@ func (c *HTTPClient) Info() ServerInfo {
 	}
 }
 
-// Close is a no-op for HTTP clients (no persistent connection).
+// Close terminates the server-side session. The Streamable HTTP
+// transport expects a DELETE carrying the session id; skipping it left
+// sessions to expire server-side (review B14).
 func (c *HTTPClient) Close() error {
+	c.mu.Lock()
+	sid := c.sessionID
+	c.sessionID = ""
+	c.mu.Unlock()
+	if sid == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.url, nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Mcp-Session-Id", sid)
+	for k, v := range c.headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		slog.Debug("mcp: session DELETE failed", "server", c.name, "err", err)
+		return nil
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
 }
 
-// sendRequest sends a JSON-RPC message via HTTP POST and returns the response.
-func (c *HTTPClient) sendRequest(ctx context.Context, msg JSONRPCMessage) (*JSONRPCMessage, error) {
+// roundTrip implements rpcTransport for the HTTP transport. Each POST
+// carries one request and returns its response, so correlation is
+// inherent to the round-trip.
+func (c *HTTPClient) roundTrip(ctx context.Context, id int64, method string, params json.RawMessage) (*JSONRPCMessage, error) {
+	return c.post(ctx, JSONRPCMessage{
+		JSONRPC: "2.0",
+		ID:      &id,
+		Method:  method,
+		Params:  params,
+	})
+}
+
+// notify implements rpcTransport for the HTTP transport. Notifications
+// expect 202 Accepted (no body).
+func (c *HTTPClient) notify(ctx context.Context, method string, params json.RawMessage) error {
+	_, err := c.post(ctx, JSONRPCMessage{
+		JSONRPC: "2.0",
+		Method:  method,
+		Params:  params,
+	})
+	return err
+}
+
+// post sends one JSON-RPC message and returns the response message.
+func (c *HTTPClient) post(ctx context.Context, msg JSONRPCMessage) (*JSONRPCMessage, error) {
 	body, err := json.Marshal(msg)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
-	if c.sessionID != "" {
-		req.Header.Set("Mcp-Session-Id", c.sessionID)
+	c.mu.Lock()
+	sid := c.sessionID
+	c.mu.Unlock()
+	if sid != "" {
+		req.Header.Set("Mcp-Session-Id", sid)
 	}
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
@@ -178,8 +173,10 @@ func (c *HTTPClient) sendRequest(ctx context.Context, msg JSONRPCMessage) (*JSON
 	defer resp.Body.Close()
 
 	// Capture session ID from response
-	if sid := resp.Header.Get("Mcp-Session-Id"); sid != "" {
-		c.sessionID = sid
+	if newSID := resp.Header.Get("Mcp-Session-Id"); newSID != "" {
+		c.mu.Lock()
+		c.sessionID = newSID
+		c.mu.Unlock()
 	}
 
 	respBody, err := io.ReadAll(resp.Body)
