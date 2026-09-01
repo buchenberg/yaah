@@ -150,20 +150,22 @@ func Resolve(s Spec) Budget {
 	}
 
 	// Turn floor: config outranks the role file, then the global default.
-	turnsFloored := false
-	if floor := firstPositive(s.CfgMinTurns, s.RoleMinTurns, s.DefaultMinTurns); floor > 0 && b.Turns < floor {
-		b.Turns, b.TurnsSource = floor, SourceFloor
-		turnsFloored = true
+	// The declared floor is captured regardless of whether it raised the
+	// resolved value, because a satisfied floor still forbids the clamp
+	// below from cutting turns under it (see reconciliation).
+	turnFloor := firstPositive(s.CfgMinTurns, s.RoleMinTurns, s.DefaultMinTurns)
+	if turnFloor > 0 && b.Turns < turnFloor {
+		b.Turns, b.TurnsSource = turnFloor, SourceFloor
 	}
 
-	// Reconcile dimensions. A FLOORED turn budget wins over iterations:
+	// Reconcile dimensions. A declared turn floor wins over iterations:
 	// growing iterations (rather than shrinking turns) is what makes a
 	// floor a floor — cutting turns below their floor would reproduce
-	// the starvation one level down. Unfloored turns keep the
-	// historical clamp down instead, so a per-call max_iterations alone
+	// the starvation one level down. Only genuinely floor-free budgets
+	// keep the historical clamp down, so a per-call max_iterations alone
 	// can still force exhaustion for deliberate cheap probes (plan §7
 	// regression; this refines §4.2's unconditional growth).
-	if turnsFloored && b.Turns >= b.Iterations {
+	if turnFloor > 0 && b.Turns >= b.Iterations {
 		b.Iterations, b.IterationsSource = b.Turns+1, SourceHeadroom
 	} else if b.Iterations > 0 && b.Turns >= b.Iterations {
 		b.Turns, b.TurnsSource = b.Iterations-1, SourceCeiling

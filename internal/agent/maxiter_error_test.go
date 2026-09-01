@@ -15,8 +15,11 @@ func TestMaxIterationsErrorCarriesBudgetSource(t *testing.T) {
 		if !strings.Contains(msg, "max iterations (5) reached") {
 			t.Errorf("message = %q, want the bare form preserved", msg)
 		}
-		if !strings.Contains(msg, "(budget source: call)") {
-			t.Errorf("message = %q, want budget source included", msg)
+		if !strings.Contains(msg, "with 4 tool turns (turns source call)") {
+			t.Errorf("message = %q, want turn budget and its source included", msg)
+		}
+		if !strings.Contains(msg, "(iterations source call)") {
+			t.Errorf("message = %q, want iterations source included", msg)
 		}
 	})
 

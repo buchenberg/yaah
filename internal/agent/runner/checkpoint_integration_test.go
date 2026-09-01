@@ -8,10 +8,27 @@ import (
 	"testing"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
+
+// floorFreeRestorerRole is a floor-free role for the turn-restore test:
+// shipped roles now carry min_turns floors that grow iterations to
+// protect the floor, which prevents the max_iterations exhaustion this
+// test uses as its restore trigger.
+const floorFreeRestorerRole = `---
+name: Restorer
+specialty: developer
+description: writes files for checkpoint tests
+tools:
+  - write
+  - read
+max_iterations: 40
+max_turns: 6
+---
+Write files as directed.`
 
 // scriptedProvider replays responses in order; once exhausted it repeats
 // the last one so the loop never sees an accidental final answer.
@@ -67,6 +84,14 @@ func finalAnswerResponse(content string) *types.ChatResponse {
 func TestSupervisedTask_TurnRestoreIntegration(t *testing.T) {
 	initTestRoles(t)
 
+	// Register a floor-free role so max_iterations: 2 actually exhausts
+	// the loop (shipped roles carry min_turns floors that grow iterations).
+	if reg := subagent.DefaultRegistry(); reg != nil {
+		if err := reg.LoadBytes(map[string][]byte{"restorer.md": []byte(floorFreeRestorerRole)}); err != nil {
+			t.Fatalf("register restorer role: %v", err)
+		}
+	}
+
 	store, err := shepherd.NewSQLiteTraceStore(":memory:")
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
@@ -97,7 +122,7 @@ func TestSupervisedTask_TurnRestoreIntegration(t *testing.T) {
 		modelName:    "test-model",
 		subCfg: config.SubAgentConfig{
 			Roles: map[string]config.RoleConfig{
-				"developer": {TurnCheckpoints: true},
+				"restorer": {TurnCheckpoints: true},
 			},
 		},
 		defaults: config.Defaults{
@@ -107,13 +132,13 @@ func TestSupervisedTask_TurnRestoreIntegration(t *testing.T) {
 
 	tool := &tools.SupervisedTaskTool{
 		Runner:     makeTaskRunner(opts, 1),
-		RoleNames:  []string{"developer"},
+		RoleNames:  []string{"restorer"},
 		RepoPath:   repo,
 		MaxRetries: 0,
 	}
 
 	result, err := tool.Execute(context.Background(),
-		`{"prompt":"do the work","role":"developer","max_iterations":2}`)
+		`{"prompt":"do the work","role":"restorer","max_iterations":2}`)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}

@@ -294,6 +294,14 @@ func TestResolve_DimensionReconciliation(t *testing.T) {
 			wantTurnSrc: SourceCeiling,
 		},
 		{
+			name:        "declared floor already satisfied still grows iterations (reviewer repro)",
+			spec:        Spec{CallIterations: 5, RoleMaxIterations: 25, RoleMaxTurns: 12, RoleMinTurns: 8},
+			wantIter:    13,
+			wantTurns:   12,
+			wantIterSrc: SourceHeadroom,
+			wantTurnSrc: SourceRoleFile,
+		},
+		{
 			name:        "plan §7 regression: call max_iterations=1 still forces exhaustion",
 			spec:        Spec{CallIterations: 1, RoleMaxIterations: 25, RoleMaxTurns: 3},
 			wantIter:    1,

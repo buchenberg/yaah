@@ -34,8 +34,14 @@ type MaxIterationsError struct {
 
 func (e MaxIterationsError) Error() string {
 	msg := fmt.Sprintf("max iterations (%d) reached", e.MaxIter)
+	if e.MaxTurns > 0 {
+		msg += fmt.Sprintf(" with %d tool turns", e.MaxTurns)
+		if e.TurnsSource != "" {
+			msg += fmt.Sprintf(" (turns source %s)", e.TurnsSource)
+		}
+	}
 	if e.IterationsSource != "" {
-		msg += fmt.Sprintf(" (budget source: %s)", e.IterationsSource)
+		msg += fmt.Sprintf(" (iterations source %s)", e.IterationsSource)
 	}
 	return msg
 }
