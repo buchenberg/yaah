@@ -25,6 +25,7 @@ tools:
   - staticcheck
   - go_mod
 max_turns: 8
+min_turns: 4
 timeout: 600
 ---
 

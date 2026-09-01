@@ -42,6 +42,7 @@ tools:
   - http
 max_iterations: 50
 max_turns: 8
+min_turns: 6
 timeout: 600
 ---
 

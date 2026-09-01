@@ -48,10 +48,16 @@ func (l *Loop) buildTurnRequest(ctx context.Context, iter int, messages []types.
 		if iter >= effective {
 			req.Tools = nil
 			if l.Config.OtelEnabled && turnSpan != nil {
-				turnSpan.AddEvent("maxturns.stripped", trace.WithAttributes(
+				attrs := []attribute.KeyValue{
 					attribute.Int("maxturns.limit", l.Config.MaxToolTurns),
 					attribute.Int("maxturns.iteration", iter),
-				))
+				}
+				// Budget provenance so a trace answers "who set this
+				// budget?" directly (subagent-turn-budget-floors §4.7).
+				if l.Config.BudgetTurnsSource != "" {
+					attrs = append(attrs, attribute.String("maxturns.source", l.Config.BudgetTurnsSource))
+				}
+				turnSpan.AddEvent("maxturns.stripped", trace.WithAttributes(attrs...))
 			}
 		} else if l.Config.WrapUpThreshold > 0 && iter >= effective-l.Config.WrapUpThreshold {
 			l.injectWrapUpNotice(&req, turnSpan, effective-iter)

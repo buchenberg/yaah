@@ -44,6 +44,57 @@ func TestParseRoleFileMissingFrontmatter(t *testing.T) {
 	}
 }
 
+func TestParseRoleFileBudgetFloors(t *testing.T) {
+	data := []byte(`---
+name: Auditor
+tools:
+  - read
+max_iterations: 30
+min_iterations: 8
+max_turns: 12
+min_turns: 6
+---
+Audit.`)
+
+	def, err := parseRoleFile(data)
+	if err != nil {
+		t.Fatalf("parseRoleFile: %v", err)
+	}
+	if def.MinLoopCycles != 8 || def.MinToolTurns != 6 {
+		t.Errorf("floors = %d/%d, want 8/6", def.MinLoopCycles, def.MinToolTurns)
+	}
+	profile := def.ToProfile()
+	if profile.MinLoopCycles != 8 || profile.MinToolTurns != 6 {
+		t.Errorf("profile floors = %d/%d, want 8/6", profile.MinLoopCycles, profile.MinToolTurns)
+	}
+}
+
+// TestParseRoleFileClampsInvalidFloors pins plan §4.6: a broken role
+// file must not brick startup — invalid floors clamp with a warning.
+func TestParseRoleFileClampsInvalidFloors(t *testing.T) {
+	data := []byte(`---
+name: Broken
+tools:
+  - read
+max_iterations: 10
+min_iterations: 20
+max_turns: 4
+min_turns: -3
+---
+Body.`)
+
+	def, err := parseRoleFile(data)
+	if err != nil {
+		t.Fatalf("invalid floors must not fail role loading: %v", err)
+	}
+	if def.MinToolTurns != 0 {
+		t.Errorf("negative min_turns = %d, want clamp to 0", def.MinToolTurns)
+	}
+	if def.MinLoopCycles != 10 {
+		t.Errorf("min_iterations = %d, want clamp to max 10", def.MinLoopCycles)
+	}
+}
+
 func TestParseRoleFileUnterminated(t *testing.T) {
 	_, err := parseRoleFile([]byte("---\ntools:\n  - read\nbody without close"))
 	if err == nil {

@@ -38,7 +38,8 @@ tools:
   - go_mod
   - bisect
 max_iterations: 40
-max_turns: 6
+max_turns: 12
+min_turns: 6
 timeout: 300
 ---
 

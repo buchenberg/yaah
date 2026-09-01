@@ -2,6 +2,7 @@ package subagent
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,7 +33,9 @@ type RoleDef struct {
 	Contract      ContractDef
 	Tools         []string
 	MaxLoopCycles int
+	MinLoopCycles int // per-call overrides may not go below; 0 = none
 	MaxToolTurns  int
+	MinToolTurns  int // per-call overrides may not go below; 0 = none
 	JSONMode      bool
 	Timeout       int // seconds; 0 = no timeout
 
@@ -43,18 +46,42 @@ type RoleDef struct {
 // RoleDef. It is the only Frontmatter→RoleDef mapping, so the registry
 // and the role tool cannot parse the same file differently (review B3).
 func roleDefFrom(fm rolefile.Frontmatter, body string) RoleDef {
-	return RoleDef{
+	def := RoleDef{
 		DisplayName:   fm.Name,
 		Specialty:     fm.Specialty,
 		Description:   fm.Description,
 		Contract:      fm.Contract,
 		Tools:         fm.Tools,
 		MaxLoopCycles: fm.MaxLoopCycles,
+		MinLoopCycles: fm.MinLoopCycles,
 		MaxToolTurns:  fm.MaxToolTurns,
+		MinToolTurns:  fm.MinToolTurns,
 		JSONMode:      fm.JSONMode,
 		Timeout:       fm.Timeout,
 		Body:          body,
 	}
+
+	// Clamp invalid budget floors instead of failing: a broken project
+	// role must not brick startup (plan §4.6). Config-level floors are
+	// hard-validated at load; role files only warn.
+	if def.MinLoopCycles < 0 {
+		slog.Warn("role file: negative min_iterations clamped to 0", "role", def.DisplayName, "value", def.MinLoopCycles)
+		def.MinLoopCycles = 0
+	}
+	if def.MinToolTurns < 0 {
+		slog.Warn("role file: negative min_turns clamped to 0", "role", def.DisplayName, "value", def.MinToolTurns)
+		def.MinToolTurns = 0
+	}
+	if def.MaxLoopCycles > 0 && def.MinLoopCycles > def.MaxLoopCycles {
+		slog.Warn("role file: min_iterations above max_iterations clamped", "role", def.DisplayName, "min", def.MinLoopCycles, "max", def.MaxLoopCycles)
+		def.MinLoopCycles = def.MaxLoopCycles
+	}
+	if def.MaxToolTurns > 0 && def.MinToolTurns > def.MaxToolTurns {
+		slog.Warn("role file: min_turns above max_turns clamped", "role", def.DisplayName, "min", def.MinToolTurns, "max", def.MaxToolTurns)
+		def.MinToolTurns = def.MaxToolTurns
+	}
+
+	return def
 }
 
 // ToProfile converts a parsed role definition into the runtime
@@ -67,7 +94,9 @@ func (d RoleDef) ToProfile() RoleProfile {
 		Contract:      d.Contract,
 		Tools:         d.Tools,
 		MaxLoopCycles: d.MaxLoopCycles,
+		MinLoopCycles: d.MinLoopCycles,
 		MaxToolTurns:  d.MaxToolTurns,
+		MinToolTurns:  d.MinToolTurns,
 		JSONMode:      d.JSONMode,
 		Timeout:       time.Duration(d.Timeout) * time.Second,
 	}

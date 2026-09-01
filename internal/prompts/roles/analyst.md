@@ -29,6 +29,7 @@ tools:
   - diff
 max_iterations: 30
 max_turns: 10
+min_turns: 5
 json_mode: true
 timeout: 240
 ---

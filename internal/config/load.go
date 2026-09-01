@@ -213,6 +213,11 @@ type SubAgentConfig struct {
 	// override is set. 0 means unlimited (off).
 	DefaultMaxToolTurns int `yaml:"default_max_turns"`
 
+	// DefaultMinToolTurns is the global floor for tool-using turns: no
+	// per-call override or role budget may drop below it. 0 means no
+	// floor.
+	DefaultMinToolTurns int `yaml:"default_min_turns"`
+
 	// JSONMode enables structured output via response_format json_object.
 	// Individual roles may override with their own json_mode setting.
 	JSONMode bool `yaml:"json_mode"`
@@ -232,7 +237,9 @@ type SubAgentConfig struct {
 type RoleConfig struct {
 	Timeout           int      `yaml:"timeout"`             // seconds; 0 = use role default
 	MaxLoopCycles     int      `yaml:"max_iterations"`      // 0 = use role default
+	MinLoopCycles     int      `yaml:"min_iterations"`      // iteration floor; 0 = none
 	MaxToolTurns      int      `yaml:"max_turns"`           // soft turn cap; 0 = use role default
+	MinToolTurns      int      `yaml:"min_turns"`           // turn floor; 0 = none
 	JSONMode          bool     `yaml:"json_mode"`           // structured output toggle
 	ContextWindow     int      `yaml:"context_window"`      // 0 = inherit halved parent default
 	OutputLimit       int      `yaml:"output_limit"`        // bytes; 0 = use config default

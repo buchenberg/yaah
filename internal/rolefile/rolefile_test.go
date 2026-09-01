@@ -19,6 +19,9 @@ tools:
     - read
     - bash
 max_iterations: 50
+min_iterations: 10
+max_turns: 20
+min_turns: 4
 timeout: 960
 ---
 
@@ -35,6 +38,15 @@ func TestParse(t *testing.T) {
 	}
 	if fm.MaxLoopCycles != 50 || fm.Timeout != 960 {
 		t.Errorf("limits = %d/%d", fm.MaxLoopCycles, fm.Timeout)
+	}
+	// Plan subagent-turn-budget-floors §4.5: the floor fields must
+	// survive Parse — a missing Frontmatter field is silently dropped
+	// when a role file is rewritten.
+	if fm.MinLoopCycles != 10 || fm.MinToolTurns != 4 {
+		t.Errorf("floors = %d/%d, want 10/4", fm.MinLoopCycles, fm.MinToolTurns)
+	}
+	if fm.MaxToolTurns != 20 {
+		t.Errorf("max_turns = %d, want 20", fm.MaxToolTurns)
 	}
 	if len(fm.Tools) != 2 || fm.Tools[1] != "bash" {
 		t.Errorf("tools = %v", fm.Tools)

@@ -57,13 +57,18 @@ keep searching for completeness after the question is resolved.
   response contract. Review it after each completes. If a finding is durable
   (a project convention, pattern, URL, decision), persist it with `memory_add`
   using an appropriate tag. Skip ephemeral details.
-- **Optional overrides:** `timeout_seconds` (10-600), `max_iterations` (1-50).
+- **Optional overrides:** `timeout_seconds` (10-600), `max_iterations`
+  (1-50), `max_turns` (1-50). Do NOT set `max_iterations`/`max_turns`
+  unless you intend a deliberately cheap probe — roles carry tuned
+  budgets, and per-call values cannot go below a role's floor
+  (`min_turns`/`min_iterations`; see `list_subagents` for the effective
+  budget of each role).
   On timeout/cancellation: `{"error":"timed out","partial":"..."}`.
-- **Scope review tasks to fit.** Reviewers have limited iteration budgets
-  (typically 25-50). If a task requires reviewing many files, split it into
-  smaller focused reviews: "Review theme.go and colors/ sub-package" rather
-  than "Review all of tui2." A reviewer that hits its iteration cap provides
-  incomplete results — subdivide the work to avoid this.
+- **Scope review tasks to fit.** If a task requires reviewing many
+  files, split it into smaller focused reviews: "Review theme.go and
+  colors/ sub-package" rather than "Review all of tui2." A reviewer that
+  hits its turn cap provides incomplete results — subdivide the work to
+  avoid this.
 
 ### Trusting sub-agent output
 

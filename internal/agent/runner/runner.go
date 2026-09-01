@@ -23,6 +23,7 @@ import (
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/budget"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
@@ -253,8 +254,20 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 
 		subReg := buildSubAgentRegistry(opts, profile, remainingDepth)
 
-		maxIter := resolveSubAgentIterations(params.MaxLoopCycles, profile, opts.subCfg, role)
-		maxTurns := resolveSubAgentTurns(params.MaxToolTurns, profile, opts.subCfg, role, maxIter)
+		b := resolveSubAgentBudget(params.MaxLoopCycles, params.MaxToolTurns, profile, opts.subCfg, role)
+		maxIter, maxTurns := b.Iterations, b.Turns
+
+		// Record the effective budget and its provenance on the
+		// sub-agent span (subagent-turn-budget-floors §4.7) so a trace
+		// answers "who set this budget to N?" directly.
+		if span := trace.SpanFromContext(ctx); span.IsRecording() {
+			span.SetAttributes(
+				attribute.Int("subagent.budget.iterations", b.Iterations),
+				attribute.String("subagent.budget.iterations_source", b.IterationsSource.String()),
+				attribute.Int("subagent.budget.turns", b.Turns),
+				attribute.String("subagent.budget.turns_source", b.TurnsSource.String()),
+			)
+		}
 
 		effectiveCW := opts.subContextWindow
 		if rc, ok := opts.subCfg.Roles[string(role)]; ok && rc.ContextWindow > 0 {
@@ -345,23 +358,25 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		}
 
 		subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{
-			MaxLoopCycles:      maxIter,
-			MaxToolTurns:       maxTurns,
-			MaxRetries:         opts.defaults.MaxRetries,
-			RetryBackoffSecs:   opts.defaults.RetryBackoffSecs,
-			MaxToolConcurrency: opts.defaults.MaxToolConcurrency,
-			JSONMode:           jsonMode,
-			ToolResultMaxLines: opts.defaults.ToolResultMaxLines,
-			ToolResultMaxBytes: opts.defaults.ToolResultMaxBytes,
-			ToolSpillDir:       opts.toolSpillDir,
-			PruneProtectTokens: opts.defaults.PruneProtectTokens,
-			PruneMinReclaim:    opts.defaults.PruneMinReclaim,
-			PruneMinTurns:      opts.defaults.PruneMinTurns,
-			PermissionRules:    opts.parentPermissionRules,
-			ContextWindow:      effectiveCW,
-			OtelEnabled:        opts.OtelEnabled,
-			OtelVerbose:        opts.OtelVerbose,
-			SessionID:          subTraceID,
+			MaxLoopCycles:          maxIter,
+			MaxToolTurns:           maxTurns,
+			BudgetIterationsSource: b.IterationsSource.String(),
+			BudgetTurnsSource:      b.TurnsSource.String(),
+			MaxRetries:             opts.defaults.MaxRetries,
+			RetryBackoffSecs:       opts.defaults.RetryBackoffSecs,
+			MaxToolConcurrency:     opts.defaults.MaxToolConcurrency,
+			JSONMode:               jsonMode,
+			ToolResultMaxLines:     opts.defaults.ToolResultMaxLines,
+			ToolResultMaxBytes:     opts.defaults.ToolResultMaxBytes,
+			ToolSpillDir:           opts.toolSpillDir,
+			PruneProtectTokens:     opts.defaults.PruneProtectTokens,
+			PruneMinReclaim:        opts.defaults.PruneMinReclaim,
+			PruneMinTurns:          opts.defaults.PruneMinTurns,
+			PermissionRules:        opts.parentPermissionRules,
+			ContextWindow:          effectiveCW,
+			OtelEnabled:            opts.OtelEnabled,
+			OtelVerbose:            opts.OtelVerbose,
+			SessionID:              subTraceID,
 
 			TurnCheckpointer:      turnCk,
 			TurnCheckpointEnabled: turnCk != nil,
@@ -569,65 +584,36 @@ func resolveSubAgentTimeout(callSeconds int, subCfg config.SubAgentConfig, role 
 	return 0
 }
 
-// resolveSubAgentIterations picks the iteration cap for a sub-agent Loop.
-// Precedence: per-call override > role-specific config > role profile
-// default > legacy hardcoded default. The role profile's MaxIterations
-// acts as a ceiling only for per-call overrides (so a task call cannot
-// neutralize the role's cap). Config-level overrides are authoritative
-// and bypass the ceiling.
-func resolveSubAgentIterations(callMax int, profile subagent.RoleProfile, subCfg config.SubAgentConfig, role subagent.SubAgentRole) int {
-	var v int
-	switch {
-	case callMax > 0:
-		v = callMax
-		if profile.MaxLoopCycles > 0 && v > profile.MaxLoopCycles {
-			v = profile.MaxLoopCycles
-		}
-	case subCfg.Roles[string(role)].MaxLoopCycles > 0:
-		v = subCfg.Roles[string(role)].MaxLoopCycles
-	case profile.MaxLoopCycles > 0:
-		v = profile.MaxLoopCycles
-	default:
-		v = subagent.RoleProfileFor(role).MaxLoopCycles
-		if v <= 0 {
-			v = 25
-		}
+// budgetSpecFor assembles the budget.Spec for a sub-agent dispatch from
+// its four sources of truth: per-call arguments, per-role config, the
+// role profile, and global subagent defaults. It is the single mapping
+// between runner inputs and the budget package.
+func budgetSpecFor(callIterations, callTurns int, profile subagent.RoleProfile, subCfg config.SubAgentConfig, role subagent.SubAgentRole) budget.Spec {
+	rc := subCfg.Roles[string(role)]
+	return budget.Spec{
+		CallIterations:    callIterations,
+		CallTurns:         callTurns,
+		RoleMaxIterations: profile.MaxLoopCycles,
+		RoleMinIterations: profile.MinLoopCycles,
+		RoleMaxTurns:      profile.MaxToolTurns,
+		RoleMinTurns:      profile.MinToolTurns,
+		CfgMaxIterations:  rc.MaxLoopCycles,
+		CfgMinIterations:  rc.MinLoopCycles,
+		CfgMaxTurns:       rc.MaxToolTurns,
+		CfgMinTurns:       rc.MinToolTurns,
+		DefaultTurns:      subCfg.DefaultMaxToolTurns,
+		DefaultMinTurns:   subCfg.DefaultMinToolTurns,
+		HardCeiling:       budget.SchemaMaxIterations,
 	}
-	return v
 }
 
-// resolveSubAgentTurns picks the soft turn cap for a sub-agent Loop.
-// Precedence: per-call override > role-specific config > role profile
-// default > config-level default > hardcoded floor.
-// The result is clamped so it never reaches the MaxIterations ceiling,
-// guaranteeing at least one iteration for the forced-text turn.
-func resolveSubAgentTurns(
-	callMax int,
-	profile subagent.RoleProfile,
-	subCfg config.SubAgentConfig,
-	role subagent.SubAgentRole,
-	maxIter int,
-) int {
-	var v int
-	switch {
-	case callMax > 0:
-		v = callMax
-	case subCfg.Roles[string(role)].MaxToolTurns > 0:
-		v = subCfg.Roles[string(role)].MaxToolTurns
-	case profile.MaxToolTurns > 0:
-		v = profile.MaxToolTurns
-	case subCfg.DefaultMaxToolTurns > 0:
-		v = subCfg.DefaultMaxToolTurns
-	default:
-		v = 3
-	}
-	if maxIter > 0 && v >= maxIter {
-		v = maxIter - 1
-	}
-	if v < 1 {
-		v = 1
-	}
-	return v
+// resolveSubAgentBudget resolves the effective iteration and turn
+// budgets for a sub-agent dispatch in a single call so the two
+// dimensions reconcile against each other (floors grow iterations
+// rather than shrinking turns). Resolution lives in
+// internal/agent/budget.
+func resolveSubAgentBudget(callIterations, callTurns int, profile subagent.RoleProfile, subCfg config.SubAgentConfig, role subagent.SubAgentRole) budget.Budget {
+	return budget.Resolve(budgetSpecFor(callIterations, callTurns, profile, subCfg, role))
 }
 
 // resolveOutputLimit picks the byte cap for sub-agent final output.

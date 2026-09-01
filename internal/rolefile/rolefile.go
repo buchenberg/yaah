@@ -55,7 +55,9 @@ type Frontmatter struct {
 	Contract      ContractDef `yaml:"contract,omitempty"`
 	Tools         []string    `yaml:"tools"`
 	MaxLoopCycles int         `yaml:"max_iterations"`
+	MinLoopCycles int         `yaml:"min_iterations"` // budget floor; 0 = none
 	MaxToolTurns  int         `yaml:"max_turns"`
+	MinToolTurns  int         `yaml:"min_turns"` // budget floor; 0 = none
 	JSONMode      bool        `yaml:"json_mode"`
 	Timeout       int         `yaml:"timeout"` // seconds; 0 = no timeout
 }

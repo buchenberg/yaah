@@ -42,7 +42,9 @@ type RoleProfile struct {
 	Contract      ContractDef
 	Tools         []string
 	MaxLoopCycles int
+	MinLoopCycles int // per-call overrides may not go below; 0 = none
 	MaxToolTurns  int
+	MinToolTurns  int // per-call overrides may not go below; 0 = none
 	JSONMode      bool
 	Timeout       time.Duration
 }

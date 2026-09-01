@@ -121,6 +121,8 @@ type LoopConfig struct {
 	Model                  string
 	MaxLoopCycles          int
 	MaxToolTurns           int
+	BudgetIterationsSource string // provenance of MaxLoopCycles ("call", "floor", ...); "" unknown
+	BudgetTurnsSource      string // provenance of MaxToolTurns; "" unknown
 	JSONMode               bool
 	ToolsLevel             ToolsLevel
 	ContextWindow          int
