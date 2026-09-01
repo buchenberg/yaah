@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.55.1](https://github.com/buchenberg/yaah/compare/v0.55.0...v0.55.1) (2026-09-01)
+
+
+### Features
+
+* Add sub-agent turn budget floors (min_turns / min_iterations) ([#213](https://github.com/buchenberg/yaah/issues/213)) ([d446099](https://github.com/buchenberg/yaah/commit/d446099edc0c6b4bf984b3abb0281686e3ab531a))
+
 ## [0.55.0](https://github.com/buchenberg/yaah/compare/v0.54.0...v0.55.0) (2026-08-23)
 
 
