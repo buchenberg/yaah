@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -29,6 +30,7 @@ type Client struct {
 	OtelVerbose      bool
 	StripReasoning   func() // called to permanently strip reasoning from session history
 	replayCount      int    // tracks empty-response replays within a single Call
+	prematureCount   int    // tracks premature-stream-close replays within a single Call
 	dsmlSeq          int    // monotonic ID counter for DSML-recovered tool calls
 }
 
@@ -69,6 +71,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 	stripAttempts := 0
 	providerSwapped := false
 	c.replayCount = 0
+	c.prematureCount = 0
 
 	// Overflow-recovery compaction/trim replaces req.Messages in place;
 	// the final slice is attached to every CallResult (success or error)
@@ -158,6 +161,32 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		}
 
 		if isDegenerateStream(err) && c.FallbackProvider != nil && !providerSwapped {
+			oldProvider := c.Provider
+			oldModel := c.Model
+			c.Provider = c.FallbackProvider
+			if c.FallbackModel != "" {
+				c.Model = c.FallbackModel
+				req.Model = c.FallbackModel
+			}
+			providerSwapped = true
+			c.FallbackProvider = oldProvider
+			c.FallbackModel = oldModel
+			attempt--
+			continue
+		}
+
+		// Premature stream close: the connection was cut before the
+		// finish_reason chunk, so the partial response was discarded.
+		// Replay the unchanged request immediately (a fresh connection
+		// usually succeeds), then rotate to the fallback provider once —
+		// the same ladder as degenerate streams. Remaining failures fall
+		// through to the classified retry path below.
+		if errors.Is(err, ErrPrematureStreamClose) && c.prematureCount < 2 {
+			c.prematureCount++
+			attempt--
+			continue
+		}
+		if errors.Is(err, ErrPrematureStreamClose) && c.FallbackProvider != nil && !providerSwapped {
 			oldProvider := c.Provider
 			oldModel := c.Model
 			c.Provider = c.FallbackProvider
