@@ -20,6 +20,8 @@ tools:
   - git
   - diff
 max_iterations: 30
+max_turns: 20
+min_turns: 12
 timeout: 180
 ---
 

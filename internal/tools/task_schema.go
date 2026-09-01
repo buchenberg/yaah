@@ -18,8 +18,8 @@ func (t *TaskTool) Schema() json.RawMessage {
 			"description": {"type": "string", "description": "3-5 word description of the subtask"},
 			"prompt": {"type": "string", "description": "The task for the sub-agent to perform autonomously"},
 			"role": {"type": "string", "description": "Sub-agent role selecting its tool set and limits. Required. Use list_subagents to see available roles."},
-			"max_iterations": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Optional cap on sub-agent loop turns. Overrides the role default."},
-			"max_turns": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Optional soft cap on tool-using turns. Overrides the role default."},
+			"max_iterations": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Optional iteration cap. Prefer omitting — roles carry tuned budgets, and the value cannot go below the role's min_iterations."},
+			"max_turns": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Optional soft cap on tool-using turns. Prefer omitting — the role knows its own budget, and the value cannot go below the role's min_turns."},
 			"json_mode": {"type": "boolean", "description": "Request structured JSON output from the sub-agent."},
 			"output_limit": {"type": "integer", "minimum": 1024, "description": "Optional byte cap on the sub-agent's final report."},
 			"background": {"type": "boolean", "description": "When true, dispatch the sub-agent asynchronously and return immediately. Results arrive in a follow-up message. Returns a job_id you can use with subagent_jobs to check status, cancel, or wait."}
@@ -94,13 +94,13 @@ func BuildTaskSchema(roleNames []string, roleDescriptions map[string]string) jso
 				"type":        "integer",
 				"minimum":     1,
 				"maximum":     50,
-				"description": "Optional cap on sub-agent loop turns. Overrides the role default.",
+				"description": "Optional iteration cap. Prefer omitting — roles carry tuned budgets, and the value cannot go below the role's min_iterations.",
 			},
 			"max_turns": map[string]any{
 				"type":        "integer",
 				"minimum":     1,
 				"maximum":     50,
-				"description": "Optional soft cap on tool-using turns. Overrides the role default.",
+				"description": "Optional soft cap on tool-using turns. Prefer omitting — the role knows its own budget, and the value cannot go below the role's min_turns.",
 			},
 			"json_mode": map[string]any{
 				"type":        "boolean",

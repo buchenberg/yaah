@@ -26,7 +26,8 @@ tools:
   - diff
   - staticcheck
 max_iterations: 25
-max_turns: 3
+max_turns: 12
+min_turns: 8
 timeout: 480
 ---
 

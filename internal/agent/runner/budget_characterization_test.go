@@ -276,8 +276,8 @@ func TestResolveSubAgentBudgets_Reconciliation(t *testing.T) {
 }
 
 // TestResolveSubAgentBudgets_ShippedRoles pins the effective budgets of
-// the built-in roles. The shipped roles carry no floors yet (Phase 5
-// adds them), so their numbers are unchanged by Phase 2.
+// the built-in roles, retuned in Phase 5 of the plan (reviewer's
+// 3-turn starvation fixed; floors added to all four built-ins).
 func TestResolveSubAgentBudgets_ShippedRoles(t *testing.T) {
 	initTestRoles(t)
 
@@ -287,9 +287,9 @@ func TestResolveSubAgentBudgets_ShippedRoles(t *testing.T) {
 		wantTurns int
 	}{
 		{"analyst", 30, 10},
-		{"developer", 40, 6},
-		{"tester", 30, 6},
-		{"reviewer", 25, 3}, // plan §2.3: retuned in Phase 5
+		{"developer", 40, 12},
+		{"tester", 30, 8},
+		{"reviewer", 25, 12},
 	}
 	for _, tc := range tests {
 		t.Run(string(tc.role), func(t *testing.T) {
@@ -301,11 +301,11 @@ func TestResolveSubAgentBudgets_ShippedRoles(t *testing.T) {
 		})
 	}
 
-	t.Run("no floor: orchestrator can still force a cheap probe", func(t *testing.T) {
+	t.Run("FIXED (plan §2.2): reviewer floor beats the orchestrator's max_turns=1", func(t *testing.T) {
 		role := subagent.SubAgentRole("reviewer")
 		b := resolveBudget(0, 1, subagent.RoleProfileFor(role), config.SubAgentConfig{}, role)
-		if b.Turns != 1 {
-			t.Errorf("per-call max_turns=1 should win without a floor, got %d", b.Turns)
+		if b.Turns != 8 || b.TurnsSource != budget.SourceFloor {
+			t.Errorf("per-call max_turns=1 must be floored to 8, got %d (%s)", b.Turns, b.TurnsSource)
 		}
 	})
 }

@@ -67,7 +67,7 @@ func (t *SupervisedTaskTool) Schema() json.RawMessage {
 			"prompt": {"type": "string", "description": "The task for the sub-agent to accomplish"},
 			"role": {"type": "string", "description": "Sub-agent role selecting its tool set and limits. Required. Use list_subagents to see available roles."},
 			"timeout_seconds": {"type": "integer", "minimum": 10, "maximum": 600, "description": "Per-attempt timeout"},
-			"max_iterations": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Cap on sub-agent loop turns"},
+			"max_iterations": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Optional iteration cap. Prefer omitting — roles carry tuned budgets, and the value cannot go below the role's min_iterations."},
 			"review": {"type": "boolean", "default": false, "description": "Run in supervised review mode: complete one work unit, then return its diff and report for your verdict. Drive the verdict cycle (continue/rollback/fork/choose/accept/abort) via the supervisor tool."}
 		},
 		"required": ["prompt", "role"]
@@ -392,7 +392,7 @@ func BuildSupervisedTaskSchema(roleNames []string, roleDescriptions map[string]s
 				"type":        "integer",
 				"minimum":     1,
 				"maximum":     50,
-				"description": "Cap on sub-agent loop turns",
+				"description": "Optional iteration cap. Prefer omitting — roles carry tuned budgets, and the value cannot go below the role's min_iterations.",
 			},
 			"review": map[string]any{
 				"type":        "boolean",

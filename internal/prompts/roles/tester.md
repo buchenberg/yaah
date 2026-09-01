@@ -32,7 +32,8 @@ tools:
   - diff
   - bisect
 max_iterations: 30
-max_turns: 6
+max_turns: 8
+min_turns: 4
 timeout: 300
 ---
 
