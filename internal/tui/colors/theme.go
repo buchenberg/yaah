@@ -227,9 +227,12 @@ func (th *Theme) ColorTag(hex string) string {
 	return "[" + hex + "]"
 }
 
+// ResetTag fully resets foreground, background, and attributes. The short
+// form [-] resets only the foreground color in tview, which lets attributes
+// like dim (::d) leak into following text.
 func (th *Theme) ResetTag() string {
 	if th.NoColor {
 		return ""
 	}
-	return "[-]"
+	return "[-:-:-]"
 }
