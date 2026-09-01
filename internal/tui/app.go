@@ -177,6 +177,14 @@ func (t *App) SetModel(name string) {
 	t.renderInfoPane()
 }
 
+// SetMCPServers populates the info pane's MCP server list. Must be
+// called before Run(); McpServers is read by renderInfoPane from the
+// UI thread.
+func (t *App) SetMCPServers(servers []mcpinfo.Server) {
+	t.McpServers = servers
+	t.renderInfoPane()
+}
+
 func (t *App) SetConfig(subAgentsEnabled bool, subAgentsProvider string, subAgentsConcurrency int, subAgentsModel string, embeddingEnabled bool, embeddingModel string, pipeline []string) {
 	t.subAgentsEnabled = subAgentsEnabled
 	t.subAgentsProvider = subAgentsProvider
