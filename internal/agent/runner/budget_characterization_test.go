@@ -139,8 +139,8 @@ func TestResolveSubAgentTurns_Characterization(t *testing.T) {
 		wantSource budget.Source
 	}{
 		{
-			name:       "plan §4.4 pending: unset still means 3 until Phase 3",
-			want:       3,
+			name:       "FIXED (plan §4.4): unset derives iterations-1, not 3",
+			want:       24,
 			wantSource: budget.SourceFallback,
 		},
 		{

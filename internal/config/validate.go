@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/buchenberg/yaah/internal/agent/budget"
 )
 
 // ValidationError collects one or more configuration problems. The error
@@ -107,6 +109,43 @@ func Validate(cfg *Config) error {
 			errs = append(errs, fmt.Sprintf(
 				"agents.subagent.provider %q is not defined in providers",
 				cfg.Agent.SubAgent.Provider))
+		}
+	}
+
+	// Sub-agent budget floors must be sane: non-negative, not above the
+	// matching max in the same role config, and satisfiable within the
+	// schema hard ceiling (subagent-turn-budget-floors §4.6).
+	if cfg.Agent.SubAgent.DefaultMinToolTurns < 0 {
+		errs = append(errs, "agents.subagent.default_min_turns must not be negative")
+	}
+	if cfg.Agent.SubAgent.DefaultMinToolTurns >= budget.SchemaMaxIterations {
+		errs = append(errs, fmt.Sprintf(
+			"agents.subagent.default_min_turns %d is unsatisfiable (hard ceiling %d)",
+			cfg.Agent.SubAgent.DefaultMinToolTurns, budget.SchemaMaxIterations))
+	}
+	for role, rc := range cfg.Agent.SubAgent.Roles {
+		if rc.MinToolTurns < 0 {
+			errs = append(errs, fmt.Sprintf(
+				"agents.subagent.roles.%s.min_turns must not be negative", role))
+		}
+		if rc.MinLoopCycles < 0 {
+			errs = append(errs, fmt.Sprintf(
+				"agents.subagent.roles.%s.min_iterations must not be negative", role))
+		}
+		if rc.MaxToolTurns > 0 && rc.MinToolTurns > rc.MaxToolTurns {
+			errs = append(errs, fmt.Sprintf(
+				"agents.subagent.roles.%s.min_turns %d exceeds max_turns %d",
+				role, rc.MinToolTurns, rc.MaxToolTurns))
+		}
+		if rc.MaxLoopCycles > 0 && rc.MinLoopCycles > rc.MaxLoopCycles {
+			errs = append(errs, fmt.Sprintf(
+				"agents.subagent.roles.%s.min_iterations %d exceeds max_iterations %d",
+				role, rc.MinLoopCycles, rc.MaxLoopCycles))
+		}
+		if rc.MinToolTurns >= budget.SchemaMaxIterations {
+			errs = append(errs, fmt.Sprintf(
+				"agents.subagent.roles.%s.min_turns %d is unsatisfiable (hard ceiling %d)",
+				role, rc.MinToolTurns, budget.SchemaMaxIterations))
 		}
 	}
 

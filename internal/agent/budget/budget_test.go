@@ -90,9 +90,9 @@ func TestResolve_TurnsPrecedence(t *testing.T) {
 		wantSource Source
 	}{
 		{
-			name:       "unset means 3 (plan §4.4 fixes this in Phase 3)",
+			name:       "FIXED (plan §4.4): unset derives iterations-1, not 3",
 			spec:       Spec{},
-			want:       3,
+			want:       24,
 			wantSource: SourceFallback,
 		},
 		{
@@ -128,7 +128,7 @@ func TestResolve_TurnsPrecedence(t *testing.T) {
 		{
 			name:       "explicit zero is unset (goat-joke-teller case)",
 			spec:       Spec{RoleMaxTurns: 0, CallTurns: 0},
-			want:       3,
+			want:       24,
 			wantSource: SourceFallback,
 		},
 	}
@@ -187,8 +187,8 @@ func TestResolve_Floors(t *testing.T) {
 			wantTurnSrc: SourceFloor,
 		},
 		{
-			name:        "role floor precedence: config > role file",
-			spec:        Spec{CfgMinTurns: 0, RoleMinTurns: 4},
+			name:        "role floor applies below the derived fallback",
+			spec:        Spec{CallTurns: 2, CfgMinTurns: 0, RoleMinTurns: 4},
 			wantIter:    25,
 			wantTurns:   4,
 			wantIterSrc: SourceFallback,
@@ -198,7 +198,7 @@ func TestResolve_Floors(t *testing.T) {
 			name:        "iteration floor beats call override",
 			spec:        Spec{CallIterations: 2, RoleMinIterations: 12},
 			wantIter:    12,
-			wantTurns:   3,
+			wantTurns:   11, // derived fallback follows the floored iterations
 			wantIterSrc: SourceFloor,
 			wantTurnSrc: SourceFallback,
 		},
@@ -206,7 +206,7 @@ func TestResolve_Floors(t *testing.T) {
 			name:        "config iteration floor beats role iteration floor",
 			spec:        Spec{CallIterations: 2, CfgMinIterations: 15, RoleMinIterations: 8},
 			wantIter:    15,
-			wantTurns:   3,
+			wantTurns:   14,
 			wantIterSrc: SourceFloor,
 			wantTurnSrc: SourceFallback,
 		},

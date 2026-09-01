@@ -2,6 +2,7 @@ package subagent
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,7 +46,7 @@ type RoleDef struct {
 // RoleDef. It is the only Frontmatter→RoleDef mapping, so the registry
 // and the role tool cannot parse the same file differently (review B3).
 func roleDefFrom(fm rolefile.Frontmatter, body string) RoleDef {
-	return RoleDef{
+	def := RoleDef{
 		DisplayName:   fm.Name,
 		Specialty:     fm.Specialty,
 		Description:   fm.Description,
@@ -59,6 +60,28 @@ func roleDefFrom(fm rolefile.Frontmatter, body string) RoleDef {
 		Timeout:       fm.Timeout,
 		Body:          body,
 	}
+
+	// Clamp invalid budget floors instead of failing: a broken project
+	// role must not brick startup (plan §4.6). Config-level floors are
+	// hard-validated at load; role files only warn.
+	if def.MinLoopCycles < 0 {
+		slog.Warn("role file: negative min_iterations clamped to 0", "role", def.DisplayName, "value", def.MinLoopCycles)
+		def.MinLoopCycles = 0
+	}
+	if def.MinToolTurns < 0 {
+		slog.Warn("role file: negative min_turns clamped to 0", "role", def.DisplayName, "value", def.MinToolTurns)
+		def.MinToolTurns = 0
+	}
+	if def.MaxLoopCycles > 0 && def.MinLoopCycles > def.MaxLoopCycles {
+		slog.Warn("role file: min_iterations above max_iterations clamped", "role", def.DisplayName, "min", def.MinLoopCycles, "max", def.MaxLoopCycles)
+		def.MinLoopCycles = def.MaxLoopCycles
+	}
+	if def.MaxToolTurns > 0 && def.MinToolTurns > def.MaxToolTurns {
+		slog.Warn("role file: min_turns above max_turns clamped", "role", def.DisplayName, "min", def.MinToolTurns, "max", def.MaxToolTurns)
+		def.MinToolTurns = def.MaxToolTurns
+	}
+
+	return def
 }
 
 // ToProfile converts a parsed role definition into the runtime

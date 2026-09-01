@@ -75,11 +75,17 @@ type Budget struct {
 // expresses one.
 const fallbackIterations = 25
 
-// fallbackTurns is the builtin tool-turn budget when nothing else
-// expresses one. (Replaced by an iterations-derived value in a later
-// phase of subagent-turn-budget-floors; kept here to port the current
-// behaviour exactly.)
-const fallbackTurns = 3
+// fallbackTurns derives the builtin tool-turn budget when nothing else
+// expresses one: essentially the whole loop budget, leaving one
+// iteration of headroom for the forced-text turn (plan §4.4 — the old
+// magic constant 3 starved roles that never declared max_turns, e.g.
+// security_auditor).
+func fallbackTurns(iterations int) int {
+	if iterations > 1 {
+		return iterations - 1
+	}
+	return 1
+}
 
 // SchemaMaxIterations is the maximum the spawn_subagent /
 // supervised_task tool schemas accept per call. Resolve bounds the
@@ -140,7 +146,7 @@ func Resolve(s Spec) Budget {
 	case s.DefaultTurns > 0:
 		b.Turns, b.TurnsSource = s.DefaultTurns, SourceDefault
 	default:
-		b.Turns, b.TurnsSource = fallbackTurns, SourceFallback
+		b.Turns, b.TurnsSource = fallbackTurns(b.Iterations), SourceFallback
 	}
 
 	// Turn floor: config outranks the role file, then the global default.
