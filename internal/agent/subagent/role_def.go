@@ -32,7 +32,9 @@ type RoleDef struct {
 	Contract      ContractDef
 	Tools         []string
 	MaxLoopCycles int
+	MinLoopCycles int // per-call overrides may not go below; 0 = none
 	MaxToolTurns  int
+	MinToolTurns  int // per-call overrides may not go below; 0 = none
 	JSONMode      bool
 	Timeout       int // seconds; 0 = no timeout
 
@@ -50,7 +52,9 @@ func roleDefFrom(fm rolefile.Frontmatter, body string) RoleDef {
 		Contract:      fm.Contract,
 		Tools:         fm.Tools,
 		MaxLoopCycles: fm.MaxLoopCycles,
+		MinLoopCycles: fm.MinLoopCycles,
 		MaxToolTurns:  fm.MaxToolTurns,
+		MinToolTurns:  fm.MinToolTurns,
 		JSONMode:      fm.JSONMode,
 		Timeout:       fm.Timeout,
 		Body:          body,
@@ -67,7 +71,9 @@ func (d RoleDef) ToProfile() RoleProfile {
 		Contract:      d.Contract,
 		Tools:         d.Tools,
 		MaxLoopCycles: d.MaxLoopCycles,
+		MinLoopCycles: d.MinLoopCycles,
 		MaxToolTurns:  d.MaxToolTurns,
+		MinToolTurns:  d.MinToolTurns,
 		JSONMode:      d.JSONMode,
 		Timeout:       time.Duration(d.Timeout) * time.Second,
 	}

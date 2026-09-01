@@ -81,6 +81,12 @@ const fallbackIterations = 25
 // behaviour exactly.)
 const fallbackTurns = 3
 
+// SchemaMaxIterations is the maximum the spawn_subagent /
+// supervised_task tool schemas accept per call. Resolve bounds the
+// final budget here so headroom reconciliation cannot grow iterations
+// without limit.
+const SchemaMaxIterations = 50
+
 // Resolve computes the effective budget for a Spec. Precedence mirrors
 // the historical runner behaviour:
 //
@@ -88,11 +94,20 @@ const fallbackTurns = 3
 //     config > role file > builtin fallback. Config overrides are
 //     authoritative and bypass the role ceiling.
 //   - turns: call > role config > role file > global default > builtin
-//     fallback, then clamped below iterations so at least one loop
-//     cycle remains for the forced-text turn.
+//     fallback.
 //
-// HardCeiling, when positive, bounds iterations and turns after all
-// other resolution.
+// Floors (min_*) raise either dimension below the declared minimum —
+// config floors outrank role-file floors, and a floor beats a per-call
+// override. Floors never shrink the other dimension: when floored turns
+// reach or exceed iterations, reconciliation GROWS iterations to keep
+// one loop cycle of headroom for the forced-text turn (source
+// "headroom"). Unfloored turns that reach iterations are clamped down
+// historically, so per-call max_iterations alone can still force a
+// cheap probe to exhaust.
+//
+// HardCeiling, when positive, bounds both dimensions after all other
+// resolution. A floor the ceiling cannot satisfy is a validation-time
+// configuration error, not something resolved here.
 func Resolve(s Spec) Budget {
 	var b Budget
 
@@ -110,6 +125,11 @@ func Resolve(s Spec) Budget {
 		b.Iterations, b.IterationsSource = fallbackIterations, SourceFallback
 	}
 
+	// Iteration floor: config outranks the role file.
+	if floor := firstPositive(s.CfgMinIterations, s.RoleMinIterations); floor > 0 && b.Iterations < floor {
+		b.Iterations, b.IterationsSource = floor, SourceFloor
+	}
+
 	switch {
 	case s.CallTurns > 0:
 		b.Turns, b.TurnsSource = s.CallTurns, SourceCall
@@ -123,25 +143,51 @@ func Resolve(s Spec) Budget {
 		b.Turns, b.TurnsSource = fallbackTurns, SourceFallback
 	}
 
-	// Reconcile dimensions: turns never reach the iteration ceiling,
-	// guaranteeing at least one iteration for the forced-text turn.
-	if b.Iterations > 0 && b.Turns >= b.Iterations {
-		b.Turns, b.TurnsSource = b.Iterations-1, SourceCeiling
-	}
-	if b.Turns < 1 {
-		b.Turns = 1
+	// Turn floor: config outranks the role file, then the global default.
+	turnsFloored := false
+	if floor := firstPositive(s.CfgMinTurns, s.RoleMinTurns, s.DefaultMinTurns); floor > 0 && b.Turns < floor {
+		b.Turns, b.TurnsSource = floor, SourceFloor
+		turnsFloored = true
 	}
 
-	// Hard ceiling (schema maximum). No-op while dispatch passes 0.
+	// Reconcile dimensions. A FLOORED turn budget wins over iterations:
+	// growing iterations (rather than shrinking turns) is what makes a
+	// floor a floor — cutting turns below their floor would reproduce
+	// the starvation one level down. Unfloored turns keep the
+	// historical clamp down instead, so a per-call max_iterations alone
+	// can still force exhaustion for deliberate cheap probes (plan §7
+	// regression; this refines §4.2's unconditional growth).
+	if turnsFloored && b.Turns >= b.Iterations {
+		b.Iterations, b.IterationsSource = b.Turns+1, SourceHeadroom
+	} else if b.Iterations > 0 && b.Turns >= b.Iterations {
+		b.Turns, b.TurnsSource = b.Iterations-1, SourceCeiling
+	}
+
+	// Hard ceiling (schema maximum). Bounds both dimensions; see the
+	// validation note above regarding unsatisfiable floors.
 	if s.HardCeiling > 0 && b.Iterations > s.HardCeiling {
 		b.Iterations, b.IterationsSource = s.HardCeiling, SourceCeiling
 		if b.Turns > b.Iterations-1 {
 			b.Turns, b.TurnsSource = b.Iterations-1, SourceCeiling
 		}
-		if b.Turns < 1 {
-			b.Turns = 1
-		}
+	}
+
+	if b.Turns < 1 {
+		b.Turns = 1
+	}
+	if b.Iterations < 1 {
+		b.Iterations = 1
 	}
 
 	return b
+}
+
+// firstPositive returns the first strictly positive value, or 0.
+func firstPositive(vs ...int) int {
+	for _, v := range vs {
+		if v > 0 {
+			return v
+		}
+	}
+	return 0
 }

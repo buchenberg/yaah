@@ -254,8 +254,8 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 
 		subReg := buildSubAgentRegistry(opts, profile, remainingDepth)
 
-		maxIter := resolveSubAgentIterations(params.MaxLoopCycles, profile, opts.subCfg, role)
-		maxTurns := resolveSubAgentTurns(params.MaxToolTurns, profile, opts.subCfg, role, maxIter)
+		b := resolveSubAgentBudget(params.MaxLoopCycles, params.MaxToolTurns, profile, opts.subCfg, role)
+		maxIter, maxTurns := b.Iterations, b.Turns
 
 		effectiveCW := opts.subContextWindow
 		if rc, ok := opts.subCfg.Roles[string(role)]; ok && rc.ContextWindow > 0 {
@@ -580,47 +580,26 @@ func budgetSpecFor(callIterations, callTurns int, profile subagent.RoleProfile, 
 		CallIterations:    callIterations,
 		CallTurns:         callTurns,
 		RoleMaxIterations: profile.MaxLoopCycles,
+		RoleMinIterations: profile.MinLoopCycles,
 		RoleMaxTurns:      profile.MaxToolTurns,
+		RoleMinTurns:      profile.MinToolTurns,
 		CfgMaxIterations:  rc.MaxLoopCycles,
+		CfgMinIterations:  rc.MinLoopCycles,
 		CfgMaxTurns:       rc.MaxToolTurns,
+		CfgMinTurns:       rc.MinToolTurns,
 		DefaultTurns:      subCfg.DefaultMaxToolTurns,
+		DefaultMinTurns:   subCfg.DefaultMinToolTurns,
+		HardCeiling:       budget.SchemaMaxIterations,
 	}
 }
 
-// resolveSubAgentIterations picks the iteration cap for a sub-agent Loop.
-// Precedence: per-call override > role-specific config > role profile
-// default > builtin fallback. The role profile's MaxIterations acts as a
-// ceiling only for per-call overrides (so a task call cannot neutralize
-// the role's cap). Config-level overrides are authoritative and bypass
-// the ceiling. Resolution lives in internal/agent/budget.
-func resolveSubAgentIterations(callMax int, profile subagent.RoleProfile, subCfg config.SubAgentConfig, role subagent.SubAgentRole) int {
-	return budget.Resolve(budgetSpecFor(callMax, 0, profile, subCfg, role)).Iterations
-}
-
-// resolveSubAgentTurns picks the soft turn cap for a sub-agent Loop.
-// Precedence: per-call override > role-specific config > role profile
-// default > config-level default > builtin fallback. The result is
-// clamped so it never reaches the MaxIterations ceiling, guaranteeing
-// at least one iteration for the forced-text turn. The maxIter argument
-// is the caller's already-resolved iteration cap (possibly carrying a
-// per-call iteration override the turns Spec cannot see), so the same
-// ceiling clamp is re-applied to it after Resolve. Resolution lives in
+// resolveSubAgentBudget resolves the effective iteration and turn
+// budgets for a sub-agent dispatch in a single call so the two
+// dimensions reconcile against each other (floors grow iterations
+// rather than shrinking turns). Resolution lives in
 // internal/agent/budget.
-func resolveSubAgentTurns(
-	callMax int,
-	profile subagent.RoleProfile,
-	subCfg config.SubAgentConfig,
-	role subagent.SubAgentRole,
-	maxIter int,
-) int {
-	turns := budget.Resolve(budgetSpecFor(0, callMax, profile, subCfg, role)).Turns
-	if maxIter > 0 && turns >= maxIter {
-		turns = maxIter - 1
-		if turns < 1 {
-			turns = 1
-		}
-	}
-	return turns
+func resolveSubAgentBudget(callIterations, callTurns int, profile subagent.RoleProfile, subCfg config.SubAgentConfig, role subagent.SubAgentRole) budget.Budget {
+	return budget.Resolve(budgetSpecFor(callIterations, callTurns, profile, subCfg, role))
 }
 
 // resolveOutputLimit picks the byte cap for sub-agent final output.
