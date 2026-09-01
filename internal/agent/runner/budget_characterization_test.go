@@ -217,4 +217,41 @@ func TestResolveSubAgentBudgets_ShippedRoles(t *testing.T) {
 			t.Errorf("per-call max_turns=1 should win today, got %d", turns)
 		}
 	})
+
+	// Pins the dispatch coupling: turns are clamped by the resolved
+	// iterations even when both call overrides are in play.
+	coupled := []struct {
+		name      string
+		callIter  int
+		callTurns int
+		profile   subagent.RoleProfile
+		wantIter  int
+		wantTurns int
+	}{
+		{
+			name:      "small call iterations clamp large call turns",
+			callIter:  2,
+			callTurns: 10,
+			wantIter:  2,
+			wantTurns: 1,
+		},
+		{
+			name:      "profile ceiling bounds call iterations, turns follow",
+			callIter:  100,
+			callTurns: 50,
+			profile:   subagent.RoleProfile{MaxLoopCycles: 30},
+			wantIter:  30,
+			wantTurns: 29,
+		},
+	}
+	for _, tc := range coupled {
+		t.Run("coupled: "+tc.name, func(t *testing.T) {
+			iter := resolveSubAgentIterations(tc.callIter, tc.profile, config.SubAgentConfig{}, charRole)
+			turns := resolveSubAgentTurns(tc.callTurns, tc.profile, config.SubAgentConfig{}, charRole, iter)
+			if iter != tc.wantIter || turns != tc.wantTurns {
+				t.Errorf("budget = %d iterations / %d turns, want %d / %d",
+					iter, turns, tc.wantIter, tc.wantTurns)
+			}
+		})
+	}
 }

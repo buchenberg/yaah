@@ -23,6 +23,7 @@ import (
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/budget"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
@@ -569,38 +570,42 @@ func resolveSubAgentTimeout(callSeconds int, subCfg config.SubAgentConfig, role 
 	return 0
 }
 
+// budgetSpecFor assembles the budget.Spec for a sub-agent dispatch from
+// its four sources of truth: per-call arguments, per-role config, the
+// role profile, and global subagent defaults. It is the single mapping
+// between runner inputs and the budget package.
+func budgetSpecFor(callIterations, callTurns int, profile subagent.RoleProfile, subCfg config.SubAgentConfig, role subagent.SubAgentRole) budget.Spec {
+	rc := subCfg.Roles[string(role)]
+	return budget.Spec{
+		CallIterations:    callIterations,
+		CallTurns:         callTurns,
+		RoleMaxIterations: profile.MaxLoopCycles,
+		RoleMaxTurns:      profile.MaxToolTurns,
+		CfgMaxIterations:  rc.MaxLoopCycles,
+		CfgMaxTurns:       rc.MaxToolTurns,
+		DefaultTurns:      subCfg.DefaultMaxToolTurns,
+	}
+}
+
 // resolveSubAgentIterations picks the iteration cap for a sub-agent Loop.
 // Precedence: per-call override > role-specific config > role profile
-// default > legacy hardcoded default. The role profile's MaxIterations
-// acts as a ceiling only for per-call overrides (so a task call cannot
-// neutralize the role's cap). Config-level overrides are authoritative
-// and bypass the ceiling.
+// default > builtin fallback. The role profile's MaxIterations acts as a
+// ceiling only for per-call overrides (so a task call cannot neutralize
+// the role's cap). Config-level overrides are authoritative and bypass
+// the ceiling. Resolution lives in internal/agent/budget.
 func resolveSubAgentIterations(callMax int, profile subagent.RoleProfile, subCfg config.SubAgentConfig, role subagent.SubAgentRole) int {
-	var v int
-	switch {
-	case callMax > 0:
-		v = callMax
-		if profile.MaxLoopCycles > 0 && v > profile.MaxLoopCycles {
-			v = profile.MaxLoopCycles
-		}
-	case subCfg.Roles[string(role)].MaxLoopCycles > 0:
-		v = subCfg.Roles[string(role)].MaxLoopCycles
-	case profile.MaxLoopCycles > 0:
-		v = profile.MaxLoopCycles
-	default:
-		v = subagent.RoleProfileFor(role).MaxLoopCycles
-		if v <= 0 {
-			v = 25
-		}
-	}
-	return v
+	return budget.Resolve(budgetSpecFor(callMax, 0, profile, subCfg, role)).Iterations
 }
 
 // resolveSubAgentTurns picks the soft turn cap for a sub-agent Loop.
 // Precedence: per-call override > role-specific config > role profile
-// default > config-level default > hardcoded floor.
-// The result is clamped so it never reaches the MaxIterations ceiling,
-// guaranteeing at least one iteration for the forced-text turn.
+// default > config-level default > builtin fallback. The result is
+// clamped so it never reaches the MaxIterations ceiling, guaranteeing
+// at least one iteration for the forced-text turn. The maxIter argument
+// is the caller's already-resolved iteration cap (possibly carrying a
+// per-call iteration override the turns Spec cannot see), so the same
+// ceiling clamp is re-applied to it after Resolve. Resolution lives in
+// internal/agent/budget.
 func resolveSubAgentTurns(
 	callMax int,
 	profile subagent.RoleProfile,
@@ -608,26 +613,14 @@ func resolveSubAgentTurns(
 	role subagent.SubAgentRole,
 	maxIter int,
 ) int {
-	var v int
-	switch {
-	case callMax > 0:
-		v = callMax
-	case subCfg.Roles[string(role)].MaxToolTurns > 0:
-		v = subCfg.Roles[string(role)].MaxToolTurns
-	case profile.MaxToolTurns > 0:
-		v = profile.MaxToolTurns
-	case subCfg.DefaultMaxToolTurns > 0:
-		v = subCfg.DefaultMaxToolTurns
-	default:
-		v = 3
+	turns := budget.Resolve(budgetSpecFor(0, callMax, profile, subCfg, role)).Turns
+	if maxIter > 0 && turns >= maxIter {
+		turns = maxIter - 1
+		if turns < 1 {
+			turns = 1
+		}
 	}
-	if maxIter > 0 && v >= maxIter {
-		v = maxIter - 1
-	}
-	if v < 1 {
-		v = 1
-	}
-	return v
+	return turns
 }
 
 // resolveOutputLimit picks the byte cap for sub-agent final output.
