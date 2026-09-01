@@ -2,7 +2,7 @@
 # Entire CLI hooks
 if command -v entire >/dev/null 2>&1; then entire hooks git prepare-commit-msg "$1" "$2" 2>/dev/null || true; else :; fi
 
-# --- BEGIN BEADS INTEGRATION v1.2.2 ---
+# --- BEGIN BEADS INTEGRATION v1.1.2 ---
 # This section is managed by beads. Do not remove these markers.
 if command -v bd >/dev/null 2>&1; then
   export BD_GIT_HOOK=1
@@ -33,4 +33,4 @@ if command -v bd >/dev/null 2>&1; then
   fi
   if [ $_bd_exit -ne 0 ]; then exit $_bd_exit; fi
 fi
-# --- END BEADS INTEGRATION v1.2.2 ---
+# --- END BEADS INTEGRATION v1.1.2 ---
