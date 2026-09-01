@@ -33,8 +33,9 @@ func Build(dimColor string) (lines int, tv *tview.TextView) {
 		lines++
 	}
 
-	// Tagline in dim gray (not blue).
-	b.WriteString(fmt.Sprintf("[%s::d]%s[-]", dimColor, tagline))
+	// Tagline in dim gray (not blue). [-:-:-] is the full reset — [-]
+	// alone leaves the dim attribute active.
+	b.WriteString(fmt.Sprintf("[%s::d]%s[-:-:-]", dimColor, tagline))
 	lines++
 
 	tv.SetText(b.String())

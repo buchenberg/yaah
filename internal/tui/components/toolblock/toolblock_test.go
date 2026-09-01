@@ -205,3 +205,29 @@ func TestRender_EmptyArgs(t *testing.T) {
 		t.Error("expanded should not show Args section when args empty")
 	}
 }
+
+// TestRender_EndsWithFullReset pins the dim-attribute leak fix: the
+// collapsed line opens a dim attribute via DimTag and must close with the
+// full reset [-:-:-]. The short form [-] resets only the foreground color
+// in tview, leaving dim active for all following text in the buffer.
+func TestRender_EndsWithFullReset(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Block)
+	}{
+		{"running", func(b *Block) {}},
+		{"done", func(b *Block) { b.Complete("ok", "") }},
+		{"error", func(b *Block) { b.Fail("fail", "boom") }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			th := colors.NewDarkTheme()
+			b := New("t1", "bash", `{"command":"ls"}`, &th)
+			tc.mutate(b)
+			out := b.Render()
+			if !strings.HasSuffix(out, "[-:-:-]") {
+				t.Errorf("collapsed render should end with full reset, got %q", out)
+			}
+		})
+	}
+}

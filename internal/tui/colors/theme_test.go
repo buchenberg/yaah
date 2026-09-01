@@ -192,8 +192,8 @@ func TestColorTag_NoColor(t *testing.T) {
 
 func TestResetTag(t *testing.T) {
 	th := NewDarkTheme()
-	if th.ResetTag() != "[-]" {
-		t.Errorf("ResetTag: got %q, want %q", th.ResetTag(), "[-]")
+	if th.ResetTag() != "[-:-:-]" {
+		t.Errorf("ResetTag: got %q, want %q", th.ResetTag(), "[-:-:-]")
 	}
 }
 

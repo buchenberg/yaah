@@ -13,6 +13,7 @@ import (
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/tui"
+	"github.com/buchenberg/yaah/internal/tui/components/mcpinfo"
 	"github.com/spf13/cobra"
 )
 
@@ -62,6 +63,16 @@ func runTUI() error {
 
 	app.SetProvider(sess.ProviderName())
 	app.SetModel(sess.ModelName())
+
+	infos := sess.MCPInfos()
+	mcpServers := make([]mcpinfo.Server, 0, len(infos))
+	for _, info := range infos {
+		mcpServers = append(mcpServers, mcpinfo.Server{
+			Name:      info.Name,
+			Connected: info.Connected,
+		})
+	}
+	app.SetMCPServers(mcpServers)
 
 	cfg := sess.cfg
 	subModel := cfg.Agent.SubAgent.Model

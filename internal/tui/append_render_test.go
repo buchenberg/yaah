@@ -99,13 +99,13 @@ func TestEnqueueUIEventDirect_AbandonsAtShutdown(t *testing.T) {
 	}
 }
 
-// TestAddUserMessage_EchoWrapsAndTruncates pins the prompt echo
+// TestSetCurrentPrompt_EchoWrapsAndTruncates pins the prompt echo
 // behavior: short prompts fit on one row, long prompts truncate with
 // an ellipsis instead of growing past promptEchoMaxLines.
-func TestAddUserMessage_EchoWrapsAndTruncates(t *testing.T) {
+func TestSetCurrentPrompt_EchoWrapsAndTruncates(t *testing.T) {
 	ui := New("test")
 
-	ui.AddUserMessage("short prompt")
+	ui.SetCurrentPrompt("short prompt")
 	short := ui.promptEcho.GetText(true)
 	if !strings.Contains(short, "short prompt") {
 		t.Fatalf("echo missing text: %q", short)
@@ -114,7 +114,7 @@ func TestAddUserMessage_EchoWrapsAndTruncates(t *testing.T) {
 		t.Errorf("short prompt should not truncate: %q", short)
 	}
 
-	ui.AddUserMessage(strings.Repeat("x", 500))
+	ui.SetCurrentPrompt(strings.Repeat("x", 500))
 	long := ui.promptEcho.GetText(true)
 	if !strings.HasSuffix(long, "…") {
 		t.Errorf("long prompt should end with ellipsis: %q", long)
