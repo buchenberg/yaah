@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -16,6 +17,13 @@ import (
 	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/types"
 )
+
+// ErrPrematureStreamClose signals that the provider closed the stream
+// before sending a finish_reason chunk. No well-formed stream ends this
+// way (OpenAI-compatible and Anthropic both emit a terminal reason), so
+// the assembled partial response is discarded and the request is replayed
+// by Client.Call instead of being treated as a final answer.
+var ErrPrematureStreamClose = errors.New("stream closed before finish_reason")
 
 // runStream handles a streaming request and returns the assembled assistant
 // message, finish reason, response model, usage, and any error.
@@ -207,6 +215,17 @@ func checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, f
 		}
 	}
 	msg.ToolCalls = validToolCalls
+
+	// A stream that ends without a finish_reason was cut by the provider
+	// mid-response. The partial content (and any half-assembled tool
+	// calls) must not be treated as a final answer — surface a retryable
+	// error instead of silently dropping whatever the model was about to
+	// do next.
+	if finishReason == "" {
+		return types.Message{}, "", responseModel, usage, fmt.Errorf(
+			"%w: %d content chars and %d tool calls discarded",
+			ErrPrematureStreamClose, len(content), len(msg.ToolCalls))
+	}
 
 	if msg.Content != "" {
 		if cleaned, dsmlCalls, ok := parseDSMLToolCalls(msg.Content, dsmlSeq); ok {
