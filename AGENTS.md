@@ -41,7 +41,6 @@ yaah/
 │   ├── repl_loop.go             # interactive REPL loop + slash commands
 │   ├── view_terminal.go         # terminal agent.View (plain REPL output)
 │   ├── control_driver.go        # shared question/approval control-plane helpers
-│   ├── subagent_runner.go       # sub-agent dispatch + role discovery
 │   ├── serve.go serve_tools.go  # yaah serve — MCP tool server (stdio + HTTP)
 │   ├── acp_cmd.go               # yaah acp-serve cobra shim (server in internal/acp)
 │   ├── web.go web_view.go       # yaah web — browser UI + WebSocket view
@@ -63,10 +62,12 @@ yaah/
 ├── internal/
 │   ├── acp/                     # ACP protocol server (JSON-RPC wire types, view, dispatch loop)
 │   ├── agent/                   # agent loop, typed events, tool dispatch, context, hooks, persistence
+│   │   ├── budget/               #   pure sub-agent budget resolution (floors/ceilings) — leaf
 │   │   ├── context/              #   pure context helpers (tokens, split, prune, chunk, truncation) — leaf
 │   │   ├── errorclassify/        #   structured LLM provider error classification
 │   │   ├── llm/                  #   LLM client wrapping (streaming, retry, fallback, usage)
 │   │   ├── pipeline/             #   middleware pipeline (compaction, approval, permissions, etc.)
+│   │   ├── runner/               #   sub-agent dispatch wiring (provider/role/budget resolution)
 │   │   └── subagent/             #   sub-agent role definitions and registry
 │   ├── banner/                  # figlet + lolcat banner for the TUI/REPL
 │   ├── config/                  # load ~/.yaah/config.yaml, env subst, validate

@@ -172,6 +172,41 @@ shadow them, only add new ones. The roles shipped in this repo's
 `.agents/roles/` (Sam, Checker, Counter, Gordon, Gopher) are themselves
 project-level custom roles: copy and adapt them freely.
 
+## Budget model: floors vs ceilings
+
+Each dispatch resolves two dimensions — **iterations** (a hard loop cap that
+yields `MaxIterationsError` when exhausted) and **tool turns** (a soft cap that
+strips the tool list and forces a text-only answer). Turns are the binding
+constraint in practice, so yaah gives role authors control in both directions:
+
+- `max_iterations` / `max_turns` are **ceilings** — resolved from, in order,
+  the per-call argument, per-role config, the role file, then a fallback.
+  Unset `max_turns` now derives `iterations - 1` (the whole loop budget minus
+  one headroom cycle) instead of the old magic `3`.
+- `min_iterations` / `min_turns` are **floors** — a per-call override from the
+  orchestrator cannot go below them. Config floors outrank role-file floors.
+- **Floors never shrink the other dimension.** If a floored turn budget would
+  reach or exceed the iteration cap, iterations grow to leave headroom, bounded
+  by the schema maximum (50). Unfloored turns keep the historical clamp, so
+  `max_iterations: 1` alone can still force a deliberately cheap probe.
+
+```markdown
+---
+name: Auditor
+max_iterations: 30
+min_iterations: 8    # orchestrator can't starve below this
+max_turns: 20
+min_turns: 12
+---
+```
+
+The orchestrator should **not** set `max_iterations`/`max_turns` for ordinary
+work — roles carry tuned budgets, and `list_subagents` reports each role's
+effective budget. Set them only for a deliberate cheap probe (or to *raise* a
+budget up to the role ceiling). The effective budget and its source (call,
+role_config, role_file, config_default, floor, headroom, …) are recorded on
+sub-agent spans so a trace always answers "who set this to N?".
+
 ## Evidenced contracts
 
 Every sub-agent returns a structured response with a contract heading and

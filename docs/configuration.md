@@ -85,6 +85,7 @@ agents:
     max_concurrency: 3                # simultaneous sub-agents per turn
     default_timeout: 120              # seconds
     default_max_turns: 0              # 0 = unlimited
+    default_min_turns: 0              # global turn floor; 0 = none
     output_limit: 51200               # bytes cap on sub-agent reports
     json_mode: false                  # force structured output
     roles:                            # per-role overrides (defaults live in the role files)
@@ -94,9 +95,13 @@ agents:
       developer:
         timeout: 300
         max_iterations: 40
+        min_turns: 6                  # per-call overrides cannot go below
       reviewer:
         timeout: 240
         max_iterations: 25
+        max_turns: 12
+        min_turns: 8
+        min_iterations: 10            # iteration floor
       tester:
         timeout: 300
         max_iterations: 30
@@ -202,11 +207,14 @@ and `max_retries` consistent across the whole team.
 | `default_timeout` | — | Default seconds per sub-agent (0 = none) |
 | `stuck_child_timeout` | 60 | Seconds without a heartbeat before a sub-agent is force-cancelled (0 = off) |
 | `default_max_turns` | 0 (unlimited) | Default soft turn cap |
+| `default_min_turns` | 0 (none) | Global turn floor — no per-call override or role budget may drop below it |
 | `output_limit` | 51200 | Byte cap on sub-agent reports |
 | `json_mode` | false | Force structured JSON output |
 | `roles.<name>.timeout` | — | Per-role timeout override |
 | `roles.<name>.max_iterations` | — | Per-role iteration cap |
+| `roles.<name>.min_iterations` | 0 (none) | Per-role iteration floor; beats per-call overrides and the role file's floor |
 | `roles.<name>.max_turns` | — | Per-role turn cap |
+| `roles.<name>.min_turns` | 0 (none) | Per-role turn floor; beats per-call overrides and the role file's floor |
 | `roles.<name>.provider` | — | Per-role provider override |
 | `roles.<name>.model` | — | Per-role model override |
 | `roles.<name>.context_window` | — | Per-role context window (halved from parent if unset) |
@@ -215,6 +223,31 @@ and `max_retries` consistent across the whole team.
 | `roles.<name>.json_mode` | — | Per-role structured-output toggle |
 | `roles.<name>.directives` | — | Per-role directives injected into that role's prompt |
 | `roles.<name>.stuck_child_timeout` | — | Per-role stuck-child timeout |
+
+**Sub-agent budget resolution** — each dispatch resolves two dimensions
+(iterations = hard loop cap; turns = soft cap that strips tools and forces a
+final answer). Resolution is a pure function in `internal/agent/budget`:
+
+| Precedence | Iterations | Turns |
+|---|---|---|
+| 1 | per-call `max_iterations` (clamped down to the role file's max) | per-call `max_turns` |
+| 2 | `roles.<name>.max_iterations` (bypasses the role-file ceiling) | `roles.<name>.max_turns` |
+| 3 | role file `max_iterations` | role file `max_turns` |
+| 4 | builtin fallback 25 | `default_max_turns`, else derived `iterations - 1` |
+
+Floors apply after the pick: `min_iterations` (config, then role file) and
+`min_turns` (config, then role file, then `default_min_turns`) raise either
+dimension, including against per-call overrides. A floored turn budget that
+reaches the iteration cap *grows* iterations (headroom) instead of being cut —
+floors never shrink the other dimension. The schema maximum (50) bounds the
+final budget. Unfloored turns keep the historical clamp, so
+`max_iterations: 1` alone can still force a deliberate cheap probe.
+
+Validation rejects negative floors, `min > max` within a role config, and
+floors unsatisfiable under the schema ceiling; role files clamp with a warning
+instead of failing startup. Effective budgets and their sources appear on
+sub-agent spans (`subagent.budget.*`), in `list_subagents`, and in
+`MaxIterationsError`.
 
 **`agents.fallback`** — fallback on transient errors (429, 503):
 
