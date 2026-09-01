@@ -6,6 +6,8 @@ package tui
 // cmd/yaah/tui.go needs no changes.
 
 import (
+	"strings"
+
 	"github.com/buchenberg/yaah/internal/tui/components/activity"
 	"github.com/rivo/tview"
 )
@@ -43,9 +45,22 @@ func (t *App) ActivityState() activity.State {
 	return t.activityLine.State()
 }
 
-// SetCurrentPrompt shows the user's prompt in the prompt echo area.
+// SetCurrentPrompt shows the user's prompt in the prompt echo area,
+// pinned as the sticky top line of the messages pane. The prompt is
+// prefixed with a marker glyph and wraps to at most promptEchoMaxLines
+// rows; a longer prompt is truncated with an ellipsis.
 func (t *App) SetCurrentPrompt(text string) {
-	t.promptEcho.SetText(t.Theme.Tag(t.Theme.User, text))
-	t.resizePromptEcho(len(tview.WordWrap(text, t.echoWidth())))
+	const prefix = "🍖 "
+	body := strings.ReplaceAll(text, "\n\n", " ")
+	full := prefix + body
+
+	w := t.echoWidth()
+	lines := tview.WordWrap(full, w)
+	if len(lines) > promptEchoMaxLines {
+		full = t.truncateEcho(prefix, body, w)
+	}
+
+	t.promptEcho.SetText(t.Theme.Tag(t.Theme.User, full))
+	t.resizePromptEcho(len(tview.WordWrap(full, w)))
 	t.App.SetFocus(t.Input)
 }

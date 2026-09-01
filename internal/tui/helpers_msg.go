@@ -13,27 +13,6 @@ const (
 	promptMaxContentLine = 3
 )
 
-// AddUserMessage pins the submitted prompt as the sticky top line of
-// the messages pane (prompt echo). The message is NOT appended to the
-// conversation log — it stays visible at the top regardless of scroll
-// position. The echo wraps to at most promptEchoMaxLines rows; a longer
-// prompt is truncated with an ellipsis.
-func (t *App) AddUserMessage(text string) {
-	const prefix = "🍖 "
-	body := strings.ReplaceAll(text, "\n", " ")
-	full := prefix + body
-
-	w := t.echoWidth()
-	lines := tview.WordWrap(full, w)
-	if len(lines) > promptEchoMaxLines {
-		full = t.truncateEcho(prefix, body, w)
-	}
-
-	t.promptEcho.SetText(t.Theme.Tag(t.Theme.User, full))
-	t.resizePromptEcho(len(tview.WordWrap(full, w)))
-	t.App.SetFocus(t.Input)
-}
-
 // truncateEcho shortens the echo body until prefix+body+"…" wraps into
 // promptEchoMaxLines rows at width w.
 func (t *App) truncateEcho(prefix, body string, w int) string {
