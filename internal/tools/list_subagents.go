@@ -17,6 +17,14 @@ type SubAgentInfo struct {
 	Contract    SubAgentContract `json:"contract"`
 	Description string           `json:"description"`
 	Tools       []string         `json:"tools"`
+
+	// Effective loop budget without any per-call override, resolved the
+	// same way dispatch resolves it (subagent-turn-budget-floors §4.7):
+	// role file + config floors/maxes + global defaults.
+	Iterations    int `json:"iterations"`
+	Turns         int `json:"turns"`
+	MinIterations int `json:"min_iterations,omitempty"`
+	MinTurns      int `json:"min_turns,omitempty"`
 }
 
 // SubAgentContract mirrors the YAML contract definition from role files
@@ -79,7 +87,19 @@ func (t *ListSubAgentsTool) Execute(ctx context.Context, args string) (string, e
 		if r.Description != "" {
 			fmt.Fprintf(&b, "%s\n\n", r.Description)
 		}
-		fmt.Fprintf(&b, "Tools: %s\n\n", strings.Join(r.Tools, ", "))
+		fmt.Fprintf(&b, "Tools: %s\n", strings.Join(r.Tools, ", "))
+		if r.Iterations > 0 || r.Turns > 0 {
+			iter := fmt.Sprintf("%d iterations", r.Iterations)
+			if r.MinIterations > 0 {
+				iter += fmt.Sprintf(" (min %d)", r.MinIterations)
+			}
+			turns := fmt.Sprintf("%d tool turns", r.Turns)
+			if r.MinTurns > 0 {
+				turns += fmt.Sprintf(" (min %d)", r.MinTurns)
+			}
+			fmt.Fprintf(&b, "Budget: %s, %s\n", iter, turns)
+		}
+		fmt.Fprintf(&b, "\n")
 	}
 	return strings.TrimSpace(b.String()), nil
 }

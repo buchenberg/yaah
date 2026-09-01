@@ -197,3 +197,9 @@ func firstPositive(vs ...int) int {
 	}
 	return 0
 }
+
+// FirstPositive is the exported floor-precedence helper: the first
+// strictly positive value in precedence order (config > role file >
+// global default), or 0 when none is set. Consumers that display the
+// effective floor (list_subagents) use it to mirror Resolve's ordering.
+func FirstPositive(vs ...int) int { return firstPositive(vs...) }

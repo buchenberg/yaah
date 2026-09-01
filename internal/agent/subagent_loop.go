@@ -13,14 +13,19 @@ import (
 // sub-agent spawning, quality gates, and hooks — they are ephemeral
 // workers with a fixed turn budget.
 type SubAgentConfig struct {
-	MaxLoopCycles      int
-	MaxToolTurns       int
-	MaxRetries         int
-	RetryBackoffSecs   int
-	MaxToolConcurrency int
-	JSONMode           bool
-	ToolResultMaxLines int
-	ToolResultMaxBytes int
+	MaxLoopCycles int
+	MaxToolTurns  int
+	// BudgetIterationsSource / BudgetTurnsSource record which precedence
+	// branch resolved the two budgets, so traces and exhaustion errors can
+	// answer "who set this?" (subagent-turn-budget-floors §4.7).
+	BudgetIterationsSource string
+	BudgetTurnsSource      string
+	MaxRetries             int
+	RetryBackoffSecs       int
+	MaxToolConcurrency     int
+	JSONMode               bool
+	ToolResultMaxLines     int
+	ToolResultMaxBytes     int
 
 	// ToolSpillDir is the directory where oversized tool results are
 	// spilled to disk (mirrors LoopConfig.ToolSpillDir). Empty disables
@@ -88,26 +93,28 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 		Registry: registry,
 		View:     NoopView{},
 		Config: LoopConfig{
-			Model:              model,
-			SystemPrompt:       systemPrompt,
-			MaxLoopCycles:      cfg.MaxLoopCycles,
-			MaxToolTurns:       cfg.MaxToolTurns,
-			MaxRetries:         cfg.MaxRetries,
-			RetryBackoff:       time.Duration(cfg.RetryBackoffSecs) * time.Second,
-			MaxToolConcurrency: cfg.MaxToolConcurrency,
-			JSONMode:           cfg.JSONMode,
-			ToolSpillDir:       cfg.ToolSpillDir,
-			PermissionRules:    cfg.PermissionRules,
-			ContextWindow:      cfg.ContextWindow,
-			OtelEnabled:        cfg.OtelEnabled,
-			OtelVerbose:        cfg.OtelVerbose,
-			ApprovalMode:       "allow",
-			ToolsLevel:         FullTools,
-			PipelineNames:      nil,
-			PipelineDisabled:   nil,
-			WrapUpThreshold:    cfg.WrapUpThreshold,
-			SessionID:          cfg.SessionID,
-			IsSubAgent:         true,
+			Model:                  model,
+			SystemPrompt:           systemPrompt,
+			MaxLoopCycles:          cfg.MaxLoopCycles,
+			MaxToolTurns:           cfg.MaxToolTurns,
+			BudgetIterationsSource: cfg.BudgetIterationsSource,
+			BudgetTurnsSource:      cfg.BudgetTurnsSource,
+			MaxRetries:             cfg.MaxRetries,
+			RetryBackoff:           time.Duration(cfg.RetryBackoffSecs) * time.Second,
+			MaxToolConcurrency:     cfg.MaxToolConcurrency,
+			JSONMode:               cfg.JSONMode,
+			ToolSpillDir:           cfg.ToolSpillDir,
+			PermissionRules:        cfg.PermissionRules,
+			ContextWindow:          cfg.ContextWindow,
+			OtelEnabled:            cfg.OtelEnabled,
+			OtelVerbose:            cfg.OtelVerbose,
+			ApprovalMode:           "allow",
+			ToolsLevel:             FullTools,
+			PipelineNames:          nil,
+			PipelineDisabled:       nil,
+			WrapUpThreshold:        cfg.WrapUpThreshold,
+			SessionID:              cfg.SessionID,
+			IsSubAgent:             true,
 
 			TurnCheckpointer:      cfg.TurnCheckpointer,
 			TurnCheckpointEnabled: cfg.TurnCheckpointEnabled,

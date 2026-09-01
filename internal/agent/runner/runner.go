@@ -257,6 +257,18 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		b := resolveSubAgentBudget(params.MaxLoopCycles, params.MaxToolTurns, profile, opts.subCfg, role)
 		maxIter, maxTurns := b.Iterations, b.Turns
 
+		// Record the effective budget and its provenance on the
+		// sub-agent span (subagent-turn-budget-floors §4.7) so a trace
+		// answers "who set this budget to N?" directly.
+		if span := trace.SpanFromContext(ctx); span.IsRecording() {
+			span.SetAttributes(
+				attribute.Int("subagent.budget.iterations", b.Iterations),
+				attribute.String("subagent.budget.iterations_source", b.IterationsSource.String()),
+				attribute.Int("subagent.budget.turns", b.Turns),
+				attribute.String("subagent.budget.turns_source", b.TurnsSource.String()),
+			)
+		}
+
 		effectiveCW := opts.subContextWindow
 		if rc, ok := opts.subCfg.Roles[string(role)]; ok && rc.ContextWindow > 0 {
 			effectiveCW = rc.ContextWindow
@@ -346,23 +358,25 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		}
 
 		subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{
-			MaxLoopCycles:      maxIter,
-			MaxToolTurns:       maxTurns,
-			MaxRetries:         opts.defaults.MaxRetries,
-			RetryBackoffSecs:   opts.defaults.RetryBackoffSecs,
-			MaxToolConcurrency: opts.defaults.MaxToolConcurrency,
-			JSONMode:           jsonMode,
-			ToolResultMaxLines: opts.defaults.ToolResultMaxLines,
-			ToolResultMaxBytes: opts.defaults.ToolResultMaxBytes,
-			ToolSpillDir:       opts.toolSpillDir,
-			PruneProtectTokens: opts.defaults.PruneProtectTokens,
-			PruneMinReclaim:    opts.defaults.PruneMinReclaim,
-			PruneMinTurns:      opts.defaults.PruneMinTurns,
-			PermissionRules:    opts.parentPermissionRules,
-			ContextWindow:      effectiveCW,
-			OtelEnabled:        opts.OtelEnabled,
-			OtelVerbose:        opts.OtelVerbose,
-			SessionID:          subTraceID,
+			MaxLoopCycles:          maxIter,
+			MaxToolTurns:           maxTurns,
+			BudgetIterationsSource: b.IterationsSource.String(),
+			BudgetTurnsSource:      b.TurnsSource.String(),
+			MaxRetries:             opts.defaults.MaxRetries,
+			RetryBackoffSecs:       opts.defaults.RetryBackoffSecs,
+			MaxToolConcurrency:     opts.defaults.MaxToolConcurrency,
+			JSONMode:               jsonMode,
+			ToolResultMaxLines:     opts.defaults.ToolResultMaxLines,
+			ToolResultMaxBytes:     opts.defaults.ToolResultMaxBytes,
+			ToolSpillDir:           opts.toolSpillDir,
+			PruneProtectTokens:     opts.defaults.PruneProtectTokens,
+			PruneMinReclaim:        opts.defaults.PruneMinReclaim,
+			PruneMinTurns:          opts.defaults.PruneMinTurns,
+			PermissionRules:        opts.parentPermissionRules,
+			ContextWindow:          effectiveCW,
+			OtelEnabled:            opts.OtelEnabled,
+			OtelVerbose:            opts.OtelVerbose,
+			SessionID:              subTraceID,
 
 			TurnCheckpointer:      turnCk,
 			TurnCheckpointEnabled: turnCk != nil,

@@ -21,12 +21,23 @@ import (
 // value to match:
 //
 //	errors.Is(err, MaxIterationsError{})
+//
+// IterationsSource / TurnsSource carry the budget provenance
+// (subagent-turn-budget-floors §4.7) when known, so retry guidance can say
+// "exhausted 5 iterations (source: call)" instead of a bare count.
 type MaxIterationsError struct {
-	MaxIter int
+	MaxIter          int
+	MaxTurns         int
+	IterationsSource string
+	TurnsSource      string
 }
 
 func (e MaxIterationsError) Error() string {
-	return fmt.Sprintf("max iterations (%d) reached", e.MaxIter)
+	msg := fmt.Sprintf("max iterations (%d) reached", e.MaxIter)
+	if e.IterationsSource != "" {
+		msg += fmt.Sprintf(" (budget source: %s)", e.IterationsSource)
+	}
+	return msg
 }
 
 func (e MaxIterationsError) Is(target error) bool {
@@ -343,7 +354,12 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 			if l.restoreLastTurnCheckpoint(ctx, &messages, exhaustionGuidance) {
 				continue
 			}
-			err := MaxIterationsError{MaxIter: l.Config.MaxLoopCycles}
+			err := MaxIterationsError{
+				MaxIter:          l.Config.MaxLoopCycles,
+				MaxTurns:         l.Config.MaxToolTurns,
+				IterationsSource: l.Config.BudgetIterationsSource,
+				TurnsSource:      l.Config.BudgetTurnsSource,
+			}
 			if traceMw != nil {
 				traceMw.FailTurn(l.Config.MaxLoopCycles, err)
 			}

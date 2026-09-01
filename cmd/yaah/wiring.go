@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/agent/budget"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/runner"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
@@ -373,6 +374,26 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 						desc = desc[:idx]
 					}
 				}
+
+				// Effective budget for a dispatch without per-call
+				// overrides — resolved exactly like makeTaskRunner
+				// resolves it, so the orchestrator sees real budgets
+				// instead of guessing (subagent-turn-budget-floors §4.7).
+				rc := cfg.Agent.SubAgent.Roles[string(name)]
+				res := budget.Resolve(budget.Spec{
+					RoleMaxIterations: def.MaxLoopCycles,
+					RoleMinIterations: def.MinLoopCycles,
+					RoleMaxTurns:      def.MaxToolTurns,
+					RoleMinTurns:      def.MinToolTurns,
+					CfgMaxIterations:  rc.MaxLoopCycles,
+					CfgMinIterations:  rc.MinLoopCycles,
+					CfgMaxTurns:       rc.MaxToolTurns,
+					CfgMinTurns:       rc.MinToolTurns,
+					DefaultTurns:      cfg.Agent.SubAgent.DefaultMaxToolTurns,
+					DefaultMinTurns:   cfg.Agent.SubAgent.DefaultMinToolTurns,
+					HardCeiling:       budget.SchemaMaxIterations,
+				})
+
 				infos = append(infos, tools.SubAgentInfo{
 					Role:        string(name),
 					DisplayName: def.DisplayName,
@@ -383,6 +404,11 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 					},
 					Description: desc,
 					Tools:       def.Tools,
+
+					Iterations:    res.Iterations,
+					Turns:         res.Turns,
+					MinIterations: budget.FirstPositive(rc.MinLoopCycles, def.MinLoopCycles),
+					MinTurns:      budget.FirstPositive(rc.MinToolTurns, def.MinToolTurns, cfg.Agent.SubAgent.DefaultMinToolTurns),
 				})
 			}
 			return infos
