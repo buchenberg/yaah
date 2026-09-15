@@ -144,6 +144,12 @@ type Registry struct {
 	// execution begins.  When nil, tools fall back to legacy path
 	// resolution (~ expansion + Clean) for backward compatibility.
 	PathValidator *PathValidator
+
+	// Workspace is where tools read, write, and run commands. It is derived
+	// from PathValidator when only that is set, so migrated tools behave exactly
+	// as they did before workspaces existed. SetWorkspace overrides it with an
+	// isolated substrate.
+	Workspace Workspace
 }
 
 // leafTools is the single source of truth for the names and
@@ -215,27 +221,61 @@ func NewLeafTool(name string) Tool {
 	return nil
 }
 
-// Register adds a tool to the registry. If the registry has a
-// PathValidator and the tool implements PathValidatorSetter, the
-// validator is injected automatically.
+// Register adds a tool to the registry and injects the registry's workspace and
+// path validator if the tool wants them.
 func (r *Registry) Register(t Tool) {
 	r.tools[t.Name()] = t
 	r.generation++
-	// Auto-inject PathValidator if the tool wants one.
+	r.inject(t)
+}
+
+// inject hands the registry's context to one tool.
+//
+// Both are applied: tools not yet migrated to Workspace still need the
+// validator, while migrated tools use the workspace. That overlap is the
+// migration mechanism and lets the two coexist without every call site changing
+// twice.
+func (r *Registry) inject(t Tool) {
 	if r.PathValidator != nil {
 		if setter, ok := t.(PathValidatorSetter); ok {
 			setter.SetPathValidator(r.PathValidator)
 		}
 	}
+	if r.Workspace != nil {
+		if setter, ok := t.(WorkspaceSetter); ok {
+			setter.SetWorkspace(r.Workspace)
+		}
+	}
 }
 
-// SetPathValidator sets the workspace-containment gate and backfills
-// any already-registered tools that implement PathValidatorSetter.
+// SetPathValidator sets the workspace-containment gate and backfills any
+// already-registered tools that implement PathValidatorSetter.
+//
+// It also derives a local workspace from the validator when none is set yet, so
+// migrated tools work without every caller having to set both. A later
+// SetWorkspace overrides it.
 func (r *Registry) SetPathValidator(pv *PathValidator) {
 	r.PathValidator = pv
+	if r.Workspace == nil {
+		r.Workspace = newLocalWorkspace(pv)
+	}
 	for _, t := range r.tools {
-		if setter, ok := t.(PathValidatorSetter); ok {
-			setter.SetPathValidator(pv)
+		r.inject(t)
+	}
+}
+
+// SetWorkspace sets the execution substrate for already-registered tools.
+//
+// A remote workspace isolates file and process operations. Note that tools not
+// yet migrated to the Workspace interface keep reading the host filesystem
+// directly through PathValidator, so selecting an isolated workspace is only
+// safe once every tool that touches the filesystem has been migrated; until then
+// use a local workspace.
+func (r *Registry) SetWorkspace(ws Workspace) {
+	r.Workspace = ws
+	for _, t := range r.tools {
+		if setter, ok := t.(WorkspaceSetter); ok {
+			setter.SetWorkspace(ws)
 		}
 	}
 }

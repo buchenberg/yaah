@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/prompts"
@@ -18,11 +17,18 @@ type editEntry struct {
 
 // EditTool performs exact string replacements in a file, with fuzzy fallback
 // when exact match fails. Supports multi-edit via an edits[] array.
-type EditTool struct{ PV *PathValidator }
+type EditTool struct {
+	PV *PathValidator
+	WS Workspace
+}
 
-var _ PathValidatorSetter = (*EditTool)(nil)
+var (
+	_ PathValidatorSetter = (*EditTool)(nil)
+	_ WorkspaceSetter     = (*EditTool)(nil)
+)
 
 func (t *EditTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
+func (t *EditTool) SetWorkspace(ws Workspace)          { t.WS = ws }
 
 func (t *EditTool) Name() string        { return "edit" }
 func (t *EditTool) Description() string { return prompts.ToolDescription("edit") }
@@ -57,14 +63,15 @@ func (t *EditTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.FilePath == "" {
 		return "", fmt.Errorf("edit: filePath is required")
 	}
-	resolved, err := resolvePathWithPV(t.PV, params.FilePath)
+	ws := workspaceOf(t.WS, t.PV)
+	resolved, err := ws.ResolvePath(params.FilePath)
 	if err != nil {
 		return "", err
 	}
 	params.FilePath = resolved
 
 	if len(params.Edits) > 0 {
-		return t.executeMultiEdit(params.FilePath, params.Edits)
+		return t.executeMultiEdit(ctx, ws, params.FilePath, params.Edits)
 	}
 
 	if params.OldString == "" {
@@ -74,11 +81,11 @@ func (t *EditTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", fmt.Errorf("edit: oldString and newString must differ")
 	}
 
-	return t.executeSingleEdit(params.FilePath, params.OldString, params.NewString, params.ReplaceAll)
+	return t.executeSingleEdit(ctx, ws, params.FilePath, params.OldString, params.NewString, params.ReplaceAll)
 }
 
-func (t *EditTool) executeSingleEdit(filePath, oldStr, newStr string, replaceAll bool) (string, error) {
-	data, err := os.ReadFile(filePath)
+func (t *EditTool) executeSingleEdit(ctx context.Context, ws Workspace, filePath, oldStr, newStr string, replaceAll bool) (string, error) {
+	data, err := ws.ReadFile(ctx, filePath)
 	if err != nil {
 		return "", fmt.Errorf("edit: %w", err)
 	}
@@ -127,7 +134,7 @@ func (t *EditTool) executeSingleEdit(filePath, oldStr, newStr string, replaceAll
 	if crlf {
 		content = strings.ReplaceAll(content, "\n", "\r\n")
 	}
-	if err := atomicWriteFile(filePath, []byte(content), 0o644); err != nil {
+	if err := ws.WriteFile(ctx, filePath, []byte(content), 0o644); err != nil {
 		return "", fmt.Errorf("edit: %w", err)
 	}
 
@@ -139,8 +146,8 @@ func (t *EditTool) executeSingleEdit(filePath, oldStr, newStr string, replaceAll
 	return formatEditResult(filePath, replaced, origLines, newLines), nil
 }
 
-func (t *EditTool) executeMultiEdit(filePath string, edits []editEntry) (string, error) {
-	data, err := os.ReadFile(filePath)
+func (t *EditTool) executeMultiEdit(ctx context.Context, ws Workspace, filePath string, edits []editEntry) (string, error) {
+	data, err := ws.ReadFile(ctx, filePath)
 	if err != nil {
 		return "", fmt.Errorf("edit: %w", err)
 	}
@@ -205,7 +212,7 @@ func (t *EditTool) executeMultiEdit(filePath string, edits []editEntry) (string,
 	if crlf {
 		content = strings.ReplaceAll(content, "\n", "\r\n")
 	}
-	if err := atomicWriteFile(filePath, []byte(content), 0o644); err != nil {
+	if err := ws.WriteFile(ctx, filePath, []byte(content), 0o644); err != nil {
 		return "", fmt.Errorf("edit: %w", err)
 	}
 

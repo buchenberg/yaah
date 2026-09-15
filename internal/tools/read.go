@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/prompts"
@@ -13,11 +12,18 @@ import (
 // ReadTool reads a file and returns its contents. Offsets and limits are
 // applied to the split lines (zero-based for line-local offset, limit caps
 // the returned line count).
-type ReadTool struct{ PV *PathValidator }
+type ReadTool struct {
+	PV *PathValidator
+	WS Workspace
+}
 
-var _ PathValidatorSetter = (*ReadTool)(nil)
+var (
+	_ PathValidatorSetter = (*ReadTool)(nil)
+	_ WorkspaceSetter     = (*ReadTool)(nil)
+)
 
 func (t *ReadTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
+func (t *ReadTool) SetWorkspace(ws Workspace)          { t.WS = ws }
 
 func (t *ReadTool) Name() string        { return "read" }
 func (t *ReadTool) Description() string { return prompts.ToolDescription("read") }
@@ -46,13 +52,14 @@ func (t *ReadTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.FilePath == "" {
 		return "", fmt.Errorf("read: filePath is required")
 	}
-	resolved, err := resolvePathWithPV(t.PV, params.FilePath)
+	ws := workspaceOf(t.WS, t.PV)
+	resolved, err := ws.ResolvePath(params.FilePath)
 	if err != nil {
 		return "", err
 	}
 	params.FilePath = resolved
 
-	info, err := os.Stat(params.FilePath)
+	info, err := ws.Stat(ctx, params.FilePath)
 	if err != nil {
 		return "", fmt.Errorf("read: %w", err)
 	}
@@ -60,7 +67,7 @@ func (t *ReadTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", fmt.Errorf("read: %s is a directory, use the ls tool to list its contents", params.FilePath)
 	}
 
-	data, err := os.ReadFile(params.FilePath)
+	data, err := ws.ReadFile(ctx, params.FilePath)
 	if err != nil {
 		return "", fmt.Errorf("read: %w", err)
 	}

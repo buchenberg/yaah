@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/prompts"
@@ -12,11 +11,18 @@ import (
 
 // PatchTool applies unified diff patches to files.
 // Parses standard unified diff format and applies hunks sequentially.
-type PatchTool struct{ PV *PathValidator }
+type PatchTool struct {
+	PV *PathValidator
+	WS Workspace
+}
 
-var _ PathValidatorSetter = (*PatchTool)(nil)
+var (
+	_ PathValidatorSetter = (*PatchTool)(nil)
+	_ WorkspaceSetter     = (*PatchTool)(nil)
+)
 
 func (t *PatchTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
+func (t *PatchTool) SetWorkspace(ws Workspace)          { t.WS = ws }
 
 func (t *PatchTool) Name() string                     { return "patch" }
 func (t *PatchTool) Description() string              { return prompts.ToolDescription("patch") }
@@ -60,13 +66,14 @@ func (t *PatchTool) Execute(ctx context.Context, args string) (string, error) {
 	if target == "" {
 		return "", fmt.Errorf("patch: could not determine file path from patch headers; provide filePath parameter")
 	}
-	resolved, err := resolvePathWithPV(t.PV, target)
+	ws := workspaceOf(t.WS, t.PV)
+	resolved, err := ws.ResolvePath(target)
 	if err != nil {
 		return "", err
 	}
 	target = resolved
 
-	data, err := os.ReadFile(target)
+	data, err := ws.ReadFile(ctx, target)
 	if err != nil {
 		return "", fmt.Errorf("patch: %w", err)
 	}
@@ -77,7 +84,7 @@ func (t *PatchTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", fmt.Errorf("patch: %w", err)
 	}
 
-	if err := atomicWriteFile(target, []byte(applied), 0o644); err != nil {
+	if err := ws.WriteFile(ctx, target, []byte(applied), 0o644); err != nil {
 		return "", fmt.Errorf("patch: %w", err)
 	}
 

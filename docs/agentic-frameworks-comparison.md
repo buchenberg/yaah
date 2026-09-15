@@ -20,7 +20,7 @@ Fifteen checkouts, twelve of which are genuinely comparable agent frameworks:
 | **deepagents** | Python | ~1.7k core SDK | LangChain/LangGraph middleware SDK for "deep agents" |
 | **hermes-agent** | Python | ~550k Python | Kitchen-sink personal agent (CLI, gateway, plugins, cron) |
 | **shepherd** | Python | ~287k Python | Programmable meta-agent + trace kernel (v3 reference w/ formal semantics) |
-| **shepherd-kernel-go** | Go | ~5.6k Go (non-test) | Port of Shepherd's trace-kernel ABI (`shepherd.kernel.abi.v0`), plus a backend-neutral `Sandbox` substrate for reversible workspace operations — git in-place and git-worktree backends shipped, containerd specified |
+| **shepherd-kernel-go** | Go | ~5.6k Go (non-test) | Port of Shepherd's trace-kernel ABI (`shepherd.kernel.abi.v0`), plus a backend-neutral `Sandbox` substrate for reversible workspace operations — git in-place and git-worktree backends shipped; a containerd/overlay backend implements the snapshot lifecycle and file I/O against containerd's snapshotter interface (its daemon adapter is unverified) |
 | **shepherd-kernel-dotnet** | C# | ~1.4k C# | Same ABI port to .NET |
 
 Not frameworks, excluded from comparison: `tviewmd` (terminal markdown viewer library), `entire-test` (demo scratch), `external-agents` (standalone agent binaries for the Entire CLI).

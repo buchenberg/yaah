@@ -554,6 +554,38 @@ Additional tools are registered by the CLI layer after `NewRegistry()`:
 - `spawn_subagent` (the task tool) and `list_subagents`
 - Any MCP tools from connected servers
 
+### Workspace seam (`internal/tools/workspace.go`)
+
+Every filesystem and process operation a tool performs goes through one interface, so a single tool implementation can run on the host during a normal session and inside an isolated substrate during a supervised run:
+
+```go
+type Workspace interface {
+    ResolvePath(path string) (string, error)   // containment
+    WorkDir() string                           // cwd for relative paths and commands
+    Local() bool                               // is this the host filesystem?
+    Shell() (string, string)                   // ("sh","-c") or ("pwsh","-Command")
+    ReadFile(ctx, path) ([]byte, error)
+    WriteFile(ctx, path, data, perm) error     // atomic
+    Stat(ctx, path) (fs.FileInfo, error)
+    Remove(ctx, path) error
+    MkdirAll(ctx, path, perm) error
+    Exec(ctx, ExecRequest) (ExecResult, error)
+}
+```
+
+Two implementations:
+
+| | Backing | Writes | Exec |
+|---|---|---|---|
+| `localWorkspace` | the host filesystem, through the session's `PathValidator` | temp file plus rename (crash-safe) | `exec.CommandContext`, combined output |
+| `sandboxWorkspace` (`workspace_sandbox.go`) | a `shepherd.Sandbox` | temp file plus rename **inside** the sandbox | in-band through the sandbox |
+
+**Injection.** `Registry` carries both a `PathValidator` and a `Workspace`. Setting only a validator — which every existing caller does — derives a `localWorkspace` from it, so migrating a tool needs no change at its construction site. Both are injected into each tool, because unmigrated tools still need the validator. `SetWorkspace` overrides the derived workspace with an isolated one.
+
+**Why this is the prerequisite for a container backend.** Pointing the tools at a host-visible mount would isolate the *files* while leaving the *processes* on the host, which defeats the purpose of a container. `sandboxWorkspace` therefore routes commands through the sandbox, and `PowerShellTool` refuses a non-local workspace through `requireLocal` rather than silently running the command somewhere the caller did not intend.
+
+**Migration status.** `read`, `write`, `edit`, `delete`, `patch`, `bash`, and `powershell` are migrated. The remaining filesystem tools (`ls`, `file_info`, `grep`, `glob`, `sed`, `replace`, `json_query`, the `go_*` tools, `git`, `diff`, `staticcheck`, `bisect`) still call `os.*` directly with `PathValidator`, so selecting an isolated workspace is only safe once they are migrated too.
+
 ### Tool execution flow (`executeAndCollect` — middleware path)
 
 ```
