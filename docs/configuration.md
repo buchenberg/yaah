@@ -66,6 +66,17 @@ agents:
     # inspectable trace store. Active when shepherd_trace is in the pipeline.
     shepherd_trace_dir: ~/.yaah/traces   # default, optional
 
+    # Supervised execution (the supervised_task tool). Requires
+    # shepherd_trace_dir. These knobs are global; per-role routing lives in the
+    # role files (subagent.roles.<name>.supervised / .turn_checkpoints).
+    supervised_max_retries: 1         # rollback-and-retry cycles after the first attempt
+    supervised_repo_path: ""          # repo to checkpoint; "" = working directory
+    supervised_worktree: false        # isolate each fork variant in its own git worktree
+    supervised_worktree_root: ""      # parent dir for worktrees; "" = beside the repo
+    supervised_worktree_bootstrap: "" # run inside each worktree, e.g. "npm ci"
+    turn_checkpoint_max: 0            # live turn checkpoints per run; 0 = unlimited
+    max_turn_restores: 3              # turn-level restores per run; 0 = default (3)
+
     # Loop detection — halt when the same tool+args+result hash repeats.
     loop_detect_count: 5              # identical calls to trigger halt
     loop_detect_window: 10            # sliding window size

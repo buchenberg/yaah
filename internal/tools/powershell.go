@@ -13,7 +13,14 @@ import (
 // PowerShellTool runs a PowerShell command and returns its stdout.
 // It tries pwsh (PowerShell 7+, cross-platform) first, then falls back
 // to powershell (Windows PowerShell 5.1).
-type PowerShellTool struct{}
+//
+// PV is injected by the Registry so the command runs in the session's working
+// directory (PathValidator.WorkDir) rather than the process cwd.
+type PowerShellTool struct{ PV *PathValidator }
+
+var _ PathValidatorSetter = (*PowerShellTool)(nil)
+
+func (t *PowerShellTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
 
 func (t *PowerShellTool) Name() string { return "powershell" }
 func (t *PowerShellTool) Description() string {
@@ -67,6 +74,9 @@ func (t *PowerShellTool) Execute(ctx context.Context, args string) (string, erro
 
 	exe := psExecutable()
 	cmd := exec.CommandContext(ctx, exe, "-NoProfile", "-NonInteractive", "-Command", params.Command)
+	if t.PV != nil && t.PV.WorkDir != "" {
+		cmd.Dir = t.PV.WorkDir
+	}
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return "", ToolTimeoutError{Tool: "powershell", Timeout: timeout.String()}

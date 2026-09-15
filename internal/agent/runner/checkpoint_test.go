@@ -22,13 +22,15 @@ func TestShepherdTurnCheckpointer_RestoreRevertsWorkspace(t *testing.T) {
 	t.Cleanup(func() { store.Close() })
 
 	mgr := shepherd.NewScopeManager(store)
-	scope, err := mgr.Create("turn-checkpoint-test")
+
+	repo := newRunnerTestGitRepo(t)
+	sb := shepherd.NewLocalGitSandbox(repo)
+	scope, err := mgr.Create("turn-checkpoint-test", sb)
 	if err != nil {
 		t.Fatalf("create scope: %v", err)
 	}
 
-	repo := newRunnerTestGitRepo(t)
-	ck := NewShepherdTurnCheckpointer(mgr, scope.ID(), repo)
+	ck := NewShepherdTurnCheckpointer(mgr, scope.ID(), sb)
 
 	ctx := context.Background()
 

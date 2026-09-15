@@ -139,11 +139,11 @@ func executeReviewAction(ctx context.Context, raw supervisorActionArgs) (string,
 	case "rollback":
 		return session.rollbackUnit(ctx, raw.Guidance)
 	case "review_diff":
-		return session.reviewDiff()
+		return session.reviewDiff(ctx)
 	case "fork":
 		return session.forkVariants(ctx, raw.PromptA, raw.PromptB)
 	case "choose":
-		return session.chooseVariant(raw.Winner)
+		return session.chooseVariant(ctx, raw.Winner)
 	case "accept":
 		return session.accept()
 	case "abort":
@@ -151,7 +151,7 @@ func executeReviewAction(ctx context.Context, raw supervisorActionArgs) (string,
 		if raw.Restore != nil {
 			restore = *raw.Restore
 		}
-		return session.abort(restore)
+		return session.abort(ctx, restore)
 	default:
 		return "", fmt.Errorf("supervisor: unknown review action %q", raw.Action)
 	}

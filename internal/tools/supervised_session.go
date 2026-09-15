@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,8 +18,8 @@ import (
 
 // supervised_session.go implements the supervised review session: an
 // interactive checkpoint/review/verdict loop between the orchestrating
-// agent and one sub-agent, built on shepherd git checkpoints and tree
-// states.
+// agent and one sub-agent, built on shepherd workspace checkpoints and
+// backend-neutral workspace states.
 //
 // Lifecycle (each orchestrator tool call blocks through exactly one
 // unit):
@@ -53,11 +57,66 @@ const reviewDiffMaxLines = 2000
 type supervisedSessionRuntime struct {
 	Runner   jobs.TaskRunner
 	RepoPath string
+
+	// Worktree isolates each fork variant in its own git worktree, so a
+	// discarded variant cannot touch the parent tree. Off by default: without
+	// it, variants run sequentially in the shared repository and are reset to
+	// the fork point between runs.
+	Worktree bool
+
+	// WorktreeRoot is the parent directory for variant worktrees. Empty
+	// defaults to a "shepherd-worktrees" directory beside the repository.
+	WorktreeRoot string
+
+	// WorktreeBootstrap runs inside each variant worktree after creation. A git
+	// worktree checks out tracked files only, so a repo whose build needs
+	// gitignored artifacts (node_modules, build caches, .env) recreates them
+	// here.
+	WorktreeBootstrap string
 }
 
-// reviewVariant holds one fork branch's captured outcome.
+// variantWorkspace is where one fork variant's work happens: the parent scope's
+// in-place tree in shared mode, or a throwaway worktree in isolated mode.
+//
+// It exists so the variant run, capture, and diff paths are identical in both
+// modes; only the backing substrate differs.
+type variantWorkspace struct {
+	// scope is set in shared mode; its workspace methods record trace events.
+	scope *shepherd.Scope
+	// sb is set in isolated mode; worktree sandboxes have no scope of their own.
+	sb shepherd.Sandbox
+	// workdir is handed to the sub-agent so its file tools and shell operate
+	// here. Empty means the process working directory (shared mode).
+	workdir string
+}
+
+func (w variantWorkspace) Capture(ctx context.Context) (shepherd.WorkspaceState, error) {
+	if w.scope != nil {
+		return w.scope.CaptureWorkspace(ctx)
+	}
+	return w.sb.Capture(ctx)
+}
+
+func (w variantWorkspace) Apply(ctx context.Context, ws shepherd.WorkspaceState) error {
+	if w.scope != nil {
+		return w.scope.ApplyWorkspace(ctx, ws)
+	}
+	return w.sb.Apply(ctx, ws)
+}
+
+func (w variantWorkspace) Diff(ctx context.Context, ws shepherd.WorkspaceState, maxLines int) (string, []string, error) {
+	if w.scope != nil {
+		return w.scope.DiffWorkspace(ctx, ws, maxLines)
+	}
+	return w.sb.Diff(ctx, ws, maxLines)
+}
+
+// reviewVariant holds one fork branch's captured outcome. Tree is the
+// backend-neutral workspace state captured at the variant's end; it stays valid
+// after an isolated variant's worktree is destroyed because the git object
+// store is shared.
 type reviewVariant struct {
-	Tree    *shepherd.TreeState
+	Tree    *shepherd.WorkspaceState
 	Conv    []types.Message
 	Result  string
 	Diff    string
@@ -78,10 +137,10 @@ type supervisedSession struct {
 	scopeID string
 
 	// checkpointID is the live unit-start checkpoint ("" when none —
-	// e.g. mid-fork or after a cancelled consume). unitHead is the HEAD
-	// SHA at unit start, used as the diff base.
+	// e.g. mid-fork or after a cancelled consume). unitState is the workspace
+	// state at unit start and is the diff base.
 	checkpointID string
-	unitHead     string
+	unitState    shepherd.WorkspaceState
 
 	unit     int             // completed+dispatched unit counter
 	lastConv []types.Message // conversation after the last dispatched unit
@@ -89,10 +148,10 @@ type supervisedSession struct {
 	state sessionState
 
 	// fork state, set while awaiting choose.
-	forkTree *shepherd.TreeState
-	forkConv []types.Message
-	varA     *reviewVariant
-	varB     *reviewVariant
+	forkState *shepherd.WorkspaceState
+	forkConv  []types.Message
+	varA      *reviewVariant
+	varB      *reviewVariant
 }
 
 type sessionState string
@@ -239,7 +298,7 @@ func startReviewSession(ctx context.Context, runtime supervisedSessionRuntime, p
 	}
 
 	id := fmt.Sprintf("supervised:%s:%d", role, time.Now().UnixNano())
-	scope, err := mgr.Create(id)
+	scope, err := mgr.Create(id, shepherd.NewLocalGitSandbox(runtime.RepoPath))
 	if err != nil {
 		return "", fmt.Errorf("supervised_task: create scope: %w", err)
 	}
@@ -261,13 +320,13 @@ func startReviewSession(ctx context.Context, runtime supervisedSessionRuntime, p
 
 	// Unit-start checkpoint for unit 1: no seed conversation yet, so the
 	// snapshot is empty.
-	cp, err := mgr.CreateCheckpoint(s.scopeID, s.runtime.RepoPath, nil)
+	cp, err := mgr.CreateCheckpoint(ctx, s.scopeID, nil)
 	if err != nil {
 		closeReviewSession(s)
 		return "", fmt.Errorf("supervised_task: checkpoint: %w", err)
 	}
 	s.checkpointID = cp.ID
-	s.unitHead = cp.HeadSHA
+	s.unitState = cp.Workspace
 
 	return s.dispatchLocked(ctx, prompt, nil)
 }
@@ -305,11 +364,13 @@ func (s *supervisedSession) dispatchLocked(ctx context.Context, prompt string, s
 		}
 	}
 
-	if diff, files, err := shepherd.DiffSince(s.runtime.RepoPath, s.unitHead, reviewDiffMaxLines); err == nil {
-		env.Diff = diff
-		env.Files = files
-	} else if env.Error == "" {
-		env.Error = "diff unavailable: " + err.Error()
+	if scope, ok := SharedScopeManager.Get(s.scopeID); ok {
+		if diff, files, err := scope.DiffWorkspace(ctx, s.unitState, reviewDiffMaxLines); err == nil {
+			env.Diff = diff
+			env.Files = files
+		} else if env.Error == "" {
+			env.Error = "diff unavailable: " + err.Error()
+		}
 	}
 
 	env.Next = nextActionsFor(s.state)
@@ -356,12 +417,12 @@ func (s *supervisedSession) continueUnit(ctx context.Context, guidance string) (
 
 	prompt := "SUPERVISOR REVIEW: your previous work unit was accepted. Proceed with the next unit.\n\nGuidance:\n" + guidance
 
-	cp, err := mgr.CreateCheckpoint(s.scopeID, s.runtime.RepoPath, marshalMessages(s.lastConv))
+	cp, err := mgr.CreateCheckpoint(ctx, s.scopeID, marshalMessages(s.lastConv))
 	if err != nil {
 		return "", fmt.Errorf("supervisor: continue: checkpoint: %w", err)
 	}
 	s.checkpointID = cp.ID
-	s.unitHead = cp.HeadSHA
+	s.unitState = cp.Workspace
 
 	return s.dispatchLocked(ctx, prompt, s.lastConv)
 }
@@ -385,7 +446,7 @@ func (s *supervisedSession) rollbackUnit(ctx context.Context, guidance string) (
 		return "", fmt.Errorf("supervisor: session %s has no live checkpoint to roll back to", s.id)
 	}
 
-	snap, err := mgr.RestoreCheckpoint(s.checkpointID)
+	snap, err := mgr.RestoreCheckpoint(ctx, s.checkpointID)
 	if err != nil {
 		return "", fmt.Errorf("supervisor: rollback: restore: %w", err)
 	}
@@ -394,19 +455,19 @@ func (s *supervisedSession) rollbackUnit(ctx context.Context, guidance string) (
 
 	prompt := "SUPERVISOR CORRECTION: your previous work unit was rejected and its changes were rolled back. Follow the revised, more specific instructions below.\n\n" + guidance
 
-	cp, err := mgr.CreateCheckpoint(s.scopeID, s.runtime.RepoPath, marshalMessages(seed))
+	cp, err := mgr.CreateCheckpoint(ctx, s.scopeID, marshalMessages(seed))
 	if err != nil {
 		return "", fmt.Errorf("supervisor: rollback: checkpoint: %w", err)
 	}
 	s.checkpointID = cp.ID
-	s.unitHead = cp.HeadSHA
+	s.unitState = cp.Workspace
 
 	return s.dispatchLocked(ctx, prompt, seed)
 }
 
 // reviewDiff re-fetches the current diff and report without running
 // anything.
-func (s *supervisedSession) reviewDiff() (string, error) {
+func (s *supervisedSession) reviewDiff(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -419,11 +480,13 @@ func (s *supervisedSession) reviewDiff() (string, error) {
 			Result:    lastUnitResult(s),
 			Next:      nextActionsFor(s.state),
 		}
-		if diff, files, err := shepherd.DiffSince(s.runtime.RepoPath, s.unitHead, reviewDiffMaxLines); err == nil {
-			env.Diff = diff
-			env.Files = files
-		} else {
-			env.Error = "diff unavailable: " + err.Error()
+		if scope, ok := SharedScopeManager.Get(s.scopeID); ok {
+			if diff, files, err := scope.DiffWorkspace(ctx, s.unitState, reviewDiffMaxLines); err == nil {
+				env.Diff = diff
+				env.Files = files
+			} else {
+				env.Error = "diff unavailable: " + err.Error()
+			}
 		}
 		return marshalReviewEnvelope(env), nil
 	case sessionAwaitChoose:
@@ -450,8 +513,13 @@ func variantOut(v *reviewVariant) reviewVariantOut {
 }
 
 // forkVariants rewinds to the unit-start checkpoint and runs two prompt
-// variants from that exact state, capturing each variant's tree so the
+// variants from that exact state, capturing each variant's workspace so the
 // winner can be re-applied by choose.
+//
+// In shared mode both variants run in the parent's tree, reset to the fork
+// point between runs. In worktree mode each variant runs in its own detached
+// worktree seeded with the fork state, so the parent tree is never touched and
+// a variant cannot leak into its sibling.
 func (s *supervisedSession) forkVariants(ctx context.Context, promptA, promptB string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -473,18 +541,18 @@ func (s *supervisedSession) forkVariants(ctx context.Context, promptA, promptB s
 	}
 
 	// Rewind to the unit start; the checkpoint is consumed by design.
-	snap, err := mgr.RestoreCheckpoint(s.checkpointID)
+	snap, err := mgr.RestoreCheckpoint(ctx, s.checkpointID)
 	if err != nil {
 		return "", fmt.Errorf("supervisor: fork: restore: %w", err)
 	}
 	s.checkpointID = ""
 	forkConv := unmarshalMessages(snap)
 
-	forkTree, err := scope.CaptureTree(s.runtime.RepoPath)
+	forkState, err := scope.CaptureWorkspace(ctx)
 	if err != nil {
 		return "", fmt.Errorf("supervisor: fork: capture fork point: %w", err)
 	}
-	s.forkTree = forkTree
+	s.forkState = &forkState
 	s.forkConv = forkConv
 
 	env := reviewEnvelope{
@@ -494,19 +562,24 @@ func (s *supervisedSession) forkVariants(ctx context.Context, promptA, promptB s
 		Next:      nextActionsFor(sessionAwaitChoose),
 	}
 
-	for _, v := range []struct {
+	variants := []struct {
 		label  string
 		prompt string
 		slot   **reviewVariant
 	}{
 		{"a", promptA, &s.varA},
 		{"b", promptB, &s.varB},
-	} {
+	}
+
+	for i, v := range variants {
 		if ctx.Err() != nil {
-			// Parent cancelled between variants: rewind to the fork
-			// point so the workspace is not left mid-experiment.
-			if applyErr := scope.ApplyTree(s.runtime.RepoPath, forkTree); applyErr == nil {
-				s.unitHead = forkTree.HeadSHA
+			// Parent cancelled between variants: leave the shared tree at the
+			// fork point so it is not stranded mid-experiment. An isolated
+			// variant leaves the parent untouched by construction.
+			if !s.runtime.Worktree {
+				if applyErr := scope.ApplyWorkspace(ctx, forkState); applyErr == nil {
+					s.unitState = forkState
+				}
 			}
 			env.Status = "cancelled"
 			env.Unit = s.unit
@@ -515,19 +588,26 @@ func (s *supervisedSession) forkVariants(ctx context.Context, promptA, promptB s
 			return marshalReviewEnvelope(env), nil
 		}
 
-		result := s.runVariant(ctx, scope, v.prompt, forkConv)
-		*v.slot = result
+		var result *reviewVariant
+		if s.runtime.Worktree {
+			result, err = s.runIsolatedVariant(ctx, i, v.label, v.prompt, forkConv, forkState)
+			if err != nil {
+				return "", fmt.Errorf("supervisor: fork: variant %s: %w", v.label, err)
+			}
+		} else {
+			result = s.runVariantIn(ctx, variantWorkspace{scope: scope}, v.prompt, forkConv, forkState)
+			// Reset the shared workspace to the fork point for the next variant
+			// (or to leave a clean post-fork state after variant B).
+			if err := scope.ApplyWorkspace(ctx, forkState); err != nil {
+				return "", fmt.Errorf("supervisor: fork: reset to fork point after variant %s: %w", v.label, err)
+			}
+		}
 
+		*v.slot = result
 		env.Variants[v.label] = variantOut(result)
 		env.Restores += result.Restore
 		if result.RunErr != "" && env.Error == "" {
 			env.Error = fmt.Sprintf("variant %s: %s", v.label, result.RunErr)
-		}
-
-		// Reset the workspace to the fork point for the next variant
-		// (or to leave a clean post-fork state after variant B).
-		if err := scope.ApplyTree(s.runtime.RepoPath, forkTree); err != nil {
-			return "", fmt.Errorf("supervisor: fork: reset to fork point after variant %s: %w", v.label, err)
 		}
 	}
 
@@ -537,10 +617,82 @@ func (s *supervisedSession) forkVariants(ctx context.Context, promptA, promptB s
 	return marshalReviewEnvelope(env), nil
 }
 
-// runVariant dispatches one fork variant and captures its tree state,
-// diff, and conversation. It must be called with s.mu held; the lock is
+// runIsolatedVariant creates a worktree for one variant, seeds it with the fork
+// state, runs the variant inside it, and captures the outcome.
+//
+// The worktree is always removed, including on error: the captured workspace
+// state survives in the repository's shared object store, so the winner can
+// still be applied after teardown. The sub-agent receives the worktree as its
+// Workdir, which confines its file tools and shell to the checkout.
+func (s *supervisedSession) runIsolatedVariant(
+	ctx context.Context,
+	index int,
+	label, prompt string,
+	forkConv []types.Message,
+	forkState shepherd.WorkspaceState,
+) (*reviewVariant, error) {
+	wtPath := s.worktreePath(index, label)
+	sb := shepherd.NewWorktreeSandbox(s.runtime.RepoPath, wtPath)
+
+	if err := sb.Create(ctx, shepherd.SandboxSpec{}); err != nil {
+		// A worktree left behind by a killed run can occupy the path. It lives
+		// under our own worktree root, so clearing it cannot delete user data.
+		_ = sb.Destroy(context.WithoutCancel(ctx))
+		if retryErr := sb.Create(ctx, shepherd.SandboxSpec{}); retryErr != nil {
+			return nil, fmt.Errorf("create worktree %s: %w (first attempt: %v)", wtPath, retryErr, err)
+		}
+	}
+	defer func() { _ = sb.Destroy(context.WithoutCancel(ctx)) }()
+
+	if s.runtime.WorktreeBootstrap != "" {
+		if err := runWorktreeBootstrap(ctx, wtPath, s.runtime.WorktreeBootstrap); err != nil {
+			return nil, fmt.Errorf("bootstrap: %w", err)
+		}
+	}
+
+	// Seed the checkout with the parent's exact state at the fork point.
+	if err := sb.Apply(ctx, forkState); err != nil {
+		return nil, fmt.Errorf("seed fork state: %w", err)
+	}
+
+	return s.runVariantIn(ctx, variantWorkspace{sb: sb, workdir: wtPath}, prompt, forkConv, forkState), nil
+}
+
+// worktreePath returns a deterministic worktree path for a variant. The session
+// id is sanitized because it contains a colon and a nanosecond timestamp.
+func (s *supervisedSession) worktreePath(index int, label string) string {
+	root := s.runtime.WorktreeRoot
+	if root == "" {
+		root = filepath.Join(filepath.Dir(s.runtime.RepoPath), "shepherd-worktrees")
+	}
+	safe := strings.NewReplacer(":", "-", "/", "-", "\\", "-").Replace(s.id)
+	return filepath.Join(root, fmt.Sprintf("%s-%d-%s", safe, index, label))
+}
+
+// runWorktreeBootstrap runs the configured bootstrap command inside a fresh
+// variant worktree. A worktree contains tracked files only, so this is where a
+// repo recreates gitignored build inputs.
+func runWorktreeBootstrap(ctx context.Context, dir, command string) error {
+	shell, shellArg := "sh", "-c"
+	if runtime.GOOS == "windows" {
+		shell, shellArg = "pwsh", "-Command"
+		if _, err := exec.LookPath("pwsh"); err != nil {
+			shell, shellArg = "powershell", "-Command"
+		}
+	}
+	cmd := exec.CommandContext(ctx, shell, shellArg, command)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// runVariantIn dispatches one fork variant against a workspace and captures its
+// state, diff, and conversation. It must be called with s.mu held; the lock is
 // held across the runner call so concurrent verdicts serialize.
-func (s *supervisedSession) runVariant(ctx context.Context, scope *shepherd.Scope, prompt string, forkConv []types.Message) *reviewVariant {
+func (s *supervisedSession) runVariantIn(ctx context.Context, ws variantWorkspace, prompt string, forkConv []types.Message, forkState shepherd.WorkspaceState) *reviewVariant {
 	// Seed with the fork-point conversation only. The prompt is passed
 	// as the runner's user input and appended by the loop's
 	// initMessages — appending it here too would duplicate it.
@@ -556,6 +708,7 @@ func (s *supervisedSession) runVariant(ctx context.Context, scope *shepherd.Scop
 	}
 	subParams := s.subBase
 	subParams.SeedMessages = seed
+	subParams.Workdir = ws.workdir
 	result, runErr := s.runtime.Runner(runCtx, prompt, subParams)
 	if cancel != nil {
 		cancel()
@@ -569,14 +722,15 @@ func (s *supervisedSession) runVariant(ctx context.Context, scope *shepherd.Scop
 	if runErr != nil {
 		v.RunErr = runErr.Error()
 	}
-	if tree, err := scope.CaptureTree(s.runtime.RepoPath); err != nil {
+	if tree, err := ws.Capture(ctx); err != nil {
 		if v.RunErr == "" {
-			v.RunErr = "capture tree: " + err.Error()
+			v.RunErr = "capture workspace: " + err.Error()
 		}
 	} else {
-		v.Tree = tree
+		treeCopy := tree
+		v.Tree = &treeCopy
 	}
-	if diff, files, err := shepherd.DiffSince(s.runtime.RepoPath, s.forkTree.HeadSHA, reviewDiffMaxLines); err == nil {
+	if diff, files, err := ws.Diff(ctx, forkState, reviewDiffMaxLines); err == nil {
 		v.Diff = diff
 		v.Files = files
 	}
@@ -586,7 +740,7 @@ func (s *supervisedSession) runVariant(ctx context.Context, scope *shepherd.Scop
 // chooseVariant applies the winning fork variant's tree and
 // conversation, takes a fresh unit-start checkpoint, and returns the
 // session to the review state. The losing variant is discarded.
-func (s *supervisedSession) chooseVariant(winner string) (string, error) {
+func (s *supervisedSession) chooseVariant(ctx context.Context, winner string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -608,7 +762,7 @@ func (s *supervisedSession) chooseVariant(winner string) (string, error) {
 		return "", fmt.Errorf("supervisor: variant %q missing — fork did not complete", winner)
 	}
 	if v.Tree == nil {
-		return "", fmt.Errorf("supervisor: choose: variant %q has no captured tree (capture failed: %s) — cannot apply its files", winner, v.RunErr)
+		return "", fmt.Errorf("supervisor: choose: variant %q has no captured workspace (capture failed: %s) — cannot apply its files", winner, v.RunErr)
 	}
 
 	mgr := SharedScopeManager
@@ -617,22 +771,22 @@ func (s *supervisedSession) chooseVariant(winner string) (string, error) {
 		return "", fmt.Errorf("supervisor: scope %s not found", s.scopeID)
 	}
 
-	if err := scope.ApplyTree(s.runtime.RepoPath, v.Tree); err != nil {
-		return "", fmt.Errorf("supervisor: choose: apply winner tree: %w", err)
+	if err := scope.ApplyWorkspace(ctx, *v.Tree); err != nil {
+		return "", fmt.Errorf("supervisor: choose: apply winner workspace: %w", err)
 	}
 	s.lastConv = v.Conv
 
 	// Fresh unit-start checkpoint over the winner's state so the review
 	// cycle (continue/rollback/fork) works on it immediately.
-	cp, err := mgr.CreateCheckpoint(s.scopeID, s.runtime.RepoPath, marshalMessages(v.Conv))
+	cp, err := mgr.CreateCheckpoint(ctx, s.scopeID, marshalMessages(v.Conv))
 	if err != nil {
 		return "", fmt.Errorf("supervisor: choose: checkpoint: %w", err)
 	}
 	s.checkpointID = cp.ID
-	s.unitHead = cp.HeadSHA
+	s.unitState = cp.Workspace
 
 	// Fork state is consumed.
-	s.forkTree = nil
+	s.forkState = nil
 	s.forkConv = nil
 	s.varA = nil
 	s.varB = nil
@@ -677,7 +831,7 @@ func (s *supervisedSession) accept() (string, error) {
 
 // abort rewinds the unaccepted work (last unit via checkpoint, or the
 // whole fork via the fork tree) and closes the session.
-func (s *supervisedSession) abort(restore bool) (string, error) {
+func (s *supervisedSession) abort(ctx context.Context, restore bool) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -688,15 +842,15 @@ func (s *supervisedSession) abort(restore bool) (string, error) {
 	if restore {
 		switch {
 		case s.state == sessionAwaitChoose:
-			if scope, ok := mgr.Get(s.scopeID); ok && s.forkTree != nil {
-				if err := scope.ApplyTree(s.runtime.RepoPath, s.forkTree); err != nil {
+			if scope, ok := mgr.Get(s.scopeID); ok && s.forkState != nil {
+				if err := scope.ApplyWorkspace(ctx, *s.forkState); err != nil {
 					rewindErr = err
 				} else {
 					rewound = true
 				}
 			}
 		case s.checkpointID != "":
-			if _, err := mgr.RestoreCheckpoint(s.checkpointID); err != nil {
+			if _, err := mgr.RestoreCheckpoint(ctx, s.checkpointID); err != nil {
 				rewindErr = err
 			} else {
 				rewound = true
@@ -704,9 +858,9 @@ func (s *supervisedSession) abort(restore bool) (string, error) {
 		default:
 			// A fork may be partially complete (error between variants)
 			// while the session is still in review: rewind to the fork
-			// tree if we have one.
-			if scope, ok := mgr.Get(s.scopeID); ok && s.forkTree != nil {
-				if err := scope.ApplyTree(s.runtime.RepoPath, s.forkTree); err != nil {
+			// state if we have one.
+			if scope, ok := mgr.Get(s.scopeID); ok && s.forkState != nil {
+				if err := scope.ApplyWorkspace(ctx, *s.forkState); err != nil {
 					rewindErr = err
 				} else {
 					rewound = true

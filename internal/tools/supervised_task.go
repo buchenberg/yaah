@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	shepherd "github.com/buchenberg/shepherd-kernel-go"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/prompts"
 )
@@ -21,10 +22,10 @@ import (
 // cannot dispatch a second supervised task while the first is running,
 // preventing filesystem contention by construction.
 //
-// The tool creates a workspace checkpoint (via shepherd-kernel-go's
-// git-based checkpoint) before running the sub-agent. If the sub-agent
-// fails, the workspace is rolled back and the sub-agent is retried with
-// guidance derived from the failure.
+// The tool creates a workspace checkpoint (via shepherd-kernel-go's sandbox
+// abstraction) before running the sub-agent. If the sub-agent fails, the
+// workspace is rolled back and the sub-agent is retried with guidance derived
+// from the failure.
 type SupervisedTaskTool struct {
 	// Runner is the sub-agent execution closure (same type as TaskTool).
 	Runner jobs.TaskRunner
@@ -42,6 +43,21 @@ type SupervisedTaskTool struct {
 	// RepoPath is the git repo for workspace checkpoints. If empty,
 	// defaults to the current working directory at Execute time.
 	RepoPath string
+
+	// Worktree enables per-variant git-worktree isolation for review sessions.
+	// Off by default: fork variants then run sequentially in the shared
+	// repository. On, each variant runs in its own worktree, so a discarded
+	// variant cannot touch the parent tree.
+	Worktree bool
+
+	// WorktreeRoot is the parent directory for variant worktrees. Empty
+	// defaults to a "shepherd-worktrees" directory beside the repository.
+	WorktreeRoot string
+
+	// WorktreeBootstrap is a shell command run inside each variant worktree
+	// after creation. A worktree checks out tracked files only, so repos whose
+	// builds need gitignored artifacts must recreate them here.
+	WorktreeBootstrap string
 
 	// MaxRetries caps the rollback-and-retry cycles after the initial
 	// attempt. 0 means one shot (no retry). Negative values fall back
@@ -152,19 +168,22 @@ func (t *SupervisedTaskTool) Execute(ctx context.Context, args string) (string, 
 	// supervisor tool.
 	if params.Review {
 		return startReviewSession(ctx, supervisedSessionRuntime{
-			Runner:   t.Runner,
-			RepoPath: repoPath,
+			Runner:            t.Runner,
+			RepoPath:          repoPath,
+			Worktree:          t.Worktree,
+			WorktreeRoot:      t.WorktreeRoot,
+			WorktreeBootstrap: t.WorktreeBootstrap,
 		}, params.Prompt, params.Role, subParams, timeout)
 	}
 
 	scopeID := fmt.Sprintf("supervised:%s:%d", params.Role, time.Now().UnixNano())
-	scope, err := mgr.Create(scopeID)
+	scope, err := mgr.Create(scopeID, shepherd.NewLocalGitSandbox(repoPath))
 	if err != nil {
 		return "", fmt.Errorf("supervised_task: create scope: %w", err)
 	}
 	defer mgr.PruneCheckpoints(scope.ID())
 
-	cp, err := mgr.CreateCheckpoint(scope.ID(), repoPath, nil)
+	cp, err := mgr.CreateCheckpoint(ctx, scope.ID(), nil)
 	if err != nil {
 		return "", fmt.Errorf("supervised_task: checkpoint: %w", err)
 	}
@@ -216,11 +235,11 @@ func (t *SupervisedTaskTool) Execute(ctx context.Context, args string) (string, 
 
 		// Checkpoints are single-use: restore consumes the current one,
 		// so a fresh checkpoint is taken before the next attempt.
-		if _, restoreErr := mgr.RestoreCheckpoint(cp.ID); restoreErr != nil {
+		if _, restoreErr := mgr.RestoreCheckpoint(ctx, cp.ID); restoreErr != nil {
 			return structuredSupervisedResult("rollback_failed", attempt+1, lastPartial, restoreErr, &restoreStats), nil
 		}
 
-		cp, err = mgr.CreateCheckpoint(scope.ID(), repoPath, nil)
+		cp, err = mgr.CreateCheckpoint(ctx, scope.ID(), nil)
 		if err != nil {
 			return structuredSupervisedResult("recheckpoint_failed", attempt+1, lastPartial, err, &restoreStats), nil
 		}

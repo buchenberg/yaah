@@ -347,6 +347,10 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 				RoleDescriptions: runner.RoleDescriptionsFor(supervisedRoles),
 				RepoPath:         cfg.Agent.Default.SupervisedRepoPath,
 				MaxRetries:       maxRetries,
+
+				Worktree:          cfg.Agent.Default.SupervisedWorktree,
+				WorktreeRoot:      cfg.Agent.Default.SupervisedWorktreeRoot,
+				WorktreeBootstrap: cfg.Agent.Default.SupervisedWorktreeBootstrap,
 			})
 		}
 	}

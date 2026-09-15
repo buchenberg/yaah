@@ -430,3 +430,80 @@ func TestWriteTool_WorkspaceEnforced(t *testing.T) {
 		t.Errorf("file outside workspace was created despite rejection")
 	}
 }
+
+// TestPathValidator_RelativePathResolvesAgainstWorkDir pins the isolated-scope
+// behaviour: with a WorkDir set, a relative path addresses that directory, so a
+// sub-agent working in a worktree reads and writes the worktree.
+func TestPathValidator_RelativePathResolvesAgainstWorkDir(t *testing.T) {
+	ws := t.TempDir()
+	if real, err := filepath.EvalSymlinks(ws); err == nil {
+		ws = real
+	}
+
+	pv := NewPathValidator(ws, false, nil)
+	pv.WorkDir = ws
+
+	got, err := pv.ResolvePath("sub/file.txt")
+	if err != nil {
+		t.Fatalf("ResolvePath: %v", err)
+	}
+	want := filepath.Join(pv.WorkspaceRoot, "sub", "file.txt")
+	if got != want {
+		t.Errorf("resolved = %q, want %q", got, want)
+	}
+}
+
+// TestPathValidator_WithWorkspaceRootDerivesPolicy verifies the derivation used
+// for isolated sub-agents: the new root applies, policy is inherited, and the
+// approval cache is not shared.
+func TestPathValidator_WithWorkspaceRootDerivesPolicy(t *testing.T) {
+	base := NewPathValidator(t.TempDir(), true, []string{"*.pem"})
+	asked := 0
+	base.AskFn = func(path, reason string) bool {
+		asked++
+		return false
+	}
+
+	other := t.TempDir()
+	derived := base.WithWorkspaceRoot(other)
+
+	if derived.WorkspaceRoot == base.WorkspaceRoot {
+		t.Error("derived validator must use the new root")
+	}
+	if derived.WorkDir != derived.WorkspaceRoot {
+		t.Errorf("derived WorkDir = %q, want the new root %q", derived.WorkDir, derived.WorkspaceRoot)
+	}
+	if !derived.AllowHomeAccess {
+		t.Error("AllowHomeAccess must be inherited")
+	}
+	if len(derived.DenyPatterns) != 1 || derived.DenyPatterns[0] != "*.pem" {
+		t.Errorf("deny patterns not inherited: %v", derived.DenyPatterns)
+	}
+	if derived.AskFn == nil {
+		t.Fatal("AskFn must be inherited")
+	}
+
+	// Paths inside the derived root resolve.
+	if _, err := derived.ResolvePath(filepath.Join(other, "ok.txt")); err != nil {
+		t.Errorf("path inside the derived root rejected: %v", err)
+	}
+
+	// The original root is now outside. AskFn declines, so it must be rejected.
+	if _, err := derived.ResolvePath(filepath.Join(base.WorkspaceRoot, "f.txt")); err == nil {
+		t.Error("the original root must be outside the derived root")
+	}
+	if asked == 0 {
+		t.Error("AskFn should have been consulted for the outside path")
+	}
+
+	// Deny patterns still apply inside the derived root.
+	if _, err := derived.ResolvePath(filepath.Join(other, "key.pem")); err == nil {
+		t.Error("deny patterns must still apply under the derived root")
+	}
+
+	// The derived validator starts with an empty approval cache, so an
+	// exception granted in one scope cannot widen another.
+	if len(derived.approved) != 0 {
+		t.Errorf("derived validator approval cache = %v, want empty", derived.approved)
+	}
+}

@@ -12,7 +12,17 @@ import (
 )
 
 // BashTool runs a shell command and returns its stdout.
-type BashTool struct{}
+//
+// PV is injected by the Registry so the command runs in the session's working
+// directory (PathValidator.WorkDir) rather than the process cwd. That is what
+// lets a sub-agent execute inside an isolated worktree. Containment is NOT
+// enforced for shell commands — the tool takes the validator only for its
+// working directory.
+type BashTool struct{ PV *PathValidator }
+
+var _ PathValidatorSetter = (*BashTool)(nil)
+
+func (t *BashTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
 
 func (t *BashTool) Name() string        { return "bash" }
 func (t *BashTool) Description() string { return prompts.ToolDescription("bash") }
@@ -63,6 +73,9 @@ func (t *BashTool) Execute(ctx context.Context, args string) (string, error) {
 		}
 	}
 	cmd := exec.CommandContext(ctx, shell, shellArg, params.Command)
+	if t.PV != nil && t.PV.WorkDir != "" {
+		cmd.Dir = t.PV.WorkDir
+	}
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return "", ToolTimeoutError{Tool: "bash", Timeout: timeout.String()}
