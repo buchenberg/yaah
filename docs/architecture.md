@@ -498,6 +498,30 @@ When an agent dispatches multiple parallel sub-agents in a single turn, those su
 
 **Observability:** Two hook event types are emitted: `conflict.check` (every turn when a tracker is present) and `conflict.detect` (when conflicts are found, with `conflict_files` count). When OTel is enabled, a `conflict.check` span appears in the trace waterfall as a child of the turn span.
 
+### Supervised execution and workspace isolation
+
+Files: `internal/tools/supervised_task.go`, `internal/tools/supervised_session.go`, `internal/tools/supervisor.go`, `internal/agent/runner/checkpoint.go`
+
+The `supervised_task` tool wraps a sub-agent run in **workspace checkpoints** via the `shepherd-kernel-go` sandbox abstraction, so work can be rolled back rather than merely reported. Two modes:
+
+- **Automatic** (`review: false`) — checkpoint, run, and on failure roll the workspace back and retry with guidance derived from the failure, up to `supervised_max_retries`.
+- **Review** (`review: true`) — an interactive session in which the orchestrator issues verdicts (`continue`, `rollback`, `fork`, `choose`, `review_diff`, `accept`, `abort`) through the `supervisor` tool.
+
+**Checkpoints.** `ShepherdTurnCheckpointer` (`internal/agent/runner/checkpoint.go`) adapts `shepherd.ScopeManager` to the loop's `TurnCheckpointer` interface. A checkpoint captures the workspace *and* the conversation, and a restore consumes it, so the two stay in step. Unit-start checkpoints are single-use by design; `continue` and `rollback` take a fresh one before the next dispatch. Restoring replaces the conversation seed, which is why a rollback restarts from the same context the sub-agent had at the unit boundary.
+
+**Workspace substrate.** Each scope holds a `shepherd.Sandbox`; the kernel is backend-agnostic and this is the seam:
+
+| Mode | Sandbox | Parent tree touched? | Discard |
+|---|---|---|---|
+| Shared (default) | `NewLocalGitSandbox` | Yes — variants run sequentially in it, reset to the fork point between runs | Causal only |
+| Isolated (`supervised_worktree`) | `NewWorktreeSandbox` | No — each variant gets its own worktree | Removes the worktree |
+
+**Confinement.** Isolation is only real if the sub-agent's tools actually operate in the worktree, so the dispatch carries `SubAgentParams.Workdir`. `buildSubAgentRegistry` turns that into a per-scope `PathValidator` — rooted at the worktree, inheriting deny patterns and the approval callback, with a fresh approval cache — and `bash`/`powershell` use it as `cmd.Dir`. Without that plumbing an isolated variant would read and mutate the parent tree while believing it was confined.
+
+**Teardown.** Worktrees are removed with `defer`, including on error, because a captured workspace state stays valid after teardown — worktrees share the repository's object store, so the winner can still be applied once its worktree is gone. A worktree left behind by a killed run is cleared and retried once on the next `Create`, and `git worktree prune` clears stale administrative entries.
+
+**Limits.** A worktree checks out tracked files only, so gitignored build inputs must be recreated by `supervised_worktree_bootstrap`. Isolation is filesystem-level: variants share the host process, network, and object store.
+
 ---
 
 ## Tool execution

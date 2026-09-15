@@ -20,7 +20,7 @@ Fifteen checkouts, twelve of which are genuinely comparable agent frameworks:
 | **deepagents** | Python | ~1.7k core SDK | LangChain/LangGraph middleware SDK for "deep agents" |
 | **hermes-agent** | Python | ~550k Python | Kitchen-sink personal agent (CLI, gateway, plugins, cron) |
 | **shepherd** | Python | ~287k Python | Programmable meta-agent + trace kernel (v3 reference w/ formal semantics) |
-| **shepherd-kernel-go** | Go | ~2.2k Go | Port of Shepherd's trace-kernel ABI (`shepherd.kernel.abi.v0`) |
+| **shepherd-kernel-go** | Go | ~5.6k Go (non-test) | Port of Shepherd's trace-kernel ABI (`shepherd.kernel.abi.v0`), plus a backend-neutral `Sandbox` substrate for reversible workspace operations — git in-place and git-worktree backends shipped, containerd specified |
 | **shepherd-kernel-dotnet** | C# | ~1.4k C# | Same ABI port to .NET |
 
 Not frameworks, excluded from comparison: `tviewmd` (terminal markdown viewer library), `entire-test` (demo scratch), `external-agents` (standalone agent binaries for the Entire CLI).
@@ -182,7 +182,7 @@ Mechanisms observed, strongest → weakest per framework:
 
 | Framework | Dispatch model | Isolation & limits | Notable |
 |---|---|---|---|
-| **yaah** | **Role registry**: `SubAgentRole` → `RoleProfile` (tools, `MaxLoopCycles`, `MaxToolTurns`, JSON mode, timeout, nesting depth). No default role — every dispatch resolves an explicit role (built-in + filesystem role files) | Curated sub-agent pipeline (no persistence/compaction/spawning); `MaxSubAgentConcurrency`; per-role timeouts | **Background jobs manager** (session-scoped usage attribution never lost even when loop-scoped event hooks are unwired); `supervised_session` + `supervisor` tools; Shepherd trace per sub-agent (parent can inspect child's causal trace on failure); broker `SubAgentStart/End` events |
+| **yaah** | **Role registry**: `SubAgentRole` → `RoleProfile` (tools, `MaxLoopCycles`, `MaxToolTurns`, JSON mode, timeout, nesting depth). No default role — every dispatch resolves an explicit role (built-in + filesystem role files) | Curated sub-agent pipeline (no persistence/compaction/spawning); `MaxSubAgentConcurrency`; per-role timeouts | **Background jobs manager** (session-scoped usage attribution never lost even when loop-scoped event hooks are unwired); `supervised_session` + `supervisor` tools with workspace+conversation checkpoints and rollback; optional **per-variant git worktree isolation** with the sub-agent's tools confined to its checkout; Shepherd trace per sub-agent (parent can inspect child's causal trace on failure); broker `SubAgentStart/End` events |
 | **crush** | Coordinator with named agents ("coder", "task"); `runSubAgent` creates a real SQLite *task session* | Session-per-subagent (persistent, inspectable); cost propagated to parent | Sub-agent results are first-class sessions (resumable, browsable) — the nicest persistence story |
 | **goose** | `subagent_handler`: recipe-driven subagent tasks | `max_turns` per task; cancellation tokens; `return_last_only` mode | **`final_output_tool` contract** — the subagent must call `final_output` to terminate; the loop warns and continues if it hasn't. Streams notifications back to the parent |
 | **opencode** | `task` tool: `subagent_type` + prompt; agent configs marked `mode: "subagent"` (excluded from primary listing) | `deriveSubagentSessionPermission`; optional `task_id` **resume** of a prior subagent session; step limits per agent | Background subagents behind an experimental flag, with strong prompt-side guardrails ("DO NOT sleep, poll…") |

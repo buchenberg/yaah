@@ -207,6 +207,30 @@ budget up to the role ceiling). The effective budget and its source (call,
 role_config, role_file, config_default, floor, headroom, …) are recorded on
 sub-agent spans so a trace always answers "who set this to N?".
 
+## Rollback and isolation
+
+A sub-agent routed through `supervised_task` runs with a rollback point instead
+of on faith. Two mechanisms make that work:
+
+- **Checkpoints.** Before each unit — and, when a role sets `turn_checkpoints`,
+  before each turn — the workspace *and* the conversation are captured. A
+  rejected unit is rolled back and re-dispatched with the orchestrator's
+  corrected guidance, and the sub-agent resumes from the context it had at the
+  unit boundary rather than from a guess.
+- **Isolation.** With `supervised_worktree: true`, each `fork` variant runs in its
+  own git worktree, confined by a per-scope path validator and working directory,
+  so a speculative branch cannot touch the parent tree. `choose` applies the
+  winner's captured state to the parent; discarding a variant removes its
+  worktree.
+
+Routing is per role: `supervised: true` exposes the role through the checkpointed
+tool, and `turn_checkpoints: true` adds per-turn rewinds (bounded by
+`max_turn_restores`). See
+[configuration.md](./configuration.md#supervised-execution-reference) for the
+knobs and the worktree prerequisites — notably that a worktree contains tracked
+files only, so gitignored build inputs must be recreated by
+`supervised_worktree_bootstrap`.
+
 ## Evidenced contracts
 
 Every sub-agent returns a structured response with a contract heading and
