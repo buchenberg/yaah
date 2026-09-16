@@ -61,6 +61,9 @@ func (w *sandboxWorkspace) ResolvePath(p string) (string, error) {
 
 func (w *sandboxWorkspace) WorkDir() string { return w.root }
 
+// Join always uses POSIX separators: the substrate is Linux by construction.
+func (w *sandboxWorkspace) Join(elem ...string) string { return path.Join(elem...) }
+
 // Local is false: this workspace is not the host filesystem.
 func (w *sandboxWorkspace) Local() bool { return false }
 
@@ -128,6 +131,28 @@ func (w *sandboxWorkspace) Remove(ctx context.Context, p string) error {
 	return w.run(ctx, `rm -f -- "$1"`, p)
 }
 
+// ReadDir lists a directory with `ls -1p`, which appends a slash to directories.
+// fs.DirEntry needs only a name and an IsDir, so that is enough and avoids
+// parsing a full listing format. Symlinks are NOT resolved: a symlink to a
+// directory reports IsDir false, which is accurate for the entry itself.
+func (w *sandboxWorkspace) ReadDir(ctx context.Context, p string) ([]fs.DirEntry, error) {
+	out, err := w.runCapture(ctx, `ls -1p -- "$1"`, p)
+	if err != nil {
+		return nil, err
+	}
+	var entries []fs.DirEntry
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		entries = append(entries, sandboxDirEntry{
+			name:  strings.TrimSuffix(line, "/"),
+			isDir: strings.HasSuffix(line, "/"),
+		})
+	}
+	return entries, nil
+}
+
 func (w *sandboxWorkspace) MkdirAll(ctx context.Context, p string, perm fs.FileMode) error {
 	return w.run(ctx, `mkdir -p -- "$1" && chmod "$2" "$1"`, p, strconv.FormatUint(uint64(perm.Perm()), 8))
 }
@@ -148,11 +173,15 @@ func (w *sandboxWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResul
 	if err != nil {
 		return ExecResult{}, err
 	}
-	return ExecResult{
-		ExitCode: res.ExitCode,
-		Stdout:   res.Stdout,
-		Stderr:   res.Stderr,
-	}, nil
+	out := ExecResult{ExitCode: res.ExitCode, Stdout: res.Stdout, Stderr: res.Stderr}
+	if !req.SeparateStreams {
+		// A remote workspace cannot interleave two transports the way
+		// CombinedOutput does, so combine stdout then stderr. Callers reading
+		// only Stdout then still see error text, as they would locally.
+		out.Stdout = res.Stdout + res.Stderr
+		out.Stderr = ""
+	}
+	return out, nil
 }
 
 // run executes a shell script with positional arguments and maps a non-zero exit
@@ -192,3 +221,16 @@ func (f sandboxFileInfo) Mode() fs.FileMode  { return f.mode }
 func (f sandboxFileInfo) ModTime() time.Time { return f.mod }
 func (f sandboxFileInfo) IsDir() bool        { return f.isDir }
 func (f sandboxFileInfo) Sys() any           { return nil }
+
+// sandboxDirEntry is the subset of fs.DirEntry callers use. Info is nil because
+// obtaining it would need another in-band stat per entry, which is a round trip
+// per file; callers that need details stat the path themselves.
+type sandboxDirEntry struct {
+	name  string
+	isDir bool
+}
+
+func (e sandboxDirEntry) Name() string               { return e.name }
+func (e sandboxDirEntry) IsDir() bool                { return e.isDir }
+func (e sandboxDirEntry) Type() fs.FileMode          { return 0 }
+func (e sandboxDirEntry) Info() (fs.FileInfo, error) { return nil, fs.ErrInvalid }

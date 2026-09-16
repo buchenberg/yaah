@@ -2,19 +2,23 @@ package tools
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // GoTestTool runs `go test -json` and returns structured results.
-type GoTestTool struct{}
+type GoTestTool struct {
+	WS Workspace
+}
+
+var _ WorkspaceSetter = (*GoTestTool)(nil)
+
+func (t *GoTestTool) SetWorkspace(ws Workspace) { t.WS = ws }
 
 func NewGoTestTool() *GoTestTool { return &GoTestTool{} }
 
@@ -109,24 +113,15 @@ func (t *GoTestTool) Execute(ctx context.Context, args string) (string, error) {
 	cmdArgs = append(cmdArgs, params.Packages)
 	cmdArgs = append(cmdArgs, params.Flags...)
 
-	cmd := exec.CommandContext(ctx, "go", cmdArgs...)
+	ws := workspaceOf(t.WS, nil)
 
-	var stdoutBuf, stderrBuf bytes.Buffer
-	cmd.Stdout = &stdoutBuf
-	cmd.Stderr = &stderrBuf
-
-	runErr := cmd.Run()
-
-	exitCode := -1
-	if cmd.ProcessState != nil {
-		exitCode = cmd.ProcessState.ExitCode()
-	} else if runErr != nil {
-		exitCode = -1
-	}
+	// Streams are kept apart because the JSON event stream is parsed from stdout
+	// alone; combined output would interleave build errors into it.
+	res, _ := ws.Exec(ctx, ExecRequest{Command: "go", Args: cmdArgs, SeparateStreams: true})
 
 	result := &goTestResult{
-		Stderr:   stderrBuf.String(),
-		ExitCode: exitCode,
+		Stderr:   res.Stderr,
+		ExitCode: res.ExitCode,
 	}
 
 	// Parse JSON line-stream from stdout
@@ -134,7 +129,7 @@ func (t *GoTestTool) Execute(ctx context.Context, args string) (string, error) {
 	var failedTests []string
 	var totalElapsed float64
 
-	scanner := bufio.NewScanner(strings.NewReader(stdoutBuf.String()))
+	scanner := bufio.NewScanner(strings.NewReader(res.Stdout))
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		var ev testEvent
@@ -181,15 +176,20 @@ func (t *GoTestTool) Execute(ctx context.Context, args string) (string, error) {
 
 	// Coverage summary
 	if coverFile != "" {
-		coverCmd := exec.CommandContext(ctx, "go", "tool", "cover", "-func="+coverFile)
-		coverOut, err := coverCmd.Output()
-		if err == nil {
-			lines := strings.Split(strings.TrimSpace(string(coverOut)), "\n")
+		// The profile was written by the test run in the workspace, so it is read
+		// and cleaned up there too, not on the host.
+		coverRes, _ := ws.Exec(ctx, ExecRequest{
+			Command:         "go",
+			Args:            []string{"tool", "cover", "-func=" + coverFile},
+			SeparateStreams: true,
+		})
+		if coverRes.ExitCode == 0 {
+			lines := strings.Split(strings.TrimSpace(coverRes.Stdout), "\n")
 			if len(lines) > 0 {
 				result.Coverage = strings.TrimSpace(lines[len(lines)-1])
 			}
 		}
-		os.Remove(coverFile)
+		_ = ws.Remove(ctx, coverFile)
 	}
 
 	outBytes, _ := json.MarshalIndent(result, "", "  ")

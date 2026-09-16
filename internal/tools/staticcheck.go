@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strings"
 
@@ -12,7 +11,13 @@ import (
 )
 
 // StaticcheckTool runs go vet and/or staticcheck, returning structured diagnostics.
-type StaticcheckTool struct{}
+type StaticcheckTool struct {
+	WS Workspace
+}
+
+var _ WorkspaceSetter = (*StaticcheckTool)(nil)
+
+func (t *StaticcheckTool) SetWorkspace(ws Workspace) { t.WS = ws }
 
 func NewStaticcheckTool() *StaticcheckTool { return &StaticcheckTool{} }
 
@@ -88,44 +93,34 @@ func (t *StaticcheckTool) Execute(ctx context.Context, args string) (string, err
 	runVet := analyzers == "vet" || analyzers == "both"
 	runSC := analyzers == "staticcheck" || analyzers == "both"
 
+	ws := workspaceOf(t.WS, nil)
+
 	// go vet
 	if runVet {
 		vetArgs := append([]string{"vet", params.Packages}, params.Flags...)
-		vetCmd := exec.CommandContext(ctx, "go", vetArgs...)
-		vetOut, err := vetCmd.CombinedOutput()
-		vetStr := string(vetOut)
-		result.VetAvailable = true
-
-		if err != nil {
-			// go vet exits non-zero when it finds issues — parse anyway
-			if _, ok := err.(*exec.ExitError); !ok {
-				result.VetAvailable = false
-				result.Stderr += fmt.Sprintf("go vet error: %v\n", err)
-			}
+		res, _ := ws.Exec(ctx, ExecRequest{Command: "go", Args: vetArgs})
+		// ExitCode < 0 means the command never ran. A non-zero exit means vet
+		// found issues, which is a normal result to parse.
+		result.VetAvailable = res.ExitCode >= 0
+		if !result.VetAvailable {
+			result.Stderr += "go vet is not available in this workspace\n"
 		}
-		parseDiagnostics(vetStr, "vet", result)
+		parseDiagnostics(res.Stdout, "vet", result)
 	}
 
 	// staticcheck
 	if runSC {
-		scBin, lookErr := exec.LookPath("staticcheck")
-		if lookErr != nil {
+		scArgs := append([]string{params.Packages}, params.Flags...)
+		res, _ := ws.Exec(ctx, ExecRequest{Command: "staticcheck", Args: scArgs})
+		// Resolving the binary with LookPath first would check the *host* PATH,
+		// which is the wrong machine once a workspace can be isolated. Attempting
+		// the run and inspecting the exit code asks the right machine instead.
+		if res.ExitCode < 0 {
 			result.StaticcheckAvailable = false
-			result.Stderr += "staticcheck not found on PATH — install with: go install honnef.co/go/tools/cmd/staticcheck@latest\n"
+			result.Stderr += "staticcheck not found in this workspace — install with: go install honnef.co/go/tools/cmd/staticcheck@latest\n"
 		} else {
-			scArgs := append([]string{params.Packages}, params.Flags...)
-			scCmd := exec.CommandContext(ctx, scBin, scArgs...)
-			scOut, err := scCmd.CombinedOutput()
-			scStr := string(scOut)
 			result.StaticcheckAvailable = true
-
-			if err != nil {
-				if _, ok := err.(*exec.ExitError); !ok {
-					result.StaticcheckAvailable = false
-					result.Stderr += fmt.Sprintf("staticcheck error: %v\n", err)
-				}
-			}
-			parseDiagnostics(scStr, "staticcheck", result)
+			parseDiagnostics(res.Stdout, "staticcheck", result)
 		}
 	}
 

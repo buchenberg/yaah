@@ -31,7 +31,13 @@ var allowedGitActions = map[string]struct {
 // GitTool runs git commands directly (not through a shell).
 // Only a whitelist of subcommands is allowed; mutating operations
 // (add, commit) are flagged as dangerous via DangerClassifier.
-type GitTool struct{}
+type GitTool struct {
+	WS Workspace
+}
+
+var _ WorkspaceSetter = (*GitTool)(nil)
+
+func (t *GitTool) SetWorkspace(ws Workspace) { t.WS = ws }
 
 func (t *GitTool) Name() string { return "git" }
 func (t *GitTool) Description() string {
@@ -177,12 +183,14 @@ func (t *GitTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", fmt.Errorf("git: action %q is recognized but not implemented — this is a bug, please report it", params.Action)
 	}
 
-	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
-	output, err := cmd.CombinedOutput()
+	// The injected workspace carries the working directory (a worktree for an
+	// isolated sub-agent); there is no PathValidator for git, which spawns a
+	// process rather than reading files directly.
+	res, err := workspaceOf(t.WS, nil).Exec(ctx, ExecRequest{Command: "git", Args: cmdArgs})
 	if ctx.Err() == context.DeadlineExceeded {
 		return "", ToolTimeoutError{Tool: "git", Timeout: timeout.String()}
 	}
-	output = truncateOutput(output)
+	output := truncateOutput([]byte(res.Stdout))
 	if err != nil {
 		return "", fmt.Errorf("%s\n%s: %w", string(output), info.description, err)
 	}

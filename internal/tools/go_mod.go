@@ -4,14 +4,28 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // GoModTool performs Go module operations (tidy, verify, list, graph, etc.).
-type GoModTool struct{}
+type GoModTool struct {
+	WS Workspace
+}
+
+var _ WorkspaceSetter = (*GoModTool)(nil)
+
+func (t *GoModTool) SetWorkspace(ws Workspace) { t.WS = ws }
+
+// runGo runs a `go` subcommand in the workspace and returns its combined output.
+// Routing every go_mod action through here means the module it operates on is the
+// workspace's — a sub-agent's worktree, or a container — rather than whatever
+// directory the yaah process happens to be in.
+func (t *GoModTool) runGo(ctx context.Context, args ...string) (string, error) {
+	res, err := workspaceOf(t.WS, nil).Exec(ctx, ExecRequest{Command: "go", Args: args})
+	return res.Stdout, err
+}
 
 func NewGoModTool() *GoModTool { return &GoModTool{} }
 
@@ -113,8 +127,7 @@ func (t *GoModTool) runTidy(ctx context.Context, params goModParams, result *goM
 		cmdArgs = append(cmdArgs, "-diff")
 	}
 	cmdArgs = append(cmdArgs, params.Flags...)
-	cmd := exec.CommandContext(ctx, "go", cmdArgs...)
-	out, err := cmd.CombinedOutput()
+	out, err := t.runGo(ctx, cmdArgs...)
 	result.Output = string(out)
 	result.Success = err == nil
 	if !result.Success {
@@ -124,8 +137,7 @@ func (t *GoModTool) runTidy(ctx context.Context, params goModParams, result *goM
 
 func (t *GoModTool) runVerify(ctx context.Context, params goModParams, result *goModResult) {
 	cmdArgs := append([]string{"mod", "verify"}, params.Flags...)
-	cmd := exec.CommandContext(ctx, "go", cmdArgs...)
-	out, err := cmd.CombinedOutput()
+	out, err := t.runGo(ctx, cmdArgs...)
 	result.Output = string(out)
 	result.Success = err == nil
 
@@ -145,8 +157,7 @@ func (t *GoModTool) runVerify(ctx context.Context, params goModParams, result *g
 
 func (t *GoModTool) runGraph(ctx context.Context, params goModParams, result *goModResult) {
 	cmdArgs := append([]string{"mod", "graph"}, params.Flags...)
-	cmd := exec.CommandContext(ctx, "go", cmdArgs...)
-	out, err := cmd.CombinedOutput()
+	out, err := t.runGo(ctx, cmdArgs...)
 	result.Output = string(out)
 	result.Success = err == nil
 
@@ -167,8 +178,7 @@ func (t *GoModTool) runWhy(ctx context.Context, params goModParams, result *goMo
 		return
 	}
 	cmdArgs := append([]string{"mod", "why", "-m", "--", params.Module}, params.Flags...)
-	cmd := exec.CommandContext(ctx, "go", cmdArgs...)
-	out, err := cmd.CombinedOutput()
+	out, err := t.runGo(ctx, cmdArgs...)
 	result.Output = string(out)
 	result.Success = err == nil
 	result.Summary = result.Output
@@ -176,8 +186,7 @@ func (t *GoModTool) runWhy(ctx context.Context, params goModParams, result *goMo
 
 func (t *GoModTool) runList(ctx context.Context, params goModParams, result *goModResult) {
 	cmdArgs := append([]string{"list", "-m", "-json", "all"}, params.Flags...)
-	cmd := exec.CommandContext(ctx, "go", cmdArgs...)
-	out, err := cmd.CombinedOutput()
+	out, err := t.runGo(ctx, cmdArgs...)
 	result.Output = string(out)
 	result.Success = err == nil
 
@@ -215,8 +224,7 @@ func (t *GoModTool) runAdd(ctx context.Context, params goModParams, result *goMo
 		mod = mod + "@latest"
 	}
 	cmdArgs := append([]string{"get", "--", mod}, params.Flags...)
-	cmd := exec.CommandContext(ctx, "go", cmdArgs...)
-	out, err := cmd.CombinedOutput()
+	out, err := t.runGo(ctx, cmdArgs...)
 	result.Output = string(out)
 	result.Success = err == nil
 }
@@ -233,15 +241,13 @@ func (t *GoModTool) runRemove(ctx context.Context, params goModParams, result *g
 		return
 	}
 	cmdArgs := append([]string{"get", "--", params.Module + "@none"}, params.Flags...)
-	cmd := exec.CommandContext(ctx, "go", cmdArgs...)
-	out, err := cmd.CombinedOutput()
+	out, err := t.runGo(ctx, cmdArgs...)
 	result.Output = string(out)
 	result.Success = err == nil
 
 	// Follow up with tidy
 	tidyArgs := []string{"mod", "tidy"}
-	tidyCmd := exec.CommandContext(ctx, "go", tidyArgs...)
-	tidyOut, tidyErr := tidyCmd.CombinedOutput()
+	tidyOut, tidyErr := t.runGo(ctx, tidyArgs...)
 	if tidyErr != nil {
 		result.Stderr += fmt.Sprintf("\ntidy after remove: %s", string(tidyOut))
 	}
@@ -263,15 +269,13 @@ func (t *GoModTool) runUpgrade(ctx context.Context, params goModParams, result *
 	} else {
 		cmdArgs = append([]string{"get", "-u", "./..."}, params.Flags...)
 	}
-	cmd := exec.CommandContext(ctx, "go", cmdArgs...)
-	out, err := cmd.CombinedOutput()
+	out, err := t.runGo(ctx, cmdArgs...)
 	result.Output = string(out)
 	result.Success = err == nil
 
 	// Follow up with tidy
 	tidyArgs := []string{"mod", "tidy"}
-	tidyCmd := exec.CommandContext(ctx, "go", tidyArgs...)
-	tidyOut, tidyErr := tidyCmd.CombinedOutput()
+	tidyOut, tidyErr := t.runGo(ctx, tidyArgs...)
 	if tidyErr != nil {
 		result.Stderr += fmt.Sprintf("\ntidy after upgrade: %s", string(tidyOut))
 	}

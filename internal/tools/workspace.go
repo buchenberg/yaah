@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 )
 
@@ -19,14 +20,23 @@ type ExecRequest struct {
 	Cwd string
 	// Stdin, when non-nil, is fed to the command.
 	Stdin []byte
+	// SeparateStreams keeps stdout and stderr apart. Leave false for combined
+	// output, which preserves interleaving — what shells and build tools want.
+	// Set it when the caller parses one stream, as diff does with stdout.
+	SeparateStreams bool
 }
 
 // ExecResult is the outcome of a workspace command.
 //
-// Stdout carries *combined* output for a local workspace, preserving the stream
-// interleaving tools relied on before workspaces existed. A remote workspace
-// cannot interleave two transports' streams, so it reports Stdout and Stderr
-// separately and leaves Stdout uncontaminated.
+// ExitCode is -1 when the command could not be started at all, and >= 0 when it
+// ran — including a non-zero exit. Callers that used to distinguish via
+// *exec.ExitError must branch on this instead, because a sandbox reports an exit
+// code without an error.
+//
+// Stdout carries *combined* output for a local workspace unless the request asked
+// for separate streams, preserving the interleaving tools relied on before
+// workspaces existed. A remote workspace keeps the streams apart, so callers that
+// parse stdout must set SeparateStreams.
 type ExecResult struct {
 	ExitCode int
 	Stdout   string
@@ -51,6 +61,11 @@ type Workspace interface {
 	// Empty means the process working directory (the pre-workspace behaviour).
 	WorkDir() string
 
+	// Join joins path elements using this workspace's syntax. A sandbox is POSIX
+	// regardless of the host OS, so tools must not use filepath.Join for
+	// workspace paths.
+	Join(elem ...string) string
+
 	// Local reports whether this workspace is the host filesystem. Tools that
 	// need host-only facilities (PowerShell, a host toolchain) use it to fail
 	// clearly instead of silently operating on the wrong machine.
@@ -67,6 +82,9 @@ type Workspace interface {
 	WriteFile(ctx context.Context, path string, data []byte, perm fs.FileMode) error
 
 	Stat(ctx context.Context, path string) (fs.FileInfo, error)
+	// ReadDir lists a directory. Entries are not sorted by the implementation;
+	// callers that need a stable order must sort.
+	ReadDir(ctx context.Context, path string) ([]fs.DirEntry, error)
 	Remove(ctx context.Context, path string) error
 	MkdirAll(ctx context.Context, path string, perm fs.FileMode) error
 
@@ -108,6 +126,8 @@ func (w *localWorkspace) WorkDir() string {
 
 func (w *localWorkspace) Local() bool { return true }
 
+func (w *localWorkspace) Join(elem ...string) string { return filepath.Join(elem...) }
+
 func (w *localWorkspace) Shell() (string, string) {
 	if runtime.GOOS != "windows" {
 		return "sh", "-c"
@@ -132,6 +152,10 @@ func (w *localWorkspace) Stat(_ context.Context, path string) (fs.FileInfo, erro
 	return os.Stat(path)
 }
 
+func (w *localWorkspace) ReadDir(_ context.Context, path string) ([]fs.DirEntry, error) {
+	return os.ReadDir(path)
+}
+
 func (w *localWorkspace) Remove(_ context.Context, path string) error {
 	return os.Remove(path)
 }
@@ -153,8 +177,21 @@ func (w *localWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResult,
 		cmd.Stdin = bytes.NewReader(req.Stdin)
 	}
 
-	out, err := cmd.CombinedOutput()
-	res := ExecResult{Stdout: string(out)}
+	var res ExecResult
+	var err error
+	if req.SeparateStreams {
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		err = cmd.Run()
+		res.Stdout = stdout.String()
+		res.Stderr = stderr.String()
+	} else {
+		var out []byte
+		out, err = cmd.CombinedOutput()
+		res.Stdout = string(out)
+	}
+
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -193,6 +230,38 @@ func shellCommand(ws Workspace, command string) ExecRequest {
 func requireLocal(ws Workspace, tool string) error {
 	if ws != nil && !ws.Local() {
 		return fmt.Errorf("%s: not available in an isolated workspace", tool)
+	}
+	return nil
+}
+
+// walkWorkspace walks a workspace tree depth-first, mirroring
+// filepath.WalkDir's contract: fn is called for every entry, and returning
+// fs.SkipDir from a directory entry skips its contents. An unreadable directory
+// is reported through fn rather than aborting the walk, so callers keep the
+// error-handling shape they had with WalkDir.
+func walkWorkspace(
+	ctx context.Context,
+	ws Workspace,
+	root string,
+	fn func(path string, d fs.DirEntry, err error) error,
+) error {
+	entries, err := ws.ReadDir(ctx, root)
+	if err != nil {
+		return fn(root, nil, err)
+	}
+	for _, e := range entries {
+		p := ws.Join(root, e.Name())
+		if err := fn(p, e, nil); err != nil {
+			if errors.Is(err, fs.SkipDir) && e.IsDir() {
+				continue
+			}
+			return err
+		}
+		if e.IsDir() {
+			if err := walkWorkspace(ctx, ws, p, fn); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

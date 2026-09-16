@@ -584,7 +584,13 @@ Two implementations:
 
 **Why this is the prerequisite for a container backend.** Pointing the tools at a host-visible mount would isolate the *files* while leaving the *processes* on the host, which defeats the purpose of a container. `sandboxWorkspace` therefore routes commands through the sandbox, and `PowerShellTool` refuses a non-local workspace through `requireLocal` rather than silently running the command somewhere the caller did not intend.
 
-**Migration status.** `read`, `write`, `edit`, `delete`, `patch`, `bash`, and `powershell` are migrated. The remaining filesystem tools (`ls`, `file_info`, `grep`, `glob`, `sed`, `replace`, `json_query`, the `go_*` tools, `git`, `diff`, `staticcheck`, `bisect`) still call `os.*` directly with `PathValidator`, so selecting an isolated workspace is only safe once they are migrated too.
+**Migration status.** Every migratable filesystem tool now routes its I/O through a `Workspace` — 21 tools, including the process-spawning ones (`git`, `diff`, `go_mod`, `go_test`, `staticcheck`, `bisect`), none of which previously set a working directory, so they ran in the *yaah process's* cwd even when a sub-agent was isolated in a worktree. Routing them through `Workspace.Exec` fixes that as a side effect: they now run in the workspace directory.
+
+**Host-only by design (4).** `role` (manages harness role files the host reads), `background_process` (drives the in-memory host process manager), `supervised_task` (provisions sandboxes, so it cannot run inside the isolation it creates), and `go_refactor`, which reads the filesystem through `golang.org/x/tools` (`imports.Process`, `packages.Load`) — a path `Workspace` cannot intercept. Isolating it means reimplementing it on in-sandbox `gofmt`/`goimports` calls, not swapping calls.
+
+**Isolation gate.** `Registry.SetWorkspace` refuses a non-local workspace, reporting unmigrated and host-only tools as separate categories. The refusal is unconditional with respect to the markers, so a forgotten annotation cannot silently weaken it; the markers only produce those diagnostics. `TestRegistry_EveryToolIsClassified` requires every registered tool to be a `FilesystemTool`, a `HostOnlyTool`, or on a short deliberate non-filesystem allowlist, so an unclassified tool fails the build rather than becoming an isolation hole.
+
+Because the unmigrated list is now empty, the gate turns entirely on which host-only tools a registry happens to hold. The default `NewRegistry()` still refuses, because it contains `go_refactor`; a sub-agent registry whose role profile excludes the four host-only tools is accepted. That is the intended shape: the orchestrator runs on the host, and a dispatched sub-agent can run isolated.
 
 ### Tool execution flow (`executeAndCollect` — middleware path)
 
