@@ -235,10 +235,11 @@ func requireLocal(ws Workspace, tool string) error {
 }
 
 // walkWorkspace walks a workspace tree depth-first, mirroring
-// filepath.WalkDir's contract: fn is called for every entry, and returning
-// fs.SkipDir from a directory entry skips its contents. An unreadable directory
-// is reported through fn rather than aborting the walk, so callers keep the
-// error-handling shape they had with WalkDir.
+// filepath.WalkDir's contract: fn is called for every entry; returning
+// fs.SkipDir from a directory entry skips its contents, and returning it from
+// a file entry skips the remaining files in that directory. An unreadable
+// directory is reported through fn rather than aborting the walk, so callers
+// keep the error-handling shape they had with WalkDir.
 func walkWorkspace(
 	ctx context.Context,
 	ws Workspace,
@@ -252,10 +253,13 @@ func walkWorkspace(
 	for _, e := range entries {
 		p := ws.Join(root, e.Name())
 		if err := fn(p, e, nil); err != nil {
-			if errors.Is(err, fs.SkipDir) && e.IsDir() {
-				continue
+			if !errors.Is(err, fs.SkipDir) {
+				return err
 			}
-			return err
+			if !e.IsDir() {
+				return nil
+			}
+			continue
 		}
 		if e.IsDir() {
 			if err := walkWorkspace(ctx, ws, p, fn); err != nil {

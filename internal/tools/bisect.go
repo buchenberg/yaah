@@ -242,14 +242,20 @@ func (t *BisectTool) runGitCmd(ctx context.Context, args ...string) (string, err
 	return res.Stdout, err
 }
 
-// runBisectTest runs a test command via git bisect run, using the
-// platform-appropriate shell wrapper.
+// runBisectTest runs a test command via git bisect run, wrapped in a shell.
+// git bisect run branches on exact exit codes (125 = skip, 126/127 = abort),
+// so the wrapper must propagate the command's exit status: cmd /c and sh -c
+// do, pwsh -Command collapses it to 0/1. A local workspace therefore keeps
+// the GOOS-selected wrapper, while a sandbox is POSIX by construction and
+// uses its own sh.
 func (t *BisectTool) runBisectTest(ctx context.Context, testCmd string) (string, error) {
-	var shellArgs []string
-	if runtime.GOOS == "windows" {
-		shellArgs = []string{"cmd", "/c", testCmd}
-	} else {
-		shellArgs = []string{"sh", "-c", testCmd}
+	ws := workspaceOf(t.WS, nil)
+	if ws.Local() {
+		if runtime.GOOS == "windows" {
+			return t.runGitCmd(ctx, "bisect", "run", "cmd", "/c", testCmd)
+		}
+		return t.runGitCmd(ctx, "bisect", "run", "sh", "-c", testCmd)
 	}
-	return t.runGitCmd(ctx, append([]string{"bisect", "run"}, shellArgs...)...)
+	shell, flag := ws.Shell()
+	return t.runGitCmd(ctx, "bisect", "run", shell, flag, testCmd)
 }

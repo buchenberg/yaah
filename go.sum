@@ -1,7 +1,7 @@
 github.com/Masterminds/semver/v3 v3.4.0 h1:Zog+i5UMtVoCU8oKka5P7i9q9HgrJeGzI9SA1Xbatp0=
 github.com/Masterminds/semver/v3 v3.4.0/go.mod h1:4V+yj/TJE1HU9XfppCwVMZq3I84lprf4nC11bSS5beM=
-github.com/buchenberg/shepherd-kernel-go v0.3.2 h1:Ep+o/aQPjidzFBJV2Pr60Q8hiP5N7FlAZId3g9BtkfA=
-github.com/buchenberg/shepherd-kernel-go v0.3.2/go.mod h1:N5a+B07Lm4xmc4ubCc83Rw4hDWuvbgKUJDSd6N7nrs4=
+github.com/buchenberg/shepherd-kernel-go v0.4.0 h1:fUqdqgch7XxAfGeE74eyhbhNyGul5b06C96ZutXbZ0c=
+github.com/buchenberg/shepherd-kernel-go v0.4.0/go.mod h1:N5a+B07Lm4xmc4ubCc83Rw4hDWuvbgKUJDSd6N7nrs4=
 github.com/buchenberg/tviewmd v0.2.0 h1:GEbCcQqgSdi6WafPsBPeXSkkcqrnKI7D1hdytIc+Ofg=
 github.com/buchenberg/tviewmd v0.2.0/go.mod h1:NSvcH2laSSUg/+4jVj/M3/NzviJ9UE16me0zlulM35w=
 github.com/cenkalti/backoff/v5 v5.0.3 h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1xcsSM=

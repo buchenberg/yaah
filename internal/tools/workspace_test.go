@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -371,7 +372,10 @@ type fakeSandbox struct {
 	stdout string
 	stderr string
 	exit   int
-	files  map[string][]byte
+	// execErr, when non-nil, simulates a transport failure: the command never
+	// reached (or never ran in) the sandbox.
+	execErr error
+	files   map[string][]byte
 }
 
 func (f *fakeSandbox) Backend() string { return "fake" }
@@ -392,6 +396,9 @@ func (f *fakeSandbox) Diff(context.Context, shepherd.WorkspaceState, int) (strin
 // the workspace asked the sandbox to do.
 func (f *fakeSandbox) Exec(_ context.Context, req shepherd.ExecRequest) (shepherd.ExecResult, error) {
 	f.execs = append(f.execs, req)
+	if f.execErr != nil {
+		return shepherd.ExecResult{}, f.execErr
+	}
 	return shepherd.ExecResult{ExitCode: f.exit, Stdout: f.stdout, Stderr: f.stderr}, nil
 }
 
@@ -410,12 +417,8 @@ func (f *fakeSandbox) WriteFile(_ context.Context, path string, data []byte, _ f
 	return nil
 }
 
-// newTestSandboxWS returns a real sandboxWorkspace over the fake sandbox, so the
+// newSandboxWS returns a real sandboxWorkspace over the given sandbox, so the
 // tests exercise the production implementation rather than a stand-in.
-func newTestSandboxWS() *sandboxWorkspace {
-	return newSandboxWS(&fakeSandbox{})
-}
-
 func newSandboxWS(sb shepherd.Sandbox) *sandboxWorkspace {
 	return newSandboxWorkspace(sb, "/workspace")
 }
@@ -565,6 +568,79 @@ func TestSandboxWorkspace_NonZeroExitIsAnError(t *testing.T) {
 		t.Fatal("a non-zero exit must surface as an error")
 	} else if !strings.Contains(err.Error(), "boom") {
 		t.Errorf("error should carry stderr, got %v", err)
+	}
+}
+
+// TestSandboxWorkspace_ReadDirIncludesDotfiles pins that the in-band listing
+// surfaces hidden entries: os.ReadDir returns them on the host, and a sandbox
+// that silently drops ".env" or ".github" would make glob and grep miss files
+// the caller asked about.
+func TestSandboxWorkspace_ReadDirIncludesDotfiles(t *testing.T) {
+	sb := &fakeSandbox{stdout: ".env\n.git/\nREADME.md\nsrc/\n"}
+	ws := newSandboxWS(sb)
+
+	entries, err := ws.ReadDir(context.Background(), "/workspace")
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(sb.execs) != 1 {
+		t.Fatalf("execs = %d, want 1", len(sb.execs))
+	}
+	// ReadDir shells out via `sh -c`, so the listing flags live in the script.
+	if script := sb.execs[0].Args[1]; !strings.Contains(script, "ls -1Ap") {
+		t.Errorf("listing script %q must use ls -1Ap (dotfiles included, . and .. excluded)", script)
+	}
+
+	byName := map[string]bool{}
+	for _, e := range entries {
+		byName[e.Name()] = e.IsDir()
+	}
+	for name, wantDir := range map[string]bool{
+		".env": false, ".git": true, "README.md": false, "src": true,
+	} {
+		got, ok := byName[name]
+		if !ok {
+			t.Errorf("entry %q missing from listing", name)
+			continue
+		}
+		if got != wantDir {
+			t.Errorf("entry %q IsDir = %v, want %v", name, got, wantDir)
+		}
+	}
+}
+
+// TestSandboxWorkspace_ExecTransportErrorReportsExitMinusOne pins the
+// Workspace interface contract: ExitCode is -1 when the command could not be
+// started at all, so callers (staticcheck, diff) can distinguish "never ran"
+// from "ran and failed".
+func TestSandboxWorkspace_ExecTransportErrorReportsExitMinusOne(t *testing.T) {
+	sb := &fakeSandbox{execErr: errors.New("container gone")}
+	ws := newSandboxWS(sb)
+
+	res, err := ws.Exec(context.Background(), ExecRequest{Command: "go", Args: []string{"version"}})
+	if err == nil {
+		t.Fatal("a transport failure must surface as an error")
+	}
+	if res.ExitCode != -1 {
+		t.Errorf("ExitCode = %d, want -1 for a command that never ran", res.ExitCode)
+	}
+}
+
+// TestSandboxWorkspace_RootSlashContainsWholeContainer pins the "/" edge case:
+// trimming must not collapse the root to an empty prefix, which would disable
+// containment entirely.
+func TestSandboxWorkspace_RootSlashContainsWholeContainer(t *testing.T) {
+	ws := newSandboxWorkspace(&fakeSandbox{}, "/")
+
+	if ws.root != "/" {
+		t.Fatalf("root = %q, want %q", ws.root, "/")
+	}
+	got, err := ws.ResolvePath("etc/passwd")
+	if err != nil || got != "/etc/passwd" {
+		t.Errorf("ResolvePath(etc/passwd) = %q, %v; want /etc/passwd, nil", got, err)
+	}
+	if got, err := ws.ResolvePath("/etc/passwd"); err != nil || got != "/etc/passwd" {
+		t.Errorf("ResolvePath(/etc/passwd) = %q, %v; want /etc/passwd, nil", got, err)
 	}
 }
 

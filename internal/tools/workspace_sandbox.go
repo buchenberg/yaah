@@ -33,7 +33,13 @@ func newSandboxWorkspace(sb shepherd.Sandbox, root string) *sandboxWorkspace {
 	if root == "" {
 		root = "/workspace"
 	}
-	return &sandboxWorkspace{sb: sb, root: strings.TrimSuffix(root, "/")}
+	root = strings.TrimSuffix(root, "/")
+	if root == "" {
+		// The caller asked for "/" itself; trimming must not collapse it to
+		// an empty prefix, which would silently disable containment.
+		root = "/"
+	}
+	return &sandboxWorkspace{sb: sb, root: root}
 }
 
 // ResolvePath keeps absolute paths and resolves relative ones against the root,
@@ -53,10 +59,12 @@ func (w *sandboxWorkspace) ResolvePath(p string) (string, error) {
 	} else {
 		abs = path.Clean(w.root + "/" + p)
 	}
-	if abs != w.root && !strings.HasPrefix(abs, w.root+"/") {
-		return "", fmt.Errorf("path %q escapes the workspace root %q", p, w.root)
+	// root "/" contains the whole container filesystem, where the prefix
+	// comparison degenerates ("//"): every absolute path is in scope.
+	if abs == w.root || w.root == "/" || strings.HasPrefix(abs, w.root+"/") {
+		return abs, nil
 	}
-	return abs, nil
+	return "", fmt.Errorf("path %q escapes the workspace root %q", p, w.root)
 }
 
 func (w *sandboxWorkspace) WorkDir() string { return w.root }
@@ -131,12 +139,15 @@ func (w *sandboxWorkspace) Remove(ctx context.Context, p string) error {
 	return w.run(ctx, `rm -f -- "$1"`, p)
 }
 
-// ReadDir lists a directory with `ls -1p`, which appends a slash to directories.
+// ReadDir lists a directory with `ls -1Ap`, which lists all entries except
+// "." and ".." and appends a slash to directories. Dotfiles must appear:
+// os.ReadDir returns them on the host, and silently hiding ".env" or
+// ".github" would make glob and grep miss files the caller asked about.
 // fs.DirEntry needs only a name and an IsDir, so that is enough and avoids
 // parsing a full listing format. Symlinks are NOT resolved: a symlink to a
 // directory reports IsDir false, which is accurate for the entry itself.
 func (w *sandboxWorkspace) ReadDir(ctx context.Context, p string) ([]fs.DirEntry, error) {
-	out, err := w.runCapture(ctx, `ls -1p -- "$1"`, p)
+	out, err := w.runCapture(ctx, `ls -1Ap -- "$1"`, p)
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +169,10 @@ func (w *sandboxWorkspace) MkdirAll(ctx context.Context, p string, perm fs.FileM
 }
 
 // Exec runs a command in the sandbox. The working directory defaults to the
-// workspace root so relative paths behave as they do locally.
+// workspace root so relative paths behave as they do locally. A transport
+// failure reports ExitCode -1, matching the Workspace interface contract that
+// callers (staticcheck, diff) use to distinguish "never ran" from "ran and
+// failed".
 func (w *sandboxWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResult, error) {
 	cwd := req.Cwd
 	if cwd == "" {
@@ -171,7 +185,7 @@ func (w *sandboxWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResul
 		Stdin:   req.Stdin,
 	})
 	if err != nil {
-		return ExecResult{}, err
+		return ExecResult{ExitCode: -1}, err
 	}
 	out := ExecResult{ExitCode: res.ExitCode, Stdout: res.Stdout, Stderr: res.Stderr}
 	if !req.SeparateStreams {

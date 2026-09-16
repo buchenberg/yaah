@@ -269,9 +269,10 @@ func (r *Registry) SetPathValidator(pv *PathValidator) {
 // FilesystemTool marks a tool that reads or writes files, or runs a process.
 //
 // It exists to track migration to the Workspace interface. The isolation gate in
-// SetWorkspace deliberately does NOT depend on this marker: a forgotten
-// annotation would silently weaken the gate, so safety is enforced
-// unconditionally and the marker only tells you what is left to convert.
+// SetWorkspace IS derived from these markers — via UnmigratedFilesystemTools
+// and HostOnlyFilesystemTools — so a filesystem tool that forgets the marker
+// (and implements no WorkspaceSetter) is invisible to the gate and silently
+// weakens isolation. Keep the markers current; they are the gate's eyes.
 type FilesystemTool interface {
 	filesystemTool()
 }

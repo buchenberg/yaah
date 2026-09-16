@@ -635,9 +635,13 @@ func (s *supervisedSession) runIsolatedVariant(
 	sb := shepherd.NewWorktreeSandbox(s.runtime.RepoPath, wtPath)
 
 	if err := sb.Create(ctx, shepherd.SandboxSpec{}); err != nil {
-		// A worktree left behind by a killed run can occupy the path. It lives
-		// under our own worktree root, so clearing it cannot delete user data.
-		_ = sb.Destroy(context.WithoutCancel(ctx))
+		// A worktree left behind by a killed run can occupy the path. Only
+		// clear it when it is actually a worktree registered with this
+		// repository: the worktree root is user-configurable, the occupant
+		// may be unrelated data, and Destroy falls back to RemoveAll.
+		if isRegisteredWorktree(ctx, s.runtime.RepoPath, wtPath) {
+			_ = sb.Destroy(context.WithoutCancel(ctx))
+		}
 		if retryErr := sb.Create(ctx, shepherd.SandboxSpec{}); retryErr != nil {
 			return nil, fmt.Errorf("create worktree %s: %w (first attempt: %v)", wtPath, retryErr, err)
 		}
@@ -658,12 +662,53 @@ func (s *supervisedSession) runIsolatedVariant(
 	return s.runVariantIn(ctx, variantWorkspace{sb: sb, workdir: wtPath}, prompt, forkConv, forkState), nil
 }
 
+// isRegisteredWorktree reports whether path is currently registered as a git
+// worktree of repoPath. A worktree left behind by a killed run still appears
+// in `git worktree list`; unrelated data in a user-configured worktree root
+// does not, which is what makes clearing it safe.
+func isRegisteredWorktree(ctx context.Context, repoPath, path string) bool {
+	out, err := exec.CommandContext(ctx, "git", "-C", repoPath, "worktree", "list", "--porcelain").Output()
+	if err != nil {
+		return false
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.HasPrefix(line, "worktree ") {
+			continue
+		}
+		wt, err := filepath.Abs(strings.TrimPrefix(line, "worktree "))
+		if err != nil {
+			continue
+		}
+		// Windows paths differ in case; a lexical compare there would miss
+		// the registered entry and skip a legitimate cleanup.
+		if runtime.GOOS == "windows" {
+			if strings.EqualFold(filepath.Clean(wt), filepath.Clean(abs)) {
+				return true
+			}
+			continue
+		}
+		if filepath.Clean(wt) == filepath.Clean(abs) {
+			return true
+		}
+	}
+	return false
+}
+
 // worktreePath returns a deterministic worktree path for a variant. The session
 // id is sanitized because it contains a colon and a nanosecond timestamp.
 func (s *supervisedSession) worktreePath(index int, label string) string {
 	root := s.runtime.WorktreeRoot
 	if root == "" {
 		root = filepath.Join(filepath.Dir(s.runtime.RepoPath), "shepherd-worktrees")
+	}
+	// A configured or derived root may be relative (RepoPath comes straight
+	// from config); git worktree add and the sub-agent's cwd need absolute.
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
 	}
 	safe := strings.NewReplacer(":", "-", "/", "-", "\\", "-").Replace(s.id)
 	return filepath.Join(root, fmt.Sprintf("%s-%d-%s", safe, index, label))

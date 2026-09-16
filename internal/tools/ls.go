@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -119,7 +118,7 @@ func listDir(ctx context.Context, ws Workspace, w io.Writer, root, prefix string
 		fmt.Fprintf(w, "%s%s%s\n", prefix, connector, name)
 
 		if e.IsDir() && currentDepth < maxDepth {
-			childPath := filepath.Join(root, e.Name())
+			childPath := ws.Join(root, e.Name())
 			if err := listDir(ctx, ws, w, childPath, prefix+nextPrefix, maxDepth, currentDepth+1); err != nil {
 				fmt.Fprintf(w, "%s%s[error: %v]\n", prefix+nextPrefix, connector, err)
 			}
