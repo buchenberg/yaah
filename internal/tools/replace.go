@@ -19,11 +19,18 @@ const replaceMaxResultLen = 4096
 // ReplaceTool performs regex find-and-replace across multiple files.
 // It walks a directory tree, filters by include glob, and applies the
 // replacement to every matching file.
-type ReplaceTool struct{ PV *PathValidator }
+type ReplaceTool struct {
+	PV *PathValidator
+	WS Workspace
+}
 
-var _ PathValidatorSetter = (*ReplaceTool)(nil)
+var (
+	_ PathValidatorSetter = (*ReplaceTool)(nil)
+	_ WorkspaceSetter     = (*ReplaceTool)(nil)
+)
 
 func (t *ReplaceTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
+func (t *ReplaceTool) SetWorkspace(ws Workspace)          { t.WS = ws }
 
 func (t *ReplaceTool) Name() string { return "replace" }
 func (t *ReplaceTool) Description() string {
@@ -63,7 +70,8 @@ func (t *ReplaceTool) Execute(ctx context.Context, args string) (string, error) 
 	if params.Path == "" {
 		params.Path = "."
 	}
-	resolved, err := resolvePathWithPV(t.PV, params.Path)
+	ws := workspaceOf(t.WS, t.PV)
+	resolved, err := ws.ResolvePath(params.Path)
 	if err != nil {
 		return "", err
 	}
@@ -95,7 +103,7 @@ func (t *ReplaceTool) Execute(ctx context.Context, args string) (string, error) 
 	totalMatches := 0
 	totalChanged := 0
 
-	walkErr := filepath.WalkDir(params.Path, func(p string, d fs.DirEntry, err error) error {
+	walkErr := walkWorkspace(ctx, ws, params.Path, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -118,7 +126,7 @@ func (t *ReplaceTool) Execute(ctx context.Context, args string) (string, error) 
 			return ctx.Err()
 		}
 
-		data, readErr := os.ReadFile(p)
+		data, readErr := ws.ReadFile(ctx, p)
 		if readErr != nil {
 			results = append(results, fileResult{Path: p, Err: readErr})
 			return nil
@@ -142,10 +150,10 @@ func (t *ReplaceTool) Execute(ctx context.Context, args string) (string, error) 
 		mode := os.FileMode(0o644)
 		if fi, err := d.Info(); err == nil {
 			mode = fi.Mode()
-		} else if st, err := os.Stat(p); err == nil {
+		} else if st, err := ws.Stat(ctx, p); err == nil {
 			mode = st.Mode()
 		}
-		if err := atomicWriteFile(p, []byte(newContent), mode); err != nil {
+		if err := ws.WriteFile(ctx, p, []byte(newContent), mode); err != nil {
 			results = append(results, fileResult{Path: p, Count: matchCount, Err: err})
 			return nil
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +24,9 @@ type sessionRunner struct {
 	responses []runnerResponse
 	prompts   []string
 	seeds     [][]types.Message
+	// workdirs records the Workdir each dispatch received, so tests can assert
+	// where an isolated variant actually ran.
+	workdirs []string
 	// sideEffect runs before each response is returned so tests can
 	// mutate the workspace like a real sub-agent would.
 	sideEffect func(call int, repoPath string)
@@ -35,6 +39,7 @@ func (f *sessionRunner) run() TaskRunner {
 		idx := len(f.prompts)
 		f.prompts = append(f.prompts, prompt)
 		f.seeds = append(f.seeds, params.SeedMessages)
+		f.workdirs = append(f.workdirs, params.Workdir)
 		resp := runnerResponse{result: "default"}
 		if idx < len(f.responses) {
 			resp = f.responses[idx]
@@ -80,6 +85,17 @@ func (f *sessionRunner) callCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.prompts)
+}
+
+// workdirFor returns the Workdir a dispatch received ("" in shared mode).
+func (f *sessionRunner) workdirFor(t *testing.T, call int) string {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if call >= len(f.workdirs) {
+		t.Fatalf("no workdir recorded for call %d (have %d)", call, len(f.workdirs))
+	}
+	return f.workdirs[call]
 }
 
 // decodeReviewEnvelope unmarshals a review envelope and fails the test
@@ -570,8 +586,8 @@ func TestReviewSession_ChooseRejectsNilTree(t *testing.T) {
 	sid := startTestReviewSession(t, tool, "prepare")
 	mustSupervisorExecute(t, sup, `{"action":"fork","session_id":`+jsonString(sid)+`,"prompt_a":"A","prompt_b":"B"}`)
 
-	// Simulate a failed tree capture on the winner: choose must reject it
-	// with a clear error rather than attempting ApplyTree(nil).
+	// Simulate a failed workspace capture on the winner: choose must reject it
+	// with a clear error rather than attempting to apply a nil state.
 	sess, err := getReviewSession(sid)
 	if err != nil {
 		t.Fatalf("getReviewSession: %v", err)
@@ -584,8 +600,8 @@ func TestReviewSession_ChooseRejectsNilTree(t *testing.T) {
 	if err == nil {
 		t.Fatal("choose with a nil captured tree must fail")
 	}
-	if !strings.Contains(err.Error(), "no captured tree") {
-		t.Errorf("error = %q, want mention of missing captured tree", err.Error())
+	if !strings.Contains(err.Error(), "no captured workspace") {
+		t.Errorf("error = %q, want mention of missing captured workspace", err.Error())
 	}
 }
 
@@ -654,6 +670,113 @@ func TestReviewSession_ContinueDefaultGuidance(t *testing.T) {
 	}
 	if !strings.Contains(runner.promptFor(t, 1), "next unit") {
 		t.Errorf("default continuation prompt should mention the next unit: %q", runner.promptFor(t, 1))
+	}
+}
+
+// TestReviewSession_WorktreeForkIsolatesVariants verifies the isolated fork
+// path: each variant runs in its own worktree seeded with the fork state, the
+// parent tree is never touched while the experiment runs, the worktrees are
+// torn down, and only the chosen variant's work reaches the parent.
+func TestReviewSession_WorktreeForkIsolatesVariants(t *testing.T) {
+	tool, sup, repo := newReviewTestEnv(t)
+	tool.Worktree = true
+	tool.WorktreeRoot = t.TempDir()
+
+	runner := &sessionRunner{
+		repoPath: repo,
+		responses: []runnerResponse{
+			{result: "unit one"},
+			{result: "variant A"},
+			{result: "variant B"},
+		},
+	}
+	runner.sideEffect = func(call int, _ string) {
+		switch call {
+		case 0:
+			writeTestFile(t, repo, "unit.txt", "unit work\n")
+		case 1, 2:
+			// Each variant writes only inside its own worktree.
+			writeTestFile(t, runner.workdirFor(t, call), fmt.Sprintf("variant-%d.txt", call), "speculative\n")
+		}
+	}
+	tool.Runner = runner.run()
+
+	sid := startTestReviewSession(t, tool, "start")
+
+	env := mustSupervisorExecute(t, sup, `{"action":"fork","session_id":`+jsonString(sid)+`,"prompt_a":"A","prompt_b":"B"}`)
+	if env.Status != "awaiting_choose" {
+		t.Fatalf("fork status = %q, want awaiting_choose (env: %v)", env.Status, env)
+	}
+
+	dirA := runner.workdirFor(t, 1)
+	dirB := runner.workdirFor(t, 2)
+	if dirA == "" || dirB == "" {
+		t.Fatal("isolated variants must receive a Workdir")
+	}
+	if dirA == dirB {
+		t.Errorf("variants must not share a worktree: %q", dirA)
+	}
+	for _, d := range []string{dirA, dirB} {
+		if d == repo {
+			t.Error("an isolated variant must not run in the parent repository")
+		}
+		if _, err := os.Stat(d); !os.IsNotExist(err) {
+			t.Errorf("worktree %s should be torn down after its variant, stat err=%v", d, err)
+		}
+	}
+
+	// The parent tree never saw the speculative files.
+	for _, name := range []string{"variant-1.txt", "variant-2.txt"} {
+		if _, err := os.Stat(filepath.Join(repo, name)); !os.IsNotExist(err) {
+			t.Errorf("%s must not exist in the parent tree before choose", name)
+		}
+	}
+
+	chosen := mustSupervisorExecute(t, sup, `{"action":"choose","session_id":`+jsonString(sid)+`,"winner":"a"}`)
+	if chosen.Status != "chosen" {
+		t.Fatalf("choose status = %q, want chosen", chosen.Status)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "variant-1.txt")); err != nil {
+		t.Errorf("chosen variant's file should be applied to the parent: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "variant-2.txt")); !os.IsNotExist(err) {
+		t.Error("losing variant's file must not be applied to the parent")
+	}
+}
+
+// TestReviewSession_WorktreeVariantsStartFromForkPoint verifies an isolated
+// variant sees the parent's uncommitted state at the fork point, not a clean
+// checkout of HEAD.
+func TestReviewSession_WorktreeVariantsStartFromForkPoint(t *testing.T) {
+	tool, sup, repo := newReviewTestEnv(t)
+	tool.Worktree = true
+	tool.WorktreeRoot = t.TempDir()
+
+	// Uncommitted work exists before the session starts, so the unit-start
+	// checkpoint captures a dirty tree.
+	writeTestFile(t, repo, "dirty.txt", "uncommitted fork point\n")
+
+	var sawDirty []string
+	runner := &sessionRunner{
+		repoPath:  repo,
+		responses: []runnerResponse{{result: "unit"}, {result: "A"}, {result: "B"}},
+	}
+	runner.sideEffect = func(call int, _ string) {
+		if call != 1 && call != 2 {
+			return
+		}
+		dir := runner.workdirFor(t, call)
+		if _, err := os.Stat(filepath.Join(dir, "dirty.txt")); err == nil {
+			sawDirty = append(sawDirty, dir)
+		}
+	}
+	tool.Runner = runner.run()
+
+	sid := startTestReviewSession(t, tool, "start")
+	mustSupervisorExecute(t, sup, `{"action":"fork","session_id":`+jsonString(sid)+`,"prompt_a":"A","prompt_b":"B"}`)
+
+	if len(sawDirty) != 2 {
+		t.Errorf("both variants should see the fork-point file, saw %d of 2", len(sawDirty))
 	}
 }
 

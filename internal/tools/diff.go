@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strconv"
 	"strings"
 
@@ -12,7 +11,13 @@ import (
 )
 
 // DiffTool runs git-diff or unified diff and returns structured results.
-type DiffTool struct{}
+type DiffTool struct {
+	WS Workspace
+}
+
+var _ WorkspaceSetter = (*DiffTool)(nil)
+
+func (t *DiffTool) SetWorkspace(ws Workspace) { t.WS = ws }
 
 func NewDiffTool() *DiffTool { return &DiffTool{} }
 
@@ -109,26 +114,27 @@ func (t *DiffTool) Execute(ctx context.Context, args string) (string, error) {
 		}
 	}
 
-	var cmd *exec.Cmd
+	req := ExecRequest{SeparateStreams: true}
 	if useGit {
-		cmd = exec.CommandContext(ctx, "git", cmdArgs...)
+		req.Command, req.Args = "git", cmdArgs
 	} else {
-		cmd = exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
+		req.Command, req.Args = cmdArgs[0], cmdArgs[1:]
 	}
 
-	outBytes, err := cmd.Output()
-	result := &diffResult{RawDiff: string(outBytes)}
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			result.ExitCode = exitErr.ExitCode()
-			result.Stderr = string(exitErr.Stderr)
-		} else {
-			return "", fmt.Errorf("diff: command failed: %w", err)
-		}
+	res, err := workspaceOf(t.WS, nil).Exec(ctx, req)
+	result := &diffResult{RawDiff: res.Stdout}
+	if res.ExitCode < 0 {
+		// The command never ran (not found, not executable).
+		return "", fmt.Errorf("diff: command failed: %w", err)
+	}
+	// diff exits 1 to mean "differences found", which is a normal result.
+	if res.ExitCode > 0 {
+		result.ExitCode = res.ExitCode
+		result.Stderr = res.Stderr
 	}
 
 	// Parse the diff to count stats
-	result.Files, result.Insertions, result.Deletions = parseDiffStats(string(outBytes))
+	result.Files, result.Insertions, result.Deletions = parseDiffStats(res.Stdout)
 	result.FilesChanged = len(result.Files)
 
 	// Truncate raw diff at 20KB

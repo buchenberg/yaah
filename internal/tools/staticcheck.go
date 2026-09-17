@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strings"
 
@@ -12,7 +11,13 @@ import (
 )
 
 // StaticcheckTool runs go vet and/or staticcheck, returning structured diagnostics.
-type StaticcheckTool struct{}
+type StaticcheckTool struct {
+	WS Workspace
+}
+
+var _ WorkspaceSetter = (*StaticcheckTool)(nil)
+
+func (t *StaticcheckTool) SetWorkspace(ws Workspace) { t.WS = ws }
 
 func NewStaticcheckTool() *StaticcheckTool { return &StaticcheckTool{} }
 
@@ -88,44 +93,33 @@ func (t *StaticcheckTool) Execute(ctx context.Context, args string) (string, err
 	runVet := analyzers == "vet" || analyzers == "both"
 	runSC := analyzers == "staticcheck" || analyzers == "both"
 
+	ws := workspaceOf(t.WS, nil)
+
 	// go vet
 	if runVet {
 		vetArgs := append([]string{"vet", params.Packages}, params.Flags...)
-		vetCmd := exec.CommandContext(ctx, "go", vetArgs...)
-		vetOut, err := vetCmd.CombinedOutput()
-		vetStr := string(vetOut)
-		result.VetAvailable = true
-
-		if err != nil {
-			// go vet exits non-zero when it finds issues — parse anyway
-			if _, ok := err.(*exec.ExitError); !ok {
-				result.VetAvailable = false
-				result.Stderr += fmt.Sprintf("go vet error: %v\n", err)
-			}
+		res, _ := ws.Exec(ctx, ExecRequest{Command: "go", Args: vetArgs})
+		// A missing go exits 127 from the shell, and a host exec failure
+		// reports -1; both mean vet never ran, unlike exit 1 ("issues found").
+		result.VetAvailable = executableExit(res.ExitCode)
+		if !result.VetAvailable {
+			result.Stderr += "go vet is not available in this workspace\n"
 		}
-		parseDiagnostics(vetStr, "vet", result)
+		parseDiagnostics(res.Stdout, "vet", result)
 	}
 
 	// staticcheck
 	if runSC {
-		scBin, lookErr := exec.LookPath("staticcheck")
-		if lookErr != nil {
-			result.StaticcheckAvailable = false
-			result.Stderr += "staticcheck not found on PATH — install with: go install honnef.co/go/tools/cmd/staticcheck@latest\n"
+		scArgs := append([]string{params.Packages}, params.Flags...)
+		res, _ := ws.Exec(ctx, ExecRequest{Command: "staticcheck", Args: scArgs})
+		// Resolving the binary with LookPath first would check the *host* PATH,
+		// which is the wrong machine once a workspace can be isolated. Attempting
+		// the run and inspecting the exit code asks the right machine instead.
+		result.StaticcheckAvailable = executableExit(res.ExitCode)
+		if !result.StaticcheckAvailable {
+			result.Stderr += "staticcheck not found in this workspace — install with: go install honnef.co/go/tools/cmd/staticcheck@latest\n"
 		} else {
-			scArgs := append([]string{params.Packages}, params.Flags...)
-			scCmd := exec.CommandContext(ctx, scBin, scArgs...)
-			scOut, err := scCmd.CombinedOutput()
-			scStr := string(scOut)
-			result.StaticcheckAvailable = true
-
-			if err != nil {
-				if _, ok := err.(*exec.ExitError); !ok {
-					result.StaticcheckAvailable = false
-					result.Stderr += fmt.Sprintf("staticcheck error: %v\n", err)
-				}
-			}
-			parseDiagnostics(scStr, "staticcheck", result)
+			parseDiagnostics(res.Stdout, "staticcheck", result)
 		}
 	}
 
@@ -176,4 +170,21 @@ func classifySeverity(msg string) string {
 		return "error"
 	}
 	return "warning"
+}
+
+// executableExit reports whether an exit code means the analyzer itself ran, as
+// opposed to the shell failing to find or invoke it. A missing binary in a
+// sandbox exits 127 (126 when present but not executable, 125 when the shell
+// itself fails), while a failed host exec reports -1. Treating those as
+// available would report zero diagnostics and a clean bill of health for a
+// tool that never ran.
+func executableExit(code int) bool {
+	if code < 0 {
+		return false
+	}
+	switch code {
+	case 125, 126, 127:
+		return false
+	}
+	return true
 }

@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -17,11 +15,18 @@ import (
 const lsMaxResultLen = 8192
 
 // LsTool lists directory contents with depth control.
-type LsTool struct{ PV *PathValidator }
+type LsTool struct {
+	PV *PathValidator
+	WS Workspace
+}
 
-var _ PathValidatorSetter = (*LsTool)(nil)
+var (
+	_ PathValidatorSetter = (*LsTool)(nil)
+	_ WorkspaceSetter     = (*LsTool)(nil)
+)
 
 func (t *LsTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
+func (t *LsTool) SetWorkspace(ws Workspace)          { t.WS = ws }
 
 func (t *LsTool) Name() string { return "ls" }
 func (t *LsTool) Description() string {
@@ -49,7 +54,8 @@ func (t *LsTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.Path == "" {
 		params.Path = "."
 	}
-	resolved, err := resolvePathWithPV(t.PV, params.Path)
+	ws := workspaceOf(t.WS, t.PV)
+	resolved, err := ws.ResolvePath(params.Path)
 	if err != nil {
 		return "", err
 	}
@@ -62,7 +68,7 @@ func (t *LsTool) Execute(ctx context.Context, args string) (string, error) {
 	}
 
 	var buf strings.Builder
-	err = listDir(&buf, params.Path, "", params.Depth, 0)
+	err = listDir(ctx, ws, &buf, params.Path, "", params.Depth, 0)
 	if err != nil {
 		return "", fmt.Errorf("ls: %w", err)
 	}
@@ -77,8 +83,8 @@ func (t *LsTool) Execute(ctx context.Context, args string) (string, error) {
 	return strings.TrimRight(result, "\n"), nil
 }
 
-func listDir(w io.Writer, root, prefix string, maxDepth, currentDepth int) error {
-	entries, err := os.ReadDir(root)
+func listDir(ctx context.Context, ws Workspace, w io.Writer, root, prefix string, maxDepth, currentDepth int) error {
+	entries, err := ws.ReadDir(ctx, root)
 	if err != nil {
 		return err
 	}
@@ -112,8 +118,8 @@ func listDir(w io.Writer, root, prefix string, maxDepth, currentDepth int) error
 		fmt.Fprintf(w, "%s%s%s\n", prefix, connector, name)
 
 		if e.IsDir() && currentDepth < maxDepth {
-			childPath := filepath.Join(root, e.Name())
-			if err := listDir(w, childPath, prefix+nextPrefix, maxDepth, currentDepth+1); err != nil {
+			childPath := ws.Join(root, e.Name())
+			if err := listDir(ctx, ws, w, childPath, prefix+nextPrefix, maxDepth, currentDepth+1); err != nil {
 				fmt.Fprintf(w, "%s%s[error: %v]\n", prefix+nextPrefix, connector, err)
 			}
 		}

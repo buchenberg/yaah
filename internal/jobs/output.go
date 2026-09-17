@@ -40,6 +40,13 @@ type SubAgentParams struct {
 	// supervised review session to carry sub-agent context across work
 	// units. The prompt is appended as a new user message after the seed.
 	SeedMessages []types.Message
+
+	// Workdir, when non-empty, is the directory this sub-agent's file tools and
+	// shell commands operate in, and the root its path containment is checked
+	// against. An isolated supervised-workflow variant sets this to its
+	// worktree so the sub-agent cannot see or mutate the parent's tree. Empty
+	// means the session workspace and process cwd (the default behaviour).
+	Workdir string
 }
 
 // EscalationSeverity classifies how serious a sub-agent escalation is.

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -18,11 +17,18 @@ import (
 const globMaxResultLen = 8192
 
 // GlobTool finds files matching a glob pattern.
-type GlobTool struct{ PV *PathValidator }
+type GlobTool struct {
+	PV *PathValidator
+	WS Workspace
+}
 
-var _ PathValidatorSetter = (*GlobTool)(nil)
+var (
+	_ PathValidatorSetter = (*GlobTool)(nil)
+	_ WorkspaceSetter     = (*GlobTool)(nil)
+)
 
 func (t *GlobTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
+func (t *GlobTool) SetWorkspace(ws Workspace)          { t.WS = ws }
 
 func (t *GlobTool) Name() string { return "glob" }
 func (t *GlobTool) Description() string {
@@ -54,7 +60,8 @@ func (t *GlobTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.Path == "" {
 		params.Path = "."
 	}
-	resolved, err := resolvePathWithPV(t.PV, params.Path)
+	ws := workspaceOf(t.WS, t.PV)
+	resolved, err := ws.ResolvePath(params.Path)
 	if err != nil {
 		return "", err
 	}
@@ -69,16 +76,20 @@ func (t *GlobTool) Execute(ctx context.Context, args string) (string, error) {
 func (t *GlobTool) globRipgrep(ctx context.Context, pattern, path string) (string, error) {
 	rgArgs := []string{"--files", "--glob", pattern, "--no-messages", "--", path}
 
-	cmd := exec.CommandContext(ctx, "rg", rgArgs...)
-	output, err := cmd.CombinedOutput()
+	ws := workspaceOf(t.WS, t.PV)
+	res, err := ws.Exec(ctx, ExecRequest{Command: "rg", Args: rgArgs})
+	// ripgrep uses exit 1 to mean "no files", which is not a failure.
+	if res.ExitCode == 1 {
+		return "No files found.", nil
+	}
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			return "No files found.", nil
-		}
-		return "", fmt.Errorf("glob: %w\n%s", err, string(output))
+		return "", fmt.Errorf("glob: %w\n%s", err, res.Stdout)
+	}
+	if res.ExitCode != 0 {
+		return "", fmt.Errorf("glob: rg exited %d\n%s", res.ExitCode, res.Stdout)
 	}
 
-	result := string(output)
+	result := res.Stdout
 	if result == "" {
 		return "No files found.", nil
 	}
@@ -101,7 +112,8 @@ func (t *GlobTool) globNative(ctx context.Context, pattern, path string) (string
 
 	var matches []string
 	hasSeparator := strings.ContainsAny(pattern, "/\\")
-	walkErr := filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
+	ws := workspaceOf(t.WS, t.PV)
+	walkErr := walkWorkspace(ctx, ws, path, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}

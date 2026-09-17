@@ -8,7 +8,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"sort"
 	"strings"
 
@@ -17,11 +16,18 @@ import (
 
 // GoOutlineTool parses Go source files using go/ast and returns structural
 // outlines or extracts specific symbols by name. Read-only — never dangerous.
-type GoOutlineTool struct{ PV *PathValidator }
+type GoOutlineTool struct {
+	PV *PathValidator
+	WS Workspace
+}
 
-var _ PathValidatorSetter = (*GoOutlineTool)(nil)
+var (
+	_ PathValidatorSetter = (*GoOutlineTool)(nil)
+	_ WorkspaceSetter     = (*GoOutlineTool)(nil)
+)
 
 func (t *GoOutlineTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
+func (t *GoOutlineTool) SetWorkspace(ws Workspace)          { t.WS = ws }
 
 func (t *GoOutlineTool) Name() string { return "go_outline" }
 func (t *GoOutlineTool) Description() string {
@@ -65,7 +71,8 @@ func (t *GoOutlineTool) Execute(ctx context.Context, args string) (string, error
 	if params.File == "" {
 		return "", fmt.Errorf("go_outline: file is required")
 	}
-	resolved, err := resolvePathWithPV(t.PV, params.File)
+	ws := workspaceOf(t.WS, t.PV)
+	resolved, err := ws.ResolvePath(params.File)
 	if err != nil {
 		return "", err
 	}
@@ -75,7 +82,7 @@ func (t *GoOutlineTool) Execute(ctx context.Context, args string) (string, error
 		return "", fmt.Errorf("go_outline: name is required for extract action")
 	}
 
-	src, err := os.ReadFile(params.File)
+	src, err := ws.ReadFile(ctx, params.File)
 	if err != nil {
 		return "", fmt.Errorf("go_outline: %w", err)
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -14,7 +13,13 @@ import (
 )
 
 // BisectTool runs guided `git bisect` to find which commit introduced a bug.
-type BisectTool struct{}
+type BisectTool struct {
+	WS Workspace
+}
+
+var _ WorkspaceSetter = (*BisectTool)(nil)
+
+func (t *BisectTool) SetWorkspace(ws Workspace) { t.WS = ws }
 
 func NewBisectTool() *BisectTool { return &BisectTool{} }
 
@@ -117,24 +122,24 @@ func (t *BisectTool) doStart(ctx context.Context, params bisectParams, result *b
 	}
 
 	// git bisect start
-	if out, err := runGitCmd(ctx, "bisect", "start"); err != nil {
+	if out, err := t.runGitCmd(ctx, "bisect", "start"); err != nil {
 		result.Status = "error"
 		result.Stderr = fmt.Sprintf("bisect start failed: %s\n%s", err, out)
 		return
 	}
 
 	// git bisect bad <bad_ref>
-	if out, err := runGitCmd(ctx, "bisect", "bad", params.BadRef); err != nil {
-		runGitCmd(ctx, "bisect", "reset")
+	if out, err := t.runGitCmd(ctx, "bisect", "bad", params.BadRef); err != nil {
+		t.runGitCmd(ctx, "bisect", "reset")
 		result.Status = "error"
 		result.Stderr = fmt.Sprintf("bisect bad failed: %s\n%s", err, out)
 		return
 	}
 
 	// git bisect good <good_ref>
-	out, err := runGitCmd(ctx, "bisect", "good", params.GoodRef)
+	out, err := t.runGitCmd(ctx, "bisect", "good", params.GoodRef)
 	if err != nil {
-		runGitCmd(ctx, "bisect", "reset")
+		t.runGitCmd(ctx, "bisect", "reset")
 		result.Status = "error"
 		result.Stderr = fmt.Sprintf("bisect good failed: %s\n%s", err, out)
 		return
@@ -146,7 +151,7 @@ func (t *BisectTool) doStart(ctx context.Context, params bisectParams, result *b
 
 	// Auto-bisect if test_cmd provided
 	if params.TestCmd != "" {
-		runOut, runErr := runBisectTest(ctx, params.TestCmd)
+		runOut, runErr := t.runBisectTest(ctx, params.TestCmd)
 		result.Log += runOut
 		if runErr != nil {
 			result.Stderr = runErr.Error() + "\n" + runOut
@@ -165,7 +170,7 @@ func (t *BisectTool) doMark(ctx context.Context, mark string, ref string, result
 	if ref != "" {
 		cmdArgs = append(cmdArgs, ref)
 	}
-	out, err := runGitCmd(ctx, cmdArgs...)
+	out, err := t.runGitCmd(ctx, cmdArgs...)
 	result.Log = out
 	if err != nil {
 		result.Stderr = err.Error()
@@ -183,7 +188,7 @@ func (t *BisectTool) doMark(ctx context.Context, mark string, ref string, result
 }
 
 func (t *BisectTool) doLog(ctx context.Context, result *bisectResult) {
-	out, err := runGitCmd(ctx, "bisect", "log")
+	out, err := t.runGitCmd(ctx, "bisect", "log")
 	result.Log = out
 	if err != nil {
 		result.Stderr = err.Error()
@@ -193,7 +198,7 @@ func (t *BisectTool) doLog(ctx context.Context, result *bisectResult) {
 }
 
 func (t *BisectTool) doReset(ctx context.Context, result *bisectResult) {
-	out, err := runGitCmd(ctx, "bisect", "reset")
+	out, err := t.runGitCmd(ctx, "bisect", "reset")
 	result.Log = out
 	result.Status = "reset"
 	if err != nil {
@@ -222,7 +227,7 @@ func (t *BisectTool) checkFound(ctx context.Context, result *bisectResult) {
 		return
 	}
 	// Check bisect log for "first bad commit"
-	out, err := runGitCmd(ctx, "bisect", "log")
+	out, err := t.runGitCmd(ctx, "bisect", "log")
 	if err != nil {
 		return
 	}
@@ -232,20 +237,25 @@ func (t *BisectTool) checkFound(ctx context.Context, result *bisectResult) {
 	}
 }
 
-func runGitCmd(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+func (t *BisectTool) runGitCmd(ctx context.Context, args ...string) (string, error) {
+	res, err := workspaceOf(t.WS, nil).Exec(ctx, ExecRequest{Command: "git", Args: args})
+	return res.Stdout, err
 }
 
-// runBisectTest runs a test command via git bisect run, using the
-// platform-appropriate shell wrapper.
-func runBisectTest(ctx context.Context, testCmd string) (string, error) {
-	var shellArgs []string
-	if runtime.GOOS == "windows" {
-		shellArgs = []string{"cmd", "/c", testCmd}
-	} else {
-		shellArgs = []string{"sh", "-c", testCmd}
+// runBisectTest runs a test command via git bisect run, wrapped in a shell.
+// git bisect run branches on exact exit codes (125 = skip, 126/127 = abort),
+// so the wrapper must propagate the command's exit status: cmd /c and sh -c
+// do, pwsh -Command collapses it to 0/1. A local workspace therefore keeps
+// the GOOS-selected wrapper, while a sandbox is POSIX by construction and
+// uses its own sh.
+func (t *BisectTool) runBisectTest(ctx context.Context, testCmd string) (string, error) {
+	ws := workspaceOf(t.WS, nil)
+	if ws.Local() {
+		if runtime.GOOS == "windows" {
+			return t.runGitCmd(ctx, "bisect", "run", "cmd", "/c", testCmd)
+		}
+		return t.runGitCmd(ctx, "bisect", "run", "sh", "-c", testCmd)
 	}
-	return runGitCmd(ctx, append([]string{"bisect", "run"}, shellArgs...)...)
+	shell, flag := ws.Shell()
+	return t.runGitCmd(ctx, "bisect", "run", shell, flag, testCmd)
 }

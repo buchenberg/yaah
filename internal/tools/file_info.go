@@ -3,8 +3,9 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
+	"io/fs"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/prompts"
@@ -13,11 +14,18 @@ import (
 // FileInfoTool returns file metadata without reading content.
 // Use before write/edit/delete to check existence, size, modtime — avoid
 // redundant work when another delegate already created or updated the file.
-type FileInfoTool struct{ PV *PathValidator }
+type FileInfoTool struct {
+	PV *PathValidator
+	WS Workspace
+}
 
-var _ PathValidatorSetter = (*FileInfoTool)(nil)
+var (
+	_ PathValidatorSetter = (*FileInfoTool)(nil)
+	_ WorkspaceSetter     = (*FileInfoTool)(nil)
+)
 
 func (t *FileInfoTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
+func (t *FileInfoTool) SetWorkspace(ws Workspace)          { t.WS = ws }
 
 func (t *FileInfoTool) Name() string { return "file_info" }
 func (t *FileInfoTool) Description() string {
@@ -55,15 +63,19 @@ func (t *FileInfoTool) Execute(ctx context.Context, args string) (string, error)
 	if params.FilePath == "" {
 		return "", fmt.Errorf("file_info: filePath is required")
 	}
-	resolved, err := resolvePathWithPV(t.PV, params.FilePath)
+	ws := workspaceOf(t.WS, t.PV)
+	resolved, err := ws.ResolvePath(params.FilePath)
 	if err != nil {
 		return "", err
 	}
 	params.FilePath = resolved
 
-	info, err := os.Stat(params.FilePath)
+	info, err := ws.Stat(ctx, params.FilePath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		// errors.Is (not os.IsNotExist) so a workspace whose Stat returns a
+		// wrapped fs.ErrNotExist — the sandbox does — still yields the clean
+		// {"exists":false} result instead of leaking shell text.
+		if errors.Is(err, fs.ErrNotExist) {
 			result := fileInfoResult{Exists: false}
 			b, _ := json.Marshal(result)
 			return string(b), nil

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -390,6 +391,41 @@ func TestRegistry_SetPathValidatorBackfills(t *testing.T) {
 	}
 }
 
+// unmigratedFSTool is a filesystem-touching tool that has not adopted
+// WorkspaceSetter, used to check that the isolation gate classifies the tool
+// inside a RecordingTool wrapper rather than the wrapper itself.
+type unmigratedFSTool struct{}
+
+func (unmigratedFSTool) Name() string                                    { return "legacy_fs" }
+func (unmigratedFSTool) Description() string                             { return "" }
+func (unmigratedFSTool) Schema() json.RawMessage                         { return nil }
+func (unmigratedFSTool) Execute(context.Context, string) (string, error) { return "", nil }
+func (unmigratedFSTool) filesystemTool()                                 {}
+
+// TestRegistry_IsolationGateUnwrapsRecordingTools pins that tools registered
+// through the conflict-tracking wrapper reach the gate: the wrapped tool's
+// markers decide migration, and SetWorkspace is forwarded so the tool inside
+// actually receives the workspace.
+func TestRegistry_IsolationGateUnwrapsRecordingTools(t *testing.T) {
+	legacy := NewEmptyRegistry()
+	legacy.Register(NewRecordingTool(unmigratedFSTool{}, nil))
+	if got := legacy.UnmigratedFilesystemTools(); len(got) != 1 || got[0] != "legacy_fs" {
+		t.Errorf("unmigrated = %v, want [legacy_fs]", got)
+	}
+
+	migrated := NewEmptyRegistry()
+	migrated.Register(NewRecordingTool(&WriteTool{}, nil))
+	if got := migrated.UnmigratedFilesystemTools(); len(got) != 0 {
+		t.Errorf("unmigrated = %v, want none for a migrated wrapped tool", got)
+	}
+
+	rec := NewRecordingTool(&WriteTool{}, nil)
+	rec.SetWorkspace(newLocalWorkspace(nil))
+	if wt, ok := rec.inner.(*WriteTool); !ok || wt.WS == nil {
+		t.Error("RecordingTool.SetWorkspace must reach the wrapped tool")
+	}
+}
+
 func TestReadTool_WorkspaceEnforced(t *testing.T) {
 	ws := t.TempDir()
 	outside := t.TempDir()
@@ -428,5 +464,82 @@ func TestWriteTool_WorkspaceEnforced(t *testing.T) {
 	}
 	if _, err := os.Stat(target); !os.IsNotExist(err) {
 		t.Errorf("file outside workspace was created despite rejection")
+	}
+}
+
+// TestPathValidator_RelativePathResolvesAgainstWorkDir pins the isolated-scope
+// behaviour: with a WorkDir set, a relative path addresses that directory, so a
+// sub-agent working in a worktree reads and writes the worktree.
+func TestPathValidator_RelativePathResolvesAgainstWorkDir(t *testing.T) {
+	ws := t.TempDir()
+	if real, err := filepath.EvalSymlinks(ws); err == nil {
+		ws = real
+	}
+
+	pv := NewPathValidator(ws, false, nil)
+	pv.WorkDir = ws
+
+	got, err := pv.ResolvePath("sub/file.txt")
+	if err != nil {
+		t.Fatalf("ResolvePath: %v", err)
+	}
+	want := filepath.Join(pv.WorkspaceRoot, "sub", "file.txt")
+	if got != want {
+		t.Errorf("resolved = %q, want %q", got, want)
+	}
+}
+
+// TestPathValidator_WithWorkspaceRootDerivesPolicy verifies the derivation used
+// for isolated sub-agents: the new root applies, policy is inherited, and the
+// approval cache is not shared.
+func TestPathValidator_WithWorkspaceRootDerivesPolicy(t *testing.T) {
+	base := NewPathValidator(t.TempDir(), true, []string{"*.pem"})
+	asked := 0
+	base.AskFn = func(path, reason string) bool {
+		asked++
+		return false
+	}
+
+	other := t.TempDir()
+	derived := base.WithWorkspaceRoot(other)
+
+	if derived.WorkspaceRoot == base.WorkspaceRoot {
+		t.Error("derived validator must use the new root")
+	}
+	if derived.WorkDir != derived.WorkspaceRoot {
+		t.Errorf("derived WorkDir = %q, want the new root %q", derived.WorkDir, derived.WorkspaceRoot)
+	}
+	if !derived.AllowHomeAccess {
+		t.Error("AllowHomeAccess must be inherited")
+	}
+	if len(derived.DenyPatterns) != 1 || derived.DenyPatterns[0] != "*.pem" {
+		t.Errorf("deny patterns not inherited: %v", derived.DenyPatterns)
+	}
+	if derived.AskFn == nil {
+		t.Fatal("AskFn must be inherited")
+	}
+
+	// Paths inside the derived root resolve.
+	if _, err := derived.ResolvePath(filepath.Join(other, "ok.txt")); err != nil {
+		t.Errorf("path inside the derived root rejected: %v", err)
+	}
+
+	// The original root is now outside. AskFn declines, so it must be rejected.
+	if _, err := derived.ResolvePath(filepath.Join(base.WorkspaceRoot, "f.txt")); err == nil {
+		t.Error("the original root must be outside the derived root")
+	}
+	if asked == 0 {
+		t.Error("AskFn should have been consulted for the outside path")
+	}
+
+	// Deny patterns still apply inside the derived root.
+	if _, err := derived.ResolvePath(filepath.Join(other, "key.pem")); err == nil {
+		t.Error("deny patterns must still apply under the derived root")
+	}
+
+	// The derived validator starts with an empty approval cache, so an
+	// exception granted in one scope cannot widen another.
+	if len(derived.approved) != 0 {
+		t.Errorf("derived validator approval cache = %v, want empty", derived.approved)
 	}
 }

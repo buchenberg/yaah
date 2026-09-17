@@ -66,6 +66,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime"
+	"sort"
+	"strings"
 )
 
 // ToolTimeoutError is returned when a tool's context deadline expires before
@@ -144,6 +146,12 @@ type Registry struct {
 	// execution begins.  When nil, tools fall back to legacy path
 	// resolution (~ expansion + Clean) for backward compatibility.
 	PathValidator *PathValidator
+
+	// Workspace is where tools read, write, and run commands. It is derived
+	// from PathValidator when only that is set, so migrated tools behave exactly
+	// as they did before workspaces existed. SetWorkspace overrides it with an
+	// isolated substrate.
+	Workspace Workspace
 }
 
 // leafTools is the single source of truth for the names and
@@ -215,29 +223,159 @@ func NewLeafTool(name string) Tool {
 	return nil
 }
 
-// Register adds a tool to the registry. If the registry has a
-// PathValidator and the tool implements PathValidatorSetter, the
-// validator is injected automatically.
+// Register adds a tool to the registry and injects the registry's workspace and
+// path validator if the tool wants them.
 func (r *Registry) Register(t Tool) {
 	r.tools[t.Name()] = t
 	r.generation++
-	// Auto-inject PathValidator if the tool wants one.
+	r.inject(t)
+}
+
+// inject hands the registry's context to one tool.
+//
+// Both are applied: tools not yet migrated to Workspace still need the
+// validator, while migrated tools use the workspace. That overlap is the
+// migration mechanism and lets the two coexist without every call site changing
+// twice.
+func (r *Registry) inject(t Tool) {
 	if r.PathValidator != nil {
 		if setter, ok := t.(PathValidatorSetter); ok {
 			setter.SetPathValidator(r.PathValidator)
 		}
 	}
-}
-
-// SetPathValidator sets the workspace-containment gate and backfills
-// any already-registered tools that implement PathValidatorSetter.
-func (r *Registry) SetPathValidator(pv *PathValidator) {
-	r.PathValidator = pv
-	for _, t := range r.tools {
-		if setter, ok := t.(PathValidatorSetter); ok {
-			setter.SetPathValidator(pv)
+	if r.Workspace != nil {
+		if setter, ok := t.(WorkspaceSetter); ok {
+			setter.SetWorkspace(r.Workspace)
 		}
 	}
+}
+
+// SetPathValidator sets the workspace-containment gate and backfills any
+// already-registered tools that implement PathValidatorSetter.
+//
+// It also derives a local workspace from the validator when none is set yet, so
+// migrated tools work without every caller having to set both. A later
+// SetWorkspace overrides it.
+func (r *Registry) SetPathValidator(pv *PathValidator) {
+	r.PathValidator = pv
+	if r.Workspace == nil {
+		r.Workspace = newLocalWorkspace(pv)
+	}
+	for _, t := range r.tools {
+		r.inject(t)
+	}
+}
+
+// FilesystemTool marks a tool that reads or writes files, or runs a process.
+//
+// It exists to track migration to the Workspace interface. The isolation gate in
+// SetWorkspace IS derived from these markers — via UnmigratedFilesystemTools
+// and HostOnlyFilesystemTools — so a filesystem tool that forgets the marker
+// (and implements no WorkspaceSetter) is invisible to the gate and silently
+// weakens isolation. Keep the markers current; they are the gate's eyes.
+type FilesystemTool interface {
+	filesystemTool()
+}
+
+// HostOnlyTool marks a tool that legitimately belongs to the host machine and
+// cannot be isolated:
+//
+//   - role manages sub-agent role files, which are harness configuration the
+//     host reads, not workspace content;
+//   - background_process drives the in-memory host process manager, and a
+//     container would need its own;
+//   - supervised_task provisions sandboxes, so it cannot run inside the
+//     isolation it creates.
+//
+// These are not migration debt. Registering one in a registry whose workspace is
+// isolated is a wiring error, so the gate reports it separately from the
+// not-yet-migrated list.
+type HostOnlyTool interface {
+	hostOnly()
+}
+
+// unwrapRecording resolves a RecordingTool (and any nesting of them) to the
+// tool it wraps. Classification must judge the wrapped tool: the wrapper only
+// delegates, so testing it would report tools registered through the
+// conflict-tracking wrapper as migrated and host-bound when they are neither.
+func unwrapRecording(t Tool) Tool {
+	for {
+		rt, ok := t.(*RecordingTool)
+		if !ok {
+			return t
+		}
+		t = rt.inner
+	}
+}
+
+// UnmigratedFilesystemTools returns the sorted names of registered tools that
+// touch the filesystem but do not yet route that through a Workspace, excluding
+// the host-only tools that never will. This is the real remaining work.
+func (r *Registry) UnmigratedFilesystemTools() []string {
+	var out []string
+	for name, t := range r.tools {
+		inner := unwrapRecording(t)
+		if _, isFS := inner.(FilesystemTool); !isFS {
+			continue
+		}
+		if _, ok := inner.(WorkspaceSetter); ok {
+			continue // migrated
+		}
+		if _, ok := inner.(HostOnlyTool); ok {
+			continue // host-bound by design
+		}
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// HostOnlyFilesystemTools returns the sorted names of registered host-only
+// tools. They are fine on a local workspace and disqualifying on an isolated one.
+func (r *Registry) HostOnlyFilesystemTools() []string {
+	var out []string
+	for name, t := range r.tools {
+		if _, ok := unwrapRecording(t).(HostOnlyTool); ok {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// SetWorkspace sets the execution substrate for already-registered tools.
+//
+// An isolated (non-local) workspace is currently refused. Two things disqualify a
+// registry from isolation: a tool that still reads and writes the host
+// filesystem, and a host-only tool that cannot work anywhere else. Isolating only
+// some tools would be worse than not isolating at all, because the caller would
+// believe the whole run was contained. The refusal is unconditional rather than
+// annotation-derived where it counts, so a missing marker cannot silently weaken
+// it; the markers only produce the diagnostic lists.
+func (r *Registry) SetWorkspace(ws Workspace) error {
+	if ws != nil && !ws.Local() {
+		unmigrated := r.UnmigratedFilesystemTools()
+		hostOnly := r.HostOnlyFilesystemTools()
+		if len(unmigrated) > 0 || len(hostOnly) > 0 {
+			var why []string
+			if len(unmigrated) > 0 {
+				why = append(why, fmt.Sprintf("%d tool(s) not yet migrated to Workspace [%s]",
+					len(unmigrated), strings.Join(unmigrated, ", ")))
+			}
+			if len(hostOnly) > 0 {
+				why = append(why, fmt.Sprintf("%d host-only tool(s) that cannot be isolated [%s]",
+					len(hostOnly), strings.Join(hostOnly, ", ")))
+			}
+			return fmt.Errorf("cannot select an isolated workspace: %s", strings.Join(why, "; "))
+		}
+	}
+	r.Workspace = ws
+	for _, t := range r.tools {
+		if setter, ok := t.(WorkspaceSetter); ok {
+			setter.SetWorkspace(ws)
+		}
+	}
+	return nil
 }
 
 // Generation returns a monotonically increasing counter that changes whenever

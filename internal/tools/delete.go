@@ -4,17 +4,23 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
-// DeleteTool removes a file from the local filesystem.
-type DeleteTool struct{ PV *PathValidator }
+// DeleteTool removes a file from the workspace.
+type DeleteTool struct {
+	PV *PathValidator
+	WS Workspace
+}
 
-var _ PathValidatorSetter = (*DeleteTool)(nil)
+var (
+	_ PathValidatorSetter = (*DeleteTool)(nil)
+	_ WorkspaceSetter     = (*DeleteTool)(nil)
+)
 
 func (t *DeleteTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
+func (t *DeleteTool) SetWorkspace(ws Workspace)          { t.WS = ws }
 
 func (t *DeleteTool) Name() string        { return "delete" }
 func (t *DeleteTool) Description() string { return prompts.ToolDescription("delete") }
@@ -41,13 +47,14 @@ func (t *DeleteTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.FilePath == "" {
 		return "", fmt.Errorf("delete: filePath is required")
 	}
-	resolved, err := resolvePathWithPV(t.PV, params.FilePath)
+	ws := workspaceOf(t.WS, t.PV)
+	resolved, err := ws.ResolvePath(params.FilePath)
 	if err != nil {
 		return "", err
 	}
 	params.FilePath = resolved
 
-	if err := os.Remove(params.FilePath); err != nil {
+	if err := ws.Remove(ctx, params.FilePath); err != nil {
 		return "", fmt.Errorf("delete: %w", err)
 	}
 	return fmt.Sprintf("Deleted %s", params.FilePath), nil

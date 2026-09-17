@@ -498,6 +498,30 @@ When an agent dispatches multiple parallel sub-agents in a single turn, those su
 
 **Observability:** Two hook event types are emitted: `conflict.check` (every turn when a tracker is present) and `conflict.detect` (when conflicts are found, with `conflict_files` count). When OTel is enabled, a `conflict.check` span appears in the trace waterfall as a child of the turn span.
 
+### Supervised execution and workspace isolation
+
+Files: `internal/tools/supervised_task.go`, `internal/tools/supervised_session.go`, `internal/tools/supervisor.go`, `internal/agent/runner/checkpoint.go`
+
+The `supervised_task` tool wraps a sub-agent run in **workspace checkpoints** via the `shepherd-kernel-go` sandbox abstraction, so work can be rolled back rather than merely reported. Two modes:
+
+- **Automatic** (`review: false`) — checkpoint, run, and on failure roll the workspace back and retry with guidance derived from the failure, up to `supervised_max_retries`.
+- **Review** (`review: true`) — an interactive session in which the orchestrator issues verdicts (`continue`, `rollback`, `fork`, `choose`, `review_diff`, `accept`, `abort`) through the `supervisor` tool.
+
+**Checkpoints.** `ShepherdTurnCheckpointer` (`internal/agent/runner/checkpoint.go`) adapts `shepherd.ScopeManager` to the loop's `TurnCheckpointer` interface. A checkpoint captures the workspace *and* the conversation, and a restore consumes it, so the two stay in step. Unit-start checkpoints are single-use by design; `continue` and `rollback` take a fresh one before the next dispatch. Restoring replaces the conversation seed, which is why a rollback restarts from the same context the sub-agent had at the unit boundary.
+
+**Workspace substrate.** Each scope holds a `shepherd.Sandbox`; the kernel is backend-agnostic and this is the seam:
+
+| Mode | Sandbox | Parent tree touched? | Discard |
+|---|---|---|---|
+| Shared (default) | `NewLocalGitSandbox` | Yes — variants run sequentially in it, reset to the fork point between runs | Causal only |
+| Isolated (`supervised_worktree`) | `NewWorktreeSandbox` | No — each variant gets its own worktree | Removes the worktree |
+
+**Confinement.** Isolation is only real if the sub-agent's tools actually operate in the worktree, so the dispatch carries `SubAgentParams.Workdir`. `buildSubAgentRegistry` turns that into a per-scope `PathValidator` — rooted at the worktree, inheriting deny patterns and the approval callback, with a fresh approval cache — and `bash`/`powershell` use it as `cmd.Dir`. Without that plumbing an isolated variant would read and mutate the parent tree while believing it was confined.
+
+**Teardown.** Worktrees are removed with `defer`, including on error, because a captured workspace state stays valid after teardown — worktrees share the repository's object store, so the winner can still be applied once its worktree is gone. A worktree left behind by a killed run is cleared and retried once on the next `Create`, and `git worktree prune` clears stale administrative entries.
+
+**Limits.** A worktree checks out tracked files only, so gitignored build inputs must be recreated by `supervised_worktree_bootstrap`. Isolation is filesystem-level: variants share the host process, network, and object store.
+
 ---
 
 ## Tool execution
@@ -529,6 +553,44 @@ Additional tools are registered by the CLI layer after `NewRegistry()`:
 - `background_process`
 - `spawn_subagent` (the task tool) and `list_subagents`
 - Any MCP tools from connected servers
+
+### Workspace seam (`internal/tools/workspace.go`)
+
+Every filesystem and process operation a tool performs goes through one interface, so a single tool implementation can run on the host during a normal session and inside an isolated substrate during a supervised run:
+
+```go
+type Workspace interface {
+    ResolvePath(path string) (string, error)   // containment
+    WorkDir() string                           // cwd for relative paths and commands
+    Local() bool                               // is this the host filesystem?
+    Shell() (string, string)                   // ("sh","-c") or ("pwsh","-Command")
+    ReadFile(ctx, path) ([]byte, error)
+    WriteFile(ctx, path, data, perm) error     // atomic
+    Stat(ctx, path) (fs.FileInfo, error)
+    Remove(ctx, path) error
+    MkdirAll(ctx, path, perm) error
+    Exec(ctx, ExecRequest) (ExecResult, error)
+}
+```
+
+Two implementations:
+
+| | Backing | Writes | Exec |
+|---|---|---|---|
+| `localWorkspace` | the host filesystem, through the session's `PathValidator` | temp file plus rename (crash-safe) | `exec.CommandContext`, combined output |
+| `sandboxWorkspace` (`workspace_sandbox.go`) | a `shepherd.Sandbox` | temp file plus rename **inside** the sandbox | in-band through the sandbox |
+
+**Injection.** `Registry` carries both a `PathValidator` and a `Workspace`. Setting only a validator — which every existing caller does — derives a `localWorkspace` from it, so migrating a tool needs no change at its construction site. Both are injected into each tool, because unmigrated tools still need the validator. `SetWorkspace` overrides the derived workspace with an isolated one.
+
+**Why this is the prerequisite for a container backend.** Pointing the tools at a host-visible mount would isolate the *files* while leaving the *processes* on the host, which defeats the purpose of a container. `sandboxWorkspace` therefore routes commands through the sandbox, and `PowerShellTool` refuses a non-local workspace through `requireLocal` rather than silently running the command somewhere the caller did not intend.
+
+**Migration status.** Every migratable filesystem tool now routes its I/O through a `Workspace` — 21 tools, including the process-spawning ones (`git`, `diff`, `go_mod`, `go_test`, `staticcheck`, `bisect`), none of which previously set a working directory, so they ran in the *yaah process's* cwd even when a sub-agent was isolated in a worktree. Routing them through `Workspace.Exec` fixes that as a side effect: they now run in the workspace directory.
+
+**Host-only by design (4).** `role` (manages harness role files the host reads), `background_process` (drives the in-memory host process manager), `supervised_task` (provisions sandboxes, so it cannot run inside the isolation it creates), and `go_refactor`, which reads the filesystem through `golang.org/x/tools` (`imports.Process`, `packages.Load`) — a path `Workspace` cannot intercept. Isolating it means reimplementing it on in-sandbox `gofmt`/`goimports` calls, not swapping calls.
+
+**Isolation gate.** `Registry.SetWorkspace` refuses a non-local workspace, reporting unmigrated and host-only tools as separate categories. The refusal is unconditional with respect to the markers, so a forgotten annotation cannot silently weaken it; the markers only produce those diagnostics. `TestRegistry_EveryToolIsClassified` requires every registered tool to be a `FilesystemTool`, a `HostOnlyTool`, or on a short deliberate non-filesystem allowlist, so an unclassified tool fails the build rather than becoming an isolation hole.
+
+Because the unmigrated list is now empty, the gate turns entirely on which host-only tools a registry happens to hold. The default `NewRegistry()` still refuses, because it contains `go_refactor`; a sub-agent registry whose role profile excludes the four host-only tools is accepted. That is the intended shape: the orchestrator runs on the host, and a dispatched sub-agent can run isolated.
 
 ### Tool execution flow (`executeAndCollect` — middleware path)
 

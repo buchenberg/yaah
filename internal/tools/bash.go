@@ -4,15 +4,30 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
-	"runtime"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
 // BashTool runs a shell command and returns its stdout.
-type BashTool struct{}
+//
+// Execution goes through the workspace, so the same tool runs on the host during
+// a normal session and inside an isolated substrate (a git worktree, or a
+// container) when a supervised run asks for one. The workspace supplies the
+// working directory and the shell; the tool supplies the command. Containment is
+// NOT enforced for shell commands.
+type BashTool struct {
+	PV *PathValidator
+	WS Workspace
+}
+
+var (
+	_ PathValidatorSetter = (*BashTool)(nil)
+	_ WorkspaceSetter     = (*BashTool)(nil)
+)
+
+func (t *BashTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
+func (t *BashTool) SetWorkspace(ws Workspace)          { t.WS = ws }
 
 func (t *BashTool) Name() string        { return "bash" }
 func (t *BashTool) Description() string { return prompts.ToolDescription("bash") }
@@ -55,19 +70,14 @@ func (t *BashTool) Execute(ctx context.Context, args string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	shell, shellArg := "sh", "-c"
-	if runtime.GOOS == "windows" {
-		shell, shellArg = "pwsh", "-Command"
-		if _, err := exec.LookPath("pwsh"); err != nil {
-			shell, shellArg = "powershell", "-Command"
-		}
-	}
-	cmd := exec.CommandContext(ctx, shell, shellArg, params.Command)
-	output, err := cmd.CombinedOutput()
+	// The workspace owns shell selection and the working directory; the tool
+	// supplies only the command text.
+	ws := workspaceOf(t.WS, t.PV)
+	res, err := ws.Exec(ctx, shellCommand(ws, params.Command))
 	if ctx.Err() == context.DeadlineExceeded {
 		return "", ToolTimeoutError{Tool: "bash", Timeout: timeout.String()}
 	}
-	output = truncateOutput(output)
+	output := truncateOutput([]byte(res.Stdout))
 	if err != nil {
 		return "", fmt.Errorf("bash: %w\n%s", err, string(output))
 	}

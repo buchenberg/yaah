@@ -252,7 +252,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// A tool-less profile is valid — some roles (e.g. grump) are
 		// designed to respond without calling any tools.
 
-		subReg := buildSubAgentRegistry(opts, profile, remainingDepth)
+		subReg := buildSubAgentRegistry(opts, profile, remainingDepth, params.Workdir)
 
 		b := resolveSubAgentBudget(params.MaxLoopCycles, params.MaxToolTurns, profile, opts.subCfg, role)
 		maxIter, maxTurns := b.Iterations, b.Turns
@@ -338,10 +338,12 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		}
 
 		// Create a scope for this sub-agent so the supervisor can
-		// inject guidance or halt it during execution.
+		// inject guidance or halt it during execution. The scope carries the
+		// sub-agent's workspace: its own worktree when the supervised session
+		// isolated this dispatch, otherwise the shared repository.
 		var subScope *shepherd.Scope
 		if mgr := tools.SharedScopeManager; mgr != nil {
-			subScope, _ = mgr.Create(subTraceID)
+			subScope, _ = mgr.Create(subTraceID, subAgentSandbox(opts, params.Workdir))
 		}
 
 		// Per-turn checkpointing is enabled per role (subagent.roles.<name>.
@@ -349,12 +351,8 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// sub-agent's own scope so turn rewinds never touch the supervised
 		// tool's attempt-level checkpoints.
 		var turnCk agent.TurnCheckpointer
-		if opts.subCfg.Roles[string(role)].TurnCheckpoints && subScope != nil {
-			repoPath := opts.defaults.SupervisedRepoPath
-			if repoPath == "" {
-				repoPath, _ = os.Getwd()
-			}
-			turnCk = NewShepherdTurnCheckpointer(tools.SharedScopeManager, subScope.ID(), repoPath)
+		if opts.subCfg.Roles[string(role)].TurnCheckpoints && subScope != nil && subScope.Sandbox() != nil {
+			turnCk = NewShepherdTurnCheckpointer(tools.SharedScopeManager, subScope.ID(), subScope.Sandbox())
 		}
 
 		subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{
@@ -509,12 +507,34 @@ func subAgentTimeoutResolver(subCfg config.SubAgentConfig) func(tools.SubAgentPa
 	}
 }
 
+// subAgentSandbox returns the workspace substrate for a sub-agent: its own
+// isolated worktree when the supervised session assigned one, otherwise the
+// shared repository.
+//
+// In the isolated case the worktree already exists — the supervised session
+// created it — so this sandbox is used for capture and apply only and never
+// calls Create. A nil return leaves the scope pure-causal, which makes its
+// workspace operations report ErrNoSandbox rather than silently doing nothing.
+func subAgentSandbox(opts taskRunnerOpts, workdir string) shepherd.Sandbox {
+	repoPath := opts.defaults.SupervisedRepoPath
+	if repoPath == "" {
+		repoPath, _ = os.Getwd()
+	}
+	if repoPath == "" {
+		return nil
+	}
+	if workdir != "" {
+		return shepherd.NewWorktreeSandbox(repoPath, workdir)
+	}
+	return shepherd.NewLocalGitSandbox(repoPath)
+}
+
 // buildSubAgentRegistry builds the tool registry for a sub-agent from
 // its role profile. If the profile includes the task tool and
 // remainingDepth > 0, a nested TaskTool is registered so the sub-agent
 // can spawn further workers. When remainingDepth == 0 the task tool is
 // omitted entirely.
-func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, remainingDepth int) *tools.Registry {
+func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, remainingDepth int, workdir string) *tools.Registry {
 	resolveTimeout := subAgentTimeoutResolver(opts.subCfg)
 	registerTask := func(reg *tools.Registry) {
 		reg.Register(&tools.TaskTool{
@@ -550,7 +570,15 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 
 	reg := tools.NewEmptyRegistry()
 	if opts.pathValidator != nil {
-		reg.SetPathValidator(opts.pathValidator)
+		// An isolated sub-agent gets a validator rooted at its own checkout, so
+		// its file tools are contained there and its shell runs there. Policy
+		// (deny patterns, home-access, approval callback) is inherited; the
+		// derived validator starts with a fresh approval cache.
+		pv := opts.pathValidator
+		if workdir != "" {
+			pv = pv.WithWorkspaceRoot(workdir)
+		}
+		reg.SetPathValidator(pv)
 	}
 	for _, name := range profile.Tools {
 		if name == "spawn_subagent" {

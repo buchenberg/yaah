@@ -3,7 +3,7 @@ module github.com/buchenberg/yaah
 go 1.25.8
 
 require (
-	github.com/buchenberg/shepherd-kernel-go v0.3.2
+	github.com/buchenberg/shepherd-kernel-go v0.4.0
 	github.com/buchenberg/tviewmd v0.2.0
 	github.com/gdamore/tcell/v2 v2.13.10
 	github.com/lsferreira42/figlet-go v0.0.2-beta

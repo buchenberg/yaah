@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -20,11 +18,18 @@ import (
 const grepMaxResultLen = 8192
 
 // GrepTool searches file contents using ripgrep with a Go-native fallback.
-type GrepTool struct{ PV *PathValidator }
+type GrepTool struct {
+	PV *PathValidator
+	WS Workspace
+}
 
-var _ PathValidatorSetter = (*GrepTool)(nil)
+var (
+	_ PathValidatorSetter = (*GrepTool)(nil)
+	_ WorkspaceSetter     = (*GrepTool)(nil)
+)
 
 func (t *GrepTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
+func (t *GrepTool) SetWorkspace(ws Workspace)          { t.WS = ws }
 
 func (t *GrepTool) Name() string        { return "grep" }
 func (t *GrepTool) Description() string { return prompts.ToolDescription("grep") }
@@ -56,7 +61,8 @@ func (t *GrepTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.Path == "" {
 		params.Path = "."
 	}
-	resolved, err := resolvePathWithPV(t.PV, params.Path)
+	ws := workspaceOf(t.WS, t.PV)
+	resolved, err := ws.ResolvePath(params.Path)
 	if err != nil {
 		return "", err
 	}
@@ -75,16 +81,21 @@ func (t *GrepTool) execRipgrep(ctx context.Context, pattern, path, include strin
 	}
 	rgArgs = append(rgArgs, "--", path)
 
-	cmd := exec.CommandContext(ctx, "rg", rgArgs...)
-	output, err := cmd.CombinedOutput()
+	ws := workspaceOf(t.WS, t.PV)
+	res, err := ws.Exec(ctx, ExecRequest{Command: "rg", Args: rgArgs})
+	// ripgrep uses exit 1 to mean "no matches", which is not a failure. Check the
+	// code before the error: a local workspace reports both.
+	if res.ExitCode == 1 {
+		return "No matches found.", nil
+	}
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			return "No matches found.", nil
-		}
-		return "", fmt.Errorf("grep: %w\n%s", err, string(output))
+		return "", fmt.Errorf("grep: %w\n%s", err, res.Stdout)
+	}
+	if res.ExitCode != 0 {
+		return "", fmt.Errorf("grep: rg exited %d\n%s", res.ExitCode, res.Stdout)
 	}
 
-	result := string(output)
+	result := res.Stdout
 	if result == "" {
 		return "No matches found.", nil
 	}
@@ -113,7 +124,8 @@ func (t *GrepTool) grepNative(ctx context.Context, pattern, path, include string
 	var buf bytes.Buffer
 	matchCount := 0
 
-	walkErr := filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
+	ws := workspaceOf(t.WS, t.PV)
+	walkErr := walkWorkspace(ctx, ws, path, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -133,13 +145,12 @@ func (t *GrepTool) grepNative(ctx context.Context, pattern, path, include string
 			return nil
 		}
 
-		file, ferr := os.Open(p)
+		data, ferr := ws.ReadFile(ctx, p)
 		if ferr != nil {
 			return nil
 		}
-		defer file.Close()
 
-		scanner := bufio.NewScanner(file)
+		scanner := bufio.NewScanner(bytes.NewReader(data))
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		lineNum := 0
 		for scanner.Scan() {

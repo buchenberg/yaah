@@ -17,6 +17,12 @@ type PathValidator struct {
 	// must stay within. Empty means "no restriction" (open access).
 	WorkspaceRoot string
 
+	// WorkDir is the directory relative paths resolve against and shell
+	// commands execute in. Empty means the process working directory (the
+	// legacy behaviour). An isolated sub-agent sets this to its worktree so
+	// its file tools and shell address that checkout.
+	WorkDir string
+
 	// AllowHomeAccess enables ~ expansion.  When false, paths starting with
 	// ~ are rejected outright.
 	AllowHomeAccess bool
@@ -61,6 +67,23 @@ func NewPathValidator(workspaceRoot string, allowHome bool, denyPatterns []strin
 	}
 }
 
+// WithWorkspaceRoot derives a validator for a different workspace root, used by
+// isolated sub-agents whose checkout lives somewhere other than the session
+// workspace (for example a git worktree).
+//
+// Policy is inherited — AllowHomeAccess, DenyPatterns, and AskFn carry over —
+// but the approval cache is deliberately fresh, so an exception granted in one
+// scope cannot silently widen another scope's access.
+func (pv *PathValidator) WithWorkspaceRoot(root string) *PathValidator {
+	if pv == nil {
+		return NewPathValidator(root, false, nil)
+	}
+	derived := NewPathValidator(root, pv.AllowHomeAccess, pv.DenyPatterns)
+	derived.AskFn = pv.AskFn
+	derived.WorkDir = derived.WorkspaceRoot
+	return derived
+}
+
 // ResolvePath validates and resolves a user-supplied file path.
 //
 // Steps (in order):
@@ -90,6 +113,12 @@ func (pv *PathValidator) ResolvePath(input string) (string, error) {
 	}
 
 	// ── 2. Absolute path ──
+	// Relative inputs resolve against the session working directory when one is
+	// configured, so a sub-agent running in an isolated checkout addresses that
+	// checkout's files. With no WorkDir the process cwd applies (legacy).
+	if pv.WorkDir != "" && !filepath.IsAbs(input) {
+		input = filepath.Join(pv.WorkDir, input)
+	}
 	abs, err := filepath.Abs(input)
 	if err != nil {
 		return "", fmt.Errorf("cannot resolve path %q: %w", input, err)

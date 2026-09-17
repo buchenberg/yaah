@@ -69,11 +69,12 @@ func benchCheckpointer(b *testing.B, repo string) *ShepherdTurnCheckpointer {
 	}
 	b.Cleanup(func() { store.Close() })
 	mgr := shepherd.NewScopeManager(store)
-	scope, err := mgr.Create("bench")
+	sb := shepherd.NewLocalGitSandbox(repo)
+	scope, err := mgr.Create("bench", sb)
 	if err != nil {
 		b.Fatalf("create scope: %v", err)
 	}
-	return NewShepherdTurnCheckpointer(mgr, scope.ID(), repo)
+	return NewShepherdTurnCheckpointer(mgr, scope.ID(), sb)
 }
 
 // BenchmarkTurnCheckpoint_CleanTree measures the common case: the turn

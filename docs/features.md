@@ -151,7 +151,7 @@ Here's what I can reach for directly:
 | `todowrite` | Track in-flight tasks |
 | `memory_search`, `memory_add`, `memory_update`, `memory_delete`, `memory_search_sessions` | Long-term memory |
 | `spawn_subagent`, `list_subagents` | Team management |
-| `supervised_task`, `supervisor` | Checkpointed sub-agent runs: automatic rollback+retry, or interactive review sessions (continue/rollback/fork/choose/review_diff/accept/abort) |
+| `supervised_task`, `supervisor` | Checkpointed sub-agent runs: automatic rollback+retry, or interactive review sessions (continue/rollback/fork/choose/review_diff/accept/abort). Fork variants can be isolated in their own git worktrees (`supervised_worktree`) so a discarded branch cannot touch the parent tree |
 
 ## OpenTelemetry observability
 

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -14,11 +13,18 @@ import (
 )
 
 // SedTool performs regex search and replacement across files.
-type SedTool struct{ PV *PathValidator }
+type SedTool struct {
+	PV *PathValidator
+	WS Workspace
+}
 
-var _ PathValidatorSetter = (*SedTool)(nil)
+var (
+	_ PathValidatorSetter = (*SedTool)(nil)
+	_ WorkspaceSetter     = (*SedTool)(nil)
+)
 
 func (t *SedTool) SetPathValidator(pv *PathValidator) { t.PV = pv }
+func (t *SedTool) SetWorkspace(ws Workspace)          { t.WS = ws }
 
 func (t *SedTool) Name() string { return "sed" }
 func (t *SedTool) Description() string {
@@ -63,13 +69,14 @@ func (t *SedTool) Execute(ctx context.Context, args string) (string, error) {
 	if params.Path == "" {
 		return "", fmt.Errorf("sed: path is required")
 	}
-	resolved, err := resolvePathWithPV(t.PV, params.Path)
+	ws := workspaceOf(t.WS, t.PV)
+	resolved, err := ws.ResolvePath(params.Path)
 	if err != nil {
 		return "", err
 	}
 	params.Path = resolved
 
-	files, err := collectFiles(params.Path, params.Include)
+	files, err := collectFiles(ctx, ws, params.Path, params.Include)
 	if err != nil {
 		return "", fmt.Errorf("sed: %w", err)
 	}
@@ -81,7 +88,7 @@ func (t *SedTool) Execute(ctx context.Context, args string) (string, error) {
 	totalHits := 0
 
 	for _, fp := range files {
-		data, readErr := os.ReadFile(fp)
+		data, readErr := ws.ReadFile(ctx, fp)
 		if readErr != nil {
 			results = append(results, fmt.Sprintf("%s: %v", fp, readErr))
 			continue
@@ -101,7 +108,7 @@ func (t *SedTool) Execute(ctx context.Context, args string) (string, error) {
 		}
 
 		replaced := re.ReplaceAllString(content, params.Replacement)
-		if err := atomicWriteFile(fp, []byte(replaced), 0o644); err != nil {
+		if err := ws.WriteFile(ctx, fp, []byte(replaced), 0o644); err != nil {
 			results = append(results, fmt.Sprintf("%s: write error: %v", fp, err))
 			continue
 		}
@@ -121,8 +128,8 @@ func (t *SedTool) Execute(ctx context.Context, args string) (string, error) {
 		totalHits, len(files), strings.Join(results, "\n")), nil
 }
 
-func collectFiles(path, include string) ([]string, error) {
-	fi, err := os.Stat(path)
+func collectFiles(ctx context.Context, ws Workspace, path, include string) ([]string, error) {
+	fi, err := ws.Stat(ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +141,7 @@ func collectFiles(path, include string) ([]string, error) {
 	}
 
 	var files []string
-	err = filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
+	err = walkWorkspace(ctx, ws, path, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

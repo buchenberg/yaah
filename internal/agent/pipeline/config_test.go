@@ -166,7 +166,7 @@ func TestInitShepherdInfrastructure(t *testing.T) {
 	}
 
 	// The scope manager creates scopes over the initialized store.
-	scope, err := mgr.Create("init-test")
+	scope, err := mgr.Create("init-test", nil)
 	if err != nil {
 		t.Fatalf("mgr.Create: %v", err)
 	}

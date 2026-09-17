@@ -144,6 +144,24 @@ type Defaults struct {
 	// directory at execution time.
 	SupervisedRepoPath string `yaml:"supervised_repo_path"`
 
+	// SupervisedWorktree enables per-variant git-worktree isolation for
+	// supervised_task review sessions. When false (the default) fork variants
+	// run sequentially in the shared repository, reset to the fork point
+	// between runs. When true each variant runs in its own detached worktree,
+	// so a discarded variant cannot touch the parent tree.
+	SupervisedWorktree bool `yaml:"supervised_worktree"`
+
+	// SupervisedWorktreeRoot is the parent directory for variant worktrees.
+	// Empty (unset) uses a "shepherd-worktrees" directory beside the
+	// repository, outside its tracked tree.
+	SupervisedWorktreeRoot string `yaml:"supervised_worktree_root"`
+
+	// SupervisedWorktreeBootstrap is a shell command run inside each variant
+	// worktree after it is created. A git worktree checks out tracked files
+	// only, so a repo whose build needs gitignored artifacts (node_modules,
+	// build caches, .env) must recreate them here, for example "npm ci".
+	SupervisedWorktreeBootstrap string `yaml:"supervised_worktree_bootstrap"`
+
 	// TurnCheckpointMax caps live turn checkpoints per sub-agent run;
 	// the oldest are pruned when the cap is reached. 0 = unlimited.
 	// (Per-turn checkpointing itself is enabled per role via
@@ -420,6 +438,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.Agent.Default.SupervisedRepoPath != "" {
 		cfg.Agent.Default.SupervisedRepoPath = expandHomeDir(cfg.Agent.Default.SupervisedRepoPath)
+	}
+	if cfg.Agent.Default.SupervisedWorktreeRoot != "" {
+		cfg.Agent.Default.SupervisedWorktreeRoot = expandHomeDir(cfg.Agent.Default.SupervisedWorktreeRoot)
 	}
 
 	return cfg, nil

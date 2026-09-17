@@ -122,6 +122,12 @@ linked docs):
   and an in-memory span buffer. Plus Shepherd execution traces: every tool
   call and turn boundary recorded to a durable, inspectable, content-addressed
   store. → [features.md](./docs/features.md) · [otel-setup.md](./docs/otel-setup.md)
+- **Supervised sub-agents** — `supervised_task` runs a role with a rollback
+  point: checkpointed workspace *and* conversation, automatic
+  rollback-and-retry, and interactive review verdicts
+  (`continue`/`rollback`/`fork`/`choose`/`accept`/`abort`). Fork variants can run
+  in isolated git worktrees, so a discarded branch never touches your tree.
+  → [sub-agents.md](./docs/sub-agents.md) · [architecture.md](./docs/architecture.md)
 - **Persistence** — SQLite sessions + memory with FTS5 full-text search
   and optional vector embeddings for semantic recall.
 - **Providers** — any OpenAI-compatible API plus native Anthropic Messages
