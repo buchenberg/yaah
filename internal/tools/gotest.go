@@ -189,7 +189,11 @@ func (t *GoTestTool) Execute(ctx context.Context, args string) (string, error) {
 				result.Coverage = strings.TrimSpace(lines[len(lines)-1])
 			}
 		}
-		_ = ws.Remove(ctx, coverFile)
+		// coverFile is relative to the command's working directory (the
+		// workspace), so resolve it against ws.WorkDir(): a bare relative path
+		// would be resolved against the process cwd instead, leaking the
+		// profile in a worktree and risking deletion of an unrelated file.
+		_ = ws.Remove(ctx, ws.Join(ws.WorkDir(), coverFile))
 	}
 
 	outBytes, _ := json.MarshalIndent(result, "", "  ")

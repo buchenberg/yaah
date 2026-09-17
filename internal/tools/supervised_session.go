@@ -648,15 +648,18 @@ func (s *supervisedSession) runIsolatedVariant(
 	}
 	defer func() { _ = sb.Destroy(context.WithoutCancel(ctx)) }()
 
+	// Seed the checkout with the parent's exact state at the fork point before
+	// bootstrapping. The bootstrap installs from tracked lockfiles that Apply
+	// restores, so running it against HEAD would provision the wrong revision,
+	// and Apply would then overwrite the gitignored artifacts bootstrap created.
+	if err := sb.Apply(ctx, forkState); err != nil {
+		return nil, fmt.Errorf("seed fork state: %w", err)
+	}
+
 	if s.runtime.WorktreeBootstrap != "" {
 		if err := runWorktreeBootstrap(ctx, wtPath, s.runtime.WorktreeBootstrap); err != nil {
 			return nil, fmt.Errorf("bootstrap: %w", err)
 		}
-	}
-
-	// Seed the checkout with the parent's exact state at the fork point.
-	if err := sb.Apply(ctx, forkState); err != nil {
-		return nil, fmt.Errorf("seed fork state: %w", err)
 	}
 
 	return s.runVariantIn(ctx, variantWorkspace{sb: sb, workdir: wtPath}, prompt, forkConv, forkState), nil

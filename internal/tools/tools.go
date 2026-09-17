@@ -294,19 +294,34 @@ type HostOnlyTool interface {
 	hostOnly()
 }
 
+// unwrapRecording resolves a RecordingTool (and any nesting of them) to the
+// tool it wraps. Classification must judge the wrapped tool: the wrapper only
+// delegates, so testing it would report tools registered through the
+// conflict-tracking wrapper as migrated and host-bound when they are neither.
+func unwrapRecording(t Tool) Tool {
+	for {
+		rt, ok := t.(*RecordingTool)
+		if !ok {
+			return t
+		}
+		t = rt.inner
+	}
+}
+
 // UnmigratedFilesystemTools returns the sorted names of registered tools that
 // touch the filesystem but do not yet route that through a Workspace, excluding
 // the host-only tools that never will. This is the real remaining work.
 func (r *Registry) UnmigratedFilesystemTools() []string {
 	var out []string
 	for name, t := range r.tools {
-		if _, isFS := t.(FilesystemTool); !isFS {
+		inner := unwrapRecording(t)
+		if _, isFS := inner.(FilesystemTool); !isFS {
 			continue
 		}
-		if _, ok := t.(WorkspaceSetter); ok {
+		if _, ok := inner.(WorkspaceSetter); ok {
 			continue // migrated
 		}
-		if _, ok := t.(HostOnlyTool); ok {
+		if _, ok := inner.(HostOnlyTool); ok {
 			continue // host-bound by design
 		}
 		out = append(out, name)
@@ -320,7 +335,7 @@ func (r *Registry) UnmigratedFilesystemTools() []string {
 func (r *Registry) HostOnlyFilesystemTools() []string {
 	var out []string
 	for name, t := range r.tools {
-		if _, ok := t.(HostOnlyTool); ok {
+		if _, ok := unwrapRecording(t).(HostOnlyTool); ok {
 			out = append(out, name)
 		}
 	}

@@ -99,9 +99,9 @@ func (t *StaticcheckTool) Execute(ctx context.Context, args string) (string, err
 	if runVet {
 		vetArgs := append([]string{"vet", params.Packages}, params.Flags...)
 		res, _ := ws.Exec(ctx, ExecRequest{Command: "go", Args: vetArgs})
-		// ExitCode < 0 means the command never ran. A non-zero exit means vet
-		// found issues, which is a normal result to parse.
-		result.VetAvailable = res.ExitCode >= 0
+		// A missing go exits 127 from the shell, and a host exec failure
+		// reports -1; both mean vet never ran, unlike exit 1 ("issues found").
+		result.VetAvailable = executableExit(res.ExitCode)
 		if !result.VetAvailable {
 			result.Stderr += "go vet is not available in this workspace\n"
 		}
@@ -115,11 +115,10 @@ func (t *StaticcheckTool) Execute(ctx context.Context, args string) (string, err
 		// Resolving the binary with LookPath first would check the *host* PATH,
 		// which is the wrong machine once a workspace can be isolated. Attempting
 		// the run and inspecting the exit code asks the right machine instead.
-		if res.ExitCode < 0 {
-			result.StaticcheckAvailable = false
+		result.StaticcheckAvailable = executableExit(res.ExitCode)
+		if !result.StaticcheckAvailable {
 			result.Stderr += "staticcheck not found in this workspace — install with: go install honnef.co/go/tools/cmd/staticcheck@latest\n"
 		} else {
-			result.StaticcheckAvailable = true
 			parseDiagnostics(res.Stdout, "staticcheck", result)
 		}
 	}
@@ -171,4 +170,21 @@ func classifySeverity(msg string) string {
 		return "error"
 	}
 	return "warning"
+}
+
+// executableExit reports whether an exit code means the analyzer itself ran, as
+// opposed to the shell failing to find or invoke it. A missing binary in a
+// sandbox exits 127 (126 when present but not executable, 125 when the shell
+// itself fails), while a failed host exec reports -1. Treating those as
+// available would report zero diagnostics and a clean bill of health for a
+// tool that never ran.
+func executableExit(code int) bool {
+	if code < 0 {
+		return false
+	}
+	switch code {
+	case 125, 126, 127:
+		return false
+	}
+	return true
 }

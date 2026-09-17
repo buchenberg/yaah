@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -387,6 +388,41 @@ func TestRegistry_SetPathValidatorBackfills(t *testing.T) {
 	}
 	if wt.PV == nil {
 		t.Error("Register after SetPathValidator did not auto-inject")
+	}
+}
+
+// unmigratedFSTool is a filesystem-touching tool that has not adopted
+// WorkspaceSetter, used to check that the isolation gate classifies the tool
+// inside a RecordingTool wrapper rather than the wrapper itself.
+type unmigratedFSTool struct{}
+
+func (unmigratedFSTool) Name() string                                    { return "legacy_fs" }
+func (unmigratedFSTool) Description() string                             { return "" }
+func (unmigratedFSTool) Schema() json.RawMessage                         { return nil }
+func (unmigratedFSTool) Execute(context.Context, string) (string, error) { return "", nil }
+func (unmigratedFSTool) filesystemTool()                                 {}
+
+// TestRegistry_IsolationGateUnwrapsRecordingTools pins that tools registered
+// through the conflict-tracking wrapper reach the gate: the wrapped tool's
+// markers decide migration, and SetWorkspace is forwarded so the tool inside
+// actually receives the workspace.
+func TestRegistry_IsolationGateUnwrapsRecordingTools(t *testing.T) {
+	legacy := NewEmptyRegistry()
+	legacy.Register(NewRecordingTool(unmigratedFSTool{}, nil))
+	if got := legacy.UnmigratedFilesystemTools(); len(got) != 1 || got[0] != "legacy_fs" {
+		t.Errorf("unmigrated = %v, want [legacy_fs]", got)
+	}
+
+	migrated := NewEmptyRegistry()
+	migrated.Register(NewRecordingTool(&WriteTool{}, nil))
+	if got := migrated.UnmigratedFilesystemTools(); len(got) != 0 {
+		t.Errorf("unmigrated = %v, want none for a migrated wrapped tool", got)
+	}
+
+	rec := NewRecordingTool(&WriteTool{}, nil)
+	rec.SetWorkspace(newLocalWorkspace(nil))
+	if wt, ok := rec.inner.(*WriteTool); !ok || wt.WS == nil {
+		t.Error("RecordingTool.SetWorkspace must reach the wrapped tool")
 	}
 }
 

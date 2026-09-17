@@ -235,12 +235,40 @@ func requireLocal(ws Workspace, tool string) error {
 }
 
 // walkWorkspace walks a workspace tree depth-first, mirroring
-// filepath.WalkDir's contract: fn is called for every entry; returning
-// fs.SkipDir from a directory entry skips its contents, and returning it from
-// a file entry skips the remaining files in that directory. An unreadable
+// filepath.WalkDir's contract: fn is called for the root and every entry;
+// returning fs.SkipDir from a directory skips its contents, and returning it
+// from a file entry skips the remaining files in that directory. An unreadable
 // directory is reported through fn rather than aborting the walk, so callers
 // keep the error-handling shape they had with WalkDir.
 func walkWorkspace(
+	ctx context.Context,
+	ws Workspace,
+	root string,
+	fn func(path string, d fs.DirEntry, err error) error,
+) error {
+	info, err := ws.Stat(ctx, root)
+	if err != nil {
+		return fn(root, nil, err)
+	}
+	// WalkDir invokes fn for the root before descending. Without this, a root
+	// that is a file is never offered to fn, and callers that ignore walk
+	// errors report "no matches" for a path that plainly matches.
+	if err := fn(root, infoDirEntry{info: info}, nil); err != nil {
+		if errors.Is(err, fs.SkipDir) {
+			return nil
+		}
+		return err
+	}
+	if !info.IsDir() {
+		return nil
+	}
+	return walkChildren(ctx, ws, root, fn)
+}
+
+// walkChildren visits root's entries depth-first. It is separate from
+// walkWorkspace so recursing does not re-stat a directory the caller already
+// classified.
+func walkChildren(
 	ctx context.Context,
 	ws Workspace,
 	root string,
@@ -262,10 +290,20 @@ func walkWorkspace(
 			continue
 		}
 		if e.IsDir() {
-			if err := walkWorkspace(ctx, ws, p, fn); err != nil {
+			if err := walkChildren(ctx, ws, p, fn); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
 }
+
+// infoDirEntry adapts an fs.FileInfo to fs.DirEntry for a walk root, which has
+// no directory entry of its own. Every method answers from the stat the walk
+// already performed.
+type infoDirEntry struct{ info fs.FileInfo }
+
+func (e infoDirEntry) Name() string               { return e.info.Name() }
+func (e infoDirEntry) IsDir() bool                { return e.info.IsDir() }
+func (e infoDirEntry) Type() fs.FileMode          { return e.info.Mode().Type() }
+func (e infoDirEntry) Info() (fs.FileInfo, error) { return e.info, nil }

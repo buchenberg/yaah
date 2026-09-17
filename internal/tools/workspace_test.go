@@ -490,8 +490,17 @@ func TestSandboxWorkspace_WriteFileIsAtomicInBand(t *testing.T) {
 		t.Errorf("command = %q, want sh", req.Command)
 	}
 	script := req.Args[1]
-	if !strings.Contains(script, "mv -f") || !strings.Contains(script, ".tmp.") {
-		t.Errorf("script must write a temp file and rename it: %q", script)
+	if !strings.Contains(script, "mktemp") || !strings.Contains(script, "mv -f") {
+		t.Errorf("script must create a fresh temp file and rename it: %q", script)
+	}
+	if strings.Contains(script, ".tmp.$$") {
+		t.Errorf("temp name must not be predictable from the pid: %q", script)
+	}
+	if !strings.Contains(script, "trap") {
+		t.Errorf("script must clean up the temp file on failure: %q", script)
+	}
+	if strings.Contains(script, "mkdir -p") {
+		t.Errorf("script must not create parent directories the host would reject: %q", script)
 	}
 	if !strings.Contains(script, `"$1"`) {
 		t.Errorf("script must take the path from $1, got %q", script)
@@ -571,12 +580,13 @@ func TestSandboxWorkspace_NonZeroExitIsAnError(t *testing.T) {
 	}
 }
 
-// TestSandboxWorkspace_ReadDirIncludesDotfiles pins that the in-band listing
-// surfaces hidden entries: os.ReadDir returns them on the host, and a sandbox
-// that silently drops ".env" or ".github" would make glob and grep miss files
-// the caller asked about.
-func TestSandboxWorkspace_ReadDirIncludesDotfiles(t *testing.T) {
-	sb := &fakeSandbox{stdout: ".env\n.git/\nREADME.md\nsrc/\n"}
+// TestSandboxWorkspace_ReadDirIsTypedAndNewlineSafe pins that the in-band
+// listing matches os.ReadDir: dotfiles are present, a filename containing a
+// newline stays one entry, and the entry type is exposed so the walkers'
+// d.Type()&fs.ModeSymlink guards still work.
+func TestSandboxWorkspace_ReadDirIsTypedAndNewlineSafe(t *testing.T) {
+	// find -printf '%y\0%f\0' emits type char, NUL, name, NUL.
+	sb := &fakeSandbox{stdout: "f\x00.env\x00d\x00.git\x00f\x00README.md\x00d\x00src\x00l\x00link\x00f\x00weird\nname.txt\x00"}
 	ws := newSandboxWS(sb)
 
 	entries, err := ws.ReadDir(context.Background(), "/workspace")
@@ -587,25 +597,134 @@ func TestSandboxWorkspace_ReadDirIncludesDotfiles(t *testing.T) {
 		t.Fatalf("execs = %d, want 1", len(sb.execs))
 	}
 	// ReadDir shells out via `sh -c`, so the listing flags live in the script.
-	if script := sb.execs[0].Args[1]; !strings.Contains(script, "ls -1Ap") {
-		t.Errorf("listing script %q must use ls -1Ap (dotfiles included, . and .. excluded)", script)
+	script := sb.execs[0].Args[1]
+	if !strings.Contains(script, "find") || !strings.Contains(script, `\0`) || !strings.Contains(script, "-mindepth 1 -maxdepth 1") {
+		t.Errorf("listing script %q must use a NUL-delimited typed find", script)
 	}
 
-	byName := map[string]bool{}
+	byName := map[string]fs.DirEntry{}
 	for _, e := range entries {
-		byName[e.Name()] = e.IsDir()
+		byName[e.Name()] = e
 	}
-	for name, wantDir := range map[string]bool{
-		".env": false, ".git": true, "README.md": false, "src": true,
+	for _, tc := range []struct {
+		name    string
+		dir     bool
+		symlink bool
+	}{
+		{".env", false, false},
+		{".git", true, false},
+		{"README.md", false, false},
+		{"src", true, false},
+		{"link", false, true},
+		{"weird\nname.txt", false, false},
 	} {
-		got, ok := byName[name]
+		e, ok := byName[tc.name]
 		if !ok {
-			t.Errorf("entry %q missing from listing", name)
+			t.Errorf("entry %q missing from listing", tc.name)
 			continue
 		}
-		if got != wantDir {
-			t.Errorf("entry %q IsDir = %v, want %v", name, got, wantDir)
+		if e.IsDir() != tc.dir {
+			t.Errorf("entry %q IsDir = %v, want %v", tc.name, e.IsDir(), tc.dir)
 		}
+		if got := e.Type()&fs.ModeSymlink != 0; got != tc.symlink {
+			t.Errorf("entry %q symlink = %v, want %v (Type = %v)", tc.name, got, tc.symlink, e.Type())
+		}
+	}
+}
+
+// TestSandboxWorkspace_ExecNonZeroExitIsAnError pins error parity with the host:
+// a command that ran and exited non-zero returns an error (and a readable
+// ExitCode), so every `if err != nil` failure check in the tool set keeps
+// working in an isolated workspace. Transport failure is a separate case with
+// ExitCode -1.
+func TestSandboxWorkspace_ExecNonZeroExitIsAnError(t *testing.T) {
+	sb := &fakeSandbox{exit: 3, stdout: "boom"}
+	ws := newSandboxWS(sb)
+
+	res, err := ws.Exec(context.Background(), ExecRequest{Command: "go", Args: []string{"build"}})
+	if err == nil {
+		t.Fatal("a non-zero exit must surface as an error, matching localWorkspace")
+	}
+	if res.ExitCode != 3 {
+		t.Errorf("ExitCode = %d, want 3", res.ExitCode)
+	}
+	if res.Stdout != "boom" {
+		t.Errorf("Stdout = %q, want the command output", res.Stdout)
+	}
+}
+
+// TestSandboxWorkspace_StatReportsNotExistAndTypes pins two fidelity points:
+// a missing path maps to fs.ErrNotExist (so callers use errors.Is), and the
+// mode carries type/setuid bits rather than only the low permission bits.
+func TestSandboxWorkspace_StatReportsNotExistAndTypes(t *testing.T) {
+	missing := &fakeSandbox{exit: 42, stderr: "No such file or directory"}
+	if _, err := newSandboxWS(missing).Stat(context.Background(), "/workspace/nope"); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("Stat error = %v, want fs.ErrNotExist", err)
+	}
+
+	dirInfo, err := newSandboxWS(&fakeSandbox{stdout: "directory|4096|755|1700000000"}).
+		Stat(context.Background(), "/workspace/d")
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if !dirInfo.Mode().IsDir() {
+		t.Errorf("Mode() = %v, want a directory mode", dirInfo.Mode())
+	}
+	if dirInfo.Mode().Perm() != 0o755 {
+		t.Errorf("Perm = %v, want 0755", dirInfo.Mode().Perm())
+	}
+
+	suid, err := newSandboxWS(&fakeSandbox{stdout: "regular file|10|4755|1700000000"}).
+		Stat(context.Background(), "/workspace/suid")
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if suid.Mode()&fs.ModeSetuid == 0 {
+		t.Errorf("Mode() = %v, want ModeSetuid set", suid.Mode())
+	}
+	if suid.Mode().Perm() != 0o755 {
+		t.Errorf("Perm = %v, want 0755", suid.Mode().Perm())
+	}
+}
+
+// TestWalkWorkspaceVisitsRoot pins filepath.WalkDir's contract that fn is called
+// for the root itself. Without it, glob, grep, and replace aimed at a single
+// file path silently report nothing.
+func TestWalkWorkspaceVisitsRoot(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ws := newLocalWorkspace(NewPathValidator(dir, false, nil))
+
+	collect := func(root string) []string {
+		t.Helper()
+		var visited []string
+		err := walkWorkspace(context.Background(), ws, root, func(_ string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			visited = append(visited, d.Name())
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walkWorkspace(%s): %v", root, err)
+		}
+		return visited
+	}
+
+	if got := collect(file); len(got) != 1 || got[0] != "note.txt" {
+		t.Errorf("file root visited %v, want [note.txt]", got)
+	}
+
+	visited := collect(dir)
+	want := map[string]bool{filepath.Base(dir): true, "note.txt": true}
+	for _, n := range visited {
+		delete(want, n)
+	}
+	if len(want) != 0 {
+		t.Errorf("directory root visited %v, missing %v", visited, want)
 	}
 }
 

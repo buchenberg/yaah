@@ -3,8 +3,9 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
+	"io/fs"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/prompts"
@@ -71,7 +72,10 @@ func (t *FileInfoTool) Execute(ctx context.Context, args string) (string, error)
 
 	info, err := ws.Stat(ctx, params.FilePath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		// errors.Is (not os.IsNotExist) so a workspace whose Stat returns a
+		// wrapped fs.ErrNotExist — the sandbox does — still yields the clean
+		// {"exists":false} result instead of leaking shell text.
+		if errors.Is(err, fs.ErrNotExist) {
 			result := fileInfoResult{Exists: false}
 			b, _ := json.Marshal(result)
 			return string(b), nil

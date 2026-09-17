@@ -26,13 +26,25 @@ func (rt *RecordingTool) Name() string            { return rt.inner.Name() }
 func (rt *RecordingTool) Description() string     { return rt.inner.Description() }
 func (rt *RecordingTool) Schema() json.RawMessage { return rt.inner.Schema() }
 
-var _ PathValidatorSetter = (*RecordingTool)(nil)
+var (
+	_ PathValidatorSetter = (*RecordingTool)(nil)
+	_ WorkspaceSetter     = (*RecordingTool)(nil)
+)
 
 // SetPathValidator forwards the validator to the wrapped tool so
 // registry auto-injection reaches tools registered through the wrapper.
 func (rt *RecordingTool) SetPathValidator(pv *PathValidator) {
 	if setter, ok := rt.inner.(PathValidatorSetter); ok {
 		setter.SetPathValidator(pv)
+	}
+}
+
+// SetWorkspace forwards the workspace to the wrapped tool for the same reason.
+// Registry classification unwraps this type before inspecting markers, so the
+// wrapped tool is what the isolation gate judges.
+func (rt *RecordingTool) SetWorkspace(ws Workspace) {
+	if setter, ok := rt.inner.(WorkspaceSetter); ok {
+		setter.SetWorkspace(ws)
 	}
 }
 
