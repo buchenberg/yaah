@@ -129,9 +129,15 @@ func (t *SedTool) Execute(ctx context.Context, args string) (string, error) {
 }
 
 func collectFiles(ctx context.Context, ws Workspace, path, include string) ([]string, error) {
-	fi, err := ws.Stat(ctx, path)
+	// Lstat, not Stat: Stat would dereference a symlink root and hand sed a
+	// direct file outside the lexical workspace. The walkers skip symlink
+	// entries, so a symlink root is skipped here too.
+	fi, err := ws.Lstat(ctx, path)
 	if err != nil {
 		return nil, err
+	}
+	if fi.Mode()&fs.ModeSymlink != 0 {
+		return nil, nil
 	}
 	if !fi.IsDir() {
 		return []string{path}, nil

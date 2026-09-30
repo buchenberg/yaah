@@ -634,9 +634,9 @@ func TestSandboxWorkspace_ReadDirIsTypedAndNewlineSafe(t *testing.T) {
 
 // TestSandboxWorkspace_ExecNonZeroExitIsAnError pins error parity with the host:
 // a command that ran and exited non-zero returns an error (and a readable
-// ExitCode), so every `if err != nil` failure check in the tool set keeps
-// working in an isolated workspace. Transport failure is a separate case with
-// ExitCode -1.
+// ExitCode), and that error is exactly *exec.ExitError's "exit status N" with
+// no command output embedded — the output lives on in ExecResult. Transport
+// failure is a separate case with ExitCode -1.
 func TestSandboxWorkspace_ExecNonZeroExitIsAnError(t *testing.T) {
 	sb := &fakeSandbox{exit: 3, stdout: "boom"}
 	ws := newSandboxWS(sb)
@@ -644,6 +644,9 @@ func TestSandboxWorkspace_ExecNonZeroExitIsAnError(t *testing.T) {
 	res, err := ws.Exec(context.Background(), ExecRequest{Command: "go", Args: []string{"build"}})
 	if err == nil {
 		t.Fatal("a non-zero exit must surface as an error, matching localWorkspace")
+	}
+	if err.Error() != "exit status 3" {
+		t.Errorf("error = %q, want the bounded %q that carries no command output", err.Error(), "exit status 3")
 	}
 	if res.ExitCode != 3 {
 		t.Errorf("ExitCode = %d, want 3", res.ExitCode)
@@ -688,8 +691,9 @@ func TestSandboxWorkspace_StatReportsNotExistAndTypes(t *testing.T) {
 }
 
 // TestSandboxWorkspace_LstatDoesNotFollowLinks pins the Lstat/Stat split: a
-// symlink entry is reported as ModeSymlink without dereferencing, and the two
-// calls run different stat invocations.
+// symlink entry is reported as ModeSymlink without dereferencing, the two
+// calls run different stat invocations, and only Lstat's presence test accepts
+// a dangling link.
 func TestSandboxWorkspace_LstatDoesNotFollowLinks(t *testing.T) {
 	lstatSB := &fakeSandbox{stdout: "symbolic link|9|777|1700000000"}
 	info, err := newSandboxWS(lstatSB).Lstat(context.Background(), "/workspace/link")
@@ -705,6 +709,11 @@ func TestSandboxWorkspace_LstatDoesNotFollowLinks(t *testing.T) {
 	if script := lstatSB.execs[0].Args[1]; strings.Contains(script, "stat -L") {
 		t.Errorf("Lstat must not dereference: %q", script)
 	}
+	// The [ -L "$1" ] presence test is what keeps a dangling link reportable
+	// (os.Lstat semantics) instead of exiting 42 like a missing path.
+	if script := lstatSB.execs[0].Args[1]; !strings.Contains(script, `[ -L "$1" ]`) {
+		t.Errorf("Lstat must accept a dangling link via the -L presence test: %q", script)
+	}
 
 	statSB := &fakeSandbox{stdout: "directory|4096|755|1700000000"}
 	if _, err := newSandboxWS(statSB).Stat(context.Background(), "/workspace/link"); err != nil {
@@ -712,6 +721,9 @@ func TestSandboxWorkspace_LstatDoesNotFollowLinks(t *testing.T) {
 	}
 	if script := statSB.execs[0].Args[1]; !strings.Contains(script, "stat -L") {
 		t.Errorf("Stat must dereference: %q", script)
+	}
+	if script := statSB.execs[0].Args[1]; strings.Contains(script, `[ -L "$1" ]`) {
+		t.Errorf("Stat must reject a dangling link, unlike Lstat: %q", script)
 	}
 }
 
