@@ -634,9 +634,9 @@ func TestSandboxWorkspace_ReadDirIsTypedAndNewlineSafe(t *testing.T) {
 
 // TestSandboxWorkspace_ExecNonZeroExitIsAnError pins error parity with the host:
 // a command that ran and exited non-zero returns an error (and a readable
-// ExitCode), so every `if err != nil` failure check in the tool set keeps
-// working in an isolated workspace. Transport failure is a separate case with
-// ExitCode -1.
+// ExitCode), and that error is exactly *exec.ExitError's "exit status N" with
+// no command output embedded — the output lives on in ExecResult. Transport
+// failure is a separate case with ExitCode -1.
 func TestSandboxWorkspace_ExecNonZeroExitIsAnError(t *testing.T) {
 	sb := &fakeSandbox{exit: 3, stdout: "boom"}
 	ws := newSandboxWS(sb)
@@ -644,6 +644,9 @@ func TestSandboxWorkspace_ExecNonZeroExitIsAnError(t *testing.T) {
 	res, err := ws.Exec(context.Background(), ExecRequest{Command: "go", Args: []string{"build"}})
 	if err == nil {
 		t.Fatal("a non-zero exit must surface as an error, matching localWorkspace")
+	}
+	if err.Error() != "exit status 3" {
+		t.Errorf("error = %q, want the bounded %q that carries no command output", err.Error(), "exit status 3")
 	}
 	if res.ExitCode != 3 {
 		t.Errorf("ExitCode = %d, want 3", res.ExitCode)
@@ -687,6 +690,43 @@ func TestSandboxWorkspace_StatReportsNotExistAndTypes(t *testing.T) {
 	}
 }
 
+// TestSandboxWorkspace_LstatDoesNotFollowLinks pins the Lstat/Stat split: a
+// symlink entry is reported as ModeSymlink without dereferencing, the two
+// calls run different stat invocations, and only Lstat's presence test accepts
+// a dangling link.
+func TestSandboxWorkspace_LstatDoesNotFollowLinks(t *testing.T) {
+	lstatSB := &fakeSandbox{stdout: "symbolic link|9|777|1700000000"}
+	info, err := newSandboxWS(lstatSB).Lstat(context.Background(), "/workspace/link")
+	if err != nil {
+		t.Fatalf("Lstat: %v", err)
+	}
+	if info.Mode()&fs.ModeSymlink == 0 {
+		t.Errorf("Mode() = %v, want ModeSymlink", info.Mode())
+	}
+	if info.IsDir() {
+		t.Error("a symlink entry must not report IsDir")
+	}
+	if script := lstatSB.execs[0].Args[1]; strings.Contains(script, "stat -L") {
+		t.Errorf("Lstat must not dereference: %q", script)
+	}
+	// The [ -L "$1" ] presence test is what keeps a dangling link reportable
+	// (os.Lstat semantics) instead of exiting 42 like a missing path.
+	if script := lstatSB.execs[0].Args[1]; !strings.Contains(script, `[ -L "$1" ]`) {
+		t.Errorf("Lstat must accept a dangling link via the -L presence test: %q", script)
+	}
+
+	statSB := &fakeSandbox{stdout: "directory|4096|755|1700000000"}
+	if _, err := newSandboxWS(statSB).Stat(context.Background(), "/workspace/link"); err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if script := statSB.execs[0].Args[1]; !strings.Contains(script, "stat -L") {
+		t.Errorf("Stat must dereference: %q", script)
+	}
+	if script := statSB.execs[0].Args[1]; strings.Contains(script, `[ -L "$1" ]`) {
+		t.Errorf("Stat must reject a dangling link, unlike Lstat: %q", script)
+	}
+}
+
 // TestWalkWorkspaceVisitsRoot pins filepath.WalkDir's contract that fn is called
 // for the root itself. Without it, glob, grep, and replace aimed at a single
 // file path silently report nothing.
@@ -725,6 +765,44 @@ func TestWalkWorkspaceVisitsRoot(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Errorf("directory root visited %v, missing %v", visited, want)
+	}
+}
+
+// TestWalkWorkspaceDoesNotDescendSymlinkRoot pins Lstat-based root handling:
+// filepath.WalkDir stats its root with os.Lstat, so a symlink root is offered to
+// fn as a symlink and never descended. Following it would walk the target, and
+// the walkers' d.Type()&fs.ModeSymlink guard could not fire for the root.
+func TestWalkWorkspaceDoesNotDescendSymlinkRoot(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "secret.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable on this platform: %v", err)
+	}
+
+	ws := newLocalWorkspace(NewPathValidator(dir, false, nil))
+	var visited []string
+	err := walkWorkspace(context.Background(), ws, link, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		visited = append(visited, d.Name())
+		if d.Type()&fs.ModeSymlink == 0 {
+			t.Errorf("symlink root reported type %v, want ModeSymlink", d.Type())
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walkWorkspace: %v", err)
+	}
+	if len(visited) != 1 || visited[0] != "link" {
+		t.Errorf("visited %v, want only the symlink root with no descent", visited)
 	}
 }
 
