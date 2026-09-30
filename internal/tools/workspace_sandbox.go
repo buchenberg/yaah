@@ -257,8 +257,8 @@ func (w *sandboxWorkspace) MkdirAll(ctx context.Context, p string, perm fs.FileM
 //
 // Errors match localWorkspace.Exec: a command that never ran reports ExitCode
 // -1, and a command that ran but exited non-zero returns an error carrying its
-// status and output (the local implementation returns *exec.ExitError). Callers
-// that need the code without the error read ExecResult.ExitCode, which stays
+// status only, like *exec.ExitError's "exit status N". Callers that need the
+// code without the error read ExecResult.ExitCode, which stays
 // >= 0 for any completed command. Without this, every err != nil check in the
 // tool set would treat a failed command as a success in an isolated workspace.
 func (w *sandboxWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResult, error) {
