@@ -121,16 +121,31 @@ mv -f -- "$t" "$1"`
 // Stat runs `stat` in the sandbox and maps the result to fs.FileInfo. shepherd's
 // Sandbox interface has no Stat, and adding one just for this would push a
 // POSIX-shaped detail into the kernel; a single in-band call keeps the kernel
-// surface smaller.
-//
-// It follows symlinks, matching os.Stat, and reports a missing path as
-// fs.ErrNotExist so callers can use errors.Is rather than matching shell text.
+// surface smaller. It follows symlinks, matching os.Stat.
 func (w *sandboxWorkspace) Stat(ctx context.Context, p string) (fs.FileInfo, error) {
+	return w.stat(ctx, p, true)
+}
+
+// Lstat is Stat without following the final symlink, matching os.Lstat, so a
+// walk can recognise a symlink root and refuse to descend as filepath.WalkDir
+// does.
+func (w *sandboxWorkspace) Lstat(ctx context.Context, p string) (fs.FileInfo, error) {
+	return w.stat(ctx, p, false)
+}
+
+// stat is the shared in-band stat. A missing path exits 42 before stat runs so
+// the caller gets fs.ErrNotExist instead of stat's stderr. The presence test
+// differs by mode: os.Stat rejects a dangling symlink (its target is missing),
+// while os.Lstat reports the link, so Stat requires -e and Lstat also accepts
+// -L.
+func (w *sandboxWorkspace) stat(ctx context.Context, p string, follow bool) (fs.FileInfo, error) {
 	const format = "%F|%s|%a|%Y"
-	// A missing path exits 42 before stat runs, so the caller gets
-	// fs.ErrNotExist instead of stat's stderr.
-	script := `[ -e "$1" ] || exit 42
+	script := `[ -e "$1" ] || [ -L "$1" ] || exit 42
+stat -c "$2" -- "$1"`
+	if follow {
+		script = `[ -e "$1" ] || exit 42
 stat -L -c "$2" -- "$1"`
+	}
 	res, err := w.sb.Exec(ctx, shepherd.ExecRequest{
 		Command: "sh",
 		Args:    []string{"-c", script, "shepherd", p, format},
@@ -269,11 +284,12 @@ func (w *sandboxWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResul
 		out.Stderr = ""
 	}
 	if out.ExitCode != 0 {
-		msg := strings.TrimSpace(out.Stderr)
-		if msg == "" {
-			msg = strings.TrimSpace(out.Stdout)
-		}
-		return out, fmt.Errorf("exit %d: %s", out.ExitCode, msg)
+		// Match localWorkspace, whose *exec.ExitError string is just
+		// "exit status N" and carries no output. Callers already surface the
+		// output themselves (bash, git and bisect append it; go_mod stores it),
+		// so embedding it here would duplicate an unbounded string into every
+		// error the sandbox returns.
+		return out, fmt.Errorf("exit status %d", out.ExitCode)
 	}
 	return out, nil
 }

@@ -82,6 +82,10 @@ type Workspace interface {
 	WriteFile(ctx context.Context, path string, data []byte, perm fs.FileMode) error
 
 	Stat(ctx context.Context, path string) (fs.FileInfo, error)
+	// Lstat is Stat without following a final symlink, matching os.Lstat. Walks
+	// use it for their root so a symlink root is reported as a link and not
+	// descended, which is what filepath.WalkDir's Lstat-based root check does.
+	Lstat(ctx context.Context, path string) (fs.FileInfo, error)
 	// ReadDir lists a directory. Entries are not sorted by the implementation;
 	// callers that need a stable order must sort.
 	ReadDir(ctx context.Context, path string) ([]fs.DirEntry, error)
@@ -150,6 +154,11 @@ func (w *localWorkspace) WriteFile(_ context.Context, path string, data []byte, 
 
 func (w *localWorkspace) Stat(_ context.Context, path string) (fs.FileInfo, error) {
 	return os.Stat(path)
+}
+
+// Lstat mirrors os.Lstat: the link itself, not its target.
+func (w *localWorkspace) Lstat(_ context.Context, path string) (fs.FileInfo, error) {
+	return os.Lstat(path)
 }
 
 func (w *localWorkspace) ReadDir(_ context.Context, path string) ([]fs.DirEntry, error) {
@@ -246,7 +255,12 @@ func walkWorkspace(
 	root string,
 	fn func(path string, d fs.DirEntry, err error) error,
 ) error {
-	info, err := ws.Stat(ctx, root)
+	// Lstat, not Stat: filepath.WalkDir stats its root with os.Lstat, so a root
+	// that is a symlink arrives as a ModeSymlink entry and is not descended.
+	// Following it here would defeat the walkers' symlink guard for the root
+	// and walk a target (possibly outside a lexically-contained workspace) that
+	// the pre-workspace code refused.
+	info, err := ws.Lstat(ctx, root)
 	if err != nil {
 		return fn(root, nil, err)
 	}

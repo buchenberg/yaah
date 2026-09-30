@@ -687,6 +687,34 @@ func TestSandboxWorkspace_StatReportsNotExistAndTypes(t *testing.T) {
 	}
 }
 
+// TestSandboxWorkspace_LstatDoesNotFollowLinks pins the Lstat/Stat split: a
+// symlink entry is reported as ModeSymlink without dereferencing, and the two
+// calls run different stat invocations.
+func TestSandboxWorkspace_LstatDoesNotFollowLinks(t *testing.T) {
+	lstatSB := &fakeSandbox{stdout: "symbolic link|9|777|1700000000"}
+	info, err := newSandboxWS(lstatSB).Lstat(context.Background(), "/workspace/link")
+	if err != nil {
+		t.Fatalf("Lstat: %v", err)
+	}
+	if info.Mode()&fs.ModeSymlink == 0 {
+		t.Errorf("Mode() = %v, want ModeSymlink", info.Mode())
+	}
+	if info.IsDir() {
+		t.Error("a symlink entry must not report IsDir")
+	}
+	if script := lstatSB.execs[0].Args[1]; strings.Contains(script, "stat -L") {
+		t.Errorf("Lstat must not dereference: %q", script)
+	}
+
+	statSB := &fakeSandbox{stdout: "directory|4096|755|1700000000"}
+	if _, err := newSandboxWS(statSB).Stat(context.Background(), "/workspace/link"); err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if script := statSB.execs[0].Args[1]; !strings.Contains(script, "stat -L") {
+		t.Errorf("Stat must dereference: %q", script)
+	}
+}
+
 // TestWalkWorkspaceVisitsRoot pins filepath.WalkDir's contract that fn is called
 // for the root itself. Without it, glob, grep, and replace aimed at a single
 // file path silently report nothing.
@@ -725,6 +753,44 @@ func TestWalkWorkspaceVisitsRoot(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Errorf("directory root visited %v, missing %v", visited, want)
+	}
+}
+
+// TestWalkWorkspaceDoesNotDescendSymlinkRoot pins Lstat-based root handling:
+// filepath.WalkDir stats its root with os.Lstat, so a symlink root is offered to
+// fn as a symlink and never descended. Following it would walk the target, and
+// the walkers' d.Type()&fs.ModeSymlink guard could not fire for the root.
+func TestWalkWorkspaceDoesNotDescendSymlinkRoot(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "secret.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable on this platform: %v", err)
+	}
+
+	ws := newLocalWorkspace(NewPathValidator(dir, false, nil))
+	var visited []string
+	err := walkWorkspace(context.Background(), ws, link, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		visited = append(visited, d.Name())
+		if d.Type()&fs.ModeSymlink == 0 {
+			t.Errorf("symlink root reported type %v, want ModeSymlink", d.Type())
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walkWorkspace: %v", err)
+	}
+	if len(visited) != 1 || visited[0] != "link" {
+		t.Errorf("visited %v, want only the symlink root with no descent", visited)
 	}
 }
 
