@@ -195,10 +195,12 @@ The nested module's repin is part of T0.8.
 > while its own tree contained the bug batch, so `sandbox/containerd@v0.1.0`
 > depended on a core version older than its own fixes.
 >
-> **Resolved 2026-10-07.** `v0.4.1` is published and the nested module now
-> requires it (PR #11), with no `replace` and `v0.4.1` verified to resolve from
-> the module proxy. `sandbox/containerd@v0.1.1` is published alongside it. So the
-> pin `yaah` needs exists and is a real tag.
+> **Partly resolved 2026-10-07.** `v0.4.1` is published and resolves from the
+> module proxy, so the core pin `yaah` needs exists as a real tag. The nested
+> module's **released** version is still wrong though: `sandbox/containerd@v0.1.1`
+> requires `v0.4.0`, and the repin to `v0.4.1` sits on kernel PR #11, which
+> merging will not push into the tag. That needs `sandbox/containerd/v0.1.2`
+> (kernel T0.8b). Tracked in §7 and in step 1 below; it blocks step 5, not step 4.
 
 ### 0.2 Establish that the containerd backend actually works — ✅ GATE CLEARED
 
@@ -432,8 +434,9 @@ Kernel work referenced, with status as of 2026-10-07 (see the kernel's
 
 | Kernel item | Plan ref | Status |
 |---|---|---|
-| Bug batch | T0.6 | ✅ landed, ❌ unreleased |
-| **`v0.4.1` release** | **T0.8** | ✅ **PUBLISHED** at `bee4ca5` — this plan's pin target; resolves through the module proxy |
+| Bug batch | T0.6 | ✅ landed, ✅ **released in `v0.4.1`** |
+| **`v0.4.1` release** | **T0.8** | ✅ **PUBLISHED** at `bee4ca5` — the core pin resolves through the module proxy |
+| **nested `sandbox/containerd/v0.1.2`** | **T0.8b** | ⬜ **PENDING** — `v0.1.1` requires core `v0.4.0` and cannot be fixed in place |
 | containerd publish (no `replace`) | T0.4 | ✅ landed |
 | CI 3-OS + containerd job | T0.7 | ✅ landed |
 | Live-daemon harness | T0.5 | ✅ committed (`603fdcf`); found and fixed 9 defects |
@@ -534,8 +537,8 @@ have been **executed**; the verdict is recorded against each.
 
 0. ✅ **DONE** — committed the kernel containerd work as `603fdcf` (6 files,
    +1202/−48), including the previously untracked `live_test.go`.
-1. ✅ **DONE** — kernel **`v0.4.1`** is published, and the nested module repinned to
-   it (kernel plan 00 T0.8, PRs #10 and #11). Both tags point at the merge commit
+1. ✅ **Core release DONE** — kernel **`v0.4.1`** is published, so `yaah` can pin
+   `v0.4.1` rather than a pseudo-version. Both tags point at the merge commit
    `bee4ca5`, and resolution is verified from a clean module context:
 
    ```
@@ -543,11 +546,30 @@ have been **executed**; the verdict is recorded against each.
    github.com/buchenberg/shepherd-kernel-go/sandbox/containerd  v0.1.1
    ```
 
-   So `yaah` can pin `v0.4.1` rather than a pseudo-version. Note the near-miss: the
-   first `v0.4.1` cut pointed at a commit that predated the review fixes, so
-   publishing it as-is would have pinned a core release missing the lease race
-   fix. Check `git merge-base --is-ancestor <last-fix-commit> <tag>` before
-   trusting a tag.
+   **But the nested release does not carry the repin (T0.8b).** Resolving the two
+   tags separately does *not* show that the nested module depends on the fixed
+   core, and it does not. The published tag's own `go.mod` still says:
+
+   ```
+   $ git show sandbox/containerd/v0.1.1:sandbox/containerd/go.mod | grep shepherd
+   github.com/buchenberg/shepherd-kernel-go v0.4.0     # <- pre-fix core
+   ```
+
+   The repin to `v0.4.1` exists only on kernel PR #11, and **merging that PR will
+   not update the published tag** — the repin lands on `main` while the tag keeps
+   pointing at the old tree. `v0.1.1` also **cannot be repaired in place**: Go
+   module versions are immutable once the proxy and `sum.golang.org` record them.
+   So the nested module needs a new version, **`sandbox/containerd/v0.1.2`**, cut
+   from `main` after #11 merges.
+
+   This does not block step 4 (or anything else here), because nothing imports the
+   nested module yet — our sandbox construction is step 5. But it **must** be fixed
+   before that step consumes it, or `yaah` silently builds against pre-fix core.
+
+   Also worth recording, because it will recur: the first `v0.4.1` cut pointed at a
+   commit that predated the review fixes, so publishing it unchecked would have
+   pinned a core release **missing the lease race fix**. Check
+   `git merge-base --is-ancestor <last-fix-commit> <tag>` before trusting a tag.
 2. ✅ **DONE — gate cleared** — kernel live-daemon smoke, T0.5. The harness found
    nine defects, the first soak then **failed 3 of 5 runs**, and the cause (no
    containerd lease) was found and fixed. **Re-soak: 12/12 green.**
@@ -583,11 +605,17 @@ have been **executed**; the verdict is recorded against each.
 is shippable. Step 2's gate fired once and is now cleared, so nothing here is
 waiting on a decision or a fix.
 
-**Status:** steps 0–3 are done. Step 2's kernel blocker is cleared, the release
-that carried it is published, and the in-memory `Sandbox` that the activation
-tests need now exists. **Steps 4–9 are ready to implement**, and step 4 (the
-config surface, §1.1) is the next one — it is the first step that changes what a
-user can configure, and steps 5–8 follow from it.
+**Status:** steps 0–3 are done. Step 2's kernel blocker is cleared, the core
+release that carried it is published, and the in-memory `Sandbox` that the
+activation tests need now exists. **Steps 4–9 are ready to implement**, and step 4
+(the config surface, §1.1) is the next one — it is the first step that changes what
+a user can configure, and steps 5–8 follow from it.
+
+**One release task rides alongside, and it must land before step 5:** kernel
+**T0.8b** — publish `sandbox/containerd/v0.1.2` so the nested module's released
+version requires the fixed core. Step 4 does not depend on it; step 5 (sandbox
+construction) does, because that is where `yaah` would first import the containerd
+adapter and would otherwise silently compile against pre-fix core code.
 
 **Hard dependencies, not reorderable:** step 1 before step 2 (the smoke needs the
 bug batch), step 3 before step 7 (the activation tests need the fake), and step 2b
