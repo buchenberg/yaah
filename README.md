@@ -456,11 +456,14 @@ The near-term roadmap lives in tracked plan files (`.agents/plans/`,
 
 ### In progress
 
-- **Per-turn checkpoint & restore** — `supervised_task` today restores at
-  attempt granularity; this adds turn-granularity rewind inside sub-agent
-  loops (a hard tool error or iteration exhaustion rewinds to the state just
-  before that turn), with an optional `Scope.Fork` to try multiple
-  alternatives from a pre-turn snapshot.
+- **Turn-checkpoint fork branching** — per-turn checkpoint/restore inside
+  sub-agent loops is shipped (opt in per role via
+  `subagent.roles.<name>.turn_checkpoints`, capped by `turn_checkpoint_max`;
+  a hard tool error or iteration exhaustion rewinds to the state just before
+  that turn, bounded by `max_turn_restores`). The remaining plan phase is
+  fork-based branching: `Scope.Fork` from a pre-turn snapshot to try
+  multiple alternatives, `Merge` on success / `Discard` on failure, driven
+  through the `supervisor` tool.
   → [plan](./.agents/plans/per-turn-checkpoint-restore/PLAN.md)
 - **Isolated workspace activation** — the `Workspace` implementation that
   runs every tool inside a `shepherd.Sandbox` is complete and tested but not

@@ -164,8 +164,8 @@ Mechanisms observed, strongest → weakest per framework:
 
 **Process & packaging**
 
-- Single static binary: **yaah** (cross-compile matrix in CI), **crush** (CGO_ENABLED=0), goose (single Rust binary via goose-cli).
-- Runtime-dependent: **goose** (Rust + tokio; Electron desktop — the Ink text UI was deprecated and removed, replaced by the native Rust CLI), **naah** (.NET 10; Spectre.Console REPL + SignalR web + Photino.NET desktop).
+- Single static binary: **yaah** (cross-compile matrix in CI), **crush** (CGO_ENABLED=0).
+- Runtime-dependent: **goose** (Rust + tokio; the CLI is a single native binary, but the desktop deliverable is Electron — the Ink text UI was deprecated and removed in favor of the native Rust CLI), **naah** (.NET 10; Spectre.Console REPL + SignalR web + Photino.NET desktop).
 - Node-runtime monorepos: **opencode** (bun, turbo, SST, 36 packages incl. sdk/console/desktop/function/slack), **kilocode** (bun, turbo; VS Code *and* JetBrains extensions, kilo-console/kilo-web-ui), **pi** (npm, lockstep versioning, 14 packages at 1.0.4).
 - Python: **hermes** (pip/uv installable app + Docker images + an Electron/React desktop app with heavy momentum + a TUI stack), **deepagents** (uv monorepo: SDK + deepagents-code harness + acp + evals).
 
@@ -178,7 +178,8 @@ Mechanisms observed, strongest → weakest per framework:
 
 **Eventing / observability**
 
-- **OTel-first**: yaah (tracing spans per prompt/turn/tool + durable execution-trace facts + in-memory span buffer), opencode (OTLP export in core), goose (tracing crate), crush (PostHog events), hermes (observability plugin + telemetry surge), deepagents (LangSmith integration).
+- **OpenTelemetry**: yaah (tracing spans per prompt/turn/tool + durable execution-trace facts + in-memory span buffer), opencode (OTLP export in core), goose (tracing crate).
+- **Vendor-specific telemetry**: crush (PostHog events), hermes (observability plugin + telemetry surge), deepagents (LangSmith integration).
 - **Event-sourced**: opencode V2 (EventV2 sequence numbers, replayable projections, session input inbox).
 - **In-process pub/sub**: yaah typed broker (`PublishMustDeliver` semantics for terminal events), crush pubsub broker (lossy + must-deliver modes), kilocode/opencode v1 `Bus`, pi `EventStream` (push/end result channel — still the simplest).
 
