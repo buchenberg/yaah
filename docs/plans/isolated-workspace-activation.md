@@ -191,10 +191,14 @@ commits past `v0.4.0` and unreleased.
 consumers than a tag, and the bug batch is exactly what a patch release is for.
 The nested module's repin is part of T0.8.
 
-> Note: the nested module pins `github.com/buchenberg/shepherd-kernel-go v0.4.0`
-> while its own tree contains the bug batch, so `sandbox/containerd@v0.1.0`
-> currently depends on a core version older than its own fixes. Worth fixing in
-> the same patch release.
+> Note: the nested module pinned `github.com/buchenberg/shepherd-kernel-go v0.4.0`
+> while its own tree contained the bug batch, so `sandbox/containerd@v0.1.0`
+> depended on a core version older than its own fixes.
+>
+> **Resolved 2026-10-07.** `v0.4.1` is published and the nested module now
+> requires it (PR #11), with no `replace` and `v0.4.1` verified to resolve from
+> the module proxy. `sandbox/containerd@v0.1.1` is published alongside it. So the
+> pin `yaah` needs exists and is a real tag.
 
 ### 0.2 Establish that the containerd backend actually works — ✅ GATE CLEARED
 
@@ -429,7 +433,7 @@ Kernel work referenced, with status as of 2026-10-07 (see the kernel's
 | Kernel item | Plan ref | Status |
 |---|---|---|
 | Bug batch | T0.6 | ✅ landed, ❌ unreleased |
-| **`v0.4.1` release** | **T0.8** | ⬜ **decided — this plan's pin target**; not blocked by T0.9 |
+| **`v0.4.1` release** | **T0.8** | ✅ **PUBLISHED** at `bee4ca5` — this plan's pin target; resolves through the module proxy |
 | containerd publish (no `replace`) | T0.4 | ✅ landed |
 | CI 3-OS + containerd job | T0.7 | ✅ landed |
 | Live-daemon harness | T0.5 | ✅ committed (`603fdcf`); found and fixed 9 defects |
@@ -530,9 +534,20 @@ have been **executed**; the verdict is recorded against each.
 
 0. ✅ **DONE** — committed the kernel containerd work as `603fdcf` (6 files,
    +1202/−48), including the previously untracked `live_test.go`.
-1. ⬜ **READY** — kernel **`v0.4.1`** containing the Phase 0 bug batch (kernel plan
-   00 T0.8). Not blocked by step 2: the core bug batch is independent of the
-   containerd lease, and `yaah` needs a pinnable tag rather than a pseudo-version.
+1. ✅ **DONE** — kernel **`v0.4.1`** is published, and the nested module repinned to
+   it (kernel plan 00 T0.8, PRs #10 and #11). Both tags point at the merge commit
+   `bee4ca5`, and resolution is verified from a clean module context:
+
+   ```
+   github.com/buchenberg/shepherd-kernel-go                     v0.4.1
+   github.com/buchenberg/shepherd-kernel-go/sandbox/containerd  v0.1.1
+   ```
+
+   So `yaah` can pin `v0.4.1` rather than a pseudo-version. Note the near-miss: the
+   first `v0.4.1` cut pointed at a commit that predated the review fixes, so
+   publishing it as-is would have pinned a core release missing the lease race
+   fix. Check `git merge-base --is-ancestor <last-fix-commit> <tag>` before
+   trusting a tag.
 2. ✅ **DONE — gate cleared** — kernel live-daemon smoke, T0.5. The harness found
    nine defects, the first soak then **failed 3 of 5 runs**, and the cause (no
    containerd lease) was found and fixed. **Re-soak: 12/12 green.**
@@ -568,10 +583,11 @@ have been **executed**; the verdict is recorded against each.
 is shippable. Step 2's gate fired once and is now cleared, so nothing here is
 waiting on a decision or a fix.
 
-**Status:** steps 0–2 are done, including the kernel blocker that step 2 exposed.
-**Steps 3–9 are ready to implement**, and step 3 (promote `fakeSandbox`, §0.3) is
-the natural next one — it is daemon-free, so the activation tests can be written
-before anyone needs a container.
+**Status:** steps 0–3 are done. Step 2's kernel blocker is cleared, the release
+that carried it is published, and the in-memory `Sandbox` that the activation
+tests need now exists. **Steps 4–9 are ready to implement**, and step 4 (the
+config surface, §1.1) is the next one — it is the first step that changes what a
+user can configure, and steps 5–8 follow from it.
 
 **Hard dependencies, not reorderable:** step 1 before step 2 (the smoke needs the
 bug batch), step 3 before step 7 (the activation tests need the fake), and step 2b
