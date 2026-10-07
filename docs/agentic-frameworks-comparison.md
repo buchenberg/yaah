@@ -1,36 +1,33 @@
 # Agentic Framework Comparison — A Code-Level Deep Dive
 
-*Analysis date: 2026-08-26. All findings below are drawn from reading the actual source in each repository, not from READMEs or marketing docs. Line counts computed with pygount (excluding `.git`, `node_modules`, build dirs, and test fixtures where noted).*
+*Analysis date: 2026-10-07 (second pass; the original 2026-08-26 analysis was fully re-verified against current checkouts). All findings below are drawn from reading the actual source in each repository, not from READMEs or marketing docs. Line counts computed with `find`+`wc` over non-test source, excluding `node_modules`, build dirs, vendored and generated code where noted. Non-framework checkouts (trace kernels, libraries, scratch projects) are excluded from the comparison.*
 
 ---
 
 ## 1. What's in the directory
 
-Fifteen checkouts, twelve of which are genuinely comparable agent frameworks:
+Nine comparable agent frameworks:
 
-| Repo | Language | Primary LOC | Category |
+| Repo | Language | Primary LOC (non-test) | Category |
 |---|---|---:|---|
-| **yaah** | Go | ~39k Go (67k w/ JSON+YAML) | Terminal coding-agent harness (vendor-free, single binary) |
-| **naah** | C# / .NET 10 | ~10k C# | Port of yaah to .NET (Phase A complete) |
-| **crush** | Go (Charm) | ~67k Go | Terminal coding agent (fantasy LLM lib, Bubble Tea v2) |
-| **goose** | Rust | ~139k Rust | AI agent framework: CLI + Electron desktop + MCP extensions |
-| **opencode** | TypeScript (Effect) | ~274k TS core (1.4M monorepo) | Coding agent platform mid-rewrite V1→V2 (durable, event-sourced) |
-| **kilocode** | TypeScript | ~416k TS (1.7M monorepo) | Fork of opencode + VS Code extension + Agent Manager |
-| **pi** | TypeScript | ~129k TS | Minimal agent monorepo (agent/ai/coding-agent/orchestrator/tui) |
-| **deepagents** | Python | ~1.7k core SDK | LangChain/LangGraph middleware SDK for "deep agents" |
-| **hermes-agent** | Python | ~550k Python | Kitchen-sink personal agent (CLI, gateway, plugins, cron) |
-| **shepherd** | Python | ~287k Python | Programmable meta-agent + trace kernel (v3 reference w/ formal semantics) |
-| **shepherd-kernel-go** | Go | ~5.6k Go (non-test) | Port of Shepherd's trace-kernel ABI (`shepherd.kernel.abi.v0`), plus a backend-neutral `Sandbox` substrate for reversible workspace operations — git in-place and git-worktree backends shipped; a containerd/overlay backend implements the snapshot lifecycle and file I/O against containerd's snapshotter interface (its daemon adapter is unverified) |
-| **shepherd-kernel-dotnet** | C# | ~1.4k C# | Same ABI port to .NET |
+| **yaah** | Go | ~45k Go (+33k tests) | Terminal coding-agent harness (vendor-free, single binary) |
+| **naah** | C# / .NET 10 | ~12k C# (+6k tests, +2k SPA) | Port of yaah to .NET (phases A+C complete) |
+| **crush** | Go (Charm) | ~106k Go | Terminal coding agent (fantasy LLM lib, Bubble Tea v2 TUI) |
+| **goose** | Rust | ~539k Rust (+201k UI TS) | AI agent platform: CLI + Electron desktop + in-process platform extensions |
+| **opencode** | TypeScript (Effect) | ~500k TS across 36 packages | Coding agent platform mid-rewrite V1→V2 (durable, event-sourced) |
+| **kilocode** | TypeScript | ~692k TS (incl. ~44k generated) | Fork of opencode + VS Code/JetBrains extensions + Agent Manager |
+| **pi** | TypeScript | ~209k TS across 14 packages | Minimal agent monorepo (agent/ai/coding-agent/durable/chord/tui) |
+| **deepagents** | Python | ~30k core SDK (+215k deepagents-code harness) | LangChain/LangGraph middleware SDK that now also ships its own harness |
+| **hermes-agent** | Python | ~899k Python | Kitchen-sink personal agent (CLI, gateway, plugins, cron, desktop) |
 
-Not frameworks, excluded from comparison: `tviewmd` (terminal markdown viewer library), `entire-test` (demo scratch), `external-agents` (standalone agent binaries for the Entire CLI).
+Excluded as non-frameworks: the shepherd checkouts (a programmable meta-agent and trace-kernel ports — execution substrates with formal semantics, not agent harnesses; yaah integrates the Go kernel as a library, covered under yaah's own row), `OpenHands`, `ReCount`, `deepseek-harness`, `gastown` (scratch/platform projects not in scope), `tview`/`tviewmd` (terminal UI libraries), `jaeger-mcp-server(-rs)` (observability tooling).
 
 **Family relationships discovered in code:**
 
-- **kilocode is a hard fork of opencode.** Its own AGENTS.md documents a "fork isolation rule": Kilo changes to shared upstream files must be mirrored under `src/kilocode/<same/path>.ts` behind `kilocode_change` markers, enforced by CI. Comparing the two is really "what does a product-focused fork add to a platform?"
-- **naah is a port of yaah** (the Go tree is explicitly named the reference implementation, ~52k LOC target).
-- **yaah's soft-pruner is a documented Go port of kilocode's compaction prune pass** (comment in `yaah/internal/agent/pipeline/pruner.go`: "a Go port of kilocode's compaction.ts prune pass"). Ideas already cross-pollinate across this directory.
-- **The Shepherd kernel trio is a determinism experiment**: Python reference, Go port, and .NET port all produce *byte-identical digests* from shared golden test vectors against a frozen ABI.
+- **kilocode is a hard fork of opencode.** Kilo changes to shared upstream files carry inline `kilocode_change` markers, enforced by CI (`script/check-opencode-annotations.ts`); `src/kilocode/**` is the exempt zone for Kilo-owned code. Comparing the two is really "what does a product-focused fork add to a platform?"
+- **naah is a port of yaah** (the Go tree is explicitly named the reference implementation). Its 164-line `AgentLoop.cs` is a faithful translation of yaah's loop-and-middleware shape into .NET idioms.
+- **yaah's soft-pruner is a documented Go port of kilocode's compaction prune pass** (comment in `yaah/internal/agent/pipeline/pruner.go`: "a Go port of kilocode's compaction.ts prune pass"; kilocode's prune constants still live in the shared `packages/opencode/src/session/compaction.ts`). Ideas already cross-pollinate across this directory.
+- **deepagents-code is the SDK eating its own dog food**: a ~215k-LOC terminal coding agent built on the deepagents middleware SDK, shipped in the same monorepo.
 
 ---
 
@@ -59,101 +56,52 @@ for {                                     // outer: checkpoint-restore retries
 
 Distinctive properties:
 
-- **Turn checkpoints with rewind-and-retry.** Before every model turn the loop snapshots workspace + conversation. On a hard tool-phase failure or iteration exhaustion it *rewinds to the last checkpoint and retries with failure guidance* (bounded by `MaxTurnRestores`, default 3) instead of failing the run. No other framework in the directory does conversation+workspace transactional rollback at the turn level.
-- **Overflow-recovery adoption** (`loop.go:250-259`): if `LLM.Call`'s internal compaction replaced the conversation, the loop detects the slice replacement and adopts the compacted baseline — with a comment citing review findings B6/B7. This is defensive correctness you normally only find in much larger codebases.
-- **Curated sub-agent pipeline**: `buildPipeline()` returns `pipeline.NewSubAgentPipeline()` for sub-agents — they skip persistence, compaction, spawning, and quality gates by construction.
-- **Loop-shape**: the pipeline `Middleware` interface is three hooks (`PrepareStep`, `PostModel`, `PostTool`) — the smallest complete interception surface of any framework here, and everything interesting (16 middlewares: steer, followups, compaction, approval, permission, conflictdetect, inlinelimit, loopdetect, promptcaching, pruner, softprune, staleness, trace, toolconcurrency, scope_init, shepherd_trace) is a middleware, not loop logic.
+- **Turn checkpoints with rewind-and-retry.** Before every model turn the loop snapshots workspace + conversation. On a hard tool-phase failure or iteration exhaustion it *rewinds to the last checkpoint and retries with failure guidance* (bounded by `MaxTurnRestores`, default 3 — `internal/agent/turn_checkpoint_loop.go:15`) instead of failing the run. No other framework in the directory does conversation+workspace transactional rollback at the turn level.
+- **Overflow-recovery adoption**: if `LLM.Call`'s internal compaction replaced the conversation, the loop detects the slice replacement and adopts the compacted baseline. This is defensive correctness you normally only find in much larger codebases.
+- **Curated sub-agent pipeline**: `buildPipeline()` returns `pipeline.NewSubAgentPipeline()` for sub-agents — they skip persistence, compaction, spawning, and quality gates by construction. The orchestrator registers **11 middleware by name (9 on by default)**: steer, followup, compaction, soft_prune, approval, inline_limit, tool_concurrency, loop_detection, conflict_detect, plus opt-in permission and prompt_caching. Sub-agent loops get their own trio (tool_concurrency, shepherd_trace, and permission when the parent passes rules); shepherd trace initialization is session-wide infrastructure shared by the supervisor and supervised-task tools, not orchestrator middleware.
+- **Loop-shape**: the pipeline `Middleware` interface is three hooks (`PrepareStep`, `PostModel`, `PostTool`) — the smallest complete interception surface of any framework here, and everything interesting is a middleware, not loop logic.
+- **Lean sub-agent prompts**: sub-agents get a dedicated 927-byte identity plus user/project context — not the orchestrator's identity — so ~1.2k tokens of unactionable orchestration guidance is absent from every dispatch.
 
 ### 2.2 crush — loop lives in a library; the harness is a concurrency shell
 
-`internal/agent/agent.go` (8.6k lines in package). The actual model-turn iteration is inside `charm.land/fantasy`'s `Agent.Stream()`; crush supplies a `PrepareStep` callback that runs per step and:
+The actual model-turn iteration is inside `charm.land/fantasy`'s `Agent.Stream()` (v0.45.1); crush calls it with `PrepareStep` callbacks (`internal/agent/agent.go:856`, `:1472`, `:1867`) that:
 
-- drains queued follow-up prompts into the step (with per-accept-sequence cancel coverage — a queued prompt covered by an earlier cancel is dropped *and still gets its terminal `RunComplete` event* so non-interactive callers don't hang),
-- places Anthropic `cache_control` on the system message and last 2 messages,
-- works around provider media limitations,
-- creates the assistant message row before streaming starts.
+- drain queued follow-up prompts into the step (with per-accept-sequence cancel coverage — a queued prompt covered by an earlier cancel is dropped *and still gets its terminal `RunComplete` event* via `publishCanceledQueueDrops`, `agent.go:465-495`),
+- place Anthropic `cache_control` on the system message and last 2 messages (`agent.go:893-907`) plus the last tool definition (`agent.go:725`),
+- work around provider media limitations,
+- create the assistant message row before streaming starts.
 
-Loop termination is expressed as **`StopWhen` conditions**, notably: context-window threshold → set `shouldSummarize` and stop (auto-summarization runs after the stream), and repeated-tool-call detection (`hasRepeatedToolCalls`, windowed). The result is that crush's "agent loop logic" is really *policy around* a library loop. The engineering weight is in dispatch concurrency: accepted (fire-and-forget) runs, cancel-on-entry, busy-queueing, per-session mutexes — the most careful cancellation protocol of the Go frameworks.
+Loop termination is expressed as **`StopWhen` conditions**, notably: context-window threshold → set `shouldSummarize` and stop (auto-summarization runs after the stream; separate large/small-window thresholds, skipped entirely if the window is unknown — protecting local models; `agent.go:1095-1117`), and repeated-tool-call detection (windowed, `agent.go:1118`). The result is that crush's "agent loop logic" is really *policy around* a library loop. The engineering weight is in dispatch concurrency: accepted (fire-and-forget) runs, cancel-on-entry, busy-queueing, per-session mutexes — still the most careful cancellation protocol of the Go frameworks. New since August: a read-only **plan mode** agent, **Claude Channels delivery** (session injection, exactly-once routing, reply-back — `channel.go`, `channelreply.go`), hyper-provider credits display, a theme system, and configurable request timeouts. The `internal/agent` package is ~17k lines including its tools subpackage (`agent.go` itself is ~5.9k of top-level files); `coordinator.go` has grown to 1,871 lines of provider wiring.
 
-### 2.3 goose — the monolith loop
+### 2.3 goose — the monolith loop, now with a state-machine escape hatch
 
-`crates/goose/src/agents/agent.rs` is a **4,427-line** file containing the reply loop: `reply()` streams from the provider, routes tool calls through MCP extension streams (`tool_stream` merges tool results + action-required messages via `tokio::select!`), handles approval routing, retries (`retry_manager`), stop-hook block caps (a stop hook that keeps blocking the turn is overridden after N consecutive blocks to avoid infinite loops — a failure mode nobody else explicitly guards), auto-compaction inline before the call, and a "final output tool" contract for subagents. Everything is async Stream composition. It works, it is battle-tested, but it is the least decomposed loop of the twelve — SRP suffers by design (see §7).
+`crates/goose/src/agents/agent.rs` is now a **6,569-line** file containing the reply loop: `reply()` (agent.rs:2116) streams from the provider, routes tool calls through MCP extension streams (`tool_stream` merges tool results + action-required messages via `tokio::select!`), handles approval routing, retries (`retry_manager`), stop-hook block caps (a stop hook that keeps blocking the turn is overridden after `GOOSE_STOP_HOOK_BLOCK_CAP` consecutive blocks — a failure mode nobody else explicitly guards), auto-compaction inline before the call, and the `final_output_tool` contract for subagents. The major architectural move since August: `reply()` can delegate to **`reply_with_state_machine`** (agent.rs:1791), backed by the new `goose-agent` crate — an effect-based `Machine`/`Operation`/`Inference`/`Step` state-machine core that is wasm-compatible. The monolith remains the load-bearing wall, but the escape hatch exists.
 
-### 2.4 opencode V2 — the durable event-sourced runner
+### 2.4 opencode V2 — the durable event-sourced runner (frozen mid-migration)
 
-`packages/core/src/session/runner/llm.ts`. The V2 "SessionRunner" is mid-migration (its own header carries an explicit checked/unchecked checklist). Loop shape:
+The V2 "SessionRunner" (`packages/core/src/session/runner/llm.ts`) carries the same explicit checked/unchecked migration checklist as in August — 12 checked, 11 unchecked — and **not one box has advanced since 2026-08-26**. Loop shape unchanged: drain durable inbox (steer → queue) → per turn: promote steers/queued inputs, resolve model, project history, materialize tools, `compactIfNeeded` (TurnTransition as a typed `Effect.die` defect), exactly one provider turn under a semaphore, fiber-per-tool settlement, `Step.Ended` with snapshot diff. Durable prompt admission is still the standout: `SessionV2.prompt()` writes a durable `session_input` row before waking the runner, so crashes lose at most an admission, not a turn.
 
-```
-run()  → drain durable inbox (steer → queue) → while shouldRun:
-  runTurn() → while needsContinuation (steps):
-    load session, select agent, init context epoch
-    promote steers/queued inputs (steer resets step counter)
-    resolve model, project history from baselineSeq
-    materialize tools (skipped on last step → toolChoice:"none" + MAX_STEPS_PROMPT)
-    compactIfNeeded → if compacted, rebuild (TurnTransition as typed defect)
-    llm.stream(request) — exactly one provider turn, events published under a semaphore
-      tool-call events settle through registry, fiber per tool (FiberSet)
-    await settlements; publish Step.Ended with snapshot diff (files changed this step)
-    needsContinuation = any tool settled
-```
+The V1/V2 coexistence verdict also stands, but with a corrected file: the live V1 monolith is `packages/opencode/src/session/prompt.ts` (1,631 LOC, still serving the HTTP API), not the 1-line re-export the previous analysis cited in `packages/core`. The 263 commits since August touched `packages/core/src` only ~9 times — the V2 core is effectively frozen while activity moved to product surface (the "opencode Go" paid tier, stats site, model-catalog churn) and continued V1 teardown at the edges (QuestionV1 contract, `SessionV1.WithParts`, v1 permission errors removed). Two generations of loop still coexist.
 
-Distinctive properties:
+### 2.5 kilocode — same engine, different policies (and a scheduler)
 
-- **Durable prompt admission separated from execution**: `SessionV2.prompt()` writes a durable `session_input` row before waking the runner; the runner promotes inbox rows to visible messages at safe boundaries. Crashes lose at most an admission, not a turn (post-crash provider continuation recovery is explicitly still a design TODO).
-- **Control flow via `Effect.die(TurnTransitionError)`** caught by `catchDefect` — compaction continuation and overflow recovery are typed defects, not booleans threaded through the loop. Overflow recovery is deliberately single-shot: "Post-compaction provider attempt cannot recover another overflow."
-- **Steer/queue semantics are first-class loop citizens** (`promotion: "steer" | "queue"`), matching crush's queue-drain and pi's steering, but durable rather than in-memory.
-- Cost: this is Effect-TS everywhere — `Layer`, `Service`, `FiberSet`, `Semaphore`, `Effect.fn` tracing. The V1 monolith (`session/prompt.ts` legacy path) still exists in parallel; the codebase literally contains two generations of loop.
+Being an opencode fork, the loop is shared; Kilo's additions visible at loop level: a `KiloSessionPromptQueue` replacing upstream queuing, compaction payload-recovery, chunked compaction, and — new since August — a **session goal subsystem** (goal tracking with a completion gate that only permits wait-tools — `schedule_wakeup`, `cron_create`, `background_process` — once a goal is set; `kilocode/session/goal/policy.ts`), **scheduled wakeups and cron** (`kilocode/wakeup/`, `cron_create/list/delete` tools), and a run of session-loop hardening files (`steering.ts`, `retention.ts`, `mode-reminders.ts`, `continuation.ts`, `drain.ts`). Delegation policy has softened from "hard one-level" to **configurable depth**: `task.ts:134` enforces `cfg.subagent_depth ?? 1` — nested subagents are opt-in, one-level by default. The permission-ceiling inheritance from parent (merged over the subagent's own policy) deliberately survives.
 
-### 2.5 kilocode — same engine, different policies
+### 2.6 pi — the cleanest loop in the directory (and it is growing a durability layer)
 
-Being an opencode fork, the loop is shared; Kilo's additions visible at loop level: a `KiloSessionPromptQueue` replacing upstream queuing, compaction payload-recovery, chunked compaction, and the swe-pruner provider transform (see §3). Delegation policy is hard-coded: "Kilo keeps delegation one level deep to avoid recursive subagent chains" (`src/kilocode/tool/task.ts`), vs upstream's arbitrary agent configs.
+`packages/agent/src/agent-loop.ts`, now **940 lines** (was 792) — still the whole loop, still the cleanest. The two signature safety details remain: `stopReason === "length"` fails every tool call in the message via `failToolCallsFromTruncatedMessage` (a token-limit-truncated message can yield tool calls that parse and validate but are silently incomplete — pi refuses to execute them), and the `AgentMessage` vs LLM `Message` separation with `convertToLlm` running exactly once per turn at the call boundary. Tool schemas moved from zod to **TypeBox**; the tool set is 8 types (read, bash, powershell, edit, write, grep, find, ls) with a default of just 4 (read, bash, edit, write). The big story since August is infrastructure: **pi-durable** (23.9k LOC — durable/restartable sessions with progress commit intervals and windowed shell output), **pi-chord** (11.7k LOC concurrency/context substrate with a 2,205-line delta tracker), **pi-codemode** (a sandboxed JavaScript runtime served as an MCP tool), and **pi-env** (SSH remote execution environments with cross-platform daemons). The package count went from 9 to 14. One wart: `interactive-mode.ts` in the coding agent is now 7,072 lines — the pi harness is growing its own god-file.
 
-### 2.6 pi — the cleanest loop in the directory
+### 2.7 deepagents — the loop is a graph you assemble (and now a harness too)
 
-`packages/agent/src/agent-loop.ts`, **792 lines total** including comments — the whole loop. Shape:
+`libs/deepagents/deepagents/graph.py` (~1,011 lines) still builds a LangGraph `CompiledStateGraph` from `langchain.agents.create_agent` plus a middleware stack — but the default stack **no longer includes planning todos** (the todo tool ships only in the OpenAI Codex harness profile). The `DeltaChannel` state optimization survives (checkpoint growth O(N²)→O(N), snapshot every 50 messages), as do filesystem offload with head+tail previews and the 85%-trigger summarization. New since August: a **profiles subsystem** (provider+harness profiles keyed by model, driving middleware exclusion and tool-description overrides), a `RubricMiddleware` (a grader sub-agent self-eval loop, 1,438 lines), content-addressed binary blob offload, and two new backends (`StoreBackend` on LangGraph Store, `LocalShellBackend`). Async sub-agent tools were renamed (`start_async_task` etc.) and now target subagents deployed via LangSmith Deployments. The headline: **deepagents-code** (~215k LOC, v0.1.83) — a full terminal coding agent with a Textual TUI, skills engine with trust model, 20+-module hooks engine, plugins, and MCP providers, built entirely on the SDK.
 
-```
-runLoop():
-  outer while(true):                       // follow-ups after natural stop
-    inner while (hasMoreToolCalls || pendingSteering):
-      inject pending steering messages
-      message = streamAssistantResponse()  // transformContext → convertToLlm at boundary
-      if stopReason error/aborted → end
-      if stopReason === "length" → fail ALL tool calls (truncated-argument guard)
-      executeToolCalls() (parallel, per-tool terminate flag)
-      prepareNextTurn hook → may swap context/model/thinkingLevel per turn
-      shouldStopAfterTurn hook → may end
-      drain steering
-    followUps? → continue outer
-```
+### 2.8 hermes-agent — the maximalist loop, decomposed
 
-Two details worth calling out because nobody else has them:
+The August god-file verdict needs revision. `agent/conversation_loop.py` is now **1,835 lines** (was ~4.6k), decomposed into 33 `turn_*`/iteration modules (`turn_preflight.py`, `turn_api_call.py`, `turn_finalizer.py`, …) — the decomposition the previous analysis noted as "ongoing" has substantially landed. The dual-budget loop guard survives (`api_call_count < max_iterations and iteration_budget.remaining > 0) or _budget_grace_call`), though defaults changed: config default is now 250 iterations (constructor default unlimited, shared with subagents; subagent cap 50). Preflight compression (≤3 passes), protocol-tail repair, and tool-schema-aware token estimation all remain. Steer handling changed mechanism: steering text is now appended as a standalone user message *after* the last tool result rather than merged into it (role-alternation intent preserved). Meanwhile `run_agent.py`'s `AIAgent` is now a composition of **13 mixins with an 84-parameter constructor** — the loop got cleaner while the agent object got wider.
 
-1. **`stopReason === "length"` fails every tool call in the message** (`failToolCallsFromTruncatedMessage`): since streamed tool-call args are finalized by a salvage parser, a token-limit-truncated message can yield tool calls that *parse and validate but are silently incomplete*. pi refuses to execute them and tells the model to re-issue. This is a real production failure mode the others don't explicitly handle at loop level.
-2. **`AgentMessage` vs LLM `Message` separation**: the context holds rich agent-domain messages; `convertToLlm` runs exactly once per turn at the call boundary, and `transformContext` allows arbitrary pre-transform. The harness thesis is "own the message model, rent the wire format."
+### 2.9 naah — thin orchestrator, pipeline-per-turn, now with a desktop
 
-### 2.7 deepagents — the loop is a graph you assemble
-
-`libs/deepagents/deepagents/graph.py` (~1,050 lines) builds a LangGraph `CompiledStateGraph` from `langchain.agents.create_agent` plus a middleware stack (planning todos, filesystem, subagents, summarization, skills, memory, permissions, HITL interrupts). The "loop" is LangGraph's tool-node/agent-node cycle; deepagents' value is the middleware composition and one clever state-level optimization: `DeepAgentState` uses a **`DeltaChannel` on messages to reduce checkpoint growth from O(N²) to O(N)** (snapshot every 50 messages) — a real token/cost-adjacent efficiency feature at the persistence layer, not the prompt layer.
-
-### 2.8 hermes-agent — the maximalist synchronous loop
-
-`agent/conversation_loop.py` (4.6k lines) + `run_agent.py` `AIAgent` (4.6k lines, ~60-parameter constructor — though many methods are now forwarders into the `agent/` package, an ongoing decomposition). Loop guard:
-
-```python
-while (api_call_count < agent.max_iterations          # default 90
-       and agent.iteration_budget.remaining > 0) or agent._budget_grace_call:
-```
-
-— a dual budget (iteration count *and* token/iteration budget with one grace call). Distinctive loop-level machinery: pre-API-call steer drain that injects steering text into the last *tool* message (preserving role alternation instead of appending a second user message); `_drop_trailing_empty_response_scaffolding` / `repair_message_sequence` to fix protocol-invalid tails (`...tool, user, user`) that make providers silently return empty content forever; multi-pass preflight compression (up to 3 passes) before the call. This is hard-won defensive engineering against real provider misbehavior — the loop is verbose precisely because it handles failure modes the minimal frameworks haven't met yet.
-
-### 2.9 naah — thin orchestrator, pipeline-per-turn
-
-`Naah.Core/Agent/AgentLoop.cs` (164 lines): builds a `TurnContext` (history, `IChatClient`, registry, per-turn `Channel<TokenDeltaEvent>`/`Channel<ToolEvent>` for backpressure-capable streaming) and calls a pre-built `AgentMiddlewareDelegate` until `ShouldContinue` is false or `MaxTurns`. All LLM/tool work lives in middleware (Approval, Compaction, Fallback, Logging, Permission, RateLimit, Telemetry). It is yaah's architecture translated to .NET idioms (DI, `Microsoft.Extensions.AI`), currently at "Phase A" — sub-agents, compaction maturity, and OTel parity are explicitly future phases.
-
-### 2.10 shepherd — no traditional loop at all
-
-An agent run is a *retained output*: `workspace.run(task_id, ...)` executes a task (whose Python function signature *is* the permission surface — parameter type grants define what the agent may touch), captures an effects stream as a content-addressed causal DAG, and applies nothing to the filesystem until the user runs `shepherd run select`. The "kernel-v3-reference" package implements the underlying calculus: algebraic effects (`Perform`/`Handle`/`Resume`/`Abort`), a generator-based direct evaluator where *a paused generator is the captured continuation*, a defunctionalized IR, an abstract machine, and trace validators at three schema boundaries — with Lean proofs in flight. This is the only framework here where the agent loop is a research artifact with formal semantics.
+`Naah.Core/Agent/AgentLoop.cs` is still 164 lines and works exactly as documented: builds a `TurnContext` (history, `IChatClient`, registry, per-turn `Channel<TokenDeltaEvent>`/`Channel<ToolEvent>` for backpressure-capable streaming) and calls a pre-built `AgentMiddlewareDelegate` until `ShouldContinue` is false or `MaxTurns`. Phase status has advanced: phases A *and* C are complete — compaction works (`CompactionMiddleware` plus chunking/pruning/summarization compactors), OTel is wired (AgentActivitySource, AgentMetrics, in-memory span exporter), and a **Photino.NET cross-platform desktop** (phases 1–5 of 6) embeds Naah.Server in-process and serves the React SPA from embedded resources. One caveat that matters for the port's story: sub-agents are still non-functional — `SubAgentRunner.cs` (280 LOC) is DI-registered but called by nothing, and the `task` tool returns a stub string. The default middleware composition also omits `FallbackMiddleware` (registered but never composed). Naah.Core has grown to 20 packages and ~11.8k non-test C#.
 
 ---
 
@@ -163,18 +111,17 @@ Mechanisms observed, strongest → weakest per framework:
 
 | Framework | Proactive (no LLM call) | Reactive compaction | Prompt caching | Tool-output bounding |
 |---|---|---|---|---|
-| **yaah** | **Soft-prune**: stubs stale tool results in the *ephemeral request only* (originals never mutated); thresholds tuned with documented field history (40k/20k → 12k/4k → 3k/500 after real sessions never fired the old ones) | LLM compaction at configurable threshold, pre-call guard, in-`Call` overflow recovery | Anthropic breakpoints (cap 4): system first, then tool msgs at turn boundaries, newest first | Tool-result line/byte caps + disk spill with path hint |
-| **kilocode** | **Prune**: `PRUNE_MINIMUM=20k`, `PRUNE_PROTECT=40k` tokens, protected tools (`skill`), tail 2 turns, preserve-recent 2k–8k tokens; safe re-prune at cache-invalidating boundaries (`PruneReason: normal \| post-compaction \| payload-limit`) | Compaction with chunking + payload recovery | Upstream mechanisms | `TOOL_OUTPUT_MAX_CHARS=2000` w/ truncation marker; **swe-pruner**: model passes `context_focus_question` per tool call → small model skims output keeping relevant lines (implements arXiv 2601.16746) |
-| **opencode V2** | Tool-output store with managed output paths (externalize bulky results); context epochs bound re-projection | `compactIfNeeded` pre-call + single-shot `compactAfterOverflow` on context-overflow failure | `promptCacheKey` (OpenAI) from session id; Anthropic `cache_control` in the `llm` package schema | Producer capture limits (e.g. Bash `maxOutputBytes` w/ accurate loss reporting) at tools; bounding at registry settlement |
-| **crush** | — | Auto-summarize `StopWhen` (context-window aware; separate thresholds for large vs small windows; skipped entirely if window unknown, protecting local models) | `cache_control` on system + last 2 messages + last tool definition | — |
-| **deepagents** | **Filesystem offload**: oversized tool results written to the backend FS, replaced by head+tail preview + read instructions (shared `_message_eviction` used by both proactive per-call offload and reactive overflow clipping) | `SummarizationMiddleware` (default trigger: 85% of context), fallback tail-clip on `ContextOverflowError` | `AnthropicPromptCachingMiddleware` (from langchain_anthropic) | Per-tool size thresholds |
-| **pi** | Compaction as **pure functions** (I/O in session manager); file-operation carryover across compactions (read/modified file lists survive into the summary context) | LLM summarization w/ dedicated system prompt | Provider-level (pi-ai package) | `truncate` tool + output-accumulator |
-| **goose** | `compute_tool_call_cutoff` (tool-result cutoff policy) | Auto-compact at threshold % (configurable) inline in the loop; `large_response_handler` | — | Tool-call cutoff |
-| **hermes** | **Preflight compression**: rough token estimate *including tool schemas* ("20–30K+ tokens the old sys+msg estimate missed"), multi-pass (≤3) | Context compressor w/ protect-first/last-N windows; context-engine plugins; manual compression feedback loop | — (session DB persists text-only summaries of multimodal results) | Multimodal→text summary at persistence |
-| **naah** | Compaction middleware (port) | planned | planned | — |
-| **shepherd / kernels** | N/A — not LLM loops; the kernel's efficiency property is *representation*: content-addressed dedup of trace facts | — | — | — |
+| **yaah** | **Soft-prune**: stubs stale tool results in the *ephemeral request only* (originals never mutated) | LLM compaction at configurable threshold, pre-call guard, in-`Call` overflow recovery | Anthropic breakpoints (cap 4): system first, then tool msgs at turn boundaries, newest first | Tool-result line/byte caps + disk spill with path hint |
+| **kilocode** | **Prune**: `PRUNE_MINIMUM=20k`, `PRUNE_PROTECT=40k` tokens, protected tools (`skill`), preserve-recent tail; safe re-prune at cache-invalidating boundaries (`PruneReason: normal \| post-compaction \| payload-limit`) — constants live in the shared upstream `session/compaction.ts` | Compaction with chunking + payload recovery | Upstream mechanisms | `TOOL_OUTPUT_MAX_CHARS=2000` w/ truncation marker. **swe-pruner was removed** (2026-08-18, "remove experimental task-aware output pruning") — the per-call semantic-filtering experiment did not survive |
+| **opencode V2** | Tool-output store with managed output paths (externalize bulky results); context epochs bound re-projection | `compactIfNeeded` pre-call + single-shot `compactAfterOverflow` on context-overflow failure | `promptCacheKey` (OpenAI) from session id; Anthropic `cache_control` in the `llm` package schema | Producer capture limits at tools; bounding at registry settlement |
+| **crush** | — | Auto-summarize `StopWhen` (context-window aware; separate thresholds for large vs small windows; skipped entirely if window unknown) | `cache_control` on system + last 2 messages + last tool definition | — |
+| **deepagents** | **Filesystem offload**: oversized tool results written to the backend FS, replaced by head+tail preview (5+5 lines) + read instructions; content-addressed binary blob offload | `SummarizationMiddleware` (default trigger: 85% of context), fallback tail-clip on `ContextOverflowError` | Upstream Anthropic/Bedrock/Fireworks prompt-caching middleware | Per-tool size thresholds |
+| **pi** | Compaction as **pure functions** (I/O in session manager); file-operation carryover across compactions | LLM summarization w/ dedicated system prompt | Provider-level (pi-ai package) | Read `DEFAULT_MAX_BYTES` cap + bash `OutputAccumulator` line/byte caps |
+| **goose** | `compute_tool_call_cutoff` (tool-result cutoff policy) | Auto-compact at threshold % (configurable) inline in the loop; plus the new `goose-context-management` crate — a standalone summarize/compact library exposed cross-language via goose-sdk uniffi | — | Tool-call cutoff |
+| **hermes** | **Preflight compression**: rough token estimate *including tool schemas*, multi-pass (≤3) | Context compressor w/ protect-first/last-N windows; context-engine plugins; manual compression feedback loop | — (session DB persists text-only summaries of multimodal results) | Multimodal→text summary at persistence |
+| **naah** | Compaction middleware (working port, incl. chunking/pruning/summarization compactors) | present | — | — |
 
-**Analysis.** The state of the art in this directory is a **three-tier ladder** (prune cheaply without an LLM → summarize with a small/model call → overflow-recover as last resort), and yaah + kilocode implement it most completely. kilocode's swe-pruner is the most novel single idea (per-call semantic filtering driven by the model's own declared intent); deepagents' filesystem offload with head/tail previews is the most reusable pattern for SDK consumers; hermes' tool-schema-aware token estimation catches a real accounting blind spot every other framework has (most estimate only messages+system); pi's compaction-purity (functions vs. I/O) is the best-factored implementation. opencode's context *epochs* + output *store* externalization is the most ambitious durable-context design but is still being built out (their own checklist marks several continuation conditions unchecked).
+**Analysis.** The three-tier ladder still holds (prune cheaply without an LLM → summarize with a model call → overflow-recover as last resort), and yaah + kilocode still implement it most completely. The August "most novel single idea" (kilocode's swe-pruner) has been **removed by its own authors** — the lesson being that per-call semantic filtering added latency and complexity for unclear wins. The durable novelty prizes now go to hermes (tool-schema-aware estimation — a real accounting blind spot everyone else still has) and deepagents (content-addressed blob offload). pi's compaction purity remains the best-factored implementation, and its new durable layer adds restartability without changing that. opencode's context *epochs* + output *store* remains the most ambitious durable-context design, but its own checklist shows it is still being built out.
 
 ---
 
@@ -182,18 +129,17 @@ Mechanisms observed, strongest → weakest per framework:
 
 | Framework | Dispatch model | Isolation & limits | Notable |
 |---|---|---|---|
-| **yaah** | **Role registry**: `SubAgentRole` → `RoleProfile` (tools, `MaxLoopCycles`, `MaxToolTurns`, JSON mode, timeout, nesting depth). No default role — every dispatch resolves an explicit role (built-in + filesystem role files) | Curated sub-agent pipeline (no persistence/compaction/spawning); `MaxSubAgentConcurrency`; per-role timeouts | **Background jobs manager** (session-scoped usage attribution never lost even when loop-scoped event hooks are unwired); `supervised_session` + `supervisor` tools with workspace+conversation checkpoints and rollback; optional **per-variant git worktree isolation** with the sub-agent's tools confined to its checkout; Shepherd trace per sub-agent (parent can inspect child's causal trace on failure); broker `SubAgentStart/End` events |
+| **yaah** | **Role registry**: `SubAgentRole` → `RoleProfile` (tools, `MaxLoopCycles`, `MaxToolTurns`, JSON mode, timeout, nesting depth). Every dispatch resolves an explicit role (built-in + filesystem role files) | Curated sub-agent pipeline (no persistence/compaction/spawning); `MaxSubAgentConcurrency`; per-role timeouts | Background jobs manager (session-scoped usage attribution); `supervised_session` + `supervisor` tools with workspace+conversation checkpoints and rollback; optional per-variant git worktree isolation; per-sub-agent Shepherd causal trace (parent inspects child's trace on failure); broker `SubAgentStart/End` events |
 | **crush** | Coordinator with named agents ("coder", "task"); `runSubAgent` creates a real SQLite *task session* | Session-per-subagent (persistent, inspectable); cost propagated to parent | Sub-agent results are first-class sessions (resumable, browsable) — the nicest persistence story |
 | **goose** | `subagent_handler`: recipe-driven subagent tasks | `max_turns` per task; cancellation tokens; `return_last_only` mode | **`final_output_tool` contract** — the subagent must call `final_output` to terminate; the loop warns and continues if it hasn't. Streams notifications back to the parent |
-| **opencode** | `task` tool: `subagent_type` + prompt; agent configs marked `mode: "subagent"` (excluded from primary listing) | `deriveSubagentSessionPermission`; optional `task_id` **resume** of a prior subagent session; step limits per agent | Background subagents behind an experimental flag, with strong prompt-side guardrails ("DO NOT sleep, poll…") |
-| **kilocode** | Same `task` tool, plus `task-background-process` | **Hard one-level delegation** (recursive chains forbidden); permission ceilings *inherited from parent* and merged over the subagent's own policy (upstream removed inheritance; Kilo deliberately preserves it — documented divergence) | Agent Manager (VS Code extension): multi-session orchestration with **git worktree isolation** per session |
-| **pi** | **None built in** — subagents ship as an *extension example* (`examples/extensions/subagent/agents`) | Depends on extension | Architectural statement: the harness core stays loop-pure; teams add delegation policy |
-| **deepagents** | **Richest programmatic surface**: sync `SubAgent` specs (name/description/system_prompt/tools/model/middleware) via `task` tool, plus `AsyncSubAgentMiddleware` exposing `start_task`/`check_task`/`update_task`/`cancel_task`/`list_tasks` | Async tasks run as LangGraph async graph executions; state carries live task list | Async subagents are state-machine citizens, not bolt-ons |
-| **hermes** | `delegate_task` (2.8k-line tool): single + batch parallel dispatch | `max_spawn_depth`, `max_concurrent_children`, child timeout, MCP-toolset inheritance from parent, sub-agent approval callbacks (auto-deny/auto-approve modes), interrupt propagation | Plus `mixture_of_agents_tool` (fan-out/fan-in) and a **kanban board dispatcher plugin** (multi-agent work queue) |
-| **shepherd** | A subagent is just another *retained run*; parent/child linkage is causal edges in the trace DAG | Placement ("jail" containers); nothing applied without selection | Only framework where sub-agent execution is formally auditable via the kernel calculus |
-| **naah** | Phase 4 roadmap (not yet built) | — | — |
+| **opencode** | `task` tool: `subagent_type` + prompt; agent configs marked `mode: "subagent"` | `deriveSubagentSessionPermission`; optional `task_id` **resume** of a prior subagent session; step limits per agent | Background subagents behind an experimental flag, with strong prompt-side guardrails |
+| **kilocode** | Same `task` tool, plus `task-background-process` | **Configurable delegation depth** (`subagent_depth`, default 1); permission ceilings *inherited from parent* and merged over the subagent's own policy (upstream removed inheritance; Kilo deliberately preserves it) | Agent Manager (VS Code): multi-session orchestration with per-session git worktrees, now with worktree *pooling*, multi-project management, and PR review/merge actions; new session goal subsystem gates long-running agents on wait-tools (`cron_create`, `schedule_wakeup`, `background_process`) |
+| **pi** | **None built in** — subagents ship as an *extension example*; a new experimental durable `Subagent` extension exists in the durable runtime only | Depends on extension | Architectural statement: the harness core stays loop-pure; teams add delegation policy |
+| **deepagents** | Sync `SubAgent` specs via `task` tool, plus `AsyncSubAgentMiddleware` exposing `start_async_task`/`check_async_task`/`update_async_task`/`cancel_async_task`/`list_async_tasks`; async subagents can target LangSmith Deployments | Async tasks run as LangGraph async graph executions; state carries live task list | Async subagents are state-machine citizens, not bolt-ons |
+| **hermes** | `delegate_task` (split across 10 files, ~5.7k total): single + batch parallel dispatch | `max_spawn_depth` (default 1), `max_concurrent_children` (default 10), child timeout, MCP-toolset inheritance, sub-agent approval callbacks (auto-deny/auto-approve), interrupt propagation | Kanban dispatch runs **inside the gateway** by default (3k-line dispatcher); mixture-of-agents moved from tool to slash-command/virtual-model mode; kanban-first review flow (`request_review`/`request_changes`, review forks defer compaction) |
+| **naah** | **Still a stub**: `SubAgentRunner` is DI-registered but unreached; the `task` tool returns "would handle" placeholder text | — | Phase B/D/E remain; sub-agents are the port's biggest gap |
 
-**Analysis.** Three schools: (1) **role/registry-based** (yaah, crush's named agents, opencode/kilo's agent configs) — declarative, auditable, tool-restricted; (2) **ad-hoc programmatic** (hermes `delegate_task`, deepagents specs) — maximum flexibility, policy lives in code; (3) **infrastructural** (shepherd — delegation is a trace relationship, not a feature). The most production-grade limits are hermes' (depth × concurrency × timeout × approval plumbing all configurable); the cleanest conceptual model is yaah's roles-as-data; the best async story is deepagents' five-tool task state machine; the best observability story is the crush/goose "sub-agent = real session" persistence.
+**Analysis.** Three schools persist: (1) **role/registry-based** (yaah, crush's named agents, opencode/kilo's agent configs) — declarative, auditable, tool-restricted; (2) **ad-hoc programmatic** (hermes `delegate_task`, deepagents specs) — maximum flexibility, policy lives in code; (3) **extension-based** (pi) — delegation as policy the team adds. The most production-grade limits are still hermes' (depth × concurrency × timeout × approval plumbing all configurable); the cleanest conceptual model is yaah's roles-as-data; the best async story is deepagents' five-tool task state machine; the best observability story is the crush/goose "sub-agent = real session" persistence, with yaah's per-sub-agent causal traces close behind. The interesting movement since August is *scheduling*: both kilocode (goal-gated cron/wakeups) and hermes (in-gateway kanban) are converging on long-running, queued, multi-agent work dispatch.
 
 ---
 
@@ -201,17 +147,16 @@ Mechanisms observed, strongest → weakest per framework:
 
 | Framework | Built-in count | Registry pattern | Signature |
 |---|---:|---|---|
-| **hermes** | **75+ registered** (79 tool files) | Import-time `registry.register()`; auto-discovery via `tools/registry.py`; **toolset system** (`research`, `development`, `safe` composites + distributions) | Largest surface; toolsets are user-facing product |
-| **yaah** | ~46 (49 files) | `tools.Registry`; `path_validator`, `conflict_tracker` cross-cutting; go-specific suite (`go_outline`, `go_refactor`, `go_test`, `go_mod`, `bisect`, `staticcheck`) | Deepest language-specific tooling of any framework here |
-| **crush** | ~37 | Tool interface + **`.md` description file pairs** (self-documenting tools); `hooked_tool.go` decorator injects PreToolUse hooks; **LSP suite as first-class tools** (definition, references, symbols, rename, replace-symbol, call-hierarchy, diagnostics) + sourcegraph | LSP integration is the standout |
-| **opencode V2** | ~14 core built-ins | **Opaque `Tool.make` values**; Location-scoped `ToolRegistry` overlaying process-scoped `ApplicationTools`; permissions attached at invocation-context construction; output bounding only at settlement | Most formally specified tool architecture (its own AGENTS.md defines the one-entry-type rule) |
-| **kilocode** | upstream + `repo_clone`, `recall` (LanceDB memory), `lsp`, `suggest`, `apply_patch` | Upstream + mirror rules | Indexing worker (LanceDB) feeds `recall` |
-| **goose** | Tools **are MCP extensions** (developer, memory, computer, ai, …) + frontend tools + platform tools | Extension manager spawns MCP servers; `tool_confirmation_router`; malware-check gate for community extensions | Maximal externalization — even core capabilities live out-of-process |
-| **pi** | ~12 (read, write, edit, edit-diff, bash, grep, find/glob, ls, truncate) | `Tool.define` w/ zod schema + auto-truncation; `file-mutation-queue` serializes writes | Smallest viable set; quality over breadth |
-| **deepagents** | FS tools derived from **`BackendProtocol`** (state, filesystem, sandbox, composite, context_hub, langsmith) | Backend abstraction means the same `read_file` tool works against in-memory state, a sandbox, or a hub | Cleanest hexagonal tool boundary |
-| **shepherd** | None — capability = function-signature grants | Tasks declared as Python functions; grants derived from parameter types | Permission model *is* the tool model |
+| **hermes** | **86 registered** at runtime (43 tool modules, 267 files after decomposition) | Import-time `registry.register()`; auto-discovery; **toolset system** reorganized around postures: web, terminal, file, browser, coding, debugging, safe, delegation, kanban, discord, spotify, feishu, … | Largest surface; toolsets are user-facing product |
+| **yaah** | ~46 tools (53 tool files) | `tools.Registry`; `path_validator`, `conflict_tracker` cross-cutting; go-specific suite (`go_outline`, `go_refactor`, `go_test`, `go_mod`, `bisect`, `staticcheck`) | Deepest language-specific tooling of any framework here |
+| **crush** | ~30 per session (29 `New*Tool` constructors; 16 always-on + question + 8 LSP + 2 MCP-resource + agent/agentic_fetch wrappers; web tools are sub-agent-only) | Tool interface + **`.md` description file pairs** (self-documenting tools); `hooked_tool.go` decorator injects PreToolUse hooks; **LSP suite as first-class tools** + sourcegraph | LSP integration is the standout |
+| **goose** | Architecture shifted: `developer` is now an **in-process platform extension** implementing `McpClientTrait`; memory/computer moved to a `goose-mcp` crate; platform extensions include todo, summarize, analyze, apps, chatrecall, code_execution, scheduler | Extension manager (6,216 lines) spawns external MCP servers (stdio + streamable HTTP); `tool_confirmation_router`; malware-check gate | In-process platform extensions + out-of-process MCP — the boundary moved, the openness stayed |
+| **opencode V2** | ~14 core built-ins | **Opaque `Tool.make` values**; Location-scoped `ToolRegistry`; permissions attached at invocation-context construction; output bounding only at settlement | Most formally specified tool architecture |
+| **kilocode** | upstream + `repo_clone`, `kilo_local_recall` (session-transcript search), `semantic_search` (LanceDB/qdrant codebase index via `kilo-indexing`), `kilo_memory_recall`, `lsp`, `suggest`, `apply_patch` | Upstream + marker rules | Three distinct recall surfaces (transcripts, code index, project memory) — easy to conflate, worth distinguishing |
+| **pi** | 8 tool types, **default 4** (read, bash, edit, write) | **TypeBox** schemas (zod is gone); `wrapToolDefinition` + `defineTool` for extensions; `file-mutation-queue` serializes writes | Smallest viable set; quality over breadth |
+| **deepagents** | FS tools derived from **`BackendProtocol`** (state, filesystem, sandbox, composite, context_hub, langsmith, store, local_shell) | Backend abstraction means the same `read_file` tool works against in-memory state, a sandbox, or a hub | Cleanest hexagonal tool boundary; deepagents-code layers a full harness (skills, hooks, plugins) on top |
 
-**Approval/permissions** (cross-cutting): yaah pipeline approval+permission middlewares with `classifyGate` + configurable rules; crush `permission` package + hooks (hooks run *before* permission checks); opencode `PermissionV2` with typed sources; kilocode merged ceilings; goose confirmation router + goose *modes* (auto-approve tiers); hermes per-subagent approval callbacks; naah `ApprovalMiddleware` + `IApprovalHandler`; deepagents `HumanInTheLoopMiddleware` with interrupt configs. All twelve treat approval as a first-class pipeline stage — table stakes in 2026.
+**Approval/permissions** (cross-cutting): yaah pipeline approval+permission middlewares; crush `permission` package + hooks (hooks run *before* permission checks; only PreToolUse is implemented); opencode `PermissionV2` with typed sources; kilocode merged parent ceilings; goose confirmation router + modes; hermes per-subagent approval callbacks; naah `ApprovalMiddleware` + `IApprovalHandler` (though `FallbackMiddleware` is registered but never composed); deepagents `HumanInTheLoopMiddleware` with interrupt configs. All treat approval as a first-class pipeline stage — table stakes in 2026.
 
 ---
 
@@ -219,33 +164,31 @@ Mechanisms observed, strongest → weakest per framework:
 
 **Process & packaging**
 
-- Single static binary: **yaah** (cross-compile matrix in CI), **crush** (CGO_ENABLED=0 + greenteagc), **shepherd-kernel-go**.
-- Runtime-dependent binaries: **goose** (Rust + tokio; Electron desktop + Ink text UI), **naah** (.NET 10; Spectre.Console REPL + SignalR web).
-- Node-runtime monorepos: **opencode** (bun, turbo, SST infra, ~30 packages incl. sdk/console/desktop/function/slack), **kilocode** (bun, turbo; VS Code extension packaging), **pi** (npm, lockstep versioning, 5 packages).
-- Python: **hermes** (pip/uv installable app + Docker images), **deepagents** (uv monorepo, multiple libs), **shepherd** (uv workspace w/ formal-design docs tree).
+- Single static binary: **yaah** (cross-compile matrix in CI), **crush** (CGO_ENABLED=0), goose (single Rust binary via goose-cli).
+- Runtime-dependent: **goose** (Rust + tokio; Electron desktop — the Ink text UI was deprecated and removed, replaced by the native Rust CLI), **naah** (.NET 10; Spectre.Console REPL + SignalR web + Photino.NET desktop).
+- Node-runtime monorepos: **opencode** (bun, turbo, SST, 36 packages incl. sdk/console/desktop/function/slack), **kilocode** (bun, turbo; VS Code *and* JetBrains extensions, kilo-console/kilo-web-ui), **pi** (npm, lockstep versioning, 14 packages at 1.0.4).
+- Python: **hermes** (pip/uv installable app + Docker images + an Electron/React desktop app with heavy momentum + a TUI stack), **deepagents** (uv monorepo: SDK + deepagents-code harness + acp + evals).
 
 **State & persistence**
 
 | Store | Frameworks |
 |---|---|
-| SQLite (embedded) | yaah (modernc, FTS5 sessions+memory), crush (sqlc codegen), opencode V2 (Drizzle + migrations), hermes (SessionDB FTS5), goose (session manager), shepherd kernels |
-| Filesystem JSON | kilocode v1 storage (`~/.local/share/kilo/storage/`, path-array keys) — upstream moved to SQLite; fork keeps JSON |
-| LangGraph checkpoints + DeltaChannel | deepagents |
-| Content-addressed append-only DAG | shepherd (the entire point of the kernel) |
+| SQLite (embedded) | yaah (modernc, FTS5 sessions+memory), crush (sqlc codegen), opencode V2 (Drizzle + migrations), hermes (SessionDB FTS5), goose (session manager); kilocode ships a drizzle SQLite layer but sessions remain filesystem JSON (`~/.local/share/kilo/storage/`, path-array keys) |
+| Durable session logs / checkpoints | pi-durable (restartable sessions with progress commit intervals), opencode V2 (event-sourced rows), deepagents (LangGraph checkpoints + DeltaChannel) |
 
 **Eventing / observability**
 
-- **OTel-first**: yaah (tracing spans per prompt/turn/tool + Shepherd trace middleware + in-memory span buffer), kilocode (kilo-telemetry: PostHog + OTel), crush (PostHog events), goose (tracing crate), hermes (observability plugin), deepagents (LangSmith integration incl. header propagation into subagents).
-- **Event-sourced**: opencode V2 (EventV2 sequence numbers, replayable projections, session input inbox), shepherd (trace facts).
-- **In-process pub/sub**: yaah typed broker (`PublishMustDeliver` semantics for terminal events), crush pubsub broker, kilocode/opencode v1 `Bus`, pi `EventStream` (push/end result channel — the simplest).
+- **OTel-first**: yaah (tracing spans per prompt/turn/tool + Shepherd trace facts + in-memory span buffer), opencode (OTLP export in core), goose (tracing crate), crush (PostHog events), hermes (observability plugin + telemetry surge), deepagents (LangSmith integration).
+- **Event-sourced**: opencode V2 (EventV2 sequence numbers, replayable projections, session input inbox).
+- **In-process pub/sub**: yaah typed broker (`PublishMustDeliver` semantics for terminal events), crush pubsub broker (lossy + must-deliver modes), kilocode/opencode v1 `Bus`, pi `EventStream` (push/end result channel — still the simplest).
 
 **Extension models**
 
-1. **MCP clients**: everyone (yaah stdio+HTTP+serve-as-server, crush, goose — goose is MCP-native, opencode/kilo, pi, hermes w/ toolset inheritance into subagents, crush even embeds MCP server *instructions* into its system prompt).
-2. **Middleware/pipeline**: yaah, naah, hermes (context-engine/memory/model-provider plugin types), opencode plugins.
-3. **Skills** (SKILL.md discovery): yaah, crush, kilocode/opencode, hermes, deepagents (`SkillsMiddleware`) — an emerging cross-tool standard.
-4. **Hooks** (user shell commands on lifecycle events): crush (Claude-Code-compatible protocol), goose (stop-hook block caps), yaah (HookEvent bus).
-5. **Out-of-process everything**: goose (extensions are servers), shepherd (function-signature tasks).
+1. **MCP clients**: everyone (yaah stdio+HTTP+serve-as-server, crush, goose — goose is MCP-native with in-process platform extensions, opencode/kilo, pi now ships pi-mcp + codemode-as-MCP-tool, hermes w/ toolset inheritance into subagents).
+2. **Middleware/pipeline**: yaah, naah, hermes (context-engine/memory/model-provider plugin types), opencode plugins, deepagents AgentMiddleware stack + profiles.
+3. **Skills** (SKILL.md discovery): yaah, crush, kilocode/opencode, hermes, deepagents (`SkillsMiddleware`; deepagents-code adds a trust model) — an emerging cross-tool standard.
+4. **Hooks** (user shell commands on lifecycle events): crush (Claude-Code-compatible protocol), goose (stop-hook block caps; hooks/plugin system ~2.3k lines), yaah (HookEvent bus), deepagents-code (20+ hook modules).
+5. **Out-of-process everything**: goose (extensions are servers or in-process platform extensions).
 
 ---
 
@@ -255,59 +198,56 @@ Grading engineering *as found in code*, weighted by consequence:
 
 ### SRP — Single Responsibility
 
-- **Best: pi.** The loop file is 792 lines *total*; compaction is "pure functions + session-manager I/O"; agent-domain vs LLM-wire message models are separated by design. Nothing in pi's core does two jobs.
-- **Excellent: opencode V2.** Self-documenting: "Keep this as orchestration over smaller collaborators rather than rebuilding the legacy `SessionPrompt` monolith." Tool registry, permission, publisher, compaction, and store are separate services with written invariants (one executable tool type; settlement is the only bounding boundary).
-- **Excellent: yaah.** Loop/pipeline/middleware/tools/jobs are separate packages; the loop file itself contains only orchestration; every middleware is one file + tests. The AGENTS.md architecture map matches the code.
-- **Good: crush** at the *package* level (config/agent/session/message/hooks/permission are clean), weaker at the *file* level — `agent.go` mixes dispatch concurrency, streaming callbacks, caching placement, summarization policy, and persistence in one 8k-line package. `coordinator.go` separately owns 1.4k+ lines of provider wiring.
-- **Good: naah** — Phase A intentionally thin; each middleware one concern.
-- **Mixed: deepagents** — the *SDK* is well-layered (graph assembly vs middleware vs backends protocol), but it inherits LangChain's boundary blur: middleware can mutate model requests, state, and tools simultaneously.
-- **Weakest: goose and hermes.** `agent.rs` (4.4k lines) and `conversation_loop.py` (4.6k lines) each hold loop + approval + retry + compaction + truncation + repair + metrics. Both show active decomposition efforts (hermes' forwarder methods into `agent/*` modules; goose' `execute_commands`, `reply_parts`, `retry` modules), but the god-file remains the load-bearing wall in both.
+- **Best: pi (the loop) and opencode V2.** pi's agent-loop file is still the cleanest single artifact in the directory (940 lines, compaction pure, message models separated) — but the coding-agent harness around it is growing file-heavy (`interactive-mode.ts` 7,072 lines). opencode V2 remains orchestration over small collaborators with written invariants.
+- **Excellent: yaah.** Loop/pipeline/middleware/tools/jobs are separate packages; the loop file contains only orchestration; every middleware is one file + tests. 11 registered orchestrator middleware, 9 default, all named and individually testable.
+- **Excellent (improved): hermes.** The August god-file verdict is outdated: the 4.6k-line conversation loop is now 1,835 lines decomposed into 33 turn-scoped modules. The counter-trend: `AIAgent` accreted to 13 mixins and an 84-parameter constructor.
+- **Good: crush** at the package level, weaker at the file level — `agent.go` still mixes dispatch concurrency, streaming callbacks, caching placement, and summarization policy; `coordinator.go` grew to 1,871 lines.
+- **Good: naah** — each middleware one concern (with the quirk that `FallbackMiddleware` exists but is never composed).
+- **Mixed: deepagents** — the SDK layering improved (profiles, backends), and it inherits LangChain's boundary blur.
+- **Weakest: goose.** `agent.rs` grew from 4.4k to **6,569 lines**. The `goose-agent` state-machine crate is a genuine extraction path, but today the monolith is bigger than in August.
 
 ### OCP — Open/Closed
 
-- **Middleware pipelines are the OCP win** wherever they exist: yaah (16 middlewares, config-driven enable/disable by name), naah, hermes context-engine plugins, deepagents AgentMiddleware stack. New behavior (e.g. yaah's `conflictdetect`) ships as a new middleware without touching the loop.
-- **goose's MCP-everything** is OCP via process boundaries — adding capabilities never touches core, at the cost of IPC latency and a 3.3k-line extension manager.
-- **crush's hooks + skills** extend behavior without code changes; but loop policy changes (summarization thresholds, cache placement) still require editing `agent.go`.
-- **kilocode's fork model is an anti-OCP pressure**: upstream evolution regularly conflicts with Kilo divergence; the team compensates with CI-enforced mirror-file discipline (`check-opencode-annotations`, `check-kilocode-change`) — process substituting for architecture.
+- **Middleware pipelines remain the OCP win**: yaah (11 middlewares, config-driven enable/disable by name), naah, hermes context-engine plugins, deepagents AgentMiddleware + profiles (per-model middleware exclusion is a genuinely new OCP mechanism).
+- **goose's MCP-everything** is OCP via process boundaries — adding capabilities never touches core, at the cost of a 6,216-line extension manager.
+- **crush's hooks + skills** extend behavior without code changes; loop policy changes still require editing `agent.go`.
+- **kilocode's fork model is an anti-OCP pressure**: upstream evolution conflicts with Kilo divergence; the team compensates with CI-enforced marker discipline plus promise-facade and architecture ratchets — process substituting for architecture, still working.
 
 ### LSP — Liskov Substitution
 
-Most honestly assessed via substitutability of the core abstractions:
-
-- **yaah `Middleware`** and **pi `StreamFn`/`AgentTool`**: small interfaces where every implementation observed obeys the contract (yaah even synthesizes tool-result messages for *removed* tool calls so provider invariants hold — middleware can't break the `tool_call_id` pairing rule because `SynthesizedResults` routes around them; the field's doc comment explains exactly why).
-- **crush `fantasy.Agent`**: the loop contract is externalized; crush passes `PrepareStep`/streaming callbacks that must satisfy library expectations (e.g., returning created assistant messages) — substitutable but the contract lives outside the repo, which is a reviewability cost.
-- **deepagents `BackendProtocol`**: genuine behavioral substitution (state vs sandbox vs composite filesystems behind identical tools).
-- **The Shepherd kernel trio is LSP at the extreme**: three languages, one ABI, byte-identical digests — substitutability *provable* by golden vectors.
+- **yaah `Middleware`**: small interface where implementations synthesize tool-result messages for *removed* tool calls so provider invariants hold — middleware can't break the `tool_call_id` pairing rule.
+- **crush `fantasy.Agent`**: the loop contract is externalized; substitutable but the contract lives outside the repo — a reviewability cost.
+- **deepagents `BackendProtocol`**: genuine behavioral substitution (state vs sandbox vs store vs shell filesystems behind identical tools), now with eight backends.
+- **goose's `goose-agent` machine traits**: an explicit substitutability play — the same loop contract implemented twice (inline monolith and state machine), selected by flag.
 
 ### ISP — Interface Segregation
 
 - **Go idiom enforced**: crush's AGENTS.md mandates consumer-defined small interfaces; yaah's `Middleware` (3 methods), `Compactor`, `TurnCheckpointer` are narrow by construction.
-- **opencode's service-per-concern** (`SessionStore`, `SessionRunnerModel`, `SystemContextRegistry`, `SkillGuidance`, `ToolRegistry`, `Snapshot`…) is fine-grained DI, though the *count* of services a feature touches is high.
-- **hermes `AIAgent`** exposes the union of ~60 constructor params and hundreds of attributes — consumers see everything; ISP is the SOLID principle it most violates.
-- **pi's `AgentLoopConfig`** is a config-bag (not an interface hierarchy) — pragmatic; consumers implement only the hooks they need (`getSteeringMessages?`, `prepareNextTurn?`, `shouldStopAfterTurn?` all optional). Effectively ISP via optional functions.
+- **opencode's service-per-concern** is fine-grained DI, though the count of services a feature touches is high.
+- **hermes `AIAgent`**: the 13-mixin, 84-parameter constructor is the biggest ISP violation in the directory — consumers see everything.
+- **pi's config-bag**: effectively ISP via optional functions (`getSteeringMessages?`, `prepareNextTurn?`, `shouldStopAfterTurn?`).
 
 ### DIP — Dependency Inversion
 
-- **Strongest: opencode** — Effect `Layer`s *are* a DI graph with compile-time composition and scoped lifetimes (`InstanceState` per directory; `makeRuntime` memoization). The most industrial DI discipline in the directory.
-- **naah** uses `Microsoft.Extensions.DependencyInjection` — idiomatic, boring, effective (explicitly listed as a key decision: "eliminates Go's manual wiring").
-- **yaah** inverts through a hand-written composition root (`cmd/yaah/wiring*.go`) — explicit, greppable, no framework; the `Loop` depends on `Compactor`/`TurnCheckpointer` interfaces it defines.
-- **deepagents**: `resolve_model` + `BackendFactory` + middleware injection — dependency inversion at SDK seams.
-- **goose/hermes** lean on concrete managers (`SessionManager::instance()`, `PermissionManager::instance()` — global singletons) — the least inverted designs here.
-- **pi** threads dependencies explicitly through constructors; the `agent` package depends only on `pi-ai/compat` types.
+- **Strongest: opencode** — Effect `Layer`s are a DI graph with compile-time composition and scoped lifetimes. The most industrial DI discipline in the directory.
+- **naah** uses `Microsoft.Extensions.DependencyInjection` — idiomatic, boring, effective.
+- **yaah** inverts through a hand-written composition root (`cmd/yaah/wiring*.go`) — explicit, greppable, no framework.
+- **goose/hermes** lean on global singletons (`SessionManager::instance()`, `PermissionManager::instance()`; hermes' 13 mixins) — the least inverted designs here.
+- **pi** threads dependencies explicitly through constructors.
 
-### Verdict table
+### Verdict table (October 2026)
 
 | | SRP | OCP | LSP | ISP | DIP | Overall feel |
 |---|---|---|---|---|---|---|
-| pi | ●●● | ●● | ●●● | ●●● | ●● | Small, honest, readable |
-| opencode V2 | ●●● | ●●● | ●● | ●● | ●●● | Industrial; two generations coexist |
-| yaah | ●●● | ●●● | ●●● | ●●● | ●● | Best middleware factoring |
-| naah | ●●● | ●●● | ●● | ●● | ●●● | Promising port, early |
+| yaah | ●●● | ●●● | ●●● | ●●● | ●● | Best middleware factoring; checkpoint/restore still unique |
+| pi | ●●● | ●● | ●●● | ●●● | ●● | Cleanest loop; harness files growing heavy |
+| opencode V2 | ●●● | ●●● | ●● | ●● | ●●● | Industrial; V2 frozen mid-checklist while V1 still serves |
+| hermes | ●● | ●● | ●● | ● | ● | Loop decomposed (33 modules); agent object accreted (84 params) |
 | crush | ●● | ●● | ●● | ●●● | ●● | Concurrency-mature, file-heavy |
-| deepagents | ●● | ●●● | ●●● | ●● | ●● | Elegant SDK on a blurry platform |
-| kilocode | ●● | ● | ●● | ●● | ●● | Product velocity via fork discipline |
-| goose | ● | ●●● | ●● | ●● | ● | Extension-native monolith |
-| hermes | ● | ●● | ●● | ● | ● | Battle-tested maximalism, refactoring |
+| naah | ●●● | ●●● | ●● | ●● | ●●● | Faithful port; sub-agents still a stub |
+| deepagents | ●● | ●●● | ●●● | ●● | ●● | Elegant SDK now dogfooded by its own 215k harness |
+| kilocode | ●● | ● | ●● | ●● | ●● | Product velocity via fork discipline + scheduler ambitions |
+| goose | ● | ●●● | ●● | ●● | ● | Extension-native; monolith grew, state-machine hatch open |
 
 ---
 
@@ -317,57 +257,54 @@ Most honestly assessed via substitutability of the core abstractions:
 |---|---|---|
 | **Agent loop design** | **yaah** (checkpoint/restore, overflow-adoption, curated sub-pipeline) | pi (cleanest minimal), opencode V2 (durable semantics) |
 | **Loop simplicity/readability** | **pi** | naah |
-| **Token efficiency breadth** | **kilocode** (prune+chunk+recovery+swe-pruner) | yaah (3-tier ladder), deepagents (FS offload) |
-| **Token efficiency novelty** | **kilocode swe-pruner** (per-call semantic filtering) | hermes (tool-schema-aware estimation) |
-| **Sub-agent machinery** | **hermes** (depth/concurrency/timeouts/approvals) | deepagents (async task state machine), yaah (roles-as-data) |
-| **Sub-agent auditability** | **shepherd** (causal trace DAG) | crush (sub-agent = persistent session) |
-| **Tool breadth** | **hermes** (75+ tools, toolsets) | crush (LSP suite) |
-| **Tool architecture rigor** | **opencode V2** (opaque tools, settlement boundary) | deepagents (BackendProtocol) |
-| **Extensibility** | **goose** (MCP-everything) | yaah/opencode middleware+plugins |
-| **Persistence/durability** | **opencode V2** (event-sourced, durable admission) | crush (SQLite sessions) |
-| **Observability** | **yaah** (OTel spans + Shepherd facts) | opencode (EventV2 replay), kilocode telemetry |
-| **Determinism/formality** | **shepherd kernels** (byte-identical tri-language ABI; formal semantics) | — |
+| **Token efficiency breadth** | **kilocode** (prune+chunk+recovery; note swe-pruner was removed) | yaah (3-tier ladder), deepagents (FS offload) |
+| **Token efficiency novelty** | **hermes** (tool-schema-aware estimation) | deepagents (content-addressed blob offload) |
+| **Sub-agent machinery** | **hermes** (depth/concurrency/timeouts/approvals + in-gateway kanban) | kilocode (goal-gated scheduling), yaah (roles-as-data) |
+| **Sub-agent auditability** | **crush** (sub-agent = persistent, resumable session) | yaah (per-sub-agent causal traces via the Shepherd kernel) |
+| **Tool breadth** | **hermes** (86 tools, toolsets) | crush (LSP suite) |
+| **Tool architecture rigor** | **opencode V2** (opaque tools, settlement boundary) | deepagents (BackendProtocol, 8 backends) |
+| **Extensibility** | **goose** (in-process platform extensions + MCP everything) | yaah/opencode middleware+plugins |
+| **Persistence/durability** | **opencode V2** (event-sourced, durable admission) | pi-durable (restartable sessions), crush (SQLite sessions) |
+| **Observability** | **yaah** (OTel spans + Shepherd facts) | opencode (EventV2 replay) |
 | **SOLID overall** | **yaah / pi / opencode V2** (different weights) | naah |
-| **Testability culture** | **hermes** (~17k tests) | crush (golden-file TUI testing via catwalk), pi (faux-provider harness, no paid-token tests) |
+| **Testability culture** | **hermes** (~44k test functions) | crush (golden-file TUI testing), pi (faux-provider harness) |
+| **Local inference** | **goose** (`goose-local-inference`: candle/llamacpp/MLX, GGUF, model downloads) | — |
 
 ---
 
 ## 9. Per-Framework One-Paragraph Verdicts
 
-**yaah** — The best factored loop-and-pipeline in the directory, with the most defensible failure semantics (turn checkpoints with bounded restore, overflow-adoption, synthesized-denial tool results that preserve provider invariants). Its middleware system is what crush's `agent.go` would be if it were decomposed, and its role-based sub-agent registry is cleaner than config-file agent definitions. Weakest area: single-maintainer velocity — the Go tool suite is deep but the surface (web UI, TUI, ACP, MCP server) is very broad for its size.
+**yaah** — Still the best factored loop-and-pipeline in the directory, with the most defensible failure semantics (turn checkpoints with bounded restore, overflow-adoption, synthesized-denial tool results that preserve provider invariants) and now a lean sub-agent prompt that strips ~1.2k unactionable tokens from every dispatch. Its middleware system is what crush's `agent.go` would be if it were decomposed, and its role-based sub-agent registry is cleaner than config-file agent definitions. The Shepherd-kernel integration (trace facts, supervised rollback) is a differentiator no other harness here has. Weakest area remains breadth-for-size: the Go tool suite is deep but the surface (web UI, TUI, ACP, MCP server, supervised sessions) is very broad for a single maintainer.
 
-**naah** — A faithful architectural translation of yaah into .NET idioms (DI, `IChatClient`, Channels for streaming backpressure). Currently a skeleton-plus-core; the plan's honesty (explicit phases, "no TUI port" decision) is a model for port projects. Judge it in a year.
+**naah** — A faithful architectural translation of yaah into .NET idioms that has quietly outgrown its "Phase A" label: working compaction, wired OTel, a 20-package core, and a new Photino cross-platform desktop shipping the React SPA. The honest caveat is sub-agents: the runner exists but the `task` tool is still a stub, so the port's most interesting feature is unreachable. The plan documentation (explicit phases, a "no TUI port" decision the Photino wrapper respects) remains a model for port projects.
 
-**crush** — The most concurrency-mature Go harness (accepted runs, cancel sequencing, queue draining, RunComplete guarantees for every admitted call) with the best LSP tooling and pragmatic library delegation (`fantasy`) — at the price of loop policy living in an 8k-line file and the actual iteration logic being outside the repo. Auto-summarization is context-window-aware and local-model-safe (skips when window unknown).
+**crush** — Still the most concurrency-mature Go harness (accepted runs, cancel sequencing, queue draining, RunComplete guarantees for every admitted call) with the best LSP tooling and pragmatic library delegation (`fantasy`) — at the price of loop policy living in a file-heavy agent package and the actual iteration logic being outside the repo. New plan mode and Claude Channels delivery show the harness absorbing product features without rearchitecting the loop.
 
-**goose** — The extension-native framework: everything is an MCP server, which buys unmatched openness (desktop app, CLI, recipes, subagents, community extensions with malware screening) and pays in a 4.4k-line orchestration monolith with global singletons. Loop features are production scar tissue: stop-hook block caps, approval routing, large-response handling, retry manager. Choose it for ecosystem, not for code aesthetics.
+**goose** — The extension-native framework, now with the directory's largest codebase (~539k Rust). The architecture moved under it: `developer` became an in-process platform extension, memory/computer moved to a `goose-mcp` crate, the Ink TUI was deleted in favor of a native Rust CLI, and a genuine local-inference stack (candle/llamacpp/MLX + resumable model downloads) plus an iroh-based p2p transport appeared. The 6.5k-line `agent.rs` monolith grew, but the `goose-agent` state-machine crate is a real extraction path. Choose it for ecosystem; the code aesthetics are still a construction site.
 
-**opencode** — The most ambitious architecture in flight: durable event-sourced sessions, context epochs, opaque tool settlement, Effect-TS DI throughout, and a self-documenting migration checklist. Also the least settled: V1 and V2 loops coexist, and several V2 continuation paths are explicit TODOs. If the migration lands, this becomes the reference durable-agent design; today it's a construction site with excellent blueprints.
+**opencode** — The most ambitious architecture in the directory, and since August it has been *frozen*: the V2 migration checklist has not advanced one box, the live V1 monolith still serves the HTTP API, and 263 commits went almost entirely to product surface (paid tier, stats site, model catalog). The durable event-sourced design remains the reference blueprint — but "if the migration lands" is now a two-month-old conditional. Today it is two generations of loop coexisting, with excellent blueprints and a paused construction site.
 
-**kilocode** — Proof that a disciplined fork can out-product its upstream: one-level delegation, parent-inherited permission ceilings, aggressive context pruning, swe-pruner, LanceDB recall, and Agent Manager worktree orchestration — while CI bots (annotation checks, promise-facade ratchets, workflow allowlists) hold the fork line against upstream drift. Architecturally conservative (Effect ratchet forbids new Promise facades), productively aggressive.
+**kilocode** — Proof that a disciplined fork can out-product its upstream: configurable-depth delegation with inherited permission ceilings, compaction chunking + payload recovery, three distinct recall surfaces, and — new since August — a scheduler story (goal-gated sessions, cron, wakeups) plus Agent Manager worktree pooling and PR actions, JetBrains and console clients. The swe-pruner experiment was removed by its own authors, which is itself informative. CI ratchets (annotation checks, promise-facade and architecture gates) still hold the fork line against upstream drift.
 
-**pi** — The minimalist thesis executed: a 792-line loop with the two best loop-level safety details in the directory (truncated-tool-call refusal, steering-before-next-turn), pure-function compaction, and a clean AgentMessage/LLM-message boundary. No built-in subagents is a feature if you agree with it. The code you'd hand to someone learning what an agent loop fundamentally is.
+**pi** — The minimalist thesis still executed: a 940-line loop with the two best loop-level safety details in the directory, TypeBox schemas, pure-function compaction, and the cleanest message-model boundary. The August snapshot missed its infrastructure trajectory: pi-durable (restartable sessions), pi-chord, pi-codemode, and pi-env SSH make pi the quiet leader in durable-session engineering at the library level. Watch `interactive-mode.ts` (7k lines) — the minimalist harness is growing a maximalist file.
 
-**deepagents** — Not a harness — the middleware SDK for building harnesses on LangChain/LangGraph. Delivers the richest *programmatic* sub-agent surface (sync + async state-machine), filesystem-offload token strategy, and a genuinely clever persistence optimization (DeltaChannel O(N²)→O(N) checkpoints). Value is inversely proportional to how much you already dislike LangChain's boundaries.
+**deepagents** — No longer just a middleware SDK: deepagents-code (~215k LOC) is a full harness with TUI, skills trust model, hooks, and plugins built on it, plus a profiles system, rubric self-eval middleware, and two new backends. The `BackendProtocol` remains the cleanest hexagonal tool boundary here. Value is still inversely proportional to how much you already dislike LangChain's boundaries — but the SDK now demonstrates its own patterns at harness scale.
 
-**hermes-agent** — The maximalist: 75+ tools, toolsets, dual-budget loop, multi-pass preflight compression, provider-tailbreaking message repair, the deepest sub-agent limit system, 15+ gateway platforms, plugins, cron, ~17k tests. The SOLID violations are real (god-objects, 60-param constructors) but so is the active decomposition (forwarder modules) and the hardening — many loop defenses here exist nowhere else in the directory because nobody else has hit those bugs yet.
-
-**shepherd + kernels** — A different species: agent execution as a content-addressed, formally specified trace calculus with retained outputs and signature-derived permissions. Nothing touches your files until you select a run. The tri-language kernel with byte-identical digests is the most rigorous engineering artifact in the directory. Not a competitor to the harnesses — the substrate that could one day sit under them (yaah already ships a Shepherd trace middleware; the ideas are already flowing).
+**hermes-agent** — The maximalist, decomposing: the 4.6k-line loop is now 1,835 lines over 33 turn modules (the god-file verdict from August no longer applies to the loop), 86 tools over reorganized toolsets, ~44k test functions, and new subsystems since August — a package manager, gateway-hosted multi-agent rooms, a platform layer, and an Electron desktop with real momentum. The `AIAgent` 13-mixin/84-parameter constructor is the new god-object. Many loop defenses here (protocol-tail repair, tool-schema token estimation, multi-pass preflight) still exist nowhere else in the directory because nobody else has hit those bugs yet.
 
 ---
 
 ## 10. Cross-Pollination Map (what each should steal)
 
-- **Everyone ← pi**: fail tool calls when `stopReason === "length"`; keep agent-domain message models separate from wire formats.
+- **Everyone ← pi**: fail tool calls when `stopReason === "length"`; keep agent-domain message models separate from wire formats; steal pi-durable's restartable-session design before building your own.
 - **Everyone ← hermes**: include tool schemas in token estimates; repair protocol-invalid tails before they become infinite empty-response loops.
-- **Everyone ← kilocode**: swe-pruner's per-call focus question; prune at cache-invalidating boundaries only.
+- **Everyone ← kilocode**: prune at cache-invalidating boundaries only; goal-gated scheduling (an agent that can only call wait-tools once its goal is set) is a clean pattern for long-running sessions.
 - **Everyone ← opencode**: durable prompt admission (inbox rows) so crashes can't lose an admitted user turn.
 - **Everyone ← crush**: every admitted run gets exactly one terminal event, even when canceled before starting or dropped from a queue.
-- **Everyone ← goose**: stop-hook block caps (bounded override of infinitely-blocking lifecycle hooks).
-- **Everyone ← yaah**: turn-level checkpoint/restore with bounded retries; synthesized tool results for denied/dropped calls.
-- **Everyone ← shepherd**: make delegation a trace relationship, not a feature — causal edges between parent and child runs.
-- **goose/hermes ← the field**: decompose the god-file; the middleware pattern demonstrated by yaah/naah is the proven path.
+- **Everyone ← goose**: stop-hook block caps; the platform-extension pattern (in-process extensions behind an MCP-shaped trait) is the best of both worlds between native tools and MCP servers.
+- **Everyone ← yaah**: turn-level checkpoint/restore with bounded retries; synthesized tool results for denied/dropped calls; lean per-role sub-agent prompts.
+- **goose/hermes-adjacent ← the field**: decompose the god-file — the middleware pattern demonstrated by yaah/naah is the proven path, and hermes' 33-module turn decomposition is the proof it works at maximalist scale.
 
 ---
 
-*Method note: findings reference specific files (`yaah/internal/agent/loop.go`, `crush/internal/agent/agent.go`, `opencode/packages/core/src/session/runner/llm.ts`, `pi/packages/agent/src/agent-loop.ts`, `deepagents/libs/deepagents/deepagents/graph.py`, `hermes-agent/agent/conversation_loop.py`, `goose/crates/goose/src/agents/agent.rs`, `naah/src/Naah.Core/Agent/AgentLoop.cs`, and the shepherd packages) so every claim above is re-verifiable at the cited location. LOC excludes vendored/generated/build directories; the "Sum" line pygount emits for `go.sum` files was excluded from language totals.*
+*Method note: findings reference specific files so every claim above is re-verifiable at the cited location — this pass re-verified all nine frameworks against checkouts dated 2026-09-30 through 2026-10-07 (goose and deepagents as fresh shallow clones at 2026-10-07 HEAD). LOC counts are `find`+`wc` over non-test source excluding `node_modules`, build/dist, and (where noted) generated code; they are not directly comparable to pygount's language-detection totals from the August pass. The shepherd checkouts (meta-agent + trace-kernel ports) were excluded from this edition as non-frameworks; yaah's use of the Go kernel is covered under yaah's own rows.*

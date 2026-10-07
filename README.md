@@ -420,6 +420,35 @@ detection (flags files touched by multiple sub-agents). Opt-in:
 cache-control breakpoints). Each is independently tested and can be
 reordered or disabled via config.
 
+## How yaah compares
+
+yaah was measured against eight peer agent frameworks (crush, goose,
+opencode, kilocode, pi, deepagents, hermes-agent, naah) in a code-level
+comparison — every claim read from source, not READMEs:
+[docs/agentic-frameworks-comparison.md](./docs/agentic-frameworks-comparison.md).
+
+Where yaah leads, per the analysis:
+
+- **Loop failure semantics** — turn-level checkpoint/restore with bounded
+  rewind-and-retry is unique in the field; no other framework does
+  conversation+workspace transactional rollback at turn granularity.
+- **Middleware factoring** — the smallest complete interception surface
+  (three hooks); 11 registered middleware, 9 on by default, each a single
+  file with tests.
+- **Sub-agent design** — roles-as-data with curated per-role pipelines and
+  evidenced response contracts; sub-agents get a lean identity, not the
+  orchestrator's prompt.
+- **Observability** — OTel spans plus per-sub-agent causal execution traces
+  (via the Shepherd kernel), inspectable with `yaah shepherd-trace`.
+
+Where peers lead: kilocode's prune tuning and compaction recovery, crush's
+cancellation protocol and LSP tooling, opencode's durable event-sourced
+sessions, pi's minimal 940-line loop and durable-session library, hermes'
+breadth (86 tools, ~44k tests) and gateway ecosystem, goose's extension
+ecosystem and local-inference stack. At ~45k lines of Go, yaah is the
+smallest full-featured harness in the set — the trade is breadth-for-size,
+with a single maintainer's velocity as the honest limit.
+
 ## Future improvements
 
 The near-term roadmap lives in tracked plan files (`.agents/plans/`,
