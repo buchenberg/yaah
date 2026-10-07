@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	"github.com/buchenberg/yaah/internal/sandboxfake"
 )
 
 // --- local workspace (host filesystem) ---
@@ -247,7 +248,7 @@ func TestRegistry_SetWorkspace_RefusesIsolated(t *testing.T) {
 	reg.Register(NewLeafTool("go_refactor"))
 	reg.SetPathValidator(&PathValidator{WorkDir: t.TempDir()})
 
-	err := reg.SetWorkspace(newSandboxWS(&fakeSandbox{}))
+	err := reg.SetWorkspace(newSandboxWS(t, nil))
 	if err == nil {
 		t.Fatal("an isolated workspace must be refused")
 	}
@@ -268,7 +269,7 @@ func TestRegistry_SetWorkspace_AllowsIsolatedWhenClean(t *testing.T) {
 	reg.Register(NewLeafTool("read"))  // migrated
 	reg.Register(NewLeafTool("write")) // migrated
 
-	if err := reg.SetWorkspace(newSandboxWS(&fakeSandbox{})); err != nil {
+	if err := reg.SetWorkspace(newSandboxWS(t, nil)); err != nil {
 		t.Fatalf("a registry of migrated tools must accept an isolated workspace: %v", err)
 	}
 }
@@ -366,65 +367,27 @@ func TestRegistry_UnmigratedFilesystemTools(t *testing.T) {
 
 // --- sandbox workspace ---
 
-// fakeSandbox is a minimal shepherd.Sandbox that records calls.
-type fakeSandbox struct {
-	execs  []shepherd.ExecRequest
-	stdout string
-	stderr string
-	exit   int
-	// execErr, when non-nil, simulates a transport failure: the command never
-	// reached (or never ran in) the sandbox.
-	execErr error
-	files   map[string][]byte
-}
-
-func (f *fakeSandbox) Backend() string { return "fake" }
-func (f *fakeSandbox) Capabilities() shepherd.SandboxCapabilities {
-	return shepherd.SandboxCapabilities{}
-}
-func (f *fakeSandbox) Create(context.Context, shepherd.SandboxSpec) error { return nil }
-func (f *fakeSandbox) Destroy(context.Context) error                      { return nil }
-func (f *fakeSandbox) Capture(context.Context) (shepherd.WorkspaceState, error) {
-	return shepherd.WorkspaceState{}, nil
-}
-func (f *fakeSandbox) Apply(context.Context, shepherd.WorkspaceState) error { return nil }
-func (f *fakeSandbox) Diff(context.Context, shepherd.WorkspaceState, int) (string, []string, error) {
-	return "", nil, nil
-}
-
-// Exec records the request and returns canned output, so tests can assert what
-// the workspace asked the sandbox to do.
-func (f *fakeSandbox) Exec(_ context.Context, req shepherd.ExecRequest) (shepherd.ExecResult, error) {
-	f.execs = append(f.execs, req)
-	if f.execErr != nil {
-		return shepherd.ExecResult{}, f.execErr
+// newSandboxWS returns a real sandboxWorkspace over an in-memory sandbox, so
+// the tests exercise the production implementation rather than a stand-in.
+// The sandbox is created with the workspace root as its workdir, the way an
+// isolated session provisions a container before dispatching tools. Tests
+// that need wire-level behaviour a working filesystem cannot produce pass
+// their own sandbox with an ExecHook registered.
+func newSandboxWS(t *testing.T, sb *sandboxfake.Sandbox) *sandboxWorkspace {
+	t.Helper()
+	if sb == nil {
+		sb = sandboxfake.New()
 	}
-	return shepherd.ExecResult{ExitCode: f.exit, Stdout: f.stdout, Stderr: f.stderr}, nil
-}
-
-func (f *fakeSandbox) ReadFile(_ context.Context, path string) ([]byte, error) {
-	if data, ok := f.files[path]; ok {
-		return data, nil
+	if !sb.Created() {
+		if err := sb.Create(context.Background(), shepherd.SandboxSpec{Workdir: "/workspace"}); err != nil {
+			t.Fatalf("create sandbox: %v", err)
+		}
 	}
-	return nil, os.ErrNotExist
-}
-
-func (f *fakeSandbox) WriteFile(_ context.Context, path string, data []byte, _ fs.FileMode) error {
-	if f.files == nil {
-		f.files = map[string][]byte{}
-	}
-	f.files[path] = data
-	return nil
-}
-
-// newSandboxWS returns a real sandboxWorkspace over the given sandbox, so the
-// tests exercise the production implementation rather than a stand-in.
-func newSandboxWS(sb shepherd.Sandbox) *sandboxWorkspace {
 	return newSandboxWorkspace(sb, "/workspace")
 }
 
 func TestSandboxWorkspace_ResolvePathContainment(t *testing.T) {
-	ws := newSandboxWS(&fakeSandbox{})
+	ws := newSandboxWS(t, nil)
 
 	// Relative paths resolve against the container root.
 	got, err := ws.ResolvePath("sub/f.txt")
@@ -457,7 +420,7 @@ func TestSandboxWorkspace_ResolvePathContainment(t *testing.T) {
 }
 
 func TestSandboxWorkspace_LocalAndShell(t *testing.T) {
-	ws := newSandboxWS(&fakeSandbox{})
+	ws := newSandboxWS(t, nil)
 	if ws.Local() {
 		t.Error("a sandbox workspace is not the host filesystem")
 	}
@@ -466,7 +429,7 @@ func TestSandboxWorkspace_LocalAndShell(t *testing.T) {
 		t.Errorf("shell = (%q, %q), want (sh, -c)", shell, flag)
 	}
 	// An empty root must default rather than produce a relative path.
-	if got := newSandboxWorkspace(&fakeSandbox{}, "").WorkDir(); got != "/workspace" {
+	if got := newSandboxWorkspace(sandboxfake.New(), "").WorkDir(); got != "/workspace" {
 		t.Errorf("default root = %q, want /workspace", got)
 	}
 }
@@ -475,17 +438,18 @@ func TestSandboxWorkspace_LocalAndShell(t *testing.T) {
 // inside the sandbox (temp file plus rename) and that content travels on stdin
 // rather than the command line.
 func TestSandboxWorkspace_WriteFileIsAtomicInBand(t *testing.T) {
-	sb := &fakeSandbox{}
-	ws := newSandboxWS(sb)
+	sb := sandboxfake.New()
+	ws := newSandboxWS(t, sb)
 
 	content := []byte("payload\nrm -rf /\n")
 	if err := ws.WriteFile(context.Background(), "/workspace/f.txt", content, 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	if len(sb.execs) != 1 {
-		t.Fatalf("execs = %d, want 1", len(sb.execs))
+	execs := sb.Execs()
+	if len(execs) != 1 {
+		t.Fatalf("execs = %d, want 1", len(execs))
 	}
-	req := sb.execs[0]
+	req := execs[0]
 	if req.Command != "sh" {
 		t.Errorf("command = %q, want sh", req.Command)
 	}
@@ -514,11 +478,24 @@ func TestSandboxWorkspace_WriteFileIsAtomicInBand(t *testing.T) {
 	if req.Cwd != "/workspace" {
 		t.Errorf("cwd = %q, want the workspace root", req.Cwd)
 	}
+
+	// The interpreted script must have actually written the file: content and
+	// mode round-trip through the in-memory tree, not just the recorder.
+	data, err := sb.ReadFile(context.Background(), "/workspace/f.txt")
+	if err != nil || string(data) != string(content) {
+		t.Fatalf("content round-trip = %q, %v; want the written payload", data, err)
+	}
+	if info, err := ws.Stat(context.Background(), "/workspace/f.txt"); err != nil || info.Mode().Perm() != 0o644 {
+		t.Errorf("mode after write = %v, %v; want 0644", info.Mode().Perm(), err)
+	}
 }
 
 func TestSandboxWorkspace_ReadFileDelegates(t *testing.T) {
-	sb := &fakeSandbox{files: map[string][]byte{"/workspace/a.txt": []byte("hello")}}
-	ws := newSandboxWS(sb)
+	sb := sandboxfake.New()
+	ws := newSandboxWS(t, sb)
+	if err := sb.WriteFile(context.Background(), "/workspace/a.txt", []byte("hello"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
 
 	got, err := ws.ReadFile(context.Background(), "/workspace/a.txt")
 	if err != nil {
@@ -532,8 +509,11 @@ func TestSandboxWorkspace_ReadFileDelegates(t *testing.T) {
 // TestSandboxWorkspace_StatParsesInBandOutput verifies the POSIX stat output is
 // mapped onto fs.FileInfo without a host stat call.
 func TestSandboxWorkspace_StatParsesInBandOutput(t *testing.T) {
-	sb := &fakeSandbox{stdout: "regular file|42|644|1700000000"}
-	ws := newSandboxWS(sb)
+	sb := sandboxfake.New()
+	ws := newSandboxWS(t, sb)
+	if err := sb.WriteFile(context.Background(), "/workspace/f.txt", []byte(strings.Repeat("x", 42)), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
 
 	info, err := ws.Stat(context.Background(), "/workspace/f.txt")
 	if err != nil {
@@ -553,8 +533,10 @@ func TestSandboxWorkspace_StatParsesInBandOutput(t *testing.T) {
 	}
 
 	// A directory is distinguished by the %F field.
-	dirSB := &fakeSandbox{stdout: "directory|4096|755|1700000000"}
-	dirInfo, err := newSandboxWS(dirSB).Stat(context.Background(), "/workspace/d")
+	if err := sb.MkdirAll("/workspace/d", 0o755); err != nil {
+		t.Fatalf("seed dir: %v", err)
+	}
+	dirInfo, err := ws.Stat(context.Background(), "/workspace/d")
 	if err != nil {
 		t.Fatalf("Stat dir: %v", err)
 	}
@@ -562,20 +544,30 @@ func TestSandboxWorkspace_StatParsesInBandOutput(t *testing.T) {
 		t.Error("a directory must report IsDir")
 	}
 
-	// Unparseable output is an error, not a zero-valued FileInfo.
-	badSB := &fakeSandbox{stdout: "garbage"}
-	if _, err := newSandboxWS(badSB).Stat(context.Background(), "/workspace/x"); err == nil {
+	// Unparseable output is an error, not a zero-valued FileInfo. The
+	// interpreter always produces parseable output, so pin this with a hook
+	// returning what a broken backend would.
+	badSB := sandboxfake.New()
+	badSB.ExecHook = func(shepherd.ExecRequest) (shepherd.ExecResult, error) {
+		return shepherd.ExecResult{ExitCode: 0, Stdout: "garbage"}, nil
+	}
+	if _, err := newSandboxWS(t, badSB).Stat(context.Background(), "/workspace/x"); err == nil {
 		t.Error("unexpected stat output must fail")
 	}
 }
 
 func TestSandboxWorkspace_NonZeroExitIsAnError(t *testing.T) {
-	sb := &fakeSandbox{exit: 2, stderr: "boom"}
-	ws := newSandboxWS(sb)
+	sb := sandboxfake.New()
+	ws := newSandboxWS(t, sb)
+	// rm -f on a directory refuses without -r, which is how a remove surfaces
+	// a real in-band failure instead of a canned one.
+	if err := sb.MkdirAll("/workspace/f.txt", 0o755); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
 
 	if err := ws.Remove(context.Background(), "/workspace/f.txt"); err == nil {
 		t.Fatal("a non-zero exit must surface as an error")
-	} else if !strings.Contains(err.Error(), "boom") {
+	} else if !strings.Contains(err.Error(), "Is a directory") {
 		t.Errorf("error should carry stderr, got %v", err)
 	}
 }
@@ -585,19 +577,35 @@ func TestSandboxWorkspace_NonZeroExitIsAnError(t *testing.T) {
 // newline stays one entry, and the entry type is exposed so the walkers'
 // d.Type()&fs.ModeSymlink guards still work.
 func TestSandboxWorkspace_ReadDirIsTypedAndNewlineSafe(t *testing.T) {
-	// find -printf '%y\0%f\0' emits type char, NUL, name, NUL.
-	sb := &fakeSandbox{stdout: "f\x00.env\x00d\x00.git\x00f\x00README.md\x00d\x00src\x00l\x00link\x00f\x00weird\nname.txt\x00"}
-	ws := newSandboxWS(sb)
+	// The listing comes from a real tree: a dotfile, two directories, a
+	// symlink, and a filename containing a newline.
+	sb := sandboxfake.New()
+	ws := newSandboxWS(t, sb)
+	ctx := context.Background()
+	for _, name := range []string{".env", "README.md", "weird\nname.txt"} {
+		if err := sb.WriteFile(ctx, "/workspace/"+name, []byte("x"), 0o644); err != nil {
+			t.Fatalf("seed %q: %v", name, err)
+		}
+	}
+	for _, name := range []string{".git", "src"} {
+		if err := sb.MkdirAll("/workspace/"+name, 0o755); err != nil {
+			t.Fatalf("seed %q: %v", name, err)
+		}
+	}
+	if err := sb.Symlink("README.md", "/workspace/link"); err != nil {
+		t.Fatalf("seed link: %v", err)
+	}
 
-	entries, err := ws.ReadDir(context.Background(), "/workspace")
+	entries, err := ws.ReadDir(ctx, "/workspace")
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
 	}
-	if len(sb.execs) != 1 {
-		t.Fatalf("execs = %d, want 1", len(sb.execs))
+	execs := sb.Execs()
+	if len(execs) != 1 {
+		t.Fatalf("execs = %d, want 1", len(execs))
 	}
 	// ReadDir shells out via `sh -c`, so the listing flags live in the script.
-	script := sb.execs[0].Args[1]
+	script := execs[0].Args[1]
 	if !strings.Contains(script, "find") || !strings.Contains(script, `\0`) || !strings.Contains(script, "-mindepth 1 -maxdepth 1") {
 		t.Errorf("listing script %q must use a NUL-delimited typed find", script)
 	}
@@ -638,8 +646,14 @@ func TestSandboxWorkspace_ReadDirIsTypedAndNewlineSafe(t *testing.T) {
 // no command output embedded — the output lives on in ExecResult. Transport
 // failure is a separate case with ExitCode -1.
 func TestSandboxWorkspace_ExecNonZeroExitIsAnError(t *testing.T) {
-	sb := &fakeSandbox{exit: 3, stdout: "boom"}
-	ws := newSandboxWS(sb)
+	// The fake has no userland, so `go build` cannot really run; the hook
+	// supplies the outcome and the assertion stays about the workspace's
+	// error mapping.
+	sb := sandboxfake.New()
+	sb.ExecHook = func(shepherd.ExecRequest) (shepherd.ExecResult, error) {
+		return shepherd.ExecResult{ExitCode: 3, Stdout: "boom"}, nil
+	}
+	ws := newSandboxWS(t, sb)
 
 	res, err := ws.Exec(context.Background(), ExecRequest{Command: "go", Args: []string{"build"}})
 	if err == nil {
@@ -660,13 +674,18 @@ func TestSandboxWorkspace_ExecNonZeroExitIsAnError(t *testing.T) {
 // a missing path maps to fs.ErrNotExist (so callers use errors.Is), and the
 // mode carries type/setuid bits rather than only the low permission bits.
 func TestSandboxWorkspace_StatReportsNotExistAndTypes(t *testing.T) {
-	missing := &fakeSandbox{exit: 42, stderr: "No such file or directory"}
-	if _, err := newSandboxWS(missing).Stat(context.Background(), "/workspace/nope"); !errors.Is(err, fs.ErrNotExist) {
+	// A missing path reaches the script's exit 42 branch and maps to
+	// fs.ErrNotExist with no canned output anywhere.
+	if _, err := newSandboxWS(t, nil).Stat(context.Background(), "/workspace/nope"); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("Stat error = %v, want fs.ErrNotExist", err)
 	}
 
-	dirInfo, err := newSandboxWS(&fakeSandbox{stdout: "directory|4096|755|1700000000"}).
-		Stat(context.Background(), "/workspace/d")
+	sbDir := sandboxfake.New()
+	wsDir := newSandboxWS(t, sbDir)
+	if err := sbDir.MkdirAll("/workspace/d", 0o755); err != nil {
+		t.Fatalf("seed dir: %v", err)
+	}
+	dirInfo, err := wsDir.Stat(context.Background(), "/workspace/d")
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
 	}
@@ -677,8 +696,12 @@ func TestSandboxWorkspace_StatReportsNotExistAndTypes(t *testing.T) {
 		t.Errorf("Perm = %v, want 0755", dirInfo.Mode().Perm())
 	}
 
-	suid, err := newSandboxWS(&fakeSandbox{stdout: "regular file|10|4755|1700000000"}).
-		Stat(context.Background(), "/workspace/suid")
+	sbSuid := sandboxfake.New()
+	wsSuid := newSandboxWS(t, sbSuid)
+	if err := sbSuid.WriteFile(context.Background(), "/workspace/suid", []byte("0123456789"), 0o4755); err != nil {
+		t.Fatalf("seed suid: %v", err)
+	}
+	suid, err := wsSuid.Stat(context.Background(), "/workspace/suid")
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
 	}
@@ -695,8 +718,16 @@ func TestSandboxWorkspace_StatReportsNotExistAndTypes(t *testing.T) {
 // calls run different stat invocations, and only Lstat's presence test accepts
 // a dangling link.
 func TestSandboxWorkspace_LstatDoesNotFollowLinks(t *testing.T) {
-	lstatSB := &fakeSandbox{stdout: "symbolic link|9|777|1700000000"}
-	info, err := newSandboxWS(lstatSB).Lstat(context.Background(), "/workspace/link")
+	sb := sandboxfake.New()
+	ws := newSandboxWS(t, sb)
+	if err := sb.MkdirAll("/workspace/d", 0o755); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := sb.Symlink("/workspace/d", "/workspace/link"); err != nil {
+		t.Fatalf("seed link: %v", err)
+	}
+
+	info, err := ws.Lstat(context.Background(), "/workspace/link")
 	if err != nil {
 		t.Fatalf("Lstat: %v", err)
 	}
@@ -706,24 +737,27 @@ func TestSandboxWorkspace_LstatDoesNotFollowLinks(t *testing.T) {
 	if info.IsDir() {
 		t.Error("a symlink entry must not report IsDir")
 	}
-	if script := lstatSB.execs[0].Args[1]; strings.Contains(script, "stat -L") {
+	execs := sb.Execs()
+	if script := execs[0].Args[1]; strings.Contains(script, "stat -L") {
 		t.Errorf("Lstat must not dereference: %q", script)
 	}
 	// The [ -L "$1" ] presence test is what keeps a dangling link reportable
 	// (os.Lstat semantics) instead of exiting 42 like a missing path.
-	if script := lstatSB.execs[0].Args[1]; !strings.Contains(script, `[ -L "$1" ]`) {
+	if script := execs[0].Args[1]; !strings.Contains(script, `[ -L "$1" ]`) {
 		t.Errorf("Lstat must accept a dangling link via the -L presence test: %q", script)
 	}
 
-	statSB := &fakeSandbox{stdout: "directory|4096|755|1700000000"}
-	if _, err := newSandboxWS(statSB).Stat(context.Background(), "/workspace/link"); err != nil {
+	// Stat dereferences to the directory the link points at.
+	if _, err := ws.Stat(context.Background(), "/workspace/link"); err != nil {
 		t.Fatalf("Stat: %v", err)
 	}
-	if script := statSB.execs[0].Args[1]; !strings.Contains(script, "stat -L") {
-		t.Errorf("Stat must dereference: %q", script)
+	all := sb.Execs()
+	statScript := all[len(all)-1].Args[1]
+	if !strings.Contains(statScript, "stat -L") {
+		t.Errorf("Stat must dereference: %q", statScript)
 	}
-	if script := statSB.execs[0].Args[1]; strings.Contains(script, `[ -L "$1" ]`) {
-		t.Errorf("Stat must reject a dangling link, unlike Lstat: %q", script)
+	if strings.Contains(statScript, `[ -L "$1" ]`) {
+		t.Errorf("Stat must reject a dangling link, unlike Lstat: %q", statScript)
 	}
 }
 
@@ -811,8 +845,11 @@ func TestWalkWorkspaceDoesNotDescendSymlinkRoot(t *testing.T) {
 // started at all, so callers (staticcheck, diff) can distinguish "never ran"
 // from "ran and failed".
 func TestSandboxWorkspace_ExecTransportErrorReportsExitMinusOne(t *testing.T) {
-	sb := &fakeSandbox{execErr: errors.New("container gone")}
-	ws := newSandboxWS(sb)
+	sb := sandboxfake.New()
+	sb.ExecHook = func(shepherd.ExecRequest) (shepherd.ExecResult, error) {
+		return shepherd.ExecResult{}, errors.New("container gone")
+	}
+	ws := newSandboxWS(t, sb)
 
 	res, err := ws.Exec(context.Background(), ExecRequest{Command: "go", Args: []string{"version"}})
 	if err == nil {
@@ -827,7 +864,7 @@ func TestSandboxWorkspace_ExecTransportErrorReportsExitMinusOne(t *testing.T) {
 // trimming must not collapse the root to an empty prefix, which would disable
 // containment entirely.
 func TestSandboxWorkspace_RootSlashContainsWholeContainer(t *testing.T) {
-	ws := newSandboxWorkspace(&fakeSandbox{}, "/")
+	ws := newSandboxWorkspace(sandboxfake.New(), "/")
 
 	if ws.root != "/" {
 		t.Fatalf("root = %q, want %q", ws.root, "/")
@@ -842,13 +879,18 @@ func TestSandboxWorkspace_RootSlashContainsWholeContainer(t *testing.T) {
 }
 
 func TestSandboxWorkspace_ExecDefaultsCwdToRoot(t *testing.T) {
-	sb := &fakeSandbox{}
-	ws := newSandboxWS(sb)
+	sb := sandboxfake.New()
+	// `go` has no userland in the fake; the hook supplies a successful run
+	// so the assertion stays about the default working directory.
+	sb.ExecHook = func(shepherd.ExecRequest) (shepherd.ExecResult, error) {
+		return shepherd.ExecResult{ExitCode: 0}, nil
+	}
+	ws := newSandboxWS(t, sb)
 
 	if _, err := ws.Exec(context.Background(), ExecRequest{Command: "go", Args: []string{"test", "./..."}}); err != nil {
 		t.Fatalf("Exec: %v", err)
 	}
-	req := sb.execs[0]
+	req := sb.Execs()[0]
 	if req.Cwd != "/workspace" {
 		t.Errorf("cwd = %q, want the workspace root", req.Cwd)
 	}
@@ -861,7 +903,7 @@ func TestRequireLocal(t *testing.T) {
 	if err := requireLocal(newLocalWorkspace(nil), "powershell"); err != nil {
 		t.Errorf("a local workspace must be accepted: %v", err)
 	}
-	err := requireLocal(newSandboxWS(&fakeSandbox{}), "powershell")
+	err := requireLocal(newSandboxWS(t, nil), "powershell")
 	if err == nil {
 		t.Fatal("a sandbox workspace must be rejected for host-only tools")
 	}
