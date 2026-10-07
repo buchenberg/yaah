@@ -540,8 +540,22 @@ have been **executed**; the verdict is recorded against each.
    containerd lease for its lifetime, so its snapshots cannot be garbage-collected.
    Accept met at 12/12 consecutive green runs, and the mechanism is now asserted
    in-test rather than inferred. **Steps 3–9 are unblocked.**
-3. Promote `fakeSandbox` into a reusable in-memory `Sandbox` (§0.3) — daemon-free
-   test-support work, and independent of the lease.
+3. ✅ **DONE** — promoted into `internal/sandboxfake` (was `fakeSandbox` in
+   `workspace_test.go`): an in-memory `shepherd.Sandbox` with a real lifecycle
+   state machine (Create gates Exec/FileIO and provisions the workdir; Destroy
+   ends the sandbox; double-create/destroy are errors, so Phase 2's leak tests
+   have something to detect), a map-backed tree, realistic `Capabilities()`
+   (all true; `Containment` matches the containerd backend's `contained`), and
+   an `sh -c` interpreter for the exact script surface `sandboxWorkspace`
+   emits (stat/find/mktemp/trap/cat/chmod/mv/rm/mkdir/test), so the config →
+   construction → `SetWorkspace` → tool-dispatch path is testable on any OS
+   with no daemon — validated on a Windows host. `Capture`/`Apply`/`Diff` are
+   real (snapshot/reset + unified diff) for the D1 rollback tests; `ExecHook`
+   keeps wire-level pinning (transport errors, canned exits, malformed output).
+   Workspace tests migrated: they now round-trip real writes instead of
+   asserting canned stdout. Gates: build, vet, staticcheck, gofmt, full
+   `go test ./...` (48 pkgs), and 5 consecutive green runs of the previously
+   flaky `internal/tools` suite.
 4. Config surface (§1.1), including D5's startup probe.
 5. Sandbox construction + lifecycle (§1.2). *First clean stopping point.*
 6. Bootstrap implementation per **D1** (§2.3).
