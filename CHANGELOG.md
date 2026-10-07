@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.56.1](https://github.com/buchenberg/yaah/compare/v0.56.0...v0.56.1) (2026-10-07)
+
+
+### Documentation
+
+* markdown accuracy audit — fix stale commands, broken links, drift ([#223](https://github.com/buchenberg/yaah/issues/223)) ([4553485](https://github.com/buchenberg/yaah/commit/45534854b869c9a4d0b0889a057d942cf8f57a9c))
+
 ## [0.56.0](https://github.com/buchenberg/yaah/compare/v0.55.2...v0.56.0) (2026-10-07)
 
 
