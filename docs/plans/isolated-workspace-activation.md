@@ -196,21 +196,20 @@ The nested module's repin is part of T0.8.
 > currently depends on a core version older than its own fixes. Worth fixing in
 > the same patch release.
 
-### 0.2 Establish that the containerd backend actually works — ❌ GATE NOT CLEARED
+### 0.2 Establish that the containerd backend actually works — ✅ GATE CLEARED
 
-**Result (2026-10-07): the harness works; the backend does not yet.** Run against
-containerd v2.3.5 (overlayfs snapshotter). The harness is committed (kernel
-`603fdcf`) and **nine defects were found and fixed** by it. But **3 of 5
-consecutive runs failed, with a different test failing each time** — the signature
-of a shared-resource race, not per-test bugs.
+**Result (2026-10-07): the gate fired, the cause was found, and the fix is
+verified.** Run against containerd v2.3.5 (overlayfs snapshotter).
 
-**Cause established:** the adapter holds **no containerd lease** (the only "lease"
-matches in `client.go` are the word *release* in a comment and an error string),
-and this daemon's GC is aggressive — `mutation_threshold = 100`,
-`schedule_delay = '0s'`, `startup_delay = '100ms'`. `Capture` stops the task and
-then prepares a successor whose parent is the just-committed snapshot; with the task
-stopped, that snapshot is **unreferenced**, so the GC can reap it in that window.
-Observed directly:
+**First pass — the harness found nine defects** (kernel `603fdcf`). Then the soak
+**failed 3 of 5 runs, with a different test failing each time** — the signature of
+a shared-resource race, not per-test bugs.
+
+**Cause:** the adapter held **no containerd lease**, and this daemon's GC is
+aggressive (`mutation_threshold = 100`, `schedule_delay = '0s'`,
+`startup_delay = '100ms'`). `Capture` stops the task and then prepares a successor
+whose parent is the just-committed snapshot; with the task stopped that snapshot is
+**unreferenced**, so the GC could reap it in that window:
 
 ```
 Capture: containerd sandbox: prepare successor snapshot:
@@ -218,20 +217,23 @@ Capture: containerd sandbox: prepare successor snapshot:
 Destroy during cleanup: remove snapshot shepherd/<id>/active/0: ... does not exist
 ```
 
-**Consequence for this plan: step 2 is a real stop-gate and it has fired.** Per
-§11 — **stop here.** Phases 1–3 must not start until kernel **T0.9** (hold a lease
-for the sandbox's lifetime; accept on ≥10 consecutive green soak runs) lands and
-the live suite is reliably green.
+**Fixed** by kernel **T0.9** (`8e9b867`): the sandbox now holds a labelled lease for
+its lifetime, released on `Destroy`. **Re-soak: 12 of 12 consecutive green runs**,
+with zero leaked containers, tasks, or snapshots. The live suite now asserts the
+mechanism directly rather than relying on a green run —
+`TestLive_LeaseHoldsSnapshots` proves the lease lists the sandbox's own snapshot
+keys as resources, and `TestLive_DestroyReleasesTheLease` proves it is dropped.
 
-This is not pedantry. A workspace whose snapshots can be garbage-collected
-mid-operation is *worse* than one that fails loudly: over a long agent run it would
-lose the workspace intermittently, and the symptom would look like anything but a
-containerd GC. Building isolated mode on it would produce exactly the
-nondeterministic data-loss bug that is hardest to diagnose.
+**Consequence for this plan: step 2's stop-gate is satisfied, and Phases 1–3 are
+unblocked.** This is worth emphasising because the gate very nearly passed by
+accident: the first run was green, and only a repeated soak exposed the race. A
+single smoke test — which is what the kernel plan originally called for — would
+have declared victory on a backend that loses its workspace roughly 60% of the
+time. **Prefer a soak to a smoke for anything that gates on a daemon.**
 
-Good hygiene to note, since it bounds the blast radius: the runs leaked **no**
-containers, tasks, or sandbox-owned snapshots — `Destroy` cleans up correctly even
-when it also reports a missing-snapshot error.
+The blast radius was bounded: the runs leaked **no** containers, tasks, or
+sandbox-owned snapshots — `Destroy` cleaned up correctly even when it also
+reported a missing-snapshot error.
 
 ### 0.3 Promote the existing `fakeSandbox` into a reusable in-memory `Sandbox`
 
@@ -431,8 +433,8 @@ Kernel work referenced, with status as of 2026-10-07 (see the kernel's
 | containerd publish (no `replace`) | T0.4 | ✅ landed |
 | CI 3-OS + containerd job | T0.7 | ✅ landed |
 | Live-daemon harness | T0.5 | ✅ committed (`603fdcf`); found and fixed 9 defects |
-| **Live-daemon VERDICT** | **T0.5** | ❌ **FAILED — 3/5 runs, different test each time** |
-| **containerd lease (GC safety)** | **T0.9** | ⬜ **BLOCKER for this plan** — accept on ≥10 green soak runs |
+| **Live-daemon VERDICT** | **T0.5** | ✅ **PASSED — 12/12 green** after the lease fix |
+| **containerd lease (GC safety)** | **T0.9** | ✅ **DONE (`8e9b867`)** — was this plan's blocker, now cleared |
 | Digest/canonical parity | T1.1–T1.2 | ⬜ not started |
 | `ReadPathPrefix` | T1.6 | ⬜ not started |
 | `WorkspaceSubstrate` | T2b.4, T2b.7 | ⬜ not started |
@@ -531,15 +533,15 @@ have been **executed**; the verdict is recorded against each.
 1. ⬜ **READY** — kernel **`v0.4.1`** containing the Phase 0 bug batch (kernel plan
    00 T0.8). Not blocked by step 2: the core bug batch is independent of the
    containerd lease, and `yaah` needs a pinnable tag rather than a pseudo-version.
-2. ❌ **FAILED — gate fired** — kernel live-daemon smoke, T0.5. The harness works
-   and found nine defects, but the suite is flaky (3/5 runs, different test each
-   time). **Per this plan's own stop-gate instruction: stop.**
-2b. ⬜ **NEW BLOCKER** — kernel **T0.9**: hold a containerd lease for the sandbox's
-   lifetime so its snapshots cannot be garbage-collected. Accept on **≥10
-   consecutive green soak runs**. Steps 3–9 are all downstream of this.
-3. Promote `fakeSandbox` into a reusable in-memory `Sandbox` (§0.3) — *this one is
-   independent of T0.9 and can proceed now*, since it is pure test-support work
-   with no daemon involvement.
+2. ✅ **DONE — gate cleared** — kernel live-daemon smoke, T0.5. The harness found
+   nine defects, the first soak then **failed 3 of 5 runs**, and the cause (no
+   containerd lease) was found and fixed. **Re-soak: 12/12 green.**
+2b. ✅ **DONE (`8e9b867`)** — kernel **T0.9**: the sandbox holds a labelled
+   containerd lease for its lifetime, so its snapshots cannot be garbage-collected.
+   Accept met at 12/12 consecutive green runs, and the mechanism is now asserted
+   in-test rather than inferred. **Steps 3–9 are unblocked.**
+3. Promote `fakeSandbox` into a reusable in-memory `Sandbox` (§0.3) — daemon-free
+   test-support work, and independent of the lease.
 4. Config surface (§1.1), including D5's startup probe.
 5. Sandbox construction + lifecycle (§1.2). *First clean stopping point.*
 6. Bootstrap implementation per **D1** (§2.3).
@@ -548,14 +550,16 @@ have been **executed**; the verdict is recorded against each.
 8. Activation wiring + `doctor` (§2.4). *First genuinely useful release.*
 9. Test matrix (§8), docs, and D2's inheritance behaviour for sub-agents (§1.3).
 
-**Stopping points:** step 2 fired and is a legitimate "not viable yet" exit. Step 5
-leaves config without activation — also clean. Step 8 is shippable.
+**Stopping points:** step 5 leaves config without activation — a clean stop. Step 8
+is shippable. Step 2's gate fired once and is now cleared, so nothing here is
+waiting on a decision or a fix.
 
-**What can proceed despite the failed gate:** steps 1 and 3. Step 1 unblocks
-`yaah`'s pin; step 3 is daemon-free test-support work. **Everything from step 4
-onward requires a green soak** — building the config surface and lifecycle on a
-backend whose snapshots can vanish would mean debugging the wrong layer.
+**Status:** steps 0–2 are done, including the kernel blocker that step 2 exposed.
+**Steps 3–9 are ready to implement**, and step 3 (promote `fakeSandbox`, §0.3) is
+the natural next one — it is daemon-free, so the activation tests can be written
+before anyone needs a container.
 
 **Hard dependencies, not reorderable:** step 1 before step 2 (the smoke needs the
-bug batch), step 3 before step 7 (the activation tests need the fake), and
-**step 2b before step 4** (a green soak before anything depends on the backend).
+bug batch), step 3 before step 7 (the activation tests need the fake), and step 2b
+before step 4 (a green soak before anything depends on the backend — now
+satisfied).
