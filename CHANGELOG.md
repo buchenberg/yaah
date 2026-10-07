@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.56.0](https://github.com/buchenberg/yaah/compare/v0.55.2...v0.56.0) (2026-10-07)
+
+
+### Features
+
+* **subagent:** give sub-agents a lean base prompt ([#221](https://github.com/buchenberg/yaah/issues/221)) ([4203df7](https://github.com/buchenberg/yaah/commit/4203df7b8e41073e31f64a72e3313cde35de5c32))
+
 ## [0.55.2](https://github.com/buchenberg/yaah/compare/v0.55.1...v0.55.2) (2026-10-07)
 
 
