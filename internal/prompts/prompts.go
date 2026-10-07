@@ -24,6 +24,16 @@ import (
 //go:embed identity.md
 var IdentityPrompt string
 
+// SubAgentIdentityPrompt is the lean identity shipped to dispatched
+// sub-agents. It deliberately omits the main identity's orchestration
+// guidance (spawn_subagent usage, dispatch waves, trusting sub-agent
+// output) — sub-agents cannot act on any of it. The runner prepends the
+// environment header on top of this and appends role guidance, the
+// response contract, and escalation rules.
+//
+//go:embed subagent_identity.md
+var SubAgentIdentityPrompt string
+
 //go:embed summary_template.md
 var summaryTemplate string
 

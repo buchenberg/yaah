@@ -10,14 +10,15 @@ import (
 	"github.com/buchenberg/yaah/internal/tools"
 )
 
-// buildSystemPrompt assembles the system prompt from config, environment,
-// instructions, and memory. When db is non-nil, stored memories are loaded
-// into the prompt layers. Memory guidelines are appended for fresh sessions
-// (resumeSessionID == "") only.
+// buildSystemPrompt assembles the main-session base system prompt from
+// config, environment, instructions, and memory. When db is non-nil,
+// stored memories are loaded into the prompt layers. Memory guidelines
+// are appended for fresh sessions (resumeSessionID == "") only.
 //
-// The returned systemPrompt is the sub-agent base prompt (clean of
+// The returned systemPrompt is the main-session base prompt (clean of
 // top-level directives). The caller derives mainPrompt by injecting
-// directives and the tool quick-reference card.
+// directives and the tool quick-reference card. Sub-agents get their own
+// lean base from buildSubAgentBasePrompt instead of this one.
 func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSessionID string) string {
 	layers := prompts.Layers{
 		Identity:               prompts.IdentityPrompt,
@@ -25,21 +26,7 @@ func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSess
 		UserContext:            prompts.LoadUserContext(config.HomeDir()),
 		Project:                instructions.FormatForSystem(instructions.Load(cwd, instructions.WorktreeRoot(cwd))),
 		MaxSubAgentConcurrency: cfg.Agent.SubAgent.MaxConcurrency,
-	}
-
-	if db != nil {
-		if entries, memErr := db.ListMemory(50); memErr == nil && len(entries) > 0 {
-			var memLines []string
-			for _, entry := range entries {
-				if strings.Contains(entry.Tags, `"user_info"`) {
-					continue
-				}
-				memLines = append(memLines, "- "+entry.Text)
-			}
-			if len(memLines) > 0 {
-				layers.Memory = "You have the following stored information about the user and project:\n" + strings.Join(memLines, "\n")
-			}
-		}
+		Memory:                 memoryLayer(db),
 	}
 
 	systemPrompt := prompts.Build(layers)
@@ -66,4 +53,45 @@ func buildMainPrompt(cfg *config.Config, opts SessionOptions, systemPrompt strin
 		mainPrompt += "\n\n" + quickRef
 	}
 	return mainPrompt
+}
+
+// buildSubAgentBasePrompt assembles the lean base prompt handed to every
+// dispatched sub-agent: the sub-agent identity, user context, project
+// instructions, and stored memories. It deliberately omits the main
+// identity (sub-agent orchestration guidance the sub-agent cannot act
+// on), the sub-agent concurrency limit, and memory tool guidelines
+// (sub-agent roles carry no memory tools). The runner prepends the
+// environment header and appends role guidance, contract, and escalation
+// rules on top of this base.
+func buildSubAgentBasePrompt(cwd string, db *memory.DB) string {
+	layers := prompts.Layers{
+		Identity:    prompts.SubAgentIdentityPrompt,
+		UserContext: prompts.LoadUserContext(config.HomeDir()),
+		Project:     instructions.FormatForSystem(instructions.Load(cwd, instructions.WorktreeRoot(cwd))),
+		Memory:      memoryLayer(db),
+	}
+	return prompts.Build(layers)
+}
+
+// memoryLayer loads stored memories (excluding user_info entries) from db
+// into a prompt layer. Returns "" when db is nil or nothing is loadable.
+func memoryLayer(db *memory.DB) string {
+	if db == nil {
+		return ""
+	}
+	entries, err := db.ListMemory(50)
+	if err != nil || len(entries) == 0 {
+		return ""
+	}
+	var memLines []string
+	for _, entry := range entries {
+		if strings.Contains(entry.Tags, `"user_info"`) {
+			continue
+		}
+		memLines = append(memLines, "- "+entry.Text)
+	}
+	if len(memLines) == 0 {
+		return ""
+	}
+	return "You have the following stored information about the user and project:\n" + strings.Join(memLines, "\n")
 }
