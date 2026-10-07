@@ -83,7 +83,7 @@ var memoryAddCmd = &cobra.Command{
 		defer db.Close()
 		initDBEmbedder(db)
 
-		id := fmt.Sprintf("mem-%d", time.Now().UnixNano())
+		id := memory.NewEntryID()
 		entry := memory.Entry{
 			ID:        id,
 			Text:      text,
