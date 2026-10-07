@@ -7,6 +7,11 @@
 
 * **tools:** add Workspace.Lstat and stop embedding sandbox exec output in errors ([#216](https://github.com/buchenberg/yaah/issues/216)) ([22f913f](https://github.com/buchenberg/yaah/commit/22f913fdd4103afb55b773ddc9d25c6f2a081537))
 
+
+### Documentation
+
+* **plans:** advance the isolated-workspace plan to step 4 ([#219](https://github.com/buchenberg/yaah/issues/219)) ([4c1e099](https://github.com/buchenberg/yaah/commit/4c1e099e9f057a60086de27c90eff76968775914))
+
 ## [0.55.1](https://github.com/buchenberg/yaah/compare/v0.55.0...v0.55.1) (2026-09-01)
 
 
