@@ -136,7 +136,7 @@ func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error
 	}
 
 	entry := memory.Entry{
-		ID:        fmt.Sprintf("mem-%d", time.Now().UnixNano()),
+		ID:        memory.NewEntryID(),
 		Text:      params.Text,
 		Tags:      params.Tags,
 		Source:    "agent",

@@ -12,6 +12,7 @@ package memory
 
 import (
 	"context"
+	crand "crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -374,6 +375,20 @@ func (d *DB) ensureColumn(table, column, ddl string) error {
 func memoryDigest(text string) string {
 	sum := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(sum[:])
+}
+
+// NewEntryID returns a fresh memory entry ID. IDs were previously
+// mem-<UnixNano>, which collides when two entries are created within the
+// clock's nanosecond resolution — coarse clocks make that a primary-key
+// collision for back-to-back inserts, not a theoretical one. The random form
+// matches newTurnID's shape: 128 bits of crypto/rand, hex-encoded, with a
+// time-based fallback only if the system entropy source is unavailable.
+func NewEntryID() string {
+	var b [16]byte
+	if _, err := crand.Read(b[:]); err != nil {
+		return fmt.Sprintf("mem-%d", time.Now().UnixNano())
+	}
+	return "mem-" + hex.EncodeToString(b[:])
 }
 
 // AddMemory inserts a new memory entry. The caller should separately call

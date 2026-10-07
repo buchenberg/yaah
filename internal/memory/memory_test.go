@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -958,5 +959,56 @@ func TestDB_ReconcileMemoryDigests(t *testing.T) {
 	}
 	if digest != memoryDigest("legacy text") {
 		t.Errorf("digest = %q, want %q", digest, memoryDigest("legacy text"))
+	}
+}
+
+// TestNewEntryIDIsUnique pins the ID contract the old mem-<UnixNano> form
+// broke: two IDs minted back to back must never collide, because the clock's
+// nanosecond resolution is coarse enough on some platforms for consecutive
+// calls to return the same tick — a primary-key collision, not a near miss.
+func TestNewEntryIDIsUnique(t *testing.T) {
+	seen := make(map[string]bool, 256)
+	for i := 0; i < 256; i++ {
+		id := NewEntryID()
+		if !strings.HasPrefix(id, "mem-") {
+			t.Fatalf("id %q lost the mem- prefix", id)
+		}
+		if seen[id] {
+			t.Fatalf("id collision at %d: %q", i, id)
+		}
+		seen[id] = true
+	}
+}
+
+// TestAddMemoryDedup_RapidDistinctInsertsBothPersist reproduces the flaky
+// failure seen in TestMemoryAddTool_DedupAllowsUniqueText at the layer that
+// owns the constraint: rapid inserts of distinct texts must all persist.
+func TestAddMemoryDedup_RapidDistinctInsertsBothPersist(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	for i := 0; i < 50; i++ {
+		for _, suffix := range []string{"a", "b"} {
+			e := Entry{
+				ID:        NewEntryID(),
+				Text:      fmt.Sprintf("fact %d %s", i, suffix),
+				Source:    "test",
+				CreatedAt: time.Now().Unix(),
+			}
+			if _, err := db.AddMemoryDedup(e); err != nil {
+				t.Fatalf("AddMemoryDedup(%q): %v", e.Text, err)
+			}
+		}
+	}
+
+	all, err := db.ListMemory(1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 100 {
+		t.Errorf("expected 100 memories, got %d", len(all))
 	}
 }
