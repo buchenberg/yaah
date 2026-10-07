@@ -405,3 +405,29 @@ func TestDiffReportsChanges(t *testing.T) {
 		t.Errorf("identical state diff = %q, %v; want empty", diff, files)
 	}
 }
+
+// TestSymlinkChainResolvesFromEachLinkDirectory pins the chain rule: a
+// relative target is anchored at the link's own directory at every hop, not
+// at the path the lookup started from. link2 → other/link1 → ../sub/f.txt
+// only resolves if hop two anchors at /workspace/other.
+func TestSymlinkChainResolvesFromEachLinkDirectory(t *testing.T) {
+	s := newCreated(t)
+	ctx := context.Background()
+	if err := s.WriteFile(ctx, "/workspace/sub/f.txt", []byte("chain"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MkdirAll("/workspace/other", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Symlink("../sub/f.txt", "/workspace/other/link1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Symlink("other/link1", "/workspace/link2"); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := s.ReadFile(ctx, "/workspace/link2")
+	if err != nil || string(data) != "chain" {
+		t.Errorf("read through link chain = %q, %v; want chain", data, err)
+	}
+}

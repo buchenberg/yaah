@@ -202,7 +202,7 @@ func (s *Sandbox) ReadFile(ctx context.Context, p string) ([]byte, error) {
 // WriteFile stores a file, creating parent directories like the containerd
 // backend's WriteFile does. The perm argument may carry setuid/setgid/sticky
 // bits (0o4000/0o2000/0o1000), which are preserved.
-func (s *Sandbox) WriteFile(ctx context.Context, p string, data []byte, perm fs.FileMode) (err error) {
+func (s *Sandbox) WriteFile(ctx context.Context, p string, data []byte, perm fs.FileMode) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.usable(); err != nil {
@@ -272,10 +272,10 @@ func (s *Sandbox) usable() error {
 }
 
 // resolve cleans p and makes it absolute against cwd (POSIX, matching the
-// substrate). Callers hold s.mu.
+// substrate). Callers hold s.mu. Only the blank check trims: a path is not
+// whitespace-normalized beyond that, matching a real filesystem.
 func (s *Sandbox) resolve(p, cwd string) (string, error) {
-	p = strings.TrimSpace(p)
-	if p == "" {
+	if strings.TrimSpace(p) == "" {
 		return "", errors.New("sandboxfake: empty path")
 	}
 	if !strings.HasPrefix(p, "/") {
@@ -342,11 +342,14 @@ func (s *Sandbox) lookup(_ context.Context, p string, follow bool) (*entry, erro
 		if depth >= maxSymlinkDepth {
 			return nil, fmt.Errorf("sandboxfake: %s: too many levels of symbolic links", p)
 		}
-		target := e.target
-		if !strings.HasPrefix(target, "/") {
-			target = path.Join(path.Dir(clean), target)
+		// A relative target resolves against the link's own directory,
+		// which changes at every hop of a link-to-link chain.
+		if strings.HasPrefix(e.target, "/") {
+			clean = e.target
+		} else {
+			clean = path.Join(path.Dir(clean), e.target)
 		}
-		e, ok = s.files[target]
+		e, ok = s.files[clean]
 		if !ok {
 			return nil, newPathError("sandboxfake", p, fs.ErrNotExist)
 		}
