@@ -31,7 +31,7 @@ sub-agent dispatch.
 
 ## Layer 1: System prompt assembly
 
-**File**: `cmd/yaah/agent_frame.go` (and `cmd/yaah/tui.go` for the TUI)
+**File**: `cmd/yaah/wiring_prompt.go` (and `cmd/yaah/tui.go` for the TUI)
 
 The agent's full system prompt is assembled once at startup via
 `prompts.Build()` (`internal/prompts/prompts.go`):
@@ -93,7 +93,6 @@ Before each turn, middleware can inject or modify messages in `step.Messages`:
 | `steer` | `pipeline/steer.go` | `[STEER] <msg>` as user message | High-priority mid-turn input |
 | `followup` | `pipeline/followup.go` | Queued follow-up as user message | Between-turn messages |
 | `compaction` | `agent_context.go` | Summary as system message | Context window overflow |
-| `sub_agent` | `pipeline/subagent.go` | `[system] depth limit reached` | Sub-agent depth cap hit |
 
 ### Compaction details (`agent_context.go`)
 
@@ -214,7 +213,7 @@ Loop.Run(userInput)
 │   └── [6] UserMsg(conflict report)
 │
 ├── If spawn_subagent calls:
-│   └── subagent_runner
+│   └── runner (TaskTool)
 │       └── [T1] SystemMsg(sub-agent base + role guidance)
 │
 └── Loop continues until model outputs no tool calls

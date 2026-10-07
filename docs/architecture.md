@@ -112,7 +112,8 @@ sub-agent (for multi-step autonomous work).
 - **Role-constrained tool sets**: Each sub-agent role has a curated tool
   list. `analyst` has read/search/web tools. `developer` adds write/edit.
   `tester` has shell + read. `reviewer` has counting/inspection tools.
-  No sub-agent registers `spawn_subagent` — nesting is structurally impossible.
+  No built-in role registers `spawn_subagent` — nesting is structurally
+  impossible for built-ins, and depth-limited for custom roles that opt in.
 - **Model tiering**: Sub-agents can use a different (typically cheaper)
   provider and model than the main agent.
 - **Auto-approval**: Sub-agents run tools without approval checks.
@@ -291,15 +292,22 @@ Runs after each tool batch in `PostTool`. When a `ConflictTracker` is configured
 
 Limits concurrent tool goroutines via a buffered channel semaphore. The Loop creates exactly one instance in `applyDefaults()` (`Loop.toolConcurrency`) and passes it to the pipeline via `PipelineConfig.ToolConc`, so `buildPipeline()` shares the same semaphore rather than allocating a second one; `executeAndCollect` acquires/releases it around each tool goroutine. The middleware hooks themselves are no-ops — the semaphore is driven directly by the dispatch loop.
 
-#### SubAgentMiddleware (`pipeline/subagent.go`)
+#### Sub-agent depth limiting (structural, no middleware)
 
-Enforces sub-agent depth limits. Depth is hardcoded to 1: at most one `spawn_subagent` call may pass through the middleware per `Loop` lifetime. `PostModel` walks the assistant message's tool calls, counts `spawn_subagent` calls, and drops any beyond the first (a system notice is injected). Non-task calls are always preserved.
+Nesting depth is bounded structurally. No built-in role registers the
+`spawn_subagent` tool, so built-in sub-agent loops cannot dispatch further
+sub-agents at all. A custom role that lists `spawn_subagent` gets the task
+tool only while `makeTaskRunner`'s `remainingDepth` is positive; the runner
+decrements the remaining depth per level, so a nested sub-loop eventually
+loses its `spawn_subagent` tool entirely (see
+[Sub-Agent Lifecycle](#sub-agent-lifecycle)). The former `SubAgentMiddleware`
+that dropped excess `spawn_subagent` calls mid-turn has been removed.
 
-Actual nesting depth is bounded structurally rather than by this middleware alone: no sub-agent role registers the `spawn_subagent` tool, and `makeTaskRunner` decrements the remaining depth on each level so a sub-loop eventually loses its `spawn_subagent` tool entirely (see [Sub-Agent Lifecycle](#sub-agent-lifecycle)).
+Sub-agent concurrency is enforced on `Loop.subAgentSem` (see
+`executeAndCollect`), mirroring how `ToolConcurrencyMiddleware` relates to
+`Loop.toolConcurrency`.
 
-Sub-agent concurrency is **not** enforced here — it lives on `Loop.subAgentSem` (see `executeAndCollect`), mirroring how `ToolConcurrencyMiddleware` relates to `Loop.toolConcurrency`.
-
-#### PromptCachingMiddleware (`middleware_promptcaching.go`)
+#### PromptCachingMiddleware (`pipeline/promptcaching.go`)
 
 Injects Anthropic `cache_control: {type: "ephemeral"}` breakpoints on system messages and tool results in `PrepareStep`. When `PromptCaching` is `true`, the system message and the last tool result before a user turn are marked for caching. The `CacheControl` field uses `omitempty` so it is a no-op for non-Anthropic providers.
 
@@ -307,7 +315,7 @@ Injects Anthropic `cache_control: {type: "ephemeral"}` breakpoints on system mes
 
 ## Sub-agent lifecycle
 
-Files: `internal/agent/pipeline/subagent.go`, `internal/agent/subagent/role_def.go`, `internal/tools/task.go`, `internal/jobs/` (`TaskRunner`, `SubAgentParams`, escalation contract, context-key helpers, `BackgroundJobs` manager), `internal/agent/runner/runner.go`
+Files: `internal/agent/subagent/role_def.go`, `internal/tools/task.go`, `internal/jobs/` (`TaskRunner`, `SubAgentParams`, escalation contract, context-key helpers, `BackgroundJobs` manager), `internal/agent/runner/runner.go`
 
 The `spawn_subagent` tool spawns a sub-agent: a fresh `agent.Loop` with a curated tool registry, its own iteration budget, deadline, and system prompt. Sub-agents let the main agent delegate isolated work and fan out independent subtasks in parallel.
 
@@ -373,7 +381,7 @@ Wiring chain: `reg.Names()` → `runner.NewTaskTool(…, roleNames)` → `TaskTo
 
 ### CLI lifecycle display
 
-Files: `internal/agent/agent.go`, `internal/agent/events.go`, `cmd/yaah/agent_frame.go`
+Files: `internal/agent/agent.go`, `internal/agent/events/events.go`, `cmd/yaah/wiring.go`
 
 Sub-agent activity is rendered with `╭─` / `╰─` box-drawing corners in the CLI, distinct from ordinary tool calls.
 
@@ -930,7 +938,7 @@ a full scan completes in under a millisecond — no ANN index needed.
 
 ## Hook events
 
-File: `internal/agent/hookevent.go`
+File: `internal/agent/events/hookevent.go`
 
 yaah emits structured JSONL events to `<HookDir>/<session-id>.jsonl` for external agent integrations (e.g. entire-agent-yaah). Events are fire-and-forget — failures are silent and never break the loop.
 
@@ -978,7 +986,7 @@ type HookEvent struct {
 
 ## Streaming
 
-File: `internal/agent/agent.go` (`runStream`, `assembleStreamed`), `internal/agent/events.go`
+File: `internal/agent/agent.go` (`runStream`, `assembleStreamed`), `internal/agent/events/events.go`
 
 When the provider implements `StreamProvider` and a `View` is configured (internal broker is active), `getAssistantMessage` uses `runStream()`. The method:
 
@@ -1024,7 +1032,7 @@ The `internal/providers/` package implements OpenAI Chat Completions and Anthrop
 
 ## Engine-View architecture
 
-Files: `internal/agent/events.go`, `internal/agent/view.go`, `internal/pubsub/broker.go`
+Files: `internal/agent/events/events.go`, `internal/agent/view.go`, `internal/pubsub/broker.go`
 
 The agent loop communicates with consumers (TUI, REPL, sub-agent runner) through a single typed event interface. There are no callbacks on `agent.Loop` — everything flows through the broker.
 
@@ -1154,8 +1162,6 @@ observability:
 ```
 
 The OTel SDK also honours standard environment variables for sampling, TLS, and resource attributes (`OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER`, etc.).
-
-A Docker-based OpenObserve setup and trace interpretation guide is at [`docs/otel-setup.md`](./otel-setup.md).
 
 ---
 

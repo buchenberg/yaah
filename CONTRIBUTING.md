@@ -180,7 +180,7 @@ yaah follows **idiomatic Go** conventions. This section highlights the most impo
 
 ### Adding a New Event Type
 
-1. Define event struct in `internal/agent/events.go`
+1. Define event struct in `internal/agent/events/events.go`
 2. Implement `eventMarker()` method
 3. Add to compile-time satisfaction checks
 4. Handle in all consumers or use `NoopView`

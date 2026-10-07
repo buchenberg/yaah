@@ -55,7 +55,7 @@ yaah/
 │   ├── skill.go                 # yaah skill list/show/create/edit
 │   ├── mcp.go                   # yaah mcp list/add/remove
 │   ├── memory.go                # yaah memory search/add
-│   ├── session.go               # yaah session list/show
+│   ├── login.go                 # yaah login/logout (OAuth device flow)
 │   ├── trace.go                 # yaah shepherd-trace list/show/profile
 │   ├── compact_cmd.go resume.go quickref.go   # /compact, session restore, prompt quick-ref
 │   └── color.go                 # ANSI color helpers
@@ -98,8 +98,10 @@ yaah/
 │   ├── sub-agents.md            # sub-agent team, roles, escalation, contracts
 │   ├── features.md              # TUI, REPL, MCP, tools, observability, middleware
 │   ├── configuration.md         # full config reference
+│   ├── prompts.md               # system prompt assembly and injection map
 │   ├── tui-components.md        # TUI component system reference
-│   └── otel-setup.md            # OpenTelemetry/SigNoz setup guide
+│   ├── web-ui.md                # web UI architecture and event reference
+│   └── adr/                     # architecture decision records
 ├── README.md
 ├── CONTRIBUTING.md
 ├── SECURITY.md
@@ -211,11 +213,11 @@ type View interface {
 The agent loop creates an internal `pubsub.Broker[Event]` and a `BrokerView`
 adapter. All events (token deltas, tool calls, sub-agent lifecycle, flush,
 done) are published as typed structs implementing the sealed `Event`
-interface. See `internal/agent/events.go` for the event types.
+interface. See `internal/agent/events/events.go` for the event types.
 
 ### Adding a new event type
 
-1. Add a struct in `internal/agent/events.go` with an `eventMarker()` method
+1. Add a struct in `internal/agent/events/events.go` with an `eventMarker()` method
 2. Add the event to `allEvents()` in `internal/agent/events/exhaustive_test.go`
    — the exhaustive tests then FAIL until every consumer's `HandleEvent`
    type switch has a case for it (explicit "intentionally ignored" cases count)
@@ -254,9 +256,12 @@ Available skills:
 
 | Skill | When to load |
 |---|---|
-| `yaah-testing` | Smoke testing the CLI, sub-agents, OTel traces, Docker containers, or running CI checks |
 | `yaah-dev-loop` | Building, running, and iterating on the yaah MCP server from inside a Kilo session |
-| `yaah-benchmark` | Running the standard multi-step benchmark and capturing metrics from Jaeger traces |
+| `beads` | Beads (`bd`) issue-tracker workflow guidance |
+| `dolt-server-lifecycle` | Starting/stopping the local Dolt SQL server used as the bd backend |
+
+User-level skills in `~/.agents/skills/` (e.g. `yaah-testing`,
+`yaah-benchmark`) also apply when present on the machine.
 
 ## What NOT to do
 

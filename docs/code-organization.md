@@ -4,7 +4,7 @@ This document outlines the **current state** of code organization in yaah and pr
 
 ---
 
-## Current State (as of August 2026)
+## Current State (as of October 2026)
 
 yaah has a **well-structured codebase** with clear separation of concerns at the package level. However, some files have grown large and could benefit from splitting.
 
@@ -13,9 +13,8 @@ yaah has a **well-structured codebase** with clear separation of concerns at the
 ```
 yaah/
 ├── cmd/yaah/                    # CLI commands (cobra-based)
-│   ├── agent_frame.go           # Agent wiring and tool construction
+│   ├── wiring*.go build_loop.go # Composition root: session wiring, prompts, loop build
 │   ├── repl_loop.go             # REPL interaction
-│   ├── wiring.go                # Dependency injection + session setup
 │   └── ... (20+ files)
 │
 ├── internal/
@@ -56,11 +55,13 @@ yaah/
 
 | File | Lines | Primary Responsibilities |
 |------|-------|--------------------------|
-| `internal/tui/app.go` | ~440 | App struct, event queue, layout, refresh loop |
-| `internal/agent/agent.go` | ~770 | Loop struct, Run() method, Turn processing, Compaction |
-| `cmd/yaah/wiring.go` | ~400 | Session construction, tool registration (composition root) |
-| `internal/agent/agent_context.go` | ~200 | `*Loop` methods: `compactContext`, `trimContext`, `ForceCompact`, `EstimatedTokens` (pure helpers extracted to `agent/context/`) |
-| `internal/agent/agent_tools.go` | ~250 | Tool execution, Result collection |
+| `internal/tools/supervised_session.go` | ~960 | Supervised sub-agent sessions (checkpoint, rollback, review) — shepherd-dependent |
+| `internal/sandboxfake/shell.go` | ~820 | In-memory shell interpreter (test infrastructure) |
+| `internal/memory/memory.go` | ~790 | SQLite persistence: sessions, memory, FTS5, embeddings |
+| `internal/agent/runner/runner.go` | ~780 | Sub-agent dispatch wiring (TaskTool, role resolution, budgets) |
+| `internal/agent/context_manager.go` | ~670 | Context-window policy: compaction, pruning, truncation |
+| `internal/mcp/http_server.go` | ~630 | MCP Streamable HTTP + SSE server |
+| `cmd/yaah/wiring.go` | ~480 | Composition root: `newAgentSessionWithOptions` is still one ~415-line function |
 
 ---
 
@@ -112,109 +113,26 @@ The old bubbletea TUI was removed on 2026-08-21; the tview TUI (promoted from
 `event_queue.go`, `panes.go`, `view.go`, `state.go`, `commands.go`,
 `input.go`, plus per-component packages under `internal/tui/components/`.
 
-### 2. `internal/agent/agent.go` → Split into 5-6 files
+### 2. ~~`internal/agent/agent.go` → Split into 5-6 files~~ ✅ Done
 
-**Current:** 770 lines with Loop struct, Run() method, Turn processing, Compaction
+The split landed (and went further than proposed): the former 770-line
+`agent.go` is now a 16-line alias file, with the Loop split across `loop.go`
+(run loop, pipeline build), `turn.go` (turn processing), `types.go`,
+`lifecycle_init.go` / `lifecycle_teardown.go`, `agent_context.go`
+(compaction entry points), `context_manager.go` (compaction policy),
+`agent_dispatch.go` (tool dispatch), `agent_tools.go`, and the pure helpers
+in `agent/context/`.
 
-**Proposed Structure:**
+### 3. ~~`cmd/yaah/agent_frame.go` → Split into 3-4 files~~ ✅ Done
 
-```
-internal/agent/
-├── types.go              # Type definitions (~150 lines)
-│                           # - Provider type aliases
-│                           # - ToolInfo struct
-│                           # - SubAgentInfo struct
-│                           # - ToolsLevel enum
-│                           # - LoopConfig struct
-│                           # - LoopState struct
-│
-├── loop.go               # Main Loop type and core methods (~300 lines)
-│                           # - Loop struct definition
-│                           # - NewLoop() constructor (already in options.go)
-│                           # - Run() method
-│                           # - runMiddleware() method
-│                           # - buildPipeline()
-│                           # - toPipelineConfig()
-│
-├── turn.go               # Turn processing (~250 lines)
-│                           # - buildTurnRequest()
-│                           # - guardContextBeforeCall()
-│                           # - executeToolPhase()
-│                           # - injectWrapUpNotice()
-│
-├── lifecycle.go          # Lifecycle methods (~150 lines)
-│                           # - initMessages()
-│                           # - publishDone()
-│                           # - teardown()
-│                           # - ctxMgr()
-│                           # - applyDefaults()
-│
-├── compact.go            # Context compaction (~100 lines)
-│                           # - Compact() method
-│                           # - llmCompact()
-│                           # - llmTrim()
-│
-└── tools.go              # Tool-related methods (~100 lines)
-                                # - buildToolsForLevel()
-                                # - agentTools()
-                                # - addUsage()
-```
-
-**Note:** The `options.go` file already contains the functional options pattern for Loop construction, which is well-separated.
-
-**Dependencies:** All files in same package, Loop struct is central
-
-**Migration Steps:**
-1. Move type definitions to `types.go` first
-2. Move turn processing methods to `turn.go`
-3. Move lifecycle methods to `lifecycle.go`
-4. Move compaction methods to `compact.go`
-5. Keep core Loop and Run() in `loop.go`
-6. Run `go build ./internal/agent/` and tests after each step
-
-### 3. `cmd/yaah/agent_frame.go` → Split into 3-4 files
-
-**Current:** 990 lines with Session interface, agentSession struct, Session management, Loop construction, Tool wiring
-
-**Proposed Structure:**
-
-```
-cmd/yaah/
-├── session.go            # Session interface and core management (~400 lines)
-│                           # - Session interface
-│                           # - agentSession struct
-│                           # - newAgentSession()
-│                           # - Session methods (Close, Compact, Steer, FollowUp, etc.)
-│                           # - SetView, SetCtrlCh, SetApproveFn, SetModel
-│
-├── wiring.go             # Dependency wiring (~300 lines)
-│                           # - Provider resolution
-│                           # - Model resolution
-│                           # - Tool registry setup
-│                           # - MCP client setup
-│                           # - Sub-agent role loading
-│                           # - Prompt assembly
-│
-├── loop_builder.go       # Loop construction (~200 lines)
-│                           # - runPrompt() method
-│                           # - Loop option assembly
-│                           # - AgentConfig construction
-│
-└── tools.go              # Tool wiring (~100 lines)
-                                # - Task tool creation
-                                # - ListSubAgents tool
-                                # - Tool quick reference building
-```
-
-**Dependencies:** Some cross-file dependencies, but all in same package
-
-**Migration Steps:**
-1. Move Session interface and agentSession struct to `session.go`
-2. Move wiring-related code (provider resolution, tool setup) to `wiring.go`
-3. Move Loop construction logic to `loop_builder.go`
-4. Run `go build ./cmd/yaah/` and tests after each step
-
----
+`agent_frame.go` (990 lines) was split into the current composition-root
+files: `wiring.go` (session construction, tool registration),
+`wiring_prompt.go` (system prompt assembly), `wiring_otel.go`,
+`wiring_mcp.go` (MCP init), `build_loop.go` (per-turn loop builder),
+`session.go` (agentSession plumbing), `session_options.go` (SessionOptions),
+and `provider_resolve.go` (provider/model/fallback resolution). Remaining
+follow-up: `wiring.go` itself is still a ~480-line composition function — see
+Future Work below.
 
 ## Code Organization Best Practices
 
@@ -391,8 +309,8 @@ golangci-lint run ./...
 1. ✅ **Documentation** - ADRs and code organization guidelines (DONE)
 2. ✅ **Extract `internal/agent/context/`** — Pure helpers moved to a leaf package (DONE, Phase 2A)
 3. ✅ **Split `internal/tui/tui.go`** - Resolved by TUI replacement (tview app already decomposed)
-4. ⏳ **Split `internal/agent/agent.go`** - Core file, but well-structured
-5. ⏳ **Split `cmd/yaah/wiring.go`** - Composition root, partially split (session.go, wiring*.go)
+4. ✅ **Split `internal/agent/agent.go`** - Done; see Proposed File Splits above
+5. ⏳ **Split `cmd/yaah/wiring.go`** - Composition root; `newAgentSessionWithOptions` is still one ~415-line function
 
 ### Medium Priority (Nice to Have)
 

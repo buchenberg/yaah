@@ -69,10 +69,12 @@ Every message is written to SQLite in real time. Sessions survive crashes
 and process restarts:
 
 ```bash
-yaah session list
-yaah session show <id>
 yaah --resume <id> "pick up where we left off"
 ```
+
+Session transcripts are stored in SQLite at `~/.yaah/state.db` (or
+`$YAAH_HOME/state.db`); inspect trace-level detail with
+`yaah shepherd-trace list` / `yaah shepherd-trace show <id>`.
 
 ## MCP servers
 
@@ -165,8 +167,9 @@ observability:
 ```
 
 Token attribution is tracked per-turn. Fire up SigNoz (https://signoz.io/docs/install/docker/),
-visit http://localhost:8080, and watch me work. Full guide at
-[`docs/otel-setup.md`](./otel-setup.md).
+visit http://localhost:8080, and watch me work. Full observability
+configuration is in
+[`docs/configuration.md`](./configuration.md).
 
 ## Hook events
 

@@ -2,9 +2,21 @@
 
 ## Summary
 
-yaah is a vendor-free AI agent harness. Type `yaah` in the terminal and it
-takes over from there: it loads the project context, calls the model chosen,
-runs the tools needed, and remembers what it learns along the way.
+yaah is a vendor-free AI agent harness: a single static Go binary that runs
+an agent loop against any OpenAI-compatible API or the Anthropic Messages
+API. On startup it assembles a system prompt from an embedded identity,
+environment detection, user and project `AGENTS.md` files (discovered by
+walking up from cwd), and stored memories. The loop then streams model
+responses and executes tool calls — file edits, shell, git, Go tooling, web
+fetch — through a middleware pipeline (context compaction, approval gates,
+loop detection, conflict tracking). Sessions and memory persist to a local
+SQLite database with FTS5 full-text search and optional vector embeddings
+for semantic recall. Multi-step work is delegated to role-based sub-agents
+(analyst, developer, tester, reviewer — or roles you define in
+`.agents/roles/*.md`), each with a curated tool set and an evidenced
+response contract. yaah speaks MCP as both client (stdio + HTTP tool
+servers) and server (`yaah serve`), so it can consume external tools and be
+consumed as a tool by other agents.
 
 yaah follows the cross-tool conventions the agent ecosystem is converging on:
 
@@ -65,7 +77,8 @@ docker compose --profile cli build
 docker compose --profile cli run --rm yaah "explain this codebase"
 ```
 
-Traces appear at http://localhost:8080. See [`docs/otel-setup.md`](./docs/otel-setup.md).
+Traces appear at http://localhost:8080. Observability configuration is
+covered in [`docs/configuration.md`](./docs/configuration.md).
 
 ## Quick start
 
@@ -84,6 +97,8 @@ yaah --approval allow "run the tests"      # auto-approve dangerous tools
 YAAH_APPROVAL=allow yaah "deploy"          # env-var equivalent
 yaah --resume <session-id> "continue"      # resume a saved session
 yaah -d "always run tests first" "fix X"   # inject session directive
+yaah --workspace ~/code "fix X"            # restrict file tools to a directory
+yaah --workspace ~/code --allow-home "fix X"  # ... and permit ~ expansion
 ```
 
 ## Documentation
@@ -94,10 +109,10 @@ yaah -d "always run tests first" "fix X"   # inject session directive
 | [docs/sub-agents.md](./docs/sub-agents.md) | The team, built-in vs custom roles, escalation, quality gates, directives, evidenced contracts |
 | [docs/features.md](./docs/features.md) | TUI & REPL, memory & sessions, MCP, the built-in tool belt, observability, hooks, approval, middleware, providers |
 | [docs/configuration.md](./docs/configuration.md) | Full `config.yaml` reference — providers, agents, sub-agents, middleware, observability, hooks, editor, embeddings |
-| [docs/otel-setup.md](./docs/otel-setup.md) | SigNoz tracing setup |
+| [docs/prompts.md](./docs/prompts.md) | System prompt assembly, layer ordering, per-turn injections |
 | [docs/tui-components.md](./docs/tui-components.md) | TUI component system reference |
 | [docs/web-ui.md](./docs/web-ui.md) | Web UI architecture and event reference |
-| [docs/PROMPT-INJECTION.md](./docs/PROMPT-INJECTION.md) | Prompt-injection architecture map |
+| [docs/adr/](./docs/adr/) | Architecture Decision Records |
 
 ## Features
 
@@ -116,12 +131,13 @@ linked docs):
   (`go_outline`, `go_test`, `go_refactor`, `go_mod`, `bisect`, `staticcheck`),
   memory, plans, todos, and more. → [features.md](./docs/features.md)
 - **Context management** — soft-prune + LLM compaction + loop detection +
-  approval gates through a 13-middleware pipeline (10 on by default).
+  approval gates through a middleware pipeline: 11 built-in middleware,
+  9 on by default.
   → [features.md](./docs/features.md)
 - **Observability** — OpenTelemetry tracing with per-turn token attribution
   and an in-memory span buffer. Plus Shepherd execution traces: every tool
   call and turn boundary recorded to a durable, inspectable, content-addressed
-  store. → [features.md](./docs/features.md) · [otel-setup.md](./docs/otel-setup.md)
+  store. → [features.md](./docs/features.md) · [configuration.md](./docs/configuration.md)
 - **Supervised sub-agents** — `supervised_task` runs a role with a rollback
   point: checkpointed workspace *and* conversation, automatic
   rollback-and-retry, and interactive review verdicts
@@ -158,8 +174,8 @@ yaah mcp remove <name>            # remove MCP server
 yaah memory add <text>            # store a fact
 yaah memory search <query>        # search memory
 
-yaah session list                 # list sessions
-yaah session show <id>            # show session
+yaah login [provider]             # OAuth device flow (providers configured with auth: oauth)
+yaah logout [provider]            # clear stored credentials
 
 yaah shepherd-trace list           # list trace sessions
 yaah shepherd-trace show <id>      # show tool calls in a session
@@ -197,7 +213,6 @@ sub-agents, middleware, observability, hooks, editor, embeddings) live in
 - Go 1.25+
 - `gofmt` (ships with Go)
 - `staticcheck` for linting (optional, recommended)
-- yaah! JK.
 
 ### Build
 
@@ -270,63 +285,39 @@ sanity-check script live in the project skill:
 ```
 yaah/
 ├── main.go                       # calls cmd/yaah.Execute()
-├── cmd/yaah/                     # cobra commands
-│   ├── root.go                   # build-time vars (version, commit, date)
-│   ├── root_cmd.go               # rootCmd: REPL, one-shot, prompt dispatch
-│   ├── agent_frame.go            # agent wiring (providers, tools, middleware)
-│   ├── repl_loop.go              # interactive REPL loop + slash commands
-│   ├── subagent_runner.go        # sub-agent dispatch + role discovery
-│   ├── provider_resolve.go       # provider/model resolution helpers
-│   ├── serve.go                  # yaah serve — MCP tool server (stdio + HTTP)
-│   ├── acp_cmd.go                # yaah acp-serve cobra shim (server in internal/acp)
+├── cmd/yaah/                     # cobra commands + composition root
+│   ├── root.go root_cmd.go       # persistent flags; REPL / one-shot dispatch
+│   ├── wiring*.go build_loop.go  # session wiring: providers, tools, prompts
+│   ├── session.go repl_loop.go   # agentSession plumbing, REPL loop
+│   ├── serve.go serve_tools.go   # yaah serve — MCP tool server (stdio + HTTP)
+│   ├── acp_cmd.go                # yaah acp-serve shim (server in internal/acp)
 │   ├── web.go web_view.go        # yaah web — browser UI + WebSocket view
-│   ├── tui.go                    # bubbletea TUI (+ tui_unix.go / tui_windows.go)
-│   ├── plan.go                   # plan tool wiring
-│   ├── goat.go                   # easter-egg `yaah yaah` ASCII goat
-│   ├── version.go config.go doctor.go update.go
-│   ├── skill.go mcp.go memory.go session.go
-│   └── color.go                  # ANSI color helpers
+│   ├── tui.go                    # yaah tui — tview terminal UI
+│   └── ...                       # config, doctor, skill, mcp, memory, trace
 ├── internal/
-│   ├── acp/                      # ACP server (JSON-RPC wire types, view, dispatch loop)
-│   ├── agent/                    # agent loop, tool dispatch, middleware
-│   │   ├── context/               #   pure context helpers (tokens, split, prune, chunk, truncation)
-│   │   ├── llm/                   #   LLM client (streaming, retry, fallback)
-│   │   ├── pipeline/              #   middleware pipeline
-│   │   ├── subagent/              #   sub-agent role definitions and registry
-│   │   └── errorclassify/         #   provider error classification
-│   ├── banner/                   # figlet + lolcat banner
-│   ├── config/                   # config loader + env subst
-│   ├── instructions/             # AGENTS.md/CLAUDE.md discovery
-│   ├── jobs/                     # background sub-agent jobs (manager, TaskRunner, I/O contract)
-│   ├── mcp/                      # MCP client + server (stdio + HTTP)
+│   ├── agent/                    # agent loop: turns, dispatch, compaction
+│   │   ├── events/               #   typed events + hooks (exhaustive-switch tests)
+│   │   ├── context/              #   pure context helpers (tokens, split, prune)
+│   │   ├── llm/                  #   LLM client (streaming, retry, fallback)
+│   │   ├── pipeline/             #   middleware pipeline
+│   │   ├── runner/               #   sub-agent dispatch wiring
+│   │   └── subagent/             #   role definitions and registry
 │   ├── memory/                   # SQLite + FTS5 + vector embeddings
-│   ├── observability/            # OpenTelemetry tracing, in-memory span buffer
-│   ├── plans/                    # PLAN.md plan files
-│   ├── process/                  # background process manager
-│   ├── prompts/                  # identity.md + system prompt assembly
-│   ├── providers/                # OpenAI + Anthropic API clients
-│   ├── pubsub/                   # in-process pub/sub broker
-│   ├── repl/                     # interactive REPL
-│   ├── skills/                   # SKILL.md discovery
-│   ├── spinner/                  # animated thinking spinner
-│   ├── todo/                     # in-memory todo store
-│   ├── tools/                    # built-in tool implementations
-│   ├── tui/                      # bubbletea TUI components
-│   ├── types/                    # OpenAI message types
-│   └── update/                   # GitHub release checking
-├── docs/
-│   ├── architecture.md           # detailed architecture
-│   ├── sub-agents.md             # sub-agent team, roles, escalation, contracts
-│   ├── features.md               # TUI, REPL, MCP, tools, observability, middleware
-│   ├── configuration.md          # full config reference
-│   ├── PROMPT-INJECTION.md       # prompt injection architecture map
-│   ├── tui-components.md         # TUI component reference
-│   ├── web-ui.md                 # web UI architecture and event reference
-│   └── otel-setup.md             # SigNoz tracing setup guide
-├── AGENTS.md                     # coding assistant instructions
+│   ├── mcp/                      # MCP client + server (stdio + HTTP)
+│   ├── providers/                # OpenAI-compatible + Anthropic clients
+│   ├── prompts/                  # embedded identity + prompt assembly
+│   ├── tools/                    # 30+ built-in tools
+│   ├── tui/                      # tview TUI components
+│   └── ...                       # config, jobs, process, observability, skills
+├── docs/                         # architecture, configuration, features, ADRs
+├── AGENTS.md                     # canonical annotated layout + assistant notes
 ├── CONTRIBUTING.md
 └── SECURITY.md
 ```
+
+The full annotated layout lives in [AGENTS.md](./AGENTS.md); file-split
+history and guidelines are in
+[docs/code-organization.md](./docs/code-organization.md).
 
 ### Architecture
 
@@ -342,12 +333,12 @@ yaah is in active development and feature-complete for daily use.
 loop detection, SQLite session and memory persistence, session resume,
 MCP integration (stdio + HTTP) as both client and server, MCP tool server
 for agent-to-agent coordination (`yaah serve`), ACP server for agent communication (`yaah acp-serve`), REPL with slash commands
-and history, Bubble Tea TUI with streaming, tool call visualization,
+and history, tview TUI with streaming, tool call visualization,
 reasoning toggle, command palette, model switching, rich keybindings,
 mouse support, sub-agent team with 4 built-in roles (plus project-level
 custom roles), parallel dispatch with configurable concurrency, evidenced
 response contracts, custom role definitions from filesystem, middleware
-pipeline with 13 middleware (10 on by default), provider fallback,
+pipeline with 11 built-in middleware (9 on by default), provider fallback,
 OpenTelemetry tracing with per-turn token attribution and in-memory span
 buffer, plan management, background process management, and hook events.
 
@@ -355,7 +346,7 @@ buffer, plan management, background process management, and hook events.
 
 ## Recent development
 
-Recently shipped (or helped ship, while synthesizing the results):
+Recently shipped:
 
 **Structured escalation and quality gates.** Sub-agents can now report when
 they're stuck via a structured escalation block with severity, summary, and
@@ -400,9 +391,11 @@ embedding:
   provider: lmstudio
   model: text-embedding-nomic-embed-text-v1.5
 ```
-`OutputLimit` caps so their reports don't overflow context. Every role got
-`MaxTurns` and `MaxIterations` tuning. JSON mode support for structured
-output when needed. Per-role `ContextWindow` limits so nobody hogs memory.
+
+**Sub-agent budgeting.** Per-role `OutputLimit` caps sub-agent reports so
+they don't overflow the orchestrator's context. Every role got `MaxTurns` and
+`MaxIterations` tuning, JSON mode support for structured output when needed,
+and per-role `ContextWindow` limits so nobody hogs memory.
 
 **Evidenced agent contracts.** Sub-agents used to return free-form summaries
 where every claim had to be verified by hand. Now they return structured
@@ -417,26 +410,71 @@ so individual follow-up messages are batched and processed once. Per-role
 provider and model overrides so Charley runs on one provider and Jack on
 another.
 
-**13 middleware and counting.** A proper middleware pipeline:
-compaction (keeps context tidy), approval (gates risky ops), inline limiting
-(caps calls per turn), conflict detection (flags files touched by multiple
-sub-agents), loop detection (stops infinite loops), follow-up (continues
-when the model calls for it), per-role config injection, MCP tool
-augmentation, human-in-the-loop gates, and OpenTelemetry span creation.
-Each is independently tested. Each can be reordered.
+**Middleware pipeline.** 11 built-in middleware, 9 on by default:
+steer (high-priority mid-turn input), follow-up (between-turn messages),
+compaction (LLM summarization on window overflow), soft-prune (elide stale
+tool output), approval (gates risky ops), inline limiting (caps calls per
+turn), tool concurrency, loop detection (stops stuck loops), and conflict
+detection (flags files touched by multiple sub-agents). Opt-in:
+`permission` (path-pattern allow/deny) and `prompt_caching` (Anthropic
+cache-control breakpoints). Each is independently tested and can be
+reordered or disabled via config.
 
 ## Future improvements
 
-- **Plugin system** — register custom Go tools and middleware without
-  recompiling.
-- **Declarative workflows** — define multi-step agent pipelines as DAGs
-  of role-typed tasks with dependencies.
-- **Session export / import** — dump transcripts as JSONL or Markdown,
-  replay or resume from a file.
-- **Better MCP lifecycle** — health checks, auto-restart, graceful
-  shutdown ordering.
-- **Knowledge base from project files** — index the project tree (RAG)
-  into the SQLite FTS5 store.
+The near-term roadmap lives in tracked plan files (`.agents/plans/`,
+`docs/plans/`) rather than aspirational bullets. What is actually planned:
+
+### In progress
+
+- **Per-turn checkpoint & restore** — `supervised_task` today restores at
+  attempt granularity; this adds turn-granularity rewind inside sub-agent
+  loops (a hard tool error or iteration exhaustion rewinds to the state just
+  before that turn), with an optional `Scope.Fork` to try multiple
+  alternatives from a pre-turn snapshot.
+  → [plan](./.agents/plans/per-turn-checkpoint-restore/PLAN.md)
+- **Isolated workspace activation** — the `Workspace` implementation that
+  runs every tool inside a `shepherd.Sandbox` is complete and tested but not
+  yet wired into sessions. Activation gives worktree-isolated sub-agents
+  where a discarded fork never touches your tree. Blocked on the next
+  `shepherd-kernel-go` release.
+  → [plan](./docs/plans/isolated-workspace-activation.md)
+
+### Approved, ready to implement
+
+- **Tool-result pruning recovery & prevention** — pruned tool results are
+  currently lost with only a "re-run the tool" stub; this adds spill-to-disk
+  for pruned content, informative stubs, corrected defaults, and per-tool
+  head-limits so read content stays recoverable.
+  → [plan](./.agents/plans/tool-result-pruning-recovery/PLAN.md)
+
+### Drafted
+
+- **Faux provider & full-stack test harness** — a scripted, zero-API-cost
+  provider behind the normal provider seam, plus an in-memory harness wiring
+  loop + pipeline + tools + persistence for regression suites and
+  deterministic benchmark scenario runs.
+  → [plan](./.agents/plans/faux-harness-port/plan.md)
+- **Persistence consolidation** — unify the two SQLite stores
+  (`~/.yaah/state.db`, Shepherd `trace.sqlite`) and OTel spans; cross-link
+  `session_id` and `trace_id` so a single turn can be joined across all
+  three systems.
+  → [plan](./.agents/plans/consolidate-persistence/PLAN.md)
+- **`memory_search_sessions` overhaul** — structured results (session ID,
+  role, timestamp, message ID), filters, and a relevance floor, replacing
+  the current concatenated-string output.
+  → [plan](./.agents/plans/memory-search-sessions-overhaul/PLAN.md)
+- **`todowrite` → bd adapter** — transparently persist todos to the beads
+  (`bd`) issue tracker when available in the workspace, in-memory fallback
+  otherwise, honoring the AGENTS.md tracking directive by construction.
+  → [plan](./.agents/plans/todowrite-bd-adapter/PLAN.md)
+- **TUI activity line** — tvxwidgets spinner state machine with a compaction
+  gauge in the status area.
+  → [plan](./.agents/plans/tui-activity-line/PLAN.md)
+
+The long tail of smaller items (correctness, token efficiency, provider
+breadth, tooling gaps measured against peer agents) is tracked in the
+[best-of-breed gap backlog](./.agents/plans/best-of-breed-gap-backlog/plan.md).
 
 ## License
 

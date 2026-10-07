@@ -9,8 +9,8 @@ behalf, security matters.
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | ✅ active          |
-| 0.0.x   | best-effort only   |
+| 0.55.x  | ✅ active          |
+| older   | best-effort only   |
 
 ## Reporting a vulnerability
 
@@ -62,10 +62,21 @@ and an explicit opt-in for auto-approve.
 | `allow` | Run every tool call without prompting. Explicit opt-in.                  |
 | `deny`  | Refuse every tool call. Useful for read-only sessions.                   |
 
-There are no per-tool allow/ask/deny rules. The "last matching rule
-wins" framing from earlier design notes does not apply — the code is
-a single switch. If you need a read-only mode, set `approval: deny`
-or only register the `read`/`memory_search` tools via your config.
+Approval is a single global switch — there are no per-tool allow/ask/deny
+rules. If you need a read-only mode, set `approval: deny`.
+
+Two additional path-level controls exist alongside the approval switch:
+
+- **Workspace restriction** (`--workspace <dir>`, plus `--allow-home` and
+  `--workspace-ask`): file-accessing tools are validated against a
+  `PathValidator` rooted at the given directory; out-of-workspace paths are
+  denied (or prompted for, with `--workspace-ask`). The validator is
+  inherited by sub-agent tool registries.
+- **Permission middleware** (opt-in): path-pattern allow/deny rules for
+  tool calls, added to the pipeline when rules are configured and enforced
+  inside sub-agent loops as well (denied calls are filtered before
+  execution). See the `permission` middleware in
+  [docs/configuration.md](./docs/configuration.md).
 
 ### Approval override
 
