@@ -52,8 +52,6 @@ The agent loop lives in `internal/agent/agent.go`. The entry point is `Loop.Run(
 | `broker` | Internal pub/sub bus (created from `View` in `applyDefaults`; not set by callers) |
 | `MaxToolConcurrency` | Cap on concurrent tool goroutines (0 = unlimited) |
 | `MaxSubAgentConcurrency` | Cap on concurrent `spawn_subagent` calls (0 = unlimited, default 3) |
-| `MaxSubAgentDepth` | SubAgentMiddleware cap on task calls per Loop |
-| `MaxSubAgentDepthByRole` | Optional per-role caps; falls back to `MaxSubAgentDepth` |
 | `PermissionRules` | Path-pattern rules for the `permission` middleware |
 | `MCPServers` | Attached MCP servers whose tools are added to the registry |
 | `Pipe` | Write stream during one-shot; nil in REPL/TUI |
@@ -381,7 +379,7 @@ Wiring chain: `reg.Names()` → `runner.NewTaskTool(…, roleNames)` → `TaskTo
 
 ### CLI lifecycle display
 
-Files: `internal/agent/agent.go`, `internal/agent/events/events.go`, `cmd/yaah/wiring.go`
+Files: `internal/agent/agent_dispatch.go` (foreground sub-agent start events), `internal/agent/loop.go` (background sub-agent lifecycle events), `internal/agent/events/events.go` (event types), rendered by `cmd/yaah/view_terminal.go`
 
 Sub-agent activity is rendered with `╭─` / `╰─` box-drawing corners in the CLI, distinct from ordinary tool calls.
 
@@ -465,10 +463,14 @@ Semaphore acquisitions in `executeAndCollect` (`subAgentSem` and `toolConcurrenc
 
 ### Nesting depth
 
-Two mechanisms bound nesting, both hardcoded to depth 1:
-
-1. **Structural**: no sub-agent role registers the `spawn_subagent` tool. A sub-agent physically cannot spawn further sub-agents because `buildSubAgentRegistry` omits `spawn_subagent` from the sub-loop's tool set when `remainingDepth` reaches 0.
-2. **Middleware**: the `SubAgentMiddleware` limits the main agent to at most one `spawn_subagent` call across its lifetime.
+Nesting is bounded structurally, hardcoded to depth 1 for built-in roles:
+no built-in sub-agent role registers the `spawn_subagent` tool, so a
+sub-agent loop cannot dispatch further sub-agents at all
+(`buildSubAgentRegistry` omits `spawn_subagent` when `remainingDepth`
+reaches 0). A custom role that lists `spawn_subagent` gets the task tool
+only while the runner's remaining depth is positive. The former
+`SubAgentMiddleware` that dropped excess `spawn_subagent` calls mid-turn
+has been removed.
 
 ### Configuration
 
@@ -986,9 +988,9 @@ type HookEvent struct {
 
 ## Streaming
 
-File: `internal/agent/agent.go` (`runStream`, `assembleStreamed`), `internal/agent/events/events.go`
+File: `internal/agent/llm/stream.go` (`runStream`, `assembleStreamed`), `internal/agent/events/events.go`
 
-When the provider implements `StreamProvider` and a `View` is configured (internal broker is active), `getAssistantMessage` uses `runStream()`. The method:
+When the provider implements `StreamProvider`, `llm.Client.Call` selects the streaming path and `runStream()` assembles the response; `lifecycle_init.go` wires the client's token/thinking callbacks to broker events. The path:
 
 1. Reads from a `<-chan StreamChunk`.
 2. Accumulates `delta.Content` into a string builder, publishing each chunk as a `TokenDeltaEvent` to the internal broker.
@@ -1155,7 +1157,7 @@ yaah emits traces via OTLP HTTP to any OpenTelemetry-compatible backend. Tracing
 observability:
   otel:
     enabled: false
-    endpoint: "localhost:4317"
+    endpoint: "localhost:4318"
     service_name: "yaah"
     traces: true
     metrics: false

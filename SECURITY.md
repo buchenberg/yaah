@@ -9,7 +9,7 @@ behalf, security matters.
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.55.x  | ✅ active          |
+| 0.56.x  | ✅ active          |
 | older   | best-effort only   |
 
 ## Reporting a vulnerability
@@ -71,12 +71,18 @@ Two additional path-level controls exist alongside the approval switch:
   `--workspace-ask`): file-accessing tools are validated against a
   `PathValidator` rooted at the given directory; out-of-workspace paths are
   denied (or prompted for, with `--workspace-ask`). The validator is
-  inherited by sub-agent tool registries.
-- **Permission middleware** (opt-in): path-pattern allow/deny rules for
-  tool calls, added to the pipeline when rules are configured and enforced
-  inside sub-agent loops as well (denied calls are filtered before
-  execution). See the `permission` middleware in
-  [docs/configuration.md](./docs/configuration.md).
+  inherited by sub-agent tool registries. **This is not a process sandbox**:
+  containment is not enforced for shell commands — `bash`/`powershell` run
+  with the workspace as their working directory but can still read or modify
+  paths outside it (`internal/tools/bash.go` documents this explicitly).
+  Treat `--workspace` as a file-tool guard, not a containment boundary.
+- **Permission middleware**: path-pattern allow/deny rules for tool calls,
+  enforced inside sub-agent loops as well (denied calls are filtered before
+  execution). Note: there is currently no user-facing config surface for
+  these rules — `WithPermissionRules` is exercised only by tests, and naming
+  `permission` in `agents.middleware.enabled` without rules is a no-op (an
+  empty rule set allows everything). It is a pipeline mechanism awaiting a
+  config schema, not yet an opt-in security control.
 
 ### Approval override
 

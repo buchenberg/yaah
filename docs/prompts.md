@@ -31,7 +31,7 @@ sub-agent dispatch.
 
 ## Layer 1: System prompt assembly
 
-**File**: `cmd/yaah/wiring_prompt.go` (and `cmd/yaah/tui.go` for the TUI)
+**File**: `cmd/yaah/wiring_prompt.go` (shared by the REPL, one-shot, TUI, and web sessions)
 
 The agent's full system prompt is assembled once at startup via
 `prompts.Build()` (`internal/prompts/prompts.go`):
@@ -199,8 +199,7 @@ Loop.Run(userInput)
 ├── [MW] middleware.PrepareStep
 │   ├── [S] steer: UserMsg("[STEER] ...")
 │   ├── [F] followup: UserMsg(queued msg)
-│   ├── [C] compaction: SystemMsg("Previous summary: ...")
-│   └── [D] sub_agent: UserMsg("[system] depth limit")
+│   └── [C] compaction: SystemMsg("Previous summary: ...")
 │
 ├── [3] ChatRequest(..., buildToolsForLevel())
 │

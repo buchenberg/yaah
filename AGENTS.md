@@ -55,7 +55,6 @@ yaah/
 │   ├── skill.go                 # yaah skill list/show/create/edit
 │   ├── mcp.go                   # yaah mcp list/add/remove
 │   ├── memory.go                # yaah memory search/add
-│   ├── login.go                 # yaah login/logout (OAuth device flow)
 │   ├── trace.go                 # yaah shepherd-trace list/show/profile
 │   ├── compact_cmd.go resume.go quickref.go   # /compact, session restore, prompt quick-ref
 │   └── color.go                 # ANSI color helpers

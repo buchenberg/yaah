@@ -5,8 +5,8 @@
 yaah is a vendor-free AI agent harness: a single static Go binary that runs
 an agent loop against any OpenAI-compatible API or the Anthropic Messages
 API. On startup it assembles a system prompt from an embedded identity,
-environment detection, user and project `AGENTS.md` files (discovered by
-walking up from cwd), and stored memories. The loop then streams model
+environment detection, user context (`~/.yaah/AGENTS.md`), project
+`AGENTS.md` files (discovered by walking up from cwd), and stored memories. The loop then streams model
 responses and executes tool calls — file edits, shell, git, Go tooling, web
 fetch — through a middleware pipeline (context compaction, approval gates,
 loop detection, conflict tracking). Sessions and memory persist to a local
@@ -436,8 +436,10 @@ The near-term roadmap lives in tracked plan files (`.agents/plans/`,
 - **Isolated workspace activation** — the `Workspace` implementation that
   runs every tool inside a `shepherd.Sandbox` is complete and tested but not
   yet wired into sessions. Activation gives worktree-isolated sub-agents
-  where a discarded fork never touches your tree. Blocked on the next
-  `shepherd-kernel-go` release.
+  where a discarded fork never touches your tree. The plan is ready to
+  implement (kernel `v0.4.1` is published); the one remaining external gate
+  is the nested `sandbox/containerd/v0.1.2` release, which must precede the
+  containerd-backend step.
   → [plan](./docs/plans/isolated-workspace-activation.md)
 
 ### Approved, ready to implement
@@ -456,9 +458,11 @@ The near-term roadmap lives in tracked plan files (`.agents/plans/`,
   deterministic benchmark scenario runs.
   → [plan](./.agents/plans/faux-harness-port/plan.md)
 - **Persistence consolidation** — unify the two SQLite stores
-  (`~/.yaah/state.db`, Shepherd `trace.sqlite`) and OTel spans; cross-link
-  `session_id` and `trace_id` so a single turn can be joined across all
-  three systems.
+  (`~/.yaah/state.db`, Shepherd `trace.sqlite`) and OTel spans into one
+  queryable surface. Identifier cross-links already shipped (persisted
+  messages carry `trace_id`/`turn_id`, OTel turn spans carry
+  `session.id`/`turn.id`, and `trace_owners` maps Shepherd owners to parent
+  sessions); the remaining work is storage-backend unification.
   → [plan](./.agents/plans/consolidate-persistence/PLAN.md)
 - **`memory_search_sessions` overhaul** — structured results (session ID,
   role, timestamp, message ID), filters, and a relevance floor, replacing

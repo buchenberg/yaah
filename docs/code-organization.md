@@ -20,9 +20,10 @@ yaah/
 ├── internal/
 │   ├── acp/                     # ACP JSON-RPC server (wire types, view, dispatch)
 │   ├── agent/                   # Core agent loop
-│   │   ├── agent.go             # Loop type and turn processing
+│   │   ├── agent.go             # 16-line package-doc stub (Loop lives across split files)
+│   │   ├── loop.go turn.go      # Run loop and turn processing
 │   │   ├── options.go           # Functional options for Loop
-│   │   ├── events.go            # Typed event system
+│   │   ├── events/              # Typed event system + hooks
 │   │   ├── view.go              # View interface
 │   │   ├── context/             # Pure context helpers (leaf, no agent imports)
 │   │   │   ├── tokens.go        #   Token estimation and constants
@@ -61,7 +62,10 @@ yaah/
 | `internal/agent/runner/runner.go` | ~780 | Sub-agent dispatch wiring (TaskTool, role resolution, budgets) |
 | `internal/agent/context_manager.go` | ~670 | Context-window policy: compaction, pruning, truncation |
 | `internal/mcp/http_server.go` | ~630 | MCP Streamable HTTP + SSE server |
-| `cmd/yaah/wiring.go` | ~480 | Composition root: `newAgentSessionWithOptions` is still one ~415-line function |
+
+Just under the cutoff, `cmd/yaah/wiring.go` (~480 lines) is the next split
+candidate — it is one ~415-line composition function
+(`newAgentSessionWithOptions`); see Future Work below.
 
 ---
 
@@ -116,7 +120,7 @@ The old bubbletea TUI was removed on 2026-08-21; the tview TUI (promoted from
 ### 2. ~~`internal/agent/agent.go` → Split into 5-6 files~~ ✅ Done
 
 The split landed (and went further than proposed): the former 770-line
-`agent.go` is now a 16-line alias file, with the Loop split across `loop.go`
+`agent.go` is now a 16-line package-doc stub, with the Loop split across `loop.go`
 (run loop, pipeline build), `turn.go` (turn processing), `types.go`,
 `lifecycle_init.go` / `lifecycle_teardown.go`, `agent_context.go`
 (compaction entry points), `context_manager.go` (compaction policy),
