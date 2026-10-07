@@ -196,26 +196,42 @@ The nested module's repin is part of T0.8.
 > currently depends on a core version older than its own fixes. Worth fixing in
 > the same patch release.
 
-### 0.2 Establish that the containerd backend actually works
+### 0.2 Establish that the containerd backend actually works — ❌ GATE NOT CLEARED
 
-The kernel's own README is candid: the daemon adapter *"compiles but has not been
-exercised — it needs a Linux host with a running containerd daemon and root or
-user namespaces"* (`README.md:269-275`). Kernel plan 00 lists this as **T0.5**, a
-manual live-daemon smoke (create → WriteFile → Capture → mutate → Apply → Exec →
-Destroy), explicitly to de-risk before dependent work.
+**Result (2026-10-07): the harness works; the backend does not yet.** Run against
+containerd v2.3.5 (overlayfs snapshotter). The harness is committed (kernel
+`603fdcf`) and **nine defects were found and fixed** by it. But **3 of 5
+consecutive runs failed, with a different test failing each time** — the signature
+of a shared-resource race, not per-test bugs.
 
-**Part of this already exists, uncommitted.** The kernel's working tree carries
-`sandbox/containerd/live_test.go` — 681 lines, **untracked** (absent from HEAD and
-from `sandbox/containerd/v0.1.0`), env-gated on `SHEPHERD_CONTAINERD_ADDR`,
-`_IMAGE`, `_NAMESPACE`, `_SNAPSHOTTER`, `_WORKDIR`, with an unconditional skip so
-`go test ./...` stays green. `client.go` has uncommitted changes (+32/−7) and
-`go.mod` promotes `opencontainers/image-spec` to a direct dependency.
+**Cause established:** the adapter holds **no containerd lease** (the only "lease"
+matches in `client.go` are the word *release* in a comment and an error string),
+and this daemon's GC is aggressive — `mutation_threshold = 100`,
+`schedule_delay = '0s'`, `startup_delay = '100ms'`. `Capture` stops the task and
+then prepares a successor whose parent is the just-committed snapshot; with the task
+stopped, that snapshot is **unreferenced**, so the GC can reap it in that window.
+Observed directly:
 
-**Action:** run that harness against a live daemon and record the result — this is
-the gate for Phases 2–4. Two caveats: the harness is untracked, so commit it
-first or the evidence disappears; and if it fails, this plan is blocked on kernel
-work and the honest move is to stop here rather than build on an unexercised
-backend.
+```
+Capture: containerd sandbox: prepare successor snapshot:
+  parent snapshot shepherd/<id>/committed/1 does not exist: not found
+Destroy during cleanup: remove snapshot shepherd/<id>/active/0: ... does not exist
+```
+
+**Consequence for this plan: step 2 is a real stop-gate and it has fired.** Per
+§11 — **stop here.** Phases 1–3 must not start until kernel **T0.9** (hold a lease
+for the sandbox's lifetime; accept on ≥10 consecutive green soak runs) lands and
+the live suite is reliably green.
+
+This is not pedantry. A workspace whose snapshots can be garbage-collected
+mid-operation is *worse* than one that fails loudly: over a long agent run it would
+lose the workspace intermittently, and the symptom would look like anything but a
+containerd GC. Building isolated mode on it would produce exactly the
+nondeterministic data-loss bug that is hardest to diagnose.
+
+Good hygiene to note, since it bounds the blast radius: the runs leaked **no**
+containers, tasks, or sandbox-owned snapshots — `Destroy` cleans up correctly even
+when it also reports a missing-snapshot error.
 
 ### 0.3 Promote the existing `fakeSandbox` into a reusable in-memory `Sandbox`
 
@@ -405,16 +421,18 @@ So: **activation is not blocked on the digest fix; trace-mediated materializatio
 is.** Worth stating plainly, because it inverts the naive reading of the kernel's
 phase order.
 
-Kernel work referenced, with status as of 2026-09-17 (see the kernel's
+Kernel work referenced, with status as of 2026-10-07 (see the kernel's
 `plans/00-execution-plan.md`):
 
 | Kernel item | Plan ref | Status |
 |---|---|---|
 | Bug batch | T0.6 | ✅ landed, ❌ unreleased |
-| **`v0.4.1` release** | **T0.8** | ⬜ **decided — this plan's pin target** |
+| **`v0.4.1` release** | **T0.8** | ⬜ **decided — this plan's pin target**; not blocked by T0.9 |
 | containerd publish (no `replace`) | T0.4 | ✅ landed |
 | CI 3-OS + containerd job | T0.7 | ✅ landed |
-| Live-daemon smoke | T0.5 | 🔄 harness written, **uncommitted**, result unrecorded |
+| Live-daemon harness | T0.5 | ✅ committed (`603fdcf`); found and fixed 9 defects |
+| **Live-daemon VERDICT** | **T0.5** | ❌ **FAILED — 3/5 runs, different test each time** |
+| **containerd lease (GC safety)** | **T0.9** | ⬜ **BLOCKER for this plan** — accept on ≥10 green soak runs |
 | Digest/canonical parity | T1.1–T1.2 | ⬜ not started |
 | `ReadPathPrefix` | T1.6 | ⬜ not started |
 | `WorkspaceSubstrate` | T2b.4, T2b.7 | ⬜ not started |
@@ -505,16 +523,23 @@ in-band shell surface must be reworked rather than probed.
 
 ## 11. Execution order
 
-Decisions are settled (§3, §10), so this is an implementation sequence.
+Decisions are settled (§3, §10), so this is an implementation sequence. Steps 0–2
+have been **executed**; the verdict is recorded against each.
 
-0. **Commit the untracked kernel `live_test.go`** — running an untracked harness
-   produces evidence that cannot be cited and vanishes on a clean checkout.
-1. Kernel **`v0.4.1`** containing the Phase 0 bug batch (kernel plan 00 T0.8) —
-   unblocks everything; `yaah` can then pin a tag instead of a pseudo-version.
-2. Kernel live-daemon smoke, T0.5 (§0.2) — **STOP-GATE.** If it fails, stop; do
-   not build activation on an unexercised backend.
-3. Promote `fakeSandbox` into a reusable in-memory `Sandbox` (§0.3) — unlocks
-   OS-independent tests, so steps 4–7 can land before the live-daemon gate clears.
+0. ✅ **DONE** — committed the kernel containerd work as `603fdcf` (6 files,
+   +1202/−48), including the previously untracked `live_test.go`.
+1. ⬜ **READY** — kernel **`v0.4.1`** containing the Phase 0 bug batch (kernel plan
+   00 T0.8). Not blocked by step 2: the core bug batch is independent of the
+   containerd lease, and `yaah` needs a pinnable tag rather than a pseudo-version.
+2. ❌ **FAILED — gate fired** — kernel live-daemon smoke, T0.5. The harness works
+   and found nine defects, but the suite is flaky (3/5 runs, different test each
+   time). **Per this plan's own stop-gate instruction: stop.**
+2b. ⬜ **NEW BLOCKER** — kernel **T0.9**: hold a containerd lease for the sandbox's
+   lifetime so its snapshots cannot be garbage-collected. Accept on **≥10
+   consecutive green soak runs**. Steps 3–9 are all downstream of this.
+3. Promote `fakeSandbox` into a reusable in-memory `Sandbox` (§0.3) — *this one is
+   independent of T0.9 and can proceed now*, since it is pure test-support work
+   with no daemon involvement.
 4. Config surface (§1.1), including D5's startup probe.
 5. Sandbox construction + lifecycle (§1.2). *First clean stopping point.*
 6. Bootstrap implementation per **D1** (§2.3).
@@ -523,9 +548,14 @@ Decisions are settled (§3, §10), so this is an implementation sequence.
 8. Activation wiring + `doctor` (§2.4). *First genuinely useful release.*
 9. Test matrix (§8), docs, and D2's inheritance behaviour for sub-agents (§1.3).
 
-**Stopping points:** step 2 is a legitimate "not viable yet" exit. Step 5 leaves
-config without activation — also clean. Step 8 is shippable.
+**Stopping points:** step 2 fired and is a legitimate "not viable yet" exit. Step 5
+leaves config without activation — also clean. Step 8 is shippable.
 
-**Two hard dependencies, not reorderable:** step 1 before step 2 (the smoke needs
-the bug batch), and step 3 before step 7 (the activation tests need the fake).
-Everything from step 4 onward is otherwise parallelisable.
+**What can proceed despite the failed gate:** steps 1 and 3. Step 1 unblocks
+`yaah`'s pin; step 3 is daemon-free test-support work. **Everything from step 4
+onward requires a green soak** — building the config surface and lifecycle on a
+backend whose snapshots can vanish would mean debugging the wrong layer.
+
+**Hard dependencies, not reorderable:** step 1 before step 2 (the smoke needs the
+bug batch), step 3 before step 7 (the activation tests need the fake), and
+**step 2b before step 4** (a green soak before anything depends on the backend).
