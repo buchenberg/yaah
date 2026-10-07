@@ -1,6 +1,6 @@
 ---
 name: yaah-dev-loop
-description: Build, run, and iterate on yaah server modes (MCP, ACP) from inside a Kilo session or via stdio JSON-RPC. Use when developing yaah itself (internal/mcp, cmd/yaah/serve, cmd/yaah/acp.go, prompt/tools) and you want to exercise the change through a live connection without restarting the host agent.
+description: Build, run, and iterate on yaah server modes (MCP, ACP) from inside a Kilo session or via stdio JSON-RPC. Use when developing yaah itself (internal/mcp, cmd/yaah/serve, cmd/yaah/acp_cmd.go, prompt/tools) and you want to exercise the change through a live connection without restarting the host agent.
 version: 1.0.0
 author: local
 license: MIT
