@@ -69,10 +69,12 @@ Every message is written to SQLite in real time. Sessions survive crashes
 and process restarts:
 
 ```bash
-yaah session list
-yaah session show <id>
 yaah --resume <id> "pick up where we left off"
 ```
+
+Session transcripts are stored in SQLite at `~/.yaah/state.db` (or
+`$YAAH_HOME/state.db`); inspect trace-level detail with
+`yaah shepherd-trace list` / `yaah shepherd-trace show <id>`.
 
 ## MCP servers
 
@@ -165,8 +167,9 @@ observability:
 ```
 
 Token attribution is tracked per-turn. Fire up SigNoz (https://signoz.io/docs/install/docker/),
-visit http://localhost:8080, and watch me work. Full guide at
-[`docs/otel-setup.md`](./otel-setup.md).
+visit http://localhost:8080, and watch me work. Full observability
+configuration is in
+[`docs/configuration.md`](./configuration.md).
 
 ## Hook events
 
@@ -209,7 +212,8 @@ alike.
 
 ## Middleware pipeline
 
-Every agent turn runs through a configurable middleware pipeline:
+Every agent turn runs through a configurable middleware pipeline. The
+orchestrator registers 11 middleware by name — 9 on by default:
 
 | Middleware | On by default | What it does |
 |---|---|---|
@@ -221,18 +225,21 @@ Every agent turn runs through a configurable middleware pipeline:
 | `inline_limit` | ✓ | Caps tool calls per turn; dropped calls get synthesized results |
 | `conflict_detect` | ✓ | Flags files touched by multiple sub-agents after each batch |
 | `loop_detection` | ✓ | Halts stuck loops via tool-call-chain hashing |
-| `staleness` | ✓ | Annotates sub-agent results when orchestrator context shifted mid-flight |
-| `permission` | — | Path-pattern rules to allow/deny tools by file path |
 | `tool_concurrency` | ✓ | Caps concurrent tool goroutines |
-| `shepherd_trace` | ✓ | Records every tool call as a durable, inspectable execution trace |
-| `sub_agent` | — | Enforces sub-agent depth limits |
+| `permission` | — | Path-pattern rules to allow/deny tools by file path |
 | `prompt_caching` | — | Anthropic cache-control breakpoints |
+
+Sub-agent loops run their own curated pipeline: `tool_concurrency` and
+`shepherd_trace` by default, plus `permission` when the parent passes path
+rules (denied calls are filtered before execution).
 
 You can reorder, disable, or enable middleware in your config.
 
 ## Execution traces
 
-When `shepherd_trace` is active (on by default), every tool call and turn
+When a trace store is configured (sub-agent pipelines carry `shepherd_trace`
+by default; the orchestrator initializes the session-wide store via
+`scope_init.go`), every tool call and turn
 boundary is recorded to a content-addressed append-only trace store at
 `~/.yaah/traces/trace.sqlite`. Each record is cryptographically hashed and
 causally chained, giving you a tamper-evident, replayable execution history.
@@ -281,8 +288,10 @@ agents:
     shepherd_trace_dir: ~/.yaah/traces   # default, optional
 ```
 
-No separate enable flag — tracing is active whenever `shepherd_trace` is in
-the middleware pipeline (on by default). Set `middleware.disabled: [shepherd_trace]`
+No separate enable flag — tracing is active whenever a trace store is
+initialized (`shepherd_trace_dir` set); sub-agent pipelines carry the
+`shepherd_trace` middleware by default. Set
+`middleware.disabled: [shepherd_trace]`
 to turn it off.
 
 ## Provider flexibility
