@@ -25,7 +25,7 @@ sub-agent dispatch.
             │ Sub-agent (isolated)       │
             │ runner.go                 │
             │ System prompt + guidance   │
-            │ (inherits orchestrator)    │
+            │ (lean sub-agent base)     │
             └───────────────────────────┘
 ```
 
@@ -155,14 +155,19 @@ messages = append(messages, conflictMsg)
 
 **File**: `internal/agent/runner/runner.go`
 
-Sub-agents spawned via the `spawn_subagent` tool inherit the full orchestrator
-system prompt plus a role guidance suffix:
+Sub-agents spawned via the `spawn_subagent` tool get a lean base prompt —
+`buildSubAgentBasePrompt` in `cmd/yaah/wiring_prompt.go` — plus a role
+guidance suffix. The base is the sub-agent identity
+(`internal/prompts/subagent_identity.md`), user context, project AGENTS.md,
+and stored memory facts. It deliberately omits the orchestrator identity
+(spawn_subagent orchestration, dispatch waves), the concurrency limit, and
+memory-tool guidelines — none of which a sub-agent role can act on:
 
 ```go
-sysPrompt := opts.systemPrompt  // same as the orchestrator's l.SystemPrompt
-// plus role-specific guidance:
+sysPrompt := DetectEnvironment(cwd) + opts.systemPrompt  // lean sub-agent base
+// plus role-specific guidance, contract, and escalation:
 Loop{
-    SystemPrompt: sysPrompt + RoleGuidance(role),
+    SystemPrompt: sysPrompt + RoleGuidance(role) + contract + Escalation(),
     Tools:        role-limited subset,
 }
 ```
@@ -179,8 +184,8 @@ roles and their personas:
 | `tester` | Casey | Run test suites, analyze failures, measure coverage; do not modify source |
 | `reviewer` | Tim | Inspect code, count files/lines, measure complexity; do not modify files |
 
-Sub-agents are full agents with the orchestrator's identity, just with
-restricted toolsets and role-specific guidance.
+Sub-agents are full agents with their own lean identity, restricted toolsets,
+and role-specific guidance.
 
 ## Complete injection map
 
@@ -210,31 +215,33 @@ Loop.Run(userInput)
 │
 ├── If spawn_subagent calls:
 │   └── subagent_runner
-│       └── [T1] SystemMsg(orchestrator prompt + role guidance)
+│       └── [T1] SystemMsg(sub-agent base + role guidance)
 │
 └── Loop continues until model outputs no tool calls
 ```
 
 ## Key design decisions
 
-1. **Sub-agents inherit the orchestrator prompt.** This means they carry the
-   full identity, principles, and tool knowledge — they are full agents with
-   restricted toolsets. Role guidance (the role's markdown body) is appended to
-   steer behavior.
+1. **Sub-agents get a lean base prompt.** `buildSubAgentBasePrompt` gives them
+   the sub-agent identity, user/project AGENTS.md, and memory facts — without
+   the orchestrator identity (spawn_subagent orchestration, dispatch waves) or
+   memory-tool guidelines, which no sub-agent role can act on. Role guidance
+   (the role's markdown body) is appended to steer behavior.
 
 2. **Environment is assembled from one shared template.** `DetectEnvironment`
-   renders `environment_header.md` once for the main agent's system prompt, and
-   sub-agents receive the same block via `EnvironmentHeader`. It is not
-   re-injected per-turn.
+   renders `environment_header.md` once for the main agent's system prompt;
+   sub-agents receive the same rendered block, prepended fresh by the runner
+   at each dispatch.
 
 3. **Tool set is consistent.** The agent gets the full tool set based on the
    current tool level. The model chooses per-action which tools to use.
 
 ## Common pitfalls
 
-- **Modifying identity.md without considering sub-agents.** Sub-agents inherit
-  the full identity prompt, so changes affect ALL sub-agent behavior — not
-  just the main agent.
+- **Letting identity.md and subagent_identity.md drift.** The batch-rule and
+  reason-before-reading sections are intentionally mirrored in both files;
+  `TestSubAgentIdentityMirrorsCanonicalHabitSections` fails if the wording
+  diverges. When updating one file, update the other to match.
 
 - **Compaction removing the system prompt.** The compaction middleware at
   `agent_context.go` preserves the system prompt and recent messages. If the

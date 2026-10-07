@@ -239,7 +239,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 
 	taskTool := runner.NewTaskTool(runner.TaskToolOpts{
 		Provider:              provider,
-		SystemPrompt:          systemPrompt,
+		SystemPrompt:          buildSubAgentBasePrompt(cwd, db),
 		ModelName:             modelName,
 		DB:                    db,
 		SessionID:             sessionID,

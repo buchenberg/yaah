@@ -189,3 +189,34 @@ func TestBuild_EnvironmentNotDoubleWrapped(t *testing.T) {
 		t.Errorf("expected exactly one environment heading, got %d in %q", n, out)
 	}
 }
+
+func TestSubAgentIdentityMirrorsCanonicalHabitSections(t *testing.T) {
+	// The batch-rule and reason-before-reading sections are duplicated from
+	// identity.md on purpose: sub-agents need the habits but not the rest of
+	// the orchestrator identity. This test turns silent drift into a failure —
+	// when identity.md wording changes, update subagent_identity.md to match.
+	identity := strings.TrimSpace(IdentityPrompt)
+	sub := strings.TrimSpace(SubAgentIdentityPrompt)
+
+	extract := func(s, start string) string {
+		i := strings.Index(s, start)
+		if i < 0 {
+			t.Fatalf("section %q not found", start)
+		}
+		rest := s[i:]
+		if j := strings.Index(rest, "\n## "); j >= 0 {
+			rest = rest[:j]
+		}
+		return strings.TrimSpace(rest)
+	}
+
+	for _, section := range []string{
+		"## Cardinal rule: batch tool calls",
+		"### Reason before reading",
+	} {
+		canonical := extract(identity, section)
+		if !strings.Contains(sub, canonical) {
+			t.Errorf("sub-agent identity must carry the canonical %q section verbatim from identity.md.\nidentity.md has:\n%s\n\nsubagent_identity.md diverged:\n%s", section, canonical, sub)
+		}
+	}
+}
