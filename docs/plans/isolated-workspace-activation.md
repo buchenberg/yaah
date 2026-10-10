@@ -1,6 +1,6 @@
 # Development Plan: Isolated Workspace Activation (yaah side)
 
-**Status:** decisions settled 2026-10-05; ready to implement · **Author:** buchenberg
+**Status:** decisions settled 2026-10-05; kernel dependencies refreshed 2026-10-10 (core v0.4.1 → v0.10.0) · **Author:** buchenberg
 **Kernel dependency:** `shepherd-kernel-go` (see §7 for the exact release requirement)
 **Related:** `supervised-task-plan.md` (the supervision/rollback substrate this sits on),
 `.agents/plans/best-of-breed-gap-backlog/plan.md` (G13/G14 — worktree isolation, done)
@@ -195,12 +195,14 @@ The nested module's repin is part of T0.8.
 > while its own tree contained the bug batch, so `sandbox/containerd@v0.1.0`
 > depended on a core version older than its own fixes.
 >
-> **Partly resolved 2026-10-07.** `v0.4.1` is published and resolves from the
-> module proxy, so the core pin `yaah` needs exists as a real tag. The nested
-> module's **released** version is still wrong though: `sandbox/containerd@v0.1.1`
-> requires `v0.4.0`, and the repin to `v0.4.1` sits on kernel PR #11, which
-> merging will not push into the tag. That needs `sandbox/containerd/v0.1.2`
-> (kernel T0.8b). Tracked in §7 and in step 1 below; it blocks step 5, not step 4.
+> **Resolved, then overtaken — refreshed 2026-10-10.** `v0.1.2` shipped (kernel
+> T0.8b), and the nested module has since advanced to `sandbox/containerd/v0.1.4`
+> (durable workspace states; cold-namespace live suite 9/9 green). The standing
+> requirement is unchanged in shape but moved in version: `yaah` must not compile
+> against a nested release older than the core it pins, so the step-5 blocker is
+> now **`sandbox/containerd/v0.1.5`, repinned to core `v0.10.0`** — which also
+> carries `DeltaApplier` and the sandbox registry. Tracked in §7 and step 5
+> below.
 
 ### 0.2 Establish that the containerd backend actually works — ✅ GATE CLEARED
 
@@ -384,9 +386,15 @@ which is the property `supervised_task`'s rollback depends on.
 Bind-mount is rejected: it contains processes but not effects, so every write
 lands on the host immediately and no fork/rollback is possible — it would leave
 `supervised_task` unable to honour its contract in isolated mode.
-`WorkspaceSubstrate` (kernel plan 03, v0.7.0) remains the better long-term answer
-— trace-mediated, auditable, idempotent — but it is gated on kernel Phase 1 and
-must **not** be a prerequisite for activation.
+`WorkspaceSubstrate` (kernel plan 03, landed in `v0.7.0`) remains the better
+long-term answer — trace-mediated, auditable, idempotent — and the machinery
+D1's apply-out needs has since landed in the kernel: `Seal`/`Settle` with
+`DeltaApplier` (`v0.8.0`) for apply-out-onto-a-moved-parent, and
+`RecoverScopes` (`v0.9.0`) for a restart story. None of it is a prerequisite
+for activation — copy-in/capture/apply-out stands on `Capture`/`Diff`/`Apply`
+alone — but step 6 should reach for the landed verbs rather than reinvent
+them, and settlement adoption remains the "separate plan" the non-goals
+anticipated (now with a concrete basis to write against).
 
 **Acceptance criterion for this decision:** in isolated mode, `supervised_task`
 must still be able to roll back a failed attempt. If copy-in/apply-out cannot
@@ -429,23 +437,25 @@ So: **activation is not blocked on the digest fix; trace-mediated materializatio
 is.** Worth stating plainly, because it inverts the naive reading of the kernel's
 phase order.
 
-Kernel work referenced, with status as of 2026-10-07 (see the kernel's
-`plans/00-execution-plan.md`):
+Kernel work referenced, with status refreshed 2026-10-10 (see the kernel's
+`plans/00-execution-plan.md`; all four parity phases are complete, core at
+**v0.10.0**):
 
-| Kernel item | Plan ref | Status |
+| Kernel item | Plan ref | Status (2026-10-10) |
 |---|---|---|
-| Bug batch | T0.6 | ✅ landed, ✅ **released in `v0.4.1`** |
-| **`v0.4.1` release** | **T0.8** | ✅ **PUBLISHED** at `bee4ca5` — the core pin resolves through the module proxy |
-| **nested `sandbox/containerd/v0.1.2`** | **T0.8b** | ⬜ **PENDING** — `v0.1.1` requires core `v0.4.0` and cannot be fixed in place |
-| containerd publish (no `replace`) | T0.4 | ✅ landed |
+| Bug batch | T0.6 | ✅ released in `v0.4.1` |
+| **Core releases through v0.10.0** | T0.8+ | ✅ `v0.5.0` (ABI byte identity), `v0.6.0` (schemas/handles), `v0.7.0` (substrates/materialization), `v0.8.0` (merge gate + settlement), `v0.9.0` (**breaking: ctx-first store APIs**, restart recovery), `v0.10.0` (sandbox registry) — all resolve from a clean module, tag-verified in CI |
+| **nested `sandbox/containerd`** | T0.8b | ✅ `v0.1.3` (repin), `v0.1.4` (durable workspace states, states-lease pins, cold-namespace fix — live suite 9/9 green). ⬜ **`v0.1.5` repinned to core `v0.10.0` is the step-5 blocker** (carries `DeltaApplier` + registry alignment) |
+| containerd publish (no `replace`) | T0.4 | ✅ landed; tag-time release-verify job guards it now |
 | CI 3-OS + containerd job | T0.7 | ✅ landed |
-| Live-daemon harness | T0.5 | ✅ committed (`603fdcf`); found and fixed 9 defects |
-| **Live-daemon VERDICT** | **T0.5** | ✅ **PASSED — 12/12 green** after the lease fix |
-| **containerd lease (GC safety)** | **T0.9** | ✅ **DONE (`8e9b867`)** — was this plan's blocker, now cleared |
-| Digest/canonical parity | T1.1–T1.2 | ⬜ not started |
-| `ReadPathPrefix` | T1.6 | ⬜ not started |
-| `WorkspaceSubstrate` | T2b.4, T2b.7 | ⬜ not started |
-| Checkpoint durability | T4.1–T4.2 | ⬜ not started |
+| Live-daemon harness + VERDICT | T0.5 | ✅ 12/12 green; the cold-namespace re-run on `v0.1.4` was 9/9 |
+| **containerd lease (GC safety)** | **T0.9** | ✅ cleared (this plan's old blocker) |
+| Digest/canonical parity | T1.1–T1.2 | ✅ `v0.5.0`, corpus + drift-gated goldens |
+| `ReadPathPrefix` | T1.6 | ✅ `v0.5.0` |
+| `WorkspaceSubstrate` | T2b.4, T2b.7 | ✅ `v0.7.0`, live round trip green (write → capture → destroy → apply → verify) |
+| Checkpoint/scope durability | T4.1–T4.2 | ✅ `v0.9.0` — `RecoverScopes` rebuilds the registry from the trace; checkpoint blobs persist with staleness detection |
+| **ctx sweep (breaking)** | T4.5 | ⚠️ **new yaah prerequisite** — see step 3c: 29 pre-ctx store call sites must be swept before any pin ≥ `v0.9.0` |
+| Sandbox registry (`OpenSandbox`) | — | ✅ `v0.10.0` — the construction seam step 4/5 should use |
 
 ---
 
@@ -480,7 +490,7 @@ Kernel work referenced, with status as of 2026-10-07 (see the kernel's
   written note against the kernel's `GAP-REPORT.md` rejection.
 - No `go_refactor` reimplementation for isolated mode.
 - No multi-tenant / per-sub-agent sandbox pooling.
-- No `WorkspaceSubstrate` adoption (kernel v0.7.0; separate plan).
+- No `WorkspaceSubstrate` adoption (kernel `v0.7.0`+, landed; separate plan — Phase 3's merge gate/settlement, `v0.8.0`+, are its basis).
 - No Windows or macOS isolation.
 
 ## 10. Decisions
@@ -593,8 +603,37 @@ have been **executed**; the verdict is recorded against each.
    asserting canned stdout. Gates: build, vet, staticcheck, gofmt, full
    `go test ./...` (48 pkgs), and 5 consecutive green runs of the previously
    flaky `internal/tools` suite.
-4. Config surface (§1.1), including D5's startup probe.
+3c. **Pin bump + ctx sweep (added 2026-10-10 — the actual next step).**
+   `yaah` pins core **`v0.4.0`**; the kernel is at `v0.10.0`, and `v0.9.0`
+   made `context.Context` the first parameter on every store API (the
+   trace-authority context moved to second). The bump is mechanical — ~29
+   call sites across ~20 files (`internal/agent/pipeline/trace.go`,
+   `internal/tools/subagent_trace.go`, `internal/agent/runner/runner.go`,
+   `internal/tools/supervisor*.go`, checkpoints, ...) go from
+   `store.Append(shepherd.TrustedAppendContext, …)` to
+   `store.Append(ctx, shepherd.TrustedAppendContext, …)`. `Sandbox`
+   interface call sites are untouched (those methods always took ctx);
+   `internal/sandboxfake` needs no changes. Land as its own PR **before**
+   step 4, so the workspace work starts on the modern API surface and
+   never mixes mechanical churn with feature changes. Optional but cheap
+   in the same PR: adopt `OpenSandbox`-era semantics nowhere yet — just
+   the pin (`v0.10.0`) + sweep + `go test ./...`.
+4. Config surface (§1.1), including D5's startup probe. The kernel's
+   `v0.10.0` sandbox registry is the natural seam: `workspace.backend`
+   maps to a registry name (`git` self-registers in-core; `containerd`
+   registers at wiring — `shepherd.RegisterSandbox` with a factory over
+   the nested module's constructor, since the adapter cannot self-register
+   until its `v0.1.5` repin), and `shepherd.SandboxBackends()` powers
+   `doctor`'s backend listing. Hand-rolled switches remain acceptable; the
+   registry is the seam, not a requirement.
 5. Sandbox construction + lifecycle (§1.2). *First clean stopping point.*
+   **Blocked on `sandbox/containerd/v0.1.5`** (repinned to core `v0.10.0`)
+   — importing the adapter at an older pin would silently compile against
+   pre-ctx core, exactly the failure mode step 1's note warns about. One
+   behavioral note from kernel `v0.8.0`: `Scope.Fork` on a sandboxed parent
+   now captures a fork baseline (one git subprocess per fork, ~10–15 ms
+   live-timed) — `supervised_task`'s per-attempt forks pay it; recorded so
+   it is not mistaken for a regression.
 6. Bootstrap implementation per **D1** (§2.3).
 7. Tool surface per **§3 Option A** + **D3** (§2.1), prompt delta per §2.2, and
    **D4**'s trace metadata.
@@ -605,19 +644,23 @@ have been **executed**; the verdict is recorded against each.
 is shippable. Step 2's gate fired once and is now cleared, so nothing here is
 waiting on a decision or a fix.
 
-**Status:** steps 0–3 are done. Step 2's kernel blocker is cleared, the core
-release that carried it is published, and the in-memory `Sandbox` that the
-activation tests need now exists. **Steps 4–9 are ready to implement**, and step 4
-(the config surface, §1.1) is the next one — it is the first step that changes what
-a user can configure, and steps 5–8 follow from it.
+**Status (refreshed 2026-10-10): steps 0–3 are done, and the kernel has since
+completed its entire parity plan (core `v0.4.1` → `v0.10.0`). The next step is
+3c — the pin bump + ctx sweep — because every pin from `v0.9.0` on carries the
+breaking ctx-first store APIs and `yaah` still pins `v0.4.0`. After 3c: steps
+4–9 as sequenced.**
 
-**One release task rides alongside, and it must land before step 5:** kernel
-**T0.8b** — publish `sandbox/containerd/v0.1.2` so the nested module's released
-version requires the fixed core. Step 4 does not depend on it; step 5 (sandbox
-construction) does, because that is where `yaah` would first import the containerd
-adapter and would otherwise silently compile against pre-fix core code.
+**Two release tasks ride alongside:**
+- **Step 3c (yaah-side):** pin `v0.10.0` + the mechanical ctx sweep (~29 call
+  sites). Step 4 must not start on the pre-ctx surface.
+- **Before step 5 (kernel-side):** `sandbox/containerd/v0.1.5`, repinned to
+  core `v0.10.0` — importing the adapter at an older pin would silently compile
+  against pre-ctx core, exactly the failure mode step 1's note warns about.
+  `v0.1.5` also carries `DeltaApplier` for the adapter, which D1's apply-out
+  path can eventually use.
 
 **Hard dependencies, not reorderable:** step 1 before step 2 (the smoke needs the
-bug batch), step 3 before step 7 (the activation tests need the fake), and step 2b
+bug batch), step 3 before step 7 (the activation tests need the fake), step 2b
 before step 4 (a green soak before anything depends on the backend — now
-satisfied).
+satisfied), and **step 3c before step 4** (no feature work on the pre-ctx
+API surface).
