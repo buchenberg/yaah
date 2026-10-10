@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.57.0](https://github.com/buchenberg/yaah/compare/v0.56.3...v0.57.0) (2026-10-10)
+
+
+### Features
+
+* **kernel:** pin shepherd-kernel-go v0.10.0 -- ctx-first store sweep (step 3c) ([774739d](https://github.com/buchenberg/yaah/commit/774739dabb4f636616a38e5a0d2f7e1156733550))
+* **kernel:** pin shepherd-kernel-go v0.10.0 — ctx-first store sweep (step 3c) ([c8d691e](https://github.com/buchenberg/yaah/commit/c8d691eafd23494ae0349fa25ed7192522b63c03))
+
+
+### Bug Fixes
+
+* **kernel:** address the PR [#229](https://github.com/buchenberg/yaah/issues/229) review -- the cancel-free rule, applied consistently ([4300ff3](https://github.com/buchenberg/yaah/commit/4300ff3ef362f9f403d5013c4964409ad61a600b))
+
 ## [0.56.3](https://github.com/buchenberg/yaah/compare/v0.56.2...v0.56.3) (2026-10-10)
 
 
