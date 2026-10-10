@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.56.3](https://github.com/buchenberg/yaah/compare/v0.56.2...v0.56.3) (2026-10-10)
+
+
+### Documentation
+
+* fresh frameworks comparison (2026-10-07) + README positioning section ([eee5819](https://github.com/buchenberg/yaah/commit/eee5819fb7ea947e7e866a4524a104619f3e42ca))
+
 ## [0.56.2](https://github.com/buchenberg/yaah/compare/v0.56.1...v0.56.2) (2026-10-10)
 
 
