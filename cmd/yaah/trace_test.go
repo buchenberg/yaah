@@ -35,7 +35,7 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 
 	// Turn start marker
 	turnIntent := owner + ":turn:0"
-	store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
+	turnReceipt, _ := store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
 		AppendIntentID: turnIntent,
 		Groups: []shepherd.AppendGroup{{
 			TraceOwnerID: owner,
@@ -82,12 +82,14 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 		lastFactIDs = captReceipt.FactIDs
 	}
 
-	// Turn complete marker — chain from the turn start
+	// Turn complete marker — chain from the turn start, as the middleware
+	// does (EndTurn cites the turn:created fact as its causal parent; the
+	// profile resolves a turn's tokens through exactly that link).
 	store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
 		AppendIntentID: owner + ":turn:0:done",
 		Groups: []shepherd.AppendGroup{{
 			TraceOwnerID:  owner,
-			CausalParents: lastFactIDs,
+			CausalParents: turnReceipt.FactIDs,
 			FactDrafts: []shepherd.RecordDraft{{
 				Mode:      shepherd.Capture,
 				SchemaRef: "yaah.execution.completed.v1",
@@ -204,6 +206,14 @@ func TestTraceProfile(t *testing.T) {
 	}
 	if !strings.Contains(output, "Tools:") {
 		t.Error("profile should show tool count")
+	}
+	// The seeded turn:completed carries prompt_tokens=5000 and
+	// completion_tokens=200, which the store canonicalizes to json.Number on
+	// the way back out. Assert the rendered numbers so a reader that fails
+	// to decode the canonical encoding (and silently reads zero) fails here,
+	// not in a user's profile.
+	if !strings.Contains(output, "5.0k + 200 tokens") {
+		t.Errorf("profile should show the seeded token counts; got:\n%s", output)
 	}
 	if !strings.Contains(output, "SUCCESS") {
 		t.Error("profile should show tool stats")

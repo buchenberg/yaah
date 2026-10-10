@@ -164,6 +164,10 @@ func (m *ShepherdTraceMiddleware) StartTurn(ctx context.Context, turnNumber int,
 	if m.store == nil || m.sessionID == "" {
 		return
 	}
+	// Turn records are audit facts: they must land even when the caller's
+	// context is already cancelled (FailTurn is reached precisely on the
+	// cancelled path), so the store writes run cancel-free.
+	ctx = context.WithoutCancel(ctx)
 	m.ordinal++
 
 	intentID := fmt.Sprintf("%s:turn:%d", m.sessionID, m.ordinal)
@@ -221,6 +225,8 @@ func (m *ShepherdTraceMiddleware) EndTurn(ctx context.Context, turnNumber int, p
 	if m.store == nil || m.sessionID == "" {
 		return
 	}
+	// Audit facts must land regardless of cancellation (see StartTurn).
+	ctx = context.WithoutCancel(ctx)
 	m.ordinal++
 
 	payload := m.turnPayload(turnNumber)
@@ -256,6 +262,8 @@ func (m *ShepherdTraceMiddleware) FailTurn(ctx context.Context, turnNumber int, 
 	if m.store == nil || m.sessionID == "" {
 		return
 	}
+	// Audit facts must land regardless of cancellation (see StartTurn).
+	ctx = context.WithoutCancel(ctx)
 	m.ordinal++
 
 	payload := m.turnPayload(turnNumber)
@@ -291,6 +299,8 @@ func (m *ShepherdTraceMiddleware) publishFrontier(ctx context.Context, turnNumbe
 	if len(m.lastFactIDs) == 0 {
 		return
 	}
+	// The frontier cut is part of the turn's durable record (see StartTurn).
+	ctx = context.WithoutCancel(ctx)
 
 	spec := shepherd.FrontierSpec{
 		FrontierID:         fmt.Sprintf("%s:frontier:%d", m.sessionID, turnNumber),

@@ -415,7 +415,7 @@ func (s *supervisedSession) continueUnit(ctx context.Context, guidance string) (
 
 	mgr := SharedScopeManager
 	if s.checkpointID != "" {
-		mgr.PruneCheckpoints(ctx, s.scopeID)
+		mgr.PruneCheckpoints(context.WithoutCancel(ctx), s.scopeID)
 		s.checkpointID = ""
 	}
 
@@ -868,7 +868,7 @@ func (s *supervisedSession) accept(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("supervisor: session %s is awaiting choose — pick a winner or abort", s.id)
 	}
 
-	SharedScopeManager.PruneCheckpoints(ctx, s.scopeID)
+	SharedScopeManager.PruneCheckpoints(context.WithoutCancel(ctx), s.scopeID)
 
 	env := reviewEnvelope{
 		Status:    "accepted",
@@ -921,7 +921,7 @@ func (s *supervisedSession) abort(ctx context.Context, restore bool) (string, er
 		}
 	}
 
-	mgr.PruneCheckpoints(ctx, s.scopeID)
+	mgr.PruneCheckpoints(context.WithoutCancel(ctx), s.scopeID)
 
 	env := reviewEnvelope{
 		Status:    "aborted",

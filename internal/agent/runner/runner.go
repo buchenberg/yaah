@@ -714,9 +714,12 @@ func subagentTraceProfile(ctx context.Context, tracePath, sessionID string) stri
 	if err != nil {
 		return ""
 	}
+	// The whole read is deliberately cancel-free, not just the Close: this
+	// profile exists to enrich a failed sub-agent, and the failure it
+	// diagnoses is often the very cancellation that would abort the read.
 	defer store.Close(context.WithoutCancel(ctx))
 
-	slice, err := store.ReadOwnerPrefix(ctx, shepherd.TrustedReadContext, sessionID, 99999, shepherd.ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.WithoutCancel(ctx), shepherd.TrustedReadContext, sessionID, 99999, shepherd.ModeBoth)
 	if err != nil || len(slice.FactIDs()) == 0 {
 		return ""
 	}
