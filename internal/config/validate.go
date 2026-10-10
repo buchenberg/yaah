@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/agent/budget"
@@ -169,6 +170,9 @@ func Validate(cfg *Config) error {
 		}
 	}
 
+	// Workspace backend selection and its containerd settings.
+	errs = append(errs, validateWorkspace(&cfg.Workspace, runtime.GOOS)...)
+
 	// MCP server configs: transport must be stdio or http.
 	for name, srv := range cfg.MCPServers {
 		switch srv.Transport {
@@ -189,4 +193,57 @@ func Validate(cfg *Config) error {
 		return nil
 	}
 	return ValidationError{Errors: errs}
+}
+
+// validateWorkspace checks the workspace stanza's obligations (the
+// isolated-workspace plan §1.1). goos is a parameter rather than a direct
+// runtime.GOOS read so the platform rule is testable from any OS.
+//
+// An empty backend is accepted: Load normalizes it to the local default, and
+// a hand-built Config that skipped Load defaults the same way at use time.
+func validateWorkspace(w *WorkspaceConfig, goos string) []string {
+	var errs []string
+
+	switch w.Backend {
+	case "", BackendLocal, BackendContainerd:
+	default:
+		errs = append(errs, fmt.Sprintf(
+			"workspace.backend %q is invalid (must be %s or %s)",
+			w.Backend, BackendLocal, BackendContainerd))
+	}
+
+	if w.Backend != BackendContainerd {
+		return errs
+	}
+
+	// The containerd backend needs a containerd daemon, which does not run
+	// off-Linux (WSL2 qualifies: the daemon is Linux even when the client
+	// is not). Refuse at load, not at the first tool call mid-task.
+	if goos != "linux" {
+		errs = append(errs, fmt.Sprintf(
+			"workspace.backend %q requires a Linux containerd daemon; %s cannot run one (native Linux or WSL2 required)",
+			BackendContainerd, goos))
+	}
+
+	// A sandbox with no base filesystem has nothing to run.
+	if w.Containerd.Image == "" {
+		errs = append(errs, "workspace.containerd.image is required when workspace.backend is containerd")
+	}
+
+	// The containment root must be an absolute path inside the sandbox.
+	// "/" would silently scope the whole container — the workspace surface
+	// exists to avoid exactly that — and a relative root cannot resolve
+	// in-band.
+	if w.Root == "" {
+		errs = append(errs, "workspace.root is required when workspace.backend is containerd (default: /workspace)")
+	} else {
+		if !filepath.IsAbs(w.Root) {
+			errs = append(errs, fmt.Sprintf("workspace.root %q must be an absolute path inside the sandbox", w.Root))
+		}
+		if w.Root == "/" {
+			errs = append(errs, `workspace.root "/" would scope the whole container; choose a dedicated root (default: /workspace)`)
+		}
+	}
+
+	return errs
 }

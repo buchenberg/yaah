@@ -299,6 +299,7 @@ type Config struct {
 	Editor        string                     `yaml:"editor"`
 	Observability ObservabilityConfig        `yaml:"observability"`
 	Embedding     EmbeddingConfig            `yaml:"embedding"`
+	Workspace     WorkspaceConfig            `yaml:"workspace"`
 }
 
 // EmbeddingConfig configures semantic memory search via an embedding model.
@@ -357,6 +358,10 @@ func defaultConfig() *Config {
 				OutputLimit:       51200,
 			},
 		},
+		Workspace: WorkspaceConfig{
+			Backend: BackendLocal,
+			Root:    "/workspace",
+		},
 		Observability: ObservabilityConfig{
 			Otel: OtelConfig{
 				Enabled:     false,
@@ -411,7 +416,12 @@ func Load() (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return defaultConfig(), nil
+			// defaultConfig already carries the workspace defaults; the
+			// normalize step is idempotent, so run it for uniformity with
+			// the parsed path.
+			cfg := defaultConfig()
+			normalizeWorkspace(&cfg.Workspace)
+			return cfg, nil
 		}
 		return nil, fmt.Errorf("cannot read config %s: %w", path, err)
 	}
@@ -442,6 +452,8 @@ func Load() (*Config, error) {
 	if cfg.Agent.Default.SupervisedWorktreeRoot != "" {
 		cfg.Agent.Default.SupervisedWorktreeRoot = expandHomeDir(cfg.Agent.Default.SupervisedWorktreeRoot)
 	}
+
+	normalizeWorkspace(&cfg.Workspace)
 
 	return cfg, nil
 }
