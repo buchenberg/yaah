@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -13,9 +14,10 @@ import (
 
 // OpenContainerdWorkspaceSandbox resolves the configured containerd backend
 // through the kernel's sandbox registry — the config-driven seam (the
-// isolated-workspace plan §1.1/step 4). The blank-imported adapter package
-// self-registers the "containerd" backend (kernel v0.1.5+), so no host-side
-// factory is wired here, and adding one would panic by the registry's design.
+// isolated-workspace plan §1.1/step 4). The adapter package this file names
+// for its Config type self-registers the "containerd" backend on import
+// (kernel v0.1.5+), so no host-side factory is wired here, and adding one
+// would panic by the registry's design.
 //
 // The returned sandbox is NOT provisioned: Create remains the caller's
 // explicit lifecycle step, per the kernel's OpenSandbox contract.
@@ -35,13 +37,14 @@ func OpenContainerdWorkspaceSandbox(w config.WorkspaceConfig) (shepherd.Sandbox,
 //
 //   - the binaries the in-band workspace surface shells out to
 //     (sh, stat, find, git, rg, and a Go toolchain),
-//   - the GNU userland specifically: Stat uses `stat -c` and ReadDir uses
-//     `find -printf` (workspace_sandbox.go), which BusyBox equivalents
-//     reject — a present-but-BusyBox binary would pass `command -v` and
-//     still break the workspace mid-task.
+//   - the flags the surface actually invokes: Stat uses `stat -c` and
+//     ReadDir uses `find -printf` (workspace_sandbox.go). The find check
+//     is the genuine GNU-vs-BusyBox discriminator — BusyBox find has no
+//     -printf. BusyBox stat, by contrast, accepts `-c` (and `%a`), so the
+//     stat check proves the flag exists, not that the userland is GNU.
 //
 // Output convention: on failure, one line "missing: <space-separated>" with
-// a ":-flag" annotation for the GNU-specific checks, and exit 1.
+// a ":-flag" annotation for the flag checks, and exit 1.
 const imageContractScript = `missing=""
 for t in sh stat find git rg go; do
   command -v "$t" >/dev/null 2>&1 || missing="$missing $t"
@@ -63,21 +66,27 @@ fi`
 // error paths would defeat the leak-freedom the lifecycle work is held to.
 // The sandbox parameter is the seam: wiring passes the session backend; tests
 // pass the in-memory fake.
-func ProbeImageContract(ctx context.Context, sb shepherd.Sandbox) error {
+func ProbeImageContract(ctx context.Context, sb shepherd.Sandbox) (err error) {
 	if err := sb.Create(ctx, shepherd.SandboxSpec{}); err != nil {
 		return fmt.Errorf("workspace image probe: create: %w", err)
 	}
 	// Destroy must run even when the probe fails and even when the caller's
 	// context expired mid-probe: an unprobed-but-running container is the
-	// leak this function must never cause.
-	defer sb.Destroy(context.WithoutCancel(ctx))
+	// leak this function must never cause. Its error joins the probe result,
+	// because a teardown failure means the container may still be running
+	// — a "successful" probe that leaked is not a success.
+	defer func() {
+		if derr := sb.Destroy(context.WithoutCancel(ctx)); derr != nil {
+			err = errors.Join(err, fmt.Errorf("workspace image probe: destroy: %w", derr))
+		}
+	}()
 
-	res, err := sb.Exec(ctx, shepherd.ExecRequest{
+	res, xerr := sb.Exec(ctx, shepherd.ExecRequest{
 		Command: "sh",
 		Args:    []string{"-c", imageContractScript},
 	})
-	if err != nil {
-		return fmt.Errorf("workspace image probe: exec: %w", err)
+	if xerr != nil {
+		return fmt.Errorf("workspace image probe: exec: %w", xerr)
 	}
 	if res.ExitCode == 0 {
 		return nil
@@ -95,7 +104,7 @@ func ProbeImageContract(ctx context.Context, sb shepherd.Sandbox) error {
 		return fmt.Errorf("workspace image probe: exit %d with no missing list: %s", res.ExitCode,
 			firstNonEmpty(strings.TrimSpace(res.Stderr), "no output"))
 	}
-	return fmt.Errorf("workspace image does not satisfy the required tool contract (D5): missing %s — the image needs sh, GNU stat (stat -c), GNU find (find -printf), git, rg, and a Go toolchain",
+	return fmt.Errorf("workspace image does not satisfy the required tool contract (D5): missing %s — the image needs sh, stat (stat -c), GNU find (find -printf), git, rg, and a Go toolchain",
 		strings.Join(items, ", "))
 }
 

@@ -42,7 +42,7 @@ jobs:
       - name: setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.26'  # sandbox/containerd v0.1.5 requires go >= 1.26.3
           cache: true
 
       - name: build

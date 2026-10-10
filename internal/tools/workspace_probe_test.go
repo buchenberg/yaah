@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -134,5 +135,50 @@ func TestOpenContainerdWorkspaceSandbox(t *testing.T) {
 	}
 	if sb.Backend() != config.BackendContainerd {
 		t.Errorf("Backend() = %q, want %q through the registry", sb.Backend(), config.BackendContainerd)
+	}
+}
+
+// destroyFailingSandbox wraps a sandbox and fails its Destroy, so a probe
+// whose teardown fails can be asserted on without teaching the fake a mode
+// it should not have.
+type destroyFailingSandbox struct {
+	shepherd.Sandbox
+}
+
+func (destroyFailingSandbox) Destroy(context.Context) error {
+	return errors.New("teardown exploded")
+}
+
+// TestProbeImageContract_DestroyFailureIsNotSilent pins the lifecycle
+// guarantee: a probe whose teardown fails reports it — on the happy path too,
+// because a "successful" probe that leaked its container is not a success.
+func TestProbeImageContract_DestroyFailureIsNotSilent(t *testing.T) {
+	sb := sandboxfake.New()
+	sb.ExecHook = probeResult(0, "")
+
+	err := ProbeImageContract(context.Background(), destroyFailingSandbox{sb})
+	if err == nil {
+		t.Fatal("a probe whose Destroy fails must report the failure")
+	}
+	if !strings.Contains(err.Error(), "destroy") || !strings.Contains(err.Error(), "teardown exploded") {
+		t.Errorf("error = %v, want the destroy failure surfaced", err)
+	}
+}
+
+// TestProbeImageContract_DestroyFailureJoinsContractError pins that both
+// signals survive: the image contract failure AND the teardown failure.
+func TestProbeImageContract_DestroyFailureJoinsContractError(t *testing.T) {
+	sb := sandboxfake.New()
+	sb.ExecHook = probeResult(1, "missing: rg\n")
+
+	err := ProbeImageContract(context.Background(), destroyFailingSandbox{sb})
+	if err == nil {
+		t.Fatal("expected both the contract and the teardown failure")
+	}
+	if !strings.Contains(err.Error(), "missing rg") {
+		t.Errorf("error = %v, want the contract failure preserved", err)
+	}
+	if !strings.Contains(err.Error(), "teardown exploded") {
+		t.Errorf("error = %v, want the teardown failure joined", err)
 	}
 }

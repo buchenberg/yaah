@@ -57,7 +57,7 @@ curl -fsSL https://raw.githubusercontent.com/buchenberg/yaah/main/install.sh | s
 iwr -useb https://raw.githubusercontent.com/buchenberg/yaah/main/install.ps1 | iex
 ```
 
-### From source (Go 1.25+ required)
+### From source (Go 1.26+ required)
 
 ```bash
 go install github.com/buchenberg/yaah@latest
@@ -210,7 +210,7 @@ sub-agents, middleware, observability, hooks, editor, embeddings) live in
 
 ### Prerequisites
 
-- Go 1.25+
+- Go 1.26+ (the sandbox/containerd module requires go >= 1.26.3)
 - `gofmt` (ships with Go)
 - `staticcheck` for linting (optional, recommended)
 

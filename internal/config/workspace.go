@@ -1,6 +1,9 @@
 package config
 
-import "strings"
+import (
+	"path"
+	"strings"
+)
 
 // Backend identifiers for WorkspaceConfig.Backend.
 const (
@@ -8,8 +11,11 @@ const (
 	// It is the default and the byte-for-byte legacy path.
 	BackendLocal = "local"
 	// BackendContainerd runs tools inside a shepherd containerd sandbox:
-	// a real Linux filesystem boundary per session. Requires a containerd
-	// daemon at runtime (native Linux, WSL2, or a Linux server).
+	// a real Linux filesystem boundary per session. The yaah client must
+	// run where the daemon runs — natively on Linux, or inside WSL2 (where
+	// GOOS=linux); a Windows/macOS-native yaah cannot select this backend
+	// and config validation refuses it at load. Pointing a non-Linux client
+	// at a remote daemon is not part of this config surface.
 	BackendContainerd = "containerd"
 )
 
@@ -68,8 +74,12 @@ func normalizeWorkspace(w *WorkspaceConfig) {
 	// Root defaults to the containment root the workspace surface assumes.
 	// It is only consumed by the containerd backend, but normalizing it for
 	// both keeps the field's meaning independent of the backend in effect.
+	// Cleaned so the configured, validated, and resolved values agree:
+	// "//workspace" and "/workspace" are one root, not two.
 	if w.Root == "" {
 		w.Root = "/workspace"
+	} else {
+		w.Root = path.Clean(w.Root)
 	}
 	// A socket path is the kind of value a deployment keeps in the
 	// environment; provider fields get the same treatment.

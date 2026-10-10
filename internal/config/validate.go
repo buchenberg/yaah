@@ -218,8 +218,10 @@ func validateWorkspace(w *WorkspaceConfig, goos string) []string {
 	}
 
 	// The containerd backend needs a containerd daemon, which does not run
-	// off-Linux (WSL2 qualifies: the daemon is Linux even when the client
-	// is not). Refuse at load, not at the first tool call mid-task.
+	// off-Linux. WSL2 qualifies exactly when yaah itself runs inside it
+	// (GOOS=linux); a Windows-native yaah.exe cannot select this backend,
+	// so the refusal keys on the client's platform, not on daemon presence.
+	// Refuse at load, not at the first tool call mid-task.
 	if goos != "linux" {
 		errs = append(errs, fmt.Sprintf(
 			"workspace.backend %q requires a Linux containerd daemon; %s cannot run one (native Linux or WSL2 required)",
@@ -241,11 +243,15 @@ func validateWorkspace(w *WorkspaceConfig, goos string) []string {
 	if w.Root == "" {
 		errs = append(errs, "workspace.root is required when workspace.backend is containerd (default: /workspace)")
 	} else {
-		if !path.IsAbs(w.Root) {
+		// Clean first: the sandbox collapses aliases such as "//" or "/a/.."
+		// when it resolves the workdir, so the rule must judge the value the
+		// container will actually use, not the literal one.
+		cleaned := path.Clean(w.Root)
+		if !path.IsAbs(cleaned) {
 			errs = append(errs, fmt.Sprintf("workspace.root %q must be an absolute path inside the sandbox", w.Root))
 		}
-		if w.Root == "/" {
-			errs = append(errs, `workspace.root "/" would scope the whole container; choose a dedicated root (default: /workspace)`)
+		if cleaned == "/" {
+			errs = append(errs, fmt.Sprintf("workspace.root %q would scope the whole container; choose a dedicated root (default: /workspace)", w.Root))
 		}
 	}
 

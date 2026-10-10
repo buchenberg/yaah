@@ -173,6 +173,19 @@ func TestValidate_workspace(t *testing.T) {
 			goos:    "linux",
 			wantErr: `would scope the whole container`,
 		},
+		{
+			// path.Clean collapses "//" and "/a/.." to "/", so the rule must
+			// judge the cleaned value or these aliases would slip a
+			// whole-container scope through the "/" refusal.
+			name: "root aliases that clean to / are refused too",
+			ws: WorkspaceConfig{
+				Backend:    BackendContainerd,
+				Root:       "//",
+				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest"},
+			},
+			goos:    "linux",
+			wantErr: `would scope the whole container`,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
