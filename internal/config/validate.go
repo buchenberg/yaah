@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -230,14 +231,17 @@ func validateWorkspace(w *WorkspaceConfig, goos string) []string {
 		errs = append(errs, "workspace.containerd.image is required when workspace.backend is containerd")
 	}
 
-	// The containment root must be an absolute path inside the sandbox.
-	// "/" would silently scope the whole container — the workspace surface
-	// exists to avoid exactly that — and a relative root cannot resolve
-	// in-band.
+	// The containment root must be an absolute path inside the sandbox —
+	// a POSIX path, evaluated with the path package rather than filepath,
+	// whose host-OS semantics would reject "/workspace" on Windows. The
+	// workspace surface is POSIX by construction (workspace_sandbox.go uses
+	// path.Join). "/" would silently scope the whole container — the
+	// workspace surface exists to avoid exactly that — and a relative root
+	// cannot resolve in-band.
 	if w.Root == "" {
 		errs = append(errs, "workspace.root is required when workspace.backend is containerd (default: /workspace)")
 	} else {
-		if !filepath.IsAbs(w.Root) {
+		if !path.IsAbs(w.Root) {
 			errs = append(errs, fmt.Sprintf("workspace.root %q must be an absolute path inside the sandbox", w.Root))
 		}
 		if w.Root == "/" {
