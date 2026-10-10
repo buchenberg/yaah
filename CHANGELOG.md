@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.56.2](https://github.com/buchenberg/yaah/compare/v0.56.1...v0.56.2) (2026-10-10)
+
+
+### Documentation
+
+* **plans:** refresh the isolated-workspace plan against kernel v0.4.1→v0.10.0 ([a0455c1](https://github.com/buchenberg/yaah/commit/a0455c12b09a1ce42a84ec1f0a7d565d3a24dffb))
+* **plans:** refresh the isolated-workspace plan against kernel v0.4.1→v0.10.0 ([01baeca](https://github.com/buchenberg/yaah/commit/01baeca70aeca6aa542e6d5182692c44caf038f4))
+
+## [0.56.1](https://github.com/buchenberg/yaah/compare/v0.56.0...v0.56.1) (2026-10-07)
+
+
+### Documentation
+
+* markdown accuracy audit — fix stale commands, broken links, drift ([#223](https://github.com/buchenberg/yaah/issues/223)) ([4553485](https://github.com/buchenberg/yaah/commit/45534854b869c9a4d0b0889a057d942cf8f57a9c))
+
+## [0.56.0](https://github.com/buchenberg/yaah/compare/v0.55.2...v0.56.0) (2026-10-07)
+
+
+### Features
+
+* **subagent:** give sub-agents a lean base prompt ([#221](https://github.com/buchenberg/yaah/issues/221)) ([4203df7](https://github.com/buchenberg/yaah/commit/4203df7b8e41073e31f64a72e3313cde35de5c32))
+
 ## [0.55.2](https://github.com/buchenberg/yaah/compare/v0.55.1...v0.55.2) (2026-10-07)
 
 
