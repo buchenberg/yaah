@@ -40,7 +40,7 @@ func (c *ShepherdTurnCheckpointer) Restore(ctx context.Context, id string) ([]by
 
 // Prune discards every live checkpoint on the adapter's scope.
 func (c *ShepherdTurnCheckpointer) Prune(ctx context.Context) error {
-	c.mgr.PruneCheckpoints(c.scopeID)
+	c.mgr.PruneCheckpoints(ctx, c.scopeID)
 	return nil
 }
 

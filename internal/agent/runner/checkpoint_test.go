@@ -19,7 +19,7 @@ func TestShepherdTurnCheckpointer_RestoreRevertsWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { store.Close(context.Background()) })
 
 	mgr := shepherd.NewScopeManager(store)
 

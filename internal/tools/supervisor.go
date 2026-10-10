@@ -145,7 +145,7 @@ func executeReviewAction(ctx context.Context, raw supervisorActionArgs) (string,
 	case "choose":
 		return session.chooseVariant(ctx, raw.Winner)
 	case "accept":
-		return session.accept()
+		return session.accept(ctx)
 	case "abort":
 		restore := true
 		if raw.Restore != nil {

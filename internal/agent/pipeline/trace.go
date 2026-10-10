@@ -85,7 +85,7 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 			"args": argsJSON,
 		}
 
-		receipt, err := m.store.Append(shepherd.TrustedAppendContext, shepherd.AppendBatch{
+		receipt, err := m.store.Append(ctx, shepherd.TrustedAppendContext, shepherd.AppendBatch{
 			AppendIntentID: intentID,
 			Groups: []shepherd.AppendGroup{{
 				TraceOwnerID:  m.sessionID,
@@ -113,7 +113,7 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 		}
 
 		captureIntentID := fmt.Sprintf("%s:result:%d", m.sessionID, m.ordinal)
-		captureReceipt, err := m.store.Append(shepherd.TrustedAppendContext, shepherd.AppendBatch{
+		captureReceipt, err := m.store.Append(ctx, shepherd.TrustedAppendContext, shepherd.AppendBatch{
 			AppendIntentID: captureIntentID,
 			Groups: []shepherd.AppendGroup{{
 				TraceOwnerID:  m.sessionID,
@@ -160,7 +160,7 @@ func (m *ShepherdTraceMiddleware) turnPayload(turnNumber int) map[string]any {
 
 // StartTurn records an execution-lifecycle declaration+capture pair marking
 // the start of a turn. Returns the ordinal of the created record.
-func (m *ShepherdTraceMiddleware) StartTurn(turnNumber int, model string, prompt string) {
+func (m *ShepherdTraceMiddleware) StartTurn(ctx context.Context, turnNumber int, model string, prompt string) {
 	if m.store == nil || m.sessionID == "" {
 		return
 	}
@@ -173,7 +173,7 @@ func (m *ShepherdTraceMiddleware) StartTurn(turnNumber int, model string, prompt
 		payload["prompt"] = prompt
 	}
 
-	receipt, err := m.store.Append(shepherd.TrustedAppendContext, shepherd.AppendBatch{
+	receipt, err := m.store.Append(ctx, shepherd.TrustedAppendContext, shepherd.AppendBatch{
 		AppendIntentID: intentID,
 		Groups: []shepherd.AppendGroup{{
 			TraceOwnerID:  m.sessionID,
@@ -196,7 +196,7 @@ func (m *ShepherdTraceMiddleware) StartTurn(turnNumber int, model string, prompt
 	startPayload := m.turnPayload(turnNumber)
 	startPayload["model"] = model
 	captureIntentID := fmt.Sprintf("%s:turn_start:%d", m.sessionID, m.ordinal)
-	captureReceipt, err := m.store.Append(shepherd.TrustedAppendContext, shepherd.AppendBatch{
+	captureReceipt, err := m.store.Append(ctx, shepherd.TrustedAppendContext, shepherd.AppendBatch{
 		AppendIntentID: captureIntentID,
 		Groups: []shepherd.AppendGroup{{
 			TraceOwnerID:  m.sessionID,
@@ -217,7 +217,7 @@ func (m *ShepherdTraceMiddleware) StartTurn(turnNumber int, model string, prompt
 }
 
 // EndTurn records a turn completion capture.
-func (m *ShepherdTraceMiddleware) EndTurn(turnNumber int, promptTokens, completionTokens int) {
+func (m *ShepherdTraceMiddleware) EndTurn(ctx context.Context, turnNumber int, promptTokens, completionTokens int) {
 	if m.store == nil || m.sessionID == "" {
 		return
 	}
@@ -229,7 +229,7 @@ func (m *ShepherdTraceMiddleware) EndTurn(turnNumber int, promptTokens, completi
 	payload["completion_tokens"] = completionTokens
 
 	intentID := fmt.Sprintf("%s:turn_done:%d", m.sessionID, m.ordinal)
-	receipt, err := m.store.Append(shepherd.TrustedAppendContext, shepherd.AppendBatch{
+	receipt, err := m.store.Append(ctx, shepherd.TrustedAppendContext, shepherd.AppendBatch{
 		AppendIntentID: intentID,
 		Groups: []shepherd.AppendGroup{{
 			TraceOwnerID:  m.sessionID,
@@ -248,11 +248,11 @@ func (m *ShepherdTraceMiddleware) EndTurn(turnNumber int, promptTokens, completi
 		m.lastFactIDs = receipt.FactIDs
 	}
 
-	m.publishFrontier(turnNumber)
+	m.publishFrontier(ctx, turnNumber)
 }
 
 // FailTurn records a turn failure capture.
-func (m *ShepherdTraceMiddleware) FailTurn(turnNumber int, err error) {
+func (m *ShepherdTraceMiddleware) FailTurn(ctx context.Context, turnNumber int, err error) {
 	if m.store == nil || m.sessionID == "" {
 		return
 	}
@@ -263,7 +263,7 @@ func (m *ShepherdTraceMiddleware) FailTurn(turnNumber int, err error) {
 	payload["error"] = err.Error()
 
 	intentID := fmt.Sprintf("%s:turn_fail:%d", m.sessionID, m.ordinal)
-	receipt, aerr := m.store.Append(shepherd.TrustedAppendContext, shepherd.AppendBatch{
+	receipt, aerr := m.store.Append(ctx, shepherd.TrustedAppendContext, shepherd.AppendBatch{
 		AppendIntentID: intentID,
 		Groups: []shepherd.AppendGroup{{
 			TraceOwnerID:  m.sessionID,
@@ -282,12 +282,12 @@ func (m *ShepherdTraceMiddleware) FailTurn(turnNumber int, err error) {
 		m.lastFactIDs = receipt.FactIDs
 	}
 
-	m.publishFrontier(turnNumber)
+	m.publishFrontier(ctx, turnNumber)
 }
 
 // publishFrontier publishes an immutable cut snapshot at the current
 // ordinal so the CLI can read stable turn boundaries.
-func (m *ShepherdTraceMiddleware) publishFrontier(turnNumber int) {
+func (m *ShepherdTraceMiddleware) publishFrontier(ctx context.Context, turnNumber int) {
 	if len(m.lastFactIDs) == 0 {
 		return
 	}
@@ -298,7 +298,7 @@ func (m *ShepherdTraceMiddleware) publishFrontier(turnNumber int) {
 		ThroughFactID:      m.lastFactIDs[len(m.lastFactIDs)-1],
 		AppendIntentID:     fmt.Sprintf("%s:frontier_intent:%d", m.sessionID, turnNumber),
 	}
-	_, err := m.store.PublishFrontier(shepherd.TrustedAppendContext, spec)
+	_, err := m.store.PublishFrontier(ctx, shepherd.TrustedAppendContext, spec)
 	if err != nil {
 		slog.Debug("shepherd_trace: frontier publish failed", "err", err)
 	}
@@ -308,9 +308,11 @@ func (m *ShepherdTraceMiddleware) publishFrontier(turnNumber int) {
 func (m *ShepherdTraceMiddleware) Ordinal() int {
 	return m.ordinal
 }
-func (m *ShepherdTraceMiddleware) Close() error {
+func (m *ShepherdTraceMiddleware) Close(ctx context.Context) error {
 	if m.store != nil && m.ownsStore {
-		return m.store.Close()
+		// Closing must not depend on the caller's cancellation: a Close
+		// reached on an expired context would leak the store handle.
+		return m.store.Close(context.WithoutCancel(ctx))
 	}
 	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -41,12 +42,13 @@ func newShepherdTraceListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer store.Close()
+			defer store.Close(cmd.Context())
 
 			out := cmd.OutOrStdout()
 			slice, err := store.ReadOwnerPrefix(
+				cmd.Context(),
 				shepherd.TrustedReadContext,
-				"", 99999, "declarations_only",
+				"", 99999, shepherd.ModeDeclarationsOnly,
 			)
 			if err != nil {
 				return fmt.Errorf("read traces: %w", err)
@@ -87,14 +89,15 @@ func newShepherdTraceShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer store.Close()
+			defer store.Close(cmd.Context())
 
 			out := cmd.OutOrStdout()
 			var sessionID string
 			if latest || len(args) == 0 {
 				slice, err := store.ReadOwnerPrefix(
+					cmd.Context(),
 					shepherd.TrustedReadContext,
-					"", 99999, "declarations_only",
+					"", 99999, shepherd.ModeDeclarationsOnly,
 				)
 				if err != nil {
 					return fmt.Errorf("read traces: %w", err)
@@ -114,8 +117,9 @@ func newShepherdTraceShowCmd() *cobra.Command {
 			}
 
 			slice, err := store.ReadOwnerPrefix(
+				cmd.Context(),
 				shepherd.TrustedReadContext,
-				sessionID, 99999, "both",
+				sessionID, 99999, shepherd.ModeBoth,
 			)
 			if err != nil {
 				return fmt.Errorf("read session: %w", err)
@@ -192,14 +196,15 @@ func newShepherdTraceProfileCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer store.Close()
+			defer store.Close(cmd.Context())
 
 			out := cmd.OutOrStdout()
 			var sessionID string
 			if len(args) == 0 {
 				slice, err := store.ReadOwnerPrefix(
+					cmd.Context(),
 					shepherd.TrustedReadContext,
-					"", 99999, "declarations_only",
+					"", 99999, shepherd.ModeDeclarationsOnly,
 				)
 				if err != nil {
 					return fmt.Errorf("read traces: %w", err)
@@ -219,8 +224,9 @@ func newShepherdTraceProfileCmd() *cobra.Command {
 			}
 
 			slice, err := store.ReadOwnerPrefix(
+				cmd.Context(),
 				shepherd.TrustedReadContext,
-				sessionID, 99999, "both",
+				sessionID, 99999, shepherd.ModeBoth,
 			)
 			if err != nil {
 				return fmt.Errorf("read session: %w", err)
@@ -279,7 +285,7 @@ func newShepherdTraceProfileCmd() *cobra.Command {
 						completionTokens: cap.completionTokens,
 					}
 					if rec, ok := fact.(shepherd.Record); ok {
-						if n, ok2 := rec.Body.Payload["turn"].(float64); ok2 {
+						if n, ok2 := payloadNumber(rec.Body.Payload["turn"]); ok2 {
 							turn.number = int(n)
 						}
 					}
@@ -443,10 +449,10 @@ func readCapturePayload(fact shepherd.VisibleRecord) captureRecord {
 		cr.turnStatus = "failed"
 	}
 	if kind == "turn:completed" || kind == "turn:failed" {
-		if pt, ok2 := rec.Body.Payload["prompt_tokens"].(float64); ok2 {
+		if pt, ok2 := payloadNumber(rec.Body.Payload["prompt_tokens"]); ok2 {
 			cr.promptTokens = int(pt)
 		}
-		if ct, ok2 := rec.Body.Payload["completion_tokens"].(float64); ok2 {
+		if ct, ok2 := payloadNumber(rec.Body.Payload["completion_tokens"]); ok2 {
 			cr.completionTokens = int(ct)
 		}
 	}
@@ -499,6 +505,29 @@ func captureStatus(fact shepherd.VisibleRecord) string {
 		return "ok"
 	}
 	return "pending"
+}
+
+// payloadNumber reads a numeric payload field across the kernel's encodings:
+// records stored before the canonical-parity work (kernel v0.5.0) hold
+// float64, newer ones hold the canonical string form. Both parse; anything
+// else reports absent.
+func payloadNumber(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case string:
+		f, err := strconv.ParseFloat(n, 64)
+		return f, err == nil
+	case json.Number:
+		f, err := strconv.ParseFloat(n.String(), 64)
+		return f, err == nil
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	default:
+		return 0, false
+	}
 }
 
 func sortedKeys(m map[string]bool) []string {

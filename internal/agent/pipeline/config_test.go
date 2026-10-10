@@ -88,7 +88,7 @@ func TestSubAgentTrace_UsesSharedStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { store.Close(context.Background()) })
 
 	prev := tools.SharedTraceStore
 	tools.SharedTraceStore = store
@@ -108,10 +108,10 @@ func TestSubAgentTrace_UsesSharedStore(t *testing.T) {
 
 	// The middleware must NOT close the shared store — closing it would
 	// kill tracing for every other consumer in the session.
-	if err := tmw.Close(); err != nil {
+	if err := tmw.Close(context.Background()); err != nil {
 		t.Fatalf("Close on shared-store middleware: %v", err)
 	}
-	if _, err := store.FactCount(); err != nil {
+	if _, err := store.FactCount(context.Background()); err != nil {
 		t.Errorf("shared store unusable after middleware Close: %v", err)
 	}
 }
@@ -140,7 +140,7 @@ func TestSubAgentTrace_EmptySessionIDIsNoop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { store.Close(context.Background()) })
 
 	prev := tools.SharedTraceStore
 	tools.SharedTraceStore = store
@@ -159,7 +159,7 @@ func TestInitShepherdInfrastructure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InitShepherdInfrastructure: %v", err)
 	}
-	defer store.Close()
+	defer store.Close(context.Background())
 
 	if store == nil || bus == nil || mgr == nil {
 		t.Fatal("store, bus, and manager must all be non-nil")

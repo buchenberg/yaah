@@ -2,6 +2,7 @@ package yaah
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,13 +29,13 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
-	defer store.Close()
+	defer store.Close(context.Background())
 
 	owner := "sess-123"
 
 	// Turn start marker
 	turnIntent := owner + ":turn:0"
-	store.Append(shepherd.TrustedAppendContext, shepherd.AppendBatch{
+	store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
 		AppendIntentID: turnIntent,
 		Groups: []shepherd.AppendGroup{{
 			TraceOwnerID: owner,
@@ -51,7 +52,7 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 	var lastFactIDs []string
 	for i, name := range tools {
 		intent := owner + ":tool:" + string(rune('a'+i))
-		declReceipt, _ := store.Append(shepherd.TrustedAppendContext, shepherd.AppendBatch{
+		declReceipt, _ := store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
 			AppendIntentID: intent,
 			Groups: []shepherd.AppendGroup{{
 				TraceOwnerID:  owner,
@@ -65,7 +66,7 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 			}},
 		})
 		capture := owner + ":result:" + string(rune('a'+i))
-		captReceipt, _ := store.Append(shepherd.TrustedAppendContext, shepherd.AppendBatch{
+		captReceipt, _ := store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
 			AppendIntentID: capture,
 			Groups: []shepherd.AppendGroup{{
 				TraceOwnerID:  owner,
@@ -82,7 +83,7 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 	}
 
 	// Turn complete marker — chain from the turn start
-	store.Append(shepherd.TrustedAppendContext, shepherd.AppendBatch{
+	store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
 		AppendIntentID: owner + ":turn:0:done",
 		Groups: []shepherd.AppendGroup{{
 			TraceOwnerID:  owner,
@@ -98,7 +99,7 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 
 	// Also add a sub-agent trace
 	subOwner := "sub-developer-sess-123-456"
-	store.Append(shepherd.TrustedAppendContext, shepherd.AppendBatch{
+	store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
 		AppendIntentID: "sub:tool:a",
 		Groups: []shepherd.AppendGroup{{
 			TraceOwnerID: subOwner,
@@ -221,7 +222,7 @@ func TestTraceProfileNoSessions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
-	store.Close()
+	store.Close(context.Background())
 
 	var buf bytes.Buffer
 	cmd := newShepherdTraceProfileCmd()
@@ -284,10 +285,10 @@ agents:
 	if err != nil {
 		t.Fatalf("openShepherdTraceStore() error: %v", err)
 	}
-	defer store.Close()
+	defer store.Close(context.Background())
 
 	// Verify we can read from it
-	slice, err := store.ReadOwnerPrefix(shepherd.TrustedReadContext, "sess-123", 999, "declarations_only")
+	slice, err := store.ReadOwnerPrefix(context.Background(), shepherd.TrustedReadContext, "sess-123", 999, shepherd.ModeDeclarationsOnly)
 	if err != nil {
 		t.Fatalf("read error: %v", err)
 	}
@@ -318,14 +319,14 @@ func TestCaptureStatus(t *testing.T) {
 
 			path := filepath.Join(dir, "trace.sqlite")
 			store, _ := shepherd.NewSQLiteTraceStore(path)
-			defer store.Close()
+			defer store.Close(context.Background())
 
 			payload := map[string]any{"success": tt.success}
 			if tt.errMsg != "" {
 				payload["error"] = tt.errMsg
 			}
 
-			store.Append(shepherd.TrustedAppendContext, shepherd.AppendBatch{
+			store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
 				AppendIntentID: "test:decl:" + tt.name,
 				Groups: []shepherd.AppendGroup{{
 					TraceOwnerID: "owner",
@@ -337,7 +338,7 @@ func TestCaptureStatus(t *testing.T) {
 					}},
 				}},
 			})
-			store.Append(shepherd.TrustedAppendContext, shepherd.AppendBatch{
+			store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
 				AppendIntentID: "test:cap:" + tt.name,
 				Groups: []shepherd.AppendGroup{{
 					TraceOwnerID: "owner",
@@ -350,7 +351,7 @@ func TestCaptureStatus(t *testing.T) {
 				}},
 			})
 
-			slice, _ := store.ReadOwnerPrefix(shepherd.TrustedReadContext, "owner", 999, "both")
+			slice, _ := store.ReadOwnerPrefix(context.Background(), shepherd.TrustedReadContext, "owner", 999, shepherd.ModeBoth)
 			for _, factID := range slice.FactIDs() {
 				fact := slice.FactsByID[factID]
 				if fact.GetEnvelope().Mode == shepherd.Capture {

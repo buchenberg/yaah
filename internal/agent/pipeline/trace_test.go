@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,7 +19,7 @@ func newTestTraceMiddleware(t *testing.T) *ShepherdTraceMiddleware {
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { store.Close(context.Background()) })
 	return NewShepherdTraceMiddleware(store, "test-session")
 }
 
@@ -82,7 +84,7 @@ func TestTraceMiddleware_PostToolRecordsDeclaration(t *testing.T) {
 		t.Fatalf("ordinal = %d, want %d", m.ordinal, startOrdinal+1)
 	}
 
-	slice, err := m.store.ReadOwnerPrefix(shepherd.TrustedReadContext, "test-session", 999, "both")
+	slice, err := m.store.ReadOwnerPrefix(context.Background(), shepherd.TrustedReadContext, "test-session", 999, shepherd.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
@@ -126,7 +128,7 @@ func TestTraceMiddleware_PostToolRecordsFailure(t *testing.T) {
 		t.Fatalf("PostTool error: %v", err)
 	}
 
-	slice, _ := m.store.ReadOwnerPrefix(shepherd.TrustedReadContext, "test-session", 999, "both")
+	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherd.TrustedReadContext, "test-session", 999, shepherd.ModeBoth)
 	factIDs := slice.FactIDs()
 
 	rec, _ := slice.FactsByID[factIDs[1]].(shepherd.Record)
@@ -146,7 +148,7 @@ func TestTraceMiddleware_CausalChaining(t *testing.T) {
 	_, _ = m.PostTool(context.Background(), []ToolResult{{Name: "ls", Args: `{}`}}, &Step{})
 	_, _ = m.PostTool(context.Background(), []ToolResult{{Name: "read", Args: `{"file":"x"}`}}, &Step{})
 
-	slice, _ := m.store.ReadOwnerPrefix(shepherd.TrustedReadContext, "test-session", 999, "both")
+	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherd.TrustedReadContext, "test-session", 999, shepherd.ModeBoth)
 	factIDs := slice.FactIDs()
 
 	if len(factIDs) != 4 {
@@ -178,7 +180,7 @@ func TestTraceMiddleware_MultipleToolsPerCall(t *testing.T) {
 		t.Fatalf("ordinal = %d, want %d", m.ordinal, startOrdinal+3)
 	}
 
-	slice, _ := m.store.ReadOwnerPrefix(shepherd.TrustedReadContext, "test-session", 999, "both")
+	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherd.TrustedReadContext, "test-session", 999, shepherd.ModeBoth)
 	if len(slice.FactIDs()) != 6 {
 		t.Fatalf("fact count = %d, want 6 (3 tools × 2 facts each)", len(slice.FactIDs()))
 	}
@@ -188,7 +190,7 @@ func TestTraceMiddleware_StartTurn(t *testing.T) {
 	m := newTestTraceMiddleware(t)
 
 	startOrdinal := m.ordinal
-	m.StartTurn(0, "deepseek-v4", "hello")
+	m.StartTurn(context.Background(), 0, "deepseek-v4", "hello")
 
 	if m.ordinal != startOrdinal+1 {
 		t.Fatalf("ordinal = %d, want %d", m.ordinal, startOrdinal+1)
@@ -197,7 +199,7 @@ func TestTraceMiddleware_StartTurn(t *testing.T) {
 		t.Fatal("turnRootFactIDs should be set")
 	}
 
-	slice, _ := m.store.ReadOwnerPrefix(shepherd.TrustedReadContext, "test-session", 999, "both")
+	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherd.TrustedReadContext, "test-session", 999, shepherd.ModeBoth)
 	factIDs := slice.FactIDs()
 	if len(factIDs) != 2 {
 		t.Fatalf("fact count = %d, want 2 (turn:created + turn:started)", len(factIDs))
@@ -214,14 +216,14 @@ func TestTraceMiddleware_StartTurn(t *testing.T) {
 
 func TestTraceMiddleware_EndTurnChainsFromTurnRoot(t *testing.T) {
 	m := newTestTraceMiddleware(t)
-	m.StartTurn(0, "deepseek-v4", "hello")
+	m.StartTurn(context.Background(), 0, "deepseek-v4", "hello")
 
 	// Add a tool call between start and end
 	_, _ = m.PostTool(context.Background(), []ToolResult{{Name: "ls", Args: `{}`}}, &Step{})
 
-	m.EndTurn(0, 5000, 200)
+	m.EndTurn(context.Background(), 0, 5000, 200)
 
-	slice, _ := m.store.ReadOwnerPrefix(shepherd.TrustedReadContext, "test-session", 999, "both")
+	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherd.TrustedReadContext, "test-session", 999, shepherd.ModeBoth)
 	factIDs := slice.FactIDs()
 
 	// Should be: turn:created, turn:started, ls, ls:result, turn:completed, frontier
@@ -244,19 +246,34 @@ func TestTraceMiddleware_EndTurnChainsFromTurnRoot(t *testing.T) {
 	if !success {
 		t.Error("turn:completed should have success=true")
 	}
-	pt, _ := rec.Body.Payload["prompt_tokens"].(float64)
-	ct, _ := rec.Body.Payload["completion_tokens"].(float64)
-	if int(pt) != 5000 || int(ct) != 200 {
-		t.Errorf("tokens = (%d, %d), want (5000, 200)", int(pt), int(ct))
+	// Numbers ride as canonical strings since the kernel's canonical-parity
+	// work (v0.5.0): the middleware wrote ints, the store rounds them
+	// through, so the read tolerates both encodings.
+	num := func(v any) string {
+		switch n := v.(type) {
+		case string:
+			return n
+		case json.Number:
+			return n.String()
+		case float64:
+			return fmt.Sprintf("%d", int(n))
+		default:
+			return "?"
+		}
+	}
+	pt := num(rec.Body.Payload["prompt_tokens"])
+	ct := num(rec.Body.Payload["completion_tokens"])
+	if pt != "5000" || ct != "200" {
+		t.Errorf("tokens = (%s, %s), want (5000, 200)", pt, ct)
 	}
 }
 
 func TestTraceMiddleware_FailTurn(t *testing.T) {
 	m := newTestTraceMiddleware(t)
-	m.StartTurn(0, "deepseek-v4", "hello")
-	m.FailTurn(0, os.ErrNotExist)
+	m.StartTurn(context.Background(), 0, "deepseek-v4", "hello")
+	m.FailTurn(context.Background(), 0, os.ErrNotExist)
 
-	slice, _ := m.store.ReadOwnerPrefix(shepherd.TrustedReadContext, "test-session", 999, "both")
+	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherd.TrustedReadContext, "test-session", 999, shepherd.ModeBoth)
 	factIDs := slice.FactIDs()
 
 	// Should be: turn:created, turn:started, turn:failed, frontier
@@ -281,12 +298,12 @@ func TestTraceMiddleware_FailTurn(t *testing.T) {
 
 func TestTraceMiddleware_PublishFrontier(t *testing.T) {
 	m := newTestTraceMiddleware(t)
-	m.StartTurn(0, "deepseek-v4", "hello")
-	m.EndTurn(0, 1000, 100)
+	m.StartTurn(context.Background(), 0, "deepseek-v4", "hello")
+	m.EndTurn(context.Background(), 0, 1000, 100)
 
 	// Frontier should have been published by EndTurn
 	store := m.store
-	factsCount, _ := store.FactCount()
+	factsCount, _ := store.FactCount(context.Background())
 	if factsCount < 2 {
 		t.Fatalf("fact count = %d, want >= 2", factsCount)
 	}
@@ -294,18 +311,18 @@ func TestTraceMiddleware_PublishFrontier(t *testing.T) {
 
 func TestTraceMiddleware_Close(t *testing.T) {
 	m := newTestTraceMiddleware(t)
-	if err := m.Close(); err != nil {
+	if err := m.Close(context.Background()); err != nil {
 		t.Errorf("Close error: %v", err)
 	}
 	// Closing twice should not panic
-	_ = m.Close()
+	_ = m.Close(context.Background())
 }
 
 func TestTraceMiddleware_Ordinal(t *testing.T) {
 	m := newTestTraceMiddleware(t)
 	startOrdinal := m.Ordinal()
 
-	m.StartTurn(0, "m", "p")
+	m.StartTurn(context.Background(), 0, "m", "p")
 	if m.Ordinal() != startOrdinal+1 {
 		t.Errorf("ordinal after start = %d, want %d", m.Ordinal(), startOrdinal+1)
 	}
@@ -326,7 +343,7 @@ func TestTraceMiddleware_SessionID(t *testing.T) {
 
 func TestTraceMiddleware_StartTurnWithNilStore(t *testing.T) {
 	m := &ShepherdTraceMiddleware{}
-	m.StartTurn(0, "m", "p")
+	m.StartTurn(context.Background(), 0, "m", "p")
 	if m.ordinal != 0 {
 		t.Fatal("ordinal should not advance with nil store")
 	}
@@ -334,7 +351,7 @@ func TestTraceMiddleware_StartTurnWithNilStore(t *testing.T) {
 
 func TestTraceMiddleware_EndTurnWithNilStore(t *testing.T) {
 	m := &ShepherdTraceMiddleware{}
-	m.EndTurn(0, 100, 50)
+	m.EndTurn(context.Background(), 0, 100, 50)
 	if m.ordinal != 0 {
 		t.Fatal("ordinal should not advance with nil store")
 	}
