@@ -96,7 +96,7 @@ func TestSupervisedTask_TurnRestoreIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { store.Close(context.Background()) })
 
 	prevMgr := tools.SharedScopeManager
 	prevStore := tools.SharedTraceStore
@@ -190,7 +190,7 @@ func TestSupervisedTask_TurnCheckpointsOffByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { store.Close(context.Background()) })
 
 	prevMgr := tools.SharedScopeManager
 	prevStore := tools.SharedTraceStore

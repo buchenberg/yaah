@@ -181,9 +181,14 @@ func (t *SupervisedTaskTool) Execute(ctx context.Context, args string) (string, 
 	if err != nil {
 		return "", fmt.Errorf("supervised_task: create scope: %w", err)
 	}
-	defer mgr.PruneCheckpoints(scope.ID())
+	// The prune must survive the task's context: if the task times out, the
+	// checkpoint blobs would otherwise stay on disk with no caller left to
+	// prune them.
+	defer mgr.PruneCheckpoints(context.WithoutCancel(ctx), scope.ID())
 
-	cp, err := mgr.CreateCheckpoint(ctx, scope.ID(), nil)
+	// A recovery point, like the session checkpoints: it must exist even when
+	// the caller's context is already cancelled, so its creation runs cancel-free.
+	cp, err := mgr.CreateCheckpoint(context.WithoutCancel(ctx), scope.ID(), nil)
 	if err != nil {
 		return "", fmt.Errorf("supervised_task: checkpoint: %w", err)
 	}

@@ -67,7 +67,7 @@ func benchCheckpointer(b *testing.B, repo string) *ShepherdTurnCheckpointer {
 	if err != nil {
 		b.Fatalf("open store: %v", err)
 	}
-	b.Cleanup(func() { store.Close() })
+	b.Cleanup(func() { store.Close(context.Background()) })
 	mgr := shepherd.NewScopeManager(store)
 	sb := shepherd.NewLocalGitSandbox(repo)
 	scope, err := mgr.Create("bench", sb)

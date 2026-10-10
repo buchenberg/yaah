@@ -40,7 +40,12 @@ func (c *ShepherdTurnCheckpointer) Restore(ctx context.Context, id string) ([]by
 
 // Prune discards every live checkpoint on the adapter's scope.
 func (c *ShepherdTurnCheckpointer) Prune(ctx context.Context) error {
-	c.mgr.PruneCheckpoints(c.scopeID)
+	// The prune removes entries in memory first and only then deletes the
+	// persisted blobs; on a cancelled run context (timeout exits are the
+	// pruned case) the SQL delete would be skipped while the adapter still
+	// reported success, leaking blobs. Cancel-free, like the checkpoint
+	// creation it cleans up after.
+	c.mgr.PruneCheckpoints(context.WithoutCancel(ctx), c.scopeID)
 	return nil
 }
 

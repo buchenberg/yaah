@@ -17,7 +17,7 @@ func newTestSubagentTraceTool(t *testing.T) (*SubagentTraceTool, *shepherd.SQLit
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { store.Close(context.Background()) })
 
 	// Seed some data
 	seedTraceStore(t, store, "sub-developer-parent-1", "ls", "read")
@@ -30,7 +30,7 @@ func seedTraceStore(t *testing.T, store *shepherd.SQLiteTraceStore, owner string
 	t.Helper()
 	for i, name := range tools {
 		intentID := owner + ":tool:" + string(rune('a'+i))
-		store.Append(shepherd.TrustedAppendContext, shepherd.AppendBatch{
+		store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
 			AppendIntentID: intentID,
 			Groups: []shepherd.AppendGroup{{
 				TraceOwnerID: owner,

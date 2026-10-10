@@ -195,14 +195,14 @@ The nested module's repin is part of T0.8.
 > while its own tree contained the bug batch, so `sandbox/containerd@v0.1.0`
 > depended on a core version older than its own fixes.
 >
-> **Resolved, then overtaken — refreshed 2026-10-10.** `v0.1.2` shipped (kernel
-> T0.8b), and the nested module has since advanced to `sandbox/containerd/v0.1.4`
-> (durable workspace states; cold-namespace live suite 9/9 green). The standing
-> requirement is unchanged in shape but moved in version: `yaah` must not compile
-> against a nested release older than the core it pins, so the step-5 blocker is
-> now **`sandbox/containerd/v0.1.5`, repinned to core `v0.10.0`** — which also
-> carries `DeltaApplier` and the sandbox registry. Tracked in §7 and step 5
-> below.
+> **Resolved, then overtaken — resolved.** `v0.1.2` shipped (kernel
+> T0.8b), the nested module advanced through `v0.1.4` (durable workspace
+> states; cold-namespace live suite 9/9 green), and
+> **`sandbox/containerd/v0.1.5` is tagged (kernel PR #33, merged at
+> `974bc56`)**: repinned to core `v0.10.0`, implementing `DeltaApplier`
+> (live-verified 11/11, including merge-onto-moved-parent and
+> conflict-refuses-untouched), and self-registering with the sandbox
+> registry on import. The step-5 blocker is cleared.
 
 ### 0.2 Establish that the containerd backend actually works — ✅ GATE CLEARED
 
@@ -445,7 +445,7 @@ Kernel work referenced, with status refreshed 2026-10-10 (see the kernel's
 |---|---|---|
 | Bug batch | T0.6 | ✅ released in `v0.4.1` |
 | **Core releases through v0.10.0** | T0.8+ | ✅ `v0.5.0` (ABI byte identity), `v0.6.0` (schemas/handles), `v0.7.0` (substrates/materialization), `v0.8.0` (merge gate + settlement), `v0.9.0` (**breaking: ctx-first store APIs**, restart recovery), `v0.10.0` (sandbox registry) — all resolve from a clean module, tag-verified in CI |
-| **nested `sandbox/containerd`** | T0.8b | ✅ `v0.1.3` (repin), `v0.1.4` (durable workspace states, states-lease pins, cold-namespace fix — live suite 9/9 green). ⬜ **`v0.1.5` repinned to core `v0.10.0` is the step-5 blocker** (carries `DeltaApplier` + registry alignment) |
+| **nested `sandbox/containerd`** | T0.8b | ✅ `v0.1.3` (repin), `v0.1.4` (durable workspace states, states-lease pins, cold-namespace fix — live suite 9/9 green), ✅ **`v0.1.5` repinned to core `v0.10.0`** (the step-5 blocker, cleared): `DeltaApplier` implemented with live acceptance, registry self-registration on import |
 | containerd publish (no `replace`) | T0.4 | ✅ landed; tag-time release-verify job guards it now |
 | CI 3-OS + containerd job | T0.7 | ✅ landed |
 | Live-daemon harness + VERDICT | T0.5 | ✅ 12/12 green; the cold-namespace re-run on `v0.1.4` was 9/9 |
@@ -454,7 +454,7 @@ Kernel work referenced, with status refreshed 2026-10-10 (see the kernel's
 | `ReadPathPrefix` | T1.6 | ✅ `v0.5.0` |
 | `WorkspaceSubstrate` | T2b.4, T2b.7 | ✅ `v0.7.0`, live round trip green (write → capture → destroy → apply → verify) |
 | Checkpoint/scope durability | T4.1–T4.2 | ✅ `v0.9.0` — `RecoverScopes` rebuilds the registry from the trace; checkpoint blobs persist with staleness detection |
-| **ctx sweep (breaking)** | T4.5 | ⚠️ **new yaah prerequisite** — see step 3c: 29 pre-ctx store call sites must be swept before any pin ≥ `v0.9.0` |
+| **ctx sweep (breaking)** | T4.5 | ✅ step 3c: pin bumped to `v0.10.0` and every store call site swept ctx-first (this PR) |
 | Sandbox registry (`OpenSandbox`) | — | ✅ `v0.10.0` — the construction seam step 4/5 should use |
 
 ---
@@ -620,16 +620,17 @@ have been **executed**; the verdict is recorded against each.
    the pin (`v0.10.0`) + sweep + `go test ./...`.
 4. Config surface (§1.1), including D5's startup probe. The kernel's
    `v0.10.0` sandbox registry is the natural seam: `workspace.backend`
-   maps to a registry name (`git` self-registers in-core; `containerd`
-   registers at wiring — `shepherd.RegisterSandbox` with a factory over
-   the nested module's constructor, since the adapter cannot self-register
-   until its `v0.1.5` repin), and `shepherd.SandboxBackends()` powers
-   `doctor`'s backend listing. Hand-rolled switches remain acceptable; the
-   registry is the seam, not a requirement.
+   maps to a registry name — both backends now self-register on import
+   (`git` in-core, `containerd` in its nested package since `v0.1.5`), so
+   the config surface resolves names through `shepherd.OpenSandbox` with no
+   host-side factory wiring (and must not add one: duplicate registration
+   panics by design). `shepherd.SandboxBackends()` powers `doctor`'s
+   backend listing. Hand-rolled switches remain acceptable; the registry is
+   the seam, not a requirement.
 5. Sandbox construction + lifecycle (§1.2). *First clean stopping point.*
-   **Blocked on `sandbox/containerd/v0.1.5`** (repinned to core `v0.10.0`)
-   — importing the adapter at an older pin would silently compile against
-   pre-ctx core, exactly the failure mode step 1's note warns about. One
+   **Unblocked** — `sandbox/containerd/v0.1.5` is tagged and repinned to
+   core `v0.10.0`, and implements `DeltaApplier`, so D1's apply-out path
+   has its merge verb from the start. One
    behavioral note from kernel `v0.8.0`: `Scope.Fork` on a sandboxed parent
    now captures a fork baseline (one git subprocess per fork, ~10–15 ms
    live-timed) — `supervised_task`'s per-attempt forks pay it; recorded so
@@ -650,14 +651,11 @@ completed its entire parity plan (core `v0.4.1` → `v0.10.0`). The next step is
 breaking ctx-first store APIs and `yaah` still pins `v0.4.0`. After 3c: steps
 4–9 as sequenced.**
 
-**Two release tasks ride alongside:**
-- **Step 3c (yaah-side):** pin `v0.10.0` + the mechanical ctx sweep (~29 call
-  sites). Step 4 must not start on the pre-ctx surface.
-- **Before step 5 (kernel-side):** `sandbox/containerd/v0.1.5`, repinned to
-  core `v0.10.0` — importing the adapter at an older pin would silently compile
-  against pre-ctx core, exactly the failure mode step 1's note warns about.
-  `v0.1.5` also carries `DeltaApplier` for the adapter, which D1's apply-out
-  path can eventually use.
+**The two release tasks that rode alongside are done:**
+- **Step 3c (yaah-side):** pin `v0.10.0` + the mechanical ctx sweep — this PR.
+- **Step 5's kernel-side blocker:** `sandbox/containerd/v0.1.5` is tagged
+  (repinned to core `v0.10.0`, `DeltaApplier` implemented and live-verified,
+  registry self-registration). Step 5 may start.
 
 **Hard dependencies, not reorderable:** step 1 before step 2 (the smoke needs the
 bug batch), step 3 before step 7 (the activation tests need the fake), step 2b

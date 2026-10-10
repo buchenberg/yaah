@@ -320,7 +320,11 @@ func startReviewSession(ctx context.Context, runtime supervisedSessionRuntime, p
 
 	// Unit-start checkpoint for unit 1: no seed conversation yet, so the
 	// snapshot is empty.
-	cp, err := mgr.CreateCheckpoint(ctx, s.scopeID, nil)
+	// Session checkpoints are recovery points: they must exist even when
+	// the caller's context is already cancelled (a cancelled unit is exactly
+	// the case the checkpoint exists for), so their creation runs
+	// cancel-free.
+	cp, err := mgr.CreateCheckpoint(context.WithoutCancel(ctx), s.scopeID, nil)
 	if err != nil {
 		closeReviewSession(s)
 		return "", fmt.Errorf("supervised_task: checkpoint: %w", err)
@@ -411,13 +415,13 @@ func (s *supervisedSession) continueUnit(ctx context.Context, guidance string) (
 
 	mgr := SharedScopeManager
 	if s.checkpointID != "" {
-		mgr.PruneCheckpoints(s.scopeID)
+		mgr.PruneCheckpoints(context.WithoutCancel(ctx), s.scopeID)
 		s.checkpointID = ""
 	}
 
 	prompt := "SUPERVISOR REVIEW: your previous work unit was accepted. Proceed with the next unit.\n\nGuidance:\n" + guidance
 
-	cp, err := mgr.CreateCheckpoint(ctx, s.scopeID, marshalMessages(s.lastConv))
+	cp, err := mgr.CreateCheckpoint(context.WithoutCancel(ctx), s.scopeID, marshalMessages(s.lastConv))
 	if err != nil {
 		return "", fmt.Errorf("supervisor: continue: checkpoint: %w", err)
 	}
@@ -455,7 +459,7 @@ func (s *supervisedSession) rollbackUnit(ctx context.Context, guidance string) (
 
 	prompt := "SUPERVISOR CORRECTION: your previous work unit was rejected and its changes were rolled back. Follow the revised, more specific instructions below.\n\n" + guidance
 
-	cp, err := mgr.CreateCheckpoint(ctx, s.scopeID, marshalMessages(seed))
+	cp, err := mgr.CreateCheckpoint(context.WithoutCancel(ctx), s.scopeID, marshalMessages(seed))
 	if err != nil {
 		return "", fmt.Errorf("supervisor: rollback: checkpoint: %w", err)
 	}
@@ -826,7 +830,7 @@ func (s *supervisedSession) chooseVariant(ctx context.Context, winner string) (s
 
 	// Fresh unit-start checkpoint over the winner's state so the review
 	// cycle (continue/rollback/fork) works on it immediately.
-	cp, err := mgr.CreateCheckpoint(ctx, s.scopeID, marshalMessages(v.Conv))
+	cp, err := mgr.CreateCheckpoint(context.WithoutCancel(ctx), s.scopeID, marshalMessages(v.Conv))
 	if err != nil {
 		return "", fmt.Errorf("supervisor: choose: checkpoint: %w", err)
 	}
@@ -856,7 +860,7 @@ func (s *supervisedSession) chooseVariant(ctx context.Context, winner string) (s
 
 // accept keeps the last unit's work, releases the checkpoint, and
 // closes the session.
-func (s *supervisedSession) accept() (string, error) {
+func (s *supervisedSession) accept(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -864,7 +868,7 @@ func (s *supervisedSession) accept() (string, error) {
 		return "", fmt.Errorf("supervisor: session %s is awaiting choose — pick a winner or abort", s.id)
 	}
 
-	SharedScopeManager.PruneCheckpoints(s.scopeID)
+	SharedScopeManager.PruneCheckpoints(context.WithoutCancel(ctx), s.scopeID)
 
 	env := reviewEnvelope{
 		Status:    "accepted",
@@ -917,7 +921,7 @@ func (s *supervisedSession) abort(ctx context.Context, restore bool) (string, er
 		}
 	}
 
-	mgr.PruneCheckpoints(s.scopeID)
+	mgr.PruneCheckpoints(context.WithoutCancel(ctx), s.scopeID)
 
 	env := reviewEnvelope{
 		Status:    "aborted",

@@ -202,13 +202,13 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 			turnStart := time.Now()
 			if traceMw != nil {
 				traceMw.SetTurnContext(turnID)
-				traceMw.StartTurn(iter, l.Config.Model, userInput)
+				traceMw.StartTurn(ctx, iter, l.Config.Model, userInput)
 			}
 
 			select {
 			case <-ctx.Done():
 				if traceMw != nil {
-					traceMw.FailTurn(iter, ctx.Err())
+					traceMw.FailTurn(ctx, iter, ctx.Err())
 				}
 				return "", ctx.Err()
 			default:
@@ -236,7 +236,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 			step, req, err := l.buildTurnRequest(ctx, iter, messages, pipe, turnSpan)
 			if err != nil {
 				if traceMw != nil {
-					traceMw.FailTurn(iter, err)
+					traceMw.FailTurn(ctx, iter, err)
 				}
 				return "", err
 			}
@@ -244,7 +244,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 
 			if err := l.guardContextBeforeCall(turnCtx, &messages, &req, turnSpan); err != nil {
 				if traceMw != nil {
-					traceMw.FailTurn(iter, err)
+					traceMw.FailTurn(ctx, iter, err)
 				}
 				return "", err
 			}
@@ -265,7 +265,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 					messages = result.CompactedMessages
 				}
 				if traceMw != nil {
-					traceMw.FailTurn(iter, err)
+					traceMw.FailTurn(ctx, iter, err)
 				}
 				return "", fmt.Errorf("provider error: %w", err)
 			}
@@ -305,7 +305,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 				l.State.Messages = messages // end-of-iteration sync; the deferred write covers the return
 				observability.RecordAgentTurn(turnCtx, time.Since(turnStart))
 				if traceMw != nil {
-					traceMw.EndTurn(iter, result.Usage.PromptTokens, result.Usage.CompletionTokens)
+					traceMw.EndTurn(ctx, iter, result.Usage.PromptTokens, result.Usage.CompletionTokens)
 				}
 				return msg.Content, nil
 			}
@@ -317,7 +317,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 			step, err = pipe.RunPostModel(ctx, &msg, step)
 			if err != nil {
 				if traceMw != nil {
-					traceMw.FailTurn(iter, err)
+					traceMw.FailTurn(ctx, iter, err)
 				}
 				return "", err
 			}
@@ -329,7 +329,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 			observability.RecordToolDispatchDone(turnCtx, len(msg.ToolCalls), err)
 			if err != nil {
 				if traceMw != nil {
-					traceMw.FailTurn(iter, err)
+					traceMw.FailTurn(ctx, iter, err)
 				}
 				guidance := fmt.Sprintf(turnFailureGuidanceFormat, err)
 				if l.restoreLastTurnCheckpoint(ctx, &messages, guidance) {
@@ -367,7 +367,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 				TurnsSource:      l.Config.BudgetTurnsSource,
 			}
 			if traceMw != nil {
-				traceMw.FailTurn(l.Config.MaxLoopCycles, err)
+				traceMw.FailTurn(ctx, l.Config.MaxLoopCycles, err)
 			}
 			return "", err
 		}

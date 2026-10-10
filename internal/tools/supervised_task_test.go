@@ -104,7 +104,7 @@ func newSupervisedTestEnv(t *testing.T) (*SupervisedTaskTool, string) {
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { store.Close(context.Background()) })
 
 	prev := SharedScopeManager
 	SharedScopeManager = shepherd.NewScopeManager(store)

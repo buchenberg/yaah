@@ -38,7 +38,7 @@ func (*SubagentTraceTool) Schema() json.RawMessage {
 	}`)
 }
 
-func (t *SubagentTraceTool) Execute(_ context.Context, args string) (string, error) {
+func (t *SubagentTraceTool) Execute(ctx context.Context, args string) (string, error) {
 	if t.TraceDir == "" {
 		return "", fmt.Errorf("subagent_trace: shepherd tracing is not enabled (set shepherd_trace_dir in config)")
 	}
@@ -56,23 +56,23 @@ func (t *SubagentTraceTool) Execute(_ context.Context, args string) (string, err
 	if err != nil {
 		return "", fmt.Errorf("subagent_trace: cannot open trace store: %w", err)
 	}
-	defer store.Close()
+	defer store.Close(context.Background())
 
 	switch raw.Action {
 	case "list":
-		return t.executeList(store)
+		return t.executeList(ctx, store)
 	case "profile":
 		if raw.SessionID == "" {
 			return "", fmt.Errorf("subagent_trace: session_id is required for profile")
 		}
-		return t.executeProfile(store, raw.SessionID)
+		return t.executeProfile(ctx, store, raw.SessionID)
 	default:
 		return "", fmt.Errorf("subagent_trace: unknown action %q (valid: list, profile)", raw.Action)
 	}
 }
 
-func (t *SubagentTraceTool) executeList(store *shepherd.SQLiteTraceStore) (string, error) {
-	slice, err := store.ReadOwnerPrefix(shepherd.TrustedReadContext, "", 99999, "declarations_only")
+func (t *SubagentTraceTool) executeList(ctx context.Context, store *shepherd.SQLiteTraceStore) (string, error) {
+	slice, err := store.ReadOwnerPrefix(ctx, shepherd.TrustedReadContext, "", 99999, shepherd.ModeDeclarationsOnly)
 	if err != nil {
 		return "", fmt.Errorf("subagent_trace: read store: %w", err)
 	}
@@ -96,8 +96,8 @@ func (t *SubagentTraceTool) executeList(store *shepherd.SQLiteTraceStore) (strin
 	return sb.String(), nil
 }
 
-func (t *SubagentTraceTool) executeProfile(store *shepherd.SQLiteTraceStore, sessionID string) (string, error) {
-	slice, err := store.ReadOwnerPrefix(shepherd.TrustedReadContext, sessionID, 99999, "both")
+func (t *SubagentTraceTool) executeProfile(ctx context.Context, store *shepherd.SQLiteTraceStore, sessionID string) (string, error) {
+	slice, err := store.ReadOwnerPrefix(ctx, shepherd.TrustedReadContext, sessionID, 99999, shepherd.ModeBoth)
 	if err != nil {
 		return "", fmt.Errorf("subagent_trace: read session: %w", err)
 	}

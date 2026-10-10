@@ -403,7 +403,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// can see exactly which tool calls led to the failure.
 		if runErr != nil && opts.defaults.ShepherdTraceDir != "" {
 			tracePath := filepath.Join(opts.defaults.ShepherdTraceDir, "trace.sqlite")
-			if profile := subagentTraceProfile(tracePath, subTraceID); profile != "" {
+			if profile := subagentTraceProfile(ctx, tracePath, subTraceID); profile != "" {
 				runErr = fmt.Errorf("%w\n\nSubagent trace:\n%s", runErr, profile)
 			}
 		}
@@ -709,14 +709,17 @@ func formatBytes(n int) string {
 	return fmt.Sprintf("%.1f %s", float64(n)/float64(div), prefix)
 }
 
-func subagentTraceProfile(tracePath, sessionID string) string {
+func subagentTraceProfile(ctx context.Context, tracePath, sessionID string) string {
 	store, err := shepherd.NewSQLiteTraceStore(tracePath)
 	if err != nil {
 		return ""
 	}
-	defer store.Close()
+	// The whole read is deliberately cancel-free, not just the Close: this
+	// profile exists to enrich a failed sub-agent, and the failure it
+	// diagnoses is often the very cancellation that would abort the read.
+	defer store.Close(context.WithoutCancel(ctx))
 
-	slice, err := store.ReadOwnerPrefix(shepherd.TrustedReadContext, sessionID, 99999, "both")
+	slice, err := store.ReadOwnerPrefix(context.WithoutCancel(ctx), shepherd.TrustedReadContext, sessionID, 99999, shepherd.ModeBoth)
 	if err != nil || len(slice.FactIDs()) == 0 {
 		return ""
 	}

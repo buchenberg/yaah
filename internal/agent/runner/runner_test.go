@@ -164,13 +164,13 @@ func TestSubagentTraceProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
-	defer store.Close()
+	defer store.Close(context.Background())
 
 	owner := "sub-tester-sess-1"
 	// Record declaration + capture pairs
 	for i, name := range []string{"read", "edit", "bash"} {
 		intent := owner + ":tool:" + string(rune('a'+i))
-		declReceipt, _ := store.Append(shepherd.TrustedAppendContext, shepherd.AppendBatch{
+		declReceipt, _ := store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
 			AppendIntentID: intent,
 			Groups: []shepherd.AppendGroup{{
 				TraceOwnerID: owner,
@@ -189,7 +189,7 @@ func TestSubagentTraceProfile(t *testing.T) {
 			success = false
 			errMsg = "permission denied"
 		}
-		store.Append(shepherd.TrustedAppendContext, shepherd.AppendBatch{
+		store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
 			AppendIntentID: captureIntent,
 			Groups: []shepherd.AppendGroup{{
 				TraceOwnerID:  owner,
@@ -204,7 +204,7 @@ func TestSubagentTraceProfile(t *testing.T) {
 		})
 	}
 
-	profile := subagentTraceProfile(tracePath, owner)
+	profile := subagentTraceProfile(context.Background(), tracePath, owner)
 	if profile == "" {
 		t.Fatal("profile should not be empty")
 	}
@@ -232,16 +232,16 @@ func TestSubagentTraceProfile_NonexistentSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
-	store.Close()
+	store.Close(context.Background())
 
-	profile := subagentTraceProfile(tracePath, "nonexistent")
+	profile := subagentTraceProfile(context.Background(), tracePath, "nonexistent")
 	if profile != "" {
 		t.Errorf("profile for nonexistent session should be empty, got %q", profile)
 	}
 }
 
 func TestSubagentTraceProfile_MissingFile(t *testing.T) {
-	profile := subagentTraceProfile("/nonexistent/path/trace.sqlite", "any")
+	profile := subagentTraceProfile(context.Background(), "/nonexistent/path/trace.sqlite", "any")
 	if profile != "" {
 		t.Errorf("profile for missing file should be empty, got %q", profile)
 	}
