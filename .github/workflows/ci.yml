@@ -17,7 +17,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go: ['1.25']
+        go: ['1.26']  # sandbox/containerd v0.1.5 requires go >= 1.26.3
     steps:
       - name: checkout
         uses: actions/checkout@v4

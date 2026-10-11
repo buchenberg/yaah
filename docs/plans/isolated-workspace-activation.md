@@ -282,8 +282,18 @@ capabilities.
 
 ### 1.1 Config surface
 
-Add workspace config keys (no workspace keys exist today). Proposed shape,
-following existing config conventions in `internal/config/load.go`:
+**Status: landed (the config keys, validation, and D5's probe; wiring is
+step 5).** `internal/config/workspace.go` holds the stanza and its
+normalization (`workspace.*` top-level key, backend/root/containerd.{address,
+namespace, image, snapshotter}, `${VAR}` substitution on the address);
+`config.Validate` enforces the backend enum, the Linux-only rule for
+`containerd` (surfaced at load, not at first tool call), the image
+requirement, and the absolute-non-`/` root. `internal/tools/workspace_probe.go`
+carries `OpenContainerdWorkspaceSandbox` (registry resolution — both backends
+self-register, no host factory) and `ProbeImageContract`, the D5 startup
+probe: one shell pass over sh/stat/find/git/rg/go plus the GNU `stat -c` /
+`find -printf` checks, with the probe owning its sandbox's full lifecycle.
+The proposed shape, as landed:
 
 ```yaml
 workspace:
@@ -618,7 +628,8 @@ have been **executed**; the verdict is recorded against each.
    never mixes mechanical churn with feature changes. Optional but cheap
    in the same PR: adopt `OpenSandbox`-era semantics nowhere yet — just
    the pin (`v0.10.0`) + sweep + `go test ./...`.
-4. Config surface (§1.1), including D5's startup probe. The kernel's
+4. ✅ Config surface (§1.1), including D5's startup probe (landed; wiring
+   is step 5). The kernel's
    `v0.10.0` sandbox registry is the natural seam: `workspace.backend`
    maps to a registry name — both backends now self-register on import
    (`git` in-core, `containerd` in its nested package since `v0.1.5`), so
