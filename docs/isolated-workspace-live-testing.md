@@ -49,6 +49,11 @@ imported into `default` is invisible to a session in `yaah-live`, and the
 backend's resolve falls through to a registry pull, which fails with
 `insufficient_scope` against Docker Hub for a locally-built tag.
 
+Do not pass `--no-unpack` either: the backend uses a local image only when it is
+present *and* unpacked in the session's snapshotter (`GetImage` + `IsUnpacked`),
+so an imported-but-unpacked image also falls through to a registry pull.
+`ctr images import` unpacks by default, which is what the runbook relies on.
+
 ## Running the harness
 
 ```bash
