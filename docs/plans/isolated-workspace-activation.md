@@ -790,13 +790,19 @@ have been **executed**; the verdict is recorded against each.
    `delta_patch` property asserted against the real backend, and the
    `apply_out` accept seam landing all three changes onto the host.
    **Live verdict — 2026-10-10, MET.** `TestLive_ActivatedSession` passed
-   end to end (1.25s) against the local containerd daemon (2.3.5,
+   end to end (1.3s) against the local containerd daemon (2.3.5,
    overlayfs) with a `golang:bookworm` + ripgrep image; the runbook,
    including the two operational rules it pinned along the way, is
    `docs/isolated-workspace-live-testing.md` (image imports must target
    the session's containerd namespace — and be unpacked — and raw
    containerd applies no image `ENV` to execs, so a D5 image must put
-   its tools on the default PATH).
+   its tools on the default PATH). The harness is genuinely
+   tool-driven, not substrate-driven: after the step-7 gate accepts the
+   real workspace, the whole task dispatches through the curated
+   registry a session would use — read, bash, write, delete, and
+   `apply_out` — and the host tree must be exactly as the bootstrap
+   left it before apply-out, so a regression that leaves tool dispatch
+   on the host fails the test instead of production.
    The harness earned its keep before it passed: it found that
    `sandboxWorkspace.WriteFile` shipped file content over exec stdin —
    which the runc-v2 shim never lets close, so every tool-facing write
