@@ -72,6 +72,14 @@ type Session struct {
 	TokensOut        int    `json:"tokens_out"`
 	SystemPrompt     string `json:"system_prompt,omitempty"`
 	CompactedSummary string `json:"compacted_summary,omitempty"`
+	// WorkspaceBackend records the workspace substrate the session ran
+	// under ("local" or "containerd"), and WorkspaceOmittedTools the
+	// host-only tool names isolated mode left out (comma-separated).
+	// Decision D4 of the isolated-workspace plan: a run's available tool
+	// set differs by mode, so "the model didn't use background_process"
+	// and "the model couldn't" must stay distinguishable in the record.
+	WorkspaceBackend      string `json:"workspace_backend,omitempty"`
+	WorkspaceOmittedTools string `json:"workspace_omitted_tools,omitempty"`
 }
 
 // Message represents a single message in a session.
@@ -326,6 +334,8 @@ func (d *DB) migrate() error {
 		{"memory", "embedding", "ALTER TABLE memory ADD COLUMN embedding BLOB"},
 		{"memory", "digest", "ALTER TABLE memory ADD COLUMN digest TEXT"},
 		{"messages", "embedding", "ALTER TABLE messages ADD COLUMN embedding BLOB"},
+		{"sessions", "workspace_backend", "ALTER TABLE sessions ADD COLUMN workspace_backend TEXT DEFAULT ''"},
+		{"sessions", "workspace_omitted_tools", "ALTER TABLE sessions ADD COLUMN workspace_omitted_tools TEXT DEFAULT ''"},
 	}
 	for _, s := range steps {
 		if err := d.ensureColumn(s.table, s.column, s.ddl); err != nil {

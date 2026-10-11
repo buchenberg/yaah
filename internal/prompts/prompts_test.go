@@ -220,3 +220,40 @@ func TestSubAgentIdentityMirrorsCanonicalHabitSections(t *testing.T) {
 		}
 	}
 }
+
+func TestIsolatedWorkspaceGuidance(t *testing.T) {
+	got := IsolatedWorkspaceGuidance(
+		[]string{"background_process", "go_refactor", "role", "supervised_task"},
+		[]string{"mcp_a", "mcp_b"})
+
+	for _, name := range []string{"background_process", "go_refactor", "role", "supervised_task"} {
+		if !strings.Contains(got, "`"+name+"`") {
+			t.Errorf("guidance must name the omitted tool %s:\n%s", name, got)
+		}
+	}
+	if !strings.Contains(got, "apply_out") {
+		t.Error("guidance must explain the apply_out workflow")
+	}
+	if !strings.Contains(got, "dry_run") {
+		t.Error("guidance must point at the dry-run preview")
+	}
+	if !strings.Contains(got, "spawn_subagent") {
+		t.Error("guidance must name the sub-agent alternative for supervised_task")
+	}
+	if !strings.Contains(got, "`mcp_a`") || !strings.Contains(got, "`mcp_b`") {
+		t.Error("guidance must name the omitted MCP tools")
+	}
+	if !strings.Contains(got, "read-only") || !strings.Contains(got, "`skill`") || !strings.Contains(got, "`plan`") {
+		t.Error("guidance must state the skill/plan read-only constraint")
+	}
+
+	// An unknown name (a future host-only tool) must still be listed.
+	if got := IsolatedWorkspaceGuidance([]string{"some_future_tool"}, nil); !strings.Contains(got, "`some_future_tool`") {
+		t.Errorf("unknown omitted tool must be listed, got:\n%s", got)
+	}
+	// Empty omission lists are valid: the mode explanation still applies
+	// (apply_out is always registered in isolated mode).
+	if got := IsolatedWorkspaceGuidance(nil, nil); strings.Contains(got, "NOT available here") {
+		t.Errorf("no omitted tools must not print an empty unavailable list, got:\n%s", got)
+	}
+}

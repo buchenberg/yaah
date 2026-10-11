@@ -104,6 +104,59 @@ func SubAgentToolsGuidance() string {
 	return strings.TrimSpace(subAgentToolsRaw)
 }
 
+// hostOnlyReasons explains, per tool, why it is absent from an isolated
+// session — the wording the model needs to work around the gap instead of
+// retrying a call that cannot succeed. Keep in sync with the hostOnly()
+// markers in internal/tools/filesystem_tools.go.
+var hostOnlyReasons = map[string]string{
+	"role":               "role files are harness configuration the host reads, not workspace content; roles still load — you just cannot manage role files from this session",
+	"background_process": "it drives the host's process manager; a container would need its own — run long-lived commands in the background with your shell tool instead",
+	"supervised_task":    "it provisions sandboxes itself, so it cannot run inside the isolation it creates — dispatch sub-agents with spawn_subagent instead",
+	"go_refactor":        "it reads the filesystem through the Go toolchain on the host; go_outline, go_test, and go_mod cover the Go tooling need",
+}
+
+// IsolatedWorkspaceGuidance is the isolated-mode prompt delta (plan §2.2,
+// the condition that makes Option A acceptable): the model is told which
+// tools are unavailable and why, and how changes reach the host. Without
+// it the model attempts background_process and receives an unexplained
+// "tool not found".
+//
+// omitted are the host-only tool names this session actually skipped (the
+// wiring collects them as it curates the registry); mcpOmitted are the
+// MCP-served tool names isolated mode leaves out because they execute on
+// the host. Skill and plan stay registered but read-only — their
+// mutating actions manage host harness configuration, which the isolated
+// workspace must not write around apply_out.
+func IsolatedWorkspaceGuidance(omitted, mcpOmitted []string) string {
+	var b strings.Builder
+	b.WriteString("## Isolated workspace\n\n")
+	b.WriteString("This session runs in an isolated workspace: your file tools and shell commands execute inside a container holding a copy of this repository. ")
+	b.WriteString("Every change you make stays in the container — the host's working tree is untouched until the user accepts it.\n")
+
+	if len(omitted) > 0 {
+		b.WriteString("\nThe following tools exist in local sessions but are NOT available here; do not attempt them:\n")
+		for _, name := range omitted {
+			if reason, ok := hostOnlyReasons[name]; ok {
+				b.WriteString("\n- `" + name + "`: " + reason + ".")
+			} else {
+				b.WriteString("\n- `" + name + "`: unavailable in isolated mode.")
+			}
+		}
+	}
+	if len(mcpOmitted) > 0 {
+		b.WriteString("\n\nMCP-served tools are omitted in isolated mode — they run on the host, which the workspace cannot contain: ")
+		b.WriteString("`" + strings.Join(mcpOmitted, "`, `") + "`.")
+	}
+	b.WriteString("\n\nThe `skill` and `plan` tools are read-only here: their create/edit/delete actions are disabled because they manage host harness configuration (.agents/). Their list/show/load actions work as usual.\n")
+
+	b.WriteString("\nChanges leave the container only through `apply_out`, which requires the user's approval:\n")
+	b.WriteString("- Call `apply_out` with `dry_run: true` to see the diff that would land; the host is untouched.\n")
+	b.WriteString("- When the user accepts the work (\"ship it\", \"apply the changes\", \"looks good\"), call `apply_out` without `dry_run` and let them approve. A dry run must come first — the approval prompt shows only the arguments, so the user approves the diff you showed them, or nothing.\n")
+	b.WriteString("- Until it runs, your changes exist only in the container. Never claim they are saved, committed, or in the repository.\n")
+	b.WriteString("\nSub-agents you dispatch with spawn_subagent do not run inside the container (sandbox inheritance is not wired yet) — treat their file work as host-side, not isolated.\n")
+	return b.String()
+}
+
 // --- Chunk summarizer helpers ---
 
 var (

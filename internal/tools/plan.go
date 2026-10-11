@@ -16,6 +16,12 @@ import (
 // (draft → approved → in_progress → completed) to track workflow.
 type PlanTool struct {
 	Dirs []string
+	// ReadOnly disables the mutating actions (create, approve, edit,
+	// delete). Isolated sessions set it: plans are host harness
+	// configuration (.agents/plans/, tracked in git), so writing them
+	// from inside the container would mutate host files around the
+	// apply-out boundary. Reading — list, show — stays available.
+	ReadOnly bool
 }
 
 func (t *PlanTool) Name() string { return "plan" }
@@ -51,16 +57,28 @@ func (t *PlanTool) Execute(ctx context.Context, args string) (string, error) {
 
 	switch params.Action {
 	case "create":
+		if t.ReadOnly {
+			return "", readOnlyActionError("plan", "create")
+		}
 		return t.create(params)
 	case "list":
 		return t.list()
 	case "show":
 		return t.show(params)
 	case "approve":
+		if t.ReadOnly {
+			return "", readOnlyActionError("plan", "approve")
+		}
 		return t.approve(params)
 	case "edit":
+		if t.ReadOnly {
+			return "", readOnlyActionError("plan", "edit")
+		}
 		return t.edit(params)
 	case "delete":
+		if t.ReadOnly {
+			return "", readOnlyActionError("plan", "delete")
+		}
 		return t.delete(params)
 	default:
 		return "", fmt.Errorf("plan: unknown action %q (valid: create, list, show, approve, edit, delete)", params.Action)

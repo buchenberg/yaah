@@ -2,12 +2,15 @@ package memory
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestDB_OpenCreatesDatabase(t *testing.T) {
@@ -1010,5 +1013,112 @@ func TestAddMemoryDedup_RapidDistinctInsertsBothPersist(t *testing.T) {
 	}
 	if len(all) != 100 {
 		t.Errorf("expected 100 memories, got %d", len(all))
+	}
+}
+
+func TestDB_SessionWorkspaceMetadata(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	// D4 of the isolated-workspace plan: the backend and the omitted
+	// tool names are part of the session record, so a reader of two
+	// runs can tell "didn't use" from "couldn't use".
+	db.CreateSession(Session{ID: "sess-ws", StartedAt: 1000})
+	if err := db.UpdateSessionWorkspace("sess-ws", "containerd", "background_process,go_refactor,role,supervised_task"); err != nil {
+		t.Fatalf("UpdateSessionWorkspace() error: %v", err)
+	}
+
+	s, err := db.GetSession("sess-ws")
+	if err != nil {
+		t.Fatalf("GetSession() error: %v", err)
+	}
+	if s.WorkspaceBackend != "containerd" {
+		t.Errorf("WorkspaceBackend = %q, want %q", s.WorkspaceBackend, "containerd")
+	}
+	if s.WorkspaceOmittedTools != "background_process,go_refactor,role,supervised_task" {
+		t.Errorf("WorkspaceOmittedTools = %q", s.WorkspaceOmittedTools)
+	}
+
+	// The metadata flows through the listing surface too.
+	sessions, err := db.ListSessions(10)
+	if err != nil {
+		t.Fatalf("ListSessions() error: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].WorkspaceBackend != "containerd" {
+		t.Errorf("ListSessions workspace metadata = %+v", sessions)
+	}
+
+	// A second update overwrites: the columns describe the session's
+	// most recent run, so a resume that changed mode rewrites them.
+	if err := db.UpdateSessionWorkspace("sess-ws", "local", ""); err != nil {
+		t.Fatalf("UpdateSessionWorkspace() error: %v", err)
+	}
+	s, _ = db.GetSession("sess-ws")
+	if s.WorkspaceBackend != "local" || s.WorkspaceOmittedTools != "" {
+		t.Errorf("after update: backend = %q, omitted = %q, want local/empty", s.WorkspaceBackend, s.WorkspaceOmittedTools)
+	}
+}
+
+func TestDB_SessionWorkspaceMetadata_MigratesExistingDB(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+
+	// Create a database with the pre-D4 sessions schema directly, so the
+	// migration under test is real: the first Open of a fresh file would
+	// create the table with the new columns already present and prove
+	// nothing (same discipline as TestMigrate_AddsCrossLinkColumns).
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	legacySchema := `
+CREATE TABLE sessions (
+	id TEXT PRIMARY KEY,
+	started_at INTEGER NOT NULL,
+	ended_at INTEGER,
+	cwd TEXT,
+	model TEXT,
+	tokens_in INTEGER DEFAULT 0,
+	tokens_out INTEGER DEFAULT 0,
+	system_prompt TEXT DEFAULT ''
+);
+INSERT INTO sessions (id, started_at, cwd, model) VALUES ('sess-old', 1000, '/tmp', '');
+`
+	if _, err := legacy.Exec(legacySchema); err != nil {
+		t.Fatalf("create legacy schema: %v", err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatalf("close legacy db: %v", err)
+	}
+
+	// Open: the ALTER-based migration must add the workspace columns to
+	// the existing table.
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open legacy db: %v", err)
+	}
+	defer db.Close()
+
+	// The old row reads back with defaults before anything writes it.
+	s, err := db.GetSession("sess-old")
+	if err != nil {
+		t.Fatalf("GetSession after migration: %v", err)
+	}
+	if s.WorkspaceBackend != "" || s.WorkspaceOmittedTools != "" {
+		t.Errorf("pre-existing row must default to empty metadata, got %q/%q", s.WorkspaceBackend, s.WorkspaceOmittedTools)
+	}
+
+	if err := db.UpdateSessionWorkspace("sess-old", "containerd", "role"); err != nil {
+		t.Fatalf("UpdateSessionWorkspace after migration: %v", err)
+	}
+	s, err = db.GetSession("sess-old")
+	if err != nil {
+		t.Fatalf("GetSession after write: %v", err)
+	}
+	if s.WorkspaceBackend != "containerd" || s.WorkspaceOmittedTools != "role" {
+		t.Errorf("post-migration metadata = %q/%q", s.WorkspaceBackend, s.WorkspaceOmittedTools)
 	}
 }
