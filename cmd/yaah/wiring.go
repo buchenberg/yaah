@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	shepherd "github.com/buchenberg/shepherd-kernel-go"
+
 	"github.com/buchenberg/yaah/internal/agent/budget"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/runner"
@@ -382,6 +384,40 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		backgroundJobs.MaxConcurrent = 4
 	}
 
+	// Shepherd infrastructure: session-shared trace store, effect bus,
+	// and scope manager. Initialized before the task tool is built — the
+	// session's root scope (shepherd-adoption plan D1) must exist when
+	// the runner closure is constructed, since every sub-agent scope
+	// forks from it and the supervisor's tree should mirror the dispatch
+	// tree. The orchestrator pipeline no longer hosts shepherd_trace, so
+	// this is the single initialization point for the supervisor tools,
+	// the supervised task tool, and sub-agent trace middleware.
+	var scopeMgr *shepherd.ScopeManager
+	var rootScopeID string
+	if cfg.Agent.Default.ShepherdTraceDir != "" {
+		store, _, mgr, serr := pipeline.InitShepherdInfrastructure(cfg.Agent.Default.ShepherdTraceDir, 0)
+		if serr != nil {
+			fmt.Fprintf(os.Stderr, "warning: shepherd tracing disabled: %v\n", serr)
+		} else {
+			tools.SharedTraceStore = store
+			scopeMgr = mgr
+			tools.SharedScopeManager = mgr
+
+			// Root scope (adoption plan D1): local mode shares the
+			// in-place git sandbox — never destroyed, the kernel's
+			// materializer contract; an isolated session keeps the
+			// root pure-causal (the container is the substrate;
+			// host-git capture would lie about the tree, isolation
+			// plan D2). A failure leaves sub-agent scopes on the
+			// legacy flat path rather than bricking tracing.
+			if root, rerr := runner.CreateRootScope(mgr, sessionID, cfg.Agent.Default.SupervisedRepoPath, sessionSandbox != nil); rerr != nil {
+				fmt.Fprintf(os.Stderr, "warning: no shepherd root scope — sub-agent scopes fall back to flat creation: %v\n", rerr)
+			} else {
+				rootScopeID = root.ID()
+			}
+		}
+	}
+
 	// Role routing: each role dispatches through exactly one sub-agent
 	// tool, selected by the per-role `supervised` flag
 	// (subagent.roles.<name>.supervised). Start with every role on
@@ -429,6 +465,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		ToolSpillDir:          subAgentSpillDir,
 		PathValidator:         pathValidator,
 		Workspace:             subAgentWorkspace,
+		RootScopeID:           rootScopeID,
 		ResolveProviderByName: resolveProviderByName,
 	})
 
@@ -472,78 +509,69 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 
 	toolReg.Register(&tools.SubAgentJobsTool{Jobs: backgroundJobs})
 
-	// Shepherd infrastructure: session-shared trace store, effect bus, and
-	// scope manager. The orchestrator pipeline no longer hosts shepherd_trace,
-	// so this is the single initialization point for the supervisor tools,
-	// the supervised task tool, and sub-agent trace middleware.
-	if cfg.Agent.Default.ShepherdTraceDir != "" {
-		store, _, scopeMgr, serr := pipeline.InitShepherdInfrastructure(cfg.Agent.Default.ShepherdTraceDir, 0)
-		if serr != nil {
-			fmt.Fprintf(os.Stderr, "warning: shepherd tracing disabled: %v\n", serr)
-		} else {
-			tools.SharedTraceStore = store
-			tools.SharedScopeManager = scopeMgr
-
-			// Supervised roles move from spawn_subagent to supervised_task
-			// now that the shared scope manager is actually available.
-			// Isolated mode folds them back: supervised_task is omitted
-			// there, and leaving the roles split off spawn_subagent would
-			// leave them with no dispatch tool at all (task rejects them
-			// by name).
-			plainRoles, supervisedRoles := splitRolesBySupervised(reg.Names(), isSupervisedRole)
+	// Shepherd-dependent tool surface: the supervisor tool and the
+	// supervised task tool register only when the infrastructure above
+	// came up, and the supervised/plain role split lands with them.
+	if scopeMgr != nil {
+		// Supervised roles move from spawn_subagent to supervised_task
+		// now that the shared scope manager is actually available.
+		// Isolated mode folds them back: supervised_task is omitted
+		// there, and leaving the roles split off spawn_subagent would
+		// leave them with no dispatch tool at all (task rejects them
+		// by name).
+		plainRoles, supervisedRoles := splitRolesBySupervised(reg.Names(), isSupervisedRole)
+		if sessionSandbox != nil {
+			plainRoles = reg.Names()
+			supervisedRoles = nil
+		}
+		taskTool.RoleNames = plainRoles
+		taskTool.RoleResolver = func() []string {
+			names := subagent.DefaultRegistry().Names()
 			if sessionSandbox != nil {
-				plainRoles = reg.Names()
-				supervisedRoles = nil
+				return names
 			}
-			taskTool.RoleNames = plainRoles
-			taskTool.RoleResolver = func() []string {
-				names := subagent.DefaultRegistry().Names()
-				if sessionSandbox != nil {
-					return names
-				}
-				plain, _ := splitRolesBySupervised(names, isSupervisedRole)
-				return plain
-			}
-			taskTool.RoleDescriptions = runner.RoleDescriptionsFor(plainRoles)
+			plain, _ := splitRolesBySupervised(names, isSupervisedRole)
+			return plain
+		}
+		taskTool.RoleDescriptions = runner.RoleDescriptionsFor(plainRoles)
 
-			// Supervisor tool for sub-agent supervision (list_scopes/inject/halt/status).
-			toolReg.Register(&tools.SupervisorTool{TraceDir: cfg.Agent.Default.ShepherdTraceDir})
+		// Supervisor tool for sub-agent supervision (list_scopes/inject/halt/status).
+		toolReg.Register(&tools.SupervisorTool{TraceDir: cfg.Agent.Default.ShepherdTraceDir})
 
-			// Supervised task tool — blocking sub-agent execution with
-			// checkpoint/rollback/retry. Shares the runner and timeout
-			// logic with the task tool, but runs synchronously and wraps
-			// each attempt in a git checkpoint. Only registered when
-			// tracing is on: checkpoint/rollback needs the shared scope
-			// manager. It offers only roles flagged `supervised`; plain
-			// roles stay with spawn_subagent.
-			maxRetries := cfg.Agent.Default.SupervisedMaxRetries
-			if maxRetries <= 0 {
-				maxRetries = 1
-			}
-			// supervised_task is host-only: it provisions sandboxes, so
-			// it cannot run inside the isolation it creates. Omitted in
-			// isolated mode (plan §3); its roles stay assigned to it,
-			// which the prompt delta explains.
-			if sessionSandbox == nil {
-				toolReg.Register(&tools.SupervisedTaskTool{
-					Runner:         taskTool.Runner,
-					ResolveTimeout: taskTool.ResolveTimeout,
-					RoleNames:      supervisedRoles,
-					RoleResolver: func() []string {
-						_, supervised := splitRolesBySupervised(subagent.DefaultRegistry().Names(), isSupervisedRole)
-						return supervised
-					},
-					RoleDescriptions: runner.RoleDescriptionsFor(supervisedRoles),
-					RepoPath:         cfg.Agent.Default.SupervisedRepoPath,
-					MaxRetries:       maxRetries,
+		// Supervised task tool — blocking sub-agent execution with
+		// checkpoint/rollback/retry. Shares the runner and timeout
+		// logic with the task tool, but runs synchronously and wraps
+		// each attempt in a git checkpoint. Only registered when
+		// tracing is on: checkpoint/rollback needs the shared scope
+		// manager. It offers only roles flagged `supervised`; plain
+		// roles stay with spawn_subagent.
+		maxRetries := cfg.Agent.Default.SupervisedMaxRetries
+		if maxRetries <= 0 {
+			maxRetries = 1
+		}
+		// supervised_task is host-only: it provisions sandboxes, so
+		// it cannot run inside the isolation it creates. Omitted in
+		// isolated mode (plan §3); its roles stay assigned to it,
+		// which the prompt delta explains.
+		if sessionSandbox == nil {
+			toolReg.Register(&tools.SupervisedTaskTool{
+				Runner:         taskTool.Runner,
+				ResolveTimeout: taskTool.ResolveTimeout,
+				RoleNames:      supervisedRoles,
+				RoleResolver: func() []string {
+					_, supervised := splitRolesBySupervised(subagent.DefaultRegistry().Names(), isSupervisedRole)
+					return supervised
+				},
+				RoleDescriptions: runner.RoleDescriptionsFor(supervisedRoles),
+				RepoPath:         cfg.Agent.Default.SupervisedRepoPath,
+				MaxRetries:       maxRetries,
 
-					Worktree:          cfg.Agent.Default.SupervisedWorktree,
-					WorktreeRoot:      cfg.Agent.Default.SupervisedWorktreeRoot,
-					WorktreeBootstrap: cfg.Agent.Default.SupervisedWorktreeBootstrap,
-				})
-			} else {
-				omittedTools = append(omittedTools, "supervised_task")
-			}
+				Worktree:          cfg.Agent.Default.SupervisedWorktree,
+				WorktreeRoot:      cfg.Agent.Default.SupervisedWorktreeRoot,
+				WorktreeBootstrap: cfg.Agent.Default.SupervisedWorktreeBootstrap,
+			})
+		} else {
+			omittedTools = append(omittedTools, "supervised_task")
 		}
 	}
 
