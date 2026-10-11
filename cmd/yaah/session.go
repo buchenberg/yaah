@@ -100,6 +100,12 @@ type agentSession struct {
 	// follow-ups. Cancelled at session close.
 	backgroundJobs *jobs.BackgroundJobs
 
+	// sessionSandbox owns the isolated workspace backend's lifecycle, when
+	// workspace.backend is containerd: the sandbox was constructed, image-
+	// probed (D5), and created once at session start, and close() destroys
+	// it. Nil in local mode.
+	sessionSandbox *tools.SessionSandbox
+
 	cwd string
 
 	view      agent.View
@@ -137,6 +143,16 @@ func (s *agentSession) close() {
 	// result deliveries before tearing down the rest of the session.
 	if s.backgroundJobs != nil {
 		s.backgroundJobs.Close()
+	}
+	// Destroy the isolated workspace sandbox only after the sub-agents
+	// are cancelled and can no longer dispatch tools into it. A teardown
+	// failure warns rather than aborts close(): the rest of the session
+	// still needs tearing down, and the warning names the container that
+	// may still be running.
+	if s.sessionSandbox != nil {
+		if err := s.sessionSandbox.Destroy(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: workspace sandbox teardown: %v\n", err)
+		}
 	}
 	s.mu.RLock()
 	ch := s.ctrlCh

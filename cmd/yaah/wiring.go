@@ -2,6 +2,7 @@ package yaah
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -89,10 +90,42 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 
 	toolReg := tools.NewRegistry()
 
-	// Workspace containment: only enforced when --workspace is given.
-	// A nil validator keeps the legacy ~-expansion behaviour.
+	// Workspace containment. Exactly one substrate may be installed:
+	//
+	//   - containerd backend: the session's sandbox is constructed, image-
+	//     probed (D5), and created here, once per session. SetWorkspace
+	//     (after every registration, below) hands the registry the sandbox
+	//     workspace. The host path validator must NOT also run — it would
+	//     install a local workspace over the registry's nil one, and the
+	//     two substrates must not race for tools.
+	//   - local backend with --workspace: the host validator gates paths.
+	//   - neither: no validator; legacy ~-expansion behaviour.
 	var pathValidator *tools.PathValidator
-	if opts.WorkspaceRoot != "" {
+	var sessionSandbox *tools.SessionSandbox
+	// sandboxHandedOff flips on the success path; the teardown guard below
+	// reads it. It exists because the session takes ownership of the
+	// sandbox only when this function returns one.
+	sandboxHandedOff := false
+	switch {
+	case cfg.Workspace.Backend == config.BackendContainerd:
+		sessionSandbox, err = tools.StartSessionSandbox(
+			context.Background(), cfg.Workspace, tools.OpenContainerdWorkspaceSandbox)
+		if err != nil {
+			return nil, err
+		}
+		// Every error return below destroys the sandbox instead of
+		// leaking a container for the lifetime of the daemon's namespace.
+		defer func() {
+			if sessionSandbox != nil && !sandboxHandedOff {
+				if derr := sessionSandbox.Destroy(context.Background()); derr != nil {
+					fmt.Fprintf(os.Stderr, "warning: workspace sandbox teardown after failed session start: %v\n", derr)
+				}
+			}
+		}()
+		if opts.WorkspaceRoot != "" {
+			fmt.Fprintf(os.Stderr, "warning: --workspace %s has no effect: the workspace.backend containerd session is isolated from the host\n", opts.WorkspaceRoot)
+		}
+	case opts.WorkspaceRoot != "":
 		// Deny patterns: explicit config wins; unset falls back to the
 		// built-in secret-file defaults; an explicit empty list disables.
 		deny := cfg.Agent.Default.WorkspaceDenyPatterns
@@ -419,6 +452,22 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		},
 	})
 
+	// Isolated mode: hand the registry the sandbox workspace only after
+	// every tool is registered. SetWorkspace is the enforcement point — a
+	// refusal fails the session loudly rather than half-isolating it, so
+	// nothing below can believe a contained run is in effect when it is
+	// not. The destroy joins the error: a teardown failure means the
+	// container may still be running.
+	if sessionSandbox != nil {
+		if serr := toolReg.SetWorkspace(sessionSandbox.Workspace()); serr != nil {
+			serr = fmt.Errorf("isolated workspace: %w", serr)
+			if derr := sessionSandbox.Destroy(context.Background()); derr != nil {
+				serr = errors.Join(serr, fmt.Errorf("workspace sandbox teardown: %w", derr))
+			}
+			return nil, serr
+		}
+	}
+
 	// Wrap the provider with OTel instrumentation if enabled.
 	provider = wrapProviderWithOtel(provider, otelActive, cfg.Observability.Otel.Verbose)
 
@@ -442,10 +491,14 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		otelShutdown:   otelShutdown,
 		tracker:        tracker,
 		backgroundJobs: backgroundJobs,
+		sessionSandbox: sessionSandbox,
 		cwd:            cwd,
 		steerCh:        make(chan string, 4),
 		followupCh:     followupCh,
 	}
+	// The session owns the sandbox from here; the failed-start teardown
+	// guard must not destroy what close() will.
+	sandboxHandedOff = true
 
 	// Ask fallback for out-of-workspace access: prompts route through
 	// the session's approval UI (TUI/web) or stdin in plain REPL mode.
