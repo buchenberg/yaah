@@ -14,6 +14,7 @@ import (
 	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 
+	shepherdgit "github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/config"
 )
@@ -230,7 +231,7 @@ func TestCheckShepherd(t *testing.T) {
 	// left no trace record (the kernel's documented rule), and the
 	// doctor's counts must show the rebuilt tree.
 	mgr := shepherd.NewScopeManager(store)
-	root, err := mgr.Create("sess-doc", shepherdsandbox.NewLocalGitSandbox(newDoctorGitRepo(t)))
+	root, err := mgr.Create("sess-doc", shepherdgit.NewLocalGitSandbox(newDoctorGitRepo(t)))
 	if err != nil {
 		t.Fatalf("create root: %v", err)
 	}

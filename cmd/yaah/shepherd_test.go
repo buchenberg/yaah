@@ -13,6 +13,7 @@ import (
 	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 
+	shepherdgit "github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	"github.com/buchenberg/yaah/internal/agent/recovery"
 )
 
@@ -33,23 +34,19 @@ func shepherdOrphanEnv(t *testing.T) (*recovery.Report, string, string) {
 		t.Fatalf("open store: %v", err)
 	}
 	mgr := shepherd.NewScopeManager(store)
-	root, err := mgr.Create("sess-shep", shepherdsandbox.NewLocalGitSandbox(repo))
+	root, err := mgr.Create("sess-shep", shepherdgit.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create root: %v", err)
 	}
 
-	// The live worktree: forked isolated, recorded, still active.
+	// The live worktree: forked isolated, still active.
 	liveWT := filepath.Join(t.TempDir(), "wt-live")
-	liveSB := shepherdsandbox.NewWorktreeSandbox(repo, liveWT)
+	liveSB := shepherdgit.NewWorktreeSandbox(repo, liveWT)
 	if err := liveSB.Create(context.Background(), shepherdsandbox.SandboxSpec{}); err != nil {
 		t.Fatalf("create live worktree: %v", err)
 	}
-	liveChild, err := mgr.ForkIsolated(root.ID(), "sub-live", nil, liveSB)
-	if err != nil {
+	if _, err := mgr.ForkIsolated(root.ID(), "sub-live", nil, liveSB); err != nil {
 		t.Fatalf("fork live: %v", err)
-	}
-	if err := recovery.RecordWorktree(context.Background(), store, liveChild.OwnerID(), repo, liveWT); err != nil {
-		t.Fatalf("record live: %v", err)
 	}
 
 	// The orphan: a real worktree whose scope is terminal but whose
@@ -59,16 +56,13 @@ func shepherdOrphanEnv(t *testing.T) (*recovery.Report, string, string) {
 	// state) and then re-adding a REAL worktree at the same path with
 	// sentinel content: the exact shape the crash leaves.
 	orphanWT := filepath.Join(t.TempDir(), "wt-dead")
-	deadSB := shepherdsandbox.NewWorktreeSandbox(repo, orphanWT)
+	deadSB := shepherdgit.NewWorktreeSandbox(repo, orphanWT)
 	if err := deadSB.Create(context.Background(), shepherdsandbox.SandboxSpec{}); err != nil {
 		t.Fatalf("create dead worktree: %v", err)
 	}
 	deadChild, err := mgr.ForkIsolated(root.ID(), "sub-dead", nil, deadSB)
 	if err != nil {
 		t.Fatalf("fork dead: %v", err)
-	}
-	if err := recovery.RecordWorktree(context.Background(), store, deadChild.OwnerID(), repo, orphanWT); err != nil {
-		t.Fatalf("record dead: %v", err)
 	}
 	if err := root.Discard(deadChild); err != nil {
 		t.Fatalf("discard: %v", err)

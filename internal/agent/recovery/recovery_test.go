@@ -2,14 +2,17 @@ package recovery
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
 	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	shepherdgit "github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
@@ -70,7 +73,7 @@ func buildCrashState(t *testing.T) *crashState {
 	t.Cleanup(func() { store.Close(context.Background()) })
 
 	mgr := shepherd.NewScopeManager(store)
-	root, err := mgr.Create("sess-old", shepherdsandbox.NewLocalGitSandbox(repo))
+	root, err := mgr.Create("sess-old", shepherdgit.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create root: %v", err)
 	}
@@ -100,7 +103,7 @@ func buildCrashState(t *testing.T) *crashState {
 	// An isolated worktree child with a sealed output — the crash
 	// happened mid-fork, before the settlement.
 	wtPath := filepath.Join(t.TempDir(), "wt-a")
-	sb := shepherdsandbox.NewWorktreeSandbox(repo, wtPath)
+	sb := shepherdgit.NewWorktreeSandbox(repo, wtPath)
 	if err := sb.Create(context.Background(), shepherdsandbox.SandboxSpec{}); err != nil {
 		t.Fatalf("create worktree: %v", err)
 	}
@@ -110,9 +113,6 @@ func buildCrashState(t *testing.T) *crashState {
 	}
 	state.worktreeChildID = wtChild.ID()
 	state.worktreePath = wtPath
-	if err := RecordWorktree(context.Background(), store, wtChild.OwnerID(), repo, wtPath); err != nil {
-		t.Fatalf("record worktree: %v", err)
-	}
 	if err := os.WriteFile(filepath.Join(wtPath, "variant.txt"), []byte("speculative\n"), 0o644); err != nil {
 		t.Fatalf("write worktree content: %v", err)
 	}
@@ -381,18 +381,15 @@ func TestRecover_SquatterDirectoryNeverAdopted(t *testing.T) {
 	}
 
 	mgr1 := shepherd.NewScopeManager(store)
-	root, err := mgr1.Create("sess-squat", shepherdsandbox.NewLocalGitSandbox(repo))
+	root, err := mgr1.Create("sess-squat", shepherdgit.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create root: %v", err)
 	}
 	// The isolated fork never provisioned a real worktree — the crash
 	// left the scope pointing at the squatter's path.
-	child, err := mgr1.ForkIsolated(root.ID(), "sub-squat", nil, shepherdsandbox.NewWorktreeSandbox(repo, squat))
+	child, err := mgr1.ForkIsolated(root.ID(), "sub-squat", nil, shepherdgit.NewWorktreeSandbox(repo, squat))
 	if err != nil {
 		t.Fatalf("fork: %v", err)
-	}
-	if err := RecordWorktree(context.Background(), store, child.OwnerID(), repo, squat); err != nil {
-		t.Fatalf("record: %v", err)
 	}
 	store.Close(context.Background())
 
@@ -461,4 +458,183 @@ func reopenMode(t *testing.T, state *crashState, adoptRoots bool) (*shepherd.Sco
 		t.Fatalf("recover: %v", err)
 	}
 	return mgr, report
+}
+
+// appendLegacyWorktreeRecord writes a pre-v0.14 yaah.worktree.provisioned.v1
+// record — the shape traces written before the kernel recorded sandbox
+// addresses itself carry. Tests use it to stand in for a fork made by an
+// older yaah against the same kernel trace.
+func appendLegacyWorktreeRecord(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, owner, repoPath, worktreePath string) error {
+	_, err := store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+		AppendIntentID: fmt.Sprintf("%s:worktree:%d", owner, time.Now().UnixNano()),
+		Groups: []shepherdtrace.AppendGroup{{
+			TraceOwnerID: owner,
+			FactDrafts: []shepherdtrace.RecordDraft{{
+				Mode:      shepherdtrace.Declaration,
+				SchemaRef: SchemaWorktreeProvisioned,
+				KindLabel: "worktree:provisioned",
+				Payload: map[string]any{
+					"path": worktreePath,
+					"repo": repoPath,
+				},
+			}},
+		}},
+	})
+	if err != nil {
+		return fmt.Errorf("record worktree path for %s: %w", owner, err)
+	}
+	return nil
+}
+
+// TestRecover_KernelRecordedWorktreeAdoptsWithoutYaahRecord is plan 06
+// phase D's retirement law: a fork made after the kernel v0.14 bump writes
+// no yaah.worktree.provisioned record — the kernel's own fork record
+// carries the sandbox address — and recovery still re-adopts the
+// worktree, with the pre-crash work live, and lists it as adopted.
+func TestRecover_KernelRecordedWorktreeAdoptsWithoutYaahRecord(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "trace.sqlite")
+	store, err := shepherdtrace.NewSQLiteTraceStore(storePath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+	repo := newGitRepo(t)
+	ctx := context.Background()
+
+	mgr := shepherd.NewScopeManager(store)
+	root, err := mgr.Create("sess-new", shepherdgit.NewLocalGitSandbox(repo))
+	if err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+
+	wtPath := filepath.Join(t.TempDir(), "wt-new")
+	sb := shepherdgit.NewWorktreeSandbox(repo, wtPath)
+	if err := sb.Create(ctx, shepherdsandbox.SandboxSpec{}); err != nil {
+		t.Fatalf("create worktree: %v", err)
+	}
+	child, err := mgr.ForkIsolated(root.ID(), "sub-new", nil, sb)
+	if err != nil {
+		t.Fatalf("fork isolated: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wtPath, "live.txt"), []byte("pre-crash\n"), 0o644); err != nil {
+		t.Fatalf("write worktree content: %v", err)
+	}
+
+	// The crash: nothing is closed, no yaah record is written, and the
+	// restarted process knows only the trace.
+	reopened, err := shepherdtrace.NewSQLiteTraceStore(storePath)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	t.Cleanup(func() { reopened.Close(context.Background()) })
+	rmgr, report, err := Recover(ctx, reopened, repo, true)
+	if err != nil {
+		t.Fatalf("recover: %v", err)
+	}
+
+	rc, ok := rmgr.Get(child.ID())
+	if !ok {
+		t.Fatal("worktree child not recovered")
+	}
+	if rc.Sandbox() == nil {
+		t.Fatal("the kernel-recorded worktree was not re-adopted; recovery must find it from the fork record alone")
+	}
+	found := false
+	for _, p := range report.Adopted {
+		if p == wtPath {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the re-adopted worktree is not on the adopted report: %v", report.Adopted)
+	}
+	if data, rerr := os.ReadFile(filepath.Join(wtPath, "live.txt")); rerr != nil || string(data) != "pre-crash\n" {
+		t.Errorf("the pre-crash work is not live through the re-adopted worktree: %q, %v", string(data), rerr)
+	}
+}
+
+// TestRecover_LegacyRecordFallbackAdopts exercises the pre-bump trace
+// shape genuinely: a fork record written before the kernel carried
+// sandbox addresses (no sandbox_path in the payload) alongside yaah's own
+// worktree record. Recovery must adopt from the yaah record — the
+// fallback deleted at the next minor — with the same strict verification.
+func TestRecover_LegacyRecordFallbackAdopts(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "trace.sqlite")
+	store, err := shepherdtrace.NewSQLiteTraceStore(storePath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	repo := newGitRepo(t)
+	ctx := context.Background()
+
+	mgr := shepherd.NewScopeManager(store)
+	root, err := mgr.Create("sess-legacy", shepherdgit.NewLocalGitSandbox(repo))
+	if err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+
+	wtPath := filepath.Join(t.TempDir(), "wt-legacy")
+	sb := shepherdgit.NewWorktreeSandbox(repo, wtPath)
+	if err := sb.Create(ctx, shepherdsandbox.SandboxSpec{}); err != nil {
+		t.Fatalf("create worktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wtPath, "old.txt"), []byte("pre-bump work\n"), 0o644); err != nil {
+		t.Fatalf("write worktree content: %v", err)
+	}
+
+	// The pre-bump trace shape: the fork record carries the backend but
+	// no sandbox address, and yaah's own record holds the path.
+	if _, err := store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+		AppendIntentID: "sess-legacy:fork-legacy",
+		Groups: []shepherdtrace.AppendGroup{{
+			TraceOwnerID: root.OwnerID(),
+			FactDrafts: []shepherdtrace.RecordDraft{{
+				Mode:      shepherdtrace.Declaration,
+				SchemaRef: shepherd.SchemaScopeForked,
+				KindLabel: "scope:forked",
+				Payload: map[string]any{
+					"child_owner":     "sub-legacy",
+					"isolated":        true,
+					"sandbox_backend": "git",
+				},
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("append pre-bump fork record: %v", err)
+	}
+	if err := appendLegacyWorktreeRecord(ctx, store, "sub-legacy", repo, wtPath); err != nil {
+		t.Fatalf("append legacy worktree record: %v", err)
+	}
+	store.Close(context.Background())
+
+	// The crash and restart.
+	reopened, err := shepherdtrace.NewSQLiteTraceStore(storePath)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	t.Cleanup(func() { reopened.Close(context.Background()) })
+	rmgr, report, err := Recover(ctx, reopened, repo, true)
+	if err != nil {
+		t.Fatalf("recover: %v", err)
+	}
+
+	rc, ok := rmgr.Get("scope:sub-legacy")
+	if !ok {
+		t.Fatal("legacy child not recovered")
+	}
+	if rc.Sandbox() == nil {
+		t.Fatal("the legacy record's worktree was not adopted; the pre-bump fallback must resolve it")
+	}
+	found := false
+	for _, p := range report.Adopted {
+		if p == wtPath {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the adopted legacy worktree is not on the report: %v", report.Adopted)
+	}
+	if data, rerr := os.ReadFile(filepath.Join(wtPath, "old.txt")); rerr != nil || string(data) != "pre-bump work\n" {
+		t.Errorf("the pre-bump work is not live through the adopted worktree: %q, %v", string(data), rerr)
+	}
 }

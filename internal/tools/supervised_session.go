@@ -14,6 +14,7 @@ import (
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
 	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	shepherdgit "github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"github.com/buchenberg/yaah/internal/agent/recovery"
 	"github.com/buchenberg/yaah/internal/jobs"
@@ -731,7 +732,7 @@ func (s *supervisedSession) provisionVariant(
 	v := &reviewVariant{}
 	wtPath := s.worktreePath(index, label)
 	v.workdir = wtPath
-	sb := shepherdsandbox.NewWorktreeSandbox(s.runtime.RepoPath, wtPath)
+	sb := shepherdgit.NewWorktreeSandbox(s.runtime.RepoPath, wtPath)
 
 	if err := sb.Create(ctx, shepherdsandbox.SandboxSpec{}); err != nil {
 		// A worktree left behind by a killed run can occupy the path. Only
@@ -760,34 +761,9 @@ func (s *supervisedSession) provisionVariant(
 	}
 	v.ScopeID = scope.ID()
 
-	// Record the worktree's path for recovery (adoption plan R1): the
-	// kernel's fork record carries the backend but not the path. A
-	// record failure discards the branch — a worktree the trace cannot
-	// find is an orphan recovery would never list.
-	if terr := recovery.RecordWorktree(ctx, SharedTraceStore, scope.OwnerID(), s.runtime.RepoPath, wtPath); terr != nil {
-		// The discard's own failure must not strand the worktree: the
-		// kernel records the discard BEFORE destroying the owned
-		// sandbox, so the same store failure returns before the
-		// teardown — destroy the sandbox explicitly and join the
-		// cleanup failure into the branch's error.
-		v.ScopeID = ""
-		v.RunErr = terr.Error()
-		// Destroy only when the discard did not already own the
-		// teardown: on a successful discard the kernel has destroyed
-		// the owned worktree, and a second destroy would append a
-		// spurious error to a clean cleanup.
-		if parent, pok := mgr.Get(s.scopeID); pok {
-			if derr := parent.Discard(scope); derr != nil {
-				v.RunErr = v.RunErr + "; discard: " + derr.Error()
-				if sderr := sb.Destroy(context.WithoutCancel(ctx)); sderr != nil {
-					v.RunErr = v.RunErr + "; destroy worktree: " + sderr.Error()
-				}
-			}
-		} else if sderr := sb.Destroy(context.WithoutCancel(ctx)); sderr != nil {
-			v.RunErr = v.RunErr + "; destroy worktree: " + sderr.Error()
-		}
-		return v
-	}
+	// No yaah-side worktree record is needed (plan 06, kernel v0.14.0):
+	// the kernel's fork record carries the sandbox address itself, so
+	// recovery finds the worktree from the trace alone.
 
 	// Seed the checkout with the parent's exact state at the fork point
 	// before bootstrapping. The bootstrap installs from tracked lockfiles
@@ -927,20 +903,12 @@ func (s *supervisedSession) chooseVariant(ctx context.Context, winner string) (s
 	}
 
 	// The settlement action mirrors the kernel's own Select
-	// precondition — digest equality, not a content diff: a dirty fork
-	// point mints a fresh state revision per capture, so an unchanged
-	// tree still never digest-matches and must take Apply (a content
-	// diff would pick Select and the kernel would refuse).
-	//
-	// Known kernel gap (worth upstreaming, plan §8 pattern): a fork
-	// point with uncommitted content cannot settle deterministically
-	// at all — Select's digest precondition only holds when both
-	// captures mint the same stash commit, and Apply's overlap guard
-	// diffs against the captured HEAD, so the baseline's own
-	// uncommitted files appear as both parent drift and sealed-output
-	// changes and always overlap. The typed conflict surfaces honestly
-	// and the session stays awaiting-choose; the recovery is abort (or
-	// committing the tree before the fork).
+	// precondition — digest equality, not a content diff: an unmoved
+	// tree digests equal (the kernel's v0.14 content identity; a dirty
+	// fork point included), so Select applies; a moved tree does not,
+	// so Apply merges. (A content diff would pick Select on a
+	// timeline-moved-but-content-equal parent, and the kernel would
+	// rightly refuse.)
 	action := shepherd.SettleSelect
 	parentNow, err := scope.CaptureWorkspace(ctx)
 	if err != nil {
