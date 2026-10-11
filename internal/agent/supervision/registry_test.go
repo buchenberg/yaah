@@ -77,11 +77,29 @@ func TestRegistry_UnregisterBeforeClosePreventsSendOnClosed(t *testing.T) {
 	}
 }
 
+// TestRegistry_RegisterNilIsNoOp pins the honest-bridge contract: a nil
+// channel registers nothing — a fabricated undrained channel would let
+// Inject claim delivery into a void while status listed the scope as
+// bridged.
+func TestRegistry_RegisterNilIsNoOp(t *testing.T) {
+	r := NewRegistry()
+	r.Register("scope:nowhere", nil)
+	if r.Has("scope:nowhere") {
+		t.Error("a nil channel must not register")
+	}
+	if err := r.Inject("scope:nowhere", "x"); !errors.Is(err, ErrNoRun) {
+		t.Errorf("Inject at a nil-registered scope = %v, want ErrNoRun", err)
+	}
+	if ids := r.ScopeIDs(); len(ids) != 0 {
+		t.Errorf("status must not list a nil registration, got %v", ids)
+	}
+}
+
 func TestRegistry_ScopeIDsSorted(t *testing.T) {
 	r := NewRegistry()
-	r.Register("scope:c", nil)
-	r.Register("scope:a", nil)
-	r.Register("scope:b", nil)
+	r.Register("scope:c", make(chan string, SteerBuffer))
+	r.Register("scope:a", make(chan string, SteerBuffer))
+	r.Register("scope:b", make(chan string, SteerBuffer))
 	got := r.ScopeIDs()
 	want := []string{"scope:a", "scope:b", "scope:c"}
 	for i := range want {

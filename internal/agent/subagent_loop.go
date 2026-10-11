@@ -71,6 +71,13 @@ type SubAgentConfig struct {
 	// delivers guidance here, and the loop's steer middleware turns it
 	// into a high-priority user message between turns. Nil disables
 	// steering for this run — the run is unreachable by inject.
+	//
+	// Delivery is between-turn and best-effort by construction: guidance
+	// that arrives after the final turn's drain is never consumed (a
+	// response without tool calls ends the run). The runner unregisters
+	// the run the moment the loop returns, so a finished run answers
+	// inject with "no active run" instead of claiming delivery — the
+	// loss window is only the final turn itself.
 	SteerCh chan string
 }
 

@@ -302,14 +302,16 @@ func SubAgentPipelineNames(disabled []string) []string {
 // observes them. Opting out via PipelineDisabled is honoured.
 func NewSubAgentPipeline(cfg PipelineConfig) *Pipeline {
 	names := SubAgentPipelineNames(cfg.PipelineDisabled)
-	// Order matters: steering guidance lands before the turn's tool
-	// calls are gated or traced, so an injected "stop doing X" reaches
-	// the model before it repeats the mistake.
-	if cfg.Steer != nil && !slices.Contains(cfg.PipelineDisabled, "steer") {
-		names = append([]string{"steer"}, names...)
-	}
+	// Prepend in reverse of the intended order so the last prepend is
+	// first: steer must run before everything — injected guidance has to
+	// reach the model before it repeats the mistake — and permission
+	// second, gating the turn's tool calls ahead of concurrency and
+	// tracing.
 	if len(cfg.PermissionRules) > 0 && !slices.Contains(cfg.PipelineDisabled, "permission") {
 		names = append([]string{"permission"}, names...)
+	}
+	if cfg.Steer != nil && !slices.Contains(cfg.PipelineDisabled, "steer") {
+		names = append([]string{"steer"}, names...)
 	}
 	mws := make([]Middleware, 0, len(names))
 	for _, name := range names {

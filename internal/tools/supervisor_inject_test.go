@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 
@@ -25,19 +24,19 @@ func TestSupervisorTool_InjectBridgesToRun(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 
-	prevMgr, prevReg := SharedScopeManager, SharedRunRegistry
+	prevMgr := SharedScopeManager
 	SharedScopeManager = shepherd.NewScopeManager(store)
-	SharedRunRegistry = supervision.NewRegistry()
-	t.Cleanup(func() { SharedScopeManager, SharedRunRegistry = prevMgr, prevReg })
+	runs := supervision.NewRegistry()
+	t.Cleanup(func() { SharedScopeManager = prevMgr })
 
 	child, err := SharedScopeManager.Create("sub-bridge", nil)
 	if err != nil {
 		t.Fatalf("create scope: %v", err)
 	}
 	steerCh := make(chan string, supervision.SteerBuffer)
-	SharedRunRegistry.Register(child.ID(), steerCh)
+	runs.Register(child.ID(), steerCh)
 
-	sup := &SupervisorTool{}
+	sup := &SupervisorTool{Runs: runs}
 	injectArgs, _ := json.Marshal(map[string]string{
 		"action": "inject", "scope_id": child.ID(), "guidance": "narrow the scope"})
 	out, err := sup.Execute(context.Background(), string(injectArgs))
@@ -77,7 +76,7 @@ func TestSupervisorTool_InjectBridgesToRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create wedged scope: %v", err)
 	}
-	SharedRunRegistry.Register(wedged.ID(), make(chan string, 1))
+	runs.Register(wedged.ID(), make(chan string, 1))
 	wedgedArgs, _ := json.Marshal(map[string]string{
 		"action": "inject", "scope_id": wedged.ID(), "guidance": "a"})
 	wedgedArgs2, _ := json.Marshal(map[string]string{
@@ -85,9 +84,12 @@ func TestSupervisorTool_InjectBridgesToRun(t *testing.T) {
 	if _, err := sup.Execute(context.Background(), string(wedgedArgs)); err != nil {
 		t.Fatalf("first inject into wedged: %v", err)
 	}
-	_, err = sup.Execute(context.Background(), string(wedgedArgs2))
-	if err == nil || !errors.Is(err, supervision.ErrSteerBusy) {
-		t.Errorf("inject into a full buffer = %v, want the busy error surfaced", err)
+	out, err = sup.Execute(context.Background(), string(wedgedArgs2))
+	if err != nil {
+		t.Fatalf("busy inject must not be a hard error (the trace holds the intervention): %v", err)
+	}
+	if !strings.Contains(out, "steering buffer is full") {
+		t.Errorf("busy inject must explain the undelivered guidance, got: %s", out)
 	}
 
 	// Status reports the bridge.
@@ -102,7 +104,7 @@ func TestSupervisorTool_InjectBridgesToRun(t *testing.T) {
 
 	// Unregister and the run is honestly gone: inject degrades to the
 	// trace-only outcome without an error.
-	SharedRunRegistry.Unregister(child.ID())
+	runs.Unregister(child.ID())
 	out, err = sup.Execute(context.Background(), string(injectArgs))
 	if err != nil {
 		t.Fatalf("Execute(inject, after unregister): %v", err)

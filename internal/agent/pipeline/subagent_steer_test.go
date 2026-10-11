@@ -43,4 +43,15 @@ func TestNewSubAgentPipeline_SteerConditional(t *testing.T) {
 	if slices.Contains(pipelineNames(p), "steer") {
 		t.Error("steer must respect the disabled list")
 	}
+
+	// With permission rules too, steer stays first: the prepends are
+	// ordered so the documented invariant holds on the combined prefix.
+	p = NewSubAgentPipeline(PipelineConfig{
+		Steer:           ch,
+		PermissionRules: []PermissionRule{{Tool: "bash"}},
+	})
+	names = pipelineNames(p)
+	if names[0] != "steer" || names[1] != "permission" {
+		t.Errorf("combined prefix = %v, want [steer permission ...]", names)
+	}
 }

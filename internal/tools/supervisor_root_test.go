@@ -27,19 +27,19 @@ func TestSupervisorTool_RootScopeHaltGuarded(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 
-	prevMgr, prevReg := SharedScopeManager, SharedRunRegistry
+	prevMgr := SharedScopeManager
 	SharedScopeManager = shepherd.NewScopeManager(store)
-	SharedRunRegistry = supervision.NewRegistry()
-	t.Cleanup(func() { SharedScopeManager, SharedRunRegistry = prevMgr, prevReg })
+	t.Cleanup(func() { SharedScopeManager = prevMgr })
 
 	root, err := SharedScopeManager.Create("sess-guard", nil)
 	if err != nil {
 		t.Fatalf("create root scope: %v", err)
 	}
 	sessionSteer := make(chan string, supervision.SteerBuffer)
-	SharedRunRegistry.Register(root.ID(), sessionSteer)
 
-	sup := &SupervisorTool{RootScopeID: root.ID()}
+	runs := supervision.NewRegistry()
+	runs.Register(root.ID(), sessionSteer)
+	sup := &SupervisorTool{RootScopeID: root.ID(), Runs: runs}
 
 	haltArgs, _ := json.Marshal(map[string]string{
 		"action": "halt", "scope_id": root.ID()})

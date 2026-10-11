@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/jobs"
@@ -107,11 +108,16 @@ type agentSession struct {
 	sessionSandbox *tools.SessionSandbox
 
 	// rootScopeID is the session's shepherd root scope (adoption plan
-	// A2): registered in the shared run registry against steerCh, so
-	// supervisor inject into the root steers the session itself.
-	// close() unregisters it BEFORE closing steerCh — a registry send
-	// must never land on a closed channel. Empty when tracing is off.
+	// A2): registered in the run registry against steerCh, so supervisor
+	// inject into the root steers the session itself. close() unregisters
+	// it BEFORE closing steerCh — a registry send must never land on a
+	// closed channel. Empty when tracing is off.
 	rootScopeID string
+
+	// runs is the session's supervision run registry (adoption plan A2),
+	// session-owned per the repo's no-globals convention. Nil when
+	// tracing is off.
+	runs *supervision.Registry
 
 	cwd string
 
@@ -154,8 +160,8 @@ func (s *agentSession) close() {
 	// The root's registry entry goes before its channel closes: the
 	// registry sends under its lock, so an unregister that returns
 	// guarantees no later send — and a send on a closed channel panics.
-	if s.rootScopeID != "" && tools.SharedRunRegistry != nil {
-		tools.SharedRunRegistry.Unregister(s.rootScopeID)
+	if s.rootScopeID != "" && s.runs != nil {
+		s.runs.Unregister(s.rootScopeID)
 	}
 	if s.steerCh != nil {
 		close(s.steerCh)

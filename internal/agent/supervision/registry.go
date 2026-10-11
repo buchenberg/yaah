@@ -46,11 +46,14 @@ func NewRegistry() *Registry {
 }
 
 // Register associates a scope with its run's steering channel. The
-// channel must be buffered (Register creates it when ch is nil) and
-// owned by the run — the registry only borrows it.
+// channel is owned by the run — the registry only borrows it, and
+// Unregister must be called before the run closes it. A nil channel
+// registers nothing: there is no loop side to deliver to, and a
+// fabricated channel nobody drains would have Inject claim delivery
+// into a void while status listed the scope as bridged.
 func (r *Registry) Register(scopeID string, ch chan string) {
 	if ch == nil {
-		ch = make(chan string, SteerBuffer)
+		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -82,6 +82,12 @@ type TaskToolOpts struct {
 	// per-dispatch scope, the pre-plan behaviour.
 	RootScopeID string
 
+	// Runs is the session's supervision run registry (adoption plan A2):
+	// the runner registers each dispatch's steering channel under its
+	// scope ID so supervisor inject reaches the loop. Nil when tracing
+	// is off.
+	Runs *supervision.Registry
+
 	// ResolveProviderByName translates a configured provider name into a
 	// live agent.Provider. Injected from the cmd layer because provider
 	// construction (makeProvider) belongs with the rest of the CLI wiring.
@@ -119,6 +125,7 @@ func NewTaskTool(opts TaskToolOpts) *tools.TaskTool {
 			pathValidator:         opts.PathValidator,
 			workspace:             opts.Workspace,
 			rootScopeID:           opts.RootScopeID,
+			runs:                  opts.Runs,
 			resolveProviderByName: opts.ResolveProviderByName,
 		}, depth),
 		ResolveTimeout:   subAgentTimeoutResolver(opts.SubCfg),
@@ -260,6 +267,12 @@ type taskRunnerOpts struct {
 	// flat per-dispatch scope.
 	rootScopeID string
 
+	// runs is the session's supervision run registry (adoption plan A2),
+	// injected by the wiring alongside the root scope — session-owned,
+	// per the repo's no-globals convention. Nil when tracing is off:
+	// dispatches then have no injectable bridge.
+	runs *supervision.Registry
+
 	// resolveProviderByName resolves a configured provider by name. It
 	// is injected from the cmd layer because provider construction
 	// (makeProvider) is CLI wiring that does not belong here. May be nil;
@@ -387,15 +400,16 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// Supervision bridge (adoption plan A2): the run registers its
 		// steering channel under the scope ID, so the supervisor tool's
 		// inject reaches this loop between turns instead of only
-		// recording a trace fact. The deferred unregister keeps the map
-		// honest on every exit path — normal, error, and cancellation;
-		// inject into a finished run then reports "no active run"
-		// rather than silently vanishing.
+		// recording a trace fact. The deferred unregister is panic
+		// safety only; the explicit unregister right after Run returns
+		// is the real cut, so the entry never outlives the loop through
+		// post-run enrichment — an inject in that window would claim
+		// delivery into a channel nothing drains anymore.
 		var steerCh chan string
-		if subScope != nil && tools.SharedRunRegistry != nil {
+		if subScope != nil && opts.runs != nil {
 			steerCh = make(chan string, supervision.SteerBuffer)
-			tools.SharedRunRegistry.Register(subScope.ID(), steerCh)
-			defer tools.SharedRunRegistry.Unregister(subScope.ID())
+			opts.runs.Register(subScope.ID(), steerCh)
+			defer opts.runs.Unregister(subScope.ID())
 		}
 
 		// Per-turn checkpointing is enabled per role (subagent.roles.<name>.
@@ -438,6 +452,13 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		})
 
 		result, runErr := subLoop.Run(ctx, prompt)
+
+		// The run is over: cut the bridge now, not at closure return —
+		// trace enrichment and output budgeting below must not sit inside
+		// a window where inject claims delivery to a dead loop.
+		if subScope != nil && opts.runs != nil {
+			opts.runs.Unregister(subScope.ID())
+		}
 
 		// Hand the final conversation to the spawner's capture pointer (set
 		// via jobs.WithConversationCapture) so supervised review sessions can
