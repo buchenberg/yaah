@@ -13,19 +13,15 @@ package tools
 // guarantees that (alpine/git, for instance, has BusyBox find without
 // -printf). Build or pick an image, then:
 //
-//	sudo -E go test ./internal/tools/ -run TestLive_ActivatedSession -count=1 \
-//	  -timeout 30m
+//	sudo env YAAH_LIVE_CONTAINERD_ADDR=/run/containerd/containerd.sock \
+//	     YAAH_LIVE_CONTAINERD_IMAGE=docker.io/library/yaah-workspace:latest \
+//	     go test ./internal/tools/ -run TestLive_ActivatedSession -count=1 \
+//	     -timeout 30m -v
 //
-// with (at minimum):
-//
-//	YAAH_LIVE_CONTAINERD_ADDR=/run/containerd/containerd.sock
-//	YAAH_LIVE_CONTAINERD_IMAGE=registry.example/yaah-workspace:latest
-//
-// Optional knobs: NAMESPACE (default yaah-live), SNAPSHOTTER (the
-// adapter's default), ROOT (default /workspace), TIMEOUT (default 10m —
-// a cold image pull rides the same bound; pass a matching go test
-// -timeout). The daemon socket needs root, so the test skips as the
-// invoking user unless euid 0 — sudo -E preserves the env.
+// `sudo env VAR=...`, not `sudo -E`: sudoers policies commonly refuse to
+// preserve the environment, the knobs vanish, and the harness skips
+// silently — run with -v to see the skip reason. The daemon socket needs
+// root, so the test skips as the invoking user unless euid 0.
 
 import (
 	"context"
