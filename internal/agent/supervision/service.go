@@ -113,11 +113,12 @@ func (s *Service) GuardCheck() func(ownerID, toolName, argsJSON string) string {
 			return ""
 		}
 		// Fail closed: a deny verdict denies regardless of whether the
-		// payload type-asserts. A silent empty-string here would turn a
-		// non-string payload into an allow — fail-open in the one
-		// pre-dispatch net sub-agent calls pass through.
+		// payload type-asserts or carries text. A silent empty string
+		// here would turn a non-string (or empty) payload into an
+		// allow — fail-open in the one pre-dispatch net sub-agent
+		// calls pass through.
 		reason, ok := iv.Payload.(string)
-		if !ok {
+		if !ok || reason == "" {
 			return "Blocked destructive operation. Supervisor denied."
 		}
 		return reason
@@ -162,9 +163,12 @@ const (
 // of), because structured tools are the approved path for changes and
 // their review is the merge gate's job (Phase C), not this net.
 //
-// background_process joins the shells: it runs an arbitrary command
-// through the host process manager — exactly the "a shell can execute
-// anything a pattern matcher cannot see" hazard, in a second door.
+// background_process joins the shells for its command-running action
+// only: it executes an arbitrary command through the host process
+// manager — the same "a shell can execute anything a pattern matcher
+// cannot see" hazard, in a second door. Its read-only actions
+// (status, output) and stop pass: a command is the hazard, and only
+// the start action carries one.
 func shellGuardRule() shepherd.SupervisionRule {
 	guard := shepherd.DestructiveToolGuard()
 	return shepherd.SupervisionRule{
@@ -173,7 +177,14 @@ func shellGuardRule() shepherd.SupervisionRule {
 			if e.Mode != shepherdtrace.Declaration {
 				return false
 			}
-			return e.KindLabel == "bash" || e.KindLabel == "powershell" || e.KindLabel == "background_process"
+			switch e.KindLabel {
+			case "bash", "powershell":
+				return true
+			case "background_process":
+				cmd, _ := e.Payload["cmd"].(string)
+				return cmd != ""
+			}
+			return false
 		},
 		Action: guard.Action,
 	}

