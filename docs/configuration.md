@@ -310,7 +310,7 @@ everything runs on the host filesystem, as it always has.
 | `containerd.namespace` | `default` | containerd namespace for the session's containers |
 | `containerd.image` | (required for `containerd`) | Base image. Must satisfy the tool contract (sh, GNU stat/find, git, rg, base64, Go toolchain) — verified at startup |
 | `containerd.snapshotter` | `overlayfs` | containerd snapshotter plugin |
-| `containerd.fifo_dir` | `$TMPDIR/yaah-fifo-<uid>` | Directory the containerd *client* creates the task/exec stdio FIFOs in. containerd's own default (`/run/containerd/fifo`) is root-only, so the yaah default keeps unprivileged sessions working; must be absolute |
+| `containerd.fifo_dir` | `~/.yaah/containerd-fifo` | Directory the containerd *client* creates the task/exec stdio FIFOs in. containerd's own default (`/run/containerd/fifo`) is root-only, so the yaah default keeps unprivileged sessions working; must be absolute. Avoids a predictable name under the shared temp dir, which another local user could pre-create |
 
 The `containerd` backend requires a Linux containerd daemon: config
 validation refuses it at load on any other platform, naming the platform.

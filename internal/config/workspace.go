@@ -1,8 +1,6 @@
 package config
 
 import (
-	"fmt"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -66,9 +64,10 @@ type ContainerdWorkspaceConfig struct {
 	// FIFODir is where the containerd *client* creates the FIFOs that carry
 	// a task's and exec's stdio. containerd's own default (/run/containerd/
 	// fifo) is root-owned, so an unprivileged yaah cannot create its FIFOs
-	// there; an empty value normalizes to a per-user directory under the
-	// system temp dir, which root can also use (the daemon-side shim opens
-	// the FIFOs by path and runs as root, so either location serves it).
+	// there; an empty value normalizes to a directory under the yaah home
+	// (<HomeDir>/containerd-fifo), which root can also use (the daemon-side
+	// shim opens the FIFOs by path and runs as root, so either location
+	// serves it). Must be absolute when set.
 	FIFODir string `yaml:"fifo_dir"`
 }
 
@@ -98,12 +97,15 @@ func normalizeWorkspace(w *WorkspaceConfig) {
 	w.Containerd.FIFODir = SubstituteEnv(w.Containerd.FIFODir)
 	// The client — not the daemon — creates the task/exec stdio FIFOs, so
 	// the directory must be writable by yaah's own uid. containerd's default
-	// (/run/containerd/fifo) is root-only; a per-user temp dir works for both
-	// an unprivileged session and a root one (the shim, which reads the
-	// FIFOs, is root and bypasses the 0700 the client's MkdirAll leaves).
-	// The configured value passes through as-is, like the socket address.
+	// (/run/containerd/fifo) is root-only, and the obvious alternative — a
+	// predictable name under the shared temp dir — can be pre-created by
+	// another local user (the client's MkdirAll accepts an existing dir
+	// without checking its owner). The yaah home works for both an
+	// unprivileged session and a root one: it is single-user territory, and
+	// the shim, which reads the FIFOs, is root and bypasses the client's
+	// 0700. The configured value passes through as-is, like the socket
+	// address.
 	if w.Containerd.FIFODir == "" {
-		w.Containerd.FIFODir = filepath.Join(
-			os.TempDir(), fmt.Sprintf("yaah-fifo-%d", os.Getuid()))
+		w.Containerd.FIFODir = filepath.Join(HomeDir(), "containerd-fifo")
 	}
 }

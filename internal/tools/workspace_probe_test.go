@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -174,6 +175,47 @@ func TestOpenContainerdWorkspaceSandbox(t *testing.T) {
 	}
 	if sb.Backend() != config.BackendContainerd {
 		t.Errorf("Backend() = %q, want %q through the registry", sb.Backend(), config.BackendContainerd)
+	}
+}
+
+// TestOpenContainerdWorkspaceSandbox_Passthrough pins that every containerd
+// field the config surface exposes — FIFODir included — reaches the backend
+// the registry resolves. The adapter keeps its Config unexported, so the test
+// reads the field reflectively rather than through an accessor the adapter
+// would have to grow just for this.
+func TestOpenContainerdWorkspaceSandbox_Passthrough(t *testing.T) {
+	w := config.WorkspaceConfig{
+		Backend: config.BackendContainerd,
+		Root:    "/sandbox",
+		Containerd: config.ContainerdWorkspaceConfig{
+			Address:     "/run/containerd/containerd.sock",
+			Namespace:   "prod",
+			Image:       "example/dev:latest",
+			Snapshotter: "overlayfs",
+			FIFODir:     "/var/tmp/yaah-fifo",
+		},
+	}
+	sb, err := OpenContainerdWorkspaceSandbox(w)
+	if err != nil {
+		t.Fatalf("OpenContainerdWorkspaceSandbox: %v", err)
+	}
+
+	// The registry hands back the concrete adapter as the Sandbox interface;
+	// dig out its unexported cfg one field at a time.
+	cfg := reflect.ValueOf(sb).Elem().FieldByName("cfg")
+	if !cfg.IsValid() {
+		t.Fatalf("backend %T carries no cfg field; update the test to its layout", sb)
+	}
+	for field, want := range map[string]string{
+		"Address":     w.Containerd.Address,
+		"Namespace":   w.Containerd.Namespace,
+		"Snapshotter": w.Containerd.Snapshotter,
+		"FIFODir":     w.Containerd.FIFODir,
+		"Workdir":     w.Root,
+	} {
+		if got := cfg.FieldByName(field).String(); got != want {
+			t.Errorf("cfg.%s = %q, want %q", field, got, want)
+		}
 	}
 }
 

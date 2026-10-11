@@ -2,7 +2,6 @@ package config
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,10 +105,11 @@ workspace:
 	if cfg.Workspace.Containerd.Namespace != "default" {
 		t.Errorf("Namespace = %q, want the normalized default", cfg.Workspace.Containerd.Namespace)
 	}
-	// An unset fifo_dir normalizes to a per-user dir under the system temp
-	// dir: containerd's own default is root-only, so it would refuse the
-	// client's FIFO creation for an unprivileged session.
-	want := filepath.Join(os.TempDir(), fmt.Sprintf("yaah-fifo-%d", os.Getuid()))
+	// An unset fifo_dir normalizes into the yaah home: containerd's own
+	// default is root-only, and a predictable name under the shared temp
+	// dir could be pre-created by another local user to deny or subvert
+	// the session's FIFO creation.
+	want := filepath.Join(HomeDir(), "containerd-fifo")
 	if cfg.Workspace.Containerd.FIFODir != want {
 		t.Errorf("FIFODir = %q, want the normalized default %q", cfg.Workspace.Containerd.FIFODir, want)
 	}

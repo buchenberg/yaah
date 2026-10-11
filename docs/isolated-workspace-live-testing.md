@@ -7,8 +7,11 @@ end — against a real containerd daemon, not the in-memory fake. `TestLive_Acti
 is the runbook for executing it.
 
 The harness is inert by default: it skips unless its environment knobs are set and
-the process runs as root (the containerd socket requires it). A green `ok` with a
-run time under a second means it skipped — run with `-v` to see the skip reason.
+the process runs as root (a deliberate harness requirement — not a session
+requirement: with the socket-group setup below, ordinary `yaah` sessions run
+unprivileged; the live harness has simply not been taught to yet). A green `ok`
+with a run time under a second means it skipped — run with `-v` to see the skip
+reason.
 
 ## Daemon socket access (one-time host setup)
 
@@ -57,10 +60,8 @@ client side, but both are handled in code, not on the host:
 - **The client FIFO directory.** The containerd *client* creates the task/exec
   stdio FIFOs, and containerd's default (`/run/containerd/fifo`) is
   root-only. yaah normalizes an unset `workspace.containerd.fifo_dir` to
-  `$TMPDIR/yaah-fifo-<uid>` — see `docs/configuration.md`. No host setup
+  `<yaah home>/containerd-fifo` (see `docs/configuration.md`). No host setup
   needed.
-
-Notes:
 
 Notes:
 
@@ -68,6 +69,10 @@ Notes:
   `/etc/containerd/config.toml`, change `gid = 0` to the containerd group's
   number (`getent group containerd | cut -d: -f3`) — the field is an
   integer, so a name string makes the daemon exit on startup.
+- Step 2's `containerd config default | tee` overwrites an existing
+  configuration with generated defaults. On a host with a customized daemon
+  (runtimes, snapshotters, registry mirrors, plugins), do not regenerate:
+  edit only the `gid` line of the existing `/etc/containerd/config.toml`.
 - Namespaces (`yaah-live` included) live under `/var/lib/containerd` and
   survive the restart; only the socket is recreated.
 - Without `newgrp` (or a fresh login), the group membership is not yet in
