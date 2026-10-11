@@ -10,7 +10,7 @@ import (
 func TestRegistry_InjectDeliversToRegisteredRun(t *testing.T) {
 	r := NewRegistry()
 	ch := make(chan string, SteerBuffer)
-	r.Register("scope:sub-1", ch, nil)
+	r.Register("scope:sub-1", Run{SteerCh: ch})
 
 	if err := r.Inject("scope:sub-1", "try a different approach"); err != nil {
 		t.Fatalf("Inject: %v", err)
@@ -38,7 +38,7 @@ func TestRegistry_InjectWithoutRun(t *testing.T) {
 func TestRegistry_UnregisterThenInject(t *testing.T) {
 	r := NewRegistry()
 	ch := make(chan string, SteerBuffer)
-	r.Register("scope:sub-2", ch, nil)
+	r.Register("scope:sub-2", Run{SteerCh: ch})
 	r.Unregister("scope:sub-2")
 	if err := r.Inject("scope:sub-2", "x"); !errors.Is(err, ErrNoRun) {
 		t.Errorf("Inject after Unregister = %v, want ErrNoRun", err)
@@ -54,7 +54,7 @@ func TestRegistry_InjectFullBufferIsBusyNotBlock(t *testing.T) {
 	// A full buffer must report busy, not block the supervisor: the
 	// run is not consuming guidance (wedged between turns).
 	ch := make(chan string, 1)
-	r.Register("scope:wedged", ch, nil)
+	r.Register("scope:wedged", Run{SteerCh: ch})
 	if err := r.Inject("scope:wedged", "first"); err != nil {
 		t.Fatalf("first Inject: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestRegistry_UnregisterBeforeClosePreventsSendOnClosed(t *testing.T) {
 	// no concurrent send is in flight.
 	r := NewRegistry()
 	ch := make(chan string, SteerBuffer)
-	r.Register("scope:closing", ch, nil)
+	r.Register("scope:closing", Run{SteerCh: ch})
 	r.Unregister("scope:closing")
 	close(ch) // would panic if a send raced it; the unregister guarantees none
 	if err := r.Inject("scope:closing", "x"); !errors.Is(err, ErrNoRun) {
@@ -85,7 +85,7 @@ func TestRegistry_UnregisterBeforeClosePreventsSendOnClosed(t *testing.T) {
 // bridged.
 func TestRegistry_RegisterNilIsNoOp(t *testing.T) {
 	r := NewRegistry()
-	r.Register("scope:nowhere", nil, nil)
+	r.Register("scope:nowhere", Run{})
 	if r.Has("scope:nowhere") {
 		t.Error("a nil channel must not register")
 	}
@@ -99,9 +99,9 @@ func TestRegistry_RegisterNilIsNoOp(t *testing.T) {
 
 func TestRegistry_ScopeIDsSorted(t *testing.T) {
 	r := NewRegistry()
-	r.Register("scope:c", make(chan string, SteerBuffer), nil)
-	r.Register("scope:a", make(chan string, SteerBuffer), nil)
-	r.Register("scope:b", make(chan string, SteerBuffer), nil)
+	r.Register("scope:c", Run{SteerCh: make(chan string, SteerBuffer)})
+	r.Register("scope:a", Run{SteerCh: make(chan string, SteerBuffer)})
+	r.Register("scope:b", Run{SteerCh: make(chan string, SteerBuffer)})
 	got := r.ScopeIDs()
 	want := []string{"scope:a", "scope:b", "scope:c"}
 	for i := range want {
@@ -125,9 +125,11 @@ func TestRegistry_CancelInvokesTheRunsCancellation(t *testing.T) {
 		<-ctx.Done()
 		cancelled <- struct{}{}
 	}()
-	r.Register("scope:run-1", ch, cancel)
+	quiesceSrc := make(chan struct{})
+	r.Register("scope:run-1", Run{SteerCh: ch, Cancel: cancel, Done: quiesceSrc})
 
-	if err := r.Cancel("scope:run-1"); err != nil {
+	quiesce, err := r.Cancel("scope:run-1")
+	if err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
 	select {
@@ -135,27 +137,42 @@ func TestRegistry_CancelInvokesTheRunsCancellation(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("the registered cancellation was never invoked")
 	}
+	// The quiesce channel: closed by the run when it stops — the
+	// caller's wait-before-teardown handle.
+	if quiesce == nil {
+		t.Fatal("Cancel must return the run's quiesce channel")
+	}
+	select {
+	case <-quiesce:
+		t.Error("the quiesce channel must not be closed while the run is live")
+	default:
+	}
+
 	// Idempotent: a second cancel on the same run is the same call on
 	// the same context — no error, no second signal needed.
-	if err := r.Cancel("scope:run-1"); err != nil {
+	if _, err := r.Cancel("scope:run-1"); err != nil {
 		t.Errorf("second Cancel = %v, want nil (context cancellation is idempotent)", err)
 	}
 
 	// No run: honest refusal, never a phantom halt.
-	if err := r.Cancel("scope:gone"); !errors.Is(err, ErrNoRun) {
+	if _, err := r.Cancel("scope:gone"); !errors.Is(err, ErrNoRun) {
 		t.Errorf("Cancel at an unregistered scope = %v, want ErrNoRun", err)
 	}
 
 	// A run registered without a cancellation is injectable but not
 	// haltable — reported, not silently treated as halted.
-	r.Register("scope:inject-only", ch, nil)
-	if err := r.Cancel("scope:inject-only"); !errors.Is(err, ErrNotHaltable) {
+	r.Register("scope:inject-only", Run{SteerCh: ch})
+	if _, err := r.Cancel("scope:inject-only"); !errors.Is(err, ErrNotHaltable) {
 		t.Errorf("Cancel at an inject-only run = %v, want ErrNotHaltable", err)
 	}
 
 	// After unregister, the run is finished: Cancel reports ErrNoRun.
+	// The run stops and closes its quiesce channel, then unregisters:
+	// the caller that waited on quiesce knows teardown is safe, and a
+	// later Cancel reports ErrNoRun — never a phantom halt.
+	close(quiesceSrc)
 	r.Unregister("scope:run-1")
-	if err := r.Cancel("scope:run-1"); !errors.Is(err, ErrNoRun) {
+	if _, err := r.Cancel("scope:run-1"); !errors.Is(err, ErrNoRun) {
 		t.Errorf("Cancel after Unregister = %v, want ErrNoRun", err)
 	}
 }

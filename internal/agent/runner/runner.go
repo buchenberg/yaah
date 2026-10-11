@@ -411,12 +411,21 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		var haltedBySupervisor atomic.Bool
 		if subScope != nil && opts.runs != nil {
 			steerCh = make(chan string, supervision.SteerBuffer)
+			quiesce := make(chan struct{})
 			haltCtx, cancelRun := context.WithCancel(ctx)
-			opts.runs.Register(subScope.ID(), steerCh, func() {
-				haltedBySupervisor.Store(true)
-				cancelRun()
+			opts.runs.Register(subScope.ID(), supervision.Run{
+				SteerCh: steerCh,
+				Cancel: func() {
+					haltedBySupervisor.Store(true)
+					cancelRun()
+				},
+				// Closed the moment the loop returns: the supervisor's
+				// bounded quiesce wait before kernel-side sandbox
+				// teardown selects on this.
+				Done: quiesce,
 			})
 			defer opts.runs.Unregister(subScope.ID())
+			defer close(quiesce)
 			ctx = haltCtx
 		}
 

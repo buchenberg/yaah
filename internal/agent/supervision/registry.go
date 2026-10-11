@@ -39,13 +39,24 @@ var ErrNotHaltable = errors.New("the run registered no cancellation; it is not h
 // the composition sites that create the channels the registry borrows.
 const SteerBuffer = 8
 
-// run is one registered execution: its steering channel (the inject
-// bridge) and its cancellation function (the halt bridge, adoption plan
-// A3). Either may be nil — a run registers what it supports, and Inject
-// or Cancel report honestly about the rest.
+// Run is one registered execution's bridge surface: the steering channel
+// (the inject bridge, adoption plan A2), the cancellation function (the
+// halt bridge, A3), and the quiesce signal — a channel the run closes
+// when its loop has returned and nothing is executing inside the
+// scope's sandbox anymore. The quiesce channel is what makes halt's
+// teardown ordering sound: destroying an owned sandbox while an
+// in-flight tool still uses it is the hazard the jobs manager's
+// CloseAndWait documents. Any field may be nil — a run registers what
+// it supports, and Inject or Cancel report honestly about the rest.
+type Run struct {
+	SteerCh chan string
+	Cancel  context.CancelFunc
+	Done    chan struct{}
+}
+
+// run is the registry's bookkeeping for one registered execution.
 type run struct {
-	steerCh chan string
-	cancel  context.CancelFunc
+	entry Run
 }
 
 // Registry maps scope IDs to the loops currently running under those
@@ -69,13 +80,21 @@ func NewRegistry() *Registry {
 // claim delivery into a void while status listed the scope as bridged.
 // A nil cancel keeps the run injectable but not haltable (Cancel then
 // reports ErrNotHaltable).
-func (r *Registry) Register(scopeID string, ch chan string, cancel context.CancelFunc) {
-	if ch == nil {
+func (r *Registry) Register(scopeID string, entry Run) {
+	if entry.SteerCh == nil {
 		return
+	}
+	if entry.Done != nil {
+		select {
+		case <-entry.Done:
+			// Already finished before registration — nothing to bridge.
+			return
+		default:
+		}
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.runs[scopeID] = &run{steerCh: ch, cancel: cancel}
+	r.runs[scopeID] = &run{entry: entry}
 }
 
 // Unregister removes a run. Safe to call twice; the run's deferred
@@ -98,7 +117,7 @@ func (r *Registry) Inject(scopeID, guidance string) error {
 		return ErrNoRun
 	}
 	select {
-	case run.steerCh <- guidance:
+	case run.entry.SteerCh <- guidance:
 		return nil
 	default:
 		return ErrSteerBusy
@@ -106,22 +125,28 @@ func (r *Registry) Inject(scopeID, guidance string) error {
 }
 
 // Cancel halts the run registered under the scope (adoption plan A3):
-// it invokes the cancellation the run registered. Idempotent per run —
+// it invokes the registered cancellation and returns the run's quiesce
+// channel — closed when the loop has returned, so the caller can wait
+// before destroying anything the run was using. The channel is nil
+// when the run registered no quiesce signal. Idempotent per run —
 // cancelling an already-cancelled run is the same call on the same
 // context, a no-op by context semantics — and a scope whose run has
 // finished reports ErrNoRun, never a phantom halt.
-func (r *Registry) Cancel(scopeID string) error {
+func (r *Registry) Cancel(scopeID string) (<-chan struct{}, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	run, ok := r.runs[scopeID]
 	if !ok {
-		return ErrNoRun
+		return nil, ErrNoRun
 	}
-	if run.cancel == nil {
-		return ErrNotHaltable
+	if run.entry.Cancel == nil {
+		return nil, ErrNotHaltable
 	}
-	run.cancel()
-	return nil
+	run.entry.Cancel()
+	if run.entry.Done == nil {
+		return nil, nil
+	}
+	return run.entry.Done, nil
 }
 
 // Has reports whether a run is registered for the scope.

@@ -51,7 +51,7 @@ func TestSupervisorTool_RootScopeHaltGuarded(t *testing.T) {
 	// Root inject steers the session: delivered to the registered
 	// session steering channel, reported as delivery. (Before the halt
 	// below — halting discards the root and ends injectable state.)
-	runs.Register(root.ID(), sessionSteer, nil)
+	runs.Register(root.ID(), supervision.Run{SteerCh: sessionSteer})
 	injectArgs, _ := json.Marshal(map[string]string{
 		"action": "inject", "scope_id": root.ID(), "guidance": "wrap up"})
 	out, err := sup.Execute(context.Background(), string(injectArgs))
@@ -77,7 +77,7 @@ func TestSupervisorTool_RootScopeHaltGuarded(t *testing.T) {
 	halted := make(chan struct{}, 1)
 	haltCtx, ctxCancel := context.WithCancel(context.Background())
 	go func() { <-haltCtx.Done(); halted <- struct{}{} }()
-	runs.Register(root.ID(), sessionSteer, ctxCancel)
+	runs.Register(root.ID(), supervision.Run{SteerCh: sessionSteer, Cancel: ctxCancel})
 	haltOut, haltErr := gated.Execute(context.Background(), string(haltArgs))
 	if haltErr != nil {
 		t.Fatalf("gated root halt: %v", haltErr)

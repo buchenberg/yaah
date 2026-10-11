@@ -768,7 +768,13 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// opt-in the SupervisorTool carries. Registered after the session
 	// literal because the cancel is the session's method.
 	if rootScopeID != "" && runRegistry != nil {
-		runRegistry.Register(rootScopeID, steerCh, sess.HaltCurrentRun)
+		// The root registers no quiesce signal: its sandbox (in-place
+		// git, or none at all in isolated mode) is never destroyed by a
+		// halt, so there is nothing a still-running prompt could race.
+		runRegistry.Register(rootScopeID, supervision.Run{
+			SteerCh: steerCh,
+			Cancel:  sess.HaltCurrentRun,
+		})
 	}
 
 	// The session owns everything created above from here: close() will

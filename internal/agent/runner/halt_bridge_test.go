@@ -90,7 +90,7 @@ func TestTaskRunner_HaltBridgeCancelsTheRun(t *testing.T) {
 			time.Sleep(time.Millisecond)
 		}
 	}
-	if err := runs.Cancel(scopeID); err != nil {
+	if _, err := runs.Cancel(scopeID); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
 
@@ -105,7 +105,7 @@ func TestTaskRunner_HaltBridgeCancelsTheRun(t *testing.T) {
 
 	// The bridge entry is cut: a later inject or halt at the scope is
 	// honestly refused, never delivered to the dead run.
-	if err := runs.Cancel(scopeID); err != supervision.ErrNoRun {
+	if _, err := runs.Cancel(scopeID); err != supervision.ErrNoRun {
 		t.Errorf("Cancel after the run ended = %v, want ErrNoRun", err)
 	}
 }

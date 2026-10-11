@@ -5,11 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
 
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 )
+
+// haltQuiesceTimeout bounds the wait for a halted run to stop before
+// the kernel-side sandbox teardown proceeds anyway — the same
+// cancel-then-join-bounded shape as the jobs manager's CloseAndWait.
+const haltQuiesceTimeout = 10 * time.Second
 
 // SupervisorTool lets the orchestrator supervise sub-agent execution.
 // It exposes intervention operations (inject/halt) on running sub-agents,
@@ -236,17 +242,31 @@ func executeHalt(mgr *shepherd.ScopeManager, runs *supervision.Registry, scopeID
 	if !ok {
 		return "", fmt.Errorf("supervisor: scope %s not found", scopeID)
 	}
-	// Halt bridge (adoption plan A3): cancel the run FIRST — it may be
-	// mid-execution inside the very sandbox scope.Halt destroys next —
-	// then record the halt in the kernel, which appends the halt fact
-	// and tears down an owned sandbox (an isolated child's worktree).
-	// Every outcome reports what happened; a finished run's halt stays a
-	// trace-side record, never a phantom cancellation.
-	var cancelled bool
+	// Halt bridge (adoption plan A3): cancel the run FIRST, then WAIT —
+	// bounded — for it to quiesce before recording the kernel halt,
+	// which tears down an owned sandbox (an isolated child's worktree).
+	// Cancelling alone is not quiescence: an in-flight tool can still be
+	// inside the very sandbox scope.Halt destroys next, the teardown
+	// hazard the jobs manager's CloseAndWait documents. Every outcome
+	// reports what happened; a finished run's halt stays a trace-side
+	// record, never a phantom cancellation.
+	var cancelled, quiesced, waited bool
 	if runs != nil {
-		switch err := runs.Cancel(scopeID); {
+		quiesce, err := runs.Cancel(scopeID)
+		switch {
 		case err == nil:
 			cancelled = true
+			if quiesce != nil {
+				waited = true
+				select {
+				case <-quiesce:
+					quiesced = true
+				case <-time.After(haltQuiesceTimeout):
+					// Bounded proceed: the kernel halt still lands —
+					// halt-while-running is its semantics — and the
+					// report names the unquiesced run.
+				}
+			}
 		case errors.Is(err, supervision.ErrNoRun), errors.Is(err, supervision.ErrNotHaltable):
 			// fall through to the kernel-side halt below
 		default:
@@ -256,10 +276,14 @@ func executeHalt(mgr *shepherd.ScopeManager, runs *supervision.Registry, scopeID
 	if err := scope.Halt(); err != nil {
 		return "", fmt.Errorf("supervisor: halt failed: %w", err)
 	}
-	if cancelled {
-		return fmt.Sprintf("Halted %s; the running loop was cancelled.", scopeID), nil
+	switch {
+	case cancelled && (!waited || quiesced):
+		return fmt.Sprintf("Halted %s; the running loop was cancelled and has stopped.", scopeID), nil
+	case cancelled:
+		return fmt.Sprintf("Halted %s; the run was cancelled but had not stopped within %s — an in-flight tool may have been interrupted by the sandbox teardown.", scopeID, haltQuiesceTimeout), nil
+	default:
+		return fmt.Sprintf("Halted %s in the trace; no active run to cancel (the scope is not currently executing).", scopeID), nil
 	}
-	return fmt.Sprintf("Halted %s in the trace; no active run to cancel (the scope is not currently executing).", scopeID), nil
 }
 
 func executeStatus(mgr *shepherd.ScopeManager, runs *supervision.Registry) (string, error) {
