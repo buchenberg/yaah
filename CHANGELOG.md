@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.64.0](https://github.com/buchenberg/yaah/compare/v0.63.0...v0.64.0) (2026-10-11)
+
+
+### Features
+
+* **shepherd:** A1 -- session root scope; sub-agent scopes fork it ([0823458](https://github.com/buchenberg/yaah/commit/08234587b817d8e19244a40b5bd4ddac1fc03f79))
+* **shepherd:** A1 -- session root scope; sub-agent scopes fork it ([1638347](https://github.com/buchenberg/yaah/commit/1638347db0376bc46187bc816e4b0a71826905fb))
+* **shepherd:** A2 -- the inject bridge: supervisor guidance reaches running loops ([17604ae](https://github.com/buchenberg/yaah/commit/17604aee1f930df4cfe96ed33166eb2ac9666c07))
+* **shepherd:** A2 -- the inject bridge: supervisor guidance reaches running loops ([672e328](https://github.com/buchenberg/yaah/commit/672e328b9e9155d8b29edb23f3d3e82773ba8a4c))
+* **shepherd:** A3 -- the halt bridge: supervisor halt cancels running loops ([472c93f](https://github.com/buchenberg/yaah/commit/472c93f18614cd8f0fc294e2697dd240899dfe02))
+* **shepherd:** A3 -- the halt bridge: supervisor halt cancels running loops ([b415fa1](https://github.com/buchenberg/yaah/commit/b415fa193e64ad273fd62be215886a074c5a7c38))
+
+
+### Bug Fixes
+
+* **shepherd:** A1 review round 1 -- root halt guard, capture probe, empty-repo guard ([227150d](https://github.com/buchenberg/yaah/commit/227150d7c026a20ddf740efbe3ce2b94e1bc03bd))
+* **shepherd:** A2 review round 1 -- session-owned registry, honest outcomes, tight cut ([f340957](https://github.com/buchenberg/yaah/commit/f34095741ce4a49b5660be95a11641829f19b322))
+* **shepherd:** A3 review round 1 -- halt waits for the run to quiesce before teardown ([eea5d36](https://github.com/buchenberg/yaah/commit/eea5d36b8db49171d739305791ffcf1e4950d97a))
+
+
+### Documentation
+
+* **plan:** review round 1 -- step IDs, config location, defaults, exit wording ([db80172](https://github.com/buchenberg/yaah/commit/db80172a72bc8dedc3b1641b4c1ef689cb906758))
+* **plan:** shepherd kernel adoption -- audit, decisions, phased execution ([9fd6796](https://github.com/buchenberg/yaah/commit/9fd6796e3f8e00e90bb7acb5a2a5b5fb8784dd56))
+* **plan:** shepherd kernel adoption -- audit, decisions, phased execution ([590abca](https://github.com/buchenberg/yaah/commit/590abca1ea500c4d0a888e85aac4ec5839d1dd6e))
+* review round 1 -- active docs follow the sandbox component move ([376cf87](https://github.com/buchenberg/yaah/commit/376cf87f8f6eb06f2a2a7e13611e8793bcd02ce7))
+
 ## [0.63.0](https://github.com/buchenberg/yaah/compare/v0.62.0...v0.63.0) (2026-10-11)
 
 
