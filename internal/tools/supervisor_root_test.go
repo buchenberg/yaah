@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
@@ -38,18 +39,19 @@ func TestSupervisorTool_RootScopeHaltGuarded(t *testing.T) {
 	sessionSteer := make(chan string, supervision.SteerBuffer)
 
 	runs := supervision.NewRegistry()
-	runs.Register(root.ID(), sessionSteer)
 	sup := &SupervisorTool{RootScopeID: root.ID(), Runs: runs}
 
 	haltArgs, _ := json.Marshal(map[string]string{
 		"action": "halt", "scope_id": root.ID()})
 	_, err = sup.Execute(context.Background(), string(haltArgs))
-	if err == nil || !strings.Contains(err.Error(), "supervisor.halt_root") {
-		t.Errorf("halt of the root must refuse with the gated-halt message, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "supervisor_halt_root opt-in") {
+		t.Errorf("halt of the root without the gate must refuse with the opt-in message, got: %v", err)
 	}
 
 	// Root inject steers the session: delivered to the registered
-	// session steering channel, reported as delivery.
+	// session steering channel, reported as delivery. (Before the halt
+	// below — halting discards the root and ends injectable state.)
+	runs.Register(root.ID(), sessionSteer, nil)
 	injectArgs, _ := json.Marshal(map[string]string{
 		"action": "inject", "scope_id": root.ID(), "guidance": "wrap up"})
 	out, err := sup.Execute(context.Background(), string(injectArgs))
@@ -68,12 +70,41 @@ func TestSupervisorTool_RootScopeHaltGuarded(t *testing.T) {
 		t.Error("root inject never reached the session's steering channel")
 	}
 
+	// With the gate on, root halt cancels the session's current run:
+	// the registered cancellation fires and the halt lands in the
+	// kernel (the root scope goes non-active).
+	gated := &SupervisorTool{RootScopeID: root.ID(), Runs: runs, HaltRoot: true}
+	halted := make(chan struct{}, 1)
+	haltCtx, ctxCancel := context.WithCancel(context.Background())
+	go func() { <-haltCtx.Done(); halted <- struct{}{} }()
+	runs.Register(root.ID(), sessionSteer, ctxCancel)
+	haltOut, haltErr := gated.Execute(context.Background(), string(haltArgs))
+	if haltErr != nil {
+		t.Fatalf("gated root halt: %v", haltErr)
+	}
+	if !strings.Contains(haltOut, "running loop was cancelled") {
+		t.Errorf("gated root halt must report the cancelled run, got: %s", haltOut)
+	}
+	select {
+	case <-halted:
+	case <-time.After(time.Second):
+		t.Fatal("the root halt never invoked the session run cancellation")
+	}
+	if root.State() == "active" {
+		t.Errorf("the kernel-side halt must mark the root non-active, got %s", root.State())
+	}
+
 	// An unset RootScopeID (tracing up without a root, or the legacy
-	// flat path) guards nothing — halt behaves exactly as before.
-	legacy := &SupervisorTool{}
+	// flat path) guards nothing: a sub-agent scope halts exactly as
+	// before, with no gate in the way.
+	child, err := SharedScopeManager.Create("sub-guard", nil)
+	if err != nil {
+		t.Fatalf("create child scope: %v", err)
+	}
+	legacy := &SupervisorTool{Runs: runs}
 	legacyHalt, _ := json.Marshal(map[string]string{
-		"action": "halt", "scope_id": root.ID()})
+		"action": "halt", "scope_id": child.ID()})
 	if _, err := legacy.Execute(context.Background(), string(legacyHalt)); err != nil {
-		t.Errorf("without RootScopeID the tool must not guard halt, got: %v", err)
+		t.Errorf("a sub-agent halt must not need the root gate, got: %v", err)
 	}
 }

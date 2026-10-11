@@ -34,7 +34,7 @@ func TestSupervisorTool_InjectBridgesToRun(t *testing.T) {
 		t.Fatalf("create scope: %v", err)
 	}
 	steerCh := make(chan string, supervision.SteerBuffer)
-	runs.Register(child.ID(), steerCh)
+	runs.Register(child.ID(), steerCh, nil)
 
 	sup := &SupervisorTool{Runs: runs}
 	injectArgs, _ := json.Marshal(map[string]string{
@@ -76,7 +76,7 @@ func TestSupervisorTool_InjectBridgesToRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create wedged scope: %v", err)
 	}
-	runs.Register(wedged.ID(), make(chan string, 1))
+	runs.Register(wedged.ID(), make(chan string, 1), nil)
 	wedgedArgs, _ := json.Marshal(map[string]string{
 		"action": "inject", "scope_id": wedged.ID(), "guidance": "a"})
 	wedgedArgs2, _ := json.Marshal(map[string]string{

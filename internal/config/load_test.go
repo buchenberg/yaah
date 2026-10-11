@@ -268,3 +268,34 @@ agents:
 			other.Supervised, other.TurnCheckpoints)
 	}
 }
+
+func TestLoad_supervisorHaltRoot(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("YAAH_HOME", tmp)
+
+	// Off by default: root halt is a big hammer (adoption plan A3's
+	// gate), so an absent key must read false.
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() (defaults) error: %v", err)
+	}
+	if cfg.Agent.Default.SupervisorHaltRoot {
+		t.Error("supervisor_halt_root must default to false")
+	}
+
+	configContent := `
+agents:
+  default:
+    supervisor_halt_root: true
+`
+	if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(configContent), 0o644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if !cfg.Agent.Default.SupervisorHaltRoot {
+		t.Error("supervisor_halt_root: true must parse into SupervisorHaltRoot")
+	}
+}

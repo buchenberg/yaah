@@ -1,14 +1,16 @@
 package supervision
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestRegistry_InjectDeliversToRegisteredRun(t *testing.T) {
 	r := NewRegistry()
 	ch := make(chan string, SteerBuffer)
-	r.Register("scope:sub-1", ch)
+	r.Register("scope:sub-1", ch, nil)
 
 	if err := r.Inject("scope:sub-1", "try a different approach"); err != nil {
 		t.Fatalf("Inject: %v", err)
@@ -36,7 +38,7 @@ func TestRegistry_InjectWithoutRun(t *testing.T) {
 func TestRegistry_UnregisterThenInject(t *testing.T) {
 	r := NewRegistry()
 	ch := make(chan string, SteerBuffer)
-	r.Register("scope:sub-2", ch)
+	r.Register("scope:sub-2", ch, nil)
 	r.Unregister("scope:sub-2")
 	if err := r.Inject("scope:sub-2", "x"); !errors.Is(err, ErrNoRun) {
 		t.Errorf("Inject after Unregister = %v, want ErrNoRun", err)
@@ -52,7 +54,7 @@ func TestRegistry_InjectFullBufferIsBusyNotBlock(t *testing.T) {
 	// A full buffer must report busy, not block the supervisor: the
 	// run is not consuming guidance (wedged between turns).
 	ch := make(chan string, 1)
-	r.Register("scope:wedged", ch)
+	r.Register("scope:wedged", ch, nil)
 	if err := r.Inject("scope:wedged", "first"); err != nil {
 		t.Fatalf("first Inject: %v", err)
 	}
@@ -69,7 +71,7 @@ func TestRegistry_UnregisterBeforeClosePreventsSendOnClosed(t *testing.T) {
 	// no concurrent send is in flight.
 	r := NewRegistry()
 	ch := make(chan string, SteerBuffer)
-	r.Register("scope:closing", ch)
+	r.Register("scope:closing", ch, nil)
 	r.Unregister("scope:closing")
 	close(ch) // would panic if a send raced it; the unregister guarantees none
 	if err := r.Inject("scope:closing", "x"); !errors.Is(err, ErrNoRun) {
@@ -83,7 +85,7 @@ func TestRegistry_UnregisterBeforeClosePreventsSendOnClosed(t *testing.T) {
 // bridged.
 func TestRegistry_RegisterNilIsNoOp(t *testing.T) {
 	r := NewRegistry()
-	r.Register("scope:nowhere", nil)
+	r.Register("scope:nowhere", nil, nil)
 	if r.Has("scope:nowhere") {
 		t.Error("a nil channel must not register")
 	}
@@ -97,14 +99,63 @@ func TestRegistry_RegisterNilIsNoOp(t *testing.T) {
 
 func TestRegistry_ScopeIDsSorted(t *testing.T) {
 	r := NewRegistry()
-	r.Register("scope:c", make(chan string, SteerBuffer))
-	r.Register("scope:a", make(chan string, SteerBuffer))
-	r.Register("scope:b", make(chan string, SteerBuffer))
+	r.Register("scope:c", make(chan string, SteerBuffer), nil)
+	r.Register("scope:a", make(chan string, SteerBuffer), nil)
+	r.Register("scope:b", make(chan string, SteerBuffer), nil)
 	got := r.ScopeIDs()
 	want := []string{"scope:a", "scope:b", "scope:c"}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("ScopeIDs = %v, want %v", got, want)
 		}
+	}
+}
+
+// TestRegistry_CancelInvokesTheRunsCancellation pins the A3 halt bridge:
+// Cancel calls the cancellation the run registered, is idempotent by
+// context semantics, and reports honestly for scopes without a live,
+// haltable run.
+func TestRegistry_CancelInvokesTheRunsCancellation(t *testing.T) {
+	r := NewRegistry()
+	ch := make(chan string, SteerBuffer)
+
+	cancelled := make(chan struct{}, 4)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-ctx.Done()
+		cancelled <- struct{}{}
+	}()
+	r.Register("scope:run-1", ch, cancel)
+
+	if err := r.Cancel("scope:run-1"); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("the registered cancellation was never invoked")
+	}
+	// Idempotent: a second cancel on the same run is the same call on
+	// the same context — no error, no second signal needed.
+	if err := r.Cancel("scope:run-1"); err != nil {
+		t.Errorf("second Cancel = %v, want nil (context cancellation is idempotent)", err)
+	}
+
+	// No run: honest refusal, never a phantom halt.
+	if err := r.Cancel("scope:gone"); !errors.Is(err, ErrNoRun) {
+		t.Errorf("Cancel at an unregistered scope = %v, want ErrNoRun", err)
+	}
+
+	// A run registered without a cancellation is injectable but not
+	// haltable — reported, not silently treated as halted.
+	r.Register("scope:inject-only", ch, nil)
+	if err := r.Cancel("scope:inject-only"); !errors.Is(err, ErrNotHaltable) {
+		t.Errorf("Cancel at an inject-only run = %v, want ErrNotHaltable", err)
+	}
+
+	// After unregister, the run is finished: Cancel reports ErrNoRun.
+	r.Unregister("scope:run-1")
+	if err := r.Cancel("scope:run-1"); !errors.Is(err, ErrNoRun) {
+		t.Errorf("Cancel after Unregister = %v, want ErrNoRun", err)
 	}
 }

@@ -38,6 +38,7 @@ func TestConfigAgentConfigParity(t *testing.T) {
 		"ShepherdTraceDir":      true, // → session-level shepherd init in wiring
 		"SupervisedMaxRetries":  true, // → supervised_task tool registration in wiring
 		"SupervisedRepoPath":    true, // → supervised_task tool registration in wiring
+		"SupervisorHaltRoot":    true, // → supervisor tool's root-halt gate in wiring
 
 		"SupervisedWorktree":          true, // → supervised_task tool registration in wiring
 		"SupervisedWorktreeRoot":      true, // → supervised_task tool registration in wiring

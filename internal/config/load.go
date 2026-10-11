@@ -133,6 +133,15 @@ type Defaults struct {
 	// task tool (checkpoint/rollback/retry) becomes available.
 	ShepherdTraceDir string `yaml:"shepherd_trace_dir"`
 
+	// SupervisorHaltRoot (agents.default.supervisor_halt_root,
+	// default false) opts into supervisor halt of the session's root
+	// scope: an explicit, deliberate stop of the session's current run
+	// — the ctrl-C equivalent — gated off by default because a rules
+	// engine or a model halting the interactive session is a big
+	// hammer. Root inject needs no gate: steering the session is
+	// reversible.
+	SupervisorHaltRoot bool `yaml:"supervisor_halt_root"`
+
 	// SupervisedMaxRetries caps the rollback-and-retry cycles of the
 	// supervised_task tool after the initial attempt. 0 (unset) defaults
 	// to 1 — one rollback-and-retry.

@@ -341,6 +341,7 @@ agents:
 |---|---|---|
 | `supervised_max_retries` | `1` | Rollback-and-retry cycles after the first attempt. |
 | `supervised_repo_path` | `""` | Repository the checkpoints operate on. Empty uses yaah's working directory. |
+| `supervisor_halt_root` | `false` | Opt in to `supervisor` halt of the session's root scope: it stops the session's current run (the ctrl-C equivalent) and ends scope-tree supervision for the process. Sub-agent halts need no gate. |
 | `supervised_worktree` | `false` | Run each fork variant in its own git worktree instead of the shared tree. |
 | `supervised_worktree_root` | `""` | Parent directory for variant worktrees. Empty uses a `shepherd-worktrees` directory beside the repository. |
 | `supervised_worktree_bootstrap` | `""` | Shell command run inside each fresh worktree — see below. |
