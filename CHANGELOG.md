@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.63.0](https://github.com/buchenberg/yaah/compare/v0.62.0...v0.63.0) (2026-10-11)
+
+
+### Features
+
+* **workspace:** step 9 -- sub-agent sandbox inheritance (D2), test matrix, docs ([2f673ee](https://github.com/buchenberg/yaah/commit/2f673eecc2a585b2971079da8862e44a7fa1fa2c))
+
+
+### Bug Fixes
+
+* **test:** make the local-route workdir assertion platform-portable ([6c24735](https://github.com/buchenberg/yaah/commit/6c24735b1eddf96ccb5492ac3f4f5710e599d3c6))
+* **workspace:** review round 1 -- gate ordering, env header, spill, prompt wording ([2392c26](https://github.com/buchenberg/yaah/commit/2392c2654475cf0dc6b20538cc20e68c6fec38e0))
+* **workspace:** review round 2 -- shell guidance agrees with the header, single spill predicate, honest test ([d6a6a2d](https://github.com/buchenberg/yaah/commit/d6a6a2da4a2a0239641e696859afd8b5347c2375))
+
 ## [0.62.0](https://github.com/buchenberg/yaah/compare/v0.61.0...v0.62.0) (2026-10-11)
 
 
