@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.67.0](https://github.com/buchenberg/yaah/compare/v0.66.0...v0.67.0) (2026-10-11)
+
+
+### Features
+
+* **shepherd:** B2 — the blocking destructive guard at sub-agent dispatch ([50d86b8](https://github.com/buchenberg/yaah/commit/50d86b8ea49b9df4171997e90c66a88013230108))
+
+
+### Bug Fixes
+
+* **shepherd:** B2 review round 1 -- fail closed, background_process, doc fix ([31f5a68](https://github.com/buchenberg/yaah/commit/31f5a685787e4122f63f3d1808f282d47477c0a6))
+* **shepherd:** B2 review round 2 -- empty payload fails closed, read-only process actions pass ([105d1f9](https://github.com/buchenberg/yaah/commit/105d1f96c60f53014edaa668bdc9e88afe1ae50d))
+
 ## [0.66.0](https://github.com/buchenberg/yaah/compare/v0.65.1...v0.66.0) (2026-10-11)
 
 
