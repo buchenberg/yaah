@@ -72,6 +72,13 @@ type TaskToolOpts struct {
 	// exactly one substrate per session.
 	Workspace tools.Workspace
 
+	// RootScopeID is the session's shepherd root scope (shepherd-adoption
+	// plan D1): sub-agent scopes fork from it, so the supervisor's scope
+	// tree mirrors the dispatch tree. Empty when tracing is off or the
+	// root could not be created — the runner then falls back to a flat
+	// per-dispatch scope, the pre-plan behaviour.
+	RootScopeID string
+
 	// ResolveProviderByName translates a configured provider name into a
 	// live agent.Provider. Injected from the cmd layer because provider
 	// construction (makeProvider) belongs with the rest of the CLI wiring.
@@ -108,6 +115,7 @@ func NewTaskTool(opts TaskToolOpts) *tools.TaskTool {
 			toolSpillDir:          opts.ToolSpillDir,
 			pathValidator:         opts.PathValidator,
 			workspace:             opts.Workspace,
+			rootScopeID:           opts.RootScopeID,
 			resolveProviderByName: opts.ResolveProviderByName,
 		}, depth),
 		ResolveTimeout:   subAgentTimeoutResolver(opts.SubCfg),
@@ -244,6 +252,11 @@ type taskRunnerOpts struct {
 	// substrate per session.
 	workspace tools.Workspace
 
+	// rootScopeID is the session's shepherd root scope (adoption plan
+	// D1): sub-agent scopes fork from it. Empty falls back to the legacy
+	// flat per-dispatch scope.
+	rootScopeID string
+
 	// resolveProviderByName resolves a configured provider by name. It
 	// is injected from the cmd layer because provider construction
 	// (makeProvider) is CLI wiring that does not belong here. May be nil;
@@ -356,12 +369,16 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		}
 
 		// Create a scope for this sub-agent so the supervisor can
-		// inject guidance or halt it during execution. The scope carries the
-		// sub-agent's workspace: its own worktree when the supervised session
-		// isolated this dispatch, otherwise the shared repository.
+		// inject guidance or halt it during execution. The scope is a
+		// fork of the session's root scope (adoption plan D1), so the
+		// supervisor sees the true dispatch tree; the fork's sandbox is
+		// the sub-agent's workspace: its own worktree when the dispatch
+		// isolated one, otherwise the root's shared sandbox (nil for an
+		// isolated session — the container is the substrate, isolation
+		// plan D2).
 		var subScope *shepherd.Scope
 		if mgr := tools.SharedScopeManager; mgr != nil {
-			subScope, _ = mgr.Create(subTraceID, subAgentSandbox(opts, params.Workdir))
+			subScope, _ = createSubAgentScope(mgr, opts, subTraceID, params.Workdir)
 		}
 
 		// Per-turn checkpointing is enabled per role (subagent.roles.<name>.
@@ -602,6 +619,73 @@ func subAgentSandbox(opts taskRunnerOpts, workdir string) shepherd.Sandbox {
 		return shepherd.NewWorktreeSandbox(repoPath, workdir)
 	}
 	return shepherd.NewLocalGitSandbox(repoPath)
+}
+
+// CreateRootScope creates the session's root scope (shepherd-adoption plan
+// D1): the anchor every sub-agent scope forks from, owned by the session so
+// scope IDs and trace owners line up. Local mode gets the shared in-place
+// git sandbox — the same backend supervised sessions use, and never
+// destroyed (the kernel's materializer contract). An isolated session gets
+// a pure-causal root: the container is the substrate, and host-git capture
+// would record a tree the session never works on (isolation plan D2). An
+// empty repoPath falls back to the process working directory, matching
+// subAgentSandbox's resolution so the root and legacy child scopes agree
+// on the repository.
+//
+// The sandbox is probed with one capture before the root is registered:
+// Fork captures the parent's baseline first, so a root over a directory
+// git cannot capture (not a repository, unborn HEAD) would make every
+// child fork fail — and the dispatch ignores that error, leaving all
+// sub-agents without a scope. A failed probe demotes the root to
+// pure-causal: the tree still exists, inject/halt still address every
+// scope, and only checkpoint capture is unavailable — which it would
+// have been anyway.
+func CreateRootScope(mgr *shepherd.ScopeManager, sessionID, repoPath string, isolated bool) (*shepherd.Scope, error) {
+	var sb shepherd.Sandbox
+	if !isolated {
+		if repoPath == "" {
+			repoPath, _ = os.Getwd()
+		}
+		if repoPath != "" {
+			candidate := shepherd.NewLocalGitSandbox(repoPath)
+			if _, cerr := candidate.Capture(context.Background()); cerr == nil {
+				sb = candidate
+			}
+		}
+	}
+	return mgr.Create(sessionID, sb)
+}
+
+// createSubAgentScope creates the sub-agent's execution scope (adoption
+// plan D1): a fork of the session's root scope, so the scope tree mirrors
+// the dispatch tree and recovery can rebuild it. A workdir dispatch forks
+// in isolation with its own worktree sandbox (destroyed on halt/discard by
+// the kernel, exactly as the pre-plan Create+WorktreeSandbox path was);
+// every other dispatch shares the root's sandbox. The fork snapshot is nil
+// (D1): seed messages live in the loop config, not the trace. An empty
+// root scope ID — tracing came up without a root — falls back to the
+// legacy flat Create so the sub-agent still gets a superviseable scope.
+func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTraceID, workdir string) (*shepherd.Scope, error) {
+	if opts.rootScopeID == "" {
+		return mgr.Create(subTraceID, subAgentSandbox(opts, workdir))
+	}
+	// workdir isolates this dispatch in its own worktree — a local-mode
+	// concept: an isolated session ignores it (its root has no sandbox,
+	// so the fork is already pure-causal and the container's root is
+	// every sub-agent's workspace). Without a resolvable repository the
+	// worktree cannot be provisioned (subAgentSandbox returns nil in the
+	// same degenerate case), so the dispatch degrades to a plain shared
+	// fork rather than a worktree sandbox rooted at an empty path.
+	if workdir != "" && opts.workspace == nil {
+		repoPath := opts.defaults.SupervisedRepoPath
+		if repoPath == "" {
+			repoPath, _ = os.Getwd()
+		}
+		if repoPath != "" {
+			return mgr.ForkIsolated(opts.rootScopeID, subTraceID, nil, shepherd.NewWorktreeSandbox(repoPath, workdir))
+		}
+	}
+	return mgr.Fork(opts.rootScopeID, subTraceID, nil)
 }
 
 // buildSubAgentRegistry builds the tool registry for a sub-agent from
