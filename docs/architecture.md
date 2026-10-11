@@ -519,7 +519,7 @@ The `supervised_task` tool wraps a sub-agent run in **workspace checkpoints** vi
 
 **Checkpoints.** `ShepherdTurnCheckpointer` (`internal/agent/runner/checkpoint.go`) adapts `shepherd.ScopeManager` to the loop's `TurnCheckpointer` interface. A checkpoint captures the workspace *and* the conversation, and a restore consumes it, so the two stay in step. Unit-start checkpoints are single-use by design; `continue` and `rollback` take a fresh one before the next dispatch. Restoring replaces the conversation seed, which is why a rollback restarts from the same context the sub-agent had at the unit boundary.
 
-**Workspace substrate.** Each scope holds a `shepherd.Sandbox`; the kernel is backend-agnostic and this is the seam:
+**Workspace substrate.** Each scope holds a `shepherdsandbox.Sandbox`; the kernel is backend-agnostic and this is the seam:
 
 | Mode | Sandbox | Parent tree touched? | Discard |
 |---|---|---|---|
@@ -588,7 +588,7 @@ Two implementations:
 | | Backing | Writes | Exec |
 |---|---|---|---|
 | `localWorkspace` | the host filesystem, through the session's `PathValidator` | temp file plus rename (crash-safe) | `exec.CommandContext`, combined output |
-| `sandboxWorkspace` (`workspace_sandbox.go`) | a `shepherd.Sandbox` | temp file plus rename **inside** the sandbox | in-band through the sandbox |
+| `sandboxWorkspace` (`workspace_sandbox.go`) | a `shepherdsandbox.Sandbox` | temp file plus rename **inside** the sandbox | in-band through the sandbox |
 
 **Injection.** `Registry` carries both a `PathValidator` and a `Workspace`. Setting only a validator — which every existing caller does — derives a `localWorkspace` from it, so migrating a tool needs no change at its construction site. Both are injected into each tool, because unmigrated tools still need the validator. `SetWorkspace` overrides the derived workspace with an isolated one.
 

@@ -434,7 +434,7 @@ The near-term roadmap lives in tracked plan files (`.agents/plans/`,
   alternatives from a pre-turn snapshot.
   → [plan](./.agents/plans/per-turn-checkpoint-restore/PLAN.md)
 - **Isolated workspace activation** — the `Workspace` implementation that
-  runs every tool inside a `shepherd.Sandbox` is complete and tested but not
+  runs every tool inside a `shepherdsandbox.Sandbox` is complete and tested but not
   yet wired into sessions. Activation gives worktree-isolated sub-agents
   where a discarded fork never touches your tree. The plan is ready to
   implement (kernel `v0.4.1` is published); the one remaining external gate
