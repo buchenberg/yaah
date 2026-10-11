@@ -233,6 +233,14 @@ func validateWorkspace(w *WorkspaceConfig, goos string) []string {
 		errs = append(errs, "workspace.containerd.image is required when workspace.backend is containerd")
 	}
 
+	// The FIFO directory is created client-side relative to the process
+	// cwd if relative, which would scatter the task/exec FIFOs wherever
+	// yaah happened to start; the socket address carries no such trap.
+	if w.Containerd.FIFODir != "" && !filepath.IsAbs(w.Containerd.FIFODir) {
+		errs = append(errs, fmt.Sprintf(
+			"workspace.containerd.fifo_dir %q must be an absolute path", w.Containerd.FIFODir))
+	}
+
 	// The containment root must be an absolute path inside the sandbox —
 	// a POSIX path, evaluated with the path package rather than filepath,
 	// whose host-OS semantics would reject "/workspace" on Windows. The

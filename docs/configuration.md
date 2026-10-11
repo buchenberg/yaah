@@ -310,11 +310,20 @@ everything runs on the host filesystem, as it always has.
 | `containerd.namespace` | `default` | containerd namespace for the session's containers |
 | `containerd.image` | (required for `containerd`) | Base image. Must satisfy the tool contract (sh, GNU stat/find, git, rg, base64, Go toolchain) — verified at startup |
 | `containerd.snapshotter` | `overlayfs` | containerd snapshotter plugin |
+| `containerd.fifo_dir` | `~/.yaah/containerd-fifo` | Directory the containerd *client* creates the task/exec stdio FIFOs in. containerd's own default (`/run/containerd/fifo`) is root-only, so the yaah default keeps unprivileged sessions working; must be absolute. Avoids a predictable name under the shared temp dir, which another local user could pre-create |
 
 The `containerd` backend requires a Linux containerd daemon: config
 validation refuses it at load on any other platform, naming the platform.
-`yaah doctor` reports the workspace check (config validity plus the
-reachable backend) when the stanza is present. See
+The daemon's socket is root-owned by default — a normal user needs
+one-time group access (see "Daemon socket access" in
+`docs/isolated-workspace-live-testing.md`), or every session fails its
+startup probe with `connect: permission denied`. Everything else an
+unprivileged session touches is handled in code: the adapter builds the
+init spec from the image config through the daemon (no client-side
+snapshot-store access), and `fifo_dir` defaults to a user-writable
+directory. `yaah doctor` reports
+the workspace check (config validity plus the reachable backend) when
+the stanza is present. See
 `docs/features.md` "Isolated workspace" for the behaviour and
 `docs/isolated-workspace-live-testing.md` for the end-to-end live test.
 

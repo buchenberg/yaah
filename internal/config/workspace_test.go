@@ -55,6 +55,7 @@ workspace:
     namespace: prod
     image: example/dev:latest
     snapshotter: zfs
+    fifo_dir: /tmp/yaah-prod-fifo
 `)
 
 	cfg, err := Load()
@@ -79,6 +80,9 @@ workspace:
 	if cfg.Workspace.Containerd.Snapshotter != "zfs" {
 		t.Errorf("Snapshotter = %q, want zfs", cfg.Workspace.Containerd.Snapshotter)
 	}
+	if cfg.Workspace.Containerd.FIFODir != "/tmp/yaah-prod-fifo" {
+		t.Errorf("FIFODir = %q, want the configured fifo directory", cfg.Workspace.Containerd.FIFODir)
+	}
 }
 
 // TestLoad_workspaceStanzaDefaults pins that a stanza naming only the backend
@@ -100,6 +104,14 @@ workspace:
 	}
 	if cfg.Workspace.Containerd.Namespace != "default" {
 		t.Errorf("Namespace = %q, want the normalized default", cfg.Workspace.Containerd.Namespace)
+	}
+	// An unset fifo_dir normalizes into the yaah home: containerd's own
+	// default is root-only, and a predictable name under the shared temp
+	// dir could be pre-created by another local user to deny or subvert
+	// the session's FIFO creation.
+	want := filepath.Join(HomeDir(), "containerd-fifo")
+	if cfg.Workspace.Containerd.FIFODir != want {
+		t.Errorf("FIFODir = %q, want the normalized default %q", cfg.Workspace.Containerd.FIFODir, want)
 	}
 }
 
@@ -185,6 +197,19 @@ func TestValidate_workspace(t *testing.T) {
 			},
 			goos:    "linux",
 			wantErr: `would scope the whole container`,
+		},
+		{
+			name: "relative fifo dir is refused",
+			ws: WorkspaceConfig{
+				Backend: BackendContainerd,
+				Root:    "/workspace",
+				Containerd: ContainerdWorkspaceConfig{
+					Image:   "example/dev:latest",
+					FIFODir: "yaah-fifo",
+				},
+			},
+			goos:    "linux",
+			wantErr: `workspace.containerd.fifo_dir "yaah-fifo" must be an absolute path`,
 		},
 	}
 	for _, tc := range cases {

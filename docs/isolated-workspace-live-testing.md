@@ -7,8 +7,84 @@ end — against a real containerd daemon, not the in-memory fake. `TestLive_Acti
 is the runbook for executing it.
 
 The harness is inert by default: it skips unless its environment knobs are set and
-the process runs as root (the containerd socket requires it). A green `ok` with a
-run time under a second means it skipped — run with `-v` to see the skip reason.
+the process runs as root (a deliberate harness requirement — not a session
+requirement: with the socket-group setup below, ordinary `yaah` sessions run
+unprivileged; the live harness has simply not been taught to yet). A green `ok`
+with a run time under a second means it skipped — run with `-v` to see the skip
+reason.
+
+## Daemon socket access (one-time host setup)
+
+The containerd socket is `root:root` mode 0660 by default, so a normal user
+— including a plain `yaah tui` with `workspace.backend: containerd` — gets
+`connect: permission denied`. The durable fix is a `containerd` group that
+the daemon sets its socket's group to:
+
+```bash
+# 1. A group for socket access, and put yourself in it
+sudo groupadd --system containerd
+sudo usermod -aG containerd $USER
+
+# 2. Give containerd a config that sets the socket's group.
+# [grpc].gid is an INTEGER, not a name -- resolve the group to its number.
+# (The gid lines are indented and there are three of them: [grpc], [ttrpc],
+# [debug] -- anchor on the section, not the line start.)
+sudo mkdir -p /etc/containerd
+sudo containerd config default | sudo tee /etc/containerd/config.toml >/dev/null
+sudo sed -i "/^\[grpc\]/,/^\[ttrpc\]/ s/gid = 0/gid = $(getent group containerd | cut -d: -f3)/" /etc/containerd/config.toml
+
+# 3. Restart the daemon and pick up the group (newgrp, or log out and back in)
+sudo systemctl restart containerd
+newgrp containerd
+
+# 4. Verify: the socket should now be root:containerd, mode 0660
+ls -l /run/containerd/containerd.sock
+```
+
+That is the whole host setup. Two further root-owned paths exist on the
+client side, but both are handled in code, not on the host:
+
+- **The snapshot store.** `oci.WithImageConfig` — what a naive adapter would
+  use to build the init spec — resolves the image user's uid/gid and
+  supplemental groups by reading `/etc/passwd` and `/etc/group` out of the
+  unpacked rootfs *in the client process* (containerd 2.3+ opens the overlay
+  snapshot directories directly through `fsview`). The daemon creates every
+  snapshot directory `0700 root:root` (MkdirTemp + rename), so no one-time
+  chmod can fix an unprivileged client: each new active snapshot would be
+  root-only again. The kernel adapter therefore does not use
+  `oci.WithImageConfig`; it derives the init spec from the image config blob,
+  which is read through the daemon's content store — something socket access
+  already authorizes. On adapter versions without this fix, an
+  unprivileged session fails its startup probe with
+  `create container ...: open /var/lib/containerd/.../snapshots/N/fs: permission denied`.
+- **The client FIFO directory.** The containerd *client* creates the task/exec
+  stdio FIFOs, and containerd's default (`/run/containerd/fifo`) is
+  root-only. yaah normalizes an unset `workspace.containerd.fifo_dir` to
+  `<yaah home>/containerd-fifo` (see `docs/configuration.md`). No host setup
+  needed.
+
+Notes:
+
+- The hand-edit form of step 2 is a single line: in the `[grpc]` section of
+  `/etc/containerd/config.toml`, change `gid = 0` to the containerd group's
+  number (`getent group containerd | cut -d: -f3`) — the field is an
+  integer, so a name string makes the daemon exit on startup.
+- Step 2's `containerd config default | tee` overwrites an existing
+  configuration with generated defaults. On a host with a customized daemon
+  (runtimes, snapshotters, registry mirrors, plugins), do not regenerate:
+  edit only the `gid` line of the existing `/etc/containerd/config.toml`.
+- Namespaces (`yaah-live` included) live under `/var/lib/containerd` and
+  survive the restart; only the socket is recreated.
+- Without `newgrp` (or a fresh login), the group membership is not yet in
+  your process credentials — the permission error will look like it
+  "didn't work" until then.
+- A quicker but temporary alternative is
+  `sudo setfacl -m u:$USER:rw /run/containerd/containerd.sock`: it works
+  immediately but is lost whenever the daemon restarts, because the socket
+  is recreated. Prefer the group.
+- Membership of the `containerd` group is root-equivalent: anyone who can
+  connect to the socket can run a root container. The socket grant above is
+  therefore the only privilege yaah's unprivileged sessions need and receive.
 
 ## Prerequisites
 
