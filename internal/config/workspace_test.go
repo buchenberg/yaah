@@ -108,10 +108,52 @@ workspace:
 	// An unset fifo_dir normalizes into the yaah home: containerd's own
 	// default is root-only, and a predictable name under the shared temp
 	// dir could be pre-created by another local user to deny or subvert
-	// the session's FIFO creation.
+	// the session's FIFO creation. When the home does not resolve
+	// absolutely the field stays empty (validation then names it), so the
+	// expectation mirrors the guard.
 	want := filepath.Join(HomeDir(), "containerd-fifo")
+	if !filepath.IsAbs(want) {
+		want = ""
+	}
 	if cfg.Workspace.Containerd.FIFODir != want {
 		t.Errorf("FIFODir = %q, want the normalized default %q", cfg.Workspace.Containerd.FIFODir, want)
+	}
+}
+
+// TestLoad_relativeHomeFifoFallback pins the reachable broken-home case
+// end to end: a relative $YAAH_HOME makes the fifo_dir default relative,
+// so normalize must leave the field empty and validation must refuse the
+// stanza with the cause named — not let the adapter fall back silently
+// to its root-only default. (With $HOME unset instead, Load fails earlier
+// at the config path, so the relative home is the case that reaches here.)
+func TestLoad_relativeHomeFifoFallback(t *testing.T) {
+	// A relative home resolves the config path against the process cwd,
+	// so chdir into a scratch root and plant the stanza under it.
+	dir := t.TempDir()
+	t.Chdir(dir)
+	rel := filepath.Join(dir, "relative", "yaah")
+	if err := os.MkdirAll(rel, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rel, "config.yaml"),
+		[]byte("workspace:\n  backend: containerd\n  containerd:\n    image: example/dev:latest\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("YAAH_HOME", "relative/yaah")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Workspace.Containerd.FIFODir != "" {
+		t.Errorf("FIFODir = %q, want empty rather than a relative default", cfg.Workspace.Containerd.FIFODir)
+	}
+	err = Validate(cfg)
+	if err == nil {
+		t.Fatal("Validate must refuse an empty fifo_dir for the containerd backend")
+	}
+	if !strings.Contains(err.Error(), "fifo_dir is empty") || !strings.Contains(err.Error(), "absolute") {
+		t.Errorf("error = %v, want the fifo_dir emptiness and its cause named", err)
 	}
 }
 
@@ -140,9 +182,12 @@ func TestValidate_workspace(t *testing.T) {
 		{
 			name: "containerd on linux with image and root is valid",
 			ws: WorkspaceConfig{
-				Backend:    BackendContainerd,
-				Root:       "/workspace",
-				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest"},
+				Backend: BackendContainerd,
+				Root:    "/workspace",
+				Containerd: ContainerdWorkspaceConfig{
+					Image:   "example/dev:latest",
+					FIFODir: "/run/containerd/fifo",
+				},
 			},
 			goos: "linux",
 		},
@@ -151,7 +196,7 @@ func TestValidate_workspace(t *testing.T) {
 			ws: WorkspaceConfig{
 				Backend:    BackendContainerd,
 				Root:       "/workspace",
-				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest"},
+				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: "/run/containerd/fifo"},
 			},
 			goos:    "windows",
 			wantErr: "windows cannot run one (native Linux or WSL2 required)",
@@ -161,6 +206,9 @@ func TestValidate_workspace(t *testing.T) {
 			ws: WorkspaceConfig{
 				Backend: BackendContainerd,
 				Root:    "/workspace",
+				Containerd: ContainerdWorkspaceConfig{
+					FIFODir: "/run/containerd/fifo",
+				},
 			},
 			goos:    "linux",
 			wantErr: "workspace.containerd.image is required",
@@ -170,7 +218,7 @@ func TestValidate_workspace(t *testing.T) {
 			ws: WorkspaceConfig{
 				Backend:    BackendContainerd,
 				Root:       "workspace",
-				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest"},
+				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: "/run/containerd/fifo"},
 			},
 			goos:    "linux",
 			wantErr: `workspace.root "workspace" must be an absolute path inside the sandbox`,
@@ -180,7 +228,7 @@ func TestValidate_workspace(t *testing.T) {
 			ws: WorkspaceConfig{
 				Backend:    BackendContainerd,
 				Root:       "/",
-				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest"},
+				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: "/run/containerd/fifo"},
 			},
 			goos:    "linux",
 			wantErr: `would scope the whole container`,
@@ -193,7 +241,7 @@ func TestValidate_workspace(t *testing.T) {
 			ws: WorkspaceConfig{
 				Backend:    BackendContainerd,
 				Root:       "//",
-				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest"},
+				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: "/run/containerd/fifo"},
 			},
 			goos:    "linux",
 			wantErr: `would scope the whole container`,
@@ -210,6 +258,21 @@ func TestValidate_workspace(t *testing.T) {
 			},
 			goos:    "linux",
 			wantErr: `workspace.containerd.fifo_dir "yaah-fifo" must be an absolute path`,
+		},
+		{
+			// Empty is what normalizeWorkspace leaves when the yaah home
+			// does not resolve absolutely; the adapter's own default is
+			// root-only, so validation must refuse it with the cause named
+			// instead of letting an unprivileged session fail later at FIFO
+			// creation.
+			name: "empty fifo dir is refused with the home named",
+			ws: WorkspaceConfig{
+				Backend:    BackendContainerd,
+				Root:       "/workspace",
+				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest"},
+			},
+			goos:    "linux",
+			wantErr: "workspace.containerd.fifo_dir is empty",
 		},
 	}
 	for _, tc := range cases {

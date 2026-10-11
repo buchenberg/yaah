@@ -96,6 +96,7 @@ func TestCheckWorkspace_Isolated(t *testing.T) {
 		Address:   "/run/containerd/containerd.sock",
 		Namespace: "yaah",
 		Image:     "registry.example/yaah-workspace:latest",
+		FIFODir:   "/run/containerd/fifo",
 	}
 	check := CheckWorkspace(cfg, nil)
 	if runtime.GOOS != "linux" {
@@ -152,6 +153,7 @@ func TestCheckWorkspace_DefaultSocket(t *testing.T) {
 	cfg.Workspace.Containerd = config.ContainerdWorkspaceConfig{
 		Namespace: "yaah",
 		Image:     "registry.example/yaah-workspace:latest",
+		FIFODir:   "/run/containerd/fifo",
 	}
 	check := CheckWorkspace(cfg, nil)
 	if check.Status != "OK" {
