@@ -12,6 +12,7 @@
 package supervision
 
 import (
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"sync"
@@ -54,6 +55,7 @@ func (r AdvisoryRules) Any() bool {
 // goroutine that turns its interventions into steering.
 type Service struct {
 	sup         *shepherd.Supervisor
+	guard       *shepherd.Supervisor
 	mgr         *shepherd.ScopeManager
 	runs        *Registry
 	bus         *shepherdtrace.EffectBus
@@ -67,6 +69,60 @@ type Service struct {
 	closed  bool
 	started bool
 	wg      sync.WaitGroup
+}
+
+// GuardCheck returns the blocking pre-dispatch check for sub-agent
+// loops (adoption plan B2): the sub-agent pipeline consults it before
+// a tool call executes, and a non-empty reason denies the call. Nil
+// when the shell guard is disabled in config — a nil check is the
+// pass-through, so tracing-off sessions are byte-identical to today.
+//
+// The event mirrors the declaration the trace middleware records —
+// schema ref, kind label, and the shell command under "cmd" — so the
+// rule set evaluates pre-dispatch and post-hoc against one shape.
+//
+// Safe under concurrent sub-agent loops: the kernel's CheckCall copies
+// the rule slice under a read lock, and the guard rule is stateless —
+// both closures read only the event — so concurrent dispatches share
+// one check without shared mutable state.
+func (s *Service) GuardCheck() func(ownerID, toolName, argsJSON string) string {
+	if s.guard == nil {
+		return nil
+	}
+	return func(ownerID, toolName, argsJSON string) string {
+		payload := map[string]any{
+			"tool": toolName,
+			"args": json.RawMessage(argsJSON),
+		}
+		if toolName == "bash" || toolName == "powershell" || toolName == "background_process" {
+			var args struct {
+				Command string `json:"command"`
+			}
+			if json.Unmarshal([]byte(argsJSON), &args) == nil && args.Command != "" {
+				payload["cmd"] = args.Command
+			}
+		}
+		iv := s.guard.CheckCall(shepherdtrace.EffectEvent{
+			TraceOwnerID: ownerID,
+			Mode:         shepherdtrace.Declaration,
+			SchemaRef:    "yaah.tool." + toolName + ".v1",
+			KindLabel:    toolName,
+			Payload:      payload,
+		})
+		if iv == nil || iv.Type != shepherd.InterventionDeny {
+			return ""
+		}
+		// Fail closed: a deny verdict denies regardless of whether the
+		// payload type-asserts or carries text. A silent empty string
+		// here would turn a non-string (or empty) payload into an
+		// allow — fail-open in the one pre-dispatch net sub-agent
+		// calls pass through.
+		reason, ok := iv.Payload.(string)
+		if !ok || reason == "" {
+			return "Blocked destructive operation. Supervisor denied."
+		}
+		return reason
+	}
 }
 
 // skippingSupervisorRecords wraps a rule so it never matches the
@@ -98,16 +154,55 @@ const (
 	defaultStuckRepeat        = 3
 )
 
+// shellGuardRule composes the blocking shell guard from the kernel's
+// DestructiveToolGuard (adoption plan B2, decision D3: "default-deny
+// for bash"), reusing the kernel's deny action verbatim. The kernel's
+// own matcher block-matches bash, write, and delete — the plan's
+// settled scope is the shell only (both of yaah's: bash on POSIX,
+// powershell on Windows, which the kernel's matcher has never heard
+// of), because structured tools are the approved path for changes and
+// their review is the merge gate's job (Phase C), not this net.
+//
+// background_process joins the shells for its command-running action
+// only: it executes an arbitrary command through the host process
+// manager — the same "a shell can execute anything a pattern matcher
+// cannot see" hazard, in a second door. Its read-only actions
+// (status, output) and stop pass: a command is the hazard, and only
+// the start action carries one.
+func shellGuardRule() shepherd.SupervisionRule {
+	guard := shepherd.DestructiveToolGuard()
+	return shepherd.SupervisionRule{
+		Name: "destructive_shell_guard",
+		Match: func(e shepherdtrace.EffectEvent) bool {
+			if e.Mode != shepherdtrace.Declaration {
+				return false
+			}
+			switch e.KindLabel {
+			case "bash", "powershell":
+				return true
+			case "background_process":
+				cmd, _ := e.Payload["cmd"].(string)
+				return cmd != ""
+			}
+			return false
+		},
+		Action: guard.Action,
+	}
+}
+
 // NewService assembles the kernel supervisor with the enabled advisory
-// rules. The thresholds default inside the kernel rules when zero, so
-// a bare AdvisoryRules{DestructiveTool: true, ...} needs no tuning
-// knowledge. rootScopeID is the session's root scope (adoption plan
-// D1): rule-driven interventions against it are dropped — advisory
-// rules exist to rescue sub-agents whose calls no policy gate sees,
-// while the parent's own calls already passed the approval middleware,
-// and steering the session mid-run is B3's gated territory. The
-// manual supervisor tool's root inject (A2) is unaffected.
-func NewService(mgr *shepherd.ScopeManager, bus *shepherdtrace.EffectBus, runs *Registry, rules AdvisoryRules, rootScopeID string) *Service {
+// rules, and — when shellGuard is set — a second, never-started
+// supervisor carrying the blocking shell guard for synchronous
+// pre-dispatch checks (B2). The thresholds default inside the kernel
+// rules when zero, so a bare AdvisoryRules{DestructiveTool: true, ...}
+// needs no tuning knowledge. rootScopeID is the session's root scope
+// (adoption plan D1): rule-driven interventions against it are
+// dropped — advisory rules exist to rescue sub-agents whose calls no
+// policy gate sees, while the parent's own calls already passed the
+// approval middleware, and steering the session mid-run is B3's gated
+// territory. The manual supervisor tool's root inject (A2) is
+// unaffected.
+func NewService(mgr *shepherd.ScopeManager, bus *shepherdtrace.EffectBus, runs *Registry, rules AdvisoryRules, shellGuard bool, rootScopeID string) *Service {
 	errorThreshold := rules.ErrorRateThreshold
 	if errorThreshold <= 0 {
 		errorThreshold = defaultErrorRateThreshold
@@ -133,7 +228,17 @@ func NewService(mgr *shepherd.ScopeManager, bus *shepherdtrace.EffectBus, runs *
 	if rules.StuckDetection {
 		sup.AddRule(skippingSupervisorRecords(shepherd.StuckDetectionRule(stuckRepeat)))
 	}
-	return &Service{sup: sup, mgr: mgr, runs: runs, bus: bus, rootScopeID: rootScopeID}
+
+	var guard *shepherd.Supervisor
+	if shellGuard {
+		// A second instance, never started: it must never subscribe to
+		// the bus, or every deny would also surface as an async
+		// intervention the advisory drain would have to drop. Its
+		// CheckCall is the whole surface.
+		guard = shepherd.NewSupervisor(mgr, nil)
+		guard.AddRule(shellGuardRule())
+	}
+	return &Service{sup: sup, guard: guard, mgr: mgr, runs: runs, bus: bus, rootScopeID: rootScopeID}
 }
 
 // Start subscribes the supervisor to the bus and launches the drain

@@ -287,3 +287,37 @@ func TestSupervisorRuleSwitchResolve(t *testing.T) {
 		t.Error("explicit master disable must disable")
 	}
 }
+
+// TestSupervisorDestructiveGuardSwitch pins the blocking guard's
+// switch (adoption plan B2): absent means enabled — the plan's §7
+// default — and an explicit false disables it.
+func TestSupervisorDestructiveGuardSwitch(t *testing.T) {
+	writeConfig(t, `
+agents:
+  default:
+    shepherd_trace_dir: ~/traces
+`)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Agent.Default.Supervisor.DestructiveGuardEnabled() {
+		t.Error("absent destructive_guard must default to enabled")
+	}
+
+	writeConfig(t, `
+agents:
+  default:
+    shepherd_trace_dir: ~/traces
+    supervisor:
+      rules:
+        destructive_guard: {enabled: false}
+`)
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Agent.Default.Supervisor.DestructiveGuardEnabled() {
+		t.Error("explicit destructive_guard: false must disable")
+	}
+}

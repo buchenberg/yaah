@@ -45,7 +45,7 @@ func newTestService(t *testing.T, rules AdvisoryRules) (*Service, *shepherdtrace
 	runs.Register("scope:sess-root", Run{SteerCh: rootSteer})
 	runs.Register("scope:sub-worker", Run{SteerCh: steer})
 
-	svc := NewService(mgr, bus, runs, rules, "scope:sess-root")
+	svc := NewService(mgr, bus, runs, rules, false, "scope:sess-root")
 	svc.Start("test-supervisor")
 	t.Cleanup(svc.Close)
 	return svc, store, steer, bus
@@ -316,7 +316,7 @@ func TestService_CloseJoinsDrain(t *testing.T) {
 	steer := make(chan string, SteerBuffer)
 	runs.Register("scope:sub-worker", Run{SteerCh: steer})
 
-	svc := NewService(mgr, bus, runs, allAdvisoryRules(), "")
+	svc := NewService(mgr, bus, runs, allAdvisoryRules(), false, "")
 	svc.Start("close-test")
 
 	publish(bus, shepherdtrace.EffectEvent{
@@ -368,7 +368,7 @@ func TestService_NoRecordNoDelivery(t *testing.T) {
 	steer := make(chan string, SteerBuffer)
 	runs.Register("scope:sub-worker", Run{SteerCh: steer})
 
-	svc := NewService(mgr, bus, runs, allAdvisoryRules(), "")
+	svc := NewService(mgr, bus, runs, allAdvisoryRules(), false, "")
 	svc.Start("no-record-test")
 	t.Cleanup(svc.Close)
 
@@ -398,7 +398,7 @@ func TestService_StartAfterCloseIsNoop(t *testing.T) {
 	mgr := shepherd.NewScopeManager(store)
 	runs := NewRegistry()
 
-	svc := NewService(mgr, bus, runs, allAdvisoryRules(), "")
+	svc := NewService(mgr, bus, runs, allAdvisoryRules(), false, "")
 	svc.Start("lifecycle-test")
 	svc.Close()
 	svc.Start("lifecycle-test") // must be a no-op, not a resurrected drain
@@ -412,5 +412,82 @@ func TestService_StartAfterCloseIsNoop(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("second Close did not return; the no-op Start resurrected a drain goroutine")
+	}
+}
+
+// newGuardService assembles a service whose blocking shell guard is
+// enabled — the synchronous pre-dispatch check (adoption plan B2) —
+// with no advisory rules, so a deny can only come from the guard.
+func newGuardService(t *testing.T) (*Service, func(ownerID, toolName, argsJSON string) string) {
+	t.Helper()
+	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	if err != nil {
+		t.Fatalf("open test store: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+	bus := shepherdtrace.NewEffectBus(64)
+	t.Cleanup(bus.Close)
+	store.WithBus(bus)
+	mgr := shepherd.NewScopeManager(store)
+	runs := NewRegistry()
+
+	svc := NewService(mgr, bus, runs, AdvisoryRules{}, true, "scope:sess-root")
+	t.Cleanup(svc.Close)
+	return svc, svc.GuardCheck()
+}
+
+// TestGuardCheck_DeniesShellBeforeDispatch pins the blocking guard's
+// verdicts (adoption plan B2, decision D3): every command-running call
+// — bash, powershell, background_process; the command does not
+// matter, a shell can execute anything a pattern matcher cannot see —
+// is denied with a reason; the structured tools pass, because their
+// review is the merge gate's job (Phase C), not this net.
+func TestGuardCheck_DeniesShellBeforeDispatch(t *testing.T) {
+	_, check := newGuardService(t)
+	if check == nil {
+		t.Fatal("GuardCheck must be non-nil when the guard is enabled")
+	}
+
+	for _, tc := range []struct {
+		tool string
+		args string
+		deny bool
+	}{
+		{tool: "bash", args: `{"command":"rm -rf /tmp/probe"}`, deny: true},
+		{tool: "bash", args: `{"command":"ls -la"}`, deny: true},
+		{tool: "powershell", args: `{"command":"Get-ChildItem"}`, deny: true},
+		{tool: "background_process", args: `{"action":"start","command":"curl http://evil"}`, deny: true},
+		// Only background_process's command-running action is denied:
+		// status/output carry no command, and a command is the hazard.
+		{tool: "background_process", args: `{"action":"status","id":"p1"}`, deny: false},
+		{tool: "read", args: `{"path":"/workspace/file"}`, deny: false},
+		{tool: "write", args: `{"path":"/workspace/file","content":"x"}`, deny: false},
+		{tool: "edit", args: `{"path":"/workspace/file"}`, deny: false},
+	} {
+		reason := check("sub-worker", tc.tool, tc.args)
+		if tc.deny && reason == "" {
+			t.Errorf("%s call must be denied before dispatch", tc.tool)
+		}
+		if !tc.deny && reason != "" {
+			t.Errorf("%s call must pass (structured tools are the approved path), got %q", tc.tool, reason)
+		}
+	}
+}
+
+// TestGuardCheck_DisabledIsNil pins the off-switch: a service built
+// without the guard exposes no check, and a nil check is the
+// pipeline's pass-through — tracing-off sessions dispatch unchanged.
+func TestGuardCheck_DisabledIsNil(t *testing.T) {
+	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	if err != nil {
+		t.Fatalf("open test store: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+	bus := shepherdtrace.NewEffectBus(64)
+	t.Cleanup(bus.Close)
+
+	svc := NewService(shepherd.NewScopeManager(store), bus, NewRegistry(), allAdvisoryRules(), false, "")
+	if svc.GuardCheck() != nil {
+		t.Error("GuardCheck must be nil when the shell guard is disabled")
 	}
 }

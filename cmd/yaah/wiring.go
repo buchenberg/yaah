@@ -462,8 +462,13 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 				StuckDetection:       supervisorCfg.StuckDetectionEnabled(),
 				StuckRepeatThreshold: supervisorCfg.StuckRepeatThreshold(),
 			}
-			if supervisorCfg.EngineEnabled() && rules.Any() {
-				supervisorSvc = supervision.NewService(mgr, bus, runRegistry, rules, rootScopeID)
+			// The blocking shell guard (adoption plan B2) rides the
+			// same service: the engine gate covers it, and its check
+			// is the synchronous pre-dispatch seam the sub-agent
+			// pipeline consults.
+			guardEnabled := supervisorCfg.DestructiveGuardEnabled()
+			if supervisorCfg.EngineEnabled() && (rules.Any() || guardEnabled) {
+				supervisorSvc = supervision.NewService(mgr, bus, runRegistry, rules, guardEnabled, rootScopeID)
 				supervisorSvc.Start("yaah-supervisor-" + sessionID)
 			}
 		}
@@ -518,6 +523,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		Workspace:             subAgentWorkspace,
 		RootScopeID:           rootScopeID,
 		Runs:                  runRegistry,
+		GuardCheck:            supervisorSvcGuardCheck(supervisorSvc),
 		ResolveProviderByName: resolveProviderByName,
 	})
 
@@ -837,6 +843,18 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	}
 
 	return sess, nil
+}
+
+// supervisorSvcGuardCheck extracts the blocking pre-dispatch check
+// (adoption plan B2) from the session's supervisor service. A nil
+// service — tracing off, the engine disabled, or a startup that never
+// reached the shepherd branch — means no guard: every sub-agent call
+// dispatches, byte-identical to a tracing-off session.
+func supervisorSvcGuardCheck(svc *supervision.Service) func(ownerID, toolName, argsJSON string) string {
+	if svc == nil {
+		return nil
+	}
+	return svc.GuardCheck()
 }
 
 // splitRolesBySupervised partitions role names into plain and supervised
