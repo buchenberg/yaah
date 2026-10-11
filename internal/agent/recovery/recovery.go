@@ -259,6 +259,7 @@ func IsRegisteredWorktree(ctx context.Context, repoPath, path string) bool {
 	if err != nil {
 		return false
 	}
+	wantStat, statErr := os.Stat(abs)
 	for _, line := range strings.Split(string(out), "\n") {
 		if !strings.HasPrefix(line, "worktree ") {
 			continue
@@ -267,16 +268,23 @@ func IsRegisteredWorktree(ctx context.Context, repoPath, path string) bool {
 		if err != nil {
 			continue
 		}
-		// Windows paths differ in case; a lexical compare there would miss
-		// the registered entry and skip a legitimate cleanup.
+		// Windows paths differ in case; a lexical compare there would
+		// miss the registered entry. Temp dirs also differ lexically
+		// on other platforms — macOS resolves /var through a symlink
+		// to /private/var, Windows may hand out an 8.3 short name —
+		// so after the string compare, os.SameFile compares the
+		// directories themselves, which no naming quirk can fool.
 		if runtime.GOOS == "windows" {
 			if strings.EqualFold(filepath.Clean(wt), filepath.Clean(abs)) {
 				return true
 			}
-			continue
-		}
-		if filepath.Clean(wt) == filepath.Clean(abs) {
+		} else if filepath.Clean(wt) == filepath.Clean(abs) {
 			return true
+		}
+		if statErr == nil {
+			if wtStat, werr := os.Stat(wt); werr == nil && os.SameFile(wantStat, wtStat) {
+				return true
+			}
 		}
 	}
 	return false

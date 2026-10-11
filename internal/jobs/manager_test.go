@@ -233,6 +233,20 @@ func TestBackgroundJobs_OnUsage(t *testing.T) {
 	}
 	waitForJob(t, m, id, 2*time.Second)
 
+	// OnUsage fires after the job's status flips, so completion does
+	// not imply attribution — poll briefly for it (a slow Windows
+	// runner exposed this race).
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		mu.Lock()
+		total := attributed.TotalTokens
+		mu.Unlock()
+		if total == 150 || !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
 	mu.Lock()
 	defer mu.Unlock()
 	if attributed.TotalTokens != 150 {
