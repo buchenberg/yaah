@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -59,6 +60,22 @@ const reviewDiffMaxLines = 2000
 type supervisedSessionRuntime struct {
 	Runner   jobs.TaskRunner
 	RepoPath string
+
+	// RootScopeID is the session's root scope (adoption plan C1): the
+	// session's scope forks from it, which is what gives the merge gate
+	// its parent and fork baseline — without a root scope there is no
+	// gate, so review sessions refuse to start rather than run
+	// ungated. Empty only on the warned degraded path (root scope
+	// creation failed with tracing on).
+	RootScopeID string
+
+	// MergePolicy composes the session's own approve verdict in the
+	// merge gate's reviewer (adoption plan C1). The interactive loop is
+	// the review — every envelope carried the unit's diff — and accept
+	// is its approve verdict; a policy composes on top of it (a deny
+	// keeps today's behavior: checkpoint restore + the reason
+	// injected). Nil in production wiring.
+	MergePolicy func(proposal shepherd.MergeProposal) error
 
 	// Worktree isolates each fork variant in its own git worktree, so a
 	// discarded variant cannot touch the parent tree. Off by default: without
@@ -140,9 +157,13 @@ type supervisedSession struct {
 
 	// checkpointID is the live unit-start checkpoint ("" when none —
 	// e.g. mid-fork or after a cancelled consume). unitState is the workspace
-	// state at unit start and is the diff base.
+	// state at unit start and is the diff base; unitSnap is the
+	// checkpoint's conversation snapshot — the denial path's seed,
+	// kept because a merge-gate denial discards the scope and the
+	// checkpoint can no longer be restored through it.
 	checkpointID string
 	unitState    shepherdtrace.WorkspaceState
+	unitSnap     []byte
 
 	unit     int             // completed+dispatched unit counter
 	lastConv []types.Message // conversation after the last dispatched unit
@@ -298,11 +319,18 @@ func startReviewSession(ctx context.Context, runtime supervisedSessionRuntime, p
 	if mgr == nil {
 		return "", fmt.Errorf("supervised_task: shepherd tracing not enabled (set shepherd_trace_dir in config)")
 	}
+	if runtime.RootScopeID == "" {
+		return "", fmt.Errorf("supervised_task: no shepherd root scope — review sessions fork their scope from it (the merge gate needs its parent and baseline); see the tracing startup warning")
+	}
 
 	id := fmt.Sprintf("supervised:%s:%d", role, time.Now().UnixNano())
-	scope, err := mgr.Create(id, shepherdsandbox.NewLocalGitSandbox(runtime.RepoPath))
+	// The session scope forks from the root (adoption plan C1), sharing
+	// the root's in-place git sandbox: the fork gives the scope a parent
+	// and a baseline, which is what the accept path's merge gate
+	// proposes and merges against.
+	scope, err := mgr.Fork(runtime.RootScopeID, id, nil)
 	if err != nil {
-		return "", fmt.Errorf("supervised_task: create scope: %w", err)
+		return "", fmt.Errorf("supervised_task: fork session scope: %w", err)
 	}
 
 	s := &supervisedSession{
@@ -333,6 +361,7 @@ func startReviewSession(ctx context.Context, runtime supervisedSessionRuntime, p
 	}
 	s.checkpointID = cp.ID
 	s.unitState = cp.Workspace
+	s.unitSnap = cp.Snapshot
 
 	return s.dispatchLocked(ctx, prompt, nil)
 }
@@ -429,6 +458,7 @@ func (s *supervisedSession) continueUnit(ctx context.Context, guidance string) (
 	}
 	s.checkpointID = cp.ID
 	s.unitState = cp.Workspace
+	s.unitSnap = cp.Snapshot
 
 	return s.dispatchLocked(ctx, prompt, s.lastConv)
 }
@@ -467,6 +497,7 @@ func (s *supervisedSession) rollbackUnit(ctx context.Context, guidance string) (
 	}
 	s.checkpointID = cp.ID
 	s.unitState = cp.Workspace
+	s.unitSnap = cp.Snapshot
 
 	return s.dispatchLocked(ctx, prompt, seed)
 }
@@ -838,6 +869,7 @@ func (s *supervisedSession) chooseVariant(ctx context.Context, winner string) (s
 	}
 	s.checkpointID = cp.ID
 	s.unitState = cp.Workspace
+	s.unitSnap = cp.Snapshot
 
 	// Fork state is consumed.
 	s.forkState = nil
@@ -860,8 +892,13 @@ func (s *supervisedSession) chooseVariant(ctx context.Context, winner string) (s
 	return marshalReviewEnvelope(env), nil
 }
 
-// accept keeps the last unit's work, releases the checkpoint, and
-// closes the session.
+// accept keeps the last unit's work through the kernel's merge gate
+// (adoption plan C1): the session's approve verdict runs CommitMerge,
+// which records the proposal and the decision causally and refuses
+// scope states that cannot merge. The merge itself is causal — the
+// work already stands in the shared tree — so approval lands as the
+// existing post-accept flow (prune checkpoints, close). A denial keeps
+// today's behavior: checkpoint restore + the denial reason injected.
 func (s *supervisedSession) accept(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -870,7 +907,18 @@ func (s *supervisedSession) accept(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("supervisor: session %s is awaiting choose — pick a winner or abort", s.id)
 	}
 
-	SharedScopeManager.PruneCheckpoints(context.WithoutCancel(ctx), s.scopeID)
+	mgr := SharedScopeManager
+	if err := mgr.CommitMerge(ctx, s.scopeID, s.mergeReviewer()); err != nil {
+		var denied *shepherd.SupervisorDeniedError
+		if errors.As(err, &denied) {
+			return s.denyAndRetryLocked(ctx, denied)
+		}
+		return "", fmt.Errorf("supervisor: accept: %w", err)
+	}
+
+	// Approval: the work stands, the decision is recorded. Existing
+	// post-accept flow — the session closes over the kept work.
+	mgr.PruneCheckpoints(context.WithoutCancel(ctx), s.scopeID)
 
 	env := reviewEnvelope{
 		Status:    "accepted",
@@ -881,6 +929,96 @@ func (s *supervisedSession) accept(ctx context.Context) (string, error) {
 	}
 	closeReviewSession(s)
 	return marshalReviewEnvelope(env), nil
+}
+
+// mergeReviewer is the session's verdict as the gate's MergeReviewer
+// (adoption plan C1). The interactive loop is the review — every
+// envelope carried the unit's diff — and accept is its approve verdict;
+// the runtime's MergePolicy composes on top of it and is the one
+// denial source (nil in production wiring, so the gate's refusal
+// semantics — isolated child, no baseline, non-active scope — are the
+// other ways accept can fail loudly).
+func (s *supervisedSession) mergeReviewer() shepherd.MergeReviewer {
+	return func(p shepherd.MergeProposal) error {
+		if s.runtime.MergePolicy != nil {
+			return s.runtime.MergePolicy(p)
+		}
+		return nil
+	}
+}
+
+// denyAndRetryLocked maps a merge-gate denial onto the session's
+// existing rollback UX (adoption plan C1): the kernel's Discard was
+// causal-only — the session scope shares the root's sandbox, so the
+// denied work still stands in the tree — and the physical rollback is
+// the checkpoint restore, with the denial reason injected into the
+// re-run the way rollback injects the orchestrator's guidance.
+//
+// The discarded scope cannot carry the restore (its workspace methods
+// refuse non-active scopes), so the tree is reset through the root
+// BEFORE the retry scope forks: the fresh fork's baseline is then the
+// restored tree, and the next accept proposes only the retry's work,
+// not reversions of the denied work.
+func (s *supervisedSession) denyAndRetryLocked(ctx context.Context, denied *shepherd.SupervisorDeniedError) (string, error) {
+	mgr := SharedScopeManager
+	root, ok := mgr.Get(s.runtime.RootScopeID)
+	if !ok {
+		return "", fmt.Errorf("supervisor: accept denied (%s) but the root scope vanished — the tree was left as the unit left it; abort or roll back manually", denied.Reason)
+	}
+
+	// The restore target: the live unit-start checkpoint when there is
+	// one; otherwise the fork point (a cancelled fork consumed the
+	// checkpoint but captured the fork state). Without either there is
+	// nothing recorded to roll back to — the denial envelope says so.
+	var target *shepherdtrace.WorkspaceState
+	var seed []byte
+	switch {
+	case s.checkpointID != "":
+		target = &s.unitState
+		seed = s.unitSnap
+	case s.forkState != nil:
+		target = s.forkState
+		seed = marshalMessages(s.forkConv)
+	}
+	if target != nil {
+		if err := root.ApplyWorkspace(ctx, *target); err != nil {
+			return "", fmt.Errorf("supervisor: accept denied (%s) but the checkpoint restore failed: %w — the tree was left as the unit left it; abort or roll back manually", denied.Reason, err)
+		}
+	}
+	if s.checkpointID != "" {
+		mgr.PruneCheckpoints(context.WithoutCancel(ctx), s.scopeID)
+	}
+
+	scope, err := mgr.Fork(s.runtime.RootScopeID, fmt.Sprintf("%s:retry:%d", s.id, time.Now().UnixNano()), nil)
+	if err != nil {
+		return "", fmt.Errorf("supervisor: accept denied (%s) but the retry scope could not fork: %w", denied.Reason, err)
+	}
+	s.scopeID = scope.ID()
+	s.checkpointID = ""
+	if target != nil {
+		cp, err := mgr.CreateCheckpoint(context.WithoutCancel(ctx), s.scopeID, seed)
+		if err != nil {
+			return "", fmt.Errorf("supervisor: accept denied (%s) but the retry checkpoint failed: %w", denied.Reason, err)
+		}
+		s.checkpointID = cp.ID
+		s.unitState = cp.Workspace
+		s.unitSnap = cp.Snapshot
+	}
+
+	prompt := "SUPERVISOR CORRECTION: your work unit was denied by the merge gate and its changes were rolled back. The gate's reason:\n" +
+		denied.Reason + "\n\nRedo the unit so the next review passes the gate."
+	out, err := s.dispatchLocked(ctx, prompt, unmarshalMessages(seed))
+	if err != nil {
+		return "", err
+	}
+	// The retry is a normal review dispatch; surface the denial so the
+	// orchestrator can see why the unit re-ran.
+	var env reviewEnvelope
+	if jerr := json.Unmarshal([]byte(out), &env); jerr == nil && env.Error == "" {
+		env.Error = "accept denied by the merge gate: " + denied.Reason
+		return marshalReviewEnvelope(env), nil
+	}
+	return out, nil
 }
 
 // abort rewinds the unaccepted work (last unit via checkpoint, or the

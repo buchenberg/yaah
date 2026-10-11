@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
@@ -109,14 +110,28 @@ func newSupervisedTestEnv(t *testing.T) (*SupervisedTaskTool, string) {
 
 	prev := SharedScopeManager
 	SharedScopeManager = shepherd.NewScopeManager(store)
-	t.Cleanup(func() { SharedScopeManager = prev })
+	prevTrace := SharedTraceStore
+	SharedTraceStore = store
+	t.Cleanup(func() {
+		SharedScopeManager = prev
+		SharedTraceStore = prevTrace
+	})
 
 	repo := newTestGitRepo(t)
 
+	// The root scope the wiring creates in local mode (adoption plan
+	// D1): the in-place git sandbox. Review sessions fork their scope
+	// from it — the merge gate's parent and baseline (C1).
+	root, err := SharedScopeManager.Create("test-session-root", shepherdsandbox.NewLocalGitSandbox(repo))
+	if err != nil {
+		t.Fatalf("create root scope: %v", err)
+	}
+
 	return &SupervisedTaskTool{
-		RoleNames:  []string{"worker"},
-		RepoPath:   repo,
-		MaxRetries: 1,
+		RoleNames:   []string{"worker"},
+		RepoPath:    repo,
+		RootScopeID: root.ID(),
+		MaxRetries:  1,
 	}, repo
 }
 

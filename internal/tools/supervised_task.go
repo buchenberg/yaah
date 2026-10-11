@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	shepherd "github.com/buchenberg/shepherd-kernel-go"
 	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/prompts"
@@ -43,6 +44,18 @@ type SupervisedTaskTool struct {
 	// RepoPath is the git repo for workspace checkpoints. If empty,
 	// defaults to the current working directory at Execute time.
 	RepoPath string
+
+	// RootScopeID is the session's root scope (adoption plan C1):
+	// review sessions fork their scope from it — the merge gate needs
+	// the parent and fork baseline. Wired from the session's root
+	// scope; review sessions refuse to start without it.
+	RootScopeID string
+
+	// MergePolicy composes the review session's approve verdict in the
+	// merge gate's reviewer (adoption plan C1); nil means the session's
+	// own verdict decides. A deny keeps the existing rollback UX:
+	// checkpoint restore + the reason injected into the re-run.
+	MergePolicy func(proposal shepherd.MergeProposal) error
 
 	// Worktree enables per-variant git-worktree isolation for review sessions.
 	// Off by default: fork variants then run sequentially in the shared
@@ -170,6 +183,8 @@ func (t *SupervisedTaskTool) Execute(ctx context.Context, args string) (string, 
 		return startReviewSession(ctx, supervisedSessionRuntime{
 			Runner:            t.Runner,
 			RepoPath:          repoPath,
+			RootScopeID:       t.RootScopeID,
+			MergePolicy:       t.MergePolicy,
 			Worktree:          t.Worktree,
 			WorktreeRoot:      t.WorktreeRoot,
 			WorktreeBootstrap: t.WorktreeBootstrap,
