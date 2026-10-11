@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.72.0](https://github.com/buchenberg/yaah/compare/v0.71.0...v0.72.0) (2026-10-11)
+
+
+### Features
+
+* **shepherd:** R1 -- RecoverScopes at startup with warn-only orphans ([cfb17e1](https://github.com/buchenberg/yaah/commit/cfb17e106e0455e1e9c5c2d3e771a07c692d2846))
+* **shepherd:** R1 — RecoverScopes at startup, warn-only orphans ([870a7c2](https://github.com/buchenberg/yaah/commit/870a7c2d8429b84d9e8248bb2e2083f8f6eb51ea))
+
+
+### Bug Fixes
+
+* **shepherd:** R1 -- delivery-assertion race in the call-cancellation jobs test ([69f6ef7](https://github.com/buchenberg/yaah/commit/69f6ef7fc325d0182f0704340bf9527053dbd61e))
+* **shepherd:** R1 -- same-file worktree matching; usage-attribution test race ([5b0a722](https://github.com/buchenberg/yaah/commit/5b0a7225a50f345415eb6c162c8528a2403fe15d))
+* **shepherd:** R1 -- settle the last two jobs-test completion races ([c3921a9](https://github.com/buchenberg/yaah/commit/c3921a98b552fe96774bcd085854750c7bc00550))
+* **shepherd:** R1 review round 1 -- strict adoption, inert orphans, loud disable ([4b769f2](https://github.com/buchenberg/yaah/commit/4b769f2d6d38019d790270fcfcc57c6198259d25))
+* **shepherd:** R1 review round 2 -- root-mode gate, unadopted bucket, teardown guard ([469a3d2](https://github.com/buchenberg/yaah/commit/469a3d2d4a2771e554de7332c9f5eba8c8b17a10))
+
 ## [0.71.0](https://github.com/buchenberg/yaah/compare/v0.70.0...v0.71.0) (2026-10-11)
 
 
