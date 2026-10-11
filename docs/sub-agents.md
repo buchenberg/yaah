@@ -217,11 +217,12 @@ of on faith. Two mechanisms make that work:
   rejected unit is rolled back and re-dispatched with the orchestrator's
   corrected guidance, and the sub-agent resumes from the context it had at the
   unit boundary rather than from a guess.
-- **Isolation.** With `supervised_worktree: true`, each `fork` variant runs in its
-  own git worktree, confined by a per-scope path validator and working directory,
-  so a speculative branch cannot touch the parent tree. `choose` applies the
-  winner's captured state to the parent; discarding a variant removes its
-  worktree.
+- **Isolation.** Each `fork` variant runs in its own git worktree — an isolated
+  child scope — confined by a per-scope path validator and working directory,
+  so a speculative branch cannot touch the parent tree. `choose` settles the
+  winner through the kernel's settlement (a fast-forward onto the parent when
+  it has not moved, a three-way merge when it drifted); the sealed outputs
+  back the review envelope, and the settlement itself is the worktree teardown.
 
 Routing is per role: `supervised: true` exposes the role through the checkpointed
 tool, and `turn_checkpoints: true` adds per-turn rewinds (bounded by

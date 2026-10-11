@@ -157,13 +157,6 @@ type Defaults struct {
 	// directory at execution time.
 	SupervisedRepoPath string `yaml:"supervised_repo_path"`
 
-	// SupervisedWorktree enables per-variant git-worktree isolation for
-	// supervised_task review sessions. When false (the default) fork variants
-	// run sequentially in the shared repository, reset to the fork point
-	// between runs. When true each variant runs in its own detached worktree,
-	// so a discarded variant cannot touch the parent tree.
-	SupervisedWorktree bool `yaml:"supervised_worktree"`
-
 	// SupervisedWorktreeRoot is the parent directory for variant worktrees.
 	// Empty (unset) uses a "shepherd-worktrees" directory beside the
 	// repository, outside its tracked tree.
@@ -451,6 +444,21 @@ func Load() (*Config, error) {
 		if _, ok := rawKeys["tui"]; ok {
 			fmt.Fprintf(os.Stderr, "warning: config key `tui:` is no longer used; toggle verbosity inside the TUI with :verbose\n")
 		}
+	}
+
+	// `agents.default.supervised_worktree` was removed with the fork
+	// settlement rework (adoption plan C2): fork variants are always
+	// isolated worktrees now. Warn once so upgraded configs know the
+	// key is dead.
+	var legacySupervised struct {
+		Agents struct {
+			Default struct {
+				SupervisedWorktree *bool `yaml:"supervised_worktree"`
+			} `yaml:"default"`
+		} `yaml:"agents"`
+	}
+	if err := yaml.Unmarshal(data, &legacySupervised); err == nil && legacySupervised.Agents.Default.SupervisedWorktree != nil {
+		fmt.Fprintf(os.Stderr, "warning: config key `agents.default.supervised_worktree` is no longer used; fork variants always run in isolated worktrees\n")
 	}
 
 	if cfg.Hooks.Dir != "" {

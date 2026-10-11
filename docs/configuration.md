@@ -71,8 +71,7 @@ agents:
     # role files (subagent.roles.<name>.supervised / .turn_checkpoints).
     supervised_max_retries: 1         # rollback-and-retry cycles after the first attempt
     supervised_repo_path: ""          # repo to checkpoint; "" = working directory
-    supervised_worktree: false        # isolate each fork variant in its own git worktree
-    supervised_worktree_root: ""      # parent dir for worktrees; "" = beside the repo
+    supervised_worktree_root: ""     # parent dir for variant worktrees; "" = beside the repo
     supervised_worktree_bootstrap: "" # run inside each worktree, e.g. "npm ci"
     turn_checkpoint_max: 0            # live turn checkpoints per run; 0 = unlimited
     max_turn_restores: 3              # turn-level restores per run; 0 = default (3)

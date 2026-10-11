@@ -57,14 +57,9 @@ type SupervisedTaskTool struct {
 	// checkpoint restore + the reason injected into the re-run.
 	MergePolicy func(proposal shepherd.MergeProposal) error
 
-	// Worktree enables per-variant git-worktree isolation for review sessions.
-	// Off by default: fork variants then run sequentially in the shared
-	// repository. On, each variant runs in its own worktree, so a discarded
-	// variant cannot touch the parent tree.
-	Worktree bool
-
 	// WorktreeRoot is the parent directory for variant worktrees. Empty
 	// defaults to a "shepherd-worktrees" directory beside the repository.
+	// Fork variants always run in isolated worktrees (adoption plan C2).
 	WorktreeRoot string
 
 	// WorktreeBootstrap is a shell command run inside each variant worktree
@@ -185,7 +180,6 @@ func (t *SupervisedTaskTool) Execute(ctx context.Context, args string) (string, 
 			RepoPath:          repoPath,
 			RootScopeID:       t.RootScopeID,
 			MergePolicy:       t.MergePolicy,
-			Worktree:          t.Worktree,
 			WorktreeRoot:      t.WorktreeRoot,
 			WorktreeBootstrap: t.WorktreeBootstrap,
 		}, params.Prompt, params.Role, subParams, timeout)
