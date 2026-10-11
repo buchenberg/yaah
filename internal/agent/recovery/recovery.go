@@ -115,7 +115,7 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 	if repoPath == "" {
 		return nil, nil, fmt.Errorf("no repository to re-adopt onto")
 	}
-	paths, err := scanWorktreePaths(ctx, store)
+	paths, err := scanWorktreePaths(ctx, store, repoPath)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -237,18 +237,20 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 
 // scanWorktreePaths reads every isolated child's worktree address into an
 // owner → info map. The kernel's fork record is the source since
-// v0.14.0: it carries sandbox_path, and the repository is derived from
-// the worktree itself (a git worktree carries its repository link), so
-// the address and the repo come from the trace alone. yaah's own
-// provision records (pre-bump traces) stay the fallback for children the
-// kernel record does not cover; that fallback is deleted at the next
-// minor. The kernel record wins on collision — last-write per child is
-// deterministic either way. A legacy record without a usable path or
-// repo is a corrupt registry entry — the exact "a worktree the trace
-// cannot find is an orphan recovery would never list" failure this
-// design fights — and fails the recovery loudly rather than being
-// skipped.
-func scanWorktreePaths(ctx context.Context, store *shepherdtrace.SQLiteTraceStore) (map[string]worktreeInfo, error) {
+// v0.14.0: it carries sandbox_path. The repository is the session's
+// trustedRepo — the fork carved the worktree from the parent's
+// repository — and never anything derived from the path's current
+// occupant: a squatter's self-reported repository would make the
+// ownership check circular, and a later teardown would destroy the
+// squatter as if it were ours. yaah's own provision records (pre-bump
+// traces) stay the fallback for children the kernel record does not
+// cover; that fallback is deleted at the next minor. The kernel record
+// wins on collision — last-write per child is deterministic either way.
+// A legacy record without a usable path or repo is a corrupt registry
+// entry — the exact "a worktree the trace cannot find is an orphan
+// recovery would never list" failure this design fights — and fails the
+// recovery loudly rather than being skipped.
+func scanWorktreePaths(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, trustedRepo string) (map[string]worktreeInfo, error) {
 	paths := make(map[string]worktreeInfo)
 
 	forks, err := shepherdtrace.ScanRecordsBySchema(ctx, store, shepherd.SchemaScopeForked)
@@ -261,7 +263,7 @@ func scanWorktreePaths(ctx context.Context, store *shepherdtrace.SQLiteTraceStor
 		if child == "" || path == "" {
 			continue // shared forks and unaddressed children have no record to read
 		}
-		paths[child] = worktreeInfo{path: path, repo: repoOfWorktree(ctx, path)}
+		paths[child] = worktreeInfo{path: path, repo: trustedRepo}
 	}
 
 	records, err := shepherdtrace.ScanRecordsBySchema(ctx, store, SchemaWorktreeProvisioned)
@@ -280,23 +282,6 @@ func scanWorktreePaths(ctx context.Context, store *shepherdtrace.SQLiteTraceStor
 		paths[rec.OwnerID] = worktreeInfo{path: path, repo: repo}
 	}
 	return paths, nil
-}
-
-// repoOfWorktree derives the repository a git worktree was carved from:
-// the worktree's .git file points into the repository's administration,
-// so `git rev-parse --git-common-dir` answers from the worktree alone.
-// A path that is gone or no longer a worktree has no repository to
-// report — "" — which the classification treats as unadoptable.
-func repoOfWorktree(ctx context.Context, path string) string {
-	out, err := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--git-common-dir").Output()
-	if err != nil {
-		return ""
-	}
-	repo := filepath.Dir(strings.TrimSpace(string(out)))
-	if !filepath.IsAbs(repo) {
-		repo = filepath.Join(path, repo)
-	}
-	return repo
 }
 
 // RegisteredWorktreePaths runs git's worktree registry for repoPath

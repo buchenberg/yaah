@@ -113,9 +113,6 @@ func buildCrashState(t *testing.T) *crashState {
 	}
 	state.worktreeChildID = wtChild.ID()
 	state.worktreePath = wtPath
-	if err := appendLegacyWorktreeRecord(context.Background(), store, wtChild.OwnerID(), repo, wtPath); err != nil {
-		t.Fatalf("record worktree: %v", err)
-	}
 	if err := os.WriteFile(filepath.Join(wtPath, "variant.txt"), []byte("speculative\n"), 0o644); err != nil {
 		t.Fatalf("write worktree content: %v", err)
 	}
@@ -394,9 +391,6 @@ func TestRecover_SquatterDirectoryNeverAdopted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fork: %v", err)
 	}
-	if err := appendLegacyWorktreeRecord(context.Background(), store, child.OwnerID(), repo, squat); err != nil {
-		t.Fatalf("record: %v", err)
-	}
 	store.Close(context.Background())
 
 	store2, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
@@ -556,5 +550,91 @@ func TestRecover_KernelRecordedWorktreeAdoptsWithoutYaahRecord(t *testing.T) {
 	}
 	if data, rerr := os.ReadFile(filepath.Join(wtPath, "live.txt")); rerr != nil || string(data) != "pre-crash\n" {
 		t.Errorf("the pre-crash work is not live through the re-adopted worktree: %q, %v", string(data), rerr)
+	}
+}
+
+// TestRecover_LegacyRecordFallbackAdopts exercises the pre-bump trace
+// shape genuinely: a fork record written before the kernel carried
+// sandbox addresses (no sandbox_path in the payload) alongside yaah's own
+// worktree record. Recovery must adopt from the yaah record — the
+// fallback deleted at the next minor — with the same strict verification.
+func TestRecover_LegacyRecordFallbackAdopts(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "trace.sqlite")
+	store, err := shepherdtrace.NewSQLiteTraceStore(storePath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	repo := newGitRepo(t)
+	ctx := context.Background()
+
+	mgr := shepherd.NewScopeManager(store)
+	root, err := mgr.Create("sess-legacy", shepherdgit.NewLocalGitSandbox(repo))
+	if err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+
+	wtPath := filepath.Join(t.TempDir(), "wt-legacy")
+	sb := shepherdgit.NewWorktreeSandbox(repo, wtPath)
+	if err := sb.Create(ctx, shepherdsandbox.SandboxSpec{}); err != nil {
+		t.Fatalf("create worktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wtPath, "old.txt"), []byte("pre-bump work\n"), 0o644); err != nil {
+		t.Fatalf("write worktree content: %v", err)
+	}
+
+	// The pre-bump trace shape: the fork record carries the backend but
+	// no sandbox address, and yaah's own record holds the path.
+	if _, err := store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+		AppendIntentID: "sess-legacy:fork-legacy",
+		Groups: []shepherdtrace.AppendGroup{{
+			TraceOwnerID: root.OwnerID(),
+			FactDrafts: []shepherdtrace.RecordDraft{{
+				Mode:      shepherdtrace.Declaration,
+				SchemaRef: shepherd.SchemaScopeForked,
+				KindLabel: "scope:forked",
+				Payload: map[string]any{
+					"child_owner":     "sub-legacy",
+					"isolated":        true,
+					"sandbox_backend": "git",
+				},
+			}},
+		}},
+	}); err != nil {
+		t.Fatalf("append pre-bump fork record: %v", err)
+	}
+	if err := appendLegacyWorktreeRecord(ctx, store, "sub-legacy", repo, wtPath); err != nil {
+		t.Fatalf("append legacy worktree record: %v", err)
+	}
+	store.Close(context.Background())
+
+	// The crash and restart.
+	reopened, err := shepherdtrace.NewSQLiteTraceStore(storePath)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	t.Cleanup(func() { reopened.Close(context.Background()) })
+	rmgr, report, err := Recover(ctx, reopened, repo, true)
+	if err != nil {
+		t.Fatalf("recover: %v", err)
+	}
+
+	rc, ok := rmgr.Get("scope:sub-legacy")
+	if !ok {
+		t.Fatal("legacy child not recovered")
+	}
+	if rc.Sandbox() == nil {
+		t.Fatal("the legacy record's worktree was not adopted; the pre-bump fallback must resolve it")
+	}
+	found := false
+	for _, p := range report.Adopted {
+		if p == wtPath {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the adopted legacy worktree is not on the report: %v", report.Adopted)
+	}
+	if data, rerr := os.ReadFile(filepath.Join(wtPath, "old.txt")); rerr != nil || string(data) != "pre-bump work\n" {
+		t.Errorf("the pre-bump work is not live through the adopted worktree: %q, %v", string(data), rerr)
 	}
 }
