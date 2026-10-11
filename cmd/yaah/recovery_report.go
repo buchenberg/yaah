@@ -17,8 +17,8 @@ func printRecoveryReport(report *recovery.Report) {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "shepherd recovery: %d scopes (%d root(s)) rebuilt from the trace", report.Scopes, report.Roots)
-	if report.Adopted > 0 {
-		fmt.Fprintf(os.Stderr, ", %d worktree(s) re-adopted", report.Adopted)
+	if len(report.Adopted) > 0 {
+		fmt.Fprintf(os.Stderr, ", %d worktree(s) re-adopted", len(report.Adopted))
 	}
 	fmt.Fprintln(os.Stderr)
 

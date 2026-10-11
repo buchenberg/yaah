@@ -532,7 +532,7 @@ func CheckShepherd(cfg *config.Config, cfgErr error) Check {
 		return Check{Label: label, Status: "FAIL", Detail: "recovery: " + err.Error()}
 	}
 	detail := fmt.Sprintf("recovery rebuilt %d scope(s) (%d root(s)), %d worktree(s) re-adopted",
-		report.Scopes, report.Roots, report.Adopted)
+		report.Scopes, report.Roots, len(report.Adopted))
 	status := "OK"
 	var warns []string
 	if n := len(report.Orphans); n > 0 {

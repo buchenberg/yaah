@@ -82,7 +82,10 @@ type worktreeInfo struct {
 type Orphan struct {
 	ScopeID string
 	Path    string
-	Size    int64
+	// Repo is the repository the worktree was carved from — the prune
+	// path's teardown needs it for git's administrative state.
+	Repo string
+	Size int64
 }
 
 // Missing is an active worktree child whose recorded path is gone: the
@@ -108,7 +111,7 @@ type Unadopted struct {
 type Report struct {
 	Scopes    int
 	Roots     int
-	Adopted   int // worktree children re-adopted (their work is live again)
+	Adopted   []string // paths of worktree children re-adopted (their work is live again)
 	Orphans   []Orphan
 	Missing   []Missing
 	Unadopted []Unadopted
@@ -231,17 +234,17 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 			report.Missing = append(report.Missing, Missing{ScopeID: scope.ID(), Path: info.path})
 		case onDisk && scope.State() == shepherd.ScopeActive:
 			// Adopted means adopted: the strict resolver refuses an
-			// unregistered occupant, and the count must not claim it —
+			// unregistered occupant, and the report must not claim it —
 			// the refusal is reported as unadopted instead.
 			if scope.Sandbox() != nil {
-				report.Adopted++
+				report.Adopted = append(report.Adopted, info.path)
 			} else {
 				report.Unadopted = append(report.Unadopted, Unadopted{ScopeID: scope.ID(), Path: info.path})
 			}
 		case onDisk:
 			// Terminal scope, worktree still standing: unmerged work
 			// may live in it. List it, never delete it.
-			report.Orphans = append(report.Orphans, Orphan{ScopeID: scope.ID(), Path: info.path, Size: dirSize(info.path)})
+			report.Orphans = append(report.Orphans, Orphan{ScopeID: scope.ID(), Path: info.path, Repo: info.repo, Size: dirSize(info.path)})
 		}
 	}
 	return mgr, report, nil
