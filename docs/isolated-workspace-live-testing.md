@@ -34,13 +34,21 @@ sudo apt-get install -y podman
 cat > /tmp/Dockerfile.yaah-workspace <<'EOF'
 FROM docker.io/library/golang:bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends ripgrep \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/local/go/bin/go /usr/local/bin/go \
+    && ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 EOF
 
 podman build -f /tmp/Dockerfile.yaah-workspace -t docker.io/library/yaah-workspace:latest /tmp
 podman save -o /tmp/yaah-workspace.tar docker.io/library/yaah-workspace:latest
 sudo ctr -n yaah-live images import /tmp/yaah-workspace.tar
 ```
+
+The symlinks are load-bearing, not cosmetic: raw containerd applies no image
+config `ENV` to `Task.Exec`, so the golang image's `PATH=/usr/local/go/bin` never
+reaches the session's execs — the probe (and later `go_test`/`go_mod`) sees
+`/usr/bin` but not the toolchain at `/usr/local/go/bin`. Symlinking `go` and
+`gofmt` into `/usr/local/bin` puts them on the default PATH.
 
 The `-n` matters: image references are namespaced resources in containerd, and the
 import must land in the namespace the session reads — the harness default
