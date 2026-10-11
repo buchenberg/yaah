@@ -732,6 +732,18 @@ func subAgentSandbox(opts taskRunnerOpts, workdir string) shepherdsandbox.Sandbo
 // scope, and only checkpoint capture is unavailable — which it would
 // have been anyway.
 func CreateRootScope(mgr *shepherd.ScopeManager, sessionID, repoPath string, isolated bool) (*shepherd.Scope, error) {
+	// Resume reattach (adoption plan R2): --resume continues under
+	// the same session ID, so a recovered registry already holds the
+	// crashed run's root — reattach it instead of colliding.
+	// Recovery re-adopted its sandbox (or kept it pure-causal for an
+	// isolated session, matching the mode the resolver was given), so
+	// the scope tree resumes where it left off.
+	if scope, ok := mgr.Get("scope:" + sessionID); ok {
+		if scope.State() == shepherd.ScopeActive {
+			return scope, nil
+		}
+		return nil, fmt.Errorf("recovered root scope is %s — a halted root ended scope-tree supervision for this session; start a new session", scope.State())
+	}
 	var sb shepherdsandbox.Sandbox
 	if !isolated {
 		if repoPath == "" {

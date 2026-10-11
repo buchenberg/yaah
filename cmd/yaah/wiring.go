@@ -844,6 +844,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		steerCh:        steerCh,
 		rootScopeID:    rootScopeID,
 		runs:           runRegistry,
+		scopes:         scopeMgr,
 		supervisor:     supervisorSvc,
 		followupCh:     followupCh,
 	}

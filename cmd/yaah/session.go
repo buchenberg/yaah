@@ -29,6 +29,7 @@ import (
 	"sync"
 	"time"
 
+	shepherd "github.com/buchenberg/shepherd-kernel-go"
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
@@ -130,6 +131,13 @@ type agentSession struct {
 	// before the registry it delivers through goes away.
 	supervisor *supervision.Service
 
+	// scopes is the session's scope manager (adoption plan R2): the
+	// recovered-at-startup registry the wiring handed the session.
+	// close() prunes its terminal scopes — merged and discarded
+	// children accumulate over a long session, and the trace records
+	// survive either way. Nil when tracing is off.
+	scopes *shepherd.ScopeManager
+
 	// runCancel is the session-owned cancellation for the currently
 	// running prompt (adoption plan A3): the target of
 	// HaltCurrentRun — the root-halt bridge. Nil between prompts.
@@ -178,6 +186,14 @@ func (s *agentSession) close() {
 	// when the registry entries it addresses start going away.
 	if s.supervisor != nil {
 		s.supervisor.Close()
+	}
+	// PruneTerminal on close (adoption plan R2): merged and discarded
+	// children accumulate over a long session; their trace records
+	// survive either way, so the in-memory registry shrinks here. The
+	// warn-only orphans are untouchable by it — recovery detached
+	// their sandboxes, and pruning never destroys anything.
+	if s.scopes != nil {
+		s.scopes.PruneTerminal()
 	}
 	// The root's registry entry goes before its channel closes: the
 	// registry sends under its lock, so an unregister that returns
