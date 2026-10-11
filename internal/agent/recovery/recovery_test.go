@@ -158,6 +158,12 @@ func TestRecover_RebuildsTreeTerminalsCheckpointsOutputs(t *testing.T) {
 	if !ok || root.State() != shepherd.ScopeActive {
 		t.Fatalf("root not recovered active: ok=%v state=%v", ok, root.State())
 	}
+	// Roots resolve with an empty backend by the kernel's recovery
+	// contract; the resolver must re-adopt the in-place git repository
+	// on them (review finding: this was unverified).
+	if root.Sandbox() == nil {
+		t.Error("the root must be re-adopted onto the in-place git repository")
+	}
 	shared, ok := mgr.Get(state.sharedChildID)
 	if !ok || shared.State() != shepherd.ScopeActive || shared.Parent() == nil || shared.Parent().ID() != root.ID() {
 		t.Fatalf("shared child not recovered under the root: ok=%v state=%s", ok, shared.State())
@@ -309,6 +315,8 @@ func TestRecover_OrphanListedAndLeftOnDisk(t *testing.T) {
 	}
 	if scope, ok := mgr.Get(state.worktreeChildID); !ok || scope.State() != shepherd.ScopeDiscarded {
 		t.Errorf("the discarded scope must recover terminal (ok=%v)", ok)
+	} else if scope.Sandbox() != nil {
+		t.Error("an orphan must stay inert: no owned sandbox handle a later teardown could destroy it through")
 	}
 
 	// Warn-only means byte-identical survival: the sentinel content is
@@ -346,5 +354,71 @@ func TestRecover_MissingWorktreeReported(t *testing.T) {
 	}
 	if scope, ok := mgr.Get(state.worktreeChildID); !ok || scope.Sandbox() != nil {
 		t.Errorf("the child must recover without a sandbox (ok=%v)", ok)
+	}
+}
+
+// TestRecover_SquatterDirectoryNeverAdopted pins the strict adoption
+// rule (review finding): the trace directory is shared across runs and
+// an unrelated directory can occupy a recorded path — adopting it as an
+// owned worktree sandbox would hand a later teardown a RemoveAll over
+// user data. The squatter is left untouched and unadopted.
+func TestRecover_SquatterDirectoryNeverAdopted(t *testing.T) {
+	repo := newGitRepo(t)
+	dir := t.TempDir()
+	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+
+	// An unregistered plain directory squats on the recorded path.
+	squat := filepath.Join(t.TempDir(), "squatter")
+	if err := os.MkdirAll(squat, 0o755); err != nil {
+		t.Fatalf("mkdir squatter: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(squat, "user-data.txt"), []byte("not yaah's\n"), 0o644); err != nil {
+		t.Fatalf("write user data: %v", err)
+	}
+
+	mgr1 := shepherd.NewScopeManager(store)
+	root, err := mgr1.Create("sess-squat", shepherdsandbox.NewLocalGitSandbox(repo))
+	if err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+	// The isolated fork never provisioned a real worktree — the crash
+	// left the scope pointing at the squatter's path.
+	child, err := mgr1.ForkIsolated(root.ID(), "sub-squat", nil, shepherdsandbox.NewWorktreeSandbox(repo, squat))
+	if err != nil {
+		t.Fatalf("fork: %v", err)
+	}
+	if err := RecordWorktree(context.Background(), store, child.OwnerID(), repo, squat); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	store.Close(context.Background())
+
+	store2, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	t.Cleanup(func() { store2.Close(context.Background()) })
+	mgr, report, err := Recover(context.Background(), store2, repo)
+	if err != nil {
+		t.Fatalf("recover: %v", err)
+	}
+
+	scope, ok := mgr.Get(child.ID())
+	if !ok || scope.State() != shepherd.ScopeActive {
+		t.Fatalf("child not recovered active (ok=%v)", ok)
+	}
+	if scope.Sandbox() != nil {
+		t.Error("a squatter directory must never be adopted as an owned sandbox")
+	}
+	if report.Adopted != 0 {
+		t.Errorf("report.Adopted = %d, want 0 (nothing adoptable)", report.Adopted)
+	}
+	// Untouched: recovery never deletes what it does not own.
+	data, rerr := os.ReadFile(filepath.Join(squat, "user-data.txt"))
+	if rerr != nil || string(data) != "not yaah's\n" {
+		t.Errorf("the squatter's data must survive untouched, got %q (%v)", data, rerr)
 	}
 }

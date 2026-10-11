@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -304,5 +305,22 @@ func TestReviewSession_AcceptDeniedRollsBackCumulativeWork(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repo, "good.txt")); err != nil {
 		t.Errorf("the re-done work must be kept: %v", err)
+	}
+}
+
+// TestMapRestoreError_PinsKernelRefusalText pins the stale-checkpoint
+// mapping (adoption plan R1/D5): the kernel does not type its
+// CheckpointInvalid refusal, so the mapping matches the pinned
+// message — and this test fails loudly if a kernel bump rewords it,
+// instead of the recorded-reason contract silently degrading to the
+// generic restore error.
+func TestMapRestoreError_PinsKernelRefusalText(t *testing.T) {
+	stale := mapRestoreError(fmt.Errorf("checkpoint cp:sess:1 is invalid, cannot restore"))
+	if !strings.Contains(stale.Error(), "no longer matches the workspace") || !strings.Contains(stale.Error(), "invalid, cannot restore") {
+		t.Errorf("stale mapping = %q, want the recorded-reason refusal carrying the kernel text", stale.Error())
+	}
+	other := mapRestoreError(fmt.Errorf("checkpoint cp:sess:1 is used, cannot restore"))
+	if !strings.Contains(other.Error(), "supervisor: rollback: restore:") || strings.Contains(other.Error(), "no longer matches") {
+		t.Errorf("generic mapping = %q, want the plain restore wrap", other.Error())
 	}
 }

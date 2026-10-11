@@ -13,6 +13,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -412,7 +413,16 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// plan D2).
 		var subScope *shepherd.Scope
 		if mgr := tools.SharedScopeManager; mgr != nil {
-			subScope, _ = createSubAgentScope(mgr, opts, subTraceID, params.Workdir)
+			var cerr error
+			subScope, cerr = createSubAgentScope(mgr, opts, subTraceID, params.Workdir)
+			if cerr != nil {
+				// A scope-creation failure fails the dispatch (R1
+				// review): the durable worktree record is part of the
+				// supervision contract, and a sub-agent that runs
+				// unsupervised against a worktree the trace cannot
+				// find is exactly the orphan this exists to prevent.
+				return "", fmt.Errorf("sub-agent scope: %w", cerr)
+			}
 		}
 
 		// Supervision bridge (adoption plans A2/A3): the run registers
@@ -769,11 +779,26 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 				// backend but not the path. A record failure discards
 				// the branch and fails the dispatch — a worktree the
 				// trace cannot find is an orphan recovery would never
-				// list, and a broken store fails everything else
-				// anyway.
+				// list. The discard's own failure must not strand the
+				// worktree (the kernel records the discard BEFORE
+				// destroying the owned sandbox, so the same store
+				// failure returns before teardown): the sandbox is
+				// destroyed explicitly and the cleanup failure joins
+				// the error.
 				if terr := recovery.RecordWorktree(context.Background(), tools.SharedTraceStore, subTraceID, repoPath, workdir); terr != nil {
 					if parent, pok := mgr.Get(opts.rootScopeID); pok {
-						_ = parent.Discard(child)
+						if derr := parent.Discard(child); derr != nil {
+							// The kernel records the discard BEFORE
+							// destroying the owned sandbox; a failure
+							// returns before the teardown — destroy
+							// explicitly so the worktree cannot strand.
+							terr = errors.Join(terr, derr)
+							if sderr := child.Sandbox().Destroy(context.Background()); sderr != nil {
+								terr = errors.Join(terr, sderr)
+							}
+						}
+					} else if sderr := child.Sandbox().Destroy(context.Background()); sderr != nil {
+						terr = errors.Join(terr, sderr)
 					}
 					return nil, terr
 				}

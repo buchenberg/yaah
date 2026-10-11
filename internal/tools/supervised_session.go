@@ -455,16 +455,7 @@ func (s *supervisedSession) rollbackUnit(ctx context.Context, guidance string) (
 
 	snap, err := mgr.RestoreCheckpoint(ctx, s.checkpointID)
 	if err != nil {
-		// A stale checkpoint (recovery marked it CheckpointInvalid — the
-		// recorded revision no longer matches the workspace) refuses with
-		// the recorded reason rather than silently rewinding a tree that
-		// moved past it (adoption plan R1/D5). The match is against the
-		// kernel's documented refusal text — the kernel does not type
-		// this error.
-		if strings.Contains(err.Error(), "is invalid, cannot restore") {
-			return "", fmt.Errorf("supervisor: rollback: the recorded checkpoint no longer matches the workspace — the tree moved past it and the unit cannot be rolled back: %w", err)
-		}
-		return "", fmt.Errorf("supervisor: rollback: restore: %w", err)
+		return "", mapRestoreError(err)
 	}
 	s.checkpointID = ""
 	seed := unmarshalMessages(snap)
@@ -480,6 +471,21 @@ func (s *supervisedSession) rollbackUnit(ctx context.Context, guidance string) (
 	s.unitSnap = cp.Snapshot
 
 	return s.dispatchLocked(ctx, prompt, seed)
+}
+
+// mapRestoreError maps a checkpoint-restore failure to the review
+// session's refusal (adoption plan R1/D5): a checkpoint recovery marked
+// CheckpointInvalid — the recorded revision no longer matches the
+// workspace — refuses with the recorded reason rather than silently
+// rewinding a tree that moved past it. The match is against the
+// kernel's documented refusal text; the kernel does not type this
+// error, and the pinned message is test-pinned so a kernel rewording
+// fails loudly instead of silently losing the mapping.
+func mapRestoreError(err error) error {
+	if strings.Contains(err.Error(), "is invalid, cannot restore") {
+		return fmt.Errorf("supervisor: rollback: the recorded checkpoint no longer matches the workspace — the tree moved past it and the unit cannot be rolled back: %w", err)
+	}
+	return fmt.Errorf("supervisor: rollback: restore: %w", err)
 }
 
 // reviewDiff re-fetches the current diff and report without running
@@ -732,7 +738,7 @@ func (s *supervisedSession) provisionVariant(
 		// clear it when it is actually a worktree registered with this
 		// repository: the worktree root is user-configurable, the occupant
 		// may be unrelated data, and Destroy falls back to RemoveAll.
-		if isRegisteredWorktree(ctx, s.runtime.RepoPath, wtPath) {
+		if recovery.IsRegisteredWorktree(ctx, s.runtime.RepoPath, wtPath) {
 			_ = sb.Destroy(context.WithoutCancel(ctx))
 		}
 		if retryErr := sb.Create(ctx, shepherdsandbox.SandboxSpec{}); retryErr != nil {
@@ -759,11 +765,21 @@ func (s *supervisedSession) provisionVariant(
 	// record failure discards the branch — a worktree the trace cannot
 	// find is an orphan recovery would never list.
 	if terr := recovery.RecordWorktree(ctx, SharedTraceStore, scope.OwnerID(), s.runtime.RepoPath, wtPath); terr != nil {
-		if parent, pok := mgr.Get(s.scopeID); pok {
-			_ = parent.Discard(scope)
-		}
+		// The discard's own failure must not strand the worktree: the
+		// kernel records the discard BEFORE destroying the owned
+		// sandbox, so the same store failure returns before the
+		// teardown — destroy the sandbox explicitly and join the
+		// cleanup failure into the branch's error.
 		v.ScopeID = ""
 		v.RunErr = terr.Error()
+		if parent, pok := mgr.Get(s.scopeID); pok {
+			if derr := parent.Discard(scope); derr != nil {
+				v.RunErr = v.RunErr + "; discard: " + derr.Error()
+			}
+		}
+		if derr := sb.Destroy(context.WithoutCancel(ctx)); derr != nil {
+			v.RunErr = v.RunErr + "; destroy worktree: " + derr.Error()
+		}
 		return v
 	}
 
@@ -784,42 +800,6 @@ func (s *supervisedSession) provisionVariant(
 		}
 	}
 	return v
-}
-
-// isRegisteredWorktree reports whether path is currently registered as a git
-// worktree of repoPath. A worktree left behind by a killed run still appears
-// in `git worktree list`; unrelated data in a user-configured worktree root
-// does not, which is what makes clearing it safe.
-func isRegisteredWorktree(ctx context.Context, repoPath, path string) bool {
-	out, err := exec.CommandContext(ctx, "git", "-C", repoPath, "worktree", "list", "--porcelain").Output()
-	if err != nil {
-		return false
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if !strings.HasPrefix(line, "worktree ") {
-			continue
-		}
-		wt, err := filepath.Abs(strings.TrimPrefix(line, "worktree "))
-		if err != nil {
-			continue
-		}
-		// Windows paths differ in case; a lexical compare there would miss
-		// the registered entry and skip a legitimate cleanup.
-		if runtime.GOOS == "windows" {
-			if strings.EqualFold(filepath.Clean(wt), filepath.Clean(abs)) {
-				return true
-			}
-			continue
-		}
-		if filepath.Clean(wt) == filepath.Clean(abs) {
-			return true
-		}
-	}
-	return false
 }
 
 // worktreePath returns a deterministic worktree path for a variant. The session

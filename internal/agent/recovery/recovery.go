@@ -15,6 +15,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -60,6 +63,17 @@ func RecordWorktree(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, 
 	return nil
 }
 
+// worktreeInfo is one recorded worktree provisioning: where it lives
+// and which repository it was carved from. The repository is what
+// makes adoption safe — an unrelated directory squatting on the path
+// is not a worktree of that repo and is never adopted, because
+// GitSandbox.Destroy falls back to RemoveAll and would delete user
+// data.
+type worktreeInfo struct {
+	path string
+	repo string
+}
+
 // Orphan is an unadopted worktree left on disk: the scope's work is
 // terminal (merged or discarded — its lifecycle record outlived the
 // crash window before the sandbox teardown), but the worktree still
@@ -103,6 +117,9 @@ type Report struct {
 // A resolver error fails the recovery loudly: half-adopted sandboxes
 // are worse than none (the kernel's contract).
 func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPath string) (*shepherd.ScopeManager, *Report, error) {
+	if repoPath == "" {
+		return nil, nil, fmt.Errorf("no repository to re-adopt onto")
+	}
 	paths, err := scanWorktreePaths(ctx, store)
 	if err != nil {
 		return nil, nil, err
@@ -111,26 +128,38 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 	resolver := func(scopeID, backend string) (shepherdsandbox.Sandbox, error) {
 		switch {
 		case backend == "":
-			// Roots have no backend record; the plan re-adopts the
-			// in-place git repository.
+			// Roots resolve with an empty backend by the kernel's
+			// recovery contract ("empty for roots, which have no
+			// record") — not the "git" both local sandboxes report.
+			// The plan re-adopts the in-place git repository.
 			return shepherdsandbox.NewLocalGitSandbox(repoPath), nil
 		case backend == "containerd":
 			// Deliberate non-adoption (D5): no re-adoptable identity.
 			return nil, nil
 		case backend == "git":
-			// An isolated worktree child. Without a recorded path
-			// there is nothing to find; without the path on disk
-			// there is nothing to adopt — the classification below
-			// reports both.
+			// An isolated worktree child. Adoption is strict: the
+			// recorded path must be a worktree registered with the
+			// recorded repository — the trace directory is shared
+			// across runs, an unrelated directory can squat on the
+			// path, and Destroy falls back to RemoveAll, so a squatter
+			// adopted as an owned sandbox is user data a later
+			// teardown would delete. Anything less stays unadopted;
+			// the classification below reports it.
 			owner := strings.TrimPrefix(scopeID, "scope:")
-			path, ok := paths[owner]
-			if !ok || path == "" {
+			info, ok := paths[owner]
+			if !ok {
 				return nil, nil
 			}
-			if _, serr := os.Stat(path); serr != nil {
+			// On disk AND registered: `git worktree list` keeps stale
+			// administrative entries after the directory is gone, so
+			// the registry alone would adopt a phantom.
+			if _, serr := os.Stat(info.path); serr != nil {
 				return nil, nil
 			}
-			return shepherdsandbox.NewWorktreeSandbox(repoPath, path), nil
+			if !IsRegisteredWorktree(ctx, info.repo, info.path) {
+				return nil, nil
+			}
+			return shepherdsandbox.NewWorktreeSandbox(info.repo, info.path), nil
 		default:
 			return nil, nil
 		}
@@ -141,6 +170,21 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 		return nil, nil, err
 	}
 
+	// Orphans stay inert (warn-only means never deletable): a terminal
+	// scope's worktree must not carry an owned sandbox handle a later
+	// kernel teardown path would destroy it through. The resolver is
+	// state-blind by contract, so detach what it attached to terminal
+	// scopes here.
+	for owner := range paths {
+		scope, ok := mgr.Get("scope:" + owner)
+		if !ok || scope.State() == shepherd.ScopeActive {
+			continue
+		}
+		if scope.Sandbox() != nil {
+			scope.WithSandbox(nil, false)
+		}
+	}
+
 	report := &Report{}
 	for _, scope := range mgr.AllScopes() {
 		report.Scopes++
@@ -148,44 +192,94 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 			report.Roots++
 		}
 	}
-	for owner, path := range paths {
+	for owner, info := range paths {
 		scope, ok := mgr.Get("scope:" + owner)
 		if !ok {
 			// A record whose fork failed before it happened; the
 			// provisioning path destroys the worktree in that case.
 			continue
 		}
-		_, statErr := os.Stat(path)
+		_, statErr := os.Stat(info.path)
 		onDisk := statErr == nil
 		switch {
 		case !onDisk && scope.State() == shepherd.ScopeActive:
-			report.Missing = append(report.Missing, Missing{ScopeID: scope.ID(), Path: path})
+			report.Missing = append(report.Missing, Missing{ScopeID: scope.ID(), Path: info.path})
 		case onDisk && scope.State() == shepherd.ScopeActive:
-			report.Adopted++
+			// Adopted means adopted: the strict resolver refuses an
+			// unregistered squatter, and the count must not claim it.
+			if scope.Sandbox() != nil {
+				report.Adopted++
+			}
 		case onDisk:
 			// Terminal scope, worktree still standing: unmerged work
 			// may live in it. List it, never delete it.
-			report.Orphans = append(report.Orphans, Orphan{ScopeID: scope.ID(), Path: path, Size: dirSize(path)})
+			report.Orphans = append(report.Orphans, Orphan{ScopeID: scope.ID(), Path: info.path, Size: dirSize(info.path)})
 		}
 	}
 	return mgr, report, nil
 }
 
 // scanWorktreePaths reads every worktree-provision record into an
-// owner → path map (the last record wins — paths are deterministic
-// per child).
-func scanWorktreePaths(ctx context.Context, store *shepherdtrace.SQLiteTraceStore) (map[string]string, error) {
+// owner → info map (the last record wins — paths are deterministic per
+// child). A record without a usable path or repo is a corrupt registry
+// entry — the exact "a worktree the trace cannot find is an orphan
+// recovery would never list" failure this design fights — and fails
+// the recovery loudly rather than being skipped.
+func scanWorktreePaths(ctx context.Context, store *shepherdtrace.SQLiteTraceStore) (map[string]worktreeInfo, error) {
 	records, err := shepherdtrace.ScanRecordsBySchema(ctx, store, SchemaWorktreeProvisioned)
 	if err != nil {
 		return nil, fmt.Errorf("scan worktree records: %w", err)
 	}
-	paths := make(map[string]string, len(records))
+	paths := make(map[string]worktreeInfo, len(records))
 	for _, rec := range records {
-		if path, ok := rec.Payload["path"].(string); ok && path != "" {
-			paths[rec.OwnerID] = path
+		path, pok := rec.Payload["path"].(string)
+		repo, rok := rec.Payload["repo"].(string)
+		if !pok || path == "" || !rok || repo == "" {
+			return nil, fmt.Errorf("worktree record %s on %s has no usable path/repo", rec.RecordID, rec.OwnerID)
 		}
+		paths[rec.OwnerID] = worktreeInfo{path: path, repo: repo}
 	}
 	return paths, nil
+}
+
+// IsRegisteredWorktree reports whether path is currently registered as
+// a git worktree of repoPath. A worktree left behind by a killed run
+// still appears in `git worktree list`; unrelated data in a
+// user-configurable worktree root does not — which is what makes both
+// clearing a stale path (provisioning) and adopting a recovered one
+// (recovery) safe: the git registry, not the filesystem, decides
+// what yaah may own or destroy.
+func IsRegisteredWorktree(ctx context.Context, repoPath, path string) bool {
+	out, err := exec.CommandContext(ctx, "git", "-C", repoPath, "worktree", "list", "--porcelain").Output()
+	if err != nil {
+		return false
+	}
+
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.HasPrefix(line, "worktree ") {
+			continue
+		}
+		wt, err := filepath.Abs(strings.TrimPrefix(line, "worktree "))
+		if err != nil {
+			continue
+		}
+		// Windows paths differ in case; a lexical compare there would miss
+		// the registered entry and skip a legitimate cleanup.
+		if runtime.GOOS == "windows" {
+			if strings.EqualFold(filepath.Clean(wt), filepath.Clean(abs)) {
+				return true
+			}
+			continue
+		}
+		if filepath.Clean(wt) == filepath.Clean(abs) {
+			return true
+		}
+	}
+	return false
 }
 
 // dirSize sums a directory tree's file sizes — the orphan report's
