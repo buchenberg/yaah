@@ -157,9 +157,23 @@ func TestLoad_relativeHomeFifoFallback(t *testing.T) {
 	}
 }
 
+// absFifoDir is a fifo_dir value the IsAbs rule accepts on every host OS
+// the suite runs on: the rule judges host paths, and os.TempDir() returns
+// $TMPDIR verbatim — which can itself be relative — so absolutize the
+// join rather than trust the environment.
+func absFifoDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.Abs(filepath.Join(os.TempDir(), "yaah-test-fifo"))
+	if err != nil {
+		t.Fatalf("absolutize fifo dir: %v", err)
+	}
+	return dir
+}
+
 // TestValidate_workspace covers every rule in validateWorkspace, including the
 // platform rule driven through its parameter so the test runs on any OS.
 func TestValidate_workspace(t *testing.T) {
+	fifo := absFifoDir(t)
 	cases := []struct {
 		name    string
 		ws      WorkspaceConfig
@@ -186,7 +200,7 @@ func TestValidate_workspace(t *testing.T) {
 				Root:    "/workspace",
 				Containerd: ContainerdWorkspaceConfig{
 					Image:   "example/dev:latest",
-					FIFODir: filepath.Join(os.TempDir(), "yaah-test-fifo"),
+					FIFODir: fifo,
 				},
 			},
 			goos: "linux",
@@ -196,7 +210,7 @@ func TestValidate_workspace(t *testing.T) {
 			ws: WorkspaceConfig{
 				Backend:    BackendContainerd,
 				Root:       "/workspace",
-				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: filepath.Join(os.TempDir(), "yaah-test-fifo")},
+				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: fifo},
 			},
 			goos:    "windows",
 			wantErr: "windows cannot run one (native Linux or WSL2 required)",
@@ -207,7 +221,7 @@ func TestValidate_workspace(t *testing.T) {
 				Backend: BackendContainerd,
 				Root:    "/workspace",
 				Containerd: ContainerdWorkspaceConfig{
-					FIFODir: filepath.Join(os.TempDir(), "yaah-test-fifo"),
+					FIFODir: fifo,
 				},
 			},
 			goos:    "linux",
@@ -218,7 +232,7 @@ func TestValidate_workspace(t *testing.T) {
 			ws: WorkspaceConfig{
 				Backend:    BackendContainerd,
 				Root:       "workspace",
-				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: filepath.Join(os.TempDir(), "yaah-test-fifo")},
+				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: fifo},
 			},
 			goos:    "linux",
 			wantErr: `workspace.root "workspace" must be an absolute path inside the sandbox`,
@@ -228,7 +242,7 @@ func TestValidate_workspace(t *testing.T) {
 			ws: WorkspaceConfig{
 				Backend:    BackendContainerd,
 				Root:       "/",
-				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: filepath.Join(os.TempDir(), "yaah-test-fifo")},
+				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: fifo},
 			},
 			goos:    "linux",
 			wantErr: `would scope the whole container`,
@@ -241,7 +255,7 @@ func TestValidate_workspace(t *testing.T) {
 			ws: WorkspaceConfig{
 				Backend:    BackendContainerd,
 				Root:       "//",
-				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: filepath.Join(os.TempDir(), "yaah-test-fifo")},
+				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: fifo},
 			},
 			goos:    "linux",
 			wantErr: `would scope the whole container`,
