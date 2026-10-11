@@ -9,13 +9,14 @@ import (
 	"strings"
 	"testing"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
 func newCreated(t *testing.T) *Sandbox {
 	t.Helper()
 	s := New()
-	if err := s.Create(context.Background(), shepherd.SandboxSpec{Workdir: "/workspace"}); err != nil {
+	if err := s.Create(context.Background(), shepherdsandbox.SandboxSpec{Workdir: "/workspace"}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	return s
@@ -23,9 +24,9 @@ func newCreated(t *testing.T) *Sandbox {
 
 // runScript executes `sh -c script name args...`, the exact wire shape
 // sandboxWorkspace uses for every in-band operation.
-func runScript(t *testing.T, s *Sandbox, script string, stdin []byte, args ...string) shepherd.ExecResult {
+func runScript(t *testing.T, s *Sandbox, script string, stdin []byte, args ...string) shepherdsandbox.ExecResult {
 	t.Helper()
-	res, err := s.Exec(context.Background(), shepherd.ExecRequest{
+	res, err := s.Exec(context.Background(), shepherdsandbox.ExecRequest{
 		Command: "sh",
 		Args:    append([]string{"-c", script, "shepherd"}, args...),
 		Cwd:     "/workspace",
@@ -42,8 +43,8 @@ func TestCapabilitiesReportFullyIsolatedBackend(t *testing.T) {
 	if !c.Lifecycle || !c.Exec || !c.FileIO || !c.Diff || !c.Isolated {
 		t.Errorf("capabilities = %+v, want every capability true", c)
 	}
-	if c.Containment != shepherd.ContainContained {
-		t.Errorf("containment = %q, want %q (matching the containerd backend)", c.Containment, shepherd.ContainContained)
+	if c.Containment != shepherdtrace.ContainContained {
+		t.Errorf("containment = %q, want %q (matching the containerd backend)", c.Containment, shepherdtrace.ContainContained)
 	}
 }
 
@@ -52,7 +53,7 @@ func TestLifecycleGates(t *testing.T) {
 	s := New()
 
 	// Before Create: every operation is refused, but Exec is still recorded.
-	if _, err := s.Exec(ctx, shepherd.ExecRequest{Command: "sh", Args: []string{"-c", "true"}}); !errors.Is(err, ErrNotCreated) {
+	if _, err := s.Exec(ctx, shepherdsandbox.ExecRequest{Command: "sh", Args: []string{"-c", "true"}}); !errors.Is(err, ErrNotCreated) {
 		t.Errorf("Exec before Create = %v, want ErrNotCreated", err)
 	}
 	if len(s.Execs()) != 1 {
@@ -65,10 +66,10 @@ func TestLifecycleGates(t *testing.T) {
 		t.Errorf("Capture before Create = %v, want ErrNotCreated", err)
 	}
 
-	if err := s.Create(ctx, shepherd.SandboxSpec{}); err != nil {
+	if err := s.Create(ctx, shepherdsandbox.SandboxSpec{}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := s.Create(ctx, shepherd.SandboxSpec{}); !errors.Is(err, ErrAlreadyCreated) {
+	if err := s.Create(ctx, shepherdsandbox.SandboxSpec{}); !errors.Is(err, ErrAlreadyCreated) {
 		t.Errorf("second Create = %v, want ErrAlreadyCreated", err)
 	}
 	if !s.Created() || s.Destroyed() {
@@ -81,7 +82,7 @@ func TestLifecycleGates(t *testing.T) {
 	if _, err := s.ReadFile(ctx, "/x"); !errors.Is(err, ErrDestroyed) {
 		t.Errorf("ReadFile after Destroy = %v, want ErrDestroyed", err)
 	}
-	if _, err := s.Exec(ctx, shepherd.ExecRequest{Command: "sh", Args: []string{"-c", "true"}}); !errors.Is(err, ErrDestroyed) {
+	if _, err := s.Exec(ctx, shepherdsandbox.ExecRequest{Command: "sh", Args: []string{"-c", "true"}}); !errors.Is(err, ErrDestroyed) {
 		t.Errorf("Exec after Destroy = %v, want ErrDestroyed", err)
 	}
 	if err := s.Destroy(ctx); !errors.Is(err, ErrAlreadyDestroyed) {
@@ -304,8 +305,8 @@ func TestExecRunsMutationsAndTests(t *testing.T) {
 
 func TestExecHookOverridesAndRecords(t *testing.T) {
 	s := newCreated(t)
-	s.ExecHook = func(req shepherd.ExecRequest) (shepherd.ExecResult, error) {
-		return shepherd.ExecResult{ExitCode: 3, Stdout: "boom"}, nil
+	s.ExecHook = func(req shepherdsandbox.ExecRequest) (shepherdsandbox.ExecResult, error) {
+		return shepherdsandbox.ExecResult{ExitCode: 3, Stdout: "boom"}, nil
 	}
 	res := runScript(t, s, `stat -c %a -- "$1"`, nil, "/x")
 	if res.ExitCode != 3 || res.Stdout != "boom" {
@@ -318,7 +319,7 @@ func TestExecHookOverridesAndRecords(t *testing.T) {
 
 func TestExecDirectCommandHasNoUserland(t *testing.T) {
 	s := newCreated(t)
-	res, err := s.Exec(context.Background(), shepherd.ExecRequest{Command: "go", Args: []string{"version"}})
+	res, err := s.Exec(context.Background(), shepherdsandbox.ExecRequest{Command: "go", Args: []string{"version"}})
 	if err != nil {
 		t.Fatalf("Exec: %v", err)
 	}
@@ -368,14 +369,14 @@ func TestCaptureApplyRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Capture after Apply: %v", err)
 	}
-	d1, _ := shepherd.CanonicalDigest(state.Data["files"])
-	d2, _ := shepherd.CanonicalDigest(after.Data["files"])
+	d1, _ := shepherdtrace.CanonicalDigest(state.Data["files"])
+	d2, _ := shepherdtrace.CanonicalDigest(after.Data["files"])
 	if d1 != d2 {
 		t.Errorf("file digest drifted after apply: %q vs %q", d1, d2)
 	}
 
 	// Cross-backend state is refused.
-	if err := s.Apply(ctx, shepherd.WorkspaceState{Backend: "containerd"}); err == nil {
+	if err := s.Apply(ctx, shepherdtrace.WorkspaceState{Backend: "containerd"}); err == nil {
 		t.Error("a state from another backend must be refused")
 	}
 }

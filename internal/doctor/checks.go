@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/buchenberg/shepherd-kernel-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/config"
@@ -251,7 +251,7 @@ func CheckWorkspace(cfg *config.Config, cfgErr error) Check {
 			detail += ", socket containerd default"
 		}
 		detail += fmt.Sprintf("; linked backends: %s; daemon and image contract probed at session start",
-			strings.Join(shepherd.SandboxBackends(), ", "))
+			strings.Join(shepherdsandbox.SandboxBackends(), ", "))
 		return Check{Label: "Workspace", Status: "OK", Detail: detail}
 	default:
 		return Check{Label: "Workspace", Status: "FAIL", Detail: fmt.Sprintf("unknown backend %q (valid: local, containerd)", w.Backend)}

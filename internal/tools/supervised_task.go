@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/prompts"
 )
@@ -177,7 +177,7 @@ func (t *SupervisedTaskTool) Execute(ctx context.Context, args string) (string, 
 	}
 
 	scopeID := fmt.Sprintf("supervised:%s:%d", params.Role, time.Now().UnixNano())
-	scope, err := mgr.Create(scopeID, shepherd.NewLocalGitSandbox(repoPath))
+	scope, err := mgr.Create(scopeID, shepherdsandbox.NewLocalGitSandbox(repoPath))
 	if err != nil {
 		return "", fmt.Errorf("supervised_task: create scope: %w", err)
 	}

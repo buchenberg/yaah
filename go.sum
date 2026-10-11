@@ -10,8 +10,12 @@ github.com/Microsoft/hcsshim v0.15.0-rc.1 h1:FbbwtQmiD+BVHynGkx5S65JkLyhkEiiTP8n
 github.com/Microsoft/hcsshim v0.15.0-rc.1/go.mod h1:HWvvUPIy9HF6LotILj1G4VyS065rcLQ6tqj6tMUdOfI=
 github.com/buchenberg/shepherd-kernel-go v0.10.0 h1:wJ2HsixLaOJ7ay5VqY4dnK/Nkr77YmLD08CLdWZwsN8=
 github.com/buchenberg/shepherd-kernel-go v0.10.0/go.mod h1:N5a+B07Lm4xmc4ubCc83Rw4hDWuvbgKUJDSd6N7nrs4=
+github.com/buchenberg/shepherd-kernel-go v0.11.0 h1:1J8k4tGdT6cYq68L/js5igGVqo4hbJRc9z8oaDs71C4=
+github.com/buchenberg/shepherd-kernel-go v0.11.0/go.mod h1:N5a+B07Lm4xmc4ubCc83Rw4hDWuvbgKUJDSd6N7nrs4=
 github.com/buchenberg/shepherd-kernel-go/sandbox/containerd v0.1.5 h1:BknLdTRg59Bfe84CneKGd3XUjYFy1pXqb4D056ZjhIY=
 github.com/buchenberg/shepherd-kernel-go/sandbox/containerd v0.1.5/go.mod h1:HaEIpQmgyDpuXngfYWi3/4QUsGmM7XLmWBPP9HVm9ew=
+github.com/buchenberg/shepherd-kernel-go/sandbox/containerd v0.2.0 h1:ey4J0SCWTbtwsMJa0qglOAaVG7oBCybDJT8AY5dCfRc=
+github.com/buchenberg/shepherd-kernel-go/sandbox/containerd v0.2.0/go.mod h1:/pyZhZrTvMs19AlXF+SV0vAxwqk1UnXG85JXii6Kc9A=
 github.com/buchenberg/tviewmd v0.2.0 h1:GEbCcQqgSdi6WafPsBPeXSkkcqrnKI7D1hdytIc+Ofg=
 github.com/buchenberg/tviewmd v0.2.0/go.mod h1:NSvcH2laSSUg/+4jVj/M3/NzviJ9UE16me0zlulM35w=
 github.com/cenkalti/backoff/v5 v5.0.3 h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1xcsSM=

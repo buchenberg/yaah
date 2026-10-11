@@ -82,7 +82,7 @@ yaah/
 │   ├── prompts/                 # system prompt assembly (identity, env, memory, project)
 │   ├── pubsub/                  # typed pub/sub broker (agent event fan-out)
 │   ├── repl/                    # REPL, history, slash commands, colors, banner
-│   ├── sandboxfake/             # in-memory shepherd.Sandbox test double (isolated-workspace activation tests)
+│   ├── sandboxfake/             # in-memory shepherdsandbox.Sandbox test double (isolated-workspace activation tests)
 │   ├── skills/                  # SKILL.md discovery, frontmatter parsing
 │   ├── spinner/                 # animated thinking spinner
 │   ├── todo/                    # in-memory todo store

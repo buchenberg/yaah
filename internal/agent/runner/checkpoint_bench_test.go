@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
 // Phase 9 of .agents/plans/per-turn-checkpoint-restore: measure the cost
@@ -63,13 +65,13 @@ func benchRepo(b *testing.B, files int) string {
 
 func benchCheckpointer(b *testing.B, repo string) *ShepherdTurnCheckpointer {
 	b.Helper()
-	store, err := shepherd.NewSQLiteTraceStore(":memory:")
+	store, err := shepherdtrace.NewSQLiteTraceStore(":memory:")
 	if err != nil {
 		b.Fatalf("open store: %v", err)
 	}
 	b.Cleanup(func() { store.Close(context.Background()) })
 	mgr := shepherd.NewScopeManager(store)
-	sb := shepherd.NewLocalGitSandbox(repo)
+	sb := shepherdsandbox.NewLocalGitSandbox(repo)
 	scope, err := mgr.Create("bench", sb)
 	if err != nil {
 		b.Fatalf("create scope: %v", err)

@@ -7,14 +7,15 @@ import (
 	"testing"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 
 	"github.com/buchenberg/yaah/internal/config"
 )
 
 // newScopeManagerForTest returns a scope manager over an in-memory store.
-func newScopeManagerForTest(t *testing.T) (*shepherd.ScopeManager, *shepherd.SQLiteTraceStore) {
+func newScopeManagerForTest(t *testing.T) (*shepherd.ScopeManager, *shepherdtrace.SQLiteTraceStore) {
 	t.Helper()
-	store, err := shepherd.NewSQLiteTraceStore(":memory:")
+	store, err := shepherdtrace.NewSQLiteTraceStore(":memory:")
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
@@ -106,7 +107,7 @@ func TestCreateSubAgentScope_ForksFromRoot(t *testing.T) {
 	// "record the fork event in the parent's trace") with the child named
 	// in the payload — recovery and the supervisor's tree view both rely
 	// on it.
-	slice, err := store.ReadOwnerPrefix(context.Background(), shepherd.TrustedReadContext, "sess-tree", 999, shepherd.ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "sess-tree", 999, shepherdtrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("ReadOwnerPrefix: %v", err)
 	}

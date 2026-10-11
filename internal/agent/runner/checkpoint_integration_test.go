@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -92,7 +93,7 @@ func TestSupervisedTask_TurnRestoreIntegration(t *testing.T) {
 		}
 	}
 
-	store, err := shepherd.NewSQLiteTraceStore(":memory:")
+	store, err := shepherdtrace.NewSQLiteTraceStore(":memory:")
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
@@ -186,7 +187,7 @@ func TestSupervisedTask_TurnRestoreIntegration(t *testing.T) {
 func TestSupervisedTask_TurnCheckpointsOffByDefault(t *testing.T) {
 	initTestRoles(t)
 
-	store, err := shepherd.NewSQLiteTraceStore(":memory:")
+	store, err := shepherdtrace.NewSQLiteTraceStore(":memory:")
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}

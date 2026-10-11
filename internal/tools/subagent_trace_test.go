@@ -6,14 +6,14 @@ import (
 	"strings"
 	"testing"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
-func newTestSubagentTraceTool(t *testing.T) (*SubagentTraceTool, *shepherd.SQLiteTraceStore) {
+func newTestSubagentTraceTool(t *testing.T) (*SubagentTraceTool, *shepherdtrace.SQLiteTraceStore) {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "trace.sqlite")
-	store, err := shepherd.NewSQLiteTraceStore(path)
+	store, err := shepherdtrace.NewSQLiteTraceStore(path)
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
@@ -26,16 +26,16 @@ func newTestSubagentTraceTool(t *testing.T) (*SubagentTraceTool, *shepherd.SQLit
 	return &SubagentTraceTool{TraceDir: dir}, store
 }
 
-func seedTraceStore(t *testing.T, store *shepherd.SQLiteTraceStore, owner string, tools ...string) {
+func seedTraceStore(t *testing.T, store *shepherdtrace.SQLiteTraceStore, owner string, tools ...string) {
 	t.Helper()
 	for i, name := range tools {
 		intentID := owner + ":tool:" + string(rune('a'+i))
-		store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
+		store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
 			AppendIntentID: intentID,
-			Groups: []shepherd.AppendGroup{{
+			Groups: []shepherdtrace.AppendGroup{{
 				TraceOwnerID: owner,
-				FactDrafts: []shepherd.RecordDraft{{
-					Mode:      shepherd.Declaration,
+				FactDrafts: []shepherdtrace.RecordDraft{{
+					Mode:      shepherdtrace.Declaration,
 					SchemaRef: "yaah.tool." + name + ".v1",
 					KindLabel: name,
 					Payload:   map[string]any{"tool": name, "args": "{}"},

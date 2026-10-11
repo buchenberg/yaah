@@ -22,6 +22,8 @@ import (
 	"time"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/budget"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
@@ -595,7 +597,7 @@ func subAgentTimeoutResolver(subCfg config.SubAgentConfig) func(tools.SubAgentPa
 // created it — so this sandbox is used for capture and apply only and never
 // calls Create. A nil return leaves the scope pure-causal, which makes its
 // workspace operations report ErrNoSandbox rather than silently doing nothing.
-func subAgentSandbox(opts taskRunnerOpts, workdir string) shepherd.Sandbox {
+func subAgentSandbox(opts taskRunnerOpts, workdir string) shepherdsandbox.Sandbox {
 	// Isolated session (plan §1.3, decision D2): the sub-agent shares the
 	// session's one sandbox, so there is no per-sub-agent host substrate
 	// to capture. A host worktree or host git sandbox would checkpoint a
@@ -616,9 +618,9 @@ func subAgentSandbox(opts taskRunnerOpts, workdir string) shepherd.Sandbox {
 		return nil
 	}
 	if workdir != "" {
-		return shepherd.NewWorktreeSandbox(repoPath, workdir)
+		return shepherdsandbox.NewWorktreeSandbox(repoPath, workdir)
 	}
-	return shepherd.NewLocalGitSandbox(repoPath)
+	return shepherdsandbox.NewLocalGitSandbox(repoPath)
 }
 
 // CreateRootScope creates the session's root scope (shepherd-adoption plan
@@ -641,13 +643,13 @@ func subAgentSandbox(opts taskRunnerOpts, workdir string) shepherd.Sandbox {
 // scope, and only checkpoint capture is unavailable — which it would
 // have been anyway.
 func CreateRootScope(mgr *shepherd.ScopeManager, sessionID, repoPath string, isolated bool) (*shepherd.Scope, error) {
-	var sb shepherd.Sandbox
+	var sb shepherdsandbox.Sandbox
 	if !isolated {
 		if repoPath == "" {
 			repoPath, _ = os.Getwd()
 		}
 		if repoPath != "" {
-			candidate := shepherd.NewLocalGitSandbox(repoPath)
+			candidate := shepherdsandbox.NewLocalGitSandbox(repoPath)
 			if _, cerr := candidate.Capture(context.Background()); cerr == nil {
 				sb = candidate
 			}
@@ -682,7 +684,7 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 			repoPath, _ = os.Getwd()
 		}
 		if repoPath != "" {
-			return mgr.ForkIsolated(opts.rootScopeID, subTraceID, nil, shepherd.NewWorktreeSandbox(repoPath, workdir))
+			return mgr.ForkIsolated(opts.rootScopeID, subTraceID, nil, shepherdsandbox.NewWorktreeSandbox(repoPath, workdir))
 		}
 	}
 	return mgr.Fork(opts.rootScopeID, subTraceID, nil)
@@ -898,7 +900,7 @@ func formatBytes(n int) string {
 }
 
 func subagentTraceProfile(ctx context.Context, tracePath, sessionID string) string {
-	store, err := shepherd.NewSQLiteTraceStore(tracePath)
+	store, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
 	if err != nil {
 		return ""
 	}
@@ -907,7 +909,7 @@ func subagentTraceProfile(ctx context.Context, tracePath, sessionID string) stri
 	// diagnoses is often the very cancellation that would abort the read.
 	defer store.Close(context.WithoutCancel(ctx))
 
-	slice, err := store.ReadOwnerPrefix(context.WithoutCancel(ctx), shepherd.TrustedReadContext, sessionID, 99999, shepherd.ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.WithoutCancel(ctx), shepherdtrace.TrustedReadContext, sessionID, 99999, shepherdtrace.ModeBoth)
 	if err != nil || len(slice.FactIDs()) == 0 {
 		return ""
 	}
@@ -918,7 +920,7 @@ func subagentTraceProfile(ctx context.Context, tracePath, sessionID string) stri
 	})
 	for _, factID := range slice.FactIDs() {
 		fact := slice.FactsByID[factID]
-		if fact.GetEnvelope().Mode != shepherd.Capture {
+		if fact.GetEnvelope().Mode != shepherdtrace.Capture {
 			continue
 		}
 		causedBy := fact.GetEnvelope().CausedByIDs
@@ -929,7 +931,7 @@ func subagentTraceProfile(ctx context.Context, tracePath, sessionID string) stri
 		if _, exists := captureByParent[parentID]; exists {
 			continue
 		}
-		rec, ok := fact.(shepherd.Record)
+		rec, ok := fact.(shepherdtrace.Record)
 		if !ok {
 			continue
 		}
@@ -948,7 +950,7 @@ func subagentTraceProfile(ctx context.Context, tracePath, sessionID string) stri
 	seq := 0
 	for _, factID := range slice.FactIDs() {
 		fact := slice.FactsByID[factID]
-		if fact.GetEnvelope().Mode != shepherd.Declaration {
+		if fact.GetEnvelope().Mode != shepherdtrace.Declaration {
 			continue
 		}
 		kind := fact.GetView().KindLabel

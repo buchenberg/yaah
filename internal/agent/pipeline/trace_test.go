@@ -8,14 +8,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
 func newTestTraceMiddleware(t *testing.T) *ShepherdTraceMiddleware {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "trace.sqlite")
-	store, err := shepherd.NewSQLiteTraceStore(path)
+	store, err := shepherdtrace.NewSQLiteTraceStore(path)
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestTraceMiddleware_PostToolRecordsDeclaration(t *testing.T) {
 		t.Fatalf("ordinal = %d, want %d", m.ordinal, startOrdinal+1)
 	}
 
-	slice, err := m.store.ReadOwnerPrefix(context.Background(), shepherd.TrustedReadContext, "test-session", 999, shepherd.ModeBoth)
+	slice, err := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
@@ -96,20 +96,20 @@ func TestTraceMiddleware_PostToolRecordsDeclaration(t *testing.T) {
 
 	decl := slice.FactsByID[factIDs[0]]
 	cap := slice.FactsByID[factIDs[1]]
-	if decl.GetEnvelope().Mode != shepherd.Declaration {
+	if decl.GetEnvelope().Mode != shepherdtrace.Declaration {
 		t.Error("first fact should be a declaration")
 	}
 	if decl.GetView().KindLabel != "ls" {
 		t.Errorf("declaration kind = %q, want %q", decl.GetView().KindLabel, "ls")
 	}
-	if cap.GetEnvelope().Mode != shepherd.Capture {
+	if cap.GetEnvelope().Mode != shepherdtrace.Capture {
 		t.Error("second fact should be a capture")
 	}
 	if cap.GetView().KindLabel != "ls:result" {
 		t.Errorf("capture kind = %q, want %q", cap.GetView().KindLabel, "ls:result")
 	}
 
-	rec, ok := cap.(shepherd.Record)
+	rec, ok := cap.(shepherdtrace.Record)
 	if !ok {
 		t.Fatal("capture should be a Record")
 	}
@@ -128,10 +128,10 @@ func TestTraceMiddleware_PostToolRecordsFailure(t *testing.T) {
 		t.Fatalf("PostTool error: %v", err)
 	}
 
-	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherd.TrustedReadContext, "test-session", 999, shepherd.ModeBoth)
+	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
 	factIDs := slice.FactIDs()
 
-	rec, _ := slice.FactsByID[factIDs[1]].(shepherd.Record)
+	rec, _ := slice.FactsByID[factIDs[1]].(shepherdtrace.Record)
 	success, _ := rec.Body.Payload["success"].(bool)
 	if success {
 		t.Error("failed tool should have success=false")
@@ -148,7 +148,7 @@ func TestTraceMiddleware_CausalChaining(t *testing.T) {
 	_, _ = m.PostTool(context.Background(), []ToolResult{{Name: "ls", Args: `{}`}}, &Step{})
 	_, _ = m.PostTool(context.Background(), []ToolResult{{Name: "read", Args: `{"file":"x"}`}}, &Step{})
 
-	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherd.TrustedReadContext, "test-session", 999, shepherd.ModeBoth)
+	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
 	factIDs := slice.FactIDs()
 
 	if len(factIDs) != 4 {
@@ -180,7 +180,7 @@ func TestTraceMiddleware_MultipleToolsPerCall(t *testing.T) {
 		t.Fatalf("ordinal = %d, want %d", m.ordinal, startOrdinal+3)
 	}
 
-	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherd.TrustedReadContext, "test-session", 999, shepherd.ModeBoth)
+	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
 	if len(slice.FactIDs()) != 6 {
 		t.Fatalf("fact count = %d, want 6 (3 tools × 2 facts each)", len(slice.FactIDs()))
 	}
@@ -199,7 +199,7 @@ func TestTraceMiddleware_StartTurn(t *testing.T) {
 		t.Fatal("turnRootFactIDs should be set")
 	}
 
-	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherd.TrustedReadContext, "test-session", 999, shepherd.ModeBoth)
+	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
 	factIDs := slice.FactIDs()
 	if len(factIDs) != 2 {
 		t.Fatalf("fact count = %d, want 2 (turn:created + turn:started)", len(factIDs))
@@ -209,7 +209,7 @@ func TestTraceMiddleware_StartTurn(t *testing.T) {
 	if decl.GetView().KindLabel != "turn:created" {
 		t.Errorf("first fact kind = %q, want turn:created", decl.GetView().KindLabel)
 	}
-	if decl.GetEnvelope().Mode != shepherd.Declaration {
+	if decl.GetEnvelope().Mode != shepherdtrace.Declaration {
 		t.Error("first fact should be declaration")
 	}
 }
@@ -223,7 +223,7 @@ func TestTraceMiddleware_EndTurnChainsFromTurnRoot(t *testing.T) {
 
 	m.EndTurn(context.Background(), 0, 5000, 200)
 
-	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherd.TrustedReadContext, "test-session", 999, shepherd.ModeBoth)
+	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
 	factIDs := slice.FactIDs()
 
 	// Should be: turn:created, turn:started, ls, ls:result, turn:completed, frontier
@@ -241,7 +241,7 @@ func TestTraceMiddleware_EndTurnChainsFromTurnRoot(t *testing.T) {
 		t.Errorf("turn:completed parent = %s, want %s (turn:created)", causedBy[0], factIDs[0])
 	}
 
-	rec, _ := completed.(shepherd.Record)
+	rec, _ := completed.(shepherdtrace.Record)
 	success, _ := rec.Body.Payload["success"].(bool)
 	if !success {
 		t.Error("turn:completed should have success=true")
@@ -273,7 +273,7 @@ func TestTraceMiddleware_FailTurn(t *testing.T) {
 	m.StartTurn(context.Background(), 0, "deepseek-v4", "hello")
 	m.FailTurn(context.Background(), 0, os.ErrNotExist)
 
-	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherd.TrustedReadContext, "test-session", 999, shepherd.ModeBoth)
+	slice, _ := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
 	factIDs := slice.FactIDs()
 
 	// Should be: turn:created, turn:started, turn:failed, frontier
@@ -285,7 +285,7 @@ func TestTraceMiddleware_FailTurn(t *testing.T) {
 	if failed.GetView().KindLabel != "turn:failed" {
 		t.Errorf("kind = %q, want turn:failed", failed.GetView().KindLabel)
 	}
-	rec, _ := failed.(shepherd.Record)
+	rec, _ := failed.(shepherdtrace.Record)
 	success, _ := rec.Body.Payload["success"].(bool)
 	if success {
 		t.Error("turn:failed should have success=false")

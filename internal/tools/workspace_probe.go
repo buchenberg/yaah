@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	containerdbackend "github.com/buchenberg/shepherd-kernel-go/sandbox/containerd"
 
 	"github.com/buchenberg/yaah/internal/config"
@@ -21,10 +21,10 @@ import (
 //
 // The returned sandbox is NOT provisioned: Create remains the caller's
 // explicit lifecycle step, per the kernel's OpenSandbox contract.
-func OpenContainerdWorkspaceSandbox(w config.WorkspaceConfig) (shepherd.Sandbox, error) {
+func OpenContainerdWorkspaceSandbox(w config.WorkspaceConfig) (shepherdsandbox.Sandbox, error) {
 	// Root maps onto the adapter's Workdir: the containment root every
 	// relative tool path resolves against inside the sandbox.
-	return shepherd.OpenSandbox(config.BackendContainerd, containerdbackend.Config{
+	return shepherdsandbox.OpenSandbox(config.BackendContainerd, containerdbackend.Config{
 		Address:     w.Containerd.Address,
 		Namespace:   w.Containerd.Namespace,
 		Image:       w.Containerd.Image,
@@ -72,7 +72,7 @@ fi`
 // fakes report "nothing was created" for an unstarted sandbox. The sandbox
 // parameter is the seam: wiring passes the session backend; tests pass the
 // in-memory fake.
-func ProbeImageContract(ctx context.Context, sb shepherd.Sandbox) (err error) {
+func ProbeImageContract(ctx context.Context, sb shepherdsandbox.Sandbox) (err error) {
 	// Destroy must run even when the probe fails, even when the caller's
 	// context expired mid-probe, and even when Create itself failed: an
 	// unprobed-but-running container is the leak this function must never
@@ -85,11 +85,11 @@ func ProbeImageContract(ctx context.Context, sb shepherd.Sandbox) (err error) {
 		}
 	}()
 
-	if cerr := sb.Create(ctx, shepherd.SandboxSpec{}); cerr != nil {
+	if cerr := sb.Create(ctx, shepherdsandbox.SandboxSpec{}); cerr != nil {
 		return fmt.Errorf("workspace image probe: create: %w", cerr)
 	}
 
-	res, xerr := sb.Exec(ctx, shepherd.ExecRequest{
+	res, xerr := sb.Exec(ctx, shepherdsandbox.ExecRequest{
 		Command: "sh",
 		Args:    []string{"-c", imageContractScript},
 	})

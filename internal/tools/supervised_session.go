@@ -12,6 +12,8 @@ import (
 	"time"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -84,27 +86,27 @@ type variantWorkspace struct {
 	// scope is set in shared mode; its workspace methods record trace events.
 	scope *shepherd.Scope
 	// sb is set in isolated mode; worktree sandboxes have no scope of their own.
-	sb shepherd.Sandbox
+	sb shepherdsandbox.Sandbox
 	// workdir is handed to the sub-agent so its file tools and shell operate
 	// here. Empty means the process working directory (shared mode).
 	workdir string
 }
 
-func (w variantWorkspace) Capture(ctx context.Context) (shepherd.WorkspaceState, error) {
+func (w variantWorkspace) Capture(ctx context.Context) (shepherdtrace.WorkspaceState, error) {
 	if w.scope != nil {
 		return w.scope.CaptureWorkspace(ctx)
 	}
 	return w.sb.Capture(ctx)
 }
 
-func (w variantWorkspace) Apply(ctx context.Context, ws shepherd.WorkspaceState) error {
+func (w variantWorkspace) Apply(ctx context.Context, ws shepherdtrace.WorkspaceState) error {
 	if w.scope != nil {
 		return w.scope.ApplyWorkspace(ctx, ws)
 	}
 	return w.sb.Apply(ctx, ws)
 }
 
-func (w variantWorkspace) Diff(ctx context.Context, ws shepherd.WorkspaceState, maxLines int) (string, []string, error) {
+func (w variantWorkspace) Diff(ctx context.Context, ws shepherdtrace.WorkspaceState, maxLines int) (string, []string, error) {
 	if w.scope != nil {
 		return w.scope.DiffWorkspace(ctx, ws, maxLines)
 	}
@@ -116,7 +118,7 @@ func (w variantWorkspace) Diff(ctx context.Context, ws shepherd.WorkspaceState, 
 // after an isolated variant's worktree is destroyed because the git object
 // store is shared.
 type reviewVariant struct {
-	Tree    *shepherd.WorkspaceState
+	Tree    *shepherdtrace.WorkspaceState
 	Conv    []types.Message
 	Result  string
 	Diff    string
@@ -140,7 +142,7 @@ type supervisedSession struct {
 	// e.g. mid-fork or after a cancelled consume). unitState is the workspace
 	// state at unit start and is the diff base.
 	checkpointID string
-	unitState    shepherd.WorkspaceState
+	unitState    shepherdtrace.WorkspaceState
 
 	unit     int             // completed+dispatched unit counter
 	lastConv []types.Message // conversation after the last dispatched unit
@@ -148,7 +150,7 @@ type supervisedSession struct {
 	state sessionState
 
 	// fork state, set while awaiting choose.
-	forkState *shepherd.WorkspaceState
+	forkState *shepherdtrace.WorkspaceState
 	forkConv  []types.Message
 	varA      *reviewVariant
 	varB      *reviewVariant
@@ -298,7 +300,7 @@ func startReviewSession(ctx context.Context, runtime supervisedSessionRuntime, p
 	}
 
 	id := fmt.Sprintf("supervised:%s:%d", role, time.Now().UnixNano())
-	scope, err := mgr.Create(id, shepherd.NewLocalGitSandbox(runtime.RepoPath))
+	scope, err := mgr.Create(id, shepherdsandbox.NewLocalGitSandbox(runtime.RepoPath))
 	if err != nil {
 		return "", fmt.Errorf("supervised_task: create scope: %w", err)
 	}
@@ -633,12 +635,12 @@ func (s *supervisedSession) runIsolatedVariant(
 	index int,
 	label, prompt string,
 	forkConv []types.Message,
-	forkState shepherd.WorkspaceState,
+	forkState shepherdtrace.WorkspaceState,
 ) (*reviewVariant, error) {
 	wtPath := s.worktreePath(index, label)
-	sb := shepherd.NewWorktreeSandbox(s.runtime.RepoPath, wtPath)
+	sb := shepherdsandbox.NewWorktreeSandbox(s.runtime.RepoPath, wtPath)
 
-	if err := sb.Create(ctx, shepherd.SandboxSpec{}); err != nil {
+	if err := sb.Create(ctx, shepherdsandbox.SandboxSpec{}); err != nil {
 		// A worktree left behind by a killed run can occupy the path. Only
 		// clear it when it is actually a worktree registered with this
 		// repository: the worktree root is user-configurable, the occupant
@@ -646,7 +648,7 @@ func (s *supervisedSession) runIsolatedVariant(
 		if isRegisteredWorktree(ctx, s.runtime.RepoPath, wtPath) {
 			_ = sb.Destroy(context.WithoutCancel(ctx))
 		}
-		if retryErr := sb.Create(ctx, shepherd.SandboxSpec{}); retryErr != nil {
+		if retryErr := sb.Create(ctx, shepherdsandbox.SandboxSpec{}); retryErr != nil {
 			return nil, fmt.Errorf("create worktree %s: %w (first attempt: %v)", wtPath, retryErr, err)
 		}
 	}
@@ -744,7 +746,7 @@ func runWorktreeBootstrap(ctx context.Context, dir, command string) error {
 // runVariantIn dispatches one fork variant against a workspace and captures its
 // state, diff, and conversation. It must be called with s.mu held; the lock is
 // held across the runner call so concurrent verdicts serialize.
-func (s *supervisedSession) runVariantIn(ctx context.Context, ws variantWorkspace, prompt string, forkConv []types.Message, forkState shepherd.WorkspaceState) *reviewVariant {
+func (s *supervisedSession) runVariantIn(ctx context.Context, ws variantWorkspace, prompt string, forkConv []types.Message, forkState shepherdtrace.WorkspaceState) *reviewVariant {
 	// Seed with the fork-point conversation only. The prompt is passed
 	// as the runner's user input and appended by the loop's
 	// initMessages — appending it here too would duplicate it.

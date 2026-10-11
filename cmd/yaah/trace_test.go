@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
 func setTestTraceConfig(t *testing.T, home, traceDir string) {
@@ -25,7 +25,7 @@ agents:
 func seedTestTraceStore(t *testing.T, dir string) string {
 	t.Helper()
 	path := filepath.Join(dir, "trace.sqlite")
-	store, err := shepherd.NewSQLiteTraceStore(path)
+	store, err := shepherdtrace.NewSQLiteTraceStore(path)
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
@@ -35,12 +35,12 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 
 	// Turn start marker
 	turnIntent := owner + ":turn:0"
-	turnReceipt, _ := store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
+	turnReceipt, _ := store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
 		AppendIntentID: turnIntent,
-		Groups: []shepherd.AppendGroup{{
+		Groups: []shepherdtrace.AppendGroup{{
 			TraceOwnerID: owner,
-			FactDrafts: []shepherd.RecordDraft{{
-				Mode:      shepherd.Declaration,
+			FactDrafts: []shepherdtrace.RecordDraft{{
+				Mode:      shepherdtrace.Declaration,
 				SchemaRef: "yaah.execution.created.v1",
 				KindLabel: "turn:created",
 				Payload:   map[string]any{"turn": float64(0), "model": "test"},
@@ -52,13 +52,13 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 	var lastFactIDs []string
 	for i, name := range tools {
 		intent := owner + ":tool:" + string(rune('a'+i))
-		declReceipt, _ := store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
+		declReceipt, _ := store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
 			AppendIntentID: intent,
-			Groups: []shepherd.AppendGroup{{
+			Groups: []shepherdtrace.AppendGroup{{
 				TraceOwnerID:  owner,
 				CausalParents: lastFactIDs,
-				FactDrafts: []shepherd.RecordDraft{{
-					Mode:      shepherd.Declaration,
+				FactDrafts: []shepherdtrace.RecordDraft{{
+					Mode:      shepherdtrace.Declaration,
 					SchemaRef: "yaah.tool." + name + ".v1",
 					KindLabel: name,
 					Payload:   map[string]any{"tool": name, "args": `{}`},
@@ -66,13 +66,13 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 			}},
 		})
 		capture := owner + ":result:" + string(rune('a'+i))
-		captReceipt, _ := store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
+		captReceipt, _ := store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
 			AppendIntentID: capture,
-			Groups: []shepherd.AppendGroup{{
+			Groups: []shepherdtrace.AppendGroup{{
 				TraceOwnerID:  owner,
 				CausalParents: declReceipt.FactIDs,
-				FactDrafts: []shepherd.RecordDraft{{
-					Mode:      shepherd.Capture,
+				FactDrafts: []shepherdtrace.RecordDraft{{
+					Mode:      shepherdtrace.Capture,
 					SchemaRef: "yaah.tool." + name + ".v1.applied",
 					KindLabel: name + ":result",
 					Payload:   map[string]any{"success": true, "duration": "1ms"},
@@ -85,13 +85,13 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 	// Turn complete marker — chain from the turn start, as the middleware
 	// does (EndTurn cites the turn:created fact as its causal parent; the
 	// profile resolves a turn's tokens through exactly that link).
-	store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
+	store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
 		AppendIntentID: owner + ":turn:0:done",
-		Groups: []shepherd.AppendGroup{{
+		Groups: []shepherdtrace.AppendGroup{{
 			TraceOwnerID:  owner,
 			CausalParents: turnReceipt.FactIDs,
-			FactDrafts: []shepherd.RecordDraft{{
-				Mode:      shepherd.Capture,
+			FactDrafts: []shepherdtrace.RecordDraft{{
+				Mode:      shepherdtrace.Capture,
 				SchemaRef: "yaah.execution.completed.v1",
 				KindLabel: "turn:completed",
 				Payload:   map[string]any{"turn": float64(0), "success": true, "prompt_tokens": float64(5000), "completion_tokens": float64(200)},
@@ -101,12 +101,12 @@ func seedTestTraceStore(t *testing.T, dir string) string {
 
 	// Also add a sub-agent trace
 	subOwner := "sub-developer-sess-123-456"
-	store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
+	store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
 		AppendIntentID: "sub:tool:a",
-		Groups: []shepherd.AppendGroup{{
+		Groups: []shepherdtrace.AppendGroup{{
 			TraceOwnerID: subOwner,
-			FactDrafts: []shepherd.RecordDraft{{
-				Mode:      shepherd.Declaration,
+			FactDrafts: []shepherdtrace.RecordDraft{{
+				Mode:      shepherdtrace.Declaration,
 				SchemaRef: "yaah.tool.read.v1",
 				KindLabel: "read",
 				Payload:   map[string]any{"tool": "read", "args": `{}`},
@@ -228,7 +228,7 @@ func TestTraceProfileNoSessions(t *testing.T) {
 	os.MkdirAll(dir, 0o755)
 	setTestTraceConfig(t, home, dir)
 
-	store, err := shepherd.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
+	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
@@ -298,7 +298,7 @@ agents:
 	defer store.Close(context.Background())
 
 	// Verify we can read from it
-	slice, err := store.ReadOwnerPrefix(context.Background(), shepherd.TrustedReadContext, "sess-123", 999, shepherd.ModeDeclarationsOnly)
+	slice, err := store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "sess-123", 999, shepherdtrace.ModeDeclarationsOnly)
 	if err != nil {
 		t.Fatalf("read error: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestCaptureStatus(t *testing.T) {
 			os.MkdirAll(dir, 0o755)
 
 			path := filepath.Join(dir, "trace.sqlite")
-			store, _ := shepherd.NewSQLiteTraceStore(path)
+			store, _ := shepherdtrace.NewSQLiteTraceStore(path)
 			defer store.Close(context.Background())
 
 			payload := map[string]any{"success": tt.success}
@@ -336,24 +336,24 @@ func TestCaptureStatus(t *testing.T) {
 				payload["error"] = tt.errMsg
 			}
 
-			store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
+			store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
 				AppendIntentID: "test:decl:" + tt.name,
-				Groups: []shepherd.AppendGroup{{
+				Groups: []shepherdtrace.AppendGroup{{
 					TraceOwnerID: "owner",
-					FactDrafts: []shepherd.RecordDraft{{
-						Mode:      shepherd.Declaration,
+					FactDrafts: []shepherdtrace.RecordDraft{{
+						Mode:      shepherdtrace.Declaration,
 						SchemaRef: "yaah.test.v1",
 						KindLabel: "test",
 						Payload:   map[string]any{},
 					}},
 				}},
 			})
-			store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
+			store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
 				AppendIntentID: "test:cap:" + tt.name,
-				Groups: []shepherd.AppendGroup{{
+				Groups: []shepherdtrace.AppendGroup{{
 					TraceOwnerID: "owner",
-					FactDrafts: []shepherd.RecordDraft{{
-						Mode:      shepherd.Capture,
+					FactDrafts: []shepherdtrace.RecordDraft{{
+						Mode:      shepherdtrace.Capture,
 						SchemaRef: "yaah.test.v1.applied",
 						KindLabel: "test:result",
 						Payload:   payload,
@@ -361,10 +361,10 @@ func TestCaptureStatus(t *testing.T) {
 				}},
 			})
 
-			slice, _ := store.ReadOwnerPrefix(context.Background(), shepherd.TrustedReadContext, "owner", 999, shepherd.ModeBoth)
+			slice, _ := store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "owner", 999, shepherdtrace.ModeBoth)
 			for _, factID := range slice.FactIDs() {
 				fact := slice.FactsByID[factID]
-				if fact.GetEnvelope().Mode == shepherd.Capture {
+				if fact.GetEnvelope().Mode == shepherdtrace.Capture {
 					got := captureStatus(fact)
 					if got != tt.want {
 						t.Errorf("captureStatus = %q, want %q", got, tt.want)
