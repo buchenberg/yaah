@@ -67,7 +67,9 @@ type ContainerdWorkspaceConfig struct {
 	// there; an empty value normalizes to a directory under the yaah home
 	// (<HomeDir>/containerd-fifo), which root can also use (the daemon-side
 	// shim opens the FIFOs by path and runs as root, so either location
-	// serves it). Must be absolute when set.
+	// serves it). Empty survives load only when the home does not resolve
+	// absolutely — validation then refuses the stanza rather than let the
+	// root-only default apply silently. Must be absolute when set.
 	FIFODir string `yaml:"fifo_dir"`
 }
 
@@ -105,7 +107,15 @@ func normalizeWorkspace(w *WorkspaceConfig) {
 	// the shim, which reads the FIFOs, is root and bypasses the client's
 	// 0700. The configured value passes through as-is, like the socket
 	// address.
+	//
+	// A home that does not resolve absolutely — a relative $YAAH_HOME,
+	// since with $HOME unset Load fails earlier at the config path —
+	// yields a relative path, which the absolute-path rule rejects. Leave
+	// the field empty instead, so validation names the condition rather
+	// than the config rejecting a value its own default produced.
 	if w.Containerd.FIFODir == "" {
-		w.Containerd.FIFODir = filepath.Join(HomeDir(), "containerd-fifo")
+		if dir := filepath.Join(HomeDir(), "containerd-fifo"); filepath.IsAbs(dir) {
+			w.Containerd.FIFODir = dir
+		}
 	}
 }

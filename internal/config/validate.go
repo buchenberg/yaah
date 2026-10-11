@@ -233,6 +233,17 @@ func validateWorkspace(w *WorkspaceConfig, goos string) []string {
 		errs = append(errs, "workspace.containerd.image is required when workspace.backend is containerd")
 	}
 
+	// An empty fifo_dir survives load only when the yaah home did not
+	// resolve absolutely (normalizeWorkspace refuses to inject a relative
+	// default). Empty means the adapter's own root-only default — the
+	// exact condition the fifo_dir default exists to avoid — so refuse it
+	// here with the cause and both fixes named. Wiring validates before
+	// the first sandbox starts, so this lands at session start, ahead of
+	// the FIFO creation it would otherwise break at.
+	if w.Containerd.FIFODir == "" {
+		errs = append(errs, "workspace.containerd.fifo_dir is empty: the yaah home did not resolve to an absolute path; set an absolute $YAAH_HOME or an explicit workspace.containerd.fifo_dir")
+	}
+
 	// The FIFO directory is created client-side relative to the process
 	// cwd if relative, which would scatter the task/exec FIFOs wherever
 	// yaah happened to start; the socket address carries no such trap.

@@ -209,6 +209,7 @@ func TestOpenContainerdWorkspaceSandbox_Passthrough(t *testing.T) {
 	for field, want := range map[string]string{
 		"Address":     w.Containerd.Address,
 		"Namespace":   w.Containerd.Namespace,
+		"Image":       w.Containerd.Image,
 		"Snapshotter": w.Containerd.Snapshotter,
 		"FIFODir":     w.Containerd.FIFODir,
 		"Workdir":     w.Root,

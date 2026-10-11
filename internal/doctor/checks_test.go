@@ -2,6 +2,8 @@ package doctor
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -64,6 +66,18 @@ func TestCheckPipeline_ConfigError(t *testing.T) {
 	}
 }
 
+// absFifoDir is a fifo_dir value the IsAbs rule accepts on every host OS
+// the suite runs on: os.TempDir() returns $TMPDIR verbatim — which can
+// itself be relative — so absolutize the join.
+func absFifoDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.Abs(filepath.Join(os.TempDir(), "yaah-fifo"))
+	if err != nil {
+		t.Fatalf("absolutize fifo dir: %v", err)
+	}
+	return dir
+}
+
 // TestCheckWorkspace_LocalMode: no workspace stanza means the local
 // substrate, byte-for-byte the legacy behaviour.
 func TestCheckWorkspace_LocalMode(t *testing.T) {
@@ -96,6 +110,7 @@ func TestCheckWorkspace_Isolated(t *testing.T) {
 		Address:   "/run/containerd/containerd.sock",
 		Namespace: "yaah",
 		Image:     "registry.example/yaah-workspace:latest",
+		FIFODir:   absFifoDir(t),
 	}
 	check := CheckWorkspace(cfg, nil)
 	if runtime.GOOS != "linux" {
@@ -152,6 +167,7 @@ func TestCheckWorkspace_DefaultSocket(t *testing.T) {
 	cfg.Workspace.Containerd = config.ContainerdWorkspaceConfig{
 		Namespace: "yaah",
 		Image:     "registry.example/yaah-workspace:latest",
+		FIFODir:   absFifoDir(t),
 	}
 	check := CheckWorkspace(cfg, nil)
 	if check.Status != "OK" {
