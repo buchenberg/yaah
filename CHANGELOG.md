@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.59.0](https://github.com/buchenberg/yaah/compare/v0.58.0...v0.59.0) (2026-10-11)
+
+
+### Features
+
+* **workspace:** sandbox construction + lifecycle -- step 5 (plan §1.2) ([5ae4a32](https://github.com/buchenberg/yaah/commit/5ae4a3290aec076d2496cfd6f72fcc9b2c9aec12))
+
+
+### Bug Fixes
+
+* **workspace:** address the PR [#233](https://github.com/buchenberg/yaah/issues/233) re-review -- followup-channel ordering, backfill vs the startup guard ([3e62093](https://github.com/buchenberg/yaah/commit/3e620932d49ed482d2233c3a9120711ee56e8079))
+* **workspace:** address the PR [#233](https://github.com/buchenberg/yaah/issues/233) review -- probe leaks, teardown races, startup resource ownership ([05dbd8a](https://github.com/buchenberg/yaah/commit/05dbd8a9cb839d1989f4f0fec8c4712dfd38d9ef))
+
 ## [0.58.0](https://github.com/buchenberg/yaah/compare/v0.57.0...v0.58.0) (2026-10-11)
 
 
