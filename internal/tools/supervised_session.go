@@ -922,6 +922,16 @@ func (s *supervisedSession) chooseVariant(ctx context.Context, winner string) (s
 	// point mints a fresh state revision per capture, so an unchanged
 	// tree still never digest-matches and must take Apply (a content
 	// diff would pick Select and the kernel would refuse).
+	//
+	// Known kernel gap (worth upstreaming, plan §8 pattern): a fork
+	// point with uncommitted content cannot settle deterministically
+	// at all — Select's digest precondition only holds when both
+	// captures mint the same stash commit, and Apply's overlap guard
+	// diffs against the captured HEAD, so the baseline's own
+	// uncommitted files appear as both parent drift and sealed-output
+	// changes and always overlap. The typed conflict surfaces honestly
+	// and the session stays awaiting-choose; the recovery is abort (or
+	// committing the tree before the fork).
 	action := shepherd.SettleSelect
 	parentNow, err := scope.CaptureWorkspace(ctx)
 	if err != nil {

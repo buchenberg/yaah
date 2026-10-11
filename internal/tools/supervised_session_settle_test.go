@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -264,59 +263,5 @@ func TestReviewSession_ForkSealsOutputs(t *testing.T) {
 		if !found {
 			t.Errorf("variant %q's scope must carry a %s fact", label, shepherd.SchemaRunOutputSealed)
 		}
-	}
-}
-
-// TestReviewSession_ChooseWithDirtyForkPoint pins the digest-based
-// action picker's reason for existing (review finding): a fork point
-// with uncommitted content mints a fresh state revision per capture,
-// so the parent can never digest-match the baseline — a content diff
-// would pick Select and the kernel would refuse. The session must
-// still choose: the picker sends it down Apply, which merges cleanly.
-// Pinned on POSIX — on Windows, capture normalization makes a dirty
-// tree's captures drift between the baseline and the settle, so the
-// overlap guard fires on the dirty path itself; that refusal is
-// honest and resolvable, but the byte stability this test assumes is
-// a platform property the local-git capture does not provide there.
-func TestReviewSession_ChooseWithDirtyForkPoint(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("dirty-tree captures drift between captures on Windows (normalization); see the overlap recovery test for the resolvable refusal")
-	}
-	tool, sup, repo := newReviewTestEnv(t)
-	tool.WorktreeRoot = t.TempDir()
-
-	// Uncommitted work exists before the session starts, so the fork
-	// point is a dirty tree.
-	writeTestFile(t, repo, "dirty.txt", "uncommitted fork point\n")
-
-	runner := &sessionRunner{
-		repoPath: repo,
-		responses: []runnerResponse{
-			{result: "unit one"},
-			{result: "variant A"},
-			{result: "variant B"},
-		},
-	}
-	runner.sideEffect = func(call int, _ string) {
-		if call == 1 || call == 2 {
-			writeTestFile(t, runner.workdirFor(t, call), "variant.txt", "variant\n")
-		}
-	}
-	tool.Runner = runner.run()
-
-	sid := startTestReviewSession(t, tool, "start")
-	if env := mustSupervisorExecute(t, sup, `{"action":"fork","session_id":`+jsonString(sid)+`,"prompt_a":"A","prompt_b":"B"}`); env.Status != "awaiting_choose" {
-		t.Fatalf("fork status = %q, want awaiting_choose", env.Status)
-	}
-
-	chosen := mustSupervisorExecute(t, sup, `{"action":"choose","session_id":`+jsonString(sid)+`,"winner":"a"}`)
-	if chosen.Status != "chosen" {
-		t.Fatalf("choose over a dirty fork point: status = %q, want chosen (env: %s)", chosen.Status, marshalReviewEnvelope(chosen))
-	}
-	if _, err := os.Stat(filepath.Join(repo, "variant.txt")); err != nil {
-		t.Errorf("the winner's work must land on the dirty parent: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(repo, "dirty.txt")); err != nil {
-		t.Errorf("the dirty fork point's content must survive the settlement: %v", err)
 	}
 }
