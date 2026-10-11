@@ -521,14 +521,14 @@ The `supervised_task` tool wraps a sub-agent run in **workspace checkpoints** vi
 
 **Workspace substrate.** Each scope holds a `shepherdsandbox.Sandbox`; the kernel is backend-agnostic and this is the seam:
 
-| Mode | Sandbox | Parent tree touched? | Discard |
-|---|---|---|---|
-| Shared (default) | `NewLocalGitSandbox` | Yes — variants run sequentially in it, reset to the fork point between runs | Causal only |
-| Isolated (`supervised_worktree`) | `NewWorktreeSandbox` | No — each variant gets its own worktree | Removes the worktree |
+Every `fork` variant is an isolated child scope owning a `NewWorktreeSandbox`;
+there is no shared-tree variant mode (the `supervised_worktree` opt-in is gone).
+Discard — the settlement's `SettleDiscard` — removes the worktree; the parent
+tree is never touched until `choose` settles the winner (adoption plan C2).
 
 **Confinement.** Isolation is only real if the sub-agent's tools actually operate in the worktree, so the dispatch carries `SubAgentParams.Workdir`. `buildSubAgentRegistry` turns that into a per-scope `PathValidator` — rooted at the worktree, inheriting deny patterns and the approval callback, with a fresh approval cache — and `bash`/`powershell` use it as `cmd.Dir`. Without that plumbing an isolated variant would read and mutate the parent tree while believing it was confined.
 
-**Teardown.** Worktrees are removed with `defer`, including on error, because a captured workspace state stays valid after teardown — worktrees share the repository's object store, so the winner can still be applied once its worktree is gone. A worktree left behind by a killed run is cleared and retried once on the next `Create`, and `git worktree prune` clears stale administrative entries.
+**Teardown.** Worktrees live until the fork is settled: `choose`'s merge (select/apply) destroys the winner's, `SettleDiscard` destroys the loser's, and abort discards both — the sealed workspace state stays valid through all of it because worktrees share the repository's object store. A worktree left behind by a killed run is cleared and retried once on the next `Create`, and `git worktree prune` clears stale administrative entries.
 
 **Limits.** A worktree checks out tracked files only, so gitignored build inputs must be recreated by `supervised_worktree_bootstrap`. Isolation is filesystem-level: variants share the host process, network, and object store.
 
