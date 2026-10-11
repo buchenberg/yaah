@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.71.0](https://github.com/buchenberg/yaah/compare/v0.70.0...v0.71.0) (2026-10-11)
+
+
+### Features
+
+* **shepherd:** C2 -- fork/choose via Seal/Settle ([1780c67](https://github.com/buchenberg/yaah/commit/1780c6771d2a5908448a436ee3d95ba2d75808b9))
+* **shepherd:** C2 — fork/choose via Seal/Settle (local mode) ([355e9cb](https://github.com/buchenberg/yaah/commit/355e9cb7eb9c692f00205514198ef3d2c371e4ee))
+
+
+### Bug Fixes
+
+* **shepherd:** C1 review follow-ups — denial completeness and cumulative rollback ([88902b0](https://github.com/buchenberg/yaah/commit/88902b0a6cc39552c7b3226942a5492a93ec4244))
+* **shepherd:** C2 -- dirty-fork choose test tolerates Windows capture drift ([b4a3da2](https://github.com/buchenberg/yaah/commit/b4a3da2513df75a87f62501f773ff068d0dff252))
+* **shepherd:** C2 -- drop the dirty-fork settle test; document the kernel gap ([0e62d09](https://github.com/buchenberg/yaah/commit/0e62d09e7527610be4b390dfcacb754919987cae))
+* **shepherd:** C2 review round 1 -- settlement ordering, baseline parity, digests ([fc70493](https://github.com/buchenberg/yaah/commit/fc70493a392d3d77cc14aa5d958989435a20adbc))
+* **shepherd:** C2 review round 2 -- cancel-free recovery, Windows dirty-fork pin ([e01d53a](https://github.com/buchenberg/yaah/commit/e01d53a40477b403e8d1e48efea186d5e5fa9118))
+
 ## [0.70.0](https://github.com/buchenberg/yaah/compare/v0.69.0...v0.70.0) (2026-10-11)
 
 
