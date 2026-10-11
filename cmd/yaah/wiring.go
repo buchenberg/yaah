@@ -468,7 +468,10 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			// pipeline consults.
 			guardEnabled := supervisorCfg.DestructiveGuardEnabled()
 			if supervisorCfg.EngineEnabled() && (rules.Any() || guardEnabled) {
-				supervisorSvc = supervision.NewService(mgr, bus, runRegistry, rules, guardEnabled, rootScopeID)
+				// haltRoot is the B3 gate: a rule-driven halt of the session root
+				// (the ctrl-C equivalent) dispatches only under the
+				// supervisor.halt_root opt-in.
+				supervisorSvc = supervision.NewService(mgr, bus, runRegistry, rules, guardEnabled, cfg.Agent.Default.HaltRootEnabled(), rootScopeID)
 				supervisorSvc.Start("yaah-supervisor-" + sessionID)
 			}
 		}

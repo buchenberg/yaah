@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -45,7 +46,7 @@ func newTestService(t *testing.T, rules AdvisoryRules) (*Service, *shepherdtrace
 	runs.Register("scope:sess-root", Run{SteerCh: rootSteer})
 	runs.Register("scope:sub-worker", Run{SteerCh: steer})
 
-	svc := NewService(mgr, bus, runs, rules, false, "scope:sess-root")
+	svc := NewService(mgr, bus, runs, rules, false, false, "scope:sess-root")
 	svc.Start("test-supervisor")
 	t.Cleanup(svc.Close)
 	return svc, store, steer, bus
@@ -316,7 +317,7 @@ func TestService_CloseJoinsDrain(t *testing.T) {
 	steer := make(chan string, SteerBuffer)
 	runs.Register("scope:sub-worker", Run{SteerCh: steer})
 
-	svc := NewService(mgr, bus, runs, allAdvisoryRules(), false, "")
+	svc := NewService(mgr, bus, runs, allAdvisoryRules(), false, false, "")
 	svc.Start("close-test")
 
 	publish(bus, shepherdtrace.EffectEvent{
@@ -368,7 +369,7 @@ func TestService_NoRecordNoDelivery(t *testing.T) {
 	steer := make(chan string, SteerBuffer)
 	runs.Register("scope:sub-worker", Run{SteerCh: steer})
 
-	svc := NewService(mgr, bus, runs, allAdvisoryRules(), false, "")
+	svc := NewService(mgr, bus, runs, allAdvisoryRules(), false, false, "")
 	svc.Start("no-record-test")
 	t.Cleanup(svc.Close)
 
@@ -398,7 +399,7 @@ func TestService_StartAfterCloseIsNoop(t *testing.T) {
 	mgr := shepherd.NewScopeManager(store)
 	runs := NewRegistry()
 
-	svc := NewService(mgr, bus, runs, allAdvisoryRules(), false, "")
+	svc := NewService(mgr, bus, runs, allAdvisoryRules(), false, false, "")
 	svc.Start("lifecycle-test")
 	svc.Close()
 	svc.Start("lifecycle-test") // must be a no-op, not a resurrected drain
@@ -431,7 +432,7 @@ func newGuardService(t *testing.T) (*Service, func(ownerID, toolName, argsJSON s
 	mgr := shepherd.NewScopeManager(store)
 	runs := NewRegistry()
 
-	svc := NewService(mgr, bus, runs, AdvisoryRules{}, true, "scope:sess-root")
+	svc := NewService(mgr, bus, runs, AdvisoryRules{}, true, false, "scope:sess-root")
 	t.Cleanup(svc.Close)
 	return svc, svc.GuardCheck()
 }
@@ -486,8 +487,193 @@ func TestGuardCheck_DisabledIsNil(t *testing.T) {
 	bus := shepherdtrace.NewEffectBus(64)
 	t.Cleanup(bus.Close)
 
-	svc := NewService(shepherd.NewScopeManager(store), bus, NewRegistry(), allAdvisoryRules(), false, "")
+	svc := NewService(shepherd.NewScopeManager(store), bus, NewRegistry(), allAdvisoryRules(), false, false, "")
 	if svc.GuardCheck() != nil {
 		t.Error("GuardCheck must be nil when the shell guard is disabled")
+	}
+}
+
+// TestService_GuidanceNamesTheRule pins the B3 dispatch contract: the
+// guidance text names its source, so the loop being steered — and the
+// trace holding the fact — can tell an error-rate warning from a
+// stuck-loop warning apart.
+func TestService_GuidanceNamesTheRule(t *testing.T) {
+	_, _, steer, bus := newTestService(t, AdvisoryRules{StuckDetection: true, StuckRepeatThreshold: 3})
+
+	for i := 0; i < 3; i++ {
+		publish(bus, shepherdtrace.EffectEvent{
+			TraceOwnerID: "sub-worker",
+			Mode:         shepherdtrace.Declaration,
+			KindLabel:    "read",
+			Payload:      map[string]any{"path": "/same/file"},
+		})
+	}
+	g := awaitSteer(t, steer, true)
+	if want := "[stuck_detection]"; !strings.Contains(g, want) {
+		t.Errorf("guidance = %q, want the rule named (prefix %q)", g, want)
+	}
+}
+
+// haltRule is a test-only rule that halts whatever scope emits a
+// declaration of the given kind — the producer B3's dispatch needs on
+// the wire.
+func haltRule(kind string) shepherd.SupervisionRule {
+	return shepherd.SupervisionRule{
+		Name: "test_halt",
+		Match: func(e shepherdtrace.EffectEvent) bool {
+			return e.Mode == shepherdtrace.Declaration && e.KindLabel == kind
+		},
+		Action: func(e shepherdtrace.EffectEvent) *shepherd.Intervention {
+			return &shepherd.Intervention{
+				Type:    shepherd.InterventionHalt,
+				ScopeID: "scope:" + e.TraceOwnerID,
+				Payload: "test halt",
+			}
+		},
+	}
+}
+
+// TestService_HaltDispatchSubScope pins the B3 halt bridge's A3
+// ordering: the run's cancellation fires first, then the kernel-side
+// halt lands — the scope ends discarded, its trace holding the halt.
+func TestService_HaltDispatchSubScope(t *testing.T) {
+	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	if err != nil {
+		t.Fatalf("open test store: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+	bus := shepherdtrace.NewEffectBus(64)
+	t.Cleanup(bus.Close)
+	store.WithBus(bus)
+	mgr := shepherd.NewScopeManager(store)
+	if _, err := mgr.Create("sub-worker", nil); err != nil {
+		t.Fatalf("create scope: %v", err)
+	}
+
+	var cancelled atomic.Bool
+	quiesce := make(chan struct{})
+	// The registry's contract is inject-shaped: a run without a
+	// steering channel is not a run (Register no-ops), and every real
+	// dispatch registers both.
+	steer := make(chan string, SteerBuffer)
+	runs := NewRegistry()
+	runs.Register("scope:sub-worker", Run{
+		SteerCh: steer,
+		Cancel: func() {
+			cancelled.Store(true)
+			close(quiesce)
+		},
+		Done: quiesce,
+	})
+
+	svc := NewService(mgr, bus, runs, AdvisoryRules{}, false, false, "scope:sess-root")
+	svc.Start("halt-test")
+	t.Cleanup(svc.Close)
+	svc.sup.AddRule(haltRule("explode"))
+
+	publish(bus, shepherdtrace.EffectEvent{
+		TraceOwnerID: "sub-worker",
+		Mode:         shepherdtrace.Declaration,
+		KindLabel:    "explode",
+	})
+
+	// The dispatch is cancel-then-quiesce-then-halt: seeing the
+	// cancellation only proves the FIRST step ran. Poll until both the
+	// cancellation and the kernel-side halt (the scope's discarded
+	// state) are visible.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		scope, ok := mgr.Get("scope:sub-worker")
+		if ok && cancelled.Load() && scope.State() == shepherd.ScopeDiscarded {
+			return
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("halt incomplete after 2s: cancelled=%v", cancelled.Load())
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// newRootHaltStack assembles a service with a root scope whose run is
+// cancellable, plus a halt rule that fires on "explode" declarations
+// from the root owner. haltRoot is the B3 gate under test.
+func newRootHaltStack(t *testing.T, haltRoot bool) (*shepherd.ScopeManager, *atomic.Bool, *shepherdtrace.EffectBus) {
+	t.Helper()
+	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	if err != nil {
+		t.Fatalf("open test store: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+	bus := shepherdtrace.NewEffectBus(64)
+	t.Cleanup(bus.Close)
+	store.WithBus(bus)
+	mgr := shepherd.NewScopeManager(store)
+	if _, err := mgr.Create("sess-root", nil); err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+
+	var cancelled atomic.Bool
+	runs := NewRegistry()
+	runs.Register("scope:sess-root", Run{
+		SteerCh: make(chan string, SteerBuffer),
+		Cancel:  func() { cancelled.Store(true) },
+	})
+
+	svc := NewService(mgr, bus, runs, AdvisoryRules{}, false, haltRoot, "scope:sess-root")
+	svc.Start("root-halt-test")
+	t.Cleanup(svc.Close)
+	svc.sup.AddRule(haltRule("explode"))
+	return mgr, &cancelled, bus
+}
+
+func publishRootExplode(bus *shepherdtrace.EffectBus) {
+	publish(bus, shepherdtrace.EffectEvent{
+		TraceOwnerID: "sess-root",
+		Mode:         shepherdtrace.Declaration,
+		KindLabel:    "explode",
+	})
+}
+
+// TestService_RootHaltRefusedWithoutOptIn pins the plan's gate: a
+// rule-driven halt of the session root is refused by default — the
+// session keeps running, its scope untouched.
+func TestService_RootHaltRefusedWithoutOptIn(t *testing.T) {
+	mgr, cancelled, bus := newRootHaltStack(t, false)
+
+	publishRootExplode(bus)
+
+	// Give the drain a beat to (wrongly) act, then assert it did not.
+	time.Sleep(100 * time.Millisecond)
+	if cancelled.Load() {
+		t.Error("a root halt must be refused without supervisor.halt_root")
+	}
+	root, ok := mgr.Get("scope:sess-root")
+	if !ok {
+		t.Fatal("root scope vanished")
+	}
+	if root.State() != shepherd.ScopeActive {
+		t.Errorf("root state = %q, want active (the halt was refused)", root.State())
+	}
+}
+
+// TestService_RootHaltWithOptIn pins the opt-in path: under
+// supervisor.halt_root, a rule-driven root halt cancels the session's
+// run (the ctrl-C equivalent) and records the kernel-side halt.
+func TestService_RootHaltWithOptIn(t *testing.T) {
+	mgr, cancelled, bus := newRootHaltStack(t, true)
+
+	publishRootExplode(bus)
+
+	// Cancel first, kernel-side halt after: poll for both.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		root, ok := mgr.Get("scope:sess-root")
+		if ok && cancelled.Load() && root.State() == shepherd.ScopeDiscarded {
+			return
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("root halt incomplete after 2s: cancelled=%v", cancelled.Load())
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

@@ -14,8 +14,10 @@ package supervision
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/buchenberg/shepherd-kernel-go"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
@@ -60,6 +62,7 @@ type Service struct {
 	runs        *Registry
 	bus         *shepherdtrace.EffectBus
 	rootScopeID string
+	haltRoot    bool
 
 	// mu guards the lifecycle transitions: wg.Add in Start must never
 	// race wg.Wait in Close — the WaitGroup reuse rule — so both hold
@@ -125,21 +128,35 @@ func (s *Service) GuardCheck() func(ownerID, toolName, argsJSON string) string {
 	}
 }
 
-// skippingSupervisorRecords wraps a rule so it never matches the
-// supervisor's own trace records. This is load-bearing, not polish:
-// the drain records each firing in the target scope's trace, the store
-// publishes that append to the bus like any other, and the stuck rule
-// matches ALL declarations — including supervisor:inject ones with an
-// identical payload. Without the filter, one firing feeds the next:
-// record → event → repeat counter → fire → record, an endless loop a
-// live session confirmed at hundreds of firings per second.
-func skippingSupervisorRecords(rule shepherd.SupervisionRule) shepherd.SupervisionRule {
-	inner := rule.Match
+// advisoryRule adapts a kernel rule for the session's engine with the
+// two invariants the plan holds:
+//
+//  1. Supervisor records never feed it — the drain records each firing
+//     in the trace, the store publishes that append, and the stuck rule
+//     matches ALL declarations: without the filter, one firing feeds
+//     the next in an endless loop.
+//  2. Its guidance names its source (adoption plan B3: the guidance
+//     text includes the rule), so the loop being steered — and the
+//     trace holding the fact — can tell an error-rate warning from a
+//     stuck-loop warning apart.
+func advisoryRule(rule shepherd.SupervisionRule) shepherd.SupervisionRule {
+	innerMatch := rule.Match
+	innerAction := rule.Action
 	rule.Match = func(e shepherdtrace.EffectEvent) bool {
 		if e.SchemaRef == shepherd.SchemaSupervisorInject {
 			return false
 		}
-		return inner(e)
+		return innerMatch(e)
+	}
+	rule.Action = func(e shepherdtrace.EffectEvent) *shepherd.Intervention {
+		iv := innerAction(e)
+		if iv == nil {
+			return nil
+		}
+		if payload, ok := iv.Payload.(string); ok {
+			iv.Payload = fmt.Sprintf("[%s] %s (observed: %s)", rule.Name, payload, e.KindLabel)
+		}
+		return iv
 	}
 	return rule
 }
@@ -153,6 +170,13 @@ const (
 	defaultErrorRateThreshold = 0.5
 	defaultStuckRepeat        = 3
 )
+
+// haltQuiesceTimeout bounds the drain's wait for a halted run to stop
+// before the kernel-side halt lands (adoption plan B3), mirroring the
+// A3 manual halt's own bound (internal/tools/supervisor.go — the value
+// is duplicated rather than shared because tools imports this package,
+// not the other way around).
+const haltQuiesceTimeout = 10 * time.Second
 
 // shellGuardRule composes the blocking shell guard from the kernel's
 // DestructiveToolGuard (adoption plan B2, decision D3: "default-deny
@@ -195,14 +219,16 @@ func shellGuardRule() shepherd.SupervisionRule {
 // supervisor carrying the blocking shell guard for synchronous
 // pre-dispatch checks (B2). The thresholds default inside the kernel
 // rules when zero, so a bare AdvisoryRules{DestructiveTool: true, ...}
-// needs no tuning knowledge. rootScopeID is the session's root scope
-// (adoption plan D1): rule-driven interventions against it are
-// dropped — advisory rules exist to rescue sub-agents whose calls no
-// policy gate sees, while the parent's own calls already passed the
-// approval middleware, and steering the session mid-run is B3's gated
-// territory. The manual supervisor tool's root inject (A2) is
-// unaffected.
-func NewService(mgr *shepherd.ScopeManager, bus *shepherdtrace.EffectBus, runs *Registry, rules AdvisoryRules, shellGuard bool, rootScopeID string) *Service {
+// needs no tuning knowledge.
+//
+// rootScopeID is the session's root scope (adoption plan D1): advisory
+// injections against it are dropped — the parent's own calls already
+// passed the approval middleware — but a HALT against it is the B3
+// path: dispatched only when haltRoot is set (the supervisor.halt_root
+// opt-in, default off — a rule halting the interactive session is a
+// big hammer). The manual supervisor tool's root inject (A2) is
+// unaffected either way.
+func NewService(mgr *shepherd.ScopeManager, bus *shepherdtrace.EffectBus, runs *Registry, rules AdvisoryRules, shellGuard, haltRoot bool, rootScopeID string) *Service {
 	errorThreshold := rules.ErrorRateThreshold
 	if errorThreshold <= 0 {
 		errorThreshold = defaultErrorRateThreshold
@@ -220,13 +246,13 @@ func NewService(mgr *shepherd.ScopeManager, bus *shepherdtrace.EffectBus, runs *
 
 	sup := shepherd.NewSupervisor(mgr, bus)
 	if rules.DestructiveTool {
-		sup.AddRule(skippingSupervisorRecords(shepherd.DestructiveToolRule()))
+		sup.AddRule(advisoryRule(shepherd.DestructiveToolRule()))
 	}
 	if rules.HighErrorRate {
-		sup.AddRule(skippingSupervisorRecords(shepherd.HighErrorRateRule(errorThreshold, errorWindow)))
+		sup.AddRule(advisoryRule(shepherd.HighErrorRateRule(errorThreshold, errorWindow)))
 	}
 	if rules.StuckDetection {
-		sup.AddRule(skippingSupervisorRecords(shepherd.StuckDetectionRule(stuckRepeat)))
+		sup.AddRule(advisoryRule(shepherd.StuckDetectionRule(stuckRepeat)))
 	}
 
 	var guard *shepherd.Supervisor
@@ -238,7 +264,7 @@ func NewService(mgr *shepherd.ScopeManager, bus *shepherdtrace.EffectBus, runs *
 		guard = shepherd.NewSupervisor(mgr, nil)
 		guard.AddRule(shellGuardRule())
 	}
-	return &Service{sup: sup, guard: guard, mgr: mgr, runs: runs, bus: bus, rootScopeID: rootScopeID}
+	return &Service{sup: sup, guard: guard, mgr: mgr, runs: runs, bus: bus, rootScopeID: rootScopeID, haltRoot: haltRoot}
 }
 
 // Start subscribes the supervisor to the bus and launches the drain
@@ -306,28 +332,91 @@ func (s *Service) drain() {
 			continue
 		}
 
-		if iv.Type != shepherd.InterventionInject {
-			// Advisory-only by construction (B1): the enabled rules
-			// emit injects. A deny is B2's synchronous path, a halt
-			// is B3's opt-in; neither can arrive from this rule set,
-			// but a dropped unknown type must not be silent.
+		switch iv.Type {
+		case shepherd.InterventionInject:
+			if s.rootScopeID != "" && scopeID == s.rootScopeID {
+				// The parent's own calls already passed the approval
+				// middleware; rule-driven session steering is out of
+				// B1's scope (and the plan's exit criterion is
+				// explicit: the parent session stays untouched). The
+				// firing is deliberately not recorded — the trace fact
+				// is the record of a delivered intervention, and this
+				// one is dropped by policy, not lost in transit.
+				slog.Debug("supervisor: rule firing against the root scope dropped",
+					"scope", scopeID)
+				continue
+			}
+			s.deliverInject(scopeID, guidance)
+		case shepherd.InterventionHalt:
+			s.deliverHalt(scopeID, guidance)
+		default:
+			// The enabled rules emit injects and (from B3) the drain
+			// dispatches halts. A deny is B2's synchronous path and
+			// cannot arrive here; a dropped unknown type must not be
+			// silent.
 			slog.Warn("supervisor: dropping non-advisory intervention",
 				"type", string(iv.Type), "scope", scopeID)
-			continue
 		}
-		if s.rootScopeID != "" && scopeID == s.rootScopeID {
-			// The parent's own calls already passed the approval
-			// middleware; rule-driven session steering is out of B1's
-			// scope (and the plan's exit criterion is explicit: the
-			// parent session stays untouched). The firing is
-			// deliberately not recorded — the trace fact is the
-			// record of a delivered intervention, and this one is
-			// dropped by policy, not lost in transit.
-			slog.Debug("supervisor: rule firing against the root scope dropped",
-				"scope", scopeID)
-			continue
+	}
+}
+
+// deliverHalt dispatches a rule-driven halt (adoption plan B3) with the
+// A3 ordering: cancel the running loop FIRST, wait — bounded — for it
+// to quiesce, and only then record the kernel-side halt, which tears
+// down an owned sandbox. Cancelling alone is not quiescence: an
+// in-flight tool can still be inside the very sandbox scope.Halt
+// destroys next.
+//
+// The root scope is the opt-in gate: a rule halting the interactive
+// session is a big hammer, dispatched only under supervisor.halt_root
+// (default off). A root halt with the gate off is refused and logged —
+// the session keeps running.
+func (s *Service) deliverHalt(scopeID, reason string) {
+	if s.rootScopeID != "" && scopeID == s.rootScopeID && !s.haltRoot {
+		slog.Warn("supervisor: rule-driven halt of the root scope refused — set supervisor.halt_root to allow it",
+			"scope", scopeID)
+		return
+	}
+
+	var quiesced, waited bool
+	if quiesce, err := s.runs.Cancel(scopeID); err == nil {
+		if quiesce != nil {
+			waited = true
+			select {
+			case <-quiesce:
+				quiesced = true
+			case <-time.After(haltQuiesceTimeout):
+				// Bounded proceed, the A3 semantics: the kernel halt
+				// still lands — halt-while-running is its meaning —
+				// and the log names the unquiesced run.
+			}
 		}
-		s.deliverInject(scopeID, guidance)
+	} else if errors.Is(err, ErrNotHaltable) {
+		// A registered run that cannot be cancelled is still using
+		// the scope's sandbox: the kernel-side halt would destroy it
+		// underneath a live run — the exact teardown hazard the
+		// cancel-first ordering exists to prevent. The manual halt
+		// tolerates this (a human asked); a rule must not.
+		slog.Warn("supervisor: halt refused — the run registered no cancellation", "scope", scopeID)
+		return
+	} else if !errors.Is(err, ErrNoRun) {
+		// A delivery failure the registry did not classify is a
+		// bridge bug; report it rather than half-halt.
+		slog.Warn("supervisor: halt delivery failed", "scope", scopeID, "err", err)
+		return
+	}
+	if scope, ok := s.mgr.Get(scopeID); ok {
+		if err := scope.Halt(); err != nil {
+			slog.Warn("supervisor: kernel halt failed", "scope", scopeID, "err", err)
+			return
+		}
+	}
+	switch {
+	case waited && !quiesced:
+		slog.Warn("supervisor: halted scope; the run was cancelled but had not stopped within the bound",
+			"scope", scopeID, "reason", reason)
+	default:
+		slog.Info("supervisor: halted scope", "scope", scopeID, "reason", reason)
 	}
 }
 
