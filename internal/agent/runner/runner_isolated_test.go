@@ -174,12 +174,16 @@ func TestBuildSubAgentSysPrompt_IsolatedGuidance(t *testing.T) {
 
 	// The environment header must advertise the sandbox, not the host:
 	// the workspace's workdir (the header's working-directory line is
-	// what relative paths key off) and the container's shell.
-	if !strings.Contains(got, "/workspace") {
+	// what relative paths key off) and the container's shell. Assert on
+	// the rendered lines, not substrings — "sh" alone matches "shell".
+	if !strings.Contains(got, "Default shell: sh ") {
+		t.Errorf("isolated sub-agent's environment header must advertise the container's sh:\n%s", got)
+	}
+	if !strings.Contains(got, "Working directory: /workspace") {
 		t.Errorf("isolated sub-agent's environment header must name the sandbox workdir:\n%s", got)
 	}
-	if !strings.Contains(got, "sh") || strings.Contains(got, "bash") {
-		t.Errorf("isolated sub-agent's environment header must advertise the container's sh, not the host's bash:\n%s", got)
+	if strings.Contains(got, "Use bash for ALL") {
+		t.Errorf("the Available Shell block must agree with the header, not advertise the host's bash:\n%s", got)
 	}
 
 	local := buildSubAgentSysPrompt(taskRunnerOpts{}, "developer", profile, false)

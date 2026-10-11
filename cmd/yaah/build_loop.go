@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
-	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/providers"
@@ -114,9 +113,12 @@ func (s *agentSession) loopBuilder(
 	// Isolated sessions must not spill oversized tool results to the
 	// host: the truncation hint points the model at the spill file to
 	// `read` it back, and a sandboxed read cannot reach a host path —
-	// the loop falls back to the bare truncation marker instead.
+	// the loop falls back to the bare truncation marker instead. The
+	// live sandbox is the single source of truth, the same predicate
+	// the sub-agent wiring keys off, so the session loop and the
+	// sub-agent loops can never disagree about host spilling.
 	spillDir := toolSpillDir()
-	if s.cfg.Workspace.Backend == config.BackendContainerd {
+	if s.sessionSandbox != nil {
 		spillDir = ""
 	}
 	var debouncer *memory.DebouncedWriter

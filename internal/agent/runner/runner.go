@@ -543,6 +543,15 @@ func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, pro
 		if runtime.GOOS == "windows" {
 			otherShell = "bash, sh, or cmd"
 		}
+		if opts.workspace != nil {
+			// The isolated workspace's contract (D5) guarantees sh
+			// — bash may exist in the image, but only sh is promised,
+			// and the shell the workspace actually launches is what
+			// the header above already advertised. The two statements
+			// must agree, or the model flips between them.
+			shell, _ = opts.workspace.Shell()
+			otherShell = "bash or powershell — only " + shell + " is guaranteed in the container"
+		}
 		sysPrompt += "\n\n## Available Shell\n"
 		sysPrompt += fmt.Sprintf("Your environment only has %s available. ", shell)
 		sysPrompt += fmt.Sprintf("Use %s for ALL command execution. ", shell)
