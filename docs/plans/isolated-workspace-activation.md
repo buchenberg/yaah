@@ -667,7 +667,37 @@ have been **executed**; the verdict is recorded against each.
    `TestPowerShellTool_runsSimpleCommand` needs a `powershell` binary that
    Linux hosts do not have; verified failing on main without this change),
    Windows + darwin cross-compile.
-6. Bootstrap implementation per **D1** (§2.3).
+6. ✅ Bootstrap implementation per **D1** (§2.3) — **landed**.
+   `StartSessionSandbox` gained the session's source tree: when non-empty,
+   the bootstrap runs inside the startup bound — verify the source is a git
+   work tree (the isolated story is git-anchored end to end: the
+   containerd backend's Diff runs against the in-container HEAD, and
+   apply-out is a git patch), copy the tree in file-by-file through the
+   kernel's `WriteFile` (parents auto-created, perm bits carried, symlinks
+   skipped loudly, empty dirs dropped), capture the baseline, then **Apply
+   the baseline once**. That closing Apply is the non-obvious piece: the
+   containerd backend records an applied state's git HEAD as its delta
+   base, and only then does every later capture carry an outward binary
+   patch — without it, no state ever would. `DiffSinceBaseline` is the
+   diff-during verb; `ApplyOut(hostDir)` is the single door changes leave
+   the container through: the backend's base64 git binary patch applied
+   with `git apply --binary` when present (containerd), a clean
+   delta-base-with-no-patch is a no-op, and backends without delta
+   machinery (the fake) fall back to copying the changed paths out through
+   the kernel's `ReadFile` (content- and existence-accurate, blind to
+   mode-only changes). The D1 acceptance criterion — rollback still works
+   in isolated mode — is pinned by
+   `TestBootstrap_RollbackRestoresBaseline`: mutate in the sandbox, apply
+   the baseline, the diff goes empty. Apply-out is not yet invoked by any
+   session flow — the accept seam arrives with the step-7 tool surface;
+   the verbs are landed and round-trip-tested (modify/add/delete, binary
+   payloads, backend-patch preference).
+   **Known costs, deliberate for the correctness-first landing:** the
+   copy-in costs one backend exec per file (a bundle-based fast path is
+   the anticipated follow-up once D1 meets real sessions); a moved host
+   parent at apply-out fails loudly rather than merging — that is
+   settlement's problem (kernel `Seal`/`Settle` + `DeltaApplier`),
+   deliberately still out of scope.
 7. Tool surface per **§3 Option A** + **D3** (§2.1), prompt delta per §2.2, and
    **D4**'s trace metadata.
 8. Activation wiring + `doctor` (§2.4). *First genuinely useful release.*
@@ -677,10 +707,11 @@ have been **executed**; the verdict is recorded against each.
 is shippable. Step 2's gate fired once and is now cleared, so nothing here is
 waiting on a decision or a fix.
 
-**Status (refreshed 2026-10-10): steps 0–5 are done, and the kernel has since
+**Status (refreshed 2026-10-11): steps 0–6 are done, and the kernel has since
 completed its entire parity plan (core `v0.4.1` → `v0.10.0`). The next step is
-6 — the D1 bootstrap (copy-in, capture/diff, apply-out). After 6: steps 7–9 as
-sequenced.**
+7 — the isolated tool surface (Option A registry, prompt delta, D4 trace
+metadata) — which is also what makes the step-6 verbs reachable from a real
+session. After 7: steps 8–9 as sequenced.**
 
 **The two release tasks that rode alongside are done:**
 - **Step 3c (yaah-side):** pin `v0.10.0` + the mechanical ctx sweep — this PR.

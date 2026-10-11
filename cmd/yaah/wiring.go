@@ -45,10 +45,11 @@ var defaultWorkspaceDenyPatterns = []string{
 
 // workspaceSandboxStartTimeout bounds the isolated workspace's startup —
 // the D5 image probe (its own throwaway sandbox), the session sandbox's
-// Create, and the contract exec — so a wedged containerd daemon fails the
-// session at startup instead of hanging it. Generous: a first-run image
-// pull happens inside this window too.
-const workspaceSandboxStartTimeout = 5 * time.Minute
+// Create, the D1 copy-in (one backend exec per file), and the baseline
+// capture/rebind — so a wedged containerd daemon fails the session at
+// startup instead of hanging it. Generous: a first-run image pull and a
+// large working tree both happen inside this window.
+const workspaceSandboxStartTimeout = 15 * time.Minute
 
 // toolSpillDir is the single source for the tool-result spill directory.
 // Both the parent loop (build_loop.go) and every sub-agent loop inherit
@@ -155,7 +156,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		startCtx, cancelStart := context.WithTimeout(context.Background(), workspaceSandboxStartTimeout)
 		defer cancelStart()
 		sessionSandbox, err = tools.StartSessionSandbox(
-			startCtx, cfg.Workspace, tools.OpenContainerdWorkspaceSandbox)
+			startCtx, cfg.Workspace, tools.OpenContainerdWorkspaceSandbox, cwd)
 		if err != nil {
 			return nil, err
 		}
