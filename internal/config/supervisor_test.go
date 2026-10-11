@@ -213,6 +213,42 @@ agents:
         stuck_detection: {repeat_threshold: 5}
 `,
 		},
+		{
+			// The stanza's contract: without a trace dir it is
+			// inert, so values the engine never reads cannot
+			// reject the config.
+			name: "tracing off makes the stanza inert",
+			config: `
+agents:
+  default:
+    supervisor:
+      rules:
+        high_error_rate: {threshold: 1.5}
+`,
+		},
+		{
+			name: "engine off makes the stanza inert",
+			config: `
+agents:
+  default:
+    shepherd_trace_dir: ~/traces
+    supervisor:
+      enabled: false
+      rules:
+        high_error_rate: {threshold: 1.5}
+`,
+		},
+		{
+			name: "a disabled rule's threshold is never read",
+			config: `
+agents:
+  default:
+    shepherd_trace_dir: ~/traces
+    supervisor:
+      rules:
+        high_error_rate: {enabled: false, threshold: 1.5}
+`,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

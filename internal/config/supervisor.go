@@ -141,19 +141,32 @@ func (d Defaults) HaltRootEnabled() bool {
 // by the rule it tunes — an error-rate threshold above 1 would make an
 // enabled rule impossible to trigger, and negatives are neither
 // defaults nor thresholds.
+//
+// The check follows the stanza's own contract: it exists only when
+// tracing is on, and only for rules that are actually enabled — values
+// the engine never reads (tracing off, engine off, rule off) cannot
+// reject an otherwise valid config.
 func validateSupervisor(d Defaults) []string {
+	if d.ShepherdTraceDir == "" || !d.Supervisor.EngineEnabled() {
+		return nil
+	}
+	sup := d.Supervisor
 	var errs []string
-	if t := d.Supervisor.ErrorRateThreshold(); t < 0 || t > 1 {
-		errs = append(errs, fmt.Sprintf(
-			"agents.default.supervisor.rules.high_error_rate.threshold %g must be 0 (default) or within (0, 1]", t))
+	if sup.HighErrorRateEnabled() {
+		if t := sup.ErrorRateThreshold(); t < 0 || t > 1 {
+			errs = append(errs, fmt.Sprintf(
+				"agents.default.supervisor.rules.high_error_rate.threshold %g must be 0 (default) or within (0, 1]", t))
+		}
+		if w := sup.ErrorRateWindow(); w < 0 {
+			errs = append(errs, fmt.Sprintf(
+				"agents.default.supervisor.rules.high_error_rate.window %d must be 0 (default) or positive", w))
+		}
 	}
-	if w := d.Supervisor.ErrorRateWindow(); w < 0 {
-		errs = append(errs, fmt.Sprintf(
-			"agents.default.supervisor.rules.high_error_rate.window %d must be 0 (default) or positive", w))
-	}
-	if r := d.Supervisor.StuckRepeatThreshold(); r < 0 {
-		errs = append(errs, fmt.Sprintf(
-			"agents.default.supervisor.rules.stuck_detection.repeat_threshold %d must be 0 (default) or positive", r))
+	if sup.StuckDetectionEnabled() {
+		if r := sup.StuckRepeatThreshold(); r < 0 {
+			errs = append(errs, fmt.Sprintf(
+				"agents.default.supervisor.rules.stuck_detection.repeat_threshold %d must be 0 (default) or positive", r))
+		}
 	}
 	return errs
 }
