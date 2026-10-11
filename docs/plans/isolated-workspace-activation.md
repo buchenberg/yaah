@@ -768,7 +768,33 @@ have been **executed**; the verdict is recorded against each.
    shows only the arguments, so the user approves exactly the diff they
    were shown, or nothing. The D4 write moved after the SetWorkspace
    gate, so a refused run never overwrites the record.
-8. Activation wiring + `doctor` (§2.4). *First genuinely useful release.*
+8. ✅ Activation wiring + `doctor` (§2.4) — **landed**.
+   The wiring itself landed with steps 5–7 (substrate selection, the
+   curated registry, the accept seam); what this step adds is
+   visibility and the end-to-end proof. `yaah doctor` gains
+   `CheckWorkspace`: the active substrate ("local — tools run on the
+   host filesystem", or isolated mode's image, namespace, containment
+   root, and socket), the backends the binary actually links (from the
+   kernel's sandbox registry — the same seam `OpenContainerdWorkspaceSandbox`
+   resolves through), and an honest FAIL for an isolated config read on a
+   non-Linux platform. It is deliberately config-level: booting
+   throwaway containers from `doctor` would be a probe, not a diagnosis —
+   the daemon and the D5 image contract stay probed at session start.
+   The §2.4 exit criterion — a real tool-driven task end to end — is
+   `TestLive_ActivatedSession` (`workspace_activation_live_test.go`),
+   inert without `YAAH_LIVE_CONTAINERD_ADDR` + `YAAH_LIVE_CONTAINERD_IMAGE`
+   and root, exactly like the kernel's own live suite: probe, create, D1
+   bootstrap from a host git work tree, tool-shaped work through the
+   session workspace (including GNU `stat` and `rg` from the image), a
+   three-file modify/add/delete delta, the containerd-only
+   `delta_patch` property asserted against the real backend, and the
+   `apply_out` accept seam landing all three changes onto the host.
+   **Not yet executed against a daemon from this workspace's session**
+   (the socket needs root): run it with
+   `sudo -E go test ./internal/tools/ -run TestLive_ActivatedSession
+   -count=1 -timeout 30m` against a D5-satisfying image, and record the
+   verdict here. Until that run is green, step 8's exit criterion is
+   *implemented*, not *met*.
 9. Test matrix (§8), docs, and D2's inheritance behaviour for sub-agents (§1.3).
 
 **Stopping points:** step 5 leaves config without activation — a clean stop. Step 8
