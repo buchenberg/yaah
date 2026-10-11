@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.74.0](https://github.com/buchenberg/yaah/compare/v0.73.0...v0.74.0) (2026-10-11)
+
+
+### Features
+
+* **shepherd:** R3 —  list +  verb ([82bd5b4](https://github.com/buchenberg/yaah/commit/82bd5b46120aef939e6a902bb6fe0c51932a7eb3))
+
+
+### Bug Fixes
+
+* **shepherd:** R3 -- plain-quoted prune hint ([f02bb51](https://github.com/buchenberg/yaah/commit/f02bb5191d8656c593d8bd754589c20f8221d789))
+* **shepherd:** R3 -- symlink-aware worktree ownership check ([2109f50](https://github.com/buchenberg/yaah/commit/2109f50aca6b33a959763d9b332a884c82337641))
+* **shepherd:** R3 review round 1 -- ownership verification before deletion ([c3cf354](https://github.com/buchenberg/yaah/commit/c3cf354df5de67cc635f14600aa78204ac34fd9a))
+
 ## [0.73.0](https://github.com/buchenberg/yaah/compare/v0.72.0...v0.73.0) (2026-10-11)
 
 
