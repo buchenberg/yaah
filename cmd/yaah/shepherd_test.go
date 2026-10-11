@@ -2,6 +2,7 @@ package yaah
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,9 +52,12 @@ func shepherdOrphanEnv(t *testing.T) (*recovery.Report, string, string) {
 		t.Fatalf("record live: %v", err)
 	}
 
-	// The orphan: a real worktree, then a discard through the kernel
-	// (teardown happens) with the directory restored by hand — the
-	// crash window's exact bytes.
+	// The orphan: a real worktree whose scope is terminal but whose
+	// teardown never ran — the crash window between the discard record
+	// and the sandbox destroy. Simulated by discarding through the
+	// kernel (which destroys the worktree and records the terminal
+	// state) and then re-adding a REAL worktree at the same path with
+	// sentinel content: the exact shape the crash leaves.
 	orphanWT := filepath.Join(t.TempDir(), "wt-dead")
 	deadSB := shepherdsandbox.NewWorktreeSandbox(repo, orphanWT)
 	if err := deadSB.Create(context.Background(), shepherdsandbox.SandboxSpec{}); err != nil {
@@ -69,8 +73,8 @@ func shepherdOrphanEnv(t *testing.T) (*recovery.Report, string, string) {
 	if err := root.Discard(deadChild); err != nil {
 		t.Fatalf("discard: %v", err)
 	}
-	if err := os.MkdirAll(orphanWT, 0o755); err != nil {
-		t.Fatalf("restore orphan dir: %v", err)
+	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "--detach", orphanWT).CombinedOutput(); err != nil {
+		t.Fatalf("re-add worktree: %v\n%s", err, out)
 	}
 	if err := os.WriteFile(filepath.Join(orphanWT, "unmerged.txt"), []byte("the only copy\n"), 0o644); err != nil {
 		t.Fatalf("write sentinel: %v", err)
@@ -105,7 +109,7 @@ func TestShepherd_ListMatchesOrphanReport(t *testing.T) {
 	if !strings.Contains(listed, "adopted   "+liveWT) {
 		t.Errorf("the list must name the adopted worktree:\n%s", listed)
 	}
-	if !strings.Contains(listed, "yaah shepherd prune "+orphanWT) {
+	if !strings.Contains(listed, "yaah shepherd prune \""+orphanWT+"\"") {
 		t.Errorf("the orphan line must carry the prune hint:\n%s", listed)
 	}
 }
@@ -118,7 +122,7 @@ func TestShepherd_PruneRequiresExactName(t *testing.T) {
 
 	// A near miss (the orphan path plus a suffix) refuses and deletes
 	// nothing.
-	if err := pruneOrphan(report, orphanWT+"/x"); err == nil {
+	if err := pruneOrphan(io.Discard, report, orphanWT+"/x"); err == nil {
 		t.Error("a path that is not exactly on the report must refuse")
 	}
 	if _, err := os.Stat(orphanWT); err != nil {
@@ -127,7 +131,7 @@ func TestShepherd_PruneRequiresExactName(t *testing.T) {
 
 	// The adopted (live) worktree refuses explicitly — it is unmerged
 	// work in use.
-	err := pruneOrphan(report, liveWT)
+	err := pruneOrphan(io.Discard, report, liveWT)
 	if err == nil || !strings.Contains(err.Error(), "adopted (live)") {
 		t.Errorf("pruning an adopted worktree must refuse explicitly, got: %v", err)
 	}
@@ -137,7 +141,7 @@ func TestShepherd_PruneRequiresExactName(t *testing.T) {
 
 	// The exact name prunes: the sentinel goes, the live worktree
 	// stays.
-	if err := pruneOrphan(report, orphanWT); err != nil {
+	if err := pruneOrphan(io.Discard, report, orphanWT); err != nil {
 		t.Fatalf("prune the exact orphan path: %v", err)
 	}
 	if _, err := os.Stat(orphanWT); !os.IsNotExist(err) {
@@ -151,7 +155,7 @@ func TestShepherd_PruneRequiresExactName(t *testing.T) {
 // TestShepherd_PruneNilReport pins the off-tracing refusal: nothing
 // to prune, stated plainly.
 func TestShepherd_PruneNilReport(t *testing.T) {
-	err := pruneOrphan(nil, "/tmp/whatever")
+	err := pruneOrphan(io.Discard, nil, "/tmp/whatever")
 	if err == nil || !strings.Contains(err.Error(), "nothing to prune") {
 		t.Errorf("pruning with tracing off must refuse, got: %v", err)
 	}
@@ -183,4 +187,59 @@ func newCmdGitRepo(t *testing.T) string {
 		}
 	}
 	return dir
+}
+
+// TestShepherd_PruneRefusesReplacedDirectory pins the ownership check
+// (review finding): git's registry can keep stale entries and a
+// directory can be replaced with unrelated data — a user-supplied
+// exact path is not ownership verification, so a listed orphan whose
+// occupant is no longer a worktree of its recorded repository refuses.
+func TestShepherd_PruneRefusesReplacedDirectory(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	repo := newCmdGitRepo(t)
+
+	// A plain directory squatting on the orphan's recorded path — the
+	// registry does not list it, and no .git file points home.
+	dir := filepath.Join(t.TempDir(), "replaced")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "user-data.txt"), []byte("not yaah's\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	report := &recovery.Report{Orphans: []recovery.Orphan{{ScopeID: "scope:sub-dead", Path: dir, Repo: repo}}}
+
+	err := pruneOrphan(io.Discard, report, dir)
+	if err == nil || !strings.Contains(err.Error(), "no longer a worktree of its recorded repository") {
+		t.Errorf("pruning a replaced directory must refuse, got: %v", err)
+	}
+	if _, serr := os.Stat(filepath.Join(dir, "user-data.txt")); serr != nil {
+		t.Fatalf("the replaced directory's data must be untouched: %v", serr)
+	}
+}
+
+// TestShepherd_PruneRefusesBrokenRegistry pins the registry-failure
+// refusal (review finding): a git lookup failure must not fall back
+// to deleting the directory — the registry is unverifiable, so the
+// deletion refuses.
+func TestShepherd_PruneRefusesBrokenRegistry(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	dir := filepath.Join(t.TempDir(), "wt-any")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Repo points at a non-repository: git's worktree list fails.
+	report := &recovery.Report{Orphans: []recovery.Orphan{{ScopeID: "scope:sub-x", Path: dir, Repo: t.TempDir()}}}
+
+	err := pruneOrphan(io.Discard, report, dir)
+	if err == nil || !strings.Contains(err.Error(), "registry unavailable") {
+		t.Errorf("a broken worktree registry must refuse the prune, got: %v", err)
+	}
+	if _, serr := os.Stat(dir); serr != nil {
+		t.Fatalf("the directory must survive the refused prune: %v", serr)
+	}
 }

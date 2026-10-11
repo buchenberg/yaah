@@ -273,6 +273,52 @@ func scanWorktreePaths(ctx context.Context, store *shepherdtrace.SQLiteTraceStor
 	return paths, nil
 }
 
+// RegisteredWorktreePaths runs git's worktree registry for repoPath
+// and returns the registered worktree paths. A lookup failure is an
+// error, not an empty registry: callers that must not delete on a
+// broken registry (the prune path) refuse on it, while callers that
+// only refuse adoption treat it as nothing-registered.
+func RegisteredWorktreePaths(ctx context.Context, repoPath string) ([]string, error) {
+	out, err := exec.CommandContext(ctx, "git", "-C", repoPath, "worktree", "list", "--porcelain").Output()
+	if err != nil {
+		return nil, fmt.Errorf("git worktree list: %w", err)
+	}
+	var paths []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "worktree ") {
+			paths = append(paths, strings.TrimPrefix(line, "worktree "))
+		}
+	}
+	return paths, nil
+}
+
+// WorktreeOwnedBy verifies the CURRENT occupant of path is a git
+// worktree belonging to repoPath: its .git file's gitdir must point
+// under the repository's worktree administration. Git's registry can
+// keep stale entries after the original directory is gone, and a
+// directory can be replaced with unrelated data — the registry alone
+// is not ownership, and neither is a user-supplied path.
+func WorktreeOwnedBy(repoPath, path string) bool {
+	data, err := os.ReadFile(filepath.Join(path, ".git"))
+	if err != nil {
+		return false // no .git file: not a worktree (a clone has a directory)
+	}
+	const prefix = "gitdir: "
+	line := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(line, prefix) {
+		return false
+	}
+	gitdir := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+	if !filepath.IsAbs(gitdir) {
+		gitdir = filepath.Join(path, gitdir)
+	}
+	// The recorded repository's worktree administration is the only
+	// acceptable owner. .git may itself be a file in exotic setups;
+	// the main-repo shape is the one yaah provisions.
+	owned := filepath.Clean(filepath.Join(repoPath, ".git", "worktrees")) + string(filepath.Separator)
+	return strings.HasPrefix(filepath.Clean(gitdir)+string(filepath.Separator), owned)
+}
+
 // IsRegisteredWorktree reports whether path is currently registered as
 // a git worktree of repoPath. A worktree left behind by a killed run
 // still appears in `git worktree list`; unrelated data in a
