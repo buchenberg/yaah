@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.59.2](https://github.com/buchenberg/yaah/compare/v0.59.1...v0.59.2) (2026-10-11)
+
+
+### Bug Fixes
+
+* **workspace:** bound the failed-start sandbox teardown -- the third destroy site ([988fc2a](https://github.com/buchenberg/yaah/commit/988fc2a90401d89ec0728589b2caf1def9ada3de))
+* **workspace:** bound the failed-start sandbox teardown -- the third destroy site ([481e7d0](https://github.com/buchenberg/yaah/commit/481e7d095a2dd35f2a002ac5f2d53f4c6a93d070))
+
 ## [0.59.1](https://github.com/buchenberg/yaah/compare/v0.59.0...v0.59.1) (2026-10-11)
 
 
