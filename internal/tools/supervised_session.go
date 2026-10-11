@@ -911,7 +911,17 @@ func (s *supervisedSession) accept(ctx context.Context) (string, error) {
 	if err := mgr.CommitMerge(ctx, s.scopeID, s.mergeReviewer()); err != nil {
 		var denied *shepherd.SupervisorDeniedError
 		if errors.As(err, &denied) {
-			return s.denyAndRetryLocked(ctx, denied)
+			// The gate joins its denial with a hard failure when the
+			// decision recording or the discard itself fails, and
+			// errors.As matches those too — but a denial without a
+			// completed discard is not a denial the retry path can
+			// build on (the scope is still active, and no decision
+			// fact may exist). Only a scope that reached
+			// ScopeDiscarded takes the denial path; anything else
+			// surfaces the whole error.
+			if scope, ok := mgr.Get(s.scopeID); ok && scope.State() == shepherd.ScopeDiscarded {
+				return s.denyAndRetryLocked(ctx, denied)
+			}
 		}
 		return "", fmt.Errorf("supervisor: accept: %w", err)
 	}
@@ -951,43 +961,53 @@ func (s *supervisedSession) mergeReviewer() shepherd.MergeReviewer {
 // existing rollback UX (adoption plan C1): the kernel's Discard was
 // causal-only — the session scope shares the root's sandbox, so the
 // denied work still stands in the tree — and the physical rollback is
-// the checkpoint restore, with the denial reason injected into the
-// re-run the way rollback injects the orchestrator's guidance.
+// ours, with the denial reason injected into the re-run the way
+// rollback injects the orchestrator's guidance.
+//
+// The restore target is the proposal's own diff base — the session
+// scope's fork baseline — because the gate's proposal is the
+// cumulative session work: a denial covers every continued unit's
+// changes, not just the last unit's. A unit-checkpoint restore would
+// leave earlier units' denied work in the tree and baseline it into
+// the retry, hiding it from the next review.
 //
 // The discarded scope cannot carry the restore (its workspace methods
 // refuse non-active scopes), so the tree is reset through the root
 // BEFORE the retry scope forks: the fresh fork's baseline is then the
-// restored tree, and the next accept proposes only the retry's work,
-// not reversions of the denied work.
+// restored tree, and the next accept proposes only the re-done work.
+// The conversation survives the rollback — it is context, not work
+// product — so the retry re-does the work with every unit's report
+// still in reach.
 func (s *supervisedSession) denyAndRetryLocked(ctx context.Context, denied *shepherd.SupervisorDeniedError) (string, error) {
 	mgr := SharedScopeManager
+	scope, ok := mgr.Get(s.scopeID)
+	if !ok {
+		return "", fmt.Errorf("supervisor: accept denied (%s) but the session scope vanished — the tree was left as the unit left it; abort or roll back manually", denied.Reason)
+	}
+	base, hasBase := scope.Baseline()
+	if !hasBase {
+		// Unreachable in practice — the gate cannot propose without a
+		// baseline — but a denial must never silently proceed without a
+		// rollback target: fail loudly instead of lying to the agent.
+		return "", fmt.Errorf("supervisor: accept denied (%s) but the session has no fork baseline to roll back to — the tree was left as the unit left it; abort or roll back manually", denied.Reason)
+	}
 	root, ok := mgr.Get(s.runtime.RootScopeID)
 	if !ok {
 		return "", fmt.Errorf("supervisor: accept denied (%s) but the root scope vanished — the tree was left as the unit left it; abort or roll back manually", denied.Reason)
 	}
-
-	// The restore target: the live unit-start checkpoint when there is
-	// one; otherwise the fork point (a cancelled fork consumed the
-	// checkpoint but captured the fork state). Without either there is
-	// nothing recorded to roll back to — the denial envelope says so.
-	var target *shepherdtrace.WorkspaceState
-	var seed []byte
-	switch {
-	case s.checkpointID != "":
-		target = &s.unitState
-		seed = s.unitSnap
-	case s.forkState != nil:
-		target = s.forkState
-		seed = marshalMessages(s.forkConv)
-	}
-	if target != nil {
-		if err := root.ApplyWorkspace(ctx, *target); err != nil {
-			return "", fmt.Errorf("supervisor: accept denied (%s) but the checkpoint restore failed: %w — the tree was left as the unit left it; abort or roll back manually", denied.Reason, err)
-		}
+	if err := root.ApplyWorkspace(ctx, base); err != nil {
+		return "", fmt.Errorf("supervisor: accept denied (%s) but the rollback to the session start failed: %w — the tree was left as the unit left it; abort or roll back manually", denied.Reason, err)
 	}
 	if s.checkpointID != "" {
 		mgr.PruneCheckpoints(context.WithoutCancel(ctx), s.scopeID)
 	}
+	// A partially-complete fork (an error between variants left the
+	// session in review) is superseded by the retry: its experiments
+	// were never chosen, and the denial rolled the tree past them.
+	s.forkState = nil
+	s.forkConv = nil
+	s.varA = nil
+	s.varB = nil
 
 	scope, err := mgr.Fork(s.runtime.RootScopeID, fmt.Sprintf("%s:retry:%d", s.id, time.Now().UnixNano()), nil)
 	if err != nil {
@@ -995,19 +1015,18 @@ func (s *supervisedSession) denyAndRetryLocked(ctx context.Context, denied *shep
 	}
 	s.scopeID = scope.ID()
 	s.checkpointID = ""
-	if target != nil {
-		cp, err := mgr.CreateCheckpoint(context.WithoutCancel(ctx), s.scopeID, seed)
-		if err != nil {
-			return "", fmt.Errorf("supervisor: accept denied (%s) but the retry checkpoint failed: %w", denied.Reason, err)
-		}
-		s.checkpointID = cp.ID
-		s.unitState = cp.Workspace
-		s.unitSnap = cp.Snapshot
+	seed := s.lastConv
+	cp, err := mgr.CreateCheckpoint(context.WithoutCancel(ctx), s.scopeID, marshalMessages(seed))
+	if err != nil {
+		return "", fmt.Errorf("supervisor: accept denied (%s) but the retry checkpoint failed: %w", denied.Reason, err)
 	}
+	s.checkpointID = cp.ID
+	s.unitState = cp.Workspace
+	s.unitSnap = cp.Snapshot
 
-	prompt := "SUPERVISOR CORRECTION: your work unit was denied by the merge gate and its changes were rolled back. The gate's reason:\n" +
-		denied.Reason + "\n\nRedo the unit so the next review passes the gate."
-	out, err := s.dispatchLocked(ctx, prompt, unmarshalMessages(seed))
+	prompt := "SUPERVISOR CORRECTION: the merge gate denied the session's work and the changes were rolled back to the session start. The gate's reason:\n" +
+		denied.Reason + "\n\nRedo the work addressing the denial so the next review passes the gate."
+	out, err := s.dispatchLocked(ctx, prompt, seed)
 	if err != nil {
 		return "", err
 	}

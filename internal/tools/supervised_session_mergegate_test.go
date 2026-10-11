@@ -167,13 +167,17 @@ func TestReviewSession_AcceptDeniedRollsBackAndRetries(t *testing.T) {
 		t.Errorf("tree at the retry's start must be byte-identical to unit start, git reports:\n%s", statusAtRetryStart)
 	}
 
-	// The reason is injected into the re-run; the re-run re-seeds from
-	// the unit-start conversation (empty for unit 1).
+	// The reason is injected into the re-run; the re-run keeps the
+	// conversation as context (the rollback is the tree, not the talk).
 	if p := runner.promptFor(t, 1); !strings.Contains(p, "changes must stay under drafts/") {
 		t.Errorf("retry prompt = %q, want the denial reason injected", p)
 	}
-	if len(runner.seedFor(t, 1)) != 0 {
-		t.Error("retry must re-seed from the unit-start conversation (empty for unit 1)")
+	seed1 := runner.seedFor(t, 1)
+	if len(seed1) == 0 {
+		t.Fatal("retry must keep the prior conversation as context")
+	}
+	if last := seed1[len(seed1)-1]; last.Role != "assistant" || last.Content != "put it in the wrong place" {
+		t.Errorf("retry seed ends with %q/%q, want the last unit's report", last.Role, last.Content)
 	}
 
 	// The denial was recorded on the root's path.
@@ -220,5 +224,85 @@ func TestReviewSession_StartWithoutRootScopeRefused(t *testing.T) {
 	_, err := tool.Execute(context.Background(), `{"prompt":"do the work","role":"worker","review":true}`)
 	if err == nil || !strings.Contains(err.Error(), "root scope") {
 		t.Errorf("review start without a root scope must refuse naming the root scope, got: %v", err)
+	}
+}
+
+// TestReviewSession_AcceptDeniedRollsBackCumulativeWork pins the
+// cumulative semantics of a merge-gate denial (review finding): the
+// gate's proposal diffs from the session scope's fork baseline — all
+// continued units' work, not just the last unit's — so the denial's
+// rollback is the session start. Earlier units' denied work must not
+// survive into the retry's baseline.
+func TestReviewSession_AcceptDeniedRollsBackCumulativeWork(t *testing.T) {
+	tool, sup, repo := newReviewTestEnv(t)
+	runner := &sessionRunner{
+		repoPath: repo,
+		responses: []runnerResponse{
+			{result: "unit one: added the forbidden file"},
+			{result: "unit two: added the good file"},
+			{result: "redone without the forbidden file"},
+		},
+	}
+	// Unit 1 adds the forbidden file, unit 2 a good one. The retry
+	// captures the tree state it starts from — it must be the session
+	// start (both files gone), and it redoes the work with only the
+	// good file.
+	var statusAtRetryStart string
+	runner.sideEffect = func(call int, repoPath string) {
+		switch call {
+		case 0:
+			writeTestFile(t, repoPath, "forbidden.txt", "denied\n")
+		case 1:
+			writeTestFile(t, repoPath, "good.txt", "fine\n")
+		case 2:
+			statusAtRetryStart = gitStatus(t, repoPath)
+			writeTestFile(t, repoPath, "good.txt", "fine\n")
+		}
+	}
+	tool.Runner = runner.run()
+
+	tool.MergePolicy = func(p shepherd.MergeProposal) error {
+		for _, c := range p.Changes {
+			if c.Path == "forbidden.txt" {
+				return errors.New("forbidden.txt may not be touched")
+			}
+		}
+		return nil
+	}
+
+	sid := startTestReviewSession(t, tool, "do the work")
+
+	// Unit 1 completes; the orchestrator accepts it per-unit via
+	// continue — its forbidden file now stands in the tree.
+	if env := mustSupervisorExecute(t, sup, `{"action":"continue","session_id":`+jsonString(sid)+`,"guidance":"now add the good file"}`); env.Status != "review" {
+		t.Fatalf("continue status = %q, want review", env.Status)
+	}
+
+	// The final accept denies the cumulative proposal: the forbidden
+	// file from unit 1 is in it.
+	env := mustSupervisorExecute(t, sup, `{"action":"accept","session_id":`+jsonString(sid)+`}`)
+	if env.Status != "review" {
+		t.Fatalf("status = %q, want review — the denial must re-run the unit (env: %s)", env.Status, marshalReviewEnvelope(env))
+	}
+	if !strings.Contains(env.Error, "forbidden.txt") {
+		t.Errorf("envelope error = %q, want the denial reason surfaced", env.Error)
+	}
+
+	// The rollback is the session start, not the last unit's
+	// checkpoint: the forbidden file from unit 1 must be gone too.
+	if strings.TrimSpace(statusAtRetryStart) != "" {
+		t.Errorf("tree at the retry's start must be the session start, git reports:\n%s", statusAtRetryStart)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "forbidden.txt")); err == nil {
+		t.Error("unit 1's denied work must be rolled back (forbidden.txt still present)")
+	}
+
+	// The retry's accept approves: the re-done work passes the gate.
+	env2 := mustSupervisorExecute(t, sup, `{"action":"accept","session_id":`+jsonString(sid)+`}`)
+	if env2.Status != "accepted" {
+		t.Fatalf("second accept status = %q, want accepted (env: %s)", env2.Status, marshalReviewEnvelope(env2))
+	}
+	if _, err := os.Stat(filepath.Join(repo, "good.txt")); err != nil {
+		t.Errorf("the re-done work must be kept: %v", err)
 	}
 }
