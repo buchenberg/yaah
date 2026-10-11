@@ -80,6 +80,11 @@ type Service struct {
 // The event mirrors the declaration the trace middleware records —
 // schema ref, kind label, and the shell command under "cmd" — so the
 // rule set evaluates pre-dispatch and post-hoc against one shape.
+//
+// Safe under concurrent sub-agent loops: the kernel's CheckCall copies
+// the rule slice under a read lock, and the guard rule is stateless —
+// both closures read only the event — so concurrent dispatches share
+// one check without shared mutable state.
 func (s *Service) GuardCheck() func(ownerID, toolName, argsJSON string) string {
 	if s.guard == nil {
 		return nil
@@ -89,7 +94,7 @@ func (s *Service) GuardCheck() func(ownerID, toolName, argsJSON string) string {
 			"tool": toolName,
 			"args": json.RawMessage(argsJSON),
 		}
-		if toolName == "bash" || toolName == "powershell" {
+		if toolName == "bash" || toolName == "powershell" || toolName == "background_process" {
 			var args struct {
 				Command string `json:"command"`
 			}
@@ -107,7 +112,14 @@ func (s *Service) GuardCheck() func(ownerID, toolName, argsJSON string) string {
 		if iv == nil || iv.Type != shepherd.InterventionDeny {
 			return ""
 		}
-		reason, _ := iv.Payload.(string)
+		// Fail closed: a deny verdict denies regardless of whether the
+		// payload type-asserts. A silent empty-string here would turn a
+		// non-string payload into an allow — fail-open in the one
+		// pre-dispatch net sub-agent calls pass through.
+		reason, ok := iv.Payload.(string)
+		if !ok {
+			return "Blocked destructive operation. Supervisor denied."
+		}
 		return reason
 	}
 }
@@ -149,6 +161,10 @@ const (
 // powershell on Windows, which the kernel's matcher has never heard
 // of), because structured tools are the approved path for changes and
 // their review is the merge gate's job (Phase C), not this net.
+//
+// background_process joins the shells: it runs an arbitrary command
+// through the host process manager — exactly the "a shell can execute
+// anything a pattern matcher cannot see" hazard, in a second door.
 func shellGuardRule() shepherd.SupervisionRule {
 	guard := shepherd.DestructiveToolGuard()
 	return shepherd.SupervisionRule{
@@ -157,7 +173,7 @@ func shellGuardRule() shepherd.SupervisionRule {
 			if e.Mode != shepherdtrace.Declaration {
 				return false
 			}
-			return e.KindLabel == "bash" || e.KindLabel == "powershell"
+			return e.KindLabel == "bash" || e.KindLabel == "powershell" || e.KindLabel == "background_process"
 		},
 		Action: guard.Action,
 	}

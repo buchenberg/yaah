@@ -845,11 +845,6 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	return sess, nil
 }
 
-// splitRolesBySupervised partitions role names into plain and supervised
-// sets using the supplied predicate (the per-role `supervised` flag). A
-// role dispatches through exactly one sub-agent tool: plain roles via
-// spawn_subagent, supervised roles via supervised_task. Order within each
-// set preserves the input order.
 // supervisorSvcGuardCheck extracts the blocking pre-dispatch check
 // (adoption plan B2) from the session's supervisor service. A nil
 // service — tracing off, the engine disabled, or a startup that never
@@ -862,6 +857,11 @@ func supervisorSvcGuardCheck(svc *supervision.Service) func(ownerID, toolName, a
 	return svc.GuardCheck()
 }
 
+// splitRolesBySupervised partitions role names into plain and supervised
+// sets using the supplied predicate (the per-role `supervised` flag). A
+// role dispatches through exactly one sub-agent tool: plain roles via
+// spawn_subagent, supervised roles via supervised_task. Order within each
+// set preserves the input order.
 func splitRolesBySupervised(names []string, isSupervised func(string) bool) (plain, supervised []string) {
 	for _, n := range names {
 		if isSupervised(n) {
