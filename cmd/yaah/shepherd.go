@@ -101,7 +101,7 @@ func printShepherdReport(w io.Writer, report *recovery.Report) {
 		fmt.Fprintf(w, "  adopted   %s (live work, leave it)\n", p)
 	}
 	for _, o := range report.Orphans {
-		fmt.Fprintf(w, "  orphaned %s (%s) — scope %s; prunable with `yaah shepherd prune %q`\n", o.Path, formatSize(o.Size), o.ScopeID, o.Path)
+		fmt.Fprintf(w, "  orphaned %s (%s) — scope %s; prunable with `yaah shepherd prune \"%s\"`\n", o.Path, formatSize(o.Size), o.ScopeID, o.Path)
 	}
 	for _, m := range report.Missing {
 		fmt.Fprintf(w, "  missing  %s — scope %s; the worktree is gone, its work is lost\n", m.Path, m.ScopeID)
