@@ -73,9 +73,6 @@ func vectorResultsJSON(results []memory.VectorResult) string {
 	var lines []string
 	for _, r := range results {
 		id := r.ID
-		if len(id) > 12 {
-			id = id[:12]
-		}
 		tag := ""
 		if r.Tags != "" && r.Tags != "null" {
 			tag = " " + r.Tags
@@ -89,9 +86,6 @@ func entryListJSON(results []memory.Entry) string {
 	var lines []string
 	for _, r := range results {
 		id := r.ID
-		if len(id) > 12 {
-			id = id[:12]
-		}
 		tag := ""
 		if r.Tags != "" && r.Tags != "null" {
 			tag = " " + r.Tags
@@ -148,7 +142,7 @@ func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error
 		return "", fmt.Errorf("memory_add: %w", err)
 	}
 	if dupID != "" {
-		return fmt.Sprintf("Memory already exists (id: %s): %s\nUse memory_search to retrieve this fact when relevant.", dupID[:12], params.Text), nil
+		return fmt.Sprintf("Memory already exists (id: %s): %s\nUse memory_search to retrieve this fact when relevant.", dupID, params.Text), nil
 	}
 
 	// Embed the new entry synchronously so it is searchable immediately.
@@ -159,7 +153,7 @@ func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error
 		}
 	}
 
-	return fmt.Sprintf("Memory saved (id: %s): %s. This fact is now in persistent memory — use memory_search to recall it when relevant.", entry.ID[:12], params.Text), nil
+	return fmt.Sprintf("Memory saved (id: %s): %s. This fact is now in persistent memory — use memory_search to recall it when relevant.", entry.ID, params.Text), nil
 }
 
 // MemoryDeleteTool removes a memory entry by ID.
