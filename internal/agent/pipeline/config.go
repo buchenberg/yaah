@@ -83,8 +83,16 @@ type PipelineConfig struct {
 
 	// SessionID scopes Shepherd trace records. The sub-agent pipeline's
 	// shepherd_trace middleware records under this owner using the
-	// session-shared store (tools.SharedTraceStore).
+	// session-shared store (tools.SharedTraceStore), and the
+	// supervisor_guard middleware addresses its checks to the same
+	// owner.
 	SessionID string
+
+	// DestructiveGuard is the supervision service's synchronous
+	// pre-dispatch check (adoption plan B2): a non-empty return denies
+	// the tool call before execution. Nil means the guard is disabled —
+	// every call passes, so tracing-off sessions are unchanged.
+	DestructiveGuard func(ownerID, toolName, argsJSON string) string
 
 	PipelineNames    []string
 	PipelineDisabled []string
@@ -175,6 +183,15 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 
 var subAgentBuilders = map[string]func(PipelineConfig) Middleware{
 	"permission": buildPermission,
+	// supervisor_guard: the blocking pre-dispatch net (adoption plan
+	// B2). Installed only when cfg.DestructiveGuard is wired; the
+	// builder below would otherwise install a pass-through no-op.
+	"supervisor_guard": func(cfg PipelineConfig) Middleware {
+		// The middleware no-ops on a nil check, so a stale config name
+		// can never deny anything; NewSubAgentPipeline installs it
+		// only when cfg.DestructiveGuard is wired.
+		return NewSupervisorGuardMiddleware(cfg.DestructiveGuard, cfg.SessionID)
+	},
 	// steer: the supervision inject channel (adoption plan A2). Unlike
 	// the orchestrator builder, no onDrain compaction hook — sub-agent
 	// loops prune via CtxMgr, and the builder is only installed when
@@ -304,9 +321,13 @@ func NewSubAgentPipeline(cfg PipelineConfig) *Pipeline {
 	names := SubAgentPipelineNames(cfg.PipelineDisabled)
 	// Prepend in reverse of the intended order so the last prepend is
 	// first: steer must run before everything — injected guidance has to
-	// reach the model before it repeats the mistake — and permission
-	// second, gating the turn's tool calls ahead of concurrency and
-	// tracing.
+	// reach the model before it repeats the mistake — permission second,
+	// gating the turn's tool calls ahead of concurrency and tracing,
+	// and the supervisor guard third — the blocking net after any
+	// explicit rules, before anything dispatches.
+	if cfg.DestructiveGuard != nil && !slices.Contains(cfg.PipelineDisabled, "supervisor_guard") {
+		names = append([]string{"supervisor_guard"}, names...)
+	}
 	if len(cfg.PermissionRules) > 0 && !slices.Contains(cfg.PipelineDisabled, "permission") {
 		names = append([]string{"permission"}, names...)
 	}

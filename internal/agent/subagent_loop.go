@@ -79,6 +79,15 @@ type SubAgentConfig struct {
 	// inject with "no active run" instead of claiming delivery — the
 	// loss window is only the final turn itself.
 	SteerCh chan string
+
+	// DestructiveGuard, when non-nil, is the supervision service's
+	// blocking pre-dispatch check (shepherd-adoption plan B2): the
+	// loop's pipeline consults it before a tool call executes, and a
+	// non-empty reason denies the call with a synthesized result —
+	// sub-agent loops run at ApprovalMode "allow", so this is the only
+	// net their calls pass through. Nil when tracing is off or the
+	// guard is disabled in config; every call then dispatches.
+	DestructiveGuard func(ownerID, toolName, argsJSON string) string
 }
 
 // NewSubAgentLoop creates a Loop optimized for sub-agent execution.
@@ -129,6 +138,7 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 			WrapUpThreshold:        cfg.WrapUpThreshold,
 			SessionID:              cfg.SessionID,
 			IsSubAgent:             true,
+			DestructiveGuard:       cfg.DestructiveGuard,
 
 			TurnCheckpointer:      cfg.TurnCheckpointer,
 			TurnCheckpointEnabled: cfg.TurnCheckpointEnabled,

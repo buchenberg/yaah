@@ -128,6 +128,9 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 		},
 
 		SessionID: l.Config.SessionID,
+		// The blocking pre-dispatch guard (adoption plan B2) rides the
+		// sub-agent pipeline; the orchestrator pipeline ignores it.
+		DestructiveGuard: l.Config.DestructiveGuard,
 	}
 }
 

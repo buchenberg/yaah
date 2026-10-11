@@ -89,6 +89,12 @@ type TaskToolOpts struct {
 	// is off.
 	Runs *supervision.Registry
 
+	// GuardCheck is the supervision service's blocking pre-dispatch
+	// check (adoption plan B2), passed through to every sub-agent loop's
+	// pipeline: a non-empty reason denies the tool call before
+	// execution. Nil when tracing is off or the guard is disabled.
+	GuardCheck func(ownerID, toolName, argsJSON string) string
+
 	// ResolveProviderByName translates a configured provider name into a
 	// live agent.Provider. Injected from the cmd layer because provider
 	// construction (makeProvider) belongs with the rest of the CLI wiring.
@@ -127,6 +133,7 @@ func NewTaskTool(opts TaskToolOpts) *tools.TaskTool {
 			workspace:             opts.Workspace,
 			rootScopeID:           opts.RootScopeID,
 			runs:                  opts.Runs,
+			guardCheck:            opts.GuardCheck,
 			resolveProviderByName: opts.ResolveProviderByName,
 		}, depth),
 		ResolveTimeout:   subAgentTimeoutResolver(opts.SubCfg),
@@ -273,6 +280,15 @@ type taskRunnerOpts struct {
 	// per the repo's no-globals convention. Nil when tracing is off:
 	// dispatches then have no injectable bridge.
 	runs *supervision.Registry
+
+	// guardCheck is the supervision service's blocking pre-dispatch
+	// check (adoption plan B2), injected by the wiring: each sub-agent
+	// loop's pipeline consults it before executing a tool call, and a
+	// non-empty reason denies the call — sub-agent loops run at
+	// ApprovalMode "allow", so this is the net their calls pass
+	// through. Nil when tracing is off or the guard is disabled in
+	// config; calls then dispatch unchanged.
+	guardCheck func(ownerID, toolName, argsJSON string) string
 
 	// resolveProviderByName resolves a configured provider by name. It
 	// is injected from the cmd layer because provider construction
@@ -459,6 +475,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			OtelVerbose:            opts.OtelVerbose,
 			SessionID:              subTraceID,
 			SteerCh:                steerCh,
+			DestructiveGuard:       opts.guardCheck,
 
 			TurnCheckpointer:      turnCk,
 			TurnCheckpointEnabled: turnCk != nil,

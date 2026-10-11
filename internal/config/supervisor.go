@@ -33,13 +33,20 @@ type SupervisorConfig struct {
 	Rules SupervisorRulesConfig `yaml:"rules"`
 }
 
-// SupervisorRulesConfig holds the per-rule switches of the advisory
-// rules engine. The blocking destructive guard is a separate, later
-// step of the plan (B2) and lands with its own config then.
+// SupervisorRulesConfig holds the per-rule switches of the rules
+// engine: the advisory rules (destructive warning, error rate, stuck
+// detection) and the blocking shell guard (adoption plan B2).
 type SupervisorRulesConfig struct {
 	// DestructiveTool warns on destructive tool declarations (advisory
 	// inject-only; the blocking guard is B2). Nil = enabled.
 	DestructiveTool *SupervisorRuleSwitch `yaml:"destructive_tool"`
+
+	// DestructiveGuard denies sub-agent shell calls before execution
+	// (adoption plan B2, decision D3: default-deny for the shell — a
+	// shell can execute anything a pattern matcher cannot see). The
+	// structured tools are the approved path for changes; their review
+	// is the merge gate's job (Phase C), not this net. Nil = enabled.
+	DestructiveGuard *SupervisorRuleSwitch `yaml:"destructive_guard"`
 
 	// HighErrorRate injects guidance when a scope's recent tool error
 	// rate crosses the threshold. Nil = enabled with defaults.
@@ -84,6 +91,12 @@ func (s SupervisorConfig) EngineEnabled() bool {
 // switch, defaulting to enabled when unconfigured.
 func (s SupervisorConfig) DestructiveRuleEnabled() bool {
 	return s.Rules.DestructiveTool == nil || s.Rules.DestructiveTool.Enabled == nil || *s.Rules.DestructiveTool.Enabled
+}
+
+// DestructiveGuardEnabled reports the blocking shell guard's switch
+// (adoption plan B2), defaulting to enabled when unconfigured.
+func (s SupervisorConfig) DestructiveGuardEnabled() bool {
+	return s.Rules.DestructiveGuard == nil || s.Rules.DestructiveGuard.Enabled == nil || *s.Rules.DestructiveGuard.Enabled
 }
 
 // HighErrorRateEnabled reports the error-rate rule's switch, defaulting

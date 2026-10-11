@@ -184,6 +184,14 @@ type LoopConfig struct {
 	// build the curated sub-agent middleware pipeline instead of the
 	// orchestrator default.
 	IsSubAgent bool
+
+	// DestructiveGuard is the supervision service's blocking
+	// pre-dispatch check (shepherd-adoption plan B2), plumbed through
+	// from SubAgentConfig: the sub-agent pipeline consults it before a
+	// tool call executes; a non-empty return denies the call. Nil (the
+	// default) means no guard — tracing-off sessions dispatch
+	// unchanged.
+	DestructiveGuard func(ownerID, toolName, argsJSON string) string
 }
 
 // LoopState holds mutable runtime state modified during Run.
