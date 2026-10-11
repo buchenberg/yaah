@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.66.0](https://github.com/buchenberg/yaah/compare/v0.65.1...v0.66.0) (2026-10-11)
+
+
+### Features
+
+* **shepherd:** B1 -- the advisory rules engine, bridged to execution ([316ea63](https://github.com/buchenberg/yaah/commit/316ea6308130882ce35279db3a3086f5a4b97995))
+* **shepherd:** B1 — the advisory rules engine, bridged to execution ([a54ae10](https://github.com/buchenberg/yaah/commit/a54ae10e701a50a832194012b7282802f2289cbe))
+
+
+### Bug Fixes
+
+* **config:** B1 review round 2 -- supervisor validation follows the stanza's contract ([0d7e423](https://github.com/buchenberg/yaah/commit/0d7e423c95950b33df54dcab90ac17d63cb9c495))
+* **shepherd:** B1 review round 1 -- lifecycle, precedence, validation, windows ([f9edda2](https://github.com/buchenberg/yaah/commit/f9edda20d4af05390e21bb7b32134b47819ebbba))
+
 ## [0.65.1](https://github.com/buchenberg/yaah/compare/v0.65.0...v0.65.1) (2026-10-11)
 
 
