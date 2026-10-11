@@ -85,6 +85,21 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 			"tool": r.Name,
 			"args": argsJSON,
 		}
+		// The kernel's supervision rules read the shell command from
+		// the declaration payload's "cmd" (shepherd-adoption plan B1:
+		// the advisory destructive rule matches patterns in it). yaah's
+		// tool schemas call the field "command", and the shell tool is
+		// bash on POSIX but powershell on Windows; copy it across for
+		// both so rule events and trace facts stay one shape on every
+		// platform the rules evaluate.
+		if r.Name == "bash" || r.Name == "powershell" {
+			var args struct {
+				Command string `json:"command"`
+			}
+			if json.Unmarshal([]byte(r.Args), &args) == nil && args.Command != "" {
+				payload["cmd"] = args.Command
+			}
+		}
 
 		receipt, err := m.store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
 			AppendIntentID: intentID,

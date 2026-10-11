@@ -36,6 +36,7 @@ func TestConfigAgentConfigParity(t *testing.T) {
 		"Directives":            true, // → prompt assembly
 		"ReasoningProtect":      true, // → AgentConfig.ReasoningProtectTurns (renamed)
 		"ShepherdTraceDir":      true, // → session-level shepherd init in wiring
+		"Supervisor":            true, // → advisory rules engine in wiring (adoption plan B1)
 		"SupervisedMaxRetries":  true, // → supervised_task tool registration in wiring
 		"SupervisedRepoPath":    true, // → supervised_task tool registration in wiring
 		"SupervisorHaltRoot":    true, // → supervisor tool's root-halt gate in wiring

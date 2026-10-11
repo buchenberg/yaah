@@ -115,9 +115,20 @@ type agentSession struct {
 	rootScopeID string
 
 	// runs is the session's supervision run registry (adoption plan A2),
-	// session-owned per the repo's no-globals convention. Nil when
+	// injected by the wiring, session-owned per the repo's no-globals
+	// convention; the root scope registers here, and it is the D2
+	// bridge the supervisor tool — and the B1 rules engine — deliver
+	// through. close() unregisters the root BEFORE closing steerCh — a
+	// registry send must never land on a closed channel. Nil when
 	// tracing is off.
 	runs *supervision.Registry
+
+	// supervisor is the session's advisory rules service (adoption plan
+	// B1): it drains the kernel supervisor's interventions into runs.
+	// Nil when tracing is off or the engine is disabled in config.
+	// Closed FIRST in teardown — a drain mid-delivery must finish
+	// before the registry it delivers through goes away.
+	supervisor *supervision.Service
 
 	// runCancel is the session-owned cancellation for the currently
 	// running prompt (adoption plan A3): the target of
@@ -162,6 +173,12 @@ const workspaceSandboxDestroyTimeout = 30 * time.Second
 
 func (s *agentSession) close() {
 	ctx := context.Background()
+	// The advisory rules service drains INTO the registry below: stop it
+	// first and join its drain goroutine, so no delivery is mid-flight
+	// when the registry entries it addresses start going away.
+	if s.supervisor != nil {
+		s.supervisor.Close()
+	}
 	// The root's registry entry goes before its channel closes: the
 	// registry sends under its lock, so an unregister that returns
 	// guarantees no later send — and a send on a closed channel panics.

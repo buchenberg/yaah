@@ -350,7 +350,11 @@ agents:
 |---|---|---|
 | `supervised_max_retries` | `1` | Rollback-and-retry cycles after the first attempt. |
 | `supervised_repo_path` | `""` | Repository the checkpoints operate on. Empty uses yaah's working directory. |
-| `supervisor_halt_root` | `false` | Opt in to `supervisor` halt of the session's root scope: it stops the session's current run (the ctrl-C equivalent) and ends scope-tree supervision for the process. Sub-agent halts need no gate. |
+| `supervisor.halt_root` | `false` | Opt in to `supervisor` halt of the session's root scope: it stops the session's current run (the ctrl-C equivalent) and ends scope-tree supervision for the process. Sub-agent halts need no gate. An explicit value wins over the deprecated flat `supervisor_halt_root` key; unset falls back to it. |
+| `supervisor.enabled` | on (tracing-gated) | Master switch for the advisory rules engine (adoption plan B1). With `shepherd_trace_dir` set, the kernel supervisor watches the session's trace and a service delivers rule firings as steering into the running sub-agent loops; `false` disables the whole engine. |
+| `supervisor.rules.destructive_tool.enabled` | `true` | Advisory warning on destructive tool declarations (bash/powershell command patterns, write, delete) — inject-only guidance, recorded in the target scope's trace. Rule-driven firings against the session's own scope are dropped: the parent's calls already passed the approval middleware. |
+| `supervisor.rules.high_error_rate.{enabled,threshold,window}` | `true`, `0.5`, `10` | Guidance when a scope's recent tool error rate crosses the threshold within the sliding window. `0` values mean the defaults. |
+| `supervisor.rules.stuck_detection.{enabled,repeat_threshold}` | `true`, `3` | Guidance when a scope repeats the same tool call `repeat_threshold` times in a row. `0` means the default. |
 | `supervised_worktree` | `false` | Run each fork variant in its own git worktree instead of the shared tree. |
 | `supervised_worktree_root` | `""` | Parent directory for variant worktrees. Empty uses a `shepherd-worktrees` directory beside the repository. |
 | `supervised_worktree_bootstrap` | `""` | Shell command run inside each fresh worktree — see below. |

@@ -103,11 +103,20 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		mcpClients   []mcp.MCPClient
 		mcpInfos     []mcp.ServerInfo
 		mcpToolNames map[string]bool
+		// supervisorSvc is the advisory rules service (adoption plan
+		// B1). Declared here, like db, so the guard can close a
+		// partially-built session no matter which later step failed —
+		// a started service owns a drain goroutine and a bus
+		// subscription, and a failed startup must not leak either.
+		supervisorSvc *supervision.Service
 	)
 	sessionHandedOff := false
 	defer func() {
 		if sessionHandedOff {
 			return
+		}
+		if supervisorSvc != nil {
+			supervisorSvc.Close()
 		}
 		if otelShutdown != nil {
 			otelShutdown(context.Background())
@@ -402,7 +411,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// borrows has the same capacity.
 	steerCh := make(chan string, supervision.SteerBuffer)
 	if cfg.Agent.Default.ShepherdTraceDir != "" {
-		store, _, mgr, serr := pipeline.InitShepherdInfrastructure(cfg.Agent.Default.ShepherdTraceDir, 0)
+		store, bus, mgr, serr := pipeline.InitShepherdInfrastructure(cfg.Agent.Default.ShepherdTraceDir, 0)
 		if serr != nil {
 			fmt.Fprintf(os.Stderr, "warning: shepherd tracing disabled: %v\n", serr)
 		} else {
@@ -430,6 +439,32 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 				fmt.Fprintf(os.Stderr, "warning: no shepherd root scope — sub-agent scopes fall back to flat creation: %v\n", rerr)
 			} else {
 				rootScopeID = root.ID()
+			}
+
+			// Advisory rules engine (adoption plan B1): the kernel
+			// supervisor watches the effect bus the trace store
+			// publishes to, and a service drains its interventions
+			// into the A2 bridge above — a rule firing becomes a
+			// delivered steering message, recorded in the trace.
+			// Constructed after the root scope so rule firings
+			// against it can be dropped: the parent's own calls
+			// already passed the approval middleware, and the exit
+			// criterion is explicit — the parent session stays
+			// untouched. The bus is otherwise inert (its first
+			// consumer, per the adoption audit); disabled by config
+			// only, since tracing is already the opt-in.
+			supervisorCfg := cfg.Agent.Default.Supervisor
+			rules := supervision.AdvisoryRules{
+				DestructiveTool:      supervisorCfg.DestructiveRuleEnabled(),
+				HighErrorRate:        supervisorCfg.HighErrorRateEnabled(),
+				ErrorRateThreshold:   supervisorCfg.ErrorRateThreshold(),
+				ErrorRateWindow:      supervisorCfg.ErrorRateWindow(),
+				StuckDetection:       supervisorCfg.StuckDetectionEnabled(),
+				StuckRepeatThreshold: supervisorCfg.StuckRepeatThreshold(),
+			}
+			if supervisorCfg.EngineEnabled() && rules.Any() {
+				supervisorSvc = supervision.NewService(mgr, bus, runRegistry, rules, rootScopeID)
+				supervisorSvc.Start("yaah-supervisor-" + sessionID)
 			}
 		}
 	}
@@ -559,8 +594,9 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			Runs:        runRegistry,
 			// supervisor.halt_root (adoption plan A3): root halt maps to
 			// cancelling the session's current run — a big hammer that
-			// needs the explicit opt-in, off by default.
-			HaltRoot: cfg.Agent.Default.SupervisorHaltRoot,
+			// needs the explicit opt-in, off by default. HaltRootEnabled
+			// resolves the stanza over the legacy flat key.
+			HaltRoot: cfg.Agent.Default.HaltRootEnabled(),
 		})
 
 		// Supervised task tool — blocking sub-agent execution with
@@ -760,6 +796,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		steerCh:        steerCh,
 		rootScopeID:    rootScopeID,
 		runs:           runRegistry,
+		supervisor:     supervisorSvc,
 		followupCh:     followupCh,
 	}
 	// Root-scope bridge registration (adoption plan A2/A3): inject into
