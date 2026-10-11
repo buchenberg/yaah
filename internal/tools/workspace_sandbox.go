@@ -21,12 +21,14 @@ import (
 // host-visible mount would isolate the files but leave the *processes* on the
 // host, which is the thing a container is for.
 //
-// Wiring status: nothing selects this in production yet. Registry.SetWorkspace
-// refuses an isolated workspace unless every registered filesystem tool is
-// migrated, but no caller asks it for one — the supervised path still uses a
-// host git worktree — so this type is exercised only by tests today. Selecting a
-// containerd backend is the remaining step; until it lands, treat isolation as
-// plumbed but not active.
+// Wiring status: cmd/yaah selects this when workspace.backend is containerd
+// (tools.SessionSandbox, the isolated-workspace plan §1.2) — one sandbox per
+// session, image-probed and created before the first tool dispatch. The
+// session still fails loudly at Registry.SetWorkspace until the plan's step 7
+// replaces the registry (the host-only tools disqualify the default one —
+// three in a default session; supervised_task registers only when
+// shepherd_trace_dir is set), so isolation is constructed and probed but not
+// yet active for a real session.
 type sandboxWorkspace struct {
 	sb shepherd.Sandbox
 	// root is the containment root inside the sandbox.

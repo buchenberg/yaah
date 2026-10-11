@@ -87,3 +87,6 @@ state.db
 
 # signoz
 pours/
+
+# Beads / Dolt files (added by bd init)
+*.gate.lock*

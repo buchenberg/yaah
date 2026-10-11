@@ -100,6 +100,12 @@ type agentSession struct {
 	// follow-ups. Cancelled at session close.
 	backgroundJobs *jobs.BackgroundJobs
 
+	// sessionSandbox owns the isolated workspace backend's lifecycle, when
+	// workspace.backend is containerd: the sandbox was constructed, image-
+	// probed (D5), and created once at session start, and close() destroys
+	// it. Nil in local mode.
+	sessionSandbox *tools.SessionSandbox
+
 	cwd string
 
 	view      agent.View
@@ -125,18 +131,53 @@ type agentSession struct {
 	auxResolved      bool
 }
 
+// backgroundJobDrainTimeout bounds how long close() waits for cancelled
+// background sub-agents to finish before destroying the session sandbox
+// anyway. Generous: cancellation propagates through the tool call in
+// flight, and the alternative is racing a live sub-agent with backend
+// teardown.
+const backgroundJobDrainTimeout = 30 * time.Second
+
+// workspaceSandboxDestroyTimeout bounds the sandbox teardown in close() so
+// a wedged containerd daemon cannot hang session shutdown.
+const workspaceSandboxDestroyTimeout = 30 * time.Second
+
 func (s *agentSession) close() {
 	ctx := context.Background()
 	if s.steerCh != nil {
 		close(s.steerCh)
 	}
+	// Cancel any still-running background sub-agents, unblock their result
+	// deliveries, and WAIT (bounded) for their goroutines to finish: a job
+	// mid-Exec through the sandbox workspace must not still be running
+	// when the session sandbox is destroyed below. Close() alone only
+	// cancels — it never joins — which is a use-after-destroy race, not a
+	// quiesced teardown.
+	if s.backgroundJobs != nil {
+		if !s.backgroundJobs.CloseAndWait(backgroundJobDrainTimeout) {
+			fmt.Fprintf(os.Stderr, "warning: background sub-agent(s) still finishing after %s; continuing session teardown\n", backgroundJobDrainTimeout)
+		}
+	}
+	// followupCh closes only AFTER the drain. A finishing job delivers
+	// through it, and Deliver's select still has a send case on this
+	// channel — sending on a closed channel panics, so closing it while
+	// the drain deliberately keeps job goroutines alive would crash
+	// shutdown. (A job that outlives the drain bound entirely retains the
+	// pre-existing exposure; the drain is what shrinks it.)
 	if s.followupCh != nil {
 		close(s.followupCh)
 	}
-	// Cancel any still-running background sub-agents and unblock their
-	// result deliveries before tearing down the rest of the session.
-	if s.backgroundJobs != nil {
-		s.backgroundJobs.Close()
+	// Destroy the isolated workspace sandbox only after the sub-agents are
+	// cancelled and can no longer dispatch tools into it. Bounded, so a
+	// wedged daemon cannot hang close(); a teardown failure warns rather
+	// than aborts close() — the rest of the session still needs tearing
+	// down, and the warning names the container that may still be running.
+	if s.sessionSandbox != nil {
+		destroyCtx, cancelDestroy := context.WithTimeout(ctx, workspaceSandboxDestroyTimeout)
+		defer cancelDestroy()
+		if err := s.sessionSandbox.Destroy(destroyCtx); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: workspace sandbox teardown: %v\n", err)
+		}
 	}
 	s.mu.RLock()
 	ch := s.ctrlCh

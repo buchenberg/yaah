@@ -365,3 +365,87 @@ func waitForJob(t *testing.T, m *BackgroundJobs, id string, timeout time.Duratio
 	}
 	t.Fatalf("job %s did not finish within %v", id, timeout)
 }
+
+func TestBackgroundJobs_CloseAndWaitJoinsRunningJobs(t *testing.T) {
+	m := newTestManager()
+
+	// The runner stays mid-flight after cancellation until released:
+	// CloseAndWait must not report done while it is still running.
+	release := make(chan struct{})
+	runner := func(ctx context.Context, prompt string, p SubAgentParams) (string, error) {
+		<-ctx.Done()
+		<-release
+		return "", ctx.Err()
+	}
+
+	if _, err := m.Launch(context.Background(), runner, "worker", "long", "x", SubAgentParams{Role: "worker"}, 0); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	waited := make(chan bool, 1)
+	go func() { waited <- m.CloseAndWait(2 * time.Second) }()
+
+	// Cancelled but still in flight: no result yet.
+	select {
+	case got := <-waited:
+		t.Fatalf("CloseAndWait returned %v while the job goroutine was still running", got)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	if got := <-waited; !got {
+		t.Error("CloseAndWait = false after the job finished, want true")
+	}
+}
+
+func TestBackgroundJobs_CloseAndWaitReturnsTrueWhenJobsFinish(t *testing.T) {
+	m := newTestManager()
+
+	done := make(chan struct{})
+	runner := func(ctx context.Context, prompt string, p SubAgentParams) (string, error) {
+		<-ctx.Done()
+		close(done)
+		return "", ctx.Err()
+	}
+
+	if _, err := m.Launch(context.Background(), runner, "worker", "long", "x", SubAgentParams{Role: "worker"}, 0); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	// Cancel first so the runner unblocks, then wait: the job's goroutine
+	// must have finished before CloseAndWait reports true.
+	m.Close()
+	<-done
+	if !m.CloseAndWait(2 * time.Second) {
+		t.Error("CloseAndWait = false with no running jobs, want true")
+	}
+}
+
+func TestBackgroundJobs_CloseAndWaitTimesOut(t *testing.T) {
+	m := newTestManager()
+	defer m.Close()
+
+	blocked := make(chan struct{})
+	runner := func(ctx context.Context, prompt string, p SubAgentParams) (string, error) {
+		close(blocked)
+		// Ignores cancellation: a wedged sub-agent the bound exists for.
+		<-make(chan struct{})
+		return "", nil
+	}
+
+	if _, err := m.Launch(context.Background(), runner, "worker", "wedged", "x", SubAgentParams{Role: "worker"}, 0); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	<-blocked
+
+	if m.CloseAndWait(10 * time.Millisecond) {
+		t.Error("CloseAndWait = true with a wedged job, want false (the bound expired)")
+	}
+}
+
+func TestBackgroundJobs_CloseAndWaitNoJobs(t *testing.T) {
+	m := newTestManager()
+	if !m.CloseAndWait(2 * time.Second) {
+		t.Error("CloseAndWait = false with no jobs at all, want true")
+	}
+}

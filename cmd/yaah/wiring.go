@@ -2,6 +2,7 @@ package yaah
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/jobs"
+	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
 	processpkg "github.com/buchenberg/yaah/internal/process"
 	"github.com/buchenberg/yaah/internal/prompts"
@@ -40,6 +42,13 @@ var defaultWorkspaceDenyPatterns = []string{
 	"id_ed25519*",
 	"id_ecdsa*",
 }
+
+// workspaceSandboxStartTimeout bounds the isolated workspace's startup —
+// the D5 image probe (its own throwaway sandbox), the session sandbox's
+// Create, and the contract exec — so a wedged containerd daemon fails the
+// session at startup instead of hanging it. Generous: a first-run image
+// pull happens inside this window too.
+const workspaceSandboxStartTimeout = 5 * time.Minute
 
 // toolSpillDir is the single source for the tool-result spill directory.
 // Both the parent loop (build_loop.go) and every sub-agent loop inherit
@@ -74,6 +83,38 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		return nil, err
 	}
 
+	// Startup ownership: every resource this function creates from here on
+	// is ours until the returned session takes it over. Any error return
+	// must close what was opened — a failed startup that leaves OTel
+	// exporters, MCP subprocesses, or a SQLite handle alive accumulates
+	// across retries in serve mode. sessionHandedOff flips only on the
+	// success path; the closer below runs on every other return.
+	//
+	// db and mcpClients are declared here (not at their call sites) so the
+	// guard can close a partially-built session no matter which later step
+	// failed.
+	var (
+		db           *memory.DB
+		mcpClients   []mcp.MCPClient
+		mcpInfos     []mcp.ServerInfo
+		mcpToolNames map[string]bool
+	)
+	sessionHandedOff := false
+	defer func() {
+		if sessionHandedOff {
+			return
+		}
+		if otelShutdown != nil {
+			otelShutdown(context.Background())
+		}
+		for _, c := range mcpClients {
+			c.Close()
+		}
+		if db != nil {
+			db.Close()
+		}
+	}()
+
 	cwd, _ := os.Getwd()
 
 	// Load sub-agent role definitions: built-in (embedded) +
@@ -89,10 +130,48 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 
 	toolReg := tools.NewRegistry()
 
-	// Workspace containment: only enforced when --workspace is given.
-	// A nil validator keeps the legacy ~-expansion behaviour.
+	// Workspace containment. Exactly one substrate may be installed:
+	//
+	//   - containerd backend: the session's sandbox is constructed, image-
+	//     probed (D5), and created here, once per session. SetWorkspace
+	//     (after every registration, below) hands the registry the sandbox
+	//     workspace. The host path validator must NOT also run — it would
+	//     install a local workspace over the registry's nil one, and the
+	//     two substrates must not race for tools.
+	//   - local backend with --workspace: the host validator gates paths.
+	//   - neither: no validator; legacy ~-expansion behaviour.
 	var pathValidator *tools.PathValidator
-	if opts.WorkspaceRoot != "" {
+	var sessionSandbox *tools.SessionSandbox
+	// sandboxTeardownHandled flips when the sandbox is either handed to the
+	// session (success path — close() destroys it) or already destroyed by
+	// an error branch below; the guard exists so no error return leaks a
+	// container, and so one failure is never reported on two channels.
+	sandboxTeardownHandled := false
+	switch {
+	case cfg.Workspace.Backend == config.BackendContainerd:
+		// A wedged daemon must not hang session startup: the probe, the
+		// Create, and the contract exec all run under one generous
+		// bound (large enough for a first-run image pull).
+		startCtx, cancelStart := context.WithTimeout(context.Background(), workspaceSandboxStartTimeout)
+		defer cancelStart()
+		sessionSandbox, err = tools.StartSessionSandbox(
+			startCtx, cfg.Workspace, tools.OpenContainerdWorkspaceSandbox)
+		if err != nil {
+			return nil, err
+		}
+		// Every error return below destroys the sandbox instead of
+		// leaking a container for the lifetime of the daemon's namespace.
+		defer func() {
+			if sessionSandbox != nil && !sandboxTeardownHandled {
+				if derr := sessionSandbox.Destroy(context.Background()); derr != nil {
+					fmt.Fprintf(os.Stderr, "warning: workspace sandbox teardown after failed session start: %v\n", derr)
+				}
+			}
+		}()
+		if opts.WorkspaceRoot != "" {
+			fmt.Fprintf(os.Stderr, "warning: --workspace %s has no effect: the workspace.backend containerd session is isolated from the host\n", opts.WorkspaceRoot)
+		}
+	case opts.WorkspaceRoot != "":
 		// Deny patterns: explicit config wins; unset falls back to the
 		// built-in secret-file defaults; an explicit empty list disables.
 		deny := cfg.Agent.Default.WorkspaceDenyPatterns
@@ -103,29 +182,21 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		toolReg.SetPathValidator(pathValidator)
 	}
 
-	db, err := memory.OpenDefault()
+	db, err = memory.OpenDefault()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: db open failed, persistence disabled: %v\n", err)
 		db = nil
 	}
 
 	// --- Embedding server ------------------------------------------------
+	// The embedder is attached here (skillTool reads it below), but the
+	// backfill goroutine launches only after the last fallible step
+	// (the SetWorkspace gate, further down): the startup guard closes db
+	// on every error return, and a backfill racing that close aborts
+	// under a spurious warning.
+	embedderAttached := false
 	if db != nil {
-		attachEmbedder(db, cfg)
-		if db.Embedder() != nil {
-			// Backfill embeddings for any memory entries created before the
-			// embedding server was configured.
-			go func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				n, err := db.ReconcileEmbeddings(ctx)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "warning: embedding backfill: %v\n", err)
-				} else if n > 0 {
-					fmt.Fprintf(os.Stderr, "embedded %d existing memory entries\n", n)
-				}
-			}()
-		}
+		embedderAttached = attachEmbedder(db, cfg)
 	}
 
 	// --- Prompt assembly -------------------------------------------------
@@ -141,7 +212,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	}
 
 	// --- MCP servers ------------------------------------------------------
-	mcpClients, mcpInfos, mcpToolNames := initMCP(cfg, toolReg, skipMCP)
+	mcpClients, mcpInfos, mcpToolNames = initMCP(cfg, toolReg, skipMCP)
 
 	skillDirs := skillSearchPaths()
 	skillTool := &tools.SkillTool{Dirs: skillDirs}
@@ -419,6 +490,46 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		},
 	})
 
+	// Isolated mode: hand the registry the sandbox workspace only after
+	// every tool is registered. SetWorkspace is the enforcement point — a
+	// refusal fails the session loudly rather than half-isolating it, so
+	// nothing below can believe a contained run is in effect when it is
+	// not. The destroy joins the error: a teardown failure means the
+	// container may still be running.
+	if sessionSandbox != nil {
+		if serr := toolReg.SetWorkspace(sessionSandbox.Workspace()); serr != nil {
+			// Teardown failure joins the returned error — a destroy that
+			// failed means the container may still be running. The guard
+			// is then stood down: reporting one failure on two channels
+			// (and destroying twice through the once-guard) helps no one.
+			serr = fmt.Errorf("isolated workspace: %w", serr)
+			destroyCtx, cancelDestroy := context.WithTimeout(context.Background(), workspaceSandboxDestroyTimeout)
+			defer cancelDestroy()
+			if derr := sessionSandbox.Destroy(destroyCtx); derr != nil {
+				serr = errors.Join(serr, fmt.Errorf("workspace sandbox teardown: %w", derr))
+			}
+			sandboxTeardownHandled = true
+			return nil, serr
+		}
+	}
+
+	// The last fallible step has passed: the startup ownership guard can
+	// no longer fire, so the embedding backfill can launch without racing
+	// the guard's db.Close. Backfill embeddings for any memory entries
+	// created before the embedding server was configured.
+	if db != nil && embedderAttached {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			n, err := db.ReconcileEmbeddings(ctx)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "warning: embedding backfill: %v\n", err)
+			} else if n > 0 {
+				fmt.Fprintf(os.Stderr, "embedded %d existing memory entries\n", n)
+			}
+		}()
+	}
+
 	// Wrap the provider with OTel instrumentation if enabled.
 	provider = wrapProviderWithOtel(provider, otelActive, cfg.Observability.Otel.Verbose)
 
@@ -442,10 +553,16 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		otelShutdown:   otelShutdown,
 		tracker:        tracker,
 		backgroundJobs: backgroundJobs,
+		sessionSandbox: sessionSandbox,
 		cwd:            cwd,
 		steerCh:        make(chan string, 4),
 		followupCh:     followupCh,
 	}
+	// The session owns everything created above from here: close() will
+	// destroy the sandbox, and neither startup guard must touch the
+	// session's resources again.
+	sandboxTeardownHandled = true
+	sessionHandedOff = true
 
 	// Ask fallback for out-of-workspace access: prompts route through
 	// the session's approval UI (TUI/web) or stdin in plain REPL mode.

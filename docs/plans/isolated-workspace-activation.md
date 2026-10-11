@@ -638,14 +638,35 @@ have been **executed**; the verdict is recorded against each.
    panics by design). `shepherd.SandboxBackends()` powers `doctor`'s
    backend listing. Hand-rolled switches remain acceptable; the registry is
    the seam, not a requirement.
-5. Sandbox construction + lifecycle (§1.2). *First clean stopping point.*
-   **Unblocked** — `sandbox/containerd/v0.1.5` is tagged and repinned to
-   core `v0.10.0`, and implements `DeltaApplier`, so D1's apply-out path
-   has its merge verb from the start. One
-   behavioral note from kernel `v0.8.0`: `Scope.Fork` on a sandboxed parent
-   now captures a fork baseline (one git subprocess per fork, ~10–15 ms
-   live-timed) — `supervised_task`'s per-attempt forks pay it; recorded so
-   it is not mistaken for a regression.
+5. ✅ Sandbox construction + lifecycle (§1.2) — **landed**. `tools.SessionSandbox`
+   owns the session's sandbox end to end: `StartSessionSandbox` probes the image
+   on a throwaway sandbox first (the probe keeps its own lifecycle), then opens,
+   creates (spec workdir = the containment root, so test backends provision it
+   the way the containerd adapter provisions its `Config.Workdir`), and binds
+   the session `sandboxWorkspace`. Every error path destroys — including a
+   failed `Create`, whose cleanup runs on `context.WithoutCancel`; the wiring's
+   failed-start guard covers every `return nil, err` between construction and
+   hand-off, so no path leaks a container. `Destroy` is once-only
+   (`sync.Once`), so a failed startup that already destroyed followed by
+   session close cannot double-destroy. `cmd/yaah/wiring.go` selects the
+   substrate by backend: containerd constructs the session sandbox and skips
+   `SetPathValidator` entirely (both must not run), `--workspace` with the
+   containerd backend warns that it is inert; local keeps the legacy path
+   byte-for-byte. `SetWorkspace` runs only after every registration — a refusal
+   fails the session loudly with the destroy joined in — so until step 7
+   replaces the registry, selecting `backend: containerd` fails at startup
+   with the gate's own diagnostic (the host-only tools — three in a default
+   session; `supervised_task` registers only when `shepherd_trace_dir` is
+   set), which is the honest stopping point: constructed and probed, never
+   half-isolated. `agentSession.close()` destroys after
+   `backgroundJobs.CloseAndWait` — cancel, then a bounded wait for the job
+   goroutines, because `Close` alone never joins them and a mid-`Exec`
+   sub-agent would race the teardown — and a teardown failure warns
+   rather than aborting the rest of teardown. Gates: build, vet, staticcheck,
+   gofmt, full `go test ./...` (one pre-existing environmental failure:
+   `TestPowerShellTool_runsSimpleCommand` needs a `powershell` binary that
+   Linux hosts do not have; verified failing on main without this change),
+   Windows + darwin cross-compile.
 6. Bootstrap implementation per **D1** (§2.3).
 7. Tool surface per **§3 Option A** + **D3** (§2.1), prompt delta per §2.2, and
    **D4**'s trace metadata.
@@ -656,11 +677,10 @@ have been **executed**; the verdict is recorded against each.
 is shippable. Step 2's gate fired once and is now cleared, so nothing here is
 waiting on a decision or a fix.
 
-**Status (refreshed 2026-10-10): steps 0–3 are done, and the kernel has since
+**Status (refreshed 2026-10-10): steps 0–5 are done, and the kernel has since
 completed its entire parity plan (core `v0.4.1` → `v0.10.0`). The next step is
-3c — the pin bump + ctx sweep — because every pin from `v0.9.0` on carries the
-breaking ctx-first store APIs and `yaah` still pins `v0.4.0`. After 3c: steps
-4–9 as sequenced.**
+6 — the D1 bootstrap (copy-in, capture/diff, apply-out). After 6: steps 7–9 as
+sequenced.**
 
 **The two release tasks that rode alongside are done:**
 - **Step 3c (yaah-side):** pin `v0.10.0` + the mechanical ctx sweep — this PR.

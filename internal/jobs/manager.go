@@ -186,7 +186,9 @@ func NewBackgroundJobs() *BackgroundJobs {
 func (m *BackgroundJobs) Done() <-chan struct{} { return m.done }
 
 // Close cancels the root context (stopping in-flight jobs) and unblocks
-// any blocked Deliver calls. Idempotent.
+// any blocked Deliver calls. Idempotent. It does NOT wait for the job
+// goroutines — use CloseAndWait when what happens next must not race a
+// still-running job (destroying a sandbox the job is executing in).
 func (m *BackgroundJobs) Close() {
 	m.rootCancel()
 	m.mu.Lock()
@@ -196,6 +198,39 @@ func (m *BackgroundJobs) Close() {
 		close(m.done)
 	}
 	m.mu.Unlock()
+}
+
+// CloseAndWait cancels like Close, then waits — bounded by timeout — for
+// every still-running job's goroutine to finish. It returns false when the
+// bound expires with a job still in flight; the caller decides whether to
+// proceed anyway. The wait is what makes teardown ordering sound: a
+// sub-agent mid-Exec must not still hold the workspace substrate when its
+// owner destroys it. A timeout <= 0 skips the wait entirely.
+func (m *BackgroundJobs) CloseAndWait(timeout time.Duration) bool {
+	m.Close()
+	m.mu.Lock()
+	var running []*backgroundJob
+	for _, j := range m.jobs {
+		j.mu.Lock()
+		if !j.finished {
+			running = append(running, j)
+		}
+		j.mu.Unlock()
+	}
+	m.mu.Unlock()
+	if len(running) == 0 || timeout <= 0 {
+		return len(running) == 0
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for _, j := range running {
+		select {
+		case <-j.done:
+		case <-timer.C:
+			return false
+		}
+	}
+	return true
 }
 
 // Launch starts a background sub-agent and returns its job id.
