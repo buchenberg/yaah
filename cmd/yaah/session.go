@@ -147,9 +147,6 @@ func (s *agentSession) close() {
 	if s.steerCh != nil {
 		close(s.steerCh)
 	}
-	if s.followupCh != nil {
-		close(s.followupCh)
-	}
 	// Cancel any still-running background sub-agents, unblock their result
 	// deliveries, and WAIT (bounded) for their goroutines to finish: a job
 	// mid-Exec through the sandbox workspace must not still be running
@@ -160,6 +157,15 @@ func (s *agentSession) close() {
 		if !s.backgroundJobs.CloseAndWait(backgroundJobDrainTimeout) {
 			fmt.Fprintf(os.Stderr, "warning: background sub-agent(s) still finishing after %s; continuing session teardown\n", backgroundJobDrainTimeout)
 		}
+	}
+	// followupCh closes only AFTER the drain. A finishing job delivers
+	// through it, and Deliver's select still has a send case on this
+	// channel — sending on a closed channel panics, so closing it while
+	// the drain deliberately keeps job goroutines alive would crash
+	// shutdown. (A job that outlives the drain bound entirely retains the
+	// pre-existing exposure; the drain is what shrinks it.)
+	if s.followupCh != nil {
+		close(s.followupCh)
 	}
 	// Destroy the isolated workspace sandbox only after the sub-agents are
 	// cancelled and can no longer dispatch tools into it. Bounded, so a

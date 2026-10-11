@@ -189,22 +189,14 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	}
 
 	// --- Embedding server ------------------------------------------------
+	// The embedder is attached here (skillTool reads it below), but the
+	// backfill goroutine launches only after the last fallible step
+	// (the SetWorkspace gate, further down): the startup guard closes db
+	// on every error return, and a backfill racing that close aborts
+	// under a spurious warning.
+	embedderAttached := false
 	if db != nil {
-		attachEmbedder(db, cfg)
-		if db.Embedder() != nil {
-			// Backfill embeddings for any memory entries created before the
-			// embedding server was configured.
-			go func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				n, err := db.ReconcileEmbeddings(ctx)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "warning: embedding backfill: %v\n", err)
-				} else if n > 0 {
-					fmt.Fprintf(os.Stderr, "embedded %d existing memory entries\n", n)
-				}
-			}()
-		}
+		embedderAttached = attachEmbedder(db, cfg)
 	}
 
 	// --- Prompt assembly -------------------------------------------------
@@ -519,6 +511,23 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			sandboxTeardownHandled = true
 			return nil, serr
 		}
+	}
+
+	// The last fallible step has passed: the startup ownership guard can
+	// no longer fire, so the embedding backfill can launch without racing
+	// the guard's db.Close. Backfill embeddings for any memory entries
+	// created before the embedding server was configured.
+	if db != nil && embedderAttached {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			n, err := db.ReconcileEmbeddings(ctx)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "warning: embedding backfill: %v\n", err)
+			} else if n > 0 {
+				fmt.Fprintf(os.Stderr, "embedded %d existing memory entries\n", n)
+			}
+		}()
 	}
 
 	// Wrap the provider with OTel instrumentation if enabled.
