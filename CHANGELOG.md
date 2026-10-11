@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.61.0](https://github.com/buchenberg/yaah/compare/v0.60.0...v0.61.0) (2026-10-11)
+
+
+### Features
+
+* **workspace:** the step-7 tool surface -- curated registry, apply_out, prompt delta, D4 record ([85ad98f](https://github.com/buchenberg/yaah/commit/85ad98f91a80b3cd40abe5b445b4376792dfecd0))
+* **workspace:** the step-7 tool surface -- curated registry, apply_out, prompt delta, D4 record (step 7, plan §2.1/§2.2/§3) ([b89eada](https://github.com/buchenberg/yaah/commit/b89eadaf424a780f1483f006667e25979be49372))
+
+
+### Bug Fixes
+
+* **workspace:** close the step-7 review findings -- host-mutation paths, honest apply-out approval ([79960dd](https://github.com/buchenberg/yaah/commit/79960ddbd66034bf575080c35e9e10693d974c62))
+
 ## [0.60.0](https://github.com/buchenberg/yaah/compare/v0.59.2...v0.60.0) (2026-10-11)
 
 
