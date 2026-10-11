@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.73.0](https://github.com/buchenberg/yaah/compare/v0.72.0...v0.73.0) (2026-10-11)
+
+
+### Features
+
+* **shepherd:** R2 -- resume reattach, PruneTerminal on close, doctor check ([d0a8ab9](https://github.com/buchenberg/yaah/commit/d0a8ab97c30c6f48eca20617424e686bb08b3bd5))
+* **shepherd:** R2 — resume reattach, PruneTerminal on close, doctor check ([d2a5241](https://github.com/buchenberg/yaah/commit/d2a5241b506f8ef6591455809f41b4d370b4161a))
+
+
+### Bug Fixes
+
+* **shepherd:** R2 -- restore CreateRootScope's doc comment ([b7bc668](https://github.com/buchenberg/yaah/commit/b7bc6681f13fdd71e7871c4881184d61a8f00d6c))
+* **shepherd:** R2 review round 1 -- doctor auto-heal parity, explicit degraded mode, prune after drain ([abdf0eb](https://github.com/buchenberg/yaah/commit/abdf0eba71818c8e15a35004bb5f3ab9c870e9d9))
+
 ## [0.72.0](https://github.com/buchenberg/yaah/compare/v0.71.0...v0.72.0) (2026-10-11)
 
 
