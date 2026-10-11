@@ -28,6 +28,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/budget"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
+	"github.com/buchenberg/yaah/internal/agent/recovery"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
@@ -763,6 +764,19 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 		}
 		if repoPath != "" {
 			if child, err := mgr.ForkIsolated(opts.rootScopeID, subTraceID, nil, shepherdsandbox.NewWorktreeSandbox(repoPath, workdir)); err == nil {
+				// Record the worktree's path for recovery (adoption
+				// plan R1): the kernel's fork record carries the
+				// backend but not the path. A record failure discards
+				// the branch and fails the dispatch — a worktree the
+				// trace cannot find is an orphan recovery would never
+				// list, and a broken store fails everything else
+				// anyway.
+				if terr := recovery.RecordWorktree(context.Background(), tools.SharedTraceStore, subTraceID, repoPath, workdir); terr != nil {
+					if parent, pok := mgr.Get(opts.rootScopeID); pok {
+						_ = parent.Discard(child)
+					}
+					return nil, terr
+				}
 				return child, nil
 			}
 			return mgr.Create(subTraceID, subAgentSandbox(opts, workdir))

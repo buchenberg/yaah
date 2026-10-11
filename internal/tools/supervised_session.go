@@ -15,6 +15,7 @@ import (
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
 	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+	"github.com/buchenberg/yaah/internal/agent/recovery"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -454,6 +455,15 @@ func (s *supervisedSession) rollbackUnit(ctx context.Context, guidance string) (
 
 	snap, err := mgr.RestoreCheckpoint(ctx, s.checkpointID)
 	if err != nil {
+		// A stale checkpoint (recovery marked it CheckpointInvalid — the
+		// recorded revision no longer matches the workspace) refuses with
+		// the recorded reason rather than silently rewinding a tree that
+		// moved past it (adoption plan R1/D5). The match is against the
+		// kernel's documented refusal text — the kernel does not type
+		// this error.
+		if strings.Contains(err.Error(), "is invalid, cannot restore") {
+			return "", fmt.Errorf("supervisor: rollback: the recorded checkpoint no longer matches the workspace — the tree moved past it and the unit cannot be rolled back: %w", err)
+		}
 		return "", fmt.Errorf("supervisor: rollback: restore: %w", err)
 	}
 	s.checkpointID = ""
@@ -743,6 +753,19 @@ func (s *supervisedSession) provisionVariant(
 		return v
 	}
 	v.ScopeID = scope.ID()
+
+	// Record the worktree's path for recovery (adoption plan R1): the
+	// kernel's fork record carries the backend but not the path. A
+	// record failure discards the branch — a worktree the trace cannot
+	// find is an orphan recovery would never list.
+	if terr := recovery.RecordWorktree(ctx, SharedTraceStore, scope.OwnerID(), s.runtime.RepoPath, wtPath); terr != nil {
+		if parent, pok := mgr.Get(s.scopeID); pok {
+			_ = parent.Discard(scope)
+		}
+		v.ScopeID = ""
+		v.RunErr = terr.Error()
+		return v
+	}
 
 	// Seed the checkout with the parent's exact state at the fork point
 	// before bootstrapping. The bootstrap installs from tracked lockfiles

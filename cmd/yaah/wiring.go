@@ -14,6 +14,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent/budget"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
+	"github.com/buchenberg/yaah/internal/agent/recovery"
 	"github.com/buchenberg/yaah/internal/agent/runner"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
@@ -415,9 +416,27 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		if serr != nil {
 			fmt.Fprintf(os.Stderr, "warning: shepherd tracing disabled: %v\n", serr)
 		} else {
-			tools.SharedTraceStore = store
-			scopeMgr = mgr
-			tools.SharedScopeManager = mgr
+			// Scope recovery (adoption plan R1, decision D5): the trace
+			// is the registry — rebuild the scope tree, checkpoints,
+			// and sealed outputs from the durable records so a
+			// restarted process remembers its supervision state. The
+			// recovered manager replaces the fresh one; a recovery
+			// failure fails loudly (half-adopted sandboxes are worse
+			// than none) by disabling tracing for this session.
+			repoPath := cfg.Agent.Default.SupervisedRepoPath
+			if repoPath == "" {
+				repoPath, _ = os.Getwd()
+			}
+			if recovered, report, rerr := recovery.Recover(context.Background(), store, repoPath); rerr != nil {
+				fmt.Fprintf(os.Stderr, "warning: shepherd tracing disabled: scope recovery failed: %v\n", rerr)
+				store.Close(context.Background())
+			} else {
+				mgr = recovered
+				printRecoveryReport(report)
+				tools.SharedTraceStore = store
+				scopeMgr = mgr
+				tools.SharedScopeManager = mgr
+			}
 
 			// Supervision bridge (adoption plan A2): scope IDs mapped
 			// to running loops' steering channels. Session-owned and
