@@ -28,6 +28,9 @@ func printRecoveryReport(report *recovery.Report) {
 	for _, m := range report.Missing {
 		fmt.Fprintf(os.Stderr, "warning: scope %s's worktree is gone: %s — its unmerged work is unrecoverable\n", m.ScopeID, m.Path)
 	}
+	for _, u := range report.Unadopted {
+		fmt.Fprintf(os.Stderr, "warning: scope %s's worktree was not re-adopted: %s — the directory is not a registered worktree of its repository; any work in it is unreachable\n", u.ScopeID, u.Path)
+	}
 }
 
 // formatSize renders a byte count for the orphan report.

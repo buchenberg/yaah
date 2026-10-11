@@ -94,19 +94,39 @@ type Missing struct {
 	Path    string
 }
 
+// Unadopted is an active worktree child whose recorded path exists but
+// was not re-adopted — an unregistered occupant (the strict resolver
+// refuses squatters), or a git-registry lookup failure. The scope
+// recovers causal-only; any work in the directory is unreachable
+// through the settlement, so it is reported rather than silenced.
+type Unadopted struct {
+	ScopeID string
+	Path    string
+}
+
 // Report summarizes one recovery for the caller's startup output.
 type Report struct {
-	Scopes  int
-	Roots   int
-	Adopted int // worktree children re-adopted (their work is live again)
-	Orphans []Orphan
-	Missing []Missing
+	Scopes    int
+	Roots     int
+	Adopted   int // worktree children re-adopted (their work is live again)
+	Orphans   []Orphan
+	Missing   []Missing
+	Unadopted []Unadopted
 }
 
 // Recover rebuilds the ScopeManager from the trace's durable records
 // (adoption plan R1, D5):
 //
-//   - git roots re-adopt the in-place repository (repoPath);
+//   - git roots re-adopt the in-place repository (repoPath) — but only
+//     when adoptRoots is set: an isolated session's root is
+//     deliberately pure-causal (the container is the substrate, D2),
+//     and re-attaching a host git sandbox on restart would lie about
+//     the tree exactly the way creation refused to. The kernel passes
+//     the same empty backend for every root, so the host's session
+//     mode is the only discriminator. Known limit: past sessions of
+//     the OTHER mode in the same trace adopt with the current
+//     session's rule — their roots are data, nothing dispatches
+//     through them;
 //   - worktree children re-adopt by the recorded path when it is on
 //     disk — a crash mid-fork leaves live work recoverable — and land
 //     on the orphan or missing report when the scope is terminal or
@@ -116,7 +136,7 @@ type Report struct {
 //
 // A resolver error fails the recovery loudly: half-adopted sandboxes
 // are worse than none (the kernel's contract).
-func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPath string) (*shepherd.ScopeManager, *Report, error) {
+func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPath string, adoptRoots bool) (*shepherd.ScopeManager, *Report, error) {
 	if repoPath == "" {
 		return nil, nil, fmt.Errorf("no repository to re-adopt onto")
 	}
@@ -131,7 +151,12 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 			// Roots resolve with an empty backend by the kernel's
 			// recovery contract ("empty for roots, which have no
 			// record") — not the "git" both local sandboxes report.
-			// The plan re-adopts the in-place git repository.
+			// The plan re-adopts the in-place git repository — unless
+			// the session is isolated (adoptRoots off), where a host
+			// git sandbox would break D2's pure-causal root.
+			if !adoptRoots {
+				return nil, nil
+			}
 			return shepherdsandbox.NewLocalGitSandbox(repoPath), nil
 		case backend == "containerd":
 			// Deliberate non-adoption (D5): no re-adoptable identity.
@@ -144,7 +169,7 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 			// path, and Destroy falls back to RemoveAll, so a squatter
 			// adopted as an owned sandbox is user data a later
 			// teardown would delete. Anything less stays unadopted;
-			// the classification below reports it.
+			// the classification below reports every refusal outcome.
 			owner := strings.TrimPrefix(scopeID, "scope:")
 			info, ok := paths[owner]
 			if !ok {
@@ -206,9 +231,12 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 			report.Missing = append(report.Missing, Missing{ScopeID: scope.ID(), Path: info.path})
 		case onDisk && scope.State() == shepherd.ScopeActive:
 			// Adopted means adopted: the strict resolver refuses an
-			// unregistered squatter, and the count must not claim it.
+			// unregistered occupant, and the count must not claim it —
+			// the refusal is reported as unadopted instead.
 			if scope.Sandbox() != nil {
 				report.Adopted++
+			} else {
+				report.Unadopted = append(report.Unadopted, Unadopted{ScopeID: scope.ID(), Path: info.path})
 			}
 		case onDisk:
 			// Terminal scope, worktree still standing: unmerged work

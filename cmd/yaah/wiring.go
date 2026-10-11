@@ -431,7 +431,10 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			if repoPath == "" {
 				repoPath, _ = os.Getwd()
 			}
-			if recovered, report, rerr := recovery.Recover(context.Background(), store, repoPath); rerr != nil {
+			// adoptRoots: an isolated session keeps roots causal (D2) —
+			// recovery must not attach a host git sandbox where creation
+			// refused one.
+			if recovered, report, rerr := recovery.Recover(context.Background(), store, repoPath, sessionSandbox == nil); rerr != nil {
 				fmt.Fprintf(os.Stderr, "warning: shepherd tracing disabled: scope recovery failed: %v\n", rerr)
 				store.Close(context.Background())
 				tracingReady = false

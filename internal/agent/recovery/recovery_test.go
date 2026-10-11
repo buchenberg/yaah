@@ -135,7 +135,7 @@ func reopen(t *testing.T, state *crashState) (*shepherd.ScopeManager, *Report) {
 		t.Fatalf("reopen store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	mgr, report, err := Recover(context.Background(), store, state.repo)
+	mgr, report, err := Recover(context.Background(), store, state.repo, true)
 	if err != nil {
 		t.Fatalf("recover: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestRecover_FailsLoudlyOnCorruptTrace(t *testing.T) {
 		t.Fatalf("append corrupt record: %v", err)
 	}
 
-	if _, _, err := Recover(context.Background(), store, repo); err == nil {
+	if _, _, err := Recover(context.Background(), store, repo, true); err == nil {
 		t.Fatal("a corrupt trace must fail the recovery loudly")
 	}
 }
@@ -401,7 +401,7 @@ func TestRecover_SquatterDirectoryNeverAdopted(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	t.Cleanup(func() { store2.Close(context.Background()) })
-	mgr, report, err := Recover(context.Background(), store2, repo)
+	mgr, report, err := Recover(context.Background(), store2, repo, true)
 	if err != nil {
 		t.Fatalf("recover: %v", err)
 	}
@@ -416,9 +416,49 @@ func TestRecover_SquatterDirectoryNeverAdopted(t *testing.T) {
 	if report.Adopted != 0 {
 		t.Errorf("report.Adopted = %d, want 0 (nothing adoptable)", report.Adopted)
 	}
+	// The refusal is reported, not silenced: an active child whose
+	// recorded occupant is unadoptable lands in the unadopted bucket.
+	if len(report.Unadopted) != 1 || report.Unadopted[0].ScopeID != child.ID() || report.Unadopted[0].Path != squat {
+		t.Errorf("the unadopted squatter must be reported (unadopted: %+v)", report.Unadopted)
+	}
 	// Untouched: recovery never deletes what it does not own.
 	data, rerr := os.ReadFile(filepath.Join(squat, "user-data.txt"))
 	if rerr != nil || string(data) != "not yaah's\n" {
 		t.Errorf("the squatter's data must survive untouched, got %q (%v)", data, rerr)
 	}
+}
+
+// TestRecover_IsolatedSessionKeepsRootsCausal pins the D2 rule on
+// restart (review finding): an isolated session's root is deliberately
+// pure-causal — the container is the substrate — and recovery must not
+// attach a host git sandbox where creation refused one. The kernel
+// passes the same empty backend for every root, so the host session's
+// mode is the discriminator.
+func TestRecover_IsolatedSessionKeepsRootsCausal(t *testing.T) {
+	state := buildCrashState(t)
+
+	mgr, _ := reopenMode(t, state, false)
+
+	root, ok := mgr.Get("scope:sess-old")
+	if !ok || root.State() != shepherd.ScopeActive {
+		t.Fatalf("root not recovered active (ok=%v)", ok)
+	}
+	if root.Sandbox() != nil {
+		t.Error("an isolated session's root must recover pure-causal — no host git sandbox (D2)")
+	}
+}
+
+// reopenMode recovers with an explicit adoptRoots mode.
+func reopenMode(t *testing.T, state *crashState, adoptRoots bool) (*shepherd.ScopeManager, *Report) {
+	t.Helper()
+	store, err := shepherdtrace.NewSQLiteTraceStore(state.storePath)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+	mgr, report, err := Recover(context.Background(), store, state.repo, adoptRoots)
+	if err != nil {
+		t.Fatalf("recover: %v", err)
+	}
+	return mgr, report
 }

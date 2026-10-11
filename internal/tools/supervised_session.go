@@ -772,13 +772,19 @@ func (s *supervisedSession) provisionVariant(
 		// cleanup failure into the branch's error.
 		v.ScopeID = ""
 		v.RunErr = terr.Error()
+		// Destroy only when the discard did not already own the
+		// teardown: on a successful discard the kernel has destroyed
+		// the owned worktree, and a second destroy would append a
+		// spurious error to a clean cleanup.
 		if parent, pok := mgr.Get(s.scopeID); pok {
 			if derr := parent.Discard(scope); derr != nil {
 				v.RunErr = v.RunErr + "; discard: " + derr.Error()
+				if sderr := sb.Destroy(context.WithoutCancel(ctx)); sderr != nil {
+					v.RunErr = v.RunErr + "; destroy worktree: " + sderr.Error()
+				}
 			}
-		}
-		if derr := sb.Destroy(context.WithoutCancel(ctx)); derr != nil {
-			v.RunErr = v.RunErr + "; destroy worktree: " + derr.Error()
+		} else if sderr := sb.Destroy(context.WithoutCancel(ctx)); sderr != nil {
+			v.RunErr = v.RunErr + "; destroy worktree: " + sderr.Error()
 		}
 		return v
 	}
