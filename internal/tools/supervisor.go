@@ -52,6 +52,12 @@ type SupervisorTool struct {
 	// when tracing is disabled: inject then degrades honestly to the
 	// trace-only outcome.
 	Runs *supervision.Registry
+
+	// Svc is the session's advisory-rules service (adoption plan B4):
+	// status lists its rule firings — which rules acted, on which
+	// scopes, how often. Nil when the supervisor stanza is not live;
+	// status then reports no firings rather than guessing.
+	Svc *supervision.Service
 }
 
 func (*SupervisorTool) Name() string { return "supervisor" }
@@ -145,7 +151,7 @@ func (t *SupervisorTool) Execute(ctx context.Context, args string) (string, erro
 		}
 		return executeHalt(mgr, t.Runs, raw.ScopeID)
 	case "status":
-		return executeStatus(mgr, t.Runs)
+		return executeStatus(mgr, t.Runs, t.Svc)
 	case "continue", "rollback", "review_diff", "fork", "choose", "accept", "abort":
 		if raw.Action == "continue" && raw.Guidance == "" {
 			raw.Guidance = "Proceed with the next work unit."
@@ -286,7 +292,7 @@ func executeHalt(mgr *shepherd.ScopeManager, runs *supervision.Registry, scopeID
 	}
 }
 
-func executeStatus(mgr *shepherd.ScopeManager, runs *supervision.Registry) (string, error) {
+func executeStatus(mgr *shepherd.ScopeManager, runs *supervision.Registry, svc *supervision.Service) (string, error) {
 	active := mgr.ActiveScopes()
 	all := mgr.AllScopes()
 	out := fmt.Sprintf("Supervision status:\n  Scopes: %d active, %d total\n", len(active), len(all))
@@ -298,6 +304,20 @@ func executeStatus(mgr *shepherd.ScopeManager, runs *supervision.Registry) (stri
 		}
 	} else {
 		out += "  Bridged runs: 0 (supervision bridge not active)\n"
+	}
+	switch {
+	case svc == nil:
+		out += "  Rule firings: 0 (supervision service not active)\n"
+	default:
+		firings := svc.Firings()
+		if len(firings) == 0 {
+			out += "  Rule firings: 0\n"
+			break
+		}
+		out += "  Rule firings:\n"
+		for _, f := range firings {
+			out += fmt.Sprintf("    %s  %s  %dx (%s)\n", f.Rule, f.Scope, f.Count, f.Kind)
+		}
 	}
 	return out, nil
 }

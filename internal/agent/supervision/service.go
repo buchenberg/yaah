@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -53,6 +54,20 @@ func (r AdvisoryRules) Any() bool {
 	return r.DestructiveTool || r.HighErrorRate || r.StuckDetection
 }
 
+// Firing is one counted rule firing against one scope (adoption plan
+// B4): the `supervisor status` surface lists these, so the
+// orchestrator can see which rules acted this session without reading
+// logs. Kind is the intervention type as fired (inject, halt, deny).
+type Firing struct {
+	Rule  string
+	Scope string
+	Kind  string
+	Count int
+}
+
+// firingKey aggregates firings per rule, scope, and kind.
+type firingKey struct{ rule, scope, kind string }
+
 // Service owns the kernel supervisor for one session and the drain
 // goroutine that turns its interventions into steering.
 type Service struct {
@@ -63,6 +78,15 @@ type Service struct {
 	bus         *shepherdtrace.EffectBus
 	rootScopeID string
 	haltRoot    bool
+
+	// firings counts rule firings for `supervisor status` (adoption
+	// plan B4). Recorded where the rule name is known — the advisory
+	// wrapper for the engine's rules, the guard closure for its denies
+	// — at the moment the rule acts, before any dispatch policy is
+	// applied: a firing dropped against the root or refused by the
+	// halt gate still fired, and status says so.
+	firingsMu sync.Mutex
+	firings   map[firingKey]int
 
 	// mu guards the lifecycle transitions: wg.Add in Start must never
 	// race wg.Wait in Close — the WaitGroup reuse rule — so both hold
@@ -115,6 +139,7 @@ func (s *Service) GuardCheck() func(ownerID, toolName, argsJSON string) string {
 		if iv == nil || iv.Type != shepherd.InterventionDeny {
 			return ""
 		}
+		s.recordFiring("destructive_shell_guard", iv)
 		// Fail closed: a deny verdict denies regardless of whether the
 		// payload type-asserts or carries text. A silent empty string
 		// here would turn a non-string (or empty) payload into an
@@ -129,7 +154,7 @@ func (s *Service) GuardCheck() func(ownerID, toolName, argsJSON string) string {
 }
 
 // advisoryRule adapts a kernel rule for the session's engine with the
-// two invariants the plan holds:
+// three invariants the plan holds:
 //
 //  1. Supervisor records never feed it — the drain records each firing
 //     in the trace, the store publishes that append, and the stuck rule
@@ -139,7 +164,11 @@ func (s *Service) GuardCheck() func(ownerID, toolName, argsJSON string) string {
 //     text includes the rule), so the loop being steered — and the
 //     trace holding the fact — can tell an error-rate warning from a
 //     stuck-loop warning apart.
-func advisoryRule(rule shepherd.SupervisionRule) shepherd.SupervisionRule {
+//  3. Each firing is counted (adoption plan B4): onFiring observes the
+//     intervention at the moment the rule acts — before dispatch
+//     policy, so a root-dropped or gate-refused firing still counts —
+//     keyed by the rule's name for `supervisor status`.
+func advisoryRule(rule shepherd.SupervisionRule, onFiring func(rule string, iv *shepherd.Intervention)) shepherd.SupervisionRule {
 	innerMatch := rule.Match
 	innerAction := rule.Action
 	rule.Match = func(e shepherdtrace.EffectEvent) bool {
@@ -152,6 +181,9 @@ func advisoryRule(rule shepherd.SupervisionRule) shepherd.SupervisionRule {
 		iv := innerAction(e)
 		if iv == nil {
 			return nil
+		}
+		if onFiring != nil {
+			onFiring(rule.Name, iv)
 		}
 		if payload, ok := iv.Payload.(string); ok {
 			iv.Payload = fmt.Sprintf("[%s] %s (observed: %s)", rule.Name, payload, e.KindLabel)
@@ -245,17 +277,19 @@ func NewService(mgr *shepherd.ScopeManager, bus *shepherdtrace.EffectBus, runs *
 	}
 
 	sup := shepherd.NewSupervisor(mgr, bus)
+	var guard *shepherd.Supervisor
+	svc := &Service{sup: sup, mgr: mgr, runs: runs, bus: bus, rootScopeID: rootScopeID, haltRoot: haltRoot}
+
 	if rules.DestructiveTool {
-		sup.AddRule(advisoryRule(shepherd.DestructiveToolRule()))
+		sup.AddRule(advisoryRule(shepherd.DestructiveToolRule(), svc.recordFiring))
 	}
 	if rules.HighErrorRate {
-		sup.AddRule(advisoryRule(shepherd.HighErrorRateRule(errorThreshold, errorWindow)))
+		sup.AddRule(advisoryRule(shepherd.HighErrorRateRule(errorThreshold, errorWindow), svc.recordFiring))
 	}
 	if rules.StuckDetection {
-		sup.AddRule(advisoryRule(shepherd.StuckDetectionRule(stuckRepeat)))
+		sup.AddRule(advisoryRule(shepherd.StuckDetectionRule(stuckRepeat), svc.recordFiring))
 	}
 
-	var guard *shepherd.Supervisor
 	if shellGuard {
 		// A second instance, never started: it must never subscribe to
 		// the bus, or every deny would also surface as an async
@@ -264,7 +298,41 @@ func NewService(mgr *shepherd.ScopeManager, bus *shepherdtrace.EffectBus, runs *
 		guard = shepherd.NewSupervisor(mgr, nil)
 		guard.AddRule(shellGuardRule())
 	}
-	return &Service{sup: sup, guard: guard, mgr: mgr, runs: runs, bus: bus, rootScopeID: rootScopeID, haltRoot: haltRoot}
+	svc.guard = guard
+	return svc
+}
+
+// recordFiring counts one rule firing for the status surface (adoption
+// plan B4).
+func (s *Service) recordFiring(rule string, iv *shepherd.Intervention) {
+	s.firingsMu.Lock()
+	if s.firings == nil {
+		s.firings = map[firingKey]int{}
+	}
+	s.firings[firingKey{rule: rule, scope: iv.ScopeID, kind: string(iv.Type)}]++
+	s.firingsMu.Unlock()
+}
+
+// Firings returns the session's counted rule firings (adoption plan
+// B4), sorted by rule then scope then kind — a deterministic snapshot
+// for `supervisor status`. Empty when no rule has acted.
+func (s *Service) Firings() []Firing {
+	s.firingsMu.Lock()
+	defer s.firingsMu.Unlock()
+	out := make([]Firing, 0, len(s.firings))
+	for k, n := range s.firings {
+		out = append(out, Firing{Rule: k.rule, Scope: k.scope, Kind: k.kind, Count: n})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Rule != out[j].Rule {
+			return out[i].Rule < out[j].Rule
+		}
+		if out[i].Scope != out[j].Scope {
+			return out[i].Scope < out[j].Scope
+		}
+		return out[i].Kind < out[j].Kind
+	})
+	return out
 }
 
 // Start subscribes the supervisor to the bus and launches the drain
