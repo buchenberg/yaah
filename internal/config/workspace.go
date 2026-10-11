@@ -1,7 +1,10 @@
 package config
 
 import (
+	"fmt"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 )
 
@@ -59,6 +62,14 @@ type ContainerdWorkspaceConfig struct {
 	// Snapshotter selects the containerd snapshotter plugin. Empty uses the
 	// adapter's default ("overlayfs").
 	Snapshotter string `yaml:"snapshotter"`
+
+	// FIFODir is where the containerd *client* creates the FIFOs that carry
+	// a task's and exec's stdio. containerd's own default (/run/containerd/
+	// fifo) is root-owned, so an unprivileged yaah cannot create its FIFOs
+	// there; an empty value normalizes to a per-user directory under the
+	// system temp dir, which root can also use (the daemon-side shim opens
+	// the FIFOs by path and runs as root, so either location serves it).
+	FIFODir string `yaml:"fifo_dir"`
 }
 
 // normalizeWorkspace applies the documented defaults so a stanza that only
@@ -84,4 +95,16 @@ func normalizeWorkspace(w *WorkspaceConfig) {
 	// A socket path is the kind of value a deployment keeps in the
 	// environment; provider fields get the same treatment.
 	w.Containerd.Address = SubstituteEnv(w.Containerd.Address)
+	w.Containerd.FIFODir = SubstituteEnv(w.Containerd.FIFODir)
+	// The client — not the daemon — creates the task/exec stdio FIFOs, so
+	// the directory must be writable by yaah's own uid. containerd's default
+	// (/run/containerd/fifo) is root-only; a per-user temp dir works for both
+	// an unprivileged session and a root one (the shim, which reads the
+	// FIFOs, is root and bypasses the 0700 the client's MkdirAll leaves).
+	if w.Containerd.FIFODir == "" {
+		w.Containerd.FIFODir = filepath.Join(
+			os.TempDir(), fmt.Sprintf("yaah-fifo-%d", os.Getuid()))
+	} else {
+		w.Containerd.FIFODir = filepath.Clean(w.Containerd.FIFODir)
+	}
 }

@@ -24,11 +24,14 @@ import (
 func OpenContainerdWorkspaceSandbox(w config.WorkspaceConfig) (shepherdsandbox.Sandbox, error) {
 	// Root maps onto the adapter's Workdir: the containment root every
 	// relative tool path resolves against inside the sandbox.
+	// FIFODir passes through so the client's task/exec stdio FIFOs land in a
+	// directory yaah's uid can write — containerd's default is root-only.
 	return shepherdsandbox.OpenSandbox(config.BackendContainerd, containerdbackend.Config{
 		Address:     w.Containerd.Address,
 		Namespace:   w.Containerd.Namespace,
 		Image:       w.Containerd.Image,
 		Snapshotter: w.Containerd.Snapshotter,
+		FIFODir:     w.Containerd.FIFODir,
 		Workdir:     w.Root,
 	})
 }
