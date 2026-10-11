@@ -30,9 +30,10 @@ actually wired to execution. The audit, verified by reading both repos:
 | 12 | Handles (`StartTask`/`Run`/`TaskControl`) | kernel-driven task execution with frontier cuts | not used; yaah's loop is provider-driven with its own runner | Unused — assessed, likely stays unused (D6) |
 | 13 | Materialization / substrates | declarations are commitments; idempotent apply with `clean_failure` honesty | fenced by the isolation plan §9; tools write directly, the trace observes | Fenced (D7) |
 
-**The goal of this plan:** close rows 2, 6, 7, 8, 9, 10, 11 — in that dependency
-order — without regressing rows 1, 3, 4, 5, and without duplicating anything the
-yaah pipeline already does better.
+**The goal of this plan:** close rows 6, 7 (Phase A), 2, 8 (Phase B), 9, 10
+(Phase C), 11 (Phase D) — without regressing rows 1, 3, 4, 5, and without
+duplicating anything the yaah pipeline already does better. The bus's first
+consumer (row 2) arrives with the rules engine (row 8), not before it.
 
 ---
 
@@ -224,27 +225,34 @@ else (rules, halt semantics) hangs off the bridge.
 - **A1. Root scope.** `InitShepherdInfrastructure` (or the wiring right after
   it) creates the session root scope: local mode `NewLocalGitSandbox(repo)`,
   isolated mode nil sandbox. Sub-agent dispatch switches from `mgr.Create`
-  to `mgr.Fork(root, …)` / `mgr.ForkIsolated(root, …, worktree)`. Seed
-  messages ride the Fork snapshot. `supervisor list_scopes` now shows a real
-  tree. Teardown: root scope sandbox handling on session close.
+  to `mgr.Fork(root, …)` / `mgr.ForkIsolated(root, …, worktree)` — the fork
+  snapshot is nil (D1); seed messages stay in the loop config.
+  `supervisor list_scopes` now shows a real tree. Teardown: root scope
+  sandbox handling on session close.
   *Tests:* tree shape (root + N children, parent linkage), fork causality in
-  the trace (branch-point record exists), supervised worktree dispatch still
-  isolates, isolated mode: pure-causal root + shared-sandbox children, no
-  container checkpoint attempts.
+  the trace (the parent's branch-point record exists), supervised worktree
+  dispatch still isolates, isolated mode: pure-causal root + pure-causal
+  children, no container checkpoint attempts.
 - **A2. Run registry + steering channel for sub-agent loops.**
   `supervision.Registry` in `internal/agent/`; `SubAgentConfig` gains the
-  steering channel; the task runner registers/unregisters runs. Manual
-  `supervisor inject` now reaches the loop; `supervisor status` reports
-  bridge state per scope.
+  steering channel; the task runner registers/unregisters runs. The root
+  scope is registered too — the session's steering channel and its
+  cancellation path — so root `inject`/`halt` are honest from the start,
+  not trace-only (the execution-bridge guarantee applies to every scope
+  the supervisor tool can name, root included). Manual `supervisor inject`
+  now reaches the loop; `supervisor status` reports bridge state per scope.
   *Tests:* inject lands as a steering message between turns; inject into a
   finished scope errors; registry cleanup on normal exit, on error exit, on
-  ctx cancel.
+  ctx cancel; root injection lands on the session steering channel.
 - **A3. Halt bridge.** `supervisor halt` cancels the registered run's
   context; task tool wording ("halted by supervisor"); scope state + sandbox
-  teardown verified; root-scope halt = session cancellation path.
+  teardown verified. Root-scope halt maps to session cancellation and is
+  gated by `supervisor.halt_root` — the gate (default off) lands in this
+  step, not B1, so an A3 stopping-point release never exposes un-gated
+  session cancellation.
   *Tests:* halt mid-run cancels within a bounded window; halt of an isolated
-  child destroys its worktree; halt of root triggers session cancel; double
-  halt is idempotent.
+  child destroys its worktree; root halt without the opt-in refuses; with
+  it, triggers session cancel; double halt is idempotent.
 
 **Phase A exit criteria:** `supervisor` tool interventions actually
 intervene; the scope tree is causal; no behavior change when tracing is off.
@@ -301,9 +309,9 @@ visible in the trace; the parent session is untouched.
 **Phase C exit criteria:** review/fork flows run on kernel mechanics; the
 hand-rolled forkState/apply path is deleted, not parallel-lived.
 
-### Phase D — Recovery (D5)
+### Phase D — Recovery (D5; steps R1–R3, distinct from the decision IDs)
 
-- **D1. RecoverScopes + resolvers.** Startup recovery when trace dir set;
+- **R1. RecoverScopes + resolvers.** Startup recovery when trace dir set;
   git/worktree re-adoption; causal-only for containerd; **orphans listed and
   left on disk (warn-only, D5)** — a missing worktree is reported with its
   scope, path, and size, never deleted.
@@ -311,12 +319,12 @@ hand-rolled forkState/apply path is deleted, not parallel-lived.
   outputs; stale checkpoint → CheckpointInvalid refused with reason;
   resolver error fails recovery loudly; orphaned worktree survives recovery
   byte-identical and is listed.
-- **D2. Resume integration.** `--resume` reattaches recovered scopes;
+- **R2. Resume integration.** `--resume` reattaches recovered scopes;
   review-session rollback across a restart uses the recovered checkpoint or
   explains why not; `PruneTerminal` on close.
   *Tests:* restart mid-review-session → continue/rollback still work; memory
   join intact; prune idempotent.
-- **D3. `shepherd prune` verb (optional, own PR).** Lists and, with an
+- **R3. `shepherd prune` verb (optional, own PR).** Lists and, with an
   explicit name argument, deletes an orphaned worktree — the only deletion
   path, by name, user-invoked.
   *Tests:* list matches recovery's orphan report; prune requires the exact
@@ -354,21 +362,34 @@ explicit command naming it.
 
 ## 7. Configuration surface (lands with the phase that needs it)
 
+`shepherd_trace_dir` lives under `agents.default`
+(`internal/config/load.go` — `agents.default.shepherd_trace_dir`), not under
+`observability`; the supervisor settings nest beside it so one block owns
+the whole feature:
+
 ```yaml
-observability:
-  shepherd_trace_dir: ~/.yaah/shepherd     # existing — gates everything here
-  supervisor:                              # Phase B
-    enabled: true                         # on when tracing is on
-    halt_root: false                      # root-scope halt needs opt-in (D3)
-    rules:
-      destructive_tool: { enabled: true }            # advisory, inject-only
-      destructive_guard: { enabled: true }            # blocking, default-deny (B2)
-      high_error_rate:  { enabled: true, threshold: 0.5, window: 10 }
-      stuck_detection:  { enabled: true, repeat_threshold: 3 }
+agents:
+  default:
+    shepherd_trace_dir: ~/.yaah/shepherd   # existing — gates everything here
+    supervisor:                            # Phase B (needs tracing on)
+      enabled: true                         # on when tracing is on
+      halt_root: false                      # root-scope halt needs opt-in (D3)
+      rules:
+        destructive_tool: { enabled: true }            # advisory, inject-only
+        destructive_guard: { enabled: true }            # blocking, default-deny (B2)
+        high_error_rate:  { enabled: true, threshold: 0.5, window: 10 }
+        stuck_detection:  { enabled: true, repeat_threshold: 3 }
 ```
 
-Defaults keep today's behavior when the stanza is absent. `doctor` grows a
-shepherd check (Phase D): store open, recovery counts, supervisor wiring.
+**Defaults, precisely:** tracing **off** is byte-identical to today — the
+stanza and everything it gates does not exist without
+`shepherd_trace_dir`. With tracing **on** and the stanza absent, the D3
+defaults apply: advisory rules on and the blocking guard on. That is a
+deliberate behavior change for tracing sessions (a destructive sub-agent
+call that dispatched ungated yesterday is denied after B2), which is the
+point of the coverage gap — it is not behavior parity, and this plan does
+not pretend otherwise. `halt_root` defaults off everywhere. `doctor` grows
+a shepherd check (Phase D): store open, recovery counts, supervisor wiring.
 
 ---
 
@@ -411,9 +432,9 @@ shepherd check (Phase D): store open, recovery counts, supervisor wiring.
 7. **B4** visibility polish
 8. **C1** accept via CommitMerge (local mode)
 9. **C2** fork/choose via Seal/Settle (local mode)
-10. **D1** RecoverScopes + resolvers (warn-only orphans)
-11. **D2** resume integration + PruneTerminal + doctor
-12. **D3** `shepherd prune` verb (optional)
+10. **R1** RecoverScopes + resolvers (warn-only orphans)
+11. **R2** resume integration + PruneTerminal + doctor
+12. **R3** `shepherd prune` verb (optional)
 
 **Stopping points:** after A3 (the supervisor tool becomes honest — user-
 visible win, everything else optional); after B2 (sub-agent destructive calls
@@ -421,7 +442,8 @@ are gated — the coverage gap closes); after B4 (automatic supervision
 complete); after C2 (review flows on kernel mechanics). Each is shippable.
 
 **Exit criteria (plan-level):** the audit table's rows 2, 6, 7, 8, 9, 10, 11
-read **Aligned**; rows 12–13 read **Deliberately unused, recorded rationale**;
-a killed session recovers its supervision state; no supervision verb ships
-without an execution-side effect; and no destructive sub-agent call dispatches
-ungated.
+read **Aligned**; row 12 reads **Deliberately unused, recorded rationale**
+(D6); row 13 still reads **Fenced (unchanged, D7)** — this plan does not
+adopt materialization; a killed session recovers its supervision state; no
+supervision verb ships without an execution-side effect; and no destructive
+sub-agent call dispatches ungated.
