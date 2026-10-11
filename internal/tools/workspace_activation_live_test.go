@@ -151,11 +151,14 @@ func TestLive_ActivatedSession(t *testing.T) {
 	}
 	// rg comes from the image (the D5 contract), and the command runs
 	// against the containment root, not the host's working directory.
+	// rg prints no filename for a single-file search, so the assertion
+	// is the matched content plus pwd; the host-untouched assertions
+	// below are the strong container-vs-host discriminator.
 	bashOut, err := reg.Get("bash").Execute(ctx, `{"command": "pwd && rg -n hello readme.txt"}`)
 	if err != nil {
 		t.Fatalf("bash through the registry: %v", err)
 	}
-	if !strings.Contains(bashOut, wcfg.Root) || !strings.Contains(bashOut, "readme.txt") {
+	if !strings.Contains(bashOut, wcfg.Root) || !strings.Contains(bashOut, "hello") {
 		t.Fatalf("the command must run inside the container (pwd %q, rg output %q)", wcfg.Root, bashOut)
 	}
 	if _, err := ss.Workspace().Stat(ctx, "/workspace/readme.txt"); err != nil {
