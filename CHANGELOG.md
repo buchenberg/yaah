@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.65.1](https://github.com/buchenberg/yaah/compare/v0.65.0...v0.65.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **config:** review round 3 -- refuse an empty fifo_dir with the cause named ([cbc22b4](https://github.com/buchenberg/yaah/commit/cbc22b48f96d0c27efe85f90ea7b1ca5d2a057cd))
+* **config:** review round 4 -- host-absolute fifo paths in tests ([3c85129](https://github.com/buchenberg/yaah/commit/3c851296780d7fbf434f2e758702f7265d7d64e4))
+* **config:** review round 5 -- absolutize the test fifo paths ([dc0271e](https://github.com/buchenberg/yaah/commit/dc0271e02bc554f14715bc5c8ff2d57515f98cab))
+* **jobs:** wait for delivery, not just terminal status, in RunnerError test ([fe5d5d1](https://github.com/buchenberg/yaah/commit/fe5d5d175ce6515e368e7ffa12139ed89801429c))
+* **workspace:** review round 2 -- home fallback guard and Image passthrough ([27f10f1](https://github.com/buchenberg/yaah/commit/27f10f1a893436a7dff678720bd409392874bd2d))
+* **workspace:** review round 2 -- home fallback guard and Image passthrough ([6c2ee3c](https://github.com/buchenberg/yaah/commit/6c2ee3c6e3e6c81209b9a6dedb0f7a6881fa9f0b))
+
 ## [0.65.0](https://github.com/buchenberg/yaah/compare/v0.64.0...v0.65.0) (2026-10-11)
 
 
