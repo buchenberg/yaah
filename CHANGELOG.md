@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.70.0](https://github.com/buchenberg/yaah/compare/v0.69.0...v0.70.0) (2026-10-11)
+
+
+### Features
+
+* **shepherd:** C1 -- accept via CommitMerge ([1cca81c](https://github.com/buchenberg/yaah/commit/1cca81cac7131862209130f4ea9a410f70e2b1b8))
+* **shepherd:** C1 — accept via CommitMerge (local mode) ([f9493c0](https://github.com/buchenberg/yaah/commit/f9493c0e1bf311d5eec82d17a670534f98713c63))
+
 ## [0.69.0](https://github.com/buchenberg/yaah/compare/v0.68.0...v0.69.0) (2026-10-11)
 
 
