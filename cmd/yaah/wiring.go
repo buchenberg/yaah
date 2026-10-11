@@ -45,10 +45,11 @@ var defaultWorkspaceDenyPatterns = []string{
 
 // workspaceSandboxStartTimeout bounds the isolated workspace's startup —
 // the D5 image probe (its own throwaway sandbox), the session sandbox's
-// Create, and the contract exec — so a wedged containerd daemon fails the
-// session at startup instead of hanging it. Generous: a first-run image
-// pull happens inside this window too.
-const workspaceSandboxStartTimeout = 5 * time.Minute
+// Create, the D1 copy-in (one backend exec per file), and the baseline
+// capture/rebind — so a wedged containerd daemon fails the session at
+// startup instead of hanging it. Generous: a first-run image pull and a
+// large working tree both happen inside this window.
+const workspaceSandboxStartTimeout = 15 * time.Minute
 
 // toolSpillDir is the single source for the tool-result spill directory.
 // Both the parent loop (build_loop.go) and every sub-agent loop inherit
@@ -115,7 +116,14 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		}
 	}()
 
-	cwd, _ := os.Getwd()
+	// A failed Getwd must not limp on as an empty cwd: the isolated
+	// bootstrap reads "" as "no source requested" and would silently skip
+	// the copy-in, starting the containerd session on an empty container
+	// with no baseline.
+	cwd, gerr := os.Getwd()
+	if gerr != nil {
+		return nil, fmt.Errorf("determine the working directory: %w", gerr)
+	}
 
 	// Load sub-agent role definitions: built-in (embedded) +
 	// user-defined (~/.agents/roles/, ./.agents/roles/).
@@ -147,6 +155,16 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// an error branch below; the guard exists so no error return leaks a
 	// container, and so one failure is never reported on two channels.
 	sandboxTeardownHandled := false
+	// Deny patterns: explicit config wins; unset falls back to the
+	// built-in secret-file defaults; an explicit empty list disables. Both
+	// substrates resolve the same list — the local validator gates tool
+	// access, and the isolated bootstrap excludes matching files from the
+	// copy-in so they never become agent-readable inside the container
+	// either.
+	deny := cfg.Agent.Default.WorkspaceDenyPatterns
+	if deny == nil {
+		deny = defaultWorkspaceDenyPatterns
+	}
 	switch {
 	case cfg.Workspace.Backend == config.BackendContainerd:
 		// A wedged daemon must not hang session startup: the probe, the
@@ -155,7 +173,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		startCtx, cancelStart := context.WithTimeout(context.Background(), workspaceSandboxStartTimeout)
 		defer cancelStart()
 		sessionSandbox, err = tools.StartSessionSandbox(
-			startCtx, cfg.Workspace, tools.OpenContainerdWorkspaceSandbox)
+			startCtx, cfg.Workspace, tools.OpenContainerdWorkspaceSandbox, cwd, deny)
 		if err != nil {
 			return nil, err
 		}
@@ -176,12 +194,6 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			fmt.Fprintf(os.Stderr, "warning: --workspace %s has no effect: the workspace.backend containerd session is isolated from the host\n", opts.WorkspaceRoot)
 		}
 	case opts.WorkspaceRoot != "":
-		// Deny patterns: explicit config wins; unset falls back to the
-		// built-in secret-file defaults; an explicit empty list disables.
-		deny := cfg.Agent.Default.WorkspaceDenyPatterns
-		if deny == nil {
-			deny = defaultWorkspaceDenyPatterns
-		}
 		pathValidator = tools.NewPathValidator(opts.WorkspaceRoot, opts.AllowHomeAccess, deny)
 		toolReg.SetPathValidator(pathValidator)
 	}

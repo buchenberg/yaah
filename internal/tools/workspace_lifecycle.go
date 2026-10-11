@@ -29,6 +29,10 @@ type SandboxOpener func(w config.WorkspaceConfig) (shepherd.Sandbox, error)
 type SessionSandbox struct {
 	sb shepherd.Sandbox
 	ws *sandboxWorkspace
+	// baseline is the state captured right after the D1 bootstrap (copy-in
+	// plus a rebind Apply), the anchor for the session's diffs and
+	// apply-out. Nil when the session started without a bootstrap.
+	baseline *shepherd.WorkspaceState
 
 	destroyOnce sync.Once
 	destroyErr  error
@@ -41,7 +45,18 @@ type SessionSandbox struct {
 // session at startup, before it consumes a task, rather than at the first
 // tool call mid-run. ProbeImageContract owns the probe sandbox's full
 // lifecycle; this function owns the session sandbox's.
-func StartSessionSandbox(ctx context.Context, w config.WorkspaceConfig, open SandboxOpener) (*SessionSandbox, error) {
+//
+// A non-empty src bootstraps the session (D1, plan §2.3): the host working
+// tree is copied into the sandbox root and a baseline state is captured, so
+// the session can diff during and apply out on accept. An empty src skips
+// the bootstrap — the sandbox is up, but there is no baseline to diff
+// against and ApplyOut refuses.
+//
+// The deny patterns are the copy-in's copy of the local workspace's
+// policy: files matching them never enter the container, so the agent can
+// never read them there either. Wiring resolves the config default before
+// calling; nil means no patterns.
+func StartSessionSandbox(ctx context.Context, w config.WorkspaceConfig, open SandboxOpener, src string, deny []string) (*SessionSandbox, error) {
 	probeSB, err := open(w)
 	if err != nil {
 		return nil, fmt.Errorf("workspace: open probe sandbox: %w", err)
@@ -68,12 +83,24 @@ func StartSessionSandbox(ctx context.Context, w config.WorkspaceConfig, open San
 		}
 		return nil, err
 	}
-	return &SessionSandbox{
+	ss := &SessionSandbox{
 		sb: sb,
 		// The config layer already validated and defaulted Root; the
 		// workspace constructor still guards the empty/"/" cases itself.
 		ws: newSandboxWorkspace(sb, w.Root),
-	}, nil
+	}
+	// The D1 bootstrap (plan §2.3): copy the host working tree in, capture
+	// the baseline, rebind to it. A failed bootstrap destroys — a
+	// half-bootstrapped container is still a container.
+	if src != "" {
+		if berr := bootstrapSession(ctx, ss, src, deny); berr != nil {
+			if derr := ss.Destroy(context.WithoutCancel(ctx)); derr != nil {
+				return nil, errors.Join(berr, fmt.Errorf("workspace: destroy after failed bootstrap: %w", derr))
+			}
+			return nil, berr
+		}
+	}
+	return ss, nil
 }
 
 // Backend names the sandbox backend, for diagnostics and doctor output.
