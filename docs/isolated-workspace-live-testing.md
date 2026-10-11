@@ -40,6 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ripgrep \
 EOF
 
 podman build -f /tmp/Dockerfile.yaah-workspace -t docker.io/library/yaah-workspace:latest /tmp
+rm -f /tmp/yaah-workspace.tar   # podman save refuses to overwrite an existing tarball
 podman save -o /tmp/yaah-workspace.tar docker.io/library/yaah-workspace:latest
 sudo ctr -n yaah-live images import /tmp/yaah-workspace.tar
 ```
