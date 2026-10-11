@@ -132,13 +132,14 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 		c.Message = "generic 404 — retry"
 		return c
 	case http.StatusBadRequest: // 400
-		if matchAny(msg, responseFormatPatterns) {
-			c.Reason = ReasonFormatError
-			c.Retryable = false
-			c.ShouldDropResponseFormat = true
-			c.Message = "response_format unsupported — drop and retry"
-			return c
-		}
+		// Overflow and content-policy run before the response_format
+		// check: those patterns are specific, while responseFormatPatterns
+		// is a broad substring match that a gateway echoing the request
+		// can trip for an unrelated 400. A genuine response_format
+		// rejection matches neither of the earlier sets, so the ordering
+		// only decides the ambiguous messages — and for those,
+		// compress-and-retry or a loud abort are the right recoveries,
+		// not a pointless format drop.
 		if matchAny(msg, contextOverflowPatterns) {
 			c.Reason = ReasonContextOverflow
 			c.ShouldCompress = true
@@ -150,6 +151,13 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 			c.Retryable = false
 			c.ShouldAbort = true
 			c.Message = "content policy blocked — do not retry unchanged"
+			return c
+		}
+		if matchAny(msg, responseFormatPatterns) {
+			c.Reason = ReasonFormatError
+			c.Retryable = false
+			c.ShouldDropResponseFormat = true
+			c.Message = "response_format unsupported — drop and retry"
 			return c
 		}
 		c.Reason = ReasonFormatError

@@ -123,6 +123,24 @@ func TestClassify(t *testing.T) {
 			want: ReasonFormatError, wantHint: "abort",
 		},
 		{
+			name: "response_format rejected — LM Studio",
+			err:  errors.New(`'response_format.type' must be 'json_schema' or 'text'`),
+			meta: ErrorMeta{StatusCode: 400},
+			want: ReasonFormatError, wantHint: "drop_response_format",
+		},
+		{
+			name: "response format rejected — spaced variant",
+			err:  errors.New("the response format parameter is not supported on this model"),
+			meta: ErrorMeta{StatusCode: 400},
+			want: ReasonFormatError, wantHint: "drop_response_format",
+		},
+		{
+			name: "response_format mentioned inside a context overflow is not a format rejection",
+			err:  errors.New("request exceeds maximum context: response_format, messages, and tools were echoed; reduce the length"),
+			meta: ErrorMeta{StatusCode: 400, NumMessages: 10},
+			want: ReasonContextOverflow, wantHint: "compress",
+		},
+		{
 			name: "content policy — OpenAI",
 			err:  errors.New("Your request violates our usage policies"),
 			meta: ErrorMeta{StatusCode: 400},

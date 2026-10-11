@@ -177,10 +177,12 @@ func (p *respFormatProvider) Send(_ context.Context, req types.ChatRequest) (*ty
 
 // TestCall_dropsResponseFormatOn400 pins the graceful degradation for
 // yaah-n7k: when a provider rejects response_format, the client drops it
-// and replays once instead of aborting the call.
+// and replays once instead of aborting the call. MaxRetries is 0 so the
+// test proves the drop-replay consumes no retry slot — with a nonzero
+// budget, removing the attempt decrement would still pass.
 func TestCall_dropsResponseFormatOn400(t *testing.T) {
 	p := &respFormatProvider{}
-	c := &Client{Provider: p, Model: "m", MaxRetries: 3, RetryBackoff: time.Millisecond}
+	c := &Client{Provider: p, Model: "m", MaxRetries: 0, RetryBackoff: time.Millisecond}
 
 	res, err := c.Call(context.Background(), types.ChatRequest{
 		Model:          "m",
@@ -193,8 +195,8 @@ func TestCall_dropsResponseFormatOn400(t *testing.T) {
 	if res.Message.Content != "ok" {
 		t.Errorf("content = %q, want ok", res.Message.Content)
 	}
-	if len(p.sawFormat) < 2 {
-		t.Fatalf("expected >=2 provider calls (reject then recover), got %d", len(p.sawFormat))
+	if len(p.sawFormat) != 2 {
+		t.Fatalf("provider calls = %d, want exactly 2 (reject, then recover without the format)", len(p.sawFormat))
 	}
 	if p.sawFormat[0] == nil {
 		t.Error("first attempt should carry response_format")

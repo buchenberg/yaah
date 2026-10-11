@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -207,11 +208,17 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 			// Provider rejects response_format (e.g. LM Studio only accepts
 			// json_schema/text, not json_object). Drop it and replay once;
 			// the prompt still requests JSON and callers parse leniently.
+			// The drop is loud: a json_mode role silently producing
+			// freeform output would otherwise be undiagnosable in the
+			// field.
+			fmt.Fprintf(os.Stderr, "warning: provider rejected response_format (%s); retrying without it — structured output now relies on the prompt alone\n",
+				classified.Message)
 			req.ResponseFormat = nil
 			respFormatDropped = true
+			// The decrement avoids consuming a retry slot — the replay is a
+			// recovery, not a retry — and the continue skips the backoff
+			// (which is only computed after this switch falls through).
 			attempt--
-			// Continue immediately: attempt is now negative, so the
-			// exponential backoff below (1 << attempt) must not run.
 			continue
 
 		case classified.ShouldStripReasoning && stripAttempts < maxStripReasoningAttempts:
