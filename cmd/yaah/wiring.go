@@ -16,6 +16,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/runner"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/mcp"
@@ -394,6 +395,12 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// the supervised task tool, and sub-agent trace middleware.
 	var scopeMgr *shepherd.ScopeManager
 	var rootScopeID string
+	var runRegistry *supervision.Registry
+	// The session's steering channel: the REPL's steer source and, from
+	// A2 on, the supervisor's injection target for the root scope. Sized
+	// with the registry's exported buffer so every channel the registry
+	// borrows has the same capacity.
+	steerCh := make(chan string, supervision.SteerBuffer)
 	if cfg.Agent.Default.ShepherdTraceDir != "" {
 		store, _, mgr, serr := pipeline.InitShepherdInfrastructure(cfg.Agent.Default.ShepherdTraceDir, 0)
 		if serr != nil {
@@ -402,6 +409,15 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			tools.SharedTraceStore = store
 			scopeMgr = mgr
 			tools.SharedScopeManager = mgr
+
+			// Supervision bridge (adoption plan A2): scope IDs mapped
+			// to running loops' steering channels. Session-owned and
+			// injected into the task runner, the supervisor tool, and
+			// the session teardown — never a process global. The
+			// runner registers each sub-agent dispatch; the root
+			// registers against the session's own steering channel,
+			// so an inject into the root steers the session itself.
+			runRegistry = supervision.NewRegistry()
 
 			// Root scope (adoption plan D1): local mode shares the
 			// in-place git sandbox — never destroyed, the kernel's
@@ -414,6 +430,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 				fmt.Fprintf(os.Stderr, "warning: no shepherd root scope — sub-agent scopes fall back to flat creation: %v\n", rerr)
 			} else {
 				rootScopeID = root.ID()
+				runRegistry.Register(rootScopeID, steerCh)
 			}
 		}
 	}
@@ -466,6 +483,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		PathValidator:         pathValidator,
 		Workspace:             subAgentWorkspace,
 		RootScopeID:           rootScopeID,
+		Runs:                  runRegistry,
 		ResolveProviderByName: resolveProviderByName,
 	})
 
@@ -539,6 +557,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		toolReg.Register(&tools.SupervisorTool{
 			TraceDir:    cfg.Agent.Default.ShepherdTraceDir,
 			RootScopeID: rootScopeID,
+			Runs:        runRegistry,
 		})
 
 		// Supervised task tool — blocking sub-agent execution with
@@ -735,7 +754,9 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		backgroundJobs: backgroundJobs,
 		sessionSandbox: sessionSandbox,
 		cwd:            cwd,
-		steerCh:        make(chan string, 4),
+		steerCh:        steerCh,
+		rootScopeID:    rootScopeID,
+		runs:           runRegistry,
 		followupCh:     followupCh,
 	}
 	// The session owns everything created above from here: close() will

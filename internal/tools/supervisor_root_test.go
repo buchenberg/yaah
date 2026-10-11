@@ -8,15 +8,19 @@ import (
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+
+	"github.com/buchenberg/yaah/internal/agent/supervision"
 )
 
-// TestSupervisorTool_RootScopeGuarded pins the A1 safety rail: inject and
-// halt refuse the session's root scope until the execution bridge lands
-// (adoption plan A2/A3). Today both verbs are trace-side only, and a
-// halted root would silently break every subsequent Fork — the scope
-// manager refuses to fork from a non-active parent, and the runner ignores
-// that error, leaving later sub-agents with no scope at all.
-func TestSupervisorTool_RootScopeGuarded(t *testing.T) {
+// TestSupervisorTool_RootScopeHaltGuarded pins the A1/A2 safety rail:
+// halt refuses the session's root scope until the halt bridge lands
+// (adoption plan A3, gated by supervisor.halt_root). A halted root would
+// silently break every subsequent Fork — the scope manager refuses to
+// fork from a non-active parent, and the runner ignores that error,
+// leaving later sub-agents with no scope at all. Inject is not guarded
+// (A2): the root is registered against the session's steering channel,
+// so injecting into it steers the session itself.
+func TestSupervisorTool_RootScopeHaltGuarded(t *testing.T) {
 	store, err := shepherdtrace.NewSQLiteTraceStore(":memory:")
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
@@ -31,19 +35,11 @@ func TestSupervisorTool_RootScopeGuarded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create root scope: %v", err)
 	}
-	child, err := SharedScopeManager.Create("sub-guard", nil)
-	if err != nil {
-		t.Fatalf("create child scope: %v", err)
-	}
+	sessionSteer := make(chan string, supervision.SteerBuffer)
 
-	sup := &SupervisorTool{RootScopeID: root.ID()}
-
-	injectArgs, _ := json.Marshal(map[string]string{
-		"action": "inject", "scope_id": root.ID(), "guidance": "steer"})
-	_, err = sup.Execute(context.Background(), string(injectArgs))
-	if err == nil || !strings.Contains(err.Error(), "session root scope") {
-		t.Errorf("inject into the root must refuse with the bridge message, got: %v", err)
-	}
+	runs := supervision.NewRegistry()
+	runs.Register(root.ID(), sessionSteer)
+	sup := &SupervisorTool{RootScopeID: root.ID(), Runs: runs}
 
 	haltArgs, _ := json.Marshal(map[string]string{
 		"action": "halt", "scope_id": root.ID()})
@@ -52,25 +48,32 @@ func TestSupervisorTool_RootScopeGuarded(t *testing.T) {
 		t.Errorf("halt of the root must refuse with the gated-halt message, got: %v", err)
 	}
 
-	// A sub-agent scope keeps the pre-A1 trace-side behavior: inject and
-	// halt still succeed (their execution bridge is A2/A3).
-	injectChild, _ := json.Marshal(map[string]string{
-		"action": "inject", "scope_id": child.ID(), "guidance": "steer"})
-	if _, err := sup.Execute(context.Background(), string(injectChild)); err != nil {
-		t.Errorf("inject into a sub-agent scope must keep working: %v", err)
+	// Root inject steers the session: delivered to the registered
+	// session steering channel, reported as delivery.
+	injectArgs, _ := json.Marshal(map[string]string{
+		"action": "inject", "scope_id": root.ID(), "guidance": "wrap up"})
+	out, err := sup.Execute(context.Background(), string(injectArgs))
+	if err != nil {
+		t.Fatalf("inject into the root: %v", err)
 	}
-	haltChild, _ := json.Marshal(map[string]string{
-		"action": "halt", "scope_id": child.ID()})
-	if _, err := sup.Execute(context.Background(), string(haltChild)); err != nil {
-		t.Errorf("halt of a sub-agent scope must keep working: %v", err)
+	if !strings.Contains(out, "delivered to the running loop") {
+		t.Errorf("root inject must report delivery to the session's loop, got: %s", out)
+	}
+	select {
+	case got := <-sessionSteer:
+		if got != "wrap up" {
+			t.Errorf("session steering got %q, want the guidance verbatim", got)
+		}
+	default:
+		t.Error("root inject never reached the session's steering channel")
 	}
 
 	// An unset RootScopeID (tracing up without a root, or the legacy
-	// flat path) guards nothing — the tool behaves exactly as before.
+	// flat path) guards nothing — halt behaves exactly as before.
 	legacy := &SupervisorTool{}
-	legacyInject, _ := json.Marshal(map[string]string{
-		"action": "inject", "scope_id": root.ID(), "guidance": "steer"})
-	if _, err := legacy.Execute(context.Background(), string(legacyInject)); err != nil {
-		t.Errorf("without RootScopeID the tool must not guard, got: %v", err)
+	legacyHalt, _ := json.Marshal(map[string]string{
+		"action": "halt", "scope_id": root.ID()})
+	if _, err := legacy.Execute(context.Background(), string(legacyHalt)); err != nil {
+		t.Errorf("without RootScopeID the tool must not guard halt, got: %v", err)
 	}
 }
