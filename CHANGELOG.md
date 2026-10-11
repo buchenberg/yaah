@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.68.0](https://github.com/buchenberg/yaah/compare/v0.67.0...v0.68.0) (2026-10-11)
+
+
+### Features
+
+* **shepherd:** B3 -- intervention dispatch end-to-end ([2092ca9](https://github.com/buchenberg/yaah/commit/2092ca914f8bac50ac9c324878ffa05f57410396))
+* **shepherd:** B3 — intervention dispatch end-to-end ([814084d](https://github.com/buchenberg/yaah/commit/814084d0681011b1936e711e2af05cf5db909c5d))
+
+
+### Bug Fixes
+
+* **shepherd:** B3 review round 1 -- halt safety, event-named guidance, race-free tests ([6ddc140](https://github.com/buchenberg/yaah/commit/6ddc1406d7d010831dcaefc2d45bd9358c3fd26b))
+
 ## [0.67.0](https://github.com/buchenberg/yaah/compare/v0.66.0...v0.67.0) (2026-10-11)
 
 
