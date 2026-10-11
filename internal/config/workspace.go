@@ -105,7 +105,14 @@ func normalizeWorkspace(w *WorkspaceConfig) {
 	// the shim, which reads the FIFOs, is root and bypasses the client's
 	// 0700. The configured value passes through as-is, like the socket
 	// address.
+	//
+	// A home that does not resolve (HOME unset in a service/cron context)
+	// yields a relative path, which the absolute-path rule below would then
+	// reject; leave the field empty instead so the adapter's own default —
+	// root-only but valid — applies rather than a value the config refuses.
 	if w.Containerd.FIFODir == "" {
-		w.Containerd.FIFODir = filepath.Join(HomeDir(), "containerd-fifo")
+		if dir := filepath.Join(HomeDir(), "containerd-fifo"); filepath.IsAbs(dir) {
+			w.Containerd.FIFODir = dir
+		}
 	}
 }
