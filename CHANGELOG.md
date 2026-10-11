@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.62.0](https://github.com/buchenberg/yaah/compare/v0.61.0...v0.62.0) (2026-10-11)
+
+
+### Features
+
+* **doctor:** step-8 activation visibility -- workspace check + live E2E harness (plan §2.4) ([9aac5fb](https://github.com/buchenberg/yaah/commit/9aac5fb639dd19950b0528c2fc61904e449eb4a5))
+* **doctor:** step-8 activation visibility -- workspace check + live E2E harness (plan §2.4) ([fc10c7b](https://github.com/buchenberg/yaah/commit/fc10c7b0570906950bdfa47acc8e053f4be48bea))
+
+
+### Bug Fixes
+
+* **workspace:** rg prints no filename for a single-file search ([ab16c61](https://github.com/buchenberg/yaah/commit/ab16c611a7eb8277170abec2fd06921948c65575))
+* **workspace:** second review round -- the chunk bound respects MAX_ARG_STRLEN ([cd97ad3](https://github.com/buchenberg/yaah/commit/cd97ad390974f9fcfd9c93dc18312ae669df8f5b))
+* **workspace:** step-8 review findings -- doctor validates the stanza, the live harness dispatches through the registry ([6510463](https://github.com/buchenberg/yaah/commit/6510463fb164abd07b9735944037ae342749ec4f))
+* **workspace:** the sandbox write must carry content in argv, not stdin ([6addeec](https://github.com/buchenberg/yaah/commit/6addeec543631e56293a06d1ba08d081e0cea77c))
+
+
+### Documentation
+
+* **plan:** step 8's live verdict is recorded -- MET, end to end ([3f3bf48](https://github.com/buchenberg/yaah/commit/3f3bf481b65fc8cdda1785935cbb0ffc2551990c))
+* **plan:** the live verdict stands on the strengthened harness ([3b29f95](https://github.com/buchenberg/yaah/commit/3b29f95c0f251d475e2a53f958b2ea15204d3167))
+* podman save refuses to overwrite an existing tarball ([b2e9a4c](https://github.com/buchenberg/yaah/commit/b2e9a4c6bd07560435f59c5c4922a1c0fb386655))
+* runbook for the live isolated-workspace activation test ([4e72d16](https://github.com/buchenberg/yaah/commit/4e72d169e52a82faf9fee87c0bb0b95baf2c4cfc))
+* the D5 image needs go on the default PATH, not the image ENV ([2f927e5](https://github.com/buchenberg/yaah/commit/2f927e548aaa26271930f14321cc119d62332cf8))
+* the live runbook's run section is one copy-paste block ([f1ce647](https://github.com/buchenberg/yaah/commit/f1ce6473e02687e4b9bcfab6cc3e02b6b82df886))
+* the live-test image import needs containerd's -n namespace ([c2c423b](https://github.com/buchenberg/yaah/commit/c2c423bd080be6b547c0a6df81d1c9b69e74ef92))
+* the live-test image must be unpacked, not just imported ([08a0708](https://github.com/buchenberg/yaah/commit/08a0708e4beb0cd3d1e7595e5ce6ff0054999683))
+* **workspace:** the live harness needs sudo env, not sudo -E ([a02307a](https://github.com/buchenberg/yaah/commit/a02307a28cca9b14ba47402557d83fb6d8b694de))
+
 ## [0.61.0](https://github.com/buchenberg/yaah/compare/v0.60.0...v0.61.0) (2026-10-11)
 
 
