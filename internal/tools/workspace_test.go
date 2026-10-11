@@ -1,7 +1,9 @@
 package tools
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -434,59 +436,109 @@ func TestSandboxWorkspace_LocalAndShell(t *testing.T) {
 	}
 }
 
-// TestSandboxWorkspace_WriteFileIsAtomicInBand pins that the atomic write happens
-// inside the sandbox (temp file plus rename) and that content travels on stdin
-// rather than the command line.
+// TestSandboxWorkspace_WriteFileIsAtomicInBand pins the write mechanism the
+// containerd backend can actually run: temp file plus rename inside the
+// sandbox, content as base64 in positional arguments — never on stdin (the
+// runc-v2 shim holds the stdin FIFO open, so a stdin write blocks forever
+// there) and never spliced into the script text.
 func TestSandboxWorkspace_WriteFileIsAtomicInBand(t *testing.T) {
 	sb := sandboxfake.New()
 	ws := newSandboxWS(t, sb)
 
-	content := []byte("payload\nrm -rf /\n")
+	content := []byte("payload\nrm -rf /\n\x00binary\xff\n")
 	if err := ws.WriteFile(context.Background(), "/workspace/f.txt", content, 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	execs := sb.Execs()
-	if len(execs) != 1 {
-		t.Fatalf("execs = %d, want 1", len(execs))
+	if len(execs) != 2 {
+		t.Fatalf("execs = %d, want 2 (create+first chunk, then finalize)", len(execs))
 	}
-	req := execs[0]
-	if req.Command != "sh" {
-		t.Errorf("command = %q, want sh", req.Command)
+	for _, req := range execs {
+		if req.Command != "sh" {
+			t.Errorf("command = %q, want sh", req.Command)
+		}
+		if len(req.Stdin) != 0 {
+			t.Errorf("exec must not carry stdin (the containerd backend refuses it): %d bytes", len(req.Stdin))
+		}
+		if req.Cwd != "/workspace" {
+			t.Errorf("cwd = %q, want the workspace root", req.Cwd)
+		}
+		script := req.Args[1]
+		if strings.Contains(script, "mkdir -p") {
+			t.Errorf("script must not create parent directories the host would reject: %q", script)
+		}
+		if strings.Contains(script, "payload") {
+			t.Error("content must not be interpolated into the script")
+		}
 	}
-	script := req.Args[1]
-	if !strings.Contains(script, "mktemp") || !strings.Contains(script, "mv -f") {
-		t.Errorf("script must create a fresh temp file and rename it: %q", script)
+	// The first exec creates the temp beside the target and lands the
+	// first chunk; the content arrives as a base64 argument.
+	if first := execs[0]; !strings.Contains(first.Args[1], "mktemp") {
+		t.Errorf("first script must create a fresh temp file: %q", first.Args[1])
 	}
-	if strings.Contains(script, ".tmp.$$") {
-		t.Errorf("temp name must not be predictable from the pid: %q", script)
+	decoded, err := base64.StdEncoding.DecodeString(execs[0].Args[4])
+	if err != nil || !bytes.Equal(decoded, content) {
+		t.Errorf("first chunk argument = %q, %v; want the base64 content", decoded, err)
 	}
-	if !strings.Contains(script, "trap") {
-		t.Errorf("script must clean up the temp file on failure: %q", script)
+	// The closing exec applies the mode and renames onto the target —
+	// the atomicity — with the mode as its first argument.
+	last := execs[len(execs)-1]
+	if !strings.Contains(last.Args[1], "chmod") || !strings.Contains(last.Args[1], "mv -f") {
+		t.Errorf("closing script must chmod and rename: %q", last.Args[1])
 	}
-	if strings.Contains(script, "mkdir -p") {
-		t.Errorf("script must not create parent directories the host would reject: %q", script)
-	}
-	if !strings.Contains(script, `"$1"`) {
-		t.Errorf("script must take the path from $1, got %q", script)
-	}
-	if strings.Contains(script, "payload") {
-		t.Error("content must not be interpolated into the script")
-	}
-	if string(req.Stdin) != string(content) {
-		t.Errorf("stdin = %q, want the content", req.Stdin)
-	}
-	if req.Cwd != "/workspace" {
-		t.Errorf("cwd = %q, want the workspace root", req.Cwd)
+	if last.Args[3] != "644" {
+		t.Errorf("closing mode argument = %q, want 644", last.Args[3])
 	}
 
-	// The interpreted script must have actually written the file: content and
+	// The interpreted scripts must have actually written the file: content and
 	// mode round-trip through the in-memory tree, not just the recorder.
 	data, err := sb.ReadFile(context.Background(), "/workspace/f.txt")
-	if err != nil || string(data) != string(content) {
+	if err != nil || !bytes.Equal(data, content) {
 		t.Fatalf("content round-trip = %q, %v; want the written payload", data, err)
 	}
 	if info, err := ws.Stat(context.Background(), "/workspace/f.txt"); err != nil || info.Mode().Perm() != 0o644 {
 		t.Errorf("mode after write = %v, %v; want 0644", info.Mode().Perm(), err)
+	}
+}
+
+// TestSandboxWorkspace_WriteFileChunksLargePayloads pins the chunked tail of
+// the write: a payload beyond one chunk's bound appends across further execs
+// and lands byte-exact, binary included.
+func TestSandboxWorkspace_WriteFileChunksLargePayloads(t *testing.T) {
+	sb := sandboxfake.New()
+	ws := newSandboxWS(t, sb)
+
+	// A deterministic binary payload well past two chunk bounds, with a
+	// pattern that would catch off-by-one or double-append errors.
+	payload := make([]byte, 2*sandboxWriteChunkBytes+12345)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+	if err := ws.WriteFile(context.Background(), "/workspace/big.bin", payload, 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	got, err := sb.ReadFile(context.Background(), "/workspace/big.bin")
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("round-trip: %d bytes, %v; want %d byte-exact", len(got), err, len(payload))
+	}
+}
+
+// TestSandboxWorkspace_WriteFileEmptyPayload pins the empty-file edge: the
+// first exec's decode of an empty chunk appends nothing, and the file lands
+// empty rather than as a zero-byte-flavored error.
+func TestSandboxWorkspace_WriteFileEmptyPayload(t *testing.T) {
+	sb := sandboxfake.New()
+	ws := newSandboxWS(t, sb)
+
+	if err := ws.WriteFile(context.Background(), "/workspace/empty.txt", nil, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	info, err := ws.Stat(context.Background(), "/workspace/empty.txt")
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if info.Size() != 0 || info.Mode().Perm() != 0o600 {
+		t.Errorf("file = %d bytes, mode %v; want empty, 0600", info.Size(), info.Mode().Perm())
 	}
 }
 

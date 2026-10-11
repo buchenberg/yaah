@@ -9,7 +9,7 @@ package tools
 // It is inert by default, exactly like the kernel's own live suite: the
 // daemon address is an env knob, and without it there is nothing to talk
 // to. The image is also required, not defaulted: the D5 contract needs a
-// GNU userland with git, rg, and a Go toolchain, and no stock image
+// GNU userland with git, rg, base64, and a Go toolchain, and no stock image
 // guarantees that (alpine/git, for instance, has BusyBox find without
 // -printf). Build or pick an image, then:
 //

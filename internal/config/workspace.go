@@ -51,9 +51,9 @@ type ContainerdWorkspaceConfig struct {
 
 	// Image is the base image provisioned for the session. Required when
 	// the backend is containerd: a sandbox with no base filesystem has
-	// nothing to run. The image must satisfy the D5 contract (sh, GNU stat,
-	// GNU find, git, rg, and a Go toolchain) — ProbeImageContract verifies
-	// it at startup.
+	// nothing to run. The image must satisfy the D5 contract (sh, GNU
+	// stat, GNU find, git, rg, base64, and a Go toolchain) —
+	// ProbeImageContract verifies it at startup.
 	Image string `yaml:"image"`
 
 	// Snapshotter selects the containerd snapshotter plugin. Empty uses the

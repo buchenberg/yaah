@@ -17,9 +17,9 @@ run time under a second means it skipped — run with `-v` to see the skip reaso
   many sudoers policies refuse to preserve the environment, the knobs vanish, and
   the harness skips silently.
 - A workspace image satisfying the D5 contract. Nothing stock carries all of it:
-  the contract needs `sh`, GNU `stat -c`, GNU `find -printf`, `git`, `rg`, and a Go
-  toolchain — `alpine/git`, for instance, fails on BusyBox `find` (no `-printf`) and
-  has no `rg` or `go`.
+  the contract needs `sh`, GNU `stat -c`, GNU `find -printf`, `git`, `rg`,
+  `base64`, and a Go toolchain — `alpine/git`, for instance, fails on BusyBox
+  `find` (no `-printf`) and has no `rg` or `go`.
 
 ## Building the D5 image
 

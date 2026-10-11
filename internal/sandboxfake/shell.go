@@ -2,6 +2,7 @@ package sandboxfake
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io/fs"
 	"path"
@@ -18,8 +19,10 @@ import (
 // exactly these forms:
 //
 //	t=$(mktemp -- "$1.XXXXXX") || exit 1   # assignment + command substitution
-//	trap 'rm -f -- "$t"' EXIT              # EXIT trap, expanded when run
-//	cat > "$t" || exit 1                   # stdout redirection
+//	trap 'rm -f -- "$t" "$t.b64"' EXIT     # EXIT trap, expanded when run
+//	trap - EXIT                            # clearing an EXIT trap
+//	printf '%s' "$2" > "$t.b64" || exit 1  # printf '%s' + stdout redirection
+//	base64 -d "$t.b64" >> "$t"            # base64 decode, append redirection
 //	chmod "$2" "$t" || exit 1
 //	mv -f -- "$t" "$1"
 //	[ -e "$1" ] || [ -L "$1" ] || exit 42  # test, || chains
@@ -183,8 +186,14 @@ func (sh *shSession) runSegment(text string) int {
 		return code
 	case "trap":
 		// trap 'body' EXIT — the body keeps its quotes-off form; expansion
-		// happens when the trap runs, matching sh.
+		// happens when the trap runs, matching sh. `trap - EXIT` clears
+		// it, so a script can arm cleanup around a fallible middle and
+		// stand it down before its success path.
 		if len(words) == 3 && strings.EqualFold(words[2], "EXIT") {
+			if words[1] == "-" {
+				sh.trap = ""
+				return 0
+			}
 			sh.trap = words[1]
 			return 0
 		}
@@ -276,6 +285,15 @@ func (sh *shSession) runSimple(words []string) (string, int) {
 		return sh.cmdMkdir(words)
 	case "find":
 		return sh.cmdFind(words)
+	case "printf":
+		// printf '%s' arg... — the exact form the workspace's chunked
+		// write emits: the arguments are concatenated with no separator.
+		if len(words) >= 2 && words[1] == "%s" {
+			return strings.Join(words[2:], ""), 0
+		}
+		return "", sh.errf("sandboxfake: printf: unsupported form (only 'printf %%s' with arguments)\n")
+	case "base64":
+		return sh.cmdBase64(words)
 	case "echo":
 		return strings.Join(words[1:], " ") + "\n", 0
 	case "pwd":
@@ -807,6 +825,37 @@ func (sh *shSession) printfFormat(format string, e *entry, p string) (string, in
 		}
 	}
 	return b.String(), 0
+}
+
+// cmdBase64 implements `base64 [-d] FILE` — the decode form is the
+// workspace's chunked-write receiver; the encode form exists for symmetry.
+func (sh *shSession) cmdBase64(words []string) (string, int) {
+	flags, ops := operands(words[1:])
+	decode := false
+	for _, f := range flags {
+		if f != "-d" {
+			return "", sh.errf("sandboxfake: base64: unsupported flag %s\n", f)
+		}
+		decode = true
+	}
+	if len(ops) != 1 {
+		return "", sh.errf("base64: missing operand\n")
+	}
+	e, err := sh.sb.lookup(sh.ctx, ops[0], true)
+	if err != nil {
+		return "", sh.errf("base64: %s: No such file or directory\n", ops[0])
+	}
+	if e.isDir {
+		return "", sh.errf("base64: %s: Is a directory\n", ops[0])
+	}
+	if decode {
+		out, derr := base64.StdEncoding.DecodeString(string(e.data))
+		if derr != nil {
+			return "", sh.errf("base64: %s: %v\n", ops[0], derr)
+		}
+		return string(out), 0
+	}
+	return base64.StdEncoding.EncodeToString(e.data), 0
 }
 
 // dirExists reports whether p is a directory entry. Callers hold s.mu.
