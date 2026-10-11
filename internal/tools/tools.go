@@ -193,6 +193,23 @@ var leafTools = map[string]func() Tool{
 // on Windows, bash elsewhere. Both implementations remain available
 // via NewLeafTool for explicit registration.
 func NewRegistry() *Registry {
+	return newRegistry(func(Tool) bool { return true })
+}
+
+// NewIsolatedRegistry creates a tool registry with the built-in leaf tools
+// that can run inside an isolated workspace (plan §3, Option A): the same
+// platform shell rule as NewRegistry, minus the host-only leaf tools. The
+// runtime-wired host-only tools (role, background_process, supervised_task)
+// are the wiring's to omit — SetWorkspace refuses a registry that still
+// holds any host-only tool, so the curated set is what makes an isolated
+// session selectable at all.
+func NewIsolatedRegistry() *Registry {
+	return newRegistry(func(t Tool) bool { return !isHostOnlyTool(t) })
+}
+
+// newRegistry installs the leaf tools the keep predicate admits, with
+// NewRegistry's platform shell rule applied first.
+func newRegistry(keep func(Tool) bool) *Registry {
 	r := NewEmptyRegistry()
 	for name, factory := range leafTools {
 		if name == "bash" && runtime.GOOS == "windows" {
@@ -201,9 +218,22 @@ func NewRegistry() *Registry {
 		if name == "powershell" && runtime.GOOS != "windows" {
 			continue
 		}
-		r.Register(factory())
+		t := factory()
+		if !keep(t) {
+			continue
+		}
+		r.Register(t)
 	}
 	return r
+}
+
+// isHostOnlyTool reports whether the tool is host-only by design —
+// filesystem_tools.go's hostOnly() marker, read through the same interface
+// SetWorkspace's diagnostics use, so the curated-registry filter and the
+// enforcement gate can never classify a tool differently.
+func isHostOnlyTool(t Tool) bool {
+	_, ok := t.(interface{ hostOnly() })
+	return ok
 }
 
 // NewEmptyRegistry returns a Registry with no tools pre-registered, so

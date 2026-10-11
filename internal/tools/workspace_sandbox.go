@@ -23,12 +23,12 @@ import (
 //
 // Wiring status: cmd/yaah selects this when workspace.backend is containerd
 // (tools.SessionSandbox, the isolated-workspace plan §1.2) — one sandbox per
-// session, image-probed and created before the first tool dispatch. The
-// session still fails loudly at Registry.SetWorkspace until the plan's step 7
-// replaces the registry (the host-only tools disqualify the default one —
-// three in a default session; supervised_task registers only when
-// shepherd_trace_dir is set), so isolation is constructed and probed but not
-// yet active for a real session.
+// session, image-probed, created, and bootstrapped (D1) before the first tool
+// dispatch. The session's registry is curated (plan §3, Option A): the
+// host-only tools are omitted so SetWorkspace's gate passes, the prompt
+// carries the tool-surface delta (§2.2), and apply_out is the accept seam
+// that lets changes out. Sub-agent inheritance of the sandbox is the plan's
+// step 9 (decision D2).
 type sandboxWorkspace struct {
 	sb shepherd.Sandbox
 	// root is the containment root inside the sandbox.

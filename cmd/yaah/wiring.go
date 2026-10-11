@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -136,7 +137,22 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	}
 	subagent.SetDefaultRoleRegistry(reg)
 
-	toolReg := tools.NewRegistry()
+	// The tool registry (plan §3, Option A): local mode installs every
+	// built-in; isolated mode curates the set — the host-only leaf tools
+	// are left out here, the runtime-wired host-only tools at their
+	// registration sites below — so Registry.SetWorkspace's gate finds
+	// both diagnostic lists empty and the isolated session can actually
+	// be selected. The model is told about the delta (plan §2.2) and the
+	// record keeps it (decision D4).
+	isolated := cfg.Workspace.Backend == config.BackendContainerd
+	var omittedTools []string
+	var toolReg *tools.Registry
+	if isolated {
+		toolReg = tools.NewIsolatedRegistry()
+		omittedTools = append(omittedTools, "go_refactor")
+	} else {
+		toolReg = tools.NewRegistry()
+	}
 
 	// Workspace containment. Exactly one substrate may be installed:
 	//
@@ -198,6 +214,14 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		toolReg.SetPathValidator(pathValidator)
 	}
 
+	// The accept seam (plan §2.3, D1): the single door changes leave the
+	// container through, registered only in isolated mode — in local mode
+	// the tools write the host directly and there is nothing to let out.
+	// Registered before buildMainPrompt so the quick-ref card includes it.
+	if sessionSandbox != nil {
+		toolReg.Register(&tools.ApplyOutTool{Sandbox: sessionSandbox, HostDir: cwd})
+	}
+
 	db, err = memory.OpenDefault()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: db open failed, persistence disabled: %v\n", err)
@@ -241,11 +265,19 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	toolReg.Register(&tools.PlanTool{Dirs: planDirs})
 
 	roleDirs := runner.RoleSearchPaths(cwd)
-	toolReg.Register(&tools.RoleTool{
-		Dirs:         roleDirs,
-		BuiltinFiles: runner.BuiltinRoleFiles(),
-		Resolver:     runner.SubAgentRoleResolver{},
-	})
+	// role is host-only (plan §3, decision D3): role files are harness
+	// configuration the host reads. The registry above still loads the
+	// host's roles; only the management tool is left out of the isolated
+	// session.
+	if sessionSandbox == nil {
+		toolReg.Register(&tools.RoleTool{
+			Dirs:         roleDirs,
+			BuiltinFiles: runner.BuiltinRoleFiles(),
+			Resolver:     runner.SubAgentRoleResolver{},
+		})
+	} else {
+		omittedTools = append(omittedTools, "role")
+	}
 
 	var todoStore *todo.Store
 	if db != nil {
@@ -266,7 +298,14 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	})
 
 	procMgr := processpkg.NewManager()
-	toolReg.Register(&tools.BackgroundProcessTool{Manager: procMgr})
+	// background_process is host-only: it drives this in-memory host
+	// process manager. The manager itself stays — session teardown still
+	// owns it — but the tool is not exposed in isolated mode.
+	if sessionSandbox == nil {
+		toolReg.Register(&tools.BackgroundProcessTool{Manager: procMgr})
+	} else {
+		omittedTools = append(omittedTools, "background_process")
+	}
 
 	var messages []types.Message
 	var sessionID string
@@ -423,30 +462,62 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			if maxRetries <= 0 {
 				maxRetries = 1
 			}
-			toolReg.Register(&tools.SupervisedTaskTool{
-				Runner:         taskTool.Runner,
-				ResolveTimeout: taskTool.ResolveTimeout,
-				RoleNames:      supervisedRoles,
-				RoleResolver: func() []string {
-					_, supervised := splitRolesBySupervised(subagent.DefaultRegistry().Names(), isSupervisedRole)
-					return supervised
-				},
-				RoleDescriptions: runner.RoleDescriptionsFor(supervisedRoles),
-				RepoPath:         cfg.Agent.Default.SupervisedRepoPath,
-				MaxRetries:       maxRetries,
+			// supervised_task is host-only: it provisions sandboxes, so
+			// it cannot run inside the isolation it creates. Omitted in
+			// isolated mode (plan §3); its roles stay assigned to it,
+			// which the prompt delta explains.
+			if sessionSandbox == nil {
+				toolReg.Register(&tools.SupervisedTaskTool{
+					Runner:         taskTool.Runner,
+					ResolveTimeout: taskTool.ResolveTimeout,
+					RoleNames:      supervisedRoles,
+					RoleResolver: func() []string {
+						_, supervised := splitRolesBySupervised(subagent.DefaultRegistry().Names(), isSupervisedRole)
+						return supervised
+					},
+					RoleDescriptions: runner.RoleDescriptionsFor(supervisedRoles),
+					RepoPath:         cfg.Agent.Default.SupervisedRepoPath,
+					MaxRetries:       maxRetries,
 
-				Worktree:          cfg.Agent.Default.SupervisedWorktree,
-				WorktreeRoot:      cfg.Agent.Default.SupervisedWorktreeRoot,
-				WorktreeBootstrap: cfg.Agent.Default.SupervisedWorktreeBootstrap,
-			})
+					Worktree:          cfg.Agent.Default.SupervisedWorktree,
+					WorktreeRoot:      cfg.Agent.Default.SupervisedWorktreeRoot,
+					WorktreeBootstrap: cfg.Agent.Default.SupervisedWorktreeBootstrap,
+				})
+			} else {
+				omittedTools = append(omittedTools, "supervised_task")
+			}
 		}
 	}
 
-	// Advertise supervised_task only when it was actually registered (the
-	// shared scope manager is set exclusively on successful init), so the
-	// prompt never references a tool that init failure left unavailable.
-	if tools.SharedScopeManager != nil {
+	// The prompt must never advertise a tool that is not registered.
+	// Local mode: the sub-agent guidance only when supervised_task is
+	// actually there (the shared scope manager is set exclusively on
+	// successful init). Isolated mode: the §2.2 delta instead — which
+	// names every omitted tool with its reason, covers the
+	// spawn_subagent-only story, and explains the apply_out workflow —
+	// since the local guidance would promise a supervised_task that
+	// cannot exist here.
+	if sessionSandbox != nil {
+		slices.Sort(omittedTools)
+		mainPrompt += "\n\n" + prompts.IsolatedWorkspaceGuidance(omittedTools)
+	} else if tools.SharedScopeManager != nil {
 		mainPrompt += "\n\n" + prompts.SubAgentToolsGuidance()
+	}
+
+	// Decision D4: the workspace substrate and the omitted tool names go
+	// into the session record, so "the model didn't use
+	// background_process" and "the model couldn't" stay distinguishable
+	// for any reader of the transcript. Written after the registry is
+	// final; a resume that changed mode overwrites, describing the most
+	// recent run.
+	if db != nil {
+		backend := cfg.Workspace.Backend
+		if backend == "" {
+			backend = config.BackendLocal
+		}
+		if werr := db.UpdateSessionWorkspace(sessionID, backend, strings.Join(omittedTools, ",")); werr != nil {
+			fmt.Fprintf(os.Stderr, "warning: recording workspace metadata: %v\n", werr)
+		}
 	}
 
 	toolReg.Register(&tools.ListSubAgentsTool{

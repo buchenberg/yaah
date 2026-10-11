@@ -713,8 +713,44 @@ have been **executed**; the verdict is recorded against each.
    parent at apply-out fails loudly rather than merging — that is
    settlement's problem (kernel `Seal`/`Settle` + `DeltaApplier`),
    deliberately still out of scope.
-7. Tool surface per **§3 Option A** + **D3** (§2.1), prompt delta per §2.2, and
-   **D4**'s trace metadata.
+7. ✅ Tool surface per **§3 Option A** + **D3** (§2.1), prompt delta per §2.2,
+   and **D4**'s trace metadata — **landed**.
+   `tools.NewIsolatedRegistry()` builds the curated leaf set — same
+   platform shell rule as `NewRegistry`, minus the host-only leaves, with
+   the filter reading the same `hostOnly()` marker `SetWorkspace`'s gate
+   uses, so curation and enforcement cannot classify a tool differently.
+   The wiring omits `role`, `background_process`, and `supervised_task` at
+   their registration sites, collecting the omitted names as it goes, so
+   `SetWorkspace` finds both diagnostic lists empty and an isolated
+   session is finally selectable — the gate stays the enforcement point
+   and still fails the session loudly if the invariant ever breaks.
+   The accept seam step 6 anticipated is here: the `apply_out` tool,
+   registered only in isolated mode, previews the diff since the baseline
+   (`dry_run`) or invokes `ApplyOut` onto the host. The real apply is
+   gated behind user approval through `DangerClassifier` — approval mode
+   "ask" prompts, "deny" strips the call; a dry run is never dangerous,
+   and unparseable arguments fail closed at the gate. The prompt delta
+   (§2.2) is `prompts.IsolatedWorkspaceGuidance(omitted)`, injected in
+   place of the sub-agent guidance (which would promise a
+   `supervised_task` that cannot exist here): it names every omitted tool
+   with its reason, explains the spawn_subagent-only story, documents the
+   apply_out workflow, and warns that sub-agents do not run inside the
+   container yet. Decision D4 lands in the session record: the sessions
+   table gains `workspace_backend` and `workspace_omitted_tools` columns
+   (migration-safe), written after the registry is final; a resume that
+   changed mode overwrites, so the columns describe the most recent run.
+   Tests: the leaf-level activation matrix (local vs isolated differ by
+   exactly `go_refactor`), the curated registry's selectability (both
+   diagnostic lists empty, `SetWorkspace` accepts), the host-only leaf
+   classification pinned, `apply_out` end to end against the fake
+   (dry-run/apply/no-op/danger table), the guidance content, and the
+   session-metadata round-trip plus migration. Gates: build, vet,
+   staticcheck, gofmt, full `go test ./...`, windows + darwin
+   cross-compile, `-race` on internal/tools.
+   **Known gap, deliberate:** sub-agents still do not inherit the sandbox
+   (step 9, D2) — `spawn_subagent` in an isolated session dispatches
+   host-side sub-agents, and the prompt says so. `doctor` visibility of
+   the active substrate is step 8.
 8. Activation wiring + `doctor` (§2.4). *First genuinely useful release.*
 9. Test matrix (§8), docs, and D2's inheritance behaviour for sub-agents (§1.3).
 

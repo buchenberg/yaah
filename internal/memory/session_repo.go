@@ -4,8 +4,23 @@ package memory
 // capped so an unbounded prompt cannot bloat the database (review A6/S7).
 func (d *DB) CreateSession(s Session) error {
 	_, err := d.sql.Exec(
-		`INSERT INTO sessions (id, started_at, ended_at, cwd, model, tokens_in, tokens_out, system_prompt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO sessions (id, started_at, ended_at, cwd, model, tokens_in, tokens_out, system_prompt, workspace_backend, workspace_omitted_tools) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		s.ID, s.StartedAt, s.EndedAt, s.CWD, s.Model, s.TokensIn, s.TokensOut, truncateWithMarker(s.SystemPrompt, maxSessionPromptBytes),
+		s.WorkspaceBackend, s.WorkspaceOmittedTools,
+	)
+	return err
+}
+
+// UpdateSessionWorkspace records the workspace substrate a session ran
+// under and the host-only tools isolated mode omitted (decision D4 of the
+// isolated-workspace plan). Called after the tool registry is final, so
+// the omitted list reflects what this session actually skipped. The
+// columns describe the session's most recent run; a resumed session that
+// changed mode overwrites them.
+func (d *DB) UpdateSessionWorkspace(id, backend, omittedTools string) error {
+	_, err := d.sql.Exec(
+		`UPDATE sessions SET workspace_backend = ?, workspace_omitted_tools = ? WHERE id = ?`,
+		backend, omittedTools, id,
 	)
 	return err
 }
@@ -14,12 +29,13 @@ func (d *DB) CreateSession(s Session) error {
 func (d *DB) GetSession(id string) (Session, error) {
 	row := d.sql.QueryRow(`
 		SELECT id, started_at, COALESCE(ended_at, 0), cwd, model, tokens_in, tokens_out,
-			COALESCE(system_prompt, ''), COALESCE(compacted_summary, '')
+			COALESCE(system_prompt, ''), COALESCE(compacted_summary, ''),
+			COALESCE(workspace_backend, ''), COALESCE(workspace_omitted_tools, '')
 		FROM sessions WHERE id = ?
 	`, id)
 	var s Session
 	err := row.Scan(&s.ID, &s.StartedAt, &s.EndedAt, &s.CWD, &s.Model, &s.TokensIn, &s.TokensOut,
-		&s.SystemPrompt, &s.CompactedSummary)
+		&s.SystemPrompt, &s.CompactedSummary, &s.WorkspaceBackend, &s.WorkspaceOmittedTools)
 	return s, err
 }
 
@@ -27,7 +43,8 @@ func (d *DB) GetSession(id string) (Session, error) {
 func (d *DB) ListSessions(limit int) ([]Session, error) {
 	rows, err := d.sql.Query(`
 		SELECT id, started_at, COALESCE(ended_at, 0), cwd, model, tokens_in, tokens_out,
-			COALESCE(system_prompt, ''), COALESCE(compacted_summary, '')
+			COALESCE(system_prompt, ''), COALESCE(compacted_summary, ''),
+			COALESCE(workspace_backend, ''), COALESCE(workspace_omitted_tools, '')
 		FROM sessions
 		ORDER BY started_at DESC
 		LIMIT ?
@@ -40,7 +57,8 @@ func (d *DB) ListSessions(limit int) ([]Session, error) {
 	var results []Session
 	for rows.Next() {
 		var s Session
-		if err := rows.Scan(&s.ID, &s.StartedAt, &s.EndedAt, &s.CWD, &s.Model, &s.TokensIn, &s.TokensOut, &s.SystemPrompt, &s.CompactedSummary); err != nil {
+		if err := rows.Scan(&s.ID, &s.StartedAt, &s.EndedAt, &s.CWD, &s.Model, &s.TokensIn, &s.TokensOut,
+			&s.SystemPrompt, &s.CompactedSummary, &s.WorkspaceBackend, &s.WorkspaceOmittedTools); err != nil {
 			return nil, err
 		}
 		results = append(results, s)
