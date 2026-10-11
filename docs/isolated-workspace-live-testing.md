@@ -56,11 +56,18 @@ so an imported-but-unpacked image also falls through to a registry pull.
 
 ## Running the harness
 
+One block, in order — the import lands the image in the namespace the session
+reads, then the run follows it:
+
 ```bash
+sudo ctr -n yaah-live images import /tmp/yaah-workspace.tar && \
 sudo env YAAH_LIVE_CONTAINERD_ADDR=/run/containerd/containerd.sock \
      YAAH_LIVE_CONTAINERD_IMAGE=docker.io/library/yaah-workspace:latest \
      go test ./internal/tools/ -run TestLive_ActivatedSession -count=1 -timeout 30m -v
 ```
+
+The import only needs re-running after rebuilding the image; the test line alone
+is enough for subsequent runs.
 
 Notes:
 
