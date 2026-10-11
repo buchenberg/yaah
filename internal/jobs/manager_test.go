@@ -113,6 +113,13 @@ func TestBackgroundJobs_SurvivesCallContextCancellation(t *testing.T) {
 
 	waitForJob(t, m, id, 2*time.Second)
 
+	// Deliver fires after the job's status flips, so completion does
+	// not imply delivery — poll briefly (the same race the usage test
+	// fixed; a slow Windows runner exposed this one too).
+	deadline := time.Now().Add(2 * time.Second)
+	for !completed.Load() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
 	if !completed.Load() {
 		t.Fatal("background job did not complete; it was likely cancelled by the call context")
 	}
