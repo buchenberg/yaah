@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/buchenberg/shepherd-kernel-go"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
@@ -103,19 +104,35 @@ func TestSubAgentLoop_ErrorRateRuleRescue(t *testing.T) {
 		t.Fatal("the failing tool never ran; the rescue scenario is not exercised")
 	}
 
-	// The rescue evidence: some turn's prompt must carry the
-	// rule-named guidance via the steer bridge.
-	var steered bool
-	for _, req := range fp.requests {
-		for _, m := range req.Messages {
-			if m.Role == "user" && strings.Contains(m.Content, "[STEER]") &&
-				strings.Contains(m.Content, "[error_rate_guard]") {
-				steered = true
+	// The rescue evidence: the rule-named guidance reached the run.
+	// Which sink holds it is a race the design owns — steering is
+	// between-turn delivery, so the guidance is either drained into a
+	// turn's prompt (asserted here) or still queued on the channel
+	// when the loop finishes (asserted below). Either proves the
+	// rescue; the middleware's prompt-side surfacing is separately
+	// pinned by the A2 steer tests.
+	delivered := func() bool {
+		for _, req := range fp.requests {
+			for _, m := range req.Messages {
+				if m.Role == "user" && strings.Contains(m.Content, "[STEER]") &&
+					strings.Contains(m.Content, "[error_rate_guard]") {
+					return true
+				}
 			}
 		}
+		select {
+		case g := <-steerCh:
+			return strings.Contains(g, "[error_rate_guard]")
+		default:
+			return false
+		}
 	}
-	if !steered {
-		t.Error("no turn's prompt carries the injected [error_rate_guard] guidance; the rescue did not happen")
+	deadline := time.Now().Add(2 * time.Second)
+	for !delivered() {
+		if !time.Now().Before(deadline) {
+			t.Fatal("the [error_rate_guard] guidance never reached the run's steering channel")
+		}
+		time.Sleep(time.Millisecond)
 	}
 
 	// And the firing is recorded in the target scope's trace — the A2

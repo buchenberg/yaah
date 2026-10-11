@@ -577,19 +577,20 @@ func TestService_HaltDispatchSubScope(t *testing.T) {
 		KindLabel:    "explode",
 	})
 
+	// The dispatch is cancel-then-quiesce-then-halt: seeing the
+	// cancellation only proves the FIRST step ran. Poll until both the
+	// cancellation and the kernel-side halt (the scope's discarded
+	// state) are visible.
 	deadline := time.Now().Add(2 * time.Second)
-	for !cancelled.Load() {
+	for {
+		scope, ok := mgr.Get("scope:sub-worker")
+		if ok && cancelled.Load() && scope.State() == shepherd.ScopeDiscarded {
+			return
+		}
 		if !time.Now().Before(deadline) {
-			t.Fatal("the halt was never delivered to the run's cancellation")
+			t.Fatalf("halt incomplete after 2s: cancelled=%v", cancelled.Load())
 		}
 		time.Sleep(time.Millisecond)
-	}
-	scope, ok := mgr.Get("scope:sub-worker")
-	if !ok {
-		t.Fatal("scope vanished")
-	}
-	if scope.State() != shepherd.ScopeDiscarded {
-		t.Errorf("scope state = %q, want discarded by the kernel-side halt", scope.State())
 	}
 }
 
@@ -663,18 +664,16 @@ func TestService_RootHaltWithOptIn(t *testing.T) {
 
 	publishRootExplode(bus)
 
+	// Cancel first, kernel-side halt after: poll for both.
 	deadline := time.Now().Add(2 * time.Second)
-	for !cancelled.Load() {
+	for {
+		root, ok := mgr.Get("scope:sess-root")
+		if ok && cancelled.Load() && root.State() == shepherd.ScopeDiscarded {
+			return
+		}
 		if !time.Now().Before(deadline) {
-			t.Fatal("the opt-in root halt was never delivered")
+			t.Fatalf("root halt incomplete after 2s: cancelled=%v", cancelled.Load())
 		}
 		time.Sleep(time.Millisecond)
-	}
-	root, ok := mgr.Get("scope:sess-root")
-	if !ok {
-		t.Fatal("root scope vanished")
-	}
-	if root.State() != shepherd.ScopeDiscarded {
-		t.Errorf("root state = %q, want discarded by the kernel-side halt", root.State())
 	}
 }

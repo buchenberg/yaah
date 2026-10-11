@@ -14,6 +14,7 @@ package supervision
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -153,7 +154,7 @@ func advisoryRule(rule shepherd.SupervisionRule) shepherd.SupervisionRule {
 			return nil
 		}
 		if payload, ok := iv.Payload.(string); ok {
-			iv.Payload = "[" + rule.Name + "] " + payload
+			iv.Payload = fmt.Sprintf("[%s] %s (observed: %s)", rule.Name, payload, e.KindLabel)
 		}
 		return iv
 	}
@@ -390,7 +391,15 @@ func (s *Service) deliverHalt(scopeID, reason string) {
 				// and the log names the unquiesced run.
 			}
 		}
-	} else if !errors.Is(err, ErrNoRun) && !errors.Is(err, ErrNotHaltable) {
+	} else if errors.Is(err, ErrNotHaltable) {
+		// A registered run that cannot be cancelled is still using
+		// the scope's sandbox: the kernel-side halt would destroy it
+		// underneath a live run — the exact teardown hazard the
+		// cancel-first ordering exists to prevent. The manual halt
+		// tolerates this (a human asked); a rule must not.
+		slog.Warn("supervisor: halt refused — the run registered no cancellation", "scope", scopeID)
+		return
+	} else if !errors.Is(err, ErrNoRun) {
 		// A delivery failure the registry did not classify is a
 		// bridge bug; report it rather than half-halt.
 		slog.Warn("supervisor: halt delivery failed", "scope", scopeID, "err", err)
