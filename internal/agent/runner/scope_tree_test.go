@@ -10,6 +10,7 @@ import (
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/tools"
 )
 
 // newScopeManagerForTest returns a scope manager over an in-memory store.
@@ -150,7 +151,13 @@ func TestCreateSubAgentScope_WorkdirForksIsolated(t *testing.T) {
 		t.Skip("git binary not available")
 	}
 	repo := newRunnerTestGitRepo(t)
-	mgr, _ := newScopeManagerForTest(t)
+	mgr, store := newScopeManagerForTest(t)
+	// The workdir branch records the worktree path for recovery (R1)
+	// through the shared store global, exactly as the wiring pairs it
+	// with the shared manager.
+	prevStore := tools.SharedTraceStore
+	tools.SharedTraceStore = store
+	t.Cleanup(func() { tools.SharedTraceStore = prevStore })
 	root, err := CreateRootScope(mgr, "sess-wt", repo, false)
 	if err != nil {
 		t.Fatalf("CreateRootScope: %v", err)

@@ -15,6 +15,7 @@ import (
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
 	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+	"github.com/buchenberg/yaah/internal/agent/recovery"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -454,7 +455,7 @@ func (s *supervisedSession) rollbackUnit(ctx context.Context, guidance string) (
 
 	snap, err := mgr.RestoreCheckpoint(ctx, s.checkpointID)
 	if err != nil {
-		return "", fmt.Errorf("supervisor: rollback: restore: %w", err)
+		return "", mapRestoreError(err)
 	}
 	s.checkpointID = ""
 	seed := unmarshalMessages(snap)
@@ -470,6 +471,21 @@ func (s *supervisedSession) rollbackUnit(ctx context.Context, guidance string) (
 	s.unitSnap = cp.Snapshot
 
 	return s.dispatchLocked(ctx, prompt, seed)
+}
+
+// mapRestoreError maps a checkpoint-restore failure to the review
+// session's refusal (adoption plan R1/D5): a checkpoint recovery marked
+// CheckpointInvalid — the recorded revision no longer matches the
+// workspace — refuses with the recorded reason rather than silently
+// rewinding a tree that moved past it. The match is against the
+// kernel's documented refusal text; the kernel does not type this
+// error, and the pinned message is test-pinned so a kernel rewording
+// fails loudly instead of silently losing the mapping.
+func mapRestoreError(err error) error {
+	if strings.Contains(err.Error(), "is invalid, cannot restore") {
+		return fmt.Errorf("supervisor: rollback: the recorded checkpoint no longer matches the workspace — the tree moved past it and the unit cannot be rolled back: %w", err)
+	}
+	return fmt.Errorf("supervisor: rollback: restore: %w", err)
 }
 
 // reviewDiff re-fetches the current diff and report without running
@@ -722,7 +738,7 @@ func (s *supervisedSession) provisionVariant(
 		// clear it when it is actually a worktree registered with this
 		// repository: the worktree root is user-configurable, the occupant
 		// may be unrelated data, and Destroy falls back to RemoveAll.
-		if isRegisteredWorktree(ctx, s.runtime.RepoPath, wtPath) {
+		if recovery.IsRegisteredWorktree(ctx, s.runtime.RepoPath, wtPath) {
 			_ = sb.Destroy(context.WithoutCancel(ctx))
 		}
 		if retryErr := sb.Create(ctx, shepherdsandbox.SandboxSpec{}); retryErr != nil {
@@ -744,6 +760,35 @@ func (s *supervisedSession) provisionVariant(
 	}
 	v.ScopeID = scope.ID()
 
+	// Record the worktree's path for recovery (adoption plan R1): the
+	// kernel's fork record carries the backend but not the path. A
+	// record failure discards the branch — a worktree the trace cannot
+	// find is an orphan recovery would never list.
+	if terr := recovery.RecordWorktree(ctx, SharedTraceStore, scope.OwnerID(), s.runtime.RepoPath, wtPath); terr != nil {
+		// The discard's own failure must not strand the worktree: the
+		// kernel records the discard BEFORE destroying the owned
+		// sandbox, so the same store failure returns before the
+		// teardown — destroy the sandbox explicitly and join the
+		// cleanup failure into the branch's error.
+		v.ScopeID = ""
+		v.RunErr = terr.Error()
+		// Destroy only when the discard did not already own the
+		// teardown: on a successful discard the kernel has destroyed
+		// the owned worktree, and a second destroy would append a
+		// spurious error to a clean cleanup.
+		if parent, pok := mgr.Get(s.scopeID); pok {
+			if derr := parent.Discard(scope); derr != nil {
+				v.RunErr = v.RunErr + "; discard: " + derr.Error()
+				if sderr := sb.Destroy(context.WithoutCancel(ctx)); sderr != nil {
+					v.RunErr = v.RunErr + "; destroy worktree: " + sderr.Error()
+				}
+			}
+		} else if sderr := sb.Destroy(context.WithoutCancel(ctx)); sderr != nil {
+			v.RunErr = v.RunErr + "; destroy worktree: " + sderr.Error()
+		}
+		return v
+	}
+
 	// Seed the checkout with the parent's exact state at the fork point
 	// before bootstrapping. The bootstrap installs from tracked lockfiles
 	// that Apply restores, so running it against HEAD would provision the
@@ -761,42 +806,6 @@ func (s *supervisedSession) provisionVariant(
 		}
 	}
 	return v
-}
-
-// isRegisteredWorktree reports whether path is currently registered as a git
-// worktree of repoPath. A worktree left behind by a killed run still appears
-// in `git worktree list`; unrelated data in a user-configured worktree root
-// does not, which is what makes clearing it safe.
-func isRegisteredWorktree(ctx context.Context, repoPath, path string) bool {
-	out, err := exec.CommandContext(ctx, "git", "-C", repoPath, "worktree", "list", "--porcelain").Output()
-	if err != nil {
-		return false
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if !strings.HasPrefix(line, "worktree ") {
-			continue
-		}
-		wt, err := filepath.Abs(strings.TrimPrefix(line, "worktree "))
-		if err != nil {
-			continue
-		}
-		// Windows paths differ in case; a lexical compare there would miss
-		// the registered entry and skip a legitimate cleanup.
-		if runtime.GOOS == "windows" {
-			if strings.EqualFold(filepath.Clean(wt), filepath.Clean(abs)) {
-				return true
-			}
-			continue
-		}
-		if filepath.Clean(wt) == filepath.Clean(abs) {
-			return true
-		}
-	}
-	return false
 }
 
 // worktreePath returns a deterministic worktree path for a variant. The session

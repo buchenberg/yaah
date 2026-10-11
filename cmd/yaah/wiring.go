@@ -14,6 +14,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent/budget"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
+	"github.com/buchenberg/yaah/internal/agent/recovery"
 	"github.com/buchenberg/yaah/internal/agent/runner"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
@@ -414,7 +415,35 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		store, bus, mgr, serr := pipeline.InitShepherdInfrastructure(cfg.Agent.Default.ShepherdTraceDir, 0)
 		if serr != nil {
 			fmt.Fprintf(os.Stderr, "warning: shepherd tracing disabled: %v\n", serr)
-		} else {
+		}
+		// Scope recovery (adoption plan R1, decision D5): the trace is
+		// the registry — rebuild the scope tree, checkpoints, and
+		// sealed outputs from the durable records so a restarted
+		// process remembers its supervision state. The recovered
+		// manager replaces the fresh one. A recovery failure fails
+		// loudly (half-adopted sandboxes are worse than none) by
+		// disabling the ENTIRE tracing block below — root scope,
+		// bridge, and supervisor all stay down rather than
+		// half-running against a closed store.
+		tracingReady := serr == nil
+		if tracingReady {
+			repoPath := cfg.Agent.Default.SupervisedRepoPath
+			if repoPath == "" {
+				repoPath, _ = os.Getwd()
+			}
+			// adoptRoots: an isolated session keeps roots causal (D2) —
+			// recovery must not attach a host git sandbox where creation
+			// refused one.
+			if recovered, report, rerr := recovery.Recover(context.Background(), store, repoPath, sessionSandbox == nil); rerr != nil {
+				fmt.Fprintf(os.Stderr, "warning: shepherd tracing disabled: scope recovery failed: %v\n", rerr)
+				store.Close(context.Background())
+				tracingReady = false
+			} else {
+				mgr = recovered
+				printRecoveryReport(report)
+			}
+		}
+		if tracingReady {
 			tools.SharedTraceStore = store
 			scopeMgr = mgr
 			tools.SharedScopeManager = mgr
