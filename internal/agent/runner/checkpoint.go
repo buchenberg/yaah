@@ -4,6 +4,7 @@ import (
 	"context"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	"github.com/buchenberg/yaah/internal/agent"
 )
 
@@ -14,12 +15,12 @@ import (
 type ShepherdTurnCheckpointer struct {
 	mgr     *shepherd.ScopeManager
 	scopeID string
-	sandbox shepherd.Sandbox
+	sandbox shepherdsandbox.Sandbox
 }
 
 // NewShepherdTurnCheckpointer returns a turn checkpointer that creates
 // single-use checkpoints on scopeID against sb.
-func NewShepherdTurnCheckpointer(mgr *shepherd.ScopeManager, scopeID string, sb shepherd.Sandbox) *ShepherdTurnCheckpointer {
+func NewShepherdTurnCheckpointer(mgr *shepherd.ScopeManager, scopeID string, sb shepherdsandbox.Sandbox) *ShepherdTurnCheckpointer {
 	return &ShepherdTurnCheckpointer{mgr: mgr, scopeID: scopeID, sandbox: sb}
 }
 

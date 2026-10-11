@@ -6,16 +6,17 @@ import (
 	"fmt"
 	"sync"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 
 	"github.com/buchenberg/yaah/internal/config"
 )
 
-// SandboxOpener constructs one unprovisioned shepherd.Sandbox from the
+// SandboxOpener constructs one unprovisioned shepherdsandbox.Sandbox from the
 // workspace config. Wiring passes OpenContainerdWorkspaceSandbox (registry
 // resolution — the step-4 seam); tests pass a closure over the in-memory
 // fake, so no test ever touches the global backend registry.
-type SandboxOpener func(w config.WorkspaceConfig) (shepherd.Sandbox, error)
+type SandboxOpener func(w config.WorkspaceConfig) (shepherdsandbox.Sandbox, error)
 
 // SessionSandbox owns the session's isolated workspace sandbox lifecycle
 // (the isolated-workspace plan §1.2): one sandbox per session — not per tool
@@ -27,12 +28,12 @@ type SandboxOpener func(w config.WorkspaceConfig) (shepherd.Sandbox, error)
 // is the most likely operational bug in isolated mode, so nothing may abandon
 // one — including its own error paths.
 type SessionSandbox struct {
-	sb shepherd.Sandbox
+	sb shepherdsandbox.Sandbox
 	ws *sandboxWorkspace
 	// baseline is the state captured right after the D1 bootstrap (copy-in
 	// plus a rebind Apply), the anchor for the session's diffs and
 	// apply-out. Nil when the session started without a bootstrap.
-	baseline *shepherd.WorkspaceState
+	baseline *shepherdtrace.WorkspaceState
 
 	destroyOnce sync.Once
 	destroyErr  error
@@ -76,7 +77,7 @@ func StartSessionSandbox(ctx context.Context, w config.WorkspaceConfig, open San
 	// still destroys: a partially-provisioned container is a container,
 	// and this cleanup must run even when the caller's context expired
 	// mid-Create.
-	if err := sb.Create(ctx, shepherd.SandboxSpec{Workdir: w.Root}); err != nil {
+	if err := sb.Create(ctx, shepherdsandbox.SandboxSpec{Workdir: w.Root}); err != nil {
 		err = fmt.Errorf("workspace: create session sandbox: %w", err)
 		if derr := sb.Destroy(context.WithoutCancel(ctx)); derr != nil {
 			return nil, errors.Join(err, fmt.Errorf("workspace: destroy after failed create: %w", derr))

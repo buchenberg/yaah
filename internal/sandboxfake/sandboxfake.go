@@ -1,4 +1,4 @@
-// Package sandboxfake provides an in-memory shepherd.Sandbox test double.
+// Package sandboxfake provides an in-memory shepherdsandbox.Sandbox test double.
 //
 // The isolated-workspace activation path (config → sandbox construction →
 // Registry.SetWorkspace → tool dispatch) must be testable on any host OS, with
@@ -26,7 +26,8 @@ import (
 	"sync"
 	"time"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
 // Lifecycle state errors. They are values: tests assert with errors.Is.
@@ -37,7 +38,7 @@ var (
 	ErrAlreadyDestroyed = errors.New("sandboxfake: sandbox already destroyed")
 )
 
-// Sandbox is an in-memory shepherd.Sandbox. It is safe for concurrent use.
+// Sandbox is an in-memory shepherdsandbox.Sandbox. It is safe for concurrent use.
 //
 // Paths are POSIX inside the fake, matching the substrate sandboxWorkspace
 // assumes: separators are / and the tree is rooted at /, seeded with a single
@@ -47,7 +48,7 @@ type Sandbox struct {
 	// every Exec, after the request is recorded. It lets a test pin exact
 	// wire-level results (exit codes, stdout, transport errors) that a
 	// working in-memory filesystem cannot produce on demand.
-	ExecHook func(shepherd.ExecRequest) (shepherd.ExecResult, error)
+	ExecHook func(shepherdsandbox.ExecRequest) (shepherdsandbox.ExecResult, error)
 
 	mu        sync.Mutex
 	files     map[string]*entry
@@ -55,10 +56,10 @@ type Sandbox struct {
 	destroyed bool
 	rev       int // capture revision counter
 	tmp       int // mktemp uniqueness counter
-	execs     []shepherd.ExecRequest
+	execs     []shepherdsandbox.ExecRequest
 }
 
-var _ shepherd.Sandbox = (*Sandbox)(nil)
+var _ shepherdsandbox.Sandbox = (*Sandbox)(nil)
 
 // entry is one node of the fake filesystem.
 type entry struct {
@@ -85,14 +86,14 @@ func (s *Sandbox) Backend() string { return "fake" }
 // Capabilities reports a fully capable, isolated backend. The in-memory tree
 // can never touch a host path, which is at least as strong as the namespaces
 // the containerd backend reports, so the containment class matches it.
-func (s *Sandbox) Capabilities() shepherd.SandboxCapabilities {
-	return shepherd.SandboxCapabilities{
+func (s *Sandbox) Capabilities() shepherdsandbox.SandboxCapabilities {
+	return shepherdsandbox.SandboxCapabilities{
 		Lifecycle:   true,
 		Exec:        true,
 		FileIO:      true,
 		Diff:        true,
 		Isolated:    true,
-		Containment: shepherd.ContainContained,
+		Containment: shepherdtrace.ContainContained,
 	}
 }
 
@@ -101,7 +102,7 @@ func (s *Sandbox) Capabilities() shepherd.SandboxCapabilities {
 // that leaks containers. When the spec names a Workdir it is created, the way
 // a container's working directory exists once the container does — every
 // in-band script the workspace runs assumes it.
-func (s *Sandbox) Create(_ context.Context, spec shepherd.SandboxSpec) error {
+func (s *Sandbox) Create(_ context.Context, spec shepherdsandbox.SandboxSpec) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch {
@@ -148,10 +149,10 @@ func (s *Sandbox) Destroyed() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.
 // Execs returns every recorded ExecRequest, in order, including requests made
 // while the sandbox was not usable (before Create or after Destroy) — an
 // attempt against a dead sandbox is exactly the signal a lifecycle test wants.
-func (s *Sandbox) Execs() []shepherd.ExecRequest {
+func (s *Sandbox) Execs() []shepherdsandbox.ExecRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]shepherd.ExecRequest, len(s.execs))
+	out := make([]shepherdsandbox.ExecRequest, len(s.execs))
 	copy(out, s.execs)
 	return out
 }
@@ -159,20 +160,20 @@ func (s *Sandbox) Execs() []shepherd.ExecRequest {
 // Exec interprets the request. A `sh -c script name args...` request runs
 // through the interpreter in shell.go; any other command is an error, because
 // the fake has no userland — tests that need a specific tool register ExecHook.
-func (s *Sandbox) Exec(ctx context.Context, req shepherd.ExecRequest) (shepherd.ExecResult, error) {
+func (s *Sandbox) Exec(ctx context.Context, req shepherdsandbox.ExecRequest) (shepherdsandbox.ExecResult, error) {
 	s.mu.Lock()
 	s.execs = append(s.execs, req)
 	err := s.usable()
 	s.mu.Unlock()
 	if err != nil {
-		return shepherd.ExecResult{}, err
+		return shepherdsandbox.ExecResult{}, err
 	}
 
 	if s.ExecHook != nil {
 		return s.ExecHook(req)
 	}
 	if req.Command != "sh" || len(req.Args) < 2 || req.Args[0] != "-c" {
-		return shepherd.ExecResult{
+		return shepherdsandbox.ExecResult{
 			ExitCode: 127,
 			Stderr:   fmt.Sprintf("sandboxfake: no such command: %s", req.Command),
 		}, nil
@@ -231,7 +232,7 @@ func (s *Sandbox) writeFileLocked(_ context.Context, p string, data []byte, perm
 }
 
 // MkdirAll creates a directory and its missing parents, for seeding. It is
-// host-side test support, not part of shepherd.Sandbox.
+// host-side test support, not part of shepherdsandbox.Sandbox.
 func (s *Sandbox) MkdirAll(p string, perm fs.FileMode) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

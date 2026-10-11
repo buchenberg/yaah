@@ -8,7 +8,7 @@ import (
 	"slices"
 	"testing"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -84,7 +84,7 @@ func TestPipeline_SubAgentPermissionHonoursDisabled(t *testing.T) {
 }
 
 func TestSubAgentTrace_UsesSharedStore(t *testing.T) {
-	store, err := shepherd.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestSubAgentTrace_NoSharedManager(t *testing.T) {
 }
 
 func TestSubAgentTrace_EmptySessionIDIsNoop(t *testing.T) {
-	store, err := shepherd.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}

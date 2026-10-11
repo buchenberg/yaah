@@ -1,6 +1,9 @@
 package tools
 
-import shepherd "github.com/buchenberg/shepherd-kernel-go"
+import (
+	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+)
 
 // SharedScopeManager is set during wiring (InitShepherdInfrastructure)
 // so the SupervisorTool, the supervised_task tool, and sub-agent scope
@@ -17,4 +20,4 @@ var SharedScopeManager *shepherd.ScopeManager
 // contend and stall on busy_timeout.
 //
 // Set once during session initialization. Nil when tracing is disabled.
-var SharedTraceStore *shepherd.SQLiteTraceStore
+var SharedTraceStore *shepherdtrace.SQLiteTraceStore

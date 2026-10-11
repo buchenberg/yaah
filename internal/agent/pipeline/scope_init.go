@@ -7,6 +7,7 @@ import (
 	"runtime"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
 // defaultBusBuffer is the per-subscriber effect bus buffer size used when
@@ -19,12 +20,12 @@ const defaultBusBuffer = 64
 // hosts shepherd_trace, so this is the single initialization point shared
 // by the SupervisorTool, the supervised_task tool, and sub-agent trace
 // middleware.
-func InitShepherdInfrastructure(traceDir string, busBuffer int) (*shepherd.SQLiteTraceStore, *shepherd.EffectBus, *shepherd.ScopeManager, error) {
+func InitShepherdInfrastructure(traceDir string, busBuffer int) (*shepherdtrace.SQLiteTraceStore, *shepherdtrace.EffectBus, *shepherd.ScopeManager, error) {
 	if err := os.MkdirAll(traceDir, 0o700); err != nil {
 		return nil, nil, nil, fmt.Errorf("shepherd: mkdir %s: %w", traceDir, err)
 	}
 	tracePath := filepath.Join(traceDir, "trace.sqlite")
-	store, err := shepherd.NewSQLiteTraceStore(tracePath)
+	store, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("shepherd: open store: %w", err)
 	}
@@ -42,7 +43,7 @@ func InitShepherdInfrastructure(traceDir string, busBuffer int) (*shepherd.SQLit
 	if busBuffer <= 0 {
 		busBuffer = defaultBusBuffer
 	}
-	bus := shepherd.NewEffectBus(busBuffer)
+	bus := shepherdtrace.NewEffectBus(busBuffer)
 	store.WithBus(bus)
 	mgr := shepherd.NewScopeManager(store)
 	return store, bus, mgr, nil

@@ -208,6 +208,10 @@ v0.10.0. v0.11.0 (unreleased) breaks import paths by moving components to
 `trace.`/`sandbox.`/`substrate.`/`materialize.` packages; that mechanical
 sweep bundles with D7's plan, not here. If v0.11 tags before phase C lands,
 re-pin mid-plan only if a needed fix rides in it.
+*Superseded 2026-10-11:* v0.11.0 tagged right after A1 merged. The revisit
+condition fired — not for a fix, but because the A1/A2 boundary made the
+sweep cheapest exactly then (every later step writes against the new
+paths). The re-pin landed as its own PR; see §8.
 
 ---
 
@@ -395,10 +399,19 @@ a shepherd check (Phase D): store open, recovery counts, supervisor wiring.
 
 ## 8. Kernel dependency
 
-- **Pinned:** core `v0.10.0`, containerd nested `v0.1.5` — sufficient for
-  phases A–D (all APIs used are root-package).
-- **v0.11.0 (unreleased):** import-path break (component packages). Needed
-  only by D7's materialization plan. Do not ride it mid-phase.
+- **Pinned (refreshed 2026-10-11):** core `v0.11.0`, containerd nested
+  `v0.2.0`. v0.11.0 tagged after A1 landed, and the import-path sweep was
+  taken at the A1/A2 boundary as its own PR — behavior, digests, and the
+  test suite are unchanged per the kernel changelog, and every phase from
+  A2 on writes against the new paths instead of accumulating v0.10 code
+  to sweep later. The sweep maps the moved symbols to
+  `shepherdtrace`/`shepherdsandbox` (aliased: `runner.go` already imports
+  OpenTelemetry's `trace`); the root package keeps `Scope`,
+  `ScopeManager`, checkpoints, settlement, the merge gate,
+  `RecoverScopes`, and the `Supervisor` — everything phases A–D use.
+- **v0.11.0's component packages** (`trace.`, `sandbox.`, `substrate.`,
+  `materialize.`) are now available without a second re-pin; D7's
+  materialization plan inherits them directly.
 - **Kernel gaps this plan works around, worth upstreaming:**
   - containerd scopes have no re-adoptable identity for `RecoverScopes`
     (D5 returns causal-only; fine, but an upstream record of container

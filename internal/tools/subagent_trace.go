@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
 // SubagentTraceTool lets the orchestrator inspect a sub-agent's execution
@@ -52,7 +52,7 @@ func (t *SubagentTraceTool) Execute(ctx context.Context, args string) (string, e
 	}
 
 	tracePath := filepath.Join(t.TraceDir, "trace.sqlite")
-	store, err := shepherd.NewSQLiteTraceStore(tracePath)
+	store, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
 	if err != nil {
 		return "", fmt.Errorf("subagent_trace: cannot open trace store: %w", err)
 	}
@@ -71,8 +71,8 @@ func (t *SubagentTraceTool) Execute(ctx context.Context, args string) (string, e
 	}
 }
 
-func (t *SubagentTraceTool) executeList(ctx context.Context, store *shepherd.SQLiteTraceStore) (string, error) {
-	slice, err := store.ReadOwnerPrefix(ctx, shepherd.TrustedReadContext, "", 99999, shepherd.ModeDeclarationsOnly)
+func (t *SubagentTraceTool) executeList(ctx context.Context, store *shepherdtrace.SQLiteTraceStore) (string, error) {
+	slice, err := store.ReadOwnerPrefix(ctx, shepherdtrace.TrustedReadContext, "", 99999, shepherdtrace.ModeDeclarationsOnly)
 	if err != nil {
 		return "", fmt.Errorf("subagent_trace: read store: %w", err)
 	}
@@ -96,8 +96,8 @@ func (t *SubagentTraceTool) executeList(ctx context.Context, store *shepherd.SQL
 	return sb.String(), nil
 }
 
-func (t *SubagentTraceTool) executeProfile(ctx context.Context, store *shepherd.SQLiteTraceStore, sessionID string) (string, error) {
-	slice, err := store.ReadOwnerPrefix(ctx, shepherd.TrustedReadContext, sessionID, 99999, shepherd.ModeBoth)
+func (t *SubagentTraceTool) executeProfile(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, sessionID string) (string, error) {
+	slice, err := store.ReadOwnerPrefix(ctx, shepherdtrace.TrustedReadContext, sessionID, 99999, shepherdtrace.ModeBoth)
 	if err != nil {
 		return "", fmt.Errorf("subagent_trace: read session: %w", err)
 	}
@@ -111,14 +111,14 @@ func (t *SubagentTraceTool) executeProfile(ctx context.Context, store *shepherd.
 	})
 	for _, factID := range slice.FactIDs() {
 		fact := slice.FactsByID[factID]
-		if fact.GetEnvelope().Mode != shepherd.Capture {
+		if fact.GetEnvelope().Mode != shepherdtrace.Capture {
 			continue
 		}
 		causedBy := fact.GetEnvelope().CausedByIDs
 		if len(causedBy) == 0 {
 			continue
 		}
-		rec, ok := fact.(shepherd.Record)
+		rec, ok := fact.(shepherdtrace.Record)
 		if !ok {
 			continue
 		}
@@ -140,7 +140,7 @@ func (t *SubagentTraceTool) executeProfile(ctx context.Context, store *shepherd.
 	seq := 0
 	for _, factID := range slice.FactIDs() {
 		fact := slice.FactsByID[factID]
-		if fact.GetEnvelope().Mode != shepherd.Declaration {
+		if fact.GetEnvelope().Mode != shepherdtrace.Declaration {
 			continue
 		}
 
@@ -161,7 +161,7 @@ func (t *SubagentTraceTool) executeProfile(ctx context.Context, store *shepherd.
 		}
 
 		args := ""
-		if rec, ok2 := fact.(shepherd.Record); ok2 {
+		if rec, ok2 := fact.(shepherdtrace.Record); ok2 {
 			if a, ok3 := rec.Body.Payload["args"]; ok3 {
 				b, _ := json.Marshal(a)
 				args = " " + truncateStr(string(b), 50)

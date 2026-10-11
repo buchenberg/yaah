@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
 // TestSupervisorTool_RootScopeGuarded pins the A1 safety rail: inject and
@@ -16,7 +17,7 @@ import (
 // manager refuses to fork from a non-active parent, and the runner ignores
 // that error, leaving later sub-agents with no scope at all.
 func TestSupervisorTool_RootScopeGuarded(t *testing.T) {
-	store, err := shepherd.NewSQLiteTraceStore(":memory:")
+	store, err := shepherdtrace.NewSQLiteTraceStore(":memory:")
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}

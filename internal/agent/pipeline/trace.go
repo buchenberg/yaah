@@ -8,19 +8,20 @@ import (
 	"sync/atomic"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
 // NewShepherdTraceStore opens or creates a Shepherd trace store at the given path.
-func NewShepherdTraceStore(path string) (*shepherd.SQLiteTraceStore, error) {
-	return shepherd.NewSQLiteTraceStore(path)
+func NewShepherdTraceStore(path string) (*shepherdtrace.SQLiteTraceStore, error) {
+	return shepherdtrace.NewSQLiteTraceStore(path)
 }
 
 // ShepherdTraceMiddleware records every tool call as a declaration (intent)
 // and capture (observation) in a Shepherd trace store.
 type ShepherdTraceMiddleware struct {
-	store           *shepherd.SQLiteTraceStore
-	bus             *shepherd.EffectBus
+	store           *shepherdtrace.SQLiteTraceStore
+	bus             *shepherdtrace.EffectBus
 	scopeManager    *shepherd.ScopeManager
 	sessionID       string
 	ordinal         int
@@ -42,7 +43,7 @@ var nextOrdinal atomic.Int64
 
 // NewShepherdTraceMiddleware creates a trace middleware that owns the
 // given store — Close will close it.
-func NewShepherdTraceMiddleware(store *shepherd.SQLiteTraceStore, sessionID string) *ShepherdTraceMiddleware {
+func NewShepherdTraceMiddleware(store *shepherdtrace.SQLiteTraceStore, sessionID string) *ShepherdTraceMiddleware {
 	return &ShepherdTraceMiddleware{
 		store:     store,
 		sessionID: sessionID,
@@ -85,13 +86,13 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 			"args": argsJSON,
 		}
 
-		receipt, err := m.store.Append(ctx, shepherd.TrustedAppendContext, shepherd.AppendBatch{
+		receipt, err := m.store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
 			AppendIntentID: intentID,
-			Groups: []shepherd.AppendGroup{{
+			Groups: []shepherdtrace.AppendGroup{{
 				TraceOwnerID:  m.sessionID,
 				CausalParents: m.lastFactIDs,
-				FactDrafts: []shepherd.RecordDraft{{
-					Mode:      shepherd.Declaration,
+				FactDrafts: []shepherdtrace.RecordDraft{{
+					Mode:      shepherdtrace.Declaration,
 					SchemaRef: schemaRef,
 					KindLabel: r.Name,
 					Payload:   payload,
@@ -113,13 +114,13 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 		}
 
 		captureIntentID := fmt.Sprintf("%s:result:%d", m.sessionID, m.ordinal)
-		captureReceipt, err := m.store.Append(ctx, shepherd.TrustedAppendContext, shepherd.AppendBatch{
+		captureReceipt, err := m.store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
 			AppendIntentID: captureIntentID,
-			Groups: []shepherd.AppendGroup{{
+			Groups: []shepherdtrace.AppendGroup{{
 				TraceOwnerID:  m.sessionID,
 				CausalParents: receipt.FactIDs,
-				FactDrafts: []shepherd.RecordDraft{{
-					Mode:      shepherd.Capture,
+				FactDrafts: []shepherdtrace.RecordDraft{{
+					Mode:      shepherdtrace.Capture,
 					SchemaRef: schemaRef + ".applied",
 					KindLabel: r.Name + ":result",
 					Payload:   capturePayload,
@@ -177,13 +178,13 @@ func (m *ShepherdTraceMiddleware) StartTurn(ctx context.Context, turnNumber int,
 		payload["prompt"] = prompt
 	}
 
-	receipt, err := m.store.Append(ctx, shepherd.TrustedAppendContext, shepherd.AppendBatch{
+	receipt, err := m.store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
 		AppendIntentID: intentID,
-		Groups: []shepherd.AppendGroup{{
+		Groups: []shepherdtrace.AppendGroup{{
 			TraceOwnerID:  m.sessionID,
 			CausalParents: m.lastFactIDs,
-			FactDrafts: []shepherd.RecordDraft{{
-				Mode:      shepherd.Declaration,
+			FactDrafts: []shepherdtrace.RecordDraft{{
+				Mode:      shepherdtrace.Declaration,
 				SchemaRef: "yaah.execution.created.v1",
 				KindLabel: "turn:created",
 				Payload:   payload,
@@ -200,13 +201,13 @@ func (m *ShepherdTraceMiddleware) StartTurn(ctx context.Context, turnNumber int,
 	startPayload := m.turnPayload(turnNumber)
 	startPayload["model"] = model
 	captureIntentID := fmt.Sprintf("%s:turn_start:%d", m.sessionID, m.ordinal)
-	captureReceipt, err := m.store.Append(ctx, shepherd.TrustedAppendContext, shepherd.AppendBatch{
+	captureReceipt, err := m.store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
 		AppendIntentID: captureIntentID,
-		Groups: []shepherd.AppendGroup{{
+		Groups: []shepherdtrace.AppendGroup{{
 			TraceOwnerID:  m.sessionID,
 			CausalParents: receipt.FactIDs,
-			FactDrafts: []shepherd.RecordDraft{{
-				Mode:      shepherd.Capture,
+			FactDrafts: []shepherdtrace.RecordDraft{{
+				Mode:      shepherdtrace.Capture,
 				SchemaRef: "yaah.execution.started.v1",
 				KindLabel: "turn:started",
 				Payload:   startPayload,
@@ -235,13 +236,13 @@ func (m *ShepherdTraceMiddleware) EndTurn(ctx context.Context, turnNumber int, p
 	payload["completion_tokens"] = completionTokens
 
 	intentID := fmt.Sprintf("%s:turn_done:%d", m.sessionID, m.ordinal)
-	receipt, err := m.store.Append(ctx, shepherd.TrustedAppendContext, shepherd.AppendBatch{
+	receipt, err := m.store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
 		AppendIntentID: intentID,
-		Groups: []shepherd.AppendGroup{{
+		Groups: []shepherdtrace.AppendGroup{{
 			TraceOwnerID:  m.sessionID,
 			CausalParents: m.turnRootFactIDs,
-			FactDrafts: []shepherd.RecordDraft{{
-				Mode:      shepherd.Capture,
+			FactDrafts: []shepherdtrace.RecordDraft{{
+				Mode:      shepherdtrace.Capture,
 				SchemaRef: "yaah.execution.completed.v1",
 				KindLabel: "turn:completed",
 				Payload:   payload,
@@ -271,13 +272,13 @@ func (m *ShepherdTraceMiddleware) FailTurn(ctx context.Context, turnNumber int, 
 	payload["error"] = err.Error()
 
 	intentID := fmt.Sprintf("%s:turn_fail:%d", m.sessionID, m.ordinal)
-	receipt, aerr := m.store.Append(ctx, shepherd.TrustedAppendContext, shepherd.AppendBatch{
+	receipt, aerr := m.store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
 		AppendIntentID: intentID,
-		Groups: []shepherd.AppendGroup{{
+		Groups: []shepherdtrace.AppendGroup{{
 			TraceOwnerID:  m.sessionID,
 			CausalParents: m.turnRootFactIDs,
-			FactDrafts: []shepherd.RecordDraft{{
-				Mode:      shepherd.Capture,
+			FactDrafts: []shepherdtrace.RecordDraft{{
+				Mode:      shepherdtrace.Capture,
 				SchemaRef: "yaah.execution.failed.v1",
 				KindLabel: "turn:failed",
 				Payload:   payload,
@@ -302,13 +303,13 @@ func (m *ShepherdTraceMiddleware) publishFrontier(ctx context.Context, turnNumbe
 	// The frontier cut is part of the turn's durable record (see StartTurn).
 	ctx = context.WithoutCancel(ctx)
 
-	spec := shepherd.FrontierSpec{
+	spec := shepherdtrace.FrontierSpec{
 		FrontierID:         fmt.Sprintf("%s:frontier:%d", m.sessionID, turnNumber),
 		TargetTraceOwnerID: m.sessionID,
 		ThroughFactID:      m.lastFactIDs[len(m.lastFactIDs)-1],
 		AppendIntentID:     fmt.Sprintf("%s:frontier_intent:%d", m.sessionID, turnNumber),
 	}
-	_, err := m.store.PublishFrontier(ctx, shepherd.TrustedAppendContext, spec)
+	_, err := m.store.PublishFrontier(ctx, shepherdtrace.TrustedAppendContext, spec)
 	if err != nil {
 		slog.Debug("shepherd_trace: frontier publish failed", "err", err)
 	}
@@ -328,7 +329,7 @@ func (m *ShepherdTraceMiddleware) Close(ctx context.Context) error {
 }
 
 // Store returns the underlying trace store for inspection by CLI commands.
-func (m *ShepherdTraceMiddleware) Store() *shepherd.SQLiteTraceStore {
+func (m *ShepherdTraceMiddleware) Store() *shepherdtrace.SQLiteTraceStore {
 	return m.store
 }
 
@@ -339,7 +340,7 @@ func (m *ShepherdTraceMiddleware) SessionID() string {
 
 // Bus returns the effect bus for real-time event subscription.
 // Returns nil if supervision is not enabled.
-func (m *ShepherdTraceMiddleware) Bus() *shepherd.EffectBus {
+func (m *ShepherdTraceMiddleware) Bus() *shepherdtrace.EffectBus {
 	return m.bus
 }
 

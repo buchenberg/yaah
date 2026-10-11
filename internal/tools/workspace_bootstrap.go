@@ -13,8 +13,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	containerdbackend "github.com/buchenberg/shepherd-kernel-go/sandbox/containerd"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
 // workspace_bootstrap.go implements the D1 bootstrap (isolated-workspace plan
@@ -162,7 +163,7 @@ func deniedBy(deny []string, p string) string {
 //
 // Known cost, deliberate for D1's correctness-first landing: one backend
 // exec per file. A bundle-based fast path is the anticipated follow-up.
-func copyTreeIn(ctx context.Context, sb shepherd.Sandbox, src, root string, deny []string, tracked map[string]bool) error {
+func copyTreeIn(ctx context.Context, sb shepherdsandbox.Sandbox, src, root string, deny []string, tracked map[string]bool) error {
 	src = filepath.Clean(src)
 	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -279,7 +280,7 @@ func bootstrapSession(ctx context.Context, ss *SessionSandbox, src string, deny 
 // act on. The identity is fixed for the same reason: no user config needs
 // to exist inside the container.
 func commitContainerBaseline(ctx context.Context, ss *SessionSandbox) error {
-	for _, req := range []shepherd.ExecRequest{
+	for _, req := range []shepherdsandbox.ExecRequest{
 		{Command: "git", Args: []string{"add", "-A"}, Cwd: ss.ws.root},
 		{Command: "git", Args: []string{
 			"-c", "user.name=yaah", "-c", "user.email=yaah@localhost",
@@ -310,7 +311,7 @@ func (s *SessionSandbox) DiffSinceBaseline(ctx context.Context, maxLines int) (s
 
 // Baseline returns the session's baseline state, or nil when the session
 // started without a bootstrap.
-func (s *SessionSandbox) Baseline() *shepherd.WorkspaceState { return s.baseline }
+func (s *SessionSandbox) Baseline() *shepherdtrace.WorkspaceState { return s.baseline }
 
 // ApplyOut applies the session's outward delta onto the host working tree —
 // the "apply-out on accept" half of D1. It is the single door changes leave

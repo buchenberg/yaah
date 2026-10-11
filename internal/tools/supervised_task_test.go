@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
 // runnerResponse configures one fake sub-agent attempt.
@@ -100,7 +101,7 @@ func (f *fakeRunner) promptFor(t *testing.T, call int) string {
 func newSupervisedTestEnv(t *testing.T) (*SupervisedTaskTool, string) {
 	t.Helper()
 
-	store, err := shepherd.NewSQLiteTraceStore(":memory:")
+	store, err := shepherdtrace.NewSQLiteTraceStore(":memory:")
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
 // state.go implements the snapshot half of the fake: Capture records the
@@ -25,18 +25,18 @@ import (
 
 // capture records the tree as a WorkspaceState. Revision counts captures, so
 // two captures of different trees never collide on the same key.
-func (s *Sandbox) Capture(_ context.Context) (shepherd.WorkspaceState, error) {
+func (s *Sandbox) Capture(_ context.Context) (shepherdtrace.WorkspaceState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.usable(); err != nil {
-		return shepherd.WorkspaceState{}, err
+		return shepherdtrace.WorkspaceState{}, err
 	}
 	s.rev++
 	files := make(map[string]any, len(s.files))
 	for p, e := range s.files {
 		files[p] = snapshotEntry(e)
 	}
-	return shepherd.WorkspaceState{
+	return shepherdtrace.WorkspaceState{
 		Backend:  s.Backend(),
 		Revision: strconv.Itoa(s.rev),
 		Data:     map[string]any{"files": files},
@@ -59,7 +59,7 @@ func snapshotEntry(e *entry) map[string]any {
 
 // apply resets the tree to a previously captured state. The state is
 // reusable: applying it twice is idempotent.
-func (s *Sandbox) Apply(_ context.Context, ws shepherd.WorkspaceState) error {
+func (s *Sandbox) Apply(_ context.Context, ws shepherdtrace.WorkspaceState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.usable(); err != nil {
@@ -123,7 +123,7 @@ func restoreEntry(m map[string]any) (*entry, error) {
 // diff compares a captured state against the current tree and returns a
 // unified diff plus the sorted list of changed paths (added, modified, or
 // deleted). maxLines <= 0 means unbounded.
-func (s *Sandbox) Diff(_ context.Context, ws shepherd.WorkspaceState, maxLines int) (string, []string, error) {
+func (s *Sandbox) Diff(_ context.Context, ws shepherdtrace.WorkspaceState, maxLines int) (string, []string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.usable(); err != nil {

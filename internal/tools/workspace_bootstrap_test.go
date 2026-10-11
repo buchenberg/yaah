@@ -13,7 +13,8 @@ import (
 	"sync"
 	"testing"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/sandboxfake"
@@ -291,11 +292,11 @@ func TestApplyOut_GitPatch(t *testing.T) {
 // emulating the containerd backend's delta-carrying captures without a
 // daemon.
 type deltaStubSandbox struct {
-	shepherd.Sandbox
-	state shepherd.WorkspaceState
+	shepherdsandbox.Sandbox
+	state shepherdtrace.WorkspaceState
 }
 
-func (d *deltaStubSandbox) Capture(context.Context) (shepherd.WorkspaceState, error) {
+func (d *deltaStubSandbox) Capture(context.Context) (shepherdtrace.WorkspaceState, error) {
 	return d.state, nil
 }
 
@@ -320,7 +321,7 @@ func TestApplyOut_PrefersBackendDeltaPatch(t *testing.T) {
 	patch := run("diff", "--binary", "HEAD")
 	run("reset", "-q", "--hard", "HEAD")
 
-	stub := &deltaStubSandbox{Sandbox: sandboxfake.New(), state: shepherd.WorkspaceState{
+	stub := &deltaStubSandbox{Sandbox: sandboxfake.New(), state: shepherdtrace.WorkspaceState{
 		Backend: "fake",
 		Data: map[string]any{
 			"delta_base":  "head0",
@@ -330,7 +331,7 @@ func TestApplyOut_PrefersBackendDeltaPatch(t *testing.T) {
 	ss := &SessionSandbox{
 		sb:       stub,
 		ws:       newSandboxWorkspace(stub, "/workspace"),
-		baseline: &shepherd.WorkspaceState{Backend: "fake"},
+		baseline: &shepherdtrace.WorkspaceState{Backend: "fake"},
 	}
 
 	if err := ss.ApplyOut(context.Background(), dir); err != nil {
@@ -345,10 +346,10 @@ func TestApplyOut_PrefersBackendDeltaPatch(t *testing.T) {
 // always fails, so a fallback that consults the diff fails the test instead
 // of quietly passing through a second no-op path.
 type diffFailingSandbox struct {
-	shepherd.Sandbox
+	shepherdsandbox.Sandbox
 }
 
-func (d *diffFailingSandbox) Diff(context.Context, shepherd.WorkspaceState, int) (string, []string, error) {
+func (d *diffFailingSandbox) Diff(context.Context, shepherdtrace.WorkspaceState, int) (string, []string, error) {
 	return "", nil, errors.New("the copy-out fallback ran: the delta-base branch was not recognised")
 }
 
@@ -357,14 +358,14 @@ func TestApplyOut_CleanDeltaIsNoop(t *testing.T) {
 	// The fake's Diff on this stub reports nothing and touches nothing,
 	// so without the failing wrapper a missed delta-base match would
 	// still pass — the exact regression this test exists to catch.
-	stub := &deltaStubSandbox{Sandbox: &diffFailingSandbox{Sandbox: sandboxfake.New()}, state: shepherd.WorkspaceState{
+	stub := &deltaStubSandbox{Sandbox: &diffFailingSandbox{Sandbox: sandboxfake.New()}, state: shepherdtrace.WorkspaceState{
 		Backend: "fake",
 		Data:    map[string]any{"delta_base": "head0"}, // base present, no patch: clean
 	}}
 	ss := &SessionSandbox{
 		sb:       stub,
 		ws:       newSandboxWorkspace(stub, "/workspace"),
-		baseline: &shepherd.WorkspaceState{Backend: "fake"},
+		baseline: &shepherdtrace.WorkspaceState{Backend: "fake"},
 	}
 
 	if err := ss.ApplyOut(context.Background(), dir); err != nil {
@@ -506,17 +507,17 @@ func TestBootstrap_RejectsTrackedDeniedFile(t *testing.T) {
 // whether the bootstrap runs the synthetic baseline commit — not what a
 // real container's git would do with one.
 type gitRecordingSandbox struct {
-	shepherd.Sandbox
+	shepherdsandbox.Sandbox
 	mu       sync.Mutex
 	gitCalls []string
 }
 
-func (g *gitRecordingSandbox) Exec(ctx context.Context, req shepherd.ExecRequest) (shepherd.ExecResult, error) {
+func (g *gitRecordingSandbox) Exec(ctx context.Context, req shepherdsandbox.ExecRequest) (shepherdsandbox.ExecResult, error) {
 	if req.Command == "git" {
 		g.mu.Lock()
 		g.gitCalls = append(g.gitCalls, strings.Join(req.Args, " "))
 		g.mu.Unlock()
-		return shepherd.ExecResult{ExitCode: 0}, nil
+		return shepherdsandbox.ExecResult{ExitCode: 0}, nil
 	}
 	return g.Sandbox.Exec(ctx, req)
 }
@@ -529,14 +530,14 @@ func (g *gitRecordingSandbox) calls() []string {
 
 // recordingOpener hands the probe a hook-wired fake (its shell cannot run
 // the contract script) and the session sandbox the given recorder.
-func recordingOpener(rec shepherd.Sandbox) SandboxOpener {
+func recordingOpener(rec shepherdsandbox.Sandbox) SandboxOpener {
 	var opened int
-	return func(config.WorkspaceConfig) (shepherd.Sandbox, error) {
+	return func(config.WorkspaceConfig) (shepherdsandbox.Sandbox, error) {
 		opened++
 		if opened == 1 {
 			sb := sandboxfake.New()
-			sb.ExecHook = func(shepherd.ExecRequest) (shepherd.ExecResult, error) {
-				return shepherd.ExecResult{ExitCode: 0}, nil
+			sb.ExecHook = func(shepherdsandbox.ExecRequest) (shepherdsandbox.ExecResult, error) {
+				return shepherdsandbox.ExecResult{ExitCode: 0}, nil
 			}
 			return sb, nil
 		}

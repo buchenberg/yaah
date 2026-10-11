@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"gopkg.in/yaml.v3"
 
 	"github.com/buchenberg/yaah/internal/agent/subagent"
@@ -160,7 +160,7 @@ roles:
 func TestSubagentTraceProfile(t *testing.T) {
 	dir := t.TempDir()
 	tracePath := filepath.Join(dir, "trace.sqlite")
-	store, err := shepherd.NewSQLiteTraceStore(tracePath)
+	store, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
@@ -170,12 +170,12 @@ func TestSubagentTraceProfile(t *testing.T) {
 	// Record declaration + capture pairs
 	for i, name := range []string{"read", "edit", "bash"} {
 		intent := owner + ":tool:" + string(rune('a'+i))
-		declReceipt, _ := store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
+		declReceipt, _ := store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
 			AppendIntentID: intent,
-			Groups: []shepherd.AppendGroup{{
+			Groups: []shepherdtrace.AppendGroup{{
 				TraceOwnerID: owner,
-				FactDrafts: []shepherd.RecordDraft{{
-					Mode:      shepherd.Declaration,
+				FactDrafts: []shepherdtrace.RecordDraft{{
+					Mode:      shepherdtrace.Declaration,
 					SchemaRef: "yaah.tool." + name + ".v1",
 					KindLabel: name,
 					Payload:   map[string]any{"tool": name, "args": `{"file":"test.go"}`},
@@ -189,13 +189,13 @@ func TestSubagentTraceProfile(t *testing.T) {
 			success = false
 			errMsg = "permission denied"
 		}
-		store.Append(context.Background(), shepherd.TrustedAppendContext, shepherd.AppendBatch{
+		store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
 			AppendIntentID: captureIntent,
-			Groups: []shepherd.AppendGroup{{
+			Groups: []shepherdtrace.AppendGroup{{
 				TraceOwnerID:  owner,
 				CausalParents: declReceipt.FactIDs,
-				FactDrafts: []shepherd.RecordDraft{{
-					Mode:      shepherd.Capture,
+				FactDrafts: []shepherdtrace.RecordDraft{{
+					Mode:      shepherdtrace.Capture,
 					SchemaRef: "yaah.tool." + name + ".v1.applied",
 					KindLabel: name + ":result",
 					Payload:   map[string]any{"success": success, "error": errMsg},
@@ -228,7 +228,7 @@ func TestSubagentTraceProfile(t *testing.T) {
 func TestSubagentTraceProfile_NonexistentSession(t *testing.T) {
 	dir := t.TempDir()
 	tracePath := filepath.Join(dir, "trace.sqlite")
-	store, err := shepherd.NewSQLiteTraceStore(tracePath)
+	store, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}

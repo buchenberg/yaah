@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
 // TestShepherdTurnCheckpointer_RestoreRevertsWorkspace verifies the adapter's
@@ -15,7 +17,7 @@ import (
 // Restore rewinds both — returning the stored snapshot and reverting file
 // changes. It also pins the single-use contract (a second restore must fail).
 func TestShepherdTurnCheckpointer_RestoreRevertsWorkspace(t *testing.T) {
-	store, err := shepherd.NewSQLiteTraceStore(":memory:")
+	store, err := shepherdtrace.NewSQLiteTraceStore(":memory:")
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
@@ -24,7 +26,7 @@ func TestShepherdTurnCheckpointer_RestoreRevertsWorkspace(t *testing.T) {
 	mgr := shepherd.NewScopeManager(store)
 
 	repo := newRunnerTestGitRepo(t)
-	sb := shepherd.NewLocalGitSandbox(repo)
+	sb := shepherdsandbox.NewLocalGitSandbox(repo)
 	scope, err := mgr.Create("turn-checkpoint-test", sb)
 	if err != nil {
 		t.Fatalf("create scope: %v", err)

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 )
 
 // This file interprets the `sh -c` subset that sandboxWorkspace emits over the
@@ -59,7 +59,7 @@ var (
 // runSh interprets a `sh -c` request. Callers must not hold s.mu; the whole
 // script runs under it, which keeps the fake's tree consistent for the
 // duration and is fine because scripts are short.
-func (s *Sandbox) runSh(ctx context.Context, req shepherd.ExecRequest) shepherd.ExecResult {
+func (s *Sandbox) runSh(ctx context.Context, req shepherdsandbox.ExecRequest) shepherdsandbox.ExecResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sh := &shSession{
@@ -74,7 +74,7 @@ func (s *Sandbox) runSh(ctx context.Context, req shepherd.ExecRequest) shepherd.
 		sh.cwd = "/"
 	}
 	code := sh.run(req.Args[1])
-	return shepherd.ExecResult{
+	return shepherdsandbox.ExecResult{
 		ExitCode: code,
 		Stdout:   sh.stdout.String(),
 		Stderr:   sh.stderr.String(),
