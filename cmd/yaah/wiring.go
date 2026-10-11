@@ -430,7 +430,6 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 				fmt.Fprintf(os.Stderr, "warning: no shepherd root scope — sub-agent scopes fall back to flat creation: %v\n", rerr)
 			} else {
 				rootScopeID = root.ID()
-				runRegistry.Register(rootScopeID, steerCh)
 			}
 		}
 	}
@@ -558,6 +557,10 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			TraceDir:    cfg.Agent.Default.ShepherdTraceDir,
 			RootScopeID: rootScopeID,
 			Runs:        runRegistry,
+			// supervisor.halt_root (adoption plan A3): root halt maps to
+			// cancelling the session's current run — a big hammer that
+			// needs the explicit opt-in, off by default.
+			HaltRoot: cfg.Agent.Default.SupervisorHaltRoot,
 		})
 
 		// Supervised task tool — blocking sub-agent execution with
@@ -759,6 +762,21 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		runs:           runRegistry,
 		followupCh:     followupCh,
 	}
+	// Root-scope bridge registration (adoption plan A2/A3): inject into
+	// the root steers the session (its own steering channel); halting it
+	// cancels the session's current run — the supervisor.halt_root
+	// opt-in the SupervisorTool carries. Registered after the session
+	// literal because the cancel is the session's method.
+	if rootScopeID != "" && runRegistry != nil {
+		// The root registers no quiesce signal: its sandbox (in-place
+		// git, or none at all in isolated mode) is never destroyed by a
+		// halt, so there is nothing a still-running prompt could race.
+		runRegistry.Register(rootScopeID, supervision.Run{
+			SteerCh: steerCh,
+			Cancel:  sess.HaltCurrentRun,
+		})
+	}
+
 	// The session owns everything created above from here: close() will
 	// destroy the sandbox, and neither startup guard must touch the
 	// session's resources again.

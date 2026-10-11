@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
@@ -397,19 +398,35 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			subScope, _ = createSubAgentScope(mgr, opts, subTraceID, params.Workdir)
 		}
 
-		// Supervision bridge (adoption plan A2): the run registers its
-		// steering channel under the scope ID, so the supervisor tool's
-		// inject reaches this loop between turns instead of only
-		// recording a trace fact. The deferred unregister is panic
-		// safety only; the explicit unregister right after Run returns
-		// is the real cut, so the entry never outlives the loop through
-		// post-run enrichment — an inject in that window would claim
-		// delivery into a channel nothing drains anymore.
+		// Supervision bridge (adoption plans A2/A3): the run registers
+		// its steering channel and its cancellation under the scope ID,
+		// so the supervisor tool's inject and halt reach this loop
+		// instead of only recording trace facts. The loop runs under a
+		// context derived from the dispatch's, so cancelling it stops
+		// the run without touching the caller's context. The deferred
+		// unregister is panic safety only; the explicit unregister
+		// right after Run returns is the real cut, so the entry never
+		// outlives the loop through post-run enrichment.
 		var steerCh chan string
+		var haltedBySupervisor atomic.Bool
 		if subScope != nil && opts.runs != nil {
 			steerCh = make(chan string, supervision.SteerBuffer)
-			opts.runs.Register(subScope.ID(), steerCh)
+			quiesce := make(chan struct{})
+			haltCtx, cancelRun := context.WithCancel(ctx)
+			opts.runs.Register(subScope.ID(), supervision.Run{
+				SteerCh: steerCh,
+				Cancel: func() {
+					haltedBySupervisor.Store(true)
+					cancelRun()
+				},
+				// Closed the moment the loop returns: the supervisor's
+				// bounded quiesce wait before kernel-side sandbox
+				// teardown selects on this.
+				Done: quiesce,
+			})
 			defer opts.runs.Unregister(subScope.ID())
+			defer close(quiesce)
+			ctx = haltCtx
 		}
 
 		// Per-turn checkpointing is enabled per role (subagent.roles.<name>.
@@ -455,9 +472,16 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 
 		// The run is over: cut the bridge now, not at closure return —
 		// trace enrichment and output budgeting below must not sit inside
-		// a window where inject claims delivery to a dead loop.
+		// a window where inject or halt claims delivery to a dead loop.
 		if subScope != nil && opts.runs != nil {
 			opts.runs.Unregister(subScope.ID())
+		}
+
+		// A supervisor halt is a deliberate stop, not a failure to
+		// retry: report it as such instead of surfacing the raw
+		// context-canceled noise from the cancelled run.
+		if haltedBySupervisor.Load() && runErr != nil {
+			runErr = fmt.Errorf("sub-agent %s halted by supervisor", role)
 		}
 
 		// Hand the final conversation to the spawner's capture pointer (set
@@ -721,10 +745,21 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 			repoPath, _ = os.Getwd()
 		}
 		if repoPath != "" {
-			return mgr.ForkIsolated(opts.rootScopeID, subTraceID, nil, shepherdsandbox.NewWorktreeSandbox(repoPath, workdir))
+			if child, err := mgr.ForkIsolated(opts.rootScopeID, subTraceID, nil, shepherdsandbox.NewWorktreeSandbox(repoPath, workdir)); err == nil {
+				return child, nil
+			}
+			return mgr.Create(subTraceID, subAgentSandbox(opts, workdir))
 		}
 	}
-	return mgr.Fork(opts.rootScopeID, subTraceID, nil)
+	if child, err := mgr.Fork(opts.rootScopeID, subTraceID, nil); err == nil {
+		return child, nil
+	}
+	// A fork can fail only against a non-active root — the one a
+	// supervisor halt leaves behind (A3: halting the root is a
+	// session-level kill for supervision). The dispatch then falls back
+	// to the legacy flat scope so the sub-agent stays superviseable,
+	// rather than silently unsupervised.
+	return mgr.Create(subTraceID, subAgentSandbox(opts, workdir))
 }
 
 // buildSubAgentRegistry builds the tool registry for a sub-agent from

@@ -119,6 +119,11 @@ type agentSession struct {
 	// tracing is off.
 	runs *supervision.Registry
 
+	// runCancel is the session-owned cancellation for the currently
+	// running prompt (adoption plan A3): the target of
+	// HaltCurrentRun — the root-halt bridge. Nil between prompts.
+	runCancel context.CancelFunc
+
 	cwd string
 
 	view      agent.View
@@ -228,8 +233,36 @@ func (s *agentSession) ProviderName() string {
 }
 func (s *agentSession) ModelName() string          { s.mu.RLock(); defer s.mu.RUnlock(); return s.modelName }
 func (s *agentSession) MCPInfos() []mcp.ServerInfo { return s.mcpInfos }
+
+// RunPrompt runs one prompt under a context the session owns: derived
+// from the caller's, so the frontends' own cancels (TUI abort, serve's
+// signal context) compose, but with a session-held cancel that
+// HaltCurrentRun can invoke — that is what supervisor halt on the root
+// scope bridges to (adoption plan A3, gated by supervisor.halt_root).
 func (s *agentSession) RunPrompt(ctx context.Context, prompt string) (string, bool, error) {
-	return s.runPrompt(ctx, prompt)
+	runCtx, cancel := context.WithCancel(ctx)
+	s.mu.Lock()
+	s.runCancel = cancel
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.runCancel = nil
+		s.mu.Unlock()
+		cancel()
+	}()
+	return s.runPrompt(runCtx, prompt)
+}
+
+// HaltCurrentRun cancels the currently running prompt, if one is
+// running — the supervisor's root-halt bridge (adoption plan A3). It is
+// the session's ctrl-C equivalent: the run unwinds, the frontends keep
+// their own cancel paths, and a session with no active run is a no-op.
+func (s *agentSession) HaltCurrentRun() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.runCancel != nil {
+		s.runCancel()
+	}
 }
 
 func (s *agentSession) Steer(text string) {
