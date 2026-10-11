@@ -160,10 +160,14 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			return nil, err
 		}
 		// Every error return below destroys the sandbox instead of
-		// leaking a container for the lifetime of the daemon's namespace.
+		// leaking a container for the lifetime of the daemon's namespace
+		// — bounded, like every other teardown, so a wedged daemon cannot
+		// also hang a failed startup on its way out.
 		defer func() {
 			if sessionSandbox != nil && !sandboxTeardownHandled {
-				if derr := sessionSandbox.Destroy(context.Background()); derr != nil {
+				destroyCtx, cancelDestroy := context.WithTimeout(context.Background(), workspaceSandboxDestroyTimeout)
+				defer cancelDestroy()
+				if derr := sessionSandbox.Destroy(destroyCtx); derr != nil {
 					fmt.Fprintf(os.Stderr, "warning: workspace sandbox teardown after failed session start: %v\n", derr)
 				}
 			}
