@@ -161,8 +161,14 @@ func TestLive_ActivatedSession(t *testing.T) {
 	if !strings.Contains(bashOut, wcfg.Root) || !strings.Contains(bashOut, "hello") {
 		t.Fatalf("the command must run inside the container (pwd %q, rg output %q)", wcfg.Root, bashOut)
 	}
-	if _, err := ss.Workspace().Stat(ctx, "/workspace/readme.txt"); err != nil {
-		t.Fatalf("Stat inside the container (GNU stat from the image): %v", err)
+	// The containment root is a knob; resolve against it rather than
+	// hardcoding /workspace.
+	readmePath, err := ss.Workspace().ResolvePath("readme.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, serr := ss.Workspace().Stat(ctx, readmePath); serr != nil {
+		t.Fatalf("Stat inside the container (GNU stat from the image): %v", serr)
 	}
 
 	// The session's work through the same registry: modify, add, delete.

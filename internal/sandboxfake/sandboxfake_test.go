@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io/fs"
+	"path"
 	"strings"
 	"testing"
 
@@ -129,7 +130,8 @@ func TestFileIORoundTrip(t *testing.T) {
 // TestExecRunsTheAtomicWriteScript interprets the exact first script
 // sandboxWorkspace.WriteFile emits and pins the resulting tree: the
 // base64 chunk lands in the mktemp file decoded, the scratch .b64 is
-// removed, the EXIT trap is stood down so the temp survives, and the
+// removed, the EXIT trap is stood down so the temp survives (a mishandled
+// `trap -` would surface as a stderr diagnostic at teardown), and the
 // temp's name returns on stdout.
 func TestExecRunsTheAtomicWriteScript(t *testing.T) {
 	s := newCreated(t)
@@ -145,6 +147,12 @@ printf '%s' "$t"`
 	if res.ExitCode != 0 {
 		t.Fatalf("exit = %d, stderr = %q", res.ExitCode, res.Stderr)
 	}
+	// The trap must have been cleared, not merely made inert: a fake
+	// that mishandles `trap -` runs the leftover trap body ("-") as a
+	// command at teardown and leaves a stderr diagnostic behind.
+	if res.Stderr != "" {
+		t.Errorf("a stood-down trap must leave no diagnostic: stderr = %q", res.Stderr)
+	}
 	temp := strings.TrimSpace(res.Stdout)
 	if !strings.HasPrefix(temp, "/workspace/f.txt.") {
 		t.Fatalf("temp name = %q, want it beside the target", temp)
@@ -158,22 +166,20 @@ printf '%s' "$t"`
 	}
 
 	// A mid-script failure must fire the still-armed EXIT trap: an
-	// invalid base64 chunk fails the decode and the temp must not
-	// survive. (The real script's caller also runs a cleanup rm; the
-	// trap is the in-exec half of that contract.)
+	// invalid base64 chunk fails the decode, the failed run's temp and
+	// scratch must be gone, and the successful run's temp must be the
+	// only survivor — counting entries cannot tell kept-from-removed,
+	// so the survivors are named.
 	res = runScript(t, s, script, nil, "/workspace/f.txt", "!!!not base64!!!")
 	if res.ExitCode == 0 {
 		t.Error("an invalid chunk must fail the script")
 	}
-	list := runScript(t, s, `find "$1" -mindepth 1 -maxdepth 1 -printf '%f\n'`, nil, "/workspace")
-	temps := 0
-	for _, name := range strings.Fields(list.Stdout) {
-		if strings.HasPrefix(name, "f.txt.") {
-			temps++
-		}
+	if _, err := s.ReadFile(context.Background(), temp); err != nil || string(data) != "payload\n" {
+		t.Fatalf("the successful run's temp must survive the failed run: %v", err)
 	}
-	if temps != 1 {
-		t.Errorf("temps after failure = %d, want 1 (the successful run's; the failed run's must be trap-removed)", temps)
+	list := runScript(t, s, `find "$1" -mindepth 1 -maxdepth 1 -printf '%f\n'`, nil, "/workspace")
+	if got := strings.Fields(list.Stdout); len(got) != 1 || got[0] != path.Base(temp) || strings.HasSuffix(got[0], ".b64") {
+		t.Errorf("survivors after failure = %v, want exactly [%s] and no scratch", got, path.Base(temp))
 	}
 }
 

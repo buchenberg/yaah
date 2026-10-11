@@ -164,24 +164,29 @@ func TestCheckWorkspace_DefaultSocket(t *testing.T) {
 
 // TestCheckWorkspace_UnusableStanzaFails: doctor's verdict must match
 // session startup's — config.Validate runs at wiring, not load, so doctor
-// runs the same workspace rules itself. A stanza with no image, or a root
-// that would scope the whole container, FAILs here with the validator's
-// own words instead of reading as healthy until the first session start.
+// runs the same workspace rules itself. Each case isolates one rule: the
+// stanza is otherwise valid, so the failure names the broken rule.
 func TestCheckWorkspace_UnusableStanzaFails(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("the workspace validation detail only renders on the Linux branch")
 	}
-	for name, root := range map[string]string{
-		"no image":             "/workspace",
-		"whole-container root": "/",
+	for _, tc := range []struct {
+		name   string
+		image  string
+		root   string
+		wantIn string
+	}{
+		{"no image", "", "/workspace", "workspace.containerd.image"},
+		{"whole-container root", "registry.example/yaah-workspace:latest", "/", "workspace.root"},
 	} {
-		t.Run(name, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.Config{}
 			cfg.Workspace.Backend = config.BackendContainerd
-			cfg.Workspace.Root = root
+			cfg.Workspace.Root = tc.root
+			cfg.Workspace.Containerd.Image = tc.image
 			check := CheckWorkspace(cfg, nil)
-			if check.Status != "FAIL" || !strings.HasPrefix(check.Detail, "workspace.") {
-				t.Errorf("an unusable stanza must FAIL with the validator's own words, got %+v", check)
+			if check.Status != "FAIL" || !strings.HasPrefix(check.Detail, "workspace.") || !strings.Contains(check.Detail, tc.wantIn) {
+				t.Errorf("the %s case must FAIL naming its own rule, got %+v", tc.name, check)
 			}
 		})
 	}

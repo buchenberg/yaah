@@ -93,11 +93,16 @@ func (w *sandboxWorkspace) ReadFile(ctx context.Context, p string) ([]byte, erro
 }
 
 // sandboxWriteChunkBytes bounds how much file content one exec carries, in
-// raw bytes before base64 expansion (~4/3). The ceiling keeps one exec's
-// argv comfortably inside ARG_MAX — the script plus a single ~350 KiB
-// argument — and matches the spirit of the kernel adapter's
-// Config.WriteChunkBytes, which exists for the same transport reason.
-const sandboxWriteChunkBytes = 256 * 1024
+// raw bytes before base64 expansion (~4/3). The ceiling is the kernel's
+// per-argument limit, not the total ARG_MAX budget: Linux caps one argv
+// string at MAX_ARG_STRLEN (32 pages = 128 KiB), and execve fails with
+// E2BIG above it — a bound the in-memory fake cannot catch, because it
+// never calls execve. 64 KiB raw encodes to ~85 KiB, comfortably under
+// the cap with room for the encoded payload's own growth. (The kernel
+// adapter's Config.WriteChunkBytes is larger because it splits its
+// encoded payload across several arguments; the fake's shell cannot
+// expand "$@", so this path keeps one argument per chunk.)
+const sandboxWriteChunkBytes = 64 * 1024
 
 // The three scripts of the chunked write. Only $1..$3 positionals appear:
 // every value is a quoted argument, and the base64 alphabet carries no
