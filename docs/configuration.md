@@ -134,6 +134,16 @@ agents:
     # disabled:                       # remove from default pipeline
     #   - approval
 
+# ── Workspace ──────────────────────────────────────────────────
+workspace:
+  backend: local                     # local | containerd
+  root: /workspace                  # containment root inside the sandbox
+  containerd:                       # only meaningful when backend: containerd
+    address: /run/containerd/containerd.sock
+    namespace: default
+    image: docker.io/library/yaah-workspace:latest
+    snapshotter: overlayfs
+
 # ── Observability ──────────────────────────────────────────────
 observability:
   otel:
@@ -286,6 +296,27 @@ union. The default pipeline is
 | `permission` | off | Path-pattern allow/deny rules (auto-added when parent rules exist for sub-agents) |
 | `tool_concurrency` | on | Cap concurrent tool goroutines |
 | `prompt_caching` | off | Anthropic cache-control breakpoints — include via `agents.default.prompt_caching: true`; naming it in `enabled` also works |
+
+## Workspace reference
+
+**`workspace`** — where the session's tools execute. Without the stanza
+everything runs on the host filesystem, as it always has.
+
+| Field | Default | Description |
+|---|---|---|
+| `backend` | `local` | `local` runs tools on the host; `containerd` runs them inside a per-session containerd sandbox |
+| `root` | `/workspace` | Containment root inside the sandbox. Must be absolute and not `/` when `containerd` is in effect (config validation refuses otherwise) |
+| `containerd.address` | containerd's own default | containerd socket or endpoint; supports `${ENV_VAR}` substitution |
+| `containerd.namespace` | `default` | containerd namespace for the session's containers |
+| `containerd.image` | (required for `containerd`) | Base image. Must satisfy the tool contract (sh, GNU stat/find, git, rg, base64, Go toolchain) — verified at startup |
+| `containerd.snapshotter` | `overlayfs` | containerd snapshotter plugin |
+
+The `containerd` backend requires a Linux containerd daemon: config
+validation refuses it at load on any other platform, naming the platform.
+`yaah doctor` reports the workspace check (config validity plus the
+reachable backend) when the stanza is present. See
+`docs/features.md` "Isolated workspace" for the behaviour and
+`docs/isolated-workspace-live-testing.md` for the end-to-end live test.
 
 ## Supervised execution reference
 

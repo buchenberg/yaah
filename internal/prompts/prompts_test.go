@@ -257,3 +257,28 @@ func TestIsolatedWorkspaceGuidance(t *testing.T) {
 		t.Errorf("no omitted tools must not print an empty unavailable list, got:\n%s", got)
 	}
 }
+
+func TestIsolatedSubAgentGuidance(t *testing.T) {
+	got := IsolatedSubAgentGuidance([]string{"go_refactor"})
+
+	if !strings.Contains(got, "isolated container") {
+		t.Errorf("guidance must say the sub-agent runs in the container:\n%s", got)
+	}
+	if !strings.Contains(got, "never claim they are saved") {
+		t.Errorf("guidance must warn against claiming changes are saved:\n%s", got)
+	}
+	if !strings.Contains(got, "`go_refactor`") {
+		t.Errorf("guidance must name the dropped host-only tool:\n%s", got)
+	}
+	// The sub-agent cannot call apply_out (it is not a leaf tool and role
+	// profiles cannot name it); the guidance must not instruct it to.
+	if strings.Contains(got, "call `apply_out`") {
+		t.Errorf("guidance must leave the apply_out workflow to the parent session:\n%s", got)
+	}
+
+	// A role with no dropped tools gets the mode explanation without an
+	// unavailable list.
+	if bare := IsolatedSubAgentGuidance(nil); strings.Contains(bare, "NOT available here") {
+		t.Errorf("no dropped tools must not print an unavailable list:\n%s", bare)
+	}
+}
