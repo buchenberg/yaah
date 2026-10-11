@@ -36,17 +36,20 @@ func OpenContainerdWorkspaceSandbox(w config.WorkspaceConfig) (shepherd.Sandbox,
 // imageContractScript verifies the D5 image contract in one exec:
 //
 //   - the binaries the in-band workspace surface shells out to
-//     (sh, stat, find, git, rg, and a Go toolchain),
+//     (sh, stat, find, git, rg, base64, and a Go toolchain),
 //   - the flags the surface actually invokes: Stat uses `stat -c` and
-//     ReadDir uses `find -printf` (workspace_sandbox.go). The find check
-//     is the genuine GNU-vs-BusyBox discriminator — BusyBox find has no
+//     ReadDir uses `find -printf` (workspace_sandbox.go), and WriteFile
+//     decodes its base64 payload with `base64 -d` — a dependency the
+//     kernel's Sandbox.WriteFile already had, now stated in the contract
+//     instead of discovered at the first write. The find check is the
+//     genuine GNU-vs-BusyBox discriminator — BusyBox find has no
 //     -printf. BusyBox stat, by contrast, accepts `-c` (and `%a`), so the
 //     stat check proves the flag exists, not that the userland is GNU.
 //
 // Output convention: on failure, one line "missing: <space-separated>" with
 // a ":-flag" annotation for the flag checks, and exit 1.
 const imageContractScript = `missing=""
-for t in sh stat find git rg go; do
+for t in sh stat find git rg go base64; do
   command -v "$t" >/dev/null 2>&1 || missing="$missing $t"
 done
 stat -c %a . >/dev/null 2>&1 || missing="$missing stat:-c"
@@ -109,7 +112,7 @@ func ProbeImageContract(ctx context.Context, sb shepherd.Sandbox) (err error) {
 		return fmt.Errorf("workspace image probe: exit %d with no missing list: %s", res.ExitCode,
 			firstNonEmpty(strings.TrimSpace(res.Stderr), "no output"))
 	}
-	return fmt.Errorf("workspace image does not satisfy the required tool contract (D5): missing %s — the image needs sh, stat (stat -c), GNU find (find -printf), git, rg, and a Go toolchain",
+	return fmt.Errorf("workspace image does not satisfy the required tool contract (D5): missing %s — the image needs sh, stat (stat -c), GNU find (find -printf), git, rg, base64, and a Go toolchain",
 		strings.Join(items, ", "))
 }
 

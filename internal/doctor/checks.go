@@ -1,12 +1,15 @@
 package doctor
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
+
+	"github.com/buchenberg/shepherd-kernel-go"
 
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/config"
@@ -39,6 +42,7 @@ func RunChecks(opts Options) []Check {
 		CheckProvider(cfg, cfgErr),
 		CheckModel(cfg, cfgErr),
 		CheckSubAgents(cfg, cfgErr),
+		CheckWorkspace(cfg, cfgErr),
 		CheckFallback(cfg, cfgErr),
 		CheckQualityGates(cfg, cfgErr),
 		CheckDirectives(cfg, cfgErr, opts.DirectiveOverrides),
@@ -185,6 +189,72 @@ func CheckSubAgents(cfg *config.Config, cfgErr error) Check {
 		Label:  "Sub-agents",
 		Status: "OK",
 		Detail: fmt.Sprintf("enabled — %s / %s, max depth 1, max concurrency %d", providerName, model, sc.MaxConcurrency),
+	}
+}
+
+// CheckWorkspace reports the workspace substrate the session will run on
+// (the isolated-workspace plan §2.4): the configured backend, the sandbox
+// image and containment root in isolated mode, and the backends this
+// binary actually links. Until this check, whether isolation was active
+// was discoverable only by reading a source comment.
+//
+// The check is deliberately config-level: the daemon and the image's D5
+// contract are probed at session start (inside the startup bound), and a
+// doctor run that booted throwaway containers would be a probe, not a
+// diagnosis. The linked-backend list comes from the kernel's sandbox
+// registry — the same registry OpenContainerdWorkspaceSandbox resolves
+// through — so an "unknown backend" failure is diagnosable here, against
+// what the binary really provides.
+func CheckWorkspace(cfg *config.Config, cfgErr error) Check {
+	if cfgErr != nil {
+		return Check{Label: "Workspace", Status: "WARN", Detail: "config not loaded"}
+	}
+	w := cfg.Workspace
+	switch {
+	case w.Backend == "" || w.Backend == config.BackendLocal:
+		return Check{Label: "Workspace", Status: "OK", Detail: "local — tools run on the host filesystem"}
+	case w.Backend == config.BackendContainerd:
+		if runtime.GOOS != "linux" {
+			// Session wiring refuses this via config.Validate (config.Load
+			// itself does not validate), so doctor is where a non-Linux
+			// user learns it before the first session start.
+			return Check{
+				Label:  "Workspace",
+				Status: "FAIL",
+				Detail: fmt.Sprintf("isolated mode needs a Linux containerd daemon; %s cannot run one (native Linux or WSL2 required)", runtime.GOOS),
+			}
+		}
+		// The same rules the session enforces at startup: config.Validate
+		// runs at wiring, not load, so a stanza that would fail the
+		// session (no image, a relative or whole-container root) must not
+		// read as healthy here. The workspace-prefixed errors are the
+		// stanza's own; the platform rule above is doctor's, reported
+		// once.
+		var wsErrs []string
+		if verr := config.Validate(cfg); verr != nil {
+			var ve config.ValidationError
+			if errors.As(verr, &ve) {
+				for _, e := range ve.Errors {
+					if strings.HasPrefix(e, "workspace.") {
+						wsErrs = append(wsErrs, e)
+					}
+				}
+			}
+		}
+		if len(wsErrs) > 0 {
+			return Check{Label: "Workspace", Status: "FAIL", Detail: strings.Join(wsErrs, "; ")}
+		}
+		detail := fmt.Sprintf("isolated (containerd) — image %s, namespace %s, root %s", w.Containerd.Image, w.Containerd.Namespace, w.Root)
+		if w.Containerd.Address != "" {
+			detail += fmt.Sprintf(", socket %s", w.Containerd.Address)
+		} else {
+			detail += ", socket containerd default"
+		}
+		detail += fmt.Sprintf("; linked backends: %s; daemon and image contract probed at session start",
+			strings.Join(shepherd.SandboxBackends(), ", "))
+		return Check{Label: "Workspace", Status: "OK", Detail: detail}
+	default:
+		return Check{Label: "Workspace", Status: "FAIL", Detail: fmt.Sprintf("unknown backend %q (valid: local, containerd)", w.Backend)}
 	}
 }
 

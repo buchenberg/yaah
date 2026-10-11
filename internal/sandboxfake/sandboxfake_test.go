@@ -2,8 +2,10 @@ package sandboxfake
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io/fs"
+	"path"
 	"strings"
 	"testing"
 
@@ -125,43 +127,59 @@ func TestFileIORoundTrip(t *testing.T) {
 	}
 }
 
-// TestExecRunsTheAtomicWriteScript interprets the exact script
-// sandboxWorkspace.WriteFile emits and pins the resulting tree: the content
-// lands at the target with the requested mode and no temp file survives.
+// TestExecRunsTheAtomicWriteScript interprets the exact first script
+// sandboxWorkspace.WriteFile emits and pins the resulting tree: the
+// base64 chunk lands in the mktemp file decoded, the scratch .b64 is
+// removed, the EXIT trap is stood down so the temp survives (a mishandled
+// `trap -` would surface as a stderr diagnostic at teardown), and the
+// temp's name returns on stdout.
 func TestExecRunsTheAtomicWriteScript(t *testing.T) {
 	s := newCreated(t)
 	script := `t=$(mktemp -- "$1.XXXXXX") || exit 1
-trap 'rm -f -- "$t"' EXIT
-cat > "$t" || exit 1
-chmod "$2" "$t" || exit 1
-mv -f -- "$t" "$1"`
+trap 'rm -f -- "$t" "$t.b64"' EXIT
+printf '%s' "$2" > "$t.b64" || exit 1
+base64 -d "$t.b64" >> "$t" || exit 1
+rm -f -- "$t.b64"
+trap - EXIT
+printf '%s' "$t"`
 
-	res := runScript(t, s, script, []byte("payload\n"), "/workspace/f.txt", "600")
+	res := runScript(t, s, script, nil, "/workspace/f.txt", base64.StdEncoding.EncodeToString([]byte("payload\n")))
 	if res.ExitCode != 0 {
 		t.Fatalf("exit = %d, stderr = %q", res.ExitCode, res.Stderr)
 	}
-	data, err := s.ReadFile(context.Background(), "/workspace/f.txt")
+	// The trap must have been cleared, not merely made inert: a fake
+	// that mishandles `trap -` runs the leftover trap body ("-") as a
+	// command at teardown and leaves a stderr diagnostic behind.
+	if res.Stderr != "" {
+		t.Errorf("a stood-down trap must leave no diagnostic: stderr = %q", res.Stderr)
+	}
+	temp := strings.TrimSpace(res.Stdout)
+	if !strings.HasPrefix(temp, "/workspace/f.txt.") {
+		t.Fatalf("temp name = %q, want it beside the target", temp)
+	}
+	data, err := s.ReadFile(context.Background(), temp)
 	if err != nil || string(data) != "payload\n" {
 		t.Fatalf("content = %q, %v; want payload", data, err)
 	}
-	mode := runScript(t, s, `stat -c %a -- "$1"`, nil, "/workspace/f.txt")
-	if strings.TrimSpace(mode.Stdout) != "600" {
-		t.Errorf("mode = %q, want 600", mode.Stdout)
-	}
-	// Only the root, the file, and its parent survive: the temp file is
-	// renamed by mv and would have been removed by the trap if mv failed.
-	if res := runScript(t, s, `find "$1" -mindepth 1 -maxdepth 1 -printf '%f\n'`, nil, "/workspace"); strings.Contains(res.Stdout, "XXXXXX") {
-		t.Errorf("temp file leaked: %q", res.Stdout)
+	if _, err := s.ReadFile(context.Background(), temp+".b64"); err == nil {
+		t.Error("the base64 scratch file must be removed")
 	}
 
-	// A failed write cleans the temp file via the trap: chmod 999 is invalid.
-	res = runScript(t, s, script, []byte("x"), "/workspace/f.txt", "999")
+	// A mid-script failure must fire the still-armed EXIT trap: an
+	// invalid base64 chunk fails the decode, the failed run's temp and
+	// scratch must be gone, and the successful run's temp must be the
+	// only survivor — counting entries cannot tell kept-from-removed,
+	// so the survivors are named.
+	res = runScript(t, s, script, nil, "/workspace/f.txt", "!!!not base64!!!")
 	if res.ExitCode == 0 {
-		t.Error("an invalid mode must fail the script")
+		t.Error("an invalid chunk must fail the script")
+	}
+	if _, err := s.ReadFile(context.Background(), temp); err != nil || string(data) != "payload\n" {
+		t.Fatalf("the successful run's temp must survive the failed run: %v", err)
 	}
 	list := runScript(t, s, `find "$1" -mindepth 1 -maxdepth 1 -printf '%f\n'`, nil, "/workspace")
-	if strings.Contains(list.Stdout, "XXXXXX") {
-		t.Errorf("temp file leaked after failure: %q", list.Stdout)
+	if got := strings.Fields(list.Stdout); len(got) != 1 || got[0] != path.Base(temp) || strings.HasSuffix(got[0], ".b64") {
+		t.Errorf("survivors after failure = %v, want exactly [%s] and no scratch", got, path.Base(temp))
 	}
 }
 

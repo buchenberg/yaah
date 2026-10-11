@@ -768,7 +768,53 @@ have been **executed**; the verdict is recorded against each.
    shows only the arguments, so the user approves exactly the diff they
    were shown, or nothing. The D4 write moved after the SetWorkspace
    gate, so a refused run never overwrites the record.
-8. Activation wiring + `doctor` (§2.4). *First genuinely useful release.*
+8. ✅ Activation wiring + `doctor` (§2.4) — **landed**.
+   The wiring itself landed with steps 5–7 (substrate selection, the
+   curated registry, the accept seam); what this step adds is
+   visibility and the end-to-end proof. `yaah doctor` gains
+   `CheckWorkspace`: the active substrate ("local — tools run on the
+   host filesystem", or isolated mode's image, namespace, containment
+   root, and socket), the backends the binary actually links (from the
+   kernel's sandbox registry — the same seam `OpenContainerdWorkspaceSandbox`
+   resolves through), and an honest FAIL for an isolated config read on a
+   non-Linux platform. It is deliberately config-level: booting
+   throwaway containers from `doctor` would be a probe, not a diagnosis —
+   the daemon and the D5 image contract stay probed at session start.
+   The §2.4 exit criterion — a real tool-driven task end to end — is
+   `TestLive_ActivatedSession` (`workspace_activation_live_test.go`),
+   inert without `YAAH_LIVE_CONTAINERD_ADDR` + `YAAH_LIVE_CONTAINERD_IMAGE`
+   and root, exactly like the kernel's own live suite: probe, create, D1
+   bootstrap from a host git work tree, tool-shaped work through the
+   session workspace (including GNU `stat` and `rg` from the image), a
+   three-file modify/add/delete delta, the containerd-only
+   `delta_patch` property asserted against the real backend, and the
+   `apply_out` accept seam landing all three changes onto the host.
+   **Live verdict — 2026-10-10, MET.** `TestLive_ActivatedSession` passed
+   end to end (1.3s) against the local containerd daemon (2.3.5,
+   overlayfs) with a `golang:bookworm` + ripgrep image; the runbook,
+   including the two operational rules it pinned along the way, is
+   `docs/isolated-workspace-live-testing.md` (image imports must target
+   the session's containerd namespace — and be unpacked — and raw
+   containerd applies no image `ENV` to execs, so a D5 image must put
+   its tools on the default PATH). The harness is genuinely
+   tool-driven, not substrate-driven: after the step-7 gate accepts the
+   real workspace, the whole task dispatches through the curated
+   registry a session would use — read, bash, write, delete, and
+   `apply_out` — and the host tree must be exactly as the bootstrap
+   left it before apply-out, so a regression that leaves tool dispatch
+   on the host fails the test instead of production.
+   The harness earned its keep before it passed: it found that
+   `sandboxWorkspace.WriteFile` shipped file content over exec stdin —
+   which the runc-v2 shim never lets close, so every tool-facing write
+   in an isolated session would have blocked until the context expired
+   (the fake's shell accepts stdin, which is why no unit test could
+   find it). The write now carries base64 in argv — matching the
+   kernel's own `Sandbox.WriteFile` — chunked at 256 KiB, with the same
+   mktemp/rename crash-safety and a trap-armed failure path; the fake's
+   shell gained `printf`/`base64`/`trap -`, and `base64` joined the D5
+   probe (the kernel's write path already required it in-container).
+   Step 8's exit criterion is met: isolation is wired, visible in
+   `doctor`, and proven end to end.
 9. Test matrix (§8), docs, and D2's inheritance behaviour for sub-agents (§1.3).
 
 **Stopping points:** step 5 leaves config without activation — a clean stop. Step 8

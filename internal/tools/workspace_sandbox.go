@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io/fs"
 	"path"
@@ -91,30 +92,122 @@ func (w *sandboxWorkspace) ReadFile(ctx context.Context, p string) ([]byte, erro
 	return w.sb.ReadFile(ctx, p)
 }
 
+// sandboxWriteChunkBytes bounds how much file content one exec carries, in
+// raw bytes before base64 expansion (~4/3). The ceiling is the kernel's
+// per-argument limit, not the total ARG_MAX budget: Linux caps one argv
+// string at MAX_ARG_STRLEN (32 pages = 128 KiB), and execve fails with
+// E2BIG above it — a bound the in-memory fake cannot catch, because it
+// never calls execve. 64 KiB raw encodes to ~85 KiB, comfortably under
+// the cap with room for the encoded payload's own growth. (The kernel
+// adapter's Config.WriteChunkBytes is larger because it splits its
+// encoded payload across several arguments; the fake's shell cannot
+// expand "$@", so this path keeps one argument per chunk.)
+const sandboxWriteChunkBytes = 64 * 1024
+
+// The three scripts of the chunked write. Only $1..$3 positionals appear:
+// every value is a quoted argument, and the base64 alphabet carries no
+// shell metacharacters, so file content and paths are never spliced into
+// script text.
+const (
+	// writeFirstScript creates the temp file beside the target, lands the
+	// first chunk, and prints the temp's name on stdout. The EXIT trap
+	// removes the temp and the chunk scratch file on any mid-script
+	// failure, and is stood down before the success path survives.
+	writeFirstScript = `t=$(mktemp -- "$1.XXXXXX") || exit 1
+trap 'rm -f -- "$t" "$t.b64"' EXIT
+printf '%s' "$2" > "$t.b64" || exit 1
+base64 -d "$t.b64" >> "$t" || exit 1
+rm -f -- "$t.b64"
+trap - EXIT
+printf '%s' "$t"`
+	// writeChunkScript appends one chunk to the temp file. The base64
+	// scratch file carries the decode without a pipeline — the in-memory
+	// test double's shell interprets no pipes, and a real sh gains
+	// nothing from one here.
+	writeChunkScript = `printf '%s' "$2" > "$1.b64" || exit 1
+base64 -d "$1.b64" >> "$1" || exit 1
+rm -f -- "$1.b64"`
+	// writeFinalScript applies the mode and renames the temp onto the
+	// target — the atomicity: a crash before this exec leaves the
+	// target untouched.
+	writeFinalScript = `chmod "$1" "$2" || exit 1
+mv -f -- "$2" "$3" || exit 1
+rm -f -- "$2.b64"`
+)
+
 // WriteFile mirrors the host implementation's crash safety: write a temp file
 // beside the target, then rename. The temp name comes from mktemp, so it is
 // created O_EXCL and code inside the sandbox cannot pre-create or symlink a
-// predictable name, and the trap removes it if the write fails part-way. Parent
-// directories are deliberately NOT created: the host atomicWriteFile fails when
-// the target directory is missing, and matching that keeps a typo'd path from
-// silently succeeding in one workspace and failing in the other.
+// predictable name, and the trap removes it if the write fails part-way.
+// Parent directories are deliberately NOT created: the host atomicWriteFile
+// fails when the target directory is missing, and matching that keeps a typo'd
+// path from silently succeeding in one workspace and failing in the other.
+//
+// The content travels as base64 in positional arguments, not on stdin: the
+// runc-v2 shim keeps a write end on an exec's stdin FIFO for the process's
+// whole lifetime, so a stdin-based write never observes EOF and blocks until
+// the context expires against the containerd backend — the kernel's
+// Sandbox.WriteFile made the same move, for the same reason, and this path
+// must match it to be usable there. Payloads beyond sandboxWriteChunkBytes
+// append across several execs before the single renaming exec.
 func (w *sandboxWorkspace) WriteFile(ctx context.Context, p string, data []byte, perm fs.FileMode) error {
-	script := `t=$(mktemp -- "$1.XXXXXX") || exit 1
-trap 'rm -f -- "$t"' EXIT
-cat > "$t" || exit 1
-chmod "$2" "$t" || exit 1
-mv -f -- "$t" "$1"`
+	mode := strconv.FormatUint(uint64(perm.Perm()), 8)
+	first := min(sandboxWriteChunkBytes, len(data))
 
 	res, err := w.sb.Exec(ctx, shepherd.ExecRequest{
 		Command: "sh",
-		Args:    []string{"-c", script, "shepherd", p, strconv.FormatUint(uint64(perm.Perm()), 8)},
+		Args:    []string{"-c", writeFirstScript, "shepherd", p, base64.StdEncoding.EncodeToString(data[:first])},
 		Cwd:     w.root,
-		Stdin:   data,
 	})
 	if err != nil {
 		return fmt.Errorf("sandbox write %s: %w", p, err)
 	}
 	if res.ExitCode != 0 {
+		return fmt.Errorf("sandbox write %s: exit %d: %s", p, res.ExitCode, strings.TrimSpace(res.Stderr))
+	}
+	// mktemp's name, printed by the first exec; trailing whitespace cannot
+	// be part of it, and trimming is robust to any sh that adds a newline.
+	temp := strings.TrimSpace(res.Stdout)
+
+	// A failed exec after the first leaves the temp behind unless the
+	// caller removes it; the scratch file is each chunk exec's own to
+	// clean, so the belt-and-braces rm names both.
+	cleanup := func() {
+		_, _ = w.sb.Exec(ctx, shepherd.ExecRequest{
+			Command: "sh",
+			Args:    []string{"-c", `rm -f -- "$1" "$1.b64"`, "shepherd", temp},
+			Cwd:     w.root,
+		})
+	}
+
+	for off := first; off < len(data); off += sandboxWriteChunkBytes {
+		end := min(off+sandboxWriteChunkBytes, len(data))
+		res, err := w.sb.Exec(ctx, shepherd.ExecRequest{
+			Command: "sh",
+			Args:    []string{"-c", writeChunkScript, "shepherd", temp, base64.StdEncoding.EncodeToString(data[off:end])},
+			Cwd:     w.root,
+		})
+		if err != nil {
+			cleanup()
+			return fmt.Errorf("sandbox write %s: chunk %d: %w", p, off, err)
+		}
+		if res.ExitCode != 0 {
+			cleanup()
+			return fmt.Errorf("sandbox write %s: chunk %d: exit %d: %s", p, off, res.ExitCode, strings.TrimSpace(res.Stderr))
+		}
+	}
+
+	res, err = w.sb.Exec(ctx, shepherd.ExecRequest{
+		Command: "sh",
+		Args:    []string{"-c", writeFinalScript, "shepherd", mode, temp, p},
+		Cwd:     w.root,
+	})
+	if err != nil {
+		cleanup()
+		return fmt.Errorf("sandbox write %s: %w", p, err)
+	}
+	if res.ExitCode != 0 {
+		cleanup()
 		return fmt.Errorf("sandbox write %s: exit %d: %s", p, res.ExitCode, strings.TrimSpace(res.Stderr))
 	}
 	return nil

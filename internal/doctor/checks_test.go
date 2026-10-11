@@ -2,8 +2,11 @@ package doctor
 
 import (
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
+
+	shepherd "github.com/buchenberg/shepherd-kernel-go"
 
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/config"
@@ -58,5 +61,133 @@ func TestCheckPipeline_ConfigError(t *testing.T) {
 	check := CheckPipeline(nil, errors.New("boom"))
 	if check.Status != "WARN" {
 		t.Errorf("status = %q, want WARN", check.Status)
+	}
+}
+
+// TestCheckWorkspace_LocalMode: no workspace stanza means the local
+// substrate, byte-for-byte the legacy behaviour.
+func TestCheckWorkspace_LocalMode(t *testing.T) {
+	check := CheckWorkspace(&config.Config{}, nil)
+	if check.Status != "OK" || !strings.Contains(check.Detail, "local") {
+		t.Errorf("local mode: %+v", check)
+	}
+}
+
+// TestCheckWorkspace_LocalExplicit: an explicit "local" reads the same.
+func TestCheckWorkspace_LocalExplicit(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Workspace.Backend = config.BackendLocal
+	check := CheckWorkspace(cfg, nil)
+	if check.Status != "OK" || !strings.Contains(check.Detail, "local") {
+		t.Errorf("explicit local: %+v", check)
+	}
+}
+
+// TestCheckWorkspace_Isolated reports the image, namespace, root, socket,
+// and the linked backends — the facts §2.4 wants visible. The backends are
+// asserted against the registry the detail was built from, not a literal,
+// so the assertion holds in any binary (the doctor test binary links only
+// the in-core git backend; the yaah binary links containerd too).
+func TestCheckWorkspace_Isolated(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Workspace.Backend = config.BackendContainerd
+	cfg.Workspace.Root = "/workspace"
+	cfg.Workspace.Containerd = config.ContainerdWorkspaceConfig{
+		Address:   "/run/containerd/containerd.sock",
+		Namespace: "yaah",
+		Image:     "registry.example/yaah-workspace:latest",
+	}
+	check := CheckWorkspace(cfg, nil)
+	if runtime.GOOS != "linux" {
+		// Session wiring refuses an isolated config off-Linux
+		// (config.Validate runs at wiring, not load), and doctor
+		// reports the same refusal.
+		if check.Status != "FAIL" {
+			t.Errorf("non-Linux isolated mode must FAIL, got %+v", check)
+		}
+		return
+	}
+	if check.Status != "OK" {
+		t.Fatalf("isolated mode on Linux: %+v", check)
+	}
+	for _, want := range []string{
+		"registry.example/yaah-workspace:latest", // the image
+		"yaah",                                   // the namespace
+		"/workspace",                             // the containment root
+		"socket /run/containerd/containerd.sock", // the configured socket
+		"linked backends: " + strings.Join(shepherd.SandboxBackends(), ", "),
+	} {
+		if !strings.Contains(check.Detail, want) {
+			t.Errorf("isolated report %q missing %q", check.Detail, want)
+		}
+	}
+}
+
+func TestCheckWorkspace_UnknownBackend(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Workspace.Backend = "kubernetes"
+	check := CheckWorkspace(cfg, nil)
+	if check.Status != "FAIL" {
+		t.Errorf("unknown backend must FAIL, got %+v", check)
+	}
+}
+
+func TestCheckWorkspace_ConfigError(t *testing.T) {
+	check := CheckWorkspace(nil, errors.New("boom"))
+	if check.Status != "WARN" {
+		t.Errorf("status = %q, want WARN", check.Status)
+	}
+}
+
+// TestCheckWorkspace_DefaultSocket: an empty address is a valid
+// configuration — containerd's own endpoint resolution — and must still
+// be accounted for in the output, not silently dropped.
+func TestCheckWorkspace_DefaultSocket(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the socket detail only renders on the Linux branch")
+	}
+	cfg := &config.Config{}
+	cfg.Workspace.Backend = config.BackendContainerd
+	cfg.Workspace.Root = "/workspace"
+	cfg.Workspace.Containerd = config.ContainerdWorkspaceConfig{
+		Namespace: "yaah",
+		Image:     "registry.example/yaah-workspace:latest",
+	}
+	check := CheckWorkspace(cfg, nil)
+	if check.Status != "OK" {
+		t.Fatalf("a valid default-socket stanza: %+v", check)
+	}
+	if !strings.Contains(check.Detail, "socket containerd default") {
+		t.Errorf("report %q must mark the default socket", check.Detail)
+	}
+}
+
+// TestCheckWorkspace_UnusableStanzaFails: doctor's verdict must match
+// session startup's — config.Validate runs at wiring, not load, so doctor
+// runs the same workspace rules itself. Each case isolates one rule: the
+// stanza is otherwise valid, so the failure names the broken rule.
+func TestCheckWorkspace_UnusableStanzaFails(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the workspace validation detail only renders on the Linux branch")
+	}
+	for _, tc := range []struct {
+		name   string
+		image  string
+		root   string
+		wantIn string
+	}{
+		{"no image", "", "/workspace", "workspace.containerd.image"},
+		{"whole-container root", "registry.example/yaah-workspace:latest", "/", "workspace.root"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Workspace.Backend = config.BackendContainerd
+			cfg.Workspace.Root = tc.root
+			cfg.Workspace.Containerd.Image = tc.image
+			check := CheckWorkspace(cfg, nil)
+			if check.Status != "FAIL" || !strings.HasPrefix(check.Detail, "workspace.") || !strings.Contains(check.Detail, tc.wantIn) {
+				t.Errorf("the %s case must FAIL naming its own rule, got %+v", tc.name, check)
+			}
+		})
 	}
 }
