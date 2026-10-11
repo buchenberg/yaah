@@ -82,7 +82,10 @@ type worktreeInfo struct {
 type Orphan struct {
 	ScopeID string
 	Path    string
-	Size    int64
+	// Repo is the repository the worktree was carved from — the prune
+	// path's teardown needs it for git's administrative state.
+	Repo string
+	Size int64
 }
 
 // Missing is an active worktree child whose recorded path is gone: the
@@ -108,7 +111,7 @@ type Unadopted struct {
 type Report struct {
 	Scopes    int
 	Roots     int
-	Adopted   int // worktree children re-adopted (their work is live again)
+	Adopted   []string // paths of worktree children re-adopted (their work is live again)
 	Orphans   []Orphan
 	Missing   []Missing
 	Unadopted []Unadopted
@@ -231,17 +234,17 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 			report.Missing = append(report.Missing, Missing{ScopeID: scope.ID(), Path: info.path})
 		case onDisk && scope.State() == shepherd.ScopeActive:
 			// Adopted means adopted: the strict resolver refuses an
-			// unregistered occupant, and the count must not claim it —
+			// unregistered occupant, and the report must not claim it —
 			// the refusal is reported as unadopted instead.
 			if scope.Sandbox() != nil {
-				report.Adopted++
+				report.Adopted = append(report.Adopted, info.path)
 			} else {
 				report.Unadopted = append(report.Unadopted, Unadopted{ScopeID: scope.ID(), Path: info.path})
 			}
 		case onDisk:
 			// Terminal scope, worktree still standing: unmerged work
 			// may live in it. List it, never delete it.
-			report.Orphans = append(report.Orphans, Orphan{ScopeID: scope.ID(), Path: info.path, Size: dirSize(info.path)})
+			report.Orphans = append(report.Orphans, Orphan{ScopeID: scope.ID(), Path: info.path, Repo: info.repo, Size: dirSize(info.path)})
 		}
 	}
 	return mgr, report, nil
@@ -268,6 +271,63 @@ func scanWorktreePaths(ctx context.Context, store *shepherdtrace.SQLiteTraceStor
 		paths[rec.OwnerID] = worktreeInfo{path: path, repo: repo}
 	}
 	return paths, nil
+}
+
+// RegisteredWorktreePaths runs git's worktree registry for repoPath
+// and returns the registered worktree paths. A lookup failure is an
+// error, not an empty registry: callers that must not delete on a
+// broken registry (the prune path) refuse on it, while callers that
+// only refuse adoption treat it as nothing-registered.
+func RegisteredWorktreePaths(ctx context.Context, repoPath string) ([]string, error) {
+	out, err := exec.CommandContext(ctx, "git", "-C", repoPath, "worktree", "list", "--porcelain").Output()
+	if err != nil {
+		return nil, fmt.Errorf("git worktree list: %w", err)
+	}
+	var paths []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "worktree ") {
+			paths = append(paths, strings.TrimPrefix(line, "worktree "))
+		}
+	}
+	return paths, nil
+}
+
+// WorktreeOwnedBy verifies the CURRENT occupant of path is a git
+// worktree belonging to repoPath: its .git file's gitdir must point
+// under the repository's worktree administration. Git's registry can
+// keep stale entries after the original directory is gone, and a
+// directory can be replaced with unrelated data — the registry alone
+// is not ownership, and neither is a user-supplied path.
+func WorktreeOwnedBy(repoPath, path string) bool {
+	data, err := os.ReadFile(filepath.Join(path, ".git"))
+	if err != nil {
+		return false // no .git file: not a worktree (a clone has a directory)
+	}
+	const prefix = "gitdir: "
+	line := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(line, prefix) {
+		return false
+	}
+	gitdir := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+	if !filepath.IsAbs(gitdir) {
+		gitdir = filepath.Join(path, gitdir)
+	}
+	// The recorded repository's worktree administration is the only
+	// acceptable owner. .git may itself be a file in exotic setups;
+	// the main-repo shape is the one yaah provisions. Both sides are
+	// resolved through symlinks first: git writes the gitdir in the
+	// physical form (macOS temp dirs resolve /var through
+	// /private/var), while the recorded repo path may be the symlinked
+	// form — a lexical compare would refuse a true owner.
+	owned := filepath.Clean(filepath.Join(repoPath, ".git", "worktrees"))
+	if resolved, rerr := filepath.EvalSymlinks(owned); rerr == nil {
+		owned = resolved
+	}
+	gitdirClean := filepath.Clean(gitdir)
+	if resolved, rerr := filepath.EvalSymlinks(gitdirClean); rerr == nil {
+		gitdirClean = resolved
+	}
+	return strings.HasPrefix(gitdirClean+string(filepath.Separator), owned+string(filepath.Separator))
 }
 
 // IsRegisteredWorktree reports whether path is currently registered as

@@ -179,8 +179,8 @@ func TestRecover_RebuildsTreeTerminalsCheckpointsOutputs(t *testing.T) {
 	if wtChild.Sandbox() == nil {
 		t.Error("the live worktree child must be re-adopted (its unmerged work is settle-able again)")
 	}
-	if report.Adopted != 1 {
-		t.Errorf("report.Adopted = %d, want 1 (the live worktree)", report.Adopted)
+	if len(report.Adopted) != 1 || report.Adopted[0] != state.worktreePath {
+		t.Errorf("report.Adopted = %v, want the live worktree's path", report.Adopted)
 	}
 	if report.Scopes != 4 || report.Roots != 1 {
 		t.Errorf("report = %d scopes, %d roots; want 4, 1", report.Scopes, report.Roots)
@@ -413,8 +413,8 @@ func TestRecover_SquatterDirectoryNeverAdopted(t *testing.T) {
 	if scope.Sandbox() != nil {
 		t.Error("a squatter directory must never be adopted as an owned sandbox")
 	}
-	if report.Adopted != 0 {
-		t.Errorf("report.Adopted = %d, want 0 (nothing adoptable)", report.Adopted)
+	if len(report.Adopted) != 0 {
+		t.Errorf("report.Adopted = %v, want none (nothing adoptable)", report.Adopted)
 	}
 	// The refusal is reported, not silenced: an active child whose
 	// recorded occupant is unadoptable lands in the unadopted bucket.
