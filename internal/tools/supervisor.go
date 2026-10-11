@@ -3,9 +3,12 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
+
+	"github.com/buchenberg/yaah/internal/agent/supervision"
 )
 
 // SupervisorTool lets the orchestrator supervise sub-agent execution.
@@ -25,11 +28,14 @@ type SupervisorTool struct {
 	TraceDir string
 
 	// RootScopeID is the session's root scope (adoption plan D1), set by
-	// the wiring. Inject and halt refuse it until the execution bridge
-	// lands (plan steps A2/A3): today both are trace-side only, and a
-	// halted root would silently break every subsequent Fork — the scope
-	// manager refuses to fork from a non-active parent, and the runner
-	// ignores the error, leaving later sub-agents with no scope at all.
+	// the wiring. Halt refuses it until the halt bridge lands (plan step
+	// A3, gated by supervisor.halt_root): a halted root would silently
+	// break every subsequent Fork — the scope manager refuses to fork
+	// from a non-active parent, and the runner ignores that error,
+	// leaving later sub-agents with no scope at all. Inject is NOT
+	// guarded: the root is registered in the run registry against the
+	// session's own steering channel (plan A2), so injecting into it
+	// steers the session itself.
 	RootScopeID string
 }
 
@@ -114,9 +120,6 @@ func (t *SupervisorTool) Execute(ctx context.Context, args string) (string, erro
 		if raw.ScopeID == "" || raw.Guidance == "" {
 			return "", fmt.Errorf("supervisor: scope_id and guidance required for inject")
 		}
-		if raw.ScopeID == t.RootScopeID {
-			return "", fmt.Errorf("supervisor: the session root scope cannot take injected guidance yet (it arrives with the adoption plan's execution bridge); inject into a sub-agent scope instead (see list_scopes)")
-		}
 		return executeInject(mgr, raw.ScopeID, raw.Guidance)
 	case "halt":
 		if raw.ScopeID == "" {
@@ -198,7 +201,21 @@ func executeInject(mgr *shepherd.ScopeManager, scopeID, guidance string) (string
 	if err := scope.Inject(guidance); err != nil {
 		return "", fmt.Errorf("supervisor: inject failed: %w", err)
 	}
-	return fmt.Sprintf("Injected guidance into %s.", scopeID), nil
+	// Supervision bridge (adoption plan A2): the trace fact above is the
+	// record; the registry delivery is the intervention. A scope with no
+	// registered run (finished, or the run predates the bridge) keeps
+	// the trace-side outcome — reported honestly, not as delivery.
+	if SharedRunRegistry != nil {
+		switch err := SharedRunRegistry.Inject(scopeID, guidance); {
+		case err == nil:
+			return fmt.Sprintf("Injected guidance into %s; delivered to the running loop.", scopeID), nil
+		case errors.Is(err, supervision.ErrNoRun):
+			return fmt.Sprintf("Guidance recorded in the trace for %s; no active run to deliver it to (the scope is not currently executing).", scopeID), nil
+		default:
+			return "", fmt.Errorf("supervisor: inject delivery failed: %w", err)
+		}
+	}
+	return fmt.Sprintf("Guidance recorded in the trace for %s; the supervision bridge is not active in this session.", scopeID), nil
 }
 
 func executeHalt(mgr *shepherd.ScopeManager, scopeID string) (string, error) {
@@ -215,5 +232,15 @@ func executeHalt(mgr *shepherd.ScopeManager, scopeID string) (string, error) {
 func executeStatus(mgr *shepherd.ScopeManager) (string, error) {
 	active := mgr.ActiveScopes()
 	all := mgr.AllScopes()
-	return fmt.Sprintf("Supervision status:\n  Scopes: %d active, %d total\n", len(active), len(all)), nil
+	out := fmt.Sprintf("Supervision status:\n  Scopes: %d active, %d total\n", len(active), len(all))
+	if SharedRunRegistry != nil {
+		ids := SharedRunRegistry.ScopeIDs()
+		out += fmt.Sprintf("  Bridged runs: %d\n", len(ids))
+		for _, id := range ids {
+			out += fmt.Sprintf("    %s (injectable)\n", id)
+		}
+	} else {
+		out += "  Bridged runs: 0 (supervision bridge not active)\n"
+	}
+	return out, nil
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/runner"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/mcp"
@@ -394,6 +395,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// the supervised task tool, and sub-agent trace middleware.
 	var scopeMgr *shepherd.ScopeManager
 	var rootScopeID string
+	steerCh := make(chan string, 4)
 	if cfg.Agent.Default.ShepherdTraceDir != "" {
 		store, _, mgr, serr := pipeline.InitShepherdInfrastructure(cfg.Agent.Default.ShepherdTraceDir, 0)
 		if serr != nil {
@@ -402,6 +404,13 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			tools.SharedTraceStore = store
 			scopeMgr = mgr
 			tools.SharedScopeManager = mgr
+
+			// Supervision bridge (adoption plan A2): scope IDs mapped
+			// to running loops' steering channels. The runner
+			// registers each sub-agent dispatch; the root registers
+			// against the session's own steering channel below, so
+			// an inject into the root steers the session itself.
+			tools.SharedRunRegistry = supervision.NewRegistry()
 
 			// Root scope (adoption plan D1): local mode shares the
 			// in-place git sandbox — never destroyed, the kernel's
@@ -414,6 +423,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 				fmt.Fprintf(os.Stderr, "warning: no shepherd root scope — sub-agent scopes fall back to flat creation: %v\n", rerr)
 			} else {
 				rootScopeID = root.ID()
+				tools.SharedRunRegistry.Register(rootScopeID, steerCh)
 			}
 		}
 	}
@@ -735,7 +745,8 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		backgroundJobs: backgroundJobs,
 		sessionSandbox: sessionSandbox,
 		cwd:            cwd,
-		steerCh:        make(chan string, 4),
+		steerCh:        steerCh,
+		rootScopeID:    rootScopeID,
 		followupCh:     followupCh,
 	}
 	// The session owns everything created above from here: close() will

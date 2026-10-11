@@ -65,6 +65,13 @@ type SubAgentConfig struct {
 	// execution history on failure. When empty, or when no shared store
 	// is configured, tracing is a no-op.
 	SessionID string
+
+	// SteerCh, when non-nil, is the supervision inject channel
+	// (shepherd-adoption plan A2): the supervisor tool's inject action
+	// delivers guidance here, and the loop's steer middleware turns it
+	// into a high-priority user message between turns. Nil disables
+	// steering for this run — the run is unreachable by inject.
+	SteerCh chan string
 }
 
 // NewSubAgentLoop creates a Loop optimized for sub-agent execution.
@@ -133,6 +140,10 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 	l.CtxMgr.ContextWindow = cfg.ContextWindow
 	l.CtxMgr.OtelEnabled = cfg.OtelEnabled
 	l.CtxMgr.EnsurePruner()
+
+	// Supervision steering (adoption plan A2): the channel the
+	// supervisor injects into; the loop's steer middleware drains it.
+	l.Steer = cfg.SteerCh
 
 	if l.Config.MaxToolConcurrency > 0 {
 		l.toolConcurrency = pipeline.NewToolConcurrencyMiddleware(l.Config.MaxToolConcurrency)

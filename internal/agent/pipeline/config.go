@@ -174,7 +174,14 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 }
 
 var subAgentBuilders = map[string]func(PipelineConfig) Middleware{
-	"permission":       buildPermission,
+	"permission": buildPermission,
+	// steer: the supervision inject channel (adoption plan A2). Unlike
+	// the orchestrator builder, no onDrain compaction hook — sub-agent
+	// loops prune via CtxMgr, and the builder is only installed when
+	// cfg.Steer is wired, so nil channels never reach the middleware.
+	"steer": func(cfg PipelineConfig) Middleware {
+		return &SteerMiddleware{ch: cfg.Steer}
+	},
 	"tool_concurrency": buildToolConcurrency,
 	"shepherd_trace": func(cfg PipelineConfig) Middleware {
 		// Sub-agents write through the session-shared store instead of
@@ -225,13 +232,17 @@ var defaultPipelineNames = []string{
 // don't need orchestrator-level middleware.
 //
 // Deliberately excluded:
-// - steer/followup: orchestrator REPL channels, sub-agents never receive them
+// - followup: orchestrator REPL channel, sub-agents never receive it
 // - approval: sub-agents auto-approve (the orchestrator gates dispatch)
 // - compaction: sub-agents use CtxMgr pruning internally, not pipeline compaction
 // - loop_detection: redundant with MaxLoopCycles/MaxToolTurns/WrapUpThreshold/ErrStuckChild
 // - soft_prune: CtxMgr.EnsurePruner() already handles context for short-lived loops
 //
 // Included (conditionally, by NewSubAgentPipeline):
+//   - steer: when the run carries a supervision inject channel
+//     (shepherd-adoption plan A2) — the supervisor's guidance must reach
+//     the loop between turns. Without a channel there is nothing to
+//     drain, and the orchestrator's REPL steering remains excluded.
 //   - permission: when the orchestrator passed parent permission rules they are
 //     enforced inside the sub-agent loop, filtering denied tool calls before
 //     concurrency gating or tracing (finding A1)
@@ -291,6 +302,12 @@ func SubAgentPipelineNames(disabled []string) []string {
 // observes them. Opting out via PipelineDisabled is honoured.
 func NewSubAgentPipeline(cfg PipelineConfig) *Pipeline {
 	names := SubAgentPipelineNames(cfg.PipelineDisabled)
+	// Order matters: steering guidance lands before the turn's tool
+	// calls are gated or traced, so an injected "stop doing X" reaches
+	// the model before it repeats the mistake.
+	if cfg.Steer != nil && !slices.Contains(cfg.PipelineDisabled, "steer") {
+		names = append([]string{"steer"}, names...)
+	}
 	if len(cfg.PermissionRules) > 0 && !slices.Contains(cfg.PipelineDisabled, "permission") {
 		names = append([]string{"permission"}, names...)
 	}

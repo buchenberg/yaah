@@ -3,6 +3,8 @@ package tools
 import (
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+
+	"github.com/buchenberg/yaah/internal/agent/supervision"
 )
 
 // SharedScopeManager is set during wiring (InitShepherdInfrastructure)
@@ -21,3 +23,14 @@ var SharedScopeManager *shepherd.ScopeManager
 //
 // Set once during session initialization. Nil when tracing is disabled.
 var SharedTraceStore *shepherdtrace.SQLiteTraceStore
+
+// SharedRunRegistry is the supervision bridge (shepherd-adoption plan
+// A2): scope IDs mapped to the steering channels of the loops currently
+// running under them. The runner registers each sub-agent dispatch; the
+// wiring registers the session root against the session's own steering
+// channel; the supervisor tool's inject delivers through it, so an
+// intervention reaches the running loop instead of only the trace.
+//
+// Set once during session initialization, alongside the scope manager.
+// Nil when tracing is disabled.
+var SharedRunRegistry *supervision.Registry

@@ -28,6 +28,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/budget"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/memory"
@@ -383,6 +384,20 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			subScope, _ = createSubAgentScope(mgr, opts, subTraceID, params.Workdir)
 		}
 
+		// Supervision bridge (adoption plan A2): the run registers its
+		// steering channel under the scope ID, so the supervisor tool's
+		// inject reaches this loop between turns instead of only
+		// recording a trace fact. The deferred unregister keeps the map
+		// honest on every exit path — normal, error, and cancellation;
+		// inject into a finished run then reports "no active run"
+		// rather than silently vanishing.
+		var steerCh chan string
+		if subScope != nil && tools.SharedRunRegistry != nil {
+			steerCh = make(chan string, supervision.SteerBuffer)
+			tools.SharedRunRegistry.Register(subScope.ID(), steerCh)
+			defer tools.SharedRunRegistry.Unregister(subScope.ID())
+		}
+
 		// Per-turn checkpointing is enabled per role (subagent.roles.<name>.
 		// turn_checkpoints). When active, the checkpointer lives on this
 		// sub-agent's own scope so turn rewinds never touch the supervised
@@ -412,6 +427,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			OtelEnabled:            opts.OtelEnabled,
 			OtelVerbose:            opts.OtelVerbose,
 			SessionID:              subTraceID,
+			SteerCh:                steerCh,
 
 			TurnCheckpointer:      turnCk,
 			TurnCheckpointEnabled: turnCk != nil,

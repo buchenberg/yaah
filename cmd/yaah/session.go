@@ -106,6 +106,13 @@ type agentSession struct {
 	// it. Nil in local mode.
 	sessionSandbox *tools.SessionSandbox
 
+	// rootScopeID is the session's shepherd root scope (adoption plan
+	// A2): registered in the shared run registry against steerCh, so
+	// supervisor inject into the root steers the session itself.
+	// close() unregisters it BEFORE closing steerCh — a registry send
+	// must never land on a closed channel. Empty when tracing is off.
+	rootScopeID string
+
 	cwd string
 
 	view      agent.View
@@ -144,6 +151,12 @@ const workspaceSandboxDestroyTimeout = 30 * time.Second
 
 func (s *agentSession) close() {
 	ctx := context.Background()
+	// The root's registry entry goes before its channel closes: the
+	// registry sends under its lock, so an unregister that returns
+	// guarantees no later send — and a send on a closed channel panics.
+	if s.rootScopeID != "" && tools.SharedRunRegistry != nil {
+		tools.SharedRunRegistry.Unregister(s.rootScopeID)
+	}
 	if s.steerCh != nil {
 		close(s.steerCh)
 	}
