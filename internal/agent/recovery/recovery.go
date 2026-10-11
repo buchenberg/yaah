@@ -314,9 +314,20 @@ func WorktreeOwnedBy(repoPath, path string) bool {
 	}
 	// The recorded repository's worktree administration is the only
 	// acceptable owner. .git may itself be a file in exotic setups;
-	// the main-repo shape is the one yaah provisions.
-	owned := filepath.Clean(filepath.Join(repoPath, ".git", "worktrees")) + string(filepath.Separator)
-	return strings.HasPrefix(filepath.Clean(gitdir)+string(filepath.Separator), owned)
+	// the main-repo shape is the one yaah provisions. Both sides are
+	// resolved through symlinks first: git writes the gitdir in the
+	// physical form (macOS temp dirs resolve /var through
+	// /private/var), while the recorded repo path may be the symlinked
+	// form — a lexical compare would refuse a true owner.
+	owned := filepath.Clean(filepath.Join(repoPath, ".git", "worktrees"))
+	if resolved, rerr := filepath.EvalSymlinks(owned); rerr == nil {
+		owned = resolved
+	}
+	gitdirClean := filepath.Clean(gitdir)
+	if resolved, rerr := filepath.EvalSymlinks(gitdirClean); rerr == nil {
+		gitdirClean = resolved
+	}
+	return strings.HasPrefix(gitdirClean+string(filepath.Separator), owned+string(filepath.Separator))
 }
 
 // IsRegisteredWorktree reports whether path is currently registered as
