@@ -50,7 +50,7 @@ func sessionTestConfig() config.WorkspaceConfig {
 func TestStartSessionSandbox_SessionLifecycle(t *testing.T) {
 	open, fakes := cleanOpener()
 
-	ss, err := StartSessionSandbox(context.Background(), sessionTestConfig(), open, "")
+	ss, err := StartSessionSandbox(context.Background(), sessionTestConfig(), open, "", nil)
 	if err != nil {
 		t.Fatalf("StartSessionSandbox: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestStartSessionSandbox_ProbeFailureLeavesNoSessionSandbox(t *testing.T) {
 		return sb, nil
 	}
 
-	_, err := StartSessionSandbox(context.Background(), sessionTestConfig(), open, "")
+	_, err := StartSessionSandbox(context.Background(), sessionTestConfig(), open, "", nil)
 	if err == nil {
 		t.Fatal("a failed image contract must fail the session")
 	}
@@ -156,7 +156,7 @@ func TestStartSessionSandbox_CreateFailureDestroys(t *testing.T) {
 		return preCreated, nil
 	}
 
-	_, err := StartSessionSandbox(context.Background(), sessionTestConfig(), open, "")
+	_, err := StartSessionSandbox(context.Background(), sessionTestConfig(), open, "", nil)
 	if err == nil {
 		t.Fatal("a failed Create must fail the session")
 	}
@@ -189,7 +189,7 @@ func TestStartSessionSandbox_OpenerFailure(t *testing.T) {
 				}
 				return sb, nil
 			}
-			if _, err := StartSessionSandbox(context.Background(), sessionTestConfig(), open, ""); err == nil {
+			if _, err := StartSessionSandbox(context.Background(), sessionTestConfig(), open, "", nil); err == nil {
 				t.Fatal("an opener failure must fail the session")
 			} else if !strings.Contains(err.Error(), "daemon unreachable") {
 				t.Errorf("error = %v, want it to name the opener failure", err)
@@ -200,7 +200,7 @@ func TestStartSessionSandbox_OpenerFailure(t *testing.T) {
 
 func TestSessionSandbox_BackendAndRoot(t *testing.T) {
 	open, _ := cleanOpener()
-	ss, err := StartSessionSandbox(context.Background(), sessionTestConfig(), open, "")
+	ss, err := StartSessionSandbox(context.Background(), sessionTestConfig(), open, "", nil)
 	if err != nil {
 		t.Fatalf("StartSessionSandbox: %v", err)
 	}

@@ -692,6 +692,21 @@ have been **executed**; the verdict is recorded against each.
    session flow — the accept seam arrives with the step-7 tool surface;
    the verbs are landed and round-trip-tested (modify/add/delete, binary
    payloads, backend-patch preference).
+   **Post-review hardening (CI + PR review):** the source check is now
+   context-bound and refuses the layouts the copy-in cannot reproduce
+   faithfully — repository subdirectories, linked worktrees and
+   submodules (a `.git` file), and repositories with no commits. Tracked
+   symlinks and tracked deny-pattern matches fail the bootstrap (the
+   container would otherwise record them as deletions and apply-out would
+   delete them from the host); untracked deny-pattern matches — the
+   usual case, local secrets — are excluded from the copy-in, so the
+   agent can never read them inside the container either. A dirty source
+   gets one synthetic in-container baseline commit of exactly the copied
+   tree, so apply-out patches carry only session changes and apply
+   cleanly back onto the dirty host. Copy-out writes are atomic, carry
+   the sandbox entry's mode (new executables arrive executable), stay
+   contained under the target root, and propagate read errors instead of
+   misreading them as directories.
    **Known costs, deliberate for the correctness-first landing:** the
    copy-in costs one backend exec per file (a bundle-based fast path is
    the anticipated follow-up once D1 meets real sessions); a moved host

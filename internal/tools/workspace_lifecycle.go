@@ -51,7 +51,12 @@ type SessionSandbox struct {
 // the session can diff during and apply out on accept. An empty src skips
 // the bootstrap — the sandbox is up, but there is no baseline to diff
 // against and ApplyOut refuses.
-func StartSessionSandbox(ctx context.Context, w config.WorkspaceConfig, open SandboxOpener, src string) (*SessionSandbox, error) {
+//
+// The deny patterns are the copy-in's copy of the local workspace's
+// policy: files matching them never enter the container, so the agent can
+// never read them there either. Wiring resolves the config default before
+// calling; nil means no patterns.
+func StartSessionSandbox(ctx context.Context, w config.WorkspaceConfig, open SandboxOpener, src string, deny []string) (*SessionSandbox, error) {
 	probeSB, err := open(w)
 	if err != nil {
 		return nil, fmt.Errorf("workspace: open probe sandbox: %w", err)
@@ -88,7 +93,7 @@ func StartSessionSandbox(ctx context.Context, w config.WorkspaceConfig, open San
 	// the baseline, rebind to it. A failed bootstrap destroys — a
 	// half-bootstrapped container is still a container.
 	if src != "" {
-		if berr := bootstrapSession(ctx, ss, src); berr != nil {
+		if berr := bootstrapSession(ctx, ss, src, deny); berr != nil {
 			if derr := ss.Destroy(context.WithoutCancel(ctx)); derr != nil {
 				return nil, errors.Join(berr, fmt.Errorf("workspace: destroy after failed bootstrap: %w", derr))
 			}
