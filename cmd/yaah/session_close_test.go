@@ -83,12 +83,19 @@ func TestSessionClosePrunesTerminalScopes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fork: %v", err)
 	}
+	discarded, err := mgr.Fork(root.ID(), "sub-discarded", nil)
+	if err != nil {
+		t.Fatalf("fork: %v", err)
+	}
 	live, err := mgr.Fork(root.ID(), "sub-live", nil)
 	if err != nil {
 		t.Fatalf("fork: %v", err)
 	}
 	if err := root.Merge(merged); err != nil {
 		t.Fatalf("merge: %v", err)
+	}
+	if err := root.Discard(discarded); err != nil {
+		t.Fatalf("discard: %v", err)
 	}
 
 	sess := &agentSession{
@@ -98,6 +105,9 @@ func TestSessionClosePrunesTerminalScopes(t *testing.T) {
 
 	if _, ok := mgr.Get(merged.ID()); ok {
 		t.Error("close() must prune the merged child from the registry")
+	}
+	if _, ok := mgr.Get(discarded.ID()); ok {
+		t.Error("close() must prune the discarded child from the registry")
 	}
 	if _, ok := mgr.Get(live.ID()); !ok {
 		t.Error("close() must not prune a live child")

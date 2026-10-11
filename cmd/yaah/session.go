@@ -187,14 +187,6 @@ func (s *agentSession) close() {
 	if s.supervisor != nil {
 		s.supervisor.Close()
 	}
-	// PruneTerminal on close (adoption plan R2): merged and discarded
-	// children accumulate over a long session; their trace records
-	// survive either way, so the in-memory registry shrinks here. The
-	// warn-only orphans are untouchable by it — recovery detached
-	// their sandboxes, and pruning never destroys anything.
-	if s.scopes != nil {
-		s.scopes.PruneTerminal()
-	}
 	// The root's registry entry goes before its channel closes: the
 	// registry sends under its lock, so an unregister that returns
 	// guarantees no later send — and a send on a closed channel panics.
@@ -214,6 +206,17 @@ func (s *agentSession) close() {
 		if !s.backgroundJobs.CloseAndWait(backgroundJobDrainTimeout) {
 			fmt.Fprintf(os.Stderr, "warning: background sub-agent(s) still finishing after %s; continuing session teardown\n", backgroundJobDrainTimeout)
 		}
+	}
+	// PruneTerminal on close (adoption plan R2): merged and discarded
+	// children accumulate over a long session; their trace records
+	// survive either way, so the in-memory registry shrinks here.
+	// Runs AFTER the background-jobs drain — the jobs share this
+	// manager, and the registry must not mutate under their forks and
+	// checkpoints. The warn-only orphans are untouchable by it —
+	// recovery detached their sandboxes, and pruning never destroys
+	// anything.
+	if s.scopes != nil {
+		s.scopes.PruneTerminal()
 	}
 	// followupCh closes only AFTER the drain. A finishing job delivers
 	// through it, and Deliver's select still has a send case on this

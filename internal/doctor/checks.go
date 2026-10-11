@@ -504,6 +504,12 @@ func CheckShepherd(cfg *config.Config, cfgErr error) Check {
 	if dir == "" {
 		return Check{Label: label, Status: "OK", Detail: "off (no shepherd_trace_dir)"}
 	}
+	// Runtime creates the trace dir before opening the store; the
+	// diagnostic must not fail a state the next session start would
+	// auto-heal (R2 review).
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return Check{Label: label, Status: "FAIL", Detail: "trace dir: " + err.Error()}
+	}
 	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
 	if err != nil {
 		return Check{Label: label, Status: "FAIL", Detail: "trace store: " + err.Error()}
@@ -512,6 +518,11 @@ func CheckShepherd(cfg *config.Config, cfgErr error) Check {
 	repoPath := cfg.Agent.Default.SupervisedRepoPath
 	if repoPath == "" {
 		repoPath, _ = os.Getwd()
+	}
+	if repoPath == "" {
+		// The same condition runtime downgrades to a warning — the
+		// row says the recovery was skipped, not that tracing broke.
+		return Check{Label: label, Status: "WARN", Detail: "no repository resolved — recovery skipped"}
 	}
 	// adoptRoots: the doctor has no session, so the local-mode rule
 	// applies; the throwaway registry is discarded either way and the

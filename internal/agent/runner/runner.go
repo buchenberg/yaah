@@ -731,6 +731,12 @@ func subAgentSandbox(opts taskRunnerOpts, workdir string) shepherdsandbox.Sandbo
 // pure-causal: the tree still exists, inject/halt still address every
 // scope, and only checkpoint capture is unavailable — which it would
 // have been anyway.
+// ErrRootTerminal reports a recovered root that cannot be reattached
+// because its lifecycle already ended (halted, discarded, or merged).
+// Callers use it to make the degraded mode explicit instead of
+// silently falling back to flat scopes.
+var ErrRootTerminal = errors.New("recovered root scope is terminal")
+
 func CreateRootScope(mgr *shepherd.ScopeManager, sessionID, repoPath string, isolated bool) (*shepherd.Scope, error) {
 	// Resume reattach (adoption plan R2): --resume continues under
 	// the same session ID, so a recovered registry already holds the
@@ -742,7 +748,7 @@ func CreateRootScope(mgr *shepherd.ScopeManager, sessionID, repoPath string, iso
 		if scope.State() == shepherd.ScopeActive {
 			return scope, nil
 		}
-		return nil, fmt.Errorf("recovered root scope is %s — a halted root ended scope-tree supervision for this session; start a new session", scope.State())
+		return nil, fmt.Errorf("%w: %s — it is terminal, so scope-tree supervision for this session ended; start a new session", ErrRootTerminal, scope.State())
 	}
 	var sb shepherdsandbox.Sandbox
 	if !isolated {
