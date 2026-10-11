@@ -340,3 +340,77 @@ func TestService_CloseJoinsDrain(t *testing.T) {
 	}
 	svc.Close() // idempotent: a second close must not panic or hang
 }
+
+// TestService_NoRecordNoDelivery pins the fact-before-intervention
+// contract: a firing whose trace fact cannot be written is NOT
+// delivered. A halted scope refuses injects (the scope is over, its
+// sandbox torn down), so the stuck rule's firing lands nowhere — no
+// steering message may claim an intervention that was never recorded.
+func TestService_NoRecordNoDelivery(t *testing.T) {
+	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	if err != nil {
+		t.Fatalf("open test store: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+	bus := shepherdtrace.NewEffectBus(64)
+	t.Cleanup(bus.Close)
+	store.WithBus(bus)
+
+	mgr := shepherd.NewScopeManager(store)
+	scope, err := mgr.Create("sub-worker", nil)
+	if err != nil {
+		t.Fatalf("create scope: %v", err)
+	}
+	if err := scope.Halt(); err != nil {
+		t.Fatalf("halt scope: %v", err)
+	}
+	runs := NewRegistry()
+	steer := make(chan string, SteerBuffer)
+	runs.Register("scope:sub-worker", Run{SteerCh: steer})
+
+	svc := NewService(mgr, bus, runs, allAdvisoryRules(), "")
+	svc.Start("no-record-test")
+	t.Cleanup(svc.Close)
+
+	for i := 0; i < 3; i++ {
+		publish(bus, shepherdtrace.EffectEvent{
+			TraceOwnerID: "sub-worker",
+			Mode:         shepherdtrace.Declaration,
+			KindLabel:    "read",
+			Payload:      map[string]any{"path": "/same/file"},
+		})
+	}
+	awaitSteer(t, steer, false)
+}
+
+// TestService_StartAfterCloseIsNoop pins the lifecycle guard: a
+// Close-then-Start sequence must not resurrect the drain goroutine
+// (whose wg.Add would race the completed wg.Wait — the WaitGroup reuse
+// rule), and Close stays safe to call repeatedly.
+func TestService_StartAfterCloseIsNoop(t *testing.T) {
+	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	if err != nil {
+		t.Fatalf("open test store: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+	bus := shepherdtrace.NewEffectBus(64)
+	t.Cleanup(bus.Close)
+	mgr := shepherd.NewScopeManager(store)
+	runs := NewRegistry()
+
+	svc := NewService(mgr, bus, runs, allAdvisoryRules(), "")
+	svc.Start("lifecycle-test")
+	svc.Close()
+	svc.Start("lifecycle-test") // must be a no-op, not a resurrected drain
+
+	done := make(chan struct{})
+	go func() {
+		svc.Close() // idempotent even after the no-op Start
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("second Close did not return; the no-op Start resurrected a drain goroutine")
+	}
+}

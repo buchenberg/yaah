@@ -173,6 +173,7 @@ func Validate(cfg *Config) error {
 
 	// Workspace backend selection and its containerd settings.
 	errs = append(errs, validateWorkspace(&cfg.Workspace, runtime.GOOS)...)
+	errs = append(errs, validateSupervisor(cfg.Agent.Default)...)
 
 	// MCP server configs: transport must be stdio or http.
 	for name, srv := range cfg.MCPServers {

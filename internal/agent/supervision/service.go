@@ -56,11 +56,17 @@ type Service struct {
 	sup         *shepherd.Supervisor
 	mgr         *shepherd.ScopeManager
 	runs        *Registry
+	bus         *shepherdtrace.EffectBus
 	rootScopeID string
 
-	startOnce sync.Once
-	closeOnce sync.Once
-	wg        sync.WaitGroup
+	// mu guards the lifecycle transitions: wg.Add in Start must never
+	// race wg.Wait in Close — the WaitGroup reuse rule — so both hold
+	// the mutex through their transition, and closed makes Start a
+	// no-op once Close has begun.
+	mu      sync.Mutex
+	closed  bool
+	started bool
+	wg      sync.WaitGroup
 }
 
 // skippingSupervisorRecords wraps a rule so it never matches the
@@ -110,39 +116,66 @@ func NewService(mgr *shepherd.ScopeManager, bus *shepherdtrace.EffectBus, runs *
 	if stuckRepeat <= 0 {
 		stuckRepeat = defaultStuckRepeat
 	}
+	// A negative window would narrow the kernel's own <= 0 default
+	// clause to exactly zero; zero keeps the kernel's default (10).
+	errorWindow := rules.ErrorRateWindow
+	if errorWindow < 0 {
+		errorWindow = 0
+	}
 
 	sup := shepherd.NewSupervisor(mgr, bus)
 	if rules.DestructiveTool {
 		sup.AddRule(skippingSupervisorRecords(shepherd.DestructiveToolRule()))
 	}
 	if rules.HighErrorRate {
-		sup.AddRule(skippingSupervisorRecords(shepherd.HighErrorRateRule(errorThreshold, rules.ErrorRateWindow)))
+		sup.AddRule(skippingSupervisorRecords(shepherd.HighErrorRateRule(errorThreshold, errorWindow)))
 	}
 	if rules.StuckDetection {
 		sup.AddRule(skippingSupervisorRecords(shepherd.StuckDetectionRule(stuckRepeat)))
 	}
-	return &Service{sup: sup, mgr: mgr, runs: runs, rootScopeID: rootScopeID}
+	return &Service{sup: sup, mgr: mgr, runs: runs, bus: bus, rootScopeID: rootScopeID}
 }
 
 // Start subscribes the supervisor to the bus and launches the drain
-// goroutine. Idempotent: a service starts once.
+// goroutine. Idempotent, and a no-op after Close: a service that is
+// closing cannot gain a new drain goroutine.
 func (s *Service) Start(subscriberID string) {
-	s.startOnce.Do(func() {
-		s.sup.Start(subscriberID)
-		s.wg.Add(1)
-		go s.drain()
-	})
+	s.mu.Lock()
+	if s.started || s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.started = true
+	if s.bus == nil {
+		// The kernel subscribes to nothing without a bus, so its
+		// interventions channel would never close and the drain would
+		// wedge Close's join. Nothing to supervise either way.
+		s.mu.Unlock()
+		return
+	}
+	s.wg.Add(1)
+	s.mu.Unlock()
+
+	s.sup.Start(subscriberID)
+	go s.drain()
 }
 
 // Close stops the supervisor and waits for the drain goroutine to
 // exit. The kernel closes the interventions channel on its way down,
 // which is what ends the drain; Close is therefore also the join point
-// tests use to assert no goroutine leaks. Idempotent.
+// tests use to assert no goroutine leaks. Idempotent, and makes any
+// later Start a no-op.
 func (s *Service) Close() {
-	s.closeOnce.Do(func() {
-		s.sup.Close()
-		s.wg.Wait()
-	})
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.closed = true
+	s.mu.Unlock()
+
+	s.sup.Close()
+	s.wg.Wait()
 }
 
 // drain bridges interventions to execution. For each inject, the
@@ -194,16 +227,24 @@ func (s *Service) drain() {
 }
 
 // deliverInject writes the firing into the scope's trace, then steers
-// the run if one is registered under the scope.
+// the run if one is registered under the scope. The fact is the record;
+// the delivery is the intervention — so a firing that cannot be
+// recorded is NOT delivered: a delivery with no trace fact would read
+// as an intervention that never happened, the exact inversion of the
+// A2 contract. The practical cases are benign races — a scope halted
+// mid-firing refuses injects, and a scope missing from the manager
+// cannot be addressed at all — and in both the run is over, so there
+// is nothing left to steer anyway.
 func (s *Service) deliverInject(scopeID, guidance string) {
-	if scope, ok := s.mgr.Get(scopeID); ok {
-		// A halted (discarded) scope refuses injects; a firing against
-		// a just-halted scope is a race the advisory path tolerates —
-		// the scope is done, there is no run to steer either.
-		if err := scope.Inject(guidance); err != nil {
-			slog.Debug("supervisor: firing not recorded (scope not injectable)",
-				"scope", scopeID, "err", err)
-		}
+	scope, ok := s.mgr.Get(scopeID)
+	if !ok {
+		slog.Warn("supervisor: firing not delivered — scope not addressable", "scope", scopeID)
+		return
+	}
+	if err := scope.Inject(guidance); err != nil {
+		slog.Warn("supervisor: firing not delivered — not recorded in the trace",
+			"scope", scopeID, "err", err)
+		return
 	}
 	switch err := s.runs.Inject(scopeID, guidance); {
 	case err == nil:

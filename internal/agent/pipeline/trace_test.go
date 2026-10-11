@@ -395,3 +395,31 @@ func TestTraceMiddleware_BashDeclarationCarriesCmd(t *testing.T) {
 		t.Error("non-bash declaration must not carry a cmd key")
 	}
 }
+
+// TestTraceMiddleware_PowerShellDeclarationCarriesCmd pins the Windows
+// half of the supervision event shape: the shell tool is powershell
+// there, and its declarations must carry the same "cmd" key the
+// advisory rules match on — otherwise the destructive rule is blind on
+// exactly the platform where bash never appears.
+func TestTraceMiddleware_PowerShellDeclarationCarriesCmd(t *testing.T) {
+	m := newTestTraceMiddleware(t)
+
+	if _, err := m.PostTool(context.Background(), []ToolResult{
+		{Name: "powershell", Args: `{"command":"Remove-Item -Recurse /tmp/probe"}`},
+	}, &Step{}); err != nil {
+		t.Fatalf("PostTool error: %v", err)
+	}
+
+	slice, err := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
+	if err != nil {
+		t.Fatalf("read trace: %v", err)
+	}
+	facts := slice.FactIDs()
+	if len(facts) < 1 {
+		t.Fatal("no facts recorded")
+	}
+	decl := slice.FactsByID[facts[0]].(shepherdtrace.Record)
+	if cmd, _ := decl.Body.Payload["cmd"].(string); cmd != "Remove-Item -Recurse /tmp/probe" {
+		t.Errorf("powershell declaration payload cmd = %q, want the shell command", cmd)
+	}
+}

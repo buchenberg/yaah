@@ -140,9 +140,10 @@ type Defaults struct {
 
 	// SupervisorHaltRoot is the DEPRECATED flat form of
 	// Supervisor.HaltRoot (it shipped with the A3 halt bridge before
-	// the plan §7 stanza existed). Load folds it into the stanza when
-	// the stanza leaves HaltRoot unset; new configuration uses
-	// supervisor.halt_root.
+	// the plan §7 stanza existed). HaltRootEnabled resolves it: the
+	// stanza's explicit value wins, unset falls back to this key, so
+	// existing configurations keep gating the same switch. New
+	// configuration uses supervisor.halt_root.
 	SupervisorHaltRoot bool `yaml:"supervisor_halt_root"`
 
 	// SupervisedMaxRetries caps the rollback-and-retry cycles of the
@@ -457,14 +458,6 @@ func Load() (*Config, error) {
 	}
 	if cfg.Agent.Default.ShepherdTraceDir != "" {
 		cfg.Agent.Default.ShepherdTraceDir = expandHomeDir(cfg.Agent.Default.ShepherdTraceDir)
-	}
-	// The A3 halt bridge shipped the flat supervisor_halt_root key; the
-	// plan §7 stanza nests it. The flat key keeps working, additively:
-	// either spelling enables the switch (it defaults off everywhere),
-	// so existing configurations are unaffected and the stanza is the
-	// one home going forward.
-	if cfg.Agent.Default.SupervisorHaltRoot {
-		cfg.Agent.Default.Supervisor.HaltRoot = true
 	}
 	if cfg.Agent.Default.SupervisedRepoPath != "" {
 		cfg.Agent.Default.SupervisedRepoPath = expandHomeDir(cfg.Agent.Default.SupervisedRepoPath)

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -27,8 +28,8 @@ agents:
 	if !sup.DestructiveRuleEnabled() || !sup.HighErrorRateEnabled() || !sup.StuckDetectionEnabled() {
 		t.Error("absent rules must default to enabled")
 	}
-	if sup.HaltRoot {
-		t.Error("HaltRoot must default off")
+	if cfg.Agent.Default.HaltRootEnabled() {
+		t.Error("HaltRootEnabled must default off")
 	}
 	if sup.ErrorRateThreshold() != 0 || sup.ErrorRateWindow() != 0 || sup.StuckRepeatThreshold() != 0 {
 		t.Error("absent thresholds must pass through as zero (the kernel rule defaults)")
@@ -70,27 +71,167 @@ agents:
 	if sup.StuckRepeatThreshold() != 5 {
 		t.Errorf("stuck threshold = %d, want 5", sup.StuckRepeatThreshold())
 	}
-	if !sup.HaltRoot {
-		t.Error("nested halt_root: true must parse")
+	if !cfg.Agent.Default.HaltRootEnabled() {
+		t.Error("nested halt_root: true must parse and enable")
 	}
 }
 
-// TestSupervisorLegacyHaltRoot pins the A3 flat key's backward
-// compatibility: supervisor_halt_root folds into the stanza's
-// HaltRoot, so existing configurations keep gating the same switch.
-func TestSupervisorLegacyHaltRoot(t *testing.T) {
-	writeConfig(t, `
+// TestSupervisorHaltRootPrecedence pins the A3 flat key's backward
+// compatibility and the stanza's win: unset in the stanza, the legacy
+// supervisor_halt_root keeps gating the same switch; an explicit
+// stanza value overrides the flat key in both directions.
+func TestSupervisorHaltRootPrecedence(t *testing.T) {
+	cases := []struct {
+		name    string
+		config  string
+		enabled bool
+	}{
+		{
+			name: "legacy key alone still enables",
+			config: `
 agents:
   default:
     shepherd_trace_dir: ~/traces
     supervisor_halt_root: true
-`)
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+`,
+			enabled: true,
+		},
+		{
+			name: "stanza false overrides legacy true",
+			config: `
+agents:
+  default:
+    shepherd_trace_dir: ~/traces
+    supervisor_halt_root: true
+    supervisor:
+      halt_root: false
+`,
+			enabled: false,
+		},
+		{
+			name: "stanza true enables without the legacy key",
+			config: `
+agents:
+  default:
+    shepherd_trace_dir: ~/traces
+    supervisor:
+      halt_root: true
+`,
+			enabled: true,
+		},
+		{
+			name: "both unset stay off",
+			config: `
+agents:
+  default:
+    shepherd_trace_dir: ~/traces
+`,
+			enabled: false,
+		},
 	}
-	if !cfg.Agent.Default.Supervisor.HaltRoot {
-		t.Error("the flat supervisor_halt_root must fold into Supervisor.HaltRoot")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			writeConfig(t, tc.config)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got := cfg.Agent.Default.HaltRootEnabled(); got != tc.enabled {
+				t.Errorf("HaltRootEnabled = %v, want %v", got, tc.enabled)
+			}
+		})
+	}
+}
+
+// TestSupervisorThresholdValidation pins that explicit rule tuning
+// must be usable by the rule it tunes: thresholds outside the usable
+// range are refused at load, not discovered as silent no-ops (or
+// always-on triggers) mid-session.
+func TestSupervisorThresholdValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		config  string
+		wantErr string
+	}{
+		{
+			name: "threshold above 1 can never trigger",
+			config: `
+agents:
+  default:
+    shepherd_trace_dir: ~/traces
+    supervisor:
+      rules:
+        high_error_rate: {threshold: 1.5}
+`,
+			wantErr: "high_error_rate.threshold 1.5",
+		},
+		{
+			name: "negative threshold",
+			config: `
+agents:
+  default:
+    shepherd_trace_dir: ~/traces
+    supervisor:
+      rules:
+        high_error_rate: {threshold: -0.1}
+`,
+			wantErr: "high_error_rate.threshold -0.1",
+		},
+		{
+			name: "negative window",
+			config: `
+agents:
+  default:
+    shepherd_trace_dir: ~/traces
+    supervisor:
+      rules:
+        high_error_rate: {window: -5}
+`,
+			wantErr: "high_error_rate.window -5",
+		},
+		{
+			name: "negative repeat threshold",
+			config: `
+agents:
+  default:
+    shepherd_trace_dir: ~/traces
+    supervisor:
+      rules:
+        stuck_detection: {repeat_threshold: -1}
+`,
+			wantErr: "stuck_detection.repeat_threshold -1",
+		},
+		{
+			name: "a valid tuning passes",
+			config: `
+agents:
+  default:
+    shepherd_trace_dir: ~/traces
+    supervisor:
+      rules:
+        high_error_rate: {threshold: 0.9, window: 20}
+        stuck_detection: {repeat_threshold: 5}
+`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			writeConfig(t, tc.config)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			verr := Validate(cfg)
+			if tc.wantErr == "" {
+				if verr != nil {
+					t.Fatalf("Validate = %v, want no errors", verr)
+				}
+				return
+			}
+			if verr == nil || !strings.Contains(verr.Error(), tc.wantErr) {
+				t.Errorf("Validate = %v, want %q named", verr, tc.wantErr)
+			}
+		})
 	}
 }
 

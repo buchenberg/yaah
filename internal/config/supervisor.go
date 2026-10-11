@@ -1,5 +1,7 @@
 package config
 
+import "fmt"
+
 // SupervisorConfig configures the supervision rules engine
 // (shepherd-adoption plan B1). The stanza exists only when tracing is
 // on: without `shepherd_trace_dir` neither the stanza nor anything it
@@ -18,10 +20,13 @@ type SupervisorConfig struct {
 
 	// HaltRoot opts into supervisor halt of the session's root scope: a
 	// deliberate stop of the session's current run, the ctrl-C
-	// equivalent. Off by default — a rules engine or model halting the
+	// equivalent. Nil (unset) falls back to the A3 legacy flat key
+	// (Defaults.SupervisorHaltRoot) — see HaltRootEnabled; an explicit
+	// value wins over the legacy key in both directions. Off by
+	// default everywhere — a rules engine or model halting the
 	// interactive session is a big hammer. Root inject needs no gate:
 	// steering the session is reversible.
-	HaltRoot bool `yaml:"halt_root"`
+	HaltRoot *bool `yaml:"halt_root"`
 
 	// Rules configures the individual advisory rules. A nil rule is
 	// enabled with its defaults.
@@ -118,4 +123,37 @@ func (s SupervisorConfig) StuckRepeatThreshold() int {
 		return 0
 	}
 	return s.Rules.StuckDetection.RepeatThreshold
+}
+
+// HaltRootEnabled resolves the root-halt opt-in. The stanza's explicit
+// value wins in both directions; unset falls back to the A3 legacy
+// flat key, so existing configurations keep gating the same switch
+// and the stanza remains the one home going forward.
+func (d Defaults) HaltRootEnabled() bool {
+	if d.Supervisor.HaltRoot != nil {
+		return *d.Supervisor.HaltRoot
+	}
+	return d.SupervisorHaltRoot
+}
+
+// validateSupervisor checks the supervisor stanza's numeric settings.
+// Zeros are the documented defaults; an explicit value must be usable
+// by the rule it tunes — an error-rate threshold above 1 would make an
+// enabled rule impossible to trigger, and negatives are neither
+// defaults nor thresholds.
+func validateSupervisor(d Defaults) []string {
+	var errs []string
+	if t := d.Supervisor.ErrorRateThreshold(); t < 0 || t > 1 {
+		errs = append(errs, fmt.Sprintf(
+			"agents.default.supervisor.rules.high_error_rate.threshold %g must be 0 (default) or within (0, 1]", t))
+	}
+	if w := d.Supervisor.ErrorRateWindow(); w < 0 {
+		errs = append(errs, fmt.Sprintf(
+			"agents.default.supervisor.rules.high_error_rate.window %d must be 0 (default) or positive", w))
+	}
+	if r := d.Supervisor.StuckRepeatThreshold(); r < 0 {
+		errs = append(errs, fmt.Sprintf(
+			"agents.default.supervisor.rules.stuck_detection.repeat_threshold %d must be 0 (default) or positive", r))
+	}
+	return errs
 }

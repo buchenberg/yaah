@@ -88,9 +88,11 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 		// The kernel's supervision rules read the shell command from
 		// the declaration payload's "cmd" (shepherd-adoption plan B1:
 		// the advisory destructive rule matches patterns in it). yaah's
-		// tool schema calls the field "command"; copy it across so rule
-		// events and trace facts stay one shape.
-		if r.Name == "bash" {
+		// tool schemas call the field "command", and the shell tool is
+		// bash on POSIX but powershell on Windows; copy it across for
+		// both so rule events and trace facts stay one shape on every
+		// platform the rules evaluate.
+		if r.Name == "bash" || r.Name == "powershell" {
 			var args struct {
 				Command string `json:"command"`
 			}

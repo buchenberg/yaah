@@ -103,11 +103,20 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		mcpClients   []mcp.MCPClient
 		mcpInfos     []mcp.ServerInfo
 		mcpToolNames map[string]bool
+		// supervisorSvc is the advisory rules service (adoption plan
+		// B1). Declared here, like db, so the guard can close a
+		// partially-built session no matter which later step failed —
+		// a started service owns a drain goroutine and a bus
+		// subscription, and a failed startup must not leak either.
+		supervisorSvc *supervision.Service
 	)
 	sessionHandedOff := false
 	defer func() {
 		if sessionHandedOff {
 			return
+		}
+		if supervisorSvc != nil {
+			supervisorSvc.Close()
 		}
 		if otelShutdown != nil {
 			otelShutdown(context.Background())
@@ -396,7 +405,6 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	var scopeMgr *shepherd.ScopeManager
 	var rootScopeID string
 	var runRegistry *supervision.Registry
-	var supervisorSvc *supervision.Service
 	// The session's steering channel: the REPL's steer source and, from
 	// A2 on, the supervisor's injection target for the root scope. Sized
 	// with the registry's exported buffer so every channel the registry
@@ -586,9 +594,9 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			Runs:        runRegistry,
 			// supervisor.halt_root (adoption plan A3): root halt maps to
 			// cancelling the session's current run — a big hammer that
-			// needs the explicit opt-in, off by default. The flat
-			// supervisor_halt_root key folds into the stanza at load.
-			HaltRoot: cfg.Agent.Default.Supervisor.HaltRoot,
+			// needs the explicit opt-in, off by default. HaltRootEnabled
+			// resolves the stanza over the legacy flat key.
+			HaltRoot: cfg.Agent.Default.HaltRootEnabled(),
 		})
 
 		// Supervised task tool — blocking sub-agent execution with
