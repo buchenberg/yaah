@@ -1,14 +1,18 @@
 package doctor
 
 import (
+	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
+	shepherd "github.com/buchenberg/shepherd-kernel-go"
 	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/config"
@@ -206,4 +210,84 @@ func TestCheckWorkspace_UnusableStanzaFails(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCheckShepherd pins the R2 shepherd check's three outcomes: off
+// (no trace dir) is OK; a healthy trace dir reports the recovery
+// counts; a store that cannot open fails loudly.
+func TestCheckShepherd(t *testing.T) {
+	off := CheckShepherd(&config.Config{}, nil)
+	if off.Status != "OK" || !strings.Contains(off.Detail, "off") {
+		t.Errorf("tracing-off check = %+v, want OK/off", off)
+	}
+
+	dir := t.TempDir()
+	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	// The root must fork to be recoverable: a root that never forked
+	// left no trace record (the kernel's documented rule), and the
+	// doctor's counts must show the rebuilt tree.
+	mgr := shepherd.NewScopeManager(store)
+	root, err := mgr.Create("sess-doc", shepherdsandbox.NewLocalGitSandbox(newDoctorGitRepo(t)))
+	if err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+	if _, err := mgr.Fork(root.ID(), "sub-doc", nil); err != nil {
+		t.Fatalf("fork: %v", err)
+	}
+	store.Close(context.Background())
+
+	cfg := &config.Config{}
+	cfg.Agent.Default.ShepherdTraceDir = dir
+	healthy := CheckShepherd(cfg, nil)
+	if healthy.Status != "OK" || !strings.Contains(healthy.Detail, "2 scope(s) (1 root(s))") {
+		t.Errorf("healthy check = %+v, want OK with recovery counts", healthy)
+	}
+
+	corrupt := filepath.Join(t.TempDir(), "trace.sqlite")
+	if err := os.WriteFile(corrupt, []byte("not a sqlite database"), 0o644); err != nil {
+		t.Fatalf("write corrupt store: %v", err)
+	}
+	cfg.Agent.Default.ShepherdTraceDir = filepath.Dir(corrupt)
+	broken := CheckShepherd(cfg, nil)
+	if broken.Status != "FAIL" {
+		t.Errorf("corrupt-store check = %+v, want FAIL", broken)
+	}
+}
+
+// newDoctorGitRepo creates a committed repository (the doctor's
+// recovery resolves one).
+func newDoctorGitRepo(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	dir := t.TempDir()
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "gitconfig"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "gitconfig-system"))
+	for _, args := range [][]string{
+		{"init"}, {"config", "user.email", "test@test.com"}, {"config", "user.name", "Test"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", args[0], err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Test\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	cmd := exec.Command("git", "add", "-A")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v\n%s", err, out)
+	}
+	cmd = exec.Command("git", "commit", "-m", "init")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v\n%s", err, out)
+	}
+	return dir
 }

@@ -712,6 +712,12 @@ func subAgentSandbox(opts taskRunnerOpts, workdir string) shepherdsandbox.Sandbo
 	return shepherdsandbox.NewLocalGitSandbox(repoPath)
 }
 
+// ErrRootTerminal reports a recovered root that cannot be reattached
+// because its lifecycle already ended (halted, discarded, or merged).
+// Callers use it to make the degraded mode explicit instead of
+// silently falling back to flat scopes.
+var ErrRootTerminal = errors.New("recovered root scope is terminal")
+
 // CreateRootScope creates the session's root scope (shepherd-adoption plan
 // D1): the anchor every sub-agent scope forks from, owned by the session so
 // scope IDs and trace owners line up. Local mode gets the shared in-place
@@ -732,6 +738,18 @@ func subAgentSandbox(opts taskRunnerOpts, workdir string) shepherdsandbox.Sandbo
 // scope, and only checkpoint capture is unavailable — which it would
 // have been anyway.
 func CreateRootScope(mgr *shepherd.ScopeManager, sessionID, repoPath string, isolated bool) (*shepherd.Scope, error) {
+	// Resume reattach (adoption plan R2): --resume continues under
+	// the same session ID, so a recovered registry already holds the
+	// crashed run's root — reattach it instead of colliding.
+	// Recovery re-adopted its sandbox (or kept it pure-causal for an
+	// isolated session, matching the mode the resolver was given), so
+	// the scope tree resumes where it left off.
+	if scope, ok := mgr.Get("scope:" + sessionID); ok {
+		if scope.State() == shepherd.ScopeActive {
+			return scope, nil
+		}
+		return nil, fmt.Errorf("%w: %s — it is terminal, so scope-tree supervision for this session ended; start a new session", ErrRootTerminal, scope.State())
+	}
 	var sb shepherdsandbox.Sandbox
 	if !isolated {
 		if repoPath == "" {

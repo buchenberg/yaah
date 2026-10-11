@@ -29,6 +29,7 @@ import (
 	"sync"
 	"time"
 
+	shepherd "github.com/buchenberg/shepherd-kernel-go"
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
@@ -130,6 +131,13 @@ type agentSession struct {
 	// before the registry it delivers through goes away.
 	supervisor *supervision.Service
 
+	// scopes is the session's scope manager (adoption plan R2): the
+	// recovered-at-startup registry the wiring handed the session.
+	// close() prunes its terminal scopes — merged and discarded
+	// children accumulate over a long session, and the trace records
+	// survive either way. Nil when tracing is off.
+	scopes *shepherd.ScopeManager
+
 	// runCancel is the session-owned cancellation for the currently
 	// running prompt (adoption plan A3): the target of
 	// HaltCurrentRun — the root-halt bridge. Nil between prompts.
@@ -198,6 +206,17 @@ func (s *agentSession) close() {
 		if !s.backgroundJobs.CloseAndWait(backgroundJobDrainTimeout) {
 			fmt.Fprintf(os.Stderr, "warning: background sub-agent(s) still finishing after %s; continuing session teardown\n", backgroundJobDrainTimeout)
 		}
+	}
+	// PruneTerminal on close (adoption plan R2): merged and discarded
+	// children accumulate over a long session; their trace records
+	// survive either way, so the in-memory registry shrinks here.
+	// Runs AFTER the background-jobs drain — the jobs share this
+	// manager, and the registry must not mutate under their forks and
+	// checkpoints. The warn-only orphans are untouchable by it —
+	// recovery detached their sandboxes, and pruning never destroys
+	// anything.
+	if s.scopes != nil {
+		s.scopes.PruneTerminal()
 	}
 	// followupCh closes only AFTER the drain. A finishing job delivers
 	// through it, and Deliver's select still has a send case on this

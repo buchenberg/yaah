@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -10,8 +11,10 @@ import (
 	"strings"
 
 	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
+	"github.com/buchenberg/yaah/internal/agent/recovery"
 	"github.com/buchenberg/yaah/internal/config"
 )
 
@@ -47,6 +50,7 @@ func RunChecks(opts Options) []Check {
 		CheckQualityGates(cfg, cfgErr),
 		CheckDirectives(cfg, cfgErr, opts.DirectiveOverrides),
 		CheckPipeline(cfg, cfgErr),
+		CheckShepherd(cfg, cfgErr),
 		CheckOTel(cfg, cfgErr),
 		CheckHomeWritable(),
 		CheckPlatform(),
@@ -485,6 +489,76 @@ func resolveProviderName(cfg *config.Config) string {
 }
 
 // Color helper functions - these respect NO_COLOR environment variable
+
+// CheckShepherd reports the shepherd-tracing health (adoption plan
+// R2): with a trace dir set, the store must open and a recovery must
+// rebuild — and the recovery counts are the check's substance: scopes,
+// roots, re-adopted worktrees, and the warn-only buckets (orphans,
+// missing, unadopted) that surface leftover or lost work.
+func CheckShepherd(cfg *config.Config, cfgErr error) Check {
+	const label = "Shepherd tracing"
+	if cfgErr != nil || cfg == nil {
+		return Check{Label: label, Status: "WARN", Detail: "config unavailable"}
+	}
+	dir := cfg.Agent.Default.ShepherdTraceDir
+	if dir == "" {
+		return Check{Label: label, Status: "OK", Detail: "off (no shepherd_trace_dir)"}
+	}
+	// Runtime creates the trace dir before opening the store; the
+	// diagnostic must not fail a state the next session start would
+	// auto-heal (R2 review).
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return Check{Label: label, Status: "FAIL", Detail: "trace dir: " + err.Error()}
+	}
+	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
+	if err != nil {
+		return Check{Label: label, Status: "FAIL", Detail: "trace store: " + err.Error()}
+	}
+	defer store.Close(context.Background())
+	repoPath := cfg.Agent.Default.SupervisedRepoPath
+	if repoPath == "" {
+		repoPath, _ = os.Getwd()
+	}
+	if repoPath == "" {
+		// The same condition runtime downgrades to a warning — the
+		// row says the recovery was skipped, not that tracing broke.
+		return Check{Label: label, Status: "WARN", Detail: "no repository resolved — recovery skipped"}
+	}
+	// adoptRoots: the doctor has no session, so the local-mode rule
+	// applies; the throwaway registry is discarded either way and the
+	// root counts do not depend on it.
+	_, report, err := recovery.Recover(context.Background(), store, repoPath, true)
+	if err != nil {
+		return Check{Label: label, Status: "FAIL", Detail: "recovery: " + err.Error()}
+	}
+	detail := fmt.Sprintf("recovery rebuilt %d scope(s) (%d root(s)), %d worktree(s) re-adopted",
+		report.Scopes, report.Roots, report.Adopted)
+	status := "OK"
+	var warns []string
+	if n := len(report.Orphans); n > 0 {
+		warns = append(warns, fmt.Sprintf("%d orphaned worktree(s): %s", n, joinPaths(report.Orphans[0].Path, n)))
+	}
+	if n := len(report.Missing); n > 0 {
+		warns = append(warns, fmt.Sprintf("%d missing worktree(s): %s", n, joinPaths(report.Missing[0].Path, n)))
+	}
+	if n := len(report.Unadopted); n > 0 {
+		warns = append(warns, fmt.Sprintf("%d unadopted worktree(s): %s", n, joinPaths(report.Unadopted[0].Path, n)))
+	}
+	if len(warns) > 0 {
+		status = "WARN"
+		detail = detail + " — " + strings.Join(warns, "; ")
+	}
+	return Check{Label: label, Status: status, Detail: detail}
+}
+
+// joinPaths names the first path of a warn bucket and, when there are
+// more, says so — the doctor row stays one line.
+func joinPaths(first string, n int) string {
+	if n > 1 {
+		return fmt.Sprintf("%s (+%d more)", first, n-1)
+	}
+	return first
+}
 
 // StatusLabel returns the status string with appropriate color coding.
 func StatusLabel(status string) string {

@@ -465,7 +465,17 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			// plan D2). A failure leaves sub-agent scopes on the
 			// legacy flat path rather than bricking tracing.
 			if root, rerr := runner.CreateRootScope(mgr, sessionID, cfg.Agent.Default.SupervisedRepoPath, sessionSandbox != nil); rerr != nil {
-				fmt.Fprintf(os.Stderr, "warning: no shepherd root scope — sub-agent scopes fall back to flat creation: %v\n", rerr)
+				if errors.Is(rerr, runner.ErrRootTerminal) {
+					// The explicit degraded mode (R2 review): the
+					// resumed session's root already ended, so its
+					// scope-tree supervision is over — sub-agent
+					// scopes run flat and unsupervised for this
+					// session. Name it; do not bury it in the
+					// generic no-root warning.
+					fmt.Fprintf(os.Stderr, "warning: %v — sub-agent scopes run unsupervised (flat) for this session\n", rerr)
+				} else {
+					fmt.Fprintf(os.Stderr, "warning: no shepherd root scope — sub-agent scopes fall back to flat creation: %v\n", rerr)
+				}
 			} else {
 				rootScopeID = root.ID()
 			}
@@ -844,6 +854,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		steerCh:        steerCh,
 		rootScopeID:    rootScopeID,
 		runs:           runRegistry,
+		scopes:         scopeMgr,
 		supervisor:     supervisorSvc,
 		followupCh:     followupCh,
 	}
