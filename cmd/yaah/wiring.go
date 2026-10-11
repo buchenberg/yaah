@@ -638,7 +638,14 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 				},
 				RoleDescriptions: runner.RoleDescriptionsFor(supervisedRoles),
 				RepoPath:         cfg.Agent.Default.SupervisedRepoPath,
-				MaxRetries:       maxRetries,
+				// RootScopeID feeds the review sessions' merge gate
+				// (adoption plan C1): the session scope forks from the
+				// root, so accept runs through the kernel's
+				// CommitMerge. MergePolicy stays nil — the session's
+				// own verdict (the interactive review) is the
+				// reviewer.
+				RootScopeID: rootScopeID,
+				MaxRetries:  maxRetries,
 
 				Worktree:          cfg.Agent.Default.SupervisedWorktree,
 				WorktreeRoot:      cfg.Agent.Default.SupervisedWorktreeRoot,
