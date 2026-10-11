@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.58.0](https://github.com/buchenberg/yaah/compare/v0.57.0...v0.58.0) (2026-10-11)
+
+
+### Features
+
+* **workspace:** the workspace.backend config surface — step 4 (plan §1.1 + D5) ([380cd59](https://github.com/buchenberg/yaah/commit/380cd5918778b45e889bdc6daf12ac8bbf94fb67))
+
+
+### Bug Fixes
+
+* **config:** the workspace root is a POSIX path, not a host path ([58d429d](https://github.com/buchenberg/yaah/commit/58d429ddbf693b3fcaf27c0dd335fd4d2e05c2f5))
+* **workspace:** address the PR [#231](https://github.com/buchenberg/yaah/issues/231) review -- POSIX roots cleaned, probe teardown surfaced, toolchain floor honest ([b156610](https://github.com/buchenberg/yaah/commit/b156610f05baf8c80769fa01215eca88bd7c74da))
+
 ## [0.57.0](https://github.com/buchenberg/yaah/compare/v0.56.3...v0.57.0) (2026-10-10)
 
 
