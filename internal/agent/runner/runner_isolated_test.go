@@ -4,6 +4,7 @@ import (
 	"context"
 	"io/fs"
 	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -94,8 +95,12 @@ func TestBuildSubAgentRegistry_LocalRouteUnchanged(t *testing.T) {
 	if reg.Workspace == nil || reg.Workspace.Local() != true {
 		t.Errorf("local sub-agent must keep the validator-derived local workspace, got %#v", reg.Workspace)
 	}
-	if got := reg.PathValidator; got == nil || got.WorkDir != "/repo/worktrees/child" {
-		t.Errorf("local sub-agent's validator must be rooted at the workdir, got %#v", got)
+	// NewPathValidator makes the root absolute, so the expectation goes
+	// through the same normalization (on Windows CI the temp cwd sits on
+	// another drive, turning "/repo/..." into "D:\repo\...").
+	want, _ := filepath.Abs("/repo/worktrees/child")
+	if got := reg.PathValidator; got == nil || got.WorkDir != want {
+		t.Errorf("local sub-agent's validator must be rooted at the workdir: got %#v, want %s", got, want)
 	}
 	if reg.Get("go_refactor") == nil {
 		t.Error("go_refactor stays available to host-side sub-agents; only isolated mode omits it")
