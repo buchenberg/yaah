@@ -647,7 +647,6 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 				RootScopeID: rootScopeID,
 				MaxRetries:  maxRetries,
 
-				Worktree:          cfg.Agent.Default.SupervisedWorktree,
 				WorktreeRoot:      cfg.Agent.Default.SupervisedWorktreeRoot,
 				WorktreeBootstrap: cfg.Agent.Default.SupervisedWorktreeBootstrap,
 			})

@@ -71,8 +71,7 @@ agents:
     # role files (subagent.roles.<name>.supervised / .turn_checkpoints).
     supervised_max_retries: 1         # rollback-and-retry cycles after the first attempt
     supervised_repo_path: ""          # repo to checkpoint; "" = working directory
-    supervised_worktree: false        # isolate each fork variant in its own git worktree
-    supervised_worktree_root: ""      # parent dir for worktrees; "" = beside the repo
+    supervised_worktree_root: ""     # parent dir for variant worktrees; "" = beside the repo
     supervised_worktree_bootstrap: "" # run inside each worktree, e.g. "npm ci"
     turn_checkpoint_max: 0            # live turn checkpoints per run; 0 = unlimited
     max_turn_restores: 3              # turn-level restores per run; 0 = default (3)
@@ -339,7 +338,6 @@ agents:
     shepherd_trace_dir: ~/.yaah/traces
     supervised_max_retries: 1
     supervised_repo_path: ""              # "" = the working directory
-    supervised_worktree: false
     supervised_worktree_root: ""
     supervised_worktree_bootstrap: ""
     turn_checkpoint_max: 0
@@ -356,7 +354,6 @@ agents:
 | `supervisor.rules.destructive_guard.enabled` | `true` | Blocking pre-dispatch net (adoption plan B2): sub-agent `bash`/`powershell` calls are denied before execution — default-deny, because a shell can execute anything a pattern matcher cannot see — with a synthesized denied-call result so the model can take the structured path. Structured tools (`write`/`edit`/`delete`) are the approved path for changes; their review is the merge gate's job. Tracing-off sessions dispatch unchanged. |
 | `supervisor.rules.high_error_rate.{enabled,threshold,window}` | `true`, `0.5`, `10` | Guidance when a scope's recent tool error rate crosses the threshold within the sliding window. `0` values mean the defaults. |
 | `supervisor.rules.stuck_detection.{enabled,repeat_threshold}` | `true`, `3` | Guidance when a scope repeats the same tool call `repeat_threshold` times in a row. `0` means the default. |
-| `supervised_worktree` | `false` | Run each fork variant in its own git worktree instead of the shared tree. |
 | `supervised_worktree_root` | `""` | Parent directory for variant worktrees. Empty uses a `shepherd-worktrees` directory beside the repository. |
 | `supervised_worktree_bootstrap` | `""` | Shell command run inside each fresh worktree — see below. |
 | `turn_checkpoint_max` | `0` | Live turn checkpoints per sub-agent run; the oldest are pruned. `0` = unlimited. |
@@ -374,11 +371,12 @@ consumes one, and a fresh checkpoint is taken before the next attempt.
 
 ### Worktree isolation
 
-With `supervised_worktree: true`, each `fork` variant runs in a detached
-`git worktree` seeded with the parent's exact state at the fork point, and the
-variant's tools operate inside it. Discarding a variant removes its worktree, so
-nothing it wrote can reach the parent tree; choosing a variant applies its
-captured state to the parent. `review`, `continue`, and `rollback` behave as
+Every `fork` variant runs in a detached `git worktree` — an isolated child scope
+seeded with the parent's exact state at the fork point — and the variant's tools
+operate inside it. Nothing a variant writes can reach the parent tree until
+`choose` settles it (a fast-forward when the parent has not moved, a three-way
+merge when it drifted); the settlement itself removes the winner's worktree, and
+discarding removes the loser's. `review`, `continue`, and `rollback` behave as
 before.
 
 Two consequences worth knowing:
@@ -391,8 +389,8 @@ Two consequences worth knowing:
    host process, network, and the repository's object store. Worktrees do not
    confine processes.
 
-Worktree mode is off by default, so existing behaviour is unchanged unless you
-opt in.
+The former `supervised_worktree` opt-in is gone — isolation is always on. A
+config that still sets the key gets one startup warning; the key does nothing.
 
 ## Observability reference
 

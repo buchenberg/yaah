@@ -332,12 +332,12 @@ func TestReviewSession_ForkAndChooseA(t *testing.T) {
 			{result: "variant B implementation"},
 		},
 	}
-	runner.sideEffect = func(call int, repoPath string) {
+	runner.sideEffect = func(call int, _ string) {
 		switch call {
 		case 1:
-			writeTestFile(t, repoPath, "variant-a.txt", "A\n")
+			writeTestFile(t, runner.workdirFor(t, 1), "variant-a.txt", "A\n")
 		case 2:
-			writeTestFile(t, repoPath, "variant-b.txt", "B\n")
+			writeTestFile(t, runner.workdirFor(t, 2), "variant-b.txt", "B\n")
 		}
 	}
 	tool.Runner = runner.run()
@@ -360,9 +360,10 @@ func TestReviewSession_ForkAndChooseA(t *testing.T) {
 		t.Errorf("variant b diff should mention variant-b.txt:\n%s", varB.Diff)
 	}
 
-	// After fork, the workspace sits at the fork point (post-B reset).
+	// After fork, the parent tree sits at the fork point: the variants
+	// ran in isolated worktrees, so nothing speculative touched it.
 	if _, err := os.Stat(filepath.Join(repo, "variant-b.txt")); !os.IsNotExist(err) {
-		t.Errorf("fork point should be restored after variant B, stat err = %v", err)
+		t.Errorf("the parent tree must be untouched after the fork, stat err = %v", err)
 	}
 
 	chooseEnv := mustSupervisorExecute(t, sup, `{"action":"choose","session_id":`+jsonString(sid)+`,"winner":"a"}`)
@@ -404,12 +405,12 @@ func TestReviewSession_ForkAndChooseB(t *testing.T) {
 			{result: "variant B implementation"},
 		},
 	}
-	runner.sideEffect = func(call int, repoPath string) {
+	runner.sideEffect = func(call int, _ string) {
 		switch call {
 		case 1:
-			writeTestFile(t, repoPath, "variant-a.txt", "A\n")
+			writeTestFile(t, runner.workdirFor(t, 1), "variant-a.txt", "A\n")
 		case 2:
-			writeTestFile(t, repoPath, "variant-b.txt", "B\n")
+			writeTestFile(t, runner.workdirFor(t, 2), "variant-b.txt", "B\n")
 		}
 	}
 	tool.Runner = runner.run()
@@ -586,22 +587,22 @@ func TestReviewSession_ChooseRejectsNilTree(t *testing.T) {
 	sid := startTestReviewSession(t, tool, "prepare")
 	mustSupervisorExecute(t, sup, `{"action":"fork","session_id":`+jsonString(sid)+`,"prompt_a":"A","prompt_b":"B"}`)
 
-	// Simulate a failed workspace capture on the winner: choose must reject it
-	// with a clear error rather than attempting to apply a nil state.
+	// Simulate a variant that errored before sealing: choose must reject
+	// it with a clear error rather than settling an unsealed branch.
 	sess, err := getReviewSession(sid)
 	if err != nil {
 		t.Fatalf("getReviewSession: %v", err)
 	}
 	sess.mu.Lock()
-	sess.varA.Tree = nil
+	sess.varA.Output = nil
 	sess.mu.Unlock()
 
 	_, err = sup.Execute(context.Background(), `{"action":"choose","session_id":`+jsonString(sid)+`,"winner":"a"}`)
 	if err == nil {
-		t.Fatal("choose with a nil captured tree must fail")
+		t.Fatal("choose on an unsealed variant must fail")
 	}
-	if !strings.Contains(err.Error(), "no captured workspace") {
-		t.Errorf("error = %q, want mention of missing captured workspace", err.Error())
+	if !strings.Contains(err.Error(), "no sealed output") {
+		t.Errorf("error = %q, want mention of the missing sealed output", err.Error())
 	}
 }
 
@@ -677,9 +678,8 @@ func TestReviewSession_ContinueDefaultGuidance(t *testing.T) {
 // path: each variant runs in its own worktree seeded with the fork state, the
 // parent tree is never touched while the experiment runs, the worktrees are
 // torn down, and only the chosen variant's work reaches the parent.
-func TestReviewSession_WorktreeForkIsolatesVariants(t *testing.T) {
+func TestReviewSession_ForkIsolatesVariants(t *testing.T) {
 	tool, sup, repo := newReviewTestEnv(t)
-	tool.Worktree = true
 	tool.WorktreeRoot = t.TempDir()
 
 	runner := &sessionRunner{
@@ -720,8 +720,10 @@ func TestReviewSession_WorktreeForkIsolatesVariants(t *testing.T) {
 		if d == repo {
 			t.Error("an isolated variant must not run in the parent repository")
 		}
-		if _, err := os.Stat(d); !os.IsNotExist(err) {
-			t.Errorf("worktree %s should be torn down after its variant, stat err=%v", d, err)
+		// The worktrees live until the settlement — the sealed outputs
+		// back the fork, and choose's merge/discard is the teardown.
+		if _, err := os.Stat(d); err != nil {
+			t.Errorf("worktree %s must exist while awaiting choose, stat err=%v", d, err)
 		}
 	}
 
@@ -737,19 +739,26 @@ func TestReviewSession_WorktreeForkIsolatesVariants(t *testing.T) {
 		t.Fatalf("choose status = %q, want chosen", chosen.Status)
 	}
 	if _, err := os.Stat(filepath.Join(repo, "variant-1.txt")); err != nil {
-		t.Errorf("chosen variant's file should be applied to the parent: %v", err)
+		t.Errorf("chosen variant's file should be settled onto the parent: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(repo, "variant-2.txt")); !os.IsNotExist(err) {
-		t.Error("losing variant's file must not be applied to the parent")
+		t.Error("losing variant's file must not be settled onto the parent")
+	}
+
+	// The settlement is the teardown: the winner's causal merge and the
+	// loser's discard each destroy the worktree the variant scope owns.
+	for _, d := range []string{dirA, dirB} {
+		if _, err := os.Stat(d); !os.IsNotExist(err) {
+			t.Errorf("worktree %s should be torn down by the settlement, stat err=%v", d, err)
+		}
 	}
 }
 
-// TestReviewSession_WorktreeVariantsStartFromForkPoint verifies an isolated
-// variant sees the parent's uncommitted state at the fork point, not a clean
-// checkout of HEAD.
-func TestReviewSession_WorktreeVariantsStartFromForkPoint(t *testing.T) {
+// TestReviewSession_VariantsStartFromForkPoint verifies an isolated
+// variant sees the parent's uncommitted state at the fork point, not a
+// clean checkout of HEAD.
+func TestReviewSession_VariantsStartFromForkPoint(t *testing.T) {
 	tool, sup, repo := newReviewTestEnv(t)
-	tool.Worktree = true
 	tool.WorktreeRoot = t.TempDir()
 
 	// Uncommitted work exists before the session starts, so the unit-start

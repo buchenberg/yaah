@@ -77,12 +77,6 @@ type supervisedSessionRuntime struct {
 	// injected). Nil in production wiring.
 	MergePolicy func(proposal shepherd.MergeProposal) error
 
-	// Worktree isolates each fork variant in its own git worktree, so a
-	// discarded variant cannot touch the parent tree. Off by default: without
-	// it, variants run sequentially in the shared repository and are reset to
-	// the fork point between runs.
-	Worktree bool
-
 	// WorktreeRoot is the parent directory for variant worktrees. Empty
 	// defaults to a "shepherd-worktrees" directory beside the repository.
 	WorktreeRoot string
@@ -94,52 +88,28 @@ type supervisedSessionRuntime struct {
 	WorktreeBootstrap string
 }
 
-// variantWorkspace is where one fork variant's work happens: the parent scope's
-// in-place tree in shared mode, or a throwaway worktree in isolated mode.
-//
-// It exists so the variant run, capture, and diff paths are identical in both
-// modes; only the backing substrate differs.
-type variantWorkspace struct {
-	// scope is set in shared mode; its workspace methods record trace events.
-	scope *shepherd.Scope
-	// sb is set in isolated mode; worktree sandboxes have no scope of their own.
-	sb shepherdsandbox.Sandbox
-	// workdir is handed to the sub-agent so its file tools and shell operate
-	// here. Empty means the process working directory (shared mode).
-	workdir string
-}
-
-func (w variantWorkspace) Capture(ctx context.Context) (shepherdtrace.WorkspaceState, error) {
-	if w.scope != nil {
-		return w.scope.CaptureWorkspace(ctx)
-	}
-	return w.sb.Capture(ctx)
-}
-
-func (w variantWorkspace) Apply(ctx context.Context, ws shepherdtrace.WorkspaceState) error {
-	if w.scope != nil {
-		return w.scope.ApplyWorkspace(ctx, ws)
-	}
-	return w.sb.Apply(ctx, ws)
-}
-
-func (w variantWorkspace) Diff(ctx context.Context, ws shepherdtrace.WorkspaceState, maxLines int) (string, []string, error) {
-	if w.scope != nil {
-		return w.scope.DiffWorkspace(ctx, ws, maxLines)
-	}
-	return w.sb.Diff(ctx, ws, maxLines)
-}
-
-// reviewVariant holds one fork branch's captured outcome. Tree is the
-// backend-neutral workspace state captured at the variant's end; it stays valid
-// after an isolated variant's worktree is destroyed because the git object
-// store is shared.
+// reviewVariant holds one fork branch's captured outcome (adoption plan
+// C2): the variant ran in an isolated child scope that owns its
+// worktree, and its workspace is sealed as a retained output — frozen
+// against the fork baseline, backing the review UI, and settle-able
+// exactly once. The sealed state outlives the worktree (git worktrees
+// share the repository's object store), so the settlement owns the
+// teardown: Merge on select/apply, Discard on discard.
 type reviewVariant struct {
-	Tree    *shepherdtrace.WorkspaceState
+	// ScopeID is the variant's isolated child scope; "" when the
+	// worktree or the fork itself failed before the scope existed.
+	ScopeID string
+
+	// workdir is the branch's worktree path — the sub-agent's Workdir.
+	workdir string
+
+	// Output is the sealed retained output; nil when the variant errored
+	// before sealing (provisioning, seeding, bootstrap). The review UI
+	// reads its Changes/Diff; choose settles it.
+	Output *shepherd.RetainedOutput
+
 	Conv    []types.Message
 	Result  string
-	Diff    string
-	Files   []string
 	RunErr  string
 	Restore int
 }
@@ -170,11 +140,11 @@ type supervisedSession struct {
 
 	state sessionState
 
-	// fork state, set while awaiting choose.
-	forkState *shepherdtrace.WorkspaceState
-	forkConv  []types.Message
-	varA      *reviewVariant
-	varB      *reviewVariant
+	// fork state, set while awaiting choose (adoption plan C2): the two
+	// sealed branches. The tree needs no fork state — the variants ran
+	// in isolated worktrees, and the parent tree sits at the fork point.
+	varA *reviewVariant
+	varB *reviewVariant
 }
 
 type sessionState string
@@ -546,17 +516,23 @@ func variantOut(v *reviewVariant) reviewVariantOut {
 	if v == nil {
 		return reviewVariantOut{}
 	}
-	return reviewVariantOut{Result: trimResult(v.Result), Diff: v.Diff, Files: v.Files, Error: v.RunErr}
+	out := reviewVariantOut{Result: trimResult(v.Result), Error: v.RunErr}
+	if v.Output != nil {
+		// The sealed output backs the review UI (adoption plan C2):
+		// frozen at seal time, no re-capture of trees. The kernel seals
+		// diffs unbounded; the envelope clips them.
+		out.Diff = clipDiff(v.Output.Diff())
+		out.Files = changesPaths(v.Output.Changes())
+	}
+	return out
 }
 
 // forkVariants rewinds to the unit-start checkpoint and runs two prompt
-// variants from that exact state, capturing each variant's workspace so the
-// winner can be re-applied by choose.
-//
-// In shared mode both variants run in the parent's tree, reset to the fork
-// point between runs. In worktree mode each variant runs in its own detached
-// worktree seeded with the fork state, so the parent tree is never touched and
-// a variant cannot leak into its sibling.
+// variants from that exact state (adoption plan C2): each variant is an
+// isolated child scope owning its own worktree, sealed as a retained
+// output whose frozen Changes/Diff back the review envelope. The parent
+// tree is never touched — it sits at the fork point — and choose
+// settles the winner on kernel mechanics.
 func (s *supervisedSession) forkVariants(ctx context.Context, promptA, promptB string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -585,12 +561,14 @@ func (s *supervisedSession) forkVariants(ctx context.Context, promptA, promptB s
 	s.checkpointID = ""
 	forkConv := unmarshalMessages(snap)
 
-	forkState, err := scope.CaptureWorkspace(ctx)
+	// The fork point: the tree the variants fork from — the restored
+	// unit-start state. Each variant's isolated child scope baselines
+	// on it (captured by the fork), and its worktree is seeded with it
+	// (a worktree checks out tracked files only).
+	forkPoint, err := scope.CaptureWorkspace(ctx)
 	if err != nil {
 		return "", fmt.Errorf("supervisor: fork: capture fork point: %w", err)
 	}
-	s.forkState = &forkState
-	s.forkConv = forkConv
 
 	env := reviewEnvelope{
 		Status:    "awaiting_choose",
@@ -599,52 +577,81 @@ func (s *supervisedSession) forkVariants(ctx context.Context, promptA, promptB s
 		Next:      nextActionsFor(sessionAwaitChoose),
 	}
 
-	variants := []struct {
+	branches := []struct {
+		index  int
 		label  string
 		prompt string
 		slot   **reviewVariant
 	}{
-		{"a", promptA, &s.varA},
-		{"b", promptB, &s.varB},
+		{0, "a", promptA, &s.varA},
+		{1, "b", promptB, &s.varB},
 	}
 
-	for i, v := range variants {
+	// Provision both branches against the one fork point BEFORE either
+	// runs: each fork captures the parent's workspace as the branch's
+	// baseline, and a branch forked after its sibling ran would
+	// baseline on whatever the parent held then — silently folding the
+	// difference into its sealed delta. Provisioning failures are
+	// per-variant (RunErr): the healthy branch stays choosable.
+	for _, b := range branches {
+		*b.slot = s.provisionVariant(ctx, b.index, b.label, forkPoint)
+	}
+
+	for _, b := range branches {
 		if ctx.Err() != nil {
-			// Parent cancelled between variants: leave the shared tree at the
-			// fork point so it is not stranded mid-experiment. An isolated
-			// variant leaves the parent untouched by construction.
-			if !s.runtime.Worktree {
-				if applyErr := scope.ApplyWorkspace(ctx, forkState); applyErr == nil {
-					s.unitState = forkState
-				}
+			// Parent cancelled between variants: the parent tree sits at
+			// the fork point untouched (the variants ran in isolated
+			// worktrees); the started branches are torn down and the
+			// session stays resumable.
+			if derr := s.discardVariantLocked(context.WithoutCancel(ctx), s.varA); derr != nil && env.Error == "" {
+				env.Error = "variant a teardown: " + derr.Error()
 			}
+			if derr := s.discardVariantLocked(context.WithoutCancel(ctx), s.varB); derr != nil && env.Error == "" {
+				env.Error = "variant b teardown: " + derr.Error()
+			}
+			s.varA, s.varB = nil, nil
 			env.Status = "cancelled"
 			env.Unit = s.unit
-			env.Error = ctx.Err().Error()
+			if env.Error == "" {
+				env.Error = ctx.Err().Error()
+			}
 			env.Next = nextActionsFor(s.state)
 			return marshalReviewEnvelope(env), nil
 		}
 
-		var result *reviewVariant
-		if s.runtime.Worktree {
-			result, err = s.runIsolatedVariant(ctx, i, v.label, v.prompt, forkConv, forkState)
-			if err != nil {
-				return "", fmt.Errorf("supervisor: fork: variant %s: %w", v.label, err)
+		v := *b.slot
+		if v.ScopeID == "" {
+			// Provisioning failed; RunErr explains. The branch is
+			// unchoosable but still reported so the orchestrator can
+			// pick the sibling.
+			env.Variants[b.label] = variantOut(v)
+			if v.RunErr != "" && env.Error == "" {
+				env.Error = fmt.Sprintf("variant %s: %s", b.label, v.RunErr)
 			}
-		} else {
-			result = s.runVariantIn(ctx, variantWorkspace{scope: scope}, v.prompt, forkConv, forkState)
-			// Reset the shared workspace to the fork point for the next variant
-			// (or to leave a clean post-fork state after variant B).
-			if err := scope.ApplyWorkspace(ctx, forkState); err != nil {
-				return "", fmt.Errorf("supervisor: fork: reset to fork point after variant %s: %w", v.label, err)
-			}
+			continue
 		}
 
-		*v.slot = result
-		env.Variants[v.label] = variantOut(result)
-		env.Restores += result.Restore
-		if result.RunErr != "" && env.Error == "" {
-			env.Error = fmt.Sprintf("variant %s: %s", v.label, result.RunErr)
+		s.runVariantPrompt(ctx, v, v.workdir, b.prompt, forkConv)
+
+		// Seal the variant's workspace against its fork baseline: the
+		// frozen Changes/Diff back the review envelope, and settle
+		// consumes the output exactly once. Sealing happens even after
+		// a run error — the partial work is reviewable — and a seal
+		// failure is appended, never dropped (review finding).
+		if out, serr := mgr.Seal(ctx, v.ScopeID); serr != nil {
+			if v.RunErr != "" {
+				v.RunErr = v.RunErr + "; seal variant: " + serr.Error()
+			} else {
+				v.RunErr = "seal variant: " + serr.Error()
+			}
+		} else {
+			v.Output = out
+		}
+
+		env.Variants[b.label] = variantOut(v)
+		env.Restores += v.Restore
+		if v.RunErr != "" && env.Error == "" {
+			env.Error = fmt.Sprintf("variant %s: %s", b.label, v.RunErr)
 		}
 	}
 
@@ -654,21 +661,60 @@ func (s *supervisedSession) forkVariants(ctx context.Context, promptA, promptB s
 	return marshalReviewEnvelope(env), nil
 }
 
-// runIsolatedVariant creates a worktree for one variant, seeds it with the fork
-// state, runs the variant inside it, and captures the outcome.
-//
-// The worktree is always removed, including on error: the captured workspace
-// state survives in the repository's shared object store, so the winner can
-// still be applied after teardown. The sub-agent receives the worktree as its
-// Workdir, which confines its file tools and shell to the checkout.
-func (s *supervisedSession) runIsolatedVariant(
+// discardVariantLocked ends one fork branch (adoption plan C2): a
+// sealed variant is settled with SettleDiscard — consume-once, and the
+// kernel's discard destroys the worktree the variant scope owns; an
+// unsealed variant (it errored before sealing) is discarded through
+// its scope directly. Best-effort by design: the caller decides how a
+// teardown failure is reported — except a branch that was consumed by
+// a DIFFERENT action out-of-band (selected or applied — the parent
+// already holds its work), which is surfaced, not silenced: only an
+// already-discarded output is a teardown that already happened.
+func (s *supervisedSession) discardVariantLocked(ctx context.Context, v *reviewVariant) error {
+	if v == nil {
+		return nil
+	}
+	mgr := SharedScopeManager
+	if v.Output != nil {
+		if err := v.Output.Settle(ctx, shepherd.SettleDiscard); err != nil {
+			if errors.Is(err, shepherd.ErrOutputConsumed) && v.Output.Action() == shepherd.SettleDiscard {
+				return nil
+			}
+			return err
+		}
+		return nil
+	}
+	if v.ScopeID == "" {
+		return nil
+	}
+	scope, ok := mgr.Get(v.ScopeID)
+	if !ok {
+		return nil
+	}
+	parent, ok := mgr.Get(s.scopeID)
+	if !ok {
+		return fmt.Errorf("session scope %s not found to discard variant %s from", s.scopeID, v.ScopeID)
+	}
+	return parent.Discard(scope)
+}
+
+// provisionVariant provisions one fork branch (adoption plan C2): a
+// worktree owned by an isolated child scope of the session scope,
+// seeded with the fork point and bootstrapped. The worktree is NOT
+// torn down here — the settlement owns the teardown (Merge on
+// select/apply, Discard on discard), and the sealed state outlives it
+// through the repository's shared object store. A branch that fails to
+// provision carries its error instead; the fork continues so the
+// healthy branch stays choosable.
+func (s *supervisedSession) provisionVariant(
 	ctx context.Context,
 	index int,
-	label, prompt string,
-	forkConv []types.Message,
-	forkState shepherdtrace.WorkspaceState,
-) (*reviewVariant, error) {
+	label string,
+	forkPoint shepherdtrace.WorkspaceState,
+) *reviewVariant {
+	v := &reviewVariant{}
 	wtPath := s.worktreePath(index, label)
+	v.workdir = wtPath
 	sb := shepherdsandbox.NewWorktreeSandbox(s.runtime.RepoPath, wtPath)
 
 	if err := sb.Create(ctx, shepherdsandbox.SandboxSpec{}); err != nil {
@@ -680,26 +726,41 @@ func (s *supervisedSession) runIsolatedVariant(
 			_ = sb.Destroy(context.WithoutCancel(ctx))
 		}
 		if retryErr := sb.Create(ctx, shepherdsandbox.SandboxSpec{}); retryErr != nil {
-			return nil, fmt.Errorf("create worktree %s: %w (first attempt: %v)", wtPath, retryErr, err)
+			v.RunErr = fmt.Sprintf("create worktree %s: %v (first attempt: %v)", wtPath, retryErr, err)
+			return v
 		}
 	}
-	defer func() { _ = sb.Destroy(context.WithoutCancel(ctx)) }()
 
-	// Seed the checkout with the parent's exact state at the fork point before
-	// bootstrapping. The bootstrap installs from tracked lockfiles that Apply
-	// restores, so running it against HEAD would provision the wrong revision,
-	// and Apply would then overwrite the gitignored artifacts bootstrap created.
-	if err := sb.Apply(ctx, forkState); err != nil {
-		return nil, fmt.Errorf("seed fork state: %w", err)
+	// From here the worktree belongs to the variant scope: the
+	// settlement owns its teardown, so the scope must exist before
+	// anything can strand the worktree. A fork failure destroys it
+	// here — no scope, no owner.
+	mgr := SharedScopeManager
+	scope, err := mgr.ForkIsolated(s.scopeID, fmt.Sprintf("%s:var-%s", s.id, label), nil, sb)
+	if err != nil {
+		_ = sb.Destroy(context.WithoutCancel(ctx))
+		v.RunErr = "fork variant scope: " + err.Error()
+		return v
+	}
+	v.ScopeID = scope.ID()
+
+	// Seed the checkout with the parent's exact state at the fork point
+	// before bootstrapping. The bootstrap installs from tracked lockfiles
+	// that Apply restores, so running it against HEAD would provision the
+	// wrong revision, and Apply would then overwrite the gitignored
+	// artifacts bootstrap created.
+	if err := sb.Apply(ctx, forkPoint); err != nil {
+		v.RunErr = "seed fork state: " + err.Error()
+		return v
 	}
 
 	if s.runtime.WorktreeBootstrap != "" {
 		if err := runWorktreeBootstrap(ctx, wtPath, s.runtime.WorktreeBootstrap); err != nil {
-			return nil, fmt.Errorf("bootstrap: %w", err)
+			v.RunErr = "bootstrap: " + err.Error()
+			return v
 		}
 	}
-
-	return s.runVariantIn(ctx, variantWorkspace{sb: sb, workdir: wtPath}, prompt, forkConv, forkState), nil
+	return v
 }
 
 // isRegisteredWorktree reports whether path is currently registered as a git
@@ -774,10 +835,12 @@ func runWorktreeBootstrap(ctx context.Context, dir, command string) error {
 	return nil
 }
 
-// runVariantIn dispatches one fork variant against a workspace and captures its
-// state, diff, and conversation. It must be called with s.mu held; the lock is
-// held across the runner call so concurrent verdicts serialize.
-func (s *supervisedSession) runVariantIn(ctx context.Context, ws variantWorkspace, prompt string, forkConv []types.Message, forkState shepherdtrace.WorkspaceState) *reviewVariant {
+// runVariantPrompt dispatches one fork variant's prompt in workdir and
+// fills the variant's conversation, result, and restore count. It must
+// be called with s.mu held; the lock is held across the runner call so
+// concurrent verdicts serialize. The workspace side (capture, diff,
+// freeze) is Seal's — this is the run.
+func (s *supervisedSession) runVariantPrompt(ctx context.Context, v *reviewVariant, workdir, prompt string, forkConv []types.Message) {
 	// Seed with the fork-point conversation only. The prompt is passed
 	// as the runner's user input and appended by the loop's
 	// initMessages — appending it here too would duplicate it.
@@ -793,38 +856,36 @@ func (s *supervisedSession) runVariantIn(ctx context.Context, ws variantWorkspac
 	}
 	subParams := s.subBase
 	subParams.SeedMessages = seed
-	subParams.Workdir = ws.workdir
+	subParams.Workdir = workdir
 	result, runErr := s.runtime.Runner(runCtx, prompt, subParams)
 	if cancel != nil {
 		cancel()
 	}
 
-	v := &reviewVariant{
-		Conv:    captured,
-		Result:  result,
-		Restore: restoreStats.Restores,
-	}
+	v.Conv = captured
+	v.Result = result
+	v.Restore = restoreStats.Restores
 	if runErr != nil {
 		v.RunErr = runErr.Error()
 	}
-	if tree, err := ws.Capture(ctx); err != nil {
-		if v.RunErr == "" {
-			v.RunErr = "capture workspace: " + err.Error()
-		}
-	} else {
-		treeCopy := tree
-		v.Tree = &treeCopy
-	}
-	if diff, files, err := ws.Diff(ctx, forkState, reviewDiffMaxLines); err == nil {
-		v.Diff = diff
-		v.Files = files
-	}
-	return v
 }
 
-// chooseVariant applies the winning fork variant's tree and
-// conversation, takes a fresh unit-start checkpoint, and returns the
-// session to the review state. The losing variant is discarded.
+// chooseVariant settles the winning fork branch on kernel mechanics
+// (adoption plan C2) and returns the session to the review state. The
+// winner's sealed output is settled — Select when the parent tree still
+// digests as the fork baseline (the common case; the variants ran in
+// isolated worktrees, so the parent never moved), Apply on parent drift
+// — and the causal merge is the winner's worktree teardown. The loser
+// is settled with SettleDiscard, which destroys its worktree.
+//
+// Ordering (review findings): the session transitions out of
+// awaiting-choose as soon as the settle consumes the output — a
+// stranded awaiting-choose with a consumed output has no retry — and
+// everything after it (loser teardown, checkpoint) is best-effort,
+// reported in the envelope rather than failing the verdict. A settle
+// error is checked against the kernel's documented partial settlement
+// before it fails the verdict: Select/Apply record the causal merge
+// AFTER the workspace effect, so the work may already stand.
 func (s *supervisedSession) chooseVariant(ctx context.Context, winner string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -832,12 +893,12 @@ func (s *supervisedSession) chooseVariant(ctx context.Context, winner string) (s
 	if s.state != sessionAwaitChoose {
 		return "", fmt.Errorf("supervisor: session %s is %s — choose needs a fork awaiting a decision", s.id, s.state)
 	}
-	var v *reviewVariant
+	var v, loser *reviewVariant
 	switch winner {
 	case "a":
-		v = s.varA
+		v, loser = s.varA, s.varB
 	case "b":
-		v = s.varB
+		v, loser = s.varB, s.varA
 	case "":
 		return "", fmt.Errorf("supervisor: choose requires winner: \"a\" or \"b\"")
 	default:
@@ -846,8 +907,8 @@ func (s *supervisedSession) chooseVariant(ctx context.Context, winner string) (s
 	if v == nil {
 		return "", fmt.Errorf("supervisor: variant %q missing — fork did not complete", winner)
 	}
-	if v.Tree == nil {
-		return "", fmt.Errorf("supervisor: choose: variant %q has no captured workspace (capture failed: %s) — cannot apply its files", winner, v.RunErr)
+	if v.Output == nil {
+		return "", fmt.Errorf("supervisor: choose: variant %q has no sealed output (%s) — cannot settle it", winner, v.RunErr)
 	}
 
 	mgr := SharedScopeManager
@@ -856,40 +917,193 @@ func (s *supervisedSession) chooseVariant(ctx context.Context, winner string) (s
 		return "", fmt.Errorf("supervisor: scope %s not found", s.scopeID)
 	}
 
-	if err := scope.ApplyWorkspace(ctx, *v.Tree); err != nil {
-		return "", fmt.Errorf("supervisor: choose: apply winner workspace: %w", err)
-	}
-	s.lastConv = v.Conv
-
-	// Fresh unit-start checkpoint over the winner's state so the review
-	// cycle (continue/rollback/fork) works on it immediately.
-	cp, err := mgr.CreateCheckpoint(context.WithoutCancel(ctx), s.scopeID, marshalMessages(v.Conv))
+	// The settlement action mirrors the kernel's own Select
+	// precondition — digest equality, not a content diff: a dirty fork
+	// point mints a fresh state revision per capture, so an unchanged
+	// tree still never digest-matches and must take Apply (a content
+	// diff would pick Select and the kernel would refuse).
+	//
+	// Known kernel gap (worth upstreaming, plan §8 pattern): a fork
+	// point with uncommitted content cannot settle deterministically
+	// at all — Select's digest precondition only holds when both
+	// captures mint the same stash commit, and Apply's overlap guard
+	// diffs against the captured HEAD, so the baseline's own
+	// uncommitted files appear as both parent drift and sealed-output
+	// changes and always overlap. The typed conflict surfaces honestly
+	// and the session stays awaiting-choose; the recovery is abort (or
+	// committing the tree before the fork).
+	action := shepherd.SettleSelect
+	parentNow, err := scope.CaptureWorkspace(ctx)
 	if err != nil {
-		return "", fmt.Errorf("supervisor: choose: checkpoint: %w", err)
+		return "", fmt.Errorf("supervisor: choose: capture parent: %w", err)
 	}
-	s.checkpointID = cp.ID
-	s.unitState = cp.Workspace
-	s.unitSnap = cp.Snapshot
+	nowDigest, err := parentNow.Digest()
+	if err != nil {
+		return "", fmt.Errorf("supervisor: choose: digest parent: %w", err)
+	}
+	baseDigest, err := v.Output.Baseline().Digest()
+	if err != nil {
+		return "", fmt.Errorf("supervisor: choose: digest baseline: %w", err)
+	}
+	if nowDigest != baseDigest {
+		action = shepherd.SettleApply
+	}
 
-	// Fork state is consumed.
-	s.forkState = nil
-	s.forkConv = nil
+	var settleErr error
+	if err := mgr.Settle(ctx, v.Output.ID(), action); err != nil {
+		if errors.Is(err, shepherd.ErrOutputConsumed) {
+			return "", fmt.Errorf("supervisor: choose: this fork was already chosen — the sealed output is consumed")
+		}
+		if errors.Is(err, shepherd.ErrApplyConflict) {
+			// The output stays unconsumed and the session stays
+			// awaiting-choose: resolve the drift and choose again.
+			return "", fmt.Errorf("supervisor: choose: the parent workspace changed paths the sealed output also changes (%s); resolve the overlap and choose again", err)
+		}
+		// Cancel-free, like everything after the settle: a cancelled
+		// verdict context must not turn the landed-work check into a
+		// false negative that strands a half-settled fork (review
+		// finding).
+		recoverCtx := context.WithoutCancel(ctx)
+		if !settlementLanded(recoverCtx, scope, v.Output, action) {
+			return "", fmt.Errorf("supervisor: choose: %w", err)
+		}
+		// The workspace effect landed; only the causal-merge recording
+		// failed — the kernel leaves the output unconsumed for exactly
+		// this. Consume it with SettleRelease so no retry can re-apply
+		// a physical effect that already happened, and complete the
+		// verdict with the recording failure noted. An
+		// already-consumed output is a lifecycle that already ended,
+		// not a failure.
+		if rerr := mgr.Settle(recoverCtx, v.Output.ID(), shepherd.SettleRelease); rerr != nil && !errors.Is(rerr, shepherd.ErrOutputConsumed) {
+			return "", fmt.Errorf("supervisor: choose: %w (ending the landed output's lifecycle also failed: %v)", err, rerr)
+		}
+		settleErr = err
+	}
+
+	// The winner is settled: transition BEFORE anything fallible. The
+	// session leaves awaiting-choose with the verdict complete.
+	s.lastConv = v.Conv
 	s.varA = nil
 	s.varB = nil
 	s.state = sessionReview
+
+	// The loser is discarded — its worktree teardown — cancel-free: a
+	// cancelled verdict context must not strand the worktree (the
+	// fork's own cancel path does the same). A failure lands in the
+	// envelope, not a half-chosen session.
+	var loserErr error
+	if derr := s.discardVariantLocked(context.WithoutCancel(ctx), loser); derr != nil {
+		loserErr = derr
+	}
+
+	// Fresh unit-start checkpoint over the winner's state so the review
+	// cycle (continue/rollback/fork) works on it immediately. Best
+	// effort: the work stands and the session is in review; a failed
+	// checkpoint degrades rollback (the envelope says so) rather than
+	// stranding the session mid-verdict.
+	var cpErr error
+	if cp, cerr := mgr.CreateCheckpoint(context.WithoutCancel(ctx), s.scopeID, marshalMessages(v.Conv)); cerr != nil {
+		cpErr = cerr
+	} else {
+		s.checkpointID = cp.ID
+		s.unitState = cp.Workspace
+		s.unitSnap = cp.Snapshot
+	}
 
 	env := reviewEnvelope{
 		Status:    "chosen",
 		SessionID: s.id,
 		Unit:      s.unit,
 		Result:    trimResult(v.Result),
-		Diff:      v.Diff,
-		Files:     v.Files,
-		Error:     v.RunErr,
+		Diff:      clipDiff(v.Output.Diff()),
+		Files:     changesPaths(v.Output.Changes()),
 		Restores:  v.Restore,
 		Next:      nextActionsFor(s.state),
 	}
+	var notes []string
+	if v.RunErr != "" {
+		notes = append(notes, v.RunErr)
+	}
+	if loserErr != nil {
+		notes = append(notes, "losing variant teardown: "+loserErr.Error())
+	}
+	if settleErr != nil {
+		notes = append(notes, "settlement recorded incompletely: "+settleErr.Error())
+	}
+	if cpErr != nil {
+		notes = append(notes, "unit-start checkpoint failed (rollback degraded until the next unit): "+cpErr.Error())
+	}
+	env.Error = strings.Join(notes, "; ")
 	return marshalReviewEnvelope(env), nil
+}
+
+// settlementLanded reports whether a failed settle left its physical
+// effect on the parent anyway — the kernel's documented partial
+// settlement: Select and Apply record the causal merge AFTER the
+// workspace change, so a recording failure means the work may already
+// stand, and a blind retry would re-apply it.
+func settlementLanded(ctx context.Context, scope *shepherd.Scope, out *shepherd.RetainedOutput, action shepherd.SettlementAction) bool {
+	switch action {
+	case shepherd.SettleSelect:
+		// Select fast-forwards the parent onto the sealed state: landed
+		// means the parent now digests as the sealed workspace.
+		now, err := scope.CaptureWorkspace(ctx)
+		if err != nil {
+			return false
+		}
+		nowDigest, err := now.Digest()
+		if err != nil {
+			return false
+		}
+		wantDigest, err := out.Workspace().Digest()
+		if err != nil {
+			return false
+		}
+		return nowDigest == wantDigest
+	case shepherd.SettleApply:
+		// Apply merges the sealed delta onto the parent: landed means
+		// the parent's diff against the baseline now carries every one
+		// of the output's changed paths.
+		_, parentFiles, err := scope.DiffWorkspace(ctx, out.Baseline(), 0)
+		if err != nil {
+			return false
+		}
+		changed := make(map[string]bool, len(parentFiles))
+		for _, f := range parentFiles {
+			changed[f] = true
+		}
+		for _, c := range out.Changes() {
+			if !changed[c.Path] {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// clipDiff bounds a sealed output's diff to the envelope's line budget
+// (the kernel seals diffs unbounded; the review envelope must not bloat
+// the orchestrator's context).
+func clipDiff(diff string) string {
+	lines := strings.Split(diff, "\n")
+	if len(lines) <= reviewDiffMaxLines {
+		return diff
+	}
+	return strings.Join(lines[:reviewDiffMaxLines], "\n") + "\n...[truncated]"
+}
+
+// changesPaths projects a sealed output's frozen changes as the changed
+// file list the envelopes carry.
+func changesPaths(changes []shepherd.ProposedChange) []string {
+	if len(changes) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(changes))
+	for _, c := range changes {
+		paths = append(paths, c.Path)
+	}
+	return paths
 }
 
 // accept keeps the last unit's work through the kernel's merge gate
@@ -1001,11 +1215,9 @@ func (s *supervisedSession) denyAndRetryLocked(ctx context.Context, denied *shep
 	if s.checkpointID != "" {
 		mgr.PruneCheckpoints(context.WithoutCancel(ctx), s.scopeID)
 	}
-	// A partially-complete fork (an error between variants left the
-	// session in review) is superseded by the retry: its experiments
-	// were never chosen, and the denial rolled the tree past them.
-	s.forkState = nil
-	s.forkConv = nil
+	// Straggler fork state is superseded by the retry (a cancelled fork
+	// already tore its branches down; its experiments were never
+	// chosen, and the denial rolled the tree past them).
 	s.varA = nil
 	s.varB = nil
 
@@ -1040,8 +1252,11 @@ func (s *supervisedSession) denyAndRetryLocked(ctx context.Context, denied *shep
 	return out, nil
 }
 
-// abort rewinds the unaccepted work (last unit via checkpoint, or the
-// whole fork via the fork tree) and closes the session.
+// abort rewinds the unaccepted work and closes the session (adoption
+// plan C2): the last unit via checkpoint restore; an open fork via the
+// settlement's discard — the branches' worktree teardown — because the
+// variants ran in isolated worktrees and the parent tree sits at the
+// fork point, needing no rewind.
 func (s *supervisedSession) abort(ctx context.Context, restore bool) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1050,34 +1265,35 @@ func (s *supervisedSession) abort(ctx context.Context, restore bool) (string, er
 	var rewindErr error
 	rewound := false
 
-	if restore {
-		switch {
-		case s.state == sessionAwaitChoose:
-			if scope, ok := mgr.Get(s.scopeID); ok && s.forkState != nil {
-				if err := scope.ApplyWorkspace(ctx, *s.forkState); err != nil {
-					rewindErr = err
-				} else {
-					rewound = true
-				}
-			}
-		case s.checkpointID != "":
-			if _, err := mgr.RestoreCheckpoint(ctx, s.checkpointID); err != nil {
-				rewindErr = err
-			} else {
-				rewound = true
-			}
-		default:
-			// A fork may be partially complete (error between variants)
-			// while the session is still in review: rewind to the fork
-			// state if we have one.
-			if scope, ok := mgr.Get(s.scopeID); ok && s.forkState != nil {
-				if err := scope.ApplyWorkspace(ctx, *s.forkState); err != nil {
-					rewindErr = err
-				} else {
-					rewound = true
-				}
-			}
+	switch {
+	case s.state == sessionAwaitChoose:
+		// The worktrees are session resources and must not outlive the
+		// session, whatever restore says; the tree itself never moved.
+		// Cancel-free: a cancelled verdict context must not strand the
+		// worktrees (the fork's own cancel path does the same).
+		teardownCtx := context.WithoutCancel(ctx)
+		if err := s.discardVariantLocked(teardownCtx, s.varA); err != nil {
+			rewindErr = err
 		}
+		if err := s.discardVariantLocked(teardownCtx, s.varB); err != nil && rewindErr == nil {
+			rewindErr = err
+		}
+		s.varA, s.varB = nil, nil
+		rewound = rewindErr == nil
+	case s.checkpointID != "":
+		if !restore {
+			break
+		}
+		if _, err := mgr.RestoreCheckpoint(ctx, s.checkpointID); err != nil {
+			rewindErr = err
+		} else {
+			rewound = true
+		}
+	default:
+		// A cancelled fork left the session in review with its branches
+		// already torn down; the tree sits at the last restore point —
+		// nothing to rewind.
+		rewound = true
 	}
 
 	mgr.PruneCheckpoints(context.WithoutCancel(ctx), s.scopeID)

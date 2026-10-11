@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -297,5 +299,70 @@ agents:
 	}
 	if !cfg.Agent.Default.SupervisorHaltRoot {
 		t.Error("supervisor_halt_root: true must parse into SupervisorHaltRoot")
+	}
+}
+
+// TestLoad_removedSupervisedWorktreeKeyWarns pins the removed-key
+// contract: `agents.default.supervised_worktree` no longer exists
+// (fork variants are always isolated worktrees), and a config that
+// still sets it gets one warning instead of a silently dead key.
+func TestLoad_removedSupervisedWorktreeKeyWarns(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("YAAH_HOME", tmp)
+
+	cases := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{
+			name: "dead key set",
+			content: `
+agents:
+  default:
+    supervised_worktree: true
+    model: test/model
+`,
+			want: true,
+		},
+		{
+			name: "dead key absent",
+			content: `
+agents:
+  default:
+    supervised_repo_path: /tmp/repo
+    model: test/model
+`,
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(tc.content), 0o644); err != nil {
+				t.Fatalf("WriteFile() error: %v", err)
+			}
+			// The warning is advisory — capture stderr for the one
+			// Load call rather than guessing from the test log.
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("pipe: %v", err)
+			}
+			prev := os.Stderr
+			os.Stderr = w
+			_, loadErr := Load()
+			os.Stderr = prev
+			_ = w.Close()
+			warned := false
+			if data, rerr := io.ReadAll(r); rerr == nil {
+				warned = bytes.Contains(data, []byte("supervised_worktree"))
+			}
+			_ = r.Close()
+			if loadErr != nil {
+				t.Fatalf("Load() error: %v", loadErr)
+			}
+			if warned != tc.want {
+				t.Errorf("warning = %v, want %v", warned, tc.want)
+			}
+		})
 	}
 }

@@ -41,7 +41,6 @@ func TestConfigAgentConfigParity(t *testing.T) {
 		"SupervisedRepoPath":    true, // → supervised_task tool registration in wiring
 		"SupervisorHaltRoot":    true, // → supervisor tool's root-halt gate in wiring
 
-		"SupervisedWorktree":          true, // → supervised_task tool registration in wiring
 		"SupervisedWorktreeRoot":      true, // → supervised_task tool registration in wiring
 		"SupervisedWorktreeBootstrap": true, // → supervised_task tool registration in wiring
 		"TurnCheckpointMax":           true, // → sub-agent runner turn checkpointer
