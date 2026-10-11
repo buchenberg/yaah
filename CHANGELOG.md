@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.69.0](https://github.com/buchenberg/yaah/compare/v0.68.0...v0.69.0) (2026-10-11)
+
+
+### Features
+
+* **shepherd:** B4 — supervisor status lists rule firings ([3f88b8d](https://github.com/buchenberg/yaah/commit/3f88b8d941a923f47590a5a760fa23b03d649e3c))
+
 ## [0.68.0](https://github.com/buchenberg/yaah/compare/v0.67.0...v0.68.0) (2026-10-11)
 
 
