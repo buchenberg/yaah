@@ -79,11 +79,12 @@ type ClassifiedError struct {
 	Meta   ErrorMeta
 
 	// Recovery hints
-	Retryable            bool // can safely retry after backoff
-	ShouldCompress       bool // compress context before retrying
-	ShouldRotateCred     bool // switch to a different credential / fallback provider
-	ShouldStripReasoning bool // strip ReasoningContent from all assistant messages and retry
-	ShouldAbort          bool // surface error to user immediately (no fallback)
+	Retryable                bool // can safely retry after backoff
+	ShouldCompress           bool // compress context before retrying
+	ShouldRotateCred         bool // switch to a different credential / fallback provider
+	ShouldStripReasoning     bool // strip ReasoningContent from all assistant messages and retry
+	ShouldDropResponseFormat bool // provider rejects response_format — drop it and retry
+	ShouldAbort              bool // surface error to user immediately (no fallback)
 
 	Message string // human-readable classification summary (for logs)
 }
