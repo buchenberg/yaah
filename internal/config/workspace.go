@@ -101,10 +101,9 @@ func normalizeWorkspace(w *WorkspaceConfig) {
 	// (/run/containerd/fifo) is root-only; a per-user temp dir works for both
 	// an unprivileged session and a root one (the shim, which reads the
 	// FIFOs, is root and bypasses the 0700 the client's MkdirAll leaves).
+	// The configured value passes through as-is, like the socket address.
 	if w.Containerd.FIFODir == "" {
 		w.Containerd.FIFODir = filepath.Join(
 			os.TempDir(), fmt.Sprintf("yaah-fifo-%d", os.Getuid()))
-	} else {
-		w.Containerd.FIFODir = filepath.Clean(w.Containerd.FIFODir)
 	}
 }
