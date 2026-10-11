@@ -236,6 +236,18 @@ func isHostOnlyTool(t Tool) bool {
 	return ok
 }
 
+// LeafToolIsHostOnly reports whether the named built-in leaf tool is
+// host-only by design — the per-name form of the filter
+// NewIsolatedRegistry applies, for callers that curate registries tool
+// by tool (the sub-agent role profiles, plan §1.3/D2). Read through the
+// same hostOnly() marker the SetWorkspace gate uses, so it can never
+// classify a tool differently. Unknown names are not host-only; they are
+// simply never registered.
+func LeafToolIsHostOnly(name string) bool {
+	t := NewLeafTool(name)
+	return t != nil && isHostOnlyTool(t)
+}
+
 // HostOnlyLeafTools returns the sorted names of the built-in leaf tools
 // that are host-only by design — exactly the set NewIsolatedRegistry
 // omits, derived from the same marker the SetWorkspace gate reads. The

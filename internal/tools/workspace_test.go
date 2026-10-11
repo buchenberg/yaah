@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -961,5 +962,100 @@ func TestRequireLocal(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "powershell") {
 		t.Errorf("error should name the tool: %v", err)
+	}
+}
+
+// TestWorkspaceParity_LocalVsSandbox closes the plan §8 parity item: the
+// same observable scenarios run against both substrates — the host default
+// and the in-band sandbox over the fake — and must produce identical
+// semantics. Per-case parity is pinned by the mirrored tests above; this
+// test is the cross-substrate comparison itself, so a divergence in one
+// substrate fails with both outcomes in the message.
+func TestWorkspaceParity_LocalVsSandbox(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the sandbox surface is POSIX; the local comparison needs sh")
+	}
+	ctx := context.Background()
+
+	// Each substrate is seeded natively — os on the host, in-band calls in
+	// the sandbox — because seeding is exactly what differs; the test then
+	// judges only the observables both substrates share.
+	host := t.TempDir()
+	if err := os.Symlink("no-such-target", filepath.Join(host, "dangling")); err != nil {
+		t.Fatalf("seed host symlink: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(host, "weird\nname.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed host newline file: %v", err)
+	}
+	local := newLocalWorkspace(NewPathValidator(host, false, nil))
+
+	sb := sandboxfake.New()
+	if err := sb.Create(ctx, shepherd.SandboxSpec{Workdir: "/workspace"}); err != nil {
+		t.Fatalf("create sandbox: %v", err)
+	}
+	if err := sb.Symlink("no-such-target", "/workspace/dangling"); err != nil {
+		t.Fatalf("seed sandbox symlink: %v", err)
+	}
+	if err := sb.WriteFile(ctx, "/workspace/weird\nname.txt", []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed sandbox newline file: %v", err)
+	}
+	boxed := newSandboxWorkspace(sb, "/workspace")
+
+	for _, tc := range []struct {
+		name string
+		w    Workspace
+		root string
+	}{
+		{"local", local, host},
+		{"sandbox", boxed, "/workspace"},
+	} {
+		// Exec: a command that ran and exited 3 has the same shape on
+		// both — error "exit status 3" carrying no output, the output
+		// on the result. (The fake's interpreter is line-oriented, so
+		// the script is newline-separated; the observable shape is
+		// what is compared.)
+		res, err := tc.w.Exec(ctx, ExecRequest{Command: "sh", Args: []string{"-c", "echo boom\nexit 3"}})
+		if err == nil || err.Error() != "exit status 3" {
+			t.Errorf("%s: Exec error = %v, want %q", tc.name, err, "exit status 3")
+		}
+		if res.ExitCode != 3 {
+			t.Errorf("%s: ExitCode = %d, want 3", tc.name, res.ExitCode)
+		}
+		if !strings.Contains(res.Stdout, "boom") {
+			t.Errorf("%s: Stdout = %q, want the command output", tc.name, res.Stdout)
+		}
+
+		// Write/read roundtrip: content survives verbatim.
+		if err := tc.w.WriteFile(ctx, tc.w.Join(tc.root, "f.txt"), []byte("same"), 0o644); err != nil {
+			t.Fatalf("%s: WriteFile: %v", tc.name, err)
+		}
+		got, err := tc.w.ReadFile(ctx, tc.w.Join(tc.root, "f.txt"))
+		if err != nil || string(got) != "same" {
+			t.Errorf("%s: ReadFile = %q, %v; want the written content", tc.name, got, err)
+		}
+
+		// Stat vs Lstat on a dangling symlink: Stat reports not-exist,
+		// Lstat reports the link itself.
+		if _, err := tc.w.Stat(ctx, tc.w.Join(tc.root, "dangling")); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s: Stat(dangling) = %v, want fs.ErrNotExist", tc.name, err)
+		}
+		linfo, lerr := tc.w.Lstat(ctx, tc.w.Join(tc.root, "dangling"))
+		if lerr != nil || linfo.Mode()&fs.ModeSymlink == 0 {
+			t.Errorf("%s: Lstat(dangling) = %v, want a symlink entry", tc.name, lerr)
+		}
+
+		// ReadDir: a newline-containing filename is reported with the
+		// newline intact.
+		entries, err := tc.w.ReadDir(ctx, tc.w.Join(tc.root))
+		if err != nil {
+			t.Fatalf("%s: ReadDir: %v", tc.name, err)
+		}
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		if !slices.Contains(names, "weird\nname.txt") {
+			t.Errorf("%s: ReadDir names = %q, want the newline filename intact", tc.name, names)
+		}
 	}
 }

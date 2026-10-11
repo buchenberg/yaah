@@ -110,6 +110,17 @@ func (s *agentSession) loopBuilder(
 	fallbackProvider agent.Provider,
 	fallbackModel string,
 ) *agent.LoopBuilder {
+	// Isolated sessions must not spill oversized tool results to the
+	// host: the truncation hint points the model at the spill file to
+	// `read` it back, and a sandboxed read cannot reach a host path —
+	// the loop falls back to the bare truncation marker instead. The
+	// live sandbox is the single source of truth, the same predicate
+	// the sub-agent wiring keys off, so the session loop and the
+	// sub-agent loops can never disagree about host spilling.
+	spillDir := toolSpillDir()
+	if s.sessionSandbox != nil {
+		spillDir = ""
+	}
 	var debouncer *memory.DebouncedWriter
 	if s.db != nil {
 		debouncer = memory.NewDebouncedWriter(s.db)
@@ -159,7 +170,7 @@ func (s *agentSession) loopBuilder(
 			WrapUpThreshold:        s.cfg.Agent.Default.WrapUpThreshold,
 			MaxInlineToolsPerTurn:  s.cfg.Agent.Default.MaxInlineToolsPerTurn,
 			PromptCaching:          s.cfg.Agent.Default.PromptCaching,
-			ToolSpillDir:           toolSpillDir(),
+			ToolSpillDir:           spillDir,
 			ReasoningProtectTurns:  s.cfg.Agent.Default.ReasoningProtect,
 			ToolResultMaxLines:     s.cfg.Agent.Default.ToolResultMaxLines,
 			ToolResultMaxBytes:     s.cfg.Agent.Default.ToolResultMaxBytes,

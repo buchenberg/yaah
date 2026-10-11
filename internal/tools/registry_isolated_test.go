@@ -72,3 +72,18 @@ func TestHostOnlyLeafClassification(t *testing.T) {
 		}
 	}
 }
+
+// TestLeafToolIsHostOnly pins the per-name form of the host-only filter
+// (the one the sub-agent registry uses, plan §1.3/D2): it must agree with
+// the marker classification above, and unknown names are simply not
+// host-only — the caller never registers them anyway.
+func TestLeafToolIsHostOnly(t *testing.T) {
+	for name := range leafTools {
+		if got, want := LeafToolIsHostOnly(name), name == "go_refactor"; got != want {
+			t.Errorf("LeafToolIsHostOnly(%s) = %v, want %v", name, got, want)
+		}
+	}
+	if LeafToolIsHostOnly("not_a_tool") {
+		t.Error("an unknown leaf name must not be host-only")
+	}
+}

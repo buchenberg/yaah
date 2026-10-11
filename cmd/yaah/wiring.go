@@ -392,6 +392,22 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		return cfg.Agent.SubAgent.Roles[name].Supervised
 	}
 
+	// Isolated session (plan §1.3, decision D2): sub-agents inherit the
+	// session's one sandbox, so the TaskTool gets the same sandbox
+	// workspace the main registry runs on — a sub-agent's file tools and
+	// shell dispatch inside the container, never on the host. Nil in
+	// local mode, where the path validator route below applies instead.
+	// Sub-agents also get no host spill dir: a truncation hint pointing
+	// at a host file is unreadable through their sandboxed read tool,
+	// so the loop falls back to the bare truncation marker instead.
+	var subAgentWorkspace tools.Workspace
+	var subAgentSpillDir string
+	if sessionSandbox == nil {
+		subAgentSpillDir = toolSpillDir()
+	} else {
+		subAgentWorkspace = sessionSandbox.Workspace()
+	}
+
 	taskTool := runner.NewTaskTool(runner.TaskToolOpts{
 		Provider:              provider,
 		SystemPrompt:          buildSubAgentBasePrompt(cwd, db),
@@ -410,8 +426,9 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		OutputLimit:           cfg.Agent.SubAgent.OutputLimit,
 		ProviderMap:           cfg.Providers,
 		Defaults:              cfg.Agent.Default,
-		ToolSpillDir:          toolSpillDir(),
+		ToolSpillDir:          subAgentSpillDir,
 		PathValidator:         pathValidator,
+		Workspace:             subAgentWorkspace,
 		ResolveProviderByName: resolveProviderByName,
 	})
 

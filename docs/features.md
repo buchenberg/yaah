@@ -210,6 +210,31 @@ grants are remembered for the session. Symlinks are resolved before the
 containment check, and approvals apply to the agent and its sub-agents
 alike.
 
+## Isolated workspace
+
+Beyond confining paths, a session can run its tools inside a real Linux
+container: `workspace.backend: containerd` (config file, see
+`docs/configuration.md` "Workspace reference") starts each session inside
+a containerd sandbox. The working tree is copied into the container at
+startup and a git baseline is captured there; every file tool and shell
+command runs in the container, and the host's working tree stays untouched
+until the model calls `apply_out` — a dry run previews the diff since the
+baseline, and the real apply is gated behind your approval.
+
+Sub-agents dispatched with `spawn_subagent` inherit the same container, so
+their file work is isolated with the parent's and reaches the host through
+the same `apply_out`. Their turn-checkpoint/rollback substrate is host-git
+based and stays off in isolated mode — the scope remains for supervisor
+inject/halt.
+
+Isolation costs a tool delta, named in the session prompt and in the
+session record: `role`, `background_process`, `supervised_task`, and
+`go_refactor` are host-only and omitted; MCP-served tools are omitted too
+(they execute on the host), and `skill`/`plan` stay registered but
+read-only. `doctor` reports the workspace check when the stanza is
+present, and `docs/isolated-workspace-live-testing.md` covers the image
+contract and the end-to-end live test.
+
 ## Middleware pipeline
 
 Every agent turn runs through a configurable middleware pipeline. The

@@ -153,7 +153,31 @@ func IsolatedWorkspaceGuidance(omitted, mcpOmitted []string) string {
 	b.WriteString("- Call `apply_out` with `dry_run: true` to see the diff that would land; the host is untouched.\n")
 	b.WriteString("- When the user accepts the work (\"ship it\", \"apply the changes\", \"looks good\"), call `apply_out` without `dry_run` and let them approve. A dry run must come first — the approval prompt shows only the arguments, so the user approves the diff you showed them, or nothing.\n")
 	b.WriteString("- Until it runs, your changes exist only in the container. Never claim they are saved, committed, or in the repository.\n")
-	b.WriteString("\nSub-agents you dispatch with spawn_subagent do not run inside the container (sandbox inheritance is not wired yet) — treat their file work as host-side, not isolated.\n")
+	b.WriteString("\nSub-agents you dispatch with spawn_subagent run inside the same container as you (they inherit this session's sandbox, changes and all) — their file work is isolated with yours and reaches the host only through apply_out.\n")
+	return b.String()
+}
+
+// IsolatedSubAgentGuidance is the isolated-mode prompt delta for a
+// sub-agent (plan §1.3, decision D2): unlike the session-level delta, it
+// does not describe the apply_out workflow — the parent session owns the
+// apply — it tells the sub-agent that its tools run in the container and
+// that its work exists nowhere else. dropped are the host-only tool names
+// the role profile asked for that isolated mode omitted, so the sub-agent
+// does not retry a call that cannot succeed.
+func IsolatedSubAgentGuidance(dropped []string) string {
+	var b strings.Builder
+	b.WriteString("## Isolated workspace\n\n")
+	b.WriteString("You run inside the same isolated container as the agent that dispatched you: your file tools and shell commands operate on the container's copy of the repository, never the host. Your changes stay in the container — never claim they are saved, committed, pushed, or in the repository. The parent session decides when the work leaves the container; you cannot do it yourself.\n")
+	if len(dropped) > 0 {
+		b.WriteString("\nThe following tools your role normally has are NOT available here; do not attempt them:\n")
+		for _, name := range dropped {
+			if reason, ok := hostOnlyReasons[name]; ok {
+				b.WriteString("\n- `" + name + "`: " + reason + ".")
+			} else {
+				b.WriteString("\n- `" + name + "`: unavailable in isolated mode.")
+			}
+		}
+	}
 	return b.String()
 }
 

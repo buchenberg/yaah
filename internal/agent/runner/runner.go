@@ -65,6 +65,13 @@ type TaskToolOpts struct {
 
 	PathValidator *tools.PathValidator
 
+	// Workspace, when non-nil, is the isolated session's sandbox
+	// workspace: sub-agents inherit it (plan §1.3, decision D2) so their
+	// tools run inside the session's container instead of on the host.
+	// Mutually exclusive with PathValidator — the wiring installs
+	// exactly one substrate per session.
+	Workspace tools.Workspace
+
 	// ResolveProviderByName translates a configured provider name into a
 	// live agent.Provider. Injected from the cmd layer because provider
 	// construction (makeProvider) belongs with the rest of the CLI wiring.
@@ -100,6 +107,7 @@ func NewTaskTool(opts TaskToolOpts) *tools.TaskTool {
 			parentPermissionRules: opts.ParentPermissionRules,
 			toolSpillDir:          opts.ToolSpillDir,
 			pathValidator:         opts.PathValidator,
+			workspace:             opts.Workspace,
 			resolveProviderByName: opts.ResolveProviderByName,
 		}, depth),
 		ResolveTimeout:   subAgentTimeoutResolver(opts.SubCfg),
@@ -229,6 +237,13 @@ type taskRunnerOpts struct {
 	// parent session's --workspace policy.
 	pathValidator *tools.PathValidator
 
+	// workspace, when non-nil, is the isolated session's sandbox
+	// workspace (plan §1.3, decision D2): every sub-agent inherits the
+	// session's one sandbox instead of running host-side. Mutually
+	// exclusive with pathValidator — the wiring installs exactly one
+	// substrate per session.
+	workspace tools.Workspace
+
 	// resolveProviderByName resolves a configured provider by name. It
 	// is injected from the cmd layer because provider construction
 	// (makeProvider) is CLI wiring that does not belong here. May be nil;
@@ -252,7 +267,10 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// A tool-less profile is valid — some roles (e.g. grump) are
 		// designed to respond without calling any tools.
 
-		subReg := buildSubAgentRegistry(opts, profile, remainingDepth, params.Workdir)
+		subReg, rerr := buildSubAgentRegistry(opts, profile, remainingDepth, params.Workdir)
+		if rerr != nil {
+			return "", fmt.Errorf("sub-agent %s: %w", role, rerr)
+		}
 
 		b := resolveSubAgentBudget(params.MaxLoopCycles, params.MaxToolTurns, profile, opts.subCfg, role)
 		maxIter, maxTurns := b.Iterations, b.Turns
@@ -438,16 +456,52 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 
 // buildSubAgentSysPrompt assembles the full system prompt for a sub-agent
 // loop. Section order: environment header, identity-derived base prompt,
-// per-role directives (from agent.subagent.roles.<role>.directives), role
+// per-role directives (from agent.subagent.roles.<role>.directives), the
+// isolated-workspace delta (isolated sessions only, decision D2), role
 // guidance, response contract, escalation format, and shell anchoring.
 // Directives sit immediately after the base prompt so they stay prominent
 // instead of being buried behind role guidance and format blocks.
 func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, profile subagent.RoleProfile, jsonMode bool) string {
 	cwd, _ := os.Getwd()
-	sysPrompt := prompts.DetectEnvironment(cwd) + "\n\n" + opts.systemPrompt
+
+	// The environment header must advertise the directory the sub-agent's
+	// tools actually resolve against. In an isolated session that is the
+	// sandbox workdir, not the host cwd — the header's working-directory
+	// line is what shell-cd'ing and relative paths key off, and a sandboxed
+	// tool rejects the advertised host path as an escape. The shell line
+	// comes from the workspace too: the container's shell is sh, not the
+	// host's bash/powershell.
+	envOS, envArch, envShell, envCwd := runtime.GOOS, runtime.GOARCH, "", cwd
+	if opts.workspace != nil {
+		envShell, _ = opts.workspace.Shell()
+		envCwd = opts.workspace.WorkDir()
+	} else {
+		if runtime.GOOS == "windows" {
+			envShell = "powershell (pwsh 7+ or Windows PowerShell)"
+		} else {
+			envShell = "bash"
+		}
+	}
+	sysPrompt := prompts.EnvironmentHeader(envOS, envArch, envShell, envCwd) + "\n\n" + opts.systemPrompt
 
 	if ds := opts.subCfg.Roles[string(role)].Directives; len(ds) > 0 {
 		sysPrompt += "\n\n" + prompts.FormatDirectives(ds)
+	}
+
+	// Isolated session (decision D2): the sub-agent shares the session's
+	// container, so its guidance must say so — without it a sub-agent
+	// claims its changes are saved, or retries a host-only tool its
+	// profile names that isolated mode omitted. Placed after the
+	// directives block, which the section order below pins immediately
+	// after the base prompt.
+	if opts.workspace != nil {
+		var dropped []string
+		for _, name := range profile.Tools {
+			if tools.LeafToolIsHostOnly(name) {
+				dropped = append(dropped, name)
+			}
+		}
+		sysPrompt += "\n\n" + prompts.IsolatedSubAgentGuidance(dropped)
 	}
 
 	if g := subagent.RoleGuidance(role); g != "" {
@@ -489,6 +543,15 @@ func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, pro
 		if runtime.GOOS == "windows" {
 			otherShell = "bash, sh, or cmd"
 		}
+		if opts.workspace != nil {
+			// The isolated workspace's contract (D5) guarantees sh
+			// — bash may exist in the image, but only sh is promised,
+			// and the shell the workspace actually launches is what
+			// the header above already advertised. The two statements
+			// must agree, or the model flips between them.
+			shell, _ = opts.workspace.Shell()
+			otherShell = "bash or powershell — only " + shell + " is guaranteed in the container"
+		}
 		sysPrompt += "\n\n## Available Shell\n"
 		sysPrompt += fmt.Sprintf("Your environment only has %s available. ", shell)
 		sysPrompt += fmt.Sprintf("Use %s for ALL command execution. ", shell)
@@ -516,6 +579,18 @@ func subAgentTimeoutResolver(subCfg config.SubAgentConfig) func(tools.SubAgentPa
 // calls Create. A nil return leaves the scope pure-causal, which makes its
 // workspace operations report ErrNoSandbox rather than silently doing nothing.
 func subAgentSandbox(opts taskRunnerOpts, workdir string) shepherd.Sandbox {
+	// Isolated session (plan §1.3, decision D2): the sub-agent shares the
+	// session's one sandbox, so there is no per-sub-agent host substrate
+	// to capture. A host worktree or host git sandbox would checkpoint a
+	// tree this sub-agent never touches, and in-container checkpoints
+	// could not isolate one sub-agent's turns from the parent's work in
+	// the shared root — the same reason D2 rejects per-sub-agent
+	// sandboxes. Nil keeps the scope pure-causal, so the supervisor's
+	// inject/halt still works and turn checkpoints stay off rather than
+	// rewinding the shared container.
+	if opts.workspace != nil {
+		return nil
+	}
 	repoPath := opts.defaults.SupervisedRepoPath
 	if repoPath == "" {
 		repoPath, _ = os.Getwd()
@@ -534,7 +609,12 @@ func subAgentSandbox(opts taskRunnerOpts, workdir string) shepherd.Sandbox {
 // remainingDepth > 0, a nested TaskTool is registered so the sub-agent
 // can spawn further workers. When remainingDepth == 0 the task tool is
 // omitted entirely.
-func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, remainingDepth int, workdir string) *tools.Registry {
+//
+// An isolated session (opts.workspace set) installs the session's sandbox
+// workspace — the sub-agent inherits the container (decision D2) — and
+// skips any host-only tool the profile names; a SetWorkspace refusal
+// surfaces as an error rather than a silently host-side sub-agent.
+func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, remainingDepth int, workdir string) (*tools.Registry, error) {
 	resolveTimeout := subAgentTimeoutResolver(opts.subCfg)
 	registerTask := func(reg *tools.Registry) {
 		reg.Register(&tools.TaskTool{
@@ -569,7 +649,8 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 	}
 
 	reg := tools.NewEmptyRegistry()
-	if opts.pathValidator != nil {
+	isolated := opts.workspace != nil
+	if !isolated && opts.pathValidator != nil {
 		// An isolated sub-agent gets a validator rooted at its own checkout, so
 		// its file tools are contained there and its shell runs there. Policy
 		// (deny patterns, home-access, approval callback) is inherited; the
@@ -587,9 +668,32 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 			}
 			continue
 		}
+		if isolated && tools.LeafToolIsHostOnly(name) {
+			// The role profile names a host-only tool; isolated mode
+			// omits it for the same reason the curated session
+			// registry does. The system prompt names the omission so
+			// the sub-agent does not retry a call that cannot succeed.
+			continue
+		}
 		registerLeaf(reg, name)
 	}
-	return reg
+	if isolated {
+		// Isolated session (plan §1.3, decision D2): the sub-agent
+		// inherits the session's sandbox workspace, so its file tools
+		// and shell run inside the container instead of on the host.
+		// SetWorkspace runs after registration — the same ordering as
+		// the session registry in the wiring — so the gate validates
+		// the tool set the sub-agent actually gets: a profile that
+		// named an unmigrated or host-only tool that slipped past the
+		// filter fails the dispatch loudly instead of silently
+		// running that tool host-side. workdir has no meaning here —
+		// the container's root is the workspace — so it is ignored
+		// rather than remapped.
+		if serr := reg.SetWorkspace(opts.workspace); serr != nil {
+			return nil, fmt.Errorf("isolated sub-agent workspace: %w", serr)
+		}
+	}
+	return reg, nil
 }
 
 // resolveSubAgentTimeout picks the effective default timeout for a

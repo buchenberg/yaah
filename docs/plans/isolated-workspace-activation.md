@@ -815,17 +815,70 @@ have been **executed**; the verdict is recorded against each.
    probe (the kernel's write path already required it in-container).
    Step 8's exit criterion is met: isolation is wired, visible in
    `doctor`, and proven end to end.
-9. Test matrix (§8), docs, and D2's inheritance behaviour for sub-agents (§1.3).
+9. ✅ **Landed (2026-10-11):** the test matrix audit, the user-facing docs,
+   and D2's inheritance behaviour for sub-agents (§1.3).
+   **D2 inheritance:** `spawn_subagent` in an isolated session now
+   dispatches sub-agents *into the session's sandbox* — one sandbox per
+   session, sub-agents inherit it, no pooling. The seam is
+   `buildSubAgentRegistry` (`internal/agent/runner/runner.go`): with the
+   session workspace set (a new `TaskToolOpts.Workspace` the wiring fills
+   from `sessionSandbox.Workspace()`), the sub-agent's registry is built
+   against that sandbox workspace — `SetWorkspace` stays the enforcement
+   point, on the empty registry — and any host-only tool a role profile
+   names is skipped (`tools.LeafToolIsHostOnly`, the per-name form of the
+   same marker the gate reads). The sub-agent's system prompt gains
+   `prompts.IsolatedSubAgentGuidance(dropped)`: it runs in the container,
+   must not claim its changes are saved, and is told which of its
+   profile's tools were dropped; unlike the session-level delta it does
+   not describe `apply_out` — the parent owns the apply. Nested
+   spawn_subagent inherits too (the opts carry the workspace down the
+   chain). The scope stays pure-causal in isolated mode
+   (`subAgentSandbox` returns nil): a host git sandbox would checkpoint
+   a tree the sub-agent never touches, and in-container checkpoints could
+   not isolate one sub-agent's turns from the parent's work in the shared
+   root — the same reasoning D2 applied to reject per-sub-agent sandboxes.
+   Turn checkpoints therefore stay off for isolated sub-agents;
+   supervisor inject/halt still works. A `workdir` dispatch parameter is
+   ignored in isolated mode (the container's root is the workspace) —
+   moot in practice, since `spawn_subagent`'s schema does not expose
+   one and the supervised variant that sets it is omitted. The "not
+   wired yet" warning in `IsolatedWorkspaceGuidance` is gone — it now
+   states the inheritance.
+   **§8 test matrix audit:** every item already had coverage from
+   steps 5–8, plus the one this step adds — activation matrix
+   (`TestNewIsolatedRegistry_OmitsExactlyHostOnlyLeaves`), refusal
+   (`TestRegistry_SetWorkspace_RefusesIsolated`), path containment
+   (`TestSandboxWorkspace_ResolvePathContainment`; `/` root and its
+   aliases refused at config load — `internal/config/workspace_test.go`),
+   parity vs `localWorkspace` (new
+   `TestWorkspaceParity_LocalVsSandbox` runs the shared observable
+   scenarios — Exec exit shape, write/read roundtrip, Stat vs Lstat on a
+   dangling link, ReadDir with a newline filename — against both
+   substrates and compares), lifecycle
+   (`TestStartSessionSandbox_*` probe/create/opener failure paths plus
+   the once-guarded destroy), and OS gating
+   ("containerd off linux fails at load with the platform named"). The
+   documented weaker guarantee stands: containment is lexical, bounded by
+   the container, and the docs do not claim otherwise.
+   **Docs:** `docs/features.md` gains the "Isolated workspace" section
+   (activation, bootstrap/apply-out, sub-agent inheritance, tool delta);
+   `docs/configuration.md` gains the `workspace:` stanza in the full
+   example and a "Workspace reference" section.
+   **Exit criteria check (§1.3):** a `workspace.backend: containerd`
+   session functions in Linux with sub-agents inside the container;
+   `local` is byte-for-byte unchanged (the pv route is pinned by
+   `TestBuildSubAgentRegistry_LocalRouteUnchanged` and
+   `TestSubAgentSandbox_LocalUnchanged`); no container leaks (session
+   teardown owns the one sandbox; sub-agents never create one).
 
 **Stopping points:** step 5 leaves config without activation — a clean stop. Step 8
 is shippable. Step 2's gate fired once and is now cleared, so nothing here is
 waiting on a decision or a fix.
 
-**Status (refreshed 2026-10-11): steps 0–6 are done, and the kernel has since
-completed its entire parity plan (core `v0.4.1` → `v0.10.0`). The next step is
-7 — the isolated tool surface (Option A registry, prompt delta, D4 trace
-metadata) — which is also what makes the step-6 verbs reachable from a real
-session. After 7: steps 8–9 as sequenced.**
+**Status (refreshed 2026-10-11): steps 0–9 are done — the plan is
+complete. The kernel finished its parity plan (core `v0.4.1` →
+`v0.10.0`) along the way; step 9 landed sub-agent sandbox inheritance
+(D2), the §8 test-matrix audit, and the user-facing docs.**
 
 **The two release tasks that rode alongside are done:**
 - **Step 3c (yaah-side):** pin `v0.10.0` + the mechanical ctx sweep — this PR.
