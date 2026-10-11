@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.65.0](https://github.com/buchenberg/yaah/compare/v0.64.0...v0.65.0) (2026-10-11)
+
+
+### Features
+
+* **workspace:** run isolated sessions unprivileged (fifo_dir + adapter v0.2.1) ([67e741d](https://github.com/buchenberg/yaah/commit/67e741d42ff60cd0a8ee753efa915abb6efaf7fe))
+* **workspace:** run isolated sessions unprivileged (fifo_dir + adapter v0.2.1) ([5d260bb](https://github.com/buchenberg/yaah/commit/5d260bb61e0a4fc3664cabe1cf9262e05eae6233))
+
+
+### Bug Fixes
+
+* **config:** pass a configured fifo_dir through as-is ([84a37d9](https://github.com/buchenberg/yaah/commit/84a37d97b8e4c74c11e65af64c4bccff803f6f45))
+* **workspace:** review round 1 -- private fifo default, passthrough test, doc accuracy ([56f0b0c](https://github.com/buchenberg/yaah/commit/56f0b0c82a9ef357eceebc8f3ffdfd0465313eac))
+
 ## [0.64.0](https://github.com/buchenberg/yaah/compare/v0.63.0...v0.64.0) (2026-10-11)
 
 
