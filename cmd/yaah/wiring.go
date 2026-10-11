@@ -601,6 +601,10 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			TraceDir:    cfg.Agent.Default.ShepherdTraceDir,
 			RootScopeID: rootScopeID,
 			Runs:        runRegistry,
+			// Svc carries the session's advisory rules service so
+			// status can list rule firings (adoption plan B4); nil
+			// when the supervisor stanza is not live.
+			Svc: supervisorSvc,
 			// supervisor.halt_root (adoption plan A3): root halt maps to
 			// cancelling the session's current run — a big hammer that
 			// needs the explicit opt-in, off by default. HaltRootEnabled

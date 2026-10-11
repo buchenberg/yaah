@@ -677,3 +677,141 @@ func TestService_RootHaltWithOptIn(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+// TestService_FiringsCountAdvisory pins the B4 status surface on the
+// advisory path: firings are counted per rule and scope — including a
+// firing the root policy drops, which still fired (the count is the
+// rule's act, not the dispatch's outcome).
+func TestService_FiringsCountAdvisory(t *testing.T) {
+	svc, _, steer, bus := newTestService(t, allAdvisoryRules())
+
+	decl := func(owner string) {
+		publish(bus, shepherdtrace.EffectEvent{
+			TraceOwnerID: owner,
+			Mode:         shepherdtrace.Declaration,
+			SchemaRef:    "yaah.tool.bash.v1",
+			KindLabel:    "bash",
+			Payload:      map[string]any{"cmd": "rm -rf /tmp/probe"},
+		})
+	}
+
+	decl("sub-worker")
+	awaitSteer(t, steer, true)
+	decl("sub-worker")
+	awaitSteer(t, steer, true)
+	// Dropped by the root policy (B1): counted anyway.
+	decl("sess-root")
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		firings := svc.Firings()
+		if len(firings) == 2 &&
+			firings[0].Rule == "destructive_file_guard" && firings[0].Scope == "scope:sess-root" &&
+			firings[0].Kind == "inject" && firings[0].Count == 1 &&
+			firings[1].Rule == "destructive_file_guard" && firings[1].Scope == "scope:sub-worker" &&
+			firings[1].Kind == "inject" && firings[1].Count == 2 {
+			return
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("firings never reached the expected snapshot: %+v", firings)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestService_FiringsCountGuardDeny pins the B2 side of the B4
+// surface: a blocking pre-dispatch deny counts under the shell guard's
+// own rule name, scoped to the sub-agent the guard refused.
+func TestService_FiringsCountGuardDeny(t *testing.T) {
+	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	if err != nil {
+		t.Fatalf("open test store: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+	bus := shepherdtrace.NewEffectBus(64)
+	t.Cleanup(bus.Close)
+	mgr := shepherd.NewScopeManager(store)
+
+	svc := NewService(mgr, bus, NewRegistry(), AdvisoryRules{}, true, false, "")
+	check := svc.GuardCheck()
+	if check == nil {
+		t.Fatal("GuardCheck must be non-nil when the guard is enabled")
+	}
+	if reason := check("sub-worker", "bash", `{"command":"rm -rf /tmp/probe"}`); reason == "" {
+		t.Fatal("the shell guard must deny a bash command")
+	}
+
+	firings := svc.Firings()
+	if len(firings) != 1 {
+		t.Fatalf("firings = %+v, want exactly the guard's deny", firings)
+	}
+	f := firings[0]
+	if f.Rule != "destructive_shell_guard" || f.Scope != "scope:sub-worker" || f.Kind != "deny" || f.Count != 1 {
+		t.Errorf("firing = %+v, want destructive_shell_guard/scope:sub-worker/deny/1", f)
+	}
+}
+
+// TestService_FiringsCountHalt pins the halt kind on the B4 surface: a
+// rule emitting InterventionHalt counts when the dispatch completes —
+// here against a scope with no registered run, so the halt lands as a
+// kernel-side record only.
+func TestService_FiringsCountHalt(t *testing.T) {
+	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	if err != nil {
+		t.Fatalf("open test store: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+	bus := shepherdtrace.NewEffectBus(64)
+	t.Cleanup(bus.Close)
+	store.WithBus(bus)
+	mgr := shepherd.NewScopeManager(store)
+	if _, err := mgr.Create("sub-worker", nil); err != nil {
+		t.Fatalf("create scope: %v", err)
+	}
+
+	svc := NewService(mgr, bus, NewRegistry(), AdvisoryRules{}, false, false, "")
+	svc.Start("firing-halt-test")
+	t.Cleanup(svc.Close)
+	svc.sup.AddRule(advisoryRule(haltRule("explode"), svc.recordFiring))
+
+	publish(bus, shepherdtrace.EffectEvent{
+		TraceOwnerID: "sub-worker",
+		Mode:         shepherdtrace.Declaration,
+		KindLabel:    "explode",
+	})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		scope, ok := mgr.Get("scope:sub-worker")
+		firings := svc.Firings()
+		if ok && scope.State() == shepherd.ScopeDiscarded && len(firings) == 1 {
+			f := firings[0]
+			if f.Rule != "test_halt" || f.Scope != "scope:sub-worker" || f.Kind != "halt" || f.Count != 1 {
+				t.Errorf("firing = %+v, want test_halt/scope:sub-worker/halt/1", f)
+			}
+			return
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("halt firing never completed: state=%v firings=%+v", scope.State(), firings)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestService_FiringsEmptyWhenSilent pins the honest zero: a service
+// whose rules never matched reports no firings, not a guess.
+func TestService_FiringsEmptyWhenSilent(t *testing.T) {
+	svc, _, steer, bus := newTestService(t, allAdvisoryRules())
+
+	// A benign declaration: no rule matches, nothing is steered.
+	publish(bus, shepherdtrace.EffectEvent{
+		TraceOwnerID: "sub-worker",
+		Mode:         shepherdtrace.Declaration,
+		SchemaRef:    "yaah.tool.read.v1",
+		KindLabel:    "read",
+	})
+	awaitSteer(t, steer, false)
+	if firings := svc.Firings(); len(firings) != 0 {
+		t.Errorf("firings = %+v, want none", firings)
+	}
+}
