@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.59.1](https://github.com/buchenberg/yaah/compare/v0.59.0...v0.59.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **llm:** address the PR [#235](https://github.com/buchenberg/yaah/issues/235) review -- overflow-first 400 ordering, the promised table cases, loud drop, honest comment ([7021f46](https://github.com/buchenberg/yaah/commit/7021f46e64816684d80320039c04585e9f4aeaf6))
+* **llm:** drop response_format and replay when a provider rejects it ([8c414ee](https://github.com/buchenberg/yaah/commit/8c414ee9a10c619e0c494ecd42e6d5dbf1104066))
+* **llm:** the drop warning carries the provider's error, not the canned label ([4b0c43e](https://github.com/buchenberg/yaah/commit/4b0c43ef54a10eda1babdd0fefdf0c0f84293cf9))
+
 ## [0.59.0](https://github.com/buchenberg/yaah/compare/v0.58.0...v0.59.0) (2026-10-11)
 
 
