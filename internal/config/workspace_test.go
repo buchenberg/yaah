@@ -186,7 +186,7 @@ func TestValidate_workspace(t *testing.T) {
 				Root:    "/workspace",
 				Containerd: ContainerdWorkspaceConfig{
 					Image:   "example/dev:latest",
-					FIFODir: "/run/containerd/fifo",
+					FIFODir: filepath.Join(os.TempDir(), "yaah-test-fifo"),
 				},
 			},
 			goos: "linux",
@@ -196,7 +196,7 @@ func TestValidate_workspace(t *testing.T) {
 			ws: WorkspaceConfig{
 				Backend:    BackendContainerd,
 				Root:       "/workspace",
-				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: "/run/containerd/fifo"},
+				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: filepath.Join(os.TempDir(), "yaah-test-fifo")},
 			},
 			goos:    "windows",
 			wantErr: "windows cannot run one (native Linux or WSL2 required)",
@@ -207,7 +207,7 @@ func TestValidate_workspace(t *testing.T) {
 				Backend: BackendContainerd,
 				Root:    "/workspace",
 				Containerd: ContainerdWorkspaceConfig{
-					FIFODir: "/run/containerd/fifo",
+					FIFODir: filepath.Join(os.TempDir(), "yaah-test-fifo"),
 				},
 			},
 			goos:    "linux",
@@ -218,7 +218,7 @@ func TestValidate_workspace(t *testing.T) {
 			ws: WorkspaceConfig{
 				Backend:    BackendContainerd,
 				Root:       "workspace",
-				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: "/run/containerd/fifo"},
+				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: filepath.Join(os.TempDir(), "yaah-test-fifo")},
 			},
 			goos:    "linux",
 			wantErr: `workspace.root "workspace" must be an absolute path inside the sandbox`,
@@ -228,7 +228,7 @@ func TestValidate_workspace(t *testing.T) {
 			ws: WorkspaceConfig{
 				Backend:    BackendContainerd,
 				Root:       "/",
-				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: "/run/containerd/fifo"},
+				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: filepath.Join(os.TempDir(), "yaah-test-fifo")},
 			},
 			goos:    "linux",
 			wantErr: `would scope the whole container`,
@@ -241,7 +241,7 @@ func TestValidate_workspace(t *testing.T) {
 			ws: WorkspaceConfig{
 				Backend:    BackendContainerd,
 				Root:       "//",
-				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: "/run/containerd/fifo"},
+				Containerd: ContainerdWorkspaceConfig{Image: "example/dev:latest", FIFODir: filepath.Join(os.TempDir(), "yaah-test-fifo")},
 			},
 			goos:    "linux",
 			wantErr: `would scope the whole container`,
