@@ -149,7 +149,11 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	var toolReg *tools.Registry
 	if isolated {
 		toolReg = tools.NewIsolatedRegistry()
-		omittedTools = append(omittedTools, "go_refactor")
+		// Derived from the same hostOnly() marker the registry filter
+		// and the SetWorkspace gate read, so the prompt delta and the
+		// D4 record can never name a tool the session actually has, or
+		// miss one it does not.
+		omittedTools = append(omittedTools, tools.HostOnlyLeafTools()...)
 	} else {
 		toolReg = tools.NewRegistry()
 	}
@@ -252,17 +256,42 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	}
 
 	// --- MCP servers ------------------------------------------------------
-	mcpClients, mcpInfos, mcpToolNames = initMCP(cfg, toolReg, skipMCP)
+	// Isolated mode omits MCP tools by policy: they execute on the host
+	// through stdio/HTTP clients no Workspace can intercept, so
+	// registering them would open host mutation paths around the
+	// apply-out boundary. The servers still start (the session owns
+	// their lifecycle); their tool names are recorded so the prompt and
+	// the D4 session row can name what was left out. mcpToolNames is
+	// then cleared for the loop config — the approval gate would prompt
+	// for calls to tools that cannot dispatch.
+	mcpClients, mcpInfos, mcpToolNames = initMCP(cfg, toolReg, skipMCP, sessionSandbox == nil)
+	var omittedMCP []string
+	if sessionSandbox != nil {
+		for name := range mcpToolNames {
+			omittedMCP = append(omittedMCP, name)
+		}
+		slices.Sort(omittedMCP)
+		if len(omittedMCP) > 0 {
+			fmt.Fprintf(os.Stderr, "warning: isolated mode omits %d MCP tool(s) — they run on the host and the workspace cannot contain them: %s\n",
+				len(omittedMCP), strings.Join(omittedMCP, ", "))
+		}
+		mcpToolNames = nil
+	}
 
 	skillDirs := skillSearchPaths()
-	skillTool := &tools.SkillTool{Dirs: skillDirs}
+	skillTool := &tools.SkillTool{Dirs: skillDirs, ReadOnly: sessionSandbox != nil}
 	if db != nil {
 		skillTool.Embedder = db.Embedder()
 	}
 	toolReg.Register(skillTool)
 
+	// skill and plan stay available in isolated mode but read-only:
+	// their mutating actions write host harness configuration (.agents/,
+	// tracked in git), which must not be written around apply_out. The
+	// prompt delta says so; the tools refuse the mutating actions
+	// themselves.
 	planDirs := planSearchPaths()
-	toolReg.Register(&tools.PlanTool{Dirs: planDirs})
+	toolReg.Register(&tools.PlanTool{Dirs: planDirs, ReadOnly: sessionSandbox != nil})
 
 	roleDirs := runner.RoleSearchPaths(cwd)
 	// role is host-only (plan §3, decision D3): role files are harness
@@ -440,10 +469,22 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 
 			// Supervised roles move from spawn_subagent to supervised_task
 			// now that the shared scope manager is actually available.
+			// Isolated mode folds them back: supervised_task is omitted
+			// there, and leaving the roles split off spawn_subagent would
+			// leave them with no dispatch tool at all (task rejects them
+			// by name).
 			plainRoles, supervisedRoles := splitRolesBySupervised(reg.Names(), isSupervisedRole)
+			if sessionSandbox != nil {
+				plainRoles = reg.Names()
+				supervisedRoles = nil
+			}
 			taskTool.RoleNames = plainRoles
 			taskTool.RoleResolver = func() []string {
-				plain, _ := splitRolesBySupervised(subagent.DefaultRegistry().Names(), isSupervisedRole)
+				names := subagent.DefaultRegistry().Names()
+				if sessionSandbox != nil {
+					return names
+				}
+				plain, _ := splitRolesBySupervised(names, isSupervisedRole)
 				return plain
 			}
 			taskTool.RoleDescriptions = runner.RoleDescriptionsFor(plainRoles)
@@ -499,25 +540,9 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// cannot exist here.
 	if sessionSandbox != nil {
 		slices.Sort(omittedTools)
-		mainPrompt += "\n\n" + prompts.IsolatedWorkspaceGuidance(omittedTools)
+		mainPrompt += "\n\n" + prompts.IsolatedWorkspaceGuidance(omittedTools, omittedMCP)
 	} else if tools.SharedScopeManager != nil {
 		mainPrompt += "\n\n" + prompts.SubAgentToolsGuidance()
-	}
-
-	// Decision D4: the workspace substrate and the omitted tool names go
-	// into the session record, so "the model didn't use
-	// background_process" and "the model couldn't" stay distinguishable
-	// for any reader of the transcript. Written after the registry is
-	// final; a resume that changed mode overwrites, describing the most
-	// recent run.
-	if db != nil {
-		backend := cfg.Workspace.Backend
-		if backend == "" {
-			backend = config.BackendLocal
-		}
-		if werr := db.UpdateSessionWorkspace(sessionID, backend, strings.Join(omittedTools, ",")); werr != nil {
-			fmt.Fprintf(os.Stderr, "warning: recording workspace metadata: %v\n", werr)
-		}
 	}
 
 	toolReg.Register(&tools.ListSubAgentsTool{
@@ -597,6 +622,26 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			}
 			sandboxTeardownHandled = true
 			return nil, serr
+		}
+	}
+
+	// Decision D4: the workspace substrate and the omitted tool names go
+	// into the session record, so "the model didn't use
+	// background_process" and "the model couldn't" stay distinguishable
+	// for any reader of the transcript. Written only after the
+	// SetWorkspace gate above has passed — a run the gate refused never
+	// started, and must not overwrite the record of the last one that
+	// did. A resume that changed mode overwrites, describing the most
+	// recent actual run.
+	if db != nil {
+		backend := cfg.Workspace.Backend
+		if backend == "" {
+			backend = config.BackendLocal
+		}
+		recorded := append(slices.Clone(omittedTools), omittedMCP...)
+		slices.Sort(recorded)
+		if werr := db.UpdateSessionWorkspace(sessionID, backend, strings.Join(recorded, ",")); werr != nil {
+			fmt.Fprintf(os.Stderr, "warning: recording workspace metadata: %v\n", werr)
 		}
 	}
 

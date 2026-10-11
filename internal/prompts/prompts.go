@@ -121,9 +121,13 @@ var hostOnlyReasons = map[string]string{
 // it the model attempts background_process and receives an unexplained
 // "tool not found".
 //
-// omitted are the tool names this session actually skipped (the wiring
-// collects them as it curates the registry), sorted by the caller.
-func IsolatedWorkspaceGuidance(omitted []string) string {
+// omitted are the host-only tool names this session actually skipped (the
+// wiring collects them as it curates the registry); mcpOmitted are the
+// MCP-served tool names isolated mode leaves out because they execute on
+// the host. Skill and plan stay registered but read-only — their
+// mutating actions manage host harness configuration, which the isolated
+// workspace must not write around apply_out.
+func IsolatedWorkspaceGuidance(omitted, mcpOmitted []string) string {
 	var b strings.Builder
 	b.WriteString("## Isolated workspace\n\n")
 	b.WriteString("This session runs in an isolated workspace: your file tools and shell commands execute inside a container holding a copy of this repository. ")
@@ -139,10 +143,15 @@ func IsolatedWorkspaceGuidance(omitted []string) string {
 			}
 		}
 	}
+	if len(mcpOmitted) > 0 {
+		b.WriteString("\n\nMCP-served tools are omitted in isolated mode — they run on the host, which the workspace cannot contain: ")
+		b.WriteString("`" + strings.Join(mcpOmitted, "`, `") + "`.")
+	}
+	b.WriteString("\n\nThe `skill` and `plan` tools are read-only here: their create/edit/delete actions are disabled because they manage host harness configuration (.agents/). Their list/show/load actions work as usual.\n")
 
-	b.WriteString("\n\nChanges leave the container only through `apply_out`, which requires the user's approval:\n")
+	b.WriteString("\nChanges leave the container only through `apply_out`, which requires the user's approval:\n")
 	b.WriteString("- Call `apply_out` with `dry_run: true` to see the diff that would land; the host is untouched.\n")
-	b.WriteString("- When the user accepts the work (\"ship it\", \"apply the changes\", \"looks good\"), call `apply_out` without `dry_run` and let them approve.\n")
+	b.WriteString("- When the user accepts the work (\"ship it\", \"apply the changes\", \"looks good\"), call `apply_out` without `dry_run` and let them approve. A dry run must come first — the approval prompt shows only the arguments, so the user approves the diff you showed them, or nothing.\n")
 	b.WriteString("- Until it runs, your changes exist only in the container. Never claim they are saved, committed, or in the repository.\n")
 	b.WriteString("\nSub-agents you dispatch with spawn_subagent do not run inside the container (sandbox inheritance is not wired yet) — treat their file work as host-side, not isolated.\n")
 	return b.String()

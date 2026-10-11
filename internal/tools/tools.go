@@ -236,6 +236,23 @@ func isHostOnlyTool(t Tool) bool {
 	return ok
 }
 
+// HostOnlyLeafTools returns the sorted names of the built-in leaf tools
+// that are host-only by design — exactly the set NewIsolatedRegistry
+// omits, derived from the same marker the SetWorkspace gate reads. The
+// wiring uses this to name the omitted tools in the prompt delta and the
+// session record, so those lists cannot drift from the registry the
+// session actually got.
+func HostOnlyLeafTools() []string {
+	var names []string
+	for name, factory := range leafTools {
+		if isHostOnlyTool(factory()) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
 // NewEmptyRegistry returns a Registry with no tools pre-registered, so
 // callers that want a curated tool set (e.g. sub-agent role profiles)
 // can build it up via Register without inheriting every built-in tool.

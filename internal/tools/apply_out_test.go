@@ -63,6 +63,11 @@ func TestApplyOutTool_AppliesOntoHost(t *testing.T) {
 	}
 
 	tool := &ApplyOutTool{Sandbox: ss, HostDir: src}
+	// The real apply requires a preceding dry run: the approval prompt
+	// shows only the arguments, so the user must have seen the diff.
+	if _, err := tool.Execute(context.Background(), `{"dry_run": true}`); err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
 	out, err := tool.Execute(context.Background(), `{}`)
 	if err != nil {
 		t.Fatalf("apply: %v", err)
@@ -72,6 +77,68 @@ func TestApplyOutTool_AppliesOntoHost(t *testing.T) {
 	}
 	if got, err := os.ReadFile(filepath.Join(src, "readme.txt")); err != nil || string(got) != "via the tool\n" {
 		t.Errorf("host readme.txt = %q, %v — the accepted change did not land", got, err)
+	}
+}
+
+// TestApplyOutTool_RefusesUnpreviewedApply pins the honest-approval
+// invariant: the approval prompt cannot show the delta, so an apply with
+// no dry run in the session is refused rather than let through blind.
+func TestApplyOutTool_RefusesUnpreviewedApply(t *testing.T) {
+	ss, src := newApplyOutSession(t)
+
+	ws := ss.Workspace()
+	readme, _ := ws.ResolvePath("readme.txt")
+	if err := ws.WriteFile(context.Background(), readme, []byte("unpreviewed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &ApplyOutTool{Sandbox: ss, HostDir: src}
+	if _, err := tool.Execute(context.Background(), `{}`); err == nil {
+		t.Fatal("an apply without a preceding dry run must be refused")
+	}
+	if got, err := os.ReadFile(filepath.Join(src, "readme.txt")); err != nil || string(got) != "hello\n" {
+		t.Errorf("host readme.txt = %q, %v — the refused apply must not touch the host", got, err)
+	}
+}
+
+// TestApplyOutTool_RefusesStalePreview pins the preview/apply race: a
+// mutation landing between the dry run and the apply changes the delta,
+// and the apply is refused rather than landing unpreviewed content.
+func TestApplyOutTool_RefusesStalePreview(t *testing.T) {
+	ss, src := newApplyOutSession(t)
+
+	ws := ss.Workspace()
+	readme, _ := ws.ResolvePath("readme.txt")
+	notes, _ := ws.ResolvePath("notes.txt")
+	if err := ws.WriteFile(context.Background(), readme, []byte("previewed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &ApplyOutTool{Sandbox: ss, HostDir: src}
+	if _, err := tool.Execute(context.Background(), `{"dry_run": true}`); err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	// A concurrent mutation after the preview.
+	if err := ws.WriteFile(context.Background(), notes, []byte("raced in\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := tool.Execute(context.Background(), `{}`); err == nil {
+		t.Fatal("an apply whose preview went stale must be refused")
+	}
+	if got, err := os.ReadFile(filepath.Join(src, "readme.txt")); err != nil || string(got) != "hello\n" {
+		t.Errorf("host readme.txt = %q, %v — the refused apply must not touch the host", got, err)
+	}
+	// A fresh dry run re-arms the apply: the user is shown the updated
+	// diff before approving it.
+	if _, err := tool.Execute(context.Background(), `{"dry_run": true}`); err != nil {
+		t.Fatalf("re-preview: %v", err)
+	}
+	if _, err := tool.Execute(context.Background(), `{}`); err != nil {
+		t.Fatalf("apply after re-preview: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(src, "readme.txt")); err != nil || string(got) != "previewed\n" {
+		t.Errorf("host readme.txt = %q, %v — the re-previewed apply did not land", got, err)
 	}
 }
 

@@ -16,6 +16,18 @@ import (
 type SkillTool struct {
 	Dirs     []string
 	Embedder memory.Embedder // optional; enables semantic skill search
+	// ReadOnly disables the mutating actions (create, edit). Isolated
+	// sessions set it: skills are host harness configuration (.agents/
+	// directories the host reads), so writing them from inside the
+	// container would mutate tracked host files around the apply-out
+	// boundary. Reading — load, list, search — stays available.
+	ReadOnly bool
+}
+
+// readOnlyActionError is the shared refusal for a mutating action on a
+// read-only skill or plan tool.
+func readOnlyActionError(tool, action string) error {
+	return fmt.Errorf("%s: %s is disabled in this session — skills and plans are host harness configuration, and isolated mode must not write host files outside apply_out", tool, action)
 }
 
 func (t *SkillTool) Name() string { return "skill" }
@@ -75,6 +87,9 @@ func (t *SkillTool) Execute(ctx context.Context, args string) (string, error) {
 		return out, nil
 
 	case "create":
+		if t.ReadOnly {
+			return "", readOnlyActionError("skill", "create")
+		}
 		if params.Name == "" {
 			return "", fmt.Errorf("skill: name is required for create")
 		}
@@ -95,6 +110,9 @@ func (t *SkillTool) Execute(ctx context.Context, args string) (string, error) {
 		return fmt.Sprintf("Skill %q created at %s", params.Name, path), nil
 
 	case "edit":
+		if t.ReadOnly {
+			return "", readOnlyActionError("skill", "edit")
+		}
 		if params.Name == "" {
 			return "", fmt.Errorf("skill: name is required for edit")
 		}

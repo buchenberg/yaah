@@ -2,12 +2,15 @@ package memory
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestDB_OpenCreatesDatabase(t *testing.T) {
@@ -1061,28 +1064,59 @@ func TestDB_SessionWorkspaceMetadata(t *testing.T) {
 }
 
 func TestDB_SessionWorkspaceMetadata_MigratesExistingDB(t *testing.T) {
-	tmp := t.TempDir()
-	path := filepath.Join(tmp, "test.db")
+	path := filepath.Join(t.TempDir(), "test.db")
+
+	// Create a database with the pre-D4 sessions schema directly, so the
+	// migration under test is real: the first Open of a fresh file would
+	// create the table with the new columns already present and prove
+	// nothing (same discipline as TestMigrate_AddsCrossLinkColumns).
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	legacySchema := `
+CREATE TABLE sessions (
+	id TEXT PRIMARY KEY,
+	started_at INTEGER NOT NULL,
+	ended_at INTEGER,
+	cwd TEXT,
+	model TEXT,
+	tokens_in INTEGER DEFAULT 0,
+	tokens_out INTEGER DEFAULT 0,
+	system_prompt TEXT DEFAULT ''
+);
+INSERT INTO sessions (id, started_at, cwd, model) VALUES ('sess-old', 1000, '/tmp', '');
+`
+	if _, err := legacy.Exec(legacySchema); err != nil {
+		t.Fatalf("create legacy schema: %v", err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatalf("close legacy db: %v", err)
+	}
+
+	// Open: the ALTER-based migration must add the workspace columns to
+	// the existing table.
 	db, err := Open(path)
 	if err != nil {
-		t.Fatalf("Open() error: %v", err)
+		t.Fatalf("Open legacy db: %v", err)
 	}
-	db.CreateSession(Session{ID: "sess-old", StartedAt: 1000})
-	db.Close()
+	defer db.Close()
 
-	// Reopen: the migration must add the workspace columns to the
-	// existing table, and the old row must read back with defaults.
-	db2, err := Open(path)
-	if err != nil {
-		t.Fatalf("reopen: %v", err)
-	}
-	defer db2.Close()
-	if err := db2.UpdateSessionWorkspace("sess-old", "containerd", "role"); err != nil {
-		t.Fatalf("UpdateSessionWorkspace after migration: %v", err)
-	}
-	s, err := db2.GetSession("sess-old")
+	// The old row reads back with defaults before anything writes it.
+	s, err := db.GetSession("sess-old")
 	if err != nil {
 		t.Fatalf("GetSession after migration: %v", err)
+	}
+	if s.WorkspaceBackend != "" || s.WorkspaceOmittedTools != "" {
+		t.Errorf("pre-existing row must default to empty metadata, got %q/%q", s.WorkspaceBackend, s.WorkspaceOmittedTools)
+	}
+
+	if err := db.UpdateSessionWorkspace("sess-old", "containerd", "role"); err != nil {
+		t.Fatalf("UpdateSessionWorkspace after migration: %v", err)
+	}
+	s, err = db.GetSession("sess-old")
+	if err != nil {
+		t.Fatalf("GetSession after write: %v", err)
 	}
 	if s.WorkspaceBackend != "containerd" || s.WorkspaceOmittedTools != "role" {
 		t.Errorf("post-migration metadata = %q/%q", s.WorkspaceBackend, s.WorkspaceOmittedTools)

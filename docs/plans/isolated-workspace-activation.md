@@ -751,6 +751,23 @@ have been **executed**; the verdict is recorded against each.
    (step 9, D2) — `spawn_subagent` in an isolated session dispatches
    host-side sub-agents, and the prompt says so. `doctor` visibility of
    the active substrate is step 8.
+   **Post-review hardening (PR review):** the two remaining host-mutation
+   paths around apply_out are closed — MCP tools are omitted by policy
+   in isolated mode (they execute on the host through stdio/HTTP clients
+   no Workspace can intercept; the servers still start, the omission is
+   named in the prompt and the D4 record, and the approval gate is not
+   told about tools that cannot dispatch), and `skill`/`plan` become
+   read-only there (their create/edit/delete actions write host harness
+   configuration in `.agents/`, tracked in git). The omitted-leaf list is
+   derived from the marker (`tools.HostOnlyLeafTools()`), not
+   hand-maintained. Supervised roles fold back into `spawn_subagent` in
+   isolated mode — omitting `supervised_task` would otherwise leave them
+   with no dispatch tool at all. `apply_out` now refuses an apply that
+   was not preceded by a dry run in the session, and refuses one whose
+   preview went stale (the workspace changed since): the approval prompt
+   shows only the arguments, so the user approves exactly the diff they
+   were shown, or nothing. The D4 write moved after the SetWorkspace
+   gate, so a refused run never overwrites the record.
 8. Activation wiring + `doctor` (§2.4). *First genuinely useful release.*
 9. Test matrix (§8), docs, and D2's inheritance behaviour for sub-agents (§1.3).
 
