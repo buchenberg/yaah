@@ -210,9 +210,11 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 			// the prompt still requests JSON and callers parse leniently.
 			// The drop is loud: a json_mode role silently producing
 			// freeform output would otherwise be undiagnosable in the
-			// field.
-			fmt.Fprintf(os.Stderr, "warning: provider rejected response_format (%s); retrying without it — structured output now relies on the prompt alone\n",
-				classified.Message)
+			// field. The raw error, not the canned classification label,
+			// carries the provider's own message — that is the part
+			// worth reading when a new provider dialect shows up.
+			fmt.Fprintf(os.Stderr, "warning: provider rejected response_format (%v); retrying without it — structured output now relies on the prompt alone\n",
+				err)
 			req.ResponseFormat = nil
 			respFormatDropped = true
 			// The decrement avoids consuming a retry slot — the replay is a
