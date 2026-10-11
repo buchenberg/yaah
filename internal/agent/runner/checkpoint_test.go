@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
-	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	shepherdgit "github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
@@ -26,7 +26,7 @@ func TestShepherdTurnCheckpointer_RestoreRevertsWorkspace(t *testing.T) {
 	mgr := shepherd.NewScopeManager(store)
 
 	repo := newRunnerTestGitRepo(t)
-	sb := shepherdsandbox.NewLocalGitSandbox(repo)
+	sb := shepherdgit.NewLocalGitSandbox(repo)
 	scope, err := mgr.Create("turn-checkpoint-test", sb)
 	if err != nil {
 		t.Fatalf("create scope: %v", err)

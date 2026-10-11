@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
-	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	shepherdgit "github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
@@ -71,7 +71,7 @@ func benchCheckpointer(b *testing.B, repo string) *ShepherdTurnCheckpointer {
 	}
 	b.Cleanup(func() { store.Close(context.Background()) })
 	mgr := shepherd.NewScopeManager(store)
-	sb := shepherdsandbox.NewLocalGitSandbox(repo)
+	sb := shepherdgit.NewLocalGitSandbox(repo)
 	scope, err := mgr.Create("bench", sb)
 	if err != nil {
 		b.Fatalf("create scope: %v", err)

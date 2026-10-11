@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/shepherd-kernel-go"
+	shepherdsupervisor "github.com/buchenberg/shepherd-kernel-go/supervisor"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
@@ -517,15 +518,15 @@ func TestService_GuidanceNamesTheRule(t *testing.T) {
 // haltRule is a test-only rule that halts whatever scope emits a
 // declaration of the given kind — the producer B3's dispatch needs on
 // the wire.
-func haltRule(kind string) shepherd.SupervisionRule {
-	return shepherd.SupervisionRule{
+func haltRule(kind string) shepherdsupervisor.SupervisionRule {
+	return shepherdsupervisor.SupervisionRule{
 		Name: "test_halt",
 		Match: func(e shepherdtrace.EffectEvent) bool {
 			return e.Mode == shepherdtrace.Declaration && e.KindLabel == kind
 		},
-		Action: func(e shepherdtrace.EffectEvent) *shepherd.Intervention {
-			return &shepherd.Intervention{
-				Type:    shepherd.InterventionHalt,
+		Action: func(e shepherdtrace.EffectEvent) *shepherdsupervisor.Intervention {
+			return &shepherdsupervisor.Intervention{
+				Type:    shepherdsupervisor.InterventionHalt,
 				ScopeID: "scope:" + e.TraceOwnerID,
 				Payload: "test halt",
 			}

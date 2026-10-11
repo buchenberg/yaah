@@ -8,9 +8,9 @@ import (
 	"testing"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
-	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 
+	shepherdgit "github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	"github.com/buchenberg/yaah/internal/agent/recovery"
 )
 
@@ -31,7 +31,7 @@ func TestReviewSession_AfterRestart(t *testing.T) {
 	// The crashed run: a rooted session with a forked sub-agent (the
 	// root must have forked to be recoverable).
 	crashed := shepherd.NewScopeManager(store)
-	root, err := crashed.Create("sess-crash", shepherdsandbox.NewLocalGitSandbox(repo))
+	root, err := crashed.Create("sess-crash", shepherdgit.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create root: %v", err)
 	}

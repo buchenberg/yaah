@@ -25,11 +25,11 @@ import (
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
 	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	shepherdgit "github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/budget"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
-	"github.com/buchenberg/yaah/internal/agent/recovery"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
@@ -707,9 +707,9 @@ func subAgentSandbox(opts taskRunnerOpts, workdir string) shepherdsandbox.Sandbo
 		return nil
 	}
 	if workdir != "" {
-		return shepherdsandbox.NewWorktreeSandbox(repoPath, workdir)
+		return shepherdgit.NewWorktreeSandbox(repoPath, workdir)
 	}
-	return shepherdsandbox.NewLocalGitSandbox(repoPath)
+	return shepherdgit.NewLocalGitSandbox(repoPath)
 }
 
 // ErrRootTerminal reports a recovered root that cannot be reattached
@@ -756,7 +756,7 @@ func CreateRootScope(mgr *shepherd.ScopeManager, sessionID, repoPath string, iso
 			repoPath, _ = os.Getwd()
 		}
 		if repoPath != "" {
-			candidate := shepherdsandbox.NewLocalGitSandbox(repoPath)
+			candidate := shepherdgit.NewLocalGitSandbox(repoPath)
 			if _, cerr := candidate.Capture(context.Background()); cerr == nil {
 				sb = candidate
 			}
@@ -791,35 +791,11 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 			repoPath, _ = os.Getwd()
 		}
 		if repoPath != "" {
-			if child, err := mgr.ForkIsolated(opts.rootScopeID, subTraceID, nil, shepherdsandbox.NewWorktreeSandbox(repoPath, workdir)); err == nil {
-				// Record the worktree's path for recovery (adoption
-				// plan R1): the kernel's fork record carries the
-				// backend but not the path. A record failure discards
-				// the branch and fails the dispatch — a worktree the
-				// trace cannot find is an orphan recovery would never
-				// list. The discard's own failure must not strand the
-				// worktree (the kernel records the discard BEFORE
-				// destroying the owned sandbox, so the same store
-				// failure returns before teardown): the sandbox is
-				// destroyed explicitly and the cleanup failure joins
-				// the error.
-				if terr := recovery.RecordWorktree(context.Background(), tools.SharedTraceStore, subTraceID, repoPath, workdir); terr != nil {
-					if parent, pok := mgr.Get(opts.rootScopeID); pok {
-						if derr := parent.Discard(child); derr != nil {
-							// The kernel records the discard BEFORE
-							// destroying the owned sandbox; a failure
-							// returns before the teardown — destroy
-							// explicitly so the worktree cannot strand.
-							terr = errors.Join(terr, derr)
-							if sderr := child.Sandbox().Destroy(context.Background()); sderr != nil {
-								terr = errors.Join(terr, sderr)
-							}
-						}
-					} else if sderr := child.Sandbox().Destroy(context.Background()); sderr != nil {
-						terr = errors.Join(terr, sderr)
-					}
-					return nil, terr
-				}
+			if child, err := mgr.ForkIsolated(opts.rootScopeID, subTraceID, nil, shepherdgit.NewWorktreeSandbox(repoPath, workdir)); err == nil {
+				// No yaah-side worktree record is needed (plan 06,
+				// kernel v0.14.0): the kernel's fork record carries
+				// the sandbox address itself, so recovery finds the
+				// worktree from the trace alone.
 				return child, nil
 			}
 			return mgr.Create(subTraceID, subAgentSandbox(opts, workdir))

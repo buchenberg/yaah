@@ -265,3 +265,53 @@ func TestReviewSession_ForkSealsOutputs(t *testing.T) {
 		}
 	}
 }
+
+// TestReviewSession_ChooseWithDirtyForkPoint pins the flow the kernel's
+// plan 06 fixed: a fork point with uncommitted content settles. The
+// pre-v0.14 kernel minted a timestamp-identified stash per capture, so
+// Select's digest precondition held only on same-second luck and Apply's
+// overlap guard read the baseline's own dirt as drift — the test was
+// removed as untestable (C2 review). The kernel's content identity
+// (tree_sha) made the digest precondition a true content check, and the
+// baseline-relative ApplyDelta keeps the baseline's dirt on neither side,
+// so this runs deterministically on every platform — including Windows,
+// whose capture normalization made the old stash identity drift.
+func TestReviewSession_ChooseWithDirtyForkPoint(t *testing.T) {
+	tool, sup, repo := newReviewTestEnv(t)
+	tool.WorktreeRoot = t.TempDir()
+
+	// Uncommitted work exists before the session starts, so the fork
+	// point is a dirty tree.
+	writeTestFile(t, repo, "dirty.txt", "uncommitted fork point\n")
+
+	runner := &sessionRunner{
+		repoPath: repo,
+		responses: []runnerResponse{
+			{result: "unit one"},
+			{result: "variant A"},
+			{result: "variant B"},
+		},
+	}
+	runner.sideEffect = func(call int, _ string) {
+		if call == 1 || call == 2 {
+			writeTestFile(t, runner.workdirFor(t, call), "variant.txt", "variant\n")
+		}
+	}
+	tool.Runner = runner.run()
+
+	sid := startTestReviewSession(t, tool, "start")
+	if env := mustSupervisorExecute(t, sup, `{"action":"fork","session_id":`+jsonString(sid)+`,"prompt_a":"A","prompt_b":"B"}`); env.Status != "awaiting_choose" {
+		t.Fatalf("fork status = %q, want awaiting_choose", env.Status)
+	}
+
+	chosen := mustSupervisorExecute(t, sup, `{"action":"choose","session_id":`+jsonString(sid)+`,"winner":"a"}`)
+	if chosen.Status != "chosen" {
+		t.Fatalf("choose over a dirty fork point: status = %q, want chosen (env: %s)", chosen.Status, marshalReviewEnvelope(chosen))
+	}
+	if _, err := os.Stat(filepath.Join(repo, "variant.txt")); err != nil {
+		t.Errorf("the winner's work must land on the dirty parent: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "dirty.txt")); err != nil {
+		t.Errorf("the dirty fork point's content must survive the settlement: %v", err)
+	}
+}

@@ -19,49 +19,21 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
 	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	shepherdgit "github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
-// SchemaWorktreeProvisioned records where yaah provisioned an isolated
-// worktree child, on the child's owner path. The kernel's fork record
-// carries the backend but not the path — and re-adoption needs the
-// path — so yaah records it itself; the trace is the registry. A child
-// without a record recovers causal-only (deliberate non-adoption, not
-// an error).
+// SchemaWorktreeProvisioned is yaah's pre-kernel-v0.14 worktree record,
+// on the child's owner path. The kernel's fork record has carried the
+// sandbox address itself since v0.14.0 (plan 06), so new forks write no
+// yaah record; this schema is kept only to read traces written before the
+// bump, and its fallback goes away at the next minor. A child with
+// neither record recovers causal-only (deliberate non-adoption, not an
+// error).
 const SchemaWorktreeProvisioned = "yaah.worktree.provisioned.v1"
-
-// RecordWorktree appends the worktree-path record for one provisioned
-// isolated child. Callers run it right after the isolated fork
-// succeeds; a failure must discard the branch — a worktree the trace
-// cannot find is an orphan recovery would never list.
-func RecordWorktree(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, owner, repoPath, worktreePath string) error {
-	if store == nil {
-		return fmt.Errorf("no trace store")
-	}
-	_, err := store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
-		AppendIntentID: fmt.Sprintf("%s:worktree:%d", owner, time.Now().UnixNano()),
-		Groups: []shepherdtrace.AppendGroup{{
-			TraceOwnerID: owner,
-			FactDrafts: []shepherdtrace.RecordDraft{{
-				Mode:      shepherdtrace.Declaration,
-				SchemaRef: SchemaWorktreeProvisioned,
-				KindLabel: "worktree:provisioned",
-				Payload: map[string]any{
-					"path": worktreePath,
-					"repo": repoPath,
-				},
-			}},
-		}},
-	})
-	if err != nil {
-		return fmt.Errorf("record worktree path for %s: %w", owner, err)
-	}
-	return nil
-}
 
 // worktreeInfo is one recorded worktree provisioning: where it lives
 // and which repository it was carved from. The repository is what
@@ -148,46 +120,59 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 		return nil, nil, err
 	}
 
-	resolver := func(scopeID, backend string) (shepherdsandbox.Sandbox, error) {
+	resolver := func(scopeID, backend, path string) (shepherdsandbox.Sandbox, error) {
 		switch {
 		case backend == "":
-			// Roots resolve with an empty backend by the kernel's
-			// recovery contract ("empty for roots, which have no
-			// record") — not the "git" both local sandboxes report.
-			// The plan re-adopts the in-place git repository — unless
-			// the session is isolated (adoptRoots off), where a host
-			// git sandbox would break D2's pure-causal root.
+			// Roots resolve with empty backend and path by the
+			// kernel's recovery contract ("empty for roots, which
+			// have no record") — not the "git" both local
+			// sandboxes report. The plan re-adopts the in-place
+			// git repository — unless the session is isolated
+			// (adoptRoots off), where a host git sandbox would
+			// break D2's pure-causal root.
 			if !adoptRoots {
 				return nil, nil
 			}
-			return shepherdsandbox.NewLocalGitSandbox(repoPath), nil
+			return shepherdgit.NewLocalGitSandbox(repoPath), nil
 		case backend == "containerd":
 			// Deliberate non-adoption (D5): no re-adoptable identity.
 			return nil, nil
 		case backend == "git":
-			// An isolated worktree child. Adoption is strict: the
-			// recorded path must be a worktree registered with the
-			// recorded repository — the trace directory is shared
-			// across runs, an unrelated directory can squat on the
-			// path, and Destroy falls back to RemoveAll, so a squatter
-			// adopted as an owned sandbox is user data a later
-			// teardown would delete. Anything less stays unadopted;
-			// the classification below reports every refusal outcome.
+			// An isolated worktree child. The kernel hands the
+			// recorded address over directly since v0.14.0 (plan
+			// 06); traces written before the bump carry no address
+			// in the fork record, and yaah's own provision record
+			// (still scanned, below) is the fallback for them.
 			owner := strings.TrimPrefix(scopeID, "scope:")
 			info, ok := paths[owner]
 			if !ok {
 				return nil, nil
 			}
-			// On disk AND registered: `git worktree list` keeps stale
-			// administrative entries after the directory is gone, so
-			// the registry alone would adopt a phantom.
+			if path != "" && path != info.path {
+				// The kernel's record is the authority for the
+				// address; the scan's entry supplies the repo.
+				info.path = path
+			}
+			// Adoption is strict: the recorded path must be a
+			// worktree registered with the recorded repository —
+			// the trace directory is shared across runs, an
+			// unrelated directory can squat on the path, and
+			// Destroy falls back to RemoveAll, so a squatter
+			// adopted as an owned sandbox is user data a later
+			// teardown would delete. Anything less stays
+			// unadopted; the classification below reports every
+			// refusal outcome.
+			//
+			// On disk AND registered: `git worktree list` keeps
+			// stale administrative entries after the directory is
+			// gone, so the registry alone would adopt a phantom.
 			if _, serr := os.Stat(info.path); serr != nil {
 				return nil, nil
 			}
 			if !IsRegisteredWorktree(ctx, info.repo, info.path) {
 				return nil, nil
 			}
-			return shepherdsandbox.NewWorktreeSandbox(info.repo, info.path), nil
+			return shepherdgit.NewWorktreeSandbox(info.repo, info.path), nil
 		default:
 			return nil, nil
 		}
@@ -250,19 +235,43 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 	return mgr, report, nil
 }
 
-// scanWorktreePaths reads every worktree-provision record into an
-// owner → info map (the last record wins — paths are deterministic per
-// child). A record without a usable path or repo is a corrupt registry
-// entry — the exact "a worktree the trace cannot find is an orphan
-// recovery would never list" failure this design fights — and fails
-// the recovery loudly rather than being skipped.
+// scanWorktreePaths reads every isolated child's worktree address into an
+// owner → info map. The kernel's fork record is the source since
+// v0.14.0: it carries sandbox_path, and the repository is derived from
+// the worktree itself (a git worktree carries its repository link), so
+// the address and the repo come from the trace alone. yaah's own
+// provision records (pre-bump traces) stay the fallback for children the
+// kernel record does not cover; that fallback is deleted at the next
+// minor. The kernel record wins on collision — last-write per child is
+// deterministic either way. A legacy record without a usable path or
+// repo is a corrupt registry entry — the exact "a worktree the trace
+// cannot find is an orphan recovery would never list" failure this
+// design fights — and fails the recovery loudly rather than being
+// skipped.
 func scanWorktreePaths(ctx context.Context, store *shepherdtrace.SQLiteTraceStore) (map[string]worktreeInfo, error) {
+	paths := make(map[string]worktreeInfo)
+
+	forks, err := shepherdtrace.ScanRecordsBySchema(ctx, store, shepherd.SchemaScopeForked)
+	if err != nil {
+		return nil, fmt.Errorf("scan fork records: %w", err)
+	}
+	for _, rec := range forks {
+		child, _ := rec.Payload["child_owner"].(string)
+		path, _ := rec.Payload["sandbox_path"].(string)
+		if child == "" || path == "" {
+			continue // shared forks and unaddressed children have no record to read
+		}
+		paths[child] = worktreeInfo{path: path, repo: repoOfWorktree(ctx, path)}
+	}
+
 	records, err := shepherdtrace.ScanRecordsBySchema(ctx, store, SchemaWorktreeProvisioned)
 	if err != nil {
 		return nil, fmt.Errorf("scan worktree records: %w", err)
 	}
-	paths := make(map[string]worktreeInfo, len(records))
 	for _, rec := range records {
+		if _, covered := paths[rec.OwnerID]; covered {
+			continue // the kernel record owns this child
+		}
 		path, pok := rec.Payload["path"].(string)
 		repo, rok := rec.Payload["repo"].(string)
 		if !pok || path == "" || !rok || repo == "" {
@@ -271,6 +280,23 @@ func scanWorktreePaths(ctx context.Context, store *shepherdtrace.SQLiteTraceStor
 		paths[rec.OwnerID] = worktreeInfo{path: path, repo: repo}
 	}
 	return paths, nil
+}
+
+// repoOfWorktree derives the repository a git worktree was carved from:
+// the worktree's .git file points into the repository's administration,
+// so `git rev-parse --git-common-dir` answers from the worktree alone.
+// A path that is gone or no longer a worktree has no repository to
+// report — "" — which the classification treats as unadoptable.
+func repoOfWorktree(ctx context.Context, path string) string {
+	out, err := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--git-common-dir").Output()
+	if err != nil {
+		return ""
+	}
+	repo := filepath.Dir(strings.TrimSpace(string(out)))
+	if !filepath.IsAbs(repo) {
+		repo = filepath.Join(path, repo)
+	}
+	return repo
 }
 
 // RegisteredWorktreePaths runs git's worktree registry for repoPath

@@ -3,7 +3,7 @@ module github.com/buchenberg/yaah
 go 1.26.3
 
 require (
-	github.com/buchenberg/shepherd-kernel-go v0.11.0
+	github.com/buchenberg/shepherd-kernel-go v0.14.0
 	github.com/buchenberg/shepherd-kernel-go/sandbox/containerd v0.2.1
 	github.com/buchenberg/tviewmd v0.2.0
 	github.com/gdamore/tcell/v2 v2.13.10

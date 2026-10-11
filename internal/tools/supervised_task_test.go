@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
-	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	shepherdgit "github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
@@ -122,7 +122,7 @@ func newSupervisedTestEnv(t *testing.T) (*SupervisedTaskTool, string) {
 	// The root scope the wiring creates in local mode (adoption plan
 	// D1): the in-place git sandbox. Review sessions fork their scope
 	// from it — the merge gate's parent and baseline (C1).
-	root, err := SharedScopeManager.Create("test-session-root", shepherdsandbox.NewLocalGitSandbox(repo))
+	root, err := SharedScopeManager.Create("test-session-root", shepherdgit.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create root scope: %v", err)
 	}

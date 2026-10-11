@@ -399,26 +399,35 @@ a shepherd check (Phase D): store open, recovery counts, supervisor wiring.
 
 ## 8. Kernel dependency
 
-- **Pinned (refreshed 2026-10-11):** core `v0.11.0`, containerd nested
-  `v0.2.0`. v0.11.0 tagged after A1 landed, and the import-path sweep was
-  taken at the A1/A2 boundary as its own PR — behavior, digests, and the
-  test suite are unchanged per the kernel changelog, and every phase from
-  A2 on writes against the new paths instead of accumulating v0.10 code
-  to sweep later. The sweep maps the moved symbols to
-  `shepherdtrace`/`shepherdsandbox` (aliased: `runner.go` already imports
-  OpenTelemetry's `trace`); the root package keeps `Scope`,
-  `ScopeManager`, checkpoints, settlement, the merge gate,
-  `RecoverScopes`, and the `Supervisor` — everything phases A–D use.
+- **Pinned (refreshed 2026-10-11, plan 06 phase D):** core `v0.14.0`,
+  containerd nested `v0.2.1`. v0.14.0 ships the kernel's plan 06 —
+  settlement over dirty baselines and the kernel-owned sandbox address —
+  plus the v0.13 packaging sweep this pin absorbs in the same move:
+  `Supervisor` and the rules live in the `supervisor` package, the git
+  backend in `sandbox/git`, and `RecoverOptions.Resolver` gained the
+  recorded `path` parameter (breaking; yaah is the sole consumer, adapted
+  in the same PR). The yaah.worktree.provisioned.v1 record is retired for
+  new forks — the kernel's fork record carries the address — and stays
+  readable as a fallback for traces written before the bump, deleted at
+  the next minor.
 - **v0.11.0's component packages** (`trace.`, `sandbox.`, `substrate.`,
-  `materialize.`) are now available without a second re-pin; D7's
+  `materialize.`) remain available without a second re-pin; D7's
   materialization plan inherits them directly.
 - **Kernel gaps this plan works around, worth upstreaming:**
   - containerd scopes have no re-adoptable identity for `RecoverScopes`
     (D5 returns causal-only; fine, but an upstream record of container
-    name/ID would close it).
+    name/ID would close it). The kernel's plan 06 additionally records
+    the containerd backend's per-capture sequence keys as a digest-
+    stability violation — its own follow-up there.
   - `Scope.Halt` on a shared-sandbox child does not distinguish "halt the
     run" from "halt the scope" — D2's bridge handles it yaah-side; an
     upstream run-handle would make it first-class.
+- **Closed upstream (kernel plan 06, v0.14.0):** a fork point with
+  uncommitted content settles deterministically — captures are content
+  identities (`tree_sha`), `Diff` and `ApplyDelta` are baseline-relative,
+  and the fork record carries the sandbox address. yaah's C2 workaround
+  (the dirty-fork test removal and the `chooseVariant` gap comment) is
+  reverted in the plan-06 phase D PR.
 
 ---
 

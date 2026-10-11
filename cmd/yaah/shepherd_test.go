@@ -2,17 +2,20 @@ package yaah
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
 	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 
+	shepherdgit "github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	"github.com/buchenberg/yaah/internal/agent/recovery"
 )
 
@@ -33,14 +36,14 @@ func shepherdOrphanEnv(t *testing.T) (*recovery.Report, string, string) {
 		t.Fatalf("open store: %v", err)
 	}
 	mgr := shepherd.NewScopeManager(store)
-	root, err := mgr.Create("sess-shep", shepherdsandbox.NewLocalGitSandbox(repo))
+	root, err := mgr.Create("sess-shep", shepherdgit.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create root: %v", err)
 	}
 
 	// The live worktree: forked isolated, recorded, still active.
 	liveWT := filepath.Join(t.TempDir(), "wt-live")
-	liveSB := shepherdsandbox.NewWorktreeSandbox(repo, liveWT)
+	liveSB := shepherdgit.NewWorktreeSandbox(repo, liveWT)
 	if err := liveSB.Create(context.Background(), shepherdsandbox.SandboxSpec{}); err != nil {
 		t.Fatalf("create live worktree: %v", err)
 	}
@@ -48,7 +51,7 @@ func shepherdOrphanEnv(t *testing.T) (*recovery.Report, string, string) {
 	if err != nil {
 		t.Fatalf("fork live: %v", err)
 	}
-	if err := recovery.RecordWorktree(context.Background(), store, liveChild.OwnerID(), repo, liveWT); err != nil {
+	if err := appendLegacyWorktreeRecord(context.Background(), store, liveChild.OwnerID(), repo, liveWT); err != nil {
 		t.Fatalf("record live: %v", err)
 	}
 
@@ -59,7 +62,7 @@ func shepherdOrphanEnv(t *testing.T) (*recovery.Report, string, string) {
 	// state) and then re-adding a REAL worktree at the same path with
 	// sentinel content: the exact shape the crash leaves.
 	orphanWT := filepath.Join(t.TempDir(), "wt-dead")
-	deadSB := shepherdsandbox.NewWorktreeSandbox(repo, orphanWT)
+	deadSB := shepherdgit.NewWorktreeSandbox(repo, orphanWT)
 	if err := deadSB.Create(context.Background(), shepherdsandbox.SandboxSpec{}); err != nil {
 		t.Fatalf("create dead worktree: %v", err)
 	}
@@ -67,7 +70,7 @@ func shepherdOrphanEnv(t *testing.T) (*recovery.Report, string, string) {
 	if err != nil {
 		t.Fatalf("fork dead: %v", err)
 	}
-	if err := recovery.RecordWorktree(context.Background(), store, deadChild.OwnerID(), repo, orphanWT); err != nil {
+	if err := appendLegacyWorktreeRecord(context.Background(), store, deadChild.OwnerID(), repo, orphanWT); err != nil {
 		t.Fatalf("record dead: %v", err)
 	}
 	if err := root.Discard(deadChild); err != nil {
@@ -242,4 +245,30 @@ func TestShepherd_PruneRefusesBrokenRegistry(t *testing.T) {
 	if _, serr := os.Stat(dir); serr != nil {
 		t.Fatalf("the directory must survive the refused prune: %v", serr)
 	}
+}
+
+// appendLegacyWorktreeRecord writes a pre-v0.14 yaah.worktree.provisioned.v1
+// record — the shape traces written before the kernel recorded sandbox
+// addresses itself carry. Tests use it to stand in for a fork made by an
+// older yaah.
+func appendLegacyWorktreeRecord(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, owner, repoPath, worktreePath string) error {
+	_, err := store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+		AppendIntentID: fmt.Sprintf("%s:worktree:%d", owner, time.Now().UnixNano()),
+		Groups: []shepherdtrace.AppendGroup{{
+			TraceOwnerID: owner,
+			FactDrafts: []shepherdtrace.RecordDraft{{
+				Mode:      shepherdtrace.Declaration,
+				SchemaRef: recovery.SchemaWorktreeProvisioned,
+				KindLabel: "worktree:provisioned",
+				Payload: map[string]any{
+					"path": worktreePath,
+					"repo": repoPath,
+				},
+			}},
+		}},
+	})
+	if err != nil {
+		return fmt.Errorf("record worktree path for %s: %w", owner, err)
+	}
+	return nil
 }
