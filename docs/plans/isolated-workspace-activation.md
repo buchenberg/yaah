@@ -789,16 +789,26 @@ have been **executed**; the verdict is recorded against each.
    three-file modify/add/delete delta, the containerd-only
    `delta_patch` property asserted against the real backend, and the
    `apply_out` accept seam landing all three changes onto the host.
-   **Not yet executed against a daemon from this workspace's session**
-   (the socket needs root): the runbook is
-   `docs/isolated-workspace-live-testing.md` — the short form is
-   `sudo env YAAH_LIVE_CONTAINERD_ADDR=/run/containerd/containerd.sock
-   YAAH_LIVE_CONTAINERD_IMAGE=<a D5-satisfying image> go test
-   ./internal/tools/ -run TestLive_ActivatedSession -count=1 -timeout 30m -v`.
-   `sudo env VAR=...`, not `sudo -E` — a sudoers policy that refuses to
-   preserve the environment silently skips the harness. Until that run is
-   green and recorded here, step 8's exit criterion is *implemented*,
-   not *met*.
+   **Live verdict — 2026-10-10, MET.** `TestLive_ActivatedSession` passed
+   end to end (1.25s) against the local containerd daemon (2.3.5,
+   overlayfs) with a `golang:bookworm` + ripgrep image; the runbook,
+   including the two operational rules it pinned along the way, is
+   `docs/isolated-workspace-live-testing.md` (image imports must target
+   the session's containerd namespace — and be unpacked — and raw
+   containerd applies no image `ENV` to execs, so a D5 image must put
+   its tools on the default PATH).
+   The harness earned its keep before it passed: it found that
+   `sandboxWorkspace.WriteFile` shipped file content over exec stdin —
+   which the runc-v2 shim never lets close, so every tool-facing write
+   in an isolated session would have blocked until the context expired
+   (the fake's shell accepts stdin, which is why no unit test could
+   find it). The write now carries base64 in argv — matching the
+   kernel's own `Sandbox.WriteFile` — chunked at 256 KiB, with the same
+   mktemp/rename crash-safety and a trap-armed failure path; the fake's
+   shell gained `printf`/`base64`/`trap -`, and `base64` joined the D5
+   probe (the kernel's write path already required it in-container).
+   Step 8's exit criterion is met: isolation is wired, visible in
+   `doctor`, and proven end to end.
 9. Test matrix (§8), docs, and D2's inheritance behaviour for sub-agents (§1.3).
 
 **Stopping points:** step 5 leaves config without activation — a clean stop. Step 8
