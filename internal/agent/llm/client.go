@@ -70,6 +70,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 	compactAttempts := 0
 	stripAttempts := 0
 	providerSwapped := false
+	respFormatDropped := false
 	c.replayCount = 0
 	c.prematureCount = 0
 
@@ -202,6 +203,17 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		}
 
 		switch {
+		case classified.ShouldDropResponseFormat && req.ResponseFormat != nil && !respFormatDropped:
+			// Provider rejects response_format (e.g. LM Studio only accepts
+			// json_schema/text, not json_object). Drop it and replay once;
+			// the prompt still requests JSON and callers parse leniently.
+			req.ResponseFormat = nil
+			respFormatDropped = true
+			attempt--
+			// Continue immediately: attempt is now negative, so the
+			// exponential backoff below (1 << attempt) must not run.
+			continue
+
 		case classified.ShouldStripReasoning && stripAttempts < maxStripReasoningAttempts:
 			req.Messages = stripReasoningContent(req.Messages)
 			if c.StripReasoning != nil {

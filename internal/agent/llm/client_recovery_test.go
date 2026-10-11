@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -152,5 +153,81 @@ func TestCall_degenerateStreamReplays(t *testing.T) {
 	}
 	if c.replayCount != 1 {
 		t.Errorf("replayCount = %d, want 1", c.replayCount)
+	}
+}
+
+// respFormatProvider rejects any request that carries a response_format
+// with a 400, emulating LM Studio (which accepts only json_schema/text,
+// not json_object). It records the response_format seen on each call so
+// tests can assert the drop-and-replay.
+type respFormatProvider struct {
+	sawFormat []*types.ResponseFormat
+}
+
+func (p *respFormatProvider) Send(_ context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
+	p.sawFormat = append(p.sawFormat, req.ResponseFormat)
+	if req.ResponseFormat != nil {
+		return nil, &providers.APIError{
+			StatusCode: 400,
+			Message:    `'response_format.type' must be 'json_schema' or 'text'`,
+		}
+	}
+	return okResponse, nil
+}
+
+// TestCall_dropsResponseFormatOn400 pins the graceful degradation for
+// yaah-n7k: when a provider rejects response_format, the client drops it
+// and replays once instead of aborting the call.
+func TestCall_dropsResponseFormatOn400(t *testing.T) {
+	p := &respFormatProvider{}
+	c := &Client{Provider: p, Model: "m", MaxRetries: 3, RetryBackoff: time.Millisecond}
+
+	res, err := c.Call(context.Background(), types.ChatRequest{
+		Model:          "m",
+		Messages:       []types.Message{{Role: "user", Content: "hi"}},
+		ResponseFormat: &types.ResponseFormat{Type: "json_object"},
+	})
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if res.Message.Content != "ok" {
+		t.Errorf("content = %q, want ok", res.Message.Content)
+	}
+	if len(p.sawFormat) < 2 {
+		t.Fatalf("expected >=2 provider calls (reject then recover), got %d", len(p.sawFormat))
+	}
+	if p.sawFormat[0] == nil {
+		t.Error("first attempt should carry response_format")
+	}
+	if last := p.sawFormat[len(p.sawFormat)-1]; last != nil {
+		t.Errorf("recovering attempt must drop response_format, got %+v", last)
+	}
+}
+
+// alwaysFail400Provider rejects every request with a response_format 400,
+// even after the format has been dropped.
+type alwaysFail400Provider struct{ calls int }
+
+func (p *alwaysFail400Provider) Send(_ context.Context, _ types.ChatRequest) (*types.ChatResponse, error) {
+	p.calls++
+	return nil, &providers.APIError{StatusCode: 400, Message: "response_format unsupported"}
+}
+
+// TestCall_dropResponseFormatBounded ensures the drop is a one-shot
+// recovery: a provider that keeps rejecting must not loop forever.
+func TestCall_dropResponseFormatBounded(t *testing.T) {
+	p := &alwaysFail400Provider{}
+	c := &Client{Provider: p, Model: "m", MaxRetries: 5, RetryBackoff: time.Millisecond}
+
+	_, err := c.Call(context.Background(), types.ChatRequest{
+		Model:          "m",
+		Messages:       []types.Message{{Role: "user", Content: "hi"}},
+		ResponseFormat: &types.ResponseFormat{Type: "json_object"},
+	})
+	if err == nil {
+		t.Fatal("expected error when provider keeps rejecting response_format")
+	}
+	if p.calls > 3 {
+		t.Errorf("drop-and-retry must be bounded; made %d calls", p.calls)
 	}
 }

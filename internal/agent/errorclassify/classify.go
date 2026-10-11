@@ -132,6 +132,13 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 		c.Message = "generic 404 — retry"
 		return c
 	case http.StatusBadRequest: // 400
+		if matchAny(msg, responseFormatPatterns) {
+			c.Reason = ReasonFormatError
+			c.Retryable = false
+			c.ShouldDropResponseFormat = true
+			c.Message = "response_format unsupported — drop and retry"
+			return c
+		}
 		if matchAny(msg, contextOverflowPatterns) {
 			c.Reason = ReasonContextOverflow
 			c.ShouldCompress = true
@@ -465,6 +472,16 @@ var contentPolicyPatterns = []string{
 
 var reasoningContentPatterns = []string{
 	"reasoning_content in the thinking mode must be passed back",
+}
+
+// responseFormatPatterns match providers that reject the response_format
+// parameter outright. LM Studio, for example, only accepts
+// {"type":"json_schema"} or {"type":"text"} and returns 400 for
+// {"type":"json_object"}. Recovered by dropping response_format and
+// replaying — the prompt still requests JSON and callers parse leniently.
+var responseFormatPatterns = []string{
+	"response_format",
+	"response format",
 }
 
 var providerPolicyPatterns = []string{

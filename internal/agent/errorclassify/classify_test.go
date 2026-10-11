@@ -239,6 +239,13 @@ func TestClassify(t *testing.T) {
 				if !c.ShouldAbort {
 					t.Error("ShouldAbort not set")
 				}
+			case "drop_response_format":
+				if !c.ShouldDropResponseFormat {
+					t.Error("ShouldDropResponseFormat not set")
+				}
+				if c.ShouldAbort {
+					t.Error("ShouldDropResponseFormat must not abort — recovery is possible")
+				}
 			case "retry":
 				if !c.Retryable {
 					t.Error("Retryable not set")
