@@ -34,11 +34,29 @@ func TestCreateRootScope_LocalAndIsolated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateRootScope (local): %v", err)
 	}
-	if local.ID() != "scope:sess-local" {
-		t.Errorf("root ID = %q, want the session-owned scope ID", local.ID())
+	// The behavioral contract, not the kernel's internal ID format: the
+	// root is owned by the session (so scope IDs and trace owners line
+	// up) and addressable through the manager.
+	if local.OwnerID() != "sess-local" {
+		t.Errorf("root owner = %q, want the session ID", local.OwnerID())
+	}
+	if got, ok := mgr.Get(local.ID()); !ok || got != local {
+		t.Errorf("mgr.Get(root.ID()) roundtrip failed: %v, %v", got, ok)
 	}
 	if sb := local.Sandbox(); sb == nil || sb.Backend() != "git" {
 		t.Errorf("local root sandbox = %#v, want the in-place git backend", sb)
+	}
+
+	// A directory git cannot capture (not a repository) demotes the root
+	// to pure-causal: Fork captures the parent baseline first, so an
+	// uncapturable root would break every child fork.
+	nonGit := t.TempDir()
+	probe, err := CreateRootScope(mgr, "sess-nongit", nonGit, false)
+	if err != nil {
+		t.Fatalf("CreateRootScope (non-git): %v", err)
+	}
+	if sb := probe.Sandbox(); sb != nil {
+		t.Errorf("non-git root sandbox = %T, want pure-causal nil (capture probe failed)", sb)
 	}
 
 	iso, err := CreateRootScope(mgr, "sess-iso", repo, true)

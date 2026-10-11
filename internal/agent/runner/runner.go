@@ -631,6 +631,15 @@ func subAgentSandbox(opts taskRunnerOpts, workdir string) shepherd.Sandbox {
 // empty repoPath falls back to the process working directory, matching
 // subAgentSandbox's resolution so the root and legacy child scopes agree
 // on the repository.
+//
+// The sandbox is probed with one capture before the root is registered:
+// Fork captures the parent's baseline first, so a root over a directory
+// git cannot capture (not a repository, unborn HEAD) would make every
+// child fork fail — and the dispatch ignores that error, leaving all
+// sub-agents without a scope. A failed probe demotes the root to
+// pure-causal: the tree still exists, inject/halt still address every
+// scope, and only checkpoint capture is unavailable — which it would
+// have been anyway.
 func CreateRootScope(mgr *shepherd.ScopeManager, sessionID, repoPath string, isolated bool) (*shepherd.Scope, error) {
 	var sb shepherd.Sandbox
 	if !isolated {
@@ -638,7 +647,10 @@ func CreateRootScope(mgr *shepherd.ScopeManager, sessionID, repoPath string, iso
 			repoPath, _ = os.Getwd()
 		}
 		if repoPath != "" {
-			sb = shepherd.NewLocalGitSandbox(repoPath)
+			candidate := shepherd.NewLocalGitSandbox(repoPath)
+			if _, cerr := candidate.Capture(context.Background()); cerr == nil {
+				sb = candidate
+			}
 		}
 	}
 	return mgr.Create(sessionID, sb)
@@ -660,13 +672,18 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 	// workdir isolates this dispatch in its own worktree — a local-mode
 	// concept: an isolated session ignores it (its root has no sandbox,
 	// so the fork is already pure-causal and the container's root is
-	// every sub-agent's workspace).
+	// every sub-agent's workspace). Without a resolvable repository the
+	// worktree cannot be provisioned (subAgentSandbox returns nil in the
+	// same degenerate case), so the dispatch degrades to a plain shared
+	// fork rather than a worktree sandbox rooted at an empty path.
 	if workdir != "" && opts.workspace == nil {
 		repoPath := opts.defaults.SupervisedRepoPath
 		if repoPath == "" {
 			repoPath, _ = os.Getwd()
 		}
-		return mgr.ForkIsolated(opts.rootScopeID, subTraceID, nil, shepherd.NewWorktreeSandbox(repoPath, workdir))
+		if repoPath != "" {
+			return mgr.ForkIsolated(opts.rootScopeID, subTraceID, nil, shepherd.NewWorktreeSandbox(repoPath, workdir))
+		}
 	}
 	return mgr.Fork(opts.rootScopeID, subTraceID, nil)
 }

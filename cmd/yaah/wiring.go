@@ -536,7 +536,10 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		taskTool.RoleDescriptions = runner.RoleDescriptionsFor(plainRoles)
 
 		// Supervisor tool for sub-agent supervision (list_scopes/inject/halt/status).
-		toolReg.Register(&tools.SupervisorTool{TraceDir: cfg.Agent.Default.ShepherdTraceDir})
+		toolReg.Register(&tools.SupervisorTool{
+			TraceDir:    cfg.Agent.Default.ShepherdTraceDir,
+			RootScopeID: rootScopeID,
+		})
 
 		// Supervised task tool — blocking sub-agent execution with
 		// checkpoint/rollback/retry. Shares the runner and timeout

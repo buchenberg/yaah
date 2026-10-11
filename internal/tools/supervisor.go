@@ -23,6 +23,14 @@ import (
 // registry as the trace middleware.
 type SupervisorTool struct {
 	TraceDir string
+
+	// RootScopeID is the session's root scope (adoption plan D1), set by
+	// the wiring. Inject and halt refuse it until the execution bridge
+	// lands (plan steps A2/A3): today both are trace-side only, and a
+	// halted root would silently break every subsequent Fork — the scope
+	// manager refuses to fork from a non-active parent, and the runner
+	// ignores the error, leaving later sub-agents with no scope at all.
+	RootScopeID string
 }
 
 func (*SupervisorTool) Name() string { return "supervisor" }
@@ -106,10 +114,16 @@ func (t *SupervisorTool) Execute(ctx context.Context, args string) (string, erro
 		if raw.ScopeID == "" || raw.Guidance == "" {
 			return "", fmt.Errorf("supervisor: scope_id and guidance required for inject")
 		}
+		if raw.ScopeID == t.RootScopeID {
+			return "", fmt.Errorf("supervisor: the session root scope cannot take injected guidance yet (it arrives with the adoption plan's execution bridge); inject into a sub-agent scope instead (see list_scopes)")
+		}
 		return executeInject(mgr, raw.ScopeID, raw.Guidance)
 	case "halt":
 		if raw.ScopeID == "" {
 			return "", fmt.Errorf("supervisor: scope_id required for halt")
+		}
+		if raw.ScopeID == t.RootScopeID {
+			return "", fmt.Errorf("supervisor: halting the session root is not supported yet (session-level halt arrives with the adoption plan's execution bridge, gated by supervisor.halt_root); halt a sub-agent scope instead (see list_scopes)")
 		}
 		return executeHalt(mgr, raw.ScopeID)
 	case "status":
