@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.60.0](https://github.com/buchenberg/yaah/compare/v0.59.2...v0.60.0) (2026-10-11)
+
+
+### Features
+
+* **workspace:** the D1 bootstrap -- copy-in, baseline capture, apply-out (step 6, plan §2.3) ([d2a8793](https://github.com/buchenberg/yaah/commit/d2a879331e63ce1a4817be3f1110bced49f45262))
+
+
+### Bug Fixes
+
+* **workspace:** harden the D1 bootstrap -- CI failures and PR review findings ([a2ef845](https://github.com/buchenberg/yaah/commit/a2ef8453357079f889fc75907469fa6d38176b7c))
+
 ## [0.59.2](https://github.com/buchenberg/yaah/compare/v0.59.1...v0.59.2) (2026-10-11)
 
 
