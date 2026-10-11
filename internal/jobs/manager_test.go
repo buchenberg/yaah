@@ -294,10 +294,12 @@ func TestBackgroundJobs_RunnerError(t *testing.T) {
 	defer m.Close()
 
 	var got jobResult
+	var delivered bool
 	var mu sync.Mutex
 	m.Deliver = func(role, desc, res string, err error) {
 		mu.Lock()
 		got = jobResult{role, desc, res, err}
+		delivered = true
 		mu.Unlock()
 	}
 
@@ -310,7 +312,22 @@ func TestBackgroundJobs_RunnerError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
-	waitForJob(t, m, id, 2*time.Second)
+	// Terminal status is set before Deliver is called (status is what
+	// waitForJob observes), so waiting for the status alone races the
+	// delivery on a slow runner: poll for the delivery itself.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		mu.Lock()
+		done := delivered
+		mu.Unlock()
+		if done {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("job %s was not delivered within 2s", id)
+		}
+		time.Sleep(time.Millisecond)
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
