@@ -55,7 +55,14 @@ func TestBackgroundJobs_LaunchAndDeliver(t *testing.T) {
 
 	waitForJob(t, m, id, 2*time.Second)
 
+	// Deliver runs after the finished flag flips; drain it before asserting.
+	deadline := time.Now().Add(2 * time.Second)
 	mu.Lock()
+	for got.res == "" && time.Now().Before(deadline) {
+		mu.Unlock()
+		time.Sleep(2 * time.Millisecond)
+		mu.Lock()
+	}
 	defer mu.Unlock()
 	if got.res != "done: read the file" {
 		t.Errorf("delivered result = %q, want %q", got.res, "done: read the file")
@@ -380,7 +387,25 @@ func TestBackgroundJobs_List(t *testing.T) {
 	}
 	wg.Wait()
 
-	list := m.List()
+	// The runner returning does not imply the status flipped — the
+	// manager's post-run bookkeeping trails the runner (status, then
+	// Deliver/usage). Poll until the statuses settle; a slow Windows
+	// runner exposed the race.
+	deadline := time.Now().Add(2 * time.Second)
+	var list []BackgroundJobStatus
+	for {
+		list = m.List()
+		settled := len(list) == 3
+		for _, st := range list {
+			if st.Status == BGStatusRunning {
+				settled = false
+			}
+		}
+		if settled || !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	if len(list) != 3 {
 		t.Errorf("List returned %d jobs, want 3", len(list))
 	}
