@@ -356,3 +356,42 @@ func TestTraceMiddleware_EndTurnWithNilStore(t *testing.T) {
 		t.Fatal("ordinal should not advance with nil store")
 	}
 }
+
+// TestTraceMiddleware_BashDeclarationCarriesCmd pins the supervision
+// event shape (shepherd-adoption plan B1): the kernel's advisory
+// destructive rule reads the shell command from the declaration
+// payload's "cmd", while yaah's tool schema calls the field "command" —
+// the middleware copies it across so rule events and trace facts stay
+// one shape. Non-bash tools carry no "cmd".
+func TestTraceMiddleware_BashDeclarationCarriesCmd(t *testing.T) {
+	m := newTestTraceMiddleware(t)
+
+	if _, err := m.PostTool(context.Background(), []ToolResult{
+		{Name: "bash", Args: `{"command":"rm -rf /tmp/probe"}`},
+	}, &Step{}); err != nil {
+		t.Fatalf("PostTool error: %v", err)
+	}
+	if _, err := m.PostTool(context.Background(), []ToolResult{
+		{Name: "ls", Args: `{"path":"."}`},
+	}, &Step{}); err != nil {
+		t.Fatalf("PostTool error: %v", err)
+	}
+
+	slice, err := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
+	if err != nil {
+		t.Fatalf("read trace: %v", err)
+	}
+
+	facts := slice.FactIDs()
+	if len(facts) < 3 {
+		t.Fatalf("fact count = %d, want at least 3 (bash decl+cap, ls decl)", len(facts))
+	}
+	bashDecl := slice.FactsByID[facts[0]].(shepherdtrace.Record)
+	if cmd, _ := bashDecl.Body.Payload["cmd"].(string); cmd != "rm -rf /tmp/probe" {
+		t.Errorf("bash declaration payload cmd = %q, want the shell command (the supervision rule's match key)", cmd)
+	}
+	lsDecl := slice.FactsByID[facts[2]].(shepherdtrace.Record)
+	if _, has := lsDecl.Body.Payload["cmd"]; has {
+		t.Error("non-bash declaration must not carry a cmd key")
+	}
+}

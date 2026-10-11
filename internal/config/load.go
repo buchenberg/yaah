@@ -133,13 +133,16 @@ type Defaults struct {
 	// task tool (checkpoint/rollback/retry) becomes available.
 	ShepherdTraceDir string `yaml:"shepherd_trace_dir"`
 
-	// SupervisorHaltRoot (agents.default.supervisor_halt_root,
-	// default false) opts into supervisor halt of the session's root
-	// scope: an explicit, deliberate stop of the session's current run
-	// — the ctrl-C equivalent — gated off by default because a rules
-	// engine or a model halting the interactive session is a big
-	// hammer. Root inject needs no gate: steering the session is
-	// reversible.
+	// Supervisor configures the advisory supervision rules engine
+	// (adoption plan B1). Gated by ShepherdTraceDir: no trace dir, no
+	// engine.
+	Supervisor SupervisorConfig `yaml:"supervisor"`
+
+	// SupervisorHaltRoot is the DEPRECATED flat form of
+	// Supervisor.HaltRoot (it shipped with the A3 halt bridge before
+	// the plan §7 stanza existed). Load folds it into the stanza when
+	// the stanza leaves HaltRoot unset; new configuration uses
+	// supervisor.halt_root.
 	SupervisorHaltRoot bool `yaml:"supervisor_halt_root"`
 
 	// SupervisedMaxRetries caps the rollback-and-retry cycles of the
@@ -454,6 +457,14 @@ func Load() (*Config, error) {
 	}
 	if cfg.Agent.Default.ShepherdTraceDir != "" {
 		cfg.Agent.Default.ShepherdTraceDir = expandHomeDir(cfg.Agent.Default.ShepherdTraceDir)
+	}
+	// The A3 halt bridge shipped the flat supervisor_halt_root key; the
+	// plan §7 stanza nests it. The flat key keeps working, additively:
+	// either spelling enables the switch (it defaults off everywhere),
+	// so existing configurations are unaffected and the stanza is the
+	// one home going forward.
+	if cfg.Agent.Default.SupervisorHaltRoot {
+		cfg.Agent.Default.Supervisor.HaltRoot = true
 	}
 	if cfg.Agent.Default.SupervisedRepoPath != "" {
 		cfg.Agent.Default.SupervisedRepoPath = expandHomeDir(cfg.Agent.Default.SupervisedRepoPath)
