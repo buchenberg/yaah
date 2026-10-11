@@ -153,7 +153,7 @@ func IsolatedWorkspaceGuidance(omitted, mcpOmitted []string) string {
 	b.WriteString("- Call `apply_out` with `dry_run: true` to see the diff that would land; the host is untouched.\n")
 	b.WriteString("- When the user accepts the work (\"ship it\", \"apply the changes\", \"looks good\"), call `apply_out` without `dry_run` and let them approve. A dry run must come first — the approval prompt shows only the arguments, so the user approves the diff you showed them, or nothing.\n")
 	b.WriteString("- Until it runs, your changes exist only in the container. Never claim they are saved, committed, or in the repository.\n")
-	b.WriteString("\nSub-agents you dispatch with spawn_subagent run inside the same container as you (they inherit this session's sandbox, changes and all) — their file work is isolated with yours and reaches the host only through apply_out. A workdir argument on the dispatch has no effect in isolated mode; the container's /workspace is every sub-agent's workspace root.\n")
+	b.WriteString("\nSub-agents you dispatch with spawn_subagent run inside the same container as you (they inherit this session's sandbox, changes and all) — their file work is isolated with yours and reaches the host only through apply_out.\n")
 	return b.String()
 }
 

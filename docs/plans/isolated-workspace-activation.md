@@ -838,11 +838,12 @@ have been **executed**; the verdict is recorded against each.
    not isolate one sub-agent's turns from the parent's work in the shared
    root — the same reasoning D2 applied to reject per-sub-agent sandboxes.
    Turn checkpoints therefore stay off for isolated sub-agents;
-   supervisor inject/halt still works. A `workdir` argument is ignored
-   in isolated mode (the container's root is every sub-agent's
-   workspace); the session-level prompt delta says so. The "not wired
-   yet" warning in `IsolatedWorkspaceGuidance` is gone — it now states
-   the inheritance.
+   supervisor inject/halt still works. A `workdir` dispatch parameter is
+   ignored in isolated mode (the container's root is the workspace) —
+   moot in practice, since `spawn_subagent`'s schema does not expose
+   one and the supervised variant that sets it is omitted. The "not
+   wired yet" warning in `IsolatedWorkspaceGuidance` is gone — it now
+   states the inheritance.
    **§8 test matrix audit:** every item already had coverage from
    steps 5–8, plus the one this step adds — activation matrix
    (`TestNewIsolatedRegistry_OmitsExactlyHostOnlyLeaves`), refusal

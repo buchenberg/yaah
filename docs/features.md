@@ -223,9 +223,9 @@ baseline, and the real apply is gated behind your approval.
 
 Sub-agents dispatched with `spawn_subagent` inherit the same container, so
 their file work is isolated with the parent's and reaches the host through
-the same `apply_out` (a `workdir` argument on the dispatch has no effect
-there). Their turn-checkpoint/rollback substrate is host-git based and
-stays off in isolated mode — the scope remains for supervisor inject/halt.
+the same `apply_out`. Their turn-checkpoint/rollback substrate is host-git
+based and stays off in isolated mode — the scope remains for supervisor
+inject/halt.
 
 Isolation costs a tool delta, named in the session prompt and in the
 session record: `role`, `background_process`, `supervised_task`, and

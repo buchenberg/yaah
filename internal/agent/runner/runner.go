@@ -456,18 +456,44 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 
 // buildSubAgentSysPrompt assembles the full system prompt for a sub-agent
 // loop. Section order: environment header, identity-derived base prompt,
-// per-role directives (from agent.subagent.roles.<role>.directives), role
+// per-role directives (from agent.subagent.roles.<role>.directives), the
+// isolated-workspace delta (isolated sessions only, decision D2), role
 // guidance, response contract, escalation format, and shell anchoring.
 // Directives sit immediately after the base prompt so they stay prominent
 // instead of being buried behind role guidance and format blocks.
 func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, profile subagent.RoleProfile, jsonMode bool) string {
 	cwd, _ := os.Getwd()
-	sysPrompt := prompts.DetectEnvironment(cwd) + "\n\n" + opts.systemPrompt
+
+	// The environment header must advertise the directory the sub-agent's
+	// tools actually resolve against. In an isolated session that is the
+	// sandbox workdir, not the host cwd — the header's working-directory
+	// line is what shell-cd'ing and relative paths key off, and a sandboxed
+	// tool rejects the advertised host path as an escape. The shell line
+	// comes from the workspace too: the container's shell is sh, not the
+	// host's bash/powershell.
+	envOS, envArch, envShell, envCwd := runtime.GOOS, runtime.GOARCH, "", cwd
+	if opts.workspace != nil {
+		envShell, _ = opts.workspace.Shell()
+		envCwd = opts.workspace.WorkDir()
+	} else {
+		if runtime.GOOS == "windows" {
+			envShell = "powershell (pwsh 7+ or Windows PowerShell)"
+		} else {
+			envShell = "bash"
+		}
+	}
+	sysPrompt := prompts.EnvironmentHeader(envOS, envArch, envShell, envCwd) + "\n\n" + opts.systemPrompt
+
+	if ds := opts.subCfg.Roles[string(role)].Directives; len(ds) > 0 {
+		sysPrompt += "\n\n" + prompts.FormatDirectives(ds)
+	}
 
 	// Isolated session (decision D2): the sub-agent shares the session's
 	// container, so its guidance must say so — without it a sub-agent
 	// claims its changes are saved, or retries a host-only tool its
-	// profile names that isolated mode omitted.
+	// profile names that isolated mode omitted. Placed after the
+	// directives block, which the section order below pins immediately
+	// after the base prompt.
 	if opts.workspace != nil {
 		var dropped []string
 		for _, name := range profile.Tools {
@@ -476,10 +502,6 @@ func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, pro
 			}
 		}
 		sysPrompt += "\n\n" + prompts.IsolatedSubAgentGuidance(dropped)
-	}
-
-	if ds := opts.subCfg.Roles[string(role)].Directives; len(ds) > 0 {
-		sysPrompt += "\n\n" + prompts.FormatDirectives(ds)
 	}
 
 	if g := subagent.RoleGuidance(role); g != "" {
@@ -619,19 +641,7 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 
 	reg := tools.NewEmptyRegistry()
 	isolated := opts.workspace != nil
-	if isolated {
-		// Isolated session (plan §1.3, decision D2): the sub-agent
-		// inherits the session's sandbox workspace, so its file tools
-		// and shell run inside the container instead of on the host.
-		// SetWorkspace is the enforcement point; on this empty registry
-		// the gate passes by construction, and the host-only filter in
-		// registerLeaf keeps it honest as tools arrive. workdir has no
-		// meaning here — the container's root is the workspace — so it
-		// is ignored rather than remapped.
-		if serr := reg.SetWorkspace(opts.workspace); serr != nil {
-			return nil, fmt.Errorf("isolated sub-agent workspace: %w", serr)
-		}
-	} else if opts.pathValidator != nil {
+	if !isolated && opts.pathValidator != nil {
 		// An isolated sub-agent gets a validator rooted at its own checkout, so
 		// its file tools are contained there and its shell runs there. Policy
 		// (deny patterns, home-access, approval callback) is inherited; the
@@ -657,6 +667,22 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 			continue
 		}
 		registerLeaf(reg, name)
+	}
+	if isolated {
+		// Isolated session (plan §1.3, decision D2): the sub-agent
+		// inherits the session's sandbox workspace, so its file tools
+		// and shell run inside the container instead of on the host.
+		// SetWorkspace runs after registration — the same ordering as
+		// the session registry in the wiring — so the gate validates
+		// the tool set the sub-agent actually gets: a profile that
+		// named an unmigrated or host-only tool that slipped past the
+		// filter fails the dispatch loudly instead of silently
+		// running that tool host-side. workdir has no meaning here —
+		// the container's root is the workspace — so it is ignored
+		// rather than remapped.
+		if serr := reg.SetWorkspace(opts.workspace); serr != nil {
+			return nil, fmt.Errorf("isolated sub-agent workspace: %w", serr)
+		}
 	}
 	return reg, nil
 }

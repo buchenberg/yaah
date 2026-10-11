@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/providers"
@@ -110,6 +111,14 @@ func (s *agentSession) loopBuilder(
 	fallbackProvider agent.Provider,
 	fallbackModel string,
 ) *agent.LoopBuilder {
+	// Isolated sessions must not spill oversized tool results to the
+	// host: the truncation hint points the model at the spill file to
+	// `read` it back, and a sandboxed read cannot reach a host path —
+	// the loop falls back to the bare truncation marker instead.
+	spillDir := toolSpillDir()
+	if s.cfg.Workspace.Backend == config.BackendContainerd {
+		spillDir = ""
+	}
 	var debouncer *memory.DebouncedWriter
 	if s.db != nil {
 		debouncer = memory.NewDebouncedWriter(s.db)
@@ -159,7 +168,7 @@ func (s *agentSession) loopBuilder(
 			WrapUpThreshold:        s.cfg.Agent.Default.WrapUpThreshold,
 			MaxInlineToolsPerTurn:  s.cfg.Agent.Default.MaxInlineToolsPerTurn,
 			PromptCaching:          s.cfg.Agent.Default.PromptCaching,
-			ToolSpillDir:           toolSpillDir(),
+			ToolSpillDir:           spillDir,
 			ReasoningProtectTurns:  s.cfg.Agent.Default.ReasoningProtect,
 			ToolResultMaxLines:     s.cfg.Agent.Default.ToolResultMaxLines,
 			ToolResultMaxBytes:     s.cfg.Agent.Default.ToolResultMaxBytes,
