@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	shepherd "github.com/buchenberg/shepherd-kernel-go"
+
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/config"
 )
@@ -81,10 +83,11 @@ func TestCheckWorkspace_LocalExplicit(t *testing.T) {
 	}
 }
 
-// TestCheckWorkspace_Isolated reports the image, namespace, root, and the
-// linked backends — the facts §2.4 wants visible. The platform gate is
-// asserted too: config validation refuses non-Linux at load, so the FAIL
-// branch is only reachable by reading a Linux-written config elsewhere.
+// TestCheckWorkspace_Isolated reports the image, namespace, root, socket,
+// and the linked backends — the facts §2.4 wants visible. The backends are
+// asserted against the registry the detail was built from, not a literal,
+// so the assertion holds in any binary (the doctor test binary links only
+// the in-core git backend; the yaah binary links containerd too).
 func TestCheckWorkspace_Isolated(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Workspace.Backend = config.BackendContainerd
@@ -96,6 +99,9 @@ func TestCheckWorkspace_Isolated(t *testing.T) {
 	}
 	check := CheckWorkspace(cfg, nil)
 	if runtime.GOOS != "linux" {
+		// Session wiring refuses an isolated config off-Linux
+		// (config.Validate runs at wiring, not load), and doctor
+		// reports the same refusal.
 		if check.Status != "FAIL" {
 			t.Errorf("non-Linux isolated mode must FAIL, got %+v", check)
 		}
@@ -108,7 +114,8 @@ func TestCheckWorkspace_Isolated(t *testing.T) {
 		"registry.example/yaah-workspace:latest", // the image
 		"yaah",                                   // the namespace
 		"/workspace",                             // the containment root
-		"containerd",                             // a linked backend
+		"socket /run/containerd/containerd.sock", // the configured socket
+		"linked backends: " + strings.Join(shepherd.SandboxBackends(), ", "),
 	} {
 		if !strings.Contains(check.Detail, want) {
 			t.Errorf("isolated report %q missing %q", check.Detail, want)
@@ -129,5 +136,53 @@ func TestCheckWorkspace_ConfigError(t *testing.T) {
 	check := CheckWorkspace(nil, errors.New("boom"))
 	if check.Status != "WARN" {
 		t.Errorf("status = %q, want WARN", check.Status)
+	}
+}
+
+// TestCheckWorkspace_DefaultSocket: an empty address is a valid
+// configuration — containerd's own endpoint resolution — and must still
+// be accounted for in the output, not silently dropped.
+func TestCheckWorkspace_DefaultSocket(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the socket detail only renders on the Linux branch")
+	}
+	cfg := &config.Config{}
+	cfg.Workspace.Backend = config.BackendContainerd
+	cfg.Workspace.Root = "/workspace"
+	cfg.Workspace.Containerd = config.ContainerdWorkspaceConfig{
+		Namespace: "yaah",
+		Image:     "registry.example/yaah-workspace:latest",
+	}
+	check := CheckWorkspace(cfg, nil)
+	if check.Status != "OK" {
+		t.Fatalf("a valid default-socket stanza: %+v", check)
+	}
+	if !strings.Contains(check.Detail, "socket containerd default") {
+		t.Errorf("report %q must mark the default socket", check.Detail)
+	}
+}
+
+// TestCheckWorkspace_UnusableStanzaFails: doctor's verdict must match
+// session startup's — config.Validate runs at wiring, not load, so doctor
+// runs the same workspace rules itself. A stanza with no image, or a root
+// that would scope the whole container, FAILs here with the validator's
+// own words instead of reading as healthy until the first session start.
+func TestCheckWorkspace_UnusableStanzaFails(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the workspace validation detail only renders on the Linux branch")
+	}
+	for name, root := range map[string]string{
+		"no image":             "/workspace",
+		"whole-container root": "/",
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Workspace.Backend = config.BackendContainerd
+			cfg.Workspace.Root = root
+			check := CheckWorkspace(cfg, nil)
+			if check.Status != "FAIL" || !strings.HasPrefix(check.Detail, "workspace.") {
+				t.Errorf("an unusable stanza must FAIL with the validator's own words, got %+v", check)
+			}
+		})
 	}
 }

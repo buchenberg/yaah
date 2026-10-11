@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -214,18 +215,40 @@ func CheckWorkspace(cfg *config.Config, cfgErr error) Check {
 		return Check{Label: "Workspace", Status: "OK", Detail: "local — tools run on the host filesystem"}
 	case w.Backend == config.BackendContainerd:
 		if runtime.GOOS != "linux" {
-			// Config validation already refuses this at load on
-			// non-Linux platforms; the FAIL here is for a config
-			// written on Linux and read somewhere else.
+			// Session wiring refuses this via config.Validate (config.Load
+			// itself does not validate), so doctor is where a non-Linux
+			// user learns it before the first session start.
 			return Check{
 				Label:  "Workspace",
 				Status: "FAIL",
 				Detail: fmt.Sprintf("isolated mode needs a Linux containerd daemon; %s cannot run one (native Linux or WSL2 required)", runtime.GOOS),
 			}
 		}
+		// The same rules the session enforces at startup: config.Validate
+		// runs at wiring, not load, so a stanza that would fail the
+		// session (no image, a relative or whole-container root) must not
+		// read as healthy here. The workspace-prefixed errors are the
+		// stanza's own; the platform rule above is doctor's, reported
+		// once.
+		var wsErrs []string
+		if verr := config.Validate(cfg); verr != nil {
+			var ve config.ValidationError
+			if errors.As(verr, &ve) {
+				for _, e := range ve.Errors {
+					if strings.HasPrefix(e, "workspace.") {
+						wsErrs = append(wsErrs, e)
+					}
+				}
+			}
+		}
+		if len(wsErrs) > 0 {
+			return Check{Label: "Workspace", Status: "FAIL", Detail: strings.Join(wsErrs, "; ")}
+		}
 		detail := fmt.Sprintf("isolated (containerd) — image %s, namespace %s, root %s", w.Containerd.Image, w.Containerd.Namespace, w.Root)
 		if w.Containerd.Address != "" {
 			detail += fmt.Sprintf(", socket %s", w.Containerd.Address)
+		} else {
+			detail += ", socket containerd default"
 		}
 		detail += fmt.Sprintf("; linked backends: %s; daemon and image contract probed at session start",
 			strings.Join(shepherd.SandboxBackends(), ", "))

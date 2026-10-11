@@ -59,8 +59,11 @@ func liveActivationEnv(key, fallback string) string {
 // address and the image are required: without an address there is no
 // daemon to talk to, and without an image there is nothing honest to
 // probe (a defaulted image that fails the D5 contract would test the
-// probe's refusal, not the activation).
-func liveActivationConfig(t *testing.T) config.WorkspaceConfig {
+// probe's refusal, not the activation). The resolved timeout comes
+// back with the config so the caller cannot re-parse it differently —
+// a malformed or non-positive YAAH_LIVE_CONTAINERD_TIMEOUT falls back
+// to 10m exactly once, here.
+func liveActivationConfig(t *testing.T) (config.WorkspaceConfig, time.Duration) {
 	t.Helper()
 
 	addr := strings.TrimSpace(os.Getenv(liveAddrEnv))
@@ -69,7 +72,7 @@ func liveActivationConfig(t *testing.T) config.WorkspaceConfig {
 		t.Skipf("set %s and %s to run the live activation verification (plan §2.4)", liveAddrEnv, liveImageEnv)
 	}
 	if os.Geteuid() != 0 {
-		t.Skip("live activation tests need root for the containerd daemon socket (sudo -E preserves the env)")
+		t.Skip("live activation tests need root for the containerd daemon socket (sudo env VAR=... preserves the knobs)")
 	}
 
 	timeout, err := time.ParseDuration(liveActivationEnv(liveTimeoutEnv, "10m"))
@@ -86,18 +89,19 @@ func liveActivationConfig(t *testing.T) config.WorkspaceConfig {
 			Image:       image,
 			Snapshotter: liveActivationEnv(liveSnapshotterEnv, ""),
 		},
-	}
+	}, timeout
 }
 
 // TestLive_ActivatedSession is the plan's step-8 exit criterion: the
 // whole activation story against the real backend — the D5 probe, the
-// Create, the D1 bootstrap from a host git work tree, tool-shaped work
-// through the session workspace, a diff against the session baseline,
-// the containerd-only delta-patch property (D1's load-bearing piece),
-// and the accept seam landing the work back onto the host.
+// Create, the D1 bootstrap from a host git work tree, a tool-driven task
+// dispatched through the session's own registry (so the workspace
+// injection, not just the substrate, is what runs the tools), a diff
+// against the session baseline, the containerd-only delta-patch property
+// (D1's load-bearing piece), and the accept seam landing the work back
+// onto the host.
 func TestLive_ActivatedSession(t *testing.T) {
-	wcfg := liveActivationConfig(t)
-	timeout, _ := time.ParseDuration(liveActivationEnv(liveTimeoutEnv, "10m"))
+	wcfg, timeout := liveActivationConfig(t)
 
 	src := gitHostRepo(t)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -127,37 +131,60 @@ func TestLive_ActivatedSession(t *testing.T) {
 	if err := reg.SetWorkspace(ss.Workspace()); err != nil {
 		t.Fatalf("SetWorkspace on the curated registry: %v", err)
 	}
+	// The accept seam joins the registry the way the wiring registers
+	// it, so the task below drives every operation — read, command,
+	// write, delete, apply-out — through the registry a real session
+	// dispatches through.
+	reg.Register(&ApplyOutTool{Sandbox: ss, HostDir: src})
 
-	// Tool-shaped work through the session workspace: the copy-in
-	// landed, reads and writes round-trip, GNU stat and rg are the
-	// image's, not the host's.
-	ws := ss.Workspace()
-	readme, err := ws.ResolvePath("readme.txt")
+	// The tool-driven task, dispatched through the registry: this is
+	// what makes the test an activation test rather than a substrate
+	// test. If workspace injection ever breaks, these tools run on the
+	// host — and the host-untouched assertions below catch it, because
+	// the host is the one place the changes must not be yet.
+	readOut, err := reg.Get("read").Execute(ctx, `{"filePath": "readme.txt"}`)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("read through the registry: %v", err)
 	}
-	if got, rerr := ws.ReadFile(ctx, readme); rerr != nil || string(got) != "hello\n" {
-		t.Fatalf("the copy-in must land the source tree: readme.txt = %q, %v", got, rerr)
+	if !strings.Contains(readOut, "hello") {
+		t.Fatalf("the copy-in must land the source tree; read returned %q", readOut)
 	}
-	if _, err := ws.Stat(ctx, readme); err != nil {
-		t.Fatalf("Stat inside the container: %v", err)
+	// rg comes from the image (the D5 contract), and the command runs
+	// against the containment root, not the host's working directory.
+	bashOut, err := reg.Get("bash").Execute(ctx, `{"command": "pwd && rg -n hello readme.txt"}`)
+	if err != nil {
+		t.Fatalf("bash through the registry: %v", err)
 	}
-	if res, xerr := ws.Exec(ctx, ExecRequest{Command: "sh", Args: []string{"-c", "rg -n hello readme.txt"}}); xerr != nil || res.ExitCode != 0 {
-		t.Fatalf("rg inside the container (D5 contract): exit %d, %v", res.ExitCode, xerr)
+	if !strings.Contains(bashOut, wcfg.Root) || !strings.Contains(bashOut, "readme.txt") {
+		t.Fatalf("the command must run inside the container (pwd %q, rg output %q)", wcfg.Root, bashOut)
+	}
+	if _, err := ss.Workspace().Stat(ctx, "/workspace/readme.txt"); err != nil {
+		t.Fatalf("Stat inside the container (GNU stat from the image): %v", err)
 	}
 
-	// The session's work: modify, add, delete — then diff against the
-	// session baseline.
-	if err := ws.WriteFile(ctx, readme, []byte("changed in the container\n"), 0o644); err != nil {
-		t.Fatal(err)
+	// The session's work through the same registry: modify, add, delete.
+	if _, err := reg.Get("write").Execute(ctx, `{"filePath": "readme.txt", "content": "changed in the container\n"}`); err != nil {
+		t.Fatalf("write through the registry: %v", err)
 	}
-	result, _ := ws.ResolvePath("result.txt")
-	if err := ws.WriteFile(ctx, result, []byte("new from the container\n"), 0o644); err != nil {
-		t.Fatal(err)
+	if _, err := reg.Get("write").Execute(ctx, `{"filePath": "result.txt", "content": "new from the container\n"}`); err != nil {
+		t.Fatalf("write (new file) through the registry: %v", err)
 	}
-	script, _ := ws.ResolvePath("pkg/run.sh")
-	if err := ws.Remove(ctx, script); err != nil {
-		t.Fatal(err)
+	if _, err := reg.Get("delete").Execute(ctx, `{"filePath": "pkg/run.sh"}`); err != nil {
+		t.Fatalf("delete through the registry: %v", err)
+	}
+
+	// The isolation discriminator: the tools above ran inside the
+	// container, so the host tree must be exactly as the bootstrap left
+	// it. A regression that leaves tool dispatch on the host fails here
+	// — before the apply-out makes the two sides indistinguishable.
+	if got, rerr := os.ReadFile(filepath.Join(src, "readme.txt")); rerr != nil || string(got) != "hello\n" {
+		t.Fatalf("host readme.txt = %q, %v — in-container writes leaked onto the host", got, rerr)
+	}
+	if _, serr := os.Lstat(filepath.Join(src, "result.txt")); !os.IsNotExist(serr) {
+		t.Fatalf("host result.txt exists (%v) — in-container writes leaked onto the host", serr)
+	}
+	if _, serr := os.Lstat(filepath.Join(src, "pkg", "run.sh")); serr != nil {
+		t.Fatalf("host pkg/run.sh missing before apply-out (%v) — the in-container delete leaked", serr)
 	}
 
 	diff, files, err := ss.DiffSinceBaseline(ctx, 0)
@@ -178,15 +205,14 @@ func TestLive_ActivatedSession(t *testing.T) {
 		t.Fatalf("the capture carries no %s — the D1 delta anchor is not in effect against the real backend", containerdbackend.StateKeyDeltaPatch)
 	}
 
-	// The accept seam, exactly as the model drives it: preview, approve,
-	// apply onto the host.
-	tool := &ApplyOutTool{Sandbox: ss, HostDir: src}
-	if out, aerr := tool.Execute(ctx, `{"dry_run": true}`); aerr != nil {
+	// The accept seam, dispatched through the registry exactly as a
+	// session would: preview, approve, apply onto the host.
+	if out, aerr := reg.Get("apply_out").Execute(ctx, `{"dry_run": true}`); aerr != nil {
 		t.Fatalf("apply_out dry run: %v", aerr)
 	} else if !strings.Contains(out, "Dry run") {
 		t.Errorf("dry-run output: %q", out)
 	}
-	if _, aerr := tool.Execute(ctx, `{}`); aerr != nil {
+	if _, aerr := reg.Get("apply_out").Execute(ctx, `{}`); aerr != nil {
 		t.Fatalf("apply_out: %v", aerr)
 	}
 	if got, rerr := os.ReadFile(filepath.Join(src, "readme.txt")); rerr != nil || string(got) != "changed in the container\n" {
