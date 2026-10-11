@@ -39,8 +39,15 @@ EOF
 
 podman build -f /tmp/Dockerfile.yaah-workspace -t docker.io/library/yaah-workspace:latest /tmp
 podman save -o /tmp/yaah-workspace.tar docker.io/library/yaah-workspace:latest
-sudo ctr images import /tmp/yaah-workspace.tar
+sudo ctr -n yaah-live images import /tmp/yaah-workspace.tar
 ```
+
+The `-n` matters: image references are namespaced resources in containerd, and the
+import must land in the namespace the session reads — the harness default
+(`yaah-live`), or whatever `YAAH_LIVE_CONTAINERD_NAMESPACE` is set to. An image
+imported into `default` is invisible to a session in `yaah-live`, and the
+backend's resolve falls through to a registry pull, which fails with
+`insufficient_scope` against Docker Hub for a locally-built tag.
 
 ## Running the harness
 
