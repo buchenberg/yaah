@@ -949,15 +949,22 @@ func (s *supervisedSession) chooseVariant(ctx context.Context, winner string) (s
 			// awaiting-choose: resolve the drift and choose again.
 			return "", fmt.Errorf("supervisor: choose: the parent workspace changed paths the sealed output also changes (%s); resolve the overlap and choose again", err)
 		}
-		if !settlementLanded(ctx, scope, v.Output, action) {
+		// Cancel-free, like everything after the settle: a cancelled
+		// verdict context must not turn the landed-work check into a
+		// false negative that strands a half-settled fork (review
+		// finding).
+		recoverCtx := context.WithoutCancel(ctx)
+		if !settlementLanded(recoverCtx, scope, v.Output, action) {
 			return "", fmt.Errorf("supervisor: choose: %w", err)
 		}
 		// The workspace effect landed; only the causal-merge recording
 		// failed — the kernel leaves the output unconsumed for exactly
 		// this. Consume it with SettleRelease so no retry can re-apply
 		// a physical effect that already happened, and complete the
-		// verdict with the recording failure noted.
-		if rerr := mgr.Settle(ctx, v.Output.ID(), shepherd.SettleRelease); rerr != nil {
+		// verdict with the recording failure noted. An
+		// already-consumed output is a lifecycle that already ended,
+		// not a failure.
+		if rerr := mgr.Settle(recoverCtx, v.Output.ID(), shepherd.SettleRelease); rerr != nil && !errors.Is(rerr, shepherd.ErrOutputConsumed) {
 			return "", fmt.Errorf("supervisor: choose: %w (ending the landed output's lifecycle also failed: %v)", err, rerr)
 		}
 		settleErr = err

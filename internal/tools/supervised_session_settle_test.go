@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -271,11 +272,16 @@ func TestReviewSession_ForkSealsOutputs(t *testing.T) {
 // with uncommitted content mints a fresh state revision per capture,
 // so the parent can never digest-match the baseline — a content diff
 // would pick Select and the kernel would refuse. The session must
-// still reach a chosen state: the picker sends it down Apply, which
-// merges cleanly (on Windows, capture normalization can drift the
-// dirty content between captures; the overlap guard then fires and
-// the same resolve-and-retry recovery applies).
+// still choose: the picker sends it down Apply, which merges cleanly.
+// Pinned on POSIX — on Windows, capture normalization makes a dirty
+// tree's captures drift between the baseline and the settle, so the
+// overlap guard fires on the dirty path itself; that refusal is
+// honest and resolvable, but the byte stability this test assumes is
+// a platform property the local-git capture does not provide there.
 func TestReviewSession_ChooseWithDirtyForkPoint(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("dirty-tree captures drift between captures on Windows (normalization); see the overlap recovery test for the resolvable refusal")
+	}
 	tool, sup, repo := newReviewTestEnv(t)
 	tool.WorktreeRoot = t.TempDir()
 
@@ -303,31 +309,14 @@ func TestReviewSession_ChooseWithDirtyForkPoint(t *testing.T) {
 		t.Fatalf("fork status = %q, want awaiting_choose", env.Status)
 	}
 
-	out, err := sup.Execute(context.Background(), `{"action":"choose","session_id":`+jsonString(sid)+`,"winner":"a"}`)
-	var chosen reviewEnvelope
-	if err != nil {
-		// Windows capture normalization can drift a dirty tree's
-		// content between captures, so the parent's diff against the
-		// baseline sees the dirty file as changed — the overlap guard
-		// fires, honestly and resolvably. The recovery is the same one
-		// the overlap test pins: resolve the drift, choose again.
-		if !strings.Contains(err.Error(), "apply conflict") {
-			t.Fatalf("choose over a dirty fork point: unexpected error: %v", err)
-		}
-		if rerr := os.Remove(filepath.Join(repo, "dirty.txt")); rerr != nil {
-			t.Fatalf("resolve drift: %v", rerr)
-		}
-		chosen = mustSupervisorExecute(t, sup, `{"action":"choose","session_id":`+jsonString(sid)+`,"winner":"a"}`)
-	} else {
-		chosen = decodeReviewEnvelope(t, out)
-		if _, derr := os.Stat(filepath.Join(repo, "dirty.txt")); derr != nil {
-			t.Errorf("the dirty fork point's content must survive the settlement: %v", derr)
-		}
-	}
+	chosen := mustSupervisorExecute(t, sup, `{"action":"choose","session_id":`+jsonString(sid)+`,"winner":"a"}`)
 	if chosen.Status != "chosen" {
 		t.Fatalf("choose over a dirty fork point: status = %q, want chosen (env: %s)", chosen.Status, marshalReviewEnvelope(chosen))
 	}
 	if _, err := os.Stat(filepath.Join(repo, "variant.txt")); err != nil {
 		t.Errorf("the winner's work must land on the dirty parent: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "dirty.txt")); err != nil {
+		t.Errorf("the dirty fork point's content must survive the settlement: %v", err)
 	}
 }
