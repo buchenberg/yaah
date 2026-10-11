@@ -21,7 +21,9 @@ package tools
 // `sudo env VAR=...`, not `sudo -E`: sudoers policies commonly refuse to
 // preserve the environment, the knobs vanish, and the harness skips
 // silently — run with -v to see the skip reason. The daemon socket needs
-// root, so the test skips as the invoking user unless euid 0.
+// root, so the test skips as the invoking user unless euid 0. The full
+// runbook, including building a D5-satisfying image, is
+// docs/isolated-workspace-live-testing.md.
 
 import (
 	"context"

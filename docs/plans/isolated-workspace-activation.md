@@ -790,14 +790,15 @@ have been **executed**; the verdict is recorded against each.
    `delta_patch` property asserted against the real backend, and the
    `apply_out` accept seam landing all three changes onto the host.
    **Not yet executed against a daemon from this workspace's session**
-   (the socket needs root): run it with
+   (the socket needs root): the runbook is
+   `docs/isolated-workspace-live-testing.md` — the short form is
    `sudo env YAAH_LIVE_CONTAINERD_ADDR=/run/containerd/containerd.sock
    YAAH_LIVE_CONTAINERD_IMAGE=<a D5-satisfying image> go test
-   ./internal/tools/ -run TestLive_ActivatedSession -count=1 -timeout 30m -v`
-   and record the verdict here. `sudo env VAR=...`, not `sudo -E` — a
-   sudoers policy that refuses to preserve the environment silently
-   skips the harness. Until that run is green, step 8's exit criterion is
-   *implemented*, not *met*.
+   ./internal/tools/ -run TestLive_ActivatedSession -count=1 -timeout 30m -v`.
+   `sudo env VAR=...`, not `sudo -E` — a sudoers policy that refuses to
+   preserve the environment silently skips the harness. Until that run is
+   green and recorded here, step 8's exit criterion is *implemented*,
+   not *met*.
 9. Test matrix (§8), docs, and D2's inheritance behaviour for sub-agents (§1.3).
 
 **Stopping points:** step 5 leaves config without activation — a clean stop. Step 8
