@@ -15,6 +15,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/jobs"
+	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
 	processpkg "github.com/buchenberg/yaah/internal/process"
 	"github.com/buchenberg/yaah/internal/prompts"
@@ -41,6 +42,13 @@ var defaultWorkspaceDenyPatterns = []string{
 	"id_ed25519*",
 	"id_ecdsa*",
 }
+
+// workspaceSandboxStartTimeout bounds the isolated workspace's startup —
+// the D5 image probe (its own throwaway sandbox), the session sandbox's
+// Create, and the contract exec — so a wedged containerd daemon fails the
+// session at startup instead of hanging it. Generous: a first-run image
+// pull happens inside this window too.
+const workspaceSandboxStartTimeout = 5 * time.Minute
 
 // toolSpillDir is the single source for the tool-result spill directory.
 // Both the parent loop (build_loop.go) and every sub-agent loop inherit
@@ -75,6 +83,38 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		return nil, err
 	}
 
+	// Startup ownership: every resource this function creates from here on
+	// is ours until the returned session takes it over. Any error return
+	// must close what was opened — a failed startup that leaves OTel
+	// exporters, MCP subprocesses, or a SQLite handle alive accumulates
+	// across retries in serve mode. sessionHandedOff flips only on the
+	// success path; the closer below runs on every other return.
+	//
+	// db and mcpClients are declared here (not at their call sites) so the
+	// guard can close a partially-built session no matter which later step
+	// failed.
+	var (
+		db           *memory.DB
+		mcpClients   []mcp.MCPClient
+		mcpInfos     []mcp.ServerInfo
+		mcpToolNames map[string]bool
+	)
+	sessionHandedOff := false
+	defer func() {
+		if sessionHandedOff {
+			return
+		}
+		if otelShutdown != nil {
+			otelShutdown(context.Background())
+		}
+		for _, c := range mcpClients {
+			c.Close()
+		}
+		if db != nil {
+			db.Close()
+		}
+	}()
+
 	cwd, _ := os.Getwd()
 
 	// Load sub-agent role definitions: built-in (embedded) +
@@ -102,21 +142,27 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	//   - neither: no validator; legacy ~-expansion behaviour.
 	var pathValidator *tools.PathValidator
 	var sessionSandbox *tools.SessionSandbox
-	// sandboxHandedOff flips on the success path; the teardown guard below
-	// reads it. It exists because the session takes ownership of the
-	// sandbox only when this function returns one.
-	sandboxHandedOff := false
+	// sandboxTeardownHandled flips when the sandbox is either handed to the
+	// session (success path — close() destroys it) or already destroyed by
+	// an error branch below; the guard exists so no error return leaks a
+	// container, and so one failure is never reported on two channels.
+	sandboxTeardownHandled := false
 	switch {
 	case cfg.Workspace.Backend == config.BackendContainerd:
+		// A wedged daemon must not hang session startup: the probe, the
+		// Create, and the contract exec all run under one generous
+		// bound (large enough for a first-run image pull).
+		startCtx, cancelStart := context.WithTimeout(context.Background(), workspaceSandboxStartTimeout)
+		defer cancelStart()
 		sessionSandbox, err = tools.StartSessionSandbox(
-			context.Background(), cfg.Workspace, tools.OpenContainerdWorkspaceSandbox)
+			startCtx, cfg.Workspace, tools.OpenContainerdWorkspaceSandbox)
 		if err != nil {
 			return nil, err
 		}
 		// Every error return below destroys the sandbox instead of
 		// leaking a container for the lifetime of the daemon's namespace.
 		defer func() {
-			if sessionSandbox != nil && !sandboxHandedOff {
+			if sessionSandbox != nil && !sandboxTeardownHandled {
 				if derr := sessionSandbox.Destroy(context.Background()); derr != nil {
 					fmt.Fprintf(os.Stderr, "warning: workspace sandbox teardown after failed session start: %v\n", derr)
 				}
@@ -136,7 +182,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		toolReg.SetPathValidator(pathValidator)
 	}
 
-	db, err := memory.OpenDefault()
+	db, err = memory.OpenDefault()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: db open failed, persistence disabled: %v\n", err)
 		db = nil
@@ -174,7 +220,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	}
 
 	// --- MCP servers ------------------------------------------------------
-	mcpClients, mcpInfos, mcpToolNames := initMCP(cfg, toolReg, skipMCP)
+	mcpClients, mcpInfos, mcpToolNames = initMCP(cfg, toolReg, skipMCP)
 
 	skillDirs := skillSearchPaths()
 	skillTool := &tools.SkillTool{Dirs: skillDirs}
@@ -460,10 +506,17 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// container may still be running.
 	if sessionSandbox != nil {
 		if serr := toolReg.SetWorkspace(sessionSandbox.Workspace()); serr != nil {
+			// Teardown failure joins the returned error — a destroy that
+			// failed means the container may still be running. The guard
+			// is then stood down: reporting one failure on two channels
+			// (and destroying twice through the once-guard) helps no one.
 			serr = fmt.Errorf("isolated workspace: %w", serr)
-			if derr := sessionSandbox.Destroy(context.Background()); derr != nil {
+			destroyCtx, cancelDestroy := context.WithTimeout(context.Background(), workspaceSandboxDestroyTimeout)
+			defer cancelDestroy()
+			if derr := sessionSandbox.Destroy(destroyCtx); derr != nil {
 				serr = errors.Join(serr, fmt.Errorf("workspace sandbox teardown: %w", derr))
 			}
+			sandboxTeardownHandled = true
 			return nil, serr
 		}
 	}
@@ -496,9 +549,11 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		steerCh:        make(chan string, 4),
 		followupCh:     followupCh,
 	}
-	// The session owns the sandbox from here; the failed-start teardown
-	// guard must not destroy what close() will.
-	sandboxHandedOff = true
+	// The session owns everything created above from here: close() will
+	// destroy the sandbox, and neither startup guard must touch the
+	// session's resources again.
+	sandboxTeardownHandled = true
+	sessionHandedOff = true
 
 	// Ask fallback for out-of-workspace access: prompts route through
 	// the session's approval UI (TUI/web) or stdin in plain REPL mode.

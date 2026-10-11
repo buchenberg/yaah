@@ -100,7 +100,12 @@ func TestProbeImageContract_ExecTransportError(t *testing.T) {
 	}
 }
 
-func TestProbeImageContract_CreateFailureIsNotProbed(t *testing.T) {
+func TestProbeImageContract_CreateFailureStillDestroys(t *testing.T) {
+	// A pre-created sandbox refuses the probe's Create (the probe owns the
+	// lifecycle), and a real backend's Create can fail after partially
+	// provisioning resources — so the cleanup attempt is mandatory on this
+	// path too. The destroy is observable here because it succeeds on a
+	// sandbox that was, in fact, created.
 	sb := sandboxfake.New()
 	if err := sb.Create(context.Background(), shepherd.SandboxSpec{}); err != nil {
 		t.Fatalf("seed Create: %v", err)
@@ -111,9 +116,43 @@ func TestProbeImageContract_CreateFailureIsNotProbed(t *testing.T) {
 	if err == nil {
 		t.Fatal("probing an already-created sandbox must fail (the probe owns the lifecycle)")
 	}
-	if sb.Destroyed() {
-		t.Error("a failed Create must not be followed by a Destroy: nothing was created")
+	if !errors.Is(err, sandboxfake.ErrAlreadyCreated) {
+		t.Errorf("error = %v, want it to carry the create failure", err)
 	}
+	if !sb.Destroyed() {
+		t.Error("a failed Create must still attempt Destroy: a partially-provisioned container is a container")
+	}
+}
+
+func TestProbeImageContract_CreateFailureDestroysEvenUncreated(t *testing.T) {
+	// The destroy attempt must happen even when Create failed before any
+	// resource existed. failCreate wraps a fresh (never-created) fake and
+	// fails Create unconditionally; the probe's cleanup is proven by the
+	// fake's own refusal joining the error — it means Destroy ran.
+	sb := sandboxfake.New()
+	failing := &failCreateSandbox{Sandbox: sb}
+
+	err := ProbeImageContract(context.Background(), failing)
+	if err == nil {
+		t.Fatal("a failed Create must fail the probe")
+	}
+	if !errors.Is(err, errCreateRefused) {
+		t.Errorf("error = %v, want it to carry the create failure", err)
+	}
+	if !errors.Is(err, sandboxfake.ErrNotCreated) {
+		t.Errorf("error = %v, want the cleanup attempt to reach the backend (its refusal proves it ran)", err)
+	}
+}
+
+// errCreateRefused is the canned Create failure failCreateSandbox returns.
+var errCreateRefused = errors.New("no image")
+
+// failCreateSandbox fails Create but delegates everything else — the probe
+// must still attempt Destroy through it.
+type failCreateSandbox struct{ shepherd.Sandbox }
+
+func (*failCreateSandbox) Create(context.Context, shepherd.SandboxSpec) error {
+	return errCreateRefused
 }
 
 // TestOpenContainerdWorkspaceSandbox pins the registry resolution: the config

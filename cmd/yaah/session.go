@@ -131,6 +131,17 @@ type agentSession struct {
 	auxResolved      bool
 }
 
+// backgroundJobDrainTimeout bounds how long close() waits for cancelled
+// background sub-agents to finish before destroying the session sandbox
+// anyway. Generous: cancellation propagates through the tool call in
+// flight, and the alternative is racing a live sub-agent with backend
+// teardown.
+const backgroundJobDrainTimeout = 30 * time.Second
+
+// workspaceSandboxDestroyTimeout bounds the sandbox teardown in close() so
+// a wedged containerd daemon cannot hang session shutdown.
+const workspaceSandboxDestroyTimeout = 30 * time.Second
+
 func (s *agentSession) close() {
 	ctx := context.Background()
 	if s.steerCh != nil {
@@ -139,18 +150,26 @@ func (s *agentSession) close() {
 	if s.followupCh != nil {
 		close(s.followupCh)
 	}
-	// Cancel any still-running background sub-agents and unblock their
-	// result deliveries before tearing down the rest of the session.
+	// Cancel any still-running background sub-agents, unblock their result
+	// deliveries, and WAIT (bounded) for their goroutines to finish: a job
+	// mid-Exec through the sandbox workspace must not still be running
+	// when the session sandbox is destroyed below. Close() alone only
+	// cancels — it never joins — which is a use-after-destroy race, not a
+	// quiesced teardown.
 	if s.backgroundJobs != nil {
-		s.backgroundJobs.Close()
+		if !s.backgroundJobs.CloseAndWait(backgroundJobDrainTimeout) {
+			fmt.Fprintf(os.Stderr, "warning: background sub-agent(s) still finishing after %s; continuing session teardown\n", backgroundJobDrainTimeout)
+		}
 	}
-	// Destroy the isolated workspace sandbox only after the sub-agents
-	// are cancelled and can no longer dispatch tools into it. A teardown
-	// failure warns rather than aborts close(): the rest of the session
-	// still needs tearing down, and the warning names the container that
-	// may still be running.
+	// Destroy the isolated workspace sandbox only after the sub-agents are
+	// cancelled and can no longer dispatch tools into it. Bounded, so a
+	// wedged daemon cannot hang close(); a teardown failure warns rather
+	// than aborts close() — the rest of the session still needs tearing
+	// down, and the warning names the container that may still be running.
 	if s.sessionSandbox != nil {
-		if err := s.sessionSandbox.Destroy(ctx); err != nil {
+		destroyCtx, cancelDestroy := context.WithTimeout(ctx, workspaceSandboxDestroyTimeout)
+		defer cancelDestroy()
+		if err := s.sessionSandbox.Destroy(destroyCtx); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: workspace sandbox teardown: %v\n", err)
 		}
 	}

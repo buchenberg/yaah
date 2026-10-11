@@ -655,10 +655,13 @@ have been **executed**; the verdict is recorded against each.
    byte-for-byte. `SetWorkspace` runs only after every registration — a refusal
    fails the session loudly with the destroy joined in — so until step 7
    replaces the registry, selecting `backend: containerd` fails at startup
-   with the gate's own diagnostic (the four host-only tools), which is the
-   honest stopping point: constructed and probed, never half-isolated.
-   `agentSession.close()` destroys after `backgroundJobs.Close()` — sub-agents
-   can no longer dispatch into the sandbox — and a teardown failure warns
+   with the gate's own diagnostic (the host-only tools — three in a default
+   session; `supervised_task` registers only when `shepherd_trace_dir` is
+   set), which is the honest stopping point: constructed and probed, never
+   half-isolated. `agentSession.close()` destroys after
+   `backgroundJobs.CloseAndWait` — cancel, then a bounded wait for the job
+   goroutines, because `Close` alone never joins them and a mid-`Exec`
+   sub-agent would race the teardown — and a teardown failure warns
    rather than aborting the rest of teardown. Gates: build, vet, staticcheck,
    gofmt, full `go test ./...` (one pre-existing environmental failure:
    `TestPowerShellTool_runsSimpleCommand` needs a `powershell` binary that

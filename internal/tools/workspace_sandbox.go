@@ -25,9 +25,10 @@ import (
 // (tools.SessionSandbox, the isolated-workspace plan §1.2) — one sandbox per
 // session, image-probed and created before the first tool dispatch. The
 // session still fails loudly at Registry.SetWorkspace until the plan's step 7
-// replaces the registry (the four host-only tools disqualify the default
-// one), so isolation is constructed and probed but not yet active for a real
-// session.
+// replaces the registry (the host-only tools disqualify the default one —
+// three in a default session; supervised_task registers only when
+// shepherd_trace_dir is set), so isolation is constructed and probed but not
+// yet active for a real session.
 type sandboxWorkspace struct {
 	sb shepherd.Sandbox
 	// root is the containment root inside the sandbox.

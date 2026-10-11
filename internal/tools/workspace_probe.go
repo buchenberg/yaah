@@ -62,24 +62,29 @@ fi`
 // mid-run.
 //
 // The probe owns the sandbox completely — Create, one exec, Destroy on every
-// path including failure — because a probe that leaks a container on its own
-// error paths would defeat the leak-freedom the lifecycle work is held to.
-// The sandbox parameter is the seam: wiring passes the session backend; tests
-// pass the in-memory fake.
+// path including a failed Create — because a probe that leaks a container on
+// its own error paths would defeat the leak-freedom the lifecycle work is
+// held to. A real backend's Create can fail after partially provisioning
+// resources, so the cleanup attempt is mandatory even though the kernel's
+// fakes report "nothing was created" for an unstarted sandbox. The sandbox
+// parameter is the seam: wiring passes the session backend; tests pass the
+// in-memory fake.
 func ProbeImageContract(ctx context.Context, sb shepherd.Sandbox) (err error) {
-	if err := sb.Create(ctx, shepherd.SandboxSpec{}); err != nil {
-		return fmt.Errorf("workspace image probe: create: %w", err)
-	}
-	// Destroy must run even when the probe fails and even when the caller's
-	// context expired mid-probe: an unprobed-but-running container is the
-	// leak this function must never cause. Its error joins the probe result,
-	// because a teardown failure means the container may still be running
-	// — a "successful" probe that leaked is not a success.
+	// Destroy must run even when the probe fails, even when the caller's
+	// context expired mid-probe, and even when Create itself failed: an
+	// unprobed-but-running container is the leak this function must never
+	// cause. Its error joins the probe result, because a teardown failure
+	// means the container may still be running — a "successful" probe
+	// that leaked is not a success.
 	defer func() {
 		if derr := sb.Destroy(context.WithoutCancel(ctx)); derr != nil {
 			err = errors.Join(err, fmt.Errorf("workspace image probe: destroy: %w", derr))
 		}
 	}()
+
+	if cerr := sb.Create(ctx, shepherd.SandboxSpec{}); cerr != nil {
+		return fmt.Errorf("workspace image probe: create: %w", cerr)
+	}
 
 	res, xerr := sb.Exec(ctx, shepherd.ExecRequest{
 		Command: "sh",
