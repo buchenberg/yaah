@@ -362,6 +362,18 @@ func TestReviewSession_ChoosePartialSettlementLands(t *testing.T) {
 		t.Fatalf("chmod winner worktree: %v", err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(winnerWT, 0o755) })
+	// The chmod cannot stop a privileged runner — root bypasses
+	// directory permissions — and the test would then fail on the
+	// teardown succeeding. Probe the injection with a scratch file and
+	// skip when it does not hold.
+	probe := filepath.Join(winnerWT, "teardown-failure-probe")
+	if err := os.WriteFile(probe, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write teardown probe: %v", err)
+	}
+	if err := os.Remove(probe); err == nil {
+		_ = os.Chmod(winnerWT, 0o755)
+		t.Skip("running privileged — directory permissions cannot force the sandbox teardown failure; the kernel's partial-settlement law tests cover the contract")
+	}
 
 	chosen := mustSupervisorExecute(t, sup, `{"action":"choose","session_id":`+jsonString(sid)+`,"winner":"a"}`)
 	if chosen.Status != "chosen" {
