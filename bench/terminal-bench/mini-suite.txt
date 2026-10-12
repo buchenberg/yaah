@@ -1,0 +1,28 @@
+# yaah mini-suite — frozen Terminal-Bench task list (15 tasks)
+#
+# Deliberately small and token-cheap: all easy-difficulty, instructions
+# 34-205 words, spread across the common categories (file operations,
+# software engineering, debugging, data science, security, games,
+# algorithms). The point is a reproducible CLI-vs-CLI comparison at
+# flash-model prices, not a leaderboard pass rate — cite it as "n/15 on
+# the yaah mini-suite" with the exact commit of this file.
+#
+# Frozen: do not edit. Extend by appending a new file (mini-suite-v2.txt)
+# so prior runs stay comparable.
+#
+# task id                  category             instruction words
+hello-world                # file-operations    34  (also the smoke task)
+create-bucket              # file-operations    43
+csv-to-parquet             # data-science       44
+broken-python              # software-engineering 46
+fix-git                    # software-engineering 57
+cpp-compatibility          # debugging          64
+fix-pandas-version         # debugging          78
+png-generation             # file-operations    78
+jsonl-aggregator           # file-operations    132
+setup-custom-dev-env       # software-engineering 143
+git-workflow-hack          # security           146
+gomoku-planner             # games              151
+npm-conflict-resolution    # debugging          167
+assign-seats               # algorithms        175
+bank-trans-filter          # data-science       205

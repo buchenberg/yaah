@@ -1,0 +1,48 @@
+#!/bin/sh
+# yaah install script for Terminal-Bench task containers.
+# Rendered by the agent adapter; runs inside the task container with the
+# env from setup-env.sh already sourced (DEEPSEEK_API_KEY, YAAH_MODEL,
+# YAAH_BASE_URL, YAAH_TRACE_DIR are set; none are echoed to the pane).
+set -eu
+
+# YAAH_HOME is /agent-logs/yaah-home (mounted to the host): the config
+# and state.db both land where the run can read them afterwards.
+YAAH_HOME="${YAAH_HOME:-/agent-logs/yaah-home}"
+mkdir -p "$YAAH_HOME" "$(dirname "${YAAH_TRACE_DIR:-/agent-logs/yaah-traces}")"
+
+# The static binary was copied to /installed-agent/yaah by the adapter.
+chmod +x /installed-agent/yaah
+if cp /installed-agent/yaah /usr/local/bin/yaah 2>/dev/null; then
+  :
+else
+  mkdir -p ~/bin
+  cp /installed-agent/yaah ~/bin/yaah
+  echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc
+  export PATH="$HOME/bin:$PATH"
+fi
+
+# Minimal config: one provider, the model pair, and the trace dir under
+# the agent-logs mount so the trace store reaches the host. Everything
+# else falls back to yaah's embedded defaults. The api_key line keeps
+# the ${DEEPSEEK_API_KEY} placeholder ESCAPED below: YAAH_HOME is
+# host-mounted, so the persisted config must never contain the literal
+# secret — yaah interpolates it from the session environment at load.
+cat > "$YAAH_HOME/config.yaml" <<EOF
+providers:
+  deepseek:
+    base_url: ${YAAH_BASE_URL:-https://api.deepseek.com/v1}
+    api_key: \${DEEPSEEK_API_KEY}
+agents:
+  default:
+    provider: deepseek
+    model: ${YAAH_MODEL:-deepseek-flash}
+    small_model: ${YAAH_MODEL:-deepseek-flash}
+    # Benchmark runs are non-interactive: the one-shot session has no
+    # human to approve tool calls, and the scaffold default (ask) would
+    # block forever on the first write. The task container IS the
+    # sandbox, same as every other CLI agent benched here.
+    approval: allow
+    shepherd_trace_dir: ${YAAH_TRACE_DIR:-/agent-logs/yaah-traces}
+EOF
+
+yaah --version 2>/dev/null || yaah --help >/dev/null 2>&1 || true
