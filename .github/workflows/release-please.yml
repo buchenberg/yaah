@@ -51,13 +51,25 @@ jobs:
           GOOS:   ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '0'
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
         run: |
           mkdir -p dist
           out=dist/yaah-${{ matrix.goos }}-${{ matrix.goarch }}
           if [ "${{ matrix.goos }}" = "windows" ]; then
             out="${out}.exe"
           fi
-          go build -trimpath -ldflags '-s -w' -o "$out" .
+          # Stamp version/commit/date via ldflags. Without these, the binary
+          # falls back to debug.ReadBuildInfo, which stamps the main module
+          # version from the nearest VCS tag — with no tags fetched on this
+          # shallow checkout that is a v0.0.0-<ts>-<sha> pseudo-version, and
+          # `yaah update` parses that as 0.0.0 forever. (Verified on the
+          # v0.77.0 asset and reproduced locally with go1.27.)
+          test -n "$TAG_NAME" || { echo "missing release-please tag_name"; exit 1; }
+          ldflags="-s -w"
+          ldflags="$ldflags -X github.com/buchenberg/yaah/cmd/yaah.version=$TAG_NAME"
+          ldflags="$ldflags -X github.com/buchenberg/yaah/cmd/yaah.commit=${GITHUB_SHA::7}"
+          ldflags="$ldflags -X github.com/buchenberg/yaah/cmd/yaah.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          go build -trimpath -ldflags "$ldflags" -o "$out" .
 
       - name: upload artifact
         uses: actions/upload-artifact@v4
