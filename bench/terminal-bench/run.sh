@@ -13,10 +13,10 @@
 #   YAAH_MODEL=deepseek-flash ./run.sh  # override the model
 #
 # Token budget (calibrated on deepseek-flash, see README.md): the fixed
-# per-session cost is ~30K input tokens (identity + tool schemas), and
-# multi-step tasks land 4-5x that (hello-world 30.6K, broken-python
-# 146.9K). The full suite projects to 0.9-1.8M tokens. Run the 2-task
-# smoke first if the budget matters.
+# per-session cost is ~30K input tokens (identity + tool schemas; the
+# hello-world smoke IS that baseline at 30.6K), and multi-step tasks
+# land 4-5x that (broken-python 146.9K, ~5x). The full suite projects
+# to 0.9-1.8M tokens. Run the 2-task smoke first if the budget matters.
 
 set -euo pipefail
 
