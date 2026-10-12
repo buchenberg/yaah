@@ -9,6 +9,17 @@
 
 ## 1. Why this plan exists — the adoption audit
 
+> **Frozen snapshot.** The table below is the pre-adoption audit, kept
+> exactly as written — it is the record of why this plan existed, and its
+> verdicts describe yaah *before* the adoption, not today. The plan
+> completed: rows 6, 7, 9, 10, 11 closed through phases A–D; rows 2 and 8
+> shipped with the rules-engine phases; the follow-up gaps the review
+> found are planned in `docs/plans/post-adoption-hardening.md`, and the
+> kernel-side fixes landed in the kernel's plan 06 (v0.14.0, re-pinned in
+> phase D). Rewriting history in place would erase the audit; the ticks
+> below stay frozen, the same convention the kernel used for its
+> archived plans.
+
 The kernel (the Go implementation of the Shepherd trace kernel, arxiv 2605.10913)
 ships a full supervision surface. yaah uses roughly half of it, and — one finding
 from this audit — the half it uses most visibly (the `supervisor` tool) is not

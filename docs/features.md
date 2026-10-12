@@ -260,6 +260,56 @@ rules (denied calls are filtered before execution).
 
 You can reorder, disable, or enable middleware in your config.
 
+## Supervision lifecycle
+
+The `supervised_task` and `supervisor` tools (see the tool belt above) run
+sub-agents under kernel-backed supervision: checkpointed runs with
+automatic rollback+retry, and interactive review sessions whose fork
+variants run in isolated git worktrees and settle through the merge gate.
+The lifecycle around those runs is durable — the trace is the registry —
+and this section is the operational half: what happens at startup, and
+what to do with the leftovers a crash can leave.
+
+### Startup recovery
+
+When a trace dir is configured (`agents.default.shepherd_trace_dir`),
+startup rebuilds the supervision state from the durable trace instead of
+forgetting it: the scope tree, checkpoints, and sealed outputs come back,
+and isolated worktree children are re-adopted onto their recorded
+addresses — a crash mid-run leaves the work recoverable, not stranded.
+The recovery report prints four buckets:
+
+| Bucket | Meaning | What to do |
+|---|---|---|
+| `adopted` | A worktree child re-adopted — its work is live again | Nothing; it is back |
+| `orphaned` | A terminal scope's worktree still on disk (the crash window between the terminal record and the teardown) — it may hold the only copy of unmerged work | Inspect it; `yaah shepherd prune` when you are sure |
+| `missing` | An active child whose worktree is gone | Nothing to recover; the crash lost its work |
+| `unadopted` | A recorded path that is not a registered worktree of its repository (a squatter, or a moved repo) | Nothing — yaah never adopts or deletes what it cannot verify it owns |
+
+Nothing is ever deleted automatically. The orphan buckets are warn-only
+by design.
+
+### The shepherd command
+
+```bash
+yaah shepherd          # list the recovery report's worktree leftovers
+yaah shepherd prune <worktree-path>   # delete exactly one orphaned worktree
+```
+
+Normal lifecycle teardown is automatic — settling or discarding a
+variant destroys the worktree its scope owns — so `prune` exists for the
+one case nothing else covers: an *orphan* the crash left behind. It
+deletes by exact path, user-invoked only, and it verifies ownership (the
+git worktree registry and the directory's own repository link) before
+deleting. An adopted, missing, or unadopted path refuses by name; an
+unlisted path is not on the report at all.
+
+### Doctor
+
+`yaah doctor` runs the same recovery scan as a check: a trace dir that
+fails to recover fails the check, and any non-empty leftover bucket
+(orphaned, missing, unadopted) warns with the same bucket vocabulary.
+
 ## Execution traces
 
 When a trace store is configured (sub-agent pipelines carry `shepherd_trace`
