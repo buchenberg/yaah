@@ -15,13 +15,14 @@ covered separately in [prompts.md](prompts.md).
 
 | Instruction block | Source | Injected when |
 | --- | --- | --- |
-| Orchestrator guidance: `spawn_subagent` vs `supervised_task` | `internal/prompts/subagent_tools.md` (`prompts.SubAgentToolsGuidance`) | Appended to the main prompt when the session's scope manager is live — i.e. the shepherd infrastructure came up (`cmd/yaah/wiring.go`) |
+| Orchestrator guidance: `spawn_subagent` vs `supervised_task` | `internal/prompts/subagent_tools.md` (`prompts.SubAgentToolsGuidance`) | Local sessions, when the session's scope manager is live (`cmd/yaah/wiring.go`) — an isolated session takes the workspace delta below instead |
 | `supervised_task` tool description | `internal/prompts/tools/supervised_task.md` (`prompts.ToolDescription`) | Always with the tool, when registered |
 | `supervisor` tool description + schema | In code: `internal/tools/supervisor.go` (`Description()`, `Schema()`) | Always with the tool, when registered |
 | `spawn_subagent` (plain `task`) tool description | `internal/prompts/tools/task.md` | Always — the unsupervised path exists in every mode |
 | Sub-agent identity (batching, codebase respect, reporting) | `internal/prompts/subagent_identity.md` | Every sub-agent dispatch; orchestration guidance is deliberately omitted |
-| Steering message (convergence rule) | `internal/prompts/steering_message.md` | Surfaced by the loop as a high-priority user message when guidance arrives mid-run |
-| Isolated-mode deltas (host-only tools, `apply_out`) | `prompts.IsolatedWorkspaceGuidance` / `IsolatedSubAgentGuidance` (built in code) | Isolated sessions only, replacing the guidance block above |
+| Loop-detection steering message (convergence rule) | `internal/prompts/steering_message.md`, emitted by `LoopDetectionMiddleware` (`internal/agent/pipeline/loopdetect.go`) | When one tool dominates consecutive turns |
+| Injected guidance (supervisor `inject`, advisory rules) | `SteerMiddleware` (`internal/agent/pipeline/steer.go`) | Next turn, as a `[STEER]`-prefixed user message, when guidance arrives mid-run |
+| Isolated-mode deltas (host-only tools, `apply_out`) | `prompts.IsolatedWorkspaceGuidance` / `IsolatedSubAgentGuidance` (built in code) | Isolated sessions only, replacing the orchestrator guidance block |
 
 ## The orchestrator's decision rule
 
@@ -43,8 +44,9 @@ From `subagent_tools.md`:
   work — it blocks the orchestrator's own loop.
 
 This block is only appended when the supervision infrastructure is
-live. With tracing off, neither tool is registered and the roles stay on
-`spawn_subagent`, so the instruction and the tool belt cannot disagree.
+live. With tracing off, the `supervised_task` and `supervisor` tools are
+not registered and every role stays on `spawn_subagent`, so the
+instruction and the tool belt cannot disagree.
 
 ## `supervised_task` instructions
 
@@ -130,21 +132,25 @@ guidance, the evidence/interpretation contract
 top of this.
 
 Guidance that arrives while the sub-agent runs — a supervisor `inject`,
-or an advisory rule's named guidance — surfaces as a high-priority user
-message next turn. The convergence steering message
-(`steering_message.md`) tells a sub-agent hammering one tool to apply
-its findings and act.
+or an advisory rule's named guidance — is surfaced by the loop's steer
+middleware as a `[STEER]`-prefixed user message next turn. Separately,
+when loop detection sees one tool dominating consecutive turns, its
+convergence message (`steering_message.md`) tells the sub-agent to
+apply its findings and act.
 
 ## Isolated sessions
 
-In isolated mode the supervised tools cannot exist (`supervised_task`
-provisions sandboxes itself), so the guidance block changes
-(`IsolatedWorkspaceGuidance`): the model is told which host-only tools
-are missing and why, that `spawn_subagent` runs inside the same
-container, and that changes reach the host only through `apply_out`
-(dry run first, user approval, never claim work is saved before it
-lands). The supervisor/supervised_task instructions above apply to local
-sessions only.
+`supervised_task` cannot exist in isolated mode — it provisions sandboxes
+itself, so it cannot run inside the isolation it creates — and with it
+the review-session cycle (sessions are started through it). The
+`supervisor` tool stays registered whenever the scope manager is live:
+scope inspection and inject/halt work on container-side scopes as they
+do locally. The orchestrator guidance block is replaced by the isolated
+workspace delta (`IsolatedWorkspaceGuidance`): the model is told which
+host-only tools are missing and why, that `spawn_subagent` runs inside
+the same container, and that changes reach the host only through
+`apply_out` (dry run first, user approval, never claim work is saved
+before it lands).
 
 ## Keeping this document honest
 
