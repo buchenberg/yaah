@@ -30,7 +30,9 @@ import (
 	"time"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"github.com/buchenberg/yaah/internal/agent"
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/control"
@@ -102,6 +104,10 @@ type agentSession struct {
 	// follow-ups. Cancelled at session close.
 	backgroundJobs *jobs.BackgroundJobs
 
+	// drainTimeout overrides backgroundJobDrainTimeout when set — the
+	// session-owned seam the close tests use; zero means the default.
+	drainTimeout time.Duration
+
 	// sessionSandbox owns the isolated workspace backend's lifecycle, when
 	// workspace.backend is containerd: the sandbox was constructed, image-
 	// probed (D5), and created once at session start, and close() destroys
@@ -138,6 +144,14 @@ type agentSession struct {
 	// survive either way. Nil when tracing is off.
 	scopes *shepherd.ScopeManager
 
+	// traceStore and traceBus are the session's shepherd infrastructure
+	// (plan 07, H2): the store and bus the wiring created and the
+	// session closes on a clean exit — store first, then the bus, only
+	// when the background-job drain succeeded, warn-only like the rest
+	// of the clean-exit path. Nil when tracing is off.
+	traceStore *shepherdtrace.SQLiteTraceStore
+	traceBus   *shepherdtrace.EffectBus
+
 	// runCancel is the session-owned cancellation for the currently
 	// running prompt (adoption plan A3): the target of
 	// HaltCurrentRun — the root-halt bridge. Nil between prompts.
@@ -172,7 +186,8 @@ type agentSession struct {
 // background sub-agents to finish before destroying the session sandbox
 // anyway. Generous: cancellation propagates through the tool call in
 // flight, and the alternative is racing a live sub-agent with backend
-// teardown.
+// teardown. A session whose drainTimeout field is set uses that instead
+// — the test seam, session-owned per the no-globals convention.
 const backgroundJobDrainTimeout = 30 * time.Second
 
 // workspaceSandboxDestroyTimeout bounds the sandbox teardown in close() so
@@ -202,9 +217,15 @@ func (s *agentSession) close() {
 	// when the session sandbox is destroyed below. Close() alone only
 	// cancels — it never joins — which is a use-after-destroy race, not a
 	// quiesced teardown.
+	drainTimeout := s.drainTimeout
+	if drainTimeout == 0 {
+		drainTimeout = backgroundJobDrainTimeout
+	}
+	drained := true
 	if s.backgroundJobs != nil {
-		if !s.backgroundJobs.CloseAndWait(backgroundJobDrainTimeout) {
-			fmt.Fprintf(os.Stderr, "warning: background sub-agent(s) still finishing after %s; continuing session teardown\n", backgroundJobDrainTimeout)
+		if !s.backgroundJobs.CloseAndWait(drainTimeout) {
+			drained = false
+			fmt.Fprintf(os.Stderr, "warning: background sub-agent(s) still finishing after %s; continuing session teardown\n", drainTimeout)
 		}
 	}
 	// PruneTerminal on close (adoption plan R2): merged and discarded
@@ -237,6 +258,32 @@ func (s *agentSession) close() {
 		defer cancelDestroy()
 		if err := s.sessionSandbox.Destroy(destroyCtx); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: workspace sandbox teardown: %v\n", err)
+		}
+	}
+	// Shepherd infrastructure (plan 07, H2): a clean exit closes the trace
+	// store and its bus — store first, then the bus — instead of leaving
+	// both to whatever the process exit does to them. Warn-only, like the
+	// rest of this path. Gated on the drain: a background job that
+	// outlived CloseAndWait shares this store, and closing it under a
+	// live writer turns the job's final writes into corruption-shaped
+	// failures — worse than an unclosed store the process exit reaps, so
+	// the infrastructure stays open with a warning instead.
+	if s.traceStore != nil || s.traceBus != nil {
+		if !drained {
+			fmt.Fprintln(os.Stderr, "warning: shepherd trace store left open — a background job outlived the drain and still writes it")
+		} else {
+			store := s.traceStore
+			pipeline.CloseShepherdInfrastructure(s.traceStore, s.traceBus)
+			s.traceStore, s.traceBus = nil, nil
+			// The package globals still point at the closed store, and a
+			// later session built with tracing off would hand sub-agent
+			// middleware a dead handle (the pipeline builder nil-checks
+			// but does not liveness-check). Clear them when they are
+			// still ours — a later session that reassigned them keeps
+			// its own. H4 retires the globals entirely.
+			if store != nil && tools.SharedTraceStore == store {
+				tools.SharedTraceStore = nil
+			}
 		}
 	}
 	s.mu.RLock()

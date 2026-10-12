@@ -11,6 +11,7 @@ import (
 	"time"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 
 	"github.com/buchenberg/yaah/internal/agent/budget"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
@@ -404,6 +405,8 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// this is the single initialization point for the supervisor tools,
 	// the supervised task tool, and sub-agent trace middleware.
 	var scopeMgr *shepherd.ScopeManager
+	var traceStore *shepherdtrace.SQLiteTraceStore
+	var traceBus *shepherdtrace.EffectBus
 	var rootScopeID string
 	var runRegistry *supervision.Registry
 	// The session's steering channel: the REPL's steer source and, from
@@ -447,6 +450,10 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			tools.SharedTraceStore = store
 			scopeMgr = mgr
 			tools.SharedScopeManager = mgr
+			// Session-owned copies for the clean-exit close (plan 07,
+			// H2): the session's close() closes the infrastructure the
+			// wiring created — see agentSession.traceStore.
+			traceStore, traceBus = store, bus
 
 			// Supervision bridge (adoption plan A2): scope IDs mapped
 			// to running loops' steering channels. Session-owned and
@@ -855,6 +862,8 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		rootScopeID:    rootScopeID,
 		runs:           runRegistry,
 		scopes:         scopeMgr,
+		traceStore:     traceStore,
+		traceBus:       traceBus,
 		supervisor:     supervisorSvc,
 		followupCh:     followupCh,
 	}
