@@ -121,13 +121,15 @@ type PromptTokensDetails struct {
 }
 
 // CacheTokens reports the prompt tokens served from a provider context
-// cache, whichever shape the usage arrived in: raw provider usage
-// carries them nested in PromptTokensDetails (deepseek's
-// prompt_tokens_details.cached_tokens, Anthropic's cache reads mapped
-// at parse time); aggregates accumulate them into the top-level
-// CachedPromptTokens. Accumulators MUST use this helper rather than
-// reading either field alone — the two shapes are disjoint by
-// convention, so adding both would double-count.
+// cache, whichever shape the usage carries: raw provider usage nests
+// them in PromptTokensDetails (deepseek's prompt_tokens_details
+// .cached_tokens; Anthropic's cache reads mapped at parse time);
+// aggregates accumulate them into the top-level CachedPromptTokens.
+// The Done event carries both (the top-level field from the aggregate
+// copy, the details re-derived for display consumers), so this helper
+// PREFERS the top-level field — correct for every shape — and
+// accumulators MUST use it rather than reading either field alone:
+// reading both would double-count.
 func (u Usage) CacheTokens() int {
 	if u.CachedPromptTokens > 0 {
 		return u.CachedPromptTokens
