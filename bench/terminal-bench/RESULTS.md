@@ -177,3 +177,33 @@ scored:
 | assign-seats | resolved | resolved | 145,128 |
 | gomoku-planner | resolved | unresolved | 338,999 |
 | **score** | **6/6** | **3/6** | **976,821 (~27% of the 15-task run)** |
+
+## Fresh suite.txt comparison (2026-10-12, deepseek-flash, yaah b2825c3)
+
+Both CLIs on the 6-task `suite.txt` (at commit b2825c3), same harness
+pin (d28711d), same judge, one trial each, runs minutes apart: yaah
+run `2026-10-12__17-26-54` (binary built from b2825c3) vs opencode run
+`2026-10-12__17-35-13`.
+
+| Task | yaah | opencode | yaah time | opencode time | yaah in | yaah out | yaah cached |
+|---|---|---|---|---|---|---|---|
+| hello-world | resolved | resolved | 6s | 23s | 45,709 | 157 | 31,360 |
+| broken-python | resolved | unresolved (parse_error) | 34s | 24s | 204,906 | 3,802 | 187,648 |
+| csv-to-parquet | resolved | resolved | 21s | 73s | 162,108 | 1,613 | 146,304 |
+| jsonl-aggregator | resolved | resolved | 24s | 38s | 118,083 | 2,394 | 101,888 |
+| assign-seats | resolved | resolved | 30s | 49s | 121,224 | 5,293 | 105,472 |
+| gomoku-planner | resolved | resolved | 112s | 116s | 292,347 | 17,656 | 275,456 |
+| **score** | **6/6** | **5/6** | **227s** | **323s** | **944,377** | **30,915** | **848,128** |
+
+yaah cost: 944,377 prompt + 30,915 output = 975,292 tokens, 90% of
+prompt tokens served from deepseek's cache. opencode token accounting
+remains unavailable through the installed-agent path; wall time
+favors yaah on 5 of 6 tasks here but stays a secondary metric.
+
+Run-over-run notes: opencode scored 3/6 on this subset in its earlier
+`2026-10-12__16-35-01` run and 5/6 here — csv-to-parquet and
+gomoku-planner flipped to resolved — so single-trial variance is real
+and the earlier gap overstated opencode's capability. Its one
+consistent failure is broken-python: a parse_error in both of its
+runs (2/2), while yaah resolved it in every run (3/3). yaah is 6/6
+across all recorded runs of this subset.
