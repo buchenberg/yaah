@@ -22,7 +22,8 @@ covered separately in [prompts.md](prompts.md).
 | Sub-agent identity (batching, codebase respect, reporting) | `internal/prompts/subagent_identity.md` | Every sub-agent dispatch; orchestration guidance is deliberately omitted |
 | Loop-detection steering message (convergence rule) | `internal/prompts/steering_message.md`, emitted by `LoopDetectionMiddleware` (`internal/agent/pipeline/loopdetect.go`) | When one tool dominates consecutive turns |
 | Injected guidance (supervisor `inject`, advisory rules) | `SteerMiddleware` (`internal/agent/pipeline/steer.go`) | Next turn, as a `[STEER]`-prefixed user message, when guidance arrives mid-run |
-| Isolated-mode deltas (host-only tools, `apply_out`) | `prompts.IsolatedWorkspaceGuidance` / `IsolatedSubAgentGuidance` (built in code) | Isolated sessions only, replacing the orchestrator guidance block |
+| Isolated workspace delta (host-only tools, `apply_out`) | `prompts.IsolatedWorkspaceGuidance` (built in code) | Isolated sessions only, appended to the main prompt in place of the orchestrator guidance block (`cmd/yaah/wiring.go`) |
+| Isolated sub-agent delta | `prompts.IsolatedSubAgentGuidance` (built in code) | Isolated sessions only, appended to each sub-agent's own system prompt (`internal/agent/runner/runner.go`) — it replaces nothing; sub-agents never receive the orchestrator guidance |
 
 ## The orchestrator's decision rule
 
