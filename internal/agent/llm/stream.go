@@ -266,11 +266,17 @@ func assembleStreamed(content string, toolCalls map[int]*types.ToolCall, reasoni
 	return msg
 }
 
-// addStreamUsage accumulates streaming usage into a running total.
+// addStreamUsage accumulates streaming usage into a running total,
+// folding the per-chunk cache hits into the aggregate's top-level
+// CachedPromptTokens (the aggregate's PromptTokensDetails stays nil so
+// downstream accumulators cannot double-count via Usage.CacheTokens).
 func addStreamUsage(total *types.Usage, u *types.Usage) {
 	total.PromptTokens += u.PromptTokens
 	total.CompletionTokens += u.CompletionTokens
 	total.TotalTokens += u.TotalTokens
+	if cached := u.CacheTokens(); cached > 0 {
+		total.CachedPromptTokens += cached
+	}
 }
 
 // setStreamUsageAttrs enriches a stream span with token detail attributes.

@@ -172,6 +172,13 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		toolReg = tools.NewRegistry()
 	}
 
+	// One-shot sessions are non-interactive: a blocking question has
+	// no one to answer it, so the tool is left out of the belt and the
+	// prompt guidance (below) says so.
+	if opts.OneShot {
+		toolReg.Unregister("question")
+	}
+
 	// Workspace containment. Exactly one substrate may be installed:
 	//
 	//   - containerd backend: the session's sandbox is constructed, image-
@@ -725,6 +732,9 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	} else if scopeMgr != nil {
 		mainPrompt += "\n\n" + prompts.SubAgentToolsGuidance()
 	}
+	if opts.OneShot {
+		mainPrompt += "\n\n" + prompts.OneShotGuidance()
+	}
 
 	toolReg.Register(&tools.ListSubAgentsTool{
 		Lister: func() []tools.SubAgentInfo {
@@ -905,12 +915,20 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	}
 
 	// Attribute completed background sub-agent usage to the session
-	// total (session-scoped, so never lost across turns/runs).
+	// total (session-scoped, so never lost across turns/runs) and to
+	// the session's sub-agent counter, so orchestrator and sub-agent
+	// spend are separately reportable.
 	backgroundJobs.OnUsage = func(u types.Usage) {
 		sess.mu.Lock()
 		sess.totalUsage.PromptTokens += u.PromptTokens
 		sess.totalUsage.CompletionTokens += u.CompletionTokens
 		sess.totalUsage.TotalTokens += u.TotalTokens
+		sess.totalUsage.CachedPromptTokens += u.CacheTokens()
+		sess.subUsage.PromptTokens += u.PromptTokens
+		sess.subUsage.CompletionTokens += u.CompletionTokens
+		sess.subUsage.TotalTokens += u.TotalTokens
+		sess.subUsage.CachedPromptTokens += u.CacheTokens()
+		sess.flushUsage()
 		sess.mu.Unlock()
 	}
 

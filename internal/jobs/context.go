@@ -92,6 +92,10 @@ func AddSubAgentUsage(ctx context.Context, delta types.Usage) {
 		acc.PromptTokens += delta.PromptTokens
 		acc.CompletionTokens += delta.CompletionTokens
 		acc.TotalTokens += delta.TotalTokens
+		// CacheTokens covers both shapes (nested details on raw
+		// provider usage, top-level on aggregates) — adding both
+		// fields separately would double-count.
+		acc.CachedPromptTokens += delta.CacheTokens()
 	}
 }
 

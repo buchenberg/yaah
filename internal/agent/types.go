@@ -90,6 +90,18 @@ type Loop struct {
 	FollowUps <-chan string
 	Steer     <-chan string
 
+	// OnUsage, when set, fires after every LLM call with the loop's
+	// running usage totals (prompt/completion/total/cache). It is the
+	// session's incremental-persistence seam: a session killed mid-run
+	// (timeout, crash) still reports what it spent so far.
+	OnUsage func(types.Usage)
+	// OnSubUsage, when set, fires when a blocking sub-agent dispatch's
+	// usage is folded into the loop's totals — the sub-agent
+	// attribution seam, so orchestrator and sub-agent spend can be
+	// reported separately (the fold into the parent total is
+	// unchanged; this is an additional, read-only observation).
+	OnSubUsage func(types.Usage)
+
 	// BackgroundJobs, when set, is wired with the loop's broker callbacks
 	// (SubAgentStart/End events) at Run start so background sub-agents
 	// dispatching through the shared TaskTool emit live UI events while a

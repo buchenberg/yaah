@@ -306,6 +306,9 @@ func (d *toolDispatch) setupSubAgent(runCtx context.Context) context.Context {
 func (d *toolDispatch) finishSubAgent() {
 	if d.subUsage.TotalTokens > 0 {
 		d.loop.addUsage(d.subUsage)
+		if d.loop.OnSubUsage != nil {
+			d.loop.OnSubUsage(d.subUsage)
+		}
 	}
 }
 

@@ -29,12 +29,14 @@ func (d *DB) UpdateSessionWorkspace(id, backend, omittedTools string) error {
 func (d *DB) GetSession(id string) (Session, error) {
 	row := d.sql.QueryRow(`
 		SELECT id, started_at, COALESCE(ended_at, 0), cwd, model, tokens_in, tokens_out,
+			COALESCE(tokens_cached, 0), COALESCE(sub_tokens_in, 0), COALESCE(sub_tokens_out, 0),
 			COALESCE(system_prompt, ''), COALESCE(compacted_summary, ''),
 			COALESCE(workspace_backend, ''), COALESCE(workspace_omitted_tools, '')
 		FROM sessions WHERE id = ?
 	`, id)
 	var s Session
 	err := row.Scan(&s.ID, &s.StartedAt, &s.EndedAt, &s.CWD, &s.Model, &s.TokensIn, &s.TokensOut,
+		&s.TokensCached, &s.SubTokensIn, &s.SubTokensOut,
 		&s.SystemPrompt, &s.CompactedSummary, &s.WorkspaceBackend, &s.WorkspaceOmittedTools)
 	return s, err
 }
@@ -43,6 +45,7 @@ func (d *DB) GetSession(id string) (Session, error) {
 func (d *DB) ListSessions(limit int) ([]Session, error) {
 	rows, err := d.sql.Query(`
 		SELECT id, started_at, COALESCE(ended_at, 0), cwd, model, tokens_in, tokens_out,
+			COALESCE(tokens_cached, 0), COALESCE(sub_tokens_in, 0), COALESCE(sub_tokens_out, 0),
 			COALESCE(system_prompt, ''), COALESCE(compacted_summary, ''),
 			COALESCE(workspace_backend, ''), COALESCE(workspace_omitted_tools, '')
 		FROM sessions
@@ -58,6 +61,7 @@ func (d *DB) ListSessions(limit int) ([]Session, error) {
 	for rows.Next() {
 		var s Session
 		if err := rows.Scan(&s.ID, &s.StartedAt, &s.EndedAt, &s.CWD, &s.Model, &s.TokensIn, &s.TokensOut,
+			&s.TokensCached, &s.SubTokensIn, &s.SubTokensOut,
 			&s.SystemPrompt, &s.CompactedSummary, &s.WorkspaceBackend, &s.WorkspaceOmittedTools); err != nil {
 			return nil, err
 		}
@@ -66,9 +70,23 @@ func (d *DB) ListSessions(limit int) ([]Session, error) {
 	return results, rows.Err()
 }
 
-// EndSession sets the ended_at timestamp and final token counts for a session.
-func (d *DB) EndSession(id string, endedAt int64, tokensIn int, tokensOut int) error {
-	_, err := d.sql.Exec(`UPDATE sessions SET ended_at = ?, tokens_in = ?, tokens_out = ? WHERE id = ?`, endedAt, tokensIn, tokensOut, id)
+// EndSession sets the ended_at timestamp and final token counts for a
+// session, including the cache-hit and sub-agent attribution columns.
+func (d *DB) EndSession(id string, endedAt int64, tokensIn int, tokensOut int, tokensCached, subTokensIn, subTokensOut int) error {
+	_, err := d.sql.Exec(
+		`UPDATE sessions SET ended_at = ?, tokens_in = ?, tokens_out = ?, tokens_cached = ?, sub_tokens_in = ?, sub_tokens_out = ? WHERE id = ?`,
+		endedAt, tokensIn, tokensOut, tokensCached, subTokensIn, subTokensOut, id)
+	return err
+}
+
+// UpdateSessionUsage flushes the running usage counters without ending
+// the session. Called incrementally (per LLM call) so a session killed
+// mid-run — a harness timeout, a crash — still reports what it spent.
+// ended_at is untouched: the session is still open.
+func (d *DB) UpdateSessionUsage(id string, tokensIn int, tokensOut int, tokensCached, subTokensIn, subTokensOut int) error {
+	_, err := d.sql.Exec(
+		`UPDATE sessions SET tokens_in = ?, tokens_out = ?, tokens_cached = ?, sub_tokens_in = ?, sub_tokens_out = ? WHERE id = ?`,
+		tokensIn, tokensOut, tokensCached, subTokensIn, subTokensOut, id)
 	return err
 }
 

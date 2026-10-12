@@ -24,6 +24,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -169,6 +170,20 @@ type agentSession struct {
 	steerCh    chan string
 	followupCh chan string
 	totalUsage types.Usage
+	// flushIn/flushOut/flushCached/flushSubIn/flushSubOut are the last
+	// values written to the session row by the incremental usage flush.
+	// The flush is monotonic: a snapshot that arrives out of order
+	// (concurrent tool goroutines) or computed from a narrower view
+	// (the per-call hook's before-run + running) can never overwrite a
+	// larger, already-flushed total.
+	flushIn, flushOut, flushCached int
+	flushSubIn, flushSubOut        int
+	// subUsage attributes the sub-agent share of totalUsage: blocking
+	// dispatches fold it into the loop totals (agent_dispatch) and fire
+	// the loop's OnSubUsage here; background dispatches report through
+	// the jobs manager's session-scoped OnUsage. totalUsage includes
+	// sub-agent spend; orchestrator spend = totalUsage - subUsage.
+	subUsage types.Usage
 
 	// Compact/fallback providers resolved once per session and reused
 	// across turns — resolving them per prompt constructed fresh HTTP
@@ -286,7 +301,8 @@ func (s *agentSession) close() {
 		s.otelShutdown(ctx)
 	}
 	if s.db != nil {
-		s.db.EndSession(s.sessionID, time.Now().Unix(), s.totalUsage.PromptTokens, s.totalUsage.CompletionTokens)
+		s.db.EndSession(s.sessionID, time.Now().Unix(), s.totalUsage.PromptTokens, s.totalUsage.CompletionTokens,
+			s.totalUsage.CachedPromptTokens, s.subUsage.PromptTokens, s.subUsage.CompletionTokens)
 		s.db.Close()
 	}
 	for _, c := range s.mcpClients {
@@ -296,6 +312,41 @@ func (s *agentSession) close() {
 
 func (s *agentSession) Close()   { s.close() }
 func (s *agentSession) Compact() { s.compactContext() }
+
+// flushUsage persists the session's running usage counters to state.db
+// without ending the session. Caller must hold s.mu.
+func (s *agentSession) flushUsage() {
+	s.flushUsageValues(
+		s.totalUsage.PromptTokens, s.totalUsage.CompletionTokens,
+		s.totalUsage.CachedPromptTokens,
+		s.subUsage.PromptTokens, s.subUsage.CompletionTokens)
+}
+
+// flushUsageValues writes the given usage counters to the session's
+// row without ending the session. Caller must hold s.mu. Values may be
+// computed (not read from the session's live totals) so the per-call
+// hook can flush without clobbering concurrent background attribution.
+// The flush is monotonic — only values that advance every counter past
+// the last write are written; a stale or out-of-order snapshot (the
+// OnSubUsage path fires after the fold already flushed, and concurrent
+// tool goroutines can deliver snapshots late) is skipped rather than
+// allowed to shrink the row. A failed flush is logged, not fatal:
+// usage accounting must never take down a session.
+func (s *agentSession) flushUsageValues(tokensIn, tokensOut, tokensCached, subTokensIn, subTokensOut int) {
+	if s.db == nil {
+		return
+	}
+	if tokensIn < s.flushIn || tokensOut < s.flushOut || tokensCached < s.flushCached ||
+		subTokensIn < s.flushSubIn || subTokensOut < s.flushSubOut {
+		return
+	}
+	s.flushIn, s.flushOut, s.flushCached = tokensIn, tokensOut, tokensCached
+	s.flushSubIn, s.flushSubOut = subTokensIn, subTokensOut
+	err := s.db.UpdateSessionUsage(s.sessionID, tokensIn, tokensOut, tokensCached, subTokensIn, subTokensOut)
+	if err != nil {
+		slog.Warn("session: usage flush failed", "err", err)
+	}
+}
 
 // ToolReg returns the session's tool registry.
 func (s *agentSession) ToolReg() *tools.Registry { return s.toolReg }

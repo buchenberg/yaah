@@ -94,9 +94,14 @@ type Choice struct {
 
 // Usage holds token usage statistics from the provider.
 type Usage struct {
-	PromptTokens            int                      `json:"prompt_tokens"`
-	CompletionTokens        int                      `json:"completion_tokens"`
-	TotalTokens             int                      `json:"total_tokens"`
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+	// CachedPromptTokens is the running sum of prompt tokens served
+	// from a provider context cache (deepseek's automatic prefix cache,
+	// OpenAI-style prompt_tokens_details.cached_tokens). It is folded in
+	// from PromptTokensDetails at accumulation time, not on the wire.
+	CachedPromptTokens      int                      `json:"cached_prompt_tokens,omitempty"`
 	CompletionTokensDetails *CompletionTokensDetails `json:"completion_tokens_details,omitempty"`
 	PromptTokensDetails     *PromptTokensDetails     `json:"prompt_tokens_details,omitempty"`
 }
@@ -113,6 +118,26 @@ type CompletionTokensDetails struct {
 type PromptTokensDetails struct {
 	CachedTokens int `json:"cached_tokens"`
 	AudioTokens  int `json:"audio_tokens,omitempty"`
+}
+
+// CacheTokens reports the prompt tokens served from a provider context
+// cache, whichever shape the usage carries: raw provider usage nests
+// them in PromptTokensDetails (deepseek's prompt_tokens_details
+// .cached_tokens; Anthropic's cache reads mapped at parse time);
+// aggregates accumulate them into the top-level CachedPromptTokens.
+// The Done event carries both (the top-level field from the aggregate
+// copy, the details re-derived for display consumers), so this helper
+// PREFERS the top-level field — correct for every shape — and
+// accumulators MUST use it rather than reading either field alone:
+// reading both would double-count.
+func (u Usage) CacheTokens() int {
+	if u.CachedPromptTokens > 0 {
+		return u.CachedPromptTokens
+	}
+	if d := u.PromptTokensDetails; d != nil {
+		return d.CachedTokens
+	}
+	return 0
 }
 
 // ToolResultMsg creates a tool result message to append to the conversation.

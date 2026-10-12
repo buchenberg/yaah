@@ -63,13 +63,24 @@ type Entry struct {
 
 // Session represents a conversation session.
 type Session struct {
-	ID               string `json:"id"`
-	StartedAt        int64  `json:"started_at"`
-	EndedAt          int64  `json:"ended_at,omitempty"`
-	CWD              string `json:"cwd"`
-	Model            string `json:"model"`
-	TokensIn         int    `json:"tokens_in"`
-	TokensOut        int    `json:"tokens_out"`
+	ID        string `json:"id"`
+	StartedAt int64  `json:"started_at"`
+	EndedAt   int64  `json:"ended_at,omitempty"`
+	CWD       string `json:"cwd"`
+	Model     string `json:"model"`
+	TokensIn  int    `json:"tokens_in"`
+	TokensOut int    `json:"tokens_out"`
+	// TokensCached is the sum of prompt tokens the provider served
+	// from its context cache (deepseek automatic prefix cache). A
+	// session killed mid-run still reports its spend because usage
+	// flushes incrementally (UpdateSessionUsage), not only at EndSession.
+	TokensCached int `json:"tokens_cached,omitempty"`
+	// SubTokensIn/SubTokensOut attribute the sub-agent share of the
+	// session total (blocking dispatches via the loop fold, background
+	// dispatches via the jobs manager). The totals include sub-agent
+	// spend; orchestrator spend = total - sub.
+	SubTokensIn      int    `json:"sub_tokens_in,omitempty"`
+	SubTokensOut     int    `json:"sub_tokens_out,omitempty"`
 	SystemPrompt     string `json:"system_prompt,omitempty"`
 	CompactedSummary string `json:"compacted_summary,omitempty"`
 	// WorkspaceBackend records the workspace substrate the session ran
@@ -217,7 +228,10 @@ func (d *DB) migrate() error {
 		cwd        TEXT,
 		model      TEXT,
 		tokens_in  INTEGER DEFAULT 0,
-		tokens_out INTEGER DEFAULT 0
+		tokens_out INTEGER DEFAULT 0,
+		tokens_cached INTEGER DEFAULT 0,
+		sub_tokens_in INTEGER DEFAULT 0,
+		sub_tokens_out INTEGER DEFAULT 0
 	);
 
 	CREATE TABLE IF NOT EXISTS messages (
@@ -336,6 +350,9 @@ func (d *DB) migrate() error {
 		{"messages", "embedding", "ALTER TABLE messages ADD COLUMN embedding BLOB"},
 		{"sessions", "workspace_backend", "ALTER TABLE sessions ADD COLUMN workspace_backend TEXT DEFAULT ''"},
 		{"sessions", "workspace_omitted_tools", "ALTER TABLE sessions ADD COLUMN workspace_omitted_tools TEXT DEFAULT ''"},
+		{"sessions", "tokens_cached", "ALTER TABLE sessions ADD COLUMN tokens_cached INTEGER DEFAULT 0"},
+		{"sessions", "sub_tokens_in", "ALTER TABLE sessions ADD COLUMN sub_tokens_in INTEGER DEFAULT 0"},
+		{"sessions", "sub_tokens_out", "ALTER TABLE sessions ADD COLUMN sub_tokens_out INTEGER DEFAULT 0"},
 	}
 	for _, s := range steps {
 		if err := d.ensureColumn(s.table, s.column, s.ddl); err != nil {
