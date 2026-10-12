@@ -197,7 +197,7 @@ then rebuilds as a sibling of a dead session. The policy applies to
 `ForkIsolated`-failure path (runner.go:800-801) both fall to flat
 `mgr.Create` today, and a halted root can fail either. The fix: both
 distinguish "root terminal" (return `ErrRootTerminal` — it exists for
-exactly this, runner.go:714) from other fork failures, and the dispatch
+exactly this, runner.go:719) from other fork failures, and the dispatch
 path surfaces the terminal error to the sub-agent's parent as an
 actionable "the session was halted; this dispatch cannot run" instead
 of a silent scope. Non-terminal `ForkIsolated` failures (worktree
