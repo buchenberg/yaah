@@ -4,7 +4,9 @@ A frozen 15-task Terminal-Bench subset for CLI-vs-CLI comparison at
 flash-model prices, plus the yaah agent adapter that plugs yaah into
 the Terminal-Bench harness as an installed agent.
 
-- Tasks: `mini-suite.txt` (frozen — do not edit; extend with a new file)
+- Tasks: `mini-suite-v2.txt` (default; 12 tasks — v1 minus the three
+  known non-agent failures) and `mini-suite.txt` (original 15-task v1;
+  frozen — do not edit either; extend with a new file)
 - Agent adapter: `yaah_agent.py` (import path `yaah_agent:YaahAgent`)
 - Container setup: `yaah-setup.sh.j2` (config written in-container)
 - Runner: `run.sh`
@@ -43,8 +45,9 @@ uv venv .venv && uv pip install -e .
 
 ```bash
 export DEEPSEEK_API_KEY=...      # required; the same key your yaah config interpolates
-./run.sh                          # the frozen 15-task mini-suite
+./run.sh                          # the frozen 12-task mini-suite v2 (default)
 ./run.sh hello-world broken-python  # the 2-task smoke
+SUITE=mini-suite.txt ./run.sh      # the original frozen 15-task v1 list
 YAAH_MODEL=<model> ./run.sh       # any tier you like; default deepseek-flash
 ```
 
