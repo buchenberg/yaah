@@ -33,6 +33,8 @@ Records are never overwritten — append a new row for every run.
 | 2026-07-23 00:43 | engine-view-separation-2-3 | fef70c0 | B4 Audit | 2 | 0 | 4 | 42.6s | 23,858 | 0 | 23,858 | 100% | 0% | 0 | PR#62 engine-view separation; model chose inline over sub-agents — strategy difference, not perf regression |
 | 2026-07-23 15:32 | feature/context-degradation-fix | bd3bdcf | B4 Audit | 10 | 3 | 13 | 50.4s | 99,364 | 63,562 | 162,926 | 61% | 39% | 0 | Dispatched Jack + 2 Counters; orchestrator re-did some sub-agent work inline |
 
+| 2026-10-12 14:07 | main | 12e9334 | TB mini-suite (Terminal-Bench, 11/15) | — | — | — | ~50min | 6.3M | — | 6,255,709 | 100% | 0% | 3 | yaah one-shot vs harness pin d28711d; deepseek-flash; fix-git excluded (upstream-unbuildable); 2 agent timeouts (localstack, kind), 1 test fail; tokens from in-container state.db |
+
 ## Analysis: Continuation Guard Impact
 
 **Test Configuration:** `context_window: 20000` to force compaction during B4 audit

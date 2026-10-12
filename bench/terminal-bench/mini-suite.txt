@@ -15,12 +15,7 @@ hello-world                # file-operations    34  (also the smoke task)
 create-bucket              # file-operations    43
 csv-to-parquet             # data-science       44
 broken-python              # software-engineering 46
-fix-git                    # software-engineering 57  UNBUILDABLE at pin
-                           #   d28711d: its setup.sh clones a GitHub
-                           #   fixture repo that has been deleted
-                           #   (TheMikeMerrill/personal-site). Fails on
-                           #   every runtime; excluded from results
-                           #   (report n/14).
+fix-git                    # software-engineering 57
 cpp-compatibility          # debugging          64
 fix-pandas-version         # debugging          78
 png-generation             # file-operations    78
