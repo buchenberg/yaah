@@ -10,14 +10,14 @@
 # Usage:
 #   ./run.sh                           # the 6-task suite (default, suite.txt)
 #   ./run.sh hello-world create-bucket # named tasks (e.g. the 2-task smoke)
-#   SUITE=<file> ./run.sh              # any task-list file in this directory
+#   SUITE=my-tasks.txt ./run.sh        # any task-list file in this directory
 #   YAAH_MODEL=deepseek-flash ./run.sh # override the model
 #
 # Token budget (calibrated on deepseek-flash, see README.md and
 # RESULTS.md): the fixed per-session cost is ~30K input tokens
 # (identity + tool schemas; the hello-world smoke IS that baseline at
 # 30.6K), and multi-step tasks land 4-5x that. The default 6-task
-# suite measured ~0.98M tokens on the recorded yaah run, ~88% of
+# suite measured ~0.98M tokens on the recorded yaah run, ~89% of
 # prompt tokens served from cache. Run the 2-task smoke first if the
 # budget matters.
 

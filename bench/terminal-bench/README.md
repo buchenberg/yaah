@@ -47,7 +47,7 @@ uv venv .venv && uv pip install -e .
 export DEEPSEEK_API_KEY=...      # required; the same key your yaah config interpolates
 ./run.sh                          # the 6-task suite (default, suite.txt)
 ./run.sh hello-world broken-python  # the 2-task smoke
-SUITE=<file> ./run.sh             # any task-list file in this directory
+SUITE=my-tasks.txt ./run.sh       # any task-list file in this directory
 YAAH_MODEL=<model> ./run.sh       # any tier you like; default deepseek-flash
 ```
 

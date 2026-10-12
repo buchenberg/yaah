@@ -131,9 +131,9 @@ dwarfed the smoke pair.
 
 The v1 comparison above included three tasks that fail for reasons
 unrelated to agent capability, so they add run cost and noise, not
-signal. They are removed from the default suite (`mini-suite-v2.txt`,
-12 tasks; the runner defaults to it; `SUITE=mini-suite.txt ./run.sh`
-restores v1):
+signal. They were removed from the default suite at the time
+(`mini-suite-v2.txt`, 12 tasks — historical: superseded by the
+Suite reset section below, and neither file is in the tree anymore):
 
 - **fix-git** — unbuildable at the pin (setup.sh clones a deleted
   GitHub repo; fails on every runtime).
@@ -156,9 +156,10 @@ yaah run scores 12/12 on the v2 subset (opencode 7/12).
 The frozen-list convention is dropped: the default task list is now
 `suite.txt`, 6 tasks, editable — iterate freely and cite the file's
 commit alongside any score. The frozen lists (`mini-suite.txt`,
-`mini-suite-v2.txt`) are removed from the tree and live in git
-history; every recorded run in this document cites its pinned commit,
-so reproducibility of past scores is unaffected.
+`mini-suite-v2.txt`) are removed from the tree; git history preserves
+them — the v1 task list both recorded runs used is recoverable at
+commit 2595c6b, the never-run v2 list at 639e2cc — so
+reproducibility of past scores is unaffected.
 
 Selection rationale: one representative per major category (files,
 software engineering, data, algorithms, games/planning), all cheap at
