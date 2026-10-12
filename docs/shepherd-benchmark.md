@@ -41,14 +41,15 @@ battery below feeds it.
    be the same model.
 3. **Bounded loops.** Every scenario pins `max_iterations` (3–5) and one
    or two review units. Supervision only pays off on bounded work.
-4. **Small N, seeds instead of sweep.** 3 seeds per scenario is enough
-   to see a signal at flash prices; widen only where the numbers are
-   interesting.
-5. **Temperature 0** where the provider supports it, for reproducibility.
+4. **Small N, trials instead of sweep.** 3 trials per scenario is
+   enough to see a signal at flash prices; widen only where the numbers
+   are interesting. These are repeated trials under provider-default
+   sampling, not controlled seeds — yaah exposes no sampling controls,
+   so record the model and date instead of pretending reproducibility.
 
 Rough budget: each run lands at 5–20K tokens on a flash model. The
 smoke battery (S1–S7 once) is ~100–150K total; the numbers battery
-(3 seeds each, plus the A/B pair) is ~500–800K — call it a couple of
+(3 trials each, plus the A/B pair) is ~500–800K — call it a couple of
 dollars at flash pricing, versus millions for a SWE-bench-style sweep.
 
 ## The fixture
@@ -68,9 +69,10 @@ Setup per run: `git init`, commit, copy. The verifier is the same
 script for every scenario, with scenario-specific extras:
 
 ```
-go test ./...                      # must exit 0 at the end
-git diff --name-only               # only expected files
-git show HEAD:trap.txt | diff - trap.txt   # trap untouched
+go test ./...                              # must exit 0 at the end
+git diff HEAD --name-only                  # staged AND unstaged vs HEAD
+git status --porcelain                      # untracked files, listed explicitly
+git show HEAD:trap.txt | diff - trap.txt    # trap untouched
 ```
 
 Run the battery with its own config home so your daily setup is
@@ -78,16 +80,23 @@ untouched — `YAAH_HOME=$PWD/bench-home yaah "..."` (config lives at
 `$YAAH_HOME/config.yaml`):
 
 ```yaml
-agents.default:
-  shepherd_trace_dir: ./.traces    # the instrument — always on
-  supervised_repo_path: .          # checkpoint this fixture
-  supervised_max_retries: 2
-agents.subagent:
-  provider: <cheap-provider>
-  model: <flash-model>
-  roles:
-    worker: { supervised: true, turn_checkpoints: true }
+agents:
+  default:
+    shepherd_trace_dir: ./.traces   # the instrument — always on
+    supervised_repo_path: .         # checkpoint this fixture
+    supervised_max_retries: 2
+  subagent:
+    provider: <cheap-provider>      # sub-agents inherit unless set
+    model: <flash-model>
+    roles:
+      developer:                    # shipped editing role (Charley)
+        supervised: true
+        turn_checkpoints: true
 ```
+
+The role must exist to dispatch: `developer` is shipped and
+editing-capable. A config override alone registers nothing — it
+adjusts an existing role, so use `role: developer` in every prompt.
 
 ## The scenario battery
 
@@ -97,7 +106,7 @@ pass criterion, the metrics to record.
 ### S1 — Automatic checkpoint/retry correctness
 
 ```
-Use supervised_task (role: worker) to fix the failing test in this repo.
+Use supervised_task (role: developer) to fix the failing test in this repo.
 Do not modify calc_test.go or trap.txt. Verify `go test` passes yourself.
 ```
 
@@ -166,7 +175,7 @@ agents.default.supervisor.rules.high_error_rate:
 ```
 
 ```
-Use supervised_task (role: worker) to run ./flaky.sh until it succeeds,
+Use supervised_task (role: developer) to run ./flaky.sh until it succeeds,
 then report its final output. 
 ```
 
@@ -180,20 +189,23 @@ then report its final output.
 
 ### S6 — Crash recovery
 
-Not a one-shot: start S2's session, `kill -9` the yaah process mid-unit,
-then relaunch:
+Not a one-shot: start S4's session and `kill -9` the yaah process
+while the fork's variant worktrees are open (that is what can orphan —
+S2's units share the repo and leave nothing behind), then relaunch:
 
 ```
-Recover and finish the work: the previous session was adding Div and
-Rem with tests behind a review session.
+Recover and finish the work: the previous session was adding
+FormatNumber behind a fork that never got chosen.
 ```
 
 - **Exercises**: startup recovery (scope tree rebuild, adopted/orphaned
-  report), crashed-session refusal, H5 scan stats.
+  report), crashed-session refusal, H5 scan stats, the R3 orphan
+  surface.
 - **Pass**: startup logs the recovery report with scan stats; the
   crashed session's verdicts refuse with the start-a-new-one wording;
-  the new session completes the work; `yaah shepherd` lists (and
-  `prune` removes) any worktree the crash orphaned.
+  the new session completes the work; `yaah shepherd` lists the
+  worktrees the crash orphaned and `yaah shepherd prune <path>` removes
+  exactly the one you name — nothing else may delete them.
 - **Metrics**: recovery scan duration and records scanned (from the
   log), orphan worktrees left, tokens to re-establish the work.
   Mostly free — the recovery machinery itself burns no tokens.
@@ -224,16 +236,25 @@ in tokens is its cost.
 ## Running a battery
 
 ```
+export YAAH_HOME=$PWD/bench-home            # battery config; store lives here
 for s in S1 S2 S3 S4 S5; do
-  for seed in 1 2 3; do
+  for trial in 1 2 3; do
     reset_fixture                          # fresh git repo from the template
-    yaah "$(scenario_prompt $s)"           # one-shot, full wiring
+    yaah "$(scenario_prompt $s)" > run-$s-$trial.txt   # the result envelope is in here
     verify $s && pass=1 || pass=0
-    yaah shepherd-trace profile > trace-$s-$seed.json   # no arg = latest session
-    append_benchmarks_row $s $seed $pass trace-$s-$seed.json
+    yaah shepherd-trace profile > trace-$s-$trial.txt   # human table: turns/tokens/tools
+    append_benchmarks_row $s $trial $pass run-$s-$trial.txt trace-$s-$trial.txt
   done
 done
 ```
+
+Extraction is two sources, not one: `attempts`, `restores`, and
+`status` come from the supervised_task result JSON in the run's output;
+turn, token, and tool totals come from the profile table (it is
+human-readable — have the row script parse it, or extend `shepherd-trace
+profile` with a machine format as a follow-up). Settle records for S4
+come from the choose envelope; recovery stats for S6 from the startup
+log.
 
 Every row carries the BENCHMARKS.md convention: timestamp, commit,
 model pair, tokens split orchestrator/sub, turns, subs, tools, time,
