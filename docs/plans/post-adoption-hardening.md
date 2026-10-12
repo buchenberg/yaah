@@ -1,10 +1,15 @@
 # Plan 07 — Post-adoption hardening (architectural findings F1–F7)
 
-Status: **proposed**. The shepherd-kernel adoption and the kernel's plan 06
-are complete; this plan hardens what the end-to-end architectural review
+Status: **shipped**. The shepherd-kernel adoption and the kernel's plan 06
+are complete; this plan hardened what the end-to-end architectural review
 (2026-10-11) found around the adopted surface. Each finding was re-verified
 against the current trees before this plan was written; where plan 06
 already closed a finding, it is recorded as closed, not re-planned.
+
+Shipped as six yaah PRs — the plan itself (#278), H1 docs (#280), H2
+(#281), H3+H5 consumer half on the kernel's v0.15.0 (#282), H6 (#283),
+and H4, deliberately last, retiring the shared-global seam (#285) —
+with the kernel halves of H3/H5 in the v0.15.0 train.
 
 ---
 
