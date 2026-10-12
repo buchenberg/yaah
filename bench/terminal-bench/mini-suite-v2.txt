@@ -10,8 +10,9 @@
 #   png-generation       upstream compose omits the agent-logs volume;
 #                        its OCR-join test is brittle (both CLIs fail it)
 #   setup-custom-dev-env  spins a kind cluster inside the task budget —
-#                        both CLIs hit the time cap; budget-bound, not
-#                        capability-bound (re-add with a larger budget)
+#                        yaah hit the cap while opencode fast-failed;
+#                        infrastructure-heavy rather than a clean
+#                        capability signal (re-add with a larger budget)
 #
 # Same pin, same judge, same categories as v1. Cite as "n/12 on the
 # yaah mini-suite v2" with the exact commit of this file. v1 stays
