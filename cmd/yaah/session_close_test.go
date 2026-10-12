@@ -185,6 +185,10 @@ func TestSessionCloseLeavesInfraOpenOnDrainTimeout(t *testing.T) {
 		t.Fatalf("launch hanging job: %v", lerr)
 	}
 	t.Cleanup(func() { close(hang); _ = bg.CloseAndWait(5 * time.Second) })
+	// The store DELIBERATELY stays open past close() here — that is the
+	// assertion — but on Windows an open handle blocks the TempDir
+	// cleanup, so the test closes it before returning.
+	t.Cleanup(func() { _ = store.Close(context.Background()) })
 
 	oldTimeout := backgroundJobDrainTimeout
 	backgroundJobDrainTimeout = 50 * time.Millisecond
