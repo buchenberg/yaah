@@ -225,7 +225,7 @@ func (s *agentSession) close() {
 	if s.backgroundJobs != nil {
 		if !s.backgroundJobs.CloseAndWait(drainTimeout) {
 			drained = false
-			fmt.Fprintf(os.Stderr, "warning: background sub-agent(s) still finishing after %s; continuing session teardown\n", backgroundJobDrainTimeout)
+			fmt.Fprintf(os.Stderr, "warning: background sub-agent(s) still finishing after %s; continuing session teardown\n", drainTimeout)
 		}
 	}
 	// PruneTerminal on close (adoption plan R2): merged and discarded
