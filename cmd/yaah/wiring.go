@@ -923,9 +923,11 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		sess.totalUsage.PromptTokens += u.PromptTokens
 		sess.totalUsage.CompletionTokens += u.CompletionTokens
 		sess.totalUsage.TotalTokens += u.TotalTokens
+		sess.totalUsage.CachedPromptTokens += u.CacheTokens()
 		sess.subUsage.PromptTokens += u.PromptTokens
 		sess.subUsage.CompletionTokens += u.CompletionTokens
 		sess.subUsage.TotalTokens += u.TotalTokens
+		sess.subUsage.CachedPromptTokens += u.CacheTokens()
 		sess.flushUsage()
 		sess.mu.Unlock()
 	}

@@ -46,7 +46,21 @@ func (l *Loop) agentTools() []types.ToolDef {
 // session persist usage incrementally — a session killed mid-run
 // (timeout, crash) still reports what it spent.
 func (l *Loop) addUsage(u types.Usage) {
+	running := l.addUsageLocked(u)
+	if l.OnUsage != nil {
+		// Outside the usage lock: the hook writes to the session DB
+		// and must not hold up LLM accounting. Out-of-order snapshots
+		// across concurrent tool goroutines are handled downstream by
+		// the session's monotonic flush.
+		l.OnUsage(running)
+	}
+}
+
+// addUsageLocked mutates the loop's running totals and returns the
+// snapshot after this call.
+func (l *Loop) addUsageLocked(u types.Usage) types.Usage {
 	l.usageMu.Lock()
+	defer l.usageMu.Unlock()
 	l.State.TotalTokens.PromptTokens += u.PromptTokens
 	l.State.TotalTokens.CompletionTokens += u.CompletionTokens
 	l.State.TotalTokens.TotalTokens += u.TotalTokens
@@ -54,19 +68,14 @@ func (l *Loop) addUsage(u types.Usage) {
 	if d := u.CompletionTokensDetails; d != nil {
 		l.State.TotalReasoningTokens += d.ReasoningTokens
 	}
-	if d := u.PromptTokensDetails; d != nil {
-		l.State.TotalCachedPromptTokens += d.CachedTokens
-		l.State.LastCachedPromptTokens = d.CachedTokens
-		l.State.TotalTokens.CachedPromptTokens += d.CachedTokens
+	if cached := u.CacheTokens(); cached > 0 {
+		l.State.TotalCachedPromptTokens += cached
+		l.State.TotalTokens.CachedPromptTokens += cached
+		l.State.LastCachedPromptTokens = cached
 	} else {
 		l.State.LastCachedPromptTokens = 0
 	}
-	onUsage := l.OnUsage
-	running := l.State.TotalTokens
-	l.usageMu.Unlock()
-	if onUsage != nil {
-		onUsage(running)
-	}
+	return l.State.TotalTokens
 }
 
 // compactMessagesIsolated runs context compaction against an isolated

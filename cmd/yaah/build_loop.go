@@ -30,48 +30,6 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 
 	b := s.loopBuilder(prov, mName, compactProvider, compactModel, fallbackProvider, fallbackModel)
 
-	// usageBeforeRun anchors the per-call usage hook: the hook sees the
-	// loop's running totals, so the session-cumulative spend at any
-	// moment is usageBeforeRun + running. The post-Run accumulation
-	// below remains the authoritative total; the hook's flushes agree
-	// with it by construction.
-	s.mu.RLock()
-	usageBeforeRun := s.totalUsage
-	s.mu.RUnlock()
-
-	// OnUsage flushes the session's usage row per LLM call, so a session
-	// killed mid-run (harness timeout, crash) still reports its spend.
-	// It must NOT write the session's live totals: background dispatches
-	// fold their usage into totalUsage concurrently, and overwriting it
-	// here would erase their contribution. The flushed value is computed
-	// (before-run + the loop's running total) and written straight to
-	// the DB; the post-Run accumulation below remains authoritative.
-	// Mid-run background-sub spend may be absent from an intermediate
-	// flush and is always present in the final one.
-	b.OnUsage = func(running types.Usage) {
-		s.mu.Lock()
-		s.flushUsageValues(
-			usageBeforeRun.PromptTokens+running.PromptTokens,
-			usageBeforeRun.CompletionTokens+running.CompletionTokens,
-			usageBeforeRun.CachedPromptTokens+running.CachedPromptTokens,
-			s.subUsage.PromptTokens, s.subUsage.CompletionTokens)
-		s.mu.Unlock()
-	}
-	// OnSubUsage attributes sub-agent usage to the session's subUsage
-	// counter (the fold into the loop totals happens regardless).
-	b.OnSubUsage = func(sub types.Usage) {
-		s.mu.Lock()
-		s.subUsage.PromptTokens += sub.PromptTokens
-		s.subUsage.CompletionTokens += sub.CompletionTokens
-		s.subUsage.TotalTokens += sub.TotalTokens
-		s.subUsage.CachedPromptTokens += sub.CachedPromptTokens
-		s.flushUsageValues(
-			s.totalUsage.PromptTokens, s.totalUsage.CompletionTokens,
-			s.totalUsage.CachedPromptTokens,
-			s.subUsage.PromptTokens, s.subUsage.CompletionTokens)
-		s.mu.Unlock()
-	}
-
 	otelEnabled := s.cfg.Observability.Otel.Enabled
 	loop := b.Build(agent.LoopBuildOptions{
 		View:         v,
@@ -155,6 +113,48 @@ func (s *agentSession) loopBuilder(
 	fallbackProvider agent.Provider,
 	fallbackModel string,
 ) *agent.LoopBuilder {
+	// The usage hooks are installed on the builder so EVERY loop this
+	// session builds — interactive (runPrompt), serve (runHeadless),
+	// compact — flushes incrementally. usageBeforeRun anchors the
+	// per-call hook: it sees the loop's running totals, so the
+	// session-cumulative spend at any moment is before-run + running.
+	s.mu.RLock()
+	usageBeforeRun := s.totalUsage
+	s.mu.RUnlock()
+
+	// OnUsage flushes the session's usage row per LLM call, so a session
+	// killed mid-run (harness timeout, crash) still reports its spend.
+	// It must NOT write the session's live totals: background dispatches
+	// fold their usage into totalUsage concurrently, and overwriting it
+	// here would erase their contribution. The flushed value is computed
+	// (before-run + the loop's running total) and written straight to
+	// the DB; the session's post-Run accumulation remains authoritative.
+	// The flush is monotonic (flushUsageValues), so a compact loop's
+	// small totals or an out-of-order snapshot can never shrink the row.
+	onUsage := func(running types.Usage) {
+		s.mu.Lock()
+		s.flushUsageValues(
+			usageBeforeRun.PromptTokens+running.PromptTokens,
+			usageBeforeRun.CompletionTokens+running.CompletionTokens,
+			usageBeforeRun.CachedPromptTokens+running.CachedPromptTokens,
+			s.subUsage.PromptTokens, s.subUsage.CompletionTokens)
+		s.mu.Unlock()
+	}
+	// OnSubUsage attributes sub-agent usage to the session's subUsage
+	// counter (the fold into the loop totals happens regardless).
+	onSubUsage := func(sub types.Usage) {
+		s.mu.Lock()
+		s.subUsage.PromptTokens += sub.PromptTokens
+		s.subUsage.CompletionTokens += sub.CompletionTokens
+		s.subUsage.TotalTokens += sub.TotalTokens
+		s.subUsage.CachedPromptTokens += sub.CacheTokens()
+		s.flushUsageValues(
+			s.totalUsage.PromptTokens, s.totalUsage.CompletionTokens,
+			s.totalUsage.CachedPromptTokens,
+			s.subUsage.PromptTokens, s.subUsage.CompletionTokens)
+		s.mu.Unlock()
+	}
+
 	// Isolated sessions must not spill oversized tool results to the
 	// host: the truncation hint points the model at the spill file to
 	// `read` it back, and a sandboxed read cannot reach a host path —
@@ -175,6 +175,8 @@ func (s *agentSession) loopBuilder(
 	hooks := agent.NewHookEmitter(s.cfg.Hooks.Dir, s.sessionID)
 
 	return &agent.LoopBuilder{
+		OnUsage:                    onUsage,
+		OnSubUsage:                 onSubUsage,
 		Provider:                   prov,
 		Registry:                   s.toolReg,
 		Model:                      modelName,

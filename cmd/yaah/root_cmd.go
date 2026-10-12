@@ -64,10 +64,6 @@ func runRoot(cmd *cobra.Command, args []string) error {
 }
 
 // runOneShot runs the agent for a single prompt and prints the response.
-func runOneShot(cmd *cobra.Command, prompt string) error {
-	return runOneShotWith(cmd, prompt, sessionOptionsFromFlags())
-}
-
 // runOneShotWith runs the agent for a single prompt and prints the
 // response. One-shot sessions are non-interactive: the opts carry the
 // OneShot marker so the wiring adds the non-interactivity guidance and

@@ -120,6 +120,24 @@ type PromptTokensDetails struct {
 	AudioTokens  int `json:"audio_tokens,omitempty"`
 }
 
+// CacheTokens reports the prompt tokens served from a provider context
+// cache, whichever shape the usage arrived in: raw provider usage
+// carries them nested in PromptTokensDetails (deepseek's
+// prompt_tokens_details.cached_tokens, Anthropic's cache reads mapped
+// at parse time); aggregates accumulate them into the top-level
+// CachedPromptTokens. Accumulators MUST use this helper rather than
+// reading either field alone — the two shapes are disjoint by
+// convention, so adding both would double-count.
+func (u Usage) CacheTokens() int {
+	if u.CachedPromptTokens > 0 {
+		return u.CachedPromptTokens
+	}
+	if d := u.PromptTokensDetails; d != nil {
+		return d.CachedTokens
+	}
+	return 0
+}
+
 // ToolResultMsg creates a tool result message to append to the conversation.
 func ToolResultMsg(callID, name, content string) Message {
 	return Message{
