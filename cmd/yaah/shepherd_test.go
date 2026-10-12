@@ -80,7 +80,7 @@ func shepherdOrphanEnv(t *testing.T) (*recovery.Report, string, string) {
 		t.Fatalf("reopen: %v", err)
 	}
 	t.Cleanup(func() { store2.Close(context.Background()) })
-	_, report, err := recovery.Recover(context.Background(), store2, repo, true)
+	_, report, err := recovery.Recover(context.Background(), store2, repo, true, nil)
 	if err != nil {
 		t.Fatalf("recover: %v", err)
 	}

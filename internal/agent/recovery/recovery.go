@@ -111,7 +111,7 @@ type Report struct {
 //
 // A resolver error fails the recovery loudly: half-adopted sandboxes
 // are worse than none (the kernel's contract).
-func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPath string, adoptRoots bool) (*shepherd.ScopeManager, *Report, error) {
+func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPath string, adoptRoots bool, stats *shepherd.RecoveryStats) (*shepherd.ScopeManager, *Report, error) {
 	if repoPath == "" {
 		return nil, nil, fmt.Errorf("no repository to re-adopt onto")
 	}
@@ -178,7 +178,7 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 		}
 	}
 
-	mgr, err := shepherd.RecoverScopes(store, shepherd.RecoverOptions{Resolver: resolver})
+	mgr, err := shepherd.RecoverScopes(store, shepherd.RecoverOptions{Resolver: resolver, Stats: stats})
 	if err != nil {
 		return nil, nil, err
 	}

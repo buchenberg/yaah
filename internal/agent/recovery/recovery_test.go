@@ -135,7 +135,7 @@ func reopen(t *testing.T, state *crashState) (*shepherd.ScopeManager, *Report) {
 		t.Fatalf("reopen store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	mgr, report, err := Recover(context.Background(), store, state.repo, true)
+	mgr, report, err := Recover(context.Background(), store, state.repo, true, nil)
 	if err != nil {
 		t.Fatalf("recover: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestRecover_FailsLoudlyOnCorruptTrace(t *testing.T) {
 		t.Fatalf("append corrupt record: %v", err)
 	}
 
-	if _, _, err := Recover(context.Background(), store, repo, true); err == nil {
+	if _, _, err := Recover(context.Background(), store, repo, true, nil); err == nil {
 		t.Fatal("a corrupt trace must fail the recovery loudly")
 	}
 }
@@ -398,7 +398,7 @@ func TestRecover_SquatterDirectoryNeverAdopted(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	t.Cleanup(func() { store2.Close(context.Background()) })
-	mgr, report, err := Recover(context.Background(), store2, repo, true)
+	mgr, report, err := Recover(context.Background(), store2, repo, true, nil)
 	if err != nil {
 		t.Fatalf("recover: %v", err)
 	}
@@ -453,7 +453,7 @@ func reopenMode(t *testing.T, state *crashState, adoptRoots bool) (*shepherd.Sco
 		t.Fatalf("reopen store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	mgr, report, err := Recover(context.Background(), store, state.repo, adoptRoots)
+	mgr, report, err := Recover(context.Background(), store, state.repo, adoptRoots, nil)
 	if err != nil {
 		t.Fatalf("recover: %v", err)
 	}
@@ -527,7 +527,7 @@ func TestRecover_KernelRecordedWorktreeAdoptsWithoutYaahRecord(t *testing.T) {
 		t.Fatalf("reopen store: %v", err)
 	}
 	t.Cleanup(func() { reopened.Close(context.Background()) })
-	rmgr, report, err := Recover(ctx, reopened, repo, true)
+	rmgr, report, err := Recover(ctx, reopened, repo, true, nil)
 	if err != nil {
 		t.Fatalf("recover: %v", err)
 	}
@@ -613,7 +613,7 @@ func TestRecover_LegacyRecordFallbackAdopts(t *testing.T) {
 		t.Fatalf("reopen store: %v", err)
 	}
 	t.Cleanup(func() { reopened.Close(context.Background()) })
-	rmgr, report, err := Recover(ctx, reopened, repo, true)
+	rmgr, report, err := Recover(ctx, reopened, repo, true, nil)
 	if err != nil {
 		t.Fatalf("recover: %v", err)
 	}

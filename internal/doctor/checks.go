@@ -527,7 +527,7 @@ func CheckShepherd(cfg *config.Config, cfgErr error) Check {
 	// adoptRoots: the doctor has no session, so the local-mode rule
 	// applies; the throwaway registry is discarded either way and the
 	// root counts do not depend on it.
-	_, report, err := recovery.Recover(context.Background(), store, repoPath, true)
+	_, report, err := recovery.Recover(context.Background(), store, repoPath, true, nil)
 	if err != nil {
 		return Check{Label: label, Status: "FAIL", Detail: "recovery: " + err.Error()}
 	}
