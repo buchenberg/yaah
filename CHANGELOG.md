@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.75.0](https://github.com/buchenberg/yaah/compare/v0.74.0...v0.75.0) (2026-10-11)
+
+
+### Features
+
+* **shepherd:** plan 06 phase D -- re-pin kernel v0.14.0, retire the worktree record ([a21798f](https://github.com/buchenberg/yaah/commit/a21798faa6b6564346ce0c49fac1750de2b5519d))
+* **shepherd:** plan 06 phase D — re-pin kernel v0.14.0, retire the worktree record ([25656a0](https://github.com/buchenberg/yaah/commit/25656a0fcf086b21635d5ade55704f4abd28ef1c))
+
+
+### Bug Fixes
+
+* **recovery:** trusted repo, not the occupant's; genuine legacy-fallback coverage (review) ([a2d38d6](https://github.com/buchenberg/yaah/commit/a2d38d67a8b268789390ea46aaa91b53471cc800))
+
 ## [0.74.0](https://github.com/buchenberg/yaah/compare/v0.73.0...v0.74.0) (2026-10-11)
 
 
