@@ -54,7 +54,9 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	// One-shot mode: args present
 	if len(args) > 0 {
 		prompt := strings.Join(args, " ")
-		return runOneShot(cmd, prompt)
+		opts := sessionOptionsFromFlags()
+		opts.OneShot = true
+		return runOneShotWith(cmd, prompt, opts)
 	}
 
 	// REPL mode: no args
@@ -63,9 +65,17 @@ func runRoot(cmd *cobra.Command, args []string) error {
 
 // runOneShot runs the agent for a single prompt and prints the response.
 func runOneShot(cmd *cobra.Command, prompt string) error {
+	return runOneShotWith(cmd, prompt, sessionOptionsFromFlags())
+}
+
+// runOneShotWith runs the agent for a single prompt and prints the
+// response. One-shot sessions are non-interactive: the opts carry the
+// OneShot marker so the wiring adds the non-interactivity guidance and
+// leaves the question tool out of the belt.
+func runOneShotWith(cmd *cobra.Command, prompt string, opts SessionOptions) error {
 	cmd.Printf("%s\n\n", repl.Bold("yaah "+version))
 
-	sess, err := newAgentSession()
+	sess, err := newAgentSessionWithOptions(opts, false, false)
 	if err != nil {
 		return err
 	}

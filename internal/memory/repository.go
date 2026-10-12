@@ -7,7 +7,8 @@ type SessionRepository interface {
 	CreateSession(s Session) error
 	GetSession(id string) (Session, error)
 	ListSessions(limit int) ([]Session, error)
-	EndSession(id string, endedAt int64, tokensIn int, tokensOut int) error
+	EndSession(id string, endedAt int64, tokensIn int, tokensOut int, tokensCached, subTokensIn, subTokensOut int) error
+	UpdateSessionUsage(id string, tokensIn int, tokensOut int, tokensCached, subTokensIn, subTokensOut int) error
 	UpdateSessionSummary(id string, summary string) error
 	GetCompactionCooldown(sessionID string) (cooldownUntil int64, ineffective int, err error)
 	SetCompactionCooldown(sessionID string, cooldownUntil int64, ineffective int) error

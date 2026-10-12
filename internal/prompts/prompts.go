@@ -61,6 +61,9 @@ var environmentHeaderRaw string
 //go:embed subagent_tools.md
 var subAgentToolsRaw string
 
+//go:embed oneshot.md
+var oneShotRaw string
+
 //go:embed tools/*.md
 var ToolsFS embed.FS
 
@@ -94,6 +97,13 @@ func ToolDescription(name string) string {
 // and severity levels for structured error reporting.
 func Escalation() string {
 	return escalation
+}
+
+// OneShotGuidance returns the non-interactivity notice injected into
+// one-shot sessions (`yaah "prompt"`): no human is watching, questions
+// dead-end the run, sensible defaults beat unanswerable questions.
+func OneShotGuidance() string {
+	return strings.TrimSpace(oneShotRaw)
 }
 
 // SubAgentToolsGuidance returns the orchestrator guidance block that

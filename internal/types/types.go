@@ -94,9 +94,14 @@ type Choice struct {
 
 // Usage holds token usage statistics from the provider.
 type Usage struct {
-	PromptTokens            int                      `json:"prompt_tokens"`
-	CompletionTokens        int                      `json:"completion_tokens"`
-	TotalTokens             int                      `json:"total_tokens"`
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+	// CachedPromptTokens is the running sum of prompt tokens served
+	// from a provider context cache (deepseek's automatic prefix cache,
+	// OpenAI-style prompt_tokens_details.cached_tokens). It is folded in
+	// from PromptTokensDetails at accumulation time, not on the wire.
+	CachedPromptTokens      int                      `json:"cached_prompt_tokens,omitempty"`
 	CompletionTokensDetails *CompletionTokensDetails `json:"completion_tokens_details,omitempty"`
 	PromptTokensDetails     *PromptTokensDetails     `json:"prompt_tokens_details,omitempty"`
 }

@@ -380,7 +380,7 @@ func TestDB_EndSession(t *testing.T) {
 		ID: "sess-1", StartedAt: 1000, CWD: "/tmp", Model: "gpt-4o",
 	})
 
-	if err := db.EndSession("sess-1", 2000, 500, 300); err != nil {
+	if err := db.EndSession("sess-1", 2000, 500, 300, 120, 200, 100); err != nil {
 		t.Fatalf("EndSession() error: %v", err)
 	}
 
@@ -396,6 +396,56 @@ func TestDB_EndSession(t *testing.T) {
 	}
 	if sessions[0].TokensOut != 300 {
 		t.Errorf("expected tokens_out=300, got %d", sessions[0].TokensOut)
+	}
+	if sessions[0].TokensCached != 120 {
+		t.Errorf("expected tokens_cached=120, got %d", sessions[0].TokensCached)
+	}
+	if sessions[0].SubTokensIn != 200 {
+		t.Errorf("expected sub_tokens_in=200, got %d", sessions[0].SubTokensIn)
+	}
+	if sessions[0].SubTokensOut != 100 {
+		t.Errorf("expected sub_tokens_out=100, got %d", sessions[0].SubTokensOut)
+	}
+}
+
+func TestDB_UpdateSessionUsage(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error: %v", err)
+	}
+	defer db.Close()
+
+	db.CreateSession(Session{
+		ID: "sess-2", StartedAt: 1000, CWD: "/tmp", Model: "m",
+	})
+
+	// The incremental flush: usage lands without ending the session.
+	if err := db.UpdateSessionUsage("sess-2", 100, 20, 60, 0, 0); err != nil {
+		t.Fatalf("UpdateSessionUsage() error: %v", err)
+	}
+
+	s, err := db.GetSession("sess-2")
+	if err != nil {
+		t.Fatalf("GetSession() error: %v", err)
+	}
+	if s.TokensIn != 100 || s.TokensOut != 20 || s.TokensCached != 60 {
+		t.Errorf("usage flush: got in=%d out=%d cached=%d, want 100/20/60", s.TokensIn, s.TokensOut, s.TokensCached)
+	}
+	if s.EndedAt != 0 {
+		t.Errorf("usage flush must not end the session, got ended_at=%d", s.EndedAt)
+	}
+
+	// A later flush overwrites with the newer running totals.
+	if err := db.UpdateSessionUsage("sess-2", 300, 40, 200, 150, 10); err != nil {
+		t.Fatalf("UpdateSessionUsage() (2) error: %v", err)
+	}
+	s, err = db.GetSession("sess-2")
+	if err != nil {
+		t.Fatalf("GetSession() (2) error: %v", err)
+	}
+	if s.TokensIn != 300 || s.TokensOut != 40 || s.TokensCached != 200 || s.SubTokensIn != 150 || s.SubTokensOut != 10 {
+		t.Errorf("usage flush (2): got %+v", s)
 	}
 }
 

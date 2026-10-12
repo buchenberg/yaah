@@ -290,6 +290,18 @@ func (r *Registry) Register(t Tool) {
 	r.inject(t)
 }
 
+// Unregister removes a tool from the belt. Used for mode-driven
+// omissions (e.g. the question tool in a non-interactive one-shot
+// session, where a blocking question has no one to answer it and
+// dead-ends the run). Unregistering a name that is not registered is
+// a no-op.
+func (r *Registry) Unregister(name string) {
+	if _, ok := r.tools[name]; ok {
+		delete(r.tools, name)
+		r.generation++
+	}
+}
+
 // inject hands the registry's context to one tool.
 //
 // Both are applied: tools not yet migrated to Workspace still need the

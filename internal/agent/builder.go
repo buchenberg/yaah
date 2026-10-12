@@ -37,6 +37,11 @@ type LoopBuilder struct {
 	Steer <-chan string
 	// FollowUps is the between-turn follow-up channel (nil = none).
 	FollowUps <-chan string
+	// OnUsage fires after every LLM call with the loop's running usage
+	// totals (incremental persistence); OnSubUsage fires when a
+	// blocking sub-agent dispatch's usage folds in (attribution).
+	OnUsage    func(types.Usage)
+	OnSubUsage func(types.Usage)
 	// BackgroundJobs manages background sub-agent dispatch.
 	BackgroundJobs *jobs.BackgroundJobs
 	// ConflictTracker detects parallel sub-agent file conflicts.
@@ -106,6 +111,7 @@ func (b *LoopBuilder) Build(opts LoopBuildOptions) *Loop {
 		WithPipeline(b.PipelineEnabled, b.PipelineDisabled),
 		WithSteer(b.Steer),
 		WithFollowUps(b.FollowUps),
+		WithUsageHooks(b.OnUsage, b.OnSubUsage),
 		WithBackgroundJobs(b.BackgroundJobs),
 		WithConflictTracker(b.ConflictTracker),
 		WithToolsLevel(FullTools),

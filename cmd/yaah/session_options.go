@@ -42,6 +42,14 @@ type SessionOptions struct {
 	// OtelInMemoryOnly keeps tracing local (no OTLP endpoint, no
 	// metrics) — set by serve mode.
 	OtelInMemoryOnly bool
+
+	// OneShot marks a non-interactive one-shot run (`yaah "prompt"`).
+	// The session's prompt gains a non-interactivity notice and the
+	// question tool is left out of the belt: there is no user to ask,
+	// and a blocking question dead-ends the run (found in the
+	// Terminal-Bench mini-suite: an agent that asks "which would you
+	// like?" simply burns its whole budget).
+	OneShot bool
 }
 
 // sessionOptionsFromFlags snapshots the parsed persistent flags into a

@@ -123,6 +123,17 @@ func WithBackgroundJobs(mgr *jobs.BackgroundJobs) Option {
 	return func(l *Loop) { l.BackgroundJobs = mgr }
 }
 
+// WithUsageHooks sets the per-call usage observation hooks: onUsage fires
+// with the loop's running totals after every LLM call (incremental
+// persistence), onSubUsage fires when a blocking sub-agent dispatch's
+// usage folds in (sub-agent attribution).
+func WithUsageHooks(onUsage, onSubUsage func(types.Usage)) Option {
+	return func(l *Loop) {
+		l.OnUsage = onUsage
+		l.OnSubUsage = onSubUsage
+	}
+}
+
 // WithConflictTracker sets the file conflict tracker.
 func WithConflictTracker(t *tools.ConflictTracker) Option {
 	return func(l *Loop) { l.ConflictTracker = t }

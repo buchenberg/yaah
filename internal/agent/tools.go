@@ -41,9 +41,12 @@ func (l *Loop) agentTools() []types.ToolDef {
 }
 
 // addUsage updates the Loop's token usage tracking from an LLM response.
+// It is the single point where per-call usage lands: the running totals
+// (including the cache-hit fold) and the OnUsage hook that lets the
+// session persist usage incrementally — a session killed mid-run
+// (timeout, crash) still reports what it spent.
 func (l *Loop) addUsage(u types.Usage) {
 	l.usageMu.Lock()
-	defer l.usageMu.Unlock()
 	l.State.TotalTokens.PromptTokens += u.PromptTokens
 	l.State.TotalTokens.CompletionTokens += u.CompletionTokens
 	l.State.TotalTokens.TotalTokens += u.TotalTokens
@@ -54,8 +57,15 @@ func (l *Loop) addUsage(u types.Usage) {
 	if d := u.PromptTokensDetails; d != nil {
 		l.State.TotalCachedPromptTokens += d.CachedTokens
 		l.State.LastCachedPromptTokens = d.CachedTokens
+		l.State.TotalTokens.CachedPromptTokens += d.CachedTokens
 	} else {
 		l.State.LastCachedPromptTokens = 0
+	}
+	onUsage := l.OnUsage
+	running := l.State.TotalTokens
+	l.usageMu.Unlock()
+	if onUsage != nil {
+		onUsage(running)
 	}
 }
 

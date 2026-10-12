@@ -92,6 +92,10 @@ func AddSubAgentUsage(ctx context.Context, delta types.Usage) {
 		acc.PromptTokens += delta.PromptTokens
 		acc.CompletionTokens += delta.CompletionTokens
 		acc.TotalTokens += delta.TotalTokens
+		acc.CachedPromptTokens += delta.CachedPromptTokens
+		if d := delta.PromptTokensDetails; d != nil {
+			acc.CachedPromptTokens += d.CachedTokens
+		}
 	}
 }
 
