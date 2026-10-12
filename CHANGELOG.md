@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.76.0](https://github.com/buchenberg/yaah/compare/v0.75.0...v0.76.0) (2026-10-12)
+
+
+### Features
+
+* **session:** plan 07 phase H2 -- close the shepherd infrastructure on a clean exit ([a57d5c1](https://github.com/buchenberg/yaah/commit/a57d5c1a2fcd1ec764104e5f1183cb465d50d7d3))
+* **session:** plan 07 phase H2 — close the shepherd infrastructure on a clean exit ([2b19c9b](https://github.com/buchenberg/yaah/commit/2b19c9b75667b7d0eb45c5c998553a58b5e3373e))
+* **shepherd:** plan 07 phases H3+H5 -- consume the typed partial settlement; log the recovery scan ([4fdbfec](https://github.com/buchenberg/yaah/commit/4fdbfec6f4c8071922bb873be696aa6236447c67))
+* **shepherd:** plan 07 phases H3+H5 — typed partial settlement; recovery scan stats ([eea5a7f](https://github.com/buchenberg/yaah/commit/eea5a7f4835f877fdb2f8badd26da29b680d3f7a))
+
+
+### Bug Fixes
+
+* **session:** H2 -- drain warning reports the effective timeout (review) ([2ff4ff1](https://github.com/buchenberg/yaah/commit/2ff4ff10025c4b5e34c7143446eb8fda00ab52ab))
+* **session:** H2 review -- session-owned drain seam, bus probe, global clear, silent idempotence ([9d21db0](https://github.com/buchenberg/yaah/commit/9d21db0cccdaf6f1392ec6e033fee17cdfb2df46))
+* **shepherd:** H3+H5 review -- stage-aware ending, stats test, partial-settle test ([076a038](https://github.com/buchenberg/yaah/commit/076a038672f6662e6174dacc16fdc4b28b2cb7c4))
+
+
+### Documentation
+
+* H1 -- prune scoped to orphans; doctor described as a fresh scan (review) ([782e85b](https://github.com/buchenberg/yaah/commit/782e85b4a5c3700853e9e15bd3b83837d24345c5))
+* plan 07 -- address review findings (three fallbacks, warn-only teardown, bus close, kernel stats) ([2ed124e](https://github.com/buchenberg/yaah/commit/2ed124e5534f2e529bba53e74be0116839d64623))
+* plan 07 -- ErrRootTerminal cited at runner.go:719 (review) ([c95c541](https://github.com/buchenberg/yaah/commit/c95c54167c1e42ce1514d393320e5eb2564362df))
+* plan 07 -- post-adoption hardening (architectural findings F1-F7) ([5529e5d](https://github.com/buchenberg/yaah/commit/5529e5d197ef54cd0fe8349fd1a6e694509ab471))
+* plan 07 — post-adoption hardening (F1–F7) ([b0bfe6b](https://github.com/buchenberg/yaah/commit/b0bfe6b38d0d436019203b83746dd5f217da961d))
+* plan 07 phase H1 -- freeze the adoption audit; document the supervision lifecycle ([974a2c8](https://github.com/buchenberg/yaah/commit/974a2c88fa7a7158b291cd5a3dcb204a1f91aae7))
+* plan 07 phase H1 — freeze the adoption audit; document the supervision lifecycle ([2a0b43e](https://github.com/buchenberg/yaah/commit/2a0b43ed9feb84b2bd34f4224c45f2b2ec60a303))
+
+
+### Tests
+
+* **recovery:** H5 -- no positive-duration assert on a sub-tick scan (windows ci) ([43687d5](https://github.com/buchenberg/yaah/commit/43687d577e7f583d03db74718bb44adb2d101222))
+* **session:** H2 survivor test closes the store before TempDir cleanup (windows ci) ([2dcf9ac](https://github.com/buchenberg/yaah/commit/2dcf9ac5d1a867124dda49c511d6b3cc9ccf228e))
+* **session:** H3 -- privileged-runner guard on the teardown-failure injection (review) ([9358d0e](https://github.com/buchenberg/yaah/commit/9358d0edc80e7b90b45ae7a8400fed83e58d382a))
+* **session:** H3 -- probe written before the read-only chmod (review follow-up) ([99f97e6](https://github.com/buchenberg/yaah/commit/99f97e6f5adee4ba90d5e51b780fca5ccec5ad4b))
+
 ## [0.75.0](https://github.com/buchenberg/yaah/compare/v0.74.0...v0.75.0) (2026-10-11)
 
 
