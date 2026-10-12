@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.78.0](https://github.com/buchenberg/yaah/compare/v0.77.0...v0.78.0) (2026-10-12)
+
+
+### Features
+
+* benchmark-driven improvements — one-shot non-interactivity, incremental usage flush, cache + sub-agent attribution ([335091a](https://github.com/buchenberg/yaah/commit/335091a7e908392e7c07e7fb845a06a133998c5e))
+* benchmark-driven improvements — one-shot non-interactivity, usage flush, cache + sub-agent attribution ([dd038a7](https://github.com/buchenberg/yaah/commit/dd038a7d9c8e7b30d29f224b101ade2837518d7b))
+
+
+### Bug Fixes
+
+* benchmark improvements review fixes — cache-flow completeness, monotonic flush, serve-mode hooks ([0b58ea7](https://github.com/buchenberg/yaah/commit/0b58ea70a1f8df805c8fdb4f11a48399a30f9357))
+
+
+### Documentation
+
+* benchmark improvements — orphaned comment, CacheTokens precedence ([47d4186](https://github.com/buchenberg/yaah/commit/47d4186fd5822f75e682733df335b6b85b5c77e6))
+
 ## [0.77.0](https://github.com/buchenberg/yaah/compare/v0.76.0...v0.77.0) (2026-10-12)
 
 
