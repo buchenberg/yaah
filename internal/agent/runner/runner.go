@@ -778,6 +778,21 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 	if opts.rootScopeID == "" {
 		return mgr.Create(subTraceID, subAgentSandbox(opts, workdir))
 	}
+	// Post-halt dispatch policy (plan 07, H6): a root whose lifecycle
+	// ended — the supervisor halt's target, A3's session-level kill —
+	// refuses the dispatch loudly instead of silently degrading to a
+	// flat scope outside the session tree. A racing dispatch that
+	// landed there would be superviseable-but-orphaned: recovery
+	// rebuilds it as a sibling of a dead session, and its scope ID
+	// addresses nothing the session owns. The check runs before both
+	// fork paths so the workdir branch is covered too.
+	root, ok := mgr.Get(opts.rootScopeID)
+	if !ok {
+		return nil, fmt.Errorf("sub-agent dispatch: the session's root scope %s is gone from the registry; scope-tree supervision for this session ended", opts.rootScopeID)
+	}
+	if root.State() != shepherd.ScopeActive {
+		return nil, fmt.Errorf("%w: %s — the supervisor halt ended this session's supervision; start a new session", ErrRootTerminal, root.State())
+	}
 	// workdir isolates this dispatch in its own worktree — a local-mode
 	// concept: an isolated session ignores it (its root has no sandbox,
 	// so the fork is already pure-causal and the container's root is
@@ -791,24 +806,30 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 			repoPath, _ = os.Getwd()
 		}
 		if repoPath != "" {
-			if child, err := mgr.ForkIsolated(opts.rootScopeID, subTraceID, nil, shepherdgit.NewWorktreeSandbox(repoPath, workdir)); err == nil {
+			child, ferr := mgr.ForkIsolated(opts.rootScopeID, subTraceID, nil, shepherdgit.NewWorktreeSandbox(repoPath, workdir))
+			if ferr == nil {
 				// No yaah-side worktree record is needed (plan 06,
 				// kernel v0.14.0): the kernel's fork record carries
 				// the sandbox address itself, so recovery finds the
 				// worktree from the trace alone.
 				return child, nil
 			}
+			// A non-terminal ForkIsolated failure degrades loudly:
+			// the sub-agent still runs, superviseable, but its escape
+			// from the session tree is visible, not silent.
+			slog.Warn("sub-agent dispatch: isolated fork failed; degrading to a flat scope outside the session tree",
+				"root", opts.rootScopeID, "sub", subTraceID, "err", ferr)
 			return mgr.Create(subTraceID, subAgentSandbox(opts, workdir))
 		}
 	}
-	if child, err := mgr.Fork(opts.rootScopeID, subTraceID, nil); err == nil {
+	child, ferr := mgr.Fork(opts.rootScopeID, subTraceID, nil)
+	if ferr == nil {
 		return child, nil
 	}
-	// A fork can fail only against a non-active root — the one a
-	// supervisor halt leaves behind (A3: halting the root is a
-	// session-level kill for supervision). The dispatch then falls back
-	// to the legacy flat scope so the sub-agent stays superviseable,
-	// rather than silently unsupervised.
+	// A non-terminal fork failure degrades loudly, the same contract:
+	// superviseable, with the escape from the tree visible.
+	slog.Warn("sub-agent dispatch: fork failed; degrading to a flat scope outside the session tree",
+		"root", opts.rootScopeID, "sub", subTraceID, "err", ferr)
 	return mgr.Create(subTraceID, subAgentSandbox(opts, workdir))
 }
 

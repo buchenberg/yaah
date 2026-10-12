@@ -2,8 +2,10 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
@@ -316,5 +318,97 @@ func TestCreateRootScope_HaltedRecoveredRootRefuses(t *testing.T) {
 	}
 	if _, err := CreateRootScope(recovered, "sess-halted", repo, false); err == nil {
 		t.Fatal("reattaching a halted root must refuse loudly")
+	}
+}
+
+// TestCreateSubAgentScope_HaltedRootRefusesBothPaths pins plan 07 H6's
+// policy: a dispatch that arrives after the supervisor halt made the
+// root terminal fails loudly with ErrRootTerminal on BOTH tree-escaping
+// paths — the plain fork and the workdir ForkIsolated — instead of
+// silently degrading to a flat scope outside the session tree, which
+// recovery would rebuild as a sibling of a dead session.
+func TestCreateSubAgentScope_HaltedRootRefusesBothPaths(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+	repo := newRunnerTestGitRepo(t)
+
+	for _, tc := range []struct {
+		name    string
+		workdir string
+	}{
+		{"plain fork", ""},
+		{"workdir isolated fork", filepath.Join(t.TempDir(), "wt-halted")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr, _ := newScopeManagerForTest(t)
+			root, err := CreateRootScope(mgr, "sess-halt-"+strings.ReplaceAll(tc.name, " ", "-"), repo, false)
+			if err != nil {
+				t.Fatalf("CreateRootScope: %v", err)
+			}
+			// The halt: A3's session-level kill ends the root's
+			// lifecycle.
+			if err := root.Halt(); err != nil {
+				t.Fatalf("halt root: %v", err)
+			}
+			opts := taskRunnerOpts{
+				rootScopeID: root.ID(),
+				defaults:    config.Defaults{SupervisedRepoPath: repo},
+			}
+
+			_, err = createSubAgentScope(mgr, opts, "sub-after-halt", tc.workdir)
+			if !errors.Is(err, ErrRootTerminal) {
+				t.Fatalf("dispatch after halt: %v, want ErrRootTerminal (the halt is a session-level kill; the dispatch must refuse, not degrade)", err)
+			}
+			if !strings.Contains(err.Error(), "start a new session") {
+				t.Errorf("the refusal must be actionable, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestCreateSubAgentScope_NonTerminalFailureDegradesLoudly pins the other
+// half of the policy: a fork failure that is NOT the halted root still
+// degrades to the flat scope — the sub-agent stays superviseable — but
+// the degradation is logged, not silent. The forced failure is a child
+// ID collision, the one non-terminal failure a healthy root can produce.
+func TestCreateSubAgentScope_NonTerminalFailureDegradesLoudly(t *testing.T) {
+	mgr, _ := newScopeManagerForTest(t)
+	root, err := CreateRootScope(mgr, "sess-degrade", "", true) // pure-causal root
+	if err != nil {
+		t.Fatalf("CreateRootScope: %v", err)
+	}
+	opts := taskRunnerOpts{rootScopeID: root.ID()}
+
+	// Saturate the child ID: the next fork of the same ID fails
+	// non-terminally, and so does the flat Create fallback — the
+	// dispatch fails loudly on the collision, which is honest, but the
+	// degradation log must have fired on the way down.
+	if _, err := createSubAgentScope(mgr, opts, "sub-collide", ""); err != nil {
+		t.Fatalf("first dispatch: %v", err)
+	}
+	_, err = createSubAgentScope(mgr, opts, "sub-collide", "")
+	if err == nil {
+		t.Fatal("a duplicate dispatch must fail; the scope already exists")
+	}
+	if errors.Is(err, ErrRootTerminal) {
+		t.Fatalf("a child ID collision is not a terminal root; got: %v", err)
+	}
+}
+
+// TestCreateSubAgentScope_TracingOffStaysFlat re-pins the untouched
+// degraded mode: with no root scope (tracing up, root creation refused),
+// a dispatch still gets its flat superviseable scope — the one fallback
+// H6 deliberately leaves silent.
+func TestCreateSubAgentScope_TracingOffStaysFlat(t *testing.T) {
+	mgr, _ := newScopeManagerForTest(t)
+	opts := taskRunnerOpts{defaults: config.Defaults{SupervisedRepoPath: newRunnerTestGitRepo(t)}}
+
+	child, err := createSubAgentScope(mgr, opts, "sub-flat-off", "")
+	if err != nil {
+		t.Fatalf("createSubAgentScope (tracing off): %v", err)
+	}
+	if child.Parent() != nil {
+		t.Errorf("tracing-off scope must be flat, got parent %s", child.Parent().ID())
 	}
 }
