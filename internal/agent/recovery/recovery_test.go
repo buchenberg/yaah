@@ -670,7 +670,10 @@ func TestRecover_StatsSinkForwarded(t *testing.T) {
 	if stats.SealedOutputs != 1 {
 		t.Errorf("SealedOutputs = %d, want 1", stats.SealedOutputs)
 	}
-	if stats.ScanDuration <= 0 {
-		t.Errorf("ScanDuration = %s, want a measured positive duration", stats.ScanDuration)
-	}
+	// ScanDuration is deliberately not asserted positive here: a
+	// fixture this small can complete inside a Windows clock tick and
+	// measure exactly zero. The kernel's law test covers the duration
+	// measurement on traces big enough to see; this test pins the
+	// wrapper's forwarding of the counts.
+	_ = stats.ScanDuration
 }
