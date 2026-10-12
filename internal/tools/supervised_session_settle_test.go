@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -313,5 +314,70 @@ func TestReviewSession_ChooseWithDirtyForkPoint(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repo, "dirty.txt")); err != nil {
 		t.Errorf("the dirty fork point's content must survive the settlement: %v", err)
+	}
+}
+
+// TestReviewSession_ChoosePartialSettlementLands pins the typed
+// partial-settlement flow (plan 07, H3): when a settle's physical effect
+// lands but the causal merge fails to complete, the choose verdict still
+// completes — the work stands, the landed output's lifecycle ends
+// (Release when the merge recorded and only the sandbox teardown failed),
+// and the envelope notes the incompleteness instead of failing the
+// session. The winner's merge is forced to fail at its SANDBOX TEARDOWN
+// stage: the worktree directory is made undeletable, so the merge records,
+// the teardown fails, and the kernel wraps ErrSettleEffectLanded.
+func TestReviewSession_ChoosePartialSettlementLands(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod cannot make the worktree undeletable on Windows")
+	}
+	tool, sup, repo := newReviewTestEnv(t)
+	tool.WorktreeRoot = t.TempDir()
+
+	runner := &sessionRunner{
+		repoPath: repo,
+		responses: []runnerResponse{
+			{result: "unit one"},
+			{result: "variant A"},
+			{result: "variant B"},
+		},
+	}
+	runner.sideEffect = func(call int, _ string) {
+		if call == 1 || call == 2 {
+			writeTestFile(t, runner.workdirFor(t, call), "variant.txt", "variant\n")
+		}
+	}
+	tool.Runner = runner.run()
+
+	sid := startTestReviewSession(t, tool, "start")
+	if env := mustSupervisorExecute(t, sup, `{"action":"fork","session_id":`+jsonString(sid)+`,"prompt_a":"A","prompt_b":"B"}`); env.Status != "awaiting_choose" {
+		t.Fatalf("fork status = %q, want awaiting_choose", env.Status)
+	}
+
+	// The winner (variant A, dispatch call 1) is made undeletable: the
+	// merge's sandbox teardown fails after the merge record, the exact
+	// partial-settlement stage where the work is landed and the child
+	// is already merged.
+	winnerWT := runner.workdirFor(t, 1)
+	if err := os.Chmod(winnerWT, 0o555); err != nil {
+		t.Fatalf("chmod winner worktree: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(winnerWT, 0o755) })
+
+	chosen := mustSupervisorExecute(t, sup, `{"action":"choose","session_id":`+jsonString(sid)+`,"winner":"a"}`)
+	if chosen.Status != "chosen" {
+		t.Fatalf("choose under a partial settlement: status = %q, want chosen (env: %s)", chosen.Status, marshalReviewEnvelope(chosen))
+	}
+	if !strings.Contains(chosen.Error, "settlement recorded incompletely") {
+		t.Errorf("the envelope must note the incomplete settlement, got: %q", chosen.Error)
+	}
+	if !strings.Contains(chosen.Error, "SettleRelease") {
+		t.Errorf("the note should carry the kernel's stage-aware ending (SettleRelease for a merged child), got: %q", chosen.Error)
+	}
+	landed, rerr := os.ReadFile(filepath.Join(repo, "variant.txt"))
+	if rerr != nil {
+		t.Fatalf("the winner's work must land on the parent: %v", rerr)
+	}
+	if string(landed) != "variant\n" {
+		t.Errorf("variant.txt = %q, want the winner's landed work", string(landed))
 	}
 }

@@ -943,17 +943,34 @@ func (s *supervisedSession) chooseVariant(ctx context.Context, winner string) (s
 		// plan 07 H3): ErrSettleEffectLanded means the physical effect
 		// is on the parent and only the causal merge failed to
 		// complete — no guesswork about whether the work landed (the
-		// old settlementLanded heuristic is gone). Consume it with
-		// SettleRelease so no retry can re-apply a physical effect
-		// that already happened, and complete the verdict with the
-		// failure noted. An already-consumed output is a lifecycle
-		// that already ended, not a failure.
+		// old settlementLanded heuristic is gone).
+		//
+		// The ending is stage-aware, mirroring the kernel's own
+		// settleEnding: a merge that failed before its record leaves
+		// the winner still active and still OWNING its worktree — and
+		// the variant references clear below, so Release alone would
+		// strand that worktree as an unreachable owned sandbox.
+		// Discard destroys it (the work is already on the parent, so
+		// the worktree is disposable). A merge whose record succeeded
+		// and whose sandbox teardown failed has already merged the
+		// winner — Discard refuses it — so Release is the only ending
+		// there. Either way no retry can re-apply a physical effect
+		// that already happened; the verdict completes with the
+		// failure noted.
 		if !errors.Is(err, shepherd.ErrSettleEffectLanded) {
 			return "", fmt.Errorf("supervisor: choose: %w", err)
 		}
+		// The child that sealed the output owns the worktree; its
+		// state — not the session scope's — decides the ending.
+		ending := shepherd.SettleRelease
+		if child, cok := mgr.Get(v.ScopeID); cok && child.State() == shepherd.ScopeActive {
+			if parent, pok := mgr.Get(s.scopeID); pok && parent.State() == shepherd.ScopeActive {
+				ending = shepherd.SettleDiscard
+			}
+		}
 		recoverCtx := context.WithoutCancel(ctx)
-		if rerr := mgr.Settle(recoverCtx, v.Output.ID(), shepherd.SettleRelease); rerr != nil && !errors.Is(rerr, shepherd.ErrOutputConsumed) {
-			return "", fmt.Errorf("supervisor: choose: %w (ending the landed output's lifecycle also failed: %v)", err, rerr)
+		if rerr := mgr.Settle(recoverCtx, v.Output.ID(), ending); rerr != nil && !errors.Is(rerr, shepherd.ErrOutputConsumed) {
+			return "", fmt.Errorf("supervisor: choose: %w (ending the landed output's lifecycle with %s also failed: %v)", err, ending, rerr)
 		}
 		settleErr = err
 	}
