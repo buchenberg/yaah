@@ -35,6 +35,8 @@ Records are never overwritten — append a new row for every run.
 
 | 2026-10-12 14:07 | main | 12e9334 | TB mini-suite (Terminal-Bench, 11/15) | — | — | — | ~50min | 6.3M | — | 6,255,709 | 100% | 0% | 3 | yaah one-shot vs harness pin d28711d; deepseek-flash; fix-git excluded (upstream-unbuildable); 2 agent timeouts (localstack, kind), 1 test fail; tokens from in-container state.db |
 
+| 2026-10-12 16:35 | main | dd038a7 | TB mini-suite vs opencode (deepseek-flash) | — | — | — | ~40min | 3.59M | — | 3,587,839 | 100% | 0% | 3 | yaah 12/14 vs opencode 7/14 of runnable tasks; same model, same judge, 1 trial each; yaah run carried the PR #291 improvements (non-interactive one-shot, incremental flush, cache accounting: 84% cache-hit) |
+
 ## Analysis: Continuation Guard Impact
 
 **Test Configuration:** `context_window: 20000` to force compaction during B4 audit
