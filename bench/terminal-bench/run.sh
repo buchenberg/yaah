@@ -8,16 +8,18 @@
 #   - the yaah static binary (built by this script if absent)
 #
 # Usage:
-#   ./run.sh                           # the frozen 12-task mini-suite v2 (default)
+#   ./run.sh                           # the 6-task suite (default, suite.txt)
 #   ./run.sh hello-world create-bucket # named tasks (e.g. the 2-task smoke)
-#   SUITE=mini-suite.txt ./run.sh      # the original frozen 15-task v1 list
+#   SUITE=my-tasks.txt ./run.sh        # any task-list file in this directory
 #   YAAH_MODEL=deepseek-flash ./run.sh # override the model
 #
-# Token budget (calibrated on deepseek-flash, see README.md): the fixed
-# per-session cost is ~30K input tokens (identity + tool schemas; the
-# hello-world smoke IS that baseline at 30.6K), and multi-step tasks
-# land 4-5x that (broken-python 146.9K, ~5x). The full suite projects
-# to 0.9-1.8M tokens. Run the 2-task smoke first if the budget matters.
+# Token budget (calibrated on deepseek-flash, see README.md and
+# RESULTS.md): the fixed per-session cost is ~30K input tokens
+# (identity + tool schemas; the hello-world smoke IS that baseline at
+# 30.6K), and multi-step tasks land 4-5x that. The default 6-task
+# suite measured ~0.98M tokens on the recorded yaah run, ~89% of
+# prompt tokens served from cache. Run the 2-task smoke first if the
+# budget matters.
 
 set -euo pipefail
 
@@ -48,7 +50,7 @@ fi
 if [ "$#" -gt 0 ]; then
   TASKS=("$@")
 else
-  SUITE="${SUITE:-mini-suite-v2.txt}"
+  SUITE="${SUITE:-suite.txt}"
   if [ ! -f "$HERE/$SUITE" ]; then
     echo "error: suite file not found: $HERE/$SUITE" >&2
     exit 1

@@ -130,10 +130,10 @@ dwarfed the smoke pair.
 ## Suite v2 (2026-10-12): known-failure tasks removed
 
 The v1 comparison above included three tasks that fail for reasons
-unrelated to agent capability — every CLI tested fails them the same
-way — so they add run cost and noise, not signal. They are removed
-from the default suite (`mini-suite-v2.txt`, 12 tasks; the runner
-defaults to it; `SUITE=mini-suite.txt ./run.sh` restores v1):
+unrelated to agent capability, so they add run cost and noise, not
+signal. They were removed from the default suite at the time
+(`mini-suite-v2.txt`, 12 tasks — historical: superseded by the
+Suite reset section below, and neither file is in the tree anymore):
 
 - **fix-git** — unbuildable at the pin (setup.sh clones a deleted
   GitHub repo; fails on every runtime).
@@ -141,7 +141,8 @@ defaults to it; `SUITE=mini-suite.txt ./run.sh` restores v1):
   (no token accounting), and its OCR-join test is brittle; both CLIs
   fail it.
 - **setup-custom-dev-env** — spins a kind cluster inside the task
-  budget; both CLIs hit the time cap. Budget-bound rather than
+  budget. Neither CLI resolves it, but by different modes: yaah hit
+  the 1200s cap; opencode fast-failed (23s). Budget-bound rather than
   capability-bound; re-add it under a larger budget if that axis
   matters.
 
@@ -149,3 +150,30 @@ v1 stays frozen for comparability with the recorded runs: its 12/14
 comparison above is unchanged and remains citable. Future v2 scores
 are "n/12 on the yaah mini-suite v2" — for reference, the recorded
 yaah run scores 12/12 on the v2 subset (opencode 7/12).
+
+## Suite reset (2026-10-12): small editable subset
+
+The frozen-list convention is dropped: the default task list is now
+`suite.txt`, 6 tasks, editable — iterate freely and cite the file's
+commit alongside any score. The frozen lists (`mini-suite.txt`,
+`mini-suite-v2.txt`) are removed from the tree; git history preserves
+them — the v1 task list both recorded runs used is recoverable at
+commit 2595c6b, the never-run v2 list at 639e2cc — so
+reproducibility of past scores is unaffected.
+
+Selection rationale: one representative per major category (files,
+software engineering, data, algorithms, games/planning), all cheap at
+flash-model prices, plus the tasks opencode failed that yaah resolves
+(broken-python, csv-to-parquet, gomoku-planner) for discriminative
+power. On the recorded 2026-10-12 runs (deepseek-flash), this subset
+scored:
+
+| Task | yaah | opencode | yaah tokens (in+out) |
+|---|---|---|---|
+| hello-world | resolved | resolved | 45,912 |
+| broken-python | resolved | unresolved (parse_error) | 156,202 |
+| csv-to-parquet | resolved | unresolved | 182,962 |
+| jsonl-aggregator | resolved | resolved | 107,618 |
+| assign-seats | resolved | resolved | 145,128 |
+| gomoku-planner | resolved | unresolved | 338,999 |
+| **score** | **6/6** | **3/6** | **976,821 (~27% of the 15-task run)** |
