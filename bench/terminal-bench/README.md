@@ -84,6 +84,46 @@ Projected full mini-suite: **~0.9-1.8M tokens** — under a dollar at
 deepseek-flash prices. (Input-heavy: ~97% input. A context-window cap or
 compaction tuning on longer tasks would move this number down.)
 
+## Full-suite results (2026-10-12, deepseek-flash, yaah 12e9334)
+
+| Task | Resolved | Tokens |
+|---|---|---|
+| assign-seats | yes | 206,057 |
+| bank-trans-filter | yes | 268,661 |
+| broken-python | yes | 134,718 |
+| cpp-compatibility | yes | 169,021 |
+| create-bucket | no (agent timeout vs localstack) | 104,825 |
+| csv-to-parquet | yes | 164,575 |
+| fix-git | — upstream-broken (deleted fixture repo), excluded | — |
+| fix-pandas-version | yes | 295,618 |
+| git-workflow-hack | yes | 3,055,210 |
+| gomoku-planner | yes | 715,288 |
+| hello-world | yes | 30,588 |
+| jsonl-aggregator | yes | 180,558 |
+| npm-conflict-resolution | yes | 930,590 |
+| png-generation | no (tests failed; real agent attempt) | n/a (see below) |
+| setup-custom-dev-env | no (agent timeout; spins a kind cluster) | — |
+
+**Score: 11/14 (78.6%)** — both failures are agent timeouts on
+infrastructure-heavy tasks (localstack, kind) inside their 900s
+budget, plus one genuine test failure. ~6.3M tokens total (~$2 at
+deepseek-flash prices). "Easy" difficulty means easy for a human:
+git-workflow-hack alone cost 3.05M tokens.
+
+### Podman gotchas found in the full run
+
+1. **Short image names**: podman refuses `FROM localstack/localstack:4.3`
+   without unqualified-search registries (Docker silently assumes
+   docker.io). Fix, user-level, no sudo:
+   `mkdir -p ~/.config/containers && printf 'unqualified-search-registries = ["docker.io"]\n' > ~/.config/containers/registries.conf`
+2. **Upstream task defects at the pin**: fix-git's setup.sh clones a
+   deleted GitHub repo (unbuildable everywhere); png-generation's
+   docker-compose.yaml omits the agent-logs volume, so its token
+   accounting is lost (the agent run itself is fine).
+3. **The podman socket can vanish while systemd still reports the unit
+   active** — if the SDK fails with FileNotFoundError, restart it:
+   `systemctl --user restart podman.socket`.
+
 ## Recording results
 
 Append-only rows in the repo root BENCHMARKS.md, the existing
