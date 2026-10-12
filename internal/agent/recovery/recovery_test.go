@@ -135,7 +135,7 @@ func reopen(t *testing.T, state *crashState) (*shepherd.ScopeManager, *Report) {
 		t.Fatalf("reopen store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	mgr, report, err := Recover(context.Background(), store, state.repo, true)
+	mgr, report, err := Recover(context.Background(), store, state.repo, true, nil)
 	if err != nil {
 		t.Fatalf("recover: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestRecover_FailsLoudlyOnCorruptTrace(t *testing.T) {
 		t.Fatalf("append corrupt record: %v", err)
 	}
 
-	if _, _, err := Recover(context.Background(), store, repo, true); err == nil {
+	if _, _, err := Recover(context.Background(), store, repo, true, nil); err == nil {
 		t.Fatal("a corrupt trace must fail the recovery loudly")
 	}
 }
@@ -398,7 +398,7 @@ func TestRecover_SquatterDirectoryNeverAdopted(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	t.Cleanup(func() { store2.Close(context.Background()) })
-	mgr, report, err := Recover(context.Background(), store2, repo, true)
+	mgr, report, err := Recover(context.Background(), store2, repo, true, nil)
 	if err != nil {
 		t.Fatalf("recover: %v", err)
 	}
@@ -453,7 +453,7 @@ func reopenMode(t *testing.T, state *crashState, adoptRoots bool) (*shepherd.Sco
 		t.Fatalf("reopen store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	mgr, report, err := Recover(context.Background(), store, state.repo, adoptRoots)
+	mgr, report, err := Recover(context.Background(), store, state.repo, adoptRoots, nil)
 	if err != nil {
 		t.Fatalf("recover: %v", err)
 	}
@@ -527,7 +527,7 @@ func TestRecover_KernelRecordedWorktreeAdoptsWithoutYaahRecord(t *testing.T) {
 		t.Fatalf("reopen store: %v", err)
 	}
 	t.Cleanup(func() { reopened.Close(context.Background()) })
-	rmgr, report, err := Recover(ctx, reopened, repo, true)
+	rmgr, report, err := Recover(ctx, reopened, repo, true, nil)
 	if err != nil {
 		t.Fatalf("recover: %v", err)
 	}
@@ -613,7 +613,7 @@ func TestRecover_LegacyRecordFallbackAdopts(t *testing.T) {
 		t.Fatalf("reopen store: %v", err)
 	}
 	t.Cleanup(func() { reopened.Close(context.Background()) })
-	rmgr, report, err := Recover(ctx, reopened, repo, true)
+	rmgr, report, err := Recover(ctx, reopened, repo, true, nil)
 	if err != nil {
 		t.Fatalf("recover: %v", err)
 	}
@@ -637,4 +637,43 @@ func TestRecover_LegacyRecordFallbackAdopts(t *testing.T) {
 	if data, rerr := os.ReadFile(filepath.Join(wtPath, "old.txt")); rerr != nil || string(data) != "pre-bump work\n" {
 		t.Errorf("the pre-bump work is not live through the adopted worktree: %q, %v", string(data), rerr)
 	}
+}
+
+// TestRecover_StatsSinkForwarded pins the wrapper's forwarding of the
+// kernel's scan-stats contract (plan 07, H5): a non-nil sink comes back
+// with the counts a known trace produces, so the wiring's startup log
+// prints real measurements.
+func TestRecover_StatsSinkForwarded(t *testing.T) {
+	state := buildCrashState(t)
+
+	store, err := shepherdtrace.NewSQLiteTraceStore(state.storePath)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+	var stats shepherd.RecoveryStats
+	if _, _, err := Recover(context.Background(), store, state.repo, true, &stats); err != nil {
+		t.Fatalf("recover with stats: %v", err)
+	}
+	// buildCrashState's tree: one isolated worktree fork, one shared
+	// fork, one discarded child (a terminal record), one checkpoint,
+	// one sealed output.
+	if stats.ForkRecords != 3 {
+		t.Errorf("ForkRecords = %d, want 3", stats.ForkRecords)
+	}
+	if stats.TerminalRecords != 1 {
+		t.Errorf("TerminalRecords = %d, want 1", stats.TerminalRecords)
+	}
+	if stats.CheckpointBlobs != 1 {
+		t.Errorf("CheckpointBlobs = %d, want 1", stats.CheckpointBlobs)
+	}
+	if stats.SealedOutputs != 1 {
+		t.Errorf("SealedOutputs = %d, want 1", stats.SealedOutputs)
+	}
+	// ScanDuration is deliberately not asserted positive here: a
+	// fixture this small can complete inside a Windows clock tick and
+	// measure exactly zero. The kernel's law test covers the duration
+	// measurement on traces big enough to see; this test pins the
+	// wrapper's forwarding of the counts.
+	_ = stats.ScanDuration
 }

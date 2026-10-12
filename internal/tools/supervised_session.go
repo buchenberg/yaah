@@ -937,22 +937,40 @@ func (s *supervisedSession) chooseVariant(ctx context.Context, winner string) (s
 			return "", fmt.Errorf("supervisor: choose: the parent workspace changed paths the sealed output also changes (%s); resolve the overlap and choose again", err)
 		}
 		// Cancel-free, like everything after the settle: a cancelled
-		// verdict context must not turn the landed-work check into a
-		// false negative that strands a half-settled fork (review
-		// finding).
-		recoverCtx := context.WithoutCancel(ctx)
-		if !settlementLanded(recoverCtx, scope, v.Output, action) {
+		// verdict context must not turn the lifecycle ending into a
+		// false failure that strands a half-settled fork.
+		// The kernel's typed partial-settlement contract (v0.15.0,
+		// plan 07 H3): ErrSettleEffectLanded means the physical effect
+		// is on the parent and only the causal merge failed to
+		// complete — no guesswork about whether the work landed (the
+		// old settlementLanded heuristic is gone).
+		//
+		// The ending is stage-aware, mirroring the kernel's own
+		// settleEnding: a merge that failed before its record leaves
+		// the winner still active and still OWNING its worktree — and
+		// the variant references clear below, so Release alone would
+		// strand that worktree as an unreachable owned sandbox.
+		// Discard destroys it (the work is already on the parent, so
+		// the worktree is disposable). A merge whose record succeeded
+		// and whose sandbox teardown failed has already merged the
+		// winner — Discard refuses it — so Release is the only ending
+		// there. Either way no retry can re-apply a physical effect
+		// that already happened; the verdict completes with the
+		// failure noted.
+		if !errors.Is(err, shepherd.ErrSettleEffectLanded) {
 			return "", fmt.Errorf("supervisor: choose: %w", err)
 		}
-		// The workspace effect landed; only the causal-merge recording
-		// failed — the kernel leaves the output unconsumed for exactly
-		// this. Consume it with SettleRelease so no retry can re-apply
-		// a physical effect that already happened, and complete the
-		// verdict with the recording failure noted. An
-		// already-consumed output is a lifecycle that already ended,
-		// not a failure.
-		if rerr := mgr.Settle(recoverCtx, v.Output.ID(), shepherd.SettleRelease); rerr != nil && !errors.Is(rerr, shepherd.ErrOutputConsumed) {
-			return "", fmt.Errorf("supervisor: choose: %w (ending the landed output's lifecycle also failed: %v)", err, rerr)
+		// The child that sealed the output owns the worktree; its
+		// state — not the session scope's — decides the ending.
+		ending := shepherd.SettleRelease
+		if child, cok := mgr.Get(v.ScopeID); cok && child.State() == shepherd.ScopeActive {
+			if parent, pok := mgr.Get(s.scopeID); pok && parent.State() == shepherd.ScopeActive {
+				ending = shepherd.SettleDiscard
+			}
+		}
+		recoverCtx := context.WithoutCancel(ctx)
+		if rerr := mgr.Settle(recoverCtx, v.Output.ID(), ending); rerr != nil && !errors.Is(rerr, shepherd.ErrOutputConsumed) {
+			return "", fmt.Errorf("supervisor: choose: %w (ending the landed output's lifecycle with %s also failed: %v)", err, ending, rerr)
 		}
 		settleErr = err
 	}
@@ -1012,51 +1030,6 @@ func (s *supervisedSession) chooseVariant(ctx context.Context, winner string) (s
 	}
 	env.Error = strings.Join(notes, "; ")
 	return marshalReviewEnvelope(env), nil
-}
-
-// settlementLanded reports whether a failed settle left its physical
-// effect on the parent anyway — the kernel's documented partial
-// settlement: Select and Apply record the causal merge AFTER the
-// workspace change, so a recording failure means the work may already
-// stand, and a blind retry would re-apply it.
-func settlementLanded(ctx context.Context, scope *shepherd.Scope, out *shepherd.RetainedOutput, action shepherd.SettlementAction) bool {
-	switch action {
-	case shepherd.SettleSelect:
-		// Select fast-forwards the parent onto the sealed state: landed
-		// means the parent now digests as the sealed workspace.
-		now, err := scope.CaptureWorkspace(ctx)
-		if err != nil {
-			return false
-		}
-		nowDigest, err := now.Digest()
-		if err != nil {
-			return false
-		}
-		wantDigest, err := out.Workspace().Digest()
-		if err != nil {
-			return false
-		}
-		return nowDigest == wantDigest
-	case shepherd.SettleApply:
-		// Apply merges the sealed delta onto the parent: landed means
-		// the parent's diff against the baseline now carries every one
-		// of the output's changed paths.
-		_, parentFiles, err := scope.DiffWorkspace(ctx, out.Baseline(), 0)
-		if err != nil {
-			return false
-		}
-		changed := make(map[string]bool, len(parentFiles))
-		for _, f := range parentFiles {
-			changed[f] = true
-		}
-		for _, c := range out.Changes() {
-			if !changed[c.Path] {
-				return false
-			}
-		}
-		return true
-	}
-	return false
 }
 
 // clipDiff bounds a sealed output's diff to the envelope's line budget

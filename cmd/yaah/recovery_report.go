@@ -3,6 +3,9 @@ package yaah
 import (
 	"fmt"
 	"os"
+	"time"
+
+	shepherd "github.com/buchenberg/shepherd-kernel-go"
 
 	"github.com/buchenberg/yaah/internal/agent/recovery"
 )
@@ -43,4 +46,16 @@ func formatSize(n int64) string {
 	default:
 		return fmt.Sprintf("%d B", n)
 	}
+}
+
+// printRecoveryStats surfaces the recovery scan's own cost (plan 07,
+// H5): the scan is O(history) with no bound, and the counts are what
+// tell a long-lived trace dir's owner when startup recovery has grown.
+// One line, beside the report it belongs to.
+func printRecoveryStats(stats *shepherd.RecoveryStats) {
+	if stats == nil {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "shepherd recovery scan: %d fork, %d terminal, %d checkpoint, %d sealed record(s) in %s\n",
+		stats.ForkRecords, stats.TerminalRecords, stats.CheckpointBlobs, stats.SealedOutputs, stats.ScanDuration.Round(time.Millisecond))
 }

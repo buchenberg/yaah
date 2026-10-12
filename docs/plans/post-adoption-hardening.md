@@ -143,14 +143,14 @@ close. A timeout-survivor test pins the branch.
 ### H3 — typed partial settlement, kernel then consumer (F7)
 
 The kernel's settle failures that leave the physical effect landed wrap
-a new sentinel — `ErrCausalMergeUnrecorded` — in both the select and
+a new sentinel — `ErrSettleEffectLanded` (renamed from `ErrCausalMergeUnrecorded` during the kernel PR review: the merge can fail at three stages, and in the teardown stage it *was* recorded, so the narrower name overclaimed) — in both the select and
 apply cases, keeping the current message text (it already says the
 right thing). A law test pins the typed surface: a settle whose causal
 merge fails to record reports the sentinel, and the output stays
 unconsumed (already the contract).
 
 yaah re-pins the kernel minor, replaces `settlementLanded` with
-`errors.Is(err, shepherd.ErrCausalMergeUnrecorded)`, and deletes the
+`errors.Is(err, shepherd.ErrSettleEffectLanded)`, and deletes the
 heuristic. The select-side digest check and the apply-side path-subset
 check both go — the kernel's own error is the authority for what
 happened, which is the entire point of a typed error. One coordinated
@@ -230,7 +230,7 @@ review question, not its implementation.
 - Own PR.
 
 ### Phase H3 — typed partial settlement (kernel v0.15.0, then yaah)
-- Kernel: `ErrCausalMergeUnrecorded` in both settle cases; law test.
+- Kernel: `ErrSettleEffectLanded` in both settle cases; law test.
 - Kernel minor release (v0.15.0) per the release procedure.
 - yaah: re-pin; `settlementLanded` deleted, replaced by `errors.Is`.
 - Kernel PR, release PR, yaah PR — the same train plan 06 used.

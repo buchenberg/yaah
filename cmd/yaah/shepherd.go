@@ -80,7 +80,7 @@ func shepherdScan() (*recovery.Report, func(), error) {
 	if repoPath == "" {
 		repoPath, _ = os.Getwd()
 	}
-	_, report, rerr := recovery.Recover(context.Background(), store, repoPath, true)
+	_, report, rerr := recovery.Recover(context.Background(), store, repoPath, true, nil)
 	if rerr != nil {
 		return nil, cleanup, fmt.Errorf("shepherd: recovery: %w", rerr)
 	}

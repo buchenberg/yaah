@@ -437,13 +437,19 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			// adoptRoots: an isolated session keeps roots causal (D2) —
 			// recovery must not attach a host git sandbox where creation
 			// refused one.
-			if recovered, report, rerr := recovery.Recover(context.Background(), store, repoPath, sessionSandbox == nil); rerr != nil {
+			// Plan 07 H5: the kernel's scan stats ride the recovery —
+			// the scan is O(history), and the cost stays visible long
+			// before it matters.
+			var stats shepherd.RecoveryStats
+			recovered, report, rerr := recovery.Recover(context.Background(), store, repoPath, sessionSandbox == nil, &stats)
+			if rerr != nil {
 				fmt.Fprintf(os.Stderr, "warning: shepherd tracing disabled: scope recovery failed: %v\n", rerr)
 				store.Close(context.Background())
 				tracingReady = false
 			} else {
 				mgr = recovered
 				printRecoveryReport(report)
+				printRecoveryStats(&stats)
 			}
 		}
 		if tracingReady {

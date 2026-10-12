@@ -255,7 +255,7 @@ func TestCreateRootScope_ResumeReattachesRecoveredRoot(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	t.Cleanup(func() { store2.Close(context.Background()) })
-	recovered, _, err := recovery.Recover(context.Background(), store2, repo, true)
+	recovered, _, err := recovery.Recover(context.Background(), store2, repo, true, nil)
 	if err != nil {
 		t.Fatalf("recover: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestCreateRootScope_HaltedRecoveredRootRefuses(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	t.Cleanup(func() { store2.Close(context.Background()) })
-	recovered, _, err := recovery.Recover(context.Background(), store2, repo, true)
+	recovered, _, err := recovery.Recover(context.Background(), store2, repo, true, nil)
 	if err != nil {
 		t.Fatalf("recover: %v", err)
 	}

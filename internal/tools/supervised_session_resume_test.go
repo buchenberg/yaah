@@ -46,7 +46,7 @@ func TestReviewSession_AfterRestart(t *testing.T) {
 		t.Fatalf("reopen store: %v", err)
 	}
 	t.Cleanup(func() { store2.Close(context.Background()) })
-	recovered, _, err := recovery.Recover(context.Background(), store2, repo, true)
+	recovered, _, err := recovery.Recover(context.Background(), store2, repo, true, nil)
 	if err != nil {
 		t.Fatalf("recover: %v", err)
 	}
