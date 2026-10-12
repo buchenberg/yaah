@@ -3,6 +3,7 @@ package agent
 import (
 	"time"
 
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -88,6 +89,12 @@ type SubAgentConfig struct {
 	// net their calls pass through. Nil when tracing is off or the
 	// guard is disabled in config; every call then dispatches.
 	DestructiveGuard func(ownerID, toolName, argsJSON string) string
+
+	// TraceStore is the session's Shepherd trace store (plan 07, H4),
+	// injected by the wiring through the task runner: the sub-agent
+	// pipeline's shepherd_trace middleware writes through it. Nil when
+	// tracing is disabled.
+	TraceStore *shepherdtrace.SQLiteTraceStore
 }
 
 // NewSubAgentLoop creates a Loop optimized for sub-agent execution.
@@ -139,6 +146,7 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 			SessionID:              cfg.SessionID,
 			IsSubAgent:             true,
 			DestructiveGuard:       cfg.DestructiveGuard,
+			TraceStore:             cfg.TraceStore,
 
 			TurnCheckpointer:      cfg.TurnCheckpointer,
 			TurnCheckpointEnabled: cfg.TurnCheckpointEnabled,

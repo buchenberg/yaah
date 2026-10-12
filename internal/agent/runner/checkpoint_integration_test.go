@@ -99,14 +99,7 @@ func TestSupervisedTask_TurnRestoreIntegration(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 
-	prevMgr := tools.SharedScopeManager
-	prevStore := tools.SharedTraceStore
-	tools.SharedScopeManager = shepherd.NewScopeManager(store)
-	tools.SharedTraceStore = store
-	t.Cleanup(func() {
-		tools.SharedScopeManager = prevMgr
-		tools.SharedTraceStore = prevStore
-	})
+	mgr := shepherd.NewScopeManager(store)
 
 	repo := newRunnerTestGitRepo(t)
 	workFile := filepath.Join(repo, "work.txt")
@@ -129,13 +122,16 @@ func TestSupervisedTask_TurnRestoreIntegration(t *testing.T) {
 		defaults: config.Defaults{
 			SupervisedRepoPath: repo,
 		},
+		scopeManager: mgr,
+		traceStore:   store,
 	}
 
 	tool := &tools.SupervisedTaskTool{
-		Runner:     makeTaskRunner(opts, 1),
-		RoleNames:  []string{"restorer"},
-		RepoPath:   repo,
-		MaxRetries: 0,
+		Runner:       makeTaskRunner(opts, 1),
+		RoleNames:    []string{"restorer"},
+		RepoPath:     repo,
+		ScopeManager: mgr,
+		MaxRetries:   0,
 	}
 
 	result, err := tool.Execute(context.Background(),
@@ -193,14 +189,7 @@ func TestSupervisedTask_TurnCheckpointsOffByDefault(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 
-	prevMgr := tools.SharedScopeManager
-	prevStore := tools.SharedTraceStore
-	tools.SharedScopeManager = shepherd.NewScopeManager(store)
-	tools.SharedTraceStore = store
-	t.Cleanup(func() {
-		tools.SharedScopeManager = prevMgr
-		tools.SharedTraceStore = prevStore
-	})
+	mgr := shepherd.NewScopeManager(store)
 
 	repo := newRunnerTestGitRepo(t)
 	workFile := filepath.Join(repo, "work.txt")
@@ -217,14 +206,17 @@ func TestSupervisedTask_TurnCheckpointsOffByDefault(t *testing.T) {
 		systemPrompt: "BASE",
 		modelName:    "test-model",
 		// No Roles["developer"].TurnCheckpoints — gate must stay closed.
-		defaults: config.Defaults{SupervisedRepoPath: repo},
+		defaults:     config.Defaults{SupervisedRepoPath: repo},
+		scopeManager: mgr,
+		traceStore:   store,
 	}
 
 	tool := &tools.SupervisedTaskTool{
-		Runner:     makeTaskRunner(opts, 1),
-		RoleNames:  []string{"developer"},
-		RepoPath:   repo,
-		MaxRetries: 0,
+		Runner:       makeTaskRunner(opts, 1),
+		RoleNames:    []string{"developer"},
+		RepoPath:     repo,
+		ScopeManager: mgr,
+		MaxRetries:   0,
 	}
 
 	result, err := tool.Execute(context.Background(),

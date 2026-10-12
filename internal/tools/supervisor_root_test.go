@@ -28,18 +28,16 @@ func TestSupervisorTool_RootScopeHaltGuarded(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 
-	prevMgr := SharedScopeManager
-	SharedScopeManager = shepherd.NewScopeManager(store)
-	t.Cleanup(func() { SharedScopeManager = prevMgr })
+	mgr := shepherd.NewScopeManager(store)
 
-	root, err := SharedScopeManager.Create("sess-guard", nil)
+	root, err := mgr.Create("sess-guard", nil)
 	if err != nil {
 		t.Fatalf("create root scope: %v", err)
 	}
 	sessionSteer := make(chan string, supervision.SteerBuffer)
 
 	runs := supervision.NewRegistry()
-	sup := &SupervisorTool{RootScopeID: root.ID(), Runs: runs}
+	sup := &SupervisorTool{RootScopeID: root.ID(), ScopeManager: mgr, Runs: runs}
 
 	haltArgs, _ := json.Marshal(map[string]string{
 		"action": "halt", "scope_id": root.ID()})
@@ -73,7 +71,7 @@ func TestSupervisorTool_RootScopeHaltGuarded(t *testing.T) {
 	// With the gate on, root halt cancels the session's current run:
 	// the registered cancellation fires and the halt lands in the
 	// kernel (the root scope goes non-active).
-	gated := &SupervisorTool{RootScopeID: root.ID(), Runs: runs, HaltRoot: true}
+	gated := &SupervisorTool{RootScopeID: root.ID(), ScopeManager: mgr, Runs: runs, HaltRoot: true}
 	halted := make(chan struct{}, 1)
 	haltCtx, ctxCancel := context.WithCancel(context.Background())
 	go func() { <-haltCtx.Done(); halted <- struct{}{} }()
@@ -97,11 +95,11 @@ func TestSupervisorTool_RootScopeHaltGuarded(t *testing.T) {
 	// An unset RootScopeID (tracing up without a root, or the legacy
 	// flat path) guards nothing: a sub-agent scope halts exactly as
 	// before, with no gate in the way.
-	child, err := SharedScopeManager.Create("sub-guard", nil)
+	child, err := mgr.Create("sub-guard", nil)
 	if err != nil {
 		t.Fatalf("create child scope: %v", err)
 	}
-	legacy := &SupervisorTool{Runs: runs}
+	legacy := &SupervisorTool{ScopeManager: mgr, Runs: runs}
 	legacyHalt, _ := json.Marshal(map[string]string{
 		"action": "halt", "scope_id": child.ID()})
 	if _, err := legacy.Execute(context.Background(), string(legacyHalt)); err != nil {

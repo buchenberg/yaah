@@ -91,6 +91,15 @@ type TaskToolOpts struct {
 	// is off.
 	Runs *supervision.Registry
 
+	// ScopeManager is the session's scope registry (plan 07, H4):
+	// sub-agent scopes fork through it. Nil when tracing is off.
+	ScopeManager *shepherd.ScopeManager
+
+	// TraceStore is the session's Shepherd trace store (plan 07, H4):
+	// the sub-agent loops' shepherd_trace middleware writes through it.
+	// Nil when tracing is off.
+	TraceStore *shepherdtrace.SQLiteTraceStore
+
 	// GuardCheck is the supervision service's blocking pre-dispatch
 	// check (adoption plan B2), passed through to every sub-agent loop's
 	// pipeline: a non-empty reason denies the tool call before
@@ -135,6 +144,8 @@ func NewTaskTool(opts TaskToolOpts) *tools.TaskTool {
 			workspace:             opts.Workspace,
 			rootScopeID:           opts.RootScopeID,
 			runs:                  opts.Runs,
+			scopeManager:          opts.ScopeManager,
+			traceStore:            opts.TraceStore,
 			guardCheck:            opts.GuardCheck,
 			resolveProviderByName: opts.ResolveProviderByName,
 		}, depth),
@@ -283,6 +294,17 @@ type taskRunnerOpts struct {
 	// dispatches then have no injectable bridge.
 	runs *supervision.Registry
 
+	// scopeManager is the session's scope registry (plan 07, H4),
+	// injected by the wiring like the run registry — sub-agent scopes
+	// fork through it without reaching through package globals. Nil
+	// when tracing is off: dispatches then run without scopes.
+	scopeManager *shepherd.ScopeManager
+
+	// traceStore is the session's Shepherd trace store (plan 07, H4),
+	// injected alongside the manager: the sub-agent loops' shepherd_trace
+	// middleware writes through it. Nil when tracing is off.
+	traceStore *shepherdtrace.SQLiteTraceStore
+
 	// guardCheck is the supervision service's blocking pre-dispatch
 	// check (adoption plan B2), injected by the wiring: each sub-agent
 	// loop's pipeline consults it before executing a tool call, and a
@@ -412,7 +434,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// isolated session — the container is the substrate, isolation
 		// plan D2).
 		var subScope *shepherd.Scope
-		if mgr := tools.SharedScopeManager; mgr != nil {
+		if mgr := opts.scopeManager; mgr != nil {
 			var cerr error
 			subScope, cerr = createSubAgentScope(mgr, opts, subTraceID, params.Workdir)
 			if cerr != nil {
@@ -462,7 +484,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// tool's attempt-level checkpoints.
 		var turnCk agent.TurnCheckpointer
 		if opts.subCfg.Roles[string(role)].TurnCheckpoints && subScope != nil && subScope.Sandbox() != nil {
-			turnCk = NewShepherdTurnCheckpointer(tools.SharedScopeManager, subScope.ID(), subScope.Sandbox())
+			turnCk = NewShepherdTurnCheckpointer(opts.scopeManager, subScope.ID(), subScope.Sandbox())
 		}
 
 		subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{
@@ -485,6 +507,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			OtelEnabled:            opts.OtelEnabled,
 			OtelVerbose:            opts.OtelVerbose,
 			SessionID:              subTraceID,
+			TraceStore:             opts.traceStore,
 			SteerCh:                steerCh,
 			DestructiveGuard:       opts.guardCheck,
 

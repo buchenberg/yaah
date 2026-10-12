@@ -51,19 +51,14 @@ func TestReviewSession_AfterRestart(t *testing.T) {
 		t.Fatalf("recover: %v", err)
 	}
 
-	prevMgr, prevStore := SharedScopeManager, SharedTraceStore
-	SharedScopeManager = recovered
-	SharedTraceStore = store2
-	t.Cleanup(func() {
-		SharedScopeManager = prevMgr
-		SharedTraceStore = prevStore
-	})
+	// The tools carry the recovered manager per the session-owned seam
+	// (plan 07, H4): the restart injects it, no globals to restore.
 	resetReviewSessions()
 	t.Cleanup(resetReviewSessions)
 
 	// The crashed session's verdict verbs refuse with the honest
 	// explanation: the session was process state, the trace survived.
-	_, err = (&SupervisorTool{RootScopeID: root.ID()}).Execute(context.Background(),
+	_, err = (&SupervisorTool{RootScopeID: root.ID(), ScopeManager: recovered}).Execute(context.Background(),
 		`{"action":"continue","session_id":"supervised:worker:crashed","guidance":"go on"}`)
 	if err == nil || !strings.Contains(err.Error(), "start one with supervised_task review:true") {
 		t.Errorf("the crashed session's verb must explain how to start a new one, got: %v", err)
@@ -86,13 +81,14 @@ func TestReviewSession_AfterRestart(t *testing.T) {
 		}
 	}
 	taskTool := &SupervisedTaskTool{
-		RoleNames:   []string{"worker"},
-		RepoPath:    repo,
-		RootScopeID: root.ID(),
-		MaxRetries:  1,
-		Runner:      runner.run(),
+		RoleNames:    []string{"worker"},
+		RepoPath:     repo,
+		RootScopeID:  root.ID(),
+		ScopeManager: recovered,
+		MaxRetries:   1,
+		Runner:       runner.run(),
 	}
-	sup := &SupervisorTool{RootScopeID: root.ID()}
+	sup := &SupervisorTool{RootScopeID: root.ID(), ScopeManager: recovered}
 
 	sid := startTestReviewSession(t, taskTool, "work after the crash")
 

@@ -26,15 +26,13 @@ func TestSupervisorTool_StatusListsFirings(t *testing.T) {
 	t.Cleanup(bus.Close)
 	store.WithBus(bus)
 
-	prevMgr := SharedScopeManager
-	SharedScopeManager = shepherd.NewScopeManager(store)
-	t.Cleanup(func() { SharedScopeManager = prevMgr })
+	mgr := shepherd.NewScopeManager(store)
 
-	root, err := SharedScopeManager.Create("sess-status", nil)
+	root, err := mgr.Create("sess-status", nil)
 	if err != nil {
 		t.Fatalf("create root scope: %v", err)
 	}
-	child, err := SharedScopeManager.Create("sub-status", nil)
+	child, err := mgr.Create("sub-status", nil)
 	if err != nil {
 		t.Fatalf("create scope: %v", err)
 	}
@@ -43,7 +41,7 @@ func TestSupervisorTool_StatusListsFirings(t *testing.T) {
 	steer := make(chan string, supervision.SteerBuffer)
 	runs.Register(child.ID(), supervision.Run{SteerCh: steer})
 
-	svc := supervision.NewService(SharedScopeManager, bus, runs,
+	svc := supervision.NewService(mgr, bus, runs,
 		supervision.AdvisoryRules{DestructiveTool: true}, false, false, root.ID())
 	svc.Start("status-test")
 	t.Cleanup(svc.Close)
@@ -62,7 +60,7 @@ func TestSupervisorTool_StatusListsFirings(t *testing.T) {
 		t.Fatal("the rule firing never reached the steering channel")
 	}
 
-	sup := &SupervisorTool{RootScopeID: root.ID(), Runs: runs, Svc: svc}
+	sup := &SupervisorTool{RootScopeID: root.ID(), ScopeManager: mgr, Runs: runs, Svc: svc}
 	out, err := sup.Execute(context.Background(), `{"action":"status"}`)
 	if err != nil {
 		t.Fatalf("Execute(status): %v", err)
@@ -89,11 +87,9 @@ func TestSupervisorTool_StatusWithoutService(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 
-	prevMgr := SharedScopeManager
-	SharedScopeManager = shepherd.NewScopeManager(store)
-	t.Cleanup(func() { SharedScopeManager = prevMgr })
+	mgr := shepherd.NewScopeManager(store)
 
-	sup := &SupervisorTool{Runs: supervision.NewRegistry()}
+	sup := &SupervisorTool{ScopeManager: mgr, Runs: supervision.NewRegistry()}
 	out, err := sup.Execute(context.Background(), `{"action":"status"}`)
 	if err != nil {
 		t.Fatalf("Execute(status): %v", err)

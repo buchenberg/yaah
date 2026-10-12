@@ -453,12 +453,12 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			}
 		}
 		if tracingReady {
-			tools.SharedTraceStore = store
 			scopeMgr = mgr
-			tools.SharedScopeManager = mgr
 			// Session-owned copies for the clean-exit close (plan 07,
 			// H2): the session's close() closes the infrastructure the
-			// wiring created — see agentSession.traceStore.
+			// wiring created — see agentSession.traceStore. The manager
+			// and store reach the tools and the runner by injection
+			// (plan 07, H4), never through package globals.
 			traceStore, traceBus = store, bus
 
 			// Supervision bridge (adoption plan A2): scope IDs mapped
@@ -578,6 +578,8 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		Workspace:             subAgentWorkspace,
 		RootScopeID:           rootScopeID,
 		Runs:                  runRegistry,
+		ScopeManager:          scopeMgr,
+		TraceStore:            traceStore,
 		GuardCheck:            supervisorSvcGuardCheck(supervisorSvc),
 		ResolveProviderByName: resolveProviderByName,
 	})
@@ -650,9 +652,10 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 
 		// Supervisor tool for sub-agent supervision (list_scopes/inject/halt/status).
 		toolReg.Register(&tools.SupervisorTool{
-			TraceDir:    cfg.Agent.Default.ShepherdTraceDir,
-			RootScopeID: rootScopeID,
-			Runs:        runRegistry,
+			TraceDir:     cfg.Agent.Default.ShepherdTraceDir,
+			RootScopeID:  rootScopeID,
+			ScopeManager: scopeMgr,
+			Runs:         runRegistry,
 			// Svc carries the session's advisory rules service so
 			// status can list rule firings (adoption plan B4); nil
 			// when the supervisor stanza is not live.
@@ -684,6 +687,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 				Runner:         taskTool.Runner,
 				ResolveTimeout: taskTool.ResolveTimeout,
 				RoleNames:      supervisedRoles,
+				ScopeManager:   scopeMgr,
 				RoleResolver: func() []string {
 					_, supervised := splitRolesBySupervised(subagent.DefaultRegistry().Names(), isSupervisedRole)
 					return supervised
@@ -718,7 +722,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	if sessionSandbox != nil {
 		slices.Sort(omittedTools)
 		mainPrompt += "\n\n" + prompts.IsolatedWorkspaceGuidance(omittedTools, omittedMCP)
-	} else if tools.SharedScopeManager != nil {
+	} else if scopeMgr != nil {
 		mainPrompt += "\n\n" + prompts.SubAgentToolsGuidance()
 	}
 

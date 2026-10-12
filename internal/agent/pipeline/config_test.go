@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
-	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -83,21 +82,17 @@ func TestPipeline_SubAgentPermissionHonoursDisabled(t *testing.T) {
 	}
 }
 
-func TestSubAgentTrace_UsesSharedStore(t *testing.T) {
+func TestSubAgentTrace_UsesConfiguredStore(t *testing.T) {
 	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 
-	prev := tools.SharedTraceStore
-	tools.SharedTraceStore = store
-	t.Cleanup(func() { tools.SharedTraceStore = prev })
-
-	pipe := NewSubAgentPipeline(PipelineConfig{SessionID: "sub-test"})
+	pipe := NewSubAgentPipeline(PipelineConfig{SessionID: "sub-test", TraceStore: store})
 	tmw := pipe.ShepherdTraceMiddleware()
 	if tmw == nil {
-		t.Fatal("expected a real ShepherdTraceMiddleware when the shared store is set")
+		t.Fatal("expected a real ShepherdTraceMiddleware when the store is configured")
 	}
 	if tmw.Store() != store {
 		t.Error("sub-agent trace middleware should use the session-shared store")
@@ -116,15 +111,11 @@ func TestSubAgentTrace_UsesSharedStore(t *testing.T) {
 	}
 }
 
-func TestSubAgentTrace_NoSharedManager(t *testing.T) {
-	prev := tools.SharedTraceStore
-	tools.SharedTraceStore = nil
-	t.Cleanup(func() { tools.SharedTraceStore = prev })
-
+func TestSubAgentTrace_NoConfiguredStore(t *testing.T) {
 	pipe := NewSubAgentPipeline(PipelineConfig{SessionID: "sub-test"})
 
 	if pipe.ShepherdTraceMiddleware() != nil {
-		t.Error("expected no real trace middleware without a shared store")
+		t.Error("expected no real trace middleware without a configured store")
 	}
 	mw := pipe.Find("shepherd_trace")
 	if mw == nil {
@@ -142,11 +133,7 @@ func TestSubAgentTrace_EmptySessionIDIsNoop(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 
-	prev := tools.SharedTraceStore
-	tools.SharedTraceStore = store
-	t.Cleanup(func() { tools.SharedTraceStore = prev })
-
-	pipe := NewSubAgentPipeline(PipelineConfig{SessionID: ""})
+	pipe := NewSubAgentPipeline(PipelineConfig{SessionID: "", TraceStore: store})
 	if _, ok := pipe.Find("shepherd_trace").(*noopShepherdTraceMiddleware); !ok {
 		t.Error("empty session ID should fall back to the noop trace middleware")
 	}

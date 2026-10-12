@@ -24,19 +24,17 @@ func TestSupervisorTool_InjectBridgesToRun(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 
-	prevMgr := SharedScopeManager
-	SharedScopeManager = shepherd.NewScopeManager(store)
+	mgr := shepherd.NewScopeManager(store)
 	runs := supervision.NewRegistry()
-	t.Cleanup(func() { SharedScopeManager = prevMgr })
 
-	child, err := SharedScopeManager.Create("sub-bridge", nil)
+	child, err := mgr.Create("sub-bridge", nil)
 	if err != nil {
 		t.Fatalf("create scope: %v", err)
 	}
 	steerCh := make(chan string, supervision.SteerBuffer)
 	runs.Register(child.ID(), supervision.Run{SteerCh: steerCh})
 
-	sup := &SupervisorTool{Runs: runs}
+	sup := &SupervisorTool{ScopeManager: mgr, Runs: runs}
 	injectArgs, _ := json.Marshal(map[string]string{
 		"action": "inject", "scope_id": child.ID(), "guidance": "narrow the scope"})
 	out, err := sup.Execute(context.Background(), string(injectArgs))
@@ -57,7 +55,7 @@ func TestSupervisorTool_InjectBridgesToRun(t *testing.T) {
 
 	// A scope with no registered run: the trace fact is recorded, the
 	// result says so — never "delivered".
-	idle, err := SharedScopeManager.Create("sub-idle", nil)
+	idle, err := mgr.Create("sub-idle", nil)
 	if err != nil {
 		t.Fatalf("create idle scope: %v", err)
 	}
@@ -72,7 +70,7 @@ func TestSupervisorTool_InjectBridgesToRun(t *testing.T) {
 	}
 
 	// A wedged run (buffer full) surfaces the busy error, not a hang.
-	wedged, err := SharedScopeManager.Create("sub-wedged", nil)
+	wedged, err := mgr.Create("sub-wedged", nil)
 	if err != nil {
 		t.Fatalf("create wedged scope: %v", err)
 	}

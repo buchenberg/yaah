@@ -27,9 +27,10 @@ const haltQuiesceTimeout = 10 * time.Second
 // (shepherd-kernel-go); sessions are started via supervised_task with
 // review:true.
 //
-// The tool uses SharedScopeManager (set by the shepherd_trace pipeline
-// builder) so it shares the same store connection and in-memory scope
-// registry as the trace middleware.
+// The tool operates on the session's scope manager and trace store,
+// injected by the wiring (plan 07, H4) — the same instances the
+// shepherd_trace middleware and the supervised task tool carry, so the
+// supervisor, the runner, and the tracing share one registry.
 type SupervisorTool struct {
 	TraceDir string
 
@@ -41,6 +42,11 @@ type SupervisorTool struct {
 	// back to flat creation and supervision degrades to scope-less
 	// tracing for the rest of the process.
 	RootScopeID string
+
+	// ScopeManager is the session's scope registry (plan 07, H4):
+	// session-owned and injected by the wiring, like the run registry.
+	// Nil when tracing is disabled.
+	ScopeManager *shepherd.ScopeManager
 
 	// HaltRoot is the agents.default.supervisor_halt_root opt-in
 	// (adoption plan A3): root halt needs it, and it defaults off — a
@@ -129,7 +135,7 @@ func (t *SupervisorTool) Execute(ctx context.Context, args string) (string, erro
 		return "", fmt.Errorf("supervisor: invalid arguments: %w", err)
 	}
 
-	mgr := SharedScopeManager
+	mgr := t.ScopeManager
 	if mgr == nil {
 		return "", fmt.Errorf("supervisor: shepherd tracing not enabled (set shepherd_trace_dir in config)")
 	}
