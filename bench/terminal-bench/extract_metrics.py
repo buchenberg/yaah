@@ -15,7 +15,6 @@ run.sh: ~/Code/Agentic/Frameworks/terminal-bench/runs).
 import datetime
 import glob
 import json
-import os
 import sqlite3
 import sys
 
@@ -25,7 +24,7 @@ def agent_seconds(result):
         start = datetime.datetime.fromisoformat(result["agent_started_at"])
         end = datetime.datetime.fromisoformat(result["agent_ended_at"])
         return int((end - start).total_seconds())
-    except (TypeError, ValueError):
+    except (KeyError, TypeError, ValueError):
         return None
 
 
@@ -63,7 +62,7 @@ def main(argv):
                 f"time={secs if secs is not None else '?':>5}"
             )
             tk = yaah_tokens(runs_dir, run_id, r["task_id"])
-            if tk:
+            if tk and tk[3]:
                 tokens_in, tokens_out, cached, _ = tk
                 line += (
                     f" in={tokens_in:>8} out={tokens_out:>7} "
