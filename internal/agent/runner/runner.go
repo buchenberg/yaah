@@ -820,8 +820,10 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 			}
 			// A halt that landed between the pre-check and this fork
 			// must not slip through the TOCTOU window into the
-			// fallback: re-check before degrading.
-			if root.State() != shepherd.ScopeActive {
+			// fallback: re-check before degrading. A nil root is the
+			// registry miss the pre-check let through — it degrades
+			// like any other non-terminal failure.
+			if root != nil && root.State() != shepherd.ScopeActive {
 				return nil, fmt.Errorf("%w: %s — the supervisor halt ended this session's supervision; start a new session", ErrRootTerminal, root.State())
 			}
 			// A non-terminal ForkIsolated failure degrades loudly:
@@ -838,8 +840,9 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 	}
 	// A halt that landed between the pre-check and this fork must not
 	// slip through the TOCTOU window into the fallback: re-check
-	// before degrading.
-	if root.State() != shepherd.ScopeActive {
+	// before degrading. A nil root is the registry miss the pre-check
+	// let through — it degrades like any other non-terminal failure.
+	if root != nil && root.State() != shepherd.ScopeActive {
 		return nil, fmt.Errorf("%w: %s — the supervisor halt ended this session's supervision; start a new session", ErrRootTerminal, root.State())
 	}
 	// A non-terminal fork failure degrades loudly, the same contract:
