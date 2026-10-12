@@ -51,6 +51,11 @@ type SupervisedTaskTool struct {
 	// scope; review sessions refuse to start without it.
 	RootScopeID string
 
+	// ScopeManager is the session's scope registry (plan 07, H4):
+	// session-owned and injected by the wiring, like the run registry.
+	// Nil when tracing is disabled.
+	ScopeManager *shepherd.ScopeManager
+
 	// MergePolicy composes the review session's approve verdict in the
 	// merge gate's reviewer (adoption plan C1); nil means the session's
 	// own verdict decides. A deny keeps the existing rollback UX:
@@ -145,7 +150,7 @@ func (t *SupervisedTaskTool) Execute(ctx context.Context, args string) (string, 
 		return "", fmt.Errorf("supervised_task: sub-agent runner not configured")
 	}
 
-	mgr := SharedScopeManager
+	mgr := t.ScopeManager
 	if mgr == nil {
 		return "", fmt.Errorf("supervised_task: shepherd tracing not enabled (set shepherd_trace_dir in config)")
 	}
@@ -179,6 +184,7 @@ func (t *SupervisedTaskTool) Execute(ctx context.Context, args string) (string, 
 			Runner:            t.Runner,
 			RepoPath:          repoPath,
 			RootScopeID:       t.RootScopeID,
+			ScopeManager:      t.ScopeManager,
 			MergePolicy:       t.MergePolicy,
 			WorktreeRoot:      t.WorktreeRoot,
 			WorktreeBootstrap: t.WorktreeBootstrap,

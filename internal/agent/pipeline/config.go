@@ -5,6 +5,7 @@ import (
 	"slices"
 	"sort"
 
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -83,10 +84,17 @@ type PipelineConfig struct {
 
 	// SessionID scopes Shepherd trace records. The sub-agent pipeline's
 	// shepherd_trace middleware records under this owner using the
-	// session-shared store (tools.SharedTraceStore), and the
-	// supervisor_guard middleware addresses its checks to the same
-	// owner.
+	// session-shared store (TraceStore, injected by the wiring — plan
+	// 07, H4), and the supervisor_guard middleware addresses its
+	// checks to the same owner.
 	SessionID string
+
+	// TraceStore is the session-wide Shepherd trace store (plan 07,
+	// H4): session-owned and injected by the wiring, like the
+	// supervisor registry — sub-agent middleware writes through this
+	// shared connection instead of reaching through package globals.
+	// Nil when tracing is disabled.
+	TraceStore *shepherdtrace.SQLiteTraceStore
 
 	// DestructiveGuard is the supervision service's synchronous
 	// pre-dispatch check (adoption plan B2): a non-empty return denies
@@ -204,7 +212,7 @@ var subAgentBuilders = map[string]func(PipelineConfig) Middleware{
 		// Sub-agents write through the session-shared store instead of
 		// opening their own SQLite connection — concurrent writers on
 		// the same trace.sqlite stall on busy_timeout.
-		store := tools.SharedTraceStore
+		store := cfg.TraceStore
 		if store == nil || cfg.SessionID == "" {
 			return &noopShepherdTraceMiddleware{}
 		}

@@ -272,18 +272,8 @@ func (s *agentSession) close() {
 		if !drained {
 			fmt.Fprintln(os.Stderr, "warning: shepherd trace store left open — a background job outlived the drain and still writes it")
 		} else {
-			store := s.traceStore
 			pipeline.CloseShepherdInfrastructure(s.traceStore, s.traceBus)
 			s.traceStore, s.traceBus = nil, nil
-			// The package globals still point at the closed store, and a
-			// later session built with tracing off would hand sub-agent
-			// middleware a dead handle (the pipeline builder nil-checks
-			// but does not liveness-check). Clear them when they are
-			// still ours — a later session that reassigned them keeps
-			// its own. H4 retires the globals entirely.
-			if store != nil && tools.SharedTraceStore == store {
-				tools.SharedTraceStore = nil
-			}
 		}
 	}
 	s.mu.RLock()

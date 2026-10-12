@@ -51,13 +51,6 @@ func TestSubAgentLoop_ErrorRateRuleRescue(t *testing.T) {
 	if _, err := mgr.Create("sub-worker", nil); err != nil {
 		t.Fatalf("create scope: %v", err)
 	}
-	// The sub-agent pipeline's shepherd_trace middleware writes through
-	// the session-shared store global; borrow it for the run and put it
-	// back.
-	saved := tools.SharedTraceStore
-	tools.SharedTraceStore = store
-	t.Cleanup(func() { tools.SharedTraceStore = saved })
-
 	steerCh := make(chan string, supervision.SteerBuffer)
 	runs := supervision.NewRegistry()
 	runs.Register("scope:sub-worker", supervision.Run{SteerCh: steerCh})
@@ -86,11 +79,14 @@ func TestSubAgentLoop_ErrorRateRuleRescue(t *testing.T) {
 		},
 	}}
 
+	// The sub-agent pipeline's shepherd_trace middleware writes through
+	// the session store injected here — the H4 seam, as the wiring does.
 	loop := NewSubAgentLoop(fp, reg, "test-model", "sys", SubAgentConfig{
 		MaxLoopCycles: 5,
 		MaxToolTurns:  5,
 		SessionID:     "sub-worker",
 		SteerCh:       steerCh,
+		TraceStore:    store,
 	})
 
 	res, err := loop.Run(context.Background(), "keep trying the broken thing")

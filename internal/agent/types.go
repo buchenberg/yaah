@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 	agentctx "github.com/buchenberg/yaah/internal/agent/context"
 	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
@@ -192,6 +193,12 @@ type LoopConfig struct {
 	// default) means no guard — tracing-off sessions dispatch
 	// unchanged.
 	DestructiveGuard func(ownerID, toolName, argsJSON string) string
+
+	// TraceStore is the session's Shepherd trace store (plan 07, H4),
+	// plumbed through from SubAgentConfig: the sub-agent pipeline's
+	// shepherd_trace middleware writes through it. Nil when tracing
+	// is disabled.
+	TraceStore *shepherdtrace.SQLiteTraceStore
 }
 
 // LoopState holds mutable runtime state modified during Run.

@@ -28,10 +28,11 @@ func gitStatus(t *testing.T, repo string) string {
 	return string(out)
 }
 
-// readOwnerFacts reads every retained fact on one owner's path.
-func readOwnerFacts(t *testing.T, owner string) []shepherdtrace.Record {
+// readOwnerFacts reads every retained fact on one owner's path from
+// the session's own trace store.
+func readOwnerFacts(t *testing.T, store *shepherdtrace.SQLiteTraceStore, owner string) []shepherdtrace.Record {
 	t.Helper()
-	slice, err := SharedTraceStore.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, owner, 999, shepherdtrace.ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, owner, 999, shepherdtrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace for %s: %v", owner, err)
 	}
@@ -61,7 +62,7 @@ func findFact(t *testing.T, facts []shepherdtrace.Record, schemaRef string) shep
 // the session scope's path, the approved decision on the root's, and
 // the session scope ends merged with the work kept in the tree.
 func TestReviewSession_AcceptMergesThroughGate(t *testing.T) {
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, fx := newReviewTestEnv(t)
 	runner := &sessionRunner{repoPath: repo, responses: []runnerResponse{{result: "gate-approved work"}}}
 	runner.sideEffect = func(call int, repoPath string) {
 		if call == 0 {
@@ -82,11 +83,11 @@ func TestReviewSession_AcceptMergesThroughGate(t *testing.T) {
 
 	// The gate recorded the review causally (C1): the proposal on the
 	// session scope's owner path, the approve decision on the root's.
-	proposed := findFact(t, readOwnerFacts(t, sid), shepherd.SchemaMergeProposed)
+	proposed := findFact(t, readOwnerFacts(t, fx.store, sid), shepherd.SchemaMergeProposed)
 	if got, _ := proposed.Body.Payload["child_scope"].(string); got != "scope:"+sid {
 		t.Errorf("proposal child_scope = %q, want the session scope", got)
 	}
-	decision := findFact(t, readOwnerFacts(t, "test-session-root"), shepherd.SchemaSupervisorDecision)
+	decision := findFact(t, readOwnerFacts(t, fx.store, "test-session-root"), shepherd.SchemaSupervisorDecision)
 	if approved, _ := decision.Body.Payload["approved"].(bool); !approved {
 		t.Errorf("decision = %+v, want approved", decision.Body.Payload)
 	}
@@ -95,7 +96,7 @@ func TestReviewSession_AcceptMergesThroughGate(t *testing.T) {
 	}
 
 	// The session scope merged (terminal), and the session closed.
-	scope, ok := SharedScopeManager.Get("scope:" + sid)
+	scope, ok := sup.ScopeManager.Get("scope:" + sid)
 	if !ok {
 		t.Fatal("session scope vanished after accept")
 	}
@@ -115,7 +116,7 @@ func TestReviewSession_AcceptMergesThroughGate(t *testing.T) {
 // is the restored tree, so the next accept proposes only the retry's
 // work — no reversions of the denied work.
 func TestReviewSession_AcceptDeniedRollsBackAndRetries(t *testing.T) {
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, fx := newReviewTestEnv(t)
 	runner := &sessionRunner{
 		repoPath: repo,
 		responses: []runnerResponse{
@@ -182,7 +183,7 @@ func TestReviewSession_AcceptDeniedRollsBackAndRetries(t *testing.T) {
 	}
 
 	// The denial was recorded on the root's path.
-	decision := findFact(t, readOwnerFacts(t, "test-session-root"), shepherd.SchemaSupervisorDecision)
+	decision := findFact(t, readOwnerFacts(t, fx.store, "test-session-root"), shepherd.SchemaSupervisorDecision)
 	if approved, _ := decision.Body.Payload["approved"].(bool); approved {
 		t.Error("first decision must be recorded as denied")
 	}
@@ -218,7 +219,7 @@ func TestReviewSession_AcceptDeniedRollsBackAndRetries(t *testing.T) {
 // baseline, so no merge gate — review sessions refuse to start rather
 // than run ungated.
 func TestReviewSession_StartWithoutRootScopeRefused(t *testing.T) {
-	tool, _, _ := newReviewTestEnv(t)
+	tool, _, _, _ := newReviewTestEnv(t)
 	tool.RootScopeID = ""
 	tool.Runner = (&sessionRunner{}).run()
 
@@ -235,7 +236,7 @@ func TestReviewSession_StartWithoutRootScopeRefused(t *testing.T) {
 // rollback is the session start. Earlier units' denied work must not
 // survive into the retry's baseline.
 func TestReviewSession_AcceptDeniedRollsBackCumulativeWork(t *testing.T) {
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, _ := newReviewTestEnv(t)
 	runner := &sessionRunner{
 		repoPath: repo,
 		responses: []runnerResponse{

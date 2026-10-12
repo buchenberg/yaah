@@ -138,17 +138,29 @@ func mustSupervisorExecute(t *testing.T, tool *SupervisorTool, args string) revi
 	return decodeReviewEnvelope(t, result)
 }
 
-func newReviewTestEnv(t *testing.T) (*SupervisedTaskTool, *SupervisorTool, string) {
+// newReviewTestEnv builds the review-session pair — the supervised task
+// tool sessions start through and the supervisor tool that drives their
+// verdict cycle — on one session-owned scope manager and trace store
+// (plan 07, H4), the same pairing the wiring makes in production.
+func newReviewTestEnv(t *testing.T) (*SupervisedTaskTool, *SupervisorTool, string, *sessionFixtures) {
 	t.Helper()
 	// The session registry is package-global; isolate every test.
 	resetReviewSessions()
 	t.Cleanup(resetReviewSessions)
-	tool, repo := newSupervisedTestEnv(t)
-	return tool, &SupervisorTool{TraceDir: "unused"}, repo
+	fx, repo, rootID := newSessionFixtures(t)
+	tool := &SupervisedTaskTool{
+		RoleNames:    []string{"worker"},
+		RepoPath:     repo,
+		RootScopeID:  rootID,
+		ScopeManager: fx.mgr,
+		MaxRetries:   1,
+	}
+	sup := &SupervisorTool{TraceDir: "unused", ScopeManager: fx.mgr}
+	return tool, sup, repo, fx
 }
 
 func TestReviewSession_StartEnvelopeAndDiff(t *testing.T) {
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, _ := newReviewTestEnv(t)
 	runner := &sessionRunner{
 		repoPath: repo,
 		responses: []runnerResponse{
@@ -200,7 +212,7 @@ func TestReviewSession_StartEnvelopeAndDiff(t *testing.T) {
 }
 
 func TestReviewSession_ContinueSeedsConversation(t *testing.T) {
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, _ := newReviewTestEnv(t)
 	runner := &sessionRunner{
 		repoPath: repo,
 		responses: []runnerResponse{
@@ -242,7 +254,7 @@ func TestReviewSession_ContinueSeedsConversation(t *testing.T) {
 }
 
 func TestReviewSession_RollbackRevertsFilesAndConversation(t *testing.T) {
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, _ := newReviewTestEnv(t)
 	badFile := filepath.Join(repo, "wrong-approach.txt")
 
 	runner := &sessionRunner{
@@ -288,7 +300,7 @@ func TestReviewSession_RollbackRevertsFilesAndConversation(t *testing.T) {
 }
 
 func TestReviewSession_RollbackKeepsPriorConversation(t *testing.T) {
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, _ := newReviewTestEnv(t)
 	runner := &sessionRunner{
 		repoPath: repo,
 		responses: []runnerResponse{
@@ -322,7 +334,7 @@ func TestReviewSession_RollbackKeepsPriorConversation(t *testing.T) {
 }
 
 func TestReviewSession_ForkAndChooseA(t *testing.T) {
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, _ := newReviewTestEnv(t)
 
 	runner := &sessionRunner{
 		repoPath: repo,
@@ -395,7 +407,7 @@ func TestReviewSession_ForkAndChooseA(t *testing.T) {
 }
 
 func TestReviewSession_ForkAndChooseB(t *testing.T) {
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, _ := newReviewTestEnv(t)
 
 	runner := &sessionRunner{
 		repoPath: repo,
@@ -431,7 +443,7 @@ func TestReviewSession_ForkAndChooseB(t *testing.T) {
 }
 
 func TestReviewSession_ForkVariantsSeedFromForkConversation(t *testing.T) {
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, _ := newReviewTestEnv(t)
 	runner := &sessionRunner{
 		repoPath: repo,
 		responses: []runnerResponse{
@@ -475,7 +487,7 @@ func TestReviewSession_ForkVariantsSeedFromForkConversation(t *testing.T) {
 }
 
 func TestReviewSession_AbortRestoresAndCloses(t *testing.T) {
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, _ := newReviewTestEnv(t)
 	badFile := filepath.Join(repo, "bad.txt")
 
 	runner := &sessionRunner{
@@ -512,7 +524,7 @@ func TestReviewSession_AbortRestoresAndCloses(t *testing.T) {
 }
 
 func TestReviewSession_SecondSessionRejected(t *testing.T) {
-	tool, _, repo := newReviewTestEnv(t)
+	tool, _, repo, _ := newReviewTestEnv(t)
 	runner := &sessionRunner{repoPath: repo}
 	tool.Runner = runner.run()
 
@@ -528,7 +540,7 @@ func TestReviewSession_SecondSessionRejected(t *testing.T) {
 }
 
 func TestReviewSession_CancelledMidUnitStaysResumable(t *testing.T) {
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, _ := newReviewTestEnv(t)
 	runner := &sessionRunner{
 		repoPath: repo,
 		responses: []runnerResponse{
@@ -561,7 +573,7 @@ func TestReviewSession_CancelledMidUnitStaysResumable(t *testing.T) {
 }
 
 func TestReviewSession_ChooseRequiresFork(t *testing.T) {
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, _ := newReviewTestEnv(t)
 	runner := &sessionRunner{repoPath: repo, responses: []runnerResponse{{result: "done"}}}
 	tool.Runner = runner.run()
 
@@ -573,7 +585,7 @@ func TestReviewSession_ChooseRequiresFork(t *testing.T) {
 }
 
 func TestReviewSession_ChooseRejectsNilTree(t *testing.T) {
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, _ := newReviewTestEnv(t)
 	runner := &sessionRunner{
 		repoPath: repo,
 		responses: []runnerResponse{
@@ -607,7 +619,7 @@ func TestReviewSession_ChooseRejectsNilTree(t *testing.T) {
 }
 
 func TestReviewSession_RollbackRequiresGuidance(t *testing.T) {
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, _ := newReviewTestEnv(t)
 	runner := &sessionRunner{repoPath: repo, responses: []runnerResponse{{result: "done"}}}
 	tool.Runner = runner.run()
 
@@ -619,14 +631,14 @@ func TestReviewSession_RollbackRequiresGuidance(t *testing.T) {
 }
 
 func TestReviewSession_UnknownSession(t *testing.T) {
-	_, sup, _ := newReviewTestEnv(t)
+	_, sup, _, _ := newReviewTestEnv(t)
 	if _, err := sup.Execute(context.Background(), `{"action":"continue","session_id":"nope"}`); err == nil {
 		t.Error("unknown session must fail")
 	}
 }
 
 func TestReviewSession_AcceptClosesAndKeepsWork(t *testing.T) {
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, _ := newReviewTestEnv(t)
 	goodFile := filepath.Join(repo, "good.txt")
 
 	runner := &sessionRunner{repoPath: repo, responses: []runnerResponse{{result: "good work"}}}
@@ -655,7 +667,7 @@ func TestReviewSession_AcceptClosesAndKeepsWork(t *testing.T) {
 }
 
 func TestReviewSession_ContinueDefaultGuidance(t *testing.T) {
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, _ := newReviewTestEnv(t)
 	runner := &sessionRunner{
 		repoPath:  repo,
 		responses: []runnerResponse{{result: "one"}, {result: "two"}},
@@ -679,7 +691,7 @@ func TestReviewSession_ContinueDefaultGuidance(t *testing.T) {
 // parent tree is never touched while the experiment runs, the worktrees are
 // torn down, and only the chosen variant's work reaches the parent.
 func TestReviewSession_ForkIsolatesVariants(t *testing.T) {
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, _ := newReviewTestEnv(t)
 	tool.WorktreeRoot = t.TempDir()
 
 	runner := &sessionRunner{
@@ -758,7 +770,7 @@ func TestReviewSession_ForkIsolatesVariants(t *testing.T) {
 // variant sees the parent's uncommitted state at the fork point, not a
 // clean checkout of HEAD.
 func TestReviewSession_VariantsStartFromForkPoint(t *testing.T) {
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, _ := newReviewTestEnv(t)
 	tool.WorktreeRoot = t.TempDir()
 
 	// Uncommitted work exists before the session starts, so the unit-start
@@ -863,7 +875,7 @@ func TestSupervisedTask_SchemaReviewParam(t *testing.T) {
 // TestReviewSession_EmptyResultStatus verifies a silent sub-agent unit
 // surfaces as status "empty" for review rather than an error.
 func TestReviewSession_EmptyResultStatus(t *testing.T) {
-	tool, _, repo := newReviewTestEnv(t)
+	tool, _, repo, _ := newReviewTestEnv(t)
 	runner := &sessionRunner{
 		repoPath:  repo,
 		responses: []runnerResponse{{result: ""}},
@@ -884,7 +896,7 @@ func TestReviewSession_EmptyResultStatus(t *testing.T) {
 // error does not auto-retry: the envelope carries the error and the
 // verdict options.
 func TestReviewSession_ErrorResultStillReviewable(t *testing.T) {
-	tool, _, repo := newReviewTestEnv(t)
+	tool, _, repo, _ := newReviewTestEnv(t)
 	runner := &sessionRunner{
 		repoPath:  repo,
 		responses: []runnerResponse{{result: "", err: errors.New("tool exploded")}},

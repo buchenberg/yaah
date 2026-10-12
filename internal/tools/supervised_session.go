@@ -63,6 +63,13 @@ type supervisedSessionRuntime struct {
 	Runner   jobs.TaskRunner
 	RepoPath string
 
+	// ScopeManager is the session's scope registry (plan 07, H4):
+	// session-owned and injected by the wiring, like the run registry
+	// — the supervisor, the task tool, and this session flow share the
+	// one manager without reaching through package globals. Nil when
+	// tracing is disabled.
+	ScopeManager *shepherd.ScopeManager
+
 	// RootScopeID is the session's root scope (adoption plan C1): the
 	// session's scope forks from it, which is what gives the merge gate
 	// its parent and fork baseline — without a root scope there is no
@@ -287,7 +294,7 @@ func startReviewSession(ctx context.Context, runtime supervisedSessionRuntime, p
 		return "", fmt.Errorf("supervised_task: a review session is already open (%s) — continue/rollback/accept/abort it before starting another", open[0])
 	}
 
-	mgr := SharedScopeManager
+	mgr := runtime.ScopeManager
 	if mgr == nil {
 		return "", fmt.Errorf("supervised_task: shepherd tracing not enabled (set shepherd_trace_dir in config)")
 	}
@@ -371,7 +378,7 @@ func (s *supervisedSession) dispatchLocked(ctx context.Context, prompt string, s
 		}
 	}
 
-	if scope, ok := SharedScopeManager.Get(s.scopeID); ok {
+	if scope, ok := s.runtime.ScopeManager.Get(s.scopeID); ok {
 		if diff, files, err := scope.DiffWorkspace(ctx, s.unitState, reviewDiffMaxLines); err == nil {
 			env.Diff = diff
 			env.Files = files
@@ -416,7 +423,7 @@ func (s *supervisedSession) continueUnit(ctx context.Context, guidance string) (
 		return "", fmt.Errorf("supervisor: session %s is %s — only a session awaiting a verdict can continue", s.id, s.state)
 	}
 
-	mgr := SharedScopeManager
+	mgr := s.runtime.ScopeManager
 	if s.checkpointID != "" {
 		mgr.PruneCheckpoints(context.WithoutCancel(ctx), s.scopeID)
 		s.checkpointID = ""
@@ -449,7 +456,7 @@ func (s *supervisedSession) rollbackUnit(ctx context.Context, guidance string) (
 		return "", fmt.Errorf("supervisor: rollback requires guidance (the more specific prompt for the corrected attempt)")
 	}
 
-	mgr := SharedScopeManager
+	mgr := s.runtime.ScopeManager
 	if s.checkpointID == "" {
 		return "", fmt.Errorf("supervisor: session %s has no live checkpoint to roll back to", s.id)
 	}
@@ -504,7 +511,7 @@ func (s *supervisedSession) reviewDiff(ctx context.Context) (string, error) {
 			Result:    lastUnitResult(s),
 			Next:      nextActionsFor(s.state),
 		}
-		if scope, ok := SharedScopeManager.Get(s.scopeID); ok {
+		if scope, ok := s.runtime.ScopeManager.Get(s.scopeID); ok {
 			if diff, files, err := scope.DiffWorkspace(ctx, s.unitState, reviewDiffMaxLines); err == nil {
 				env.Diff = diff
 				env.Files = files
@@ -564,7 +571,7 @@ func (s *supervisedSession) forkVariants(ctx context.Context, promptA, promptB s
 		return "", fmt.Errorf("supervisor: session %s has no live checkpoint to fork from", s.id)
 	}
 
-	mgr := SharedScopeManager
+	mgr := s.runtime.ScopeManager
 	scope, ok := mgr.Get(s.scopeID)
 	if !ok {
 		return "", fmt.Errorf("supervisor: scope %s not found", s.scopeID)
@@ -691,7 +698,7 @@ func (s *supervisedSession) discardVariantLocked(ctx context.Context, v *reviewV
 	if v == nil {
 		return nil
 	}
-	mgr := SharedScopeManager
+	mgr := s.runtime.ScopeManager
 	if v.Output != nil {
 		if err := v.Output.Settle(ctx, shepherd.SettleDiscard); err != nil {
 			if errors.Is(err, shepherd.ErrOutputConsumed) && v.Output.Action() == shepherd.SettleDiscard {
@@ -752,7 +759,7 @@ func (s *supervisedSession) provisionVariant(
 	// settlement owns its teardown, so the scope must exist before
 	// anything can strand the worktree. A fork failure destroys it
 	// here — no scope, no owner.
-	mgr := SharedScopeManager
+	mgr := s.runtime.ScopeManager
 	scope, err := mgr.ForkIsolated(s.scopeID, fmt.Sprintf("%s:var-%s", s.id, label), nil, sb)
 	if err != nil {
 		_ = sb.Destroy(context.WithoutCancel(ctx))
@@ -896,7 +903,7 @@ func (s *supervisedSession) chooseVariant(ctx context.Context, winner string) (s
 		return "", fmt.Errorf("supervisor: choose: variant %q has no sealed output (%s) — cannot settle it", winner, v.RunErr)
 	}
 
-	mgr := SharedScopeManager
+	mgr := s.runtime.ScopeManager
 	scope, ok := mgr.Get(s.scopeID)
 	if !ok {
 		return "", fmt.Errorf("supervisor: scope %s not found", s.scopeID)
@@ -1071,7 +1078,7 @@ func (s *supervisedSession) accept(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("supervisor: session %s is awaiting choose — pick a winner or abort", s.id)
 	}
 
-	mgr := SharedScopeManager
+	mgr := s.runtime.ScopeManager
 	if err := mgr.CommitMerge(ctx, s.scopeID, s.mergeReviewer()); err != nil {
 		var denied *shepherd.SupervisorDeniedError
 		if errors.As(err, &denied) {
@@ -1143,7 +1150,7 @@ func (s *supervisedSession) mergeReviewer() shepherd.MergeReviewer {
 // product — so the retry re-does the work with every unit's report
 // still in reach.
 func (s *supervisedSession) denyAndRetryLocked(ctx context.Context, denied *shepherd.SupervisorDeniedError) (string, error) {
-	mgr := SharedScopeManager
+	mgr := s.runtime.ScopeManager
 	scope, ok := mgr.Get(s.scopeID)
 	if !ok {
 		return "", fmt.Errorf("supervisor: accept denied (%s) but the session scope vanished — the tree was left as the unit left it; abort or roll back manually", denied.Reason)
@@ -1211,7 +1218,7 @@ func (s *supervisedSession) abort(ctx context.Context, restore bool) (string, er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	mgr := SharedScopeManager
+	mgr := s.runtime.ScopeManager
 	var rewindErr error
 	rewound := false
 

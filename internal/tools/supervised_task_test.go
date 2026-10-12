@@ -96,10 +96,21 @@ func (f *fakeRunner) promptFor(t *testing.T, call int) string {
 	return f.prompts[call]
 }
 
-// newSupervisedTestEnv builds a SupervisedTaskTool backed by a real
-// ScopeManager (in-memory store) and a real temp git repo, swapping the
-// SharedScopeManager global for the duration of the test.
-func newSupervisedTestEnv(t *testing.T) (*SupervisedTaskTool, string) {
+// sessionFixtures is the session-owned seam a test env hands around:
+// the scope manager and trace store the wiring pairs in production
+// (plan 07, H4). Tests own their instances — there are no globals to
+// swap and restore.
+type sessionFixtures struct {
+	mgr   *shepherd.ScopeManager
+	store *shepherdtrace.SQLiteTraceStore
+}
+
+// newSessionFixtures builds the shared fixtures: an in-memory trace
+// store, a scope manager on it, a temp git repo, and the root scope the
+// wiring creates in local mode (adoption plan D1) — the in-place git
+// sandbox. Review sessions fork their scope from it, so it is the merge
+// gate's parent and baseline (C1).
+func newSessionFixtures(t *testing.T) (*sessionFixtures, string, string) {
 	t.Helper()
 
 	store, err := shepherdtrace.NewSQLiteTraceStore(":memory:")
@@ -108,30 +119,31 @@ func newSupervisedTestEnv(t *testing.T) (*SupervisedTaskTool, string) {
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 
-	prev := SharedScopeManager
-	SharedScopeManager = shepherd.NewScopeManager(store)
-	prevTrace := SharedTraceStore
-	SharedTraceStore = store
-	t.Cleanup(func() {
-		SharedScopeManager = prev
-		SharedTraceStore = prevTrace
-	})
+	fx := &sessionFixtures{mgr: shepherd.NewScopeManager(store), store: store}
 
 	repo := newTestGitRepo(t)
 
-	// The root scope the wiring creates in local mode (adoption plan
-	// D1): the in-place git sandbox. Review sessions fork their scope
-	// from it — the merge gate's parent and baseline (C1).
-	root, err := SharedScopeManager.Create("test-session-root", shepherdgit.NewLocalGitSandbox(repo))
+	root, err := fx.mgr.Create("test-session-root", shepherdgit.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create root scope: %v", err)
 	}
 
+	return fx, repo, root.ID()
+}
+
+// newSupervisedTestEnv builds a SupervisedTaskTool backed by a real
+// ScopeManager (in-memory store) and a real temp git repo, injected per
+// the session-owned seam (plan 07, H4).
+func newSupervisedTestEnv(t *testing.T) (*SupervisedTaskTool, string) {
+	t.Helper()
+	fx, repo, rootID := newSessionFixtures(t)
+
 	return &SupervisedTaskTool{
-		RoleNames:   []string{"worker"},
-		RepoPath:    repo,
-		RootScopeID: root.ID(),
-		MaxRetries:  1,
+		RoleNames:    []string{"worker"},
+		RepoPath:     repo,
+		RootScopeID:  rootID,
+		ScopeManager: fx.mgr,
+		MaxRetries:   1,
 	}, repo
 }
 
@@ -313,10 +325,6 @@ func TestSupervisedTask_RollbackRestoresWorkspace(t *testing.T) {
 }
 
 func TestSupervisedTask_NoScopeManager(t *testing.T) {
-	prev := SharedScopeManager
-	SharedScopeManager = nil
-	t.Cleanup(func() { SharedScopeManager = prev })
-
 	tool := &SupervisedTaskTool{
 		Runner:    (&fakeRunner{}).run(),
 		RoleNames: []string{"worker"},

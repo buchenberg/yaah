@@ -39,12 +39,9 @@ func TestTaskRunner_HaltBridgeCancelsTheRun(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 
-	prevMgr, prevStore := tools.SharedScopeManager, tools.SharedTraceStore
-	tools.SharedScopeManager = shepherd.NewScopeManager(store)
-	tools.SharedTraceStore = store
-	t.Cleanup(func() { tools.SharedScopeManager, tools.SharedTraceStore = prevMgr, prevStore })
+	mgr := shepherd.NewScopeManager(store)
 
-	root, err := CreateRootScope(tools.SharedScopeManager, "sess-halt", "", true) // pure-causal root
+	root, err := CreateRootScope(mgr, "sess-halt", "", true) // pure-causal root
 	if err != nil {
 		t.Fatalf("CreateRootScope: %v", err)
 	}
@@ -58,6 +55,8 @@ func TestTaskRunner_HaltBridgeCancelsTheRun(t *testing.T) {
 		defaults:     config.Defaults{},
 		rootScopeID:  root.ID(),
 		runs:         runs,
+		scopeManager: mgr,
+		traceStore:   store,
 	}
 	runner := makeTaskRunner(opts, 0)
 

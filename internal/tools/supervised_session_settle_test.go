@@ -16,9 +16,9 @@ import (
 // settledAction reads the settlement action recorded on a variant
 // scope's owner path (shepherd.run_output.settled.v1), the durable
 // assertion of which kernel action chose ran.
-func settledAction(t *testing.T, owner string) string {
+func settledAction(t *testing.T, store *shepherdtrace.SQLiteTraceStore, owner string) string {
 	t.Helper()
-	slice, err := SharedTraceStore.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, owner, 999, shepherdtrace.ModeBoth)
+	slice, err := store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, owner, 999, shepherdtrace.ModeBoth)
 	if err != nil {
 		t.Fatalf("read trace for %s: %v", owner, err)
 	}
@@ -34,10 +34,11 @@ func settledAction(t *testing.T, owner string) string {
 
 // forkAndDrift starts a session, forks two variants that each write
 // name in their isolated worktrees, applies drift to the parent tree
-// after the fork, and returns the session and paths.
-func forkAndDrift(t *testing.T, variantFile string, drift func(repo string)) (string, *SupervisorTool, string, *sessionRunner) {
+// after the fork, and returns the session, paths, and session fixtures
+// (the trace store settle records are read from).
+func forkAndDrift(t *testing.T, variantFile string, drift func(repo string)) (string, *SupervisorTool, string, *sessionRunner, *sessionFixtures) {
 	t.Helper()
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, fx := newReviewTestEnv(t)
 	tool.WorktreeRoot = t.TempDir()
 
 	runner := &sessionRunner{
@@ -63,7 +64,7 @@ func forkAndDrift(t *testing.T, variantFile string, drift func(repo string)) (st
 	if drift != nil {
 		drift(repo)
 	}
-	return sid, sup, repo, runner
+	return sid, sup, repo, runner, fx
 }
 
 // TestReviewSession_ChooseSelectFastPath pins the common case
@@ -71,7 +72,7 @@ func forkAndDrift(t *testing.T, variantFile string, drift func(repo string)) (st
 // settles the winner with Select — fast-forward onto the parent — and
 // the settlement records it.
 func TestReviewSession_ChooseSelectFastPath(t *testing.T) {
-	sid, sup, repo, _ := forkAndDrift(t, "variant-a.txt", nil)
+	sid, sup, repo, _, fx := forkAndDrift(t, "variant-a.txt", nil)
 
 	chosen := mustSupervisorExecute(t, sup, `{"action":"choose","session_id":`+jsonString(sid)+`,"winner":"a"}`)
 	if chosen.Status != "chosen" {
@@ -80,10 +81,10 @@ func TestReviewSession_ChooseSelectFastPath(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repo, "variant-a.txt")); err != nil {
 		t.Errorf("the selected variant's work must land in the parent: %v", err)
 	}
-	if action := settledAction(t, sid+":var-a"); action != "selected" {
+	if action := settledAction(t, fx.store, sid+":var-a"); action != "selected" {
 		t.Errorf("winner settlement action = %q, want selected (the parent never moved)", action)
 	}
-	if action := settledAction(t, sid+":var-b"); action != "discarded" {
+	if action := settledAction(t, fx.store, sid+":var-b"); action != "discarded" {
 		t.Errorf("loser settlement action = %q, want discarded", action)
 	}
 }
@@ -93,7 +94,7 @@ func TestReviewSession_ChooseSelectFastPath(t *testing.T) {
 // the winner settles with Apply — a three-way merge that keeps the
 // parent's concurrent changes.
 func TestReviewSession_ChooseAppliesOverParentDrift(t *testing.T) {
-	sid, sup, repo, _ := forkAndDrift(t, "variant-a.txt", func(repo string) {
+	sid, sup, repo, _, fx := forkAndDrift(t, "variant-a.txt", func(repo string) {
 		// Disjoint drift: a file the variants never touch.
 		writeTestFile(t, repo, "parent-drift.txt", "drift\n")
 	})
@@ -108,7 +109,7 @@ func TestReviewSession_ChooseAppliesOverParentDrift(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repo, "parent-drift.txt")); err != nil {
 		t.Errorf("the parent's disjoint drift must survive the apply: %v", err)
 	}
-	if action := settledAction(t, sid+":var-a"); action != "applied" {
+	if action := settledAction(t, fx.store, sid+":var-a"); action != "applied" {
 		t.Errorf("winner settlement action = %q, want applied (the parent drifted)", action)
 	}
 }
@@ -119,7 +120,7 @@ func TestReviewSession_ChooseAppliesOverParentDrift(t *testing.T) {
 // stays unconsumed (its worktree survives), the session stays
 // awaiting-choose, and choosing again after the drift resolves works.
 func TestReviewSession_ChooseOverlapConflictRefusesUnconsumed(t *testing.T) {
-	sid, sup, repo, runner := forkAndDrift(t, "shared.txt", func(repo string) {
+	sid, sup, repo, runner, _ := forkAndDrift(t, "shared.txt", func(repo string) {
 		// Overlapping drift: the same path the variants change.
 		writeTestFile(t, repo, "shared.txt", "drifted\n")
 	})
@@ -158,7 +159,7 @@ func TestReviewSession_ChooseOverlapConflictRefusesUnconsumed(t *testing.T) {
 // second choose, and the kernel's ErrOutputConsumed maps to the
 // already-chose error when the state guard did not fire first.
 func TestReviewSession_DoubleChooseRefused(t *testing.T) {
-	sid, sup, _, _ := forkAndDrift(t, "variant-a.txt", nil)
+	sid, sup, _, _, _ := forkAndDrift(t, "variant-a.txt", nil)
 
 	if chosen := mustSupervisorExecute(t, sup, `{"action":"choose","session_id":`+jsonString(sid)+`,"winner":"a"}`); chosen.Status != "chosen" {
 		t.Fatalf("first choose status = %q, want chosen", chosen.Status)
@@ -170,7 +171,7 @@ func TestReviewSession_DoubleChooseRefused(t *testing.T) {
 	// The consume-once mapping: an output settled out-of-band (a
 	// partial-choose recovery) is refused as already chosen — not as a
 	// silent re-settle of a physical effect that already happened.
-	sid2, sup2, repo2, runner2 := forkAndDrift(t, "variant-a.txt", nil)
+	sid2, sup2, repo2, runner2, _ := forkAndDrift(t, "variant-a.txt", nil)
 	_ = repo2
 	sess, err := getReviewSession(sid2)
 	if err != nil {
@@ -206,7 +207,7 @@ func TestReviewSession_DoubleChooseRefused(t *testing.T) {
 // both through the settlement, and the parent tree sits at the fork
 // point needing no rewind.
 func TestReviewSession_AbortDuringForkTearsDownWorktrees(t *testing.T) {
-	sid, sup, repo, runner := forkAndDrift(t, "variant-a.txt", func(repo string) {
+	sid, sup, repo, runner, _ := forkAndDrift(t, "variant-a.txt", func(repo string) {
 		writeTestFile(t, repo, "unit-work.txt", "kept at fork point\n")
 	})
 
@@ -233,7 +234,7 @@ func TestReviewSession_AbortDuringForkTearsDownWorktrees(t *testing.T) {
 // scope's owner path carries a sealed record before any settlement,
 // and the envelope's variants are backed by the frozen outputs.
 func TestReviewSession_ForkSealsOutputs(t *testing.T) {
-	sid, sup, _, _ := forkAndDrift(t, "variant-a.txt", nil)
+	sid, sup, _, _, fx := forkAndDrift(t, "variant-a.txt", nil)
 	_ = sup
 
 	env := mustSupervisorExecute(t, sup, `{"action":"review_diff","session_id":`+jsonString(sid)+`}`)
@@ -251,7 +252,7 @@ func TestReviewSession_ForkSealsOutputs(t *testing.T) {
 	}
 	for _, label := range []string{"a", "b"} {
 		owner := fmt.Sprintf("%s:var-%s", sid, label)
-		slice, err := SharedTraceStore.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, owner, 999, shepherdtrace.ModeBoth)
+		slice, err := fx.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, owner, 999, shepherdtrace.ModeBoth)
 		if err != nil {
 			t.Fatalf("read trace for %s: %v", owner, err)
 		}
@@ -278,7 +279,7 @@ func TestReviewSession_ForkSealsOutputs(t *testing.T) {
 // so this runs deterministically on every platform — including Windows,
 // whose capture normalization made the old stash identity drift.
 func TestReviewSession_ChooseWithDirtyForkPoint(t *testing.T) {
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, _ := newReviewTestEnv(t)
 	tool.WorktreeRoot = t.TempDir()
 
 	// Uncommitted work exists before the session starts, so the fork
@@ -330,7 +331,7 @@ func TestReviewSession_ChoosePartialSettlementLands(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("chmod cannot make the worktree undeletable on Windows")
 	}
-	tool, sup, repo := newReviewTestEnv(t)
+	tool, sup, repo, _ := newReviewTestEnv(t)
 	tool.WorktreeRoot = t.TempDir()
 
 	runner := &sessionRunner{
