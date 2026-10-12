@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.78.1](https://github.com/buchenberg/yaah/compare/v0.78.0...v0.78.1) (2026-10-12)
+
+
+### Documentation
+
+* **bench:** per-task metrics in TB comparison; metrics extractor ([732cadd](https://github.com/buchenberg/yaah/commit/732caddd4ff58df682746636069ef82e470caa2f))
+* **bench:** split TB results into RESULTS.md ([e4dd972](https://github.com/buchenberg/yaah/commit/e4dd9722a0d315f9fed259c7e8a02c3310e71f7d))
+* **bench:** split TB results into RESULTS.md ([fad1595](https://github.com/buchenberg/yaah/commit/fad1595f1996f519c04974a0958465f5d4cb76d4))
+
+
+### CI / Build
+
+* **release:** assert tag_name non-empty; clarify fallback comment ([07ea34a](https://github.com/buchenberg/yaah/commit/07ea34a2c6034d9cdf0f59d7524ebd5e4f2e4731))
+* **release:** stamp version/commit/date via ldflags ([4ea7e83](https://github.com/buchenberg/yaah/commit/4ea7e830b14a072d5e72b2c49df3132e0791a560))
+
 ## [0.78.0](https://github.com/buchenberg/yaah/compare/v0.77.0...v0.78.0) (2026-10-12)
 
 
