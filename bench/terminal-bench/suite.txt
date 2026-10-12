@@ -8,16 +8,22 @@
 # Selection: one category representative each — file operations
 # (hello-world smoke, jsonl-aggregator), software engineering
 # (broken-python), data (csv-to-parquet), algorithms (assign-seats),
-# planning (gomoku-planner) — with the three tasks opencode failed
-# that yaah resolves (broken-python, csv-to-parquet, gomoku-planner)
-# included for discriminative power. On the recorded 2026-10-12 runs
-# (deepseek-flash), this subset scored yaah 6/6 (~0.98M tokens, ~27%
-# of the old 15-task run) vs opencode 3/6.
+# planning (gomoku-planner) — with broken-python, csv-to-parquet, and
+# gomoku-planner (the tasks opencode failed in its earlier
+# 2026-10-12__16-35-01 run) included for discriminative power.
 #
-# task id              category                 words  yaah tokens
+# Fresh same-day comparison (runs 2026-10-12__17-26-54 /
+# 2026-10-12__17-35-13, deepseek-flash, one trial each): yaah 6/6
+# (~0.98M tokens, 90% cache-hit, ~27% of the old 15-task cost) vs
+# opencode 5/6 — broken-python is opencode's lone failure in the
+# fresh run and a reproducible parse_error (2/2 of its runs; yaah
+# resolves it 3/3). opencode scored 3/6 on this subset in the earlier
+# run: single-trial variance is real.
+#
+# task id              category                 words  yaah tokens (2026-10-12__17-26-54)
 hello-world            # file-operations         34    46K (smoke)
-broken-python          # software-engineering    46    156K
-csv-to-parquet         # data-science            44    183K
-jsonl-aggregator       # file-operations         132   108K
-assign-seats           # algorithms              175   145K
-gomoku-planner         # games                    151   339K
+broken-python          # software-engineering    46    209K
+csv-to-parquet         # data-science            44    164K
+jsonl-aggregator       # file-operations         132   120K
+assign-seats           # algorithms              175   127K
+gomoku-planner         # games                    151   310K

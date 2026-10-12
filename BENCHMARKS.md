@@ -37,6 +37,8 @@ Records are never overwritten — append a new row for every run.
 
 | 2026-10-12 16:35 | main | dd038a7 | TB mini-suite vs opencode (deepseek-flash) | — | — | — | ~40min | 3.59M | — | 3,587,839 | 100% | 0% | 3 | yaah 12/14 vs opencode 7/14 of runnable tasks; same model, same judge, 1 trial each; yaah run carried the PR #291 improvements (non-interactive one-shot, incremental flush, cache accounting: 84% cache-hit) |
 
+| 2026-10-12 17:26 | main | b2825c3 | TB suite.txt vs opencode (deepseek-flash) | — | — | — | ~10min | 975K | — | 975,292 | 100% | 0% | 0 | yaah 6/6 vs opencode 5/6 on the 6-task editable suite; harness pin d28711d; 1 trial each; yaah 944,377 prompt + 30,915 output, 90% cache-hit (848K); opencode failed broken-python (parse_error, 2/2 runs); opencode no token accounting; run-ids 2026-10-12__17-26-54 / 2026-10-12__17-35-13; opencode improved vs its 16-35 run (3/6 → 5/6) — single-trial variance is real |
+
 ## Analysis: Continuation Guard Impact
 
 **Test Configuration:** `context_window: 20000` to force compaction during B4 audit
