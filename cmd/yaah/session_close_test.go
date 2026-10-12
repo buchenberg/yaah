@@ -1,7 +1,10 @@
 package yaah
 
 import (
+	"bytes"
 	"context"
+	"io"
+	"os"
 	"testing"
 	"time"
 
@@ -135,6 +138,7 @@ func TestSessionCloseClosesShepherdInfrastructure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init infrastructure: %v", err)
 	}
+	sub := bus.Subscribe("close-probe")
 	sess := &agentSession{
 		traceStore: store,
 		traceBus:   bus,
@@ -143,22 +147,19 @@ func TestSessionCloseClosesShepherdInfrastructure(t *testing.T) {
 
 	sess.close()
 
-	if _, aerr := store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
-		AppendIntentID: "post-close-probe",
-		Groups: []shepherdtrace.AppendGroup{{
-			TraceOwnerID: "probe",
-			FactDrafts: []shepherdtrace.RecordDraft{{
-				Mode:      shepherdtrace.Declaration,
-				SchemaRef: "shepherd.probe.v1",
-				KindLabel: "probe",
-				Payload:   map[string]any{"probe": true},
-			}},
-		}},
-	}); aerr == nil {
-		t.Error("the trace store accepted a write after close; the clean exit must close it")
-	}
 	if storeAppendable(store) {
-		t.Error("the trace store is still usable after close")
+		t.Error("the trace store is still usable after close; the clean exit must close it")
+	}
+	// The bus half: a subscriber registered before close has its channel
+	// closed by EffectBus.Close — this is what catches a close() that
+	// stops calling bus.Close().
+	select {
+	case _, ok := <-sub:
+		if ok {
+			t.Error("the bus's subscriber channel still delivers after close; close() must close the bus")
+		}
+	default:
+		t.Error("the bus's subscriber channel is still open after close; close() must close the bus")
 	}
 }
 
@@ -187,17 +188,20 @@ func TestSessionCloseLeavesInfraOpenOnDrainTimeout(t *testing.T) {
 	t.Cleanup(func() { close(hang); _ = bg.CloseAndWait(5 * time.Second) })
 	// The store DELIBERATELY stays open past close() here — that is the
 	// assertion — but on Windows an open handle blocks the TempDir
-	// cleanup, so the test closes it before returning.
-	t.Cleanup(func() { _ = store.Close(context.Background()) })
-
-	oldTimeout := backgroundJobDrainTimeout
-	backgroundJobDrainTimeout = 50 * time.Millisecond
-	t.Cleanup(func() { backgroundJobDrainTimeout = oldTimeout })
+	// cleanup, so the test closes both before returning.
+	t.Cleanup(func() {
+		_ = store.Close(context.Background())
+		bus.Close()
+	})
 
 	sess := &agentSession{
 		backgroundJobs: bg,
 		traceStore:     store,
 		traceBus:       bus,
+		// The session-owned drain seam (the production default is a
+		// const): shrink it so the hanging job provably outlives the
+		// drain without slowing the test.
+		drainTimeout: 50 * time.Millisecond,
 	}
 	sess.close()
 
@@ -221,7 +225,23 @@ func TestCloseShepherdInfrastructureIdempotent(t *testing.T) {
 	}
 
 	pipeline.CloseShepherdInfrastructure(store, bus)
-	pipeline.CloseShepherdInfrastructure(store, bus) // must not panic or error
+
+	// The second close must be a silent no-op, not a close that warns:
+	// capture stderr for it and require silence.
+	saved := os.Stderr
+	r, w, perr := os.Pipe()
+	if perr != nil {
+		t.Fatalf("pipe: %v", perr)
+	}
+	os.Stderr = w
+	pipeline.CloseShepherdInfrastructure(store, bus)
+	os.Stderr = saved
+	_ = w.Close()
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	if buf.Len() > 0 {
+		t.Errorf("the second close warned instead of a silent no-op: %s", buf.String())
+	}
 
 	if storeAppendable(store) {
 		t.Error("the store is still usable after being closed")
@@ -245,5 +265,3 @@ func storeAppendable(store *shepherdtrace.SQLiteTraceStore) bool {
 	})
 	return err == nil
 }
-
-var _ = shepherd.Scope{} // keep the shepherd import for the shared fixtures

@@ -104,6 +104,10 @@ type agentSession struct {
 	// follow-ups. Cancelled at session close.
 	backgroundJobs *jobs.BackgroundJobs
 
+	// drainTimeout overrides backgroundJobDrainTimeout when set — the
+	// session-owned seam the close tests use; zero means the default.
+	drainTimeout time.Duration
+
 	// sessionSandbox owns the isolated workspace backend's lifecycle, when
 	// workspace.backend is containerd: the sandbox was constructed, image-
 	// probed (D5), and created once at session start, and close() destroys
@@ -182,8 +186,9 @@ type agentSession struct {
 // background sub-agents to finish before destroying the session sandbox
 // anyway. Generous: cancellation propagates through the tool call in
 // flight, and the alternative is racing a live sub-agent with backend
-// teardown. A var so the drain-timeout survivor test can shrink it.
-var backgroundJobDrainTimeout = 30 * time.Second
+// teardown. A session whose drainTimeout field is set uses that instead
+// — the test seam, session-owned per the no-globals convention.
+const backgroundJobDrainTimeout = 30 * time.Second
 
 // workspaceSandboxDestroyTimeout bounds the sandbox teardown in close() so
 // a wedged containerd daemon cannot hang session shutdown.
@@ -212,9 +217,13 @@ func (s *agentSession) close() {
 	// when the session sandbox is destroyed below. Close() alone only
 	// cancels — it never joins — which is a use-after-destroy race, not a
 	// quiesced teardown.
+	drainTimeout := s.drainTimeout
+	if drainTimeout == 0 {
+		drainTimeout = backgroundJobDrainTimeout
+	}
 	drained := true
 	if s.backgroundJobs != nil {
-		if !s.backgroundJobs.CloseAndWait(backgroundJobDrainTimeout) {
+		if !s.backgroundJobs.CloseAndWait(drainTimeout) {
 			drained = false
 			fmt.Fprintf(os.Stderr, "warning: background sub-agent(s) still finishing after %s; continuing session teardown\n", backgroundJobDrainTimeout)
 		}
@@ -263,8 +272,18 @@ func (s *agentSession) close() {
 		if !drained {
 			fmt.Fprintln(os.Stderr, "warning: shepherd trace store left open — a background job outlived the drain and still writes it")
 		} else {
+			store := s.traceStore
 			pipeline.CloseShepherdInfrastructure(s.traceStore, s.traceBus)
 			s.traceStore, s.traceBus = nil, nil
+			// The package globals still point at the closed store, and a
+			// later session built with tracing off would hand sub-agent
+			// middleware a dead handle (the pipeline builder nil-checks
+			// but does not liveness-check). Clear them when they are
+			// still ours — a later session that reassigned them keeps
+			// its own. H4 retires the globals entirely.
+			if store != nil && tools.SharedTraceStore == store {
+				tools.SharedTraceStore = nil
+			}
 		}
 	}
 	s.mu.RLock()
