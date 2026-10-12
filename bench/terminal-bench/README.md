@@ -72,6 +72,13 @@ The persisted `yaah-home/config.yaml` keeps the `${DEEPSEEK_API_KEY}`
 placeholder — no literal secret is written anywhere under the mounted
 agent-logs; yaah resolves the key from the session environment.
 
+Per-task metrics (verdict, agent wall time, yaah token accounting
+summed from the state.dbs) for one or more runs:
+
+```bash
+python3 extract_metrics.py ~/Code/Agentic/Frameworks/terminal-bench/runs <run-id> [run-id ...]
+```
+
 ## Podman gotchas
 
 1. **Short image names**: podman refuses `FROM localstack/localstack:4.3`
@@ -94,7 +101,8 @@ agent-logs; yaah resolves the key from the session environment.
 
 - Task tables, scores, and caveats: append a new dated section to
   [RESULTS.md](RESULTS.md) — existing sections are never rewritten.
-- Ledger: append-only rows in the repo root BENCHMARKS.md, the existing
+- Ledger: append-only rows in the repo root
+  [BENCHMARKS.md](../../BENCHMARKS.md), the existing
   convention: timestamp, branch, commit, scenario (`TB <task>`), turns,
   subs, tools, time, orch/sub tokens, total, errors, notes — plus the
   run-id so the harness output backs the row.

@@ -1,10 +1,10 @@
 # Terminal-Bench mini-suite results
 
-All yaah-vs-baseline numbers recorded to date, one document per suite
+All yaah-vs-baseline numbers recorded to date, one section per suite
 run. The adapter, host setup, and run instructions live in
 [README.md](README.md); ledger rows live in the repo root
-`BENCHMARKS.md`. Records here are append-only — new runs get a new
-section, existing sections are never rewritten.
+[BENCHMARKS.md](../../BENCHMARKS.md). Records here are append-only —
+new runs get a new section, existing sections are never rewritten.
 
 ## Full-suite vs opencode (2026-10-12, deepseek-flash)
 
@@ -14,38 +14,55 @@ incremental usage flush, cache accounting) vs run
 `2026-10-12__16-35-01` (opencode, harness installed-agent).
 Same 15 frozen tasks, same judge, same model, one trial each.
 
-| Task | yaah | opencode |
-|---|---|---|
-| hello-world | resolved | resolved |
-| broken-python | resolved | unresolved (parse_error) |
-| csv-to-parquet | resolved | unresolved |
-| cpp-compatibility | resolved | resolved |
-| jsonl-aggregator | resolved | resolved |
-| assign-seats | resolved | resolved |
-| bank-trans-filter | resolved | resolved |
-| fix-pandas-version | resolved | resolved |
-| git-workflow-hack | resolved | resolved |
-| gomoku-planner | resolved | unresolved |
-| npm-conflict-resolution | resolved | unresolved |
-| create-bucket | resolved | unresolved |
-| png-generation | unresolved (OCR-join brittle test; both fail) | unresolved |
-| setup-custom-dev-env | unresolved (kind-cluster timeout) | unresolved |
-| fix-git | — (upstream-unbuildable) | — (same) |
+What the harness measures: the agent lands in a fresh container with
+a task instruction and a time budget; `resolved` means the hidden
+end-state tests pass after the agent finishes. With the model held
+constant, the score delta isolates the agent layer (harness, prompts,
+tools, context management). Token figures are summed from yaah's
+in-container `state.db` (sessions table); wall time is the harness's
+per-trial agent window. Both are reproducible with
+`extract_metrics.py`. The harness's own token fields are 0 for both
+adapters, and opencode writes no usage data under agent-logs, so the
+token columns are yaah-only.
 
-**yaah 12/14 vs opencode 7/14** of the runnable tasks. Both CLIs
-share the same two hard failures (the brittle png OCR check; the
+| Task | yaah | opencode | yaah time | opencode time | yaah in | yaah out | yaah cached |
+|---|---|---|---|---|---|---|---|
+| hello-world | resolved | resolved | 5s | 24s | 45,734 | 178 | 31,616 |
+| broken-python | resolved | unresolved (parse_error) | 36s | 38s | 151,002 | 5,200 | 133,760 |
+| csv-to-parquet | resolved | unresolved | 39s | 44s | 178,353 | 4,609 | 162,176 |
+| cpp-compatibility | resolved | resolved | 1200s | 32s | 92,626 | 7,500 | 78,080 |
+| jsonl-aggregator | resolved | resolved | 27s | 33s | 104,843 | 2,775 | 88,704 |
+| assign-seats | resolved | resolved | 35s | 73s | 140,415 | 4,713 | 124,160 |
+| bank-trans-filter | resolved | resolved | 56s | 29s | 197,136 | 9,009 | 149,248 |
+| fix-pandas-version | resolved | resolved | 50s | 38s | 174,154 | 5,237 | 149,120 |
+| git-workflow-hack | resolved | resolved | 182s | 82s | 935,000 | 42,108 | 827,136 |
+| gomoku-planner | resolved | unresolved | 182s | 322s | 306,876 | 32,123 | 287,488 |
+| npm-conflict-resolution | resolved | unresolved | 292s | 26s | 618,060 | 22,043 | 539,776 |
+| create-bucket | resolved | unresolved | 50s | 28s | 221,484 | 5,343 | 204,288 |
+| png-generation | unresolved (OCR-join brittle test) | unresolved | 28s | 41s | — (upstream missing volume) | | |
+| setup-custom-dev-env | unresolved (kind-cluster timeout) | unresolved | 1200s | 23s | 272,601 | 8,717 | 244,736 |
+| fix-git | — (upstream-unbuildable) | — (same) | — | — | — | | |
+
+**Score: yaah 12/14 vs opencode 7/14** of the runnable tasks. Both
+CLIs share the same two hard failures (the brittle png OCR check; the
 kind-cluster timeout); opencode additionally failed create-bucket,
 csv-to-parquet, gomoku-planner, npm-conflict-resolution, and lost
 broken-python to a parse error.
 
+**yaah cost across the 13 tasks with accounting: 3.44M prompt +
+150K output = 3.59M tokens, of which 3.02M (84% of total, 88% of
+prompt tokens) were served from deepseek's cache** — down from 6.3M
+with no cache accounting the week before. Wall time is not directly
+comparable either: yaah hit the 1200s budget cap on cpp-compatibility
+(resolved at the cap) and setup-custom-dev-env (unresolved), while
+opencode's low totals partly reflect fast-fails (npm-conflict-
+resolution 26s, setup-custom-dev-env 23s) — giving up early rather
+than working the task.
+
 Caveats for the record: single trial per task per CLI (a smoke-signal
 comparison, not a statistic); yaah's improved run also benefited from
 the run-over-run delta of PR #291 (11/15 -> 12/15: create-bucket
-flipped after the one-shot non-interactivity fix); opencode reports no
-token accounting through the installed-agent path, so the cost
-comparison is yaah-only: 3.59M tokens with 84% of prompt tokens served
-from deepseek's cache (2.32M of 2.76M prompt tokens; see the run's
-state.dbs), down from 6.3M the week before.
+flipped after the one-shot non-interactivity fix).
 
 ## First full-suite run (2026-10-12, deepseek-flash, yaah 12e9334)
 
@@ -104,8 +121,8 @@ accounting is lost (the agent run itself is fine).
 | broken-python | 143,384 | 3,497 | 146,881 | 24 | yes |
 
 The fixed per-session cost dominates: ~30K input tokens before any work
-(hello-world did one write). Multi-step debug tasks land 4-5x that.
+(hello-world did one write). Multi-step debug tasks land 4-5× that.
 The full mini-suite then measured ~6.3M tokens — under $2 at
-deepseek-flash prices, but 3.5-7x this early projection: the suite's
+deepseek-flash prices, but 3.5-7× this early projection: the suite's
 long-horizon tasks (git-workflow-hack, npm-conflict-resolution)
 dwarfed the smoke pair.
