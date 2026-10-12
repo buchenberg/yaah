@@ -8,6 +8,7 @@ import (
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 
+	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/jobs"
 )
 
@@ -122,3 +123,123 @@ func TestSessionClosePrunesTerminalScopes(t *testing.T) {
 		t.Error("a second close must not prune live scopes")
 	}
 }
+
+// TestSessionCloseClosesShepherdInfrastructure pins plan 07 H2's happy
+// exit: a session with the shepherd infrastructure tears the trace store
+// and its bus down on close — store first, then the bus — instead of
+// leaving both to the process exit. Post-close, the store refuses writes
+// and the bus's subscriber channels are closed.
+func TestSessionCloseClosesShepherdInfrastructure(t *testing.T) {
+	dir := t.TempDir()
+	store, bus, mgr, err := pipeline.InitShepherdInfrastructure(dir, 0)
+	if err != nil {
+		t.Fatalf("init infrastructure: %v", err)
+	}
+	sess := &agentSession{
+		traceStore: store,
+		traceBus:   bus,
+		scopes:     mgr,
+	}
+
+	sess.close()
+
+	if _, aerr := store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+		AppendIntentID: "post-close-probe",
+		Groups: []shepherdtrace.AppendGroup{{
+			TraceOwnerID: "probe",
+			FactDrafts: []shepherdtrace.RecordDraft{{
+				Mode:      shepherdtrace.Declaration,
+				SchemaRef: "shepherd.probe.v1",
+				KindLabel: "probe",
+				Payload:   map[string]any{"probe": true},
+			}},
+		}},
+	}); aerr == nil {
+		t.Error("the trace store accepted a write after close; the clean exit must close it")
+	}
+	if storeAppendable(store) {
+		t.Error("the trace store is still usable after close")
+	}
+}
+
+// TestSessionCloseLeavesInfraOpenOnDrainTimeout pins plan 07 H2's
+// survivor branch: a background job that outlives the drain shares the
+// trace store, and closing it under a live writer would turn the job's
+// final writes into corruption-shaped failures — worse than an unclosed
+// store the process exit reaps. The infrastructure stays open, and
+// close() says so.
+func TestSessionCloseLeavesInfraOpenOnDrainTimeout(t *testing.T) {
+	dir := t.TempDir()
+	store, bus, _, err := pipeline.InitShepherdInfrastructure(dir, 0)
+	if err != nil {
+		t.Fatalf("init infrastructure: %v", err)
+	}
+
+	// A job that ignores cancellation and outlives any shrunk drain.
+	bg := jobs.NewBackgroundJobs()
+	hang := make(chan struct{})
+	if _, lerr := bg.Launch(context.Background(), func(ctx context.Context, prompt string, p jobs.SubAgentParams) (string, error) {
+		<-hang
+		return "", ctx.Err()
+	}, "role", "hang", "hang", jobs.SubAgentParams{}, time.Minute); lerr != nil {
+		t.Fatalf("launch hanging job: %v", lerr)
+	}
+	t.Cleanup(func() { close(hang); _ = bg.CloseAndWait(5 * time.Second) })
+
+	oldTimeout := backgroundJobDrainTimeout
+	backgroundJobDrainTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { backgroundJobDrainTimeout = oldTimeout })
+
+	sess := &agentSession{
+		backgroundJobs: bg,
+		traceStore:     store,
+		traceBus:       bus,
+	}
+	sess.close()
+
+	if !storeAppendable(store) {
+		t.Error("the trace store was closed under a live background job; a drain-timeout survivor must leave it open")
+	}
+	if sess.traceStore != store || sess.traceBus != bus {
+		t.Error("close() dropped the infrastructure references without closing them")
+	}
+}
+
+// TestCloseShepherdInfrastructureIdempotent pins the double-close no-op:
+// the store's database Close and the bus's closed guard make a second
+// close benign — a close that already happened (the wiring's
+// recovery-failure path) must not fabricate a failure.
+func TestCloseShepherdInfrastructureIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	store, bus, _, err := pipeline.InitShepherdInfrastructure(dir, 0)
+	if err != nil {
+		t.Fatalf("init infrastructure: %v", err)
+	}
+
+	pipeline.CloseShepherdInfrastructure(store, bus)
+	pipeline.CloseShepherdInfrastructure(store, bus) // must not panic or error
+
+	if storeAppendable(store) {
+		t.Error("the store is still usable after being closed")
+	}
+}
+
+// storeAppendable reports whether the store still accepts a write — the
+// probe the close tests use to tell an open store from a closed one.
+func storeAppendable(store *shepherdtrace.SQLiteTraceStore) bool {
+	_, err := store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+		AppendIntentID: "appendable-probe",
+		Groups: []shepherdtrace.AppendGroup{{
+			TraceOwnerID: "probe",
+			FactDrafts: []shepherdtrace.RecordDraft{{
+				Mode:      shepherdtrace.Declaration,
+				SchemaRef: "shepherd.probe.v1",
+				KindLabel: "probe",
+				Payload:   map[string]any{"probe": true},
+			}},
+		}},
+	})
+	return err == nil
+}
+
+var _ = shepherd.Scope{} // keep the shepherd import for the shared fixtures

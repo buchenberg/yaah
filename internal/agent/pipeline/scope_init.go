@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,4 +48,25 @@ func InitShepherdInfrastructure(traceDir string, busBuffer int) (*shepherdtrace.
 	store.WithBus(bus)
 	mgr := shepherd.NewScopeManager(store)
 	return store, bus, mgr, nil
+}
+
+// CloseShepherdInfrastructure closes the session-wide shepherd trace store
+// and its effect bus on a clean session end (plan 07, H2): the store first
+// — no more publishes reach the bus — then the bus, whose Close stops its
+// subscriber goroutines. Both are idempotent (the store's database Close
+// and the bus's closed guard), so a close that already happened — the
+// wiring's recovery-failure path closes the store it never hands over —
+// is a no-op, not a fabricated failure. Failures warn rather than
+// propagate: the clean-exit path reports its teardown failures the same
+// way the workspace sandbox destroy does, and its callers have no error
+// contract to join into.
+func CloseShepherdInfrastructure(store *shepherdtrace.SQLiteTraceStore, bus *shepherdtrace.EffectBus) {
+	if store != nil {
+		if err := store.Close(context.Background()); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: shepherd trace store close: %v\n", err)
+		}
+	}
+	if bus != nil {
+		bus.Close()
+	}
 }
