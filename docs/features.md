@@ -296,17 +296,19 @@ yaah shepherd          # list the recovery report's worktree leftovers
 yaah shepherd prune <worktree-path>   # delete exactly one orphaned worktree
 ```
 
-`prune` is the only deletion path in the design — by exact path,
-user-invoked, and it verifies ownership (the git worktree registry and
-the directory's own repository link) before deleting. An adopted,
-missing, or unadopted path refuses by name; an unlisted path is not on
-the report at all.
+Normal lifecycle teardown is automatic — settling or discarding a
+variant destroys the worktree its scope owns — so `prune` exists for the
+one case nothing else covers: an *orphan* the crash left behind. It
+deletes by exact path, user-invoked only, and it verifies ownership (the
+git worktree registry and the directory's own repository link) before
+deleting. An adopted, missing, or unadopted path refuses by name; an
+unlisted path is not on the report at all.
 
 ### Doctor
 
 `yaah doctor` runs the same recovery scan as a check: a trace dir that
-fails to recover, or an orphan report that has grown, surfaces there
-with the same bucket vocabulary.
+fails to recover fails the check, and any non-empty leftover bucket
+(orphaned, missing, unadopted) warns with the same bucket vocabulary.
 
 ## Execution traces
 
