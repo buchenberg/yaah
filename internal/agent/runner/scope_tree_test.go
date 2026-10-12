@@ -1,8 +1,10 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -369,9 +371,12 @@ func TestCreateSubAgentScope_HaltedRootRefusesBothPaths(t *testing.T) {
 
 // TestCreateSubAgentScope_NonTerminalFailureDegradesLoudly pins the other
 // half of the policy: a fork failure that is NOT the halted root still
-// degrades to the flat scope — the sub-agent stays superviseable — but
-// the degradation is logged, not silent. The forced failure is a child
-// ID collision, the one non-terminal failure a healthy root can produce.
+// degrades toward the flat scope — the sub-agent stays superviseable —
+// but the degradation is logged, not silent. The forced failure is a
+// child ID collision, the one non-terminal failure a healthy root can
+// produce; the collision also fails the flat Create fallback, so the
+// dispatch fails honestly — what is pinned here is that the degradation
+// warning fired on the way down, naming the root and the sub.
 func TestCreateSubAgentScope_NonTerminalFailureDegradesLoudly(t *testing.T) {
 	mgr, _ := newScopeManagerForTest(t)
 	root, err := CreateRootScope(mgr, "sess-degrade", "", true) // pure-causal root
@@ -380,10 +385,13 @@ func TestCreateSubAgentScope_NonTerminalFailureDegradesLoudly(t *testing.T) {
 	}
 	opts := taskRunnerOpts{rootScopeID: root.ID()}
 
-	// Saturate the child ID: the next fork of the same ID fails
-	// non-terminally, and so does the flat Create fallback — the
-	// dispatch fails loudly on the collision, which is honest, but the
-	// degradation log must have fired on the way down.
+	// Capture the default logger so the degradation warning is
+	// observable, not just emitted.
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
 	if _, err := createSubAgentScope(mgr, opts, "sub-collide", ""); err != nil {
 		t.Fatalf("first dispatch: %v", err)
 	}
@@ -393,6 +401,13 @@ func TestCreateSubAgentScope_NonTerminalFailureDegradesLoudly(t *testing.T) {
 	}
 	if errors.Is(err, ErrRootTerminal) {
 		t.Fatalf("a child ID collision is not a terminal root; got: %v", err)
+	}
+	logged := buf.String()
+	if !strings.Contains(logged, "degrading to a flat scope outside the session tree") {
+		t.Errorf("the degradation must be logged, got: %q", logged)
+	}
+	if !strings.Contains(logged, "sub-collide") || !strings.Contains(logged, root.ID()) {
+		t.Errorf("the warning must name the root and the sub-agent, got: %q", logged)
 	}
 }
 

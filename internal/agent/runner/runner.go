@@ -784,13 +784,17 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 	// flat scope outside the session tree. A racing dispatch that
 	// landed there would be superviseable-but-orphaned: recovery
 	// rebuilds it as a sibling of a dead session, and its scope ID
-	// addresses nothing the session owns. The check runs before both
-	// fork paths so the workdir branch is covered too.
+	// addresses nothing the session owns.
+	//
+	// The pre-check fails fast (the workdir path would provision a
+	// worktree for a dispatch that cannot run), and the fork-failure
+	// paths below RE-CHECK before degrading: a halt that lands between
+	// the check and the fork must not slip through the TOCTOU window
+	// into the flat-scope fallback. A root missing from the registry
+	// is not this policy's case — the fork fails and the dispatch
+	// degrades like any other non-terminal failure.
 	root, ok := mgr.Get(opts.rootScopeID)
-	if !ok {
-		return nil, fmt.Errorf("sub-agent dispatch: the session's root scope %s is gone from the registry; scope-tree supervision for this session ended", opts.rootScopeID)
-	}
-	if root.State() != shepherd.ScopeActive {
+	if ok && root.State() != shepherd.ScopeActive {
 		return nil, fmt.Errorf("%w: %s — the supervisor halt ended this session's supervision; start a new session", ErrRootTerminal, root.State())
 	}
 	// workdir isolates this dispatch in its own worktree — a local-mode
@@ -814,6 +818,12 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 				// worktree from the trace alone.
 				return child, nil
 			}
+			// A halt that landed between the pre-check and this fork
+			// must not slip through the TOCTOU window into the
+			// fallback: re-check before degrading.
+			if root.State() != shepherd.ScopeActive {
+				return nil, fmt.Errorf("%w: %s — the supervisor halt ended this session's supervision; start a new session", ErrRootTerminal, root.State())
+			}
 			// A non-terminal ForkIsolated failure degrades loudly:
 			// the sub-agent still runs, superviseable, but its escape
 			// from the session tree is visible, not silent.
@@ -825,6 +835,12 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 	child, ferr := mgr.Fork(opts.rootScopeID, subTraceID, nil)
 	if ferr == nil {
 		return child, nil
+	}
+	// A halt that landed between the pre-check and this fork must not
+	// slip through the TOCTOU window into the fallback: re-check
+	// before degrading.
+	if root.State() != shepherd.ScopeActive {
+		return nil, fmt.Errorf("%w: %s — the supervisor halt ended this session's supervision; start a new session", ErrRootTerminal, root.State())
 	}
 	// A non-terminal fork failure degrades loudly, the same contract:
 	// superviseable, with the escape from the tree visible.
