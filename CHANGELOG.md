@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.77.0](https://github.com/buchenberg/yaah/compare/v0.76.0...v0.77.0) (2026-10-12)
+
+
+### Features
+
+* plan 07 phase H4 — retire the shared-global seam ([39cd251](https://github.com/buchenberg/yaah/commit/39cd2518bcb515feb9cbe53e71314e016c5ec02f))
+* plan 07 phase H4 — retire the shared-global seam ([876235a](https://github.com/buchenberg/yaah/commit/876235aaa0f9f44488367723a3bf92c969d586ea))
+* **runner:** plan 07 phase H6 -- post-halt dispatches refuse loudly ([bbee345](https://github.com/buchenberg/yaah/commit/bbee3457b5fc405f331eea579e07627e883fa29f))
+* **runner:** plan 07 phase H6 — post-halt dispatches refuse loudly ([241ee5c](https://github.com/buchenberg/yaah/commit/241ee5c57fc2eedc81172180cc0a4c2cd0955b5e))
+
+
+### Bug Fixes
+
+* **runner:** H6 -- nil-root guard on the TOCTOU re-checks (review) ([ed0558e](https://github.com/buchenberg/yaah/commit/ed0558e055af0ace66beaf726f0c120f71d31b14))
+* **runner:** H6 review -- close the halt TOCTOU on both fork paths; log capture in the test ([b99ba6e](https://github.com/buchenberg/yaah/commit/b99ba6ef3a29ad62d5538a87f166f52af2f595b7))
+
+
+### Documentation
+
+* agent-instructions review fixes ([e1052db](https://github.com/buchenberg/yaah/commit/e1052dbfcc585d6b71e1ec88e992afd1d3dc3e88))
+* plan 07 shipped ([2fbbb82](https://github.com/buchenberg/yaah/commit/2fbbb82b787af868f7ec44f7711d7e7e1c0fee43))
+* plan 07 shipped ([01eef09](https://github.com/buchenberg/yaah/commit/01eef09f6ac67cf30daab7b0c249719748419faf))
+* plan 07 shipped — fix the PR count (review) ([506cd07](https://github.com/buchenberg/yaah/commit/506cd0723d4335c49415f779ba23471839c4899a))
+* shepherd benchmark — complete the S7 redesign ([d1fa113](https://github.com/buchenberg/yaah/commit/d1fa113c27ffa251d03b9283000248247d679264))
+* shepherd benchmark — Kilo review fixes ([c974998](https://github.com/buchenberg/yaah/commit/c974998e1d0d2f2c62706eec698083b6d478db37))
+* shepherd benchmark — test prompts and an effectiveness harness ([16927ff](https://github.com/buchenberg/yaah/commit/16927ff54c5c75ed85de8594f05b591fac1e92b5))
+* shepherd benchmark — test prompts and an effectiveness harness ([11e0706](https://github.com/buchenberg/yaah/commit/11e0706896cdc4dc92e7554f7d2e142818247c72))
+* shepherd benchmark — verifier covers untracked files ([aad3acf](https://github.com/buchenberg/yaah/commit/aad3acf8a1586659716c8f10e32c21b0ca2f5917))
+* shepherd benchmark review fixes ([41990c0](https://github.com/buchenberg/yaah/commit/41990c016e1c31464d1f031365dc014e438614d3))
+* split the isolated-mode delta rows (Kilo review) ([8630741](https://github.com/buchenberg/yaah/commit/8630741d66a6883b15c6fa9ab5fe7bb1056ed55c))
+* write up the agent instructions for the supervision surface ([b36d7cc](https://github.com/buchenberg/yaah/commit/b36d7cc158afd469be5119c988b830fbed38f417))
+* write up the agent instructions for the supervision surface ([8ad3ad6](https://github.com/buchenberg/yaah/commit/8ad3ad6dd2fb8e3c2d4ea1edb4db19158c715cb1))
+
 ## [0.76.0](https://github.com/buchenberg/yaah/compare/v0.75.0...v0.76.0) (2026-10-12)
 
 
