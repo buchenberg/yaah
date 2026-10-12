@@ -21,14 +21,18 @@ The table is history presented as an audit. The kernel solved the same
 problem by archiving its completed plans "with their ticks frozen" — yaah
 should do the same here rather than rewriting history in place.
 
-**F2 — features.md does not mention the supervision surface (docs).**
-`docs/features.md` documents yaah's user-facing capabilities but says
-nothing about: fork-and-choose review sessions, supervised sub-agent
-tasks with checkpoint/rollback/retry, startup recovery (the adopted /
-orphaned / missing / unadopted report), the doctor check, or the
-`yaah shepherd` list and prune commands. A user who hits any of them —
-a warning at startup, an orphaned worktree on disk — has no documented
-explanation. All six exist and are tested; none are discoverable.
+**F2 — features.md covers the supervision surface only in passing
+(docs).** `docs/features.md` mentions pieces of it — the tools table
+row for `supervised_task`/`supervisor` names the review verbs and the
+merge gate (features.md:156), and the isolation section notes the
+doctor workspace check (features.md:234) — but there is no
+user-facing section for the supervision *lifecycle*: startup recovery
+and its adopted / orphaned / missing / unadopted report, what a user
+should do with each bucket, the doctor check's recovery pass, or the
+`yaah shepherd` list and prune commands. A user who hits any of those —
+a warning at startup, an orphaned worktree on disk — has no operational
+explanation. All exist and are tested; H1 expands the existing entry
+rather than pretending the surface is entirely undiscoverable.
 
 **F3 — the trace store and effect bus are never closed on a happy exit
 (lifecycle).** `cmd/yaah/wiring.go` creates them once
@@ -41,9 +45,10 @@ sandbox destroy joins its error and is guarded by a timeout
 (wiring.go:779-786); the shepherd infrastructure deserves the same.
 
 **F4 — the recovery scan at startup is unbounded (scale).**
-`RecoverScopes` scans every record of five lifecycle schemas
-(shepherd-kernel-go `recovery.go:263,295,346,428`). The scans are
-SQL-filtered per schema (`ScanRecordsBySchema`, `WHERE schema_ref IN
+`RecoverScopes` scans every record of five lifecycle schemas across
+four scan sites (shepherd-kernel-go `recovery.go:263,295,346,428` — the
+second site covers merged, discarded, and halt in one call). The scans
+are SQL-filtered per schema (`ScanRecordsBySchema`, `WHERE schema_ref IN
 (...)`), so the cost grows with supervision lifecycle events — forks,
 settles, checkpoints — not with per-tool-call facts, and in practice it
 stays small for a long time. But it is O(history) with no bound and no
@@ -64,15 +69,18 @@ tests must reset globals between runs and a second session in one
 process would stomp the first.
 
 **F6 — supervised_task's flat-scope fallbacks are undocumented policy
-(design).** `createSubAgentScope` (runner.go:776-817) has two
-`mgr.Create` fallbacks: tracing-off (no root — deliberate degraded
-mode) and the fork-refused path after a supervisor halt makes the root
-terminal (runner.go:810-815). The second one is a real policy question
-hiding in a fallback: A3 calls halting the root "a session-level kill
-for supervision", yet a dispatch that races the kill silently lands as
-a flat root-level scope — superviseable, but outside the session tree,
-and recovery will rebuild it as a sibling of the session root rather
-than a child of anything.
+(design).** `createSubAgentScope` (runner.go:776-817) has three
+`mgr.Create` fallbacks: tracing-off (runner.go:779 — the deliberate
+degraded mode), the `ForkIsolated` failure on the workdir path
+(runner.go:800-801 — not halt-specific; worktree provisioning can fail
+on its own), and the plain `Fork` refusal after a supervisor halt makes
+the root terminal (runner.go:812-815). The last two are policy
+questions hiding in fallbacks: A3 calls halting the root "a
+session-level kill for supervision", yet a dispatch that races the kill
+— or a worktree that fails to provision — silently lands as a flat
+root-level scope: superviseable, but outside the session tree, and
+recovery will rebuild it as a sibling of the session root rather than a
+child of anything.
 
 **F7 — `settlementLanded` guesses what the kernel knows (upstream).**
 When a settle's physical effect lands but the causal-merge record
@@ -100,27 +108,37 @@ one-line completion note pointing at the phases that closed each row.
 Do not rewrite the verdicts in place: the table is the record of why
 the plan existed.
 
-Add the missing documentation to features.md: one supervision section
-covering fork-and-choose review sessions, supervised tasks, startup
-recovery and its report buckets, the doctor check, and the
-`yaah shepherd` command pair — written for the user who just saw the
-startup warning or found a stray worktree, not for the kernel's
+Expand features.md's existing coverage into a supervision section:
+what the tools-table row (features.md:156) already names, plus the
+operational half — startup recovery and its report buckets with what a
+user should do with each, the doctor check's recovery pass, and the
+`yaah shepherd` list and prune commands — written for the user who just
+saw the startup warning or found a stray worktree, not for the kernel's
 maintainer.
 
 ### H2 — close the shepherd infrastructure on session end (F3)
 
 A `CloseShepherdInfrastructure(store, bus)` teardown, called from the
-session teardown path where the workspace sandbox destroy already
-lives, with the same shape: a bounded timeout (cancel-free context —
-teardown must not be abandoned because the caller's context expired),
-errors joined into the teardown result, and idempotence against the
-recovery-failure close (the store is already closed there; closing
-twice must not fabricate a failure). The bus has no Close today — the
-kernel's `EffectBus` needs a shutdown or the store's Close must drain
-it; whichever the kernel already supports wins, and if neither exists,
-the bus is a recorded kernel follow-up and the plan closes only the
-store (the store is the resource with durability semantics; the bus is
-goroutines the process exit reaps).
+session teardown path (`cmd/yaah/session.go`'s close), with the shape the
+clean-exit path already uses — **warn-only**: `close()` returns no error
+and the workspace sandbox destroy there only warns
+(session.go:235-240), so the shepherd close reports its failure the same
+way rather than inventing an error-propagation contract the callers do
+not have. Ordering: close the **store first** (no more publishes), then
+the **bus** — the kernel's `EffectBus.Close` already exists
+(trace/bus.go:106) and is what the supervision tests already use
+(`t.Cleanup(bus.Close)`); no upstream follow-up is needed. Idempotence
+against the recovery-failure close (wiring.go:439 already closed the
+store; closing twice must not fabricate a failure).
+
+The writer-join question the drain leaves open: the background-jobs
+`CloseAndWait` times out and *continues* (session.go:206-208) — jobs
+that survive the drain share this store and can still write. Closing
+the store under a live writer turns its final writes into
+corruption-shaped errors, which is worse than an unclosed store, so the
+policy is: **if the drain timed out, the infrastructure stays open** —
+the process exit reaps it — and the teardown warns that it did not
+close. A timeout-survivor test pins the branch.
 
 ### H3 — typed partial settlement, kernel then consumer (F7)
 
@@ -150,16 +168,22 @@ behavior phases (it must not rebalance diffs that change behavior).
 
 ### H5 — measure the recovery scan; record the compaction trigger (F4)
 
-Startup logs the recovery's scan duration and recovered-record counts
-(one line, next to the existing recovery report). The growth bound is
-documented where the report is produced: lifecycle events only, never
-per-tool-call facts. The compaction design — a `shepherd`-verb that
-deletes the records of fully-terminal, fully-pruned subtrees past a
-retention window, with the trace store gaining its only deliberate
-deletion surface — is recorded in the kernel's backlog with its
-trigger: when startup recovery measurably exceeds a second on a real
-trace. Not before; no speculative deletion surface for a cost nobody
-has observed.
+`shepherd.RecoverScopes` returns only a manager and an error — no scan
+counts — and yaah's `Report` counts scopes and worktree outcomes, not
+records scanned, so the O(history) metric F4 identifies has no existing
+source. The kernel therefore gains a small recovery-stats surface in
+the same v0.15.0 train as H3: `RecoverScopes` (or `RecoverOptions`)
+reports records scanned per schema and total scan duration —
+instrumentation at the point that does the work, not a duplicated
+count query in yaah. Startup logs it next to the existing recovery
+report. The growth bound is documented where the report is produced:
+lifecycle events only, never per-tool-call facts. The compaction
+design — a `shepherd`-verb that deletes the records of fully-terminal,
+fully-pruned subtrees past a retention window, with the trace store
+gaining its only deliberate deletion surface — is recorded in the
+kernel's backlog with its trigger: when startup recovery measurably
+exceeds a second on a real trace. Not before; no speculative deletion
+surface for a cost nobody has observed.
 
 ### H6 — decide the post-halt dispatch policy (F6)
 
@@ -167,15 +191,22 @@ The plan's position: a dispatch that arrives after the root was halted
 should fail loudly, not silently degrade to a flat scope. A3's halt is
 a session-level kill; a racing dispatch that lands as a rootless
 root-level scope is superviseable-but-orphaned — the shape recovery
-then rebuilds as a sibling of a dead session. The fix: the fork-refused
-fallback distinguishes "root terminal" (return
-`ErrRootTerminal` — it exists for exactly this, runner.go:714) from
-"tracing off" (keep the flat Create — the deliberate degraded mode),
-and the dispatch path surfaces the error to the sub-agent's parent as
-an actionable "the session was halted; this dispatch cannot run"
-instead of a silent scope. If a review disagrees and wants mid-kill
-dispatches to survive, the fallback stays but must log its degradation;
-the decision is the phase's review question, not its implementation.
+then rebuilds as a sibling of a dead session. The policy applies to
+**both** tree-escaping fallbacks, not just the plain fork: the
+`Fork`-refused path (runner.go:812-815) and the workdir
+`ForkIsolated`-failure path (runner.go:800-801) both fall to flat
+`mgr.Create` today, and a halted root can fail either. The fix: both
+distinguish "root terminal" (return `ErrRootTerminal` — it exists for
+exactly this, runner.go:714) from other fork failures, and the dispatch
+path surfaces the terminal error to the sub-agent's parent as an
+actionable "the session was halted; this dispatch cannot run" instead
+of a silent scope. Non-terminal `ForkIsolated` failures (worktree
+provisioning) keep their flat fallback but log the degradation — the
+sub-agent still runs, superviseable, with its escape from the tree
+visible. "Tracing off" (runner.go:779) is untouched: the deliberate
+degraded mode. If a review disagrees and wants mid-kill dispatches to
+survive, the fallbacks stay but must log; the decision is the phase's
+review question, not its implementation.
 
 ---
 
@@ -187,11 +218,15 @@ the decision is the phase's review question, not its implementation.
 - Own PR; no code.
 
 ### Phase H2 — happy-exit teardown (yaah)
-- `CloseShepherdInfrastructure` with bounded, cancel-free close;
-  idempotent against the recovery-failure close.
-- Wired into the session teardown; failure joins the teardown result.
-- Test: a session that ends cleanly closes the store (a post-close
-  write fails); a double close does not fabricate an error.
+- `CloseShepherdInfrastructure`: store first, then `EffectBus.Close`
+  (trace/bus.go:106); warn-only failures, matching the clean-exit
+  path's shape; idempotent against the recovery-failure close.
+- Wired into the session teardown, after the background-jobs drain —
+  and only when the drain succeeded: a timed-out drain leaves the
+  infrastructure open with a warning, never closed under live writers.
+- Tests: a session that ends cleanly closes the store (a post-close
+  write fails); a double close does not fabricate an error; a
+  drain-timeout survivor leaves it open.
 - Own PR.
 
 ### Phase H3 — typed partial settlement (kernel v0.15.0, then yaah)
@@ -200,15 +235,22 @@ the decision is the phase's review question, not its implementation.
 - yaah: re-pin; `settlementLanded` deleted, replaced by `errors.Is`.
 - Kernel PR, release PR, yaah PR — the same train plan 06 used.
 
-### Phase H5 — recovery observability (yaah)
-- Startup logs scan duration and record counts beside the report.
-- Own PR (may ride with H2 if the review prefers one lifecycle PR).
+### Phase H5 — recovery observability (kernel, then yaah)
+- Kernel: `RecoverScopes` reports records scanned per schema and scan
+  duration (rides the v0.15.0 train with H3 — the stats surface and
+  the typed error are one kernel release).
+- yaah: startup logs them beside the existing recovery report.
+- yaah's consumption lands with the H3 re-pin PR.
 
 ### Phase H6 — post-halt dispatch policy (yaah)
-- `ErrRootTerminal` distinguishes halted-root from tracing-off.
-- The dispatch error surfaces as actionable; the flat fallback remains
-  for tracing-off only.
-- Test: a dispatch after halt fails with the typed error; a
+- `ErrRootTerminal` distinguishes a halted root (both tree-escaping
+  fallbacks: the `Fork` refusal and the workdir `ForkIsolated`
+  failure) from tracing-off and from non-terminal provisioning
+  failures.
+- The terminal error surfaces as actionable; non-terminal fallbacks
+  log their degradation; the tracing-off fallback is untouched.
+- Tests: a dispatch after halt fails with the typed error on both
+  paths; a worktree-provisioning failure still degrades with a log; a
   tracing-off dispatch still gets its flat scope.
 - Own PR.
 
@@ -222,10 +264,12 @@ the decision is the phase's review question, not its implementation.
 ## 4. Risks
 
 - **H2's close-on-exit could regress crash-adjacent paths**: a close
-  that runs while a sub-agent still writes would surface as write
-  failures that look like corruption. Mitigation: the teardown runs
-  only after the session's loops are joined — the same ordering the
-  sandbox teardown already depends on — and the test suite covers the
+  that runs while a background job still writes would surface as write
+  failures that look like corruption. The drain's timeout does not
+  guarantee the writer is gone (session.go:206-208 continues after
+  `CloseAndWait`), so the teardown closes only when the drain
+  succeeded; a timed-out drain leaves the infrastructure open and warns.
+  A timeout-survivor test pins the branch, and the suite covers the
   resumed-session path.
 - **H3's typed error is a contract the kernel must get right**: if the
   sentinel wraps a merge failure whose physical effect did NOT land,
@@ -239,14 +283,18 @@ the decision is the phase's review question, not its implementation.
 
 - The adoption plan's table reads as history, and features.md explains
   every user-visible supervision surface.
-- A clean session exit closes the store; nothing writes after; a double
-  close is a no-op, not an error.
+- A clean session exit closes the store and the bus (warn-only, like
+  the rest of the clean-exit path); a double close is a no-op; a
+  drain-timeout leaves it open with a warning rather than closing
+  under a live writer.
 - A settle whose causal merge fails to record is detected by the
   kernel's typed error, and yaah's heuristic is gone.
-- Startup shows the recovery scan's cost; the compaction trigger is
-  recorded, not built.
+- Startup shows the recovery scan's cost from the kernel's own stats
+  surface; the compaction trigger is recorded, not built.
 - A dispatch after a supervisor halt fails with `ErrRootTerminal` and
-  an actionable message; tracing-off dispatches are unchanged.
+  an actionable message on both tree-escaping paths; worktree
+  provisioning failures degrade loudly (logged); tracing-off
+  dispatches are unchanged.
 - No `tools.Shared*` package globals remain.
 
 ## 6. Non-goals
