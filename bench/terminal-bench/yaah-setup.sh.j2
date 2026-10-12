@@ -23,13 +23,15 @@ fi
 
 # Minimal config: one provider, the model pair, and the trace dir under
 # the agent-logs mount so the trace store reaches the host. Everything
-# else falls back to yaah's embedded defaults. The API key is expanded
-# from the environment at write time and never appears in the pane.
+# else falls back to yaah's embedded defaults. The api_key line keeps
+# the ${DEEPSEEK_API_KEY} placeholder ESCAPED below: YAAH_HOME is
+# host-mounted, so the persisted config must never contain the literal
+# secret — yaah interpolates it from the session environment at load.
 cat > "$YAAH_HOME/config.yaml" <<EOF
 providers:
   deepseek:
     base_url: ${YAAH_BASE_URL:-https://api.deepseek.com/v1}
-    api_key: ${DEEPSEEK_API_KEY}
+    api_key: \${DEEPSEEK_API_KEY}
 agents:
   default:
     provider: deepseek

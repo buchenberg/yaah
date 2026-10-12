@@ -31,7 +31,11 @@ chmod +x ~/.local/bin/docker
 # 3. A Terminal-Bench checkout with its venv (defaults below)
 git clone https://github.com/laude-institute/terminal-bench \
   ~/Code/Agentic/Frameworks/terminal-bench
-cd ~/Code/Agentic/Frameworks/terminal-bench && uv venv .venv && uv pip install -e .
+cd ~/Code/Agentic/Frameworks/terminal-bench
+git checkout d28711d   # PINNED: the adapter imports internal harness
+                      # modules and tasks move — reruns are comparable
+                      # only against the pinned commit
+uv venv .venv && uv pip install -e .
 ```
 
 ## Running
@@ -62,6 +66,10 @@ every other CLI agent benched here.
   placed under the mounted agent-logs path so `state.db` survives the
   container. Sub-agent traces (when a task dispatches sub-agents) land
   in `agent-logs/yaah-traces/` the same way.
+
+The persisted `yaah-home/config.yaml` keeps the `${DEEPSEEK_API_KEY}`
+placeholder — no literal secret is written anywhere under the mounted
+agent-logs; yaah resolves the key from the session environment.
 
 ## Smoke calibration (2026-10-13, deepseek-flash, commit 16927ff)
 

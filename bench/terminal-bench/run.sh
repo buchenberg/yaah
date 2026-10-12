@@ -12,10 +12,11 @@
 #   ./run.sh hello-world create-bucket  # named tasks (e.g. the 2-task smoke)
 #   YAAH_MODEL=deepseek-flash ./run.sh  # override the model
 #
-# Token budget: each easy task lands in the ~5-30K range on a flash
-# model; the full suite is roughly 100-400K tokens. Calibrate on the
-# 2-task smoke first and read yaah-profile.txt in the run dir before
-# committing to the full suite.
+# Token budget (calibrated on deepseek-flash, see README.md): the fixed
+# per-session cost is ~30K input tokens (identity + tool schemas), and
+# multi-step tasks land 4-5x that (hello-world 30.6K, broken-python
+# 146.9K). The full suite projects to 0.9-1.8M tokens. Run the 2-task
+# smoke first if the budget matters.
 
 set -euo pipefail
 
@@ -31,6 +32,7 @@ YAAH_BIN="${YAAH_BIN:-/tmp/yaah-bin/yaah}"
 export YAAH_BIN
 if [ ! -x "$YAAH_BIN" ]; then
   echo "building the static yaah binary..."
+  mkdir -p "$(dirname "$YAAH_BIN")"
   (cd "$REPO_ROOT" && CGO_ENABLED=0 go build -o "$YAAH_BIN" .)
 fi
 

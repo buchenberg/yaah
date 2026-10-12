@@ -18,11 +18,11 @@ broken-python              # software-engineering 46
 fix-git                    # software-engineering 57
 cpp-compatibility          # debugging          64
 fix-pandas-version         # debugging          78
-png-generation             # file_operations    78
+png-generation             # file-operations    78
 jsonl-aggregator           # file-operations    132
 setup-custom-dev-env       # software-engineering 143
 git-workflow-hack          # security           146
-gomoku-planner             # game               151
+gomoku-planner             # games              151
 npm-conflict-resolution    # debugging          167
 assign-seats               # algorithms        175
 bank-trans-filter          # data-science       205
