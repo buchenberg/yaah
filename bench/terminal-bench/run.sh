@@ -8,9 +8,10 @@
 #   - the yaah static binary (built by this script if absent)
 #
 # Usage:
-#   ./run.sh                          # the frozen 15-task mini-suite
-#   ./run.sh hello-world create-bucket  # named tasks (e.g. the 2-task smoke)
-#   YAAH_MODEL=deepseek-flash ./run.sh  # override the model
+#   ./run.sh                           # the frozen 12-task mini-suite v2 (default)
+#   ./run.sh hello-world create-bucket # named tasks (e.g. the 2-task smoke)
+#   SUITE=mini-suite.txt ./run.sh      # the original frozen 15-task v1 list
+#   YAAH_MODEL=deepseek-flash ./run.sh # override the model
 #
 # Token budget (calibrated on deepseek-flash, see README.md): the fixed
 # per-session cost is ~30K input tokens (identity + tool schemas; the
@@ -47,7 +48,12 @@ fi
 if [ "$#" -gt 0 ]; then
   TASKS=("$@")
 else
-  mapfile -t TASKS < <(grep -v '^#' "$HERE/mini-suite.txt" | awk '{print $1}' | grep -v '^$')
+  SUITE="${SUITE:-mini-suite-v2.txt}"
+  if [ ! -f "$HERE/$SUITE" ]; then
+    echo "error: suite file not found: $HERE/$SUITE" >&2
+    exit 1
+  fi
+  mapfile -t TASKS < <(grep -v '^#' "$HERE/$SUITE" | awk '{print $1}' | grep -v '^$')
 fi
 TASK_ARGS=()
 for t in "${TASKS[@]}"; do TASK_ARGS+=(-t "$t"); done

@@ -126,3 +126,26 @@ The full mini-suite then measured ~6.3M tokens — under $2 at
 deepseek-flash prices, but 3.5-7× this early projection: the suite's
 long-horizon tasks (git-workflow-hack, npm-conflict-resolution)
 dwarfed the smoke pair.
+
+## Suite v2 (2026-10-12): known-failure tasks removed
+
+The v1 comparison above included three tasks that fail for reasons
+unrelated to agent capability — every CLI tested fails them the same
+way — so they add run cost and noise, not signal. They are removed
+from the default suite (`mini-suite-v2.txt`, 12 tasks; the runner
+defaults to it; `SUITE=mini-suite.txt ./run.sh` restores v1):
+
+- **fix-git** — unbuildable at the pin (setup.sh clones a deleted
+  GitHub repo; fails on every runtime).
+- **png-generation** — upstream compose omits the agent-logs volume
+  (no token accounting), and its OCR-join test is brittle; both CLIs
+  fail it.
+- **setup-custom-dev-env** — spins a kind cluster inside the task
+  budget; both CLIs hit the time cap. Budget-bound rather than
+  capability-bound; re-add it under a larger budget if that axis
+  matters.
+
+v1 stays frozen for comparability with the recorded runs: its 12/14
+comparison above is unchanged and remains citable. Future v2 scores
+are "n/12 on the yaah mini-suite v2" — for reference, the recorded
+yaah run scores 12/12 on the v2 subset (opencode 7/12).
