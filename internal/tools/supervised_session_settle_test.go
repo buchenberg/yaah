@@ -358,18 +358,20 @@ func TestReviewSession_ChoosePartialSettlementLands(t *testing.T) {
 	// partial-settlement stage where the work is landed and the child
 	// is already merged.
 	winnerWT := runner.workdirFor(t, 1)
+	// The probe is written before the directory goes read-only; its
+	// removal is what tests the injection.
+	probe := filepath.Join(winnerWT, "teardown-failure-probe")
+	if err := os.WriteFile(probe, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write teardown probe: %v", err)
+	}
 	if err := os.Chmod(winnerWT, 0o555); err != nil {
 		t.Fatalf("chmod winner worktree: %v", err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(winnerWT, 0o755) })
 	// The chmod cannot stop a privileged runner — root bypasses
 	// directory permissions — and the test would then fail on the
-	// teardown succeeding. Probe the injection with a scratch file and
-	// skip when it does not hold.
-	probe := filepath.Join(winnerWT, "teardown-failure-probe")
-	if err := os.WriteFile(probe, []byte("x"), 0o644); err != nil {
-		t.Fatalf("write teardown probe: %v", err)
-	}
+	// teardown succeeding. Probe the injection and skip when it does
+	// not hold.
 	if err := os.Remove(probe); err == nil {
 		_ = os.Chmod(winnerWT, 0o755)
 		t.Skip("running privileged — directory permissions cannot force the sandbox teardown failure; the kernel's partial-settlement law tests cover the contract")
