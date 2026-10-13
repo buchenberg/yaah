@@ -105,3 +105,5 @@ do not regress performance. The dominant factor in benchmark variance is whether
 the orchestrator model chooses to dispatch sub-agents or run inline — an
 unpredictable model behavior orthogonal to our changes. When both branches run
 inline, they perform at parity.
+
+| 2026-10-12 20:18 | main | 191389c | TB suite.txt + aider (deepseek-flash) | — | — | — | ~40min | 646K | — | 647,016 | 100% | 0% | 5 | aider @ 5dc9490 via aider_agent.py adapter + aider_driver.py (prebuilt package trees py312/313; stream=False for exact usage; autonomy preamble; model deepseek/deepseek-chat per aider's model-settings); 1/6 — edit-format non-conformance: deepseek-flash answers in prose/bash, aider reflects 3x and applies no edits; 99% cache-hit (641K); four-way same-day: yaah 6/6 (975K), hermes 6/6 (859K), opencode 5/6 (no accounting), aider 1/6 (647K); run-id 2026-10-12__20-18-12 |

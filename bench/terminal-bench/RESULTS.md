@@ -252,3 +252,53 @@ is the cheaper run (0.86M vs 0.98M in+out) with the higher cache-hit;
 yaah is faster overall (227s vs 272s agent time; 3-3 per task). As
 everywhere above: one trial per CLI, a smoke-signal comparison — hermes
 at its defaults, yaah as benched, same judge.
+
+## Aider added to the comparison (2026-10-12, deepseek-flash, aider @ 5dc9490)
+
+Fourth CLI: aider, run through a new driver-based adapter
+(`aider_agent.py` + `aider_driver.py`, this commit). Aider ships into
+the container as a prebuilt package tree per Python minor version
+(like the hermes tree); because its usage reporting is display-only,
+the driver runs the same Coder flow as `aider --message` in
+non-streaming mode (aider skips the final usage-only chunk on the
+streaming path, so its streamed "Tokens:" numbers are estimates) and
+hooks the accounting call to dump exact tokens. Model
+`deepseek/deepseek-chat` — the name aider's own model-settings.yml
+curates for this family (edit_format diff, caches_by_default, repo
+map); deepseek-chat is the flash tier's wire alias, the same model
+every other CLI here benches. A short autonomy preamble is prepended
+(aider answers one-shot instructions with clarifying questions
+without it — mirroring yaah's one-shot guidance). Run
+`2026-10-12__20-18-12`.
+
+| Task | aider | time | in | out | cached |
+|---|---|---|---|---|---|
+| hello-world | resolved | 9s | 2,494 | 39 | 1,536 |
+| broken-python | unresolved (edit-format non-conformance) | 929s | 289,203 | 0 | 289,024 |
+| csv-to-parquet | unresolved | 10s | 2,505 | 194 | 128 |
+| jsonl-aggregator | unresolved | 11s | 2,703 | 503 | 1,536 |
+| assign-seats | unresolved | 799s | 248,434 | 0 | 248,192 |
+| gomoku-planner | unresolved | 325s | 100,941 | 0 | 100,736 |
+| **score** | **1/6** | **2083s** | **646,280** | **736** | **641,152 (99%)** |
+
+**Score: aider 1/6.** The dominant failure mode is protocol, not
+capability: deepseek-flash answers with prose and bash blocks
+instead of aider's diff edit format, and aider gives up after its 3
+reflections without applying edits — the panes show real repair
+plans in every failure. The three long tasks burned 100-290K-token
+prompts (99% served from cache) whose single call returned no output
+within the task budget. The behavior was stable across the three
+configurations tried during integration (aider's generic defaults,
++autonomy preamble, +curated deepseek settings), so the record is
+the harness-protocol match between aider and this model tier —
+parallel to opencode's reproducible parse_error on broken-python.
+
+Four-way summary on suite.txt (same day, same model tier, same
+judge, one trial each):
+
+| Metric | yaah | hermes | aider | opencode |
+|---|---|---|---|---|
+| Score | 6/6 | 6/6 | 1/6 | 5/6 |
+| Tokens (in+out) | 975,292 | 858,729 | 647,016 | n/a |
+| Prompt cache-hit | 90% | 97% | 99% | n/a |
+| Agent time | 227s | 272s | 2083s | 323s |
