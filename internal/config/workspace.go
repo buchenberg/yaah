@@ -11,7 +11,7 @@ const (
 	// BackendLocal runs tools on the host filesystem, as yaah always has.
 	// It is the default and the byte-for-byte legacy path.
 	BackendLocal = "local"
-	// BackendContainerd runs tools inside a shepherd containerd sandbox:
+	// BackendContainerd runs tools inside a croft (containerd) sandbox:
 	// a real Linux filesystem boundary per session. The yaah client must
 	// run where the daemon runs — natively on Linux, or inside WSL2 (where
 	// GOOS=linux); a Windows/macOS-native yaah cannot select this backend
@@ -40,7 +40,7 @@ type WorkspaceConfig struct {
 }
 
 // ContainerdWorkspaceConfig is the containerd backend's settings block.
-// The fields map one-to-one onto the kernel adapter's containerd.Config.
+// The fields map one-to-one onto croft.Config.
 type ContainerdWorkspaceConfig struct {
 	// Address is the containerd socket or endpoint. Empty uses containerd's
 	// own default resolution.

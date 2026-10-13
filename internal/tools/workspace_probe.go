@@ -4,29 +4,27 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	croft "github.com/buchenberg/croft"
 	"strings"
-
-	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
-	containerdbackend "github.com/buchenberg/shepherd-kernel-go/sandbox/containerd"
 
 	"github.com/buchenberg/yaah/internal/config"
 )
 
-// OpenContainerdWorkspaceSandbox resolves the configured containerd backend
-// through the kernel's sandbox registry — the config-driven seam (the
-// isolated-workspace plan §1.1/step 4). The adapter package this file names
-// for its Config type self-registers the "containerd" backend on import
-// (kernel v0.1.5+), so no host-side factory is wired here, and adding one
-// would panic by the registry's design.
+// OpenContainerdWorkspaceSandbox constructs the configured croft sandbox
+// directly from the workspace config (the isolated-workspace plan §1.1). It
+// cannot fail — croft.New does no I/O — so the SandboxOpener signature's
+// error return exists for the test openers, not this one; the nil guard
+// below is the invariant that keeps that honest even if croft's constructor
+// grows a failure mode.
 //
 // The returned sandbox is NOT provisioned: Create remains the caller's
-// explicit lifecycle step, per the kernel's OpenSandbox contract.
-func OpenContainerdWorkspaceSandbox(w config.WorkspaceConfig) (shepherdsandbox.Sandbox, error) {
-	// Root maps onto the adapter's Workdir: the containment root every
+// explicit lifecycle step, per croft's own lifecycle contract.
+func OpenContainerdWorkspaceSandbox(w config.WorkspaceConfig) (croft.Sandbox, error) {
+	// Root maps onto Config.Workdir: the containment root every
 	// relative tool path resolves against inside the sandbox.
 	// FIFODir passes through so the client's task/exec stdio FIFOs land in a
 	// directory yaah's uid can write — containerd's default is root-only.
-	return shepherdsandbox.OpenSandbox(config.BackendContainerd, containerdbackend.Config{
+	sb := croft.New(croft.Config{
 		Address:     w.Containerd.Address,
 		Namespace:   w.Containerd.Namespace,
 		Image:       w.Containerd.Image,
@@ -34,6 +32,10 @@ func OpenContainerdWorkspaceSandbox(w config.WorkspaceConfig) (shepherdsandbox.S
 		FIFODir:     w.Containerd.FIFODir,
 		Workdir:     w.Root,
 	})
+	if sb == nil {
+		return nil, fmt.Errorf("workspace: croft.New returned no sandbox for config %+v", w.Containerd)
+	}
+	return sb, nil
 }
 
 // imageContractScript verifies the D5 image contract in one exec:
@@ -75,7 +77,7 @@ fi`
 // fakes report "nothing was created" for an unstarted sandbox. The sandbox
 // parameter is the seam: wiring passes the session backend; tests pass the
 // in-memory fake.
-func ProbeImageContract(ctx context.Context, sb shepherdsandbox.Sandbox) (err error) {
+func ProbeImageContract(ctx context.Context, sb croft.Sandbox) (err error) {
 	// Destroy must run even when the probe fails, even when the caller's
 	// context expired mid-probe, and even when Create itself failed: an
 	// unprobed-but-running container is the leak this function must never
@@ -88,11 +90,11 @@ func ProbeImageContract(ctx context.Context, sb shepherdsandbox.Sandbox) (err er
 		}
 	}()
 
-	if cerr := sb.Create(ctx, shepherdsandbox.SandboxSpec{}); cerr != nil {
+	if cerr := sb.Create(ctx, croft.SandboxSpec{}); cerr != nil {
 		return fmt.Errorf("workspace image probe: create: %w", cerr)
 	}
 
-	res, xerr := sb.Exec(ctx, shepherdsandbox.ExecRequest{
+	res, xerr := sb.Exec(ctx, croft.ExecRequest{
 		Command: "sh",
 		Args:    []string{"-c", imageContractScript},
 	})

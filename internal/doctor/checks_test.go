@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
-	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 
 	shepherdgit "github.com/buchenberg/shepherd-kernel-go/sandbox/git"
@@ -135,7 +134,7 @@ func TestCheckWorkspace_Isolated(t *testing.T) {
 		"yaah",                                   // the namespace
 		"/workspace",                             // the containment root
 		"socket /run/containerd/containerd.sock", // the configured socket
-		"linked backends: " + strings.Join(shepherdsandbox.SandboxBackends(), ", "),
+		"sandbox library: croft (containerd), supervision: shepherd (git)",
 	} {
 		if !strings.Contains(check.Detail, want) {
 			t.Errorf("isolated report %q missing %q", check.Detail, want)

@@ -3,11 +3,10 @@ package tools
 import (
 	"context"
 	"errors"
+	croft "github.com/buchenberg/croft"
 	"reflect"
 	"strings"
 	"testing"
-
-	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/sandboxfake"
@@ -15,9 +14,9 @@ import (
 
 // probeResult is the canned outcome the fake's ExecHook returns for the
 // contract script: the exit code, stdout, and stderr the probe must classify.
-func probeResult(exit int, stdout string) func(shepherdsandbox.ExecRequest) (shepherdsandbox.ExecResult, error) {
-	return func(shepherdsandbox.ExecRequest) (shepherdsandbox.ExecResult, error) {
-		return shepherdsandbox.ExecResult{ExitCode: exit, Stdout: stdout, Stderr: "stderr detail"}, nil
+func probeResult(exit int, stdout string) func(croft.ExecRequest) (croft.ExecResult, error) {
+	return func(croft.ExecRequest) (croft.ExecResult, error) {
+		return croft.ExecResult{ExitCode: exit, Stdout: stdout, Stderr: "stderr detail"}, nil
 	}
 }
 
@@ -88,8 +87,8 @@ func TestProbeImageContract_OperationalFailureHasBothChannels(t *testing.T) {
 
 func TestProbeImageContract_ExecTransportError(t *testing.T) {
 	sb := sandboxfake.New()
-	sb.ExecHook = func(shepherdsandbox.ExecRequest) (shepherdsandbox.ExecResult, error) {
-		return shepherdsandbox.ExecResult{}, context.DeadlineExceeded
+	sb.ExecHook = func(croft.ExecRequest) (croft.ExecResult, error) {
+		return croft.ExecResult{}, context.DeadlineExceeded
 	}
 
 	err := ProbeImageContract(context.Background(), sb)
@@ -108,7 +107,7 @@ func TestProbeImageContract_CreateFailureStillDestroys(t *testing.T) {
 	// path too. The destroy is observable here because it succeeds on a
 	// sandbox that was, in fact, created.
 	sb := sandboxfake.New()
-	if err := sb.Create(context.Background(), shepherdsandbox.SandboxSpec{}); err != nil {
+	if err := sb.Create(context.Background(), croft.SandboxSpec{}); err != nil {
 		t.Fatalf("seed Create: %v", err)
 	}
 	sb.ExecHook = probeResult(0, "")
@@ -150,15 +149,15 @@ var errCreateRefused = errors.New("no image")
 
 // failCreateSandbox fails Create but delegates everything else — the probe
 // must still attempt Destroy through it.
-type failCreateSandbox struct{ shepherdsandbox.Sandbox }
+type failCreateSandbox struct{ croft.Sandbox }
 
-func (*failCreateSandbox) Create(context.Context, shepherdsandbox.SandboxSpec) error {
+func (*failCreateSandbox) Create(context.Context, croft.SandboxSpec) error {
 	return errCreateRefused
 }
 
-// TestOpenContainerdWorkspaceSandbox pins the registry resolution: the config
-// surface reaches the backend through shepherdsandbox.OpenSandbox (both backends
-// self-register), and the returned sandbox is unprovisioned.
+// TestOpenContainerdWorkspaceSandbox pins the direct construction: the
+// config surface reaches croft through croft.New (no registry, no
+// self-registration), and the returned sandbox is unprovisioned.
 func TestOpenContainerdWorkspaceSandbox(t *testing.T) {
 	w := config.WorkspaceConfig{
 		Backend: config.BackendContainerd,
@@ -174,7 +173,7 @@ func TestOpenContainerdWorkspaceSandbox(t *testing.T) {
 		t.Fatalf("OpenContainerdWorkspaceSandbox: %v", err)
 	}
 	if sb.Backend() != config.BackendContainerd {
-		t.Errorf("Backend() = %q, want %q through the registry", sb.Backend(), config.BackendContainerd)
+		t.Errorf("Backend() = %q, want %q", sb.Backend(), config.BackendContainerd)
 	}
 }
 
@@ -224,7 +223,7 @@ func TestOpenContainerdWorkspaceSandbox_Passthrough(t *testing.T) {
 // whose teardown fails can be asserted on without teaching the fake a mode
 // it should not have.
 type destroyFailingSandbox struct {
-	shepherdsandbox.Sandbox
+	croft.Sandbox
 }
 
 func (destroyFailingSandbox) Destroy(context.Context) error {

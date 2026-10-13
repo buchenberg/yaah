@@ -27,7 +27,7 @@ They are not part of the yaah repo and should never be committed:
 ```
 yaah/
 ├── main.go                      # calls cmd/yaah.Execute()
-├── go.mod                       # Go 1.26+ (sandbox/containerd dep), cobra, modernc.org/sqlite
+├── go.mod                       # Go 1.26+ (croft dep), cobra, modernc.org/sqlite
 ├── cmd/yaah/                    # cobra commands
 │   ├── root.go                  # build-time vars + persistent flags (parse targets only)
 │   ├── root_cmd.go              # rootCmd: REPL, one-shot, prompt dispatch
@@ -164,7 +164,7 @@ registration is shared between stdio and HTTP transports via
 
 ## Conventions
 
-- **Go 1.26+** (per `go.mod`; the sandbox/containerd module requires go >= 1.26.3).
+- **Go 1.26+** (per `go.mod`; the croft dependency requires go >= 1.26.3).
 - **No codegen, no build tags, no `go generate`.**
 - **cobra + pflag** for CLI.
 - **`internal/` for everything private.** `pkg/` reserved for future exports.

@@ -27,13 +27,12 @@ package tools
 
 import (
 	"context"
+	croft "github.com/buchenberg/croft"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	containerdbackend "github.com/buchenberg/shepherd-kernel-go/sandbox/containerd"
 
 	"github.com/buchenberg/yaah/internal/config"
 )
@@ -210,8 +209,8 @@ func TestLive_ActivatedSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
-	if _, ok := cur.Data[containerdbackend.StateKeyDeltaPatch].(string); !ok {
-		t.Fatalf("the capture carries no %s — the D1 delta anchor is not in effect against the real backend", containerdbackend.StateKeyDeltaPatch)
+	if _, ok := cur.Data[croft.StateKeyDeltaPatch].(string); !ok {
+		t.Fatalf("the capture carries no %s — the D1 delta anchor is not in effect against the real backend", croft.StateKeyDeltaPatch)
 	}
 
 	// The accept seam, dispatched through the registry exactly as a

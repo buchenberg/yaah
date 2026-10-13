@@ -210,7 +210,7 @@ sub-agents, middleware, observability, hooks, editor, embeddings) live in
 
 ### Prerequisites
 
-- Go 1.26+ (the sandbox/containerd module requires go >= 1.26.3)
+- Go 1.26+ (the croft dependency requires go >= 1.26.3)
 - `gofmt` (ships with Go)
 - `staticcheck` for linting (optional, recommended)
 
@@ -433,14 +433,6 @@ The near-term roadmap lives in tracked plan files (`.agents/plans/`,
   before that turn), with an optional `Scope.Fork` to try multiple
   alternatives from a pre-turn snapshot.
   → [plan](./.agents/plans/per-turn-checkpoint-restore/PLAN.md)
-- **Isolated workspace activation** — the `Workspace` implementation that
-  runs every tool inside a `shepherdsandbox.Sandbox` is complete and tested but not
-  yet wired into sessions. Activation gives worktree-isolated sub-agents
-  where a discarded fork never touches your tree. The plan is ready to
-  implement (kernel `v0.4.1` is published); the one remaining external gate
-  is the nested `sandbox/containerd/v0.1.2` release, which must precede the
-  containerd-backend step.
-  → [plan](./docs/plans/isolated-workspace-activation.md)
 
 ### Approved, ready to implement
 
