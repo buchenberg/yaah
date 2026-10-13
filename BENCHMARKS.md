@@ -39,6 +39,8 @@ Records are never overwritten — append a new row for every run.
 
 | 2026-10-12 17:26 | main | b2825c3 | TB suite.txt vs opencode (deepseek-flash) | — | — | — | ~10min | 975K | — | 975,292 | 100% | 0% | 0 | yaah 6/6 vs opencode 5/6 on the 6-task editable suite; harness pin d28711d; 1 trial each; yaah 944,377 prompt + 30,915 output, 90% cache-hit (848K); opencode failed broken-python (parse_error, 2/2 runs); opencode no token accounting; run-ids 2026-10-12__17-26-54 / 2026-10-12__17-35-13; opencode improved vs its 16-35 run (3/6 → 5/6) — single-trial variance is real |
 
+| 2026-10-12 18:34 | main | b2825c3 | TB suite.txt + hermes (deepseek-flash) | — | — | — | ~8min | 844K | — | 858,729 | 100% | 0% | 0 | hermes-agent 0.19.0 via hermes_agent.py adapter (prebuilt package tree per Python minor version — immune to broken-python's deleted-pip fixture); 6/6; wire model deepseek-chat (flash alias); hermes 844,193 prompt + 14,536 output, 97% cache-hit (816K); usage-file semantics: input excludes cache reads (combined here to match yaah); three-way same-day: yaah 6/6 (975K), hermes 6/6 (859K), opencode 5/6 (no accounting); run-id 2026-10-12__18-34-17 |
+
 ## Analysis: Continuation Guard Impact
 
 **Test Configuration:** `context_window: 20000` to force compaction during B4 audit

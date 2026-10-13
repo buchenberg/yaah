@@ -8,6 +8,9 @@ the Terminal-Bench harness as an installed agent.
   commit alongside any score. The frozen 15- and 12-task lists live
   in git history; recorded runs cite their pinned commits)
 - Agent adapter: `yaah_agent.py` (import path `yaah_agent:YaahAgent`)
+- Comparison adapters: `hermes_agent.py` for hermes (import path
+  `hermes_agent:HermesAgent`; ships a prebuilt package tree per Python
+  minor version — see its module docstring for the tarball build)
 - Container setup: `yaah-setup.sh.j2` (config written in-container)
 - Runner: `run.sh`
 - Results: [RESULTS.md](RESULTS.md)
@@ -55,6 +58,24 @@ The runner builds the static yaah binary if `$YAAH_BIN` is absent, reads
 the API key from the environment (never from the yaah config — its
 `api_key` is typically the `${DEEPSEEK_API_KEY}` placeholder), and runs
 the harness with the agent adapter on `PYTHONPATH`.
+
+Benching the comparison CLIs (same suite and key; see RESULTS.md for
+recorded runs):
+
+```bash
+# opencode (harness installed-agent; no token accounting)
+.venv/bin/tb run --agent opencode --model deepseek/deepseek-flash \
+  -t hello-world -t broken-python -t csv-to-parquet \
+  -t jsonl-aggregator -t assign-seats -t gomoku-planner \
+  --dataset-path original-tasks --output-path runs --n-concurrent 1
+
+# hermes (adapter on PYTHONPATH; full usage accounting via --usage-file)
+PYTHONPATH=<this-dir> .venv/bin/tb run \
+  --agent-import-path hermes_agent:HermesAgent \
+  -t hello-world -t broken-python -t csv-to-parquet \
+  -t jsonl-aggregator -t assign-seats -t gomoku-planner \
+  --dataset-path original-tasks --output-path runs --n-concurrent 1
+```
 
 Model config inside the task container: `agents.default.model` and
 `small_model` are the model (default deepseek-flash); sub-agents inherit
