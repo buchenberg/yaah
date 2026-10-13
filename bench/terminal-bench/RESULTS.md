@@ -302,3 +302,16 @@ judge, one trial each):
 | Tokens (in+out) | 975,292 | 858,729 | 647,016 | n/a |
 | Prompt cache-hit | 90% | 97% | 99% | n/a |
 | Agent time | 227s | 272s | 2083s | 323s |
+
+## Aider removed from the roster (2026-10-12)
+
+The aider adapter (`aider_agent.py`, `aider_driver.py`,
+`aider-setup.sh.j2`) is removed from the tree: 1/6 with a
+protocol-mismatch failure mode (deepseek-flash does not conform to
+aider's diff edit format; the repairs never apply) is not a
+comparison worth maintaining integration for. The sections above
+and the BENCHMARKS.md rows stay — records are append-only — and
+`extract_metrics.py` still reads the recorded aider usage reports,
+so the 2026-10-12__20-18-12 run remains reproducible from its
+package tarballs (build commands preserved in git history at the
+removal commit).

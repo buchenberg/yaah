@@ -20,9 +20,7 @@
 # resolves it 3/3). opencode scored 3/6 on this subset in the earlier
 # run: single-trial variance is real. hermes (Nous Research, 0.19.0)
 # joined later the same day: 6/6, 858,729 tokens, 97% cache-hit
-# (run 2026-10-12__18-34-17). aider (5dc9490, driver-based adapter)
-# also joined: 1/6 — deepseek-flash does not conform to aider's diff
-# edit format, so its repairs never apply (see RESULTS.md).
+# (run 2026-10-12__18-34-17).
 #
 # task id              category                 words  yaah tokens (2026-10-12__17-26-54)
 hello-world            # file-operations         34    46K (smoke)

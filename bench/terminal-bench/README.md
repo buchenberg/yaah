@@ -10,10 +10,7 @@ the Terminal-Bench harness as an installed agent.
 - Agent adapter: `yaah_agent.py` (import path `yaah_agent:YaahAgent`)
 - Comparison adapters: `hermes_agent.py` for hermes (import path
   `hermes_agent:HermesAgent`; ships a prebuilt package tree per Python
-  minor version — see its module docstring for the tarball build) and
-  `aider_agent.py` + `aider_driver.py` for aider (import path
-  `aider_agent:AiderAgent`; same prebuilt-tree mechanism, plus a
-  driver that captures aider's display-only usage accounting)
+  minor version — see its module docstring for the tarball build)
 - Container setup: `yaah-setup.sh.j2` (config written in-container)
 - Runner: `run.sh`
 - Results: [RESULTS.md](RESULTS.md)
