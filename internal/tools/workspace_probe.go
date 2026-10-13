@@ -10,12 +10,12 @@ import (
 	"github.com/buchenberg/yaah/internal/config"
 )
 
-// OpenContainerdWorkspaceSandbox resolves the configured containerd backend
-// through the kernel's sandbox registry — the config-driven seam (the
-// isolated-workspace plan §1.1/step 4). The adapter package this file names
-// for its Config type self-registers the "containerd" backend on import
-// (kernel v0.1.5+), so no host-side factory is wired here, and adding one
-// would panic by the registry's design.
+// OpenContainerdWorkspaceSandbox constructs the configured croft sandbox
+// directly from the workspace config (the isolated-workspace plan §1.1). It
+// cannot fail — croft.New does no I/O — so the SandboxOpener signature's
+// error return exists for the test openers, not this one; the nil guard
+// below is the invariant that keeps that honest even if croft's constructor
+// grows a failure mode.
 //
 // The returned sandbox is NOT provisioned: Create remains the caller's
 // explicit lifecycle step, per croft's own lifecycle contract.
@@ -24,14 +24,18 @@ func OpenContainerdWorkspaceSandbox(w config.WorkspaceConfig) (croft.Sandbox, er
 	// relative tool path resolves against inside the sandbox.
 	// FIFODir passes through so the client's task/exec stdio FIFOs land in a
 	// directory yaah's uid can write — containerd's default is root-only.
-	return croft.New(croft.Config{
+	sb := croft.New(croft.Config{
 		Address:     w.Containerd.Address,
 		Namespace:   w.Containerd.Namespace,
 		Image:       w.Containerd.Image,
 		Snapshotter: w.Containerd.Snapshotter,
 		FIFODir:     w.Containerd.FIFODir,
 		Workdir:     w.Root,
-	}), nil
+	})
+	if sb == nil {
+		return nil, fmt.Errorf("workspace: croft.New returned no sandbox for config %+v", w.Containerd)
+	}
+	return sb, nil
 }
 
 // imageContractScript verifies the D5 image contract in one exec:

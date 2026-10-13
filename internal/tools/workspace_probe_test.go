@@ -155,9 +155,9 @@ func (*failCreateSandbox) Create(context.Context, croft.SandboxSpec) error {
 	return errCreateRefused
 }
 
-// TestOpenContainerdWorkspaceSandbox pins the registry resolution: the config
-// surface reaches the backend through croft.OpenSandbox (both backends
-// self-register), and the returned sandbox is unprovisioned.
+// TestOpenContainerdWorkspaceSandbox pins the direct construction: the
+// config surface reaches croft through croft.New (no registry, no
+// self-registration), and the returned sandbox is unprovisioned.
 func TestOpenContainerdWorkspaceSandbox(t *testing.T) {
 	w := config.WorkspaceConfig{
 		Backend: config.BackendContainerd,
@@ -173,7 +173,7 @@ func TestOpenContainerdWorkspaceSandbox(t *testing.T) {
 		t.Fatalf("OpenContainerdWorkspaceSandbox: %v", err)
 	}
 	if sb.Backend() != config.BackendContainerd {
-		t.Errorf("Backend() = %q, want %q through the registry", sb.Backend(), config.BackendContainerd)
+		t.Errorf("Backend() = %q, want %q", sb.Backend(), config.BackendContainerd)
 	}
 }
 

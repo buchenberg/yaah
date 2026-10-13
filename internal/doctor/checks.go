@@ -204,10 +204,10 @@ func CheckSubAgents(cfg *config.Config, cfgErr error) Check {
 // The check is deliberately config-level: the daemon and the image's D5
 // contract are probed at session start (inside the startup bound), and a
 // doctor run that booted throwaway containers would be a probe, not a
-// diagnosis. The linked-backend list comes from the kernel's sandbox
-// registry — the same registry OpenContainerdWorkspaceSandbox resolves
-// through — so an "unknown backend" failure is diagnosable here, against
-// what the binary really provides.
+// diagnosis. The detail line names the libraries the binary really
+// depends on — croft for the isolated workspace, shepherd for supervision —
+// so an "unknown backend" failure is diagnosable here, against what the
+// binary provides.
 func CheckWorkspace(cfg *config.Config, cfgErr error) Check {
 	if cfgErr != nil {
 		return Check{Label: "Workspace", Status: "WARN", Detail: "config not loaded"}
