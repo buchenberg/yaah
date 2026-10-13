@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.78.2](https://github.com/buchenberg/yaah/compare/v0.78.1...v0.78.2) (2026-10-13)
+
+
+### Bug Fixes
+
+* **review:** address PR [#303](https://github.com/buchenberg/yaah/issues/303) findings -- direct-construction docs, nil guard ([89b25d5](https://github.com/buchenberg/yaah/commit/89b25d5d8fb097e100529369d627755f0fd78c91))
+
+
+### Code Refactoring
+
+* **workspace:** swap the containerd sandbox backend to croft ([7cd6b11](https://github.com/buchenberg/yaah/commit/7cd6b11b62a08e0998e939955400c26959df2fa9))
+* **workspace:** swap the containerd sandbox backend to croft ([a7a81d1](https://github.com/buchenberg/yaah/commit/a7a81d1609c20f3a554ecb959a10ed7130775a29))
+
 ## [0.78.1](https://github.com/buchenberg/yaah/compare/v0.78.0...v0.78.1) (2026-10-12)
 
 
