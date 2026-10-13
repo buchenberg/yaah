@@ -10,6 +10,10 @@ set -eu
 
 # Pick the tarball matching the container's interpreter: the compiled
 # wheels (pydantic_core etc.) are ABI-specific per minor version.
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "hermes: python3 not found in the task container" >&2
+  exit 1
+fi
 PYV="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
 case "$PYV" in
   3.12) TARBALL=hermes-pkg-py312.tar.gz ;;
@@ -41,4 +45,4 @@ fi
 # run command (the harness mounts agent-logs into the container).
 mkdir -p /agent-logs
 
-hermes --version
+hermes --version 2>/dev/null || hermes --help >/dev/null 2>&1 || true

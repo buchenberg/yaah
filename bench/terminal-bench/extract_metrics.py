@@ -5,9 +5,9 @@ Prints verdict, agent wall time, and token accounting for each task in
 a run — the same numbers recorded in RESULTS.md. Accounting sources:
 yaah sums its in-container state.db (sessions table, tokens_in
 includes cached); hermes reads its --usage-file report, whose
-input_tokens EXCLUDES cache_read_tokens, so prompt is combined to
-match yaah's semantics. opencode reports nothing through the
-installed-agent path.
+input_tokens EXCLUDES cache reads and writes, so both buckets are
+combined to match yaah's semantics. opencode reports nothing through
+the installed-agent path.
 
 Usage:
     python3 extract_metrics.py RUNS_DIR RUN_ID [RUN_ID ...]
@@ -55,8 +55,15 @@ def hermes_tokens(runs_dir, run_id, task_id):
     )
     if not path:
         return None
-    with open(path[0]) as f:
-        report = json.load(f)
+    # A truncated/invalid report degrades to "no accounting" for this
+    # task rather than aborting the run summary.
+    try:
+        with open(path[0]) as f:
+            report = json.load(f)
+        if not isinstance(report, dict):
+            return None
+    except (OSError, ValueError):
+        return None
     # hermes splits prompt into uncached input + cache reads + cache
     # writes; combine to match yaah's tokens_in (which includes
     # cached tokens). The report is written even for failed/partial
