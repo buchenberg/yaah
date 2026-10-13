@@ -14,7 +14,9 @@
 # commit; the version metadata needs a pretend version without git,
 # and the pyproject `include = ["aider"]` package filter must be
 # widened to `["aider*"]` in the copy or subpackages like
-# aider.coders are dropped from source builds):
+# aider.coders are dropped from source builds; the package data
+# (aider/resources) must also be overlaid from the source tree —
+# MANIFEST.in does not select it for --target builds):
 #   rsync -a --exclude .git --exclude __pycache__ <aider-checkout>/ /tmp/aider-src/
 #   sed -i 's/^include = \["aider"\]$/include = ["aider*"]/' /tmp/aider-src/pyproject.toml
 #   for py in 3.12 3.13; do
@@ -25,6 +27,10 @@
 #              pip install --quiet --no-input --upgrade pip setuptools wheel \
 #              && SETUPTOOLS_SCM_PRETEND_VERSION=0.16.0.dev1 \
 #                 pip install --quiet --no-input --target /out/aider-pkg /src \
+#              && rm -rf /out/aider-pkg/aider \
+#              && cp -r /src/aider /out/aider-pkg/aider \
+#              && find /out/aider-pkg/aider -name __pycache__ -type d \
+#                 -prune -exec rm -rf {} + \
 #              && cd /out && tar czf aider-pkg-py${tag}.tar.gz aider-pkg \
 #              && rm -rf aider-pkg"
 #   done

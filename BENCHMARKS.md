@@ -40,6 +40,7 @@ Records are never overwritten — append a new row for every run.
 | 2026-10-12 17:26 | main | b2825c3 | TB suite.txt vs opencode (deepseek-flash) | — | — | — | ~10min | 975K | — | 975,292 | 100% | 0% | 0 | yaah 6/6 vs opencode 5/6 on the 6-task editable suite; harness pin d28711d; 1 trial each; yaah 944,377 prompt + 30,915 output, 90% cache-hit (848K); opencode failed broken-python (parse_error, 2/2 runs); opencode no token accounting; run-ids 2026-10-12__17-26-54 / 2026-10-12__17-35-13; opencode improved vs its 16-35 run (3/6 → 5/6) — single-trial variance is real |
 
 | 2026-10-12 18:34 | main | b2825c3 | TB suite.txt + hermes (deepseek-flash) | — | — | — | ~8min | 844K | — | 858,729 | 100% | 0% | 0 | hermes-agent 0.19.0 via hermes_agent.py adapter (prebuilt package tree per Python minor version — immune to broken-python's deleted-pip fixture); 6/6; wire model deepseek-chat (flash alias); hermes 844,193 prompt + 14,536 output, 97% cache-hit (816K); usage-file semantics: input excludes cache reads and writes (combined to match yaah); three-way same-day: yaah 6/6 (975K), hermes 6/6 (859K), opencode 5/6 (no accounting); run-id 2026-10-12__18-34-17 |
+| 2026-10-12 20:18 | main | 191389c | TB suite.txt + aider (deepseek-flash) | — | — | — | ~40min | 646K | — | 647,016 | 100% | 0% | 5 | aider @ 5dc9490 via aider_agent.py adapter + aider_driver.py (prebuilt package trees py312/313; stream=False for exact usage; autonomy preamble; model deepseek/deepseek-chat per aider's model-settings); 1/6 — edit-format non-conformance: deepseek-flash answers in prose/bash, aider reflects 3x and applies no edits; 99% cache-hit (641K); four-way same-day: yaah 6/6 (975K), hermes 6/6 (859K), opencode 5/6 (no accounting), aider 1/6 (647K); run-id 2026-10-12__20-18-12 |
 
 ## Analysis: Continuation Guard Impact
 
@@ -105,5 +106,3 @@ do not regress performance. The dominant factor in benchmark variance is whether
 the orchestrator model chooses to dispatch sub-agents or run inline — an
 unpredictable model behavior orthogonal to our changes. When both branches run
 inline, they perform at parity.
-
-| 2026-10-12 20:18 | main | 191389c | TB suite.txt + aider (deepseek-flash) | — | — | — | ~40min | 646K | — | 647,016 | 100% | 0% | 5 | aider @ 5dc9490 via aider_agent.py adapter + aider_driver.py (prebuilt package trees py312/313; stream=False for exact usage; autonomy preamble; model deepseek/deepseek-chat per aider's model-settings); 1/6 — edit-format non-conformance: deepseek-flash answers in prose/bash, aider reflects 3x and applies no edits; 99% cache-hit (641K); four-way same-day: yaah 6/6 (975K), hermes 6/6 (859K), opencode 5/6 (no accounting), aider 1/6 (647K); run-id 2026-10-12__20-18-12 |
