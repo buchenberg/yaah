@@ -6,16 +6,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	croft "github.com/buchenberg/croft"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
-
-	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
-	containerdbackend "github.com/buchenberg/shepherd-kernel-go/sandbox/containerd"
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 )
 
 // workspace_bootstrap.go implements the D1 bootstrap (isolated-workspace plan
@@ -163,7 +160,7 @@ func deniedBy(deny []string, p string) string {
 //
 // Known cost, deliberate for D1's correctness-first landing: one backend
 // exec per file. A bundle-based fast path is the anticipated follow-up.
-func copyTreeIn(ctx context.Context, sb shepherdsandbox.Sandbox, src, root string, deny []string, tracked map[string]bool) error {
+func copyTreeIn(ctx context.Context, sb croft.Sandbox, src, root string, deny []string, tracked map[string]bool) error {
 	src = filepath.Clean(src)
 	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -280,7 +277,7 @@ func bootstrapSession(ctx context.Context, ss *SessionSandbox, src string, deny 
 // act on. The identity is fixed for the same reason: no user config needs
 // to exist inside the container.
 func commitContainerBaseline(ctx context.Context, ss *SessionSandbox) error {
-	for _, req := range []shepherdsandbox.ExecRequest{
+	for _, req := range []croft.ExecRequest{
 		{Command: "git", Args: []string{"add", "-A"}, Cwd: ss.ws.root},
 		{Command: "git", Args: []string{
 			"-c", "user.name=yaah", "-c", "user.email=yaah@localhost",
@@ -311,7 +308,7 @@ func (s *SessionSandbox) DiffSinceBaseline(ctx context.Context, maxLines int) (s
 
 // Baseline returns the session's baseline state, or nil when the session
 // started without a bootstrap.
-func (s *SessionSandbox) Baseline() *shepherdtrace.WorkspaceState { return s.baseline }
+func (s *SessionSandbox) Baseline() *croft.WorkspaceState { return s.baseline }
 
 // ApplyOut applies the session's outward delta onto the host working tree —
 // the "apply-out on accept" half of D1. It is the single door changes leave
@@ -343,13 +340,13 @@ func (s *SessionSandbox) ApplyOut(ctx context.Context, hostDir string) error {
 	if err != nil {
 		return fmt.Errorf("workspace: apply-out: capture: %w", err)
 	}
-	if raw, present := cur.Data[containerdbackend.StateKeyDeltaPatch]; present {
+	if raw, present := cur.Data[croft.StateKeyDeltaPatch]; present {
 		b64, isStr := raw.(string)
 		if !isStr {
 			// A present-but-undecodable patch must not fall through to
 			// the no-op or copy-out branches: that would report success
 			// while discarding the session's changes.
-			return fmt.Errorf("workspace: apply-out: %s has type %T, want a base64 string — refusing to guess at the backend's delta", containerdbackend.StateKeyDeltaPatch, raw)
+			return fmt.Errorf("workspace: apply-out: %s has type %T, want a base64 string — refusing to guess at the backend's delta", croft.StateKeyDeltaPatch, raw)
 		}
 		patch, derr := base64.StdEncoding.DecodeString(b64)
 		if derr != nil {
@@ -357,7 +354,7 @@ func (s *SessionSandbox) ApplyOut(ctx context.Context, hostDir string) error {
 		}
 		return applyGitPatch(ctx, hostDir, patch)
 	}
-	if _, ok := cur.Data[containerdbackend.StateKeyDeltaBase]; ok {
+	if _, ok := cur.Data[croft.StateKeyDeltaBase]; ok {
 		// A clean capture: the backend recorded its delta base and found
 		// nothing between it and the current tree.
 		return nil

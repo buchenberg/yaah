@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strings"
 
-	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
@@ -254,8 +253,7 @@ func CheckWorkspace(cfg *config.Config, cfgErr error) Check {
 		} else {
 			detail += ", socket containerd default"
 		}
-		detail += fmt.Sprintf("; linked backends: %s; daemon and image contract probed at session start",
-			strings.Join(shepherdsandbox.SandboxBackends(), ", "))
+		detail += "; sandbox library: croft (containerd), supervision: shepherd (git); daemon and image contract probed at session start"
 		return Check{Label: "Workspace", Status: "OK", Detail: detail}
 	default:
 		return Check{Label: "Workspace", Status: "FAIL", Detail: fmt.Sprintf("unknown backend %q (valid: local, containerd)", w.Backend)}

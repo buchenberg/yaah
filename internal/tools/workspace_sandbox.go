@@ -4,13 +4,12 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	croft "github.com/buchenberg/croft"
 	"io/fs"
 	"path"
 	"strconv"
 	"strings"
 	"time"
-
-	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 )
 
 // sandboxWorkspace runs a tool's filesystem and process operations inside an
@@ -31,7 +30,7 @@ import (
 // that lets changes out. Sub-agent inheritance of the sandbox is the plan's
 // step 9 (decision D2).
 type sandboxWorkspace struct {
-	sb shepherdsandbox.Sandbox
+	sb croft.Sandbox
 	// root is the containment root inside the sandbox.
 	root string
 }
@@ -39,7 +38,7 @@ type sandboxWorkspace struct {
 var _ Workspace = (*sandboxWorkspace)(nil)
 
 // newSandboxWorkspace binds a workspace to a sandbox and its container-side root.
-func newSandboxWorkspace(sb shepherdsandbox.Sandbox, root string) *sandboxWorkspace {
+func newSandboxWorkspace(sb croft.Sandbox, root string) *sandboxWorkspace {
 	if root == "" {
 		root = "/workspace"
 	}
@@ -154,7 +153,7 @@ func (w *sandboxWorkspace) WriteFile(ctx context.Context, p string, data []byte,
 	mode := strconv.FormatUint(uint64(perm.Perm()), 8)
 	first := min(sandboxWriteChunkBytes, len(data))
 
-	res, err := w.sb.Exec(ctx, shepherdsandbox.ExecRequest{
+	res, err := w.sb.Exec(ctx, croft.ExecRequest{
 		Command: "sh",
 		Args:    []string{"-c", writeFirstScript, "shepherd", p, base64.StdEncoding.EncodeToString(data[:first])},
 		Cwd:     w.root,
@@ -173,7 +172,7 @@ func (w *sandboxWorkspace) WriteFile(ctx context.Context, p string, data []byte,
 	// caller removes it; the scratch file is each chunk exec's own to
 	// clean, so the belt-and-braces rm names both.
 	cleanup := func() {
-		_, _ = w.sb.Exec(ctx, shepherdsandbox.ExecRequest{
+		_, _ = w.sb.Exec(ctx, croft.ExecRequest{
 			Command: "sh",
 			Args:    []string{"-c", `rm -f -- "$1" "$1.b64"`, "shepherd", temp},
 			Cwd:     w.root,
@@ -182,7 +181,7 @@ func (w *sandboxWorkspace) WriteFile(ctx context.Context, p string, data []byte,
 
 	for off := first; off < len(data); off += sandboxWriteChunkBytes {
 		end := min(off+sandboxWriteChunkBytes, len(data))
-		res, err := w.sb.Exec(ctx, shepherdsandbox.ExecRequest{
+		res, err := w.sb.Exec(ctx, croft.ExecRequest{
 			Command: "sh",
 			Args:    []string{"-c", writeChunkScript, "shepherd", temp, base64.StdEncoding.EncodeToString(data[off:end])},
 			Cwd:     w.root,
@@ -197,7 +196,7 @@ func (w *sandboxWorkspace) WriteFile(ctx context.Context, p string, data []byte,
 		}
 	}
 
-	res, err = w.sb.Exec(ctx, shepherdsandbox.ExecRequest{
+	res, err = w.sb.Exec(ctx, croft.ExecRequest{
 		Command: "sh",
 		Args:    []string{"-c", writeFinalScript, "shepherd", mode, temp, p},
 		Cwd:     w.root,
@@ -241,7 +240,7 @@ stat -c "$2" -- "$1"`
 		script = `[ -e "$1" ] || exit 42
 stat -L -c "$2" -- "$1"`
 	}
-	res, err := w.sb.Exec(ctx, shepherdsandbox.ExecRequest{
+	res, err := w.sb.Exec(ctx, croft.ExecRequest{
 		Command: "sh",
 		Args:    []string{"-c", script, "shepherd", p, format},
 		Cwd:     w.root,
@@ -361,7 +360,7 @@ func (w *sandboxWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResul
 	if cwd == "" {
 		cwd = w.root
 	}
-	res, err := w.sb.Exec(ctx, shepherdsandbox.ExecRequest{
+	res, err := w.sb.Exec(ctx, croft.ExecRequest{
 		Command: req.Command,
 		Args:    req.Args,
 		Cwd:     cwd,
@@ -397,7 +396,7 @@ func (w *sandboxWorkspace) run(ctx context.Context, script string, args ...strin
 }
 
 func (w *sandboxWorkspace) runCapture(ctx context.Context, script string, args ...string) (string, error) {
-	res, err := w.sb.Exec(ctx, shepherdsandbox.ExecRequest{
+	res, err := w.sb.Exec(ctx, croft.ExecRequest{
 		Command: "sh",
 		Args:    append([]string{"-c", script, "shepherd"}, args...),
 		Cwd:     w.root,
