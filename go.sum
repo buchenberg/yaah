@@ -10,8 +10,8 @@ github.com/Microsoft/hcsshim v0.15.0-rc.1 h1:FbbwtQmiD+BVHynGkx5S65JkLyhkEiiTP8n
 github.com/Microsoft/hcsshim v0.15.0-rc.1/go.mod h1:HWvvUPIy9HF6LotILj1G4VyS065rcLQ6tqj6tMUdOfI=
 github.com/buchenberg/croft v0.3.0 h1:+d5eZu/egFP2vect6YLp8egCRdXn3m2diwSAnasmTkk=
 github.com/buchenberg/croft v0.3.0/go.mod h1:60+zTcbxiPspcSOeoG3e39ZFCVVXHaQWxlO96lGAnt4=
-github.com/buchenberg/shepherd-kernel-go v0.15.0 h1:WjLQpw2oorAATm7lf1il8ZH6LhS+tky48YNFuZDFea0=
-github.com/buchenberg/shepherd-kernel-go v0.15.0/go.mod h1:N5a+B07Lm4xmc4ubCc83Rw4hDWuvbgKUJDSd6N7nrs4=
+github.com/buchenberg/shepherd-kernel-go v0.16.0 h1:+lNGhsxNTNtzz+1E/JVCErUHYiVxYD68yg5iU5yyeZs=
+github.com/buchenberg/shepherd-kernel-go v0.16.0/go.mod h1:N5a+B07Lm4xmc4ubCc83Rw4hDWuvbgKUJDSd6N7nrs4=
 github.com/buchenberg/tviewmd v0.2.0 h1:GEbCcQqgSdi6WafPsBPeXSkkcqrnKI7D1hdytIc+Ofg=
 github.com/buchenberg/tviewmd v0.2.0/go.mod h1:NSvcH2laSSUg/+4jVj/M3/NzviJ9UE16me0zlulM35w=
 github.com/cenkalti/backoff/v5 v5.0.3 h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1xcsSM=
