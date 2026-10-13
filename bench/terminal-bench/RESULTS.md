@@ -235,8 +235,9 @@ defaults.
 | **agent time** | **227s** | **272s** | **323s** |
 
 Token accounting (yaah from its in-container state.db; hermes from its
-`--usage-file` report, whose input excludes cache reads — combined
-here to match yaah's semantics; opencode reports nothing):
+`--usage-file` report, whose input excludes cache reads and writes —
+both combined here to match yaah's semantics; cache writes are zero on
+deepseek in this run; opencode reports nothing):
 
 | Metric | yaah | hermes |
 |---|---|---|

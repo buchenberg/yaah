@@ -57,16 +57,21 @@ def hermes_tokens(runs_dir, run_id, task_id):
         return None
     with open(path[0]) as f:
         report = json.load(f)
-    # hermes splits prompt into uncached input + cache_read; combine
-    # to match yaah's tokens_in (which includes cached tokens).
-    prompt = (report.get("input_tokens") or 0) + (
-        report.get("cache_read_tokens") or 0
+    # hermes splits prompt into uncached input + cache reads + cache
+    # writes; combine to match yaah's tokens_in (which includes
+    # cached tokens). The report is written even for failed/partial
+    # runs, so a parsed report counts as accounting regardless of
+    # `completed`.
+    prompt = (
+        (report.get("input_tokens") or 0)
+        + (report.get("cache_read_tokens") or 0)
+        + (report.get("cache_write_tokens") or 0)
     )
     return (
         prompt,
         report.get("output_tokens") or 0,
         report.get("cache_read_tokens") or 0,
-        1 if report.get("completed") else 0,
+        1,
     )
 
 
