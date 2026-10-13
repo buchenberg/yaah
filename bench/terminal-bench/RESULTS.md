@@ -207,3 +207,48 @@ and the earlier gap overstated opencode's capability. Its one
 consistent failure is broken-python: a parse_error in both of its
 runs (2/2), while yaah resolved it in every run (3/3). yaah is 6/6
 across all recorded runs of this subset.
+
+## Hermes added to the comparison (2026-10-12, deepseek-flash, hermes-agent 0.19.0)
+
+Third CLI: Nous Research's hermes-agent 0.19.0, run through a new
+installed-agent adapter (`hermes_agent.py`, this commit). Like the
+static yaah/opencode binaries it is immune to broken-python's
+deleted-pip fixture: the adapter ships hermes as a prebuilt,
+self-contained package tree (one tarball per Python minor version —
+the task images at the pin use 3.13 and ubuntu-24-04's 3.12), so the
+container's own packaging is never used. Same suite, pin, model,
+judge, one trial each, all same-day: yaah `2026-10-12__17-26-54`,
+opencode `2026-10-12__17-35-13`, hermes `2026-10-12__18-34-17`.
+hermes `-m deepseek-flash` resolves via its deepseek provider to the
+wire alias `deepseek-chat` (flash tier); it ran with its out-of-box
+defaults.
+
+| Task | yaah | hermes | opencode |
+|---|---|---|---|
+| hello-world | resolved 6s | resolved 16s | resolved 23s |
+| broken-python | resolved 34s | resolved 41s | unresolved 24s (parse_error) |
+| csv-to-parquet | resolved 21s | resolved 104s | resolved 73s |
+| jsonl-aggregator | resolved 24s | resolved 17s | resolved 38s |
+| assign-seats | resolved 30s | resolved 29s | resolved 49s |
+| gomoku-planner | resolved 112s | resolved 65s | resolved 116s |
+| **score** | **6/6** | **6/6** | **5/6** |
+| **agent time** | **227s** | **272s** | **323s** |
+
+Token accounting (yaah from its in-container state.db; hermes from its
+`--usage-file` report, whose input excludes cache reads and writes —
+both combined here to match yaah's semantics; cache writes are zero on
+deepseek in this run; opencode reports nothing):
+
+| Metric | yaah | hermes |
+|---|---|---|
+| prompt tokens | 944,377 | 844,193 |
+| output tokens | 30,915 | 14,536 |
+| total | 975,292 | 858,729 |
+| cached prompt tokens | 848,128 (90%) | 816,128 (97%) |
+
+Notes: yaah and hermes tie at 6/6, and both resolve broken-python —
+the task opencode parse-errors on in both of its runs (2/2). hermes
+is the cheaper run (0.86M vs 0.98M in+out) with the higher cache-hit;
+yaah is faster overall (227s vs 272s agent time; 3-3 per task). As
+everywhere above: one trial per CLI, a smoke-signal comparison — hermes
+at its defaults, yaah as benched, same judge.

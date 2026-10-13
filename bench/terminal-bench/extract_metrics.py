@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Extract per-task metrics from Terminal-Bench run directories.
 
-Prints verdict, agent wall time, and yaah token accounting (summed from
-the in-container state.db) for each task in a run — the same numbers
-recorded in RESULTS.md.
+Prints verdict, agent wall time, and token accounting for each task in
+a run — the same numbers recorded in RESULTS.md. Accounting sources:
+yaah sums its in-container state.db (sessions table, tokens_in
+includes cached); hermes reads its --usage-file report, whose
+input_tokens EXCLUDES cache reads and writes, so both buckets are
+combined to match yaah's semantics. opencode reports nothing through
+the installed-agent path.
 
 Usage:
     python3 extract_metrics.py RUNS_DIR RUN_ID [RUN_ID ...]
@@ -45,6 +49,39 @@ def yaah_tokens(runs_dir, run_id, task_id):
     return row
 
 
+def hermes_tokens(runs_dir, run_id, task_id):
+    path = glob.glob(
+        f"{runs_dir}/{run_id}/{task_id}/*/agent-logs/hermes-usage.json"
+    )
+    if not path:
+        return None
+    # A truncated/invalid report degrades to "no accounting" for this
+    # task rather than aborting the run summary.
+    try:
+        with open(path[0]) as f:
+            report = json.load(f)
+        if not isinstance(report, dict):
+            return None
+    except (OSError, ValueError):
+        return None
+    # hermes splits prompt into uncached input + cache reads + cache
+    # writes; combine to match yaah's tokens_in (which includes
+    # cached tokens). The report is written even for failed/partial
+    # runs, so a parsed report counts as accounting regardless of
+    # `completed`.
+    prompt = (
+        (report.get("input_tokens") or 0)
+        + (report.get("cache_read_tokens") or 0)
+        + (report.get("cache_write_tokens") or 0)
+    )
+    return (
+        prompt,
+        report.get("output_tokens") or 0,
+        report.get("cache_read_tokens") or 0,
+        1,
+    )
+
+
 def main(argv):
     if len(argv) < 3:
         print(__doc__)
@@ -61,7 +98,9 @@ def main(argv):
                 f"{r['task_id']:24s} resolved={str(r['is_resolved']):5s} "
                 f"time={secs if secs is not None else '?':>5}"
             )
-            tk = yaah_tokens(runs_dir, run_id, r["task_id"])
+            tk = yaah_tokens(runs_dir, run_id, r["task_id"]) or hermes_tokens(
+                runs_dir, run_id, r["task_id"]
+            )
             if tk and tk[3]:
                 tokens_in, tokens_out, cached, _ = tk
                 line += (
