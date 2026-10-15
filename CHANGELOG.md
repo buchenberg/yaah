@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.79.0](https://github.com/buchenberg/yaah/compare/v0.78.2...v0.79.0) (2026-10-15)
+
+
+### Features
+
+* **providers:** adopt anthropic-sdk-go for the native Anthropic path ([a1ed879](https://github.com/buchenberg/yaah/commit/a1ed87929c48f4dc090a79f5812dcc3f61936e59))
+* **providers:** adopt anthropic-sdk-go for the native Anthropic path ([0ba965b](https://github.com/buchenberg/yaah/commit/0ba965b5c9a9e4e5fb64ffd7af392095b3df160a))
+
+
+### Bug Fixes
+
+* **llm:** drain stream errors before synthesizing premature close ([65b066f](https://github.com/buchenberg/yaah/commit/65b066fd48730445b69abffc025d030177d4cc8c))
+* **providers:** address Kilo re-review on the review-fix commit ([6611fda](https://github.com/buchenberg/yaah/commit/6611fda5362098634ba608274862f9674d2b9dab))
+* **providers:** address review findings on the anthropic-sdk path ([8f3470a](https://github.com/buchenberg/yaah/commit/8f3470a7ef8165e15bb164da9c187bb47baaeb4d))
+
 ## [0.78.2](https://github.com/buchenberg/yaah/compare/v0.78.1...v0.78.2) (2026-10-13)
 
 
