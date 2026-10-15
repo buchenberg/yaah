@@ -413,6 +413,65 @@ func TestLoop_subAgentStuckChildTimeout(t *testing.T) {
 	}
 }
 
+func TestLoop_stuckChildPreservesPartial(t *testing.T) {
+	// A watchdog kill must not discard the partial result the task tool
+	// captured: the structured {"error":"cancelled","partial":...} payload
+	// must reach the model alongside the stuck classification (yaah-1ep).
+	hangingRunner := func(ctx context.Context, prompt string, params tools.SubAgentParams) (string, error) {
+		<-ctx.Done()
+		return "half-finished review notes", ctx.Err()
+	}
+
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{
+			{Choices: []types.Choice{{
+				Message: types.Message{
+					Role: "assistant",
+					ToolCalls: []types.ToolCall{{
+						ID:       "c1",
+						Type:     "function",
+						Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"hang","prompt":"do nothing","role":"tester"}`},
+					}},
+				},
+				FinishReason: "tool_calls",
+			}}},
+			{Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant", Content: "handled"},
+				FinishReason: "stop",
+			}}},
+		},
+	}
+
+	reg := tools.NewEmptyRegistry()
+	reg.Register(&tools.TaskTool{Runner: hangingRunner})
+
+	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
+		MaxLoopCycles:     5,
+		StuckChildTimeout: 100 * time.Millisecond}, Provider: fp,
+		Registry: reg,
+	}
+
+	if _, err := loop.Run(context.Background(), "hang"); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	var stuckMsg string
+	for _, m := range loop.State.Messages {
+		if m.Role == "tool" && strings.Contains(m.Content, "sub-agent stuck") {
+			stuckMsg = m.Content
+		}
+	}
+	if stuckMsg == "" {
+		t.Fatal("no stuck-classified tool message found in loop state")
+	}
+	if !strings.Contains(stuckMsg, "half-finished review notes") {
+		t.Errorf("stuck message dropped the partial output: %q", stuckMsg)
+	}
+	if !strings.Contains(stuckMsg, `"error":"cancelled"`) {
+		t.Errorf("stuck message dropped the structured task result: %q", stuckMsg)
+	}
+}
+
 func TestLoop_subAgentHeartbeatKeepsAlive(t *testing.T) {
 	// A sub-agent that emits heartbeats periodically should NOT be
 	// killed by the watchdog, even if it runs longer than the timeout.

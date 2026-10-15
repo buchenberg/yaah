@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent/errorclassify"
 	"github.com/buchenberg/yaah/internal/providers"
+	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -31,8 +33,13 @@ type Client struct {
 	OtelVerbose      bool
 	StripReasoning   func() // called to permanently strip reasoning from session history
 	replayCount      int    // tracks empty-response replays within a single Call
-	prematureCount   int    // tracks premature-stream-close replays within a single Call
-	dsmlSeq          int    // monotonic ID counter for DSML-recovered tool calls
+
+	// HeartbeatInterval throttles the sub-agent liveness heartbeats
+	// emitted while a stream is being consumed. Zero means 5s. Tests
+	// shorten it to observe per-chunk heartbeats.
+	HeartbeatInterval time.Duration
+	prematureCount    int // tracks premature-stream-close replays within a single Call
+	dsmlSeq           int // monotonic ID counter for DSML-recovered tool calls
 }
 
 // CallResult holds the outcome of a single LLM call. Response metadata
@@ -87,6 +94,11 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 	}
 
 	for attempt := 0; attempt <= c.MaxRetries; attempt++ {
+		// Per-attempt liveness ping marks the attempt boundary; the wait
+		// ticker (startWaitHeartbeat) covers the long silent windows
+		// within an attempt (yaah-1ep).
+		tools.SendHeartbeat(ctx)
+
 		var result CallResult
 		var err error
 
@@ -103,8 +115,10 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 				ResponseModel: responseModel,
 			}
 		} else {
+			stopHB := c.startWaitHeartbeat(ctx)
 			var resp *types.ChatResponse
 			resp, err = c.Provider.Send(ctx, req)
+			stopHB()
 			if err == nil {
 				result.Usage = captureUsage(resp)
 				result.Streamed = false
@@ -281,16 +295,55 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 				backoff = time.Second
 			}
 			backoff *= time.Duration(1 << attempt)
+			stopHB := c.startWaitHeartbeat(ctx)
 			select {
 			case <-time.After(backoff):
 			case <-ctx.Done():
+				stopHB()
 				return attach(CallResult{Usage: result.Usage}), ctx.Err()
 			}
+			stopHB()
 		} else if !classified.Retryable {
 			return attach(CallResult{Usage: result.Usage}), err
 		}
 	}
 	return attach(lastResult), lastErr
+}
+
+// heartbeatInterval returns the throttle interval for liveness heartbeats
+// (default 5s when unset).
+func (c *Client) heartbeatInterval() time.Duration {
+	if c.HeartbeatInterval > 0 {
+		return c.HeartbeatInterval
+	}
+	return 5 * time.Second
+}
+
+// startWaitHeartbeat beats the sub-agent liveness heartbeat every
+// heartbeatInterval until the returned stop function is called or ctx
+// ends. It covers the silent waits where no stream chunk — the normal
+// heartbeat source — can arrive: time-to-first-token, blocking
+// non-streaming calls, and retry backoff. Without it those waits starve
+// the stuck-child watchdog and healthy sub-agents are cancelled mid-call
+// (yaah-1ep). stop is idempotent.
+func (c *Client) startWaitHeartbeat(ctx context.Context) (stop func()) {
+	done := make(chan struct{})
+	go func() {
+		t := time.NewTicker(c.heartbeatInterval())
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				tools.SendHeartbeat(ctx)
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(done) }) }
 }
 
 // isDegenerateStream returns true if the error is from a model that produced

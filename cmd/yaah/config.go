@@ -51,6 +51,28 @@ var configShowCmd = &cobra.Command{
 			cmd.Println("  (none configured — run 'yaah config edit' to add one)")
 		}
 
+		// Embedding (semantic memory search). The enablement condition
+		// mirrors embedderFor: search is live only when both provider and
+		// model are set AND the provider resolves in the providers map, so
+		// a half-configured or dangling stanza must say so rather than
+		// report "configured".
+		cmd.Println()
+		cmd.Println("[embedding]")
+		switch {
+		case cfg.Embedding.Provider == "" && cfg.Embedding.Model == "":
+			cmd.Println("  (not configured — semantic memory search disabled)")
+		case cfg.Embedding.Provider == "" || cfg.Embedding.Model == "":
+			cmd.Printf("  provider: %s\n", orNotSet(cfg.Embedding.Provider))
+			cmd.Printf("  model:    %s\n", orNotSet(cfg.Embedding.Model))
+			cmd.Println("  (incomplete — semantic memory search disabled until provider and model are set)")
+		default:
+			cmd.Printf("  provider: %s\n", cfg.Embedding.Provider)
+			cmd.Printf("  model:    %s\n", cfg.Embedding.Model)
+			if _, ok := cfg.Providers[cfg.Embedding.Provider]; !ok {
+				cmd.Printf("  (provider %s not found in [providers] — semantic memory search disabled)\n", cfg.Embedding.Provider)
+			}
+		}
+
 		cmd.Println()
 		cmd.Printf("[other]\n")
 		cmd.Printf("  editor:    %s\n", config.ResolveEditor(cfg))
@@ -96,6 +118,15 @@ var configEditCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+// orNotSet renders an empty config value as "(not set)", the convention
+// redactKey established for empty API keys.
+func orNotSet(v string) string {
+	if v == "" {
+		return "(not set)"
+	}
+	return v
 }
 
 // redactKey masks all but the last 4 characters of an API key.

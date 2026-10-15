@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.79.1](https://github.com/buchenberg/yaah/compare/v0.79.0...v0.79.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **agent:** keep sub-agents alive during silent LLM phases; preserve partial output on watchdog kill ([6819ec5](https://github.com/buchenberg/yaah/commit/6819ec545bd30b7807f7077f0259254e520c5023))
+* **agent:** keep sub-agents alive during silent LLM phases; preserve partial output on watchdog kill ([fefcd19](https://github.com/buchenberg/yaah/commit/fefcd19dd764b2c8146e46346477b52567bdfbf9)), closes [#309](https://github.com/buchenberg/yaah/issues/309)
+* **llm:** ticker heartbeats during silent waits (TTFT, blocking send, retry backoff) ([a332724](https://github.com/buchenberg/yaah/commit/a3327248bf67f947810bb280bcca464e4a6d9d6c))
+* **tools,cli:** address review — embedding enablement condition in config show; sandbox write creates parent dirs ([daa8f14](https://github.com/buchenberg/yaah/commit/daa8f14645d5391f20da1831948beaf3bb608651))
+* **tools,cli:** create parent dirs in atomic write; reject invalid calculate chars; show embedding config ([5e2a218](https://github.com/buchenberg/yaah/commit/5e2a218418e3a5de6bdab0b32eae8997efbea94a))
+* **tools,cli:** create parent dirs in atomic write; reject invalid calculate chars; show embedding config ([ec342b6](https://github.com/buchenberg/yaah/commit/ec342b62ab7737356cd7fab38610522681e7072e))
+
 ## [0.79.0](https://github.com/buchenberg/yaah/compare/v0.78.2...v0.79.0) (2026-10-15)
 
 

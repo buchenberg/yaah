@@ -108,11 +108,16 @@ const sandboxWriteChunkBytes = 64 * 1024
 // shell metacharacters, so file content and paths are never spliced into
 // script text.
 const (
-	// writeFirstScript creates the temp file beside the target, lands the
-	// first chunk, and prints the temp's name on stdout. The EXIT trap
-	// removes the temp and the chunk scratch file on any mid-script
-	// failure, and is stood down before the success path survives.
-	writeFirstScript = `t=$(mktemp -- "$1.XXXXXX") || exit 1
+	// writeFirstScript creates the target's parent directory, creates the
+	// temp file beside the target, lands the first chunk, and prints the
+	// temp's name on stdout. The mkdir -p mirrors the host
+	// atomicWriteFile's MkdirAll, so a write into a new nested path
+	// succeeds on both substrates; the parent arrives as a quoted
+	// positional, never spliced into the script. The EXIT trap removes the
+	// temp and the chunk scratch file on any mid-script failure, and is
+	// stood down before the success path survives.
+	writeFirstScript = `mkdir -p -- "$3" || exit 1
+t=$(mktemp -- "$1.XXXXXX") || exit 1
 trap 'rm -f -- "$t" "$t.b64"' EXIT
 printf '%s' "$2" > "$t.b64" || exit 1
 base64 -d "$t.b64" >> "$t" || exit 1
@@ -138,9 +143,10 @@ rm -f -- "$2.b64"`
 // beside the target, then rename. The temp name comes from mktemp, so it is
 // created O_EXCL and code inside the sandbox cannot pre-create or symlink a
 // predictable name, and the trap removes it if the write fails part-way.
-// Parent directories are deliberately NOT created: the host atomicWriteFile
-// fails when the target directory is missing, and matching that keeps a typo'd
-// path from silently succeeding in one workspace and failing in the other.
+// Parent directories ARE created (mkdir -p on the target's parent, passed as
+// a quoted positional): the host atomicWriteFile MkdirAlls the same directory
+// before its temp file, so both substrates accept a write into a new nested
+// path and neither diverges on a missing directory.
 //
 // The content travels as base64 in positional arguments, not on stdin: the
 // runc-v2 shim keeps a write end on an exec's stdin FIFO for the process's
@@ -155,7 +161,7 @@ func (w *sandboxWorkspace) WriteFile(ctx context.Context, p string, data []byte,
 
 	res, err := w.sb.Exec(ctx, croft.ExecRequest{
 		Command: "sh",
-		Args:    []string{"-c", writeFirstScript, "shepherd", p, base64.StdEncoding.EncodeToString(data[:first])},
+		Args:    []string{"-c", writeFirstScript, "shepherd", p, base64.StdEncoding.EncodeToString(data[:first]), path.Dir(p)},
 		Cwd:     w.root,
 	})
 	if err != nil {

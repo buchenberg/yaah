@@ -128,13 +128,16 @@ func TestFileIORoundTrip(t *testing.T) {
 
 // TestExecRunsTheAtomicWriteScript interprets the exact first script
 // sandboxWorkspace.WriteFile emits and pins the resulting tree: the
-// base64 chunk lands in the mktemp file decoded, the scratch .b64 is
-// removed, the EXIT trap is stood down so the temp survives (a mishandled
-// `trap -` would surface as a stderr diagnostic at teardown), and the
-// temp's name returns on stdout.
+// parent directory is mkdir -p'd from its positional (the host
+// atomicWriteFile's MkdirAll parity), the base64 chunk lands in the
+// mktemp file decoded, the scratch .b64 is removed, the EXIT trap is
+// stood down so the temp survives (a mishandled `trap -` would surface
+// as a stderr diagnostic at teardown), and the temp's name returns on
+// stdout.
 func TestExecRunsTheAtomicWriteScript(t *testing.T) {
 	s := newCreated(t)
-	script := `t=$(mktemp -- "$1.XXXXXX") || exit 1
+	script := `mkdir -p -- "$3" || exit 1
+t=$(mktemp -- "$1.XXXXXX") || exit 1
 trap 'rm -f -- "$t" "$t.b64"' EXIT
 printf '%s' "$2" > "$t.b64" || exit 1
 base64 -d "$t.b64" >> "$t" || exit 1
@@ -142,7 +145,7 @@ rm -f -- "$t.b64"
 trap - EXIT
 printf '%s' "$t"`
 
-	res := runScript(t, s, script, nil, "/workspace/f.txt", base64.StdEncoding.EncodeToString([]byte("payload\n")))
+	res := runScript(t, s, script, nil, "/workspace/f.txt", base64.StdEncoding.EncodeToString([]byte("payload\n")), "/workspace")
 	if res.ExitCode != 0 {
 		t.Fatalf("exit = %d, stderr = %q", res.ExitCode, res.Stderr)
 	}
@@ -169,7 +172,7 @@ printf '%s' "$t"`
 	// scratch must be gone, and the successful run's temp must be the
 	// only survivor — counting entries cannot tell kept-from-removed,
 	// so the survivors are named.
-	res = runScript(t, s, script, nil, "/workspace/f.txt", "!!!not base64!!!")
+	res = runScript(t, s, script, nil, "/workspace/f.txt", "!!!not base64!!!", "/workspace")
 	if res.ExitCode == 0 {
 		t.Error("an invalid chunk must fail the script")
 	}
@@ -179,6 +182,21 @@ printf '%s' "$t"`
 	list := runScript(t, s, `find "$1" -mindepth 1 -maxdepth 1 -printf '%f\n'`, nil, "/workspace")
 	if got := strings.Fields(list.Stdout); len(got) != 1 || got[0] != path.Base(temp) || strings.HasSuffix(got[0], ".b64") {
 		t.Errorf("survivors after failure = %v, want exactly [%s] and no scratch", got, path.Base(temp))
+	}
+
+	// The mkdir -p line lets the same script serve a target whose parent
+	// does not exist yet: the parent is created from its positional and
+	// the temp lands beside the nested target.
+	res = runScript(t, s, script, nil, "/workspace/fresh/sub/g.txt", base64.StdEncoding.EncodeToString([]byte("deep\n")), "/workspace/fresh/sub")
+	if res.ExitCode != 0 {
+		t.Fatalf("nested exit = %d, stderr = %q", res.ExitCode, res.Stderr)
+	}
+	nestedTemp := strings.TrimSpace(res.Stdout)
+	if !strings.HasPrefix(nestedTemp, "/workspace/fresh/sub/g.txt.") {
+		t.Errorf("nested temp name = %q, want it beside the target", nestedTemp)
+	}
+	if nested, err := s.ReadFile(context.Background(), nestedTemp); err != nil || string(nested) != "deep\n" {
+		t.Errorf("nested content = %q, %v; want deep", nested, err)
 	}
 }
 

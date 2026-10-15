@@ -280,6 +280,42 @@ func TestCalculateTool_Errors(t *testing.T) {
 	}
 }
 
+// TestCalculateTool_InvalidCharacter pins the #317 regression: an
+// unrecognized character must produce a clear error instead of lexing as
+// EOF, which used to silently evaluate only the valid prefix
+// ("2 @ 3" returned 2).
+func TestCalculateTool_InvalidCharacter(t *testing.T) {
+	ct := &CalculateTool{}
+
+	errTests := []string{
+		"2 @ 3",
+		"@ 3",
+		"2 + 3 #",
+		"1 $ 2",
+	}
+	for _, expr := range errTests {
+		t.Run(expr, func(t *testing.T) {
+			_, err := ct.Execute(context.Background(), `{"expr":"`+expr+`"}`)
+			if err == nil {
+				t.Fatalf("expected error for %q, got none", expr)
+			}
+			if !strings.Contains(err.Error(), "invalid character") {
+				t.Errorf("error = %q, want it to mention invalid character", err)
+			}
+		})
+	}
+
+	t.Run("2 + 3", func(t *testing.T) {
+		result, err := ct.Execute(context.Background(), `{"expr":"2 + 3"}`)
+		if err != nil {
+			t.Fatalf("Execute() error: %v", err)
+		}
+		if result != "5" {
+			t.Errorf("= %q, want 5", result)
+		}
+	})
+}
+
 func TestCalculateTool_Whitespace(t *testing.T) {
 	ct := &CalculateTool{}
 

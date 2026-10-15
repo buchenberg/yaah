@@ -92,6 +92,7 @@ const (
 	ctkRParen
 	ctkComma
 	ctkStarStar // **
+	ctkInvalid  // unrecognized character
 )
 
 type calcTok struct {
@@ -165,7 +166,7 @@ func (l *calcLexer) next() calcTok {
 	case ',':
 		return calcTok{ctkComma, ","}
 	}
-	return calcTok{ctkEOF, ""}
+	return calcTok{ctkInvalid, string(ch)}
 }
 
 func (l *calcLexer) skipWS() {
@@ -322,6 +323,9 @@ func (p *calcParser) parseExpr(minPrec int) (float64, error) {
 			return 0, fmt.Errorf("expected )")
 		}
 		p.advance()
+
+	case ctkInvalid:
+		return 0, fmt.Errorf("invalid character %q", p.tok.text)
 
 	default:
 		return 0, fmt.Errorf("unexpected token %q", p.tok.text)
@@ -551,6 +555,9 @@ func evalExpr(expr string) (float64, error) {
 	val, err := p.parseExpr(0)
 	if err != nil {
 		return 0, err
+	}
+	if p.tok.kind == ctkInvalid {
+		return 0, fmt.Errorf("invalid character %q", p.tok.text)
 	}
 	if p.tok.kind != ctkEOF {
 		return 0, fmt.Errorf("unexpected token %q after expression", p.tok.text)
