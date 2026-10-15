@@ -1223,3 +1223,37 @@ func TestAnthropicSend_NoSDKNonStreamingTimeoutPolicy(t *testing.T) {
 		t.Errorf("expected content 'ok', got %q", resp.Choices[0].Message.Content)
 	}
 }
+
+// TestAnthropicToolDescription_OmittedWhenEmpty pins the wire shape for
+// descriptionless tools: the description field must be omitted entirely,
+// matching the pre-SDK wire — never serialized as an empty string, which
+// Anthropic-compatible endpoints may reject.
+func TestAnthropicToolDescription_OmittedWhenEmpty(t *testing.T) {
+	req := types.ChatRequest{
+		Model:     "claude-3.5-sonnet",
+		MaxTokens: 1000,
+		Tools: []types.ToolDef{
+			{Type: "function", Function: types.ToolFn{Name: "get_weather", Parameters: json.RawMessage(`{"type":"object"}`)}},
+		},
+		Messages: []types.Message{
+			{Role: "user", Content: "Hello"},
+		},
+	}
+
+	body, err := json.Marshal(lowerAnthropicRequest(req))
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	var wire struct {
+		Tools []map[string]any `json:"tools"`
+	}
+	if err := json.Unmarshal(body, &wire); err != nil {
+		t.Fatalf("unmarshal wire: %v", err)
+	}
+	if len(wire.Tools) != 1 {
+		t.Fatalf("expected 1 tool on the wire, got %d", len(wire.Tools))
+	}
+	if _, present := wire.Tools[0]["description"]; present {
+		t.Errorf("description must be omitted for descriptionless tools, got %v", wire.Tools[0]["description"])
+	}
+}

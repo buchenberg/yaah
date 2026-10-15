@@ -230,13 +230,14 @@ func lowerAnthropicRequest(req types.ChatRequest) anthropic.MessageNewParams {
 				schema = anthropic.ToolInputSchemaParam{}
 			}
 		}
-		tools = append(tools, anthropic.ToolUnionParam{
-			OfTool: &anthropic.ToolParam{
-				InputSchema: schema,
-				Name:        t.Function.Name,
-				Description: param.NewOpt(t.Function.Description),
-			},
-		})
+		tool := &anthropic.ToolParam{
+			InputSchema: schema,
+			Name:        t.Function.Name,
+		}
+		if t.Function.Description != "" {
+			tool.Description = param.NewOpt(t.Function.Description)
+		}
+		tools = append(tools, anthropic.ToolUnionParam{OfTool: tool})
 	}
 
 	maxTokens := int64(req.MaxTokens)
