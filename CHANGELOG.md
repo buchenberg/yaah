@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.79.2](https://github.com/buchenberg/yaah/compare/v0.79.1...v0.79.2) (2026-10-15)
+
+
+### Bug Fixes
+
+* **memory,observability:** address review suggestions — limiter lock scope, test poll snapshots, counter test isolation ([224c652](https://github.com/buchenberg/yaah/commit/224c65231a57936a40dcdeb4d8ab1f8eef49e8c0))
+* **observability:** mirror accumulated stream usage; normalize Anthropic cache accounting for gen_ai input tokens ([78bbcce](https://github.com/buchenberg/yaah/commit/78bbccef4f0e33b13528788bcfa18c0113decc71))
+
 ## [0.79.1](https://github.com/buchenberg/yaah/compare/v0.79.0...v0.79.1) (2026-10-15)
 
 
