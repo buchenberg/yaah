@@ -297,6 +297,8 @@ func addStreamUsage(total *types.Usage, u *types.Usage) {
 }
 
 // setStreamUsageAttrs enriches a stream span with token detail attributes.
+// The GenAI semconv attributes SigNoz's signozllmpricing processor keys
+// off are mirrored alongside the llm.* attributes.
 func setStreamUsageAttrs(span trace.Span, u *types.Usage) {
 	span.SetAttributes(
 		attribute.Int("llm.prompt_tokens", u.PromptTokens),
@@ -309,4 +311,5 @@ func setStreamUsageAttrs(span trace.Span, u *types.Usage) {
 	if d := u.PromptTokensDetails; d != nil && d.CachedTokens > 0 {
 		span.SetAttributes(attribute.Int("llm.cached_prompt_tokens", d.CachedTokens))
 	}
+	observability.MirrorGenAIUsage(span, *u)
 }

@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -615,6 +616,14 @@ func (s stubEmbedder) Embed(_ context.Context, text string) (Embedding, error) {
 	return Embedding{float32(len(text)) / 100, 0.5, -float32(len(text)) / 200}, nil
 }
 
+// failingEmbedder always fails, standing in for a down or unreachable
+// embed server (GitHub #311).
+type failingEmbedder struct{ err error }
+
+func (f failingEmbedder) Embed(context.Context, string) (Embedding, error) {
+	return nil, f.err
+}
+
 func TestDB_SearchMemoryVector(t *testing.T) {
 	tmp := t.TempDir()
 	db, err := Open(filepath.Join(tmp, "test.db"))
@@ -1170,5 +1179,101 @@ INSERT INTO sessions (id, started_at, cwd, model) VALUES ('sess-old', 1000, '/tm
 	}
 	if s.WorkspaceBackend != "containerd" || s.WorkspaceOmittedTools != "role" {
 		t.Errorf("post-migration metadata = %q/%q", s.WorkspaceBackend, s.WorkspaceOmittedTools)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Embedding failure surfacing (GitHub #311): every swallow point must
+// log a rate-limited warning and degrade gracefully without panicking.
+// ─────────────────────────────────────────────────────────────────────
+
+func TestDB_EmbedMemoryAsync_FailureSurfaced(t *testing.T) {
+	logs := captureWarnLogs(t)
+	db := openTestDB(t)
+	db.SetEmbedder(failingEmbedder{errors.New("embed server down")})
+
+	if err := db.AddMemory(Entry{ID: "m1", Text: "remember this", Source: "agent", CreatedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	ch := db.EmbedMemoryAsync("m1", "remember this")
+	if ch == nil {
+		t.Fatal("expected done channel with embedder configured")
+	}
+	<-ch
+
+	out := logs.String()
+	if !strings.Contains(out, "embedding failed") {
+		t.Errorf("expected warning log, got: %q", out)
+	}
+	if !strings.Contains(out, "embed_memory") {
+		t.Errorf("expected op name in log, got: %q", out)
+	}
+	if !strings.Contains(out, "embed server down") {
+		t.Errorf("expected error in log, got: %q", out)
+	}
+
+	var blob []byte
+	if err := db.sql.QueryRow(`SELECT COALESCE(embedding, '') FROM memory WHERE id = 'm1'`).Scan(&blob); err != nil {
+		t.Fatal(err)
+	}
+	if len(blob) != 0 {
+		t.Errorf("failed embed must leave embedding NULL, got %d bytes", len(blob))
+	}
+}
+
+func TestDB_SearchMemoryVector_EmbedFailureDegradesToNil(t *testing.T) {
+	logs := captureWarnLogs(t)
+	db := openTestDB(t)
+	db.SetEmbedder(failingEmbedder{errors.New("connection refused")})
+
+	results, err := db.SearchMemoryVector(context.Background(), "anything", 5)
+	if err != nil {
+		t.Fatalf("SearchMemoryVector must degrade, got error: %v", err)
+	}
+	if results != nil {
+		t.Fatalf("expected nil results on embed failure, got %d", len(results))
+	}
+
+	out := logs.String()
+	if !strings.Contains(out, "search_memory_vector") {
+		t.Errorf("expected op name in log, got: %q", out)
+	}
+	if !strings.Contains(out, "connection refused") {
+		t.Errorf("expected error in log, got: %q", out)
+	}
+}
+
+func TestDB_ReconcileEmbeddings_EmbedFailureSkipsRow(t *testing.T) {
+	logs := captureWarnLogs(t)
+	db := openTestDB(t)
+
+	// Insert without an embedder so the rows have NULL embeddings.
+	if err := db.AddMemory(Entry{ID: "r1", Text: "reconcile me", Source: "agent", CreatedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	db.SetEmbedder(failingEmbedder{errors.New("timeout")})
+
+	updated, err := db.ReconcileEmbeddings(context.Background())
+	if err != nil {
+		t.Fatalf("ReconcileEmbeddings must not fail on embed errors: %v", err)
+	}
+	if updated != 0 {
+		t.Errorf("updated = %d, want 0", updated)
+	}
+
+	out := logs.String()
+	if !strings.Contains(out, "reconcile_embeddings") {
+		t.Errorf("expected op name in log, got: %q", out)
+	}
+	if !strings.Contains(out, "timeout") {
+		t.Errorf("expected error in log, got: %q", out)
+	}
+
+	var blob []byte
+	if err := db.sql.QueryRow(`SELECT COALESCE(embedding, '') FROM memory WHERE id = 'r1'`).Scan(&blob); err != nil {
+		t.Fatal(err)
+	}
+	if len(blob) != 0 {
+		t.Error("failed reconcile must leave embedding NULL")
 	}
 }
