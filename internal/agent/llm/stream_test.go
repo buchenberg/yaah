@@ -7,6 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+
+	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -205,5 +209,94 @@ func TestRunStream_realErrorNotMaskedByPrematureClose(t *testing.T) {
 		if !errors.Is(err, wantErr) {
 			t.Fatalf("iteration %d: error = %v, want %v (transport error must not be masked as premature close)", i, err, wantErr)
 		}
+	}
+}
+
+// splitUsageStreamProvider mimics the native Anthropic usage split: an
+// early usage-only chunk carries the input tokens (message_start shape),
+// a content chunk follows, and the finish chunk carries ONLY the output
+// tokens (message_delta shape). Mirroring gen_ai.* attributes per chunk
+// would let the output-only finish chunk overwrite
+// gen_ai.usage.input_tokens with 0.
+type splitUsageStreamProvider struct{}
+
+func (p *splitUsageStreamProvider) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
+	return nil, errors.New("streaming only")
+}
+
+func (p *splitUsageStreamProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan providers.StreamChunk, <-chan error) {
+	// Unbuffered on purpose: runStream's select also watches errs, and a
+	// closed errs channel races buffered chunks into the nondeterministic
+	// errs-nil early-close path. Rendezvous sends guarantee every chunk
+	// is consumed before the producer can close anything.
+	chunks := make(chan providers.StreamChunk)
+	errs := make(chan error, 1)
+	go func() {
+		defer close(chunks)
+		defer close(errs)
+		chunks <- providers.StreamChunk{
+			Model: "claude-test",
+			Usage: &types.Usage{PromptTokens: 100},
+		}
+		chunks <- providers.StreamChunk{Choices: []providers.StreamChoice{{
+			Delta: providers.StreamDelta{Content: "hello"},
+		}}}
+		chunks <- providers.StreamChunk{
+			Choices: []providers.StreamChoice{{
+				Delta:        providers.StreamDelta{},
+				FinishReason: strPtr("stop"),
+			}},
+			Usage: &types.Usage{CompletionTokens: 42},
+		}
+	}()
+	return chunks, errs
+}
+
+// TestRunStream_genAIAttrsMirrorAccumulatedUsage pins the fix for the
+// Anthropic split-usage shape: the finished llm.stream span must carry
+// the accumulated totals (input from the early chunk, output from the
+// finish chunk), not the last chunk's partial usage.
+func TestRunStream_genAIAttrsMirrorAccumulatedUsage(t *testing.T) {
+	bp := observability.NewBufferingSpanProcessor()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(bp))
+	old := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	defer func() {
+		otel.SetTracerProvider(old)
+		_ = tp.Shutdown(context.Background())
+	}()
+
+	c := newStreamingClient(&splitUsageStreamProvider{})
+	c.OtelEnabled = true
+
+	msg, finishReason, _, usage, err := c.runStream(
+		context.Background(), c.Provider.(StreamProvider), types.ChatRequest{Model: "claude-test"})
+	if err != nil {
+		t.Fatalf("runStream: %v", err)
+	}
+	if msg.Content != "hello" {
+		t.Errorf("content = %q, want hello", msg.Content)
+	}
+	if finishReason != "stop" {
+		t.Errorf("finish reason = %q, want stop", finishReason)
+	}
+	if usage.PromptTokens != 100 || usage.CompletionTokens != 42 {
+		t.Errorf("accumulated usage = %d in / %d out, want 100/42",
+			usage.PromptTokens, usage.CompletionTokens)
+	}
+
+	traces := bp.Traces()
+	if len(traces) != 1 {
+		t.Fatalf("recorded %d spans, want 1 (llm.stream)", len(traces))
+	}
+	span := traces[0]
+	if span.Name != "llm.stream" {
+		t.Errorf("span name = %q, want llm.stream", span.Name)
+	}
+	if got := span.Attributes["gen_ai.usage.input_tokens"]; got != int64(100) {
+		t.Errorf("gen_ai.usage.input_tokens = %v, want 100 (message_start input must survive the output-only finish chunk)", got)
+	}
+	if got := span.Attributes["gen_ai.usage.output_tokens"]; got != int64(42) {
+		t.Errorf("gen_ai.usage.output_tokens = %v, want 42", got)
 	}
 }

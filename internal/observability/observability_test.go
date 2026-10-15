@@ -331,12 +331,15 @@ func TestFinishLLM_GenAICachedTokens(t *testing.T) {
 		bp, cleanup := setupTestTracer(t)
 		defer cleanup()
 
+		// OpenAI accounting: PromptTokens ALREADY INCLUDES the cached
+		// subset in PromptTokensDetails — it must pass through as-is,
+		// not have the reads added on top.
 		_, span := StartLLM(context.Background(), "gpt-4")
 		FinishLLM(span, 1, 0, types.Usage{
 			PromptTokens:        100,
 			CompletionTokens:    20,
 			TotalTokens:         120,
-			PromptTokensDetails: &types.PromptTokensDetails{CachedTokens: 64},
+			PromptTokensDetails: &types.PromptTokensDetails{CachedTokens: 90},
 		})
 		span.End()
 
@@ -344,48 +347,86 @@ func TestFinishLLM_GenAICachedTokens(t *testing.T) {
 		require.Len(t, traces, 1)
 		assert.Equal(t, int64(100), traces[0].Attributes["gen_ai.usage.input_tokens"])
 		assert.Equal(t, int64(20), traces[0].Attributes["gen_ai.usage.output_tokens"])
-		assert.Equal(t, int64(64), traces[0].Attributes["gen_ai.usage.cache_read.input_tokens"])
+		assert.Equal(t, int64(90), traces[0].Attributes["gen_ai.usage.cache_read.input_tokens"])
 	})
 
-	t.Run("stream aggregate shape", func(t *testing.T) {
+	t.Run("anthropic aggregate shape", func(t *testing.T) {
 		bp, cleanup := setupTestTracer(t)
 		defer cleanup()
 
-		_, span := StartLLM(context.Background(), "gpt-4")
+		// Anthropic accounting: PromptTokens holds only the UNCACHED
+		// input, cache reads are folded into the top-level
+		// CachedPromptTokens (PromptTokensDetails stays nil). The
+		// gen_ai input total must be the cache-inclusive sum.
+		_, span := StartLLM(context.Background(), "claude-3")
 		FinishLLM(span, 1, 0, types.Usage{
-			PromptTokens:       100,
+			PromptTokens:       10,
 			CompletionTokens:   20,
-			TotalTokens:        120,
-			CachedPromptTokens: 32,
+			TotalTokens:        20,
+			CachedPromptTokens: 90,
 		})
 		span.End()
 
 		traces := bp.Traces()
 		require.Len(t, traces, 1)
-		assert.Equal(t, int64(32), traces[0].Attributes["gen_ai.usage.cache_read.input_tokens"])
+		assert.Equal(t, int64(100), traces[0].Attributes["gen_ai.usage.input_tokens"])
+		assert.Equal(t, int64(20), traces[0].Attributes["gen_ai.usage.output_tokens"])
+		assert.Equal(t, int64(90), traces[0].Attributes["gen_ai.usage.cache_read.input_tokens"])
 	})
 }
 
 func TestMirrorGenAIUsage(t *testing.T) {
-	bp, cleanup := setupTestTracer(t)
-	defer cleanup()
+	t.Run("openai inclusive wire shape", func(t *testing.T) {
+		bp, cleanup := setupTestTracer(t)
+		defer cleanup()
 
-	_, span := StartStream(context.Background(), "claude-3")
-	MirrorGenAIUsage(span, types.Usage{
-		PromptTokens:        200,
-		CompletionTokens:    50,
-		TotalTokens:         250,
-		PromptTokensDetails: &types.PromptTokensDetails{CachedTokens: 128},
+		// PromptTokensDetails marks OpenAI-shaped usage whose
+		// PromptTokens already includes the cached subset: the mirror
+		// must not add the reads on top.
+		_, span := StartStream(context.Background(), "gpt-4")
+		MirrorGenAIUsage(span, types.Usage{
+			PromptTokens:        200,
+			CompletionTokens:    50,
+			TotalTokens:         250,
+			PromptTokensDetails: &types.PromptTokensDetails{CachedTokens: 128},
+		})
+		span.End()
+
+		traces := bp.Traces()
+		require.Len(t, traces, 1)
+		m := traces[0].Attributes
+		assert.Equal(t, "gpt-4", m["gen_ai.request.model"])
+		assert.Equal(t, int64(200), m["gen_ai.usage.input_tokens"])
+		assert.Equal(t, int64(50), m["gen_ai.usage.output_tokens"])
+		assert.Equal(t, int64(128), m["gen_ai.usage.cache_read.input_tokens"])
 	})
-	span.End()
 
-	traces := bp.Traces()
-	require.Len(t, traces, 1)
-	m := traces[0].Attributes
-	assert.Equal(t, "claude-3", m["gen_ai.request.model"])
-	assert.Equal(t, int64(200), m["gen_ai.usage.input_tokens"])
-	assert.Equal(t, int64(50), m["gen_ai.usage.output_tokens"])
-	assert.Equal(t, int64(128), m["gen_ai.usage.cache_read.input_tokens"])
+	t.Run("anthropic exclusive aggregate shape", func(t *testing.T) {
+		bp, cleanup := setupTestTracer(t)
+		defer cleanup()
+
+		// The accumulated shape addStreamUsage produces for native
+		// Anthropic streams: PromptTokens holds the uncached input,
+		// CachedPromptTokens the cache reads, PromptTokensDetails nil.
+		// gen_ai.usage.input_tokens must be the cache-inclusive total
+		// while cache_read reports only the READ portion.
+		_, span := StartStream(context.Background(), "claude-3")
+		MirrorGenAIUsage(span, types.Usage{
+			PromptTokens:       10,
+			CompletionTokens:   42,
+			TotalTokens:        42,
+			CachedPromptTokens: 90,
+		})
+		span.End()
+
+		traces := bp.Traces()
+		require.Len(t, traces, 1)
+		m := traces[0].Attributes
+		assert.Equal(t, "claude-3", m["gen_ai.request.model"])
+		assert.Equal(t, int64(100), m["gen_ai.usage.input_tokens"])
+		assert.Equal(t, int64(42), m["gen_ai.usage.output_tokens"])
+		assert.Equal(t, int64(90), m["gen_ai.usage.cache_read.input_tokens"])
+	})
 }
 
 func TestMirrorGenAIUsage_NilSpan(t *testing.T) {

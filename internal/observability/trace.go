@@ -193,12 +193,17 @@ func StartStream(ctx context.Context, model string) (context.Context, trace.Span
 // span attributes consumed by SigNoz's signozllmpricing processor:
 // gen_ai.usage.input_tokens, gen_ai.usage.output_tokens, and — when the
 // provider reported a cache hit — gen_ai.usage.cache_read.input_tokens.
-// Usage.CacheTokens covers both wire shapes: PromptTokensDetails on raw
-// provider usage and the top-level CachedPromptTokens aggregate on
-// streamed usage.
+// The semconv input total must be cache-INCLUSIVE, so it comes from
+// Usage.GenAIInputTokens, which normalizes the OpenAI (inclusive
+// PromptTokens + PromptTokensDetails) and Anthropic (uncached
+// PromptTokens + aggregated CachedPromptTokens) accounting shapes.
+// cache_read keeps reporting only the cache READ portion via
+// Usage.CacheTokens, which covers both wire shapes: PromptTokensDetails
+// on raw provider usage and the top-level CachedPromptTokens aggregate
+// on streamed usage.
 func genAIUsageAttrs(usage types.Usage) []attribute.KeyValue {
 	attrs := []attribute.KeyValue{
-		gensemconv.GenAIUsageInputTokens(usage.PromptTokens),
+		gensemconv.GenAIUsageInputTokens(usage.GenAIInputTokens()),
 		gensemconv.GenAIUsageOutputTokens(usage.CompletionTokens),
 	}
 	if cached := usage.CacheTokens(); cached > 0 {
@@ -209,8 +214,11 @@ func genAIUsageAttrs(usage types.Usage) []attribute.KeyValue {
 
 // MirrorGenAIUsage sets the GenAI semconv usage attributes on an LLM
 // span alongside yaah's own llm.* attributes. Exported for the
-// streaming path (internal/agent/llm), which records per-chunk usage
-// directly on the llm.stream span.
+// streaming path (internal/agent/llm), which mirrors the ACCUMULATED
+// stream usage onto the llm.stream span: native Anthropic streams split
+// usage across chunks (input tokens in message_start, output tokens in
+// a later message_delta), so mirroring a single chunk would clobber the
+// earlier counts.
 func MirrorGenAIUsage(span trace.Span, usage types.Usage) {
 	if span == nil {
 		return
