@@ -59,9 +59,13 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 		observability.RecordStreamEnd(streamSpan, path, finishReason, usageCaptured, len(msg.Content), len(msg.ToolCalls))
 	}
 
+	hbInterval := c.HeartbeatInterval
+	if hbInterval <= 0 {
+		hbInterval = 5 * time.Second
+	}
 	var lastHeartbeat time.Time
 	emitHeartbeat := func() {
-		if time.Since(lastHeartbeat) > 5*time.Second {
+		if time.Since(lastHeartbeat) > hbInterval {
 			tools.SendHeartbeat(ctx)
 			lastHeartbeat = time.Now()
 		}
@@ -95,6 +99,13 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 				}
 				return checkTruncatedStream(content.String(), toolCallMap, finishReason, responseModel, reasoning.String(), totalUsage, &c.dsmlSeq)
 			}
+
+			// Any chunk counts as liveness, not just content deltas:
+			// reasoning-only and tool-call chunks prove the stream is
+			// alive. Counting only content starves the stuck-child
+			// watchdog during long thinking phases of reasoning models
+			// (yaah-1ep).
+			emitHeartbeat()
 
 			if !firstToken {
 				firstToken = true
@@ -130,7 +141,6 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 			if delta.Content != "" {
 				content.WriteString(delta.Content)
 				tokenCount++
-				emitHeartbeat()
 				if c.OnToken != nil {
 					if clean := dsmlFilter.filterToken(delta.Content); clean != "" {
 						c.OnToken(clean)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent/errorclassify"
 	"github.com/buchenberg/yaah/internal/providers"
+	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -31,8 +32,13 @@ type Client struct {
 	OtelVerbose      bool
 	StripReasoning   func() // called to permanently strip reasoning from session history
 	replayCount      int    // tracks empty-response replays within a single Call
-	prematureCount   int    // tracks premature-stream-close replays within a single Call
-	dsmlSeq          int    // monotonic ID counter for DSML-recovered tool calls
+
+	// HeartbeatInterval throttles the sub-agent liveness heartbeats
+	// emitted while a stream is being consumed. Zero means 5s. Tests
+	// shorten it to observe per-chunk heartbeats.
+	HeartbeatInterval time.Duration
+	prematureCount    int // tracks premature-stream-close replays within a single Call
+	dsmlSeq           int // monotonic ID counter for DSML-recovered tool calls
 }
 
 // CallResult holds the outcome of a single LLM call. Response metadata
@@ -87,6 +93,12 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 	}
 
 	for attempt := 0; attempt <= c.MaxRetries; attempt++ {
+		// Per-attempt liveness ping: covers the time-to-first-token wait
+		// and the retry-backoff window, neither of which produces stream
+		// chunks — without it the stuck-child watchdog starves during
+		// slow or retried calls (yaah-1ep).
+		tools.SendHeartbeat(ctx)
+
 		var result CallResult
 		var err error
 
