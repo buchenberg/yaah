@@ -71,6 +71,23 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
+				// Provider goroutines push the real read/protocol error
+				// onto errs before closing chunks, which makes both
+				// select cases ready at once — and Go picks uniformly
+				// at random. Drain errs first so a transport failure
+				// (timeout, reset, scanner overflow) is not masked by
+				// the generic premature-close synthesized below.
+				select {
+				case err := <-errs:
+					if err != nil {
+						if streamSpan != nil {
+							observability.RecordError(streamSpan, err)
+							streamSpan.End()
+						}
+						return types.Message{}, "", responseModel, totalUsage, err
+					}
+				default:
+				}
 				recordVerbose("channel_closed")
 				if streamSpan != nil {
 					observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))

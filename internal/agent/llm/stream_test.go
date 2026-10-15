@@ -167,3 +167,43 @@ func TestCall_prematureCloseRotatesToFallback(t *testing.T) {
 		t.Errorf("model = %q, want fallback-model", c.Model)
 	}
 }
+
+// errorThenCloseStreamProvider streams partial content, pushes a real
+// transport error onto errs, then closes both channels — the ordering
+// real providers use. Once chunks is closed both select cases in
+// runStream are ready and Go picks at random; the real error must win
+// deterministically instead of being masked by ErrPrematureStreamClose.
+type errorThenCloseStreamProvider struct {
+	err error
+}
+
+func (p *errorThenCloseStreamProvider) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
+	return nil, errors.New("streaming only")
+}
+
+func (p *errorThenCloseStreamProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan providers.StreamChunk, <-chan error) {
+	chunks := make(chan providers.StreamChunk, 4)
+	errs := make(chan error, 1)
+	go func() {
+		defer close(chunks)
+		defer close(errs)
+		chunks <- providers.StreamChunk{Choices: []providers.StreamChoice{{
+			Delta: providers.StreamDelta{Content: "partial text"},
+		}}}
+		errs <- p.err
+	}()
+	return chunks, errs
+}
+
+func TestRunStream_realErrorNotMaskedByPrematureClose(t *testing.T) {
+	// Run several times: before the errs-drain fix, the select race
+	// masked the real error roughly half the time.
+	wantErr := errors.New("read stream: unexpected EOF")
+	for i := 0; i < 20; i++ {
+		c := newStreamingClient(&errorThenCloseStreamProvider{err: wantErr})
+		_, _, _, _, err := c.runStream(context.Background(), c.Provider.(StreamProvider), types.ChatRequest{Model: "test-model"})
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("iteration %d: error = %v, want %v (transport error must not be masked as premature close)", i, err, wantErr)
+		}
+	}
+}
