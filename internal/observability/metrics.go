@@ -37,6 +37,8 @@ var (
 	tuiRefreshCount metric.Int64Counter
 	tuiRefreshDur   metric.Int64Histogram
 	tuiRefreshCad   metric.Int64Histogram
+
+	memoryEmbedFailures metric.Int64Counter
 )
 
 func initMetrics() {
@@ -135,6 +137,11 @@ func initMetrics() {
 		metric.WithDescription("Milliseconds since previous TUI refresh"),
 		metric.WithUnit("ms"),
 	)
+
+	memoryEmbedFailures, _ = meter.Int64Counter(
+		"yaah.memory.embed_failures",
+		metric.WithDescription("Number of memory embedding operations that failed"),
+	)
 }
 
 // RecordToolCall records a tool execution outcome.
@@ -221,4 +228,15 @@ func RecordTUIRefresh(ctx context.Context, duration time.Duration, cadence time.
 	if queueDepth >= 0 {
 		tuiQueueDepth.Record(ctx, int64(queueDepth), metric.WithAttributes(attribute.String("event_type", "refresh"), attribute.String("outcome", "sample")))
 	}
+}
+
+// RecordMemoryEmbedFailure records one failed memory embedding
+// operation. op names the swallow point: "embed_memory",
+// "embed_message", "search_memory_vector", "search_messages_vector",
+// or "reconcile_embeddings".
+func RecordMemoryEmbedFailure(ctx context.Context, op string) {
+	if memoryEmbedFailures == nil {
+		return
+	}
+	memoryEmbedFailures.Add(ctx, 1, metric.WithAttributes(attribute.String("op", op)))
 }

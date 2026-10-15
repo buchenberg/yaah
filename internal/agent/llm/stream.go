@@ -130,7 +130,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 					usageCaptured = true
 					addStreamUsage(&totalUsage, chunk.Usage)
 					if streamSpan != nil {
-						setStreamUsageAttrs(streamSpan, chunk.Usage)
+						setStreamUsageAttrs(streamSpan, chunk.Usage, &totalUsage)
 					}
 				}
 				continue
@@ -188,7 +188,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 					usageCaptured = true
 					addStreamUsage(&totalUsage, chunk.Usage)
 					if streamSpan != nil {
-						setStreamUsageAttrs(streamSpan, chunk.Usage)
+						setStreamUsageAttrs(streamSpan, chunk.Usage, &totalUsage)
 					}
 				}
 				for chunk := range chunks {
@@ -196,7 +196,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 						usageCaptured = true
 						addStreamUsage(&totalUsage, chunk.Usage)
 						if streamSpan != nil {
-							setStreamUsageAttrs(streamSpan, chunk.Usage)
+							setStreamUsageAttrs(streamSpan, chunk.Usage, &totalUsage)
 						}
 					}
 				}
@@ -314,16 +314,25 @@ func addStreamUsage(total *types.Usage, u *types.Usage) {
 }
 
 // setStreamUsageAttrs enriches a stream span with token detail attributes.
-func setStreamUsageAttrs(span trace.Span, u *types.Usage) {
+// The llm.* attributes describe the CURRENT chunk exactly as the provider
+// reported it. The GenAI semconv attributes SigNoz's signozllmpricing
+// processor keys off mirror the ACCUMULATED total instead: native
+// Anthropic streams report input tokens in the message_start chunk and
+// output tokens in a later message_delta chunk, so mirroring per-chunk
+// usage would let the output-only chunk overwrite
+// gen_ai.usage.input_tokens with 0. Callers must pass the totalUsage
+// snapshot taken AFTER addStreamUsage folded the chunk in.
+func setStreamUsageAttrs(span trace.Span, chunkUsage, totalUsage *types.Usage) {
 	span.SetAttributes(
-		attribute.Int("llm.prompt_tokens", u.PromptTokens),
-		attribute.Int("llm.completion_tokens", u.CompletionTokens),
-		attribute.Int("llm.total_tokens", u.TotalTokens),
+		attribute.Int("llm.prompt_tokens", chunkUsage.PromptTokens),
+		attribute.Int("llm.completion_tokens", chunkUsage.CompletionTokens),
+		attribute.Int("llm.total_tokens", chunkUsage.TotalTokens),
 	)
-	if d := u.CompletionTokensDetails; d != nil && d.ReasoningTokens > 0 {
+	if d := chunkUsage.CompletionTokensDetails; d != nil && d.ReasoningTokens > 0 {
 		span.SetAttributes(attribute.Int("llm.reasoning_tokens", d.ReasoningTokens))
 	}
-	if d := u.PromptTokensDetails; d != nil && d.CachedTokens > 0 {
+	if d := chunkUsage.PromptTokensDetails; d != nil && d.CachedTokens > 0 {
 		span.SetAttributes(attribute.Int("llm.cached_prompt_tokens", d.CachedTokens))
 	}
+	observability.MirrorGenAIUsage(span, *totalUsage)
 }

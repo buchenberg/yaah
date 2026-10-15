@@ -111,9 +111,13 @@ type Message struct {
 
 // DB is the yaah persistent database.
 type DB struct {
-	sql      *sql.DB
-	embedder Embedder // optional; set via SetEmbedder
-	embMu    sync.Mutex
+	sql *sql.DB
+	// embedder is optional; set via SetEmbedder. embMu guards the field
+	// only — it must never be held across SQL/exec calls or embedder
+	// network calls. Take a snapshot via Embedder() and use that.
+	embedder  Embedder
+	embMu     sync.Mutex
+	embedWarn embedWarnLimiter
 }
 
 // SetEmbedder configures the embedding model used for semantic search.
@@ -433,19 +437,21 @@ func (d *DB) AddMemory(e Entry) error {
 // nil when no embedder is configured. Callers that need to wait for the
 // embedding (e.g. the memory_add tool) can read from the channel.
 func (d *DB) EmbedMemoryAsync(id, text string) <-chan struct{} {
-	if d.embedder == nil {
+	embedder := d.Embedder()
+	if embedder == nil {
 		return nil
 	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		emb, err := d.embedder.Embed(context.Background(), text)
+		emb, err := embedder.Embed(context.Background(), text)
 		if err != nil {
+			d.recordEmbedFailure("embed_memory", err)
 			return
 		}
-		d.embMu.Lock()
-		d.sql.Exec(`UPDATE memory SET embedding = ? WHERE id = ?`, EncodeEmbedding(emb), id)
-		d.embMu.Unlock()
+		if _, err := d.sql.Exec(`UPDATE memory SET embedding = ? WHERE id = ?`, EncodeEmbedding(emb), id); err != nil {
+			slog.Warn("memory: store embedding failed", "op", "embed_memory", "id", id, "err", err)
+		}
 	}()
 	return done
 }
@@ -577,13 +583,17 @@ type VectorResult struct {
 // SearchMemoryVector embeds the query, scans all rows with non-null
 // embedding, and returns the top-K sorted by cosine similarity
 // (descending). Falls back to an empty result when no embedder is
-// configured or the embedding call fails.
+// configured or the embedding call fails; a failed embedding call is
+// surfaced via the rate-limited warning log and the OTel embed-failure
+// counter.
 func (d *DB) SearchMemoryVector(ctx context.Context, query string, limit int) ([]VectorResult, error) {
-	if d.embedder == nil {
+	embedder := d.Embedder()
+	if embedder == nil {
 		return nil, nil
 	}
-	qEmb, err := d.embedder.Embed(ctx, query)
+	qEmb, err := embedder.Embed(ctx, query)
 	if err != nil {
+		d.recordEmbedFailure("search_memory_vector", err)
 		return nil, nil
 	}
 
@@ -670,9 +680,11 @@ func (d *DB) bumpAccessCountIDs(ids []string, now int64) {
 // ReconcileEmbeddings finds memory rows with NULL embedding, embeds their
 // text using the configured embedder, and stores the results. It returns
 // the number of rows updated. An error from any single embed does not stop
-// the reconciliation.
+// the reconciliation; each failure is surfaced via the rate-limited
+// warning log and the OTel embed-failure counter.
 func (d *DB) ReconcileEmbeddings(ctx context.Context) (int, error) {
-	if d.embedder == nil {
+	embedder := d.Embedder()
+	if embedder == nil {
 		return 0, nil
 	}
 	rows, err := d.sql.Query(`SELECT id, text FROM memory WHERE embedding IS NULL`)
@@ -698,12 +710,13 @@ func (d *DB) ReconcileEmbeddings(ctx context.Context) (int, error) {
 
 	updated := 0
 	for _, r := range pending {
-		emb, err := d.embedder.Embed(ctx, r.text)
+		emb, err := embedder.Embed(ctx, r.text)
 		if err != nil {
+			d.recordEmbedFailure("reconcile_embeddings", err)
 			continue
 		}
-		_, err = d.sql.Exec(`UPDATE memory SET embedding = ? WHERE id = ?`, EncodeEmbedding(emb), r.id)
-		if err != nil {
+		if _, err := d.sql.Exec(`UPDATE memory SET embedding = ? WHERE id = ?`, EncodeEmbedding(emb), r.id); err != nil {
+			slog.Warn("memory: store embedding failed", "op", "reconcile_embeddings", "id", r.id, "err", err)
 			continue
 		}
 		updated++

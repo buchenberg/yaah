@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	gensemconv "go.opentelemetry.io/otel/semconv/v1.41.0"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/buchenberg/yaah/internal/types"
@@ -148,11 +149,16 @@ func StartLLM(ctx context.Context, model string) (context.Context, trace.Span) {
 	ctx, span := tracer().Start(ctx, "llm.chat")
 	span.SetAttributes(
 		attribute.String("llm.model", model),
+		gensemconv.GenAIRequestModel(model),
 	)
 	return ctx, span
 }
 
 // FinishLLM records prompt/completion token counts and duration as an event.
+// The token usage is additionally mirrored onto the span as GenAI
+// semantic-convention attributes (see genAIUsageAttrs) — SigNoz's
+// signozllmpricing processor prices spans from span-level gen_ai.usage.*
+// attributes, not from yaah's llm.* event attributes.
 func FinishLLM(span trace.Span, promptLen, systemLen int, usage types.Usage) {
 	attrs := []attribute.KeyValue{
 		attribute.Int("llm.messages", promptLen),
@@ -167,6 +173,7 @@ func FinishLLM(span trace.Span, promptLen, systemLen int, usage types.Usage) {
 	if d := usage.PromptTokensDetails; d != nil && d.CachedTokens > 0 {
 		attrs = append(attrs, attribute.Int("llm.cached_prompt_tokens", d.CachedTokens))
 	}
+	span.SetAttributes(genAIUsageAttrs(usage)...)
 	span.AddEvent("tokens", trace.WithAttributes(attrs...))
 }
 
@@ -175,8 +182,48 @@ func FinishLLM(span trace.Span, promptLen, systemLen int, usage types.Usage) {
 // the span hierarchy.
 func StartStream(ctx context.Context, model string) (context.Context, trace.Span) {
 	ctx, span := tracer().Start(ctx, "llm.stream")
-	span.SetAttributes(attribute.String("llm.model", model))
+	span.SetAttributes(
+		attribute.String("llm.model", model),
+		gensemconv.GenAIRequestModel(model),
+	)
 	return ctx, span
+}
+
+// genAIUsageAttrs maps a types.Usage onto the GenAI semantic-convention
+// span attributes consumed by SigNoz's signozllmpricing processor:
+// gen_ai.usage.input_tokens, gen_ai.usage.output_tokens, and — when the
+// provider reported a cache hit — gen_ai.usage.cache_read.input_tokens.
+// The semconv input total must be cache-INCLUSIVE, so it comes from
+// Usage.GenAIInputTokens, which normalizes the OpenAI (inclusive
+// PromptTokens + PromptTokensDetails) and Anthropic (uncached
+// PromptTokens + aggregated CachedPromptTokens) accounting shapes.
+// cache_read keeps reporting only the cache READ portion via
+// Usage.CacheTokens, which covers both wire shapes: PromptTokensDetails
+// on raw provider usage and the top-level CachedPromptTokens aggregate
+// on streamed usage.
+func genAIUsageAttrs(usage types.Usage) []attribute.KeyValue {
+	attrs := []attribute.KeyValue{
+		gensemconv.GenAIUsageInputTokens(usage.GenAIInputTokens()),
+		gensemconv.GenAIUsageOutputTokens(usage.CompletionTokens),
+	}
+	if cached := usage.CacheTokens(); cached > 0 {
+		attrs = append(attrs, gensemconv.GenAIUsageCacheReadInputTokens(cached))
+	}
+	return attrs
+}
+
+// MirrorGenAIUsage sets the GenAI semconv usage attributes on an LLM
+// span alongside yaah's own llm.* attributes. Exported for the
+// streaming path (internal/agent/llm), which mirrors the ACCUMULATED
+// stream usage onto the llm.stream span: native Anthropic streams split
+// usage across chunks (input tokens in message_start, output tokens in
+// a later message_delta), so mirroring a single chunk would clobber the
+// earlier counts.
+func MirrorGenAIUsage(span trace.Span, usage types.Usage) {
+	if span == nil {
+		return
+	}
+	span.SetAttributes(genAIUsageAttrs(usage)...)
 }
 
 // FinishStream adds first-token latency and token count events to a

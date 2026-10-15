@@ -134,3 +134,64 @@ func TestChatResponse_parsesPlainTextResponse(t *testing.T) {
 		t.Errorf("expected no tool calls for plain text response")
 	}
 }
+
+func TestUsageGenAIInputTokens(t *testing.T) {
+	t.Run("openai inclusive wire shape", func(t *testing.T) {
+		// OpenAI reports PromptTokens that ALREADY INCLUDE the cached
+		// subset in PromptTokensDetails — must not be double-counted.
+		u := Usage{
+			PromptTokens:        100,
+			CompletionTokens:    42,
+			TotalTokens:         142,
+			PromptTokensDetails: &PromptTokensDetails{CachedTokens: 90},
+		}
+		if got := u.GenAIInputTokens(); got != 100 {
+			t.Errorf("GenAIInputTokens() = %d, want 100", got)
+		}
+		if got := u.CacheTokens(); got != 90 {
+			t.Errorf("CacheTokens() = %d, want 90 (cache READ portion only)", got)
+		}
+	})
+
+	t.Run("anthropic exclusive stream aggregate", func(t *testing.T) {
+		// Anthropic reports UNCACHED InputTokens separately from cache
+		// reads; addStreamUsage folds the reads into the top-level
+		// CachedPromptTokens and leaves PromptTokensDetails nil. The
+		// GenAI semconv total must be the cache-inclusive sum.
+		u := Usage{
+			PromptTokens:       10,
+			CompletionTokens:   42,
+			TotalTokens:        42,
+			CachedPromptTokens: 90,
+		}
+		if got := u.GenAIInputTokens(); got != 100 {
+			t.Errorf("GenAIInputTokens() = %d, want 100", got)
+		}
+		if got := u.CacheTokens(); got != 90 {
+			t.Errorf("CacheTokens() = %d, want 90 (cache READ portion only)", got)
+		}
+	})
+
+	t.Run("uncached usage", func(t *testing.T) {
+		u := Usage{PromptTokens: 42, CompletionTokens: 7, TotalTokens: 49}
+		if got := u.GenAIInputTokens(); got != 42 {
+			t.Errorf("GenAIInputTokens() = %d, want 42", got)
+		}
+	})
+
+	t.Run("details without cached tokens", func(t *testing.T) {
+		u := Usage{
+			PromptTokens:        55,
+			PromptTokensDetails: &PromptTokensDetails{CachedTokens: 0},
+		}
+		if got := u.GenAIInputTokens(); got != 55 {
+			t.Errorf("GenAIInputTokens() = %d, want 55", got)
+		}
+	})
+
+	t.Run("zero usage", func(t *testing.T) {
+		if got := (Usage{}).GenAIInputTokens(); got != 0 {
+			t.Errorf("GenAIInputTokens() = %d, want 0", got)
+		}
+	})
+}

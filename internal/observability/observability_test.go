@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.opentelemetry.io/otel"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 
@@ -281,6 +283,8 @@ func TestStartLLM(t *testing.T) {
 	require.Len(t, traces, 1)
 	assert.Equal(t, "llm.chat", traces[0].Name)
 	assert.Equal(t, "gpt-4", traces[0].Attributes["llm.model"])
+	// GenAI semconv mirror for SigNoz pricing (GitHub #315).
+	assert.Equal(t, "gpt-4", traces[0].Attributes["gen_ai.request.model"])
 	_ = ctx
 }
 
@@ -301,7 +305,134 @@ func TestFinishLLM(t *testing.T) {
 
 	traces := bp.Traces()
 	require.Len(t, traces, 1)
-	// FinishLLM adds a "tokens" event on the span.
+	// FinishLLM adds a "tokens" event on the span. The existing llm.*
+	// attributes stay on that event, unchanged.
+	require.Len(t, traces[0].Events, 1)
+	assert.Equal(t, "tokens", traces[0].Events[0].Name)
+	ev := traces[0].Events[0].Attributes
+	assert.Equal(t, int64(3), ev["llm.messages"])
+	assert.Equal(t, int64(800), ev["llm.system_len"])
+	assert.Equal(t, int64(10), ev["llm.prompt_tokens"])
+	assert.Equal(t, int64(15), ev["llm.completion_tokens"])
+	assert.Equal(t, int64(25), ev["llm.total_tokens"])
+
+	// GenAI semconv usage is mirrored onto the span itself so SigNoz's
+	// signozllmpricing processor can price the call (GitHub #315).
+	m := traces[0].Attributes
+	assert.Equal(t, "gpt-4", m["gen_ai.request.model"])
+	assert.Equal(t, int64(10), m["gen_ai.usage.input_tokens"])
+	assert.Equal(t, int64(15), m["gen_ai.usage.output_tokens"])
+	_, hasCache := m["gen_ai.usage.cache_read.input_tokens"]
+	assert.False(t, hasCache, "cache_read must be absent when nothing was cached")
+}
+
+func TestFinishLLM_GenAICachedTokens(t *testing.T) {
+	t.Run("provider details shape", func(t *testing.T) {
+		bp, cleanup := setupTestTracer(t)
+		defer cleanup()
+
+		// OpenAI accounting: PromptTokens ALREADY INCLUDES the cached
+		// subset in PromptTokensDetails — it must pass through as-is,
+		// not have the reads added on top.
+		_, span := StartLLM(context.Background(), "gpt-4")
+		FinishLLM(span, 1, 0, types.Usage{
+			PromptTokens:        100,
+			CompletionTokens:    20,
+			TotalTokens:         120,
+			PromptTokensDetails: &types.PromptTokensDetails{CachedTokens: 90},
+		})
+		span.End()
+
+		traces := bp.Traces()
+		require.Len(t, traces, 1)
+		assert.Equal(t, int64(100), traces[0].Attributes["gen_ai.usage.input_tokens"])
+		assert.Equal(t, int64(20), traces[0].Attributes["gen_ai.usage.output_tokens"])
+		assert.Equal(t, int64(90), traces[0].Attributes["gen_ai.usage.cache_read.input_tokens"])
+	})
+
+	t.Run("anthropic aggregate shape", func(t *testing.T) {
+		bp, cleanup := setupTestTracer(t)
+		defer cleanup()
+
+		// Anthropic accounting: PromptTokens holds only the UNCACHED
+		// input, cache reads are folded into the top-level
+		// CachedPromptTokens (PromptTokensDetails stays nil). The
+		// gen_ai input total must be the cache-inclusive sum.
+		_, span := StartLLM(context.Background(), "claude-3")
+		FinishLLM(span, 1, 0, types.Usage{
+			PromptTokens:       10,
+			CompletionTokens:   20,
+			TotalTokens:        20,
+			CachedPromptTokens: 90,
+		})
+		span.End()
+
+		traces := bp.Traces()
+		require.Len(t, traces, 1)
+		assert.Equal(t, int64(100), traces[0].Attributes["gen_ai.usage.input_tokens"])
+		assert.Equal(t, int64(20), traces[0].Attributes["gen_ai.usage.output_tokens"])
+		assert.Equal(t, int64(90), traces[0].Attributes["gen_ai.usage.cache_read.input_tokens"])
+	})
+}
+
+func TestMirrorGenAIUsage(t *testing.T) {
+	t.Run("openai inclusive wire shape", func(t *testing.T) {
+		bp, cleanup := setupTestTracer(t)
+		defer cleanup()
+
+		// PromptTokensDetails marks OpenAI-shaped usage whose
+		// PromptTokens already includes the cached subset: the mirror
+		// must not add the reads on top.
+		_, span := StartStream(context.Background(), "gpt-4")
+		MirrorGenAIUsage(span, types.Usage{
+			PromptTokens:        200,
+			CompletionTokens:    50,
+			TotalTokens:         250,
+			PromptTokensDetails: &types.PromptTokensDetails{CachedTokens: 128},
+		})
+		span.End()
+
+		traces := bp.Traces()
+		require.Len(t, traces, 1)
+		m := traces[0].Attributes
+		assert.Equal(t, "gpt-4", m["gen_ai.request.model"])
+		assert.Equal(t, int64(200), m["gen_ai.usage.input_tokens"])
+		assert.Equal(t, int64(50), m["gen_ai.usage.output_tokens"])
+		assert.Equal(t, int64(128), m["gen_ai.usage.cache_read.input_tokens"])
+	})
+
+	t.Run("anthropic exclusive aggregate shape", func(t *testing.T) {
+		bp, cleanup := setupTestTracer(t)
+		defer cleanup()
+
+		// The accumulated shape addStreamUsage produces for native
+		// Anthropic streams: PromptTokens holds the uncached input,
+		// CachedPromptTokens the cache reads, PromptTokensDetails nil.
+		// gen_ai.usage.input_tokens must be the cache-inclusive total
+		// while cache_read reports only the READ portion.
+		_, span := StartStream(context.Background(), "claude-3")
+		MirrorGenAIUsage(span, types.Usage{
+			PromptTokens:       10,
+			CompletionTokens:   42,
+			TotalTokens:        42,
+			CachedPromptTokens: 90,
+		})
+		span.End()
+
+		traces := bp.Traces()
+		require.Len(t, traces, 1)
+		m := traces[0].Attributes
+		assert.Equal(t, "claude-3", m["gen_ai.request.model"])
+		assert.Equal(t, int64(100), m["gen_ai.usage.input_tokens"])
+		assert.Equal(t, int64(42), m["gen_ai.usage.output_tokens"])
+		assert.Equal(t, int64(90), m["gen_ai.usage.cache_read.input_tokens"])
+	})
+}
+
+func TestMirrorGenAIUsage_NilSpan(t *testing.T) {
+	require.NotPanics(t, func() {
+		MirrorGenAIUsage(nil, types.Usage{PromptTokens: 1})
+	})
 }
 
 func TestStartStream(t *testing.T) {
@@ -314,6 +445,9 @@ func TestStartStream(t *testing.T) {
 	traces := bp.Traces()
 	require.Len(t, traces, 1)
 	assert.Equal(t, "llm.stream", traces[0].Name)
+	assert.Equal(t, "claude-3", traces[0].Attributes["llm.model"])
+	// GenAI semconv mirror for SigNoz pricing (GitHub #315).
+	assert.Equal(t, "claude-3", traces[0].Attributes["gen_ai.request.model"])
 	_ = ctx
 }
 
@@ -716,6 +850,52 @@ func TestMetrics_NoProvider(t *testing.T) {
 	assert.NotPanics(t, func() {
 		RecordAgentTurn(context.Background(), 2*time.Second)
 	})
+	assert.NotPanics(t, func() {
+		RecordMemoryEmbedFailure(context.Background(), "embed_memory")
+	})
+}
+
+func TestRecordMemoryEmbedFailure_Counter(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	defer func() { _ = mp.Shutdown(context.Background()) }()
+
+	// Bind the counter directly from the test provider instead of
+	// swapping the global provider and re-running initMetrics: every
+	// other package-level instrument stays untouched (no order
+	// dependence for later tests), and the sticky OTel global-meter
+	// delegation cannot route re-runs into a torn-down provider
+	// (review suggestion).
+	saved := memoryEmbedFailures
+	memoryEmbedFailures, _ = mp.Meter("yaah").Int64Counter("yaah.memory.embed_failures")
+	defer func() { memoryEmbedFailures = saved }()
+
+	RecordMemoryEmbedFailure(context.Background(), "search_memory_vector")
+	RecordMemoryEmbedFailure(context.Background(), "search_memory_vector")
+	RecordMemoryEmbedFailure(context.Background(), "embed_message")
+
+	var rm metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &rm))
+
+	counts := map[string]int64{}
+	found := false
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != "yaah.memory.embed_failures" {
+				continue
+			}
+			found = true
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			require.True(t, ok, "embed_failures must be an int64 sum")
+			for _, dp := range sum.DataPoints {
+				op, _ := dp.Attributes.Value("op")
+				counts[op.AsString()] = dp.Value
+			}
+		}
+	}
+	require.True(t, found, "yaah.memory.embed_failures metric not collected")
+	assert.Equal(t, int64(2), counts["search_memory_vector"])
+	assert.Equal(t, int64(1), counts["embed_message"])
 }
 
 func TestMetrics_WithError(t *testing.T) {

@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"fmt"
+	"log/slog"
 )
 
 // AddMessage inserts a message into a session. When an embedder is
@@ -44,19 +45,21 @@ func (d *DB) AddMessage(m Message) error {
 // stores the result. Tool messages are skipped. Returns a channel that
 // closes when the embed completes, or nil when no embedder is configured.
 func (d *DB) embedMessageAsync(id, role, content string) <-chan struct{} {
-	if d.embedder == nil || role != "user" && role != "assistant" || content == "" || id == "" {
+	embedder := d.Embedder()
+	if embedder == nil || role != "user" && role != "assistant" || content == "" || id == "" {
 		return nil
 	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		emb, err := d.embedder.Embed(context.Background(), content)
+		emb, err := embedder.Embed(context.Background(), content)
 		if err != nil {
+			d.recordEmbedFailure("embed_message", err)
 			return
 		}
-		d.embMu.Lock()
-		d.sql.Exec(`UPDATE messages SET embedding = ? WHERE id = ?`, EncodeEmbedding(emb), id)
-		d.embMu.Unlock()
+		if _, err := d.sql.Exec(`UPDATE messages SET embedding = ? WHERE id = ?`, EncodeEmbedding(emb), id); err != nil {
+			slog.Warn("memory: store embedding failed", "op", "embed_message", "id", id, "err", err)
+		}
 	}()
 	return done
 }
@@ -125,13 +128,17 @@ func (d *DB) SearchMessages(query string, limit int) ([]Message, error) {
 
 // SearchMessagesVector embeds the query, scans messages with non-null
 // embeddings, and returns the top-K by cosine similarity. Falls back
-// to empty when no embedder is configured.
+// to empty when no embedder is configured; a failed embedding call
+// degrades to empty and is surfaced via the rate-limited warning log
+// and the OTel embed-failure counter.
 func (d *DB) SearchMessagesVector(ctx context.Context, query string, limit int) ([]VectorResult, error) {
-	if d.embedder == nil {
+	embedder := d.Embedder()
+	if embedder == nil {
 		return nil, nil
 	}
-	qEmb, err := d.embedder.Embed(ctx, query)
+	qEmb, err := embedder.Embed(ctx, query)
 	if err != nil {
+		d.recordEmbedFailure("search_messages_vector", err)
 		return nil, nil
 	}
 
