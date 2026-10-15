@@ -464,26 +464,35 @@ func TestSandboxWorkspace_WriteFileIsAtomicInBand(t *testing.T) {
 		if req.Cwd != "/workspace" {
 			t.Errorf("cwd = %q, want the workspace root", req.Cwd)
 		}
-		script := req.Args[1]
-		if strings.Contains(script, "mkdir -p") {
-			t.Errorf("script must not create parent directories the host would reject: %q", script)
-		}
-		if strings.Contains(script, "payload") {
+		if script := req.Args[1]; strings.Contains(script, "payload") {
 			t.Error("content must not be interpolated into the script")
 		}
 	}
-	// The first exec creates the temp beside the target and lands the
-	// first chunk; the content arrives as a base64 argument.
-	if first := execs[0]; !strings.Contains(first.Args[1], "mktemp") {
+	// The first exec creates the target's parent directory (parity with the
+	// host atomicWriteFile's MkdirAll), creates the temp beside the target,
+	// and lands the first chunk; the content arrives as a base64 argument
+	// and the parent as a quoted positional.
+	first := execs[0]
+	if !strings.Contains(first.Args[1], `mkdir -p -- "$3"`) {
+		t.Errorf("first script must create the parent directory like the host MkdirAll: %q", first.Args[1])
+	}
+	if !strings.Contains(first.Args[1], "mktemp") {
 		t.Errorf("first script must create a fresh temp file: %q", first.Args[1])
 	}
-	decoded, err := base64.StdEncoding.DecodeString(execs[0].Args[4])
+	if first.Args[5] != "/workspace" {
+		t.Errorf("parent dir argument = %q, want /workspace", first.Args[5])
+	}
+	decoded, err := base64.StdEncoding.DecodeString(first.Args[4])
 	if err != nil || !bytes.Equal(decoded, content) {
 		t.Errorf("first chunk argument = %q, %v; want the base64 content", decoded, err)
 	}
 	// The closing exec applies the mode and renames onto the target —
-	// the atomicity — with the mode as its first argument.
+	// the atomicity — with the mode as its first argument. Directory
+	// creation is the first exec's alone; the closing one must not repeat it.
 	last := execs[len(execs)-1]
+	if strings.Contains(last.Args[1], "mkdir") {
+		t.Errorf("only the first exec may create directories: %q", last.Args[1])
+	}
 	if !strings.Contains(last.Args[1], "chmod") || !strings.Contains(last.Args[1], "mv -f") {
 		t.Errorf("closing script must chmod and rename: %q", last.Args[1])
 	}
@@ -540,6 +549,52 @@ func TestSandboxWorkspace_WriteFileEmptyPayload(t *testing.T) {
 	}
 	if info.Size() != 0 || info.Mode().Perm() != 0o600 {
 		t.Errorf("file = %d bytes, mode %v; want empty, 0600", info.Size(), info.Mode().Perm())
+	}
+}
+
+// TestSandboxWorkspace_WriteFileCreatesMissingParentDirs pins host parity for
+// new nested paths: the host atomicWriteFile MkdirAlls the target's parent,
+// so the sandbox write must script the same — the first exec mkdir -p's the
+// parent (as a quoted positional, never spliced into the script text) and the
+// write lands instead of failing at the mktemp step.
+func TestSandboxWorkspace_WriteFileCreatesMissingParentDirs(t *testing.T) {
+	sb := sandboxfake.New()
+	ws := newSandboxWS(t, sb)
+	ctx := context.Background()
+
+	target := "/workspace/new/deep/nested/f.txt"
+	if err := ws.WriteFile(ctx, target, []byte("nested"), 0o644); err != nil {
+		t.Fatalf("WriteFile into missing dirs: %v", err)
+	}
+
+	// The parent travels as the first exec's third positional argument.
+	execs := sb.Execs()
+	if got := execs[0].Args[5]; got != "/workspace/new/deep/nested" {
+		t.Errorf("parent dir argument = %q, want /workspace/new/deep/nested", got)
+	}
+	if strings.Contains(execs[0].Args[1], "nested") {
+		t.Errorf("the parent path must not be interpolated into the script: %q", execs[0].Args[1])
+	}
+
+	// Content and mode round-trip through the interpreted scripts, and the
+	// intermediates exist as directories.
+	got, err := sb.ReadFile(ctx, target)
+	if err != nil || string(got) != "nested" {
+		t.Fatalf("round-trip = %q, %v; want nested", got, err)
+	}
+	info, err := ws.Stat(ctx, target)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Errorf("mode = %v, want 0644", info.Mode().Perm())
+	}
+	dirInfo, err := ws.Stat(ctx, "/workspace/new/deep")
+	if err != nil {
+		t.Fatalf("Stat intermediate dir: %v", err)
+	}
+	if !dirInfo.IsDir() {
+		t.Error("the intermediate path must be a directory")
 	}
 }
 
@@ -1032,6 +1087,18 @@ func TestWorkspaceParity_LocalVsSandbox(t *testing.T) {
 		got, err := tc.w.ReadFile(ctx, tc.w.Join(tc.root, "f.txt"))
 		if err != nil || string(got) != "same" {
 			t.Errorf("%s: ReadFile = %q, %v; want the written content", tc.name, got, err)
+		}
+
+		// A write into a missing nested directory succeeds on both
+		// substrates: the host's MkdirAll and the sandbox's scripted
+		// mkdir -p keep the parity the atomic write promises.
+		nested := tc.w.Join(tc.root, "fresh", "sub", "n.txt")
+		if err := tc.w.WriteFile(ctx, nested, []byte("deep"), 0o644); err != nil {
+			t.Fatalf("%s: WriteFile into missing dirs: %v", tc.name, err)
+		}
+		deep, err := tc.w.ReadFile(ctx, nested)
+		if err != nil || string(deep) != "deep" {
+			t.Errorf("%s: nested ReadFile = %q, %v; want the written content", tc.name, deep, err)
 		}
 
 		// Stat vs Lstat on a dangling symlink: Stat reports not-exist,

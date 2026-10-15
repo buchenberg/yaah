@@ -61,6 +61,38 @@ func TestAtomicWriteFile_newFileUsesPerm(t *testing.T) {
 	}
 }
 
+// TestAtomicWriteFile_createsMissingDirs pins the #310 regression: a write
+// into a non-existent nested directory must succeed — atomicWriteFile
+// creates the parent chain before the temp file — instead of failing with
+// "atomic write: create temp: ... no such file or directory".
+func TestAtomicWriteFile_createsMissingDirs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a", "b", "c", "file.txt")
+	if err := atomicWriteFile(path, []byte("nested"), 0o600); err != nil {
+		t.Fatalf("atomicWriteFile into missing nested dirs: %v", err)
+	}
+
+	t.Run("content", func(t *testing.T) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != "nested" {
+			t.Errorf("content = %q, want nested", data)
+		}
+	})
+
+	t.Run("mode", func(t *testing.T) {
+		requirePOSIXPerms(t)
+		st, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := st.Mode().Perm(); got != 0o600 {
+			t.Errorf("mode = %o, want 600 (perm applied to new file)", got)
+		}
+	})
+}
+
 // TestAtomicWriteFile_leavesNoTempFiles pins the temp cleanup: a crash
 // free run must not litter the target directory with dot-temp files.
 func TestAtomicWriteFile_leavesNoTempFiles(t *testing.T) {
