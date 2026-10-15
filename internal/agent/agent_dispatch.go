@@ -133,9 +133,14 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 		}
 	}
 
+	// Watchdog kill: task.go already converted the cancellation into a
+	// structured {"error":"cancelled","partial":...} result. Keep that
+	// payload so the child's partial output survives and surface the
+	// stuck classification alongside it (yaah-1ep).
+	stuckPartial := ""
 	if d.isTask && !d.isBackground && d.watchdogActive && ctx.Err() == nil && runCtx.Err() == context.Canceled {
 		err = tools.ErrStuckChild
-		res = ""
+		stuckPartial = l.truncateToolResult(res)
 	}
 	if l.Config.OtelEnabled && toolSpan != nil {
 		if d.isTask && !d.isBackground {
@@ -151,6 +156,9 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 	if err != nil {
 		errStr = err.Error()
 		res = fmt.Sprintf("error: %v", err)
+		if stuckPartial != "" {
+			res += "\n" + stuckPartial
+		}
 	} else {
 		res = l.truncateToolResult(res)
 	}
@@ -424,7 +432,14 @@ func (l *Loop) runGateDispatch(ctx context.Context, validatorRole, gatePrompt st
 	})
 
 	if gd.watchdogActive && ctx.Err() == nil && runCtx.Err() == context.Canceled {
-		err = tools.ErrStuckChild
+		// Gate callers only log dispatch errors; wrap the structured
+		// result so the child's partial output reaches that log instead
+		// of being dropped (yaah-1ep).
+		if res != "" {
+			err = fmt.Errorf("%w: %s", tools.ErrStuckChild, l.truncateToolResult(res))
+		} else {
+			err = tools.ErrStuckChild
+		}
 		res = ""
 	}
 	if l.Config.OtelEnabled && span != nil {

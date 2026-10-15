@@ -39,6 +39,14 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 	start := time.Now()
 	chunks, errs := sp.SendStream(ctx, req)
 
+	// Beat while waiting for the first chunk: nothing drives the
+	// chunk-based heartbeat yet, so a slow provider queue or model load
+	// would starve the stuck-child watchdog (yaah-1ep). Stopped once the
+	// first chunk arrives — from there, per-chunk liveness takes over so
+	// a genuinely stalled stream is still detectable.
+	stopWaitHB := c.startWaitHeartbeat(ctx)
+	defer stopWaitHB()
+
 	var content strings.Builder
 	var reasoning strings.Builder
 	var dsmlFilter dsmlTokenFilter
@@ -59,9 +67,10 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 		observability.RecordStreamEnd(streamSpan, path, finishReason, usageCaptured, len(msg.Content), len(msg.ToolCalls))
 	}
 
+	hbInterval := c.heartbeatInterval()
 	var lastHeartbeat time.Time
 	emitHeartbeat := func() {
-		if time.Since(lastHeartbeat) > 5*time.Second {
+		if time.Since(lastHeartbeat) > hbInterval {
 			tools.SendHeartbeat(ctx)
 			lastHeartbeat = time.Now()
 		}
@@ -95,6 +104,15 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 				}
 				return checkTruncatedStream(content.String(), toolCallMap, finishReason, responseModel, reasoning.String(), totalUsage, &c.dsmlSeq)
 			}
+
+			// Any chunk counts as liveness, not just content deltas:
+			// reasoning-only and tool-call chunks prove the stream is
+			// alive. Counting only content starves the stuck-child
+			// watchdog during long thinking phases of reasoning models
+			// (yaah-1ep). The first chunk also ends the TTFT wait
+			// ticker.
+			stopWaitHB()
+			emitHeartbeat()
 
 			if !firstToken {
 				firstToken = true
@@ -130,7 +148,6 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 			if delta.Content != "" {
 				content.WriteString(delta.Content)
 				tokenCount++
-				emitHeartbeat()
 				if c.OnToken != nil {
 					if clean := dsmlFilter.filterToken(delta.Content); clean != "" {
 						c.OnToken(clean)
