@@ -1,58 +1,27 @@
 package providers
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"strings"
+
+	"github.com/anthropics/anthropic-sdk-go"
 
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-type anthropicSSEEvent struct {
-	Type         string                    `json:"type"`
-	Index        *int                      `json:"index,omitempty"`
-	Delta        *anthropicSSEDelta        `json:"delta,omitempty"`
-	Message      *anthropicSSEMessage      `json:"message,omitempty"`
-	ContentBlock *anthropicSSEContentBlock `json:"content_block,omitempty"`
-	Usage        *anthropicUsage           `json:"usage,omitempty"`
+// anthropicStreamState carries translation state across the events of one
+// stream: whether a message_delta carrying a stop_reason was seen, so the
+// message_stop fallback knows whether to synthesize a finish reason.
+type anthropicStreamState struct {
+	sawStopReason bool
 }
 
-type anthropicSSEDelta struct {
-	Type        string `json:"type"`
-	Text        string `json:"text,omitempty"`
-	Thinking    string `json:"thinking,omitempty"`
-	PartialJSON string `json:"partial_json,omitempty"`
-	StopReason  string `json:"stop_reason,omitempty"`
-}
-
-type anthropicSSEMessage struct {
-	ID    string               `json:"id"`
-	Model string               `json:"model"`
-	Usage *anthropicUsageInput `json:"usage,omitempty"`
-}
-
-type anthropicUsageInput struct {
-	InputTokens              int `json:"input_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-}
-
-type anthropicSSEContentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
-	ID   string `json:"id,omitempty"`
-	Name string `json:"name,omitempty"`
-}
-
+// SendStream sends a streaming chat request and returns a channel of
+// chunks in yaah's StreamChunk shape. The SDK owns SSE decoding — including
+// mid-stream `error` events, which surface from the stream as typed
+// *anthropic.Error and are converted by anthropicAPIError so the retry
+// ladder never replays blind. The channel is closed when the stream ends
+// or an error occurs.
 func (c *AnthropicClient) SendStream(ctx context.Context, req types.ChatRequest) (<-chan StreamChunk, <-chan error) {
-	antReq := lowerAnthropicRequest(req)
-	antReq.Stream = true
-
 	chunks := make(chan StreamChunk, 64)
 	errs := make(chan error, 1)
 
@@ -60,197 +29,114 @@ func (c *AnthropicClient) SendStream(ctx context.Context, req types.ChatRequest)
 		defer close(chunks)
 		defer close(errs)
 
-		body, err := json.Marshal(antReq)
-		if err != nil {
-			errs <- fmt.Errorf("marshal request: %w", err)
-			return
-		}
+		stream := c.client.Messages.NewStreaming(ctx, lowerAnthropicRequest(req), c.requestOpts(ctx)...)
+		defer stream.Close()
 
-		url := c.baseURL + "/v1/messages"
-		httpReq, err := newAnthropicHTTPReq(c, ctx, url, body)
-		if err != nil {
-			errs <- err
-			return
-		}
-
-		resp, err := c.client.Do(httpReq)
-		if err != nil {
-			errs <- fmt.Errorf("send request: %w", err)
-			return
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			respBody, _ := io.ReadAll(resp.Body)
-			errs <- newAPIError(resp.StatusCode, respBody)
-			return
-		}
-
-		toolArgs := make(map[int]string)
-
-		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
-
-		var dataLines []string
-
-		for scanner.Scan() {
-			line := scanner.Text()
-
-			if strings.HasPrefix(line, "event: ") {
-			} else if strings.HasPrefix(line, "data: ") {
-				dataLines = append(dataLines, strings.TrimPrefix(line, "data: "))
-			} else if line == "" && len(dataLines) > 0 {
-				chunk := processAnthropicSSEEvent(strings.Join(dataLines, "\n"), toolArgs)
-				if chunk != nil {
-					select {
-					case chunks <- *chunk:
-					case <-ctx.Done():
-						return
-					}
-				}
-				dataLines = nil
+		st := &anthropicStreamState{}
+		for stream.Next() {
+			chunk, err := translateAnthropicEvent(stream.Current(), st)
+			if err != nil {
+				errs <- err
+				return
 			}
-		}
-
-		if len(dataLines) > 0 {
-			chunk := processAnthropicSSEEvent(strings.Join(dataLines, "\n"), toolArgs)
 			if chunk != nil {
 				select {
 				case chunks <- *chunk:
 				case <-ctx.Done():
+					return
 				}
 			}
 		}
-
-		if err := scanner.Err(); err != nil {
-			errs <- fmt.Errorf("read stream: %w", err)
+		if err := stream.Err(); err != nil {
+			errs <- anthropicAPIError(err)
 		}
 	}()
 
 	return chunks, errs
 }
 
-func newAnthropicHTTPReq(c *AnthropicClient, ctx context.Context, url string, body []byte) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", c.apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-	req.Header.Set("Accept", "text/event-stream")
-	setSessionHeaders(req, SessionIDFromContext(ctx))
-	return req, nil
-}
-
-func processAnthropicSSEEvent(data string, toolArgs map[int]string) *StreamChunk {
-	if data == "" {
-		return nil
-	}
-
-	var evt anthropicSSEEvent
-	if err := json.Unmarshal([]byte(data), &evt); err != nil {
-		return nil
-	}
-
-	switch evt.Type {
-	case "message_start":
-		if evt.Message != nil {
-			chunk := &StreamChunk{
-				ID:    evt.Message.ID,
-				Model: evt.Message.Model,
-			}
-			if evt.Message.Usage != nil {
-				chunk.Usage = &types.Usage{
-					PromptTokens: evt.Message.Usage.InputTokens,
-					PromptTokensDetails: &types.PromptTokensDetails{
-						CachedTokens: evt.Message.Usage.CacheReadInputTokens,
-					},
-				}
-			}
-			return chunk
+// translateAnthropicEvent converts one SDK stream event into a StreamChunk.
+// A nil chunk means the event carries no yaah-visible payload. Mid-stream
+// failures never reach this function — the SDK decoder turns `error`
+// events into stream errors before they surface here.
+func translateAnthropicEvent(event anthropic.MessageStreamEventUnion, st *anthropicStreamState) (*StreamChunk, error) {
+	switch e := event.AsAny().(type) {
+	case anthropic.MessageStartEvent:
+		chunk := &StreamChunk{
+			ID:    e.Message.ID,
+			Model: e.Message.Model,
 		}
-
-	case "content_block_start":
-		if evt.ContentBlock == nil || evt.Index == nil {
-			return nil
+		if u := e.Message.Usage; u.InputTokens > 0 || u.CacheReadInputTokens > 0 {
+			chunk.Usage = &types.Usage{
+				PromptTokens:        int(u.InputTokens),
+				PromptTokensDetails: &types.PromptTokensDetails{CachedTokens: int(u.CacheReadInputTokens)},
+			}
 		}
-		idx := *evt.Index
-		switch evt.ContentBlock.Type {
+		return chunk, nil
+
+	case anthropic.ContentBlockStartEvent:
+		idx := int(e.Index)
+		switch e.ContentBlock.Type {
 		case "text":
 			return &StreamChunk{
-				Choices: []StreamChoice{{
-					Index: idx,
-					Delta: StreamDelta{Role: "assistant"},
-				}},
-			}
+				Choices: []StreamChoice{{Index: idx, Delta: StreamDelta{Role: "assistant"}}},
+			}, nil
 		case "thinking":
 			return &StreamChunk{
-				Choices: []StreamChoice{{
-					Index: idx,
-					Delta: StreamDelta{},
-				}},
-			}
+				Choices: []StreamChoice{{Index: idx, Delta: StreamDelta{}}},
+			}, nil
 		case "tool_use":
-			toolArgs[idx] = ""
 			return &StreamChunk{
-				Choices: []StreamChoice{{
-					Index: idx,
-					Delta: StreamDelta{
-						ToolCalls: []types.ToolCall{{
-							Index: idx,
-							ID:    evt.ContentBlock.ID,
-							Type:  "function",
-							Function: types.ToolCallFn{
-								Name: evt.ContentBlock.Name,
-							},
-						}},
-					},
-				}},
-			}
+				Choices: []StreamChoice{{Index: idx, Delta: StreamDelta{
+					ToolCalls: []types.ToolCall{{
+						Index: idx,
+						ID:    e.ContentBlock.ID,
+						Type:  "function",
+						Function: types.ToolCallFn{
+							Name: e.ContentBlock.Name,
+						},
+					}},
+				}}},
+			}, nil
 		}
 
-	case "content_block_delta":
-		if evt.Index == nil || evt.Delta == nil {
-			return nil
-		}
-		idx := *evt.Index
-		switch evt.Delta.Type {
+	case anthropic.ContentBlockDeltaEvent:
+		idx := int(e.Index)
+		switch e.Delta.Type {
 		case "text_delta":
 			return &StreamChunk{
-				Choices: []StreamChoice{{
-					Index: idx,
-					Delta: StreamDelta{Content: evt.Delta.Text},
-				}},
-			}
+				Choices: []StreamChoice{{Index: idx, Delta: StreamDelta{Content: e.Delta.Text}}},
+			}, nil
 		case "thinking_delta":
 			return &StreamChunk{
-				Choices: []StreamChoice{{
-					Index: idx,
-					Delta: StreamDelta{ReasoningContent: evt.Delta.Thinking},
-				}},
-			}
+				Choices: []StreamChoice{{Index: idx, Delta: StreamDelta{ReasoningContent: e.Delta.Thinking}}},
+			}, nil
 		case "input_json_delta":
-			toolArgs[idx] += evt.Delta.PartialJSON
 			return &StreamChunk{
-				Choices: []StreamChoice{{
-					Index: idx,
-					Delta: StreamDelta{
-						ToolCalls: []types.ToolCall{{
-							Index: idx,
-							Function: types.ToolCallFn{
-								Arguments: evt.Delta.PartialJSON,
-							},
-						}},
-					},
-				}},
-			}
+				Choices: []StreamChoice{{Index: idx, Delta: StreamDelta{
+					ToolCalls: []types.ToolCall{{
+						Index: idx,
+						Function: types.ToolCallFn{
+							Arguments: e.Delta.PartialJSON,
+						},
+					}},
+				}}},
+			}, nil
 		}
 
-	case "message_delta":
+	case anthropic.MessageDeltaEvent:
 		finishReason := "stop"
-		if evt.Delta != nil && evt.Delta.StopReason == "tool_use" {
-			finishReason = "tool_calls"
+		if e.Delta.StopReason != "" {
+			st.sawStopReason = true
+			switch e.Delta.StopReason {
+			case "tool_use":
+				finishReason = "tool_calls"
+			case "max_tokens":
+				// Match the non-streaming path (raiseAnthropicResponse):
+				// a truncated response must stay visible as "length"
+				// so downstream guards can discard partial tool calls.
+				finishReason = "length"
+			}
 		}
 		chunk := &StreamChunk{
 			Choices: []StreamChoice{{
@@ -258,18 +144,31 @@ func processAnthropicSSEEvent(data string, toolArgs map[int]string) *StreamChunk
 				FinishReason: &finishReason,
 			}},
 		}
-		if evt.Usage != nil {
+		if u := e.Usage; u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadInputTokens > 0 {
 			chunk.Usage = &types.Usage{
-				PromptTokens:     evt.Usage.InputTokens,
-				CompletionTokens: evt.Usage.OutputTokens,
-				TotalTokens:      evt.Usage.InputTokens + evt.Usage.OutputTokens,
-				PromptTokensDetails: &types.PromptTokensDetails{
-					CachedTokens: evt.Usage.CacheReadInputTokens,
-				},
+				PromptTokens:        int(u.InputTokens),
+				CompletionTokens:    int(u.OutputTokens),
+				TotalTokens:         int(u.InputTokens + u.OutputTokens),
+				PromptTokensDetails: &types.PromptTokensDetails{CachedTokens: int(u.CacheReadInputTokens)},
 			}
 		}
-		return chunk
+		return chunk, nil
+
+	case anthropic.MessageStopEvent:
+		// Well-formed Anthropic streams always carry a message_delta
+		// with stop_reason before message_stop. Some Anthropic-compatible
+		// proxies skip it; without this fallback a fully assembled
+		// response would be discarded as a premature stream close.
+		if !st.sawStopReason {
+			finishReason := "stop"
+			return &StreamChunk{
+				Choices: []StreamChoice{{
+					Delta:        StreamDelta{},
+					FinishReason: &finishReason,
+				}},
+			}, nil
+		}
 	}
 
-	return nil
+	return nil, nil
 }

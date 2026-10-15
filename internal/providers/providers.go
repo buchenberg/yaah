@@ -178,14 +178,20 @@ func WithSessionID(ctx context.Context, sessionID string) context.Context {
 	return context.WithValue(ctx, sessionIDKey{}, sessionID)
 }
 
+// sessionAffinityID derives the stable, fixed-length header value from a
+// session ID. Shared by the OpenAI-compat client's header plumbing and the
+// Anthropic client's per-request SDK options.
+func sessionAffinityID(sessionID string) string {
+	hash := sha256.Sum256([]byte(sessionID))
+	return hex.EncodeToString(hash[:])
+}
+
 // setSessionHeaders adds session-affinity headers to an HTTP request.
-// Uses SHA-256 to produce a stable, fixed-length header value from the session ID.
 func setSessionHeaders(req *http.Request, sessionID string) {
 	if sessionID == "" {
 		return
 	}
-	hash := sha256.Sum256([]byte(sessionID))
-	hexID := hex.EncodeToString(hash[:])
+	hexID := sessionAffinityID(sessionID)
 	req.Header.Set("x-session-id", hexID)
 	req.Header.Set("x-session-affinity", hexID)
 }

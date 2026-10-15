@@ -1,129 +1,82 @@
 package providers
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/anthropics/anthropic-sdk-go/packages/param"
+
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-type anthropicRequest struct {
-	Model       string             `json:"model"`
-	MaxTokens   int                `json:"max_tokens"`
-	System      []anthropicBlock   `json:"system,omitempty"`
-	Messages    []anthropicMessage `json:"messages"`
-	Tools       []anthropicTool    `json:"tools,omitempty"`
-	Stream      bool               `json:"stream"`
-	Temperature float64            `json:"temperature,omitempty"`
-}
-
-type anthropicMessage struct {
-	Role    string           `json:"role"`
-	Content []anthropicBlock `json:"content"`
-}
-
-type anthropicBlock struct {
-	Type         string              `json:"type"`
-	Text         string              `json:"text,omitempty"`
-	ID           string              `json:"id,omitempty"`
-	Name         string              `json:"name,omitempty"`
-	Input        json.RawMessage     `json:"input,omitempty"`
-	ToolUseID    string              `json:"tool_use_id,omitempty"`
-	Content      string              `json:"content,omitempty"`
-	Thinking     string              `json:"thinking,omitempty"`
-	CacheControl *types.CacheControl `json:"cache_control,omitempty"`
-}
-
-type anthropicTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"input_schema"`
-}
-
-type anthropicResponse struct {
-	ID         string           `json:"id"`
-	Model      string           `json:"model"`
-	Role       string           `json:"role"`
-	Content    []anthropicBlock `json:"content"`
-	StopReason string           `json:"stop_reason"`
-	Usage      anthropicUsage   `json:"usage"`
-}
-
-type anthropicUsage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-}
-
-// AnthropicClient sends requests to the Anthropic Messages API.
+// AnthropicClient talks to the Anthropic Messages API (or an
+// Anthropic-compatible endpoint such as DeepSeek or ZAI) through the
+// official anthropic-sdk-go. The SDK owns wire serialization and SSE
+// decoding; this client owns yaah's mapping between
+// types.ChatRequest/ChatResponse and the SDK's params, the StreamChunk
+// contract consumed by internal/agent/llm, and APIError conversion so
+// errorclassify keeps a single error currency across providers.
 type AnthropicClient struct {
-	baseURL string
-	apiKey  string
-	client  *http.Client
+	client   anthropic.Client
+	baseOpts []option.RequestOption
 }
 
-// NewAnthropicClient creates a new client targeting the Anthropic Messages API.
+// NewAnthropicClient creates a new client targeting the Anthropic Messages
+// API at baseURL. Transport retries are disabled: yaah's classified retry
+// ladder (internal/agent/llm) is the single retry owner, so retries never
+// compound. timeoutSeconds has the same semantics as the hand-rolled
+// client this replaces — it spans the whole request including body read;
+// 0 means no timeout (slow local models), negative falls back to 120s.
 func NewAnthropicClient(baseURL, apiKey string, timeoutSeconds int) *AnthropicClient {
 	to := time.Duration(timeoutSeconds) * time.Second
 	if timeoutSeconds < 0 {
 		to = 120 * time.Second
 	}
+	opts := []option.RequestOption{
+		option.WithBaseURL(baseURL),
+		option.WithAPIKey(apiKey),
+		option.WithMaxRetries(0),
+		option.WithHTTPClient(&http.Client{Timeout: to}),
+	}
 	return &AnthropicClient{
-		baseURL: baseURL,
-		apiKey:  apiKey,
-		client: &http.Client{
-			Timeout: to,
-		},
+		client:   anthropic.NewClient(opts...),
+		baseOpts: opts,
 	}
 }
 
-// Send translates a ChatRequest to the Anthropic Messages API format and returns the response.
+// requestOpts returns the base options plus session-affinity headers when
+// a session ID is present in ctx. The copy keeps per-request appends from
+// ever aliasing baseOpts.
+func (c *AnthropicClient) requestOpts(ctx context.Context) []option.RequestOption {
+	sessionID := SessionIDFromContext(ctx)
+	if sessionID == "" {
+		return c.baseOpts
+	}
+	hexID := sessionAffinityID(sessionID)
+	opts := make([]option.RequestOption, 0, len(c.baseOpts)+2)
+	opts = append(opts, c.baseOpts...)
+	opts = append(opts,
+		option.WithHeader("x-session-id", hexID),
+		option.WithHeader("x-session-affinity", hexID),
+	)
+	return opts
+}
+
+// Send translates a ChatRequest to the Anthropic Messages API and returns
+// the response.
 func (c *AnthropicClient) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
-	antReq := lowerAnthropicRequest(req)
-	body, err := json.Marshal(antReq)
+	msg, err := c.client.Messages.New(ctx, lowerAnthropicRequest(req), c.requestOpts(ctx)...)
 	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
+		return nil, anthropicAPIError(err)
 	}
-
-	url := c.baseURL + "/v1/messages"
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-api-key", c.apiKey)
-	httpReq.Header.Set("anthropic-version", "2023-06-01")
-	setSessionHeaders(httpReq, SessionIDFromContext(ctx))
-
-	resp, err := c.client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, newAPIError(resp.StatusCode, respBody)
-	}
-
-	var antResp anthropicResponse
-	if err := json.Unmarshal(respBody, &antResp); err != nil {
-		return nil, fmt.Errorf("unmarshal response: %w", err)
-	}
-
-	return raiseAnthropicResponse(antResp), nil
+	return raiseAnthropicResponse(*msg), nil
 }
 
 // ListModels is not supported by the Anthropic Messages API.
@@ -131,15 +84,41 @@ func (c *AnthropicClient) ListModels(ctx context.Context) ([]string, error) {
 	return nil, fmt.Errorf("anthropic Messages API does not support model listing")
 }
 
-func lowerAnthropicRequest(req types.ChatRequest) anthropicRequest {
-	var sysBlocks []anthropicBlock
+// anthropicCacheControl maps yaah's cache marker to the SDK param.
+// "ephemeral" is the only cache type the Messages API supports, so any
+// configured type lowers to an ephemeral breakpoint.
+func anthropicCacheControl(cc types.CacheControl) anthropic.CacheControlEphemeralParam {
+	return anthropic.NewCacheControlEphemeralParam()
+}
+
+// anthropicTextBlock builds a text content block union with optional
+// cache control.
+func anthropicTextBlock(text string, cc *types.CacheControl) anthropic.ContentBlockParamUnion {
+	block := anthropic.TextBlockParam{Text: text}
+	if cc != nil {
+		block.CacheControl = anthropicCacheControl(*cc)
+	}
+	return anthropic.ContentBlockParamUnion{OfText: &block}
+}
+
+// lowerAnthropicRequest converts a ChatRequest into the SDK's
+// MessageNewParams. The message walk preserves the ordering invariants the
+// Messages API requires:
+//
+//   - system messages are hoisted into the top-level system parameter
+//   - pending tool results are flushed as their own user message before the
+//     next assistant turn (every tool_use must be answered by tool_result
+//     blocks in the immediately following user message)
+//   - consecutive user messages merge into one multi-block message
+func lowerAnthropicRequest(req types.ChatRequest) anthropic.MessageNewParams {
+	var sysBlocks []anthropic.TextBlockParam
 	var convMessages []types.Message
 
 	for _, m := range req.Messages {
 		if m.Role == "system" {
-			block := anthropicBlock{Type: "text", Text: m.Content}
+			block := anthropic.TextBlockParam{Text: m.Content}
 			if m.CacheControl != nil {
-				block.CacheControl = m.CacheControl
+				block.CacheControl = anthropicCacheControl(*m.CacheControl)
 			}
 			sysBlocks = append(sysBlocks, block)
 		} else {
@@ -147,91 +126,107 @@ func lowerAnthropicRequest(req types.ChatRequest) anthropicRequest {
 		}
 	}
 
-	var msgs []anthropicMessage
-	var pendingToolResults []anthropicBlock
+	var msgs []anthropic.MessageParam
+	var pendingToolResults []anthropic.ContentBlockParamUnion
+
+	flushToolResults := func() {
+		if len(pendingToolResults) > 0 {
+			msgs = append(msgs, anthropic.NewUserMessage(pendingToolResults...))
+			pendingToolResults = nil
+		}
+	}
 
 	for _, m := range convMessages {
 		switch m.Role {
 		case "user":
-			blocks := make([]anthropicBlock, 0, 1+len(pendingToolResults))
+			blocks := make([]anthropic.ContentBlockParamUnion, 0, 1+len(pendingToolResults))
 			blocks = append(blocks, pendingToolResults...)
 			pendingToolResults = nil
 
 			if m.Content != "" {
-				block := anthropicBlock{Type: "text", Text: m.Content}
-				if m.CacheControl != nil {
-					block.CacheControl = m.CacheControl
-				}
-				blocks = append(blocks, block)
+				blocks = append(blocks, anthropicTextBlock(m.Content, m.CacheControl))
 			}
 
-			if len(msgs) > 0 && msgs[len(msgs)-1].Role == "user" {
+			if len(msgs) > 0 && msgs[len(msgs)-1].Role == anthropic.MessageParamRoleUser {
 				msgs[len(msgs)-1].Content = append(msgs[len(msgs)-1].Content, blocks...)
 			} else if len(blocks) > 0 {
-				msgs = append(msgs, anthropicMessage{Role: "user", Content: blocks})
+				msgs = append(msgs, anthropic.NewUserMessage(blocks...))
 			}
 
 		case "assistant":
-			blocks := make([]anthropicBlock, 0, 1+len(m.ToolCalls))
+			// Flush pending tool results as their own user message before
+			// the next assistant turn. Anthropic requires every tool_use
+			// to be answered by tool_result blocks in the *immediately
+			// following* user message; deferring the flush until the next
+			// user turn leaves an assistant message between the tool_use
+			// and its results and the API rejects the request with 400
+			// "tool_use ids were found without tool_result blocks
+			// immediately after".
+			flushToolResults()
 
+			var blocks []anthropic.ContentBlockParamUnion
 			if m.ReasoningContent != "" {
-				blocks = append(blocks, anthropicBlock{Type: "thinking", Thinking: m.ReasoningContent})
+				blocks = append(blocks, anthropic.NewThinkingBlock("", m.ReasoningContent))
 			}
 			if m.Content != "" {
-				blocks = append(blocks, anthropicBlock{Type: "text", Text: m.Content})
+				blocks = append(blocks, anthropicTextBlock(m.Content, nil))
 			}
 			for _, tc := range m.ToolCalls {
-				blocks = append(blocks, anthropicBlock{
-					Type:  "tool_use",
-					ID:    tc.ID,
-					Name:  tc.Function.Name,
-					Input: json.RawMessage(tc.Function.Arguments),
-				})
+				// Empty arguments omit the input field (the API treats a
+				// missing input as {}); non-empty arguments pass through as
+				// raw JSON exactly as the provider emitted them.
+				var input any
+				if tc.Function.Arguments != "" {
+					input = json.RawMessage(tc.Function.Arguments)
+				}
+				blocks = append(blocks, anthropic.NewToolUseBlock(tc.ID, input, tc.Function.Name))
 			}
 
 			if len(blocks) > 0 {
-				msgs = append(msgs, anthropicMessage{Role: "assistant", Content: blocks})
+				msgs = append(msgs, anthropic.NewAssistantMessage(blocks...))
 			}
 
 		case "tool":
-			pendingToolResults = append(pendingToolResults, anthropicBlock{
-				Type:      "tool_result",
-				ToolUseID: m.ToolCallID,
-				Content:   m.Content,
-			})
+			pendingToolResults = append(pendingToolResults,
+				anthropic.NewToolResultBlock(m.ToolCallID, m.Content, false))
 		}
 	}
 
-	if len(pendingToolResults) > 0 {
-		msgs = append(msgs, anthropicMessage{Role: "user", Content: pendingToolResults})
-	}
+	// Orphan tool results (a trailing tool turn with no following user or
+	// assistant message) still need their own user message.
+	flushToolResults()
 
-	var antTools []anthropicTool
+	var tools []anthropic.ToolUnionParam
 	for _, t := range req.Tools {
-		antTools = append(antTools, anthropicTool{
-			Name:        t.Function.Name,
-			Description: t.Function.Description,
-			InputSchema: t.Function.Parameters,
-		})
+		var schema anthropic.ToolInputSchemaParam
+		if len(t.Function.Parameters) > 0 {
+			if err := json.Unmarshal(t.Function.Parameters, &schema); err != nil {
+				schema = anthropic.ToolInputSchemaParam{}
+			}
+		}
+		tools = append(tools, anthropic.ToolUnionParamOfTool(schema, t.Function.Name))
 	}
 
-	maxTokens := req.MaxTokens
+	maxTokens := int64(req.MaxTokens)
 	if maxTokens <= 0 {
 		maxTokens = 4096
 	}
 
-	return anthropicRequest{
-		Model:       req.Model,
-		MaxTokens:   maxTokens,
-		System:      sysBlocks,
-		Messages:    msgs,
-		Tools:       antTools,
-		Stream:      req.Stream,
-		Temperature: req.Temperature,
+	params := anthropic.MessageNewParams{
+		Model:     req.Model,
+		MaxTokens: maxTokens,
+		System:    sysBlocks,
+		Messages:  msgs,
+		Tools:     tools,
 	}
+	if req.Temperature != 0 {
+		params.Temperature = param.NewOpt(req.Temperature)
+	}
+	return params
 }
 
-func raiseAnthropicResponse(resp anthropicResponse) *types.ChatResponse {
+// raiseAnthropicResponse converts an SDK Message into a ChatResponse.
+func raiseAnthropicResponse(resp anthropic.Message) *types.ChatResponse {
 	var content strings.Builder
 	var reasoning strings.Builder
 	var toolCalls []types.ToolCall
@@ -244,8 +239,9 @@ func raiseAnthropicResponse(resp anthropicResponse) *types.ChatResponse {
 			reasoning.WriteString(block.Thinking)
 		case "tool_use":
 			// Validate that the tool input is valid JSON before storing.
-			// Anthropic will reject requests with invalid JSON in tool_use.input.
-			if !json.Valid(block.Input) {
+			// Anthropic will reject requests with invalid JSON in
+			// tool_use.input.
+			if len(block.Input) == 0 || !json.Valid(block.Input) {
 				continue
 			}
 			toolCalls = append(toolCalls, types.ToolCall{
@@ -259,7 +255,7 @@ func raiseAnthropicResponse(resp anthropicResponse) *types.ChatResponse {
 		}
 	}
 
-	finishReason := resp.StopReason
+	finishReason := string(resp.StopReason)
 	switch finishReason {
 	case "end_turn":
 		finishReason = "stop"
@@ -285,12 +281,83 @@ func raiseAnthropicResponse(resp anthropicResponse) *types.ChatResponse {
 			FinishReason: finishReason,
 		}},
 		Usage: types.Usage{
-			PromptTokens:     resp.Usage.InputTokens,
-			CompletionTokens: resp.Usage.OutputTokens,
-			TotalTokens:      resp.Usage.InputTokens + resp.Usage.OutputTokens,
+			PromptTokens:     int(resp.Usage.InputTokens),
+			CompletionTokens: int(resp.Usage.OutputTokens),
+			TotalTokens:      int(resp.Usage.InputTokens + resp.Usage.OutputTokens),
 			PromptTokensDetails: &types.PromptTokensDetails{
-				CachedTokens: resp.Usage.CacheReadInputTokens,
+				CachedTokens: int(resp.Usage.CacheReadInputTokens),
 			},
 		},
+	}
+}
+
+// anthropicAPIError converts an SDK error into the structured APIError
+// consumed by errorclassify. Non-2xx responses carry the real HTTP status.
+// Mid-stream SSE `error` events surface through the SDK carrying the (200)
+// streaming status, so the provider error type is mapped to the status it
+// would have carried as a non-2xx response — errorclassify then routes
+// both delivery forms identically.
+func anthropicAPIError(err error) error {
+	var aerr *anthropic.Error
+	if !errors.As(err, &aerr) {
+		return err
+	}
+	status := aerr.StatusCode
+	if status < 400 {
+		status = anthropicErrorStatus(string(aerr.Type()))
+	}
+	return &APIError{
+		StatusCode: status,
+		Code:       string(aerr.Type()),
+		Message:    anthropicErrorMessage(aerr),
+	}
+}
+
+// anthropicErrorMessage extracts the human-readable message from an SDK
+// error's response body, falling back to the rendered error.
+func anthropicErrorMessage(aerr *anthropic.Error) string {
+	if raw := aerr.RawJSON(); raw != "" {
+		var body struct {
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+			Message string `json:"message"`
+		}
+		if json.Unmarshal([]byte(raw), &body) == nil {
+			if body.Error.Message != "" {
+				return body.Error.Message
+			}
+			if body.Message != "" {
+				return body.Message
+			}
+		}
+	}
+	if aerr.Request != nil && aerr.Response != nil {
+		return aerr.Error()
+	}
+	return string(aerr.Type())
+}
+
+// anthropicErrorStatus maps an Anthropic error type from a mid-stream
+// `error` event to the HTTP status it would carry as a non-2xx response,
+// so errorclassify routes both delivery forms identically.
+func anthropicErrorStatus(errType string) int {
+	switch errType {
+	case "invalid_request_error":
+		return http.StatusBadRequest
+	case "authentication_error":
+		return http.StatusUnauthorized
+	case "permission_error":
+		return http.StatusForbidden
+	case "not_found_error":
+		return http.StatusNotFound
+	case "request_too_large":
+		return http.StatusRequestEntityTooLarge
+	case "rate_limit_error":
+		return http.StatusTooManyRequests
+	case "overloaded_error":
+		return 529
+	default: // api_error and unknown types
+		return http.StatusInternalServerError
 	}
 }
