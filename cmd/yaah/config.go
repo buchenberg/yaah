@@ -51,6 +51,16 @@ var configShowCmd = &cobra.Command{
 			cmd.Println("  (none configured — run 'yaah config edit' to add one)")
 		}
 
+		// Embedding (semantic memory search)
+		cmd.Println()
+		cmd.Println("[embedding]")
+		if cfg.Embedding.Provider != "" {
+			cmd.Printf("  provider: %s\n", cfg.Embedding.Provider)
+			cmd.Printf("  model:    %s\n", cfg.Embedding.Model)
+		} else {
+			cmd.Println("  (not configured — semantic memory search disabled)")
+		}
+
 		cmd.Println()
 		cmd.Printf("[other]\n")
 		cmd.Printf("  editor:    %s\n", config.ResolveEditor(cfg))
