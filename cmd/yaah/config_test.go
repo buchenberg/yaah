@@ -39,7 +39,10 @@ func TestConfigShow_printsConfig(t *testing.T) {
 
 // TestConfigShow_printsEmbeddingSection pins the #316 regression: the
 // top-level embedding: stanza must render as an [embedding] section,
-// both when configured and when absent.
+// both when configured and when absent. The section must also report
+// embedderFor's real enablement condition: a half-set stanza or a
+// provider missing from the providers map means semantic search is
+// disabled, and the output must say so instead of implying "configured".
 func TestConfigShow_printsEmbeddingSection(t *testing.T) {
 	runConfigShow := func(t *testing.T, configYAML string) string {
 		t.Helper()
@@ -64,10 +67,16 @@ func TestConfigShow_printsEmbeddingSection(t *testing.T) {
 	}
 
 	t.Run("configured", func(t *testing.T) {
-		output := runConfigShow(t, "embedding:\n  provider: deepseek\n  model: text-embedding-v1\n")
+		output := runConfigShow(t, "providers:\n  deepseek:\n    base_url: https://api.deepseek.com/v1\n    api_key: sk-test-abcdef123456\nembedding:\n  provider: deepseek\n  model: text-embedding-v1\n")
 		for _, want := range []string{"[embedding]", "provider: deepseek", "model:    text-embedding-v1"} {
 			if !strings.Contains(output, want) {
 				t.Errorf("config show output missing %q\ngot:\n%s", want, output)
+			}
+		}
+		// A fully resolved embedder carries no disabled-note.
+		for _, unwanted := range []string{"(not configured", "(incomplete", "not found in [providers]"} {
+			if strings.Contains(output, unwanted) {
+				t.Errorf("configured embedding must not print %q\ngot:\n%s", unwanted, output)
 			}
 		}
 	})
@@ -79,6 +88,45 @@ func TestConfigShow_printsEmbeddingSection(t *testing.T) {
 		}
 		if !strings.Contains(output, "(not configured") {
 			t.Errorf("unconfigured embedding should say so\ngot:\n%s", output)
+		}
+	})
+
+	t.Run("incomplete provider only", func(t *testing.T) {
+		output := runConfigShow(t, "embedding:\n  provider: deepseek\n")
+		for _, want := range []string{
+			"provider: deepseek",
+			"model:    (not set)",
+			"(incomplete — semantic memory search disabled until provider and model are set)",
+		} {
+			if !strings.Contains(output, want) {
+				t.Errorf("config show output missing %q\ngot:\n%s", want, output)
+			}
+		}
+	})
+
+	t.Run("incomplete model only", func(t *testing.T) {
+		output := runConfigShow(t, "embedding:\n  model: text-embedding-v1\n")
+		for _, want := range []string{
+			"provider: (not set)",
+			"model:    text-embedding-v1",
+			"(incomplete — semantic memory search disabled until provider and model are set)",
+		} {
+			if !strings.Contains(output, want) {
+				t.Errorf("config show output missing %q\ngot:\n%s", want, output)
+			}
+		}
+	})
+
+	t.Run("unknown provider", func(t *testing.T) {
+		output := runConfigShow(t, "embedding:\n  provider: ghost\n  model: text-embedding-v1\n")
+		for _, want := range []string{
+			"provider: ghost",
+			"model:    text-embedding-v1",
+			"(provider ghost not found in [providers] — semantic memory search disabled)",
+		} {
+			if !strings.Contains(output, want) {
+				t.Errorf("config show output missing %q\ngot:\n%s", want, output)
+			}
 		}
 	})
 }

@@ -17,6 +17,7 @@ import (
 // sandbox Exec transport. Everything the workspace does in-band goes through
 // exactly these forms:
 //
+//	mkdir -p -- "$3" || exit 1             # write-path parent creation
 //	t=$(mktemp -- "$1.XXXXXX") || exit 1   # assignment + command substitution
 //	trap 'rm -f -- "$t" "$t.b64"' EXIT     # EXIT trap, expanded when run
 //	trap - EXIT                            # clearing an EXIT trap
