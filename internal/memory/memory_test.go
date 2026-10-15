@@ -806,6 +806,12 @@ func addMessageAndWait(t *testing.T, db *DB, m Message) {
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
+	// Final check: the embedding may have landed during the last sleep.
+	var emb []byte
+	db.sql.QueryRow(`SELECT COALESCE(embedding, '') FROM messages WHERE id = ?`, m.ID).Scan(&emb)
+	if len(emb) > 0 {
+		return
+	}
 	t.Fatalf("timed out waiting for embedding of message %s", m.ID)
 }
 

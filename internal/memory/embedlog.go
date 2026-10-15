@@ -29,9 +29,11 @@ type embedWarnLimiter struct {
 }
 
 // warn logs an embedding failure unless the quiet window is active. It
-// reports whether the warning was emitted. The mutex guards only the
-// limiter's bookkeeping — the slog call runs outside it.
+// reports whether the warning was emitted. The mutex guards all limiter
+// state, including the interval and clock snapshots; only the slog call
+// runs outside it.
 func (l *embedWarnLimiter) warn(op string, err error) bool {
+	l.mu.Lock()
 	interval := l.interval
 	if interval <= 0 {
 		interval = embedWarnInterval
@@ -40,8 +42,6 @@ func (l *embedWarnLimiter) warn(op string, err error) bool {
 	if nowFn == nil {
 		nowFn = time.Now
 	}
-
-	l.mu.Lock()
 	now := nowFn()
 	if !l.last.IsZero() && now.Sub(l.last) < interval {
 		l.suppressed++

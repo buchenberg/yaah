@@ -858,15 +858,16 @@ func TestMetrics_NoProvider(t *testing.T) {
 func TestRecordMemoryEmbedFailure_Counter(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	old := otel.GetMeterProvider()
-	otel.SetMeterProvider(mp)
-	defer func() {
-		otel.SetMeterProvider(old)
-		_ = mp.Shutdown(context.Background())
-	}()
+	defer func() { _ = mp.Shutdown(context.Background()) }()
 
+	// Bind the counter directly from the test provider instead of
+	// swapping the global provider and re-running initMetrics: every
+	// other package-level instrument stays untouched (no order
+	// dependence for later tests), and the sticky OTel global-meter
+	// delegation cannot route re-runs into a torn-down provider
+	// (review suggestion).
 	saved := memoryEmbedFailures
-	initMetrics()
+	memoryEmbedFailures, _ = mp.Meter("yaah").Int64Counter("yaah.memory.embed_failures")
 	defer func() { memoryEmbedFailures = saved }()
 
 	RecordMemoryEmbedFailure(context.Background(), "search_memory_vector")

@@ -80,6 +80,9 @@ func TestDB_AddMessage_EmbedFailureSurfaced(t *testing.T) {
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
+	// Final snapshot: the async warn may have landed during the last
+	// sleep, after the loop's final read.
+	out = logs.String()
 	if !strings.Contains(out, "embedding failed") {
 		t.Fatalf("expected warning log, got: %q", out)
 	}
