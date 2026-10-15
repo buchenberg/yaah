@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -241,6 +242,9 @@ func TestChatRequestToAnthropic_Tools(t *testing.T) {
 	}
 	if result.Tools[0].OfTool.Name != "get_weather" {
 		t.Errorf("expected tool name 'get_weather', got %q", result.Tools[0].OfTool.Name)
+	}
+	if !result.Tools[0].OfTool.Description.Valid() || result.Tools[0].OfTool.Description.Or("") != "Get weather" {
+		t.Errorf("expected tool description 'Get weather', got valid=%v value=%q", result.Tools[0].OfTool.Description.Valid(), result.Tools[0].OfTool.Description.Or(""))
 	}
 }
 
@@ -872,6 +876,29 @@ func TestTranslateAnthropicEvent_MessageStopFallback(t *testing.T) {
 	}
 }
 
+// TestTranslateAnthropicEvent_DeltaWithoutStopReasonThenStop pins that a
+// non-conforming proxy that sends message_delta without a stop_reason and
+// then message_stop yields exactly one finish chunk — the delta's chunk,
+// with no second synthesized chunk from the fallback.
+func TestTranslateAnthropicEvent_DeltaWithoutStopReasonThenStop(t *testing.T) {
+	st := &anthropicStreamState{}
+	deltaChunk, err := translateSSE(t, `{"type":"message_delta","delta":{},"usage":{"output_tokens":1}}`, st)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if deltaChunk == nil || deltaChunk.Choices[0].FinishReason == nil || *deltaChunk.Choices[0].FinishReason != "stop" {
+		t.Fatalf("expected finish chunk from the delta, got %+v", deltaChunk)
+	}
+
+	stopChunk, err := translateSSE(t, `{"type":"message_stop"}`, st)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if stopChunk != nil {
+		t.Errorf("expected no second finish chunk after any message_delta, got %+v", stopChunk)
+	}
+}
+
 func TestTranslateAnthropicEvent_MessageStopAfterDelta(t *testing.T) {
 	// Once a message_delta with stop_reason was seen, message_stop must
 	// not emit a second finish chunk.
@@ -1109,5 +1136,90 @@ func TestAnthropicSendStream_ProxyOmitsMessageDelta(t *testing.T) {
 	}
 	if finishReason == nil || *finishReason != "stop" {
 		t.Fatalf("expected synthesized finish reason 'stop', got %v", finishReason)
+	}
+}
+
+// ── review regression tests ──────────────────────────────────────
+
+// messageServer serves a canned Messages API response for one POST and
+// records the request headers.
+func messageServer(t *testing.T) (*httptest.Server, *struct {
+	Authorization string
+	APIKey        string
+	Body          map[string]any
+}) {
+	t.Helper()
+	capture := &struct {
+		Authorization string
+		APIKey        string
+		Body          map[string]any
+	}{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capture.Authorization = r.Header.Get("Authorization")
+		capture.APIKey = r.Header.Get("x-api-key")
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &capture.Body)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"m1","type":"message","role":"assistant","model":"claude-3.5-sonnet","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}`)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, capture
+}
+
+// TestAnthropicSend_IgnoresEnvCredentials pins that a stray
+// ANTHROPIC_AUTH_TOKEN (or other SDK default credential source) never
+// reaches the endpoint: yaah's configured API key is the only credential
+// sent. Without WithoutEnvironmentDefaults the SDK's default chain would
+// attach the env bearer token as an Authorization header alongside yaah's
+// x-api-key.
+func TestAnthropicSend_IgnoresEnvCredentials(t *testing.T) {
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "env-secret-token")
+	t.Setenv("ANTHROPIC_API_KEY", "env-secret-api-key")
+
+	srv, capture := messageServer(t)
+	client := NewAnthropicClient(srv.URL, "sk-test", 30)
+
+	resp, err := client.Send(context.Background(), types.ChatRequest{
+		Model:     "claude-3.5-sonnet",
+		MaxTokens: 64,
+		Messages:  []types.Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Choices[0].Message.Content != "ok" {
+		t.Errorf("expected content 'ok', got %q", resp.Choices[0].Message.Content)
+	}
+	if capture.Authorization != "" {
+		t.Errorf("Authorization header must not be sent (env credentials must be ignored), got %q", capture.Authorization)
+	}
+	if capture.APIKey != "sk-test" {
+		t.Errorf("expected x-api-key 'sk-test', got %q", capture.APIKey)
+	}
+}
+
+// TestAnthropicSend_NoSDKNonStreamingTimeoutPolicy pins that the SDK's
+// non-streaming policy never overrides yaah's timeout configuration.
+// Messages.New otherwise caps calls at ten minutes and rejects requests
+// whose max_tokens implies a longer call ("streaming is required") —
+// breaking timeout=0 (unlimited) and large non-streaming token budgets
+// that the previous transport allowed.
+func TestAnthropicSend_NoSDKNonStreamingTimeoutPolicy(t *testing.T) {
+	srv, _ := messageServer(t)
+
+	// timeout=0 means unlimited; MaxTokens 32768 would make the SDK's
+	// calculated policy reject the request client-side before the fix.
+	client := NewAnthropicClient(srv.URL, "sk-test", 0)
+
+	resp, err := client.Send(context.Background(), types.ChatRequest{
+		Model:     "claude-3.5-sonnet",
+		MaxTokens: 32768,
+		Messages:  []types.Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("large non-streaming budget with unlimited timeout must not be rejected: %v", err)
+	}
+	if resp.Choices[0].Message.Content != "ok" {
+		t.Errorf("expected content 'ok', got %q", resp.Choices[0].Message.Content)
 	}
 }

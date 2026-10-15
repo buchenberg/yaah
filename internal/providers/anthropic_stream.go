@@ -9,10 +9,12 @@ import (
 )
 
 // anthropicStreamState carries translation state across the events of one
-// stream: whether a message_delta carrying a stop_reason was seen, so the
-// message_stop fallback knows whether to synthesize a finish reason.
+// stream: whether a message_delta was seen. A message_delta always carries
+// the finish chunk for the stream, so the message_stop fallback synthesizes
+// a finish reason only when the provider (or an Anthropic-compatible proxy)
+// omitted the delta entirely.
 type anthropicStreamState struct {
-	sawStopReason bool
+	sawMessageDelta bool
 }
 
 // SendStream sends a streaming chat request and returns a channel of
@@ -126,8 +128,8 @@ func translateAnthropicEvent(event anthropic.MessageStreamEventUnion, st *anthro
 
 	case anthropic.MessageDeltaEvent:
 		finishReason := "stop"
+		st.sawMessageDelta = true
 		if e.Delta.StopReason != "" {
-			st.sawStopReason = true
 			switch e.Delta.StopReason {
 			case "tool_use":
 				finishReason = "tool_calls"
@@ -159,7 +161,7 @@ func translateAnthropicEvent(event anthropic.MessageStreamEventUnion, st *anthro
 		// with stop_reason before message_stop. Some Anthropic-compatible
 		// proxies skip it; without this fallback a fully assembled
 		// response would be discarded as a premature stream close.
-		if !st.sawStopReason {
+		if !st.sawMessageDelta {
 			finishReason := "stop"
 			return &StreamChunk{
 				Choices: []StreamChoice{{

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -40,15 +41,39 @@ func NewAnthropicClient(baseURL, apiKey string, timeoutSeconds int) *AnthropicCl
 		to = 120 * time.Second
 	}
 	opts := []option.RequestOption{
+		// yaah is the sole credential resolver. Without this marker the
+		// SDK's default chain reads ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN
+		// from the environment first; a stray ANTHROPIC_AUTH_TOKEN would
+		// then be sent as an Authorization header alongside yaah's x-api-key
+		// to whatever endpoint yaah is configured for (DeepSeek, ZAI, ...).
+		option.WithoutEnvironmentDefaults(),
 		option.WithBaseURL(baseURL),
 		option.WithAPIKey(apiKey),
 		option.WithMaxRetries(0),
 		option.WithHTTPClient(&http.Client{Timeout: to}),
+		// An explicit request timeout also bypasses the SDK's
+		// non-streaming policy, which otherwise caps Messages.New at ten
+		// minutes and rejects requests whose max_tokens implies a longer
+		// call ("streaming is required"). yaah's configured timeout —
+		// including unlimited — must be the only deadline.
+		option.WithRequestTimeout(anthropicRequestTimeout(to)),
 	}
 	return &AnthropicClient{
 		client:   anthropic.NewClient(opts...),
 		baseOpts: opts,
 	}
+}
+
+// anthropicRequestTimeout maps yaah's HTTP timeout to an explicit SDK
+// request timeout. A non-positive configured timeout means "no timeout";
+// the SDK treats an unset (zero) RequestTimeout as "apply the default
+// policy", so unlimited is expressed as the largest representable
+// duration (~292 years).
+func anthropicRequestTimeout(to time.Duration) time.Duration {
+	if to > 0 {
+		return to
+	}
+	return time.Duration(math.MaxInt64)
 }
 
 // requestOpts returns the base options plus session-affinity headers when
@@ -84,10 +109,11 @@ func (c *AnthropicClient) ListModels(ctx context.Context) ([]string, error) {
 	return nil, fmt.Errorf("anthropic Messages API does not support model listing")
 }
 
-// anthropicCacheControl maps yaah's cache marker to the SDK param.
-// "ephemeral" is the only cache type the Messages API supports, so any
-// configured type lowers to an ephemeral breakpoint.
-func anthropicCacheControl(cc types.CacheControl) anthropic.CacheControlEphemeralParam {
+// anthropicCacheControl returns the cache-control breakpoint param. The
+// Messages API supports a single cache type ("ephemeral") and yaah's
+// types.CacheControl carries only that type field, so every configured
+// marker lowers to an ephemeral breakpoint.
+func anthropicCacheControl() anthropic.CacheControlEphemeralParam {
 	return anthropic.NewCacheControlEphemeralParam()
 }
 
@@ -96,7 +122,7 @@ func anthropicCacheControl(cc types.CacheControl) anthropic.CacheControlEphemera
 func anthropicTextBlock(text string, cc *types.CacheControl) anthropic.ContentBlockParamUnion {
 	block := anthropic.TextBlockParam{Text: text}
 	if cc != nil {
-		block.CacheControl = anthropicCacheControl(*cc)
+		block.CacheControl = anthropicCacheControl()
 	}
 	return anthropic.ContentBlockParamUnion{OfText: &block}
 }
@@ -118,7 +144,7 @@ func lowerAnthropicRequest(req types.ChatRequest) anthropic.MessageNewParams {
 		if m.Role == "system" {
 			block := anthropic.TextBlockParam{Text: m.Content}
 			if m.CacheControl != nil {
-				block.CacheControl = anthropicCacheControl(*m.CacheControl)
+				block.CacheControl = anthropicCacheControl()
 			}
 			sysBlocks = append(sysBlocks, block)
 		} else {
@@ -204,7 +230,13 @@ func lowerAnthropicRequest(req types.ChatRequest) anthropic.MessageNewParams {
 				schema = anthropic.ToolInputSchemaParam{}
 			}
 		}
-		tools = append(tools, anthropic.ToolUnionParamOfTool(schema, t.Function.Name))
+		tools = append(tools, anthropic.ToolUnionParam{
+			OfTool: &anthropic.ToolParam{
+				InputSchema: schema,
+				Name:        t.Function.Name,
+				Description: param.NewOpt(t.Function.Description),
+			},
+		})
 	}
 
 	maxTokens := int64(req.MaxTokens)
@@ -333,9 +365,13 @@ func anthropicErrorMessage(aerr *anthropic.Error) string {
 		}
 	}
 	if aerr.Request != nil && aerr.Response != nil {
-		return aerr.Error()
+		return truncateRunes(aerr.Error(), 512)
 	}
-	return string(aerr.Type())
+	msg := strings.TrimSpace(string(aerr.Type()))
+	if msg == "" {
+		msg = "api error"
+	}
+	return msg
 }
 
 // anthropicErrorStatus maps an Anthropic error type from a mid-stream
