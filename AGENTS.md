@@ -180,7 +180,13 @@ registration is shared between stdio and HTTP transports via
 - **No third-party HTTP client.** Use `net/http` from stdlib.
 - **`gopkg.in/yaml.v3`** for config parsing.
 - **`modernc.org/sqlite`** for SQLite (pure Go, no CGo, FTS5 included).
-- **No model SDK.** Direct HTTP to `chat/completions`.
+- **No model SDK for the OpenAI-compat path.** Direct HTTP to
+  `chat/completions` — the compat client serves 6+ providers whose
+  extension fields (`reasoning_content`, copilot mode, thinking overrides)
+  no SDK round-trips. Exception: the native Anthropic path
+  (`api: anthropic`) uses `github.com/anthropics/anthropic-sdk-go` for
+  wire types, SSE decoding, and typed errors; policy (retries, fallback,
+  classification) stays in yaah.
 
 ## Style
 
