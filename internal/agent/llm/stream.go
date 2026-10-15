@@ -39,6 +39,14 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 	start := time.Now()
 	chunks, errs := sp.SendStream(ctx, req)
 
+	// Beat while waiting for the first chunk: nothing drives the
+	// chunk-based heartbeat yet, so a slow provider queue or model load
+	// would starve the stuck-child watchdog (yaah-1ep). Stopped once the
+	// first chunk arrives — from there, per-chunk liveness takes over so
+	// a genuinely stalled stream is still detectable.
+	stopWaitHB := c.startWaitHeartbeat(ctx)
+	defer stopWaitHB()
+
 	var content strings.Builder
 	var reasoning strings.Builder
 	var dsmlFilter dsmlTokenFilter
@@ -59,10 +67,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 		observability.RecordStreamEnd(streamSpan, path, finishReason, usageCaptured, len(msg.Content), len(msg.ToolCalls))
 	}
 
-	hbInterval := c.HeartbeatInterval
-	if hbInterval <= 0 {
-		hbInterval = 5 * time.Second
-	}
+	hbInterval := c.heartbeatInterval()
 	var lastHeartbeat time.Time
 	emitHeartbeat := func() {
 		if time.Since(lastHeartbeat) > hbInterval {
@@ -104,7 +109,9 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 			// reasoning-only and tool-call chunks prove the stream is
 			// alive. Counting only content starves the stuck-child
 			// watchdog during long thinking phases of reasoning models
-			// (yaah-1ep).
+			// (yaah-1ep). The first chunk also ends the TTFT wait
+			// ticker.
+			stopWaitHB()
 			emitHeartbeat()
 
 			if !firstToken {
