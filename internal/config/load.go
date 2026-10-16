@@ -253,6 +253,14 @@ type SubAgentConfig struct {
 	// bytes before it reaches the orchestrator. 0 means unlimited.
 	OutputLimit int `yaml:"output_limit"`
 
+	// Containment selects the syscall jail for workdir sub-agent dispatches
+	// (Plan 7). "" / "off" / "advisory" leave the host path; "auto" jails on a
+	// Landlock-capable host and falls back to advisory elsewhere; "paddock"
+	// (alias "jail") fails closed when the host cannot jail. Default off — and
+	// the orchestrator's own commands are never jailed either way, only a
+	// dispatched sub-agent's.
+	Containment string `yaml:"containment"`
+
 	// Roles holds per-role overrides keyed by role name
 	// ("analyst", "developer", "tester", "reviewer").
 	Roles map[string]RoleConfig `yaml:"roles"`

@@ -10,6 +10,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"time"
+
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 )
 
 // ExecRequest describes a command to run in a workspace.
@@ -107,8 +111,22 @@ type WorkspaceSetter interface {
 
 // localWorkspace is the host filesystem: the default, and what every session
 // used before workspaces existed.
+//
+// When a confiner is set, Exec runs commands under the syscall jail (Landlock on
+// Linux) with the workspace as the sole writable root. The orchestrator's
+// workspace never carries one, so its commands keep running unconfined; a
+// confiner is attached only on the sub-agent workdir lane (that run's bound
+// world).
 type localWorkspace struct {
 	pv *PathValidator
+
+	// confiner, when non-nil, is the syscall-deny backend. nil is the host path:
+	// commands run unconfined (the orchestrator's workspace, always).
+	confiner containment.Backend
+	// placement decides whether a confined run jails or falls back to advisory.
+	placement confinement.Placement
+	// network is the egress axis of the confinement spec.
+	network containment.NetworkPolicy
 }
 
 var _ Workspace = (*localWorkspace)(nil)
@@ -116,6 +134,19 @@ var _ Workspace = (*localWorkspace)(nil)
 func newLocalWorkspace(pv *PathValidator) *localWorkspace {
 	return &localWorkspace{pv: pv}
 }
+
+// NewConfinedLocalWorkspace returns a local workspace whose commands run under
+// backend's syscall jail, with the workspace's working directory as the sole
+// writable root. placement resolves whether the jail is used: PlacementPaddock
+// fails closed when the host cannot jail, PlacementAuto falls back to advisory,
+// PlacementAdvisory never jails. The orchestrator's workspace is never built
+// this way.
+func NewConfinedLocalWorkspace(pv *PathValidator, backend containment.Backend, placement confinement.Placement, network containment.NetworkPolicy) *localWorkspace {
+	return &localWorkspace{pv: pv, confiner: backend, placement: placement, network: network}
+}
+
+// Confined reports whether this workspace carries a syscall-jail backend.
+func (w *localWorkspace) Confined() bool { return w.confiner != nil }
 
 func (w *localWorkspace) ResolvePath(path string) (string, error) {
 	return resolvePathWithPV(w.pv, path)
@@ -173,9 +204,37 @@ func (w *localWorkspace) MkdirAll(_ context.Context, path string, perm fs.FileMo
 	return os.MkdirAll(path, perm)
 }
 
-// Exec runs a command on the host with combined output, matching what the shell
-// tools produced before workspaces existed.
+// Exec runs a command in the workspace. On the orchestrator's host workspace (no
+// confiner) it runs directly; on a confined workspace it runs under the syscall
+// jail, rooted at the workspace's working directory.
 func (w *localWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResult, error) {
+	if w.confiner == nil {
+		if w.placement == confinement.PlacementPaddock {
+			// Fail closed: a paddock placement with no backend refuses rather
+			// than running unconfined.
+			return ExecResult{ExitCode: -1}, fmt.Errorf(
+				"%w: no syscall-jail backend on this host", containment.ErrPaddockNotEstablished)
+		}
+		return w.advisoryExec(ctx, req)
+	}
+
+	available := true
+	if ok, _ := w.confiner.Available(); !ok {
+		available = false
+	}
+	confine, err := confinement.ResolvePlacement(w.placement, available)
+	if err != nil {
+		return ExecResult{ExitCode: -1}, err
+	}
+	if !confine {
+		return w.advisoryExec(ctx, req)
+	}
+	return w.confinedExec(ctx, req)
+}
+
+// advisoryExec is the unconfined host path — the behaviour every session had
+// before workspaces, and the fallback when no jail is available.
+func (w *localWorkspace) advisoryExec(ctx context.Context, req ExecRequest) (ExecResult, error) {
 	cmd := exec.CommandContext(ctx, req.Command, req.Args...)
 	dir := req.Cwd
 	if dir == "" {
@@ -210,6 +269,50 @@ func (w *localWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResult,
 		}
 	}
 	return res, err
+}
+
+// confinedExec runs the command under the syscall jail, with the workspace's
+// working directory as the sole writable root. Output is combined unless the
+// request asked for separate streams, matching the host path. A jail that could
+// not be established is reported as a launch failure (ExitCode -1) — the command
+// never ran, so there is no unconfined fallback.
+func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (ExecResult, error) {
+	root := w.WorkDir()
+	spec := containment.ConfinementSpec{
+		WritableRoots: []string{root},
+		Network:       w.network,
+	}
+	lreq := containment.LaunchRequest{
+		Command:     append([]string{req.Command}, req.Args...),
+		WorkingRoot: root,
+		Cwd:         req.Cwd,
+		Stdin:       req.Stdin,
+	}
+	if dl, ok := ctx.Deadline(); ok {
+		// A passed deadline gives a negative duration; leave Timeout unset
+		// rather than passing a nonsensical value to the backend.
+		if d := time.Until(dl); d > 0 {
+			lreq.Timeout = d
+		}
+	}
+	res, err := containment.LaunchConfined(w.confiner, spec, lreq)
+	if err != nil {
+		// A jail that could not be established is a launch failure, not a
+		// result: return the error so callers see it, never a silent success.
+		return ExecResult{ExitCode: -1, Stderr: err.Error()}, err
+	}
+	out := ExecResult{ExitCode: res.ExitCode}
+	if req.SeparateStreams {
+		out.Stdout, out.Stderr = res.Stdout, res.Stderr
+	} else {
+		out.Stdout = res.Stdout + res.Stderr
+	}
+	if res.ExitCode != 0 {
+		// Match the host path's wording (exec's *exec.ExitError) so callers
+		// that surface the message read the same either way.
+		return out, fmt.Errorf("exit status %d", res.ExitCode)
+	}
+	return out, nil
 }
 
 // workspaceOf returns a tool's injected workspace, falling back to a local
