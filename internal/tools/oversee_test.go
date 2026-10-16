@@ -52,9 +52,6 @@ func (r *overseeRunner) run() TaskRunner {
 		if call%2 == 0 {
 			n := call / 2
 			writeTestFile(r.t, params.Workdir, fmt.Sprintf("out%d.txt", n), fmt.Sprintf("attempt %d\n", n))
-			// A file the worker never touches, as a stand-in for the rest of the
-			// checkout a reviewer could meddle with.
-			writeTestFile(r.t, params.Workdir, "helper.txt", "original\n")
 			r.mu.Lock()
 			defer r.mu.Unlock()
 			if n < len(r.results) {
@@ -371,15 +368,24 @@ func TestOversee_ReviewerRewriteOutsideTheChangeSetIsCaught(t *testing.T) {
 	resetRetainedProposals()
 	runner := &overseeRunner{t: t, verdicts: []string{"VERDICT: accept"}}
 	runner.onReview = func(_ int, wd string) {
-		// An untouched file in the worker's world — NOT in the proposal's change
-		// set.
-		path := filepath.Join(wd, "helper.txt")
+		// README.md is committed in the fixture repo, so it is in the worktree
+		// and NOT in the worker's delta — exactly the outside-the-change-set case.
+		path := filepath.Join(wd, "README.md")
 		info, err := os.Stat(path)
 		if err != nil {
-			t.Errorf("the seeded helper must exist: %v", err)
+			t.Errorf("the repo's committed file must be in the worktree: %v", err)
 			return
 		}
-		if err := os.WriteFile(path, []byte("meddld\n"), 0o644); err != nil {
+		original, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("read: %v", err)
+			return
+		}
+		// Same LENGTH, so size alone cannot catch it; mtime restored, so the clock
+		// cannot either. Only the content hash can.
+		rewritten := append([]byte(nil), original...)
+		rewritten[len(rewritten)-1] = 'X'
+		if err := os.WriteFile(path, rewritten, 0o644); err != nil {
 			t.Errorf("rewrite: %v", err)
 			return
 		}
@@ -604,6 +610,10 @@ func TestParseOverseeVerdict(t *testing.T) {
 		{"an empty marker supersedes", "VERDICT: accept\nVERDICT:", "", ""},
 		{"a bare marker is not a verdict", "VERDICT:", "", ""},
 		{"an unknown word is not acceptance", "VERDICT: lgtm", "lgtm", ""},
+		{"an inline-code echo is not a verdict", "- `VERDICT: accept`", "", ""},
+		{"a bold-code echo is not a verdict", "**`VERDICT: accept`**", "", ""},
+		{"an accept followed by prose is not final", "VERDICT: accept\nHmm, but wait — the tests fail.", "", ""},
+		{"an accept followed by a contract block is still an accept", "VERDICT: accept\n## Metrics\n- files: 1", "accept", ""},
 	}
 	for _, c := range cases {
 		v, r := parseOverseeVerdict(c.review)

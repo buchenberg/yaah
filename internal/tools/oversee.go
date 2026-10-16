@@ -368,17 +368,15 @@ func runOverseeReview(ctx context.Context, t *OverseeTool, reviewer string, p *r
 	return t.Runtime.Runner(runCtx, prompt, params)
 }
 
-// maxHashedFileSize bounds the files that get a content hash. Every file
-// contributes size + mtime; files up to this size also contribute a digest, so a
-// same-size write that restored the clock is still caught anywhere in the tree —
-// not just in the parts we expect a reviewer to touch. The bound exists only for
-// pathological entries: hashing a whole checkout twice is cheap next to the LLM
-// dispatch a round costs, which is why the filter is a size cap rather than a
-// path allowlist.
-const maxHashedFileSize = 8 << 20
-
 // worldFingerprint records what a world contains, so the review can be checked
-// for writes. The confinement scratch is excluded — our own review dispatch
+// for writes. Every regular file is digested: a same-size write that restored the
+// clock must not be invisible anywhere in the tree — not just in the parts a
+// reviewer is expected to touch. Size and mtime ride along so a change is cheap
+// to describe, but the digest is what makes the check complete. Hashing a
+// checkout twice per round costs a fraction of what the round's LLM dispatch
+// costs, so completeness wins.
+//
+// The confinement scratch is excluded — our own review dispatch
 // creates it — as is .git, which the retained worktree may not even own (a
 // linked worktree's git dir lives in the original repository).
 func worldFingerprint(root string) (map[string]string, error) {
@@ -405,17 +403,12 @@ func worldFingerprint(root string) (map[string]string, error) {
 			fp[rel] = "irregular"
 			return nil
 		}
-		entry := fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano())
-		if info.Size() <= maxHashedFileSize {
-			sum, herr := fileHash(p)
-			if herr != nil {
-				// Not being able to hash a file is a failure to verify, not a
-				// pass.
-				return herr
-			}
-			entry += ":" + sum
+		sum, herr := fileHash(p)
+		if herr != nil {
+			// Not being able to hash a file is a failure to verify, not a pass.
+			return herr
 		}
-		fp[rel] = entry
+		fp[rel] = fmt.Sprintf("%d:%d:%s", info.Size(), info.ModTime().UnixNano(), sum)
 		return nil
 	})
 	return fp, err
@@ -522,6 +515,12 @@ func parseOverseeVerdict(review string) (verdict, reason string) {
 	lines := stripFenced(review)
 	idx, word, known := -1, "", false
 	for i, ln := range lines {
+		if isQuotedVerdict(ln) {
+			// An inline code span is a quotation — the prompt itself shows
+			// `VERDICT: accept`, so an echo of the format must not be read as the
+			// reviewer's judgement.
+			continue
+		}
 		w, ok := verdictWord(ln)
 		if !ok {
 			continue
@@ -531,6 +530,13 @@ func parseOverseeVerdict(review string) (verdict, reason string) {
 		idx, word, known = i, w, w != ""
 	}
 	if idx < 0 || !known {
+		return "", ""
+	}
+	// The contract is that the reply ENDS with the verdict. An acceptance with
+	// judgement still to come is not an acceptance — and that is exactly the
+	// shape a quoted echo takes, so this is the second guard against it (the
+	// first being isQuotedVerdict).
+	if word == verdictAccept && !verdictIsFinal(lines, idx) {
 		return "", ""
 	}
 
@@ -552,6 +558,31 @@ func parseOverseeVerdict(review string) (verdict, reason string) {
 		parts = append(parts, trimmed)
 	}
 	return word, strings.TrimSpace(strings.Join(parts, "\n"))
+}
+
+// verdictIsFinal reports whether nothing meaningful follows the verdict, other
+// than a trailing contract/fence block (the role's own response contract may
+// still be appended after an overriding verdict).
+func verdictIsFinal(lines []string, idx int) bool {
+	for _, ln := range lines[idx+1:] {
+		trimmed := strings.TrimSpace(ln)
+		if trimmed == "" {
+			continue
+		}
+		return strings.HasPrefix(trimmed, "## ") || strings.HasPrefix(trimmed, "```")
+	}
+	return true
+}
+
+// isQuotedVerdict reports whether a line is nothing but an inline code span (or a
+// list item wrapping one), i.e. a quotation rather than a judgement.
+func isQuotedVerdict(line string) bool {
+	t := strings.TrimSpace(strings.Trim(strings.TrimSpace(line), "*_#"))
+	t = strings.TrimSpace(strings.TrimLeft(t, "-• "))
+	if len(t) < 2 || !strings.HasPrefix(t, "`") || !strings.HasSuffix(t, "`") {
+		return false
+	}
+	return !strings.Contains(t[1:len(t)-1], "`")
 }
 
 // stripFenced blanks out fenced code blocks so a verdict line inside one (a
