@@ -289,11 +289,17 @@ func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (Exe
 		Stdin:       req.Stdin,
 	}
 	if dl, ok := ctx.Deadline(); ok {
-		lreq.Timeout = time.Until(dl)
+		// A passed deadline gives a negative duration; leave Timeout unset
+		// rather than passing a nonsensical value to the backend.
+		if d := time.Until(dl); d > 0 {
+			lreq.Timeout = d
+		}
 	}
 	res, err := containment.LaunchConfined(w.confiner, spec, lreq)
 	if err != nil {
-		return ExecResult{ExitCode: -1, Stderr: err.Error()}, nil
+		// A jail that could not be established is a launch failure, not a
+		// result: return the error so callers see it, never a silent success.
+		return ExecResult{ExitCode: -1, Stderr: err.Error()}, err
 	}
 	out := ExecResult{ExitCode: res.ExitCode}
 	if req.SeparateStreams {
@@ -302,7 +308,9 @@ func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (Exe
 		out.Stdout = res.Stdout + res.Stderr
 	}
 	if res.ExitCode != 0 {
-		return out, fmt.Errorf("command exited with status %d", res.ExitCode)
+		// Match the host path's wording (exec's *exec.ExitError) so callers
+		// that surface the message read the same either way.
+		return out, fmt.Errorf("exit status %d", res.ExitCode)
 	}
 	return out, nil
 }

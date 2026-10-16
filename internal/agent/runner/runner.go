@@ -991,12 +991,14 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 
 		// Confinement seam (Plan 7 Phase 1): on the sub-agent workdir lane the
 		// sub-agent's shell runs under the syscall jail when configured, with
-		// the worktree as its sole writable root. The orchestrator's workspace
-		// is built in the wiring and never carries a confiner, so its commands
-		// keep running unconfined on the host.
-		if ws := confinedSubAgentWorkspace(pv, opts.subCfg); ws != nil {
-			if err := reg.SetWorkspace(ws); err != nil {
-				slog.Debug("sub-agent confinement unavailable", "workdir", workdir, "err", err)
+		// the worktree as its sole writable root. Guarded on workdir: only that
+		// lane has a bound world to jail against. The orchestrator's workspace
+		// and a workdir-less (shared-host) sub-agent keep running unconfined.
+		if workdir != "" {
+			if ws := confinedSubAgentWorkspace(pv, opts.subCfg); ws != nil {
+				if err := reg.SetWorkspace(ws); err != nil {
+					slog.Debug("sub-agent confinement unavailable", "workdir", workdir, "err", err)
+				}
 			}
 		}
 	}

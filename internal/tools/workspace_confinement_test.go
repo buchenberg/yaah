@@ -109,3 +109,47 @@ func TestConfinedWorkspace_PaddockFailsClosed(t *testing.T) {
 		t.Fatal("a paddock placement with no backend must refuse, not run unconfined")
 	}
 }
+
+// unavailableBackend reports itself unavailable, to exercise the branch where a
+// confiner is bound but the host cannot establish the jail.
+type unavailableBackend struct{}
+
+func (unavailableBackend) Name() string                             { return "unavailable" }
+func (unavailableBackend) EnforcementTier() string                  { return "none" }
+func (unavailableBackend) Available() (bool, string)                { return false, "no LSM" }
+func (unavailableBackend) SupportsNetwork(containment.NetMode) bool { return true }
+func (unavailableBackend) ProfileFor([]string, containment.NetworkPolicy) string {
+	return ""
+}
+func (unavailableBackend) Probe(string, string, []string) error { return nil }
+func (unavailableBackend) Launch(string, containment.LaunchRequest) (containment.LaunchResult, error) {
+	return containment.LaunchResult{}, nil
+}
+
+// A bound backend that turns out to be unavailable, with PlacementPaddock, must
+// fail closed — Exec refuses rather than silently running unconfined.
+func TestConfinedWorkspace_BoundBackendUnavailableFailsClosed(t *testing.T) {
+	root := t.TempDir()
+	pv := NewPathValidator(root, false, nil)
+	pv.WorkDir = pv.WorkspaceRoot
+	ws := NewConfinedLocalWorkspace(pv, unavailableBackend{}, confinement.PlacementPaddock,
+		containment.NetworkPolicy{Mode: containment.NetAllowAll})
+	if _, err := ws.Exec(context.Background(), ExecRequest{Command: "true"}); err == nil {
+		t.Fatal("paddock with an unavailable backend must refuse, not run unconfined")
+	}
+}
+
+// The same bound-but-unavailable backend under PlacementAuto degrades to the
+// host (advisory) path.
+func TestConfinedWorkspace_BoundBackendUnavailableAdvisory(t *testing.T) {
+	root := t.TempDir()
+	pv := NewPathValidator(root, false, nil)
+	pv.WorkDir = pv.WorkspaceRoot
+	ws := NewConfinedLocalWorkspace(pv, unavailableBackend{}, confinement.PlacementAuto,
+		containment.NetworkPolicy{Mode: containment.NetAllowAll})
+	shell, flag := ws.Shell()
+	res, err := ws.Exec(context.Background(), ExecRequest{Command: shell, Args: []string{flag, "echo hi"}})
+	if err != nil || res.ExitCode != 0 {
+		t.Fatalf("auto with an unavailable backend should run advisory: %+v err=%v", res, err)
+	}
+}

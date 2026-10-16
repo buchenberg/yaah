@@ -120,7 +120,7 @@ func Validate(cfg *Config) error {
 	case "", "off", "none", "advisory", "auto", "paddock", "jail":
 	default:
 		errs = append(errs, fmt.Sprintf(
-			"agents.subagent.containment %q is not one of: off, advisory, auto, paddock",
+			"agents.subagent.containment %q is not one of: off (or none), advisory, auto, paddock (or jail)",
 			cfg.Agent.SubAgent.Containment))
 	}
 
