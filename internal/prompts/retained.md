@@ -25,3 +25,11 @@ run git write commands (`add`, `commit`, `stash`). Its changes reach your tree a
 file edits when you settle the proposal — so ask it for the change, not for a
 commit, and do the committing yourself afterwards. When the two disagree — you
 want it to build, it reports it could not commit — this is why.
+
+**When the work has to be *good*, use `oversee`.** `spawn_subagent` returns the
+proposal for **you** to judge. When you would rather delegate the judgement — or
+the task is the kind that usually needs a second pass — `oversee` runs the same
+retained dispatch and has a reviewer sub-agent inspect it, discarding a rejected
+round and re-dispatching with the reviewer's feedback, then settling the round it
+accepts. It costs two dispatches per round, so use it for work whose quality
+matters, not for a task you can check with a glance.

@@ -690,6 +690,13 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		// the prompt must not advertise a settlement that can never happen).
 		if sessionSandbox == nil && retainedMode(cfg.Agent.SubAgent.Mode) && rootScopeID != "" {
 			toolReg.Register(&tools.ProposalTool{})
+			// Oversee tool (Plan 7 Phase 4): retry-until-acceptable over the same
+			// retained lane. Registered with the settlement tool it composes —
+			// it needs the retained runtime, which only exists when that lane is
+			// live.
+			if taskTool.Retained != nil {
+				toolReg.Register(&tools.OverseeTool{Runtime: taskTool.Retained})
+			}
 		}
 
 		// Supervised task tool — blocking sub-agent execution with
