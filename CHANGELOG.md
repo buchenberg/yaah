@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.79.6](https://github.com/buchenberg/yaah/compare/v0.79.5...v0.79.6) (2026-10-16)
+
+
+### Bug Fixes
+
+* **llm,prompts:** recover attribute-style tool-call dialects, guard markup-only reports, gate prompts on real tool sets ([23db4c8](https://github.com/buchenberg/yaah/commit/23db4c8947012f924894a2d907915679e0f28517))
+
 ## [0.79.5](https://github.com/buchenberg/yaah/compare/v0.79.4...v0.79.5) (2026-10-16)
 
 
