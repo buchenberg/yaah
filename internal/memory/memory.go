@@ -735,10 +735,20 @@ func (d *DB) GetMemory(id string) (Entry, error) {
 	return e, err
 }
 
-// DeleteMemory removes a memory entry by ID.
+// DeleteMemory removes a memory entry by ID. A delete matching no rows
+// is an error, not a success: tool callers pass back whatever ID the
+// tools surfaced, and a silent no-op delete let truncated IDs report
+// "deleted" while the row — and its duplicates — accumulated (#328).
 func (d *DB) DeleteMemory(id string) error {
-	_, err := d.sql.Exec(`DELETE FROM memory WHERE id = ?`, id)
-	return err
+	result, err := d.sql.Exec(`DELETE FROM memory WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("memory not found: %s", id)
+	}
+	return nil
 }
 
 // UpdateMemory updates the text of an existing memory entry.

@@ -322,9 +322,11 @@ func TestDB_DeleteMemory(t *testing.T) {
 		t.Errorf("expected 0 memories after delete, got %d", len(all))
 	}
 
-	// Deleting again should not error (no-op)
-	if err := db.DeleteMemory("mem-1"); err != nil {
-		t.Errorf("DeleteMemory() on non-existent should not error: %v", err)
+	// Deleting again must error (#328): a delete matching no rows used
+	// to report success, which let truncated-ID deletes fake-succeed
+	// while the row — and duplicates of it — accumulated.
+	if err := db.DeleteMemory("mem-1"); err == nil || !strings.Contains(err.Error(), "memory not found") {
+		t.Errorf("DeleteMemory() on non-existent = %v, want memory-not-found error", err)
 	}
 }
 
@@ -1281,5 +1283,36 @@ func TestDB_ReconcileEmbeddings_EmbedFailureSkipsRow(t *testing.T) {
 	}
 	if len(blob) != 0 {
 		t.Error("failed reconcile must leave embedding NULL")
+	}
+}
+
+// TestDB_DeleteMemory_NotFound pins the #328 fix: a delete matching no
+// rows must report "memory not found" instead of silently succeeding —
+// the fake success let truncated-ID deletes diverge the DB and
+// duplicates accumulate.
+func TestDB_DeleteMemory_NotFound(t *testing.T) {
+	db := openTestDB(t)
+	err := db.DeleteMemory("mem-0000000000000000000000000000dead")
+	if err == nil || !strings.Contains(err.Error(), "memory not found") {
+		t.Fatalf("DeleteMemory(nonexistent) = %v, want a memory-not-found error", err)
+	}
+}
+
+// TestDB_DeleteMemory_RemovesRow covers the happy path and the
+// consume-once behavior of the new RowsAffected check.
+func TestDB_DeleteMemory_RemovesRow(t *testing.T) {
+	db := openTestDB(t)
+	e := Entry{ID: NewEntryID(), Text: "deletable fact", Source: "agent", CreatedAt: time.Now().Unix()}
+	if dupID, err := db.AddMemoryDedup(e); err != nil || dupID != "" {
+		t.Fatalf("AddMemoryDedup: dup=%q err=%v", dupID, err)
+	}
+	if err := db.DeleteMemory(e.ID); err != nil {
+		t.Fatalf("DeleteMemory: %v", err)
+	}
+	if _, err := db.GetMemory(e.ID); err == nil {
+		t.Error("GetMemory after delete must fail")
+	}
+	if err := db.DeleteMemory(e.ID); err == nil || !strings.Contains(err.Error(), "memory not found") {
+		t.Errorf("second DeleteMemory = %v, want memory-not-found", err)
 	}
 }
