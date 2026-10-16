@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.79.3](https://github.com/buchenberg/yaah/compare/v0.79.2...v0.79.3) (2026-10-16)
+
+
+### Bug Fixes
+
+* **supervision:** address review — drift notes never pre-empt real errors, warnings channel for informational notes ([55162d6](https://github.com/buchenberg/yaah/commit/55162d6d9214e16d2fa01df7bf14b104472fb3da))
+* **supervision:** address review — lossless-or-loud preservation, symlink-safe restores, empty dirs, quarantine denied creates ([7963a22](https://github.com/buchenberg/yaah/commit/7963a22df69f21a42c287c6c7699aee24c1ad0de))
+* **supervision:** root workdir dispatches at their worktree; rewinds preserve uncaptured untracked files ([77893b2](https://github.com/buchenberg/yaah/commit/77893b2f9ad3be4e59cd76bb0aec38b6a20cb008))
+* **supervision:** root workdir dispatches at their worktree; rewinds preserve uncaptured untracked files ([5c6c25a](https://github.com/buchenberg/yaah/commit/5c6c25a1d5b1cb3a9d1514cc85e18a53775c3304))
+
 ## [0.79.2](https://github.com/buchenberg/yaah/compare/v0.79.1...v0.79.2) (2026-10-15)
 
 
