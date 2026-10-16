@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.79.9](https://github.com/buchenberg/yaah/compare/v0.79.8...v0.79.9) (2026-10-16)
+
+
+### Bug Fixes
+
+* **tests:** assert the shim against the escaper, and make escaping byte-wise ([2e4857d](https://github.com/buchenberg/yaah/commit/2e4857df2ff972a60496732d2889c0d674e101b1))
+* **tests:** resolve the temp workdir the way the validator does ([5906f96](https://github.com/buchenberg/yaah/commit/5906f9646505de678ac57821ae5924869c01c0da))
+
 ## [0.79.8](https://github.com/buchenberg/yaah/compare/v0.79.7...v0.79.8) (2026-10-16)
 
 
