@@ -12,6 +12,7 @@ import (
 
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
 
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/landlock"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/recovery"
 	"github.com/buchenberg/yaah/internal/config"
@@ -44,6 +45,7 @@ func RunChecks(opts Options) []Check {
 		CheckProvider(cfg, cfgErr),
 		CheckModel(cfg, cfgErr),
 		CheckSubAgents(cfg, cfgErr),
+		CheckContainment(cfg, cfgErr),
 		CheckWorkspace(cfg, cfgErr),
 		CheckFallback(cfg, cfgErr),
 		CheckQualityGates(cfg, cfgErr),
@@ -192,6 +194,66 @@ func CheckSubAgents(cfg *config.Config, cfgErr error) Check {
 		Label:  "Sub-agents",
 		Status: "OK",
 		Detail: fmt.Sprintf("enabled — %s / %s, max depth 1, max concurrency %d", providerName, model, sc.MaxConcurrency),
+	}
+}
+
+// CheckContainment reports the sub-agent syscall-jail capability (Plan 7 Phase
+// 3): whether a Landlock backend is available here, and how agents.subagent's
+// mode + containment will use it. A `paddock` placement on a host with no
+// backend fails closed, so it is surfaced as a FAIL rather than discovered at
+// dispatch.
+func CheckContainment(cfg *config.Config, cfgErr error) Check {
+	if cfgErr != nil {
+		return Check{Label: "Containment", Status: "WARN", Detail: "config not loaded"}
+	}
+	sc := cfg.Agent.SubAgent
+	backend := landlock.Detect()
+	available := false
+	backendDesc := "none (no jail on this host)"
+	if backend != nil {
+		if ok, why := backend.Available(); ok {
+			available = true
+			if why != "" {
+				backendDesc = why
+			} else {
+				backendDesc = "available"
+			}
+		} else if why != "" {
+			backendDesc = "unusable — " + why
+		} else {
+			backendDesc = "unusable"
+		}
+	}
+	return containmentCheck(available, backendDesc, sc.Mode, sc.Containment)
+}
+
+// containmentCheck is the pure decision behind CheckContainment, split out so
+// the present-but-unusable backend case is testable (landlock.Detect never
+// returns one, but a future backend or a race could).
+func containmentCheck(available bool, backendDesc, mode, containment string) Check {
+	m := strings.ToLower(strings.TrimSpace(mode))
+	if m == "" {
+		m = "retained"
+	}
+	p := strings.ToLower(strings.TrimSpace(containment))
+	if p == "" {
+		p = "off"
+	}
+	detail := fmt.Sprintf("mode %s, placement %s, backend %s", m, p, backendDesc)
+
+	switch p {
+	case "paddock", "jail":
+		if !available {
+			return Check{Label: "Containment", Status: "FAIL", Detail: detail + " — placement=paddock fails closed with no usable backend; every dispatch would refuse"}
+		}
+		return Check{Label: "Containment", Status: "OK", Detail: detail + " — sub-agents are jailed"}
+	case "auto":
+		if available {
+			return Check{Label: "Containment", Status: "OK", Detail: detail + " — sub-agents are jailed"}
+		}
+		return Check{Label: "Containment", Status: "WARN", Detail: detail + " — auto degrades visibly to advisory here"}
+	default: // off / none / advisory
+		return Check{Label: "Containment", Status: "OK", Detail: detail + " — sub-agents run unconfined on the host"}
 	}
 }
 

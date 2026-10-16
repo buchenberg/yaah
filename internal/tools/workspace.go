@@ -127,6 +127,10 @@ type localWorkspace struct {
 	placement confinement.Placement
 	// network is the egress axis of the confinement spec.
 	network containment.NetworkPolicy
+	// confinedEnv, when non-empty, overrides the process environment for
+	// confined commands — the redirect that points HOME/TMPDIR/caches into the
+	// worktree's scratch.
+	confinedEnv []string
 }
 
 var _ Workspace = (*localWorkspace)(nil)
@@ -147,6 +151,16 @@ func NewConfinedLocalWorkspace(pv *PathValidator, backend containment.Backend, p
 
 // Confined reports whether this workspace carries a syscall-jail backend.
 func (w *localWorkspace) Confined() bool { return w.confiner != nil }
+
+// WithEnv returns a copy of the workspace with extra environment variables
+// applied to every confined command (keys here override the process
+// environment). It copies rather than mutating the receiver, so a workspace
+// handed to more than one registry is never altered under another's feet.
+func (w *localWorkspace) WithEnv(env []string) *localWorkspace {
+	clone := *w
+	clone.confinedEnv = env
+	return &clone
+}
 
 func (w *localWorkspace) ResolvePath(path string) (string, error) {
 	return resolvePathWithPV(w.pv, path)
@@ -287,6 +301,7 @@ func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (Exe
 		WorkingRoot: root,
 		Cwd:         req.Cwd,
 		Stdin:       req.Stdin,
+		Env:         mergeEnv(os.Environ(), w.confinedEnv),
 	}
 	if dl, ok := ctx.Deadline(); ok {
 		// A passed deadline gives a negative duration; leave Timeout unset

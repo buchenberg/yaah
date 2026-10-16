@@ -666,6 +666,11 @@ func (s *supervisedSession) forkVariants(ctx context.Context, promptA, promptB s
 
 		s.runVariantPrompt(ctx, v, v.workdir, b.prompt, forkConv)
 
+		// Scrub the confinement scratch before sealing (Plan 7 Phase 3): the
+		// confined variant's env redirect puts HOME/TMPDIR/caches inside its
+		// worktree, and the scrub keeps them out of the sealed delta.
+		ScrubConfinementScratch(v.workdir)
+
 		// Seal the variant's workspace against its fork baseline: the
 		// frozen Changes/Diff back the review envelope, and settle
 		// consumes the output exactly once. Sealing happens even after
