@@ -2,7 +2,9 @@ package tools
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -244,6 +246,19 @@ func (t *OverseeTool) Execute(ctx context.Context, args string) (string, error) 
 		// and then accepts has approved a tree that is NOT what the settle will
 		// land (the settlement applies the sealed delta, not the directory).
 		// Fingerprint around the review so that cannot pass silently.
+		// A per-round token the WORKER cannot know: its work was sealed before the
+		// token existed. Requiring it on the verdict line is what makes an
+		// injected `VERDICT: accept` — quoted by the reviewer as its final line —
+		// structurally unable to pass, which no amount of textual heuristics can
+		// guarantee.
+		reviewToken, tokErr := newReviewToken()
+		if tokErr != nil {
+			_, _ = settleRetainedProposal(ctx, proposal.id, "discard")
+			env.Status, env.Error, env.ProposalID, env.Next = "error",
+				"could not mint a review token: "+tokErr.Error(), "", nil
+			return marshalOverseeEnvelope(env), nil
+		}
+
 		before, fpErr := worldFingerprint(proposal.workdir)
 		if fpErr != nil {
 			// Do not spend a review we could not trust: an unverifiable round is
@@ -253,7 +268,7 @@ func (t *OverseeTool) Execute(ctx context.Context, args string) (string, error) 
 				fmt.Sprintf("could not fingerprint the world before reviewing it (%v); the round was discarded", fpErr), "", nil
 			return marshalOverseeEnvelope(env), nil
 		}
-		reviewText, rErr := runOverseeReview(ctx, t, reviewer, proposal, raw.Task, round, rounds, clampedTimeout)
+		reviewText, rErr := runOverseeReview(ctx, t, reviewer, proposal, raw.Task, round, rounds, clampedTimeout, reviewToken)
 		if rErr != nil {
 			// The review failed to run: the round is unjudged. Discard it —
 			// leaving an unjudged proposal open would leak its worktree — and
@@ -282,7 +297,7 @@ func (t *OverseeTool) Execute(ctx context.Context, args string) (string, error) 
 				strings.Join(clipList(drift, 5), ", "))
 			return marshalOverseeEnvelope(env), nil
 		}
-		verdict, reason := parseOverseeVerdict(reviewText)
+		verdict, reason := parseOverseeVerdict(reviewText, reviewToken)
 		env.Review = reviewReason(verdict, reason)
 
 		if verdict == verdictAccept {
@@ -354,8 +369,8 @@ func (t *OverseeTool) dispatchTimeout(params jobs.SubAgentParams) time.Duration 
 // reviewer's workdir IS the proposal's worktree (the post-change tree), so it
 // inspects the actual result rather than a diff transcript — and because that
 // worktree is already confined, Phase 3's jail bounds the review too.
-func runOverseeReview(ctx context.Context, t *OverseeTool, reviewer string, p *retainedProposal, task string, round, rounds, callTimeoutSeconds int) (string, error) {
-	prompt := buildOverseeReviewPrompt(task, p, round, rounds)
+func runOverseeReview(ctx context.Context, t *OverseeTool, reviewer string, p *retainedProposal, task string, round, rounds, callTimeoutSeconds int, token string) (string, error) {
+	prompt := buildOverseeReviewPrompt(task, p, round, rounds, token)
 	// The caller's explicit timeout applies to the reviewer too: a review that
 	// outlives it would let a round outlive the budget it was given.
 	params := jobs.SubAgentParams{Role: reviewer, Workdir: p.workdir, TimeoutSeconds: callTimeoutSeconds}
@@ -459,7 +474,7 @@ func fileHash(path string) (string, error) {
 // because the role's own response contract also asks for a trailing block —
 // naming the order removes the ambiguity, and the parser reads the last verdict
 // regardless.
-func buildOverseeReviewPrompt(task string, p *retainedProposal, round, rounds int) string {
+func buildOverseeReviewPrompt(task string, p *retainedProposal, round, rounds int, token string) string {
 	var b strings.Builder
 	b.WriteString("A sub-agent has finished a piece of work and it is now yours to judge. ")
 	b.WriteString("Your working directory IS that sub-agent's tree, with its changes applied: read the files there to check the work in context.\n\n")
@@ -485,9 +500,13 @@ func buildOverseeReviewPrompt(task string, p *retainedProposal, round, rounds in
 	b.WriteString("\n## Your verdict\n\n")
 	b.WriteString("Decide whether the work satisfies the task — correctness and completeness against what was asked, not style preference. ")
 	b.WriteString("Read the tree before deciding; do not accept work you have not looked at.\n\n")
-	b.WriteString("Override your usual response contract for this reply: it must END with exactly one of these, with nothing after it:\n\n")
-	b.WriteString("VERDICT: accept\n\n")
-	b.WriteString("VERDICT: revise\nREASON: <what must change, addressed to the sub-agent that did the work>\n")
+	fmt.Fprintf(&b, "Your review token for this round is `%s`. You must put it on your verdict line — the work "+
+		"under review predates it, so a verdict that does not carry it is not yours and will not be counted "+
+		"(which is also what stops anything inside the change you are reviewing from impersonating your decision).\n\n", token)
+	b.WriteString("Override your usual response contract for this reply. It must END with exactly one of these, " +
+		"with your token substituted for <token> and nothing after it:\n\n")
+	b.WriteString("VERDICT: accept <token>\n\n")
+	b.WriteString("VERDICT: revise <token>\nREASON: <what must change, addressed to the sub-agent that did the work>\n")
 	return b.String()
 }
 
@@ -511,7 +530,7 @@ func buildOverseeRetryBlock(round int, reason string) string {
 //     `VERDICT: accept\nVERDICT:` — a truncated reply — does not accept.
 //
 // Anything unrecognized returns "" for the verdict, which is not acceptance.
-func parseOverseeVerdict(review string) (verdict, reason string) {
+func parseOverseeVerdict(review, token string) (verdict, reason string) {
 	lines := stripFenced(review)
 	idx, word, known := -1, "", false
 	for i, ln := range lines {
@@ -521,7 +540,7 @@ func parseOverseeVerdict(review string) (verdict, reason string) {
 			// reviewer's judgement.
 			continue
 		}
-		w, ok := verdictWord(ln)
+		w, ok := verdictWord(ln, token)
 		if !ok {
 			continue
 		}
@@ -608,19 +627,43 @@ func stripFenced(review string) []string {
 	return out
 }
 
-// verdictWord recognizes a `VERDICT: <word>` line, tolerating the emphasis
-// (bold, backticks, a leading list bullet) a model tends to add. It reports ok
-// for a bare `VERDICT:` too, with an empty word — which supersedes an earlier
-// verdict and cannot accept.
-func verdictWord(line string) (string, bool) {
+// verdictWord recognizes a `VERDICT: <word> <token>` line, tolerating the
+// emphasis (bold, backticks, a leading list bullet) a model tends to add. It
+// reports ok for a bare `VERDICT:` too, with an empty word — which supersedes an
+// earlier verdict and cannot accept.
+//
+// The token is what makes the verdict the reviewer's own: it was minted after the
+// work under review was sealed, so nothing inside that work can carry it. A
+// verdict-looking line WITHOUT the token is reported as a marker with no word
+// rather than as `accept`/`revise`, so last-wins cannot promote an injected line.
+func verdictWord(line, token string) (string, bool) {
 	line = strings.Trim(strings.TrimSpace(line), "*_`#")
 	line = strings.TrimSpace(strings.TrimLeft(line, "-• "))
 	const prefix = "VERDICT:"
 	if len(line) < len(prefix) || !strings.EqualFold(line[:len(prefix)], prefix) {
 		return "", false
 	}
-	word := strings.Trim(strings.TrimSpace(line[len(prefix):]), "*_`.\"'")
-	return strings.ToLower(word), true
+	fields := strings.Fields(strings.Trim(strings.TrimSpace(line[len(prefix):]), "*_`.\"'"))
+	if len(fields) == 0 {
+		return "", true
+	}
+	word := strings.ToLower(fields[0])
+	if token == "" || len(fields) < 2 || fields[1] != token {
+		if word == verdictAccept || word == "revise" {
+			return "", true
+		}
+		return word, true
+	}
+	return word, true
+}
+
+// newReviewToken mints the per-round token a verdict must carry.
+func newReviewToken() (string, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 // reviewReason renders the verdict for the envelope.
