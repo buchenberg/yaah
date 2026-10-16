@@ -24,7 +24,7 @@ const haltQuiesceTimeout = 10 * time.Second
 // accept, abort.
 //
 // The review-session actions operate on git checkpoints and tree states
-// (shepherd-kernel-go); sessions are started via supervised_task with
+// (shepherd-runtime-go); sessions are started via supervised_task with
 // review:true.
 //
 // The tool operates on the session's scope manager and trace store,

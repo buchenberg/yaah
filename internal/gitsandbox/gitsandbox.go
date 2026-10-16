@@ -19,8 +19,8 @@
 // the reason. Symlinked parents are never written through, so a
 // rewind cannot relocate preserved content outside the repository.
 //
-// Upstream note: the deletion lives in the kernel's applyTree/applyState
-// (shepherd-kernel-go sandbox/git/backend.go, cleanFiles). If the kernel
+// Upstream note: the deletion lives in the runtime's applyTree/applyState
+// (shepherd-runtime-go sandbox/git/backend.go, cleanFiles). If the runtime
 // ever makes the clean policy host-selectable, this wrapper can retire.
 package gitsandbox
 
