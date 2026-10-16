@@ -14,6 +14,22 @@ import (
 	"github.com/buchenberg/yaah/internal/tools"
 )
 
+// resolvedWorkdir is the path a validator will hold: absolute, with symlinks
+// resolved. On Windows that also expands the 8.3 short name t.TempDir returns
+// (RUNNER~1), which NewPathValidator's EvalSymlinks otherwise leaves the
+// expectation disagreeing with.
+func resolvedWorkdir(t *testing.T, p string) string {
+	t.Helper()
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		t.Fatalf("abs %s: %v", p, err)
+	}
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		return real
+	}
+	return abs
+}
+
 // fakeSandboxWorkspace is a non-local tools.Workspace stand-in: the runner
 // only needs Local()==false and interface identity to prove inheritance.
 type fakeSandboxWorkspace struct{}
@@ -103,9 +119,7 @@ func TestBuildSubAgentRegistry_LocalRouteUnchanged(t *testing.T) {
 	if reg.Workspace == nil || reg.Workspace.Local() != true {
 		t.Errorf("local sub-agent must keep the validator-derived local workspace, got %#v", reg.Workspace)
 	}
-	// NewPathValidator makes the root absolute, so the expectation goes through
-	// the same normalization.
-	want, _ := filepath.Abs(child)
+	want := resolvedWorkdir(t, child)
 	if got := reg.PathValidator; got == nil || got.WorkDir != want {
 		t.Errorf("local sub-agent's validator must be rooted at the workdir: got %#v, want %s", got, want)
 	}
@@ -137,7 +151,7 @@ func TestBuildSubAgentRegistry_WorkdirWithoutSessionValidator(t *testing.T) {
 	if reg.Workspace == nil || !reg.Workspace.Local() {
 		t.Errorf("workdir dispatch must derive a local workspace, got %#v", reg.Workspace)
 	}
-	want, _ := filepath.Abs(workdir)
+	want := resolvedWorkdir(t, workdir)
 	if got := reg.PathValidator; got == nil || got.WorkDir != want || got.WorkspaceRoot != want {
 		t.Errorf("validator must be rooted at the workdir: got %#v, want %s", got, want)
 	}
