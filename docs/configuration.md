@@ -98,6 +98,8 @@ agents:
     default_min_turns: 0              # global turn floor; 0 = none
     output_limit: 51200               # bytes cap on sub-agent reports
     json_mode: false                  # force structured output
+    mode: retained                    # dispatch lane: retained | shared
+    containment: off                  # syscall jail (opt-in): off | auto | paddock
     roles:                            # per-role overrides (defaults live in the role files)
       analyst:
         timeout: 240
@@ -230,6 +232,8 @@ and `max_retries` consistent across the whole team.
 | `default_min_turns` | 0 (none) | Global turn floor — no per-call override or role budget may drop below it |
 | `output_limit` | 51200 | Byte cap on sub-agent reports |
 | `json_mode` | false | Force structured JSON output |
+| `mode` | `retained` | Dispatch lane — `retained` (isolated worktree + proposal) or `shared` (direct to host) |
+| `containment` | `off` | Syscall-jail placement — `off`, `auto` (if the host can jail), or `paddock` (fails closed). See "Sub-agent dispatch lane and confinement" |
 | `roles.<name>.timeout` | — | Per-role timeout override |
 | `roles.<name>.max_iterations` | — | Per-role iteration cap |
 | `roles.<name>.min_iterations` | 0 (none) | Per-role iteration floor; beats per-call overrides and the role file's floor |
@@ -391,6 +395,92 @@ Two consequences worth knowing:
 
 The former `supervised_worktree` opt-in is gone — isolation is always on. A
 config that still sets the key gets one startup warning; the key does nothing.
+
+## Sub-agent dispatch lane and confinement
+
+Two `agents.subagent` keys (not `agents.default` — see the field table above)
+decide *where a sub-agent runs* and *what it may touch*. They apply to
+dispatched sub-agents only: the orchestrator runs on the host, unconfined,
+exactly as before — which is the whole point of the split, since the
+orchestrator is the part that must reach everything.
+
+**Retention — `mode: retained` (the default).** Each dispatch runs in its own
+`git worktree` and returns a proposal; the host tree is untouched until the
+orchestrator applies it with the `proposal` tool. Read-only roles return an
+empty changeset — retained always, so "did anything change?" is never the
+question. `mode: shared` is the older direct-to-host lane: the escape hatch, and
+the benchmark baseline.
+
+**Confinement — `containment`, default `off`.** Where the host can jail
+(Landlock on Linux) a dispatch with `containment: auto` runs its shell inside a
+syscall jail whose sole writable root is its worktree; `auto` degrades visibly to
+advisory where the host cannot jail, and `paddock` (alias `jail`) fails closed
+instead. The unconfined host path is the default, so confinement is opted into
+rather than inherited.
+
+> **Why still opt-in.** The acceptance run that was to gate the flip to `auto`
+> (`TestConfinedBuild_Acceptance`) found a blocker in the very lane the flip
+> would confine. A retained dispatch works in a **linked** `git worktree`, whose
+> index and object store live in the original repository's `.git` — outside the
+> jail's writable root. So a confined `git add`/`git commit` in the retained lane
+> is refused by the kernel; read-only git (`status`, `diff`, `log`) is fine.
+> Granting `<repo>/.git` as a second writable root would fix the symptom and
+> break the promise — a confined sub-agent could then rewrite the host
+> repository's refs and objects, which is what retention exists to prevent. It
+> needs the git-write story settled (the orchestrator settles, so a sub-agent
+> need not commit), and the acceptance now exercises the linked layout so the
+> gap cannot be missed again.
+
+Housekeeping writes are **redirected into** the worktree rather than the jail
+being widened: `HOME`, `TMPDIR`, `XDG_CACHE_HOME`, `GOCACHE`, and
+`npm_config_cache` point at a `.yaah-scratch/` inside it. The scratch is scrubbed
+before the proposal is sealed, so it never reaches the delta. Two *reads* the
+redirect would otherwise hide are handled explicitly:
+
+- `GOMODCACHE` is pinned against the *pre-redirect* environment, so a confined
+  Go build reads the shared module cache instead of silently re-downloading into
+  the scratch.
+- `GIT_CONFIG_GLOBAL` is pointed at a small **shim** in the scratch that includes
+  the user's real global git config files, resolved before the redirect. The
+  moved `HOME` would otherwise hide the identity a commit needs ("Author identity
+  unknown"). A shim rather than a direct pointer, because `GIT_CONFIG_GLOBAL`
+  replaces *both* default files and takes a single path — naming one would drop
+  the other, and a name in `~/.gitconfig` with the email in
+  `$XDG_CONFIG_HOME/git/config` is a real configuration. The shim carries paths,
+  not values, so no config content — `http.<url>.extraheader` tokens included —
+  lands in the worktree, and each included file's own `include` paths still
+  resolve against its real location.
+
+The scratch itself is created defensively: **any** symlinked path component from
+the worktree down to the scratch is refused — not only links that point outside.
+A symlinked scratch is never intended, these writes happen in the unconfined
+parent (where `MkdirAll` would follow the link), and telling a safe link from an
+unsafe one is not worth the risk. A refusal **fails the dispatch** rather than
+quietly confining without the redirect — a jailed body whose `HOME`/`TMPDIR`
+still point outside the writable root would just fail confusingly. (`containment:
+off` is the way to run unconfined.)
+
+Credential *stores* (`~/.ssh`, `~/.git-credentials`, `~/.npmrc`, `~/.netrc`) are
+deliberately not made reachable: the worktree bootstrap — which runs unconfined
+before the body — is where authenticated inputs get prepared.
+
+Two limits to know about:
+
+- **`/dev` is writable, not just `/dev/null`.** Every profile grants writes to
+  the whole `/dev` subtree, because Landlock's path rule requires a *directory*
+  (a rule on the device file is rejected with `EINVAL`) and Landlock has no deny
+  rules, so `/dev/shm` cannot be carved back out. Seatbelt's Python profiles make
+  the same allowance. So "sole writable root" means "sole root under the
+  worktree's own tree": `/dev` is the one exception, and it comes with a
+  world-writable tmpfs.
+- **Git index writes in a linked worktree** are refused, as above.
+
+Each dispatch records the resolved placement on the sub-agent's trace
+(`yaah.subagent.confinement.v1`: requested vs resolved, backend, enforcement
+tier, `enforced`, writable root), so an advisory run is never misread as jailed
+— including the case where a backend is present but unusable. `yaah doctor`
+reports the effective placement and this host's capability: `auto` with no
+usable backend is a WARN, `paddock` is a FAIL.
 
 ## Observability reference
 

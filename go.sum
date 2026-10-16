@@ -20,6 +20,8 @@ github.com/buchenberg/shepherd-runtime-go v0.17.0 h1:vRAogvhLZDTbzGFCOpqF4yCthCW
 github.com/buchenberg/shepherd-runtime-go v0.17.0/go.mod h1:uIQ6aK2f2hkz6uZKRDqx2XLhcIccSTgegb5qI/Qv5Jg=
 github.com/buchenberg/shepherd-runtime-go/sandbox/landlock v0.1.0 h1:QRcA7umaC7RF+y+RgGHEbvCj9FGMEE62DSw59v/TCwg=
 github.com/buchenberg/shepherd-runtime-go/sandbox/landlock v0.1.0/go.mod h1:l5keimWEtQioySbYomg1rOzCr6CTNctNrwkCivPwm+A=
+github.com/buchenberg/shepherd-runtime-go/sandbox/landlock v0.1.1 h1:F1zKPfGN6mgpHpXiDU7MDzfN+/jzGyRXr8R1VERJEdI=
+github.com/buchenberg/shepherd-runtime-go/sandbox/landlock v0.1.1/go.mod h1:l5keimWEtQioySbYomg1rOzCr6CTNctNrwkCivPwm+A=
 github.com/buchenberg/tviewmd v0.2.0 h1:GEbCcQqgSdi6WafPsBPeXSkkcqrnKI7D1hdytIc+Ofg=
 github.com/buchenberg/tviewmd v0.2.0/go.mod h1:NSvcH2laSSUg/+4jVj/M3/NzviJ9UE16me0zlulM35w=
 github.com/buger/jsonparser v1.1.2 h1:frqHqw7otoVbk5M8LlE/L7HTnIq2v9RX6EJ48i9AxJk=

@@ -62,6 +62,178 @@ func TestDefaultGoModCache(t *testing.T) {
 	}
 }
 
+// TestConfinementScratchEnv_PointsGitAtGlobalConfig: the redirect moves HOME, so
+// git would look for the user's identity in an empty scratch and refuse to commit
+// ("Author identity unknown"). The redirect points git at a SHIM in the scratch
+// that includes the real global config files — not a copy, so a config carrying
+// `http.<url>.extraheader` tokens never lands in the worktree, and `include`
+// paths keep resolving against the files' real locations. A shim rather than a
+// direct pointer, because GIT_CONFIG_GLOBAL replaces BOTH default files and
+// takes one path: naming a single file would drop the other.
+func TestConfinementScratchEnv_PointsGitAtGlobalConfig(t *testing.T) {
+	// No inherited pointer: the resolution under test is the HOME one.
+	if prev, ok := os.LookupEnv("GIT_CONFIG_GLOBAL"); ok {
+		_ = os.Unsetenv("GIT_CONFIG_GLOBAL")
+		t.Cleanup(func() { _ = os.Setenv("GIT_CONFIG_GLOBAL", prev) })
+	}
+	// gitGlobal runs the redirect and returns the pointer plus the shim's body.
+	gitGlobal := func(t *testing.T, root string) (string, string, bool) {
+		t.Helper()
+		env, err := ConfinementScratchEnv(root)
+		if err != nil {
+			t.Fatalf("scratch env: %v", err)
+		}
+		for _, kv := range env {
+			if k, v, _ := strings.Cut(kv, "="); k == "GIT_CONFIG_GLOBAL" {
+				body, rerr := os.ReadFile(v)
+				if rerr != nil {
+					t.Fatalf("the pointer must name a readable shim: %v", rerr)
+				}
+				return v, string(body), true
+			}
+		}
+		return "", "", false
+	}
+
+	t.Run("both files are included, in git's precedence order", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("XDG_CONFIG_HOME", "")
+		xdg := filepath.Join(home, ".config", "git", "config")
+		legacy := filepath.Join(home, ".gitconfig")
+		if err := os.MkdirAll(filepath.Dir(xdg), 0o755); err != nil {
+			t.Fatalf("seed xdg dir: %v", err)
+		}
+		if err := os.WriteFile(xdg, []byte("[user]\n\tname = XDG\n"), 0o644); err != nil {
+			t.Fatalf("seed xdg config: %v", err)
+		}
+		if err := os.WriteFile(legacy, []byte("[user]\n\temail = legacy@example.com\n"), 0o644); err != nil {
+			t.Fatalf("seed .gitconfig: %v", err)
+		}
+		root := t.TempDir()
+		pointer, body, ok := gitGlobal(t, root)
+		if !ok {
+			t.Fatal("GIT_CONFIG_GLOBAL must be set when a global config exists")
+		}
+		if want := filepath.Join(root, confinementScratchName, "home", ".gitconfig"); pointer != want {
+			t.Errorf("GIT_CONFIG_GLOBAL = %q, want the shim %q", pointer, want)
+		}
+		// Both, in order. Including only one would DROP the other: the pointer
+		// replaces both defaults rather than adding to them, and a name in one
+		// file plus an email in the other is a real configuration.
+		if !strings.Contains(body, "path = "+gitConfigValue(xdg)) || !strings.Contains(body, "path = "+gitConfigValue(legacy)) {
+			t.Errorf("the shim must include both files:\n%s", body)
+		}
+		if strings.Index(body, xdg) > strings.Index(body, legacy) {
+			t.Errorf("the shim must include the XDG file first (git's order):\n%s", body)
+		}
+		// Paths, not values: nothing from either config is copied.
+		if strings.Contains(body, "XDG") || strings.Contains(body, "legacy@example.com") {
+			t.Errorf("the shim must carry paths, not config content:\n%s", body)
+		}
+	})
+
+	t.Run("a pre-set pointer is left alone", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("XDG_CONFIG_HOME", "")
+		if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[user]\n\tname = Legacy\n"), 0o644); err != nil {
+			t.Fatalf("seed .gitconfig: %v", err)
+		}
+		t.Setenv("GIT_CONFIG_GLOBAL", "/somewhere/else")
+		if pointer, _, ok := gitGlobal(t, t.TempDir()); ok {
+			t.Errorf("an inherited pointer must be left alone, got %q", pointer)
+		}
+	})
+
+	t.Run("XDG_CONFIG_HOME is honored", func(t *testing.T) {
+		home := t.TempDir()
+		xdg := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("XDG_CONFIG_HOME", xdg)
+		if err := os.MkdirAll(filepath.Join(xdg, "git"), 0o755); err != nil {
+			t.Fatalf("seed xdg dir: %v", err)
+		}
+		want := filepath.Join(xdg, "git", "config")
+		if err := os.WriteFile(want, []byte("[user]\n\tname = XDG\n"), 0o644); err != nil {
+			t.Fatalf("seed xdg config: %v", err)
+		}
+		_, body, ok := gitGlobal(t, t.TempDir())
+		if !ok {
+			t.Fatal("GIT_CONFIG_GLOBAL must be set when a global config exists")
+		}
+		if !strings.Contains(body, "path = "+gitConfigValue(want)) {
+			t.Errorf("the shim must include the XDG config %q:\n%s", want, body)
+		}
+	})
+
+	t.Run("no global config adds no pointer", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("XDG_CONFIG_HOME", "")
+		if pointer, _, ok := gitGlobal(t, t.TempDir()); ok {
+			t.Errorf("no source config should mean no pointer, got %q", pointer)
+		}
+	})
+}
+
+// TestConfinementScratchEnv_RefusesSymlinkedScratch: the scratch is created by
+// the unconfined parent, and MkdirAll follows symlinks — so a `.yaah-scratch`
+// planted as a symlink out of the worktree (a checked-in one, or one an earlier
+// turn left) must be refused rather than followed, or the redirect would point
+// the body outside the jail's writable root.
+func TestConfinementScratchEnv_RefusesSymlinkedScratch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	outside := t.TempDir()
+	root := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, confinementScratchName)); err != nil {
+		t.Fatalf("plant the symlink: %v", err)
+	}
+
+	if _, err := ConfinementScratchEnv(root); err == nil {
+		t.Fatal("a symlinked scratch must be refused, not followed")
+	}
+	// Nothing may have been created through it.
+	if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+		t.Errorf("the symlink target must be untouched: entries=%v err=%v", entries, err)
+	}
+
+	// A final-component symlink is refused too (not just a parent).
+	root2 := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root2, confinementScratchName), 0o700); err != nil {
+		t.Fatalf("mkdir scratch: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root2, confinementScratchName, "home")); err != nil {
+		t.Fatalf("plant the inner symlink: %v", err)
+	}
+	if _, err := ConfinementScratchEnv(root2); err == nil {
+		t.Fatal("a symlinked scratch HOME must be refused, not followed")
+	}
+}
+
+// TestGitConfigValue_QuotesAndEscapes: an unquoted interpolation would be
+// truncated at a comment character and reinterpreted at a backslash, so a HOME
+// containing either would silently corrupt the shim.
+func TestGitConfigValue_QuotesAndEscapes(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"/home/plain/.gitconfig", `"/home/plain/.gitconfig"`},
+		{"/home/has space/.gitconfig", `"/home/has space/.gitconfig"`},
+		{"/home/hash # not a comment/.gitconfig", `"/home/hash # not a comment/.gitconfig"`},
+		{"/home/semi ; not a comment/.gitconfig", `"/home/semi ; not a comment/.gitconfig"`},
+		{`/home/back\slash/.gitconfig`, `"/home/back\\slash/.gitconfig"`},
+		{"/home/quote\"/.gitconfig", `"/home/quote\"/.gitconfig"`},
+		{"/home/new\nline", `"/home/new\nline"`},
+		// A path is a byte string and may not be valid UTF-8; every byte must survive.
+		{"/home/\xff\xfe/.gitconfig", "\"/home/\xff\xfe/.gitconfig\""},
+	}
+	for _, c := range cases {
+		if got := gitConfigValue(c.in); got != c.want {
+			t.Errorf("gitConfigValue(%q) = %s, want %s", c.in, got, c.want)
+		}
+	}
+}
+
 // TestScrubConfinementScratch_Removes: the scrub removes the whole scratch tree.
 func TestScrubConfinementScratch_Removes(t *testing.T) {
 	root := t.TempDir()

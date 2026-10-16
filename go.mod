@@ -7,7 +7,7 @@ require (
 	github.com/buchenberg/croft v0.3.0
 	github.com/buchenberg/shepherd-kernel-go v0.17.0
 	github.com/buchenberg/shepherd-runtime-go v0.17.0
-	github.com/buchenberg/shepherd-runtime-go/sandbox/landlock v0.1.0
+	github.com/buchenberg/shepherd-runtime-go/sandbox/landlock v0.1.1
 	github.com/buchenberg/tviewmd v0.2.0
 	github.com/gdamore/tcell/v2 v2.13.10
 	github.com/lsferreira42/figlet-go v0.0.2-beta

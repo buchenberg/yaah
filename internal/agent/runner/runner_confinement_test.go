@@ -1,13 +1,112 @@
 package runner
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/landlock"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/tools"
 )
+
+// A scratch that cannot be prepared must FAIL the dispatch, not be silently
+// downgraded: without the redirect the jailed body's HOME/TMPDIR writes land
+// outside the writable root and are denied, and dropping the jail instead would
+// silently lose containment. A planted symlink is the hostile case that
+// motivates it (and is real: the redirect's own writes happen unconfined).
+func TestResolveSubAgentConfinement_RefusalFailsTheDispatch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	pv := tools.NewPathValidator(t.TempDir(), false, nil)
+	workdir := t.TempDir()
+	if err := os.Symlink(t.TempDir(), filepath.Join(workdir, ".yaah-scratch")); err != nil {
+		t.Fatalf("plant the symlink: %v", err)
+	}
+	// paddock fails closed even with no backend, so this reaches the redirect.
+	ws, rec, err := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: "paddock"}, workdir)
+	if err == nil {
+		t.Fatalf("an unredirectable scratch must fail the dispatch, got ws=%v rec=%+v", ws, rec)
+	}
+	if !strings.Contains(err.Error(), ".yaah-scratch") {
+		t.Errorf("the error must name the offending path, got %v", err)
+	}
+
+	// And the registry build surfaces it rather than confining without the
+	// redirect.
+	if _, _, rerr := buildSubAgentRegistry(
+		taskRunnerOpts{pathValidator: pv, subCfg: config.SubAgentConfig{Containment: "paddock"}},
+		subagent.RoleProfile{Tools: []string{"read", "grep"}}, 0, workdir); rerr == nil {
+		t.Fatal("buildSubAgentRegistry must fail on an unredirectable scratch")
+	}
+}
+
+// stubBackend stands in for a syscall-jail backend so both sides of the
+// availability decision are testable; `nil` stands in for "none on this host".
+// A live backend cannot produce "present but unusable".
+type stubBackend struct{ usable bool }
+
+func (stubBackend) Name() string                             { return "stub" }
+func (stubBackend) EnforcementTier() string                  { return "stub-tier" }
+func (b stubBackend) Available() (bool, string)              { return b.usable, "" }
+func (stubBackend) SupportsNetwork(containment.NetMode) bool { return true }
+func (stubBackend) ProfileFor([]string, containment.NetworkPolicy) string {
+	return ""
+}
+func (stubBackend) Probe(string, string, []string) error { return nil }
+func (stubBackend) Launch(string, containment.LaunchRequest) (containment.LaunchResult, error) {
+	return containment.LaunchResult{}, nil
+}
+
+// The recorded placement must describe what the dispatch will actually do — the
+// bug Kilo caught was recording "paddock" for an unusable backend, which Exec
+// would silently run advisory (or refuse), so an advisory run read as jailed.
+func TestConfinementRecord_Placement(t *testing.T) {
+	cases := []struct {
+		name         string
+		placement    confinement.Placement
+		available    bool
+		backend      containment.Backend
+		wantResolved string
+		wantEnforced bool
+		wantConfine  bool // build a workspace (so Exec can jail or fail closed)
+	}{
+		{"auto, no backend", confinement.PlacementAuto, false, nil, "advisory", false, false},
+		{"auto, unusable backend", confinement.PlacementAuto, false, stubBackend{}, "advisory", false, false},
+		{"paddock, no backend", confinement.PlacementPaddock, false, nil, "paddock", false, true},
+		{"paddock, unusable backend", confinement.PlacementPaddock, false, stubBackend{}, "paddock", false, true},
+		{"auto, usable backend", confinement.PlacementAuto, true, stubBackend{usable: true}, "paddock", true, true},
+		{"paddock, usable backend", confinement.PlacementPaddock, true, stubBackend{usable: true}, "paddock", true, true},
+	}
+	for _, c := range cases {
+		rec, confine := confinementRecord("auto", c.placement, c.available, c.backend, "/work")
+		if rec.Resolved != c.wantResolved {
+			t.Errorf("%s: resolved = %q, want %q", c.name, rec.Resolved, c.wantResolved)
+		}
+		if rec.Enforced != c.wantEnforced {
+			t.Errorf("%s: enforced = %v, want %v", c.name, rec.Enforced, c.wantEnforced)
+		}
+		if confine != c.wantConfine {
+			t.Errorf("%s: confine = %v, want %v", c.name, confine, c.wantConfine)
+		}
+		if !rec.Enforced && (rec.Backend != "" || rec.Tier != "") {
+			t.Errorf("%s: an unenforced record must not name a backend/tier, got %q/%q", c.name, rec.Backend, rec.Tier)
+		}
+		if c.wantEnforced && (rec.Backend == "" || rec.Tier == "") {
+			t.Errorf("%s: an enforced record must name the backend and tier", c.name)
+		}
+		// Only a jail claims a writable root; advisory claims nothing.
+		if (rec.Writable != "") != (rec.Resolved == "paddock") {
+			t.Errorf("%s: writable = %q with resolved %q", c.name, rec.Writable, rec.Resolved)
+		}
+	}
+}
 
 // Plan 7 Phase 3: the workdir lane attaches a confiner when configured, and
 // buildSubAgentRegistry hands back the resolution so the dispatch can record it —
@@ -17,12 +116,16 @@ func TestBuildSubAgentRegistry_ReturnsConfinementRecord(t *testing.T) {
 	pv := tools.NewPathValidator(t.TempDir(), false, nil)
 	profile := subagent.RoleProfile{Tools: []string{"read", "grep"}}
 
-	if _, conf, err := buildSubAgentRegistry(
-		taskRunnerOpts{pathValidator: pv, subCfg: config.SubAgentConfig{Containment: "off"}},
-		profile, 0, t.TempDir()); err != nil {
-		t.Fatalf("off: %v", err)
-	} else if conf != nil {
-		t.Errorf("off must not record a resolution, got %+v", conf)
+	// The default is still "off" (the flip is gated), and "off" records nothing:
+	// no jail was requested, so there is no placement to report.
+	for _, setting := range []string{"", "off"} {
+		if _, conf, err := buildSubAgentRegistry(
+			taskRunnerOpts{pathValidator: pv, subCfg: config.SubAgentConfig{Containment: setting}},
+			profile, 0, t.TempDir()); err != nil {
+			t.Fatalf("containment=%q: %v", setting, err)
+		} else if conf != nil {
+			t.Errorf("containment=%q must not record a resolution, got %+v", setting, conf)
+		}
 	}
 
 	_, conf, err := buildSubAgentRegistry(
@@ -49,7 +152,7 @@ func TestBuildSubAgentRegistry_ReturnsConfinementRecord(t *testing.T) {
 // The workdir lane attaches a confiner only when agents.subagent.containment
 // asks for one, and records the resolution either way (Plan 7 Phase 3). The
 // default (and "off"/"advisory") leaves the host path — the guardrail that the
-// orchestrator's lane and the unconfigured sub-agent stay unconfined.
+// orchestrator's lane and an unconfigured sub-agent stay unconfined.
 func TestResolveSubAgentConfinement_Placement(t *testing.T) {
 	pv := tools.NewPathValidator(t.TempDir(), false, nil)
 
@@ -58,7 +161,7 @@ func TestResolveSubAgentConfinement_Placement(t *testing.T) {
 		confine bool // a confined workspace is returned
 		record  bool // a resolution record is returned
 	}{
-		{"", false, false},
+		{"", false, false}, // the default: the flip is gated, so still off
 		{"off", false, false},
 		{"none", false, false},
 		{"advisory", false, false},
@@ -66,7 +169,11 @@ func TestResolveSubAgentConfinement_Placement(t *testing.T) {
 		{"jail", true, true},
 	}
 	for _, c := range cases {
-		ws, rec := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: c.setting}, t.TempDir())
+		ws, rec, rerr := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: c.setting}, t.TempDir())
+		if rerr != nil {
+			t.Errorf("containment=%q: %v", c.setting, rerr)
+			continue
+		}
 		if (ws != nil) != c.confine {
 			t.Errorf("containment=%q: confined=%v, want %v", c.setting, ws != nil, c.confine)
 		}
@@ -81,22 +188,25 @@ func TestResolveSubAgentConfinement_Placement(t *testing.T) {
 	// "auto" jails only where a backend exists; elsewhere it degrades to
 	// advisory — and either way records the resolution, so a reader can tell the
 	// two apart.
-	ws, rec := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: "auto"}, t.TempDir())
-	wantJail := landlock.Detect() != nil
-	if (ws != nil) != wantJail {
-		t.Errorf("auto: confined=%v, want %v", ws != nil, wantJail)
+	autoWS, autoRec, autoErr := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: "auto"}, t.TempDir())
+	if autoErr != nil {
+		t.Fatalf("auto: %v", autoErr)
 	}
-	if rec == nil {
+	wantJail := landlock.Detect() != nil
+	if (autoWS != nil) != wantJail {
+		t.Errorf("auto: confined=%v, want %v", autoWS != nil, wantJail)
+	}
+	if autoRec == nil {
 		t.Fatal("auto must record a resolution")
 	}
 	wantResolved := "advisory"
 	if wantJail {
 		wantResolved = "paddock"
 	}
-	if rec.Resolved != wantResolved {
-		t.Errorf("auto: resolved = %q, want %q", rec.Resolved, wantResolved)
+	if autoRec.Resolved != wantResolved {
+		t.Errorf("auto: resolved = %q, want %q", autoRec.Resolved, wantResolved)
 	}
-	if wantJail && (rec.Backend == "" || rec.Tier == "") {
-		t.Errorf("auto (jailed): backend/tier must be recorded, got %q / %q", rec.Backend, rec.Tier)
+	if wantJail && (autoRec.Backend == "" || autoRec.Tier == "") {
+		t.Errorf("auto (jailed): backend/tier must be recorded, got %q / %q", autoRec.Backend, autoRec.Tier)
 	}
 }

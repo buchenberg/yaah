@@ -1028,7 +1028,10 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 		// lane has a bound world to jail against. The orchestrator's workspace
 		// and a workdir-less (shared-host) sub-agent keep running unconfined.
 		if workdir != "" {
-			ws, rec := resolveSubAgentConfinement(pv, opts.subCfg, workdir)
+			ws, rec, cerr := resolveSubAgentConfinement(pv, opts.subCfg, workdir)
+			if cerr != nil {
+				return nil, nil, cerr
+			}
 			// Record the resolution even when there is no workspace: "auto"
 			// degrading to advisory returns a nil workspace WITH a record, and
 			// that advisory resolution is exactly what the trace must show.
@@ -1286,6 +1289,7 @@ type subAgentConfinement struct {
 	Resolved  string // "paddock" (jailed) or "advisory" (host path)
 	Backend   string // backend name when jailed (e.g. "landlock")
 	Tier      string // enforcement tier, e.g. "native-syscall-deny"
+	Enforced  bool   // a usable backend will actually establish the jail
 	Writable  string // the bound world — the sole writable root
 }
 
@@ -1295,6 +1299,7 @@ func (c *subAgentConfinement) payload() map[string]any {
 		"resolved":      c.Resolved,
 		"backend":       c.Backend,
 		"tier":          c.Tier,
+		"enforced":      c.Enforced,
 		"writable_root": c.Writable,
 	}
 }
@@ -1302,22 +1307,32 @@ func (c *subAgentConfinement) payload() map[string]any {
 // resolveSubAgentConfinement builds the syscall-jailed workspace for a sub-agent
 // workdir dispatch when agents.subagent.containment asks for one, and describes
 // what it resolved to (for the trace). It returns a nil workspace to leave the
-// host path. "" / "off" / "advisory" mean no jail; "auto" jails on a
-// Landlock-capable host and falls back to advisory elsewhere; "paddock" (alias
-// "jail") fails closed. The writable root is the worktree — the sub-agent's
-// bound world — so the kernel boundary and the run's own boundary agree.
-func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConfig, workdir string) (tools.Workspace, *subAgentConfinement) {
+// host path. Default "off" (see SubAgentConfig.Containment for why the flip is
+// still gated); "auto" jails on a Landlock-capable host and degrades to advisory
+// elsewhere; "off" (or "none"/"advisory") mean no jail; "paddock" (alias "jail")
+// fails closed. The writable root is the worktree — the sub-agent's bound world —
+// so the kernel boundary and the run's own boundary agree.
+func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConfig, workdir string) (tools.Workspace, *subAgentConfinement, error) {
 	requested := strings.TrimSpace(cfg.Containment)
 	placement := containmentPlacement(requested)
 	if placement == "" || workdir == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 
+	// Availability, not mere presence: a backend that is present but unusable
+	// (an LSM that is compiled in but disabled, say) means Exec will degrade.
 	backend := landlock.Detect()
-	if backend == nil && placement != confinement.PlacementPaddock {
-		// "auto" degrades visibly to advisory: the host path *is* advisory. No
-		// writable root is claimed — nothing bounded it.
-		return nil, &subAgentConfinement{Requested: requested, Resolved: "advisory"}
+	available := false
+	if backend != nil {
+		if ok, _ := backend.Available(); ok {
+			available = true
+		}
+	}
+
+	rec, confine := confinementRecord(requested, placement, available, backend, workdir)
+	if !confine {
+		// "auto" degrades visibly to advisory: the host path *is* advisory.
+		return nil, rec, nil
 	}
 
 	// A write-jail by default (network allow_all); egress confinement is opt-in.
@@ -1327,18 +1342,41 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 	// Redirect housekeeping writes into the worktree (the one writable root):
 	// HOME, TMPDIR, and the build caches. The scratch is scrubbed before the
 	// workspace is sealed, so it never reaches a proposal's delta.
-	if env, err := tools.ConfinementScratchEnv(workdir); err == nil {
-		ws = ws.WithEnv(env)
-	} else {
-		slog.Debug("confinement scratch unavailable", "workdir", workdir, "err", err)
+	//
+	// A failure here fails the dispatch. The redirect is not decoration: without
+	// it the jailed body's HOME/TMPDIR writes land outside the writable root and
+	// are denied, so the run would fail confusingly — and dropping the jail
+	// instead would silently lose containment. The refusal is therefore surfaced
+	// rather than downgraded. (An operator who wants no jail sets
+	// `containment: off`.)
+	env, err := tools.ConfinementScratchEnv(workdir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("confinement redirect for %s: %w", workdir, err)
 	}
+	return ws.WithEnv(env), rec, nil
+}
 
+// confinementRecord is the pure decision behind what a dispatch records, split
+// out (like doctor's containmentCheck) so the two cases a live backend cannot
+// produce are testable: a backend that is present but unusable with "auto"
+// (which must record advisory, NOT the paddock it will not enter), and the same
+// with "paddock" (which must record paddock with Enforced false — the dispatch
+// refuses rather than running unconfined, so "advisory" would be a lie).
+//
+// confine reports whether a confined workspace should be built: true whenever
+// the placement is paddock (so Exec can fail closed) or a usable backend exists.
+func confinementRecord(requested string, placement confinement.Placement, available bool, backend containment.Backend, workdir string) (*subAgentConfinement, bool) {
+	if !available && placement != confinement.PlacementPaddock {
+		// No writable root is claimed — nothing bounded it.
+		return &subAgentConfinement{Requested: requested, Resolved: "advisory"}, false
+	}
 	rec := &subAgentConfinement{Requested: requested, Resolved: "paddock", Writable: workdir}
-	if backend != nil {
+	if available && backend != nil {
+		rec.Enforced = true
 		rec.Backend = backend.Name()
 		rec.Tier = backend.EnforcementTier()
 	}
-	return ws, rec
+	return rec, true
 }
 
 // containmentPlacement maps agents.subagent.containment to a placement, or ""
