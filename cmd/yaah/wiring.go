@@ -691,12 +691,16 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		if sessionSandbox == nil && retainedMode(cfg.Agent.SubAgent.Mode) && rootScopeID != "" {
 			toolReg.Register(&tools.ProposalTool{})
 			// Oversee tool (Plan 7 Phase 4): retry-until-acceptable over the same
-			// retained lane. Registered with the settlement tool it composes —
-			// it needs the retained runtime, which only exists when that lane is
-			// live.
-			if taskTool.Retained != nil {
-				toolReg.Register(&tools.OverseeTool{Runtime: taskTool.Retained})
-			}
+			// retained lane. It needs the retained runtime, which the enclosing
+			// block's condition guarantees (the same condition that built it) —
+			// and `Execute` refuses a nil runtime as a second line of defence.
+			// Roles/ResolveTimeout come from the task tool so an overseen
+			// dispatch resolves and is accounted exactly like a spawn.
+			toolReg.Register(&tools.OverseeTool{
+				Runtime:        taskTool.Retained,
+				Roles:          taskTool.RoleResolver,
+				ResolveTimeout: taskTool.ResolveTimeout,
+			})
 		}
 
 		// Supervised task tool — blocking sub-agent execution with
