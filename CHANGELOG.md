@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.79.4](https://github.com/buchenberg/yaah/compare/v0.79.3...v0.79.4) (2026-10-16)
+
+
+### Bug Fixes
+
+* **memory:** deletes that match nothing must not report success; full IDs everywhere ([9d4b549](https://github.com/buchenberg/yaah/commit/9d4b54990e2a03963512742e62eb3338b3374311)), closes [#328](https://github.com/buchenberg/yaah/issues/328)
+* **memory:** stop truncating memory IDs; deletes that match nothing report not-found ([bf2a9b1](https://github.com/buchenberg/yaah/commit/bf2a9b1760e36ff5f2268e16e61e60cf499b8213))
+* **tools:** stop truncating memory IDs to 12 chars ([b632c4e](https://github.com/buchenberg/yaah/commit/b632c4ecc55226c2cf9eea05dc59629e9a430c69))
+
 ## [0.79.3](https://github.com/buchenberg/yaah/compare/v0.79.2...v0.79.3) (2026-10-16)
 
 
