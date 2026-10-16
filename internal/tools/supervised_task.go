@@ -10,7 +10,7 @@ import (
 	"time"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
-	shepherdgit "github.com/buchenberg/shepherd-kernel-go/sandbox/git"
+	"github.com/buchenberg/yaah/internal/gitsandbox"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/prompts"
 )
@@ -192,7 +192,7 @@ func (t *SupervisedTaskTool) Execute(ctx context.Context, args string) (string, 
 	}
 
 	scopeID := fmt.Sprintf("supervised:%s:%d", params.Role, time.Now().UnixNano())
-	scope, err := mgr.Create(scopeID, shepherdgit.NewLocalGitSandbox(repoPath))
+	scope, err := mgr.Create(scopeID, gitsandbox.NewLocalSandbox(repoPath))
 	if err != nil {
 		return "", fmt.Errorf("supervised_task: create scope: %w", err)
 	}

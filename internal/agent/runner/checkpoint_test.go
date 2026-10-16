@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
-	shepherdgit "github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+	"github.com/buchenberg/yaah/internal/gitsandbox"
 )
 
 // TestShepherdTurnCheckpointer_RestoreRevertsWorkspace verifies the adapter's
@@ -26,7 +26,7 @@ func TestShepherdTurnCheckpointer_RestoreRevertsWorkspace(t *testing.T) {
 	mgr := shepherd.NewScopeManager(store)
 
 	repo := newRunnerTestGitRepo(t)
-	sb := shepherdgit.NewLocalGitSandbox(repo)
+	sb := gitsandbox.NewLocalSandbox(repo)
 	scope, err := mgr.Create("turn-checkpoint-test", sb)
 	if err != nil {
 		t.Fatalf("create scope: %v", err)
@@ -75,8 +75,11 @@ func TestShepherdTurnCheckpointer_RestoreRevertsWorkspace(t *testing.T) {
 	if string(got) != "v1" {
 		t.Errorf("base after restore = %q, want %q", got, "v1")
 	}
-	if _, err := os.Stat(filepath.Join(repo, "untracked.txt")); !os.IsNotExist(err) {
-		t.Errorf("untracked file should be gone after restore, stat err = %v", err)
+	// Production restores run through the untracked-preserving sandbox
+	// (gitsandbox): captured content is rewound, but files created after
+	// the checkpoint deliberately survive (#313).
+	if got, err := os.ReadFile(filepath.Join(repo, "untracked.txt")); err != nil || string(got) != "junk" {
+		t.Errorf("uncaptured untracked file should survive restore, got %q err %v", got, err)
 	}
 
 	// Single-use: the checkpoint was consumed, so restoring it again fails.

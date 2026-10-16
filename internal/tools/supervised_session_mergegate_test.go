@@ -162,11 +162,12 @@ func TestReviewSession_AcceptDeniedRollsBackAndRetries(t *testing.T) {
 		t.Errorf("envelope error = %q, want the denial reason surfaced", env.Error)
 	}
 
-	// Denial leaves the parent tree byte-identical to the unit start:
-	// at the retry's start the denied file is gone and git reports a
-	// clean tree.
-	if strings.TrimSpace(statusAtRetryStart) != "" {
-		t.Errorf("tree at the retry's start must be byte-identical to unit start, git reports:\n%s", statusAtRetryStart)
+	// Denial restores the tracked tree to the unit start. The denied
+	// unit's untracked file deliberately survives (#313): rewind never
+	// deletes uncaptured content — it stays visible in the diff so the
+	// retry (or the orchestrator) can remove it explicitly.
+	if got := strings.TrimSpace(statusAtRetryStart); got != "?? outside.txt" {
+		t.Errorf("tree at the retry's start must hold only the preserved untracked stray, git reports:\n%s", got)
 	}
 
 	// The reason is injected into the re-run; the re-run keeps the
@@ -290,13 +291,14 @@ func TestReviewSession_AcceptDeniedRollsBackCumulativeWork(t *testing.T) {
 		t.Errorf("envelope error = %q, want the denial reason surfaced", env.Error)
 	}
 
-	// The rollback is the session start, not the last unit's
-	// checkpoint: the forbidden file from unit 1 must be gone too.
-	if strings.TrimSpace(statusAtRetryStart) != "" {
-		t.Errorf("tree at the retry's start must be the session start, git reports:\n%s", statusAtRetryStart)
+	// The rollback restores the tracked tree to the session start; the
+	// units' untracked files deliberately survive (#313) and fold into
+	// the re-fork baseline, so the gate never re-sees them as changes.
+	if got := strings.TrimSpace(statusAtRetryStart); got != "?? forbidden.txt\n?? good.txt" {
+		t.Errorf("tree at the retry's start must hold only the preserved untracked strays, git reports:\n%s", got)
 	}
-	if _, err := os.Stat(filepath.Join(repo, "forbidden.txt")); err == nil {
-		t.Error("unit 1's denied work must be rolled back (forbidden.txt still present)")
+	if _, err := os.Stat(filepath.Join(repo, "forbidden.txt")); err != nil {
+		t.Errorf("unit 1's untracked stray must survive the rewind (#313): %v", err)
 	}
 
 	// The retry's accept approves: the re-done work passes the gate.

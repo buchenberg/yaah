@@ -278,9 +278,11 @@ func TestReviewSession_RollbackRevertsFilesAndConversation(t *testing.T) {
 		t.Errorf("status = %q, want review", env.Status)
 	}
 
-	// The bad file must be gone: the workspace rewound to unit start.
-	if _, err := os.Stat(badFile); !os.IsNotExist(err) {
-		t.Errorf("wrong-approach.txt should be rolled back, stat err = %v", err)
+	// Tracked content rewound to the unit start; the unit's untracked
+	// file deliberately survives (#313) — a rewind never deletes
+	// uncaptured content, and the corrected dispatch's diff surfaces it.
+	if _, err := os.Stat(badFile); err != nil {
+		t.Errorf("wrong-approach.txt should survive rollback (uncaptured untracked), stat err = %v", err)
 	}
 
 	// The conversation must be rewound too: the corrected dispatch is
@@ -406,6 +408,78 @@ func TestReviewSession_ForkAndChooseA(t *testing.T) {
 	}
 }
 
+// TestReviewSession_ForkWarnsOnParentTreeDrift pins the loud guard for
+// the #312 failure class: a variant that escapes its workdir and writes
+// the parent tree must be called out in the fork envelope, naming only
+// the escapee.
+func TestReviewSession_ForkWarnsOnParentTreeDrift(t *testing.T) {
+	tool, sup, repo, _ := newReviewTestEnv(t)
+
+	runner := &sessionRunner{
+		repoPath: repo,
+		responses: []runnerResponse{
+			{result: "unit one done"},
+			{result: "variant A implementation"},
+			{result: "variant B implementation"},
+		},
+	}
+	runner.sideEffect = func(call int, repoPath string) {
+		switch call {
+		case 1:
+			// Misbehaving variant: ignores its assigned workdir and
+			// writes the parent tree directly.
+			writeTestFile(t, repoPath, "escaped.txt", "A wrote to parent\n")
+		case 2:
+			writeTestFile(t, runner.workdirFor(t, 2), "variant-b.txt", "B\n")
+		}
+	}
+	tool.Runner = runner.run()
+
+	sid := startTestReviewSession(t, tool, "prepare the ground")
+
+	env := mustSupervisorExecute(t, sup, `{"action":"fork","session_id":`+jsonString(sid)+`,"prompt_a":"approach A","prompt_b":"approach B"}`)
+	if env.Status != "awaiting_choose" {
+		t.Fatalf("fork status = %q, want awaiting_choose (env: %s)", env.Status, marshalReviewEnvelope(env))
+	}
+	if !strings.Contains(env.Error, "variant a mutated the PARENT tree") {
+		t.Errorf("fork envelope must name the escaping variant, error = %q", env.Error)
+	}
+	if strings.Contains(env.Error, "variant b mutated") {
+		t.Errorf("variant b ran in its worktree and must not be blamed, error = %q", env.Error)
+	}
+}
+
+// TestReviewSession_ChooseNotesEmptyWinnerDelta pins the loud note when
+// the winner sealed no changes: "chosen" over an empty delta is exactly
+// how #312 presented, so the envelope must say that nothing was applied.
+func TestReviewSession_ChooseNotesEmptyWinnerDelta(t *testing.T) {
+	tool, sup, _, _ := newReviewTestEnv(t)
+
+	runner := &sessionRunner{
+		responses: []runnerResponse{
+			{result: "unit one done"},
+			{result: "variant A analysis only"},
+			{result: "variant B analysis only"},
+		},
+	}
+	tool.Runner = runner.run()
+
+	sid := startTestReviewSession(t, tool, "prepare the ground")
+
+	forkEnv := mustSupervisorExecute(t, sup, `{"action":"fork","session_id":`+jsonString(sid)+`,"prompt_a":"analyze A","prompt_b":"analyze B"}`)
+	if forkEnv.Status != "awaiting_choose" {
+		t.Fatalf("fork status = %q, want awaiting_choose", forkEnv.Status)
+	}
+
+	env := mustSupervisorExecute(t, sup, `{"action":"choose","session_id":`+jsonString(sid)+`,"winner":"a"}`)
+	if env.Status != "chosen" {
+		t.Fatalf("choose status = %q, want chosen (env: %s)", env.Status, marshalReviewEnvelope(env))
+	}
+	if !strings.Contains(env.Error, "sealed no file changes") {
+		t.Errorf("choose envelope must note the empty delta, error = %q", env.Error)
+	}
+}
+
 func TestReviewSession_ForkAndChooseB(t *testing.T) {
 	tool, sup, repo, _ := newReviewTestEnv(t)
 
@@ -507,8 +581,8 @@ func TestReviewSession_AbortRestoresAndCloses(t *testing.T) {
 	if env.Status != "aborted" {
 		t.Errorf("status = %q, want aborted", env.Status)
 	}
-	if _, err := os.Stat(badFile); !os.IsNotExist(err) {
-		t.Errorf("bad.txt should be rewound by abort, stat err = %v", err)
+	if _, err := os.Stat(badFile); err != nil {
+		t.Errorf("bad.txt should survive abort's rewind (uncaptured untracked, #313), stat err = %v", err)
 	}
 
 	// Session closed: further verdicts fail.

@@ -621,6 +621,11 @@ func (s *supervisedSession) forkVariants(ctx context.Context, promptA, promptB s
 		*b.slot = s.provisionVariant(ctx, b.index, b.label, forkPoint)
 	}
 
+	// Loud guard baseline (#312): variants run in isolated worktrees,
+	// so the parent tree must not move while one executes. Tracked per
+	// variant so only the escapee is named.
+	parentBefore := forkPoint
+
 	for _, b := range branches {
 		if ctx.Err() != nil {
 			// Parent cancelled between variants: the parent tree sits at
@@ -670,6 +675,26 @@ func (s *supervisedSession) forkVariants(ctx context.Context, promptA, promptB s
 			}
 		} else {
 			v.Output = out
+		}
+
+		// Loud guard (#312): if the parent tree moved while this variant
+		// ran, the sub-agent escaped its workdir and the sealed delta is
+		// suspect — surface that here instead of letting choose "succeed"
+		// over an empty apply.
+		if after, cerr := scope.CaptureWorkspace(ctx); cerr == nil {
+			if d1, e1 := parentBefore.Digest(); e1 == nil {
+				if d2, e2 := after.Digest(); e2 == nil {
+					if d1 != d2 {
+						note := fmt.Sprintf("variant %s mutated the PARENT tree — its sealed delta is suspect (sub-agent workdir plumbing broken?)", b.label)
+						if env.Error == "" {
+							env.Error = note
+						} else {
+							env.Error += "; " + note
+						}
+					}
+					parentBefore = after
+				}
+			}
 		}
 
 		env.Variants[b.label] = variantOut(v)
@@ -1034,6 +1059,12 @@ func (s *supervisedSession) chooseVariant(ctx context.Context, winner string) (s
 	}
 	if cpErr != nil {
 		notes = append(notes, "unit-start checkpoint failed (rollback degraded until the next unit): "+cpErr.Error())
+	}
+	if len(v.Output.Changes()) == 0 {
+		// Not fatal — an analysis-only variant legitimately changes
+		// nothing — but "chosen" over an empty delta is exactly how #312
+		// presented, so say it out loud.
+		notes = append(notes, "winner variant sealed no file changes — nothing was applied to the tree")
 	}
 	env.Error = strings.Join(notes, "; ")
 	return marshalReviewEnvelope(env), nil

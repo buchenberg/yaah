@@ -107,6 +107,41 @@ func TestBuildSubAgentRegistry_LocalRouteUnchanged(t *testing.T) {
 	}
 }
 
+// TestBuildSubAgentRegistry_WorkdirWithoutSessionValidator pins the
+// #312/#318 root cause: in the default local mode the session carries no
+// path validator, but a workdir dispatch must still root the sub-agent's
+// file tools and shell at its assigned checkout. Without this the
+// supervised session's fork variants all wrote the ONE main tree —
+// worktrees stayed pristine, sealed deltas came out empty, and choose
+// had nothing to apply.
+func TestBuildSubAgentRegistry_WorkdirWithoutSessionValidator(t *testing.T) {
+	opts := taskRunnerOpts{} // pathValidator == nil: default local mode
+	profile := subagent.RoleProfile{Tools: []string{"read", "bash", "write"}}
+
+	reg, err := buildSubAgentRegistry(opts, profile, 0, "/repo/shepherd-worktrees/var-a")
+	if err != nil {
+		t.Fatalf("buildSubAgentRegistry: %v", err)
+	}
+
+	if reg.Workspace == nil || !reg.Workspace.Local() {
+		t.Errorf("workdir dispatch must derive a local workspace, got %#v", reg.Workspace)
+	}
+	want, _ := filepath.Abs("/repo/shepherd-worktrees/var-a")
+	if got := reg.PathValidator; got == nil || got.WorkDir != want || got.WorkspaceRoot != want {
+		t.Errorf("validator must be rooted at the workdir: got %#v, want %s", got, want)
+	}
+}
+
+// TestBuildSubAgentSysPrompt_WorkdirHeader pins that a local-mode workdir
+// dispatch's environment header advertises the assigned worktree, not the
+// orchestrator's process cwd (#312).
+func TestBuildSubAgentSysPrompt_WorkdirHeader(t *testing.T) {
+	got := buildSubAgentSysPrompt(taskRunnerOpts{}, "developer", subagent.RoleProfile{}, false, "/repo/shepherd-worktrees/var-a")
+	if !strings.Contains(got, "/repo/shepherd-worktrees/var-a") {
+		t.Errorf("env header must advertise the workdir, got:\n%.400s", got)
+	}
+}
+
 // TestBuildSubAgentRegistry_NestedTaskInherits proves the inheritance
 // survives nesting: a sub-agent that can itself spawn sub-agents hands the
 // same workspace to its children.
@@ -161,7 +196,7 @@ func TestBuildSubAgentSysPrompt_IsolatedGuidance(t *testing.T) {
 	opts := taskRunnerOpts{workspace: fakeSandboxWorkspace{}}
 	profile := subagent.RoleProfile{Tools: []string{"read", "go_refactor"}}
 
-	got := buildSubAgentSysPrompt(opts, "developer", profile, false)
+	got := buildSubAgentSysPrompt(opts, "developer", profile, false, "")
 	for _, want := range []string{
 		"isolated container",
 		"never claim they are saved",
@@ -186,7 +221,7 @@ func TestBuildSubAgentSysPrompt_IsolatedGuidance(t *testing.T) {
 		t.Errorf("the Available Shell block must agree with the header, not advertise the host's bash:\n%s", got)
 	}
 
-	local := buildSubAgentSysPrompt(taskRunnerOpts{}, "developer", profile, false)
+	local := buildSubAgentSysPrompt(taskRunnerOpts{}, "developer", profile, false, "")
 	if strings.Contains(local, "isolated container") {
 		t.Error("a local sub-agent must not receive the isolated-workspace guidance")
 	}

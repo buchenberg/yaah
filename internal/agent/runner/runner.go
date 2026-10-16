@@ -33,6 +33,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/gitsandbox"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/prompts"
@@ -375,7 +376,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 
 		outLimit := resolveOutputLimit(params.OutputLimit, opts.subCfg, role, opts.outputLimit)
 
-		sysPrompt := buildSubAgentSysPrompt(opts, role, profile, jsonMode)
+		sysPrompt := buildSubAgentSysPrompt(opts, role, profile, jsonMode, params.Workdir)
 
 		// Record the role's directives on the sub-agent span so traces
 		// show which policy statements this child received (if any).
@@ -592,7 +593,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 // guidance, response contract, escalation format, and shell anchoring.
 // Directives sit immediately after the base prompt so they stay prominent
 // instead of being buried behind role guidance and format blocks.
-func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, profile subagent.RoleProfile, jsonMode bool) string {
+func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, profile subagent.RoleProfile, jsonMode bool, workdir string) string {
 	cwd, _ := os.Getwd()
 
 	// The environment header must advertise the directory the sub-agent's
@@ -601,12 +602,18 @@ func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, pro
 	// line is what shell-cd'ing and relative paths key off, and a sandboxed
 	// tool rejects the advertised host path as an escape. The shell line
 	// comes from the workspace too: the container's shell is sh, not the
-	// host's bash/powershell.
+	// host's bash/powershell. A local-mode workdir dispatch (a supervised
+	// session's fork variant) gets the same treatment: its file tools and
+	// shell are rooted at the assigned worktree, so advertising the
+	// orchestrator's cwd would point the model at the wrong tree (#312).
 	envOS, envArch, envShell, envCwd := runtime.GOOS, runtime.GOARCH, "", cwd
 	if opts.workspace != nil {
 		envShell, _ = opts.workspace.Shell()
 		envCwd = opts.workspace.WorkDir()
 	} else {
+		if workdir != "" {
+			envCwd = workdir
+		}
 		if runtime.GOOS == "windows" {
 			envShell = "powershell (pwsh 7+ or Windows PowerShell)"
 		} else {
@@ -732,7 +739,7 @@ func subAgentSandbox(opts taskRunnerOpts, workdir string) shepherdsandbox.Sandbo
 	if workdir != "" {
 		return shepherdgit.NewWorktreeSandbox(repoPath, workdir)
 	}
-	return shepherdgit.NewLocalGitSandbox(repoPath)
+	return gitsandbox.NewLocalSandbox(repoPath)
 }
 
 // ErrRootTerminal reports a recovered root that cannot be reattached
@@ -779,7 +786,7 @@ func CreateRootScope(mgr *shepherd.ScopeManager, sessionID, repoPath string, iso
 			repoPath, _ = os.Getwd()
 		}
 		if repoPath != "" {
-			candidate := shepherdgit.NewLocalGitSandbox(repoPath)
+			candidate := gitsandbox.NewLocalSandbox(repoPath)
 			if _, cerr := candidate.Capture(context.Background()); cerr == nil {
 				sb = candidate
 			}
@@ -921,11 +928,18 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 
 	reg := tools.NewEmptyRegistry()
 	isolated := opts.workspace != nil
-	if !isolated && opts.pathValidator != nil {
+	if !isolated && (opts.pathValidator != nil || workdir != "") {
 		// An isolated sub-agent gets a validator rooted at its own checkout, so
 		// its file tools are contained there and its shell runs there. Policy
 		// (deny patterns, home-access, approval callback) is inherited; the
 		// derived validator starts with a fresh approval cache.
+		//
+		// A workdir dispatch installs a rooted validator even when the session
+		// carries none (the default local mode): without it params.Workdir
+		// never reaches the tools, file paths and the shell resolve against
+		// the process cwd, and a supervised session's fork variants all write
+		// the ONE main tree — worktrees stay pristine, sealed deltas come out
+		// empty, and choose has nothing to apply (#312/#318).
 		pv := opts.pathValidator
 		if workdir != "" {
 			pv = pv.WithWorkspaceRoot(workdir)

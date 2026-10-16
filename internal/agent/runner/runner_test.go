@@ -38,7 +38,7 @@ func TestBuildSubAgentSysPrompt_InjectsRoleDirectivesAfterBase(t *testing.T) {
 		},
 	}
 	role := subagent.SubAgentRole("analyst")
-	got := buildSubAgentSysPrompt(opts, role, subagent.RoleProfileFor(role), false)
+	got := buildSubAgentSysPrompt(opts, role, subagent.RoleProfileFor(role), false, "")
 
 	idxEnv := strings.Index(got, "## Environment")
 	idxBase := strings.Index(got, "BASE_IDENTITY_MARKER")
@@ -71,7 +71,7 @@ func TestBuildSubAgentSysPrompt_NoDirectivesNoBlock(t *testing.T) {
 		},
 	}
 	role := subagent.SubAgentRole("reviewer")
-	got := buildSubAgentSysPrompt(opts, role, subagent.RoleProfileFor(role), false)
+	got := buildSubAgentSysPrompt(opts, role, subagent.RoleProfileFor(role), false, "")
 	if strings.Contains(got, "## Session directives") {
 		t.Errorf("reviewer must not receive a directives block:\n%s", got)
 	}

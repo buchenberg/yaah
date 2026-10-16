@@ -24,6 +24,8 @@ import (
 	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
 	shepherdgit "github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+
+	"github.com/buchenberg/yaah/internal/gitsandbox"
 )
 
 // SchemaWorktreeProvisioned is yaah's pre-kernel-v0.14 worktree record,
@@ -133,7 +135,7 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 			if !adoptRoots {
 				return nil, nil
 			}
-			return shepherdgit.NewLocalGitSandbox(repoPath), nil
+			return gitsandbox.NewLocalSandbox(repoPath), nil
 		case backend == "containerd":
 			// Deliberate non-adoption (D5): no re-adoptable identity.
 			return nil, nil
