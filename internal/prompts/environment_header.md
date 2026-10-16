@@ -1,2 +1,2 @@
 ## Environment
-OS: {{OS}}/{{ARCH}}. Default shell: {{SHELL}} — use it for all shell commands. Working directory: {{CWD}}.
+OS: {{OS}}/{{ARCH}}. {{SHELL_SENTENCE}}Working directory: {{CWD}}.

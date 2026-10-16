@@ -225,6 +225,9 @@ type SubAgentConfig struct {
 
 	// DefaultTimeout is applied when a task call supplies no timeout
 	// and the role profile has none. Seconds. 0 means no timeout.
+	// Slow local models can take 30s+ for a trivial completion, so tune
+	// per-role timeouts (role file or roles.<role>.timeout) for them
+	// rather than raising this global default (#319).
 	DefaultTimeout int `yaml:"default_timeout"`
 
 	// StuckChildTimeout is the duration without a heartbeat before a

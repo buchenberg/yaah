@@ -61,6 +61,11 @@ This is injected into the agent's system prompt via the `Environment` layer.
 Sub-agents receive the **same** environment block — `EnvironmentHeader` is the
 single source of truth shared by the main agent and sub-agents, which is why
 role guidance can refer to "the shell specified in the Environment section".
+The shell sentence is conditional: passing an empty shell to
+`EnvironmentHeader` drops it, and the runner does exactly that for roles whose
+tool set carries no shell (#329), so a tool-less sub-agent never receives the
+"use it for all shell commands" imperative. The OS and working-directory
+lines always render.
 
 ## Layer 2: Loop initialization
 
@@ -184,7 +189,13 @@ roles and their personas:
 | `reviewer` | Tim | Inspect code, count files/lines, measure complexity; do not modify files |
 
 Sub-agents are full agents with their own lean identity, restricted toolsets,
-and role-specific guidance.
+and role-specific guidance. Shell and tool guidance follow the role's tool
+set (#329): a role without `bash`/`powershell` gets no shell imperative, and
+a zero-tool role's base prompt swaps `subagent_identity.md` for
+`subagent_identity_notools.md` (`prompts.InjectNoToolsIdentity`) — a "You
+have NO tools" directive placed before the identity text, with the
+tool-batching cardinal rule and named-tool guidance removed, so tool-less
+roles stop fabricating command output.
 
 ## Complete injection map
 
@@ -229,7 +240,8 @@ Loop.Run(userInput)
 2. **Environment is assembled from one shared template.** `DetectEnvironment`
    renders `environment_header.md` once for the main agent's system prompt;
    sub-agents receive the same rendered block, prepended fresh by the runner
-   at each dispatch.
+   at each dispatch — minus the shell sentence when the role's tool set
+   carries no shell (#329).
 
 3. **Tool set is consistent.** The agent gets the full tool set based on the
    current tool level. The model chooses per-action which tools to use.

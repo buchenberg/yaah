@@ -194,7 +194,10 @@ func TestSubAgentSandbox_LocalUnchanged(t *testing.T) {
 // were dropped. A local sub-agent must not receive it.
 func TestBuildSubAgentSysPrompt_IsolatedGuidance(t *testing.T) {
 	opts := taskRunnerOpts{workspace: fakeSandboxWorkspace{}}
-	profile := subagent.RoleProfile{Tools: []string{"read", "go_refactor"}}
+	// bash is in the profile so the role passes the shell gate (#329) —
+	// this test pins that the header and the Available Shell block agree
+	// on the container's shell, which needs a shell-carrying role.
+	profile := subagent.RoleProfile{Tools: []string{"read", "bash", "go_refactor"}}
 
 	got := buildSubAgentSysPrompt(opts, "developer", profile, false, "")
 	for _, want := range []string{

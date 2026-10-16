@@ -29,6 +29,7 @@ import (
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/budget"
+	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
@@ -549,6 +550,24 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			runErr = fmt.Errorf("sub-agent %s produced no output — its final turn returned empty content (likely hit its turn cap mid-task; consider raising max_turns)", role)
 		}
 
+		// Markup-only output is a silent pseudo-success (issue #314):
+		// the model emitted a tool call in a nonstandard text dialect,
+		// the call never executed, and the raw markup became the report.
+		// Turn it into an explicit error so the orchestrator never
+		// accepts an unexecuted tool call as a completed task.
+		if runErr == nil && llm.LooksLikeUnexecutedToolCalls(result) {
+			runErr = fmt.Errorf("sub-agent %s returned unexecuted tool-call markup as its final report — the model emitted a tool call in a nonstandard text dialect that was never executed; treat this dispatch as failed (consider raising max_turns or reducing the role's toolset)", role)
+		}
+
+		// A zero-tool role cannot have executed anything, so a command
+		// transcript with output evidence in its final report is
+		// fabricated (issue #329 — the same pseudo-success class without
+		// the markup). Scoped to tool-less dispatches: a role with a
+		// shell quoting a transcript it really produced is legitimate.
+		if runErr == nil && len(profile.Tools) == 0 && llm.LooksLikeFabricatedTranscript(result) {
+			runErr = fmt.Errorf("sub-agent %s has no tools but returned a command transcript with invented output — the report is fabricated, nothing was executed; treat this dispatch as failed", role)
+		}
+
 		// Enrich errors with the sub-agent's trace so the orchestrator
 		// can see exactly which tool calls led to the failure.
 		if runErr != nil && opts.defaults.ShepherdTraceDir != "" {
@@ -593,6 +612,11 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 // guidance, response contract, escalation format, and shell anchoring.
 // Directives sit immediately after the base prompt so they stay prominent
 // instead of being buried behind role guidance and format blocks.
+//
+// Shell guidance is gated on the role's tool set (#329): a role without a
+// shell tool gets an environment header with no shell sentence, and a
+// zero-tool role's base prompt swaps the tool-oriented sub-agent identity
+// for the no-tools variant whose directive leads the identity block.
 func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, profile subagent.RoleProfile, jsonMode bool, workdir string) string {
 	cwd, _ := os.Getwd()
 
@@ -620,7 +644,23 @@ func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, pro
 			envShell = "bash"
 		}
 	}
-	sysPrompt := prompts.EnvironmentHeader(envOS, envArch, envShell, envCwd) + "\n\n" + opts.systemPrompt
+	// A role without a shell tool must not receive the header's "use it
+	// for all shell commands" imperative (#329): the registry gives it no
+	// shell, and tool-less roles resolve the contradiction by fabricating
+	// fenced command blocks with invented output. An empty shell drops the
+	// sentence; the OS and working-directory lines stay.
+	if !roleHasShell(profile.Tools) {
+		envShell = ""
+	}
+
+	// A zero-tool role gets the no-tools identity variant: the directive
+	// sits before the identity text so it lands early in the prompt, and
+	// the tool-batching cardinal rule and named-tool guidance disappear.
+	base := opts.systemPrompt
+	if len(profile.Tools) == 0 {
+		base = prompts.InjectNoToolsIdentity(base)
+	}
+	sysPrompt := prompts.EnvironmentHeader(envOS, envArch, envShell, envCwd) + "\n\n" + base
 
 	if ds := opts.subCfg.Roles[string(role)].Directives; len(ds) > 0 {
 		sysPrompt += "\n\n" + prompts.FormatDirectives(ds)
@@ -1069,12 +1109,11 @@ func safeTruncateBytes(s string, maxBytes int) string {
 }
 
 // roleHasShell reports whether the role's tool list includes a shell
-// (bash or powershell). Empty tool lists (legacy full-tool profile) are
-// considered to have all tools, including both shells.
+// (bash or powershell). An empty tool list means the role carries no
+// tools at all — buildSubAgentRegistry registers nothing for it — so it
+// has no shell either (#329). The legacy "empty means every tool"
+// profile is gone: every shipped role file declares its tools.
 func roleHasShell(tools []string) bool {
-	if len(tools) == 0 {
-		return true
-	}
 	for _, t := range tools {
 		if t == "bash" || t == "powershell" {
 			return true

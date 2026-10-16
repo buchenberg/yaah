@@ -11,6 +11,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -80,6 +81,87 @@ func TestBuildSubAgentSysPrompt_NoDirectivesNoBlock(t *testing.T) {
 	}
 }
 
+// TestBuildSubAgentSysPrompt_ToolGating pins #329: shell and tool guidance
+// follow the role's tool set. A zero-tool role gets no shell imperative, no
+// tool-batching cardinal rule, and an early "You have NO tools" directive
+// before the identity text; a shell role keeps the full guidance; a
+// tool-carrying role without a shell loses only the shell imperative.
+func TestBuildSubAgentSysPrompt_ToolGating(t *testing.T) {
+	initTestRoles(t)
+	base := prompts.Build(prompts.Layers{Identity: prompts.SubAgentIdentityPrompt})
+
+	t.Run("zero-tool role", func(t *testing.T) {
+		opts := taskRunnerOpts{systemPrompt: base}
+		profile := subagent.RoleProfile{Tools: []string{}}
+		got := buildSubAgentSysPrompt(opts, "grump", profile, false, "")
+
+		for _, banned := range []string{
+			"Default shell",
+			"use it for all shell commands",
+			"## Available Shell",
+			"batch tool calls",
+			"go_outline",
+			"file_info",
+		} {
+			if strings.Contains(got, banned) {
+				t.Errorf("zero-tool prompt must not contain %q:\n%s", banned, got)
+			}
+		}
+		idxEnv := strings.Index(got, "## Environment")
+		idxDirective := strings.Index(got, "You have NO tools")
+		idxIdentity := strings.Index(got, "You are a yaah sub-agent")
+		if idxEnv < 0 || idxDirective < 0 || idxIdentity < 0 {
+			t.Fatalf("missing env(%d) directive(%d) or identity(%d) section:\n%s", idxEnv, idxDirective, idxIdentity, got)
+		}
+		if !(idxEnv < idxDirective && idxDirective < idxIdentity) {
+			t.Errorf("directive must sit early — after the env header, before the identity text: env=%d directive=%d identity=%d", idxEnv, idxDirective, idxIdentity)
+		}
+		// The OS and working-directory lines survive the shell gate.
+		if !strings.Contains(got, "OS: ") || !strings.Contains(got, "Working directory: ") {
+			t.Errorf("zero-tool header must keep the OS and working-directory lines:\n%.300s", got)
+		}
+	})
+
+	t.Run("shell role keeps shell line and batching rule", func(t *testing.T) {
+		opts := taskRunnerOpts{systemPrompt: base}
+		profile := subagent.RoleProfile{Tools: []string{"bash", "read"}}
+		got := buildSubAgentSysPrompt(opts, "developer", profile, false, "")
+
+		for _, want := range []string{
+			"Default shell: ",
+			"use it for all shell commands",
+			"## Available Shell",
+			"## Cardinal rule: batch tool calls",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("shell-role prompt must contain %q:\n%s", want, got)
+			}
+		}
+		if strings.Contains(got, "You have NO tools") {
+			t.Errorf("shell role must not receive the no-tools directive:\n%s", got)
+		}
+	})
+
+	t.Run("non-shell tool role", func(t *testing.T) {
+		opts := taskRunnerOpts{systemPrompt: base}
+		profile := subagent.RoleProfile{Tools: []string{"read"}}
+		got := buildSubAgentSysPrompt(opts, "reviewer", profile, false, "")
+
+		if strings.Contains(got, "Default shell") || strings.Contains(got, "use it for all shell commands") {
+			t.Errorf("a role without a shell tool must not get the shell imperative:\n%.400s", got)
+		}
+		if strings.Contains(got, "## Available Shell") {
+			t.Errorf("a role without a shell tool must not get the shell anchoring block:\n%s", got)
+		}
+		if !strings.Contains(got, "## Cardinal rule: batch tool calls") {
+			t.Errorf("a role with tools keeps the batching rule:\n%s", got)
+		}
+		if strings.Contains(got, "You have NO tools") {
+			t.Errorf("a role with tools must not receive the no-tools directive:\n%s", got)
+		}
+	})
+}
+
 // whitespaceProvider answers every request with whitespace-only content,
 // reproducing the degenerate forced-final-turn output seen in traces.
 type whitespaceProvider struct{}
@@ -111,6 +193,98 @@ func TestTaskRunnerEmptyResultError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "max_turns") {
 		t.Errorf("error should hint at the turn cap, got: %v", err)
+	}
+}
+
+// markupOnlyProvider answers every request with an unrecoverable
+// tool-response wrapper fragment — the unparseable residue of the
+// nonstandard dialect leak from issue #314. Built from fragments so the
+// test source never contains a complete literal markup tag.
+type markupOnlyProvider struct{}
+
+func (markupOnlyProvider) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
+	return &types.ChatResponse{
+		Choices: []types.Choice{{
+			Message: types.Message{Role: "assistant",
+				Content: "<" + "tool_response>\n</" + "tool_response>"},
+			FinishReason: "stop",
+		}},
+		Usage: types.Usage{TotalTokens: 5},
+	}, nil
+}
+
+func TestTaskRunnerMarkupOnlyResultError(t *testing.T) {
+	initTestRoles(t)
+	opts := taskRunnerOpts{
+		provider:     markupOnlyProvider{},
+		systemPrompt: "BASE",
+		modelName:    "test-model",
+	}
+	runner := makeTaskRunner(opts, 0)
+	result, err := runner(context.Background(), "count the Go files", tools.SubAgentParams{Role: "analyst"})
+	if err == nil {
+		t.Fatalf("expected error for markup-only sub-agent output, got result %q", result)
+	}
+	if !strings.Contains(err.Error(), "unexecuted tool-call markup") {
+		t.Errorf("error should explain the pseudo-success, got: %v", err)
+	}
+}
+
+// fabricatedTranscriptProvider answers like a zero-tool role that
+// hallucinated running a command (issue #329): a fenced shell block with
+// invented stdout, no dialect markup for the recovery parser to catch.
+type fabricatedTranscriptProvider struct{}
+
+func (fabricatedTranscriptProvider) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
+	return &types.ChatResponse{
+		Choices: []types.Choice{{
+			Message: types.Message{Role: "assistant",
+				Content: "```bash\ngit ls-files '*.go' | wc -l\n```\nstdout: 842"},
+			FinishReason: "stop",
+		}},
+		Usage: types.Usage{TotalTokens: 5},
+	}, nil
+}
+
+// A tool-less role that returns a command transcript with output evidence
+// fabricated it — nothing in its registry could have run. The dispatch
+// must fail explicitly (issue #329 acceptance criterion 3). "grump" is
+// not in the embedded registry, so its profile is the zero-value one:
+// no tools.
+func TestTaskRunnerFabricatedTranscriptError(t *testing.T) {
+	initTestRoles(t)
+	opts := taskRunnerOpts{
+		provider:     fabricatedTranscriptProvider{},
+		systemPrompt: "BASE",
+		modelName:    "test-model",
+	}
+	runner := makeTaskRunner(opts, 0)
+	result, err := runner(context.Background(), "count the Go files", tools.SubAgentParams{Role: "grump"})
+	if err == nil {
+		t.Fatalf("expected error for a fabricated transcript from a zero-tool role, got result %q", result)
+	}
+	if !strings.Contains(err.Error(), "fabricated") {
+		t.Errorf("error should explain the fabrication, got: %v", err)
+	}
+}
+
+// The same transcript from a role that HAS a shell is a legitimate quote
+// of what it ran — the fabrication guard is scoped to tool-less profiles
+// and must not reject it.
+func TestTaskRunnerTranscriptFromTooledRolePasses(t *testing.T) {
+	initTestRoles(t)
+	opts := taskRunnerOpts{
+		provider:     fabricatedTranscriptProvider{},
+		systemPrompt: "BASE",
+		modelName:    "test-model",
+	}
+	runner := makeTaskRunner(opts, 0)
+	result, err := runner(context.Background(), "count the Go files", tools.SubAgentParams{Role: "analyst"})
+	if err != nil {
+		t.Fatalf("a tool-enabled role's transcript must not be rejected, got error: %v", err)
+	}
+	if !strings.Contains(result, "stdout: 842") {
+		t.Fatalf("expected the transcript to pass through, got %q", result)
 	}
 }
 

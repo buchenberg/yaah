@@ -34,6 +34,16 @@ var IdentityPrompt string
 //go:embed subagent_identity.md
 var SubAgentIdentityPrompt string
 
+// subAgentIdentityNoToolsRaw is the zero-tool variant of the sub-agent
+// identity: an explicit no-tools directive followed by an identity block
+// without the tool-batching cardinal rule or any named-tool guidance.
+// InjectNoToolsIdentity swaps it in for roles whose tool set is empty
+// (#329) — the standard identity's "work with the tools your role
+// provides" framing makes tool-less roles fabricate command output.
+//
+//go:embed subagent_identity_notools.md
+var subAgentIdentityNoToolsRaw string
+
 //go:embed summary_template.md
 var summaryTemplate string
 
@@ -278,15 +288,29 @@ func WrapUpMessage(count int) string {
 
 // --- Environment header ---
 
+// environmentShellSentence is the shell clause of the environment header,
+// rendered into {{SHELL_SENTENCE}} only when the caller has a shell to
+// advertise. An empty shell omits the whole sentence so a tool-less
+// sub-agent never receives the "use it for all shell commands" imperative
+// (#329).
+const environmentShellSentence = "Default shell: %s — use it for all shell commands. "
+
 // EnvironmentHeader renders the embedded environment_header.md template
-// with {{OS}}, {{ARCH}}, {{SHELL}}, and {{CWD}} replaced by the given
-// values. It is the single source of truth for the environment block
-// shared by the main agent and sub-agents.
+// with {{OS}}, {{ARCH}}, {{SHELL_SENTENCE}}, and {{CWD}} replaced by the
+// given values. It is the single source of truth for the environment
+// block shared by the main agent and sub-agents. An empty shell drops the
+// shell sentence entirely — callers whose tool set carries no shell pass
+// "" so the OS and working-directory lines render without a dangling
+// separator.
 func EnvironmentHeader(os, arch, shell, cwd string) string {
 	s := environmentHeaderRaw
+	sentence := ""
+	if shell != "" {
+		sentence = fmt.Sprintf(environmentShellSentence, shell)
+	}
 	s = strings.ReplaceAll(s, "{{OS}}", os)
 	s = strings.ReplaceAll(s, "{{ARCH}}", arch)
-	s = strings.ReplaceAll(s, "{{SHELL}}", shell)
+	s = strings.ReplaceAll(s, "{{SHELL_SENTENCE}}", sentence)
 	s = strings.ReplaceAll(s, "{{CWD}}", cwd)
 	return s
 }
@@ -337,6 +361,28 @@ func InjectAfterIdentity(prompt string, directives []string) string {
 		return block
 	}
 	return prompt + "\n\n" + block
+}
+
+// InjectNoToolsIdentity swaps the standard sub-agent identity inside
+// prompt for the zero-tool variant, which leads with an explicit
+// "You have NO tools" directive placed before the identity text — early
+// position matters because flash-tier models weight early instructions.
+// The variant drops the tool-batching cardinal rule and all named-tool
+// guidance, which are contradictions a tool-less role would otherwise
+// resolve by fabricating command output (#329). If the standard identity
+// is not present (e.g. a custom base prompt), the zero-tool block is
+// prepended instead.
+func InjectNoToolsIdentity(prompt string) string {
+	block := strings.TrimSpace(subAgentIdentityNoToolsRaw)
+	if identity := strings.TrimSpace(SubAgentIdentityPrompt); identity != "" {
+		if i := strings.Index(prompt, identity); i >= 0 {
+			return prompt[:i] + block + prompt[i+len(identity):]
+		}
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return block
+	}
+	return block + "\n\n" + prompt
 }
 
 // Layers holds the composable pieces of the system prompt assembled

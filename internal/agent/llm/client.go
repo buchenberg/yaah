@@ -39,7 +39,7 @@ type Client struct {
 	// shorten it to observe per-chunk heartbeats.
 	HeartbeatInterval time.Duration
 	prematureCount    int // tracks premature-stream-close replays within a single Call
-	dsmlSeq           int // monotonic ID counter for DSML-recovered tool calls
+	dialectSeq        int // monotonic ID counter for dialect-recovered tool calls
 }
 
 // CallResult holds the outcome of a single LLM call. Response metadata
@@ -137,13 +137,26 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 						c.OnThinking(msg.ReasoningContent)
 					}
 
-					if cleaned, dsmlCalls, ok := parseDSMLToolCalls(msg.Content, &c.dsmlSeq); ok {
-						msg.Content = cleaned
-						msg.ToolCalls = append(msg.ToolCalls, dsmlCalls...)
+					var recoveryErr error
+					if cleaned, recovered, rejected, ok := recoverDialectToolCalls(msg.Content, &c.dialectSeq, req.Tools); ok {
+						if len(rejected) > 0 {
+							// Part of the model's tool-call markup could
+							// not be safely synthesized (cut mid-parameter
+							// or missing a required argument). Executing
+							// the remainder or accepting the content as
+							// the answer would both be a silent partial
+							// success — fail the turn explicitly.
+							recoveryErr = fmt.Errorf("model emitted tool-call markup that could not be safely recovered: %s", strings.Join(rejected, "; "))
+						} else {
+							msg.Content = cleaned
+							msg.ToolCalls = append(msg.ToolCalls, recovered...)
+						}
 					}
 
 					finish := resp.Choices[0].FinishReason
-					if finish == "content_filter" && msg.Content == "" {
+					if recoveryErr != nil {
+						err = recoveryErr
+					} else if finish == "content_filter" && msg.Content == "" {
 						err = fmt.Errorf("response blocked by content filter")
 					} else if finish == "length" && len(msg.ToolCalls) > 0 {
 						err = fmt.Errorf("response truncated (finish_reason=length), discarding %d tool calls", len(msg.ToolCalls))

@@ -190,6 +190,81 @@ func TestBuild_EnvironmentNotDoubleWrapped(t *testing.T) {
 	}
 }
 
+func TestEnvironmentHeader_ShellGate(t *testing.T) {
+	t.Run("with shell renders the imperative", func(t *testing.T) {
+		got := EnvironmentHeader("linux", "amd64", "bash", "/work/dir")
+		want := "## Environment\nOS: linux/amd64. Default shell: bash — use it for all shell commands. Working directory: /work/dir.\n"
+		if got != want {
+			t.Errorf("shell header changed:\n got %q\nwant %q", got, want)
+		}
+	})
+
+	t.Run("empty shell drops the sentence", func(t *testing.T) {
+		got := EnvironmentHeader("linux", "amd64", "", "/work/dir")
+		want := "## Environment\nOS: linux/amd64. Working directory: /work/dir.\n"
+		if got != want {
+			t.Errorf("shell-less header wrong:\n got %q\nwant %q", got, want)
+		}
+		for _, banned := range []string{"Default shell", "use it for all shell commands", "{{", "..", "  "} {
+			if strings.Contains(got, banned) {
+				t.Errorf("shell-less header must not contain %q (dangling separator or leftover placeholder), got %q", banned, got)
+			}
+		}
+	})
+}
+
+func TestInjectNoToolsIdentity(t *testing.T) {
+	base := Build(Layers{Identity: SubAgentIdentityPrompt, UserContext: "prefer terse answers"})
+
+	t.Run("swaps identity and leads with the directive", func(t *testing.T) {
+		got := InjectNoToolsIdentity(base)
+		idxDirective := strings.Index(got, "You have NO tools")
+		idxIdentity := strings.Index(got, "You are a yaah sub-agent")
+		if idxDirective < 0 {
+			t.Fatalf("no-tools directive missing:\n%s", got)
+		}
+		if idxIdentity < 0 {
+			t.Fatalf("zero-tool identity variant missing:\n%s", got)
+		}
+		if idxDirective > idxIdentity {
+			t.Errorf("directive must sit before the identity text: directive=%d identity=%d", idxDirective, idxIdentity)
+		}
+		for _, banned := range []string{
+			"batch tool calls",
+			"tools your role provides",
+			"go_outline",
+			"file_info",
+		} {
+			if strings.Contains(got, banned) {
+				t.Errorf("zero-tool identity must not carry tool guidance %q:\n%s", banned, got)
+			}
+		}
+		if !strings.Contains(got, "prefer terse answers") {
+			t.Errorf("the remaining base layers must survive the swap:\n%s", got)
+		}
+		if strings.Count(got, "You are a yaah sub-agent") != 1 {
+			t.Errorf("the tool-oriented identity must be replaced, not duplicated:\n%s", got)
+		}
+	})
+
+	t.Run("custom base without identity gets the block prepended", func(t *testing.T) {
+		got := InjectNoToolsIdentity("CUSTOM BASE MARKER")
+		if !strings.HasPrefix(got, "**You have NO tools.**") {
+			t.Errorf("directive block must lead the prompt, got %q", got)
+		}
+		if !strings.Contains(got, "CUSTOM BASE MARKER") {
+			t.Errorf("custom base must be preserved, got %q", got)
+		}
+	})
+
+	t.Run("empty prompt yields just the block", func(t *testing.T) {
+		got := InjectNoToolsIdentity("")
+		if !strings.HasPrefix(got, "**You have NO tools.**") || strings.Contains(got, "\n\n\n") {
+			t.Errorf("empty prompt should yield the bare block, got %q", got)
+		}
+	})
+}
+
 func TestSubAgentIdentityMirrorsCanonicalHabitSections(t *testing.T) {
 	// The batch-rule and reason-before-reading sections are duplicated from
 	// identity.md on purpose: sub-agents need the habits but not the rest of
