@@ -169,6 +169,11 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	sp.Workdir = wt
 	result, bodyErr := runRetainedBody(ctx, rt, prompt, sp, timeout)
 
+	// Scrub the confinement scratch before sealing: the env redirect keeps the
+	// body's housekeeping writes (HOME/TMPDIR/caches) inside the worktree, and
+	// the scrub keeps them out of the proposal's delta.
+	ScrubConfinementScratch(wt)
+
 	// Seal even after a body error: the partial work is reviewable. A seal
 	// failure is surfaced, never dropped.
 	output, sealErr := mgr.Seal(ctx, scopeID)

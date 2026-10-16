@@ -27,7 +27,7 @@ func TestConfinedSubAgentWorkspace_Placement(t *testing.T) {
 		{"jail", true},
 	}
 	for _, c := range cases {
-		got := confinedSubAgentWorkspace(pv, config.SubAgentConfig{Containment: c.setting})
+		got := confinedSubAgentWorkspace(pv, config.SubAgentConfig{Containment: c.setting}, t.TempDir())
 		if (got != nil) != c.want {
 			t.Errorf("containment=%q: confined=%v, want %v", c.setting, got != nil, c.want)
 		}
@@ -35,7 +35,7 @@ func TestConfinedSubAgentWorkspace_Placement(t *testing.T) {
 
 	// "auto" jails only where a backend exists; elsewhere it degrades to the
 	// host (advisory) path, so the result tracks the host's capability.
-	auto := confinedSubAgentWorkspace(pv, config.SubAgentConfig{Containment: "auto"})
+	auto := confinedSubAgentWorkspace(pv, config.SubAgentConfig{Containment: "auto"}, t.TempDir())
 	wantAuto := landlock.Detect() != nil
 	if (auto != nil) != wantAuto {
 		t.Errorf("containment=auto: confined=%v, want %v (backend present=%v)", auto != nil, wantAuto, wantAuto)

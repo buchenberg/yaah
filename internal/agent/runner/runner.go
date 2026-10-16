@@ -1022,7 +1022,7 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 		// lane has a bound world to jail against. The orchestrator's workspace
 		// and a workdir-less (shared-host) sub-agent keep running unconfined.
 		if workdir != "" {
-			if ws := confinedSubAgentWorkspace(pv, opts.subCfg); ws != nil {
+			if ws := confinedSubAgentWorkspace(pv, opts.subCfg, workdir); ws != nil {
 				if err := reg.SetWorkspace(ws); err != nil {
 					slog.Debug("sub-agent confinement unavailable", "workdir", workdir, "err", err)
 				}
@@ -1259,7 +1259,7 @@ func subagentTraceProfile(ctx context.Context, tracePath, sessionID string) stri
 // Landlock-capable host and falls back to advisory elsewhere; "paddock" (alias
 // "jail") fails closed. The writable root is the worktree — the sub-agent's
 // bound world — so the kernel boundary and the run's own boundary agree.
-func confinedSubAgentWorkspace(pv *tools.PathValidator, cfg config.SubAgentConfig) tools.Workspace {
+func confinedSubAgentWorkspace(pv *tools.PathValidator, cfg config.SubAgentConfig, workdir string) tools.Workspace {
 	placement := containmentPlacement(cfg.Containment)
 	if placement == "" {
 		return nil
@@ -1270,8 +1270,18 @@ func confinedSubAgentWorkspace(pv *tools.PathValidator, cfg config.SubAgentConfi
 		return nil
 	}
 	// A write-jail by default (network allow_all); egress confinement is opt-in.
-	return tools.NewConfinedLocalWorkspace(pv, backend, placement,
+	ws := tools.NewConfinedLocalWorkspace(pv, backend, placement,
 		containment.NetworkPolicy{Mode: containment.NetAllowAll})
+
+	// Redirect housekeeping writes into the worktree (the one writable root):
+	// HOME, TMPDIR, and the build caches. The scratch is scrubbed before the
+	// workspace is sealed, so it never reaches a proposal's delta.
+	if env, err := tools.ConfinementScratchEnv(workdir); err == nil {
+		ws = ws.WithEnv(env)
+	} else {
+		slog.Debug("confinement scratch unavailable", "workdir", workdir, "err", err)
+	}
+	return ws
 }
 
 // containmentPlacement maps agents.subagent.containment to a placement, or ""
