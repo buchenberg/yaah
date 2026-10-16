@@ -37,7 +37,11 @@ type RoleDef struct {
 	MaxToolTurns  int
 	MinToolTurns  int // per-call overrides may not go below; 0 = none
 	JSONMode      bool
-	Timeout       int // seconds; 0 = no timeout
+	// Timeout is the role's default per-dispatch budget in seconds;
+	// 0 = no timeout. Roles served by slow local models need a generous
+	// budget — even a trivial completion can take 30s+ there, so a tight
+	// per-role timeout kills runs that would have finished (#319).
+	Timeout int
 
 	Body string
 }

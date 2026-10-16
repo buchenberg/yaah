@@ -11,6 +11,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -78,6 +79,87 @@ func TestBuildSubAgentSysPrompt_NoDirectivesNoBlock(t *testing.T) {
 	if strings.Contains(got, "analyst-only rule") {
 		t.Errorf("analyst directive leaked into reviewer prompt")
 	}
+}
+
+// TestBuildSubAgentSysPrompt_ToolGating pins #329: shell and tool guidance
+// follow the role's tool set. A zero-tool role gets no shell imperative, no
+// tool-batching cardinal rule, and an early "You have NO tools" directive
+// before the identity text; a shell role keeps the full guidance; a
+// tool-carrying role without a shell loses only the shell imperative.
+func TestBuildSubAgentSysPrompt_ToolGating(t *testing.T) {
+	initTestRoles(t)
+	base := prompts.Build(prompts.Layers{Identity: prompts.SubAgentIdentityPrompt})
+
+	t.Run("zero-tool role", func(t *testing.T) {
+		opts := taskRunnerOpts{systemPrompt: base}
+		profile := subagent.RoleProfile{Tools: []string{}}
+		got := buildSubAgentSysPrompt(opts, "grump", profile, false, "")
+
+		for _, banned := range []string{
+			"Default shell",
+			"use it for all shell commands",
+			"## Available Shell",
+			"batch tool calls",
+			"go_outline",
+			"file_info",
+		} {
+			if strings.Contains(got, banned) {
+				t.Errorf("zero-tool prompt must not contain %q:\n%s", banned, got)
+			}
+		}
+		idxEnv := strings.Index(got, "## Environment")
+		idxDirective := strings.Index(got, "You have NO tools")
+		idxIdentity := strings.Index(got, "You are a yaah sub-agent")
+		if idxEnv < 0 || idxDirective < 0 || idxIdentity < 0 {
+			t.Fatalf("missing env(%d) directive(%d) or identity(%d) section:\n%s", idxEnv, idxDirective, idxIdentity, got)
+		}
+		if !(idxEnv < idxDirective && idxDirective < idxIdentity) {
+			t.Errorf("directive must sit early — after the env header, before the identity text: env=%d directive=%d identity=%d", idxEnv, idxDirective, idxIdentity)
+		}
+		// The OS and working-directory lines survive the shell gate.
+		if !strings.Contains(got, "OS: ") || !strings.Contains(got, "Working directory: ") {
+			t.Errorf("zero-tool header must keep the OS and working-directory lines:\n%.300s", got)
+		}
+	})
+
+	t.Run("shell role keeps shell line and batching rule", func(t *testing.T) {
+		opts := taskRunnerOpts{systemPrompt: base}
+		profile := subagent.RoleProfile{Tools: []string{"bash", "read"}}
+		got := buildSubAgentSysPrompt(opts, "developer", profile, false, "")
+
+		for _, want := range []string{
+			"Default shell: ",
+			"use it for all shell commands",
+			"## Available Shell",
+			"## Cardinal rule: batch tool calls",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("shell-role prompt must contain %q:\n%s", want, got)
+			}
+		}
+		if strings.Contains(got, "You have NO tools") {
+			t.Errorf("shell role must not receive the no-tools directive:\n%s", got)
+		}
+	})
+
+	t.Run("non-shell tool role", func(t *testing.T) {
+		opts := taskRunnerOpts{systemPrompt: base}
+		profile := subagent.RoleProfile{Tools: []string{"read"}}
+		got := buildSubAgentSysPrompt(opts, "reviewer", profile, false, "")
+
+		if strings.Contains(got, "Default shell") || strings.Contains(got, "use it for all shell commands") {
+			t.Errorf("a role without a shell tool must not get the shell imperative:\n%.400s", got)
+		}
+		if strings.Contains(got, "## Available Shell") {
+			t.Errorf("a role without a shell tool must not get the shell anchoring block:\n%s", got)
+		}
+		if !strings.Contains(got, "## Cardinal rule: batch tool calls") {
+			t.Errorf("a role with tools keeps the batching rule:\n%s", got)
+		}
+		if strings.Contains(got, "You have NO tools") {
+			t.Errorf("a role with tools must not receive the no-tools directive:\n%s", got)
+		}
+	})
 }
 
 // whitespaceProvider answers every request with whitespace-only content,

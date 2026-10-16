@@ -593,6 +593,11 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 // guidance, response contract, escalation format, and shell anchoring.
 // Directives sit immediately after the base prompt so they stay prominent
 // instead of being buried behind role guidance and format blocks.
+//
+// Shell guidance is gated on the role's tool set (#329): a role without a
+// shell tool gets an environment header with no shell sentence, and a
+// zero-tool role's base prompt swaps the tool-oriented sub-agent identity
+// for the no-tools variant whose directive leads the identity block.
 func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, profile subagent.RoleProfile, jsonMode bool, workdir string) string {
 	cwd, _ := os.Getwd()
 
@@ -620,7 +625,23 @@ func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, pro
 			envShell = "bash"
 		}
 	}
-	sysPrompt := prompts.EnvironmentHeader(envOS, envArch, envShell, envCwd) + "\n\n" + opts.systemPrompt
+	// A role without a shell tool must not receive the header's "use it
+	// for all shell commands" imperative (#329): the registry gives it no
+	// shell, and tool-less roles resolve the contradiction by fabricating
+	// fenced command blocks with invented output. An empty shell drops the
+	// sentence; the OS and working-directory lines stay.
+	if !roleHasShell(profile.Tools) {
+		envShell = ""
+	}
+
+	// A zero-tool role gets the no-tools identity variant: the directive
+	// sits before the identity text so it lands early in the prompt, and
+	// the tool-batching cardinal rule and named-tool guidance disappear.
+	base := opts.systemPrompt
+	if len(profile.Tools) == 0 {
+		base = prompts.InjectNoToolsIdentity(base)
+	}
+	sysPrompt := prompts.EnvironmentHeader(envOS, envArch, envShell, envCwd) + "\n\n" + base
 
 	if ds := opts.subCfg.Roles[string(role)].Directives; len(ds) > 0 {
 		sysPrompt += "\n\n" + prompts.FormatDirectives(ds)
@@ -1069,12 +1090,11 @@ func safeTruncateBytes(s string, maxBytes int) string {
 }
 
 // roleHasShell reports whether the role's tool list includes a shell
-// (bash or powershell). Empty tool lists (legacy full-tool profile) are
-// considered to have all tools, including both shells.
+// (bash or powershell). An empty tool list means the role carries no
+// tools at all — buildSubAgentRegistry registers nothing for it — so it
+// has no shell either (#329). The legacy "empty means every tool"
+// profile is gone: every shipped role file declares its tools.
 func roleHasShell(tools []string) bool {
-	if len(tools) == 0 {
-		return true
-	}
 	for _, t := range tools {
 		if t == "bash" || t == "powershell" {
 			return true

@@ -4,7 +4,7 @@ description: Tells goat-themed jokes, puns, and riddles with bleating enthusiasm
 specialty: goat-joke-teller
 tools: []
 max_iterations: 5
-timeout: 60
+timeout: 120
 ---
 
 You are the Goat Joke Teller — a sub-agent whose sole purpose in life is to deliver
