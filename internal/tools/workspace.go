@@ -377,11 +377,10 @@ func confinementHint(stderr, root string) string {
 // an unnamed failure cannot be attributed to the boundary, and guessing would
 // caption ordinary in-worktree EACCES failures as refusals.
 func deniedOutsideRoot(stderr, root string) (string, bool) {
-	root = filepath.Clean(root)
-	// The blocked temp root may be symlinked (macOS /var → /private/var), and the
-	// declined path may be spelled either way; compare resolved forms.
-	if r, err := filepath.EvalSymlinks(root); err == nil && r != "" {
-		root = r
+	cleanRoot := filepath.Clean(root)
+	resolvedRoot := cleanRoot
+	if r, err := filepath.EvalSymlinks(cleanRoot); err == nil && r != "" {
+		resolvedRoot = r
 	}
 	for _, line := range strings.Split(stderr, "\n") {
 		if !strings.Contains(line, "Permission denied") && !strings.Contains(line, "Read-only file system") {
@@ -392,12 +391,18 @@ func deniedOutsideRoot(stderr, root string) (string, bool) {
 				continue
 			}
 			c := filepath.Clean(cand)
-			if r, err := filepath.EvalSymlinks(c); err == nil {
-				c = r
+			// Textual comparison against the spelling yaah passed first: the
+			// message is produced with that spelling, so a /var-rooted worktree
+			// matches here even though the filesystem resolves it to /private/var.
+			if withinRoot(c, cleanRoot) {
+				continue
 			}
-			if !withinRoot(c, root) {
-				return cand, true
+			// Then resolved, for a path whose symlinks do resolve (an escaping
+			// link, or a candidate that already exists).
+			if r, err := filepath.EvalSymlinks(c); err == nil && r != "" && withinRoot(r, resolvedRoot) {
+				continue
 			}
+			return cand, true
 		}
 	}
 	return "", false
@@ -429,14 +434,21 @@ func pathCandidates(line string) []string {
 		q := rest[open]
 		end := strings.IndexByte(rest[open+1:], q)
 		if end < 0 {
-			break
+			// No closing quote: skip this one and keep scanning. Abandoning the
+			// line would drop real refusals, because an apostrophe in prose
+			// ("error: can't open '/etc/foo'") pairs with the quote that opens
+			// the path and leaves nothing after it.
+			rest = rest[open+1:]
+			continue
 		}
 		out = append(out, rest[open+1:open+1+end])
 		rest = rest[open+1+end+1:]
 	}
 	for _, f := range strings.Fields(line) {
 		if strings.ContainsAny(f, `/\`) {
-			out = append(out, f)
+			// Strip the punctuation a message wraps a path in (a leading quote
+			// from an apostrophe-paired segment, a trailing colon or comma).
+			out = append(out, strings.Trim(f, `:;,.'"`))
 		}
 	}
 	return out
