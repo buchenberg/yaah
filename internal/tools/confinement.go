@@ -99,7 +99,7 @@ func scratchGitGlobalConfig(scratch string) string {
 
 	var b strings.Builder
 	for _, p := range paths {
-		fmt.Fprintf(&b, "[include]\n\tpath = %s\n", p)
+		fmt.Fprintf(&b, "[include]\n\tpath = %s\n", gitConfigValue(p))
 	}
 
 	// The scratch HOME was just created and symlink-checked, but a repository
@@ -119,6 +119,31 @@ func scratchGitGlobalConfig(scratch string) string {
 		return ""
 	}
 	return shim
+}
+
+// gitConfigValue quotes a path for a git config value. Unquoted interpolations
+// are not safe: git starts a comment at `#`/`;` preceded by whitespace, and
+// processes backslash escapes — so a HOME containing either would silently
+// truncate or corrupt the shim. Quoting with `\`/`"`/newline/tab escaped makes
+// the value exact.
+func gitConfigValue(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"', '\\':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 // realGitGlobalConfigs resolves the global config files git would read from a

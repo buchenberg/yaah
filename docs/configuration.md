@@ -451,9 +451,14 @@ redirect would otherwise hide are handled explicitly:
   lands in the worktree, and each included file's own `include` paths still
   resolve against its real location.
 
-The scratch itself is created defensively: a `.yaah-scratch` that is (or resolves
-through) a symlink out of the worktree is refused, since that write happens in
-the unconfined parent and MkdirAll follows symlinks.
+The scratch itself is created defensively: **any** symlinked path component from
+the worktree down to the scratch is refused — not only links that point outside.
+A symlinked scratch is never intended, these writes happen in the unconfined
+parent (where `MkdirAll` would follow the link), and telling a safe link from an
+unsafe one is not worth the risk. A refusal **fails the dispatch** rather than
+quietly confining without the redirect — a jailed body whose `HOME`/`TMPDIR`
+still point outside the writable root would just fail confusingly. (`containment:
+off` is the way to run unconfined.)
 
 Credential *stores* (`~/.ssh`, `~/.git-credentials`, `~/.npmrc`, `~/.netrc`) are
 deliberately not made reachable: the worktree bootstrap — which runs unconfined

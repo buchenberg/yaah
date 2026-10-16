@@ -121,7 +121,7 @@ func TestConfinementScratchEnv_PointsGitAtGlobalConfig(t *testing.T) {
 		// Both, in order. Including only one would DROP the other: the pointer
 		// replaces both defaults rather than adding to them, and a name in one
 		// file plus an email in the other is a real configuration.
-		if !strings.Contains(body, "path = "+xdg) || !strings.Contains(body, "path = "+legacy) {
+		if !strings.Contains(body, "path = \""+xdg+"\"") || !strings.Contains(body, "path = \""+legacy+"\"") {
 			t.Errorf("the shim must include both files:\n%s", body)
 		}
 		if strings.Index(body, xdg) > strings.Index(body, legacy) {
@@ -162,7 +162,7 @@ func TestConfinementScratchEnv_PointsGitAtGlobalConfig(t *testing.T) {
 		if !ok {
 			t.Fatal("GIT_CONFIG_GLOBAL must be set when a global config exists")
 		}
-		if !strings.Contains(body, "path = "+want) {
+		if !strings.Contains(body, "path = \""+want+"\"") {
 			t.Errorf("the shim must include the XDG config %q:\n%s", want, body)
 		}
 	})
@@ -209,6 +209,26 @@ func TestConfinementScratchEnv_RefusesSymlinkedScratch(t *testing.T) {
 	}
 	if _, err := ConfinementScratchEnv(root2); err == nil {
 		t.Fatal("a symlinked scratch HOME must be refused, not followed")
+	}
+}
+
+// TestGitConfigValue_QuotesAndEscapes: an unquoted interpolation would be
+// truncated at a comment character and reinterpreted at a backslash, so a HOME
+// containing either would silently corrupt the shim.
+func TestGitConfigValue_QuotesAndEscapes(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"/home/plain/.gitconfig", `"/home/plain/.gitconfig"`},
+		{"/home/has space/.gitconfig", `"/home/has space/.gitconfig"`},
+		{"/home/hash # not a comment/.gitconfig", `"/home/hash # not a comment/.gitconfig"`},
+		{"/home/semi ; not a comment/.gitconfig", `"/home/semi ; not a comment/.gitconfig"`},
+		{`/home/back\slash/.gitconfig`, `"/home/back\\slash/.gitconfig"`},
+		{"/home/quote\"/.gitconfig", `"/home/quote\"/.gitconfig"`},
+		{"/home/new\nline", `"/home/new\nline"`},
+	}
+	for _, c := range cases {
+		if got := gitConfigValue(c.in); got != c.want {
+			t.Errorf("gitConfigValue(%q) = %s, want %s", c.in, got, c.want)
+		}
 	}
 }
 

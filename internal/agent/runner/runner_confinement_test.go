@@ -1,6 +1,10 @@
 package runner
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
@@ -10,6 +14,38 @@ import (
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/tools"
 )
+
+// A scratch that cannot be prepared must FAIL the dispatch, not be silently
+// downgraded: without the redirect the jailed body's HOME/TMPDIR writes land
+// outside the writable root and are denied, and dropping the jail instead would
+// silently lose containment. A planted symlink is the hostile case that
+// motivates it (and is real: the redirect's own writes happen unconfined).
+func TestResolveSubAgentConfinement_RefusalFailsTheDispatch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	pv := tools.NewPathValidator(t.TempDir(), false, nil)
+	workdir := t.TempDir()
+	if err := os.Symlink(t.TempDir(), filepath.Join(workdir, ".yaah-scratch")); err != nil {
+		t.Fatalf("plant the symlink: %v", err)
+	}
+	// paddock fails closed even with no backend, so this reaches the redirect.
+	ws, rec, err := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: "paddock"}, workdir)
+	if err == nil {
+		t.Fatalf("an unredirectable scratch must fail the dispatch, got ws=%v rec=%+v", ws, rec)
+	}
+	if !strings.Contains(err.Error(), ".yaah-scratch") {
+		t.Errorf("the error must name the offending path, got %v", err)
+	}
+
+	// And the registry build surfaces it rather than confining without the
+	// redirect.
+	if _, _, rerr := buildSubAgentRegistry(
+		taskRunnerOpts{pathValidator: pv, subCfg: config.SubAgentConfig{Containment: "paddock"}},
+		subagent.RoleProfile{Tools: []string{"read", "grep"}}, 0, workdir); rerr == nil {
+		t.Fatal("buildSubAgentRegistry must fail on an unredirectable scratch")
+	}
+}
 
 // stubBackend stands in for a syscall-jail backend so both sides of the
 // availability decision are testable; `nil` stands in for "none on this host".
@@ -133,7 +169,11 @@ func TestResolveSubAgentConfinement_Placement(t *testing.T) {
 		{"jail", true, true},
 	}
 	for _, c := range cases {
-		ws, rec := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: c.setting}, t.TempDir())
+		ws, rec, rerr := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: c.setting}, t.TempDir())
+		if rerr != nil {
+			t.Errorf("containment=%q: %v", c.setting, rerr)
+			continue
+		}
 		if (ws != nil) != c.confine {
 			t.Errorf("containment=%q: confined=%v, want %v", c.setting, ws != nil, c.confine)
 		}
@@ -148,7 +188,10 @@ func TestResolveSubAgentConfinement_Placement(t *testing.T) {
 	// "auto" jails only where a backend exists; elsewhere it degrades to
 	// advisory — and either way records the resolution, so a reader can tell the
 	// two apart.
-	autoWS, autoRec := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: "auto"}, t.TempDir())
+	autoWS, autoRec, autoErr := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: "auto"}, t.TempDir())
+	if autoErr != nil {
+		t.Fatalf("auto: %v", autoErr)
+	}
 	wantJail := landlock.Detect() != nil
 	if (autoWS != nil) != wantJail {
 		t.Errorf("auto: confined=%v, want %v", autoWS != nil, wantJail)

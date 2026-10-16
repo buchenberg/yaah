@@ -1028,7 +1028,10 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 		// lane has a bound world to jail against. The orchestrator's workspace
 		// and a workdir-less (shared-host) sub-agent keep running unconfined.
 		if workdir != "" {
-			ws, rec := resolveSubAgentConfinement(pv, opts.subCfg, workdir)
+			ws, rec, cerr := resolveSubAgentConfinement(pv, opts.subCfg, workdir)
+			if cerr != nil {
+				return nil, nil, cerr
+			}
 			// Record the resolution even when there is no workspace: "auto"
 			// degrading to advisory returns a nil workspace WITH a record, and
 			// that advisory resolution is exactly what the trace must show.
@@ -1309,11 +1312,11 @@ func (c *subAgentConfinement) payload() map[string]any {
 // elsewhere; "off" (or "none"/"advisory") mean no jail; "paddock" (alias "jail")
 // fails closed. The writable root is the worktree — the sub-agent's bound world —
 // so the kernel boundary and the run's own boundary agree.
-func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConfig, workdir string) (tools.Workspace, *subAgentConfinement) {
+func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConfig, workdir string) (tools.Workspace, *subAgentConfinement, error) {
 	requested := strings.TrimSpace(cfg.Containment)
 	placement := containmentPlacement(requested)
 	if placement == "" || workdir == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// Availability, not mere presence: a backend that is present but unusable
@@ -1329,7 +1332,7 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 	rec, confine := confinementRecord(requested, placement, available, backend, workdir)
 	if !confine {
 		// "auto" degrades visibly to advisory: the host path *is* advisory.
-		return nil, rec
+		return nil, rec, nil
 	}
 
 	// A write-jail by default (network allow_all); egress confinement is opt-in.
@@ -1339,12 +1342,18 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 	// Redirect housekeeping writes into the worktree (the one writable root):
 	// HOME, TMPDIR, and the build caches. The scratch is scrubbed before the
 	// workspace is sealed, so it never reaches a proposal's delta.
-	if env, err := tools.ConfinementScratchEnv(workdir); err == nil {
-		ws = ws.WithEnv(env)
-	} else {
-		slog.Debug("confinement scratch unavailable", "workdir", workdir, "err", err)
+	//
+	// A failure here fails the dispatch. The redirect is not decoration: without
+	// it the jailed body's HOME/TMPDIR writes land outside the writable root and
+	// are denied, so the run would fail confusingly — and dropping the jail
+	// instead would silently lose containment. The refusal is therefore surfaced
+	// rather than downgraded. (An operator who wants no jail sets
+	// `containment: off`.)
+	env, err := tools.ConfinementScratchEnv(workdir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("confinement redirect for %s: %w", workdir, err)
 	}
-	return ws, rec
+	return ws.WithEnv(env), rec, nil
 }
 
 // confinementRecord is the pure decision behind what a dispatch records, split
