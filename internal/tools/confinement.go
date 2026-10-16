@@ -126,20 +126,24 @@ func scratchGitGlobalConfig(scratch string) string {
 // processes backslash escapes — so a HOME containing either would silently
 // truncate or corrupt the shim. Quoting with `\`/`"`/newline/tab escaped makes
 // the value exact.
+//
+// Bytes, not runes: a path is a byte string, and on Linux it may not be valid
+// UTF-8. Iterating runes would replace every undecodable byte with U+FFFD and
+// point git at a different file.
 func gitConfigValue(s string) string {
 	var b strings.Builder
 	b.WriteByte('"')
-	for _, r := range s {
-		switch r {
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; c {
 		case '"', '\\':
 			b.WriteByte('\\')
-			b.WriteRune(r)
+			b.WriteByte(c)
 		case '\n':
 			b.WriteString(`\n`)
 		case '\t':
 			b.WriteString(`\t`)
 		default:
-			b.WriteRune(r)
+			b.WriteByte(c)
 		}
 	}
 	b.WriteByte('"')

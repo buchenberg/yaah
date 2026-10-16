@@ -121,7 +121,7 @@ func TestConfinementScratchEnv_PointsGitAtGlobalConfig(t *testing.T) {
 		// Both, in order. Including only one would DROP the other: the pointer
 		// replaces both defaults rather than adding to them, and a name in one
 		// file plus an email in the other is a real configuration.
-		if !strings.Contains(body, "path = \""+xdg+"\"") || !strings.Contains(body, "path = \""+legacy+"\"") {
+		if !strings.Contains(body, "path = "+gitConfigValue(xdg)) || !strings.Contains(body, "path = "+gitConfigValue(legacy)) {
 			t.Errorf("the shim must include both files:\n%s", body)
 		}
 		if strings.Index(body, xdg) > strings.Index(body, legacy) {
@@ -162,7 +162,7 @@ func TestConfinementScratchEnv_PointsGitAtGlobalConfig(t *testing.T) {
 		if !ok {
 			t.Fatal("GIT_CONFIG_GLOBAL must be set when a global config exists")
 		}
-		if !strings.Contains(body, "path = \""+want+"\"") {
+		if !strings.Contains(body, "path = "+gitConfigValue(want)) {
 			t.Errorf("the shim must include the XDG config %q:\n%s", want, body)
 		}
 	})
@@ -224,6 +224,8 @@ func TestGitConfigValue_QuotesAndEscapes(t *testing.T) {
 		{`/home/back\slash/.gitconfig`, `"/home/back\\slash/.gitconfig"`},
 		{"/home/quote\"/.gitconfig", `"/home/quote\"/.gitconfig"`},
 		{"/home/new\nline", `"/home/new\nline"`},
+		// A path is a byte string and may not be valid UTF-8; every byte must survive.
+		{"/home/\xff\xfe/.gitconfig", "\"/home/\xff\xfe/.gitconfig\""},
 	}
 	for _, c := range cases {
 		if got := gitConfigValue(c.in); got != c.want {
