@@ -171,7 +171,7 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 	// Retained mode (Plan 7 Phase 2): run in an isolated worktree and return a
 	// sealed proposal the orchestrator settles, instead of mutating the host.
 	if t.Retained != nil {
-		return startRetainedRun(ctx, *t.Retained, params.Prompt, subParams, timeout)
+		return startRetainedRun(runCtx, *t.Retained, params.Prompt, subParams, timeout)
 	}
 
 	if timeout > 0 {

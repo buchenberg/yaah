@@ -121,6 +121,46 @@ func TestRetained_DiscardLeavesHostUntouched(t *testing.T) {
 	}
 }
 
+// TestRetained_ReleaseRemovesWorktree: release integrates nothing, so it must
+// tear the isolated worktree down rather than strand it, and must not touch the
+// host.
+func TestRetained_ReleaseRemovesWorktree(t *testing.T) {
+	resetRetainedProposals()
+	runner := writingRunner(t, "out.txt")
+	rt := newRetainedTestEnv(t, runner)
+
+	res, _ := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 0)
+	env := decodeProposalEnvelope(t, res)
+	wt := runner.workdirFor(t, 0)
+
+	if _, err := settleRetainedProposal(context.Background(), env.ProposalID, "release"); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if _, err := os.Stat(wt); !os.IsNotExist(err) {
+		t.Errorf("release must tear down the worktree (stat err=%v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(rt.RepoPath, "out.txt")); !os.IsNotExist(err) {
+		t.Errorf("release must not touch the host (stat err=%v)", err)
+	}
+}
+
+// TestRetained_ParallelIDsUnique: proposals dispatched in the same nanosecond
+// get distinct ids — and therefore distinct worktree paths.
+func TestRetained_ParallelIDsUnique(t *testing.T) {
+	resetRetainedProposals()
+	rt := newRetainedTestEnv(t, writingRunner(t, "out.txt"))
+
+	r1, _ := startRetainedRun(context.Background(), rt, "one", SubAgentParams{Role: "worker"}, 0)
+	r2, _ := startRetainedRun(context.Background(), rt, "two", SubAgentParams{Role: "worker"}, 0)
+	e1, e2 := decodeProposalEnvelope(t, r1), decodeProposalEnvelope(t, r2)
+	if e1.ProposalID == "" || e2.ProposalID == "" {
+		t.Fatalf("both dispatches should seal a proposal: %v / %v", e1, e2)
+	}
+	if e1.ProposalID == e2.ProposalID {
+		t.Fatalf("parallel dispatches must not collide on a proposal id: %q", e1.ProposalID)
+	}
+}
+
 // TestRetained_SettleOnce: a sealed proposal settles exactly once.
 func TestRetained_SettleOnce(t *testing.T) {
 	resetRetainedProposals()

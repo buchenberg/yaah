@@ -685,8 +685,10 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 
 		// Proposal tool (Plan 7 Phase 2): settles the sealed proposals the
 		// retained lane produces. Registered only when that lane is live — a
-		// shared lane, or an isolated session, produces none.
-		if sessionSandbox == nil && retainedMode(cfg.Agent.SubAgent.Mode) {
+		// shared lane, an isolated session, or a failed root scope produces none
+		// (spawn_subagent falls back to the direct lane without a root scope, so
+		// the prompt must not advertise a settlement that can never happen).
+		if sessionSandbox == nil && retainedMode(cfg.Agent.SubAgent.Mode) && rootScopeID != "" {
 			toolReg.Register(&tools.ProposalTool{})
 		}
 
@@ -747,7 +749,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		mainPrompt += "\n\n" + prompts.IsolatedWorkspaceGuidance(omittedTools, omittedMCP)
 	} else if scopeMgr != nil {
 		mainPrompt += "\n\n" + prompts.SubAgentToolsGuidance()
-		if retainedMode(cfg.Agent.SubAgent.Mode) {
+		if retainedMode(cfg.Agent.SubAgent.Mode) && rootScopeID != "" {
 			mainPrompt += "\n\n" + prompts.RetainedModeGuidance()
 		}
 	}

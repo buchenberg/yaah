@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
@@ -53,7 +55,7 @@ type RetainedRuntime struct {
 
 // proposalEnvelope is the JSON the orchestrator receives from a retained
 // dispatch and from a settlement. Status is "proposal" (awaiting a verdict),
-// "settled", "listing", or "error".
+// "settled", or "error".
 type proposalEnvelope struct {
 	Status     string   `json:"status"`
 	ProposalID string   `json:"proposal_id,omitempty"`
@@ -80,7 +82,13 @@ type retainedProposal struct {
 	result   string
 	runErr   string
 	parentID string
+	mgr      *shepherd.ScopeManager
 }
+
+// proposalSeq disambiguates proposal ids minted within the same nanosecond
+// (parallel dispatches are invited), so ids — and their worktree paths — never
+// collide.
+var proposalSeq atomic.Uint64
 
 // retainedProposals is the process-wide registry of open proposals. Like the
 // supervised-session registry it is process-scoped: a proposal outlives its
@@ -127,6 +135,17 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		return "", fmt.Errorf("spawn_subagent: root scope %s not found", rt.RootScopeID)
 	}
 
+	// A repo path defaults to the process working directory, as the supervised
+	// lane and root-scope creation do — so a session that never set
+	// supervised_repo_path still gets a real worktree repository.
+	if rt.RepoPath == "" {
+		wd, werr := os.Getwd()
+		if werr != nil {
+			return "", fmt.Errorf("spawn_subagent: resolve repo path: %w", werr)
+		}
+		rt.RepoPath = wd
+	}
+
 	// The basis: the parent's workspace at dispatch. The proposal's delta is
 	// everything the sub-agent changes relative to it.
 	forkPoint, err := parent.CaptureWorkspace(ctx)
@@ -134,7 +153,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		return "", fmt.Errorf("spawn_subagent: capture basis: %w", err)
 	}
 
-	id := fmt.Sprintf("proposal:%d", time.Now().UnixNano())
+	id := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))
 	wt := retainedWorktreePath(rt, id)
 
 	scopeID, provErr := provisionRetainedBranch(ctx, rt, id, wt, forkPoint)
@@ -184,6 +203,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		result:   trimResult(result),
 		runErr:   errorString(bodyErr),
 		parentID: rt.RootScopeID,
+		mgr:      mgr,
 	}
 	retainedProposals.mu.Unlock()
 
@@ -215,9 +235,22 @@ func settleRetainedProposal(ctx context.Context, id, action string) (string, err
 			return "", fmt.Errorf("proposal %s was already settled — a sealed output is consumed once", id)
 		case errors.Is(err, shepherd.ErrApplyConflict):
 			return "", fmt.Errorf("proposal %s: the parent changed paths this proposal also changes (%w); resolve the overlap, then apply or discard", id, err)
+		case errors.Is(err, shepherd.ErrSettleEffectLanded):
+			// The work is on the parent; only the causal merge failed to finish.
+			// End the proposal with the failure noted — a retry would re-apply
+			// an effect that already happened.
+			env.Error = err.Error()
 		default:
 			return "", fmt.Errorf("proposal %s: %w", id, err)
 		}
+	}
+
+	// Release integrates nothing and leaves the isolated scope — and its
+	// worktree — untouched (the kernel's release is "keep, don't integrate"), so
+	// tear the child down here rather than strand the worktree. Select, Apply,
+	// and Discard already end the child scope themselves.
+	if verb == shepherd.SettleRelease {
+		teardownReleasedProposal(p)
 	}
 
 	// Consume-once: a settled proposal leaves the registry.
@@ -225,6 +258,24 @@ func settleRetainedProposal(ctx context.Context, id, action string) (string, err
 	delete(retainedProposals.byID, id)
 	retainedProposals.mu.Unlock()
 	return marshalProposalEnvelope(env), nil
+}
+
+// teardownReleasedProposal discards the isolated child scope a released
+// proposal owned, removing its worktree. Best-effort: the record is already
+// settled either way.
+func teardownReleasedProposal(p *retainedProposal) {
+	if p.mgr == nil {
+		return
+	}
+	parent, ok := p.mgr.Get(p.parentID)
+	if !ok {
+		return
+	}
+	scope, ok := p.mgr.Get(p.scopeID)
+	if !ok {
+		return
+	}
+	_ = parent.Discard(scope)
 }
 
 // settlementVerb maps a proposal verb to the kernel's settlement action.
