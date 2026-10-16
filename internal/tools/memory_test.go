@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -73,7 +74,7 @@ func TestMemoryTools_TruncatedIDFailsLoudly(t *testing.T) {
 
 	if res, err := (&MemoryDeleteTool{DB: db}).Execute(ctx, `{"id":"`+truncated+`"}`); err == nil {
 		t.Errorf("memory_delete with a truncated ID must fail, got result %q", res)
-	} else if !strings.Contains(err.Error(), "memory not found") {
+	} else if !errors.Is(err, memory.ErrMemoryNotFound) {
 		t.Errorf("delete error = %v, want memory-not-found", err)
 	}
 

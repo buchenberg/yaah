@@ -27,7 +27,11 @@ type MemoryRepository interface {
 	AddMemoryDedup(e Entry) (string, error)
 	SearchMemory(query string, limit int, tag ...string) ([]Entry, error)
 	GetMemory(id string) (Entry, error)
+	// DeleteMemory removes an entry; a delete matching no rows returns
+	// an error wrapping ErrMemoryNotFound (never a silent no-op).
 	DeleteMemory(id string) error
+	// UpdateMemory updates an entry's text; an ID matching no rows
+	// returns an error wrapping ErrMemoryNotFound.
 	UpdateMemory(id string, text string) error
 	ListMemory(limit int) ([]Entry, error)
 }
