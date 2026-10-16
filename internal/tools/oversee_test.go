@@ -325,6 +325,41 @@ func TestOversee_SettleNoneHandsBack(t *testing.T) {
 	}
 }
 
+// TestOversee_ReviewerSameSizeRewriteIsCaught: the cheap fingerprint (size +
+// mtime) is not enough on its own — a same-size rewrite that preserves the clock
+// must still be caught for the files the verdict depends on, which is why the
+// change set is hashed.
+func TestOversee_ReviewerSameSizeRewriteIsCaught(t *testing.T) {
+	resetRetainedProposals()
+	runner := &overseeRunner{t: t, verdicts: []string{"VERDICT: accept"}}
+	// The worker writes "attempt 0\n" (10 bytes) into out0.txt; the reviewer
+	// rewrites it with the same length and puts the mtime back.
+	runner.onReview = func(_ int, wd string) {
+		path := filepath.Join(wd, "out0.txt")
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Errorf("the worker's file must be there to rewrite: %v", err)
+			return
+		}
+		if err := os.WriteFile(path, []byte("attempt 9\n"), 0o644); err != nil {
+			t.Errorf("rewrite: %v", err)
+			return
+		}
+		if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+			t.Errorf("restore mtime: %v", err)
+		}
+	}
+	tool, repo := newOverseeTool(t, runner)
+
+	env := runOversee(t, tool, `{"task":"write it"}`)
+	if env.Status != "error" || !strings.Contains(env.Error, "modified the world") {
+		t.Fatalf("a same-size, same-mtime rewrite must still invalidate the verdict, got %+v", env)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "out0.txt")); !os.IsNotExist(err) {
+		t.Errorf("nothing may land (stat err=%v)", err)
+	}
+}
+
 // TestOversee_Validation: the loop refuses what it cannot do, rather than
 // guessing.
 func TestOversee_Validation(t *testing.T) {

@@ -244,8 +244,12 @@ func (t *OverseeTool) Execute(ctx context.Context, args string) (string, error) 
 		// and then accepts has approved a tree that is NOT what the settle will
 		// land (the settlement applies the sealed delta, not the directory).
 		// Fingerprint around the review so that cannot pass silently.
-		before, fpErr := worldFingerprint(proposal.workdir)
-		reviewText, rErr := runOverseeReview(ctx, t, reviewer, proposal, raw.Task, round, rounds)
+		hashPaths := map[string]bool{}
+		for _, f := range changesPaths(proposal.output.Changes()) {
+			hashPaths[filepath.ToSlash(f)] = true
+		}
+		before, fpErr := worldFingerprint(proposal.workdir, hashPaths)
+		reviewText, rErr := runOverseeReview(ctx, t, reviewer, proposal, raw.Task, round, rounds, clampedTimeout)
 		if rErr != nil {
 			// The review failed to run: the round is unjudged. Discard it —
 			// leaving an unjudged proposal open would leak its worktree — and
@@ -254,16 +258,23 @@ func (t *OverseeTool) Execute(ctx context.Context, args string) (string, error) 
 			env.Status, env.Error = "error", rErr.Error()
 			return marshalOverseeEnvelope(env), nil
 		}
-		if fpErr == nil {
-			if after, aerr := worldFingerprint(proposal.workdir); aerr == nil {
-				if drift := fingerprintDrift(before, after); len(drift) > 0 {
-					_, _ = settleRetainedProposal(ctx, proposal.id, "discard")
-					env.Status, env.Error = "error", fmt.Sprintf(
-						"the reviewer modified the world it was reviewing (%s): its verdict cannot be trusted, and the round was discarded — use a read-only reviewer role",
-						strings.Join(clipList(drift, 5), ", "))
-					return marshalOverseeEnvelope(env), nil
-				}
-			}
+		// Fail CLOSED if the check cannot be made: an unverifiable review is not
+		// a trustworthy one, and the cost of being wrong is landed unreviewed
+		// work.
+		after, aErr := worldFingerprint(proposal.workdir, hashPaths)
+		if fpErr != nil || aErr != nil {
+			_, _ = settleRetainedProposal(ctx, proposal.id, "discard")
+			env.Status = "error"
+			env.Error = fmt.Sprintf("could not verify that the reviewer left the world it was judging unmodified (%v / %v); the round was discarded",
+				fpErr, aErr)
+			return marshalOverseeEnvelope(env), nil
+		}
+		if drift := fingerprintDrift(before, after); len(drift) > 0 {
+			_, _ = settleRetainedProposal(ctx, proposal.id, "discard")
+			env.Status, env.Error = "error", fmt.Sprintf(
+				"the reviewer modified the world it was reviewing (%s): its verdict cannot be trusted, and the round was discarded — use a read-only reviewer role",
+				strings.Join(clipList(drift, 5), ", "))
+			return marshalOverseeEnvelope(env), nil
 		}
 		verdict, reason := parseOverseeVerdict(reviewText)
 		env.Review = reviewReason(verdict, reason)
@@ -337,9 +348,11 @@ func (t *OverseeTool) dispatchTimeout(params jobs.SubAgentParams) time.Duration 
 // reviewer's workdir IS the proposal's worktree (the post-change tree), so it
 // inspects the actual result rather than a diff transcript — and because that
 // worktree is already confined, Phase 3's jail bounds the review too.
-func runOverseeReview(ctx context.Context, t *OverseeTool, reviewer string, p *retainedProposal, task string, round, rounds int) (string, error) {
+func runOverseeReview(ctx context.Context, t *OverseeTool, reviewer string, p *retainedProposal, task string, round, rounds, callTimeoutSeconds int) (string, error) {
 	prompt := buildOverseeReviewPrompt(task, p, round, rounds)
-	params := jobs.SubAgentParams{Role: reviewer, Workdir: p.workdir}
+	// The caller's explicit timeout applies to the reviewer too: a review that
+	// outlives it would let a round outlive the budget it was given.
+	params := jobs.SubAgentParams{Role: reviewer, Workdir: p.workdir, TimeoutSeconds: callTimeoutSeconds}
 	runCtx := ctx
 	if d := t.dispatchTimeout(params); d > 0 {
 		var cancel context.CancelFunc
@@ -350,11 +363,17 @@ func runOverseeReview(ctx context.Context, t *OverseeTool, reviewer string, p *r
 }
 
 // worldFingerprint records what a world contains, so the review can be checked
-// for writes. Content hashes, not mtimes: a modification must not be invisible
-// because the clock did not move. The confinement scratch is excluded — our own
-// review dispatch creates it — as is .git, which the retained worktree may not
-// even own (a linked worktree's git dir lives in the original repository).
-func worldFingerprint(root string) (map[string]string, error) {
+// for writes. Every file contributes size and mtime; the files in mustHash (the
+// proposal's own change set — the ones whose integrity the verdict depends on)
+// also contribute a content hash, so a same-size write that preserved the clock
+// is still caught. Hashing the WHOLE worktree twice per round would be
+// disproportionate for a large checkout; this way the expensive part is bounded
+// by the change set.
+//
+// The confinement scratch is excluded — our own review dispatch creates it — as
+// is .git, which the retained worktree may not even own (a linked worktree's git
+// dir lives in the original repository).
+func worldFingerprint(root string, mustHash map[string]bool) (map[string]string, error) {
 	fp := make(map[string]string)
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, werr error) error {
 		if werr != nil {
@@ -370,17 +389,25 @@ func worldFingerprint(root string) (map[string]string, error) {
 		if rerr != nil {
 			return nil
 		}
+		// Change-set paths are git-shaped ("a/b.txt"); compare in that form so
+		// the hash list still matches on a host whose separator differs.
+		rel = filepath.ToSlash(rel)
 		info, ierr := d.Info()
 		if ierr != nil || !info.Mode().IsRegular() {
 			fp[rel] = "irregular"
 			return nil
 		}
-		sum, herr := fileHash(p)
-		if herr != nil {
-			fp[rel] = fmt.Sprintf("size:%d", info.Size())
-			return nil
+		entry := fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano())
+		if mustHash[rel] {
+			sum, herr := fileHash(p)
+			if herr != nil {
+				// Not being able to hash a file we depend on is a failure to
+				// verify, not a pass.
+				return herr
+			}
+			entry += ":" + sum
 		}
-		fp[rel] = sum
+		fp[rel] = entry
 		return nil
 	})
 	return fp, err
