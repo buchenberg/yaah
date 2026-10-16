@@ -20,10 +20,10 @@ func TestContainmentCheck(t *testing.T) {
 		placement string
 		want      string
 	}{
-		// An empty setting is still the config default, "off": the flip to
-		// "auto" is gated (see config.SubAgentConfig.Containment).
-		{"absent/default-off", false, "", "OK"},
-		{"available/default-off", true, "", "OK"},
+		// An empty setting is the config default, which since Plan 7 Phase 3 is
+		// "auto": jail where the host can, degrade visibly where it cannot.
+		{"available/default", true, "", "OK"},
+		{"absent/default", false, "", "WARN"},
 		{"absent/off", false, "off", "OK"},
 		{"absent/off-explicit", false, "off", "OK"},
 		{"absent/advisory", false, "advisory", "OK"},
@@ -46,26 +46,20 @@ func TestCheckContainment(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Agent.SubAgent.Mode = "retained"
 
-	// An unset setting is the config default: still "off" — the flip to "auto"
-	// is gated (see config.SubAgentConfig.Containment) — and doctor reports the
-	// placement it resolves to.
+	// An unset setting is the config default, which reports the placement it
+	// really resolves to (auto since Plan 7 Phase 3) and the status that follows
+	// from this host's capability.
 	cfg.Agent.SubAgent.Containment = ""
 	c := CheckContainment(cfg, nil)
-	if !strings.Contains(c.Detail, "placement off") {
-		t.Errorf("the default must resolve to off, got %q", c.Detail)
+	if !strings.Contains(c.Detail, "placement auto") {
+		t.Errorf("the default must resolve to auto, got %q", c.Detail)
 	}
-	if c.Status != "OK" {
-		t.Errorf("default containment: status = %q, want OK (%s)", c.Status, c.Detail)
-	}
-	// "auto" degrades visibly where the host cannot jail, and doctor says so.
-	cfg.Agent.SubAgent.Containment = "auto"
-	c = CheckContainment(cfg, nil)
 	want := "WARN"
 	if landlock.Detect() != nil {
 		want = "OK"
 	}
 	if c.Status != want {
-		t.Errorf("auto containment: status = %q, want %q (%s)", c.Status, want, c.Detail)
+		t.Errorf("default containment: status = %q, want %q (%s)", c.Status, want, c.Detail)
 	}
 	if c := CheckContainment(nil, errors.New("boom")); c.Status != "WARN" {
 		t.Errorf("config error: status = %q, want WARN", c.Status)

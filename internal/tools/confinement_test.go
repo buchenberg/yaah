@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -231,6 +232,67 @@ func TestGitConfigValue_QuotesAndEscapes(t *testing.T) {
 		if got := gitConfigValue(c.in); got != c.want {
 			t.Errorf("gitConfigValue(%q) = %s, want %s", c.in, got, c.want)
 		}
+	}
+}
+
+// TestConfinementHint_ExplainsRefusedWrites: a kernel refusal reaches the model as
+// a bare "Permission denied" unless it is explained, and an unexplained refusal
+// is what makes a jail feel broken. The hint names the writable root, and names
+// the git rule when the refusal is git's own metadata.
+func TestConfinementHint_ExplainsRefusedWrites(t *testing.T) {
+	// Host-native absolute paths: the hint is only reachable where a kernel jail
+	// runs (Linux today), but the function is cross-platform code and must not be
+	// tested with one platform's path shapes.
+	root := t.TempDir()
+	outside := t.TempDir()
+
+	gitCase := fmt.Sprintf("fatal: Unable to create '%s': Permission denied",
+		filepath.Join(outside, ".git", "worktrees", "wt", "index.lock"))
+	got := confinementHint(gitCase, root)
+	if !strings.Contains(got, root) || !strings.Contains(got, "orchestrator commits") {
+		t.Errorf("a git-metadata refusal must name the root and the commit rule, got:\n%s", got)
+	}
+
+	plain := fmt.Sprintf("sh: 1: cannot create %s: Permission denied", filepath.Join(outside, "motd"))
+	if got := confinementHint(plain, root); !strings.Contains(got, root) || strings.Contains(got, "orchestrator commits") {
+		t.Errorf("a non-git refusal outside the root must name the root without the git rule, got:\n%s", got)
+	}
+
+	// An apostrophe before the quoted path must not swallow the path.
+	apos := fmt.Sprintf("error: can't open '%s': Permission denied", filepath.Join(outside, "x"))
+	if got := confinementHint(apos, root); got == "" {
+		t.Error("an unmatched apostrophe must not drop the refusal")
+	}
+
+	// A sibling is not "inside": <root>-other must not pass as the root.
+	sibling := filepath.Join(filepath.Dir(root), filepath.Base(root)+"-other", "x")
+	if got := confinementHint("sh: 1: cannot create "+sibling+": Permission denied", root); got == "" {
+		t.Error("a sibling of the root is outside it and must be explained")
+	}
+
+	// The false positives the reviewer named: a permission failure INSIDE the
+	// worktree is not a boundary refusal, and captioning it as one misdirects.
+	for _, s := range []string{
+		"", // no failure at all
+		"compile error: undefined: foo",
+		"ls: cannot access '/nope': No such file or directory",
+		// chmod 000 file, in-worktree
+		"cat: " + filepath.Join(root, "secret") + ": Permission denied",
+		// non-executable script, in-worktree
+		"sh: 1: " + filepath.Join(root, "script.sh") + ": Permission denied",
+		// read-only file, in-worktree
+		"tee: " + filepath.Join(root, "ro.txt") + ": Read-only file system",
+		// a refusal the message does not attribute to a path
+		"git: Permission denied",
+	} {
+		if got := confinementHint(s, root); got != "" {
+			t.Errorf("confinementHint(%q) = %q, want no hint (inside the root, or unattributable)", s, got)
+		}
+	}
+
+	// No root to name (an advisory workspace runs no jail) — no hint.
+	if got := confinementHint(gitCase, ""); got != "" {
+		t.Errorf("a workspace with no root must produce no hint, got %q", got)
 	}
 }
 

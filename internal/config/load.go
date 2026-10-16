@@ -254,25 +254,23 @@ type SubAgentConfig struct {
 	OutputLimit int `yaml:"output_limit"`
 
 	// Containment selects the syscall jail for workdir sub-agent dispatches
-	// (Plan 7). Default "off": "" / "off" / "none" / "advisory" leave the host
-	// path; "auto" jails on a Landlock-capable host and falls back to advisory
-	// elsewhere; "paddock" (alias "jail") fails closed when the host cannot jail.
-	// The orchestrator's own commands are never jailed either way, only a
-	// dispatched sub-agent's — and a confined dispatch records the resolved
-	// placement (paddock vs advisory, the backend, the writable root) on the
-	// sub-agent's trace.
+	// (Plan 7). "" / "auto" (the default) jail on a Landlock-capable host and
+	// fall back to advisory elsewhere; "off" (or "none"/"advisory") leaves the
+	// host path; "paddock" (alias "jail") fails closed when the host cannot
+	// jail. The orchestrator's own commands are never jailed either way, only a
+	// dispatched sub-agent's.
 	//
-	// The flip to "auto" is still gated (Plan 7 Phase 3). The acceptance run
-	// (TestConfinedBuild_Acceptance) found a real blocker in the lane the flip
-	// would confine: a retained dispatch works in a LINKED git worktree, whose
-	// index and object store live in the original repository's .git — outside
-	// the jail's sole writable root. A confined `git add`/`git commit` is
-	// therefore refused by the kernel, and the fix cannot be "also grant
-	// <repo>/.git": that hands a confined sub-agent write access to the host
-	// repository's refs and objects, which is the very thing retention exists to
-	// prevent. Read-only git (status/diff/log) is unaffected. Flipping needs the
-	// git-write story settled first — the orchestrator settles, so a sub-agent
-	// need not commit — and the acceptance extended to the linked layout.
+	// A confined dispatch cannot run git WRITE commands (add/commit/stash): it
+	// works in a `git worktree`, whose index and object store live in the
+	// original repository, outside the jail's sole writable root. Read-only git
+	// is unaffected, and nothing is lost — the sub-agent prepares changes and
+	// the orchestrator commits when it settles the proposal. A denied write says
+	// so (see internal/tools/workspace.go confinementHint), and the sub-agent's
+	// prompt states the rule up front.
+	//
+	// A confined dispatch also records the resolved placement (paddock vs
+	// advisory, the backend, whether the jail was really established, the
+	// writable root) on the sub-agent's trace.
 	Containment string `yaml:"containment"`
 
 	// Mode selects the dispatch lane (Plan 7 Phase 2). "retained" (the default)

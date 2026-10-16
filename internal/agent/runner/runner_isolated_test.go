@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"io/fs"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,22 @@ import (
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/tools"
 )
+
+// resolvedWorkdir is the path a validator will hold: absolute, with symlinks
+// resolved. On Windows that also expands the 8.3 short name t.TempDir returns
+// (RUNNER~1), which NewPathValidator's EvalSymlinks otherwise leaves the
+// expectation disagreeing with.
+func resolvedWorkdir(t *testing.T, p string) string {
+	t.Helper()
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		t.Fatalf("abs %s: %v", p, err)
+	}
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		return real
+	}
+	return abs
+}
 
 // fakeSandboxWorkspace is a non-local tools.Workspace stand-in: the runner
 // only needs Local()==false and interface identity to prove inheritance.
@@ -83,11 +100,18 @@ func TestBuildSubAgentRegistry_InheritsSessionSandbox(t *testing.T) {
 // validator rooted at its workdir exactly as before — the inheritance
 // change must not leak into local sessions.
 func TestBuildSubAgentRegistry_LocalRouteUnchanged(t *testing.T) {
-	pv := tools.NewPathValidator("/repo", false, nil)
+	// A real workdir: since the confinement default is "auto", the registry
+	// build prepares the redirect inside it.
+	root := t.TempDir()
+	child := filepath.Join(root, "worktrees", "child")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatalf("mkdir workdir: %v", err)
+	}
+	pv := tools.NewPathValidator(root, false, nil)
 	opts := taskRunnerOpts{pathValidator: pv}
 	profile := subagent.RoleProfile{Tools: []string{"read", "go_refactor"}}
 
-	reg, _, err := buildSubAgentRegistry(opts, profile, 0, "/repo/worktrees/child")
+	reg, _, err := buildSubAgentRegistry(opts, profile, 0, child)
 	if err != nil {
 		t.Fatalf("buildSubAgentRegistry: %v", err)
 	}
@@ -95,10 +119,7 @@ func TestBuildSubAgentRegistry_LocalRouteUnchanged(t *testing.T) {
 	if reg.Workspace == nil || reg.Workspace.Local() != true {
 		t.Errorf("local sub-agent must keep the validator-derived local workspace, got %#v", reg.Workspace)
 	}
-	// NewPathValidator makes the root absolute, so the expectation goes
-	// through the same normalization (on Windows CI the temp cwd sits on
-	// another drive, turning "/repo/..." into "D:\repo\...").
-	want, _ := filepath.Abs("/repo/worktrees/child")
+	want := resolvedWorkdir(t, child)
 	if got := reg.PathValidator; got == nil || got.WorkDir != want {
 		t.Errorf("local sub-agent's validator must be rooted at the workdir: got %#v, want %s", got, want)
 	}
@@ -117,8 +138,12 @@ func TestBuildSubAgentRegistry_LocalRouteUnchanged(t *testing.T) {
 func TestBuildSubAgentRegistry_WorkdirWithoutSessionValidator(t *testing.T) {
 	opts := taskRunnerOpts{} // pathValidator == nil: default local mode
 	profile := subagent.RoleProfile{Tools: []string{"read", "bash", "write"}}
+	// A real worktree exists by the time a dispatch happens — and since the
+	// confinement default is "auto", the registry build prepares the redirect in
+	// it, so the path must be real.
+	workdir := t.TempDir()
 
-	reg, _, err := buildSubAgentRegistry(opts, profile, 0, "/repo/shepherd-worktrees/var-a")
+	reg, _, err := buildSubAgentRegistry(opts, profile, 0, workdir)
 	if err != nil {
 		t.Fatalf("buildSubAgentRegistry: %v", err)
 	}
@@ -126,7 +151,7 @@ func TestBuildSubAgentRegistry_WorkdirWithoutSessionValidator(t *testing.T) {
 	if reg.Workspace == nil || !reg.Workspace.Local() {
 		t.Errorf("workdir dispatch must derive a local workspace, got %#v", reg.Workspace)
 	}
-	want, _ := filepath.Abs("/repo/shepherd-worktrees/var-a")
+	want := resolvedWorkdir(t, workdir)
 	if got := reg.PathValidator; got == nil || got.WorkDir != want || got.WorkspaceRoot != want {
 		t.Errorf("validator must be rooted at the workdir: got %#v, want %s", got, want)
 	}
@@ -136,7 +161,7 @@ func TestBuildSubAgentRegistry_WorkdirWithoutSessionValidator(t *testing.T) {
 // dispatch's environment header advertises the assigned worktree, not the
 // orchestrator's process cwd (#312).
 func TestBuildSubAgentSysPrompt_WorkdirHeader(t *testing.T) {
-	got := buildSubAgentSysPrompt(taskRunnerOpts{}, "developer", subagent.RoleProfile{}, false, "/repo/shepherd-worktrees/var-a")
+	got := buildSubAgentSysPrompt(taskRunnerOpts{}, "developer", subagent.RoleProfile{}, false, "/repo/shepherd-worktrees/var-a", nil)
 	if !strings.Contains(got, "/repo/shepherd-worktrees/var-a") {
 		t.Errorf("env header must advertise the workdir, got:\n%.400s", got)
 	}
@@ -199,7 +224,7 @@ func TestBuildSubAgentSysPrompt_IsolatedGuidance(t *testing.T) {
 	// on the container's shell, which needs a shell-carrying role.
 	profile := subagent.RoleProfile{Tools: []string{"read", "bash", "go_refactor"}}
 
-	got := buildSubAgentSysPrompt(opts, "developer", profile, false, "")
+	got := buildSubAgentSysPrompt(opts, "developer", profile, false, "", nil)
 	for _, want := range []string{
 		"isolated container",
 		"never claim they are saved",
@@ -224,7 +249,7 @@ func TestBuildSubAgentSysPrompt_IsolatedGuidance(t *testing.T) {
 		t.Errorf("the Available Shell block must agree with the header, not advertise the host's bash:\n%s", got)
 	}
 
-	local := buildSubAgentSysPrompt(taskRunnerOpts{}, "developer", profile, false, "")
+	local := buildSubAgentSysPrompt(taskRunnerOpts{}, "developer", profile, false, "", nil)
 	if strings.Contains(local, "isolated container") {
 		t.Error("a local sub-agent must not receive the isolated-workspace guidance")
 	}

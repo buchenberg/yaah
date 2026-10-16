@@ -116,16 +116,24 @@ func TestBuildSubAgentRegistry_ReturnsConfinementRecord(t *testing.T) {
 	pv := tools.NewPathValidator(t.TempDir(), false, nil)
 	profile := subagent.RoleProfile{Tools: []string{"read", "grep"}}
 
-	// The default is still "off" (the flip is gated), and "off" records nothing:
-	// no jail was requested, so there is no placement to report.
-	for _, setting := range []string{"", "off"} {
-		if _, conf, err := buildSubAgentRegistry(
-			taskRunnerOpts{pathValidator: pv, subCfg: config.SubAgentConfig{Containment: setting}},
-			profile, 0, t.TempDir()); err != nil {
-			t.Fatalf("containment=%q: %v", setting, err)
-		} else if conf != nil {
-			t.Errorf("containment=%q must not record a resolution, got %+v", setting, conf)
-		}
+	// "off" records nothing: no jail was requested, so there is no placement to
+	// report.
+	if _, conf, err := buildSubAgentRegistry(
+		taskRunnerOpts{pathValidator: pv, subCfg: config.SubAgentConfig{Containment: "off"}},
+		profile, 0, t.TempDir()); err != nil {
+		t.Fatalf("off: %v", err)
+	} else if conf != nil {
+		t.Errorf("off must not record a resolution, got %+v", conf)
+	}
+
+	// An unset setting (the zero value — what an untouched config produces) is
+	// the auto default, and must record.
+	if _, conf, err := buildSubAgentRegistry(
+		taskRunnerOpts{pathValidator: pv, subCfg: config.SubAgentConfig{}},
+		profile, 0, t.TempDir()); err != nil {
+		t.Fatalf("default: %v", err)
+	} else if conf == nil {
+		t.Error("the default (auto) must record a resolution")
 	}
 
 	_, conf, err := buildSubAgentRegistry(
@@ -161,7 +169,6 @@ func TestResolveSubAgentConfinement_Placement(t *testing.T) {
 		confine bool // a confined workspace is returned
 		record  bool // a resolution record is returned
 	}{
-		{"", false, false}, // the default: the flip is gated, so still off
 		{"off", false, false},
 		{"none", false, false},
 		{"advisory", false, false},
@@ -208,5 +215,17 @@ func TestResolveSubAgentConfinement_Placement(t *testing.T) {
 	}
 	if wantJail && (autoRec.Backend == "" || autoRec.Tier == "") {
 		t.Errorf("auto (jailed): backend/tier must be recorded, got %q / %q", autoRec.Backend, autoRec.Tier)
+	}
+
+	// An unset setting is the same default and must resolve identically.
+	defWS, defRec, defErr := resolveSubAgentConfinement(pv, config.SubAgentConfig{}, t.TempDir())
+	if defErr != nil {
+		t.Fatalf("default: %v", defErr)
+	}
+	if (defWS != nil) != wantJail {
+		t.Errorf("the default must resolve like auto: confined=%v, want %v", defWS != nil, wantJail)
+	}
+	if defRec == nil || defRec.Resolved != wantResolved {
+		t.Errorf("the default must resolve like auto: rec=%+v, want resolved %q", defRec, wantResolved)
 	}
 }

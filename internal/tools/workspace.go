@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
@@ -323,11 +324,134 @@ func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (Exe
 		out.Stdout = res.Stdout + res.Stderr
 	}
 	if res.ExitCode != 0 {
+		// A write the kernel refused looks like any other failure to the model
+		// ("Permission denied", no clue why), which is the jail's real usability
+		// cost. Say what happened and where the boundary is.
+		if hint := confinementHint(res.Stderr, root); hint != "" {
+			if req.SeparateStreams {
+				out.Stderr = strings.TrimRight(out.Stderr, "\n") + "\n" + hint
+			} else {
+				out.Stdout = strings.TrimRight(out.Stdout, "\n") + "\n" + hint
+			}
+		}
 		// Match the host path's wording (exec's *exec.ExitError) so callers
 		// that surface the message read the same either way.
 		return out, fmt.Errorf("exit status %d", res.ExitCode)
 	}
 	return out, nil
+}
+
+// confinementHint explains a kernel-refused write, or "" when the failure does
+// not look like one. The jail is the boundary, not a bug, and a sub-agent that
+// cannot see why a write failed will retry it (or flail) instead of routing
+// around it — so the message names the boundary and, for the git case, the rule
+// that makes it deliberate.
+//
+// Detection requires BOTH a permission failure and a denied path the message
+// names that lies outside the writable root. "Permission denied" alone is not
+// evidence of a boundary refusal — a `chmod 000` file or a non-executable script
+// inside the worktree produces the same errno — so a failure with no attributable
+// path gets no hint. A missed hint costs nothing (the raw error still surfaces);
+// a wrong one sends the model to the wrong remedy.
+func confinementHint(stderr, root string) string {
+	if root == "" {
+		return ""
+	}
+	if _, ok := deniedOutsideRoot(stderr, root); !ok {
+		return ""
+	}
+	const gitWorkRule = " Your changes are still captured — the orchestrator commits when it accepts your work, so there is nothing for you to commit."
+	// git names the offending path in quotes; a path under the repo but outside
+	// this workspace is the retained-lane case (the worktree's index and object
+	// store live in the original repository's .git).
+	if strings.Contains(stderr, ".git/") || strings.Contains(stderr, ".git\\") {
+		return "[yaah] This write was refused by the sub-agent sandbox. You work in an isolated worktree whose only writable root is " + root +
+			"; git's index and object store live in the original repository, outside it, so git write commands (add, commit, stash, checkout, reset) cannot run here." + gitWorkRule
+	}
+	return "[yaah] This write was refused by the sub-agent sandbox: its only writable root is " + root +
+		", and writes outside it are denied by the kernel. Housekeeping paths (HOME, TMPDIR, build caches) are redirected inside that root, so work there instead."
+}
+
+// deniedOutsideRoot reports whether stderr carries a permission failure on a path
+// outside root, returning that path. Only paths the message actually names count:
+// an unnamed failure cannot be attributed to the boundary, and guessing would
+// caption ordinary in-worktree EACCES failures as refusals.
+func deniedOutsideRoot(stderr, root string) (string, bool) {
+	cleanRoot := filepath.Clean(root)
+	resolvedRoot := cleanRoot
+	if r, err := filepath.EvalSymlinks(cleanRoot); err == nil && r != "" {
+		resolvedRoot = r
+	}
+	for _, line := range strings.Split(stderr, "\n") {
+		if !strings.Contains(line, "Permission denied") && !strings.Contains(line, "Read-only file system") {
+			continue
+		}
+		for _, cand := range pathCandidates(line) {
+			if !filepath.IsAbs(cand) {
+				continue
+			}
+			c := filepath.Clean(cand)
+			// Textual comparison against the spelling yaah passed first: the
+			// message is produced with that spelling, so a /var-rooted worktree
+			// matches here even though the filesystem resolves it to /private/var.
+			if withinRoot(c, cleanRoot) {
+				continue
+			}
+			// Then resolved, for a path whose symlinks do resolve (an escaping
+			// link, or a candidate that already exists).
+			if r, err := filepath.EvalSymlinks(c); err == nil && r != "" && withinRoot(r, resolvedRoot) {
+				continue
+			}
+			return cand, true
+		}
+	}
+	return "", false
+}
+
+// withinRoot reports whether p is root or lies beneath it, separator-aware so
+// "/work/wt-other" is not "inside" "/work/wt". Host path rules apply because the
+// message is produced on this host: the hint is only reachable where a kernel
+// jail actually runs (Linux today), since every other placement either degrades
+// to advisory or refuses before the body starts.
+func withinRoot(p, root string) bool {
+	if p == root {
+		return true
+	}
+	return strings.HasPrefix(p, root+string(filepath.Separator))
+}
+
+// pathCandidates extracts the path-like tokens from one stderr line: quoted
+// segments (git quotes the path it could not create) and whitespace-delimited
+// tokens containing a separator.
+func pathCandidates(line string) []string {
+	var out []string
+	rest := line
+	for {
+		open := strings.IndexAny(rest, `'"`)
+		if open < 0 {
+			break
+		}
+		q := rest[open]
+		end := strings.IndexByte(rest[open+1:], q)
+		if end < 0 {
+			// No closing quote: skip this one and keep scanning. Abandoning the
+			// line would drop real refusals, because an apostrophe in prose
+			// ("error: can't open '/etc/foo'") pairs with the quote that opens
+			// the path and leaves nothing after it.
+			rest = rest[open+1:]
+			continue
+		}
+		out = append(out, rest[open+1:open+1+end])
+		rest = rest[open+1+end+1:]
+	}
+	for _, f := range strings.Fields(line) {
+		if strings.ContainsAny(f, `/\`) {
+			// Strip the punctuation a message wraps a path in (a leading quote
+			// from an apostrophe-paired segment, a trailing colon or comma).
+			out = append(out, strings.Trim(f, `:;,.'"`))
+		}
+	}
+	return out
 }
 
 // workspaceOf returns a tool's injected workspace, falling back to a local

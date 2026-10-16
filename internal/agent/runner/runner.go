@@ -407,7 +407,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 
 		outLimit := resolveOutputLimit(params.OutputLimit, opts.subCfg, role, opts.outputLimit)
 
-		sysPrompt := buildSubAgentSysPrompt(opts, role, profile, jsonMode, params.Workdir)
+		sysPrompt := buildSubAgentSysPrompt(opts, role, profile, jsonMode, params.Workdir, subConf)
 
 		// Record the role's directives on the sub-agent span so traces
 		// show which policy statements this child received (if any).
@@ -652,7 +652,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 // shell tool gets an environment header with no shell sentence, and a
 // zero-tool role's base prompt swaps the tool-oriented sub-agent identity
 // for the no-tools variant whose directive leads the identity block.
-func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, profile subagent.RoleProfile, jsonMode bool, workdir string) string {
+func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, profile subagent.RoleProfile, jsonMode bool, workdir string, conf *subAgentConfinement) string {
 	cwd, _ := os.Getwd()
 
 	// The environment header must advertise the directory the sub-agent's
@@ -715,6 +715,18 @@ func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, pro
 			}
 		}
 		sysPrompt += "\n\n" + prompts.IsolatedSubAgentGuidance(dropped)
+	}
+
+	// A confined dispatch gets told the boundary before it meets it (Plan 7
+	// Phase 3): the one writable root, the redirect, and the git-write rule that
+	// the default flip makes reachable. Enforced, not merely requested — a
+	// paddock placement with no usable backend refuses at Exec, so there is no
+	// run to advise.
+	if conf != nil && conf.Enforced {
+		if sysPrompt != "" {
+			sysPrompt += "\n\n"
+		}
+		sysPrompt += prompts.ConfinementSubAgentGuidance(workdir)
 	}
 
 	if g := subagent.RoleGuidance(role); g != "" {
@@ -1307,11 +1319,11 @@ func (c *subAgentConfinement) payload() map[string]any {
 // resolveSubAgentConfinement builds the syscall-jailed workspace for a sub-agent
 // workdir dispatch when agents.subagent.containment asks for one, and describes
 // what it resolved to (for the trace). It returns a nil workspace to leave the
-// host path. Default "off" (see SubAgentConfig.Containment for why the flip is
-// still gated); "auto" jails on a Landlock-capable host and degrades to advisory
-// elsewhere; "off" (or "none"/"advisory") mean no jail; "paddock" (alias "jail")
-// fails closed. The writable root is the worktree — the sub-agent's bound world —
-// so the kernel boundary and the run's own boundary agree.
+// host path. "" / "auto" (the default) jail on a Landlock-capable host and
+// degrade to advisory elsewhere; "off" (or "none"/"advisory") mean no jail;
+// "paddock" (alias "jail") fails closed. The writable root is the worktree — the
+// sub-agent's bound world — so the kernel boundary and the run's own boundary
+// agree.
 func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConfig, workdir string) (tools.Workspace, *subAgentConfinement, error) {
 	requested := strings.TrimSpace(cfg.Containment)
 	placement := containmentPlacement(requested)
@@ -1379,15 +1391,20 @@ func confinementRecord(requested string, placement confinement.Placement, availa
 	return rec, true
 }
 
-// containmentPlacement maps agents.subagent.containment to a placement, or ""
-// for the default unconfined host path.
+// containmentPlacement maps agents.subagent.containment to a placement, or "" for
+// "run on the host" (the explicit opt-out: "off"/"none"/"advisory"). An unset
+// setting is the default and means auto.
 func containmentPlacement(v string) confinement.Placement {
 	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "auto":
+	case "", "auto":
+		// "auto" is the default (Plan 7 Phase 3): jail where the host can, and
+		// degrade visibly to advisory where it cannot. The opt-out is explicit
+		// — "off" (or "none"/"advisory") — so the unconfined host path is a
+		// choice, not an omission.
 		return confinement.PlacementAuto
 	case "paddock", "jail":
 		return confinement.PlacementPaddock
-	default: // "", "off", "none", "advisory"
+	default: // "off", "none", "advisory"
 		return ""
 	}
 }
