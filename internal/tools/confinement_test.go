@@ -37,7 +37,7 @@ func TestConfinementScratchEnv_Redirects(t *testing.T) {
 			fi, err := os.Stat(v)
 			if err != nil || !fi.IsDir() {
 				t.Errorf("%s dir %q not created: %v", k, v, err)
-			} else if fi.Mode().Perm() != 0o700 {
+			} else if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o700 {
 				t.Errorf("%s dir perm = %o, want 700 (HOME/TMPDIR may hold credentials)", k, fi.Mode().Perm())
 			}
 			delete(want, k)
@@ -53,12 +53,12 @@ func TestConfinementScratchEnv_Redirects(t *testing.T) {
 func TestDefaultGoModCache(t *testing.T) {
 	t.Setenv("GOPATH", "")
 	t.Setenv("HOME", "/real/home")
-	if got := defaultGoModCache(); got != "/real/home/go/pkg/mod" {
-		t.Errorf("default = %q, want /real/home/go/pkg/mod", got)
+	if got, want := defaultGoModCache(), filepath.Join("/real/home", "go", "pkg", "mod"); got != want {
+		t.Errorf("default = %q, want %q", got, want)
 	}
 	t.Setenv("GOPATH", "/go")
-	if got := defaultGoModCache(); got != "/go/pkg/mod" {
-		t.Errorf("with GOPATH = %q, want /go/pkg/mod", got)
+	if got, want := defaultGoModCache(), filepath.Join("/go", "pkg", "mod"); got != want {
+		t.Errorf("with GOPATH = %q, want %q", got, want)
 	}
 }
 
