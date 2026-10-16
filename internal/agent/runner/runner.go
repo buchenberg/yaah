@@ -1304,11 +1304,11 @@ func (c *subAgentConfinement) payload() map[string]any {
 // resolveSubAgentConfinement builds the syscall-jailed workspace for a sub-agent
 // workdir dispatch when agents.subagent.containment asks for one, and describes
 // what it resolved to (for the trace). It returns a nil workspace to leave the
-// host path. "" / "auto" (the default) jail on a Landlock-capable host and
-// degrade to advisory elsewhere; "off" (or "none"/"advisory") mean no jail;
-// "paddock" (alias "jail") fails closed. The writable root is the worktree — the
-// sub-agent's bound world — so the kernel boundary and the run's own boundary
-// agree.
+// host path. Default "off" (see SubAgentConfig.Containment for why the flip is
+// still gated); "auto" jails on a Landlock-capable host and degrades to advisory
+// elsewhere; "off" (or "none"/"advisory") mean no jail; "paddock" (alias "jail")
+// fails closed. The writable root is the worktree — the sub-agent's bound world —
+// so the kernel boundary and the run's own boundary agree.
 func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConfig, workdir string) (tools.Workspace, *subAgentConfinement) {
 	requested := strings.TrimSpace(cfg.Containment)
 	placement := containmentPlacement(requested)
@@ -1374,15 +1374,11 @@ func confinementRecord(requested string, placement confinement.Placement, availa
 // for the default unconfined host path.
 func containmentPlacement(v string) confinement.Placement {
 	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "", "auto":
-		// "auto" is the default (Plan 7 Phase 3): jail where the host can, and
-		// degrade visibly to advisory where it cannot. The opt-out is explicit
-		// — "off" (or "none"/"advisory") — so the unconfined host path is a
-		// choice, not an omission.
+	case "auto":
 		return confinement.PlacementAuto
 	case "paddock", "jail":
 		return confinement.PlacementPaddock
-	default: // "off", "none", "advisory"
+	default: // "", "off", "none", "advisory"
 		return ""
 	}
 }

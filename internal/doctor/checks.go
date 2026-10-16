@@ -237,9 +237,7 @@ func containmentCheck(available bool, backendDesc, mode, containment string) Che
 	}
 	p := strings.ToLower(strings.TrimSpace(containment))
 	if p == "" {
-		// The config default: "auto" (Plan 7 Phase 3). Doctor must report the
-		// real default, not a pre-flip "off".
-		p = "auto"
+		p = "off"
 	}
 	detail := fmt.Sprintf("mode %s, placement %s, backend %s", m, p, backendDesc)
 

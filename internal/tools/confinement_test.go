@@ -142,6 +142,42 @@ func TestConfinementScratchEnv_PointsGitAtGlobalConfig(t *testing.T) {
 	})
 }
 
+// TestConfinementScratchEnv_RefusesSymlinkedScratch: the scratch is created by
+// the unconfined parent, and MkdirAll follows symlinks — so a `.yaah-scratch`
+// planted as a symlink out of the worktree (a checked-in one, or one an earlier
+// turn left) must be refused rather than followed, or the redirect would point
+// the body outside the jail's writable root.
+func TestConfinementScratchEnv_RefusesSymlinkedScratch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on Windows")
+	}
+	outside := t.TempDir()
+	root := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, confinementScratchName)); err != nil {
+		t.Fatalf("plant the symlink: %v", err)
+	}
+
+	if _, err := ConfinementScratchEnv(root); err == nil {
+		t.Fatal("a symlinked scratch must be refused, not followed")
+	}
+	// Nothing may have been created through it.
+	if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+		t.Errorf("the symlink target must be untouched: entries=%v err=%v", entries, err)
+	}
+
+	// A final-component symlink is refused too (not just a parent).
+	root2 := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root2, confinementScratchName), 0o700); err != nil {
+		t.Fatalf("mkdir scratch: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root2, confinementScratchName, "home")); err != nil {
+		t.Fatalf("plant the inner symlink: %v", err)
+	}
+	if _, err := ConfinementScratchEnv(root2); err == nil {
+		t.Fatal("a symlinked scratch HOME must be refused, not followed")
+	}
+}
+
 // TestScrubConfinementScratch_Removes: the scrub removes the whole scratch tree.
 func TestScrubConfinementScratch_Removes(t *testing.T) {
 	root := t.TempDir()

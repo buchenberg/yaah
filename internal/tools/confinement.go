@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,9 +44,7 @@ func ConfinementScratchEnv(workdir string) ([]string, error) {
 	env := make([]string, 0, len(specs)+1)
 	for _, s := range specs {
 		dir := filepath.Join(scratch, s.sub)
-		// 0o700: HOME and TMPDIR can hold credentials (npm tokens, cloud
-		// configs) — nothing outside the sandbox should read them.
-		if err := os.MkdirAll(dir, 0o700); err != nil {
+		if err := confinementScratchDir(workdir, dir); err != nil {
 			return nil, err
 		}
 		env = append(env, s.key+"="+dir)
@@ -104,6 +103,43 @@ func realGitGlobalConfig() string {
 		}
 	}
 	return ""
+}
+
+// confinementScratchDir prepares one scratch directory beneath root, refusing any
+// path that is, or resolves through, a symlink out of the worktree.
+//
+// The worktree is seeded from the repository (and reused across turns), so a
+// checked-in `.yaah-scratch` symlink — or one an earlier turn planted — would
+// otherwise redirect the redirect: MkdirAll follows symlinks, and the body's
+// HOME/TMPDIR would then point outside the jail's writable root. These writes
+// happen in the unconfined parent, so walk the components from the worktree down
+// and refuse the first symlink BEFORE creating anything. 0o700 because HOME and
+// TMPDIR can hold credentials (npm tokens, cloud configs).
+func confinementScratchDir(root, dir string) error {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		return err
+	}
+	cur := root
+	for _, part := range strings.Split(rel, string(os.PathSeparator)) {
+		cur = filepath.Join(cur, part)
+		fi, err := os.Lstat(cur)
+		if os.IsNotExist(err) {
+			// Everything from here down is created fresh, so there is no symlink
+			// to follow.
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("confinement scratch %q is a symlink — refusing to redirect writes through it", cur)
+		}
+		if !fi.IsDir() {
+			return fmt.Errorf("confinement scratch %q exists and is not a directory", cur)
+		}
+	}
+	return os.MkdirAll(dir, 0o700)
 }
 
 // defaultGoModCache resolves Go's default module cache against the CURRENT
