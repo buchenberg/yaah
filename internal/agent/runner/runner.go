@@ -29,6 +29,7 @@ import (
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/budget"
+	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
@@ -547,6 +548,15 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// a narrower task instead of seeing an empty result.
 		if runErr == nil && strings.TrimSpace(result) == "" {
 			runErr = fmt.Errorf("sub-agent %s produced no output — its final turn returned empty content (likely hit its turn cap mid-task; consider raising max_turns)", role)
+		}
+
+		// Markup-only output is a silent pseudo-success (issue #314):
+		// the model emitted a tool call in a nonstandard text dialect,
+		// the call never executed, and the raw markup became the report.
+		// Turn it into an explicit error so the orchestrator never
+		// accepts an unexecuted tool call as a completed task.
+		if runErr == nil && llm.LooksLikeUnexecutedToolCalls(result) {
+			runErr = fmt.Errorf("sub-agent %s returned unexecuted tool-call markup as its final report — the model emitted a tool call in a nonstandard text dialect that was never executed; treat this dispatch as failed (consider raising max_turns or reducing the role's toolset)", role)
 		}
 
 		// Enrich errors with the sub-agent's trace so the orchestrator

@@ -196,6 +196,40 @@ func TestTaskRunnerEmptyResultError(t *testing.T) {
 	}
 }
 
+// markupOnlyProvider answers every request with an unrecoverable
+// tool-response wrapper fragment — the unparseable residue of the
+// nonstandard dialect leak from issue #314. Built from fragments so the
+// test source never contains a complete literal markup tag.
+type markupOnlyProvider struct{}
+
+func (markupOnlyProvider) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
+	return &types.ChatResponse{
+		Choices: []types.Choice{{
+			Message: types.Message{Role: "assistant",
+				Content: "<" + "tool_response>\n</" + "tool_response>"},
+			FinishReason: "stop",
+		}},
+		Usage: types.Usage{TotalTokens: 5},
+	}, nil
+}
+
+func TestTaskRunnerMarkupOnlyResultError(t *testing.T) {
+	initTestRoles(t)
+	opts := taskRunnerOpts{
+		provider:     markupOnlyProvider{},
+		systemPrompt: "BASE",
+		modelName:    "test-model",
+	}
+	runner := makeTaskRunner(opts, 0)
+	result, err := runner(context.Background(), "count the Go files", tools.SubAgentParams{Role: "analyst"})
+	if err == nil {
+		t.Fatalf("expected error for markup-only sub-agent output, got result %q", result)
+	}
+	if !strings.Contains(err.Error(), "unexecuted tool-call markup") {
+		t.Errorf("error should explain the pseudo-success, got: %v", err)
+	}
+}
+
 // Every shipped role must declare a tool list: with the default role
 // gone, a role without tools is unspawnable (the runner guards against
 // it), so catch silent regressions in the embedded role files here.

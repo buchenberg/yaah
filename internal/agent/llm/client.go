@@ -39,7 +39,7 @@ type Client struct {
 	// shorten it to observe per-chunk heartbeats.
 	HeartbeatInterval time.Duration
 	prematureCount    int // tracks premature-stream-close replays within a single Call
-	dsmlSeq           int // monotonic ID counter for DSML-recovered tool calls
+	dialectSeq        int // monotonic ID counter for dialect-recovered tool calls
 }
 
 // CallResult holds the outcome of a single LLM call. Response metadata
@@ -137,9 +137,9 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 						c.OnThinking(msg.ReasoningContent)
 					}
 
-					if cleaned, dsmlCalls, ok := parseDSMLToolCalls(msg.Content, &c.dsmlSeq); ok {
+					if cleaned, recovered, ok := recoverDialectToolCalls(msg.Content, &c.dialectSeq); ok {
 						msg.Content = cleaned
-						msg.ToolCalls = append(msg.ToolCalls, dsmlCalls...)
+						msg.ToolCalls = append(msg.ToolCalls, recovered...)
 					}
 
 					finish := resp.Choices[0].FinishReason
