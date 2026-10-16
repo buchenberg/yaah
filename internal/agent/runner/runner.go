@@ -1028,11 +1028,15 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 		// lane has a bound world to jail against. The orchestrator's workspace
 		// and a workdir-less (shared-host) sub-agent keep running unconfined.
 		if workdir != "" {
-			if ws, rec := resolveSubAgentConfinement(pv, opts.subCfg, workdir); ws != nil {
+			ws, rec := resolveSubAgentConfinement(pv, opts.subCfg, workdir)
+			// Record the resolution even when there is no workspace: "auto"
+			// degrading to advisory returns a nil workspace WITH a record, and
+			// that advisory resolution is exactly what the trace must show.
+			conf = rec
+			if ws != nil {
 				if err := reg.SetWorkspace(ws); err != nil {
 					slog.Debug("sub-agent confinement unavailable", "workdir", workdir, "err", err)
-				} else {
-					conf = rec
+					conf = nil
 				}
 			}
 		}
@@ -1311,8 +1315,9 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 
 	backend := landlock.Detect()
 	if backend == nil && placement != confinement.PlacementPaddock {
-		// "auto" degrades visibly to advisory: the host path *is* advisory.
-		return nil, &subAgentConfinement{Requested: requested, Resolved: "advisory", Writable: workdir}
+		// "auto" degrades visibly to advisory: the host path *is* advisory. No
+		// writable root is claimed — nothing bounded it.
+		return nil, &subAgentConfinement{Requested: requested, Resolved: "advisory"}
 	}
 
 	// A write-jail by default (network allow_all); egress confinement is opt-in.
