@@ -230,6 +230,64 @@ func TestTaskRunnerMarkupOnlyResultError(t *testing.T) {
 	}
 }
 
+// fabricatedTranscriptProvider answers like a zero-tool role that
+// hallucinated running a command (issue #329): a fenced shell block with
+// invented stdout, no dialect markup for the recovery parser to catch.
+type fabricatedTranscriptProvider struct{}
+
+func (fabricatedTranscriptProvider) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
+	return &types.ChatResponse{
+		Choices: []types.Choice{{
+			Message: types.Message{Role: "assistant",
+				Content: "```bash\ngit ls-files '*.go' | wc -l\n```\nstdout: 842"},
+			FinishReason: "stop",
+		}},
+		Usage: types.Usage{TotalTokens: 5},
+	}, nil
+}
+
+// A tool-less role that returns a command transcript with output evidence
+// fabricated it — nothing in its registry could have run. The dispatch
+// must fail explicitly (issue #329 acceptance criterion 3). "grump" is
+// not in the embedded registry, so its profile is the zero-value one:
+// no tools.
+func TestTaskRunnerFabricatedTranscriptError(t *testing.T) {
+	initTestRoles(t)
+	opts := taskRunnerOpts{
+		provider:     fabricatedTranscriptProvider{},
+		systemPrompt: "BASE",
+		modelName:    "test-model",
+	}
+	runner := makeTaskRunner(opts, 0)
+	result, err := runner(context.Background(), "count the Go files", tools.SubAgentParams{Role: "grump"})
+	if err == nil {
+		t.Fatalf("expected error for a fabricated transcript from a zero-tool role, got result %q", result)
+	}
+	if !strings.Contains(err.Error(), "fabricated") {
+		t.Errorf("error should explain the fabrication, got: %v", err)
+	}
+}
+
+// The same transcript from a role that HAS a shell is a legitimate quote
+// of what it ran — the fabrication guard is scoped to tool-less profiles
+// and must not reject it.
+func TestTaskRunnerTranscriptFromTooledRolePasses(t *testing.T) {
+	initTestRoles(t)
+	opts := taskRunnerOpts{
+		provider:     fabricatedTranscriptProvider{},
+		systemPrompt: "BASE",
+		modelName:    "test-model",
+	}
+	runner := makeTaskRunner(opts, 0)
+	result, err := runner(context.Background(), "count the Go files", tools.SubAgentParams{Role: "analyst"})
+	if err != nil {
+		t.Fatalf("a tool-enabled role's transcript must not be rejected, got error: %v", err)
+	}
+	if !strings.Contains(result, "stdout: 842") {
+		t.Fatalf("expected the transcript to pass through, got %q", result)
+	}
+}
+
 // Every shipped role must declare a tool list: with the default role
 // gone, a role without tools is unspawnable (the runner guards against
 // it), so catch silent regressions in the embedded role files here.

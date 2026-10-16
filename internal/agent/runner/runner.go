@@ -559,6 +559,15 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			runErr = fmt.Errorf("sub-agent %s returned unexecuted tool-call markup as its final report — the model emitted a tool call in a nonstandard text dialect that was never executed; treat this dispatch as failed (consider raising max_turns or reducing the role's toolset)", role)
 		}
 
+		// A zero-tool role cannot have executed anything, so a command
+		// transcript with output evidence in its final report is
+		// fabricated (issue #329 — the same pseudo-success class without
+		// the markup). Scoped to tool-less dispatches: a role with a
+		// shell quoting a transcript it really produced is legitimate.
+		if runErr == nil && len(profile.Tools) == 0 && llm.LooksLikeFabricatedTranscript(result) {
+			runErr = fmt.Errorf("sub-agent %s has no tools but returned a command transcript with invented output — the report is fabricated, nothing was executed; treat this dispatch as failed", role)
+		}
+
 		// Enrich errors with the sub-agent's trace so the orchestrator
 		// can see exactly which tool calls led to the failure.
 		if runErr != nil && opts.defaults.ShepherdTraceDir != "" {

@@ -102,7 +102,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 					observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 					streamSpan.End()
 				}
-				return checkTruncatedStream(content.String(), toolCallMap, finishReason, responseModel, reasoning.String(), totalUsage, &c.dialectSeq)
+				return checkTruncatedStream(content.String(), toolCallMap, finishReason, responseModel, reasoning.String(), totalUsage, &c.dialectSeq, req.Tools)
 			}
 
 			// Any chunk counts as liveness, not just content deltas:
@@ -205,7 +205,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 					observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 					streamSpan.End()
 				}
-				return checkTruncatedStream(content.String(), toolCallMap, finishReason, responseModel, reasoning.String(), totalUsage, &c.dialectSeq)
+				return checkTruncatedStream(content.String(), toolCallMap, finishReason, responseModel, reasoning.String(), totalUsage, &c.dialectSeq, req.Tools)
 			}
 
 		case err := <-errs:
@@ -221,7 +221,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 				observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 				streamSpan.End()
 			}
-			return checkTruncatedStream(content.String(), toolCallMap, finishReason, responseModel, reasoning.String(), totalUsage, &c.dialectSeq)
+			return checkTruncatedStream(content.String(), toolCallMap, finishReason, responseModel, reasoning.String(), totalUsage, &c.dialectSeq, req.Tools)
 
 		case <-ctx.Done():
 			if streamSpan != nil {
@@ -236,7 +236,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 // checkTruncatedStream validates the assembled streamed message and returns it
 // with finish reason, response model, and accumulated usage, or an error if the
 // stream was truncated or blocked.
-func checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, finishReason string, responseModel string, reasoningContent string, usage types.Usage, dialectSeq *int) (types.Message, string, string, types.Usage, error) {
+func checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, finishReason string, responseModel string, reasoningContent string, usage types.Usage, dialectSeq *int, toolDefs []types.ToolDef) (types.Message, string, string, types.Usage, error) {
 	msg := assembleStreamed(content, toolCallMap, reasoningContent)
 
 	// Filter out tool calls with invalid JSON arguments. Anthropic will
@@ -263,9 +263,15 @@ func checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, f
 
 	// Dialect recovery: tool-call markup leaked into content (DSML or the
 	// attribute style) is re-parsed into structured tool calls so it
-	// executes instead of surfacing as the answer (issue #314).
+	// executes instead of surfacing as the answer (issue #314). Markup
+	// that cannot be safely synthesized (cut mid-parameter, missing a
+	// required argument) fails the turn explicitly instead of executing
+	// a partial call or silently dropping one.
 	if msg.Content != "" {
-		if cleaned, recoveredCalls, ok := recoverDialectToolCalls(msg.Content, dialectSeq); ok {
+		if cleaned, recoveredCalls, rejected, ok := recoverDialectToolCalls(msg.Content, dialectSeq, toolDefs); ok {
+			if len(rejected) > 0 {
+				return types.Message{}, finishReason, responseModel, usage, fmt.Errorf("streamed tool-call markup could not be safely recovered: %s", strings.Join(rejected, "; "))
+			}
 			msg.Content = cleaned
 			msg.ToolCalls = append(msg.ToolCalls, recoveredCalls...)
 		}

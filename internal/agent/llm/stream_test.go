@@ -32,7 +32,7 @@ func TestCheckTruncatedStream_prematureClose(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, _, _, err := checkTruncatedStream(tc.content, nil, tc.finishReason, "model-x", "", types.Usage{}, nil)
+			_, _, _, _, err := checkTruncatedStream(tc.content, nil, tc.finishReason, "model-x", "", types.Usage{}, nil, nil)
 			if tc.wantErr && err == nil {
 				t.Fatal("expected error, got nil")
 			}
