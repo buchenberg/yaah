@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.79.8](https://github.com/buchenberg/yaah/compare/v0.79.7...v0.79.8) (2026-10-16)
+
+
+### Bug Fixes
+
+* **llm:** a closed errs must not discard a buffered finish chunk ([71f69a7](https://github.com/buchenberg/yaah/commit/71f69a77772a32e4494557f7e49cb31095a4f901))
+
+
+### Documentation
+
+* **llm:** note the end-of-stream contract on the closed-errs path ([1e4314b](https://github.com/buchenberg/yaah/commit/1e4314bf45f3940266983ee439e24cafa0fb13c5))
+
 ## [0.79.7](https://github.com/buchenberg/yaah/compare/v0.79.6...v0.79.7) (2026-10-16)
 
 
