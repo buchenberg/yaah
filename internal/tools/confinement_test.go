@@ -64,17 +64,20 @@ func TestDefaultGoModCache(t *testing.T) {
 
 // TestConfinementScratchEnv_PointsGitAtGlobalConfig: the redirect moves HOME, so
 // git would look for the user's identity in an empty scratch and refuse to commit
-// ("Author identity unknown"). The redirect points git at the REAL global config
-// instead — no copy, so a global config carrying `http.<url>.extraheader` tokens
-// never lands in the worktree, and `include` paths keep resolving against the
-// file's real location.
+// ("Author identity unknown"). The redirect points git at a SHIM in the scratch
+// that includes the real global config files — not a copy, so a config carrying
+// `http.<url>.extraheader` tokens never lands in the worktree, and `include`
+// paths keep resolving against the files' real locations. A shim rather than a
+// direct pointer, because GIT_CONFIG_GLOBAL replaces BOTH default files and
+// takes one path: naming a single file would drop the other.
 func TestConfinementScratchEnv_PointsGitAtGlobalConfig(t *testing.T) {
 	// No inherited pointer: the resolution under test is the HOME one.
 	if prev, ok := os.LookupEnv("GIT_CONFIG_GLOBAL"); ok {
 		_ = os.Unsetenv("GIT_CONFIG_GLOBAL")
 		t.Cleanup(func() { _ = os.Setenv("GIT_CONFIG_GLOBAL", prev) })
 	}
-	gitGlobal := func(t *testing.T, root string) (string, bool) {
+	// gitGlobal runs the redirect and returns the pointer plus the shim's body.
+	gitGlobal := func(t *testing.T, root string) (string, string, bool) {
 		t.Helper()
 		env, err := ConfinementScratchEnv(root)
 		if err != nil {
@@ -82,37 +85,64 @@ func TestConfinementScratchEnv_PointsGitAtGlobalConfig(t *testing.T) {
 		}
 		for _, kv := range env {
 			if k, v, _ := strings.Cut(kv, "="); k == "GIT_CONFIG_GLOBAL" {
-				return v, true
+				body, rerr := os.ReadFile(v)
+				if rerr != nil {
+					t.Fatalf("the pointer must name a readable shim: %v", rerr)
+				}
+				return v, string(body), true
 			}
 		}
-		return "", false
+		return "", "", false
 	}
 
-	t.Run("legacy .gitconfig wins when both exist", func(t *testing.T) {
+	t.Run("both files are included, in git's precedence order", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
 		t.Setenv("XDG_CONFIG_HOME", "")
+		xdg := filepath.Join(home, ".config", "git", "config")
 		legacy := filepath.Join(home, ".gitconfig")
-		if err := os.WriteFile(legacy, []byte("[user]\n\tname = Legacy\n"), 0o644); err != nil {
-			t.Fatalf("seed .gitconfig: %v", err)
-		}
-		if err := os.MkdirAll(filepath.Join(home, ".config", "git"), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(xdg), 0o755); err != nil {
 			t.Fatalf("seed xdg dir: %v", err)
 		}
-		if err := os.WriteFile(filepath.Join(home, ".config", "git", "config"), []byte("[user]\n\tname = XDG\n"), 0o644); err != nil {
+		if err := os.WriteFile(xdg, []byte("[user]\n\tname = XDG\n"), 0o644); err != nil {
 			t.Fatalf("seed xdg config: %v", err)
 		}
+		if err := os.WriteFile(legacy, []byte("[user]\n\temail = legacy@example.com\n"), 0o644); err != nil {
+			t.Fatalf("seed .gitconfig: %v", err)
+		}
 		root := t.TempDir()
-		got, ok := gitGlobal(t, root)
+		pointer, body, ok := gitGlobal(t, root)
 		if !ok {
 			t.Fatal("GIT_CONFIG_GLOBAL must be set when a global config exists")
 		}
-		if got != legacy {
-			t.Errorf("GIT_CONFIG_GLOBAL = %q, want the legacy config git applies last (%q)", got, legacy)
+		if want := filepath.Join(root, confinementScratchName, "home", ".gitconfig"); pointer != want {
+			t.Errorf("GIT_CONFIG_GLOBAL = %q, want the shim %q", pointer, want)
 		}
-		// Nothing is copied into the worktree: the config can carry credentials.
-		if _, err := os.Stat(filepath.Join(root, confinementScratchName, "home", ".gitconfig")); !os.IsNotExist(err) {
-			t.Errorf("the global config must NOT be copied into the worktree (stat err=%v)", err)
+		// Both, in order. Including only one would DROP the other: the pointer
+		// replaces both defaults rather than adding to them, and a name in one
+		// file plus an email in the other is a real configuration.
+		if !strings.Contains(body, "path = "+xdg) || !strings.Contains(body, "path = "+legacy) {
+			t.Errorf("the shim must include both files:\n%s", body)
+		}
+		if strings.Index(body, xdg) > strings.Index(body, legacy) {
+			t.Errorf("the shim must include the XDG file first (git's order):\n%s", body)
+		}
+		// Paths, not values: nothing from either config is copied.
+		if strings.Contains(body, "XDG") || strings.Contains(body, "legacy@example.com") {
+			t.Errorf("the shim must carry paths, not config content:\n%s", body)
+		}
+	})
+
+	t.Run("a pre-set pointer is left alone", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("XDG_CONFIG_HOME", "")
+		if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[user]\n\tname = Legacy\n"), 0o644); err != nil {
+			t.Fatalf("seed .gitconfig: %v", err)
+		}
+		t.Setenv("GIT_CONFIG_GLOBAL", "/somewhere/else")
+		if pointer, _, ok := gitGlobal(t, t.TempDir()); ok {
+			t.Errorf("an inherited pointer must be left alone, got %q", pointer)
 		}
 	})
 
@@ -128,16 +158,20 @@ func TestConfinementScratchEnv_PointsGitAtGlobalConfig(t *testing.T) {
 		if err := os.WriteFile(want, []byte("[user]\n\tname = XDG\n"), 0o644); err != nil {
 			t.Fatalf("seed xdg config: %v", err)
 		}
-		if got, ok := gitGlobal(t, t.TempDir()); !ok || got != want {
-			t.Errorf("GIT_CONFIG_GLOBAL = %q (set=%v), want %q", got, ok, want)
+		_, body, ok := gitGlobal(t, t.TempDir())
+		if !ok {
+			t.Fatal("GIT_CONFIG_GLOBAL must be set when a global config exists")
+		}
+		if !strings.Contains(body, "path = "+want) {
+			t.Errorf("the shim must include the XDG config %q:\n%s", want, body)
 		}
 	})
 
 	t.Run("no global config adds no pointer", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		t.Setenv("XDG_CONFIG_HOME", "")
-		if got, ok := gitGlobal(t, t.TempDir()); ok {
-			t.Errorf("no source config should mean no pointer, got %q", got)
+		if pointer, _, ok := gitGlobal(t, t.TempDir()); ok {
+			t.Errorf("no source config should mean no pointer, got %q", pointer)
 		}
 	})
 }

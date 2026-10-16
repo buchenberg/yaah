@@ -363,11 +363,6 @@ agents:
 | `turn_checkpoint_max` | `0` | Live turn checkpoints per sub-agent run; the oldest are pruned. `0` = unlimited. |
 | `max_turn_restores` | `3` | Turn-level restores per run, so a deterministically failing turn cannot rewind forever. |
 
-
-`yaah doctor` reports the effective placement and whether the host can jail
-(`auto` on a host with no usable backend is a WARN, `paddock` is a FAIL).
-
-
 ### What checkpointing covers
 
 A checkpoint captures **workspace state plus the conversation**. Rolling back
@@ -445,13 +440,16 @@ redirect would otherwise hide are handled explicitly:
 - `GOMODCACHE` is pinned against the *pre-redirect* environment, so a confined
   Go build reads the shared module cache instead of silently re-downloading into
   the scratch.
-- `GIT_CONFIG_GLOBAL` is pointed at the user's **real** global git config,
-  resolved before the redirect. The moved `HOME` would otherwise hide the
-  identity a commit needs ("Author identity unknown"); pointing at the real file
-  (rather than copying it) keeps includes resolving correctly and keeps the
-  config — which can carry `http.<url>.extraheader` tokens — out of the
-  worktree. A `git config --global` write inside the jail is then an out-of-root
-  write and is refused, which is the right answer.
+- `GIT_CONFIG_GLOBAL` is pointed at a small **shim** in the scratch that includes
+  the user's real global git config files, resolved before the redirect. The
+  moved `HOME` would otherwise hide the identity a commit needs ("Author identity
+  unknown"). A shim rather than a direct pointer, because `GIT_CONFIG_GLOBAL`
+  replaces *both* default files and takes a single path — naming one would drop
+  the other, and a name in `~/.gitconfig` with the email in
+  `$XDG_CONFIG_HOME/git/config` is a real configuration. The shim carries paths,
+  not values, so no config content — `http.<url>.extraheader` tokens included —
+  lands in the worktree, and each included file's own `include` paths still
+  resolve against its real location.
 
 The scratch itself is created defensively: a `.yaah-scratch` that is (or resolves
 through) a symlink out of the worktree is refused, since that write happens in

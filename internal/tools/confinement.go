@@ -61,48 +61,89 @@ func ConfinementScratchEnv(workdir string) ([]string, error) {
 		env = append(env, "GOMODCACHE="+defaultGoModCache())
 	}
 
-	// Point git at the user's REAL global config (see realGitGlobalConfig): the
+	// Point git at the user's REAL global config (see scratchGitGlobalConfig): the
 	// redirect moves HOME, and with it the global config git finds the user's
 	// identity in — so without this a confined `git commit` fails with "Author
 	// identity unknown".
-	if _, set := os.LookupEnv("GIT_CONFIG_GLOBAL"); !set {
-		if p := realGitGlobalConfig(); p != "" {
-			env = append(env, "GIT_CONFIG_GLOBAL="+p)
-		}
+	if p := scratchGitGlobalConfig(scratch); p != "" {
+		env = append(env, "GIT_CONFIG_GLOBAL="+p)
 	}
 	return env, nil
 }
 
-// realGitGlobalConfig resolves the file git would read as the user's global
-// config, against the PRE-redirect environment: $GIT_CONFIG_GLOBAL if set, else
-// ~/.gitconfig, else $XDG_CONFIG_HOME/git/config (or ~/.config/git/config).
-// Empty when the user has none — the normal case.
+// scratchGitGlobalConfig writes a shim into the scratch HOME that INCLUDES the
+// user's real global config files, and returns its path (or "" when there is
+// nothing to include, or the user already points git somewhere else and the
+// inherited value should be left alone).
 //
-// The legacy ~/.gitconfig is preferred when both exist: git reads the XDG file
-// first and the legacy one after, so the legacy values are the ones that win —
-// pointing at it preserves the effective identity. (The path is resolved here
-// because both candidates are HOME-relative, and HOME is about to move.)
-func realGitGlobalConfig() string {
-	if p := os.Getenv("GIT_CONFIG_GLOBAL"); p != "" {
-		return p
+// A shim, rather than pointing at a real file, because GIT_CONFIG_GLOBAL
+// *replaces* BOTH default files and takes exactly one path — a colon-separated
+// list is not honored (git 2.55 reads the whole string as one filename and
+// silently finds nothing), so naming a single file would drop the other, and a
+// user whose name lives in ~/.gitconfig and email in $XDG_CONFIG_HOME/git/config
+// would still get "Author identity unknown". The shim includes them in git's own
+// order (XDG first, legacy second, so legacy wins per key) and carries paths
+// rather than values, so no config content — `http.<url>.extraheader` tokens
+// included — is copied into the worktree. Each included file's own `include`
+// paths still resolve against its real location, and a file that disappears
+// mid-run is skipped rather than fatal.
+func scratchGitGlobalConfig(scratch string) string {
+	if _, set := os.LookupEnv("GIT_CONFIG_GLOBAL"); set {
+		// Already pointed somewhere (possibly at an empty value); leave it.
+		return ""
 	}
+	paths := realGitGlobalConfigs()
+	if len(paths) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	for _, p := range paths {
+		fmt.Fprintf(&b, "[include]\n\tpath = %s\n", p)
+	}
+
+	// The scratch HOME was just created and symlink-checked, but a repository
+	// can carry a `.yaah-scratch/home/.gitconfig` — including a symlink — and
+	// this write happens in the unconfined parent. Remove first, then create
+	// exclusively, so we never write through a planted link.
+	shim := filepath.Join(scratch, "home", ".gitconfig")
+	_ = os.Remove(shim)
+	f, err := os.OpenFile(shim, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		// Best-effort: git then sees an empty HOME, so a commit needs an explicit
+		// identity. A degraded run, not a failed dispatch.
+		return ""
+	}
+	defer f.Close()
+	if _, err := f.WriteString(b.String()); err != nil {
+		return ""
+	}
+	return shim
+}
+
+// realGitGlobalConfigs resolves the global config files git would read from a
+// normal HOME, against the PRE-redirect environment, in git's precedence order:
+// $XDG_CONFIG_HOME/git/config (or ~/.config/git/config) first, ~/.gitconfig
+// second. Empty when the user has none — the normal case.
+func realGitGlobalConfigs() []string {
 	home := os.Getenv("HOME")
 	if home == "" {
-		return ""
+		return nil
 	}
 	dir := os.Getenv("XDG_CONFIG_HOME")
 	if dir == "" {
 		dir = filepath.Join(home, ".config")
 	}
+	var paths []string
 	for _, p := range []string{
-		filepath.Join(home, ".gitconfig"),
 		filepath.Join(dir, "git", "config"),
+		filepath.Join(home, ".gitconfig"),
 	} {
 		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
-			return p
+			paths = append(paths, p)
 		}
 	}
-	return ""
+	return paths
 }
 
 // confinementScratchDir prepares one scratch directory beneath root, refusing any

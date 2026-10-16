@@ -63,18 +63,30 @@ func TestConfinedBuild_Acceptance(t *testing.T) {
 		t.Skip("no git on PATH")
 	}
 
-	// A global git identity, exactly as a normal user configures one. HOME is
-	// moved by the redirect, so the only way it can be found inside the jail is
-	// the redirect pointing git at this file. (Clear any inherited
+	// A global git identity, exactly as a normal user configures one — and split
+	// across BOTH files git reads (name in the legacy file, email in the XDG
+	// one). HOME is moved by the redirect, so the only way either can be found
+	// inside the jail is the redirect's shim including both. (Clear any inherited
 	// GIT_CONFIG_GLOBAL first, so the resolution under test is the HOME one.)
 	if prev, ok := os.LookupEnv("GIT_CONFIG_GLOBAL"); ok {
 		_ = os.Unsetenv("GIT_CONFIG_GLOBAL")
 		t.Cleanup(func() { _ = os.Setenv("GIT_CONFIG_GLOBAL", prev) })
 	}
+	t.Setenv("XDG_CONFIG_HOME", "")
 	fakeHome := t.TempDir()
 	if err := os.WriteFile(filepath.Join(fakeHome, ".gitconfig"),
-		[]byte("[user]\n\tname = Acceptance\n\temail = acceptance@example.com\n"), 0o600); err != nil {
+		[]byte("[user]\n\tname = Acceptance\n"), 0o600); err != nil {
 		t.Fatalf("seed gitconfig: %v", err)
+	}
+	// The XDG default location, git's FIRST-read global file, which the legacy
+	// ~/.gitconfig then overrides per key.
+	xdgDir := filepath.Join(fakeHome, ".config", "git")
+	if err := os.MkdirAll(xdgDir, 0o755); err != nil {
+		t.Fatalf("seed xdg dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(xdgDir, "config"),
+		[]byte("[user]\n\temail = acceptance@example.com\n"), 0o600); err != nil {
+		t.Fatalf("seed xdg config: %v", err)
 	}
 	t.Setenv("HOME", fakeHome)
 
@@ -151,14 +163,21 @@ func TestConfinedBuild_Acceptance(t *testing.T) {
 		t.Fatal("the scratch build cache is empty — the build did not use the redirect")
 	}
 
-	// 3. The identity the redirect points git at is visible inside the jail.
-	res, rerr := exec("git", "config", "--get", "user.email")
-	if rerr != nil || res.ExitCode != 0 {
-		t.Fatalf("the redirect must point git at the global identity: exit=%d err=%v stderr=%s",
-			res.ExitCode, rerr, res.Stderr)
-	}
-	if got := strings.TrimSpace(res.Stdout); got != "acceptance@example.com" {
-		t.Fatalf("user.email inside the jail = %q, want the global identity", got)
+	// 3. Both halves of the identity are visible inside the jail: the redirect's
+	// shim must merge BOTH real files, not just one.
+	for _, want := range []struct{ key, value string }{
+		{"user.name", "Acceptance"},
+		{"user.email", "acceptance@example.com"},
+	} {
+		res, rerr := exec("git", "config", "--get", want.key)
+		if rerr != nil || res.ExitCode != 0 {
+			t.Fatalf("the redirect must expose %s: exit=%d err=%v stderr=%s",
+				want.key, res.ExitCode, rerr, res.Stderr)
+		}
+		if got := strings.TrimSpace(res.Stdout); got != want.value {
+			t.Fatalf("%s inside the jail = %q, want %q (each lives in a different global file)",
+				want.key, got, want.value)
+		}
 	}
 
 	// 4. Read-only git works in the linked worktree — most of what a sub-agent
@@ -169,7 +188,7 @@ func TestConfinedBuild_Acceptance(t *testing.T) {
 	// is outside the writable root, so an index write is refused. Pinned here so
 	// the flip cannot land without settling it — and so this leg fails loudly
 	// when it is settled, rather than silently going stale.
-	res, rerr = exec("git", "add", "-A")
+	res, rerr := exec("git", "add", "-A")
 	if res.ExitCode != 0 && !strings.Contains(res.Stderr, "Permission denied") {
 		t.Fatalf("a denied index write must be a kernel denial, not a launch failure: exit=%d err=%v stderr=%q",
 			res.ExitCode, rerr, res.Stderr)
