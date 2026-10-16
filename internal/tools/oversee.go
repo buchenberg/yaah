@@ -659,7 +659,10 @@ func verdictWord(line, token string) (string, bool) {
 	hasToken := false
 	if token != "" {
 		for _, f := range fields[1:] {
-			if trimDecorations(f) == token {
+			// Case-insensitive: a model may upper-case a hex token, and rejecting
+			// that would downgrade a genuine acceptance into an unbreakable retry
+			// loop. The token is an authentication marker, not a secret.
+			if strings.EqualFold(trimDecorations(f), token) {
 				hasToken = true
 				break
 			}

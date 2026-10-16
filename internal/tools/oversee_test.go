@@ -654,6 +654,7 @@ func TestParseOverseeVerdict(t *testing.T) {
 		{"a bolded token accepts", "VERDICT: accept **" + tok + "**", "accept", ""},
 		{"a trailing period on the token accepts", "VERDICT: accept " + tok + ".", "accept", ""},
 		{"parenthesized token accepts", "- **VERDICT: revise (" + tok + ")**\nREASON: fix it", "revise", "fix it"},
+		{"an upper-cased token accepts", "VERDICT: accept " + strings.ToUpper(tok), "accept", ""},
 		{"the placeholder echoed verbatim does not accept", "VERDICT: accept <token>", "", ""},
 		{"another round's token does not accept", "VERDICT: accept " + other, "", ""},
 		{"an unknown word with the token is not acceptance", "VERDICT: lgtm " + tok, "lgtm", ""},
