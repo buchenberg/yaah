@@ -114,6 +114,16 @@ func Validate(cfg *Config) error {
 		}
 	}
 
+	// Containment must be a known placement; an unknown value would otherwise
+	// silently mean "off" (unconfined), which is the wrong failure direction.
+	switch strings.ToLower(strings.TrimSpace(cfg.Agent.SubAgent.Containment)) {
+	case "", "off", "none", "advisory", "auto", "paddock", "jail":
+	default:
+		errs = append(errs, fmt.Sprintf(
+			"agents.subagent.containment %q is not one of: off, advisory, auto, paddock",
+			cfg.Agent.SubAgent.Containment))
+	}
+
 	// Sub-agent budget floors must be sane: non-negative, not above the
 	// matching max in the same role config, and satisfiable within the
 	// schema hard ceiling (subagent-turn-budget-floors §4.6).

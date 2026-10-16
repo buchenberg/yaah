@@ -26,7 +26,10 @@ import (
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
 	shepherd "github.com/buchenberg/shepherd-runtime-go"
 	shepherdsandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 	shepherdgit "github.com/buchenberg/shepherd-runtime-go/sandbox/git"
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/landlock"
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/budget"
 	"github.com/buchenberg/yaah/internal/agent/llm"
@@ -985,6 +988,17 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 			pv = pv.WithWorkspaceRoot(workdir)
 		}
 		reg.SetPathValidator(pv)
+
+		// Confinement seam (Plan 7 Phase 1): on the sub-agent workdir lane the
+		// sub-agent's shell runs under the syscall jail when configured, with
+		// the worktree as its sole writable root. The orchestrator's workspace
+		// is built in the wiring and never carries a confiner, so its commands
+		// keep running unconfined on the host.
+		if ws := confinedSubAgentWorkspace(pv, opts.subCfg); ws != nil {
+			if err := reg.SetWorkspace(ws); err != nil {
+				slog.Debug("sub-agent confinement unavailable", "workdir", workdir, "err", err)
+			}
+		}
 	}
 	for _, name := range profile.Tools {
 		if name == "spawn_subagent" {
@@ -1208,4 +1222,38 @@ func subagentTraceProfile(ctx context.Context, tracePath, sessionID string) stri
 		return ""
 	}
 	return fmt.Sprintf("%d tool calls:\n%s", seq, strings.Join(lines, "\n"))
+}
+
+// confinedSubAgentWorkspace builds the syscall-jailed workspace for a sub-agent
+// workdir dispatch when agents.subagent.containment asks for one, or nil to
+// leave the host path. "" / "off" / "advisory" mean no jail; "auto" jails on a
+// Landlock-capable host and falls back to advisory elsewhere; "paddock" (alias
+// "jail") fails closed. The writable root is the worktree — the sub-agent's
+// bound world — so the kernel boundary and the run's own boundary agree.
+func confinedSubAgentWorkspace(pv *tools.PathValidator, cfg config.SubAgentConfig) tools.Workspace {
+	placement := containmentPlacement(cfg.Containment)
+	if placement == "" {
+		return nil
+	}
+	backend := landlock.Detect()
+	if backend == nil && placement != confinement.PlacementPaddock {
+		// "auto" degrades visibly to advisory: the host path *is* advisory.
+		return nil
+	}
+	// A write-jail by default (network allow_all); egress confinement is opt-in.
+	return tools.NewConfinedLocalWorkspace(pv, backend, placement,
+		containment.NetworkPolicy{Mode: containment.NetAllowAll})
+}
+
+// containmentPlacement maps agents.subagent.containment to a placement, or ""
+// for the default unconfined host path.
+func containmentPlacement(v string) confinement.Placement {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "auto":
+		return confinement.PlacementAuto
+	case "paddock", "jail":
+		return confinement.PlacementPaddock
+	default: // "", "off", "none", "advisory"
+		return ""
+	}
 }
