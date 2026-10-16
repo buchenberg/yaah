@@ -366,8 +366,8 @@ func TestDB_UpdateMemory_NonExistentReturnsError(t *testing.T) {
 	defer db.Close()
 
 	err = db.UpdateMemory("nonexistent", "new text")
-	if err == nil {
-		t.Error("expected error for non-existent memory update")
+	if !errors.Is(err, ErrMemoryNotFound) {
+		t.Errorf("UpdateMemory(nonexistent) = %v, want ErrMemoryNotFound", err)
 	}
 }
 
