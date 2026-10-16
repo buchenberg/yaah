@@ -57,7 +57,7 @@ func TestBuildSubAgentRegistry_InheritsSessionSandbox(t *testing.T) {
 		Tools: []string{"read", "write", "go_refactor", "grep"},
 	}
 
-	reg, err := buildSubAgentRegistry(opts, profile, 0, "/host/some/worktree")
+	reg, _, err := buildSubAgentRegistry(opts, profile, 0, "/host/some/worktree")
 	if err != nil {
 		t.Fatalf("buildSubAgentRegistry: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestBuildSubAgentRegistry_LocalRouteUnchanged(t *testing.T) {
 	opts := taskRunnerOpts{pathValidator: pv}
 	profile := subagent.RoleProfile{Tools: []string{"read", "go_refactor"}}
 
-	reg, err := buildSubAgentRegistry(opts, profile, 0, "/repo/worktrees/child")
+	reg, _, err := buildSubAgentRegistry(opts, profile, 0, "/repo/worktrees/child")
 	if err != nil {
 		t.Fatalf("buildSubAgentRegistry: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestBuildSubAgentRegistry_WorkdirWithoutSessionValidator(t *testing.T) {
 	opts := taskRunnerOpts{} // pathValidator == nil: default local mode
 	profile := subagent.RoleProfile{Tools: []string{"read", "bash", "write"}}
 
-	reg, err := buildSubAgentRegistry(opts, profile, 0, "/repo/shepherd-worktrees/var-a")
+	reg, _, err := buildSubAgentRegistry(opts, profile, 0, "/repo/shepherd-worktrees/var-a")
 	if err != nil {
 		t.Fatalf("buildSubAgentRegistry: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestBuildSubAgentRegistry_NestedTaskInherits(t *testing.T) {
 	opts := taskRunnerOpts{workspace: ws}
 	profile := subagent.RoleProfile{Tools: []string{"read", "spawn_subagent"}}
 
-	reg, err := buildSubAgentRegistry(opts, profile, 1, "")
+	reg, _, err := buildSubAgentRegistry(opts, profile, 1, "")
 	if err != nil {
 		t.Fatalf("buildSubAgentRegistry: %v", err)
 	}

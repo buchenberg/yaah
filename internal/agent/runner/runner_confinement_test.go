@@ -9,35 +9,56 @@ import (
 )
 
 // The workdir lane attaches a confiner only when agents.subagent.containment
-// asks for one. The default (and "off"/"advisory") leaves the host path — this
-// is the guardrail that the orchestrator's lane and the unconfigured sub-agent
-// stay unconfined.
-func TestConfinedSubAgentWorkspace_Placement(t *testing.T) {
+// asks for one, and records the resolution either way (Plan 7 Phase 3). The
+// default (and "off"/"advisory") leaves the host path — the guardrail that the
+// orchestrator's lane and the unconfigured sub-agent stay unconfined.
+func TestResolveSubAgentConfinement_Placement(t *testing.T) {
 	pv := tools.NewPathValidator(t.TempDir(), false, nil)
 
 	cases := []struct {
 		setting string
-		want    bool
+		confine bool // a confined workspace is returned
+		record  bool // a resolution record is returned
 	}{
-		{"", false},
-		{"off", false},
-		{"none", false},
-		{"advisory", false},
-		{"paddock", true}, // fails closed even with no backend
-		{"jail", true},
+		{"", false, false},
+		{"off", false, false},
+		{"none", false, false},
+		{"advisory", false, false},
+		{"paddock", true, true}, // fails closed even with no backend
+		{"jail", true, true},
 	}
 	for _, c := range cases {
-		got := confinedSubAgentWorkspace(pv, config.SubAgentConfig{Containment: c.setting}, t.TempDir())
-		if (got != nil) != c.want {
-			t.Errorf("containment=%q: confined=%v, want %v", c.setting, got != nil, c.want)
+		ws, rec := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: c.setting}, t.TempDir())
+		if (ws != nil) != c.confine {
+			t.Errorf("containment=%q: confined=%v, want %v", c.setting, ws != nil, c.confine)
+		}
+		if (rec != nil) != c.record {
+			t.Errorf("containment=%q: record=%v, want %v", c.setting, rec != nil, c.record)
+		}
+		if rec != nil && rec.Resolved == "" {
+			t.Errorf("containment=%q: empty resolved placement", c.setting)
 		}
 	}
 
-	// "auto" jails only where a backend exists; elsewhere it degrades to the
-	// host (advisory) path, so the result tracks the host's capability.
-	auto := confinedSubAgentWorkspace(pv, config.SubAgentConfig{Containment: "auto"}, t.TempDir())
-	wantAuto := landlock.Detect() != nil
-	if (auto != nil) != wantAuto {
-		t.Errorf("containment=auto: confined=%v, want %v (backend present=%v)", auto != nil, wantAuto, wantAuto)
+	// "auto" jails only where a backend exists; elsewhere it degrades to
+	// advisory — and either way records the resolution, so a reader can tell the
+	// two apart.
+	ws, rec := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: "auto"}, t.TempDir())
+	wantJail := landlock.Detect() != nil
+	if (ws != nil) != wantJail {
+		t.Errorf("auto: confined=%v, want %v", ws != nil, wantJail)
+	}
+	if rec == nil {
+		t.Fatal("auto must record a resolution")
+	}
+	wantResolved := "advisory"
+	if wantJail {
+		wantResolved = "paddock"
+	}
+	if rec.Resolved != wantResolved {
+		t.Errorf("auto: resolved = %q, want %q", rec.Resolved, wantResolved)
+	}
+	if wantJail && (rec.Backend == "" || rec.Tier == "") {
+		t.Errorf("auto (jailed): backend/tier must be recorded, got %q / %q", rec.Backend, rec.Tier)
 	}
 }
