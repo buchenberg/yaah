@@ -52,6 +52,9 @@ func (r *overseeRunner) run() TaskRunner {
 		if call%2 == 0 {
 			n := call / 2
 			writeTestFile(r.t, params.Workdir, fmt.Sprintf("out%d.txt", n), fmt.Sprintf("attempt %d\n", n))
+			// A file the worker never touches, as a stand-in for the rest of the
+			// checkout a reviewer could meddle with.
+			writeTestFile(r.t, params.Workdir, "helper.txt", "original\n")
 			r.mu.Lock()
 			defer r.mu.Unlock()
 			if n < len(r.results) {
@@ -357,6 +360,64 @@ func TestOversee_ReviewerSameSizeRewriteIsCaught(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repo, "out0.txt")); !os.IsNotExist(err) {
 		t.Errorf("nothing may land (stat err=%v)", err)
+	}
+}
+
+// TestOversee_ReviewerRewriteOutsideTheChangeSetIsCaught: the check must cover
+// the whole world, not just the files the worker touched — a reviewer editing a
+// helper it was not asked about is the same hazard. Same size, mtime restored:
+// only the content hash can see it.
+func TestOversee_ReviewerRewriteOutsideTheChangeSetIsCaught(t *testing.T) {
+	resetRetainedProposals()
+	runner := &overseeRunner{t: t, verdicts: []string{"VERDICT: accept"}}
+	runner.onReview = func(_ int, wd string) {
+		// An untouched file in the worker's world — NOT in the proposal's change
+		// set.
+		path := filepath.Join(wd, "helper.txt")
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Errorf("the seeded helper must exist: %v", err)
+			return
+		}
+		if err := os.WriteFile(path, []byte("meddld\n"), 0o644); err != nil {
+			t.Errorf("rewrite: %v", err)
+			return
+		}
+		if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+			t.Errorf("restore mtime: %v", err)
+		}
+	}
+	tool, repo := newOverseeTool(t, runner)
+
+	env := runOversee(t, tool, `{"task":"write out0.txt"}`)
+	if env.Status != "error" || !strings.Contains(env.Error, "modified the world") {
+		t.Fatalf("a same-size rewrite outside the change set must still invalidate the verdict, got %+v", env)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "out0.txt")); !os.IsNotExist(err) {
+		t.Errorf("nothing may land (stat err=%v)", err)
+	}
+}
+
+// TestOversee_DiscardedRoundLeavesNoDanglingPointer: the envelope must never
+// advertise a proposal the loop already consumed.
+func TestOversee_DiscardedRoundLeavesNoDanglingPointer(t *testing.T) {
+	resetRetainedProposals()
+	runner := &overseeRunner{
+		t:            t,
+		verdicts:     []string{"VERDICT: accept"},
+		reviewWrites: []string{"reviewer-fix.txt"},
+	}
+	tool, _ := newOverseeTool(t, runner)
+
+	env := runOversee(t, tool, `{"task":"write it"}`)
+	if env.Status != "error" {
+		t.Fatalf("want an error, got %+v", env)
+	}
+	if env.ProposalID != "" {
+		t.Errorf("the discarded proposal id must be cleared, got %q", env.ProposalID)
+	}
+	if len(env.Next) != 0 {
+		t.Errorf("Next must not point at a consumed proposal, got %v", env.Next)
 	}
 }
 

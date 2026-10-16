@@ -244,11 +244,15 @@ func (t *OverseeTool) Execute(ctx context.Context, args string) (string, error) 
 		// and then accepts has approved a tree that is NOT what the settle will
 		// land (the settlement applies the sealed delta, not the directory).
 		// Fingerprint around the review so that cannot pass silently.
-		hashPaths := map[string]bool{}
-		for _, f := range changesPaths(proposal.output.Changes()) {
-			hashPaths[filepath.ToSlash(f)] = true
+		before, fpErr := worldFingerprint(proposal.workdir)
+		if fpErr != nil {
+			// Do not spend a review we could not trust: an unverifiable round is
+			// discarded here rather than after a full LLM dispatch.
+			_, _ = settleRetainedProposal(ctx, proposal.id, "discard")
+			env.Status, env.Error, env.ProposalID, env.Next = "error",
+				fmt.Sprintf("could not fingerprint the world before reviewing it (%v); the round was discarded", fpErr), "", nil
+			return marshalOverseeEnvelope(env), nil
 		}
-		before, fpErr := worldFingerprint(proposal.workdir, hashPaths)
 		reviewText, rErr := runOverseeReview(ctx, t, reviewer, proposal, raw.Task, round, rounds, clampedTimeout)
 		if rErr != nil {
 			// The review failed to run: the round is unjudged. Discard it —
@@ -261,17 +265,19 @@ func (t *OverseeTool) Execute(ctx context.Context, args string) (string, error) 
 		// Fail CLOSED if the check cannot be made: an unverifiable review is not
 		// a trustworthy one, and the cost of being wrong is landed unreviewed
 		// work.
-		after, aErr := worldFingerprint(proposal.workdir, hashPaths)
-		if fpErr != nil || aErr != nil {
+		after, aErr := worldFingerprint(proposal.workdir)
+		if aErr != nil {
 			_, _ = settleRetainedProposal(ctx, proposal.id, "discard")
-			env.Status = "error"
-			env.Error = fmt.Sprintf("could not verify that the reviewer left the world it was judging unmodified (%v / %v); the round was discarded",
-				fpErr, aErr)
+			env.Status, env.Error, env.ProposalID, env.Next = "error",
+				fmt.Sprintf("could not verify that the reviewer left the world it was judging unmodified (%v); the round was discarded", aErr), "", nil
 			return marshalOverseeEnvelope(env), nil
 		}
 		if drift := fingerprintDrift(before, after); len(drift) > 0 {
+			// The proposal is consumed by the discard, so the envelope must not
+			// keep pointing at it.
 			_, _ = settleRetainedProposal(ctx, proposal.id, "discard")
-			env.Status, env.Error = "error", fmt.Sprintf(
+			env.Status, env.ProposalID, env.Next = "error", "", nil
+			env.Error = fmt.Sprintf(
 				"the reviewer modified the world it was reviewing (%s): its verdict cannot be trusted, and the round was discarded — use a read-only reviewer role",
 				strings.Join(clipList(drift, 5), ", "))
 			return marshalOverseeEnvelope(env), nil
@@ -362,18 +368,20 @@ func runOverseeReview(ctx context.Context, t *OverseeTool, reviewer string, p *r
 	return t.Runtime.Runner(runCtx, prompt, params)
 }
 
+// maxHashedFileSize bounds the files that get a content hash. Every file
+// contributes size + mtime; files up to this size also contribute a digest, so a
+// same-size write that restored the clock is still caught anywhere in the tree —
+// not just in the parts we expect a reviewer to touch. The bound exists only for
+// pathological entries: hashing a whole checkout twice is cheap next to the LLM
+// dispatch a round costs, which is why the filter is a size cap rather than a
+// path allowlist.
+const maxHashedFileSize = 8 << 20
+
 // worldFingerprint records what a world contains, so the review can be checked
-// for writes. Every file contributes size and mtime; the files in mustHash (the
-// proposal's own change set — the ones whose integrity the verdict depends on)
-// also contribute a content hash, so a same-size write that preserved the clock
-// is still caught. Hashing the WHOLE worktree twice per round would be
-// disproportionate for a large checkout; this way the expensive part is bounded
-// by the change set.
-//
-// The confinement scratch is excluded — our own review dispatch creates it — as
-// is .git, which the retained worktree may not even own (a linked worktree's git
-// dir lives in the original repository).
-func worldFingerprint(root string, mustHash map[string]bool) (map[string]string, error) {
+// for writes. The confinement scratch is excluded — our own review dispatch
+// creates it — as is .git, which the retained worktree may not even own (a
+// linked worktree's git dir lives in the original repository).
+func worldFingerprint(root string) (map[string]string, error) {
 	fp := make(map[string]string)
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, werr error) error {
 		if werr != nil {
@@ -398,11 +406,11 @@ func worldFingerprint(root string, mustHash map[string]bool) (map[string]string,
 			return nil
 		}
 		entry := fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano())
-		if mustHash[rel] {
+		if info.Size() <= maxHashedFileSize {
 			sum, herr := fileHash(p)
 			if herr != nil {
-				// Not being able to hash a file we depend on is a failure to
-				// verify, not a pass.
+				// Not being able to hash a file is a failure to verify, not a
+				// pass.
 				return herr
 			}
 			entry += ":" + sum
