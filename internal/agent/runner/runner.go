@@ -1391,8 +1391,9 @@ func confinementRecord(requested string, placement confinement.Placement, availa
 	return rec, true
 }
 
-// containmentPlacement maps agents.subagent.containment to a placement, or ""
-// for the default unconfined host path.
+// containmentPlacement maps agents.subagent.containment to a placement, or "" for
+// "run on the host" (the explicit opt-out: "off"/"none"/"advisory"). An unset
+// setting is the default and means auto.
 func containmentPlacement(v string) confinement.Placement {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "", "auto":

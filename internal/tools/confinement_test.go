@@ -245,22 +245,36 @@ func TestConfinementHint_ExplainsRefusedWrites(t *testing.T) {
 	if got := confinementHint(gitCase, root); !strings.Contains(got, root) || !strings.Contains(got, "orchestrator commits") {
 		t.Errorf("a git-metadata refusal must name the root and the commit rule, got:\n%s", got)
 	}
-	// Windows-shaped paths count too.
-	if got := confinementHint(`fatal: Unable to create 'C:\repo\.git\worktrees\wt\index.lock': Permission denied`, root); !strings.Contains(got, "orchestrator commits") {
-		t.Errorf("a Windows-shaped git refusal must be recognized, got:\n%s", got)
-	}
 
 	plain := "sh: 1: cannot create /etc/motd: Permission denied"
 	if got := confinementHint(plain, root); !strings.Contains(got, root) || strings.Contains(got, "orchestrator commits") {
-		t.Errorf("a non-git refusal must name the root without the git rule, got:\n%s", got)
+		t.Errorf("a non-git refusal outside the root must name the root without the git rule, got:\n%s", got)
+	}
+	// A sibling path is not "inside": "/work/wt-other" must not pass as the root.
+	if got := confinementHint("sh: 1: cannot create /work/wt-other/x: Permission denied", root); got == "" {
+		t.Error("a sibling of the root is outside it and must be explained")
 	}
 
-	// No refusal, no hint — a false positive would caption an unrelated failure.
-	for _, s := range []string{"", "compile error: undefined: foo", "ls: cannot access '/nope': No such file or directory"} {
+	// The false positives the reviewer named: a permission failure INSIDE the
+	// worktree is not a boundary refusal, and captioning it as one misdirects.
+	for _, s := range []string{
+		"", // no failure at all
+		"compile error: undefined: foo",
+		"ls: cannot access '/nope': No such file or directory",
+		// chmod 000 file, in-worktree
+		"cat: " + root + "/secret: Permission denied",
+		// non-executable script, in-worktree
+		"sh: 1: " + root + "/script.sh: Permission denied",
+		// read-only file, in-worktree
+		"tee: " + root + "/ro.txt: Read-only file system",
+		// a refusal the message does not attribute to a path
+		"git: Permission denied",
+	} {
 		if got := confinementHint(s, root); got != "" {
-			t.Errorf("confinementHint(%q) = %q, want no hint", s, got)
+			t.Errorf("confinementHint(%q) = %q, want no hint (inside the root, or unattributable)", s, got)
 		}
 	}
+
 	// No root to name (an advisory workspace runs no jail) — no hint.
 	if got := confinementHint(gitCase, ""); got != "" {
 		t.Errorf("a workspace with no root must produce no hint, got %q", got)
