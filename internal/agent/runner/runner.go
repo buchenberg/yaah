@@ -369,7 +369,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// A tool-less profile is valid — some roles (e.g. grump) are
 		// designed to respond without calling any tools.
 
-		subReg, rerr := buildSubAgentRegistry(opts, profile, remainingDepth, params.Workdir)
+		subReg, subConf, rerr := buildSubAgentRegistry(opts, profile, remainingDepth, params.Workdir)
 		if rerr != nil {
 			return "", fmt.Errorf("sub-agent %s: %w", role, rerr)
 		}
@@ -478,6 +478,11 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 				return "", fmt.Errorf("sub-agent scope: %w", cerr)
 			}
 		}
+
+		// Record the resolved jail placement on the sub-agent's trace (Plan 7
+		// Phase 3): requested vs resolved, the backend, and the sole writable
+		// root — so an advisory run is never read as jailed.
+		recordConfinementFact(ctx, subScope, subConf)
 
 		// Supervision bridge (adoption plans A2/A3): the run registers
 		// its steering channel and its cancellation under the scope ID,
@@ -962,7 +967,7 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 // workspace — the sub-agent inherits the container (decision D2) — and
 // skips any host-only tool the profile names; a SetWorkspace refusal
 // surfaces as an error rather than a silently host-side sub-agent.
-func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, remainingDepth int, workdir string) (*tools.Registry, error) {
+func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, remainingDepth int, workdir string) (*tools.Registry, *subAgentConfinement, error) {
 	resolveTimeout := subAgentTimeoutResolver(opts.subCfg)
 	registerTask := func(reg *tools.Registry) {
 		reg.Register(&tools.TaskTool{
@@ -997,6 +1002,7 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 	}
 
 	reg := tools.NewEmptyRegistry()
+	var conf *subAgentConfinement
 	isolated := opts.workspace != nil
 	if !isolated && (opts.pathValidator != nil || workdir != "") {
 		// An isolated sub-agent gets a validator rooted at its own checkout, so
@@ -1022,9 +1028,15 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 		// lane has a bound world to jail against. The orchestrator's workspace
 		// and a workdir-less (shared-host) sub-agent keep running unconfined.
 		if workdir != "" {
-			if ws := confinedSubAgentWorkspace(pv, opts.subCfg, workdir); ws != nil {
+			ws, rec := resolveSubAgentConfinement(pv, opts.subCfg, workdir)
+			// Record the resolution even when there is no workspace: "auto"
+			// degrading to advisory returns a nil workspace WITH a record, and
+			// that advisory resolution is exactly what the trace must show.
+			conf = rec
+			if ws != nil {
 				if err := reg.SetWorkspace(ws); err != nil {
 					slog.Debug("sub-agent confinement unavailable", "workdir", workdir, "err", err)
+					conf = nil
 				}
 			}
 		}
@@ -1058,10 +1070,10 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 		// the container's root is the workspace — so it is ignored
 		// rather than remapped.
 		if serr := reg.SetWorkspace(opts.workspace); serr != nil {
-			return nil, fmt.Errorf("isolated sub-agent workspace: %w", serr)
+			return nil, nil, fmt.Errorf("isolated sub-agent workspace: %w", serr)
 		}
 	}
-	return reg, nil
+	return reg, conf, nil
 }
 
 // resolveSubAgentTimeout picks the effective default timeout for a
@@ -1253,22 +1265,61 @@ func subagentTraceProfile(ctx context.Context, tracePath, sessionID string) stri
 	return fmt.Sprintf("%d tool calls:\n%s", seq, strings.Join(lines, "\n"))
 }
 
-// confinedSubAgentWorkspace builds the syscall-jailed workspace for a sub-agent
-// workdir dispatch when agents.subagent.containment asks for one, or nil to
-// leave the host path. "" / "off" / "advisory" mean no jail; "auto" jails on a
+// recordConfinementFact appends the resolved jail placement to a sub-agent's
+// scope (Plan 7 Phase 3), so a reader can tell a jailed run from an advisory one.
+// Best-effort: a tracing failure must not fail the dispatch. It is a no-op when
+// either argument is nil (tracing off, or no confinement to record).
+func recordConfinementFact(ctx context.Context, scope *shepherd.Scope, conf *subAgentConfinement) {
+	if scope == nil || conf == nil {
+		return
+	}
+	if _, err := scope.AppendFact(ctx, "yaah.subagent.confinement.v1", "confinement", conf.payload()); err != nil {
+		slog.Debug("confinement fact: append failed", "scope", scope.ID(), "err", err)
+	}
+}
+
+// subAgentConfinement records how one dispatch resolved its jail placement, for
+// the sub-agent's trace (Plan 7 Phase 3): a reader can tell a jailed run from an
+// advisory one, and see the single writable root the kernel bounded it to.
+type subAgentConfinement struct {
+	Requested string // the configured agents.subagent.containment value
+	Resolved  string // "paddock" (jailed) or "advisory" (host path)
+	Backend   string // backend name when jailed (e.g. "landlock")
+	Tier      string // enforcement tier, e.g. "native-syscall-deny"
+	Writable  string // the bound world — the sole writable root
+}
+
+func (c *subAgentConfinement) payload() map[string]any {
+	return map[string]any{
+		"requested":     c.Requested,
+		"resolved":      c.Resolved,
+		"backend":       c.Backend,
+		"tier":          c.Tier,
+		"writable_root": c.Writable,
+	}
+}
+
+// resolveSubAgentConfinement builds the syscall-jailed workspace for a sub-agent
+// workdir dispatch when agents.subagent.containment asks for one, and describes
+// what it resolved to (for the trace). It returns a nil workspace to leave the
+// host path. "" / "off" / "advisory" mean no jail; "auto" jails on a
 // Landlock-capable host and falls back to advisory elsewhere; "paddock" (alias
 // "jail") fails closed. The writable root is the worktree — the sub-agent's
 // bound world — so the kernel boundary and the run's own boundary agree.
-func confinedSubAgentWorkspace(pv *tools.PathValidator, cfg config.SubAgentConfig, workdir string) tools.Workspace {
-	placement := containmentPlacement(cfg.Containment)
-	if placement == "" {
-		return nil
+func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConfig, workdir string) (tools.Workspace, *subAgentConfinement) {
+	requested := strings.TrimSpace(cfg.Containment)
+	placement := containmentPlacement(requested)
+	if placement == "" || workdir == "" {
+		return nil, nil
 	}
+
 	backend := landlock.Detect()
 	if backend == nil && placement != confinement.PlacementPaddock {
-		// "auto" degrades visibly to advisory: the host path *is* advisory.
-		return nil
+		// "auto" degrades visibly to advisory: the host path *is* advisory. No
+		// writable root is claimed — nothing bounded it.
+		return nil, &subAgentConfinement{Requested: requested, Resolved: "advisory"}
 	}
+
 	// A write-jail by default (network allow_all); egress confinement is opt-in.
 	ws := tools.NewConfinedLocalWorkspace(pv, backend, placement,
 		containment.NetworkPolicy{Mode: containment.NetAllowAll})
@@ -1281,7 +1332,13 @@ func confinedSubAgentWorkspace(pv *tools.PathValidator, cfg config.SubAgentConfi
 	} else {
 		slog.Debug("confinement scratch unavailable", "workdir", workdir, "err", err)
 	}
-	return ws
+
+	rec := &subAgentConfinement{Requested: requested, Resolved: "paddock", Writable: workdir}
+	if backend != nil {
+		rec.Backend = backend.Name()
+		rec.Tier = backend.EnforcementTier()
+	}
+	return ws, rec
 }
 
 // containmentPlacement maps agents.subagent.containment to a placement, or ""
