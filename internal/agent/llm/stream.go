@@ -217,7 +217,10 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 				// a perfectly good response). The chunks arm already drains errs
 				// for a real error; this is the symmetric guard. Drop errs from
 				// the select so the loop waits on chunks — the real end signal —
-				// rather than busy-spinning on a closed channel.
+				// rather than busy-spinning on a closed channel. (A provider
+				// that closes errs but never chunks violates the contract; the
+				// wait then ends only on ctx cancellation, which is the correct
+				// place to notice that.)
 				errs = nil
 				continue
 			}
