@@ -16,6 +16,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -735,6 +736,12 @@ func (d *DB) GetMemory(id string) (Entry, error) {
 	return e, err
 }
 
+// ErrMemoryNotFound is the sentinel wrapped (with the offending ID) by
+// DeleteMemory and UpdateMemory when no row matches, so consumers can
+// separate a missing ID from a genuine database failure with errors.Is
+// instead of substring-matching a message (#330 review follow-up).
+var ErrMemoryNotFound = errors.New("memory not found")
+
 // DeleteMemory removes a memory entry by ID. A delete matching no rows
 // is an error, not a success: tool callers pass back whatever ID the
 // tools surfaced, and a silent no-op delete let truncated IDs report
@@ -746,7 +753,7 @@ func (d *DB) DeleteMemory(id string) error {
 	}
 	n, _ := result.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("memory not found: %s", id)
+		return fmt.Errorf("%w: %s", ErrMemoryNotFound, id)
 	}
 	return nil
 }
@@ -759,7 +766,7 @@ func (d *DB) UpdateMemory(id string, text string) error {
 	}
 	n, _ := result.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("memory not found: %s", id)
+		return fmt.Errorf("%w: %s", ErrMemoryNotFound, id)
 	}
 	return nil
 }

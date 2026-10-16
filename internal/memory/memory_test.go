@@ -325,7 +325,7 @@ func TestDB_DeleteMemory(t *testing.T) {
 	// Deleting again must error (#328): a delete matching no rows used
 	// to report success, which let truncated-ID deletes fake-succeed
 	// while the row — and duplicates of it — accumulated.
-	if err := db.DeleteMemory("mem-1"); err == nil || !strings.Contains(err.Error(), "memory not found") {
+	if err := db.DeleteMemory("mem-1"); !errors.Is(err, ErrMemoryNotFound) {
 		t.Errorf("DeleteMemory() on non-existent = %v, want memory-not-found error", err)
 	}
 }
@@ -1293,7 +1293,7 @@ func TestDB_ReconcileEmbeddings_EmbedFailureSkipsRow(t *testing.T) {
 func TestDB_DeleteMemory_NotFound(t *testing.T) {
 	db := openTestDB(t)
 	err := db.DeleteMemory("mem-0000000000000000000000000000dead")
-	if err == nil || !strings.Contains(err.Error(), "memory not found") {
+	if !errors.Is(err, ErrMemoryNotFound) {
 		t.Fatalf("DeleteMemory(nonexistent) = %v, want a memory-not-found error", err)
 	}
 }
@@ -1312,7 +1312,7 @@ func TestDB_DeleteMemory_RemovesRow(t *testing.T) {
 	if _, err := db.GetMemory(e.ID); err == nil {
 		t.Error("GetMemory after delete must fail")
 	}
-	if err := db.DeleteMemory(e.ID); err == nil || !strings.Contains(err.Error(), "memory not found") {
+	if err := db.DeleteMemory(e.ID); !errors.Is(err, ErrMemoryNotFound) {
 		t.Errorf("second DeleteMemory = %v, want memory-not-found", err)
 	}
 }
