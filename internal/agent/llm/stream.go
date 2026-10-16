@@ -208,7 +208,19 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 				return checkTruncatedStream(content.String(), toolCallMap, finishReason, responseModel, reasoning.String(), totalUsage, &c.dialectSeq, req.Tools)
 			}
 
-		case err := <-errs:
+		case err, ok := <-errs:
+			if !ok {
+				// errs closed without an error. Do NOT end the stream here: a
+				// buffered chunk — possibly the finish chunk — may still be
+				// pending, and Go picks uniformly among ready cases, so this arm
+				// can win the race and discard it (a flaky "premature close" on
+				// a perfectly good response). The chunks arm already drains errs
+				// for a real error; this is the symmetric guard. Drop errs from
+				// the select so the loop waits on chunks — the real end signal —
+				// rather than busy-spinning on a closed channel.
+				errs = nil
+				continue
+			}
 			if err != nil {
 				if streamSpan != nil {
 					observability.RecordError(streamSpan, err)

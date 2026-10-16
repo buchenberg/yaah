@@ -199,6 +199,45 @@ func (p *errorThenCloseStreamProvider) SendStream(ctx context.Context, req types
 	return chunks, errs
 }
 
+// closeErrsEarlyProvider closes errs BEFORE chunks, and only after streaming a
+// finish chunk. Go's select picks uniformly among ready cases, so runStream can
+// read the closed errs before the buffered chunk — and must not discard the
+// buffered finish chunk as a premature close.
+type closeErrsEarlyProvider struct{}
+
+func (p *closeErrsEarlyProvider) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
+	return nil, errors.New("streaming only")
+}
+
+func (p *closeErrsEarlyProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan providers.StreamChunk, <-chan error) {
+	chunks := make(chan providers.StreamChunk, 4)
+	errs := make(chan error, 1)
+	go func() {
+		chunks <- providers.StreamChunk{Choices: []providers.StreamChoice{{
+			Delta:        providers.StreamDelta{Content: "answer"},
+			FinishReason: strPtr("stop"),
+		}}}
+		close(errs) // closed before chunks — the ordering the fix guards
+		close(chunks)
+	}()
+	return chunks, errs
+}
+
+func TestRunStream_closedErrsDoesNotDiscardBufferedChunk(t *testing.T) {
+	// Repeat so both select orders are exercised: a closed errs winning the race
+	// must not discard the buffered finish chunk.
+	for i := 0; i < 300; i++ {
+		c := newStreamingClient(&closeErrsEarlyProvider{})
+		msg, _, _, _, err := c.runStream(context.Background(), c.Provider.(StreamProvider), types.ChatRequest{Model: "test-model"})
+		if err != nil {
+			t.Fatalf("iteration %d: err = %v, want the buffered finish chunk assembled", i, err)
+		}
+		if msg.Content != "answer" {
+			t.Fatalf("iteration %d: content = %q, want answer", i, msg.Content)
+		}
+	}
+}
+
 func TestRunStream_realErrorNotMaskedByPrematureClose(t *testing.T) {
 	// Run several times: before the errs-drain fix, the select race
 	// masked the real error roughly half the time.
