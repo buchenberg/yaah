@@ -187,7 +187,7 @@ func (t *MemoryDeleteTool) Execute(ctx context.Context, args string) (string, er
 	if err := t.DB.DeleteMemory(params.ID); err != nil {
 		return "", fmt.Errorf("memory_delete: %w", err)
 	}
-	return fmt.Sprintf("Memory deleted: %s", params.ID[:min(len(params.ID), 12)]), nil
+	return fmt.Sprintf("Memory deleted: %s", params.ID), nil
 }
 
 // MemoryUpdateTool updates the text of an existing memory entry.
