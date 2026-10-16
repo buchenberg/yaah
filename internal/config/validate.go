@@ -124,6 +124,16 @@ func Validate(cfg *Config) error {
 			cfg.Agent.SubAgent.Containment))
 	}
 
+	// Mode selects the dispatch lane; an unknown value must not silently pick
+	// one (the default is retained).
+	switch strings.ToLower(strings.TrimSpace(cfg.Agent.SubAgent.Mode)) {
+	case "", "retained", "shared":
+	default:
+		errs = append(errs, fmt.Sprintf(
+			"agents.subagent.mode %q is not one of: retained, shared",
+			cfg.Agent.SubAgent.Mode))
+	}
+
 	// Sub-agent budget floors must be sane: non-negative, not above the
 	// matching max in the same role config, and satisfiable within the
 	// schema hard ceiling (subagent-turn-budget-floors §4.6).

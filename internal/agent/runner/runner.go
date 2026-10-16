@@ -115,6 +115,16 @@ type TaskToolOpts struct {
 	// live agent.Provider. Injected from the cmd layer because provider
 	// construction (makeProvider) belongs with the rest of the CLI wiring.
 	ResolveProviderByName func(map[string]config.Provider, string) agent.Provider
+
+	// Retain enables the retained-run lane for spawn_subagent (Plan 7 Phase 2):
+	// each dispatch runs in an isolated worktree and returns a sealed proposal
+	// the orchestrator settles. RetainedRepoPath / RetainedWorktreeRoot /
+	// RetainedBootstrap mirror the supervised defaults — they provision the same
+	// kind of worktree.
+	Retain               bool
+	RetainedRepoPath     string
+	RetainedWorktreeRoot string
+	RetainedBootstrap    string
 }
 
 // NewTaskTool builds the planner's TaskTool: it resolves the advertised
@@ -125,40 +135,57 @@ func NewTaskTool(opts TaskToolOpts) *tools.TaskTool {
 	// can spawn one level of sub-agents; sub-agents cannot spawn further
 	// sub-agents (remainingDepth reaches 0).
 	depth := 1
-	return &tools.TaskTool{
-		Runner: makeTaskRunner(taskRunnerOpts{
-			provider:              opts.Provider,
-			systemPrompt:          opts.SystemPrompt,
-			modelName:             opts.ModelName,
-			db:                    opts.DB,
-			parentSession:         opts.SessionID,
-			subCfg:                opts.SubCfg,
-			subAgentProvider:      opts.SubAgentProvider,
-			subAgentModel:         opts.SubAgentModel,
-			OtelEnabled:           opts.OtelEnabled,
-			OtelVerbose:           opts.OtelVerbose,
-			tracker:               opts.Tracker,
-			estimateFactor:        opts.EstimateFactor,
-			subContextWindow:      opts.SubContextWindow,
-			outputLimit:           opts.OutputLimit,
-			providerMap:           opts.ProviderMap,
-			defaults:              opts.Defaults,
-			parentPermissionRules: opts.ParentPermissionRules,
-			toolSpillDir:          opts.ToolSpillDir,
-			pathValidator:         opts.PathValidator,
-			workspace:             opts.Workspace,
-			rootScopeID:           opts.RootScopeID,
-			runs:                  opts.Runs,
-			scopeManager:          opts.ScopeManager,
-			traceStore:            opts.TraceStore,
-			guardCheck:            opts.GuardCheck,
-			resolveProviderByName: opts.ResolveProviderByName,
-		}, depth),
+	runnerFn := makeTaskRunner(taskRunnerOpts{
+		provider:              opts.Provider,
+		systemPrompt:          opts.SystemPrompt,
+		modelName:             opts.ModelName,
+		db:                    opts.DB,
+		parentSession:         opts.SessionID,
+		subCfg:                opts.SubCfg,
+		subAgentProvider:      opts.SubAgentProvider,
+		subAgentModel:         opts.SubAgentModel,
+		OtelEnabled:           opts.OtelEnabled,
+		OtelVerbose:           opts.OtelVerbose,
+		tracker:               opts.Tracker,
+		estimateFactor:        opts.EstimateFactor,
+		subContextWindow:      opts.SubContextWindow,
+		outputLimit:           opts.OutputLimit,
+		providerMap:           opts.ProviderMap,
+		defaults:              opts.Defaults,
+		parentPermissionRules: opts.ParentPermissionRules,
+		toolSpillDir:          opts.ToolSpillDir,
+		pathValidator:         opts.PathValidator,
+		workspace:             opts.Workspace,
+		rootScopeID:           opts.RootScopeID,
+		runs:                  opts.Runs,
+		scopeManager:          opts.ScopeManager,
+		traceStore:            opts.TraceStore,
+		guardCheck:            opts.GuardCheck,
+		resolveProviderByName: opts.ResolveProviderByName,
+	}, depth)
+
+	tool := &tools.TaskTool{
+		Runner:           runnerFn,
 		ResolveTimeout:   subAgentTimeoutResolver(opts.SubCfg),
 		RoleNames:        opts.RoleNames,
 		RoleDescriptions: RoleDescriptionsFor(opts.RoleNames),
 		Tracker:          opts.Tracker,
 	}
+	// Retained mode (Plan 7 Phase 2): route spawn_subagent through the
+	// retained-run lane. It needs a scope manager and a root scope to fork from;
+	// without them the tool stays on the direct lane rather than failing each
+	// dispatch.
+	if opts.Retain && opts.ScopeManager != nil && opts.RootScopeID != "" {
+		tool.Retained = &tools.RetainedRuntime{
+			Runner:            runnerFn,
+			RepoPath:          opts.RetainedRepoPath,
+			ScopeManager:      opts.ScopeManager,
+			RootScopeID:       opts.RootScopeID,
+			WorktreeRoot:      opts.RetainedWorktreeRoot,
+			WorktreeBootstrap: opts.RetainedBootstrap,
+		}
+	}
+	return tool
 }
 
 // RoleDescriptionsFor maps each role name to a one-line description (or
