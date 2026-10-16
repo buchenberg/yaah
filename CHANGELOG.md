@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.79.7](https://github.com/buchenberg/yaah/compare/v0.79.6...v0.79.7) (2026-10-16)
+
+
+### Bug Fixes
+
+* make the Phase 3 tests OS-portable ([ba7da8f](https://github.com/buchenberg/yaah/commit/ba7da8fd4b5d380c9baf4c43e34d62edf90f0cf4))
+
 ## [0.79.6](https://github.com/buchenberg/yaah/compare/v0.79.5...v0.79.6) (2026-10-16)
 
 
