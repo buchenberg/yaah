@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherd "github.com/buchenberg/shepherd-runtime-go"
 	"github.com/buchenberg/yaah/internal/gitsandbox"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/prompts"
@@ -23,7 +23,7 @@ import (
 // cannot dispatch a second supervised task while the first is running,
 // preventing filesystem contention by construction.
 //
-// The tool creates a workspace checkpoint (via shepherd-kernel-go's sandbox
+// The tool creates a workspace checkpoint (via shepherd-runtime-go's sandbox
 // abstraction) before running the sub-agent. If the sub-agent fails, the
 // workspace is rolled back and the sub-agent is retried with guidance derived
 // from the failure.

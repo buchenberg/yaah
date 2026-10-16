@@ -512,7 +512,7 @@ When an agent dispatches multiple parallel sub-agents in a single turn, those su
 
 Files: `internal/tools/supervised_task.go`, `internal/tools/supervised_session.go`, `internal/tools/supervisor.go`, `internal/agent/runner/checkpoint.go`
 
-The `supervised_task` tool wraps a sub-agent run in **workspace checkpoints** via the `shepherd-kernel-go` sandbox abstraction, so work can be rolled back rather than merely reported. Two modes:
+The `supervised_task` tool wraps a sub-agent run in **workspace checkpoints** via the `shepherd-runtime-go` sandbox abstraction, so work can be rolled back rather than merely reported. Two modes:
 
 - **Automatic** (`review: false`) — checkpoint, run, and on failure roll the workspace back and retry with guidance derived from the failure, up to `supervised_max_retries`.
 - **Review** (`review: true`) — an interactive session in which the orchestrator issues verdicts (`continue`, `rollback`, `fork`, `choose`, `review_diff`, `accept`, `abort`) through the `supervisor` tool.

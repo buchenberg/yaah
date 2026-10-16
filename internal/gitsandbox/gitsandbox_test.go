@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
 )
 
 func gitCmd(t *testing.T, dir string, args ...string) string {

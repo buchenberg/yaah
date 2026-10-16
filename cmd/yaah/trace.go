@@ -11,7 +11,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/spf13/cobra"
 )

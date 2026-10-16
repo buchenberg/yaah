@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
-	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
+	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
 
-	shepherdgit "github.com/buchenberg/shepherd-kernel-go/sandbox/git"
+	shepherdgit "github.com/buchenberg/shepherd-runtime-go/sandbox/git"
 	"github.com/buchenberg/yaah/internal/agent/recovery"
 )
 

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
 )
 
 // SubagentTraceTool lets the orchestrator inspect a sub-agent's execution

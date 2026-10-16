@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
+	shepherd "github.com/buchenberg/shepherd-runtime-go"
 )
 
 // defaultBusBuffer is the per-subscriber effect bus buffer size used when

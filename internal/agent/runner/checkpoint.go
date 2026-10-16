@@ -3,13 +3,13 @@ package runner
 import (
 	"context"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
-	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
 	"github.com/buchenberg/yaah/internal/agent"
 )
 
 // ShepherdTurnCheckpointer adapts agent.TurnCheckpointer to the shared
-// shepherd-kernel-go ScopeManager. It records workspace checkpoints (plus
+// shepherd-runtime-go ScopeManager. It records workspace checkpoints (plus
 // opaque snapshots) on a single scope, using whatever Sandbox that scope holds
 // — an in-place repository, or the sub-agent's isolated worktree.
 type ShepherdTurnCheckpointer struct {

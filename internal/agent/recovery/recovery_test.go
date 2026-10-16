@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
-	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
-	shepherdgit "github.com/buchenberg/shepherd-kernel-go/sandbox/git"
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
+	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
+	shepherdgit "github.com/buchenberg/shepherd-runtime-go/sandbox/git"
 )
 
 // newGitRepo creates a committed repository — worktrees and captures

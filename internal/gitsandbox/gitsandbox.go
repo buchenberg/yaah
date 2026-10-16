@@ -19,8 +19,8 @@
 // the reason. Symlinked parents are never written through, so a
 // rewind cannot relocate preserved content outside the repository.
 //
-// Upstream note: the deletion lives in the kernel's applyTree/applyState
-// (shepherd-kernel-go sandbox/git/backend.go, cleanFiles). If the kernel
+// Upstream note: the deletion lives in the runtime's applyTree/applyState
+// (shepherd-runtime-go sandbox/git/backend.go, cleanFiles). If the runtime
 // ever makes the clean policy host-selectable, this wrapper can retire.
 package gitsandbox
 
@@ -36,9 +36,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
-	shepherdgit "github.com/buchenberg/shepherd-kernel-go/sandbox/git"
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
+	shepherdgit "github.com/buchenberg/shepherd-runtime-go/sandbox/git"
 )
 
 // NewLocalSandbox returns an in-place sandbox over repoPath whose Apply
