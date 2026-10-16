@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/buchenberg/yaah/internal/agent/subagent"
+	"github.com/buchenberg/yaah/internal/types"
 )
 
 // withRoleRegistry installs a registry loaded from the given role files
@@ -76,5 +77,35 @@ func TestGateVerdictFailed_HeuristicWithoutContract(t *testing.T) {
 	}
 	if gateVerdictFailed("no-such-role", "FAIL earlier, but PASS at the end") {
 		t.Error("last-occurrence heuristic should pass when PASS follows FAIL")
+	}
+}
+
+// A tool that dispatches sub-agent work of its own must take a sub-agent
+// concurrency slot, while staying out of the task-specific branches (which shape
+// spawn_subagent's own envelope). Without this a composite tool escapes
+// MaxSubAgentConcurrency entirely.
+func TestNewDispatch_SubAgentWorkAccountsForCompositeTools(t *testing.T) {
+	l := &Loop{}
+	call := func(name string) types.ToolCall {
+		return types.ToolCall{ID: name, Type: "function", Function: types.ToolCallFn{Name: name, Arguments: "{}"}}
+	}
+
+	for _, tc := range []struct {
+		name     string
+		task     bool
+		accounts bool
+	}{
+		{"spawn_subagent", true, true},
+		{"oversee", false, true}, // composite: dispatches, but its envelope is not a spawn's
+		{"read", false, false},
+		{"proposal", false, false},
+	} {
+		d := l.newDispatch(0, call(tc.name))
+		if d.isTask != tc.task {
+			t.Errorf("%s: isTask = %v, want %v", tc.name, d.isTask, tc.task)
+		}
+		if d.isSubAgentWork != tc.accounts {
+			t.Errorf("%s: isSubAgentWork = %v, want %v", tc.name, d.isSubAgentWork, tc.accounts)
+		}
 	}
 }
