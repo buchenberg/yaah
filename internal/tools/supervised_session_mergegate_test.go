@@ -162,12 +162,22 @@ func TestReviewSession_AcceptDeniedRollsBackAndRetries(t *testing.T) {
 		t.Errorf("envelope error = %q, want the denial reason surfaced", env.Error)
 	}
 
-	// Denial restores the tracked tree to the unit start. The denied
-	// unit's untracked file deliberately survives (#313): rewind never
-	// deletes uncaptured content — it stays visible in the diff so the
-	// retry (or the orchestrator) can remove it explicitly.
-	if got := strings.TrimSpace(statusAtRetryStart); got != "?? outside.txt" {
-		t.Errorf("tree at the retry's start must hold only the preserved untracked stray, git reports:\n%s", got)
+	// Denial restores the tracked tree to the unit start, and the denied
+	// addition is quarantined out of the workspace (review finding on
+	// #326): it must neither survive into the retry's baseline (that
+	// would hide it from the gate forever) nor be deleted outright (it
+	// is kept under .git and named in the envelope).
+	if strings.TrimSpace(statusAtRetryStart) != "" {
+		t.Errorf("tree at the retry's start must be byte-identical to unit start, git reports:\n%s", statusAtRetryStart)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "outside.txt")); !os.IsNotExist(err) {
+		t.Errorf("denied outside.txt must be quarantined out of the tree, stat err = %v", err)
+	}
+	if !strings.Contains(env.Error, "quarantined") || !strings.Contains(env.Error, "outside.txt") {
+		t.Errorf("envelope must report the quarantine, error = %q", env.Error)
+	}
+	if content := findQuarantined(t, repo, "outside.txt"); content != "denied\n" {
+		t.Errorf("quarantined content = %q, want %q (kept, not deleted)", content, "denied\n")
 	}
 
 	// The reason is injected into the re-run; the re-run keeps the
@@ -291,14 +301,22 @@ func TestReviewSession_AcceptDeniedRollsBackCumulativeWork(t *testing.T) {
 		t.Errorf("envelope error = %q, want the denial reason surfaced", env.Error)
 	}
 
-	// The rollback restores the tracked tree to the session start; the
-	// units' untracked files deliberately survive (#313) and fold into
-	// the re-fork baseline, so the gate never re-sees them as changes.
-	if got := strings.TrimSpace(statusAtRetryStart); got != "?? forbidden.txt\n?? good.txt" {
-		t.Errorf("tree at the retry's start must hold only the preserved untracked strays, git reports:\n%s", got)
+	// The rollback is the session start: both denied additions are
+	// quarantined out of the workspace — kept under .git, gone from the
+	// tree, and reported in the envelope. A retry baseline that
+	// swallowed them would hide them from the gate forever (#326
+	// review finding).
+	if strings.TrimSpace(statusAtRetryStart) != "" {
+		t.Errorf("tree at the retry's start must be the session start, git reports:\n%s", statusAtRetryStart)
 	}
-	if _, err := os.Stat(filepath.Join(repo, "forbidden.txt")); err != nil {
-		t.Errorf("unit 1's untracked stray must survive the rewind (#313): %v", err)
+	if _, err := os.Stat(filepath.Join(repo, "forbidden.txt")); err == nil {
+		t.Error("unit 1's denied work must be quarantined out of the tree (forbidden.txt still present)")
+	}
+	if content := findQuarantined(t, repo, "forbidden.txt"); content != "denied\n" {
+		t.Errorf("forbidden.txt not kept in quarantine: %q", content)
+	}
+	if !strings.Contains(env.Error, "quarantined") {
+		t.Errorf("envelope must report the quarantine, error = %q", env.Error)
 	}
 
 	// The retry's accept approves: the re-done work passes the gate.
@@ -326,4 +344,19 @@ func TestMapRestoreError_PinsKernelRefusalText(t *testing.T) {
 	if !strings.Contains(other.Error(), "supervisor: rollback: restore:") || strings.Contains(other.Error(), "no longer matches") {
 		t.Errorf("generic mapping = %q, want the plain restore wrap", other.Error())
 	}
+}
+
+// findQuarantined returns the content of a path inside the session's
+// quarantine dir under .git, or "" when it is not there.
+func findQuarantined(t *testing.T, repo, rel string) string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(repo, ".git", "shepherd-quarantine", "*", filepath.FromSlash(rel)))
+	if err != nil || len(matches) == 0 {
+		return ""
+	}
+	b, rerr := os.ReadFile(matches[0])
+	if rerr != nil {
+		return ""
+	}
+	return string(b)
 }

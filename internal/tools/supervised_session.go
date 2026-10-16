@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -1110,7 +1111,19 @@ func (s *supervisedSession) accept(ctx context.Context) (string, error) {
 	}
 
 	mgr := s.runtime.ScopeManager
-	if err := mgr.CommitMerge(ctx, s.scopeID, s.mergeReviewer()); err != nil {
+	// Capture the denied proposal: its created paths are quarantined
+	// before the rollback so denied additions cannot slip into the
+	// retry's baseline (review finding, #326).
+	var deniedProposal *shepherd.MergeProposal
+	reviewer := func(p shepherd.MergeProposal) error {
+		rerr := s.mergeReviewer()(p)
+		if rerr != nil {
+			denied := p
+			deniedProposal = &denied
+		}
+		return rerr
+	}
+	if err := mgr.CommitMerge(ctx, s.scopeID, reviewer); err != nil {
 		var denied *shepherd.SupervisorDeniedError
 		if errors.As(err, &denied) {
 			// The gate joins its denial with a hard failure when the
@@ -1122,7 +1135,7 @@ func (s *supervisedSession) accept(ctx context.Context) (string, error) {
 			// ScopeDiscarded takes the denial path; anything else
 			// surfaces the whole error.
 			if scope, ok := mgr.Get(s.scopeID); ok && scope.State() == shepherd.ScopeDiscarded {
-				return s.denyAndRetryLocked(ctx, denied)
+				return s.denyAndRetryLocked(ctx, denied, deniedProposal)
 			}
 		}
 		return "", fmt.Errorf("supervisor: accept: %w", err)
@@ -1180,7 +1193,7 @@ func (s *supervisedSession) mergeReviewer() shepherd.MergeReviewer {
 // The conversation survives the rollback — it is context, not work
 // product — so the retry re-does the work with every unit's report
 // still in reach.
-func (s *supervisedSession) denyAndRetryLocked(ctx context.Context, denied *shepherd.SupervisorDeniedError) (string, error) {
+func (s *supervisedSession) denyAndRetryLocked(ctx context.Context, denied *shepherd.SupervisorDeniedError, deniedProposal *shepherd.MergeProposal) (string, error) {
 	mgr := s.runtime.ScopeManager
 	scope, ok := mgr.Get(s.scopeID)
 	if !ok {
@@ -1197,6 +1210,14 @@ func (s *supervisedSession) denyAndRetryLocked(ctx context.Context, denied *shep
 	if !ok {
 		return "", fmt.Errorf("supervisor: accept denied (%s) but the root scope vanished — the tree was left as the unit left it; abort or roll back manually", denied.Reason)
 	}
+	// Quarantine the denied proposal's created files BEFORE the rewind
+	// (review finding, #326): rewinds preserve uncaptured untracked
+	// content (#313), but denied additions left in the tree would fold
+	// into the retry's fork baseline, vanish from the next proposal,
+	// and the gate could never deny them again. Quarantine keeps them
+	// recoverable while review stays anchored to what the gate sees.
+	quarantined, quarantineDir, quarantineErr := s.quarantineDeniedCreates(deniedProposal)
+
 	if err := root.ApplyWorkspace(ctx, base); err != nil {
 		return "", fmt.Errorf("supervisor: accept denied (%s) but the rollback to the session start failed: %w — the tree was left as the unit left it; abort or roll back manually", denied.Reason, err)
 	}
@@ -1230,14 +1251,62 @@ func (s *supervisedSession) denyAndRetryLocked(ctx context.Context, denied *shep
 	if err != nil {
 		return "", err
 	}
-	// The retry is a normal review dispatch; surface the denial so the
-	// orchestrator can see why the unit re-ran.
+	// The retry is a normal review dispatch; surface the denial — and
+	// what happened to the denied additions — so the orchestrator can
+	// see why the unit re-ran and where quarantined content went.
 	var env reviewEnvelope
-	if jerr := json.Unmarshal([]byte(out), &env); jerr == nil && env.Error == "" {
-		env.Error = "accept denied by the merge gate: " + denied.Reason
+	if jerr := json.Unmarshal([]byte(out), &env); jerr == nil {
+		notes := []string{"accept denied by the merge gate: " + denied.Reason}
+		if env.Error != "" {
+			notes = append(notes, env.Error)
+		}
+		if len(quarantined) > 0 {
+			notes = append(notes, fmt.Sprintf("denied additions quarantined to %s: %s", quarantineDir, strings.Join(quarantined, ", ")))
+		}
+		if quarantineErr != nil {
+			notes = append(notes, "quarantine of denied additions FAILED: "+quarantineErr.Error()+" — denied files may still stand in the tree")
+		}
+		env.Error = strings.Join(notes, "; ")
 		return marshalReviewEnvelope(env), nil
 	}
 	return out, nil
+}
+
+// quarantineDeniedCreates moves the denied proposal's created files out
+// of the active workspace into a quarantine directory under the git
+// dir. Only paths that still exist as plain files are moved; reverting
+// tracked modifications is the rewind's job. Quarantined content is
+// kept, never deleted — the review may still want it, and the envelope
+// reports exactly where it went.
+func (s *supervisedSession) quarantineDeniedCreates(proposal *shepherd.MergeProposal) (paths []string, dir string, err error) {
+	if proposal == nil || s.runtime.RepoPath == "" {
+		return nil, "", nil
+	}
+	gitDir := filepath.Join(s.runtime.RepoPath, ".git")
+	if fi, gerr := os.Stat(gitDir); gerr != nil || !fi.IsDir() {
+		return nil, "", fmt.Errorf("no git dir at %s to quarantine into", gitDir)
+	}
+	for _, c := range proposal.Changes {
+		if c.Kind != "create" {
+			continue
+		}
+		src := filepath.Join(s.runtime.RepoPath, filepath.FromSlash(c.Path))
+		if fi, serr := os.Lstat(src); serr != nil || fi.IsDir() {
+			continue // already gone or not a plain file — nothing to quarantine
+		}
+		if dir == "" {
+			dir = filepath.Join(gitDir, "shepherd-quarantine", fmt.Sprintf("%d", time.Now().UnixNano()))
+		}
+		dst := filepath.Join(dir, filepath.FromSlash(c.Path))
+		if merr := os.MkdirAll(filepath.Dir(dst), 0o755); merr != nil {
+			return paths, dir, fmt.Errorf("quarantine %s: %w", c.Path, merr)
+		}
+		if rerr := os.Rename(src, dst); rerr != nil {
+			return paths, dir, fmt.Errorf("quarantine %s: %w", c.Path, rerr)
+		}
+		paths = append(paths, c.Path)
+	}
+	return paths, dir, nil
 }
 
 // abort rewinds the unaccepted work and closes the session (adoption
