@@ -475,8 +475,11 @@ func TestReviewSession_ChooseNotesEmptyWinnerDelta(t *testing.T) {
 	if env.Status != "chosen" {
 		t.Fatalf("choose status = %q, want chosen (env: %s)", env.Status, marshalReviewEnvelope(env))
 	}
-	if !strings.Contains(env.Error, "sealed no file changes") {
-		t.Errorf("choose envelope must note the empty delta, error = %q", env.Error)
+	if env.Error != "" {
+		t.Errorf("an empty-delta choose is a successful verdict — error must stay empty, got %q", env.Error)
+	}
+	if len(env.Warnings) == 0 || !strings.Contains(env.Warnings[0], "sealed no file changes") {
+		t.Errorf("choose envelope must warn about the empty delta, warnings = %v", env.Warnings)
 	}
 }
 

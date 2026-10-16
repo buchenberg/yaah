@@ -242,6 +242,7 @@ type reviewEnvelope struct {
 	Diff      string                      `json:"diff,omitempty"`
 	Files     []string                    `json:"files,omitempty"`
 	Error     string                      `json:"error,omitempty"`
+	Warnings  []string                    `json:"warnings,omitempty"`
 	Restores  int                         `json:"restores,omitempty"`
 	Variants  map[string]reviewVariantOut `json:"variants,omitempty"`
 	Next      []string                    `json:"next,omitempty"`
@@ -624,8 +625,10 @@ func (s *supervisedSession) forkVariants(ctx context.Context, promptA, promptB s
 
 	// Loud guard baseline (#312): variants run in isolated worktrees,
 	// so the parent tree must not move while one executes. Tracked per
-	// variant so only the escapee is named.
+	// variant so only the escapee is named. Notes accumulate separately
+	// from env.Error so they can never pre-empt a real run/seal error.
 	parentBefore := forkPoint
+	var driftNotes []string
 
 	for _, b := range branches {
 		if ctx.Err() != nil {
@@ -681,21 +684,22 @@ func (s *supervisedSession) forkVariants(ctx context.Context, promptA, promptB s
 		// Loud guard (#312): if the parent tree moved while this variant
 		// ran, the sub-agent escaped its workdir and the sealed delta is
 		// suspect — surface that here instead of letting choose "succeed"
-		// over an empty apply.
-		if after, cerr := scope.CaptureWorkspace(ctx); cerr == nil {
-			if d1, e1 := parentBefore.Digest(); e1 == nil {
-				if d2, e2 := after.Digest(); e2 == nil {
-					if d1 != d2 {
-						note := fmt.Sprintf("variant %s mutated the PARENT tree — its sealed delta is suspect (sub-agent workdir plumbing broken?)", b.label)
-						if env.Error == "" {
-							env.Error = note
-						} else {
-							env.Error += "; " + note
-						}
-					}
-					parentBefore = after
-				}
+		// over an empty apply. Capture/digest failures are surfaced too
+		// (never silently skipped), and the baseline advances on every
+		// successful capture so a later variant cannot be blamed for an
+		// earlier escape.
+		if after, cerr := scope.CaptureWorkspace(ctx); cerr != nil {
+			driftNotes = append(driftNotes, fmt.Sprintf("variant %s: parent-tree drift check failed: %v", b.label, cerr))
+		} else {
+			d1, e1 := parentBefore.Digest()
+			d2, e2 := after.Digest()
+			switch {
+			case e1 != nil || e2 != nil:
+				driftNotes = append(driftNotes, fmt.Sprintf("variant %s: parent-tree drift check inconclusive (digest: %v / %v)", b.label, e1, e2))
+			case d1 != d2:
+				driftNotes = append(driftNotes, fmt.Sprintf("variant %s mutated the PARENT tree — its sealed delta is suspect (sub-agent workdir plumbing broken?)", b.label))
 			}
+			parentBefore = after
 		}
 
 		env.Variants[b.label] = variantOut(v)
@@ -707,6 +711,14 @@ func (s *supervisedSession) forkVariants(ctx context.Context, promptA, promptB s
 
 	s.state = sessionAwaitChoose
 	env.Unit = s.unit
+	if len(driftNotes) > 0 {
+		joined := strings.Join(driftNotes, "; ")
+		if env.Error == "" {
+			env.Error = joined
+		} else {
+			env.Error += "; " + joined
+		}
+	}
 	env.Next = nextActionsFor(s.state)
 	return marshalReviewEnvelope(env), nil
 }
@@ -1061,13 +1073,14 @@ func (s *supervisedSession) chooseVariant(ctx context.Context, winner string) (s
 	if cpErr != nil {
 		notes = append(notes, "unit-start checkpoint failed (rollback degraded until the next unit): "+cpErr.Error())
 	}
-	if len(v.Output.Changes()) == 0 {
-		// Not fatal — an analysis-only variant legitimately changes
-		// nothing — but "chosen" over an empty delta is exactly how #312
-		// presented, so say it out loud.
-		notes = append(notes, "winner variant sealed no file changes — nothing was applied to the tree")
-	}
 	env.Error = strings.Join(notes, "; ")
+	if len(v.Output.Changes()) == 0 {
+		// Not an error — an analysis-only variant legitimately changes
+		// nothing, and "chosen" is a successful verdict — but an empty
+		// delta is exactly how #312 presented, so say it out loud in a
+		// channel that does not read as failure.
+		env.Warnings = append(env.Warnings, "winner variant sealed no file changes — nothing was applied to the tree")
+	}
 	return marshalReviewEnvelope(env), nil
 }
 
