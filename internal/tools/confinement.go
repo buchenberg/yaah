@@ -40,15 +40,38 @@ func ConfinementScratchEnv(workdir string) ([]string, error) {
 		{"GOCACHE", "go-build"},
 		{"npm_config_cache", "npm"},
 	}
-	env := make([]string, 0, len(specs))
+	env := make([]string, 0, len(specs)+1)
 	for _, s := range specs {
 		dir := filepath.Join(scratch, s.sub)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		// 0o700: HOME and TMPDIR can hold credentials (npm tokens, cloud
+		// configs) — nothing outside the sandbox should read them.
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, err
 		}
 		env = append(env, s.key+"="+dir)
 	}
+
+	// Pinning GOMODCACHE, which the HOME redirect would otherwise relocate: Go
+	// defaults the module cache to $HOME/go/pkg/mod, so moving HOME silently
+	// moves it into the scratch (a cold, re-downloading cache). Resolve it HERE,
+	// against the pre-redirect environment, and pass it through unchanged — the
+	// body then reads the shared cache. Landlock governs writes only, so the
+	// read is unpoliced; a *download* of a missing module needs a write, which
+	// the (unconfined) worktree bootstrap does.
+	if _, set := os.LookupEnv("GOMODCACHE"); !set {
+		env = append(env, "GOMODCACHE="+defaultGoModCache())
+	}
 	return env, nil
+}
+
+// defaultGoModCache resolves Go's default module cache against the CURRENT
+// (pre-redirect) environment: $GOMODCACHE if set, else $GOPATH/pkg/mod, else
+// $HOME/go/pkg/mod.
+func defaultGoModCache() string {
+	if p := os.Getenv("GOPATH"); p != "" {
+		return filepath.Join(p, "pkg", "mod")
+	}
+	return filepath.Join(os.Getenv("HOME"), "go", "pkg", "mod")
 }
 
 // ScrubConfinementScratch removes the redirect scratch so the sealed proposal

@@ -152,12 +152,14 @@ func NewConfinedLocalWorkspace(pv *PathValidator, backend containment.Backend, p
 // Confined reports whether this workspace carries a syscall-jail backend.
 func (w *localWorkspace) Confined() bool { return w.confiner != nil }
 
-// WithEnv returns the workspace with extra environment variables applied to
-// every confined command (keys here override the process environment). This is
-// how the confinement scratch redirects HOME/TMPDIR/caches into the worktree.
+// WithEnv returns a copy of the workspace with extra environment variables
+// applied to every confined command (keys here override the process
+// environment). It copies rather than mutating the receiver, so a workspace
+// handed to more than one registry is never altered under another's feet.
 func (w *localWorkspace) WithEnv(env []string) *localWorkspace {
-	w.confinedEnv = env
-	return w
+	clone := *w
+	clone.confinedEnv = env
+	return &clone
 }
 
 func (w *localWorkspace) ResolvePath(path string) (string, error) {

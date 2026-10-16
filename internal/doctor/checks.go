@@ -208,34 +208,47 @@ func CheckContainment(cfg *config.Config, cfgErr error) Check {
 	}
 	sc := cfg.Agent.SubAgent
 	backend := landlock.Detect()
-
+	available := false
 	backendDesc := "none (no jail on this host)"
 	if backend != nil {
-		if _, why := backend.Available(); why != "" {
-			backendDesc = why
+		if ok, why := backend.Available(); ok {
+			available = true
+			if why != "" {
+				backendDesc = why
+			} else {
+				backendDesc = "available"
+			}
+		} else if why != "" {
+			backendDesc = "unusable — " + why
 		} else {
-			backendDesc = "available"
+			backendDesc = "unusable"
 		}
 	}
+	return containmentCheck(available, backendDesc, sc.Mode, sc.Containment)
+}
 
-	mode := strings.ToLower(strings.TrimSpace(sc.Mode))
-	if mode == "" {
-		mode = "retained"
+// containmentCheck is the pure decision behind CheckContainment, split out so
+// the present-but-unusable backend case is testable (landlock.Detect never
+// returns one, but a future backend or a race could).
+func containmentCheck(available bool, backendDesc, mode, containment string) Check {
+	m := strings.ToLower(strings.TrimSpace(mode))
+	if m == "" {
+		m = "retained"
 	}
-	placement := strings.ToLower(strings.TrimSpace(sc.Containment))
-	if placement == "" {
-		placement = "off"
+	p := strings.ToLower(strings.TrimSpace(containment))
+	if p == "" {
+		p = "off"
 	}
-	detail := fmt.Sprintf("mode %s, placement %s, backend %s", mode, placement, backendDesc)
+	detail := fmt.Sprintf("mode %s, placement %s, backend %s", m, p, backendDesc)
 
-	switch placement {
+	switch p {
 	case "paddock", "jail":
-		if backend == nil {
-			return Check{Label: "Containment", Status: "FAIL", Detail: detail + " — placement=paddock fails closed with no backend; every dispatch would refuse"}
+		if !available {
+			return Check{Label: "Containment", Status: "FAIL", Detail: detail + " — placement=paddock fails closed with no usable backend; every dispatch would refuse"}
 		}
 		return Check{Label: "Containment", Status: "OK", Detail: detail + " — sub-agents are jailed"}
 	case "auto":
-		if backend != nil {
+		if available {
 			return Check{Label: "Containment", Status: "OK", Detail: detail + " — sub-agents are jailed"}
 		}
 		return Check{Label: "Containment", Status: "WARN", Detail: detail + " — auto degrades visibly to advisory here"}
