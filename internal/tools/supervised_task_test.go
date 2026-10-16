@@ -12,8 +12,8 @@ import (
 	"testing"
 
 	shepherd "github.com/buchenberg/shepherd-kernel-go"
-	shepherdgit "github.com/buchenberg/shepherd-kernel-go/sandbox/git"
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+	"github.com/buchenberg/yaah/internal/gitsandbox"
 )
 
 // runnerResponse configures one fake sub-agent attempt.
@@ -123,7 +123,7 @@ func newSessionFixtures(t *testing.T) (*sessionFixtures, string, string) {
 
 	repo := newTestGitRepo(t)
 
-	root, err := fx.mgr.Create("test-session-root", shepherdgit.NewLocalGitSandbox(repo))
+	root, err := fx.mgr.Create("test-session-root", gitsandbox.NewLocalSandbox(repo))
 	if err != nil {
 		t.Fatalf("create root scope: %v", err)
 	}
@@ -312,10 +312,12 @@ func TestSupervisedTask_RollbackRestoresWorkspace(t *testing.T) {
 		t.Errorf("result = %q, want prefix %q", out.Result, "clean success")
 	}
 
-	// The rollback must have removed the first attempt's file before the
-	// second attempt ran — and it must still be gone after success.
-	if _, err := os.Stat(badFile); !os.IsNotExist(err) {
-		t.Errorf("bad.txt should have been rolled back, stat err = %v", err)
+	// The rollback restored all captured content, but the failed
+	// attempt's untracked file deliberately survives (#313): a rewind
+	// never deletes uncaptured content. The retry saw it (and could
+	// remove it explicitly); it is still on disk after success.
+	if _, err := os.Stat(badFile); err != nil {
+		t.Errorf("bad.txt should survive the rollback (uncaptured untracked), stat err = %v", err)
 	}
 
 	// The committed README from before the checkpoint must survive.

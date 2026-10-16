@@ -543,3 +543,32 @@ func TestPathValidator_WithWorkspaceRootDerivesPolicy(t *testing.T) {
 		t.Errorf("derived validator approval cache = %v, want empty", derived.approved)
 	}
 }
+
+// TestPathValidator_WithWorkspaceRootNilReceiver pins the nil-receiver
+// derivation used when a workdir dispatch runs in a session that carries
+// no validator of its own (default local mode): WorkDir must be set to
+// the new root, or relative paths and the shell would still resolve
+// against the process cwd (#312).
+func TestPathValidator_WithWorkspaceRootNilReceiver(t *testing.T) {
+	var pv *PathValidator
+	root := t.TempDir()
+
+	derived := pv.WithWorkspaceRoot(root)
+	if derived == nil {
+		t.Fatal("nil receiver must still derive a validator")
+	}
+	// NewPathValidator normalizes (abs + symlink-resolve); expect the same.
+	want, _ := filepath.Abs(root)
+	if real, err := filepath.EvalSymlinks(want); err == nil {
+		want = real
+	}
+	if derived.WorkspaceRoot != want {
+		t.Errorf("WorkspaceRoot = %q, want %q", derived.WorkspaceRoot, want)
+	}
+	if derived.WorkDir != derived.WorkspaceRoot {
+		t.Errorf("WorkDir = %q, want the new root %q", derived.WorkDir, derived.WorkspaceRoot)
+	}
+	if derived.AllowHomeAccess {
+		t.Error("nil-receiver derivation must not grant home access")
+	}
+}

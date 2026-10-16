@@ -162,11 +162,22 @@ func TestReviewSession_AcceptDeniedRollsBackAndRetries(t *testing.T) {
 		t.Errorf("envelope error = %q, want the denial reason surfaced", env.Error)
 	}
 
-	// Denial leaves the parent tree byte-identical to the unit start:
-	// at the retry's start the denied file is gone and git reports a
-	// clean tree.
+	// Denial restores the tracked tree to the unit start, and the denied
+	// addition is quarantined out of the workspace (review finding on
+	// #326): it must neither survive into the retry's baseline (that
+	// would hide it from the gate forever) nor be deleted outright (it
+	// is kept under .git and named in the envelope).
 	if strings.TrimSpace(statusAtRetryStart) != "" {
 		t.Errorf("tree at the retry's start must be byte-identical to unit start, git reports:\n%s", statusAtRetryStart)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "outside.txt")); !os.IsNotExist(err) {
+		t.Errorf("denied outside.txt must be quarantined out of the tree, stat err = %v", err)
+	}
+	if !strings.Contains(env.Error, "quarantined") || !strings.Contains(env.Error, "outside.txt") {
+		t.Errorf("envelope must report the quarantine, error = %q", env.Error)
+	}
+	if content := findQuarantined(t, repo, "outside.txt"); content != "denied\n" {
+		t.Errorf("quarantined content = %q, want %q (kept, not deleted)", content, "denied\n")
 	}
 
 	// The reason is injected into the re-run; the re-run keeps the
@@ -290,13 +301,22 @@ func TestReviewSession_AcceptDeniedRollsBackCumulativeWork(t *testing.T) {
 		t.Errorf("envelope error = %q, want the denial reason surfaced", env.Error)
 	}
 
-	// The rollback is the session start, not the last unit's
-	// checkpoint: the forbidden file from unit 1 must be gone too.
+	// The rollback is the session start: both denied additions are
+	// quarantined out of the workspace — kept under .git, gone from the
+	// tree, and reported in the envelope. A retry baseline that
+	// swallowed them would hide them from the gate forever (#326
+	// review finding).
 	if strings.TrimSpace(statusAtRetryStart) != "" {
 		t.Errorf("tree at the retry's start must be the session start, git reports:\n%s", statusAtRetryStart)
 	}
 	if _, err := os.Stat(filepath.Join(repo, "forbidden.txt")); err == nil {
-		t.Error("unit 1's denied work must be rolled back (forbidden.txt still present)")
+		t.Error("unit 1's denied work must be quarantined out of the tree (forbidden.txt still present)")
+	}
+	if content := findQuarantined(t, repo, "forbidden.txt"); content != "denied\n" {
+		t.Errorf("forbidden.txt not kept in quarantine: %q", content)
+	}
+	if !strings.Contains(env.Error, "quarantined") {
+		t.Errorf("envelope must report the quarantine, error = %q", env.Error)
 	}
 
 	// The retry's accept approves: the re-done work passes the gate.
@@ -324,4 +344,19 @@ func TestMapRestoreError_PinsKernelRefusalText(t *testing.T) {
 	if !strings.Contains(other.Error(), "supervisor: rollback: restore:") || strings.Contains(other.Error(), "no longer matches") {
 		t.Errorf("generic mapping = %q, want the plain restore wrap", other.Error())
 	}
+}
+
+// findQuarantined returns the content of a path inside the session's
+// quarantine dir under .git, or "" when it is not there.
+func findQuarantined(t *testing.T, repo, rel string) string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(repo, ".git", "shepherd-quarantine", "*", filepath.FromSlash(rel)))
+	if err != nil || len(matches) == 0 {
+		return ""
+	}
+	b, rerr := os.ReadFile(matches[0])
+	if rerr != nil {
+		return ""
+	}
+	return string(b)
 }

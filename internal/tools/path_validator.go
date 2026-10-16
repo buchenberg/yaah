@@ -76,7 +76,9 @@ func NewPathValidator(workspaceRoot string, allowHome bool, denyPatterns []strin
 // scope cannot silently widen another scope's access.
 func (pv *PathValidator) WithWorkspaceRoot(root string) *PathValidator {
 	if pv == nil {
-		return NewPathValidator(root, false, nil)
+		derived := NewPathValidator(root, false, nil)
+		derived.WorkDir = derived.WorkspaceRoot
+		return derived
 	}
 	derived := NewPathValidator(root, pv.AllowHomeAccess, pv.DenyPatterns)
 	derived.AskFn = pv.AskFn
