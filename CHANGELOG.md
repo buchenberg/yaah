@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.79.5](https://github.com/buchenberg/yaah/compare/v0.79.4...v0.79.5) (2026-10-16)
+
+
+### Code Refactoring
+
+* **memory:** ErrMemoryNotFound sentinel for not-found deletes/updates ([317a109](https://github.com/buchenberg/yaah/commit/317a109e0721cc133c4fb7ca73d681cf425ea57e))
+
+
+### Tests
+
+* **memory:** assert UpdateMemory not-found wraps ErrMemoryNotFound ([052aa44](https://github.com/buchenberg/yaah/commit/052aa44388948d8c4f765261091f23917c3d56ce))
+
 ## [0.79.4](https://github.com/buchenberg/yaah/compare/v0.79.3...v0.79.4) (2026-10-16)
 
 
