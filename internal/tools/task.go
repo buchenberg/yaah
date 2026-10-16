@@ -66,6 +66,13 @@ type TaskTool struct {
 	// delivers their results as follow-ups. When nil, background mode is
 	// unavailable and the tool errors if requested.
 	BackgroundJobs *jobs.BackgroundJobs
+
+	// Retained, when non-nil, routes the dispatch through the retained-run
+	// primitive (Plan 7 Phase 2): the sub-agent runs in an isolated worktree and
+	// its delta is sealed into a proposal the orchestrator settles with the
+	// proposal tool. Nil keeps the direct-to-host lane. Background dispatch is
+	// not retained (a proposal needs a settlement call).
+	Retained *RetainedRuntime
 }
 
 func (t *TaskTool) Name() string { return "spawn_subagent" }
@@ -159,6 +166,12 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 			return "", err
 		}
 		return structuredBackgroundResult(jobID, label), nil
+	}
+
+	// Retained mode (Plan 7 Phase 2): run in an isolated worktree and return a
+	// sealed proposal the orchestrator settles, instead of mutating the host.
+	if t.Retained != nil {
+		return startRetainedRun(runCtx, *t.Retained, params.Prompt, subParams, timeout)
 	}
 
 	if timeout > 0 {

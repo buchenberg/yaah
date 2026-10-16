@@ -589,6 +589,15 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		TraceStore:            traceStore,
 		GuardCheck:            supervisorSvcGuardCheck(supervisorSvc),
 		ResolveProviderByName: resolveProviderByName,
+
+		// Retained lane (Plan 7 Phase 2): default on in local mode, where a
+		// sub-agent's work comes back as a proposal. Isolated mode keeps the
+		// container as the substrate (no host worktrees), and
+		// agents.subagent.mode: shared is the opt-out.
+		Retain:               sessionSandbox == nil && retainedMode(cfg.Agent.SubAgent.Mode),
+		RetainedRepoPath:     cfg.Agent.Default.SupervisedRepoPath,
+		RetainedWorktreeRoot: cfg.Agent.Default.SupervisedWorktreeRoot,
+		RetainedBootstrap:    cfg.Agent.Default.SupervisedWorktreeBootstrap,
 	})
 
 	// RoleResolver provides a live role-name lookup so the spawn_subagent
@@ -674,6 +683,15 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			HaltRoot: cfg.Agent.Default.HaltRootEnabled(),
 		})
 
+		// Proposal tool (Plan 7 Phase 2): settles the sealed proposals the
+		// retained lane produces. Registered only when that lane is live — a
+		// shared lane, an isolated session, or a failed root scope produces none
+		// (spawn_subagent falls back to the direct lane without a root scope, so
+		// the prompt must not advertise a settlement that can never happen).
+		if sessionSandbox == nil && retainedMode(cfg.Agent.SubAgent.Mode) && rootScopeID != "" {
+			toolReg.Register(&tools.ProposalTool{})
+		}
+
 		// Supervised task tool — blocking sub-agent execution with
 		// checkpoint/rollback/retry. Shares the runner and timeout
 		// logic with the task tool, but runs synchronously and wraps
@@ -731,6 +749,9 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		mainPrompt += "\n\n" + prompts.IsolatedWorkspaceGuidance(omittedTools, omittedMCP)
 	} else if scopeMgr != nil {
 		mainPrompt += "\n\n" + prompts.SubAgentToolsGuidance()
+		if retainedMode(cfg.Agent.SubAgent.Mode) && rootScopeID != "" {
+			mainPrompt += "\n\n" + prompts.RetainedModeGuidance()
+		}
 	}
 	if opts.OneShot {
 		mainPrompt += "\n\n" + prompts.OneShotGuidance()
@@ -961,4 +982,11 @@ func splitRolesBySupervised(names []string, isSupervised func(string) bool) (pla
 		}
 	}
 	return plain, supervised
+}
+
+// retainedMode reports whether agents.subagent.mode selects the retained-run
+// lane for spawn_subagent (Plan 7 Phase 2). The default (empty) is retained —
+// the parity default; "shared" is the explicit opt-out.
+func retainedMode(mode string) bool {
+	return !strings.EqualFold(strings.TrimSpace(mode), "shared")
 }

@@ -71,6 +71,9 @@ var environmentHeaderRaw string
 //go:embed subagent_tools.md
 var subAgentToolsRaw string
 
+//go:embed retained.md
+var retainedRaw string
+
 //go:embed oneshot.md
 var oneShotRaw string
 
@@ -122,6 +125,13 @@ func OneShotGuidance() string {
 // Shepherd tracing is enabled).
 func SubAgentToolsGuidance() string {
 	return strings.TrimSpace(subAgentToolsRaw)
+}
+
+// RetainedModeGuidance returns the retained-lane guidance block (Plan 7 Phase
+// 2): how a sub-agent's work comes back as a sealed proposal, and how to settle
+// it with the proposal tool. Injected when agents.subagent.mode is retained.
+func RetainedModeGuidance() string {
+	return strings.TrimSpace(retainedRaw)
 }
 
 // hostOnlyReasons explains, per tool, why it is absent from an isolated

@@ -261,6 +261,12 @@ type SubAgentConfig struct {
 	// dispatched sub-agent's.
 	Containment string `yaml:"containment"`
 
+	// Mode selects the dispatch lane (Plan 7 Phase 2). "retained" (the default)
+	// runs each sub-agent in an isolated worktree and returns a sealed proposal
+	// the orchestrator settles with the proposal tool; nothing touches the
+	// working tree until then. "shared" keeps the older direct-to-host lane.
+	Mode string `yaml:"mode"`
+
 	// Roles holds per-role overrides keyed by role name
 	// ("analyst", "developer", "tester", "reviewer").
 	Roles map[string]RoleConfig `yaml:"roles"`
