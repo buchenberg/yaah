@@ -8,8 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
-	shepherdgit "github.com/buchenberg/shepherd-kernel-go/sandbox/git"
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
+	shepherdgit "github.com/buchenberg/shepherd-runtime-go/sandbox/git"
 	"github.com/spf13/cobra"
 
 	"github.com/buchenberg/yaah/internal/agent/recovery"

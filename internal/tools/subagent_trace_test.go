@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
 )
 
 func newTestSubagentTraceTool(t *testing.T) (*SubagentTraceTool, *shepherdtrace.SQLiteTraceStore) {

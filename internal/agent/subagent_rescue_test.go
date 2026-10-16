@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/shepherd-kernel-go"
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
+	"github.com/buchenberg/shepherd-runtime-go"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"

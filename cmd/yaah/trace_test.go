@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
 )
 
 func setTestTraceConfig(t *testing.T, home, traceDir string) {

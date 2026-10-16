@@ -3,8 +3,8 @@ package runner
 import (
 	"context"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
-	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
+	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
 	"github.com/buchenberg/yaah/internal/agent"
 )
 

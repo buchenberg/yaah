@@ -36,9 +36,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	shepherdsandbox "github.com/buchenberg/shepherd-kernel-go/sandbox"
-	shepherdgit "github.com/buchenberg/shepherd-kernel-go/sandbox/git"
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
+	shepherdsandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
+	shepherdgit "github.com/buchenberg/shepherd-runtime-go/sandbox/git"
 )
 
 // NewLocalSandbox returns an in-place sandbox over repoPath whose Apply

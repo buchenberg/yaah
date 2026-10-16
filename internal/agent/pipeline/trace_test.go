@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
 	"github.com/buchenberg/yaah/internal/types"
 )
 

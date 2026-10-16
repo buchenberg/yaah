@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	shepherd "github.com/buchenberg/shepherd-kernel-go"
+	shepherd "github.com/buchenberg/shepherd-runtime-go"
 
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 )

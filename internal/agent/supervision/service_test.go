@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/shepherd-kernel-go"
-	shepherdsupervisor "github.com/buchenberg/shepherd-kernel-go/supervisor"
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
+	"github.com/buchenberg/shepherd-runtime-go"
+	shepherdsupervisor "github.com/buchenberg/shepherd-runtime-go/supervisor"
 )
 
 // newTestService assembles a real supervision stack for one fake

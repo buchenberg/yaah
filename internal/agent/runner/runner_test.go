@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
 	"gopkg.in/yaml.v3"
 
 	"github.com/buchenberg/yaah/internal/agent/subagent"

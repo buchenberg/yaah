@@ -20,9 +20,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/buchenberg/shepherd-kernel-go"
-	shepherdsupervisor "github.com/buchenberg/shepherd-kernel-go/supervisor"
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go/trace"
+	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
+	"github.com/buchenberg/shepherd-runtime-go"
+	shepherdsupervisor "github.com/buchenberg/shepherd-runtime-go/supervisor"
 )
 
 // AdvisoryRules carries the advisory rules' switches and tuning.
