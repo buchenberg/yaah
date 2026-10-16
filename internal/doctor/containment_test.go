@@ -2,7 +2,10 @@ package doctor
 
 import (
 	"errors"
+	"strings"
 	"testing"
+
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/landlock"
 
 	"github.com/buchenberg/yaah/internal/config"
 )
@@ -17,7 +20,11 @@ func TestContainmentCheck(t *testing.T) {
 		placement string
 		want      string
 	}{
-		{"absent/off", false, "", "OK"},
+		// An empty setting is the config default, which since Plan 7 Phase 3 is
+		// "auto": jail where the host can, degrade visibly where it cannot.
+		{"available/default", true, "", "OK"},
+		{"absent/default", false, "", "WARN"},
+		{"absent/off", false, "off", "OK"},
 		{"absent/off-explicit", false, "off", "OK"},
 		{"absent/advisory", false, "advisory", "OK"},
 		{"available/paddock", true, "paddock", "OK"},
@@ -39,9 +46,20 @@ func TestCheckContainment(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Agent.SubAgent.Mode = "retained"
 
+	// An unset setting is the config default, which reports the placement it
+	// really resolves to (auto since Plan 7 Phase 3) and the status that follows
+	// from this host's capability.
 	cfg.Agent.SubAgent.Containment = ""
-	if c := CheckContainment(cfg, nil); c.Status != "OK" {
-		t.Errorf("default containment: status = %q, want OK (%s)", c.Status, c.Detail)
+	c := CheckContainment(cfg, nil)
+	if !strings.Contains(c.Detail, "placement auto") {
+		t.Errorf("the default must resolve to auto, got %q", c.Detail)
+	}
+	want := "WARN"
+	if landlock.Detect() != nil {
+		want = "OK"
+	}
+	if c.Status != want {
+		t.Errorf("default containment: status = %q, want %q (%s)", c.Status, want, c.Detail)
 	}
 	if c := CheckContainment(nil, errors.New("boom")); c.Status != "WARN" {
 		t.Errorf("config error: status = %q, want WARN", c.Status)

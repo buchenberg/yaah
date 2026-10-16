@@ -98,6 +98,8 @@ agents:
     default_min_turns: 0              # global turn floor; 0 = none
     output_limit: 51200               # bytes cap on sub-agent reports
     json_mode: false                  # force structured output
+    mode: retained                    # dispatch lane: retained | shared
+    containment: auto                 # syscall jail: auto | off | paddock
     roles:                            # per-role overrides (defaults live in the role files)
       analyst:
         timeout: 240
@@ -230,6 +232,8 @@ and `max_retries` consistent across the whole team.
 | `default_min_turns` | 0 (none) | Global turn floor — no per-call override or role budget may drop below it |
 | `output_limit` | 51200 | Byte cap on sub-agent reports |
 | `json_mode` | false | Force structured JSON output |
+| `mode` | `retained` | Dispatch lane — `retained` (isolated worktree + proposal) or `shared` (direct to host) |
+| `containment` | `auto` | Syscall-jail placement — `auto`, `off`, or `paddock` (see "Sub-agent dispatch lane and confinement") |
 | `roles.<name>.timeout` | — | Per-role timeout override |
 | `roles.<name>.max_iterations` | — | Per-role iteration cap |
 | `roles.<name>.min_iterations` | 0 (none) | Per-role iteration floor; beats per-call overrides and the role file's floor |
@@ -358,6 +362,46 @@ agents:
 | `supervised_worktree_bootstrap` | `""` | Shell command run inside each fresh worktree — see below. |
 | `turn_checkpoint_max` | `0` | Live turn checkpoints per sub-agent run; the oldest are pruned. `0` = unlimited. |
 | `max_turn_restores` | `3` | Turn-level restores per run, so a deterministically failing turn cannot rewind forever. |
+| `mode` | `retained` | Dispatch lane. `retained` runs each sub-agent in an isolated worktree and hands back a sealed proposal the orchestrator settles with the `proposal` tool — nothing touches the working tree until then. `shared` is the older direct-to-host lane (the escape hatch and the benchmark baseline). |
+| `containment` | `auto` | Syscall-jail placement for a workdir dispatch (Plan 7). `auto` jails where the host can (Landlock on Linux) and degrades visibly to advisory elsewhere; `off` (or `none`/`advisory`) always runs on the host; `paddock` (alias `jail`) fails closed when the host cannot jail. See the next section. |
+
+## Sub-agent dispatch lane and confinement
+
+The `mode` and `containment` keys above decide *where a sub-agent runs* and
+*what it may touch*. They apply to dispatched sub-agents only: the orchestrator
+runs on the host, unconfined, exactly as before — which is the whole point of
+the split, since the orchestrator is the part that must reach everything.
+
+**Retention (`mode: retained`, the default).** Each dispatch runs in its own
+`git worktree` and returns a proposal; the host tree is untouched until the
+orchestrator applies it with the `proposal` tool. Read-only roles return an
+empty changeset — retained always, so "did anything change?" is never the
+question.
+
+**Confinement (`containment: auto`, the default).** On a Landlock host the
+dispatch's shell runs inside a syscall jail whose **sole writable root is that
+worktree**. Housekeeping writes are *redirected into* it rather than the jail
+being widened: `HOME`, `TMPDIR`, `XDG_CACHE_HOME`, `GOCACHE`, and
+`npm_config_cache` point at a `.yaah-scratch/` inside the worktree, which is
+scrubbed before the proposal is sealed so it never reaches the delta. Two reads
+the redirect would otherwise hide are handled explicitly:
+
+- `GOMODCACHE` is pinned against the *pre-redirect* environment, so a confined
+  Go build reads the shared module cache instead of silently re-downloading
+  into the scratch.
+- The user's global **git identity** is carried into the scratch, because a
+  commit needs it and the moved `HOME` would otherwise produce "Author identity
+  unknown". Credential stores (`~/.ssh`, `~/.git-credentials`, `~/.npmrc`,
+  `~/.netrc`) are deliberately *not* carried: copying secrets into a
+  proposal-bearing worktree is worse than requiring the worktree bootstrap —
+  which runs unconfined before the body — to prepare authenticated inputs.
+
+Each dispatch records the resolved placement on the sub-agent's trace
+(`yaah.subagent.confinement.v1`: requested vs resolved, backend, enforcement
+tier, writable root), so an advisory run is never misread as jailed.
+`yaah doctor` reports the effective placement and whether the host can jail
+(`auto` on a host with no usable backend is a WARN, `paddock` is a FAIL).
+
 
 ### What checkpointing covers
 

@@ -254,11 +254,13 @@ type SubAgentConfig struct {
 	OutputLimit int `yaml:"output_limit"`
 
 	// Containment selects the syscall jail for workdir sub-agent dispatches
-	// (Plan 7). "" / "off" / "advisory" leave the host path; "auto" jails on a
-	// Landlock-capable host and falls back to advisory elsewhere; "paddock"
-	// (alias "jail") fails closed when the host cannot jail. Default off — and
-	// the orchestrator's own commands are never jailed either way, only a
-	// dispatched sub-agent's.
+	// (Plan 7). "" / "auto" (the default) jail on a Landlock-capable host and
+	// fall back to advisory elsewhere; "off" (or "none"/"advisory") leaves the
+	// host path; "paddock" (alias "jail") fails closed when the host cannot
+	// jail. The orchestrator's own commands are never jailed either way, only a
+	// dispatched sub-agent's — and a confined dispatch records the resolved
+	// placement (paddock vs advisory, the backend, the writable root) on the
+	// sub-agent's trace.
 	Containment string `yaml:"containment"`
 
 	// Mode selects the dispatch lane (Plan 7 Phase 2). "retained" (the default)

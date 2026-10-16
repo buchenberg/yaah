@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -59,6 +60,71 @@ func TestDefaultGoModCache(t *testing.T) {
 	t.Setenv("GOPATH", "/go")
 	if got, want := defaultGoModCache(), filepath.Join("/go", "pkg", "mod"); got != want {
 		t.Errorf("with GOPATH = %q, want %q", got, want)
+	}
+}
+
+// TestConfinementScratchEnv_CarriesGitIdentity: the redirect moves HOME, so git
+// would look for the user's identity in an empty scratch and refuse to commit
+// ("Author identity unknown"). The redirect carries the global config in at
+// git's own precedence — both candidate files — and writes it 0o600, since a
+// git config can name credential helpers and URL rewrites.
+func TestConfinementScratchEnv_CarriesGitIdentity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	legacy := []byte("[user]\n\tname = Legacy\n\temail = legacy@example.com\n")
+	xdg := []byte("[user]\n\tname = XDG\n")
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), legacy, 0o644); err != nil {
+		t.Fatalf("seed .gitconfig: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".config", "git"), 0o755); err != nil {
+		t.Fatalf("seed config dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".config", "git", "config"), xdg, 0o644); err != nil {
+		t.Fatalf("seed xdg config: %v", err)
+	}
+
+	root := t.TempDir()
+	if _, err := ConfinementScratchEnv(root); err != nil {
+		t.Fatalf("scratch env: %v", err)
+	}
+
+	scratchHome := filepath.Join(root, confinementScratchName, "home")
+	for _, c := range []struct {
+		rel  string
+		want []byte
+	}{
+		{".gitconfig", legacy},
+		{filepath.Join(".config", "git", "config"), xdg},
+	} {
+		dst := filepath.Join(scratchHome, c.rel)
+		got, err := os.ReadFile(dst)
+		if err != nil {
+			t.Errorf("%s not carried into the scratch: %v", c.rel, err)
+			continue
+		}
+		if !bytes.Equal(got, c.want) {
+			t.Errorf("%s content = %q, want %q", c.rel, got, c.want)
+		}
+		if runtime.GOOS != "windows" {
+			fi, statErr := os.Stat(dst)
+			if statErr != nil {
+				t.Errorf("%s: %v", c.rel, statErr)
+			} else if fi.Mode().Perm() != 0o600 {
+				t.Errorf("%s perm = %o, want 600", c.rel, fi.Mode().Perm())
+			}
+		}
+	}
+
+	// An absent global config is the normal case, not an error: the scratch is
+	// still built, just without one.
+	empty := t.TempDir()
+	t.Setenv("HOME", empty)
+	root2 := t.TempDir()
+	if _, err := ConfinementScratchEnv(root2); err != nil {
+		t.Fatalf("scratch env with no global config: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root2, confinementScratchName, "home", ".gitconfig")); !os.IsNotExist(err) {
+		t.Errorf("no source config should mean no carried config (stat err=%v)", err)
 	}
 }
 

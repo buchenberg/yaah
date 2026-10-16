@@ -51,7 +51,7 @@ func ConfinementScratchEnv(workdir string) ([]string, error) {
 		env = append(env, s.key+"="+dir)
 	}
 
-	// Pinning GOMODCACHE, which the HOME redirect would otherwise relocate: Go
+	// Pin GOMODCACHE, which the HOME redirect would otherwise relocate: Go
 	// defaults the module cache to $HOME/go/pkg/mod, so moving HOME silently
 	// moves it into the scratch (a cold, re-downloading cache). Resolve it HERE,
 	// against the pre-redirect environment, and pass it through unchanged — the
@@ -61,7 +61,58 @@ func ConfinementScratchEnv(workdir string) ([]string, error) {
 	if _, set := os.LookupEnv("GOMODCACHE"); !set {
 		env = append(env, "GOMODCACHE="+defaultGoModCache())
 	}
+
+	// Carry the git identity (see carryGitConfig): the redirect moves HOME, and
+	// with it the global config git finds the user's name and email in — so
+	// without this a confined `git commit` fails with "Author identity unknown".
+	carryGitConfig(scratch)
 	return env, nil
+}
+
+// gitConfigCarry is the global git config git would read from a normal HOME, at
+// the relative paths it looks in: $XDG_CONFIG_HOME/git/config (worked out below
+// against the pre-redirect HOME) then ~/.gitconfig. Both are carried, in order,
+// so git's own precedence is preserved rather than flattened.
+var gitConfigCarry = [][2]string{
+	{filepath.Join(".config", "git", "config"), filepath.Join("home", ".config", "git", "config")},
+	{".gitconfig", filepath.Join("home", ".gitconfig")},
+}
+
+// carryGitConfig copies the user's global git config into the scratch HOME so a
+// confined git keeps the identity it has on the host. The redirect moves HOME
+// for writes, but the global identity is a READ the body still needs — a commit
+// without it fails outright ("Author identity unknown"), which is the one
+// silent-but-total regression the redirect could cause.
+//
+// It copies rather than pointing git at the real file (GIT_CONFIG_GLOBAL) so
+// git's own precedence — both candidate files — is preserved, and a
+// global-config WRITE lands in the scratch (discarded with it) instead of being
+// refused as an out-of-root write. It deliberately does NOT carry credential
+// stores (~/.git-credentials, ~/.npmrc, ~/.netrc): copying secrets into a
+// proposal-bearing worktree is a worse trade than requiring the user to
+// configure the worktree, and authentication is an authority concern, not a
+// redirect one.
+//
+// Best-effort: an absent source is the normal case and a copy failure degrades
+// to "no global config", never a failed dispatch. The scratch is scrubbed
+// before the workspace is sealed, so the copy never reaches a proposal's delta.
+func carryGitConfig(scratch string) {
+	home := os.Getenv("HOME")
+	if home == "" {
+		return
+	}
+	for _, c := range gitConfigCarry {
+		data, err := os.ReadFile(filepath.Join(home, c[0]))
+		if err != nil {
+			continue
+		}
+		dst := filepath.Join(scratch, c[1])
+		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+			continue
+		}
+		// 0o600: a git config can name credential helpers and URL rewrites.
+		_ = os.WriteFile(dst, data, 0o600)
+	}
 }
 
 // defaultGoModCache resolves Go's default module cache against the CURRENT
