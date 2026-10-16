@@ -99,7 +99,7 @@ agents:
     output_limit: 51200               # bytes cap on sub-agent reports
     json_mode: false                  # force structured output
     mode: retained                    # dispatch lane: retained | shared
-    containment: off                  # syscall jail (opt-in): off | auto | paddock
+    containment: auto                 # syscall jail: auto | off | paddock
     roles:                            # per-role overrides (defaults live in the role files)
       analyst:
         timeout: 240
@@ -233,7 +233,7 @@ and `max_retries` consistent across the whole team.
 | `output_limit` | 51200 | Byte cap on sub-agent reports |
 | `json_mode` | false | Force structured JSON output |
 | `mode` | `retained` | Dispatch lane — `retained` (isolated worktree + proposal) or `shared` (direct to host) |
-| `containment` | `off` | Syscall-jail placement — `off`, `auto` (if the host can jail), or `paddock` (fails closed). See "Sub-agent dispatch lane and confinement" |
+| `containment` | `auto` | Syscall-jail placement — `auto` (jail if the host can, else advisory), `off`, or `paddock` (fails closed). See "Sub-agent dispatch lane and confinement" |
 | `roles.<name>.timeout` | — | Per-role timeout override |
 | `roles.<name>.max_iterations` | — | Per-role iteration cap |
 | `roles.<name>.min_iterations` | 0 (none) | Per-role iteration floor; beats per-call overrides and the role file's floor |
@@ -411,25 +411,28 @@ empty changeset — retained always, so "did anything change?" is never the
 question. `mode: shared` is the older direct-to-host lane: the escape hatch, and
 the benchmark baseline.
 
-**Confinement — `containment`, default `off`.** Where the host can jail
-(Landlock on Linux) a dispatch with `containment: auto` runs its shell inside a
-syscall jail whose sole writable root is its worktree; `auto` degrades visibly to
-advisory where the host cannot jail, and `paddock` (alias `jail`) fails closed
-instead. The unconfined host path is the default, so confinement is opted into
-rather than inherited.
+**Confinement — `containment`, default `auto`.** Where the host can jail
+(Landlock on Linux) a dispatch runs its shell inside a syscall jail whose sole
+writable root is its worktree. `auto` jails where the host can and **degrades
+visibly to advisory** where it cannot (macOS, Windows, a kernel without
+Landlock), recording which happened on the sub-agent's trace; `paddock` (alias
+`jail`) fails closed instead of degrading; `off` (or `none`/`advisory`) always
+runs on the host. The orchestrator is never jailed either way.
 
-> **Why still opt-in.** The acceptance run that was to gate the flip to `auto`
-> (`TestConfinedBuild_Acceptance`) found a blocker in the very lane the flip
-> would confine. A retained dispatch works in a **linked** `git worktree`, whose
-> index and object store live in the original repository's `.git` — outside the
-> jail's writable root. So a confined `git add`/`git commit` in the retained lane
-> is refused by the kernel; read-only git (`status`, `diff`, `log`) is fine.
-> Granting `<repo>/.git` as a second writable root would fix the symptom and
-> break the promise — a confined sub-agent could then rewrite the host
-> repository's refs and objects, which is what retention exists to prevent. It
-> needs the git-write story settled (the orchestrator settles, so a sub-agent
-> need not commit), and the acceptance now exercises the linked layout so the
-> gap cannot be missed again.
+> **The git rule (why this needed a decision).** A retained dispatch works in a
+> **linked** `git worktree`, whose index and object store live in the *original*
+> repository's `.git` — outside the jail's writable root. So a confined
+> **`git add`/`commit`/`stash` is refused by the kernel**; read-only git
+> (`status`, `diff`, `log`, `show`) is fine. This is **by design**: the
+> sub-agent prepares changes and the orchestrator commits when it settles the
+> proposal — which is what retention already meant. Granting `<repo>/.git` as a
+> second writable root would fix the symptom and break the promise, letting a
+> confined sub-agent rewrite the host repository's refs and objects.
+>
+> Because the raw failure is just `Permission denied`, the refusal now carries an
+> explanation naming the writable root and the rule, and a confined sub-agent's
+> prompt states the rule up front. `TestConfinedBuild_Acceptance` exercises the
+> real linked-worktree layout and pins both.
 
 Housekeeping writes are **redirected into** the worktree rather than the jail
 being widened: `HOME`, `TMPDIR`, `XDG_CACHE_HOME`, `GOCACHE`, and

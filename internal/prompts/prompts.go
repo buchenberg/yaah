@@ -74,6 +74,9 @@ var subAgentToolsRaw string
 //go:embed retained.md
 var retainedRaw string
 
+//go:embed confinement.md
+var confinementRaw string
+
 //go:embed oneshot.md
 var oneShotRaw string
 
@@ -132,6 +135,20 @@ func SubAgentToolsGuidance() string {
 // it with the proposal tool. Injected when agents.subagent.mode is retained.
 func RetainedModeGuidance() string {
 	return strings.TrimSpace(retainedRaw)
+}
+
+// ConfinementSubAgentGuidance is the sub-agent prompt delta for a confined
+// dispatch (Plan 7 Phase 3): it states the one writable root, that housekeeping
+// writes are redirected into it, and — the part that matters most in practice —
+// that git write commands cannot run, because a worktree's index and object
+// store live in the original repository. Without it a sub-agent asked to
+// "commit the fix" spends turns retrying a write the kernel will always refuse.
+func ConfinementSubAgentGuidance(worktree string) string {
+	body := strings.TrimSpace(confinementRaw)
+	if worktree == "" {
+		return body
+	}
+	return body + "\n\nThis worktree is `" + worktree + "`."
 }
 
 // hostOnlyReasons explains, per tool, why it is absent from an isolated

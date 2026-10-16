@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
@@ -323,11 +324,47 @@ func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (Exe
 		out.Stdout = res.Stdout + res.Stderr
 	}
 	if res.ExitCode != 0 {
+		// A write the kernel refused looks like any other failure to the model
+		// ("Permission denied", no clue why), which is the jail's real usability
+		// cost. Say what happened and where the boundary is.
+		if hint := confinementHint(res.Stderr, root); hint != "" {
+			if req.SeparateStreams {
+				out.Stderr = strings.TrimRight(out.Stderr, "\n") + "\n" + hint
+			} else {
+				out.Stdout = strings.TrimRight(out.Stdout, "\n") + "\n" + hint
+			}
+		}
 		// Match the host path's wording (exec's *exec.ExitError) so callers
 		// that surface the message read the same either way.
 		return out, fmt.Errorf("exit status %d", res.ExitCode)
 	}
 	return out, nil
+}
+
+// confinementHint explains a kernel-refused write, or "" when the failure does
+// not look like one. The jail is the boundary, not a bug, and a sub-agent that
+// cannot see why a write failed will retry it (or flail) instead of routing
+// around it — so the message names the boundary and, for the git case, the rule
+// that makes it deliberate.
+//
+// Detection is deliberately narrow: git's own "Permission denied" wording on a
+// path outside the writable root. A false negative costs nothing (the raw error
+// still surfaces); a false positive would put a misleading note on a legitimate
+// failure.
+func confinementHint(stderr, root string) string {
+	if root == "" || !strings.Contains(stderr, "Permission denied") {
+		return ""
+	}
+	const gitWorkRule = " Your changes are still captured — the orchestrator commits when it accepts your work, so there is nothing for you to commit."
+	// git names the offending path in quotes; a path under the repo but outside
+	// this workspace is the retained-lane case (the worktree's index and object
+	// store live in the original repository's .git).
+	if strings.Contains(stderr, ".git/") || strings.Contains(stderr, ".git\\") {
+		return "[yaah] This write was refused by the sub-agent sandbox. You work in an isolated worktree whose only writable root is " + root +
+			"; git's index and object store live in the original repository, outside it, so git write commands (add, commit, stash, checkout, reset) cannot run here." + gitWorkRule
+	}
+	return "[yaah] This write was refused by the sub-agent sandbox: its only writable root is " + root +
+		", and writes outside it are denied by the kernel. Housekeeping paths (HOME, TMPDIR, build caches) are redirected inside that root, so work there instead."
 }
 
 // workspaceOf returns a tool's injected workspace, falling back to a local

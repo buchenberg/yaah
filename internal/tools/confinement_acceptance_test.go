@@ -21,13 +21,14 @@ package tools
 //  3. the identity pointer works — `git config --get user.email` inside the jail
 //     finds the global identity the moved HOME would otherwise hide;
 //  4. read-only git works (status/log), which is most of what a sub-agent does;
-//  5. KNOWN BLOCKER, pinned: a confined `git add` is refused by the kernel,
-//     because the linked worktree's index is outside the sole writable root.
-//     This is why the flip is still gated. The fix cannot be "also grant
-//     <repo>/.git" — that hands a confined sub-agent write access to the host
-//     repository's refs and objects, the exact thing retention prevents. When
-//     the git-write story is settled, this leg must change, which is the point
-//     of pinning it;
+//  5. the git-write rule, by design: a confined `git add` is refused by the
+//     kernel, because the linked worktree's index is outside the sole writable
+//     root — and the refusal is explained rather than left as a bare "Permission
+//     denied". Accepting this is what let the default flip to `auto`: the
+//     sub-agent prepares changes and the orchestrator commits at settlement,
+//     which is what retention already meant. Granting <repo>/.git instead would
+//     hand a confined sub-agent write access to the host repository's refs and
+//     objects, the exact thing retention prevents;
 //  6. the boundary holds: an out-of-root write is refused by the kernel, and the
 //     refusal is a denial rather than a launch failure.
 //
@@ -184,18 +185,31 @@ func TestConfinedBuild_Acceptance(t *testing.T) {
 	// does with git (status, diff, log) needs no write.
 	run("read-only git must work in a linked worktree", "git", "status", "--porcelain")
 
-	// 5. KNOWN BLOCKER (see the file header): the retained lane's git metadata
-	// is outside the writable root, so an index write is refused. Pinned here so
-	// the flip cannot land without settling it — and so this leg fails loudly
-	// when it is settled, rather than silently going stale.
+	// 5. The git-write rule, BY DESIGN (see the file header). The retained lane's
+	// git metadata lives outside the writable root, so an index write is refused
+	// — accepted deliberately: the sub-agent prepares changes and the orchestrator
+	// commits at settlement. What matters is that the refusal is LEGIBLE (the
+	// kernel's bare "Permission denied" is what makes a jail feel broken), so the
+	// hint must ride along. This leg fails if the write ever starts succeeding,
+	// forcing the design note and the prompt guidance to be revisited rather than
+	// going stale.
 	res, rerr := exec("git", "add", "-A")
-	if res.ExitCode != 0 && !strings.Contains(res.Stderr, "Permission denied") {
-		t.Fatalf("a denied index write must be a kernel denial, not a launch failure: exit=%d err=%v stderr=%q",
-			res.ExitCode, rerr, res.Stderr)
+	if res.ExitCode == -1 {
+		t.Fatalf("the jail must establish, so the refusal is a denial and not a launch failure: %v", rerr)
 	}
 	if res.ExitCode == 0 {
-		t.Fatalf("the linked-worktree index write is no longer refused — the git-write blocker "+
-			"appears settled; update this leg (and the containment default) rather than leaving it stale: %+v", res)
+		t.Fatalf("the linked-worktree index write is no longer refused — the git-write rule "+
+			"appears settled; update this leg (and the sub-agent guidance) rather than leaving it stale: %+v", res)
+	}
+	if !strings.Contains(res.Stderr, "Permission denied") {
+		t.Fatalf("the refusal must be a kernel denial, got exit=%d stderr=%q", res.ExitCode, res.Stderr)
+	}
+	if !strings.Contains(res.Stderr, "[yaah]") || !strings.Contains(res.Stderr, "orchestrator commits") {
+		t.Fatalf("the refusal must be explained to the caller, got:\n%s", res.Stderr)
+	}
+	// The command never got as far as staging anything.
+	if staged, _ := exec("git", "diff", "--cached", "--name-only"); strings.TrimSpace(staged.Stdout) != "" {
+		t.Fatalf("nothing may have been staged, got %q", staged.Stdout)
 	}
 
 	// 6. The boundary survived the whole run: an out-of-root write is still

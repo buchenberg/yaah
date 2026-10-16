@@ -39,7 +39,7 @@ func TestBuildSubAgentSysPrompt_InjectsRoleDirectivesAfterBase(t *testing.T) {
 		},
 	}
 	role := subagent.SubAgentRole("analyst")
-	got := buildSubAgentSysPrompt(opts, role, subagent.RoleProfileFor(role), false, "")
+	got := buildSubAgentSysPrompt(opts, role, subagent.RoleProfileFor(role), false, "", nil)
 
 	idxEnv := strings.Index(got, "## Environment")
 	idxBase := strings.Index(got, "BASE_IDENTITY_MARKER")
@@ -61,6 +61,36 @@ func TestBuildSubAgentSysPrompt_InjectsRoleDirectivesAfterBase(t *testing.T) {
 	}
 }
 
+// A confined dispatch is told the boundary before it meets it (Plan 7 Phase 3):
+// the writable root and the git-write rule. Without it a sub-agent asked to
+// "commit the fix" burns turns on a write the kernel will always refuse.
+func TestBuildSubAgentSysPrompt_ConfinementGuidance(t *testing.T) {
+	opts := taskRunnerOpts{}
+	profile := subagent.RoleProfileFor("developer")
+	const worktree = "/work/retained-wt"
+
+	plain := buildSubAgentSysPrompt(opts, "developer", profile, false, worktree, nil)
+	if strings.Contains(plain, "sandboxed") {
+		t.Errorf("an unconfined dispatch must not claim to be sandboxed:\n%s", plain)
+	}
+
+	// Requested but not established (paddock with no usable backend refuses at
+	// Exec, so there is no run to advise) — no guidance.
+	unestablished := buildSubAgentSysPrompt(opts, "developer", profile, false, worktree,
+		&subAgentConfinement{Requested: "paddock", Resolved: "paddock"})
+	if strings.Contains(unestablished, "sandboxed") {
+		t.Errorf("an unenforced placement must not claim to be sandboxed:\n%s", unestablished)
+	}
+
+	confined := buildSubAgentSysPrompt(opts, "developer", profile, false, worktree,
+		&subAgentConfinement{Requested: "auto", Resolved: "paddock", Enforced: true})
+	for _, want := range []string{"sandboxed", worktree, "git write commands", "orchestrator commits"} {
+		if !strings.Contains(confined, want) {
+			t.Errorf("the confined prompt must mention %q:\n%s", want, confined)
+		}
+	}
+}
+
 func TestBuildSubAgentSysPrompt_NoDirectivesNoBlock(t *testing.T) {
 	initTestRoles(t)
 	opts := taskRunnerOpts{
@@ -72,7 +102,7 @@ func TestBuildSubAgentSysPrompt_NoDirectivesNoBlock(t *testing.T) {
 		},
 	}
 	role := subagent.SubAgentRole("reviewer")
-	got := buildSubAgentSysPrompt(opts, role, subagent.RoleProfileFor(role), false, "")
+	got := buildSubAgentSysPrompt(opts, role, subagent.RoleProfileFor(role), false, "", nil)
 	if strings.Contains(got, "## Session directives") {
 		t.Errorf("reviewer must not receive a directives block:\n%s", got)
 	}
@@ -93,7 +123,7 @@ func TestBuildSubAgentSysPrompt_ToolGating(t *testing.T) {
 	t.Run("zero-tool role", func(t *testing.T) {
 		opts := taskRunnerOpts{systemPrompt: base}
 		profile := subagent.RoleProfile{Tools: []string{}}
-		got := buildSubAgentSysPrompt(opts, "grump", profile, false, "")
+		got := buildSubAgentSysPrompt(opts, "grump", profile, false, "", nil)
 
 		for _, banned := range []string{
 			"Default shell",
@@ -125,7 +155,7 @@ func TestBuildSubAgentSysPrompt_ToolGating(t *testing.T) {
 	t.Run("shell role keeps shell line and batching rule", func(t *testing.T) {
 		opts := taskRunnerOpts{systemPrompt: base}
 		profile := subagent.RoleProfile{Tools: []string{"bash", "read"}}
-		got := buildSubAgentSysPrompt(opts, "developer", profile, false, "")
+		got := buildSubAgentSysPrompt(opts, "developer", profile, false, "", nil)
 
 		for _, want := range []string{
 			"Default shell: ",
@@ -145,7 +175,7 @@ func TestBuildSubAgentSysPrompt_ToolGating(t *testing.T) {
 	t.Run("non-shell tool role", func(t *testing.T) {
 		opts := taskRunnerOpts{systemPrompt: base}
 		profile := subagent.RoleProfile{Tools: []string{"read"}}
-		got := buildSubAgentSysPrompt(opts, "reviewer", profile, false, "")
+		got := buildSubAgentSysPrompt(opts, "reviewer", profile, false, "", nil)
 
 		if strings.Contains(got, "Default shell") || strings.Contains(got, "use it for all shell commands") {
 			t.Errorf("a role without a shell tool must not get the shell imperative:\n%.400s", got)

@@ -234,6 +234,39 @@ func TestGitConfigValue_QuotesAndEscapes(t *testing.T) {
 	}
 }
 
+// TestConfinementHint_ExplainsRefusedWrites: a kernel refusal reaches the model as
+// a bare "Permission denied" unless it is explained, and an unexplained refusal
+// is what makes a jail feel broken. The hint names the writable root, and names
+// the git rule when the refusal is git's own metadata.
+func TestConfinementHint_ExplainsRefusedWrites(t *testing.T) {
+	const root = "/work/wt"
+
+	gitCase := "fatal: Unable to create '/repo/.git/worktrees/wt/index.lock': Permission denied"
+	if got := confinementHint(gitCase, root); !strings.Contains(got, root) || !strings.Contains(got, "orchestrator commits") {
+		t.Errorf("a git-metadata refusal must name the root and the commit rule, got:\n%s", got)
+	}
+	// Windows-shaped paths count too.
+	if got := confinementHint(`fatal: Unable to create 'C:\repo\.git\worktrees\wt\index.lock': Permission denied`, root); !strings.Contains(got, "orchestrator commits") {
+		t.Errorf("a Windows-shaped git refusal must be recognized, got:\n%s", got)
+	}
+
+	plain := "sh: 1: cannot create /etc/motd: Permission denied"
+	if got := confinementHint(plain, root); !strings.Contains(got, root) || strings.Contains(got, "orchestrator commits") {
+		t.Errorf("a non-git refusal must name the root without the git rule, got:\n%s", got)
+	}
+
+	// No refusal, no hint — a false positive would caption an unrelated failure.
+	for _, s := range []string{"", "compile error: undefined: foo", "ls: cannot access '/nope': No such file or directory"} {
+		if got := confinementHint(s, root); got != "" {
+			t.Errorf("confinementHint(%q) = %q, want no hint", s, got)
+		}
+	}
+	// No root to name (an advisory workspace runs no jail) — no hint.
+	if got := confinementHint(gitCase, ""); got != "" {
+		t.Errorf("a workspace with no root must produce no hint, got %q", got)
+	}
+}
+
 // TestScrubConfinementScratch_Removes: the scrub removes the whole scratch tree.
 func TestScrubConfinementScratch_Removes(t *testing.T) {
 	root := t.TempDir()
