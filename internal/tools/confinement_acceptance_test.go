@@ -33,6 +33,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,7 +59,12 @@ func TestConfinedBuild_Acceptance(t *testing.T) {
 
 	// A global git identity, exactly as a normal user configures one. HOME is
 	// moved by the redirect, so a repo with no local identity can only commit if
-	// the redirect carries this file.
+	// the redirect points git at this file. (Clear any inherited
+	// GIT_CONFIG_GLOBAL first, so the resolution under test is the HOME one.)
+	if prev, ok := os.LookupEnv("GIT_CONFIG_GLOBAL"); ok {
+		_ = os.Unsetenv("GIT_CONFIG_GLOBAL")
+		t.Cleanup(func() { _ = os.Setenv("GIT_CONFIG_GLOBAL", prev) })
+	}
 	fakeHome := t.TempDir()
 	if err := os.WriteFile(filepath.Join(fakeHome, ".gitconfig"),
 		[]byte("[user]\n\tname = Acceptance\n\temail = acceptance@example.com\n"), 0o600); err != nil {
@@ -116,19 +122,30 @@ func TestConfinedBuild_Acceptance(t *testing.T) {
 		t.Fatal("the scratch build cache is empty — the build did not use the redirect")
 	}
 
-	// 3. A commit finds the identity the redirect carried. Without the carry git
+	// 3. A commit finds the identity the redirect pointed git at. Without it git
 	// reads an empty scratch HOME and refuses ("Author identity unknown").
 	run("git init in the worktree", "git", "init", "-q", ".")
 	run("stage", "git", "add", "-A")
-	run("a confined git commit must find the carried global identity", "git", "commit", "-q", "-m", "confined commit")
+	run("a confined git commit must find the global identity the redirect points at", "git", "commit", "-q", "-m", "confined commit")
 
-	// 4. The boundary survived both: an out-of-root write is still refused.
+	// 4. The boundary survived both: an out-of-root write is still refused — by
+	// the kernel, not by a launch failure. (A jail that never established would
+	// also "not write" the file, so assert the command RAN and was denied,
+	// otherwise this leg passes vacuously. A launch failure is ExitCode -1.)
 	outside := filepath.Join(t.TempDir(), "escaped.txt")
 	shell, flag := ws.Shell()
-	if r, _ := ws.Exec(context.Background(), ExecRequest{
+	res, err := ws.Exec(ctx, ExecRequest{
 		Command: shell, Args: []string{flag, "echo no > " + outside},
-	}); r.ExitCode == 0 {
+		Cwd: root, SeparateStreams: true,
+	})
+	if res.ExitCode == -1 {
+		t.Fatalf("the jail must establish, so the refusal is a denial and not a launch failure: %v", err)
+	}
+	if res.ExitCode == 0 {
 		t.Fatalf("the boundary must hold after a real build; %s was written", outside)
+	}
+	if !strings.Contains(res.Stderr, "Permission denied") {
+		t.Fatalf("the refusal must be a kernel denial, got exit=%d stderr=%q", res.ExitCode, res.Stderr)
 	}
 	if _, statErr := os.Stat(outside); !os.IsNotExist(statErr) {
 		t.Fatalf("the out-of-root file must not exist (stat err = %v)", statErr)

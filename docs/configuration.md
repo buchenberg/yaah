@@ -362,43 +362,8 @@ agents:
 | `supervised_worktree_bootstrap` | `""` | Shell command run inside each fresh worktree — see below. |
 | `turn_checkpoint_max` | `0` | Live turn checkpoints per sub-agent run; the oldest are pruned. `0` = unlimited. |
 | `max_turn_restores` | `3` | Turn-level restores per run, so a deterministically failing turn cannot rewind forever. |
-| `mode` | `retained` | Dispatch lane. `retained` runs each sub-agent in an isolated worktree and hands back a sealed proposal the orchestrator settles with the `proposal` tool — nothing touches the working tree until then. `shared` is the older direct-to-host lane (the escape hatch and the benchmark baseline). |
-| `containment` | `auto` | Syscall-jail placement for a workdir dispatch (Plan 7). `auto` jails where the host can (Landlock on Linux) and degrades visibly to advisory elsewhere; `off` (or `none`/`advisory`) always runs on the host; `paddock` (alias `jail`) fails closed when the host cannot jail. See the next section. |
 
-## Sub-agent dispatch lane and confinement
 
-The `mode` and `containment` keys above decide *where a sub-agent runs* and
-*what it may touch*. They apply to dispatched sub-agents only: the orchestrator
-runs on the host, unconfined, exactly as before — which is the whole point of
-the split, since the orchestrator is the part that must reach everything.
-
-**Retention (`mode: retained`, the default).** Each dispatch runs in its own
-`git worktree` and returns a proposal; the host tree is untouched until the
-orchestrator applies it with the `proposal` tool. Read-only roles return an
-empty changeset — retained always, so "did anything change?" is never the
-question.
-
-**Confinement (`containment: auto`, the default).** On a Landlock host the
-dispatch's shell runs inside a syscall jail whose **sole writable root is that
-worktree**. Housekeeping writes are *redirected into* it rather than the jail
-being widened: `HOME`, `TMPDIR`, `XDG_CACHE_HOME`, `GOCACHE`, and
-`npm_config_cache` point at a `.yaah-scratch/` inside the worktree, which is
-scrubbed before the proposal is sealed so it never reaches the delta. Two reads
-the redirect would otherwise hide are handled explicitly:
-
-- `GOMODCACHE` is pinned against the *pre-redirect* environment, so a confined
-  Go build reads the shared module cache instead of silently re-downloading
-  into the scratch.
-- The user's global **git identity** is carried into the scratch, because a
-  commit needs it and the moved `HOME` would otherwise produce "Author identity
-  unknown". Credential stores (`~/.ssh`, `~/.git-credentials`, `~/.npmrc`,
-  `~/.netrc`) are deliberately *not* carried: copying secrets into a
-  proposal-bearing worktree is worse than requiring the worktree bootstrap —
-  which runs unconfined before the body — to prepare authenticated inputs.
-
-Each dispatch records the resolved placement on the sub-agent's trace
-(`yaah.subagent.confinement.v1`: requested vs resolved, backend, enforcement
-tier, writable root), so an advisory run is never misread as jailed.
 `yaah doctor` reports the effective placement and whether the host can jail
 (`auto` on a host with no usable backend is a WARN, `paddock` is a FAIL).
 
@@ -435,6 +400,57 @@ Two consequences worth knowing:
 
 The former `supervised_worktree` opt-in is gone — isolation is always on. A
 config that still sets the key gets one startup warning; the key does nothing.
+
+## Sub-agent dispatch lane and confinement
+
+Two `agents.subagent` keys (not `agents.default` — see the field table above)
+decide *where a sub-agent runs* and *what it may touch*. They apply to
+dispatched sub-agents only: the orchestrator runs on the host, unconfined,
+exactly as before — which is the whole point of the split, since the
+orchestrator is the part that must reach everything.
+
+**Retention — `mode: retained` (the default).** Each dispatch runs in its own
+`git worktree` and returns a proposal; the host tree is untouched until the
+orchestrator applies it with the `proposal` tool. Read-only roles return an
+empty changeset — retained always, so "did anything change?" is never the
+question. `mode: shared` is the older direct-to-host lane: the escape hatch, and
+the benchmark baseline.
+
+**Confinement — `containment: auto` (the default).** Where the host can jail
+(Landlock on Linux) the dispatch's shell runs inside a syscall jail whose **sole
+writable root is that worktree**. Where it cannot, `auto` degrades visibly to
+advisory — the host path, exactly as before — and the trace says so. The other
+values are opt-outs rather than defaults: `off` (or `none`/`advisory`) always
+runs on the host, and `paddock` (alias `jail`) fails closed when the host cannot
+jail.
+
+Housekeeping writes are **redirected into** the worktree rather than the jail
+being widened: `HOME`, `TMPDIR`, `XDG_CACHE_HOME`, `GOCACHE`, and
+`npm_config_cache` point at a `.yaah-scratch/` inside it. The scratch is scrubbed
+before the proposal is sealed, so it never reaches the delta. Two *reads* the
+redirect would otherwise hide are handled explicitly:
+
+- `GOMODCACHE` is pinned against the *pre-redirect* environment, so a confined
+  Go build reads the shared module cache instead of silently re-downloading into
+  the scratch.
+- `GIT_CONFIG_GLOBAL` is pointed at the user's **real** global git config,
+  resolved before the redirect. A commit needs the identity in it, and the moved
+  `HOME` would otherwise produce "Author identity unknown"; pointing at the real
+  file (rather than copying it) keeps includes resolving correctly and keeps the
+  config — which can carry `http.<url>.extraheader` tokens — out of the
+  worktree. A `git config --global` write inside the jail is then an out-of-root
+  write and is refused, which is the right answer.
+
+Credential *stores* (`~/.ssh`, `~/.git-credentials`, `~/.npmrc`, `~/.netrc`) are
+deliberately not made reachable: the worktree bootstrap — which runs unconfined
+before the body — is where authenticated inputs get prepared.
+
+Each dispatch records the resolved placement on the sub-agent's trace
+(`yaah.subagent.confinement.v1`: requested vs resolved, backend, enforcement
+tier, `enforced`, writable root), so an advisory run is never misread as jailed
+— including the case where a backend is present but unusable. `yaah doctor`
+reports the effective placement and this host's capability: `auto` with no
+usable backend is a WARN, `paddock` is a FAIL.
 
 ## Observability reference
 

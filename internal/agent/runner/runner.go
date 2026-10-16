@@ -1286,6 +1286,7 @@ type subAgentConfinement struct {
 	Resolved  string // "paddock" (jailed) or "advisory" (host path)
 	Backend   string // backend name when jailed (e.g. "landlock")
 	Tier      string // enforcement tier, e.g. "native-syscall-deny"
+	Enforced  bool   // a usable backend will actually establish the jail
 	Writable  string // the bound world — the sole writable root
 }
 
@@ -1295,6 +1296,7 @@ func (c *subAgentConfinement) payload() map[string]any {
 		"resolved":      c.Resolved,
 		"backend":       c.Backend,
 		"tier":          c.Tier,
+		"enforced":      c.Enforced,
 		"writable_root": c.Writable,
 	}
 }
@@ -1314,11 +1316,20 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 		return nil, nil
 	}
 
+	// Availability, not mere presence: a backend that is present but unusable
+	// (an LSM that is compiled in but disabled, say) means Exec will degrade.
 	backend := landlock.Detect()
-	if backend == nil && placement != confinement.PlacementPaddock {
-		// "auto" degrades visibly to advisory: the host path *is* advisory. No
-		// writable root is claimed — nothing bounded it.
-		return nil, &subAgentConfinement{Requested: requested, Resolved: "advisory"}
+	available := false
+	if backend != nil {
+		if ok, _ := backend.Available(); ok {
+			available = true
+		}
+	}
+
+	rec, confine := confinementRecord(requested, placement, available, backend, workdir)
+	if !confine {
+		// "auto" degrades visibly to advisory: the host path *is* advisory.
+		return nil, rec
 	}
 
 	// A write-jail by default (network allow_all); egress confinement is opt-in.
@@ -1333,13 +1344,30 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 	} else {
 		slog.Debug("confinement scratch unavailable", "workdir", workdir, "err", err)
 	}
+	return ws, rec
+}
 
+// confinementRecord is the pure decision behind what a dispatch records, split
+// out (like doctor's containmentCheck) so the two cases a live backend cannot
+// produce are testable: a backend that is present but unusable with "auto"
+// (which must record advisory, NOT the paddock it will not enter), and the same
+// with "paddock" (which must record paddock with Enforced false — the dispatch
+// refuses rather than running unconfined, so "advisory" would be a lie).
+//
+// confine reports whether a confined workspace should be built: true whenever
+// the placement is paddock (so Exec can fail closed) or a usable backend exists.
+func confinementRecord(requested string, placement confinement.Placement, available bool, backend containment.Backend, workdir string) (*subAgentConfinement, bool) {
+	if !available && placement != confinement.PlacementPaddock {
+		// No writable root is claimed — nothing bounded it.
+		return &subAgentConfinement{Requested: requested, Resolved: "advisory"}, false
+	}
 	rec := &subAgentConfinement{Requested: requested, Resolved: "paddock", Writable: workdir}
-	if backend != nil {
+	if available && backend != nil {
+		rec.Enforced = true
 		rec.Backend = backend.Name()
 		rec.Tier = backend.EnforcementTier()
 	}
-	return ws, rec
+	return rec, true
 }
 
 // containmentPlacement maps agents.subagent.containment to a placement, or ""

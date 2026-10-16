@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -63,69 +62,84 @@ func TestDefaultGoModCache(t *testing.T) {
 	}
 }
 
-// TestConfinementScratchEnv_CarriesGitIdentity: the redirect moves HOME, so git
-// would look for the user's identity in an empty scratch and refuse to commit
-// ("Author identity unknown"). The redirect carries the global config in at
-// git's own precedence — both candidate files — and writes it 0o600, since a
-// git config can name credential helpers and URL rewrites.
-func TestConfinementScratchEnv_CarriesGitIdentity(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	legacy := []byte("[user]\n\tname = Legacy\n\temail = legacy@example.com\n")
-	xdg := []byte("[user]\n\tname = XDG\n")
-	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), legacy, 0o644); err != nil {
-		t.Fatalf("seed .gitconfig: %v", err)
+// TestConfinementScratchEnv_PointsGitAtGlobalConfig: the redirect moves HOME, so
+// git would look for the user's identity in an empty scratch and refuse to commit
+// ("Author identity unknown"). The redirect points git at the REAL global config
+// instead — no copy, so a global config carrying `http.<url>.extraheader` tokens
+// never lands in the worktree, and `include` paths keep resolving against the
+// file's real location.
+func TestConfinementScratchEnv_PointsGitAtGlobalConfig(t *testing.T) {
+	// No inherited pointer: the resolution under test is the HOME one.
+	if prev, ok := os.LookupEnv("GIT_CONFIG_GLOBAL"); ok {
+		_ = os.Unsetenv("GIT_CONFIG_GLOBAL")
+		t.Cleanup(func() { _ = os.Setenv("GIT_CONFIG_GLOBAL", prev) })
 	}
-	if err := os.MkdirAll(filepath.Join(home, ".config", "git"), 0o755); err != nil {
-		t.Fatalf("seed config dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".config", "git", "config"), xdg, 0o644); err != nil {
-		t.Fatalf("seed xdg config: %v", err)
-	}
-
-	root := t.TempDir()
-	if _, err := ConfinementScratchEnv(root); err != nil {
-		t.Fatalf("scratch env: %v", err)
-	}
-
-	scratchHome := filepath.Join(root, confinementScratchName, "home")
-	for _, c := range []struct {
-		rel  string
-		want []byte
-	}{
-		{".gitconfig", legacy},
-		{filepath.Join(".config", "git", "config"), xdg},
-	} {
-		dst := filepath.Join(scratchHome, c.rel)
-		got, err := os.ReadFile(dst)
+	gitGlobal := func(t *testing.T, root string) (string, bool) {
+		t.Helper()
+		env, err := ConfinementScratchEnv(root)
 		if err != nil {
-			t.Errorf("%s not carried into the scratch: %v", c.rel, err)
-			continue
+			t.Fatalf("scratch env: %v", err)
 		}
-		if !bytes.Equal(got, c.want) {
-			t.Errorf("%s content = %q, want %q", c.rel, got, c.want)
-		}
-		if runtime.GOOS != "windows" {
-			fi, statErr := os.Stat(dst)
-			if statErr != nil {
-				t.Errorf("%s: %v", c.rel, statErr)
-			} else if fi.Mode().Perm() != 0o600 {
-				t.Errorf("%s perm = %o, want 600", c.rel, fi.Mode().Perm())
+		for _, kv := range env {
+			if k, v, _ := strings.Cut(kv, "="); k == "GIT_CONFIG_GLOBAL" {
+				return v, true
 			}
 		}
+		return "", false
 	}
 
-	// An absent global config is the normal case, not an error: the scratch is
-	// still built, just without one.
-	empty := t.TempDir()
-	t.Setenv("HOME", empty)
-	root2 := t.TempDir()
-	if _, err := ConfinementScratchEnv(root2); err != nil {
-		t.Fatalf("scratch env with no global config: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(root2, confinementScratchName, "home", ".gitconfig")); !os.IsNotExist(err) {
-		t.Errorf("no source config should mean no carried config (stat err=%v)", err)
-	}
+	t.Run("legacy .gitconfig wins when both exist", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("XDG_CONFIG_HOME", "")
+		legacy := filepath.Join(home, ".gitconfig")
+		if err := os.WriteFile(legacy, []byte("[user]\n\tname = Legacy\n"), 0o644); err != nil {
+			t.Fatalf("seed .gitconfig: %v", err)
+		}
+		if err := os.MkdirAll(filepath.Join(home, ".config", "git"), 0o755); err != nil {
+			t.Fatalf("seed xdg dir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(home, ".config", "git", "config"), []byte("[user]\n\tname = XDG\n"), 0o644); err != nil {
+			t.Fatalf("seed xdg config: %v", err)
+		}
+		root := t.TempDir()
+		got, ok := gitGlobal(t, root)
+		if !ok {
+			t.Fatal("GIT_CONFIG_GLOBAL must be set when a global config exists")
+		}
+		if got != legacy {
+			t.Errorf("GIT_CONFIG_GLOBAL = %q, want the legacy config git applies last (%q)", got, legacy)
+		}
+		// Nothing is copied into the worktree: the config can carry credentials.
+		if _, err := os.Stat(filepath.Join(root, confinementScratchName, "home", ".gitconfig")); !os.IsNotExist(err) {
+			t.Errorf("the global config must NOT be copied into the worktree (stat err=%v)", err)
+		}
+	})
+
+	t.Run("XDG_CONFIG_HOME is honored", func(t *testing.T) {
+		home := t.TempDir()
+		xdg := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("XDG_CONFIG_HOME", xdg)
+		if err := os.MkdirAll(filepath.Join(xdg, "git"), 0o755); err != nil {
+			t.Fatalf("seed xdg dir: %v", err)
+		}
+		want := filepath.Join(xdg, "git", "config")
+		if err := os.WriteFile(want, []byte("[user]\n\tname = XDG\n"), 0o644); err != nil {
+			t.Fatalf("seed xdg config: %v", err)
+		}
+		if got, ok := gitGlobal(t, t.TempDir()); !ok || got != want {
+			t.Errorf("GIT_CONFIG_GLOBAL = %q (set=%v), want %q", got, ok, want)
+		}
+	})
+
+	t.Run("no global config adds no pointer", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("XDG_CONFIG_HOME", "")
+		if got, ok := gitGlobal(t, t.TempDir()); ok {
+			t.Errorf("no source config should mean no pointer, got %q", got)
+		}
+	})
 }
 
 // TestScrubConfinementScratch_Removes: the scrub removes the whole scratch tree.

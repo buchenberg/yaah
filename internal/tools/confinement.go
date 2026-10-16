@@ -62,57 +62,48 @@ func ConfinementScratchEnv(workdir string) ([]string, error) {
 		env = append(env, "GOMODCACHE="+defaultGoModCache())
 	}
 
-	// Carry the git identity (see carryGitConfig): the redirect moves HOME, and
-	// with it the global config git finds the user's name and email in — so
-	// without this a confined `git commit` fails with "Author identity unknown".
-	carryGitConfig(scratch)
+	// Point git at the user's REAL global config (see realGitGlobalConfig): the
+	// redirect moves HOME, and with it the global config git finds the user's
+	// identity in — so without this a confined `git commit` fails with "Author
+	// identity unknown".
+	if _, set := os.LookupEnv("GIT_CONFIG_GLOBAL"); !set {
+		if p := realGitGlobalConfig(); p != "" {
+			env = append(env, "GIT_CONFIG_GLOBAL="+p)
+		}
+	}
 	return env, nil
 }
 
-// gitConfigCarry is the global git config git would read from a normal HOME, at
-// the relative paths it looks in: $XDG_CONFIG_HOME/git/config (worked out below
-// against the pre-redirect HOME) then ~/.gitconfig. Both are carried, in order,
-// so git's own precedence is preserved rather than flattened.
-var gitConfigCarry = [][2]string{
-	{filepath.Join(".config", "git", "config"), filepath.Join("home", ".config", "git", "config")},
-	{".gitconfig", filepath.Join("home", ".gitconfig")},
-}
-
-// carryGitConfig copies the user's global git config into the scratch HOME so a
-// confined git keeps the identity it has on the host. The redirect moves HOME
-// for writes, but the global identity is a READ the body still needs — a commit
-// without it fails outright ("Author identity unknown"), which is the one
-// silent-but-total regression the redirect could cause.
+// realGitGlobalConfig resolves the file git would read as the user's global
+// config, against the PRE-redirect environment: $GIT_CONFIG_GLOBAL if set, else
+// ~/.gitconfig, else $XDG_CONFIG_HOME/git/config (or ~/.config/git/config).
+// Empty when the user has none — the normal case.
 //
-// It copies rather than pointing git at the real file (GIT_CONFIG_GLOBAL) so
-// git's own precedence — both candidate files — is preserved, and a
-// global-config WRITE lands in the scratch (discarded with it) instead of being
-// refused as an out-of-root write. It deliberately does NOT carry credential
-// stores (~/.git-credentials, ~/.npmrc, ~/.netrc): copying secrets into a
-// proposal-bearing worktree is a worse trade than requiring the user to
-// configure the worktree, and authentication is an authority concern, not a
-// redirect one.
-//
-// Best-effort: an absent source is the normal case and a copy failure degrades
-// to "no global config", never a failed dispatch. The scratch is scrubbed
-// before the workspace is sealed, so the copy never reaches a proposal's delta.
-func carryGitConfig(scratch string) {
+// The legacy ~/.gitconfig is preferred when both exist: git reads the XDG file
+// first and the legacy one after, so the legacy values are the ones that win —
+// pointing at it preserves the effective identity. (The path is resolved here
+// because both candidates are HOME-relative, and HOME is about to move.)
+func realGitGlobalConfig() string {
+	if p := os.Getenv("GIT_CONFIG_GLOBAL"); p != "" {
+		return p
+	}
 	home := os.Getenv("HOME")
 	if home == "" {
-		return
+		return ""
 	}
-	for _, c := range gitConfigCarry {
-		data, err := os.ReadFile(filepath.Join(home, c[0]))
-		if err != nil {
-			continue
-		}
-		dst := filepath.Join(scratch, c[1])
-		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-			continue
-		}
-		// 0o600: a git config can name credential helpers and URL rewrites.
-		_ = os.WriteFile(dst, data, 0o600)
+	dir := os.Getenv("XDG_CONFIG_HOME")
+	if dir == "" {
+		dir = filepath.Join(home, ".config")
 	}
+	for _, p := range []string{
+		filepath.Join(home, ".gitconfig"),
+		filepath.Join(dir, "git", "config"),
+	} {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p
+		}
+	}
+	return ""
 }
 
 // defaultGoModCache resolves Go's default module cache against the CURRENT

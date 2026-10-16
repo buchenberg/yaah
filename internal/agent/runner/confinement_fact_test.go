@@ -23,6 +23,7 @@ func TestRecordConfinementFact(t *testing.T) {
 		Resolved:  "paddock",
 		Backend:   "landlock",
 		Tier:      "native-syscall-deny",
+		Enforced:  true,
 		Writable:  "/tmp/wt",
 	})
 
@@ -45,6 +46,9 @@ func TestRecordConfinementFact(t *testing.T) {
 		}
 		if rec.Body.Payload["backend"] != "landlock" {
 			t.Errorf("backend = %v, want landlock", rec.Body.Payload["backend"])
+		}
+		if rec.Body.Payload["enforced"] != true {
+			t.Errorf("enforced = %v, want true", rec.Body.Payload["enforced"])
 		}
 	}
 	if !found {

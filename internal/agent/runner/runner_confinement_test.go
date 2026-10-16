@@ -3,11 +3,74 @@ package runner
 import (
 	"testing"
 
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/landlock"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/tools"
 )
+
+// stubBackend stands in for a syscall-jail backend so both sides of the
+// availability decision are testable; `nil` stands in for "none on this host".
+// A live backend cannot produce "present but unusable".
+type stubBackend struct{ usable bool }
+
+func (stubBackend) Name() string                             { return "stub" }
+func (stubBackend) EnforcementTier() string                  { return "stub-tier" }
+func (b stubBackend) Available() (bool, string)              { return b.usable, "" }
+func (stubBackend) SupportsNetwork(containment.NetMode) bool { return true }
+func (stubBackend) ProfileFor([]string, containment.NetworkPolicy) string {
+	return ""
+}
+func (stubBackend) Probe(string, string, []string) error { return nil }
+func (stubBackend) Launch(string, containment.LaunchRequest) (containment.LaunchResult, error) {
+	return containment.LaunchResult{}, nil
+}
+
+// The recorded placement must describe what the dispatch will actually do — the
+// bug Kilo caught was recording "paddock" for an unusable backend, which Exec
+// would silently run advisory (or refuse), so an advisory run read as jailed.
+func TestConfinementRecord_Placement(t *testing.T) {
+	cases := []struct {
+		name         string
+		placement    confinement.Placement
+		available    bool
+		backend      containment.Backend
+		wantResolved string
+		wantEnforced bool
+		wantConfine  bool // build a workspace (so Exec can jail or fail closed)
+	}{
+		{"auto, no backend", confinement.PlacementAuto, false, nil, "advisory", false, false},
+		{"auto, unusable backend", confinement.PlacementAuto, false, stubBackend{}, "advisory", false, false},
+		{"paddock, no backend", confinement.PlacementPaddock, false, nil, "paddock", false, true},
+		{"paddock, unusable backend", confinement.PlacementPaddock, false, stubBackend{}, "paddock", false, true},
+		{"auto, usable backend", confinement.PlacementAuto, true, stubBackend{usable: true}, "paddock", true, true},
+		{"paddock, usable backend", confinement.PlacementPaddock, true, stubBackend{usable: true}, "paddock", true, true},
+	}
+	for _, c := range cases {
+		rec, confine := confinementRecord("auto", c.placement, c.available, c.backend, "/work")
+		if rec.Resolved != c.wantResolved {
+			t.Errorf("%s: resolved = %q, want %q", c.name, rec.Resolved, c.wantResolved)
+		}
+		if rec.Enforced != c.wantEnforced {
+			t.Errorf("%s: enforced = %v, want %v", c.name, rec.Enforced, c.wantEnforced)
+		}
+		if confine != c.wantConfine {
+			t.Errorf("%s: confine = %v, want %v", c.name, confine, c.wantConfine)
+		}
+		if !rec.Enforced && (rec.Backend != "" || rec.Tier != "") {
+			t.Errorf("%s: an unenforced record must not name a backend/tier, got %q/%q", c.name, rec.Backend, rec.Tier)
+		}
+		if c.wantEnforced && (rec.Backend == "" || rec.Tier == "") {
+			t.Errorf("%s: an enforced record must name the backend and tier", c.name)
+		}
+		// Only a jail claims a writable root; advisory claims nothing.
+		if (rec.Writable != "") != (rec.Resolved == "paddock") {
+			t.Errorf("%s: writable = %q with resolved %q", c.name, rec.Writable, rec.Resolved)
+		}
+	}
+}
 
 // Plan 7 Phase 3: the workdir lane attaches a confiner when configured, and
 // buildSubAgentRegistry hands back the resolution so the dispatch can record it —
