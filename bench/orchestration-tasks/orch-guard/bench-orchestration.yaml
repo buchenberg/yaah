@@ -10,3 +10,5 @@ agents:
           enabled: true
           threshold: 0.5
           window: 2
+        destructive_guard:
+          enabled: false

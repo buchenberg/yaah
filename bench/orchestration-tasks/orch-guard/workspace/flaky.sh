@@ -8,5 +8,5 @@ if [ "$n" -lt 5 ]; then
     echo "flaky failure $n" >&2
     exit 1
 fi
-echo ok >"${ORCH_APP_DIR:-/app}/ok.txt"
+echo "attempts=$n" >"${ORCH_APP_DIR:-/app}/ok.txt"
 echo "flaky success on attempt $n"

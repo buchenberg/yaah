@@ -34,5 +34,5 @@ def test_workspace_integrity():
 def test_orchestration_trace():
     """A sub-agent produced the blocker report."""
     oa.assert_delegate_count(minimum=1)
-    oa.assert_message_contains("blocker")
+    oa.assert_tool_message_contains("blocker")
     oa.assert_no_orphan_worktrees()

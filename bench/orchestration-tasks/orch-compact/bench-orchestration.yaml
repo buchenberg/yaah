@@ -1,5 +1,11 @@
 agents:
   default:
-    context_window: 8000
+    context_window: 6000
     compaction_threshold: 0.3
     raw_compaction_threshold: 0.3
+    # Keep tool-output pruning out of the way so the run reaches the
+    # compaction threshold instead of quietly pruning old reads.
+    prune_min_turns: 100
+    # Deterministic rollover: cross this message count even if the model
+    # batches reads and the token estimate stays low.
+    compact_max_messages: 20

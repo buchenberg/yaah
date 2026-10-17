@@ -208,3 +208,34 @@ All eight tasks have now passed at least once, but not in a single invocation:
 `orch-escalation` passed in the first full run; the four above passed after the
 fixes. A fresh full-suite run is the next record; single-trial variance means
 "all eight passed somewhere" is weaker than "8/8 in one run".
+
+## 2026-10-17 — PR #382 review pass
+
+Addressed reviewer findings; no new full-suite run.
+
+- **False-positive guard scenario.** The blocking shell guard (enabled by
+  tracing) denied every sub-agent bash call, and a prior "passing" guard run
+  fabricated `ok.txt`/`answer.txt` without executing `flaky.sh`. The guard is
+  now disabled for `orch-guard` and `orch-quality-gate`; `ok.txt` must contain
+  the script's own `attempts=5` marker, the warning must appear in a **tool
+  result**, and at least four failed bash captures are required. Live re-run:
+  resolved (`2026-10-17__05:36:45`).
+- **Quality gate.** Same guard disable; `[quality-gate:FAIL]` must appear in a
+  tool result. Live run executed `verify.py` and passed (`05-29-24`).
+- **Settle-apply fixture.** The seed already contained the `power(2, 5)`
+  assertion, making the delegate step a no-op. Removed it; the oracle and live
+  run both add it. Live run passed (`05-29-24`).
+- **Settle-discard id.** `answer.txt` must name `proposal:<digits>:<digits>`,
+  and the trace layer cross-checks it against the settled output ID.
+- **Missing evidence.** A missing trace/state DB now fails unless the run
+  declares itself an oracle (`/tmp/orch-oracle` + `ORCH_ORACLE=1`), so broken
+  capture cannot skip the orchestration layers.
+- **Tool-failure and window helpers.** Failures are scoped to `sub-` owners;
+  unfinished sessions use their last start fact for the window.
+- **Usage accounting.** Child usage folds before the tool result is
+  published, no longer overwrites the parent's last-prompt/cache counters, and
+  the per-dispatch usage fact records own (non-nested) usage.
+- **Compaction.** Parked in `suite.txt`: live runs never persisted a
+  `compacted_summary` even with a 6K window, 38+ messages, pruning off, and
+  `compact_max_messages: 20`. Tracked in `yaah-8uz`; the verifier keeps the
+  strict summary assertion so re-enabling it cannot regress silently.

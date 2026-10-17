@@ -1,5 +1,7 @@
 """Three-layer verifier for orch-guard."""
 
+import re
+
 from _lib import orch_assert as oa
 
 APP = oa.APP
@@ -8,10 +10,17 @@ ALLOWLIST = ["answer.txt", "ok.txt", "bench-orchestration.yaml"]
 
 def test_end_state():
     """The retry loop converged and the guard warning was reported."""
-    assert (APP / "ok.txt").is_file(), "flaky.sh never succeeded"
+    ok = APP / "ok.txt"
+    assert ok.is_file(), "flaky.sh never succeeded"
+    assert ok.read_text().strip() == "attempts=5", (
+        f"ok.txt = {ok.read_text().strip()!r}; expected the script's own "
+        "'attempts=5' marker, not a fabricated success file"
+    )
 
     answer = (APP / "answer.txt").read_text()
-    assert "attempts:" in answer, f"answer.txt does not report attempts:\n{answer}"
+    assert re.search(r"(?i)attempt[^\n]*\b5\b", answer), (
+        f"answer.txt does not report five attempts:\n{answer}"
+    )
     assert "WARNING: error rate" in answer, (
         f"answer.txt does not carry the supervisor warning:\n{answer}"
     )
@@ -26,6 +35,6 @@ def test_workspace_integrity():
 def test_orchestration_trace():
     """The sub-agent hit repeated failures and received the guard guidance."""
     oa.assert_delegate_count(minimum=1)
-    oa.assert_tool_failures(minimum=1)
-    oa.assert_message_contains("WARNING: error rate")
+    oa.assert_tool_failures(minimum=4)
+    oa.assert_tool_message_contains("WARNING: error rate")
     oa.assert_no_orphan_worktrees()

@@ -25,5 +25,5 @@ def test_orchestration_trace():
     """A developer ran, the tester gate failed it, and the orchestrator fixed it."""
     oa.assert_delegate_count(minimum=1)
     oa.assert_subagent_role("tester")
-    oa.assert_message_contains("[quality-gate:FAIL]")
+    oa.assert_tool_message_contains("[quality-gate:FAIL]")
     oa.assert_no_orphan_worktrees()

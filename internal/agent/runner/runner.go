@@ -590,7 +590,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		})
 
 		result, runErr := subLoop.Run(ctx, prompt)
-		recordSubAgentUsage(context.WithoutCancel(ctx), opts.traceStore, subTraceID, string(role), subModel, subLoop.State.TotalTokens)
+		recordSubAgentUsage(context.WithoutCancel(ctx), opts.traceStore, subTraceID, string(role), subModel, subLoop.OwnUsage())
 
 		// The run is over: cut the bridge now, not at closure return —
 		// trace enrichment and output budgeting below must not sit inside

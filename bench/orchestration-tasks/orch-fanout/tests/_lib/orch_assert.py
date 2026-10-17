@@ -45,6 +45,22 @@ _TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 # not properties of the agent's work and must not trip the integrity layer.
 _TEST_ARTIFACTS = {".tbench-testing", ".pytest_cache", "__pycache__"}
 
+# Oracle runs are deterministic shell scripts with no model trace. They touch
+# this marker (and set ORCH_ORACLE=1) before running the verifier. A real agent
+# run never sets it, so missing evidence fails instead of skipping.
+_ORACLE = os.environ.get("ORCH_ORACLE") == "1" or Path("/tmp/orch-oracle").exists()
+
+
+def _require_artifact(path: Path, kind: str) -> None:
+    if path.is_file():
+        return
+    if _ORACLE:
+        pytest.skip(f"{kind} not found: {path} (oracle run)")
+    pytest.fail(
+        f"missing {kind}: {path}; a real agent run must produce it "
+        "(set ORCH_ORACLE=1 only for a deterministic oracle run)"
+    )
+
 
 def seed() -> str:
     """Return the fixture seed commit captured when the image was built."""
@@ -75,8 +91,8 @@ def _git(*args: str, text: bool = True):
 
 
 def _connect(path: Path) -> sqlite3.Connection:
-    if not path.is_file():
-        pytest.skip(f"trace artifact not found: {path} (oracle run?)")
+    kind = "trace database" if path == TRACE_DB else "state database"
+    _require_artifact(path, kind)
     conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     return conn
 
@@ -97,7 +113,8 @@ def _sub_session_windows() -> list[dict]:
     try:
         starts = conn.execute(
             """
-            SELECT json_extract(r.body_json, '$.session_id'), MIN(ai.committed_at)
+            SELECT json_extract(r.body_json, '$.session_id'),
+                   MIN(ai.committed_at), MAX(ai.committed_at)
             FROM records r
             JOIN append_intents ai ON ai.append_intent_id = r.append_intent_id
             WHERE r.schema_ref = 'yaah.execution.started.v1'
@@ -119,11 +136,14 @@ def _sub_session_windows() -> list[dict]:
 
     end_by_session = {session: ts for session, ts in ends if session}
     windows = []
-    for session, started in starts:
+    for session, first_start, last_start in starts:
         if not session or not session.startswith("sub-"):
             continue
-        start = _parse_ts(started)
-        end = _parse_ts(end_by_session.get(session, started))
+        start = _parse_ts(first_start)
+        # Unfinished sessions fall back to their LAST start fact: using the
+        # first start collapses the window to zero width and under-counts
+        # overlaps.
+        end = _parse_ts(end_by_session.get(session, last_start))
         windows.append({"session": session, "start": start, "end": end})
     windows.sort(key=lambda w: (w["start"], w["end"]))
     return windows
@@ -195,6 +215,19 @@ def settled_actions() -> set[str]:
     finally:
         conn.close()
     return {action for (action,) in rows if action}
+
+
+def settled_output_ids() -> set[str]:
+    """Return the settled output IDs recorded in the trace store."""
+    conn = _connect(TRACE_DB)
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT json_extract(body_json, '$.output_id') FROM records "
+            "WHERE schema_ref = 'shepherd.run_output.settled.v1'"
+        ).fetchall()
+    finally:
+        conn.close()
+    return {output for (output,) in rows if output}
 
 
 def assert_settle_verbs(expected: set[str]) -> None:
@@ -285,9 +318,11 @@ def assert_tool_failures(minimum: int = 1) -> None:
         row = conn.execute(
             """
             SELECT COUNT(*)
-            FROM records
-            WHERE schema_ref LIKE '%.applied'
-              AND json_extract(body_json, '$.success') = 0
+            FROM records r
+            JOIN path_entries pe ON pe.record_id = r.record_id
+            WHERE r.schema_ref LIKE 'yaah.tool.%.applied'
+              AND json_extract(r.body_json, '$.success') = 0
+              AND pe.path_ref LIKE 'sub-%'
             """
         ).fetchone()
     finally:
@@ -349,6 +384,52 @@ def assert_message_contains(text: str) -> None:
     assert any(text in (m["content"] or "") for m in messages), (
         f"no persisted message contains {text!r}"
     )
+
+
+def assert_tool_message_contains(text: str) -> None:
+    """A tool result contains ``text``.
+
+    User and assistant text can echo the instruction, so orchestration
+    evidence must come from an actual tool result.
+    """
+    messages = session_messages()
+    assert any(
+        m["role"] == "tool" and text in (m["content"] or "") for m in messages
+    ), f"no tool result contains {text!r}"
+
+
+def assert_tool_calls(name: str, minimum: int = 1) -> None:
+    """At least ``minimum`` assistant tool calls used ``name``."""
+    import json
+
+    count = 0
+    for message in session_messages():
+        if message["role"] != "assistant" or not message["tool_calls"]:
+            continue
+        for call in json.loads(message["tool_calls"]):
+            if (call.get("function") or {}).get("name") == name:
+                count += 1
+    assert count >= minimum, (
+        f"expected at least {minimum} {name!r} tool calls, found {count}"
+    )
+
+
+def assert_session_summary() -> None:
+    """The latest session persisted a compaction summary.
+
+    The conversation length alone does not prove a rollover (a batched
+    read loop is short too). ``sessions.summary`` is written only when
+    compaction produces a summary.
+    """
+    conn = _connect(STATE_DB)
+    try:
+        row = conn.execute(
+            "SELECT compacted_summary FROM sessions ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None, "no session row in state.db"
+    assert (row[0] or "").strip(), "no compaction summary was persisted"
 
 
 def assert_tool_call_linkage() -> None:

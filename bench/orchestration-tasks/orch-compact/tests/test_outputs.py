@@ -29,4 +29,6 @@ def test_workspace_integrity():
 def test_orchestration_trace():
     """Compaction kept call/result pairs and rolled the context over."""
     oa.assert_tool_call_linkage()
+    oa.assert_tool_calls("read", minimum=1)
+    oa.assert_session_summary()
     oa.assert_message_count_below(45)

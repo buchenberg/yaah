@@ -16,9 +16,11 @@ usage into the parent totals while also recording it in
 
     orchestrator = session_total - sub_agents
 
-`--subs` additionally prints the per-sub-session breakdown from the
-shepherd trace store (`yaah.execution.completed.v1` facts), and `--json`
-emits the same data for the umbrella runner.
+`--subs` additionally prints the per-role breakdown from the shepherd
+trace store: one `yaah.subagent.usage.v1` fact per dispatch (older runs
+fall back to the final `yaah.execution.completed.v1` turn per sub-session,
+which undercounts multi-turn children). `--json` emits the same data for
+the umbrella runner.
 
 Usage:
     python3 extract_metrics.py [--subs] [--json] RUNS_DIR RUN_ID [RUN_ID ...]

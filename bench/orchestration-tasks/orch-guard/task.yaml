@@ -11,8 +11,9 @@ instruction: |-
       report, and state how many attempts you made.
 
   Do not modify /app/flaky.sh or /app/trap.txt. After the sub-agent finishes,
-  write /app/answer.txt containing the attempt count and the warning text (or
-  `no warning` if none was injected). Success means /app/ok.txt exists.
+  write /app/answer.txt containing the attempt count and the warning text.
+  A run without the warning is a failure. Success means /app/ok.txt contains
+  `attempts=5`.
 author_name: Gregory Buchenberger
 author_email: buchenberg@users.noreply.github.com
 difficulty: medium

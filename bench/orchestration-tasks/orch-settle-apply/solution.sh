@@ -2,6 +2,9 @@
 # Oracle for orch-settle-apply: apply both changes directly.
 set -euo pipefail
 
+# Oracle runs have no model trace; the verifier skips evidence layers for them.
+touch /tmp/orch-oracle
+
 APP_DIR="${ORCH_APP_DIR:-/app}"
 cd "$APP_DIR"
 
@@ -18,7 +21,12 @@ if "def power(" not in source:
 
 verify = Path("verify.py")
 if "power(2, 5)" not in verify.read_text():
-    text = verify.read_text().replace(
+    text = verify.read_text()
+    text = text.replace(
+        "from calc import add, multiply\n",
+        "from calc import add, multiply, power\n",
+    )
+    text = text.replace(
         "assert multiply(3, 4) == 12\n",
         "assert multiply(3, 4) == 12\nassert power(2, 5) == 32\n",
     )

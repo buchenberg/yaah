@@ -773,3 +773,28 @@ func TestLoop_foregroundSubAgentUsageFolded(t *testing.T) {
 		t.Errorf("loop totals did not absorb sub-agent usage: %+v", loop.State.TotalTokens)
 	}
 }
+
+// TestLoop_childUsageKeepsParentContextCounters: folding a child dispatch must
+// not replace the parent's last-response prompt/cache counters. Those drive
+// compaction; replacing them with a child's cumulative spend could compact a
+// small parent conversation. It also keeps nested usage separable for the
+// per-dispatch usage fact.
+func TestLoop_childUsageKeepsParentContextCounters(t *testing.T) {
+	loop := &Loop{}
+	loop.addUsage(types.Usage{PromptTokens: 100, CompletionTokens: 10, TotalTokens: 110, CachedPromptTokens: 10})
+	loop.addSubAgentUsage(types.Usage{PromptTokens: 500, CompletionTokens: 50, TotalTokens: 550, CachedPromptTokens: 50})
+
+	if loop.State.LastPromptTokens != 100 {
+		t.Errorf("LastPromptTokens = %d, want the parent's 100", loop.State.LastPromptTokens)
+	}
+	if loop.State.LastCachedPromptTokens != 10 {
+		t.Errorf("LastCachedPromptTokens = %d, want the parent's 10", loop.State.LastCachedPromptTokens)
+	}
+	if loop.State.TotalTokens.TotalTokens != 660 {
+		t.Errorf("TotalTokens = %d, want 660", loop.State.TotalTokens.TotalTokens)
+	}
+	own := loop.OwnUsage()
+	if own.TotalTokens != 110 || own.PromptTokens != 100 || own.CompletionTokens != 10 {
+		t.Errorf("OwnUsage = %+v, want the parent's 110/100/10", own)
+	}
+}

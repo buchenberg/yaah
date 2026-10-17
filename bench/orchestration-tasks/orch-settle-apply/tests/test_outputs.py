@@ -16,6 +16,11 @@ def test_end_state():
     calc = (APP / "calc.py").read_text()
     assert "def power(" in calc, "the delegate's power() change was not applied"
 
+    verify = (APP / "verify.py").read_text()
+    assert "power(2, 5)" in verify, (
+        "the delegate's verify.py assertion was not applied"
+    )
+
     result = subprocess.run(
         ["python3", "verify.py"], cwd=APP, capture_output=True, text=True
     )
