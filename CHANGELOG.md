@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.79.11](https://github.com/buchenberg/yaah/compare/v0.79.10...v0.79.11) (2026-10-17)
+
+
+### Tests
+
+* name the dispatch accounting test for what it now asserts ([9170a25](https://github.com/buchenberg/yaah/commit/9170a25c0125240d09524fea411ff96af1edd977))
+
 ## [0.79.10](https://github.com/buchenberg/yaah/compare/v0.79.9...v0.79.10) (2026-10-17)
 
 
