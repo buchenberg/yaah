@@ -244,8 +244,10 @@ func (r *goTestResult) parse(stdout string) {
 		case "output":
 			// go test -timeout prints this through an output event and exits
 			// non-zero without a per-test fail event; without it a timed-out
-			// suite is indistinguishable from a normal test failure.
-			if strings.Contains(ev.Output, "test timed out after") {
+			// suite is indistinguishable from a normal test failure. The panic
+			// prefix keeps a test that merely prints the phrase in its own
+			// output from being misclassified.
+			if strings.HasPrefix(strings.TrimSpace(ev.Output), "panic: test timed out after ") {
 				goTimedOut = true
 			}
 		}

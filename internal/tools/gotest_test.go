@@ -191,6 +191,18 @@ func TestGoTestParse_GoOwnTimeout(t *testing.T) {
 	if r.RawOutput == "" {
 		t.Error("raw_output must carry the timeout tail")
 	}
+
+	// A test that prints the phrase itself is not a Go timeout: only the
+	// testing package's panic line counts.
+	lookalike := strings.Join([]string{
+		`{"Action":"start","Package":"example.com/x"}`,
+		`{"Action":"pass","Package":"example.com/x","Test":"TestPhrase","Elapsed":0.01}`,
+		`{"Action":"output","Package":"example.com/x","Test":"TestPhrase","Output":"the string test timed out after appears here\n"}`,
+		`{"Action":"pass","Package":"example.com/x","Elapsed":0.01}`,
+	}, "\n")
+	if got := parseGoTestResult(t, lookalike, 0); got.TimedOut {
+		t.Errorf("a test printing the phrase must not set timed_out: %+v", got)
+	}
 }
 
 // TestGoTestParse_NoEventsIsNotGreen: exit 0 with nothing parsed means nothing
