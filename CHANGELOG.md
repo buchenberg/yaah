@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.80.0](https://github.com/buchenberg/yaah/compare/v0.79.13...v0.80.0) (2026-10-17)
+
+
+### Features
+
+* decode double-escaped edit arguments and explain snap-confine failures ([5f1a3d2](https://github.com/buchenberg/yaah/commit/5f1a3d236a705fb11971b5a5f34d0d06a6178753))
+* decode double-escaped edit arguments and explain snap-confine failures ([1938d2e](https://github.com/buchenberg/yaah/commit/1938d2e38195c991fc794c55e9dfd90914d6c1e0))
+* keep a timed-out sub-agent's partial output ([daa856d](https://github.com/buchenberg/yaah/commit/daa856ded8ae22e6e816bb556743efb38cc4f01a))
+* keep a timed-out sub-agent's partial output ([3095adc](https://github.com/buchenberg/yaah/commit/3095adc38f76926c2335403dd7c1a6c2e45146e2))
+* print memory entry IDs in the CLI ([281f372](https://github.com/buchenberg/yaah/commit/281f372452ea2cc3206a04ee71494957f9e3d7ad))
+* print memory entry IDs in the CLI ([633667c](https://github.com/buchenberg/yaah/commit/633667c8eb6b6b81842ec15a1433d8b63e7788a0))
+* report run status instead of a false green in go_test/staticcheck ([7075730](https://github.com/buchenberg/yaah/commit/7075730f30c1825ff1d3feb0e0fcc225151b86c0))
+* report run status instead of a false green in go_test/staticcheck ([1795cac](https://github.com/buchenberg/yaah/commit/1795cac7402f191787b70f57e6a03f2c4bdcc6b8))
+
 ## [0.79.13](https://github.com/buchenberg/yaah/compare/v0.79.12...v0.79.13) (2026-10-17)
 
 
