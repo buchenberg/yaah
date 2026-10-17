@@ -94,6 +94,30 @@ Step 1: Do the thing.
 	}
 }
 
+func TestParseFrontmatter_unquotesValues(t *testing.T) {
+	md := `---
+name: "my-plan"
+description: "A: test plan"
+status: 'approved'
+---
+
+body
+`
+	plan, err := ParseFrontmatter([]byte(md))
+	if err != nil {
+		t.Fatalf("ParseFrontmatter() error: %v", err)
+	}
+	if plan.Name != "my-plan" {
+		t.Errorf("Name = %q, want my-plan", plan.Name)
+	}
+	if plan.Description != "A: test plan" {
+		t.Errorf("Description = %q", plan.Description)
+	}
+	if plan.Status != "approved" {
+		t.Errorf("Status = %q, want approved", plan.Status)
+	}
+}
+
 func TestParseFrontmatter_defaultsStatusToDraft(t *testing.T) {
 	md := `---
 name: no-status
