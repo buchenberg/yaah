@@ -2,10 +2,10 @@
 
 **A vendor-free agent harness for orchestrating a team of AI coding agents.**
 
-yaah is a single Go binary. It runs an orchestrator agent that can work
+Yaah ships as a single Go binary. It runs an orchestrator agent that can work
 directly, or dispatch specialist sub-agents that research, implement, test,
 and review in parallel. Sub-agents can run in isolated git worktrees and
-return sealed proposals, so you review a diff before anything reaches your
+return sealed proposals, so you a diff is reviewed before anything reaches your
 working tree.
 
 It speaks any OpenAI-compatible API or the Anthropic Messages API, keeps

@@ -228,7 +228,7 @@ Addressed reviewer findings; no new full-suite run.
 - **Settle-discard id.** `answer.txt` must name `proposal:<digits>:<digits>`,
   and the trace layer cross-checks it against the settled output ID.
 - **Missing evidence.** A missing trace/state DB now fails unless the run
-  declares itself an oracle (`/tmp/orch-oracle` + `ORCH_ORACLE=1`), so broken
+  declares itself an oracle (`ORCH_ORACLE=1`), so broken
   capture cannot skip the orchestration layers.
 - **Tool-failure and window helpers.** Failures are scoped to `sub-` owners;
   unfinished sessions use their last start fact for the window.
@@ -242,3 +242,19 @@ Addressed reviewer findings; no new full-suite run.
   `compacted_summary` even with a 6K window, 38+ messages, pruning off, and
   `compact_max_messages: 20`. Tracked in `yaah-8uz`; the verifier keeps the
   strict summary assertion so re-enabling it cannot regress silently.
+
+### 2026-10-17 — second review follow-up
+
+- `flaky.sh` is idempotent after success: a redundant confirmation run no
+  longer advances the counter or rewrites `ok.txt`, so `attempts=5` is stable
+  across delegate re-dispatches.
+- Oracle detection is now the `ORCH_ORACLE=1` environment signal only. The
+  agent can write files anywhere, so a filesystem marker was forgeable; the
+  verifier's environment is not. Oracle validation runs
+  `ORCH_ORACLE=1 bash run-tests.sh` after `solution.sh` (documented in
+  `../terminal-bench/README.md`).
+- Failed-capture counting uses `COUNT(DISTINCT record_id)`, so a record linked
+  to multiple `path_entries` rows counts once.
+- Compaction helper docstring names `sessions.compacted_summary`.
+
+All eight oracles re-validated in-container with the env signal.

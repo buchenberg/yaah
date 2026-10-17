@@ -45,10 +45,11 @@ _TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 # not properties of the agent's work and must not trip the integrity layer.
 _TEST_ARTIFACTS = {".tbench-testing", ".pytest_cache", "__pycache__"}
 
-# Oracle runs are deterministic shell scripts with no model trace. They touch
-# this marker (and set ORCH_ORACLE=1) before running the verifier. A real agent
-# run never sets it, so missing evidence fails instead of skipping.
-_ORACLE = os.environ.get("ORCH_ORACLE") == "1" or Path("/tmp/orch-oracle").exists()
+# Oracle runs are deterministic shell scripts with no model trace. The test
+# wrapper sets ORCH_ORACLE=1; a real agent run cannot set the verifier's
+# environment, so missing evidence fails instead of skipping. Do not add a
+# filesystem marker: the agent runs as root and could forge it.
+_ORACLE = os.environ.get("ORCH_ORACLE") == "1"
 
 
 def _require_artifact(path: Path, kind: str) -> None:
@@ -317,7 +318,7 @@ def assert_tool_failures(minimum: int = 1) -> None:
     try:
         row = conn.execute(
             """
-            SELECT COUNT(*)
+            SELECT COUNT(DISTINCT r.record_id)
             FROM records r
             JOIN path_entries pe ON pe.record_id = r.record_id
             WHERE r.schema_ref LIKE 'yaah.tool.%.applied'
@@ -432,7 +433,7 @@ def assert_session_summary() -> None:
     """The latest session persisted a compaction summary.
 
     The conversation length alone does not prove a rollover (a batched
-    read loop is short too). ``sessions.summary`` is written only when
+    read loop is short too). ``sessions.compacted_summary`` is written only when
     compaction produces a summary.
     """
     conn = _connect(STATE_DB)

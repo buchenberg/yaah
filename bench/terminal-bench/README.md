@@ -105,6 +105,11 @@ SUITES=orch ./bench/run-all.sh     # orchestration only
 combined `summary-<timestamp>.txt`. It does not merge the scores: coding
 measures outcome accuracy, orchestration measures trace compliance.
 
+Oracle validation for an orchestration task: run `solution.sh`, then
+`ORCH_ORACLE=1 bash run-tests.sh`. The env flag is the only skip signal for
+missing trace/state evidence; a real agent run cannot set it, so broken
+capture fails instead of silently skipping the orchestration layers.
+
 ## Reading results
 
 - Verdicts: `runs/<run-id>/results.json` (`is_resolved` per task).
