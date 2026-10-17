@@ -34,13 +34,6 @@ type toolDispatch struct {
 	taskPrompt   string
 	isBackground bool
 
-	// isSubAgentWork marks a call that dispatches sub-agent work of its own, so
-	// it takes a sub-agent concurrency slot exactly as a spawn does. It is
-	// separate from isTask because the task branches (sub-agent span, start
-	// notifier, escalation parsing) only apply to spawn_subagent's own envelope —
-	// but a composite tool that runs sub-agents inside it must not escape the cap.
-	isSubAgentWork bool
-
 	subAgentID    string
 	subAgentModel string
 	subUsage      types.Usage
@@ -57,7 +50,6 @@ func (l *Loop) newDispatch(idx int, call types.ToolCall) *toolDispatch {
 	d.toolID = l.toolIDGen.Add(1)
 	d.abbreviated = abbreviateArgs(call.Function.Arguments, 80)
 	d.isTask = call.Function.Name == "spawn_subagent"
-	d.isSubAgentWork = d.isTask || call.Function.Name == "oversee"
 	if d.isTask {
 		d.taskRole, d.taskPrompt, d.isBackground = parseTaskArgs(call.Function.Arguments)
 		d.subAgentID = fmt.Sprintf("sa-%d", l.subAgentIDGen.Add(1))
@@ -223,7 +215,7 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 // call or ctx ends.
 func (d *toolDispatch) acquire(ctx context.Context) error {
 	l := d.loop
-	if d.isSubAgentWork && l.subAgentSem != nil {
+	if d.isTask && l.subAgentSem != nil {
 		select {
 		case l.subAgentSem <- struct{}{}:
 			d.releaseSubAgent = func() { <-l.subAgentSem }
@@ -403,7 +395,7 @@ func (l *Loop) runGateDispatch(ctx context.Context, validatorRole, gatePrompt st
 	// Non-blocking semaphore acquire: the parent sub-agent dispatch
 	// already holds a slot that accounts for this work, and a blocking
 	// acquire could deadlock when MaxSubAgentConcurrency == 1.
-	if gd.isSubAgentWork && l.subAgentSem != nil {
+	if gd.isTask && l.subAgentSem != nil {
 		select {
 		case l.subAgentSem <- struct{}{}:
 			gd.releaseSubAgent = func() { <-l.subAgentSem }
