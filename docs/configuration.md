@@ -1,11 +1,10 @@
 # Configuration
 
-Everything lives in `~/.yaah/config.yaml` (or `$YAAH_HOME/config.yaml`).
-Environment variables referenced as `${VAR_NAME}` are substituted at load
-time. Missing sections fall back to sensible defaults. On first run, a
-scaffold is written automatically.
-
-This file used to be smaller. I'm getting complicated. Sorry about that.
+yaah reads `~/.yaah/config.yaml` (or `$YAAH_HOME/config.yaml`). Missing
+sections fall back to built-in defaults; a scaffold is written on first run.
+`${VAR_NAME}` references are substituted in provider connection fields and
+workspace containerd fields when the value is resolved, not for arbitrary
+config strings.
 
 ## Full example
 
@@ -14,174 +13,190 @@ This file used to be smaller. I'm getting complicated. Sorry about that.
 providers:
   deepseek:
     name: DeepSeek
-    base_url: https://api.deepseek.com/v1
+    base_url: https://api.deepseek.com
     api_key: ${DEEPSEEK_API_KEY}
   anthropic:
     api: anthropic                     # native Anthropic Messages API
     name: Anthropic
     base_url: https://api.anthropic.com
     api_key: ${ANTHROPIC_API_KEY}
-    max_tokens: 8192                   # optional output cap (default: 4096 native / 8192 compatible)
+    max_tokens: 8192                   # optional output cap
+  zai:
+    api: anthropic                     # Anthropic-compatible endpoint
+    name: ZAI
+    base_url: https://api.z.ai/api/anthropic
+    api_key: ${ZAI_API_KEY}
+    max_tokens: 16384                  # room for reasoning models
   ollama:
     name: Ollama
     base_url: http://localhost:11434/v1
     api_key: ollama
-    timeout: 0                       # 0 = no timeout (slow local models)
+    timeout: 0                         # 0 = no timeout
   openrouter:
     name: OpenRouter
     base_url: https://openrouter.ai/api/v1
     api_key: ${OPENROUTER_API_KEY}
-    models:                          # limit available models
+    models:                            # limit the model list
       - meta-llama/llama-4-maverick
-  copilot:
-    api: copilot                     # GitHub Copilot (OpenAI-compatible)
-    name: GitHub Copilot
-    api_key: ${GITHUB_TOKEN}
-    models:
-      - gpt-4o
 
 # ── Agents ─────────────────────────────────────────────────────
 agents:
-  default:                           # the main agent (me!)
+  default:
     provider: deepseek
     model: deepseek-v4-pro
-    small_model: deepseek-v4-flash    # cheaper model for compaction
-    max_iterations: 50                # hard loop cap
-    max_turns: 5                      # soft cap that strips tools at N (0 = off)
-    context_window: 1048576
-    approval: ask                     # ask | allow | deny
-    workspace_ask: false              # with --workspace: prompt before denying out-of-bounds access
-    max_inline_tools_per_turn: 0      # 0 = unlimited
-    estimate_factor: 1.3              # token estimate multiplier (0 = default 1.3)
+    small_model: deepseek-v4-flash     # compaction model
+    max_iterations: 50                 # hard loop cap
+    max_turns: 0                       # 0 = derive iterations - 1
+    context_window: 1048576            # 0 = use the model's known window
+    approval: ask                      # ask | allow | deny
+    mcp_approval: ask                  # ask | allow | deny for MCP tools
+    workspace_ask: false               # prompt before denying out-of-workspace paths
+    max_inline_tools_per_turn: 0       # 0 = unlimited
+    estimate_factor: 1.3               # token estimate multiplier (0 = 1.3)
 
-    # Compaction tuning — fractions of context_window that trigger summarisation.
-    compaction_threshold: 0.5
-    raw_compaction_threshold: 0.5     # triggers on raw prompt tokens (ignores cache)
-    compact_max_messages: 50          # force compaction above N messages (0 = off)
+    compaction_threshold: 0.5          # fraction of context_window
+    raw_compaction_threshold: 0.5      # ignore cached tokens
+    compact_max_messages: 0            # force compaction above N messages
 
-    # Session directives — injected into all agent prompts.
-    directives:
+    directives:                        # orchestrator prompt policy
       - "always run tests after implementation"
 
-    # Execution tracing via Shepherd — records every tool call to a durable,
-    # inspectable trace store. Active when shepherd_trace is in the pipeline.
-    shepherd_trace_dir: ~/.yaah/traces   # default, optional
+    shepherd_trace_dir: ""             # unset = tracing off; e.g. ~/.yaah/traces
 
-    # Retained sub-agent worktrees (agents.subagent.mode: retained). The repo is
-    # also where per-turn checkpoints operate.
-    retained_repo_path: ""            # repo sub-agent worktrees are cut from; "" = cwd
-    retained_worktree_root: ""       # parent dir for worktrees; "" = beside the repo
-    retained_worktree_bootstrap: ""   # run inside each worktree, e.g. "npm ci"
-    turn_checkpoint_max: 0            # live turn checkpoints per run; 0 = unlimited
-    max_turn_restores: 3              # turn-level restores per run; 0 = default (3)
+    retained_repo_path: ""             # "" = cwd
+    retained_worktree_root: ""         # "" = beside the repo
+    retained_worktree_bootstrap: ""    # e.g. "npm ci"
+    turn_checkpoint_max: 0             # 0 = unlimited live checkpoints
+    max_turn_restores: 3               # 0 = default 3
 
-    # Loop detection — halt when the same tool+args+result hash repeats.
-    loop_detect_count: 5              # identical calls to trigger halt
-    loop_detect_window: 10            # sliding window size
+    loop_detect_count: 5
+    loop_detect_window: 10
+    max_retries: 2
+    retry_backoff_secs: 1
+    max_tool_concurrency: 8            # 0 = unlimited
+    prompt_caching: false
+    reasoning_protect_turns: 2
 
-    # Provider resilience — retry transient errors with backoff.
-    max_retries: 2                    # 0 = no retries
-    retry_backoff_secs: 1             # base backoff (exponential)
+    supervisor:                        # active when tracing is enabled
+      enabled: true
+      halt_root: false
+      rules:
+        destructive_guard:
+          enabled: true
+        high_error_rate:
+          threshold: 0.5
+          window: 10
+        stuck_detection:
+          repeat_threshold: 3
 
-    # Concurrency and caching.
-    max_tool_concurrency: 8           # 0 = unlimited
-    prompt_caching: false             # Anthropic cache-control breakpoints
-    reasoning_protect_turns: 2        # preserve reasoning in N recent turns
-
-  subagent:                           # my team
-    provider: deepseek                # override provider (default: inherit)
-    model: deepseek-v4-flash          # override model (default: inherit)
-    max_concurrency: 3                # simultaneous sub-agents per turn
-    default_timeout: 120              # seconds
-    default_max_turns: 0              # 0 = unlimited
-    default_min_turns: 0              # global turn floor; 0 = none
-    output_limit: 51200               # bytes cap on sub-agent reports
-    json_mode: false                  # force structured output
-    mode: retained                    # dispatch lane: retained | shared
-    containment: auto                 # syscall jail: auto | off | paddock
-    network: allow_all                # confined egress: allow_all | deny_all | broker
-    network_hosts: []                 # broker allowlist (exact host names)
-    roles:                            # per-role overrides (defaults live in the role files)
+  subagent:
+    provider: ""                       # "" = inherit the orchestrator
+    model: ""                          # "" = inherit the orchestrator
+    max_concurrency: 3                 # 0 = unlimited
+    default_timeout: 0                 # seconds; 0 = none
+    default_max_turns: 0               # 0 = derive iterations - 1
+    default_min_turns: 0               # global floor; 0 = none
+    output_limit: 51200                # bytes; 0 = unlimited
+    json_mode: false
+    mode: retained                     # retained | shared
+    containment: auto                  # auto | off | paddock
+    network: allow_all                 # allow_all | deny_all | broker
+    network_hosts: []                  # broker allowlist; empty = admit nothing
+    roles:
       analyst:
         timeout: 240
         max_iterations: 30
       developer:
         timeout: 300
         max_iterations: 40
-        min_turns: 6                  # per-call overrides cannot go below
+        min_turns: 6
+        turn_checkpoints: false
       reviewer:
-        timeout: 240
+        timeout: 480
         max_iterations: 25
         max_turns: 12
         min_turns: 8
-        min_iterations: 10            # iteration floor
       tester:
         timeout: 300
         max_iterations: 30
 
-  fallback:                           # optional — try on primary failure
+  fallback:
     provider: ollama
     model: llama3.2
 
-  quality_gates:                      # auto-validate sub-agent output
-    developer: [tester]               # after developer completes, dispatch tester
+  quality_gates:
+    developer: [tester]
 
   middleware:
-    enabled:                          # explicit pipeline order
-      - steer
-      - followup
-      - compaction
-      - approval
-      - loop_detection
-    # disabled:                       # remove from default pipeline
-    #   - approval
+    enabled: [prompt_caching]          # additive, orchestrator only
+    disabled: []                       # removes from both pipelines
+
+# ── MCP servers ────────────────────────────────────────────────
+mcp_servers:
+  filesystem:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    env:
+      LOG_LEVEL: info
+  remote:
+    url: http://127.0.0.1:3000/mcp
+    transport: http
 
 # ── Workspace ──────────────────────────────────────────────────
 workspace:
-  backend: local                     # local | containerd
-  root: /workspace                  # containment root inside the sandbox
-  containerd:                       # only meaningful when backend: containerd
+  backend: local                       # local | containerd
+  root: /workspace                     # containment root inside the sandbox
+  containerd:
     address: /run/containerd/containerd.sock
     namespace: default
     image: docker.io/library/yaah-workspace:latest
     snapshotter: overlayfs
+    fifo_dir: ""                       # default <yaah home>/containerd-fifo
 
 # ── Observability ──────────────────────────────────────────────
 observability:
   otel:
     enabled: false
-    endpoint: localhost:4318          # OTLP HTTP endpoint (SigNoz: localhost:4318)
+    endpoint: localhost:4317           # OTLP/HTTP; SigNoz uses 4318
     service_name: yaah
-    traces: true                      # emit trace spans
-    metrics: false                    # emit OTLP metrics
-    verbose: false                    # record full conversations (debug)
+    traces: true
+    metrics: false
+    verbose: false
 
 # ── Hooks ──────────────────────────────────────────────────────
 hooks:
-  dir: ~/.yaah/hooks                  # JSONL event log (off by default)
+  dir: ""                              # unset/empty disables JSONL hooks
 
 # ── Editor ─────────────────────────────────────────────────────
-  editor: code --wait                   # overrides $EDITOR and $VISUAL
+editor: code --wait
 
-# ── Embeddings ───────────────────────────────────────────────────
+# ── Embeddings ─────────────────────────────────────────────────
 embedding:
-  provider: lmstudio                    # provider from the providers map
-  model: text-embedding-nomic-embed-text-v1.5  # embedding model name
+  provider: lmstudio
+  model: text-embedding-nomic-embed-text-v1.5
 ```
 
 ## Provider reference
 
-At least one provider is required. Each needs a `base_url` and an `api_key`.
+At least one provider is required. A provider needs a `base_url` plus either a
+real `api_key` or `auth: oauth` (with a stored token from `yaah login`).
 
 | Field | Default | Description |
 |---|---|---|
-| `api` | `openai` | API protocol: `openai` (default), `anthropic` (native Messages API), or `copilot` (GitHub Copilot, OpenAI-compatible) |
-| `base_url` | (required) | API endpoint (OpenAI-compatible or Anthropic Messages) |
+| `api` | `openai` | API protocol: `openai` (default), `anthropic` (native or compatible Messages API), or `copilot` (GitHub Copilot, OpenAI-compatible) |
+| `auth` | `api_key` | `api_key` or `oauth` |
+| `base_url` | (required) | API endpoint |
 | `api_key` | — | Supports `${ENV_VAR}` substitution |
-| `name` | map key | Display name shown in CLI/TUI |
-| `models` | — | Limit available models. Each entry is a plain name or `{name: …, thinking: true/false}` to override thinking detection (empty = all from `/models`; n/a for Anthropic) |
-| `timeout` | 120 | HTTP request timeout in seconds (0 = no timeout) |
-| `max_tokens` | 4096 native, 8192 compatible; unset on `openai` | Output-token cap applied when a request does not set its own. Native `api.anthropic.com` stays at 4096 for older Claude models; Anthropic-compatible endpoints (DeepSeek, ZAI, etc.) default to 8192 because they count thinking tokens against the budget — raise it if turns end with `finish_reason=length` before any content |
+| `name` | map key | Display name shown in the CLI and TUI |
+| `models` | — | Limit available models. Each entry is a plain name or `{name: …, thinking: true/false}` |
+| `timeout` | 0 (no timeout) | HTTP request timeout in seconds; negative values fall back to 120s |
+| `max_tokens` | 4096 native, 8192 compatible; unset on `openai` | Output-token cap when a request has none. Native `api.anthropic.com` stays at 4096 for older Claude models; compatible endpoints default to 8192 because reasoning tokens count against the budget |
+| `headers` | — | Extra HTTP headers sent on every request |
+| `oauth_client_id` / `oauth_scope` / `oauth_domain` | — | OAuth device-flow settings used with `auth: oauth` |
+
+OAuth providers are authenticated once with `yaah login <provider>`; the
+stored token is used instead of `api_key`. See `yaah login --help` for the
+provider-specific defaults.
 
 ## Agent reference
 
@@ -189,55 +204,67 @@ At least one provider is required. Each needs a `base_url` and an `api_key`.
 
 | Field | Default | Description |
 |---|---|---|
-| `provider` | first alphabetically | Provider from `providers` |
-| `model` | — | Model for the main agent |
-| `small_model` | — | Cheaper model for context compaction |
+| `provider` | first usable provider | Resolution: explicit value, then a provider prefix in `model`, then the first provider alphabetically |
+| `model` | `deepseek/deepseek-v4-pro` | Model for the main agent |
+| `small_model` | `deepseek/deepseek-v4-flash` | Cheaper model for context compaction |
 | `max_iterations` | 50 | Safety cap on loop turns |
-| `max_turns` | 0 (off) | Soft cap; tools are stripped at this iteration, forcing a final answer |
-| `context_window` | 1048576 | Token budget; caps the model's resolved window (0 = disabled) |
+| `max_turns` | 0 | Soft cap; tools are stripped at this iteration. `0` derives `max_iterations - 1` |
+| `context_window` | 1048576 | Caps the model's resolved window. `0` = use the model's known window, not "disabled" |
 | `approval` | `ask` | `allow`, `ask`, or `deny` |
-| `workspace_ask` | `false` | With `--workspace`: prompt before denying out-of-bounds file access instead of hard-rejecting |
+| `mcp_approval` | `ask` | `allow`, `ask`, or `deny` for MCP-served tools |
+| `workspace_ask` | `false` | With `--workspace`: prompt before denying out-of-bounds access |
+| `workspace_deny_patterns` | nil (built-in secret defaults) | Globs denied even inside the workspace. `nil` applies `.env`, `*.pem`, `*.key`, SSH keys; `[]` disables the built-ins |
 | `max_inline_tools_per_turn` | 0 (unlimited) | Cap inline tool calls per turn |
 | `estimate_factor` | 1.3 | Token estimate multiplier for preflight compaction |
-| `compaction_threshold` | 0.5 | Fraction of context_window that triggers LLM summarisation (effective tokens after cache subtraction) |
-| `raw_compaction_threshold` | 0.5 | Same as above but ignores cached tokens; guards latency |
-| `compact_max_messages` | 0 (off) | Force compaction when message count exceeds N, regardless of token estimates |
-| `directives` | — | Session-level policy statements injected into all agent prompts |
-| `loop_detect_count` | 5 | Identical tool calls (hash) within the window that trigger a hard halt |
-| `loop_detect_window` | 10 | Sliding window size (in turns) for loop detection |
-| `max_retries` | 0 (off) | Retry count on transient provider errors |
-| `retry_backoff_secs` | 1 | Base backoff seconds (exponential growth) |
+| `compaction_threshold` | 0.5 | Fraction of `context_window` that triggers summarisation (effective tokens after cache subtraction) |
+| `raw_compaction_threshold` | 0.5 | Same, but ignores cached tokens |
+| `compact_max_messages` | 0 (off) | Force compaction above N messages |
+| `directives` | — | Policy statements injected into the orchestrator prompt only |
+| `shepherd_trace_dir` | unset (off) | Path to the Shepherd trace store. Setting it enables tracing, which enables the retained lane and supervision |
+| `retained_repo_path` | cwd | Repository retained worktrees are cut from |
+| `retained_worktree_root` | beside the repo | Parent directory for retained worktrees |
+| `retained_worktree_bootstrap` | — | Command run inside each retained worktree, e.g. `npm ci` |
+| `turn_checkpoint_max` | 0 (unlimited) | Live turn checkpoints per run |
+| `max_turn_restores` | 3 | Turn-level restores per run |
+| `loop_detect_count` | 5 | Identical tool-call hashes within the window that trigger a halt |
+| `loop_detect_window` | 10 | Sliding window size for loop detection |
+| `max_retries` | 0 (off) | Retries on transient provider errors |
+| `retry_backoff_secs` | 1 | Base backoff seconds (exponential) |
 | `max_tool_concurrency` | 0 (unlimited) | Cap concurrent tool goroutines per turn |
-| `prompt_caching` | `false` | Inject Anthropic `cache_control` breakpoints (requires `api: anthropic`) |
-| `reasoning_protect_turns` | 2 | Preserve reasoning on N recent turns in provider requests |
+| `prompt_caching` | `false` | Inject Anthropic `cache_control` breakpoints |
+| `reasoning_protect_turns` | 2 | Preserve reasoning on N recent turns |
 | `wrap_up_turns` | 1 | Inject a wrap-up notice N turns before the soft cap (negative = off) |
 | `tool_result_max_lines` | 500 | Truncate tool results to N lines |
 | `tool_result_max_bytes` | 20480 | Truncate tool results to N bytes |
 | `prune_protect_tokens` | 2000 | Recent tool-output tokens shielded from soft-prune |
-| `prune_min_reclaim` | 400 | Minimum tokens required to commit a soft-prune |
+| `prune_min_reclaim` | 200 | Minimum tokens required to commit a soft-prune |
 | `prune_min_turns` | 1 | Recent turns always kept by soft-prune |
+| `supervisor` | enabled when tracing is on | Advisory supervision rules; see the supervision table below |
 
-Sub-agents inherit all of the above (except `max_turns`, which they override via
-`default_max_turns` below) — making `compaction_threshold`, `loop_detect_count`,
-and `max_retries` consistent across the whole team.
+Sub-agent inheritance is selective. `max_retries`, `retry_backoff_secs`,
+`max_tool_concurrency`, tool-result limits, prune settings, context window,
+and turn-checkpoint limits are passed down. `loop_detect_*`, compaction
+tuning, `prompt_caching`, `reasoning_protect_turns`,
+`max_inline_tools_per_turn`, approval policy, and `directives` are not.
+Sub-agents use their own curated pipeline and per-role directives.
 
 **`agents.subagent`** — team configuration:
 
 | Field | Default | Description |
 |---|---|---|
-| `provider` | `default.provider` | Provider for sub-agents |
-| `model` | `default.model` | Model for sub-agents |
-| `max_concurrency` | 3 | Max simultaneous `delegate` calls |
-| `default_timeout` | — | Default seconds per sub-agent (0 = none) |
+| `provider` | inherits | Provider for sub-agents |
+| `model` | inherits | Model for sub-agents |
+| `max_concurrency` | 3 | Max simultaneous `delegate` calls; 0 = unlimited |
+| `default_timeout` | 0 (none) | Default seconds per sub-agent |
 | `stuck_child_timeout` | 60 | Seconds without a heartbeat before a sub-agent is force-cancelled (0 = off) |
-| `default_max_turns` | 0 (unlimited) | Default soft turn cap |
+| `default_max_turns` | 0 (derive) | Default soft turn cap; 0 derives `iterations - 1` |
 | `default_min_turns` | 0 (none) | Global turn floor — no per-call override or role budget may drop below it |
-| `output_limit` | 51200 | Byte cap on sub-agent reports |
+| `output_limit` | 51200 | Byte cap on sub-agent reports; 0 = unlimited |
 | `json_mode` | false | Force structured JSON output |
 | `mode` | `retained` | Dispatch lane — `retained` (isolated worktree + proposal) or `shared` (direct to host) |
-| `containment` | `auto` | Syscall-jail placement — `auto` (jail if the host can, else advisory), `off`, or `paddock` (fails closed). See "Sub-agent dispatch lane and confinement" |
+| `containment` | `auto` | Syscall-jail placement — `auto` (jail if the host can, else advisory), `off`/`none`/`advisory`, `paddock`/`jail` (fails closed) |
 | `network` | `allow_all` | Egress posture for a confined dispatch — `allow_all`, `deny_all`, or `broker` (allowlist via the session's broker) |
-| `network_hosts` | `[]` | The broker's allowlist (exact host names); only meaningful with `network: broker` |
+| `network_hosts` | `[]` | The broker's allowlist (exact host names); only meaningful with `network: broker`. Empty = the broker admits nothing; setting hosts with another mode is a validation error |
 | `roles.<name>.timeout` | — | Per-role timeout override |
 | `roles.<name>.max_iterations` | — | Per-role iteration cap |
 | `roles.<name>.min_iterations` | 0 (none) | Per-role iteration floor; beats per-call overrides and the role file's floor |
@@ -251,6 +278,7 @@ and `max_retries` consistent across the whole team.
 | `roles.<name>.json_mode` | — | Per-role structured-output toggle |
 | `roles.<name>.directives` | — | Per-role directives injected into that role's prompt |
 | `roles.<name>.stuck_child_timeout` | — | Per-role stuck-child timeout |
+| `roles.<name>.turn_checkpoints` | false | Capture workspace + conversation before each turn and restore on failure (bounded by `max_turn_restores`) |
 
 **Sub-agent budget resolution** — each dispatch resolves two dimensions
 (iterations = hard loop cap; turns = soft cap that strips tools and forces a
@@ -268,7 +296,7 @@ Floors apply after the pick: `min_iterations` (config, then role file) and
 dimension, including against per-call overrides. A floored turn budget that
 reaches the iteration cap *grows* iterations (headroom) instead of being cut —
 floors never shrink the other dimension. The schema maximum (50) bounds the
-final budget. Unfloored turns keep the historical clamp, so
+final budget. Unfloored turns are clamped to `iterations - 1`, so
 `max_iterations: 1` alone can still force a deliberate cheap probe.
 
 Validation rejects negative floors, `min > max` within a role config, and
@@ -277,17 +305,20 @@ instead of failing startup. Effective budgets and their sources appear on
 sub-agent spans (`subagent.budget.*`), in `list_subagents`, and in
 `MaxIterationsError`.
 
-**`agents.fallback`** — fallback on transient errors (429, 503):
+**`agents.fallback`** — rotate on auth, billing, or rate-limit/quota failures (401/402/403/429). 503/529 are retried with backoff instead:
 
 | Field | Default | Description |
 |---|---|---|
 | `provider` | — | Fallback provider name |
 | `model` | — | Fallback model name |
 
-**`agents.middleware`** — control the pipeline. `enabled` is
-**additive**: listed middleware are added to the default pipeline
-(duplicates are collapsed). `disabled` removes middleware from the
-union. The default pipeline is
+### Middleware
+
+**`agents.middleware`** — control the pipeline. `enabled` is **additive
+and orchestrator-only**: listed middleware are added to the default
+orchestrator pipeline (duplicates collapse). `disabled` removes middleware
+from both the orchestrator and sub-agent pipelines. The default orchestrator
+pipeline is
 `steer → followup → compaction → soft_prune → approval → inline_limit → tool_concurrency → loop_detection → conflict_detect`.
 
 | Middleware | Default | Purpose |
@@ -303,6 +334,7 @@ union. The default pipeline is
 | `permission` | off | Path-pattern allow/deny rules (auto-added when parent rules exist for sub-agents) |
 | `tool_concurrency` | on | Cap concurrent tool goroutines |
 | `prompt_caching` | off | Anthropic cache-control breakpoints — include via `agents.default.prompt_caching: true`; naming it in `enabled` also works |
+| `supervisor_guard` | sub-agents only | Blocking destructive-shell guard; present in the sub-agent pipeline when tracing/supervision is active |
 
 ## Workspace reference
 
@@ -317,30 +349,27 @@ everything runs on the host filesystem, as it always has.
 | `containerd.namespace` | `default` | containerd namespace for the session's containers |
 | `containerd.image` | (required for `containerd`) | Base image. Must satisfy the tool contract (sh, GNU stat/find, git, rg, base64, Go toolchain) — verified at startup |
 | `containerd.snapshotter` | `overlayfs` | containerd snapshotter plugin |
-| `containerd.fifo_dir` | `~/.yaah/containerd-fifo` | Directory the containerd *client* creates the task/exec stdio FIFOs in. containerd's own default (`/run/containerd/fifo`) is root-only, so the yaah default keeps unprivileged sessions working; must be absolute. Avoids a predictable name under the shared temp dir, which another local user could pre-create |
+| `containerd.fifo_dir` | `<yaah home>/containerd-fifo` | Directory the containerd *client* creates the task/exec stdio FIFOs in. containerd's own default (`/run/containerd/fifo`) is root-only, so the yaah default keeps unprivileged sessions working; must be absolute. Avoids a predictable name under the shared temp dir, which another local user could pre-create |
 
 The `containerd` backend requires a Linux containerd daemon: config
-validation refuses it at load on any other platform, naming the platform.
-The daemon's socket is root-owned by default — a normal user needs
-one-time group access (see "Daemon socket access" in
-`docs/isolated-workspace-live-testing.md`), or every session fails its
-startup probe with `connect: permission denied`. Everything else an
-unprivileged session touches is handled in code: the adapter builds the
-init spec from the image config through the daemon (no client-side
-snapshot-store access), and `fifo_dir` defaults to a user-writable
-directory. `yaah doctor` reports
-the workspace check (config validity plus the reachable backend) when
-the stanza is present. See
-`docs/features.md` "Isolated workspace" for the behaviour and
-`docs/isolated-workspace-live-testing.md` for the end-to-end live test.
+validation refuses it at load on any other platform. The daemon's socket is
+root-owned by default, so a normal user needs one-time group access or every
+session fails its startup probe with `connect: permission denied`. The
+adapter builds the init spec from the image config through the daemon, and
+`fifo_dir` defaults to a user-writable directory. `yaah doctor` reports the
+workspace check when the stanza is present. `--workspace` has no effect in
+this mode; the container is the containment boundary. See
+[features.md](./features.md) for the user-facing behavior.
 
 ## Retained worktrees and turn checkpoints
 
-A retained dispatch (`agents.subagent.mode: retained`, the default) runs the
-sub-agent in its **own git worktree** and returns a sealed proposal; the
-orchestrator settles it with `proposal select|apply|discard`. Nothing reaches
-the host tree until settlement, so a rejected attempt costs a dispatch rather
-than a rollback.
+A retained dispatch runs the sub-agent in its **own git worktree** and
+returns a sealed proposal; the orchestrator settles it with
+`proposal select|apply|release|discard`. Nothing reaches the host tree until
+settlement, so a rejected attempt costs a dispatch rather than a rollback.
+Retained mode is available when `agents.default.shepherd_trace_dir` is set
+and a root scope can be created; otherwise use `agents.subagent.mode: shared`
+or expect the direct lane.
 
 ```yaml
 agents:
@@ -359,12 +388,6 @@ agents:
 | `retained_worktree_bootstrap` | `""` | Shell command run inside each fresh worktree — see below. |
 | `turn_checkpoint_max` | `0` | Live turn checkpoints per sub-agent run; the oldest are pruned. `0` = unlimited. |
 | `max_turn_restores` | `3` | Turn-level restores per run, so a deterministically failing turn cannot rewind forever. |
-| `supervisor.halt_root` | `false` | Opt in to halting the session's root scope — by the manual `supervisor` tool and, from adoption plan B3 on, by rule-driven halt interventions: the session's current run stops (the ctrl-C equivalent) and scope-tree supervision ends for the process. Sub-agent halts need no gate. An explicit value wins over the deprecated flat `supervisor_halt_root` key; unset falls back to it. |
-| `supervisor.enabled` | on (tracing-gated) | Master switch for the advisory rules engine (adoption plan B1). With `shepherd_trace_dir` set, the kernel supervisor watches the session's trace and a service delivers rule firings as steering into the running sub-agent loops; `false` disables the whole engine. |
-| `supervisor.rules.destructive_tool.enabled` | `true` | Advisory warning on destructive tool declarations (bash/powershell command patterns, write, delete) — inject-only guidance, recorded in the target scope's trace. Rule-driven firings against the session's own scope are dropped: the parent's calls already passed the approval middleware. |
-| `supervisor.rules.destructive_guard.enabled` | `true` | Blocking pre-dispatch net (adoption plan B2): sub-agent `bash`/`powershell` calls are denied before execution — default-deny, because a shell can execute anything a pattern matcher cannot see — with a synthesized denied-call result so the model can take the structured path. Structured tools (`write`/`edit`/`delete`) are the approved path for changes. Tracing-off sessions dispatch unchanged. |
-| `supervisor.rules.high_error_rate.{enabled,threshold,window}` | `true`, `0.5`, `10` | Guidance when a scope's recent tool error rate crosses the threshold within the sliding window. `0` values mean the defaults. |
-| `supervisor.rules.stuck_detection.{enabled,repeat_threshold}` | `true`, `3` | Guidance when a scope repeats the same tool call `repeat_threshold` times in a row. `0` means the default. |
 
 ### Speculating on a task
 
@@ -405,20 +428,55 @@ Two consequences worth knowing:
    process, network, and the repository's object store. Containment is the
    separate `agents.subagent.containment`/`network` axis below.
 
+## Supervision
+
+Supervision is active only when `agents.default.shepherd_trace_dir` is set.
+The kernel watches the session's trace; advisory rule firings are delivered as
+steering into the running sub-agent loops.
+
+```yaml
+agents:
+  default:
+    supervisor:
+      enabled: true          # master switch (default on when tracing is on)
+      halt_root: false       # allow halting the session's root scope
+      rules:
+        destructive_tool:
+          enabled: true
+        destructive_guard:
+          enabled: true
+        high_error_rate:
+          enabled: true
+          threshold: 0.5
+          window: 10
+        stuck_detection:
+          enabled: true
+          repeat_threshold: 3
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `supervisor.enabled` | on (tracing-gated) | Master switch for the advisory rules engine |
+| `supervisor.halt_root` | `false` | Allow a rule or the `supervisor` tool to halt the session's root scope |
+| `supervisor.rules.destructive_tool.enabled` | `true` | Advisory warning on destructive tool declarations; inject-only |
+| `supervisor.rules.destructive_guard.enabled` | `true` | Blocking pre-dispatch net for sub-agent `bash`/`powershell` and command-running `background_process` calls, with a synthesized denial result |
+| `supervisor.rules.high_error_rate.{enabled,threshold,window}` | `true`, `0.5`, `10` | Guidance when a scope's recent tool error rate crosses the threshold |
+| `supervisor.rules.stuck_detection.{enabled,repeat_threshold}` | `true`, `3` | Guidance when a scope repeats the same tool call |
+
 ## Sub-agent dispatch lane and confinement
 
 Two `agents.subagent` keys (not `agents.default` — see the field table above)
 decide *where a sub-agent runs* and *what it may touch*. They apply to
-dispatched sub-agents only: the orchestrator runs on the host, unconfined,
-exactly as before — which is the whole point of the split, since the
-orchestrator is the part that must reach everything.
+dispatched sub-agents only: the orchestrator runs on the host, unconfined.
+That split is the point — the orchestrator is the part that must reach
+everything.
 
 **Retention — `mode: retained` (the default).** Each dispatch runs in its own
 `git worktree` and returns a proposal; the host tree is untouched until the
 orchestrator applies it with the `proposal` tool. Read-only roles return an
 empty changeset — retained always, so "did anything change?" is never the
-question. `mode: shared` is the older direct-to-host lane: the escape hatch, and
-the benchmark baseline.
+question. `mode: shared` is the direct-to-host lane: the explicit opt-out from
+retention.
 
 **Confinement — `containment`, default `auto`.** Where the host can jail
 (Landlock on Linux) a dispatch runs its shell inside a syscall jail whose sole
@@ -428,7 +486,7 @@ Landlock), recording which happened on the sub-agent's trace; `paddock` (alias
 `jail`) fails closed instead of degrading; `off` (or `none`/`advisory`) always
 runs on the host. The orchestrator is never jailed either way.
 
-> **The git rule (why this needed a decision).** A retained dispatch works in a
+> **The git rule.** A retained dispatch works in a
 > **linked** `git worktree`, whose index and object store live in the *original*
 > repository's `.git` — outside the jail's writable root. So a confined
 > **`git add`/`commit`/`stash` is refused by the kernel**; read-only git
@@ -489,9 +547,9 @@ generally cannot be trusted with your network either:
   inside the sandbox, so tools that honour the usual proxy variables route
   through it without configuration; hosts outside the list are refused by the
   broker.
-- `allow_all` (the default) — ungoverned, as before.
+- `allow_all` (the default) — ungoverned.
 
-Three things to know about the guarantee:
+Four things to know about the guarantee:
 
 - **The pin is by port, not by address.** Landlock's network rules are
   port-scoped, so "broker" means "the broker's port and nothing else", not
@@ -522,8 +580,7 @@ Three things to know about the guarantee:
   container's posture does **not** cover `http`/`webfetch`, which still make their
   request in this process, outside the container. So in an isolated session a
   restrictive `network` neither protects those two tools nor blocks them: use the
-  container's own egress controls. That is a pre-existing property of the isolated
-  lane, recorded here rather than implied.
+  container's own egress controls.
 
 A confined sub-agent is told its posture up front ("there is no network egress"
 or "egress is limited to an allowlist"), so a blocked fetch is not something it
@@ -547,29 +604,53 @@ tier, `enforced`, writable root), so an advisory run is never misread as jailed
 reports the effective placement and this host's capability: `auto` with no
 usable backend is a WARN, `paddock` is a FAIL.
 
+## MCP servers
+
+`mcp_servers` configures MCP servers that yaah connects to as a client.
+Tools from connected servers are registered alongside built-in tools.
+
+| Field | Default | Description |
+|---|---|---|
+| `command` | — | Executable for a stdio server |
+| `args` | — | Arguments for a stdio server |
+| `env` | — | Environment variables for a stdio server |
+| `url` | — | Endpoint for an HTTP server |
+| `transport` | inferred | `stdio`, `http`, or `sse` |
+| `framing` | auto | stdio framing: newline-delimited or Content-Length |
+| `headers` | — | Extra HTTP headers for an HTTP server |
+
+Use either `command` + `args` (stdio) or `url` (HTTP). `agents.default.mcp_approval`
+controls whether MCP-served tools are auto-approved, prompted, or denied.
+`headers` values are literal; `${VAR}` substitution applies only to provider
+connection fields and workspace containerd fields.
+
 ## Observability reference
 
 ```yaml
 observability:
   otel:
     enabled: false
-    endpoint: localhost:4318     # OTLP HTTP endpoint (OpenObserve: localhost:5080)
+    endpoint: localhost:4317     # OTLP/HTTP endpoint (SigNoz HTTP: 4318)
     service_name: yaah
     traces: true                 # emit trace spans (default: true)
     metrics: false               # emit OTLP metrics (default: false)
     verbose: false               # record full conversations + summaries
 ```
 
+`YAAH_OTEL_ENABLED=true` enables tracing, and
+`OTEL_EXPORTER_OTLP_ENDPOINT` overrides the configured endpoint. Both take
+precedence over the YAML values.
+
 ## Hooks reference
 
 ```yaml
 hooks:
-  dir: ~/.yaah/hooks             # JSONL event log (off by default)
+  dir: ""                        # JSONL event log; empty disables hooks
 ```
 
 Events: `session.start`, `session.end`, `turn.start`, `tool.start`,
-`tool.end`, `conflict.detect` — with timestamps, model, tool results, and
-durations.
+`tool.end`, `conflict.check`, `conflict.detect`, and `context.prune` — with
+timestamps, model, tool results, durations, and prune counters.
 
 ## Embeddings reference
 

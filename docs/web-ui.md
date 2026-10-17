@@ -10,17 +10,22 @@ collapsible tool results, and interactive approval/question modals.
 prompts for the lifetime of the server, and all events stream to the
 browser via Server-Sent Events (SSE).
 
+Every request is token-gated. When `--token` is empty, a random token is
+generated and the startup banner prints the full URL (`/?t=<token>`). The
+token can also be sent as `X-Yaah-Token` or the `yaah_token` cookie; the
+query form is used because `EventSource` cannot set headers.
+
 ```
 Browser (SPA)                          Go server (web.go)
 ─────────────                         ──────────────────
 Alpine.js + Pico CSS                  net/http + embed.FS
      │                                       │
-     ├── GET / ──────────────────────────────┤ serve index.html
-     ├── GET /api/stream ────────────────────┤ SSE event stream
+     ├── GET /?t=<token> ───────────────────┤ serve index.html (auth)
+     ├── GET /api/stream?t=<token> ─────────┤ SSE event stream
      │   (EventSource)                       │   (sseView.HandleEvent)
-     ├── POST /api/action ───────────────────┤ prompt / abort / answer / compact / model
+     ├── POST /api/action ───────────────────┤ prompt / abort / answer / compact / model / login / logout / steer
      │   (fetch JSON)                        │   (webServer.handleAction)
-     └──                                    ┘
+     └── GET /api/commands ─────────────────┤ slash-command list
 ```
 
 ## Architecture
@@ -31,8 +36,9 @@ Files involved:
 |---|---|
 | `cmd/yaah/web.go` | HTTP server, SSE stream handler, action endpoint, prompt runner, approval flow |
 | `cmd/yaah/web_view.go` | SSE view adapter (`sseView`), wire event types (`sseWireEvent`), `forwardCtrl` goroutine, answer map, tool summary engine |
-| `cmd/yaah/web/index.html` | Single-page app: Alpine.js reactive data, Pico CSS styling, Marked.js markdown rendering |
+| `cmd/yaah/web/index.html` | Single-page app: Alpine.js reactive data, Pico CSS styling, Marked.js markdown rendering, DOMPurify sanitization |
 | `cmd/yaah/web/marked.min.js` | Marked.js (markdown-to-HTML) |
+| `cmd/yaah/web/purify.min.js` | DOMPurify (HTML sanitization) |
 | `cmd/yaah/web/alpine.min.js` | Alpine.js (reactive data binding) |
 | `cmd/yaah/web/pico.min.css` | Pico CSS (semantic light/dark styling) |
 
@@ -53,6 +59,11 @@ All web UI assets are embedded in the yaah binary via `//go:embed web`.
   - `answer` — respond to a question/approval modal
   - `compact` — trigger context compaction
   - `model` — switch provider/model
+  - `login` / `logout` — start or clear an OAuth login
+  - `steer` — inject guidance while the agent is running
+
+- **`handleCommands`**: Returns the slash-command list for the browser's
+  command palette.
 
 - **`runPrompt`**: Runs the agent in a background goroutine. Sets up
   a cancellable context and calls `Session.RunPrompt`.
@@ -86,34 +97,14 @@ All events use a single `sseWireEvent` struct with a `type` discriminator:
 | `ctrl.models` | Agent → Browser | Available model list |
 | `ctrl.header` | Agent → Browser | Header metadata: provider, model, and MCP server list |
 
-#### Tool summary engine
+#### Tool summaries
 
-The server computes one-line tool summaries that match the TUI's
-tool summary patterns (shared engine in `internal/toolfmt`):
-
-| Tool | Summary format | Example |
-|---|---|---|
-| `grep` | `N matches in N files` | `12 matches in 3 files` |
-| `glob` | `N files` | `7 files` |
-| `ls` | `N entries` | `14 entries` |
-| `bash` | first line of output (≤60 chars) | `go build ./...` |
-| `read` | `read <file> (N,N chars)` | `read main.go (1,234 chars)` |
-| `write` | `wrote <file> (N,N chars)` | `wrote config.go (567 chars)` |
-| `edit` | `edited <file>` | `edited handler.go` |
-| `delete` | `deleted <file>` | `deleted temp.txt` |
-| `http` | URL from args | `https://api.example.com` |
-| `webfetch` | URL from args | `https://docs.example.com` |
-| `git` | action from args | `commit` |
-| `replace` | `replaced in <file>` | `replaced in utils.go` |
-| `delegate` | `sub-agent: <role> — <specialty> · <description>` | `sub-agent: Developer — Full-stack engineer · Fix auth bug` |
-| _(default)_ | first line of output (≤80 chars) | — |
-
-Two summary functions are used at different points:
-
-- **`toolStartSummary(name, args)`** — runs before execution, based only on
-  tool name and arguments (preview). E.g. `"bash — go test ./..."`.
-- **`toolSummary(name, args, result)`** — runs after execution, based on
-  the result content. E.g. `"0 matches"` (empty grep output).
+- **`toolStartSummary(name, args)`** — a local pre-execution preview based
+  only on the tool name and arguments, e.g. `bash — go test ./...`.
+- **Post-execution summaries** — the shared `internal/toolfmt.Summary`
+  engine, which the TUI and web UI both use. Formats are defined once in
+  `internal/toolfmt`; add new tool summaries there rather than in the web
+  layer.
 
 ### Control-plane messages (`forwardCtrl`)
 
@@ -158,14 +149,15 @@ goroutines don't leak.
 
 ## Frontend (`index.html`)
 
-The frontend is a single HTML file with no build step, using three CDN
-libraries:
+The frontend is a single HTML file with no build step. All libraries are
+vendored and embedded in the binary:
 
-| Library | Version | Purpose |
-|---|---|---|
-| [Pico CSS](https://picocss.com) | 2.x | Semantic light/dark styling, no class names needed |
-| [Alpine.js](https://alpinejs.dev) | 3.x | Reactive data binding with `x-data`, `x-show`, `x-for`, `x-html` |
-| [Marked](https://marked.js.org) | latest | Markdown-to-HTML rendering with GFM support |
+| Library | Purpose |
+|---|---|
+| [Pico CSS](https://picocss.com) | Semantic light/dark styling |
+| [Alpine.js](https://alpinejs.dev) | Reactive data binding with `x-data`, `x-show`, `x-for`, `x-html` |
+| [Marked](https://marked.js.org) | Markdown-to-HTML rendering with GFM support |
+| [DOMPurify](https://github.com/cure53/DOMPurify) | Sanitizes rendered markdown before insertion |
 
 ### Reactive state
 
@@ -246,17 +238,15 @@ Right side: context window fill percentage.
 
 ## Limitations
 
-- **Single SSE client**: Only one browser tab can connect at a time.
-  The `sseView` is a singleton on the `webServer`.
-- **No chat search**: Relies on the browser's built-in Ctrl+F.
-- **No copy button**: No clipboard integration (TUI has `Ctrl+Y`).
-- **No follow-up/steer**: Cannot send additional input while the agent is
-  running (TUI supports mid-turn messages).
+- **Single SSE client**: Only one browser tab can connect at a time. The
+  `sseView` is a singleton on the `webServer`.
+
+Chat search, copying the last response, and `:steer` while a turn is running
+are supported.
 
 ## Compared to the TUI
 
-The TUI (`yaah tui`) is the reference implementation. The web UI tracks it
-closely on core functionality but trails on advanced features:
+The TUI is the richer interface; the web UI covers the core chat workflow.
 
 | Feature | TUI | Web UI |
 |---|---|---|
@@ -268,26 +258,25 @@ closely on core functionality but trails on advanced features:
 | Context fill display | ✅ (fraction bar) | ✅ (percentage) |
 | Todo list | ✅ (persistent table) | ✅ (inline messages) |
 | Model switching UI | ✅ (searchable palette) | ✅ (command palette) |
-| Commands (`:compact`, `:clear`, etc.) | ✅ | ✅ (command palette) |
-| Chat search (`/`) | ✅ | ✗ |
-| Copy to clipboard | ✅ (`Ctrl+Y`) | ✗ |
+| Chat search | ✅ | ✅ |
+| Copy response | ✗ | ✅ |
 | Sub-agent visual bracketing | ✅ (`╭─` / `╰─`) | ✗ |
 | Header with provider/model | ✅ | ✅ |
-| Status bar (CWD, msg count) | ✅ | ✗ |
-| Theme switching | ✅ (5 themes) | ✗ (browser light/dark only) |
+| Status bar (CWD, message count) | ✅ | ✗ |
+| Theme switching | ✅ (auto light/dark) | ✅ (browser light/dark) |
 | MCP server status | ✅ | ✅ (badge) |
-| Follow-up / steer injection | ✅ | ✗ |
-| Ephemeral feedback messages | ✅ | ✗ |
-| Mid-turn compaction button | ✅ (`:compact`) | ✅ (palette) |
+| Follow-up / steer injection | ✅ | ✅ (`:steer`) |
+| Mid-turn compaction | ✅ (`:compact`) | ✅ (palette) |
 | Multiple clients | N/A | ✗ (single SSE) |
 
 ## Extending
 
-- **New event type**: add a case in `sseView.HandleEvent` → add
-  corresponding handling in `onEvt()` in the frontend.
-- **New tool summary**: add a case in `toolSummary()` in `web_view.go`.
+- **New event type**: add a case in `sseView.HandleEvent`, then handle it in
+  `onEvt()` in the frontend.
+- **New tool summary**: add it to `internal/toolfmt`; both the TUI and web UI
+  consume the shared formatter.
 - **New action**: add a case in `webServer.handleAction` and a matching
   `post()` call in the frontend.
-- **New modal type**: add a `<template x-if="modal.type === '...'">`
-  block in the dialog, update `onEvt` to set the modal, and add a
-  corresponding action handler.
+- **New modal type**: add a `<template x-if="modal.type === '...'">` block in
+  the dialog, update `onEvt` to set the modal, and add the corresponding
+  action handler.

@@ -14,7 +14,7 @@ sub-agent dispatch.
                    │ l.SystemPrompt
                    ▼
 ┌─────────────────────────────────────────────────────┐
-│ Agent loop (agent.go:Run)                           │
+│ Agent loop (loop.go:Loop.Run)                       │
 │ System message → User message → Assistant → Tools   │
 │ Middleware injects: steer, followup, compaction     │
 │ Post-turn injects: tool results, conflicts          │
@@ -64,33 +64,33 @@ single source of truth shared by the main agent and sub-agents, which is why
 role guidance can refer to "the shell specified in the Environment section".
 The shell sentence is conditional: passing an empty shell to
 `EnvironmentHeader` drops it, and the runner does exactly that for roles whose
-tool set carries no shell (#329), so a tool-less sub-agent never receives the
+tool set carries no shell, so a tool-less sub-agent never receives the
 "use it for all shell commands" imperative. The OS and working-directory
 lines always render.
 
 ## Layer 2: Loop initialization
 
-**File**: `internal/agent/agent.go`
+**File**: `internal/agent/lifecycle_init.go`
 
 ```go
 // Fresh session
-l.Messages = []types.Message{
-    types.SystemMsg(l.SystemPrompt),   // [1] full assembled system prompt
-    types.UserMsg(userInput),          // [2] user's input
+l.State.Messages = []types.Message{
+    types.SystemMsg(l.Config.SystemPrompt), // [1] full assembled system prompt
+    types.UserMsg(userInput),               // [2] user's input
 }
 
-// Session resume (l.Messages already exists)
-l.Messages = append(l.Messages, types.UserMsg(userInput)) // [2]
+// Session resume (l.State.Messages already exists)
+l.State.Messages = append(l.State.Messages, types.UserMsg(userInput)) // [2]
 ```
 
 | Inject | Type | Content |
 |---|---|---|
-| [1] | `system` | Full `l.SystemPrompt` (Layer 1 output) |
+| [1] | `system` | Full `l.Config.SystemPrompt` (Layer 1 output) |
 | [2] | `user` | Raw user input string |
 
 ## Layer 3: Middleware prepare step
 
-**File**: `internal/agent/agent.go` (middleware in `internal/agent/pipeline/`)
+**File**: `internal/agent/pipeline/compaction.go` (middleware in `internal/agent/pipeline/`)
 
 Before each turn, middleware can inject or modify messages in `step.Messages`:
 
@@ -98,9 +98,9 @@ Before each turn, middleware can inject or modify messages in `step.Messages`:
 |---|---|---|---|
 | `steer` | `pipeline/steer.go` | `[STEER] <msg>` as user message | High-priority mid-turn input |
 | `followup` | `pipeline/followup.go` | Queued follow-up as user message | Between-turn messages |
-| `compaction` | `agent_context.go` | Summary as system message | Context window overflow |
+| `compaction` | `pipeline/compaction.go` | Summary as system message | Context window overflow |
 
-### Compaction details (`agent_context.go`)
+### Compaction details (`context_manager.go`)
 
 When the estimated context exceeds the window, old messages are summarized:
 
@@ -114,16 +114,16 @@ messages in the LLM context.
 
 ## Layer 4: Chat request assembly
 
-**File**: `internal/agent/agent.go`
+**File**: `internal/agent/turn.go`
 
 Each turn, the chat request is assembled from the running message history plus
 tool definitions:
 
 ```go
 req := types.ChatRequest{
-    Model:    l.Model,
-    Messages: messages,              // running conversation
-    Tools:    l.buildToolsForLevel(), // registry tools
+    Model:    l.Config.Model,
+    Messages: messages,                 // running conversation
+    Tools:    l.buildToolsForLevel(),   // registry tools
 }
 ```
 
@@ -133,7 +133,7 @@ req := types.ChatRequest{
 
 After the model responds each turn, messages are appended to the history:
 
-### 5a. Assistant response (`agent.go`)
+### 5a. Assistant response (`loop.go`)
 
 ```go
 messages = append(messages, msg)  // model's response with content + tool calls
@@ -147,7 +147,7 @@ Each tool executed produces a tool result message:
 *messages = append(*messages, types.ToolResultMsg(callID, name, result))
 ```
 
-### 5c. Conflict detection (`agent.go`)
+### 5c. Conflict detection (`pipeline/conflictdetect.go`)
 
 When external file modifications are detected, a user message is injected:
 
@@ -191,7 +191,7 @@ roles and their personas:
 
 Sub-agents are full agents with their own lean identity, restricted toolsets,
 and role-specific guidance. Shell and tool guidance follow the role's tool
-set (#329): a role without `bash`/`powershell` gets no shell imperative, and
+set: a role without `bash`/`powershell` gets no shell imperative, and
 a zero-tool role's base prompt swaps `subagent_identity.md` for
 `subagent_identity_notools.md` (`prompts.InjectNoToolsIdentity`) — a "You
 have NO tools" directive placed before the identity text, with the
@@ -230,7 +230,7 @@ Loop.Run(userInput)
 └── Loop continues until model outputs no tool calls
 ```
 
-## Key design decisions
+## Prompt invariants
 
 1. **Sub-agents get a lean base prompt.** `buildSubAgentBasePrompt` gives them
    the sub-agent identity, user/project AGENTS.md, and memory facts — without
@@ -242,7 +242,7 @@ Loop.Run(userInput)
    renders `environment_header.md` once for the main agent's system prompt;
    sub-agents receive the same rendered block, prepended fresh by the runner
    at each dispatch — minus the shell sentence when the role's tool set
-   carries no shell (#329).
+   carries no shell.
 
 3. **Tool set is consistent.** The agent gets the full tool set based on the
    current tool level. The model chooses per-action which tools to use.
@@ -255,5 +255,5 @@ Loop.Run(userInput)
   diverges. When updating one file, update the other to match.
 
 - **Compaction removing the system prompt.** The compaction middleware at
-  `agent_context.go` preserves the system prompt and recent messages. If the
+  `context_manager.go` preserves the system prompt and recent messages. If the
   summary is too aggressive, the model may lose important context.

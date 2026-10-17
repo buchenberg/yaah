@@ -70,10 +70,9 @@ one of them, it will be rejected even if the code is correct.
 5. **One concern per PR.** Don't mix a bug fix with a refactor with a
    new feature. Smaller PRs review faster and merge faster.
 
-6. **Update the docs.** If your change is user-visible, update
-   `README.md` and (if it exists) the relevant section of the design
-   plan. If your change is purely internal, a `docs:` line in the PR
-   description is enough.
+6. **Update the docs.** If your change is user-visible, update the relevant
+   page under `docs/` (and `README.md` for the top-level pitch). If the change
+   is purely internal, a `docs:` line in the PR description is enough.
 
 7. **Don't bump the version.** Maintainers cut releases. Your PR just
    needs to land on `main`.
@@ -213,7 +212,6 @@ This checklist is used by maintainers to review PRs. Contributors can use it to 
 
 - [ ] README.md updated if user-facing change
 - [ ] Configuration docs updated if new options
-- [ ] ADR added for significant architectural decisions
 
 ### Architecture
 
@@ -229,16 +227,6 @@ This checklist is used by maintainers to review PRs. Contributors can use it to 
 - [ ] Sensitive data properly handled
 - [ ] User input properly validated
 - [ ] No injection vulnerabilities
-
----
-
-## Architecture Decision Records (ADRs)
-
-yaah uses **Architecture Decision Records (ADRs)** to document significant architectural decisions.
-
-See [docs/adr/README.md](docs/adr/README.md) for ADR guidelines and the template.
-
-Previous ADRs (engine-view separation, middleware pipeline, functional options, event-driven architecture) were fully implemented and are now documented in [architecture.md](docs/architecture.md).
 
 ---
 

@@ -4,111 +4,87 @@
 
 ## What yaah is
 
-yaah is a vendor-free AI agent harness. One Go static binary, minimal
-config at `~/.yaah/`, skills at `./.agents/` (project, tracked in git)
-and `~/.agents/` (cross-tool standard, per-machine), MCP over stdio and
-HTTP for tool servers. See `README.md` for the user-facing pitch.
+yaah is a vendor-free AI agent harness: one Go static binary, minimal config
+at `~/.yaah/`, skills at `./.agents/` (project, tracked) and `~/.agents/`
+(cross-tool standard, per-machine), and MCP over stdio and HTTP. See
+[README.md](./README.md) for the user-facing pitch and
+[docs/architecture.md](./docs/architecture.md) for the runtime design.
 
 ## Local-only directories
 
-The following are local to a developer's working copy and are gitignored.
-They are not part of the yaah repo and should never be committed:
+These are local to a developer's working copy and are gitignored. Never commit
+them:
 
-- **`.scratch/`** — scratch space for AI coding assistants to clone
-  third-party repos when building yaah skills. For example, building the
-  `charm-bubbles` skill clones `github.com/charmbracelet/bubbles` here
-  for reading. These clones are working copies only — the real upstream
-  dependencies are pinned in `go.sum` as Go modules.
-- **`.ghost/`, `.claude/`, `.qwen/`, `.hermes/`, etc.** — metadata dirs
-  for various AI coding tools. Never commit.
+- **`.scratch/`** — scratch space for cloning third-party repos while building
+  a skill. Real dependencies are pinned in `go.sum`.
+- **`.ghost/`, `.claude/`, `.qwen/`, `.hermes/`, etc.** — metadata for AI
+  coding tools.
 
-## Repo layout (canonical)
+## Repo layout
 
 ```
 yaah/
 ├── main.go                      # calls cmd/yaah.Execute()
-├── go.mod                       # Go 1.26+ (croft dep), cobra, modernc.org/sqlite
-├── cmd/yaah/                    # cobra commands
-│   ├── root.go                  # build-time vars + persistent flags (parse targets only)
-│   ├── root_cmd.go              # rootCmd: REPL, one-shot, prompt dispatch
-│   ├── session.go               # agentSession: view/ctrl-ch/approval plumbing
-│   ├── session_options.go       # SessionOptions: CLI inputs as explicit data
-│   ├── wiring.go                # composition root: providers, tools, jobs → session
-│   ├── wiring_otel.go           # OTel init from SessionOptions
-│   ├── wiring_prompt.go         # system prompt assembly
-│   ├── build_loop.go            # per-turn LoopBuilder population + runPrompt
-│   ├── provider_resolve.go      # provider/model/fallback resolution chain
-│   ├── repl_loop.go             # interactive REPL loop + slash commands
-│   ├── view_terminal.go         # terminal agent.View (plain REPL output)
-│   ├── control_driver.go        # shared question/approval control-plane helpers
-│   ├── serve.go serve_tools.go  # yaah serve — MCP tool server (stdio + HTTP)
-│   ├── acp_cmd.go               # yaah acp-serve cobra shim (server in internal/acp)
-│   ├── web.go web_view.go       # yaah web — browser UI + WebSocket view
-│   ├── tui.go                   # yaah tui (tview terminal UI)
-│   ├── plan.go                  # plan tool wiring
-│   ├── goat.go                  # easter-egg `yaah yaah` ASCII goat
-│   ├── version.go               # yaah version
-│   ├── config.go                # yaah config show/edit
-│   ├── doctor.go                # yaah doctor
-│   ├── login.go                 # yaah login/logout (OAuth device flow via providers)
-│   ├── update.go                # yaah update (mechanics in internal/update)
-│   ├── skill.go                 # yaah skill list/show/create/edit
-│   ├── mcp.go                   # yaah mcp list/add/remove
-│   ├── memory.go                # yaah memory search/add
-│   ├── trace.go                 # yaah shepherd-trace list/show/profile
-│   ├── compact_cmd.go resume.go quickref.go   # /compact, session restore, prompt quick-ref
-│   └── color.go                 # ANSI color helpers
+├── cmd/yaah/                    # cobra commands + composition root
+│   ├── root*.go                 # build-time vars, persistent flags, dispatch
+│   ├── session*.go              # agentSession plumbing and options
+│   ├── wiring*.go               # providers, tools, prompts, OTel, MCP
+│   ├── build_loop.go            # per-run LoopBuilder + runPrompt
+│   ├── provider_resolve.go      # provider/model/fallback resolution
+│   ├── repl_loop.go             # interactive REPL
+│   ├── serve*.go                # MCP tool server (stdio + HTTP)
+│   ├── acp_cmd.go               # ACP server shim (server in internal/acp)
+│   ├── web*.go                  # browser UI + SSE view
+│   ├── tui.go                   # terminal UI entry point
+│   └── ...                      # config, doctor, skill, mcp, memory, trace, update
 ├── internal/
-│   ├── acp/                     # ACP protocol server (JSON-RPC wire types, view, dispatch loop)
-│   ├── agent/                   # agent loop, typed events, tool dispatch, context, hooks, persistence
-│   │   ├── budget/               #   pure sub-agent budget resolution (floors/ceilings) — leaf
-│   │   ├── context/              #   pure context helpers (tokens, split, prune, chunk, truncation) — leaf
-│   │   ├── errorclassify/        #   structured LLM provider error classification
-│   │   ├── llm/                  #   LLM client wrapping (streaming, retry, fallback, usage)
-│   │   ├── pipeline/             #   middleware pipeline (compaction, approval, permissions, etc.)
-│   │   ├── runner/               #   sub-agent dispatch wiring (provider/role/budget resolution)
-│   │   └── subagent/             #   sub-agent role definitions and registry
-│   ├── banner/                  # figlet + lolcat banner for the TUI/REPL
-│   ├── config/                  # load ~/.yaah/config.yaml, env subst, validate
-│   ├── control/                 # control-plane message types (CtrlMsg, approvals, questions, todos)
-│   ├── instructions/            # walk up cwd, load AGENTS.md/CLAUDE.md
-│   ├── jobs/                    # background sub-agent jobs (manager, TaskRunner, sub-agent I/O contract)
-│   ├── mcp/                     # MCP client + server (stdio + HTTP), manifests
-│   ├── memory/                  # SQLite + FTS5 (sessions, messages, memory)
-│   ├── observability/           # OpenTelemetry tracing, in-memory span buffer
-│   ├── plans/                   # PLAN.md discovery/parsing (project + user, like skills + status)
+│   ├── acp/                     # ACP JSON-RPC server
+│   ├── agent/                   # agent loop, events, pipeline, tools, context
+│   │   ├── budget/              #   pure sub-agent budget resolution
+│   │   ├── context/             #   pure context helpers (tokens, split, prune)
+│   │   ├── errorclassify/       #   provider error classification
+│   │   ├── events/              #   typed events + hooks
+│   │   ├── llm/                 #   LLM client: streaming, retry, fallback
+│   │   ├── pipeline/            #   middleware pipeline
+│   │   ├── runner/              #   sub-agent dispatch wiring
+│   │   ├── subagent/            #   role definitions and registry
+│   │   └── supervision/         #   advisory rules and destructive guard
+│   ├── config/                  # config load, env substitution, validation
+│   ├── doctor/                  # `yaah doctor` checks
+│   ├── gitsandbox/              # untracked-file-preserving git sandbox wrapper
+│   ├── instructions/            # AGENTS.md/CLAUDE.md discovery
+│   ├── jobs/                    # background jobs + sub-agent I/O contract
+│   ├── mcp/                     # MCP client + server (stdio + HTTP)
+│   ├── memory/                  # SQLite sessions, memory, FTS5, embeddings
+│   ├── observability/           # OpenTelemetry tracing + span buffer
+│   ├── plans/                   # PLAN.md discovery/parsing
 │   ├── process/                 # background process manager
-│   ├── providers/               # OpenAI & Anthropic API clients, streaming, model info
-│   ├── prompts/                 # system prompt assembly (identity, env, memory, project)
-│   ├── pubsub/                  # typed pub/sub broker (agent event fan-out)
-│   ├── repl/                    # REPL, history, slash commands, colors, banner
-│   ├── sandboxfake/             # in-memory shepherdsandbox.Sandbox test double (isolated-workspace activation tests)
-│   ├── skills/                  # SKILL.md discovery, frontmatter parsing
-│   ├── spinner/                 # animated thinking spinner
-│   ├── todo/                    # in-memory todo store
-│   ├── toolfmt/                 # shared tool result formatting (TUI + web views)
-│   ├── tools/                   # built-in tools (read, write, edit, replace, delete, patch, sed, json_query, grep, glob, ls, bash, powershell, git, question, webfetch, http, go_outline, go_refactor, go_test, go_mod, bisect, diff, staticcheck, calculate, file_info, task, background_process, memory, todo, plan, skill, supervisor, supervised_task)
-│   ├── tui/                     # tview TUI (App in app.go, agent.View adapter in proxy.go, components/ subpackages, theme in colors/theme.go)
-│   ├── types/                   # OpenAI message types
-│   └── update/                  # GitHub release checking
+│   ├── prompts/                 # identity, roles, tool docs, prompt assembly
+│   ├── providers/               # OpenAI-compatible + Anthropic clients
+│   ├── pubsub/                  # typed event broker
+│   ├── repl/                    # REPL history, slash commands, colors
+│   ├── rolefile/                # role frontmatter parsing/validation
+│   ├── sandboxfake/             # in-memory sandbox test double
+│   ├── skills/                  # SKILL.md discovery/parsing
+│   ├── toolfmt/                 # shared tool result formatting
+│   ├── tools/                   # built-in tools
+│   ├── tui/                     # tview UI components
+│   ├── types/                   # message and chat request types
+│   └── update/                  # release checking and self-update
+├── docs/                        # architecture, configuration, features, sub-agents,
+│                                # prompts, agent instructions, code organization,
+│                                # TUI, web UI
+├── bench/                       # benchmark harnesses
+├── .agents/                     # project skills and roles
 ├── .github/workflows/ci.yml     # CI: test, vet, staticcheck, cross-compile
-├── docs/
-│   ├── architecture.md          # detailed architecture documentation
-│   ├── sub-agents.md            # sub-agent team, roles, escalation, contracts
-│   ├── features.md              # TUI, REPL, MCP, tools, observability, middleware
-│   ├── configuration.md         # full config reference
-│   ├── prompts.md               # system prompt assembly and injection map
-│   ├── tui-components.md        # TUI component system reference
-│   ├── web-ui.md                # web UI architecture and event reference
-│   └── adr/                     # architecture decision records
 ├── README.md
 ├── CONTRIBUTING.md
 ├── SECURITY.md
-├── AGENTS.md                    # this file
+├── AGENTS.md
 └── LICENSE                      # MIT OR Apache-2.0
 ```
 
-## Build & test
+## Build and test
 
 ```bash
 go build .                      # produces ./yaah
@@ -117,7 +93,7 @@ go vet ./...                    # vet
 gofmt -l .                      # must be empty
 go run honnef.co/go/tools/cmd/staticcheck@latest ./...   # staticcheck
 
-# Cross-compile matrix
+# Cross-compile
 GOOS=darwin  GOARCH=arm64 go build -trimpath -ldflags '-s -w' -o dist/yaah-darwin-arm64  .
 GOOS=darwin  GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o dist/yaah-darwin-amd64  .
 GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o dist/yaah-linux-amd64    .
@@ -125,7 +101,7 @@ GOOS=linux   GOARCH=arm64 go build -trimpath -ldflags '-s -w' -o dist/yaah-linux
 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o dist/yaah-windows-amd64  .
 ```
 
-## Install locally
+Install locally:
 
 ```bash
 go build -trimpath -ldflags '-s -w' -o yaah .
@@ -134,78 +110,60 @@ ditto --norsrc yaah ~/.local/bin/yaah  # macOS: avoids Gatekeeper quarantine
 
 ## Dev loop (MCP hot-reload)
 
-When editing yaah source code, do **not** expect the user (or your own Kilo
-session) to restart to pick up the change. Use the HTTP+SSE MCP transport —
-`yaah serve --http 127.0.0.1:7333` — and let the host agent connect to the
-running yaah once. After that, every code change is just:
+Use the HTTP MCP transport so the host agent can connect once and survive
+rebuilds:
 
 ```bash
-go build -o yaah.exe .
-# kill the running yaah process and start the new one with the same flags
-Get-Process yaah -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Process ./yaah.exe -ArgumentList 'serve','--http','127.0.0.1:7333' -NoNewWindow
+yaah serve --http 127.0.0.1:7333
 ```
 
-Total swap: ~1 s. The host agent reconnects on the next MCP request — no
-agent restart, no config reload, no Kilo exit/relaunch. Verify the swap took
-effect by calling `mcp__yaah__status` and checking the `pid` field.
+After a code change, rebuild and restart only the server process; the host
+agent reconnects on the next request. Verify the swap via `status`
+(`pid` must change), then inspect behavior with `traces` (`tree: true` on a
+known `trace_id`). One observable change per iteration; trust trace data over
+model self-report. Full workflow: `.agents/skills/yaah-dev-loop/SKILL.md`.
 
-Use the same discipline as
-[karpathy/autoresearch](https://github.com/karpathy/autoresearch): one
-observable change per iteration; always check the trace data with
-`mcp__yaah__traces` (use `tree: true` on a known `trace_id`) before trusting
-the model's self-report; the cheapest signal (`status`) goes first.
-
-Full troubleshooting, comparison table, and sanity script are in
-`.agents/skills/yaah-dev-loop/SKILL.md`. The `cmd/yaah/serve.go` tool
-registration is shared between stdio and HTTP transports via
-`registerServeTools()` — changes there apply to both `yaah serve` (stdio) and
-`yaah serve --http`.
+`cmd/yaah/serve.go` registers the same tools for stdio and HTTP via
+`registerServeTools()`.
 
 ## Conventions
 
-- **Go 1.26+** (per `go.mod`; the croft dependency requires go >= 1.26.3).
+- **Go 1.26+** (the croft dependency requires go >= 1.26.3).
 - **No codegen, no build tags, no `go generate`.**
 - **cobra + pflag** for CLI.
-- **`internal/` for everything private.** `pkg/` reserved for future exports.
-- **No globals except** build-time vars and persistent-flag parse
-  targets in `cmd/yaah/root.go` (read only via `sessionOptionsFromFlags`),
-  the `httpAddr` flag target in `cmd/yaah/serve.go`, the embedded web FS
-  in `cmd/yaah/web.go`, and the atomic role registry
-  (`defaultRoleReg` in `internal/agent/subagent/role.go`, set at startup
-  via `SetDefaultRoleRegistry` for hot-reloadable role profiles).
-  OTel metric instruments in `internal/observability/metrics.go` are
-  initialised once by `initMetrics()` and are effectively const after setup.
+- **`internal/` for everything private.** `pkg/` is reserved for future
+  exports.
+- **Avoid globals** except build-time vars, persistent-flag parse targets,
+  the embedded web FS, the atomic role registry, and OTel instruments
+  initialised once at startup.
 - **Errors are values, not panics.**
-- **No third-party HTTP client.** Use `net/http` from stdlib.
+- **No third-party HTTP client.** Use `net/http` from the stdlib.
 - **`gopkg.in/yaml.v3`** for config parsing.
 - **`modernc.org/sqlite`** for SQLite (pure Go, no CGo, FTS5 included).
-- **No model SDK for the OpenAI-compat path.** Direct HTTP to
-  `chat/completions` — the compat client serves 6+ providers whose
-  extension fields (`reasoning_content`, copilot mode, thinking overrides)
-  no SDK round-trips. Exception: the native Anthropic path
-  (`api: anthropic`) uses `github.com/anthropics/anthropic-sdk-go` for
-  wire types, SSE decoding, and typed errors; policy (retries, fallback,
-  classification) stays in yaah.
+- **No model SDK for the OpenAI-compatible path.** Direct HTTP to
+  `chat/completions` preserves provider extension fields
+  (`reasoning_content`, Copilot mode, thinking overrides). The native
+  Anthropic path uses `github.com/anthropics/anthropic-sdk-go` for wire types,
+  SSE decoding, and typed errors; retries, fallback, and classification stay
+  in yaah.
 
 ## Style
 
 - Run `gofmt -w .` before committing.
-- `go vet` must be clean.
-- `staticcheck` must be clean.
-- Prefer `for ... range` over index-based loops.
-- Prefer early returns over nested `if/else`.
+- `go vet` and `staticcheck` must be clean.
+- Prefer `for ... range` and early returns.
 - One file, one concern.
-- Tests live next to the code they test (`foo.go` ↔ `foo_test.go`).
-- Use `t.Run("name", func(t *testing.T) { ... })` for subtests.
+- Tests live next to the code (`foo.go` ↔ `foo_test.go`).
+- Use subtests (`t.Run("name", ...)`) for table-driven cases.
 
-## Engine-View Architecture
+## Engine-view architecture
 
-The agent loop (`internal/agent/`) communicates with consumers (TUI, REPL,
-sub-agent runner) through a single typed event interface. There are no
-callbacks on `agent.Loop` — everything flows through the broker.
+The agent loop communicates with consumers (TUI, REPL, web, ACP) through a
+single typed event interface. View delivery is broker-based; a few control
+hooks (`ApproveFn`, `ContinueAfterMaxIter`, `OnUsage`, `OnSubUsage`) remain on
+the loop.
 
-### Adding a new consumer
+### Adding a consumer
 
 Implement `agent.View`:
 
@@ -215,144 +173,66 @@ type View interface {
 }
 ```
 
-The agent loop creates an internal `pubsub.Broker[Event]` and a `BrokerView`
-adapter. All events (token deltas, tool calls, sub-agent lifecycle, flush,
-done) are published as typed structs implementing the sealed `Event`
-interface. See `internal/agent/events/events.go` for the event types.
+The loop creates an internal `pubsub.Broker[Event]` and a `BrokerView`
+adapter. Events are typed structs implementing the sealed `Event` interface;
+see `internal/agent/events/events.go`.
 
-### Adding a new event type
+### Adding an event type
 
-1. Add a struct in `internal/agent/events/events.go` with an `eventMarker()` method
-2. Add the event to `allEvents()` in `internal/agent/events/exhaustive_test.go`
-   — the exhaustive tests then FAIL until every consumer's `HandleEvent`
-   type switch has a case for it (explicit "intentionally ignored" cases count)
-3. Publish from the agent loop's internal broker
+1. Add the struct in `internal/agent/events/events.go` with an
+   `eventMarker()` method.
+2. Add it to `allEvents()` in `internal/agent/events/exhaustive_test.go`.
+   The exhaustive tests fail until every consumer handles the event (an
+   explicit "intentionally ignored" case counts).
+3. Publish it from the agent loop's internal broker.
 
 ### Consumers
 
 | Consumer | View impl | File |
-|----------|-----------|------|
-| TUI | `App.HandleEvent` (type switch, via `tui.Proxy`) | `internal/tui/proxy.go` |
+|---|---|---|
+| TUI | `App.HandleEvent` (via `tui.Proxy`) | `internal/tui/proxy.go` |
 | REPL | `terminalView` / `replView` | `cmd/yaah/view_terminal.go` |
+| Web | `sseView` | `cmd/yaah/web_view.go` |
 | Sub-agents | `agent.NoopView` | `internal/agent/runner/runner.go` |
 | MCP serve | `agent.NoopView` | `cmd/yaah/serve.go` |
 | ACP serve | `acp.View` + `acp.ViewWithWrite` | `internal/acp/view.go` |
 
 Control-plane messages (todos, questions, approvals, model lists) use
-`tui.ControlMsg` — a separate channel from the broker events.
-
-### History
-
-The engine-view boundary was refactored in PRs #60 and #62 (plan:
-`.agents/plans/engine-view-separation/PLAN.md`). Before this, the agent
-loop had dual delivery (callbacks + broker) with a 25-field `AgentMsg`
-god struct and an 8-hop TUI delivery pipeline. The refactor removed
-callbacks entirely, internalized the broker, cut the pipeline to 4 hops,
-and replaced `AgentMsg` with compile-time-exhaustive typed events.
+`tui.ControlMsg`, a separate channel from broker events.
 
 ## Skills
 
-Project-level skills live in `.agents/skills/` and are tracked in git.
-Load a skill when the task at hand matches its description. Use the
-`skill` tool with `action: "load"` to inject its instructions into the
-current context.
+Project skills live in `.agents/skills/`; user skills live in
+`~/.agents/skills/`. Load a skill when the task matches its description using
+the `skill` tool (`action: "load"`). See the directory for the current list;
+`yaah-dev-loop`, `beads`, and `dolt-server-lifecycle` are the core development
+skills.
 
-Available skills:
+## Beads issue tracker
 
-| Skill | When to load |
-|---|---|
-| `yaah-dev-loop` | Building, running, and iterating on the yaah MCP server from inside a Kilo session |
-| `beads` | Beads (`bd`) issue-tracker workflow guidance |
-| `dolt-server-lifecycle` | Starting/stopping the local Dolt SQL server used as the bd backend |
-
-User-level skills in `~/.agents/skills/` (e.g. `yaah-testing`,
-`yaah-benchmark`) also apply when present on the machine.
-
-## What NOT to do
-
-- Don't add a `web/` package, a `gateway/` package, or anything that talks to
-  Telegram/Discord/Slack. Out of scope.
-- Don't add a "yaah cloud" or any hosted service.
-- Don't add Anthropic-specific features unless via MCP.
-- Don't change the license. `MIT OR Apache-2.0` is the deal.
-- Don't bump the version in a PR. Maintainers cut releases.
-
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:46cd31e7 -->
-## Beads Issue Tracker
-
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
-
-### Quick Reference
+This project uses **bd (beads)** for task tracking. Run `bd prime` for the
+full workflow.
 
 ```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>         # Complete work
+bd ready                 # available work
+bd show <id>             # details
+bd update <id> --claim   # claim work
+bd close <id>            # complete work
 ```
 
-### Rules
+Rules:
 
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
+- Use `bd` for all task tracking. Do not create markdown TODO lists or use
+  TodoWrite/TaskCreate.
+- Use `bd remember` for durable knowledge; do not create MEMORY.md files.
+- Conservative git policy by default: do not commit, push, or run Dolt remote
+  sync unless the user asks.
 
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/core-concepts/sync-concepts.md for details and anti-patterns.
+## What not to do
 
-## Agent Context Profiles
-
-The managed Beads block is task-tracking guidance, not permission to override repository, user, or orchestrator instructions.
-
-- **Conservative (default)**: Use `bd` for task tracking. Do not run git commits, git pushes, or Dolt remote sync unless explicitly asked. At handoff, report changed files, validation, and suggested next commands.
-- **Minimal**: Keep tool instruction files as pointers to `bd prime`; use the same conservative git policy unless active instructions say otherwise.
-- **Team-maintainer**: Only when the repository explicitly opts in, agents may close beads, run quality gates, commit, and push as part of session close. A current "do not commit" or "do not push" instruction still wins.
-
-## Session Completion
-
-This protocol applies when ending a Beads implementation workflow. It is subordinate to explicit user, repository, and orchestrator instructions.
-
-1. **File issues for remaining work** - Create beads for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **Handle git/sync by active profile**:
-   ```bash
-   # Conservative/minimal/default: report status and proposed commands; wait for approval.
-   git status
-
-   # Team-maintainer opt-in only, unless current instructions forbid it:
-   git pull --rebase
-   bd dolt push
-   git push
-   git status
-   ```
-5. **Hand off** - Summarize changes, validation, issue status, and any blocked sync/commit/push step
-
-**Critical rules:**
-- Explicit user or orchestrator instructions override this Beads block.
-- Do not commit or push without clear authority from the active profile or the current user request.
-- If a required sync or push is blocked, stop and report the exact command and error.
-<!-- END BEADS INTEGRATION -->
-
-<!-- BEGIN BEADS CODEX SETUP: generated by bd setup codex -->
-## Beads Issue Tracker
-
-Use Beads (`bd`) for durable task tracking in repositories that include it. Use the `beads` skill at `.agents/skills/beads/SKILL.md` (project install) or `~/.agents/skills/beads/SKILL.md` (global install) for Beads workflow guidance, then use the `bd` CLI for issue operations.
-
-### Quick Reference
-
-```bash
-bd ready                # Find available work
-bd show <id>            # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>           # Complete work
-bd prime                # Refresh Beads context
-```
-
-### Rules
-
-- Use `bd` for all task tracking; do not create markdown TODO lists.
-- Run `bd prime` when Beads context is missing or stale. Codex 0.129.0+ can load Beads context automatically through native hooks; use `/hooks` to inspect or toggle them.
-- Keep persistent project memory in Beads via `bd remember`; do not create ad hoc memory files.
-
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/core-concepts/sync-concepts.md for details and anti-patterns.
-<!-- END BEADS CODEX SETUP -->
+- Don't add a `web/` or `gateway/` package, or integrations for
+  Telegram/Discord/Slack.
+- Don't add a hosted service or a paid-only integration.
+- Don't add Anthropic-specific features outside the provider/MCP surface.
+- Don't change the license (`MIT OR Apache-2.0`).
+- Don't bump the version in a PR; maintainers cut releases.

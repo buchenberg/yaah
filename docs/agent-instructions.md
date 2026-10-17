@@ -38,8 +38,9 @@ From `subagent_tools.md`:
   run concurrently, and for exploration whose raw tool calls would otherwise
   fill the orchestrator's context.
 - The sub-agent never lands work: in the retained lane it returns a sealed
-  proposal and the orchestrator settles it. That is the only gate — there is
-  no reviewer sub-agent and no round loop.
+  proposal and the orchestrator settles it. That is the only gate; there is no
+  mandatory review round. A reviewer role can still be dispatched explicitly or
+  through a quality gate.
 
 ## The retained lane's contract
 
@@ -81,7 +82,7 @@ Two behaviors the model will meet and should not fight:
 
 Injecting into the root scope steers the orchestrator's own session —
 that is why root `halt` is gated behind the
-`supervisor_halt_root` opt-in, off by default.
+`supervisor.halt_root` opt-in, off by default.
 
 ## What a sub-agent is told
 

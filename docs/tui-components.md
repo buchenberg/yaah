@@ -3,10 +3,6 @@
 How the yaah TUI (`internal/tui/`, tview-based) composes its visual elements
 through focused component packages, all styled from the shared theme.
 
-> Rewritten 2026-08-21 when the tview TUI (formerly `tui2`) became the one and
-> only `yaah tui`; the previous bubbletea component system was removed.
-> Updated 2026-08-25: activity line, prompt redesign, error dialog.
-
 ## Layout
 
 The app is a `Pages → Flex` hierarchy owned by the `App` struct in
