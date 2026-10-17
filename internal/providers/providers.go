@@ -36,6 +36,11 @@ type OpenAIClient struct {
 	// CopilotMode enables transformations for the GitHub Copilot API
 	// which does not count system messages as valid messages.
 	CopilotMode bool
+
+	// DefaultMaxTokens caps output tokens when a request does not set its
+	// own cap. Zero leaves the field unset so the provider's own default
+	// applies (the historical behaviour for OpenAI-compatible endpoints).
+	DefaultMaxTokens int
 }
 
 // NewOpenAIClient creates a new client targeting baseURL (e.g. "https://api.openai.com").
@@ -69,8 +74,18 @@ func (c *OpenAIClient) resolveThinkingMode(model string) bool {
 	return IsThinkingModel(model)
 }
 
+// applyDefaultMaxTokens fills an unset output cap from the provider's
+// configured default. A zero default keeps the request untouched so the
+// server applies its own model-specific limit.
+func (c *OpenAIClient) applyDefaultMaxTokens(req *types.ChatRequest) {
+	if req.MaxTokens <= 0 && c.DefaultMaxTokens > 0 {
+		req.MaxTokens = c.DefaultMaxTokens
+	}
+}
+
 // Send posts a ChatRequest to the provider and returns the parsed ChatResponse.
 func (c *OpenAIClient) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
+	c.applyDefaultMaxTokens(&req)
 	body, err := json.Marshal(lowerRequest(req, c.resolveThinkingMode(req.Model), c.CopilotMode))
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)

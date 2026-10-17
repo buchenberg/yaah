@@ -275,6 +275,20 @@ func TestClassify(t *testing.T) {
 	}
 }
 
+func TestClassify_OutputBudgetExhausted(t *testing.T) {
+	err := errors.New("streamed response produced no content (finish_reason=length): output token budget exhausted before any content — the model may have spent max_tokens on reasoning; raise max_tokens")
+	c := Classify(err, ErrorMeta{})
+	if c.Reason != ReasonOutputBudget {
+		t.Errorf("reason = %v, want %v", c.Reason, ReasonOutputBudget)
+	}
+	if c.Retryable {
+		t.Error("output-budget exhaustion must not retry unchanged")
+	}
+	if c.ShouldCompress {
+		t.Error("compaction cannot reclaim output budget")
+	}
+}
+
 func TestClassify_priority(t *testing.T) {
 	// Status code beats message pattern: 429 overrides any billing text in body
 	err := errors.New("insufficient credits for model. rate limit exceeded")
@@ -317,6 +331,7 @@ func TestErrorReasonString(t *testing.T) {
 		ReasonServerError:           "server_error",
 		ReasonTimeout:               "timeout",
 		ReasonContextOverflow:       "context_overflow",
+		ReasonOutputBudget:          "output_budget",
 		ReasonPayloadTooLarge:       "payload_too_large",
 		ReasonModelNotFound:         "model_not_found",
 		ReasonContentPolicyBlocked:  "content_policy_blocked",

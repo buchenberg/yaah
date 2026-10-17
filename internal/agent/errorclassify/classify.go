@@ -207,6 +207,19 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 
 	// ── 2. Status-code-agnostic pattern matching ──────────────────
 
+	// Output-budget exhaustion: the model spent the entire max_tokens
+	// budget (reasoning models bill thinking tokens against it) before
+	// emitting any content. This is not context overflow — compaction
+	// cannot reclaim output budget, so retrying unchanged only repeats
+	// the failure.
+	if strings.Contains(msg, "produced no content") &&
+		(strings.Contains(msg, "finish_reason=length") || strings.Contains(msg, "output token budget")) {
+		c.Reason = ReasonOutputBudget
+		c.Retryable = false
+		c.Message = "output token budget exhausted — raise max_tokens (reasoning may consume the whole budget)"
+		return c
+	}
+
 	// Empty streamed/non-streamed response with known finish_reason — the
 	// model may be hitting a context limit without returning a clear error
 	// code (DeepSeek v4-pro is known to do this).

@@ -97,10 +97,13 @@ func makeProvider(name string, p config.Provider) (agent.Provider, bool) {
 	}
 	switch r.API {
 	case "anthropic":
-		return providers.NewAnthropicClient(r.BaseURL, r.APIKey, r.TimeoutSeconds), true
+		client := providers.NewAnthropicClient(r.BaseURL, r.APIKey, r.TimeoutSeconds)
+		client.DefaultMaxTokens = r.MaxTokens
+		return client, true
 	default:
 		client := providers.NewOpenAIClient(r.BaseURL, r.APIKey, r.TimeoutSeconds)
 		client.ExtraHeaders = r.Headers
+		client.DefaultMaxTokens = r.MaxTokens
 		applyThinkingOverrides(client, r)
 		return client, true
 	}
@@ -120,10 +123,13 @@ func makeOAuthProvider(name string, r config.Provider) (agent.Provider, bool) {
 
 	switch r.API {
 	case "anthropic":
-		return providers.NewAnthropicClient(r.BaseURL, token.AccessToken, r.TimeoutSeconds), true
+		client := providers.NewAnthropicClient(r.BaseURL, token.AccessToken, r.TimeoutSeconds)
+		client.DefaultMaxTokens = r.MaxTokens
+		return client, true
 	default:
 		client := providers.NewOpenAIClient(r.BaseURL, token.AccessToken, r.TimeoutSeconds)
 		client.ExtraHeaders = r.Headers
+		client.DefaultMaxTokens = r.MaxTokens
 		client.CopilotMode = r.API == "copilot" || strings.Contains(r.BaseURL, "githubcopilot.com")
 		applyThinkingOverrides(client, r)
 		return client, true

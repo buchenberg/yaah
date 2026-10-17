@@ -27,6 +27,12 @@ import (
 type AnthropicClient struct {
 	client   anthropic.Client
 	baseOpts []option.RequestOption
+
+	// DefaultMaxTokens caps output tokens when a request does not set
+	// its own cap. Zero means use the built-in fallback. Anthropic-
+	// compatible reasoning endpoints bill thinking tokens against this
+	// budget, so a too-small value can end a turn before any content.
+	DefaultMaxTokens int
 }
 
 // NewAnthropicClient creates a new client targeting the Anthropic Messages
@@ -97,11 +103,21 @@ func (c *AnthropicClient) requestOpts(ctx context.Context) []option.RequestOptio
 // Send translates a ChatRequest to the Anthropic Messages API and returns
 // the response.
 func (c *AnthropicClient) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
-	msg, err := c.client.Messages.New(ctx, lowerAnthropicRequest(req), c.requestOpts(ctx)...)
+	msg, err := c.client.Messages.New(ctx, c.lower(req), c.requestOpts(ctx)...)
 	if err != nil {
 		return nil, anthropicAPIError(err)
 	}
 	return raiseAnthropicResponse(*msg), nil
+}
+
+// lower applies the client's configured default output cap before
+// translating the request. Per-request values always win so callers
+// (for example context compaction) can keep their own explicit budget.
+func (c *AnthropicClient) lower(req types.ChatRequest) anthropic.MessageNewParams {
+	if req.MaxTokens <= 0 && c.DefaultMaxTokens > 0 {
+		req.MaxTokens = c.DefaultMaxTokens
+	}
+	return lowerAnthropicRequest(req)
 }
 
 // ListModels is not supported by the Anthropic Messages API.
@@ -242,7 +258,12 @@ func lowerAnthropicRequest(req types.ChatRequest) anthropic.MessageNewParams {
 
 	maxTokens := int64(req.MaxTokens)
 	if maxTokens <= 0 {
-		maxTokens = 4096
+		// Anthropic-compatible reasoning endpoints (DeepSeek, ZAI, ...)
+		// charge thinking tokens against max_tokens. 4096 was routinely
+		// exhausted before the first content block, so the unconfigured
+		// fallback is large enough for a reasoning preamble plus an
+		// answer while staying inside every current model's output cap.
+		maxTokens = 8192
 	}
 
 	params := anthropic.MessageNewParams{

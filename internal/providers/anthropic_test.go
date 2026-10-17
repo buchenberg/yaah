@@ -304,8 +304,8 @@ func TestChatRequestToAnthropic_MaxTokensDefault(t *testing.T) {
 
 	result := lowerAnthropicRequest(req)
 
-	if result.MaxTokens != 4096 {
-		t.Errorf("expected MaxTokens 4096, got %d", result.MaxTokens)
+	if result.MaxTokens != 8192 {
+		t.Errorf("expected MaxTokens 8192, got %d", result.MaxTokens)
 	}
 }
 
@@ -322,6 +322,25 @@ func TestChatRequestToAnthropic_MaxTokensExplicit(t *testing.T) {
 
 	if result.MaxTokens != 8000 {
 		t.Errorf("expected MaxTokens 8000, got %d", result.MaxTokens)
+	}
+}
+
+func TestAnthropicClient_DefaultMaxTokens(t *testing.T) {
+	client := NewAnthropicClient("https://api.anthropic.com", "sk-test", 30)
+	client.DefaultMaxTokens = 16000
+
+	req := types.ChatRequest{
+		Model:    "glm-5.3-flash",
+		Messages: []types.Message{{Role: "user", Content: "Hello"}},
+	}
+	if got := client.lower(req).MaxTokens; got != 16000 {
+		t.Errorf("provider default: expected MaxTokens 16000, got %d", got)
+	}
+
+	// An explicit per-request cap must win over the provider default.
+	req.MaxTokens = 32000
+	if got := client.lower(req).MaxTokens; got != 32000 {
+		t.Errorf("explicit cap: expected MaxTokens 32000, got %d", got)
 	}
 }
 

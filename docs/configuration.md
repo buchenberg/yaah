@@ -21,6 +21,7 @@ providers:
     name: Anthropic
     base_url: https://api.anthropic.com
     api_key: ${ANTHROPIC_API_KEY}
+    max_tokens: 8192                   # output cap per turn (raise for reasoning models)
   ollama:
     name: Ollama
     base_url: http://localhost:11434/v1
@@ -180,6 +181,7 @@ At least one provider is required. Each needs a `base_url` and an `api_key`.
 | `name` | map key | Display name shown in CLI/TUI |
 | `models` | — | Limit available models. Each entry is a plain name or `{name: …, thinking: true/false}` to override thinking detection (empty = all from `/models`; n/a for Anthropic) |
 | `timeout` | 120 | HTTP request timeout in seconds (0 = no timeout) |
+| `max_tokens` | 8192 on `anthropic`, unset on `openai` | Output-token cap applied when a request does not set its own. Reasoning endpoints (Anthropic-compatible DeepSeek/ZAI, etc.) count thinking tokens against it — raise it if turns end with `finish_reason=length` before any content |
 
 ## Agent reference
 

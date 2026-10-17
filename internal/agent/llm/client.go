@@ -161,7 +161,11 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 					} else if finish == "length" && len(msg.ToolCalls) > 0 {
 						err = fmt.Errorf("response truncated (finish_reason=length), discarding %d tool calls", len(msg.ToolCalls))
 					} else if msg.Content == "" && len(msg.ToolCalls) == 0 {
-						err = fmt.Errorf("non-streaming response produced no content (finish_reason=%s)", finish)
+						if finish == "length" {
+							err = fmt.Errorf("non-streaming response produced no content (finish_reason=length): output token budget exhausted before any content — the model may have spent max_tokens on reasoning; raise max_tokens")
+						} else {
+							err = fmt.Errorf("non-streaming response produced no content (finish_reason=%s)", finish)
+						}
 					} else {
 						result.Message = msg
 					}
@@ -366,6 +370,13 @@ func isDegenerateStream(err error) bool {
 		return false
 	}
 	msg := err.Error()
+	// finish_reason=length is deterministic output-budget exhaustion:
+	// replaying the identical request cannot succeed. Let classification
+	// surface an actionable max_tokens error instead of burning two
+	// replays and a fallback swap.
+	if strings.Contains(msg, "finish_reason=length") {
+		return false
+	}
 	return strings.Contains(msg, "streamed response produced no content") ||
 		strings.Contains(msg, "non-streaming response produced no content")
 }

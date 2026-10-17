@@ -18,6 +18,7 @@ const (
 	ReasonServerError                                // 500/502 — internal server error, retry
 	ReasonTimeout                                    // connection/read timeout — retry
 	ReasonContextOverflow                            // context window exceeded — compress
+	ReasonOutputBudget                               // max_tokens exhausted before content — raise cap
 	ReasonPayloadTooLarge                            // 413 — compress payload
 	ReasonModelNotFound                              // 404/invalid model — fallback to different model
 	ReasonContentPolicyBlocked                       // safety filter — do NOT retry unchanged
@@ -46,6 +47,8 @@ func (r ErrorReason) String() string {
 		return "timeout"
 	case ReasonContextOverflow:
 		return "context_overflow"
+	case ReasonOutputBudget:
+		return "output_budget"
 	case ReasonPayloadTooLarge:
 		return "payload_too_large"
 	case ReasonModelNotFound:
