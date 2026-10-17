@@ -3,9 +3,11 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -205,5 +207,138 @@ func TestProposalTool_Surface(t *testing.T) {
 	}
 	if _, err := tool.Execute(context.Background(), `{"action":"select"}`); err == nil {
 		t.Error("select without a proposal_id must error")
+	}
+}
+
+// TestRetained_SpeculationSettlesOneAndDiscardsTheRest pins the mechanics the
+// speculation guidance relies on: N dispatches of one task, issued together,
+// each get their own world and seal their own proposal; the orchestrator compares
+// them, settles one, and discards the rest.
+//
+// There is deliberately no `attempts` parameter on spawn_subagent: the loop
+// already fans out parallel calls in one turn (each takes a sub-agent slot), so a
+// tool-level multiplier would duplicate that and bypass the concurrency cap.
+func TestRetained_SpeculationSettlesOneAndDiscardsTheRest(t *testing.T) {
+	resetRetainedProposals()
+
+	const attempts = 3
+	runner := &sessionRunner{responses: []runnerResponse{
+		{result: "approach a"}, {result: "approach b"}, {result: "approach c"},
+	}}
+	// Everything touched from a dispatch goroutine is non-fatal: t.Fatalf is
+	// only legal on the test's own goroutine, and a failure there would surface
+	// later as a misleading assertion.
+	writeErrs := make([]error, attempts)
+	runner.sideEffect = func(call int, _ string) {
+		wd, ok := runner.workdirAt(call)
+		if !ok {
+			writeErrs[call] = fmt.Errorf("no workdir recorded for call %d", call)
+			return
+		}
+		writeErrs[call] = os.WriteFile(filepath.Join(wd, fmt.Sprintf("approach-%d.txt", call)), []byte("variant\n"), 0o644)
+	}
+	rt := newRetainedTestEnv(t, runner)
+
+	var wg sync.WaitGroup
+	envs := make([]proposalEnvelope, attempts)
+	runErrs := make([]error, attempts)
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			res, err := startRetainedRun(context.Background(), rt, "propose a fix", SubAgentParams{Role: "worker"}, 0)
+			if err != nil {
+				runErrs[i] = err
+				return
+			}
+			var env proposalEnvelope
+			if uerr := json.Unmarshal([]byte(res), &env); uerr != nil {
+				runErrs[i] = fmt.Errorf("envelope: %w", uerr)
+				return
+			}
+			envs[i] = env
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range runErrs {
+		if err != nil {
+			t.Fatalf("dispatch %d: %v", i, err)
+		}
+	}
+	for call, err := range writeErrs {
+		if err != nil {
+			t.Fatalf("attempt %d's write: %v", call, err)
+		}
+	}
+
+	seenID := map[string]bool{}
+	for i, env := range envs {
+		if env.Status != "proposal" || env.ProposalID == "" {
+			t.Fatalf("attempt %d did not seal a proposal: %+v", i, env)
+		}
+		if seenID[env.ProposalID] {
+			t.Fatalf("two attempts share a proposal id: %q", env.ProposalID)
+		}
+		seenID[env.ProposalID] = true
+	}
+
+	// Each attempt ran in its own world, not in the others'.
+	workdirs := map[string]bool{}
+	for call := 0; call < attempts; call++ {
+		wd := runner.workdirFor(t, call)
+		if wd == rt.RepoPath || wd == "" {
+			t.Fatalf("attempt %d is not isolated: %q", call, wd)
+		}
+		if workdirs[wd] {
+			t.Fatalf("two attempts share a world: %q", wd)
+		}
+		workdirs[wd] = true
+	}
+
+	// The orchestrator picks one and throws the others away. A goroutine's index
+	// is not the runner's call index (they are concurrent), so the attempt is
+	// identified by the report it returned.
+	callOf := map[string]int{}
+	for k := 0; k < attempts; k++ {
+		callOf[runner.responses[k].result] = k
+	}
+	const winner = 1 // the call that returned "approach b"
+	for _, env := range envs {
+		call, ok := callOf[env.Result]
+		if !ok {
+			t.Fatalf("proposal result %q matches no attempt", env.Result)
+		}
+		if call == winner {
+			if _, err := settleRetainedProposal(context.Background(), env.ProposalID, "select"); err != nil {
+				t.Fatalf("select the winner: %v", err)
+			}
+			continue
+		}
+		if _, err := settleRetainedProposal(context.Background(), env.ProposalID, "discard"); err != nil {
+			t.Fatalf("discard attempt %d: %v", call, err)
+		}
+	}
+
+	// Only the winner's change landed, and the losers' worlds are gone.
+	for call := 0; call < attempts; call++ {
+		_, err := os.Stat(filepath.Join(rt.RepoPath, fmt.Sprintf("approach-%d.txt", call)))
+		if call == winner {
+			if err != nil {
+				t.Errorf("the winner's change must land: %v", err)
+			}
+			continue
+		}
+		if !os.IsNotExist(err) {
+			t.Errorf("attempt %d must not land (stat err=%v)", call, err)
+		}
+		if _, werr := os.Stat(runner.workdirFor(t, call)); !os.IsNotExist(werr) {
+			t.Errorf("discard must remove attempt %d's worktree (stat err=%v)", call, werr)
+		}
+	}
+
+	for _, env := range envs {
+		if _, err := getRetainedProposal(env.ProposalID); err == nil {
+			t.Errorf("proposal %s should be consumed", env.ProposalID)
+		}
 	}
 }

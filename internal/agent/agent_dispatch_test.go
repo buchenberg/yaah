@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/types"
@@ -105,4 +107,36 @@ func TestNewDispatch_OnlySpawnSubAgentTakesASubAgentSlot(t *testing.T) {
 			t.Errorf("%s: isTask = %v, want %v", tc.name, d.isTask, tc.task)
 		}
 	}
+}
+
+// The speculation guidance promises that `max_concurrency` bounds a fan-out of
+// parallel spawn_subagent calls. That bound is the sub-agent semaphore: each
+// dispatch takes a slot and holds it until the dispatch ends, so N concurrent
+// calls cannot exceed the cap.
+func TestDispatch_SubAgentSemaphoreBoundsFanOut(t *testing.T) {
+	l := &Loop{subAgentSem: make(chan struct{}, 1)}
+	spawn := func() types.ToolCall {
+		return types.ToolCall{Type: "function", Function: types.ToolCallFn{Name: "spawn_subagent"}}
+	}
+
+	first := l.newDispatch(0, spawn())
+	if err := first.acquire(context.Background()); err != nil {
+		t.Fatalf("first dispatch must take the only slot: %v", err)
+	}
+	defer first.release()
+
+	second := l.newDispatch(1, spawn())
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := second.acquire(ctx); err == nil {
+		second.release()
+		t.Fatal("a second dispatch took a slot while the cap was 1 — the fan-out bound does not hold")
+	}
+
+	// The slot frees when the first dispatch ends, not before.
+	first.release()
+	if err := second.acquire(context.Background()); err != nil {
+		t.Fatalf("the slot must be reusable once the first dispatch ends: %v", err)
+	}
+	second.release()
 }

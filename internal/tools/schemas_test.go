@@ -26,7 +26,6 @@ func TestAllToolSchemas_AreValidJSON(t *testing.T) {
 		&ProposalTool{},
 		&RoleTool{},
 		&SubAgentJobsTool{},
-		&SubagentTraceTool{},
 		&SupervisorTool{},
 		&TaskTool{},
 		&TodoWriteTool{},

@@ -31,3 +31,15 @@ Nothing lands unreviewed, and there is no reviewer sub-agent or round loop to
 satisfy. If the work needs another attempt, `discard` and dispatch again with
 what you learned — a discarded attempt costs one dispatch and leaves your tree
 untouched.
+
+**When more than one approach is plausible, speculate.** Issue 2–3
+`spawn_subagent` calls in the *same* turn, one per approach, each with a
+`description` naming it. They run concurrently, each in its own worktree, and each
+seals its own proposal — the parent tree still sees nothing. Then `proposal show`
+each, `select` the best, and `discard` the rest; a discarded attempt costs its
+dispatch and nothing else. Each call takes a sub-agent slot, so
+`max_concurrency` bounds the fan-out.
+
+Bound it by cost, not by doubt: three attempts triple the spend, and a task with
+one obvious shape gains nothing from a second sample. One attempt plus a careful
+read beats three attempts you settle without comparing.
