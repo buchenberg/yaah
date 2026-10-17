@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.81.2](https://github.com/buchenberg/yaah/compare/v0.81.1...v0.81.2) (2026-10-17)
+
+
+### Bug Fixes
+
+* attribute run timeouts and let compaction use the provider cap ([911e6b6](https://github.com/buchenberg/yaah/commit/911e6b685dc5616e90b29636382878b6076a4c3b))
+* attribute timeouts to the dispatch budget ([ebda825](https://github.com/buchenberg/yaah/commit/ebda8254583d3ee484ea2b94bf10187b1fbf37c3))
+
 ## [0.81.1](https://github.com/buchenberg/yaah/compare/v0.81.0...v0.81.1) (2026-10-17)
 
 
