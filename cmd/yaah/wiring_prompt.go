@@ -52,14 +52,18 @@ func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSess
 func subAgentDispatchLine(cfg *config.Config) string {
 	sc := cfg.Agent.SubAgent
 	provider := sc.Provider
-	// A configured-but-unknown name is ignored at dispatch (resolveSubAgent
-	// returns nil and sub-agents inherit the planner), so report what will
-	// actually run rather than the dangling name.
-	if _, ok := cfg.Providers[provider]; provider == "" || !ok {
+	// A configured-but-unknown or unusable name is ignored at dispatch
+	// (resolveSubAgent returns nil and sub-agents inherit the planner),
+	// so report what will actually run rather than the dangling name.
+	modelOverrideHonored := true
+	if provider == "" {
 		provider = resolveProviderName(cfg)
+	} else if !providerUsable(cfg, provider) {
+		provider = resolveProviderName(cfg)
+		modelOverrideHonored = false
 	}
 	model := sc.Model
-	if model == "" {
+	if model == "" || !modelOverrideHonored {
 		model = resolveModel(cfg)
 	}
 	if model == "" {
@@ -76,6 +80,18 @@ func subAgentDispatchLine(cfg *config.Config) string {
 		line += fmt.Sprintf(" max_tokens=%d", p.MaxTokens)
 	}
 	return line + ". Per-role overrides may change provider or model."
+}
+
+// providerUsable mirrors makeProvider's cheap gate: a provider entry can
+// actually be constructed when it has OAuth, a real API key, or a base URL.
+// This keeps the dispatch line from advertising a dangling or keyless entry.
+func providerUsable(cfg *config.Config, name string) bool {
+	p, ok := cfg.Providers[name]
+	if !ok {
+		return false
+	}
+	r := config.Resolve(p)
+	return r.Auth == "oauth" || isRealKey(r.APIKey) || r.BaseURL != ""
 }
 
 // buildMainPrompt derives the top-level agent prompt from the system prompt

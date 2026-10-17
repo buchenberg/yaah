@@ -30,6 +30,9 @@ func TestSubAgentDispatchLine_UnknownProviderFallsBack(t *testing.T) {
 	if strings.Contains(got, "typo") {
 		t.Errorf("dispatch line must not name an unusable provider: %s", got)
 	}
+	if !strings.Contains(got, "model=GLM-5.3") || strings.Contains(got, "GLM-5.3-Flash") {
+		t.Errorf("dangling provider must also drop the sub-agent model override: %s", got)
+	}
 }
 
 func TestSubAgentDispatchLine(t *testing.T) {

@@ -451,9 +451,8 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		if rc, ok := opts.subCfg.Roles[string(role)]; ok {
 			if rc.Provider != "" {
 				if opts.resolveProviderByName != nil {
-					if resolved := opts.resolveProviderByName(opts.providerMap, rc.Provider); resolved != nil {
-						subProvider = resolved
-						subModel = ""
+					subProvider = opts.resolveProviderByName(opts.providerMap, rc.Provider)
+					if subProvider != nil {
 						subProviderName = rc.Provider
 					}
 				}
