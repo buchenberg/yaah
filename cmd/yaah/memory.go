@@ -104,8 +104,9 @@ var memoryAddCmd = &cobra.Command{
 		}
 
 		cmd.Printf("Added memory: %s\n", text)
-		// The full ID is the canonical handle for update/delete; without it a
-		// shell user has to open state.db to act on what they just added.
+		// The full ID is the canonical handle for the entry: the agent tools
+		// accept it, and it is the only way to refer to this exact row later
+		// (including from a future CLI update/delete subcommand).
 		cmd.Printf("ID: %s\n", id)
 		return nil
 	},
