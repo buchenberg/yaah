@@ -1,8 +1,11 @@
 package agent
 
 import (
+	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/buchenberg/yaah/internal/agent/llm"
 )
@@ -51,4 +54,35 @@ func TestProviderErrorLabelsProviderAndModel(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestTurnErrorAttributesExpiredBudget: when the run context is done, the
+// provider was only in flight — the failure belongs to the deadline/cancel
+// path, not to the provider. Mislabeling it sends operators chasing z.ai.
+func TestTurnErrorAttributesExpiredBudget(t *testing.T) {
+	l := &Loop{Config: LoopConfig{ProviderName: "zai", Model: "GLM-5.3-Flash"}}
+
+	t.Run("deadline exceeded", func(t *testing.T) {
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+		defer cancel()
+		<-ctx.Done()
+
+		got := l.turnError(ctx, errors.New("provider boom"))
+		if !errors.Is(got, context.DeadlineExceeded) {
+			t.Fatalf("turnError() = %v, want context.DeadlineExceeded", got)
+		}
+		if errors.Is(got, context.Canceled) {
+			t.Errorf("turnError() = %v, must not look like a cancellation", got)
+		}
+		if !strings.Contains(got.Error(), "provider boom") {
+			t.Errorf("turnError() = %v, want the underlying provider cause preserved", got)
+		}
+	})
+
+	t.Run("ready context keeps provider attribution", func(t *testing.T) {
+		got := l.turnError(context.Background(), errors.New("boom")).Error()
+		if want := "provider error [zai/GLM-5.3-Flash]: boom"; got != want {
+			t.Fatalf("turnError() = %q, want %q", got, want)
+		}
+	})
 }

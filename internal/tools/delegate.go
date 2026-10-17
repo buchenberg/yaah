@@ -200,11 +200,11 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 		partial := result
 		switch {
 		case errors.Is(err, context.DeadlineExceeded), runCtx.Err() == context.DeadlineExceeded:
-			return structuredTaskResult("timed out", timeout, partial), nil
+			return structuredTaskResult("timed out", params.Role, timeout, partial), nil
 		case errors.Is(err, jobs.ErrStuckChild):
-			return structuredTaskResult("stuck", timeout, partial), nil
+			return structuredTaskResult("stuck", params.Role, timeout, partial), nil
 		case errors.Is(err, context.Canceled), runCtx.Err() == context.Canceled:
-			return structuredTaskResult("cancelled", timeout, partial), nil
+			return structuredTaskResult("cancelled", params.Role, timeout, partial), nil
 		default:
 			return "", err
 		}
@@ -278,17 +278,19 @@ func structuredBackgroundResult(jobID, label string) string {
 // agent when a sub-agent did not complete normally. Returning this as a
 // successful tool result (rather than a Go error) lets the model decide
 // whether to retry, continue, or report.
-func structuredTaskResult(reason string, timeout time.Duration, partial string) string {
+func structuredTaskResult(reason, role string, timeout time.Duration, partial string) string {
 	timeoutStr := ""
 	if timeout > 0 {
 		timeoutStr = fmt.Sprintf("%.0fs", timeout.Seconds())
 	}
 	out := struct {
 		Error   string `json:"error"`
+		Role    string `json:"role,omitempty"`
 		Timeout string `json:"timeout,omitempty"`
 		Partial string `json:"partial,omitempty"`
 	}{
 		Error:   reason,
+		Role:    role,
 		Timeout: timeoutStr,
 		Partial: partial,
 	}

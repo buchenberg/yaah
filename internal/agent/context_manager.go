@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -389,8 +390,7 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 	}
 
 	req := types.ChatRequest{
-		Model:     compactModel,
-		MaxTokens: 4096,
+		Model: compactModel,
 		Messages: []types.Message{
 			types.UserMsg(sb.String()),
 		},
@@ -398,7 +398,22 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 
 	beforeEstimate := cm.estimatedTokens()
 	resp, err := compactProvider.Send(ctx, req)
-	if err != nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+	if err != nil || resp == nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+		reason := "empty response"
+		switch {
+		case err != nil:
+			reason = err.Error()
+		case resp != nil && len(resp.Choices) > 0 && resp.Choices[0].FinishReason != "":
+			reason = "finish_reason=" + resp.Choices[0].FinishReason
+		}
+		if r := []rune(reason); len(r) > 256 {
+			reason = string(r[:256]) + "..."
+		}
+		slog.Warn("compaction returned no summary; falling back to chunked or heuristic compaction",
+			"session_id", cm.SessionID,
+			"model", compactModel,
+			"reason", reason,
+		)
 		factor := cm.EstimateFactor
 		if factor <= 0 {
 			factor = agentctx.DefaultEstimateFactor
@@ -538,8 +553,7 @@ func (cm *ContextManager) summarizeChunk(ctx context.Context, chunk []types.Mess
 	sb.WriteString(prompts.SummaryTemplate())
 
 	req := types.ChatRequest{
-		Model:     model,
-		MaxTokens: 4096,
+		Model: model,
 		Messages: []types.Message{
 			types.SystemMsg(prompts.ChunkSummarizerRole()),
 			types.UserMsg(sb.String()),
@@ -635,8 +649,7 @@ func (cm *ContextManager) reducePartialSummaries(ctx context.Context, partials [
 	sb.WriteString(prompts.SummaryTemplate())
 
 	req := types.ChatRequest{
-		Model:     model,
-		MaxTokens: 4096,
+		Model: model,
 		Messages: []types.Message{
 			types.SystemMsg(prompts.ChunkMergerRole()),
 			types.UserMsg(sb.String()),

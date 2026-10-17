@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // decodeProposalEnvelope unmarshals a proposal envelope and fails the test on
@@ -46,6 +47,81 @@ func writingRunner(t *testing.T, name string) *sessionRunner {
 	return r
 }
 
+// TestRetained_TimeoutNamesRoleBudget: a retained run that exhausts its
+// wall-clock budget must not report a provider error — the provider was only
+// in flight when the role timeout expired.
+func TestRetained_TimeoutNamesRoleBudget(t *testing.T) {
+	resetRetainedProposals()
+	fx, repo, rootID := newSessionFixtures(t)
+
+	rt := RetainedRuntime{
+		Runner: func(ctx context.Context, _ string, _ SubAgentParams) (string, error) {
+			<-ctx.Done()
+			return "", ctx.Err()
+		},
+		RepoPath:     repo,
+		ScopeManager: fx.mgr,
+		RootScopeID:  rootID,
+		WorktreeRoot: t.TempDir(),
+	}
+
+	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "developer"}, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("startRetainedRun: %v", err)
+	}
+	env := decodeProposalEnvelope(t, res)
+	for _, want := range []string{"sub-agent timed out", "role developer", "default_timeout"} {
+		if !strings.Contains(env.Error, want) {
+			t.Errorf("timeout error should mention %q, got %q", want, env.Error)
+		}
+	}
+	if strings.Contains(env.Error, "provider error") {
+		t.Errorf("a role-budget timeout must not be attributed to the provider: %q", env.Error)
+	}
+}
+
+func TestRetainedBodyFailure_ParentDeadlineWithoutBudget(t *testing.T) {
+	got := retainedBodyFailure(context.DeadlineExceeded, "developer", 0, retainedFailureParent)
+	if !strings.Contains(got, "parent context deadline") {
+		t.Errorf("message = %q, want a parent-deadline explanation", got)
+	}
+	if strings.Contains(got, "raise the role timeout") {
+		t.Errorf("message = %q, must not blame the role timeout when none is configured", got)
+	}
+}
+
+func TestRetainedBodyFailure_ProviderDeadline(t *testing.T) {
+	got := retainedBodyFailure(context.DeadlineExceeded, "developer", 50*time.Millisecond, retainedFailureProvider)
+	if strings.Contains(got, "raise the role timeout") || strings.Contains(got, "sub-agent timed out") {
+		t.Errorf("message = %q, must preserve a provider-internal deadline", got)
+	}
+}
+
+func TestClassifyRetainedBodyFailure(t *testing.T) {
+	tests := []struct {
+		name          string
+		err           error
+		timeout       time.Duration
+		runErr        error
+		parentErr     error
+		budgetGoverns bool
+		want          retainedFailureSource
+	}{
+		{"provider deadline while contexts live", context.DeadlineExceeded, 50 * time.Millisecond, nil, nil, true, retainedFailureProvider},
+		{"dispatch budget", context.DeadlineExceeded, 50 * time.Millisecond, context.DeadlineExceeded, nil, true, retainedFailureBudget},
+		{"parent deadline first", context.DeadlineExceeded, 50 * time.Millisecond, context.DeadlineExceeded, context.DeadlineExceeded, false, retainedFailureParent},
+		{"parent deadline without budget", context.DeadlineExceeded, 0, context.DeadlineExceeded, context.DeadlineExceeded, false, retainedFailureParent},
+		{"cancellation", context.Canceled, 50 * time.Millisecond, context.Canceled, nil, true, retainedFailureProvider},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyRetainedBodyFailure(tc.err, tc.timeout, tc.runErr, tc.parentErr, tc.budgetGoverns); got != tc.want {
+				t.Errorf("source = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestRetained_ReturnsProposal: a retained dispatch runs the sub-agent in an
 // isolated worktree and returns a sealed proposal — not a host mutation.
 func TestRetained_ReturnsProposal(t *testing.T) {
@@ -53,7 +129,7 @@ func TestRetained_ReturnsProposal(t *testing.T) {
 	runner := writingRunner(t, "out.txt")
 	rt := newRetainedTestEnv(t, runner)
 
-	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 0)
+	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 50*time.Millisecond)
 	if err != nil {
 		t.Fatalf("startRetainedRun: %v", err)
 	}
@@ -84,7 +160,7 @@ func TestRetained_HostUntouchedUntilSettle(t *testing.T) {
 	resetRetainedProposals()
 	rt := newRetainedTestEnv(t, writingRunner(t, "out.txt"))
 
-	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 0)
+	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 50*time.Millisecond)
 	if err != nil {
 		t.Fatalf("startRetainedRun: %v", err)
 	}
@@ -349,15 +425,15 @@ func TestRetained_SpeculationSettlesOneAndDiscardsTheRest(t *testing.T) {
 func TestRetained_PartialOutputSurvivesBodyError(t *testing.T) {
 	resetRetainedProposals()
 	r := &sessionRunner{responses: []runnerResponse{{
-		result: "almost done",
-		err:    context.DeadlineExceeded,
+		result:         "almost done",
+		waitForContext: true,
 	}}}
 	r.sideEffect = func(call int, _ string) {
 		writeTestFile(t, r.workdirFor(t, call), "partial.txt", "work in progress\n")
 	}
 	rt := newRetainedTestEnv(t, r)
 
-	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 0)
+	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 50*time.Millisecond)
 	if err != nil {
 		t.Fatalf("startRetainedRun: %v", err)
 	}
@@ -368,7 +444,7 @@ func TestRetained_PartialOutputSurvivesBodyError(t *testing.T) {
 	if !strings.Contains(env.Result, "almost done") {
 		t.Errorf("result = %q, want the partial output", env.Result)
 	}
-	if !strings.Contains(env.Error, "deadline exceeded") {
-		t.Errorf("error = %q, want the reason the run stopped", env.Error)
+	if !strings.Contains(env.Error, "sub-agent timed out") || !strings.Contains(env.Error, "role worker") {
+		t.Errorf("error = %q, want the role-budget reason the run stopped", env.Error)
 	}
 }

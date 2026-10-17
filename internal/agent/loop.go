@@ -84,6 +84,23 @@ func (l *Loop) providerError(err error) error {
 	return fmt.Errorf("provider error [%s]: %w", label, err)
 }
 
+// turnError attributes a failed LLM call. When the turn context is already
+// done, the call did not fail at the provider — the run's wall-clock budget
+// expired (or the caller cancelled). Labeling that as a provider error sends
+// operators chasing the wrong service; the sub-agent timeout is configured
+// per role and reported by the dispatch layer.
+func (l *Loop) turnError(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		if err != nil {
+			// Keep the provider cause for logs while errors.Is still routes the
+			// failure through the deadline/cancellation path.
+			return fmt.Errorf("%w: %v", ctxErr, err)
+		}
+		return ctxErr
+	}
+	return l.providerError(err)
+}
+
 // buildPipeline assembles the middleware pipeline from config. Sub-agent
 // loops get the curated sub-agent pipeline; the orchestrator gets the
 // full default pipeline.
@@ -309,7 +326,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 				// empty result, and the dispatcher cannot tell a lost partial from
 				// a model that said nothing. Callers decide whether to show it; it
 				// is not appended to the conversation.
-				return result.Message.Content, l.providerError(err)
+				return result.Message.Content, l.turnError(turnCtx, err)
 			}
 			msg := result.Message
 
