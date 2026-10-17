@@ -38,7 +38,6 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/gitsandbox"
-	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -119,8 +118,8 @@ type TaskToolOpts struct {
 	// Retain enables the retained-run lane for spawn_subagent (Plan 7 Phase 2):
 	// each dispatch runs in an isolated worktree and returns a sealed proposal
 	// the orchestrator settles. RetainedRepoPath / RetainedWorktreeRoot /
-	// RetainedBootstrap mirror the supervised defaults — they provision the same
-	// kind of worktree.
+	// RetainedBootstrap are resolved from the retained_* config keys — they
+	// provision the worktree.
 	Retain               bool
 	RetainedRepoPath     string
 	RetainedWorktreeRoot string
@@ -197,9 +196,8 @@ func NewTaskTool(opts TaskToolOpts) *tools.TaskTool {
 
 // RoleDescriptionsFor maps each role name to a one-line description (or
 // specialty fallback) drawn from the role registry. Used to populate the
-// role parameter descriptions of the spawn_subagent and supervised_task
-// schemas so the orchestrator can choose roles without calling
-// list_subagents.
+// role parameter description of the spawn_subagent schema so the orchestrator
+// can choose a role without calling list_subagents.
 func RoleDescriptionsFor(roleNames []string) map[string]string {
 	descs := make(map[string]string, len(roleNames))
 	for _, name := range roleNames {
@@ -570,8 +568,6 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			TurnCheckpointEnabled: turnCk != nil,
 			TurnCheckpointMax:     opts.defaults.TurnCheckpointMax,
 			MaxTurnRestores:       opts.defaults.MaxTurnRestores,
-
-			InitialMessages: params.SeedMessages,
 		})
 
 		result, runErr := subLoop.Run(ctx, prompt)
@@ -589,11 +585,6 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		if haltedBySupervisor.Load() && runErr != nil {
 			runErr = fmt.Errorf("sub-agent %s halted by supervisor", role)
 		}
-
-		// Hand the final conversation to the spawner's capture pointer (set
-		// via jobs.WithConversationCapture) so supervised review sessions can
-		// seed the next dispatch from this history.
-		jobs.WriteConversationCapture(ctx, subLoop.State.Messages)
 
 		// Whitespace-only output is a silent failure (observed when a
 		// forced final turn degenerates after tools are stripped). Turn
@@ -846,7 +837,7 @@ func subAgentSandbox(opts taskRunnerOpts, workdir string) shepherdsandbox.Sandbo
 	if opts.workspace != nil {
 		return nil
 	}
-	repoPath := opts.defaults.SupervisedRepoPath
+	repoPath := opts.defaults.RetainedRepoPath
 	if repoPath == "" {
 		repoPath, _ = os.Getwd()
 	}
@@ -952,7 +943,7 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 	// same degenerate case), so the dispatch degrades to a plain shared
 	// fork rather than a worktree sandbox rooted at an empty path.
 	if workdir != "" && opts.workspace == nil {
-		repoPath := opts.defaults.SupervisedRepoPath
+		repoPath := opts.defaults.RetainedRepoPath
 		if repoPath == "" {
 			repoPath, _ = os.Getwd()
 		}

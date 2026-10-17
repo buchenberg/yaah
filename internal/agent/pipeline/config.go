@@ -274,7 +274,7 @@ var defaultPipelineNames = []string{
 //
 // Included always:
 // - tool_concurrency: prevents uncontrolled parallel tool dispatch
-// - shepherd_trace: records tool calls for error enrichment and supervised rollback
+// - shepherd_trace: records tool calls for error enrichment and sub-agent diagnostics
 var subAgentPipelineNames = []string{
 	"tool_concurrency",
 	"shepherd_trace",

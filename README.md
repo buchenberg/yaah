@@ -138,11 +138,9 @@ linked docs):
   and an in-memory span buffer. Plus Shepherd execution traces: every tool
   call and turn boundary recorded to a durable, inspectable, content-addressed
   store. → [features.md](./docs/features.md) · [configuration.md](./docs/configuration.md)
-- **Supervised sub-agents** — `supervised_task` runs a role with a rollback
-  point: checkpointed workspace *and* conversation, automatic
-  rollback-and-retry, and interactive review verdicts
-  (`continue`/`rollback`/`fork`/`choose`/`accept`/`abort`). Fork variants can run
-  in isolated git worktrees, so a discarded branch never touches your tree.
+- **Retained sub-agents** — every dispatch runs in its own git worktree and comes
+  back as a sealed proposal: `select` fast-forwards, `apply` three-way merges,
+  `discard` throws the attempt away. Nothing lands unreviewed, and you commit.
   → [sub-agents.md](./docs/sub-agents.md) · [architecture.md](./docs/architecture.md)
 - **Persistence** — SQLite sessions + memory with FTS5 full-text search
   and optional vector embeddings for semantic recall.
@@ -427,11 +425,9 @@ The near-term roadmap lives in tracked plan files (`.agents/plans/`,
 
 ### In progress
 
-- **Per-turn checkpoint & restore** — `supervised_task` today restores at
-  attempt granularity; this adds turn-granularity rewind inside sub-agent
-  loops (a hard tool error or iteration exhaustion rewinds to the state just
-  before that turn), with an optional `Scope.Fork` to try multiple
-  alternatives from a pre-turn snapshot.
+- **Speculation over retained worktrees** — run N attempts of one task in
+  parallel (each already gets its own worktree), keep the proposal you want,
+  discard the rest. Shepherd's `speculate`/`race`, without new sandbox work.
   → [plan](./.agents/plans/per-turn-checkpoint-restore/PLAN.md)
 
 ### Approved, ready to implement

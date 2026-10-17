@@ -199,7 +199,7 @@ func NewRegistry() *Registry {
 // NewIsolatedRegistry creates a tool registry with the built-in leaf tools
 // that can run inside an isolated workspace (plan §3, Option A): the same
 // platform shell rule as NewRegistry, minus the host-only leaf tools. The
-// runtime-wired host-only tools (role, background_process, supervised_task)
+// runtime-wired host-only tools (role, background_process)
 // are the wiring's to omit — SetWorkspace refuses a registry that still
 // holds any host-only tool, so the curated set is what makes an isolated
 // session selectable at all.
@@ -370,9 +370,7 @@ type FilesystemTool interface {
 //   - role manages sub-agent role files, which are harness configuration the
 //     host reads, not workspace content;
 //   - background_process drives the in-memory host process manager, and a
-//     container would need its own;
-//   - supervised_task provisions sandboxes, so it cannot run inside the
-//     isolation it creates.
+//     container would need its own.
 //
 // These are not migration debt. Registering one in a registry whose workspace is
 // isolated is a wiring error, so the gate reports it separately from the

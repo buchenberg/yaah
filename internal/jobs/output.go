@@ -6,8 +6,6 @@ package jobs
 import (
 	"encoding/json"
 	"regexp"
-
-	"github.com/buchenberg/yaah/internal/types"
 )
 
 // SubAgentParams carries the per-invocation sub-agent configuration that
@@ -34,18 +32,11 @@ type SubAgentParams struct {
 	// 0 means use the role/config default.
 	OutputLimit int
 
-	// SeedMessages, when non-empty, seeds the sub-agent loop's
-	// conversation with prior history so a follow-up dispatch continues
-	// from the same point instead of starting fresh. Used by the
-	// supervised review session to carry sub-agent context across work
-	// units. The prompt is appended as a new user message after the seed.
-	SeedMessages []types.Message
-
 	// Workdir, when non-empty, is the directory this sub-agent's file tools and
 	// shell commands operate in, and the root its path containment is checked
-	// against. An isolated supervised-workflow variant sets this to its
-	// worktree so the sub-agent cannot see or mutate the parent's tree. Empty
-	// means the session workspace and process cwd (the default behaviour).
+	// against. The retained lane sets it to the sub-agent's own worktree so the
+	// dispatch cannot see or mutate the parent's tree. Empty means the session
+	// workspace and process cwd (the default behaviour).
 	Workdir string
 }
 

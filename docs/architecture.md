@@ -508,29 +508,23 @@ When an agent dispatches multiple parallel sub-agents in a single turn, those su
 
 **Observability:** Two hook event types are emitted: `conflict.check` (every turn when a tracker is present) and `conflict.detect` (when conflicts are found, with `conflict_files` count). When OTel is enabled, a `conflict.check` span appears in the trace waterfall as a child of the turn span.
 
-### Supervised execution and workspace isolation
+### Retained sub-agents and workspace isolation
 
-Files: `internal/tools/supervised_task.go`, `internal/tools/supervised_session.go`, `internal/tools/supervisor.go`, `internal/agent/runner/checkpoint.go`
+Files: `internal/tools/retained.go`, `internal/tools/proposal.go`, `internal/tools/supervisor.go`, `internal/agent/runner/checkpoint.go`
 
-The `supervised_task` tool wraps a sub-agent run in **workspace checkpoints** via the `shepherd-runtime-go` sandbox abstraction, so work can be rolled back rather than merely reported. Two modes:
+A retained dispatch runs the sub-agent in a **worktree of its own** and seals its output into a proposal; the orchestrator settles it. Nothing reaches the parent tree before settlement, so a rejected attempt is discarded rather than rolled back.
 
-- **Automatic** (`review: false`) — checkpoint, run, and on failure roll the workspace back and retry with guidance derived from the failure, up to `supervised_max_retries`.
-- **Review** (`review: true`) — an interactive session in which the orchestrator issues verdicts (`continue`, `rollback`, `fork`, `choose`, `review_diff`, `accept`, `abort`) through the `supervisor` tool.
+- **The world.** `ScopeManager.ForkIsolated` gives the dispatch an isolated child scope owning a `NewWorktreeSandbox`. There is no shared-tree mode: `agents.subagent.mode: shared` is the explicit opt-out that runs the sub-agent directly on the host.
+- **The settlement.** `select` fast-forwards and fails closed if the tree moved; `apply` is a three-way merge that lands only when the change sets are path-disjoint; `release` keeps whatever landed and drops the record; `discard` throws the work away and removes the worktree. A sealed output is consumed exactly once (`ErrOutputConsumed`), and a settlement that landed an effect but failed its causal merge reports the diagnostic instead of inviting a retry that would apply it twice.
+- **The judgement.** It is the orchestrator's, not a sub-agent's: the retained lane returns a diff and the orchestrator decides. Plan 7 Phase 4 tried a reviewer sub-agent here and removed it — shepherd's `gate` predicate is a callable on the orchestrator's side, and everything a reviewer needed (a verdict token, a world fingerprint, a round cap) was compensation for putting it elsewhere.
 
-**Checkpoints.** `ShepherdTurnCheckpointer` (`internal/agent/runner/checkpoint.go`) adapts `shepherd.ScopeManager` to the loop's `TurnCheckpointer` interface. A checkpoint captures the workspace *and* the conversation, and a restore consumes it, so the two stay in step. Unit-start checkpoints are single-use by design; `continue` and `rollback` take a fresh one before the next dispatch. Restoring replaces the conversation seed, which is why a rollback restarts from the same context the sub-agent had at the unit boundary.
+**Turn checkpoints.** `ShepherdTurnCheckpointer` (`internal/agent/runner/checkpoint.go`) adapts `shepherd.ScopeManager` to the loop's `TurnCheckpointer` interface. A checkpoint captures the workspace *and* the conversation, and a restore consumes it, so the two stay in step. This is per-attempt robustness inside a dispatch (a role sets `turn_checkpoints`), not a settlement mechanism — the worktree already makes the attempt disposable.
 
-**Workspace substrate.** Each scope holds a `shepherdsandbox.Sandbox`; the kernel is backend-agnostic and this is the seam:
+**Confinement.** Isolation is only real if the sub-agent's tools actually operate in the worktree, so the dispatch carries `SubAgentParams.Workdir`. `buildSubAgentRegistry` turns that into a per-scope `PathValidator` — rooted at the worktree, inheriting deny patterns and the approval callback, with a fresh approval cache — and `bash`/`powershell` use it as `cmd.Dir`. Confinement then rides that root: `agents.subagent.containment` jails writes to it, and `agents.subagent.network` governs egress from it.
 
-Every `fork` variant is an isolated child scope owning a `NewWorktreeSandbox`;
-there is no shared-tree variant mode (the `supervised_worktree` opt-in is gone).
-Discard — the settlement's `SettleDiscard` — removes the worktree; the parent
-tree is never touched until `choose` settles the winner (adoption plan C2).
+**Teardown.** The worktree lives until settlement: `select`/`apply`/`discard` end the child scope and remove it, `release` tears it down explicitly. A worktree left behind by a killed run is cleared and retried once on the next `Create`, and `git worktree prune` clears stale administrative entries.
 
-**Confinement.** Isolation is only real if the sub-agent's tools actually operate in the worktree, so the dispatch carries `SubAgentParams.Workdir`. `buildSubAgentRegistry` turns that into a per-scope `PathValidator` — rooted at the worktree, inheriting deny patterns and the approval callback, with a fresh approval cache — and `bash`/`powershell` use it as `cmd.Dir`. Without that plumbing an isolated variant would read and mutate the parent tree while believing it was confined.
-
-**Teardown.** Worktrees live until the fork is settled: `choose`'s merge (select/apply) destroys the winner's, `SettleDiscard` destroys the loser's, and abort discards both — the sealed workspace state stays valid through all of it because worktrees share the repository's object store. A worktree left behind by a killed run is cleared and retried once on the next `Create`, and `git worktree prune` clears stale administrative entries.
-
-**Limits.** A worktree checks out tracked files only, so gitignored build inputs must be recreated by `supervised_worktree_bootstrap`. Isolation is filesystem-level: variants share the host process, network, and object store.
+**Limits.** A worktree checks out tracked files only, so gitignored build inputs must be recreated by `retained_worktree_bootstrap`. Isolation is filesystem-level: dispatches share the host process, network, and object store.
 
 ---
 
@@ -566,7 +560,7 @@ Additional tools are registered by the CLI layer after `NewRegistry()`:
 
 ### Workspace seam (`internal/tools/workspace.go`)
 
-Every filesystem and process operation a tool performs goes through one interface, so a single tool implementation can run on the host during a normal session and inside an isolated substrate during a supervised run:
+Every filesystem and process operation a tool performs goes through one interface, so a single tool implementation can run on the host during a normal session and inside an isolated substrate during an isolated run:
 
 ```go
 type Workspace interface {
@@ -596,7 +590,7 @@ Two implementations:
 
 **Migration status.** Every migratable filesystem tool now routes its I/O through a `Workspace` — 21 tools, including the process-spawning ones (`git`, `diff`, `go_mod`, `go_test`, `staticcheck`, `bisect`), none of which previously set a working directory, so they ran in the *yaah process's* cwd even when a sub-agent was isolated in a worktree. Routing them through `Workspace.Exec` fixes that as a side effect: they now run in the workspace directory.
 
-**Host-only by design (4).** `role` (manages harness role files the host reads), `background_process` (drives the in-memory host process manager), `supervised_task` (provisions sandboxes, so it cannot run inside the isolation it creates), and `go_refactor`, which reads the filesystem through `golang.org/x/tools` (`imports.Process`, `packages.Load`) — a path `Workspace` cannot intercept. Isolating it means reimplementing it on in-sandbox `gofmt`/`goimports` calls, not swapping calls.
+**Host-only by design (3).** `role` (manages harness role files the host reads), `background_process` (drives the in-memory host process manager), and `go_refactor`, which reads the filesystem through `golang.org/x/tools` (`imports.Process`, `packages.Load`) — a path `Workspace` cannot intercept. Isolating it means reimplementing it on in-sandbox `gofmt`/`goimports` calls, not swapping calls.
 
 **Isolation gate.** `Registry.SetWorkspace` refuses a non-local workspace, reporting unmigrated and host-only tools as separate categories. The refusal is unconditional with respect to the markers, so a forgotten annotation cannot silently weaken it; the markers only produce those diagnostics. `TestRegistry_EveryToolIsClassified` requires every registered tool to be a `FilesystemTool`, a `HostOnlyTool`, or on a short deliberate non-filesystem allowlist, so an unclassified tool fails the build rather than becoming an isolation hole.
 

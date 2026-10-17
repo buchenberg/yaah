@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -32,7 +34,7 @@ import (
 // baseline.
 
 // RetainedRuntime carries the wiring a retained dispatch needs. It is injected
-// by the composition root; the fields mirror the supervised-session runtime.
+// by the composition root.
 type RetainedRuntime struct {
 	// Runner is the sub-agent execution closure (the same one spawn_subagent
 	// uses). Required.
@@ -90,9 +92,9 @@ type retainedProposal struct {
 // collide.
 var proposalSeq atomic.Uint64
 
-// retainedProposals is the process-wide registry of open proposals. Like the
-// supervised-session registry it is process-scoped: a proposal outlives its
-// dispatch call and is settled later by the orchestrator.
+// retainedProposals is the process-wide registry of open proposals. It is
+// process-scoped: a proposal outlives its dispatch call and is settled later by
+// the orchestrator.
 var retainedProposals = struct {
 	mu   sync.Mutex
 	byID map[string]*retainedProposal
@@ -135,9 +137,9 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		return "", fmt.Errorf("spawn_subagent: root scope %s not found", rt.RootScopeID)
 	}
 
-	// A repo path defaults to the process working directory, as the supervised
-	// lane and root-scope creation do — so a session that never set
-	// supervised_repo_path still gets a real worktree repository.
+	// A repo path defaults to the process working directory, as root-scope
+	// creation does — so a session that never set retained_repo_path still gets a
+	// real worktree repository.
 	if rt.RepoPath == "" {
 		wd, werr := os.Getwd()
 		if werr != nil {
@@ -410,4 +412,63 @@ func errorString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// clipDiff bounds a sealed output's diff to the envelope's line budget.
+// The kernel seals diffs unbounded; an envelope must not bloat the
+// orchestrator's context.
+func clipDiff(diff string) string {
+	lines := strings.Split(diff, "\n")
+	if len(lines) <= retainedDiffMaxLines {
+		return diff
+	}
+	return strings.Join(lines[:retainedDiffMaxLines], "\n") + "\n...[truncated]"
+}
+
+// retainedDiffMaxLines bounds a proposal envelope's diff.
+const retainedDiffMaxLines = 200
+
+// changesPaths projects a sealed output's frozen changes as the changed file
+// list the envelopes carry.
+func changesPaths(changes []shepherd.ProposedChange) []string {
+	if len(changes) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(changes))
+	for _, c := range changes {
+		paths = append(paths, c.Path)
+	}
+	return paths
+}
+
+// trimResult normalizes a sub-agent report for envelopes: trims whitespace and
+// caps length.
+func trimResult(s string) string {
+	const maxResult = 4000
+	s = strings.TrimRight(s, " \t\r\n")
+	if len(s) > maxResult {
+		return s[:maxResult] + "\n...[truncated]"
+	}
+	return s
+}
+
+// runWorktreeBootstrap runs the configured bootstrap command inside a freshly
+// created worktree. A git worktree checks out tracked files only, so a repo
+// whose build needs gitignored artifacts (node_modules, caches, .env) recreates
+// them here.
+func runWorktreeBootstrap(ctx context.Context, dir, command string) error {
+	shell, shellArg := "sh", "-c"
+	if runtime.GOOS == "windows" {
+		shell, shellArg = "pwsh", "-Command"
+		if _, err := exec.LookPath("pwsh"); err != nil {
+			shell, shellArg = "powershell", "-Command"
+		}
+	}
+	cmd := exec.CommandContext(ctx, shell, shellArg, command)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }

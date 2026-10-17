@@ -132,7 +132,7 @@ func TestCreateSubAgentScope_ForksFromRoot(t *testing.T) {
 // dispatch still gets a superviseable flat scope.
 func TestCreateSubAgentScope_FallbackWithoutRoot(t *testing.T) {
 	mgr, _ := newScopeManagerForTest(t)
-	opts := taskRunnerOpts{defaults: config.Defaults{SupervisedRepoPath: newRunnerTestGitRepo(t)}}
+	opts := taskRunnerOpts{defaults: config.Defaults{RetainedRepoPath: newRunnerTestGitRepo(t)}}
 
 	child, err := createSubAgentScope(mgr, opts, "sub-flat-1", "")
 	if err != nil {
@@ -162,7 +162,7 @@ func TestCreateSubAgentScope_WorkdirForksIsolated(t *testing.T) {
 	}
 	opts := taskRunnerOpts{
 		rootScopeID: root.ID(),
-		defaults:    config.Defaults{SupervisedRepoPath: repo},
+		defaults:    config.Defaults{RetainedRepoPath: repo},
 	}
 
 	child, err := createSubAgentScope(mgr, opts, "sub-wt-1", filepath.Join(t.TempDir(), "wt-branch"))
@@ -348,7 +348,7 @@ func TestCreateSubAgentScope_HaltedRootRefusesBothPaths(t *testing.T) {
 			}
 			opts := taskRunnerOpts{
 				rootScopeID: root.ID(),
-				defaults:    config.Defaults{SupervisedRepoPath: repo},
+				defaults:    config.Defaults{RetainedRepoPath: repo},
 			}
 
 			_, err = createSubAgentScope(mgr, opts, "sub-after-halt", tc.workdir)
@@ -410,7 +410,7 @@ func TestCreateSubAgentScope_NonTerminalFailureDegradesLoudly(t *testing.T) {
 // H6 deliberately leaves silent.
 func TestCreateSubAgentScope_TracingOffStaysFlat(t *testing.T) {
 	mgr, _ := newScopeManagerForTest(t)
-	opts := taskRunnerOpts{defaults: config.Defaults{SupervisedRepoPath: newRunnerTestGitRepo(t)}}
+	opts := taskRunnerOpts{defaults: config.Defaults{RetainedRepoPath: newRunnerTestGitRepo(t)}}
 
 	child, err := createSubAgentScope(mgr, opts, "sub-flat-off", "")
 	if err != nil {

@@ -626,7 +626,7 @@ func CheckShepherd(cfg *config.Config, cfgErr error) Check {
 		return Check{Label: label, Status: "FAIL", Detail: "trace store: " + err.Error()}
 	}
 	defer store.Close(context.Background())
-	repoPath := cfg.Agent.Default.SupervisedRepoPath
+	repoPath := cfg.Agent.Default.RetainedRepoPath
 	if repoPath == "" {
 		repoPath, _ = os.Getwd()
 	}

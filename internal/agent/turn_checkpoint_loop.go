@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -108,7 +107,6 @@ func (l *Loop) restoreLastTurnCheckpoint(ctx context.Context, messages *[]types.
 	l.State.TurnCheckpoints = nil
 	l.State.TurnRestores++
 	l.State.RestoredFrom = id
-	jobs.RecordTurnRestore(ctx, id)
 
 	if len(snap) > 0 {
 		var restored []types.Message

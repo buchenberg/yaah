@@ -1,3 +1,11 @@
+> **Status: removed (2026-10).** This plan describes `supervised_task`, which has
+> been removed: the retained lane (`spawn_subagent` → sealed proposal →
+> `select`/`apply`/`discard`) makes an attempt disposable by construction, so a
+> second tool with checkpoint/rollback/retry was a duplicate answer to the same
+> question. Kept as the historical record of what was built and why. The
+> current surface is described in `../sub-agents.md` and
+> `../configuration.md`.
+
 # Development Plan: Supervised Task Tool (yaah side)
 
 **Goal**: Add a `supervised_task` tool to yaah that runs a sub-agent
