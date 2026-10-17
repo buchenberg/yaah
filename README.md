@@ -423,14 +423,14 @@ reordered or disabled via config.
 The near-term roadmap lives in tracked plan files (`.agents/plans/`,
 `docs/plans/`) rather than aspirational bullets. What is actually planned:
 
-### In progress
+### Approved, ready to implement
 
 - **Speculation over retained worktrees** — run N attempts of one task in
   parallel (each already gets its own worktree), keep the proposal you want,
   discard the rest. Shepherd's `speculate`/`race`, without new sandbox work.
-  → [plan](./.agents/plans/per-turn-checkpoint-restore/PLAN.md)
-
-### Approved, ready to implement
+  No plan file yet: the shape is `N × spawn_subagent` + `proposal discard` on
+  the losers, so the open question is the cost policy (how many attempts, and
+  who pays for them), not the mechanism.
 
 - **Tool-result pruning recovery & prevention** — pruned tool results are
   currently lost with only a "re-run the tool" stub; this adds spill-to-disk
