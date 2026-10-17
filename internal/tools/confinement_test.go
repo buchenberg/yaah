@@ -311,10 +311,16 @@ func TestConfinementHint_TranslatesSnapConfine(t *testing.T) {
 		}
 	}
 
-	// An ordinary capability message from something that is not snap-confine
-	// must not be captioned as a toolchain packaging problem.
-	if got := confinementHint("apparmor: required capability denied", root); got != "" {
-		t.Errorf("unrelated capability failure produced a snap hint: %q", got)
+	// A capability message from something that is not snap-confine must not be
+	// captioned as a toolchain packaging problem — including the exact wording
+	// snap-confine uses, when the token itself is absent.
+	for _, stderr := range []string{
+		"apparmor: required capability denied",
+		"required permitted capability cap_dac_override not found in current capabilities",
+	} {
+		if got := confinementHint(stderr, root); got != "" {
+			t.Errorf("non-snap capability failure produced a snap hint: %q", got)
+		}
 	}
 }
 

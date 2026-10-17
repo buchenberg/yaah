@@ -379,17 +379,23 @@ func confinementHint(stderr, root string) string {
 
 // snapToolchainHint translates the one jail failure that is a packaging
 // problem, not a confinement problem: a command that resolves to a snap cannot
-// start inside the sub-agent sandbox, because snap-confine requires capabilities
-// the jail drops. The raw message names neither the packaging nor the remedy,
-// so the model retries it or blames its own code.
+// start inside the sub-agent sandbox. snap-confine is setuid, and commands run
+// with no_new_privs, so it cannot raise the capabilities it needs. The raw
+// message names neither the packaging nor the remedy, so the model retries it
+// or blames its own code.
+//
+// Detection anchors on the snap-confine token: generic capability wording also
+// appears in non-snap failures, and mis-captioning those sends the model to the
+// wrong remedy. The capability/not-confined clause is only a second gate for
+// snap-confine messages whose wording differs between snapd versions.
 func snapToolchainHint(stderr string) string {
-	if !strings.Contains(stderr, "current capabilities") {
+	if !strings.Contains(stderr, "snap-confine") {
 		return ""
 	}
-	if !strings.Contains(stderr, "snap-confine") && !strings.Contains(stderr, "required permitted capability") {
+	if !strings.Contains(stderr, "capabilit") && !strings.Contains(stderr, "not confined") {
 		return ""
 	}
-	return "[yaah] This command resolved to a snap package, which cannot start inside the sub-agent sandbox: snap-confine requires capabilities the jail drops. " +
+	return "[yaah] This command resolved to a snap package, which cannot start inside the sub-agent sandbox: snap-confine is setuid and needs capabilities the sandbox never grants it (commands run with no_new_privs, so it cannot raise them). " +
 		"Install a tarball or distro build of this toolchain and put it ahead of /snap/bin on PATH."
 }
 

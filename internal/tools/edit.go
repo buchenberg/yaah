@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/buchenberg/yaah/internal/prompts"
 )
@@ -108,11 +109,15 @@ func (t *EditTool) executeSingleEdit(ctx context.Context, ws Workspace, filePath
 		return "", fmt.Errorf("edit: oldString not found in %s%s", filePath, hint)
 	}
 
-	// A double-escaped argument was decoded to find the file text; the
-	// replacement is decoded the same way, because it was escaped the same way.
+	// newString is never decoded. When oldString had to be decoded, the model
+	// may well have double-escaped the replacement too — but it may equally
+	// have sent a literal backslash that is meant to survive (a Windows path, a
+	// regex, source containing "\n"), and decoding would silently corrupt it.
+	// Write it verbatim and say so, so the caller can re-issue if needed.
+	newHasEscapes := false
 	if decoded {
-		if dn, ok := decodeLiteralEscapes(newStr); ok {
-			newStr = dn
+		if _, ok := decodeLiteralEscapes(newStr); ok {
+			newHasEscapes = true
 		}
 	}
 
@@ -152,9 +157,7 @@ func (t *EditTool) executeSingleEdit(ctx context.Context, ws Workspace, filePath
 	}
 	newLines := countLines(content)
 	msg := formatEditResult(filePath, replaced, origLines, newLines)
-	if decoded {
-		msg += "\nnote: oldString contained literal escape sequences (e.g. \\u00e9); they were decoded to match the file"
-	}
+	msg += decodeNote(decoded, newHasEscapes)
 	return msg, nil
 }
 
@@ -174,6 +177,7 @@ func (t *EditTool) executeMultiEdit(ctx context.Context, ws Workspace, filePath 
 	origLines := countLines(content)
 	totalReplaced := 0
 	decodedAny := false
+	newHasEscapes := false
 	var failures []string
 
 	for i, e := range edits {
@@ -187,11 +191,8 @@ func (t *EditTool) executeMultiEdit(ctx context.Context, ws Workspace, filePath 
 			failures = append(failures, fmt.Sprintf("edit #%d: oldString not found", i))
 			continue
 		}
-		if decoded {
-			decodedAny = true
-			if dn, ok := decodeLiteralEscapes(e.NewString); ok {
-				e.NewString = dn
-			}
+		if _, ok := decodeLiteralEscapes(e.NewString); ok {
+			newHasEscapes = true
 		}
 
 		// If fuzzy matching was used, verify the mapped-back match actually
@@ -216,6 +217,7 @@ func (t *EditTool) executeMultiEdit(ctx context.Context, ws Workspace, filePath 
 
 		content = strings.Replace(content, matched, e.NewString, 1)
 		totalReplaced++
+		decodedAny = decodedAny || decoded
 	}
 
 	if totalReplaced == 0 && len(failures) > 0 {
@@ -231,9 +233,7 @@ func (t *EditTool) executeMultiEdit(ctx context.Context, ws Workspace, filePath 
 
 	newLines := countLines(content)
 	msg := formatEditResult(filePath, totalReplaced, origLines, newLines)
-	if decodedAny {
-		msg += "\nnote: oldString contained literal escape sequences (e.g. \\u00e9); they were decoded to match the file"
-	}
+	msg += decodeNote(decodedAny, newHasEscapes)
 	if len(failures) > 0 {
 		msg += fmt.Sprintf("\n%d edit(s) failed:\n%s", len(failures), strings.Join(failures, "\n"))
 	}
@@ -257,6 +257,10 @@ func matchEdit(content, oldStr string) (matched string, count int, usedFuzzy, de
 		return m, c, true, false
 	}
 	if d, ok := decodeLiteralEscapes(oldStr); ok {
+		// The file content was normalized to LF before matching; a decoded
+		// "\r\n" must be normalized the same way or it can never match a CRLF
+		// file (and would reinstate CR into an LF buffer if it did).
+		d = strings.ReplaceAll(d, "\r\n", "\n")
 		if c := strings.Count(content, d); c > 0 {
 			return d, c, false, true
 		}
@@ -265,6 +269,20 @@ func matchEdit(content, oldStr string) (matched string, count int, usedFuzzy, de
 		}
 	}
 	return oldStr, 0, false, false
+}
+
+// decodeNote describes any escape interpretation applied to an edit. It is
+// appended to the success message so a model that double-escaped its arguments
+// can see what happened without re-reading the file.
+func decodeNote(decodedOld, escapedNew bool) string {
+	var b strings.Builder
+	if decodedOld {
+		b.WriteString("\nnote: oldString contained literal escape sequences (e.g. \\u00e9); they were decoded to match the file")
+	}
+	if escapedNew {
+		b.WriteString("\nnote: newString contains literal escape sequences and was written verbatim")
+	}
+	return b.String()
 }
 
 // decodeLiteralEscapes interprets JSON-style backslash escapes the way a JSON
@@ -325,8 +343,11 @@ func decodeLiteralEscapes(s string) (string, bool) {
 				n = 8
 			}
 			v, ok := parseHexEscape(s, i+2, n)
-			if !ok {
-				b.WriteByte(s[i]) // malformed: keep the backslash and continue
+			if !ok || v > utf8.MaxRune {
+				// Malformed, or a code point Unicode cannot encode. Preserve the
+				// escape verbatim: WriteRune would emit U+FFFD and corrupt the
+				// text instead of leaving the source visible.
+				b.WriteByte(s[i])
 				i++
 				continue
 			}

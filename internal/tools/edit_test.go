@@ -250,17 +250,41 @@ func TestEditTool_decodesDoubleEscapedArguments(t *testing.T) {
 	path := filepath.Join(tmp, "file.txt")
 	os.WriteFile(path, []byte("x caf\u00e9 y\n"), 0o644)
 
-	raw := `{"filePath":` + jsonString(path) + `,"oldString":"caf\\u00e9","newString":"TH\\u00c9"}`
+	// oldString is double-escaped (literal `caf\u00e9`); newString is a normal
+	// JSON escape, which the JSON layer already turns into THÉ.
+	raw := `{"filePath":` + jsonString(path) + `,"oldString":"caf\\u00e9","newString":"TH\u00c9"}`
 	msg, err := (&EditTool{}).Execute(context.Background(), raw)
 	if err != nil {
 		t.Fatalf("Execute() error: %v", err)
 	}
 	data, _ := os.ReadFile(path)
 	if string(data) != "x TH\u00c9 y\n" {
-		t.Errorf("content = %q, want the decoded replacement", string(data))
+		t.Errorf("content = %q, want the replacement", string(data))
 	}
 	if !strings.Contains(msg, "decoded") {
 		t.Errorf("result must report the interpretation, got %q", msg)
+	}
+}
+
+// TestEditTool_newStringIsNeverDecoded: when oldString needed decoding, a
+// correctly escaped newString with a literal backslash must survive verbatim.
+// Decoding it would turn C:\Users into C: + U+0008 + sers — silent corruption.
+func TestEditTool_newStringIsNeverDecoded(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "file.txt")
+	os.WriteFile(path, []byte("x caf\u00e9 y\n"), 0o644)
+
+	raw := `{"filePath":` + jsonString(path) + `,"oldString":"caf\\u00e9","newString":"C:\\Users\\bob"}`
+	msg, err := (&EditTool{}).Execute(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if want := `x C:\Users\bob y` + "\n"; string(data) != want {
+		t.Errorf("content = %q, want %q (newString must be written verbatim)", string(data), want)
+	}
+	if !strings.Contains(msg, "newString") {
+		t.Errorf("result must say newString was not decoded, got %q", msg)
 	}
 }
 
@@ -348,5 +372,58 @@ func TestEditTool_multiEditDecodesEscapes(t *testing.T) {
 	}
 	if !strings.Contains(msg, "decoded") {
 		t.Errorf("result must report the interpretation, got %q", msg)
+	}
+}
+
+// TestEditTool_decodedCRLFIsNormalized: file content is matched after CRLF is
+// folded to LF, so a decoded "\r\n" must be folded too — otherwise it cannot
+// match a CRLF file, and if it did the final restoration would write \r\r\n.
+func TestEditTool_decodedCRLFIsNormalized(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "file.txt")
+	os.WriteFile(path, []byte("line1\r\nline2\r\n"), 0o644)
+
+	raw := `{"filePath":` + jsonString(path) + `,"oldString":"line1\\r\\nline2","newString":"joined"}`
+	if _, err := (&EditTool{}).Execute(context.Background(), raw); err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if want := "joined\r\n"; string(data) != want {
+		t.Errorf("content = %q, want %q (no doubled carriage return)", string(data), want)
+	}
+}
+
+// TestDecodeLiteralEscapes_RejectsOutOfRangeCodePoints: an escape above
+// U+10FFFF parses as an integer but cannot be written; it must be preserved
+// literally, not turned into U+FFFD.
+func TestDecodeLiteralEscapes_RejectsOutOfRangeCodePoints(t *testing.T) {
+	for _, in := range []string{`\U00110000`, `\UFFFFFFFF`} {
+		got, ok := decodeLiteralEscapes(in)
+		if ok || got != in {
+			t.Errorf("decodeLiteralEscapes(%q) = (%q, %v), want the literal escape preserved", in, got, ok)
+		}
+	}
+}
+
+// TestEditTool_multiEditWritesNewStringVerbatim covers the multi-edit path for
+// the same rule: only oldString is decoded, so a replacement containing a
+// literal backslash is written as given.
+func TestEditTool_multiEditWritesNewStringVerbatim(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "file.txt")
+	os.WriteFile(path, []byte("caf\u00e9\n"), 0o644)
+
+	raw := `{"filePath":` + jsonString(path) + `,"edits":[` +
+		`{"oldString":"caf\\u00e9","newString":"C:\\Users\\bob"}]}`
+	msg, err := (&EditTool{}).Execute(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if want := `C:\Users\bob` + "\n"; string(data) != want {
+		t.Errorf("content = %q, want %q", string(data), want)
+	}
+	if !strings.Contains(msg, "verbatim") {
+		t.Errorf("result must say newString was written verbatim, got %q", msg)
 	}
 }
