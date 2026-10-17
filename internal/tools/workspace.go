@@ -384,15 +384,18 @@ func confinementHint(stderr, root string) string {
 // message names neither the packaging nor the remedy, so the model retries it
 // or blames its own code.
 //
-// Detection anchors on the snap-confine token: generic capability wording also
-// appears in non-snap failures, and mis-captioning those sends the model to the
-// wrong remedy. The capability/not-confined clause is only a second gate for
-// snap-confine messages whose wording differs between snapd versions.
+// Detection anchors on the snap-confine token, or on snap-confine's exact
+// capability wording. Generic capability text also appears in non-snap
+// failures, and mis-captioning those sends the model to the wrong remedy — but
+// the "required permitted capability … not found in current capabilities" pair
+// is specific to snap-confine, so it is safe without the executable's name in
+// the message (the abort reaches the tool through a shell that does not always
+// prefix it).
 func snapToolchainHint(stderr string) string {
-	if !strings.Contains(stderr, "snap-confine") {
-		return ""
-	}
-	if !strings.Contains(stderr, "capabilit") && !strings.Contains(stderr, "not confined") {
+	snapToken := strings.Contains(stderr, "snap-confine")
+	capabilityAbort := strings.Contains(stderr, "required permitted capability") &&
+		strings.Contains(stderr, "not found in current capabilities")
+	if !snapToken && !capabilityAbort {
 		return ""
 	}
 	return "[yaah] This command resolved to a snap package, which cannot start inside the sub-agent sandbox: snap-confine is setuid and needs capabilities the sandbox never grants it (commands run with no_new_privs, so it cannot raise them). " +

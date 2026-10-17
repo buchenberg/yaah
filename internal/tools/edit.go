@@ -191,10 +191,6 @@ func (t *EditTool) executeMultiEdit(ctx context.Context, ws Workspace, filePath 
 			failures = append(failures, fmt.Sprintf("edit #%d: oldString not found", i))
 			continue
 		}
-		if _, ok := decodeLiteralEscapes(e.NewString); ok {
-			newHasEscapes = true
-		}
-
 		// If fuzzy matching was used, verify the mapped-back match actually
 		// exists in the original content the expected number of times.
 		if usedFuzzy {
@@ -217,7 +213,14 @@ func (t *EditTool) executeMultiEdit(ctx context.Context, ws Workspace, filePath 
 
 		content = strings.Replace(content, matched, e.NewString, 1)
 		totalReplaced++
-		decodedAny = decodedAny || decoded
+		if decoded {
+			// Only an applied edit whose match needed decoding is worth noting;
+			// an entry that failed verification never reaches this point.
+			decodedAny = true
+			if _, ok := decodeLiteralEscapes(e.NewString); ok {
+				newHasEscapes = true
+			}
+		}
 	}
 
 	if totalReplaced == 0 && len(failures) > 0 {

@@ -311,16 +311,18 @@ func TestConfinementHint_TranslatesSnapConfine(t *testing.T) {
 		}
 	}
 
-	// A capability message from something that is not snap-confine must not be
-	// captioned as a toolchain packaging problem — including the exact wording
-	// snap-confine uses, when the token itself is absent.
-	for _, stderr := range []string{
-		"apparmor: required capability denied",
-		"required permitted capability cap_dac_override not found in current capabilities",
-	} {
-		if got := confinementHint(stderr, root); got != "" {
-			t.Errorf("non-snap capability failure produced a snap hint: %q", got)
-		}
+	// Generic capability text from something that is not snap-confine must not
+	// be captioned as a toolchain packaging problem.
+	if got := confinementHint("apparmor: required capability denied", root); got != "" {
+		t.Errorf("a generic capability failure produced a snap hint: %q", got)
+	}
+
+	// snap-confine's capability abort without the executable's name in the
+	// message is still snap-confine: this exact pair is its wording, and the
+	// abort is often relayed without the token.
+	bare := "required permitted capability cap_dac_override not found in current capabilities"
+	if got := confinementHint(bare, root); got == "" {
+		t.Error("snap-confine's capability abort must be explained even without the token")
 	}
 }
 
