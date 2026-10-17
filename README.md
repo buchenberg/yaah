@@ -5,8 +5,8 @@
 Yaah ships as a single Go binary. It runs an orchestrator agent that can work
 directly, or dispatch specialist sub-agents that research, implement, test,
 and review in parallel. Sub-agents can run in isolated git worktrees and
-return sealed proposals, so you review a diff before anything reaches your
-working tree.
+return sealed proposals, so the orchestrating agent reviews a diff before
+anything reaches your working tree.
 
 It speaks any OpenAI-compatible API or the Anthropic Messages API, keeps
 sessions and memory in local SQLite, and speaks MCP as both a client and a
