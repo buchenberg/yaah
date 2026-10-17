@@ -69,3 +69,35 @@ func TestWriteTool_isDangerous(t *testing.T) {
 		t.Error("WriteTool should be dangerous")
 	}
 }
+
+// TestWriteTool_preservesNonASCII pins the write path to bytes. A sub-agent
+// reported a literal NBSP (U+00A0) being degraded to a space on read-back; JSON
+// decoding and the atomic write both preserve the bytes, so this test makes the
+// guarantee explicit rather than leaving it to inspection.
+func TestWriteTool_preservesNonASCII(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "unicode.txt")
+	content := "a\u00a0b\ncaf\u00e9 \u00f6 \U0001F600\n"
+
+	args, _ := json.Marshal(map[string]any{"content": content, "filePath": path})
+	if _, err := (&WriteTool{}).Execute(context.Background(), string(args)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(data) != content {
+		t.Fatalf("write changed the bytes:\n got %q\nwant %q", string(data), content)
+	}
+
+	readArgs, _ := json.Marshal(map[string]any{"filePath": path})
+	out, err := (&ReadTool{}).Execute(context.Background(), string(readArgs))
+	if err != nil {
+		t.Fatalf("read tool: %v", err)
+	}
+	if out != content {
+		t.Errorf("read tool changed the content:\n got %q\nwant %q", out, content)
+	}
+}

@@ -341,21 +341,26 @@ func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (Exe
 	return out, nil
 }
 
-// confinementHint explains a kernel-refused write, or "" when the failure does
-// not look like one. The jail is the boundary, not a bug, and a sub-agent that
-// cannot see why a write failed will retry it (or flail) instead of routing
-// around it — so the message names the boundary and, for the git case, the rule
-// that makes it deliberate.
+// confinementHint explains a failure the jail caused, or "" when the failure
+// does not look like one. The jail is the boundary, not a bug, and a sub-agent
+// that cannot see why a command failed will retry it (or flail) instead of
+// routing around it — so the message names the boundary and, for the git case,
+// the rule that makes it deliberate.
 //
-// Detection requires BOTH a permission failure and a denied path the message
-// names that lies outside the writable root. "Permission denied" alone is not
-// evidence of a boundary refusal — a `chmod 000` file or a non-executable script
-// inside the worktree produces the same errno — so a failure with no attributable
-// path gets no hint. A missed hint costs nothing (the raw error still surfaces);
-// a wrong one sends the model to the wrong remedy.
+// Detection of a refused write requires BOTH a permission failure and a denied
+// path the message names that lies outside the writable root. "Permission
+// denied" alone is not evidence of a boundary refusal — a `chmod 000` file or a
+// non-executable script inside the worktree produces the same errno — so a
+// failure with no attributable path gets no hint. A missed hint costs nothing
+// (the raw error still surfaces); a wrong one sends the model to the wrong
+// remedy. The one exception is a snap-packaged toolchain, whose failure names
+// its own cause precisely enough to translate.
 func confinementHint(stderr, root string) string {
 	if root == "" {
 		return ""
+	}
+	if hint := snapToolchainHint(stderr); hint != "" {
+		return hint
 	}
 	if _, ok := deniedOutsideRoot(stderr, root); !ok {
 		return ""
@@ -370,6 +375,22 @@ func confinementHint(stderr, root string) string {
 	}
 	return "[yaah] This write was refused by the sub-agent sandbox: its only writable root is " + root +
 		", and writes outside it are denied by the kernel. Housekeeping paths (HOME, TMPDIR, build caches) are redirected inside that root, so work there instead."
+}
+
+// snapToolchainHint translates the one jail failure that is a packaging
+// problem, not a confinement problem: a command that resolves to a snap cannot
+// start inside the sub-agent sandbox, because snap-confine requires capabilities
+// the jail drops. The raw message names neither the packaging nor the remedy,
+// so the model retries it or blames its own code.
+func snapToolchainHint(stderr string) string {
+	if !strings.Contains(stderr, "current capabilities") {
+		return ""
+	}
+	if !strings.Contains(stderr, "snap-confine") && !strings.Contains(stderr, "required permitted capability") {
+		return ""
+	}
+	return "[yaah] This command resolved to a snap package, which cannot start inside the sub-agent sandbox: snap-confine requires capabilities the jail drops. " +
+		"Install a tarball or distro build of this toolchain and put it ahead of /snap/bin on PATH."
 }
 
 // deniedOutsideRoot reports whether stderr carries a permission failure on a path
