@@ -351,8 +351,7 @@ ls     1      100%     3ms
 Sub-agents get their own trace owners (identified as `sub-<role>-sess-*-<id>`)
 in the same store. When a sub-agent fails, the orchestrator automatically
 inspects its trace — so retry prompts include the exact tool-call sequence
-that led to the failure. The `subagent_trace` tool lets the orchestrator
-query sub-agent traces proactively during a run.
+that led to the failure.
 
 ### Configuration
 

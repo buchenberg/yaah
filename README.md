@@ -141,6 +141,7 @@ linked docs):
 - **Retained sub-agents** — every dispatch runs in its own git worktree and comes
   back as a sealed proposal: `select` fast-forwards, `apply` three-way merges,
   `discard` throws the attempt away. Nothing lands unreviewed, and you commit.
+  Dispatch several approaches at once, compare the proposals, settle the best.
   → [sub-agents.md](./docs/sub-agents.md) · [architecture.md](./docs/architecture.md)
 - **Persistence** — SQLite sessions + memory with FTS5 full-text search
   and optional vector embeddings for semantic recall.
@@ -424,13 +425,6 @@ The near-term roadmap lives in tracked plan files (`.agents/plans/`,
 `docs/plans/`) rather than aspirational bullets. What is actually planned:
 
 ### Approved, ready to implement
-
-- **Speculation over retained worktrees** — run N attempts of one task in
-  parallel (each already gets its own worktree), keep the proposal you want,
-  discard the rest. Shepherd's `speculate`/`race`, without new sandbox work.
-  No plan file yet: the shape is `N × spawn_subagent` + `proposal discard` on
-  the losers, so the open question is the cost policy (how many attempts, and
-  who pays for them), not the mechanism.
 
 - **Tool-result pruning recovery & prevention** — pruned tool results are
   currently lost with only a "re-run the tool" stub; this adds spill-to-disk

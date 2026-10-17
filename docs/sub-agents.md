@@ -222,6 +222,11 @@ a proposal the orchestrator settles.
   error or an exhausted iteration budget rewinds instead of losing the attempt.
   Bounded by `max_turn_restores`.
 
+Because every dispatch is isolated, several can be compared safely: issue 2–3
+calls for one task in a single turn (one per approach), read the proposals, keep
+one and discard the rest. That is all "speculation" needs here — no extra tool,
+and the losers cost only their dispatch.
+
 See [configuration.md](./configuration.md#retained-worktrees-and-turn-checkpoints)
 for the knobs and the worktree prerequisites — notably that a worktree contains
 tracked files only, so gitignored build inputs must be recreated by

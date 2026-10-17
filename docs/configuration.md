@@ -364,6 +364,18 @@ agents:
 | `supervisor.rules.high_error_rate.{enabled,threshold,window}` | `true`, `0.5`, `10` | Guidance when a scope's recent tool error rate crosses the threshold within the sliding window. `0` values mean the defaults. |
 | `supervisor.rules.stuck_detection.{enabled,repeat_threshold}` | `true`, `3` | Guidance when a scope repeats the same tool call `repeat_threshold` times in a row. `0` means the default. |
 
+### Speculating on a task
+
+N dispatches of the same task issued in one turn run concurrently — one sub-agent
+slot each, so `agents.subagent.max_concurrency` bounds the fan-out — and each
+seals its own proposal. The orchestrator reads them, settles one, and discards
+the rest; the losers' worktrees go with them.
+
+There is deliberately no `attempts` knob on `spawn_subagent`. Parallel calls
+already fan out, and a tool-level multiplier would duplicate that mechanism while
+bypassing the concurrency accounting. What bounds speculation is your budget, not
+the tool: three attempts cost three dispatches.
+
 ### What turn checkpoints cover
 
 A turn checkpoint captures **workspace state plus the conversation**, so a turn
