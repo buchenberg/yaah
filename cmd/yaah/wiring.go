@@ -711,18 +711,11 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		// (spawn_subagent falls back to the direct lane without a root scope, so
 		// the prompt must not advertise a settlement that can never happen).
 		if sessionSandbox == nil && retainedMode(cfg.Agent.SubAgent.Mode) && rootScopeID != "" {
+			// The orchestrator is the gate: it reads the proposal's diff and
+			// settles it. There is no reviewer dispatch — the judgement lives on
+			// this side of the boundary, as it does in shepherd's `gate(task,
+			// predicate)`, so no verdict protocol or review round exists.
 			toolReg.Register(&tools.ProposalTool{})
-			// Oversee tool (Plan 7 Phase 4): retry-until-acceptable over the same
-			// retained lane. It needs the retained runtime, which the enclosing
-			// block's condition guarantees (the same condition that built it) —
-			// and `Execute` refuses a nil runtime as a second line of defence.
-			// Roles/ResolveTimeout come from the task tool so an overseen
-			// dispatch resolves and is accounted exactly like a spawn.
-			toolReg.Register(&tools.OverseeTool{
-				Runtime:        taskTool.Retained,
-				Roles:          taskTool.RoleResolver,
-				ResolveTimeout: taskTool.ResolveTimeout,
-			})
 		}
 
 		// Supervised task tool — blocking sub-agent execution with

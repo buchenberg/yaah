@@ -81,31 +81,28 @@ func TestGateVerdictFailed_HeuristicWithoutContract(t *testing.T) {
 }
 
 // A tool that dispatches sub-agent work of its own must take a sub-agent
-// concurrency slot, while staying out of the task-specific branches (which shape
-// spawn_subagent's own envelope). Without this a composite tool escapes
-// MaxSubAgentConcurrency entirely.
-func TestNewDispatch_SubAgentWorkAccountsForCompositeTools(t *testing.T) {
+// sub-agent work is exactly a spawn_subagent call: it takes the concurrency
+// slot and the task-specific branches. A composite tool that dispatched sub-agents
+// of its own once existed (oversee) and is gone, so the flag is one concept again
+// — this test pins that a non-spawn tool neither takes a slot nor is shaped like
+// a spawn.
+func TestNewDispatch_OnlySpawnSubAgentTakesASubAgentSlot(t *testing.T) {
 	l := &Loop{}
 	call := func(name string) types.ToolCall {
 		return types.ToolCall{ID: name, Type: "function", Function: types.ToolCallFn{Name: name, Arguments: "{}"}}
 	}
 
 	for _, tc := range []struct {
-		name     string
-		task     bool
-		accounts bool
+		name string
+		task bool
 	}{
-		{"spawn_subagent", true, true},
-		{"oversee", false, true}, // composite: dispatches, but its envelope is not a spawn's
-		{"read", false, false},
-		{"proposal", false, false},
+		{"spawn_subagent", true},
+		{"read", false},
+		{"proposal", false},
 	} {
 		d := l.newDispatch(0, call(tc.name))
 		if d.isTask != tc.task {
 			t.Errorf("%s: isTask = %v, want %v", tc.name, d.isTask, tc.task)
-		}
-		if d.isSubAgentWork != tc.accounts {
-			t.Errorf("%s: isSubAgentWork = %v, want %v", tc.name, d.isSubAgentWork, tc.accounts)
 		}
 	}
 }
