@@ -371,7 +371,7 @@ Built-in roles are embedded via `//go:embed roles/*.md` in `internal/prompts/pro
 
 ### Dynamic delegate schema
 
-File: `internal/tools/delegate.go`
+File: `internal/tools/delegate_schema.go`
 
 `BuildDelegateSchema(roleNames []string) json.RawMessage` constructs the `delegate` tool's JSON Schema at startup from the active role list, using `encoding/json` marshalling to avoid injection. The `DelegateTool.Schema()` method checks `RoleNames`: when non-empty it calls `BuildDelegateSchema`; when empty it returns a legacy static schema with `["analyst", "developer", "tester", "reviewer"]`. This means user-defined roles are only visible to the model when a registry is configured (the default for both CLI and TUI sessions).
 
