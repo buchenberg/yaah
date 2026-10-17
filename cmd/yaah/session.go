@@ -32,6 +32,7 @@ import (
 
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
 	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/egress"
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
@@ -138,6 +139,13 @@ type agentSession struct {
 	// before the registry it delivers through goes away.
 	supervisor *supervision.Service
 
+	// egressBroker is the session's sub-agent egress broker (Plan 7 Phase 3),
+	// non-nil only when agents.subagent.network is "broker". close() stops it
+	// after background sub-agents are drained — Stop waits for accepted
+	// connections, so stopping before the drain would take the network away from
+	// a job that has not been cancelled yet.
+	egressBroker *egress.Broker
+
 	// scopes is the session's scope manager (adoption plan R2): the
 	// recovered-at-startup registry the wiring handed the session.
 	// close() prunes its terminal scopes — merged and discarded
@@ -242,6 +250,13 @@ func (s *agentSession) close() {
 			drained = false
 			fmt.Fprintf(os.Stderr, "warning: background sub-agent(s) still finishing after %s; continuing session teardown\n", drainTimeout)
 		}
+	}
+	// The egress broker stops AFTER the drain, not before: Stop() waits for its
+	// accepted connections, and a background jailed sub-agent can still be
+	// mid-tunnel through it — stopping first would both block shutdown and pull
+	// the broker out from under a job that has not been cancelled yet.
+	if s.egressBroker != nil {
+		s.egressBroker.Stop()
 	}
 	// PruneTerminal on close (adoption plan R2): merged and discarded
 	// children accumulate over a long session; their trace records

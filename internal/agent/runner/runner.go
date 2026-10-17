@@ -125,6 +125,12 @@ type TaskToolOpts struct {
 	RetainedRepoPath     string
 	RetainedWorktreeRoot string
 	RetainedBootstrap    string
+
+	// SubNetwork is the egress posture for confined dispatches (Plan 7 Phase 3),
+	// lowered from agents.subagent.network with the session broker's port (see
+	// SubAgentNetworkPolicy). The zero value means allow_all — the config
+	// default; the composition root passes an explicit policy either way.
+	SubNetwork containment.NetworkPolicy
 }
 
 // NewTaskTool builds the planner's TaskTool: it resolves the advertised
@@ -142,6 +148,7 @@ func NewTaskTool(opts TaskToolOpts) *tools.TaskTool {
 		db:                    opts.DB,
 		parentSession:         opts.SessionID,
 		subCfg:                opts.SubCfg,
+		subNetwork:            opts.SubNetwork,
 		subAgentProvider:      opts.SubAgentProvider,
 		subAgentModel:         opts.SubAgentModel,
 		OtelEnabled:           opts.OtelEnabled,
@@ -251,6 +258,17 @@ type taskRunnerOpts struct {
 	db            *memory.DB
 	parentSession string
 	subCfg        config.SubAgentConfig
+
+	// subNetwork is the egress posture for confined dispatches (Plan 7 Phase 3),
+	// lowered from agents.subagent.network with the session broker's port.
+	//
+	// The zero value means allow_all — the config default, and the behaviour of
+	// every session before this key existed — and resolveSubAgentConfinement
+	// normalizes it to an explicit allow_all rather than handing an empty mode to
+	// the runtime (whose own zero policy fails closed to deny_all). A caller that
+	// omits it therefore gets today's behaviour, not a dispatch that refuses
+	// wherever the host cannot jail.
+	subNetwork containment.NetworkPolicy
 
 	// subAgentProvider and subAgentModel override the planner's
 	// provider/model for sub-agent loops. When nil/empty, sub-agents
@@ -722,11 +740,23 @@ func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, pro
 	// the default flip makes reachable. Enforced, not merely requested — a
 	// paddock placement with no usable backend refuses at Exec, so there is no
 	// run to advise.
-	if conf != nil && conf.Enforced {
-		if sysPrompt != "" {
-			sysPrompt += "\n\n"
+	// The egress half follows the POSTURE (a dispatch refused a jail still must not
+	// reach the network from outside one); the jail half follows enforcement. The
+	// function returns "" when it has nothing to say, so the block is only added
+	// when it does.
+	if opts.workspace == nil {
+		// The posture comes from the POLICY: the confinement record carries it only
+		// when the jail was established, so reading it from conf would suppress the
+		// egress half exactly when the jail was refused — while the tools are still
+		// omitted.
+		network, broker := networkMode(opts.subNetwork), opts.subNetwork.BrokerPort
+		if g := prompts.ConfinementSubAgentGuidance(workdir, network, broker,
+			hostNetworkToolsIn(profile), conf != nil && conf.Enforced); g != "" {
+			if sysPrompt != "" {
+				sysPrompt += "\n\n"
+			}
+			sysPrompt += g
 		}
-		sysPrompt += prompts.ConfinementSubAgentGuidance(workdir)
 	}
 
 	if g := subagent.RoleGuidance(role); g != "" {
@@ -1013,6 +1043,28 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 		return false
 	}
 
+	// The egress requirement is a property of the DISPATCH, not of the lane that
+	// happens to jail it, so it is decided here — before any lane gate. A
+	// workdir-less dispatch (a shared-mode spawn, a model-supplied empty workdir)
+	// never reaches the confinement path, and leaving the check inside it dropped
+	// the posture silently and left the host-network tools registered.
+	//
+	// The isolated lane is exempt: its egress is the container's posture, which
+	// this key does not govern (documented in the config reference).
+	if opts.workspace == nil {
+		hostBackend := landlock.Detect()
+		hostAvailable := false
+		if hostBackend != nil {
+			if ok, _ := hostBackend.Available(); ok {
+				hostAvailable = true
+			}
+		}
+		if err := requireEnforceableEgress(hostAvailable, hostBackend, opts.subNetwork,
+			containmentPlacement(opts.subCfg.Containment), workdir, strings.TrimSpace(opts.subCfg.Containment)); err != nil {
+			return nil, nil, err
+		}
+	}
+
 	reg := tools.NewEmptyRegistry()
 	var conf *subAgentConfinement
 	isolated := opts.workspace != nil
@@ -1040,7 +1092,7 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 		// lane has a bound world to jail against. The orchestrator's workspace
 		// and a workdir-less (shared-host) sub-agent keep running unconfined.
 		if workdir != "" {
-			ws, rec, cerr := resolveSubAgentConfinement(pv, opts.subCfg, workdir)
+			ws, rec, cerr := resolveSubAgentConfinement(pv, opts.subCfg, workdir, opts.subNetwork)
 			if cerr != nil {
 				return nil, nil, cerr
 			}
@@ -1056,11 +1108,28 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 			}
 		}
 	}
+	// The jail governs the processes a dispatch starts, and these tools make their
+	// requests in THIS process — so a restrictive egress posture omits them rather
+	// than leaving a hole in it. (They are named in the prompt, so the sub-agent
+	// does not read a missing tool as a broken profile.)
+	// Host lanes only. The isolated lane's egress is the container's posture, which
+	// this key neither applies nor refuses (the guard above, and the config
+	// reference). Omitting tools there would also be wrong twice over: it would
+	// describe a rule the container does not have (its loopback is not the host's),
+	// and these two tools execute in THIS process — outside the container — so the
+	// container's posture does not cover them either. That is a known gap of the
+	// isolated lane, not something this key can paper over; it is stated in the
+	// docs rather than implied.
+	restrictiveEgress := opts.workspace == nil && restrictivePosture(opts.subNetwork)
+
 	for _, name := range profile.Tools {
 		if name == "spawn_subagent" {
 			if remainingDepth > 0 {
 				registerTask(reg)
 			}
+			continue
+		}
+		if restrictiveEgress && tools.LeafToolUsesHostNetwork(name) {
 			continue
 		}
 		if isolated && tools.LeafToolIsHostOnly(name) {
@@ -1303,6 +1372,8 @@ type subAgentConfinement struct {
 	Tier      string // enforcement tier, e.g. "native-syscall-deny"
 	Enforced  bool   // a usable backend will actually establish the jail
 	Writable  string // the bound world — the sole writable root
+	Network   string // the egress posture that rode the jail ("allow_all", …)
+	Broker    int    // the pinned egress port, when the posture is "broker"
 }
 
 func (c *subAgentConfinement) payload() map[string]any {
@@ -1313,6 +1384,8 @@ func (c *subAgentConfinement) payload() map[string]any {
 		"tier":          c.Tier,
 		"enforced":      c.Enforced,
 		"writable_root": c.Writable,
+		"network":       c.Network,
+		"broker_port":   c.Broker,
 	}
 }
 
@@ -1324,11 +1397,20 @@ func (c *subAgentConfinement) payload() map[string]any {
 // "paddock" (alias "jail") fails closed. The writable root is the worktree — the
 // sub-agent's bound world — so the kernel boundary and the run's own boundary
 // agree.
-func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConfig, workdir string) (tools.Workspace, *subAgentConfinement, error) {
+func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConfig, workdir string, network containment.NetworkPolicy) (tools.Workspace, *subAgentConfinement, error) {
 	requested := strings.TrimSpace(cfg.Containment)
 	placement := containmentPlacement(requested)
-	if placement == "" || workdir == "" {
-		return nil, nil, nil
+
+	// Normalize the zero policy to the config default before anything reads it:
+	// an unset caller means "no posture configured", and handing an empty mode to
+	// the runtime would mean deny_all — a jail that refuses every connect because
+	// nobody set a key. The broker port goes with the mode: a port on a non-broker
+	// posture is a record saying two things at once.
+	if network.Mode == "" {
+		network.Mode = containment.NetAllowAll
+	}
+	if network.Mode != containment.NetBroker {
+		network.BrokerPort = 0
 	}
 
 	// Availability, not mere presence: a backend that is present but unusable
@@ -1341,15 +1423,20 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 		}
 	}
 
-	rec, confine := confinementRecord(requested, placement, available, backend, workdir)
+	if placement == "" || workdir == "" {
+		return nil, nil, nil
+	}
+
+	rec, confine := confinementRecord(requested, placement, available, backend, workdir, network)
 	if !confine {
 		// "auto" degrades visibly to advisory: the host path *is* advisory.
 		return nil, rec, nil
 	}
 
-	// A write-jail by default (network allow_all); egress confinement is opt-in.
-	ws := tools.NewConfinedLocalWorkspace(pv, backend, placement,
-		containment.NetworkPolicy{Mode: containment.NetAllowAll})
+	// The write jail, with the configured egress posture. A restrictive posture
+	// the host cannot enforce fails closed inside the backend, so it is surfaced
+	// rather than silently downgraded.
+	ws := tools.NewConfinedLocalWorkspace(pv, backend, placement, network)
 
 	// Redirect housekeeping writes into the worktree (the one writable root):
 	// HOME, TMPDIR, and the build caches. The scratch is scrubbed before the
@@ -1365,6 +1452,7 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 	if err != nil {
 		return nil, nil, fmt.Errorf("confinement redirect for %s: %w", workdir, err)
 	}
+	env = append(env, brokerProxyEnv(network)...)
 	return ws.WithEnv(env), rec, nil
 }
 
@@ -1377,18 +1465,149 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 //
 // confine reports whether a confined workspace should be built: true whenever
 // the placement is paddock (so Exec can fail closed) or a usable backend exists.
-func confinementRecord(requested string, placement confinement.Placement, available bool, backend containment.Backend, workdir string) (*subAgentConfinement, bool) {
+func confinementRecord(requested string, placement confinement.Placement, available bool, backend containment.Backend, workdir string, network containment.NetworkPolicy) (*subAgentConfinement, bool) {
 	if !available && placement != confinement.PlacementPaddock {
 		// No writable root is claimed — nothing bounded it.
 		return &subAgentConfinement{Requested: requested, Resolved: "advisory"}, false
 	}
 	rec := &subAgentConfinement{Requested: requested, Resolved: "paddock", Writable: workdir}
 	if available && backend != nil {
+		// An egress posture rides the jail, so it is recorded with it. An
+		// advisory run has no jail to put a rule in, and its record says nothing
+		// about the network rather than claiming one.
+		rec.Network = networkMode(network)
+		rec.Broker = network.BrokerPort
 		rec.Enforced = true
 		rec.Backend = backend.Name()
 		rec.Tier = backend.EnforcementTier()
 	}
 	return rec, true
+}
+
+// SubAgentNetworkPolicy lowers agents.subagent.network to the confinement policy
+// a confined dispatch carries. Exported because the composition root owns the
+// broker and therefore knows its port, while the mapping belongs next to the
+// code that applies it — two copies drifting is exactly how a config key quietly
+// stops meaning what it says. The broker port is required for "broker": a policy
+// that cannot be applied is not applied quietly.
+func SubAgentNetworkPolicy(mode string, brokerPort int) (containment.NetworkPolicy, error) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "allow_all":
+		return containment.NetworkPolicy{Mode: containment.NetAllowAll}, nil
+	case "deny_all":
+		return containment.NetworkPolicy{Mode: containment.NetDenyAll}, nil
+	case "broker":
+		if brokerPort <= 0 {
+			return containment.NetworkPolicy{}, fmt.Errorf(
+				"agents.subagent.network is %q but no egress broker is running", mode)
+		}
+		return containment.NetworkPolicy{Mode: containment.NetBroker, BrokerPort: brokerPort}, nil
+	default:
+		return containment.NetworkPolicy{}, fmt.Errorf(
+			"agents.subagent.network %q is not one of: allow_all, deny_all, broker", mode)
+	}
+}
+
+// restrictivePosture reports whether a policy denies or brokers egress — the
+// modes whose rules a dispatch has to be jailed for. It reads the posture, not
+// whether a jail was established: a refused jail still must not leave the
+// host-network tools registered.
+func restrictivePosture(network containment.NetworkPolicy) bool {
+	mode := networkMode(network)
+	return mode != "" && mode != string(containment.NetAllowAll)
+}
+
+// hostNetworkToolsIn lists the profile's tools that would reach the network from
+// this process — omitted from a restrictive dispatch's registry, and named in its
+// prompt so the omission is legible.
+func hostNetworkToolsIn(profile subagent.RoleProfile) []string {
+	var out []string
+	for _, name := range profile.Tools {
+		if tools.LeafToolUsesHostNetwork(name) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// requireEnforceableEgress refuses a restrictive posture this host cannot apply.
+//
+// "allow_all" needs nothing. "deny_all" and "broker" are kernel rules: they need
+// a usable backend AND its network support (Landlock ABI >= 4). Without both, the
+// dispatch would either fail deep inside the jail with a kernel message, or — far
+// worse on the advisory fallback — run with open egress while the config, the
+// trace and the sub-agent's own prompt said otherwise.
+func requireEnforceableEgress(available bool, backend containment.Backend, network containment.NetworkPolicy, placement confinement.Placement, workdir, requested string) error {
+	mode := networkMode(network)
+	if mode == string(containment.NetAllowAll) {
+		return nil
+	}
+	// "This dispatch is not jailed at all" is the primary reason the posture
+	// cannot be applied, and it is checked here rather than left to an early
+	// return — a dropped posture is a rule the user believes is in force.
+	if workdir == "" {
+		return fmt.Errorf(
+			"agents.subagent.network is %q, but this dispatch has no workdir to jail against, so the posture cannot be applied: "+
+				"set network: allow_all to accept open egress", mode)
+	}
+	if placement == "" {
+		configured := requested
+		if configured == "" {
+			configured = "off"
+		}
+		return fmt.Errorf(
+			"agents.subagent.network is %q, which needs a jail, but agents.subagent.containment is %q: "+
+				"set containment: auto (or paddock) to enforce it, or network: allow_all to accept open egress",
+			mode, configured)
+	}
+	if placement == confinement.PlacementPaddock && !available {
+		// paddock already fails closed at Exec; let that message stand.
+		return nil
+	}
+	if !available {
+		return fmt.Errorf(
+			"agents.subagent.network is %q, which needs a jail, but this host has no usable syscall-jail backend: "+
+				"the dispatch would run with open egress. Set network: allow_all to accept that, or run where confinement is available",
+			mode)
+	}
+	if !backend.SupportsNetwork(network.Mode) {
+		return fmt.Errorf(
+			"agents.subagent.network is %q, which this host's syscall jail cannot enforce (network rules need Landlock ABI >= 4): "+
+				"set network: allow_all, or remove the jail requirement", mode)
+	}
+	return nil
+}
+
+// brokerProxyEnv routes well-behaved clients through the broker. A pin without
+// routing is half a control: the jail would permit only the broker's port while
+// every ordinary HTTPS fetch still went straight to :443 and was refused — so the
+// broker is advertised the way HTTP proxies are advertised, and clients that
+// honour the convention (curl, git-http, npm, pip, Go's net/http) reach it
+// without being told twice.
+func brokerProxyEnv(network containment.NetworkPolicy) []string {
+	if network.Mode != containment.NetBroker || network.BrokerPort <= 0 {
+		return nil
+	}
+	addr := fmt.Sprintf("http://127.0.0.1:%d", network.BrokerPort)
+	return []string{
+		"HTTP_PROXY=" + addr,
+		"HTTPS_PROXY=" + addr,
+		"http_proxy=" + addr,
+		"https_proxy=" + addr,
+		// The broker itself is on loopback; never proxy the loopback hop.
+		"NO_PROXY=localhost,127.0.0.1",
+		"no_proxy=localhost,127.0.0.1",
+	}
+}
+
+// networkMode names a policy's posture for the trace and the prompt. It is read
+// after resolveSubAgentConfinement has normalized an unset mode, so it reports the
+// posture actually applied rather than a default nobody chose.
+func networkMode(np containment.NetworkPolicy) string {
+	if np.Mode == "" {
+		return string(containment.NetAllowAll)
+	}
+	return string(np.Mode)
 }
 
 // containmentPlacement maps agents.subagent.containment to a placement, or "" for

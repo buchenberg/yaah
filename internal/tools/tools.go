@@ -248,6 +248,22 @@ func LeafToolIsHostOnly(name string) bool {
 	return t != nil && isHostOnlyTool(t)
 }
 
+// hostNetworkLeafTools are the built-in leaf tools that reach the network from
+// THIS process rather than from a sandboxed child — an HTTP client in yaah's own
+// goroutine. A dispatch's jail governs the processes it starts, so a restrictive
+// egress posture cannot cover these; they are omitted instead of pretending
+// otherwise.
+var hostNetworkLeafTools = map[string]bool{
+	"http":     true,
+	"webfetch": true,
+}
+
+// LeafToolUsesHostNetwork reports whether the named built-in tool makes network
+// requests in this process. Distinct from LeafToolIsHostOnly: these tools are
+// perfectly usable on the host, and omitting them is a property of a *confined
+// and restrictive* dispatch, not of the tool.
+func LeafToolUsesHostNetwork(name string) bool { return hostNetworkLeafTools[name] }
+
 // HostOnlyLeafTools returns the sorted names of the built-in leaf tools
 // that are host-only by design — exactly the set NewIsolatedRegistry
 // omits, derived from the same marker the SetWorkspace gate reads. The

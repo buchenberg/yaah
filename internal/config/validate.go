@@ -124,6 +124,34 @@ func Validate(cfg *Config) error {
 			cfg.Agent.SubAgent.Containment))
 	}
 
+	// Egress (Plan 7 Phase 3): the mode must be known, and hosts are only
+	// meaningful for "broker" — naming hosts under another mode would look like
+	// a policy that is not in effect.
+	switch strings.ToLower(strings.TrimSpace(cfg.Agent.SubAgent.Network)) {
+	case "", "allow_all", "deny_all", "broker":
+	default:
+		errs = append(errs, fmt.Sprintf(
+			"agents.subagent.network %q is not one of: allow_all, deny_all, broker",
+			cfg.Agent.SubAgent.Network))
+	}
+	if hosts := cfg.Agent.SubAgent.NetworkHosts; len(hosts) > 0 {
+		if m := strings.ToLower(strings.TrimSpace(cfg.Agent.SubAgent.Network)); m != "broker" {
+			errs = append(errs, "agents.subagent.network_hosts is set but network is not \"broker\" — the allowlist would have no effect")
+		}
+		for i, h := range hosts {
+			switch {
+			case strings.TrimSpace(h) == "":
+				errs = append(errs, fmt.Sprintf("agents.subagent.network_hosts[%d] is empty", i))
+			case strings.ContainsAny(h, "*?/"):
+				// The broker matches EXACT host names, so a pattern would be a
+				// silent no-op — the failure mode where a rule looks present and
+				// admits nothing.
+				errs = append(errs, fmt.Sprintf(
+					"agents.subagent.network_hosts[%d] %q looks like a pattern; the allowlist matches exact host names only (e.g. api.example.com)", i, h))
+			}
+		}
+	}
+
 	// Mode selects the dispatch lane; an unknown value must not silently pick
 	// one (the default is retained).
 	switch strings.ToLower(strings.TrimSpace(cfg.Agent.SubAgent.Mode)) {

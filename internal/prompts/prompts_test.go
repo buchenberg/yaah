@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+
 	"github.com/buchenberg/yaah/internal/skills"
 )
 
@@ -355,5 +357,43 @@ func TestIsolatedSubAgentGuidance(t *testing.T) {
 	// unavailable list.
 	if bare := IsolatedSubAgentGuidance(nil); strings.Contains(bare, "NOT available here") {
 		t.Errorf("no dropped tools must not print an unavailable list:\n%s", bare)
+	}
+}
+
+// The egress guidance switches on the NetMode string values, while the runner
+// feeds it those values via string(containment.NetDenyAll) on a policy it lowered
+// from config. If a constant's value ever moves, the switch would fall through and
+// a deny_all sub-agent would never be told its egress is blocked — so the coupling
+// is asserted rather than assumed.
+func TestConfinementGuidance_EgressLiterals(t *testing.T) {
+	if string(containment.NetDenyAll) != "deny_all" || string(containment.NetBroker) != "broker" {
+		t.Fatalf("the NetMode literals moved (%q / %q): the guidance switch and the runner must agree",
+			containment.NetDenyAll, containment.NetBroker)
+	}
+	// And the guidance really distinguishes them.
+	denied := ConfinementSubAgentGuidance("/wt", string(containment.NetDenyAll), 0, []string{"webfetch", "http"}, true)
+	for _, want := range []string{"no network egress", "not available to you here"} {
+		if !strings.Contains(denied, want) {
+			t.Errorf("deny_all guidance must contain %q:\n%s", want, denied)
+		}
+	}
+	brokered := ConfinementSubAgentGuidance("/wt", string(containment.NetBroker), 41234, nil, true)
+	if !strings.Contains(brokered, "127.0.0.1:41234") {
+		t.Errorf("broker guidance must name the endpoint:\n%s", brokered)
+	}
+	open := ConfinementSubAgentGuidance("/wt", string(containment.NetAllowAll), 0, []string{"webfetch"}, true)
+	if strings.Contains(open, "no network egress") || strings.Contains(open, "not available to you here") {
+		t.Errorf("allow_all guidance must claim nothing about egress:\n%s", open)
+	}
+	// A non-canonical spelling must not make the switch and the omission note
+	// disagree: the posture is normalized once, for both.
+	mixed := ConfinementSubAgentGuidance("/wt", "  Deny_All ", 0, []string{"webfetch"}, false)
+	if !strings.Contains(mixed, "no network egress") || !strings.Contains(mixed, "not available to you here") {
+		t.Errorf("the posture must be normalized for both the switch and the omission note:\n%s", mixed)
+	}
+	// An unenforced posture still says so (the tools are omitted either way), but
+	// must not claim a worktree it is not jailed to.
+	if strings.Contains(mixed, "This worktree is") {
+		t.Errorf("an unenforced dispatch must not claim the jail's worktree:\n%s", mixed)
 	}
 }

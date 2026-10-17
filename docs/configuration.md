@@ -100,6 +100,8 @@ agents:
     json_mode: false                  # force structured output
     mode: retained                    # dispatch lane: retained | shared
     containment: auto                 # syscall jail: auto | off | paddock
+    network: allow_all                # confined egress: allow_all | deny_all | broker
+    network_hosts: []                 # broker allowlist (exact host names)
     roles:                            # per-role overrides (defaults live in the role files)
       analyst:
         timeout: 240
@@ -234,6 +236,8 @@ and `max_retries` consistent across the whole team.
 | `json_mode` | false | Force structured JSON output |
 | `mode` | `retained` | Dispatch lane — `retained` (isolated worktree + proposal) or `shared` (direct to host) |
 | `containment` | `auto` | Syscall-jail placement — `auto` (jail if the host can, else advisory), `off`, or `paddock` (fails closed). See "Sub-agent dispatch lane and confinement" |
+| `network` | `allow_all` | Egress posture for a confined dispatch — `allow_all`, `deny_all`, or `broker` (allowlist via the session's broker) |
+| `network_hosts` | `[]` | The broker's allowlist (exact host names); only meaningful with `network: broker` |
 | `roles.<name>.timeout` | — | Per-role timeout override |
 | `roles.<name>.max_iterations` | — | Per-role iteration cap |
 | `roles.<name>.min_iterations` | 0 (none) | Per-role iteration floor; beats per-call overrides and the role file's floor |
@@ -466,6 +470,59 @@ off` is the way to run unconfined.)
 Credential *stores* (`~/.ssh`, `~/.git-credentials`, `~/.npmrc`, `~/.netrc`) are
 deliberately not made reachable: the worktree bootstrap — which runs unconfined
 before the body — is where authenticated inputs get prepared.
+
+**Egress (`network`, default `allow_all`).** The jail governs the network as well as the
+filesystem, because a sub-agent that cannot be trusted with your working tree
+generally cannot be trusted with your network either:
+
+- `deny_all` — no TCP egress at all. A dependency download or an HTTP call fails
+  inside the sandbox.
+- `broker` — a session egress broker is started and the jail pins egress **to its
+  port**, so the only reachable destination is the broker, which admits just
+  `network_hosts` (exact host names; patterns are rejected at validation rather
+  than silently admitting nothing). `HTTP_PROXY`/`HTTPS_PROXY` are pointed at it
+  inside the sandbox, so tools that honour the usual proxy variables route
+  through it without configuration; hosts outside the list are refused by the
+  broker.
+- `allow_all` (the default) — ungoverned, as before.
+
+Three things to know about the guarantee:
+
+- **The pin is by port, not by address.** Landlock's network rules are
+  port-scoped, so "broker" means "the broker's port and nothing else", not
+  "loopback only" — a confined body could still reach *some other host* on that
+  port. True loopback-only pinning needs a network namespace (croft). The broker's
+  host allowlist is what does the actual policy work.
+- **It rides the jail, and it does not ride it silently.** `deny_all` and
+  `broker` are kernel rules; the jail is where they live. So a restrictive posture
+  that cannot be applied — `containment: off`/`advisory`/`none`, a workdir-less
+  dispatch with no world to jail, a host with no usable jail, or a Landlock ABI
+  below 4 (filesystem-only: the jail exists, the network rule does not) —
+  **fails the dispatch**, naming the fix, rather than running with open egress
+  after you asked for none. `yaah doctor` reports the same conditions as a `FAIL`
+  before you hit them.
+- **Tools that run in this process are outside the jail.** A sub-agent's `http`
+  and `webfetch` calls are made by the yaah process, not by a sandboxed child, so
+  a jail cannot govern them — a restrictive posture therefore **omits those tools**
+  from the dispatch (and says so in the sub-agent's prompt) rather than leaving a
+  one-call hole. A client the sub-agent runs *itself* is governed normally.
+- **This key governs the host lanes.** It is decided per dispatch, before any lane
+  gate, so a workdir-less dispatch counts too (shared mode, or a model-supplied
+  empty workdir): a restrictive posture there is refused as well, since nothing
+  would jail the sub-agent. An isolated session is the exception — its sub-agents
+  run in a container whose network posture is the container's, so this key is
+  neither applied nor refused there. It does not omit tools or describe an egress
+  rule the container does not have either (the container's loopback is not the
+  host's, so a broker proxy address would be wrong there) — and note that the
+  container's posture does **not** cover `http`/`webfetch`, which still make their
+  request in this process, outside the container. So in an isolated session a
+  restrictive `network` neither protects those two tools nor blocks them: use the
+  container's own egress controls. That is a pre-existing property of the isolated
+  lane, recorded here rather than implied.
+
+A confined sub-agent is told its posture up front ("there is no network egress"
+or "egress is limited to an allowlist"), so a blocked fetch is not something it
+has to discover by retrying.
 
 Two limits to know about:
 

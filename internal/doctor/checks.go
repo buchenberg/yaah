@@ -12,6 +12,7 @@ import (
 
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
 
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/landlock"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/recovery"
@@ -224,13 +225,22 @@ func CheckContainment(cfg *config.Config, cfgErr error) Check {
 			backendDesc = "unusable"
 		}
 	}
-	return containmentCheck(available, backendDesc, sc.Mode, sc.Containment)
+	// Network rules are a separate capability from the jail itself: Landlock ABI
+	// 1-3 confines the filesystem and nothing else, so a restrictive egress
+	// posture is a FAIL there rather than a claim of enforcement.
+	netMode := containment.NetMode(strings.ToLower(strings.TrimSpace(sc.Network)))
+	if netMode == "" {
+		netMode = containment.NetAllowAll
+	}
+	netCapable := backend != nil && backend.SupportsNetwork(netMode)
+
+	return containmentCheck(available, backendDesc, sc.Mode, sc.Containment, sc.Network, len(sc.NetworkHosts), netCapable)
 }
 
 // containmentCheck is the pure decision behind CheckContainment, split out so
 // the present-but-unusable backend case is testable (landlock.Detect never
 // returns one, but a future backend or a race could).
-func containmentCheck(available bool, backendDesc, mode, containment string) Check {
+func containmentCheck(available bool, backendDesc, mode, containment, network string, hosts int, networkCapable bool) Check {
 	m := strings.ToLower(strings.TrimSpace(mode))
 	if m == "" {
 		m = "retained"
@@ -241,7 +251,27 @@ func containmentCheck(available bool, backendDesc, mode, containment string) Che
 		// default, not a pre-flip "off".
 		p = "auto"
 	}
-	detail := fmt.Sprintf("mode %s, placement %s, backend %s", m, p, backendDesc)
+	n := strings.ToLower(strings.TrimSpace(network))
+	if n == "" {
+		n = "allow_all"
+	}
+	egress := "egress " + n
+	if n == "broker" {
+		egress += fmt.Sprintf(" (%d allowed host(s))", hosts)
+	}
+	detail := fmt.Sprintf("mode %s, placement %s, %s, backend %s", m, p, egress, backendDesc)
+	if jailed(p, available) && n != "allow_all" {
+		// The egress rule lives in the jail: without one there is nowhere to
+		// put it, and the posture is a setting rather than a control.
+		detail += " — enforced by the jail"
+	}
+	if n != "allow_all" && !networkCapable {
+		// The dispatch refuses (a policy that cannot be applied is not applied
+		// quietly), so this is not a warning about a weak control: sub-agent
+		// dispatches will not run at all.
+		return Check{Label: "Containment", Status: "FAIL",
+			Detail: detail + " — this host's syscall jail cannot enforce network rules (needs Landlock ABI >= 4), and a restrictive egress posture is refused rather than run open; set network: allow_all or run where it can be enforced"}
+	}
 
 	switch p {
 	case "paddock", "jail":
@@ -255,7 +285,26 @@ func containmentCheck(available bool, backendDesc, mode, containment string) Che
 		}
 		return Check{Label: "Containment", Status: "WARN", Detail: detail + " — auto degrades visibly to advisory here"}
 	default: // off / none / advisory
+		// A restrictive egress posture with no jail to enforce it is refused at
+		// dispatch, not quietly dropped — so this is a FAIL, not a warning about
+		// a weak control: sub-agent dispatches will not run at all.
+		if n != "allow_all" {
+			return Check{Label: "Containment", Status: "FAIL",
+				Detail: detail + " — sub-agents run unconfined on the host and a restrictive egress posture is refused rather than run open; set containment: auto (or paddock) to enforce it, or network: allow_all"}
+		}
 		return Check{Label: "Containment", Status: "OK", Detail: detail + " — sub-agents run unconfined on the host"}
+	}
+}
+
+// jailed reports whether a placement puts sub-agents in a jail on this host.
+func jailed(placement string, available bool) bool {
+	switch placement {
+	case "paddock", "jail":
+		return available
+	case "auto":
+		return available
+	default:
+		return false
 	}
 }
 

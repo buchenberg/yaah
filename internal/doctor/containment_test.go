@@ -35,9 +35,51 @@ func TestContainmentCheck(t *testing.T) {
 		{"absent/auto", false, "auto", "WARN"},
 	}
 	for _, c := range cases {
-		got := containmentCheck(c.available, "test-backend", "retained", c.placement)
+		got := containmentCheck(c.available, "test-backend", "retained", c.placement, "", 0, true)
 		if got.Status != c.want {
 			t.Errorf("%s: status = %q, want %q (%s)", c.name, got.Status, c.want, got.Detail)
+		}
+	}
+}
+
+// Egress rides the jail (Plan 7 Phase 3): with confinement a restrictive posture
+// is a control, and without it the posture is only a setting — which doctor must
+// not present as enforced.
+func TestContainmentCheck_EgressPosture(t *testing.T) {
+	cases := []struct {
+		name        string
+		available   bool
+		containment string
+		network     string
+		hosts       int
+		capable     bool
+		want        string
+	}{
+		{"jailed + deny_all", true, "auto", "deny_all", 0, true, "OK"},
+		{"jailed + broker", true, "paddock", "broker", 2, true, "OK"},
+		{"jailed + allow_all", true, "auto", "allow_all", 0, true, "OK"},
+		{"no jail + allow_all", false, "off", "allow_all", 0, true, "OK"},
+		// Filesystem-only Landlock (ABI 1-3): the jail exists, the network rule
+		// does not, and the dispatch refuses rather than running open.
+		{"jailed but no net + deny_all", true, "auto", "deny_all", 0, false, "FAIL"},
+		{"jailed but no net + broker", true, "paddock", "broker", 1, false, "FAIL"},
+		// No jail at all is the same outcome: the posture cannot be applied, and
+		// the dispatch refuses rather than dropping it.
+		{"no jail + deny_all", false, "auto", "deny_all", 0, false, "FAIL"},
+		{"jail off + deny_all", true, "off", "deny_all", 0, true, "FAIL"},
+		{"jail off + broker", true, "advisory", "broker", 1, true, "FAIL"},
+	}
+	for _, c := range cases {
+		got := containmentCheck(c.available, "test-backend", "retained", c.containment, c.network, c.hosts, c.capable)
+		if got.Status != c.want {
+			t.Errorf("%s: status = %q, want %q (%s)", c.name, got.Status, c.want, got.Detail)
+		}
+	}
+	// The detail must show the posture and, for a broker, its allowlist size.
+	ok := containmentCheck(true, "test-backend", "retained", "auto", "broker", 3, true)
+	for _, want := range []string{"egress broker", "3 allowed host(s)", "enforced by the jail"} {
+		if !strings.Contains(ok.Detail, want) {
+			t.Errorf("detail %q must mention %q", ok.Detail, want)
 		}
 	}
 }

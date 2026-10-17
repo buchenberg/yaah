@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +13,8 @@ import (
 
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
 	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/egress"
 
 	"github.com/buchenberg/yaah/internal/agent/budget"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
@@ -111,6 +114,11 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		// a started service owns a drain goroutine and a bus
 		// subscription, and a failed startup must not leak either.
 		supervisorSvc *supervision.Service
+		// egressBroker is the session's egress broker (Plan 7 Phase 3), started
+		// only when agents.subagent.network is "broker". Declared here, like the
+		// supervisor, so the guard below stops a partially-built session's broker
+		// — it owns a listener and a goroutine.
+		egressBroker *egress.Broker
 	)
 	sessionHandedOff := false
 	defer func() {
@@ -119,6 +127,9 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		}
 		if supervisorSvc != nil {
 			supervisorSvc.Close()
+		}
+		if egressBroker != nil {
+			egressBroker.Stop()
 		}
 		if otelShutdown != nil {
 			otelShutdown(context.Background())
@@ -562,6 +573,16 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		subAgentWorkspace = sessionSandbox.Workspace()
 	}
 
+	// Egress (Plan 7 Phase 3): agents.subagent.network selects the confined
+	// dispatch's posture. "broker" needs a live broker, so one is started for the
+	// session and its port pinned — the same object the guard above stops on a
+	// failed startup and the session stops on close.
+	subNetwork, broker, nerr := wireSubAgentNetwork(cfg.Agent.SubAgent)
+	if nerr != nil {
+		return nil, nerr
+	}
+	egressBroker = broker
+
 	taskTool := runner.NewTaskTool(runner.TaskToolOpts{
 		Provider:              provider,
 		SystemPrompt:          buildSubAgentBasePrompt(cwd, db),
@@ -594,6 +615,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		// sub-agent's work comes back as a proposal. Isolated mode keeps the
 		// container as the substrate (no host worktrees), and
 		// agents.subagent.mode: shared is the opt-out.
+		SubNetwork:           subNetwork,
 		Retain:               sessionSandbox == nil && retainedMode(cfg.Agent.SubAgent.Mode),
 		RetainedRepoPath:     cfg.Agent.Default.SupervisedRepoPath,
 		RetainedWorktreeRoot: cfg.Agent.Default.SupervisedWorktreeRoot,
@@ -917,6 +939,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		traceStore:     traceStore,
 		traceBus:       traceBus,
 		supervisor:     supervisorSvc,
+		egressBroker:   egressBroker,
 		followupCh:     followupCh,
 	}
 	// Root-scope bridge registration (adoption plan A2/A3): inject into
@@ -993,6 +1016,52 @@ func splitRolesBySupervised(names []string, isSupervised func(string) bool) (pla
 		}
 	}
 	return plain, supervised
+}
+
+// wireSubAgentNetwork lowers agents.subagent.network into the confinement policy
+// a confined dispatch carries, starting the session's egress broker when the mode
+// calls for one. The broker is returned so its owner can stop it; nil otherwise.
+//
+// The two restrictive modes are only meaningful with confinement: the rule lives
+// in the jail, so a configuration that would not jail the dispatch is REFUSED at
+// dispatch time (and reported by doctor) rather than silently dropped. Starting
+// the broker here is unconditional so the port is known before any dispatch; the
+// dispatch is where the contradiction is caught, with the config in hand.
+func wireSubAgentNetwork(sc config.SubAgentConfig) (containment.NetworkPolicy, *egress.Broker, error) {
+	// The broker comes first: its port is what the policy pins to. The mapping
+	// itself lives in the runner (one copy, next to the code that applies it).
+	if !strings.EqualFold(strings.TrimSpace(sc.Network), "broker") {
+		np, err := runner.SubAgentNetworkPolicy(sc.Network, 0)
+		return np, nil, err
+	}
+
+	broker := egress.NewBroker(egress.AllowHosts(normalizeBrokerHosts(sc.NetworkHosts)...))
+	port, err := broker.Start()
+	if err != nil {
+		return containment.NetworkPolicy{}, nil, fmt.Errorf("agents.subagent.network: start the egress broker: %w", err)
+	}
+	np, err := runner.SubAgentNetworkPolicy(sc.Network, port)
+	if err != nil {
+		broker.Stop()
+		return containment.NetworkPolicy{}, nil, err
+	}
+	slog.Info("sub-agent egress broker started", "port", port, "allow_hosts", len(sc.NetworkHosts))
+	return np, broker, nil
+}
+
+// normalizeBrokerHosts puts allowlist entries into the form the broker matches
+// against (see egress.normalizeHost), so a padded, upper-cased or
+// trailing-dot entry does exactly what it looks like. Without this an exact-host
+// allowlist silently never matches.
+func normalizeBrokerHosts(hosts []string) []string {
+	out := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		h = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(h)), ".")
+		if h != "" {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 // retainedMode reports whether agents.subagent.mode selects the retained-run
