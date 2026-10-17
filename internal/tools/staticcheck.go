@@ -63,6 +63,12 @@ type diagnostic struct {
 }
 
 type staticcheckResult struct {
+	// Status is "ok" when every requested analyzer actually ran, and "error"
+	// when one did not (missing binary, unusable toolchain, or an analyzer that
+	// exited non-zero without producing a single diagnostic). Count alone
+	// cannot express that: 0 diagnostics from a tool that never ran looks
+	// exactly like clean code.
+	Status               string         `json:"status"`
 	Diagnostics          []diagnostic   `json:"diagnostics"`
 	Count                int            `json:"count"`
 	ByFile               map[string]int `json:"by_file"`
@@ -92,40 +98,95 @@ func (t *StaticcheckTool) Execute(ctx context.Context, args string) (string, err
 
 	runVet := analyzers == "vet" || analyzers == "both"
 	runSC := analyzers == "staticcheck" || analyzers == "both"
+	if !runVet && !runSC {
+		return "", fmt.Errorf("staticcheck: analyzers must be one of vet, staticcheck, both")
+	}
 
 	ws := workspaceOf(t.WS, nil)
+	status := staticcheckOK
 
 	// go vet
 	if runVet {
 		vetArgs := append([]string{"vet", params.Packages}, params.Flags...)
-		res, _ := ws.Exec(ctx, ExecRequest{Command: "go", Args: vetArgs})
+		res, execErr := ws.Exec(ctx, ExecRequest{Command: "go", Args: vetArgs})
 		// A missing go exits 127 from the shell, and a host exec failure
 		// reports -1; both mean vet never ran, unlike exit 1 ("issues found").
 		result.VetAvailable = executableExit(res.ExitCode)
+		if execErr != nil && res.ExitCode < 0 {
+			result.Stderr += fmt.Sprintf("go vet could not run: %v\n", execErr)
+		}
 		if !result.VetAvailable {
 			result.Stderr += "go vet is not available in this workspace\n"
 		}
-		parseDiagnostics(res.Stdout, "vet", result)
+		before := len(result.Diagnostics)
+		buildFailed := analyzerBuildFailure(res.Stdout)
+		if buildFailed {
+			// Compiler errors, not findings: `go vet` prints a `# pkg` header and
+			// then `vet: x.go:3:9: undefined: x`, which even matches diagRe with a
+			// bogus file name. Keep the output verbatim instead of dressing a
+			// build failure up as a warning-level diagnostic.
+			result.Stdout += strings.TrimRight(res.Stdout, "\n") + "\n"
+		} else {
+			parseDiagnostics(res.Stdout, "vet", result)
+		}
+		if !result.VetAvailable || buildFailed || (res.ExitCode != 0 && len(result.Diagnostics) == before) {
+			status = staticcheckError
+		}
 	}
 
 	// staticcheck
 	if runSC {
 		scArgs := append([]string{params.Packages}, params.Flags...)
-		res, _ := ws.Exec(ctx, ExecRequest{Command: "staticcheck", Args: scArgs})
+		res, execErr := ws.Exec(ctx, ExecRequest{Command: "staticcheck", Args: scArgs})
 		// Resolving the binary with LookPath first would check the *host* PATH,
 		// which is the wrong machine once a workspace can be isolated. Attempting
 		// the run and inspecting the exit code asks the right machine instead.
 		result.StaticcheckAvailable = executableExit(res.ExitCode)
+		if execErr != nil && res.ExitCode < 0 {
+			result.Stderr += fmt.Sprintf("staticcheck could not run: %v\n", execErr)
+		}
 		if !result.StaticcheckAvailable {
 			result.Stderr += "staticcheck not found in this workspace — install with: go install honnef.co/go/tools/cmd/staticcheck@latest\n"
+			status = staticcheckError
 		} else {
-			parseDiagnostics(res.Stdout, "staticcheck", result)
+			before := len(result.Diagnostics)
+			buildFailed := analyzerBuildFailure(res.Stdout)
+			if buildFailed {
+				// staticcheck prefixes its load failure with `-: # pkg`; the
+				// position lines that follow are compiler messages, not checks.
+				result.Stdout += strings.TrimRight(res.Stdout, "\n") + "\n"
+			} else {
+				parseDiagnostics(res.Stdout, "staticcheck", result)
+			}
+			if buildFailed || (res.ExitCode != 0 && len(result.Diagnostics) == before) {
+				status = staticcheckError
+			}
 		}
 	}
 
 	result.Count = len(result.Diagnostics)
+	result.Status = status
 	outBytes, _ := json.MarshalIndent(result, "", "  ")
 	return string(outBytes), nil
+}
+
+const (
+	staticcheckOK    = "ok"
+	staticcheckError = "error"
+)
+
+// analyzerBuildFailure reports whether the analyzer output carries Go's build
+// header (`# pkg`, or staticcheck's `-: # pkg`), which both tools print only
+// when the package could not be compiled. Those runs analyzed nothing, and
+// their position-prefixed lines must not be reported as findings.
+func analyzerBuildFailure(output string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "# ") || strings.HasPrefix(t, "-: # ") {
+			return true
+		}
+	}
+	return false
 }
 
 func parseDiagnostics(output string, analyzer string, result *staticcheckResult) {
