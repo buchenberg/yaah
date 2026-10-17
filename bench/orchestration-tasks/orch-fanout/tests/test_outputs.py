@@ -34,6 +34,20 @@ def _expected_audits():
     return expected
 
 
+def _normalize(text):
+    """Treat comma spacing as presentation, not content.
+
+    The instruction says "comma-separated"; both `a,b` and `a, b` satisfy it.
+    """
+    lines = []
+    for line in text.splitlines():
+        if line.startswith("functions:"):
+            names = [name.strip() for name in line.split(":", 1)[1].split(",")]
+            line = "functions: " + ", ".join(names)
+        lines.append(line.strip())
+    return "\n".join(lines)
+
+
 def test_end_state():
     """Layer 1: exactly the six audits, in the canonical format."""
     expected = _expected_audits()
@@ -46,7 +60,9 @@ def test_end_state():
 
     for name, want in expected.items():
         got = (AUDITS / name).read_text().strip()
-        assert got == want, f"{name} content mismatch:\n--- got ---\n{got}\n--- want ---\n{want}"
+        assert _normalize(got) == _normalize(want), (
+            f"{name} content mismatch:\n--- got ---\n{got}\n--- want ---\n{want}"
+        )
 
 
 def test_workspace_integrity():

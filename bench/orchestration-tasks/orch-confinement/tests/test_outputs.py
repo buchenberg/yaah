@@ -29,4 +29,8 @@ def test_orchestration_trace():
     """A confined sub-agent dispatch was recorded."""
     oa.assert_delegate_count(minimum=1)
     oa.assert_confinement_recorded()
+    actions = oa.settled_actions()
+    assert actions & {"applied", "selected"}, (
+        f"proposal was not settled; recorded actions: {sorted(actions)}"
+    )
     oa.assert_no_orphan_worktrees()

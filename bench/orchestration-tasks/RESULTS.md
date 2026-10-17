@@ -100,3 +100,111 @@ and integrity passed, the trace layer failed with 0 sub-sessions.
 
 This is the suite doing its job: a correct-looking result that skipped
 orchestration is rejected.
+
+## 2026-10-17 — first full 8-task run
+
+Run `2026-10-17__04-56-01`, one trial per task, `--n-concurrent 1`, via
+`bench/run-all.sh`. **4/8 resolved.**
+
+| Task | Resolved | Time | in | out | sub in | sub out |
+|---|---|---|---|---|---|---|
+| orch-fanout | no | 16s | 100,779 | 2,378 | 0 | 0 |
+| orch-settle-apply | no | 46s | 331,767 | 5,773 | 84,566 | 2,545 |
+| orch-settle-discard | yes | 33s | 172,716 | 4,586 | 48,467 | 2,746 |
+| orch-confinement | no | 57s | 186,910 | 9,377 | 62,913 | 6,417 |
+| orch-quality-gate | yes | 53s | 205,722 | 8,239 | 71,480 | 6,377 |
+| orch-escalation | yes | 30s | 129,918 | 4,590 | 30,147 | 1,998 |
+| orch-guard | no | 79s | 415,894 | 10,871 | 122,255 | 5,455 |
+| orch-compact | yes | 20s | 90,873 | 1,715 | 0 | 0 |
+
+Totals: 1,634,579 prompt + 47,529 output = 1,682,108 tokens, 1,425,664
+cached (87%). Orchestrator 1,214,751 / 21,991; sub-agents 419,828 / 25,538
+(26% of total tokens).
+
+Failure reasons, and whether they are harness defects:
+
+- **orch-fanout** — inline again (0 sub-sessions), plus an end-state mismatch:
+  the model wrote `functions: make_item,total_value` without a space after the
+  comma. The instruction says "comma-separated", so the verifier was too
+  strict; normalization was the fix.
+- **orch-settle-apply** — the model settled with `select`, not `apply`, and the
+  end state passed. The task edited CHANGELOG *before* dispatching, so select
+  fast-forwarded legitimately. The scenario must move the basis after the
+  proposal is sealed to force three-way apply.
+- **orch-confinement** — the shared lane is not a "workdir" dispatch, so no
+  jail was established and the `/tmp` escape succeeded; no confinement fact was
+  recorded. The task must use the retained lane (worktree workdir) to get a
+  confined dispatch.
+- **orch-guard** — the sub-agent achieved success in one tool call (a loop
+  inside bash), so only one failed capture reached the trace. With
+  `threshold: 0.6, window: 4`, the rule never fired. The scenario needs a
+  first-failure trigger (`threshold: 0.5, window: 2`) and a stricter
+  one-attempt-per-call instruction.
+
+The four passing tasks exercised retained discard, quality gates, escalation,
+and compaction. The failures are informative; the three harness defects were
+fixed and the affected tasks re-run (next section).
+
+The umbrella run also recorded the coding suite at 6/6 in the same invocation;
+see [../terminal-bench/RESULTS.md](../terminal-bench/RESULTS.md).
+
+## 2026-10-17 — task fixes and focused re-runs
+
+The first full run exposed three task-design defects (not product bugs) and one
+behavioral miss. Fixes:
+
+- **orch-fanout** — verifier now treats comma spacing in `functions:` as
+  presentation. The committed instruction also changed from behavior-forcing to
+  explicit delegation (at least three concurrent developers); the model
+  consistently did the audits inline when only the workload shape was described.
+- **orch-settle-apply** — the CHANGELOG edit now happens *after* the proposal
+  is sealed, moving the basis past the fork point. `select` can no longer
+  fast-forward, so `apply` is forced.
+- **orch-confinement** — switched to the retained lane so the dispatch has a
+  worktree and a real confinement placement. The verifier accepts `select` or
+  `apply` for settlement; the evidence that matters is the confinement fact and
+  the denied escape.
+- **orch-guard** — rule thresholds changed to `threshold: 0.5, window: 2` so
+  the first failed tool call trips the rule, and the instruction forbids
+  hiding the retry loop inside one shell command. The verifier requires at
+  least one failed capture.
+
+### Re-run 1: four affected tasks (run `2026-10-17__05-10-07`)
+
+2/4 resolved.
+
+| Task | Resolved | Time | in | out | sub in | sub out |
+|---|---|---|---|---|---|---|
+| orch-fanout | no | 18s | 118,897 | 2,856 | 0 | 0 |
+| orch-settle-apply | yes | 60s | 348,439 | 8,921 | 85,575 | 3,287 |
+| orch-confinement | no | 43s | 202,079 | 6,808 | 74,563 | 4,374 |
+| orch-guard | yes | 140s | 885,445 | 20,588 | 131,126 | 7,462 |
+
+Totals: 1,554,860 prompt + 39,173 output, 1,400,064 cached (90%).
+Orchestrator 1,263,596 / 24,050; sub-agents 291,264 / 15,123 (19%).
+
+`orch-confinement`'s end state, integrity, and confinement fact all passed; it
+failed only because the verifier still demanded the `apply` verb while the
+model used `select` (a legitimate settlement here). `orch-fanout` was still the
+behavior-forcing instruction and stayed inline.
+
+### Re-run 2: fan-out + confinement (run `2026-10-17__05-17-45`)
+
+2/2 resolved.
+
+| Task | Resolved | Time | in | out | sub in | sub out |
+|---|---|---|---|---|---|---|
+| orch-fanout | yes | 80s | 296,057 | 36,701 | 171,257 | 29,770 |
+| orch-confinement | yes | 51s | 235,166 | 8,061 | 79,860 | 5,333 |
+
+Totals: 531,223 prompt + 44,762 output, 461,056 cached (87%).
+Orchestrator 280,106 / 9,659; sub-agents 251,117 / 35,103 (50%).
+Fan-out ran three developer dispatches; 50% of tokens were sub-agent spend.
+
+### Net status
+
+All eight tasks have now passed at least once, but not in a single invocation:
+`orch-compact`, `orch-settle-discard`, `orch-quality-gate`, and
+`orch-escalation` passed in the first full run; the four above passed after the
+fixes. A fresh full-suite run is the next record; single-trial variance means
+"all eight passed somewhere" is weaker than "8/8 in one run".

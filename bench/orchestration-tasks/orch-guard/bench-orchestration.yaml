@@ -8,5 +8,5 @@ agents:
       rules:
         high_error_rate:
           enabled: true
-          threshold: 0.6
-          window: 4
+          threshold: 0.5
+          window: 2

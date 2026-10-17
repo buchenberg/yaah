@@ -1,6 +1,6 @@
 agents:
   subagent:
-    mode: shared
+    mode: retained
     model: deepseek-flash
     containment: auto
     max_concurrency: 1

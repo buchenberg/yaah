@@ -14,8 +14,10 @@ instruction: |-
   Count lines with newline splitting (a trailing newline does not add a line).
   A public function is a top-level `def name(` whose name does not start with
   an underscore. Do not modify anything under /app/inventory, and do not touch
-  /app/trap.txt. The six audits are independent and may be worked in any order
-  or concurrently.
+  /app/trap.txt. The six audits are independent: use the delegate tool with
+  role developer for them, with at least three distinct sub-agents running
+  concurrently. Review the returned results and write the final six files
+  yourself if a sub-agent's output is incomplete.
 author_name: Gregory Buchenberger
 author_email: buchenberg@users.noreply.github.com
 difficulty: medium

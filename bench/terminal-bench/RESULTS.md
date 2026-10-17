@@ -315,3 +315,23 @@ and the BENCHMARKS.md rows stay — records are append-only — and
 so the 2026-10-12__20-18-12 run remains reproducible from its
 package tarballs (build commands preserved in git history at the
 removal commit).
+
+## Full 6-task suite (2026-10-17, deepseek-flash, commit aaa8958)
+
+Run `2026-10-17__04-47-51`, one trial per task, `--n-concurrent 1`,
+alongside the first orchestration-suite run in the same umbrella invocation
+(`bench/run-all.sh`). The coding task list and adapter are unchanged from the
+earlier sections; this run is the current smoke signal for the benchmark PR.
+
+| Task | Resolved | Time | in | out | cached |
+|---|---|---|---|---|---|
+| assign-seats | yes | 36s | 205,256 | 5,302 | 187,776 |
+| broken-python | yes | 29s | 168,527 | 3,929 | 151,424 |
+| csv-to-parquet | yes | 44s | 246,339 | 3,255 | 228,864 |
+| gomoku-planner | yes | 126s | 516,365 | 21,248 | 494,336 |
+| hello-world | yes | 5s | 47,345 | 150 | 32,512 |
+| jsonl-aggregator | yes | 23s | 84,797 | 1,798 | 68,864 |
+
+**Score: 6/6.** Totals: 1,268,629 prompt + 35,682 output = 1,304,311
+tokens, 1,163,776 cached (92% of prompt tokens). No sub-agent usage on
+this suite; every task stayed single-lane.
