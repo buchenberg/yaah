@@ -88,7 +88,7 @@ for iter := 0; iter < MaxIterations; iter++ {
 
 ### Agent coordination model
 
-File: `internal/agent/agent.go`, `internal/tools/task.go`
+File: `internal/agent/agent.go`, `internal/tools/delegate.go`
 
 yaah uses a two-layer agent→sub-agent architecture with FullTools mode.
 The main agent sees all tools plus `delegate` and chooses per-task
@@ -313,7 +313,7 @@ Injects Anthropic `cache_control: {type: "ephemeral"}` breakpoints on system mes
 
 ## Sub-agent lifecycle
 
-Files: `internal/agent/subagent/role_def.go`, `internal/tools/task.go`, `internal/jobs/` (`TaskRunner`, `SubAgentParams`, escalation contract, context-key helpers, `BackgroundJobs` manager), `internal/agent/runner/runner.go`
+Files: `internal/agent/subagent/role_def.go`, `internal/tools/delegate.go`, `internal/jobs/` (`TaskRunner`, `SubAgentParams`, escalation contract, context-key helpers, `BackgroundJobs` manager), `internal/agent/runner/runner.go`
 
 The `delegate` tool spawns a sub-agent: a fresh `agent.Loop` with a curated tool registry, its own iteration budget, deadline, and system prompt. Sub-agents let the main agent delegate isolated work and fan out independent subtasks in parallel.
 
@@ -371,11 +371,11 @@ Built-in roles are embedded via `//go:embed roles/*.md` in `internal/prompts/pro
 
 ### Dynamic delegate schema
 
-File: `internal/tools/task.go`
+File: `internal/tools/delegate.go`
 
 `BuildDelegateSchema(roleNames []string) json.RawMessage` constructs the `delegate` tool's JSON Schema at startup from the active role list, using `encoding/json` marshalling to avoid injection. The `DelegateTool.Schema()` method checks `RoleNames`: when non-empty it calls `BuildDelegateSchema`; when empty it returns a legacy static schema with `["analyst", "developer", "tester", "reviewer"]`. This means user-defined roles are only visible to the model when a registry is configured (the default for both CLI and TUI sessions).
 
-Wiring chain: `reg.Names()` → `runner.NewTaskTool(…, roleNames)` → `TaskTool.RoleNames` → `DelegateTool.Schema()`.
+Wiring chain: `reg.Names()` → `runner.NewDelegateTool(…, roleNames)` → `DelegateTool.RoleNames` → `DelegateTool.Schema()`.
 
 ### CLI lifecycle display
 
@@ -405,7 +405,7 @@ The TUI renders each sub-agent's whole lifetime as a single collapsible block in
 
 ### Timeout enforcement
 
-`TaskTool.Execute` (`internal/tools/task.go`) wraps the runner call in `context.WithTimeout`. The effective timeout is the per-call `timeout_seconds` argument (10–600), falling back to the resolved role default, then the tool's `DefaultTimeout`. On `DeadlineExceeded` or `Canceled` the tool returns a **structured JSON result** (`{"error":"timed out","partial":"..."}`) instead of a Go error, so the parent agent can decide whether to retry, continue, or report. Any non-empty string returned alongside the context error is surfaced as `partial`.
+`DelegateTool.Execute` (`internal/tools/delegate.go`) wraps the runner call in `context.WithTimeout`. The effective timeout is the per-call `timeout_seconds` argument (10–600), falling back to the resolved role default, then the tool's `DefaultTimeout`. On `DeadlineExceeded` or `Canceled` the tool returns a **structured JSON result** (`{"error":"timed out","partial":"..."}`) instead of a Go error, so the parent agent can decide whether to retry, continue, or report. Any non-empty string returned alongside the context error is surfaced as `partial`.
 
 ### Parallel dispatch and concurrency cap
 
@@ -413,7 +413,7 @@ Multiple `delegate` tool calls issued in a single turn are dispatched concurrent
 
 ### Interrupt propagation
 
-The parent context flows through `executeAndCollect` → `TaskTool.Execute` → `Runner` → `subLoop.Run`. Cancelling the parent (e.g. Ctrl-C) propagates via the context: each sub-agent's `Loop.Run` checks `ctx.Done()` at the top of every iteration and the underlying provider HTTP call respects the context. A cancelled sub-agent returns the structured cancellation result described above rather than failing the parent turn.
+The parent context flows through `executeAndCollect` → `DelegateTool.Execute` → `Runner` → `subLoop.Run`. Cancelling the parent (e.g. Ctrl-C) propagates via the context: each sub-agent's `Loop.Run` checks `ctx.Done()` at the top of every iteration and the underlying provider HTTP call respects the context. A cancelled sub-agent returns the structured cancellation result described above rather than failing the parent turn.
 
 ### Structured escalation
 
@@ -502,7 +502,7 @@ When an agent dispatches multiple parallel sub-agents in a single turn, those su
 
 **Tracker:** `ConflictTracker` is a thread-safe `[]FileRecord` store on `Loop`. Sub-agent write/edit/delete tools are wrapped with `RecordingTool` (via `buildSubAgentRegistry`), which extracts the `filePath` from JSON args and records `(subAgentLabel, filePath, toolName)` to the shared tracker.
 
-**Label propagation:** `TaskTool.Execute` builds a label from the task's `role` and `description` (e.g. `"developer — Add login handler"`) and injects it into the request context via `WithConflictLabel()`. `RecordingTool.Execute` reads this label from the context, so each record is tagged with which sub-agent produced it.
+**Label propagation:** `DelegateTool.Execute` builds a label from the task's `role` and `description` (e.g. `"developer — Add login handler"`) and injects it into the request context via `WithConflictLabel()`. `RecordingTool.Execute` reads this label from the context, so each record is tagged with which sub-agent produced it.
 
 **Detection:** After the tool batch completes, the `conflict_detect` middleware runs in `PostTool` and calls `ConflictTracker.DetectAndReset()`. Files touched by more than one distinct sub-agent label are flagged. If conflicts are found, a structured `CONFLICT:` user message is injected into the conversation before the next LLM call. The report lists each conflicting file, which sub-agents touched it, and which tools they used.
 
