@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.82.0](https://github.com/buchenberg/yaah/compare/v0.81.2...v0.82.0) (2026-10-17)
+
+
+### Features
+
+* **bench:** add orchestration Terminal-Bench suite and token splits ([08f5091](https://github.com/buchenberg/yaah/commit/08f5091c63ba644e6bcd4e2d8227c6af26b24841))
+* **bench:** add orchestration Terminal-Bench suite and token splits ([aaa8958](https://github.com/buchenberg/yaah/commit/aaa8958f9a19b36fda823c75dbfabef0264619ee))
+
+
+### Bug Fixes
+
+* **bench:** address PR review on orchestration verifiers and usage accounting ([13b634c](https://github.com/buchenberg/yaah/commit/13b634c6f906aef60a11a466cbc974f9802007a9))
+* **bench:** close remaining review nits ([93bd230](https://github.com/buchenberg/yaah/commit/93bd230a82ac48e3d5f0ce02a1730e4d1c9f7668))
+* **bench:** require enforced confinement in orch-confinement ([5d0b51c](https://github.com/buchenberg/yaah/commit/5d0b51ce38f211628978604f5a8c1d6b64c21283))
+
+
+### Code Refactoring
+
+* **bench:** improve orchestration verifier security and accuracy ([6f601bb](https://github.com/buchenberg/yaah/commit/6f601bb92450cf9d8f0c8330a39e01441ab430b1))
+
+
+### Documentation
+
+* correct stale commands, defaults, and behavior claims ([6910359](https://github.com/buchenberg/yaah/commit/69103591429db4214335511a4e6661c35a60d521))
+* correct who reviews sealed proposal diffs ([ef8ce9f](https://github.com/buchenberg/yaah/commit/ef8ce9fa04279b45414d56f195a3138e3ea9e4cd))
+* update README formatting and orchestration descriptions ([2797796](https://github.com/buchenberg/yaah/commit/2797796447761deae935401c7216e706c7a6a8f4))
+
+
+### Tests
+
+* **bench:** fix orchestration task defects and record full-suite results ([ba41357](https://github.com/buchenberg/yaah/commit/ba41357f91e86ee904c7377c21989f4242b136a5))
+
 ## [0.81.2](https://github.com/buchenberg/yaah/compare/v0.81.1...v0.81.2) (2026-10-17)
 
 
