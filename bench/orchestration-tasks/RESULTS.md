@@ -248,11 +248,13 @@ Addressed reviewer findings; no new full-suite run.
 - `flaky.sh` is idempotent after success: a redundant confirmation run no
   longer advances the counter or rewrites `ok.txt`, so `attempts=5` is stable
   across delegate re-dispatches.
-- Oracle detection is now the `ORCH_ORACLE=1` environment signal only. The
-  agent can write files anywhere, so a filesystem marker was forgeable; the
-  verifier's environment is not. Oracle validation runs
-  `ORCH_ORACLE=1 bash run-tests.sh` after `solution.sh` (documented in
-  `../terminal-bench/README.md`).
+- Oracle detection is the `ORCH_ORACLE=1` environment signal only. The agent
+  can write files anywhere, so a filesystem marker was forgeable; the
+  verifier's environment is not. For Terminal-Bench's oracle agent, each
+  task's `run-tests.sh` detects the staged `/oracle/solution.sh` and exports
+  the flag; manual runs set it explicitly (documented in
+  `../terminal-bench/README.md`). Validated end to end with
+  `tb run --agent oracle -t orch-guard`: 1/1.
 - Failed-capture counting uses `COUNT(DISTINCT record_id)`, so a record linked
   to multiple `path_entries` rows counts once.
 - Compaction helper docstring names `sessions.compacted_summary`.
