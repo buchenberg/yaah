@@ -52,7 +52,7 @@ func (t *DelegateTool) roleNames() []string {
 	return names
 }
 
-// BuildDelegateSchema returns a JSON Schema for the task tool whose role
+// BuildDelegateSchema returns a JSON Schema for the delegate tool whose role
 // enum is populated from the given list of role names, so user-defined
 // roles discovered at runtime are visible to the model.
 func BuildDelegateSchema(roleNames []string, roleDescriptions map[string]string) json.RawMessage {

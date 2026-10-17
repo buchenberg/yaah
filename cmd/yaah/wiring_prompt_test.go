@@ -24,10 +24,13 @@ func TestBuildSubAgentBasePrompt_LeanIdentity(t *testing.T) {
 		t.Errorf("missing sub-agent identity:\n%s", got)
 	}
 	// These live in the orchestrator identity; the sub-agent base must never
-	// embed it, whatever the builder wiring looks like.
+	// embed it, whatever the builder wiring looks like. A tool name would be a
+	// weak marker here — the base prompt embeds AGENTS.md and memory facts, so
+	// any common English word ("delegate") can appear legitimately. The
+	// orchestrator-only guidance sentence is the distinctive thing to ban.
 	for _, banned := range []string{
 		prompts.IdentityPrompt,
-		"delegate",
+		"most expensive resource",
 		"list_subagents",
 	} {
 		if strings.Contains(got, banned) {
