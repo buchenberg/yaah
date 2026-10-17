@@ -78,6 +78,60 @@ func (l *Loop) addUsageLocked(u types.Usage) types.Usage {
 	return l.State.TotalTokens
 }
 
+// addSubAgentUsage folds a child dispatch's usage into the loop totals without
+// touching LastPromptTokens/LastCachedPromptTokens: those describe the
+// parent's current context occupancy, and replacing them with a child's
+// cumulative spend would make compaction act on the wrong conversation.
+func (l *Loop) addSubAgentUsage(u types.Usage) {
+	l.usageMu.Lock()
+	l.State.TotalTokens.PromptTokens += u.PromptTokens
+	l.State.TotalTokens.CompletionTokens += u.CompletionTokens
+	l.State.TotalTokens.TotalTokens += u.TotalTokens
+	l.State.SubAgentTokens.PromptTokens += u.PromptTokens
+	l.State.SubAgentTokens.CompletionTokens += u.CompletionTokens
+	l.State.SubAgentTokens.TotalTokens += u.TotalTokens
+	if d := u.CompletionTokensDetails; d != nil {
+		l.State.TotalReasoningTokens += d.ReasoningTokens
+	}
+	if cached := u.CacheTokens(); cached > 0 {
+		l.State.TotalCachedPromptTokens += cached
+		l.State.TotalTokens.CachedPromptTokens += cached
+		l.State.SubAgentTokens.CachedPromptTokens += cached
+	}
+	running := l.State.TotalTokens
+	l.usageMu.Unlock()
+	if l.OnUsage != nil {
+		l.OnUsage(running)
+	}
+}
+
+// OwnUsage returns the loop's own model usage: totals minus the child usage
+// folded into them. Recording this per dispatch keeps nested delegate spend
+// from being counted once in the parent's fact and again in the child's.
+func (l *Loop) OwnUsage() types.Usage {
+	l.usageMu.Lock()
+	defer l.usageMu.Unlock()
+	own := types.Usage{
+		PromptTokens:       l.State.TotalTokens.PromptTokens - l.State.SubAgentTokens.PromptTokens,
+		CompletionTokens:   l.State.TotalTokens.CompletionTokens - l.State.SubAgentTokens.CompletionTokens,
+		TotalTokens:        l.State.TotalTokens.TotalTokens - l.State.SubAgentTokens.TotalTokens,
+		CachedPromptTokens: l.State.TotalTokens.CachedPromptTokens - l.State.SubAgentTokens.CachedPromptTokens,
+	}
+	if own.PromptTokens < 0 {
+		own.PromptTokens = 0
+	}
+	if own.CompletionTokens < 0 {
+		own.CompletionTokens = 0
+	}
+	if own.TotalTokens < 0 {
+		own.TotalTokens = 0
+	}
+	if own.CachedPromptTokens < 0 {
+		own.CachedPromptTokens = 0
+	}
+	return own
+}
+
 // compactMessagesIsolated runs context compaction against an isolated
 // LoopState view so overflow recovery triggered from inside LLM.Call —
 // and the pipeline's compaction drains — never mutate the loop's live

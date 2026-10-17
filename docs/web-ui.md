@@ -121,7 +121,7 @@ stream. It handles:
 - **Context** (`CtrlContextInfo`): Token/Window ratio displayed as a
   percentage in the footer.
 - **Model list** (`CtrlModelList`): Available models from configured
-  providers (currently rendered as chat messages).
+  providers; the frontend adds them to the command palette.
 
 ### Answer map
 
@@ -144,8 +144,9 @@ Agent asks question
                   → Agent receives answer
 ```
 
-On SSE disconnect, `am.cancel(id)` cleans up pending answers so the server
-goroutines don't leak.
+On SSE disconnect, the approval path calls `am.cancel(id)` to unblock its
+waiter. Pending question and continue-answer channels are not drained, so those
+entries can remain registered until the server exits.
 
 ## Frontend (`index.html`)
 
@@ -227,13 +228,13 @@ The browser supports two modal types via the native `<dialog>` element:
 
 ### Input
 
-The textarea auto-resizes from 1 to 8 lines. Enter sends; Shift+Enter
+The textarea auto-resizes from 1 line up to a 160px height cap. Enter sends; Shift+Enter
 inserts a newline. The Send button is disabled while `live` is true; a
 Stop button appears instead.
 
 ### Footer
 
-Left side: connection dot (green = connected, red = disconnected) + status text.
+Left side: connection dot (green = connected, gray = disconnected, yellow/pulsing = running) + status text.
 Right side: context window fill percentage.
 
 ## Limitations
@@ -256,13 +257,13 @@ The TUI is the richer interface; the web UI covers the core chat workflow.
 | Questions (radio/checkbox) | ✅ | ✅ |
 | Tool approvals | ✅ | ✅ |
 | Context fill display | ✅ (fraction bar) | ✅ (percentage) |
-| Todo list | ✅ (persistent table) | ✅ (inline messages) |
+| Todo list | ✅ (persistent table) | ✅ (collapsible todos panel) |
 | Model switching UI | ✅ (searchable palette) | ✅ (command palette) |
 | Chat search | ✅ | ✅ |
 | Copy response | ✗ | ✅ |
 | Sub-agent visual bracketing | ✅ (`╭─` / `╰─`) | ✗ |
-| Header with provider/model | ✅ | ✅ |
-| Status bar (CWD, message count) | ✅ | ✗ |
+| Header with provider/model | ✅ (info pane) | ✅ (header) |
+| Status bar (CWD, message count) | ✗ | ✗ |
 | Theme switching | ✅ (auto light/dark) | ✅ (browser light/dark) |
 | MCP server status | ✅ | ✅ (badge) |
 | Follow-up / steer injection | ✅ | ✅ (`:steer`) |

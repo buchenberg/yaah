@@ -185,7 +185,7 @@ yaah follows **idiomatic Go** conventions. This section highlights the most impo
 
 1. Define event struct in `internal/agent/events/events.go`
 2. Implement `eventMarker()` method
-3. Add to compile-time satisfaction checks
+3. Add it to `allEvents()` in `internal/agent/events/exhaustive_test.go`; the exhaustive tests require every View consumer to handle or explicitly ignore it
 4. Handle in all consumers or use `NoopView`
 
 ---

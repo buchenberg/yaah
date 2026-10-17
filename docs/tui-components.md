@@ -10,7 +10,7 @@ The app is a `Pages → Flex` hierarchy owned by the `App` struct in
 
 ```
 ┌──────────────────────────────────────────────┐
-│ Header (banner, provider/model info)         │
+│ Header (banner only)                         │
 ├───────────────────────────┬──────────────────┤
 │ Prompt echo (sticky)      │ Info pane        │
 │ Conversation              │ (session, context│
@@ -24,15 +24,17 @@ The app is a `Pages → Flex` hierarchy owned by the `App` struct in
 └──────────────────────────────────────────────┘
 ```
 
-The bottom two rows are **dedicated** — always reserved, never resized:
+The bottom two rows are **dedicated**:
 
 - **Activity line** (1 row): `tvxwidgets.Spinner` + state label. Always present;
   collapsed to blank when idle. Animation driven by a 100ms ticker goroutine.
-- **Prompt input** (3 rows): bordered `TextArea` with pink border that switches
-  to a double border on focus. Placeholder includes the `❯` glyph.
+- **Prompt input** (3 content rows, growing to 5 total rows): bordered
+  `TextArea` with pink border that switches to a double border on focus. It
+  grows as the prompt wraps, then scrolls. Placeholder includes the `❯` glyph.
 
-The **prompt echo** is a 1-row `TextView` pinned at the top of the messages
-column showing the current user prompt so it never scrolls away.
+The **prompt echo** is a `TextView` pinned at the top of the messages column
+showing the current user prompt so it never scrolls away; it grows from 1 to at
+most 3 rows.
 
 ## Activity state machine
 
@@ -61,8 +63,8 @@ a `tvxwidgets.ActivityModeGauge`.
 Errors from `control.Error` and `DoneEvent.Error` are displayed using
 `tvxwidgets.MessageDialog` (the `ErrorDailog` variant — note upstream
 misspelling). The dialog auto-centers, caps at 30 lines / 1200 chars, and
-restores focus to the input on dismiss. The conversation log line is appended
-separately as the durable record.
+restores focus to the input on dismiss. Only `control.Error` also appends a
+durable conversation-log line; `DoneEvent.Error` is dialog-only.
 
 ## Component packages
 
@@ -81,11 +83,11 @@ separately as the durable record.
 | `components/modelpicker` | Live-filtered provider/model picker |
 | `components/help` | Keybinding reference overlay |
 | `components/banner` | Figlet+lolcat banner rendering |
-| `components/infopane` | Info pane container; embeds the four sections below |
-| `components/sessioninfo` | Session ID, cwd, uptime section |
+| `components/infopane` | Info pane container; embeds the session, context, and MCP sections and renders usage/sub-agents/embedding/middleware inline. Background jobs render in a separate right-pane item. |
+| `components/sessioninfo` | Agent provider/model/version/status section |
 | `components/contextinfo` | Context window usage section |
 | `components/mcpinfo` | Connected MCP servers section |
-| `components/backgroundjobs` | Running/completed background sub-agent jobs |
+| `components/backgroundjobs` | Running background sub-agents |
 | `components/todo` | Todo list sidebar |
 | `components/input` | Prompt input (bordered TextArea with pink border) |
 | `colors` | Theme tokens (single source of truth: `colors/theme.go`) |
@@ -95,10 +97,11 @@ separately as the durable record.
 
 Agent events arrive on one goroutine via the broker forwarder
 (`proxy.go` implements `agent.View`). Streaming token deltas bypass the queue
-(direct write to a mutex-guarded pending buffer) and are flushed by a debounce
-timer; every other mutation is funneled through an ordered event queue onto the
-tview main goroutine (`QueueUpdate` / `QueueUpdateDraw`). Refresh renders are
-debounced and instrumented (`tui.refresh.*` spans, `yaah.tui.*` metrics).
+(direct write to a mutex-guarded pending buffer) and are flushed on
+`FlushEvent` and at done/tool/compaction boundaries; every other mutation is
+funneled through an ordered event queue onto the tview main goroutine
+(`QueueUpdate` / `QueueUpdateDraw`). Refresh work is coalesced and instrumented
+(`tui.refresh.*` spans, `yaah.tui.*` metrics).
 
 The activity line is updated via `setActivity` / `restoreActivity` helpers
 called from `proxy.go` (agent events) and `control.go` (control messages).

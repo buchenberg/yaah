@@ -41,6 +41,7 @@ import (
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/buchenberg/yaah/internal/types"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -589,6 +590,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		})
 
 		result, runErr := subLoop.Run(ctx, prompt)
+		recordSubAgentUsage(context.WithoutCancel(ctx), opts.traceStore, subTraceID, string(role), subModel, subLoop.OwnUsage())
 
 		// The run is over: cut the bridge now, not at closure return —
 		// trace enrichment and output budgeting below must not sit inside
@@ -1283,6 +1285,39 @@ func formatBytes(n int) string {
 	}
 	prefix := []string{"KB", "MB", "GB"}[exp]
 	return fmt.Sprintf("%.1f %s", float64(n)/float64(div), prefix)
+}
+
+// recordSubAgentUsage persists the child's cumulative usage as a trace fact.
+// The orchestrator's session totals fold child usage in, so state.db exposes
+// only the aggregate sub-agent share. This fact keeps the per-dispatch and
+// per-role split available to benchmark metrics and trace readers.
+func recordSubAgentUsage(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, sessionID, role, model string, usage types.Usage) {
+	if store == nil || sessionID == "" {
+		return
+	}
+	payload := map[string]any{
+		"role":                 role,
+		"model":                model,
+		"prompt_tokens":        usage.PromptTokens,
+		"completion_tokens":    usage.CompletionTokens,
+		"total_tokens":         usage.TotalTokens,
+		"cached_prompt_tokens": usage.CacheTokens(),
+	}
+	_, err := store.Append(ctx, shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+		AppendIntentID: sessionID + ":usage",
+		Groups: []shepherdtrace.AppendGroup{{
+			TraceOwnerID: sessionID,
+			FactDrafts: []shepherdtrace.RecordDraft{{
+				Mode:      shepherdtrace.Capture,
+				SchemaRef: "yaah.subagent.usage.v1",
+				KindLabel: "subagent:usage",
+				Payload:   payload,
+			}},
+		}},
+	})
+	if err != nil {
+		slog.Debug("subagent usage trace failed", "session", sessionID, "err", err)
+	}
 }
 
 func subagentTraceProfile(ctx context.Context, tracePath, sessionID string) string {

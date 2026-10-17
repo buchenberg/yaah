@@ -83,6 +83,35 @@ it (`small_model` is compaction-only). `approval: allow` — benchmark
 sessions are non-interactive; the task container is the sandbox, same as
 every other CLI agent benched here.
 
+## Orchestration suite and combined runs
+
+The orchestration task set lives in `../orchestration-tasks` and uses its own
+dataset root. Run it directly:
+
+```bash
+DATASET=bench/orchestration-tasks \
+SUITE=bench/orchestration-tasks/suite.txt \
+bench/terminal-bench/run.sh
+```
+
+Or run both suites with separate scoreboards:
+
+```bash
+./bench/run-all.sh                 # coding + orchestration
+SUITES=orch ./bench/run-all.sh     # orchestration only
+```
+
+`run-all.sh` writes `<OUTPUT_PATH>/<run-id>/metrics.json` per suite and a
+combined `summary-<timestamp>.txt`. It does not merge the scores: coding
+measures outcome accuracy, orchestration measures trace compliance.
+
+Oracle validation for an orchestration task: `tb run --agent oracle` stages
+`solution.sh` at `/oracle/solution.sh`, and each task's `run-tests.sh` sees
+that file and sets `ORCH_ORACLE=1`. For a manual run, set it yourself:
+`ORCH_ORACLE=1 bash run-tests.sh`. The env flag is the only skip signal for
+missing trace/state evidence; the agent cannot set the verifier's environment,
+so broken capture fails instead of silently skipping the orchestration layers.
+
 ## Reading results
 
 - Verdicts: `runs/<run-id>/results.json` (`is_resolved` per task).
@@ -102,6 +131,13 @@ summed from the state.dbs) for one or more runs:
 ```bash
 python3 extract_metrics.py ~/Code/Agentic/Frameworks/terminal-bench/runs <run-id> [run-id ...]
 ```
+
+For runs that dispatch sub-agents, the extractor splits the session total into
+the orchestrator share and the sub-agent share (`sub_tokens_in/out`, with
+`orchestrator = total - sub`). `--subs` prints the per-role breakdown from
+`yaah.subagent.usage.v1` trace facts, and `--json` emits the same data for
+scripted reports. Orchestration-suite records live in
+`../orchestration-tasks/RESULTS.md`.
 
 ## Podman gotchas
 
@@ -124,9 +160,7 @@ python3 extract_metrics.py ~/Code/Agentic/Frameworks/terminal-bench/runs <run-id
 ## Recording results
 
 - Task tables, scores, and caveats: append a new dated section to
-  [RESULTS.md](RESULTS.md) — existing sections are never rewritten.
-- Ledger: append-only rows in the repo root
-  [BENCHMARKS.md](../../BENCHMARKS.md), the existing
-  convention: timestamp, branch, commit, scenario (`TB <task>`), turns,
-  subs, tools, time, orch/sub tokens, total, errors, notes — plus the
-  run-id so the harness output backs the row.
+  [RESULTS.md](RESULTS.md) — existing sections are never rewritten. This is
+  the results ledger.
+- [BENCHMARKS.md](../../BENCHMARKS.md) is methodology and comparison context
+  only; new run results go in `RESULTS.md`, not that page.

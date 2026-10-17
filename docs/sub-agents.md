@@ -183,15 +183,16 @@ before suspecting the provider or the network.
 A sub-agent's work is retained, not trusted: it runs in its own world and
 returns a proposal the orchestrator settles.
 
-- **Retention.** With a Shepherd trace store configured
-  (`agents.default.shepherd_trace_dir`), each dispatch runs in a detached
-  `git worktree` and returns a sealed proposal. `select` fast-forwards,
+- **Retention.** In a local session with a Shepherd trace store configured
+  (`agents.default.shepherd_trace_dir`) and a root scope, each dispatch runs in
+  a detached `git worktree` and returns a sealed proposal. `select` fast-forwards,
   `apply` three-way merges path-disjoint changes, `release` keeps what landed
   and drops the record, and `discard` removes the worktree. A rejected
   attempt never touches the parent tree.
 - **Shared mode.** `agents.subagent.mode: shared` is the explicit
-  direct-to-host opt-out. Without a trace store, the retained lane is not
-  available and dispatches use the direct lane.
+  direct-to-host opt-out. Without a trace store, or in a containerd/isolated
+  session, the retained lane is not available and dispatches use the direct
+  lane.
 - **Turn checkpoints.** A role whose config sets
   `agents.subagent.roles.<role>.turn_checkpoints: true` captures workspace and
   conversation before each turn, so a turn that fails in the tool phase or

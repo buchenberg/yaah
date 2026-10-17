@@ -43,12 +43,12 @@ systemPrompt := prompts.Build(layers)
 | Layer | Source | Injected as | Format |
 |---|---|---|---|
 | Identity | `identity.md` (embedded) | Root block | Defines yaah's personality, principles, tools |
-| Environment | `prompts.DetectEnvironment(cwd)` | `## Runtime Environment` | `OS: windows/amd64. Default shell: powershell.` |
+| Environment | `prompts.DetectEnvironment(cwd)` | `## Environment` | `OS: windows/amd64. Default shell: powershell.` |
 | Sub-agent dispatch | `wiring_prompt.go:subAgentDispatchLine` | Inline line | `Sub-agent dispatch: provider=zai model=GLM-5.3-Flash max_concurrency=5` |
 | User context | `~/.yaah/AGENTS.md` | `<user-preferences>` block | Cross-project user preferences |
 | Project context | walked-up `AGENTS.md`/`CLAUDE.md` | Inlined | Project-specific instructions and conventions |
 | Memory | SQLite `memory_search` | `## Memory` | Stored facts from past sessions |
-| Skills | `prompts.BuildSkillsIndex` | `## Available Skills` | Name + one-line description per discovered skill |
+| Skills | not injected into the base prompt | — | The model loads skills on demand with the `skill` tool. `prompts.BuildSkillsIndex` exists but is unused by the production wiring. |
 
 ### Where environment info goes
 
@@ -122,7 +122,7 @@ tool definitions:
 ```go
 req := types.ChatRequest{
     Model:    l.Config.Model,
-    Messages: messages,                 // running conversation
+    Messages: l.prepareRequestMessages(messages), // repaired + pruned conversation
     Tools:    l.buildToolsForLevel(),   // registry tools
 }
 ```
@@ -149,7 +149,7 @@ Each tool executed produces a tool result message:
 
 ### 5c. Conflict detection (`pipeline/conflictdetect.go`)
 
-When external file modifications are detected, a user message is injected:
+When more than one sub-agent touches the same file, a user message is injected:
 
 ```go
 conflictMsg := types.UserMsg(report)

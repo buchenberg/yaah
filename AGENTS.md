@@ -76,7 +76,7 @@ yaah/
 │                                # TUI, web UI
 ├── bench/                       # benchmark harnesses
 ├── .agents/                     # project skills and roles
-├── .github/workflows/ci.yml     # CI: test, vet, staticcheck, cross-compile
+├── .github/workflows/ci.yml     # CI: gofmt, vet, staticcheck, test, native build (ubuntu/macos/windows)
 ├── README.md
 ├── CONTRIBUTING.md
 ├── SECURITY.md
@@ -190,7 +190,7 @@ see `internal/agent/events/events.go`.
 
 | Consumer | View impl | File |
 |---|---|---|
-| TUI | `App.HandleEvent` (via `tui.Proxy`) | `internal/tui/proxy.go` |
+| TUI | `App.HandleEvent` (`App` is the `agent.View`) | `internal/tui/proxy.go` |
 | REPL | `terminalView` / `replView` | `cmd/yaah/view_terminal.go` |
 | Web | `sseView` | `cmd/yaah/web_view.go` |
 | Sub-agents | `agent.NoopView` | `internal/agent/runner/runner.go` |
@@ -198,7 +198,7 @@ see `internal/agent/events/events.go`.
 | ACP serve | `acp.View` + `acp.ViewWithWrite` | `internal/acp/view.go` |
 
 Control-plane messages (todos, questions, approvals, model lists) use
-`tui.ControlMsg`, a separate channel from broker events.
+`control.Msg`, a separate channel from broker events.
 
 ## Skills
 

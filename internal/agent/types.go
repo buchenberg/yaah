@@ -215,8 +215,13 @@ type LoopConfig struct {
 
 // LoopState holds mutable runtime state modified during Run.
 type LoopState struct {
-	Messages                   []types.Message
-	TotalTokens                types.Usage
+	Messages    []types.Message
+	TotalTokens types.Usage
+	// SubAgentTokens is the portion of TotalTokens folded in from child
+	// dispatches. It is tracked separately so the loop's own usage can be
+	// reported without double-counting nested delegates, and so child
+	// totals never masquerade as the parent's current context occupancy.
+	SubAgentTokens             types.Usage
 	LastPromptTokens           int
 	LastCachedPromptTokens     int
 	TotalReasoningTokens       int
