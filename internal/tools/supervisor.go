@@ -17,19 +17,14 @@ import (
 // cancel-then-join-bounded shape as the jobs manager's CloseAndWait.
 const haltQuiesceTimeout = 10 * time.Second
 
-// SupervisorTool lets the orchestrator supervise sub-agent execution.
-// It exposes intervention operations (inject/halt) on running sub-agents,
-// scope inspection (list_scopes, status), and the supervised review
-// session verdict cycle: continue, rollback, review_diff, fork, choose,
-// accept, abort.
-//
-// The review-session actions operate on git checkpoints and tree states
-// (shepherd-runtime-go); sessions are started via supervised_task with
-// review:true.
+// SupervisorTool lets the orchestrator supervise sub-agent execution:
+// intervention (inject/halt) on running sub-agents, and scope inspection
+// (list_scopes, status). Judgement of a sub-agent's work is not an action
+// here — it is the orchestrator settling the proposal.
 //
 // The tool operates on the session's scope manager and trace store,
 // injected by the wiring (plan 07, H4) — the same instances the
-// shepherd_trace middleware and the supervised task tool carry, so the
+// shepherd_trace middleware and the sub-agent runner carry, so the
 // supervisor, the runner, and the tracing share one registry.
 type SupervisorTool struct {
 	TraceDir string
@@ -68,7 +63,7 @@ type SupervisorTool struct {
 
 func (*SupervisorTool) Name() string { return "supervisor" }
 func (*SupervisorTool) Description() string {
-	return "Supervise sub-agent execution: list scopes, inject guidance, halt agents, and drive supervised review sessions (continue, rollback, fork, choose, review_diff, accept, abort)"
+	return "Supervise running sub-agents: list scopes, inject guidance, halt an agent, and report supervision status"
 }
 
 func (*SupervisorTool) Schema() json.RawMessage {
@@ -77,8 +72,8 @@ func (*SupervisorTool) Schema() json.RawMessage {
 		"properties": {
 			"action": {
 				"type": "string",
-				"enum": ["list_scopes", "inject", "halt", "status", "continue", "rollback", "review_diff", "fork", "choose", "accept", "abort"],
-				"description": "list_scopes: show all scopes and their state; inject: push guidance into a scope; halt: force-stop a scope; status: show supervision system status; review-session verdicts (session started via supervised_task review:true): continue: accept the last unit and run the next one; rollback: revert the last unit (files+conversation) and rerun with more specific guidance; review_diff: re-fetch the current diff/report; fork: rewind and run two prompt variants from the same checkpoint; choose: apply the winning fork variant; accept: keep the work and close the session; abort: rewind the unaccepted unit and close the session"
+				"enum": ["list_scopes", "inject", "halt", "status"],
+				"description": "list_scopes: show all scopes and their state; inject: push guidance into a scope; halt: force-stop a scope; status: show supervision system status"
 			},
 			"scope_id": {
 				"type": "string",
@@ -86,47 +81,19 @@ func (*SupervisorTool) Schema() json.RawMessage {
 			},
 			"guidance": {
 				"type": "string",
-				"description": "Guidance text (required for inject and rollback; optional for continue)"
-			},
-			"session_id": {
-				"type": "string",
-				"description": "Supervised review session ID from the supervised_task review envelope (required for continue, rollback, review_diff, fork, choose, accept, abort)"
-			},
-			"prompt_a": {
-				"type": "string",
-				"description": "First variant prompt (required for fork)"
-			},
-			"prompt_b": {
-				"type": "string",
-				"description": "Second variant prompt (required for fork)"
-			},
-			"winner": {
-				"type": "string",
-				"enum": ["a", "b"],
-				"description": "Winning fork variant (required for choose)"
-			},
-			"restore": {
-				"type": "boolean",
-				"default": true,
-				"description": "abort only: rewind the unaccepted unit (default true)"
+				"description": "Guidance text to inject (required for inject)"
 			}
 		},
 		"required": ["action"]
 	}`)
 }
 
-// supervisorActionArgs is the parsed argument set for the supervisor
-// tool. Session fields apply to the review verdict actions; scope
-// fields to inject/halt.
+// supervisorActionArgs is the parsed argument set for the supervisor tool:
+// scope fields apply to inject/halt.
 type supervisorActionArgs struct {
-	Action    string `json:"action"`
-	ScopeID   string `json:"scope_id"`
-	Guidance  string `json:"guidance"`
-	SessionID string `json:"session_id"`
-	PromptA   string `json:"prompt_a"`
-	PromptB   string `json:"prompt_b"`
-	Winner    string `json:"winner"`
-	Restore   *bool  `json:"restore"`
+	Action   string `json:"action"`
+	ScopeID  string `json:"scope_id"`
+	Guidance string `json:"guidance"`
 }
 
 func (t *SupervisorTool) Execute(ctx context.Context, args string) (string, error) {
@@ -158,46 +125,8 @@ func (t *SupervisorTool) Execute(ctx context.Context, args string) (string, erro
 		return executeHalt(mgr, t.Runs, raw.ScopeID)
 	case "status":
 		return executeStatus(mgr, t.Runs, t.Svc)
-	case "continue", "rollback", "review_diff", "fork", "choose", "accept", "abort":
-		if raw.Action == "continue" && raw.Guidance == "" {
-			raw.Guidance = "Proceed with the next work unit."
-		}
-		return executeReviewAction(ctx, raw)
 	default:
-		return "", fmt.Errorf("supervisor: unknown action %q (valid: list_scopes, inject, halt, status, continue, rollback, review_diff, fork, choose, accept, abort)", raw.Action)
-	}
-}
-
-// executeReviewAction dispatches a supervised review session verdict.
-func executeReviewAction(ctx context.Context, raw supervisorActionArgs) (string, error) {
-	if raw.SessionID == "" {
-		return "", fmt.Errorf("supervisor: session_id required for %s (start a review session with supervised_task review:true)", raw.Action)
-	}
-	session, err := getReviewSession(raw.SessionID)
-	if err != nil {
-		return "", err
-	}
-	switch raw.Action {
-	case "continue":
-		return session.continueUnit(ctx, raw.Guidance)
-	case "rollback":
-		return session.rollbackUnit(ctx, raw.Guidance)
-	case "review_diff":
-		return session.reviewDiff(ctx)
-	case "fork":
-		return session.forkVariants(ctx, raw.PromptA, raw.PromptB)
-	case "choose":
-		return session.chooseVariant(ctx, raw.Winner)
-	case "accept":
-		return session.accept(ctx)
-	case "abort":
-		restore := true
-		if raw.Restore != nil {
-			restore = *raw.Restore
-		}
-		return session.abort(ctx, restore)
-	default:
-		return "", fmt.Errorf("supervisor: unknown review action %q", raw.Action)
+		return "", fmt.Errorf("supervisor: unknown action %q (valid: list_scopes, inject, halt, status)", raw.Action)
 	}
 }
 

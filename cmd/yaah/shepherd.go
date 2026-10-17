@@ -76,7 +76,7 @@ func shepherdScan() (*recovery.Report, func(), error) {
 		return nil, nil, fmt.Errorf("shepherd: trace store: %w", err)
 	}
 	cleanup := func() { store.Close(context.Background()) }
-	repoPath := cfg.Agent.Default.SupervisedRepoPath
+	repoPath := cfg.Agent.Default.RetainedRepoPath
 	if repoPath == "" {
 		repoPath, _ = os.Getwd()
 	}

@@ -6,7 +6,6 @@ import (
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/tools"
-	"github.com/buchenberg/yaah/internal/types"
 )
 
 // SubAgentConfig holds the tuning parameters for a sub-agent loop.
@@ -53,11 +52,6 @@ type SubAgentConfig struct {
 	TurnCheckpointEnabled bool
 	TurnCheckpointMax     int
 	MaxTurnRestores       int
-
-	// InitialMessages, when non-empty, seeds the loop's conversation so
-	// this dispatch continues from prior history. See LoopConfig.
-	// InitialMessages.
-	InitialMessages []types.Message
 
 	// SessionID is the trace owner ID for this sub-agent's Shepherd
 	// trace records (e.g. "sub-worker-sess-...-123"). The sub-agent
@@ -152,7 +146,6 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 			TurnCheckpointEnabled: cfg.TurnCheckpointEnabled,
 			TurnCheckpointMax:     cfg.TurnCheckpointMax,
 			MaxTurnRestores:       cfg.MaxTurnRestores,
-			InitialMessages:       cfg.InitialMessages,
 		},
 	}
 

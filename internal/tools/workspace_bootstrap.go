@@ -20,8 +20,8 @@ import (
 // a baseline state is captured, and the session's outward delta can be
 // applied back onto the host when the work is accepted. Copy-in,
 // capture/diff during, apply-out on accept — effects stay in the container
-// until they are deliberately let out, which is the property
-// supervised_task's rollback depends on.
+// until they are deliberately let out, which is the property that makes an
+// isolated attempt safe to discard.
 
 // checkHostGitWorkTree refuses a bootstrap source the copy-in cannot
 // reproduce faithfully. The isolated story is git-anchored end to end:

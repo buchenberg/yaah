@@ -43,13 +43,10 @@ func (*BisectTool) filesystemTool()      {}
 //     reads, not workspace content;
 //   - background_process drives the in-memory host process manager, and a
 //     container would need its own;
-//   - supervised_task provisions sandboxes, so it cannot run inside the isolation
-//     it creates;
 //   - go_refactor reads the filesystem through golang.org/x/tools
 //     (imports.Process, packages.Load), a path Workspace cannot intercept.
 //     Isolating it means reimplementing it on in-sandbox gofmt/goimports calls,
 //     not swapping calls.
 func (*RoleTool) hostOnly()              {}
 func (*BackgroundProcessTool) hostOnly() {}
-func (*SupervisedTaskTool) hostOnly()    {}
 func (*GoRefactorTool) hostOnly()        {}

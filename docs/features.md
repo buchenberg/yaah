@@ -153,7 +153,7 @@ Here's what I can reach for directly:
 | `todowrite` | Track in-flight tasks |
 | `memory_search`, `memory_add`, `memory_update`, `memory_delete`, `memory_search_sessions` | Long-term memory |
 | `spawn_subagent`, `list_subagents` | Team management |
-| `supervised_task`, `supervisor` | Checkpointed sub-agent runs: automatic rollback+retry, or interactive review sessions (continue/rollback/fork/choose/review_diff/accept/abort). Fork variants run in isolated git worktrees and settle through the kernel's merge gate and settlement, so a discarded branch cannot touch the parent tree |
+| `supervisor` | Supervision of running sub-agents: scope inspection (`list_scopes`, `status`), guidance injection, and force-stop (`halt`) |
 
 ## OpenTelemetry observability
 
@@ -228,7 +228,7 @@ based and stays off in isolated mode — the scope remains for supervisor
 inject/halt.
 
 Isolation costs a tool delta, named in the session prompt and in the
-session record: `role`, `background_process`, `supervised_task`, and
+session record: `role`, `background_process`, and
 `go_refactor` are host-only and omitted; MCP-served tools are omitted too
 (they execute on the host), and `skill`/`plan` stay registered but
 read-only. `doctor` reports the workspace check when the stanza is
@@ -262,11 +262,10 @@ You can reorder, disable, or enable middleware in your config.
 
 ## Supervision lifecycle
 
-The `supervised_task` and `supervisor` tools (see the tool belt above) run
-sub-agents under kernel-backed supervision: checkpointed runs with
-automatic rollback+retry, and interactive review sessions whose fork
-variants run in isolated git worktrees and settle through the merge gate.
-The lifecycle around those runs is durable — the trace is the registry —
+The `supervisor` tool (see the tool belt above) watches
+sub-agents under kernel-backed supervision: scope inspection, guidance
+injection, and force-stop. The lifecycle around those runs is durable — the
+trace is the registry —
 and this section is the operational half: what happens at startup, and
 what to do with the leftovers a crash can leave.
 

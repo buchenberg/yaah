@@ -146,27 +146,21 @@ type Defaults struct {
 	// configuration uses supervisor.halt_root.
 	SupervisorHaltRoot bool `yaml:"supervisor_halt_root"`
 
-	// SupervisedMaxRetries caps the rollback-and-retry cycles of the
-	// supervised_task tool after the initial attempt. 0 (unset) defaults
-	// to 1 — one rollback-and-retry.
-	SupervisedMaxRetries int `yaml:"supervised_max_retries"`
+	// RetainedRepoPath is the git repository sub-agent worktrees are cut from,
+	// and the repository per-turn checkpoints operate on. Empty (unset)
+	// defaults to the working directory at execution time.
+	RetainedRepoPath string `yaml:"retained_repo_path"`
 
-	// SupervisedRepoPath is the git repository the supervised_task tool
-	// checkpoints and rolls back. It is also the repository per-turn
-	// checkpoints operate on. Empty (unset) defaults to the working
-	// directory at execution time.
-	SupervisedRepoPath string `yaml:"supervised_repo_path"`
-
-	// SupervisedWorktreeRoot is the parent directory for variant worktrees.
+	// RetainedWorktreeRoot is the parent directory for sub-agent worktrees.
 	// Empty (unset) uses a "shepherd-worktrees" directory beside the
 	// repository, outside its tracked tree.
-	SupervisedWorktreeRoot string `yaml:"supervised_worktree_root"`
+	RetainedWorktreeRoot string `yaml:"retained_worktree_root"`
 
-	// SupervisedWorktreeBootstrap is a shell command run inside each variant
+	// RetainedWorktreeBootstrap is a shell command run inside each sub-agent
 	// worktree after it is created. A git worktree checks out tracked files
 	// only, so a repo whose build needs gitignored artifacts (node_modules,
 	// build caches, .env) must recreate them here, for example "npm ci".
-	SupervisedWorktreeBootstrap string `yaml:"supervised_worktree_bootstrap"`
+	RetainedWorktreeBootstrap string `yaml:"retained_worktree_bootstrap"`
 
 	// TurnCheckpointMax caps live turn checkpoints per sub-agent run;
 	// the oldest are pruned when the cap is reached. 0 = unlimited.
@@ -320,14 +314,9 @@ type RoleConfig struct {
 	StuckChildTimeout int      `yaml:"stuck_child_timeout"` // seconds; 0 = use global default
 	Directives        []string `yaml:"directives"`          // injected into this role's sub-agent prompt; empty = none
 
-	// Supervised routes the role exclusively through the supervised_task
-	// tool (attempt-level git checkpoint + rollback + retry) and hides it
-	// from spawn_subagent. Default false: the role is a plain sub-agent
-	// dispatched via spawn_subagent with no checkpointing.
-	Supervised bool `yaml:"supervised"`
 	// TurnCheckpoints enables per-turn checkpoint/restore inside this
-	// role's sub-agent loop. Default false. Independent of Supervised, but
-	// only meaningful where a shared shepherd scope manager is configured.
+	// role's sub-agent loop. Default false. Only meaningful where a shared
+	// shepherd scope manager is configured.
 	TurnCheckpoints bool `yaml:"turn_checkpoints"`
 }
 
@@ -508,17 +497,58 @@ func Load() (*Config, error) {
 		fmt.Fprintf(os.Stderr, "warning: config key `agents.default.supervised_worktree` is no longer used; fork variants always run in isolated worktrees\n")
 	}
 
+	// `supervised_task` was removed (the orchestrator is the gate; see the
+	// Plan 7 Phase 4 record). Its keys are dead, and so is the per-role
+	// `supervised` routing flag: every role dispatches through spawn_subagent.
+	// Warn once, per key, so an upgraded config does not look like it still
+	// selects a lane that no longer exists.
+	var legacySupervisedTask struct {
+		Agents struct {
+			Default struct {
+				Retries     *int    `yaml:"supervised_max_retries"`
+				RepoPath    *string `yaml:"supervised_repo_path"`
+				TreeRoot    *string `yaml:"supervised_worktree_root"`
+				TreeBootstr *string `yaml:"supervised_worktree_bootstrap"`
+			} `yaml:"default"`
+			SubAgent struct {
+				Roles map[string]struct {
+					Supervised *bool `yaml:"supervised"`
+				} `yaml:"roles"`
+			} `yaml:"subagent"`
+		} `yaml:"agents"`
+	}
+	if err := yaml.Unmarshal(data, &legacySupervisedTask); err == nil {
+		d := legacySupervisedTask.Agents.Default
+		if d.Retries != nil {
+			fmt.Fprintf(os.Stderr, "warning: config key `agents.default.supervised_max_retries` is no longer used; supervised_task was removed\n")
+		}
+		if d.RepoPath != nil {
+			fmt.Fprintf(os.Stderr, "warning: config key `agents.default.supervised_repo_path` is no longer used; rename it to `retained_repo_path`\n")
+		}
+		if d.TreeRoot != nil {
+			fmt.Fprintf(os.Stderr, "warning: config key `agents.default.supervised_worktree_root` is no longer used; rename it to `retained_worktree_root`\n")
+		}
+		if d.TreeBootstr != nil {
+			fmt.Fprintf(os.Stderr, "warning: config key `agents.default.supervised_worktree_bootstrap` is no longer used; rename it to `retained_worktree_bootstrap`\n")
+		}
+		for name, role := range legacySupervisedTask.Agents.SubAgent.Roles {
+			if role.Supervised != nil {
+				fmt.Fprintf(os.Stderr, "warning: config key `agents.subagent.roles.%s.supervised` is no longer used; supervised_task was removed and every role dispatches through spawn_subagent\n", name)
+			}
+		}
+	}
+
 	if cfg.Hooks.Dir != "" {
 		cfg.Hooks.Dir = expandHomeDir(cfg.Hooks.Dir)
 	}
 	if cfg.Agent.Default.ShepherdTraceDir != "" {
 		cfg.Agent.Default.ShepherdTraceDir = expandHomeDir(cfg.Agent.Default.ShepherdTraceDir)
 	}
-	if cfg.Agent.Default.SupervisedRepoPath != "" {
-		cfg.Agent.Default.SupervisedRepoPath = expandHomeDir(cfg.Agent.Default.SupervisedRepoPath)
+	if cfg.Agent.Default.RetainedRepoPath != "" {
+		cfg.Agent.Default.RetainedRepoPath = expandHomeDir(cfg.Agent.Default.RetainedRepoPath)
 	}
-	if cfg.Agent.Default.SupervisedWorktreeRoot != "" {
-		cfg.Agent.Default.SupervisedWorktreeRoot = expandHomeDir(cfg.Agent.Default.SupervisedWorktreeRoot)
+	if cfg.Agent.Default.RetainedWorktreeRoot != "" {
+		cfg.Agent.Default.RetainedWorktreeRoot = expandHomeDir(cfg.Agent.Default.RetainedWorktreeRoot)
 	}
 
 	normalizeWorkspace(&cfg.Workspace)

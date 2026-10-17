@@ -122,10 +122,9 @@ func OneShotGuidance() string {
 	return strings.TrimSpace(oneShotRaw)
 }
 
-// SubAgentToolsGuidance returns the orchestrator guidance block that
-// explains when to use spawn_subagent vs supervised_task. Injected into
-// the top-level prompt only when supervised_task is registered (i.e.
-// Shepherd tracing is enabled).
+// SubAgentToolsGuidance returns the orchestrator guidance block on delegating
+// to a sub-agent (and why long-horizon exploration is worth delegating).
+// Injected in local mode; the retained-lane specifics are a separate block.
 func SubAgentToolsGuidance() string {
 	return strings.TrimSpace(subAgentToolsRaw)
 }
@@ -193,7 +192,6 @@ func ConfinementSubAgentGuidance(worktree, network string, brokerPort int, omitt
 var hostOnlyReasons = map[string]string{
 	"role":               "role files are harness configuration the host reads, not workspace content; roles still load — you just cannot manage role files from this session",
 	"background_process": "it drives the host's process manager; a container would need its own — run long-lived commands in the background with your shell tool instead",
-	"supervised_task":    "it provisions sandboxes itself, so it cannot run inside the isolation it creates — dispatch sub-agents with spawn_subagent instead",
 	"go_refactor":        "it reads the filesystem through the Go toolchain on the host; go_outline, go_test, and go_mod cover the Go tooling need",
 }
 

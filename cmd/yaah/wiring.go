@@ -448,7 +448,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		// half-running against a closed store.
 		tracingReady := serr == nil
 		if tracingReady {
-			repoPath := cfg.Agent.Default.SupervisedRepoPath
+			repoPath := cfg.Agent.Default.RetainedRepoPath
 			if repoPath == "" {
 				repoPath, _ = os.Getwd()
 			}
@@ -495,7 +495,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			// host-git capture would lie about the tree, isolation
 			// plan D2). A failure leaves sub-agent scopes on the
 			// legacy flat path rather than bricking tracing.
-			if root, rerr := runner.CreateRootScope(mgr, sessionID, cfg.Agent.Default.SupervisedRepoPath, sessionSandbox != nil); rerr != nil {
+			if root, rerr := runner.CreateRootScope(mgr, sessionID, cfg.Agent.Default.RetainedRepoPath, sessionSandbox != nil); rerr != nil {
 				if errors.Is(rerr, runner.ErrRootTerminal) {
 					// The explicit degraded mode (R2 review): the
 					// resumed session's root already ended, so its
@@ -545,16 +545,6 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 				supervisorSvc.Start("yaah-supervisor-" + sessionID)
 			}
 		}
-	}
-
-	// Role routing: each role dispatches through exactly one sub-agent
-	// tool, selected by the per-role `supervised` flag
-	// (subagent.roles.<name>.supervised). Start with every role on
-	// spawn_subagent; supervised roles are moved to supervised_task only
-	// after shepherd infrastructure initializes successfully, so a role is
-	// never unreachable when tracing is unset or init fails.
-	isSupervisedRole := func(name string) bool {
-		return cfg.Agent.SubAgent.Roles[name].Supervised
 	}
 
 	// Isolated session (plan §1.3, decision D2): sub-agents inherit the
@@ -617,9 +607,9 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		// agents.subagent.mode: shared is the opt-out.
 		SubNetwork:           subNetwork,
 		Retain:               sessionSandbox == nil && retainedMode(cfg.Agent.SubAgent.Mode),
-		RetainedRepoPath:     cfg.Agent.Default.SupervisedRepoPath,
-		RetainedWorktreeRoot: cfg.Agent.Default.SupervisedWorktreeRoot,
-		RetainedBootstrap:    cfg.Agent.Default.SupervisedWorktreeBootstrap,
+		RetainedRepoPath:     cfg.Agent.Default.RetainedRepoPath,
+		RetainedWorktreeRoot: cfg.Agent.Default.RetainedWorktreeRoot,
+		RetainedBootstrap:    cfg.Agent.Default.RetainedWorktreeBootstrap,
 	})
 
 	// RoleResolver provides a live role-name lookup so the spawn_subagent
@@ -662,32 +652,9 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 
 	toolReg.Register(&tools.SubAgentJobsTool{Jobs: backgroundJobs})
 
-	// Shepherd-dependent tool surface: the supervisor tool and the
-	// supervised task tool register only when the infrastructure above
-	// came up, and the supervised/plain role split lands with them.
+	// Shepherd-dependent tool surface: the supervisor and proposal tools
+	// register only when the infrastructure above came up.
 	if scopeMgr != nil {
-		// Supervised roles move from spawn_subagent to supervised_task
-		// now that the shared scope manager is actually available.
-		// Isolated mode folds them back: supervised_task is omitted
-		// there, and leaving the roles split off spawn_subagent would
-		// leave them with no dispatch tool at all (task rejects them
-		// by name).
-		plainRoles, supervisedRoles := splitRolesBySupervised(reg.Names(), isSupervisedRole)
-		if sessionSandbox != nil {
-			plainRoles = reg.Names()
-			supervisedRoles = nil
-		}
-		taskTool.RoleNames = plainRoles
-		taskTool.RoleResolver = func() []string {
-			names := subagent.DefaultRegistry().Names()
-			if sessionSandbox != nil {
-				return names
-			}
-			plain, _ := splitRolesBySupervised(names, isSupervisedRole)
-			return plain
-		}
-		taskTool.RoleDescriptions = runner.RoleDescriptionsFor(plainRoles)
-
 		// Supervisor tool for sub-agent supervision (list_scopes/inject/halt/status).
 		toolReg.Register(&tools.SupervisorTool{
 			TraceDir:     cfg.Agent.Default.ShepherdTraceDir,
@@ -717,63 +684,16 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			// predicate)`, so no verdict protocol or review round exists.
 			toolReg.Register(&tools.ProposalTool{})
 		}
-
-		// Supervised task tool — blocking sub-agent execution with
-		// checkpoint/rollback/retry. Shares the runner and timeout
-		// logic with the task tool, but runs synchronously and wraps
-		// each attempt in a git checkpoint. Only registered when
-		// tracing is on: checkpoint/rollback needs the shared scope
-		// manager. It offers only roles flagged `supervised`; plain
-		// roles stay with spawn_subagent.
-		maxRetries := cfg.Agent.Default.SupervisedMaxRetries
-		if maxRetries <= 0 {
-			maxRetries = 1
-		}
-		// supervised_task is host-only: it provisions sandboxes, so
-		// it cannot run inside the isolation it creates. Omitted in
-		// isolated mode (plan §3); its roles stay assigned to it,
-		// which the prompt delta explains.
-		if sessionSandbox == nil {
-			toolReg.Register(&tools.SupervisedTaskTool{
-				Runner:         taskTool.Runner,
-				ResolveTimeout: taskTool.ResolveTimeout,
-				RoleNames:      supervisedRoles,
-				ScopeManager:   scopeMgr,
-				RoleResolver: func() []string {
-					_, supervised := splitRolesBySupervised(subagent.DefaultRegistry().Names(), isSupervisedRole)
-					return supervised
-				},
-				RoleDescriptions: runner.RoleDescriptionsFor(supervisedRoles),
-				RepoPath:         cfg.Agent.Default.SupervisedRepoPath,
-				// RootScopeID feeds the review sessions' merge gate
-				// (adoption plan C1): the session scope forks from the
-				// root, so accept runs through the kernel's
-				// CommitMerge. MergePolicy stays nil — the session's
-				// own verdict (the interactive review) is the
-				// reviewer.
-				RootScopeID: rootScopeID,
-				MaxRetries:  maxRetries,
-
-				WorktreeRoot:      cfg.Agent.Default.SupervisedWorktreeRoot,
-				WorktreeBootstrap: cfg.Agent.Default.SupervisedWorktreeBootstrap,
-			})
-		} else {
-			omittedTools = append(omittedTools, "supervised_task")
-		}
 	}
 
 	// The prompt must never advertise a tool that is not registered.
-	// Local mode: the sub-agent guidance only when supervised_task is
-	// actually there (the shared scope manager is set exclusively on
-	// successful init). Isolated mode: the §2.2 delta instead — which
-	// names every omitted tool with its reason, covers the
-	// spawn_subagent-only story, and explains the apply_out workflow —
-	// since the local guidance would promise a supervised_task that
-	// cannot exist here.
+	// Isolated mode gets the §2.2 delta instead — which names every omitted
+	// tool with its reason, covers the spawn_subagent-only story, and explains
+	// the apply_out workflow.
 	if sessionSandbox != nil {
 		slices.Sort(omittedTools)
 		mainPrompt += "\n\n" + prompts.IsolatedWorkspaceGuidance(omittedTools, omittedMCP)
-	} else if scopeMgr != nil {
+	} else {
 		mainPrompt += "\n\n" + prompts.SubAgentToolsGuidance()
 		if retainedMode(cfg.Agent.SubAgent.Mode) && rootScopeID != "" {
 			mainPrompt += "\n\n" + prompts.RetainedModeGuidance()
@@ -993,22 +913,6 @@ func supervisorSvcGuardCheck(svc *supervision.Service) func(ownerID, toolName, a
 		return nil
 	}
 	return svc.GuardCheck()
-}
-
-// splitRolesBySupervised partitions role names into plain and supervised
-// sets using the supplied predicate (the per-role `supervised` flag). A
-// role dispatches through exactly one sub-agent tool: plain roles via
-// spawn_subagent, supervised roles via supervised_task. Order within each
-// set preserves the input order.
-func splitRolesBySupervised(names []string, isSupervised func(string) bool) (plain, supervised []string) {
-	for _, n := range names {
-		if isSupervised(n) {
-			supervised = append(supervised, n)
-		} else {
-			plain = append(plain, n)
-		}
-	}
-	return plain, supervised
 }
 
 // wireSubAgentNetwork lowers agents.subagent.network into the confinement policy

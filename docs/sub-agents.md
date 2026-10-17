@@ -207,30 +207,25 @@ budget up to the role ceiling). The effective budget and its source (call,
 role_config, role_file, config_default, floor, headroom, …) are recorded on
 sub-agent spans so a trace always answers "who set this to N?".
 
-## Rollback and isolation
+## Retention and isolation
 
-A sub-agent routed through `supervised_task` runs with a rollback point instead
-of on faith. Two mechanisms make that work:
+A sub-agent's work is retained, not trusted: it runs in its own world and returns
+a proposal the orchestrator settles.
 
-- **Checkpoints.** Before each unit — and, when a role sets `turn_checkpoints`,
-  before each turn — the workspace *and* the conversation are captured. A
-  rejected unit is rolled back and re-dispatched with the orchestrator's
-  corrected guidance, and the sub-agent resumes from the context it had at the
-  unit boundary rather than from a guess.
-- **Isolation.** Each `fork` variant runs in its own git worktree — an isolated
-  child scope — confined by a per-scope path validator and working directory,
-  so a speculative branch cannot touch the parent tree. `choose` settles the
-  winner through the kernel's settlement (a fast-forward onto the parent when
-  it has not moved, a three-way merge when it drifted); the sealed outputs
-  back the review envelope, and the settlement itself is the worktree teardown.
+- **Retention.** Each dispatch runs in a detached `git worktree` — an isolated
+  child scope — confined by a per-scope path validator and working directory.
+  Its changes come back as a sealed proposal (`select` fast-forwards, `apply`
+  three-way merges, `discard` removes the worktree), so a rejected attempt never
+  touches the parent tree.
+- **Turn checkpoints.** A role that sets `turn_checkpoints: true` also captures
+  workspace *and* conversation before each turn, so a turn that ends in a tool
+  error or an exhausted iteration budget rewinds instead of losing the attempt.
+  Bounded by `max_turn_restores`.
 
-Routing is per role: `supervised: true` exposes the role through the checkpointed
-tool, and `turn_checkpoints: true` adds per-turn rewinds (bounded by
-`max_turn_restores`). See
-[configuration.md](./configuration.md#supervised-execution-reference) for the
-knobs and the worktree prerequisites — notably that a worktree contains tracked
-files only, so gitignored build inputs must be recreated by
-`supervised_worktree_bootstrap`.
+See [configuration.md](./configuration.md#retained-worktrees-and-turn-checkpoints)
+for the knobs and the worktree prerequisites — notably that a worktree contains
+tracked files only, so gitignored build inputs must be recreated by
+`retained_worktree_bootstrap`.
 
 ## Evidenced contracts
 

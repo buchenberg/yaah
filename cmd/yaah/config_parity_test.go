@@ -37,14 +37,13 @@ func TestConfigAgentConfigParity(t *testing.T) {
 		"ReasoningProtect":      true, // → AgentConfig.ReasoningProtectTurns (renamed)
 		"ShepherdTraceDir":      true, // → session-level shepherd init in wiring
 		"Supervisor":            true, // → advisory rules engine in wiring (adoption plan B1)
-		"SupervisedMaxRetries":  true, // → supervised_task tool registration in wiring
-		"SupervisedRepoPath":    true, // → supervised_task tool registration in wiring
 		"SupervisorHaltRoot":    true, // → supervisor tool's root-halt gate in wiring
 
-		"SupervisedWorktreeRoot":      true, // → supervised_task tool registration in wiring
-		"SupervisedWorktreeBootstrap": true, // → supervised_task tool registration in wiring
-		"TurnCheckpointMax":           true, // → sub-agent runner turn checkpointer
-		"MaxTurnRestores":             true, // → sub-agent runner turn checkpointer
+		"RetainedRepoPath":          true, // → retained-lane worktrees + root scope in wiring
+		"RetainedWorktreeRoot":      true, // → retained-lane worktrees in wiring
+		"RetainedWorktreeBootstrap": true, // → retained-lane worktrees in wiring
+		"TurnCheckpointMax":         true, // → sub-agent runner turn checkpointer
+		"MaxTurnRestores":           true, // → sub-agent runner turn checkpointer
 	}
 
 	// Fields in agent.AgentConfig that come from other config sections

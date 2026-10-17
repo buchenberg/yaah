@@ -1,5 +1,12 @@
 # Shepherd Benchmark — test prompts and an effectiveness harness
 
+> **Historical.** This battery was written against `supervised_task`, which has
+> since been removed in favour of the retained lane (`spawn_subagent` → sealed
+> proposal → `select`/`apply`/`discard`). The results and the harness steps below
+> are a record of that comparison, not a runnable procedure: "Arm B" no longer
+> exists. A retained-lane equivalent would dispatch once per attempt and measure
+> the orchestrator's settlement decisions.
+
 How to get benchmark numbers for the supervision surface without a
 large token spend. Two parts: the framework choice, and the scenario
 battery (exact prompts, config, pass criteria, metrics).

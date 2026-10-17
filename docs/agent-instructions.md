@@ -1,7 +1,7 @@
 # Agent Instructions — the supervision surface
 
 This document writes up, in one place, the instructions the yaah model
-actually receives about the supervised sub-agent surface: which prompt
+actually receives about the sub-agent surface: which prompt
 blocks exist, what they tell the model to do, when each is injected, and
 where its source of truth lives. It is a map of the instruction text, not
 a second copy of it — when behavior changes, the embedded files in
@@ -15,10 +15,10 @@ covered separately in [prompts.md](prompts.md).
 
 | Instruction block | Source | Injected when |
 | --- | --- | --- |
-| Orchestrator guidance: `spawn_subagent` vs `supervised_task` | `internal/prompts/subagent_tools.md` (`prompts.SubAgentToolsGuidance`) | Local sessions, when the session's scope manager is live (`cmd/yaah/wiring.go`) — an isolated session takes the workspace delta below instead |
-| `supervised_task` tool description | `internal/prompts/tools/supervised_task.md` (`prompts.ToolDescription`) | Always with the tool, when registered |
+| Orchestrator guidance: delegating to a sub-agent | `internal/prompts/subagent_tools.md` (`prompts.SubAgentToolsGuidance`) | Local sessions (`cmd/yaah/wiring.go`) — an isolated session takes the workspace delta below instead |
+| Retained-lane guidance: proposals and settlement | `internal/prompts/retained.md` (`prompts.RetainedModeGuidance`) | Local sessions with the retained lane live (`agents.subagent.mode: retained` and a root scope) |
 | `supervisor` tool description + schema | In code: `internal/tools/supervisor.go` (`Description()`, `Schema()`) | Always with the tool, when registered |
-| `spawn_subagent` (plain `task`) tool description | `internal/prompts/tools/task.md` | Always — the unsupervised path exists in every mode |
+| `spawn_subagent` (plain `task`) tool description | `internal/prompts/tools/task.md` | Always |
 | Sub-agent identity (batching, codebase respect, reporting) | `internal/prompts/subagent_identity.md` | Every sub-agent dispatch; orchestration guidance is deliberately omitted |
 | Loop-detection steering message (convergence rule) | `internal/prompts/steering_message.md`, emitted by `LoopDetectionMiddleware` (`internal/agent/pipeline/loopdetect.go`) | When one tool dominates consecutive turns |
 | Injected guidance (supervisor `inject`, advisory rules) | `SteerMiddleware` (`internal/agent/pipeline/steer.go`) | Next turn, as a `[STEER]`-prefixed user message, when guidance arrives mid-run |
@@ -27,54 +27,36 @@ covered separately in [prompts.md](prompts.md).
 
 ## The orchestrator's decision rule
 
-The one-sentence version the model is given: **parallel work uses
-`spawn_subagent`; work that must succeed or roll back cleanly uses
-`supervised_task`.**
+The one-sentence version the model is given: **delegate exploration and
+long-horizon work to a sub-agent; the orchestrator judges and lands the
+result.**
 
 From `subagent_tools.md`:
 
-- **`spawn_subagent`** is non-blocking. It supports parallel and
-  background execution and is the tool for independent tasks that can
-  run concurrently. It has no rollback safety — bad changes persist.
-- **`supervised_task`** is BLOCKING. It runs a single sub-agent to
-  completion with an automatic git checkpoint and rollback: a failed
-  attempt is reverted and retried with guidance. It is the tool when
-  correctness matters more than speed and a failed attempt must not
-  leave the workspace broken.
-- The model is told explicitly NOT to use `supervised_task` for parallel
-  work — it blocks the orchestrator's own loop.
+- **`spawn_subagent`** is non-blocking. Parallel and background dispatches
+  are supported, each in its own world. Use it for independent work that can
+  run concurrently, and for exploration whose raw tool calls would otherwise
+  fill the orchestrator's context.
+- The sub-agent never lands work: in the retained lane it returns a sealed
+  proposal and the orchestrator settles it. That is the only gate — there is
+  no reviewer sub-agent and no round loop.
 
-This block is only appended when the supervision infrastructure is
-live. With tracing off, the `supervised_task` and `supervisor` tools are
-not registered and every role stays on `spawn_subagent`, so the
-instruction and the tool belt cannot disagree.
+## The retained lane's contract
 
-## `supervised_task` instructions
+From `retained.md` (injected when the retained lane is live):
 
-The tool description (`tools/supervised_task.md`) pins three contracts:
-
-**Automatic mode (default).** One attempt = one git checkpoint. On
-failure the attempt's changes are rolled back and the sub-agent is
-retried with the failure's guidance. The result is a JSON envelope:
-`status` (`completed`, `failed`, `cancelled`, `rollback_failed`,
-`recheckpoint_failed`, `exhausted`), `attempts`, and `result` on success
-or `error`/`partial` on failure. The model is told to check `status`
-first — a failed-and-rolled-back run is a normal outcome, not an error
-to retry blind. With per-role turn checkpointing enabled, `restores` and
-`restored_from` report in-attempt turn rewinds.
-
-**Review mode (`review: true`).** Instead of automatic retry, the
-sub-agent completes ONE work unit and the model receives a review
-envelope: `session_id`, `status`, `unit`, `result` (the sub-agent's
-report), `diff` (bounded patch), `files`, optional `error`, and `next`
-(the allowed verdicts). The model then drives the cycle through the
-supervisor tool.
-
-**Workspace ownership.** While a review session is open, the session
-owns the workspace: the model is instructed not to edit files itself
-between verdicts, because `rollback` and `choose` overwrite the working
-tree. Work units should be scoped so each stays reviewable — one
-coherent change per unit.
+- A dispatch returns `status: "proposal"` with a `proposal_id`, the changed
+  `files`, and a `diff`. **Nothing has changed on the working tree yet.**
+- Settlement is `proposal` with an action: `select` (fast-forward; fails
+  closed if the tree moved), `apply` (three-way, path-disjoint), `release`
+  (keep what landed, drop the record), `discard` (throw it away and free the
+  worktree). A proposal settles exactly once.
+- **The orchestrator commits, not the sub-agent.** A worktree's index and
+  object store live in the original repository, outside the sub-agent's jail,
+  so git write commands are refused there. Changes arrive as file edits at
+  settlement.
+- Retrying means `discard` + dispatch again with what was learned — a
+  discarded attempt costs one dispatch and leaves the tree untouched.
 
 ## The supervisor tool's verbs
 
@@ -87,28 +69,15 @@ From the description in `internal/tools/supervisor.go`:
   loop — delivered between turns as a high-priority user message),
   `halt` (force-stop a scope; the run reports a deliberate
   "halted by supervisor" stop, not raw cancellation noise).
-- **Review-session verdicts** (session started via
-  `supervised_task review:true`): `continue` (keep the unit's files and
-  conversation, run the next unit with optional guidance), `rollback`
-  (revert the unit's files AND conversation, rerun with the more
-  specific `guidance`), `review_diff` (re-fetch the current diff),
-  `fork` (rewind and run two competing variants from the same
-  checkpoint), `choose` (apply the winning variant), `accept` (keep the
-  work, close the session), `abort` (rewind the unaccepted unit, close
-  the session).
 
 Two behaviors the model will meet and should not fight:
 
-- **A merge-gate denial is a verdict, not an error.** If the gate
-  refuses the final accept, the tree is rolled back to the session
-  start, the denial reason is injected into the re-run's prompt, and the
-  session stays open — the model re-runs the unit addressing the reason.
 - **After a halt, the session refuses new work loudly.** A dispatch
   after the root was halted fails with the root-terminal explanation
   ("start a new session") instead of silently running unsupervised.
-  Likewise a verdict against a session lost to a crash refuses with
-  "start one with `supervised_task review:true`" rather than a mystery
-  error.
+- **A confinement or egress posture that cannot be applied refuses the
+  dispatch** with the reason and the fix, rather than running open. See
+  `configuration.md`.
 
 Injecting into the root scope steers the orchestrator's own session —
 that is why root `halt` is gated behind the
@@ -141,10 +110,7 @@ apply its findings and act.
 
 ## Isolated sessions
 
-`supervised_task` cannot exist in isolated mode — it provisions sandboxes
-itself, so it cannot run inside the isolation it creates — and with it
-the review-session cycle (sessions are started through it). The
-`supervisor` tool stays registered whenever the scope manager is live:
+The `supervisor` tool stays registered whenever the scope manager is live:
 scope inspection and inject/halt work on container-side scopes as they
 do locally. The orchestrator guidance block is replaced by the isolated
 workspace delta (`IsolatedWorkspaceGuidance`): the model is told which

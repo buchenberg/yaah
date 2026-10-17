@@ -19,8 +19,7 @@ const defaultBusBuffer = 64
 // effect bus, and scope manager. Called once from wiring when
 // shepherd_trace_dir is configured — the orchestrator pipeline no longer
 // hosts shepherd_trace, so this is the single initialization point shared
-// by the SupervisorTool, the supervised_task tool, and sub-agent trace
-// middleware.
+// by the SupervisorTool and the sub-agent trace middleware.
 func InitShepherdInfrastructure(traceDir string, busBuffer int) (*shepherdtrace.SQLiteTraceStore, *shepherdtrace.EffectBus, *shepherd.ScopeManager, error) {
 	if err := os.MkdirAll(traceDir, 0o700); err != nil {
 		return nil, nil, nil, fmt.Errorf("shepherd: mkdir %s: %w", traceDir, err)

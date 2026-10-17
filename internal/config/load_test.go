@@ -225,7 +225,7 @@ func TestLoad_shepherdTraceDirEmptyByDefault(t *testing.T) {
 	}
 }
 
-func TestLoad_roleShepherdingFlags(t *testing.T) {
+func TestLoad_roleTurnCheckpoints(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("YAAH_HOME", tmp)
 
@@ -236,10 +236,7 @@ agents:
   subagent:
     roles:
       developer:
-        supervised: true
         turn_checkpoints: true
-      counter:
-        supervised: false
 `
 	if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(configContent), 0o644); err != nil {
 		t.Fatalf("WriteFile() error: %v", err)
@@ -251,23 +248,14 @@ agents:
 	}
 
 	dev := cfg.Agent.SubAgent.Roles["developer"]
-	if !dev.Supervised {
-		t.Error("developer.Supervised = false, want true")
-	}
 	if !dev.TurnCheckpoints {
 		t.Error("developer.TurnCheckpoints = false, want true")
 	}
 
-	counter := cfg.Agent.SubAgent.Roles["counter"]
-	if counter.Supervised {
-		t.Error("counter.Supervised = true, want false")
-	}
-
-	// A role with no shepherding keys defaults both flags to false.
+	// A role with no checkpoint key defaults it to false.
 	other := cfg.Agent.SubAgent.Roles["unset-role"]
-	if other.Supervised || other.TurnCheckpoints {
-		t.Errorf("unset role shepherding flags = (%v, %v), want (false, false)",
-			other.Supervised, other.TurnCheckpoints)
+	if other.TurnCheckpoints {
+		t.Error("unset role TurnCheckpoints = true, want false")
 	}
 }
 
@@ -362,6 +350,101 @@ agents:
 			}
 			if warned != tc.want {
 				t.Errorf("warning = %v, want %v", warned, tc.want)
+			}
+		})
+	}
+}
+
+// TestLoad_removedSupervisedTaskKeysWarn pins the removal contract:
+// supervised_task is gone, so its keys and the per-role routing flag are dead.
+// A config that still sets them must say so once rather than look like it still
+// selects a lane that no longer exists.
+func TestLoad_removedSupervisedTaskKeysWarn(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name: "retry cap",
+			content: `
+agents:
+  default:
+    model: test/model
+    supervised_max_retries: 2
+`,
+			want: "supervised_max_retries",
+		},
+		{
+			name: "repo path",
+			content: `
+agents:
+  default:
+    model: test/model
+    supervised_repo_path: /tmp/repo
+`,
+			want: "rename it to `retained_repo_path`",
+		},
+		{
+			name: "worktree root",
+			content: `
+agents:
+  default:
+    model: test/model
+    supervised_worktree_root: /tmp/wt
+`,
+			want: "rename it to `retained_worktree_root`",
+		},
+		{
+			name: "worktree bootstrap",
+			content: `
+agents:
+  default:
+    model: test/model
+    supervised_worktree_bootstrap: npm ci
+`,
+			want: "rename it to `retained_worktree_bootstrap`",
+		},
+		{
+			name: "role routing flag",
+			content: `
+agents:
+  default:
+    model: test/model
+  subagent:
+    roles:
+      developer:
+        supervised: true
+`,
+			want: "roles.developer.supervised",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			t.Setenv("YAAH_HOME", tmp)
+			if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(tc.content), 0o644); err != nil {
+				t.Fatalf("WriteFile() error: %v", err)
+			}
+
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("pipe: %v", err)
+			}
+			prev := os.Stderr
+			os.Stderr = w
+			_, loadErr := Load()
+			os.Stderr = prev
+			_ = w.Close()
+			data, _ := io.ReadAll(r)
+			_ = r.Close()
+
+			if loadErr != nil {
+				t.Fatalf("Load() error: %v", loadErr)
+			}
+			if !bytes.Contains(data, []byte(tc.want)) {
+				t.Errorf("warning must mention %q, got %q", tc.want, string(data))
 			}
 		})
 	}

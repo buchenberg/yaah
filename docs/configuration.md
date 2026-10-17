@@ -66,13 +66,11 @@ agents:
     # inspectable trace store. Active when shepherd_trace is in the pipeline.
     shepherd_trace_dir: ~/.yaah/traces   # default, optional
 
-    # Supervised execution (the supervised_task tool). Requires
-    # shepherd_trace_dir. These knobs are global; per-role routing lives in the
-    # role files (subagent.roles.<name>.supervised / .turn_checkpoints).
-    supervised_max_retries: 1         # rollback-and-retry cycles after the first attempt
-    supervised_repo_path: ""          # repo to checkpoint; "" = working directory
-    supervised_worktree_root: ""     # parent dir for variant worktrees; "" = beside the repo
-    supervised_worktree_bootstrap: "" # run inside each worktree, e.g. "npm ci"
+    # Retained sub-agent worktrees (agents.subagent.mode: retained). The repo is
+    # also where per-turn checkpoints operate.
+    retained_repo_path: ""            # repo sub-agent worktrees are cut from; "" = cwd
+    retained_worktree_root: ""       # parent dir for worktrees; "" = beside the repo
+    retained_worktree_bootstrap: ""   # run inside each worktree, e.g. "npm ci"
     turn_checkpoint_max: 0            # live turn checkpoints per run; 0 = unlimited
     max_turn_restores: 3              # turn-level restores per run; 0 = default (3)
 
@@ -334,71 +332,64 @@ the stanza is present. See
 `docs/features.md` "Isolated workspace" for the behaviour and
 `docs/isolated-workspace-live-testing.md` for the end-to-end live test.
 
-## Supervised execution reference
+## Retained worktrees and turn checkpoints
 
-The `supervised_task` tool (and the `supervisor` verdict tool) turns a sub-agent
-run into a checkpointed, reviewable unit. It requires `shepherd_trace_dir` (see
-the `agents.default` block above) and a role marked `supervised: true`.
+A retained dispatch (`agents.subagent.mode: retained`, the default) runs the
+sub-agent in its **own git worktree** and returns a sealed proposal; the
+orchestrator settles it with `proposal select|apply|discard`. Nothing reaches
+the host tree until settlement, so a rejected attempt costs a dispatch rather
+than a rollback.
 
 ```yaml
 agents:
   default:
-    shepherd_trace_dir: ~/.yaah/traces
-    supervised_max_retries: 1
-    supervised_repo_path: ""              # "" = the working directory
-    supervised_worktree_root: ""
-    supervised_worktree_bootstrap: ""
+    retained_repo_path: ""              # "" = the working directory
+    retained_worktree_root: ""
+    retained_worktree_bootstrap: ""
     turn_checkpoint_max: 0
     max_turn_restores: 3
 ```
 
 | Key | Default | Meaning |
 |---|---|---|
-| `supervised_max_retries` | `1` | Rollback-and-retry cycles after the first attempt. |
-| `supervised_repo_path` | `""` | Repository the checkpoints operate on. Empty uses yaah's working directory. |
+| `retained_repo_path` | `""` | Repository sub-agent worktrees are cut from, and where per-turn checkpoints operate. Empty uses yaah's working directory. |
+| `retained_worktree_root` | `""` | Parent directory for sub-agent worktrees. Empty uses a `shepherd-worktrees` directory beside the repository. |
+| `retained_worktree_bootstrap` | `""` | Shell command run inside each fresh worktree — see below. |
+| `turn_checkpoint_max` | `0` | Live turn checkpoints per sub-agent run; the oldest are pruned. `0` = unlimited. |
+| `max_turn_restores` | `3` | Turn-level restores per run, so a deterministically failing turn cannot rewind forever. |
 | `supervisor.halt_root` | `false` | Opt in to halting the session's root scope — by the manual `supervisor` tool and, from adoption plan B3 on, by rule-driven halt interventions: the session's current run stops (the ctrl-C equivalent) and scope-tree supervision ends for the process. Sub-agent halts need no gate. An explicit value wins over the deprecated flat `supervisor_halt_root` key; unset falls back to it. |
 | `supervisor.enabled` | on (tracing-gated) | Master switch for the advisory rules engine (adoption plan B1). With `shepherd_trace_dir` set, the kernel supervisor watches the session's trace and a service delivers rule firings as steering into the running sub-agent loops; `false` disables the whole engine. |
 | `supervisor.rules.destructive_tool.enabled` | `true` | Advisory warning on destructive tool declarations (bash/powershell command patterns, write, delete) — inject-only guidance, recorded in the target scope's trace. Rule-driven firings against the session's own scope are dropped: the parent's calls already passed the approval middleware. |
-| `supervisor.rules.destructive_guard.enabled` | `true` | Blocking pre-dispatch net (adoption plan B2): sub-agent `bash`/`powershell` calls are denied before execution — default-deny, because a shell can execute anything a pattern matcher cannot see — with a synthesized denied-call result so the model can take the structured path. Structured tools (`write`/`edit`/`delete`) are the approved path for changes; their review is the merge gate's job. Tracing-off sessions dispatch unchanged. |
+| `supervisor.rules.destructive_guard.enabled` | `true` | Blocking pre-dispatch net (adoption plan B2): sub-agent `bash`/`powershell` calls are denied before execution — default-deny, because a shell can execute anything a pattern matcher cannot see — with a synthesized denied-call result so the model can take the structured path. Structured tools (`write`/`edit`/`delete`) are the approved path for changes. Tracing-off sessions dispatch unchanged. |
 | `supervisor.rules.high_error_rate.{enabled,threshold,window}` | `true`, `0.5`, `10` | Guidance when a scope's recent tool error rate crosses the threshold within the sliding window. `0` values mean the defaults. |
 | `supervisor.rules.stuck_detection.{enabled,repeat_threshold}` | `true`, `3` | Guidance when a scope repeats the same tool call `repeat_threshold` times in a row. `0` means the default. |
-| `supervised_worktree_root` | `""` | Parent directory for variant worktrees. Empty uses a `shepherd-worktrees` directory beside the repository. |
-| `supervised_worktree_bootstrap` | `""` | Shell command run inside each fresh worktree — see below. |
-| `turn_checkpoint_max` | `0` | Live turn checkpoints per sub-agent run; the oldest are pruned. `0` = unlimited. |
-| `max_turn_restores` | `3` | Turn-level restores per run, so a deterministically failing turn cannot rewind forever. |
 
-### What checkpointing covers
+### What turn checkpoints cover
 
-A checkpoint captures **workspace state plus the conversation**. Rolling back
-rewinds both, so the sub-agent restarts from the same files *and* the same
-context it had at the unit boundary. Checkpoints are single-use: a restore
-consumes one, and a fresh checkpoint is taken before the next attempt.
-
-`turn_checkpoints` (set per role) extends this to individual turns, bounded by
+A turn checkpoint captures **workspace state plus the conversation**, so a turn
+that ends in a tool-phase error or an exhausted iteration budget can rewind to
+the state before it, rather than losing the whole attempt. Checkpoints are
+single-use: a restore consumes one, and a fresh checkpoint is taken before the
+next turn. `turn_checkpoints` (set per role) enables them, bounded by
 `max_turn_restores`.
 
 ### Worktree isolation
 
-Every `fork` variant runs in a detached `git worktree` — an isolated child scope
-seeded with the parent's exact state at the fork point — and the variant's tools
-operate inside it. Nothing a variant writes can reach the parent tree until
-`choose` settles it (a fast-forward when the parent has not moved, a three-way
-merge when it drifted); the settlement itself removes the winner's worktree, and
-discarding removes the loser's. `review`, `continue`, and `rollback` behave as
-before.
+Every retained dispatch runs in a detached `git worktree` — an isolated child
+scope seeded with the parent's state — and the sub-agent's tools operate inside
+it. Nothing it writes reaches the parent tree until the proposal is settled
+(`select` fast-forwards, `apply` three-way merges, `discard` removes the
+worktree).
 
 Two consequences worth knowing:
 
 1. **A worktree contains tracked files only.** `node_modules`, build caches,
-   `.env`, and anything else gitignored are absent, so a variant that needs them
-   cannot build or test. Use `supervised_worktree_bootstrap` to recreate them,
-   for example `npm ci` or `go mod download`.
-2. **Isolation is filesystem-level, not a sandbox.** Variants still share the
-   host process, network, and the repository's object store. Worktrees do not
-   confine processes.
-
-The former `supervised_worktree` opt-in is gone — isolation is always on. A
-config that still sets the key gets one startup warning; the key does nothing.
+   `.env`, and anything else gitignored are absent, so a dispatch that needs them
+   cannot build or test. Use `retained_worktree_bootstrap` to recreate them, for
+   example `npm ci` or `go mod download`.
+2. **Isolation is filesystem-level, not a sandbox.** Worktrees share the host
+   process, network, and the repository's object store. Containment is the
+   separate `agents.subagent.containment`/`network` axis below.
 
 ## Sub-agent dispatch lane and confinement
 

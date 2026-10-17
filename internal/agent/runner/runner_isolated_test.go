@@ -190,7 +190,7 @@ func TestBuildSubAgentRegistry_NestedTaskInherits(t *testing.T) {
 func TestSubAgentSandbox_NilWhenIsolated(t *testing.T) {
 	opts := taskRunnerOpts{
 		workspace: fakeSandboxWorkspace{},
-		defaults:  config.Defaults{SupervisedRepoPath: "/repo"},
+		defaults:  config.Defaults{RetainedRepoPath: "/repo"},
 	}
 	if got := subAgentSandbox(opts, ""); got != nil {
 		t.Errorf("isolated sub-agent scope sandbox must be nil, got %T", got)
@@ -203,7 +203,7 @@ func TestSubAgentSandbox_NilWhenIsolated(t *testing.T) {
 // TestSubAgentSandbox_LocalUnchanged keeps the local behaviour pinned:
 // workdir selects a worktree sandbox, no workdir the shared repository.
 func TestSubAgentSandbox_LocalUnchanged(t *testing.T) {
-	opts := taskRunnerOpts{defaults: config.Defaults{SupervisedRepoPath: "/repo"}}
+	opts := taskRunnerOpts{defaults: config.Defaults{RetainedRepoPath: "/repo"}}
 
 	if got := subAgentSandbox(opts, "/repo/worktrees/child"); got == nil {
 		t.Error("local sub-agent with a workdir must get a worktree sandbox")
