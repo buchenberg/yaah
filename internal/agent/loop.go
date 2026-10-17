@@ -51,6 +51,25 @@ func (e MaxIterationsError) Is(target error) bool {
 	return ok
 }
 
+// providerError labels a provider failure with the serving provider and
+// model. An orchestrator can then attribute a sub-agent outage without
+// reading config or probing endpoints. The label degrades gracefully when
+// either value is unknown.
+func (l *Loop) providerError(err error) error {
+	label := l.Config.Model
+	if l.Config.ProviderName != "" {
+		if label == "" {
+			label = l.Config.ProviderName
+		} else {
+			label = l.Config.ProviderName + "/" + label
+		}
+	}
+	if label == "" {
+		return fmt.Errorf("provider error: %w", err)
+	}
+	return fmt.Errorf("provider error [%s]: %w", label, err)
+}
+
 // buildPipeline assembles the middleware pipeline from config. Sub-agent
 // loops get the curated sub-agent pipeline; the orchestrator gets the
 // full default pipeline.
@@ -276,7 +295,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 				// empty result, and the dispatcher cannot tell a lost partial from
 				// a model that said nothing. Callers decide whether to show it; it
 				// is not appended to the conversation.
-				return result.Message.Content, fmt.Errorf("provider error: %w", err)
+				return result.Message.Content, l.providerError(err)
 			}
 			msg := result.Message
 

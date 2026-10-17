@@ -1,6 +1,7 @@
 package yaah
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/config"
@@ -23,6 +24,7 @@ func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSess
 	layers := prompts.Layers{
 		Identity:               prompts.IdentityPrompt,
 		Environment:            prompts.DetectEnvironment(cwd),
+		SubAgentDispatch:       subAgentDispatchLine(cfg),
 		UserContext:            prompts.LoadUserContext(config.HomeDir()),
 		Project:                instructions.FormatForSystem(instructions.Load(cwd, instructions.WorktreeRoot(cwd))),
 		MaxSubAgentConcurrency: cfg.Agent.SubAgent.MaxConcurrency,
@@ -41,6 +43,36 @@ func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSess
 	}
 
 	return systemPrompt
+}
+
+// subAgentDispatchLine describes the resolved sub-agent dispatch defaults
+// in the orchestrator's environment block. Without it, any sub-agent
+// provider failure sends the orchestrator to stale memory or endpoint
+// probing to discover which provider actually served the dispatch.
+func subAgentDispatchLine(cfg *config.Config) string {
+	sc := cfg.Agent.SubAgent
+	provider := sc.Provider
+	if provider == "" {
+		provider = resolveProviderName(cfg)
+	}
+	model := sc.Model
+	if model == "" {
+		model = resolveModel(cfg)
+	}
+	if model == "" {
+		model = "(unset)"
+	}
+	line := fmt.Sprintf("Sub-agent dispatch: provider=%s model=%s", provider, model)
+	if sc.MaxConcurrency > 0 {
+		line += fmt.Sprintf(" max_concurrency=%d", sc.MaxConcurrency)
+	}
+	if sc.DefaultTimeout > 0 {
+		line += fmt.Sprintf(" default_timeout=%ds", sc.DefaultTimeout)
+	}
+	if p, ok := cfg.Providers[provider]; ok && p.MaxTokens > 0 {
+		line += fmt.Sprintf(" max_tokens=%d", p.MaxTokens)
+	}
+	return line + ". Per-role overrides may change provider or model."
 }
 
 // buildMainPrompt derives the top-level agent prompt from the system prompt

@@ -6,9 +6,37 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/prompts"
 )
+
+func TestSubAgentDispatchLine(t *testing.T) {
+	cfg := &config.Config{
+		Providers: map[string]config.Provider{"zai": {MaxTokens: 16384}},
+		Agent: config.AgentConfig{
+			Default: config.Defaults{Provider: "zai", Model: "GLM-5.3"},
+			SubAgent: config.SubAgentConfig{
+				Model:          "GLM-5.3-Flash",
+				MaxConcurrency: 5,
+				DefaultTimeout: 600,
+			},
+		},
+	}
+
+	got := subAgentDispatchLine(cfg)
+	for _, want := range []string{
+		"provider=zai",
+		"model=GLM-5.3-Flash",
+		"max_concurrency=5",
+		"default_timeout=600s",
+		"max_tokens=16384",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("dispatch line missing %q: %s", want, got)
+		}
+	}
+}
 
 func TestBuildSubAgentBasePrompt_LeanIdentity(t *testing.T) {
 	t.Setenv("YAAH_HOME", t.TempDir())

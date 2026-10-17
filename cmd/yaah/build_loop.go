@@ -201,6 +201,7 @@ func (s *agentSession) loopBuilder(
 		SubAgentStuckChildTimeout:  time.Duration(s.cfg.Agent.SubAgent.StuckChildTimeout) * time.Second,
 		SubAgentStuckChildTimeouts: buildStuckChildTimeouts(s.cfg.Agent.SubAgent),
 		Cfg: agent.AgentConfig{
+			ProviderName:           s.providerName,
 			MaxLoopCycles:          s.cfg.Agent.Default.MaxLoopCycles,
 			MaxToolTurns:           s.cfg.Agent.Default.MaxToolTurns,
 			MaxRetries:             s.cfg.Agent.Default.MaxRetries,

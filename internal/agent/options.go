@@ -164,6 +164,9 @@ func WithSubAgentConcurrency(max int, stuckTimeout time.Duration, stuckTimeouts 
 // AgentConfig holds the full set of tuning parameters typically derived
 // from config.yaml. Use WithAgentConfig to apply them all at once.
 type AgentConfig struct {
+	// ProviderName labels the loop's provider in error envelopes. It is
+	// resolved at wiring time and is not a config.Defaults knob.
+	ProviderName           string
 	MaxLoopCycles          int
 	MaxToolTurns           int
 	MaxRetries             int
@@ -196,6 +199,7 @@ type AgentConfig struct {
 // Zero values are left unset (applyDefaults fills them later).
 func WithAgentConfig(cfg AgentConfig) Option {
 	return func(l *Loop) {
+		l.Config.ProviderName = cfg.ProviderName
 		l.Config.MaxLoopCycles = cfg.MaxLoopCycles
 		l.Config.MaxToolTurns = cfg.MaxToolTurns
 		l.Config.MaxRetries = cfg.MaxRetries

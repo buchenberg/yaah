@@ -458,6 +458,7 @@ type QuickRefEntry struct {
 type Layers struct {
 	Identity               string // embedded identity (always present)
 	Environment            string // runtime OS/arch/shell context
+	SubAgentDispatch       string // resolved sub-agent provider/model + limits
 	UserContext            string // ~/.yaah/AGENTS.md (optional)
 	Project                string // walked-up AGENTS.md/CLAUDE.md from cwd
 	Memory                 string // stored facts from SQLite
@@ -521,6 +522,10 @@ func Build(l Layers) string {
 		// The environment layer carries its own heading (rendered from
 		// environment_header.md); append it verbatim.
 		parts = append(parts, strings.TrimSpace(l.Environment))
+	}
+
+	if strings.TrimSpace(l.SubAgentDispatch) != "" {
+		parts = append(parts, strings.TrimSpace(l.SubAgentDispatch))
 	}
 
 	if strings.TrimSpace(l.UserContext) != "" {

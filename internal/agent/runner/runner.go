@@ -50,6 +50,7 @@ import (
 // signature, and call sites read as keyed literals (finding C3).
 type DelegateToolOpts struct {
 	Provider              agent.Provider
+	ProviderName          string
 	SystemPrompt          string
 	ModelName             string
 	DB                    *memory.DB
@@ -142,6 +143,7 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 	depth := 1
 	runnerFn := makeTaskRunner(taskRunnerOpts{
 		provider:              opts.Provider,
+		providerName:          opts.ProviderName,
 		systemPrompt:          opts.SystemPrompt,
 		modelName:             opts.ModelName,
 		db:                    opts.DB,
@@ -250,7 +252,10 @@ func RoleSearchPaths(cwd string) []string {
 // It is captured by every makeTaskRunner closure so nested sub-agents
 // (planner -> worker) inherit the same provider, prompt base, and config.
 type taskRunnerOpts struct {
-	provider      agent.Provider
+	provider agent.Provider
+	// providerName labels the planner's provider in sub-agent error
+	// envelopes when no explicit sub-agent provider is configured.
+	providerName  string
 	systemPrompt  string
 	modelName     string
 	db            *memory.DB
@@ -455,6 +460,17 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			subModel = opts.modelName
 		}
 
+		// Resolve the provider label used in error envelopes. Per-role
+		// overrides win over the global sub-agent provider, which wins
+		// over the planner's own provider.
+		subProviderName := opts.subCfg.Provider
+		if rc, ok := opts.subCfg.Roles[string(role)]; ok && rc.Provider != "" {
+			subProviderName = rc.Provider
+		}
+		if subProviderName == "" {
+			subProviderName = opts.providerName
+		}
+
 		// Announce the resolved model before the loop runs so the parent
 		// emits its sub-agent start event with the role/model pairing,
 		// and the model pointer carries the final value even when the
@@ -541,6 +557,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		}
 
 		subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{
+			ProviderName:           subProviderName,
 			MaxLoopCycles:          maxIter,
 			MaxToolTurns:           maxTurns,
 			BudgetIterationsSource: b.IterationsSource.String(),

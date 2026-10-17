@@ -53,6 +53,7 @@ func TestConfigAgentConfigParity(t *testing.T) {
 		"JSONMode":              true, // ← AgentConfig.JSONMode (separate config section)
 		"QualityGates":          true, // ← AgentConfig.QualityGates (separate config section)
 		"ToolSpillDir":          true, // ← derived from config.HomeDir() at wiring time
+		"ProviderName":          true, // ← derived from provider resolution at wiring time
 	}
 
 	// Check every Defaults field has a matching AgentConfig field.
