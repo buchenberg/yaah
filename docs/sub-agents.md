@@ -156,6 +156,28 @@ min_turns: 12
 The effective budget and its source are recorded on sub-agent spans and
 reported by `list_subagents`, so a trace answers which layer set a value.
 
+### Wall-clock timeout
+
+`timeout` (per role) and `agents.subagent.default_timeout` are **total-run
+wall-clock budgets**, not per-request timeouts. The clock starts at dispatch
+and includes provider time-to-first-token, reasoning, streaming, and tool
+calls. When it expires mid-call, the failure is attributed to the budget
+rather than the provider: in the retained lane the run is sealed with a
+timeout note, and in the direct lane the delegate returns a structured
+timeout result. The provider did not reject the request. A provider-internal
+request deadline while the dispatch is still live, or a parent deadline that
+fires first, is not reported as role-budget exhaustion.
+
+Reasoning models can spend a long time thinking before their first content
+block, and a parallel wave can increase per-request latency. Budgets that
+work for a solo cheap model can expire before the first content block when
+several reasoning agents run at once. Size them from the role's expected
+thinking time, not from the number of tool calls: a short budget that fits a
+counter role may not fit a developer role that thinks for longer. Raise
+`agents.subagent.roles.<role>.timeout` or `agents.subagent.default_timeout`
+for long-reasoning roles, and check the role named in the timeout error
+before suspecting the provider or the network.
+
 ## Retention and isolation
 
 A sub-agent's work is retained, not trusted: it runs in its own world and

@@ -255,7 +255,7 @@ Sub-agents use their own curated pipeline and per-role directives.
 | `provider` | inherits | Provider for sub-agents |
 | `model` | inherits | Model for sub-agents |
 | `max_concurrency` | 3 | Max simultaneous `delegate` calls; 0 = unlimited |
-| `default_timeout` | 0 (none) | Default seconds per sub-agent |
+| `default_timeout` | 0 (none) | Total wall-clock seconds per sub-agent dispatch, including provider thinking time; 0 = none |
 | `stuck_child_timeout` | 60 | Seconds without a heartbeat before a sub-agent is force-cancelled (0 = off) |
 | `default_max_turns` | 0 (derive) | Default soft turn cap; 0 derives `iterations - 1` |
 | `default_min_turns` | 0 (none) | Global turn floor — no per-call override or role budget may drop below it |
@@ -265,7 +265,7 @@ Sub-agents use their own curated pipeline and per-role directives.
 | `containment` | `auto` | Syscall-jail placement — `auto` (jail if the host can, else advisory), `off`/`none`/`advisory`, `paddock`/`jail` (fails closed) |
 | `network` | `allow_all` | Egress posture for a confined dispatch — `allow_all`, `deny_all`, or `broker` (allowlist via the session's broker) |
 | `network_hosts` | `[]` | The broker's allowlist (exact host names); only meaningful with `network: broker`. Empty = the broker admits nothing; setting hosts with another mode is a validation error |
-| `roles.<name>.timeout` | — | Per-role timeout override |
+| `roles.<name>.timeout` | — | Per-role total wall-clock budget in seconds; overrides both the role file and `default_timeout` |
 | `roles.<name>.max_iterations` | — | Per-role iteration cap |
 | `roles.<name>.min_iterations` | 0 (none) | Per-role iteration floor; beats per-call overrides and the role file's floor |
 | `roles.<name>.max_turns` | — | Per-role turn cap |

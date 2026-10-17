@@ -74,6 +74,7 @@ func (t *GlobTool) Execute(ctx context.Context, args string) (string, error) {
 }
 
 func (t *GlobTool) globRipgrep(ctx context.Context, pattern, path string) (string, error) {
+	pattern = filepath.ToSlash(pattern)
 	rgArgs := []string{"--files", "--glob", pattern, "--no-messages", "--", path}
 
 	ws := workspaceOf(t.WS, t.PV)
@@ -105,6 +106,9 @@ func (t *GlobTool) globRipgrep(ctx context.Context, pattern, path string) (strin
 }
 
 func (t *GlobTool) globNative(ctx context.Context, pattern, path string) (string, error) {
+	// Match against slash-separated paths on every platform. Patterns use
+	// forward slashes; Windows walk paths use backslashes.
+	pattern = filepath.ToSlash(pattern)
 	re, err := patternToRegex(pattern)
 	if err != nil {
 		return "", fmt.Errorf("glob: invalid pattern: %w", err)
@@ -132,7 +136,12 @@ func (t *GlobTool) globNative(ctx context.Context, pattern, path string) (string
 		target := p
 		if !hasSeparator {
 			target = filepath.Base(p)
+		} else if !isAbsolutePattern(pattern) {
+			if rel, relErr := filepath.Rel(path, p); relErr == nil && rel != "." {
+				target = filepath.ToSlash(rel)
+			}
 		}
+		target = filepath.ToSlash(target)
 		if re.MatchString(target) {
 			matches = append(matches, p)
 			if len(matches) >= 10000 {
@@ -157,6 +166,16 @@ func (t *GlobTool) globNative(ctx context.Context, pattern, path string) (string
 		result = result[:globMaxResultLen] + fmt.Sprintf("\n...[truncated: %d files total]...", len(matches))
 	}
 	return result, nil
+}
+
+// isAbsolutePattern reports whether a glob starts at a filesystem root.
+// filepath.IsAbs alone misses slash-rooted patterns on Windows, which are
+// still absolute for matching purposes here.
+func isAbsolutePattern(pattern string) bool {
+	return filepath.IsAbs(pattern) ||
+		filepath.VolumeName(pattern) != "" ||
+		strings.HasPrefix(pattern, "/") ||
+		strings.HasPrefix(pattern, "\\")
 }
 
 // patternToRegex converts a glob pattern to a regex for matching file paths.

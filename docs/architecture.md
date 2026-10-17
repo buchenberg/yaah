@@ -407,9 +407,11 @@ in `context.WithTimeout`. The effective timeout resolves in this order:
 per-call `timeout_seconds` (values above 600 are clamped), per-role
 `agents.subagent.roles.<role>.timeout`, the role file's `timeout`, then
 `agents.subagent.default_timeout`. On deadline or cancellation the tool
-returns a structured JSON result (`{"error":"timed out","partial":"..."}`)
-instead of a Go error, so the parent can retry, continue, or report. Any
-partial output is surfaced alongside the error.
+returns a structured JSON result
+(`{"error":"timed out","role":"developer","timeout":"300s","partial":"..."}`)
+instead of a Go error, so the parent can retry, continue, or report. The role
+and resolved budget tell the orchestrator which timeout to raise; any partial
+output is surfaced alongside the error.
 
 ### Parallel dispatch and concurrency cap
 
@@ -771,15 +773,17 @@ keep as many recent turns as fit in 25% of the context window, with:
 5. Send pruned history to the LLM summarizer with a structured prompt
    (`## Goal`, `## Constraints & Preferences`, `## Progress` with
    `### Done` / `### In Progress` / `### Blocked`, `## Key Decisions`,
-   `## Next Steps`, `## Critical Context`, `## Relevant Files`), capped at
-   4,096 output tokens via `max_tokens`.
+   `## Next Steps`, `## Critical Context`, `## Relevant Files`). The request
+   leaves `max_tokens` unset, so the provider's configured/default output cap
+   applies (`providers.<name>.max_tokens` or the provider default).
 6. On re-compaction (second+), passes the previous summary to the LLM and
    asks it to **update** rather than re-summarize from scratch, preserving
    continuity across multiple compactions.
 7. Replace old messages with a system message containing the summary.
-8. Track compaction effectiveness: if savings <10%, increment anti-thrashing
-   counter. After 2 consecutive ineffective compactions, skip further
-   compaction.
+8. Track compaction effectiveness: if savings fall below
+   `max(ContextWindow/20, 2000)` tokens (~5%, with a 2K floor), increment the
+   anti-thrashing counter. After 2 consecutive ineffective compactions, skip
+   further compaction.
 9. If the LLM call fails or returns empty, try chunked compaction when the old tail is large enough; otherwise fall back to `trimContext()`.
 
 ### Sub-agent result capping

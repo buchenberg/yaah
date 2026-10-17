@@ -95,8 +95,9 @@ func writeTestFile(t *testing.T, dir, name, content string) {
 }
 
 type runnerResponse struct {
-	result string
-	err    error
+	result         string
+	err            error
+	waitForContext bool
 }
 
 // sessionRunner replays configured responses and records every dispatch, so a
@@ -126,6 +127,10 @@ func (f *sessionRunner) run() TaskRunner {
 
 		if f.sideEffect != nil {
 			f.sideEffect(idx, f.repoPath)
+		}
+		if resp.waitForContext {
+			<-ctx.Done()
+			return resp.result, ctx.Err()
 		}
 		return resp.result, resp.err
 	}

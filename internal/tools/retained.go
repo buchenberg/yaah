@@ -169,7 +169,25 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 
 	sp := subParams
 	sp.Workdir = wt
-	result, bodyErr := runRetainedBody(ctx, rt, prompt, sp, timeout)
+
+	// The dispatch budget is a wall-clock limit on the whole run. Track which
+	// deadline governed the run context so a parent deadline (or a provider's
+	// own per-request timeout) is not misreported as role-budget exhaustion.
+	budgetDeadline := time.Now().Add(timeout)
+	parentDeadline, parentHasDeadline := ctx.Deadline()
+	budgetGoverns := timeout > 0 && (!parentHasDeadline || parentDeadline.After(budgetDeadline))
+
+	runCtx := ctx
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		runCtx, cancel = context.WithTimeout(ctx, timeout)
+	}
+	result, bodyErr := runRetainedBody(runCtx, rt, prompt, sp)
+	runErr := runCtx.Err()
+	parentErr := ctx.Err()
+	if cancel != nil {
+		cancel()
+	}
 
 	// Scrub the confinement scratch before sealing: the env redirect keeps the
 	// body's housekeeping writes (HOME/TMPDIR/caches) inside the worktree, and
@@ -180,11 +198,14 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	// failure is surfaced, never dropped.
 	output, sealErr := mgr.Seal(ctx, scopeID)
 	var notes []string
+	bodyFailure := ""
 	if bodyErr != nil {
 		// The run stopped early (timeout, halt, provider error) but its partial
 		// work was still sealed. Say why in the envelope so the orchestrator
 		// does not read a truncated result as a finished one.
-		notes = append(notes, errorString(bodyErr))
+		source := classifyRetainedBodyFailure(bodyErr, timeout, runErr, parentErr, budgetGoverns)
+		bodyFailure = retainedBodyFailure(bodyErr, sp.Role, timeout, source)
+		notes = append(notes, bodyFailure)
 	}
 	if provErr != nil {
 		notes = append(notes, provErr.Error())
@@ -216,7 +237,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		workdir:  wt,
 		output:   output,
 		result:   trimResult(result),
-		runErr:   errorString(bodyErr),
+		runErr:   bodyFailure,
 		parentID: rt.RootScopeID,
 		mgr:      mgr,
 	}
@@ -383,15 +404,9 @@ func provisionRetainedBranch(
 }
 
 // runRetainedBody invokes the sub-agent runner with its workdir set to the
-// worktree.
-func runRetainedBody(ctx context.Context, rt RetainedRuntime, prompt string, sp jobs.SubAgentParams, timeout time.Duration) (string, error) {
-	runCtx := ctx
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
-	return rt.Runner(runCtx, prompt, sp)
+// worktree. The caller owns any dispatch timeout on ctx.
+func runRetainedBody(ctx context.Context, rt RetainedRuntime, prompt string, sp jobs.SubAgentParams) (string, error) {
+	return rt.Runner(ctx, prompt, sp)
 }
 
 // retainedWorktreePath returns the worktree directory for a proposal.
@@ -420,6 +435,71 @@ func errorString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+type retainedFailureSource int
+
+const (
+	// retainedFailureProvider is a provider or body error while the dispatch
+	// context was still live (for example a provider's own request timeout).
+	retainedFailureProvider retainedFailureSource = iota
+	// retainedFailureBudget is the role/global wall-clock budget expiring.
+	retainedFailureBudget
+	// retainedFailureParent is the parent context deadline expiring first.
+	retainedFailureParent
+)
+
+// classifyRetainedBodyFailure identifies which deadline actually stopped the
+// run. A body error that is a deadline while both contexts remain live is a
+// provider-internal timeout, not budget exhaustion.
+func classifyRetainedBodyFailure(err error, timeout time.Duration, runErr, parentErr error, budgetGoverns bool) retainedFailureSource {
+	if !errors.Is(err, context.DeadlineExceeded) {
+		return retainedFailureProvider
+	}
+	if budgetGoverns && runErr == context.DeadlineExceeded {
+		return retainedFailureBudget
+	}
+	if parentErr == context.DeadlineExceeded {
+		return retainedFailureParent
+	}
+	if timeout > 0 && runErr == context.DeadlineExceeded {
+		// The run context expired, but the parent deadline was earlier.
+		return retainedFailureParent
+	}
+	return retainedFailureProvider
+}
+
+// retainedBodyFailure describes why a retained run stopped. Budget and parent
+// deadlines must not be reported as provider rejections: name the role and the
+// budget to raise, or the parent deadline that actually fired, so the
+// orchestrator does not chase the service that was merely in flight.
+func retainedBodyFailure(err error, role string, timeout time.Duration, source retainedFailureSource) string {
+	if !errors.Is(err, context.DeadlineExceeded) {
+		return errorString(err)
+	}
+	switch source {
+	case retainedFailureBudget:
+		if timeout <= 0 {
+			break
+		}
+		msg := "sub-agent timed out after " + timeout.String()
+		if role != "" {
+			msg += " (role " + role + ")"
+		}
+		return msg + "; raise the role timeout or agents.subagent.default_timeout for long reasoning runs"
+	case retainedFailureParent:
+		msg := "sub-agent run ended because the parent context deadline expired"
+		if role != "" {
+			msg += " (role " + role + ")"
+		}
+		if timeout > 0 {
+			msg += " before its " + timeout.String() + " dispatch budget"
+		}
+		return msg
+	}
+	// Provider-internal deadline while the dispatch was live (or an
+	// unclassified deadline): preserve the original error.
+	return errorString(err)
 }
 
 // clipDiff bounds a sealed output's diff to the envelope's line budget.

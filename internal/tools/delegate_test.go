@@ -346,6 +346,7 @@ func TestExecute_TimeoutIncludesPartialOutput(t *testing.T) {
 	}
 	var got struct {
 		Error   string `json:"error"`
+		Role    string `json:"role"`
 		Partial string `json:"partial"`
 	}
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
@@ -353,6 +354,9 @@ func TestExecute_TimeoutIncludesPartialOutput(t *testing.T) {
 	}
 	if got.Error != "timed out" {
 		t.Errorf("error = %q, want timed out", got.Error)
+	}
+	if got.Role != "analyst" {
+		t.Errorf("role = %q, want analyst (the orchestrator needs the budget that expired)", got.Role)
 	}
 	if got.Partial != "almost done" {
 		t.Errorf("partial = %q, want the sub-agent's output", got.Partial)
