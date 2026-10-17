@@ -225,7 +225,7 @@ and `max_retries` consistent across the whole team.
 |---|---|---|
 | `provider` | `default.provider` | Provider for sub-agents |
 | `model` | `default.model` | Model for sub-agents |
-| `max_concurrency` | 3 | Max simultaneous `spawn_subagent` calls |
+| `max_concurrency` | 3 | Max simultaneous `delegate` calls |
 | `default_timeout` | — | Default seconds per sub-agent (0 = none) |
 | `stuck_child_timeout` | 60 | Seconds without a heartbeat before a sub-agent is force-cancelled (0 = off) |
 | `default_max_turns` | 0 (unlimited) | Default soft turn cap |
@@ -371,7 +371,7 @@ slot each, so `agents.subagent.max_concurrency` bounds the fan-out — and each
 seals its own proposal. The orchestrator reads them, settles one, and discards
 the rest; the losers' worktrees go with them.
 
-There is deliberately no `attempts` knob on `spawn_subagent`. Parallel calls
+There is deliberately no `attempts` knob on `delegate`. Parallel calls
 already fan out, and a tool-level multiplier would duplicate that mechanism while
 bypassing the concurrency accounting. What bounds speculation is your budget, not
 the tool: three attempts cost three dispatches.

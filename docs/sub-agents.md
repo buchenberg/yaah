@@ -69,7 +69,7 @@ role, and an unknown role name is rejected rather than silently falling
 back. Want a generalist? Define one in `.agents/roles/` (see [Custom
 sub-agent roles](#custom-sub-agent-roles)).
 
-Multiple `spawn_subagent` calls in one turn fan out in parallel (up to your
+Multiple `delegate` calls in one turn fan out in parallel (up to your
 configured `max_concurrency`, default 3). I dispatch them in waves:
 Charley and Tim might fix code while Jack researches a dependency, all at
 once. Then Casey tests the result while Sam audits for safety.

@@ -11,7 +11,7 @@ import (
 )
 
 // SubAgentJobsTool provides list/status/cancel/wait for background
-// sub-agent jobs dispatched via spawn_subagent with background:true.
+// sub-agent jobs dispatched via delegate with background:true.
 // It is the lifecycle companion to the dispatch, analogous to the
 // background_process tool for shell processes.
 type SubAgentJobsTool struct {
@@ -32,7 +32,7 @@ func (*SubAgentJobsTool) Schema() json.RawMessage {
 			},
 			"job_id": {
 				"type": "string",
-				"description": "Job identifier (from spawn_subagent background dispatch result). Required for status, cancel, and wait."
+				"description": "Job identifier (from delegate background dispatch result). Required for status, cancel, and wait."
 			},
 			"timeout_seconds": {
 				"type": "integer",

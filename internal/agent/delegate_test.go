@@ -14,7 +14,7 @@ import (
 	"github.com/buchenberg/yaah/internal/types"
 )
 
-// --- TaskTool timeout / cancellation ---
+// --- DelegateTool timeout / cancellation ---
 
 // sleepingRunner blocks until ctx is done or the given duration elapses,
 // returning a partial string alongside the ctx error on cancellation.
@@ -29,8 +29,8 @@ func sleepingRunner(d time.Duration) tools.TaskRunner {
 	}
 }
 
-func TestTaskToolTimeoutReturnsStructuredResult(t *testing.T) {
-	tool := &tools.TaskTool{
+func TestDelegateToolTimeoutReturnsStructuredResult(t *testing.T) {
+	tool := &tools.DelegateTool{
 		Runner: sleepingRunner(5 * time.Second),
 		ResolveTimeout: func(tools.SubAgentParams) time.Duration {
 			return 50 * time.Millisecond
@@ -55,9 +55,9 @@ func TestTaskToolTimeoutReturnsStructuredResult(t *testing.T) {
 	}
 }
 
-func TestTaskToolPerCallTimeoutOverridesDefault(t *testing.T) {
+func TestDelegateToolPerCallTimeoutOverridesDefault(t *testing.T) {
 	// ResolveTimeout would give 10s; the per-call 1s must win.
-	tool := &tools.TaskTool{
+	tool := &tools.DelegateTool{
 		Runner: sleepingRunner(5 * time.Second),
 		ResolveTimeout: func(tools.SubAgentParams) time.Duration {
 			return 10 * time.Second
@@ -85,9 +85,9 @@ func TestTaskToolPerCallTimeoutOverridesDefault(t *testing.T) {
 	}
 }
 
-func TestTaskToolTimeoutClampedToMax(t *testing.T) {
+func TestDelegateToolTimeoutClampedToMax(t *testing.T) {
 	// A wildly large per-call timeout is capped at 600s.
-	tool := &tools.TaskTool{Runner: func(ctx context.Context, prompt string, _ tools.SubAgentParams) (string, error) {
+	tool := &tools.DelegateTool{Runner: func(ctx context.Context, prompt string, _ tools.SubAgentParams) (string, error) {
 		return "ok", nil
 	}}
 	// Use a runner that records the ctx deadline via a blocking runner
@@ -112,10 +112,10 @@ func TestTaskToolTimeoutClampedToMax(t *testing.T) {
 	}
 }
 
-func TestTaskToolRoleAwareDefaultTimeout(t *testing.T) {
+func TestDelegateToolRoleAwareDefaultTimeout(t *testing.T) {
 	// ResolveTimeout receives params.Role, so role-aware defaults apply.
 	var seenRole string
-	tool := &tools.TaskTool{
+	tool := &tools.DelegateTool{
 		Runner: func(ctx context.Context, prompt string, _ tools.SubAgentParams) (string, error) {
 			return "ok", nil
 		},
@@ -130,12 +130,12 @@ func TestTaskToolRoleAwareDefaultTimeout(t *testing.T) {
 	}
 }
 
-func TestTaskToolCancellationReturnsStructuredResult(t *testing.T) {
+func TestDelegateToolCancellationReturnsStructuredResult(t *testing.T) {
 	runner := func(ctx context.Context, prompt string, params tools.SubAgentParams) (string, error) {
 		<-ctx.Done()
 		return "partial", ctx.Err()
 	}
-	tool := &tools.TaskTool{Runner: runner}
+	tool := &tools.DelegateTool{Runner: runner}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -160,13 +160,13 @@ func TestTaskToolCancellationReturnsStructuredResult(t *testing.T) {
 	}
 }
 
-func TestTaskToolPassesParamsToRunner(t *testing.T) {
+func TestDelegateToolPassesParamsToRunner(t *testing.T) {
 	var captured tools.SubAgentParams
 	runner := func(ctx context.Context, prompt string, params tools.SubAgentParams) (string, error) {
 		captured = params
 		return "ok", nil
 	}
-	tool := &tools.TaskTool{Runner: runner}
+	tool := &tools.DelegateTool{Runner: runner}
 	_, err := tool.Execute(context.Background(), `{"description":"x","prompt":"y","role":"reviewer","timeout_seconds":42,"max_iterations":7}`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -182,16 +182,16 @@ func TestTaskToolPassesParamsToRunner(t *testing.T) {
 	}
 }
 
-func TestTaskToolRejectsEmptyPrompt(t *testing.T) {
-	tool := &tools.TaskTool{Runner: sleepingRunner(time.Second)}
+func TestDelegateToolRejectsEmptyPrompt(t *testing.T) {
+	tool := &tools.DelegateTool{Runner: sleepingRunner(time.Second)}
 	_, err := tool.Execute(context.Background(), `{"description":"x"}`)
 	if err == nil {
 		t.Fatal("expected error for missing prompt")
 	}
 }
 
-func TestTaskToolNoRunnerConfigured(t *testing.T) {
-	tool := &tools.TaskTool{}
+func TestDelegateToolNoRunnerConfigured(t *testing.T) {
+	tool := &tools.DelegateTool{}
 	_, err := tool.Execute(context.Background(), `{"description":"x","prompt":"y","role":"tester"}`)
 	if err == nil {
 		t.Fatal("expected error when Runner is nil")
@@ -246,7 +246,7 @@ func TestLoop_subAgentConcurrencyCap(t *testing.T) {
 	}
 
 	reg := tools.NewEmptyRegistry()
-	reg.Register(&tools.TaskTool{Runner: runner})
+	reg.Register(&tools.DelegateTool{Runner: runner})
 
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
 		MaxLoopCycles:          5,
@@ -279,7 +279,7 @@ func TestLoop_subAgentParallelWithoutCap(t *testing.T) {
 		},
 	}
 	reg := tools.NewEmptyRegistry()
-	reg.Register(&tools.TaskTool{Runner: runner})
+	reg.Register(&tools.DelegateTool{Runner: runner})
 
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test", MaxLoopCycles: 5}, Provider: fp, Registry: reg}
 	start := time.Now()
@@ -314,7 +314,7 @@ func TestLoop_subAgentInterruptPropagation(t *testing.T) {
 			{Choices: []types.Choice{{
 				Message: types.Message{
 					Role:      "assistant",
-					ToolCalls: []types.ToolCall{{ID: "c1", Type: "function", Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"x","prompt":"y","role":"tester"}`}}},
+					ToolCalls: []types.ToolCall{{ID: "c1", Type: "function", Function: types.ToolCallFn{Name: "delegate", Arguments: `{"description":"x","prompt":"y","role":"tester"}`}}},
 				},
 				FinishReason: "tool_calls",
 			}}},
@@ -323,7 +323,7 @@ func TestLoop_subAgentInterruptPropagation(t *testing.T) {
 	}
 
 	reg := tools.NewEmptyRegistry()
-	reg.Register(&tools.TaskTool{Runner: runner})
+	reg.Register(&tools.DelegateTool{Runner: runner})
 
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test", MaxLoopCycles: 5}, Provider: fp, Registry: reg}
 
@@ -352,7 +352,7 @@ func taskCallsN(n int) []types.ToolCall {
 		calls[i] = types.ToolCall{
 			ID:       "c" + string(rune('1'+i)),
 			Type:     "function",
-			Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"x","prompt":"y","role":"tester"}`},
+			Function: types.ToolCallFn{Name: "delegate", Arguments: `{"description":"x","prompt":"y","role":"tester"}`},
 		}
 	}
 	return calls
@@ -376,7 +376,7 @@ func TestLoop_subAgentStuckChildTimeout(t *testing.T) {
 					ToolCalls: []types.ToolCall{{
 						ID:       "c1",
 						Type:     "function",
-						Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"hang","prompt":"do nothing","role":"tester"}`},
+						Function: types.ToolCallFn{Name: "delegate", Arguments: `{"description":"hang","prompt":"do nothing","role":"tester"}`},
 					}},
 				},
 				FinishReason: "tool_calls",
@@ -389,7 +389,7 @@ func TestLoop_subAgentStuckChildTimeout(t *testing.T) {
 	}
 
 	reg := tools.NewEmptyRegistry()
-	reg.Register(&tools.TaskTool{Runner: hangingRunner})
+	reg.Register(&tools.DelegateTool{Runner: hangingRunner})
 
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
 		MaxLoopCycles:     5,
@@ -430,7 +430,7 @@ func TestLoop_stuckChildPreservesPartial(t *testing.T) {
 					ToolCalls: []types.ToolCall{{
 						ID:       "c1",
 						Type:     "function",
-						Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"hang","prompt":"do nothing","role":"tester"}`},
+						Function: types.ToolCallFn{Name: "delegate", Arguments: `{"description":"hang","prompt":"do nothing","role":"tester"}`},
 					}},
 				},
 				FinishReason: "tool_calls",
@@ -443,7 +443,7 @@ func TestLoop_stuckChildPreservesPartial(t *testing.T) {
 	}
 
 	reg := tools.NewEmptyRegistry()
-	reg.Register(&tools.TaskTool{Runner: hangingRunner})
+	reg.Register(&tools.DelegateTool{Runner: hangingRunner})
 
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
 		MaxLoopCycles:     5,
@@ -497,7 +497,7 @@ func TestLoop_subAgentHeartbeatKeepsAlive(t *testing.T) {
 					ToolCalls: []types.ToolCall{{
 						ID:       "c1",
 						Type:     "function",
-						Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"beat","prompt":"do work","role":"tester"}`},
+						Function: types.ToolCallFn{Name: "delegate", Arguments: `{"description":"beat","prompt":"do work","role":"tester"}`},
 					}},
 				},
 				FinishReason: "tool_calls",
@@ -510,7 +510,7 @@ func TestLoop_subAgentHeartbeatKeepsAlive(t *testing.T) {
 	}
 
 	reg := tools.NewEmptyRegistry()
-	reg.Register(&tools.TaskTool{Runner: beatingRunner})
+	reg.Register(&tools.DelegateTool{Runner: beatingRunner})
 
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
 		MaxLoopCycles:     5,
@@ -543,7 +543,7 @@ func TestLoop_subAgentStuckChildDisabled(t *testing.T) {
 					ToolCalls: []types.ToolCall{{
 						ID:       "c1",
 						Type:     "function",
-						Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"hang","prompt":"do nothing","role":"tester"}`},
+						Function: types.ToolCallFn{Name: "delegate", Arguments: `{"description":"hang","prompt":"do nothing","role":"tester"}`},
 					}},
 				},
 				FinishReason: "tool_calls",
@@ -556,7 +556,7 @@ func TestLoop_subAgentStuckChildDisabled(t *testing.T) {
 	}
 
 	reg := tools.NewEmptyRegistry()
-	reg.Register(&tools.TaskTool{Runner: hangingRunner})
+	reg.Register(&tools.DelegateTool{Runner: hangingRunner})
 
 	loop := &Loop{Config: LoopConfig{SystemPrompt: "test",
 		MaxLoopCycles:     5,
@@ -577,7 +577,7 @@ func TestLoop_subAgentStuckChildDisabled(t *testing.T) {
 }
 
 // TestLoop_backgroundSubAgentSurvivesDispatchingTurn verifies the full
-// integration: the loop routes a background:true spawn_subagent through
+// integration: the loop routes a background:true delegate through
 // the BackgroundJobs manager, the dispatch returns immediately with a
 // running placeholder, the job completes and delivers its result to the
 // follow-up channel, and the foreground attribution path does not
@@ -619,7 +619,7 @@ func TestLoop_backgroundSubAgentSurvivesDispatchingTurn(t *testing.T) {
 					ToolCalls: []types.ToolCall{{
 						ID:       "c1",
 						Type:     "function",
-						Function: types.ToolCallFn{Name: "spawn_subagent", Arguments: `{"description":"x","prompt":"do work","role":"tester","background":true}`},
+						Function: types.ToolCallFn{Name: "delegate", Arguments: `{"description":"x","prompt":"do work","role":"tester","background":true}`},
 					}},
 				},
 				FinishReason: "tool_calls",
@@ -632,7 +632,7 @@ func TestLoop_backgroundSubAgentSurvivesDispatchingTurn(t *testing.T) {
 	}
 
 	reg := tools.NewEmptyRegistry()
-	tt := &tools.TaskTool{Runner: runner, BackgroundJobs: mgr, RoleNames: []string{"tester"}}
+	tt := &tools.DelegateTool{Runner: runner, BackgroundJobs: mgr, RoleNames: []string{"tester"}}
 	reg.Register(tt)
 
 	rv := &recordingView{}

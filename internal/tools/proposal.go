@@ -7,7 +7,7 @@ import (
 )
 
 // ProposalTool settles retained sub-agent proposals (Plan 7 Phase 2). A retained
-// dispatch (spawn_subagent in "retained" mode) runs a sub-agent in an isolated
+// dispatch (delegate in "retained" mode) runs a sub-agent in an isolated
 // worktree and seals its delta into a proposal; the orchestrator reads it and
 // settles it once — select (fast-forward), apply (three-way, path-disjoint),
 // release (keep the landed work, drop the record), or discard (throw it away and
@@ -18,7 +18,7 @@ type ProposalTool struct{}
 func (*ProposalTool) Name() string { return "proposal" }
 
 func (*ProposalTool) Description() string {
-	return "Settle retained sub-agent proposals: select (fast-forward), apply (three-way merge, path-disjoint), release, discard — plus list and show. A proposal is produced by spawn_subagent."
+	return "Settle retained sub-agent proposals: select (fast-forward), apply (three-way merge, path-disjoint), release, discard — plus list and show. A proposal is produced by delegate."
 }
 
 func (*ProposalTool) Schema() json.RawMessage {
@@ -32,7 +32,7 @@ func (*ProposalTool) Schema() json.RawMessage {
 			},
 			"proposal_id": {
 				"type": "string",
-				"description": "The proposal id from a spawn_subagent result (required for show, select, apply, release, discard)"
+				"description": "The proposal id from a delegate result (required for show, select, apply, release, discard)"
 			}
 		},
 		"required": ["action"]

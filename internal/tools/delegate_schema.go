@@ -7,10 +7,10 @@ import (
 	"strings"
 )
 
-func (t *TaskTool) Schema() json.RawMessage {
+func (t *DelegateTool) Schema() json.RawMessage {
 	known := t.roleNames()
 	if len(known) > 0 {
-		return BuildTaskSchema(known, t.RoleDescriptions)
+		return BuildDelegateSchema(known, t.RoleDescriptions)
 	}
 	return json.RawMessage(`{
 		"type": "object",
@@ -31,7 +31,7 @@ func (t *TaskTool) Schema() json.RawMessage {
 // roleNames returns the known role names for validation and schema
 // generation: the cached startup snapshot layered with the live resolver
 // (if any) so role create/delete via the role tool takes immediate effect.
-func (t *TaskTool) roleNames() []string {
+func (t *DelegateTool) roleNames() []string {
 	// Build the set of known roles: start with the cached snapshot,
 	// then layer on the live resolver so role create/delete takes
 	// immediate effect.
@@ -52,10 +52,10 @@ func (t *TaskTool) roleNames() []string {
 	return names
 }
 
-// BuildTaskSchema returns a JSON Schema for the task tool whose role
+// BuildDelegateSchema returns a JSON Schema for the delegate tool whose role
 // enum is populated from the given list of role names, so user-defined
 // roles discovered at runtime are visible to the model.
-func BuildTaskSchema(roleNames []string, roleDescriptions map[string]string) json.RawMessage {
+func BuildDelegateSchema(roleNames []string, roleDescriptions map[string]string) json.RawMessage {
 	roles := make([]string, len(roleNames))
 	copy(roles, roleNames)
 

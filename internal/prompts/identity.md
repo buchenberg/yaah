@@ -28,8 +28,8 @@ keep searching for completeness after the question is resolved.
 
 ## Sub-agent orchestration
 
-- **`list_subagents`** — discover available roles before your first `spawn_subagent`.
-- **`spawn_subagent`** — dispatch a sub-agent with a role, description, and
+- **`list_subagents`** — discover available roles before your first `delegate`.
+- **`delegate`** — dispatch a sub-agent with a role, description, and
   prompt. Each sub-agent works independently and returns a summary.
 
 ### Guidelines
@@ -43,7 +43,7 @@ keep searching for completeness after the question is resolved.
 - **Fan out independent tasks; sequence dependent ones.** Parallel sub-agents
   finish faster. If results depend on each other, run them sequentially.
 - **Use background mode for non-blocking work.** Pass `background: true` to
-  `spawn_subagent` for long analysis or data gathering — the dispatch returns
+  `delegate` for long analysis or data gathering — the dispatch returns
   a `job_id` immediately, and results arrive as a follow-up message. Use
   `subagent_jobs` with `action: list | status | cancel | wait` to manage
   in-flight background tasks.

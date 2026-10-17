@@ -71,7 +71,7 @@ type ToolEndEvent struct {
 
 func (*ToolEndEvent) eventMarker() {}
 
-// SubAgentStartEvent is emitted when a sub-agent (spawn_subagent) begins.
+// SubAgentStartEvent is emitted when a sub-agent (delegate) begins.
 type SubAgentStartEvent struct {
 	SubAgentID string // unique sub-agent identifier ("sa-N" foreground, "bg-N" background)
 	Role       string // sub-agent role (e.g. "developer", "analyst")

@@ -63,7 +63,7 @@ const workspaceSandboxStartTimeout = 15 * time.Minute
 // toolSpillDir is the single source for the tool-result spill directory.
 // Both the parent loop (build_loop.go) and every sub-agent loop inherit
 // it so oversized tool results land in one place. Sub-agents receive it
-// via TaskToolOpts.ToolSpillDir — internal/agent never reads config
+// via DelegateToolOpts.ToolSpillDir — internal/agent never reads config
 // paths directly (finding C4).
 func toolSpillDir() string {
 	return filepath.Join(config.HomeDir(), "truncated")
@@ -548,7 +548,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	}
 
 	// Isolated session (plan §1.3, decision D2): sub-agents inherit the
-	// session's one sandbox, so the TaskTool gets the same sandbox
+	// session's one sandbox, so the DelegateTool gets the same sandbox
 	// workspace the main registry runs on — a sub-agent's file tools and
 	// shell dispatch inside the container, never on the host. Nil in
 	// local mode, where the path validator route below applies instead.
@@ -573,7 +573,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	}
 	egressBroker = broker
 
-	taskTool := runner.NewTaskTool(runner.TaskToolOpts{
+	taskTool := runner.NewDelegateTool(runner.DelegateToolOpts{
 		Provider:              provider,
 		SystemPrompt:          buildSubAgentBasePrompt(cwd, db),
 		ModelName:             modelName,
@@ -612,7 +612,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		RetainedBootstrap:    cfg.Agent.Default.RetainedWorktreeBootstrap,
 	})
 
-	// RoleResolver provides a live role-name lookup so the spawn_subagent
+	// RoleResolver provides a live role-name lookup so the delegate
 	// tool sees roles created via the role tool without a restart. Until
 	// supervised_task is registered it returns every role; it is narrowed
 	// to the non-supervised roles after successful shepherd init below.
@@ -675,7 +675,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		// Proposal tool (Plan 7 Phase 2): settles the sealed proposals the
 		// retained lane produces. Registered only when that lane is live — a
 		// shared lane, an isolated session, or a failed root scope produces none
-		// (spawn_subagent falls back to the direct lane without a root scope, so
+		// (delegate falls back to the direct lane without a root scope, so
 		// the prompt must not advertise a settlement that can never happen).
 		if sessionSandbox == nil && retainedMode(cfg.Agent.SubAgent.Mode) && rootScopeID != "" {
 			// The orchestrator is the gate: it reads the proposal's diff and
@@ -688,7 +688,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 
 	// The prompt must never advertise a tool that is not registered.
 	// Isolated mode gets the §2.2 delta instead — which names every omitted
-	// tool with its reason, covers the spawn_subagent-only story, and explains
+	// tool with its reason, covers the delegate-only story, and explains
 	// the apply_out workflow.
 	if sessionSandbox != nil {
 		slices.Sort(omittedTools)
@@ -962,7 +962,7 @@ func normalizeBrokerHosts(hosts []string) []string {
 }
 
 // retainedMode reports whether agents.subagent.mode selects the retained-run
-// lane for spawn_subagent (Plan 7 Phase 2). The default (empty) is retained —
+// lane for delegate (Plan 7 Phase 2). The default (empty) is retained —
 // the parity default; "shared" is the explicit opt-out.
 func retainedMode(mode string) bool {
 	return !strings.EqualFold(strings.TrimSpace(mode), "shared")

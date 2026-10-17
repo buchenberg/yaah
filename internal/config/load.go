@@ -499,7 +499,7 @@ func Load() (*Config, error) {
 
 	// `supervised_task` was removed (the orchestrator is the gate; see the
 	// Plan 7 Phase 4 record). Its keys are dead, and so is the per-role
-	// `supervised` routing flag: every role dispatches through spawn_subagent.
+	// `supervised` routing flag: every role dispatches through delegate.
 	// Warn once, per key, so an upgraded config does not look like it still
 	// selects a lane that no longer exists.
 	var legacySupervisedTask struct {
@@ -533,7 +533,7 @@ func Load() (*Config, error) {
 		}
 		for name, role := range legacySupervisedTask.Agents.SubAgent.Roles {
 			if role.Supervised != nil {
-				fmt.Fprintf(os.Stderr, "warning: config key `agents.subagent.roles.%s.supervised` is no longer used; supervised_task was removed and every role dispatches through spawn_subagent\n", name)
+				fmt.Fprintf(os.Stderr, "warning: config key `agents.subagent.roles.%s.supervised` is no longer used; supervised_task was removed and every role dispatches through delegate\n", name)
 			}
 		}
 	}

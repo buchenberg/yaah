@@ -83,7 +83,7 @@ func TestGateVerdictFailed_HeuristicWithoutContract(t *testing.T) {
 }
 
 // A tool that dispatches sub-agent work of its own must take a sub-agent
-// sub-agent work is exactly a spawn_subagent call: it takes the concurrency
+// sub-agent work is exactly a delegate call: it takes the concurrency
 // slot and the task-specific branches. A composite tool that dispatched sub-agents
 // of its own once existed (oversee) and is gone, so the flag is one concept again
 // — this test pins that a non-spawn tool neither takes a slot nor is shaped like
@@ -98,25 +98,25 @@ func TestNewDispatch_OnlySpawnSubAgentTakesASubAgentSlot(t *testing.T) {
 		name string
 		task bool
 	}{
-		{"spawn_subagent", true},
+		{"delegate", true},
 		{"read", false},
 		{"proposal", false},
 	} {
 		d := l.newDispatch(0, call(tc.name))
-		if d.isTask != tc.task {
-			t.Errorf("%s: isTask = %v, want %v", tc.name, d.isTask, tc.task)
+		if d.isDelegate != tc.task {
+			t.Errorf("%s: isDelegate = %v, want %v", tc.name, d.isDelegate, tc.task)
 		}
 	}
 }
 
 // The speculation guidance promises that `max_concurrency` bounds a fan-out of
-// parallel spawn_subagent calls. That bound is the sub-agent semaphore: each
+// parallel delegate calls. That bound is the sub-agent semaphore: each
 // dispatch takes a slot and holds it until the dispatch ends, so N concurrent
 // calls cannot exceed the cap.
 func TestDispatch_SubAgentSemaphoreBoundsFanOut(t *testing.T) {
 	l := &Loop{subAgentSem: make(chan struct{}, 1)}
 	spawn := func() types.ToolCall {
-		return types.ToolCall{Type: "function", Function: types.ToolCallFn{Name: "spawn_subagent"}}
+		return types.ToolCall{Type: "function", Function: types.ToolCallFn{Name: "delegate"}}
 	}
 
 	first := l.newDispatch(0, spawn())

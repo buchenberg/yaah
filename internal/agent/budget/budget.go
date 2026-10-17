@@ -87,7 +87,7 @@ func fallbackTurns(iterations int) int {
 	return 1
 }
 
-// SchemaMaxIterations is the maximum the spawn_subagent /
+// SchemaMaxIterations is the maximum the delegate /
 // supervised_task tool schemas accept per call. Resolve bounds the
 // final budget here so headroom reconciliation cannot grow iterations
 // without limit.

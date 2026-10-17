@@ -173,14 +173,14 @@ func TestBuildSubAgentSysPrompt_WorkdirHeader(t *testing.T) {
 func TestBuildSubAgentRegistry_NestedTaskInherits(t *testing.T) {
 	ws := fakeSandboxWorkspace{}
 	opts := taskRunnerOpts{workspace: ws}
-	profile := subagent.RoleProfile{Tools: []string{"read", "spawn_subagent"}}
+	profile := subagent.RoleProfile{Tools: []string{"read", "delegate"}}
 
 	reg, _, err := buildSubAgentRegistry(opts, profile, 1, "")
 	if err != nil {
 		t.Fatalf("buildSubAgentRegistry: %v", err)
 	}
-	if reg.Get("spawn_subagent") == nil {
-		t.Fatal("profile with spawn_subagent and remaining depth must register the task tool")
+	if reg.Get("delegate") == nil {
+		t.Fatal("profile with delegate and remaining depth must register the task tool")
 	}
 }
 

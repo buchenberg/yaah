@@ -1,6 +1,6 @@
 // Package runner wires sub-agent execution: it builds the per-role tool
 // registries, resolves provider/model/timeout/iteration budgets, assembles
-// the sub-agent system prompt, and constructs the top-level TaskTool that
+// the sub-agent system prompt, and constructs the top-level DelegateTool that
 // the planner uses to spawn sub-agents.
 //
 // This is a composition layer over the agent loop (internal/agent), the
@@ -45,10 +45,10 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// TaskToolOpts carries everything NewTaskTool needs. A struct beats a
+// DelegateToolOpts carries everything NewDelegateTool needs. A struct beats a
 // 20-parameter constructor: new sub-agent knobs no longer grow the
 // signature, and call sites read as keyed literals (finding C3).
-type TaskToolOpts struct {
+type DelegateToolOpts struct {
 	Provider              agent.Provider
 	SystemPrompt          string
 	ModelName             string
@@ -115,7 +115,7 @@ type TaskToolOpts struct {
 	// construction (makeProvider) belongs with the rest of the CLI wiring.
 	ResolveProviderByName func(map[string]config.Provider, string) agent.Provider
 
-	// Retain enables the retained-run lane for spawn_subagent (Plan 7 Phase 2):
+	// Retain enables the retained-run lane for delegate (Plan 7 Phase 2):
 	// each dispatch runs in an isolated worktree and returns a sealed proposal
 	// the orchestrator settles. RetainedRepoPath / RetainedWorktreeRoot /
 	// RetainedBootstrap are resolved from the retained_* config keys — they
@@ -132,10 +132,10 @@ type TaskToolOpts struct {
 	SubNetwork containment.NetworkPolicy
 }
 
-// NewTaskTool builds the planner's TaskTool: it resolves the advertised
-// role names/descriptions and returns a TaskTool whose Runner is a
+// NewDelegateTool builds the planner's DelegateTool: it resolves the advertised
+// role names/descriptions and returns a DelegateTool whose Runner is a
 // makeTaskRunner closure bounded to one level of nesting.
-func NewTaskTool(opts TaskToolOpts) *tools.TaskTool {
+func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 	// Sub-agent spawning depth is hard-coded at 1: the top-level agent
 	// can spawn one level of sub-agents; sub-agents cannot spawn further
 	// sub-agents (remainingDepth reaches 0).
@@ -170,14 +170,14 @@ func NewTaskTool(opts TaskToolOpts) *tools.TaskTool {
 		resolveProviderByName: opts.ResolveProviderByName,
 	}, depth)
 
-	tool := &tools.TaskTool{
+	tool := &tools.DelegateTool{
 		Runner:           runnerFn,
 		ResolveTimeout:   subAgentTimeoutResolver(opts.SubCfg),
 		RoleNames:        opts.RoleNames,
 		RoleDescriptions: RoleDescriptionsFor(opts.RoleNames),
 		Tracker:          opts.Tracker,
 	}
-	// Retained mode (Plan 7 Phase 2): route spawn_subagent through the
+	// Retained mode (Plan 7 Phase 2): route delegate through the
 	// retained-run lane. It needs a scope manager and a root scope to fork from;
 	// without them the tool stays on the direct lane rather than failing each
 	// dispatch.
@@ -196,7 +196,7 @@ func NewTaskTool(opts TaskToolOpts) *tools.TaskTool {
 
 // RoleDescriptionsFor maps each role name to a one-line description (or
 // specialty fallback) drawn from the role registry. Used to populate the
-// role parameter description of the spawn_subagent schema so the orchestrator
+// role parameter description of the delegate schema so the orchestrator
 // can choose a role without calling list_subagents.
 func RoleDescriptionsFor(roleNames []string) map[string]string {
 	descs := make(map[string]string, len(roleNames))
@@ -807,7 +807,7 @@ func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, pro
 	return sysPrompt
 }
 
-// subAgentTimeoutResolver returns a TaskTool timeout resolver that folds
+// subAgentTimeoutResolver returns a DelegateTool timeout resolver that folds
 // in the actual per-call role, so role-profile and per-role config
 // timeouts are honoured rather than a single construction-time default.
 func subAgentTimeoutResolver(subCfg config.SubAgentConfig) func(tools.SubAgentParams) time.Duration {
@@ -992,7 +992,7 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 
 // buildSubAgentRegistry builds the tool registry for a sub-agent from
 // its role profile. If the profile includes the task tool and
-// remainingDepth > 0, a nested TaskTool is registered so the sub-agent
+// remainingDepth > 0, a nested DelegateTool is registered so the sub-agent
 // can spawn further workers. When remainingDepth == 0 the task tool is
 // omitted entirely.
 //
@@ -1003,7 +1003,7 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, remainingDepth int, workdir string) (*tools.Registry, *subAgentConfinement, error) {
 	resolveTimeout := subAgentTimeoutResolver(opts.subCfg)
 	registerTask := func(reg *tools.Registry) {
-		reg.Register(&tools.TaskTool{
+		reg.Register(&tools.DelegateTool{
 			Runner:         makeTaskRunner(opts, remainingDepth-1),
 			ResolveTimeout: resolveTimeout,
 		})
@@ -1114,7 +1114,7 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 	restrictiveEgress := opts.workspace == nil && restrictivePosture(opts.subNetwork)
 
 	for _, name := range profile.Tools {
-		if name == "spawn_subagent" {
+		if name == "delegate" {
 			if remainingDepth > 0 {
 				registerTask(reg)
 			}
@@ -1152,8 +1152,8 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 }
 
 // resolveSubAgentTimeout picks the effective default timeout for a
-// sub-agent TaskTool. Precedence: per-call override (handled by the
-// TaskTool itself) > role-specific config > role profile default >
+// sub-agent DelegateTool. Precedence: per-call override (handled by the
+// DelegateTool itself) > role-specific config > role profile default >
 // global subagent default_timeout.
 func resolveSubAgentTimeout(callSeconds int, subCfg config.SubAgentConfig, role subagent.SubAgentRole) time.Duration {
 	if callSeconds > 0 {

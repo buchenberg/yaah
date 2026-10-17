@@ -44,7 +44,7 @@ func DefaultPruneConfig() PruneConfig {
 		ProtectTokens:  defaultPruneProtectTokens,
 		MinReclaim:     defaultPruneMinReclaim,
 		MinTurns:       defaultPruneMinTurns,
-		ProtectedTools: map[string]bool{"skill": true, "spawn_subagent": true},
+		ProtectedTools: map[string]bool{"skill": true, "delegate": true},
 	}
 }
 
@@ -87,7 +87,7 @@ func NewPruner(cfg PruneConfig) *Pruner {
 		cfg.MinTurns = defaultPruneMinTurns
 	}
 	if cfg.ProtectedTools == nil {
-		cfg.ProtectedTools = map[string]bool{"skill": true, "spawn_subagent": true}
+		cfg.ProtectedTools = map[string]bool{"skill": true, "delegate": true}
 	}
 	return &Pruner{
 		cfg:    cfg,

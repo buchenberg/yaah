@@ -253,7 +253,7 @@ func (m *BackgroundJobs) Launch(callCtx context.Context, runner TaskRunner, role
 		}
 		if running >= m.MaxConcurrent {
 			m.mu.Unlock()
-			return "", fmt.Errorf("spawn_subagent: background concurrency limit (%d) reached; wait for a running job to finish or cancel one with subagent_jobs", m.MaxConcurrent)
+			return "", fmt.Errorf("delegate: background concurrency limit (%d) reached; wait for a running job to finish or cancel one with subagent_jobs", m.MaxConcurrent)
 		}
 	}
 	m.nextID++

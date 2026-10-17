@@ -215,7 +215,7 @@ func TestProposalTool_Surface(t *testing.T) {
 // each get their own world and seal their own proposal; the orchestrator compares
 // them, settles one, and discards the rest.
 //
-// There is deliberately no `attempts` parameter on spawn_subagent: the loop
+// There is deliberately no `attempts` parameter on delegate: the loop
 // already fans out parallel calls in one turn (each takes a sub-agent slot), so a
 // tool-level multiplier would duplicate that and bypass the concurrency cap.
 func TestRetained_SpeculationSettlesOneAndDiscardsTheRest(t *testing.T) {

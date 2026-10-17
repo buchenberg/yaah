@@ -59,7 +59,7 @@ yaah/
 | `internal/tools/supervised_session.go` | ~960 | Supervised sub-agent sessions (checkpoint, rollback, review) — shepherd-dependent |
 | `internal/sandboxfake/shell.go` | ~820 | In-memory shell interpreter (test infrastructure) |
 | `internal/memory/memory.go` | ~790 | SQLite persistence: sessions, memory, FTS5, embeddings |
-| `internal/agent/runner/runner.go` | ~780 | Sub-agent dispatch wiring (TaskTool, role resolution, budgets) |
+| `internal/agent/runner/runner.go` | ~780 | Sub-agent dispatch wiring (DelegateTool, role resolution, budgets) |
 | `internal/agent/context_manager.go` | ~670 | Context-window policy: compaction, pruning, truncation |
 | `internal/mcp/http_server.go` | ~630 | MCP Streamable HTTP + SSE server |
 

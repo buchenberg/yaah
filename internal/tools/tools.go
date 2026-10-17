@@ -58,7 +58,7 @@
 //
 // No leafTools entry is needed — the runtime-wired instance replaces
 // the default one. Existing examples: MemorySearchTool, BackgroundProcessTool,
-// TodoWriteTool, SkillTool, TaskTool.
+// TodoWriteTool, SkillTool, DelegateTool.
 package tools
 
 import (

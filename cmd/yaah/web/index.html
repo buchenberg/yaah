@@ -246,7 +246,7 @@ dialog article{max-width:480px;min-width:320px}
       <div x-show="m.role === 'tool'" class="tool" :class="m.running && 'tool-running'"
         @click="m.expanded = !m.expanded; scroll()">
         <div class="tool-head">
-          <span class="tool-icon" x-text="m.running ? (m.name === 'spawn_subagent' ? '🤖' : '⏳') : m.error ? '✗' : '✓'"></span>
+          <span class="tool-icon" x-text="m.running ? (m.name === 'delegate' ? '🤖' : '⏳') : m.error ? '✗' : '✓'"></span>
           <span class="tool-name" x-text="toolLabel(m)"></span>
           <span class="tool-summary" x-show="toolSummary(m)" x-text="toolSummary(m)"></span>
           <span class="tool-model" x-show="m.subModel" x-text="modelLabel(m.subModel)"></span>
@@ -405,7 +405,7 @@ function fmtMs(ms) {
 // toolLabel builds a display header for a tool from its name + args.
 function toolLabel(m) {
   if (m.name === 'bash') return 'bash — ' + (m.args || '')
-  if (m.name === 'spawn_subagent') {
+  if (m.name === 'delegate') {
     // summary already has "sub-agent: role · desc" — just show name
     return 'sub-agent'
   }
@@ -457,7 +457,7 @@ document.addEventListener('alpine:init', () => {
       // toolSummary strips the "sub-agent" prefix the backend summary
       // carries, since the name column already identifies the row.
       toolSummary(m) {
-        if (m.name === 'spawn_subagent' && m.summary) {
+        if (m.name === 'delegate' && m.summary) {
           if (m.summary.startsWith('sub-agent: ')) return m.summary.slice('sub-agent: '.length)
           if (m.summary.startsWith('sub-agent · ')) return m.summary.slice('sub-agent · '.length)
         }
@@ -475,14 +475,14 @@ document.addEventListener('alpine:init', () => {
         }
         return model
       },
-      // matchSubRow finds the running spawn_subagent tool row a
+      // matchSubRow finds the running delegate tool row a
       // subagent.start/end event belongs to, by role + prompt. Truncated
       // args (unparseable JSON) fall back to the first available row.
       matchSubRow(role, prompt) {
         let fallback = null
         for (const id in this._tools) {
           const t = this._tools[id]
-          if (t.name !== 'spawn_subagent' || t.subModel) continue
+          if (t.name !== 'delegate' || t.subModel) continue
           try {
             const a = JSON.parse(t.args)
             if ((!role || a.role === role) && (!prompt || !a.prompt || a.prompt === prompt)) return t

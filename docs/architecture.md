@@ -51,7 +51,7 @@ The agent loop lives in `internal/agent/agent.go`. The entry point is `Loop.Run(
 | `View` | Consumer for typed events via `HandleEvent(Event)` — see Engine-View Architecture below |
 | `broker` | Internal pub/sub bus (created from `View` in `applyDefaults`; not set by callers) |
 | `MaxToolConcurrency` | Cap on concurrent tool goroutines (0 = unlimited) |
-| `MaxSubAgentConcurrency` | Cap on concurrent `spawn_subagent` calls (0 = unlimited, default 3) |
+| `MaxSubAgentConcurrency` | Cap on concurrent `delegate` calls (0 = unlimited, default 3) |
 | `PermissionRules` | Path-pattern rules for the `permission` middleware |
 | `MCPServers` | Attached MCP servers whose tools are added to the registry |
 | `Pipe` | Write stream during one-shot; nil in REPL/TUI |
@@ -88,29 +88,29 @@ for iter := 0; iter < MaxIterations; iter++ {
 
 ### Agent coordination model
 
-File: `internal/agent/agent.go`, `internal/tools/task.go`
+File: `internal/agent/agent.go`, `internal/tools/delegate.go`
 
 yaah uses a two-layer agent→sub-agent architecture with FullTools mode.
-The main agent sees all tools plus `spawn_subagent` and chooses per-task
+The main agent sees all tools plus `delegate` and chooses per-task
 whether to call tools directly (for simple operations) or dispatch a
 sub-agent (for multi-step autonomous work).
 
 **Key properties:**
 
 - **FullTools mode**: `ToolsLevel` is set to `FullTools` — the agent sees
-  every tool from the registry alongside `spawn_subagent`. Simple
+  every tool from the registry alongside `delegate`. Simple
   `glob`/`read`/`grep` calls skip the sub-agent roundtrip entirely.
 - **Per-action choice**: The agent decides per-turn whether to work inline
   or delegate. A single turn may contain both direct tool calls and
-  `spawn_subagent` dispatches.
+  `delegate` dispatches.
 - **Sub-agents own tool execution**: When the agent calls
-  `spawn_subagent(role, description, prompt)`, the sub-agent runs its
+  `delegate(role, description, prompt)`, the sub-agent runs its
   curated tool set to accomplish the directive. The agent describes
   *what* to do, not *how*.
 - **Role-constrained tool sets**: Each sub-agent role has a curated tool
   list. `analyst` has read/search/web tools. `developer` adds write/edit.
   `tester` has shell + read. `reviewer` has counting/inspection tools.
-  No built-in role registers `spawn_subagent` — nesting is structurally
+  No built-in role registers `delegate` — nesting is structurally
   impossible for built-ins, and depth-limited for custom roles that opt in.
 - **Model tiering**: Sub-agents can use a different (typically cheaper)
   provider and model than the main agent.
@@ -119,7 +119,7 @@ sub-agent (for multi-step autonomous work).
 **Sub-agent dispatch flow:**
 
 ```
-1. Agent emits spawn_subagent(role="analyst", description="...", prompt="...")
+1. Agent emits delegate(role="analyst", description="...", prompt="...")
 2. makeTaskRunner builds role-specific Loop:
    a. Loads role profile (tool set, iterations, timeout)
    b. Injects role guidance + contract block into system prompt
@@ -293,13 +293,13 @@ Limits concurrent tool goroutines via a buffered channel semaphore. The Loop cre
 #### Sub-agent depth limiting (structural, no middleware)
 
 Nesting depth is bounded structurally. No built-in role registers the
-`spawn_subagent` tool, so built-in sub-agent loops cannot dispatch further
-sub-agents at all. A custom role that lists `spawn_subagent` gets the task
+`delegate` tool, so built-in sub-agent loops cannot dispatch further
+sub-agents at all. A custom role that lists `delegate` gets the task
 tool only while `makeTaskRunner`'s `remainingDepth` is positive; the runner
 decrements the remaining depth per level, so a nested sub-loop eventually
-loses its `spawn_subagent` tool entirely (see
+loses its `delegate` tool entirely (see
 [Sub-Agent Lifecycle](#sub-agent-lifecycle)). The former `SubAgentMiddleware`
-that dropped excess `spawn_subagent` calls mid-turn has been removed.
+that dropped excess `delegate` calls mid-turn has been removed.
 
 Sub-agent concurrency is enforced on `Loop.subAgentSem` (see
 `executeAndCollect`), mirroring how `ToolConcurrencyMiddleware` relates to
@@ -313,9 +313,9 @@ Injects Anthropic `cache_control: {type: "ephemeral"}` breakpoints on system mes
 
 ## Sub-agent lifecycle
 
-Files: `internal/agent/subagent/role_def.go`, `internal/tools/task.go`, `internal/jobs/` (`TaskRunner`, `SubAgentParams`, escalation contract, context-key helpers, `BackgroundJobs` manager), `internal/agent/runner/runner.go`
+Files: `internal/agent/subagent/role_def.go`, `internal/tools/delegate.go`, `internal/jobs/` (`TaskRunner`, `SubAgentParams`, escalation contract, context-key helpers, `BackgroundJobs` manager), `internal/agent/runner/runner.go`
 
-The `spawn_subagent` tool spawns a sub-agent: a fresh `agent.Loop` with a curated tool registry, its own iteration budget, deadline, and system prompt. Sub-agents let the main agent delegate isolated work and fan out independent subtasks in parallel.
+The `delegate` tool spawns a sub-agent: a fresh `agent.Loop` with a curated tool registry, its own iteration budget, deadline, and system prompt. Sub-agents let the main agent delegate isolated work and fan out independent subtasks in parallel.
 
 ### Roles and tool profiles
 
@@ -369,13 +369,13 @@ Built-in roles are embedded via `//go:embed roles/*.md` in `internal/prompts/pro
 | `Guidance(role SubAgentRole) string` | Return role-specific system-prompt text (the markdown body) |
 | `Names() []string` | All registered role names, for dynamic schema generation |
 
-### Dynamic spawn_subagent schema
+### Dynamic delegate schema
 
-File: `internal/tools/task.go`
+File: `internal/tools/delegate.go`
 
-`BuildTaskSchema(roleNames []string) json.RawMessage` constructs the `spawn_subagent` tool's JSON Schema at startup from the active role list, using `encoding/json` marshalling to avoid injection. The `TaskTool.Schema()` method checks `RoleNames`: when non-empty it calls `BuildTaskSchema`; when empty it returns a legacy static schema with `["analyst", "developer", "tester", "reviewer"]`. This means user-defined roles are only visible to the model when a registry is configured (the default for both CLI and TUI sessions).
+`BuildDelegateSchema(roleNames []string) json.RawMessage` constructs the `delegate` tool's JSON Schema at startup from the active role list, using `encoding/json` marshalling to avoid injection. The `DelegateTool.Schema()` method checks `RoleNames`: when non-empty it calls `BuildDelegateSchema`; when empty it returns a legacy static schema with `["analyst", "developer", "tester", "reviewer"]`. This means user-defined roles are only visible to the model when a registry is configured (the default for both CLI and TUI sessions).
 
-Wiring chain: `reg.Names()` → `runner.NewTaskTool(…, roleNames)` → `TaskTool.RoleNames` → `TaskTool.Schema()`.
+Wiring chain: `reg.Names()` → `runner.NewDelegateTool(…, roleNames)` → `DelegateTool.RoleNames` → `DelegateTool.Schema()`.
 
 ### CLI lifecycle display
 
@@ -399,21 +399,21 @@ Files: `cmd/yaah/tui.go`, `internal/tui/proxy.go`, `internal/tui/components/suba
 
 The TUI renders each sub-agent's whole lifetime as a single collapsible block in the conversation view, distinct from ordinary tool blocks.
 
-**Data flow:** `SubAgentStartEvent` and `SubAgentEndEvent` are published to the broker and delivered to `Model.HandleEvent`. The start event appends one `Message` with role `"subagent"` (`SubRole` = role key, `SubID` = sub-agent ID, `Content` = task prompt, `SubRunning` = true). The end event finds the matching running line by sub-agent ID (`SubAgentID` field, correlated across spawns), transitions it in place (`SubRunning` = false, duration, error), and stores the result (`SubResult`, from the end event's `Result` field), displayed via the line's expand toggle. No separate end message is appended, and the `spawn_subagent` tool result is suppressed — only the single sub-agent line carries the lifecycle (see [TUI component system](./tui-components.md)).
+**Data flow:** `SubAgentStartEvent` and `SubAgentEndEvent` are published to the broker and delivered to `Model.HandleEvent`. The start event appends one `Message` with role `"subagent"` (`SubRole` = role key, `SubID` = sub-agent ID, `Content` = task prompt, `SubRunning` = true). The end event finds the matching running line by sub-agent ID (`SubAgentID` field, correlated across spawns), transitions it in place (`SubRunning` = false, duration, error), and stores the result (`SubResult`, from the end event's `Result` field), displayed via the line's expand toggle. No separate end message is appended, and the `delegate` tool result is suppressed — only the single sub-agent line carries the lifecycle (see [TUI component system](./tui-components.md)).
 
 **`renderMessages`** handles the `"subagent"` role with the `SubAgentLine` component: a status icon (`⏳` running, `✓` done, `✗` error), a robot icon (🤖), the role-colored display name (per-role palette in `role_colors.go`, matching TUI2), the task, and the duration. The task tool header in the `"tool"` case uses `matchJSONField` to extract `role` and `description` from tool args JSON, displaying e.g. `"sub-agent: analyst — Research docs"` instead of the generic `"sub-agent"`.
 
 ### Timeout enforcement
 
-`TaskTool.Execute` (`internal/tools/task.go`) wraps the runner call in `context.WithTimeout`. The effective timeout is the per-call `timeout_seconds` argument (10–600), falling back to the resolved role default, then the tool's `DefaultTimeout`. On `DeadlineExceeded` or `Canceled` the tool returns a **structured JSON result** (`{"error":"timed out","partial":"..."}`) instead of a Go error, so the parent agent can decide whether to retry, continue, or report. Any non-empty string returned alongside the context error is surfaced as `partial`.
+`DelegateTool.Execute` (`internal/tools/delegate.go`) wraps the runner call in `context.WithTimeout`. The effective timeout is the per-call `timeout_seconds` argument (10–600), falling back to the resolved role default, then the tool's `DefaultTimeout`. On `DeadlineExceeded` or `Canceled` the tool returns a **structured JSON result** (`{"error":"timed out","partial":"..."}`) instead of a Go error, so the parent agent can decide whether to retry, continue, or report. Any non-empty string returned alongside the context error is surfaced as `partial`.
 
 ### Parallel dispatch and concurrency cap
 
-Multiple `spawn_subagent` tool calls issued in a single turn are dispatched concurrently by `executeAndCollect` like any other tool. Sub-agent fan-out is bounded independently by `Loop.MaxSubAgentConcurrency` (default 3), realised as a separate `subAgentSem` semaphore acquired only for tool calls named `spawn_subagent`. This lets the agent dispatch many sub-agents without exceeding the configured concurrency, and is independent of `MaxToolConcurrency`.
+Multiple `delegate` tool calls issued in a single turn are dispatched concurrently by `executeAndCollect` like any other tool. Sub-agent fan-out is bounded independently by `Loop.MaxSubAgentConcurrency` (default 3), realised as a separate `subAgentSem` semaphore acquired only for tool calls named `delegate`. This lets the agent dispatch many sub-agents without exceeding the configured concurrency, and is independent of `MaxToolConcurrency`.
 
 ### Interrupt propagation
 
-The parent context flows through `executeAndCollect` → `TaskTool.Execute` → `Runner` → `subLoop.Run`. Cancelling the parent (e.g. Ctrl-C) propagates via the context: each sub-agent's `Loop.Run` checks `ctx.Done()` at the top of every iteration and the underlying provider HTTP call respects the context. A cancelled sub-agent returns the structured cancellation result described above rather than failing the parent turn.
+The parent context flows through `executeAndCollect` → `DelegateTool.Execute` → `Runner` → `subLoop.Run`. Cancelling the parent (e.g. Ctrl-C) propagates via the context: each sub-agent's `Loop.Run` checks `ctx.Done()` at the top of every iteration and the underlying provider HTTP call respects the context. A cancelled sub-agent returns the structured cancellation result described above rather than failing the parent turn.
 
 ### Structured escalation
 
@@ -464,12 +464,12 @@ Semaphore acquisitions in `executeAndCollect` (`subAgentSem` and `toolConcurrenc
 ### Nesting depth
 
 Nesting is bounded structurally, hardcoded to depth 1 for built-in roles:
-no built-in sub-agent role registers the `spawn_subagent` tool, so a
+no built-in sub-agent role registers the `delegate` tool, so a
 sub-agent loop cannot dispatch further sub-agents at all
-(`buildSubAgentRegistry` omits `spawn_subagent` when `remainingDepth`
-reaches 0). A custom role that lists `spawn_subagent` gets the task tool
+(`buildSubAgentRegistry` omits `delegate` when `remainingDepth`
+reaches 0). A custom role that lists `delegate` gets the task tool
 only while the runner's remaining depth is positive. The former
-`SubAgentMiddleware` that dropped excess `spawn_subagent` calls mid-turn
+`SubAgentMiddleware` that dropped excess `delegate` calls mid-turn
 has been removed.
 
 ### Configuration
@@ -477,7 +477,7 @@ has been removed.
 ```yaml
 agent:
   subagent:
-    max_concurrency: 3    # simultaneous spawn_subagent calls per turn
+    max_concurrency: 3    # simultaneous delegate calls per turn
     default_timeout: 120  # seconds; used when no role default applies
     roles:
       analyst:
@@ -502,7 +502,7 @@ When an agent dispatches multiple parallel sub-agents in a single turn, those su
 
 **Tracker:** `ConflictTracker` is a thread-safe `[]FileRecord` store on `Loop`. Sub-agent write/edit/delete tools are wrapped with `RecordingTool` (via `buildSubAgentRegistry`), which extracts the `filePath` from JSON args and records `(subAgentLabel, filePath, toolName)` to the shared tracker.
 
-**Label propagation:** `TaskTool.Execute` builds a label from the task's `role` and `description` (e.g. `"developer — Add login handler"`) and injects it into the request context via `WithConflictLabel()`. `RecordingTool.Execute` reads this label from the context, so each record is tagged with which sub-agent produced it.
+**Label propagation:** `DelegateTool.Execute` builds a label from the task's `role` and `description` (e.g. `"developer — Add login handler"`) and injects it into the request context via `WithConflictLabel()`. `RecordingTool.Execute` reads this label from the context, so each record is tagged with which sub-agent produced it.
 
 **Detection:** After the tool batch completes, the `conflict_detect` middleware runs in `PostTool` and calls `ConflictTracker.DetectAndReset()`. Files touched by more than one distinct sub-agent label are flagged. If conflicts are found, a structured `CONFLICT:` user message is injected into the conversation before the next LLM call. The report lists each conflicting file, which sub-agents touched it, and which tools they used.
 
@@ -555,7 +555,7 @@ Additional tools are registered by the CLI layer after `NewRegistry()`:
 - `plan`
 - `todowrite`
 - `background_process`
-- `spawn_subagent` (the task tool) and `list_subagents`
+- `delegate` (the task tool) and `list_subagents`
 - Any MCP tools from connected servers
 
 ### Workspace seam (`internal/tools/workspace.go`)

@@ -35,7 +35,7 @@ func (t *App) HandleEvent(event agent.Event) {
 	case *agent.ToolStartEvent:
 		t.queueUpdateCritical(func() {
 			t.pendingTool = e.Name
-			if e.Name == "spawn_subagent" {
+			if e.Name == "delegate" {
 				return
 			}
 			t.setActivity(activity.Tool, e.Name)
@@ -45,7 +45,7 @@ func (t *App) HandleEvent(event agent.Event) {
 	case *agent.ToolEndEvent:
 		t.queueUpdateCritical(func() {
 			t.pendingTool = ""
-			if e.Name == "spawn_subagent" {
+			if e.Name == "delegate" {
 				return
 			}
 			id := fmt.Sprintf("%d", e.ID)

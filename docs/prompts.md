@@ -159,12 +159,12 @@ messages = append(messages, conflictMsg)
 
 **File**: `internal/agent/runner/runner.go`
 
-Sub-agents spawned via the `spawn_subagent` tool get a lean base prompt —
+Sub-agents spawned via the `delegate` tool get a lean base prompt —
 `buildSubAgentBasePrompt` in `cmd/yaah/wiring_prompt.go` — plus a role
 guidance suffix. The base is the sub-agent identity
 (`internal/prompts/subagent_identity.md`), user context, project AGENTS.md,
 and stored memory facts. It deliberately omits the orchestrator identity
-(spawn_subagent orchestration, dispatch waves), the concurrency limit, and
+(delegate orchestration, dispatch waves), the concurrency limit, and
 memory-tool guidelines — none of which a sub-agent role can act on:
 
 ```go
@@ -222,8 +222,8 @@ Loop.Run(userInput)
 ├── If conflict detected:
 │   └── [6] UserMsg(conflict report)
 │
-├── If spawn_subagent calls:
-│   └── runner (TaskTool)
+├── If delegate calls:
+│   └── runner (DelegateTool)
 │       └── [T1] SystemMsg(sub-agent base + role guidance)
 │
 └── Loop continues until model outputs no tool calls
@@ -233,7 +233,7 @@ Loop.Run(userInput)
 
 1. **Sub-agents get a lean base prompt.** `buildSubAgentBasePrompt` gives them
    the sub-agent identity, user/project AGENTS.md, and memory facts — without
-   the orchestrator identity (spawn_subagent orchestration, dispatch waves) or
+   the orchestrator identity (delegate orchestration, dispatch waves) or
    memory-tool guidelines, which no sub-agent role can act on. Role guidance
    (the role's markdown body) is appended to steer behavior.
 

@@ -236,8 +236,8 @@ func TestService_RootFiringsDropped(t *testing.T) {
 		publish(bus, shepherdtrace.EffectEvent{
 			TraceOwnerID: "sess-root",
 			Mode:         shepherdtrace.Declaration,
-			SchemaRef:    "yaah.tool.spawn_subagent.v1",
-			KindLabel:    "spawn_subagent",
+			SchemaRef:    "yaah.tool.delegate.v1",
+			KindLabel:    "delegate",
 			Payload:      map[string]any{"role": "worker"},
 		})
 	}

@@ -318,7 +318,7 @@ and where is it" answer.
 ### 4.7 Protected tools (optional, config-gated)
 
 `ProtectedTools` already exists and defaults to
-`{"skill": true, "spawn_subagent": true}`. Consider making
+`{"skill": true, "delegate": true}`. Consider making
 `read`/`grep`/`glob`/`file_info` protected-by-default is tempting but
 changes the context-growth profile; **leave defaults unchanged** and add a
 config override so operators can opt in:
@@ -328,7 +328,7 @@ prune_protected_tools: [read, grep, glob, file_info]
 ```
 
 Merged *additively* onto the hardcoded defaults (never removed, so the
-safety properties of `skill`/`spawn_subagent` are preserved).
+safety properties of `skill`/`delegate` are preserved).
 
 ## 5. Alternatives considered
 
@@ -404,7 +404,7 @@ Each phase lands green independently.
 | Spill dedupe | one file per ToolCallID across repeated `Mark` |
 | `Filter` after spill | does not rewrite the file |
 | Spill disabled | bare stub, no path, no error |
-| Protected tools | `skill`/`spawn_subagent` never pruned even when stale |
+| Protected tools | `skill`/`delegate` never pruned even when stale |
 | `prune_protected_tools` override | additive merge, defaults preserved |
 
 **Unit — tools**
