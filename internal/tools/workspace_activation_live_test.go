@@ -22,8 +22,8 @@ package tools
 // preserve the environment, the knobs vanish, and the harness skips
 // silently — run with -v to see the skip reason. The daemon socket needs
 // root, so the test skips as the invoking user unless euid 0. The full
-// runbook, including building a D5-satisfying image, is
-// docs/isolated-workspace-live-testing.md.
+// runbook, including building a contract-satisfying image, is in
+// docs/configuration.md#workspace-reference.
 
 import (
 	"context"

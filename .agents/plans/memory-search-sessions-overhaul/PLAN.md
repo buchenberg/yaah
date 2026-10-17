@@ -39,9 +39,9 @@ has no filters at all.
 | 1 | "dolt setup on windows" | 3 | semantic | all 3 hits from current session; no session_id in output |
 | 2 | (empty) | 1 | listRecentMessages | works as documented |
 | 3 | "platform-router PMA rules composition" | 5 | semantic | top hits are `tool:memory_add` arg payloads, not discussion |
-| 4 | "supervised_task rollback demo checkpoint" | 5 | semantic | same — tool-call payload pollution |
+| 4 | "retained proposal rollback demo checkpoint" | 5 | semantic | same — tool-call payload pollution |
 | 5 | "asdkfjhqwoeirujzxcv nonsense" | 3 | semantic | returns 3 hits at 0.44–0.46, no threshold, no signal |
-| 6 | "supervised_task developer sub-agent" | 2 | semantic | both hits `[tool:memory_add]` args |
+| 6 | "delegate developer sub-agent" | 2 | semantic | both hits `[tool:memory_add]` args |
 | 7 | "yaah" | 20 | semantic | 20 tool-call blobs; **zero** `[SUB]` markers |
 | 8 | " " (whitespace) | 3 | semantic | bypasses listing branch — should be empty-query |
 
