@@ -76,6 +76,41 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 		}
 	}
 
+	// drainPending consumes any chunks the producer buffered before it pushed
+	// an error or the context ended. Both select arms can win while a content
+	// chunk is still unread (Go picks uniformly among ready cases), which would
+	// discard text the model already emitted. Non-blocking by construction.
+	drainPending := func() {
+	drain:
+		// Bounded: a producer that keeps refilling the buffer must not turn a
+		// failure path into an unbounded read loop that outlives the deadline.
+		for drained := 0; drained < 1024; drained++ {
+			select {
+			case chunk, ok := <-chunks:
+				if !ok {
+					break drain
+				}
+				if chunk.Usage != nil {
+					usageCaptured = true
+					addStreamUsage(&totalUsage, chunk.Usage)
+				}
+				if len(chunk.Choices) == 0 {
+					continue
+				}
+				delta := chunk.Choices[0].Delta
+				if delta.ReasoningContent != "" {
+					reasoning.WriteString(delta.ReasoningContent)
+				}
+				if delta.Content != "" {
+					content.WriteString(delta.Content)
+					tokenCount++
+				}
+			default:
+				break drain
+			}
+		}
+	}
+
 	for {
 		select {
 		case chunk, ok := <-chunks:
@@ -93,7 +128,8 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 							observability.RecordError(streamSpan, err)
 							streamSpan.End()
 						}
-						return types.Message{}, "", responseModel, totalUsage, err
+						drainPending()
+						return partialStreamedMessage(content.String()), "", responseModel, totalUsage, err
 					}
 				default:
 				}
@@ -229,7 +265,8 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 					observability.RecordError(streamSpan, err)
 					streamSpan.End()
 				}
-				return types.Message{}, "", "", totalUsage, err
+				drainPending()
+				return partialStreamedMessage(content.String()), "", "", totalUsage, err
 			}
 			recordVerbose("errs_nil")
 			if streamSpan != nil {
@@ -243,7 +280,8 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 				observability.RecordError(streamSpan, ctx.Err())
 				streamSpan.End()
 			}
-			return types.Message{}, "", "", totalUsage, ctx.Err()
+			drainPending()
+			return partialStreamedMessage(content.String()), "", "", totalUsage, ctx.Err()
 		}
 	}
 }
@@ -302,6 +340,20 @@ func checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, f
 		return types.Message{}, finishReason, responseModel, usage, fmt.Errorf("streamed response produced no content (finish_reason=%s)", finishReason)
 	}
 	return msg, finishReason, responseModel, usage, nil
+}
+
+// partialStreamedMessage preserves the text the model produced before a stream
+// failed. A deadline that lands mid-completion would otherwise erase work that
+// the user (or the orchestrator judging the sub-agent) can still read, and the
+// caller could not tell a lost partial from a model that produced nothing.
+//
+// Content only: tool calls cut mid-stream have incomplete arguments and must
+// never look executable.
+func partialStreamedMessage(content string) types.Message {
+	if content == "" {
+		return types.Message{}
+	}
+	return types.Message{Role: "assistant", Content: content}
 }
 
 // assembleStreamed builds the assistant message from accumulated stream state.

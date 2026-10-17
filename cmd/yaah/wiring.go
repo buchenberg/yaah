@@ -640,6 +640,11 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		text := result
 		if err != nil {
 			text = "error: " + err.Error()
+			if strings.TrimSpace(result) != "" {
+				// A timeout mid-completion leaves reviewable text; delivering
+				// only the error threw away everything the sub-agent wrote.
+				text += "\n\npartial output before the failure:\n" + result
+			}
 		}
 		msg := prefix + " completed:\n" + text
 		select {

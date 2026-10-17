@@ -299,7 +299,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 			continue
 
 		case classified.ShouldAbort:
-			return attach(CallResult{Usage: result.Usage}), err
+			return attach(result), err
 		}
 
 		if classified.Retryable && attempt < c.MaxRetries {
@@ -313,11 +313,11 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 			case <-time.After(backoff):
 			case <-ctx.Done():
 				stopHB()
-				return attach(CallResult{Usage: result.Usage}), ctx.Err()
+				return attach(result), ctx.Err()
 			}
 			stopHB()
 		} else if !classified.Retryable {
-			return attach(CallResult{Usage: result.Usage}), err
+			return attach(result), err
 		}
 	}
 	return attach(lastResult), lastErr

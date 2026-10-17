@@ -327,3 +327,34 @@ func TestExecute_BackgroundRetainedReturnsProposal(t *testing.T) {
 		t.Error("the host tree must not be touched before settlement")
 	}
 }
+
+// TestExecute_TimeoutIncludesPartialOutput pins the shared-lane contract: a
+// non-empty result returned alongside the deadline is the partial output, and
+// it must reach the orchestrator in the structured result instead of being
+// replaced by the bare error.
+func TestExecute_TimeoutIncludesPartialOutput(t *testing.T) {
+	tt := &DelegateTool{
+		RoleNames: []string{"analyst"},
+		Runner: func(context.Context, string, SubAgentParams) (string, error) {
+			return "almost done", context.DeadlineExceeded
+		},
+	}
+
+	out, err := tt.Execute(context.Background(), `{"description":"d","prompt":"p","role":"analyst","timeout_seconds":1}`)
+	if err != nil {
+		t.Fatalf("a timeout is a structured result, not a tool error: %v", err)
+	}
+	var got struct {
+		Error   string `json:"error"`
+		Partial string `json:"partial"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("unmarshal %q: %v", out, err)
+	}
+	if got.Error != "timed out" {
+		t.Errorf("error = %q, want timed out", got.Error)
+	}
+	if got.Partial != "almost done" {
+		t.Errorf("partial = %q, want the sub-agent's output", got.Partial)
+	}
+}
