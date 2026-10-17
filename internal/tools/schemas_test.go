@@ -27,7 +27,7 @@ func TestAllToolSchemas_AreValidJSON(t *testing.T) {
 		&RoleTool{},
 		&SubAgentJobsTool{},
 		&SupervisorTool{},
-		&TaskTool{},
+		&DelegateTool{},
 		&TodoWriteTool{},
 	}
 	// NewLeafTool reaches every leaf tool, including the shell this platform

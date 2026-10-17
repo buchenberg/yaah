@@ -17,7 +17,7 @@ import (
 
 func TestExecute_RoleValidation(t *testing.T) {
 	var gotRole string
-	tt := &TaskTool{
+	tt := &DelegateTool{
 		RoleNames: []string{"analyst", "developer"},
 		Runner: func(ctx context.Context, prompt string, params SubAgentParams) (string, error) {
 			gotRole = params.Role
@@ -55,7 +55,7 @@ func TestExecute_RoleValidation(t *testing.T) {
 
 func TestExecute_RoleResolverLayersOverCached(t *testing.T) {
 	var gotRole string
-	tt := &TaskTool{
+	tt := &DelegateTool{
 		RoleNames:        []string{"a", "b"},
 		RoleResolver:     func() []string { return []string{"b", "c", "goat-jokes"} },
 		RoleDescriptions: map[string]string{"goat-jokes": "tells a joke"},
@@ -110,9 +110,9 @@ func TestSchema_RoleRequired(t *testing.T) {
 	}
 
 	// Enum schema (registry roles present).
-	requiredHasRole(t, (&TaskTool{RoleNames: []string{"analyst"}}).Schema())
+	requiredHasRole(t, (&DelegateTool{RoleNames: []string{"analyst"}}).Schema())
 	// Fallback schema (no registry).
-	requiredHasRole(t, (&TaskTool{}).Schema())
+	requiredHasRole(t, (&DelegateTool{}).Schema())
 }
 
 func TestParseSubAgentOutput_NoEscalation(t *testing.T) {
@@ -183,7 +183,7 @@ func TestExecute_BackgroundViaManager(t *testing.T) {
 		mu.Unlock()
 	}
 
-	tt := &TaskTool{
+	tt := &DelegateTool{
 		RoleNames:      []string{"analyst"},
 		BackgroundJobs: mgr,
 		Runner: func(ctx context.Context, prompt string, params SubAgentParams) (string, error) {
@@ -245,7 +245,7 @@ func TestExecute_BackgroundViaManager(t *testing.T) {
 // background mode without a manager yields a clear error (e.g. in a
 // context where background is unavailable).
 func TestExecute_BackgroundWithoutManagerErrors(t *testing.T) {
-	tt := &TaskTool{
+	tt := &DelegateTool{
 		RoleNames: []string{"analyst"},
 		Runner: func(ctx context.Context, prompt string, params SubAgentParams) (string, error) {
 			return "should not run", nil
@@ -282,7 +282,7 @@ func TestExecute_BackgroundRetainedReturnsProposal(t *testing.T) {
 	runner := writingRunner(t, "bg.txt")
 	rt := newRetainedTestEnv(t, runner)
 
-	tt := &TaskTool{
+	tt := &DelegateTool{
 		RoleNames:      []string{"developer"},
 		BackgroundJobs: mgr,
 		Runner:         runner.run(),

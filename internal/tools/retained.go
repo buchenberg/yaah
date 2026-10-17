@@ -36,7 +36,7 @@ import (
 // RetainedRuntime carries the wiring a retained dispatch needs. It is injected
 // by the composition root.
 type RetainedRuntime struct {
-	// Runner is the sub-agent execution closure (the same one spawn_subagent
+	// Runner is the sub-agent execution closure (the same one delegate
 	// uses). Required.
 	Runner jobs.TaskRunner
 	// RepoPath is the git repository the worktree is cut from.
@@ -123,18 +123,18 @@ func getRetainedProposal(id string) (*retainedProposal, error) {
 // provisioning or sealing failure has no output.
 func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, subParams jobs.SubAgentParams, timeout time.Duration) (string, error) {
 	if rt.Runner == nil {
-		return "", fmt.Errorf("spawn_subagent: sub-agent runner not configured")
+		return "", fmt.Errorf("delegate: sub-agent runner not configured")
 	}
 	mgr := rt.ScopeManager
 	if mgr == nil {
-		return "", fmt.Errorf("spawn_subagent: retained mode needs shepherd tracing (set shepherd_trace_dir)")
+		return "", fmt.Errorf("delegate: retained mode needs shepherd tracing (set shepherd_trace_dir)")
 	}
 	if rt.RootScopeID == "" {
-		return "", fmt.Errorf("spawn_subagent: retained mode needs a shepherd root scope to fork from")
+		return "", fmt.Errorf("delegate: retained mode needs a shepherd root scope to fork from")
 	}
 	parent, ok := mgr.Get(rt.RootScopeID)
 	if !ok {
-		return "", fmt.Errorf("spawn_subagent: root scope %s not found", rt.RootScopeID)
+		return "", fmt.Errorf("delegate: root scope %s not found", rt.RootScopeID)
 	}
 
 	// A repo path defaults to the process working directory, as root-scope
@@ -143,7 +143,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	if rt.RepoPath == "" {
 		wd, werr := os.Getwd()
 		if werr != nil {
-			return "", fmt.Errorf("spawn_subagent: resolve repo path: %w", werr)
+			return "", fmt.Errorf("delegate: resolve repo path: %w", werr)
 		}
 		rt.RepoPath = wd
 	}
@@ -152,7 +152,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	// everything the sub-agent changes relative to it.
 	forkPoint, err := parent.CaptureWorkspace(ctx)
 	if err != nil {
-		return "", fmt.Errorf("spawn_subagent: capture basis: %w", err)
+		return "", fmt.Errorf("delegate: capture basis: %w", err)
 	}
 
 	id := fmt.Sprintf("proposal:%d:%d", time.Now().UnixNano(), proposalSeq.Add(1))

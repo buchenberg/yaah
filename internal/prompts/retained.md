@@ -4,7 +4,7 @@ Sub-agents run in an **isolated worktree** and their work comes back as a
 **proposal** — a sealed diff held to one side. Your own commands still run
 directly on the host; only a sub-agent's work is retained.
 
-`spawn_subagent` returns `status: "proposal"` with a `proposal_id`, the changed
+`delegate` returns `status: "proposal"` with a `proposal_id`, the changed
 `files`, and a `diff`. **Nothing has changed on your working tree yet.** Read the
 proposal and settle it with the `proposal` tool:
 
@@ -33,7 +33,7 @@ what you learned — a discarded attempt costs one dispatch and leaves your tree
 untouched.
 
 **When more than one approach is plausible, speculate.** Issue 2–3
-`spawn_subagent` calls in the *same* turn, one per approach, each with a
+`delegate` calls in the *same* turn, one per approach, each with a
 `description` naming it. They run concurrently, each in its own worktree, and each
 seals its own proposal — the parent tree still sees nothing. Then `proposal show`
 each, `select` the best, and `discard` the rest; a discarded attempt costs its

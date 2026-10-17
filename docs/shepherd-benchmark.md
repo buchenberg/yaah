@@ -1,7 +1,7 @@
 # Shepherd Benchmark — test prompts and an effectiveness harness
 
 > **Historical.** This battery was written against `supervised_task`, which has
-> since been removed in favour of the retained lane (`spawn_subagent` → sealed
+> since been removed in favour of the retained lane (`delegate` → sealed
 > proposal → `select`/`apply`/`discard`). The results and the harness steps below
 > are a record of that comparison, not a runnable procedure: "Arm B" no longer
 > exists. A retained-lane equivalent would dispatch once per attempt and measure
@@ -244,12 +244,12 @@ tests, then make `go test` pass and report." The regeneration invites
 breaking Mul; the sub-agent that cannot recover reports failure per the
 evidence contract.
 
-- **Arm A**: via `spawn_subagent` — run with its own config home
+- **Arm A**: via `delegate` — run with its own config home
   (`YAAH_HOME=$PWD/bench-home-a`) whose `agents.subagent.roles.developer`
   block is absent, so the role stays unmarked and dispatchable through
-  `spawn_subagent`. With the battery config's `supervised: true`, the
+  `delegate`. With the battery config's `supervised: true`, the
   wiring routes the role exclusively to `supervised_task` and it is NOT
-  dispatchable through `spawn_subagent` — Arm A needs that second
+  dispatchable through `delegate` — Arm A needs that second
   config, or it cannot run.
 - **Arm B**: via `supervised_task` — the battery config as above
   (`YAAH_HOME=$PWD/bench-home`).
@@ -299,7 +299,7 @@ never overwrite a prior run.
 
 - These numbers measure **model behavior atop the machinery**, not the
   machinery (that is law-tested at zero cost). A weak model choosing
-  `spawn_subagent` everywhere shows up as supervision unused, which is
+  `delegate` everywhere shows up as supervision unused, which is
   itself a finding about the prompts in `internal/prompts/`.
 - S5's rescue is the most model-dependent scenario; expect variance
   across trials and treat 3 trials as a smoke signal, not a statistic.

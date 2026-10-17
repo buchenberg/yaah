@@ -119,11 +119,11 @@ func TestRoleDefToProfile(t *testing.T) {
 	if len(p.Tools) != 2 {
 		t.Errorf("Tools len = %d", len(p.Tools))
 	}
-	if !contains(p.Tools, "spawn_subagent") {
-		// "spawn_subagent" is not in Tools, correct
-		defTask := RoleDef{Tools: []string{"read", "spawn_subagent"}}
-		if pt := defTask.ToProfile(); !contains(pt.Tools, "spawn_subagent") {
-			t.Error("profile with spawn_subagent tool should be spawn-capable")
+	if !contains(p.Tools, "delegate") {
+		// "delegate" is not in Tools, correct
+		defTask := RoleDef{Tools: []string{"read", "delegate"}}
+		if pt := defTask.ToProfile(); !contains(pt.Tools, "delegate") {
+			t.Error("profile with delegate tool should be spawn-capable")
 		}
 	}
 }

@@ -152,7 +152,7 @@ Here's what I can reach for directly:
 | `plan` | Create and manage PLAN.md files |
 | `todowrite` | Track in-flight tasks |
 | `memory_search`, `memory_add`, `memory_update`, `memory_delete`, `memory_search_sessions` | Long-term memory |
-| `spawn_subagent`, `list_subagents` | Team management |
+| `delegate`, `list_subagents` | Team management |
 | `supervisor` | Supervision of running sub-agents: scope inspection (`list_scopes`, `status`), guidance injection, and force-stop (`halt`) |
 
 ## OpenTelemetry observability
@@ -221,7 +221,7 @@ command runs in the container, and the host's working tree stays untouched
 until the model calls `apply_out` — a dry run previews the diff since the
 baseline, and the real apply is gated behind your approval.
 
-Sub-agents dispatched with `spawn_subagent` inherit the same container, so
+Sub-agents dispatched with `delegate` inherit the same container, so
 their file work is isolated with the parent's and reaches the host through
 the same `apply_out`. Their turn-checkpoint/rollback substrate is host-git
 based and stays off in isolated mode — the scope remains for supervisor

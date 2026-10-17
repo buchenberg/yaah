@@ -1,6 +1,6 @@
 ## Sub-agents
 
-`spawn_subagent` dispatches a specialist sub-agent: non-blocking, with parallel
+`delegate` dispatches a specialist sub-agent: non-blocking, with parallel
 and background dispatches. In the retained lane its work comes back as a
 proposal you settle; in the shared lane it runs directly on the workspace.
 

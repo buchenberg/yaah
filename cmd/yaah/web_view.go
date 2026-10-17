@@ -350,7 +350,7 @@ func toolStartSummary(name, args string) string {
 		if a := extractAction(args); a != "" {
 			return a
 		}
-	case "spawn_subagent":
+	case "delegate":
 		role := toolfmt.MatchJSONField(args, "role")
 		desc := toolfmt.MatchJSONField(args, "description")
 		return toolfmt.SubagentLabel(role, desc)

@@ -314,7 +314,7 @@ func TestIsolatedWorkspaceGuidance(t *testing.T) {
 	if !strings.Contains(got, "dry_run") {
 		t.Error("guidance must point at the dry-run preview")
 	}
-	if !strings.Contains(got, "spawn_subagent") {
+	if !strings.Contains(got, "delegate") {
 		t.Error("guidance must name the sub-agent alternative for supervised_task")
 	}
 	if !strings.Contains(got, "`mcp_a`") || !strings.Contains(got, "`mcp_b`") {

@@ -29,7 +29,7 @@ type toolDispatch struct {
 	toolID      int64
 	abbreviated string
 
-	isTask       bool
+	isDelegate   bool
 	taskRole     string
 	taskPrompt   string
 	isBackground bool
@@ -49,8 +49,8 @@ func (l *Loop) newDispatch(idx int, call types.ToolCall) *toolDispatch {
 	d := &toolDispatch{loop: l, idx: idx, call: call}
 	d.toolID = l.toolIDGen.Add(1)
 	d.abbreviated = abbreviateArgs(call.Function.Arguments, 80)
-	d.isTask = call.Function.Name == "spawn_subagent"
-	if d.isTask {
+	d.isDelegate = call.Function.Name == "delegate"
+	if d.isDelegate {
 		d.taskRole, d.taskPrompt, d.isBackground = parseTaskArgs(call.Function.Arguments)
 		d.subAgentID = fmt.Sprintf("sa-%d", l.subAgentIDGen.Add(1))
 	}
@@ -91,25 +91,25 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 	runCtx := ctx
 	var toolSpan trace.Span
 	if l.Config.OtelEnabled {
-		if d.isTask && !d.isBackground {
+		if d.isDelegate && !d.isBackground {
 			runCtx, toolSpan = observability.StartSubAgent(ctx, d.taskRole, d.taskPrompt)
-		} else if d.isTask && d.isBackground {
+		} else if d.isDelegate && d.isBackground {
 			// A short span for the dispatch only; the background job
 			// owns its own long-lived sub-agent span (created by the
 			// BackgroundJobs manager as a child of this).
-			runCtx, toolSpan = observability.StartTool(ctx, "spawn_subagent:dispatch", d.call.Function.Arguments)
+			runCtx, toolSpan = observability.StartTool(ctx, "delegate:dispatch", d.call.Function.Arguments)
 		} else {
 			runCtx, toolSpan = observability.StartTool(ctx, d.call.Function.Name, d.call.Function.Arguments)
 		}
 	}
 
-	if d.isTask && !d.isBackground {
+	if d.isDelegate && !d.isBackground {
 		runCtx = d.setupSubAgent(runCtx)
 	}
 
 	res, err := l.Registry.Execute(runCtx, d.call.Function.Name, d.call.Function.Arguments)
 
-	if d.isTask && !d.isBackground {
+	if d.isDelegate && !d.isBackground {
 		// Fallback for runners that never fired the start notifier: emit
 		// the start event with the final model so views still see the
 		// role/model pairing (arrives late but complete). Background
@@ -127,7 +127,7 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 	// result is truncated for display. Background dispatch returns a
 	// {"status":"running"} placeholder with no payload to parse.
 	var escalation *tools.Escalation
-	if d.isTask && !d.isBackground && l.broker != nil {
+	if d.isDelegate && !d.isBackground && l.broker != nil {
 		if output := tools.ParseSubAgentOutput(res, err); output.Escalation != nil {
 			escalation = output.Escalation
 		}
@@ -138,12 +138,12 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 	// payload so the child's partial output survives and surface the
 	// stuck classification alongside it (yaah-1ep).
 	stuckPartial := ""
-	if d.isTask && !d.isBackground && d.watchdogActive && ctx.Err() == nil && runCtx.Err() == context.Canceled {
+	if d.isDelegate && !d.isBackground && d.watchdogActive && ctx.Err() == nil && runCtx.Err() == context.Canceled {
 		err = tools.ErrStuckChild
 		stuckPartial = l.truncateToolResult(res)
 	}
 	if l.Config.OtelEnabled && toolSpan != nil {
-		if d.isTask && !d.isBackground {
+		if d.isDelegate && !d.isBackground {
 			observability.FinishSubAgent(toolSpan, err)
 		} else {
 			observability.FinishTool(toolSpan, res, err)
@@ -179,7 +179,7 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 		l.broker.PublishMustDeliver(evt)
 	}
 
-	if d.isTask && !d.isBackground && l.broker != nil {
+	if d.isDelegate && !d.isBackground && l.broker != nil {
 		d.emitSubAgentEnd(res, errStr, duration)
 		if escalation != nil {
 			l.broker.PublishMustDeliver(&EscalationEvent{
@@ -215,7 +215,7 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 // call or ctx ends.
 func (d *toolDispatch) acquire(ctx context.Context) error {
 	l := d.loop
-	if d.isTask && l.subAgentSem != nil {
+	if d.isDelegate && l.subAgentSem != nil {
 		select {
 		case l.subAgentSem <- struct{}{}:
 			d.releaseSubAgent = func() { <-l.subAgentSem }
@@ -387,7 +387,7 @@ func (l *Loop) runGateDispatch(ctx context.Context, validatorRole, gatePrompt st
 		ID:   fmt.Sprintf("gate-%s", validatorRole),
 		Type: "function",
 		Function: types.ToolCallFn{
-			Name:      "spawn_subagent",
+			Name:      "delegate",
 			Arguments: gateArgs,
 		},
 	})
@@ -395,7 +395,7 @@ func (l *Loop) runGateDispatch(ctx context.Context, validatorRole, gatePrompt st
 	// Non-blocking semaphore acquire: the parent sub-agent dispatch
 	// already holds a slot that accounts for this work, and a blocking
 	// acquire could deadlock when MaxSubAgentConcurrency == 1.
-	if gd.isTask && l.subAgentSem != nil {
+	if gd.isDelegate && l.subAgentSem != nil {
 		select {
 		case l.subAgentSem <- struct{}{}:
 			gd.releaseSubAgent = func() { <-l.subAgentSem }
@@ -420,7 +420,7 @@ func (l *Loop) runGateDispatch(ctx context.Context, validatorRole, gatePrompt st
 	runCtx = gd.setupSubAgent(runCtx)
 
 	start := time.Now()
-	res, err := l.Registry.Execute(runCtx, "spawn_subagent", gateArgs)
+	res, err := l.Registry.Execute(runCtx, "delegate", gateArgs)
 
 	// Fallback start announce for runners that never notified.
 	gd.startOnce.Do(func() {

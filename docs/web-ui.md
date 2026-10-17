@@ -105,7 +105,7 @@ tool summary patterns (shared engine in `internal/toolfmt`):
 | `webfetch` | URL from args | `https://docs.example.com` |
 | `git` | action from args | `commit` |
 | `replace` | `replaced in <file>` | `replaced in utils.go` |
-| `spawn_subagent` | `sub-agent: <role> — <specialty> · <description>` | `sub-agent: Developer — Full-stack engineer · Fix auth bug` |
+| `delegate` | `sub-agent: <role> — <specialty> · <description>` | `sub-agent: Developer — Full-stack engineer · Fix auth bug` |
 | _(default)_ | first line of output (≤80 chars) | — |
 
 Two summary functions are used at different points:

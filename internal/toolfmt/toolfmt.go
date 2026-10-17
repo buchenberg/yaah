@@ -57,7 +57,7 @@ func Summary(toolName, toolArgs, content string) string {
 		return ""
 	case "replace":
 		return "replaced in " + FilePath(toolArgs)
-	case "spawn_subagent":
+	case "delegate":
 		role := MatchJSONField(toolArgs, "role")
 		desc := MatchJSONField(toolArgs, "description")
 		return SubagentLabel(role, desc)

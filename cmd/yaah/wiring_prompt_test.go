@@ -27,7 +27,7 @@ func TestBuildSubAgentBasePrompt_LeanIdentity(t *testing.T) {
 	// embed it, whatever the builder wiring looks like.
 	for _, banned := range []string{
 		prompts.IdentityPrompt,
-		"spawn_subagent",
+		"delegate",
 		"list_subagents",
 	} {
 		if strings.Contains(got, banned) {

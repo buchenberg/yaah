@@ -104,7 +104,7 @@ type Loop struct {
 
 	// BackgroundJobs, when set, is wired with the loop's broker callbacks
 	// (SubAgentStart/End events) at Run start so background sub-agents
-	// dispatching through the shared TaskTool emit live UI events while a
+	// dispatching through the shared DelegateTool emit live UI events while a
 	// loop is active. Usage attribution is session-scoped (on the manager)
 	// so it survives across Runs; only the event hooks are loop-scoped.
 	BackgroundJobs *jobs.BackgroundJobs

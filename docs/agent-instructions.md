@@ -18,7 +18,7 @@ covered separately in [prompts.md](prompts.md).
 | Orchestrator guidance: delegating to a sub-agent | `internal/prompts/subagent_tools.md` (`prompts.SubAgentToolsGuidance`) | Local sessions (`cmd/yaah/wiring.go`) — an isolated session takes the workspace delta below instead |
 | Retained-lane guidance: proposals and settlement | `internal/prompts/retained.md` (`prompts.RetainedModeGuidance`) | Local sessions with the retained lane live (`agents.subagent.mode: retained` and a root scope) |
 | `supervisor` tool description + schema | In code: `internal/tools/supervisor.go` (`Description()`, `Schema()`) | Always with the tool, when registered |
-| `spawn_subagent` (plain `task`) tool description | `internal/prompts/tools/task.md` | Always |
+| `delegate` tool description | `internal/prompts/tools/delegate.md` | Always |
 | Sub-agent identity (batching, codebase respect, reporting) | `internal/prompts/subagent_identity.md` | Every sub-agent dispatch; orchestration guidance is deliberately omitted |
 | Loop-detection steering message (convergence rule) | `internal/prompts/steering_message.md`, emitted by `LoopDetectionMiddleware` (`internal/agent/pipeline/loopdetect.go`) | When one tool dominates consecutive turns |
 | Injected guidance (supervisor `inject`, advisory rules) | `SteerMiddleware` (`internal/agent/pipeline/steer.go`) | Next turn, as a `[STEER]`-prefixed user message, when guidance arrives mid-run |
@@ -33,7 +33,7 @@ result.**
 
 From `subagent_tools.md`:
 
-- **`spawn_subagent`** is non-blocking. Parallel and background dispatches
+- **`delegate`** is non-blocking. Parallel and background dispatches
   are supported, each in its own world. Use it for independent work that can
   run concurrently, and for exploration whose raw tool calls would otherwise
   fill the orchestrator's context.
@@ -114,7 +114,7 @@ The `supervisor` tool stays registered whenever the scope manager is live:
 scope inspection and inject/halt work on container-side scopes as they
 do locally. The orchestrator guidance block is replaced by the isolated
 workspace delta (`IsolatedWorkspaceGuidance`): the model is told which
-host-only tools are missing and why, that `spawn_subagent` runs inside
+host-only tools are missing and why, that `delegate` runs inside
 the same container, and that changes reach the host only through
 `apply_out` (dry run first, user approval, never claim work is saved
 before it lands).

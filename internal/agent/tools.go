@@ -19,7 +19,7 @@ func (l *Loop) buildToolsForLevel() []types.ToolDef {
 
 // agentTools returns only the sub-agent related tools.
 func (l *Loop) agentTools() []types.ToolDef {
-	agentToolNames := map[string]bool{"spawn_subagent": true, "list_subagents": true}
+	agentToolNames := map[string]bool{"delegate": true, "list_subagents": true}
 	var defs []types.ToolDef
 	for _, name := range l.Registry.List() {
 		if agentToolNames[name] {

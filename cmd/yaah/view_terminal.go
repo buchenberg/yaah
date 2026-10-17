@@ -46,7 +46,7 @@ func (v *terminalView) HandleEvent(evt agent.Event) {
 	case *agent.ToolStartEvent:
 		// handled on ToolEndEvent
 	case *agent.ToolEndEvent:
-		if e.Name == "spawn_subagent" {
+		if e.Name == "delegate" {
 			return
 		}
 		fmt.Fprintf(os.Stderr, "\n  tool: %s", Bold(e.Name))

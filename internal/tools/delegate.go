@@ -14,7 +14,7 @@ import (
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
-// TaskTool spawns a sub-agent with a restricted tool set to complete a task.
+// DelegateTool spawns a sub-agent with a restricted tool set to complete a task.
 //
 // The tool supports an optional role (worker/reviewer/planner) that
 // selects the sub-agent's tool set, iteration budget, and default
@@ -26,14 +26,14 @@ import (
 // Background mode (background: true) dispatches the sub-agent in a
 // goroutine and returns immediately. Results are delivered via
 // BackgroundNotifier.
-type TaskTool struct {
+type DelegateTool struct {
 	Runner jobs.TaskRunner
 
 	// ResolveTimeout returns the effective default deadline for a call
 	// when the model did not supply timeout_seconds. It receives the
 	// parsed params so it can vary by role. May be nil (no default
 	// timeout). The caller is expected to fold in role/profile/config
-	// defaults; TaskTool clamps any per-call override to the schema
+	// defaults; DelegateTool clamps any per-call override to the schema
 	// bounds before this is consulted.
 	ResolveTimeout func(params jobs.SubAgentParams) time.Duration
 
@@ -45,11 +45,11 @@ type TaskTool struct {
 
 	// RoleResolver, when non-nil, provides a live role-name lookup.
 	// It is called at execution time to validate roles against the current
-	// registry, so the spawn_subagent tool sees newly created roles immediately.
+	// registry, so the delegate tool sees newly created roles immediately.
 	RoleResolver func() []string
 
 	// RoleDescriptions maps role name to a one-line description of what
-	// the role does. Included in the spawn_subagent schema's role
+	// the role does. Included in the delegate schema's role
 	// parameter so the orchestrator can choose roles without calling
 	// list_subagents. When empty no descriptions are appended.
 	RoleDescriptions map[string]string
@@ -76,15 +76,15 @@ type TaskTool struct {
 	Retained *RetainedRuntime
 }
 
-func (t *TaskTool) Name() string { return "spawn_subagent" }
-func (t *TaskTool) Description() string {
-	return prompts.ToolDescription("task")
+func (t *DelegateTool) Name() string { return "delegate" }
+func (t *DelegateTool) Description() string {
+	return prompts.ToolDescription("delegate")
 }
 
-func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
+func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error) {
 	var raw map[string]any
 	if err := json.Unmarshal([]byte(args), &raw); err != nil {
-		return "", fmt.Errorf("spawn_subagent: invalid arguments: %w", err)
+		return "", fmt.Errorf("delegate: invalid arguments: %w", err)
 	}
 
 	for _, f := range []string{"timeout_seconds", "max_iterations", "max_turns", "output_limit"} {
@@ -113,10 +113,10 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 		Background     bool   `json:"background"`
 	}
 	if err := json.Unmarshal(fixed, &params); err != nil {
-		return "", fmt.Errorf("spawn_subagent: invalid arguments: %w", err)
+		return "", fmt.Errorf("delegate: invalid arguments: %w", err)
 	}
 	if params.Prompt == "" {
-		return "", fmt.Errorf("spawn_subagent: prompt is required")
+		return "", fmt.Errorf("delegate: prompt is required")
 	}
 
 	// Role is required: there is no default role. Reject empty and
@@ -124,14 +124,14 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 	// result instead of spawning an unconfigured sub-agent.
 	known := t.roleNames()
 	if params.Role == "" {
-		return "", fmt.Errorf("spawn_subagent: role is required — pick one of: %s (use list_subagents for details)", strings.Join(known, ", "))
+		return "", fmt.Errorf("delegate: role is required — pick one of: %s (use list_subagents for details)", strings.Join(known, ", "))
 	}
 	if len(known) > 0 && !slices.Contains(known, params.Role) {
-		return "", fmt.Errorf("spawn_subagent: %w — valid roles: %s", RoleNotFoundError{Role: params.Role}, strings.Join(known, ", "))
+		return "", fmt.Errorf("delegate: %w — valid roles: %s", RoleNotFoundError{Role: params.Role}, strings.Join(known, ", "))
 	}
 
 	if t.Runner == nil {
-		return "", fmt.Errorf("spawn_subagent: sub-agent runner not configured")
+		return "", fmt.Errorf("delegate: sub-agent runner not configured")
 	}
 
 	// Clamp model-supplied overrides to the advertised schema bounds so a
@@ -160,7 +160,7 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 
 	if params.Background {
 		if t.BackgroundJobs == nil {
-			return "", fmt.Errorf("spawn_subagent: background mode requested but not available")
+			return "", fmt.Errorf("delegate: background mode requested but not available")
 		}
 		// The retained lane covers background dispatches too: a background job
 		// that ran the raw runner would mutate the host tree with no proposal,

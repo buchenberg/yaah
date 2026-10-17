@@ -26,7 +26,7 @@ var IdentityPrompt string
 
 // SubAgentIdentityPrompt is the lean identity shipped to dispatched
 // sub-agents. It deliberately omits the main identity's orchestration
-// guidance (spawn_subagent usage, dispatch waves, trusting sub-agent
+// guidance (delegate usage, dispatch waves, trusting sub-agent
 // output) — sub-agents cannot act on any of it. The runner prepends the
 // environment header on top of this and appends role guidance, the
 // response contract, and escalation rules.
@@ -233,7 +233,7 @@ func IsolatedWorkspaceGuidance(omitted, mcpOmitted []string) string {
 	b.WriteString("- Call `apply_out` with `dry_run: true` to see the diff that would land; the host is untouched.\n")
 	b.WriteString("- When the user accepts the work (\"ship it\", \"apply the changes\", \"looks good\"), call `apply_out` without `dry_run` and let them approve. A dry run must come first — the approval prompt shows only the arguments, so the user approves the diff you showed them, or nothing.\n")
 	b.WriteString("- Until it runs, your changes exist only in the container. Never claim they are saved, committed, or in the repository.\n")
-	b.WriteString("\nSub-agents you dispatch with spawn_subagent run inside the same container as you (they inherit this session's sandbox, changes and all) — their file work is isolated with yours and reaches the host only through apply_out.\n")
+	b.WriteString("\nSub-agents you dispatch with delegate run inside the same container as you (they inherit this session's sandbox, changes and all) — their file work is isolated with yours and reaches the host only through apply_out.\n")
 	return b.String()
 }
 
@@ -506,7 +506,7 @@ func Build(l Layers) string {
 
 	if l.MaxSubAgentConcurrency > 0 {
 		parts = append(parts, fmt.Sprintf(
-			"Your sub-agent concurrency limit is %d. You can dispatch up to %d spawn_subagent calls "+
+			"Your sub-agent concurrency limit is %d. You can dispatch up to %d delegate calls "+
 				"per turn; additional calls queue behind the semaphore. Batch dispatches in waves of "+
 				"%d or fewer for optimal throughput.",
 			l.MaxSubAgentConcurrency, l.MaxSubAgentConcurrency, l.MaxSubAgentConcurrency,

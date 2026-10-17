@@ -10,7 +10,7 @@ func TestRoleProfileFor(t *testing.T) {
 		if len(p.Tools) != 0 {
 			t.Errorf("unknown role should fall back to zero-value profile, got %v", p.Tools)
 		}
-		if contains(p.Tools, "spawn_subagent") {
+		if contains(p.Tools, "delegate") {
 			t.Error("unknown role should not be spawn-capable")
 		}
 	})

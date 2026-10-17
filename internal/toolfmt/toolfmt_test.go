@@ -299,11 +299,11 @@ func TestSummary(t *testing.T) {
 		}
 	})
 
-	t.Run("spawn_subagent", func(t *testing.T) {
-		got := Summary("spawn_subagent", `{"role":"developer","description":"fix bug"}`, "")
+	t.Run("delegate", func(t *testing.T) {
+		got := Summary("delegate", `{"role":"developer","description":"fix bug"}`, "")
 		want := "sub-agent: developer \u00b7 fix bug"
 		if got != want {
-			t.Errorf("Summary(spawn_subagent) = %q; want %q", got, want)
+			t.Errorf("Summary(delegate) = %q; want %q", got, want)
 		}
 	})
 
