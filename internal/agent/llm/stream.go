@@ -93,7 +93,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 							observability.RecordError(streamSpan, err)
 							streamSpan.End()
 						}
-						return types.Message{}, "", responseModel, totalUsage, err
+						return partialStreamedMessage(content.String()), "", responseModel, totalUsage, err
 					}
 				default:
 				}
@@ -229,7 +229,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 					observability.RecordError(streamSpan, err)
 					streamSpan.End()
 				}
-				return types.Message{}, "", "", totalUsage, err
+				return partialStreamedMessage(content.String()), "", "", totalUsage, err
 			}
 			recordVerbose("errs_nil")
 			if streamSpan != nil {
@@ -243,7 +243,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 				observability.RecordError(streamSpan, ctx.Err())
 				streamSpan.End()
 			}
-			return types.Message{}, "", "", totalUsage, ctx.Err()
+			return partialStreamedMessage(content.String()), "", "", totalUsage, ctx.Err()
 		}
 	}
 }
@@ -305,6 +305,21 @@ func checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, f
 }
 
 // assembleStreamed builds the assistant message from accumulated stream state.
+
+// partialStreamedMessage preserves the text the model produced before a stream
+// failed. A deadline that lands mid-completion would otherwise erase work that
+// the user (or the orchestrator judging the sub-agent) can still read, and the
+// caller could not tell a lost partial from a model that produced nothing.
+//
+// Content only: tool calls cut mid-stream have incomplete arguments and must
+// never look executable.
+func partialStreamedMessage(content string) types.Message {
+	if content == "" {
+		return types.Message{}
+	}
+	return types.Message{Role: "assistant", Content: content}
+}
+
 func assembleStreamed(content string, toolCalls map[int]*types.ToolCall, reasoningContent string) types.Message {
 	msg := types.Message{
 		Role:             "assistant",

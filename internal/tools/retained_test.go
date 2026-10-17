@@ -342,3 +342,33 @@ func TestRetained_SpeculationSettlesOneAndDiscardsTheRest(t *testing.T) {
 		}
 	}
 }
+
+// TestRetained_PartialOutputSurvivesBodyError: a run that stops early still
+// seals its partial work. The envelope must carry both the partial result and
+// the reason it stopped, or the orchestrator reads truncated work as finished.
+func TestRetained_PartialOutputSurvivesBodyError(t *testing.T) {
+	resetRetainedProposals()
+	r := &sessionRunner{responses: []runnerResponse{{
+		result: "almost done",
+		err:    context.DeadlineExceeded,
+	}}}
+	r.sideEffect = func(call int, _ string) {
+		writeTestFile(t, r.workdirFor(t, call), "partial.txt", "work in progress\n")
+	}
+	rt := newRetainedTestEnv(t, r)
+
+	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 0)
+	if err != nil {
+		t.Fatalf("startRetainedRun: %v", err)
+	}
+	env := decodeProposalEnvelope(t, res)
+	if env.Status != "proposal" {
+		t.Fatalf("status = %q, want proposal (partial work is still reviewable)", env.Status)
+	}
+	if !strings.Contains(env.Result, "almost done") {
+		t.Errorf("result = %q, want the partial output", env.Result)
+	}
+	if !strings.Contains(env.Error, "deadline exceeded") {
+		t.Errorf("error = %q, want the reason the run stopped", env.Error)
+	}
+}

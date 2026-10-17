@@ -180,6 +180,12 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	// failure is surfaced, never dropped.
 	output, sealErr := mgr.Seal(ctx, scopeID)
 	var notes []string
+	if bodyErr != nil {
+		// The run stopped early (timeout, halt, provider error) but its partial
+		// work was still sealed. Say why in the envelope so the orchestrator
+		// does not read a truncated result as a finished one.
+		notes = append(notes, errorString(bodyErr))
+	}
 	if provErr != nil {
 		notes = append(notes, provErr.Error())
 	}

@@ -271,7 +271,12 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 				if traceMw != nil {
 					traceMw.FailTurn(ctx, iter, err)
 				}
-				return "", fmt.Errorf("provider error: %w", err)
+				// Keep whatever the model streamed before the failure. A deadline
+				// that lands mid-completion otherwise turns "almost done" into an
+				// empty result, and the dispatcher cannot tell a lost partial from
+				// a model that said nothing. Callers decide whether to show it; it
+				// is not appended to the conversation.
+				return result.Message.Content, fmt.Errorf("provider error: %w", err)
 			}
 			msg := result.Message
 

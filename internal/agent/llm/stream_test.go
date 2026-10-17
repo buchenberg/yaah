@@ -339,3 +339,54 @@ func TestRunStream_genAIAttrsMirrorAccumulatedUsage(t *testing.T) {
 		t.Errorf("gen_ai.usage.output_tokens = %v, want 42", got)
 	}
 }
+
+// TestRunStream_errorKeepsPartialContent: a transport error after the model has
+// streamed text must not erase that text. Before this, the deadline case
+// returned an empty message, so a sub-agent that was almost done looked
+// identical to one that produced nothing.
+func TestRunStream_errorKeepsPartialContent(t *testing.T) {
+	wantErr := errors.New("read stream: unexpected EOF")
+	c := newStreamingClient(&errorThenCloseStreamProvider{err: wantErr})
+
+	msg, _, _, _, err := c.runStream(context.Background(), c.Provider.(StreamProvider), types.ChatRequest{Model: "test-model"})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("error = %v, want %v", err, wantErr)
+	}
+	if msg.Content != "partial text" {
+		t.Errorf("content = %q, want the partial text", msg.Content)
+	}
+	if len(msg.ToolCalls) != 0 {
+		t.Errorf("a failed stream must not expose partial tool calls, got %d", len(msg.ToolCalls))
+	}
+}
+
+// partialThenHangStreamProvider emits one content chunk and then never closes:
+// the only way out is context cancellation, which is the timeout shape.
+type partialThenHangStreamProvider struct{}
+
+func (p *partialThenHangStreamProvider) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
+	return nil, errors.New("streaming only")
+}
+
+func (p *partialThenHangStreamProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan providers.StreamChunk, <-chan error) {
+	chunks := make(chan providers.StreamChunk, 1)
+	errs := make(chan error)
+	chunks <- providers.StreamChunk{Choices: []providers.StreamChoice{{
+		Delta: providers.StreamDelta{Content: "almost done"},
+	}}}
+	return chunks, errs
+}
+
+func TestRunStream_cancelKeepsPartialContent(t *testing.T) {
+	c := newStreamingClient(&partialThenHangStreamProvider{})
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	msg, _, _, _, err := c.runStream(ctx, c.Provider.(StreamProvider), types.ChatRequest{Model: "test-model"})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want DeadlineExceeded", err)
+	}
+	if msg.Content != "almost done" {
+		t.Errorf("content = %q, want the partial text", msg.Content)
+	}
+}
