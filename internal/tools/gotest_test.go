@@ -135,26 +135,70 @@ func TestGoTestParse_BuildFailureWithPassingPackages(t *testing.T) {
 
 func TestGoTestStatus(t *testing.T) {
 	cases := []struct {
-		name     string
-		exit     int
-		total    int
-		failed   int
-		timedOut bool
-		want     string
+		name        string
+		exit        int
+		total       int
+		failed      int
+		timedOut    bool
+		buildFailed bool
+		sawPackage  bool
+		want        string
 	}{
-		{"clean run", 0, 5, 0, false, goTestOK},
-		{"no test files", 0, 0, 0, false, goTestOK},
-		{"failing tests", 1, 5, 1, false, goTestFailed},
-		{"build failure with no tests", 1, 0, 0, false, goTestError},
-		{"build failure alongside passing tests", 1, 3, 0, false, goTestFailed},
-		{"never started", -1, 0, 0, false, goTestError},
-		{"killed by the time limit", -1, 2, 0, true, goTestError},
+		{"clean run", 0, 5, 0, false, false, true, goTestOK},
+		{"no test files", 0, 0, 0, false, false, true, goTestOK},
+		{"compile-only (-c) runs nothing", 0, 0, 0, false, false, false, goTestError},
+		{"text output (-json=false) parses nothing", 0, 0, 0, false, false, false, goTestError},
+		{"failing tests", 1, 5, 1, false, false, true, goTestFailed},
+		{"build failure with no tests", 1, 0, 0, false, true, true, goTestError},
+		{"build failure alongside passing tests", 1, 3, 0, false, true, true, goTestFailed},
+		{"package-level failure (TestMain exit)", 1, 0, 0, false, false, true, goTestFailed},
+		{"nonzero exit with nothing parsed", 1, 0, 0, false, false, false, goTestError},
+		{"go's own -timeout with partial counts", 1, 2, 0, true, false, true, goTestError},
+		{"never started", -1, 0, 0, false, false, false, goTestError},
+		{"killed by the caller's deadline", -1, 2, 0, true, false, true, goTestError},
 	}
 	for _, c := range cases {
-		if got := goTestStatus(c.exit, c.total, c.failed, c.timedOut); got != c.want {
-			t.Errorf("%s: goTestStatus(%d, %d, %d, %v) = %q, want %q",
-				c.name, c.exit, c.total, c.failed, c.timedOut, got, c.want)
+		if got := goTestStatus(c.exit, c.total, c.failed, c.timedOut, c.buildFailed, c.sawPackage); got != c.want {
+			t.Errorf("%s: goTestStatus(%d, %d, %d, %v, %v, %v) = %q, want %q",
+				c.name, c.exit, c.total, c.failed, c.timedOut, c.buildFailed, c.sawPackage, got, c.want)
 		}
+	}
+}
+
+// TestGoTestParse_GoOwnTimeout: `go test -timeout` kills the binary and exits
+// non-zero without a per-test fail event, so the partial counts used to look
+// like an ordinary failed run with no cause. The panic line marks it.
+func TestGoTestParse_GoOwnTimeout(t *testing.T) {
+	stdout := strings.Join([]string{
+		`{"Action":"start","Package":"example.com/x"}`,
+		`{"Action":"run","Package":"example.com/x","Test":"TestFast"}`,
+		`{"Action":"pass","Package":"example.com/x","Test":"TestFast","Elapsed":0.01}`,
+		`{"Action":"run","Package":"example.com/x","Test":"TestSlow"}`,
+		`{"Action":"output","Package":"example.com/x","Test":"TestSlow","Output":"panic: test timed out after 1s\n"}`,
+		`{"Action":"fail","Package":"example.com/x","Elapsed":1.006}`,
+	}, "\n")
+
+	r := parseGoTestResult(t, stdout, 1)
+	if !r.TimedOut {
+		t.Error("timed_out = false, want true for Go's own -timeout kill")
+	}
+	if r.Status != goTestError {
+		t.Errorf("status = %q, want %q (the run never completed)", r.Status, goTestError)
+	}
+	if r.Passed != 1 {
+		t.Errorf("partial counts lost: passed = %d, want 1", r.Passed)
+	}
+	if r.RawOutput == "" {
+		t.Error("raw_output must carry the timeout tail")
+	}
+}
+
+// TestGoTestParse_NoEventsIsNotGreen: exit 0 with nothing parsed means nothing
+// ran (-c compiles only; -json=false emits text this parser cannot read).
+func TestGoTestParse_NoEventsIsNotGreen(t *testing.T) {
+	r := parseGoTestResult(t, "", 0)
+	if r.Status != goTestError {
+		t.Errorf("status = %q, want %q when no package event was parsed", r.Status, goTestError)
 	}
 }
 

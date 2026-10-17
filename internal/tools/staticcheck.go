@@ -119,11 +119,17 @@ func (t *StaticcheckTool) Execute(ctx context.Context, args string) (string, err
 			result.Stderr += "go vet is not available in this workspace\n"
 		}
 		before := len(result.Diagnostics)
-		parseDiagnostics(res.Stdout, "vet", result)
-		if !result.VetAvailable || (res.ExitCode != 0 && len(result.Diagnostics) == before) {
-			// Non-zero with no diagnostics means vet failed to do its job — a
-			// package that does not compile is the common case — and the build
-			// error is already preserved verbatim in Stdout.
+		buildFailed := analyzerBuildFailure(res.Stdout)
+		if buildFailed {
+			// Compiler errors, not findings: `go vet` prints a `# pkg` header and
+			// then `vet: x.go:3:9: undefined: x`, which even matches diagRe with a
+			// bogus file name. Keep the output verbatim instead of dressing a
+			// build failure up as a warning-level diagnostic.
+			result.Stdout += strings.TrimRight(res.Stdout, "\n") + "\n"
+		} else {
+			parseDiagnostics(res.Stdout, "vet", result)
+		}
+		if !result.VetAvailable || buildFailed || (res.ExitCode != 0 && len(result.Diagnostics) == before) {
 			status = staticcheckError
 		}
 	}
@@ -144,8 +150,15 @@ func (t *StaticcheckTool) Execute(ctx context.Context, args string) (string, err
 			status = staticcheckError
 		} else {
 			before := len(result.Diagnostics)
-			parseDiagnostics(res.Stdout, "staticcheck", result)
-			if res.ExitCode != 0 && len(result.Diagnostics) == before {
+			buildFailed := analyzerBuildFailure(res.Stdout)
+			if buildFailed {
+				// staticcheck prefixes its load failure with `-: # pkg`; the
+				// position lines that follow are compiler messages, not checks.
+				result.Stdout += strings.TrimRight(res.Stdout, "\n") + "\n"
+			} else {
+				parseDiagnostics(res.Stdout, "staticcheck", result)
+			}
+			if buildFailed || (res.ExitCode != 0 && len(result.Diagnostics) == before) {
 				status = staticcheckError
 			}
 		}
@@ -161,6 +174,20 @@ const (
 	staticcheckOK    = "ok"
 	staticcheckError = "error"
 )
+
+// analyzerBuildFailure reports whether the analyzer output carries Go's build
+// header (`# pkg`, or staticcheck's `-: # pkg`), which both tools print only
+// when the package could not be compiled. Those runs analyzed nothing, and
+// their position-prefixed lines must not be reported as findings.
+func analyzerBuildFailure(output string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "# ") || strings.HasPrefix(t, "-: # ") {
+			return true
+		}
+	}
+	return false
+}
 
 func parseDiagnostics(output string, analyzer string, result *staticcheckResult) {
 	lines := strings.Split(output, "\n")

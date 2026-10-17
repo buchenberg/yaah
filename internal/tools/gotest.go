@@ -77,14 +77,13 @@ type goTestParams struct {
 // that does not compile is reported as build-output/build-fail, not as a failed
 // test, so ignoring these fields makes a broken build look like a green run.
 type testEvent struct {
-	Time        string  `json:"Time"`
-	Action      string  `json:"Action"`
-	Package     string  `json:"Package"`
-	Test        string  `json:"Test"`
-	Output      string  `json:"Output"`
-	Elapsed     float64 `json:"Elapsed"`
-	ImportPath  string  `json:"ImportPath"`
-	FailedBuild string  `json:"FailedBuild"`
+	Time       string  `json:"Time"`
+	Action     string  `json:"Action"`
+	Package    string  `json:"Package"`
+	Test       string  `json:"Test"`
+	Output     string  `json:"Output"`
+	Elapsed    float64 `json:"Elapsed"`
+	ImportPath string  `json:"ImportPath"`
 }
 
 type goTestPkgResult struct {
@@ -148,20 +147,26 @@ func (t *GoTestTool) Execute(ctx context.Context, args string) (string, error) {
 	res, execErr := ws.Exec(ctx, ExecRequest{Command: "go", Args: cmdArgs, SeparateStreams: true})
 
 	// A non-zero exit is how go test reports failing tests, so it is not an
-	// error. A negative exit code means the process never started (or was
-	// killed) — the old code discarded that error, so a missing or unrunnable
-	// toolchain produced {"passed":0,"failed":0,"exit_code":1}, which reads as
-	// green. A cancelled context is not a launch failure: the partial stream is
-	// still parsed and reported as an error result below.
-	if execErr != nil && res.ExitCode < 0 && ctx.Err() == nil {
-		detail := strings.TrimSpace(res.Stderr)
-		if detail == "" {
-			detail = strings.TrimSpace(res.Stdout)
+	// error. A non-positive exit with no output means the process never started
+	// (missing go, snap-confine abort, a workspace that returns the zero-value
+	// ExecResult with an error) — the old code discarded that error, so it
+	// produced {"passed":0,"failed":0,"exit_code":1}, which reads as green.
+	//
+	// A kill after output (OOM, SIGKILL) is different: the JSON stream is
+	// partial but reviewable, so it becomes a structured error result instead
+	// of a hard error. A cancelled context is handled the same way below.
+	killedWithOutput := false
+	if execErr != nil && res.ExitCode <= 0 && ctx.Err() == nil {
+		// Only stdout is evidence that go ran: it is the JSON event stream. A
+		// launch failure explains itself on stderr and produced none.
+		killedWithOutput = strings.TrimSpace(res.Stdout) != ""
+		if !killedWithOutput {
+			detail := strings.TrimSpace(res.Stderr)
+			if detail != "" {
+				return "", fmt.Errorf("go_test: could not run go: %w\n%s", execErr, detail)
+			}
+			return "", fmt.Errorf("go_test: could not run go: %w", execErr)
 		}
-		if detail != "" {
-			return "", fmt.Errorf("go_test: could not run go: %w\n%s", execErr, detail)
-		}
-		return "", fmt.Errorf("go_test: could not run go: %w", execErr)
 	}
 
 	result := &goTestResult{
@@ -170,10 +175,12 @@ func (t *GoTestTool) Execute(ctx context.Context, args string) (string, error) {
 		TimedOut: ctx.Err() == context.DeadlineExceeded,
 	}
 	result.parse(res.Stdout)
-	if ctx.Err() != nil && result.Status != goTestError {
-		// A cancelled or timed-out run yields partial events, but the counts are
-		// not a verdict: the suite was cut short.
+	if (ctx.Err() != nil || killedWithOutput) && result.Status != goTestError {
+		// A cancelled, timed-out, or externally killed run yields partial
+		// events, but the counts are not a verdict: the suite was cut short.
 		result.Status = goTestError
+	}
+	if result.Status == goTestError || result.TimedOut {
 		result.RawOutput = tailOutput(res.Stdout, 8*1024)
 	}
 
@@ -210,6 +217,8 @@ func (r *goTestResult) parse(stdout string) {
 	var failedBuilds []string
 	var buildOutput strings.Builder
 	var totalElapsed float64
+	sawPackage := false
+	goTimedOut := false
 
 	scanner := bufio.NewScanner(strings.NewReader(stdout))
 	// Generated code and panic traces produce long output lines; the default
@@ -232,10 +241,18 @@ func (r *goTestResult) parse(stdout string) {
 				failedBuilds = append(failedBuilds, ev.ImportPath)
 			}
 			continue
+		case "output":
+			// go test -timeout prints this through an output event and exits
+			// non-zero without a per-test fail event; without it a timed-out
+			// suite is indistinguishable from a normal test failure.
+			if strings.Contains(ev.Output, "test timed out after") {
+				goTimedOut = true
+			}
 		}
 		if ev.Package == "" {
 			continue
 		}
+		sawPackage = true
 
 		pkg, ok := pkgMap[ev.Package]
 		if !ok {
@@ -275,30 +292,52 @@ func (r *goTestResult) parse(stdout string) {
 	r.FailedTests = failedTests
 	r.FailedBuilds = failedBuilds
 	r.BuildOutput = strings.TrimRight(buildOutput.String(), "\n")
-	r.Status = goTestStatus(r.ExitCode, r.Total, r.Failed, r.TimedOut)
+	r.TimedOut = r.TimedOut || goTimedOut
+	r.Status = goTestStatus(r.ExitCode, r.Total, r.Failed, r.TimedOut, r.BuildOutput != "" || len(r.FailedBuilds) > 0, sawPackage)
 
 	// If not one test event parsed, everything above is empty; hand back the raw
 	// stream so the caller can see why instead of concluding the suite is green.
-	if r.Status == goTestError {
+	if r.Status == goTestError || r.TimedOut {
 		r.RawOutput = tailOutput(stdout, 8*1024)
 	}
 }
 
 // goTestStatus separates "the tests failed" from "the run did not happen".
-// A zero-test exit 0 is legitimate (a package with no test files); a zero-test
-// non-zero exit is not.
-func goTestStatus(exitCode, total, failed int, timedOut bool) string {
+//
+// sawPackage is true when go emitted at least one package-scoped event. Exit 0
+// with no such event means nothing ran: `-c` only compiles, `-json=false`
+// produces text this parser discards, and a pattern matching no packages emits
+// nothing. A zero-test exit 0 with package events is legitimate (no test files).
+//
+// buildFailed means the failure came from compilation (build-output/build-fail)
+// rather than from a test, which decides error vs failed when no test event
+// carried a verdict.
+func goTestStatus(exitCode, total, failed int, timedOut, buildFailed, sawPackage bool) string {
 	switch {
 	case timedOut:
+		// A timed-out run never completed, whatever it counted before dying;
+		// the partial counts and raw_output still travel with the error.
 		return goTestError
-	case exitCode < 0:
-		return goTestError
-	case exitCode != 0 && total == 0:
-		return goTestError
-	case exitCode != 0 || failed > 0:
-		return goTestFailed
-	default:
+	case exitCode == 0:
+		if !sawPackage {
+			return goTestError
+		}
+		if failed > 0 {
+			return goTestFailed
+		}
 		return goTestOK
+	case total == 0:
+		if buildFailed {
+			return goTestError
+		}
+		if sawPackage {
+			// The package ran and failed without per-test events: TestMain
+			// exited non-zero, or init panicked before the first test.
+			return goTestFailed
+		}
+		return goTestError
+	default:
+		return goTestFailed
 	}
 }
 

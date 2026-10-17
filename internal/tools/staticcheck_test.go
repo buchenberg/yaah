@@ -103,3 +103,35 @@ func TestStaticcheck_RejectsUnknownAnalyzers(t *testing.T) {
 		t.Errorf("error = %q", err)
 	}
 }
+
+// TestStaticcheck_BuildFailureIsAnErrorNotADiagnostic: `go vet` on a package
+// that does not compile prints a `# pkg` header and then
+// `vet: x.go:3:9: undefined: foo`, which matches diagRe with the bogus file
+// "vet: x.go". That must be a failed run with the compiler output verbatim,
+// not a warning-level finding on a package vet never analyzed.
+func TestStaticcheck_BuildFailureIsAnErrorNotADiagnostic(t *testing.T) {
+	r := runStaticcheck(t, func(ExecRequest) (ExecResult, error) {
+		return ExecResult{ExitCode: 1, Stdout: "# example.com/x\nvet: x.go:3:9: undefined: foo\n"}, nil
+	}, `{"packages":"./..."}`)
+	if r.Status != staticcheckError {
+		t.Errorf("status = %q, want error (nothing was analyzed)", r.Status)
+	}
+	if r.Count != 0 {
+		t.Errorf("count = %d, want 0 (compiler errors are not findings)", r.Count)
+	}
+	if !strings.Contains(r.Stdout, "undefined: foo") {
+		t.Errorf("compiler output must survive verbatim, got %q", r.Stdout)
+	}
+}
+
+func TestStaticcheck_StaticcheckLoadFailureIsAnError(t *testing.T) {
+	r := runStaticcheck(t, func(ExecRequest) (ExecResult, error) {
+		return ExecResult{ExitCode: 1, Stdout: "-: # example.com/x\nx.go:3:9: undefined: foo (compile)\n"}, nil
+	}, `{"packages":"./...","analyzers":"staticcheck"}`)
+	if r.Status != staticcheckError {
+		t.Errorf("status = %q, want error", r.Status)
+	}
+	if r.Count != 0 {
+		t.Errorf("count = %d, want 0", r.Count)
+	}
+}
