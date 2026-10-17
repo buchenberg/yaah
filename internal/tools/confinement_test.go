@@ -296,6 +296,36 @@ func TestConfinementHint_ExplainsRefusedWrites(t *testing.T) {
 	}
 }
 
+// TestConfinementHint_TranslatesSnapConfine: a command that resolves to a snap
+// cannot start inside the jail, and the raw snap-confine message names neither
+// the packaging nor the remedy. The hint must say both, without waiting for a
+// path-attributed permission failure (there is none).
+func TestConfinementHint_TranslatesSnapConfine(t *testing.T) {
+	root := t.TempDir()
+	stderr := "snap-confine: required permitted capability cap_dac_override not found in current capabilities"
+
+	got := confinementHint(stderr, root)
+	for _, want := range []string{"snap package", "/snap/bin", "tarball or distro build"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("hint must mention %q, got:\n%s", want, got)
+		}
+	}
+
+	// Generic capability text from something that is not snap-confine must not
+	// be captioned as a toolchain packaging problem.
+	if got := confinementHint("apparmor: required capability denied", root); got != "" {
+		t.Errorf("a generic capability failure produced a snap hint: %q", got)
+	}
+
+	// snap-confine's capability abort without the executable's name in the
+	// message is still snap-confine: this exact pair is its wording, and the
+	// abort is often relayed without the token.
+	bare := "required permitted capability cap_dac_override not found in current capabilities"
+	if got := confinementHint(bare, root); got == "" {
+		t.Error("snap-confine's capability abort must be explained even without the token")
+	}
+}
+
 // TestScrubConfinementScratch_Removes: the scrub removes the whole scratch tree.
 func TestScrubConfinementScratch_Removes(t *testing.T) {
 	root := t.TempDir()

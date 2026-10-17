@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/buchenberg/yaah/internal/prompts"
 )
@@ -96,15 +99,25 @@ func (t *EditTool) executeSingleEdit(ctx context.Context, ws Workspace, filePath
 	newStr = strings.ReplaceAll(newStr, "\r\n", "\n")
 
 	origLines := countLines(content)
-	count := strings.Count(content, oldStr)
 
-	matched := oldStr
-	usedFuzzy := false
+	matched, count, usedFuzzy, decoded := matchEdit(content, oldStr)
 	if count == 0 {
-		matched, count = tryFuzzyMatch(content, oldStr)
-		usedFuzzy = true
-		if count == 0 {
-			return "", fmt.Errorf("edit: oldString not found in %s", filePath)
+		hint := ""
+		if d, ok := decodeLiteralEscapes(oldStr); ok && d != oldStr {
+			hint = " (also tried decoding literal escape sequences in oldString)"
+		}
+		return "", fmt.Errorf("edit: oldString not found in %s%s", filePath, hint)
+	}
+
+	// newString is never decoded. When oldString had to be decoded, the model
+	// may well have double-escaped the replacement too — but it may equally
+	// have sent a literal backslash that is meant to survive (a Windows path, a
+	// regex, source containing "\n"), and decoding would silently corrupt it.
+	// Write it verbatim and say so, so the caller can re-issue if needed.
+	newHasEscapes := false
+	if decoded {
+		if _, ok := decodeLiteralEscapes(newStr); ok {
+			newHasEscapes = true
 		}
 	}
 
@@ -143,7 +156,9 @@ func (t *EditTool) executeSingleEdit(ctx context.Context, ws Workspace, filePath
 		replaced = 1
 	}
 	newLines := countLines(content)
-	return formatEditResult(filePath, replaced, origLines, newLines), nil
+	msg := formatEditResult(filePath, replaced, origLines, newLines)
+	msg += decodeNote(decoded, newHasEscapes)
+	return msg, nil
 }
 
 func (t *EditTool) executeMultiEdit(ctx context.Context, ws Workspace, filePath string, edits []editEntry) (string, error) {
@@ -161,6 +176,8 @@ func (t *EditTool) executeMultiEdit(ctx context.Context, ws Workspace, filePath 
 
 	origLines := countLines(content)
 	totalReplaced := 0
+	decodedAny := false
+	newHasEscapes := false
 	var failures []string
 
 	for i, e := range edits {
@@ -169,18 +186,11 @@ func (t *EditTool) executeMultiEdit(ctx context.Context, ws Workspace, filePath 
 			continue
 		}
 
-		matched := e.OldString
-		count := strings.Count(content, matched)
-		usedFuzzy := false
-		if count == 0 {
-			matched, count = tryFuzzyMatch(content, e.OldString)
-			usedFuzzy = true
-		}
+		matched, count, usedFuzzy, decoded := matchEdit(content, e.OldString)
 		if count == 0 {
 			failures = append(failures, fmt.Sprintf("edit #%d: oldString not found", i))
 			continue
 		}
-
 		// If fuzzy matching was used, verify the mapped-back match actually
 		// exists in the original content the expected number of times.
 		if usedFuzzy {
@@ -203,6 +213,14 @@ func (t *EditTool) executeMultiEdit(ctx context.Context, ws Workspace, filePath 
 
 		content = strings.Replace(content, matched, e.NewString, 1)
 		totalReplaced++
+		if decoded {
+			// Only an applied edit whose match needed decoding is worth noting;
+			// an entry that failed verification never reaches this point.
+			decodedAny = true
+			if _, ok := decodeLiteralEscapes(e.NewString); ok {
+				newHasEscapes = true
+			}
+		}
 	}
 
 	if totalReplaced == 0 && len(failures) > 0 {
@@ -218,10 +236,170 @@ func (t *EditTool) executeMultiEdit(ctx context.Context, ws Workspace, filePath 
 
 	newLines := countLines(content)
 	msg := formatEditResult(filePath, totalReplaced, origLines, newLines)
+	msg += decodeNote(decodedAny, newHasEscapes)
 	if len(failures) > 0 {
 		msg += fmt.Sprintf("\n%d edit(s) failed:\n%s", len(failures), strings.Join(failures, "\n"))
 	}
 	return msg, nil
+}
+
+// matchEdit locates oldStr in content, preferring an exact match, then the
+// fuzzy fallbacks, and finally an interpretation where literal escape
+// sequences (\u00e9, \n, \t) are decoded into the characters they stand for.
+//
+// The last step exists because a model sometimes double-escapes a tool
+// argument: it sends "\\u00e9" meaning "é", and the JSON layer faithfully
+// delivers the six literal characters. Decoding only runs when nothing else
+// matched, and callers report it in the result, so it cannot silently rewrite a
+// file that already contains the literal escape text.
+func matchEdit(content, oldStr string) (matched string, count int, usedFuzzy, decoded bool) {
+	if c := strings.Count(content, oldStr); c > 0 {
+		return oldStr, c, false, false
+	}
+	if m, c := tryFuzzyMatch(content, oldStr); c > 0 {
+		return m, c, true, false
+	}
+	if d, ok := decodeLiteralEscapes(oldStr); ok {
+		// The file content was normalized to LF before matching; a decoded
+		// "\r\n" must be normalized the same way or it can never match a CRLF
+		// file (and would reinstate CR into an LF buffer if it did).
+		d = strings.ReplaceAll(d, "\r\n", "\n")
+		if c := strings.Count(content, d); c > 0 {
+			return d, c, false, true
+		}
+		if m, c := tryFuzzyMatch(content, d); c > 0 {
+			return m, c, true, true
+		}
+	}
+	return oldStr, 0, false, false
+}
+
+// decodeNote describes any escape interpretation applied to an edit. It is
+// appended to the success message so a model that double-escaped its arguments
+// can see what happened without re-reading the file.
+func decodeNote(decodedOld, escapedNew bool) string {
+	var b strings.Builder
+	if decodedOld {
+		b.WriteString("\nnote: oldString contained literal escape sequences (e.g. \\u00e9); they were decoded to match the file")
+	}
+	if escapedNew {
+		b.WriteString("\nnote: newString contains literal escape sequences and was written verbatim")
+	}
+	return b.String()
+}
+
+// decodeLiteralEscapes interprets JSON-style backslash escapes the way a JSON
+// string decoder would, returning the decoded text and whether anything
+// changed. Unknown or malformed escapes are preserved verbatim. Surrogate
+// pairs are combined; an unpaired surrogate is left alone rather than turned
+// into U+FFFD, because that would corrupt the text instead of matching it.
+func decodeLiteralEscapes(s string) (string, bool) {
+	if !strings.Contains(s, `\`) {
+		return s, false
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	changed := false
+
+	for i := 0; i < len(s); {
+		if s[i] != '\\' || i+1 >= len(s) {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		switch s[i+1] {
+		case 'n':
+			b.WriteByte('\n')
+			i += 2
+			changed = true
+		case 't':
+			b.WriteByte('\t')
+			i += 2
+			changed = true
+		case 'r':
+			b.WriteByte('\r')
+			i += 2
+			changed = true
+		case 'b':
+			b.WriteByte('\b')
+			i += 2
+			changed = true
+		case 'f':
+			b.WriteByte('\f')
+			i += 2
+			changed = true
+		case '"':
+			b.WriteByte('"')
+			i += 2
+			changed = true
+		case '/':
+			b.WriteByte('/')
+			i += 2
+			changed = true
+		case '\\':
+			b.WriteByte('\\')
+			i += 2
+			changed = true
+		case 'u', 'U':
+			n := 4
+			if s[i+1] == 'U' {
+				n = 8
+			}
+			v, ok := parseHexEscape(s, i+2, n)
+			if !ok || v > utf8.MaxRune {
+				// Malformed, or a code point Unicode cannot encode. Preserve the
+				// escape verbatim: WriteRune would emit U+FFFD and corrupt the
+				// text instead of leaving the source visible.
+				b.WriteByte(s[i])
+				i++
+				continue
+			}
+			r := rune(v)
+			if utf16.IsSurrogate(r) {
+				// A high surrogate followed by a \uXXXX low surrogate is one
+				// code point. Anything else is left as literal text rather than
+				// written as U+FFFD.
+				lowPos := i + 2 + n
+				var low uint64
+				ok := false
+				if lowPos+1 < len(s) && s[lowPos] == '\\' && s[lowPos+1] == 'u' {
+					low, ok = parseHexEscape(s, lowPos+2, 4)
+				}
+				if !ok || r < 0xD800 || r > 0xDBFF || rune(low) < 0xDC00 || rune(low) > 0xDFFF {
+					b.WriteByte(s[i])
+					i++
+					continue
+				}
+				b.WriteRune(utf16.DecodeRune(r, rune(low)))
+				i = lowPos + 6
+				changed = true
+				continue
+			}
+			b.WriteRune(r)
+			i += 2 + n
+			changed = true
+		default:
+			b.WriteByte(s[i]) // unknown escape: keep it as written
+			i++
+		}
+	}
+	if !changed {
+		return s, false
+	}
+	return b.String(), true
+}
+
+// parseHexEscape parses n hex digits at s[pos:], reporting whether they are
+// present and valid.
+func parseHexEscape(s string, pos, n int) (uint64, bool) {
+	if pos < 0 || pos+n > len(s) {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(s[pos:pos+n], 16, 32)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
 }
 
 // tryFuzzyMatch attempts progressively looser matching strategies when exact

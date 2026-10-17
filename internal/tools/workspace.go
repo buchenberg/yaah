@@ -341,21 +341,26 @@ func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (Exe
 	return out, nil
 }
 
-// confinementHint explains a kernel-refused write, or "" when the failure does
-// not look like one. The jail is the boundary, not a bug, and a sub-agent that
-// cannot see why a write failed will retry it (or flail) instead of routing
-// around it — so the message names the boundary and, for the git case, the rule
-// that makes it deliberate.
+// confinementHint explains a failure the jail caused, or "" when the failure
+// does not look like one. The jail is the boundary, not a bug, and a sub-agent
+// that cannot see why a command failed will retry it (or flail) instead of
+// routing around it — so the message names the boundary and, for the git case,
+// the rule that makes it deliberate.
 //
-// Detection requires BOTH a permission failure and a denied path the message
-// names that lies outside the writable root. "Permission denied" alone is not
-// evidence of a boundary refusal — a `chmod 000` file or a non-executable script
-// inside the worktree produces the same errno — so a failure with no attributable
-// path gets no hint. A missed hint costs nothing (the raw error still surfaces);
-// a wrong one sends the model to the wrong remedy.
+// Detection of a refused write requires BOTH a permission failure and a denied
+// path the message names that lies outside the writable root. "Permission
+// denied" alone is not evidence of a boundary refusal — a `chmod 000` file or a
+// non-executable script inside the worktree produces the same errno — so a
+// failure with no attributable path gets no hint. A missed hint costs nothing
+// (the raw error still surfaces); a wrong one sends the model to the wrong
+// remedy. The one exception is a snap-packaged toolchain, whose failure names
+// its own cause precisely enough to translate.
 func confinementHint(stderr, root string) string {
 	if root == "" {
 		return ""
+	}
+	if hint := snapToolchainHint(stderr); hint != "" {
+		return hint
 	}
 	if _, ok := deniedOutsideRoot(stderr, root); !ok {
 		return ""
@@ -370,6 +375,31 @@ func confinementHint(stderr, root string) string {
 	}
 	return "[yaah] This write was refused by the sub-agent sandbox: its only writable root is " + root +
 		", and writes outside it are denied by the kernel. Housekeeping paths (HOME, TMPDIR, build caches) are redirected inside that root, so work there instead."
+}
+
+// snapToolchainHint translates the one jail failure that is a packaging
+// problem, not a confinement problem: a command that resolves to a snap cannot
+// start inside the sub-agent sandbox. snap-confine is setuid, and commands run
+// with no_new_privs, so it cannot raise the capabilities it needs. The raw
+// message names neither the packaging nor the remedy, so the model retries it
+// or blames its own code.
+//
+// Detection anchors on the snap-confine token, or on snap-confine's exact
+// capability wording. Generic capability text also appears in non-snap
+// failures, and mis-captioning those sends the model to the wrong remedy — but
+// the "required permitted capability … not found in current capabilities" pair
+// is specific to snap-confine, so it is safe without the executable's name in
+// the message (the abort reaches the tool through a shell that does not always
+// prefix it).
+func snapToolchainHint(stderr string) string {
+	snapToken := strings.Contains(stderr, "snap-confine")
+	capabilityAbort := strings.Contains(stderr, "required permitted capability") &&
+		strings.Contains(stderr, "not found in current capabilities")
+	if !snapToken && !capabilityAbort {
+		return ""
+	}
+	return "[yaah] This command resolved to a snap package, which cannot start inside the sub-agent sandbox: snap-confine is setuid and needs capabilities the sandbox never grants it (commands run with no_new_privs, so it cannot raise them). " +
+		"Install a tarball or distro build of this toolchain and put it ahead of /snap/bin on PATH."
 }
 
 // deniedOutsideRoot reports whether stderr carries a permission failure on a path

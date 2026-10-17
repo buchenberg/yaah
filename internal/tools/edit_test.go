@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -237,5 +238,192 @@ func TestEditTool_fuzzyFailsWhenMappedMatchNotFound(t *testing.T) {
 	}
 	if !contains(err.Error(), "oldString not found") {
 		t.Errorf("expected oldString not found error, got %q", err.Error())
+	}
+}
+
+// TestEditTool_decodesDoubleEscapedArguments: a model sometimes escapes a tool
+// argument twice, so the JSON layer delivers the literal six characters
+// `\u00e9` instead of `é`. The exact and fuzzy matches both miss; the edit now
+// decodes and says so instead of failing on text that is visibly present.
+func TestEditTool_decodesDoubleEscapedArguments(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "file.txt")
+	os.WriteFile(path, []byte("x caf\u00e9 y\n"), 0o644)
+
+	// oldString is double-escaped (literal `caf\u00e9`); newString is a normal
+	// JSON escape, which the JSON layer already turns into THÉ.
+	raw := `{"filePath":` + jsonString(path) + `,"oldString":"caf\\u00e9","newString":"TH\u00c9"}`
+	msg, err := (&EditTool{}).Execute(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "x TH\u00c9 y\n" {
+		t.Errorf("content = %q, want the replacement", string(data))
+	}
+	if !strings.Contains(msg, "decoded") {
+		t.Errorf("result must report the interpretation, got %q", msg)
+	}
+}
+
+// TestEditTool_newStringIsNeverDecoded: when oldString needed decoding, a
+// correctly escaped newString with a literal backslash must survive verbatim.
+// Decoding it would turn C:\Users into C: + U+0008 + sers — silent corruption.
+func TestEditTool_newStringIsNeverDecoded(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "file.txt")
+	os.WriteFile(path, []byte("x caf\u00e9 y\n"), 0o644)
+
+	raw := `{"filePath":` + jsonString(path) + `,"oldString":"caf\\u00e9","newString":"C:\\Users\\bob"}`
+	msg, err := (&EditTool{}).Execute(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if want := `x C:\Users\bob y` + "\n"; string(data) != want {
+		t.Errorf("content = %q, want %q (newString must be written verbatim)", string(data), want)
+	}
+	if !strings.Contains(msg, "newString") {
+		t.Errorf("result must say newString was not decoded, got %q", msg)
+	}
+}
+
+func TestEditTool_decodesDoubleEscapedNewline(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "file.txt")
+	os.WriteFile(path, []byte("line1\nline2\n"), 0o644)
+
+	raw := `{"filePath":` + jsonString(path) + `,"oldString":"line1\\nline2","newString":"joined"}`
+	if _, err := (&EditTool{}).Execute(context.Background(), raw); err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "joined\n" {
+		t.Errorf("content = %q, want %q", string(data), "joined\n")
+	}
+}
+
+func TestEditTool_decodesSurrogatePair(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "file.txt")
+	os.WriteFile(path, []byte("emoji \U0001F600 here\n"), 0o644)
+
+	raw := `{"filePath":` + jsonString(path) + `,"oldString":"emoji \\ud83d\\ude00 here","newString":"emoji :-) here"}`
+	if _, err := (&EditTool{}).Execute(context.Background(), raw); err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "emoji :-) here\n" {
+		t.Errorf("content = %q", string(data))
+	}
+}
+
+// TestEditTool_exactMatchWinsOverEscapeDecoding: a file that really contains
+// the literal escape text must be edited as written, never decoded.
+func TestEditTool_exactMatchWinsOverEscapeDecoding(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "file.go")
+	os.WriteFile(path, []byte("const s = \"caf\\u00e9\"\n"), 0o644)
+
+	raw := `{"filePath":` + jsonString(path) + `,"oldString":"caf\\u00e9","newString":"cafX"}`
+	msg, err := (&EditTool{}).Execute(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "const s = \"cafX\"\n" {
+		t.Errorf("content = %q; the literal escape must match literally", string(data))
+	}
+	if strings.Contains(msg, "decoded") {
+		t.Errorf("an exact literal match must not be reported as decoded, got %q", msg)
+	}
+}
+
+func TestEditTool_unmatchedEscapesMentionDecoding(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "file.txt")
+	os.WriteFile(path, []byte("hello\n"), 0o644)
+
+	raw := `{"filePath":` + jsonString(path) + `,"oldString":"x\\u00e9y","newString":"z"}`
+	_, err := (&EditTool{}).Execute(context.Background(), raw)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "decoding literal escape sequences") {
+		t.Errorf("error should mention the attempted interpretation, got %q", err)
+	}
+}
+
+func TestEditTool_multiEditDecodesEscapes(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "file.txt")
+	os.WriteFile(path, []byte("caf\u00e9\nna\u00efve\n"), 0o644)
+
+	raw := `{"filePath":` + jsonString(path) + `,"edits":[` +
+		`{"oldString":"caf\\u00e9","newString":"cafe"},` +
+		`{"oldString":"na\\u00efve","newString":"naive"}]}`
+	msg, err := (&EditTool{}).Execute(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "cafe\nnaive\n" {
+		t.Errorf("content = %q", string(data))
+	}
+	if !strings.Contains(msg, "decoded") {
+		t.Errorf("result must report the interpretation, got %q", msg)
+	}
+}
+
+// TestEditTool_decodedCRLFIsNormalized: file content is matched after CRLF is
+// folded to LF, so a decoded "\r\n" must be folded too — otherwise it cannot
+// match a CRLF file, and if it did the final restoration would write \r\r\n.
+func TestEditTool_decodedCRLFIsNormalized(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "file.txt")
+	os.WriteFile(path, []byte("line1\r\nline2\r\n"), 0o644)
+
+	raw := `{"filePath":` + jsonString(path) + `,"oldString":"line1\\r\\nline2","newString":"joined"}`
+	if _, err := (&EditTool{}).Execute(context.Background(), raw); err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if want := "joined\r\n"; string(data) != want {
+		t.Errorf("content = %q, want %q (no doubled carriage return)", string(data), want)
+	}
+}
+
+// TestDecodeLiteralEscapes_RejectsOutOfRangeCodePoints: an escape above
+// U+10FFFF parses as an integer but cannot be written; it must be preserved
+// literally, not turned into U+FFFD.
+func TestDecodeLiteralEscapes_RejectsOutOfRangeCodePoints(t *testing.T) {
+	for _, in := range []string{`\U00110000`, `\UFFFFFFFF`} {
+		got, ok := decodeLiteralEscapes(in)
+		if ok || got != in {
+			t.Errorf("decodeLiteralEscapes(%q) = (%q, %v), want the literal escape preserved", in, got, ok)
+		}
+	}
+}
+
+// TestEditTool_multiEditWritesNewStringVerbatim covers the multi-edit path for
+// the same rule: only oldString is decoded, so a replacement containing a
+// literal backslash is written as given.
+func TestEditTool_multiEditWritesNewStringVerbatim(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "file.txt")
+	os.WriteFile(path, []byte("caf\u00e9\n"), 0o644)
+
+	raw := `{"filePath":` + jsonString(path) + `,"edits":[` +
+		`{"oldString":"caf\\u00e9","newString":"C:\\Users\\bob"}]}`
+	msg, err := (&EditTool{}).Execute(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if want := `C:\Users\bob` + "\n"; string(data) != want {
+		t.Errorf("content = %q, want %q", string(data), want)
+	}
+	if !strings.Contains(msg, "verbatim") {
+		t.Errorf("result must say newString was written verbatim, got %q", msg)
 	}
 }
