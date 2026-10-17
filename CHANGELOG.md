@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.81.0](https://github.com/buchenberg/yaah/compare/v0.80.0...v0.81.0) (2026-10-17)
+
+
+### Features
+
+* surface sub-agent dispatch identity in prompts and errors ([b49f5a0](https://github.com/buchenberg/yaah/commit/b49f5a0f30db69e3d62d9e0dae73dd2a46af1038))
+
+
+### Bug Fixes
+
+* raise the output-token budget and attribute provider failures ([f8c3c51](https://github.com/buchenberg/yaah/commit/f8c3c51325886211e8f3c82eb6ad56bcdc3545e9))
+* raise the output-token budget and classify exhaustion ([24ba883](https://github.com/buchenberg/yaah/commit/24ba8835f0d3ba5778e85869f090c8f59a11b68d))
+
 ## [0.80.0](https://github.com/buchenberg/yaah/compare/v0.79.13...v0.80.0) (2026-10-17)
 
 
