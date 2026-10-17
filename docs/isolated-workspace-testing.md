@@ -3,13 +3,15 @@
 `TestLive_ActivatedSession` in
 `internal/tools/workspace_activation_live_test.go` exercises a real
 containerd-backed session end to end. The harness is inert by default: it
-skips unless its environment knobs are set and the process has access to the
-containerd socket. A fast `ok` means it skipped; run with `-v` to see why.
+skips unless its environment knobs are set **and the process runs as root**
+(the live harness hard-codes that requirement; ordinary yaah sessions do not
+need root). A fast `ok` means it skipped; run with `-v` to see why.
 
 ## One-time host setup
 
-The containerd socket is `root:root`, mode 0660, by default. A normal user
-needs group access:
+The containerd socket is `root:root`, mode 0660, by default. The live harness
+still runs under `sudo`; this group setup is for unprivileged `yaah` sessions
+using `workspace.backend: containerd`:
 
 ```bash
 sudo groupadd --system containerd
@@ -34,7 +36,8 @@ root-equivalent on the host; grant it deliberately.
 ## Build the workspace image
 
 The image needs `sh`, GNU `stat -c`, GNU `find -printf`, `git`, `rg`,
-`base64`, and a Go toolchain. `golang:bookworm` has most of that; add
+`base64`, a Go toolchain, and standard coreutils/findutils (`mkdir`, `mktemp`,
+`printf`, `rm`, `chmod`, `mv`). `golang:bookworm` has most of that; add
 ripgrep and put the Go toolchain on the default `PATH`:
 
 ```bash
@@ -71,7 +74,8 @@ sudo env YAAH_LIVE_CONTAINERD_ADDR=/run/containerd/containerd.sock \
 
 The import only needs re-running after rebuilding the image. `go test` under
 sudo uses root's module cache, so the first run re-downloads modules. The
-first run also includes a cold image pull; keep the `-timeout` generous.
+`-timeout` above is the Go test bound; the session itself is bounded by
+`YAAH_LIVE_CONTAINERD_TIMEOUT` (default `10m`).
 
 ## Environment knobs
 

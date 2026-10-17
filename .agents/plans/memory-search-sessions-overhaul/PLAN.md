@@ -1,6 +1,6 @@
 ---
 name: memory-search-sessions-overhaul
-description: Fix memory_search_sessions: structured results, filters, relevance floor, tool-call exclusion, doc/behavior parity
+description: "Fix memory_search_sessions: structured results, filters, relevance floor, tool-call exclusion, doc/behavior parity"
 status: draft
 ---
 

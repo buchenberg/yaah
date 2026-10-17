@@ -1,6 +1,6 @@
 ---
 name: tool-result-pruning-recovery
-description: Make tool-result pruning recoverable and preventable via spill-to-disk, informative stubs, corrected defaults, and tool head-limits
+description: "Make tool-result pruning recoverable and preventable via spill-to-disk, informative stubs, corrected defaults, and tool head-limits"
 status: approved
 ---
 

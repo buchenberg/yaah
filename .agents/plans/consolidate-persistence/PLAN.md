@@ -1,6 +1,6 @@
 ---
 name: consolidate-persistence
-description: Remaining persistence work: a unified session CLI over sessions and Shepherd traces.
+description: "Remaining persistence work: a unified session CLI over sessions and Shepherd traces."
 status: draft
 ---
 

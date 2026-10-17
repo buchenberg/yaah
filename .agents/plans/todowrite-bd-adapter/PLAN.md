@@ -1,6 +1,6 @@
 ---
 name: todowrite-bd-adapter
-description: Wire todowrite to bd (beads) transparently when available; keep in-memory fallback. Honors AGENTS.md directive without prompt changes.
+description: "Wire todowrite to bd (beads) transparently when available; keep in-memory fallback. Honors AGENTS.md directive without prompt changes."
 status: draft
 ---
 

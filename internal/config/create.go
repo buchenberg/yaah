@@ -68,7 +68,7 @@ agents:
 
   # middleware:
   #   enabled:                    # additive over the built-in defaults
-  #     - prompt_caching
+  #     - prompt_caching          # also set agents.default.prompt_caching: true
   #   # disabled:                 # remove middleware from the pipeline
   #   #   - approval
 

@@ -1,6 +1,6 @@
 ---
 name: architecture-improvements
-description: Remaining architecture improvements: trace-query extraction, MCP YAML editing, skill scaffolding, shared control driver, and home-dir injection.
+description: "Remaining architecture improvements: trace-query extraction, MCP YAML editing, skill scaffolding, shared control driver, and home-dir injection."
 status: draft
 ---
 

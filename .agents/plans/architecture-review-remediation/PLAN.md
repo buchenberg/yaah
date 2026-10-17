@@ -1,6 +1,6 @@
 ---
 name: architecture-review-remediation
-description: Remaining review remediation: driver bootstrap and the ongoing coverage rebalance.
+description: "Remaining review remediation: driver bootstrap and the ongoing coverage rebalance."
 status: draft
 ---
 

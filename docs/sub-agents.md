@@ -172,8 +172,8 @@ returns a proposal the orchestrator settles.
   available and dispatches use the direct lane.
 - **Turn checkpoints.** A role whose config sets
   `agents.subagent.roles.<role>.turn_checkpoints: true` captures workspace and
-  conversation before each turn, so a failed turn rewinds instead of losing
-  the attempt.
+  conversation before each turn, so a turn that fails in the tool phase or
+  exhausts its iteration budget rewinds instead of losing the attempt.
 
 Because every retained dispatch is isolated, several can be compared safely:
 issue two or three calls for one task in a single turn, read the proposals,
