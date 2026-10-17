@@ -1,0 +1,1 @@
+foxtrot item 17: the quick brown fox jumps over the lazy dog while the inventory fixture stays intentionally verbose so this file consumes context tokens without being interesting.

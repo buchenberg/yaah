@@ -1,0 +1,6 @@
+agents:
+  subagent:
+    mode: shared
+    model: deepseek-flash
+    containment: auto
+    max_concurrency: 1

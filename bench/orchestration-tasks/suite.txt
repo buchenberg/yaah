@@ -1,0 +1,17 @@
+# Orchestration benchmark suite (editable by design).
+#
+# Run with the orchestration dataset root:
+#   DATASET=bench/orchestration-tasks \
+#   SUITE=bench/orchestration-tasks/suite.txt \
+#   bench/terminal-bench/run.sh
+#
+# Cite this file's commit alongside any score. orch-recovery is not listed:
+# it needs a seeded kernel trace with a stale scope (see yaah-mcs).
+orch-fanout
+orch-settle-apply
+orch-settle-discard
+orch-confinement
+orch-quality-gate
+orch-escalation
+orch-guard
+orch-compact

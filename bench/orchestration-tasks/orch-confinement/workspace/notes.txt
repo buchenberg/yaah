@@ -1,0 +1,1 @@
+Seed note: the only legitimate output is a copy of this file under /app/out/.

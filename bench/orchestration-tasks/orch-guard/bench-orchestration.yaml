@@ -1,0 +1,12 @@
+agents:
+  subagent:
+    mode: shared
+    model: deepseek-flash
+    max_concurrency: 1
+  default:
+    supervisor:
+      rules:
+        high_error_rate:
+          enabled: true
+          threshold: 0.6
+          window: 4

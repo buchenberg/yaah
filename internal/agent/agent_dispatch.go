@@ -105,6 +105,11 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 
 	if d.isDelegate && !d.isBackground {
 		runCtx = d.setupSubAgent(runCtx)
+		// The child accumulates usage on runCtx; fold it into the loop's
+		// totals and the session's sub-agent share once the call returns.
+		// Without this, foreground delegate spend is silently dropped from
+		// state.db (sub_tokens_*) and OnSubUsage never fires.
+		defer d.finishSubAgent()
 	}
 
 	res, err := l.Registry.Execute(runCtx, d.call.Function.Name, d.call.Function.Arguments)

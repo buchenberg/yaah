@@ -715,3 +715,61 @@ func stForFirstJob(m *jobs.BackgroundJobs) string {
 	}
 	return ""
 }
+
+// TestLoop_foregroundSubAgentUsageFolded pins the attribution path: a
+// foreground delegate's usage must reach the loop totals and OnSubUsage,
+// not just the child's own state. Regression for sub_tokens_* staying zero.
+func TestLoop_foregroundSubAgentUsageFolded(t *testing.T) {
+	var gotSub *types.Usage
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{
+			{Choices: []types.Choice{{
+				Message: types.Message{
+					Role: "assistant",
+					ToolCalls: []types.ToolCall{{
+						ID:       "c1",
+						Type:     "function",
+						Function: types.ToolCallFn{Name: "delegate", Arguments: `{"description":"x","prompt":"do work","role":"tester"}`},
+					}},
+				},
+				FinishReason: "tool_calls",
+			}}},
+			{Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant", Content: "final answer"},
+				FinishReason: "stop",
+			}}},
+		},
+	}
+
+	runner := func(ctx context.Context, prompt string, params tools.SubAgentParams) (string, error) {
+		tools.AddSubAgentUsage(ctx, types.Usage{PromptTokens: 5, CompletionTokens: 6, TotalTokens: 11})
+		return "ok", nil
+	}
+
+	reg := tools.NewEmptyRegistry()
+	reg.Register(&tools.DelegateTool{Runner: runner, RoleNames: []string{"tester"}})
+
+	loop := &Loop{
+		Config:   LoopConfig{SystemPrompt: "test", MaxLoopCycles: 5},
+		Provider: fp,
+		Registry: reg,
+		OnSubUsage: func(u types.Usage) {
+			copied := u
+			gotSub = &copied
+		},
+	}
+
+	if _, err := loop.Run(context.Background(), "delegate please"); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	if gotSub == nil {
+		t.Fatal("OnSubUsage never fired for a foreground delegate")
+	}
+	if gotSub.PromptTokens != 5 || gotSub.CompletionTokens != 6 {
+		t.Errorf("OnSubUsage = %+v, want prompt=5 completion=6", *gotSub)
+	}
+	if loop.State.TotalTokens.PromptTokens < 5 || loop.State.TotalTokens.CompletionTokens < 6 {
+		t.Errorf("loop totals did not absorb sub-agent usage: %+v", loop.State.TotalTokens)
+	}
+}

@@ -1,0 +1,19 @@
+#!/bin/bash
+# Oracle for orch-quality-gate: add the docstring and fix the defect.
+set -euo pipefail
+
+APP_DIR="${ORCH_APP_DIR:-/app}"
+cd "$APP_DIR"
+
+python3 - <<'PY'
+from pathlib import Path
+
+path = Path("mathx.py")
+text = path.read_text()
+if not text.startswith('"""'):
+    text = '"""Math helpers."""\n\n' + text
+text = text.replace("sum(values) / (len(values) - 1)", "sum(values) / len(values)")
+path.write_text(text)
+PY
+
+python3 verify.py
