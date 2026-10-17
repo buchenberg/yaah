@@ -35,6 +35,7 @@ var memorySearchCmd = &cobra.Command{
 			cmd.Printf("Found %d result(s):\n\n", len(vecResults))
 			for _, r := range vecResults {
 				cmd.Printf("  %s  (score: %.2f)\n", Bold(r.Text), r.Score)
+				cmd.Printf("        id: %s\n", Dim(r.ID))
 				if r.Tags != "" && r.Tags != "null" {
 					cmd.Printf("        tags: %s\n", Dim(r.Tags))
 				}
@@ -57,6 +58,7 @@ var memorySearchCmd = &cobra.Command{
 		cmd.Printf("Found %d result(s):\n\n", len(results))
 		for _, r := range results {
 			cmd.Printf("  %s\n", Bold(r.Text))
+			cmd.Printf("        id: %s\n", Dim(r.ID))
 			if r.Tags != "" && r.Tags != "null" {
 				cmd.Printf("        tags: %s\n", Dim(r.Tags))
 			}
@@ -102,6 +104,10 @@ var memoryAddCmd = &cobra.Command{
 		}
 
 		cmd.Printf("Added memory: %s\n", text)
+		// The full ID is the canonical handle for the entry: the agent tools
+		// accept it, and it is the only way to refer to this exact row later
+		// (including from a future CLI update/delete subcommand).
+		cmd.Printf("ID: %s\n", id)
 		return nil
 	},
 }
