@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.79.12](https://github.com/buchenberg/yaah/compare/v0.79.11...v0.79.12) (2026-10-17)
+
+
+### Documentation
+
+* speculation is next, not in progress ([027758a](https://github.com/buchenberg/yaah/commit/027758a8ea776b926be1fcfbaa8b4fe9b71066de))
+* speculation is the next item, not in progress ([cb808e2](https://github.com/buchenberg/yaah/commit/cb808e2a2ad2782e8b4753b9a68ad278b86dc3e1))
+
 ## [0.79.11](https://github.com/buchenberg/yaah/compare/v0.79.10...v0.79.11) (2026-10-17)
 
 
