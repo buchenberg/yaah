@@ -63,6 +63,12 @@ type diagnostic struct {
 }
 
 type staticcheckResult struct {
+	// Status is "ok" when every requested analyzer actually ran, and "error"
+	// when one did not (missing binary, unusable toolchain, or an analyzer that
+	// exited non-zero without producing a single diagnostic). Count alone
+	// cannot express that: 0 diagnostics from a tool that never ran looks
+	// exactly like clean code.
+	Status               string         `json:"status"`
 	Diagnostics          []diagnostic   `json:"diagnostics"`
 	Count                int            `json:"count"`
 	ByFile               map[string]int `json:"by_file"`
@@ -92,41 +98,69 @@ func (t *StaticcheckTool) Execute(ctx context.Context, args string) (string, err
 
 	runVet := analyzers == "vet" || analyzers == "both"
 	runSC := analyzers == "staticcheck" || analyzers == "both"
+	if !runVet && !runSC {
+		return "", fmt.Errorf("staticcheck: analyzers must be one of vet, staticcheck, both")
+	}
 
 	ws := workspaceOf(t.WS, nil)
+	status := staticcheckOK
 
 	// go vet
 	if runVet {
 		vetArgs := append([]string{"vet", params.Packages}, params.Flags...)
-		res, _ := ws.Exec(ctx, ExecRequest{Command: "go", Args: vetArgs})
+		res, execErr := ws.Exec(ctx, ExecRequest{Command: "go", Args: vetArgs})
 		// A missing go exits 127 from the shell, and a host exec failure
 		// reports -1; both mean vet never ran, unlike exit 1 ("issues found").
 		result.VetAvailable = executableExit(res.ExitCode)
+		if execErr != nil && res.ExitCode < 0 {
+			result.Stderr += fmt.Sprintf("go vet could not run: %v\n", execErr)
+		}
 		if !result.VetAvailable {
 			result.Stderr += "go vet is not available in this workspace\n"
 		}
+		before := len(result.Diagnostics)
 		parseDiagnostics(res.Stdout, "vet", result)
+		if !result.VetAvailable || (res.ExitCode != 0 && len(result.Diagnostics) == before) {
+			// Non-zero with no diagnostics means vet failed to do its job — a
+			// package that does not compile is the common case — and the build
+			// error is already preserved verbatim in Stdout.
+			status = staticcheckError
+		}
 	}
 
 	// staticcheck
 	if runSC {
 		scArgs := append([]string{params.Packages}, params.Flags...)
-		res, _ := ws.Exec(ctx, ExecRequest{Command: "staticcheck", Args: scArgs})
+		res, execErr := ws.Exec(ctx, ExecRequest{Command: "staticcheck", Args: scArgs})
 		// Resolving the binary with LookPath first would check the *host* PATH,
 		// which is the wrong machine once a workspace can be isolated. Attempting
 		// the run and inspecting the exit code asks the right machine instead.
 		result.StaticcheckAvailable = executableExit(res.ExitCode)
+		if execErr != nil && res.ExitCode < 0 {
+			result.Stderr += fmt.Sprintf("staticcheck could not run: %v\n", execErr)
+		}
 		if !result.StaticcheckAvailable {
 			result.Stderr += "staticcheck not found in this workspace — install with: go install honnef.co/go/tools/cmd/staticcheck@latest\n"
+			status = staticcheckError
 		} else {
+			before := len(result.Diagnostics)
 			parseDiagnostics(res.Stdout, "staticcheck", result)
+			if res.ExitCode != 0 && len(result.Diagnostics) == before {
+				status = staticcheckError
+			}
 		}
 	}
 
 	result.Count = len(result.Diagnostics)
+	result.Status = status
 	outBytes, _ := json.MarshalIndent(result, "", "  ")
 	return string(outBytes), nil
 }
+
+const (
+	staticcheckOK    = "ok"
+	staticcheckError = "error"
+)
 
 func parseDiagnostics(output string, analyzer string, result *staticcheckResult) {
 	lines := strings.Split(output, "\n")

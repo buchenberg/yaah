@@ -6,9 +6,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
+	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/buchenberg/yaah/internal/prompts"
+)
+
+// Status values for goTestResult.Status. "error" is distinct from "failed":
+// failed means tests ran and some did not pass, error means the run itself did
+// not happen (toolchain missing, build never produced a test, or the time limit
+// killed the process). A caller reading only the counts cannot tell the two
+// apart, which is why the field exists.
+const (
+	goTestOK     = "ok"
+	goTestFailed = "failed"
+	goTestError  = "error"
 )
 
 // GoTestTool runs `go test -json` and returns structured results.
@@ -31,7 +45,7 @@ func (t *GoTestTool) Schema() json.RawMessage {
 		"properties": {
 			"packages": {
 				"type": "string",
-				"description": "Go package pattern like './...'"
+				"description": "Go package pattern relative to the workspace, like './...'"
 			},
 			"timeout_seconds": {
 				"type": "integer",
@@ -58,14 +72,19 @@ type goTestParams struct {
 	Coverprofile   bool     `json:"coverprofile"`
 }
 
-// testEvent is a single JSON line from "go test -json".
+// testEvent is a single JSON line from "go test -json". ImportPath and
+// FailedBuild appear on build events, which carry no Package or Test: a package
+// that does not compile is reported as build-output/build-fail, not as a failed
+// test, so ignoring these fields makes a broken build look like a green run.
 type testEvent struct {
-	Time    string  `json:"Time"`
-	Action  string  `json:"Action"`
-	Package string  `json:"Package"`
-	Test    string  `json:"Test"`
-	Output  string  `json:"Output"`
-	Elapsed float64 `json:"Elapsed"`
+	Time        string  `json:"Time"`
+	Action      string  `json:"Action"`
+	Package     string  `json:"Package"`
+	Test        string  `json:"Test"`
+	Output      string  `json:"Output"`
+	Elapsed     float64 `json:"Elapsed"`
+	ImportPath  string  `json:"ImportPath"`
+	FailedBuild string  `json:"FailedBuild"`
 }
 
 type goTestPkgResult struct {
@@ -77,6 +96,7 @@ type goTestPkgResult struct {
 }
 
 type goTestResult struct {
+	Status      string            `json:"status"`
 	Passed      int               `json:"passed"`
 	Failed      int               `json:"failed"`
 	Skipped     int               `json:"skipped"`
@@ -85,9 +105,17 @@ type goTestResult struct {
 	Packages    []goTestPkgResult `json:"packages"`
 	Coverage    string            `json:"coverage,omitempty"`
 	FailedTests []string          `json:"failed_tests,omitempty"`
-	Stdout      string            `json:"stdout"`
-	Stderr      string            `json:"stderr"`
-	ExitCode    int               `json:"exit_code"`
+	// BuildOutput is the verbatim compiler output of packages that failed to
+	// build, and FailedBuilds names them. Without them a build failure is
+	// invisible: it produces zero test events.
+	BuildOutput  string   `json:"build_output,omitempty"`
+	FailedBuilds []string `json:"failed_builds,omitempty"`
+	// RawOutput preserves the stdout tail when no test events could be parsed,
+	// so an unusable run is diagnosable instead of looking like an empty pass.
+	RawOutput string `json:"raw_output,omitempty"`
+	TimedOut  bool   `json:"timed_out,omitempty"`
+	Stderr    string `json:"stderr"`
+	ExitCode  int    `json:"exit_code"`
 }
 
 func (t *GoTestTool) Execute(ctx context.Context, args string) (string, error) {
@@ -117,62 +145,37 @@ func (t *GoTestTool) Execute(ctx context.Context, args string) (string, error) {
 
 	// Streams are kept apart because the JSON event stream is parsed from stdout
 	// alone; combined output would interleave build errors into it.
-	res, _ := ws.Exec(ctx, ExecRequest{Command: "go", Args: cmdArgs, SeparateStreams: true})
+	res, execErr := ws.Exec(ctx, ExecRequest{Command: "go", Args: cmdArgs, SeparateStreams: true})
+
+	// A non-zero exit is how go test reports failing tests, so it is not an
+	// error. A negative exit code means the process never started (or was
+	// killed) — the old code discarded that error, so a missing or unrunnable
+	// toolchain produced {"passed":0,"failed":0,"exit_code":1}, which reads as
+	// green. A cancelled context is not a launch failure: the partial stream is
+	// still parsed and reported as an error result below.
+	if execErr != nil && res.ExitCode < 0 && ctx.Err() == nil {
+		detail := strings.TrimSpace(res.Stderr)
+		if detail == "" {
+			detail = strings.TrimSpace(res.Stdout)
+		}
+		if detail != "" {
+			return "", fmt.Errorf("go_test: could not run go: %w\n%s", execErr, detail)
+		}
+		return "", fmt.Errorf("go_test: could not run go: %w", execErr)
+	}
 
 	result := &goTestResult{
 		Stderr:   res.Stderr,
 		ExitCode: res.ExitCode,
+		TimedOut: ctx.Err() == context.DeadlineExceeded,
 	}
-
-	// Parse JSON line-stream from stdout
-	pkgMap := map[string]*goTestPkgResult{}
-	var failedTests []string
-	var totalElapsed float64
-
-	scanner := bufio.NewScanner(strings.NewReader(res.Stdout))
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		var ev testEvent
-		if err := json.Unmarshal(line, &ev); err != nil {
-			continue
-		}
-
-		pkg, ok := pkgMap[ev.Package]
-		if !ok {
-			pkg = &goTestPkgResult{Package: ev.Package}
-			pkgMap[ev.Package] = pkg
-		}
-
-		switch ev.Action {
-		case "pass":
-			if ev.Test != "" {
-				pkg.Passed++
-				result.Passed++
-			}
-			pkg.Elapsed = ev.Elapsed
-		case "fail":
-			if ev.Test != "" {
-				pkg.Failed++
-				result.Failed++
-				failedTests = append(failedTests, fmt.Sprintf("%s/%s", ev.Package, ev.Test))
-			}
-			pkg.Elapsed = ev.Elapsed
-		case "skip":
-			if ev.Test != "" {
-				pkg.Skipped++
-				result.Skipped++
-			}
-		}
-		totalElapsed += ev.Elapsed
+	result.parse(res.Stdout)
+	if ctx.Err() != nil && result.Status != goTestError {
+		// A cancelled or timed-out run yields partial events, but the counts are
+		// not a verdict: the suite was cut short.
+		result.Status = goTestError
+		result.RawOutput = tailOutput(res.Stdout, 8*1024)
 	}
-
-	// Build package list
-	for _, pkg := range pkgMap {
-		result.Packages = append(result.Packages, *pkg)
-	}
-	result.Total = result.Passed + result.Failed + result.Skipped
-	result.Elapsed = totalElapsed
-	result.FailedTests = failedTests
 
 	// Coverage summary
 	if coverFile != "" {
@@ -198,4 +201,116 @@ func (t *GoTestTool) Execute(ctx context.Context, args string) (string, error) {
 
 	outBytes, _ := json.MarshalIndent(result, "", "  ")
 	return string(outBytes), nil
+}
+
+// parse fills the result from the "go test -json" stream and decides its status.
+func (r *goTestResult) parse(stdout string) {
+	pkgMap := map[string]*goTestPkgResult{}
+	var failedTests []string
+	var failedBuilds []string
+	var buildOutput strings.Builder
+	var totalElapsed float64
+
+	scanner := bufio.NewScanner(strings.NewReader(stdout))
+	// Generated code and panic traces produce long output lines; the default
+	// 64 KiB token limit would stop the scan and drop the rest of the stream.
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		var ev testEvent
+		if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil {
+			// Not a JSON event. Older toolchains print build errors as plain
+			// text here; keep the raw stream for the error path.
+			continue
+		}
+
+		switch ev.Action {
+		case "build-output":
+			buildOutput.WriteString(ev.Output)
+			continue
+		case "build-fail":
+			if ev.ImportPath != "" && !slices.Contains(failedBuilds, ev.ImportPath) {
+				failedBuilds = append(failedBuilds, ev.ImportPath)
+			}
+			continue
+		}
+		if ev.Package == "" {
+			continue
+		}
+
+		pkg, ok := pkgMap[ev.Package]
+		if !ok {
+			pkg = &goTestPkgResult{Package: ev.Package}
+			pkgMap[ev.Package] = pkg
+		}
+
+		switch ev.Action {
+		case "pass":
+			if ev.Test != "" {
+				pkg.Passed++
+				r.Passed++
+			}
+			pkg.Elapsed = ev.Elapsed
+		case "fail":
+			if ev.Test != "" {
+				pkg.Failed++
+				r.Failed++
+				failedTests = append(failedTests, fmt.Sprintf("%s/%s", ev.Package, ev.Test))
+			}
+			pkg.Elapsed = ev.Elapsed
+		case "skip":
+			if ev.Test != "" {
+				pkg.Skipped++
+				r.Skipped++
+			}
+		}
+		totalElapsed += ev.Elapsed
+	}
+
+	for _, pkg := range pkgMap {
+		r.Packages = append(r.Packages, *pkg)
+	}
+	sort.Slice(r.Packages, func(i, j int) bool { return r.Packages[i].Package < r.Packages[j].Package })
+	r.Total = r.Passed + r.Failed + r.Skipped
+	r.Elapsed = totalElapsed
+	r.FailedTests = failedTests
+	r.FailedBuilds = failedBuilds
+	r.BuildOutput = strings.TrimRight(buildOutput.String(), "\n")
+	r.Status = goTestStatus(r.ExitCode, r.Total, r.Failed, r.TimedOut)
+
+	// If not one test event parsed, everything above is empty; hand back the raw
+	// stream so the caller can see why instead of concluding the suite is green.
+	if r.Status == goTestError {
+		r.RawOutput = tailOutput(stdout, 8*1024)
+	}
+}
+
+// goTestStatus separates "the tests failed" from "the run did not happen".
+// A zero-test exit 0 is legitimate (a package with no test files); a zero-test
+// non-zero exit is not.
+func goTestStatus(exitCode, total, failed int, timedOut bool) string {
+	switch {
+	case timedOut:
+		return goTestError
+	case exitCode < 0:
+		return goTestError
+	case exitCode != 0 && total == 0:
+		return goTestError
+	case exitCode != 0 || failed > 0:
+		return goTestFailed
+	default:
+		return goTestOK
+	}
+}
+
+// tailOutput returns at most the last n bytes of s, starting on a rune
+// boundary, with a marker when it truncated.
+func tailOutput(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	cut := len(s) - n
+	for cut < len(s) && !utf8.RuneStart(s[cut]) {
+		cut++
+	}
+	return "...[output truncated]...\n" + s[cut:]
 }
