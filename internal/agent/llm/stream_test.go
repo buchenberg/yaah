@@ -346,17 +346,22 @@ func TestRunStream_genAIAttrsMirrorAccumulatedUsage(t *testing.T) {
 // identical to one that produced nothing.
 func TestRunStream_errorKeepsPartialContent(t *testing.T) {
 	wantErr := errors.New("read stream: unexpected EOF")
-	c := newStreamingClient(&errorThenCloseStreamProvider{err: wantErr})
-
-	msg, _, _, _, err := c.runStream(context.Background(), c.Provider.(StreamProvider), types.ChatRequest{Model: "test-model"})
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("error = %v, want %v", err, wantErr)
-	}
-	if msg.Content != "partial text" {
-		t.Errorf("content = %q, want the partial text", msg.Content)
-	}
-	if len(msg.ToolCalls) != 0 {
-		t.Errorf("a failed stream must not expose partial tool calls, got %d", len(msg.ToolCalls))
+	// Repeat: the provider buffers the content chunk and the error together, so
+	// which select arm wins is uniform. The buffered chunk must be drained on
+	// the error path either way (it was not, and Windows picked the error arm
+	// first while Linux happened to read the chunk).
+	for i := 0; i < 50; i++ {
+		c := newStreamingClient(&errorThenCloseStreamProvider{err: wantErr})
+		msg, _, _, _, err := c.runStream(context.Background(), c.Provider.(StreamProvider), types.ChatRequest{Model: "test-model"})
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("iteration %d: error = %v, want %v", i, err, wantErr)
+		}
+		if msg.Content != "partial text" {
+			t.Fatalf("iteration %d: content = %q, want the partial text", i, msg.Content)
+		}
+		if len(msg.ToolCalls) != 0 {
+			t.Errorf("iteration %d: a failed stream must not expose partial tool calls, got %d", i, len(msg.ToolCalls))
+		}
 	}
 }
 

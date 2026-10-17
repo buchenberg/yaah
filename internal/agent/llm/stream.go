@@ -76,6 +76,39 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 		}
 	}
 
+	// drainPending consumes any chunks the producer buffered before it pushed
+	// an error or the context ended. Both select arms can win while a content
+	// chunk is still unread (Go picks uniformly among ready cases), which would
+	// discard text the model already emitted. Non-blocking by construction.
+	drainPending := func() {
+	drain:
+		for {
+			select {
+			case chunk, ok := <-chunks:
+				if !ok {
+					break drain
+				}
+				if chunk.Usage != nil {
+					usageCaptured = true
+					addStreamUsage(&totalUsage, chunk.Usage)
+				}
+				if len(chunk.Choices) == 0 {
+					continue
+				}
+				delta := chunk.Choices[0].Delta
+				if delta.ReasoningContent != "" {
+					reasoning.WriteString(delta.ReasoningContent)
+				}
+				if delta.Content != "" {
+					content.WriteString(delta.Content)
+					tokenCount++
+				}
+			default:
+				break drain
+			}
+		}
+	}
+
 	for {
 		select {
 		case chunk, ok := <-chunks:
@@ -93,6 +126,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 							observability.RecordError(streamSpan, err)
 							streamSpan.End()
 						}
+						drainPending()
 						return partialStreamedMessage(content.String()), "", responseModel, totalUsage, err
 					}
 				default:
@@ -229,6 +263,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 					observability.RecordError(streamSpan, err)
 					streamSpan.End()
 				}
+				drainPending()
 				return partialStreamedMessage(content.String()), "", "", totalUsage, err
 			}
 			recordVerbose("errs_nil")
@@ -243,6 +278,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 				observability.RecordError(streamSpan, ctx.Err())
 				streamSpan.End()
 			}
+			drainPending()
 			return partialStreamedMessage(content.String()), "", "", totalUsage, ctx.Err()
 		}
 	}
