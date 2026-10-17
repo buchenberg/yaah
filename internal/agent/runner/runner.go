@@ -128,9 +128,8 @@ type TaskToolOpts struct {
 
 	// SubNetwork is the egress posture for confined dispatches (Plan 7 Phase 3),
 	// lowered from agents.subagent.network with the session broker's port (see
-	// SubAgentNetworkPolicy). The zero value fails closed to deny_all, so a
-	// caller that passes nothing denies egress rather than opening it; the
-	// composition root always passes an explicit policy.
+	// SubAgentNetworkPolicy). The zero value means allow_all — the config
+	// default; the composition root passes an explicit policy either way.
 	SubNetwork containment.NetworkPolicy
 }
 
@@ -261,9 +260,14 @@ type taskRunnerOpts struct {
 	subCfg        config.SubAgentConfig
 
 	// subNetwork is the egress posture for confined dispatches (Plan 7 Phase 3),
-	// lowered from agents.subagent.network with the session broker's port. The
-	// zero value fails closed to deny_all — the runtime's own default — so a
-	// caller that forgets to pass a policy denies egress rather than opening it.
+	// lowered from agents.subagent.network with the session broker's port.
+	//
+	// The zero value means allow_all — the config default, and the behaviour of
+	// every session before this key existed — and resolveSubAgentConfinement
+	// normalizes it to an explicit allow_all rather than handing an empty mode to
+	// the runtime (whose own zero policy fails closed to deny_all). A caller that
+	// omits it therefore gets today's behaviour, not a dispatch that refuses
+	// wherever the host cannot jail.
 	subNetwork containment.NetworkPolicy
 
 	// subAgentProvider and subAgentModel override the planner's
@@ -1360,6 +1364,14 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 		return nil, nil, nil
 	}
 
+	// Normalize the zero policy to the config default before anything reads it:
+	// an unset caller means "no posture configured", and handing an empty mode to
+	// the runtime would mean deny_all — a jail that refuses every connect because
+	// nobody set a key.
+	if network.Mode == "" {
+		network.Mode = containment.NetAllowAll
+	}
+
 	// Availability, not mere presence: a backend that is present but unusable
 	// (an LSM that is compiled in but disabled, say) means Exec will degrade.
 	backend := landlock.Detect()
@@ -1525,12 +1537,12 @@ func brokerProxyEnv(network containment.NetworkPolicy) []string {
 	}
 }
 
-// networkMode names a policy's posture for the trace, defaulting the zero value
-// the way ResolveSpec fails closed — to deny_all — so a record never claims open
-// egress the spec did not ask for.
+// networkMode names a policy's posture for the trace and the prompt. It is read
+// after resolveSubAgentConfinement has normalized an unset mode, so it reports the
+// posture actually applied rather than a default nobody chose.
 func networkMode(np containment.NetworkPolicy) string {
 	if np.Mode == "" {
-		return string(containment.NetDenyAll)
+		return string(containment.NetAllowAll)
 	}
 	return string(np.Mode)
 }

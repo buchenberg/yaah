@@ -275,14 +275,22 @@ func TestNetworkPolicy_Lowering(t *testing.T) {
 	}
 }
 
-// A record must never claim open egress the spec did not ask for: the zero value
-// reads as deny_all, matching the runtime's fail-closed default.
-func TestNetworkMode_ZeroValueIsDenyAll(t *testing.T) {
-	if got := networkMode(containment.NetworkPolicy{}); got != string(containment.NetDenyAll) {
-		t.Errorf("zero policy names %q, want %q", got, containment.NetDenyAll)
+// An unset policy means "no posture configured", which is the config default —
+// allow_all — and resolveSubAgentConfinement normalizes it so the recorded
+// posture is the one actually applied. Handing an empty mode through would mean
+// deny_all (the runtime's own default), i.e. a jail that refuses every connect
+// because nobody set a key.
+func TestResolveSubAgentConfinement_UnsetNetworkIsTheConfigDefault(t *testing.T) {
+	if landlock.Detect() == nil {
+		t.Skip("no Landlock on this host, so no dispatch reaches the posture check")
 	}
-	if got := networkMode(allowAllNetwork()); got != string(containment.NetAllowAll) {
-		t.Errorf("allow_all names %q", got)
+	pv := tools.NewPathValidator(t.TempDir(), false, nil)
+	_, rec, err := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: "auto"}, t.TempDir(), containment.NetworkPolicy{})
+	if err != nil {
+		t.Fatalf("an unset network must not refuse the dispatch: %v", err)
+	}
+	if rec.Network != string(containment.NetAllowAll) {
+		t.Errorf("an unset network records %q, want allow_all", rec.Network)
 	}
 }
 
