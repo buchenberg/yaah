@@ -193,7 +193,9 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 		notes = append(notes, "seal: "+sealErr.Error())
 	}
 	if len(notes) > 0 {
-		env.Error = strings.Join(notes, "; ")
+		// Same bound as the result: a provider error can carry a trace profile
+		// or a long provider message, and the envelope must stay reviewable.
+		env.Error = trimResult(strings.Join(notes, "; "))
 	}
 
 	if output == nil {

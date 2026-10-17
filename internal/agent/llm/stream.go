@@ -82,7 +82,9 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 	// discard text the model already emitted. Non-blocking by construction.
 	drainPending := func() {
 	drain:
-		for {
+		// Bounded: a producer that keeps refilling the buffer must not turn a
+		// failure path into an unbounded read loop that outlives the deadline.
+		for drained := 0; drained < 1024; drained++ {
 			select {
 			case chunk, ok := <-chunks:
 				if !ok {
@@ -340,8 +342,6 @@ func checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, f
 	return msg, finishReason, responseModel, usage, nil
 }
 
-// assembleStreamed builds the assistant message from accumulated stream state.
-
 // partialStreamedMessage preserves the text the model produced before a stream
 // failed. A deadline that lands mid-completion would otherwise erase work that
 // the user (or the orchestrator judging the sub-agent) can still read, and the
@@ -356,6 +356,7 @@ func partialStreamedMessage(content string) types.Message {
 	return types.Message{Role: "assistant", Content: content}
 }
 
+// assembleStreamed builds the assistant message from accumulated stream state.
 func assembleStreamed(content string, toolCalls map[int]*types.ToolCall, reasoningContent string) types.Message {
 	msg := types.Message{
 		Role:             "assistant",
