@@ -11,6 +11,27 @@ import (
 	"github.com/buchenberg/yaah/internal/prompts"
 )
 
+func TestSubAgentDispatchLine_UnknownProviderFallsBack(t *testing.T) {
+	cfg := &config.Config{
+		Providers: map[string]config.Provider{"zai": {}},
+		Agent: config.AgentConfig{
+			Default: config.Defaults{Provider: "zai", Model: "GLM-5.3"},
+			SubAgent: config.SubAgentConfig{
+				Provider: "typo",
+				Model:    "GLM-5.3-Flash",
+			},
+		},
+	}
+
+	got := subAgentDispatchLine(cfg)
+	if !strings.Contains(got, "provider=zai") {
+		t.Errorf("dangling provider should fall back to the planner: %s", got)
+	}
+	if strings.Contains(got, "typo") {
+		t.Errorf("dispatch line must not name an unusable provider: %s", got)
+	}
+}
+
 func TestSubAgentDispatchLine(t *testing.T) {
 	cfg := &config.Config{
 		Providers: map[string]config.Provider{"zai": {MaxTokens: 16384}},

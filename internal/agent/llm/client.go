@@ -19,20 +19,26 @@ import (
 type Client struct {
 	Provider         Provider
 	FallbackProvider Provider
-	Model            string
-	FallbackModel    string
-	MaxRetries       int
-	RetryBackoff     time.Duration
-	ContextWindow    int
-	SessionID        string
-	OnToken          TokenCallback
-	OnThinking       ThinkingCallback
-	Compact          CompactFunc
-	Trim             TrimFunc
-	OtelEnabled      bool
-	OtelVerbose      bool
-	StripReasoning   func() // called to permanently strip reasoning from session history
-	replayCount      int    // tracks empty-response replays within a single Call
+	// ProviderName / FallbackProviderName label the two providers in
+	// error envelopes. They are swapped together with Provider and
+	// FallbackProvider so a failed attempt is attributed to the provider
+	// that actually served it.
+	ProviderName         string
+	FallbackProviderName string
+	Model                string
+	FallbackModel        string
+	MaxRetries           int
+	RetryBackoff         time.Duration
+	ContextWindow        int
+	SessionID            string
+	OnToken              TokenCallback
+	OnThinking           ThinkingCallback
+	Compact              CompactFunc
+	Trim                 TrimFunc
+	OtelEnabled          bool
+	OtelVerbose          bool
+	StripReasoning       func() // called to permanently strip reasoning from session history
+	replayCount          int    // tracks empty-response replays within a single Call
 
 	// HeartbeatInterval throttles the sub-agent liveness heartbeats
 	// emitted while a stream is being consumed. Zero means 5s. Tests
@@ -66,6 +72,20 @@ type CallResult struct {
 // stripped payload falls through to the classified retry path (bounded by
 // MaxRetries) instead of spinning forever (finding A2).
 const maxStripReasoningAttempts = 3
+
+// swapToFallback rotates the client to its fallback provider/model once,
+// swapping identity labels in lockstep. The previous provider becomes the
+// fallback so a later swap can return to it.
+func (c *Client) swapToFallback(req *types.ChatRequest) {
+	c.Provider, c.FallbackProvider = c.FallbackProvider, c.Provider
+	c.ProviderName, c.FallbackProviderName = c.FallbackProviderName, c.ProviderName
+	oldModel := c.Model
+	if c.FallbackModel != "" {
+		c.Model = c.FallbackModel
+		req.Model = c.FallbackModel
+	}
+	c.FallbackModel = oldModel
+}
 
 // Call sends a chat request and returns the result. It handles retries,
 // provider rotation on credential errors, and context compaction on overflow.
@@ -162,7 +182,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 						err = fmt.Errorf("response truncated (finish_reason=length), discarding %d tool calls", len(msg.ToolCalls))
 					} else if msg.Content == "" && len(msg.ToolCalls) == 0 {
 						if finish == "length" {
-							err = fmt.Errorf("non-streaming response produced no content (finish_reason=length): output token budget exhausted before any content — the model may have spent max_tokens on reasoning; raise max_tokens")
+							err = fmt.Errorf("non-streaming response produced no content (finish_reason=length): output token budget exhausted before any content — the model may have spent max_tokens on reasoning; raise max_tokens for this request (provider default or caller cap)")
 						} else {
 							err = fmt.Errorf("non-streaming response produced no content (finish_reason=%s)", finish)
 						}
@@ -194,16 +214,8 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		}
 
 		if isDegenerateStream(err) && c.FallbackProvider != nil && !providerSwapped {
-			oldProvider := c.Provider
-			oldModel := c.Model
-			c.Provider = c.FallbackProvider
-			if c.FallbackModel != "" {
-				c.Model = c.FallbackModel
-				req.Model = c.FallbackModel
-			}
+			c.swapToFallback(&req)
 			providerSwapped = true
-			c.FallbackProvider = oldProvider
-			c.FallbackModel = oldModel
 			attempt--
 			continue
 		}
@@ -220,16 +232,8 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 			continue
 		}
 		if errors.Is(err, ErrPrematureStreamClose) && c.FallbackProvider != nil && !providerSwapped {
-			oldProvider := c.Provider
-			oldModel := c.Model
-			c.Provider = c.FallbackProvider
-			if c.FallbackModel != "" {
-				c.Model = c.FallbackModel
-				req.Model = c.FallbackModel
-			}
+			c.swapToFallback(&req)
 			providerSwapped = true
-			c.FallbackProvider = oldProvider
-			c.FallbackModel = oldModel
 			attempt--
 			continue
 		}
@@ -289,16 +293,8 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 			}
 
 		case classified.ShouldRotateCred && c.FallbackProvider != nil && !providerSwapped:
-			oldProvider := c.Provider
-			oldModel := c.Model
-			c.Provider = c.FallbackProvider
-			if c.FallbackModel != "" {
-				c.Model = c.FallbackModel
-				req.Model = c.FallbackModel
-			}
+			c.swapToFallback(&req)
 			providerSwapped = true
-			c.FallbackProvider = oldProvider
-			c.FallbackModel = oldModel
 			attempt--
 			continue
 

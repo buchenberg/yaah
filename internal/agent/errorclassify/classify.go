@@ -216,7 +216,7 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 		(strings.Contains(msg, "finish_reason=length") || strings.Contains(msg, "output token budget")) {
 		c.Reason = ReasonOutputBudget
 		c.Retryable = false
-		c.Message = "output token budget exhausted — raise max_tokens (reasoning may consume the whole budget)"
+		c.Message = "output token budget exhausted — raise max_tokens for this call (provider default or caller cap; reasoning may consume the whole budget)"
 		return c
 	}
 

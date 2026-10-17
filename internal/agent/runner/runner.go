@@ -440,10 +440,22 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 
 		subProvider := opts.subAgentProvider
 		subModel := opts.subAgentModel
+
+		// Start with the provider that runs when no role override
+		// resolves: the global sub-agent provider, else the planner's.
+		subProviderName := opts.providerName
+		if opts.subAgentProvider != nil && opts.subCfg.Provider != "" {
+			subProviderName = opts.subCfg.Provider
+		}
+
 		if rc, ok := opts.subCfg.Roles[string(role)]; ok {
 			if rc.Provider != "" {
 				if opts.resolveProviderByName != nil {
-					subProvider = opts.resolveProviderByName(opts.providerMap, rc.Provider)
+					if resolved := opts.resolveProviderByName(opts.providerMap, rc.Provider); resolved != nil {
+						subProvider = resolved
+						subModel = ""
+						subProviderName = rc.Provider
+					}
 				}
 				if subProvider != nil {
 					subModel = ""
@@ -455,20 +467,10 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		}
 		if subProvider == nil {
 			subProvider = opts.provider
+			subProviderName = opts.providerName
 		}
 		if subModel == "" {
 			subModel = opts.modelName
-		}
-
-		// Resolve the provider label used in error envelopes. Per-role
-		// overrides win over the global sub-agent provider, which wins
-		// over the planner's own provider.
-		subProviderName := opts.subCfg.Provider
-		if rc, ok := opts.subCfg.Roles[string(role)]; ok && rc.Provider != "" {
-			subProviderName = rc.Provider
-		}
-		if subProviderName == "" {
-			subProviderName = opts.providerName
 		}
 
 		// Announce the resolved model before the loop runs so the parent

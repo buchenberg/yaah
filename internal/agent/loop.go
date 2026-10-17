@@ -56,12 +56,26 @@ func (e MaxIterationsError) Is(target error) bool {
 // reading config or probing endpoints. The label degrades gracefully when
 // either value is unknown.
 func (l *Loop) providerError(err error) error {
-	label := l.Config.Model
-	if l.Config.ProviderName != "" {
+	// Prefer the client's live identity: it rotates with the provider on
+	// a fallback, so a failed fallback attempt is attributed to the
+	// provider and model that actually ran. Config fields describe the
+	// last successful attempt and may lag.
+	providerName := l.Config.ProviderName
+	model := l.Config.Model
+	if l.LLM != nil {
+		if l.LLM.ProviderName != "" {
+			providerName = l.LLM.ProviderName
+		}
+		if l.LLM.Model != "" {
+			model = l.LLM.Model
+		}
+	}
+	label := model
+	if providerName != "" {
 		if label == "" {
-			label = l.Config.ProviderName
+			label = providerName
 		} else {
-			label = l.Config.ProviderName + "/" + label
+			label = providerName + "/" + label
 		}
 	}
 	if label == "" {
@@ -311,6 +325,8 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 				toolCallNames(msg.ToolCalls), result.FinishReason)
 
 			l.Provider = l.LLM.Provider
+			l.Config.ProviderName = l.LLM.ProviderName
+			l.Config.FallbackProviderName = l.LLM.FallbackProviderName
 			l.Config.Model = l.LLM.Model
 			l.FallbackProvider = l.LLM.FallbackProvider
 			l.FallbackModel = l.LLM.FallbackModel

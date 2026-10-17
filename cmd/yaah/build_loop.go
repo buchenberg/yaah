@@ -28,7 +28,7 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 		v = agent.NoopView{}
 	}
 
-	b := s.loopBuilder(prov, mName, compactProvider, compactModel, fallbackProvider, fallbackModel)
+	b := s.loopBuilder(prov, mName, compactProvider, compactModel, fallbackProvider, fallbackModel, fallbackProviderName)
 
 	otelEnabled := s.cfg.Observability.Otel.Enabled
 	loop := b.Build(agent.LoopBuildOptions{
@@ -112,6 +112,7 @@ func (s *agentSession) loopBuilder(
 	compactModel string,
 	fallbackProvider agent.Provider,
 	fallbackModel string,
+	fallbackProviderName string,
 ) *agent.LoopBuilder {
 	// The usage hooks are installed on the builder so EVERY loop this
 	// session builds — interactive (runPrompt), serve (runHeadless),
@@ -201,7 +202,8 @@ func (s *agentSession) loopBuilder(
 		SubAgentStuckChildTimeout:  time.Duration(s.cfg.Agent.SubAgent.StuckChildTimeout) * time.Second,
 		SubAgentStuckChildTimeouts: buildStuckChildTimeouts(s.cfg.Agent.SubAgent),
 		Cfg: agent.AgentConfig{
-			ProviderName:           s.providerName,
+			ProviderName:           s.ProviderName(),
+			FallbackProviderName:   fallbackProviderName,
 			MaxLoopCycles:          s.cfg.Agent.Default.MaxLoopCycles,
 			MaxToolTurns:           s.cfg.Agent.Default.MaxToolTurns,
 			MaxRetries:             s.cfg.Agent.Default.MaxRetries,

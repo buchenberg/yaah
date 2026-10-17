@@ -338,7 +338,7 @@ func checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, f
 	}
 	if msg.Content == "" && len(msg.ToolCalls) == 0 {
 		if finishReason == "length" {
-			return types.Message{}, finishReason, responseModel, usage, fmt.Errorf("streamed response produced no content (finish_reason=length): output token budget exhausted before any content — the model may have spent max_tokens on reasoning; raise max_tokens")
+			return types.Message{}, finishReason, responseModel, usage, fmt.Errorf("streamed response produced no content (finish_reason=length): output token budget exhausted before any content — the model may have spent max_tokens on reasoning; raise max_tokens for this request (provider default or caller cap)")
 		}
 		return types.Message{}, finishReason, responseModel, usage, fmt.Errorf("streamed response produced no content (finish_reason=%s)", finishReason)
 	}

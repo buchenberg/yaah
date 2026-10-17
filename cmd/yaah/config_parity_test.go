@@ -54,6 +54,7 @@ func TestConfigAgentConfigParity(t *testing.T) {
 		"QualityGates":          true, // ← AgentConfig.QualityGates (separate config section)
 		"ToolSpillDir":          true, // ← derived from config.HomeDir() at wiring time
 		"ProviderName":          true, // ← derived from provider resolution at wiring time
+		"FallbackProviderName":  true, // ← derived from fallback resolution at wiring time
 	}
 
 	// Check every Defaults field has a matching AgentConfig field.
@@ -141,7 +142,7 @@ func TestLoopBuilderAgentConfigRoundtrip(t *testing.T) {
 	}
 
 	s := &agentSession{cfg: cfg}
-	b := s.loopBuilder(nil, "test-model", nil, "", nil, "")
+	b := s.loopBuilder(nil, "test-model", nil, "", nil, "", "")
 	loop := b.Build(agent.LoopBuildOptions{})
 
 	// Verify every mapped field made it through.
