@@ -232,17 +232,32 @@ func BuiltinRoleFiles() map[string][]byte {
 // RoleSearchPaths returns directories to scan for user-defined role
 // definitions. Mirrors the skill search hierarchy: project-level
 // (walked up from cwd) then user-level (~/.agents/roles/).
+//
+// The walk reaches ~/.agents/roles only when cwd is under $HOME, which a
+// worktree or a container path is not. config.HomeDir() is ~/.yaah, not the
+// home directory, so appending it directly looked in ~/.yaah/.agents/roles and
+// never at the documented location; both are appended explicitly now.
 func RoleSearchPaths(cwd string) []string {
-	home := config.HomeDir()
 	var dirs []string
+	seen := make(map[string]bool)
+	add := func(dir string) {
+		if dir == "" || seen[dir] {
+			return
+		}
+		seen[dir] = true
+		dirs = append(dirs, dir)
+	}
 	for dir := cwd; ; dir = filepath.Dir(dir) {
-		dirs = append(dirs, filepath.Join(dir, ".agents", "roles"))
+		add(filepath.Join(dir, ".agents", "roles"))
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			break
 		}
 	}
-	dirs = append(dirs, filepath.Join(home, ".agents", "roles"))
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		add(filepath.Join(home, ".agents", "roles"))
+	}
+	add(filepath.Join(config.HomeDir(), ".agents", "roles"))
 	return dirs
 }
 

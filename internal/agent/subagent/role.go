@@ -1,6 +1,7 @@
 package subagent
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sync/atomic"
@@ -129,14 +130,19 @@ func ReloadDefaultRoles(opts ReloadDefaultRolesOptions) error {
 	if err := reg.LoadBytes(opts.BuiltinFiles); err != nil {
 		return err
 	}
+	var errs []error
 	for _, dir := range opts.SearchDirs {
 		if err := reg.LoadDir(dir); err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return err
+			errs = append(errs, err)
 		}
 	}
+	// Swap even when a file failed: the roles that did parse stay available,
+	// and the error tells the caller which files to fix. Returning early left
+	// the previous registry in place, which is how a single bad file made every
+	// user role disappear from a `/roles` reload.
 	SetDefaultRoleRegistry(reg)
-	return nil
+	return errors.Join(errs...)
 }

@@ -158,7 +158,11 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		reg.LoadBytes(files)
 	}
 	for _, dir := range runner.RoleSearchPaths(cwd) {
-		reg.LoadDir(dir)
+		if err := reg.LoadDir(dir); err != nil {
+			// A malformed role file must not silently reduce the role list to
+			// the built-ins; name the files the user needs to fix.
+			fmt.Fprintf(os.Stderr, "warning: role files in %s: %v\n", dir, err)
+		}
 	}
 	subagent.SetDefaultRoleRegistry(reg)
 

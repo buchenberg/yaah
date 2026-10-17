@@ -130,12 +130,12 @@ func (s *agentSession) reloadRoles() {
 		BuiltinFiles: runner.BuiltinRoleFiles(),
 		SearchDirs:   runner.RoleSearchPaths(cwd),
 	}
-	if err := subagent.ReloadDefaultRoles(opts); err != nil {
-		msg(fmt.Sprintf("role reload failed: %v", err))
-		return
-	}
-
+	reloadErr := subagent.ReloadDefaultRoles(opts)
 	reg := subagent.DefaultRegistry()
 	roles := reg.Names()
 	msg(fmt.Sprintf("reloaded %d roles (%d built-in + %d search dirs)", len(roles), len(opts.BuiltinFiles), len(opts.SearchDirs)))
+	if reloadErr != nil {
+		// The valid roles were swapped in; these are the files that were not.
+		msg(fmt.Sprintf("role reload warnings: %v", reloadErr))
+	}
 }

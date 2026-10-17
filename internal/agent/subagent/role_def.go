@@ -1,6 +1,7 @@
 package subagent
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -148,6 +149,11 @@ func (r *RoleRegistry) LoadBytes(files map[string][]byte) error {
 // Roles already present in the registry (i.e. built-in) are NOT
 // overwritten, so user-defined roles cannot shadow built-in roles.
 // Non-.md files and directories are skipped silently.
+//
+// A file that cannot be read or parsed is reported in the returned error, but
+// loading continues: one malformed file must not hide the roles beside it. That
+// is how a directory of custom roles silently collapsed to the built-ins when a
+// single frontmatter mistake made the scanner stop at the first bad file.
 func (r *RoleRegistry) LoadDir(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -158,6 +164,7 @@ func (r *RoleRegistry) LoadDir(dir string) error {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	var errs []error
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
@@ -170,15 +177,17 @@ func (r *RoleRegistry) LoadDir(dir string) error {
 		path := filepath.Join(dir, e.Name())
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return fmt.Errorf("role %q: %w", path, err)
+			errs = append(errs, fmt.Errorf("role %q: %w", path, err))
+			continue
 		}
 		def, err := parseRoleFile(data)
 		if err != nil {
-			return fmt.Errorf("role %q: %w", path, err)
+			errs = append(errs, fmt.Errorf("role %q: %w", path, err))
+			continue
 		}
 		r.entries[key] = def
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // ProfileFor returns the runtime profile for the given role. Unknown

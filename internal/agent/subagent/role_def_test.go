@@ -248,3 +248,75 @@ Test guidance.`),
 		t.Errorf("no registry: expected zero-value profile, got %v", p.Tools)
 	}
 }
+
+// TestRoleRegistryLoadDir_OneBadFileDoesNotHideOthers: discovery must not stop
+// at the first malformed file. Before this, one frontmatter mistake made every
+// role sorted after it disappear, and startup discarded the error.
+func TestRoleRegistryLoadDir_OneBadFileDoesNotHideOthers(t *testing.T) {
+	dir := t.TempDir()
+	good := `---
+tools: [read, grep]
+max_iterations: 5
+timeout: 30
+---
+A valid role.`
+	if err := os.WriteFile(filepath.Join(dir, "aaa-valid.md"), []byte(good), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "zzz-broken.md"), []byte("this is not a role file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	reg := NewRoleRegistry()
+	err := reg.LoadDir(dir)
+	if err == nil {
+		t.Fatal("a malformed role file must be reported")
+	}
+	if !strings.Contains(err.Error(), "zzz-broken.md") {
+		t.Errorf("error must name the broken file, got %v", err)
+	}
+	if !contains(reg.Names(), "aaa-valid") {
+		t.Errorf("valid role was hidden by the broken one: %v", reg.Names())
+	}
+}
+
+// TestReloadDefaultRoles_KeepsValidRolesWhenOneFileIsBad: a reload swaps in the
+// roles that parsed even when another file fails, and reports the files at
+// fault. The role tool and /roles rely on both halves.
+func TestReloadDefaultRoles_KeepsValidRolesWhenOneFileIsBad(t *testing.T) {
+	prev := DefaultRegistry()
+	t.Cleanup(func() { SetDefaultRoleRegistry(prev) })
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "user-role.md"), []byte(`---
+tools: [read]
+max_iterations: 5
+timeout: 30
+---
+User role.`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "broken.md"), []byte("---\ntools: [\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	builtin := map[string][]byte{
+		"builtin.md": []byte(`---
+tools: [read]
+max_iterations: 5
+timeout: 30
+---
+Built-in role.`),
+	}
+	err := ReloadDefaultRoles(ReloadDefaultRolesOptions{BuiltinFiles: builtin, SearchDirs: []string{dir}})
+	if err == nil {
+		t.Fatal("the broken file must be reported")
+	}
+	names := Roles()
+	if !contains(names, "user-role") {
+		t.Errorf("valid user role missing after a partial reload: %v", names)
+	}
+	if !contains(names, "builtin") {
+		t.Errorf("built-in role missing after a partial reload: %v", names)
+	}
+}
