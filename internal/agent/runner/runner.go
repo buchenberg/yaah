@@ -744,11 +744,12 @@ func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, pro
 	// reach the network from outside one); the jail half follows enforcement. The
 	// function returns "" when it has nothing to say, so the block is only added
 	// when it does.
-	{
+	if opts.workspace == nil {
+		// The posture comes from the POLICY: the confinement record carries it only
+		// when the jail was established, so reading it from conf would suppress the
+		// egress half exactly when the jail was refused — while the tools are still
+		// omitted.
 		network, broker := networkMode(opts.subNetwork), opts.subNetwork.BrokerPort
-		if conf != nil {
-			network, broker = conf.Network, conf.Broker
-		}
 		if g := prompts.ConfinementSubAgentGuidance(workdir, network, broker,
 			hostNetworkToolsIn(profile), conf != nil && conf.Enforced); g != "" {
 			if sysPrompt != "" {
@@ -1111,7 +1112,11 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 	// requests in THIS process — so a restrictive egress posture omits them rather
 	// than leaving a hole in it. (They are named in the prompt, so the sub-agent
 	// does not read a missing tool as a broken profile.)
-	restrictiveEgress := restrictivePosture(opts.subNetwork)
+	// Host lanes only: the isolated lane's egress is the container's posture, and
+	// both the guard above and the config reference say this key neither applies
+	// nor refuses there — so it must not omit tools or describe an egress rule the
+	// container does not have (its loopback is not the host's).
+	restrictiveEgress := opts.workspace == nil && restrictivePosture(opts.subNetwork)
 
 	for _, name := range profile.Tools {
 		if name == "spawn_subagent" {

@@ -418,6 +418,7 @@ func TestBuildSubAgentRegistry_RestrictiveEgressOmitsHostNetworkTools(t *testing
 func TestBuildSubAgentSysPrompt_NamesOmittedHostNetworkTools(t *testing.T) {
 	opts := taskRunnerOpts{}
 	profile := subagent.RoleProfile{Tools: []string{"read", "webfetch", "http"}}
+	opts.subNetwork = containment.NetworkPolicy{Mode: containment.NetDenyAll}
 	got := buildSubAgentSysPrompt(opts, "developer", profile, false, "/wt",
 		&subAgentConfinement{Requested: "auto", Resolved: "paddock", Enforced: true, Network: "deny_all"})
 	if !strings.Contains(got, "webfetch") || !strings.Contains(got, "http") {
@@ -468,25 +469,21 @@ func TestBuildSubAgentRegistry_RefusedJailStillOmitsHostNetworkTools(t *testing.
 		subCfg:        config.SubAgentConfig{Containment: "paddock"},
 		subNetwork:    containment.NetworkPolicy{Mode: containment.NetDenyAll},
 	}
-	if b := landlock.Detect(); b == nil {
-		t.Skip("no Landlock on this host")
-	} else if ok, _ := b.Available(); !ok {
-		// This is exactly the case under test, so drive it with the stub instead.
-		_ = opts
-	}
-	reg, conf, err := buildSubAgentRegistry(opts, profile, 0, t.TempDir())
+	reg, _, err := buildSubAgentRegistry(opts, profile, 0, t.TempDir())
 	if err != nil {
-		// A host that cannot jail refuses the posture first — also correct.
+		// A host whose jail cannot carry the rule refuses the posture outright —
+		// also correct, and there is no registry to inspect.
 		if !strings.Contains(err.Error(), "network") {
 			t.Fatalf("unexpected refusal: %v", err)
 		}
 		return
 	}
-	if conf != nil && !conf.Enforced {
-		for _, name := range []string{"webfetch", "http"} {
-			if reg.Get(name) != nil {
-				t.Errorf("an unenforced jail with a restrictive posture must still omit %s", name)
-			}
+	// Whatever the enforcement outcome, the host-network tools are gone: the
+	// omission follows the posture, so it must not hinge on the jail having
+	// established.
+	for _, name := range []string{"webfetch", "http"} {
+		if reg.Get(name) != nil {
+			t.Errorf("a restrictive posture must omit %s regardless of whether the jail established", name)
 		}
 	}
 }

@@ -510,10 +510,11 @@ Three things to know about the guarantee:
   gate, so a workdir-less dispatch counts too (shared mode, or a model-supplied
   empty workdir): a restrictive posture there is refused as well, since nothing
   would jail the sub-agent. An isolated session is the exception — its sub-agents
-  run in a container whose network posture is the container's, so `network` is
-  neither applied nor refused there, and since `http`/`webfetch` execute in this
-  process they sit outside a container as well. That is a pre-existing property of
-  the isolated lane, recorded here rather than implied.
+  run in a container whose network posture is the container's, so this key is
+  neither applied nor refused there — and it does not omit tools or describe an
+  egress rule the container does not have (the container's loopback is not the
+  host's, so a broker proxy address would be wrong there). That is a pre-existing
+  property of the isolated lane, recorded here rather than implied.
 
 A confined sub-agent is told its posture up front ("there is no network egress"
 or "egress is limited to an allowlist"), so a blocked fetch is not something it

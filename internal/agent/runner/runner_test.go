@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -95,12 +96,16 @@ func TestBuildSubAgentSysPrompt_ConfinementGuidance(t *testing.T) {
 
 	// The egress posture is stated before the sub-agent meets it, so a blocked
 	// fetch is not something it has to guess at.
-	noEgress := buildSubAgentSysPrompt(opts, "developer", profile, false, worktree,
+	noEgressOpts := opts
+	noEgressOpts.subNetwork = containment.NetworkPolicy{Mode: containment.NetDenyAll}
+	noEgress := buildSubAgentSysPrompt(noEgressOpts, "developer", profile, false, worktree,
 		&subAgentConfinement{Requested: "auto", Resolved: "paddock", Enforced: true, Network: "deny_all"})
 	if !strings.Contains(noEgress, "no network egress") {
 		t.Errorf("a deny_all dispatch must say so:\n%s", noEgress)
 	}
-	brokered := buildSubAgentSysPrompt(opts, "developer", profile, false, worktree,
+	brokerOpts := opts
+	brokerOpts.subNetwork = containment.NetworkPolicy{Mode: containment.NetBroker, BrokerPort: 41234}
+	brokered := buildSubAgentSysPrompt(brokerOpts, "developer", profile, false, worktree,
 		&subAgentConfinement{Requested: "auto", Resolved: "paddock", Enforced: true, Network: "broker", Broker: 41234})
 	for _, want := range []string{"allowlist", "127.0.0.1:41234"} {
 		if !strings.Contains(brokered, want) {
