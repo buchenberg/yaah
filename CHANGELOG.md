@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.79.13](https://github.com/buchenberg/yaah/compare/v0.79.12...v0.79.13) (2026-10-17)
+
+
+### Documentation
+
+* finish the wiring-chain rename in architecture.md ([3592a75](https://github.com/buchenberg/yaah/commit/3592a75d1fbe51ae2779e37631c6d95e8c7546dd))
+* point the dynamic delegate schema at delegate_schema.go ([60da262](https://github.com/buchenberg/yaah/commit/60da262b5fcfd645e9eaf6ba8787becd4c9d90b5))
+* point the dynamic delegate schema at delegate_schema.go ([2feb13a](https://github.com/buchenberg/yaah/commit/2feb13a71f18bdd468c5f018aee4eecde45fd0ef))
+
 ## [0.79.12](https://github.com/buchenberg/yaah/compare/v0.79.11...v0.79.12) (2026-10-17)
 
 
