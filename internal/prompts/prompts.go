@@ -155,10 +155,6 @@ func ConfinementSubAgentGuidance(worktree, network string, brokerPort int, omitt
 		body += "\n\n**There is no network egress from this sandbox.** Anything that fetches " +
 			"(a dependency download, a package install, an HTTP call) will fail; work with what is " +
 			"already in the tree, and say so in your report rather than retrying."
-		if len(omittedHostNetwork) > 0 {
-			body += " The tools `" + strings.Join(omittedHostNetwork, "`, `") + "` are not available to you here: " +
-				"they would make the request from outside the sandbox, which is the thing the posture exists to prevent."
-		}
 	case "broker":
 		body += "\n\n**Network egress is limited to an allowlist** through a broker: only the hosts " +
 			"the session allows are reachable, and anything else is refused. Do not retry a blocked " +
@@ -168,6 +164,12 @@ func ConfinementSubAgentGuidance(worktree, network string, brokerPort int, omitt
 				"so tools that honour the usual proxy variables route through it without configuration; "+
 				"a client that ignores them, or connects to an address directly, is refused.", brokerPort)
 		}
+	}
+	// Any restrictive posture omits the tools that would make their request from
+	// outside the sandbox, so every such posture says so — not just deny_all.
+	if network != "" && network != "allow_all" && len(omittedHostNetwork) > 0 {
+		body += " The tools `" + strings.Join(omittedHostNetwork, "`, `") + "` are not available to you here: " +
+			"they would make the request from outside the sandbox, which is the thing the posture exists to prevent."
 	}
 	return body
 }

@@ -1023,11 +1023,10 @@ func splitRolesBySupervised(names []string, isSupervised func(string) bool) (pla
 // calls for one. The broker is returned so its owner can stop it; nil otherwise.
 //
 // The two restrictive modes are only meaningful with confinement: the rule lives
-// in the jail, so a caller that left containment off gets a policy that is
-// never applied. That is reported (doctor, and the trace records the posture
-// only for a Jailed dispatch) rather than silently ignored here, because
-// refusing to start a session over a config combination the user may have set
-// deliberately would be worse.
+// in the jail, so a configuration that would not jail the dispatch is REFUSED at
+// dispatch time (and reported by doctor) rather than silently dropped. Starting
+// the broker here is unconditional so the port is known before any dispatch; the
+// dispatch is where the contradiction is caught, with the config in hand.
 func wireSubAgentNetwork(sc config.SubAgentConfig) (containment.NetworkPolicy, *egress.Broker, error) {
 	// The broker comes first: its port is what the policy pins to. The mapping
 	// itself lives in the runner (one copy, next to the code that applies it).

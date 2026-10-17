@@ -1360,16 +1360,17 @@ func (c *subAgentConfinement) payload() map[string]any {
 func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConfig, workdir string, network containment.NetworkPolicy) (tools.Workspace, *subAgentConfinement, error) {
 	requested := strings.TrimSpace(cfg.Containment)
 	placement := containmentPlacement(requested)
-	if placement == "" || workdir == "" {
-		return nil, nil, nil
-	}
 
 	// Normalize the zero policy to the config default before anything reads it:
 	// an unset caller means "no posture configured", and handing an empty mode to
 	// the runtime would mean deny_all — a jail that refuses every connect because
-	// nobody set a key.
+	// nobody set a key. The broker port goes with the mode: a port on a non-broker
+	// posture is a record saying two things at once.
 	if network.Mode == "" {
 		network.Mode = containment.NetAllowAll
+	}
+	if network.Mode != containment.NetBroker {
+		network.BrokerPort = 0
 	}
 
 	// Availability, not mere presence: a backend that is present but unusable
@@ -1382,13 +1383,17 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 		}
 	}
 
-	// A restrictive egress posture is only a control inside a jail, so it cannot
-	// ride the advisory fallback: "auto" degrading here would run the dispatch
-	// with OPEN egress after the user asked for none. Refuse instead, and name
-	// the fix. (An explicit containment: off plus a restrictive network is the
-	// same contradiction, caught by the same check.)
-	if err := requireEnforceableEgress(available, backend, network, placement); err != nil {
+	// The egress requirement is checked BEFORE any early return: "this dispatch
+	// will not be jailed" is itself a reason a restrictive posture cannot be
+	// honoured, and an early return that skipped this would drop the posture
+	// silently (containment off, or no workdir to jail against) — leaving a rule
+	// the user believes is in force.
+	if err := requireEnforceableEgress(available, backend, network, placement, workdir, requested); err != nil {
 		return nil, nil, err
+	}
+
+	if placement == "" || workdir == "" {
+		return nil, nil, nil
 	}
 
 	rec, confine := confinementRecord(requested, placement, available, backend, workdir, network)
@@ -1492,10 +1497,28 @@ func hostNetworkToolsIn(profile subagent.RoleProfile) []string {
 // dispatch would either fail deep inside the jail with a kernel message, or — far
 // worse on the advisory fallback — run with open egress while the config, the
 // trace and the sub-agent's own prompt said otherwise.
-func requireEnforceableEgress(available bool, backend containment.Backend, network containment.NetworkPolicy, placement confinement.Placement) error {
+func requireEnforceableEgress(available bool, backend containment.Backend, network containment.NetworkPolicy, placement confinement.Placement, workdir, requested string) error {
 	mode := networkMode(network)
 	if mode == string(containment.NetAllowAll) {
 		return nil
+	}
+	// "This dispatch is not jailed at all" is the primary reason the posture
+	// cannot be applied, and it is checked here rather than left to an early
+	// return — a dropped posture is a rule the user believes is in force.
+	if workdir == "" {
+		return fmt.Errorf(
+			"agents.subagent.network is %q, but this dispatch has no workdir to jail against, so the posture cannot be applied: "+
+				"set network: allow_all to accept open egress", mode)
+	}
+	if placement == "" {
+		configured := requested
+		if configured == "" {
+			configured = "off"
+		}
+		return fmt.Errorf(
+			"agents.subagent.network is %q, which needs a jail, but agents.subagent.containment is %q: "+
+				"set containment: auto (or paddock) to enforce it, or network: allow_all to accept open egress",
+			mode, configured)
 	}
 	if placement == confinement.PlacementPaddock && !available {
 		// paddock already fails closed at Exec; let that message stand.

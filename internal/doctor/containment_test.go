@@ -63,8 +63,11 @@ func TestContainmentCheck_EgressPosture(t *testing.T) {
 		// does not, and the dispatch refuses rather than running open.
 		{"jailed but no net + deny_all", true, "auto", "deny_all", 0, false, "FAIL"},
 		{"jailed but no net + broker", true, "paddock", "broker", 1, false, "FAIL"},
-		// No jail at all is the same outcome: the posture cannot be applied.
+		// No jail at all is the same outcome: the posture cannot be applied, and
+		// the dispatch refuses rather than dropping it.
 		{"no jail + deny_all", false, "auto", "deny_all", 0, false, "FAIL"},
+		{"jail off + deny_all", true, "off", "deny_all", 0, true, "FAIL"},
+		{"jail off + broker", true, "advisory", "broker", 1, true, "FAIL"},
 	}
 	for _, c := range cases {
 		got := containmentCheck(c.available, "test-backend", "retained", c.containment, c.network, c.hosts, c.capable)

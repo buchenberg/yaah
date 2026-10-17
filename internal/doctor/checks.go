@@ -285,12 +285,12 @@ func containmentCheck(available bool, backendDesc, mode, containment, network st
 		}
 		return Check{Label: "Containment", Status: "WARN", Detail: detail + " — auto degrades visibly to advisory here"}
 	default: // off / none / advisory
-		// A restrictive egress posture with no jail to enforce it is a setting
-		// that does nothing. Say so rather than reporting a control that is not
-		// in force.
+		// A restrictive egress posture with no jail to enforce it is refused at
+		// dispatch, not quietly dropped — so this is a FAIL, not a warning about
+		// a weak control: sub-agent dispatches will not run at all.
 		if n != "allow_all" {
-			return Check{Label: "Containment", Status: "WARN",
-				Detail: detail + " — sub-agents run unconfined on the host, so no egress rule applies (set containment: auto or paddock to enforce it)"}
+			return Check{Label: "Containment", Status: "FAIL",
+				Detail: detail + " — sub-agents run unconfined on the host and a restrictive egress posture is refused rather than run open; set containment: auto (or paddock) to enforce it, or network: allow_all"}
 		}
 		return Check{Label: "Containment", Status: "OK", Detail: detail + " — sub-agents run unconfined on the host"}
 	}

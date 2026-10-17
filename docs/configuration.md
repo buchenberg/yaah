@@ -495,15 +495,22 @@ Three things to know about the guarantee:
   host allowlist is what does the actual policy work.
 - **It rides the jail, and it does not ride it silently.** `deny_all` and
   `broker` are kernel rules; the jail is where they live. So a restrictive posture
-  on a host that cannot enforce it — no usable jail, `containment: off`/`advisory`,
-  or a Landlock ABI below 4 (filesystem-only) — **fails the dispatch**, naming the
-  fix, rather than running with open egress after you asked for none. `yaah
-  doctor` reports the same condition as a `FAIL` before you hit it.
+  that cannot be applied — `containment: off`/`advisory`/`none`, a workdir-less
+  dispatch with no world to jail, a host with no usable jail, or a Landlock ABI
+  below 4 (filesystem-only: the jail exists, the network rule does not) —
+  **fails the dispatch**, naming the fix, rather than running with open egress
+  after you asked for none. `yaah doctor` reports the same conditions as a `FAIL`
+  before you hit them.
 - **Tools that run in this process are outside the jail.** A sub-agent's `http`
   and `webfetch` calls are made by the yaah process, not by a sandboxed child, so
   a jail cannot govern them — a restrictive posture therefore **omits those tools**
   from the dispatch (and says so in the sub-agent's prompt) rather than leaving a
   one-call hole. A client the sub-agent runs *itself* is governed normally.
+- **This key governs the host lane.** An isolated session (`workspace.backend`) runs
+  its sub-agents in a container whose network posture is the container's, so
+  `network` is neither applied nor refused there — and since `http`/`webfetch`
+  execute in this process, they sit outside a container too. That is a pre-existing
+  property of the isolated lane, recorded here rather than implied.
 
 A confined sub-agent is told its posture up front ("there is no network egress"
 or "egress is limited to an allowlist"), so a blocked fetch is not something it

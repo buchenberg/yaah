@@ -281,8 +281,10 @@ func TestNetworkPolicy_Lowering(t *testing.T) {
 // deny_all (the runtime's own default), i.e. a jail that refuses every connect
 // because nobody set a key.
 func TestResolveSubAgentConfinement_UnsetNetworkIsTheConfigDefault(t *testing.T) {
-	if landlock.Detect() == nil {
-		t.Skip("no Landlock on this host, so no dispatch reaches the posture check")
+	if b := landlock.Detect(); b == nil {
+		t.Skip("no Landlock on this host")
+	} else if ok, _ := b.Available(); !ok {
+		t.Skip("Landlock present but unusable on this host")
 	}
 	pv := tools.NewPathValidator(t.TempDir(), false, nil)
 	_, rec, err := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: "auto"}, t.TempDir(), containment.NetworkPolicy{})
@@ -304,27 +306,35 @@ func TestRequireEnforceableEgress(t *testing.T) {
 	usableNoNet := stubBackend{usable: true, netCapable: false}
 	usableNet := stubBackend{usable: true, netCapable: true}
 
+	const workdir = "/work/wt"
 	cases := []struct {
 		name      string
 		available bool
 		backend   containment.Backend
 		network   containment.NetworkPolicy
 		placement confinement.Placement
+		workdir   string
 		wantErr   bool
 		wantHint  string
 	}{
-		{"allow_all needs nothing", false, nil, allow, confinement.PlacementAuto, false, ""},
-		{"deny_all with no backend refuses", false, nil, deny, confinement.PlacementAuto, true, "no usable syscall-jail backend"},
-		{"broker with no backend refuses", false, nil, broker, confinement.PlacementAuto, true, "no usable syscall-jail backend"},
-		{"deny_all without network rules refuses", true, usableNoNet, deny, confinement.PlacementAuto, true, "ABI >= 4"},
-		{"broker without network rules refuses", true, usableNoNet, broker, confinement.PlacementAuto, true, "ABI >= 4"},
-		{"deny_all with rules is fine", true, usableNet, deny, confinement.PlacementAuto, false, ""},
-		{"broker with rules is fine", true, usableNet, broker, confinement.PlacementPaddock, false, ""},
+		{"allow_all needs nothing", false, nil, allow, confinement.PlacementAuto, workdir, false, ""},
+		{"allow_all with no placement needs nothing", false, nil, allow, "", "", false, ""},
+		{"deny_all with no backend refuses", false, nil, deny, confinement.PlacementAuto, workdir, true, "no usable syscall-jail backend"},
+		{"broker with no backend refuses", false, nil, broker, confinement.PlacementAuto, workdir, true, "no usable syscall-jail backend"},
+		{"deny_all without network rules refuses", true, usableNoNet, deny, confinement.PlacementAuto, workdir, true, "ABI >= 4"},
+		{"broker without network rules refuses", true, usableNoNet, broker, confinement.PlacementAuto, workdir, true, "ABI >= 4"},
+		{"deny_all with rules is fine", true, usableNet, deny, confinement.PlacementAuto, workdir, false, ""},
+		{"broker with rules is fine", true, usableNet, broker, confinement.PlacementPaddock, workdir, false, ""},
 		// paddock already fails closed at Exec with its own message.
-		{"paddock with no backend keeps its own refusal", false, nil, deny, confinement.PlacementPaddock, false, ""},
+		{"paddock with no backend keeps its own refusal", false, nil, deny, confinement.PlacementPaddock, workdir, false, ""},
+		// The fail-open combinations the review caught: a posture that would be
+		// dropped because the dispatch is not jailed at all.
+		{"containment off + deny_all refuses", true, usableNet, deny, "", workdir, true, "containment is"},
+		{"containment off + broker refuses", true, usableNet, broker, "", workdir, true, "containment is"},
+		{"no workdir + deny_all refuses", true, usableNet, deny, confinement.PlacementAuto, "", true, "no workdir"},
 	}
 	for _, c := range cases {
-		err := requireEnforceableEgress(c.available, c.backend, c.network, c.placement)
+		err := requireEnforceableEgress(c.available, c.backend, c.network, c.placement, c.workdir, "auto")
 		if c.wantErr && err == nil {
 			t.Errorf("%s: want a refusal, got none", c.name)
 			continue
@@ -376,10 +386,11 @@ func TestBuildSubAgentRegistry_RestrictiveEgressOmitsHostNetworkTools(t *testing
 	}
 
 	// A restrictive posture on a host that can jail: they are gone.
-	if landlock.Detect() == nil {
-		t.Skip("no Landlock on this host, so the posture cannot be enforced here")
-	}
-	if !landlock.Detect().SupportsNetwork(containment.NetDenyAll) {
+	if b := landlock.Detect(); b == nil {
+		t.Skip("no Landlock on this host")
+	} else if ok, _ := b.Available(); !ok {
+		t.Skip("Landlock present but unusable on this host")
+	} else if !b.SupportsNetwork(containment.NetDenyAll) {
 		t.Skip("no Landlock network support on this host")
 	}
 	closed, _, err := buildSubAgentRegistry(
