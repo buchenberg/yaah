@@ -1029,23 +1029,40 @@ func splitRolesBySupervised(names []string, isSupervised func(string) bool) (pla
 // refusing to start a session over a config combination the user may have set
 // deliberately would be worse.
 func wireSubAgentNetwork(sc config.SubAgentConfig) (containment.NetworkPolicy, *egress.Broker, error) {
-	switch strings.ToLower(strings.TrimSpace(sc.Network)) {
-	case "", "allow_all":
-		return containment.NetworkPolicy{Mode: containment.NetAllowAll}, nil, nil
-	case "deny_all":
-		return containment.NetworkPolicy{Mode: containment.NetDenyAll}, nil, nil
-	case "broker":
-		broker := egress.NewBroker(egress.AllowHosts(sc.NetworkHosts...))
-		port, err := broker.Start()
-		if err != nil {
-			return containment.NetworkPolicy{}, nil, fmt.Errorf("agents.subagent.network: start the egress broker: %w", err)
-		}
-		slog.Info("sub-agent egress broker started", "port", port, "allow_hosts", len(sc.NetworkHosts))
-		return containment.NetworkPolicy{Mode: containment.NetBroker, BrokerPort: port}, broker, nil
-	default:
-		return containment.NetworkPolicy{}, nil, fmt.Errorf(
-			"agents.subagent.network %q is not one of: allow_all, deny_all, broker", sc.Network)
+	// The broker comes first: its port is what the policy pins to. The mapping
+	// itself lives in the runner (one copy, next to the code that applies it).
+	if !strings.EqualFold(strings.TrimSpace(sc.Network), "broker") {
+		np, err := runner.SubAgentNetworkPolicy(sc.Network, 0)
+		return np, nil, err
 	}
+
+	broker := egress.NewBroker(egress.AllowHosts(normalizeBrokerHosts(sc.NetworkHosts)...))
+	port, err := broker.Start()
+	if err != nil {
+		return containment.NetworkPolicy{}, nil, fmt.Errorf("agents.subagent.network: start the egress broker: %w", err)
+	}
+	np, err := runner.SubAgentNetworkPolicy(sc.Network, port)
+	if err != nil {
+		broker.Stop()
+		return containment.NetworkPolicy{}, nil, err
+	}
+	slog.Info("sub-agent egress broker started", "port", port, "allow_hosts", len(sc.NetworkHosts))
+	return np, broker, nil
+}
+
+// normalizeBrokerHosts puts allowlist entries into the form the broker matches
+// against (see egress.normalizeHost), so a padded, upper-cased or
+// trailing-dot entry does exactly what it looks like. Without this an exact-host
+// allowlist silently never matches.
+func normalizeBrokerHosts(hosts []string) []string {
+	out := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		h = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(h)), ".")
+		if h != "" {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 // retainedMode reports whether agents.subagent.mode selects the retained-run

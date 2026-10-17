@@ -12,6 +12,7 @@ import (
 
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
 
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/landlock"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/recovery"
@@ -224,13 +225,22 @@ func CheckContainment(cfg *config.Config, cfgErr error) Check {
 			backendDesc = "unusable"
 		}
 	}
-	return containmentCheck(available, backendDesc, sc.Mode, sc.Containment, sc.Network, len(sc.NetworkHosts))
+	// Network rules are a separate capability from the jail itself: Landlock ABI
+	// 1-3 confines the filesystem and nothing else, so a restrictive egress
+	// posture is a FAIL there rather than a claim of enforcement.
+	netMode := containment.NetMode(strings.ToLower(strings.TrimSpace(sc.Network)))
+	if netMode == "" {
+		netMode = containment.NetAllowAll
+	}
+	netCapable := backend != nil && backend.SupportsNetwork(netMode)
+
+	return containmentCheck(available, backendDesc, sc.Mode, sc.Containment, sc.Network, len(sc.NetworkHosts), netCapable)
 }
 
 // containmentCheck is the pure decision behind CheckContainment, split out so
 // the present-but-unusable backend case is testable (landlock.Detect never
 // returns one, but a future backend or a race could).
-func containmentCheck(available bool, backendDesc, mode, containment, network string, hosts int) Check {
+func containmentCheck(available bool, backendDesc, mode, containment, network string, hosts int, networkCapable bool) Check {
 	m := strings.ToLower(strings.TrimSpace(mode))
 	if m == "" {
 		m = "retained"
@@ -254,6 +264,13 @@ func containmentCheck(available bool, backendDesc, mode, containment, network st
 		// The egress rule lives in the jail: without one there is nowhere to
 		// put it, and the posture is a setting rather than a control.
 		detail += " — enforced by the jail"
+	}
+	if n != "allow_all" && !networkCapable {
+		// The dispatch refuses (a policy that cannot be applied is not applied
+		// quietly), so this is not a warning about a weak control: sub-agent
+		// dispatches will not run at all.
+		return Check{Label: "Containment", Status: "FAIL",
+			Detail: detail + " — this host's syscall jail cannot enforce network rules (needs Landlock ABI >= 4), and a restrictive egress posture is refused rather than run open; set network: allow_all or run where it can be enforced"}
 	}
 
 	switch p {

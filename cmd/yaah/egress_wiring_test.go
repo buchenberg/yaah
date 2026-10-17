@@ -61,6 +61,22 @@ func TestWireSubAgentNetwork(t *testing.T) {
 		}
 	})
 
+	t.Run("allowlist hosts are normalized to what the broker matches against", func(t *testing.T) {
+		// An exact-host allowlist compares normalized host names, so an entry
+		// that is padded, upper-cased or trailing-dotted would otherwise never
+		// match — a rule that looks present and admits nothing.
+		got := normalizeBrokerHosts([]string{" API.Example.com ", "api.example.com.", "", "  "})
+		want := []string{"api.example.com", "api.example.com"}
+		if len(got) != len(want) {
+			t.Fatalf("normalizeBrokerHosts = %v, want %v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("host %d = %q, want %q", i, got[i], want[i])
+			}
+		}
+	})
+
 	t.Run("an unknown mode is refused", func(t *testing.T) {
 		if _, _, err := wireSubAgentNetwork(config.SubAgentConfig{Network: "borker"}); err == nil {
 			t.Fatal("an unknown mode must be refused rather than defaulted")

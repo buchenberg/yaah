@@ -139,8 +139,15 @@ func Validate(cfg *Config) error {
 			errs = append(errs, "agents.subagent.network_hosts is set but network is not \"broker\" — the allowlist would have no effect")
 		}
 		for i, h := range hosts {
-			if strings.TrimSpace(h) == "" {
+			switch {
+			case strings.TrimSpace(h) == "":
 				errs = append(errs, fmt.Sprintf("agents.subagent.network_hosts[%d] is empty", i))
+			case strings.ContainsAny(h, "*?/"):
+				// The broker matches EXACT host names, so a pattern would be a
+				// silent no-op — the failure mode where a rule looks present and
+				// admits nothing.
+				errs = append(errs, fmt.Sprintf(
+					"agents.subagent.network_hosts[%d] %q looks like a pattern; the allowlist matches exact host names only (e.g. api.example.com)", i, h))
 			}
 		}
 	}

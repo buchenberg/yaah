@@ -143,7 +143,7 @@ func RetainedModeGuidance() string {
 // that git write commands cannot run, because a worktree's index and object
 // store live in the original repository. Without it a sub-agent asked to
 // "commit the fix" spends turns retrying a write the kernel will always refuse.
-func ConfinementSubAgentGuidance(worktree, network string) string {
+func ConfinementSubAgentGuidance(worktree, network string, brokerPort int, omittedHostNetwork []string) string {
 	body := strings.TrimSpace(confinementRaw)
 	if worktree != "" {
 		body += "\n\nThis worktree is `" + worktree + "`."
@@ -155,10 +155,19 @@ func ConfinementSubAgentGuidance(worktree, network string) string {
 		body += "\n\n**There is no network egress from this sandbox.** Anything that fetches " +
 			"(a dependency download, a package install, an HTTP call) will fail; work with what is " +
 			"already in the tree, and say so in your report rather than retrying."
+		if len(omittedHostNetwork) > 0 {
+			body += " The tools `" + strings.Join(omittedHostNetwork, "`, `") + "` are not available to you here: " +
+				"they would make the request from outside the sandbox, which is the thing the posture exists to prevent."
+		}
 	case "broker":
 		body += "\n\n**Network egress is limited to an allowlist** through a broker: only the hosts " +
 			"the session allows are reachable, and anything else is refused. Do not retry a blocked " +
 			"host; report it."
+		if brokerPort > 0 {
+			body += fmt.Sprintf(" `HTTP_PROXY`/`HTTPS_PROXY` already point at it (`http://127.0.0.1:%d`), "+
+				"so tools that honour the usual proxy variables route through it without configuration; "+
+				"a client that ignores them, or connects to an address directly, is refused.", brokerPort)
+		}
 	}
 	return body
 }

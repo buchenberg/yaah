@@ -479,21 +479,31 @@ generally cannot be trusted with your network either:
   inside the sandbox.
 - `broker` — a session egress broker is started and the jail pins egress **to its
   port**, so the only reachable destination is the broker, which admits just
-  `network_hosts`. Hosts outside the list are refused by the broker.
+  `network_hosts` (exact host names; patterns are rejected at validation rather
+  than silently admitting nothing). `HTTP_PROXY`/`HTTPS_PROXY` are pointed at it
+  inside the sandbox, so tools that honour the usual proxy variables route
+  through it without configuration; hosts outside the list are refused by the
+  broker.
 - `allow_all` (the default) — ungoverned, as before.
 
-Two things to know about the guarantee:
+Three things to know about the guarantee:
 
 - **The pin is by port, not by address.** Landlock's network rules are
   port-scoped, so "broker" means "the broker's port and nothing else", not
   "loopback only" — a confined body could still reach *some other host* on that
   port. True loopback-only pinning needs a network namespace (croft). The broker's
   host allowlist is what does the actual policy work.
-- **It rides the jail.** With `containment: off` there is no jail to put the rule
-  in, so a restrictive `network` is a setting rather than a control — and
-  `yaah doctor` says so rather than presenting it as enforced. `deny_all` and
-  `broker` also need Landlock ABI ≥ 4; where the host cannot enforce them the
-  dispatch **fails closed** instead of silently running with open egress.
+- **It rides the jail, and it does not ride it silently.** `deny_all` and
+  `broker` are kernel rules; the jail is where they live. So a restrictive posture
+  on a host that cannot enforce it — no usable jail, `containment: off`/`advisory`,
+  or a Landlock ABI below 4 (filesystem-only) — **fails the dispatch**, naming the
+  fix, rather than running with open egress after you asked for none. `yaah
+  doctor` reports the same condition as a `FAIL` before you hit it.
+- **Tools that run in this process are outside the jail.** A sub-agent's `http`
+  and `webfetch` calls are made by the yaah process, not by a sandboxed child, so
+  a jail cannot govern them — a restrictive posture therefore **omits those tools**
+  from the dispatch (and says so in the sub-agent's prompt) rather than leaving a
+  one-call hole. A client the sub-agent runs *itself* is governed normally.
 
 A confined sub-agent is told its posture up front ("there is no network egress"
 or "egress is limited to an allowlist"), so a blocked fetch is not something it

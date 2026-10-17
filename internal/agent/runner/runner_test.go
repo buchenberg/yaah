@@ -101,9 +101,11 @@ func TestBuildSubAgentSysPrompt_ConfinementGuidance(t *testing.T) {
 		t.Errorf("a deny_all dispatch must say so:\n%s", noEgress)
 	}
 	brokered := buildSubAgentSysPrompt(opts, "developer", profile, false, worktree,
-		&subAgentConfinement{Requested: "auto", Resolved: "paddock", Enforced: true, Network: "broker"})
-	if !strings.Contains(brokered, "allowlist") {
-		t.Errorf("a broker dispatch must say so:\n%s", brokered)
+		&subAgentConfinement{Requested: "auto", Resolved: "paddock", Enforced: true, Network: "broker", Broker: 41234})
+	for _, want := range []string{"allowlist", "127.0.0.1:41234"} {
+		if !strings.Contains(brokered, want) {
+			t.Errorf("a broker dispatch must mention %q:\n%s", want, brokered)
+		}
 	}
 }
 

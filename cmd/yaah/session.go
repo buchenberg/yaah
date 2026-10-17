@@ -141,8 +141,9 @@ type agentSession struct {
 
 	// egressBroker is the session's sub-agent egress broker (Plan 7 Phase 3),
 	// non-nil only when agents.subagent.network is "broker". close() stops it
-	// after the supervisor, so no in-flight sub-agent is still connecting
-	// through it.
+	// after background sub-agents are drained — Stop waits for accepted
+	// connections, so stopping before the drain would take the network away from
+	// a job that has not been cancelled yet.
 	egressBroker *egress.Broker
 
 	// scopes is the session's scope manager (adoption plan R2): the
@@ -224,9 +225,6 @@ func (s *agentSession) close() {
 	if s.supervisor != nil {
 		s.supervisor.Close()
 	}
-	if s.egressBroker != nil {
-		s.egressBroker.Stop()
-	}
 	// The root's registry entry goes before its channel closes: the
 	// registry sends under its lock, so an unregister that returns
 	// guarantees no later send — and a send on a closed channel panics.
@@ -252,6 +250,13 @@ func (s *agentSession) close() {
 			drained = false
 			fmt.Fprintf(os.Stderr, "warning: background sub-agent(s) still finishing after %s; continuing session teardown\n", drainTimeout)
 		}
+	}
+	// The egress broker stops AFTER the drain, not before: Stop() waits for its
+	// accepted connections, and a background jailed sub-agent can still be
+	// mid-tunnel through it — stopping first would both block shutdown and pull
+	// the broker out from under a job that has not been cancelled yet.
+	if s.egressBroker != nil {
+		s.egressBroker.Stop()
 	}
 	// PruneTerminal on close (adoption plan R2): merged and discarded
 	// children accumulate over a long session; their trace records
