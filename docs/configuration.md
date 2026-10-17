@@ -157,7 +157,7 @@ workspace:
 observability:
   otel:
     enabled: false
-    endpoint: localhost:4317           # OTLP/HTTP; SigNoz uses 4318
+    endpoint: localhost:4318           # OTLP/HTTP (SigNoz: 4318)
     service_name: yaah
     traces: true
     metrics: false
@@ -630,7 +630,7 @@ connection fields and workspace containerd fields.
 observability:
   otel:
     enabled: false
-    endpoint: localhost:4317     # OTLP/HTTP endpoint (SigNoz HTTP: 4318)
+    endpoint: localhost:4318     # OTLP/HTTP endpoint (SigNoz: 4318)
     service_name: yaah
     traces: true                 # emit trace spans (default: true)
     metrics: false               # emit OTLP metrics (default: false)

@@ -36,7 +36,7 @@ func initOtel(cfg *config.Config, opts SessionOptions, skipOtel bool) (func(cont
 		otelCfg.Metrics = false
 	} else {
 		if otelCfg.Endpoint == "" {
-			otelCfg.Endpoint = "localhost:4317"
+			otelCfg.Endpoint = "localhost:4318"
 		}
 		if ep := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); ep != "" {
 			otelCfg.Endpoint = ep

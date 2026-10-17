@@ -68,14 +68,14 @@ agents:
 
   # middleware:
   #   enabled:                    # additive over the built-in defaults
-  #     - shepherd_trace
+  #     - prompt_caching
   #   # disabled:                 # remove middleware from the pipeline
   #   #   - approval
 
 # observability:
 #   otel:
 #     enabled: true
-#     endpoint: localhost:4317
+#     endpoint: localhost:4318
 #     service_name: yaah
 #     verbose: false
 

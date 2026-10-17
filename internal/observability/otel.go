@@ -21,7 +21,7 @@ import (
 // Config holds OpenTelemetry initialization settings.
 type Config struct {
 	Enabled     bool
-	Endpoint    string // OTLP gRPC endpoint (e.g. "localhost:4317")
+	Endpoint    string // OTLP/HTTP endpoint (e.g. "localhost:4318")
 	ServiceName string
 	// ServiceVersion is reported as the service.version resource
 	// attribute. Empty falls back to "dev" so unversioned builds stay
@@ -44,7 +44,7 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		Enabled:     false,
-		Endpoint:    "localhost:4317",
+		Endpoint:    "localhost:4318",
 		ServiceName: "yaah",
 		Traces:      true,
 		Metrics:     true,

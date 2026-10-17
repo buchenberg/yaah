@@ -109,7 +109,7 @@ func Test_truncate(t *testing.T) {
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 	require.False(t, cfg.Enabled)
-	require.Equal(t, "localhost:4317", cfg.Endpoint)
+	require.Equal(t, "localhost:4318", cfg.Endpoint)
 	require.Equal(t, "yaah", cfg.ServiceName)
 	require.True(t, cfg.Traces)
 	require.True(t, cfg.Metrics)
