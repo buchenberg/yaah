@@ -160,9 +160,7 @@ scripted reports. Orchestration-suite records live in
 ## Recording results
 
 - Task tables, scores, and caveats: append a new dated section to
-  [RESULTS.md](RESULTS.md) — existing sections are never rewritten.
-- Ledger: append-only rows in the repo root
-  [BENCHMARKS.md](../../BENCHMARKS.md), the existing
-  convention: timestamp, branch, commit, scenario (`TB <task>`), turns,
-  subs, tools, time, orch/sub tokens, total, errors, notes — plus the
-  run-id so the harness output backs the row.
+  [RESULTS.md](RESULTS.md) — existing sections are never rewritten. This is
+  the results ledger.
+- [BENCHMARKS.md](../../BENCHMARKS.md) is methodology and comparison context
+  only; new run results go in `RESULTS.md`, not that page.

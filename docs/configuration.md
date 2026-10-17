@@ -46,7 +46,7 @@ agents:
     model: deepseek-v4-pro
     small_model: deepseek-v4-flash     # compaction model
     max_iterations: 50                 # hard loop cap
-    max_turns: 0                       # 0 = derive iterations - 1
+    max_turns: 0                       # 0 = no soft tool-turn cap
     context_window: 1048576            # 0 = use the model's known window
     approval: ask                      # ask | allow | deny
     mcp_approval: ask                  # ask | allow | deny for MCP tools
@@ -96,7 +96,7 @@ agents:
     default_timeout: 0                 # seconds; 0 = none
     default_max_turns: 0               # 0 = derive iterations - 1
     default_min_turns: 0               # global floor; 0 = none
-    output_limit: 51200                # bytes; 0 = unlimited
+    output_limit: 51200                # bytes; 0 = built-in 50 KiB cap
     json_mode: false
     mode: retained                     # retained | shared
     containment: auto                  # auto | off | paddock
@@ -172,14 +172,15 @@ editor: code --wait
 
 # ── Embeddings ─────────────────────────────────────────────────
 embedding:
-  provider: lmstudio
-  model: text-embedding-nomic-embed-text-v1.5
+  provider: ollama
+  model: nomic-embed-text
 ```
 
 ## Provider reference
 
-At least one provider is required. A provider needs a `base_url` plus either a
-real `api_key` or `auth: oauth` (with a stored token from `yaah login`).
+At least one provider is required. A provider needs a `base_url`. A real
+`api_key` (or `auth: oauth` with a stored token from `yaah login`) is optional
+for keyless local endpoints.
 
 | Field | Default | Description |
 |---|---|---|
@@ -191,7 +192,7 @@ real `api_key` or `auth: oauth` (with a stored token from `yaah login`).
 | `models` | — | Limit available models. Each entry is a plain name or `{name: …, thinking: true/false}` |
 | `timeout` | 0 (no timeout) | HTTP request timeout in seconds; negative values fall back to 120s |
 | `max_tokens` | 4096 native, 8192 compatible; unset on `openai` | Output-token cap when a request has none. Native `api.anthropic.com` stays at 4096 for older Claude models; compatible endpoints default to 8192 because reasoning tokens count against the budget |
-| `headers` | — | Extra HTTP headers sent on every request |
+| `headers` | — | Extra HTTP headers, sent by OpenAI-compatible providers only |
 | `oauth_client_id` / `oauth_scope` / `oauth_domain` | — | OAuth device-flow settings used with `auth: oauth` |
 
 OAuth providers are authenticated once with `yaah login <provider>`; the
@@ -208,7 +209,7 @@ provider-specific defaults.
 | `model` | `deepseek/deepseek-v4-pro` | Model for the main agent |
 | `small_model` | `deepseek/deepseek-v4-flash` | Cheaper model for context compaction |
 | `max_iterations` | 50 | Safety cap on loop turns |
-| `max_turns` | 0 | Soft cap; tools are stripped at this iteration. `0` derives `max_iterations - 1` |
+| `max_turns` | 0 | Soft cap; tools are stripped at this iteration. `0` = no soft cap (the derive rule applies only to `agents.subagent.default_max_turns`) |
 | `context_window` | 1048576 | Caps the model's resolved window. `0` = use the model's known window, not "disabled" |
 | `approval` | `ask` | `allow`, `ask`, or `deny` |
 | `mcp_approval` | `ask` | `allow`, `ask`, or `deny` for MCP-served tools |
@@ -220,7 +221,7 @@ provider-specific defaults.
 | `raw_compaction_threshold` | 0.5 | Same, but ignores cached tokens |
 | `compact_max_messages` | 0 (off) | Force compaction above N messages |
 | `directives` | — | Policy statements injected into the orchestrator prompt only |
-| `shepherd_trace_dir` | unset (off) | Path to the Shepherd trace store. Setting it enables tracing, which enables the retained lane and supervision |
+| `shepherd_trace_dir` | unset (off) | Path to the Shepherd trace store. Setting it enables tracing, which enables supervision and, in local sessions, the retained lane |
 | `retained_repo_path` | cwd | Repository retained worktrees are cut from |
 | `retained_worktree_root` | beside the repo | Parent directory for retained worktrees |
 | `retained_worktree_bootstrap` | — | Command run inside each retained worktree, e.g. `npm ci` |
@@ -259,7 +260,7 @@ Sub-agents use their own curated pipeline and per-role directives.
 | `stuck_child_timeout` | 60 | Seconds without a heartbeat before a sub-agent is force-cancelled (0 = off) |
 | `default_max_turns` | 0 (derive) | Default soft turn cap; 0 derives `iterations - 1` |
 | `default_min_turns` | 0 (none) | Global turn floor — no per-call override or role budget may drop below it |
-| `output_limit` | 51200 | Byte cap on sub-agent reports; 0 = unlimited |
+| `output_limit` | 51200 | Byte cap on sub-agent reports; 0 = built-in 50 KiB cap |
 | `json_mode` | false | Force structured JSON output |
 | `mode` | `retained` | Dispatch lane — `retained` (isolated worktree + proposal) or `shared` (direct to host) |
 | `containment` | `auto` | Syscall-jail placement — `auto` (jail if the host can, else advisory), `off`/`none`/`advisory`, `paddock`/`jail` (fails closed) |
@@ -273,8 +274,7 @@ Sub-agents use their own curated pipeline and per-role directives.
 | `roles.<name>.provider` | — | Per-role provider override |
 | `roles.<name>.model` | — | Per-role model override |
 | `roles.<name>.context_window` | — | Per-role context window (halved from parent if unset) |
-| `roles.<name>.max_concurrency` | — | Per-role concurrency cap |
-| `roles.<name>.output_limit` | — | Per-role report byte cap |
+| `roles.<name>.output_limit` | — | Per-role report byte cap; 0 = inherit the sub-agent default |
 | `roles.<name>.json_mode` | — | Per-role structured-output toggle |
 | `roles.<name>.directives` | — | Per-role directives injected into that role's prompt |
 | `roles.<name>.stuck_child_timeout` | — | Per-role stuck-child timeout |
@@ -299,9 +299,10 @@ floors never shrink the other dimension. The schema maximum (50) bounds the
 final budget. Unfloored turns are clamped to `iterations - 1`, so
 `max_iterations: 1` alone can still force a deliberate cheap probe.
 
-Validation rejects negative floors, `min > max` within a role config, and
-floors unsatisfiable under the schema ceiling; role files clamp with a warning
-instead of failing startup. Effective budgets and their sources appear on
+Validation rejects negative floors and `min > max` within a role config, and
+rejects turn floors at or above the 50-turn schema ceiling. Iteration floors
+above the ceiling are clamped during budget resolution rather than rejected.
+Role files clamp with a warning instead of failing startup. Effective budgets and their sources appear on
 sub-agent spans (`subagent.budget.*`), in `list_subagents`, and in
 `MaxIterationsError`.
 
@@ -367,9 +368,9 @@ A retained dispatch runs the sub-agent in its **own git worktree** and
 returns a sealed proposal; the orchestrator settles it with
 `proposal select|apply|release|discard`. Nothing reaches the host tree until
 settlement, so a rejected attempt costs a dispatch rather than a rollback.
-Retained mode is available when `agents.default.shepherd_trace_dir` is set
-and a root scope can be created; otherwise use `agents.subagent.mode: shared`
-or expect the direct lane.
+Retained mode is available in local (non-containerd) sessions when
+`agents.default.shepherd_trace_dir` is set and a root scope can be created;
+otherwise use `agents.subagent.mode: shared` or expect the direct lane.
 
 ```yaml
 agents:
@@ -386,7 +387,7 @@ agents:
 | `retained_repo_path` | `""` | Repository sub-agent worktrees are cut from, and where per-turn checkpoints operate. Empty uses yaah's working directory. |
 | `retained_worktree_root` | `""` | Parent directory for sub-agent worktrees. Empty uses a `shepherd-worktrees` directory beside the repository. |
 | `retained_worktree_bootstrap` | `""` | Shell command run inside each fresh worktree — see below. |
-| `turn_checkpoint_max` | `0` | Live turn checkpoints per sub-agent run; the oldest are pruned. `0` = unlimited. |
+| `turn_checkpoint_max` | `0` | Live turn checkpoints per sub-agent run; reaching the cap prunes/resets all live checkpoints. `0` = unlimited. |
 | `max_turn_restores` | `3` | Turn-level restores per run, so a deterministically failing turn cannot rewind forever. |
 
 ### Speculating on a task
@@ -471,8 +472,8 @@ dispatched sub-agents only: the orchestrator runs on the host, unconfined.
 That split is the point — the orchestrator is the part that must reach
 everything.
 
-**Retention — `mode: retained` (the default).** Each dispatch runs in its own
-`git worktree` and returns a proposal; the host tree is untouched until the
+**Retention — `mode: retained` (the default in local sessions).** Each dispatch
+runs in its own `git worktree` and returns a proposal; the host tree is untouched until the
 orchestrator applies it with the `proposal` tool. Read-only roles return an
 empty changeset — retained always, so "did anything change?" is never the
 question. `mode: shared` is the direct-to-host lane: the explicit opt-out from
@@ -615,7 +616,7 @@ Tools from connected servers are registered alongside built-in tools.
 | `args` | — | Arguments for a stdio server |
 | `env` | — | Environment variables for a stdio server |
 | `url` | — | Endpoint for an HTTP server |
-| `transport` | inferred | `stdio`, `http`, or `sse` |
+| `transport` | inferred | `stdio` or `http` |
 | `framing` | auto | stdio framing: newline-delimited or Content-Length |
 | `headers` | — | Extra HTTP headers for an HTTP server |
 

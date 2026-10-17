@@ -12,7 +12,7 @@ sub-agent team, see [sub-agents.md](./sub-agents.md); for configuration, see
 - Streaming responses, collapsible reasoning blocks (`ctrl+r`), and
   collapsible tool cards (`ctrl+t`)
 - Sub-agent dispatch cards with role, duration, and status
-- A command palette (`ctrl+p` or `:`) with `:help`, `:clear`, `:compact`,
+- A command palette (`ctrl+p`) with `:help`, `:clear`, `:compact`,
   `:banner`, `:model`, `:search`, `:steer`, `:verbose`, `:quit`, and `:stop`
 - A paned layout: conversation, info pane (session, context, MCP, config),
   todo sidebar, and background sub-agent jobs
@@ -31,7 +31,7 @@ Running `yaah` with no arguments starts a readline REPL:
 | `/compact` | Summarize old context |
 | `/help`, `/?` | Show commands |
 
-History persists at `~/.yaah/history`.
+History persists at `~/.yaah/history` (or `$YAAH_HOME/history` when `YAAH_HOME` is set).
 
 ## Web UI
 
@@ -112,7 +112,7 @@ task matches:
 ```bash
 yaah skill list
 yaah skill show <name>
-yaah skill create <name> <desc>
+yaah skill create <name> <desc> < body.md
 yaah skill edit <name>
 ```
 

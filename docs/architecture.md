@@ -172,7 +172,7 @@ type Step struct {
 
 `Pipeline` wraps an ordered list of `Middleware`. Each hook method iterates through every middleware in registration order. Errors are wrapped with the middleware name and halt the pipeline.
 
-The middleware list is resolved from the `builtinBuilders` and `subAgentBuilders` registries (maps of `func(PipelineConfig) Middleware` in `config.go`; `permission` and `tool_concurrency` share named builder functions across both). Builders construct implementations from `PipelineConfig` fields, including injected callbacks (approval gating, conflict reporting) so the pipeline stays free of agent-package dependencies. The `resolvedPipelineNames()` function applies the `enabled`/`disabled` config overrides to produce the final ordered list.
+The middleware list is resolved from the `builtinBuilders` and `subAgentBuilders` registries (maps of `func(PipelineConfig) Middleware` in `config.go`; `permission` and `tool_concurrency` share named builder functions across both). Builders construct implementations from `PipelineConfig` fields, including injected callbacks (approval gating, conflict reporting) so the pipeline stays free of agent-package dependencies. The `ResolvedPipelineNames()` function applies the `enabled`/`disabled` config overrides to produce the final ordered list.
 
 ```go
 func (p *Pipeline) RunPrepareStep(ctx context.Context, step *Step) (*Step, error) {
@@ -209,7 +209,7 @@ the default set (duplicates collapse). `disabled` removes names from both the
 orchestrator and sub-agent pipelines. Middleware not registered in the
 relevant builder set is silently skipped.
 
-Custom middleware can be injected via `Loop.Middleware`. If set, `buildPipeline()` uses the custom list instead of the config-driven chain.
+Middleware selection is config-driven: `agents.middleware.enabled` / `disabled` are resolved by `ResolvedPipelineNames`, and `buildPipeline()` always builds from that resolved list and the relevant builder registry. There is no arbitrary `Loop.Middleware` injection seam.
 
 ### Individual middleware
 
@@ -269,7 +269,7 @@ Caps tool calls dispatched per turn in `PostModel`. When a batch exceeds `MaxInl
 
 #### LoopDetectionMiddleware (`pipeline/loopdetect.go`)
 
-Tracks a sliding window of SHA-256 hashes of `(tool_name, tool_result)` pairs. If any hash appears `count` or more times within the last `window` executions, the pipeline halts with an error. Uses the package-level `toolCallHash()` function.
+Tracks a sliding window of SHA-256 hashes of `(tool_name, tool_arguments, tool_result)` triples. If any hash appears `count` or more times within the last `window` executions, the pipeline halts with an error. Uses the package-level `toolCallHash()` function.
 
 #### PermissionMiddleware (`pipeline/permission.go`)
 
@@ -665,14 +665,15 @@ history from exceeding the model's context window:
 
 | Tier | Mechanism | Cost | When |
 |------|-----------|------|------|
-| 0 — Soft-prune | Elide stale tool-output content (no LLM call) | ~µs | After every tool batch (`PostTool`) |
+| 0 — Soft-prune | Elide stale tool-output content (no LLM call) | ~µs | Before each LLM call (`PrepareStep`) and after each tool batch (`PostTool`) |
 | 1 — Compaction | LLM-powered summarization of old messages | ~tokens | Proactive (50% window) or reactive (overflow) |
 | 2 — Trim | Deterministic oldest-message removal (no LLM) | ~µs | Fallback when LLM summarization fails |
 
-Compaction is triggered proactively when estimated tokens reach 50% of
-`ContextWindow` (with a 64K minimum floor), reactively when the provider
-signals context overflow, or when the message count exceeds
-`CompactMaxMessages` (regardless of token estimates — guards against
+Compaction is triggered proactively when effective tokens reach 50% of
+`ContextWindow` or raw (cache-inclusive) tokens reach `raw_compaction_threshold`
+(default 0.5; the zero value falls back to 0.25), with a 64K minimum target
+floor; reactively when the provider signals context overflow; or when the
+message count exceeds `CompactMaxMessages` (regardless of token estimates — guards against
 unbounded message accumulation when pruning keeps effective tokens below
 the token threshold).
 
@@ -695,9 +696,9 @@ placeholder:
 
 The algorithm (`Pruner.Mark`) walks messages backwards from the most recent,
 shielding:
-- The last `MinTurns` user turns (default 2)
-- The last `ProtectTokens` tokens of tool output (default 40k)
-- Results from `ProtectedTools` (default: `skill`)
+- The last `MinTurns` user turns (default 1)
+- The last `ProtectTokens` tokens of tool output (default 2,000)
+- Results from `ProtectedTools` (default: `skill`, `delegate`)
 
 Walk termination boundaries (cheap per-turn cost):
 - A non-index-0 system message (compaction summary — older is already summarized)
@@ -1096,13 +1097,13 @@ The agent loop creates the broker and `BrokerView` internally in `applyDefaults`
 
 | Consumer | View impl | File |
 |----------|-----------|------|
-| TUI | `App.HandleEvent` (type switch, via `tui.Proxy`) | `internal/tui/proxy.go` |
+| TUI | `App.HandleEvent` (type switch; `App` is the `agent.View`) | `internal/tui/proxy.go` |
 | REPL | `terminalView` / `replView` | `cmd/yaah/view_terminal.go` |
 | Sub-agents | `agent.NoopView` | `internal/agent/runner/runner.go` |
 | MCP serve | `agent.NoopView` | `cmd/yaah/serve.go` |
 | ACP serve | `acp.View` + `acp.ViewWithWrite` | `internal/acp/view.go` |
 
-Control-plane messages (todos, questions, approvals, model lists) use `tui.ControlMsg` — a separate channel from the broker events.
+Control-plane messages (todos, questions, approvals, model lists) use `control.Msg` (`internal/control`) — a separate channel from the broker events.
 
 ---
 
@@ -1110,11 +1111,11 @@ Control-plane messages (todos, questions, approvals, model lists) use `tui.Contr
 
 Files: `cmd/yaah/tui.go`, `internal/tui/`
 
-The TUI is a [tview](https://github.com/rivo/tview)/[tcell](https://github.com/gdamore/tcell) application running the agent loop in a background goroutine. Communication from the agent goroutine to the TUI goes through the typed event broker — the agent loop publishes `Event` values to the internal `pubsub.Broker[Event]`, and a forwarder delivers them to the app's `agent.View` implementation (`tui.Proxy`), which funnels mutations through an ordered event queue onto the tview main goroutine. Streaming token deltas collect in a pending buffer and are flushed by a debounce timer or a `FlushEvent`.
+The TUI is a [tview](https://github.com/rivo/tview)/[tcell](https://github.com/gdamore/tcell) application running the agent loop in a background goroutine. Communication from the agent goroutine to the TUI goes through the typed event broker — the agent loop publishes `Event` values to the internal `pubsub.Broker[Event]`, and a forwarder delivers them to `App.HandleEvent`, the `agent.View` implementation in `internal/tui/proxy.go`, which funnels mutations through an ordered event queue onto the tview main goroutine. Streaming token deltas collect in a pending buffer and are flushed on `FlushEvent` and at done/tool/compaction boundaries; refresh work is coalesced rather than timer-debounced.
 
 **Layout:** Pages → Flex hierarchy with a conversation view (collapsible tool/reasoning/sub-agent blocks rendered by components under `internal/tui/components/`), an info pane (session/context/MCP/config sections), a todo sidebar, a background-jobs pane, and a multi-line input. All colors come from the shared theme in `internal/tui/colors/theme.go`.
 
-**Command palette:** `ctrl+p` (or typing `:`) opens a command palette (`:help`, `:clear`, `:compact`, `:banner`, `:model`, `:search`, `:steer`, `:verbose`, `:stop`, `:quit`). `:model` queries providers' model lists and filters live; selection swaps provider/model mid-session.
+**Command palette:** `ctrl+p` opens a command palette (`:help`, `:clear`, `:compact`, `:banner`, `:model`, `:search`, `:steer`, `:verbose`, `:stop`, `:quit`). `:model` queries providers' model lists and filters live; selection swaps provider/model mid-session.
 
 Component inventory and rendering rules: [TUI component system](./tui-components.md).
 

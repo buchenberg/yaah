@@ -45,7 +45,7 @@ From source (Go 1.26+):
 go install github.com/buchenberg/yaah@latest
 ```
 
-Docker with SigNoz tracing:
+Docker with OTLP tracing:
 
 ```bash
 export DEEPSEEK_API_KEY=sk-...
@@ -53,7 +53,9 @@ docker compose --profile cli build
 docker compose --profile cli run --rm yaah "explain this codebase"
 ```
 
-Traces appear at <http://localhost:8080>.
+Traces are exported to the OTLP endpoint at `host.docker.internal:4318`. Run
+SigNoz (or another OTLP backend) separately and open its UI; the compose file
+does not start one.
 
 ## Quick start
 

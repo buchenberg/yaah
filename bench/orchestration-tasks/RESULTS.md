@@ -115,11 +115,16 @@ Run `2026-10-17__04-56-01`, one trial per task, `--n-concurrent 1`, via
 | orch-quality-gate | yes | 53s | 205,722 | 8,239 | 71,480 | 6,377 |
 | orch-escalation | yes | 30s | 129,918 | 4,590 | 30,147 | 1,998 |
 | orch-guard | no | 79s | 415,894 | 10,871 | 122,255 | 5,455 |
-| orch-compact | yes | 20s | 90,873 | 1,715 | 0 | 0 |
+| orch-compact | yes* | 20s | 90,873 | 1,715 | 0 | 0 |
 
 Totals: 1,634,579 prompt + 47,529 output = 1,682,108 tokens, 1,425,664
 cached (87%). Orchestrator 1,214,751 / 21,991; sub-agents 419,828 / 25,538
 (26% of total tokens).
+
+`*` `orch-compact` passed under the original verifier, which did not require a
+persisted compaction summary. Under the current strict verifier it does not
+prove compaction; the task is parked in `suite.txt` (`yaah-8uz`) and this
+result is not comparable to later runs.
 
 Failure reasons, and whether they are harness defects:
 
@@ -142,7 +147,7 @@ Failure reasons, and whether they are harness defects:
   one-attempt-per-call instruction.
 
 The four passing tasks exercised retained discard, quality gates, escalation,
-and compaction. The failures are informative; the three harness defects were
+and (under the original verifier) compaction. The failures are informative; the three harness defects were
 fixed and the affected tasks re-run (next section).
 
 The umbrella run also recorded the coding suite at 6/6 in the same invocation;
@@ -203,11 +208,13 @@ Fan-out ran three developer dispatches; 50% of tokens were sub-agent spend.
 
 ### Net status
 
-All eight tasks have now passed at least once, but not in a single invocation:
-`orch-compact`, `orch-settle-discard`, `orch-quality-gate`, and
-`orch-escalation` passed in the first full run; the four above passed after the
-fixes. A fresh full-suite run is the next record; single-trial variance means
-"all eight passed somewhere" is weaker than "8/8 in one run".
+Seven of the eight tasks have a passing live run, but not in a single
+invocation: `orch-settle-discard`, `orch-quality-gate`, and `orch-escalation`
+passed in the first full run; the four fixed tasks passed in focused re-runs.
+Some of those passes used earlier verifier revisions, and the strict checks
+have since been re-validated against oracles rather than every live scenario.
+`orch-compact` is parked (`yaah-8uz`) and its earlier result is not comparable.
+A fresh full-suite run is the next record.
 
 ## 2026-10-17 — PR #382 review pass
 
@@ -219,7 +226,7 @@ Addressed reviewer findings; no new full-suite run.
   now disabled for `orch-guard` and `orch-quality-gate`; `ok.txt` must contain
   the script's own `attempts=5` marker, the warning must appear in a **tool
   result**, and at least four failed bash captures are required. Live re-run:
-  resolved (`2026-10-17__05:36:45`).
+  resolved (`2026-10-17__05-36-45`).
 - **Quality gate.** Same guard disable; `[quality-gate:FAIL]` must appear in a
   tool result. Live run executed `verify.py` and passed (`05-29-24`).
 - **Settle-apply fixture.** The seed already contained the `power(2, 5)`
