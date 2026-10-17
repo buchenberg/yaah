@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.79.10](https://github.com/buchenberg/yaah/compare/v0.79.9...v0.79.10) (2026-10-17)
+
+
+### Bug Fixes
+
+* an unset network policy is the config default, not a refusal ([2acaa76](https://github.com/buchenberg/yaah/commit/2acaa76fa9cf220590bc3118d41711675fa8ddcc))
+
 ## [0.79.9](https://github.com/buchenberg/yaah/compare/v0.79.8...v0.79.9) (2026-10-16)
 
 
