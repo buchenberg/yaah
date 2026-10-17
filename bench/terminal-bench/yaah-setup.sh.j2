@@ -45,4 +45,38 @@ agents:
     shepherd_trace_dir: ${YAAH_TRACE_DIR:-/agent-logs/yaah-traces}
 EOF
 
+# Per-task overlay: a task may bake /app/bench-orchestration.yaml to change
+# scenario wiring (quality gates, supervision, concurrency, dispatch lane).
+# Deep-merge it over the generated config; task values win. This is opt-in,
+# so existing tasks without the file keep the exact generated config.
+if [ -f /app/bench-orchestration.yaml ]; then
+  if python3 -c 'import yaml' 2>/dev/null; then
+    python3 - "$YAAH_HOME/config.yaml" /app/bench-orchestration.yaml <<'PY'
+import sys
+import yaml
+
+base_path, overlay_path = sys.argv[1], sys.argv[2]
+with open(base_path) as handle:
+    base = yaml.safe_load(handle) or {}
+with open(overlay_path) as handle:
+    overlay = yaml.safe_load(handle) or {}
+
+
+def merge(target, source):
+    for key, value in source.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            merge(target[key], value)
+        else:
+            target[key] = value
+
+
+merge(base, overlay)
+with open(base_path, "w") as handle:
+    yaml.safe_dump(base, handle, sort_keys=False)
+PY
+  else
+    echo "warning: /app/bench-orchestration.yaml present but PyYAML is missing; task config ignored" >&2
+  fi
+fi
+
 yaah --version 2>/dev/null || yaah --help >/dev/null 2>&1 || true

@@ -1,0 +1,2 @@
+Do not modify this file. The orchestration verifier checks its bytes against
+the seed commit; editing it is workspace damage even when the answer is right.

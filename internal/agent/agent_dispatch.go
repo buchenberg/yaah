@@ -38,6 +38,7 @@ type toolDispatch struct {
 	subAgentModel string
 	subUsage      types.Usage
 	startOnce     sync.Once
+	finishOnce    sync.Once
 
 	watchdogActive  bool
 	releaseSubAgent func()
@@ -105,6 +106,13 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 
 	if d.isDelegate && !d.isBackground {
 		runCtx = d.setupSubAgent(runCtx)
+		// The child accumulates usage on runCtx; fold it into the loop's
+		// totals and the session's sub-agent share once the call returns.
+		// Without this, foreground delegate spend is silently dropped from
+		// state.db (sub_tokens_*) and OnSubUsage never fires. The explicit
+		// fold below runs before the result is published; the defer covers
+		// only early returns and is idempotent.
+		defer d.finishSubAgent()
 	}
 
 	res, err := l.Registry.Execute(runCtx, d.call.Function.Name, d.call.Function.Arguments)
@@ -207,6 +215,10 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 		ToolError:  errStr,
 	})
 
+	// Publish usage before the result: executeAndCollect proceeds as soon as
+	// it receives this value, so a deferred fold would race the parent's next
+	// turn (and its final usage flush).
+	d.finishSubAgent()
 	results <- toolExecResult{idx: d.idx, callID: d.call.ID, name: d.call.Function.Name, args: d.call.Function.Arguments, content: res, dur: duration, err: err}
 }
 
@@ -312,12 +324,14 @@ func (d *toolDispatch) setupSubAgent(runCtx context.Context) context.Context {
 // finishSubAgent delivers usage captured from the child back to the
 // loop. Called by owners of a foreground dispatch once execution ends.
 func (d *toolDispatch) finishSubAgent() {
-	if d.subUsage.TotalTokens > 0 {
-		d.loop.addUsage(d.subUsage)
-		if d.loop.OnSubUsage != nil {
-			d.loop.OnSubUsage(d.subUsage)
+	d.finishOnce.Do(func() {
+		if d.subUsage.TotalTokens > 0 {
+			d.loop.addSubAgentUsage(d.subUsage)
+			if d.loop.OnSubUsage != nil {
+				d.loop.OnSubUsage(d.subUsage)
+			}
 		}
-	}
+	})
 }
 
 // emitSubAgentEnd publishes the SubAgentEndEvent for a foreground

@@ -10,8 +10,16 @@
 # Usage:
 #   ./run.sh                           # the 6-task suite (default, suite.txt)
 #   ./run.sh hello-world create-bucket # named tasks (e.g. the 2-task smoke)
-#   SUITE=my-tasks.txt ./run.sh        # any task-list file in this directory
+#   SUITE=my-tasks.txt ./run.sh        # any task-list file (relative to this dir)
 #   YAAH_MODEL=deepseek-flash ./run.sh # override the model
+#
+# Orchestration task set (bench/orchestration-tasks):
+#   DATASET=bench/orchestration-tasks \
+#   SUITE=bench/orchestration-tasks/suite.txt ./run.sh
+#
+# A SUITE value that is an existing path is used as-is; otherwise it is
+# resolved relative to this directory. When DATASET contains _lib/, the
+# shared verifier helpers are vendored into each task before the run.
 #
 # Token budget (calibrated on deepseek-flash, see README.md and
 # RESULTS.md): the fixed per-session cost is ~30K input tokens
@@ -30,6 +38,12 @@ export DOCKER_HOST="${DOCKER_HOST:-unix:///run/user/$(id -u)/podman/podman.sock}
 
 TB="${TB:-$HOME/Code/Agentic/Frameworks/terminal-bench/.venv/bin/tb}"
 DATASET="${DATASET:-$HOME/Code/Agentic/Frameworks/terminal-bench/original-tasks}"
+if [ -d "$DATASET" ]; then
+  DATASET="$(cd "$DATASET" && pwd)"
+fi
+if [ -d "$DATASET/_lib" ] && [ -x "$DATASET/sync-lib.sh" ]; then
+  "$DATASET/sync-lib.sh"
+fi
 
 YAAH_BIN="${YAAH_BIN:-/tmp/yaah-bin/yaah}"
 export YAAH_BIN
@@ -51,11 +65,16 @@ if [ "$#" -gt 0 ]; then
   TASKS=("$@")
 else
   SUITE="${SUITE:-suite.txt}"
-  if [ ! -f "$HERE/$SUITE" ]; then
-    echo "error: suite file not found: $HERE/$SUITE" >&2
+  if [ -f "$SUITE" ]; then
+    SUITE_FILE="$SUITE"
+  else
+    SUITE_FILE="$HERE/$SUITE"
+  fi
+  if [ ! -f "$SUITE_FILE" ]; then
+    echo "error: suite file not found: $SUITE_FILE" >&2
     exit 1
   fi
-  mapfile -t TASKS < <(grep -v '^#' "$HERE/$SUITE" | awk '{print $1}' | grep -v '^$')
+  mapfile -t TASKS < <(grep -v '^#' "$SUITE_FILE" | awk '{print $1}' | grep -v '^$')
 fi
 TASK_ARGS=()
 for t in "${TASKS[@]}"; do TASK_ARGS+=(-t "$t"); done

@@ -715,3 +715,86 @@ func stForFirstJob(m *jobs.BackgroundJobs) string {
 	}
 	return ""
 }
+
+// TestLoop_foregroundSubAgentUsageFolded pins the attribution path: a
+// foreground delegate's usage must reach the loop totals and OnSubUsage,
+// not just the child's own state. Regression for sub_tokens_* staying zero.
+func TestLoop_foregroundSubAgentUsageFolded(t *testing.T) {
+	var gotSub *types.Usage
+	fp := &fakeProvider{
+		responses: []*types.ChatResponse{
+			{Choices: []types.Choice{{
+				Message: types.Message{
+					Role: "assistant",
+					ToolCalls: []types.ToolCall{{
+						ID:       "c1",
+						Type:     "function",
+						Function: types.ToolCallFn{Name: "delegate", Arguments: `{"description":"x","prompt":"do work","role":"tester"}`},
+					}},
+				},
+				FinishReason: "tool_calls",
+			}}},
+			{Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant", Content: "final answer"},
+				FinishReason: "stop",
+			}}},
+		},
+	}
+
+	runner := func(ctx context.Context, prompt string, params tools.SubAgentParams) (string, error) {
+		tools.AddSubAgentUsage(ctx, types.Usage{PromptTokens: 5, CompletionTokens: 6, TotalTokens: 11})
+		return "ok", nil
+	}
+
+	reg := tools.NewEmptyRegistry()
+	reg.Register(&tools.DelegateTool{Runner: runner, RoleNames: []string{"tester"}})
+
+	loop := &Loop{
+		Config:   LoopConfig{SystemPrompt: "test", MaxLoopCycles: 5},
+		Provider: fp,
+		Registry: reg,
+		OnSubUsage: func(u types.Usage) {
+			copied := u
+			gotSub = &copied
+		},
+	}
+
+	if _, err := loop.Run(context.Background(), "delegate please"); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	if gotSub == nil {
+		t.Fatal("OnSubUsage never fired for a foreground delegate")
+	}
+	if gotSub.PromptTokens != 5 || gotSub.CompletionTokens != 6 {
+		t.Errorf("OnSubUsage = %+v, want prompt=5 completion=6", *gotSub)
+	}
+	if loop.State.TotalTokens.PromptTokens < 5 || loop.State.TotalTokens.CompletionTokens < 6 {
+		t.Errorf("loop totals did not absorb sub-agent usage: %+v", loop.State.TotalTokens)
+	}
+}
+
+// TestLoop_childUsageKeepsParentContextCounters: folding a child dispatch must
+// not replace the parent's last-response prompt/cache counters. Those drive
+// compaction; replacing them with a child's cumulative spend could compact a
+// small parent conversation. It also keeps nested usage separable for the
+// per-dispatch usage fact.
+func TestLoop_childUsageKeepsParentContextCounters(t *testing.T) {
+	loop := &Loop{}
+	loop.addUsage(types.Usage{PromptTokens: 100, CompletionTokens: 10, TotalTokens: 110, CachedPromptTokens: 10})
+	loop.addSubAgentUsage(types.Usage{PromptTokens: 500, CompletionTokens: 50, TotalTokens: 550, CachedPromptTokens: 50})
+
+	if loop.State.LastPromptTokens != 100 {
+		t.Errorf("LastPromptTokens = %d, want the parent's 100", loop.State.LastPromptTokens)
+	}
+	if loop.State.LastCachedPromptTokens != 10 {
+		t.Errorf("LastCachedPromptTokens = %d, want the parent's 10", loop.State.LastCachedPromptTokens)
+	}
+	if loop.State.TotalTokens.TotalTokens != 660 {
+		t.Errorf("TotalTokens = %d, want 660", loop.State.TotalTokens.TotalTokens)
+	}
+	own := loop.OwnUsage()
+	if own.TotalTokens != 110 || own.PromptTokens != 100 || own.CompletionTokens != 10 {
+		t.Errorf("OwnUsage = %+v, want the parent's 110/100/10", own)
+	}
+}

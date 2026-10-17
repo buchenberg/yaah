@@ -83,6 +83,28 @@ it (`small_model` is compaction-only). `approval: allow` — benchmark
 sessions are non-interactive; the task container is the sandbox, same as
 every other CLI agent benched here.
 
+## Orchestration suite and combined runs
+
+The orchestration task set lives in `../orchestration-tasks` and uses its own
+dataset root. Run it directly:
+
+```bash
+DATASET=bench/orchestration-tasks \
+SUITE=bench/orchestration-tasks/suite.txt \
+bench/terminal-bench/run.sh
+```
+
+Or run both suites with separate scoreboards:
+
+```bash
+./bench/run-all.sh                 # coding + orchestration
+SUITES=orch ./bench/run-all.sh     # orchestration only
+```
+
+`run-all.sh` writes `<OUTPUT_PATH>/<run-id>/metrics.json` per suite and a
+combined `summary-<timestamp>.txt`. It does not merge the scores: coding
+measures outcome accuracy, orchestration measures trace compliance.
+
 ## Reading results
 
 - Verdicts: `runs/<run-id>/results.json` (`is_resolved` per task).
@@ -102,6 +124,13 @@ summed from the state.dbs) for one or more runs:
 ```bash
 python3 extract_metrics.py ~/Code/Agentic/Frameworks/terminal-bench/runs <run-id> [run-id ...]
 ```
+
+For runs that dispatch sub-agents, the extractor splits the session total into
+the orchestrator share and the sub-agent share (`sub_tokens_in/out`, with
+`orchestrator = total - sub`). `--subs` prints the per-role breakdown from
+`yaah.subagent.usage.v1` trace facts, and `--json` emits the same data for
+scripted reports. Orchestration-suite records live in
+`../orchestration-tasks/RESULTS.md`.
 
 ## Podman gotchas
 

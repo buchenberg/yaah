@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"fmt"
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 	"path/filepath"
 	"strings"
@@ -471,5 +472,53 @@ func TestSubagentTraceProfile_MissingFile(t *testing.T) {
 	profile := subagentTraceProfile(context.Background(), "/nonexistent/path/trace.sqlite", "any")
 	if profile != "" {
 		t.Errorf("profile for missing file should be empty, got %q", profile)
+	}
+}
+
+func TestRecordSubAgentUsage(t *testing.T) {
+	dir := t.TempDir()
+	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
+	if err != nil {
+		t.Fatalf("open test store: %v", err)
+	}
+	defer store.Close(context.Background())
+
+	owner := "sub-developer-sess-1"
+	recordSubAgentUsage(context.Background(), store, owner, "developer", "deepseek-flash", types.Usage{
+		PromptTokens:       12000,
+		CompletionTokens:   800,
+		TotalTokens:        12800,
+		CachedPromptTokens: 9000,
+	})
+
+	slice, err := store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, owner, 99, shepherdtrace.ModeCapturesOnly)
+	if err != nil {
+		t.Fatalf("read trace: %v", err)
+	}
+	var found bool
+	for _, id := range slice.FactIDs() {
+		rec, ok := slice.FactsByID[id].(shepherdtrace.Record)
+		if !ok || rec.Envelope.SchemaRef != "yaah.subagent.usage.v1" {
+			continue
+		}
+		found = true
+		if got := rec.Body.Payload["role"]; got != "developer" {
+			t.Errorf("role = %v, want developer", got)
+		}
+		if got := rec.Body.Payload["model"]; got != "deepseek-flash" {
+			t.Errorf("model = %v, want deepseek-flash", got)
+		}
+		if got := fmt.Sprint(rec.Body.Payload["prompt_tokens"]); got != "12000" {
+			t.Errorf("prompt_tokens = %v, want 12000", rec.Body.Payload["prompt_tokens"])
+		}
+		if got := fmt.Sprint(rec.Body.Payload["completion_tokens"]); got != "800" {
+			t.Errorf("completion_tokens = %v, want 800", rec.Body.Payload["completion_tokens"])
+		}
+		if got := fmt.Sprint(rec.Body.Payload["cached_prompt_tokens"]); got != "9000" {
+			t.Errorf("cached_prompt_tokens = %v, want 9000", rec.Body.Payload["cached_prompt_tokens"])
+		}
+	}
+	if !found {
+		t.Fatalf("no yaah.subagent.usage.v1 fact recorded; facts=%d", len(slice.FactIDs()))
 	}
 }

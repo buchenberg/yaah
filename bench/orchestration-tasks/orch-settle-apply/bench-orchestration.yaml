@@ -1,0 +1,5 @@
+agents:
+  subagent:
+    mode: retained
+    model: deepseek-flash
+    max_concurrency: 1

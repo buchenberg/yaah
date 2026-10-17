@@ -1,0 +1,6 @@
+agents:
+  subagent:
+    mode: retained
+    model: deepseek-flash
+    containment: paddock
+    max_concurrency: 1
