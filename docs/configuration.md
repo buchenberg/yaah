@@ -506,11 +506,14 @@ Three things to know about the guarantee:
   a jail cannot govern them — a restrictive posture therefore **omits those tools**
   from the dispatch (and says so in the sub-agent's prompt) rather than leaving a
   one-call hole. A client the sub-agent runs *itself* is governed normally.
-- **This key governs the host lane.** An isolated session (`workspace.backend`) runs
-  its sub-agents in a container whose network posture is the container's, so
-  `network` is neither applied nor refused there — and since `http`/`webfetch`
-  execute in this process, they sit outside a container too. That is a pre-existing
-  property of the isolated lane, recorded here rather than implied.
+- **This key governs the host lanes.** It is decided per dispatch, before any lane
+  gate, so a workdir-less dispatch counts too (shared mode, or a model-supplied
+  empty workdir): a restrictive posture there is refused as well, since nothing
+  would jail the sub-agent. An isolated session is the exception — its sub-agents
+  run in a container whose network posture is the container's, so `network` is
+  neither applied nor refused there, and since `http`/`webfetch` execute in this
+  process they sit outside a container as well. That is a pre-existing property of
+  the isolated lane, recorded here rather than implied.
 
 A confined sub-agent is told its posture up front ("there is no network egress"
 or "egress is limited to an allowlist"), so a blocked fetch is not something it

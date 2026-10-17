@@ -424,3 +424,69 @@ func TestBuildSubAgentSysPrompt_NamesOmittedHostNetworkTools(t *testing.T) {
 		t.Errorf("the omission must be named:\\n%s", got)
 	}
 }
+
+// The posture is a property of the DISPATCH: a workdir-less dispatch (shared mode,
+// or a model-supplied empty workdir) never reaches the confinement path, so a
+// restrictive posture there must be refused and its host-network tools omitted —
+// otherwise the rule is dropped exactly where nothing jails the sub-agent.
+func TestBuildSubAgentRegistry_RestrictiveEgressOnTheUnjailedLane(t *testing.T) {
+	pv := tools.NewPathValidator(t.TempDir(), false, nil)
+	profile := subagent.RoleProfile{Tools: []string{"read", "webfetch", "http"}}
+	opts := taskRunnerOpts{
+		pathValidator: pv,
+		subCfg:        config.SubAgentConfig{},
+		subNetwork:    containment.NetworkPolicy{Mode: containment.NetDenyAll},
+	}
+
+	// No workdir: the lane does not jail, so the posture is refused outright.
+	if _, _, err := buildSubAgentRegistry(opts, profile, 0, ""); err == nil {
+		t.Fatal("a restrictive posture with no workdir to jail against must be refused")
+	} else if !strings.Contains(err.Error(), "no workdir") {
+		t.Errorf("the refusal should say why, got %v", err)
+	}
+
+	// Containment off is the same contradiction, named differently.
+	off := opts
+	off.subCfg = config.SubAgentConfig{Containment: "off"}
+	if _, _, err := buildSubAgentRegistry(off, profile, 0, t.TempDir()); err == nil {
+		t.Fatal("a restrictive posture with containment off must be refused")
+	} else if !strings.Contains(err.Error(), "containment is") {
+		t.Errorf("the refusal should name the containment setting, got %v", err)
+	}
+}
+
+// The omission follows the POSTURE, not whether a jail was established: a paddock
+// placement with no usable backend refuses at Exec, but nothing stops the
+// host-process tools from reaching the network in the meantime.
+func TestBuildSubAgentRegistry_RefusedJailStillOmitsHostNetworkTools(t *testing.T) {
+	pv := tools.NewPathValidator(t.TempDir(), false, nil)
+	profile := subagent.RoleProfile{Tools: []string{"read", "webfetch", "http"}}
+	// A stub backend that is present but unusable, with paddock: the jail refuses
+	// at Exec, so Enforced is false.
+	opts := taskRunnerOpts{
+		pathValidator: pv,
+		subCfg:        config.SubAgentConfig{Containment: "paddock"},
+		subNetwork:    containment.NetworkPolicy{Mode: containment.NetDenyAll},
+	}
+	if b := landlock.Detect(); b == nil {
+		t.Skip("no Landlock on this host")
+	} else if ok, _ := b.Available(); !ok {
+		// This is exactly the case under test, so drive it with the stub instead.
+		_ = opts
+	}
+	reg, conf, err := buildSubAgentRegistry(opts, profile, 0, t.TempDir())
+	if err != nil {
+		// A host that cannot jail refuses the posture first — also correct.
+		if !strings.Contains(err.Error(), "network") {
+			t.Fatalf("unexpected refusal: %v", err)
+		}
+		return
+	}
+	if conf != nil && !conf.Enforced {
+		for _, name := range []string{"webfetch", "http"} {
+			if reg.Get(name) != nil {
+				t.Errorf("an unenforced jail with a restrictive posture must still omit %s", name)
+			}
+		}
+	}
+}

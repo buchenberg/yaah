@@ -371,17 +371,29 @@ func TestConfinementGuidance_EgressLiterals(t *testing.T) {
 			containment.NetDenyAll, containment.NetBroker)
 	}
 	// And the guidance really distinguishes them.
-	denied := ConfinementSubAgentGuidance("/wt", string(containment.NetDenyAll), 0, []string{"webfetch", "http"})
+	denied := ConfinementSubAgentGuidance("/wt", string(containment.NetDenyAll), 0, []string{"webfetch", "http"}, true)
 	for _, want := range []string{"no network egress", "not available to you here"} {
 		if !strings.Contains(denied, want) {
 			t.Errorf("deny_all guidance must contain %q:\n%s", want, denied)
 		}
 	}
-	brokered := ConfinementSubAgentGuidance("/wt", string(containment.NetBroker), 41234, nil)
+	brokered := ConfinementSubAgentGuidance("/wt", string(containment.NetBroker), 41234, nil, true)
 	if !strings.Contains(brokered, "127.0.0.1:41234") {
 		t.Errorf("broker guidance must name the endpoint:\n%s", brokered)
 	}
-	if open := ConfinementSubAgentGuidance("/wt", string(containment.NetAllowAll), 0, nil); strings.Contains(open, "no network egress") {
-		t.Errorf("allow_all guidance must not claim egress is blocked:\n%s", open)
+	open := ConfinementSubAgentGuidance("/wt", string(containment.NetAllowAll), 0, []string{"webfetch"}, true)
+	if strings.Contains(open, "no network egress") || strings.Contains(open, "not available to you here") {
+		t.Errorf("allow_all guidance must claim nothing about egress:\n%s", open)
+	}
+	// A non-canonical spelling must not make the switch and the omission note
+	// disagree: the posture is normalized once, for both.
+	mixed := ConfinementSubAgentGuidance("/wt", "  Deny_All ", 0, []string{"webfetch"}, false)
+	if !strings.Contains(mixed, "no network egress") || !strings.Contains(mixed, "not available to you here") {
+		t.Errorf("the posture must be normalized for both the switch and the omission note:\n%s", mixed)
+	}
+	// An unenforced posture still says so (the tools are omitted either way), but
+	// must not claim a worktree it is not jailed to.
+	if strings.Contains(mixed, "This worktree is") {
+		t.Errorf("an unenforced dispatch must not claim the jail's worktree:\n%s", mixed)
 	}
 }

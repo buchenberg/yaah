@@ -740,12 +740,22 @@ func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, pro
 	// the default flip makes reachable. Enforced, not merely requested — a
 	// paddock placement with no usable backend refuses at Exec, so there is no
 	// run to advise.
-	if conf != nil && conf.Enforced {
-		if sysPrompt != "" {
-			sysPrompt += "\n\n"
+	// The egress half follows the POSTURE (a dispatch refused a jail still must not
+	// reach the network from outside one); the jail half follows enforcement. The
+	// function returns "" when it has nothing to say, so the block is only added
+	// when it does.
+	{
+		network, broker := networkMode(opts.subNetwork), opts.subNetwork.BrokerPort
+		if conf != nil {
+			network, broker = conf.Network, conf.Broker
 		}
-		sysPrompt += prompts.ConfinementSubAgentGuidance(workdir, conf.Network, conf.Broker,
-			hostNetworkToolsIn(profile))
+		if g := prompts.ConfinementSubAgentGuidance(workdir, network, broker,
+			hostNetworkToolsIn(profile), conf != nil && conf.Enforced); g != "" {
+			if sysPrompt != "" {
+				sysPrompt += "\n\n"
+			}
+			sysPrompt += g
+		}
 	}
 
 	if g := subagent.RoleGuidance(role); g != "" {
@@ -1032,6 +1042,28 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 		return false
 	}
 
+	// The egress requirement is a property of the DISPATCH, not of the lane that
+	// happens to jail it, so it is decided here — before any lane gate. A
+	// workdir-less dispatch (a shared-mode spawn, a model-supplied empty workdir)
+	// never reaches the confinement path, and leaving the check inside it dropped
+	// the posture silently and left the host-network tools registered.
+	//
+	// The isolated lane is exempt: its egress is the container's posture, which
+	// this key does not govern (documented in the config reference).
+	if opts.workspace == nil {
+		hostBackend := landlock.Detect()
+		hostAvailable := false
+		if hostBackend != nil {
+			if ok, _ := hostBackend.Available(); ok {
+				hostAvailable = true
+			}
+		}
+		if err := requireEnforceableEgress(hostAvailable, hostBackend, opts.subNetwork,
+			containmentPlacement(opts.subCfg.Containment), workdir, strings.TrimSpace(opts.subCfg.Containment)); err != nil {
+			return nil, nil, err
+		}
+	}
+
 	reg := tools.NewEmptyRegistry()
 	var conf *subAgentConfinement
 	isolated := opts.workspace != nil
@@ -1079,8 +1111,7 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 	// requests in THIS process — so a restrictive egress posture omits them rather
 	// than leaving a hole in it. (They are named in the prompt, so the sub-agent
 	// does not read a missing tool as a broken profile.)
-	restrictiveEgress := conf != nil && conf.Enforced &&
-		conf.Network != "" && conf.Network != string(containment.NetAllowAll)
+	restrictiveEgress := restrictivePosture(opts.subNetwork)
 
 	for _, name := range profile.Tools {
 		if name == "spawn_subagent" {
@@ -1383,15 +1414,6 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 		}
 	}
 
-	// The egress requirement is checked BEFORE any early return: "this dispatch
-	// will not be jailed" is itself a reason a restrictive posture cannot be
-	// honoured, and an early return that skipped this would drop the posture
-	// silently (containment off, or no workdir to jail against) — leaving a rule
-	// the user believes is in force.
-	if err := requireEnforceableEgress(available, backend, network, placement, workdir, requested); err != nil {
-		return nil, nil, err
-	}
-
 	if placement == "" || workdir == "" {
 		return nil, nil, nil
 	}
@@ -1475,6 +1497,15 @@ func SubAgentNetworkPolicy(mode string, brokerPort int) (containment.NetworkPoli
 		return containment.NetworkPolicy{}, fmt.Errorf(
 			"agents.subagent.network %q is not one of: allow_all, deny_all, broker", mode)
 	}
+}
+
+// restrictivePosture reports whether a policy denies or brokers egress — the
+// modes whose rules a dispatch has to be jailed for. It reads the posture, not
+// whether a jail was established: a refused jail still must not leave the
+// host-network tools registered.
+func restrictivePosture(network containment.NetworkPolicy) bool {
+	mode := networkMode(network)
+	return mode != "" && mode != string(containment.NetAllowAll)
 }
 
 // hostNetworkToolsIn lists the profile's tools that would reach the network from
