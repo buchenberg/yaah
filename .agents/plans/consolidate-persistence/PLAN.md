@@ -1,3 +1,9 @@
+---
+name: consolidate-persistence
+description: Remaining persistence work: a unified session CLI over sessions and Shepherd traces.
+status: draft
+---
+
 # Persistence consolidation — remaining work
 
 Sessions, memories, Shepherd traces, and OTel spans remain separate stores by

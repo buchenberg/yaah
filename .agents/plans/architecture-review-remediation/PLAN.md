@@ -1,3 +1,9 @@
+---
+name: architecture-review-remediation
+description: Remaining review remediation: driver bootstrap and the ongoing coverage rebalance.
+status: draft
+---
+
 # Architecture review remediation — remaining work
 
 The security, data-integrity, loop-integrity, config, and protocol phases of

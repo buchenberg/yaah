@@ -1,0 +1,95 @@
+# Isolated workspace live test
+
+`TestLive_ActivatedSession` in
+`internal/tools/workspace_activation_live_test.go` exercises a real
+containerd-backed session end to end. The harness is inert by default: it
+skips unless its environment knobs are set and the process has access to the
+containerd socket. A fast `ok` means it skipped; run with `-v` to see why.
+
+## One-time host setup
+
+The containerd socket is `root:root`, mode 0660, by default. A normal user
+needs group access:
+
+```bash
+sudo groupadd --system containerd
+sudo usermod -aG containerd "$USER"
+
+sudo mkdir -p /etc/containerd
+sudo containerd config default | sudo tee /etc/containerd/config.toml >/dev/null
+sudo sed -i "/^\[grpc\]/,/^\[ttrpc\]/ s/gid = 0/gid = $(getent group containerd | cut -d: -f3)/" /etc/containerd/config.toml
+sudo systemctl restart containerd
+newgrp containerd
+```
+
+Verify the socket is `root:containerd` and mode 0660. If you have a
+customized `/etc/containerd/config.toml`, edit only the `[grpc]` `gid` line
+instead of regenerating the file. The `gid` value is an integer.
+
+A temporary alternative is
+`sudo setfacl -m u:$USER:rw /run/containerd/containerd.sock`, but it is lost
+when the daemon restarts. Membership in the containerd group is
+root-equivalent on the host; grant it deliberately.
+
+## Build the workspace image
+
+The image needs `sh`, GNU `stat -c`, GNU `find -printf`, `git`, `rg`,
+`base64`, and a Go toolchain. `golang:bookworm` has most of that; add
+ripgrep and put the Go toolchain on the default `PATH`:
+
+```bash
+sudo apt-get install -y podman
+
+cat > /tmp/Dockerfile.yaah-workspace <<'EOF'
+FROM docker.io/library/golang:bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends ripgrep \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/local/go/bin/go /usr/local/bin/go \
+    && ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+EOF
+
+podman build -f /tmp/Dockerfile.yaah-workspace -t docker.io/library/yaah-workspace:latest /tmp
+rm -f /tmp/yaah-workspace.tar
+podman save -o /tmp/yaah-workspace.tar docker.io/library/yaah-workspace:latest
+sudo ctr -n yaah-live images import /tmp/yaah-workspace.tar
+```
+
+The `-n yaah-live` matters: image references are namespaced in containerd,
+and the harness reads the `yaah-live` namespace by default. Importing into
+`default` makes the backend fall through to a registry pull. Do not pass
+`--no-unpack`; the backend uses a local image only when it is present and
+unpacked.
+
+## Run the harness
+
+```bash
+sudo ctr -n yaah-live images import /tmp/yaah-workspace.tar && \
+sudo env YAAH_LIVE_CONTAINERD_ADDR=/run/containerd/containerd.sock \
+     YAAH_LIVE_CONTAINERD_IMAGE=docker.io/library/yaah-workspace:latest \
+     go test ./internal/tools/ -run TestLive_ActivatedSession -count=1 -timeout 30m -v
+```
+
+The import only needs re-running after rebuilding the image. `go test` under
+sudo uses root's module cache, so the first run re-downloads modules. The
+first run also includes a cold image pull; keep the `-timeout` generous.
+
+## Environment knobs
+
+| Knob | Required | Default | Meaning |
+|---|---|---|---|
+| `YAAH_LIVE_CONTAINERD_ADDR` | yes | — | containerd socket/endpoint |
+| `YAAH_LIVE_CONTAINERD_IMAGE` | yes | — | Workspace image (must satisfy the tool contract) |
+| `YAAH_LIVE_CONTAINERD_NAMESPACE` | no | `yaah-live` | containerd namespace |
+| `YAAH_LIVE_CONTAINERD_SNAPSHOTTER` | no | adapter default (`overlayfs`) | Snapshotter plugin |
+| `YAAH_LIVE_CONTAINERD_ROOT` | no | `/workspace` | Containment root inside the sandbox |
+| `YAAH_LIVE_CONTAINERD_TIMEOUT` | no | `10m` | Whole-session bound (probe, create, bootstrap, tools, apply-out) |
+
+## What it proves
+
+1. `StartSessionSandbox` through the real registry seam: image probe,
+   `Create`, and the copy-in/bootstrap/rebind path.
+2. The isolated registry accepts the real sandbox workspace.
+3. Tool-shaped work runs inside the container (GNU `stat`, `rg`, writes).
+4. A three-file modify/add/delete delta is captured.
+5. `apply_out` dry-run and apply land the changes on the host tree.
+6. Teardown completes under its own bound.

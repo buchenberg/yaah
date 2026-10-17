@@ -73,8 +73,9 @@ unsafe patterns. Report findings with file paths, line numbers, and severity.
 Do NOT modify files.
 ```
 
-`turn_checkpoints: true` opts a role into per-turn checkpoint/restore
-(bounded by `max_turn_restores`). See
+Per-turn checkpointing is configured in `config.yaml`, not in the role-file
+frontmatter: set `agents.subagent.roles.<role>.turn_checkpoints: true`.
+The restore limit is `agents.default.max_turn_restores`. See
 [configuration.md](./configuration.md#retained-worktrees-and-turn-checkpoints).
 
 ## Structured escalation
@@ -169,9 +170,10 @@ returns a proposal the orchestrator settles.
 - **Shared mode.** `agents.subagent.mode: shared` is the explicit
   direct-to-host opt-out. Without a trace store, the retained lane is not
   available and dispatches use the direct lane.
-- **Turn checkpoints.** A role that sets `turn_checkpoints: true` captures
-  workspace and conversation before each turn, so a failed turn rewinds
-  instead of losing the attempt.
+- **Turn checkpoints.** A role whose config sets
+  `agents.subagent.roles.<role>.turn_checkpoints: true` captures workspace and
+  conversation before each turn, so a failed turn rewinds instead of losing
+  the attempt.
 
 Because every retained dispatch is isolated, several can be compared safely:
 issue two or three calls for one task in a single turn, read the proposals,

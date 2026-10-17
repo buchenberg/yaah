@@ -58,7 +58,11 @@ one of them, it will be rejected even if the code is correct.
    regression test. Run `go test ./...` locally before opening the PR;
    CI will run it again but a green local build is faster feedback.
 
-4. **Lint clean.** CI runs `gofmt -l .` (must be empty), `go vet ./...`,
+4. **Live workspace tests.** The containerd-backed test is opt-in; see
+   [docs/isolated-workspace-testing.md](docs/isolated-workspace-testing.md) for
+   the one-time socket setup, image build, and environment knobs.
+
+5. **Lint clean.** CI runs `gofmt -l .` (must be empty), `go vet ./...`,
    and `staticcheck ./...`. If any of those fail, the PR will be
    blocked. Run them locally first:
    ```bash
@@ -67,14 +71,14 @@ one of them, it will be rejected even if the code is correct.
    go run honnef.co/go/tools/cmd/staticcheck@latest ./...
    ```
 
-5. **One concern per PR.** Don't mix a bug fix with a refactor with a
+6. **One concern per PR.** Don't mix a bug fix with a refactor with a
    new feature. Smaller PRs review faster and merge faster.
 
-6. **Update the docs.** If your change is user-visible, update the relevant
+7. **Update the docs.** If your change is user-visible, update the relevant
    page under `docs/` (and `README.md` for the top-level pitch). If the change
    is purely internal, a `docs:` line in the PR description is enough.
 
-7. **Don't bump the version.** Maintainers cut releases. Your PR just
+8. **Don't bump the version.** Maintainers cut releases. Your PR just
    needs to land on `main`.
 
 ## What we won't accept

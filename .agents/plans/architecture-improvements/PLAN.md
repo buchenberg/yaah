@@ -1,3 +1,9 @@
+---
+name: architecture-improvements
+description: Remaining architecture improvements: trace-query extraction, MCP YAML editing, skill scaffolding, shared control driver, and home-dir injection.
+status: draft
+---
+
 # Architecture improvements — remaining work
 
 Most of this plan shipped: event exhaustiveness, loop single-use, parent

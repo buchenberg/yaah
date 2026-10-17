@@ -318,7 +318,7 @@ Each sub-agent runs under a **role** that selects its tool set and default limit
 |---|---|---|---|---|
 | `analyst` (Jack) | 30 | 10 (5) | 240s | read/search/web + shell, git, diff, go_outline |
 | `developer` (Charley) | 40 | 12 (6) | 300s | analyst set + write/edit/delete/patch + Go tools |
-| `tester` (Casey) | 30 | 8 (4) | 300s | read/search + shell + go_test/staticcheck + git/diff |
+| `tester` (Casey) | 30 | 8 (4) | 300s | read/search + shell + go_test + git/diff |
 | `reviewer` (Tim) | 25 | 12 (8) | 480s | read/search + git/diff/staticcheck; no shell or web |
 
 There is no default role and no full-tools fallback. `RoleProfileFor(role)`
@@ -1154,7 +1154,7 @@ yaah emits traces via OTLP HTTP to any OpenTelemetry-compatible backend. Tracing
 observability:
   otel:
     enabled: false
-    endpoint: "localhost:4317"
+    endpoint: "localhost:4318"
     service_name: "yaah"
     traces: true
     metrics: false

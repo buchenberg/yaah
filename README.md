@@ -219,6 +219,7 @@ yaah version
 | [code-organization.md](./docs/code-organization.md) | Package layout and file-size guidelines |
 | [tui-components.md](./docs/tui-components.md) | TUI component system |
 | [web-ui.md](./docs/web-ui.md) | Web UI architecture and wire events |
+| [isolated-workspace-testing.md](./docs/isolated-workspace-testing.md) | Live containerd workspace test runbook |
 
 ## Development
 
