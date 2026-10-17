@@ -131,6 +131,17 @@ func (f *sessionRunner) run() TaskRunner {
 	}
 }
 
+// workdirAt is workdirFor without the testing dependency, for use inside a
+// dispatch goroutine — t.Fatalf is only legal on the test's own goroutine.
+func (f *sessionRunner) workdirAt(call int) (string, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if call >= len(f.workdirs) {
+		return "", false
+	}
+	return f.workdirs[call], true
+}
+
 func (f *sessionRunner) workdirFor(t *testing.T, call int) string {
 	t.Helper()
 	f.mu.Lock()

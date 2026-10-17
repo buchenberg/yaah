@@ -225,26 +225,51 @@ func TestRetained_SpeculationSettlesOneAndDiscardsTheRest(t *testing.T) {
 	runner := &sessionRunner{responses: []runnerResponse{
 		{result: "approach a"}, {result: "approach b"}, {result: "approach c"},
 	}}
+	// Everything touched from a dispatch goroutine is non-fatal: t.Fatalf is
+	// only legal on the test's own goroutine, and a failure there would surface
+	// later as a misleading assertion.
+	writeErrs := make([]error, attempts)
 	runner.sideEffect = func(call int, _ string) {
-		writeTestFile(t, runner.workdirFor(t, call), fmt.Sprintf("approach-%d.txt", call), "variant\n")
+		wd, ok := runner.workdirAt(call)
+		if !ok {
+			writeErrs[call] = fmt.Errorf("no workdir recorded for call %d", call)
+			return
+		}
+		writeErrs[call] = os.WriteFile(filepath.Join(wd, fmt.Sprintf("approach-%d.txt", call)), []byte("variant\n"), 0o644)
 	}
 	rt := newRetainedTestEnv(t, runner)
 
 	var wg sync.WaitGroup
 	envs := make([]proposalEnvelope, attempts)
+	runErrs := make([]error, attempts)
 	for i := 0; i < attempts; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			res, err := startRetainedRun(context.Background(), rt, "propose a fix", SubAgentParams{Role: "worker"}, 0)
 			if err != nil {
-				t.Errorf("dispatch %d: %v", i, err)
+				runErrs[i] = err
 				return
 			}
-			envs[i] = decodeProposalEnvelope(t, res)
+			var env proposalEnvelope
+			if uerr := json.Unmarshal([]byte(res), &env); uerr != nil {
+				runErrs[i] = fmt.Errorf("envelope: %w", uerr)
+				return
+			}
+			envs[i] = env
 		}(i)
 	}
 	wg.Wait()
+	for i, err := range runErrs {
+		if err != nil {
+			t.Fatalf("dispatch %d: %v", i, err)
+		}
+	}
+	for call, err := range writeErrs {
+		if err != nil {
+			t.Fatalf("attempt %d's write: %v", call, err)
+		}
+	}
 
 	seenID := map[string]bool{}
 	for i, env := range envs {
