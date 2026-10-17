@@ -31,7 +31,7 @@ func (c *AnthropicClient) SendStream(ctx context.Context, req types.ChatRequest)
 		defer close(chunks)
 		defer close(errs)
 
-		stream := c.client.Messages.NewStreaming(ctx, lowerAnthropicRequest(req), c.requestOpts(ctx)...)
+		stream := c.client.Messages.NewStreaming(ctx, c.lower(req), c.requestOpts(ctx)...)
 		defer stream.Close()
 
 		st := &anthropicStreamState{}

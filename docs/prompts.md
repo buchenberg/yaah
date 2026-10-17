@@ -44,6 +44,7 @@ systemPrompt := prompts.Build(layers)
 |---|---|---|---|
 | Identity | `identity.md` (embedded) | Root block | Defines yaah's personality, principles, tools |
 | Environment | `prompts.DetectEnvironment(cwd)` | `## Runtime Environment` | `OS: windows/amd64. Default shell: powershell.` |
+| Sub-agent dispatch | `wiring_prompt.go:subAgentDispatchLine` | Inline line | `Sub-agent dispatch: provider=zai model=GLM-5.3-Flash max_concurrency=5` |
 | User context | `~/.yaah/AGENTS.md` | `<user-preferences>` block | Cross-project user preferences |
 | Project context | walked-up `AGENTS.md`/`CLAUDE.md` | Inlined | Project-specific instructions and conventions |
 | Memory | SQLite `memory_search` | `## Memory` | Stored facts from past sessions |

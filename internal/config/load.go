@@ -21,6 +21,13 @@ type Provider struct {
 	TimeoutSeconds int               `yaml:"timeout,omitempty"`
 	Headers        map[string]string `yaml:"headers,omitempty"` // extra headers sent on every request
 
+	// MaxTokens caps the output tokens for every request this provider
+	// serves when the request does not set its own cap. Anthropic-
+	// compatible reasoning endpoints count thinking tokens against this
+	// budget, so the default (8192) can be exhausted before any content
+	// is emitted; set this higher for reasoning-heavy models.
+	MaxTokens int `yaml:"max_tokens,omitempty"`
+
 	// OAuth fields (used when auth: oauth).
 	OAuthClientID string `yaml:"oauth_client_id,omitempty"`
 	OAuthScope    string `yaml:"oauth_scope,omitempty"`
@@ -440,6 +447,7 @@ func Resolve(p Provider) Provider {
 		Models:         p.Models,
 		TimeoutSeconds: p.TimeoutSeconds,
 		Headers:        p.Headers,
+		MaxTokens:      p.MaxTokens,
 		OAuthClientID:  SubstituteEnv(p.OAuthClientID),
 		OAuthScope:     SubstituteEnv(p.OAuthScope),
 		OAuthDomain:    SubstituteEnv(p.OAuthDomain),

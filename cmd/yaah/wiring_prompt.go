@@ -1,6 +1,7 @@
 package yaah
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/config"
@@ -23,6 +24,7 @@ func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSess
 	layers := prompts.Layers{
 		Identity:               prompts.IdentityPrompt,
 		Environment:            prompts.DetectEnvironment(cwd),
+		SubAgentDispatch:       subAgentDispatchLine(cfg),
 		UserContext:            prompts.LoadUserContext(config.HomeDir()),
 		Project:                instructions.FormatForSystem(instructions.Load(cwd, instructions.WorktreeRoot(cwd))),
 		MaxSubAgentConcurrency: cfg.Agent.SubAgent.MaxConcurrency,
@@ -41,6 +43,55 @@ func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSess
 	}
 
 	return systemPrompt
+}
+
+// subAgentDispatchLine describes the resolved sub-agent dispatch defaults
+// in the orchestrator's environment block. Without it, any sub-agent
+// provider failure sends the orchestrator to stale memory or endpoint
+// probing to discover which provider actually served the dispatch.
+func subAgentDispatchLine(cfg *config.Config) string {
+	sc := cfg.Agent.SubAgent
+	provider := sc.Provider
+	// A configured-but-unknown or unusable name is ignored at dispatch
+	// (resolveSubAgent returns nil and sub-agents inherit the planner),
+	// so report what will actually run rather than the dangling name.
+	modelOverrideHonored := true
+	if provider == "" {
+		provider = resolveProviderName(cfg)
+	} else if !providerUsable(cfg, provider) {
+		provider = resolveProviderName(cfg)
+		modelOverrideHonored = false
+	}
+	model := sc.Model
+	if model == "" || !modelOverrideHonored {
+		model = resolveModel(cfg)
+	}
+	if model == "" {
+		model = "(unset)"
+	}
+	line := fmt.Sprintf("Sub-agent dispatch: provider=%s model=%s", provider, model)
+	if sc.MaxConcurrency > 0 {
+		line += fmt.Sprintf(" max_concurrency=%d", sc.MaxConcurrency)
+	}
+	if sc.DefaultTimeout > 0 {
+		line += fmt.Sprintf(" default_timeout=%ds", sc.DefaultTimeout)
+	}
+	if p, ok := cfg.Providers[provider]; ok && p.MaxTokens > 0 {
+		line += fmt.Sprintf(" max_tokens=%d", p.MaxTokens)
+	}
+	return line + ". Per-role overrides may change provider or model."
+}
+
+// providerUsable mirrors makeProvider's cheap gate: a provider entry can
+// actually be constructed when it has OAuth, a real API key, or a base URL.
+// This keeps the dispatch line from advertising a dangling or keyless entry.
+func providerUsable(cfg *config.Config, name string) bool {
+	p, ok := cfg.Providers[name]
+	if !ok {
+		return false
+	}
+	r := config.Resolve(p)
+	return r.Auth == "oauth" || isRealKey(r.APIKey) || r.BaseURL != ""
 }
 
 // buildMainPrompt derives the top-level agent prompt from the system prompt

@@ -51,6 +51,39 @@ func (e MaxIterationsError) Is(target error) bool {
 	return ok
 }
 
+// providerError labels a provider failure with the serving provider and
+// model. An orchestrator can then attribute a sub-agent outage without
+// reading config or probing endpoints. The label degrades gracefully when
+// either value is unknown.
+func (l *Loop) providerError(err error) error {
+	// Prefer the client's live identity: it rotates with the provider on
+	// a fallback, so a failed fallback attempt is attributed to the
+	// provider and model that actually ran. Config fields describe the
+	// last successful attempt and may lag.
+	providerName := l.Config.ProviderName
+	model := l.Config.Model
+	if l.LLM != nil {
+		if l.LLM.ProviderName != "" {
+			providerName = l.LLM.ProviderName
+		}
+		if l.LLM.Model != "" {
+			model = l.LLM.Model
+		}
+	}
+	label := model
+	if providerName != "" {
+		if label == "" {
+			label = providerName
+		} else {
+			label = providerName + "/" + label
+		}
+	}
+	if label == "" {
+		return fmt.Errorf("provider error: %w", err)
+	}
+	return fmt.Errorf("provider error [%s]: %w", label, err)
+}
+
 // buildPipeline assembles the middleware pipeline from config. Sub-agent
 // loops get the curated sub-agent pipeline; the orchestrator gets the
 // full default pipeline.
@@ -276,7 +309,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 				// empty result, and the dispatcher cannot tell a lost partial from
 				// a model that said nothing. Callers decide whether to show it; it
 				// is not appended to the conversation.
-				return result.Message.Content, fmt.Errorf("provider error: %w", err)
+				return result.Message.Content, l.providerError(err)
 			}
 			msg := result.Message
 
@@ -292,6 +325,8 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 				toolCallNames(msg.ToolCalls), result.FinishReason)
 
 			l.Provider = l.LLM.Provider
+			l.Config.ProviderName = l.LLM.ProviderName
+			l.Config.FallbackProviderName = l.LLM.FallbackProviderName
 			l.Config.Model = l.LLM.Model
 			l.FallbackProvider = l.LLM.FallbackProvider
 			l.FallbackModel = l.LLM.FallbackModel

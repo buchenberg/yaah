@@ -13,6 +13,9 @@ import (
 // sub-agent spawning, quality gates, and hooks — they are ephemeral
 // workers with a fixed turn budget.
 type SubAgentConfig struct {
+	// ProviderName labels the sub-agent's serving provider in error
+	// envelopes. Empty means unknown; callers resolve it at dispatch.
+	ProviderName  string
 	MaxLoopCycles int
 	MaxToolTurns  int
 	// BudgetIterationsSource / BudgetTurnsSource record which precedence
@@ -118,6 +121,7 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 		View:     NoopView{},
 		Config: LoopConfig{
 			Model:                  model,
+			ProviderName:           cfg.ProviderName,
 			SystemPrompt:           systemPrompt,
 			MaxLoopCycles:          cfg.MaxLoopCycles,
 			MaxToolTurns:           cfg.MaxToolTurns,

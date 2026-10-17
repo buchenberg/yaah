@@ -45,6 +45,9 @@ var configShowCmd = &cobra.Command{
 				cmd.Printf("  %s:\n", name)
 				cmd.Printf("    base_url: %s\n", p.BaseURL)
 				cmd.Printf("    api_key:  %s\n", redactKey(p.APIKey))
+				if p.MaxTokens > 0 {
+					cmd.Printf("    max_tokens: %d\n", p.MaxTokens)
+				}
 			}
 		} else {
 			cmd.Println("[providers]")

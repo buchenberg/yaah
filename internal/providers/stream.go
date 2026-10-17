@@ -42,6 +42,7 @@ type StreamDelta struct {
 func (c *OpenAIClient) SendStream(ctx context.Context, req types.ChatRequest) (<-chan StreamChunk, <-chan error) {
 	req.Stream = true
 	req.StreamOptions = &types.StreamOptions{IncludeUsage: true}
+	c.applyDefaultMaxTokens(&req)
 
 	chunks := make(chan StreamChunk, 64)
 	errs := make(chan error, 1)

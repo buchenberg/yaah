@@ -218,7 +218,7 @@ func serveHTTPTransport(st *serveState, srv *mcp.Server) error {
 // conversation state in the session so successive calls form a multi-turn
 // dialogue, and returns the response plus the loop's token usage.
 func (s *agentSession) runHeadless(ctx context.Context, prompt string) (string, types.Usage, error) {
-	compactProvider, compactModel, fallbackProvider, fallbackModel, _ := s.auxProviders()
+	compactProvider, compactModel, fallbackProvider, fallbackModel, fallbackProviderName := s.auxProviders()
 
 	// Snapshot session state under the mutex, mirroring runPrompt's pattern.
 	s.mu.RLock()
@@ -226,7 +226,7 @@ func (s *agentSession) runHeadless(ctx context.Context, prompt string) (string, 
 	mName := s.modelName
 	s.mu.RUnlock()
 
-	b := s.loopBuilder(prov, mName, compactProvider, compactModel, fallbackProvider, fallbackModel)
+	b := s.loopBuilder(prov, mName, compactProvider, compactModel, fallbackProvider, fallbackModel, fallbackProviderName)
 
 	// Headless serve mode always forces OTel on (in-memory tracing).
 	otelForced := true

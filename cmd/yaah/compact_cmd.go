@@ -71,9 +71,9 @@ func (s *agentSession) compactContext() {
 
 	msg(fmt.Sprintf("context: %d/%d tokens (%d%%) — compacting...", estTokens, window, estTokens*100/window))
 
-	compactProvider, compactModel, fallbackProvider, fallbackModel, _ := s.auxProviders()
+	compactProvider, compactModel, fallbackProvider, fallbackModel, fallbackProviderName := s.auxProviders()
 
-	b := s.loopBuilder(s.provider, s.modelName, compactProvider, compactModel, fallbackProvider, fallbackModel)
+	b := s.loopBuilder(s.provider, s.modelName, compactProvider, compactModel, fallbackProvider, fallbackModel, fallbackProviderName)
 
 	otelEnabled := s.cfg.Observability.Otel.Enabled
 	loop := b.Build(agent.LoopBuildOptions{

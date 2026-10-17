@@ -575,6 +575,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 
 	taskTool := runner.NewDelegateTool(runner.DelegateToolOpts{
 		Provider:              provider,
+		ProviderName:          providerName,
 		SystemPrompt:          buildSubAgentBasePrompt(cwd, db),
 		ModelName:             modelName,
 		DB:                    db,

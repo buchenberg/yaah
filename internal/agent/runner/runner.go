@@ -50,6 +50,7 @@ import (
 // signature, and call sites read as keyed literals (finding C3).
 type DelegateToolOpts struct {
 	Provider              agent.Provider
+	ProviderName          string
 	SystemPrompt          string
 	ModelName             string
 	DB                    *memory.DB
@@ -142,6 +143,7 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 	depth := 1
 	runnerFn := makeTaskRunner(taskRunnerOpts{
 		provider:              opts.Provider,
+		providerName:          opts.ProviderName,
 		systemPrompt:          opts.SystemPrompt,
 		modelName:             opts.ModelName,
 		db:                    opts.DB,
@@ -250,7 +252,10 @@ func RoleSearchPaths(cwd string) []string {
 // It is captured by every makeTaskRunner closure so nested sub-agents
 // (planner -> worker) inherit the same provider, prompt base, and config.
 type taskRunnerOpts struct {
-	provider      agent.Provider
+	provider agent.Provider
+	// providerName labels the planner's provider in sub-agent error
+	// envelopes when no explicit sub-agent provider is configured.
+	providerName  string
 	systemPrompt  string
 	modelName     string
 	db            *memory.DB
@@ -435,10 +440,21 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 
 		subProvider := opts.subAgentProvider
 		subModel := opts.subAgentModel
+
+		// Start with the provider that runs when no role override
+		// resolves: the global sub-agent provider, else the planner's.
+		subProviderName := opts.providerName
+		if opts.subAgentProvider != nil && opts.subCfg.Provider != "" {
+			subProviderName = opts.subCfg.Provider
+		}
+
 		if rc, ok := opts.subCfg.Roles[string(role)]; ok {
 			if rc.Provider != "" {
 				if opts.resolveProviderByName != nil {
 					subProvider = opts.resolveProviderByName(opts.providerMap, rc.Provider)
+					if subProvider != nil {
+						subProviderName = rc.Provider
+					}
 				}
 				if subProvider != nil {
 					subModel = ""
@@ -450,6 +466,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		}
 		if subProvider == nil {
 			subProvider = opts.provider
+			subProviderName = opts.providerName
 		}
 		if subModel == "" {
 			subModel = opts.modelName
@@ -541,6 +558,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		}
 
 		subLoop := agent.NewSubAgentLoop(subProvider, subReg, subModel, sysPrompt, agent.SubAgentConfig{
+			ProviderName:           subProviderName,
 			MaxLoopCycles:          maxIter,
 			MaxToolTurns:           maxTurns,
 			BudgetIterationsSource: b.IterationsSource.String(),

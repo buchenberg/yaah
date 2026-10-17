@@ -325,6 +325,42 @@ func TestChatRequestToAnthropic_MaxTokensExplicit(t *testing.T) {
 	}
 }
 
+func TestAnthropicClient_DefaultMaxTokens(t *testing.T) {
+	client := NewAnthropicClient("https://api.z.ai/api/anthropic", "sk-test", 30)
+	client.DefaultMaxTokens = 16000
+
+	req := types.ChatRequest{
+		Model:    "glm-5.3-flash",
+		Messages: []types.Message{{Role: "user", Content: "Hello"}},
+	}
+	if got := client.lower(req).MaxTokens; got != 16000 {
+		t.Errorf("provider default: expected MaxTokens 16000, got %d", got)
+	}
+
+	// An explicit per-request cap must win over the provider default.
+	req.MaxTokens = 32000
+	if got := client.lower(req).MaxTokens; got != 32000 {
+		t.Errorf("explicit cap: expected MaxTokens 32000, got %d", got)
+	}
+}
+
+func TestAnthropicClient_EndpointAwareFallbackMaxTokens(t *testing.T) {
+	req := types.ChatRequest{
+		Model:    "claude-3-haiku",
+		Messages: []types.Message{{Role: "user", Content: "Hello"}},
+	}
+
+	native := NewAnthropicClient("https://api.anthropic.com", "sk-test", 30)
+	if got := native.lower(req).MaxTokens; got != nativeAnthropicMaxTokens {
+		t.Errorf("native endpoint: expected %d, got %d", nativeAnthropicMaxTokens, got)
+	}
+
+	compatible := NewAnthropicClient("https://api.z.ai/api/anthropic", "sk-test", 30)
+	if got := compatible.lower(req).MaxTokens; got != compatibleAnthropicMaxTokens {
+		t.Errorf("compatible endpoint: expected %d, got %d", compatibleAnthropicMaxTokens, got)
+	}
+}
+
 func TestChatRequestToAnthropic_CacheControlPassthrough(t *testing.T) {
 	req := types.ChatRequest{
 		Model:     "claude-3.5-sonnet",

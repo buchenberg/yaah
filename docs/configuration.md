@@ -21,6 +21,7 @@ providers:
     name: Anthropic
     base_url: https://api.anthropic.com
     api_key: ${ANTHROPIC_API_KEY}
+    max_tokens: 8192                   # optional output cap (default: 4096 native / 8192 compatible)
   ollama:
     name: Ollama
     base_url: http://localhost:11434/v1
@@ -180,6 +181,7 @@ At least one provider is required. Each needs a `base_url` and an `api_key`.
 | `name` | map key | Display name shown in CLI/TUI |
 | `models` | — | Limit available models. Each entry is a plain name or `{name: …, thinking: true/false}` to override thinking detection (empty = all from `/models`; n/a for Anthropic) |
 | `timeout` | 120 | HTTP request timeout in seconds (0 = no timeout) |
+| `max_tokens` | 4096 native, 8192 compatible; unset on `openai` | Output-token cap applied when a request does not set its own. Native `api.anthropic.com` stays at 4096 for older Claude models; Anthropic-compatible endpoints (DeepSeek, ZAI, etc.) default to 8192 because they count thinking tokens against the budget — raise it if turns end with `finish_reason=length` before any content |
 
 ## Agent reference
 

@@ -131,7 +131,13 @@ type Loop struct {
 
 // LoopConfig holds immutable configuration set once before Run.
 type LoopConfig struct {
-	Model                  string
+	Model string
+	// ProviderName is the configured provider label (e.g. "zai") for
+	// this loop. Used only for error attribution; empty means unknown.
+	ProviderName string
+	// FallbackProviderName labels the fallback provider in error
+	// envelopes. Empty when no fallback is configured.
+	FallbackProviderName   string
 	MaxLoopCycles          int
 	MaxToolTurns           int
 	BudgetIterationsSource string // provenance of MaxLoopCycles ("call", "floor", ...); "" unknown

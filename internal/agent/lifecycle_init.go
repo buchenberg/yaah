@@ -166,21 +166,23 @@ func (l *Loop) applyDefaults() {
 			onThinking = l.publishThinking
 		}
 		l.LLM = &llm.Client{
-			Provider:         l.Provider,
-			FallbackProvider: l.FallbackProvider,
-			Model:            l.Config.Model,
-			FallbackModel:    l.FallbackModel,
-			MaxRetries:       l.Config.MaxRetries,
-			RetryBackoff:     l.Config.RetryBackoff,
-			ContextWindow:    l.Config.ContextWindow,
-			SessionID:        l.Config.SessionID,
-			OnToken:          onToken,
-			OnThinking:       onThinking,
-			Compact:          l.llmCompact,
-			Trim:             l.llmTrim,
-			StripReasoning:   l.StripAllReasoning,
-			OtelEnabled:      l.Config.OtelEnabled,
-			OtelVerbose:      l.Config.OtelVerbose,
+			Provider:             l.Provider,
+			FallbackProvider:     l.FallbackProvider,
+			ProviderName:         l.Config.ProviderName,
+			FallbackProviderName: l.Config.FallbackProviderName,
+			Model:                l.Config.Model,
+			FallbackModel:        l.FallbackModel,
+			MaxRetries:           l.Config.MaxRetries,
+			RetryBackoff:         l.Config.RetryBackoff,
+			ContextWindow:        l.Config.ContextWindow,
+			SessionID:            l.Config.SessionID,
+			OnToken:              onToken,
+			OnThinking:           onThinking,
+			Compact:              l.llmCompact,
+			Trim:                 l.llmTrim,
+			StripReasoning:       l.StripAllReasoning,
+			OtelEnabled:          l.Config.OtelEnabled,
+			OtelVerbose:          l.Config.OtelVerbose,
 		}
 	} else if l.broker != nil {
 		// Rebind the streaming callbacks to the current broker — closures
