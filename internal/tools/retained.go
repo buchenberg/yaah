@@ -425,8 +425,10 @@ func clipDiff(diff string) string {
 	return strings.Join(lines[:retainedDiffMaxLines], "\n") + "\n...[truncated]"
 }
 
-// retainedDiffMaxLines bounds a proposal envelope's diff.
-const retainedDiffMaxLines = 200
+// retainedDiffMaxLines bounds a proposal envelope's diff. It matches the review
+// envelope's old budget: an orchestrator settling a proposal needs the change,
+// and a diff it cannot read is a proposal it cannot judge.
+const retainedDiffMaxLines = 2000
 
 // changesPaths projects a sealed output's frozen changes as the changed file
 // list the envelopes carry.

@@ -81,8 +81,8 @@ func (*SupervisorTool) Schema() json.RawMessage {
 			},
 			"guidance": {
 				"type": "string",
-				"description": "Guidance text (required for inject and rollback; optional for continue)"
-			},
+				"description": "Guidance text to inject (required for inject)"
+			}
 		},
 		"required": ["action"]
 	}`)

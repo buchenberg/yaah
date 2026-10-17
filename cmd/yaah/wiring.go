@@ -684,7 +684,6 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			// predicate)`, so no verdict protocol or review round exists.
 			toolReg.Register(&tools.ProposalTool{})
 		}
-
 	}
 
 	// The prompt must never advertise a tool that is not registered.

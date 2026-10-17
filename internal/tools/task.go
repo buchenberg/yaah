@@ -161,7 +161,18 @@ func (t *TaskTool) Execute(ctx context.Context, args string) (string, error) {
 		if t.BackgroundJobs == nil {
 			return "", fmt.Errorf("spawn_subagent: background mode requested but not available")
 		}
-		jobID, err := t.BackgroundJobs.Launch(ctx, t.Runner, params.Role, params.Description, params.Prompt, subParams, timeout)
+		// The retained lane covers background dispatches too: a background job
+		// that ran the raw runner would mutate the host tree with no proposal,
+		// which is exactly the guarantee "retained" makes. The job's delivered
+		// result is then a proposal envelope like any other dispatch's.
+		runner := t.Runner
+		if t.Retained != nil {
+			rt := *t.Retained
+			runner = func(ctx context.Context, prompt string, sp SubAgentParams) (string, error) {
+				return startRetainedRun(ctx, rt, prompt, sp, timeout)
+			}
+		}
+		jobID, err := t.BackgroundJobs.Launch(ctx, runner, params.Role, params.Description, params.Prompt, subParams, timeout)
 		if err != nil {
 			return "", err
 		}

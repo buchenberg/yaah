@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -255,5 +257,73 @@ func TestExecute_BackgroundWithoutManagerErrors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not available") {
 		t.Errorf("error = %q, want it to mention unavailability", err.Error())
+	}
+}
+
+// TestExecute_BackgroundRetainedReturnsProposal: background:true must not be the
+// way around the retained lane. A job that ran the raw runner would mutate the
+// host tree with no proposal — the guarantee "retained" exists to make — so the
+// job is launched through startRetainedRun and its delivered result is a proposal
+// envelope like any other dispatch's.
+func TestExecute_BackgroundRetainedReturnsProposal(t *testing.T) {
+	resetRetainedProposals()
+
+	mgr := jobs.NewBackgroundJobs()
+	defer mgr.Close()
+
+	var mu sync.Mutex
+	var delivered string
+	mgr.Deliver = func(role, desc, res string, err error) {
+		mu.Lock()
+		delivered = res
+		mu.Unlock()
+	}
+
+	runner := writingRunner(t, "bg.txt")
+	rt := newRetainedTestEnv(t, runner)
+
+	tt := &TaskTool{
+		RoleNames:      []string{"developer"},
+		BackgroundJobs: mgr,
+		Runner:         runner.run(),
+		Retained:       &rt,
+	}
+	if _, err := tt.Execute(context.Background(),
+		`{"description":"d","prompt":"p","role":"developer","background":true}`); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		d := delivered
+		mu.Unlock()
+		if d != "" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	mu.Lock()
+	got := delivered
+	mu.Unlock()
+	if got == "" {
+		t.Fatal("the background job delivered nothing")
+	}
+	env := decodeProposalEnvelope(t, got)
+	if env.Status != "proposal" || env.ProposalID == "" {
+		t.Fatalf("a background dispatch must deliver a proposal, got %+v", env)
+	}
+
+	// The isolated world took the write; the host tree did not.
+	wd := runner.workdirFor(t, 0)
+	if wd == "" || wd == rt.RepoPath {
+		t.Fatalf("the background dispatch must run in an isolated worktree, got %q", wd)
+	}
+	if _, err := os.Stat(filepath.Join(wd, "bg.txt")); err != nil {
+		t.Errorf("the worktree should hold the change: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rt.RepoPath, "bg.txt")); err == nil {
+		t.Error("the host tree must not be touched before settlement")
 	}
 }
