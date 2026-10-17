@@ -235,6 +235,9 @@ Addressed reviewer findings; no new full-suite run.
 - **Usage accounting.** Child usage folds before the tool result is
   published, no longer overwrites the parent's last-prompt/cache counters, and
   the per-dispatch usage fact records own (non-nested) usage.
+- **Confinement.** Requests `containment: paddock` (fails closed) and the
+  helper requires an enforced, non-advisory placement; an advisory fallback
+  can no longer pass.
 - **Compaction.** Parked in `suite.txt`: live runs never persisted a
   `compacted_summary` even with a 6K window, 38+ messages, pruning off, and
   `compact_max_messages: 20`. Tracked in `yaah-8uz`; the verifier keeps the

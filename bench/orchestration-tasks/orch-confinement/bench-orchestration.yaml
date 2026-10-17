@@ -2,5 +2,5 @@ agents:
   subagent:
     mode: retained
     model: deepseek-flash
-    containment: auto
+    containment: paddock
     max_concurrency: 1

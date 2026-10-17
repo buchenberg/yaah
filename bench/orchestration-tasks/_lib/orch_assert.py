@@ -334,15 +334,29 @@ def assert_tool_failures(minimum: int = 1) -> None:
 
 
 def assert_confinement_recorded() -> None:
-    """The sub-agent dispatch recorded a confinement placement."""
+    """The sub-agent dispatch recorded an *enforced* confinement placement.
+
+    A fact exists even when ``auto`` degrades to an advisory host path, so
+    existence alone is not evidence. The scenario requests ``paddock`` (fail
+    closed) and this check requires ``enforced: true`` with a non-advisory
+    resolution.
+    """
     conn = _connect(TRACE_DB)
     try:
         row = conn.execute(
-            "SELECT COUNT(*) FROM records WHERE schema_ref = 'yaah.subagent.confinement.v1'"
+            """
+            SELECT COUNT(*) FROM records
+            WHERE schema_ref = 'yaah.subagent.confinement.v1'
+              AND json_extract(body_json, '$.enforced') = 1
+              AND json_extract(body_json, '$.resolved') != 'advisory'
+            """
         ).fetchone()
     finally:
         conn.close()
-    assert row and row[0] > 0, "no yaah.subagent.confinement.v1 fact was recorded"
+    assert row and row[0] > 0, (
+        "no enforced yaah.subagent.confinement.v1 fact was recorded; "
+        "the dispatch degraded to advisory"
+    )
 
 
 def session_messages() -> list[dict]:
