@@ -31,8 +31,11 @@ func TestAllToolSchemas_AreValidJSON(t *testing.T) {
 		&TaskTool{},
 		&TodoWriteTool{},
 	}
+	// NewLeafTool reaches every leaf tool, including the shell this platform
+	// does not register (NewRegistry omits it, which would silently skip a
+	// schema).
 	for name := range leafTools {
-		all = append(all, NewRegistry().Get(name))
+		all = append(all, NewLeafTool(name))
 	}
 
 	for _, tool := range all {

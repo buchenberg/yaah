@@ -70,8 +70,9 @@ type TaskTool struct {
 	// Retained, when non-nil, routes the dispatch through the retained-run
 	// primitive (Plan 7 Phase 2): the sub-agent runs in an isolated worktree and
 	// its delta is sealed into a proposal the orchestrator settles with the
-	// proposal tool. Nil keeps the direct-to-host lane. Background dispatch is
-	// not retained (a proposal needs a settlement call).
+	// proposal tool. Nil keeps the direct-to-host lane. Background dispatches are
+	// retained too — their delivered result is a proposal envelope — so there is
+	// no path from this tool to the host tree while Retained is set.
 	Retained *RetainedRuntime
 }
 
