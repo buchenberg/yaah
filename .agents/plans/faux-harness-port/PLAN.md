@@ -1,6 +1,6 @@
 ---
 name: faux-harness-port
-description: Port pi's faux-provider benchmark pattern to yaah — a scripted, zero-API-cost provider plus a full-stack test harness, regression-suite convention, golden transcripts, and a benchmark scenario runner.
+description: "Port pi's faux-provider benchmark pattern to yaah — a scripted, zero-API-cost provider plus a full-stack test harness, regression-suite convention, golden transcripts, and a benchmark scenario runner."
 status: proposed
 ---
 
@@ -79,7 +79,7 @@ Success criteria:
   backlog item G1, not part of this port.
 - **Pipeline middleware is config-composed** (`pipeline.PipelineConfig`),
   hooks emit `HookEvent` via `l.Hooks` — natural event-capture point.
-- **Plans convention**: `.agents/plans/<slug>/plan.md` with frontmatter
+- **Plans convention**: `.agents/plans/<slug>/PLAN.md` with frontmatter
   (this file). Benchmark history: `BENCHMARKS.md` (append-only rows; scenario
   methodology already proven — it surfaced the continuation-guard +52% finding).
 

@@ -12,9 +12,9 @@ import (
 	shepherdgit "github.com/buchenberg/shepherd-runtime-go/sandbox/git"
 )
 
-// Phase 9 of .agents/plans/per-turn-checkpoint-restore: measure the cost
-// of per-turn git checkpoints to decide whether per-turn checkpointing
-// (per-role `turn_checkpoints`) can ever default on.
+// Benchmark per-turn git checkpoints to measure their cost and decide
+// whether per-turn checkpointing (per-role `turn_checkpoints`) can ever
+// default on.
 //
 // Each Checkpoint runs three git subprocesses (add -A, stash create,
 // rev-parse HEAD) plus one SQLite append, so the cost is dominated by

@@ -372,7 +372,7 @@ type ObservabilityConfig struct {
 // OtelConfig controls the OpenTelemetry OTLP exporter.
 type OtelConfig struct {
 	Enabled     bool   `yaml:"enabled"`      // must be true to activate
-	Endpoint    string `yaml:"endpoint"`     // OTLP gRPC endpoint (e.g. "localhost:4317")
+	Endpoint    string `yaml:"endpoint"`     // OTLP/HTTP endpoint (e.g. "localhost:4318")
 	ServiceName string `yaml:"service_name"` // displayed in the tracing UI
 	Traces      bool   `yaml:"traces"`       // enable trace spans
 	Metrics     bool   `yaml:"metrics"`      // enable OTLP metrics
@@ -414,7 +414,7 @@ func defaultConfig() *Config {
 		Observability: ObservabilityConfig{
 			Otel: OtelConfig{
 				Enabled:     false,
-				Endpoint:    "localhost:4317",
+				Endpoint:    "localhost:4318",
 				ServiceName: "yaah",
 				Traces:      true,
 				Metrics:     false,

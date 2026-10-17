@@ -1,10 +1,16 @@
+---
+name: best-of-breed-gap-backlog
+description: "Living backlog of gaps measured against peer agent frameworks."
+status: draft
+---
+
 # yaah Best-of-Breed Gap Backlog
 
-*Derived from the cross-framework comparison (`../agentic-frameworks-comparison.md`,
-2026-08-26). Each item names the source framework where the superior pattern
-lives, the concrete yaah gap verified in code, and the done-criteria. Priority
-ordering: P0 = correctness/efficiency wins that compound daily; P1 = strong
-differentiators; P2 = breadth/parity.*
+*A living backlog of gaps measured against peer agent frameworks. Each item
+names the source pattern, the concrete yaah gap, and the done-criteria.
+Priority ordering: P0 = correctness/efficiency wins that compound daily;
+P1 = strong differentiators; P2 = breadth/parity. Completed items are marked
+and kept only while their follow-up work is still useful.*
 
 ---
 
@@ -118,12 +124,10 @@ differentiators; P2 = breadth/parity.*
 - Done: gap list vs crush/kilocode TUI capability inventory (image support,
   diff rendering quality, worktree switcher, session switcher); land top 3.
 
-**G13. Multi-root / workspace awareness**
-- yaah: single cwd assumption across tools (path_validator, instructions
-    walker). VS Code/Agent-Manager-style multi-root and worktree isolation
-    (kilocode Agent Manager) increasingly standard.
-- Done: `--workspace` flag + workspace-scoped tools/instructions; worktree
-    isolation mode for sub-agents (ties into G14).
+**G13. Multi-root / workspace awareness** — **done**
+- `--workspace` confines file tools to a directory, with scoped instructions
+  and an approval path for out-of-bounds access. Sub-agent worktrees cover the
+  isolation half (see G14).
 
 **G13b. Loop detection hardening** *(from goose stop-hook cap)*
 - goose: bounded override of infinitely-blocking lifecycle hooks.
@@ -133,13 +137,10 @@ differentiators; P2 = breadth/parity.*
 - Done: synthetic-loop regression suite via faux harness (same-call/same-
   result/same-error × window); bounded override synthesizes guidance message.
 
-**G14. Sub-agent worktree isolation** *(from kilocode Agent Manager)*
-- yaah: sub-agents share the orchestrator's working tree; parallel write
-  conflicts are handled reactively (conflictdetect middleware).
-- kilocode: per-session git worktree isolation in Agent Manager.
-- Done: `worktree: true` role option; `tools.SharedScopeManager` integrates
-  worktree path per sub-agent; conflictdetect still backstops; bench scenario
-  `b5-parallel` shows zero conflict events with isolation on.
+**G14. Sub-agent worktree isolation** — **done**
+- Retained dispatches run in per-dispatch git worktrees and return sealed
+  proposals; `conflictdetect` remains the backstop for shared-mode dispatches.
+  See `docs/sub-agents.md` and `docs/configuration.md`.
 
 ## P2 — Ecosystem
 
@@ -147,7 +148,7 @@ differentiators; P2 = breadth/parity.*
 - Done: `evals/harbor/agent.py`-style adapter (modeled on goose's
   `GooseBinaryAgent`) that installs a pre-built yaah binary into the task
   container; one clean `terminal-bench-2` subset run documented in
-  BENCHMARKS.md with cost/compute columns, matching goose's table format.
+  `bench/terminal-bench/RESULTS.md` with cost/compute columns.
 
 **G16. Skills standard alignment**
 - yaah already ships `.agents/` skills; verify SKILL.md discovery matches the
@@ -158,8 +159,6 @@ differentiators; P2 = breadth/parity.*
 
 ## Housekeeping (non-graded)
 
-- **H1.** `docs/architecture.md` sync with post-port reality (faux harness,
-  bench runner) — keep the AGENTS.md tree accurate.
 - **H2.** BENCHMARKS.md: add faux-row section per the port plan Phase 5.
 - **H3.** Delete or graduate `coverage.out` from repo root (build artifact).
 

@@ -100,11 +100,11 @@ func ParseFrontmatter(data []byte) (*Plan, error) {
 			continue
 		}
 		if strings.HasPrefix(line, "name:") {
-			plan.Name = strings.TrimSpace(strings.TrimPrefix(line, "name:"))
+			plan.Name = unquote(strings.TrimPrefix(line, "name:"))
 		} else if strings.HasPrefix(line, "description:") {
-			plan.Description = strings.TrimSpace(strings.TrimPrefix(line, "description:"))
+			plan.Description = unquote(strings.TrimPrefix(line, "description:"))
 		} else if strings.HasPrefix(line, "status:") {
-			plan.Status = strings.TrimSpace(strings.TrimPrefix(line, "status:"))
+			plan.Status = unquote(strings.TrimPrefix(line, "status:"))
 		}
 	}
 
@@ -113,6 +113,20 @@ func ParseFrontmatter(data []byte) (*Plan, error) {
 	}
 
 	return plan, nil
+}
+
+// unquote strips a matching pair of YAML quotes from a scalar. The
+// frontmatter reader is line-based so it does not decode YAML escapes; it
+// only needs to keep quoted descriptions from rendering with their quotes.
+func unquote(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) < 2 {
+		return s
+	}
+	if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
+		return s[1 : len(s)-1]
+	}
+	return s
 }
 
 // FindPlan discovers plans from the given dirs and returns the one with

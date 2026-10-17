@@ -1,11 +1,8 @@
 package runner
 
-// Characterization tests for sub-agent budget resolution. Phase 0 of
-// .agents/plans/subagent-turn-budget-floors pinned the old behaviour
-// here; Phase 2 edited this file deliberately to the new semantics —
-// the diff is the proof of the fix:
+// Characterization tests for sub-agent budget resolution:
 //
-//   - a role/config floor (min_turns / min_iterations) now beats any
+//   - a role/config floor (min_turns / min_iterations) beats any
 //     per-call override,
 //   - floors grow the other dimension (headroom) instead of shrinking
 //     it: turns at or above iterations raise iterations to turns+1,

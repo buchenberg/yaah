@@ -5,7 +5,7 @@
 ```
 ┌──────────────────────────────────────────────────┐
 │  CLI (cmd/yaah/)                                 │
-│  root_cmd.go / tui.go / repl/                    │
+│  root_cmd.go / tui.go / repl_loop.go / web.go    │
 │  ─────────────                                   │
 │  Parses config, wires providers, builds tool     │
 │  registry, creates agent.Loop, calls Run()       │
@@ -13,7 +13,7 @@
                    │
 ┌──────────────────▼───────────────────────────────┐
 │  agent.Loop                                      │
-│  agent.go                                        │
+│  loop.go / turn.go                               │
 │  ─────────────                                   │
 │  Manages conversation history, iteration loop,   │
 │  tool execution, streaming, context compaction,  │
@@ -28,117 +28,106 @@
 └─────────┘ └──────────┘ └──────────────┘
 ```
 
-yaah is structured as a single Go binary. The entry point is `main.go`, which delegates to `cmd/yaah.Execute()` (cobra). The CLI layer (`cmd/yaah/`) wires together providers, tools, memory, MCP clients, and creates an `agent.Loop` for each conversation turn. The `internal/agent/` package contains all agent loop logic, including the middleware pipeline, tool execution, streaming, and context compaction.
+yaah is structured as a single Go binary. The entry point is `main.go`, which delegates to `cmd/yaah.Execute()` (cobra). The CLI layer (`cmd/yaah/`) wires providers, tools, memory, MCP clients, and creates an `agent.Loop` for each conversation turn. `internal/agent/` contains the loop, middleware pipeline, tool dispatch, streaming, and context management.
 
 ---
 
 ## Agent loop
 
-The agent loop lives in `internal/agent/agent.go`. The entry point is `Loop.Run(ctx, userInput)`. A `Loop` holds:
+The loop lives in `internal/agent/loop.go`; turn processing is in `turn.go`. The entry point is `Loop.Run(ctx, userInput)`. A `Loop` has three groups of state:
 
-| Field | Purpose |
-|---|---|---|
-| `Provider` | LLM backend implementing `Provider` or `StreamProvider` |
-| `Registry` | Tool registry mapping names to `Tool` implementations |
-| `SystemPrompt` | Assembled system prompt (identity + env + project + memory) |
-| `Model` | Model name string (e.g. `gpt-4o-mini`) |
-| `MaxIterations` | Safety cap on loop turns (default 50) |
-| `Messages` | Conversation history, persisted across multiple `Run()` calls |
-| `ContextWindow` | Token budget for context compaction (0 = disabled) |
-| `ApprovalMode` | `"allow"`, `"ask"`, or `"deny"` for destructive tools |
-| `DB` | Optional SQLite database for per-message persistence (nil = in-memory only) |
-| `MsgIdx` | Next message index for DB inserts, initialized to `len(Messages)` on resume |
-| `View` | Consumer for typed events via `HandleEvent(Event)` — see Engine-View Architecture below |
-| `broker` | Internal pub/sub bus (created from `View` in `applyDefaults`; not set by callers) |
-| `MaxToolConcurrency` | Cap on concurrent tool goroutines (0 = unlimited) |
-| `MaxSubAgentConcurrency` | Cap on concurrent `delegate` calls (0 = unlimited, default 3) |
-| `PermissionRules` | Path-pattern rules for the `permission` middleware |
-| `MCPServers` | Attached MCP servers whose tools are added to the registry |
-| `Pipe` | Write stream during one-shot; nil in REPL/TUI |
+| Group | Fields |
+|---|---|
+| `Config` (`LoopConfig`) | `Model`, `ProviderName`, `SystemPrompt`, `MaxLoopCycles`, `MaxToolTurns`, `ContextWindow`, `ApprovalMode`, `MaxToolConcurrency`, `MaxSubAgentConcurrency`, `PermissionRules`, `MCPToolNames`, `MCPApproval`, `QualityGates`, `OtelEnabled` |
+| `State` (`LoopState`) | `Messages`, token/usage totals, last finish reason/model, compaction counters, turn checkpoint IDs |
+| Direct fields | `Provider`, `Registry`, `View`, `LLM`, `Persister`, `Hooks`, `Steer`, `FollowUps`, `ApproveFn`, `ContinueAfterMaxIter`, `ConflictTracker`, `CtxMgr`, `BackgroundJobs`, `OnUsage`, `OnSubUsage` |
+
+`Persister` owns session persistence; `Persister.MsgIdx()` is the next message index. There is no `DB`/`MsgIdx`/`Pipe` on `Loop`, and MCP tools are registered in `Registry` (policy is `Config.MCPApproval` / `Config.MCPToolNames`).
 
 ### Agent loop (`runMiddleware`)
 
 The agent loop runs via a single middleware pipeline. One iteration follows this sequence:
 
 ```
-for iter := 0; iter < MaxIterations; iter++ {
+for iter := 0; iter < Config.MaxLoopCycles; iter++ {
     1. emitHook(TurnStart)
-    2. Build Step{ Messages, Tools, Iteration, Model, SystemPrompt }
+    2. Build Step{ Messages, Tools, Iteration, Model, SystemPrompt, ... }
     3. pipeline.RunPrepareStep(ctx, step)      ← middleware hook
-    4. getAssistantMessage(ctx, req)            ← LLM call (+ retry)
-    5. persistMessage(msg)                      ← DB persistence (no-op if DB==nil)
-    6. If no tool calls → return content        ← terminal
-    7. If streamed → OnFlush(content)           ← flush streamed content
-    8. pipeline.RunPostModel(ctx, &msg, step)   ← middleware hook
+    4. l.LLM.Call(turnCtx, req)                ← LLM call (+ retry/fallback)
+    5. l.Persister.Persist(msg)                ← session persistence
+    6. If no tool calls → return content       ← terminal
+    7. If streamed → broker.PublishMustDeliver(&FlushEvent{...})
+    8. pipeline.RunPostModel(ctx, &msg, step)  ← middleware hook
                                                   (approval / inline_limit strip calls here,
                                                    synthesizing results on step.SynthesizedResults)
     9. executeToolPhase: merge step.SynthesizedResults, then
-       executeAndCollect(ctx, toolCalls, &messages)  ← run tools, persist results
+       executeAndCollect(ctx, toolCalls, &messages)  ← fan out to toolDispatch
    10. pipeline.RunPostTool(ctx, results, step) ← middleware hook
        (conflict_detect appends reports here)
    11. Update messages ← step.Messages
    12. Persist any new messages from middleware (e.g. compaction summaries)
 ```
 
-**Key decisions:**
+Current invariants:
 
 - `executeAndCollect` returns `[]ToolResult` so middleware can inspect tool outcomes.
-- `l.Messages` is updated inside `executeAndCollect` (tool results are appended) AND after `RunPostTool` (middleware may have modified `step.Messages`). Both copies are kept in sync so `CompactionMiddleware` sees the latest messages.
-- The `Step` struct is the mutable per-iteration state bag. Middleware reads and writes it freely.
+- Per-call lifecycle (semaphore acquisition, events, spans, truncation) lives in `toolDispatch.run` (`agent_dispatch.go`).
+- `State.Messages` is updated inside `executeAndCollect` and again after `RunPostTool`; both copies stay in sync so compaction sees the latest messages.
+- `Step` is the mutable per-iteration state bag. Middleware reads and writes it freely.
 
 ### Agent coordination model
 
-File: `internal/agent/agent.go`, `internal/tools/delegate.go`
+Files: `internal/agent/loop.go`, `agent_dispatch.go`, `internal/tools/delegate.go`, `internal/agent/runner/runner.go`
 
-yaah uses a two-layer agent→sub-agent architecture with FullTools mode.
-The main agent sees all tools plus `delegate` and chooses per-task
-whether to call tools directly (for simple operations) or dispatch a
-sub-agent (for multi-step autonomous work).
+yaah uses a two-layer orchestrator → sub-agent architecture. The
+orchestrator sees the full tool set plus `delegate` and chooses per task
+whether to work inline or dispatch a sub-agent.
 
-**Key properties:**
+**Properties:**
 
-- **FullTools mode**: `ToolsLevel` is set to `FullTools` — the agent sees
-  every tool from the registry alongside `delegate`. Simple
-  `glob`/`read`/`grep` calls skip the sub-agent roundtrip entirely.
-- **Per-action choice**: The agent decides per-turn whether to work inline
-  or delegate. A single turn may contain both direct tool calls and
-  `delegate` dispatches.
-- **Sub-agents own tool execution**: When the agent calls
-  `delegate(role, description, prompt)`, the sub-agent runs its
-  curated tool set to accomplish the directive. The agent describes
-  *what* to do, not *how*.
-- **Role-constrained tool sets**: Each sub-agent role has a curated tool
-  list. `analyst` has read/search/web tools. `developer` adds write/edit.
-  `tester` has shell + read. `reviewer` has counting/inspection tools.
-  No built-in role registers `delegate` — nesting is structurally
-  impossible for built-ins, and depth-limited for custom roles that opt in.
-- **Model tiering**: Sub-agents can use a different (typically cheaper)
-  provider and model than the main agent.
-- **Auto-approval**: Sub-agents run tools without approval checks.
+- **Per-action choice.** A turn may contain direct tool calls and
+  `delegate` dispatches. Simple `glob`/`read`/`grep` calls skip the
+  sub-agent roundtrip.
+- **Sub-agents own tool execution.** `delegate(role, description, prompt)`
+  runs the role's curated tool set. The orchestrator describes *what* to
+  do, not *how*.
+- **Role-constrained tool sets.** `analyst` has read/search/web tools,
+  `developer` adds write/edit, `tester` has shell + test tools, and
+  `reviewer` has inspection/analysis tools. No built-in role registers
+  `delegate`; nesting is depth-limited for custom roles that opt in.
+- **Model tiering.** Sub-agents can use a different provider/model than
+  the orchestrator.
+- **Approval.** Sub-agent loops run with approval `allow`; the parent's
+  permission rules are still enforced by the `permission` middleware.
 
-**Sub-agent dispatch flow:**
+**Dispatch flow:**
 
 ```
-1. Agent emits delegate(role="analyst", description="...", prompt="...")
-2. makeTaskRunner builds role-specific Loop:
-   a. Loads role profile (tool set, iterations, timeout)
-   b. Injects role guidance + contract block into system prompt
-   c. Builds curated tool registry
-3. Sub-agent Loop runs autonomously, returns summary
-4. Result fed back to main agent as tool output
-5. Main agent evaluates result, may dispatch more sub-agents
+1. Orchestrator emits delegate(role, description, prompt)
+2. makeTaskRunner resolves the role, budget, provider/model, and lane
+3. Retained lane: fork an isolated worktree, run the sub-agent, seal a proposal
+   Direct lane:  run the sub-agent on the host/shared workspace
+4. Result returns as a tool result (or a proposal the orchestrator settles)
+5. Orchestrator evaluates the result and may dispatch more sub-agents
 ```
 
-**Benchmarks documented in** [`BENCHMARKS.md`](../BENCHMARKS.md).
+### LLM call with retry (`llm.Client.Call`)
 
-### LLM call with retry (`getAssistantMessage`)
+Files: `internal/agent/llm/client.go`, `internal/agent/llm/stream.go`
 
-Both paths use the same `getAssistantMessage` method, which:
+`Client.Call` owns the model call and the retry ladder:
 
-1. Checks if the provider implements `StreamProvider`. If a `View` is configured (internal broker is active), uses streaming via `runStream()`.
-2. Otherwise uses synchronous `Provider.Send()`.
-3. On failure, retries with exponential backoff (`RetryBackoff * 2^attempt`) up to `MaxRetries`.
-4. Rejects responses where `finish_reason == "length"` and tool calls are present (truncated tool calls are unsafe to execute).
+1. Uses streaming when the provider implements `StreamProvider` **and**
+   `OnToken` is non-nil (a broker/View is active); otherwise it calls
+   `Provider.Send`.
+2. On failure, classifies the error and applies the configured recovery:
+   retry with exponential backoff, compact/trim on context overflow, strip
+   reasoning on dialect errors, or rotate to the fallback provider on
+   auth/billing/rate-limit failures.
+3. Rejects responses where `finish_reason == "length"` and tool calls are
+   present (truncated tool calls are unsafe to execute).
+4. Maps `finish_reason=length` with no content to an output-budget error
+   that names the serving provider/model.
 
 ---
 
@@ -209,13 +198,16 @@ The pipeline is built in `buildPipeline()` with a config-driven order:
 The default set is defined in `defaultPipelineNames` in `config.go`. Users can override which middleware runs via `config.yaml`:
 
 ```yaml
-agent:
+agents:
   middleware:
-    enabled: [shepherd_trace]
+    enabled: [prompt_caching]
     disabled: [approval]
 ```
 
-`enabled` is additive: listed middleware are added to the default set (duplicates collapse). `disabled` removes names from the union. Middleware not registered in `builtinBuilders` is silently skipped.
+`enabled` is additive for the orchestrator: listed middleware are added to
+the default set (duplicates collapse). `disabled` removes names from both the
+orchestrator and sub-agent pipelines. Middleware not registered in the
+relevant builder set is silently skipped.
 
 Custom middleware can be injected via `Loop.Middleware`. If set, `buildPipeline()` uses the custom list instead of the config-driven chain.
 
@@ -223,7 +215,7 @@ Custom middleware can be injected via `Loop.Middleware`. If set, `buildPipeline(
 
 #### SteerMiddleware (`pipeline/steer.go`)
 
-Drains the `Loop.Steer` channel in `PrepareStep`. Messages are prepended with `[STEER]` and injected as user messages. If a compaction hook is provided, it runs after injection.
+Drains the `Loop.Steer` channel in `PrepareStep`. Messages are appended as user messages prefixed with `[STEER]`. If a compaction hook is provided, it runs after injection.
 
 #### FollowupMiddleware (`pipeline/followup.go`)
 
@@ -231,44 +223,45 @@ Drains the `Loop.FollowUps` channel in `PrepareStep`. Messages are injected as u
 
 #### CompactionMiddleware (`pipeline/compaction.go`)
 
-Triggers context compaction at both `PrepareStep` (preflight) and `PostTool` (post-iteration) hooks when `ContextWindow > 0`. Delegates to `Loop.compactContext(ctx, threshold)`. The `threshold` parameter (default 0.5) controls what fraction of the window triggers compaction. The middleware now accepts a configurable `CompactionThreshold` from the `Loop` struct.
+Triggers context compaction at both `PrepareStep` (preflight) and `PostTool` (post-iteration) hooks when `ContextWindow > 0`. Delegates through `Loop.Compact` to `ContextManager`; `Loop.Config.CompactionThreshold` (default 0.5) controls what fraction of the window triggers compaction.
 
 #### SoftPruneMiddleware (`pipeline/softprune.go`)
 
-Soft-prune is a tier-0, non-LLM context-reclaim step. After each tool batch (`PostTool`),
-it walks the message history backwards from the most recent, identifying stale
-tool-result messages whose output is large enough and old enough to safely elide.
-The tool-call IDs are recorded in an in-memory `Pruner` set (`pipeline/pruner.go`),
-and at request-build time `Loop.applyPruning` stubs those messages' content with a
-compact placeholder before the provider sees them.
+Soft-prune is a tier-0, non-LLM context-reclaim step. It runs in both
+`PrepareStep` and `PostTool`: it walks the message history backwards from the
+most recent message, marks stale tool-result messages whose output is large
+enough and old enough to elide, and at request-build time `Loop.applyPruning`
+stubs those messages' content with a compact placeholder before the provider
+sees them.
 
-Key design points:
+Current behavior:
 
-- **Non-mutating:** `l.Messages` and the DB keep full original content. Only the
-  ephemeral `ChatRequest` sent to the provider carries stubs.
-- **Tool-call linkage preserved:** Tool messages are *never removed* — only
-  their `Content` string is replaced. The `tool_call_id` ↔ tool message
-  pairing remains intact, so the provider cannot 400.
-- **Protect window:** The last 40k tokens of recent tool output and the current
-  + previous user turn are always shielded (configurable via `PruneConfig`).
-- **Walk termination:** The backward walk stops at either a compaction-summary
-  system message or an already-pruned tool message, bounding the per-turn cost
-  to O(new messages).
-- **`skill` protection:** Tool results from the `skill` tool are never pruned,
-  since they carry instruction payloads the model may need again.
+- **Non-mutating.** `State.Messages` and the database keep the full original
+  content; only the ephemeral `ChatRequest` carries stubs.
+- **Tool-call linkage preserved.** Tool messages are never removed — only
+  their `Content` string is replaced, so every `tool_call_id` keeps its
+  answer.
+- **Defaults.** `ProtectTokens` 2000, `MinReclaim` 200, `MinTurns` 1. The
+  protect window and minimum reclaim are configurable; `MinTurns` counts
+  user messages or assistant messages with tool calls.
+- **Protected tools.** `skill` (instruction payloads) and `delegate`
+  (sub-agent results) are never pruned.
+- **Walk termination.** The backward walk skips already-pruned messages and
+  stops at a non-index-0 system message, bounding the per-turn cost to new
+  messages.
 
-`SoftPruneMiddleware` is on by default (after `compaction`, before `approval`).
-Disable via `PipelineDisabled: ["soft_prune"]`.
+`SoftPruneMiddleware` is on by default (after `compaction`, before
+`approval`). Disable with `agents.middleware.disabled: [soft_prune]`.
 
 #### ApprovalMiddleware (`pipeline/approval.go`)
 
-Enforces the approval policy in `PostModel`, mirroring the call-stripping pattern of `PermissionMiddleware`. For each dangerous tool call (classified via injected callback wired to `Loop.classifyDanger` / the `tools.DangerClassifier` interface):
+Enforces the approval policy in `PostModel`, mirroring the call-stripping pattern of `PermissionMiddleware`. For each dangerous tool call (classified via injected callback wired to `Loop.classifyGate` / the `tools.DangerClassifier` interface):
 
 - **deny** mode: the call is stripped and a synthesized error tool-result (`error: tool %q requires approval but approval mode 'deny'`) is appended to `step.SynthesizedResults`.
 - **ask** mode: the injected approve callback prompts (or consults `Loop.ApproveFn`); an approval keeps the call, a refusal strips it with `error: tool %q was denied by user`.
 - **allow** mode (and sub-agent loops): inert.
 
-Stripped calls emit the same `ToolStart`/`ToolEnd` hook pair as before, and every stripped `tool_call_id` receives a persisted synthesized result so the provider invariant (every tool call answered) holds. Approval runs before `inline_limit` in the default order, so only approved calls count against the per-turn cap.
+Stripped calls emit the `ToolStart`/`ToolEnd` hook pair, and every stripped `tool_call_id` receives a persisted synthesized result so the provider invariant (every tool call answered) holds. Approval runs before `inline_limit` in the default order, so only approved calls count against the per-turn cap.
 
 #### InlineLimitMiddleware (`pipeline/inlinelimit.go`)
 
@@ -280,7 +273,7 @@ Tracks a sliding window of SHA-256 hashes of `(tool_name, tool_result)` pairs. I
 
 #### PermissionMiddleware (`pipeline/permission.go`)
 
-Filters tool calls in `PostModel` based on path-pattern rules. Rules are configured as `PermissionRule` structs with `Tool` (name), `Path` (glob), and `Mode` (allow/deny). Denied tool calls are silently removed from the assistant message before execution. Rule matching uses `filepath.Match` for glob support. Paths are extracted from tool arguments by key (`path`, `filePath`, or `command` for shell tools).
+Filters tool calls in `PostModel` based on path-pattern rules. Rules are configured as `PermissionRule` structs with `Tool` (name), `Path` (glob), and `Mode` (allow/deny). Denied tool calls are removed from the assistant message and replaced with a synthesized denial tool result, so every `tool_call_id` is answered. Rule matching uses `filepath.Match` for glob support. Paths are extracted from tool arguments by key (`path`, `filePath`, or `command` for shell tools).
 
 #### ConflictDetectMiddleware (`pipeline/conflictdetect.go`)
 
@@ -288,7 +281,7 @@ Runs after each tool batch in `PostTool`. When a `ConflictTracker` is configured
 
 #### ToolConcurrencyMiddleware (`pipeline/toolconcurrency.go`)
 
-Limits concurrent tool goroutines via a buffered channel semaphore. The Loop creates exactly one instance in `applyDefaults()` (`Loop.toolConcurrency`) and passes it to the pipeline via `PipelineConfig.ToolConc`, so `buildPipeline()` shares the same semaphore rather than allocating a second one; `executeAndCollect` acquires/releases it around each tool goroutine. The middleware hooks themselves are no-ops — the semaphore is driven directly by the dispatch loop.
+Limits concurrent tool goroutines via a buffered channel semaphore. The Loop creates exactly one instance in `applyDefaults()` (`Loop.toolConcurrency`) and passes it to the pipeline via `PipelineConfig.ToolConc`, so `buildPipeline()` shares the same semaphore rather than allocating a second one; `toolDispatch` acquires/releases it around each tool call. The middleware hooks themselves are no-ops — the semaphore is driven directly by the dispatch loop.
 
 #### Sub-agent depth limiting (structural, no middleware)
 
@@ -298,8 +291,8 @@ sub-agents at all. A custom role that lists `delegate` gets the task
 tool only while `makeTaskRunner`'s `remainingDepth` is positive; the runner
 decrements the remaining depth per level, so a nested sub-loop eventually
 loses its `delegate` tool entirely (see
-[Sub-Agent Lifecycle](#sub-agent-lifecycle)). The former `SubAgentMiddleware`
-that dropped excess `delegate` calls mid-turn has been removed.
+[Sub-Agent Lifecycle](#sub-agent-lifecycle)). Depth limiting is structural;
+there is no middleware that drops excess `delegate` calls.
 
 Sub-agent concurrency is enforced on `Loop.subAgentSem` (see
 `executeAndCollect`), mirroring how `ToolConcurrencyMiddleware` relates to
@@ -321,18 +314,18 @@ The `delegate` tool spawns a sub-agent: a fresh `agent.Loop` with a curated tool
 
 Each sub-agent runs under a **role** that selects its tool set and default limits.
 
-| Role | Tools | Max iter | Turns | Timeout | Can spawn |
-|---|---|---|---|---|---|
-| `analyst` (Jack) | webfetch, http, read, grep, glob, ls, powershell, bash, json_query, calculate, file_info, go_outline, git, sed, diff | 30 | 10 | 240s | no |
-| `developer` (Charley) | search set + write, edit, delete, replace, patch, go_refactor, go_test, go_mod, bisect, staticcheck | 40 | 6 | 300s | no |
-| `tester` (Casey) | read, powershell, bash, grep, glob, sed, ls, go_outline, calculate, file_info, json_query, webfetch, http, git, go_test, diff, bisect | 30 | 6 | 300s | no |
-| `reviewer` (Tim) | read, grep, glob, ls, sed, powershell, bash, calculate, file_info, go_outline, json_query, webfetch, http, git, diff, staticcheck | 25 | 3 | 240s | no |
+| Role | Iterations | Turns (floor) | Timeout | Tools |
+|---|---|---|---|---|
+| `analyst` (Jack) | 30 | 10 (5) | 240s | read/search/web + shell, git, diff, go_outline |
+| `developer` (Charley) | 40 | 12 (6) | 300s | analyst set + write/edit/delete/patch + Go tools |
+| `tester` (Casey) | 30 | 8 (4) | 300s | read/search + shell + go_test + git/diff |
+| `reviewer` (Tim) | 25 | 12 (8) | 480s | read/search + git/diff/staticcheck; no shell or web |
 
-There is **no default role** and no full-tools fallback. `RoleProfileFor(role)`
+There is no default role and no full-tools fallback. `RoleProfileFor(role)`
 reads from the global `RoleRegistry` installed at startup via
-`SetDefaultRoleRegistry`. Unknown roles (or any role when no registry is set)
-return the zero-value profile, which `makeTaskRunner` rejects with an error
-("role has no tools configured") rather than granting a full tool set.
+`SetDefaultRoleRegistry`. Unknown roles return the zero-value profile; a
+tool-less profile is valid. `delegate` rejects unknown role names when the
+registry-supplied role list is available.
 
 ### RoleRegistry
 
@@ -357,7 +350,7 @@ Built-in roles are embedded via `//go:embed roles/*.md` in `internal/prompts/pro
 
 **Atomic installation:**
 
-`SetDefaultRoleRegistry` stores the loaded registry in a package-level `atomic.Pointer[RoleRegistry]` in `role.go`. `RoleProfileFor` and `RoleGuidance` read from this pointer; when it's `nil` (e.g. in unit tests), or the role is unknown, they return the zero-value `RoleProfile` / empty string — there is no legacy fallback.
+`SetDefaultRoleRegistry` stores the loaded registry in a package-level `atomic.Pointer[RoleRegistry]` in `role.go`. `RoleProfileFor` and `RoleGuidance` read from this pointer; when it's `nil` (e.g. in unit tests), or the role is unknown, they return the zero-value `RoleProfile` / empty string.
 
 **Key methods:**
 
@@ -373,51 +366,70 @@ Built-in roles are embedded via `//go:embed roles/*.md` in `internal/prompts/pro
 
 File: `internal/tools/delegate_schema.go`
 
-`BuildDelegateSchema(roleNames []string) json.RawMessage` constructs the `delegate` tool's JSON Schema at startup from the active role list, using `encoding/json` marshalling to avoid injection. The `DelegateTool.Schema()` method checks `RoleNames`: when non-empty it calls `BuildDelegateSchema`; when empty it returns a legacy static schema with `["analyst", "developer", "tester", "reviewer"]`. This means user-defined roles are only visible to the model when a registry is configured (the default for both CLI and TUI sessions).
+`BuildDelegateSchema(roleNames []string, roleDescriptions map[string]string) json.RawMessage` constructs the `delegate` tool's JSON Schema at startup from the active role list and descriptions, using `encoding/json` marshalling to avoid injection. When `RoleNames` is empty, `DelegateTool.Schema()` falls back to a static schema whose `role` field is an unconstrained string.
 
-Wiring chain: `reg.Names()` → `runner.NewDelegateTool(…, roleNames)` → `DelegateTool.RoleNames` → `DelegateTool.Schema()`.
+Wiring chain: `runner.RoleDescriptionsFor(reg.Names())` and `RoleNames` → `runner.NewDelegateTool(DelegateToolOpts{...})` → `DelegateTool.Schema()`. The tool also carries a live `RoleResolver` so roles created during a session are visible without a restart.
 
 ### CLI lifecycle display
 
-Files: `internal/agent/agent_dispatch.go` (foreground sub-agent start events), `internal/agent/loop.go` (background sub-agent lifecycle events), `internal/agent/events/events.go` (event types), rendered by `cmd/yaah/view_terminal.go`
+Files: `internal/agent/agent_dispatch.go` (event publication), `internal/agent/events/events.go` (event types), `cmd/yaah/view_terminal.go` (rendering)
 
-Sub-agent activity is rendered with `╭─` / `╰─` box-drawing corners in the CLI, distinct from ordinary tool calls.
-
-**Events:** The agent loop publishes typed events to the internal broker: `SubAgentStartEvent` (role, model, prompt) when a sub-agent begins, and `SubAgentEndEvent` (role, duration, error) when it completes. The REPL's `terminalView.HandleEvent` type-switches on these to render the brackets:
+The REPL renders a sub-agent's lifetime with `╭─` / `╰─` box-drawing
+corners:
 
 ```
-╭─ sub-agent: analyst — Research external docs
-╰─ sub-agent: analyst — completed (6.8s)
+╭─ sub-agent: Developer · Implement the retry backoff
+╰─ sub-agent: Developer [zai/GLM-5.3-Flash] · completed (6.8s)
 ```
-If a sub-agent errors, the status shows the error string (styled in yellow) instead of "completed".
 
-Sub-agent tool calls are displayed indented beneath the parent's activity via `ToolStartEvent` and `ToolEndEvent`. The `terminalView` renders tool events from sub-agents with 4-space indent (vs. the parent's 2-space) by inspecting the event's originating context depth.
+`SubAgentStartEvent` carries `SubAgentID`, role, model, and prompt;
+`SubAgentEndEvent` carries the same identity plus duration, error, and the
+result. `terminalView` prints ordinary tools as a single flat
+`tool: <name>(<args>) (<duration>)` line on `ToolEndEvent`; it does not
+indent sub-agent tool calls or track a context depth.
 
 ### TUI lifecycle display
 
-Files: `cmd/yaah/tui.go`, `internal/tui/proxy.go`, `internal/tui/components/subagent/`, `internal/tui/components/messages/`
+Files: `cmd/yaah/tui.go`, `internal/tui/proxy.go`, `internal/tui/blocks.go`, `internal/tui/components/subagent/`
 
-The TUI renders each sub-agent's whole lifetime as a single collapsible block in the conversation view, distinct from ordinary tool blocks.
-
-**Data flow:** `SubAgentStartEvent` and `SubAgentEndEvent` are published to the broker and delivered to `Model.HandleEvent`. The start event appends one `Message` with role `"subagent"` (`SubRole` = role key, `SubID` = sub-agent ID, `Content` = task prompt, `SubRunning` = true). The end event finds the matching running line by sub-agent ID (`SubAgentID` field, correlated across spawns), transitions it in place (`SubRunning` = false, duration, error), and stores the result (`SubResult`, from the end event's `Result` field), displayed via the line's expand toggle. No separate end message is appended, and the `delegate` tool result is suppressed — only the single sub-agent line carries the lifecycle (see [TUI component system](./tui-components.md)).
-
-**`renderMessages`** handles the `"subagent"` role with the `SubAgentLine` component: a status icon (`⏳` running, `✓` done, `✗` error), a robot icon (🤖), the role-colored display name (per-role palette in `role_colors.go`, matching TUI2), the task, and the duration. The task tool header in the `"tool"` case uses `matchJSONField` to extract `role` and `description` from tool args JSON, displaying e.g. `"sub-agent: analyst — Research docs"` instead of the generic `"sub-agent"`.
+Each sub-agent is one collapsible block in the conversation log.
+`SubAgentStartEvent` calls `AddSubAgentStart`, which creates a
+`subagent.Block` and appends a `convItem{subBlock: ...}`.
+`SubAgentEndEvent` calls `AddSubAgentEnd` (or `AddSubAgentError`) and finds
+the block by `SubAgentID` to transition it in place. The block shows role,
+task, model, duration, status, and an expandable result; role colors come
+from `Theme.RoleHex` in `internal/tui/colors/theme.go`.
 
 ### Timeout enforcement
 
-`DelegateTool.Execute` (`internal/tools/delegate.go`) wraps the runner call in `context.WithTimeout`. The effective timeout is the per-call `timeout_seconds` argument (10–600), falling back to the resolved role default, then the tool's `DefaultTimeout`. On `DeadlineExceeded` or `Canceled` the tool returns a **structured JSON result** (`{"error":"timed out","partial":"..."}`) instead of a Go error, so the parent agent can decide whether to retry, continue, or report. Any non-empty string returned alongside the context error is surfaced as `partial`.
+`DelegateTool.Execute` (`internal/tools/delegate.go`) wraps the runner call
+in `context.WithTimeout`. The effective timeout resolves in this order:
+per-call `timeout_seconds` (values above 600 are clamped), per-role
+`agents.subagent.roles.<role>.timeout`, the role file's `timeout`, then
+`agents.subagent.default_timeout`. On deadline or cancellation the tool
+returns a structured JSON result (`{"error":"timed out","partial":"..."}`)
+instead of a Go error, so the parent can retry, continue, or report. Any
+partial output is surfaced alongside the error.
 
 ### Parallel dispatch and concurrency cap
 
-Multiple `delegate` tool calls issued in a single turn are dispatched concurrently by `executeAndCollect` like any other tool. Sub-agent fan-out is bounded independently by `Loop.MaxSubAgentConcurrency` (default 3), realised as a separate `subAgentSem` semaphore acquired only for tool calls named `delegate`. This lets the agent dispatch many sub-agents without exceeding the configured concurrency, and is independent of `MaxToolConcurrency`.
+Multiple `delegate` calls in one turn are dispatched concurrently by
+`toolDispatch` like any other tool. Sub-agent fan-out is bounded by
+`Loop.Config.MaxSubAgentConcurrency` (default 3), realised as a separate
+`subAgentSem` acquired only for tool calls named `delegate`. This is
+independent of `MaxToolConcurrency`.
 
 ### Interrupt propagation
 
-The parent context flows through `executeAndCollect` → `DelegateTool.Execute` → `Runner` → `subLoop.Run`. Cancelling the parent (e.g. Ctrl-C) propagates via the context: each sub-agent's `Loop.Run` checks `ctx.Done()` at the top of every iteration and the underlying provider HTTP call respects the context. A cancelled sub-agent returns the structured cancellation result described above rather than failing the parent turn.
+The parent context flows through `toolDispatch` → `DelegateTool.Execute` →
+`Runner` → `subLoop.Run`. Cancelling the parent (for example Ctrl-C)
+propagates through the context; the provider call respects it. A cancelled
+sub-agent returns the structured cancellation result rather than failing
+the parent turn.
 
 ### Structured escalation
 
-Sub-agents can raise structured escalations when they hit a blocker. The
+Sub-agents raise structured escalations when they hit a blocker. The
 escalation is a fenced JSON block in the sub-agent's final output:
 
 ```
@@ -426,40 +438,28 @@ escalation is a fenced JSON block in the sub-agent's final output:
 ```
 ```
 
-`ParseSubAgentOutput` (`internal/jobs/output.go`) extracts the escalation via
-regex before the result is truncated. If found, `executeAndCollect` publishes
-an `EscalationEvent` to the broker. The REPL renders a color-coded banner
-(red for blocker/critical, yellow for warning, dim for info). The TUI injects
-an escalation message card into the conversation view.
-
-Severity routing: `blocker`/`critical` halt sibling sub-agents and signal the
-orchestrator. `warning`/`info` are advisory.
+`ParseSubAgentOutput` (`internal/jobs/output.go`) extracts it before the
+result is truncated. `toolDispatch` publishes an `EscalationEvent`; the REPL
+and TUI render a severity-colored card. The event is advisory: the
+orchestrator prompt tells the model to consider halting siblings, but no
+automatic sibling cancellation occurs.
 
 ### Quality gates
 
-After a sub-agent completes (without escalating), the orchestrator checks
-`Loop.QualityGates[role]` for configured validator roles. Each validator is
-dispatched as a new sub-agent with the original output as context. If the
-validator's verdict is FAIL (determined by last-occurrence heuristic —
-"PASS" appearing after the last "FAIL" means pass), the result is annotated
-with `[quality-gate:FAIL]` before reaching the orchestrator.
-
-Configuration:
-
-```yaml
-agents:
-  quality_gates:
-    developer: [tester]
-```
+After a sub-agent completes, the orchestrator checks
+`Loop.Config.QualityGates[role]` for validator roles. Each validator is
+dispatched with the original output as context. The verdict comes from the
+validator's contract `verdict` field, with a last-occurrence heuristic as
+fallback. A failing verdict annotates the result with
+`[quality-gate:FAIL]`. Gates also run when the sub-agent escalated.
 
 ### Session directives
 
-Directives are policy statements injected into all agent prompts. Sources:
-CLI `--directive` / `-d` flag (repeatable, prepended) and config
-`agents.default.directives`. Injected into sub-agent system prompts after
-the escalation block, and into the orchestrator prompt during assembly.
-
-Semaphore acquisitions in `executeAndCollect` (`subAgentSem` and `toolConcurrency`) use `select` on `ctx.Done()` alongside the channel send, so goroutines queued on concurrency caps immediately return a cancellation result instead of blocking until a slot opens.
+Top-level directives come from `agents.default.directives` and the
+repeatable `-d/--directive` flag; CLI directives are prepended to config
+directives and injected into the orchestrator prompt after the identity
+block. Sub-agents do not inherit them; use
+`agents.subagent.roles.<role>.directives` for per-role policy.
 
 ### Nesting depth
 
@@ -467,15 +467,14 @@ Nesting is bounded structurally, hardcoded to depth 1 for built-in roles:
 no built-in sub-agent role registers the `delegate` tool, so a
 sub-agent loop cannot dispatch further sub-agents at all
 (`buildSubAgentRegistry` omits `delegate` when `remainingDepth`
-reaches 0). A custom role that lists `delegate` gets the task tool
-only while the runner's remaining depth is positive. The former
-`SubAgentMiddleware` that dropped excess `delegate` calls mid-turn
-has been removed.
+reaches 0). A custom role that lists `delegate` gets the delegate tool
+only while the runner's remaining depth is positive. Depth limiting is
+structural; there is no middleware that drops excess `delegate` calls.
 
 ### Configuration
 
 ```yaml
-agent:
+agents:
   subagent:
     max_concurrency: 3    # simultaneous delegate calls per turn
     default_timeout: 120  # seconds; used when no role default applies
@@ -496,7 +495,7 @@ agent:
 
 ### Agent conflict reconciliation
 
-Files: `internal/tools/conflict_tracker.go`, `internal/tools/recording.go`, `internal/agent/agent.go`
+Files: `internal/tools/conflict_tracker.go`, `internal/tools/recording.go`, `internal/agent/loop.go`, `internal/agent/turn.go`, `internal/agent/agent_dispatch.go`
 
 When an agent dispatches multiple parallel sub-agents in a single turn, those sub-agents may independently modify the same files. If sub-agent B's write clobbers sub-agent A's changes, the agent has no way of knowing without explicit conflict detection.
 
@@ -506,7 +505,7 @@ When an agent dispatches multiple parallel sub-agents in a single turn, those su
 
 **Detection:** After the tool batch completes, the `conflict_detect` middleware runs in `PostTool` and calls `ConflictTracker.DetectAndReset()`. Files touched by more than one distinct sub-agent label are flagged. If conflicts are found, a structured `CONFLICT:` user message is injected into the conversation before the next LLM call. The report lists each conflicting file, which sub-agents touched it, and which tools they used.
 
-**Observability:** Two hook event types are emitted: `conflict.check` (every turn when a tracker is present) and `conflict.detect` (when conflicts are found, with `conflict_files` count). When OTel is enabled, a `conflict.check` span appears in the trace waterfall as a child of the turn span.
+**Observability:** Two hook event types are emitted: `conflict.check` (every turn when a tracker is present) and `conflict.detect` (when conflicts are found, with `conflict_files` count). When OTel is enabled, `conflict.files` and a `conflict.detected` event are recorded on the current turn span.
 
 ### Retained sub-agents and workspace isolation
 
@@ -514,15 +513,15 @@ Files: `internal/tools/retained.go`, `internal/tools/proposal.go`, `internal/too
 
 A retained dispatch runs the sub-agent in a **worktree of its own** and seals its output into a proposal; the orchestrator settles it. Nothing reaches the parent tree before settlement, so a rejected attempt is discarded rather than rolled back.
 
-- **The world.** `ScopeManager.ForkIsolated` gives the dispatch an isolated child scope owning a `NewWorktreeSandbox`. There is no shared-tree mode: `agents.subagent.mode: shared` is the explicit opt-out that runs the sub-agent directly on the host.
+- **The world.** `ScopeManager.ForkIsolated` gives the dispatch an isolated child scope owning a `NewWorktreeSandbox`. Retained is the default when a trace store is configured; `agents.subagent.mode: shared` is the explicit opt-out that runs the sub-agent directly on the host.
 - **The settlement.** `select` fast-forwards and fails closed if the tree moved; `apply` is a three-way merge that lands only when the change sets are path-disjoint; `release` keeps whatever landed and drops the record; `discard` throws the work away and removes the worktree. A sealed output is consumed exactly once (`ErrOutputConsumed`), and a settlement that landed an effect but failed its causal merge reports the diagnostic instead of inviting a retry that would apply it twice.
-- **The judgement.** It is the orchestrator's, not a sub-agent's: the retained lane returns a diff and the orchestrator decides. Plan 7 Phase 4 tried a reviewer sub-agent here and removed it — shepherd's `gate` predicate is a callable on the orchestrator's side, and everything a reviewer needed (a verdict token, a world fingerprint, a round cap) was compensation for putting it elsewhere.
+- **The judgement.** It is the orchestrator's, not a sub-agent's: the retained lane returns a diff and the orchestrator decides. No reviewer sub-agent is inserted automatically.
 
 **Turn checkpoints.** `ShepherdTurnCheckpointer` (`internal/agent/runner/checkpoint.go`) adapts `shepherd.ScopeManager` to the loop's `TurnCheckpointer` interface. A checkpoint captures the workspace *and* the conversation, and a restore consumes it, so the two stay in step. This is per-attempt robustness inside a dispatch (a role sets `turn_checkpoints`), not a settlement mechanism — the worktree already makes the attempt disposable.
 
 **Confinement.** Isolation is only real if the sub-agent's tools actually operate in the worktree, so the dispatch carries `SubAgentParams.Workdir`. `buildSubAgentRegistry` turns that into a per-scope `PathValidator` — rooted at the worktree, inheriting deny patterns and the approval callback, with a fresh approval cache — and `bash`/`powershell` use it as `cmd.Dir`. Confinement then rides that root: `agents.subagent.containment` jails writes to it, and `agents.subagent.network` governs egress from it.
 
-**Teardown.** The worktree lives until settlement: `select`/`apply`/`discard` end the child scope and remove it, `release` tears it down explicitly. A worktree left behind by a killed run is cleared and retried once on the next `Create`, and `git worktree prune` clears stale administrative entries.
+**Teardown.** The worktree lives until settlement: `select`/`apply`/`discard` end the child scope and remove it, `release` tears it down explicitly. A worktree left behind by a killed run is detected through the git worktree registry, cleared, and retried once on the next `Create`. Recovery reports stale entries instead of deleting them automatically.
 
 **Limits.** A worktree checks out tracked files only, so gitignored build inputs must be recreated by `retained_worktree_bootstrap`. Isolation is filesystem-level: dispatches share the host process, network, and object store.
 
@@ -551,11 +550,9 @@ register on a given OS:
 
 Additional tools are registered by the CLI layer after `NewRegistry()`:
 - `memory_search`, `memory_add`, `memory_delete`, `memory_update`, `memory_search_sessions`
-- `skill`
-- `plan`
-- `todowrite`
-- `background_process`
-- `delegate` (the task tool) and `list_subagents`
+- `skill`, `plan`, `todowrite`
+- `delegate`, `list_subagents`, `subagent_jobs`
+- `role` (host mode), `supervisor` (when tracing/supervision is live), `proposal` (retained mode), `apply_out` (isolated workspace)
 - Any MCP tools from connected servers
 
 ### Workspace seam (`internal/tools/workspace.go`)
@@ -571,8 +568,11 @@ type Workspace interface {
     ReadFile(ctx, path) ([]byte, error)
     WriteFile(ctx, path, data, perm) error     // atomic
     Stat(ctx, path) (fs.FileInfo, error)
+    Lstat(ctx, path) (fs.FileInfo, error)
+    ReadDir(ctx, path) ([]os.DirEntry, error)
     Remove(ctx, path) error
     MkdirAll(ctx, path, perm) error
+    Join(elem ...string) string
     Exec(ctx, ExecRequest) (ExecResult, error)
 }
 ```
@@ -588,33 +588,40 @@ Two implementations:
 
 **Why this is the prerequisite for a container backend.** Pointing the tools at a host-visible mount would isolate the *files* while leaving the *processes* on the host, which defeats the purpose of a container. `sandboxWorkspace` therefore routes commands through the sandbox, and `PowerShellTool` refuses a non-local workspace through `requireLocal` rather than silently running the command somewhere the caller did not intend.
 
-**Migration status.** Every migratable filesystem tool now routes its I/O through a `Workspace` — 21 tools, including the process-spawning ones (`git`, `diff`, `go_mod`, `go_test`, `staticcheck`, `bisect`), none of which previously set a working directory, so they ran in the *yaah process's* cwd even when a sub-agent was isolated in a worktree. Routing them through `Workspace.Exec` fixes that as a side effect: they now run in the workspace directory.
+Every filesystem tool routes its I/O through a `Workspace` — including the
+process-spawning tools (`git`, `diff`, `go_mod`, `go_test`, `staticcheck`,
+`bisect`), which run with the workspace as their working directory. A
+sub-agent's tools therefore act on its worktree, not the yaah process's cwd.
 
 **Host-only by design (3).** `role` (manages harness role files the host reads), `background_process` (drives the in-memory host process manager), and `go_refactor`, which reads the filesystem through `golang.org/x/tools` (`imports.Process`, `packages.Load`) — a path `Workspace` cannot intercept. Isolating it means reimplementing it on in-sandbox `gofmt`/`goimports` calls, not swapping calls.
 
 **Isolation gate.** `Registry.SetWorkspace` refuses a non-local workspace, reporting unmigrated and host-only tools as separate categories. The refusal is unconditional with respect to the markers, so a forgotten annotation cannot silently weaken it; the markers only produce those diagnostics. `TestRegistry_EveryToolIsClassified` requires every registered tool to be a `FilesystemTool`, a `HostOnlyTool`, or on a short deliberate non-filesystem allowlist, so an unclassified tool fails the build rather than becoming an isolation hole.
 
-Because the unmigrated list is now empty, the gate turns entirely on which host-only tools a registry happens to hold. The default `NewRegistry()` still refuses, because it contains `go_refactor`; a sub-agent registry whose role profile excludes the four host-only tools is accepted. That is the intended shape: the orchestrator runs on the host, and a dispatched sub-agent can run isolated.
+The gate turns on which host-only tools a registry holds. The default
+`NewRegistry()` refuses an isolated workspace because it contains
+`go_refactor`; a sub-agent registry whose role profile excludes the three
+host-only tools (`role`, `background_process`, `go_refactor`) is accepted.
+The orchestrator runs on the host; a dispatched sub-agent can run isolated.
 
 ### Tool execution flow (`executeAndCollect` — middleware path)
 
 ```
 executeAndCollect(ctx, calls, messages):
   for each tool call:
-    1. If ApprovalMode=="deny" && dangerous → emit hooks, return error
-    2. If ApprovalMode=="ask" && dangerous → prompt user, deny if rejected
-    3. Spawn goroutine:
-       a. Call OnTool (before) — Duration=0
-       b. emitHook(ToolStart)
-       c. Registry.Execute(ctx, name, args)
-       d. Truncate result to the configured caps (default 500 lines / 20480 bytes) if needed
-       e. Call OnTool (after) — with Duration, Result, Error
-       f. emitHook(ToolEnd)
-       g. Send toolExecResult to channel
-    4. Collect results in order
-     5. Build []ToolResult for middleware
-     6. Append tool result messages to *messages
+    spawn toolDispatch.run:
+      1. Acquire subAgentSem (delegate only) and toolConcurrency semaphores
+      2. Publish ToolStartEvent; start the tool span
+      3. Registry.Execute(ctx, name, args)
+      4. Parse escalation/watchdog data; truncate with spill
+      5. Publish ToolEndEvent; emit hooks
+    collect results in call order
+    build []ToolResult for middleware
+    append tool result messages to *messages and persist
 ```
+
+Approval is not checked here: the `approval` middleware strips denied calls in
+`PostModel` and supplies synthesized results through `Step.SynthesizedResults`,
+which `executeToolPhase` merges before dispatch.
 
 ### Dangerous tools
 
@@ -636,10 +643,10 @@ not. `GoRefactorTool` and `PlanTool` also implement the classifier. Tools that
 are never dangerous (`ReadTool`, `GrepTool`, `GlobTool`, etc.) simply don't
 implement the interface.
 
-The `Loop.classifyDanger(name, args)` method in `agent.go` checks whether a
-tool implements `DangerClassifier` and calls `IsDangerous` when present.
-Approval checks (`executeAndCollect` at line 570) use this single code path
-for all tools.
+`Loop.classifyGate` (`agent_safety.go`) checks whether a tool implements
+`DangerClassifier` and calls `IsDangerous` when present. The approval
+middleware (`pipeline/approval.go`) uses this single path for all tools, and
+also applies `MCPApproval` to MCP-served tools.
 
 All file-path-accepting tools support `~` expansion via `expandHomeDir()`
 in `helpers.go`. Shared tool utilities (`rgAvailable`, `commonIgnoreDirs`,
@@ -719,11 +726,10 @@ systematically undercounting code and JSON payloads.
 ### Mid-tool-loop compaction
 
 Compaction is safe to run even while the model is mid-tool-loop. The
-token-budgeted `SplitTail` split (`internal/agent/context`) is boundary-aligned: it never cuts a
-tool-call/result pair, so compacting during a tool loop preserves tool-call
-linkage and the model can continue without a bricked conversation. (An earlier
-`isContinuation` guard skipped compaction mid-loop; it was removed once
-boundary-aligned splitting made the guard unnecessary — see BENCHMARKS.md.)
+token-budgeted `SplitTail` split (`internal/agent/context`) is
+boundary-aligned: it never cuts a tool-call/result pair, so compacting during
+a tool loop preserves tool-call linkage and the model can continue without a
+bricked conversation.
 
 ### Pre-compaction pruning (`PruneMessages`)
 
@@ -755,7 +761,7 @@ keep as many recent turns as fit in 25% of the context window, with:
 
 ### LLM-powered compaction (`compactContext`)
 
-1. Check anti-thrashing guard: skip if last 2 compactions each saved <10%.
+1. Check the anti-thrashing guard: skip if the last 2 compactions each saved less than `max(ContextWindow/20, 2000)` tokens (~5%, with a 2K floor).
 2. Check token budget: compute effective tokens — when cached prompt
    tokens are reported (`LastCachedPromptTokens > 0`), subtract them from
    `LastPromptTokens` so heavily-cached conversations don't over-trigger
@@ -774,25 +780,23 @@ keep as many recent turns as fit in 25% of the context window, with:
 8. Track compaction effectiveness: if savings <10%, increment anti-thrashing
    counter. After 2 consecutive ineffective compactions, skip further
    compaction.
-9. If the LLM call fails or returns empty, fall back to `trimContext()`.
+9. If the LLM call fails or returns empty, try chunked compaction when the old tail is large enough; otherwise fall back to `trimContext()`.
 
 ### Sub-agent result capping
 
-Sub-agent results are capped at 8,000 chars with
-head+tail preservation to prevent unbounded context growth from verbose
-sub-agent output.
+Sub-agent results are capped by `resolveOutputLimit` (per-call limit, then
+role config, then the 50 KiB default) and truncated head-only with an
+explicit `...[sub-agent output capped at N]` marker. A separate 25%-of-context
+trim bounds the result before it reaches the orchestrator.
 
 ### Overflow recovery
 
-When the provider returns a context overflow error, the retry loop in
-`getAssistantMessage` triggers an aggressive compaction at 40% of the window
-(up to 3 attempts). A pre-flight guard also checks `LastPromptTokens >
-ContextWindow` before each LLM call as a last-resort safety net.
-
-The preflight compaction path uses `PreflightTokens()` (`internal/agent/context`) with the configurable
-`EstimateFactor` (default 1.3) to estimate tokens before the first API call
-(when `LastPromptTokens` is 0). This catches overflow earlier than waiting
-for a failed API call, avoiding wasted round-trips.
+When the provider returns a context overflow error, `llm.Client.Call`
+triggers an aggressive compaction at 40% of the window (up to 3 attempts)
+before retrying. The proactive path is the `compaction` middleware's
+`PrepareStep` hook, which uses `PreflightTokens()` (`internal/agent/context`)
+with the configurable `EstimateFactor` (default 1.3) before the first API
+call.
 
 ### Truncation fallback (`trimContext`)
 
@@ -803,21 +807,21 @@ preserves the system message at index 0.
 
 ## Session persistence
 
-File: `internal/agent/agent.go` (`persistMessage`)
+File: `internal/agent/persist.go` (`SessionPersister`)
 
-When `Loop.DB` is non-nil, every message is persisted to SQLite as it is
-appended to the conversation. This enables session resume across process
-restarts and crash recovery.
+When `Loop.Persister` has a database, every message is persisted to SQLite
+as it is appended. This enables session resume across process restarts and
+crash recovery.
 
 ### Persistence points
 
 | Point | What | Where |
 |---|---|---|
-| First turn | System prompt + user message | `runMiddleware`, after message construction |
+| First turn | System prompt + user message | `Loop.initMessages` (`lifecycle_init.go`) |
 | Subsequent turns | User message only | `runMiddleware`, before loop entry |
-| Assistant response | Content + tool calls (serialized as JSON) | `runMiddleware`, after `getAssistantMessage` |
+| Assistant response | Content + tool calls (serialized as JSON) | `runMiddleware`, after `LLM.Call` |
 | Tool results | Result content, call ID, tool name | `executeAndCollect`, after each tool execution |
-| Compaction summaries | New synthetic system messages | `runMiddleware`, after `step.Messages` assignment |
+| Compaction summaries | New synthetic messages; the persister rebases indices | `ContextManager.OnMessagesReplaced` / `SessionPersister.Rebase` |
 
 ### Message conversion
 
@@ -836,16 +840,17 @@ yaah --resume <session-id> "continue"
   → Populates s.messages with the full conversation history
   → If last message is an assistant message with pending tool calls,
     injects an interruption notice as a system message
-  → runPrompt sets loop.MsgIdx = len(s.messages) so new messages
+  → loopBuilder calls persister.SetMsgIdx(s.msgIdx) so new messages
     get the correct DB indices
   → Loop runs normally, appending new messages to both memory and DB
 ```
 
 ### Error handling
 
-`persistMessage` logs errors to stderr (`warning: db persist: ...`) but never
-returns them. The agent loop continues even if the database is unavailable.
-`MsgIdx` is not incremented on error, so the failed message slot is skipped.
+`SessionPersister.Persist` logs errors to stderr (`warning: db persist: ...`)
+but never returns them. The agent loop continues even if the database is
+unavailable. The persister does not advance the message index on a failed
+insert.
 
 ---
 
@@ -877,18 +882,16 @@ stanza, which references a provider's `base_url` (e.g. `lmstudio` →
 ### 2. Storage (`embedding` BLOB column)
 
 Both the `memory` and `messages` tables carry an optional `embedding BLOB`
-column (added via a migration). Embeddings are serialized as little-endian
+column. Embeddings are serialized as little-endian
 float32 arrays. At startup, `ReconcileEmbeddings` backfills entries that
 were created before the embedding provider was configured.
 
 ### 3. Embed-on-save
 
-- **memory**: `MemoryAddTool.Execute` calls `EmbedMemoryAsync` after
-  `AddMemory`, waits on the done channel, and returns to the caller only
-  after the embedding is stored — so new entries are immediately
-  searchable. The underlying `EmbedMemoryAsync` runs in a goroutine with
-  a serializing mutex (`embMu`) to prevent SQLITE_BUSY under concurrent
-  writes.
+- **memory**: `MemoryAddTool.Execute` calls `AddMemoryDedup`, then
+  `EmbedMemoryAsync`, and waits for the embedding to be stored so new
+  entries are immediately searchable. `embMu` guards the `embedder` field,
+  not SQL or network calls.
 
 - **messages**: `AddMessage` fires `embedMessageAsync` in a background
   goroutine (user and assistant messages only; tool results are skipped).
@@ -897,16 +900,17 @@ were created before the embedding provider was configured.
 
 ### 4. Search (`SearchMemoryVector` / `SearchMessagesVector`)
 
-1. Embed the query via `d.embedder.Embed(ctx, query)`
+1. Embed the query via `d.Embedder().Embed(ctx, query)`
 2. Scan all rows with non-null `embedding`
 3. Compute `CosineSimilarity` between the query embedding and each stored
-   embedding (brute-force — sub-millisecond at yaah's scale of hundreds to
-   low thousands of entries)
+   embedding (brute-force scan)
 4. Sort descending by score, return top-K
 
 ### 5. Tool dispatch
 
-Both `memory_search` and `memory_search_sessions` try vector search first.
+Both `memory_search` and `memory_search_sessions` try vector search first
+(`memory_search` skips it when a tag filter is set; session search skips it
+for an empty query).
 If the embedder is nil, the embedding call fails, or no vector results are
 found, they fall back to FTS5 keyword search. The CLI memory commands
 (`yaah memory add` / `yaah memory search`) load config and set the embedder
@@ -916,6 +920,7 @@ independently (they open their own short-lived DB connections).
 
 ```go
 func CosineSimilarity(a, b []float32) float32 {
+    if len(a) != len(b) { return 0 }
     var dot, normA, normB float32
     for i := range a {
         dot += a[i] * b[i]
@@ -984,7 +989,7 @@ type HookEvent struct {
 
 File: `internal/agent/llm/stream.go` (`runStream`, `assembleStreamed`), `internal/agent/events/events.go`
 
-When the provider implements `StreamProvider`, `llm.Client.Call` selects the streaming path and `runStream()` assembles the response; `lifecycle_init.go` wires the client's token/thinking callbacks to broker events. The path:
+When the provider implements `StreamProvider` **and** `OnToken` is non-nil (a broker/View is active), `llm.Client.Call` selects the streaming path and `runStream()` assembles the response; `lifecycle_init.go` wires the client's token/thinking callbacks to broker events. The path:
 
 1. Reads from a `<-chan StreamChunk`.
 2. Accumulates `delta.Content` into a string builder, publishing each chunk as a `TokenDeltaEvent` to the internal broker.
@@ -1001,15 +1006,15 @@ Events published during streaming and tool execution:
 | `TokenDeltaEvent` | Each streamed content delta | `Text string` |
 | `ThinkingEvent` | Each reasoning/thinking delta | `Text string` |
 | `FlushEvent` | Model finishes a streaming segment | `Content string` |
-| `ToolStartEvent` | Before tool execution | `Name, Args string` |
-| `ToolEndEvent` | After tool execution | `Name, Args, Result, Error string`; `Duration time.Duration` |
-| `SubAgentStartEvent` | Sub-agent begins | `Role, Model, Prompt string` |
-| `SubAgentEndEvent` | Sub-agent completes | `Role, Duration time.Duration`; `Error string` |
-| `DoneEvent` | Agent loop finishes | `Response string`; `ContextTokens, ContextWindow int` |
+| `ToolStartEvent` | Before tool execution | `ID int64`; `Name, Args string` |
+| `ToolEndEvent` | After tool execution | `ID int64`; `Name, Args, Result, Error string`; `Duration time.Duration` |
+| `SubAgentStartEvent` | Sub-agent begins | `SubAgentID, Role, Model, Prompt string` |
+| `SubAgentEndEvent` | Sub-agent completes | `SubAgentID, Role, Model, Prompt, Error, Result string`; `Duration time.Duration` |
+| `DoneEvent` | Agent loop finishes | `Response, Error, FinishReason, ResponseModel string`; `ContextTokens, ContextWindow, LastPromptTokens int`; `Usage` |
 
 ## Provider interface
 
-File: `internal/agent/agent.go`
+File: `internal/agent/llm/types.go`
 
 ```go
 type Provider interface {
@@ -1022,7 +1027,7 @@ type StreamProvider interface {
 }
 ```
 
-The `internal/providers/` package implements OpenAI Chat Completions and Anthropic Messages API clients. Providers are resolved by the CLI layer from `~/.yaah/config.yaml` and passed to `Loop.Provider`. The `Prov` struct's `api` field (`"openai"` or `"anthropic"`) determines which client is created — both implement the same `Provider` + `StreamProvider` interfaces.
+The `internal/providers/` package implements OpenAI Chat Completions and Anthropic Messages API clients. Providers are resolved by the CLI layer from `~/.yaah/config.yaml` and passed to `Loop.Provider`. `config.Provider.API` (`"openai"`, `"anthropic"`, or `"copilot"`) determines which client is created — both implement the same `Provider` + `StreamProvider` interfaces.
 
 ---
 
@@ -1030,7 +1035,7 @@ The `internal/providers/` package implements OpenAI Chat Completions and Anthrop
 
 Files: `internal/agent/events/events.go`, `internal/agent/view.go`, `internal/pubsub/broker.go`
 
-The agent loop communicates with consumers (TUI, REPL, sub-agent runner) through a single typed event interface. There are no callbacks on `agent.Loop` — everything flows through the broker.
+The agent loop communicates with consumers (TUI, REPL, sub-agent runner) through a single typed event interface. View delivery is broker-based; a few control hooks (`ApproveFn`, `ContinueAfterMaxIter`, `OnUsage`, `OnSubUsage`) remain on the loop.
 
 ### Event interface
 
@@ -1095,17 +1100,13 @@ The agent loop creates the broker and `BrokerView` internally in `applyDefaults`
 
 Control-plane messages (todos, questions, approvals, model lists) use `tui.ControlMsg` — a separate channel from the broker events.
 
-### History
-
-The engine-view boundary was refactored in PRs #60 and #62 (plan: `.agents/plans/engine-view-separation/PLAN.md`). Before this, the agent loop had dual delivery (callbacks + broker) with a 25-field `AgentMsg` god struct and an 8-hop TUI delivery pipeline. The refactor removed callbacks entirely, internalized the broker, cut the pipeline to 4 hops, and replaced `AgentMsg` with compile-time-exhaustive typed events.
-
 ---
 
 ## TUI architecture
 
 Files: `cmd/yaah/tui.go`, `internal/tui/`
 
-The TUI is a [tview](https://github.com/rivo/tview)/[tcell](https://github.com/gdamore/tcell) application running the agent loop in a background goroutine. Communication from the agent goroutine to the TUI goes through the typed event broker — the agent loop publishes `Event` values to the internal `pubsub.Broker[Event]`, and a forwarder delivers them to the app's `agent.View` implementation (`tui.Proxy`), which funnels mutations through an event queue onto the tview main goroutine (`QueueUpdate` for plain updates, debounced direct writes for streaming token deltas).
+The TUI is a [tview](https://github.com/rivo/tview)/[tcell](https://github.com/gdamore/tcell) application running the agent loop in a background goroutine. Communication from the agent goroutine to the TUI goes through the typed event broker — the agent loop publishes `Event` values to the internal `pubsub.Broker[Event]`, and a forwarder delivers them to the app's `agent.View` implementation (`tui.Proxy`), which funnels mutations through an ordered event queue onto the tview main goroutine. Streaming token deltas collect in a pending buffer and are flushed by a debounce timer or a `FlushEvent`.
 
 **Layout:** Pages → Flex hierarchy with a conversation view (collapsible tool/reasoning/sub-agent blocks rendered by components under `internal/tui/components/`), an info pane (session/context/MCP/config sections), a todo sidebar, a background-jobs pane, and a multi-line input. All colors come from the shared theme in `internal/tui/colors/theme.go`.
 
@@ -1117,33 +1118,35 @@ Component inventory and rendering rules: [TUI component system](./tui-components
 
 ## OpenTelemetry observability
 
-Files: `internal/observability/`, `internal/agent/agent.go`, `internal/config/load.go`
+Files: `internal/observability/`, `internal/agent/loop.go`, `internal/config/load.go`
 
 yaah emits traces via OTLP HTTP to any OpenTelemetry-compatible backend. Tracing is off by default; enable with `observability.otel.enabled: true` in `config.yaml`.
 
 ### Initialisation
 
-`observability.Setup(ctx, cfg)` in `internal/observability/otel.go` creates a `TracerProvider` (and optionally a `MeterProvider`) configured for the OTLP endpoint. It returns a `shutdown` function that the CLI (`root_cmd.go`) and TUI (`tui.go`) defer. Both entrypoints set `Loop.OtelEnabled` so individual spans are gated on the config flag.
+`observability.Setup(ctx, cfg)` in `internal/observability/otel.go` creates a `TracerProvider` (and optionally a `MeterProvider`) configured for the OTLP endpoint. It returns a `shutdown` function that `cmd/yaah/wiring.go` defers. The loop gates spans on `Loop.Config.OtelEnabled`.
 
 `Config.ExtraProcessors` allows injecting additional `sdktrace.SpanProcessor` instances alongside the OTLP batcher. Serve mode (`cmd/yaah/serve.go`) uses this to attach an in-memory `BufferingSpanProcessor` so traces can be queried via the `traces` MCP tool without an external backend. When `Endpoint` is empty, the OTLP exporter is skipped entirely and only the extra processors receive spans.
 
 ### In-memory span buffer
 
-`BufferingSpanProcessor` in `internal/observability/buffer.go` collects completed spans in a ring buffer (capped at 10,000 spans). It supports flat queries (`Traces()`), hierarchical tree rendering (`TraceTree(traceID)`), and reset between benchmark runs. The `yaah serve` MCP server exposes this via the `traces` tool.
+`BufferingSpanProcessor` in `internal/observability/buffer.go` collects completed spans in a ring buffer (capped at 10,000 spans). It supports flat queries (`Traces()`), hierarchical tree rendering (`TraceTree(traceID)`), and reset between runs. The `yaah serve` MCP server exposes this via the `traces` tool.
 
 ### Span hierarchy
 
 | Span type | Location | Contents |
 |---|---|---|
-| `tool.<name>` | `executeAndCollect` in `agent.go` | Operation name is the tool name. `tool.args` attribute (200-char truncated JSON). `result` event with truncated output. Errors are recorded via `RecordError`. |
-| `subagent: <role> — <description>` | `executeAndCollect` in `agent.go` | Role + task description in the operation name. `dispatched` event with role and task text. `completed` / `failed` event on finish. |
-| `llm.chat` | `InstrumentedProvider.Send` in `observability/provider.go` | `tokens` event with `llm.prompt_tokens`, `llm.completion_tokens`, `llm.total_tokens`, `llm.messages`, and `llm.system_len`. `llm.duration_ms` attribute. |
-| `conflict.check` | `runMiddleware` in `agent.go` | Child of the turn span. `conflict.files` attribute. When conflicts are found, a `conflict.detected` event is added with the file count. |
-| `prune` | `SoftPruneMiddleware.PostTool` → `observability/trace.go` | `prune.reason`, `prune.candidates`, `prune.marked`, `prune.reclaimed_tokens`, `prune.protected_skipped`, `prune.committed`, `prune.total_marked`. Emitted after every tool batch, including non-committed passes. |
+| Tool name | `toolDispatch.run` in `agent_dispatch.go` | Operation name is the tool name. `tool.args` attribute (200-char truncated JSON). `result` event with truncated output. Errors are recorded via `RecordError`. |
+| `subagent: <role> — <description>` | `toolDispatch.run` in `agent_dispatch.go` | Role + task description in the operation name. `dispatched` event with role and task text. `completed` / `failed` event on finish. |
+| `llm.stream` / `llm.chat` | `observability/provider.go` and `observability/trace.go` | Streaming uses `llm.stream`; non-streaming uses `llm.chat`. `tokens` event with prompt/completion/total tokens, message count, and system length. `llm.duration_ms` on `llm.chat`. |
+| `prune` | `SoftPruneMiddleware` (`PrepareStep` / `PostTool`) → `observability/trace.go` | `prune.reason`, `prune.candidates`, `prune.marked`, `prune.reclaimed_tokens`, `prune.protected_skipped`, `prune.committed`, `prune.total_marked`. Emitted after each pass, including non-committed passes. |
+
+`conflict.check` is a hook event, not a span; the turn span carries
+`conflict.files` and a `conflict.detected` event when conflicts are found.
 
 ### Propagation to sub-agents
 
-`Loop.OtelEnabled` is propagated through `taskRunnerOpts.OtelEnabled` → `makeTaskRunner` → `subLoop.OtelEnabled`. The parent span context flows via `context.Context` through `Registry.Execute(runCtx, ...)`, so sub-agent tool spans appear as children of the sub-agent span in the trace waterfall.
+`Loop.Config.OtelEnabled` is propagated through `taskRunnerOpts.OtelEnabled` → `makeTaskRunner` → `subLoop.Config.OtelEnabled`. The parent span context flows via `context.Context` through `Registry.Execute(runCtx, ...)`, so sub-agent tool spans appear as children of the sub-agent span in the trace waterfall.
 
 ### Configuration
 

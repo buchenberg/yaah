@@ -49,8 +49,7 @@ type SubAgentConfig struct {
 	// rewinds workspace and conversation to the last checkpoint and
 	// retries with guidance. TurnCheckpointMax caps the number of live
 	// turn checkpoints (0 = unlimited). MaxTurnRestores bounds restores
-	// per run (0 = default 3). See
-	// .agents/plans/per-turn-checkpoint-restore.
+	// per run (0 = default 3). See docs/sub-agents.md.
 	TurnCheckpointer      TurnCheckpointer
 	TurnCheckpointEnabled bool
 	TurnCheckpointMax     int
