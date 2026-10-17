@@ -1112,10 +1112,14 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 	// requests in THIS process — so a restrictive egress posture omits them rather
 	// than leaving a hole in it. (They are named in the prompt, so the sub-agent
 	// does not read a missing tool as a broken profile.)
-	// Host lanes only: the isolated lane's egress is the container's posture, and
-	// both the guard above and the config reference say this key neither applies
-	// nor refuses there — so it must not omit tools or describe an egress rule the
-	// container does not have (its loopback is not the host's).
+	// Host lanes only. The isolated lane's egress is the container's posture, which
+	// this key neither applies nor refuses (the guard above, and the config
+	// reference). Omitting tools there would also be wrong twice over: it would
+	// describe a rule the container does not have (its loopback is not the host's),
+	// and these two tools execute in THIS process — outside the container — so the
+	// container's posture does not cover them either. That is a known gap of the
+	// isolated lane, not something this key can paper over; it is stated in the
+	// docs rather than implied.
 	restrictiveEgress := opts.workspace == nil && restrictivePosture(opts.subNetwork)
 
 	for _, name := range profile.Tools {

@@ -511,10 +511,14 @@ Three things to know about the guarantee:
   empty workdir): a restrictive posture there is refused as well, since nothing
   would jail the sub-agent. An isolated session is the exception — its sub-agents
   run in a container whose network posture is the container's, so this key is
-  neither applied nor refused there — and it does not omit tools or describe an
-  egress rule the container does not have (the container's loopback is not the
-  host's, so a broker proxy address would be wrong there). That is a pre-existing
-  property of the isolated lane, recorded here rather than implied.
+  neither applied nor refused there. It does not omit tools or describe an egress
+  rule the container does not have either (the container's loopback is not the
+  host's, so a broker proxy address would be wrong there) — and note that the
+  container's posture does **not** cover `http`/`webfetch`, which still make their
+  request in this process, outside the container. So in an isolated session a
+  restrictive `network` neither protects those two tools nor blocks them: use the
+  container's own egress controls. That is a pre-existing property of the isolated
+  lane, recorded here rather than implied.
 
 A confined sub-agent is told its posture up front ("there is no network egress"
 or "egress is limited to an allowlist"), so a blocked fetch is not something it
