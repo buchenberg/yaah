@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.81.1](https://github.com/buchenberg/yaah/compare/v0.81.0...v0.81.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* default the OTLP endpoint to the HTTP port ([ec56785](https://github.com/buchenberg/yaah/commit/ec56785e0b1da0710f52506debd54abf0eee8e5c))
+* strip quotes from plan frontmatter values ([c10b686](https://github.com/buchenberg/yaah/commit/c10b68666ed0ed7be0f9d6c3ef35e259b5362583))
+
+
+### Documentation
+
+* address review feedback on plans and runbooks ([f1c283f](https://github.com/buchenberg/yaah/commit/f1c283f9dc0924186fca2167a1e2e886e2579ab2))
+* address the second review pass ([88be933](https://github.com/buchenberg/yaah/commit/88be933ada4250c31fa4b1811a856f1558656670))
+* prepare documentation for 1.0 ([8f7ac3c](https://github.com/buchenberg/yaah/commit/8f7ac3c93006b1f237c74eaad7540485154fd078))
+* remove completed plans and historical records ([a4b705e](https://github.com/buchenberg/yaah/commit/a4b705e2d54af4425db8710b73fe32976e692d71))
+* rewrite README and audit reference docs for 1.0 ([af54589](https://github.com/buchenberg/yaah/commit/af54589d156f68e4624a2c1689ce8cc34ecfe5d5))
+
 ## [0.81.0](https://github.com/buchenberg/yaah/compare/v0.80.0...v0.81.0) (2026-10-17)
 
 
