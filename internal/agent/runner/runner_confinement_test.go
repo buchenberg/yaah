@@ -30,7 +30,7 @@ func TestResolveSubAgentConfinement_RefusalFailsTheDispatch(t *testing.T) {
 		t.Fatalf("plant the symlink: %v", err)
 	}
 	// paddock fails closed even with no backend, so this reaches the redirect.
-	ws, rec, err := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: "paddock"}, workdir)
+	ws, rec, err := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: "paddock"}, workdir, allowAllNetwork())
 	if err == nil {
 		t.Fatalf("an unredirectable scratch must fail the dispatch, got ws=%v rec=%+v", ws, rec)
 	}
@@ -45,6 +45,12 @@ func TestResolveSubAgentConfinement_RefusalFailsTheDispatch(t *testing.T) {
 		subagent.RoleProfile{Tools: []string{"read", "grep"}}, 0, workdir); rerr == nil {
 		t.Fatal("buildSubAgentRegistry must fail on an unredirectable scratch")
 	}
+}
+
+// allowAllNetwork is the default posture, so confinement tests exercise the jail
+// rather than an egress rule.
+func allowAllNetwork() containment.NetworkPolicy {
+	return containment.NetworkPolicy{Mode: containment.NetAllowAll}
 }
 
 // stubBackend stands in for a syscall-jail backend so both sides of the
@@ -85,7 +91,7 @@ func TestConfinementRecord_Placement(t *testing.T) {
 		{"paddock, usable backend", confinement.PlacementPaddock, true, stubBackend{usable: true}, "paddock", true, true},
 	}
 	for _, c := range cases {
-		rec, confine := confinementRecord("auto", c.placement, c.available, c.backend, "/work")
+		rec, confine := confinementRecord("auto", c.placement, c.available, c.backend, "/work", allowAllNetwork())
 		if rec.Resolved != c.wantResolved {
 			t.Errorf("%s: resolved = %q, want %q", c.name, rec.Resolved, c.wantResolved)
 		}
@@ -176,7 +182,7 @@ func TestResolveSubAgentConfinement_Placement(t *testing.T) {
 		{"jail", true, true},
 	}
 	for _, c := range cases {
-		ws, rec, rerr := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: c.setting}, t.TempDir())
+		ws, rec, rerr := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: c.setting}, t.TempDir(), allowAllNetwork())
 		if rerr != nil {
 			t.Errorf("containment=%q: %v", c.setting, rerr)
 			continue
@@ -195,7 +201,7 @@ func TestResolveSubAgentConfinement_Placement(t *testing.T) {
 	// "auto" jails only where a backend exists; elsewhere it degrades to
 	// advisory — and either way records the resolution, so a reader can tell the
 	// two apart.
-	autoWS, autoRec, autoErr := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: "auto"}, t.TempDir())
+	autoWS, autoRec, autoErr := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: "auto"}, t.TempDir(), allowAllNetwork())
 	if autoErr != nil {
 		t.Fatalf("auto: %v", autoErr)
 	}
@@ -218,7 +224,7 @@ func TestResolveSubAgentConfinement_Placement(t *testing.T) {
 	}
 
 	// An unset setting is the same default and must resolve identically.
-	defWS, defRec, defErr := resolveSubAgentConfinement(pv, config.SubAgentConfig{}, t.TempDir())
+	defWS, defRec, defErr := resolveSubAgentConfinement(pv, config.SubAgentConfig{}, t.TempDir(), allowAllNetwork())
 	if defErr != nil {
 		t.Fatalf("default: %v", defErr)
 	}
@@ -227,5 +233,52 @@ func TestResolveSubAgentConfinement_Placement(t *testing.T) {
 	}
 	if defRec == nil || defRec.Resolved != wantResolved {
 		t.Errorf("the default must resolve like auto: rec=%+v, want resolved %q", defRec, wantResolved)
+	}
+}
+
+// The egress posture is lowered from config, and the one mode that cannot be
+// honoured without session state (a live broker) is refused rather than
+// downgraded to open egress.
+func TestNetworkPolicy_Lowering(t *testing.T) {
+	for _, tc := range []struct {
+		mode     string
+		broker   int
+		wantMode containment.NetMode
+		wantPort int
+		wantErr  bool
+	}{
+		{"", 0, containment.NetAllowAll, 0, false},
+		{"allow_all", 0, containment.NetAllowAll, 0, false},
+		{"deny_all", 0, containment.NetDenyAll, 0, false},
+		{"DENY_ALL", 0, containment.NetDenyAll, 0, false},
+		{"broker", 41234, containment.NetBroker, 41234, false},
+		{"broker", 0, "", 0, true}, // no broker to pin to
+		{"borker", 0, "", 0, true}, // unknown mode
+	} {
+		got, err := networkPolicy(tc.mode, tc.broker)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("networkPolicy(%q, %d): want an error, got %+v", tc.mode, tc.broker, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("networkPolicy(%q, %d): %v", tc.mode, tc.broker, err)
+			continue
+		}
+		if got.Mode != tc.wantMode || got.BrokerPort != tc.wantPort {
+			t.Errorf("networkPolicy(%q, %d) = %+v, want mode %q port %d", tc.mode, tc.broker, got, tc.wantMode, tc.wantPort)
+		}
+	}
+}
+
+// A record must never claim open egress the spec did not ask for: the zero value
+// reads as deny_all, matching the runtime's fail-closed default.
+func TestNetworkMode_ZeroValueIsDenyAll(t *testing.T) {
+	if got := networkMode(containment.NetworkPolicy{}); got != string(containment.NetDenyAll) {
+		t.Errorf("zero policy names %q, want %q", got, containment.NetDenyAll)
+	}
+	if got := networkMode(allowAllNetwork()); got != string(containment.NetAllowAll) {
+		t.Errorf("allow_all names %q", got)
 	}
 }

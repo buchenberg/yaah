@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +13,8 @@ import (
 
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
 	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/egress"
 
 	"github.com/buchenberg/yaah/internal/agent/budget"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
@@ -111,6 +114,11 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		// a started service owns a drain goroutine and a bus
 		// subscription, and a failed startup must not leak either.
 		supervisorSvc *supervision.Service
+		// egressBroker is the session's egress broker (Plan 7 Phase 3), started
+		// only when agents.subagent.network is "broker". Declared here, like the
+		// supervisor, so the guard below stops a partially-built session's broker
+		// — it owns a listener and a goroutine.
+		egressBroker *egress.Broker
 	)
 	sessionHandedOff := false
 	defer func() {
@@ -119,6 +127,9 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		}
 		if supervisorSvc != nil {
 			supervisorSvc.Close()
+		}
+		if egressBroker != nil {
+			egressBroker.Stop()
 		}
 		if otelShutdown != nil {
 			otelShutdown(context.Background())
@@ -562,6 +573,16 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		subAgentWorkspace = sessionSandbox.Workspace()
 	}
 
+	// Egress (Plan 7 Phase 3): agents.subagent.network selects the confined
+	// dispatch's posture. "broker" needs a live broker, so one is started for the
+	// session and its port pinned — the same object the guard above stops on a
+	// failed startup and the session stops on close.
+	subNetwork, broker, nerr := wireSubAgentNetwork(cfg.Agent.SubAgent)
+	if nerr != nil {
+		return nil, nerr
+	}
+	egressBroker = broker
+
 	taskTool := runner.NewTaskTool(runner.TaskToolOpts{
 		Provider:              provider,
 		SystemPrompt:          buildSubAgentBasePrompt(cwd, db),
@@ -594,6 +615,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		// sub-agent's work comes back as a proposal. Isolated mode keeps the
 		// container as the substrate (no host worktrees), and
 		// agents.subagent.mode: shared is the opt-out.
+		SubNetwork:           subNetwork,
 		Retain:               sessionSandbox == nil && retainedMode(cfg.Agent.SubAgent.Mode),
 		RetainedRepoPath:     cfg.Agent.Default.SupervisedRepoPath,
 		RetainedWorktreeRoot: cfg.Agent.Default.SupervisedWorktreeRoot,
@@ -917,6 +939,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		traceStore:     traceStore,
 		traceBus:       traceBus,
 		supervisor:     supervisorSvc,
+		egressBroker:   egressBroker,
 		followupCh:     followupCh,
 	}
 	// Root-scope bridge registration (adoption plan A2/A3): inject into
@@ -993,6 +1016,36 @@ func splitRolesBySupervised(names []string, isSupervised func(string) bool) (pla
 		}
 	}
 	return plain, supervised
+}
+
+// wireSubAgentNetwork lowers agents.subagent.network into the confinement policy
+// a confined dispatch carries, starting the session's egress broker when the mode
+// calls for one. The broker is returned so its owner can stop it; nil otherwise.
+//
+// The two restrictive modes are only meaningful with confinement: the rule lives
+// in the jail, so a caller that left containment off gets a policy that is
+// never applied. That is reported (doctor, and the trace records the posture
+// only for a Jailed dispatch) rather than silently ignored here, because
+// refusing to start a session over a config combination the user may have set
+// deliberately would be worse.
+func wireSubAgentNetwork(sc config.SubAgentConfig) (containment.NetworkPolicy, *egress.Broker, error) {
+	switch strings.ToLower(strings.TrimSpace(sc.Network)) {
+	case "", "allow_all":
+		return containment.NetworkPolicy{Mode: containment.NetAllowAll}, nil, nil
+	case "deny_all":
+		return containment.NetworkPolicy{Mode: containment.NetDenyAll}, nil, nil
+	case "broker":
+		broker := egress.NewBroker(egress.AllowHosts(sc.NetworkHosts...))
+		port, err := broker.Start()
+		if err != nil {
+			return containment.NetworkPolicy{}, nil, fmt.Errorf("agents.subagent.network: start the egress broker: %w", err)
+		}
+		slog.Info("sub-agent egress broker started", "port", port, "allow_hosts", len(sc.NetworkHosts))
+		return containment.NetworkPolicy{Mode: containment.NetBroker, BrokerPort: port}, broker, nil
+	default:
+		return containment.NetworkPolicy{}, nil, fmt.Errorf(
+			"agents.subagent.network %q is not one of: allow_all, deny_all, broker", sc.Network)
+	}
 }
 
 // retainedMode reports whether agents.subagent.mode selects the retained-run

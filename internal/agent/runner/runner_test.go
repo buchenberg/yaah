@@ -89,6 +89,22 @@ func TestBuildSubAgentSysPrompt_ConfinementGuidance(t *testing.T) {
 			t.Errorf("the confined prompt must mention %q:\n%s", want, confined)
 		}
 	}
+	if strings.Contains(confined, "no network egress") {
+		t.Errorf("an allow_all dispatch must not claim egress is denied:\n%s", confined)
+	}
+
+	// The egress posture is stated before the sub-agent meets it, so a blocked
+	// fetch is not something it has to guess at.
+	noEgress := buildSubAgentSysPrompt(opts, "developer", profile, false, worktree,
+		&subAgentConfinement{Requested: "auto", Resolved: "paddock", Enforced: true, Network: "deny_all"})
+	if !strings.Contains(noEgress, "no network egress") {
+		t.Errorf("a deny_all dispatch must say so:\n%s", noEgress)
+	}
+	brokered := buildSubAgentSysPrompt(opts, "developer", profile, false, worktree,
+		&subAgentConfinement{Requested: "auto", Resolved: "paddock", Enforced: true, Network: "broker"})
+	if !strings.Contains(brokered, "allowlist") {
+		t.Errorf("a broker dispatch must say so:\n%s", brokered)
+	}
 }
 
 func TestBuildSubAgentSysPrompt_NoDirectivesNoBlock(t *testing.T) {

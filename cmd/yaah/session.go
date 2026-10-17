@@ -32,6 +32,7 @@ import (
 
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
 	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	"github.com/buchenberg/shepherd-runtime-go/sandbox/egress"
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
@@ -138,6 +139,12 @@ type agentSession struct {
 	// before the registry it delivers through goes away.
 	supervisor *supervision.Service
 
+	// egressBroker is the session's sub-agent egress broker (Plan 7 Phase 3),
+	// non-nil only when agents.subagent.network is "broker". close() stops it
+	// after the supervisor, so no in-flight sub-agent is still connecting
+	// through it.
+	egressBroker *egress.Broker
+
 	// scopes is the session's scope manager (adoption plan R2): the
 	// recovered-at-startup registry the wiring handed the session.
 	// close() prunes its terminal scopes — merged and discarded
@@ -216,6 +223,9 @@ func (s *agentSession) close() {
 	// when the registry entries it addresses start going away.
 	if s.supervisor != nil {
 		s.supervisor.Close()
+	}
+	if s.egressBroker != nil {
+		s.egressBroker.Stop()
 	}
 	// The root's registry entry goes before its channel closes: the
 	// registry sends under its lock, so an unregister that returns

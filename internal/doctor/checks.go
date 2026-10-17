@@ -224,13 +224,13 @@ func CheckContainment(cfg *config.Config, cfgErr error) Check {
 			backendDesc = "unusable"
 		}
 	}
-	return containmentCheck(available, backendDesc, sc.Mode, sc.Containment)
+	return containmentCheck(available, backendDesc, sc.Mode, sc.Containment, sc.Network, len(sc.NetworkHosts))
 }
 
 // containmentCheck is the pure decision behind CheckContainment, split out so
 // the present-but-unusable backend case is testable (landlock.Detect never
 // returns one, but a future backend or a race could).
-func containmentCheck(available bool, backendDesc, mode, containment string) Check {
+func containmentCheck(available bool, backendDesc, mode, containment, network string, hosts int) Check {
 	m := strings.ToLower(strings.TrimSpace(mode))
 	if m == "" {
 		m = "retained"
@@ -241,7 +241,20 @@ func containmentCheck(available bool, backendDesc, mode, containment string) Che
 		// default, not a pre-flip "off".
 		p = "auto"
 	}
-	detail := fmt.Sprintf("mode %s, placement %s, backend %s", m, p, backendDesc)
+	n := strings.ToLower(strings.TrimSpace(network))
+	if n == "" {
+		n = "allow_all"
+	}
+	egress := "egress " + n
+	if n == "broker" {
+		egress += fmt.Sprintf(" (%d allowed host(s))", hosts)
+	}
+	detail := fmt.Sprintf("mode %s, placement %s, %s, backend %s", m, p, egress, backendDesc)
+	if jailed(p, available) && n != "allow_all" {
+		// The egress rule lives in the jail: without one there is nowhere to
+		// put it, and the posture is a setting rather than a control.
+		detail += " — enforced by the jail"
+	}
 
 	switch p {
 	case "paddock", "jail":
@@ -255,7 +268,26 @@ func containmentCheck(available bool, backendDesc, mode, containment string) Che
 		}
 		return Check{Label: "Containment", Status: "WARN", Detail: detail + " — auto degrades visibly to advisory here"}
 	default: // off / none / advisory
+		// A restrictive egress posture with no jail to enforce it is a setting
+		// that does nothing. Say so rather than reporting a control that is not
+		// in force.
+		if n != "allow_all" {
+			return Check{Label: "Containment", Status: "WARN",
+				Detail: detail + " — sub-agents run unconfined on the host, so no egress rule applies (set containment: auto or paddock to enforce it)"}
+		}
 		return Check{Label: "Containment", Status: "OK", Detail: detail + " — sub-agents run unconfined on the host"}
+	}
+}
+
+// jailed reports whether a placement puts sub-agents in a jail on this host.
+func jailed(placement string, available bool) bool {
+	switch placement {
+	case "paddock", "jail":
+		return available
+	case "auto":
+		return available
+	default:
+		return false
 	}
 }
 

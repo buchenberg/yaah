@@ -143,12 +143,24 @@ func RetainedModeGuidance() string {
 // that git write commands cannot run, because a worktree's index and object
 // store live in the original repository. Without it a sub-agent asked to
 // "commit the fix" spends turns retrying a write the kernel will always refuse.
-func ConfinementSubAgentGuidance(worktree string) string {
+func ConfinementSubAgentGuidance(worktree, network string) string {
 	body := strings.TrimSpace(confinementRaw)
-	if worktree == "" {
-		return body
+	if worktree != "" {
+		body += "\n\nThis worktree is `" + worktree + "`."
 	}
-	return body + "\n\nThis worktree is `" + worktree + "`."
+	// Say the egress posture before the sub-agent meets it: a fetch that fails
+	// with a bare connection error is how a confined agent burns turns guessing.
+	switch strings.ToLower(strings.TrimSpace(network)) {
+	case "deny_all":
+		body += "\n\n**There is no network egress from this sandbox.** Anything that fetches " +
+			"(a dependency download, a package install, an HTTP call) will fail; work with what is " +
+			"already in the tree, and say so in your report rather than retrying."
+	case "broker":
+		body += "\n\n**Network egress is limited to an allowlist** through a broker: only the hosts " +
+			"the session allows are reachable, and anything else is refused. Do not retry a blocked " +
+			"host; report it."
+	}
+	return body
 }
 
 // hostOnlyReasons explains, per tool, why it is absent from an isolated

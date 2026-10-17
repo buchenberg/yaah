@@ -35,9 +35,43 @@ func TestContainmentCheck(t *testing.T) {
 		{"absent/auto", false, "auto", "WARN"},
 	}
 	for _, c := range cases {
-		got := containmentCheck(c.available, "test-backend", "retained", c.placement)
+		got := containmentCheck(c.available, "test-backend", "retained", c.placement, "", 0)
 		if got.Status != c.want {
 			t.Errorf("%s: status = %q, want %q (%s)", c.name, got.Status, c.want, got.Detail)
+		}
+	}
+}
+
+// Egress rides the jail (Plan 7 Phase 3): with confinement a restrictive posture
+// is a control, and without it the posture is only a setting — which doctor must
+// not present as enforced.
+func TestContainmentCheck_EgressPosture(t *testing.T) {
+	cases := []struct {
+		name        string
+		available   bool
+		containment string
+		network     string
+		hosts       int
+		want        string
+	}{
+		{"jailed + deny_all", true, "auto", "deny_all", 0, "OK"},
+		{"jailed + broker", true, "paddock", "broker", 2, "OK"},
+		{"jailed + allow_all", true, "auto", "allow_all", 0, "OK"},
+		{"no jail + deny_all", false, "off", "deny_all", 0, "WARN"},
+		{"no jail + broker", false, "advisory", "broker", 1, "WARN"},
+		{"no jail + allow_all", false, "off", "allow_all", 0, "OK"},
+	}
+	for _, c := range cases {
+		got := containmentCheck(c.available, "test-backend", "retained", c.containment, c.network, c.hosts)
+		if got.Status != c.want {
+			t.Errorf("%s: status = %q, want %q (%s)", c.name, got.Status, c.want, got.Detail)
+		}
+	}
+	// The detail must show the posture and, for a broker, its allowlist size.
+	ok := containmentCheck(true, "test-backend", "retained", "auto", "broker", 3)
+	for _, want := range []string{"egress broker", "3 allowed host(s)", "enforced by the jail"} {
+		if !strings.Contains(ok.Detail, want) {
+			t.Errorf("detail %q must mention %q", ok.Detail, want)
 		}
 	}
 }

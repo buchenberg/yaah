@@ -273,6 +273,24 @@ type SubAgentConfig struct {
 	// writable root) on the sub-agent's trace.
 	Containment string `yaml:"containment"`
 
+	// Network selects the confined dispatch's egress posture (Plan 7 Phase 3,
+	// alongside Containment). "allow_all" (the default) leaves the network
+	// ungoverned; "deny_all" refuses TCP egress entirely; "broker" pins egress
+	// to the session's egress broker, which admits only NetworkHosts — so a
+	// sub-agent can reach an allowlisted host and nothing else.
+	//
+	// The two restrictive modes need Landlock ABI >= 4 (network rules). Where the
+	// host cannot enforce them the dispatch FAILS rather than silently running
+	// with open egress — a policy that cannot be applied is not applied quietly.
+	// Only confined dispatches are governed: with Containment off there is no
+	// jail to put the rule in, and the config is reported as unenforced.
+	Network string `yaml:"network"`
+
+	// NetworkHosts is the broker's allowlist (exact host names), used only when
+	// Network is "broker". Empty means the broker admits nothing, so "broker"
+	// with no hosts is a deny-all that still runs the broker.
+	NetworkHosts []string `yaml:"network_hosts"`
+
 	// Mode selects the dispatch lane (Plan 7 Phase 2). "retained" (the default)
 	// runs each sub-agent in an isolated worktree and returns a sealed proposal
 	// the orchestrator settles with the proposal tool; nothing touches the
