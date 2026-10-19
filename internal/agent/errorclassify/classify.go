@@ -543,6 +543,17 @@ var reasoningContentUnsupportedPatterns = []string{
 	"unrecognized request argument",
 	"unrecognized",
 	"extra inputs are not permitted",
+	// phrasings used by gateways and OpenAI-strict servers when they reject
+	// the field outright rather than tolerating it.
+	"unsupported parameter",
+	"unsupported field",
+	"not allowed",
+	"is not permitted",
+	"unexpected field",
+	"unexpected parameter",
+	"unknown argument",
+	"invalid parameter",
+	"extra field",
 }
 
 // responseFormatPatterns match providers that reject the response_format

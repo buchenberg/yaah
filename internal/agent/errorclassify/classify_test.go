@@ -458,3 +458,21 @@ func TestClassify_replayOutranksStripWhenBothSignalsPresent(t *testing.T) {
 		t.Error("replay patterns alone must not match without a thinking/reasoning token")
 	}
 }
+
+// The unsupported-field branch must catch the phrasings gateways and
+// OpenAI-strict servers actually use, not just "not supported".
+func TestClassify_unsupportedFieldPhrasings(t *testing.T) {
+	for _, msg := range []string{
+		"Unsupported parameter: 'reasoning_content' is not supported with this model.",
+		"reasoning_content is not allowed for this model",
+		"unexpected field reasoning_content",
+		"Unknown argument 'reasoning_content'",
+	} {
+		t.Run(msg[0:20], func(t *testing.T) {
+			c := Classify(errors.New(msg), ErrorMeta{StatusCode: 400, NumMessages: 2})
+			if !c.ShouldStripReasoning {
+				t.Errorf("ShouldStripReasoning = false for %q (reason=%v)", msg, c.Reason)
+			}
+		})
+	}
+}
