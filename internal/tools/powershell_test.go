@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"os/exec"
 	"testing"
 )
 
@@ -39,5 +40,19 @@ func TestPowerShellTool_isDangerous(t *testing.T) {
 	pt := &PowerShellTool{}
 	if !pt.IsDangerous(`{}`) {
 		t.Error("PowerShellTool should be dangerous")
+	}
+}
+
+// TestPsExecutable_neverReturnsMissingBinary guards the regression where
+// psExecutable returned "powershell" unconditionally when pwsh was absent,
+// causing TestPowerShellTool_runsSimpleCommand to fail instead of skip on
+// machines without any PowerShell installed.
+func TestPsExecutable_neverReturnsMissingBinary(t *testing.T) {
+	got := psExecutable()
+	if got == "" {
+		return // neither binary installed; empty is correct
+	}
+	if _, err := exec.LookPath(got); err != nil {
+		t.Errorf("psExecutable() = %q, but it is not on PATH: %v", got, err)
 	}
 }

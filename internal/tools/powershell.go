@@ -48,12 +48,16 @@ func (t *PowerShellTool) Schema() json.RawMessage {
 
 func (t *PowerShellTool) IsDangerous(argsJSON string) bool { return true }
 
-// psExecutable returns the best available PowerShell executable.
+// psExecutable returns the best available PowerShell executable, or "" if
+// neither pwsh nor powershell is on PATH.
 func psExecutable() string {
 	if _, err := exec.LookPath("pwsh"); err == nil {
 		return "pwsh"
 	}
-	return "powershell"
+	if _, err := exec.LookPath("powershell"); err == nil {
+		return "powershell"
+	}
+	return ""
 }
 
 func (t *PowerShellTool) Execute(ctx context.Context, args string) (string, error) {
@@ -87,8 +91,13 @@ func (t *PowerShellTool) Execute(ctx context.Context, args string) (string, erro
 		return "", err
 	}
 
+	exe := psExecutable()
+	if exe == "" {
+		return "", fmt.Errorf("powershell: not installed (no pwsh or powershell on PATH)")
+	}
+
 	res, err := ws.Exec(ctx, ExecRequest{
-		Command: psExecutable(),
+		Command: exe,
 		Args:    []string{"-NoProfile", "-NonInteractive", "-Command", params.Command},
 	})
 	if ctx.Err() == context.DeadlineExceeded {
