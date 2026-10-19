@@ -312,7 +312,12 @@ func TestRetained_SpeculationSettlesOneAndDiscardsTheRest(t *testing.T) {
 			writeErrs[call] = fmt.Errorf("no workdir recorded for call %d", call)
 			return
 		}
-		writeErrs[call] = os.WriteFile(filepath.Join(wd, fmt.Sprintf("approach-%d.txt", call)), []byte("variant\n"), 0o644)
+		// Each attempt must write distinct bytes: identical content would hash
+		// to one blob, and the concurrent `git add -A` that seals each attempt
+		// would race on creating that same loose object. POSIX tolerates
+		// renaming over an existing object; Git for Windows fails with
+		// "unable to write file .git/objects/...: Permission denied".
+		writeErrs[call] = os.WriteFile(filepath.Join(wd, fmt.Sprintf("approach-%d.txt", call)), []byte(fmt.Sprintf("variant %d\n", call)), 0o644)
 	}
 	rt := newRetainedTestEnv(t, runner)
 
