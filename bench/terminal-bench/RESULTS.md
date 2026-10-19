@@ -335,3 +335,50 @@ earlier sections; this run is the current smoke signal for the benchmark PR.
 **Score: 6/6.** Totals: 1,268,629 prompt + 35,682 output = 1,304,311
 tokens, 1,163,776 cached (92% of prompt tokens). No sub-agent usage on
 this suite; every task stayed single-lane.
+
+## Hermes comparison — same 6 coding tasks (2026-10-17)
+
+Same task set, dataset pin, one-shot harness, model (`deepseek-flash`), and
+`--n-concurrent 1`. yaah run `2026-10-17__04-47-51`; Hermes run
+`hermes-coding` (hermes-agent 0.19.0, `hermes_agent:HermesAgent`). One trial
+each. Hermes prompt tokens are normalized to yaah semantics: `input_tokens +
+cache_read_tokens` (see `extract_metrics.py`).
+
+| Task | yaah resolved | yaah in/out | yaah cached | yaah time | Hermes resolved | Hermes in/out | Hermes cached | Hermes time |
+|---|---|---|---|---|---|---|---|---|
+| hello-world | yes | 47,345 / 150 | 32,512 | 5s | yes | 22,349 / 78 | 21,888 | 14s |
+| broken-python | yes | 168,527 / 3,929 | 151,424 | 29s | yes | 197,570 / 2,539 | 183,552 | 42s |
+| csv-to-parquet | yes | 246,339 / 3,255 | 228,864 | 44s | yes | 81,451 / 932 | 70,272 | 31s |
+| jsonl-aggregator | yes | 84,797 / 1,798 | 68,864 | 23s | yes | 87,750 / 1,730 | 85,504 | 35s |
+| assign-seats | yes | 205,256 / 5,302 | 187,776 | 36s | yes | 101,115 / 1,754 | 87,680 | 27s |
+| gomoku-planner | yes | 516,365 / 21,248 | 494,336 | 126s | yes | 1,008,219 / 12,855 | 982,528 | 615s |
+
+**Totals**
+
+| Metric | yaah | Hermes | Delta |
+|---|---|---|---|
+| Resolved | 6/6 | 6/6 | — |
+| Prompt tokens | 1,268,629 | 1,498,454 | +18% |
+| Output tokens | 35,682 | 19,888 | -44% |
+| Cached prompt | 1,163,776 (92%) | 1,431,424 (96%) | — |
+| Agent wall time | 263s | 764s | 2.9× |
+| Mean tokens/task (in/out) | 211,438 / 5,947 | 249,742 / 3,315 | — |
+
+**Excluding the image task (`gomoku-planner`)**
+
+| Metric | yaah | Hermes |
+|---|---|---|
+| Prompt tokens | 752,264 | 490,235 (-35%) |
+| Output tokens | 14,434 | 7,033 (-51%) |
+| Wall time | 137s | 149s (+9%) |
+| Cached prompt | 669,440 (89%) | 448,896 (92%) |
+
+Caveats: single trial per task; `gomoku-planner` dominates both totals and is
+a vision-adjacent task where Hermes spent 615s and 1.0M prompt tokens. Across
+the five non-image tasks Hermes was token-cheaper but marginally slower, while
+yaah was faster on the image task by 5×. Do not read these as a general
+agent-quality ranking; they are one sampled run per task.
+
+Raw Hermes usage reports live under each trial's
+`agent-logs/hermes-usage.json`; run them through
+`extract_metrics.py <runs-dir> hermes-coding` to reproduce the table.
