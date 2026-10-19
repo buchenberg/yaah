@@ -1323,6 +1323,12 @@ func recordSubAgentUsage(ctx context.Context, store *shepherdtrace.SQLiteTraceSt
 }
 
 func subagentTraceProfile(ctx context.Context, tracePath, sessionID string) string {
+	// Do not open the store unless it already exists: NewSQLiteTraceStore
+	// creates the file, so probing speculatively would conjure an empty
+	// store at the default path as a side effect of a failed dispatch.
+	if _, err := os.Stat(tracePath); err != nil {
+		return ""
+	}
 	store, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
 	if err != nil {
 		return ""

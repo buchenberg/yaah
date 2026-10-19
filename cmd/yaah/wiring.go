@@ -683,9 +683,11 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 
 		// Proposal tool (Plan 7 Phase 2): settles the sealed proposals the
 		// retained lane produces. Registered only when that lane is live — a
-		// shared lane or an isolated session produces none (the store always
-		// initializes, so the lane itself is the only gate).
-		if sessionSandbox == nil && retainedMode(cfg.Agent.SubAgent.Mode) {
+		// shared lane or an isolated session produces none. The root-scope
+		// check is a runtime guard, not a config gate: the store can fail to
+		// open and the root scope can fail to be created independently of
+		// the lane, and startRetainedRun refuses without a root scope.
+		if sessionSandbox == nil && retainedMode(cfg.Agent.SubAgent.Mode) && rootScopeID != "" {
 			// The orchestrator is the gate: it reads the proposal's diff and
 			// settles it. There is no reviewer dispatch — the judgement lives on
 			// this side of the boundary, as it does in shepherd's `gate(task,
@@ -703,7 +705,12 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		mainPrompt += "\n\n" + prompts.IsolatedWorkspaceGuidance(omittedTools, omittedMCP)
 	} else {
 		mainPrompt += "\n\n" + prompts.SubAgentToolsGuidance()
-		if retainedMode(cfg.Agent.SubAgent.Mode) {
+		// RetainedModeGuidance names the proposal tool, so it is gated
+		// identically to that tool's registration: scopeMgr is non-nil here
+		// only when the store opened, and rootScopeID only when the root
+		// scope was created. Advertising settlement without both would
+		// promise a lane that cannot run.
+		if retainedMode(cfg.Agent.SubAgent.Mode) && scopeMgr != nil && rootScopeID != "" {
 			mainPrompt += "\n\n" + prompts.RetainedModeGuidance()
 		}
 	}

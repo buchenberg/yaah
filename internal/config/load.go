@@ -518,6 +518,9 @@ func Load() (*Config, error) {
 				RepoPath    *string `yaml:"supervised_repo_path"`
 				TreeRoot    *string `yaml:"supervised_worktree_root"`
 				TreeBootstr *string `yaml:"supervised_worktree_bootstrap"`
+				// ShepherdTraceDir was renamed to shepherd_trace_path and
+				// retyped from directory to file path.
+				ShepherdTraceDir *string `yaml:"shepherd_trace_dir"`
 			} `yaml:"default"`
 			SubAgent struct {
 				Roles map[string]struct {
@@ -539,6 +542,9 @@ func Load() (*Config, error) {
 		}
 		if d.TreeBootstr != nil {
 			fmt.Fprintf(os.Stderr, "warning: config key `agents.default.supervised_worktree_bootstrap` is no longer used; rename it to `retained_worktree_bootstrap`\n")
+		}
+		if d.ShepherdTraceDir != nil {
+			fmt.Fprintf(os.Stderr, "warning: config key `agents.default.shepherd_trace_dir` was renamed to `shepherd_trace_path` and now names the trace store file, not its directory; the old key is ignored and the store resolves to the default path\n")
 		}
 		for name, role := range legacySupervisedTask.Agents.SubAgent.Roles {
 			if role.Supervised != nil {
