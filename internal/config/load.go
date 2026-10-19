@@ -159,8 +159,8 @@ type Defaults struct {
 	RetainedRepoPath string `yaml:"retained_repo_path"`
 
 	// RetainedWorktreeRoot is the parent directory for sub-agent worktrees.
-	// Empty (unset) uses a "shepherd-worktrees" directory beside the
-	// repository, outside its tracked tree.
+	// Empty (unset) uses a ".yaah/shepherd-worktrees" directory inside the
+	// repository working tree (project-local).
 	RetainedWorktreeRoot string `yaml:"retained_worktree_root"`
 
 	// RetainedWorktreeBootstrap is a shell command run inside each sub-agent

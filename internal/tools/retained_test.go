@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -446,5 +447,99 @@ func TestRetained_PartialOutputSurvivesBodyError(t *testing.T) {
 	}
 	if !strings.Contains(env.Error, "sub-agent timed out") || !strings.Contains(env.Error, "role worker") {
 		t.Errorf("error = %q, want the role-budget reason the run stopped", env.Error)
+	}
+}
+
+// TestRetainedWorktreePath_DefaultProjectLocal pins the default worktree root:
+// when WorktreeRoot is unset, retained worktrees live at .yaah/shepherd-worktrees
+// inside the repository working tree — not beside it.
+func TestRetainedWorktreePath_DefaultProjectLocal(t *testing.T) {
+	repo := t.TempDir()
+	rt := RetainedRuntime{RepoPath: repo} // WorktreeRoot empty → default
+
+	got := retainedWorktreePath(rt, "proposal:1/2")
+	want := filepath.Join(repo, ".yaah", "shepherd-worktrees", "proposal-1-2")
+	if got != want {
+		t.Errorf("default path = %q, want %q", got, want)
+	}
+}
+
+// TestRetainedWorktreePath_ExplicitRoot: a configured root is used verbatim and
+// the proposal id is still sanitized into a safe directory name.
+func TestRetainedWorktreePath_ExplicitRoot(t *testing.T) {
+	root := t.TempDir()
+	rt := RetainedRuntime{RepoPath: t.TempDir(), WorktreeRoot: root}
+
+	got := retainedWorktreePath(rt, "proposal/1")
+	want := filepath.Join(root, "proposal-1")
+	if got != want {
+		t.Errorf("explicit path = %q, want %q", got, want)
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+func TestEnsureWorktreeRootExcluded(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repo := t.TempDir()
+	runGit(t, repo, "init", "-q")
+	runGit(t, repo, "config", "user.email", "t@example.com")
+	runGit(t, repo, "config", "user.name", "test")
+
+	rt := RetainedRuntime{RepoPath: repo} // default root: repo/.yaah/shepherd-worktrees
+
+	if err := ensureWorktreeRootExcluded(context.Background(), rt); err != nil {
+		t.Fatalf("ensureWorktreeRootExcluded: %v", err)
+	}
+
+	excludePath := filepath.Join(repo, ".git", "info", "exclude")
+	data, err := os.ReadFile(excludePath)
+	if err != nil {
+		t.Fatalf("read info/exclude: %v", err)
+	}
+	if !strings.Contains(string(data), ".yaah/shepherd-worktrees/") {
+		t.Errorf("info/exclude does not contain the worktree root:\n%s", data)
+	}
+
+	// Idempotent: a second call must not duplicate the line.
+	if err := ensureWorktreeRootExcluded(context.Background(), rt); err != nil {
+		t.Fatalf("second ensureWorktreeRootExcluded: %v", err)
+	}
+	data, _ = os.ReadFile(excludePath)
+	if got := strings.Count(string(data), ".yaah/shepherd-worktrees/"); got != 1 {
+		t.Errorf("info/exclude contains the line %d times, want 1", got)
+	}
+}
+
+func TestEnsureWorktreeRootExcluded_OutsideRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repo := t.TempDir()
+	runGit(t, repo, "init", "-q")
+
+	outside := t.TempDir()
+	rt := RetainedRuntime{RepoPath: repo, WorktreeRoot: outside}
+
+	if err := ensureWorktreeRootExcluded(context.Background(), rt); err != nil {
+		t.Fatalf("ensureWorktreeRootExcluded: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(repo, ".git", "info", "exclude"))
+	if err != nil {
+		t.Fatalf("read info/exclude: %v", err)
+	}
+	if strings.Contains(string(data), "shepherd-worktrees") {
+		t.Errorf("info/exclude unexpectedly modified for an outside root:\n%s", data)
 	}
 }

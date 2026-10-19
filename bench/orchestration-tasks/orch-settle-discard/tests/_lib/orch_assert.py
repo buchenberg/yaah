@@ -43,7 +43,7 @@ _TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 # Harness artifacts that legitimately appear in /app while tests run; they are
 # not properties of the agent's work and must not trip the integrity layer.
-_TEST_ARTIFACTS = {".tbench-testing", ".pytest_cache", "__pycache__"}
+_TEST_ARTIFACTS = {".tbench-testing", ".pytest_cache", "__pycache__", ".yaah"}
 
 # Oracle runs are deterministic shell scripts with no model trace. The test
 # wrapper sets ORCH_ORACLE=1; a real agent run cannot set the verifier's
@@ -244,15 +244,15 @@ def assert_settle_verbs(expected: set[str]) -> None:
 def assert_no_orphan_worktrees() -> None:
     """No retained-run worktrees were left behind.
 
-    The default worktree root is ``shepherd-worktrees`` beside the repository
-    path, so both /app and its parent are checked; ``ORCH_WORKTREE_ROOT``
+    The default worktree root is ``.yaah/shepherd-worktrees`` inside the
+    repository path; ``ORCH_WORKTREE_ROOT``
     overrides the search when a scenario declares a different root.
     """
     candidates = []
     override = os.environ.get("ORCH_WORKTREE_ROOT")
     if override:
         candidates.append(Path(override))
-    candidates.extend([APP / "shepherd-worktrees", APP.parent / "shepherd-worktrees"])
+    candidates.extend([APP / ".yaah" / "shepherd-worktrees"])
 
     leftovers = []
     for root in candidates:
