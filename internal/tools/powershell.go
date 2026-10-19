@@ -91,8 +91,13 @@ func (t *PowerShellTool) Execute(ctx context.Context, args string) (string, erro
 		return "", err
 	}
 
+	exe := psExecutable()
+	if exe == "" {
+		return "", fmt.Errorf("powershell: not installed (no pwsh or powershell on PATH)")
+	}
+
 	res, err := ws.Exec(ctx, ExecRequest{
-		Command: psExecutable(),
+		Command: exe,
 		Args:    []string{"-NoProfile", "-NonInteractive", "-Command", params.Command},
 	})
 	if ctx.Err() == context.DeadlineExceeded {
