@@ -42,7 +42,7 @@ agents:
     # block forever on the first write. The task container IS the
     # sandbox, same as every other CLI agent benched here.
     approval: allow
-    shepherd_trace_dir: ${YAAH_TRACE_DIR:-/agent-logs/yaah-traces}
+    shepherd_trace_path: ${YAAH_TRACE_DIR:-/agent-logs/yaah-traces}/trace.sqlite
 EOF
 
 # Per-task overlay: a task may bake /app/bench-orchestration.yaml to change

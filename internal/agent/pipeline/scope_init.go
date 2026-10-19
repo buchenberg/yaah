@@ -23,6 +23,11 @@ const defaultBusBuffer = 64
 // the store file itself, not its parent directory.
 func InitShepherdInfrastructure(tracePath string, busBuffer int) (*shepherdtrace.SQLiteTraceStore, *shepherdtrace.EffectBus, *shepherd.ScopeManager, error) {
 	traceDir := filepath.Dir(tracePath)
+	// Only tighten the directory we create. tracePath may be relative, in
+	// which case traceDir is "." — chmod'ing an existing cwd to 0700 would
+	// lock the user out of their own directory.
+	_, statErr := os.Stat(traceDir)
+	createdDir := os.IsNotExist(statErr)
 	if err := os.MkdirAll(traceDir, 0o700); err != nil {
 		return nil, nil, nil, fmt.Errorf("shepherd: mkdir %s: %w", traceDir, err)
 	}
@@ -34,8 +39,10 @@ func InitShepherdInfrastructure(tracePath string, busBuffer int) (*shepherdtrace
 	// the session owner on POSIX platforms (Windows uses ACLs and ignores
 	// POSIX modes; os.Chmod there only toggles the read-only bit).
 	if runtime.GOOS != "windows" {
-		if err := os.Chmod(traceDir, 0o700); err != nil {
-			return nil, nil, nil, fmt.Errorf("shepherd: chmod dir %s: %w", traceDir, err)
+		if createdDir {
+			if err := os.Chmod(traceDir, 0o700); err != nil {
+				return nil, nil, nil, fmt.Errorf("shepherd: chmod dir %s: %w", traceDir, err)
+			}
 		}
 		if err := os.Chmod(tracePath, 0o600); err != nil {
 			return nil, nil, nil, fmt.Errorf("shepherd: chmod store %s: %w", tracePath, err)
