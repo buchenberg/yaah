@@ -92,9 +92,9 @@ func (t *App) handleControlMsg(msg control.Msg) {
 }
 
 // setPaneText replaces a side pane's content while keeping the vertical
-// scroll position the user was reading. The horizontal offset is always
-// reset to zero: a column offset carried across SetText is what slid the
-// pane's content sideways (bead yaah-kzg).
+// scroll position the reader was on. The horizontal offset is reset to
+// zero so a pane cannot stay scrolled sideways across a refresh; the row
+// is clamped by TextView.Draw when the new content is shorter.
 func setPaneText(tv *tview.TextView, text string) {
 	row, _ := tv.GetScrollOffset()
 	tv.SetText(text)
