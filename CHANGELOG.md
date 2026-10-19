@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.83.2](https://github.com/buchenberg/yaah/compare/v0.83.1...v0.83.2) (2026-10-19)
+
+
+### Tests
+
+* **tools:** give each speculation attempt distinct content ([#395](https://github.com/buchenberg/yaah/issues/395)) ([12219a1](https://github.com/buchenberg/yaah/commit/12219a1c862bda91e7f630f0cafbbd7c9111c7e2))
+
 ## [0.83.1](https://github.com/buchenberg/yaah/compare/v0.83.0...v0.83.1) (2026-10-19)
 
 
