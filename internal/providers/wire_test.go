@@ -101,7 +101,7 @@ func TestLowerRequest_ThinkingMode(t *testing.T) {
 		},
 	}
 
-	wire := lowerRequest(req, true, false)
+	wire := lowerRequest(req, true, false, true)
 
 	if wire.Messages[1].ReasoningContent == nil || *wire.Messages[1].ReasoningContent != "thinking..." {
 		t.Error("first assistant should preserve reasoning")
@@ -175,7 +175,7 @@ func TestCopilotMode_LowerMessages(t *testing.T) {
 		{Role: "user", Content: "hello"},
 	}
 
-	out := lowerMessages(msgs, false, true)
+	out := lowerMessages(msgs, false, true, true)
 
 	if len(out) != 1 {
 		t.Fatalf("Copilot mode should merge system into user, expected 1 msg got %d", len(out))
@@ -216,5 +216,33 @@ func TestMergeSystemMessages_PreservesToolCalls(t *testing.T) {
 	}
 	if out[2].Role != "tool" || out[2].ToolCallID != "c1" {
 		t.Error("tool result should be preserved")
+	}
+}
+
+// Config is the source of truth: an explicit `thinking: false` must NOT be
+// promoted by the history heuristic just because history carries reasoning.
+// The resolver test cannot catch this — the override is applied here, in the
+// lowering path, one layer below where thinking mode is resolved.
+func TestLowerRequest_explicitThinkingFalseIsNotPromoted(t *testing.T) {
+	no := false
+	c := &OpenAIClient{ThinkingOverrides: map[string]*bool{"some-model": &no}}
+	req := types.ChatRequest{
+		Model: "some-model",
+		Messages: []types.Message{
+			{Role: "assistant", Content: "hi", ReasoningContent: "because reasons"},
+		},
+	}
+
+	wire := lowerRequest(req, c.resolveThinkingMode(req.Model), c.CopilotMode, !c.thinkingExplicit(req.Model))
+	if wire.Messages[0].ReasoningContent != nil {
+		t.Error("explicit thinking:false must not be promoted by history")
+	}
+
+	// Without an override the history promotion still applies, so the guard
+	// above does not disable the heuristic for unconfigured models.
+	req.Model = "unconfigured-model"
+	wire = lowerRequest(req, c.resolveThinkingMode(req.Model), c.CopilotMode, !c.thinkingExplicit(req.Model))
+	if wire.Messages[0].ReasoningContent == nil {
+		t.Error("unconfigured model should still promote on history")
 	}
 }

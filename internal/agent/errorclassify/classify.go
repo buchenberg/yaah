@@ -66,23 +66,33 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 	}
 
 	// ── 0. Semantic checks that outrank the status code ───────────
-	// A provider in thinking mode demanding reasoning_content be replayed is
-	// identifiable from the message alone, and its remedy is config, not
-	// retry. This MUST precede the status switch: the generic 4xx default
-	// reports an opaque `format_error` and aborts, which is exactly the
-	// confusion this check removes.
-	if matchAny(msg, thinkingRequiredPatterns) {
-		c.Reason = ReasonThinkingModeRequired
-		c.Retryable = false
-		c.ShouldAbort = true
-		c.Message = fmt.Sprintf("model %q requires thinking mode but reasoning_content was omitted — set `thinking: true` for this model in config", meta.Model)
-		return c
-	}
-	if matchAny(msg, reasoningContentPatterns) {
-		c.Reason = ReasonReasoningContentMissing
-		c.ShouldStripReasoning = true
-		c.Message = "reasoning_content rejected — strip and retry"
-		return c
+	// Scoped to 400 (and unknown status): a transient 429/5xx whose body
+	// merely contains this wording must still back off and retry.
+	if meta.StatusCode == 400 || meta.StatusCode == 0 {
+		// A provider that does not understand the field at all is worth
+		// STRIPPING it for. Checked first: "...thinking is not supported"
+		// also carries reasoning tokens and must not be relabelled as its
+		// exact opposite by the branch below.
+		if strings.Contains(msg, "reasoning_content") || strings.Contains(msg, "content[].thinking") {
+			if matchAny(msg, reasoningContentUnsupportedPatterns) {
+				c.Reason = ReasonReasoningContentMissing
+				c.ShouldStripReasoning = true
+				c.Message = "reasoning_content rejected — strip and retry"
+				return c
+			}
+		}
+		// A provider in thinking mode demanding the content be replayed.
+		// Requires the replay wording AND a reasoning token: "must be
+		// passed back" alone is generic enough to appear in unrelated
+		// provider prose.
+		if strings.Contains(msg, "must be passed back") &&
+			(strings.Contains(msg, "thinking") || strings.Contains(msg, "reasoning")) {
+			c.Reason = ReasonThinkingModeRequired
+			c.Retryable = false
+			c.ShouldAbort = true
+			c.Message = fmt.Sprintf("model %q requires thinking mode but reasoning_content was omitted — set `thinking: true` for this model in config", meta.Model)
+			return c
+		}
 	}
 
 	// ── 1. Status-code-driven classification ──────────────────────
@@ -506,22 +516,16 @@ var contentPolicyPatterns = []string{
 	"responsibleaipolicyviolation",
 }
 
-// thinkingRequiredPatterns match providers that are in thinking mode and demand
-// reasoning_content be replayed on every assistant message. The remedy is to
-// SEND it, never to strip it — stripping guarantees the same failure forever.
-// The authoritative fix is per-model config (`thinking: true`).
-var thinkingRequiredPatterns = []string{
-	"must be passed back",
-	"thinking mode must be passed back",
-	"content[].thinking",
-}
-
-// reasoningContentPatterns match providers that do not understand the
-// reasoning_content field at all. Only these warrant stripping it.
-var reasoningContentPatterns = []string{
-	"reasoning_content is not supported",
-	"reasoning_content: unknown",
-	"unknown field \"reasoning_content\"",
+// reasoningContentUnsupportedPatterns match the common ways OpenAI-compatible
+// servers reject a field they do not know. Only these warrant stripping it —
+// the caller additionally requires the message to mention the field.
+var reasoningContentUnsupportedPatterns = []string{
+	"not supported",
+	"unknown parameter",
+	"unknown field",
+	"unrecognized request argument",
+	"unrecognized",
+	"extra inputs are not permitted",
 }
 
 // responseFormatPatterns match providers that reject the response_format

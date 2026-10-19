@@ -20,7 +20,7 @@ type stripReasoningProvider struct {
 func (p *stripReasoningProvider) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
 	p.calls++
 	return nil, errors.New(
-		"invalid_request_error: reasoning_content in the thinking mode must be passed back [msgs=3 roles=user]")
+		"invalid_request_error: reasoning_content is not supported by this model [msgs=3 roles=user]")
 }
 
 func TestCall_stripReasoningRetryIsBounded(t *testing.T) {

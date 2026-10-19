@@ -57,11 +57,27 @@ type wireRequest struct {
 // reasoning content, thinking mode is forced on for the entire request —
 // this catches models not yet in the registry (e.g. new DeepSeek variants)
 // and ensures reasoning_content is always present on every assistant message.
-func lowerMessages(msgs []types.Message, thinkingMode bool, copilotMode bool) []wireMessage {
+// allowPromotion gates the history-based promotion below. Config is the source
+// of truth: when a per-model `thinking:` is declared, an explicit false must
+// NOT be overridden just because history happens to carry reasoning.
+func lowerMessages(msgs []types.Message, thinkingMode bool, copilotMode bool, allowPromotion bool) []wireMessage {
 	if copilotMode {
 		msgs = mergeSystemMessages(msgs)
 	}
-	if !thinkingMode {
+	if !thinkingMode && !allowPromotion {
+		// Explicit `thinking: false`. The else-branch in lowerMessage would
+		// still emit any non-empty reasoning from history, so clear it on a
+		// copy — config is authoritative, and sending the field to a model
+		// that does not declare thinking mode is what draws "not supported".
+		out := make([]types.Message, len(msgs))
+		copy(out, msgs)
+		for i := range out {
+			out[i].ReasoningContent = ""
+			out[i].ReasoningSignature = ""
+		}
+		msgs = out
+	}
+	if !thinkingMode && allowPromotion {
 		for _, m := range msgs {
 			if m.Role == "assistant" && m.ReasoningContent != "" {
 				thinkingMode = true
@@ -155,10 +171,10 @@ func lowerToolCalls(calls []types.ToolCall) []wireToolCall {
 
 // lowerRequest converts a types.ChatRequest into the wire-format request
 // body, applying message lowering with the given thinking mode and copilot mode.
-func lowerRequest(req types.ChatRequest, thinkingMode bool, copilotMode bool) wireRequest {
+func lowerRequest(req types.ChatRequest, thinkingMode bool, copilotMode bool, allowPromotion bool) wireRequest {
 	return wireRequest{
 		Model:           req.Model,
-		Messages:        lowerMessages(req.Messages, thinkingMode, copilotMode),
+		Messages:        lowerMessages(req.Messages, thinkingMode, copilotMode, allowPromotion),
 		Tools:           req.Tools,
 		ToolChoice:      req.ToolChoice,
 		Temperature:     req.Temperature,

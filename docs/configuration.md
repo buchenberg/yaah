@@ -210,7 +210,7 @@ message. Omitting it fails the request outright with a message like
 
 ```yaml
 providers:
-  - name: deepseek
+  deepseek:                             # mapping keyed by provider name
     base_url: https://api.deepseek.com/v1
     models:
       - name: deepseek-flash
