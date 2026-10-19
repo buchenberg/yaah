@@ -602,28 +602,27 @@ func resolveProviderName(cfg *config.Config) string {
 // Color helper functions - these respect NO_COLOR environment variable
 
 // CheckShepherd reports the shepherd-tracing health (adoption plan
-// R2): with a trace dir set, the store must open and a recovery must
-// rebuild — and the recovery counts are the check's substance: scopes,
-// roots, re-adopted worktrees, and the warn-only buckets (orphans,
-// missing, unadopted) that surface leftover or lost work.
+// R2): the store must open and a recovery must rebuild — and the
+// recovery counts are the check's substance: scopes, roots, re-adopted
+// worktrees, and the warn-only buckets (orphans, missing, unadopted)
+// that surface leftover or lost work. Tracing is integral, so the
+// resolved store path is always reported.
 func CheckShepherd(cfg *config.Config, cfgErr error) Check {
 	const label = "Shepherd tracing"
 	if cfgErr != nil || cfg == nil {
 		return Check{Label: label, Status: "WARN", Detail: "config unavailable"}
 	}
-	dir := cfg.Agent.Default.ShepherdTraceDir
-	if dir == "" {
-		return Check{Label: label, Status: "OK", Detail: "off (no shepherd_trace_dir)"}
+	tracePath := cfg.Agent.Default.TracePath()
+	// Runtime creates the store's parent directory before opening the
+	// store; the diagnostic must not fail a state the next session start
+	// would auto-heal (R2 review).
+	traceDir := filepath.Dir(tracePath)
+	if err := os.MkdirAll(traceDir, 0o700); err != nil {
+		return Check{Label: label, Status: "FAIL", Detail: "trace dir " + traceDir + ": " + err.Error()}
 	}
-	// Runtime creates the trace dir before opening the store; the
-	// diagnostic must not fail a state the next session start would
-	// auto-heal (R2 review).
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return Check{Label: label, Status: "FAIL", Detail: "trace dir: " + err.Error()}
-	}
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
+	store, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
 	if err != nil {
-		return Check{Label: label, Status: "FAIL", Detail: "trace store: " + err.Error()}
+		return Check{Label: label, Status: "FAIL", Detail: "trace store " + tracePath + ": " + err.Error()}
 	}
 	defer store.Close(context.Background())
 	repoPath := cfg.Agent.Default.RetainedRepoPath

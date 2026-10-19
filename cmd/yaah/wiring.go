@@ -426,16 +426,26 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	var traceStore *shepherdtrace.SQLiteTraceStore
 	var traceBus *shepherdtrace.EffectBus
 	var rootScopeID string
+	// retainCapable reports whether the root scope can actually capture
+	// workspace state. CreateRootScope demotes an uncapturable directory
+	// (e.g. not a git repo) to pure-causal — it still returns a root with
+	// an ID, but with a nil sandbox, and a retained dispatch would then
+	// fail at CaptureWorkspace. The retained lane is only live when both
+	// the root exists and it has a sandbox.
+	retainCapable := false
 	var runRegistry *supervision.Registry
 	// The session's steering channel: the REPL's steer source and, from
 	// A2 on, the supervisor's injection target for the root scope. Sized
 	// with the registry's exported buffer so every channel the registry
 	// borrows has the same capacity.
 	steerCh := make(chan string, supervision.SteerBuffer)
-	if cfg.Agent.Default.ShepherdTraceDir != "" {
-		store, bus, mgr, serr := pipeline.InitShepherdInfrastructure(cfg.Agent.Default.ShepherdTraceDir, 0)
+	// Tracing is integral: the session store always initializes. A
+	// store-open failure is the runtime safety net, not a config switch —
+	// warn and continue without a root scope.
+	{
+		store, bus, mgr, serr := pipeline.InitShepherdInfrastructure(cfg.Agent.Default.TracePath(), 0)
 		if serr != nil {
-			fmt.Fprintf(os.Stderr, "warning: shepherd tracing disabled: %v\n", serr)
+			fmt.Fprintf(os.Stderr, "warning: shepherd trace store unavailable, continuing without a root scope: %v\n", serr)
 		}
 		// Scope recovery (adoption plan R1, decision D5): the trace is
 		// the registry — rebuild the scope tree, checkpoints, and
@@ -509,6 +519,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 				}
 			} else {
 				rootScopeID = root.ID()
+				retainCapable = root.Sandbox() != nil
 			}
 
 			// Advisory rules engine (adoption plan B1): the kernel
@@ -607,7 +618,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		// container as the substrate (no host worktrees), and
 		// agents.subagent.mode: shared is the opt-out.
 		SubNetwork:           subNetwork,
-		Retain:               sessionSandbox == nil && retainedMode(cfg.Agent.SubAgent.Mode),
+		Retain:               sessionSandbox == nil && retainedMode(cfg.Agent.SubAgent.Mode) && retainCapable,
 		RetainedRepoPath:     cfg.Agent.Default.RetainedRepoPath,
 		RetainedWorktreeRoot: cfg.Agent.Default.RetainedWorktreeRoot,
 		RetainedBootstrap:    cfg.Agent.Default.RetainedWorktreeBootstrap,
@@ -663,7 +674,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	if scopeMgr != nil {
 		// Supervisor tool for sub-agent supervision (list_scopes/inject/halt/status).
 		toolReg.Register(&tools.SupervisorTool{
-			TraceDir:     cfg.Agent.Default.ShepherdTraceDir,
+			TraceDir:     cfg.Agent.Default.TracePath(),
 			RootScopeID:  rootScopeID,
 			ScopeManager: scopeMgr,
 			Runs:         runRegistry,
@@ -680,10 +691,16 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 
 		// Proposal tool (Plan 7 Phase 2): settles the sealed proposals the
 		// retained lane produces. Registered only when that lane is live — a
-		// shared lane, an isolated session, or a failed root scope produces none
-		// (delegate falls back to the direct lane without a root scope, so
-		// the prompt must not advertise a settlement that can never happen).
-		if sessionSandbox == nil && retainedMode(cfg.Agent.SubAgent.Mode) && rootScopeID != "" {
+		// shared lane or an isolated session produces none. The root-scope
+		// check is a runtime guard, not a config gate: the store can fail to
+		// open and the root scope can fail to be created independently of
+		// the lane, and startRetainedRun refuses without a root scope.
+		// taskTool.Retained is the single source of truth for "the retained
+		// lane is live": it is non-nil only when the lane is enabled, the
+		// scope manager initialized, and the root scope can capture. Gating
+		// both the tool and the prompt on it keeps the advertised settlement
+		// flow exactly in step with the registered capability.
+		if taskTool.Retained != nil {
 			// The orchestrator is the gate: it reads the proposal's diff and
 			// settles it. There is no reviewer dispatch — the judgement lives on
 			// this side of the boundary, as it does in shepherd's `gate(task,
@@ -701,7 +718,12 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		mainPrompt += "\n\n" + prompts.IsolatedWorkspaceGuidance(omittedTools, omittedMCP)
 	} else {
 		mainPrompt += "\n\n" + prompts.SubAgentToolsGuidance()
-		if retainedMode(cfg.Agent.SubAgent.Mode) && rootScopeID != "" {
+		// RetainedModeGuidance names the proposal tool, so it is gated on the
+		// same signal as that tool's registration — taskTool.Retained — rather
+		// than on the config key alone. A store-open failure or an
+		// uncapturable root makes the lane unavailable, and advertising
+		// settlement then would promise work the runtime refuses.
+		if taskTool.Retained != nil {
 			mainPrompt += "\n\n" + prompts.RetainedModeGuidance()
 		}
 	}

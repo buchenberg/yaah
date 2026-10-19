@@ -1,11 +1,14 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+)
 
 // SupervisorConfig configures the supervision rules engine
-// (shepherd-adoption plan B1). The stanza exists only when tracing is
-// on: without `shepherd_trace_dir` neither the stanza nor anything it
-// gates is consulted.
+// (shepherd-adoption plan B1). Tracing is integral, so the stanza is
+// always consulted.
 //
 // Defaults, precisely: with tracing on and the stanza absent, every
 // advisory rule is enabled with its built-in thresholds. Disables and
@@ -138,6 +141,16 @@ func (s SupervisorConfig) StuckRepeatThreshold() int {
 	return s.Rules.StuckDetection.RepeatThreshold
 }
 
+// TracePath returns the Shepherd trace store file path. Tracing is
+// integral, so there is no empty/off result: an unset shepherd_trace_path
+// resolves to <yaah home>/trace.db, honoring $YAAH_HOME.
+func (d Defaults) TracePath() string {
+	if p := strings.TrimSpace(d.ShepherdTracePath); p != "" {
+		return p
+	}
+	return filepath.Join(HomeDir(), "trace.db")
+}
+
 // HaltRootEnabled resolves the root-halt opt-in. The stanza's explicit
 // value wins in both directions; unset falls back to the A3 legacy
 // flat key, so existing configurations keep gating the same switch
@@ -155,12 +168,11 @@ func (d Defaults) HaltRootEnabled() bool {
 // enabled rule impossible to trigger, and negatives are neither
 // defaults nor thresholds.
 //
-// The check follows the stanza's own contract: it exists only when
-// tracing is on, and only for rules that are actually enabled — values
-// the engine never reads (tracing off, engine off, rule off) cannot
-// reject an otherwise valid config.
+// The check follows the stanza's own contract: it applies only to rules
+// that are actually enabled — values the engine never reads (engine
+// off, rule off) cannot reject an otherwise valid config.
 func validateSupervisor(d Defaults) []string {
-	if d.ShepherdTraceDir == "" || !d.Supervisor.EngineEnabled() {
+	if !d.Supervisor.EngineEnabled() {
 		return nil
 	}
 	sup := d.Supervisor

@@ -56,22 +56,18 @@ var shepherdPruneCmd = &cobra.Command{
 }
 
 // shepherdScan recovers the supervision state from the configured
-// trace dir — the same scan startup and doctor run — and returns its
-// report. Off tracing is not an error: the command reports it.
+// trace store — the same scan startup and doctor run — and returns its
+// report. Tracing is integral, so there is no off state to report.
 func shepherdScan() (*recovery.Report, func(), error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, nil, fmt.Errorf("shepherd: load config: %w", err)
 	}
-	dir := cfg.Agent.Default.ShepherdTraceDir
-	if dir == "" {
-		fmt.Fprintln(os.Stderr, "shepherd tracing is off (set agents.default.shepherd_trace_dir)")
-		return nil, nil, nil
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	tracePath := cfg.Agent.Default.TracePath()
+	if err := os.MkdirAll(filepath.Dir(tracePath), 0o700); err != nil {
 		return nil, nil, fmt.Errorf("shepherd: trace dir: %w", err)
 	}
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
+	store, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("shepherd: trace store: %w", err)
 	}

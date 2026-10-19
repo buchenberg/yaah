@@ -26,7 +26,7 @@ yaah session profile <id>         # turns, tokens, tool stats, success rates
 - Read from the existing stores; do not migrate data or merge SQLite files.
 - If a trace store is unset, the session views still work and say so.
 
-Acceptance: the three commands work with and without `shepherd_trace_dir`;
+Acceptance: the three commands work with and without `shepherd_trace_path`;
 `shepherd-trace` output is unchanged; no new store or background process.
 
 ## Deferred

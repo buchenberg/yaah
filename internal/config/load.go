@@ -134,15 +134,16 @@ type Defaults struct {
 	// directives via SubAgentConfig.Roles[name].Directives instead.
 	Directives []string `yaml:"directives"`
 
-	// ShepherdTraceDir is the directory for the Shepherd trace store.
-	// When set, Shepherd tracing is enabled: sub-agent tool calls are
-	// recorded, the supervisor tool is registered, and the supervised
-	// task tool (checkpoint/rollback/retry) becomes available.
-	ShepherdTraceDir string `yaml:"shepherd_trace_dir"`
+	// ShepherdTracePath is the file path of the Shepherd trace store.
+	// Tracing is integral: sub-agent tool calls are always recorded, the
+	// supervisor tool is registered, and the supervised task tool
+	// (checkpoint/rollback/retry) is available. Empty resolves to the
+	// default trace store under the yaah home — see TracePath.
+	ShepherdTracePath string `yaml:"shepherd_trace_path"`
 
 	// Supervisor configures the advisory supervision rules engine
-	// (adoption plan B1). Gated by ShepherdTraceDir: no trace dir, no
-	// engine.
+	// (adoption plan B1). It is not gated on tracing: tracing is always
+	// on.
 	Supervisor SupervisorConfig `yaml:"supervisor"`
 
 	// SupervisorHaltRoot is the DEPRECATED flat form of
@@ -517,6 +518,9 @@ func Load() (*Config, error) {
 				RepoPath    *string `yaml:"supervised_repo_path"`
 				TreeRoot    *string `yaml:"supervised_worktree_root"`
 				TreeBootstr *string `yaml:"supervised_worktree_bootstrap"`
+				// ShepherdTraceDir was renamed to shepherd_trace_path and
+				// retyped from directory to file path.
+				ShepherdTraceDir *string `yaml:"shepherd_trace_dir"`
 			} `yaml:"default"`
 			SubAgent struct {
 				Roles map[string]struct {
@@ -539,6 +543,9 @@ func Load() (*Config, error) {
 		if d.TreeBootstr != nil {
 			fmt.Fprintf(os.Stderr, "warning: config key `agents.default.supervised_worktree_bootstrap` is no longer used; rename it to `retained_worktree_bootstrap`\n")
 		}
+		if d.ShepherdTraceDir != nil {
+			fmt.Fprintf(os.Stderr, "warning: config key `agents.default.shepherd_trace_dir` was renamed to `shepherd_trace_path` and now names the trace store file, not its directory; the old key is ignored and the store resolves to the default path\n")
+		}
 		for name, role := range legacySupervisedTask.Agents.SubAgent.Roles {
 			if role.Supervised != nil {
 				fmt.Fprintf(os.Stderr, "warning: config key `agents.subagent.roles.%s.supervised` is no longer used; supervised_task was removed and every role dispatches through delegate\n", name)
@@ -549,8 +556,8 @@ func Load() (*Config, error) {
 	if cfg.Hooks.Dir != "" {
 		cfg.Hooks.Dir = expandHomeDir(cfg.Hooks.Dir)
 	}
-	if cfg.Agent.Default.ShepherdTraceDir != "" {
-		cfg.Agent.Default.ShepherdTraceDir = expandHomeDir(cfg.Agent.Default.ShepherdTraceDir)
+	if cfg.Agent.Default.ShepherdTracePath != "" {
+		cfg.Agent.Default.ShepherdTracePath = expandHomeDir(cfg.Agent.Default.ShepherdTracePath)
 	}
 	if cfg.Agent.Default.RetainedRepoPath != "" {
 		cfg.Agent.Default.RetainedRepoPath = expandHomeDir(cfg.Agent.Default.RetainedRepoPath)

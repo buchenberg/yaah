@@ -185,14 +185,14 @@ agents:
 	}
 }
 
-func TestLoad_shepherdTraceDirExpandsTilde(t *testing.T) {
+func TestLoad_shepherdTracePathExpandsTilde(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("YAAH_HOME", tmp)
 
 	configContent := `
 agents:
   default:
-    shepherd_trace_dir: ~/custom-traces
+    shepherd_trace_path: ~/custom-traces
     model: test/model
 `
 	if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(configContent), 0o644); err != nil {
@@ -206,12 +206,12 @@ agents:
 
 	home, _ := os.UserHomeDir()
 	expected := filepath.Join(home, "custom-traces")
-	if cfg.Agent.Default.ShepherdTraceDir != expected {
-		t.Errorf("ShepherdTraceDir = %q, want %q (tilde expanded)", cfg.Agent.Default.ShepherdTraceDir, expected)
+	if cfg.Agent.Default.ShepherdTracePath != expected {
+		t.Errorf("ShepherdTracePath = %q, want %q (tilde expanded)", cfg.Agent.Default.ShepherdTracePath, expected)
 	}
 }
 
-func TestLoad_shepherdTraceDirEmptyByDefault(t *testing.T) {
+func TestLoad_shepherdTracePathDefaultsToHome(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("YAAH_HOME", tmp)
 
@@ -220,8 +220,12 @@ func TestLoad_shepherdTraceDirEmptyByDefault(t *testing.T) {
 		t.Fatalf("Load() error: %v", err)
 	}
 
-	if cfg.Agent.Default.ShepherdTraceDir != "" {
-		t.Errorf("ShepherdTraceDir should be empty by default, got %q", cfg.Agent.Default.ShepherdTraceDir)
+	// The raw field stays empty so TracePath() can apply the default.
+	if cfg.Agent.Default.ShepherdTracePath != "" {
+		t.Errorf("ShepherdTracePath should be empty by default, got %q", cfg.Agent.Default.ShepherdTracePath)
+	}
+	if got, want := cfg.Agent.Default.TracePath(), filepath.Join(tmp, "trace.db"); got != want {
+		t.Errorf("TracePath() = %q, want %q", got, want)
 	}
 }
 

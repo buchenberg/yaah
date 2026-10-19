@@ -61,7 +61,7 @@ agents:
     directives:                        # orchestrator prompt policy
       - "always run tests after implementation"
 
-    shepherd_trace_dir: ""             # unset = tracing off; e.g. ~/.yaah/traces
+    shepherd_trace_path: ""             # "" = ~/.yaah/trace.db; tracing is always on
 
     retained_repo_path: ""             # "" = cwd
     retained_worktree_root: ""         # "" = ./.yaah/shepherd-worktrees
@@ -221,7 +221,7 @@ provider-specific defaults.
 | `raw_compaction_threshold` | 0.5 | Same, but ignores cached tokens |
 | `compact_max_messages` | 0 (off) | Force compaction above N messages |
 | `directives` | — | Policy statements injected into the orchestrator prompt only |
-| `shepherd_trace_dir` | unset (off) | Path to the Shepherd trace store. Setting it enables tracing, which enables supervision and, in local sessions, the retained lane |
+| `shepherd_trace_path` | ~/.yaah/trace.db | Path to the Shepherd trace store **file**. Tracing is always on — this only relocates the store |
 | `retained_repo_path` | cwd | Repository retained worktrees are cut from |
 | `retained_worktree_root` | .yaah/shepherd-worktrees | Parent directory for retained worktrees |
 | `retained_worktree_bootstrap` | — | Command run inside each retained worktree, e.g. `npm ci` |
@@ -368,9 +368,10 @@ A retained dispatch runs the sub-agent in its **own git worktree** and
 returns a sealed proposal; the orchestrator settles it with
 `proposal select|apply|release|discard`. Nothing reaches the host tree until
 settlement, so a rejected attempt costs a dispatch rather than a rollback.
-Retained mode is available in local (non-containerd) sessions when
-`agents.default.shepherd_trace_dir` is set and a root scope can be created;
-otherwise use `agents.subagent.mode: shared` or expect the direct lane.
+Retained mode is available in local (non-containerd) sessions whenever the
+shepherd root scope exists — which it now always does, unless the trace store
+fails to open; otherwise use `agents.subagent.mode: shared` or expect the
+direct lane.
 
 ```yaml
 agents:
@@ -431,8 +432,8 @@ Two consequences worth knowing:
 
 ## Supervision
 
-Supervision is active only when `agents.default.shepherd_trace_dir` is set.
-The kernel watches the session's trace; advisory rule firings are delivered as
+Supervision is always active: tracing is integral, and the kernel watches every
+session's trace. Advisory rule firings are delivered as
 steering into the running sub-agent loops.
 
 ```yaml

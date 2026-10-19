@@ -152,7 +152,7 @@ orchestrator
             └─ discard  throw the attempt away
 ```
 
-Retained mode is the default when `agents.default.shepherd_trace_dir` is set. Without a trace store, or with `agents.subagent.mode: shared`, dispatches run directly on the host. See [configuration.md](./docs/configuration.md#retained-worktrees-and-turn-checkpoints)
+Retained mode is the default in local sessions: tracing is integral, so the shepherd root scope always exists. With `agents.subagent.mode: shared`, or if the trace store cannot be opened, dispatches run directly on the host. See [configuration.md](./docs/configuration.md#retained-worktrees-and-turn-checkpoints)
 for the prerequisites and knobs.
 
 ## Commands
