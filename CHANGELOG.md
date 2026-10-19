@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.83.1](https://github.com/buchenberg/yaah/compare/v0.83.0...v0.83.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* **providers:** make thinking mode config-authoritative and stop stripping it ([#392](https://github.com/buchenberg/yaah/issues/392)) ([46b350f](https://github.com/buchenberg/yaah/commit/46b350f5a9430f6796d0f8b9189870d36875f5c8))
+
 ## [0.83.0](https://github.com/buchenberg/yaah/compare/v0.82.2...v0.83.0) (2026-10-19)
 
 
