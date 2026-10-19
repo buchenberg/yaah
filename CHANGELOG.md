@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.82.2](https://github.com/buchenberg/yaah/compare/v0.82.1...v0.82.2) (2026-10-19)
+
+
+### Bug Fixes
+
+* **tools:** psExecutable returns "" when no PowerShell is installed ([#387](https://github.com/buchenberg/yaah/issues/387)) ([9960736](https://github.com/buchenberg/yaah/commit/9960736026353e12e636d5405ea421e58504f484))
+
 ## [0.82.1](https://github.com/buchenberg/yaah/compare/v0.82.0...v0.82.1) (2026-10-19)
 
 
