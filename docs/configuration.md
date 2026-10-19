@@ -64,7 +64,7 @@ agents:
     shepherd_trace_dir: ""             # unset = tracing off; e.g. ~/.yaah/traces
 
     retained_repo_path: ""             # "" = cwd
-    retained_worktree_root: ""         # "" = beside the repo
+    retained_worktree_root: ""         # "" = ./.yaah/shepherd-worktrees
     retained_worktree_bootstrap: ""    # e.g. "npm ci"
     turn_checkpoint_max: 0             # 0 = unlimited live checkpoints
     max_turn_restores: 3               # 0 = default 3
@@ -223,7 +223,7 @@ provider-specific defaults.
 | `directives` | — | Policy statements injected into the orchestrator prompt only |
 | `shepherd_trace_dir` | unset (off) | Path to the Shepherd trace store. Setting it enables tracing, which enables supervision and, in local sessions, the retained lane |
 | `retained_repo_path` | cwd | Repository retained worktrees are cut from |
-| `retained_worktree_root` | beside the repo | Parent directory for retained worktrees |
+| `retained_worktree_root` | .yaah/shepherd-worktrees | Parent directory for retained worktrees |
 | `retained_worktree_bootstrap` | — | Command run inside each retained worktree, e.g. `npm ci` |
 | `turn_checkpoint_max` | 0 (unlimited) | Live turn checkpoints per run |
 | `max_turn_restores` | 3 | Turn-level restores per run |
@@ -385,7 +385,7 @@ agents:
 | Key | Default | Meaning |
 |---|---|---|
 | `retained_repo_path` | `""` | Repository sub-agent worktrees are cut from, and where per-turn checkpoints operate. Empty uses yaah's working directory. |
-| `retained_worktree_root` | `""` | Parent directory for sub-agent worktrees. Empty uses a `shepherd-worktrees` directory beside the repository. |
+| `retained_worktree_root` | `""` | Parent directory for sub-agent worktrees. Empty uses a `.yaah/shepherd-worktrees` directory inside the repository. |
 | `retained_worktree_bootstrap` | `""` | Shell command run inside each fresh worktree — see below. |
 | `turn_checkpoint_max` | `0` | Live turn checkpoints per sub-agent run; reaching the cap prunes/resets all live checkpoints. `0` = unlimited. |
 | `max_turn_restores` | `3` | Turn-level restores per run, so a deterministically failing turn cannot rewind forever. |

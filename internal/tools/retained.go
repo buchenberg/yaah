@@ -48,7 +48,8 @@ type RetainedRuntime struct {
 	// target a settlement applies to. Required.
 	RootScopeID string
 	// WorktreeRoot is the parent directory for retained worktrees. Empty
-	// defaults to "shepherd-worktrees" beside the repository.
+	// defaults to ".yaah/shepherd-worktrees" inside the repository working
+	// tree (project-local).
 	WorktreeRoot string
 	// WorktreeBootstrap runs inside each worktree after creation, for repos
 	// whose build needs gitignored artifacts.
@@ -413,7 +414,7 @@ func runRetainedBody(ctx context.Context, rt RetainedRuntime, prompt string, sp 
 func retainedWorktreePath(rt RetainedRuntime, id string) string {
 	root := rt.WorktreeRoot
 	if root == "" {
-		root = filepath.Join(filepath.Dir(rt.RepoPath), "shepherd-worktrees")
+		root = filepath.Join(rt.RepoPath, ".yaah", "shepherd-worktrees")
 	}
 	if abs, err := filepath.Abs(root); err == nil {
 		root = abs

@@ -448,3 +448,30 @@ func TestRetained_PartialOutputSurvivesBodyError(t *testing.T) {
 		t.Errorf("error = %q, want the role-budget reason the run stopped", env.Error)
 	}
 }
+
+// TestRetainedWorktreePath_DefaultProjectLocal pins the default worktree root:
+// when WorktreeRoot is unset, retained worktrees live at .yaah/shepherd-worktrees
+// inside the repository working tree — not beside it.
+func TestRetainedWorktreePath_DefaultProjectLocal(t *testing.T) {
+	repo := t.TempDir()
+	rt := RetainedRuntime{RepoPath: repo} // WorktreeRoot empty → default
+
+	got := retainedWorktreePath(rt, "proposal:1/2")
+	want := filepath.Join(repo, ".yaah", "shepherd-worktrees", "proposal-1-2")
+	if got != want {
+		t.Errorf("default path = %q, want %q", got, want)
+	}
+}
+
+// TestRetainedWorktreePath_ExplicitRoot: a configured root is used verbatim and
+// the proposal id is still sanitized into a safe directory name.
+func TestRetainedWorktreePath_ExplicitRoot(t *testing.T) {
+	root := t.TempDir()
+	rt := RetainedRuntime{RepoPath: t.TempDir(), WorktreeRoot: root}
+
+	got := retainedWorktreePath(rt, "proposal/1")
+	want := filepath.Join(root, "proposal-1")
+	if got != want {
+		t.Errorf("explicit path = %q, want %q", got, want)
+	}
+}

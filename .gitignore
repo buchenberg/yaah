@@ -27,6 +27,7 @@ go.work.sum
 # Scratch / sandbox directories
 .sandbox/
 .scratch/
+.yaah/
 .idea/
 *.swp
 *.swo
