@@ -15,7 +15,6 @@ func TestSupervisorDefaults(t *testing.T) {
 	writeConfig(t, `
 agents:
   default:
-    shepherd_trace_dir: ~/traces
 `)
 	cfg, err := Load()
 	if err != nil {
@@ -42,7 +41,6 @@ func TestSupervisorStanza(t *testing.T) {
 	writeConfig(t, `
 agents:
   default:
-    shepherd_trace_dir: ~/traces
     supervisor:
       enabled: false
       halt_root: true
@@ -91,7 +89,6 @@ func TestSupervisorHaltRootPrecedence(t *testing.T) {
 			config: `
 agents:
   default:
-    shepherd_trace_dir: ~/traces
     supervisor_halt_root: true
 `,
 			enabled: true,
@@ -101,7 +98,6 @@ agents:
 			config: `
 agents:
   default:
-    shepherd_trace_dir: ~/traces
     supervisor_halt_root: true
     supervisor:
       halt_root: false
@@ -113,7 +109,6 @@ agents:
 			config: `
 agents:
   default:
-    shepherd_trace_dir: ~/traces
     supervisor:
       halt_root: true
 `,
@@ -124,7 +119,6 @@ agents:
 			config: `
 agents:
   default:
-    shepherd_trace_dir: ~/traces
 `,
 			enabled: false,
 		},
@@ -158,7 +152,6 @@ func TestSupervisorThresholdValidation(t *testing.T) {
 			config: `
 agents:
   default:
-    shepherd_trace_dir: ~/traces
     supervisor:
       rules:
         high_error_rate: {threshold: 1.5}
@@ -170,7 +163,6 @@ agents:
 			config: `
 agents:
   default:
-    shepherd_trace_dir: ~/traces
     supervisor:
       rules:
         high_error_rate: {threshold: -0.1}
@@ -182,7 +174,6 @@ agents:
 			config: `
 agents:
   default:
-    shepherd_trace_dir: ~/traces
     supervisor:
       rules:
         high_error_rate: {window: -5}
@@ -194,7 +185,6 @@ agents:
 			config: `
 agents:
   default:
-    shepherd_trace_dir: ~/traces
     supervisor:
       rules:
         stuck_detection: {repeat_threshold: -1}
@@ -206,7 +196,6 @@ agents:
 			config: `
 agents:
   default:
-    shepherd_trace_dir: ~/traces
     supervisor:
       rules:
         high_error_rate: {threshold: 0.9, window: 20}
@@ -214,24 +203,10 @@ agents:
 `,
 		},
 		{
-			// The stanza's contract: without a trace dir it is
-			// inert, so values the engine never reads cannot
-			// reject the config.
-			name: "tracing off makes the stanza inert",
-			config: `
-agents:
-  default:
-    supervisor:
-      rules:
-        high_error_rate: {threshold: 1.5}
-`,
-		},
-		{
 			name: "engine off makes the stanza inert",
 			config: `
 agents:
   default:
-    shepherd_trace_dir: ~/traces
     supervisor:
       enabled: false
       rules:
@@ -243,7 +218,6 @@ agents:
 			config: `
 agents:
   default:
-    shepherd_trace_dir: ~/traces
     supervisor:
       rules:
         high_error_rate: {enabled: false, threshold: 1.5}
@@ -295,7 +269,6 @@ func TestSupervisorDestructiveGuardSwitch(t *testing.T) {
 	writeConfig(t, `
 agents:
   default:
-    shepherd_trace_dir: ~/traces
 `)
 	cfg, err := Load()
 	if err != nil {
@@ -308,7 +281,6 @@ agents:
 	writeConfig(t, `
 agents:
   default:
-    shepherd_trace_dir: ~/traces
     supervisor:
       rules:
         destructive_guard: {enabled: false}

@@ -432,10 +432,13 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// with the registry's exported buffer so every channel the registry
 	// borrows has the same capacity.
 	steerCh := make(chan string, supervision.SteerBuffer)
-	if cfg.Agent.Default.ShepherdTraceDir != "" {
-		store, bus, mgr, serr := pipeline.InitShepherdInfrastructure(cfg.Agent.Default.ShepherdTraceDir, 0)
+	// Tracing is integral: the session store always initializes. A
+	// store-open failure is the runtime safety net, not a config switch —
+	// warn and continue without a root scope.
+	{
+		store, bus, mgr, serr := pipeline.InitShepherdInfrastructure(cfg.Agent.Default.TracePath(), 0)
 		if serr != nil {
-			fmt.Fprintf(os.Stderr, "warning: shepherd tracing disabled: %v\n", serr)
+			fmt.Fprintf(os.Stderr, "warning: shepherd trace store unavailable, continuing without a root scope: %v\n", serr)
 		}
 		// Scope recovery (adoption plan R1, decision D5): the trace is
 		// the registry — rebuild the scope tree, checkpoints, and
@@ -663,7 +666,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	if scopeMgr != nil {
 		// Supervisor tool for sub-agent supervision (list_scopes/inject/halt/status).
 		toolReg.Register(&tools.SupervisorTool{
-			TraceDir:     cfg.Agent.Default.ShepherdTraceDir,
+			TraceDir:     cfg.Agent.Default.TracePath(),
 			RootScopeID:  rootScopeID,
 			ScopeManager: scopeMgr,
 			Runs:         runRegistry,
@@ -680,10 +683,9 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 
 		// Proposal tool (Plan 7 Phase 2): settles the sealed proposals the
 		// retained lane produces. Registered only when that lane is live — a
-		// shared lane, an isolated session, or a failed root scope produces none
-		// (delegate falls back to the direct lane without a root scope, so
-		// the prompt must not advertise a settlement that can never happen).
-		if sessionSandbox == nil && retainedMode(cfg.Agent.SubAgent.Mode) && rootScopeID != "" {
+		// shared lane or an isolated session produces none (the store always
+		// initializes, so the lane itself is the only gate).
+		if sessionSandbox == nil && retainedMode(cfg.Agent.SubAgent.Mode) {
 			// The orchestrator is the gate: it reads the proposal's diff and
 			// settles it. There is no reviewer dispatch — the judgement lives on
 			// this side of the boundary, as it does in shepherd's `gate(task,
@@ -701,7 +703,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		mainPrompt += "\n\n" + prompts.IsolatedWorkspaceGuidance(omittedTools, omittedMCP)
 	} else {
 		mainPrompt += "\n\n" + prompts.SubAgentToolsGuidance()
-		if retainedMode(cfg.Agent.SubAgent.Mode) && rootScopeID != "" {
+		if retainedMode(cfg.Agent.SubAgent.Mode) {
 			mainPrompt += "\n\n" + prompts.RetainedModeGuidance()
 		}
 	}

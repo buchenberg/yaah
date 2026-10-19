@@ -11,13 +11,15 @@ import (
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
 )
 
+// setTestTraceConfig points the trace-store config key at
+// <traceDir>/trace.sqlite. The key is a file path, not a directory.
 func setTestTraceConfig(t *testing.T, home, traceDir string) {
 	t.Helper()
 	configContent := `
 agents:
   default:
     model: test/model
-    shepherd_trace_dir: ` + traceDir + `
+    shepherd_trace_path: ` + filepath.Join(traceDir, "trace.sqlite") + `
 `
 	os.WriteFile(filepath.Join(home, "config.yaml"), []byte(configContent), 0o644)
 }
@@ -283,7 +285,7 @@ func TestOpenShepherdTraceStore_UsesConfigPath(t *testing.T) {
 agents:
   default:
     model: test/model
-    shepherd_trace_dir: ` + filepath.Join(home, "custom-traces") + `
+    shepherd_trace_path: ` + filepath.Join(home, "custom-traces", "trace.sqlite") + `
 `
 	os.WriteFile(filepath.Join(home, "config.yaml"), []byte(configContent), 0o644)
 

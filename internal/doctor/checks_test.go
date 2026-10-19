@@ -212,17 +212,15 @@ func TestCheckWorkspace_UnusableStanzaFails(t *testing.T) {
 	}
 }
 
-// TestCheckShepherd pins the R2 shepherd check's three outcomes: off
-// (no trace dir) is OK; a healthy trace dir reports the recovery
-// counts; a store that cannot open fails loudly.
+// TestCheckShepherd pins the R2 shepherd check's outcomes: a healthy
+// trace store reports the recovery counts, and a store that cannot open
+// fails loudly. Tracing is integral, so there is no "off" outcome.
 func TestCheckShepherd(t *testing.T) {
-	off := CheckShepherd(&config.Config{}, nil)
-	if off.Status != "OK" || !strings.Contains(off.Detail, "off") {
-		t.Errorf("tracing-off check = %+v, want OK/off", off)
-	}
+	t.Setenv("YAAH_HOME", t.TempDir())
 
 	dir := t.TempDir()
-	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(dir, "trace.sqlite"))
+	tracePath := filepath.Join(dir, "trace.sqlite")
+	store, err := shepherdtrace.NewSQLiteTraceStore(tracePath)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -240,7 +238,7 @@ func TestCheckShepherd(t *testing.T) {
 	store.Close(context.Background())
 
 	cfg := &config.Config{}
-	cfg.Agent.Default.ShepherdTraceDir = dir
+	cfg.Agent.Default.ShepherdTracePath = tracePath
 	healthy := CheckShepherd(cfg, nil)
 	if healthy.Status != "OK" || !strings.Contains(healthy.Detail, "2 scope(s) (1 root(s))") {
 		t.Errorf("healthy check = %+v, want OK with recovery counts", healthy)
@@ -250,7 +248,7 @@ func TestCheckShepherd(t *testing.T) {
 	if err := os.WriteFile(corrupt, []byte("not a sqlite database"), 0o644); err != nil {
 		t.Fatalf("write corrupt store: %v", err)
 	}
-	cfg.Agent.Default.ShepherdTraceDir = filepath.Dir(corrupt)
+	cfg.Agent.Default.ShepherdTracePath = corrupt
 	broken := CheckShepherd(cfg, nil)
 	if broken.Status != "FAIL" {
 		t.Errorf("corrupt-store check = %+v, want FAIL", broken)

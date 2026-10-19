@@ -4,10 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
-	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -469,24 +467,12 @@ func formatNum(n int) string {
 
 func openShepherdTraceStore() (*shepherdtrace.SQLiteTraceStore, error) {
 	cfg, _ := config.Load()
-	traceDir := ""
+	path := config.Defaults{}.TracePath()
 	if cfg != nil {
-		traceDir = cfg.Agent.Default.ShepherdTraceDir
+		path = cfg.Agent.Default.TracePath()
 	}
-	if traceDir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("get home dir: %w", err)
-		}
-		traceDir = filepath.Join(home, ".yaah", "traces")
-	}
-	if strings.HasPrefix(traceDir, "~/") {
-		home, _ := os.UserHomeDir()
-		traceDir = filepath.Join(home, traceDir[2:])
-	}
-	path := filepath.Join(traceDir, "trace.sqlite")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil, fmt.Errorf("no trace store found at %s (run yaah with shepherd_trace_enabled: true first)", path)
+		return nil, fmt.Errorf("no trace store at %s (it is created on first use)", path)
 	}
 	return shepherdtrace.NewSQLiteTraceStore(path)
 }

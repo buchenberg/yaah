@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -134,7 +135,7 @@ func TestSessionClosePrunesTerminalScopes(t *testing.T) {
 // and the bus's subscriber channels are closed.
 func TestSessionCloseClosesShepherdInfrastructure(t *testing.T) {
 	dir := t.TempDir()
-	store, bus, mgr, err := pipeline.InitShepherdInfrastructure(dir, 0)
+	store, bus, mgr, err := pipeline.InitShepherdInfrastructure(filepath.Join(dir, "trace.db"), 0)
 	if err != nil {
 		t.Fatalf("init infrastructure: %v", err)
 	}
@@ -171,7 +172,7 @@ func TestSessionCloseClosesShepherdInfrastructure(t *testing.T) {
 // close() says so.
 func TestSessionCloseLeavesInfraOpenOnDrainTimeout(t *testing.T) {
 	dir := t.TempDir()
-	store, bus, _, err := pipeline.InitShepherdInfrastructure(dir, 0)
+	store, bus, _, err := pipeline.InitShepherdInfrastructure(filepath.Join(dir, "trace.db"), 0)
 	if err != nil {
 		t.Fatalf("init infrastructure: %v", err)
 	}
@@ -219,7 +220,7 @@ func TestSessionCloseLeavesInfraOpenOnDrainTimeout(t *testing.T) {
 // recovery-failure path) must not fabricate a failure.
 func TestCloseShepherdInfrastructureIdempotent(t *testing.T) {
 	dir := t.TempDir()
-	store, bus, _, err := pipeline.InitShepherdInfrastructure(dir, 0)
+	store, bus, _, err := pipeline.InitShepherdInfrastructure(filepath.Join(dir, "trace.db"), 0)
 	if err != nil {
 		t.Fatalf("init infrastructure: %v", err)
 	}

@@ -142,7 +142,7 @@ func TestSubAgentTrace_EmptySessionIDIsNoop(t *testing.T) {
 func TestInitShepherdInfrastructure(t *testing.T) {
 	dir := t.TempDir()
 
-	store, bus, mgr, err := InitShepherdInfrastructure(dir, 0)
+	store, bus, mgr, err := InitShepherdInfrastructure(filepath.Join(dir, "trace.db"), 0)
 	if err != nil {
 		t.Fatalf("InitShepherdInfrastructure: %v", err)
 	}

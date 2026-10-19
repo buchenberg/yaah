@@ -183,8 +183,7 @@ before suspecting the provider or the network.
 A sub-agent's work is retained, not trusted: it runs in its own world and
 returns a proposal the orchestrator settles.
 
-- **Retention.** In a local session with a Shepherd trace store configured
-  (`agents.default.shepherd_trace_dir`) and a root scope, each dispatch runs in
+- **Retention.** In a local session the shepherd root scope always exists (tracing is integral), so each dispatch runs in
   a detached `git worktree` and returns a sealed proposal. `select` fast-forwards,
   `apply` three-way merges path-disjoint changes, `release` keeps what landed
   and drops the record, and `discard` removes the worktree. A rejected

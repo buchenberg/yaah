@@ -633,9 +633,11 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		}
 
 		// Enrich errors with the sub-agent's trace so the orchestrator
-		// can see exactly which tool calls led to the failure.
-		if runErr != nil && opts.defaults.ShepherdTraceDir != "" {
-			tracePath := filepath.Join(opts.defaults.ShepherdTraceDir, "trace.sqlite")
+		// can see exactly which tool calls led to the failure. Tracing is
+		// integral, so the store path always resolves; only the profile
+		// lookup decides whether there is anything to append.
+		if runErr != nil {
+			tracePath := opts.defaults.TracePath()
 			if profile := subagentTraceProfile(ctx, tracePath, subTraceID); profile != "" {
 				runErr = fmt.Errorf("%w\n\nSubagent trace:\n%s", runErr, profile)
 			}
