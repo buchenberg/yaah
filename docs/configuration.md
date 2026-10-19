@@ -199,6 +199,42 @@ OAuth providers are authenticated once with `yaah login <provider>`; the
 stored token is used instead of `api_key`. See `yaah login --help` for the
 provider-specific defaults.
 
+### Thinking mode
+
+Some models run in a *thinking* mode where the provider requires the model's
+reasoning (`reasoning_content`) to be replayed on every subsequent assistant
+message. Omitting it fails the request outright with a message like
+`the thinking mode must be passed back`.
+
+**Config is the source of truth.** Set it per model:
+
+```yaml
+providers:
+  - name: deepseek
+    base_url: https://api.deepseek.com/v1
+    models:
+      - name: deepseek-flash
+        thinking: true      # authoritative — wins over auto-detection
+```
+
+Resolution order, first match wins:
+
+1. per-model `thinking: true|false` from config — **authoritative**
+2. a built-in registry of known thinking models (`deepseek-r1*`, `deepseek-v4*`,
+   `o1-*`, `o3-*`, `qwq-*`, …) — a default, not truth
+3. auto-detection from any `reasoning_content` already present in history
+4. otherwise off
+
+There is no API that advertises this capability — OpenAI, Anthropic, and
+DeepSeek `/models` endpoints return identifiers only — so config is the only
+reliable way to declare a model you know to think. The registry exists to spare
+the common cases a round trip, not to be authoritative.
+
+If a provider reports thinking mode is required and config did not declare it,
+`yaah` aborts with a message naming the model and the `thinking: true` knob
+rather than retrying a request that cannot succeed.
+
+
 ## Agent reference
 
 **`agents.default`** — the main agent loop:

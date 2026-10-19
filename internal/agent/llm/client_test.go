@@ -52,7 +52,7 @@ func TestCall_stripReasoningRetryIsBounded(t *testing.T) {
 
 func TestCall_stripReasoningRecoversWhenProviderHeals(t *testing.T) {
 	p := &healingProvider{
-		failErr: errors.New("invalid_request_error: reasoning_content in the thinking mode must be passed back [msgs=3 roles=user]"),
+		failErr: errors.New("invalid_request_error: reasoning_content is not supported by this model [msgs=3 roles=user]"),
 		response: &types.ChatResponse{
 			Choices: []types.Choice{{
 				Message:      types.Message{Role: "assistant", Content: "recovered"},
@@ -96,4 +96,33 @@ func (p *healingProvider) Send(ctx context.Context, req types.ChatRequest) (*typ
 		return nil, p.failErr
 	}
 	return p.response, nil
+}
+
+// A provider in thinking mode demands reasoning_content be replayed. Stripping
+// is the OPPOSITE of the remedy: it guarantees the identical failure forever.
+// The client must classify it as config-actionable and abort, not strip-retry.
+func TestCall_thinkingRequiredAbortsWithoutStripping(t *testing.T) {
+	p := &healingProvider{
+		failErr:  errors.New("invalid_request_error: The `content[].thinking` in the thinking mode must be passed back to the API."),
+		maxFails: 100,
+	}
+	strips := 0
+	c := &Client{
+		Provider:       p,
+		Model:          "test-model",
+		MaxRetries:     3,
+		RetryBackoff:   time.Millisecond,
+		StripReasoning: func() { strips++ },
+	}
+
+	_, err := c.Call(context.Background(), types.ChatRequest{Model: "test-model"})
+	if err == nil {
+		t.Fatal("expected a non-retryable error")
+	}
+	if strips != 0 {
+		t.Errorf("StripReasoning invoked %d times — stripping cannot satisfy a provider demanding the content back", strips)
+	}
+	if p.stripped != 1 {
+		t.Errorf("provider called %d times, want 1 (non-retryable abort)", p.stripped)
+	}
 }

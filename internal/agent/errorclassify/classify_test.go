@@ -3,6 +3,7 @@ package errorclassify
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -396,5 +397,42 @@ func TestClassify_providerCodeIsSearchable(t *testing.T) {
 	c := Classify(err, ErrorMeta{})
 	if c.Reason != ReasonBilling {
 		t.Errorf("Reason = %v, want billing from provider code", c.Reason)
+	}
+}
+
+// The provider is in thinking mode and requires reasoning_content be replayed.
+// Regression guard for the inverted rule that stripped it instead — which
+// guaranteed the identical 400 on every retry.
+func TestClassify_thinkingModeRequiredIsActionable(t *testing.T) {
+	err := errors.New("The `content[].thinking` in the thinking mode must be passed back to the API.")
+	c := Classify(err, ErrorMeta{StatusCode: 400, Model: "deepseek-flash", NumMessages: 5})
+
+	if c.Reason != ReasonThinkingModeRequired {
+		t.Fatalf("reason = %v, want %v", c.Reason, ReasonThinkingModeRequired)
+	}
+	if c.ShouldStripReasoning {
+		t.Error("ShouldStripReasoning must be false — stripping is the opposite of the remedy")
+	}
+	if c.Retryable {
+		t.Error("Retryable must be false — the request cannot succeed unchanged")
+	}
+	if !strings.Contains(c.Message, "thinking: true") {
+		t.Errorf("message must name the config knob, got %q", c.Message)
+	}
+}
+
+// A provider that genuinely does not understand the field is still worth
+// stripping it for — that path must survive the split. Note the message is
+// deliberately free of "invalid request", which classifies as format_error
+// earlier in the chain.
+func TestClassify_reasoningContentUnsupportedStillStrips(t *testing.T) {
+	err := errors.New("reasoning_content is not supported by this model")
+	c := Classify(err, ErrorMeta{StatusCode: 400})
+
+	if c.Reason != ReasonReasoningContentMissing {
+		t.Fatalf("reason = %v, want %v", c.Reason, ReasonReasoningContentMissing)
+	}
+	if !c.ShouldStripReasoning {
+		t.Error("ShouldStripReasoning should be set for an unsupported field")
 	}
 }

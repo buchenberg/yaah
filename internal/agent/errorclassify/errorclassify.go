@@ -24,7 +24,8 @@ const (
 	ReasonContentPolicyBlocked                       // safety filter — do NOT retry unchanged
 	ReasonProviderPolicyBlocked                      // aggregator data/privacy block
 	ReasonFormatError                                // 400 bad request — abort or strip+retry
-	ReasonReasoningContentMissing                    // reasoning_content required but missing — strip and retry
+	ReasonReasoningContentMissing                    // reasoning_content rejected — strip and retry
+	ReasonThinkingModeRequired                       // thinking mode required but reasoning_content omitted — set thinking: true
 )
 
 func (r ErrorReason) String() string {
@@ -61,6 +62,8 @@ func (r ErrorReason) String() string {
 		return "format_error"
 	case ReasonReasoningContentMissing:
 		return "reasoning_content_missing"
+	case ReasonThinkingModeRequired:
+		return "thinking_mode_required"
 	default:
 		return fmt.Sprintf("ErrorReason(%d)", r)
 	}

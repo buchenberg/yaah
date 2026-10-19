@@ -2,6 +2,7 @@ package errorclassify
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -62,6 +63,26 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 		Meta:      meta,
 		Retryable: true, // default: unknown errors are retryable
 		Message:   msg,
+	}
+
+	// ── 0. Semantic checks that outrank the status code ───────────
+	// A provider in thinking mode demanding reasoning_content be replayed is
+	// identifiable from the message alone, and its remedy is config, not
+	// retry. This MUST precede the status switch: the generic 4xx default
+	// reports an opaque `format_error` and aborts, which is exactly the
+	// confusion this check removes.
+	if matchAny(msg, thinkingRequiredPatterns) {
+		c.Reason = ReasonThinkingModeRequired
+		c.Retryable = false
+		c.ShouldAbort = true
+		c.Message = fmt.Sprintf("model %q requires thinking mode but reasoning_content was omitted — set `thinking: true` for this model in config", meta.Model)
+		return c
+	}
+	if matchAny(msg, reasoningContentPatterns) {
+		c.Reason = ReasonReasoningContentMissing
+		c.ShouldStripReasoning = true
+		c.Message = "reasoning_content rejected — strip and retry"
+		return c
 	}
 
 	// ── 1. Status-code-driven classification ──────────────────────
@@ -265,12 +286,6 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 		c.Retryable = false
 		c.ShouldAbort = true
 		c.Message = "content policy blocked — abort"
-		return c
-	}
-	if matchAny(msg, reasoningContentPatterns) {
-		c.Reason = ReasonReasoningContentMissing
-		c.ShouldStripReasoning = true
-		c.Message = "reasoning_content must be passed back — strip and retry"
 		return c
 	}
 	if matchAny(msg, providerPolicyPatterns) {
@@ -491,8 +506,22 @@ var contentPolicyPatterns = []string{
 	"responsibleaipolicyviolation",
 }
 
+// thinkingRequiredPatterns match providers that are in thinking mode and demand
+// reasoning_content be replayed on every assistant message. The remedy is to
+// SEND it, never to strip it — stripping guarantees the same failure forever.
+// The authoritative fix is per-model config (`thinking: true`).
+var thinkingRequiredPatterns = []string{
+	"must be passed back",
+	"thinking mode must be passed back",
+	"content[].thinking",
+}
+
+// reasoningContentPatterns match providers that do not understand the
+// reasoning_content field at all. Only these warrant stripping it.
 var reasoningContentPatterns = []string{
-	"reasoning_content in the thinking mode must be passed back",
+	"reasoning_content is not supported",
+	"reasoning_content: unknown",
+	"unknown field \"reasoning_content\"",
 }
 
 // responseFormatPatterns match providers that reject the response_format
