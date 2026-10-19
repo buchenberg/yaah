@@ -96,7 +96,16 @@ func TestRenderMarkdown_TableAlignsWithEmojiPresentation(t *testing.T) {
 		t.Fatalf("emoji table rendered %d rows, plain table rendered %d\nemoji:\n%s",
 			len(got), len(want), gotOut)
 	}
+
+	// Both tables are also held to one absolute width — two cell-widths and the
+	// single space between columns, taken from the width oracle rather than
+	// written out — so a regression that shifts every row equally cannot hide
+	// behind the comparison below.
+	wantCols := uniseg.StringWidth("mark") + 1 + uniseg.StringWidth("kind")
 	for row := range want {
+		if want[row] != wantCols {
+			t.Errorf("plain table row %d is %d cells wide, want %d", row, want[row], wantCols)
+		}
 		if got[row] != want[row] {
 			t.Errorf("emoji table row %d is %d cells wide, plain table row is %d (ragged borders)\nemoji:\n%s",
 				row, got[row], want[row], gotOut)
@@ -105,13 +114,22 @@ func TestRenderMarkdown_TableAlignsWithEmojiPresentation(t *testing.T) {
 }
 
 // renderedRowWidths strips tview colour tags and measures each rendered line in
-// display cells — the width the terminal actually paints.
+// display cells — the width the terminal actually paints. Blank lines (the empty
+// tail after a trailing newline) are dropped so every entry is a real row.
+//
+// The tag pattern is deliberately naive: fixtures in this file contain no literal
+// brackets, which tview would render as an escape such as ["["] and which this
+// strip would then remove. Adding a bracketed literal to a fixture means teaching
+// this helper about escapes first.
 func renderedRowWidths(rendered string) []int {
 	tag := regexp.MustCompile(`\[[^\]]*\]`)
-	lines := strings.Split(rendered, "\n")
-	widths := make([]int, len(lines))
-	for i, line := range lines {
-		widths[i] = uniseg.StringWidth(tag.ReplaceAllString(line, ""))
+	var widths []int
+	for _, line := range strings.Split(rendered, "\n") {
+		plain := tag.ReplaceAllString(line, "")
+		if strings.TrimSpace(plain) == "" {
+			continue
+		}
+		widths = append(widths, uniseg.StringWidth(plain))
 	}
 	return widths
 }
