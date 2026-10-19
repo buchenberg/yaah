@@ -49,6 +49,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 
 	var content strings.Builder
 	var reasoning strings.Builder
+	var signature strings.Builder
 	var dsmlFilter dsmlTokenFilter
 	toolCallMap := make(map[int]*types.ToolCall)
 	var finishReason string
@@ -62,7 +63,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 		if !c.OtelVerbose || streamSpan == nil {
 			return
 		}
-		msg := assembleStreamed(content.String(), toolCallMap, reasoning.String())
+		msg := assembleStreamed(content.String(), toolCallMap, reasoning.String(), signature.String())
 		observability.RecordAssistantResponse(streamSpan, msg, finishReason)
 		observability.RecordStreamEnd(streamSpan, path, finishReason, usageCaptured, len(msg.Content), len(msg.ToolCalls))
 	}
@@ -100,6 +101,10 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 				delta := chunk.Choices[0].Delta
 				if delta.ReasoningContent != "" {
 					reasoning.WriteString(delta.ReasoningContent)
+					if delta.ReasoningSignature != "" {
+						signature.Reset()
+						signature.WriteString(delta.ReasoningSignature)
+					}
 				}
 				if delta.Content != "" {
 					content.WriteString(delta.Content)
@@ -138,7 +143,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 					observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 					streamSpan.End()
 				}
-				return checkTruncatedStream(content.String(), toolCallMap, finishReason, responseModel, reasoning.String(), totalUsage, &c.dialectSeq, req.Tools)
+				return checkTruncatedStream(content.String(), toolCallMap, finishReason, responseModel, reasoning.String(), signature.String(), totalUsage, &c.dialectSeq, req.Tools)
 			}
 
 			// Any chunk counts as liveness, not just content deltas:
@@ -176,6 +181,10 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 
 			if delta.ReasoningContent != "" {
 				reasoning.WriteString(delta.ReasoningContent)
+				if delta.ReasoningSignature != "" {
+					signature.Reset()
+					signature.WriteString(delta.ReasoningSignature)
+				}
 				if c.OnThinking != nil {
 					c.OnThinking(delta.ReasoningContent)
 				}
@@ -241,7 +250,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 					observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 					streamSpan.End()
 				}
-				return checkTruncatedStream(content.String(), toolCallMap, finishReason, responseModel, reasoning.String(), totalUsage, &c.dialectSeq, req.Tools)
+				return checkTruncatedStream(content.String(), toolCallMap, finishReason, responseModel, reasoning.String(), signature.String(), totalUsage, &c.dialectSeq, req.Tools)
 			}
 
 		case err, ok := <-errs:
@@ -273,7 +282,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 				observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 				streamSpan.End()
 			}
-			return checkTruncatedStream(content.String(), toolCallMap, finishReason, responseModel, reasoning.String(), totalUsage, &c.dialectSeq, req.Tools)
+			return checkTruncatedStream(content.String(), toolCallMap, finishReason, responseModel, reasoning.String(), signature.String(), totalUsage, &c.dialectSeq, req.Tools)
 
 		case <-ctx.Done():
 			if streamSpan != nil {
@@ -289,8 +298,8 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 // checkTruncatedStream validates the assembled streamed message and returns it
 // with finish reason, response model, and accumulated usage, or an error if the
 // stream was truncated or blocked.
-func checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, finishReason string, responseModel string, reasoningContent string, usage types.Usage, dialectSeq *int, toolDefs []types.ToolDef) (types.Message, string, string, types.Usage, error) {
-	msg := assembleStreamed(content, toolCallMap, reasoningContent)
+func checkTruncatedStream(content string, toolCallMap map[int]*types.ToolCall, finishReason string, responseModel string, reasoningContent string, reasoningSignature string, usage types.Usage, dialectSeq *int, toolDefs []types.ToolDef) (types.Message, string, string, types.Usage, error) {
+	msg := assembleStreamed(content, toolCallMap, reasoningContent, reasoningSignature)
 
 	// Filter out tool calls with invalid JSON arguments. Anthropic will
 	// reject requests containing tool calls with invalid JSON in their
@@ -360,11 +369,12 @@ func partialStreamedMessage(content string) types.Message {
 }
 
 // assembleStreamed builds the assistant message from accumulated stream state.
-func assembleStreamed(content string, toolCalls map[int]*types.ToolCall, reasoningContent string) types.Message {
+func assembleStreamed(content string, toolCalls map[int]*types.ToolCall, reasoningContent string, reasoningSignature string) types.Message {
 	msg := types.Message{
-		Role:             "assistant",
-		Content:          content,
-		ReasoningContent: reasoningContent,
+		Role:               "assistant",
+		Content:            content,
+		ReasoningContent:   reasoningContent,
+		ReasoningSignature: reasoningSignature,
 	}
 	if len(toolCalls) > 0 {
 		indices := make([]int, 0, len(toolCalls))

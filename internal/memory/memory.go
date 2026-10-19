@@ -96,18 +96,19 @@ type Session struct {
 
 // Message represents a single message in a session.
 type Message struct {
-	ID               string `json:"id"`
-	SessionID        string `json:"session_id"`
-	Idx              int    `json:"idx"`
-	Role             string `json:"role"`
-	Content          string `json:"content"`
-	ReasoningContent string `json:"reasoning_content,omitempty"`
-	ToolName         string `json:"tool_name,omitempty"`
-	ToolCallID       string `json:"tool_call_id,omitempty"`
-	ToolCalls        string `json:"tool_calls,omitempty"`
-	Timestamp        int64  `json:"ts"`
-	TraceID          string `json:"trace_id,omitempty"`
-	TurnID           string `json:"turn_id,omitempty"`
+	ID                 string `json:"id"`
+	SessionID          string `json:"session_id"`
+	Idx                int    `json:"idx"`
+	Role               string `json:"role"`
+	Content            string `json:"content"`
+	ReasoningContent   string `json:"reasoning_content,omitempty"`
+	ReasoningSignature string `json:"reasoning_signature,omitempty"`
+	ToolName           string `json:"tool_name,omitempty"`
+	ToolCallID         string `json:"tool_call_id,omitempty"`
+	ToolCalls          string `json:"tool_calls,omitempty"`
+	Timestamp          int64  `json:"ts"`
+	TraceID            string `json:"trace_id,omitempty"`
+	TurnID             string `json:"turn_id,omitempty"`
 }
 
 // DB is the yaah persistent database.
@@ -245,6 +246,7 @@ func (d *DB) migrate() error {
 		role              TEXT NOT NULL,
 		content           TEXT NOT NULL,
 		reasoning_content TEXT DEFAULT '',
+		reasoning_signature TEXT DEFAULT '',
 		tool_name         TEXT,
 		tool_call_id      TEXT,
 		tool_calls        TEXT,
@@ -346,6 +348,7 @@ func (d *DB) migrate() error {
 		{"sessions", "compaction_cooldown_until", "ALTER TABLE sessions ADD COLUMN compaction_cooldown_until INTEGER DEFAULT 0"},
 		{"sessions", "ineffective_compactions", "ALTER TABLE sessions ADD COLUMN ineffective_compactions INTEGER DEFAULT 0"},
 		{"messages", "reasoning_content", "ALTER TABLE messages ADD COLUMN reasoning_content TEXT DEFAULT ''"},
+		{"messages", "reasoning_signature", "ALTER TABLE messages ADD COLUMN reasoning_signature TEXT DEFAULT ''"},
 		{"messages", "trace_id", "ALTER TABLE messages ADD COLUMN trace_id TEXT DEFAULT ''"},
 		{"messages", "turn_id", "ALTER TABLE messages ADD COLUMN turn_id TEXT DEFAULT ''"},
 		{"sessions", "system_prompt", "ALTER TABLE sessions ADD COLUMN system_prompt TEXT DEFAULT ''"},

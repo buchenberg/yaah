@@ -71,18 +71,19 @@ func (p *SessionPersister) Persist(msg types.Message) {
 		toolName = msg.Name
 	}
 	m := memory.Message{
-		ID:               messageID(p.sessionID, p.msgIdx, msg.Role, content, msg.ReasoningContent, toolName, msg.ToolCallID, toolCallsJSON),
-		SessionID:        p.sessionID,
-		Idx:              p.msgIdx,
-		Role:             msg.Role,
-		Content:          content,
-		ReasoningContent: msg.ReasoningContent,
-		ToolName:         toolName,
-		ToolCallID:       msg.ToolCallID,
-		ToolCalls:        toolCallsJSON,
-		Timestamp:        time.Now().Unix(),
-		TraceID:          p.traceID,
-		TurnID:           p.turnID,
+		ID:                 messageID(p.sessionID, p.msgIdx, msg.Role, content, msg.ReasoningContent, toolName, msg.ToolCallID, toolCallsJSON),
+		SessionID:          p.sessionID,
+		Idx:                p.msgIdx,
+		Role:               msg.Role,
+		Content:            content,
+		ReasoningContent:   msg.ReasoningContent,
+		ReasoningSignature: msg.ReasoningSignature,
+		ToolName:           toolName,
+		ToolCallID:         msg.ToolCallID,
+		ToolCalls:          toolCallsJSON,
+		Timestamp:          time.Now().Unix(),
+		TraceID:            p.traceID,
+		TurnID:             p.turnID,
 	}
 	if err := p.writeMsg(m); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: db persist: %v\n", err)

@@ -518,7 +518,7 @@ func TestRecoverDialectToolCalls(t *testing.T) {
 }
 
 func TestCheckTruncatedStream_AttrDialectRecovery(t *testing.T) {
-	msg, finish, _, _, err := checkTruncatedStream(issue314Fixture, nil, "stop", "model-x", "", types.Usage{}, new(int), nil)
+	msg, finish, _, _, err := checkTruncatedStream(issue314Fixture, nil, "stop", "model-x", "", "", types.Usage{}, new(int), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -542,7 +542,7 @@ func TestCheckTruncatedStream_AttrDialectRecovery(t *testing.T) {
 // The truncated-write rejection must fail the stream seam explicitly
 // instead of dispatching the partial call (#333 review).
 func TestCheckTruncatedStream_RejectsPartialRecovery(t *testing.T) {
-	_, _, _, _, err := checkTruncatedStream(truncatedWriteFixture, nil, "stop", "model-x", "", types.Usage{}, new(int), attrToolDefs())
+	_, _, _, _, err := checkTruncatedStream(truncatedWriteFixture, nil, "stop", "model-x", "", "", types.Usage{}, new(int), attrToolDefs())
 	if err == nil {
 		t.Fatal("expected an explicit error for markup cut mid-parameter")
 	}
@@ -563,7 +563,7 @@ func TestCheckTruncatedStream_FencedExampleNotRecovered(t *testing.T) {
 		"```",
 		"It never executed.",
 	}, "\n")
-	msg, _, _, _, err := checkTruncatedStream(content, nil, "stop", "model-x", "", types.Usage{}, new(int), attrToolDefs())
+	msg, _, _, _, err := checkTruncatedStream(content, nil, "stop", "model-x", "", "", types.Usage{}, new(int), attrToolDefs())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
