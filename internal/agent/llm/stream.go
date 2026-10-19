@@ -101,10 +101,14 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 				delta := chunk.Choices[0].Delta
 				if delta.ReasoningContent != "" {
 					reasoning.WriteString(delta.ReasoningContent)
-					if delta.ReasoningSignature != "" {
-						signature.Reset()
-						signature.WriteString(delta.ReasoningSignature)
-					}
+				}
+				// Providers may deliver the signature in its own delta,
+				// after the reasoning text has finished (DeepSeek's
+				// Anthropic-compatible stream does exactly this), so it
+				// cannot be captured inside the ReasoningContent guard.
+				if delta.ReasoningSignature != "" {
+					signature.Reset()
+					signature.WriteString(delta.ReasoningSignature)
 				}
 				if delta.Content != "" {
 					content.WriteString(delta.Content)
@@ -181,13 +185,16 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 
 			if delta.ReasoningContent != "" {
 				reasoning.WriteString(delta.ReasoningContent)
-				if delta.ReasoningSignature != "" {
-					signature.Reset()
-					signature.WriteString(delta.ReasoningSignature)
-				}
 				if c.OnThinking != nil {
 					c.OnThinking(delta.ReasoningContent)
 				}
+			}
+			// See the drain loop above: the signature may arrive on its
+			// own, after the reasoning text, so it is captured
+			// independently of ReasoningContent.
+			if delta.ReasoningSignature != "" {
+				signature.Reset()
+				signature.WriteString(delta.ReasoningSignature)
 			}
 
 			if delta.Content != "" {

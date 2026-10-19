@@ -408,3 +408,54 @@ func TestAssembleStreamed_carriesReasoningSignature(t *testing.T) {
 		t.Errorf("ReasoningSignature = %q, want %q — the signature is dropped in assembly", msg.ReasoningSignature, "sig-xyz")
 	}
 }
+
+// separateSignatureStreamProvider delivers the thinking signature in its own
+// delta after the reasoning text has finished, the way DeepSeek's
+// Anthropic-compatible stream does. Capturing the signature only inside a
+// ReasoningContent guard drops it, and a dropped signature means the
+// reasoning block is never replayed on the following turn.
+type separateSignatureStreamProvider struct{}
+
+func (p *separateSignatureStreamProvider) Send(context.Context, types.ChatRequest) (*types.ChatResponse, error) {
+	return nil, errors.New("streaming only")
+}
+
+func (p *separateSignatureStreamProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan providers.StreamChunk, <-chan error) {
+	chunks := make(chan providers.StreamChunk, 4)
+	errs := make(chan error, 1)
+	go func() {
+		defer close(chunks)
+		defer close(errs)
+		chunks <- providers.StreamChunk{Choices: []providers.StreamChoice{{
+			Delta: providers.StreamDelta{ReasoningContent: "thinking text"},
+		}}}
+		chunks <- providers.StreamChunk{Choices: []providers.StreamChoice{{
+			Delta: providers.StreamDelta{ReasoningSignature: "sig-standalone"},
+		}}}
+		chunks <- providers.StreamChunk{Choices: []providers.StreamChoice{{
+			Delta:        providers.StreamDelta{Content: "answer"},
+			FinishReason: strPtr("stop"),
+		}}}
+	}()
+	return chunks, errs
+}
+
+// TestRunStream_capturesSignatureInSeparateDelta pins that a signature
+// arriving on its own delta survives the accumulator.
+func TestRunStream_capturesSignatureInSeparateDelta(t *testing.T) {
+	c := newStreamingClient(&separateSignatureStreamProvider{})
+
+	msg, _, _, _, err := c.runStream(context.Background(), c.Provider.(StreamProvider), types.ChatRequest{Model: "test-model"})
+	if err != nil {
+		t.Fatalf("runStream: %v", err)
+	}
+	if msg.ReasoningContent != "thinking text" {
+		t.Errorf("ReasoningContent = %q, want %q", msg.ReasoningContent, "thinking text")
+	}
+	if msg.ReasoningSignature != "sig-standalone" {
+		t.Errorf("ReasoningSignature = %q, want %q", msg.ReasoningSignature, "sig-standalone")
+	}
+	if msg.Content != "answer" {
+		t.Errorf("Content = %q, want %q", msg.Content, "answer")
+	}
+}
