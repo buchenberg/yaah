@@ -113,6 +113,13 @@ func translateAnthropicEvent(event anthropic.MessageStreamEventUnion, st *anthro
 			return &StreamChunk{
 				Choices: []StreamChoice{{Index: idx, Delta: StreamDelta{ReasoningContent: e.Delta.Thinking}}},
 			}, nil
+		case "signature_delta":
+			// Anthropic delivers the thinking-block signature AFTER the
+			// thinking text. Losing it makes every streamed turn
+			// unreplayable — the signature is opaque and cannot be rebuilt.
+			return &StreamChunk{
+				Choices: []StreamChoice{{Index: idx, Delta: StreamDelta{ReasoningSignature: e.Delta.Signature}}},
+			}, nil
 		case "input_json_delta":
 			return &StreamChunk{
 				Choices: []StreamChoice{{Index: idx, Delta: StreamDelta{

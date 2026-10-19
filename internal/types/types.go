@@ -11,14 +11,19 @@ import "encoding/json"
 // providers/wire.go for the lowering step that handles provider-specific
 // serialization (content nullability, reasoning_content presence, etc.).
 type Message struct {
-	Role             string        `json:"role"`
-	Content          string        `json:"content"`
-	Refusal          string        `json:"refusal,omitempty"`
-	ReasoningContent string        `json:"reasoning_content,omitempty"`
-	ToolCalls        []ToolCall    `json:"tool_calls,omitempty"`
-	ToolCallID       string        `json:"tool_call_id,omitempty"`
-	Name             string        `json:"name,omitempty"`
-	CacheControl     *CacheControl `json:"cache_control,omitempty"`
+	Role             string `json:"role"`
+	Content          string `json:"content"`
+	Refusal          string `json:"refusal,omitempty"`
+	ReasoningContent string `json:"reasoning_content,omitempty"`
+	// ReasoningSignature is the opaque signature an Anthropic-compatible
+	// provider returns with a thinking block. It must be replayed verbatim
+	// alongside ReasoningContent or the request is rejected with
+	// "the thinking mode must be passed back to the API".
+	ReasoningSignature string        `json:"reasoning_signature,omitempty"`
+	ToolCalls          []ToolCall    `json:"tool_calls,omitempty"`
+	ToolCallID         string        `json:"tool_call_id,omitempty"`
+	Name               string        `json:"name,omitempty"`
+	CacheControl       *CacheControl `json:"cache_control,omitempty"`
 }
 
 // CacheControl marks a message for Anthropic prompt caching.
