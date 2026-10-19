@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.82.1](https://github.com/buchenberg/yaah/compare/v0.82.0...v0.82.1) (2026-10-19)
+
+
+### Documentation
+
+* **bench:** record Hermes coding-suite comparison ([592f802](https://github.com/buchenberg/yaah/commit/592f802d2008b2e18fee49309587795590ab0ee9))
+* **bench:** record Hermes coding-suite comparison ([88485d6](https://github.com/buchenberg/yaah/commit/88485d678c8aa708d23ccc40645c912175f1cab4))
+
 ## [0.82.0](https://github.com/buchenberg/yaah/compare/v0.81.2...v0.82.0) (2026-10-17)
 
 
