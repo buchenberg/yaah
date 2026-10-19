@@ -106,8 +106,9 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 				// after the reasoning text has finished (DeepSeek's
 				// Anthropic-compatible stream does exactly this), so it
 				// cannot be captured inside the ReasoningContent guard.
+				// Appended rather than reset: a signature split across
+				// deltas must not keep only its last fragment.
 				if delta.ReasoningSignature != "" {
-					signature.Reset()
 					signature.WriteString(delta.ReasoningSignature)
 				}
 				if delta.Content != "" {
@@ -191,9 +192,9 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 			}
 			// See the drain loop above: the signature may arrive on its
 			// own, after the reasoning text, so it is captured
-			// independently of ReasoningContent.
+			// independently of ReasoningContent and appended for the
+			// same split-delta reason.
 			if delta.ReasoningSignature != "" {
-				signature.Reset()
 				signature.WriteString(delta.ReasoningSignature)
 			}
 

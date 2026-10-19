@@ -2,6 +2,7 @@ package providers
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/buchenberg/yaah/internal/types"
@@ -244,5 +245,41 @@ func TestLowerRequest_explicitThinkingFalseIsNotPromoted(t *testing.T) {
 	wire = lowerRequest(req, c.resolveThinkingMode(req.Model), c.CopilotMode, !c.thinkingExplicit(req.Model))
 	if wire.Messages[0].ReasoningContent == nil {
 		t.Error("unconfigured model should still promote on history")
+	}
+}
+
+// TestLowerRequest_suppressReasoning proves the suppress flag reaches the wire:
+// a thinking-capable model must not re-emit reasoning fields once a provider
+// has rejected them, because an empty value is still a present field.
+func TestLowerRequest_suppressReasoning(t *testing.T) {
+	history := []types.Message{{
+		Role:               "assistant",
+		Content:            "hi",
+		ReasoningContent:   "because",
+		ReasoningSignature: "sig",
+	}}
+
+	plain := lowerRequest(types.ChatRequest{Model: "m", Messages: history}, true, false, true)
+	body, err := json.Marshal(plain)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(body), "reasoning_content") {
+		t.Fatalf("baseline: thinking mode should send reasoning_content, got %s", body)
+	}
+
+	suppressed := lowerRequest(types.ChatRequest{
+		Model:             "m",
+		Messages:          history,
+		SuppressReasoning: true,
+	}, true, false, true)
+	body, err = json.Marshal(suppressed)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, field := range []string{"reasoning_content", "reasoning_signature"} {
+		if strings.Contains(string(body), field) {
+			t.Errorf("suppressed request still carries %q: %s", field, body)
+		}
 	}
 }

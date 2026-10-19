@@ -70,6 +70,12 @@ type ChatRequest struct {
 	StreamOptions   *StreamOptions  `json:"stream_options,omitempty"`
 	ResponseFormat  *ResponseFormat `json:"response_format,omitempty"`
 	ReasoningEffort string          `json:"reasoning_effort,omitempty"`
+
+	// SuppressReasoning omits the reasoning field from the wire entirely
+	// instead of sending it empty. Set by the retry path after a provider
+	// rejected the field: an empty value is still a present field, which is
+	// exactly what drew the rejection.
+	SuppressReasoning bool `json:"-"`
 }
 
 // ResponseFormat controls structured output mode.

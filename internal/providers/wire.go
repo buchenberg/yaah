@@ -172,6 +172,14 @@ func lowerToolCalls(calls []types.ToolCall) []wireToolCall {
 // lowerRequest converts a types.ChatRequest into the wire-format request
 // body, applying message lowering with the given thinking mode and copilot mode.
 func lowerRequest(req types.ChatRequest, thinkingMode bool, copilotMode bool, allowPromotion bool) wireRequest {
+	if req.SuppressReasoning {
+		// The provider rejected reasoning_content for this model. Dropping
+		// thinkingMode clears the history fields, and allowPromotion stays
+		// off so lowerMessage does not re-add them as "" — an empty value is
+		// still a present field, so resending it would repeat the rejection.
+		thinkingMode = false
+		allowPromotion = false
+	}
 	return wireRequest{
 		Model:           req.Model,
 		Messages:        lowerMessages(req.Messages, thinkingMode, copilotMode, allowPromotion),

@@ -39,17 +39,7 @@ func restoreSession(db *memory.DB, resumeSessionID, systemPrompt string) ([]type
 			messages = append(messages, types.SystemMsg(restored.CompactedSummary))
 		}
 		for _, m := range dbMsgs {
-			msg := types.Message{
-				Role:             m.Role,
-				Content:          m.Content,
-				ReasoningContent: m.ReasoningContent,
-				Name:             m.ToolName,
-				ToolCallID:       m.ToolCallID,
-			}
-			if m.ToolCalls != "" {
-				json.Unmarshal([]byte(m.ToolCalls), &msg.ToolCalls)
-			}
-			messages = append(messages, msg)
+			messages = append(messages, restoreMessage(m))
 		}
 		if len(messages) > 0 {
 			last := messages[len(messages)-1]
@@ -64,4 +54,23 @@ func restoreSession(db *memory.DB, resumeSessionID, systemPrompt string) ([]type
 	}
 
 	return messages, sessionID, msgIdx, systemPrompt, nil
+}
+
+// restoreMessage maps a persisted message row back into a conversation
+// message. Every field the provider needs on replay must be carried: the
+// reasoning signature in particular, because a thinking block is only
+// re-emitted when both its content and its signature are present.
+func restoreMessage(m memory.Message) types.Message {
+	msg := types.Message{
+		Role:               m.Role,
+		Content:            m.Content,
+		ReasoningContent:   m.ReasoningContent,
+		ReasoningSignature: m.ReasoningSignature,
+		Name:               m.ToolName,
+		ToolCallID:         m.ToolCallID,
+	}
+	if m.ToolCalls != "" {
+		json.Unmarshal([]byte(m.ToolCalls), &msg.ToolCalls)
+	}
+	return msg
 }

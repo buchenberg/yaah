@@ -436,3 +436,25 @@ func TestClassify_reasoningContentUnsupportedStillStrips(t *testing.T) {
 		t.Error("ShouldStripReasoning should be set for an unsupported field")
 	}
 }
+
+// A message carrying BOTH signals must resolve to replay, not strip. The two
+// remedies are opposites, so the ordering is load-bearing: "thinking is not
+// supported" (a genuine strip case) must still classify as strip while a
+// message that also says the content must be passed back resolves to replay.
+func TestClassify_replayOutranksStripWhenBothSignalsPresent(t *testing.T) {
+	err := errors.New("reasoning_content is not supported unless content[].thinking in the thinking mode must be passed back to the API")
+	c := Classify(err, ErrorMeta{StatusCode: 400, Model: "deepseek-flash", NumMessages: 3})
+
+	if c.Reason != ReasonThinkingModeRequired {
+		t.Fatalf("reason = %v, want %v", c.Reason, ReasonThinkingModeRequired)
+	}
+	if c.ShouldStripReasoning {
+		t.Error("ShouldStripReasoning must be false — replay and strip are opposite remedies")
+	}
+
+	// The remediation suffix must not trip the replay branch on its own.
+	strip := Classify(errors.New("No endpoints found that support tool use. To learn more, see our docs: reasoning_content must be provided"), ErrorMeta{StatusCode: 400})
+	if strip.Reason == ReasonThinkingModeRequired {
+		t.Error("replay patterns alone must not match without a thinking/reasoning token")
+	}
+}
