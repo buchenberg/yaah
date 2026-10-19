@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/buchenberg/yaah/internal/tui/colors"
+	"github.com/rivo/uniseg"
 )
 
 func TestRenderMarkdown_Empty(t *testing.T) {
@@ -68,4 +70,48 @@ func TestMessageWidth_Nil(t *testing.T) {
 	if got := messageWidth(nil); got != 80 {
 		t.Errorf("messageWidth(nil) = %d, want 80", got)
 	}
+}
+
+// TestRenderMarkdown_TableAlignsWithEmojiPresentation pins the width contract
+// between yaah and tviewmd: a table column holding an emoji presentation
+// sequence (base rune + U+FE0F) must render at the same width as a plain-text
+// column of the same shape. U+270D U+FE0F is a single grapheme cluster that
+// tview paints in two cells while go-runewidth measures it as one, so a
+// renderer that measures per rune reserves one cell too few and every affected
+// row overruns its separator (bead yaah-vdr, tviewmd v0.2.1).
+func TestRenderMarkdown_TableAlignsWithEmojiPresentation(t *testing.T) {
+	th := colors.NewDarkTheme()
+
+	const (
+		plain = "| mark | kind |\n|------|------|\n| note | note |\n| todo | todo |\n"
+		emoji = "| mark | kind |\n|------|------|\n| \u270d\ufe0f | note |\n| \u270d\ufe0f | todo |\n"
+	)
+
+	wantOut := renderMarkdown(plain, 80, &th)
+	gotOut := renderMarkdown(emoji, 80, &th)
+	want := renderedRowWidths(wantOut)
+	got := renderedRowWidths(gotOut)
+
+	if len(want) != len(got) {
+		t.Fatalf("emoji table rendered %d rows, plain table rendered %d\nemoji:\n%s",
+			len(got), len(want), gotOut)
+	}
+	for row := range want {
+		if got[row] != want[row] {
+			t.Errorf("emoji table row %d is %d cells wide, plain table row is %d (ragged borders)\nemoji:\n%s",
+				row, got[row], want[row], gotOut)
+		}
+	}
+}
+
+// renderedRowWidths strips tview colour tags and measures each rendered line in
+// display cells — the width the terminal actually paints.
+func renderedRowWidths(rendered string) []int {
+	tag := regexp.MustCompile(`\[[^\]]*\]`)
+	lines := strings.Split(rendered, "\n")
+	widths := make([]int, len(lines))
+	for i, line := range lines {
+		widths[i] = uniseg.StringWidth(tag.ReplaceAllString(line, ""))
+	}
+	return widths
 }
