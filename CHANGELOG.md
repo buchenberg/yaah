@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.83.0](https://github.com/buchenberg/yaah/compare/v0.82.2...v0.83.0) (2026-10-19)
+
+
+### Features
+
+* make shepherd tracing integral ([#390](https://github.com/buchenberg/yaah/issues/390)) ([ec4b639](https://github.com/buchenberg/yaah/commit/ec4b639c2bbb5ccd67a866839d2cd43734d1893b))
+
 ## [0.82.2](https://github.com/buchenberg/yaah/compare/v0.82.1...v0.82.2) (2026-10-19)
 
 
