@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/rivo/tview"
+
 	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/tui/components/activity"
 	"github.com/buchenberg/yaah/internal/tui/components/backgroundjobs"
@@ -89,6 +91,16 @@ func (t *App) handleControlMsg(msg control.Msg) {
 	}
 }
 
+// setPaneText replaces a side pane's content while keeping the vertical
+// scroll position the reader was on. The horizontal offset is reset to
+// zero so a pane cannot stay scrolled sideways across a refresh; the row
+// is clamped by TextView.Draw when the new content is shorter.
+func setPaneText(tv *tview.TextView, text string) {
+	row, _ := tv.GetScrollOffset()
+	tv.SetText(text)
+	tv.ScrollTo(row, 0)
+}
+
 // renderInfoPane rebuilds the info pane from live state.
 func (t *App) renderInfoPane() {
 	promptTokens, completionTokens := t.GetCumulativeUsage()
@@ -97,7 +109,7 @@ func (t *App) renderInfoPane() {
 		costEstimate = t.calculateCost(t.lastModel) + " (at current model rates)"
 	}
 
-	t.InfoPane.SetText(infopane.Format(infopane.State{
+	setPaneText(t.InfoPane, infopane.Format(infopane.State{
 		Provider:      t.lastProvider,
 		Model:         t.lastModel,
 		Version:       t.version,
@@ -128,7 +140,7 @@ func (t *App) renderInfoPane() {
 // the item count when active.
 func (t *App) renderTodoPane() {
 	text := todoview.FormatList(t.todoItems)
-	t.TodoPane.SetText(text)
+	setPaneText(t.TodoPane, text)
 	if len(t.todoItems) == 0 {
 		t.rightPane.ResizeItem(t.TodoPane, 0, 0)
 	} else {
@@ -150,7 +162,7 @@ func (t *App) collectSubagentBlocks() []*subagent.Block {
 func (t *App) renderBackgroundJobsPane() {
 	subagentBlocks := t.collectSubagentBlocks()
 	text := backgroundjobs.Format(subagentBlocks, t.Theme)
-	t.BackgroundJobsPane.SetText(text)
+	setPaneText(t.BackgroundJobsPane, text)
 	if text == "" {
 		t.rightPane.ResizeItem(t.BackgroundJobsPane, 0, 0)
 	} else {
