@@ -43,7 +43,7 @@ _TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 # Harness artifacts that legitimately appear in /app while tests run; they are
 # not properties of the agent's work and must not trip the integrity layer.
-_TEST_ARTIFACTS = {".tbench-testing", ".pytest_cache", "__pycache__"}
+_TEST_ARTIFACTS = {".tbench-testing", ".pytest_cache", "__pycache__", ".yaah"}
 
 # Oracle runs are deterministic shell scripts with no model trace. The test
 # wrapper sets ORCH_ORACLE=1; a real agent run cannot set the verifier's

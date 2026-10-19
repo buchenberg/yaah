@@ -371,6 +371,11 @@ func provisionRetainedBranch(
 	ownerID, wtPath string,
 	forkPoint shepherdtrace.WorkspaceState,
 ) (string, error) {
+	// Hide the worktree root from the target repo's git status before the
+	// worktree exists. Best-effort: failure only means the repo may surface
+	// the scratch dirs as untracked; the worktree itself is unaffected.
+	_ = ensureWorktreeRootExcluded(ctx, rt)
+
 	sb := shepherdgit.NewWorktreeSandbox(rt.RepoPath, wtPath)
 	if err := sb.Create(ctx, shepherdsandbox.SandboxSpec{}); err != nil {
 		// A worktree left behind by a killed run can occupy the path. Only
@@ -410,8 +415,9 @@ func runRetainedBody(ctx context.Context, rt RetainedRuntime, prompt string, sp 
 	return rt.Runner(ctx, prompt, sp)
 }
 
-// retainedWorktreePath returns the worktree directory for a proposal.
-func retainedWorktreePath(rt RetainedRuntime, id string) string {
+// retainedWorktreeRoot returns the absolute parent directory for retained
+// worktrees.
+func retainedWorktreeRoot(rt RetainedRuntime) string {
 	root := rt.WorktreeRoot
 	if root == "" {
 		root = filepath.Join(rt.RepoPath, ".yaah", "shepherd-worktrees")
@@ -419,8 +425,81 @@ func retainedWorktreePath(rt RetainedRuntime, id string) string {
 	if abs, err := filepath.Abs(root); err == nil {
 		root = abs
 	}
+	return root
+}
+
+// retainedWorktreePath returns the worktree directory for a proposal.
+func retainedWorktreePath(rt RetainedRuntime, id string) string {
 	safe := strings.NewReplacer(":", "-", "/", "-", "\\", "-").Replace(id)
-	return filepath.Join(root, safe)
+	return filepath.Join(retainedWorktreeRoot(rt), safe)
+}
+
+// ensureWorktreeRootExcluded makes the retained-worktree root invisible to the
+// target repo's git status. The .yaah/ entry in yaah's own .gitignore only
+// protects yaah's checkout; when retained_repo_path points at a different repo,
+// that repo would otherwise see the worktrees as untracked content (and could
+// sweep them into a commit, or gitsandbox could evacuate them). We append the
+// root — relative to that repo — to its .git/info/exclude, a local, uncommitted
+// exclusion.
+func ensureWorktreeRootExcluded(ctx context.Context, rt RetainedRuntime) error {
+	repoPath, err := filepath.Abs(rt.RepoPath)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(repoPath, retainedWorktreeRoot(rt))
+	if err != nil {
+		return err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil // root is outside the repo; nothing to exclude
+	}
+	return appendGitInfoExclude(ctx, repoPath, filepath.ToSlash(rel))
+}
+
+// appendGitInfoExclude appends a relative path (gitignore syntax, directory
+// semantics) to the target repo's .git/info/exclude, unless already present.
+func appendGitInfoExclude(ctx context.Context, repoPath, rel string) error {
+	excludePath, err := gitInfoExcludePath(ctx, repoPath)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(excludePath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	line := strings.TrimSuffix(rel, "/") + "/"
+	for _, existing := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(existing) == line {
+			return nil // already present
+		}
+	}
+
+	f, err := os.OpenFile(excludePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if len(data) > 0 && !strings.HasSuffix(string(data), "\n") {
+		if _, err := f.WriteString("\n"); err != nil {
+			return err
+		}
+	}
+	_, err = fmt.Fprintf(f, "%s\n", line)
+	return err
+}
+
+// gitInfoExcludePath resolves the absolute path of the target repo's
+// .git/info/exclude, handling linked worktrees (where .git is a file).
+func gitInfoExcludePath(ctx context.Context, repoPath string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--path-format=absolute", "--git-path", "info/exclude")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func marshalProposalEnvelope(env proposalEnvelope) string {
