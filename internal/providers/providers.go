@@ -74,6 +74,17 @@ func (c *OpenAIClient) resolveThinkingMode(model string) bool {
 	return IsThinkingModel(model)
 }
 
+// thinkingExplicit reports whether config declared thinking mode for this model.
+// When it has, the history-based promotion in lowerMessages must not override
+// it — explicit config is authoritative in both directions.
+func (c *OpenAIClient) thinkingExplicit(model string) bool {
+	if c.ThinkingOverrides == nil {
+		return false
+	}
+	v, ok := c.ThinkingOverrides[sanitizeModelName(model)]
+	return ok && v != nil
+}
+
 // applyDefaultMaxTokens fills an unset output cap from the provider's
 // configured default. A zero default keeps the request untouched so the
 // server applies its own model-specific limit.
@@ -86,7 +97,7 @@ func (c *OpenAIClient) applyDefaultMaxTokens(req *types.ChatRequest) {
 // Send posts a ChatRequest to the provider and returns the parsed ChatResponse.
 func (c *OpenAIClient) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
 	c.applyDefaultMaxTokens(&req)
-	body, err := json.Marshal(lowerRequest(req, c.resolveThinkingMode(req.Model), c.CopilotMode))
+	body, err := json.Marshal(lowerRequest(req, c.resolveThinkingMode(req.Model), c.CopilotMode, !c.thinkingExplicit(req.Model)))
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}

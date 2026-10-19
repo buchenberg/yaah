@@ -30,10 +30,11 @@ type StreamChoice struct {
 
 // StreamDelta contains the incremental content for a stream chunk.
 type StreamDelta struct {
-	Role             string           `json:"role,omitempty"`
-	Content          string           `json:"content,omitempty"`
-	ReasoningContent string           `json:"reasoning_content,omitempty"`
-	ToolCalls        []types.ToolCall `json:"tool_calls,omitempty"`
+	Role               string           `json:"role,omitempty"`
+	Content            string           `json:"content,omitempty"`
+	ReasoningContent   string           `json:"reasoning_content,omitempty"`
+	ReasoningSignature string           `json:"reasoning_signature,omitempty"`
+	ToolCalls          []types.ToolCall `json:"tool_calls,omitempty"`
 }
 
 // SendStream sends a streaming chat request and returns a channel of chunks.
@@ -51,7 +52,7 @@ func (c *OpenAIClient) SendStream(ctx context.Context, req types.ChatRequest) (<
 		defer close(chunks)
 		defer close(errs)
 
-		body, err := json.Marshal(lowerRequest(req, c.resolveThinkingMode(req.Model), c.CopilotMode))
+		body, err := json.Marshal(lowerRequest(req, c.resolveThinkingMode(req.Model), c.CopilotMode, !c.thinkingExplicit(req.Model)))
 		if err != nil {
 			errs <- fmt.Errorf("marshal request: %w", err)
 			return

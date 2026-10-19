@@ -2,6 +2,7 @@ package errorclassify
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -62,6 +63,41 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 		Meta:      meta,
 		Retryable: true, // default: unknown errors are retryable
 		Message:   msg,
+	}
+
+	// ── 0. Semantic checks that outrank the status code ───────────
+	// Scoped to 400 (and unknown status): a transient 429/5xx whose body
+	// merely contains this wording must still back off and retry.
+	if meta.StatusCode == 400 || meta.StatusCode == 0 {
+		// A provider in thinking mode demanding the content be replayed.
+		// Checked first: when a message carries both signals, replay is the
+		// remedy that matches, because stripping is its exact opposite.
+		// Requires the replay wording AND a thinking-mode signal. The signal
+		// must be the mode word itself, not "reasoning": every message in
+		// this branch names the reasoning_content field, so a bare
+		// "reasoning" substring would satisfy the check unconditionally and
+		// let unrelated provider prose ("...must be provided" in a
+		// tool-support error) be misread as a replay demand.
+		if matchAny(msg, reasoningContentReplayPatterns) && isThinkingModeComplaint(msg) {
+			c.Reason = ReasonThinkingModeRequired
+			c.Retryable = false
+			c.ShouldAbort = true
+			c.Message = fmt.Sprintf("model %q requires thinking mode but reasoning_content was omitted — set `thinking: true` for this model in config", meta.Model)
+			return c
+		}
+		// A provider that does not understand the field at all is worth
+		// STRIPPING it for. Both the field name and an explicit
+		// unknown/unsupported phrase are required: "reasoning_content is
+		// not supported" strips, while prose that merely mentions the
+		// field does not.
+		if strings.Contains(msg, "reasoning_content") || strings.Contains(msg, "content[].thinking") {
+			if matchAny(msg, reasoningContentUnsupportedPatterns) {
+				c.Reason = ReasonReasoningContentMissing
+				c.ShouldStripReasoning = true
+				c.Message = "reasoning_content rejected — strip and retry"
+				return c
+			}
+		}
 	}
 
 	// ── 1. Status-code-driven classification ──────────────────────
@@ -265,12 +301,6 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 		c.Retryable = false
 		c.ShouldAbort = true
 		c.Message = "content policy blocked — abort"
-		return c
-	}
-	if matchAny(msg, reasoningContentPatterns) {
-		c.Reason = ReasonReasoningContentMissing
-		c.ShouldStripReasoning = true
-		c.Message = "reasoning_content must be passed back — strip and retry"
 		return c
 	}
 	if matchAny(msg, providerPolicyPatterns) {
@@ -491,8 +521,39 @@ var contentPolicyPatterns = []string{
 	"responsibleaipolicyviolation",
 }
 
-var reasoningContentPatterns = []string{
-	"reasoning_content in the thinking mode must be passed back",
+// reasoningContentReplayPatterns match the ways a provider in thinking mode
+// says the reasoning must be echoed back on assistant messages. These outrank
+// the unsupported-field patterns: replaying and stripping are opposite
+// remedies, so a message carrying both signals must not be resolved by
+// stripping.
+var reasoningContentReplayPatterns = []string{
+	"must be passed back",
+	"must be provided",
+	"must be sent back",
+	"must be supplied",
+}
+
+// reasoningContentUnsupportedPatterns match the common ways OpenAI-compatible
+// servers reject a field they do not know. Only these warrant stripping it —
+// the caller additionally requires the message to mention the field.
+var reasoningContentUnsupportedPatterns = []string{
+	"not supported",
+	"unknown parameter",
+	"unknown field",
+	"unrecognized request argument",
+	"unrecognized",
+	"extra inputs are not permitted",
+	// phrasings used by gateways and OpenAI-strict servers when they reject
+	// the field outright rather than tolerating it.
+	"unsupported parameter",
+	"unsupported field",
+	"not allowed",
+	"is not permitted",
+	"unexpected field",
+	"unexpected parameter",
+	"unknown argument",
+	"invalid parameter",
+	"extra field",
 }
 
 // responseFormatPatterns match providers that reject the response_format
@@ -571,4 +632,22 @@ var transportErrorTypes = []string{
 	"tls:",
 	"i/o timeout",
 	"context deadline exceeded",
+}
+
+// isThinkingModeComplaint reports whether a message is talking about thinking
+// mode rather than merely naming the reasoning_content field. The distinction
+// matters because every message reaching the replay check mentions the field,
+// so matching on "reasoning" would make the check unconditional.
+func isThinkingModeComplaint(msg string) bool {
+	if strings.Contains(msg, "thinking") {
+		return true
+	}
+	// Providers that describe the demand as "reasoning" without using the
+	// word thinking always qualify it with a modal verb.
+	for _, phrase := range []string{"reasoning must", "reasoning is required", "reasoning content must"} {
+		if strings.Contains(msg, phrase) {
+			return true
+		}
+	}
+	return false
 }

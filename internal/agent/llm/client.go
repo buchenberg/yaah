@@ -204,6 +204,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 		// errors (providers.APIError); string parsing is gone.
 		meta := errorclassify.ErrorMeta{
 			NumMessages: len(req.Messages),
+			Model:       req.Model,
 		}
 		classified := errorclassify.Classify(err, meta)
 
@@ -260,6 +261,10 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 
 		case classified.ShouldStripReasoning && stripAttempts < maxStripReasoningAttempts:
 			req.Messages = stripReasoningContent(req.Messages)
+			// Suppress the field on the wire, not just in the history: a
+			// thinking-capable model would otherwise have it re-emitted as
+			// "" and draw the same rejection again.
+			req.SuppressReasoning = true
 			if c.StripReasoning != nil {
 				c.StripReasoning()
 			}
@@ -299,6 +304,12 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 			continue
 
 		case classified.ShouldAbort:
+			// Surface the actionable diagnosis: the classification explains
+			// WHAT to change, the provider error is the cause. Returning err
+			// alone discards the guidance entirely.
+			if classified.Message != "" {
+				return attach(result), fmt.Errorf("%s: %w", classified.Message, err)
+			}
 			return attach(result), err
 		}
 

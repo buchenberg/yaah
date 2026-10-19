@@ -233,8 +233,12 @@ func lowerAnthropicRequest(req types.ChatRequest) anthropic.MessageNewParams {
 			flushToolResults()
 
 			var blocks []anthropic.ContentBlockParamUnion
-			if m.ReasoningContent != "" {
-				blocks = append(blocks, anthropic.NewThinkingBlock("", m.ReasoningContent))
+			// A thinking block must carry the provider's opaque signature
+			// verbatim. Fabricating an empty one is rejected with "the
+			// thinking mode must be passed back to the API", so omit the
+			// block entirely when the signature was never captured.
+			if m.ReasoningContent != "" && m.ReasoningSignature != "" {
+				blocks = append(blocks, anthropic.NewThinkingBlock(m.ReasoningSignature, m.ReasoningContent))
 			}
 			if m.Content != "" {
 				blocks = append(blocks, anthropicTextBlock(m.Content, nil))
@@ -307,6 +311,7 @@ func lowerAnthropicRequest(req types.ChatRequest) anthropic.MessageNewParams {
 func raiseAnthropicResponse(resp anthropic.Message) *types.ChatResponse {
 	var content strings.Builder
 	var reasoning strings.Builder
+	var signature string
 	var toolCalls []types.ToolCall
 
 	for _, block := range resp.Content {
@@ -315,6 +320,7 @@ func raiseAnthropicResponse(resp anthropic.Message) *types.ChatResponse {
 			content.WriteString(block.Text)
 		case "thinking":
 			reasoning.WriteString(block.Thinking)
+			signature = block.Signature
 		case "tool_use":
 			// Validate that the tool input is valid JSON before storing.
 			// Anthropic will reject requests with invalid JSON in
@@ -351,10 +357,11 @@ func raiseAnthropicResponse(resp anthropic.Message) *types.ChatResponse {
 		Choices: []types.Choice{{
 			Index: 0,
 			Message: types.Message{
-				Role:             "assistant",
-				Content:          content.String(),
-				ReasoningContent: reasoning.String(),
-				ToolCalls:        toolCalls,
+				Role:               "assistant",
+				Content:            content.String(),
+				ReasoningContent:   reasoning.String(),
+				ReasoningSignature: signature,
+				ToolCalls:          toolCalls,
 			},
 			FinishReason: finishReason,
 		}},

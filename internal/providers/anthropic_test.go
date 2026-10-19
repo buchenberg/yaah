@@ -391,7 +391,12 @@ func TestChatRequestToAnthropic_ReasoningContent(t *testing.T) {
 		Model:     "claude-3.5-sonnet",
 		MaxTokens: 1000,
 		Messages: []types.Message{
-			{Role: "assistant", ReasoningContent: "Let me think about this...", Content: "The answer is 42."},
+			{
+				Role:               "assistant",
+				ReasoningContent:   "Let me think about this...",
+				ReasoningSignature: "sig-abc123",
+				Content:            "The answer is 42.",
+			},
 		},
 	}
 
@@ -404,11 +409,36 @@ func TestChatRequestToAnthropic_ReasoningContent(t *testing.T) {
 	if blockType(blocks[0]) != "thinking" {
 		t.Errorf("expected first block type 'thinking', got %q", blockType(blocks[0]))
 	}
+	// The signature must be replayed verbatim: fabricating an empty one is
+	// what produced "the thinking mode must be passed back to the API".
+	if got := blocks[0].OfThinking.Signature; got != "sig-abc123" {
+		t.Errorf("thinking block signature = %q, want %q", got, "sig-abc123")
+	}
 	if blockThinking(blocks[0]) != "Let me think about this..." {
 		t.Errorf("expected thinking content, got %q", blockThinking(blocks[0]))
 	}
 	if blockType(blocks[1]) != "text" {
 		t.Errorf("expected second block type 'text', got %q", blockType(blocks[1]))
+	}
+}
+
+// A thinking block without its signature cannot be replayed: Anthropic rejects
+// an invalid signature, so omit the block rather than send it empty.
+func TestChatRequestToAnthropic_ThinkingWithoutSignatureIsOmitted(t *testing.T) {
+	req := types.ChatRequest{
+		Model:     "claude-3.5-sonnet",
+		MaxTokens: 1000,
+		Messages: []types.Message{
+			{Role: "assistant", ReasoningContent: "orphaned thinking", Content: "The answer is 42."},
+		},
+	}
+
+	result := lowerAnthropicRequest(req)
+
+	for _, b := range result.Messages[0].Content {
+		if blockType(b) == "thinking" {
+			t.Fatal("a thinking block with no signature must not be emitted")
+		}
 	}
 }
 

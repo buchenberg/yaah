@@ -7,6 +7,7 @@ import (
 var modelWindows = map[string]int{
 	"deepseek-v4-pro":   1048576,
 	"deepseek-v4-flash": 1048576,
+	"deepseek-flash":    1048576,
 	"deepseek-v3":       65536,
 
 	"gpt-4o":        128000,
@@ -48,6 +49,7 @@ var thinkingModels = map[string]bool{
 	"deepseek-r1":         true,
 	"deepseek-r1-0528":    true,
 	"deepseek-r1-distill": true,
+	"deepseek-flash":      true,
 	"o1":                  true,
 	"o1-mini":             true,
 	"o1-preview":          true,
