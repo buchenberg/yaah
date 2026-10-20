@@ -52,8 +52,11 @@ func TestBuildSubAgentSysPrompt_InjectsRoleDirectivesAfterBase(t *testing.T) {
 			t.Fatalf("missing %s section in prompt:\n%s", name, got)
 		}
 	}
-	if !(idxEnv < idxBase && idxBase < idxDir && idxDir < idxEsc) {
-		t.Errorf("wrong section order: env=%d base=%d directives=%d escalation=%d", idxEnv, idxBase, idxDir, idxEsc)
+	// Caching contract (yaah-o02): the byte-stable block leads — base,
+	// directives, escalation — and the volatile environment header (its
+	// working directory differs per sibling dispatch) closes the prompt.
+	if !(idxBase < idxDir && idxDir < idxEsc && idxEsc < idxEnv) {
+		t.Errorf("wrong section order: base=%d directives=%d escalation=%d env=%d", idxBase, idxDir, idxEsc, idxEnv)
 	}
 	if !strings.Contains(got, "- trust actual code over documentation\n") {
 		t.Errorf("missing first directive bullet in prompt:\n%s", got)
@@ -167,8 +170,10 @@ func TestBuildSubAgentSysPrompt_ToolGating(t *testing.T) {
 		if idxEnv < 0 || idxDirective < 0 || idxIdentity < 0 {
 			t.Fatalf("missing env(%d) directive(%d) or identity(%d) section:\n%s", idxEnv, idxDirective, idxIdentity, got)
 		}
-		if !(idxEnv < idxDirective && idxDirective < idxIdentity) {
-			t.Errorf("directive must sit early — after the env header, before the identity text: env=%d directive=%d identity=%d", idxEnv, idxDirective, idxIdentity)
+		// The no-tools directive lands before the identity text (both in
+		// the stable prefix); the env header closes the prompt (yaah-o02).
+		if !(idxDirective < idxIdentity && idxIdentity < idxEnv) {
+			t.Errorf("wrong order: directive=%d identity=%d env=%d — directive and identity lead, the header closes", idxDirective, idxIdentity, idxEnv)
 		}
 		// The OS and working-directory lines survive the shell gate.
 		if !strings.Contains(got, "OS: ") || !strings.Contains(got, "Working directory: ") {
@@ -520,5 +525,42 @@ func TestRecordSubAgentUsage(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("no yaah.subagent.usage.v1 fact recorded; facts=%d", len(slice.FactIDs()))
+	}
+}
+
+// TestBuildSubAgentSysPrompt_StablePrefixAcrossSiblings pins the caching
+// contract (yaah-o02): two sibling dispatches of the same role in different
+// worktrees share a byte-identical prompt prefix, and neither worktree path
+// leaks into it. The provider caches the longest common prefix, so this is
+// what makes fan-out token spend collapse.
+func TestBuildSubAgentSysPrompt_StablePrefixAcrossSiblings(t *testing.T) {
+	initTestRoles(t)
+	opts := taskRunnerOpts{systemPrompt: "BASE_IDENTITY_MARKER"}
+	profile := subagent.RoleProfileFor("developer")
+
+	a := buildSubAgentSysPrompt(opts, "developer", profile, false, "/wt/sibling-a", nil)
+	b := buildSubAgentSysPrompt(opts, "developer", profile, false, "/wt/sibling-b", nil)
+
+	n := 0
+	for n < len(a) && n < len(b) && a[n] == b[n] {
+		n++
+	}
+	prefix := a[:n]
+
+	// The shared prefix carries the whole stable block...
+	for _, want := range []string{"BASE_IDENTITY_MARKER", "## Escalation", "## Response contract"} {
+		if !strings.Contains(prefix, want) {
+			t.Errorf("shared prefix must contain %q:\n%s", want, prefix)
+		}
+	}
+	// ...and none of the volatile per-dispatch paths.
+	if strings.Contains(prefix, "sibling-a") || strings.Contains(prefix, "sibling-b") {
+		t.Errorf("shared prefix must not contain a worktree path:\n%s", prefix)
+	}
+
+	// Each prompt's volatile suffix advertises its own worktree.
+	if !strings.Contains(a, "Working directory: /wt/sibling-a") ||
+		!strings.Contains(b, "Working directory: /wt/sibling-b") {
+		t.Errorf("sibling prompts must advertise their own worktrees:\n--a--\n%s\n--b--\n%s", a, b)
 	}
 }

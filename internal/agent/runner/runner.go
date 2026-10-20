@@ -735,7 +735,14 @@ func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, pro
 	if len(profile.Tools) == 0 {
 		base = prompts.InjectNoToolsIdentity(base)
 	}
-	sysPrompt := prompts.EnvironmentHeader(envOS, envArch, envShell, envCwd) + "\n\n" + base
+	// Section order is a caching contract (yaah-o02): the prompt opens
+	// with the byte-stable block — identity, directives, guidance,
+	// contract, escalation, shell rules — so sibling dispatches and later
+	// turns of one dispatch share the longest possible provider
+	// prompt-cache prefix. The volatile parts close it: confinement
+	// guidance, then the environment header with its per-dispatch
+	// working directory.
+	sysPrompt := base
 
 	if ds := opts.subCfg.Roles[string(role)].Directives; len(ds) > 0 {
 		sysPrompt += "\n\n" + prompts.FormatDirectives(ds)
@@ -755,30 +762,6 @@ func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, pro
 			}
 		}
 		sysPrompt += "\n\n" + prompts.IsolatedSubAgentGuidance(dropped)
-	}
-
-	// A confined dispatch gets told the boundary before it meets it (Plan 7
-	// Phase 3): the one writable root, the redirect, and the git-write rule that
-	// the default flip makes reachable. Enforced, not merely requested — a
-	// paddock placement with no usable backend refuses at Exec, so there is no
-	// run to advise.
-	// The egress half follows the POSTURE (a dispatch refused a jail still must not
-	// reach the network from outside one); the jail half follows enforcement. The
-	// function returns "" when it has nothing to say, so the block is only added
-	// when it does.
-	if opts.workspace == nil {
-		// The posture comes from the POLICY: the confinement record carries it only
-		// when the jail was established, so reading it from conf would suppress the
-		// egress half exactly when the jail was refused — while the tools are still
-		// omitted.
-		network, broker := networkMode(opts.subNetwork), opts.subNetwork.BrokerPort
-		if g := prompts.ConfinementSubAgentGuidance(workdir, network, broker,
-			hostNetworkToolsIn(profile), conf != nil && conf.Enforced); g != "" {
-			if sysPrompt != "" {
-				sysPrompt += "\n\n"
-			}
-			sysPrompt += g
-		}
 	}
 
 	if g := subagent.RoleGuidance(role); g != "" {
@@ -824,7 +807,7 @@ func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, pro
 			// The isolated workspace's contract (D5) guarantees sh
 			// — bash may exist in the image, but only sh is promised,
 			// and the shell the workspace actually launches is what
-			// the header above already advertised. The two statements
+			// the header below already advertises. The two statements
 			// must agree, or the model flips between them.
 			shell, _ = opts.workspace.Shell()
 			otherShell = "bash or powershell — only " + shell + " is guaranteed in the container"
@@ -835,6 +818,32 @@ func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, pro
 		sysPrompt += fmt.Sprintf("There is no %s.", otherShell)
 	}
 
+	// A confined dispatch gets told the boundary before it meets it (Plan 7
+	// Phase 3): the one writable root, the redirect, and the git-write rule that
+	// the default flip makes reachable. Enforced, not merely requested — a
+	// paddock placement with no usable backend refuses at Exec, so there is no
+	// run to advise. This and the environment header below are the prompt's
+	// only per-dispatch sections; both name the assigned worktree.
+	// The egress half follows the POSTURE (a dispatch refused a jail still must not
+	// reach the network from outside one); the jail half follows enforcement. The
+	// function returns "" when it has nothing to say, so the block is only added
+	// when it does.
+	if opts.workspace == nil {
+		// The posture comes from the POLICY: the confinement record carries it only
+		// when the jail was established, so reading it from conf would suppress the
+		// egress half exactly when the jail was refused — while the tools are still
+		// omitted.
+		network, broker := networkMode(opts.subNetwork), opts.subNetwork.BrokerPort
+		if g := prompts.ConfinementSubAgentGuidance(workdir, network, broker,
+			hostNetworkToolsIn(profile), conf != nil && conf.Enforced); g != "" {
+			if sysPrompt != "" {
+				sysPrompt += "\n\n"
+			}
+			sysPrompt += g
+		}
+	}
+
+	sysPrompt += "\n\n" + prompts.EnvironmentHeader(envOS, envArch, envShell, envCwd)
 	return sysPrompt
 }
 

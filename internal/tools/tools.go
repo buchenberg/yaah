@@ -486,10 +486,15 @@ func (r *Registry) Execute(ctx context.Context, name, args string) (string, erro
 }
 
 // List returns all registered tool names.
+// List returns every registered tool name in sorted order. The order is
+// part of the wire contract: the tool-def array rides the request prefix
+// that providers cache, so map-iteration randomness here would break
+// sibling dispatches' prompt-cache hits (yaah-o02).
 func (r *Registry) List() []string {
 	names := make([]string, 0, len(r.tools))
 	for name := range r.tools {
 		names = append(names, name)
 	}
+	sort.Strings(names)
 	return names
 }
