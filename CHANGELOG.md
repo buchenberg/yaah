@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.88.2](https://github.com/buchenberg/yaah/compare/v0.88.1...v0.88.2) (2026-10-20)
+
+
+### Documentation
+
+* **bench:** record the 2026-10-20 full coding-suite run ([#494](https://github.com/buchenberg/yaah/issues/494)) ([d40b0bd](https://github.com/buchenberg/yaah/commit/d40b0bd993ce841539068b305cf61d20b938f0d9))
+
 ## [0.88.1](https://github.com/buchenberg/yaah/compare/v0.88.0...v0.88.1) (2026-10-20)
 
 
