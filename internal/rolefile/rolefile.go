@@ -7,7 +7,6 @@
 package rolefile
 
 import (
-	"bytes"
 	"fmt"
 	"reflect"
 	"strings"
@@ -63,14 +62,17 @@ type Frontmatter struct {
 	JSONMode      bool        `yaml:"json_mode"`
 	Timeout       int         `yaml:"timeout"` // seconds; 0 = no timeout
 
-	// extra holds frontmatter keys this struct does not model. They are
-	// preserved verbatim through Parse→Marshal so editing a role does not
-	// silently drop provider/project extensions.
+	// extra holds frontmatter keys this struct does not model, in source
+	// order. They are preserved through Parse→Marshal so editing a role does
+	// not silently drop provider/project extensions.
 	extra []extraField
+	// order records every top-level key in source order, so rewrites do not
+	// move extensions relative to modeled fields.
+	order []string
 }
 
 type extraField struct {
-	key   string
+	key   yaml.Node
 	value yaml.Node
 }
 
@@ -87,9 +89,26 @@ var knownFrontmatterKeys = func() map[string]bool {
 	return keys
 }()
 
-// UnmarshalYAML decodes the modeled fields and stashes every other key.
-// It deliberately decodes through an alias type so this method is not
-// re-entered for the known fields.
+// expandAliases inlines alias targets and clears anchors so preserved values
+// are self-contained. The modeled fields are re-encoded from the struct, so
+// anchors declared there would otherwise dangle.
+func expandAliases(n *yaml.Node) {
+	if n == nil {
+		return
+	}
+	if n.Kind == yaml.AliasNode && n.Alias != nil {
+		*n = *n.Alias
+	}
+	n.Anchor = ""
+	for _, child := range n.Content {
+		expandAliases(child)
+	}
+}
+
+// UnmarshalYAML decodes the modeled fields, records the source key order, and
+// stashes every other key with its original key/value nodes. It deliberately
+// decodes through an alias type so this method is not re-entered for the
+// known fields.
 func (f *Frontmatter) UnmarshalYAML(value *yaml.Node) error {
 	type plain Frontmatter
 	var p plain
@@ -100,12 +119,23 @@ func (f *Frontmatter) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind != yaml.MappingNode {
 		return nil
 	}
+	seen := make(map[string]bool)
 	for i := 0; i+1 < len(value.Content); i += 2 {
-		key := value.Content[i].Value
-		if knownFrontmatterKeys[key] {
+		keyNode := value.Content[i]
+		name := keyNode.Value
+		if seen[name] {
+			// Duplicate keys are invalid YAML; keep the first so a rewrite
+			// does not emit an invalid mapping.
 			continue
 		}
-		f.extra = append(f.extra, extraField{key: key, value: *value.Content[i+1]})
+		seen[name] = true
+		f.order = append(f.order, name)
+		if knownFrontmatterKeys[name] {
+			continue
+		}
+		val := *value.Content[i+1]
+		expandAliases(&val)
+		f.extra = append(f.extra, extraField{key: *keyNode, value: val})
 	}
 	return nil
 }
@@ -142,28 +172,67 @@ func Parse(content string) (Frontmatter, string, error) {
 // Marshal serializes frontmatter plus body back into the role file
 // format (--- fences around YAML, blank line before the body). An empty
 // body produces a frontmatter-only file.
+// Marshal serializes frontmatter plus body back into the role file
+// format (--- fences around YAML, blank line before the body). An empty
+// body produces a frontmatter-only file.
 func Marshal(fm Frontmatter, body string) (string, error) {
 	type plain Frontmatter
-	fmBytes, err := yaml.Marshal((*plain)(&fm))
+	knownBytes, err := yaml.Marshal((*plain)(&fm))
+	if err != nil {
+		return "", err
+	}
+	var knownDoc yaml.Node
+	if err := yaml.Unmarshal(knownBytes, &knownDoc); err != nil {
+		return "", err
+	}
+	if len(knownDoc.Content) == 0 || knownDoc.Content[0].Kind != yaml.MappingNode {
+		return "", fmt.Errorf("marshal role frontmatter: unexpected YAML shape")
+	}
+	knownMap := knownDoc.Content[0]
+	knownValues := make(map[string]*yaml.Node, len(knownMap.Content)/2)
+	for i := 0; i+1 < len(knownMap.Content); i += 2 {
+		knownValues[knownMap.Content[i].Value] = knownMap.Content[i+1]
+	}
+	extraByKey := make(map[string]extraField, len(fm.extra))
+	for _, extra := range fm.extra {
+		extraByKey[extra.key.Value] = extra
+	}
+
+	out := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	used := make(map[string]bool)
+	appendKey := func(name string) {
+		if used[name] {
+			return
+		}
+		if value, ok := knownValues[name]; ok {
+			out.Content = append(out.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: name},
+				value)
+			used[name] = true
+			return
+		}
+		if extra, ok := extraByKey[name]; ok {
+			key := extra.key
+			value := extra.value
+			out.Content = append(out.Content, &key, &value)
+			used[name] = true
+		}
+	}
+	for _, name := range fm.order {
+		appendKey(name)
+	}
+	for i := 0; i+1 < len(knownMap.Content); i += 2 {
+		appendKey(knownMap.Content[i].Value)
+	}
+	for _, extra := range fm.extra {
+		appendKey(extra.key.Value)
+	}
+
+	fmBytes, err := yaml.Marshal(out)
 	if err != nil {
 		return "", err
 	}
 	fmText := strings.TrimRight(string(fmBytes), "\n")
-	for _, extra := range fm.extra {
-		if knownFrontmatterKeys[extra.key] {
-			continue
-		}
-		var buf bytes.Buffer
-		enc := yaml.NewEncoder(&buf)
-		enc.SetIndent(2)
-		if err := enc.Encode(map[string]yaml.Node{extra.key: extra.value}); err != nil {
-			return "", err
-		}
-		if err := enc.Close(); err != nil {
-			return "", err
-		}
-		fmText += "\n" + strings.TrimRight(buf.String(), "\n")
-	}
 	if strings.TrimSpace(body) == "" {
 		return fmt.Sprintf("---\n%s\n---\n", fmText), nil
 	}
