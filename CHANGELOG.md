@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.87.2](https://github.com/buchenberg/yaah/compare/v0.87.1...v0.87.2) (2026-10-20)
+
+
+### Documentation
+
+* **prompts:** state that shell commands already start in the cwd ([#430](https://github.com/buchenberg/yaah/issues/430)) ([9acd085](https://github.com/buchenberg/yaah/commit/9acd085703ade2f50d2ce615d7067fad3da0336b))
+
 ## [0.87.1](https://github.com/buchenberg/yaah/compare/v0.87.0...v0.87.1) (2026-10-20)
 
 
