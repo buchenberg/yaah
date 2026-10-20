@@ -33,16 +33,25 @@ def _expected_reports():
 def test_end_state():
     expected = _expected_reports()
     assert expected, "fixture produced no expected reports"
+    present = {p.name for p in REPORTS.glob("*.md")} if REPORTS.is_dir() else set()
+    assert present == set(expected), (
+        f"reports directory mismatch: extra={sorted(present - set(expected))} "
+        f"missing={sorted(set(expected) - present)}"
+    )
     for name, want in expected.items():
         got = (REPORTS / name)
-        assert got.is_file(), f"missing report: {got}"
         # Comma spacing in "functions:" is presentation (the fanout task
-        # pinned this same normalization); compare token-wise.
+        # pinned this same normalization); labels are verified, values are
+        # compared token-wise.
         got_lines = [line.strip() for line in got.read_text().strip().splitlines()]
         want_lines = want.splitlines()
-        if len(got_lines) != 3 or got_lines[0] != want_lines[0] or got_lines[1] != want_lines[1]:
+        if len(got_lines) != 3 or got_lines[:2] != want_lines[:2]:
             raise AssertionError(
                 f"{name} content mismatch:\ngot:\n{got.read_text()}\nwant:\n{want}"
+            )
+        if not got_lines[2].startswith("functions:"):
+            raise AssertionError(
+                f"{name} third line must start with 'functions:', got {got_lines[2]!r}"
             )
         got_funcs = [f.strip() for f in got_lines[2].split(":", 1)[1].split(",") if f.strip()]
         want_funcs = [f.strip() for f in want_lines[2].split(":", 1)[1].split(",") if f.strip()]
@@ -61,5 +70,6 @@ def test_workspace_integrity():
 def test_orchestration_trace():
     oa.assert_delegate_count(minimum=2)
     oa.assert_parallel_dispatch(minimum=2)
+    oa.assert_subagent_role("reviewer")
     oa.assert_sub_token_share()
     oa.assert_no_proposals()

@@ -254,6 +254,20 @@ def sealed_output_count() -> int:
     return rows[0][0] if rows else 0
 
 
+def assert_any_settled_output() -> None:
+    """At least one settlement recorded an output id.
+
+    Positive exercise for the settled-output schema family: proposal-lane
+    tasks pair this with assert_settle_verbs so a schema-name drift fails
+    loudly instead of silently satisfying assert_no_proposals' zero-count.
+    """
+    ids = settled_output_ids()
+    assert ids, (
+        "no settled output ids recorded; the settlement records are missing "
+        "their output_id payload"
+    )
+
+
 def assert_no_proposals() -> None:
     """The run produced no sealed outputs and settled nothing (yaah-7yf).
 
