@@ -107,7 +107,9 @@ func (m *Manager) Start(command, description string) (*Info, error) {
 	}
 
 	if err := cmd.Start(); err != nil {
+		info.mu.Lock()
 		info.status = "error"
+		info.mu.Unlock()
 		info.appendLog(fmt.Sprintf("start error: %v\n", err))
 		return info, err
 	}
