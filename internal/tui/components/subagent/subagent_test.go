@@ -4,13 +4,10 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/buchenberg/yaah/internal/tui/colors"
 )
 
 func TestNew_ActiveState(t *testing.T) {
-	th := colors.NewDarkTheme()
-	b := New("sa-1", "developer", "fix the bug", &th)
+	b := New("sa-1", "developer", "fix the bug")
 	if b.ID() != "sa-1" {
 		t.Errorf("ID = %q, want sa-1", b.ID())
 	}
@@ -29,8 +26,7 @@ func TestNew_ActiveState(t *testing.T) {
 }
 
 func TestNew_DisplayName(t *testing.T) {
-	th := colors.NewDarkTheme()
-	b := New("sa-1", "developer", "task", &th)
+	b := New("sa-1", "developer", "task")
 	name := b.DisplayName()
 	if !strings.Contains(name, "developer") && !strings.Contains(name, "Developer") {
 		t.Errorf("DisplayName should contain role, got %q", name)
@@ -38,8 +34,7 @@ func TestNew_DisplayName(t *testing.T) {
 }
 
 func TestComplete(t *testing.T) {
-	th := colors.NewDarkTheme()
-	b := New("sa-1", "developer", "task", &th)
+	b := New("sa-1", "developer", "task")
 	b.Complete()
 	if b.S() != Done {
 		t.Errorf("should be Done after Complete, got %v", b.S())
@@ -47,8 +42,7 @@ func TestComplete(t *testing.T) {
 }
 
 func TestFail(t *testing.T) {
-	th := colors.NewDarkTheme()
-	b := New("sa-1", "developer", "task", &th)
+	b := New("sa-1", "developer", "task")
 	b.Fail()
 	if b.S() != Error {
 		t.Errorf("should be Error after Fail, got %v", b.S())
@@ -56,8 +50,7 @@ func TestFail(t *testing.T) {
 }
 
 func TestAdvanceSpinner_Active(t *testing.T) {
-	th := colors.NewDarkTheme()
-	b := New("sa-1", "developer", "task", &th)
+	b := New("sa-1", "developer", "task")
 	initial := b.spinnerFrame
 	b.AdvanceSpinner()
 	if b.spinnerFrame == initial {
@@ -66,8 +59,7 @@ func TestAdvanceSpinner_Active(t *testing.T) {
 }
 
 func TestAdvanceSpinner_Done(t *testing.T) {
-	th := colors.NewDarkTheme()
-	b := New("sa-1", "developer", "task", &th)
+	b := New("sa-1", "developer", "task")
 	b.Complete()
 	initial := b.spinnerFrame
 	b.AdvanceSpinner()
@@ -77,8 +69,7 @@ func TestAdvanceSpinner_Done(t *testing.T) {
 }
 
 func TestSpinnerFrame(t *testing.T) {
-	th := colors.NewDarkTheme()
-	b := New("sa-1", "developer", "task", &th)
+	b := New("sa-1", "developer", "task")
 	if got := b.SpinnerFrame(); got != spinnerFrames[0] {
 		t.Errorf("SpinnerFrame = %q, want %q", got, spinnerFrames[0])
 	}
@@ -89,8 +80,7 @@ func TestSpinnerFrame(t *testing.T) {
 }
 
 func TestElapsed(t *testing.T) {
-	th := colors.NewDarkTheme()
-	b := New("sa-1", "developer", "task", &th)
+	b := New("sa-1", "developer", "task")
 	b.startTime = time.Now().Add(-1 * time.Second)
 	elapsed := b.Elapsed()
 	if elapsed < 900*time.Millisecond || elapsed > 1100*time.Millisecond {

@@ -20,7 +20,7 @@ func TestFormat_NoRunning(t *testing.T) {
 	th := colors.NewDarkTheme()
 	blocks := []*subagent.Block{
 		func() *subagent.Block {
-			b := subagent.New("sa-1", "developer", "task", &th)
+			b := subagent.New("sa-1", "developer", "task")
 			b.Complete()
 			return b
 		}(),
@@ -33,7 +33,7 @@ func TestFormat_NoRunning(t *testing.T) {
 
 func TestFormat_OneRunning(t *testing.T) {
 	th := colors.NewDarkTheme()
-	b := subagent.New("sa-1", "developer", "fix the bug", &th)
+	b := subagent.New("sa-1", "developer", "fix the bug")
 	out := Format([]*subagent.Block{b}, &th)
 	if !strings.Contains(out, "fix the bug") {
 		t.Errorf("should contain task, got %q", out)
@@ -45,8 +45,8 @@ func TestFormat_OneRunning(t *testing.T) {
 
 func TestFormat_MultipleRunning(t *testing.T) {
 	th := colors.NewDarkTheme()
-	b1 := subagent.New("sa-1", "developer", "fix bug A", &th)
-	b2 := subagent.New("sa-2", "tester", "test feature", &th)
+	b1 := subagent.New("sa-1", "developer", "fix bug A")
+	b2 := subagent.New("sa-2", "tester", "test feature")
 	out := Format([]*subagent.Block{b1, b2}, &th)
 	if !strings.Contains(out, "fix bug A") {
 		t.Error("should contain first task")
@@ -58,10 +58,10 @@ func TestFormat_MultipleRunning(t *testing.T) {
 
 func TestFormat_MixedStates(t *testing.T) {
 	th := colors.NewDarkTheme()
-	b1 := subagent.New("sa-1", "developer", "running task", &th)
-	b2 := subagent.New("sa-2", "tester", "done task", &th)
+	b1 := subagent.New("sa-1", "developer", "running task")
+	b2 := subagent.New("sa-2", "tester", "done task")
 	b2.Complete()
-	b3 := subagent.New("sa-3", "checker", "error task", &th)
+	b3 := subagent.New("sa-3", "checker", "error task")
 	b3.Fail()
 	out := Format([]*subagent.Block{b1, b2, b3}, &th)
 	if !strings.Contains(out, "running task") {
@@ -77,7 +77,7 @@ func TestFormat_MixedStates(t *testing.T) {
 
 func TestFormat_ContainsDisplayName(t *testing.T) {
 	th := colors.NewDarkTheme()
-	b := subagent.New("sa-1", "developer", "fix bug", &th)
+	b := subagent.New("sa-1", "developer", "fix bug")
 	out := Format([]*subagent.Block{b}, &th)
 	name := b.DisplayName()
 	if !strings.Contains(out, name) {
@@ -87,7 +87,7 @@ func TestFormat_ContainsDisplayName(t *testing.T) {
 
 func TestFormat_AdvancesWithSpinner(t *testing.T) {
 	th := colors.NewDarkTheme()
-	b := subagent.New("sa-1", "developer", "fix bug", &th)
+	b := subagent.New("sa-1", "developer", "fix bug")
 	first := Format([]*subagent.Block{b}, &th)
 	b.AdvanceSpinner()
 	second := Format([]*subagent.Block{b}, &th)

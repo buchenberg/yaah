@@ -61,7 +61,7 @@ func (t *App) AddToolEnd(id, summary, result string) {
 // Sub-agents are not part of the conversation log; the pane is their only
 // display surface.
 func (t *App) AddSubAgentStart(id, role, task string) {
-	sb := subagent.New(id, role, task, t.Theme)
+	sb := subagent.New(id, role, task)
 	t.subAgents = append(t.subAgents, sb)
 	t.subAgentsBusy.Store(true)
 	t.renderBackgroundJobsPane()
