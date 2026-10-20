@@ -76,7 +76,7 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 
 /* todo panel */
 #todos-wrap{border-bottom:1px solid var(--pico-muted-border-color);font-size:.8rem;font-family:var(--pico-font-family-monospace,monospace)}
-#todos-wrap .todos-head{display:flex;align-items:center;gap:.5rem;padding:.35rem 1rem;cursor:pointer;user-select:none;color:var(--pico-muted-color)}
+#todos-wrap .todos-head{display:flex;align-items:center;gap:.5rem;padding:.35rem 1rem;cursor:pointer;user-select:none;color:var(--pico-muted-color);background:transparent;border:0;box-shadow:none;font-weight:inherit}
 #todos-wrap .todos-head:hover{background:var(--pico-card-background-color)}
 #todos-wrap .todos-head .arrow{display:inline-block;transition:transform .2s}
 #todos-wrap .todos-head .arrow.open{transform:rotate(90deg)}
@@ -92,7 +92,7 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 .todo-status.st-in_progress{color:var(--wui-info)}
 .todo-status.st-cancelled{color:var(--wui-err-text)}
 .todo-time{flex-shrink:0;font-size:.75em;color:var(--pico-muted-color)}
-.tool{align-self:flex-start;max-width:90%;font-size:.8rem;margin:.15rem 0;cursor:pointer;user-select:none}
+.tool{align-self:flex-start;max-width:90%;font-size:.8rem;margin:.15rem 0;cursor:pointer;user-select:none;background:transparent;border:0;box-shadow:none;font-weight:inherit;color:inherit;padding:0}
 .tool-head{display:flex;align-items:baseline;gap:.35rem;padding:.25rem 0;color:var(--pico-muted-color);font-family:var(--pico-font-family-monospace,monospace)}
 .tool-icon{flex-shrink:0;font-size:.85em}
 .tool-name{font-weight:600;color:var(--pico-color)}
@@ -151,8 +151,9 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 .msg.search-hit{outline:2px solid var(--pico-primary);outline-offset:2px;border-radius:4px}
 
 /* reasoning toggle */
-.reason-toggle{cursor:pointer;user-select:none;color:var(--pico-muted-color);font-size:.8rem;padding:.25rem 0}
+.reason-toggle{cursor:pointer;user-select:none;color:var(--pico-muted-color);font-size:.8rem;padding:.25rem 0;background:transparent;border:0;box-shadow:none;font-weight:inherit}
 .reason-toggle:hover{color:var(--pico-color)}
+.todos-head:focus-visible,.tool:focus-visible,.reason-toggle:focus-visible{outline:2px solid var(--pico-primary);outline-offset:2px;border-radius:6px}
 
 /* thinking bounce */
 .think{align-self:flex-start;padding:.6rem 1rem;border-radius:12px;border-bottom-left-radius:4px;font-size:.85rem;max-width:80%;background:var(--pico-card-background-color);color:var(--pico-muted-color)}
@@ -185,14 +186,14 @@ dialog article{max-width:480px;min-width:320px}
       <div class="pal-drop" x-show="palOpen" @click.outside="palClose()">
         <div class="pal-input-wrap">
           <span class="pal-prompt">›</span>
-          <input x-ref="palInput" x-model="palQuery" @input="palIdx = palFirstEnabled()"
+          <input x-ref="palInput" x-model="palQuery" @input="palIdx = palFirstEnabled()" aria-haspopup="listbox" aria-controls="pal-listbox" :aria-expanded="palOpen" :aria-activedescendant="'pal-opt-' + palIdx"
             placeholder="Type a command…" autocomplete="off" spellcheck="false">
         </div>
-        <div class="pal-list" x-ref="palList" role="listbox" aria-label="Commands">
+        <div class="pal-list" x-ref="palList" id="pal-listbox" role="listbox" aria-label="Commands">
           <template x-for="(it, i) in palItems()" :key="it.id">
             <div role="none">
               <div class="pal-group" x-show="it.first" x-text="palGroupLabel(it.group)"></div>
-              <div class="pal-item" role="option" :aria-selected="i === palIdx"
+              <div class="pal-item" role="option" :id="'pal-opt-' + i" :aria-selected="i === palIdx"
                 :class="{'active': i === palIdx, 'disabled': it.disabled, 'current': it.current}"
                 @click="palRun(i)" @mouseenter="!it.disabled && (palIdx = i)">
                 <span class="pal-icon" x-text="it.current ? '✓' : it.icon"></span>
@@ -271,8 +272,8 @@ dialog article{max-width:480px;min-width:320px}
   <button class="scroll-btn" x-show="showScrollBtn" @click="scrollToBottom()">↓ Scroll to bottom</button>
   <div class="think" x-show="live && !stream && think">
     <span class="bounce" aria-hidden="true"><span></span><span></span><span></span></span>
-    <div class="reason-toggle" x-show="!reasonExpanded" x-ref="reasonToggle" role="button" tabindex="0" @click="reasonExpanded = true; $nextTick(() => $refs.reason && $refs.reason.focus())" @keydown.enter="reasonExpanded = true; $nextTick(() => $refs.reason && $refs.reason.focus())" @keydown.space.prevent="reasonExpanded = true; $nextTick(() => $refs.reason && $refs.reason.focus())">▶ Reasoning…</div>
-    <div class="reason" x-ref="reason" x-text="think" x-show="reasonExpanded" role="button" tabindex="0" @click="reasonExpanded = false; $nextTick(() => $refs.reasonToggle && $refs.reasonToggle.focus())" @keydown.enter="reasonExpanded = false; $nextTick(() => $refs.reasonToggle && $refs.reasonToggle.focus())" @keydown.space.prevent="reasonExpanded = false; $nextTick(() => $refs.reasonToggle && $refs.reasonToggle.focus())"></div>
+    <div class="reason-toggle" role="button" tabindex="0" :aria-expanded="reasonExpanded" @click="reasonExpanded = !reasonExpanded" @keydown.enter="reasonExpanded = !reasonExpanded" @keydown.space.prevent="reasonExpanded = !reasonExpanded"><span x-text="reasonExpanded ? '▼' : '▶'"></span> Reasoning…</div>
+    <div class="reason" x-show="reasonExpanded" x-text="think"></div>
   </div>
   <div class="msg asst" x-show="stream" x-html="md(stream)" aria-live="off"></div>
 </div>
@@ -289,9 +290,9 @@ dialog article{max-width:480px;min-width:320px}
         </div>
       </template>
       <template x-if="!cmdSteerMode">
-        <div role="listbox" aria-label="Commands">
+        <div role="listbox" id="cmd-listbox" aria-label="Commands">
           <template x-for="(c, i) in cmdFiltered()" :key="c.id">
-            <div class="cmd-item" role="option" :aria-selected="i === cmdIdx" :class="{'active': i === cmdIdx}"
+            <div class="cmd-item" role="option" :id="'cmd-opt-' + i" :aria-selected="i === cmdIdx" :class="{'active': i === cmdIdx}"
               @click="cmdSelect(i)" @mouseenter="cmdIdx = i">
               <span x-text="c.label"></span>
               <span class="cmd-desc" x-text="c.desc"></span>
@@ -300,7 +301,7 @@ dialog article{max-width:480px;min-width:320px}
         </div>
       </template>
     </div>
-    <textarea id="prompt" rows="1" placeholder="Ask yaah…" x-ref="el"
+    <textarea id="prompt" rows="1" placeholder="Ask yaah…" x-ref="el" aria-haspopup="listbox" aria-controls="cmd-listbox" :aria-expanded="cmdOpen" :aria-activedescendant="cmdOpen ? 'cmd-opt-' + cmdIdx : null"
       :disabled="(live && !cmdOpen) || cmdSteerMode"
       @keydown.enter="!$event.shiftKey && ($event.preventDefault(), cmdOpen ? cmdRun() : send())"
       @keydown.escape="cmdOpen && ($event.preventDefault(), cmdDismiss())"
