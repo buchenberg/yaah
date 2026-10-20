@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.86.1](https://github.com/buchenberg/yaah/compare/v0.86.0...v0.86.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* **web:** improve accessibility, markdown spacing, and theme consistency ([#407](https://github.com/buchenberg/yaah/issues/407)) ([41e881d](https://github.com/buchenberg/yaah/commit/41e881d6e0740586a3a173c63e2ef4a3bf9a2b65))
+
 ## [0.86.0](https://github.com/buchenberg/yaah/compare/v0.85.2...v0.86.0) (2026-10-20)
 
 
