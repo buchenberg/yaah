@@ -173,6 +173,18 @@ type agentSession struct {
 	approveFn func(name, args string) bool
 	mu        sync.RWMutex
 
+	// pendingEvents buffers session-scoped events for views whose
+	// HandleEvent cannot safely run outside a prompt (the REPL and ACP
+	// connection writers). Each event keeps the view it was produced for, so
+	// an ACP session switch cannot replay another session's completion into
+	// the new connection. Bounded so a view that never runs again cannot
+	// retain results forever.
+	pendingEvents []pendingSessionEvent
+	// evictedStarts records sub-agent IDs whose buffered start was dropped by
+	// the cap; their later end is dropped too instead of rendering an
+	// unmatched completion.
+	evictedStarts map[string]bool
+
 	stdinMu sync.Mutex // serialises stdin reads for approve/prompt fallbacks
 
 	steerCh    chan string
@@ -439,16 +451,105 @@ func (s *agentSession) SetView(v agent.View) {
 	s.view = v
 }
 
-// dispatchEvent delivers a session-scoped event to the current view. It is
-// used for out-of-band events (background sub-agents finishing between turns)
-// where no loop broker is live. HandleEvent implementations are expected to
-// queue their own UI operations, so calling from the job goroutine is safe.
+// maxPendingSessionEvents bounds the between-run event buffer. A view that
+// never starts another run (headless serve) must not retain result strings
+// indefinitely.
+const maxPendingSessionEvents = 64
+
+// pendingSessionEvent pairs an event with the view that was current when it
+// arrived. Unsafe views change between ACP prompts, so delivery must not use
+// whatever view happens to be current at drain time.
+type pendingSessionEvent struct {
+	view agent.View
+	evt  agent.Event
+}
+
+// dispatchEvent delivers a session-scoped event to the current view. Only
+// views that marshal HandleEvent onto their own UI loop (or otherwise guard
+// their output) accept events between runs; the rest are buffered until the
+// next run's view forwarder drains them, so a background completion cannot
+// interleave with the REPL prompt or an ACP connection write. Nil and Noop
+// views drop the event.
 func (s *agentSession) dispatchEvent(evt agent.Event) {
-	s.mu.RLock()
+	s.mu.Lock()
 	v := s.view
-	s.mu.RUnlock()
-	if v != nil {
-		v.HandleEvent(evt)
+	if v == nil || isNoopView(v) {
+		s.mu.Unlock()
+		return
+	}
+	safe := false
+	if sink, ok := v.(interface{ AcceptsEventsBetweenRuns() bool }); ok {
+		safe = sink.AcceptsEventsBetweenRuns()
+	}
+	if !safe {
+		if len(s.pendingEvents) >= maxPendingSessionEvents {
+			s.evictOldestPendingLocked()
+		}
+		if end, ok := evt.(*agent.SubAgentEndEvent); ok && s.evictedStarts[end.SubAgentID] {
+			delete(s.evictedStarts, end.SubAgentID)
+			s.mu.Unlock()
+			return
+		}
+		s.pendingEvents = append(s.pendingEvents, pendingSessionEvent{view: v, evt: evt})
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+	v.HandleEvent(evt)
+}
+
+// evictOldestPendingLocked drops the oldest buffered event. When that event
+// is a sub-agent start, its matching end is dropped too, so the cap cannot
+// leave a completion without its start. Caller holds s.mu.
+func (s *agentSession) evictOldestPendingLocked() {
+	if len(s.pendingEvents) == 0 {
+		return
+	}
+	first := s.pendingEvents[0]
+	if start, ok := first.evt.(*agent.SubAgentStartEvent); ok {
+		paired := false
+		for i := 1; i < len(s.pendingEvents); i++ {
+			end, ok := s.pendingEvents[i].evt.(*agent.SubAgentEndEvent)
+			if ok && end.SubAgentID == start.SubAgentID && s.pendingEvents[i].view == first.view {
+				s.pendingEvents = append(s.pendingEvents[:i], s.pendingEvents[i+1:]...)
+				paired = true
+				break
+			}
+		}
+		if !paired {
+			if s.evictedStarts == nil {
+				s.evictedStarts = make(map[string]bool)
+			}
+			s.evictedStarts[start.SubAgentID] = true
+		}
+	}
+	s.pendingEvents = s.pendingEvents[1:]
+}
+
+// isNoopView reports whether v discards events, so buffering them for a
+// future run would only waste memory.
+func isNoopView(v agent.View) bool {
+	switch v.(type) {
+	case agent.NoopView, *agent.NoopView:
+		return true
+	default:
+		return false
+	}
+}
+
+// deliverPendingEvents replays buffered events to the view that produced
+// them. It runs on the run's BrokerView forwarder goroutine, before any live
+// broker event, so the view still sees events from exactly one goroutine and
+// start/end order is preserved.
+func (s *agentSession) deliverPendingEvents() {
+	s.mu.Lock()
+	pending := s.pendingEvents
+	s.pendingEvents = nil
+	s.mu.Unlock()
+	for _, p := range pending {
+		if p.view != nil {
+			p.view.HandleEvent(p.evt)
+		}
 	}
 }
 

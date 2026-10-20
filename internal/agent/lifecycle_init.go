@@ -155,7 +155,7 @@ func (l *Loop) applyDefaults() {
 	// instead of silently dropping events on later Runs (finding A4).
 	if l.View != nil && (l.broker == nil || l.brokerClosed) {
 		l.broker = pubsub.NewBroker[Event]()
-		l.brokerView = NewBrokerView(l.broker, l.View)
+		l.brokerView = NewBrokerViewWithSync(l.broker, l.View, l.BeforeViewEvents)
 		l.brokerClosed = false
 	}
 	if l.LLM == nil {

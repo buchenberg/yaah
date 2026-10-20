@@ -55,6 +55,31 @@ func TestBroker_PublishMustDeliver(t *testing.T) {
 	b.Unsubscribe("t")
 }
 
+func TestBroker_TryPublishMustDeliverReportsUnavailable(t *testing.T) {
+	b := NewBroker[int]()
+	if b.TryPublishMustDeliver(1) {
+		t.Fatal("empty broker should report false so callers can fall back")
+	}
+
+	ch := b.Subscribe("t", 1)
+	if !b.TryPublishMustDeliver(2) {
+		t.Fatal("open broker with a subscriber should deliver")
+	}
+	select {
+	case got := <-ch:
+		if got != 2 {
+			t.Errorf("event = %d, want 2", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("event not delivered")
+	}
+
+	b.Close()
+	if b.TryPublishMustDeliver(3) {
+		t.Fatal("closed broker should report false")
+	}
+}
+
 func TestBroker_PublishMustDeliverTimeout(t *testing.T) {
 	b := NewBroker[int]()
 	b.mustDeliverTimeout = 10 * time.Millisecond

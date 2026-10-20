@@ -37,6 +37,9 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 		OtelEnabled:  &otelEnabled,
 		OtelVerbose:  s.cfg.Observability.Otel.Verbose,
 	})
+	// Replay events buffered while no broker was live on this run's view
+	// forwarder, before it starts delivering live broker events.
+	loop.BeforeViewEvents = s.deliverPendingEvents
 
 	if appr != nil {
 		loop.ApproveFn = appr

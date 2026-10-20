@@ -40,6 +40,38 @@ func TestNoopView(t *testing.T) {
 	nv.HandleEvent(&SubAgentEndEvent{Role: "dev", Model: "gpt-4", Prompt: "fix it", Duration: 2 * time.Second})
 }
 
+func TestBrokerView_SyncRunsBeforeEvents(t *testing.T) {
+	broker := pubsub.NewBroker[Event]()
+	rv := &recordingView{}
+	synced := make(chan struct{})
+	bv := NewBrokerViewWithSync(broker, rv, func() {
+		rv.HandleEvent(&FlushEvent{Content: "buffered"})
+		close(synced)
+	})
+	defer bv.Close()
+
+	broker.PublishMustDeliver(&TokenDeltaEvent{Text: "live"})
+	<-synced
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		events := rv.eventsOfType()
+		if len(events) >= 2 {
+			if _, ok := events[0].(*FlushEvent); !ok {
+				t.Fatalf("first event = %T, want the sync callback's flush first", events[0])
+			}
+			if _, ok := events[1].(*TokenDeltaEvent); !ok {
+				t.Fatalf("second event = %T, want live broker event", events[1])
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("events = %d, want 2", len(events))
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestBrokerView_ForwardsEvents(t *testing.T) {
 	broker := pubsub.NewBroker[Event]()
 	rv := &recordingView{}

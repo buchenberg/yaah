@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent/subagent"
-	"github.com/buchenberg/yaah/internal/tui/colors"
 )
 
 // Block is the live state of one sub-agent row in the dedicated Subagents
@@ -19,7 +18,6 @@ type Block struct {
 	state        State
 	startTime    time.Time
 	spinnerFrame int
-	theme        *colors.Theme
 }
 
 type State int
@@ -30,7 +28,7 @@ const (
 	Error
 )
 
-func New(id, role, task string, th *colors.Theme) *Block {
+func New(id, role, task string) *Block {
 	name := subagent.RoleDisplayName(subagent.SubAgentRole(role))
 	label := name
 	if name != role {
@@ -43,7 +41,6 @@ func New(id, role, task string, th *colors.Theme) *Block {
 		task:        task,
 		state:       Active,
 		startTime:   time.Now(),
-		theme:       th,
 	}
 }
 

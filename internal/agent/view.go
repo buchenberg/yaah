@@ -33,17 +33,27 @@ type BrokerView struct {
 	broker *pubsub.Broker[Event]
 	sub    <-chan Event
 	done   chan struct{}
+	sync   func()
 }
 
 // NewBrokerView creates a BrokerView, subscribes to the broker, and
 // starts a forwarder goroutine that delivers events to target.HandleEvent.
 // Call Close() to stop forwarding and release resources.
 func NewBrokerView(broker *pubsub.Broker[Event], target View) *BrokerView {
+	return NewBrokerViewWithSync(broker, target, nil)
+}
+
+// NewBrokerViewWithSync is NewBrokerView with a sync callback that runs on
+// the forwarder goroutine before the first broker event is delivered. A
+// session uses it to replay events buffered before this run's broker existed,
+// preserving their order relative to live broker events.
+func NewBrokerViewWithSync(broker *pubsub.Broker[Event], target View, syncFn func()) *BrokerView {
 	sub := broker.Subscribe("view", 4096)
 	bv := &BrokerView{
 		broker: broker,
 		sub:    sub,
 		done:   make(chan struct{}),
+		sync:   syncFn,
 	}
 	go bv.forward(target)
 	return bv
@@ -54,6 +64,9 @@ func NewBrokerView(broker *pubsub.Broker[Event], target View) *BrokerView {
 // (which happens when the broker is closed).
 func (bv *BrokerView) forward(target View) {
 	defer close(bv.done)
+	if bv.sync != nil {
+		bv.sync()
+	}
 	for evt := range bv.sub {
 		target.HandleEvent(evt)
 	}

@@ -68,6 +68,13 @@ type Loop struct {
 	// pubsub.Broker and BrokerView adapter; callers should NOT set Broker.
 	View View
 
+	// BeforeViewEvents, when set, runs on the BrokerView forwarder goroutine
+	// immediately before it starts delivering this run's broker events. The
+	// session uses it to replay events buffered while no broker was live, so
+	// their order relative to live broker events is preserved without a
+	// second goroutine calling View.HandleEvent.
+	BeforeViewEvents func()
+
 	broker     *pubsub.Broker[Event]
 	brokerView *BrokerView
 	// brokerClosed is true once publishDone closed the broker;
