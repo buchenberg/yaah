@@ -95,15 +95,15 @@ func providerUsable(cfg *config.Config, name string) bool {
 }
 
 // buildMainPrompt derives the top-level agent prompt from the system prompt
-// by injecting session directives after the identity block and appending the
-// tool quick-reference card. The systemPrompt stays clean so child sub-agent
-// prompts never inherit top-level directives.
+// by injecting session directives after the identity block. The systemPrompt
+// stays clean so child sub-agent prompts never inherit top-level directives.
+//
+// The old tool quick-reference card is gone (yaah-w8x): it re-rendered every
+// registered tool's name, signature, and description that the request's
+// tools array already carries — ~3.4K tokens of pure duplication per call.
+// The schemas are the single source of tool truth on the wire.
 func buildMainPrompt(cfg *config.Config, opts SessionOptions, systemPrompt string, toolReg *tools.Registry) string {
-	mainPrompt := prompts.InjectAfterIdentity(systemPrompt, resolveDirectives(cfg, opts))
-	if quickRef := buildToolQuickRef(toolReg); quickRef != "" {
-		mainPrompt += "\n\n" + quickRef
-	}
-	return mainPrompt
+	return prompts.InjectAfterIdentity(systemPrompt, resolveDirectives(cfg, opts))
 }
 
 // buildSubAgentBasePrompt assembles the lean base prompt handed to every

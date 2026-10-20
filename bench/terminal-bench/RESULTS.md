@@ -28,10 +28,13 @@ five tasks, so every row is directly comparable.
 | 2026-10-17 | hermes-agent 0.19.0 | hermes | 5/5 | 490,235 | 7,033 | 448,896 (92%) | 149s |
 | 2026-10-20 | 47f14c7 | yaah | 5/5 | 724,083 | 15,199 | 643,200 (89%) | 133s |
 | 2026-10-20 | hermes-agent 0.19.0 | hermes | 4/5 | 453,528 | 7,373 | 414,080 (91%) | 147s |
+| 2026-10-20 | 5d927a7+quickref-trim (trial 1) | yaah | 5/5 | 786,996 | 26,344 | 712,448 (91%) | 292s |
+| 2026-10-20 | 5d927a7+quickref-trim (trial 2) | yaah | 5/5 | 536,465 | 14,714 | 523,648 (98%) | 125s |
 
 Run ids: 2026-10-17__04-47-51 (yaah), hermes-coding 2026-10-17__18-34-17
 lineage (see the Hermes section below), 2026-10-20__15-49-57 (yaah),
-2026-10-20__15-55-38 (hermes). The 2026-10-20 hermes run failed
+2026-10-20__15-55-38 (hermes), 2026-10-20__16-32-16 and 2026-10-20__16-35-46
+(yaah, quickref-trimmed). The 2026-10-20 hermes run failed
 `assign-seats` on `has_correct_pairs` — the same task family it failed on
 2026-10-12 (broken-python then); single-trial variance is real.
 
@@ -438,3 +441,34 @@ Comparison against the 2026-10-17 run (`aaa8958`): 6/6 again, prompt tokens
 time +30% (342s vs 263s) — within single-trial variance; `gomoku-planner`
 alone accounts for 716K prompt and 201s of it in both runs. No regression
 signal from the 0.87.x→0.88.x supervision/lane work on the coding path.
+
+## Quick Reference card removed (2026-10-20, commit 5d927a7 + trim, bead yaah-w8x)
+
+The system prompt carried a quick-reference card re-rendering every
+registered tool's name, signature, and description — a full duplicate of the
+request's `tools` array, ~3.4K tokens per call. Removed outright (zero
+information loss; the schemas are the single source of tool truth on the
+wire).
+
+Two full-suite trials after the trim, both 5/5 resolved:
+
+| Task | pre-trim in | trial 1 in | trial 2 in |
+|---|---|---|---|
+| hello-world | 45,375 | 33,924 | 33,920 |
+| broken-python | 190,459 | 233,161 | 153,071 |
+| csv-to-parquet | 165,090 | 181,131 | 138,856 |
+| jsonl-aggregator | 161,890 | 80,332 | 131,039 |
+| assign-seats | 161,274 | 258,448 | 79,579 |
+| **Total** | **724,083** | **786,996** | **536,465** |
+
+Reading: `hello-world` is the clean instrument — two API calls, minimal
+variance — and it dropped exactly the predicted −25% (45.4K → 33.9K, −11.4K
+across two calls). Trial 2 improved every task (−26% total, 98% cached,
+125s). Trial 1's aggregate regression is one task misbehaving
+(`assign-seats` spent 10.8K output tokens across many more turns — a turn-
+count outlier, not a floor change; its per-call floor is still trimmed).
+Resolution held at 5/5 in both trials.
+
+Verdict: floor cut confirmed; suite-level mean (662K vs 724K, −9%) is
+positive within variance. Keep the trim; the tracking table carries both
+trials until more runs accumulate.
