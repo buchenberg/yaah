@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.87.3](https://github.com/buchenberg/yaah/compare/v0.87.2...v0.87.3) (2026-10-20)
+
+
+### Bug Fixes
+
+* **calculate:** reject non-finite and out-of-range int64 operands ([#433](https://github.com/buchenberg/yaah/issues/433)) ([468faab](https://github.com/buchenberg/yaah/commit/468faab300ca1d5ccb6f9bfe82258babd051ffe0))
+* **calculate:** validate the shift count conversion too ([#435](https://github.com/buchenberg/yaah/issues/435)) ([4a41c6a](https://github.com/buchenberg/yaah/commit/4a41c6a429f6f4594f3dbcdbfcb7e5bac389cf67))
+
 ## [0.87.2](https://github.com/buchenberg/yaah/compare/v0.87.1...v0.87.2) (2026-10-20)
 
 
