@@ -115,7 +115,9 @@ called from `proxy.go` (agent events) and `control.go` (control messages).
 The 100ms animation ticker uses the droppable non-critical queue path — dropped
 ticks only stutter the animation, never block. The same tick advances the
 Subagents pane's per-agent spinner frames and repaints the pane while agents
-are active.
+are active. Background sub-agents that finish between turns are delivered
+through a session-scoped hook, so their pane rows clear even after the loop's
+broker hooks have been removed.
 
 ## Conventions
 

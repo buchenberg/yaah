@@ -105,10 +105,10 @@ agents:
     roles:
       analyst:
         timeout: 600
-        max_iterations: 75
+        max_iterations: 50             # schema hard cap (role file asks for 75)
       developer:
         timeout: 900
-        max_iterations: 75
+        max_iterations: 50             # schema hard cap (role file asks for 75)
         min_turns: 6
         turn_checkpoints: false
       reviewer:

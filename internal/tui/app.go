@@ -107,7 +107,6 @@ type App struct {
 	embeddingModel       string
 	middlewarePipeline   []string
 	agentActive          bool
-	activeSubAgents      int
 	subAgents            []*subagent.Block
 	subAgentsBusy        atomic.Bool
 	activityBusy         atomic.Bool

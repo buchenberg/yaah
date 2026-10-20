@@ -81,7 +81,6 @@ func (t *App) handleControlMsg(msg control.Msg) {
 		}
 		t.flushPendingTokens()
 		t.pendingTool = ""
-		t.activeSubAgents = 0
 		t.setActivity(activity.Idle, "")
 		t.conversationLog = append(t.conversationLog, convItem{
 			text: fmt.Sprintf("[%s]error: %s[-]", t.Theme.Error, errText),

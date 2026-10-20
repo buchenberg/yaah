@@ -58,22 +58,18 @@ func (t *App) HandleEvent(event agent.Event) {
 		})
 	case *agent.SubAgentStartEvent:
 		t.queueUpdateDrawCritical(func() {
-			t.activeSubAgents++
-			t.AddSubAgentStart(e.SubAgentID, e.Role, "", e.Prompt, e.Model)
-			t.setActivity(activity.SubAgent, activity.FormatSubAgentDetail(e.Role, t.activeSubAgents))
+			t.AddSubAgentStart(e.SubAgentID, e.Role, e.Prompt)
+			t.setActivity(activity.SubAgent, activity.FormatSubAgentDetail(e.Role, len(t.subAgents)))
 		})
 	case *agent.SubAgentEndEvent:
 		t.queueUpdateDrawCritical(func() {
 			if e.Error != "" {
-				t.AddSubAgentError(e.SubAgentID, e.Error)
+				t.AddSubAgentError(e.SubAgentID)
 			} else {
 				t.AddSubAgentEnd(e.SubAgentID)
 			}
-			if t.activeSubAgents > 0 {
-				t.activeSubAgents--
-			}
-			if t.activeSubAgents > 0 {
-				t.activityLine.SetState(activity.SubAgent, activity.FormatSubAgentDetail(e.Role, t.activeSubAgents))
+			if len(t.subAgents) > 0 {
+				t.activityLine.SetState(activity.SubAgent, activity.FormatSubAgentDetail(e.Role, len(t.subAgents)))
 			} else {
 				t.restoreActivity()
 			}
@@ -108,7 +104,6 @@ func (t *App) HandleEvent(event agent.Event) {
 		t.queueUpdateDrawCritical(func() {
 			flushed := t.flushPendingTokens()
 			t.pendingTool = ""
-			t.activeSubAgents = 0
 			t.setActivity(activity.Idle, "")
 			if !flushed && e.Response != "" {
 				t.addAssistantResponse(e.Response)

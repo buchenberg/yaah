@@ -439,6 +439,19 @@ func (s *agentSession) SetView(v agent.View) {
 	s.view = v
 }
 
+// dispatchEvent delivers a session-scoped event to the current view. It is
+// used for out-of-band events (background sub-agents finishing between turns)
+// where no loop broker is live. HandleEvent implementations are expected to
+// queue their own UI operations, so calling from the job goroutine is safe.
+func (s *agentSession) dispatchEvent(evt agent.Event) {
+	s.mu.RLock()
+	v := s.view
+	s.mu.RUnlock()
+	if v != nil {
+		v.HandleEvent(evt)
+	}
+}
+
 func (s *agentSession) SetCtrlCh(ch chan<- control.Msg) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

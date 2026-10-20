@@ -2,8 +2,6 @@ package tui
 
 import (
 	"testing"
-
-	"github.com/buchenberg/yaah/internal/tui/components/subagent"
 )
 
 func TestAddReasoningBlock(t *testing.T) {
@@ -99,7 +97,7 @@ func TestAddSubAgentStartAndEnd(t *testing.T) {
 	ui := New("test")
 
 	// Sub-agents belong to the dedicated pane, not the conversation log.
-	ui.AddSubAgentStart("sub-1", "analyst", "", "Analyze the code", "claude-3-sonnet")
+	ui.AddSubAgentStart("sub-1", "analyst", "Analyze the code")
 
 	if len(ui.conversationLog) != 0 {
 		t.Errorf("sub-agent must not add a conversation item, got %d", len(ui.conversationLog))
@@ -114,14 +112,11 @@ func TestAddSubAgentStartAndEnd(t *testing.T) {
 		t.Error("Expected sub-agent animation flag to be set while active")
 	}
 
-	// End the sub-agent
+	// Terminal blocks leave the active pane immediately.
 	ui.AddSubAgentEnd("sub-1")
 
-	if len(ui.subAgents) != 1 {
-		t.Errorf("Expected 1 sub-agent after completion, got %d", len(ui.subAgents))
-	}
-	if ui.subAgents[0].S() != subagent.Done {
-		t.Errorf("Expected completed sub-agent, got state %v", ui.subAgents[0].S())
+	if len(ui.subAgents) != 0 {
+		t.Errorf("Expected completed sub-agent to be pruned, got %d remaining", len(ui.subAgents))
 	}
 	if ui.subAgentsBusy.Load() {
 		t.Error("Expected sub-agent animation flag to clear when nothing is active")
@@ -131,38 +126,39 @@ func TestAddSubAgentStartAndEnd(t *testing.T) {
 func TestAddSubAgentError(t *testing.T) {
 	ui := New("test")
 
-	// Add a sub-agent start
-	ui.AddSubAgentStart("sub-1", "analyst", "", "Analyze the code", "claude-3-sonnet")
+	ui.AddSubAgentStart("sub-1", "analyst", "Analyze the code")
+	ui.AddSubAgentError("sub-1")
 
-	// Add an error
-	ui.AddSubAgentError("sub-1", "sub-agent failed")
-
-	if len(ui.subAgents) != 1 {
-		t.Fatalf("Expected 1 sub-agent, got %d", len(ui.subAgents))
+	if len(ui.subAgents) != 0 {
+		t.Fatalf("Expected failed sub-agent to be pruned, got %d remaining", len(ui.subAgents))
 	}
-	if ui.subAgents[0].S() != subagent.Error {
-		t.Errorf("Expected failed sub-agent, got state %v", ui.subAgents[0].S())
+	if ui.subAgentsBusy.Load() {
+		t.Error("Expected animation flag to clear after the failed agent is pruned")
 	}
 }
 
 func TestAdvanceSubAgentSpinners(t *testing.T) {
 	ui := New("test")
-	ui.AddSubAgentStart("sub-1", "analyst", "", "Task 1", "model")
-	ui.AddSubAgentStart("sub-2", "reviewer", "", "Task 2", "model")
-	ui.AddSubAgentEnd("sub-2")
-	if !ui.subAgentsBusy.Load() {
-		t.Error("one remaining active sub-agent must keep the animation flag set")
-	}
+	ui.AddSubAgentStart("sub-1", "analyst", "Task 1")
+	ui.AddSubAgentStart("sub-2", "reviewer", "Task 2")
 
 	before1 := ui.subAgents[0].SpinnerFrame()
 	before2 := ui.subAgents[1].SpinnerFrame()
 	ui.advanceSubAgentSpinners()
 
 	if got := ui.subAgents[0].SpinnerFrame(); got == before1 {
-		t.Error("active sub-agent spinner did not advance")
+		t.Error("first active sub-agent spinner did not advance")
 	}
-	if got := ui.subAgents[1].SpinnerFrame(); got != before2 {
-		t.Error("completed sub-agent spinner must not advance")
+	if got := ui.subAgents[1].SpinnerFrame(); got == before2 {
+		t.Error("second active sub-agent spinner did not advance")
+	}
+
+	ui.AddSubAgentEnd("sub-2")
+	if len(ui.subAgents) != 1 {
+		t.Fatalf("Expected one remaining active sub-agent, got %d", len(ui.subAgents))
+	}
+	if !ui.subAgentsBusy.Load() {
+		t.Error("one remaining active sub-agent must keep the animation flag set")
 	}
 }
 

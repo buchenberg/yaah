@@ -368,6 +368,85 @@ func TestBackgroundJobs_RunnerError(t *testing.T) {
 	}
 }
 
+// TestBackgroundJobs_SessionHooksFireOutsideLoop covers the between-runs
+// completion path: with no loop hook installed, the session-scoped fallback
+// must still announce start and end so the UI can clear the pane row.
+func TestBackgroundJobs_SessionHooksFireOutsideLoop(t *testing.T) {
+	m := newTestManager()
+	defer m.Close()
+
+	startCh := make(chan string, 1)
+	endCh := make(chan string, 1)
+	m.SetSessionHooks(
+		func(id, role, model, prompt string) { startCh <- id },
+		func(id, role, model, prompt, result string, dur time.Duration, err string) { endCh <- id },
+	)
+
+	runner := func(ctx context.Context, prompt string, p SubAgentParams) (string, error) {
+		NotifySubAgentStart(ctx, "test-model")
+		return "done", nil
+	}
+	id, err := m.Launch(context.Background(), runner, "worker", "task", "x", SubAgentParams{Role: "worker"}, 0)
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	select {
+	case got := <-startCh:
+		if got != id {
+			t.Errorf("start id = %q, want %q", got, id)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("session start hook did not fire")
+	}
+	select {
+	case got := <-endCh:
+		if got != id {
+			t.Errorf("end id = %q, want %q", got, id)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("session end hook did not fire")
+	}
+}
+
+// TestBackgroundJobs_LoopHooksTakePrecedence pins the no-duplicate guarantee:
+// while a loop is live, only its broker hooks fire; session fallbacks stay
+// silent.
+func TestBackgroundJobs_LoopHooksTakePrecedence(t *testing.T) {
+	m := newTestManager()
+	defer m.Close()
+
+	loopEnd := make(chan string, 1)
+	m.SetLoopHooks(nil, func(id, role, model, prompt, result string, dur time.Duration, err string) {
+		loopEnd <- id
+	})
+
+	var sessionEnd atomic.Int32
+	m.SetSessionHooks(nil, func(id, role, model, prompt, result string, dur time.Duration, err string) {
+		sessionEnd.Add(1)
+	})
+
+	runner := func(ctx context.Context, prompt string, p SubAgentParams) (string, error) {
+		return "done", nil
+	}
+	id, err := m.Launch(context.Background(), runner, "worker", "task", "x", SubAgentParams{Role: "worker"}, 0)
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	select {
+	case got := <-loopEnd:
+		if got != id {
+			t.Errorf("loop end id = %q, want %q", got, id)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("loop end hook did not fire")
+	}
+	if got := sessionEnd.Load(); got != 0 {
+		t.Errorf("session end hook fired %d times while a loop hook was live", got)
+	}
+}
+
 // TestBackgroundJobs_List verifies List returns snapshots for multiple
 // jobs.
 func TestBackgroundJobs_List(t *testing.T) {

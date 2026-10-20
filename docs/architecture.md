@@ -401,7 +401,10 @@ calls `AddSubAgentEnd` (or `AddSubAgentError`) and finds the block by
 `SubAgentID` to transition it in place. `backgroundjobs.Format` renders the
 active blocks as a compact row with role, elapsed time, and task; the
 100ms activity ticker calls `AdvanceSpinner` on each active block and
-repaints the pane. Role colors come from `Theme.RoleHex` in
+repaints the pane. Terminal blocks are pruned from the pane. Background jobs
+that complete after the loop retires use the session-scoped fallback hooks
+(`SetSessionHooks`) to deliver `SubAgentEndEvent` directly to the current
+view. Role colors come from `Theme.RoleHex` in
 `internal/tui/colors/theme.go`.
 
 ### Timeout enforcement
