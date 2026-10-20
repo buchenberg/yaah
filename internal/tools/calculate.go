@@ -449,8 +449,9 @@ func applyUnary(op calcTokKind, v float64) (float64, error) {
 	return v, nil
 }
 
-// int64ConvBounds are the exclusive float bounds of the int64 range:
-// values below -2^63 or at/above 2^63 do not survive the conversion.
+// int64MinFloat and int64MaxFloat are the exclusive float bounds of the
+// int64 range: values below -2^63 or at/above 2^63 do not survive the
+// conversion.
 const (
 	int64MinFloat = -9223372036854775808.0
 	int64MaxFloat = 9223372036854775808.0
@@ -524,7 +525,10 @@ func applyBinary(op calcTokKind, a, b float64) (float64, error) {
 		if err != nil {
 			return 0, err
 		}
-		n := int64(b)
+		n, err := toInt64(b, "shift count")
+		if err != nil {
+			return 0, err
+		}
 		if n < 0 || n >= 64 {
 			return 0, fmt.Errorf("shift count out of range: %g", b)
 		}
@@ -534,7 +538,10 @@ func applyBinary(op calcTokKind, a, b float64) (float64, error) {
 		if err != nil {
 			return 0, err
 		}
-		n := int64(b)
+		n, err := toInt64(b, "shift count")
+		if err != nil {
+			return 0, err
+		}
 		if n < 0 || n >= 64 {
 			return 0, fmt.Errorf("shift count out of range: %g", b)
 		}

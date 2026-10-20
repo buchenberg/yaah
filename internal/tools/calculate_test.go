@@ -526,3 +526,14 @@ func TestCalculateTool_BitwiseOperandValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestCalculateTool_ShiftCountValidation(t *testing.T) {
+	ct := &CalculateTool{}
+	for _, expr := range []string{"1 << sqrt(-1)", "1 >> 1e300"} {
+		t.Run(expr, func(t *testing.T) {
+			if _, err := ct.Execute(context.Background(), `{"expr":"`+expr+`"}`); err == nil {
+				t.Fatalf("%s: expected error, got success", expr)
+			}
+		})
+	}
+}
