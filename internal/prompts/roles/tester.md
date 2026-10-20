@@ -20,7 +20,6 @@ tools:
   - bash
   - grep
   - glob
-  - sed
   - ls
   - go_outline
   - calculate

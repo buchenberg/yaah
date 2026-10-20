@@ -30,11 +30,13 @@ five tasks, so every row is directly comparable.
 | 2026-10-20 | hermes-agent 0.19.0 | hermes | 4/5 | 453,528 | 7,373 | 414,080 (91%) | 147s |
 | 2026-10-20 | 5d927a7+quickref-trim (trial 1) | yaah | 5/5 | 786,996 | 26,344 | 712,448 (91%) | 292s |
 | 2026-10-20 | 5d927a7+quickref-trim (trial 2) | yaah | 5/5 | 536,465 | 14,714 | 523,648 (98%) | 125s |
+| 2026-10-20 | 5d927a7+quickref-trim+sed-rm (trial 3) | yaah | 5/5 | 565,069 | 14,487 | 544,768 (96%) | 137s |
 
 Run ids: 2026-10-17__04-47-51 (yaah), hermes-coding 2026-10-17__18-34-17
 lineage (see the Hermes section below), 2026-10-20__15-49-57 (yaah),
-2026-10-20__15-55-38 (hermes), 2026-10-20__16-32-16 and 2026-10-20__16-35-46
-(yaah, quickref-trimmed). The 2026-10-20 hermes run failed
+2026-10-20__15-55-38 (hermes), 2026-10-20__16-32-16, 2026-10-20__16-35-46,
+and 2026-10-20__16-46-31 (yaah, quickref-trimmed; trial 3 also drops the
+deprecated sed tool). The 2026-10-20 hermes run failed
 `assign-seats` on `has_correct_pairs` — the same task family it failed on
 2026-10-12 (broken-python then); single-trial variance is real.
 
@@ -458,17 +460,23 @@ Two full-suite trials after the trim, both 5/5 resolved:
 | broken-python | 190,459 | 233,161 | 153,071 |
 | csv-to-parquet | 165,090 | 181,131 | 138,856 |
 | jsonl-aggregator | 161,890 | 80,332 | 131,039 |
-| assign-seats | 161,274 | 258,448 | 79,579 |
-| **Total** | **724,083** | **786,996** | **536,465** |
+| assign-seats | 161,274 | 258,448 | 93,880 |
+| **Total** | **724,083** | **786,996** | **565,069** |
 
 Reading: `hello-world` is the clean instrument — two API calls, minimal
-variance — and it dropped exactly the predicted −25% (45.4K → 33.9K, −11.4K
-across two calls). Trial 2 improved every task (−26% total, 98% cached,
-125s). Trial 1's aggregate regression is one task misbehaving
+variance — and it dropped exactly the predicted −25% (45.4K → 33.9K/33.1K,
+−11.4K across two calls). Trial 2 improved every task (−26% total, 98%
+cached, 125s). Trial 1's aggregate regression is one task misbehaving
 (`assign-seats` spent 10.8K output tokens across many more turns — a turn-
 count outlier, not a floor change; its per-call floor is still trimmed).
-Resolution held at 5/5 in both trials.
+Resolution held at 5/5 in all three trials.
 
-Verdict: floor cut confirmed; suite-level mean (662K vs 724K, −9%) is
-positive within variance. Keep the trim; the tracking table carries both
-trials until more runs accumulate.
+Trial 3 also removes the deprecated `sed` tool (superseded by `replace`):
+one fewer schema in every request, one fewer role-file entry, and the
+`reviewer` role becomes genuinely read-only, which routes it to the shared
+lane under the yaah-7yf derivation instead of paying for a worktree.
+
+Verdict: floor cut confirmed; trimmed-run totals 787K / 536K / 565K vs
+724K pre-trim (mean 630K, −13%), with trial 3 the first to also carry the
+sed removal. Keep both trims; the tracking table carries all three trials
+until more runs accumulate.

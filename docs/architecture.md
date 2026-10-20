@@ -549,7 +549,7 @@ register on a given OS:
 | Category | Tools |
 |---|---|
 | Filesystem (read) | `read`, `ls`, `file_info` |
-| Filesystem (mutate — always need approval) | `write`, `edit`, `replace`, `delete`, `patch`, `sed` |
+| Filesystem (mutate — always need approval) | `write`, `edit`, `replace`, `delete`, `patch` |
 | Search | `grep`, `glob` |
 | Shell (always need approval) | `bash`, `powershell` |
 | VCS / data (per-action approval) | `git`, `json_query` |

@@ -16,7 +16,7 @@ func Icon(name string) string {
 		return "📝"
 	case "delete":
 		return "🧹"
-	case "patch", "sed", "replace":
+	case "patch", "replace":
 		return "🩹"
 	case "grep", "glob":
 		return "🔍"

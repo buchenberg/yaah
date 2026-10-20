@@ -1,1 +1,1 @@
-`replace(pattern, replacement, path, include?, dry_run?)` — Recursively finds and replaces using Go regex syntax across files in a directory. Supports capture groups (`$1`, `$2`). Use `edit` for exact string swaps in a single file; use `sed` for single-file regex substitution.
+`replace(pattern, replacement, path, include?, dry_run?)` — Recursively finds and replaces using Go regex syntax across files in a directory. Supports capture groups (`$1`, `$2`).
