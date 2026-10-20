@@ -368,3 +368,37 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+func TestCreateRejectsEscapingNames(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(filepath.Dir(root), "escaped-plan")
+
+	tests := []string{
+		"..",
+		"../escaped-plan",
+		"a/b",
+		`a\b`,
+		".",
+		filepath.Join(root, "abs"),
+	}
+	for _, name := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Create(root, name, "desc", "body"); err == nil {
+				t.Fatalf("Create(%q) succeeded; want validation error", name)
+			}
+		})
+	}
+
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("escaped plan directory exists at %s", outside)
+	}
+}
+
+func TestCreateAcceptsSingleSegmentNames(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"my-plan", "plan_2", ".hidden-plan"} {
+		if _, err := Create(root, name, "desc", "body"); err != nil {
+			t.Errorf("Create(%q) error: %v", name, err)
+		}
+	}
+}

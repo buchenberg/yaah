@@ -153,11 +153,27 @@ func FormatPlanForAgent(plan *Plan) string {
 	return buf.String()
 }
 
+// validatePlanName rejects names that could escape the plans root. The name
+// becomes a directory beneath it, so it must be a single path segment.
+func validatePlanName(name string) error {
+	if name == "." || name == ".." ||
+		strings.ContainsAny(name, `/\`) ||
+		strings.ContainsRune(name, 0) ||
+		filepath.IsAbs(name) ||
+		filepath.Base(name) != name {
+		return fmt.Errorf("invalid plan name %q: use a single path segment without separators", name)
+	}
+	return nil
+}
+
 // Create writes a new PLAN.md file in the given directory. The plan is
 // placed at <dir>/<name>/PLAN.md. Returns the path to the created file.
 func Create(dir, name, description, body string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("plan name is required")
+	}
+	if err := validatePlanName(name); err != nil {
+		return "", err
 	}
 	planDir := filepath.Join(dir, name)
 	if err := os.MkdirAll(planDir, 0o755); err != nil {
