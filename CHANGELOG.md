@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.87.0](https://github.com/buchenberg/yaah/compare/v0.86.2...v0.87.0) (2026-10-20)
+
+
+### Features
+
+* add evidence guard for stale exploration ([#425](https://github.com/buchenberg/yaah/issues/425)) ([6852c07](https://github.com/buchenberg/yaah/commit/6852c07e1103fe25ca98caaf333a5533f5a2e0ff))
+
 ## [0.86.2](https://github.com/buchenberg/yaah/compare/v0.86.1...v0.86.2) (2026-10-20)
 
 
