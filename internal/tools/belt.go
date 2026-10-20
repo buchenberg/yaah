@@ -79,6 +79,9 @@ func (b *Belt) Refuse(name string) {
 	if !slices.Contains(b.refused, name) {
 		b.refused = append(b.refused, name)
 	}
+	// A refused tool still exists — it is known, so an allowlist that
+	// names it is not a typo.
+	b.Know(name)
 }
 
 // Refused returns the tool names the belt turned away, sorted.
