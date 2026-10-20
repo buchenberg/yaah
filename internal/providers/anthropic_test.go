@@ -356,8 +356,56 @@ func TestAnthropicClient_EndpointAwareFallbackMaxTokens(t *testing.T) {
 	}
 
 	compatible := NewAnthropicClient("https://api.z.ai/api/anthropic", "sk-test", 30)
-	if got := compatible.lower(req).MaxTokens; got != compatibleAnthropicMaxTokens {
+	compatibleReq := req
+	compatibleReq.Model = "unknown-model"
+	if got := compatible.lower(compatibleReq).MaxTokens; got != compatibleAnthropicMaxTokens {
 		t.Errorf("compatible endpoint: expected %d, got %d", compatibleAnthropicMaxTokens, got)
+	}
+	if compatibleAnthropicMaxTokens != 16384 {
+		t.Errorf("compatible fallback = %d, want 16384 (room for reasoning tokens)", compatibleAnthropicMaxTokens)
+	}
+}
+
+func TestAnthropicClient_EffectiveMaxTokens(t *testing.T) {
+	client := NewAnthropicClient("https://api.z.ai/api/anthropic", "sk-test", 30)
+	client.DefaultMaxTokens = 32000
+
+	if got := client.EffectiveMaxTokens(types.ChatRequest{Model: "m"}); got != 32000 {
+		t.Errorf("unset request: EffectiveMaxTokens = %d, want provider default 32000", got)
+	}
+	if got := client.EffectiveMaxTokens(types.ChatRequest{Model: "m", MaxTokens: 4096}); got != 4096 {
+		t.Errorf("explicit cap: EffectiveMaxTokens = %d, want 4096", got)
+	}
+
+	client.DefaultMaxTokens = 0
+	if got := client.EffectiveMaxTokens(types.ChatRequest{Model: "m"}); got != compatibleAnthropicMaxTokens {
+		t.Errorf("fallback: EffectiveMaxTokens = %d, want %d", got, compatibleAnthropicMaxTokens)
+	}
+	if got := client.EffectiveMaxTokens(types.ChatRequest{Model: "claude-3-haiku"}); got != 4096 {
+		t.Errorf("known lower-output model: EffectiveMaxTokens = %d, want 4096", got)
+	}
+}
+
+func TestAnthropicClient_OutputTokenCeiling(t *testing.T) {
+	req := types.ChatRequest{Model: "m"}
+
+	native := NewAnthropicClient("https://api.anthropic.com", "sk-test", 30)
+	if got := native.OutputTokenCeiling(req); got != nativeAnthropicMaxTokens {
+		t.Errorf("native ceiling = %d, want %d", got, nativeAnthropicMaxTokens)
+	}
+
+	compatible := NewAnthropicClient("https://api.z.ai/api/anthropic", "sk-test", 30)
+	if got := compatible.OutputTokenCeiling(req); got != 0 {
+		t.Errorf("compatible ceiling for unknown model = %d, want 0 (unknown)", got)
+	}
+	if got := compatible.OutputTokenCeiling(types.ChatRequest{Model: "GLM-5.3"}); got != 32768 {
+		t.Errorf("GLM-5.3 ceiling = %d, want 32768", got)
+	}
+	if got := compatible.OutputTokenCeiling(types.ChatRequest{Model: "claude-3-5-sonnet-20250620"}); got != 8192 {
+		t.Errorf("dated Claude ceiling = %d, want 8192", got)
+	}
+	if got := compatible.OutputTokenCeiling(types.ChatRequest{Model: "claude-3.5-sonnet"}); got != 8192 {
+		t.Errorf("dotted Claude ceiling = %d, want 8192", got)
 	}
 }
 

@@ -308,6 +308,11 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 
 			result, err := l.LLM.Call(turnCtx, req)
 			if err != nil {
+				// A failed call can still have billable usage: the exhausted
+				// attempt captured in RecoveryUsage and the final failing
+				// attempt in Usage. Account for both before returning; there
+				// is no successful response to set context occupancy from.
+				l.foldFailedCallUsage(result)
 				if turnSpan != nil {
 					observability.RecordError(turnSpan, err)
 					turnSpan.End()
@@ -348,6 +353,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 			l.FallbackProvider = l.LLM.FallbackProvider
 			l.FallbackModel = l.LLM.FallbackModel
 			l.addUsage(result.Usage)
+			l.addRecoveryUsage(result.RecoveryUsage)
 			l.State.LastFinishReason = result.FinishReason
 			l.State.LastResponseModel = result.ResponseModel
 			messages = append(messages, msg)

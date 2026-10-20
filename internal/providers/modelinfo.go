@@ -41,6 +41,75 @@ var modelWindows = map[string]int{
 	"llama-3.3-70b":  131072,
 }
 
+// modelOutputLimits maps known models to a conservative maximum output-token
+// cap. It is used only to keep output-budget recovery from raising max_tokens
+// past a provider limit; it is not a claim about the model's full capacity.
+// Keys are normalized (lowercase, dots → hyphens) and matched by longest
+// prefix so dated/versioned IDs resolve to the family entry. Unknown models
+// return 0 and rely on the retry ladder's global bound.
+var modelOutputLimits = map[string]int{
+	"gpt-4o":      16384,
+	"gpt-4o-mini": 16384,
+	"gpt-4-turbo": 4096,
+	"gpt-4":       8192,
+
+	"gpt-3-5-turbo": 4096,
+
+	"deepseek-v4-pro":   32768,
+	"deepseek-v4-flash": 32768,
+	"deepseek-flash":    32768,
+	"deepseek-v3":       8192,
+
+	"glm-5-3":       32768,
+	"glm-5-3-flash": 32768,
+
+	"claude-3-5-sonnet": 8192,
+	"claude-3-5-haiku":  8192,
+	"claude-3-opus":     4096,
+	"claude-3-sonnet":   4096,
+	"claude-3-haiku":    4096,
+}
+
+// modelOutputLimitAliases maps dotted/spelled family aliases onto the
+// canonical hyphenated keys above. Dots are NOT normalized globally: doing so
+// would make an unrelated family like "gpt-4.1" prefix-match the "gpt-4"
+// entry.
+var modelOutputLimitAliases = map[string]string{
+	"gpt-3.5-turbo":     "gpt-3-5-turbo",
+	"claude-3.5-sonnet": "claude-3-5-sonnet",
+	"claude-3.5-haiku":  "claude-3-5-haiku",
+	"glm-5.3":           "glm-5-3",
+	"glm-5.3-flash":     "glm-5-3-flash",
+}
+
+// normalizeModelID lowercases a model ID and strips any provider prefix,
+// preserving dots so aliases stay distinguishable from date/version
+// separators.
+func normalizeModelID(name string) string {
+	return strings.ToLower(sanitizeModelName(name))
+}
+
+// ResolveOutputLimit returns the known output-token ceiling for modelName,
+// or 0 when the model family is not in the conservative table. Matching uses
+// the longest key that equals the ID or prefixes it with a hyphen, so
+// "gpt-4o-2024-08-06" resolves to gpt-4o while "gpt-4o-mini" does not fall
+// back to gpt-4o and "gpt-4.1" does not match "gpt-4".
+func ResolveOutputLimit(modelName string) int {
+	name := normalizeModelID(modelName)
+	if alias, ok := modelOutputLimitAliases[name]; ok {
+		name = alias
+	}
+	bestLen, best := 0, 0
+	for key, limit := range modelOutputLimits {
+		if name == key || strings.HasPrefix(name, key+"-") {
+			if len(key) > bestLen {
+				bestLen, best = len(key), limit
+			}
+		}
+	}
+	return best
+}
+
 // thinkingModels are models that use interleaved reasoning and require
 // reasoning_content to be passed back on every assistant message. Keyed by
 // sanitized model name (after the last "/"). Prefix matching is used for

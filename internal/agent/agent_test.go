@@ -14,6 +14,7 @@ import (
 
 	agentctx "github.com/buchenberg/yaah/internal/agent/context"
 	"github.com/buchenberg/yaah/internal/agent/errorclassify"
+	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -914,6 +915,62 @@ func TestLoop_tokenUsageTracking(t *testing.T) {
 	}
 	if loop.State.TotalTokens.TotalTokens != 80 {
 		t.Errorf("TotalTokens = %d, want 80", loop.State.TotalTokens.TotalTokens)
+	}
+}
+
+// Recovery usage counts toward totals without replacing the context
+// occupancy derived from the final attempt.
+func TestLoop_addRecoveryUsagePreservesContextOccupancy(t *testing.T) {
+	loop := &Loop{}
+	loop.State.LastPromptTokens = 500
+	loop.State.LastCachedPromptTokens = 100
+
+	loop.addRecoveryUsage(types.Usage{
+		PromptTokens:       1000,
+		CompletionTokens:   2000,
+		TotalTokens:        3000,
+		CachedPromptTokens: 400,
+		CompletionTokensDetails: &types.CompletionTokensDetails{
+			ReasoningTokens: 1800,
+		},
+	})
+
+	if got := loop.State.TotalTokens.TotalTokens; got != 3000 {
+		t.Errorf("TotalTokens = %d, want 3000", got)
+	}
+	if got := loop.State.TotalReasoningTokens; got != 1800 {
+		t.Errorf("TotalReasoningTokens = %d, want 1800", got)
+	}
+	if loop.State.LastPromptTokens != 500 {
+		t.Errorf("LastPromptTokens = %d, want 500 (final attempt occupancy)", loop.State.LastPromptTokens)
+	}
+	if loop.State.LastCachedPromptTokens != 100 {
+		t.Errorf("LastCachedPromptTokens = %d, want 100 (final attempt occupancy)", loop.State.LastCachedPromptTokens)
+	}
+}
+
+// A failed call accounts for both the exhausted recovery attempt and the
+// final failing attempt, without replacing context occupancy.
+func TestLoop_foldFailedCallUsageCountsBothAttempts(t *testing.T) {
+	loop := &Loop{}
+	loop.State.LastPromptTokens = 500
+
+	loop.foldFailedCallUsage(llm.CallResult{
+		RecoveryUsage: types.Usage{PromptTokens: 100, CompletionTokens: 200, TotalTokens: 300},
+		Usage:         types.Usage{PromptTokens: 110, CompletionTokens: 210, TotalTokens: 320},
+	})
+
+	if got := loop.State.TotalTokens.PromptTokens; got != 210 {
+		t.Errorf("PromptTokens = %d, want 210", got)
+	}
+	if got := loop.State.TotalTokens.CompletionTokens; got != 410 {
+		t.Errorf("CompletionTokens = %d, want 410", got)
+	}
+	if got := loop.State.TotalTokens.TotalTokens; got != 620 {
+		t.Errorf("TotalTokens = %d, want 620", got)
+	}
+	if loop.State.LastPromptTokens != 500 {
+		t.Errorf("LastPromptTokens = %d, want 500 (no successful attempt to replace it)", loop.State.LastPromptTokens)
 	}
 }
 

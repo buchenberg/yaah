@@ -24,8 +24,9 @@ type Provider struct {
 	// MaxTokens caps the output tokens for every request this provider
 	// serves when the request does not set its own cap. Anthropic-
 	// compatible reasoning endpoints count thinking tokens against this
-	// budget, so the default (8192) can be exhausted before any content
-	// is emitted; set this higher for reasoning-heavy models.
+	// budget, so the default (16384) can still be exhausted before any
+	// content is emitted; the client retries once with a doubled cap, and
+	// this field raises that starting point for reasoning-heavy models.
 	MaxTokens int `yaml:"max_tokens,omitempty"`
 
 	// OAuth fields (used when auth: oauth).

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -103,6 +104,40 @@ func (l *Loop) addSubAgentUsage(u types.Usage) {
 	if l.OnUsage != nil {
 		l.OnUsage(running)
 	}
+}
+
+// addRecoveryUsage folds usage billed by an attempt that was replayed after
+// output-budget exhaustion. It updates running totals but deliberately leaves
+// LastPromptTokens/LastCachedPromptTokens alone: those describe the final,
+// successful attempt's context occupancy, not the discarded attempt's prompt.
+func (l *Loop) addRecoveryUsage(u types.Usage) {
+	if u.PromptTokens == 0 && u.CompletionTokens == 0 && u.TotalTokens == 0 {
+		return
+	}
+	l.usageMu.Lock()
+	l.State.TotalTokens.PromptTokens += u.PromptTokens
+	l.State.TotalTokens.CompletionTokens += u.CompletionTokens
+	l.State.TotalTokens.TotalTokens += u.TotalTokens
+	if d := u.CompletionTokensDetails; d != nil {
+		l.State.TotalReasoningTokens += d.ReasoningTokens
+	}
+	if cached := u.CacheTokens(); cached > 0 {
+		l.State.TotalCachedPromptTokens += cached
+		l.State.TotalTokens.CachedPromptTokens += cached
+	}
+	running := l.State.TotalTokens
+	l.usageMu.Unlock()
+	if l.OnUsage != nil {
+		l.OnUsage(running)
+	}
+}
+
+// foldFailedCallUsage accounts for spend from a failed LLM call without
+// touching context occupancy. RecoveryUsage holds the first, budget-exhausted
+// attempt; Usage holds the final failing attempt. Both are billable.
+func (l *Loop) foldFailedCallUsage(result llm.CallResult) {
+	l.addRecoveryUsage(result.RecoveryUsage)
+	l.addRecoveryUsage(result.Usage)
 }
 
 // OwnUsage returns the loop's own model usage: totals minus the child usage

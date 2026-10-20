@@ -58,9 +58,14 @@ type Client struct {
 // boundary instead of the compaction mutating loop state from inside
 // Call (review finding B6).
 type CallResult struct {
-	Message           types.Message
-	Streamed          bool
-	Usage             types.Usage
+	Message  types.Message
+	Streamed bool
+	Usage    types.Usage
+	// RecoveryUsage is usage billed by an attempt that was replayed after
+	// output-budget exhaustion. It is kept separate from Usage because the
+	// loop must add it to session totals without replacing LastPromptTokens
+	// (which describes the final attempt's conversation occupancy).
+	RecoveryUsage     types.Usage
 	FinishReason      string
 	ResponseModel     string
 	Compacted         bool
@@ -72,6 +77,59 @@ type CallResult struct {
 // stripped payload falls through to the classified retry path (bounded by
 // MaxRetries) instead of spinning forever (finding A2).
 const maxStripReasoningAttempts = 3
+
+const (
+	// outputBudgetRetryCeiling bounds the doubled cap so an already
+	// generous explicit max_tokens cannot overflow into a value the model
+	// rejects outright.
+	outputBudgetRetryCeiling = 65536
+)
+
+// OutputBudgetProvider is implemented by providers that can report the
+// output-token cap they will apply to a request. After output-budget
+// exhaustion the retry ladder must double that effective cap — reading
+// req.MaxTokens alone is not enough because providers fill an unset value
+// with their own default internally.
+//
+// OutputTokenCeiling reports the largest cap the provider considers safe
+// for the request, or 0 when it cannot say. Providers with a known-safe
+// floor (native Anthropic) return it so the retry cannot raise the cap past
+// what older models accept.
+type OutputBudgetProvider interface {
+	EffectiveMaxTokens(req types.ChatRequest) int
+	OutputTokenCeiling(req types.ChatRequest) int
+}
+
+// raisedOutputBudget returns the output cap to use for the single
+// budget-raising retry. ok is false when the effective cap is unknown or
+// already at its ceiling: without a known starting point, an explicit
+// floor could actually ask for fewer tokens than the attempt that failed.
+func raisedOutputBudget(provider Provider, req types.ChatRequest) (int, bool) {
+	current := req.MaxTokens
+	if current <= 0 {
+		obp, ok := provider.(OutputBudgetProvider)
+		if !ok {
+			return 0, false
+		}
+		current = obp.EffectiveMaxTokens(req)
+		if current <= 0 {
+			return 0, false
+		}
+	}
+	next := current * 2
+	if obp, ok := provider.(OutputBudgetProvider); ok {
+		if ceiling := obp.OutputTokenCeiling(req); ceiling > 0 && next > ceiling {
+			next = ceiling
+		}
+	}
+	if next > outputBudgetRetryCeiling {
+		next = outputBudgetRetryCeiling
+	}
+	if next <= current {
+		return 0, false
+	}
+	return next, true
+}
 
 // swapToFallback rotates the client to its fallback provider/model once,
 // swapping identity labels in lockstep. The previous provider becomes the
@@ -99,6 +157,8 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 	stripAttempts := 0
 	providerSwapped := false
 	respFormatDropped := false
+	outputBudgetRaised := false
+	var outputBudgetErr error
 	c.replayCount = 0
 	c.prematureCount = 0
 
@@ -106,10 +166,12 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 	// the final slice is attached to every CallResult (success or error)
 	// so the loop adopts it at its defined compaction point (B6).
 	var compactedMessages []types.Message
+	var recoveryUsage types.Usage
 	compacted := false
 	attach := func(r CallResult) CallResult {
 		r.Compacted = compacted
 		r.CompactedMessages = compactedMessages
+		r.RecoveryUsage = recoveryUsage
 		return r
 	}
 
@@ -303,10 +365,40 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 			attempt--
 			continue
 
+		case classified.Reason == errorclassify.ReasonOutputBudget:
+			// The model spent the whole output budget on reasoning before
+			// emitting content. Replaying unchanged is deterministic
+			// failure, but doubling the cap once gives a reasoning-heavy
+			// model the room it needed. If the raised cap is exhausted
+			// too, surface the actionable diagnosis instead of looping.
+			if !outputBudgetRaised {
+				if next, ok := raisedOutputBudget(c.Provider, req); ok {
+					// The exhausted attempt was billable even though it
+					// produced no content. Preserve it for session totals;
+					// the loop accounts for it without touching the context
+					// occupancy derived from the final attempt.
+					accumulateUsage(&recoveryUsage, result.Usage)
+					outputBudgetErr = err
+					req.MaxTokens = next
+					outputBudgetRaised = true
+					// Recovery replay, not a retry: do not consume a
+					// MaxRetries slot and skip the backoff.
+					attempt--
+					continue
+				}
+			}
+			if classified.Message != "" {
+				return attach(result), fmt.Errorf("%s: %w", classified.Message, err)
+			}
+			return attach(result), err
+
 		case classified.ShouldAbort:
 			// Surface the actionable diagnosis: the classification explains
 			// WHAT to change, the provider error is the cause. Returning err
 			// alone discards the guidance entirely.
+			if outputBudgetErr != nil {
+				return attach(result), recoveryFailure(classified.Message, outputBudgetErr, req.MaxTokens, err)
+			}
 			if classified.Message != "" {
 				return attach(result), fmt.Errorf("%s: %w", classified.Message, err)
 			}
@@ -328,8 +420,14 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 			}
 			stopHB()
 		} else if !classified.Retryable {
+			if outputBudgetErr != nil {
+				return attach(result), recoveryFailure(classified.Message, outputBudgetErr, req.MaxTokens, err)
+			}
 			return attach(result), err
 		}
+	}
+	if outputBudgetErr != nil {
+		return attach(lastResult), recoveryFailure("", outputBudgetErr, req.MaxTokens, lastErr)
 	}
 	return attach(lastResult), lastErr
 }
@@ -402,4 +500,37 @@ func stripReasoningContent(messages []types.Message) []types.Message {
 // captureUsage extracts token usage from a response.
 func captureUsage(resp *types.ChatResponse) types.Usage {
 	return resp.Usage
+}
+
+// accumulateUsage folds one exhausted attempt's usage into the recovery
+// total, preserving reasoning details and normalizing cache reads through
+// CacheTokens so aggregate shapes are not double-counted.
+func accumulateUsage(total *types.Usage, u types.Usage) {
+	total.PromptTokens += u.PromptTokens
+	total.CompletionTokens += u.CompletionTokens
+	total.TotalTokens += u.TotalTokens
+	if cached := u.CacheTokens(); cached > 0 {
+		total.CachedPromptTokens += cached
+	}
+	if d := u.CompletionTokensDetails; d != nil {
+		if total.CompletionTokensDetails == nil {
+			total.CompletionTokensDetails = &types.CompletionTokensDetails{}
+		}
+		total.CompletionTokensDetails.ReasoningTokens += d.ReasoningTokens
+		total.CompletionTokensDetails.AudioTokens += d.AudioTokens
+		total.CompletionTokensDetails.AcceptedPredictionTokens += d.AcceptedPredictionTokens
+		total.CompletionTokensDetails.RejectedPredictionTokens += d.RejectedPredictionTokens
+	}
+}
+
+// recoveryFailure preserves the original output-budget diagnosis when the
+// raised-cap retry fails for a different reason (for example a provider
+// rejecting the larger max_tokens). Without this, the actionable budget error
+// is replaced by a generic "bad request format" abort.
+func recoveryFailure(classifiedMsg string, budgetErr error, maxTokens int, retryErr error) error {
+	if classifiedMsg == "" {
+		return fmt.Errorf("%w (raised max_tokens to %d; retry failed: %w)", budgetErr, maxTokens, retryErr)
+	}
+	return fmt.Errorf("%s: %w (raised max_tokens to %d; retry failed: %w)",
+		classifiedMsg, budgetErr, maxTokens, retryErr)
 }
