@@ -233,8 +233,8 @@ func TestLogsInitiallyEmpty(t *testing.T) {
 	t.Logf("initial logs: %q", logs)
 }
 
-// TestManagerNextProcessIDConcurrent: Add+Load raced and could hand two
-// starters the same proc-N. The unique ID comes from Add's return value.
+// TestManagerNextProcessIDConcurrent exercises the allocator used by Start.
+// An Add-then-Load implementation can hand two callers the same id.
 func TestManagerNextProcessIDConcurrent(t *testing.T) {
 	m := NewManager()
 	const n = 200
@@ -244,7 +244,7 @@ func TestManagerNextProcessIDConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ids <- fmt.Sprintf("proc-%d", m.nextID.Add(1))
+			ids <- m.nextProcessID()
 		}()
 	}
 	wg.Wait()

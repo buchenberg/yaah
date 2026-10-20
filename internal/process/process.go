@@ -61,6 +61,12 @@ func NewManager() *Manager {
 	}
 }
 
+// nextProcessID mints a unique process id. Add returns the new value, so
+// concurrent callers cannot observe the same counter value.
+func (m *Manager) nextProcessID() string {
+	return fmt.Sprintf("proc-%d", m.nextID.Add(1))
+}
+
 // Start launches a command as a tracked background process.
 func (m *Manager) Start(command, description string) (*Info, error) {
 	// Use powershell on Windows, sh on Unix for the shell wrapper.
@@ -85,7 +91,7 @@ func (m *Manager) Start(command, description string) (*Info, error) {
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
 
-	id := fmt.Sprintf("proc-%d", m.nextID.Add(1))
+	id := m.nextProcessID()
 
 	info := &Info{
 		ID:          id,
