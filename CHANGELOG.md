@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.89.0](https://github.com/buchenberg/yaah/compare/v0.88.4...v0.89.0) (2026-10-20)
+
+
+### Features
+
+* **tools:** a tool belt the registry enforces at registration ([#504](https://github.com/buchenberg/yaah/issues/504)) ([8ab48b2](https://github.com/buchenberg/yaah/commit/8ab48b247d4ca383d331aa39a030b2a4b62e7edc))
+
 ## [0.88.4](https://github.com/buchenberg/yaah/compare/v0.88.3...v0.88.4) (2026-10-20)
 
 
