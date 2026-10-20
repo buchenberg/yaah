@@ -36,4 +36,5 @@ def test_orchestration_trace():
     """The retained proposal was settled with apply, over a moved basis."""
     oa.assert_delegate_count(minimum=1)
     oa.assert_settle_verbs({"applied"})
+    oa.assert_any_settled_output()
     oa.assert_no_orphan_worktrees()
