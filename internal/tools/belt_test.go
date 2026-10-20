@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"runtime"
 	"slices"
 	"testing"
 )
@@ -57,8 +58,13 @@ func TestRegistry_BeltRefusesAtRegistration(t *testing.T) {
 	if reg.Get("write") != nil {
 		t.Error("a tool outside the belt must never be installed")
 	}
-	if reg.Get("read") == nil || reg.Get("bash") == nil {
+	if reg.Get("read") == nil {
 		t.Error("allowlisted tools must be installed")
+	}
+	// bash is platform-gated: Windows has no bash, so the registry never
+	// installs it and the belt records the absence.
+	if runtime.GOOS != "windows" && reg.Get("bash") == nil {
+		t.Error("bash must be installed where the platform has it")
 	}
 
 	// A late registration is refused through the same door.
