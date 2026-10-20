@@ -7,7 +7,9 @@
 package rolefile
 
 import (
+	"bytes"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -60,6 +62,52 @@ type Frontmatter struct {
 	MinToolTurns  int         `yaml:"min_turns"` // budget floor; 0 = none
 	JSONMode      bool        `yaml:"json_mode"`
 	Timeout       int         `yaml:"timeout"` // seconds; 0 = no timeout
+
+	// extra holds frontmatter keys this struct does not model. They are
+	// preserved verbatim through Parse→Marshal so editing a role does not
+	// silently drop provider/project extensions.
+	extra []extraField
+}
+
+type extraField struct {
+	key   string
+	value yaml.Node
+}
+
+var knownFrontmatterKeys = func() map[string]bool {
+	keys := make(map[string]bool)
+	t := reflect.TypeOf(Frontmatter{})
+	for i := 0; i < t.NumField(); i++ {
+		tag := t.Field(i).Tag.Get("yaml")
+		if tag == "" {
+			continue
+		}
+		keys[strings.Split(tag, ",")[0]] = true
+	}
+	return keys
+}()
+
+// UnmarshalYAML decodes the modeled fields and stashes every other key.
+// It deliberately decodes through an alias type so this method is not
+// re-entered for the known fields.
+func (f *Frontmatter) UnmarshalYAML(value *yaml.Node) error {
+	type plain Frontmatter
+	var p plain
+	if err := value.Decode(&p); err != nil {
+		return err
+	}
+	*f = Frontmatter(p)
+	if value.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		key := value.Content[i].Value
+		if knownFrontmatterKeys[key] {
+			continue
+		}
+		f.extra = append(f.extra, extraField{key: key, value: *value.Content[i+1]})
+	}
+	return nil
 }
 
 // Parse splits role file content into its YAML frontmatter and markdown
@@ -95,11 +143,27 @@ func Parse(content string) (Frontmatter, string, error) {
 // format (--- fences around YAML, blank line before the body). An empty
 // body produces a frontmatter-only file.
 func Marshal(fm Frontmatter, body string) (string, error) {
-	fmBytes, err := yaml.Marshal(&fm)
+	type plain Frontmatter
+	fmBytes, err := yaml.Marshal((*plain)(&fm))
 	if err != nil {
 		return "", err
 	}
 	fmText := strings.TrimRight(string(fmBytes), "\n")
+	for _, extra := range fm.extra {
+		if knownFrontmatterKeys[extra.key] {
+			continue
+		}
+		var buf bytes.Buffer
+		enc := yaml.NewEncoder(&buf)
+		enc.SetIndent(2)
+		if err := enc.Encode(map[string]yaml.Node{extra.key: extra.value}); err != nil {
+			return "", err
+		}
+		if err := enc.Close(); err != nil {
+			return "", err
+		}
+		fmText += "\n" + strings.TrimRight(buf.String(), "\n")
+	}
 	if strings.TrimSpace(body) == "" {
 		return fmt.Sprintf("---\n%s\n---\n", fmText), nil
 	}

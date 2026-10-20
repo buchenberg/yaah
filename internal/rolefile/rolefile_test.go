@@ -127,3 +127,52 @@ func TestMarshalEmptyBody(t *testing.T) {
 		t.Errorf("frontmatter-only file malformed: %q", out)
 	}
 }
+
+// TestMarshalPreservesUnknownFrontmatter: role edit parses and rewrites the
+// file, so keys the struct does not model must survive verbatim.
+func TestMarshalPreservesUnknownFrontmatter(t *testing.T) {
+	input := `---
+name: tester
+description: runs checks
+specialty: testing
+owner: platform-team
+metadata:
+  tier: 2
+  labels: [ci, review]
+tools: [bash]
+---
+`
+
+	fm, body, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	out, err := Marshal(fm, body)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	for _, want := range []string{
+		"owner: platform-team",
+		"metadata:",
+		"tier: 2",
+		"labels:",
+		"ci",
+		"review",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("marshaled role lost %q:\n%s", want, out)
+		}
+	}
+
+	fm2, body2, err := Parse(out)
+	if err != nil {
+		t.Fatalf("re-parse: %v\n%s", err, out)
+	}
+	out2, err := Marshal(fm2, body2)
+	if err != nil {
+		t.Fatalf("re-marshal: %v", err)
+	}
+	if out2 != out {
+		t.Errorf("round trip changed the file:\n--- first ---\n%s\n--- second ---\n%s", out, out2)
+	}
+}
