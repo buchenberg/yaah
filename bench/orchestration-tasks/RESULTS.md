@@ -289,3 +289,72 @@ Root causes found while investigating `yaah-8uz` (run `2026-10-20__12-39-41`):
 The verifier dropped the message-count proxy and now requires the persisted
 summary plus tool-call linkage. Live run `2026-10-20__12-41-11`:
 **resolved 100%**, `compacted_summary` 1.2 KB, task re-enabled in `suite.txt`.
+
+## 2026-10-20 — suite audit: minimal metric set + report-lane fan-out
+
+Audit before the next benchmark capture (follow-up to the `yaah-7yf` lane
+decoupling, PRs #479 and #480):
+
+- **New `orch-report-fanout`.** Four read-only audits through report-role
+  delegates (`reviewer`) in the retained lane: ≥2 parallel dispatches, no
+  sealed proposals, no settlements (`assert_no_proposals`), worktrees torn
+  down, host tree byte-identical, report content exact. Pins the
+  isolated-report lane end to end — the first task that fails if a report
+  dispatch ever seals or settles again.
+- **`assert_any_settled_output`** gives the settled-output schema family a
+  positive consumer (`orch-settle-apply`), so a schema-name drift fails
+  loudly instead of silently zero-counting.
+- **`orch-settle-discard` verifier fixed.** The shepherd v0.17 repin added a
+  per-seal sequence suffix to sealed output ids (`out:<owner>:<seq>`), so the
+  exact-membership check could never match again (run `15-22-31`'s predecessor
+  failed on it). It now matches the prefix; ad-hoc re-run resolved.
+- **`suite.txt` shrinks to the five-task metric set** — one task per
+  load-bearing behavior: fanout, report-fanout, settle-apply, confinement,
+  compact. `orch-settle-discard`, `orch-quality-gate`, `orch-escalation`, and
+  `orch-guard` remain runnable ad hoc by name; their last recorded results
+  stand.
+
+Validation runs (one trial each): `orch-report-fanout` first failed on comma
+spacing in `functions:` (the presentation rule fanout already pinned;
+normalized) and then resolved (`15-01-28` no → `15-19-16` yes); the tightened
+verifier also re-validated after the review fixes. `orch-settle-discard`
+resolved with the prefix fix (`15-03-31`). `orch-settle-apply` resolved with
+the positive settled-output assertion (`15-17-33`).
+
+## 2026-10-20 — first full run of the minimal suite (5/5)
+
+Run `2026-10-20__15-22-31`, one trial per task, binary `v0.88.1`
+(commit `47f14c7`, includes the lane decoupling), deepseek-flash,
+`N_CONCURRENT=2`. **5/5 resolved (100%)** — the suite's first 100% full run.
+
+| Task | Resolved | Time | in | out | sub in | sub out |
+|---|---|---|---|---|---|---|
+| orch-fanout | yes | 97s | 594,423 | 40,531 | 442,013 | 35,576 |
+| orch-settle-apply | yes | 80s | 549,502 | 12,418 | 76,808 | 2,617 |
+| orch-report-fanout | yes | 78s | 298,612 | 22,426 | 177,920 | 19,551 |
+| orch-confinement | yes | 52s | 228,548 | 9,199 | 67,279 | 4,717 |
+| orch-compact | yes | 37s | 139,732 | 1,806 | 0 | 0 |
+
+Totals: 1,810,817 prompt + 86,380 output = 1,897,197 tokens.
+Sub-agents 764,020 in / 62,461 out (44% of total tokens).
+
+Notes:
+
+- **Report lane in a benchmark.** `orch-report-fanout` is the new task: three
+  concurrent reviewer dispatches produced no proposal records and no orphan
+  worktrees; the reports landed from the returned text. Sub-agent share 63%
+  of that task's tokens — delegation is doing the reading.
+- **Fan-out remains the heaviest task** (594K in, 442K sub in): three
+  developer dispatches on the shared lane re-read overlapping inventory.
+  `yaah-csg` (shared read cache) targets exactly this.
+- **Compact** shows zero sub tokens and the shortest agent window — the
+  orchestrator reads and compacts alone, and the persisted summary satisfied
+  the strict verifier on the first try after the `yaah-8uz` fixes.
+
+### Net status
+
+The five-task minimal suite has a single-invocation 100% full run at
+commit `47f14c7`. The four ad-hoc tasks' most recent records: settle-discard
+resolved (`15-03-31`, prefix-fixed verifier), quality-gate and escalation
+resolved on 2026-10-17 (`05-29-24`), guard resolved (`05-36-45`); those three
+predate the minimal-suite re-shuffle and have not been re-run since.
