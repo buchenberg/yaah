@@ -185,6 +185,7 @@ func (cm *ContextManager) applyCompactedSummary(summary string, sysMsg types.Mes
 	cm.State.LastPromptTokens = estimate
 	cm.State.LastPromptTokensInclusive = estimate
 	cm.State.LastPromptIncludesCache = false
+	cm.State.LastCachedPromptTokens = 0
 	cm.resetPruner()
 	if cm.Pruner != nil {
 		cm.Pruner.Mark(cm.State.Messages, "post_compaction")
@@ -284,8 +285,15 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 
 	rawTokens := cm.State.LastPromptTokens
 	effectiveTokens := rawTokens
-	if cm.State.LastPromptIncludesCache && effectiveTokens > 0 && cm.State.LastCachedPromptTokens > 0 {
-		effectiveTokens -= cm.State.LastCachedPromptTokens
+	if cm.State.LastPromptIncludesCache {
+		// OpenAI shape: the raw prompt already contains cache reads.
+		if effectiveTokens > 0 && cm.State.LastCachedPromptTokens > 0 {
+			effectiveTokens -= cm.State.LastCachedPromptTokens
+		}
+	} else if rawTokens > 0 {
+		// Anthropic shape: raw is uncached input (plus cache creation);
+		// the context size for the raw gate is the inclusive total.
+		rawTokens += cm.State.LastCachedPromptTokens
 	}
 	if effectiveTokens <= 0 {
 		factor := cm.EstimateFactor

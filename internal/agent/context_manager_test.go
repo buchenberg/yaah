@@ -118,3 +118,32 @@ func TestCompactContextRejectsThoughtOnlySummary(t *testing.T) {
 		t.Errorf("system message lost during fallback: role=%q", cm.State.Messages[0].Role)
 	}
 }
+
+// TestCompactContextAnthropicRawGate: cache-heavy Anthropic usage reports a
+// small uncached prompt, but the context is large. The raw gate must use the
+// inclusive size or compaction never fires.
+func TestCompactContextAnthropicRawGate(t *testing.T) {
+	p := &compactionRecordingProvider{}
+	cm := &ContextManager{
+		ContextWindow:   6000,
+		EstimateFactor:  1.3,
+		Provider:        p,
+		CompactProvider: p,
+		CompactModel:    "test-small-model",
+		State: &LoopState{
+			Messages:                   largeConversation(8),
+			LastPromptTokens:           1000,  // uncached input
+			LastCachedPromptTokens:     20000, // cache reads
+			LastPromptIncludesCache:    false, // Anthropic shape
+			CompactionBudgetMultiplier: 1.0,
+		},
+	}
+	cm.compactContext(context.Background(), 0.3)
+
+	if len(p.snapshot()) == 0 {
+		t.Fatal("compaction did not fire: raw gate used uncached prompt only")
+	}
+	if cm.State.PreviousSummary == "" {
+		t.Fatal("compaction did not persist a summary")
+	}
+}
