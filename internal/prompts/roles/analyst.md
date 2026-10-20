@@ -11,6 +11,7 @@ contract:
     - { name: finding,      kind: interpretation }
     - { name: confidence,   kind: interpretation }
     - { name: findings,     kind: interpretation }
+output: report
 tools:
   - webfetch
   - http

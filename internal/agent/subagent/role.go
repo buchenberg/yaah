@@ -36,11 +36,14 @@ type SubAgentRole string
 // role. Profiles are derived from parsed RoleDef entries in the
 // default RoleRegistry installed at startup.
 type RoleProfile struct {
-	DisplayName   string
-	Specialty     string
-	Description   string
-	Contract      ContractDef
-	Tools         []string
+	DisplayName string
+	Specialty   string
+	Description string
+	Contract    ContractDef
+	Tools       []string
+	// Output is the dispatch output contract: "report" or "proposal".
+	// Empty means proposal (lane routing, see lane.go).
+	Output        string
 	MaxLoopCycles int
 	MinLoopCycles int // per-call overrides may not go below; 0 = none
 	MaxToolTurns  int

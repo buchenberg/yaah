@@ -29,9 +29,12 @@ type RoleDef struct {
 	Specialty   string
 	// Description is a one-line summary shown to the orchestrator so
 	// it can choose the right role without calling list_subagents.
-	Description   string
-	Contract      ContractDef
-	Tools         []string
+	Description string
+	Contract    ContractDef
+	Tools       []string
+	// Output is the dispatch output contract ("report" or "proposal");
+	// empty means proposal (derived routing keys off this, see lane.go).
+	Output        string
 	MaxLoopCycles int
 	MinLoopCycles int // per-call overrides may not go below; 0 = none
 	MaxToolTurns  int
@@ -56,6 +59,7 @@ func roleDefFrom(fm rolefile.Frontmatter, body string) RoleDef {
 		Description:   fm.Description,
 		Contract:      fm.Contract,
 		Tools:         fm.Tools,
+		Output:        normalizeRoleOutput(fm.Output, fm.Name),
 		MaxLoopCycles: fm.MaxLoopCycles,
 		MinLoopCycles: fm.MinLoopCycles,
 		MaxToolTurns:  fm.MaxToolTurns,
@@ -97,6 +101,7 @@ func (d RoleDef) ToProfile() RoleProfile {
 		Description:   d.Description,
 		Contract:      d.Contract,
 		Tools:         d.Tools,
+		Output:        d.Output,
 		MaxLoopCycles: d.MaxLoopCycles,
 		MinLoopCycles: d.MinLoopCycles,
 		MaxToolTurns:  d.MaxToolTurns,

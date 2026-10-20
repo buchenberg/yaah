@@ -66,7 +66,7 @@ func TestRetained_TimeoutNamesRoleBudget(t *testing.T) {
 		WorktreeRoot: t.TempDir(),
 	}
 
-	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "developer"}, 50*time.Millisecond)
+	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "developer"}, 50*time.Millisecond, false)
 	if err != nil {
 		t.Fatalf("startRetainedRun: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestRetained_ReturnsProposal(t *testing.T) {
 	runner := writingRunner(t, "out.txt")
 	rt := newRetainedTestEnv(t, runner)
 
-	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 50*time.Millisecond)
+	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 50*time.Millisecond, false)
 	if err != nil {
 		t.Fatalf("startRetainedRun: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestRetained_HostUntouchedUntilSettle(t *testing.T) {
 	resetRetainedProposals()
 	rt := newRetainedTestEnv(t, writingRunner(t, "out.txt"))
 
-	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 50*time.Millisecond)
+	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 50*time.Millisecond, false)
 	if err != nil {
 		t.Fatalf("startRetainedRun: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestRetained_DiscardLeavesHostUntouched(t *testing.T) {
 	resetRetainedProposals()
 	rt := newRetainedTestEnv(t, writingRunner(t, "out.txt"))
 
-	res, _ := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 0)
+	res, _ := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 0, false)
 	env := decodeProposalEnvelope(t, res)
 
 	if _, err := settleRetainedProposal(context.Background(), env.ProposalID, "discard"); err != nil {
@@ -208,7 +208,7 @@ func TestRetained_ReleaseRemovesWorktree(t *testing.T) {
 	runner := writingRunner(t, "out.txt")
 	rt := newRetainedTestEnv(t, runner)
 
-	res, _ := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 0)
+	res, _ := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 0, false)
 	env := decodeProposalEnvelope(t, res)
 	wt := runner.workdirFor(t, 0)
 
@@ -229,8 +229,8 @@ func TestRetained_ParallelIDsUnique(t *testing.T) {
 	resetRetainedProposals()
 	rt := newRetainedTestEnv(t, writingRunner(t, "out.txt"))
 
-	r1, _ := startRetainedRun(context.Background(), rt, "one", SubAgentParams{Role: "worker"}, 0)
-	r2, _ := startRetainedRun(context.Background(), rt, "two", SubAgentParams{Role: "worker"}, 0)
+	r1, _ := startRetainedRun(context.Background(), rt, "one", SubAgentParams{Role: "worker"}, 0, false)
+	r2, _ := startRetainedRun(context.Background(), rt, "two", SubAgentParams{Role: "worker"}, 0, false)
 	e1, e2 := decodeProposalEnvelope(t, r1), decodeProposalEnvelope(t, r2)
 	if e1.ProposalID == "" || e2.ProposalID == "" {
 		t.Fatalf("both dispatches should seal a proposal: %v / %v", e1, e2)
@@ -245,7 +245,7 @@ func TestRetained_SettleOnce(t *testing.T) {
 	resetRetainedProposals()
 	rt := newRetainedTestEnv(t, writingRunner(t, "out.txt"))
 
-	res, _ := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 0)
+	res, _ := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 0, false)
 	env := decodeProposalEnvelope(t, res)
 
 	if _, err := settleRetainedProposal(context.Background(), env.ProposalID, "select"); err != nil {
@@ -260,7 +260,7 @@ func TestRetained_SettleOnce(t *testing.T) {
 func TestProposalTool_Surface(t *testing.T) {
 	resetRetainedProposals()
 	rt := newRetainedTestEnv(t, writingRunner(t, "out.txt"))
-	res, _ := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 0)
+	res, _ := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 0, false)
 	env := decodeProposalEnvelope(t, res)
 
 	tool := &ProposalTool{}
@@ -328,7 +328,7 @@ func TestRetained_SpeculationSettlesOneAndDiscardsTheRest(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			res, err := startRetainedRun(context.Background(), rt, "propose a fix", SubAgentParams{Role: "worker"}, 0)
+			res, err := startRetainedRun(context.Background(), rt, "propose a fix", SubAgentParams{Role: "worker"}, 0, false)
 			if err != nil {
 				runErrs[i] = err
 				return
@@ -439,7 +439,7 @@ func TestRetained_PartialOutputSurvivesBodyError(t *testing.T) {
 	}
 	rt := newRetainedTestEnv(t, r)
 
-	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 50*time.Millisecond)
+	res, err := startRetainedRun(context.Background(), rt, "do the work", SubAgentParams{Role: "worker"}, 50*time.Millisecond, false)
 	if err != nil {
 		t.Fatalf("startRetainedRun: %v", err)
 	}
@@ -546,5 +546,67 @@ func TestEnsureWorktreeRootExcluded_OutsideRepo(t *testing.T) {
 	}
 	if strings.Contains(string(data), "shepherd-worktrees") {
 		t.Errorf("info/exclude unexpectedly modified for an outside root:\n%s", data)
+	}
+}
+
+// TestRetained_ReportLaneReturnsPlainResult pins yaah-7yf's report lane:
+// the dispatch keeps its isolated worktree, but the result is the plain
+// report text, no proposal is registered, and the worktree is gone when
+// the call returns — nothing to settle.
+func TestRetained_ReportLaneReturnsPlainResultAndDiscards(t *testing.T) {
+	resetRetainedProposals()
+	runner := writingRunner(t, "out.txt")
+	rt := newRetainedTestEnv(t, runner)
+
+	res, err := startRetainedRun(context.Background(), rt, "review the thing", SubAgentParams{Role: "reviewer"}, 50*time.Millisecond, true)
+	if err != nil {
+		t.Fatalf("startRetainedRun(report): %v", err)
+	}
+	if res != "default" {
+		t.Errorf("report lane must return the runner's text verbatim, got %q", res)
+	}
+	if strings.HasPrefix(strings.TrimSpace(res), "{") {
+		t.Errorf("report lane must not return a proposal envelope, got %q", res)
+	}
+
+	// No proposal was registered: nothing to settle.
+	if got := listRetainedProposalsSummaries(); got != "No open proposals." {
+		t.Errorf("report lane must not register a proposal, got %q", got)
+	}
+
+	// The worktree existed during the run (the write landed) and is gone now.
+	wd := runner.workdirFor(t, 0)
+	if wd == "" || wd == rt.RepoPath {
+		t.Fatalf("the dispatch must run in an isolated worktree, got %q", wd)
+	}
+	if _, err := os.Stat(wd); !os.IsNotExist(err) {
+		t.Errorf("report worktree must be torn down (stat err=%v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(rt.RepoPath, "out.txt")); !os.IsNotExist(err) {
+		t.Errorf("the host tree must be untouched (stat err=%v)", err)
+	}
+}
+
+// TestRetained_ReportLaneBodyErrorPropagates: a failed report run discards
+// the worktree and surfaces the error — the delegate layer classifies it
+// the same way it classifies shared-lane failures.
+func TestRetained_ReportLaneBodyErrorPropagates(t *testing.T) {
+	resetRetainedProposals()
+	runner := &sessionRunner{}
+	runner.responses = []runnerResponse{{waitForContext: true}}
+	rt := newRetainedTestEnv(t, runner)
+
+	res, err := startRetainedRun(context.Background(), rt, "review", SubAgentParams{Role: "reviewer"}, 50*time.Millisecond, true)
+	if err == nil {
+		t.Fatalf("report lane body error must propagate, got result %q", res)
+	}
+	if got := listRetainedProposalsSummaries(); got != "No open proposals." {
+		t.Errorf("failed report run must not register a proposal, got %q", got)
+	}
+	wd := runner.workdirFor(t, 0)
+	if wd != "" {
+		if _, statErr := os.Stat(wd); !os.IsNotExist(statErr) {
+			t.Errorf("failed report run must tear down the worktree (stat err=%v)", statErr)
+		}
 	}
 }

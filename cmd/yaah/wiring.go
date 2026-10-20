@@ -630,6 +630,22 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// tool sees roles created via the role tool without a restart.
 	taskTool.RoleResolver = func() []string { return subagent.DefaultRegistry().Names() }
 
+	// LaneForRole routes each dispatch by the role's declared output
+	// contract (yaah-7yf): report roles get their text back with the
+	// worktree torn down (or run shared when they cannot mutate), proposal
+	// roles keep the sealed-delta flow. The registry lookup is live, so
+	// roles created via the role tool route immediately too.
+	taskTool.LaneForRole = func(role string) tools.DelegateLane {
+		switch subagent.DispatchLaneFor(subagent.SubAgentRole(role)) {
+		case subagent.LaneRetainedReport:
+			return tools.LaneReport
+		case subagent.LaneShared:
+			return tools.LaneShared
+		default:
+			return tools.LaneProposal
+		}
+	}
+
 	// Hand the manager to the task tool so background:true dispatches go
 	// through it instead of the broken inline goroutine.
 	taskTool.BackgroundJobs = backgroundJobs

@@ -183,11 +183,20 @@ before suspecting the provider or the network.
 A sub-agent's work is retained, not trusted: it runs in its own world and
 returns a proposal the orchestrator settles.
 
-- **Retention.** In a local session the shepherd root scope always exists (tracing is integral), so each dispatch runs in
+- **Retention.** In a local session the shepherd root scope always exists (tracing is integral), so each proposal-lane dispatch runs in
   a detached `git worktree` and returns a sealed proposal. `select` fast-forwards,
   `apply` three-way merges path-disjoint changes, `release` keeps what landed
   and drops the record, and `discard` removes the worktree. A rejected
   attempt never touches the parent tree.
+- **Report roles.** A role whose frontmatter declares `output: report`
+  decouples the output contract from the substrate (yaah-7yf): the dispatch
+  keeps the isolated worktree (scratch writes, builds, and test runs stay off
+  the parent tree) but returns the report text directly — no proposal is
+  sealed and nothing needs settling; the worktree is torn down when the
+  dispatch returns. A report role that carries no tool capable of changing
+  the workspace skips the fork entirely and runs directly on the shared
+  workspace, so its reads see fresh data. Roles that declare nothing keep
+  the proposal lane, and an explicit `output: proposal` always seals.
 - **Shared mode.** `agents.subagent.mode: shared` is the explicit
   direct-to-host opt-out. Without a trace store, or in a containerd/isolated
   session, the retained lane is not available and dispatches use the direct

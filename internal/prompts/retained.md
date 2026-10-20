@@ -4,9 +4,10 @@ Sub-agents run in an **isolated worktree** and their work comes back as a
 **proposal** — a sealed diff held to one side. Your own commands still run
 directly on the host; only a sub-agent's work is retained.
 
-`delegate` returns `status: "proposal"` with a `proposal_id`, the changed
-`files`, and a `diff`. **Nothing has changed on your working tree yet.** Read the
-proposal and settle it with the `proposal` tool:
+Roles that produce changes (developer and friends) come back as
+`status: "proposal"` with a `proposal_id`, the changed `files`, and a `diff`.
+**Nothing has changed on your working tree yet.** Read the proposal and settle
+it with the `proposal` tool:
 
 - `select` — fast-forward the proposal onto your working tree. It fails closed
   if the tree moved since the dispatch.
@@ -18,6 +19,11 @@ proposal and settle it with the `proposal` tool:
 `proposal` with `action: "list"` shows open proposals; `action: "show"` re-reads
 one. A proposal settles exactly once. Dispatch in parallel freely — each has its
 own worktree — and settle each once its report is in.
+
+Report roles (`reviewer`, `tester`, `analyst`) are different: their dispatch
+result **is** the deliverable. They run in their own isolated worktree (their
+scratch never touches your tree), but there is no proposal and nothing to
+settle — read the report and move on.
 
 **You commit, not the sub-agent.** A sub-agent works in a `git worktree` whose
 index and object store live in this repository, outside its sandbox, so it cannot

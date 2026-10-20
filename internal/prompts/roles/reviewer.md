@@ -12,6 +12,7 @@ contract:
     - { name: issues_found,   kind: interpretation }
     - { name: key_detail,     kind: interpretation }
     - { name: findings,       kind: interpretation }
+output: report
 tools:
   - read
   - grep
