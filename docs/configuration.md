@@ -54,6 +54,15 @@ agents:
     max_inline_tools_per_turn: 0       # 0 = unlimited
     estimate_factor: 1.3               # token estimate multiplier (0 = 1.3)
 
+    # Tool belt: the tools this session may call. Every tool the model
+    # does not use still ships its schema on every request, so a lane
+    # that needs only a few tools names them and the rest never reach
+    # the wire. Omit the key (or leave it empty) for the full belt.
+    # The belt covers the main session; a sub-agent's tools come from
+    # its role file. A tool the belt excludes is never registered, and
+    # the session is told which ones are missing.
+    tools: [read, write, edit, bash, grep, glob, ls, file_info]
+
     compaction_threshold: 0.5          # fraction of context_window
     raw_compaction_threshold: 0.5      # ignore cached tokens
     compact_max_messages: 0            # force compaction above N messages

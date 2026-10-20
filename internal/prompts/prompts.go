@@ -207,6 +207,24 @@ var hostOnlyReasons = map[string]string{
 // the host. Skill and plan stay registered but read-only — their
 // mutating actions manage host harness configuration, which the isolated
 // workspace must not write around apply_out.
+// ToolBeltGuidance names the tools a configured tool belt left out. The
+// schemas are simply absent from the request, so without this the model
+// may call a tool that is not there — and a missing tool comes back as an
+// error the model then tries to narrate (yaah-awn).
+func ToolBeltGuidance(omitted []string) string {
+	if len(omitted) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Tool belt\n\n")
+	b.WriteString("This session runs with a reduced tool set. The following tools are not available; do not call them:\n")
+	for _, name := range omitted {
+		b.WriteString("\n- `" + name + "`")
+	}
+	b.WriteString("\n\nUse the tools that are available; if none of them can do the job, say so instead of attempting an absent tool.\n")
+	return b.String()
+}
+
 func IsolatedWorkspaceGuidance(omitted, mcpOmitted []string) string {
 	var b strings.Builder
 	b.WriteString("## Isolated workspace\n\n")

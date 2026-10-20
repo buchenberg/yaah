@@ -397,3 +397,18 @@ func TestConfinementGuidance_EgressLiterals(t *testing.T) {
 		t.Errorf("an unenforced dispatch must not claim the jail's worktree:\n%s", mixed)
 	}
 }
+
+// TestToolBeltGuidance pins the reduced-belt notice (yaah-w8x): the
+// session is told which tools are absent, so it does not call a tool the
+// request has no schema for.
+func TestToolBeltGuidance(t *testing.T) {
+	if got := ToolBeltGuidance(nil); got != "" {
+		t.Errorf("no omitted tools must render nothing, got %q", got)
+	}
+	got := ToolBeltGuidance([]string{"go_test", "bisect"})
+	for _, want := range []string{"## Tool belt", "`go_test`", "`bisect`", "do not call them"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("belt guidance must contain %q:\n%s", want, got)
+		}
+	}
+}
