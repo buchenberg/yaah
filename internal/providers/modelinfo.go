@@ -41,6 +41,40 @@ var modelWindows = map[string]int{
 	"llama-3.3-70b":  131072,
 }
 
+// modelOutputLimits maps known models to a conservative maximum output-token
+// cap. It is used only to keep output-budget recovery from raising max_tokens
+// past a provider limit; it is not a claim about the model's full capacity.
+// Unknown models return 0 and rely on the retry ladder's global bound.
+var modelOutputLimits = map[string]int{
+	"gpt-4o":      16384,
+	"gpt-4o-mini": 16384,
+	"gpt-4-turbo": 4096,
+	"gpt-4":       8192,
+
+	"gpt-3.5-turbo": 4096,
+
+	"deepseek-v4-pro":   32768,
+	"deepseek-v4-flash": 32768,
+	"deepseek-flash":    32768,
+	"deepseek-v3":       8192,
+
+	"glm-5.3":       32768,
+	"glm-5.3-flash": 32768,
+
+	"claude-3.5-sonnet": 8192,
+	"claude-3.5-haiku":  8192,
+	"claude-3-opus":     4096,
+	"claude-3-sonnet":   4096,
+	"claude-3-haiku":    4096,
+}
+
+// ResolveOutputLimit returns the known output-token ceiling for modelName,
+// or 0 when the model is not in the conservative table.
+func ResolveOutputLimit(modelName string) int {
+	name := strings.ToLower(sanitizeModelName(modelName))
+	return modelOutputLimits[name]
+}
+
 // thinkingModels are models that use interleaved reasoning and require
 // reasoning_content to be passed back on every assistant message. Keyed by
 // sanitized model name (after the last "/"). Prefix matching is used for

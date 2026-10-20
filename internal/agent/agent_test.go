@@ -14,6 +14,7 @@ import (
 
 	agentctx "github.com/buchenberg/yaah/internal/agent/context"
 	"github.com/buchenberg/yaah/internal/agent/errorclassify"
+	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -945,6 +946,31 @@ func TestLoop_addRecoveryUsagePreservesContextOccupancy(t *testing.T) {
 	}
 	if loop.State.LastCachedPromptTokens != 100 {
 		t.Errorf("LastCachedPromptTokens = %d, want 100 (final attempt occupancy)", loop.State.LastCachedPromptTokens)
+	}
+}
+
+// A failed call accounts for both the exhausted recovery attempt and the
+// final failing attempt, without replacing context occupancy.
+func TestLoop_foldFailedCallUsageCountsBothAttempts(t *testing.T) {
+	loop := &Loop{}
+	loop.State.LastPromptTokens = 500
+
+	loop.foldFailedCallUsage(llm.CallResult{
+		RecoveryUsage: types.Usage{PromptTokens: 100, CompletionTokens: 200, TotalTokens: 300},
+		Usage:         types.Usage{PromptTokens: 110, CompletionTokens: 210, TotalTokens: 320},
+	})
+
+	if got := loop.State.TotalTokens.PromptTokens; got != 210 {
+		t.Errorf("PromptTokens = %d, want 210", got)
+	}
+	if got := loop.State.TotalTokens.CompletionTokens; got != 410 {
+		t.Errorf("CompletionTokens = %d, want 410", got)
+	}
+	if got := loop.State.TotalTokens.TotalTokens; got != 620 {
+		t.Errorf("TotalTokens = %d, want 620", got)
+	}
+	if loop.State.LastPromptTokens != 500 {
+		t.Errorf("LastPromptTokens = %d, want 500 (no successful attempt to replace it)", loop.State.LastPromptTokens)
 	}
 }
 

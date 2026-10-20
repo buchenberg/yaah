@@ -152,14 +152,14 @@ func (c *AnthropicClient) EffectiveMaxTokens(req types.ChatRequest) int {
 // OutputTokenCeiling reports the highest output cap that is safe without
 // knowing the exact model. Native api.anthropic.com keeps the 4096 floor
 // (older Claude 3 models reject more), so budget recovery cannot raise the
-// cap there; Anthropic-compatible endpoints have no reliable per-model
-// ceiling in this client, so 0 means "unknown" and the retry ladder applies
+// cap there. Compatible endpoints consult the conservative model table
+// (GLM/DeepSeek/Claude); unknown models return 0 and the retry ladder applies
 // its own global bound.
-func (c *AnthropicClient) OutputTokenCeiling(types.ChatRequest) int {
+func (c *AnthropicClient) OutputTokenCeiling(req types.ChatRequest) int {
 	if strings.Contains(strings.ToLower(c.baseURL), "api.anthropic.com") {
 		return nativeAnthropicMaxTokens
 	}
-	return 0
+	return ResolveOutputLimit(req.Model)
 }
 
 // fallbackMaxTokens selects the unconfigured output cap by endpoint. The

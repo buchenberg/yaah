@@ -391,7 +391,10 @@ func TestAnthropicClient_OutputTokenCeiling(t *testing.T) {
 
 	compatible := NewAnthropicClient("https://api.z.ai/api/anthropic", "sk-test", 30)
 	if got := compatible.OutputTokenCeiling(req); got != 0 {
-		t.Errorf("compatible ceiling = %d, want 0 (unknown)", got)
+		t.Errorf("compatible ceiling for unknown model = %d, want 0 (unknown)", got)
+	}
+	if got := compatible.OutputTokenCeiling(types.ChatRequest{Model: "GLM-5.3"}); got != 32768 {
+		t.Errorf("GLM-5.3 ceiling = %d, want 32768", got)
 	}
 }
 

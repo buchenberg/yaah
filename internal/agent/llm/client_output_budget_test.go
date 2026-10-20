@@ -164,17 +164,91 @@ func TestRaisedOutputBudgetThroughInstrumentedProvider(t *testing.T) {
 }
 
 // The native Anthropic safe floor must not be doubled; compatible endpoints
-// can be raised.
+// can be raised, clamped to a known model output limit.
 func TestRaisedOutputBudgetHonorsProviderCeiling(t *testing.T) {
 	native := providers.NewAnthropicClient("https://api.anthropic.com", "sk-test", 0)
-	if next, ok := raisedOutputBudget(native, types.ChatRequest{}); ok {
+	if next, ok := raisedOutputBudget(native, types.ChatRequest{Model: "claude-3-haiku"}); ok {
 		t.Fatalf("native Anthropic cap raised to %d; want no raise past the 4096 safe floor", next)
 	}
 
 	compatible := providers.NewAnthropicClient("https://api.z.ai/api/anthropic", "sk-test", 0)
-	next, ok := raisedOutputBudget(compatible, types.ChatRequest{})
+	next, ok := raisedOutputBudget(compatible, types.ChatRequest{Model: "GLM-5.3"})
 	if !ok || next != 32768 {
 		t.Fatalf("compatible cap = %d, ok = %v; want 32768, true", next, ok)
+	}
+}
+
+// A known model output limit clamps the doubled cap instead of crossing it.
+func TestRaisedOutputBudgetClampsToModelCeiling(t *testing.T) {
+	openai := providers.NewOpenAIClient("https://api.openai.com", "sk-test", 0)
+	next, ok := raisedOutputBudget(openai, types.ChatRequest{Model: "gpt-4o", MaxTokens: 10000})
+	if !ok || next != 16384 {
+		t.Fatalf("gpt-4o raised cap = %d, ok = %v; want 16384 (model ceiling), true", next, ok)
+	}
+
+	compatible := providers.NewAnthropicClient("https://api.z.ai/api/anthropic", "sk-test", 0)
+	next, ok = raisedOutputBudget(compatible, types.ChatRequest{Model: "GLM-5.3", MaxTokens: 16384})
+	if !ok || next != 32768 {
+		t.Fatalf("GLM-5.3 raised cap = %d, ok = %v; want 32768, true", next, ok)
+	}
+}
+
+// recoveryRejectProvider exhausts the first budget, then rejects the raised
+// cap with a 400, as providers do when max_tokens exceeds the model limit.
+type recoveryRejectProvider struct {
+	calls int
+}
+
+func (p *recoveryRejectProvider) Send(context.Context, types.ChatRequest) (*types.ChatResponse, error) {
+	p.calls++
+	if p.calls == 1 {
+		return &types.ChatResponse{
+			Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant"},
+				FinishReason: "length",
+			}},
+			Usage: types.Usage{PromptTokens: 100, CompletionTokens: 10000, TotalTokens: 10100},
+		}, nil
+	}
+	return nil, &providers.APIError{
+		StatusCode: 400,
+		Message:    "invalid request: max completion tokens exceeds the model limit",
+	}
+}
+
+func (p *recoveryRejectProvider) EffectiveMaxTokens(req types.ChatRequest) int { return req.MaxTokens }
+func (p *recoveryRejectProvider) OutputTokenCeiling(types.ChatRequest) int     { return 16384 }
+
+// A failed raised-cap retry must not replace the actionable budget diagnosis
+// with a generic format-error abort.
+func TestCall_outputBudgetRejectionKeepsDiagnosis(t *testing.T) {
+	p := &recoveryRejectProvider{}
+	c := &Client{
+		Provider:     p,
+		Model:        "test-model",
+		MaxRetries:   2,
+		RetryBackoff: time.Millisecond,
+	}
+
+	res, err := c.Call(context.Background(), types.ChatRequest{
+		Model:     "test-model",
+		MaxTokens: 10000,
+	})
+	if err == nil {
+		t.Fatal("expected the raised-cap retry to fail")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "output token budget exhausted") {
+		t.Errorf("error = %v, want the original output-budget diagnosis preserved", err)
+	}
+	if !strings.Contains(msg, "provider returned 400") {
+		t.Errorf("error = %v, want the provider's rejection included", err)
+	}
+	if p.calls != 2 {
+		t.Fatalf("provider called %d times, want 2 (initial + one raised retry)", p.calls)
+	}
+	if res.RecoveryUsage.TotalTokens != 10100 {
+		t.Errorf("RecoveryUsage.TotalTokens = %d, want 10100", res.RecoveryUsage.TotalTokens)
 	}
 }
 

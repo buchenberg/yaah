@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -129,6 +130,14 @@ func (l *Loop) addRecoveryUsage(u types.Usage) {
 	if l.OnUsage != nil {
 		l.OnUsage(running)
 	}
+}
+
+// foldFailedCallUsage accounts for spend from a failed LLM call without
+// touching context occupancy. RecoveryUsage holds the first, budget-exhausted
+// attempt; Usage holds the final failing attempt. Both are billable.
+func (l *Loop) foldFailedCallUsage(result llm.CallResult) {
+	l.addRecoveryUsage(result.RecoveryUsage)
+	l.addRecoveryUsage(result.Usage)
 }
 
 // OwnUsage returns the loop's own model usage: totals minus the child usage

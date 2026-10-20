@@ -158,6 +158,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 	providerSwapped := false
 	respFormatDropped := false
 	outputBudgetRaised := false
+	var outputBudgetErr error
 	c.replayCount = 0
 	c.prematureCount = 0
 
@@ -377,6 +378,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 					// the loop accounts for it without touching the context
 					// occupancy derived from the final attempt.
 					accumulateUsage(&recoveryUsage, result.Usage)
+					outputBudgetErr = err
 					req.MaxTokens = next
 					outputBudgetRaised = true
 					// Recovery replay, not a retry: do not consume a
@@ -394,6 +396,9 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 			// Surface the actionable diagnosis: the classification explains
 			// WHAT to change, the provider error is the cause. Returning err
 			// alone discards the guidance entirely.
+			if outputBudgetErr != nil {
+				return attach(result), recoveryFailure(classified.Message, outputBudgetErr, req.MaxTokens, err)
+			}
 			if classified.Message != "" {
 				return attach(result), fmt.Errorf("%s: %w", classified.Message, err)
 			}
@@ -415,8 +420,14 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 			}
 			stopHB()
 		} else if !classified.Retryable {
+			if outputBudgetErr != nil {
+				return attach(result), recoveryFailure(classified.Message, outputBudgetErr, req.MaxTokens, err)
+			}
 			return attach(result), err
 		}
+	}
+	if outputBudgetErr != nil {
+		return attach(lastResult), recoveryFailure("", outputBudgetErr, req.MaxTokens, lastErr)
 	}
 	return attach(lastResult), lastErr
 }
@@ -510,4 +521,16 @@ func accumulateUsage(total *types.Usage, u types.Usage) {
 		total.CompletionTokensDetails.AcceptedPredictionTokens += d.AcceptedPredictionTokens
 		total.CompletionTokensDetails.RejectedPredictionTokens += d.RejectedPredictionTokens
 	}
+}
+
+// recoveryFailure preserves the original output-budget diagnosis when the
+// raised-cap retry fails for a different reason (for example a provider
+// rejecting the larger max_tokens). Without this, the actionable budget error
+// is replaced by a generic "bad request format" abort.
+func recoveryFailure(classifiedMsg string, budgetErr error, cap int, retryErr error) error {
+	if classifiedMsg == "" {
+		return fmt.Errorf("%w (raised max_tokens to %d; retry failed: %v)", budgetErr, cap, retryErr)
+	}
+	return fmt.Errorf("%s: %w (raised max_tokens to %d; provider rejected the retry: %v)",
+		classifiedMsg, budgetErr, cap, retryErr)
 }
