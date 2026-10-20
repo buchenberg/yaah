@@ -23,6 +23,8 @@ import (
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
 	"github.com/buchenberg/shepherd-runtime-go"
 	shepherdsupervisor "github.com/buchenberg/shepherd-runtime-go/supervisor"
+
+	"github.com/buchenberg/yaah/internal/types"
 )
 
 // AdvisoryRules carries the advisory rules' switches and tuning.
@@ -223,7 +225,9 @@ const haltQuiesceTimeout = 10 * time.Second
 func destructiveFileRule() shepherdsupervisor.SupervisionRule {
 	kernel := shepherdsupervisor.DestructiveToolRule()
 	return shepherdsupervisor.SupervisionRule{
-		Name:   "destructive_file_guard",
+		// The kernel's name, read from the rule itself: it is
+		// user-visible via `supervisor status` and must not diverge.
+		Name:   kernel.Name,
 		Match:  destructiveMatch(kernel.Match),
 		Action: kernel.Action,
 	}
@@ -236,8 +240,8 @@ func destructiveMatch(kernelMatch func(shepherdtrace.EffectEvent) bool) func(she
 		if e.Mode != shepherdtrace.Declaration {
 			return false
 		}
-		if e.SchemaRef == "yaah.tool.write.v1" || e.KindLabel == "write" {
-			existed, ok := e.Payload["file_existed"].(bool)
+		if e.SchemaRef == types.ToolSchemaRef("write") || e.KindLabel == "write" {
+			existed, ok := e.Payload[types.SupervisionKeyFileExisted].(bool)
 			return !ok || existed
 		}
 		return kernelMatch(e)

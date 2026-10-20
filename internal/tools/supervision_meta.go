@@ -13,7 +13,10 @@ type supervisionMetaKey struct{}
 
 // WithSupervisionMeta returns a context carrying a metadata sink for one
 // tool execution. The caller owns the pointed-to map and reads it after
-// the call returns.
+// the call returns. Invariant: the sink is written synchronously during
+// Execute and read once after Execute returns — tools must not retain
+// the sink in goroutines that outlive the call, and the loop must not
+// read it before every dispatch has been collected.
 func WithSupervisionMeta(ctx context.Context, sink *map[string]any) context.Context {
 	return context.WithValue(ctx, supervisionMetaKey{}, sink)
 }
