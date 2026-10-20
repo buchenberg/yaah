@@ -39,6 +39,12 @@ type ToolResult struct {
 	Result   string
 	Error    error
 	Duration time.Duration
+
+	// Meta carries tool-observed supervision facts (see
+	// tools.WithSupervisionMeta); the trace middleware copies it into
+	// the declaration payload for the advisory rules. Nil when the
+	// tool observed nothing.
+	Meta map[string]any
 }
 
 // Middleware intercepts the agent loop at well-defined points.

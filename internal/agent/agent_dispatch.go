@@ -115,6 +115,8 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 		defer d.finishSubAgent()
 	}
 
+	var supervisionMeta map[string]any
+	runCtx = tools.WithSupervisionMeta(runCtx, &supervisionMeta)
 	res, err := l.Registry.Execute(runCtx, d.call.Function.Name, d.call.Function.Arguments)
 
 	if d.isDelegate && !d.isBackground {
@@ -219,7 +221,7 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 	// it receives this value, so a deferred fold would race the parent's next
 	// turn (and its final usage flush).
 	d.finishSubAgent()
-	results <- toolExecResult{idx: d.idx, callID: d.call.ID, name: d.call.Function.Name, args: d.call.Function.Arguments, content: res, dur: duration, err: err}
+	results <- toolExecResult{idx: d.idx, callID: d.call.ID, name: d.call.Function.Name, args: d.call.Function.Arguments, content: res, dur: duration, err: err, meta: supervisionMeta}
 }
 
 // acquire gates the call on the sub-agent semaphore (foreground tasks)

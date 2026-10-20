@@ -37,6 +37,7 @@ func (l *Loop) executeAndCollect(ctx context.Context, calls []types.ToolCall, me
 			Result:   r.content,
 			Error:    r.err,
 			Duration: r.dur,
+			Meta:     r.meta,
 		}
 		*messages = append(*messages, types.ToolResultMsg(r.callID, r.name, r.content))
 		l.Persister.Persist((*messages)[len(*messages)-1])

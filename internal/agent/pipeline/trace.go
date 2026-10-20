@@ -71,7 +71,7 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 		m.ordinal++
 
 		intentID := fmt.Sprintf("%s:tool:%d", m.sessionID, m.ordinal)
-		schemaRef := fmt.Sprintf("yaah.tool.%s.v1", r.Name)
+		schemaRef := types.ToolSchemaRef(r.Name)
 
 		// Wrap args as RawMessage only if valid JSON; otherwise store as string.
 		var argsJSON json.RawMessage
@@ -84,6 +84,20 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 		payload := map[string]any{
 			"tool": r.Name,
 			"args": argsJSON,
+		}
+		// Tool-observed supervision facts ride the declaration so the
+		// advisory rules see what the tool saw (e.g. whether the write
+		// target already existed) instead of re-deriving it — the
+		// middleware has no workspace of its own.
+		for k, v := range r.Meta {
+			// Reserved keys stay middleware-owned: the rules match on
+			// them, so a tool observation must not overwrite the
+			// envelope fields (or "cmd", set below for shells).
+			switch k {
+			case "tool", "args", "cmd":
+				continue
+			}
+			payload[k] = v
 		}
 		// The kernel's supervision rules read the shell command from
 		// the declaration payload's "cmd" (shepherd-adoption plan B1:

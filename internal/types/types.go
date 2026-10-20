@@ -209,3 +209,20 @@ func AssistantMsg(content string, toolCalls []ToolCall) Message {
 		ToolCalls: toolCalls,
 	}
 }
+
+// Supervision constants shared by the tool layer (which observes facts)
+// and the supervision layer (which classifies them). Keeping both sides
+// on one symbol means a rename compiles instead of silently reverting
+// the classification to warn-on-every-write.
+const (
+	// SupervisionKeyFileExisted is the declaration-payload key the write
+	// tool sets to report whether its target file existed before the
+	// call (bool).
+	SupervisionKeyFileExisted = "file_existed"
+)
+
+// ToolSchemaRef is the declaration SchemaRef for a tool name, the shape
+// the trace middleware publishes and the supervision rules match on.
+func ToolSchemaRef(tool string) string {
+	return "yaah.tool." + tool + ".v1"
+}

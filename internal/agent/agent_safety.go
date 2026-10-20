@@ -21,6 +21,7 @@ type toolExecResult struct {
 	content string
 	dur     time.Duration
 	err     error
+	meta    map[string]any
 }
 
 // parseTaskArgs extracts a display-friendly role and prompt (and whether
