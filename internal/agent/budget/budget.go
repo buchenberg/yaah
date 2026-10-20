@@ -87,8 +87,8 @@ func fallbackTurns(iterations int) int {
 	return 1
 }
 
-// SchemaMaxIterations is the maximum the delegate /
-// supervised_task tool schemas accept per call. Resolve bounds the
+// SchemaMaxIterations is the maximum the delegate tool schema accepts
+// per call. Resolve bounds the
 // final budget here so headroom reconciliation cannot grow iterations
 // without limit.
 const SchemaMaxIterations = 50

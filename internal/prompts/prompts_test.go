@@ -300,10 +300,10 @@ func TestSubAgentIdentityMirrorsCanonicalHabitSections(t *testing.T) {
 
 func TestIsolatedWorkspaceGuidance(t *testing.T) {
 	got := IsolatedWorkspaceGuidance(
-		[]string{"background_process", "go_refactor", "role", "supervised_task"},
+		[]string{"background_process", "go_refactor", "role", "bisect"},
 		[]string{"mcp_a", "mcp_b"})
 
-	for _, name := range []string{"background_process", "go_refactor", "role", "supervised_task"} {
+	for _, name := range []string{"background_process", "go_refactor", "role", "bisect"} {
 		if !strings.Contains(got, "`"+name+"`") {
 			t.Errorf("guidance must name the omitted tool %s:\n%s", name, got)
 		}
@@ -315,7 +315,7 @@ func TestIsolatedWorkspaceGuidance(t *testing.T) {
 		t.Error("guidance must point at the dry-run preview")
 	}
 	if !strings.Contains(got, "delegate") {
-		t.Error("guidance must name the sub-agent alternative for supervised_task")
+		t.Error("guidance must name delegate as the sub-agent alternative")
 	}
 	if !strings.Contains(got, "`mcp_a`") || !strings.Contains(got, "`mcp_b`") {
 		t.Error("guidance must name the omitted MCP tools")

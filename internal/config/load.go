@@ -143,8 +143,8 @@ type Defaults struct {
 
 	// ShepherdTracePath is the file path of the Shepherd trace store.
 	// Tracing is integral: sub-agent tool calls are always recorded, the
-	// supervisor tool is registered, and the supervised task tool
-	// (checkpoint/rollback/retry) is available. Empty resolves to the
+	// supervisor tool is registered, and per-turn checkpointing is
+	// available to roles that opt in (`turn_checkpoints`). Empty resolves to the
 	// default trace store under the yaah home — see TracePath.
 	ShepherdTracePath string `yaml:"shepherd_trace_path"`
 
@@ -313,7 +313,7 @@ type SubAgentConfig struct {
 
 // RoleConfig overrides a single role's default timeout, iteration cap,
 // turn cap, provider, model, concurrency, output format, directives, and
-// shepherding (supervised dispatch + per-turn checkpointing).
+// per-turn checkpointing (`turn_checkpoints`).
 type RoleConfig struct {
 	Timeout           int      `yaml:"timeout"`             // seconds; 0 = use role default
 	MaxLoopCycles     int      `yaml:"max_iterations"`      // 0 = use role default
@@ -499,66 +499,21 @@ func Load() (*Config, error) {
 		}
 	}
 
-	// `agents.default.supervised_worktree` was removed with the fork
-	// settlement rework (adoption plan C2): fork variants are always
-	// isolated worktrees now. Warn once so upgraded configs know the
-	// key is dead.
-	var legacySupervised struct {
+	// `shepherd_trace_dir` was renamed to `shepherd_trace_path` and
+	// retyped from directory to file path; warn once so an upgraded
+	// config knows the old key is ignored and the store resolves to the
+	// default path. The supervised_task keys and the per-role
+	// `supervised` flag are past their deprecation window and now die
+	// silently like any unknown key.
+	var legacyRenamed struct {
 		Agents struct {
 			Default struct {
-				SupervisedWorktree *bool `yaml:"supervised_worktree"`
-			} `yaml:"default"`
-		} `yaml:"agents"`
-	}
-	if err := yaml.Unmarshal(data, &legacySupervised); err == nil && legacySupervised.Agents.Default.SupervisedWorktree != nil {
-		fmt.Fprintf(os.Stderr, "warning: config key `agents.default.supervised_worktree` is no longer used; fork variants always run in isolated worktrees\n")
-	}
-
-	// `supervised_task` was removed (the orchestrator is the gate; see the
-	// Plan 7 Phase 4 record). Its keys are dead, and so is the per-role
-	// `supervised` routing flag: every role dispatches through delegate.
-	// Warn once, per key, so an upgraded config does not look like it still
-	// selects a lane that no longer exists.
-	var legacySupervisedTask struct {
-		Agents struct {
-			Default struct {
-				Retries     *int    `yaml:"supervised_max_retries"`
-				RepoPath    *string `yaml:"supervised_repo_path"`
-				TreeRoot    *string `yaml:"supervised_worktree_root"`
-				TreeBootstr *string `yaml:"supervised_worktree_bootstrap"`
-				// ShepherdTraceDir was renamed to shepherd_trace_path and
-				// retyped from directory to file path.
 				ShepherdTraceDir *string `yaml:"shepherd_trace_dir"`
 			} `yaml:"default"`
-			SubAgent struct {
-				Roles map[string]struct {
-					Supervised *bool `yaml:"supervised"`
-				} `yaml:"roles"`
-			} `yaml:"subagent"`
 		} `yaml:"agents"`
 	}
-	if err := yaml.Unmarshal(data, &legacySupervisedTask); err == nil {
-		d := legacySupervisedTask.Agents.Default
-		if d.Retries != nil {
-			fmt.Fprintf(os.Stderr, "warning: config key `agents.default.supervised_max_retries` is no longer used; supervised_task was removed\n")
-		}
-		if d.RepoPath != nil {
-			fmt.Fprintf(os.Stderr, "warning: config key `agents.default.supervised_repo_path` is no longer used; rename it to `retained_repo_path`\n")
-		}
-		if d.TreeRoot != nil {
-			fmt.Fprintf(os.Stderr, "warning: config key `agents.default.supervised_worktree_root` is no longer used; rename it to `retained_worktree_root`\n")
-		}
-		if d.TreeBootstr != nil {
-			fmt.Fprintf(os.Stderr, "warning: config key `agents.default.supervised_worktree_bootstrap` is no longer used; rename it to `retained_worktree_bootstrap`\n")
-		}
-		if d.ShepherdTraceDir != nil {
-			fmt.Fprintf(os.Stderr, "warning: config key `agents.default.shepherd_trace_dir` was renamed to `shepherd_trace_path` and now names the trace store file, not its directory; the old key is ignored and the store resolves to the default path\n")
-		}
-		for name, role := range legacySupervisedTask.Agents.SubAgent.Roles {
-			if role.Supervised != nil {
-				fmt.Fprintf(os.Stderr, "warning: config key `agents.subagent.roles.%s.supervised` is no longer used; supervised_task was removed and every role dispatches through delegate\n", name)
-			}
-		}
+	if err := yaml.Unmarshal(data, &legacyRenamed); err == nil && legacyRenamed.Agents.Default.ShepherdTraceDir != nil {
+		fmt.Fprintf(os.Stderr, "warning: config key `agents.default.shepherd_trace_dir` was renamed to `shepherd_trace_path` and now names the trace store file, not its directory; the old key is ignored and the store resolves to the default path\n")
 	}
 
 	if cfg.Hooks.Dir != "" {
