@@ -101,3 +101,38 @@ func TestWriteTool_preservesNonASCII(t *testing.T) {
 		t.Errorf("read tool changed the content:\n got %q\nwant %q", out, content)
 	}
 }
+
+func TestWriteTool_supervisionMetaRecordsExistence(t *testing.T) {
+	tmp := t.TempDir()
+	existing := filepath.Join(tmp, "existing.txt")
+	os.WriteFile(existing, []byte("old"), 0o644)
+	fresh := filepath.Join(tmp, "fresh.txt")
+
+	wt := &WriteTool{}
+
+	meta := map[string]any(nil)
+	ctx := WithSupervisionMeta(context.Background(), &meta)
+	args, _ := json.Marshal(map[string]any{"content": "next", "filePath": existing})
+	if _, err := wt.Execute(ctx, string(args)); err != nil {
+		t.Fatalf("existing-file Execute() error: %v", err)
+	}
+	if meta["file_existed"] != true {
+		t.Errorf("file_existed = %v, want true for an overwrite", meta["file_existed"])
+	}
+
+	meta = map[string]any(nil)
+	ctx = WithSupervisionMeta(context.Background(), &meta)
+	args, _ = json.Marshal(map[string]any{"content": "first", "filePath": fresh})
+	if _, err := wt.Execute(ctx, string(args)); err != nil {
+		t.Fatalf("new-file Execute() error: %v", err)
+	}
+	if meta["file_existed"] != false {
+		t.Errorf("file_existed = %v, want false for first-time creation", meta["file_existed"])
+	}
+
+	// No sink: direct tool use outside a supervised loop must not panic.
+	args, _ = json.Marshal(map[string]any{"content": "x", "filePath": filepath.Join(tmp, "sinkless.txt")})
+	if _, err := wt.Execute(context.Background(), string(args)); err != nil {
+		t.Fatalf("sinkless Execute() error: %v", err)
+	}
+}

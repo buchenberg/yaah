@@ -816,3 +816,40 @@ func TestService_FiringsEmptyWhenSilent(t *testing.T) {
 		t.Errorf("firings = %+v, want none", firings)
 	}
 }
+
+// TestDestructiveFileRule_WriteClassification pins yaah-0fn: the advisory
+// destructive_file_guard warns on overwrites but not on first-time file
+// creation, staying conservative when the tool attached no observation.
+func TestDestructiveFileRule_WriteClassification(t *testing.T) {
+	rule := destructiveFileRule()
+	decl := func(schema, kind string, payload map[string]any) shepherdtrace.EffectEvent {
+		return shepherdtrace.EffectEvent{
+			Mode:      shepherdtrace.Declaration,
+			SchemaRef: schema,
+			KindLabel: kind,
+			Payload:   payload,
+		}
+	}
+
+	tests := []struct {
+		name  string
+		event shepherdtrace.EffectEvent
+		want  bool
+	}{
+		{"new file passes", decl("yaah.tool.write.v1", "write", map[string]any{"file_existed": false}), false},
+		{"overwrite warns", decl("yaah.tool.write.v1", "write", map[string]any{"file_existed": true}), true},
+		{"missing observation warns", decl("yaah.tool.write.v1", "write", nil), true},
+		{"non-bool observation warns", decl("yaah.tool.write.v1", "write", map[string]any{"file_existed": "yes"}), true},
+		{"rm still warns", decl("yaah.tool.bash.v1", "bash", map[string]any{"cmd": "rm -rf /tmp/x"}), true},
+		{"plain ls passes", decl("yaah.tool.bash.v1", "bash", map[string]any{"cmd": "ls /tmp"}), false},
+		{"delete warns", decl("yaah.tool.delete.v1", "delete", nil), true},
+		{"capture never matches", shepherdtrace.EffectEvent{Mode: shepherdtrace.Capture, SchemaRef: "yaah.tool.write.v1", KindLabel: "write", Payload: map[string]any{"file_existed": true}}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := rule.Match(tt.event); got != tt.want {
+				t.Errorf("Match() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

@@ -85,6 +85,13 @@ func (m *ShepherdTraceMiddleware) PostTool(ctx context.Context, results []ToolRe
 			"tool": r.Name,
 			"args": argsJSON,
 		}
+		// Tool-observed supervision facts ride the declaration so the
+		// advisory rules see what the tool saw (e.g. whether the write
+		// target already existed) instead of re-deriving it — the
+		// middleware has no workspace of its own.
+		for k, v := range r.Meta {
+			payload[k] = v
+		}
 		// The kernel's supervision rules read the shell command from
 		// the declaration payload's "cmd" (shepherd-adoption plan B1:
 		// the advisory destructive rule matches patterns in it). yaah's

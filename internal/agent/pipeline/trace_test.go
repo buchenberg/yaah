@@ -423,3 +423,32 @@ func TestTraceMiddleware_PowerShellDeclarationCarriesCmd(t *testing.T) {
 		t.Errorf("powershell declaration payload cmd = %q, want the shell command", cmd)
 	}
 }
+
+func TestTraceMiddleware_MetaRidesDeclaration(t *testing.T) {
+	m := newTestTraceMiddleware(t)
+	results := []ToolResult{{
+		Name: "write",
+		Args: `{"content":"hi","filePath":"/tmp/x"}`,
+		Meta: map[string]any{"file_existed": false},
+	}}
+
+	if _, err := m.PostTool(context.Background(), results, &Step{}); err != nil {
+		t.Fatalf("PostTool error: %v", err)
+	}
+
+	slice, err := m.store.ReadOwnerPrefix(context.Background(), shepherdtrace.TrustedReadContext, "test-session", 999, shepherdtrace.ModeBoth)
+	if err != nil {
+		t.Fatalf("read trace: %v", err)
+	}
+	factIDs := slice.FactIDs()
+	if len(factIDs) != 2 {
+		t.Fatalf("fact count = %d, want 2", len(factIDs))
+	}
+	rec, ok := slice.FactsByID[factIDs[0]].(shepherdtrace.Record)
+	if !ok {
+		t.Fatal("declaration should be a Record")
+	}
+	if rec.Body.Payload["file_existed"] != false {
+		t.Errorf("declaration payload file_existed = %v, want false", rec.Body.Payload["file_existed"])
+	}
+}

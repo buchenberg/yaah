@@ -211,6 +211,39 @@ const (
 // not the other way around).
 const haltQuiesceTimeout = 10 * time.Second
 
+// destructiveFileRule is yaah's advisory destructive_file_guard. The
+// kernel's DestructiveToolRule flags every write declaration ("all writes
+// are potentially destructive"), which warns on plain new-file creation —
+// the common case in a sub-agent worktree — and trains warning fatigue
+// (yaah-0fn). yaah keeps the kernel's bash blacklist and delete match but
+// classifies a write by what the tool observed: file_existed=true is an
+// overwrite (warn), false is first-time creation (pass), and a missing
+// field — a tool that attached nothing, or a Stat error other than
+// not-exist — stays conservative and warns.
+func destructiveFileRule() shepherdsupervisor.SupervisionRule {
+	kernel := shepherdsupervisor.DestructiveToolRule()
+	return shepherdsupervisor.SupervisionRule{
+		Name:   "destructive_file_guard",
+		Match:  destructiveMatch(kernel.Match),
+		Action: kernel.Action,
+	}
+}
+
+// destructiveMatch wraps a kernel matcher with yaah's write
+// classification.
+func destructiveMatch(kernelMatch func(shepherdtrace.EffectEvent) bool) func(shepherdtrace.EffectEvent) bool {
+	return func(e shepherdtrace.EffectEvent) bool {
+		if e.Mode != shepherdtrace.Declaration {
+			return false
+		}
+		if e.SchemaRef == "yaah.tool.write.v1" || e.KindLabel == "write" {
+			existed, ok := e.Payload["file_existed"].(bool)
+			return !ok || existed
+		}
+		return kernelMatch(e)
+	}
+}
+
 // shellGuardRule composes the blocking shell guard from the kernel's
 // DestructiveToolGuard (adoption plan B2, decision D3: "default-deny
 // for bash"), reusing the kernel's deny action verbatim. The kernel's
@@ -282,7 +315,7 @@ func NewService(mgr *shepherd.ScopeManager, bus *shepherdtrace.EffectBus, runs *
 	svc := &Service{sup: sup, mgr: mgr, runs: runs, bus: bus, rootScopeID: rootScopeID, haltRoot: haltRoot}
 
 	if rules.DestructiveTool {
-		sup.AddRule(advisoryRule(shepherdsupervisor.DestructiveToolRule(), svc.recordFiring))
+		sup.AddRule(advisoryRule(destructiveFileRule(), svc.recordFiring))
 	}
 	if rules.HighErrorRate {
 		sup.AddRule(advisoryRule(shepherdsupervisor.HighErrorRateRule(errorThreshold, errorWindow), svc.recordFiring))

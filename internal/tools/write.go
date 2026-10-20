@@ -3,7 +3,9 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 
 	"github.com/buchenberg/yaah/internal/prompts"
 )
@@ -55,6 +57,17 @@ func (t *WriteTool) Execute(ctx context.Context, args string) (string, error) {
 		return "", err
 	}
 	params.FilePath = resolved
+
+	// Report whether the target already existed so the advisory
+	// destructive_file_guard can tell an overwrite from first-time
+	// creation (yaah-0fn): the rule warns on the former only. Stat
+	// failures other than not-exist leave the field unset — the rule
+	// treats unknown as potentially destructive.
+	if _, err := ws.Stat(ctx, params.FilePath); err == nil {
+		SetSupervisionMeta(ctx, "file_existed", true)
+	} else if errors.Is(err, fs.ErrNotExist) {
+		SetSupervisionMeta(ctx, "file_existed", false)
+	}
 
 	if err := ws.WriteFile(ctx, params.FilePath, []byte(params.Content), 0o644); err != nil {
 		return "", fmt.Errorf("write: %w", err)
