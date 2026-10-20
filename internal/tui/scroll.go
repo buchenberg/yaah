@@ -67,7 +67,6 @@ func (t *App) buildItems(from, to, w int) []messages.Item {
 		items[i-from] = messages.Item{
 			Text:      text,
 			ToolBlock: ci.toolBlock,
-			SubBlock:  ci.subBlock,
 			ReasBlock: ci.reasoningBlock,
 		}
 	}

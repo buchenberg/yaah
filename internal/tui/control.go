@@ -81,7 +81,6 @@ func (t *App) handleControlMsg(msg control.Msg) {
 		}
 		t.flushPendingTokens()
 		t.pendingTool = ""
-		t.activeSubAgents = 0
 		t.setActivity(activity.Idle, "")
 		t.conversationLog = append(t.conversationLog, convItem{
 			text: fmt.Sprintf("[%s]error: %s[-]", t.Theme.Error, errText),
@@ -148,15 +147,9 @@ func (t *App) renderTodoPane() {
 	}
 }
 
-// collectSubagentBlocks returns all subagent blocks from conversationLog.
+// collectSubagentBlocks returns the sub-agents shown in the dedicated pane.
 func (t *App) collectSubagentBlocks() []*subagent.Block {
-	var blocks []*subagent.Block
-	for _, ci := range t.conversationLog {
-		if ci.subBlock != nil {
-			blocks = append(blocks, ci.subBlock)
-		}
-	}
-	return blocks
+	return t.subAgents
 }
 
 func (t *App) renderBackgroundJobsPane() {

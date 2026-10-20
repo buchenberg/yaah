@@ -12,7 +12,6 @@ const (
 	ActionCommand
 	ActionToggleReasoning
 	ActionToggleTools
-	ActionToggleSubAgents
 	ActionSend
 	ActionCancel
 	ActionScrollUp
@@ -46,7 +45,6 @@ func DefaultBindings() []Binding {
 		{Key: tcell.KeyCtrlP, Action: ActionCommand, Label: "Ctrl+P", HelpText: "command palette"},
 		{Key: tcell.KeyCtrlR, Action: ActionToggleReasoning, Label: "Ctrl+R", HelpText: "toggle reasoning blocks"},
 		{Key: tcell.KeyCtrlT, Action: ActionToggleTools, Label: "Ctrl+T", HelpText: "toggle tool blocks"},
-		{Key: tcell.KeyCtrlS, Action: ActionToggleSubAgents, Label: "Ctrl+S", HelpText: "toggle sub-agent blocks"},
 		{Key: tcell.KeyEnter, Action: ActionSend, Label: "Enter", HelpText: "send message / follow-up"},
 		{Key: tcell.KeyUp, Action: ActionScrollUp, Label: "↑", HelpText: "scroll up"},
 		{Key: tcell.KeyDown, Action: ActionScrollDown, Label: "↓", HelpText: "scroll down"},

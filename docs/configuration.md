@@ -104,11 +104,11 @@ agents:
     network_hosts: []                  # broker allowlist; empty = admit nothing
     roles:
       analyst:
-        timeout: 240
-        max_iterations: 30
+        timeout: 600
+        max_iterations: 50             # schema hard cap (role file asks for 75)
       developer:
-        timeout: 300
-        max_iterations: 40
+        timeout: 900
+        max_iterations: 50             # schema hard cap (role file asks for 75)
         min_turns: 6
         turn_checkpoints: false
       reviewer:

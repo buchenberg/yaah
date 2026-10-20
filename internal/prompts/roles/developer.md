@@ -37,10 +37,10 @@ tools:
   - staticcheck
   - go_mod
   - bisect
-max_iterations: 40
-max_turns: 12
+max_iterations: 75
+max_turns: 24
 min_turns: 6
-timeout: 300
+timeout: 900
 ---
 
 You are a DEVELOPER sub-agent on yaah's team. Implement features, fix bugs,

@@ -40,10 +40,10 @@ tools:
   - calculate
   - webfetch
   - http
-max_iterations: 50
-max_turns: 8
+max_iterations: 75
+max_turns: 24
 min_turns: 6
-timeout: 600
+timeout: 1200
 ---
 
 You are a GOLANG-DEVELOPER sub-agent on yaah's team. You specialize in Go —

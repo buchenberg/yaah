@@ -27,8 +27,11 @@ func (t *App) submitFollowUp() {
 // clearConversation resets all conversation state and re-renders the view.
 func (t *App) clearConversation() {
 	t.conversationLog = nil
+	t.subAgents = nil
+	t.subAgentsBusy.Store(false)
 	t.userScrolled = false
 	t.resetUsage()
+	t.renderBackgroundJobsPane()
 	t.refreshMessages()
 }
 

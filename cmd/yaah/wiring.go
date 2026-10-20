@@ -16,6 +16,7 @@ import (
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/egress"
 
+	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/budget"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/recovery"
@@ -927,6 +928,33 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		sess.flushUsage()
 		sess.mu.Unlock()
 	}
+
+	// Session-scoped sub-agent lifecycle events keep the UI's Subagents pane
+	// honest for background jobs that outlive the loop that dispatched them.
+	// While a loop is live its broker hooks win (no duplicate events); once
+	// the loop clears them, these fallbacks deliver the completion directly
+	// to the current view.
+	backgroundJobs.SetSessionHooks(
+		func(id, role, model, prompt string) {
+			sess.dispatchEvent(&agent.SubAgentStartEvent{
+				SubAgentID: id,
+				Role:       role,
+				Model:      model,
+				Prompt:     prompt,
+			})
+		},
+		func(id, role, model, prompt, result string, dur time.Duration, err string) {
+			sess.dispatchEvent(&agent.SubAgentEndEvent{
+				SubAgentID: id,
+				Role:       role,
+				Model:      model,
+				Prompt:     prompt,
+				Duration:   dur,
+				Error:      err,
+				Result:     result,
+			})
+		},
+	)
 
 	return sess, nil
 }

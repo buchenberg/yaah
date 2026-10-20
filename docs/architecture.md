@@ -316,10 +316,12 @@ Each sub-agent runs under a **role** that selects its tool set and default limit
 
 | Role | Iterations | Turns (floor) | Timeout | Tools |
 |---|---|---|---|---|
-| `analyst` (Jack) | 30 | 10 (5) | 240s | read/search/web + shell, git, diff, go_outline |
-| `developer` (Charley) | 40 | 12 (6) | 300s | analyst set + write/edit/delete/patch + Go tools |
+| `analyst` (Jack) | 75 (cap 50) | 24 (5) | 600s | read/search/web + shell, git, diff, go_outline |
+| `developer` (Charley) | 75 (cap 50) | 24 (6) | 900s | analyst set + write/edit/delete/patch + Go tools |
 | `tester` (Casey) | 30 | 8 (4) | 300s | read/search + shell + go_test + git/diff |
 | `reviewer` (Tim) | 25 | 12 (8) | 480s | read/search + git/diff/staticcheck; no shell or web |
+
+Role iteration limits above the tool schema's hard ceiling of 50 resolve to 50.
 
 There is no default role and no full-tools fallback. `RoleProfileFor(role)`
 reads from the global `RoleRegistry` installed at startup via
@@ -390,15 +392,20 @@ indent sub-agent tool calls or track a context depth.
 
 ### TUI lifecycle display
 
-Files: `cmd/yaah/tui.go`, `internal/tui/proxy.go`, `internal/tui/blocks.go`, `internal/tui/components/subagent/`
+Files: `cmd/yaah/tui.go`, `internal/tui/proxy.go`, `internal/tui/blocks.go`, `internal/tui/components/subagent/`, `internal/tui/components/backgroundjobs/`
 
-Each sub-agent is one collapsible block in the conversation log.
-`SubAgentStartEvent` calls `AddSubAgentStart`, which creates a
-`subagent.Block` and appends a `convItem{subBlock: ...}`.
-`SubAgentEndEvent` calls `AddSubAgentEnd` (or `AddSubAgentError`) and finds
-the block by `SubAgentID` to transition it in place. The block shows role,
-task, model, duration, status, and an expandable result; role colors come
-from `Theme.RoleHex` in `internal/tui/colors/theme.go`.
+Sub-agents render only in the dedicated Subagents pane; they are not added
+to the conversation log. `SubAgentStartEvent` calls `AddSubAgentStart`,
+which appends a `subagent.Block` to `App.subAgents`. `SubAgentEndEvent`
+calls `AddSubAgentEnd` (or `AddSubAgentError`) and finds the block by
+`SubAgentID` to transition it in place. `backgroundjobs.Format` renders the
+active blocks as a compact row with role, elapsed time, and task; the
+100ms activity ticker calls `AdvanceSpinner` on each active block and
+repaints the pane. Terminal blocks are pruned from the pane. Background jobs
+that complete after the loop retires use the session-scoped fallback hooks
+(`SetSessionHooks`) to deliver `SubAgentEndEvent` directly to the current
+view. Role colors come from `Theme.RoleHex` in
+`internal/tui/colors/theme.go`.
 
 ### Timeout enforcement
 
@@ -408,7 +415,7 @@ per-call `timeout_seconds` (values above 600 are clamped), per-role
 `agents.subagent.roles.<role>.timeout`, the role file's `timeout`, then
 `agents.subagent.default_timeout`. On deadline or cancellation the tool
 returns a structured JSON result
-(`{"error":"timed out","role":"developer","timeout":"300s","partial":"..."}`)
+(`{"error":"timed out","role":"developer","timeout":"900s","partial":"..."}`)
 instead of a Go error, so the parent can retry, continue, or report. The role
 and resolved budget tell the orchestrator which timeout to raise; any partial
 output is surfaced alongside the error.
@@ -1113,7 +1120,7 @@ Files: `cmd/yaah/tui.go`, `internal/tui/`
 
 The TUI is a [tview](https://github.com/rivo/tview)/[tcell](https://github.com/gdamore/tcell) application running the agent loop in a background goroutine. Communication from the agent goroutine to the TUI goes through the typed event broker — the agent loop publishes `Event` values to the internal `pubsub.Broker[Event]`, and a forwarder delivers them to `App.HandleEvent`, the `agent.View` implementation in `internal/tui/proxy.go`, which funnels mutations through an ordered event queue onto the tview main goroutine. Streaming token deltas collect in a pending buffer and are flushed on `FlushEvent` and at done/tool/compaction boundaries; refresh work is coalesced rather than timer-debounced.
 
-**Layout:** Pages → Flex hierarchy with a conversation view (collapsible tool/reasoning/sub-agent blocks rendered by components under `internal/tui/components/`), an info pane (session/context/MCP/config sections), a todo sidebar, a background-jobs pane, and a multi-line input. All colors come from the shared theme in `internal/tui/colors/theme.go`.
+**Layout:** Pages → Flex hierarchy with a conversation view (collapsible tool/reasoning blocks rendered by components under `internal/tui/components/`), an info pane (session/context/MCP/config sections), a dedicated Subagents pane for active dispatches, a todo sidebar, and a multi-line input. All colors come from the shared theme in `internal/tui/colors/theme.go`.
 
 **Command palette:** `ctrl+p` opens a command palette (`:help`, `:clear`, `:compact`, `:banner`, `:model`, `:search`, `:steer`, `:verbose`, `:stop`, `:quit`). `:model` queries providers' model lists and filters live; selection swaps provider/model mid-session.
 

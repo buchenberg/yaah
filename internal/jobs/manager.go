@@ -143,8 +143,17 @@ type BackgroundJobs struct {
 	OnStart func(id, role, model, prompt string)
 	OnEnd   func(id, role, model, prompt, result string, dur time.Duration, err string)
 
-	// hookMu guards OnStart/OnEnd against Run-boundary writes racing
-	// with reads from completing job goroutines (finding D3).
+	// OnStartSession / OnEndSession are session-scoped fallbacks for jobs
+	// that start or finish outside a live loop (most commonly a job that
+	// completes between turns after the loop cleared its hooks). They fire
+	// only when the corresponding loop hook is nil, so the live broker path
+	// is never duplicated. Guarded by hookMu; set via SetSessionHooks.
+	OnStartSession func(id, role, model, prompt string)
+	OnEndSession   func(id, role, model, prompt, result string, dur time.Duration, err string)
+
+	// hookMu guards OnStart/OnEnd/OnStartSession/OnEndSession against
+	// Run-boundary writes racing with reads from completing job goroutines
+	// (finding D3).
 	hookMu sync.RWMutex
 }
 
@@ -165,6 +174,48 @@ func (m *BackgroundJobs) loopHooks() (onStart func(id, role, model, prompt strin
 	m.hookMu.RLock()
 	defer m.hookMu.RUnlock()
 	return m.OnStart, m.OnEnd
+}
+
+// SetSessionHooks installs (or clears, when both nil) the session-scoped
+// fallbacks used when no loop hook is live. Unlike SetLoopHooks, these are
+// not cleared at turn boundaries.
+func (m *BackgroundJobs) SetSessionHooks(
+	onStart func(id, role, model, prompt string),
+	onEnd func(id, role, model, prompt, result string, dur time.Duration, err string),
+) {
+	m.hookMu.Lock()
+	m.OnStartSession = onStart
+	m.OnEndSession = onEnd
+	m.hookMu.Unlock()
+}
+
+// sessionHooks snapshots the current session-scoped hooks.
+func (m *BackgroundJobs) sessionHooks() (onStart func(id, role, model, prompt string), onEnd func(id, role, model, prompt, result string, dur time.Duration, err string)) {
+	m.hookMu.RLock()
+	defer m.hookMu.RUnlock()
+	return m.OnStartSession, m.OnEndSession
+}
+
+// startHook returns the loop hook when one is installed, otherwise the
+// session fallback. Exactly one path fires, so live views never see a
+// duplicate start event.
+func (m *BackgroundJobs) startHook() func(id, role, model, prompt string) {
+	if onStart, _ := m.loopHooks(); onStart != nil {
+		return onStart
+	}
+	onStart, _ := m.sessionHooks()
+	return onStart
+}
+
+// endHook returns the loop hook when one is installed, otherwise the
+// session fallback. Exactly one path fires, so live views never see a
+// duplicate end event.
+func (m *BackgroundJobs) endHook() func(id, role, model, prompt, result string, dur time.Duration, err string) {
+	if _, onEnd := m.loopHooks(); onEnd != nil {
+		return onEnd
+	}
+	_, onEnd := m.sessionHooks()
+	return onEnd
 }
 
 // NewBackgroundJobs creates a manager backed by context.Background().
@@ -296,8 +347,7 @@ func (m *BackgroundJobs) Launch(callCtx context.Context, runner TaskRunner, role
 	jobCtx = WithSubAgentUsage(jobCtx, &job.usage)
 	jobCtx = WithSubAgentStartNotifier(jobCtx, func(model string) {
 		setJobModel(model)
-		onStart, _ := m.loopHooks()
-		if onStart != nil {
+		if onStart := m.startHook(); onStart != nil {
 			onStart(job.id, role, model, description)
 		}
 	})
@@ -348,8 +398,7 @@ func (m *BackgroundJobs) run(job *backgroundJob, jobCtx context.Context, jobCanc
 	if m.OnUsage != nil && (job.usage.TotalTokens > 0 || job.usage.PromptTokens > 0 || job.usage.CompletionTokens > 0) {
 		m.OnUsage(job.usage)
 	}
-	_, onEnd := m.loopHooks()
-	if onEnd != nil {
+	if onEnd := m.endHook(); onEnd != nil {
 		errStr := ""
 		if runErr != nil {
 			errStr = runErr.Error()

@@ -62,10 +62,11 @@ func (t *App) startControlLoop(done <-chan struct{}) {
 	}()
 }
 
-// startActivityTicker drives the spinner/gauge animation at ~10 Hz.
-// The tick is dropped (non-critical queue path) when the UI event
-// queue is saturated — worst case the animation stutters, it never
-// blocks or crashes.
+// startActivityTicker drives the spinner/gauge animation at ~10 Hz, and
+// advances the dedicated Subagents pane's per-agent spinners while any
+// activity is in flight. The tick is dropped (non-critical queue path)
+// when the UI event queue is saturated — worst case the animation
+// stutters, it never blocks or crashes.
 func (t *App) startActivityTicker(done <-chan struct{}) {
 	go func() {
 		tick := time.NewTicker(100 * time.Millisecond)
@@ -75,11 +76,14 @@ func (t *App) startActivityTicker(done <-chan struct{}) {
 			case <-done:
 				return
 			case <-tick.C:
-				if !t.activityBusy.Load() {
+				if !t.activityBusy.Load() && !t.subAgentsBusy.Load() {
 					continue
 				}
 				t.queueUpdateDraw(func() {
-					t.activityLine.Pulse()
+					if t.activityBusy.Load() {
+						t.activityLine.Pulse()
+					}
+					t.advanceSubAgentSpinners()
 				})
 			}
 		}

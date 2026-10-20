@@ -6,7 +6,6 @@ import (
 
 	"github.com/buchenberg/yaah/internal/tui/colors"
 	"github.com/buchenberg/yaah/internal/tui/components/reasoning"
-	"github.com/buchenberg/yaah/internal/tui/components/subagent"
 	"github.com/buchenberg/yaah/internal/tui/components/toolblock"
 	"github.com/buchenberg/yaah/internal/tui/lolcat"
 )
@@ -45,16 +44,6 @@ func TestFormat_ToolBlock(t *testing.T) {
 	}
 }
 
-func TestFormat_SubAgentBlock(t *testing.T) {
-	th := colors.NewDarkTheme()
-	sb := subagent.New("sa-1", "developer", "", "fix the bug", "gpt-4", &th)
-	items := []Item{{SubBlock: sb}}
-	out := Format(items, Content{Width: 80, Theme: &th})
-	if !strings.Contains(out, "fix the bug") {
-		t.Errorf("should contain sub-agent task, got %q", out)
-	}
-}
-
 func TestFormat_ReasoningBlock(t *testing.T) {
 	th := colors.NewDarkTheme()
 	rb := reasoning.New("r1", "model thoughts", 0, &th)
@@ -70,13 +59,11 @@ func TestFormat_MixedBlocks(t *testing.T) {
 	th := colors.NewDarkTheme()
 	tb := toolblock.New("t1", "read", `{"path":"/foo"}`, &th)
 	tb.Complete("done", "content")
-	sb := subagent.New("sa-1", "developer", "", "fix bug", "gpt-4", &th)
 	rb := reasoning.New("r1", "thoughts", 0, &th)
 
 	items := []Item{
 		{Text: "User: do something"},
 		{ToolBlock: tb},
-		{SubBlock: sb},
 		{ReasBlock: rb},
 	}
 	out := Format(items, Content{Width: 80, Theme: &th})
@@ -86,9 +73,6 @@ func TestFormat_MixedBlocks(t *testing.T) {
 	}
 	if !strings.Contains(out, "read") {
 		t.Error("should contain tool")
-	}
-	if !strings.Contains(out, "fix bug") {
-		t.Error("should contain sub-agent")
 	}
 	if !strings.Contains(plain, "Reasoning") {
 		t.Error("should contain reasoning")
