@@ -165,7 +165,9 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 		// Prefer the real provider-reported token count over the
 		// char/4 estimate (which inflates with reasoning content).
 		ct := e.ContextTokens
-		if e.LastPromptTokens > 0 {
+		if e.LastPromptTokensInclusive > 0 {
+			ct = e.LastPromptTokensInclusive
+		} else if e.LastPromptTokens > 0 {
 			ct = e.LastPromptTokens
 		}
 		we = sseWireEvent{Type: "done", Response: e.Response, Error: e.Error,
@@ -305,7 +307,9 @@ func forwardCtrl(ctx context.Context, ch <-chan control.Msg, v *sseView, am *ans
 				v.write(marshalWire(sseWireEvent{Type: "ctrl.todos", Items: items}))
 			case *control.ContextInfo:
 				ct := m.Tokens
-				if m.LastPromptTokens > 0 {
+				if m.LastPromptTokensInclusive > 0 {
+					ct = m.LastPromptTokensInclusive
+				} else if m.LastPromptTokens > 0 {
 					ct = m.LastPromptTokens
 				}
 				v.write(marshalWire(sseWireEvent{Type: "ctrl.context", Tokens: ct, Window: m.Window}))

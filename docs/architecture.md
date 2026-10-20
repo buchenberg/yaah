@@ -727,7 +727,9 @@ outcomes.
 
 ### Token estimation
 
-Primary: API-reported `LastPromptTokens` from the most recent model call.
+Primary: the API-reported cache-inclusive prompt size
+(`LastPromptTokensInclusive`) for display; compaction uses the provider-shaped
+`LastPromptTokens` (see usage shapes above).
 Fallback (first call, before any API response): `PreflightTokens()` which
 uses a `len(content) / 4` heuristic with a configurable multiplier
 (`EstimateFactor`, default 1.3) to compensate for provider tokenizers
@@ -793,6 +795,23 @@ keep as many recent turns as fit in 25% of the context window, with:
    anti-thrashing counter. After 2 consecutive ineffective compactions, skip
    further compaction.
 9. If the LLM call fails or returns empty, try chunked compaction when the old tail is large enough; otherwise fall back to `trimContext()`.
+
+### Usage shapes and the context display
+
+Providers report prompt usage in two shapes:
+
+- **OpenAI-compatible:** `prompt_tokens` already includes cache reads.
+  `PromptIncludesCache` is set to `true` at decode time.
+- **Anthropic-shaped:** `input_tokens` excludes cache reads, which arrive
+  separately as `cache_read_input_tokens`. `PromptIncludesCache` stays
+  `false`.
+
+`Usage.InclusivePromptTokens()` normalizes both (`prompt + cache` for
+Anthropic, `prompt` for OpenAI), including streamed aggregates where
+`PromptTokensDetails` is nil. The views read `LastPromptTokensInclusive`, so the context percentage uses the
+real context size. Compaction keeps using the provider-shaped
+`LastPromptTokens` for its raw gate; this display change does not alter the
+compaction thresholds.
 
 ### Sub-agent result capping
 
@@ -1022,7 +1041,7 @@ Events published during streaming and tool execution:
 | `ToolEndEvent` | After tool execution | `ID int64`; `Name, Args, Result, Error string`; `Duration time.Duration` |
 | `SubAgentStartEvent` | Sub-agent begins | `SubAgentID, Role, Model, Prompt string` |
 | `SubAgentEndEvent` | Sub-agent completes | `SubAgentID, Role, Model, Prompt, Error, Result string`; `Duration time.Duration` |
-| `DoneEvent` | Agent loop finishes | `Response, Error, FinishReason, ResponseModel string`; `ContextTokens, ContextWindow, LastPromptTokens int`; `Usage` |
+| `DoneEvent` | Agent loop finishes | `Response, Error, FinishReason, ResponseModel string`; `ContextTokens, ContextWindow, LastPromptTokens, LastPromptTokensInclusive int`; `Usage` |
 
 ## Provider interface
 

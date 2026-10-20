@@ -195,6 +195,10 @@ for keyless local endpoints.
 | `headers` | — | Extra HTTP headers, sent by OpenAI-compatible providers only |
 | `oauth_client_id` / `oauth_scope` / `oauth_domain` | — | OAuth device-flow settings used with `auth: oauth` |
 
+Anthropic-shaped providers report `input_tokens` excluding cache reads. yaah
+keeps that provider-shaped value for persisted token totals but displays a
+cache-inclusive context size in the TUI and web UI.
+
 OAuth providers are authenticated once with `yaah login <provider>`; the
 stored token is used instead of `api_key`. See `yaah login --help` for the
 provider-specific defaults.

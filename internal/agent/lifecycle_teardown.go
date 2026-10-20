@@ -20,6 +20,7 @@ func (l *Loop) publishDone(response *string, runErr *error) {
 	done.ContextTokens = l.EstimatedTokens()
 	done.ContextWindow = l.Config.ContextWindow
 	done.LastPromptTokens = l.State.LastPromptTokens
+	done.LastPromptTokensInclusive = l.State.LastPromptTokensInclusive
 	done.FinishReason = l.State.LastFinishReason
 	done.ResponseModel = l.State.LastResponseModel
 	done.Usage = l.State.TotalTokens

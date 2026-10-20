@@ -73,3 +73,17 @@ func TestStreamChunk_serializesFromJSON(t *testing.T) {
 		t.Errorf("content = %q", chunk.Choices[0].Delta.Content)
 	}
 }
+
+func TestParseSSEChunk_marksOpenAIUsageInclusive(t *testing.T) {
+	line := []byte(`data: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":1,"total_tokens":101,"prompt_tokens_details":{"cached_tokens":90}}}`)
+	chunk, done, err := parseSSEChunk(line)
+	if err != nil || done || chunk == nil || chunk.Usage == nil {
+		t.Fatalf("parseSSEChunk() = %v, done=%v, err=%v", chunk, done, err)
+	}
+	if !chunk.Usage.PromptIncludesCache {
+		t.Fatal("OpenAI usage must be marked PromptIncludesCache")
+	}
+	if got := chunk.Usage.InclusivePromptTokens(); got != 100 {
+		t.Errorf("InclusivePromptTokens() = %d, want 100", got)
+	}
+}

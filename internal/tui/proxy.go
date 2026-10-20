@@ -119,7 +119,9 @@ func (t *App) HandleEvent(event agent.Event) {
 
 			if e.ContextWindow > 0 {
 				ct := e.ContextTokens
-				if e.LastPromptTokens > 0 {
+				if e.LastPromptTokensInclusive > 0 {
+					ct = e.LastPromptTokensInclusive
+				} else if e.LastPromptTokens > 0 {
 					ct = e.LastPromptTokens
 				}
 				t.contextTokens = ct

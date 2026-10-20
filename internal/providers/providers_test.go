@@ -2,8 +2,12 @@ package providers
 
 import (
 	"context"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+
+	"github.com/buchenberg/yaah/internal/types"
 )
 
 func TestSessionIDFromContext_Empty(t *testing.T) {
@@ -81,5 +85,28 @@ func TestSetSessionHeaders_Different(t *testing.T) {
 
 	if req1.Header.Get("x-session-id") == req2.Header.Get("x-session-id") {
 		t.Error("different session IDs produced same hash")
+	}
+}
+
+func TestOpenAISendMarksUsageInclusive(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":1,"total_tokens":101,"prompt_tokens_details":{"cached_tokens":90}}}`)
+	}))
+	defer srv.Close()
+
+	c := NewOpenAIClient(srv.URL, "test-key", 1)
+	resp, err := c.Send(context.Background(), types.ChatRequest{
+		Model:    "test-model",
+		Messages: []types.Message{types.UserMsg("hi")},
+	})
+	if err != nil {
+		t.Fatalf("Send() error: %v", err)
+	}
+	if !resp.Usage.PromptIncludesCache {
+		t.Fatal("OpenAI usage must be marked PromptIncludesCache")
+	}
+	if got := resp.Usage.InclusivePromptTokens(); got != 100 {
+		t.Errorf("InclusivePromptTokens() = %d, want 100", got)
 	}
 }

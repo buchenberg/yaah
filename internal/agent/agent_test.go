@@ -1879,3 +1879,47 @@ func TestConflictDetection_TrackerClearedAfterIteration(t *testing.T) {
 type fmtErrorf string
 
 func (e fmtErrorf) Error() string { return string(e) }
+
+// TestLoop_lastPromptTokensCacheInclusive: views show the cache-inclusive
+// context size, while compaction can still subtract the cached subset to get
+// the same effective (uncached) count for both provider shapes.
+func TestLoop_lastPromptTokensCacheInclusive(t *testing.T) {
+	t.Run("anthropic shape", func(t *testing.T) {
+		loop := &Loop{}
+		loop.addUsage(types.Usage{PromptTokens: 10, CachedPromptTokens: 90, TotalTokens: 100})
+		if loop.State.LastPromptTokens != 10 {
+			t.Errorf("LastPromptTokens = %d, want raw 10", loop.State.LastPromptTokens)
+		}
+		if loop.State.LastPromptTokensInclusive != 100 {
+			t.Errorf("LastPromptTokensInclusive = %d, want 100", loop.State.LastPromptTokensInclusive)
+		}
+		if loop.State.LastPromptIncludesCache {
+			t.Error("Anthropic usage must not be marked cache-inclusive")
+		}
+		if loop.State.LastCachedPromptTokens != 90 {
+			t.Errorf("LastCachedPromptTokens = %d, want 90", loop.State.LastCachedPromptTokens)
+		}
+	})
+
+	t.Run("openai shape", func(t *testing.T) {
+		loop := &Loop{}
+		loop.addUsage(types.Usage{
+			PromptTokens:        100,
+			CachedPromptTokens:  90,
+			TotalTokens:         100,
+			PromptIncludesCache: true,
+		})
+		if loop.State.LastPromptTokens != 100 {
+			t.Errorf("LastPromptTokens = %d, want raw 100", loop.State.LastPromptTokens)
+		}
+		if loop.State.LastPromptTokensInclusive != 100 {
+			t.Errorf("LastPromptTokensInclusive = %d, want 100", loop.State.LastPromptTokensInclusive)
+		}
+		if !loop.State.LastPromptIncludesCache {
+			t.Error("OpenAI usage must be marked cache-inclusive")
+		}
+		if effective := loop.State.LastPromptTokens - loop.State.LastCachedPromptTokens; effective != 10 {
+			t.Errorf("effective tokens = %d, want 10", effective)
+		}
+	})
+}

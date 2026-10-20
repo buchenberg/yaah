@@ -142,6 +142,10 @@ func parseSSEChunk(line []byte) (*StreamChunk, bool, error) {
 	if err := json.Unmarshal(payload, &chunk); err != nil {
 		return nil, false, err
 	}
+	if chunk.Usage != nil {
+		// OpenAI-compatible prompt_tokens include cache reads.
+		chunk.Usage.PromptIncludesCache = true
+	}
 
 	return &chunk, false, nil
 }

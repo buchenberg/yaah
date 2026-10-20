@@ -68,10 +68,11 @@ func translateAnthropicEvent(event anthropic.MessageStreamEventUnion, st *anthro
 			ID:    e.Message.ID,
 			Model: e.Message.Model,
 		}
-		if u := e.Message.Usage; u.InputTokens > 0 || u.CacheReadInputTokens > 0 {
+		if u := e.Message.Usage; u.InputTokens > 0 || u.CacheCreationInputTokens > 0 || u.CacheReadInputTokens > 0 {
 			chunk.Usage = &types.Usage{
-				PromptTokens:        int(u.InputTokens),
+				PromptTokens:        int(u.InputTokens + u.CacheCreationInputTokens),
 				PromptTokensDetails: &types.PromptTokensDetails{CachedTokens: int(u.CacheReadInputTokens)},
+				PromptIncludesCache: false,
 			}
 		}
 		return chunk, nil
@@ -153,12 +154,15 @@ func translateAnthropicEvent(event anthropic.MessageStreamEventUnion, st *anthro
 				FinishReason: &finishReason,
 			}},
 		}
-		if u := e.Usage; u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadInputTokens > 0 {
+		if u := e.Usage; u.InputTokens > 0 || u.CacheCreationInputTokens > 0 || u.OutputTokens > 0 || u.CacheReadInputTokens > 0 {
 			chunk.Usage = &types.Usage{
-				PromptTokens:        int(u.InputTokens),
+				// Creation tokens are processed input; reads are the
+				// cache portion compaction subtracts.
+				PromptTokens:        int(u.InputTokens + u.CacheCreationInputTokens),
 				CompletionTokens:    int(u.OutputTokens),
-				TotalTokens:         int(u.InputTokens + u.OutputTokens),
+				TotalTokens:         int(u.InputTokens + u.CacheCreationInputTokens + u.OutputTokens),
 				PromptTokensDetails: &types.PromptTokensDetails{CachedTokens: int(u.CacheReadInputTokens)},
+				PromptIncludesCache: false,
 			}
 		}
 		return chunk, nil

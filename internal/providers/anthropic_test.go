@@ -1371,3 +1371,38 @@ func TestAnthropicToolDescription_OmittedWhenEmpty(t *testing.T) {
 		t.Errorf("description must be omitted for descriptionless tools, got %v", wire.Tools[0]["description"])
 	}
 }
+
+func TestAnthropicStreamUsageExcludesCacheFromPrompt(t *testing.T) {
+	chunk, err := translateSSE(t, `{"type":"message_start","message":{"id":"m","type":"message","role":"assistant","content":[],"model":"claude","usage":{"input_tokens":10,"cache_read_input_tokens":90,"output_tokens":0}}}`, &anthropicStreamState{})
+	if err != nil {
+		t.Fatalf("translateSSE() error: %v", err)
+	}
+	if chunk == nil || chunk.Usage == nil {
+		t.Fatal("message_start did not emit usage")
+	}
+	if chunk.Usage.PromptIncludesCache {
+		t.Fatal("Anthropic usage must not be marked PromptIncludesCache")
+	}
+	if chunk.Usage.PromptTokens != 10 {
+		t.Errorf("PromptTokens = %d, want uncached 10", chunk.Usage.PromptTokens)
+	}
+	if got := chunk.Usage.InclusivePromptTokens(); got != 100 {
+		t.Errorf("InclusivePromptTokens() = %d, want 100", got)
+	}
+}
+
+func TestAnthropicUsageIncludesCacheCreation(t *testing.T) {
+	chunk, err := translateSSE(t, `{"type":"message_start","message":{"id":"m","type":"message","role":"assistant","content":[],"model":"claude","usage":{"input_tokens":10,"cache_creation_input_tokens":5,"cache_read_input_tokens":90,"output_tokens":0}}}`, &anthropicStreamState{})
+	if err != nil {
+		t.Fatalf("translateSSE() error: %v", err)
+	}
+	if chunk == nil || chunk.Usage == nil {
+		t.Fatal("message_start did not emit usage")
+	}
+	if chunk.Usage.PromptTokens != 15 {
+		t.Errorf("PromptTokens = %d, want input+creation 15", chunk.Usage.PromptTokens)
+	}
+	if got := chunk.Usage.InclusivePromptTokens(); got != 105 {
+		t.Errorf("InclusivePromptTokens() = %d, want 105", got)
+	}
+}

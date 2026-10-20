@@ -459,3 +459,39 @@ func TestRunStream_capturesSignatureInSeparateDelta(t *testing.T) {
 		t.Errorf("Content = %q, want %q", msg.Content, "answer")
 	}
 }
+
+// TestAddStreamUsagePreservesShapeAcrossChunks: an output-only chunk must not
+// reset the provider shape, and aggregates must stay shape-aware. Regression
+// for display/GenAI totals double-counting OpenAI cache reads.
+func TestAddStreamUsagePreservesShapeAcrossChunks(t *testing.T) {
+	t.Run("openai", func(t *testing.T) {
+		total := types.Usage{}
+		addStreamUsage(&total, &types.Usage{
+			PromptTokens:        100,
+			PromptTokensDetails: &types.PromptTokensDetails{CachedTokens: 90},
+			PromptIncludesCache: true,
+		})
+		addStreamUsage(&total, &types.Usage{CompletionTokens: 5})
+		if !total.PromptIncludesCache {
+			t.Fatal("shape flag lost on output-only chunk")
+		}
+		if got := total.InclusivePromptTokens(); got != 100 {
+			t.Errorf("InclusivePromptTokens() = %d, want 100", got)
+		}
+	})
+
+	t.Run("anthropic", func(t *testing.T) {
+		total := types.Usage{}
+		addStreamUsage(&total, &types.Usage{
+			PromptTokens:        10,
+			PromptTokensDetails: &types.PromptTokensDetails{CachedTokens: 90},
+		})
+		addStreamUsage(&total, &types.Usage{CompletionTokens: 5})
+		if total.PromptIncludesCache {
+			t.Fatal("Anthropic aggregate must not be marked inclusive")
+		}
+		if got := total.InclusivePromptTokens(); got != 100 {
+			t.Errorf("InclusivePromptTokens() = %d, want 100", got)
+		}
+	})
+}

@@ -679,8 +679,8 @@ func TestCompactContext_cacheSubtraction(t *testing.T) {
 	// = 2000 < target(2500) -> both triggers under threshold, skips.
 	withCache := &Loop{Config: LoopConfig{CompactModel: "test",
 		ContextWindow: 10000}, State: LoopState{Messages: append([]types.Message{}, msgs...),
-		LastPromptTokens:       2000,
-		LastCachedPromptTokens: 1500}, Provider: &fakeProvider{responses: []*types.ChatResponse{summary()}},
+		LastPromptTokens:        2000,
+		LastPromptIncludesCache: true, LastCachedPromptTokens: 1500}, Provider: &fakeProvider{responses: []*types.ChatResponse{summary()}},
 	}
 
 	noCache.compactContext(context.Background(), 0.25)
@@ -716,8 +716,8 @@ func TestCompactContext_rawTriggerFires(t *testing.T) {
 	msgs := largeConversation(30)
 	loop := &Loop{Config: LoopConfig{CompactModel: "test",
 		ContextWindow: 100000}, State: LoopState{Messages: append([]types.Message{}, msgs...),
-		LastPromptTokens:       60000,
-		LastCachedPromptTokens: 50000}, Provider: summaryProvider(),
+		LastPromptTokens:        60000,
+		LastPromptIncludesCache: true, LastCachedPromptTokens: 50000}, Provider: summaryProvider(),
 
 	// effective = 10000 < 64000 target
 	}
@@ -736,8 +736,8 @@ func TestCompactContext_bothTriggersUnderThreshold(t *testing.T) {
 	msgs := largeConversation(30)
 	loop := &Loop{Config: LoopConfig{CompactModel: "test",
 		ContextWindow: 100000}, State: LoopState{Messages: append([]types.Message{}, msgs...),
-		LastPromptTokens:       20000,
-		LastCachedPromptTokens: 15000}, Provider: summaryProvider(),
+		LastPromptTokens:        20000,
+		LastPromptIncludesCache: true, LastCachedPromptTokens: 15000}, Provider: summaryProvider(),
 
 	// effective = 5000
 	}
@@ -823,8 +823,8 @@ func TestCompactContext_rawThresholdConfigurable(t *testing.T) {
 
 	defaultThreshold := &Loop{Config: LoopConfig{CompactModel: "test",
 		ContextWindow: 100000}, State: LoopState{Messages: append([]types.Message{}, msgs...),
-		LastPromptTokens:       60000,
-		LastCachedPromptTokens: 55000}, Provider: summaryProvider(),
+		LastPromptTokens:        60000,
+		LastPromptIncludesCache: true, LastCachedPromptTokens: 55000}, Provider: summaryProvider(),
 
 	// effective = 5000 < 64000
 	}
@@ -832,8 +832,8 @@ func TestCompactContext_rawThresholdConfigurable(t *testing.T) {
 		ContextWindow:          100000,
 		RawCompactionThreshold: 0.9}, State: // rawTarget = 90000
 	LoopState{Messages: append([]types.Message{}, msgs...),
-		LastPromptTokens:       60000,
-		LastCachedPromptTokens: 55000}, Provider: summaryProvider(),
+		LastPromptTokens:        60000,
+		LastPromptIncludesCache: true, LastCachedPromptTokens: 55000}, Provider: summaryProvider(),
 	}
 
 	beforeDefault := len(defaultThreshold.State.Messages)

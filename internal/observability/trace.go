@@ -194,9 +194,9 @@ func StartStream(ctx context.Context, model string) (context.Context, trace.Span
 // gen_ai.usage.input_tokens, gen_ai.usage.output_tokens, and — when the
 // provider reported a cache hit — gen_ai.usage.cache_read.input_tokens.
 // The semconv input total must be cache-INCLUSIVE, so it comes from
-// Usage.GenAIInputTokens, which normalizes the OpenAI (inclusive
-// PromptTokens + PromptTokensDetails) and Anthropic (uncached
-// PromptTokens + aggregated CachedPromptTokens) accounting shapes.
+// Usage.GenAIInputTokens, which uses the provider-set
+// Usage.PromptIncludesCache shape flag: OpenAI prompt_tokens already
+// include cache reads, while Anthropic InputTokens do not.
 // cache_read keeps reporting only the cache READ portion via
 // Usage.CacheTokens, which covers both wire shapes: PromptTokensDetails
 // on raw provider usage and the top-level CachedPromptTokens aggregate

@@ -157,6 +157,8 @@ func (c *OpenAIClient) Send(ctx context.Context, req types.ChatRequest) (*types.
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
+	// OpenAI-compatible prompt_tokens include cache reads.
+	result.Usage.PromptIncludesCache = true
 
 	return &result, nil
 }

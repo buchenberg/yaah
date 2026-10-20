@@ -95,8 +95,9 @@ func (s *agentSession) compactContext() {
 	if ch != nil {
 		select {
 		case ch <- &control.ContextInfo{
-			Tokens: newEstimate,
-			Window: window,
+			Tokens:                    newEstimate,
+			Window:                    window,
+			LastPromptTokensInclusive: newEstimate,
 		}:
 		default:
 		}

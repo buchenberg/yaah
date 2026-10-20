@@ -92,7 +92,7 @@ durable conversation-log line; `DoneEvent.Error` is dialog-only.
 | `components/banner` | Figlet+lolcat banner rendering |
 | `components/infopane` | Info pane container; embeds the session, context, and MCP sections and renders usage/sub-agents/embedding/middleware inline. Background jobs render in a separate right-pane item. |
 | `components/sessioninfo` | Agent provider/model/version/status section |
-| `components/contextinfo` | Context window usage section |
+| `components/contextinfo` | Context window usage section; "used" is the cache-inclusive provider prompt (`LastPromptTokensInclusive`), not the uncached input |
 | `components/mcpinfo` | Connected MCP servers section |
 | `components/backgroundjobs` | Running sub-agents in the Subagents pane, with animated spinners |
 | `components/todo` | Todo list sidebar |
