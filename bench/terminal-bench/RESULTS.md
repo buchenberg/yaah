@@ -382,3 +382,30 @@ agent-quality ranking; they are one sampled run per task.
 Raw Hermes usage reports live under each trial's
 `agent-logs/hermes-usage.json`; run them through
 `extract_metrics.py <runs-dir> hermes-coding` to reproduce the table.
+
+## Full 6-task suite (2026-10-20, deepseek-flash, commit 47f14c7)
+
+Same task set, dataset pin, one-shot harness, and model as the 2026-10-17
+run. yaah `v0.88.1` (commit `47f14c7`): includes the orchestration-lane work
+(cache-inclusive compaction gate, evidence guard, supervision fixes) but
+nothing that touches the coding-task path. Run `2026-10-20__15-33-23`,
+`N_CONCURRENT=2` — the first suite run since the minimal-orchestra split
+kept the harness at two parallel trials instead of one. One trial each.
+
+| Task | Resolved | in/out | cached | time |
+|---|---|---|---|---|
+| hello-world | yes | 45,375 / 137 | 31,232 | 4s |
+| broken-python | yes | 144,980 / 4,891 | 127,616 | 34s |
+| csv-to-parquet | yes | 162,615 / 2,349 | 147,072 | 48s |
+| jsonl-aggregator | yes | 84,310 / 2,825 | 68,480 | 27s |
+| assign-seats | yes | 155,009 / 4,522 | 139,136 | 28s |
+| gomoku-planner | yes | 716,370 / 27,802 | 695,680 | 201s |
+
+**Totals**: 6/6 resolved; 1,308,659 prompt + 42,526 output; cached
+1,209,216 (92%); agent wall time 342s.
+
+Comparison against the 2026-10-17 run (`aaa8958`): 6/6 again, prompt tokens
++3% (1,308,659 vs 1,268,629), output tokens +19% (42,526 vs 35,682), wall
+time +30% (342s vs 263s) — within single-trial variance; `gomoku-planner`
+alone accounts for 716K prompt and 201s of it in both runs. No regression
+signal from the 0.87.x→0.88.x supervision/lane work on the coding path.
