@@ -150,6 +150,11 @@ func (l *Loop) applyDefaults() {
 	if l.Persister == nil {
 		l.Persister = NewSessionPersister(nil, nil, l.Config.SessionID)
 	}
+	// Attach the session DB after the default persister exists; creating the
+	// manager earlier in this function would otherwise leave CtxMgr.DB nil.
+	if l.CtxMgr != nil && l.Persister != nil {
+		l.CtxMgr.DB = l.Persister.DB()
+	}
 	// (Re)create the event broker for this Run. publishDone closes the
 	// broker at the end of every Run; a reused Loop re-arms eventing here
 	// instead of silently dropping events on later Runs (finding A4).

@@ -267,3 +267,25 @@ Addressed reviewer findings; no new full-suite run.
 - Compaction helper docstring names `sessions.compacted_summary`.
 
 All eight oracles re-validated in-container with the env signal.
+
+## 2026-10-20 — orch-compact fixed and re-enabled
+
+Root causes found while investigating `yaah-8uz` (run `2026-10-20__12-39-41`):
+
+1. **Raw gate under-triggered on Anthropic usage.** `LastPromptTokens` is uncached
+   input; the compaction raw gate used it directly, so cache-heavy prompts looked
+   small. The gate now uses input + cache-creation + cache reads, while the
+   effective count stays uncached.
+2. **Oversized single-turn conversations produced no summary material.** When the
+   whole conversation is one turn larger than the preserve budget, `SplitTail`
+   returned `KeepStart == len(messages)` and compaction summarized nothing. It now
+   keeps the final exchange (including the assistant call for tool results) and
+   summarizes the rest.
+3. **Summaries were not persisted in one-shot runs.** `applyDefaults` created the
+   context manager without attaching the session DB, so `compacted_summary`
+   stayed empty even when compaction succeeded. The DB is now wired from the
+   persister.
+
+The verifier dropped the message-count proxy and now requires the persisted
+summary plus tool-call linkage. Live run `2026-10-20__12-41-11`:
+**resolved 100%**, `compacted_summary` 1.2 KB, task re-enabled in `suite.txt`.
