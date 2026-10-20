@@ -181,7 +181,9 @@ func (cm *ContextManager) applyCompactedSummary(summary string, sysMsg types.Mes
 	if cm.OnMessagesReplaced != nil {
 		cm.OnMessagesReplaced(newMsgs)
 	}
-	cm.State.LastPromptTokens = cm.estimatedTokens()
+	estimate := cm.estimatedTokens()
+	cm.State.LastPromptTokens = estimate
+	cm.State.LastPromptTokensInclusive = estimate
 	cm.resetPruner()
 	if cm.Pruner != nil {
 		cm.Pruner.Mark(cm.State.Messages, "post_compaction")

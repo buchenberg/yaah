@@ -1887,14 +1887,14 @@ func TestLoop_lastPromptTokensCacheInclusive(t *testing.T) {
 	t.Run("anthropic shape", func(t *testing.T) {
 		loop := &Loop{}
 		loop.addUsage(types.Usage{PromptTokens: 10, CachedPromptTokens: 90, TotalTokens: 100})
-		if loop.State.LastPromptTokens != 100 {
-			t.Errorf("LastPromptTokens = %d, want inclusive 100", loop.State.LastPromptTokens)
+		if loop.State.LastPromptTokens != 10 {
+			t.Errorf("LastPromptTokens = %d, want raw 10", loop.State.LastPromptTokens)
+		}
+		if loop.State.LastPromptTokensInclusive != 100 {
+			t.Errorf("LastPromptTokensInclusive = %d, want 100", loop.State.LastPromptTokensInclusive)
 		}
 		if loop.State.LastCachedPromptTokens != 90 {
 			t.Errorf("LastCachedPromptTokens = %d, want 90", loop.State.LastCachedPromptTokens)
-		}
-		if effective := loop.State.LastPromptTokens - loop.State.LastCachedPromptTokens; effective != 10 {
-			t.Errorf("effective tokens = %d, want 10", effective)
 		}
 	})
 
@@ -1907,7 +1907,10 @@ func TestLoop_lastPromptTokensCacheInclusive(t *testing.T) {
 			PromptIncludesCache: true,
 		})
 		if loop.State.LastPromptTokens != 100 {
-			t.Errorf("LastPromptTokens = %d, want 100", loop.State.LastPromptTokens)
+			t.Errorf("LastPromptTokens = %d, want raw 100", loop.State.LastPromptTokens)
+		}
+		if loop.State.LastPromptTokensInclusive != 100 {
+			t.Errorf("LastPromptTokensInclusive = %d, want 100", loop.State.LastPromptTokensInclusive)
 		}
 		if effective := loop.State.LastPromptTokens - loop.State.LastCachedPromptTokens; effective != 10 {
 			t.Errorf("effective tokens = %d, want 10", effective)

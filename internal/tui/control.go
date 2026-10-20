@@ -59,7 +59,9 @@ func (t *App) handleControlMsg(msg control.Msg) {
 
 	case *control.ContextInfo:
 		ct := m.Tokens
-		if m.LastPromptTokens > 0 {
+		if m.LastPromptTokensInclusive > 0 {
+			ct = m.LastPromptTokensInclusive
+		} else if m.LastPromptTokens > 0 {
 			ct = m.LastPromptTokens
 		}
 		t.contextTokens = ct

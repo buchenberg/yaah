@@ -229,7 +229,8 @@ type LoopState struct {
 	// reported without double-counting nested delegates, and so child
 	// totals never masquerade as the parent's current context occupancy.
 	SubAgentTokens             types.Usage
-	LastPromptTokens           int
+	LastPromptTokens           int // provider-shaped prompt tokens (compaction raw gate)
+	LastPromptTokensInclusive  int // cache-inclusive prompt size (views)
 	LastCachedPromptTokens     int
 	TotalReasoningTokens       int
 	TotalCachedPromptTokens    int

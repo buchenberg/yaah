@@ -65,7 +65,11 @@ func (l *Loop) addUsageLocked(u types.Usage) types.Usage {
 	l.State.TotalTokens.PromptTokens += u.PromptTokens
 	l.State.TotalTokens.CompletionTokens += u.CompletionTokens
 	l.State.TotalTokens.TotalTokens += u.TotalTokens
-	l.State.LastPromptTokens = u.InclusivePromptTokens()
+	if u.PromptIncludesCache {
+		l.State.TotalTokens.PromptIncludesCache = true
+	}
+	l.State.LastPromptTokens = u.PromptTokens
+	l.State.LastPromptTokensInclusive = u.InclusivePromptTokens()
 	if d := u.CompletionTokensDetails; d != nil {
 		l.State.TotalReasoningTokens += d.ReasoningTokens
 	}
@@ -88,6 +92,9 @@ func (l *Loop) addSubAgentUsage(u types.Usage) {
 	l.State.TotalTokens.PromptTokens += u.PromptTokens
 	l.State.TotalTokens.CompletionTokens += u.CompletionTokens
 	l.State.TotalTokens.TotalTokens += u.TotalTokens
+	if u.PromptIncludesCache {
+		l.State.TotalTokens.PromptIncludesCache = true
+	}
 	l.State.SubAgentTokens.PromptTokens += u.PromptTokens
 	l.State.SubAgentTokens.CompletionTokens += u.CompletionTokens
 	l.State.SubAgentTokens.TotalTokens += u.TotalTokens
@@ -118,6 +125,9 @@ func (l *Loop) addRecoveryUsage(u types.Usage) {
 	l.State.TotalTokens.PromptTokens += u.PromptTokens
 	l.State.TotalTokens.CompletionTokens += u.CompletionTokens
 	l.State.TotalTokens.TotalTokens += u.TotalTokens
+	if u.PromptIncludesCache {
+		l.State.TotalTokens.PromptIncludesCache = true
+	}
 	if d := u.CompletionTokensDetails; d != nil {
 		l.State.TotalReasoningTokens += d.ReasoningTokens
 	}
@@ -147,10 +157,11 @@ func (l *Loop) OwnUsage() types.Usage {
 	l.usageMu.Lock()
 	defer l.usageMu.Unlock()
 	own := types.Usage{
-		PromptTokens:       l.State.TotalTokens.PromptTokens - l.State.SubAgentTokens.PromptTokens,
-		CompletionTokens:   l.State.TotalTokens.CompletionTokens - l.State.SubAgentTokens.CompletionTokens,
-		TotalTokens:        l.State.TotalTokens.TotalTokens - l.State.SubAgentTokens.TotalTokens,
-		CachedPromptTokens: l.State.TotalTokens.CachedPromptTokens - l.State.SubAgentTokens.CachedPromptTokens,
+		PromptIncludesCache: l.State.TotalTokens.PromptIncludesCache,
+		PromptTokens:        l.State.TotalTokens.PromptTokens - l.State.SubAgentTokens.PromptTokens,
+		CompletionTokens:    l.State.TotalTokens.CompletionTokens - l.State.SubAgentTokens.CompletionTokens,
+		TotalTokens:         l.State.TotalTokens.TotalTokens - l.State.SubAgentTokens.TotalTokens,
+		CachedPromptTokens:  l.State.TotalTokens.CachedPromptTokens - l.State.SubAgentTokens.CachedPromptTokens,
 	}
 	if own.PromptTokens < 0 {
 		own.PromptTokens = 0

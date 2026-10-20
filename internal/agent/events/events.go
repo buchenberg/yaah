@@ -114,18 +114,20 @@ func (*EscalationEvent) eventMarker() {}
 // turn, cumulative token usage, and the response model string.
 //
 // ContextTokens is the char/4 estimate of the full conversation history.
-// LastPromptTokens is the cache-INCLUSIVE provider-reported prompt size for
-// the last turn: the authoritative context size. Views should prefer it when
-// > 0 for accuracy. (Compaction separately subtracts the cached subset.)
+// LastPromptTokens is the provider-shaped prompt count for the last turn,
+// used by compaction's raw gate. LastPromptTokensInclusive is the
+// cache-inclusive context size; views should prefer it. (Compaction
+// separately subtracts the cached subset.)
 type DoneEvent struct {
-	Response         string
-	Error            string
-	ContextTokens    int // char/4 estimate of all messages
-	ContextWindow    int
-	LastPromptTokens int // cache-inclusive provider-reported prompt size (last turn)
-	FinishReason     string
-	Usage            types.Usage
-	ResponseModel    string
+	Response                  string
+	Error                     string
+	ContextTokens             int // char/4 estimate of all messages
+	ContextWindow             int
+	LastPromptTokens          int // provider-shaped prompt tokens (compaction raw gate)
+	LastPromptTokensInclusive int // cache-inclusive provider prompt size (views)
+	FinishReason              string
+	Usage                     types.Usage
+	ResponseModel             string
 }
 
 func (*DoneEvent) eventMarker() {}

@@ -396,9 +396,13 @@ func raiseAnthropicResponse(resp anthropic.Message) *types.ChatResponse {
 			FinishReason: finishReason,
 		}},
 		Usage: types.Usage{
-			PromptTokens:     int(resp.Usage.InputTokens), // uncached input only
+			// Anthropic splits prompt usage into uncached input, cache
+			// creation, and cache reads. Creation tokens are processed
+			// input, so include them in PromptTokens; reads stay in
+			// CachedPromptTokens and are the portion compaction subtracts.
+			PromptTokens:     int(resp.Usage.InputTokens + resp.Usage.CacheCreationInputTokens),
 			CompletionTokens: int(resp.Usage.OutputTokens),
-			TotalTokens:      int(resp.Usage.InputTokens + resp.Usage.OutputTokens),
+			TotalTokens:      int(resp.Usage.InputTokens + resp.Usage.CacheCreationInputTokens + resp.Usage.OutputTokens),
 			PromptTokensDetails: &types.PromptTokensDetails{
 				CachedTokens: int(resp.Usage.CacheReadInputTokens),
 			},

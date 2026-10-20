@@ -83,9 +83,10 @@ func (*Todos) marker() {}
 
 // ContextInfo carries context window usage statistics.
 type ContextInfo struct {
-	Tokens           int
-	Window           int
-	LastPromptTokens int // cache-inclusive provider-reported prompt size (last turn)
+	Tokens                    int
+	Window                    int
+	LastPromptTokens          int // provider-shaped prompt tokens (last turn)
+	LastPromptTokensInclusive int // cache-inclusive provider prompt size (last turn)
 }
 
 func (*ContextInfo) marker() {}

@@ -806,10 +806,10 @@ Providers report prompt usage in two shapes:
 
 `Usage.InclusivePromptTokens()` normalizes both (`prompt + cache` for
 Anthropic, `prompt` for OpenAI), including streamed aggregates where
-`PromptTokensDetails` is nil. `LastPromptTokens` carries that inclusive value,
-so the TUI/web context percentage uses the real context size. Compaction
-subtracts the cached subset (`LastPromptTokens - LastCachedPromptTokens`) to
-keep the effective-token thresholds unchanged.
+`PromptTokensDetails` is nil. The views read `LastPromptTokensInclusive`, so the context percentage uses the
+real context size. Compaction keeps using the provider-shaped
+`LastPromptTokens` for its raw gate; this display change does not alter the
+compaction thresholds.
 
 ### Sub-agent result capping
 

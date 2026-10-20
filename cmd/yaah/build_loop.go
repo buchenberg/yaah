@@ -89,9 +89,10 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 		}
 		select {
 		case ctrl <- &control.ContextInfo{
-			Tokens:           loop.EstimatedTokens(),
-			Window:           loop.Config.ContextWindow,
-			LastPromptTokens: loop.State.LastPromptTokens,
+			Tokens:                    loop.EstimatedTokens(),
+			Window:                    loop.Config.ContextWindow,
+			LastPromptTokens:          loop.State.LastPromptTokens,
+			LastPromptTokensInclusive: loop.State.LastPromptTokensInclusive,
 		}:
 		default:
 		}
