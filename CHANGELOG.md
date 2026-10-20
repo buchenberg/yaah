@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.86.2](https://github.com/buchenberg/yaah/compare/v0.86.1...v0.86.2) (2026-10-20)
+
+
+### Bug Fixes
+
+* display cache-inclusive context usage for Anthropic-shaped providers ([#419](https://github.com/buchenberg/yaah/issues/419)) ([842ee62](https://github.com/buchenberg/yaah/commit/842ee622ca29a96c5236bd0de8fc45c2a2532f7c))
+* guard process status reads with a mutex ([#421](https://github.com/buchenberg/yaah/issues/421)) ([ef4703d](https://github.com/buchenberg/yaah/commit/ef4703d0d0418f6dd88def00678c758b8effd4a5))
+* mint unique process ids under concurrent starts ([#422](https://github.com/buchenberg/yaah/issues/422)) ([217f656](https://github.com/buchenberg/yaah/commit/217f6568e754e6513494d9195394f213236944e7))
+* preserve unknown role frontmatter keys on edit ([#423](https://github.com/buchenberg/yaah/issues/423)) ([a3bc524](https://github.com/buchenberg/yaah/commit/a3bc52459ccfa83e6a8a2ca5e4a16e76917deb53))
+* reject path traversal in plan names ([#420](https://github.com/buchenberg/yaah/issues/420)) ([e241d87](https://github.com/buchenberg/yaah/commit/e241d876d24210b65f1c1c39f0a1ccb344223b47))
+
 ## [0.86.1](https://github.com/buchenberg/yaah/compare/v0.86.0...v0.86.1) (2026-10-20)
 
 
