@@ -12,7 +12,7 @@
 <style>
 :root{color-scheme:light dark;--wui-ok:#22c55e;--wui-warn:#facc15;--wui-err:#dc2626;--wui-err-text:#f87171;--wui-info:#60a5fa;--wui-muted:#9ca3af;--wui-off:#555}
 @media (prefers-color-scheme:light){:root{--wui-ok:#16a34a;--wui-warn:#a16207;--wui-err:#dc2626;--wui-err-text:#b91c1c;--wui-info:#2563eb;--wui-muted:#6b7280;--wui-off:#9ca3af}}
-@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}#log{scroll-behavior:auto}}
 [x-cloak]{display:none!important}
 body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 #log{flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;gap:.4rem}
@@ -82,13 +82,12 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 #todos-wrap .todos-head .arrow.open{transform:rotate(90deg)}
 #todos-body{padding:.3rem 1rem .5rem;display:flex;flex-direction:column;gap:.15rem}
 .todo-item{display:flex;align-items:baseline;gap:.35rem;padding:.15rem 0}
-.todo-status{flex-shrink:0;font-size:.9em;width:1.2em;text-align:center}
+.todo-status{flex-shrink:0;font-size:.9em;width:1.2em;text-align:center;color:var(--wui-muted)}
 .todo-prio{flex-shrink:0;font-size:.7em;padding:0 .25rem;border-radius:3px;text-transform:uppercase}
 .todo-prio.high{background:rgba(220,38,38,.2);color:var(--wui-err-text)}
 .todo-prio.medium{background:rgba(250,204,21,.2);color:var(--wui-warn)}
 .todo-prio.low{background:rgba(156,163,175,.2);color:var(--wui-muted)}
 .todo-content{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.todo-status{color:var(--wui-muted)}
 .todo-status.st-completed{color:var(--wui-ok)}
 .todo-status.st-in_progress{color:var(--wui-info)}
 .todo-status.st-cancelled{color:var(--wui-err-text)}
@@ -189,9 +188,9 @@ dialog article{max-width:480px;min-width:320px}
           <input x-ref="palInput" x-model="palQuery" @input="palIdx = palFirstEnabled()"
             placeholder="Type a command…" autocomplete="off" spellcheck="false">
         </div>
-        <div class="pal-list" x-ref="palList">
+        <div class="pal-list" x-ref="palList" role="listbox" aria-label="Commands">
           <template x-for="(it, i) in palItems()" :key="it.id">
-            <div>
+            <div role="none">
               <div class="pal-group" x-show="it.first" x-text="palGroupLabel(it.group)"></div>
               <div class="pal-item" role="option" :aria-selected="i === palIdx"
                 :class="{'active': i === palIdx, 'disabled': it.disabled, 'current': it.current}"
@@ -244,14 +243,14 @@ dialog article{max-width:480px;min-width:320px}
     </div>
   </div>
 
-<div id="log" x-ref="log" role="log" aria-live="polite">
+<div id="log" x-ref="log" role="log">
   <template x-for="m in msgs" :key="m.id">
     <div>
       <!-- assistant / user / error messages -->
       <div x-show="m.role !== 'tool'" :class="'msg ' + classOf(m.role)" x-html="m.html"></div>
       <!-- tool messages: inline collapsible -->
       <div x-show="m.role === 'tool'" class="tool" :class="m.running && 'tool-running'"
-        role="button" tabindex="0" :aria-expanded="m.expanded"
+        :role="m.result ? 'button' : null" :tabindex="m.result ? '0' : null" :aria-expanded="m.result ? m.expanded : null"
         @click="m.expanded = !m.expanded; scroll()"
         @keydown.enter="m.expanded = !m.expanded; scroll()"
         @keydown.space.prevent="m.expanded = !m.expanded; scroll()">
@@ -272,14 +271,10 @@ dialog article{max-width:480px;min-width:320px}
   <button class="scroll-btn" x-show="showScrollBtn" @click="scrollToBottom()">↓ Scroll to bottom</button>
   <div class="think" x-show="live && !stream && think">
     <span class="bounce" aria-hidden="true"><span></span><span></span><span></span></span>
-    <template x-if="!reasonExpanded">
-      <div class="reason-toggle" role="button" tabindex="0" @click="reasonExpanded = true" @keydown.enter="reasonExpanded = true" @keydown.space.prevent="reasonExpanded = true">▶ Reasoning…</div>
-    </template>
-    <template x-if="reasonExpanded">
-      <div class="reason" x-ref="reason" x-text="think" role="button" tabindex="0" @click="reasonExpanded = false" @keydown.enter="reasonExpanded = false" @keydown.space.prevent="reasonExpanded = false"></div>
-    </template>
+    <div class="reason-toggle" x-show="!reasonExpanded" x-ref="reasonToggle" role="button" tabindex="0" @click="reasonExpanded = true; $nextTick(() => $refs.reason && $refs.reason.focus())" @keydown.enter="reasonExpanded = true; $nextTick(() => $refs.reason && $refs.reason.focus())" @keydown.space.prevent="reasonExpanded = true; $nextTick(() => $refs.reason && $refs.reason.focus())">▶ Reasoning…</div>
+    <div class="reason" x-ref="reason" x-text="think" x-show="reasonExpanded" role="button" tabindex="0" @click="reasonExpanded = false; $nextTick(() => $refs.reasonToggle && $refs.reasonToggle.focus())" @keydown.enter="reasonExpanded = false; $nextTick(() => $refs.reasonToggle && $refs.reasonToggle.focus())" @keydown.space.prevent="reasonExpanded = false; $nextTick(() => $refs.reasonToggle && $refs.reasonToggle.focus())"></div>
   </div>
-  <div class="msg asst" x-show="stream" x-html="md(stream)"></div>
+  <div class="msg asst" x-show="stream" x-html="md(stream)" aria-live="off"></div>
 </div>
 
 <div id="bar">
@@ -294,13 +289,15 @@ dialog article{max-width:480px;min-width:320px}
         </div>
       </template>
       <template x-if="!cmdSteerMode">
-        <template x-for="(c, i) in cmdFiltered()" :key="c.id">
-          <div class="cmd-item" role="option" :aria-selected="i === cmdIdx" :class="{'active': i === cmdIdx}"
-            @click="cmdSelect(i)" @mouseenter="cmdIdx = i">
-            <span x-text="c.label"></span>
-            <span class="cmd-desc" x-text="c.desc"></span>
-          </div>
-        </template>
+        <div role="listbox" aria-label="Commands">
+          <template x-for="(c, i) in cmdFiltered()" :key="c.id">
+            <div class="cmd-item" role="option" :aria-selected="i === cmdIdx" :class="{'active': i === cmdIdx}"
+              @click="cmdSelect(i)" @mouseenter="cmdIdx = i">
+              <span x-text="c.label"></span>
+              <span class="cmd-desc" x-text="c.desc"></span>
+            </div>
+          </template>
+        </div>
       </template>
     </div>
     <textarea id="prompt" rows="1" placeholder="Ask yaah…" x-ref="el"
