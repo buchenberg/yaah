@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.84.0](https://github.com/buchenberg/yaah/compare/v0.83.2...v0.84.0) (2026-10-20)
+
+
+### Features
+
+* **tui:** single-rune wide emoji for tool icons ([#397](https://github.com/buchenberg/yaah/issues/397)) ([a57f3eb](https://github.com/buchenberg/yaah/commit/a57f3eb06464e1522fc73d7e02ba5a0fc1bad3e9))
+
 ## [0.83.2](https://github.com/buchenberg/yaah/compare/v0.83.1...v0.83.2) (2026-10-19)
 
 
