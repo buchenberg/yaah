@@ -441,3 +441,40 @@ func TestIsolatedWorkspaceGuidance_BeltAwareness(t *testing.T) {
 		t.Errorf("guidance must not promise delegate when the belt excluded it:\n%s", got)
 	}
 }
+
+// TestIsolatedWorkspaceGuidance_PerToolReadOnly pins the per-tool
+// read-only wording: excluding one of the two must not leave the other
+// unexplained, and each tool's own action set is named.
+func TestIsolatedWorkspaceGuidance_PerToolReadOnly(t *testing.T) {
+	// The belt excluded `plan`: `skill` survives and carries the note.
+	skillOnly := IsolatedWorkspaceGuidance(nil, nil, []string{"plan"})
+	if !strings.Contains(skillOnly, "The `skill` tool is read-only here") {
+		t.Errorf("the surviving tool must carry the read-only note:\n%s", skillOnly)
+	}
+	if strings.Contains(skillOnly, "The `plan` tool is read-only here") {
+		t.Errorf("an excluded tool must not be described:\n%s", skillOnly)
+	}
+	if !strings.Contains(skillOnly, "create/edit actions are disabled") {
+		t.Errorf("the note must name skill's own disabled actions:\n%s", skillOnly)
+	}
+	if !strings.Contains(skillOnly, "load/list/search actions work as usual") {
+		t.Errorf("the note must name skill's own working actions:\n%s", skillOnly)
+	}
+
+	planOnly := IsolatedWorkspaceGuidance(nil, nil, []string{"skill"})
+	if !strings.Contains(planOnly, "The `plan` tool is read-only here") {
+		t.Errorf("the surviving tool must carry the read-only note:\n%s", planOnly)
+	}
+	if !strings.Contains(planOnly, "create/approve/edit/delete actions are disabled") {
+		t.Errorf("the note must name plan's own disabled actions:\n%s", planOnly)
+	}
+}
+
+// TestIsolatedWorkspaceGuidance_BeltCountExcludesNamedTools pins that a
+// tool the omitted list already names is not counted twice.
+func TestIsolatedWorkspaceGuidance_BeltCountExcludesNamedTools(t *testing.T) {
+	got := IsolatedWorkspaceGuidance([]string{"go_refactor"}, nil, []string{"go_refactor", "bisect"})
+	if !strings.Contains(got, "excludes 1 further tool(s)") {
+		t.Errorf("a tool the omitted list already names must not be counted again:\n%s", got)
+	}
+}

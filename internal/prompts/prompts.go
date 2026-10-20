@@ -234,9 +234,18 @@ func IsolatedWorkspaceGuidance(omitted, mcpOmitted, beltRemoved []string) string
 		b.WriteString("\n\nMCP-served tools are omitted in isolated mode — they run on the host, which the workspace cannot contain: ")
 		b.WriteString("`" + strings.Join(mcpOmitted, "`, `") + "`.")
 	}
-	if len(beltRemoved) > 0 {
+	// The belt count covers only the tools the omitted list does not
+	// already name: a host-only leaf tool the belt also excludes is one
+	// absence, not two.
+	extra := make([]string, 0, len(beltRemoved))
+	for _, name := range beltRemoved {
+		if !slices.Contains(omitted, name) {
+			extra = append(extra, name)
+		}
+	}
+	if len(extra) > 0 {
 		// A count, not a list: the exact set is in the request's schemas.
-		b.WriteString("\n\nThis session's tool belt excludes " + strconv.Itoa(len(beltRemoved)) + " further tool(s). Do not attempt them.")
+		b.WriteString("\n\nThis session's tool belt excludes " + strconv.Itoa(len(extra)) + " further tool(s). Do not attempt them.")
 	}
 	// The read-only note is per tool: one of them may be excluded by the
 	// belt while the other is still there.
@@ -246,10 +255,13 @@ func IsolatedWorkspaceGuidance(omitted, mcpOmitted, beltRemoved []string) string
 			readOnly = append(readOnly, "`"+name+"`")
 		}
 	}
-	if len(readOnly) == 2 {
-		b.WriteString("\n\nThe `skill` and `plan` tools are read-only here: their create/edit/delete actions are disabled because they manage host harness configuration (.agents/). Their list/show/load actions work as usual.\n")
-	} else if len(readOnly) == 1 {
-		b.WriteString("\n\nThe " + readOnly[0] + " tool is read-only here: its create/edit/delete actions are disabled because it manages host harness configuration (.agents/). Its list/show/load actions work as usual.\n")
+	switch {
+	case len(readOnly) == 2:
+		b.WriteString("\n\nThe `skill` and `plan` tools are read-only here: `plan` disables create/approve/edit/delete, `skill` disables create/edit — they manage host harness configuration (.agents/). Their list/show/load/search actions work as usual.\n")
+	case len(readOnly) == 1 && readOnly[0] == "`plan`":
+		b.WriteString("\n\nThe `plan` tool is read-only here: its create/approve/edit/delete actions are disabled because it manages host harness configuration (.agents/). Its list/show actions work as usual.\n")
+	case len(readOnly) == 1 && readOnly[0] == "`skill`":
+		b.WriteString("\n\nThe `skill` tool is read-only here: its create/edit actions are disabled because it manages host harness configuration (.agents/). Its load/list/search actions work as usual.\n")
 	}
 
 	if hasTool(beltRemoved, "apply_out") {
