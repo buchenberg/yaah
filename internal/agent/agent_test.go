@@ -1893,6 +1893,9 @@ func TestLoop_lastPromptTokensCacheInclusive(t *testing.T) {
 		if loop.State.LastPromptTokensInclusive != 100 {
 			t.Errorf("LastPromptTokensInclusive = %d, want 100", loop.State.LastPromptTokensInclusive)
 		}
+		if loop.State.LastPromptIncludesCache {
+			t.Error("Anthropic usage must not be marked cache-inclusive")
+		}
 		if loop.State.LastCachedPromptTokens != 90 {
 			t.Errorf("LastCachedPromptTokens = %d, want 90", loop.State.LastCachedPromptTokens)
 		}
@@ -1911,6 +1914,9 @@ func TestLoop_lastPromptTokensCacheInclusive(t *testing.T) {
 		}
 		if loop.State.LastPromptTokensInclusive != 100 {
 			t.Errorf("LastPromptTokensInclusive = %d, want 100", loop.State.LastPromptTokensInclusive)
+		}
+		if !loop.State.LastPromptIncludesCache {
+			t.Error("OpenAI usage must be marked cache-inclusive")
 		}
 		if effective := loop.State.LastPromptTokens - loop.State.LastCachedPromptTokens; effective != 10 {
 			t.Errorf("effective tokens = %d, want 10", effective)

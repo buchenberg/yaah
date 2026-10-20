@@ -727,7 +727,9 @@ outcomes.
 
 ### Token estimation
 
-Primary: API-reported `LastPromptTokens` from the most recent model call.
+Primary: the API-reported cache-inclusive prompt size
+(`LastPromptTokensInclusive`) for display; compaction uses the provider-shaped
+`LastPromptTokens` (see usage shapes above).
 Fallback (first call, before any API response): `PreflightTokens()` which
 uses a `len(content) / 4` heuristic with a configurable multiplier
 (`EstimateFactor`, default 1.3) to compensate for provider tokenizers
@@ -1039,7 +1041,7 @@ Events published during streaming and tool execution:
 | `ToolEndEvent` | After tool execution | `ID int64`; `Name, Args, Result, Error string`; `Duration time.Duration` |
 | `SubAgentStartEvent` | Sub-agent begins | `SubAgentID, Role, Model, Prompt string` |
 | `SubAgentEndEvent` | Sub-agent completes | `SubAgentID, Role, Model, Prompt, Error, Result string`; `Duration time.Duration` |
-| `DoneEvent` | Agent loop finishes | `Response, Error, FinishReason, ResponseModel string`; `ContextTokens, ContextWindow, LastPromptTokens int`; `Usage` |
+| `DoneEvent` | Agent loop finishes | `Response, Error, FinishReason, ResponseModel string`; `ContextTokens, ContextWindow, LastPromptTokens, LastPromptTokensInclusive int`; `Usage` |
 
 ## Provider interface
 

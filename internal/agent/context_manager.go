@@ -184,6 +184,7 @@ func (cm *ContextManager) applyCompactedSummary(summary string, sysMsg types.Mes
 	estimate := cm.estimatedTokens()
 	cm.State.LastPromptTokens = estimate
 	cm.State.LastPromptTokensInclusive = estimate
+	cm.State.LastPromptIncludesCache = false
 	cm.resetPruner()
 	if cm.Pruner != nil {
 		cm.Pruner.Mark(cm.State.Messages, "post_compaction")
@@ -283,7 +284,7 @@ func (cm *ContextManager) compactContext(ctx context.Context, threshold float64)
 
 	rawTokens := cm.State.LastPromptTokens
 	effectiveTokens := rawTokens
-	if effectiveTokens > 0 && cm.State.LastCachedPromptTokens > 0 {
+	if cm.State.LastPromptIncludesCache && effectiveTokens > 0 && cm.State.LastCachedPromptTokens > 0 {
 		effectiveTokens -= cm.State.LastCachedPromptTokens
 	}
 	if effectiveTokens <= 0 {

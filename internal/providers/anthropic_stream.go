@@ -68,7 +68,7 @@ func translateAnthropicEvent(event anthropic.MessageStreamEventUnion, st *anthro
 			ID:    e.Message.ID,
 			Model: e.Message.Model,
 		}
-		if u := e.Message.Usage; u.InputTokens > 0 || u.CacheReadInputTokens > 0 {
+		if u := e.Message.Usage; u.InputTokens > 0 || u.CacheCreationInputTokens > 0 || u.CacheReadInputTokens > 0 {
 			chunk.Usage = &types.Usage{
 				PromptTokens:        int(u.InputTokens + u.CacheCreationInputTokens),
 				PromptTokensDetails: &types.PromptTokensDetails{CachedTokens: int(u.CacheReadInputTokens)},
@@ -154,7 +154,7 @@ func translateAnthropicEvent(event anthropic.MessageStreamEventUnion, st *anthro
 				FinishReason: &finishReason,
 			}},
 		}
-		if u := e.Usage; u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadInputTokens > 0 {
+		if u := e.Usage; u.InputTokens > 0 || u.CacheCreationInputTokens > 0 || u.OutputTokens > 0 || u.CacheReadInputTokens > 0 {
 			chunk.Usage = &types.Usage{
 				// Creation tokens are processed input; reads are the
 				// cache portion compaction subtracts.

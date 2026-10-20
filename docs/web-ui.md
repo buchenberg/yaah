@@ -119,7 +119,7 @@ stream. It handles:
 - **Todos** (`CtrlTodos`): Serialized as `wireTodo` items and sent to the
   browser for inline rendering.
 - **Context** (`CtrlContextInfo`): Token/Window ratio displayed as a
-  percentage in the footer. "Used" is the cache-inclusive provider prompt,
+  percentage in the footer. "Used" is the cache-inclusive provider prompt (`LastPromptTokensInclusive`),
   so cache-heavy Anthropic-shaped sessions are not under-reported.
 - **Model list** (`CtrlModelList`): Available models from configured
   providers; the frontend adds them to the command palette.
