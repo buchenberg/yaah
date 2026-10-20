@@ -85,8 +85,7 @@ func (m *Manager) Start(command, description string) (*Info, error) {
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
 
-	m.nextID.Add(1)
-	id := fmt.Sprintf("proc-%d", m.nextID.Load())
+	id := fmt.Sprintf("proc-%d", m.nextID.Add(1))
 
 	info := &Info{
 		ID:          id,

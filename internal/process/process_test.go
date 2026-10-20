@@ -2,6 +2,7 @@ package process
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -230,4 +231,33 @@ func TestLogsInitiallyEmpty(t *testing.T) {
 	// Logs may be empty immediately (before output)
 	logs := info.Logs()
 	t.Logf("initial logs: %q", logs)
+}
+
+// TestManagerNextProcessIDConcurrent: Add+Load raced and could hand two
+// starters the same proc-N. The unique ID comes from Add's return value.
+func TestManagerNextProcessIDConcurrent(t *testing.T) {
+	m := NewManager()
+	const n = 200
+	ids := make(chan string, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ids <- fmt.Sprintf("proc-%d", m.nextID.Add(1))
+		}()
+	}
+	wg.Wait()
+	close(ids)
+
+	seen := make(map[string]struct{}, n)
+	for id := range ids {
+		if _, dup := seen[id]; dup {
+			t.Fatalf("duplicate process id %q", id)
+		}
+		seen[id] = struct{}{}
+	}
+	if len(seen) != n {
+		t.Fatalf("got %d unique ids, want %d", len(seen), n)
+	}
 }
