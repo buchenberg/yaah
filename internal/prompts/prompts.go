@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -207,25 +209,12 @@ var hostOnlyReasons = map[string]string{
 // the host. Skill and plan stay registered but read-only — their
 // mutating actions manage host harness configuration, which the isolated
 // workspace must not write around apply_out.
-// ToolBeltGuidance names the tools a configured tool belt left out. The
-// schemas are simply absent from the request, so without this the model
-// may call a tool that is not there — and a missing tool comes back as an
-// error the model then tries to narrate (yaah-awn).
-func ToolBeltGuidance(omitted []string) string {
-	if len(omitted) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString("## Tool belt\n\n")
-	b.WriteString("This session runs with a reduced tool set. The following tools are not available; do not call them:\n")
-	for _, name := range omitted {
-		b.WriteString("\n- `" + name + "`")
-	}
-	b.WriteString("\n\nUse the tools that are available; if none of them can do the job, say so instead of attempting an absent tool.\n")
-	return b.String()
-}
-
-func IsolatedWorkspaceGuidance(omitted, mcpOmitted []string) string {
+//
+// beltRemoved are the tools the session's tool belt excluded on top of
+// that (yaah-w8x). The guidance must not contradict itself: the
+// apply_out, skill/plan, and delegate sentences are only stated for the
+// tools that are actually there.
+func IsolatedWorkspaceGuidance(omitted, mcpOmitted, beltRemoved []string) string {
 	var b strings.Builder
 	b.WriteString("## Isolated workspace\n\n")
 	b.WriteString("This session runs in an isolated workspace: your file tools and shell commands execute inside a container holding a copy of this repository. ")
@@ -245,13 +234,51 @@ func IsolatedWorkspaceGuidance(omitted, mcpOmitted []string) string {
 		b.WriteString("\n\nMCP-served tools are omitted in isolated mode — they run on the host, which the workspace cannot contain: ")
 		b.WriteString("`" + strings.Join(mcpOmitted, "`, `") + "`.")
 	}
-	b.WriteString("\n\nThe `skill` and `plan` tools are read-only here: their create/edit/delete actions are disabled because they manage host harness configuration (.agents/). Their list/show/load actions work as usual.\n")
+	if len(beltRemoved) > 0 {
+		b.WriteString("\n\nThis session's tool belt also excludes: ")
+		b.WriteString("`" + strings.Join(beltRemoved, "`, `") + "`. Do not attempt them.")
+	}
+	if !hasTool(beltRemoved, "skill") && !hasTool(beltRemoved, "plan") {
+		b.WriteString("\n\nThe `skill` and `plan` tools are read-only here: their create/edit/delete actions are disabled because they manage host harness configuration (.agents/). Their list/show/load actions work as usual.\n")
+	}
 
-	b.WriteString("\nChanges leave the container only through `apply_out`, which requires the user's approval:\n")
-	b.WriteString("- Call `apply_out` with `dry_run: true` to see the diff that would land; the host is untouched.\n")
-	b.WriteString("- When the user accepts the work (\"ship it\", \"apply the changes\", \"looks good\"), call `apply_out` without `dry_run` and let them approve. A dry run must come first — the approval prompt shows only the arguments, so the user approves the diff you showed them, or nothing.\n")
-	b.WriteString("- Until it runs, your changes exist only in the container. Never claim they are saved, committed, or in the repository.\n")
-	b.WriteString("\nSub-agents you dispatch with delegate run inside the same container as you (they inherit this session's sandbox, changes and all) — their file work is isolated with yours and reaches the host only through apply_out.\n")
+	if hasTool(beltRemoved, "apply_out") {
+		b.WriteString("\nThis session's tool belt excludes `apply_out`, so changes cannot leave the container in this session — they stay in the container, and the host's tree is never touched.\n")
+	} else {
+		b.WriteString("\nChanges leave the container only through `apply_out`, which requires the user's approval:\n")
+		b.WriteString("- Call `apply_out` with `dry_run: true` to see the diff that would land; the host is untouched.\n")
+		b.WriteString("- When the user accepts the work (\"ship it\", \"apply the changes\", \"looks good\"), call `apply_out` without `dry_run` and let them approve. A dry run must come first — the approval prompt shows only the arguments, so the user approves the diff you showed them, or nothing.\n")
+		b.WriteString("- Until it runs, your changes exist only in the container. Never claim they are saved, committed, or in the repository.\n")
+	}
+	if !hasTool(beltRemoved, "delegate") {
+		b.WriteString("\nSub-agents you dispatch with delegate run inside the same container as you (they inherit this session's sandbox, changes and all) — their file work is isolated with yours and reaches the host only through apply_out.\n")
+	}
+	return b.String()
+}
+
+// hasTool reports whether a tool name appears in a list.
+func hasTool(names []string, name string) bool {
+	return slices.Contains(names, name)
+}
+
+// ToolBeltGuidance tells the model that the session runs a reduced tool
+// set. The exact list is in the request's schemas — the model can see
+// which tools it has — so the notice stays a sentence: naming every
+// excluded tool would duplicate that list on every call (yaah-w8x).
+func ToolBeltGuidance(available []string, excluded int) string {
+	if excluded <= 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Tool belt\n\n")
+	if len(available) > 0 {
+		b.WriteString("This session exposes only `" + strings.Join(available, "`, `") + "`.")
+	} else {
+		b.WriteString("This session exposes no tools.")
+	}
+	b.WriteString(" The other ")
+	b.WriteString(strconv.Itoa(excluded))
+	b.WriteString(" are not available — do not call them. Use the tools in your tool list, and say so if none of them can do the job.\n")
 	return b.String()
 }
 

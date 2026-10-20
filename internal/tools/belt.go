@@ -20,6 +20,7 @@ type Belt struct {
 	allowAll bool
 	allowed  map[string]bool
 	refused  []string
+	known    map[string]bool
 }
 
 // NewBelt builds a belt from the configured allowlist. An empty list
@@ -29,7 +30,7 @@ func NewBelt(names []string) *Belt {
 	if len(names) == 0 {
 		return &Belt{allowAll: true}
 	}
-	b := &Belt{allowed: make(map[string]bool, len(names))}
+	b := &Belt{allowed: make(map[string]bool, len(names)), known: make(map[string]bool)}
 	for _, name := range names {
 		n := strings.TrimSpace(name)
 		if n == "" {
@@ -49,6 +50,22 @@ func (b *Belt) Allows(name string) bool {
 		return true
 	}
 	return b.allowed[name]
+}
+
+// Know records a tool name the session knows about, whether or not it was
+// installed: a tool that exists but was left out for another reason (a
+// disabled lane, an absent database, an isolated workspace) is not a typo
+// in the allowlist. The registry calls it for every tool it accepts.
+func (b *Belt) Know(names ...string) {
+	if b == nil || b.allowAll {
+		return
+	}
+	if b.known == nil {
+		b.known = make(map[string]bool)
+	}
+	for _, name := range names {
+		b.known[name] = true
+	}
 }
 
 // Refuse records a tool the belt turned away. The registry calls it when
@@ -75,22 +92,17 @@ func (b *Belt) Refused() []string {
 }
 
 // Unknown returns the allowlist names that match no tool the session
-// registered and no tool the belt refused — a typo, which would silently
-// leave the session without a tool it asked for.
-func (b *Belt) Unknown(registered []string) []string {
+// knows about — a typo, which would silently leave the session without a
+// tool it asked for. A tool that exists but was not installed for another
+// reason (the retained lane is off, the database is absent, the workspace
+// is isolated) is known, so it never reads as a typo.
+func (b *Belt) Unknown() []string {
 	if b == nil || b.allowAll {
 		return nil
 	}
-	known := make(map[string]bool, len(registered))
-	for _, name := range registered {
-		known[name] = true
-	}
-	for _, name := range b.refused {
-		known[name] = true
-	}
 	var unknown []string
 	for name := range b.allowed {
-		if !known[name] {
+		if !b.known[name] {
 			unknown = append(unknown, name)
 		}
 	}

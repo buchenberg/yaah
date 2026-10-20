@@ -341,6 +341,9 @@ func (r *Registry) Register(t Tool) {
 		r.belt.Refuse(t.Name())
 		return
 	}
+	if r.belt != nil {
+		r.belt.Know(t.Name())
+	}
 	r.tools[t.Name()] = t
 	r.generation++
 	r.inject(t)

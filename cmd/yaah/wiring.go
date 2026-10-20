@@ -290,6 +290,11 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		toolReg.Register(&tools.MemoryDeleteTool{DB: db})
 		toolReg.Register(&tools.MemoryUpdateTool{DB: db})
 		toolReg.Register(&tools.MemorySessionSearchTool{DB: db})
+	} else {
+		// The tools exist but this session has nowhere to put them: the
+		// belt must know the names, or an allowlist that names them reads
+		// as a typo.
+		belt.Know("memory_search", "memory_add", "memory_delete", "memory_update", "memory_search_sessions")
 	}
 
 	// --- MCP servers ------------------------------------------------------
@@ -306,6 +311,10 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	if sessionSandbox != nil {
 		for name := range mcpToolNames {
 			omittedMCP = append(omittedMCP, name)
+			// The MCP tools exist in this session's configuration even
+			// though the workspace leaves them out: the belt must know
+			// the names, or an allowlist that names them reads as a typo.
+			belt.Know(name)
 		}
 		slices.Sort(omittedMCP)
 		if len(omittedMCP) > 0 {
@@ -343,6 +352,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		})
 	} else {
 		omittedTools = append(omittedTools, "role")
+		belt.Know("role")
 	}
 
 	var todoStore *todo.Store
@@ -371,6 +381,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		toolReg.Register(&tools.BackgroundProcessTool{Manager: procMgr})
 	} else {
 		omittedTools = append(omittedTools, "background_process")
+		belt.Know("background_process")
 	}
 
 	var messages []types.Message
@@ -726,32 +737,12 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			// this side of the boundary, as it does in shepherd's `gate(task,
 			// predicate)`, so no verdict protocol or review round exists.
 			toolReg.Register(&tools.ProposalTool{})
+		} else {
+			belt.Know("proposal")
 		}
-	}
-
-	// The prompt must never advertise a tool that is not registered.
-	// Isolated mode gets the §2.2 delta instead — which names every omitted
-	// tool with its reason, covers the delegate-only story, and explains
-	// the apply_out workflow.
-	if sessionSandbox != nil {
-		slices.Sort(omittedTools)
-		mainPrompt += "\n\n" + prompts.IsolatedWorkspaceGuidance(omittedTools, omittedMCP)
 	} else {
-		// The guidance must never advertise a tool the belt pruned.
-		if toolReg.Get("delegate") != nil {
-			mainPrompt += "\n\n" + prompts.SubAgentToolsGuidance()
-		}
-		// RetainedModeGuidance names the proposal tool, so it is gated on the
-		// same signal as that tool's registration — taskTool.Retained — rather
-		// than on the config key alone. A store-open failure or an
-		// uncapturable root makes the lane unavailable, and advertising
-		// settlement then would promise work the runtime refuses.
-		if taskTool.Retained != nil && toolReg.Get("proposal") != nil {
-			mainPrompt += "\n\n" + prompts.RetainedModeGuidance()
-		}
-	}
-	if opts.OneShot {
-		mainPrompt += "\n\n" + prompts.OneShotGuidance()
+		belt.Know("supervisor")
+
 	}
 
 	toolReg.Register(&tools.ListSubAgentsTool{
@@ -840,10 +831,38 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// failure), and an allowlist name that matched no tool at all is a
 	// typo worth reporting.
 	beltRemoved := belt.Refused()
-	if len(beltRemoved) > 0 {
-		mainPrompt += "\n\n" + prompts.ToolBeltGuidance(beltRemoved)
+
+	// The prompt must never advertise a tool that is not registered.
+	// Isolated mode gets the §2.2 delta instead — which names every omitted
+	// tool with its reason, covers the delegate-only story, and explains
+	// the apply_out workflow. The tool sections come after the last
+	// registration, because the belt's list is only final there.
+	if sessionSandbox != nil {
+		slices.Sort(omittedTools)
+		mainPrompt += "\n\n" + prompts.IsolatedWorkspaceGuidance(omittedTools, omittedMCP, beltRemoved)
+	} else {
+		// The guidance must never advertise a tool the belt excluded.
+		if toolReg.Get("delegate") != nil {
+			mainPrompt += "\n\n" + prompts.SubAgentToolsGuidance()
+		}
+		// RetainedModeGuidance names the proposal tool, so it is gated on the
+		// same signal as that tool's registration — taskTool.Retained — rather
+		// than on the config key alone. A store-open failure or an
+		// uncapturable root makes the lane unavailable, and advertising
+		// settlement then would promise work the runtime refuses.
+		if taskTool.Retained != nil && toolReg.Get("proposal") != nil {
+			mainPrompt += "\n\n" + prompts.RetainedModeGuidance()
+		}
+		// The belt notice is a sentence, not a list: the exact set is in
+		// the request's schemas.
+		if len(beltRemoved) > 0 {
+			mainPrompt += "\n\n" + prompts.ToolBeltGuidance(toolReg.List(), len(beltRemoved))
+		}
 	}
-	for _, name := range belt.Unknown(toolReg.List()) {
+	if opts.OneShot {
+		mainPrompt += "\n\n" + prompts.OneShotGuidance()
+	}
+	for _, name := range belt.Unknown() {
 		fmt.Fprintf(os.Stderr, "warning: config `agents.default.tools` names unknown tool %q; ignored\n", name)
 	}
 

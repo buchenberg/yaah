@@ -38,9 +38,15 @@ func TestBelt_AllowsAndRefuses(t *testing.T) {
 func TestBelt_UnknownNames(t *testing.T) {
 	belt := NewBelt([]string{"read", "nope"})
 	belt.Refuse("write")
-	unknown := belt.Unknown([]string{"read", "bash"})
+	belt.Know("read", "bash")
+	unknown := belt.Unknown()
 	if len(unknown) != 1 || unknown[0] != "nope" {
 		t.Errorf("unknown = %v, want [nope]", unknown)
+	}
+	// A tool the session knows about but did not install is not a typo.
+	belt.Know("proposal")
+	if got := belt.Unknown(); len(got) != 1 {
+		t.Errorf("known-but-uninstalled tools must not read as typos, got %v", got)
 	}
 	if got := belt.Allowed(); len(got) != 2 || !slices.IsSorted(got) {
 		t.Errorf("allowed = %v, want a sorted list of two", got)

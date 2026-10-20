@@ -60,7 +60,9 @@ agents:
     # the wire. Omit the key (or leave it empty) for the full belt.
     # The belt covers the main session; a sub-agent's tools come from
     # its role file. A tool the belt excludes is never registered, and
-    # the session is told which ones are missing.
+    # the session is told which ones are missing. MCP-served tools are
+    # part of the belt too: an MCP tool that is not named here is
+    # refused like any other, so list its name to keep it.
     tools: [read, write, edit, bash, grep, glob, ls, file_info]
 
     compaction_threshold: 0.5          # fraction of context_window
