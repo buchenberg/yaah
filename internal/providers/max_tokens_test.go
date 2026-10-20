@@ -52,4 +52,10 @@ func TestOpenAIClientEffectiveMaxTokens(t *testing.T) {
 	if got := client.OutputTokenCeiling(types.ChatRequest{Model: "gpt-4o-mini-2024-07-18"}); got != 16384 {
 		t.Errorf("dated gpt-4o-mini OutputTokenCeiling = %d, want 16384", got)
 	}
+	if got := client.OutputTokenCeiling(types.ChatRequest{Model: "gpt-3.5-turbo"}); got != 4096 {
+		t.Errorf("gpt-3.5-turbo OutputTokenCeiling = %d, want 4096", got)
+	}
+	if got := client.OutputTokenCeiling(types.ChatRequest{Model: "gpt-4.1"}); got != 0 {
+		t.Errorf("gpt-4.1 OutputTokenCeiling = %d, want 0 (must not match gpt-4)", got)
+	}
 }
