@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.85.0](https://github.com/buchenberg/yaah/compare/v0.84.0...v0.85.0) (2026-10-20)
+
+
+### Features
+
+* **tui:** show subagents only in the dedicated pane ([#401](https://github.com/buchenberg/yaah/issues/401)) ([893335d](https://github.com/buchenberg/yaah/commit/893335de43f42ac8acca639ffdb2bd61cc194313))
+
 ## [0.84.0](https://github.com/buchenberg/yaah/compare/v0.83.2...v0.84.0) (2026-10-20)
 
 
