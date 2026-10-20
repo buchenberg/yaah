@@ -193,7 +193,7 @@ dialog article{max-width:480px;min-width:320px}
           <template x-for="(it, i) in palItems()" :key="it.id">
             <div role="none">
               <div class="pal-group" x-show="it.first" x-text="palGroupLabel(it.group)" aria-hidden="true"></div>
-              <div class="pal-item" role="option" :id="'pal-opt-' + i" :aria-selected="i === palIdx" :aria-label="palGroupLabel(it.group) + ': ' + it.label"
+              <div class="pal-item" role="option" :id="'pal-opt-' + i" :aria-selected="i === palIdx" :aria-disabled="it.disabled" :aria-label="palGroupLabel(it.group) + ': ' + it.label + (it.hint ? ' (' + it.hint + ')' : '')"
                 :class="{'active': i === palIdx, 'disabled': it.disabled, 'current': it.current}"
                 @click="palRun(i)" @mouseenter="!it.disabled && (palIdx = i)">
                 <span class="pal-icon" x-text="it.current ? '✓' : it.icon"></span>
