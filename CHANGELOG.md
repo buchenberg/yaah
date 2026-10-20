@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.85.2](https://github.com/buchenberg/yaah/compare/v0.85.1...v0.85.2) (2026-10-20)
+
+
+### Bug Fixes
+
+* **tui:** bump tviewmd to v0.3.0 ([#404](https://github.com/buchenberg/yaah/issues/404)) ([86f0703](https://github.com/buchenberg/yaah/commit/86f07034e0a610654a27ded7dea60a318533da82))
+
 ## [0.85.1](https://github.com/buchenberg/yaah/compare/v0.85.0...v0.85.1) (2026-10-20)
 
 
