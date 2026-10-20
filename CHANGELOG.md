@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.88.1](https://github.com/buchenberg/yaah/compare/v0.88.0...v0.88.1) (2026-10-20)
+
+
+### Documentation
+
+* **bench:** record the first full minimal-suite run ([#493](https://github.com/buchenberg/yaah/issues/493)) ([c100519](https://github.com/buchenberg/yaah/commit/c100519c8abf1fd593a9bc9aee75426a5394c7bf))
+
 ## [0.88.0](https://github.com/buchenberg/yaah/compare/v0.87.4...v0.88.0) (2026-10-20)
 
 
