@@ -176,6 +176,7 @@ type agentSession struct {
 	// pendingEvents buffers session-scoped events for views whose
 	// HandleEvent cannot safely run outside a prompt (the REPL and ACP
 	// connection writers). They are delivered at the start of the next run.
+	// Bounded so a view that never runs again cannot retain results forever.
 	pendingEvents []agent.Event
 
 	stdinMu sync.Mutex // serialises stdin reads for approve/prompt fallbacks
@@ -444,25 +445,48 @@ func (s *agentSession) SetView(v agent.View) {
 	s.view = v
 }
 
+// maxPendingSessionEvents bounds the between-run event buffer. A view that
+// never starts another run (headless serve) must not retain result strings
+// indefinitely.
+const maxPendingSessionEvents = 64
+
 // dispatchEvent delivers a session-scoped event to the current view. Only
 // views that marshal HandleEvent onto their own UI loop (or otherwise guard
 // their output) accept events between runs; the rest are buffered until the
 // next RunPrompt so a background completion cannot interleave with the REPL
-// prompt or an ACP connection write.
+// prompt or an ACP connection write. Nil and Noop views drop the event.
 func (s *agentSession) dispatchEvent(evt agent.Event) {
 	s.mu.Lock()
 	v := s.view
+	if v == nil || isNoopView(v) {
+		s.mu.Unlock()
+		return
+	}
 	safe := false
 	if sink, ok := v.(interface{ AcceptsEventsBetweenRuns() bool }); ok {
 		safe = sink.AcceptsEventsBetweenRuns()
 	}
 	if !safe {
+		if len(s.pendingEvents) >= maxPendingSessionEvents {
+			s.pendingEvents = s.pendingEvents[1:]
+		}
 		s.pendingEvents = append(s.pendingEvents, evt)
 		s.mu.Unlock()
 		return
 	}
 	s.mu.Unlock()
 	v.HandleEvent(evt)
+}
+
+// isNoopView reports whether v discards events, so buffering them for a
+// future run would only waste memory.
+func isNoopView(v agent.View) bool {
+	switch v.(type) {
+	case agent.NoopView, *agent.NoopView:
+		return true
+	default:
+		return false
+	}
 }
 
 // takePendingEvents drains events buffered for a view that cannot accept

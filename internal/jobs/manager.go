@@ -146,8 +146,10 @@ type BackgroundJobs struct {
 	// OnStartSession / OnEndSession are session-scoped fallbacks for jobs
 	// that start or finish outside a live loop (most commonly a job that
 	// completes between turns after the loop cleared its hooks). They fire
-	// only when the corresponding loop hook is nil, so the live broker path
-	// is never duplicated. Guarded by hookMu; set via SetSessionHooks.
+	// when no loop hook is installed, and the loop may also invoke them
+	// explicitly via NotifySession* when its broker closed during teardown,
+	// so the live broker path is never duplicated. Guarded by hookMu; set via
+	// SetSessionHooks.
 	OnStartSession func(id, role, model, prompt string)
 	OnEndSession   func(id, role, model, prompt, result string, dur time.Duration, err string)
 
