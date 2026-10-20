@@ -477,4 +477,11 @@ func TestIsolatedWorkspaceGuidance_BeltCountExcludesNamedTools(t *testing.T) {
 	if !strings.Contains(got, "excludes 1 further tool(s)") {
 		t.Errorf("a tool the omitted list already names must not be counted again:\n%s", got)
 	}
+
+	// The main path: every belt-excluded tool is already named above, so
+	// there is nothing further to say.
+	only := IsolatedWorkspaceGuidance([]string{"go_refactor"}, nil, []string{"go_refactor"})
+	if strings.Contains(only, "further tool(s)") {
+		t.Errorf("a belt exclusion already named must not be counted:\n%s", only)
+	}
 }
