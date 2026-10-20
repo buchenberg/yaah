@@ -5,13 +5,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
+
 	"github.com/buchenberg/yaah/internal/tui/colors"
 )
 
 func TestIcon_Known(t *testing.T) {
 	tests := []struct{ name, want string }{
 		{"read", "📖"},
-		{"write", "✍️"},
+		{"write", "📝"},
+		{"edit", "📝"},
+		{"delete", "🧹"},
+		{"background_process", "🌀"},
 		{"bash", "💻"},
 		{"grep", "🔍"},
 		{"todowrite", "✅"},
@@ -22,6 +28,85 @@ func TestIcon_Known(t *testing.T) {
 			t.Errorf("Icon(%q) = %q, want %q", tc.name, got, tc.want)
 		}
 	}
+}
+
+// TestIcon_SingleRuneAndDoubleWidth pins the icon invariant: every icon is
+// exactly one rune with no U+FE0F, and tcell reserves two cells for it.
+//
+// The single-rune and no-U+FE0F checks are the cross-terminal guards:
+// emoji-presentation-default glyphs are wide both in tcell's tables and in
+// terminals. The width check is narrower in scope: it pins tcell's own cell
+// accounting -- the model the real layout/renderer uses -- so it catches a
+// regression that swaps in a rune tcell considers narrow. By itself it says
+// nothing about how a real terminal paints the glyph.
+//
+// The failure this guards against is subtle. Text-presentation codepoints such
+// as U+270D (writing hand), U+2699 (gear) and U+1F5D1 (wastebasket) are one
+// cell wide on their own, so they were written as "codepoint + U+FE0F"
+// (variation selector-16) to request emoji presentation. tcell measures that
+// composed sequence as two cells, but a terminal that renders the glyph in text
+// presentation paints one -- so the layout reserves a cell the screen never
+// draws. The row then shifts left by one, the ghost cell is never repainted, and
+// the damage shows up as stray or duplicated characters that can bleed into the
+// adjacent pane. The icons were also visibly narrower than their neighbours.
+//
+// A single rune from the emoji-presentation ranges (U+1F300+, or default-emoji
+// dingbats such as ✅ U+2705) is measured the same way by tcell and drawn the
+// same way by every terminal.
+func TestIcon_SingleRuneAndDoubleWidth(t *testing.T) {
+	names := []string{
+		"read", "write", "edit", "delete", "patch", "sed", "replace",
+		"grep", "glob", "ls", "file_info", "http", "webfetch", "bash",
+		"powershell", "git", "diff", "bisect", "go_test", "go_outline",
+		"go_refactor", "staticcheck", "go_mod", "json_query", "calculate",
+		"todowrite", "question", "plan", "list_subagents", "skill", "role",
+		"memory_search", "memory_add", "memory_update", "memory_delete",
+		"memory_search_sessions", "background_process", "task", "",
+		"nonexistent_tool",
+	}
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			icon := Icon(name)
+			if runes := []rune(icon); len(runes) != 1 {
+				t.Fatalf("Icon(%q) = %q has %d runes, want 1 (no variation selectors or ZWJ sequences)", name, icon, len(runes))
+			}
+			if strings.ContainsRune(icon, '\uFE0F') {
+				t.Fatalf("Icon(%q) = %q contains U+FE0F; terminals disagree on its width", name, icon)
+			}
+			if got := renderedWidth(t, icon); got != 2 {
+				t.Errorf("Icon(%q) = %q reserves %d cells in tcell's model (SimulationScreen), want 2", name, icon, got)
+			}
+		})
+	}
+}
+
+// renderedWidth returns how many cells tview's layout reserves for icon,
+// measured in tcell's SimulationScreen model, by rendering icon+"X" and
+// locating X.
+func renderedWidth(t *testing.T, icon string) int {
+	t.Helper()
+	sim := tcell.NewSimulationScreen("UTF-8")
+	if err := sim.Init(); err != nil {
+		t.Fatalf("init simulation screen: %v", err)
+	}
+	defer sim.Fini()
+	sim.SetSize(8, 1)
+
+	tv := tview.NewTextView().SetDynamicColors(false)
+	tv.SetText(icon + "X")
+	root := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(tv, 0, 1, false)
+	root.SetRect(0, 0, 8, 1)
+	root.Draw(sim)
+	sim.Show()
+
+	cells, width, _ := sim.GetContents()
+	for x := 0; x < width; x++ {
+		if len(cells[x].Runes) > 0 && cells[x].Runes[0] == 'X' {
+			return x
+		}
+	}
+	t.Fatalf("could not locate marker while measuring %q", icon)
+	return 0
 }
 
 func TestIcon_Unknown(t *testing.T) {
