@@ -197,9 +197,13 @@ func (m *EvidenceGuardMiddleware) observeRead(result ToolResult) bool {
 		}
 		state.ranges = make(map[[2]int]string)
 		if len(lines) > maxFileLines {
-			// Too large for line coverage; keep a file-level fingerprint.
+			// Keep a bounded prefix for partial-read coverage plus a
+			// file-level fingerprint for repeated full reads.
+			if state.fullHash == hash && slices.Equal(state.lineHashes, hashes[:maxFileLines]) {
+				return false
+			}
 			state.fullHash = hash
-			state.lineHashes = nil
+			state.lineHashes = hashes[:maxFileLines]
 		} else {
 			if state.lineHashes != nil && slices.Equal(state.lineHashes, hashes) {
 				return false
@@ -255,12 +259,27 @@ func hashLine(line string) string {
 }
 
 func (m *EvidenceGuardMiddleware) trim() {
-	if m.entries() <= maxEvidenceEntries && m.lineEntries() <= maxEvidenceLines {
+	if m.entries() > maxEvidenceEntries {
+		// Cap the bookkeeping itself; this is rare and only after a very
+		// long run with more unique calls than we can track.
+		m.calls = make(map[string]string)
+		m.reads = make(map[string]*readState)
 		return
 	}
-	// Bounded memory matters more than perfect recall on very long runs.
-	m.calls = make(map[string]string)
-	m.reads = make(map[string]*readState)
+	for m.lineEntries() > maxEvidenceLines {
+		var largest *readState
+		for _, state := range m.reads {
+			if largest == nil || len(state.lineHashes) > len(largest.lineHashes) {
+				largest = state
+			}
+		}
+		if largest == nil || len(largest.lineHashes) == 0 {
+			break
+		}
+		// Drop line coverage for the biggest file; its full-file hash and
+		// partial ranges still provide some evidence.
+		largest.lineHashes = nil
+	}
 }
 
 func (m *EvidenceGuardMiddleware) entries() int {
@@ -304,7 +323,7 @@ func mutationSucceeded(result ToolResult) bool {
 		if err := json.Unmarshal([]byte(result.Args), &args); err != nil {
 			return false
 		}
-		return !args.DryRun
+		return !args.DryRun && !strings.Contains(result.Result, "Replaced 0 match(es)")
 	case "sed":
 		var args struct {
 			DryRun bool `json:"dryRun"`
@@ -312,7 +331,10 @@ func mutationSucceeded(result ToolResult) bool {
 		if err := json.Unmarshal([]byte(result.Args), &args); err != nil {
 			return false
 		}
-		return !args.DryRun
+		if args.DryRun || strings.Contains(result.Result, "no matches") {
+			return false
+		}
+		return true
 	case "apply_out":
 		var args struct {
 			DryRun bool `json:"dry_run"`
