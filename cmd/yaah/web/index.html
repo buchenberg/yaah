@@ -10,16 +10,19 @@
 <script src="purify.min.js"></script>
 <script defer src="alpine.min.js"></script>
 <style>
+:root{color-scheme:light dark;--wui-ok:#22c55e;--wui-warn:#facc15;--wui-err:#dc2626;--wui-err-text:#f87171;--wui-info:#60a5fa;--wui-muted:#9ca3af;--wui-off:#555}
+@media (prefers-color-scheme:light){:root{--wui-ok:#16a34a;--wui-warn:#a16207;--wui-err:#dc2626;--wui-err-text:#b91c1c;--wui-info:#2563eb;--wui-muted:#6b7280;--wui-off:#9ca3af}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}#log{scroll-behavior:auto!important}}
 [x-cloak]{display:none!important}
 body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 #log{flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;gap:.4rem}
-.msg{max-width:80%;padding:.6rem 1rem;border-radius:12px;line-height:1.4;white-space:pre-wrap;word-wrap:break-word;font-size:.875rem}
-.user{align-self:flex-end;background:var(--pico-muted-border-color);color:var(--pico-color);border-bottom-right-radius:4px}
+.msg{max-width:80%;padding:.6rem 1rem;border-radius:12px;line-height:1.4;white-space:normal;word-wrap:break-word;font-size:.875rem}
+.user{align-self:flex-end;background:var(--pico-muted-border-color);color:var(--pico-color);border-bottom-right-radius:4px;white-space:pre-wrap}
 .asst{align-self:flex-start;background:var(--pico-card-background-color);border-bottom-left-radius:4px}
-.err{align-self:flex-start;background:#dc2626;color:#fff;max-height:120px;overflow-y:auto;white-space:pre-wrap;word-wrap:break-word}
+.err{align-self:flex-start;background:var(--wui-err);color:#fff;max-height:120px;overflow-y:auto;white-space:pre-wrap;word-wrap:break-word}
 .msg :where(h1,h2,h3,h4,h5,h6){font-size:1em;margin:.4rem 0 .15rem;color:inherit}
-.msg :where(p){margin:.15rem 0}
-.msg :where(ul,ol){padding-left:1.5rem;margin:.15rem 0}
+.msg :where(p){margin:.35rem 0}
+.msg :where(ul,ol){padding-left:1.5rem;margin:.25rem 0}
 .msg :where(li){margin:0}
 .msg :where(pre){margin:.3rem 0;padding:.5rem;font-size:.8em}
 .msg :where(code){font-size:.85em;padding:0;background:0}
@@ -40,11 +43,11 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 .mcp-drop{position:absolute;right:0;top:calc(100% + 6px);background:var(--pico-card-background-color);border:1px solid var(--pico-muted-border-color);border-radius:8px;padding:.5rem .75rem;min-width:220px;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,.25)}
 .mcp-item{display:flex;align-items:center;gap:.5rem;padding:.3rem 0;font-size:.8rem}
 .mcp-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
-.mcp-dot.on{background:#22c55e}
-.mcp-dot.off{background:#dc2626}
+.mcp-dot.on{background:var(--wui-ok)}
+.mcp-dot.off{background:var(--wui-err)}
 .mcp-name{font-weight:600;color:var(--pico-color)}
 .mcp-detail{color:var(--pico-muted-color);margin-left:auto;font-size:.75rem}
-.mcp-err{color:#f87171;font-size:.7rem;width:100%}
+.mcp-err{color:var(--wui-err-text);font-size:.7rem;width:100%}
 
 /* command palette */
 .pal-wrap{position:relative}
@@ -73,20 +76,23 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 
 /* todo panel */
 #todos-wrap{border-bottom:1px solid var(--pico-muted-border-color);font-size:.8rem;font-family:var(--pico-font-family-monospace,monospace)}
-#todos-wrap .todos-head{display:flex;align-items:center;gap:.5rem;padding:.35rem 1rem;cursor:pointer;user-select:none;color:var(--pico-muted-color)}
+#todos-wrap .todos-head{display:flex;align-items:center;gap:.5rem;padding:.35rem 1rem;cursor:pointer;user-select:none;color:var(--pico-muted-color);background:transparent;border:0;box-shadow:none;font-weight:inherit;text-align:left}
 #todos-wrap .todos-head:hover{background:var(--pico-card-background-color)}
 #todos-wrap .todos-head .arrow{display:inline-block;transition:transform .2s}
 #todos-wrap .todos-head .arrow.open{transform:rotate(90deg)}
 #todos-body{padding:.3rem 1rem .5rem;display:flex;flex-direction:column;gap:.15rem}
 .todo-item{display:flex;align-items:baseline;gap:.35rem;padding:.15rem 0}
-.todo-status{flex-shrink:0;font-size:.9em;width:1.2em;text-align:center}
+.todo-status{flex-shrink:0;font-size:.9em;width:1.2em;text-align:center;color:var(--wui-muted)}
 .todo-prio{flex-shrink:0;font-size:.7em;padding:0 .25rem;border-radius:3px;text-transform:uppercase}
-.todo-prio.high{background:rgba(220,38,38,.2);color:#f87171}
-.todo-prio.medium{background:rgba(250,204,21,.2);color:#facc15}
-.todo-prio.low{background:rgba(156,163,175,.2);color:#9ca3af}
+.todo-prio.high{background:rgba(220,38,38,.2);color:var(--wui-err-text)}
+.todo-prio.medium{background:rgba(250,204,21,.2);color:var(--wui-warn)}
+.todo-prio.low{background:rgba(156,163,175,.2);color:var(--wui-muted)}
 .todo-content{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.todo-status.st-completed{color:var(--wui-ok)}
+.todo-status.st-in_progress{color:var(--wui-info)}
+.todo-status.st-cancelled{color:var(--wui-err-text)}
 .todo-time{flex-shrink:0;font-size:.75em;color:var(--pico-muted-color)}
-.tool{align-self:flex-start;max-width:90%;font-size:.8rem;margin:.15rem 0;cursor:pointer;user-select:none}
+.tool{align-self:flex-start;max-width:90%;font-size:.8rem;margin:.15rem 0;cursor:pointer;user-select:none;background:transparent;border:0;box-shadow:none;font-weight:inherit;color:inherit;padding:0;text-align:left}
 .tool-head{display:flex;align-items:baseline;gap:.35rem;padding:.25rem 0;color:var(--pico-muted-color);font-family:var(--pico-font-family-monospace,monospace)}
 .tool-icon{flex-shrink:0;font-size:.85em}
 .tool-name{font-weight:600;color:var(--pico-color)}
@@ -94,7 +100,7 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 .tool-head .tool-summary::before{content:'—';margin-right:.35rem;color:var(--pico-muted-border-color)}
 .tool-model{flex-shrink:0;font-size:.72em;color:var(--pico-muted-color);border:1px solid var(--pico-muted-border-color);border-radius:4px;padding:.05rem .35rem;white-space:nowrap}
 .tool-dur{flex-shrink:0;font-size:.75em;color:var(--pico-muted-color);margin-left:auto}
-.tool-err{color:#dc2626;font-weight:600}
+.tool-err{color:var(--wui-err-text);font-weight:600}
 .tool-body{margin-top:.2rem}
 .tool-result{border:1px solid var(--pico-muted-border-color);border-radius:6px;padding:.5rem .65rem;font-size:.78rem;font-family:var(--pico-font-family-monospace,monospace);white-space:pre-wrap;word-wrap:break-word;max-height:280px;overflow-y:auto;background:var(--pico-card-background-color);line-height:1.35}
 
@@ -145,8 +151,9 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 .msg.search-hit{outline:2px solid var(--pico-primary);outline-offset:2px;border-radius:4px}
 
 /* reasoning toggle */
-.reason-toggle{cursor:pointer;user-select:none;color:var(--pico-muted-color);font-size:.8rem;padding:.25rem 0}
+.reason-toggle{cursor:pointer;user-select:none;color:var(--pico-muted-color);font-size:.8rem;padding:.25rem 0;background:transparent;border:0;box-shadow:none;font-weight:inherit;text-align:left}
 .reason-toggle:hover{color:var(--pico-color)}
+.todos-head:focus-visible,.tool:focus-visible,.reason-toggle:focus-visible{outline:2px solid var(--pico-primary);outline-offset:2px;border-radius:6px}
 
 /* thinking bounce */
 .think{align-self:flex-start;padding:.6rem 1rem;border-radius:12px;border-bottom-left-radius:4px;font-size:.85rem;max-width:80%;background:var(--pico-card-background-color);color:var(--pico-muted-color)}
@@ -160,10 +167,10 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 #prompt{flex:1;resize:none;min-height:44px;max-height:160px}
 #bar button{align-self:stretch;margin:0}
 #foot{display:flex;justify-content:space-between;align-items:center;padding:.25rem 1rem;font-size:.75rem;border-top:1px solid var(--pico-muted-border-color);color:var(--pico-muted-color)}
-.led{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;background:#555;transition:background .2s}
-.led.on{background:#22c55e}
-.led.off{background:#555}
-.led.active{background:#facc15;animation:pulse-led 1s ease-in-out infinite}
+.led{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;background:var(--wui-off);transition:background .2s}
+.led.on{background:var(--wui-ok)}
+.led.off{background:var(--wui-off)}
+.led.active{background:var(--wui-warn);animation:pulse-led 1s ease-in-out infinite}
 @keyframes pulse-led{0%,100%{opacity:1}50%{opacity:.3}}
 dialog article{max-width:480px;min-width:320px}
 </style>
@@ -179,14 +186,14 @@ dialog article{max-width:480px;min-width:320px}
       <div class="pal-drop" x-show="palOpen" @click.outside="palClose()">
         <div class="pal-input-wrap">
           <span class="pal-prompt">›</span>
-          <input x-ref="palInput" x-model="palQuery" @input="palIdx = palFirstEnabled()"
+          <input x-ref="palInput" x-model="palQuery" @input="palIdx = palFirstEnabled()" role="combobox" aria-haspopup="listbox" aria-controls="pal-listbox" :aria-expanded="palOpen" :aria-activedescendant="palItems().length ? 'pal-opt-' + palIdx : null"
             placeholder="Type a command…" autocomplete="off" spellcheck="false">
         </div>
-        <div class="pal-list" x-ref="palList">
+        <div class="pal-list" x-ref="palList" id="pal-listbox" role="listbox" aria-label="Command palette">
           <template x-for="(it, i) in palItems()" :key="it.id">
-            <div>
-              <div class="pal-group" x-show="it.first" x-text="palGroupLabel(it.group)"></div>
-              <div class="pal-item"
+            <div role="none">
+              <div class="pal-group" x-show="it.first" x-text="palGroupLabel(it.group)" aria-hidden="true"></div>
+              <div class="pal-item" role="option" :id="'pal-opt-' + i" :aria-selected="i === palIdx" :aria-disabled="it.disabled" :aria-label="palGroupLabel(it.group) + ': ' + it.label + (it.hint ? ' (' + it.hint + ')' : '')"
                 :class="{'active': i === palIdx, 'disabled': it.disabled, 'current': it.current}"
                 @click="palRun(i)" @mouseenter="!it.disabled && (palIdx = i)">
                 <span class="pal-icon" x-text="it.current ? '✓' : it.icon"></span>
@@ -195,7 +202,7 @@ dialog article{max-width:480px;min-width:320px}
               </div>
             </div>
           </template>
-          <div class="pal-empty" x-show="!palItems().length" x-text="'no matches for “' + palQuery + '”'"></div>
+          <div class="pal-empty" x-show="!palItems().length" x-text="'no matches for “' + palQuery + '”'" role="presentation"></div>
         </div>
         <div class="pal-foot">
           <span><span class="pal-kbd">↑</span><span class="pal-kbd">↓</span> navigate</span>
@@ -205,11 +212,11 @@ dialog article{max-width:480px;min-width:320px}
       </div>
     </div>
     <div class="mcp-wrap" x-show="head.mcpServers && head.mcpServers.length">
-      <span class="mcp-badge" @click="mcpOpen = !mcpOpen" x-text="head.mcpServers.length + ' MCP'"></span>
+      <span class="mcp-badge" role="button" tabindex="0" :aria-expanded="mcpOpen" @click="mcpOpen = !mcpOpen" @keydown.enter="mcpOpen = !mcpOpen" @keydown.space.prevent="mcpOpen = !mcpOpen" x-text="head.mcpServers.length + ' MCP'"></span>
       <div class="mcp-drop" x-show="mcpOpen" @click.outside="mcpOpen = false">
         <template x-for="s in head.mcpServers" :key="s.name">
           <div class="mcp-item">
-            <span class="mcp-dot" :class="s.connected ? 'on' : 'off'"></span>
+            <span class="mcp-dot" :class="s.connected ? 'on' : 'off'" aria-hidden="true"></span>
             <span class="mcp-name" x-text="s.name"></span>
             <span class="mcp-detail" x-text="s.transport + ' · ' + s.toolCount + ' tools'"></span>
             <span class="mcp-err" x-show="s.error" x-text="s.error"></span>
@@ -221,14 +228,14 @@ dialog article{max-width:480px;min-width:320px}
 
   <!-- todo panel -->
   <div id="todos-wrap" x-show="todos.length">
-    <div class="todos-head" @click="todosOpen = !todosOpen">
+    <div class="todos-head" role="button" tabindex="0" :aria-expanded="todosOpen" @click="todosOpen = !todosOpen" @keydown.enter="todosOpen = !todosOpen" @keydown.space.prevent="todosOpen = !todosOpen">
       <span class="arrow" :class="todosOpen && 'open'">▶</span>
       <span x-text="todos.length + ' todo' + (todos.length !== 1 ? 's' : '')"></span>
     </div>
     <div id="todos-body" x-show="todosOpen">
       <template x-for="t in todos" :key="t.id">
         <div class="todo-item">
-          <span class="todo-status" :style="statusStyle(t.status)" x-text="statusIcon(t.status)"></span>
+          <span class="todo-status" :class="'st-' + t.status" x-text="statusIcon(t.status)"></span>
           <span class="todo-prio" :class="t.priority" x-show="t.priority" x-text="t.priority"></span>
           <span class="todo-content" x-text="t.content"></span>
           <span class="todo-time" x-show="t.created_at" x-text="shortTime(t.created_at)"></span>
@@ -237,14 +244,17 @@ dialog article{max-width:480px;min-width:320px}
     </div>
   </div>
 
-<div id="log" x-ref="log">
+<div id="log" x-ref="log" role="log">
   <template x-for="m in msgs" :key="m.id">
     <div>
       <!-- assistant / user / error messages -->
       <div x-show="m.role !== 'tool'" :class="'msg ' + classOf(m.role)" x-html="m.html"></div>
       <!-- tool messages: inline collapsible -->
       <div x-show="m.role === 'tool'" class="tool" :class="m.running && 'tool-running'"
-        @click="m.expanded = !m.expanded; scroll()">
+        :role="m.result ? 'button' : null" :tabindex="m.result ? '0' : null" :aria-expanded="m.result ? m.expanded : null"
+        @click="m.expanded = !m.expanded; scroll()"
+        @keydown.enter="m.expanded = !m.expanded; scroll()"
+        @keydown.space.prevent="m.expanded = !m.expanded; scroll()">
         <div class="tool-head">
           <span class="tool-icon" x-text="m.running ? (m.name === 'delegate' ? '🤖' : '⏳') : m.error ? '✗' : '✓'"></span>
           <span class="tool-name" x-text="toolLabel(m)"></span>
@@ -261,15 +271,11 @@ dialog article{max-width:480px;min-width:320px}
   </template>
   <button class="scroll-btn" x-show="showScrollBtn" @click="scrollToBottom()">↓ Scroll to bottom</button>
   <div class="think" x-show="live && !stream && think">
-    <span class="bounce"><span></span><span></span><span></span></span>
-    <template x-if="!reasonExpanded">
-      <div class="reason-toggle" @click="reasonExpanded = true">▶ Reasoning…</div>
-    </template>
-    <template x-if="reasonExpanded">
-      <div class="reason" x-ref="reason" x-text="think" @click="reasonExpanded = false"></div>
-    </template>
+    <span class="bounce" aria-hidden="true"><span></span><span></span><span></span></span>
+    <div class="reason-toggle" role="button" tabindex="0" :aria-expanded="reasonExpanded" @click="reasonExpanded = !reasonExpanded" @keydown.enter="reasonExpanded = !reasonExpanded" @keydown.space.prevent="reasonExpanded = !reasonExpanded"><span x-text="reasonExpanded ? '▼' : '▶'"></span> Reasoning…</div>
+    <div class="reason" x-ref="reason" x-show="reasonExpanded" x-text="think" aria-live="off" tabindex="0"></div>
   </div>
-  <div class="msg asst" x-show="stream" x-html="md(stream)"></div>
+  <div class="msg asst" x-show="stream" x-html="md(stream)" aria-live="off"></div>
 </div>
 
 <div id="bar">
@@ -284,16 +290,18 @@ dialog article{max-width:480px;min-width:320px}
         </div>
       </template>
       <template x-if="!cmdSteerMode">
-        <template x-for="(c, i) in cmdFiltered()" :key="c.id">
-          <div class="cmd-item" :class="{'active': i === cmdIdx}"
-            @click="cmdSelect(i)" @mouseenter="cmdIdx = i">
-            <span x-text="c.label"></span>
-            <span class="cmd-desc" x-text="c.desc"></span>
-          </div>
-        </template>
+        <div role="listbox" id="cmd-listbox" aria-label="Command list">
+          <template x-for="(c, i) in cmdFiltered()" :key="c.id">
+            <div class="cmd-item" role="option" :id="'cmd-opt-' + i" :aria-selected="i === cmdIdx" :class="{'active': i === cmdIdx}"
+              @click="cmdSelect(i)" @mouseenter="cmdIdx = i">
+              <span x-text="c.label"></span>
+              <span class="cmd-desc" x-text="c.desc"></span>
+            </div>
+          </template>
+        </div>
       </template>
     </div>
-    <textarea id="prompt" rows="1" placeholder="Ask yaah…" x-ref="el"
+    <textarea id="prompt" rows="1" placeholder="Ask yaah…" x-ref="el" role="combobox" aria-haspopup="listbox" aria-controls="cmd-listbox" :aria-expanded="cmdOpen" :aria-activedescendant="cmdOpen && !cmdSteerMode && cmdFiltered().length ? 'cmd-opt-' + cmdIdx : null"
       :disabled="(live && !cmdOpen) || cmdSteerMode"
       @keydown.enter="!$event.shiftKey && ($event.preventDefault(), cmdOpen ? cmdRun() : send())"
       @keydown.escape="cmdOpen && ($event.preventDefault(), cmdDismiss())"
@@ -307,7 +315,7 @@ dialog article{max-width:480px;min-width:320px}
 </div>
 
 <div id="foot">
-  <span><span class="led" :class="live ? 'active' : (on ? 'on' : 'off')"></span><span x-text="status"></span></span>
+  <span><span class="led" :class="live ? 'active' : (on ? 'on' : 'off')" aria-hidden="true"></span><span x-text="status"></span></span>
   <span x-text="ctx ? ctx + '% context' : ''"></span>
 </div>
 
@@ -571,10 +579,6 @@ document.addEventListener('alpine:init', () => {
       // todo helpers for the template
       statusIcon(s) {
         return s === 'completed' ? '✓' : s === 'in_progress' ? '●' : s === 'cancelled' ? '✗' : '○'
-      },
-      statusStyle(s) {
-        var color = s === 'completed' ? '#4ade80' : s === 'in_progress' ? '#60a5fa' : s === 'cancelled' ? '#f87171' : '#9ca3af'
-        return 'color:' + color
       },
       shortTime(ts) {
         if (!ts) return ''
