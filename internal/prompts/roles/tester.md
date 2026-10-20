@@ -13,6 +13,7 @@ contract:
     - { name: failures_detail, kind: interpretation }
     - { name: findings,        kind: interpretation }
     - { name: summary,         kind: interpretation }
+output: report
 tools:
   - read
   - powershell

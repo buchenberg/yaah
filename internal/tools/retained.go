@@ -122,7 +122,12 @@ func getRetainedProposal(id string) (*retainedProposal, error) {
 // its delta into a proposal, returning the proposal envelope. A body error still
 // yields a sealed (partial) proposal, exactly as the review fork does; only a
 // provisioning or sealing failure has no output.
-func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, subParams jobs.SubAgentParams, timeout time.Duration) (string, error) {
+// startRetainedRun runs one retained dispatch. When report is set
+// (yaah-7yf), the isolation is kept but the sealing is skipped: the
+// result is the sub-agent's report text, the worktree is torn down
+// before returning, and no proposal is registered — a report-role
+// dispatch carries no delta to settle.
+func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, subParams jobs.SubAgentParams, timeout time.Duration, report bool) (string, error) {
 	if rt.Runner == nil {
 		return "", fmt.Errorf("delegate: sub-agent runner not configured")
 	}
@@ -188,6 +193,20 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	parentErr := ctx.Err()
 	if cancel != nil {
 		cancel()
+	}
+
+	// The report lane (yaah-7yf) never seals: the deliverable is the
+	// result text. Tear the worktree down — the scratch goes with it — and
+	// hand the report straight back. A body error propagates so the
+	// delegate's shared-lane error handling (timeout/stuck/cancelled
+	// classification) applies verbatim.
+	if report {
+		if scope, gok := mgr.Get(scopeID); gok {
+			_ = parent.Discard(scope)
+		} else if recovery.IsRegisteredWorktree(ctx, rt.RepoPath, wt) {
+			_ = shepherdgit.NewWorktreeSandbox(rt.RepoPath, wt).Destroy(context.WithoutCancel(ctx))
+		}
+		return result, bodyErr
 	}
 
 	// Scrub the confinement scratch before sealing: the env redirect keeps the

@@ -100,7 +100,8 @@ agents:
     default_min_turns: 0               # global floor; 0 = none
     output_limit: 51200                # bytes; 0 = built-in 50 KiB cap
     json_mode: false
-    mode: retained                     # retained | shared
+    mode: retained                     # retained | shared; per-role routing
+                                       # comes from each role's `output` field
     containment: auto                  # auto | off | paddock
     network: allow_all                 # allow_all | deny_all | broker
     network_hosts: []                  # broker allowlist; empty = admit nothing

@@ -362,3 +362,84 @@ func TestExecute_TimeoutIncludesPartialOutput(t *testing.T) {
 		t.Errorf("partial = %q, want the sub-agent's output", got.Partial)
 	}
 }
+
+// TestExecute_LaneForRoleRouting pins yaah-7yf: LaneForRole decouples the
+// output contract from the substrate. A report role keeps the isolated
+// worktree but gets its report back with nothing to settle; a shared role
+// runs the raw runner directly on the workspace even when the session is
+// retained; a nil LaneForRole keeps every dispatch on the proposal lane.
+func TestExecute_LaneForRoleRouting(t *testing.T) {
+	newTool := func(runner TaskRunner, rt *RetainedRuntime, lane func(role string) DelegateLane) *DelegateTool {
+		return &DelegateTool{
+			RoleNames:   []string{"developer", "reviewer", "counter"},
+			Runner:      runner,
+			Retained:    rt,
+			LaneForRole: lane,
+		}
+	}
+	args := func(role string) string {
+		return `{"description":"d","prompt":"p","role":"` + role + `"}`
+	}
+
+	t.Run("report lane returns the report, no proposal", func(t *testing.T) {
+		resetRetainedProposals()
+		runner := writingRunner(t, "r.txt")
+		rt := newRetainedTestEnv(t, runner)
+		tt := newTool(runner.run(), &rt, func(string) DelegateLane { return LaneReport })
+
+		res, err := tt.Execute(context.Background(), args("reviewer"))
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		if res != "default" {
+			t.Errorf("report lane must return the runner text, got %q", res)
+		}
+		if got := listRetainedProposalsSummaries(); got != "No open proposals." {
+			t.Errorf("report lane must not register a proposal, got %q", got)
+		}
+		wd := runner.workdirFor(t, 0)
+		if wd == "" || wd == rt.RepoPath {
+			t.Fatalf("report lane must still isolate, got workdir %q", wd)
+		}
+		if _, err := os.Stat(wd); !os.IsNotExist(err) {
+			t.Errorf("report lane worktree must be torn down (stat err=%v)", err)
+		}
+	})
+
+	t.Run("shared lane bypasses retention", func(t *testing.T) {
+		resetRetainedProposals()
+		runner := &sessionRunner{responses: []runnerResponse{{result: "shared report"}}}
+		rt := newRetainedTestEnv(t, runner)
+		tt := newTool(runner.run(), &rt, func(string) DelegateLane { return LaneShared })
+
+		res, err := tt.Execute(context.Background(), args("counter"))
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		if res != "shared report" {
+			t.Errorf("shared lane must return the runner text, got %q", res)
+		}
+		if wd := runner.workdirFor(t, 0); wd != "" {
+			t.Errorf("shared lane must not provision a worktree, got %q", wd)
+		}
+		if got := listRetainedProposalsSummaries(); got != "No open proposals." {
+			t.Errorf("shared lane must not register a proposal, got %q", got)
+		}
+	})
+
+	t.Run("nil LaneForRole keeps the proposal lane", func(t *testing.T) {
+		resetRetainedProposals()
+		runner := writingRunner(t, "p.txt")
+		rt := newRetainedTestEnv(t, runner)
+		tt := &DelegateTool{RoleNames: []string{"developer"}, Runner: runner.run(), Retained: &rt}
+
+		res, err := tt.Execute(context.Background(), args("developer"))
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		env := decodeProposalEnvelope(t, res)
+		if env.Status != "proposal" || env.ProposalID == "" {
+			t.Fatalf("nil LaneForRole must keep the proposal lane, got %+v", env)
+		}
+	})
+}

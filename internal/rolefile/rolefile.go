@@ -50,17 +50,22 @@ type ContractDef struct {
 // field-for-field complete: any role field missing here is silently
 // dropped when a role file is rewritten.
 type Frontmatter struct {
-	Name          string      `yaml:"name"`
-	Description   string      `yaml:"description"`
-	Specialty     string      `yaml:"specialty"`
-	Contract      ContractDef `yaml:"contract,omitempty"`
-	Tools         []string    `yaml:"tools"`
-	MaxLoopCycles int         `yaml:"max_iterations"`
-	MinLoopCycles int         `yaml:"min_iterations"` // budget floor; 0 = none
-	MaxToolTurns  int         `yaml:"max_turns"`
-	MinToolTurns  int         `yaml:"min_turns"` // budget floor; 0 = none
-	JSONMode      bool        `yaml:"json_mode"`
-	Timeout       int         `yaml:"timeout"` // seconds; 0 = no timeout
+	Name        string      `yaml:"name"`
+	Description string      `yaml:"description"`
+	Specialty   string      `yaml:"specialty"`
+	Contract    ContractDef `yaml:"contract,omitempty"`
+	Tools       []string    `yaml:"tools"`
+	// Output selects the dispatch output contract: "report" returns the
+	// sub-agent's text directly (isolated-report or shared lane), "proposal"
+	// seals an isolated worktree delta for the orchestrator to settle. Empty
+	// means proposal — the historical behavior.
+	Output        string `yaml:"output,omitempty"`
+	MaxLoopCycles int    `yaml:"max_iterations"`
+	MinLoopCycles int    `yaml:"min_iterations"` // budget floor; 0 = none
+	MaxToolTurns  int    `yaml:"max_turns"`
+	MinToolTurns  int    `yaml:"min_turns"` // budget floor; 0 = none
+	JSONMode      bool   `yaml:"json_mode"`
+	Timeout       int    `yaml:"timeout"` // seconds; 0 = no timeout
 
 	// extra holds frontmatter keys this struct does not model, in source
 	// order. They are preserved through Parse→Marshal so editing a role does

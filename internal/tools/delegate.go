@@ -48,6 +48,13 @@ type DelegateTool struct {
 	// registry, so the delegate tool sees newly created roles immediately.
 	RoleResolver func() []string
 
+	// LaneForRole, when non-nil, resolves the dispatch lane for a role at
+	// execution time (yaah-7yf): proposal (isolated worktree + sealed
+	// delta), report (isolated worktree, plain result, auto-discarded), or
+	// shared (direct on the workspace). Nil routes every dispatch to the
+	// proposal lane — the historical behavior.
+	LaneForRole func(role string) DelegateLane
+
 	// RoleDescriptions maps role name to a one-line description of what
 	// the role does. Included in the delegate schema's role
 	// parameter so the orchestrator can choose roles without calling
@@ -165,12 +172,16 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 		// The retained lane covers background dispatches too: a background job
 		// that ran the raw runner would mutate the host tree with no proposal,
 		// which is exactly the guarantee "retained" makes. The job's delivered
-		// result is then a proposal envelope like any other dispatch's.
+		// result is then a proposal envelope like any other dispatch's — or,
+		// for a report lane, the plain report with the worktree already torn
+		// down. A shared-lane role reaches the raw runner directly: it cannot
+		// mutate the tree, so the retained guarantee is moot.
 		runner := t.Runner
-		if t.Retained != nil {
+		if t.Retained != nil && t.laneFor(params.Role) != LaneShared {
 			rt := *t.Retained
+			report := t.laneFor(params.Role) == LaneReport
 			runner = func(ctx context.Context, prompt string, sp SubAgentParams) (string, error) {
-				return startRetainedRun(ctx, rt, prompt, sp, timeout)
+				return startRetainedRun(ctx, rt, prompt, sp, timeout, report)
 			}
 		}
 		jobID, err := t.BackgroundJobs.Launch(ctx, runner, params.Role, params.Description, params.Prompt, subParams, timeout)
@@ -182,8 +193,18 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 
 	// Retained mode (Plan 7 Phase 2): run in an isolated worktree and return a
 	// sealed proposal the orchestrator settles, instead of mutating the host.
+	// The report lane (yaah-7yf) keeps the isolation but skips the sealing:
+	// the result is the sub-agent's report text, and the worktree is torn
+	// down automatically. A shared-lane role falls through to the direct
+	// runner below — it cannot mutate the tree, so isolation buys nothing.
 	if t.Retained != nil {
-		return startRetainedRun(runCtx, *t.Retained, params.Prompt, subParams, timeout)
+		switch t.laneFor(params.Role) {
+		case LaneReport:
+			return startRetainedRun(runCtx, *t.Retained, params.Prompt, subParams, timeout, true)
+		case LaneShared:
+		default:
+			return startRetainedRun(runCtx, *t.Retained, params.Prompt, subParams, timeout, false)
+		}
 	}
 
 	if timeout > 0 {
@@ -303,4 +324,16 @@ func structuredTaskResult(reason, role string, timeout time.Duration, partial st
 
 func coerceInt(s string) (int, error) {
 	return strconv.Atoi(strings.TrimSpace(s))
+}
+
+// laneFor resolves the dispatch lane for a role. A nil LaneForRole keeps
+// every dispatch on the proposal lane.
+func (t *DelegateTool) laneFor(role string) DelegateLane {
+	if t.LaneForRole == nil {
+		return LaneProposal
+	}
+	if lane := t.LaneForRole(role); lane != "" {
+		return lane
+	}
+	return LaneProposal
 }

@@ -2,6 +2,7 @@ package rolefile
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -92,6 +93,44 @@ func TestRoundTrip(t *testing.T) {
 	fm2.order = fm.order
 	if !reflect.DeepEqual(fm2, fm) {
 		t.Errorf("frontmatter changed on round trip:\n got %+v\nwant %+v", fm2, fm)
+	}
+	if body2 != body {
+		t.Errorf("body changed on round trip: %q vs %q", body2, body)
+	}
+}
+
+// TestRoundTripOutputField pins the modeled output field (yaah-7yf): a
+// role file that declares `output: report` keeps the value through
+// parse→marshal, and the field joins the recorded key order so rewrites
+// do not move it relative to extension keys.
+func TestRoundTripOutputField(t *testing.T) {
+	input := `---
+name: reviewer
+output: report
+tools: [read, grep]
+---
+body
+`
+	fm, body, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if fm.Output != "report" {
+		t.Fatalf("Output = %q, want report", fm.Output)
+	}
+	out, err := Marshal(fm, body)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	fm2, body2, err := Parse(out)
+	if err != nil {
+		t.Fatalf("re-parse after Marshal: %v\n--- output ---\n%s", err, out)
+	}
+	if fm2.Output != "report" {
+		t.Errorf("output changed on round trip: %q vs %q", fm2.Output, fm.Output)
+	}
+	if !slices.Contains(fm2.order, "output") {
+		t.Errorf("key order lost the output field: %v", fm2.order)
 	}
 	if body2 != body {
 		t.Errorf("body changed on round trip: %q vs %q", body2, body)
