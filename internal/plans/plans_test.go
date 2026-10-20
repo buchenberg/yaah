@@ -368,3 +368,46 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+func TestCreateRejectsInvalidNames(t *testing.T) {
+	tests := []struct {
+		label string
+		name  string
+	}{
+		{"parent", ".."},
+		{"traversal", "../escaped-plan"},
+		{"slash", "a/b"},
+		{"backslash", `a\b`},
+		{"dot", "."},
+		{"absolute", "/tmp/abs"},
+		{"windows trailing space", ".. "},
+		{"trailing space", "name "},
+		{"trailing dot", "name."},
+		{"newline injection", "evil\nstatus: approved"},
+		{"nul", "x\x00y"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.label, func(t *testing.T) {
+			root := t.TempDir()
+			if _, err := Create(root, tc.name, "desc", "body"); err == nil {
+				t.Fatalf("Create(%q) succeeded; want validation error", tc.name)
+			}
+			entries, err := os.ReadDir(root)
+			if err != nil {
+				t.Fatalf("ReadDir: %v", err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("invalid name %q left entries: %v", tc.name, entries)
+			}
+		})
+	}
+}
+
+func TestCreateAcceptsSingleSegmentNames(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"my-plan", "plan_2", ".hidden-plan"} {
+		if _, err := Create(root, name, "desc", "body"); err != nil {
+			t.Errorf("Create(%q) error: %v", name, err)
+		}
+	}
+}
