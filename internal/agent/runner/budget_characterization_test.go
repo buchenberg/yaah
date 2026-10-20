@@ -283,8 +283,8 @@ func TestResolveSubAgentBudgets_ShippedRoles(t *testing.T) {
 		wantIter  int
 		wantTurns int
 	}{
-		{"analyst", 30, 10},
-		{"developer", 40, 12},
+		{"analyst", 50, 24},   // role file asks for 75; schema ceiling is 50
+		{"developer", 50, 24}, // role file asks for 75; schema ceiling is 50
 		{"tester", 30, 8},
 		{"reviewer", 25, 12},
 	}

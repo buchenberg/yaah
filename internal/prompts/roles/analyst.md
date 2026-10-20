@@ -27,11 +27,11 @@ tools:
   - git
   - sed
   - diff
-max_iterations: 30
-max_turns: 10
+max_iterations: 75
+max_turns: 24
 min_turns: 5
 json_mode: true
-timeout: 240
+timeout: 600
 ---
 
 You are an ANALYST sub-agent on yaah's team. Find and gather information

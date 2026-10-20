@@ -57,45 +57,69 @@ func (t *App) AddToolEnd(id, summary, result string) {
 	}
 }
 
-// AddSubAgentStart adds a sub-agent start entry to conversationLog.
-// Note: flushes any pending streaming tokens first and triggers background jobs pane update.
+// AddSubAgentStart adds a sub-agent to the dedicated Subagents pane.
+// Sub-agents are not part of the conversation log; the pane is their only
+// display surface.
 func (t *App) AddSubAgentStart(id, role, specialty, task, model string) {
-	t.flushPendingTokens()
 	sb := subagent.New(id, role, specialty, task, model, t.Theme)
-	t.conversationLog = append(t.conversationLog, convItem{
-		subBlock: sb,
-	})
-	t.markDirty()
+	t.subAgents = append(t.subAgents, sb)
+	t.subAgentsBusy.Store(true)
 	t.renderBackgroundJobsPane()
 }
 
-// AddSubAgentEnd marks a sub-agent block as completed.
-// Note: triggers background jobs pane update.
+// AddSubAgentEnd marks a sub-agent as completed and refreshes the pane.
 func (t *App) AddSubAgentEnd(id string) {
-	for i := range t.conversationLog {
-		ci := &t.conversationLog[i]
-		if ci.subBlock != nil && ci.subBlock.ID() == id {
-			ci.subBlock.Complete()
-			t.needsFullRender.Store(true)
-			t.markDirty()
-			t.renderBackgroundJobsPane()
-			return
-		}
+	if sb := t.findSubAgent(id); sb != nil {
+		sb.Complete()
+		t.syncSubAgentBusy()
+		t.renderBackgroundJobsPane()
 	}
 }
 
-// AddSubAgentError marks a sub-agent block as failed.
-// Note: triggers background jobs pane update.
+// AddSubAgentError marks a sub-agent as failed and refreshes the pane.
 func (t *App) AddSubAgentError(id, err string) {
-	for i := range t.conversationLog {
-		ci := &t.conversationLog[i]
-		if ci.subBlock != nil && ci.subBlock.ID() == id {
-			ci.subBlock.Fail(err)
-			t.needsFullRender.Store(true)
-			t.markDirty()
-			t.renderBackgroundJobsPane()
+	if sb := t.findSubAgent(id); sb != nil {
+		sb.Fail(err)
+		t.syncSubAgentBusy()
+		t.renderBackgroundJobsPane()
+	}
+}
+
+// findSubAgent returns the sub-agent block with the given id, if any.
+func (t *App) findSubAgent(id string) *subagent.Block {
+	for _, sb := range t.subAgents {
+		if sb.ID() == id {
+			return sb
+		}
+	}
+	return nil
+}
+
+// syncSubAgentBusy updates the atomic flag that keeps the animation ticker
+// alive while sub-agents run, including background dispatches that outlive
+// the turn's activity-line state.
+func (t *App) syncSubAgentBusy() {
+	for _, sb := range t.subAgents {
+		if sb.S() == subagent.Active {
+			t.subAgentsBusy.Store(true)
 			return
 		}
+	}
+	t.subAgentsBusy.Store(false)
+}
+
+// advanceSubAgentSpinners advances every active sub-agent's spinner and
+// repaints the pane. Driven by the activity ticker while agents are running.
+func (t *App) advanceSubAgentSpinners() {
+	advanced := false
+	for _, sb := range t.subAgents {
+		if sb.S() == subagent.Active {
+			sb.AdvanceSpinner()
+			advanced = true
+		}
+	}
+	if advanced {
+		t.renderBackgroundJobsPane()
 	}
 }
 
@@ -113,9 +137,6 @@ func (t *App) ToggleBlockByIndex(n int) {
 		}
 		if ci.toolBlock != nil {
 			blocks = append(blocks, ci.toolBlock)
-		}
-		if ci.subBlock != nil {
-			blocks = append(blocks, ci.subBlock)
 		}
 	}
 
@@ -140,11 +161,6 @@ func (t *App) CollapseAll() {
 				ci.toolBlock.Toggle()
 			}
 		}
-		if ci.subBlock != nil {
-			for ci.subBlock.IsExpanded() {
-				ci.subBlock.Toggle()
-			}
-		}
 	}
 	t.refreshMessages()
 }
@@ -164,16 +180,6 @@ func (t *App) toggleAllTools() {
 	for _, ci := range t.conversationLog {
 		if ci.toolBlock != nil {
 			ci.toolBlock.Toggle()
-		}
-	}
-	t.refreshMessages()
-}
-
-func (t *App) toggleAllSubAgents() {
-	t.needsFullRender.Store(true)
-	for _, ci := range t.conversationLog {
-		if ci.subBlock != nil {
-			ci.subBlock.Toggle()
 		}
 	}
 	t.refreshMessages()

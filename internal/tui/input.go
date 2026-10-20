@@ -23,9 +23,6 @@ func (t *App) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
 	case ActionToggleTools:
 		t.toggleAllTools()
 		return nil
-	case ActionToggleSubAgents:
-		t.toggleAllSubAgents()
-		return nil
 	case ActionSend:
 		if t.App.GetFocus() != t.Input {
 			return ev

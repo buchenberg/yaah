@@ -15,7 +15,10 @@ The app is a `Pages → Flex` hierarchy owned by the `App` struct in
 │ Prompt echo (sticky)      │ Info pane        │
 │ Conversation              │ (session, context│
 │ (messages / tool blocks / │  MCP, config)    │
-│  reasoning / sub-agents)  ├──────────────────┤
+│  reasoning)               ├──────────────────┤
+│                           │ Subagents (while │
+│                           │  active)         │
+│                           ├──────────────────┤
 │                           │ Todo sidebar     │
 ├───────────────────────────┴──────────────────┤
 │ Activity line (spinner + state label)        │
@@ -23,6 +26,10 @@ The app is a `Pages → Flex` hierarchy owned by the `App` struct in
 │ Prompt input (bordered TextArea, pink border)│
 └──────────────────────────────────────────────┘
 ```
+
+Sub-agents are rendered **only** in the dedicated Subagents pane; the
+conversation pane does not show sub-agent rows. The pane is collapsed when no
+sub-agent is running.
 
 The bottom two rows are **dedicated**:
 
@@ -75,7 +82,7 @@ durable conversation-log line; `DoneEvent.Error` is dialog-only.
 | `components/messages` | Conversation view composition; delegates to the block components |
 | `components/toolblock` | Collapsible tool-call card: header summary, duration, result body |
 | `components/reasoning` | Collapsible thinking/reasoning block with lolcat styling |
-| `components/subagent` | Sub-agent lifecycle card: role, task, model, duration, expandable result |
+| `components/subagent` | Sub-agent lifecycle state: role, task, elapsed time, spinner frame |
 | `components/approval` | Modal for dangerous-tool approval requests |
 | `components/question` | Modal for `question` tool prompts with selectable options |
 | `components/command` | Colon-command parser + Ctrl+P command palette |
@@ -87,7 +94,7 @@ durable conversation-log line; `DoneEvent.Error` is dialog-only.
 | `components/sessioninfo` | Agent provider/model/version/status section |
 | `components/contextinfo` | Context window usage section |
 | `components/mcpinfo` | Connected MCP servers section |
-| `components/backgroundjobs` | Running background sub-agents |
+| `components/backgroundjobs` | Running sub-agents in the Subagents pane, with animated spinners |
 | `components/todo` | Todo list sidebar |
 | `components/input` | Prompt input (bordered TextArea with pink border) |
 | `colors` | Theme tokens (single source of truth: `colors/theme.go`) |
@@ -106,7 +113,9 @@ funneled through an ordered event queue onto the tview main goroutine
 The activity line is updated via `setActivity` / `restoreActivity` helpers
 called from `proxy.go` (agent events) and `control.go` (control messages).
 The 100ms animation ticker uses the droppable non-critical queue path — dropped
-ticks only stutter the animation, never block.
+ticks only stutter the animation, never block. The same tick advances the
+Subagents pane's per-agent spinner frames and repaints the pane while agents
+are active.
 
 ## Conventions
 

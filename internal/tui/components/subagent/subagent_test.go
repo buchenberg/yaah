@@ -111,6 +111,18 @@ func TestAdvanceSpinner_Done(t *testing.T) {
 	}
 }
 
+func TestSpinnerFrame(t *testing.T) {
+	th := colors.NewDarkTheme()
+	b := New("sa-1", "developer", "", "task", "gpt-4", &th)
+	if got := b.SpinnerFrame(); got != spinnerFrames[0] {
+		t.Errorf("SpinnerFrame = %q, want %q", got, spinnerFrames[0])
+	}
+	b.AdvanceSpinner()
+	if got := b.SpinnerFrame(); got != spinnerFrames[1] {
+		t.Errorf("SpinnerFrame after advance = %q, want %q", got, spinnerFrames[1])
+	}
+}
+
 func TestElapsed(t *testing.T) {
 	th := colors.NewDarkTheme()
 	b := New("sa-1", "developer", "", "task", "gpt-4", &th)

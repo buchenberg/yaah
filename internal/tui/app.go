@@ -108,6 +108,8 @@ type App struct {
 	middlewarePipeline   []string
 	agentActive          bool
 	activeSubAgents      int
+	subAgents            []*subagent.Block
+	subAgentsBusy        atomic.Bool
 	activityBusy         atomic.Bool
 	tokensRx             atomic.Int64
 	charsWritten         atomic.Int64
@@ -150,7 +152,6 @@ type convItem struct {
 	cached         string
 	cachedWidth    int
 	toolBlock      *toolblock.Block
-	subBlock       *subagent.Block
 	reasoningBlock *reasoning.Block
 }
 

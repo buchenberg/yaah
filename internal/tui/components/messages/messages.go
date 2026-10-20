@@ -6,19 +6,17 @@ import (
 
 	"github.com/buchenberg/yaah/internal/tui/colors"
 	"github.com/buchenberg/yaah/internal/tui/components/reasoning"
-	"github.com/buchenberg/yaah/internal/tui/components/subagent"
 	"github.com/buchenberg/yaah/internal/tui/components/toolblock"
 	"github.com/rivo/tview"
 )
 
 // Item is a single entry in the chronological conversation log.
 // Exactly one of the fields is set — Text for plain/markdown content,
-// ToolBlock for tool calls, SubBlock for sub-agent rows, or ReasBlock for
-// reasoning sections.
+// ToolBlock for tool calls, or ReasBlock for reasoning sections.
+// Sub-agents are not conversation items; they render in their own pane.
 type Item struct {
 	Text      string
 	ToolBlock *toolblock.Block
-	SubBlock  *subagent.Block
 	ReasBlock *reasoning.Block
 }
 
@@ -54,9 +52,6 @@ func Format(items []Item, ctx Content) string {
 			b.WriteString("\n\n")
 		case item.ToolBlock != nil:
 			b.WriteString(item.ToolBlock.RenderCtx(rctx))
-			b.WriteString("\n")
-		case item.SubBlock != nil:
-			b.WriteString(item.SubBlock.RenderCtx(rctx))
 			b.WriteString("\n")
 		case item.ReasBlock != nil:
 			b.WriteString("\n")

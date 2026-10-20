@@ -38,8 +38,8 @@ func TestFormat_OneRunning(t *testing.T) {
 	if !strings.Contains(out, "fix the bug") {
 		t.Errorf("should contain task, got %q", out)
 	}
-	if !strings.Contains(out, "🤖") {
-		t.Errorf("should contain robot icon, got %q", out)
+	if !strings.Contains(out, b.SpinnerFrame()) {
+		t.Errorf("should contain the active spinner frame %q, got %q", b.SpinnerFrame(), out)
 	}
 }
 
@@ -82,5 +82,16 @@ func TestFormat_ContainsDisplayName(t *testing.T) {
 	name := b.DisplayName()
 	if !strings.Contains(out, name) {
 		t.Errorf("should contain DisplayName %q, got %q", name, out)
+	}
+}
+
+func TestFormat_AdvancesWithSpinner(t *testing.T) {
+	th := colors.NewDarkTheme()
+	b := subagent.New("sa-1", "developer", "", "fix bug", "gpt-4", &th)
+	first := Format([]*subagent.Block{b}, &th)
+	b.AdvanceSpinner()
+	second := Format([]*subagent.Block{b}, &th)
+	if first == second {
+		t.Errorf("pane output did not change after advancing the spinner: %q", first)
 	}
 }

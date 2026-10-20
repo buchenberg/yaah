@@ -14,8 +14,8 @@ Four roles are built in and work in any project with no setup:
 
 | Role | Persona | Defaults | Specialty |
 |---|---|---|---|
-| `developer` | Charley | 40 iterations, 12 turns, 300s | Implement features, fix bugs, edit files |
-| `analyst` | Jack | 30 iterations, 10 turns, 240s | Research from code, docs, and the web; no file changes |
+| `developer` | Charley | 75 iterations (cap 50), 24 turns, 900s | Implement features, fix bugs, edit files |
+| `analyst` | Jack | 75 iterations (cap 50), 24 turns, 600s | Research from code, docs, and the web; no file changes |
 | `tester` | Casey | 30 iterations, 8 turns, 300s | Run suites, analyze failures, measure coverage |
 | `reviewer` | Tim | 25 iterations, 12 turns, 480s | Inspect code, complexity, dead code, maintainability |
 

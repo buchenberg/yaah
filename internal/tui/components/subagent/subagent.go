@@ -72,6 +72,11 @@ func (b *Block) AdvanceSpinner() {
 	}
 }
 
+// SpinnerFrame returns the current spinner glyph. Completed and failed
+// blocks keep their last frame; renderers that only animate active blocks
+// should check S() first.
+func (b *Block) SpinnerFrame() string { return spinnerFrames[b.spinnerFrame] }
+
 func (b *Block) Complete() {
 	b.endTime = time.Now()
 	b.state = Done
