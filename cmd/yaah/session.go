@@ -175,9 +175,15 @@ type agentSession struct {
 
 	// pendingEvents buffers session-scoped events for views whose
 	// HandleEvent cannot safely run outside a prompt (the REPL and ACP
-	// connection writers). They are delivered at the start of the next run.
-	// Bounded so a view that never runs again cannot retain results forever.
-	pendingEvents []agent.Event
+	// connection writers). Each event keeps the view it was produced for, so
+	// an ACP session switch cannot replay another session's completion into
+	// the new connection. Bounded so a view that never runs again cannot
+	// retain results forever.
+	pendingEvents []pendingSessionEvent
+	// evictedStarts records sub-agent IDs whose buffered start was dropped by
+	// the cap; their later end is dropped too instead of rendering an
+	// unmatched completion.
+	evictedStarts map[string]bool
 
 	stdinMu sync.Mutex // serialises stdin reads for approve/prompt fallbacks
 
@@ -450,11 +456,20 @@ func (s *agentSession) SetView(v agent.View) {
 // indefinitely.
 const maxPendingSessionEvents = 64
 
+// pendingSessionEvent pairs an event with the view that was current when it
+// arrived. Unsafe views change between ACP prompts, so delivery must not use
+// whatever view happens to be current at drain time.
+type pendingSessionEvent struct {
+	view agent.View
+	evt  agent.Event
+}
+
 // dispatchEvent delivers a session-scoped event to the current view. Only
 // views that marshal HandleEvent onto their own UI loop (or otherwise guard
 // their output) accept events between runs; the rest are buffered until the
-// next RunPrompt so a background completion cannot interleave with the REPL
-// prompt or an ACP connection write. Nil and Noop views drop the event.
+// next run's view forwarder drains them, so a background completion cannot
+// interleave with the REPL prompt or an ACP connection write. Nil and Noop
+// views drop the event.
 func (s *agentSession) dispatchEvent(evt agent.Event) {
 	s.mu.Lock()
 	v := s.view
@@ -468,14 +483,47 @@ func (s *agentSession) dispatchEvent(evt agent.Event) {
 	}
 	if !safe {
 		if len(s.pendingEvents) >= maxPendingSessionEvents {
-			s.pendingEvents = s.pendingEvents[1:]
+			s.evictOldestPendingLocked()
 		}
-		s.pendingEvents = append(s.pendingEvents, evt)
+		if end, ok := evt.(*agent.SubAgentEndEvent); ok && s.evictedStarts[end.SubAgentID] {
+			delete(s.evictedStarts, end.SubAgentID)
+			s.mu.Unlock()
+			return
+		}
+		s.pendingEvents = append(s.pendingEvents, pendingSessionEvent{view: v, evt: evt})
 		s.mu.Unlock()
 		return
 	}
 	s.mu.Unlock()
 	v.HandleEvent(evt)
+}
+
+// evictOldestPendingLocked drops the oldest buffered event. When that event
+// is a sub-agent start, its matching end is dropped too, so the cap cannot
+// leave a completion without its start. Caller holds s.mu.
+func (s *agentSession) evictOldestPendingLocked() {
+	if len(s.pendingEvents) == 0 {
+		return
+	}
+	first := s.pendingEvents[0]
+	if start, ok := first.evt.(*agent.SubAgentStartEvent); ok {
+		paired := false
+		for i := 1; i < len(s.pendingEvents); i++ {
+			end, ok := s.pendingEvents[i].evt.(*agent.SubAgentEndEvent)
+			if ok && end.SubAgentID == start.SubAgentID && s.pendingEvents[i].view == first.view {
+				s.pendingEvents = append(s.pendingEvents[:i], s.pendingEvents[i+1:]...)
+				paired = true
+				break
+			}
+		}
+		if !paired {
+			if s.evictedStarts == nil {
+				s.evictedStarts = make(map[string]bool)
+			}
+			s.evictedStarts[start.SubAgentID] = true
+		}
+	}
+	s.pendingEvents = s.pendingEvents[1:]
 }
 
 // isNoopView reports whether v discards events, so buffering them for a
@@ -489,14 +537,20 @@ func isNoopView(v agent.View) bool {
 	}
 }
 
-// takePendingEvents drains events buffered for a view that cannot accept
-// them between runs.
-func (s *agentSession) takePendingEvents() []agent.Event {
+// deliverPendingEvents replays buffered events to the view that produced
+// them. It runs on the run's BrokerView forwarder goroutine, before any live
+// broker event, so the view still sees events from exactly one goroutine and
+// start/end order is preserved.
+func (s *agentSession) deliverPendingEvents() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	events := s.pendingEvents
+	pending := s.pendingEvents
 	s.pendingEvents = nil
-	return events
+	s.mu.Unlock()
+	for _, p := range pending {
+		if p.view != nil {
+			p.view.HandleEvent(p.evt)
+		}
+	}
 }
 
 func (s *agentSession) SetCtrlCh(ch chan<- control.Msg) {
