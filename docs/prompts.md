@@ -55,7 +55,7 @@ systemPrompt := prompts.Build(layers)
 `prompts.DetectEnvironment()` (`prompts/prompts.go`) renders the embedded
 `environment_header.md` template, producing e.g.:
 ```
-OS: windows/amd64. Default shell: powershell (pwsh 7+ or Windows PowerShell). Working directory: C:\Code\Personal\yaah.
+OS: windows/amd64. Default shell: powershell (pwsh 7+ or Windows PowerShell). Working directory: C:\Code\Personal\yaah. Shell commands already start there; do not prefix them with `cd`.
 ```
 
 This is injected into the agent's system prompt via the `Environment` layer.
