@@ -227,3 +227,26 @@ func TestEvidenceGuardPatchResets(t *testing.T) {
 		t.Fatalf("patch did not reset stale: %d", m.stale)
 	}
 }
+
+func TestEvidenceGuardFullReadCoversPartialRanges(t *testing.T) {
+	m := NewEvidenceGuardMiddleware(10, 0)
+	step := &Step{}
+	ctx := context.Background()
+	full := "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8"
+	fullArgs := `{"filePath":"/tmp/a.go"}`
+
+	m.PostTool(ctx, []ToolResult{readResult("/tmp/a.go", fullArgs, full)}, step)
+	partialArgs := `{"filePath":"/tmp/a.go","offset":3,"limit":4}`
+	m.PostTool(ctx, []ToolResult{readResult("/tmp/a.go", partialArgs, "l3\nl4\nl5\nl6")}, step)
+	if m.stale != 1 {
+		t.Fatalf("covered partial stale = %d, want 1", m.stale)
+	}
+	m.PostTool(ctx, []ToolResult{readResult("/tmp/a.go", partialArgs, "l3\nl4\nl5\nl6")}, step)
+	if m.stale != 2 {
+		t.Fatalf("repeated partial stale = %d, want 2", m.stale)
+	}
+	m.PostTool(ctx, []ToolResult{readResult("/tmp/a.go", fullArgs, full)}, step)
+	if m.stale != 3 {
+		t.Fatalf("repeated full read stale = %d, want 3", m.stale)
+	}
+}

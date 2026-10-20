@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
+	"strings"
 
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/types"
@@ -42,6 +44,14 @@ const (
 // tool results so a re-read hashes the same as the original.
 var spillPathPattern = regexp.MustCompile(`full output at \S+`)
 
+type readState struct {
+	// lineHashes comes from a full-file read and lets a partial read be
+	// compared line-for-line.
+	lineHashes []string
+	// ranges stores exact partial ranges not covered by a full read.
+	ranges map[[2]int]string
+}
+
 // EvidenceGuardMiddleware detects exploration that is not producing new
 // evidence: repeated identical calls, and re-reads of the same unchanged
 // file range. Exact-result repetition is still the loop detector's job; this
@@ -52,10 +62,10 @@ type EvidenceGuardMiddleware struct {
 	// hash. Only hashes are retained, so long sessions do not keep every
 	// command in memory.
 	calls map[string]string
-	// reads maps a path to its observed line ranges and their slice hashes.
-	// Ranges are exact: without file-level metadata a subrange cannot be
-	// compared to a larger read, so only an identical range repeats count.
-	reads map[string]map[[2]int]string
+	// reads maps a path to its full-read line hashes and any partial ranges.
+	// A partial read is compared against the full read; when no full read is
+	// known, only an identical (range, hash) repeat counts as stale.
+	reads map[string]*readState
 
 	nudgeAfter int
 	haltAfter  int
@@ -76,7 +86,7 @@ func NewEvidenceGuardMiddleware(nudgeAfter, haltAfter int) *EvidenceGuardMiddlew
 	}
 	return &EvidenceGuardMiddleware{
 		calls:      make(map[string]string),
-		reads:      make(map[string]map[[2]int]string),
+		reads:      make(map[string]*readState),
 		nudgeAfter: nudgeAfter,
 		haltAfter:  haltAfter,
 	}
@@ -134,7 +144,7 @@ func (m *EvidenceGuardMiddleware) observe(result ToolResult) bool {
 	if mutationSucceeded(result) {
 		// File contents may have changed; prior read hashes are no longer
 		// trustworthy. Call history is kept so repeated greps still count.
-		m.reads = make(map[string]map[[2]int]string)
+		m.reads = make(map[string]*readState)
 		return true
 	}
 	if result.Name == "read" {
@@ -166,45 +176,94 @@ func (m *EvidenceGuardMiddleware) observeRead(result ToolResult) bool {
 		m.trim()
 		return true
 	}
-	start, end := readRange(args.Offset, args.Limit)
-	rng := [2]int{start, end}
-	hash := resultHash(result)
-
-	ranges, ok := m.reads[args.FilePath]
+	lines := strings.Split(result.Result, "\n")
+	hashes := lineHashes(lines)
+	full := args.Offset <= 1 && args.Limit <= 0
+	state, ok := m.reads[args.FilePath]
 	if !ok {
-		m.reads[args.FilePath] = map[[2]int]string{rng: hash}
+		state = &readState{ranges: make(map[[2]int]string)}
+		m.reads[args.FilePath] = state
+	}
+
+	if full {
+		if state.lineHashes != nil && slices.Equal(state.lineHashes, hashes) {
+			return false
+		}
+		state.lineHashes = hashes
+		state.ranges = make(map[[2]int]string)
 		m.trim()
 		return true
 	}
-	if previous, seen := ranges[rng]; seen {
+
+	start, end := readRange(args.Offset, args.Limit)
+	rng := [2]int{start, end}
+	hash := resultHash(result)
+	if state.lineHashes != nil && end <= len(state.lineHashes) && start >= 1 &&
+		len(lines) == end-start+1 {
+		match := true
+		for i, line := range lines {
+			if state.lineHashes[start-1+i] != hashLine(line) {
+				match = false
+				break
+			}
+		}
+		if match {
+			return false
+		}
+		// File content changed under the full read; old hashes are stale.
+		state.lineHashes = nil
+	}
+	if previous, seen := state.ranges[rng]; seen {
 		if previous == hash {
 			return false
 		}
-		// The same range returned different content: the file changed.
-		// Drop the other range hashes because they describe the old file.
-		m.reads[args.FilePath] = map[[2]int]string{rng: hash}
+		state.ranges[rng] = hash
 		return true
 	}
-	ranges[rng] = hash
+	state.ranges[rng] = hash
 	m.trim()
 	return true
 }
 
+func lineHashes(lines []string) []string {
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		out[i] = hashLine(line)
+	}
+	return out
+}
+
+func hashLine(line string) string {
+	sum := sha256.Sum256([]byte(line))
+	return hex.EncodeToString(sum[:])
+}
+
 func (m *EvidenceGuardMiddleware) trim() {
-	if len(m.calls)+len(m.reads) <= maxEvidenceEntries {
+	if m.entries() <= maxEvidenceEntries {
 		return
 	}
 	// Bounded memory matters more than perfect recall on very long runs.
 	m.calls = make(map[string]string)
-	m.reads = make(map[string]map[[2]int]string)
+	m.reads = make(map[string]*readState)
+}
+
+func (m *EvidenceGuardMiddleware) entries() int {
+	total := len(m.calls)
+	for _, state := range m.reads {
+		total += len(state.lineHashes) + len(state.ranges)
+	}
+	return total
 }
 
 func (m *EvidenceGuardMiddleware) distinct() int {
-	entries := len(m.calls)
-	for _, ranges := range m.reads {
-		entries += len(ranges)
+	total := len(m.calls)
+	for _, state := range m.reads {
+		total += len(state.ranges)
+		if state.lineHashes != nil {
+			total++
+		}
 	}
-	return entries
+	return total
 }
 
 func mutationSucceeded(result ToolResult) bool {
@@ -212,8 +271,32 @@ func mutationSucceeded(result ToolResult) bool {
 		return false
 	}
 	switch result.Name {
-	case "write", "edit", "patch", "delete", "replace", "sed":
+	case "write", "edit", "patch", "delete", "replace":
 		return true
+	case "sed":
+		var args struct {
+			DryRun bool `json:"dryRun"`
+		}
+		if err := json.Unmarshal([]byte(result.Args), &args); err != nil {
+			return false
+		}
+		return !args.DryRun
+	case "apply_out":
+		var args struct {
+			DryRun bool `json:"dry_run"`
+		}
+		if err := json.Unmarshal([]byte(result.Args), &args); err != nil {
+			return false
+		}
+		return !args.DryRun
+	case "go_refactor":
+		var args struct {
+			Action string `json:"action"`
+		}
+		if err := json.Unmarshal([]byte(result.Args), &args); err != nil {
+			return false
+		}
+		return args.Action == "format"
 	case "proposal":
 		var args struct {
 			Action string `json:"action"`
