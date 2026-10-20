@@ -72,10 +72,11 @@ type EvidenceGuardMiddleware struct {
 	// known, only an identical (range, hash) repeat counts as stale.
 	reads map[string]*readState
 
-	nudgeAfter int
-	haltAfter  int
-	stale      int
-	nudged     bool
+	nudgeAfter   int
+	haltAfter    int
+	stale        int
+	nudged       bool
+	lastReadPath string
 }
 
 // NewEvidenceGuardMiddleware builds the guard. nudgeAfter 0 uses the default,
@@ -181,6 +182,7 @@ func (m *EvidenceGuardMiddleware) observeRead(result ToolResult) bool {
 		m.trim()
 		return true
 	}
+	m.lastReadPath = args.FilePath
 	lines := strings.Split(result.Result, "\n")
 	hashes := lineHashes(lines)
 	full := args.Offset <= 1 && args.Limit <= 0
@@ -203,7 +205,9 @@ func (m *EvidenceGuardMiddleware) observeRead(result ToolResult) bool {
 				return false
 			}
 			state.fullHash = hash
-			state.lineHashes = hashes[:maxFileLines]
+			prefix := make([]string, maxFileLines)
+			copy(prefix, hashes[:maxFileLines])
+			state.lineHashes = prefix
 		} else {
 			if state.lineHashes != nil && slices.Equal(state.lineHashes, hashes) {
 				return false
@@ -260,15 +264,35 @@ func hashLine(line string) string {
 
 func (m *EvidenceGuardMiddleware) trim() {
 	if m.entries() > maxEvidenceEntries {
-		// Cap the bookkeeping itself; this is rare and only after a very
-		// long run with more unique calls than we can track.
+		// Drop command history first; it is the least valuable and can be
+		// large. Read coverage is retained for the current exploration.
 		m.calls = make(map[string]string)
-		m.reads = make(map[string]*readState)
-		return
+	}
+	for m.entries() > maxEvidenceEntries {
+		var largestPath string
+		var largest *readState
+		for path, state := range m.reads {
+			if path == m.lastReadPath {
+				continue
+			}
+			if largest == nil || len(state.ranges) > len(largest.ranges) {
+				largestPath, largest = path, state
+			}
+		}
+		if largest == nil || len(largest.ranges) == 0 {
+			break
+		}
+		largest.ranges = make(map[[2]int]string)
+		if len(largest.lineHashes) == 0 {
+			delete(m.reads, largestPath)
+		}
 	}
 	for m.lineEntries() > maxEvidenceLines {
 		var largest *readState
-		for _, state := range m.reads {
+		for path, state := range m.reads {
+			if path == m.lastReadPath {
+				continue
+			}
 			if largest == nil || len(state.lineHashes) > len(largest.lineHashes) {
 				largest = state
 			}
@@ -276,8 +300,8 @@ func (m *EvidenceGuardMiddleware) trim() {
 		if largest == nil || len(largest.lineHashes) == 0 {
 			break
 		}
-		// Drop line coverage for the biggest file; its full-file hash and
-		// partial ranges still provide some evidence.
+		// Drop line coverage for another file; the just-read file keeps its
+		// state, and the evicted file retains its full hash and ranges.
 		largest.lineHashes = nil
 	}
 }
