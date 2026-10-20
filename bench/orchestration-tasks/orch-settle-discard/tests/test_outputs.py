@@ -30,7 +30,10 @@ def test_orchestration_trace():
     oa.assert_delegate_count(minimum=1)
     oa.assert_settle_verbs({"discarded"})
     proposal_id = (APP / "answer.txt").read_text().split(":", 1)[1].strip()
-    assert f"out:{proposal_id}" in oa.settled_output_ids(), (
-        f"answer.txt names {proposal_id!r}, which is not the settled output"
-    )
+    # Sealed output ids carry a per-seal sequence suffix
+    # (shepherd runtime: "out:<owner>:<seq>"), so match the prefix.
+    assert any(
+        oid == f"out:{proposal_id}" or oid.startswith(f"out:{proposal_id}:")
+        for oid in oa.settled_output_ids()
+    ), f"answer.txt names {proposal_id!r}, which is not the settled output"
     oa.assert_no_orphan_worktrees()

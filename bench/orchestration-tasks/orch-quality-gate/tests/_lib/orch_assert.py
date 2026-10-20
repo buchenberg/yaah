@@ -241,6 +241,37 @@ def assert_settle_verbs(expected: set[str]) -> None:
     )
 
 
+def sealed_output_count() -> int:
+    """Count sealed retained outputs recorded in the trace store."""
+    conn = _connect(TRACE_DB)
+    try:
+        rows = conn.execute(
+            "SELECT COUNT(DISTINCT json_extract(body_json, '$.output_id')) FROM records "
+            "WHERE schema_ref = 'shepherd.run_output.sealed.v1'"
+        ).fetchall()
+    finally:
+        conn.close()
+    return rows[0][0] if rows else 0
+
+
+def assert_no_proposals() -> None:
+    """The run produced no sealed outputs and settled nothing (yaah-7yf).
+
+    A report-lane fan-out must leave the proposal surface untouched: no
+    sealed worktree deltas, no settlement records. Worktree leftovers are
+    asserted separately (assert_no_orphan_worktrees).
+    """
+    assert settled_actions() == set(), (
+        f"report-lane dispatches must not settle proposals; recorded: "
+        f"{sorted(settled_actions())}"
+    )
+    sealed = sealed_output_count()
+    assert sealed == 0, (
+        f"report-lane dispatches must not seal proposals; found {sealed} "
+        "sealed output(s) in the trace"
+    )
+
+
 def assert_no_orphan_worktrees() -> None:
     """No retained-run worktrees were left behind.
 

@@ -1,0 +1,4 @@
+This file is a tripwire. The report fan-out must not modify the workspace:
+report roles return their findings as text, and their worktrees are torn
+down automatically. If you are reading this because a test failed, a
+dispatch wrote to the parent tree instead of reporting.

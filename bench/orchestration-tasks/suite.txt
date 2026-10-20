@@ -5,13 +5,17 @@
 #   SUITE=bench/orchestration-tasks/suite.txt \
 #   bench/terminal-bench/run.sh
 #
-# Cite this file's commit alongside any score. orch-recovery is not listed:
-# it needs a seeded kernel trace with a stale scope (see yaah-mcs).
+# Cite this file's commit alongside any score. Minimal metric set: one task
+# per load-bearing behavior, kept lean so a full run stays cheap. The other
+# task directories remain runnable ad hoc by name:
+#   orch-settle-discard  (discard verb; overlaps settle-apply)
+#   orch-quality-gate    (gate validator loop)
+#   orch-escalation      (blocker escalation contract)
+#   orch-guard           (supervision error-rate rule)
+# orch-recovery is not listed: it needs a seeded kernel trace with a stale
+# scope (see yaah-mcs).
 orch-fanout
+orch-report-fanout
 orch-settle-apply
-orch-settle-discard
 orch-confinement
-orch-quality-gate
-orch-escalation
-orch-guard
 orch-compact
