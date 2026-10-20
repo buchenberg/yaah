@@ -474,3 +474,55 @@ func TestCalculateTool_UnaryPrecedence(t *testing.T) {
 		})
 	}
 }
+
+func TestCalculateTool_BitwiseOperandValidation(t *testing.T) {
+	ct := &CalculateTool{}
+
+	tests := []struct {
+		expr    string
+		wantErr string
+	}{
+		{"sqrt(-1) & 1", "left operand is not a finite number"},
+		{"10 ** 400 & 1", "left operand is not a finite number"},
+		{"1e300 | 0", "left operand out of int64 range"},
+		{"1 & 1e300", "right operand out of int64 range"},
+		{"sqrt(-1) ^ 1", "left operand is not a finite number"},
+		{"~sqrt(-1)", "~ operand is not a finite number"},
+		{"~1e300", "~ operand out of int64 range"},
+		{"1e300 << 2", "shifted value out of int64 range"},
+		{"sqrt(-1) >> 2", "shifted value is not a finite number"},
+		{"2 ** 63 & 1", "left operand out of int64 range"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.expr, func(t *testing.T) {
+			_, err := ct.Execute(context.Background(), `{"expr":"`+tt.expr+`"}`)
+			if err == nil {
+				t.Fatalf("%s: expected error, got success", tt.expr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("%s error = %q, want substring %q", tt.expr, err, tt.wantErr)
+			}
+		})
+	}
+
+	valid := []struct{ expr, want string }{
+		{"255 & 1", "1"},
+		{"128 | 64", "192"},
+		{"5 ^ 3", "6"},
+		{"~5", "-6"},
+		{"1 << 10", "1024"},
+		{"1024 >> 3", "128"},
+		{"-(2 ** 31) | 0", "-2147483648"},
+	}
+	for _, tt := range valid {
+		t.Run(tt.expr, func(t *testing.T) {
+			result, err := ct.Execute(context.Background(), `{"expr":"`+tt.expr+`"}`)
+			if err != nil {
+				t.Fatalf("%s error: %v", tt.expr, err)
+			}
+			if result != tt.want {
+				t.Errorf("%s = %q, want %q", tt.expr, result, tt.want)
+			}
+		})
+	}
+}

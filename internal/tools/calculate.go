@@ -310,7 +310,10 @@ func (p *calcParser) parseExpr(minPrec int) (float64, error) {
 		if err != nil {
 			return 0, err
 		}
-		left = applyUnary(op, right)
+		left, err = applyUnary(op, right)
+		if err != nil {
+			return 0, err
+		}
 
 	case ctkLParen:
 		p.advance()
@@ -425,21 +428,45 @@ func resolveConstant(name string) float64 {
 	return math.NaN()
 }
 
-func applyUnary(op calcTokKind, v float64) float64 {
+func applyUnary(op calcTokKind, v float64) (float64, error) {
 	switch op {
 	case ctkMinus:
-		return -v
+		return -v, nil
 	case ctkPlus:
-		return v
+		return v, nil
 	case ctkBang:
 		if v == 0 {
-			return 1
+			return 1, nil
 		}
-		return 0
+		return 0, nil
 	case ctkTilde:
-		return float64(^int64(v))
+		i, err := toInt64(v, "~ operand")
+		if err != nil {
+			return 0, err
+		}
+		return float64(^i), nil
 	}
-	return v
+	return v, nil
+}
+
+// int64ConvBounds are the exclusive float bounds of the int64 range:
+// values below -2^63 or at/above 2^63 do not survive the conversion.
+const (
+	int64MinFloat = -9223372036854775808.0
+	int64MaxFloat = 9223372036854775808.0
+)
+
+// toInt64 converts a float operand for bitwise/shift use, rejecting the
+// NaN/±Inf/out-of-range values whose int64 conversion is implementation
+// defined per the Go spec.
+func toInt64(v float64, label string) (int64, error) {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, fmt.Errorf("%s is not a finite number: %g", label, v)
+	}
+	if v < int64MinFloat || v >= int64MaxFloat {
+		return 0, fmt.Errorf("%s out of int64 range: %g", label, v)
+	}
+	return int64(v), nil
 }
 
 func applyBinary(op calcTokKind, a, b float64) (float64, error) {
@@ -463,23 +490,55 @@ func applyBinary(op calcTokKind, a, b float64) (float64, error) {
 	case ctkStarStar:
 		return math.Pow(a, b), nil
 	case ctkAmp:
-		return float64(int64(a) & int64(b)), nil
+		ia, err := toInt64(a, "left operand")
+		if err != nil {
+			return 0, err
+		}
+		ib, err := toInt64(b, "right operand")
+		if err != nil {
+			return 0, err
+		}
+		return float64(ia & ib), nil
 	case ctkPipeVal:
-		return float64(int64(a) | int64(b)), nil
+		ia, err := toInt64(a, "left operand")
+		if err != nil {
+			return 0, err
+		}
+		ib, err := toInt64(b, "right operand")
+		if err != nil {
+			return 0, err
+		}
+		return float64(ia | ib), nil
 	case ctkCaret:
-		return float64(int64(a) ^ int64(b)), nil
+		ia, err := toInt64(a, "left operand")
+		if err != nil {
+			return 0, err
+		}
+		ib, err := toInt64(b, "right operand")
+		if err != nil {
+			return 0, err
+		}
+		return float64(ia ^ ib), nil
 	case ctkLShift:
+		ia, err := toInt64(a, "shifted value")
+		if err != nil {
+			return 0, err
+		}
 		n := int64(b)
 		if n < 0 || n >= 64 {
 			return 0, fmt.Errorf("shift count out of range: %g", b)
 		}
-		return float64(int64(a) << uint64(n)), nil
+		return float64(ia << uint64(n)), nil
 	case ctkRShift:
+		ia, err := toInt64(a, "shifted value")
+		if err != nil {
+			return 0, err
+		}
 		n := int64(b)
 		if n < 0 || n >= 64 {
 			return 0, fmt.Errorf("shift count out of range: %g", b)
 		}
-		return float64(int64(a) >> uint64(n)), nil
+		return float64(ia >> uint64(n)), nil
 	}
 	return 0, fmt.Errorf("calculate: unknown operator (kind %d) — this is a bug", op)
 }
