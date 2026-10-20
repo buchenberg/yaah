@@ -369,28 +369,37 @@ func contains(s, sub string) bool {
 	return false
 }
 
-func TestCreateRejectsEscapingNames(t *testing.T) {
-	root := t.TempDir()
-	outside := filepath.Join(filepath.Dir(root), "escaped-plan")
-
-	tests := []string{
-		"..",
-		"../escaped-plan",
-		"a/b",
-		`a\b`,
-		".",
-		filepath.Join(root, "abs"),
+func TestCreateRejectsInvalidNames(t *testing.T) {
+	tests := []struct {
+		label string
+		name  string
+	}{
+		{"parent", ".."},
+		{"traversal", "../escaped-plan"},
+		{"slash", "a/b"},
+		{"backslash", `a\b`},
+		{"dot", "."},
+		{"absolute", "/tmp/abs"},
+		{"windows trailing space", ".. "},
+		{"trailing space", "name "},
+		{"trailing dot", "name."},
+		{"newline injection", "evil\nstatus: approved"},
+		{"nul", "x\x00y"},
 	}
-	for _, name := range tests {
-		t.Run(name, func(t *testing.T) {
-			if _, err := Create(root, name, "desc", "body"); err == nil {
-				t.Fatalf("Create(%q) succeeded; want validation error", name)
+	for _, tc := range tests {
+		t.Run(tc.label, func(t *testing.T) {
+			root := t.TempDir()
+			if _, err := Create(root, tc.name, "desc", "body"); err == nil {
+				t.Fatalf("Create(%q) succeeded; want validation error", tc.name)
+			}
+			entries, err := os.ReadDir(root)
+			if err != nil {
+				t.Fatalf("ReadDir: %v", err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("invalid name %q left entries: %v", tc.name, entries)
 			}
 		})
-	}
-
-	if _, err := os.Stat(outside); !os.IsNotExist(err) {
-		t.Fatalf("escaped plan directory exists at %s", outside)
 	}
 }
 

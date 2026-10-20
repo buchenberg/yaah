@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 // Plan represents a discovered plan with its metadata and body.
@@ -158,10 +159,15 @@ func FormatPlanForAgent(plan *Plan) string {
 func validatePlanName(name string) error {
 	if name == "." || name == ".." ||
 		strings.ContainsAny(name, `/\`) ||
-		strings.ContainsRune(name, 0) ||
+		strings.TrimRight(name, " .") != name ||
 		filepath.IsAbs(name) ||
 		filepath.Base(name) != name {
-		return fmt.Errorf("invalid plan name %q: use a single path segment without separators", name)
+		return fmt.Errorf("invalid plan name %q: use a single path segment without separators or trailing spaces/dots", name)
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("invalid plan name %q: control characters are not allowed", name)
+		}
 	}
 	return nil
 }
