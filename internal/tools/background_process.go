@@ -63,7 +63,7 @@ func (t *BackgroundProcessTool) Execute(ctx context.Context, args string) (strin
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf("%d background process(es):\n", len(procs)))
 		for _, p := range procs {
-			sb.WriteString(fmt.Sprintf("  [%s] %s — %s\n", p.ID, p.Status, truncateCmd(p.Command, 60)))
+			sb.WriteString(fmt.Sprintf("  [%s] %s — %s\n", p.ID, p.Status(), truncateCmd(p.Command, 60)))
 		}
 		return sb.String(), nil
 
@@ -75,7 +75,7 @@ func (t *BackgroundProcessTool) Execute(ctx context.Context, args string) (strin
 		if info == nil {
 			return "", fmt.Errorf("background_process: process %s not found", params.ID)
 		}
-		return fmt.Sprintf("Process %s: %s — started at %s", info.ID, info.Status, info.StartedAt.Format("15:04:05")), nil
+		return fmt.Sprintf("Process %s: %s — started at %s", info.ID, info.Status(), info.StartedAt.Format("15:04:05")), nil
 
 	case "logs":
 		if params.ID == "" {
@@ -108,7 +108,7 @@ func (t *BackgroundProcessTool) Execute(ctx context.Context, args string) (strin
 		if info == nil {
 			return "", fmt.Errorf("background_process: process %s not found", params.ID)
 		}
-		if info.Status == "running" {
+		if info.Status() == "running" {
 			if err := t.Manager.Stop(params.ID); err != nil {
 				return "", fmt.Errorf("background_process: restart stop: %w", err)
 			}
