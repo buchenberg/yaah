@@ -165,6 +165,11 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 
 	runCtx := WithConflictLabel(ctx, label)
 
+	// Resolve the lane once: LaneForRole reads the live role registry, so a
+	// second call could disagree with the first if a role is created or
+	// edited mid-dispatch.
+	lane := t.laneFor(params.Role)
+
 	if params.Background {
 		if t.BackgroundJobs == nil {
 			return "", fmt.Errorf("delegate: background mode requested but not available")
@@ -177,9 +182,9 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 		// down. A shared-lane role reaches the raw runner directly: it cannot
 		// mutate the tree, so the retained guarantee is moot.
 		runner := t.Runner
-		if t.Retained != nil && t.laneFor(params.Role) != LaneShared {
+		if t.Retained != nil && lane != LaneShared {
 			rt := *t.Retained
-			report := t.laneFor(params.Role) == LaneReport
+			report := lane == LaneReport
 			runner = func(ctx context.Context, prompt string, sp SubAgentParams) (string, error) {
 				return startRetainedRun(ctx, rt, prompt, sp, timeout, report)
 			}
@@ -195,12 +200,14 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 	// sealed proposal the orchestrator settles, instead of mutating the host.
 	// The report lane (yaah-7yf) keeps the isolation but skips the sealing:
 	// the result is the sub-agent's report text, and the worktree is torn
-	// down automatically. A shared-lane role falls through to the direct
-	// runner below — it cannot mutate the tree, so isolation buys nothing.
+	// down automatically — errors classified exactly like the shared lane's.
+	// A shared-lane role falls through to the direct runner below — it cannot
+	// mutate the tree, so isolation buys nothing.
 	if t.Retained != nil {
-		switch t.laneFor(params.Role) {
+		switch lane {
 		case LaneReport:
-			return startRetainedRun(runCtx, *t.Retained, params.Prompt, subParams, timeout, true)
+			res, rerr := startRetainedRun(runCtx, *t.Retained, params.Prompt, subParams, timeout, true)
+			return t.classifyRunnerResult(res, rerr, params.Role, timeout, runCtx)
 		case LaneShared:
 		default:
 			return startRetainedRun(runCtx, *t.Retained, params.Prompt, subParams, timeout, false)
@@ -215,22 +222,26 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 
 	result, err := t.Runner(runCtx, params.Prompt, subParams)
 
+	return t.classifyRunnerResult(result, err, params.Role, timeout, runCtx)
+}
+
+// classifyRunnerResult maps a runner outcome to the orchestrator-facing
+// result. A non-empty result alongside an error is treated as the partial
+// output the sub-agent produced before stopping.
+func (t *DelegateTool) classifyRunnerResult(result string, err error, role string, timeout time.Duration, runCtx context.Context) (string, error) {
 	if err != nil {
-		// A non-empty result alongside an error is treated as the
-		// partial output the sub-agent produced before stopping.
 		partial := result
 		switch {
 		case errors.Is(err, context.DeadlineExceeded), runCtx.Err() == context.DeadlineExceeded:
-			return structuredTaskResult("timed out", params.Role, timeout, partial), nil
+			return structuredTaskResult("timed out", role, timeout, partial), nil
 		case errors.Is(err, jobs.ErrStuckChild):
-			return structuredTaskResult("stuck", params.Role, timeout, partial), nil
+			return structuredTaskResult("stuck", role, timeout, partial), nil
 		case errors.Is(err, context.Canceled), runCtx.Err() == context.Canceled:
-			return structuredTaskResult("cancelled", params.Role, timeout, partial), nil
+			return structuredTaskResult("cancelled", role, timeout, partial), nil
 		default:
 			return "", err
 		}
 	}
-
 	return result, nil
 }
 

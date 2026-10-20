@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -196,15 +197,27 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	}
 
 	// The report lane (yaah-7yf) never seals: the deliverable is the
-	// result text. Tear the worktree down — the scratch goes with it — and
-	// hand the report straight back. A body error propagates so the
-	// delegate's shared-lane error handling (timeout/stuck/cancelled
-	// classification) applies verbatim.
+	// result text. Surface any provisioning problem the proposal lane
+	// would have put in the envelope (seed/bootstrap failures return a
+	// scope AND an error), tear the worktree down — the scratch goes with
+	// it — and hand the report straight back.
 	if report {
+		if provErr != nil {
+			result = strings.TrimSpace(result + "\n\nnote: " + provErr.Error())
+		}
 		if scope, gok := mgr.Get(scopeID); gok {
-			_ = parent.Discard(scope)
+			if derr := parent.Discard(scope); derr != nil {
+				// A report dispatch registers nothing, so a leaked
+				// worktree has no proposal record to clean up through;
+				// at least say so.
+				slog.Warn("retained report: worktree discard failed", "worktree", wt, "err", derr)
+			}
 		} else if recovery.IsRegisteredWorktree(ctx, rt.RepoPath, wt) {
-			_ = shepherdgit.NewWorktreeSandbox(rt.RepoPath, wt).Destroy(context.WithoutCancel(ctx))
+			if derr := shepherdgit.NewWorktreeSandbox(rt.RepoPath, wt).Destroy(context.WithoutCancel(ctx)); derr != nil {
+				slog.Warn("retained report: worktree destroy failed", "worktree", wt, "err", derr)
+			}
+		} else {
+			slog.Warn("retained report: scope missing and worktree unregistered; nothing to tear down", "scope", scopeID, "worktree", wt)
 		}
 		return result, bodyErr
 	}
