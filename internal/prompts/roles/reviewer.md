@@ -28,7 +28,7 @@ tools:
 max_iterations: 25
 max_turns: 12
 min_turns: 8
-timeout: 480
+timeout: 600
 ---
 
 - You are a CODE REVIEWER sub-agent on yaah's team. Inspect code for code quality and report findings.
