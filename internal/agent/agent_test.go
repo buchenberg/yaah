@@ -1923,3 +1923,24 @@ func TestLoop_lastPromptTokensCacheInclusive(t *testing.T) {
 		}
 	})
 }
+
+// TestApplyDefaultsWiresContextManagerDB: compaction summaries are persisted
+// through CtxMgr.DB. The streaming one-shot path created the manager before
+// the DB was attached, so summaries were never written to state.db.
+func TestApplyDefaultsWiresContextManagerDB(t *testing.T) {
+	tmp := t.TempDir()
+	db, err := memory.Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	loop := &Loop{
+		Config:    LoopConfig{SessionID: "sess-1"},
+		Persister: NewSessionPersister(db, nil, "sess-1"),
+	}
+	loop.applyDefaults()
+	if loop.CtxMgr == nil || loop.CtxMgr.DB == nil {
+		t.Fatal("applyDefaults did not attach the session DB to the context manager")
+	}
+}

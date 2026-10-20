@@ -78,6 +78,14 @@ func SplitTail(messages []types.Message, budget int) SplitResult {
 		// Turn doesn't fit entirely — try to split it.
 		if splitAt := SplitTurn(messages, t, budget-total); splitAt >= 0 {
 			keepStart = splitAt
+		} else if keepStart == len(messages) {
+			// No later turn fit and no contiguous tail of this turn fits
+			// the budget. Keep the final exchange (including the assistant
+			// call for any tool results) and summarize the rest.
+			keepStart = t.End - 1
+			for keepStart > t.Start && messages[keepStart].Role == "tool" {
+				keepStart--
+			}
 		}
 		break
 	}

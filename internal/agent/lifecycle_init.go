@@ -106,6 +106,9 @@ func (l *Loop) applyDefaults() {
 	l.CtxMgr.CompactModel = l.Config.CompactModel
 	l.CtxMgr.SessionID = l.Config.SessionID
 	l.CtxMgr.OtelEnabled = l.Config.OtelEnabled
+	if l.Persister != nil {
+		l.CtxMgr.DB = l.Persister.DB()
+	}
 	if l.CtxMgr.ReasoningProtectTurns <= 0 {
 		l.CtxMgr.ReasoningProtectTurns = 2
 	}

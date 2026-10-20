@@ -14,5 +14,4 @@ orch-confinement
 orch-quality-gate
 orch-escalation
 orch-guard
-# orch-compact: parked until a live run reliably triggers a context rollover
-# (see yaah-8uz); the verifier requires a persisted compaction summary.
+orch-compact
