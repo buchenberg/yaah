@@ -6,6 +6,35 @@ run. The adapter, host setup, and run instructions live in
 [BENCHMARKS.md](../../BENCHMARKS.md). Records here are append-only —
 new runs get a new section, existing sections are never rewritten.
 
+
+## Tracking table
+
+One row per recorded full-suite run, five tasks each (hello-world,
+broken-python, csv-to-parquet, jsonl-aggregator, assign-seats). This is the
+canonical plot source; the prose sections below are per-run detail and
+superseded comparisons. `gomoku-planner` left the suite on 2026-10-20
+(vision-adjacent outlier: ≈40% of tokens, 2/3 of wall time); rows before
+that date are recomputed from the recorded per-task tables with the same
+five tasks, so every row is directly comparable.
+
+- Resolved is out of 5. Tokens are yaah-semantics prompt tokens
+  (input includes cache reads) and output tokens.
+- Cached % is cache-read share of prompt tokens.
+- Time is summed per-task agent wall time.
+
+| Date | Commit | Agent | Resolved | Prompt in | Out | Cached | Time |
+|---|---|---|---|---|---|---|---|
+| 2026-10-17 | aaa8958 | yaah | 5/5 | 752,264 | 14,434 | 669,440 (89%) | 137s |
+| 2026-10-17 | hermes-agent 0.19.0 | hermes | 5/5 | 490,235 | 7,033 | 448,896 (92%) | 149s |
+| 2026-10-20 | 47f14c7 | yaah | 5/5 | 724,083 | 15,199 | 643,200 (89%) | 133s |
+| 2026-10-20 | hermes-agent 0.19.0 | hermes | 4/5 | 453,528 | 7,373 | 414,080 (91%) | 147s |
+
+Run ids: 2026-10-17__04-47-51 (yaah), hermes-coding 2026-10-17__18-34-17
+lineage (see the Hermes section below), 2026-10-20__15-49-57 (yaah),
+2026-10-20__15-55-38 (hermes). The 2026-10-20 hermes run failed
+`assign-seats` on `has_correct_pairs` — the same task family it failed on
+2026-10-12 (broken-python then); single-trial variance is real.
+
 ## Full-suite vs opencode (2026-10-12, deepseek-flash)
 
 Run `2026-10-12__16-03-48` (yaah, one-shot, commit dd038a7 —

@@ -1,4 +1,4 @@
-# yaah suite — small Terminal-Bench task list (6 tasks)
+# yaah suite — small Terminal-Bench task list (5 tasks)
 #
 # Editable by design (unfrozen): iterate freely, and cite the commit
 # of this file alongside any score. The frozen 15- and 12-task lists
@@ -7,10 +7,11 @@
 #
 # Selection: one category representative each — file operations
 # (hello-world smoke, jsonl-aggregator), software engineering
-# (broken-python), data (csv-to-parquet), algorithms (assign-seats),
-# planning (gomoku-planner) — with broken-python, csv-to-parquet, and
-# gomoku-planner (the tasks opencode failed in its earlier
-# 2026-10-12__16-35-01 run) included for discriminative power.
+# (broken-python), data (csv-to-parquet), algorithms (assign-seats).
+# gomoku-planner was removed on 2026-10-20: the vision-adjacent outlier
+# dominated every total (≈40% of tokens, 2/3 of wall time) and compressed
+# the signal of the other five tasks; its recorded runs stay comparable
+# via the per-task tables in RESULTS.md.
 #
 # Fresh same-day comparison (runs 2026-10-12__17-26-54 /
 # 2026-10-12__17-35-13, deepseek-flash, one trial each): yaah 6/6
@@ -28,4 +29,3 @@ broken-python          # software-engineering    46    209K
 csv-to-parquet         # data-science            44    164K
 jsonl-aggregator       # file-operations         132   120K
 assign-seats           # algorithms              175   127K
-gomoku-planner         # games                    151   310K
