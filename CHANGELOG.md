@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.88.3](https://github.com/buchenberg/yaah/compare/v0.88.2...v0.88.3) (2026-10-20)
+
+
+### Performance Improvements
+
+* **runner:** byte-stable sub-agent prompt prefix for fan-out caching ([#499](https://github.com/buchenberg/yaah/issues/499)) ([5d927a7](https://github.com/buchenberg/yaah/commit/5d927a7715d8b8f07aae18dba2bfa193940b5abb))
+
 ## [0.88.2](https://github.com/buchenberg/yaah/compare/v0.88.1...v0.88.2) (2026-10-20)
 
 
