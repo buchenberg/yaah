@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.88.0](https://github.com/buchenberg/yaah/compare/v0.87.4...v0.88.0) (2026-10-20)
+
+
+### Features
+
+* **delegate:** decouple output contract from dispatch substrate ([#476](https://github.com/buchenberg/yaah/issues/476)) ([0429d38](https://github.com/buchenberg/yaah/commit/0429d3816d98b09a4bbba7891948f2e87263be2d))
+
 ## [0.87.4](https://github.com/buchenberg/yaah/compare/v0.87.3...v0.87.4) (2026-10-20)
 
 
