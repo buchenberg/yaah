@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.87.4](https://github.com/buchenberg/yaah/compare/v0.87.3...v0.87.4) (2026-10-20)
+
+
+### Bug Fixes
+
+* **supervision:** stop warning on first-time file writes ([#436](https://github.com/buchenberg/yaah/issues/436)) ([0b0db3d](https://github.com/buchenberg/yaah/commit/0b0db3dab475c9621ed6fa9187a279c456a07366))
+
 ## [0.87.3](https://github.com/buchenberg/yaah/compare/v0.87.2...v0.87.3) (2026-10-20)
 
 
