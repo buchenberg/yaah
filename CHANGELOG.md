@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.85.1](https://github.com/buchenberg/yaah/compare/v0.85.0...v0.85.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* **llm:** retry output-budget exhaustion with a doubled cap ([#400](https://github.com/buchenberg/yaah/issues/400)) ([9eeab58](https://github.com/buchenberg/yaah/commit/9eeab58b12cbf78ad1d5f8e06808ee266f9c7da5))
+* **tui:** make between-run subagent delivery view-safe ([#403](https://github.com/buchenberg/yaah/issues/403)) ([0bc68c8](https://github.com/buchenberg/yaah/commit/0bc68c822296a06530e8d3f062edb9b2af2c1485))
+
 ## [0.85.0](https://github.com/buchenberg/yaah/compare/v0.84.0...v0.85.0) (2026-10-20)
 
 
