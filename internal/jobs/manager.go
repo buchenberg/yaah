@@ -196,6 +196,22 @@ func (m *BackgroundJobs) sessionHooks() (onStart func(id, role, model, prompt st
 	return m.OnStartSession, m.OnEndSession
 }
 
+// NotifySessionStart invokes the session-scoped start fallback, if any. The
+// loop uses it when its broker is already closed (teardown race), so the
+// event still reaches the session view instead of being dropped.
+func (m *BackgroundJobs) NotifySessionStart(id, role, model, prompt string) {
+	if onStart, _ := m.sessionHooks(); onStart != nil {
+		onStart(id, role, model, prompt)
+	}
+}
+
+// NotifySessionEnd invokes the session-scoped end fallback, if any.
+func (m *BackgroundJobs) NotifySessionEnd(id, role, model, prompt, result string, dur time.Duration, err string) {
+	if _, onEnd := m.sessionHooks(); onEnd != nil {
+		onEnd(id, role, model, prompt, result, dur, err)
+	}
+}
+
 // startHook returns the loop hook when one is installed, otherwise the
 // session fallback. Exactly one path fires, so live views never see a
 // duplicate start event.

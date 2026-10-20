@@ -173,6 +173,11 @@ type agentSession struct {
 	approveFn func(name, args string) bool
 	mu        sync.RWMutex
 
+	// pendingEvents buffers session-scoped events for views whose
+	// HandleEvent cannot safely run outside a prompt (the REPL and ACP
+	// connection writers). They are delivered at the start of the next run.
+	pendingEvents []agent.Event
+
 	stdinMu sync.Mutex // serialises stdin reads for approve/prompt fallbacks
 
 	steerCh    chan string
@@ -439,17 +444,35 @@ func (s *agentSession) SetView(v agent.View) {
 	s.view = v
 }
 
-// dispatchEvent delivers a session-scoped event to the current view. It is
-// used for out-of-band events (background sub-agents finishing between turns)
-// where no loop broker is live. HandleEvent implementations are expected to
-// queue their own UI operations, so calling from the job goroutine is safe.
+// dispatchEvent delivers a session-scoped event to the current view. Only
+// views that marshal HandleEvent onto their own UI loop (or otherwise guard
+// their output) accept events between runs; the rest are buffered until the
+// next RunPrompt so a background completion cannot interleave with the REPL
+// prompt or an ACP connection write.
 func (s *agentSession) dispatchEvent(evt agent.Event) {
-	s.mu.RLock()
+	s.mu.Lock()
 	v := s.view
-	s.mu.RUnlock()
-	if v != nil {
-		v.HandleEvent(evt)
+	safe := false
+	if sink, ok := v.(interface{ AcceptsEventsBetweenRuns() bool }); ok {
+		safe = sink.AcceptsEventsBetweenRuns()
 	}
+	if !safe {
+		s.pendingEvents = append(s.pendingEvents, evt)
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+	v.HandleEvent(evt)
+}
+
+// takePendingEvents drains events buffered for a view that cannot accept
+// them between runs.
+func (s *agentSession) takePendingEvents() []agent.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	events := s.pendingEvents
+	s.pendingEvents = nil
+	return events
 }
 
 func (s *agentSession) SetCtrlCh(ch chan<- control.Msg) {

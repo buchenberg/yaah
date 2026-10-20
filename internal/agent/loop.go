@@ -444,14 +444,18 @@ func (l *Loop) wireBackgroundHooks() {
 	}
 	l.BackgroundJobs.SetLoopHooks(
 		func(id, role, model, prompt string) {
-			if l.broker != nil {
-				l.broker.PublishMustDeliver(&SubAgentStartEvent{SubAgentID: id, Role: role, Model: model, Prompt: prompt})
+			evt := &SubAgentStartEvent{SubAgentID: id, Role: role, Model: model, Prompt: prompt}
+			if l.broker != nil && l.broker.TryPublishMustDeliver(evt) {
+				return
 			}
+			l.BackgroundJobs.NotifySessionStart(id, role, model, prompt)
 		},
 		func(id, role, model, prompt, result string, dur time.Duration, err string) {
-			if l.broker != nil {
-				l.broker.PublishMustDeliver(&SubAgentEndEvent{SubAgentID: id, Role: role, Model: model, Prompt: prompt, Duration: dur, Error: err, Result: result})
+			evt := &SubAgentEndEvent{SubAgentID: id, Role: role, Model: model, Prompt: prompt, Duration: dur, Error: err, Result: result}
+			if l.broker != nil && l.broker.TryPublishMustDeliver(evt) {
+				return
 			}
+			l.BackgroundJobs.NotifySessionEnd(id, role, model, prompt, result, dur, err)
 		},
 	)
 }

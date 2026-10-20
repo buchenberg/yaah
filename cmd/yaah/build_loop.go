@@ -27,6 +27,9 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 	if v == nil {
 		v = agent.NoopView{}
 	}
+	for _, evt := range s.takePendingEvents() {
+		v.HandleEvent(evt)
+	}
 
 	b := s.loopBuilder(prov, mName, compactProvider, compactModel, fallbackProvider, fallbackModel, fallbackProviderName)
 

@@ -127,6 +127,10 @@ type sseView struct {
 	todos []wireTodo
 }
 
+// AcceptsEventsBetweenRuns reports that writes are mutex-guarded and can be
+// delivered from the background-job goroutine outside a run.
+func (v *sseView) AcceptsEventsBetweenRuns() bool { return true }
+
 func (v *sseView) HandleEvent(evt agent.Event) {
 	var we sseWireEvent
 	switch e := evt.(type) {

@@ -167,6 +167,11 @@ func New(version string) *App {
 	return t
 }
 
+// AcceptsEventsBetweenRuns reports that HandleEvent is safe to call from the
+// background-job goroutine: it marshals every mutation onto the tview event
+// queue rather than writing to the terminal directly.
+func (t *App) AcceptsEventsBetweenRuns() bool { return true }
+
 func (t *App) SetProvider(name string) {
 	t.lastProvider = name
 	t.renderInfoPane()

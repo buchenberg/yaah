@@ -57,11 +57,31 @@ func (b *Broker[T]) Publish(event T) {
 // PublishMustDeliver calls never block each other — only teardown waits
 // for in-flight delivery (bounded by mustDeliverTimeout per subscriber).
 func (b *Broker[T]) PublishMustDeliver(event T) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	if b.closed.Load() {
 		return
 	}
+	b.deliverMust(event)
+}
+
+// TryPublishMustDeliver is PublishMustDeliver with the open check performed
+// under the read lock. It reports false when the broker is already closed or
+// has no subscribers, letting callers fall back to another delivery path
+// instead of silently dropping the event during teardown.
+func (b *Broker[T]) TryPublishMustDeliver(event T) bool {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
+	if b.closed.Load() || len(b.subs) == 0 {
+		return false
+	}
+	b.deliverMust(event)
+	return true
+}
+
+// deliverMust fans event out to every current subscriber. The caller holds
+// the read lock and has verified the broker is open.
+func (b *Broker[T]) deliverMust(event T) {
 	timeout := b.mustDeliverTimeout
 	for _, s := range b.subs {
 		select {
