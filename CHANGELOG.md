@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.87.1](https://github.com/buchenberg/yaah/compare/v0.87.0...v0.87.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* make context compaction fire and persist in one-shot runs ([#428](https://github.com/buchenberg/yaah/issues/428)) ([71717ef](https://github.com/buchenberg/yaah/commit/71717ef09357f71618ca80e0b2e0832da63409d4))
+
 ## [0.87.0](https://github.com/buchenberg/yaah/compare/v0.86.2...v0.87.0) (2026-10-20)
 
 
