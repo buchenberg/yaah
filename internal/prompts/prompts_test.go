@@ -301,7 +301,8 @@ func TestSubAgentIdentityMirrorsCanonicalHabitSections(t *testing.T) {
 func TestIsolatedWorkspaceGuidance(t *testing.T) {
 	got := IsolatedWorkspaceGuidance(
 		[]string{"background_process", "go_refactor", "role", "bisect"},
-		[]string{"mcp_a", "mcp_b"})
+		[]string{"mcp_a", "mcp_b"},
+		nil)
 
 	for _, name := range []string{"background_process", "go_refactor", "role", "bisect"} {
 		if !strings.Contains(got, "`"+name+"`") {
@@ -325,12 +326,12 @@ func TestIsolatedWorkspaceGuidance(t *testing.T) {
 	}
 
 	// An unknown name (a future host-only tool) must still be listed.
-	if got := IsolatedWorkspaceGuidance([]string{"some_future_tool"}, nil); !strings.Contains(got, "`some_future_tool`") {
+	if got := IsolatedWorkspaceGuidance([]string{"some_future_tool"}, nil, nil); !strings.Contains(got, "`some_future_tool`") {
 		t.Errorf("unknown omitted tool must be listed, got:\n%s", got)
 	}
 	// Empty omission lists are valid: the mode explanation still applies
 	// (apply_out is always registered in isolated mode).
-	if got := IsolatedWorkspaceGuidance(nil, nil); strings.Contains(got, "NOT available here") {
+	if got := IsolatedWorkspaceGuidance(nil, nil, nil); strings.Contains(got, "NOT available here") {
 		t.Errorf("no omitted tools must not print an empty unavailable list, got:\n%s", got)
 	}
 }
@@ -395,5 +396,46 @@ func TestConfinementGuidance_EgressLiterals(t *testing.T) {
 	// must not claim a worktree it is not jailed to.
 	if strings.Contains(mixed, "This worktree is") {
 		t.Errorf("an unenforced dispatch must not claim the jail's worktree:\n%s", mixed)
+	}
+}
+
+// TestToolBeltGuidance pins the reduced-belt notice (yaah-w8x): a
+// sentence that names the tools the session has and says the rest are
+// unavailable. The exact set is in the request's schemas, so the notice
+// must not enumerate the excluded tools — that list is a per-call cost
+// and duplicates what the schema list already says.
+func TestToolBeltGuidance(t *testing.T) {
+	if got := ToolBeltGuidance([]string{"read"}, 0); got != "" {
+		t.Errorf("an intact belt must render nothing, got %q", got)
+	}
+	got := ToolBeltGuidance([]string{"read", "ls"}, 35)
+	for _, want := range []string{"## Tool belt", "`read`", "`ls`", "35", "do not call them"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("belt guidance must contain %q:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{"go_test", "bisect"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("belt guidance must not enumerate excluded tools (%q):\n%s", unwanted, got)
+		}
+	}
+}
+
+// TestIsolatedWorkspaceGuidance_BeltAwareness pins the belt-aware
+// isolated guidance: when the belt excludes apply_out, the guidance must
+// not promise the apply_out workflow, and the excluded tools are named.
+func TestIsolatedWorkspaceGuidance_BeltAwareness(t *testing.T) {
+	got := IsolatedWorkspaceGuidance(nil, nil, []string{"apply_out", "delegate"})
+	if strings.Contains(got, "Changes leave the container only through `apply_out`") {
+		t.Errorf("guidance must not promise apply_out when the belt excluded it:\n%s", got)
+	}
+	if !strings.Contains(got, "cannot leave the container") {
+		t.Errorf("guidance must say changes stay in the container:\n%s", got)
+	}
+	if !strings.Contains(got, "`apply_out`") {
+		t.Errorf("guidance must name the excluded tools:\n%s", got)
+	}
+	if strings.Contains(got, "you dispatch with delegate") {
+		t.Errorf("guidance must not promise delegate when the belt excluded it:\n%s", got)
 	}
 }

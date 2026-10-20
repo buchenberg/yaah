@@ -338,3 +338,28 @@ agents:
 		t.Errorf("removed supervised keys must die silently, got warnings %q", string(data))
 	}
 }
+
+// TestLoad_toolBeltAllowlist pins the tool-belt config key (yaah-w8x):
+// `agents.default.tools` names the tools the session may call; an unset
+// key keeps every tool.
+func TestLoad_toolBeltAllowlist(t *testing.T) {
+	content := `
+agents:
+  default:
+    model: test/model
+    tools: [read, bash, write]
+`
+	tmp := t.TempDir()
+	t.Setenv("YAAH_HOME", tmp)
+	if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	got := cfg.Agent.Default.Tools
+	if len(got) != 3 || got[0] != "read" || got[1] != "bash" || got[2] != "write" {
+		t.Errorf("tools = %v, want [read bash write]", got)
+	}
+}

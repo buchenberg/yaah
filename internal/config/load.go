@@ -101,6 +101,15 @@ type Defaults struct {
 	MaxInlineToolsPerTurn int      `yaml:"max_inline_tools_per_turn"` // 0 = unlimited
 	EstimateFactor        float64  `yaml:"estimate_factor"`           // 0 = default (1.3)
 
+	// Tools is the main session's tool belt: when set, only these tools
+	// are registered, and every other tool is left out of the request's
+	// schema list. Empty means every registered tool (the default). The
+	// belt is a per-call prompt cost — an unused tool still ships its
+	// schema on every request — so a lane that only needs a few tools can
+	// name them (yaah-w8x). The session is told which tools are absent so
+	// it does not call them.
+	Tools []string `yaml:"tools"`
+
 	// Compaction controls context summarisation behaviour.
 	CompactionThreshold    float64 `yaml:"compaction_threshold"`     // fraction of ContextWindow; 0 = 0.5
 	RawCompactionThreshold float64 `yaml:"raw_compaction_threshold"` // fraction ignoring cache; 0 = 0.5

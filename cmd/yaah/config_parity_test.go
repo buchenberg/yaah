@@ -39,6 +39,7 @@ func TestConfigAgentConfigParity(t *testing.T) {
 		"Supervisor":            true, // → advisory rules engine in wiring (adoption plan B1)
 		"SupervisorHaltRoot":    true, // → supervisor tool's root-halt gate in wiring
 
+		"Tools":                     true, // main-session tool belt in wiring (yaah-w8x)
 		"RetainedRepoPath":          true, // → retained-lane worktrees + root scope in wiring
 		"RetainedWorktreeRoot":      true, // → retained-lane worktrees in wiring
 		"RetainedWorktreeBootstrap": true, // → retained-lane worktrees in wiring

@@ -152,6 +152,10 @@ type Registry struct {
 	// as they did before workspaces existed. SetWorkspace overrides it with an
 	// isolated substrate.
 	Workspace Workspace
+
+	// belt is the session's tool belt: the registry refuses to install a
+	// tool the belt does not admit. Nil means every tool is admitted.
+	belt *Belt
 }
 
 // leafTools is the single source of truth for the names and
@@ -192,7 +196,14 @@ var leafTools = map[string]func() Tool{
 // on Windows, bash elsewhere. Both implementations remain available
 // via NewLeafTool for explicit registration.
 func NewRegistry() *Registry {
-	return newRegistry(func(Tool) bool { return true })
+	return newRegistry(func(Tool) bool { return true }, nil)
+}
+
+// NewRegistryWithBelt creates a tool registry that installs only the
+// tools the belt admits. The belt is enforced at registration, so a
+// runtime-wired tool registered later is refused like a leaf tool.
+func NewRegistryWithBelt(belt *Belt) *Registry {
+	return newRegistry(func(Tool) bool { return true }, belt)
 }
 
 // NewIsolatedRegistry creates a tool registry with the built-in leaf tools
@@ -203,18 +214,41 @@ func NewRegistry() *Registry {
 // holds any host-only tool, so the curated set is what makes an isolated
 // session selectable at all.
 func NewIsolatedRegistry() *Registry {
-	return newRegistry(func(t Tool) bool { return !isHostOnlyTool(t) })
+	return newRegistry(func(t Tool) bool { return !isHostOnlyTool(t) }, nil)
+}
+
+// NewIsolatedRegistryWithBelt creates the isolated registry under a
+// session's tool belt: the host-only leaf tools are left out, and the
+// belt decides the rest.
+func NewIsolatedRegistryWithBelt(belt *Belt) *Registry {
+	return newRegistry(func(t Tool) bool { return !isHostOnlyTool(t) }, belt)
 }
 
 // newRegistry installs the leaf tools the keep predicate admits, with
-// NewRegistry's platform shell rule applied first.
-func newRegistry(keep func(Tool) bool) *Registry {
+// NewRegistry's platform shell rule applied first. A belt is consulted
+// before anything is installed: a tool it does not admit is never
+// created, and the belt records the refusal so the session can tell the
+// model what is missing.
+func newRegistry(keep func(Tool) bool, belt *Belt) *Registry {
 	r := NewEmptyRegistry()
+	r.belt = belt
 	for name, factory := range leafTools {
+		if belt != nil && !belt.Allows(name) {
+			belt.Refuse(name)
+			continue
+		}
 		if name == "bash" && runtime.GOOS == "windows" {
+			// The platform has no bash: the belt records the absence
+			// so the session prompt can name it.
+			if belt != nil {
+				belt.Refuse(name)
+			}
 			continue
 		}
 		if name == "powershell" && runtime.GOOS != "windows" {
+			if belt != nil {
+				belt.Refuse(name)
+			}
 			continue
 		}
 		t := factory()
@@ -299,7 +333,17 @@ func NewLeafTool(name string) Tool {
 
 // Register adds a tool to the registry and injects the registry's workspace and
 // path validator if the tool wants them.
+// Register installs a tool. A tool the session's belt does not admit is
+// refused at the door: it is never added, and the belt records the name
+// so the session can tell the model (and the transcript) what is missing.
 func (r *Registry) Register(t Tool) {
+	if r.belt != nil && !r.belt.Allows(t.Name()) {
+		r.belt.Refuse(t.Name())
+		return
+	}
+	if r.belt != nil {
+		r.belt.Know(t.Name())
+	}
 	r.tools[t.Name()] = t
 	r.generation++
 	r.inject(t)

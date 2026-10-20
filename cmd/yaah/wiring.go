@@ -171,17 +171,22 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// be selected. The model is told about the delta (plan §2.2) and the
 	// record keeps it (decision D4).
 	isolated := cfg.Workspace.Backend == config.BackendContainerd
+	// Tool belt (yaah-w8x): the session's allowlist of tools. The belt
+	// is enforced by the registry at registration — a tool it does not
+	// admit is never installed, so a late registration is refused like
+	// any other. An unset list admits every tool (the default).
+	belt := tools.NewBelt(cfg.Agent.Default.Tools)
 	var omittedTools []string
 	var toolReg *tools.Registry
 	if isolated {
-		toolReg = tools.NewIsolatedRegistry()
+		toolReg = tools.NewIsolatedRegistryWithBelt(belt)
 		// Derived from the same hostOnly() marker the registry filter
 		// and the SetWorkspace gate read, so the prompt delta and the
 		// D4 record can never name a tool the session actually has, or
 		// miss one it does not.
 		omittedTools = append(omittedTools, tools.HostOnlyLeafTools()...)
 	} else {
-		toolReg = tools.NewRegistry()
+		toolReg = tools.NewRegistryWithBelt(belt)
 	}
 
 	// One-shot sessions are non-interactive: a blocking question has
@@ -285,6 +290,11 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		toolReg.Register(&tools.MemoryDeleteTool{DB: db})
 		toolReg.Register(&tools.MemoryUpdateTool{DB: db})
 		toolReg.Register(&tools.MemorySessionSearchTool{DB: db})
+	} else {
+		// The tools exist but this session has nowhere to put them: the
+		// belt must know the names, or an allowlist that names them reads
+		// as a typo.
+		belt.Know("memory_search", "memory_add", "memory_delete", "memory_update", "memory_search_sessions")
 	}
 
 	// --- MCP servers ------------------------------------------------------
@@ -301,6 +311,10 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	if sessionSandbox != nil {
 		for name := range mcpToolNames {
 			omittedMCP = append(omittedMCP, name)
+			// The MCP tools exist in this session's configuration even
+			// though the workspace leaves them out: the belt must know
+			// the names, or an allowlist that names them reads as a typo.
+			belt.Know(name)
 		}
 		slices.Sort(omittedMCP)
 		if len(omittedMCP) > 0 {
@@ -338,6 +352,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		})
 	} else {
 		omittedTools = append(omittedTools, "role")
+		belt.Know("role")
 	}
 
 	var todoStore *todo.Store
@@ -366,6 +381,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		toolReg.Register(&tools.BackgroundProcessTool{Manager: procMgr})
 	} else {
 		omittedTools = append(omittedTools, "background_process")
+		belt.Know("background_process")
 	}
 
 	var messages []types.Message
@@ -721,29 +737,12 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			// this side of the boundary, as it does in shepherd's `gate(task,
 			// predicate)`, so no verdict protocol or review round exists.
 			toolReg.Register(&tools.ProposalTool{})
+		} else {
+			belt.Know("proposal")
 		}
-	}
-
-	// The prompt must never advertise a tool that is not registered.
-	// Isolated mode gets the §2.2 delta instead — which names every omitted
-	// tool with its reason, covers the delegate-only story, and explains
-	// the apply_out workflow.
-	if sessionSandbox != nil {
-		slices.Sort(omittedTools)
-		mainPrompt += "\n\n" + prompts.IsolatedWorkspaceGuidance(omittedTools, omittedMCP)
 	} else {
-		mainPrompt += "\n\n" + prompts.SubAgentToolsGuidance()
-		// RetainedModeGuidance names the proposal tool, so it is gated on the
-		// same signal as that tool's registration — taskTool.Retained — rather
-		// than on the config key alone. A store-open failure or an
-		// uncapturable root makes the lane unavailable, and advertising
-		// settlement then would promise work the runtime refuses.
-		if taskTool.Retained != nil {
-			mainPrompt += "\n\n" + prompts.RetainedModeGuidance()
-		}
-	}
-	if opts.OneShot {
-		mainPrompt += "\n\n" + prompts.OneShotGuidance()
+		belt.Know("supervisor")
+
 	}
 
 	toolReg.Register(&tools.ListSubAgentsTool{
@@ -826,6 +825,47 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		}
 	}
 
+	// The belt's refusal log is complete now: every tool the session was
+	// configured to have but does not. The model is told which are
+	// missing (so it does not call an absent tool and narrate the
+	// failure), and an allowlist name that matched no tool at all is a
+	// typo worth reporting.
+	beltRemoved := belt.Refused()
+
+	// The prompt must never advertise a tool that is not registered.
+	// Isolated mode gets the §2.2 delta instead — which names every omitted
+	// tool with its reason, covers the delegate-only story, and explains
+	// the apply_out workflow. The tool sections come after the last
+	// registration, because the belt's list is only final there.
+	if sessionSandbox != nil {
+		slices.Sort(omittedTools)
+		mainPrompt += "\n\n" + prompts.IsolatedWorkspaceGuidance(omittedTools, omittedMCP, beltRemoved)
+	} else {
+		// The guidance must never advertise a tool the belt excluded.
+		if toolReg.Get("delegate") != nil {
+			mainPrompt += "\n\n" + prompts.SubAgentToolsGuidance()
+		}
+		// RetainedModeGuidance names the proposal tool, so it is gated on the
+		// same signal as that tool's registration — taskTool.Retained — rather
+		// than on the config key alone. A store-open failure or an
+		// uncapturable root makes the lane unavailable, and advertising
+		// settlement then would promise work the runtime refuses.
+		if taskTool.Retained != nil && toolReg.Get("proposal") != nil {
+			mainPrompt += "\n\n" + prompts.RetainedModeGuidance()
+		}
+		// The belt notice is a sentence, not a list: the exact set is in
+		// the request's schemas.
+		if len(beltRemoved) > 0 {
+			mainPrompt += "\n\n" + prompts.ToolBeltGuidance(toolReg.List(), len(beltRemoved))
+		}
+	}
+	if opts.OneShot {
+		mainPrompt += "\n\n" + prompts.OneShotGuidance()
+	}
+	for _, name := range belt.Unknown() {
+		fmt.Fprintf(os.Stderr, "warning: config `agents.default.tools` names unknown tool %q; ignored\n", name)
+	}
+
 	// Decision D4: the workspace substrate and the omitted tool names go
 	// into the session record, so "the model didn't use
 	// background_process" and "the model couldn't" stay distinguishable
@@ -840,6 +880,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			backend = config.BackendLocal
 		}
 		recorded := append(slices.Clone(omittedTools), omittedMCP...)
+		recorded = append(recorded, beltRemoved...)
 		slices.Sort(recorded)
 		if werr := db.UpdateSessionWorkspace(sessionID, backend, strings.Join(recorded, ",")); werr != nil {
 			fmt.Fprintf(os.Stderr, "warning: recording workspace metadata: %v\n", werr)
