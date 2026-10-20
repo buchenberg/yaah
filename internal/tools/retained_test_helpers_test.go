@@ -1,8 +1,7 @@
 package tools
 
-// retained_test_helpers_test.go: the fixtures the retained-lane tests share. The
-// retained lane used to borrow them from the supervised-task tests; with that
-// tool gone they live here, trimmed to what the retained tests need.
+// retained_test_helpers_test.go: the fixtures the retained-lane tests
+// share, trimmed to what those tests need.
 
 import (
 	"context"

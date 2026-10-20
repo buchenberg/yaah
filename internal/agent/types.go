@@ -250,7 +250,7 @@ type LoopState struct {
 	// order. Only populated when turn checkpointing is active.
 	TurnCheckpoints []string
 	// TurnRestores counts turn-level checkpoint restores performed during
-	// this Run (diagnostic for supervised-task envelopes).
+	// this Run (diagnostic for turn checkpointing).
 	TurnRestores int
 	// RestoredFrom is the checkpoint ID of the most recent turn restore.
 	RestoredFrom string

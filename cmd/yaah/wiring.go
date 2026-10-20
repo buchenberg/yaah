@@ -421,8 +421,8 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// the runner closure is constructed, since every sub-agent scope
 	// forks from it and the supervisor's tree should mirror the dispatch
 	// tree. The orchestrator pipeline no longer hosts shepherd_trace, so
-	// this is the single initialization point for the supervisor tools,
-	// the supervised task tool, and sub-agent trace middleware.
+	// this is the single initialization point for the supervisor tools
+	// and sub-agent trace middleware.
 	var scopeMgr *shepherd.ScopeManager
 	var traceStore *shepherdtrace.SQLiteTraceStore
 	var traceBus *shepherdtrace.EffectBus
@@ -627,9 +627,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	})
 
 	// RoleResolver provides a live role-name lookup so the delegate
-	// tool sees roles created via the role tool without a restart. Until
-	// supervised_task is registered it returns every role; it is narrowed
-	// to the non-supervised roles after successful shepherd init below.
+	// tool sees roles created via the role tool without a restart.
 	taskTool.RoleResolver = func() []string { return subagent.DefaultRegistry().Names() }
 
 	// Hand the manager to the task tool so background:true dispatches go

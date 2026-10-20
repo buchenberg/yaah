@@ -160,7 +160,7 @@ func TestBootstrap_RequiresGitWorkTree(t *testing.T) {
 
 // TestBootstrap_RollbackRestoresBaseline is D1's acceptance criterion: in
 // isolated mode, a failed attempt must still be rollable back to the
-// session baseline (plan §2.3). The supervised machinery applies states
+// session baseline (plan §2.3). Turn checkpointing applies states
 // through the same kernel verb this test uses.
 func TestBootstrap_RollbackRestoresBaseline(t *testing.T) {
 	src := gitHostRepo(t)
@@ -184,8 +184,8 @@ func TestBootstrap_RollbackRestoresBaseline(t *testing.T) {
 		t.Fatal("mutations are not visible against the baseline")
 	}
 
-	// Rollback: re-apply the baseline, exactly as the supervised session
-	// would on a failed attempt.
+	// Rollback: re-apply the baseline, exactly as a failed isolated
+	// attempt would be rolled back.
 	if err := ss.sb.Apply(context.Background(), *ss.Baseline()); err != nil {
 		t.Fatalf("Apply(baseline): %v", err)
 	}

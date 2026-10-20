@@ -7,9 +7,9 @@ import (
 
 // The curated registry (plan §3, Option A): the isolated session's
 // registry omits the host-only leaf tools so Registry.SetWorkspace's gate
-// passes. The runtime-wired host-only tools (role, background_process,
-// supervised_task) are omitted at the wiring's registration sites; these
-// tests pin the leaf-level half of the contract.
+// passes. The runtime-wired host-only tools (role, background_process)
+// are omitted at the wiring's registration sites; these tests pin the
+// leaf-level half of the contract.
 
 // TestNewIsolatedRegistry_OmitsExactlyHostOnlyLeaves is the leaf-level
 // activation matrix (plan §8): local and isolated registries differ by

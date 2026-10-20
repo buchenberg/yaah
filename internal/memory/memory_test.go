@@ -1095,7 +1095,7 @@ func TestDB_SessionWorkspaceMetadata(t *testing.T) {
 	// tool names are part of the session record, so a reader of two
 	// runs can tell "didn't use" from "couldn't use".
 	db.CreateSession(Session{ID: "sess-ws", StartedAt: 1000})
-	if err := db.UpdateSessionWorkspace("sess-ws", "containerd", "background_process,go_refactor,role,supervised_task"); err != nil {
+	if err := db.UpdateSessionWorkspace("sess-ws", "containerd", "background_process,go_refactor,role,bisect"); err != nil {
 		t.Fatalf("UpdateSessionWorkspace() error: %v", err)
 	}
 
@@ -1106,7 +1106,7 @@ func TestDB_SessionWorkspaceMetadata(t *testing.T) {
 	if s.WorkspaceBackend != "containerd" {
 		t.Errorf("WorkspaceBackend = %q, want %q", s.WorkspaceBackend, "containerd")
 	}
-	if s.WorkspaceOmittedTools != "background_process,go_refactor,role,supervised_task" {
+	if s.WorkspaceOmittedTools != "background_process,go_refactor,role,bisect" {
 		t.Errorf("WorkspaceOmittedTools = %q", s.WorkspaceOmittedTools)
 	}
 

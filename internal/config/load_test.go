@@ -294,162 +294,47 @@ agents:
 	}
 }
 
-// TestLoad_removedSupervisedWorktreeKeyWarns pins the removed-key
-// contract: `agents.default.supervised_worktree` no longer exists
-// (fork variants are always isolated worktrees), and a config that
-// still sets it gets one warning instead of a silently dead key.
-func TestLoad_removedSupervisedWorktreeKeyWarns(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("YAAH_HOME", tmp)
-
-	cases := []struct {
-		name    string
-		content string
-		want    bool
-	}{
-		{
-			name: "dead key set",
-			content: `
+// TestLoad_removedSupervisedKeysAreSilentlyDead pins the end of the
+// supervised_task deprecation window: its keys and the per-role
+// `supervised` flag are gone, load without warnings, and behave like any
+// unknown key.
+func TestLoad_removedSupervisedKeysAreSilentlyDead(t *testing.T) {
+	content := `
 agents:
   default:
+    model: test/model
     supervised_worktree: true
-    model: test/model
-`,
-			want: true,
-		},
-		{
-			name: "dead key absent",
-			content: `
-agents:
-  default:
-    supervised_repo_path: /tmp/repo
-    model: test/model
-`,
-			want: false,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(tc.content), 0o644); err != nil {
-				t.Fatalf("WriteFile() error: %v", err)
-			}
-			// The warning is advisory — capture stderr for the one
-			// Load call rather than guessing from the test log.
-			r, w, err := os.Pipe()
-			if err != nil {
-				t.Fatalf("pipe: %v", err)
-			}
-			prev := os.Stderr
-			os.Stderr = w
-			_, loadErr := Load()
-			os.Stderr = prev
-			_ = w.Close()
-			warned := false
-			if data, rerr := io.ReadAll(r); rerr == nil {
-				warned = bytes.Contains(data, []byte("supervised_worktree"))
-			}
-			_ = r.Close()
-			if loadErr != nil {
-				t.Fatalf("Load() error: %v", loadErr)
-			}
-			if warned != tc.want {
-				t.Errorf("warning = %v, want %v", warned, tc.want)
-			}
-		})
-	}
-}
-
-// TestLoad_removedSupervisedTaskKeysWarn pins the removal contract:
-// supervised_task is gone, so its keys and the per-role routing flag are dead.
-// A config that still sets them must say so once rather than look like it still
-// selects a lane that no longer exists.
-func TestLoad_removedSupervisedTaskKeysWarn(t *testing.T) {
-	cases := []struct {
-		name    string
-		content string
-		want    string
-	}{
-		{
-			name: "retry cap",
-			content: `
-agents:
-  default:
-    model: test/model
     supervised_max_retries: 2
-`,
-			want: "supervised_max_retries",
-		},
-		{
-			name: "repo path",
-			content: `
-agents:
-  default:
-    model: test/model
     supervised_repo_path: /tmp/repo
-`,
-			want: "rename it to `retained_repo_path`",
-		},
-		{
-			name: "worktree root",
-			content: `
-agents:
-  default:
-    model: test/model
     supervised_worktree_root: /tmp/wt
-`,
-			want: "rename it to `retained_worktree_root`",
-		},
-		{
-			name: "worktree bootstrap",
-			content: `
-agents:
-  default:
-    model: test/model
     supervised_worktree_bootstrap: npm ci
-`,
-			want: "rename it to `retained_worktree_bootstrap`",
-		},
-		{
-			name: "role routing flag",
-			content: `
-agents:
-  default:
-    model: test/model
   subagent:
     roles:
       developer:
         supervised: true
-`,
-			want: "roles.developer.supervised",
-		},
+`
+	tmp := t.TempDir()
+	t.Setenv("YAAH_HOME", tmp)
+	if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			tmp := t.TempDir()
-			t.Setenv("YAAH_HOME", tmp)
-			if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(tc.content), 0o644); err != nil {
-				t.Fatalf("WriteFile() error: %v", err)
-			}
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	prev := os.Stderr
+	os.Stderr = w
+	_, loadErr := Load()
+	os.Stderr = prev
+	_ = w.Close()
+	data, _ := io.ReadAll(r)
+	_ = r.Close()
 
-			r, w, err := os.Pipe()
-			if err != nil {
-				t.Fatalf("pipe: %v", err)
-			}
-			prev := os.Stderr
-			os.Stderr = w
-			_, loadErr := Load()
-			os.Stderr = prev
-			_ = w.Close()
-			data, _ := io.ReadAll(r)
-			_ = r.Close()
-
-			if loadErr != nil {
-				t.Fatalf("Load() error: %v", loadErr)
-			}
-			if !bytes.Contains(data, []byte(tc.want)) {
-				t.Errorf("warning must mention %q, got %q", tc.want, string(data))
-			}
-		})
+	if loadErr != nil {
+		t.Fatalf("Load() error: %v", loadErr)
+	}
+	if bytes.Contains(data, []byte("supervised")) {
+		t.Errorf("removed supervised keys must die silently, got warnings %q", string(data))
 	}
 }
