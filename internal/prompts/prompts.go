@@ -363,7 +363,7 @@ func WrapUpMessage(count int) string {
 // advertise. An empty shell omits the whole sentence so a tool-less
 // sub-agent never receives the "use it for all shell commands" imperative
 // (#329).
-const environmentShellSentence = "Default shell: %s — use it for all shell commands. "
+const environmentShellSentence = "Default shell: %s — use it for all shell commands. Shell commands already start in the working directory; do not prefix them with `cd`. "
 
 // EnvironmentHeader renders the embedded environment_header.md template
 // with {{OS}}, {{ARCH}}, {{SHELL_SENTENCE}}, and {{CWD}} replaced by the

@@ -195,7 +195,7 @@ func TestBuild_EnvironmentNotDoubleWrapped(t *testing.T) {
 func TestEnvironmentHeader_ShellGate(t *testing.T) {
 	t.Run("with shell renders the imperative", func(t *testing.T) {
 		got := EnvironmentHeader("linux", "amd64", "bash", "/work/dir")
-		want := "## Environment\nOS: linux/amd64. Default shell: bash — use it for all shell commands. Working directory: /work/dir. Shell commands already start there; do not prefix them with `cd`.\n"
+		want := "## Environment\nOS: linux/amd64. Default shell: bash — use it for all shell commands. Shell commands already start in the working directory; do not prefix them with `cd`. Working directory: /work/dir.\n"
 		if got != want {
 			t.Errorf("shell header changed:\n got %q\nwant %q", got, want)
 		}
@@ -203,7 +203,7 @@ func TestEnvironmentHeader_ShellGate(t *testing.T) {
 
 	t.Run("empty shell drops the sentence", func(t *testing.T) {
 		got := EnvironmentHeader("linux", "amd64", "", "/work/dir")
-		want := "## Environment\nOS: linux/amd64. Working directory: /work/dir. Shell commands already start there; do not prefix them with `cd`.\n"
+		want := "## Environment\nOS: linux/amd64. Working directory: /work/dir.\n"
 		if got != want {
 			t.Errorf("shell-less header wrong:\n got %q\nwant %q", got, want)
 		}
