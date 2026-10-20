@@ -107,7 +107,7 @@ func TestNewSubAgentPipeline_GuardOrdering(t *testing.T) {
 	for _, mw := range withGuard.middleware {
 		names = append(names, mw.Name())
 	}
-	want := "supervisor_guard,tool_concurrency,shepherd_trace"
+	want := "supervisor_guard,tool_concurrency,shepherd_trace,evidence_guard"
 	got := strings.Join(names, ",")
 	if got != want {
 		t.Errorf("pipeline = %q, want %q (no steer/permission wired in this config)", got, want)

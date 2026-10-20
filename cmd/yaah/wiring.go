@@ -604,6 +604,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		OutputLimit:           cfg.Agent.SubAgent.OutputLimit,
 		ProviderMap:           cfg.Providers,
 		Defaults:              cfg.Agent.Default,
+		PipelineDisabled:      cfg.Agent.Middleware.Disabled,
 		ToolSpillDir:          subAgentSpillDir,
 		PathValidator:         pathValidator,
 		Workspace:             subAgentWorkspace,

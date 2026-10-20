@@ -161,6 +161,8 @@ type LoopConfig struct {
 	RetryBackoff           time.Duration
 	LoopDetectCount        int
 	LoopDetectWindow       int
+	EvidenceGuardNudge     int
+	EvidenceGuardHalt      int
 	ApprovalMode           string
 	// MCPApproval gates tools served by MCP servers. Remote tools
 	// cannot implement tools.DangerClassifier, so classifyDanger

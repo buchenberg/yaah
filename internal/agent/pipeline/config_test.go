@@ -23,7 +23,7 @@ func TestPipeline_OrchestratorNoTraceBuilder(t *testing.T) {
 
 func TestPipeline_SubAgentPipelineNames(t *testing.T) {
 	names := SubAgentPipelineNames(nil)
-	want := []string{"tool_concurrency", "shepherd_trace"}
+	want := []string{"tool_concurrency", "shepherd_trace", "evidence_guard"}
 	if len(names) != len(want) {
 		t.Fatalf("SubAgentPipelineNames(nil) = %v, want %v", names, want)
 	}
@@ -250,7 +250,7 @@ func TestNewFromConfig_NoShepherdTrace(t *testing.T) {
 		t.Error("orchestrator pipeline must not contain shepherd_trace")
 	}
 	// The rest of the default pipeline is intact.
-	for _, name := range []string{"steer", "followup", "compaction", "approval", "inline_limit", "tool_concurrency", "loop_detection", "conflict_detect"} {
+	for _, name := range []string{"steer", "followup", "compaction", "approval", "inline_limit", "tool_concurrency", "loop_detection", "evidence_guard", "conflict_detect"} {
 		if pipe.Find(name) == nil {
 			t.Errorf("default pipeline lost middleware %q", name)
 		}

@@ -220,6 +220,8 @@ func (s *agentSession) loopBuilder(
 			QualityGates:           s.cfg.Agent.QualityGates,
 			LoopDetectCount:        s.cfg.Agent.Default.LoopDetectCount,
 			LoopDetectWindow:       s.cfg.Agent.Default.LoopDetectWindow,
+			EvidenceGuardNudge:     s.cfg.Agent.Default.EvidenceGuardNudge,
+			EvidenceGuardHalt:      s.cfg.Agent.Default.EvidenceGuardHalt,
 			MaxToolConcurrency:     s.cfg.Agent.Default.MaxToolConcurrency,
 			WrapUpThreshold:        s.cfg.Agent.Default.WrapUpThreshold,
 			MaxInlineToolsPerTurn:  s.cfg.Agent.Default.MaxInlineToolsPerTurn,
