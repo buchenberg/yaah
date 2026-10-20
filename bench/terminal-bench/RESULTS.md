@@ -461,7 +461,11 @@ Two full-suite trials after the trim, both 5/5 resolved:
 | csv-to-parquet | 165,090 | 181,131 | 138,856 |
 | jsonl-aggregator | 161,890 | 80,332 | 131,039 |
 | assign-seats | 161,274 | 258,448 | 93,880 |
-| **Total** | **724,083** | **786,996** | **565,069** |
+| **Total** | **724,088** | **786,996** | **565,069** |
+
+(The pre-trim per-task column sums to 724,088; the tracking table above
+carries 724,083 from the extractor's own aggregate — a 5-token difference
+in how the run's session totals were read, not a data change.)
 
 Reading: `hello-world` is the clean instrument — two API calls, minimal
 variance — and it dropped exactly the predicted −25% (45.4K → 33.9K/33.1K,
