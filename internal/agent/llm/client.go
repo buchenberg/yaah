@@ -509,6 +509,9 @@ func accumulateUsage(total *types.Usage, u types.Usage) {
 	total.PromptTokens += u.PromptTokens
 	total.CompletionTokens += u.CompletionTokens
 	total.TotalTokens += u.TotalTokens
+	if u.PromptIncludesCache {
+		total.PromptIncludesCache = true
+	}
 	if cached := u.CacheTokens(); cached > 0 {
 		total.CachedPromptTokens += cached
 	}

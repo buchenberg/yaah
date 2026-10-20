@@ -115,6 +115,12 @@ type Usage struct {
 	CachedPromptTokens      int                      `json:"cached_prompt_tokens,omitempty"`
 	CompletionTokensDetails *CompletionTokensDetails `json:"completion_tokens_details,omitempty"`
 	PromptTokensDetails     *PromptTokensDetails     `json:"prompt_tokens_details,omitempty"`
+	// PromptIncludesCache records whether PromptTokens already contains the
+	// tokens in CachedPromptTokens. OpenAI-compatible providers report the
+	// inclusive total; Anthropic-shaped providers report uncached input and
+	// cache reads separately. It is an internal shape marker, never sent on
+	// the wire, and is set at the provider boundary.
+	PromptIncludesCache bool `json:"-"`
 }
 
 // CompletionTokensDetails breaks down where completion tokens were spent.
@@ -151,30 +157,28 @@ func (u Usage) CacheTokens() int {
 	return 0
 }
 
-// GenAIInputTokens returns the cache-INCLUSIVE prompt token total that
-// the GenAI semantic conventions (gen_ai.usage.input_tokens) require,
-// normalizing over the two accounting shapes yaah sees:
-//
-//   - OpenAI shape: raw OpenAI-compatible wire usage carries
-//     PromptTokensDetails, and its PromptTokens ALREADY INCLUDES the
-//     cached subset (PromptTokensDetails.CachedTokens) — returned as-is
-//     so the cache reads are not double-counted.
-//   - Anthropic shape: Anthropic reports UNCACHED InputTokens separately
-//     from cache reads. Streamed Anthropic usage is aggregated by
-//     addStreamUsage (internal/agent/llm) into the top-level
-//     CachedPromptTokens with PromptTokensDetails left nil, where
-//     PromptTokens holds only the uncached portion — the inclusive
-//     total is the sum of both.
-//
-// Cache-creation tokens are not captured by types.Usage today (the
-// Anthropic parse drops cache_creation_input_tokens); if a creation
-// field is ever added, fold it into the Anthropic-shape sum here while
-// CacheTokens keeps reporting only the cache READ portion.
-func (u Usage) GenAIInputTokens() int {
-	if u.PromptTokensDetails != nil {
+// InclusivePromptTokens returns the cache-INCLUSIVE prompt total for
+// display and GenAI semantic conventions. The shape comes from
+// PromptIncludesCache, set by the provider client, rather than from
+// PromptTokensDetails: aggregates intentionally leave details nil, so a
+// details-based heuristic cannot distinguish an OpenAI aggregate (prompt
+// already inclusive) from an Anthropic aggregate (prompt uncached).
+func (u Usage) InclusivePromptTokens() int {
+	if u.PromptIncludesCache {
 		return u.PromptTokens
 	}
-	return u.PromptTokens + u.CachedPromptTokens
+	return u.PromptTokens + u.CacheTokens()
+}
+
+// GenAIInputTokens returns the cache-INCLUSIVE prompt token total that
+// the GenAI semantic conventions (gen_ai.usage.input_tokens) require.
+// See InclusivePromptTokens for the shape rules. Cache-creation tokens
+// are not captured by types.Usage today (the Anthropic parse drops
+// cache_creation_input_tokens); if a creation field is ever added, fold
+// it into the Anthropic-shape sum here while CacheTokens keeps reporting
+// only the cache READ portion.
+func (u Usage) GenAIInputTokens() int {
+	return u.InclusivePromptTokens()
 }
 
 // ToolResultMsg creates a tool result message to append to the conversation.

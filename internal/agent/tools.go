@@ -65,7 +65,7 @@ func (l *Loop) addUsageLocked(u types.Usage) types.Usage {
 	l.State.TotalTokens.PromptTokens += u.PromptTokens
 	l.State.TotalTokens.CompletionTokens += u.CompletionTokens
 	l.State.TotalTokens.TotalTokens += u.TotalTokens
-	l.State.LastPromptTokens = u.PromptTokens
+	l.State.LastPromptTokens = u.InclusivePromptTokens()
 	if d := u.CompletionTokensDetails; d != nil {
 		l.State.TotalReasoningTokens += d.ReasoningTokens
 	}

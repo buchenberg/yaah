@@ -784,8 +784,8 @@ func TestLoop_childUsageKeepsParentContextCounters(t *testing.T) {
 	loop.addUsage(types.Usage{PromptTokens: 100, CompletionTokens: 10, TotalTokens: 110, CachedPromptTokens: 10})
 	loop.addSubAgentUsage(types.Usage{PromptTokens: 500, CompletionTokens: 50, TotalTokens: 550, CachedPromptTokens: 50})
 
-	if loop.State.LastPromptTokens != 100 {
-		t.Errorf("LastPromptTokens = %d, want the parent's 100", loop.State.LastPromptTokens)
+	if loop.State.LastPromptTokens != 110 {
+		t.Errorf("LastPromptTokens = %d, want the parent's inclusive 110", loop.State.LastPromptTokens)
 	}
 	if loop.State.LastCachedPromptTokens != 10 {
 		t.Errorf("LastCachedPromptTokens = %d, want the parent's 10", loop.State.LastCachedPromptTokens)

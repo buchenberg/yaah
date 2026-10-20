@@ -70,8 +70,9 @@ func translateAnthropicEvent(event anthropic.MessageStreamEventUnion, st *anthro
 		}
 		if u := e.Message.Usage; u.InputTokens > 0 || u.CacheReadInputTokens > 0 {
 			chunk.Usage = &types.Usage{
-				PromptTokens:        int(u.InputTokens),
+				PromptTokens:        int(u.InputTokens), // uncached input only
 				PromptTokensDetails: &types.PromptTokensDetails{CachedTokens: int(u.CacheReadInputTokens)},
+				PromptIncludesCache: false,
 			}
 		}
 		return chunk, nil
@@ -155,10 +156,11 @@ func translateAnthropicEvent(event anthropic.MessageStreamEventUnion, st *anthro
 		}
 		if u := e.Usage; u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadInputTokens > 0 {
 			chunk.Usage = &types.Usage{
-				PromptTokens:        int(u.InputTokens),
+				PromptTokens:        int(u.InputTokens), // uncached input only
 				CompletionTokens:    int(u.OutputTokens),
 				TotalTokens:         int(u.InputTokens + u.OutputTokens),
 				PromptTokensDetails: &types.PromptTokensDetails{CachedTokens: int(u.CacheReadInputTokens)},
+				PromptIncludesCache: false,
 			}
 		}
 		return chunk, nil

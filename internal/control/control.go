@@ -85,7 +85,7 @@ func (*Todos) marker() {}
 type ContextInfo struct {
 	Tokens           int
 	Window           int
-	LastPromptTokens int // real provider-reported prompt tokens from last turn
+	LastPromptTokens int // cache-inclusive provider-reported prompt size (last turn)
 }
 
 func (*ContextInfo) marker() {}

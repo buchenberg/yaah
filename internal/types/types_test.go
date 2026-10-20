@@ -144,6 +144,7 @@ func TestUsageGenAIInputTokens(t *testing.T) {
 			CompletionTokens:    42,
 			TotalTokens:         142,
 			PromptTokensDetails: &PromptTokensDetails{CachedTokens: 90},
+			PromptIncludesCache: true,
 		}
 		if got := u.GenAIInputTokens(); got != 100 {
 			t.Errorf("GenAIInputTokens() = %d, want 100", got)
@@ -194,4 +195,50 @@ func TestUsageGenAIInputTokens(t *testing.T) {
 			t.Errorf("GenAIInputTokens() = %d, want 0", got)
 		}
 	})
+}
+
+func TestUsageInclusivePromptTokensShapes(t *testing.T) {
+	tests := []struct {
+		name string
+		u    Usage
+		want int
+	}{
+		{
+			name: "openai raw wire",
+			u:    Usage{PromptTokens: 100, PromptTokensDetails: &PromptTokensDetails{CachedTokens: 90}, PromptIncludesCache: true},
+			want: 100,
+		},
+		{
+			name: "openai stream aggregate",
+			u:    Usage{PromptTokens: 100, CachedPromptTokens: 90, PromptIncludesCache: true},
+			want: 100,
+		},
+		{
+			name: "anthropic raw wire",
+			u:    Usage{PromptTokens: 10, PromptTokensDetails: &PromptTokensDetails{CachedTokens: 90}},
+			want: 100,
+		},
+		{
+			name: "anthropic stream aggregate",
+			u:    Usage{PromptTokens: 10, CachedPromptTokens: 90},
+			want: 100,
+		},
+		{
+			name: "uncached",
+			u:    Usage{PromptTokens: 42},
+			want: 42,
+		},
+		{
+			name: "zero",
+			u:    Usage{},
+			want: 0,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.u.InclusivePromptTokens(); got != tc.want {
+				t.Errorf("InclusivePromptTokens() = %d, want %d", got, tc.want)
+			}
+		})
+	}
 }

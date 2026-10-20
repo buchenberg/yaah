@@ -794,6 +794,23 @@ keep as many recent turns as fit in 25% of the context window, with:
    further compaction.
 9. If the LLM call fails or returns empty, try chunked compaction when the old tail is large enough; otherwise fall back to `trimContext()`.
 
+### Usage shapes and the context display
+
+Providers report prompt usage in two shapes:
+
+- **OpenAI-compatible:** `prompt_tokens` already includes cache reads.
+  `PromptIncludesCache` is set to `true` at decode time.
+- **Anthropic-shaped:** `input_tokens` excludes cache reads, which arrive
+  separately as `cache_read_input_tokens`. `PromptIncludesCache` stays
+  `false`.
+
+`Usage.InclusivePromptTokens()` normalizes both (`prompt + cache` for
+Anthropic, `prompt` for OpenAI), including streamed aggregates where
+`PromptTokensDetails` is nil. `LastPromptTokens` carries that inclusive value,
+so the TUI/web context percentage uses the real context size. Compaction
+subtracts the cached subset (`LastPromptTokens - LastCachedPromptTokens`) to
+keep the effective-token thresholds unchanged.
+
 ### Sub-agent result capping
 
 Sub-agent results are capped by `resolveOutputLimit` (per-call limit, then

@@ -340,6 +340,7 @@ func TestFinishLLM_GenAICachedTokens(t *testing.T) {
 			CompletionTokens:    20,
 			TotalTokens:         120,
 			PromptTokensDetails: &types.PromptTokensDetails{CachedTokens: 90},
+			PromptIncludesCache: true,
 		})
 		span.End()
 
@@ -389,6 +390,7 @@ func TestMirrorGenAIUsage(t *testing.T) {
 			CompletionTokens:    50,
 			TotalTokens:         250,
 			PromptTokensDetails: &types.PromptTokensDetails{CachedTokens: 128},
+			PromptIncludesCache: true,
 		})
 		span.End()
 

@@ -396,12 +396,13 @@ func raiseAnthropicResponse(resp anthropic.Message) *types.ChatResponse {
 			FinishReason: finishReason,
 		}},
 		Usage: types.Usage{
-			PromptTokens:     int(resp.Usage.InputTokens),
+			PromptTokens:     int(resp.Usage.InputTokens), // uncached input only
 			CompletionTokens: int(resp.Usage.OutputTokens),
 			TotalTokens:      int(resp.Usage.InputTokens + resp.Usage.OutputTokens),
 			PromptTokensDetails: &types.PromptTokensDetails{
 				CachedTokens: int(resp.Usage.CacheReadInputTokens),
 			},
+			PromptIncludesCache: false,
 		},
 	}
 }
