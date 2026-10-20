@@ -254,7 +254,6 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// The accept seam (plan §2.3, D1): the single door changes leave the
 	// container through, registered only in isolated mode — in local mode
 	// the tools write the host directly and there is nothing to let out.
-	// Registered before buildMainPrompt so the quick-ref card includes it.
 	if sessionSandbox != nil {
 		toolReg.Register(&tools.ApplyOutTool{Sandbox: sessionSandbox, HostDir: cwd})
 	}
@@ -391,10 +390,10 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		}
 	}
 
-	// Derive the top-level agent prompt (directives + quick-ref) from the
-	// clean system prompt. systemPrompt stays clean so child sub-agent
-	// prompts never inherit top-level directives.
-	mainPrompt := buildMainPrompt(cfg, opts, systemPrompt, toolReg)
+	// Derive the top-level agent prompt (with directives) from the clean
+	// system prompt. systemPrompt stays clean so child sub-agent prompts
+	// never inherit top-level directives.
+	mainPrompt := buildMainPrompt(cfg, opts, systemPrompt)
 
 	tracker := &tools.ConflictTracker{}
 	subAgentProvider, subAgentModel := resolveSubAgent(cfg)

@@ -8,7 +8,6 @@ import (
 	"github.com/buchenberg/yaah/internal/instructions"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/prompts"
-	"github.com/buchenberg/yaah/internal/tools"
 )
 
 // buildSystemPrompt assembles the main-session base system prompt from
@@ -18,8 +17,8 @@ import (
 //
 // The returned systemPrompt is the main-session base prompt (clean of
 // top-level directives). The caller derives mainPrompt by injecting
-// directives and the tool quick-reference card. Sub-agents get their own
-// lean base from buildSubAgentBasePrompt instead of this one.
+// directives. Sub-agents get their own lean base from
+// buildSubAgentBasePrompt instead of this one.
 func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSessionID string) string {
 	layers := prompts.Layers{
 		Identity:               prompts.IdentityPrompt,
@@ -102,7 +101,7 @@ func providerUsable(cfg *config.Config, name string) bool {
 // registered tool's name, signature, and description that the request's
 // tools array already carries — ~3.4K tokens of pure duplication per call.
 // The schemas are the single source of tool truth on the wire.
-func buildMainPrompt(cfg *config.Config, opts SessionOptions, systemPrompt string, toolReg *tools.Registry) string {
+func buildMainPrompt(cfg *config.Config, opts SessionOptions, systemPrompt string) string {
 	return prompts.InjectAfterIdentity(systemPrompt, resolveDirectives(cfg, opts))
 }
 
