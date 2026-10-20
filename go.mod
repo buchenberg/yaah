@@ -8,11 +8,12 @@ require (
 	github.com/buchenberg/shepherd-kernel-go v0.17.0
 	github.com/buchenberg/shepherd-runtime-go v0.17.0
 	github.com/buchenberg/shepherd-runtime-go/sandbox/landlock v0.1.1
-	github.com/buchenberg/tviewmd v0.2.0
+	github.com/buchenberg/tviewmd v0.2.1
 	github.com/gdamore/tcell/v2 v2.13.10
 	github.com/lsferreira42/figlet-go v0.0.2-beta
 	github.com/navidys/tvxwidgets v0.14.0
 	github.com/rivo/tview v0.42.0
+	github.com/rivo/uniseg v0.4.7
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/otel v1.44.0
@@ -78,7 +79,6 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
