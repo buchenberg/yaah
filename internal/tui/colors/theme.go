@@ -54,7 +54,6 @@ func newToolColors() map[string]string {
 		"edit":                   "#ffff00",
 		"delete":                 "#ff0044",
 		"patch":                  "#ff00ff",
-		"sed":                    "#ff00ff",
 		"replace":                "#ff00ff",
 		"grep":                   "#ff8c00",
 		"glob":                   "#ff8c00",

@@ -164,7 +164,6 @@ var leafTools = map[string]func() Tool{
 	"write":       func() Tool { return &WriteTool{} },
 	"edit":        func() Tool { return &EditTool{} },
 	"patch":       func() Tool { return &PatchTool{} },
-	"sed":         func() Tool { return &SedTool{} },
 	"delete":      func() Tool { return &DeleteTool{} },
 	"replace":     func() Tool { return &ReplaceTool{} },
 	"json_query":  func() Tool { return &JSONQueryTool{} },

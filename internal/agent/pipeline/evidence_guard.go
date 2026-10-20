@@ -348,17 +348,6 @@ func mutationSucceeded(result ToolResult) bool {
 			return false
 		}
 		return !args.DryRun && !strings.Contains(result.Result, "Replaced 0 match(es)")
-	case "sed":
-		var args struct {
-			DryRun bool `json:"dryRun"`
-		}
-		if err := json.Unmarshal([]byte(result.Args), &args); err != nil {
-			return false
-		}
-		if args.DryRun || strings.Contains(result.Result, "no matches") {
-			return false
-		}
-		return true
 	case "apply_out":
 		var args struct {
 			DryRun bool `json:"dry_run"`

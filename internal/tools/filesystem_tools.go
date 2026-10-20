@@ -25,7 +25,6 @@ func (*GrepTool) filesystemTool()        {}
 func (*GlobTool) filesystemTool()        {}
 func (*JSONQueryTool) filesystemTool()   {}
 func (*GoOutlineTool) filesystemTool()   {}
-func (*SedTool) filesystemTool()         {}
 func (*ReplaceTool) filesystemTool()     {}
 func (*GitTool) filesystemTool()         {}
 func (*DiffTool) filesystemTool()        {}

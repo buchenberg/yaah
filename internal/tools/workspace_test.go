@@ -347,7 +347,7 @@ func TestRegistry_UnmigratedFilesystemTools(t *testing.T) {
 		return false
 	}
 
-	for _, name := range []string{"read", "write", "edit", "delete", "patch", "bash", "ls", "grep", "glob", "sed", "replace", "git", "go_mod", "go_test", "staticcheck", "bisect"} {
+	for _, name := range []string{"read", "write", "edit", "delete", "patch", "bash", "ls", "grep", "glob", "replace", "git", "go_mod", "go_test", "staticcheck", "bisect"} {
 		if isUnmigrated(name) {
 			t.Errorf("%s is migrated and must not be listed as unmigrated", name)
 		}

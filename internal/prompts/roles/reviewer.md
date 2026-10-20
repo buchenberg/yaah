@@ -18,7 +18,6 @@ tools:
   - grep
   - glob
   - ls
-  - sed
   - calculate
   - file_info
   - go_outline

@@ -21,7 +21,6 @@ tools:
   - delete
   - replace
   - patch
-  - sed
   - grep
   - glob
   - ls

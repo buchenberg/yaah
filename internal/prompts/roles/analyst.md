@@ -26,7 +26,6 @@ tools:
   - file_info
   - go_outline
   - git
-  - sed
   - diff
 max_iterations: 75
 max_turns: 24
