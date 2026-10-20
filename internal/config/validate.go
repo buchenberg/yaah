@@ -54,6 +54,16 @@ func Validate(cfg *Config) error {
 			cfg.Agent.Default.Approval))
 	}
 
+	// Evidence guard: a halt below the nudge threshold is unreachable.
+	guardNudge := cfg.Agent.Default.EvidenceGuardNudge
+	if guardNudge == 0 {
+		guardNudge = 6
+	}
+	if guardNudge > 0 && cfg.Agent.Default.EvidenceGuardHalt > 0 &&
+		cfg.Agent.Default.EvidenceGuardHalt < guardNudge {
+		errs = append(errs, "agents.default.evidence_guard_halt must be 0 (off) or at least evidence_guard_nudge")
+	}
+
 	// MCP approval policy follows the same enum.
 	switch cfg.Agent.Default.MCPApproval {
 	case "", "allow", "ask", "deny":

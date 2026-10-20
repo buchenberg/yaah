@@ -336,6 +336,16 @@ func SteeringMessage(tool string, count int) string {
 	return s
 }
 
+// EvidenceSteerMessage is injected when the evidence guard sees repeated
+// calls or unchanged re-reads with no new information.
+func EvidenceSteerMessage(stale, distinct int) string {
+	return fmt.Sprintf(
+		"[STEER] No new evidence in the last %d tool calls (%d distinct results). "+
+			"You are re-reading files or repeating searches that already answered the question. "+
+			"Stop exploring: summarize what you have, or change approach with a concrete new question.",
+		stale, distinct)
+}
+
 // --- Wrap-up notice ---
 
 // WrapUpMessage returns the iteration-budget warning injected when an

@@ -110,6 +110,12 @@ type Defaults struct {
 	LoopDetectCount  int `yaml:"loop_detect_count"`  // identical calls to trigger halt; 0 = default (5)
 	LoopDetectWindow int `yaml:"loop_detect_window"` // sliding window size; 0 = default (10)
 
+	// Evidence guard steers or halts when exploration stops producing new
+	// evidence (repeated calls, unchanged re-reads). Nudge 0 = default (6),
+	// negative = disabled; halt 0 = disabled.
+	EvidenceGuardNudge int `yaml:"evidence_guard_nudge"`
+	EvidenceGuardHalt  int `yaml:"evidence_guard_halt"`
+
 	// Provider resilience: retry on transient errors with backoff.
 	MaxRetries       int `yaml:"max_retries"`        // 0 = no retries (default)
 	RetryBackoffSecs int `yaml:"retry_backoff_secs"` // seconds; 0 = default (1)
@@ -400,6 +406,7 @@ func defaultConfig() *Config {
 				RawCompactionThreshold: 0.5,
 				LoopDetectCount:        5,
 				LoopDetectWindow:       10,
+				EvidenceGuardNudge:     6,
 				RetryBackoffSecs:       1,
 				ReasoningProtect:       2,
 			},

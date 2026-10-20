@@ -71,6 +71,8 @@ agents:
 
     loop_detect_count: 5
     loop_detect_window: 10
+    evidence_guard_nudge: 6            # 0 = default 6; negative = disabled
+    evidence_guard_halt: 0             # 0 = never halt; e.g. 16
     max_retries: 2
     retry_backoff_secs: 1
     max_tool_concurrency: 8            # 0 = unlimited
@@ -269,6 +271,8 @@ rather than retrying a request that cannot succeed.
 | `max_turn_restores` | 3 | Turn-level restores per run |
 | `loop_detect_count` | 5 | Identical tool-call hashes within the window that trigger a halt |
 | `loop_detect_window` | 10 | Sliding window size for loop detection |
+| `evidence_guard_nudge` | 6 | Stale calls before a “no new evidence” steer; negative disables |
+| `evidence_guard_halt` | 0 (off) | Stale calls before halting; 0 = never |
 | `max_retries` | 0 (off) | Retries on transient provider errors |
 | `retry_backoff_secs` | 1 | Base backoff seconds (exponential) |
 | `max_tool_concurrency` | 0 (unlimited) | Cap concurrent tool goroutines per turn |
@@ -360,7 +364,7 @@ and orchestrator-only**: listed middleware are added to the default
 orchestrator pipeline (duplicates collapse). `disabled` removes middleware
 from both the orchestrator and sub-agent pipelines. The default orchestrator
 pipeline is
-`steer → followup → compaction → soft_prune → approval → inline_limit → tool_concurrency → loop_detection → conflict_detect`.
+`steer → followup → compaction → soft_prune → approval → inline_limit → tool_concurrency → loop_detection → evidence_guard → conflict_detect`.
 
 | Middleware | Default | Purpose |
 |---|---|---|
@@ -370,7 +374,8 @@ pipeline is
 | `soft_prune` | on | Elide stale tool-output content (no LLM) |
 | `approval` | on | Gate dangerous tools |
 | `inline_limit` | on | Cap tool calls dispatched per turn (0 = unlimited) |
-| `loop_detection` | on | Halt stuck loops |
+| `loop_detection` | on | Halt identical tool+result loops |
+| `evidence_guard` | on | Steer/halt when repeated calls or unchanged re-reads produce no new evidence |
 | `conflict_detect` | on | Flag files touched by multiple sub-agents |
 | `permission` | off | Path-pattern allow/deny rules (auto-added when parent rules exist for sub-agents) |
 | `tool_concurrency` | on | Cap concurrent tool goroutines |

@@ -182,6 +182,8 @@ type AgentConfig struct {
 	QualityGates           map[string][]string
 	LoopDetectCount        int
 	LoopDetectWindow       int
+	EvidenceGuardNudge     int
+	EvidenceGuardHalt      int
 	MaxToolConcurrency     int
 	WrapUpThreshold        int
 	MaxInlineToolsPerTurn  int
@@ -218,6 +220,8 @@ func WithAgentConfig(cfg AgentConfig) Option {
 		l.Config.QualityGates = cfg.QualityGates
 		l.Config.LoopDetectCount = cfg.LoopDetectCount
 		l.Config.LoopDetectWindow = cfg.LoopDetectWindow
+		l.Config.EvidenceGuardNudge = cfg.EvidenceGuardNudge
+		l.Config.EvidenceGuardHalt = cfg.EvidenceGuardHalt
 		l.Config.MaxToolConcurrency = cfg.MaxToolConcurrency
 		l.Config.WrapUpThreshold = cfg.WrapUpThreshold
 		l.Config.MaxInlineToolsPerTurn = cfg.MaxInlineToolsPerTurn

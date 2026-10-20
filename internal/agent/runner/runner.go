@@ -567,6 +567,8 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			MaxRetries:             opts.defaults.MaxRetries,
 			RetryBackoffSecs:       opts.defaults.RetryBackoffSecs,
 			MaxToolConcurrency:     opts.defaults.MaxToolConcurrency,
+			EvidenceGuardNudge:     opts.defaults.EvidenceGuardNudge,
+			EvidenceGuardHalt:      opts.defaults.EvidenceGuardHalt,
 			JSONMode:               jsonMode,
 			ToolResultMaxLines:     opts.defaults.ToolResultMaxLines,
 			ToolResultMaxBytes:     opts.defaults.ToolResultMaxBytes,

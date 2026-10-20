@@ -48,6 +48,11 @@ type PipelineConfig struct {
 	LoopDetectCount  int
 	LoopDetectWindow int
 
+	// EvidenceGuardNudge / EvidenceGuardHalt configure the stale-evidence
+	// guard. Nudge 0 = default (6); negative = disabled; halt 0 = disabled.
+	EvidenceGuardNudge int
+	EvidenceGuardHalt  int
+
 	MaxToolConcurrency int
 
 	// MaxInlineToolsPerTurn caps tool calls dispatched per turn; 0 =
@@ -178,6 +183,9 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 		}
 		return &LoopDetectionMiddleware{count: count, window: window}
 	},
+	"evidence_guard": func(cfg PipelineConfig) Middleware {
+		return NewEvidenceGuardMiddleware(cfg.EvidenceGuardNudge, cfg.EvidenceGuardHalt)
+	},
 	"permission":       buildPermission,
 	"tool_concurrency": buildToolConcurrency,
 	"prompt_caching":   func(cfg PipelineConfig) Middleware { return &PromptCachingMiddleware{enabled: cfg.PromptCaching} },
@@ -208,6 +216,9 @@ var subAgentBuilders = map[string]func(PipelineConfig) Middleware{
 		return &SteerMiddleware{ch: cfg.Steer}
 	},
 	"tool_concurrency": buildToolConcurrency,
+	"evidence_guard": func(cfg PipelineConfig) Middleware {
+		return NewEvidenceGuardMiddleware(cfg.EvidenceGuardNudge, cfg.EvidenceGuardHalt)
+	},
 	"shepherd_trace": func(cfg PipelineConfig) Middleware {
 		// Sub-agents write through the session-shared store instead of
 		// opening their own SQLite connection — concurrent writers on
@@ -249,6 +260,7 @@ var defaultPipelineNames = []string{
 	"inline_limit",
 	"tool_concurrency",
 	"loop_detection",
+	"evidence_guard",
 	"conflict_detect",
 }
 
@@ -277,6 +289,7 @@ var defaultPipelineNames = []string{
 // - shepherd_trace: records tool calls for error enrichment and sub-agent diagnostics
 var subAgentPipelineNames = []string{
 	"tool_concurrency",
+	"evidence_guard",
 	"shepherd_trace",
 }
 

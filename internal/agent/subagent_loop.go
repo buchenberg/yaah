@@ -26,6 +26,8 @@ type SubAgentConfig struct {
 	MaxRetries             int
 	RetryBackoffSecs       int
 	MaxToolConcurrency     int
+	EvidenceGuardNudge     int
+	EvidenceGuardHalt      int
 	JSONMode               bool
 	ToolResultMaxLines     int
 	ToolResultMaxBytes     int
@@ -129,6 +131,8 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 			MaxRetries:             cfg.MaxRetries,
 			RetryBackoff:           time.Duration(cfg.RetryBackoffSecs) * time.Second,
 			MaxToolConcurrency:     cfg.MaxToolConcurrency,
+			EvidenceGuardNudge:     cfg.EvidenceGuardNudge,
+			EvidenceGuardHalt:      cfg.EvidenceGuardHalt,
 			JSONMode:               cfg.JSONMode,
 			ToolSpillDir:           cfg.ToolSpillDir,
 			PermissionRules:        cfg.PermissionRules,
