@@ -89,20 +89,35 @@ var knownFrontmatterKeys = func() map[string]bool {
 	return keys
 }()
 
-// expandAliases inlines alias targets and clears anchors so preserved values
-// are self-contained. The modeled fields are re-encoded from the struct, so
-// anchors declared there would otherwise dangle.
-func expandAliases(n *yaml.Node) {
-	if n == nil {
-		return
+// cloneNode returns a deep copy with aliases inlined and anchors cleared.
+// Cycles (a self-referential anchor) collapse to null. A shallow alias copy
+// would share the target's Content slice and could create a cyclic node graph
+// the YAML emitter never finishes.
+func cloneNode(src *yaml.Node, stack map[*yaml.Node]bool) yaml.Node {
+	if src == nil {
+		return yaml.Node{Kind: yaml.ScalarNode, Tag: "!!null", Value: "null"}
 	}
-	if n.Kind == yaml.AliasNode && n.Alias != nil {
-		*n = *n.Alias
+	if src.Kind == yaml.AliasNode && src.Alias != nil {
+		if stack[src.Alias] {
+			return yaml.Node{Kind: yaml.ScalarNode, Tag: "!!null", Value: "null"}
+		}
+		stack[src.Alias] = true
+		expanded := cloneNode(src.Alias, stack)
+		stack[src.Alias] = false
+		expanded.Anchor = ""
+		return expanded
 	}
-	n.Anchor = ""
-	for _, child := range n.Content {
-		expandAliases(child)
+	out := *src
+	out.Anchor = ""
+	out.Alias = nil
+	out.Content = make([]*yaml.Node, len(src.Content))
+	stack[src] = true
+	for i, child := range src.Content {
+		copied := cloneNode(child, stack)
+		out.Content[i] = &copied
 	}
+	stack[src] = false
+	return out
 }
 
 // UnmarshalYAML decodes the modeled fields, records the source key order, and
@@ -122,6 +137,9 @@ func (f *Frontmatter) UnmarshalYAML(value *yaml.Node) error {
 	seen := make(map[string]bool)
 	for i := 0; i+1 < len(value.Content); i += 2 {
 		keyNode := value.Content[i]
+		if keyNode.Kind != yaml.ScalarNode {
+			return fmt.Errorf("role frontmatter keys must be scalar strings")
+		}
 		name := keyNode.Value
 		if seen[name] {
 			// Duplicate keys are invalid YAML; keep the first so a rewrite
@@ -133,8 +151,7 @@ func (f *Frontmatter) UnmarshalYAML(value *yaml.Node) error {
 		if knownFrontmatterKeys[name] {
 			continue
 		}
-		val := *value.Content[i+1]
-		expandAliases(&val)
+		val := cloneNode(value.Content[i+1], make(map[*yaml.Node]bool))
 		f.extra = append(f.extra, extraField{key: *keyNode, value: val})
 	}
 	return nil

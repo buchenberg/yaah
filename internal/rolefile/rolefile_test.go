@@ -317,3 +317,30 @@ func TestMarshalPreservesKeepChompScalar(t *testing.T) {
 		t.Fatalf("keep-chomp trailing newlines lost: %q\n%s", parsed["notes"], out)
 	}
 }
+
+func TestMarshalHandlesSelfReferentialAnchor(t *testing.T) {
+	input := `---
+name: tester
+metadata: &m
+  self: *m
+---
+`
+	fm, body, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	out, err := Marshal(fm, body)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if _, _, err := Parse(out); err != nil {
+		t.Fatalf("re-parse: %v\n%s", err, out)
+	}
+}
+
+func TestParseRejectsComplexKeys(t *testing.T) {
+	input := "---\n? [a, b]\n: value\nname: tester\n---\n"
+	if _, _, err := Parse(input); err == nil {
+		t.Fatal("Parse accepted a non-scalar frontmatter key")
+	}
+}
