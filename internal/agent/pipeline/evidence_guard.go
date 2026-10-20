@@ -38,6 +38,8 @@ const (
 	defaultEvidenceNudgeAfter = 6
 	unboundedRangeEnd         = int(^uint(0) >> 1)
 	maxEvidenceEntries        = 1024
+	maxEvidenceLines          = 16384
+	maxFileLines              = 2048
 )
 
 // spillPathPattern strips the timestamped spill filename from oversized
@@ -45,6 +47,9 @@ const (
 var spillPathPattern = regexp.MustCompile(`full output at \S+`)
 
 type readState struct {
+	// fullHash identifies a large full read that is too big to keep
+	// line-for-line; repeated full reads still count as stale.
+	fullHash string
 	// lineHashes comes from a full-file read and lets a partial read be
 	// compared line-for-line.
 	lineHashes []string
@@ -186,11 +191,22 @@ func (m *EvidenceGuardMiddleware) observeRead(result ToolResult) bool {
 	}
 
 	if full {
-		if state.lineHashes != nil && slices.Equal(state.lineHashes, hashes) {
+		hash := resultHash(result)
+		if state.fullHash == hash && state.lineHashes == nil && len(state.ranges) == 0 {
 			return false
 		}
-		state.lineHashes = hashes
 		state.ranges = make(map[[2]int]string)
+		if len(lines) > maxFileLines {
+			// Too large for line coverage; keep a file-level fingerprint.
+			state.fullHash = hash
+			state.lineHashes = nil
+		} else {
+			if state.lineHashes != nil && slices.Equal(state.lineHashes, hashes) {
+				return false
+			}
+			state.fullHash = ""
+			state.lineHashes = hashes
+		}
 		m.trim()
 		return true
 	}
@@ -239,7 +255,7 @@ func hashLine(line string) string {
 }
 
 func (m *EvidenceGuardMiddleware) trim() {
-	if m.entries() <= maxEvidenceEntries {
+	if m.entries() <= maxEvidenceEntries && m.lineEntries() <= maxEvidenceLines {
 		return
 	}
 	// Bounded memory matters more than perfect recall on very long runs.
@@ -250,7 +266,15 @@ func (m *EvidenceGuardMiddleware) trim() {
 func (m *EvidenceGuardMiddleware) entries() int {
 	total := len(m.calls)
 	for _, state := range m.reads {
-		total += len(state.lineHashes) + len(state.ranges)
+		total += len(state.ranges)
+	}
+	return total
+}
+
+func (m *EvidenceGuardMiddleware) lineEntries() int {
+	total := 0
+	for _, state := range m.reads {
+		total += len(state.lineHashes)
 	}
 	return total
 }
@@ -271,8 +295,16 @@ func mutationSucceeded(result ToolResult) bool {
 		return false
 	}
 	switch result.Name {
-	case "write", "edit", "patch", "delete", "replace":
+	case "write", "edit", "patch", "delete":
 		return true
+	case "replace":
+		var args struct {
+			DryRun bool `json:"dry_run"`
+		}
+		if err := json.Unmarshal([]byte(result.Args), &args); err != nil {
+			return false
+		}
+		return !args.DryRun
 	case "sed":
 		var args struct {
 			DryRun bool `json:"dryRun"`
