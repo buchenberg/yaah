@@ -244,6 +244,10 @@ func TestCall_outputBudgetRejectionKeepsDiagnosis(t *testing.T) {
 	if !strings.Contains(msg, "provider returned 400") {
 		t.Errorf("error = %v, want the provider's rejection included", err)
 	}
+	var apiErr *providers.APIError
+	if !errors.As(err, &apiErr) {
+		t.Errorf("error chain lost the retry *providers.APIError: %v", err)
+	}
 	if p.calls != 2 {
 		t.Fatalf("provider called %d times, want 2 (initial + one raised retry)", p.calls)
 	}

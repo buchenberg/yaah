@@ -527,10 +527,10 @@ func accumulateUsage(total *types.Usage, u types.Usage) {
 // raised-cap retry fails for a different reason (for example a provider
 // rejecting the larger max_tokens). Without this, the actionable budget error
 // is replaced by a generic "bad request format" abort.
-func recoveryFailure(classifiedMsg string, budgetErr error, cap int, retryErr error) error {
+func recoveryFailure(classifiedMsg string, budgetErr error, maxTokens int, retryErr error) error {
 	if classifiedMsg == "" {
-		return fmt.Errorf("%w (raised max_tokens to %d; retry failed: %v)", budgetErr, cap, retryErr)
+		return fmt.Errorf("%w (raised max_tokens to %d; retry failed: %w)", budgetErr, maxTokens, retryErr)
 	}
-	return fmt.Errorf("%s: %w (raised max_tokens to %d; provider rejected the retry: %v)",
-		classifiedMsg, budgetErr, cap, retryErr)
+	return fmt.Errorf("%s: %w (raised max_tokens to %d; retry failed: %w)",
+		classifiedMsg, budgetErr, maxTokens, retryErr)
 }

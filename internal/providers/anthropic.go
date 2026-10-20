@@ -146,7 +146,11 @@ func (c *AnthropicClient) EffectiveMaxTokens(req types.ChatRequest) int {
 	if c.DefaultMaxTokens > 0 {
 		return c.DefaultMaxTokens
 	}
-	return int(c.fallbackMaxTokens())
+	fallback := int(c.fallbackMaxTokens())
+	if limit := c.OutputTokenCeiling(req); limit > 0 && limit < fallback {
+		return limit
+	}
+	return fallback
 }
 
 // OutputTokenCeiling reports the highest output cap that is safe without

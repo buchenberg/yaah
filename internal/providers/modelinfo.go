@@ -44,7 +44,9 @@ var modelWindows = map[string]int{
 // modelOutputLimits maps known models to a conservative maximum output-token
 // cap. It is used only to keep output-budget recovery from raising max_tokens
 // past a provider limit; it is not a claim about the model's full capacity.
-// Unknown models return 0 and rely on the retry ladder's global bound.
+// Keys are normalized (lowercase, dots → hyphens) and matched by longest
+// prefix so dated/versioned IDs resolve to the family entry. Unknown models
+// return 0 and rely on the retry ladder's global bound.
 var modelOutputLimits = map[string]int{
 	"gpt-4o":      16384,
 	"gpt-4o-mini": 16384,
@@ -58,21 +60,40 @@ var modelOutputLimits = map[string]int{
 	"deepseek-flash":    32768,
 	"deepseek-v3":       8192,
 
-	"glm-5.3":       32768,
-	"glm-5.3-flash": 32768,
+	"glm-5-3":       32768,
+	"glm-5-3-flash": 32768,
 
-	"claude-3.5-sonnet": 8192,
-	"claude-3.5-haiku":  8192,
+	"claude-3-5-sonnet": 8192,
+	"claude-3-5-haiku":  8192,
 	"claude-3-opus":     4096,
 	"claude-3-sonnet":   4096,
 	"claude-3-haiku":    4096,
 }
 
+// normalizeModelID lowercases a model ID, strips any provider prefix, and
+// canonicalizes dots to hyphens so "zai/GLM-5.3" and "claude-3.5-sonnet"
+// match the same family keys as their dated hyphenated IDs.
+func normalizeModelID(name string) string {
+	name = strings.ToLower(sanitizeModelName(name))
+	return strings.ReplaceAll(name, ".", "-")
+}
+
 // ResolveOutputLimit returns the known output-token ceiling for modelName,
-// or 0 when the model is not in the conservative table.
+// or 0 when the model family is not in the conservative table. Matching uses
+// the longest key that equals the ID or prefixes it with a hyphen, so
+// "gpt-4o-2024-08-06" resolves to gpt-4o while "gpt-4o-mini" does not fall
+// back to gpt-4o.
 func ResolveOutputLimit(modelName string) int {
-	name := strings.ToLower(sanitizeModelName(modelName))
-	return modelOutputLimits[name]
+	name := normalizeModelID(modelName)
+	bestLen, best := 0, 0
+	for key, limit := range modelOutputLimits {
+		if name == key || strings.HasPrefix(name, key+"-") {
+			if len(key) > bestLen {
+				bestLen, best = len(key), limit
+			}
+		}
+	}
+	return best
 }
 
 // thinkingModels are models that use interleaved reasoning and require
