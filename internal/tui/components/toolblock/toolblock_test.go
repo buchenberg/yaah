@@ -15,6 +15,9 @@ func TestIcon_Known(t *testing.T) {
 	tests := []struct{ name, want string }{
 		{"read", "📖"},
 		{"write", "📝"},
+		{"edit", "📝"},
+		{"delete", "🧹"},
+		{"background_process", "🌀"},
 		{"bash", "💻"},
 		{"grep", "🔍"},
 		{"todowrite", "✅"},
@@ -28,7 +31,14 @@ func TestIcon_Known(t *testing.T) {
 }
 
 // TestIcon_SingleRuneAndDoubleWidth pins the icon invariant: every icon is
-// exactly one rune and paints exactly two cells.
+// exactly one rune with no U+FE0F, and tcell reserves two cells for it.
+//
+// The single-rune and no-U+FE0F checks are the cross-terminal guards:
+// emoji-presentation-default glyphs are wide both in tcell's tables and in
+// terminals. The width check is narrower in scope: it pins tcell's own cell
+// accounting -- the model the real layout/renderer uses -- so it catches a
+// regression that swaps in a rune tcell considers narrow. By itself it says
+// nothing about how a real terminal paints the glyph.
 //
 // The failure this guards against is subtle. Text-presentation codepoints such
 // as U+270D (writing hand), U+2699 (gear) and U+1F5D1 (wastebasket) are one
@@ -64,14 +74,15 @@ func TestIcon_SingleRuneAndDoubleWidth(t *testing.T) {
 				t.Fatalf("Icon(%q) = %q contains U+FE0F; terminals disagree on its width", name, icon)
 			}
 			if got := renderedWidth(t, icon); got != 2 {
-				t.Errorf("Icon(%q) = %q paints %d cells, want 2", name, icon, got)
+				t.Errorf("Icon(%q) = %q reserves %d cells in tcell's model (SimulationScreen), want 2", name, icon, got)
 			}
 		})
 	}
 }
 
-// renderedWidth returns how many cells tv paints icon into, by rendering
-// icon+"X" and locating X.
+// renderedWidth returns how many cells tview's layout reserves for icon,
+// measured in tcell's SimulationScreen model, by rendering icon+"X" and
+// locating X.
 func renderedWidth(t *testing.T, icon string) int {
 	t.Helper()
 	sim := tcell.NewSimulationScreen("UTF-8")

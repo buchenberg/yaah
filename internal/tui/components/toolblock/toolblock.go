@@ -49,7 +49,7 @@ func Icon(name string) string {
 	case "memory_search", "memory_add", "memory_update", "memory_delete", "memory_search_sessions":
 		return "🧠"
 	case "background_process":
-		return "🔄"
+		return "🌀"
 	case "task":
 		return "🔗"
 	default:
