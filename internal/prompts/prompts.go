@@ -235,11 +235,21 @@ func IsolatedWorkspaceGuidance(omitted, mcpOmitted, beltRemoved []string) string
 		b.WriteString("`" + strings.Join(mcpOmitted, "`, `") + "`.")
 	}
 	if len(beltRemoved) > 0 {
-		b.WriteString("\n\nThis session's tool belt also excludes: ")
-		b.WriteString("`" + strings.Join(beltRemoved, "`, `") + "`. Do not attempt them.")
+		// A count, not a list: the exact set is in the request's schemas.
+		b.WriteString("\n\nThis session's tool belt excludes " + strconv.Itoa(len(beltRemoved)) + " further tool(s). Do not attempt them.")
 	}
-	if !hasTool(beltRemoved, "skill") && !hasTool(beltRemoved, "plan") {
+	// The read-only note is per tool: one of them may be excluded by the
+	// belt while the other is still there.
+	var readOnly []string
+	for _, name := range []string{"skill", "plan"} {
+		if !hasTool(beltRemoved, name) {
+			readOnly = append(readOnly, "`"+name+"`")
+		}
+	}
+	if len(readOnly) == 2 {
 		b.WriteString("\n\nThe `skill` and `plan` tools are read-only here: their create/edit/delete actions are disabled because they manage host harness configuration (.agents/). Their list/show/load actions work as usual.\n")
+	} else if len(readOnly) == 1 {
+		b.WriteString("\n\nThe " + readOnly[0] + " tool is read-only here: its create/edit/delete actions are disabled because it manages host harness configuration (.agents/). Its list/show/load actions work as usual.\n")
 	}
 
 	if hasTool(beltRemoved, "apply_out") {
@@ -262,23 +272,16 @@ func hasTool(names []string, name string) bool {
 }
 
 // ToolBeltGuidance tells the model that the session runs a reduced tool
-// set. The exact list is in the request's schemas — the model can see
-// which tools it has — so the notice stays a sentence: naming every
-// excluded tool would duplicate that list on every call (yaah-w8x).
-func ToolBeltGuidance(available []string, excluded int) string {
+// set. It names nothing: the exact set is in the request's schemas, and
+// a list would be a per-call cost in either direction (yaah-w8x).
+func ToolBeltGuidance(excluded int) string {
 	if excluded <= 0 {
 		return ""
 	}
 	var b strings.Builder
 	b.WriteString("## Tool belt\n\n")
-	if len(available) > 0 {
-		b.WriteString("This session exposes only `" + strings.Join(available, "`, `") + "`.")
-	} else {
-		b.WriteString("This session exposes no tools.")
-	}
-	b.WriteString(" The other ")
-	b.WriteString(strconv.Itoa(excluded))
-	b.WriteString(" are not available — do not call them. Use the tools in your tool list, and say so if none of them can do the job.\n")
+	b.WriteString("This session runs with a reduced tool set: the tools in your tool list are the only ones available. ")
+	b.WriteString("Do not attempt any other tool — if none of them can do the job, say so instead.\n")
 	return b.String()
 }
 

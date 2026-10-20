@@ -253,6 +253,13 @@ func newRegistry(keep func(Tool) bool, belt *Belt) *Registry {
 		}
 		t := factory()
 		if !keep(t) {
+			// The tool exists but this registry does not carry it (an
+			// isolated session leaves the host-only leaf tools out). The
+			// belt must know the name, or an allowlist that names it
+			// reads as a typo.
+			if belt != nil {
+				belt.Know(name)
+			}
 			continue
 		}
 		r.Register(t)

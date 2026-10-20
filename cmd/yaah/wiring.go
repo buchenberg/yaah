@@ -856,7 +856,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		// The belt notice is a sentence, not a list: the exact set is in
 		// the request's schemas.
 		if len(beltRemoved) > 0 {
-			mainPrompt += "\n\n" + prompts.ToolBeltGuidance(toolReg.List(), len(beltRemoved))
+			mainPrompt += "\n\n" + prompts.ToolBeltGuidance(len(beltRemoved))
 		}
 	}
 	if opts.OneShot {

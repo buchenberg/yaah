@@ -405,18 +405,20 @@ func TestConfinementGuidance_EgressLiterals(t *testing.T) {
 // must not enumerate the excluded tools — that list is a per-call cost
 // and duplicates what the schema list already says.
 func TestToolBeltGuidance(t *testing.T) {
-	if got := ToolBeltGuidance([]string{"read"}, 0); got != "" {
+	if got := ToolBeltGuidance(0); got != "" {
 		t.Errorf("an intact belt must render nothing, got %q", got)
 	}
-	got := ToolBeltGuidance([]string{"read", "ls"}, 35)
-	for _, want := range []string{"## Tool belt", "`read`", "`ls`", "35", "do not call them"} {
+	got := ToolBeltGuidance(35)
+	for _, want := range []string{"## Tool belt", "Do not attempt"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("belt guidance must contain %q:\n%s", want, got)
 		}
 	}
-	for _, unwanted := range []string{"go_test", "bisect"} {
+	// The notice names nothing: the schemas carry the list, and naming
+	// tools is a per-call cost in either direction.
+	for _, unwanted := range []string{"go_test", "bisect", "read", "`"} {
 		if strings.Contains(got, unwanted) {
-			t.Errorf("belt guidance must not enumerate excluded tools (%q):\n%s", unwanted, got)
+			t.Errorf("belt guidance must not name tools (%q):\n%s", unwanted, got)
 		}
 	}
 }
@@ -432,8 +434,8 @@ func TestIsolatedWorkspaceGuidance_BeltAwareness(t *testing.T) {
 	if !strings.Contains(got, "cannot leave the container") {
 		t.Errorf("guidance must say changes stay in the container:\n%s", got)
 	}
-	if !strings.Contains(got, "`apply_out`") {
-		t.Errorf("guidance must name the excluded tools:\n%s", got)
+	if !strings.Contains(got, "tool belt excludes") {
+		t.Errorf("guidance must state the belt's exclusion:\n%s", got)
 	}
 	if strings.Contains(got, "you dispatch with delegate") {
 		t.Errorf("guidance must not promise delegate when the belt excluded it:\n%s", got)
