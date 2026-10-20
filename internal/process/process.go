@@ -20,10 +20,19 @@ type Info struct {
 	Command     string
 	Description string
 	StartedAt   time.Time
-	Status      string // "running", "finished", "stopped", "error"
+	status      string // "running", "finished", "stopped", "error"
 	logs        strings.Builder
 	cmd         *exec.Cmd
 	mu          sync.Mutex
+}
+
+// Status returns the current lifecycle state under the same mutex used by
+// the exit and stop paths. Callers outside this package must use this
+// accessor; the field is unexported so an unsynchronized read cannot compile.
+func (p *Info) Status() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.status
 }
 
 // Logs returns a copy of the process output buffer.
@@ -93,12 +102,14 @@ func (m *Manager) Start(command, description string) (*Info, error) {
 		Command:     command,
 		Description: description,
 		StartedAt:   time.Now(),
-		Status:      "running",
+		status:      "running",
 		cmd:         cmd,
 	}
 
 	if err := cmd.Start(); err != nil {
-		info.Status = "error"
+		info.mu.Lock()
+		info.status = "error"
+		info.mu.Unlock()
 		info.appendLog(fmt.Sprintf("start error: %v\n", err))
 		return info, err
 	}
@@ -132,14 +143,14 @@ func (m *Manager) Start(command, description string) (*Info, error) {
 		pipeWg.Wait()
 		err := cmd.Wait()
 		info.mu.Lock()
-		if info.Status == "running" {
+		if info.status == "running" {
 			if err != nil {
-				info.Status = "error"
+				info.status = "error"
 				// Write directly to logs since we already hold info.mu
 				// (appendLog would deadlock — sync.Mutex is not reentrant).
 				info.logs.WriteString(fmt.Sprintf("exit error: %v\n", err))
 			} else {
-				info.Status = "finished"
+				info.status = "finished"
 			}
 		}
 		info.mu.Unlock()
@@ -175,11 +186,11 @@ func (m *Manager) Stop(id string) error {
 		return fmt.Errorf("process %s not found", id)
 	}
 	info.mu.Lock()
-	if info.Status != "running" {
+	if info.status != "running" {
 		info.mu.Unlock()
 		return fmt.Errorf("process %s is not running", id)
 	}
-	info.Status = "stopped"
+	info.status = "stopped"
 	info.mu.Unlock()
 
 	if info.cmd != nil && info.cmd.Process != nil {

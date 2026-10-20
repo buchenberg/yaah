@@ -34,11 +34,9 @@ func TestStartSimpleCommand(t *testing.T) {
 	if info.ID == "" {
 		t.Error("info.ID should not be empty")
 	}
-	info.mu.Lock()
-	status := info.Status
-	info.mu.Unlock()
+	status := info.Status()
 	if status != "running" && status != "finished" {
-		t.Errorf("info.Status = %q; want %q or %q", status, "running", "finished")
+		t.Errorf("info.Status() = %q; want %q or %q", status, "running", "finished")
 	}
 	if info.Command != "echo hello" {
 		t.Errorf("info.Command = %q; want %q", info.Command, "echo hello")
@@ -88,9 +86,7 @@ func TestStartEchoProducesOutput(t *testing.T) {
 	// (pwsh cold start can exceed 2s on Windows).
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		info.mu.Lock()
-		s := info.Status
-		info.mu.Unlock()
+		s := info.Status()
 		if s != "running" {
 			logs := info.Logs()
 			if logs != "" {
@@ -149,9 +145,7 @@ func TestStartFailingCommand(t *testing.T) {
 	// deadline tolerates slow shell startup on loaded CI runners.
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		info.mu.Lock()
-		status := info.Status
-		info.mu.Unlock()
+		status := info.Status()
 		if status != "running" {
 			if status != "error" {
 				t.Errorf("failing command status = %q; want %q", status, "error")
@@ -162,9 +156,7 @@ func TestStartFailingCommand(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	info.mu.Lock()
-	status := info.Status
-	info.mu.Unlock()
+	status := info.Status()
 	t.Logf("failing command status: %q, logs: %q", status, info.Logs())
 	t.Error("failing command status still 'running' after 10s")
 }
@@ -189,9 +181,7 @@ func TestStopRunningProcess(t *testing.T) {
 	// Give it a moment to fully stop
 	time.Sleep(200 * time.Millisecond)
 
-	info.mu.Lock()
-	status := info.Status
-	info.mu.Unlock()
+	status := info.Status()
 	if status != "stopped" {
 		t.Errorf("status = %q; want %q", status, "stopped")
 	}
