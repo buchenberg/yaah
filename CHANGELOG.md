@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.88.4](https://github.com/buchenberg/yaah/compare/v0.88.3...v0.88.4) (2026-10-20)
+
+
+### Performance Improvements
+
+* **prompts:** drop the tool quick-reference card from the system prompt ([#501](https://github.com/buchenberg/yaah/issues/501)) ([1fde0dc](https://github.com/buchenberg/yaah/commit/1fde0dcca9978d445c1cbe9d2cc12131b90a9f68))
+
 ## [0.88.3](https://github.com/buchenberg/yaah/compare/v0.88.2...v0.88.3) (2026-10-20)
 
 
