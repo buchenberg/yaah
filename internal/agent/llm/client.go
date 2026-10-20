@@ -73,6 +73,51 @@ type CallResult struct {
 // MaxRetries) instead of spinning forever (finding A2).
 const maxStripReasoningAttempts = 3
 
+const (
+	// outputBudgetRetryFloor is the base cap used when neither the request
+	// nor the provider reports an output cap. OpenAI-compatible endpoints
+	// leave max_tokens unset by default, so the wire value that exhausted
+	// the budget is only known to the server; this floor gives the retry
+	// room to finish a reasoning preamble plus an answer.
+	outputBudgetRetryFloor = 16384
+	// outputBudgetRetryCeiling bounds the doubled cap so an already
+	// generous explicit max_tokens cannot overflow into a value the model
+	// rejects outright.
+	outputBudgetRetryCeiling = 65536
+)
+
+// OutputBudgetProvider is implemented by providers that can report the
+// output-token cap they will apply to a request. After output-budget
+// exhaustion the retry ladder must double that effective cap — reading
+// req.MaxTokens alone is not enough because providers fill an unset value
+// with their own default internally.
+type OutputBudgetProvider interface {
+	EffectiveMaxTokens(req types.ChatRequest) int
+}
+
+// raisedOutputBudget returns the output cap to use for the single
+// budget-raising retry. ok is false when the cap is unknown or already at
+// the ceiling, where doubling cannot help.
+func raisedOutputBudget(provider Provider, req types.ChatRequest) (int, bool) {
+	current := req.MaxTokens
+	if current <= 0 {
+		if obp, ok := provider.(OutputBudgetProvider); ok {
+			current = obp.EffectiveMaxTokens(req)
+		}
+	}
+	if current <= 0 {
+		current = outputBudgetRetryFloor
+	}
+	next := current * 2
+	if next > outputBudgetRetryCeiling {
+		next = outputBudgetRetryCeiling
+	}
+	if next <= current {
+		return 0, false
+	}
+	return next, true
+}
+
 // swapToFallback rotates the client to its fallback provider/model once,
 // swapping identity labels in lockstep. The previous provider becomes the
 // fallback so a later swap can return to it.
@@ -99,6 +144,7 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 	stripAttempts := 0
 	providerSwapped := false
 	respFormatDropped := false
+	outputBudgetRaised := false
 	c.replayCount = 0
 	c.prematureCount = 0
 
@@ -302,6 +348,27 @@ func (c *Client) Call(ctx context.Context, req types.ChatRequest) (CallResult, e
 			providerSwapped = true
 			attempt--
 			continue
+
+		case classified.Reason == errorclassify.ReasonOutputBudget:
+			// The model spent the whole output budget on reasoning before
+			// emitting content. Replaying unchanged is deterministic
+			// failure, but doubling the cap once gives a reasoning-heavy
+			// model the room it needed. If the raised cap is exhausted
+			// too, surface the actionable diagnosis instead of looping.
+			if !outputBudgetRaised {
+				if next, ok := raisedOutputBudget(c.Provider, req); ok {
+					req.MaxTokens = next
+					outputBudgetRaised = true
+					// Recovery replay, not a retry: do not consume a
+					// MaxRetries slot and skip the backoff.
+					attempt--
+					continue
+				}
+			}
+			if classified.Message != "" {
+				return attach(result), fmt.Errorf("%s: %w", classified.Message, err)
+			}
+			return attach(result), err
 
 		case classified.ShouldAbort:
 			// Surface the actionable diagnosis: the classification explains

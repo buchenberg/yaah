@@ -94,6 +94,17 @@ func (c *OpenAIClient) applyDefaultMaxTokens(req *types.ChatRequest) {
 	}
 }
 
+// EffectiveMaxTokens reports the output cap this client applies to req:
+// an explicit request cap wins, otherwise the configured provider default.
+// Zero means the cap is left to the server. The retry ladder uses this to
+// double the cap after output-budget exhaustion.
+func (c *OpenAIClient) EffectiveMaxTokens(req types.ChatRequest) int {
+	if req.MaxTokens > 0 {
+		return req.MaxTokens
+	}
+	return c.DefaultMaxTokens
+}
+
 // Send posts a ChatRequest to the provider and returns the parsed ChatResponse.
 func (c *OpenAIClient) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
 	c.applyDefaultMaxTokens(&req)

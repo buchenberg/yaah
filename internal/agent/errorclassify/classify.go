@@ -247,7 +247,8 @@ func Classify(err error, meta ErrorMeta) ClassifiedError {
 	// budget (reasoning models bill thinking tokens against it) before
 	// emitting any content. This is not context overflow — compaction
 	// cannot reclaim output budget, so retrying unchanged only repeats
-	// the failure.
+	// the failure. The retry ladder doubles the cap once before giving
+	// up with this diagnosis.
 	if strings.Contains(msg, "produced no content") &&
 		(strings.Contains(msg, "finish_reason=length") || strings.Contains(msg, "output token budget")) {
 		c.Reason = ReasonOutputBudget

@@ -359,6 +359,26 @@ func TestAnthropicClient_EndpointAwareFallbackMaxTokens(t *testing.T) {
 	if got := compatible.lower(req).MaxTokens; got != compatibleAnthropicMaxTokens {
 		t.Errorf("compatible endpoint: expected %d, got %d", compatibleAnthropicMaxTokens, got)
 	}
+	if compatibleAnthropicMaxTokens != 16384 {
+		t.Errorf("compatible fallback = %d, want 16384 (room for reasoning tokens)", compatibleAnthropicMaxTokens)
+	}
+}
+
+func TestAnthropicClient_EffectiveMaxTokens(t *testing.T) {
+	client := NewAnthropicClient("https://api.z.ai/api/anthropic", "sk-test", 30)
+	client.DefaultMaxTokens = 32000
+
+	if got := client.EffectiveMaxTokens(types.ChatRequest{Model: "m"}); got != 32000 {
+		t.Errorf("unset request: EffectiveMaxTokens = %d, want provider default 32000", got)
+	}
+	if got := client.EffectiveMaxTokens(types.ChatRequest{Model: "m", MaxTokens: 4096}); got != 4096 {
+		t.Errorf("explicit cap: EffectiveMaxTokens = %d, want 4096", got)
+	}
+
+	client.DefaultMaxTokens = 0
+	if got := client.EffectiveMaxTokens(types.ChatRequest{Model: "m"}); got != compatibleAnthropicMaxTokens {
+		t.Errorf("fallback: EffectiveMaxTokens = %d, want %d", got, compatibleAnthropicMaxTokens)
+	}
 }
 
 func TestChatRequestToAnthropic_CacheControlPassthrough(t *testing.T) {

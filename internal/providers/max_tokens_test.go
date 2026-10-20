@@ -22,3 +22,22 @@ func TestOpenAIClientDefaultMaxTokens(t *testing.T) {
 		t.Errorf("explicit cap must win, got %d", req.MaxTokens)
 	}
 }
+
+func TestOpenAIClientEffectiveMaxTokens(t *testing.T) {
+	client := NewOpenAIClient("http://localhost:1234/v1", "key", 0)
+	client.DefaultMaxTokens = 12345
+
+	if got := client.EffectiveMaxTokens(types.ChatRequest{Model: "m"}); got != 12345 {
+		t.Errorf("unset request: EffectiveMaxTokens = %d, want provider default 12345", got)
+	}
+	if got := client.EffectiveMaxTokens(types.ChatRequest{Model: "m", MaxTokens: 4096}); got != 4096 {
+		t.Errorf("explicit cap: EffectiveMaxTokens = %d, want 4096", got)
+	}
+
+	// Zero means the server owns the cap; the retry ladder applies its own
+	// floor when this reports 0.
+	client.DefaultMaxTokens = 0
+	if got := client.EffectiveMaxTokens(types.ChatRequest{Model: "m"}); got != 0 {
+		t.Errorf("no configured cap: EffectiveMaxTokens = %d, want 0", got)
+	}
+}

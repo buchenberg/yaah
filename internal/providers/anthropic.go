@@ -32,7 +32,7 @@ type AnthropicClient struct {
 	// DefaultMaxTokens caps output tokens when a request does not set
 	// its own cap. Zero means use the endpoint-aware fallback chosen by
 	// lower: 4096 for api.anthropic.com (several Claude 3 models cap
-	// there) and 8192 for Anthropic-compatible endpoints (DeepSeek, ZAI,
+	// there) and 16384 for Anthropic-compatible endpoints (DeepSeek, ZAI,
 	// ...), which bill thinking tokens against max_tokens.
 	DefaultMaxTokens int
 }
@@ -43,8 +43,10 @@ const (
 	// Claude 2.x line reject anything larger.
 	nativeAnthropicMaxTokens = 4096
 	// compatibleAnthropicMaxTokens leaves room for a reasoning preamble
-	// plus an answer on Anthropic-compatible reasoning endpoints.
-	compatibleAnthropicMaxTokens = 8192
+	// plus an answer on Anthropic-compatible reasoning endpoints. GLM-style
+	// thinking models can spend several thousand tokens before emitting any
+	// content, so 8192 proved too tight in practice.
+	compatibleAnthropicMaxTokens = 16384
 )
 
 // NewAnthropicClient creates a new client targeting the Anthropic Messages
@@ -128,12 +130,23 @@ func (c *AnthropicClient) Send(ctx context.Context, req types.ChatRequest) (*typ
 // (for example context compaction) can keep their own explicit budget.
 func (c *AnthropicClient) lower(req types.ChatRequest) anthropic.MessageNewParams {
 	if req.MaxTokens <= 0 {
-		req.MaxTokens = c.DefaultMaxTokens
-		if req.MaxTokens <= 0 {
-			req.MaxTokens = int(c.fallbackMaxTokens())
-		}
+		req.MaxTokens = c.EffectiveMaxTokens(req)
 	}
 	return lowerAnthropicRequest(req)
+}
+
+// EffectiveMaxTokens reports the output cap lower applies to req: an
+// explicit request cap wins, then the provider's configured default, then
+// the endpoint-aware fallback. The retry ladder uses this to double the cap
+// after output-budget exhaustion even when the caller left MaxTokens unset.
+func (c *AnthropicClient) EffectiveMaxTokens(req types.ChatRequest) int {
+	if req.MaxTokens > 0 {
+		return req.MaxTokens
+	}
+	if c.DefaultMaxTokens > 0 {
+		return c.DefaultMaxTokens
+	}
+	return int(c.fallbackMaxTokens())
 }
 
 // fallbackMaxTokens selects the unconfigured output cap by endpoint. The
@@ -290,7 +303,7 @@ func lowerAnthropicRequest(req types.ChatRequest) anthropic.MessageNewParams {
 	if maxTokens <= 0 {
 		// Safe floor for direct callers. AnthropicClient.lower normally
 		// fills this in with the endpoint-aware default (4096 native,
-		// 8192 for Anthropic-compatible reasoning endpoints).
+		// 16384 for Anthropic-compatible reasoning endpoints).
 		maxTokens = nativeAnthropicMaxTokens
 	}
 
