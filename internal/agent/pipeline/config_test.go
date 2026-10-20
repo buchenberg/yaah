@@ -23,7 +23,7 @@ func TestPipeline_OrchestratorNoTraceBuilder(t *testing.T) {
 
 func TestPipeline_SubAgentPipelineNames(t *testing.T) {
 	names := SubAgentPipelineNames(nil)
-	want := []string{"tool_concurrency", "evidence_guard", "shepherd_trace"}
+	want := []string{"tool_concurrency", "shepherd_trace", "evidence_guard"}
 	if len(names) != len(want) {
 		t.Fatalf("SubAgentPipelineNames(nil) = %v, want %v", names, want)
 	}

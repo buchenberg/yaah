@@ -289,8 +289,8 @@ var defaultPipelineNames = []string{
 // - shepherd_trace: records tool calls for error enrichment and sub-agent diagnostics
 var subAgentPipelineNames = []string{
 	"tool_concurrency",
-	"evidence_guard",
 	"shepherd_trace",
+	"evidence_guard",
 }
 
 // RegisteredOrchestratorNames returns the middleware names that have

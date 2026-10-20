@@ -28,6 +28,7 @@ type SubAgentConfig struct {
 	MaxToolConcurrency     int
 	EvidenceGuardNudge     int
 	EvidenceGuardHalt      int
+	PipelineDisabled       []string
 	JSONMode               bool
 	ToolResultMaxLines     int
 	ToolResultMaxBytes     int
@@ -142,7 +143,7 @@ func NewSubAgentLoop(provider Provider, registry *tools.Registry, model, systemP
 			ApprovalMode:           "allow",
 			ToolsLevel:             FullTools,
 			PipelineNames:          nil,
-			PipelineDisabled:       nil,
+			PipelineDisabled:       cfg.PipelineDisabled,
 			WrapUpThreshold:        cfg.WrapUpThreshold,
 			SessionID:              cfg.SessionID,
 			IsSubAgent:             true,

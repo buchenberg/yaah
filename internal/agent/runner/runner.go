@@ -68,6 +68,7 @@ type DelegateToolOpts struct {
 	OutputLimit           int
 	ProviderMap           map[string]config.Provider
 	Defaults              config.Defaults
+	PipelineDisabled      []string
 	ParentPermissionRules []pipeline.PermissionRule
 
 	// ToolSpillDir is where oversized sub-agent tool results spill to
@@ -161,6 +162,7 @@ func NewDelegateTool(opts DelegateToolOpts) *tools.DelegateTool {
 		outputLimit:           opts.OutputLimit,
 		providerMap:           opts.ProviderMap,
 		defaults:              opts.Defaults,
+		pipelineDisabled:      opts.PipelineDisabled,
 		parentPermissionRules: opts.ParentPermissionRules,
 		toolSpillDir:          opts.ToolSpillDir,
 		pathValidator:         opts.PathValidator,
@@ -313,6 +315,10 @@ type taskRunnerOpts struct {
 	// inherit loop-detection thresholds, retry policies, compaction
 	// tuning, and concurrency caps from the parent config.
 	defaults config.Defaults
+
+	// pipelineDisabled is agents.middleware.disabled, forwarded so an
+	// opt-out such as [evidence_guard] also applies inside delegated loops.
+	pipelineDisabled []string
 
 	// parentPermissionRules, when non-nil, are passed to the sub-agent's
 	// PermissionMiddleware so path-based deny rules from the parent
@@ -569,6 +575,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 			MaxToolConcurrency:     opts.defaults.MaxToolConcurrency,
 			EvidenceGuardNudge:     opts.defaults.EvidenceGuardNudge,
 			EvidenceGuardHalt:      opts.defaults.EvidenceGuardHalt,
+			PipelineDisabled:       opts.pipelineDisabled,
 			JSONMode:               jsonMode,
 			ToolResultMaxLines:     opts.defaults.ToolResultMaxLines,
 			ToolResultMaxBytes:     opts.defaults.ToolResultMaxBytes,

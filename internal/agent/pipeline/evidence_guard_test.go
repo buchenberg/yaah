@@ -51,14 +51,22 @@ func TestEvidenceGuardReadRangeCoverage(t *testing.T) {
 	if m.stale != 0 {
 		t.Fatalf("first read stale = %d", m.stale)
 	}
-	// Fully covered range, unchanged content -> stale.
-	if _, err := m.PostTool(ctx, []ToolResult{readResult("/tmp/a.go", `{"filePath":"/tmp/a.go","offset":3,"limit":4}`, "alpha")}, step); err != nil {
+	// A different range is new evidence: partial slices cannot be compared
+	// byte-for-byte with a larger read.
+	if _, err := m.PostTool(ctx, []ToolResult{readResult("/tmp/a.go", `{"filePath":"/tmp/a.go","offset":3,"limit":4}`, "pha")}, step); err != nil {
+		t.Fatal(err)
+	}
+	if m.stale != 0 {
+		t.Fatalf("different range stale = %d, want 0", m.stale)
+	}
+	// Exact same range + content is stale.
+	if _, err := m.PostTool(ctx, []ToolResult{readResult("/tmp/a.go", first, "alpha")}, step); err != nil {
 		t.Fatal(err)
 	}
 	if m.stale != 1 {
-		t.Fatalf("covered read stale = %d, want 1", m.stale)
+		t.Fatalf("exact repeat stale = %d, want 1", m.stale)
 	}
-	// New range -> new evidence, resets stale.
+	// New range resets.
 	if _, err := m.PostTool(ctx, []ToolResult{readResult("/tmp/a.go", `{"filePath":"/tmp/a.go","offset":11,"limit":10}`, "beta")}, step); err != nil {
 		t.Fatal(err)
 	}
@@ -176,14 +184,46 @@ func TestEvidenceGuardMixedSearchThrash(t *testing.T) {
 	b := `{"filePath":"/tmp/b.go"}`
 
 	m.PostTool(ctx, []ToolResult{readResult("/tmp/a.go", a, "alpha")}, step)
-	m.PostTool(ctx, []ToolResult{{Name: "grep", Args: `{"pattern":"Context"`, Result: "hits"}}, step)
+	m.PostTool(ctx, []ToolResult{{Name: "grep", Args: `{"pattern":"Context"}`, Result: "hits"}}, step)
 	m.PostTool(ctx, []ToolResult{readResult("/tmp/b.go", b, "bravo")}, step)
 	// Heterogeneous repeats that exact loop detection never sees.
 	m.PostTool(ctx, []ToolResult{readResult("/tmp/a.go", a, "alpha")}, step)
-	m.PostTool(ctx, []ToolResult{{Name: "grep", Args: `{"pattern":"Context"`, Result: "hits"}}, step)
+	m.PostTool(ctx, []ToolResult{{Name: "grep", Args: `{"pattern":"Context"}`, Result: "hits"}}, step)
 	m.PostTool(ctx, []ToolResult{readResult("/tmp/b.go", b, "bravo")}, step)
 
 	if len(step.Messages) != 1 {
 		t.Fatalf("messages = %d, want one mixed-thrash steer", len(step.Messages))
+	}
+}
+
+func TestEvidenceGuardHashesSpilledResultsStably(t *testing.T) {
+	m := NewEvidenceGuardMiddleware(10, 0)
+	step := &Step{}
+	ctx := context.Background()
+	args := `{"pattern":"needle","path":"."}`
+	first := "x\n...[output truncated at 10 lines / 20480 bytes — full output at /tmp/spill/1-tool.txt. To read portions, use the read tool]..."
+	second := "x\n...[output truncated at 10 lines / 20480 bytes — full output at /tmp/spill/2-tool.txt. To read portions, use the read tool]..."
+	m.PostTool(ctx, []ToolResult{{Name: "grep", Args: args, Result: first}}, step)
+	m.PostTool(ctx, []ToolResult{{Name: "grep", Args: args, Result: second}}, step)
+	if m.stale != 1 {
+		t.Fatalf("spill timestamp changed the hash: stale=%d, want 1", m.stale)
+	}
+}
+
+func TestEvidenceGuardPatchResets(t *testing.T) {
+	m := NewEvidenceGuardMiddleware(10, 0)
+	step := &Step{}
+	ctx := context.Background()
+	file := `{"filePath":"/tmp/a.go"}`
+	m.PostTool(ctx, []ToolResult{readResult("/tmp/a.go", file, "one")}, step)
+	m.PostTool(ctx, []ToolResult{readResult("/tmp/a.go", file, "one")}, step)
+	if m.stale != 1 {
+		t.Fatalf("stale = %d, want 1", m.stale)
+	}
+	if _, err := m.PostTool(ctx, []ToolResult{{Name: "patch", Args: file, Result: "ok"}}, step); err != nil {
+		t.Fatal(err)
+	}
+	if m.stale != 0 {
+		t.Fatalf("patch did not reset stale: %d", m.stale)
 	}
 }
