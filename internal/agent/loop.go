@@ -348,6 +348,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 			l.FallbackProvider = l.LLM.FallbackProvider
 			l.FallbackModel = l.LLM.FallbackModel
 			l.addUsage(result.Usage)
+			l.addRecoveryUsage(result.RecoveryUsage)
 			l.State.LastFinishReason = result.FinishReason
 			l.State.LastResponseModel = result.ResponseModel
 			messages = append(messages, msg)

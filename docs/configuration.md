@@ -191,7 +191,7 @@ for keyless local endpoints.
 | `name` | map key | Display name shown in the CLI and TUI |
 | `models` | — | Limit available models. Each entry is a plain name or `{name: …, thinking: true/false}` |
 | `timeout` | 0 (no timeout) | HTTP request timeout in seconds; negative values fall back to 120s |
-| `max_tokens` | 4096 native, 16384 compatible; unset on `openai` | Output-token cap when a request has none. Native `api.anthropic.com` stays at 4096 for older Claude models; compatible endpoints default to 16384 because reasoning tokens count against the budget. When the model exhausts the cap before emitting content, the client retries once with a doubled cap (bounded at 65536) |
+| `max_tokens` | 4096 native, 16384 compatible; unset on `openai` | Output-token cap when a request has none. Native `api.anthropic.com` stays at 4096 for older Claude models; compatible endpoints default to 16384 because reasoning tokens count against the budget. When the model exhausts a known cap before emitting content, the client retries once with a doubled cap (bounded at 65536); providers that do not report a cap are not retried, and the native Anthropic safe floor is never raised |
 | `headers` | — | Extra HTTP headers, sent by OpenAI-compatible providers only |
 | `oauth_client_id` / `oauth_scope` / `oauth_domain` | — | OAuth device-flow settings used with `auth: oauth` |
 

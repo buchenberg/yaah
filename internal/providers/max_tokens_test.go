@@ -34,10 +34,13 @@ func TestOpenAIClientEffectiveMaxTokens(t *testing.T) {
 		t.Errorf("explicit cap: EffectiveMaxTokens = %d, want 4096", got)
 	}
 
-	// Zero means the server owns the cap; the retry ladder applies its own
-	// floor when this reports 0.
+	// Zero means the server owns the cap; the retry ladder skips the raise
+	// when this reports 0.
 	client.DefaultMaxTokens = 0
 	if got := client.EffectiveMaxTokens(types.ChatRequest{Model: "m"}); got != 0 {
 		t.Errorf("no configured cap: EffectiveMaxTokens = %d, want 0", got)
+	}
+	if got := client.OutputTokenCeiling(types.ChatRequest{Model: "m"}); got != 0 {
+		t.Errorf("OutputTokenCeiling = %d, want 0 (unknown)", got)
 	}
 }

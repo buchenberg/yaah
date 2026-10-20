@@ -105,6 +105,10 @@ func (c *OpenAIClient) EffectiveMaxTokens(req types.ChatRequest) int {
 	return c.DefaultMaxTokens
 }
 
+// OutputTokenCeiling reports no known per-model ceiling; OpenAI-compatible
+// servers own that limit. Zero means "unknown" to the retry ladder.
+func (c *OpenAIClient) OutputTokenCeiling(types.ChatRequest) int { return 0 }
+
 // Send posts a ChatRequest to the provider and returns the parsed ChatResponse.
 func (c *OpenAIClient) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
 	c.applyDefaultMaxTokens(&req)

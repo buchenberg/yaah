@@ -3,10 +3,12 @@ package llm
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/observability"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -18,6 +20,7 @@ type outputBudgetProvider struct {
 	caps      []int
 	failCalls int
 	effective int
+	ceiling   int
 }
 
 func (p *outputBudgetProvider) Send(ctx context.Context, req types.ChatRequest) (*types.ChatResponse, error) {
@@ -29,12 +32,18 @@ func (p *outputBudgetProvider) Send(ctx context.Context, req types.ChatRequest) 
 	return okResponse, nil
 }
 
+func (p *outputBudgetProvider) SendStream(context.Context, types.ChatRequest) (<-chan providers.StreamChunk, <-chan error) {
+	return nil, nil
+}
+
 func (p *outputBudgetProvider) EffectiveMaxTokens(req types.ChatRequest) int {
 	if req.MaxTokens > 0 {
 		return req.MaxTokens
 	}
 	return p.effective
 }
+
+func (p *outputBudgetProvider) OutputTokenCeiling(types.ChatRequest) int { return p.ceiling }
 
 // The first budget exhaustion must retry once with a doubled cap, without
 // consuming a MaxRetries slot.
@@ -135,11 +144,109 @@ func TestRaisedOutputBudgetCeiling(t *testing.T) {
 }
 
 // A provider that reports no effective cap (OpenAI-compatible with
-// max_tokens unset) still gets a usable retry floor.
-func TestRaisedOutputBudgetUsesFloorWhenUnknown(t *testing.T) {
+// max_tokens unset) must not be retried: an explicit floor could ask for
+// fewer tokens than the server's unknown default already used.
+func TestRaisedOutputBudgetSkipsUnknownCap(t *testing.T) {
 	p := &providers.OpenAIClient{} // DefaultMaxTokens zero
-	next, ok := raisedOutputBudget(p, types.ChatRequest{})
-	if !ok || next != outputBudgetRetryFloor*2 {
-		t.Fatalf("raised cap = %d, ok = %v; want %d, true", next, ok, outputBudgetRetryFloor*2)
+	if next, ok := raisedOutputBudget(p, types.ChatRequest{}); ok {
+		t.Fatalf("raised cap = %d, ok = true; want no raise when the cap is unknown", next)
+	}
+}
+
+// OTel instrumentation must forward the optional output-cap capability.
+func TestRaisedOutputBudgetThroughInstrumentedProvider(t *testing.T) {
+	p := &outputBudgetProvider{effective: 16384}
+	wrapped := &observability.InstrumentedProvider{Inner: p}
+	next, ok := raisedOutputBudget(wrapped, types.ChatRequest{})
+	if !ok || next != 32768 {
+		t.Fatalf("raised cap = %d, ok = %v; want 32768, true through the OTel wrapper", next, ok)
+	}
+}
+
+// The native Anthropic safe floor must not be doubled; compatible endpoints
+// can be raised.
+func TestRaisedOutputBudgetHonorsProviderCeiling(t *testing.T) {
+	native := providers.NewAnthropicClient("https://api.anthropic.com", "sk-test", 0)
+	if next, ok := raisedOutputBudget(native, types.ChatRequest{}); ok {
+		t.Fatalf("native Anthropic cap raised to %d; want no raise past the 4096 safe floor", next)
+	}
+
+	compatible := providers.NewAnthropicClient("https://api.z.ai/api/anthropic", "sk-test", 0)
+	next, ok := raisedOutputBudget(compatible, types.ChatRequest{})
+	if !ok || next != 32768 {
+		t.Fatalf("compatible cap = %d, ok = %v; want 32768, true", next, ok)
+	}
+}
+
+// exhaustedUsageProvider returns an empty finish_reason=length response with
+// billable usage, then a normal response.
+type exhaustedUsageProvider struct {
+	calls     int
+	failUsage types.Usage
+	okUsage   types.Usage
+}
+
+func (p *exhaustedUsageProvider) Send(context.Context, types.ChatRequest) (*types.ChatResponse, error) {
+	p.calls++
+	if p.calls == 1 {
+		return &types.ChatResponse{
+			Choices: []types.Choice{{
+				Message:      types.Message{Role: "assistant"},
+				FinishReason: "length",
+			}},
+			Usage: p.failUsage,
+		}, nil
+	}
+	return &types.ChatResponse{
+		Choices: []types.Choice{{
+			Message:      types.Message{Role: "assistant", Content: "ok"},
+			FinishReason: "stop",
+		}},
+		Usage: p.okUsage,
+	}, nil
+}
+
+func (p *exhaustedUsageProvider) EffectiveMaxTokens(req types.ChatRequest) int {
+	if req.MaxTokens > 0 {
+		return req.MaxTokens
+	}
+	return 16384
+}
+
+func (p *exhaustedUsageProvider) OutputTokenCeiling(types.ChatRequest) int { return 0 }
+
+// Usage billed by the exhausted attempt must survive the replay separately
+// from the final attempt's Usage.
+func TestCall_outputBudgetPreservesExhaustedUsage(t *testing.T) {
+	failUsage := types.Usage{
+		PromptTokens:       120,
+		CompletionTokens:   16384,
+		TotalTokens:        16504,
+		CachedPromptTokens: 20,
+		CompletionTokensDetails: &types.CompletionTokensDetails{
+			ReasoningTokens: 16000,
+		},
+	}
+	okUsage := types.Usage{PromptTokens: 130, CompletionTokens: 12, TotalTokens: 142}
+	p := &exhaustedUsageProvider{failUsage: failUsage, okUsage: okUsage}
+	c := &Client{
+		Provider:     p,
+		Model:        "test-model",
+		MaxRetries:   0,
+		RetryBackoff: time.Millisecond,
+	}
+
+	res, err := c.Call(context.Background(), types.ChatRequest{
+		Model:     "test-model",
+		MaxTokens: 4096,
+	})
+	if err != nil {
+		t.Fatalf("Call() error after raised-budget retry: %v", err)
+	}
+	if !reflect.DeepEqual(res.Usage, okUsage) {
+		t.Errorf("Usage = %+v, want final attempt usage %+v", res.Usage, okUsage)
+	}
+	if !reflect.DeepEqual(res.RecoveryUsage, failUsage) {
+		t.Errorf("RecoveryUsage = %+v, want exhausted attempt usage %+v", res.RecoveryUsage, failUsage)
 	}
 }

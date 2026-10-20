@@ -917,6 +917,37 @@ func TestLoop_tokenUsageTracking(t *testing.T) {
 	}
 }
 
+// Recovery usage counts toward totals without replacing the context
+// occupancy derived from the final attempt.
+func TestLoop_addRecoveryUsagePreservesContextOccupancy(t *testing.T) {
+	loop := &Loop{}
+	loop.State.LastPromptTokens = 500
+	loop.State.LastCachedPromptTokens = 100
+
+	loop.addRecoveryUsage(types.Usage{
+		PromptTokens:       1000,
+		CompletionTokens:   2000,
+		TotalTokens:        3000,
+		CachedPromptTokens: 400,
+		CompletionTokensDetails: &types.CompletionTokensDetails{
+			ReasoningTokens: 1800,
+		},
+	})
+
+	if got := loop.State.TotalTokens.TotalTokens; got != 3000 {
+		t.Errorf("TotalTokens = %d, want 3000", got)
+	}
+	if got := loop.State.TotalReasoningTokens; got != 1800 {
+		t.Errorf("TotalReasoningTokens = %d, want 1800", got)
+	}
+	if loop.State.LastPromptTokens != 500 {
+		t.Errorf("LastPromptTokens = %d, want 500 (final attempt occupancy)", loop.State.LastPromptTokens)
+	}
+	if loop.State.LastCachedPromptTokens != 100 {
+		t.Errorf("LastCachedPromptTokens = %d, want 100 (final attempt occupancy)", loop.State.LastCachedPromptTokens)
+	}
+}
+
 // --- Test: Context window management ---
 
 func TestLoop_contextWindowTrimming(t *testing.T) {

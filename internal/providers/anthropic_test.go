@@ -381,6 +381,20 @@ func TestAnthropicClient_EffectiveMaxTokens(t *testing.T) {
 	}
 }
 
+func TestAnthropicClient_OutputTokenCeiling(t *testing.T) {
+	req := types.ChatRequest{Model: "m"}
+
+	native := NewAnthropicClient("https://api.anthropic.com", "sk-test", 30)
+	if got := native.OutputTokenCeiling(req); got != nativeAnthropicMaxTokens {
+		t.Errorf("native ceiling = %d, want %d", got, nativeAnthropicMaxTokens)
+	}
+
+	compatible := NewAnthropicClient("https://api.z.ai/api/anthropic", "sk-test", 30)
+	if got := compatible.OutputTokenCeiling(req); got != 0 {
+		t.Errorf("compatible ceiling = %d, want 0 (unknown)", got)
+	}
+}
+
 func TestChatRequestToAnthropic_CacheControlPassthrough(t *testing.T) {
 	req := types.ChatRequest{
 		Model:     "claude-3.5-sonnet",

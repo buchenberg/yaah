@@ -64,3 +64,27 @@ func (p *InstrumentedProvider) Send(ctx context.Context, req types.ChatRequest) 
 func (p *InstrumentedProvider) SendStream(ctx context.Context, req types.ChatRequest) (<-chan providers.StreamChunk, <-chan error) {
 	return p.Inner.SendStream(ctx, req)
 }
+
+// EffectiveMaxTokens forwards the optional output-cap capability to the
+// wrapped provider. Without this, OTel instrumentation would hide the
+// capability from the llm retry ladder and output-budget recovery would lose
+// the provider's effective default.
+func (p *InstrumentedProvider) EffectiveMaxTokens(req types.ChatRequest) int {
+	if inner, ok := p.Inner.(interface {
+		EffectiveMaxTokens(types.ChatRequest) int
+	}); ok {
+		return inner.EffectiveMaxTokens(req)
+	}
+	return 0
+}
+
+// OutputTokenCeiling forwards the provider's safe output-cap bound, if the
+// wrapped provider exposes one.
+func (p *InstrumentedProvider) OutputTokenCeiling(req types.ChatRequest) int {
+	if inner, ok := p.Inner.(interface {
+		OutputTokenCeiling(types.ChatRequest) int
+	}); ok {
+		return inner.OutputTokenCeiling(req)
+	}
+	return 0
+}
