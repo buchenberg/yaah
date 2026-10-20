@@ -18,6 +18,8 @@ github.com/buchenberg/shepherd-kernel-go v0.17.0 h1:0+nF6XKu28pfPEZZHfrYZln/KFJz
 github.com/buchenberg/shepherd-kernel-go v0.17.0/go.mod h1:N5a+B07Lm4xmc4ubCc83Rw4hDWuvbgKUJDSd6N7nrs4=
 github.com/buchenberg/shepherd-runtime-go v0.17.0 h1:vRAogvhLZDTbzGFCOpqF4yCthCWXW3Y0FajYGcPi8Aw=
 github.com/buchenberg/shepherd-runtime-go v0.17.0/go.mod h1:uIQ6aK2f2hkz6uZKRDqx2XLhcIccSTgegb5qI/Qv5Jg=
+github.com/buchenberg/shepherd-runtime-go v0.18.0 h1:vHtydCL7Ee5YvMIr9MrCFgykGGhr+JYgqRs4O2HkMpM=
+github.com/buchenberg/shepherd-runtime-go v0.18.0/go.mod h1:uIQ6aK2f2hkz6uZKRDqx2XLhcIccSTgegb5qI/Qv5Jg=
 github.com/buchenberg/shepherd-runtime-go/sandbox/landlock v0.1.0 h1:QRcA7umaC7RF+y+RgGHEbvCj9FGMEE62DSw59v/TCwg=
 github.com/buchenberg/shepherd-runtime-go/sandbox/landlock v0.1.0/go.mod h1:l5keimWEtQioySbYomg1rOzCr6CTNctNrwkCivPwm+A=
 github.com/buchenberg/shepherd-runtime-go/sandbox/landlock v0.1.1 h1:F1zKPfGN6mgpHpXiDU7MDzfN+/jzGyRXr8R1VERJEdI=
