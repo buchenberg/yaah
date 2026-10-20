@@ -358,3 +358,38 @@ commit `47f14c7`. The four ad-hoc tasks' most recent records: settle-discard
 resolved (`15-03-31`, prefix-fixed verifier), quality-gate and escalation
 resolved on 2026-10-17 (`05-29-24`), guard resolved (`05-36-45`); those three
 predate the minimal-suite re-shuffle and have not been re-run since.
+
+## 2026-10-20 — stable sub-agent prompt prefix (yaah-o02)
+
+Sub-agent dispatches re-paid their full cold-start context per sibling, and
+the prefix was not even byte-stable: the environment header (with the
+per-dispatch worktree path) led the prompt, and `Registry.List()` returned
+tools in map order, so the tool array also differed between siblings.
+Two changes:
+
+1. `buildSubAgentSysPrompt` now opens with the byte-stable block (identity,
+   role guidance, contract, directives, escalation, shell rules) and closes
+   with the volatile parts (confinement guidance, environment header).
+2. `Registry.List()` returns sorted names, so the request's tool array is
+   deterministic across dispatches.
+
+Both are preconditions for deepseek's automatic server-side prefix caching
+(OpenAI-compatible path sends no cache markers; hits need a byte-identical
+prefix). Regression-pinned: section order in the two prompt tests, and a new
+`TestBuildSubAgentSysPrompt_StablePrefixAcrossSiblings` asserting two sibling
+prompts share a byte-identical prefix that carries the whole stable block and
+leaks neither worktree path.
+
+Measurement is honest but noisy: three `orch-report-fanout` trials on the
+branch (all resolved) vs the three pre-change runs of the same task —
+
+| | prompt in | sub in |
+|---|---|---|
+| pre-change (3 runs) | 331K / 299K / 190K | 171K / 178K / 92K |
+| branch (3 runs) | 292K / 253K / 228K | 140K / 107K / 85K |
+
+Means: prompt in 273K → 258K (−6%), sub in 147K → 110K (−25%). All three
+branch trials landed below the pre-change sub-in mean, but single-trial
+variance is large (the pre-change spread alone is 92K–178K), so treat the
+magnitude as directional. The structural preconditions are pinned by tests;
+the tracking-table runs are the long-term confirmation.
