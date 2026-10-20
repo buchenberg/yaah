@@ -12,7 +12,7 @@
 <style>
 :root{color-scheme:light dark;--wui-ok:#22c55e;--wui-warn:#facc15;--wui-err:#dc2626;--wui-err-text:#f87171;--wui-info:#60a5fa;--wui-muted:#9ca3af;--wui-off:#555}
 @media (prefers-color-scheme:light){:root{--wui-ok:#16a34a;--wui-warn:#a16207;--wui-err:#dc2626;--wui-err-text:#b91c1c;--wui-info:#2563eb;--wui-muted:#6b7280;--wui-off:#9ca3af}}
-@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}#log{scroll-behavior:auto}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}#log{scroll-behavior:auto!important}}
 [x-cloak]{display:none!important}
 body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 #log{flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;gap:.4rem}
@@ -189,10 +189,10 @@ dialog article{max-width:480px;min-width:320px}
           <input x-ref="palInput" x-model="palQuery" @input="palIdx = palFirstEnabled()" aria-haspopup="listbox" aria-controls="pal-listbox" :aria-expanded="palOpen" :aria-activedescendant="'pal-opt-' + palIdx"
             placeholder="Type a command…" autocomplete="off" spellcheck="false">
         </div>
-        <div class="pal-list" x-ref="palList" id="pal-listbox" role="listbox" aria-label="Commands">
+        <div class="pal-list" x-ref="palList" id="pal-listbox" role="listbox" aria-label="Command palette">
           <template x-for="(it, i) in palItems()" :key="it.id">
             <div role="none">
-              <div class="pal-group" x-show="it.first" x-text="palGroupLabel(it.group)"></div>
+              <div class="pal-group" x-show="it.first" x-text="palGroupLabel(it.group)" role="group" :aria-label="palGroupLabel(it.group)"></div>
               <div class="pal-item" role="option" :id="'pal-opt-' + i" :aria-selected="i === palIdx"
                 :class="{'active': i === palIdx, 'disabled': it.disabled, 'current': it.current}"
                 @click="palRun(i)" @mouseenter="!it.disabled && (palIdx = i)">
@@ -202,7 +202,7 @@ dialog article{max-width:480px;min-width:320px}
               </div>
             </div>
           </template>
-          <div class="pal-empty" x-show="!palItems().length" x-text="'no matches for “' + palQuery + '”'"></div>
+          <div class="pal-empty" x-show="!palItems().length" x-text="'no matches for “' + palQuery + '”'" role="presentation"></div>
         </div>
         <div class="pal-foot">
           <span><span class="pal-kbd">↑</span><span class="pal-kbd">↓</span> navigate</span>
@@ -273,7 +273,7 @@ dialog article{max-width:480px;min-width:320px}
   <div class="think" x-show="live && !stream && think">
     <span class="bounce" aria-hidden="true"><span></span><span></span><span></span></span>
     <div class="reason-toggle" role="button" tabindex="0" :aria-expanded="reasonExpanded" @click="reasonExpanded = !reasonExpanded" @keydown.enter="reasonExpanded = !reasonExpanded" @keydown.space.prevent="reasonExpanded = !reasonExpanded"><span x-text="reasonExpanded ? '▼' : '▶'"></span> Reasoning…</div>
-    <div class="reason" x-show="reasonExpanded" x-text="think"></div>
+    <div class="reason" x-show="reasonExpanded" x-text="think" aria-live="off"></div>
   </div>
   <div class="msg asst" x-show="stream" x-html="md(stream)" aria-live="off"></div>
 </div>
@@ -290,7 +290,7 @@ dialog article{max-width:480px;min-width:320px}
         </div>
       </template>
       <template x-if="!cmdSteerMode">
-        <div role="listbox" id="cmd-listbox" aria-label="Commands">
+        <div role="listbox" id="cmd-listbox" aria-label="Command list">
           <template x-for="(c, i) in cmdFiltered()" :key="c.id">
             <div class="cmd-item" role="option" :id="'cmd-opt-' + i" :aria-selected="i === cmdIdx" :class="{'active': i === cmdIdx}"
               @click="cmdSelect(i)" @mouseenter="cmdIdx = i">
