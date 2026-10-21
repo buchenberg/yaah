@@ -4,8 +4,10 @@ import (
 	"context"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -278,14 +280,19 @@ func TestSubAgentUnavailableTools(t *testing.T) {
 			t.Errorf("Go machinery must be unavailable outside a Go module: %v", unavailable)
 		}
 	}
-	// The shells are gated by the machine and by the workspace; the
-	// expectation comes from the same helper the gate uses, so the test
-	// cannot disagree with it.
-	for _, name := range []string{"bash", "powershell"} {
-		want := !tools.ShellToolAvailable(name)
-		if got := slices.Contains(unavailable, name); got != want {
-			t.Errorf("%s unavailable = %v, want %v (list %v)", name, got, want, unavailable)
+	// The shells are gated by the machine: bash is not on Windows, and
+	// powershell needs pwsh on PATH. The expectations are spelled out
+	// here rather than derived from the gate's helper, so a wrong gate
+	// fails the test.
+	if runtime.GOOS == "windows" {
+		if !slices.Contains(unavailable, "bash") {
+			t.Errorf("bash must be unavailable on Windows: %v", unavailable)
 		}
+	} else if slices.Contains(unavailable, "bash") {
+		t.Errorf("bash must be available on Unix: %v", unavailable)
+	}
+	if _, err := exec.LookPath("pwsh"); err != nil && !slices.Contains(unavailable, "powershell") {
+		t.Errorf("powershell must be unavailable without pwsh: %v", unavailable)
 	}
 	if slices.Contains(unavailable, "read") {
 		t.Errorf("ordinary tools must stay available: %v", unavailable)

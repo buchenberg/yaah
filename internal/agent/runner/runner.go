@@ -750,7 +750,7 @@ func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, pro
 	// sits before the identity text so it lands early in the prompt, and
 	// the tool-batching cardinal rule and named-tool guidance disappear.
 	base := opts.systemPrompt
-	if len(profile.Tools) == 0 {
+	if len(effectiveTools) == 0 {
 		base = prompts.InjectNoToolsIdentity(base)
 	}
 	// Section order is a caching contract (yaah-o02): the prompt opens
@@ -1075,13 +1075,11 @@ func subAgentUnavailableTools(opts taskRunnerOpts, profile subagent.RoleProfile,
 	// uses: the workspace decides (in the isolated lane the workdir is
 	// meaningless), then the assigned worktree, then the process cwd the
 	// shared lane runs in.
-	root := ""
-	if opts.workspace != nil {
-		root = opts.workspace.WorkDir()
-	}
-	if root == "" {
-		root = workdir
-	}
+	// The Go check needs a HOST path: the workspace's workdir is a
+	// container path ("/workspace"), which the host cannot stat. The
+	// assigned worktree is a host path, and the shared lane runs in the
+	// process cwd.
+	root := workdir
 	if root == "" {
 		root, _ = os.Getwd()
 	}
@@ -1089,18 +1087,23 @@ func subAgentUnavailableTools(opts taskRunnerOpts, profile subagent.RoleProfile,
 
 	var unavailable []string
 	for _, name := range profile.Tools {
-		switch {
-		case name == "bash" || name == "powershell":
-			// The host gate applies to the local lane, where the shell
-			// runs on this machine. In the isolated lane the tool
-			// delegates to the workspace, which runs commands in the
-			// container — a container has its own shells, whatever the
-			// host has.
+		switch name {
+		case "bash":
+			// The local lane runs the shell on this machine, so the
+			// host decides. The isolated lane delegates to the
+			// workspace, which runs commands in the container.
 			if opts.workspace == nil && !tools.ShellToolAvailable(name) {
 				unavailable = append(unavailable, name)
 			}
-		case tools.IsGoToolchainTool(name):
-			if !goAvailable {
+		case "powershell":
+			// There is no PowerShell inside the Linux sandbox — the
+			// tool itself refuses there — so the isolated lane must
+			// not advertise it. The local lane needs one on PATH.
+			if opts.workspace != nil || !tools.ShellToolAvailable(name) {
+				unavailable = append(unavailable, name)
+			}
+		default:
+			if tools.IsGoToolchainTool(name) && !goAvailable {
 				unavailable = append(unavailable, name)
 			}
 		}
