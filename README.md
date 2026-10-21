@@ -181,8 +181,8 @@ Windows; on Linux the network can be governed with it as well:
   Linux, winacl's write-restricted access checks on Windows — whose only
   writable root is its own worktree; housekeeping writes are redirected into a
   `.yaah-scratch/` inside it and scrubbed before the proposal is sealed:
-  package caches (`XDG_CACHE_HOME`, `GOCACHE`, `npm_config_cache`) on every
-  platform, `HOME`/`TMPDIR` on POSIX, and `TEMP`/`TMP` plus the
+  `HOME`, `TMPDIR` and the package caches (`XDG_CACHE_HOME`, `GOCACHE`,
+  `npm_config_cache`) on every platform, plus `TEMP`/`TMP` and the
   `APPDATA`/`LOCALAPPDATA`/`USERPROFILE` trees on Windows. The orchestrator is
   never jailed. Where no jail is available, `auto` degrades visibly and records
   the tier on the trace; `paddock` fails closed instead of degrading.

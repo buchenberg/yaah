@@ -83,10 +83,12 @@ func ConfinementScratchEnv(workdir string) ([]string, error) {
 	//
 	// When no home resolves at all (HOME unset, UserHomeDir failed — the
 	// degenerate Unix case), the pin is left OFF rather than exporting a
-	// relative "go/pkg/mod": Go would resolve that against the body's cwd and
-	// download the cache into the worktree, defeating the pin and polluting the
-	// sealed delta. Leaving it unset makes Go resolve its own default the way it
-	// does on an unconfined run; the same download outcome, but not pinned here.
+	// relative "go/pkg/mod", which Go would resolve against the body's cwd and
+	// download the cache into the worktree, defeating the pin AND polluting the
+	// sealed delta. In that case the body's Go resolves its default from the
+	// redirected HOME — a cold cache under the scratch, which re-downloads on
+	// cold worktrees but is scrubbed before sealing. The pin is simply
+	// unavailable in this case; no relative path is exported here.
 	if _, set := os.LookupEnv("GOMODCACHE"); !set {
 		if mc := defaultGoModCache(); mc != "" {
 			env = append(env, "GOMODCACHE="+mc)

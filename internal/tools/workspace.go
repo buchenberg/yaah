@@ -461,14 +461,17 @@ func deniedOutsideRoot(stderr, root string) (string, bool) {
 // MSYS tool lowercasing the drive letter, shell vs Explorer directory
 // capitalization), and NTFS folds them onto the same file — a refusal inside
 // the worktree must not be reported as a boundary refusal just because the
-// spelling differs. The drive-letter shape triggers folding on every host, so
-// attribution behaves the same on Linux CI as on Windows; a POSIX root keeps
-// exact comparison, because Unix paths are case-sensitive and the message
-// spells what the kernel named. An 8.3 short-name spelling stays inexact —
-// it neither matches nor misattributes; the hint is simply not offered, per
-// the "guessing is worse than none" rule above.
+// spelling differs. Folding triggers on two shapes: a drive-letter path on
+// either side on every host (so the attribution behavior is pinned in tests on
+// Linux CI, and an MSYS-spelled candidate folds off-Windows too), and every
+// path on a Windows host — which also covers a worktree rooted at a UNC share,
+// neither side of which is a drive path. A POSIX root keeps exact comparison,
+// because Unix paths are case-sensitive and the message spells what the kernel
+// named. An 8.3 short-name spelling stays inexact — it neither matches nor
+// misattributes; the hint is simply not offered, per the "guessing is worse
+// than none" rule above.
 func withinRoot(p, root string) bool {
-	if drivePath(p) || drivePath(root) {
+	if drivePath(p) || drivePath(root) || runtime.GOOS == "windows" {
 		pp := strings.ReplaceAll(p, "/", `\`)
 		rr := strings.ReplaceAll(root, "/", `\`)
 		lowerP, lowerR := strings.ToLower(pp), strings.ToLower(rr)
@@ -480,10 +483,12 @@ func withinRoot(p, root string) bool {
 	return strings.HasPrefix(p, root+string(filepath.Separator))
 }
 
-// drivePath reports whether s carries a Windows drive-letter prefix ("C:\…",
-// "C:/…"), the shape case folding is decided on.
+// drivePath reports whether s carries a Windows drive-letter prefix
+// ("C:\…", "C:/…") — separator required after the colon, so "a:b:<c", "1:x",
+// and drive-relative "C:foo" spellings never count. The shape case folding and
+// host-independent absoluteness are decided on.
 func drivePath(s string) bool {
-	return len(s) >= 2 && s[1] == ':'
+	return len(s) >= 3 && s[1] == ':' && (s[2] == '\\' || s[2] == '/')
 }
 
 // absPath reports whether p is absolute for its own shape: host filepath rules,
