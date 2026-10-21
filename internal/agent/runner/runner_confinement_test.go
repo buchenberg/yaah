@@ -12,6 +12,7 @@ import (
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/landlock"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/jail"
 	"github.com/buchenberg/yaah/internal/tools"
 )
 
@@ -155,7 +156,7 @@ func TestBuildSubAgentRegistry_ReturnsConfinementRecord(t *testing.T) {
 		t.Fatal("auto must record a resolution (advisory included)")
 	}
 	wantResolved := "advisory"
-	if landlock.Detect() != nil {
+	if jail.Backend() != nil {
 		wantResolved = "paddock"
 	}
 	if conf.Resolved != wantResolved {
@@ -208,7 +209,7 @@ func TestResolveSubAgentConfinement_Placement(t *testing.T) {
 	if autoErr != nil {
 		t.Fatalf("auto: %v", autoErr)
 	}
-	wantJail := landlock.Detect() != nil
+	wantJail := jail.Backend() != nil
 	if (autoWS != nil) != wantJail {
 		t.Errorf("auto: confined=%v, want %v", autoWS != nil, wantJail)
 	}
