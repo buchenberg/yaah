@@ -305,9 +305,10 @@ If green, the dev loop is ready.
 
 ### ACP dev loop variant
 
-`yaah acp-serve` runs over stdio with newline-delimited JSON-RPC 2.0. The
-swap cycle is the same (build → kill → restart) but you drive it from an
-ACP client (e.g. Gas Town's ACP proxy) rather than Kilo:
+`yaah acp-serve` runs over stdio with newline-delimited JSON-RPC 2.0 and
+speaks Agent Client Protocol v1 (agentclientprotocol.com). The swap cycle
+is the same (build → kill → restart) but you drive it from an ACP client
+(e.g. the Zed editor or a VS Code ACP client extension):
 
 ```bash
 go build -o yaah . && pkill -f 'yaah acp-serve' 2>/dev/null
@@ -317,10 +318,19 @@ yaah acp-serve &
 Test the ACP initialize handshake by piping a JSON-RPC request:
 
 ```bash
-printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol_version":"2024-11-05","capabilities":{},"client_info":{"name":"test","version":"1"}}}\n' | timeout 2 yaah acp-serve 2>/dev/null
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":true,"writeTextFile":true}},"clientInfo":{"name":"test","version":"1"}}}\n' | timeout 2 yaah acp-serve 2>/dev/null
 ```
 
 Expected output:
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"protocol_version":"2024-11-05","capabilities":{"tools":{"listChanged":false}},"server_info":{"name":"yaah","version":"..."}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{},"agentInfo":{"name":"yaah","version":"..."},"authMethods":[]}}
+```
+
+A full turn drive (session/new honors the client cwd; session/prompt
+stays open until the turn ends and answers with a stopReason; tool
+approvals arrive as session/request_permission requests the client must
+answer):
+
+```bash
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientInfo":{"name":"test"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized"}\n{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"'$PWD'","mcpServers":[]}}\n' | timeout 5 yaah acp-serve 2>/dev/null
 ```

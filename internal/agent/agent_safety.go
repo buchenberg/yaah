@@ -104,11 +104,23 @@ func (l *Loop) classifyGate(name, args string) pipeline.GateDecision {
 }
 
 // approveTool prompts the user on stderr/stdin to approve a tool call.
-// Returns true if the user approves. If ApproveFn is set, it delegates to that instead.
+// Returns true if the user approves. If ApproveFn is set, it delegates
+// to that instead.
+//
+// Without ApproveFn the fallback reads os.Stdin — but only when stdin
+// is an interactive character device. Headless drivers (MCP serve,
+// ACP, sandboxed sub-agents) abuse stdin as a protocol stream or a
+// closed pipe; scanning it would swallow live protocol bytes as the
+// y/N answer (review: stdin-steal on protocol streams). Heads-off
+// approval is therefore denied.
 func (l *Loop) approveTool(name, args string) bool {
 	abbr := abbreviateArgs(args, 120)
 	if l.ApproveFn != nil {
 		return l.ApproveFn(name, abbr)
+	}
+	if fi, err := os.Stdin.Stat(); err != nil || (fi.Mode()&os.ModeCharDevice) == 0 {
+		fmt.Fprintf(os.Stderr, "\n  ⚠ Denying %s(%s): approval required but stdin is not interactive\n", name, abbr)
+		return false
 	}
 	fmt.Fprintf(os.Stderr, "\n  ⚠ Approve %s(%s)? [y/N]: ", name, abbr)
 	os.Stderr.Sync()
