@@ -63,8 +63,13 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 
 	response, err := loop.Run(ctx, prompt)
 
+	// s.messages / s.msgIdx are read concurrently (History under
+	// s.mu.RLock); guard the post-run swap the same way the usage
+	// counters below are guarded.
+	s.mu.Lock()
 	s.messages = loop.State.Messages
 	s.msgIdx = loop.Persister.MsgIdx()
+	s.mu.Unlock()
 
 	s.mu.Lock()
 	s.totalUsage.PromptTokens += loop.State.TotalTokens.PromptTokens

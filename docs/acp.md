@@ -85,10 +85,13 @@ Load flow (`internal/acp/server.go` `handleSessionLoad`):
 3. Before responding, the agent **streams the conversation back** as
    `session/update` notifications: each persisted user message replays as
    `user_message_chunk`, each persisted assistant text as
-   `agent_message_chunk`. Conversation internals are skipped (system rows
-   such as compaction summaries and post-interrupt continuations, tool
-   results, and the assistant tool-call-only rows whose text is the
-   synthetic `[tool:…]` summary). Tool calls are not replayed as
+   `agent_message_chunk`. Conversation internals are skipped: system rows
+   (compaction summaries and post-interrupt continuations), tool results,
+   the assistant tool-call-only rows whose text is the synthetic
+   `[tool:…]` summary, and user-role rows that carry agent-internal
+   guidance rather than user input (`[STEER] ` steering/loop-detection
+   nudges, `SUPERVISOR: ` checkpoint-recovery guidance, `CONFLICT: `
+   sub-agent conflict reports). Tool calls are not replayed as
    `tool_call` updates — replay is text-level.
 4. The request then answers with `{}` (empty object), per spec.
 
@@ -100,10 +103,11 @@ Idempotency and the per-process conversation limit:
   rejected with invalid params (`session %q already established; one
   conversation per process`).
 
-Clients that hold old ids must tolerate both outcomes: any id mismatch
-(e.g. after `~/.yaah/state.db` is deleted or the session was never
-persisted because the database failed to open) surfaces as an invalid
-params error naming the id.
+Clients that hold old ids must tolerate both outcomes: ids the store
+never issued (e.g. after `~/.yaah/state.db` was deleted) are rejected
+with an invalid params error naming the id, while a state store that
+failed to open surfaces as its own invalid params error (the message
+describes the store problem; it does not name the id).
 
 ## Approvals and questions
 
@@ -116,16 +120,18 @@ params error naming the id.
 
 ## Client setup (Zed)
 
-`~/.config/zed/settings.json`:
+`~/.config/zed/settings.json` — Zed wraps custom agents in a top-level
+`agent_servers` entry (per
+[zed.dev/docs/ai/external-agents](https://zed.dev/docs/ai/external-agents#custom-agents)):
 
 ```json
 {
-  "agent": {
-    "custom_servers": {
-      "yaah": {
-        "command": "/path/to/yaah",
-        "args": ["acp-serve"]
-      }
+  "agent_servers": {
+    "yaah": {
+      "type": "custom",
+      "command": "/path/to/yaah",
+      "args": ["acp-serve"],
+      "env": {}
     }
   }
 }

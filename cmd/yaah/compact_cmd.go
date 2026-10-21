@@ -88,7 +88,9 @@ func (s *agentSession) compactContext() {
 	defer cancel()
 	loop.ForceCompact(ctx, 0.0)
 
+	s.mu.Lock()
 	s.messages = loop.State.Messages
+	s.mu.Unlock()
 
 	newEstimate := estimateTokens(s.messages)
 

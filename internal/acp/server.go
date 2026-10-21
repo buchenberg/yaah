@@ -231,16 +231,39 @@ func (s *Server) ensureSessionLocked(resumeID string) error {
 // user-visible agent text.
 const syntheticAssistantText = "[tool:"
 
+// internalUserMarkers are the content prefixes of persisted user-role
+// rows that carry agent-internal guidance rather than things the user
+// typed or said in a follow-up: steering and loop-detection nudges
+// (`[STEER] `, internal/agent/pipeline/steer.go and loopdetect.go),
+// checkpoint recovery guidance after a failed or budget-exhausted turn
+// (`SUPERVISOR: `, internal/agent/turn_checkpoint_loop.go), and
+// sub-agent conflict reports (`CONFLICT: `,
+// internal/tools/conflict_tracker.go). Replay skips them like the
+// other conversation internals — a resumed client renders them as
+// text the client never saw, not as its own input.
+var internalUserMarkers = []string{"[STEER] ", "SUPERVISOR: ", "CONFLICT: "}
+
+func isInternalUserContent(content string) bool {
+	for _, marker := range internalUserMarkers {
+		if strings.HasPrefix(content, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // replayable folds one persisted conversation message into the ACP
 // update variant it replays as, with the text to stream. Empty text
 // means "do not replay": system rows (compaction summaries,
 // post-interrupt continuations) and tool-result rows are conversation
-// internals; assistant rows that carry no real text are the
-// tool-call-only records above.
+// internals; user rows carrying agent-internal guidance (the markers
+// above) never reached the client as stream content either;
+// assistant rows that carry no real text are the tool-call-only
+// records above.
 func replayable(m types.Message) (updateKind, text string) {
 	switch m.Role {
 	case "user":
-		if m.Content == "" {
+		if m.Content == "" || isInternalUserContent(m.Content) {
 			return "", ""
 		}
 		return UpdateUserMessageChunk, m.Content
@@ -315,7 +338,21 @@ func (s *Server) handleSessionLoad(
 		respErr(msg.ID, codeInvalidParams, err.Error())
 		return
 	}
-	s.sessionID = s.sess.AgentSessionID()
+	// Invariant: the build must have re-attached to the requested
+	// conversation. A factory that silently resumed a different
+	// conversation would leave the client talking to an id it never
+	// negotiated; reject the response and drop the half-built session
+	// (Close uses its own lock, so this is safe under s.mu) so a retry
+	// or session/new is not wedged on an unwanted conversation.
+	if built := s.sess.AgentSessionID(); built != p.SessionID {
+		s.sess.Close()
+		s.sess = nil
+		s.mu.Unlock()
+		respErr(msg.ID, codeInvalidParams,
+			fmt.Sprintf("resumed session %q does not match requested %q", built, p.SessionID))
+		return
+	}
+	s.sessionID = p.SessionID
 	s.run = &runningPrompt{}
 	history := s.sess.History()
 	s.mu.Unlock()

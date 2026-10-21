@@ -62,7 +62,15 @@ func (f *fakeSession) approveCall(name, args string) bool {
 	return fn(name, args)
 }
 
-func (f *fakeSession) Close()                   { f.mu.Lock(); f.closed++; f.mu.Unlock() }
+func (f *fakeSession) Close() { f.mu.Lock(); f.closed++; f.mu.Unlock() }
+
+// closedCount reports how many times Close was called, under lock.
+func (f *fakeSession) closedCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.closed
+}
+
 func (f *fakeSession) ToolReg() *tools.Registry { return tools.NewRegistry() }
 func (f *fakeSession) AgentSessionID() string   { return f.id }
 
@@ -345,17 +353,23 @@ func loadProbe(t *testing.T, raw json.RawMessage) string {
 // process loads a persisted conversation, streams user/assistant text
 // as session/update notifications before responding, skips
 // conversation internals (synthetic tool-call text, tool results,
-// system rows), and stays promptable afterwards.
+// system rows, and the persisted user-role guidance rows that carry
+// agent-internal steering/checkpoint/conflict text rather than user
+// input), and stays promptable afterwards.
 func TestServer_sessionLoadReplaysHistory(t *testing.T) {
 	fac := &fakeSession{
 		id: "sess-load-1",
 		history: []types.Message{
 			{Role: "user", Content: "fix the flake"},
+			{Role: "user", Content: "[STEER] stop doing that, use the other approach"},
+			{Role: "user", Content: "[STEER] No new evidence in the last 3 tool calls."},
 			{Role: "assistant", Content: "on it"},
 			{Role: "assistant", Content: "[tool:question] asked",
 				ToolCalls: []types.ToolCall{{Function: types.ToolCallFn{Name: "question"}}}},
 			{Role: "tool", Content: "answer", ToolCallID: "call-1"},
+			{Role: "user", Content: "SUPERVISOR: the previous turn failed while executing tools: boom. Retry or report."},
 			{Role: "assistant", Content: "done"},
+			{Role: "user", Content: "CONFLICT: Parallel workers modified the same file(s)."},
 			{Role: "system", Content: "compaction summary"},
 		},
 	}
@@ -441,6 +455,44 @@ func TestServer_sessionLoadUnknownSessionRejected(t *testing.T) {
 	}
 	if res := h.resumes(); len(res) != 1 || res[0] != "sess-ghost" {
 		t.Errorf("factory called with %v, want [sess-ghost]", res)
+	}
+}
+
+// TestServer_sessionLoadMismatchedResumedSession pins the id invariant
+// behind the load: the build must re-attach to the requested
+// conversation. A factory that resumes a different id is rejected
+// before anything replays, the half-built session is dropped (not
+// left serving a conversation the client never negotiated), and the
+// server stays usable for a session/new afterwards.
+func TestServer_sessionLoadMismatchedResumedSession(t *testing.T) {
+	built := &fakeSession{id: "sess-someone-else"}
+	h := newACPHarnessFactory(t, func(resumeID string) (Session, error) {
+		return built, nil
+	})
+	initialize(t, h)
+	if err := h.send("session/load", 8, `{"sessionId":"sess-requested"}`); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recv(t)
+	if msg.Method == "session/update" {
+		t.Fatalf("replay update streamed before the rejection: %v", msg)
+	}
+	if msg.Error == nil || msg.Error.Code != codeInvalidParams {
+		t.Fatalf("response = %+v, want invalid params", msg)
+	}
+	for _, id := range []string{"sess-someone-else", "sess-requested"} {
+		if !strings.Contains(msg.Error.Message, id) {
+			t.Errorf("error should name %q: %s", id, msg.Error.Message)
+		}
+	}
+	if built.closedCount() == 0 {
+		t.Error("mismatched resumed session must be dropped after the rejection")
+	}
+
+	// The dropped build must not wedge the server: a session/new
+	// proceeds normally.
+	if got := newSession(t, h); got != "sess-someone-else" {
+		t.Errorf("session/new after rejection returned %q, want sess-someone-else", got)
 	}
 }
 
