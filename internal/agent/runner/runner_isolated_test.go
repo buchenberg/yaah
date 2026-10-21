@@ -228,7 +228,10 @@ func TestBuildSubAgentSysPrompt_IsolatedGuidance(t *testing.T) {
 	// bash is in the profile so the role passes the shell gate (#329) —
 	// this test pins that the header and the Available Shell block agree
 	// on the container's shell, which needs a shell-carrying role.
-	profile := subagent.RoleProfile{Tools: []string{"read", "bash", "go_refactor"}}
+	// Both shells are named: the gate drops the one this machine does
+	// not have (bash on Windows, powershell without pwsh), so the role
+	// keeps a shell on every platform.
+	profile := subagent.RoleProfile{Tools: []string{"read", "bash", "powershell", "go_refactor"}}
 
 	got := buildSubAgentSysPrompt(opts, "developer", profile, false, "", nil)
 	for _, want := range []string{

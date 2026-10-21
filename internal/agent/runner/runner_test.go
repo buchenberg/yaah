@@ -183,7 +183,10 @@ func TestBuildSubAgentSysPrompt_ToolGating(t *testing.T) {
 
 	t.Run("shell role keeps shell line and batching rule", func(t *testing.T) {
 		opts := taskRunnerOpts{systemPrompt: base}
-		profile := subagent.RoleProfile{Tools: []string{"bash", "read"}}
+		// Both shells are named so the role keeps one on every platform:
+		// the availability gate drops the shell this machine lacks
+		// (yaah-9n0), and a role with no shell gets no shell line.
+		profile := subagent.RoleProfile{Tools: []string{"bash", "powershell", "read"}}
 		got := buildSubAgentSysPrompt(opts, "developer", profile, false, "", nil)
 
 		for _, want := range []string{
