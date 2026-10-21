@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.90.0](https://github.com/buchenberg/yaah/compare/v0.89.2...v0.90.0) (2026-10-21)
+
+
+### Features
+
+* **sandbox:** confine retained dispatches on Windows via winacl ([#512](https://github.com/buchenberg/yaah/issues/512)) ([575f5fe](https://github.com/buchenberg/yaah/commit/575f5fecb2d7aa1903109f1535f3bc2ad020ea53))
+
 ## [0.89.2](https://github.com/buchenberg/yaah/compare/v0.89.1...v0.89.2) (2026-10-21)
 
 
