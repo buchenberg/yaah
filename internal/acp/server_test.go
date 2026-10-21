@@ -14,6 +14,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/buchenberg/yaah/internal/types"
 )
 
 // fakeSession is a controllable Session for server tests.
@@ -24,6 +25,11 @@ type fakeSession struct {
 	ctrl    chan<- control.Msg
 	approve func(name, args string) bool
 	closed  int
+	// id is the persisted conversation id AgentSessionID reports; set
+	// at construction and never mutated.
+	id string
+	// history is what History returns for session/load replay tests.
+	history []types.Message
 }
 
 func (f *fakeSession) RunPrompt(ctx context.Context, prompt string) (string, bool, error) {
@@ -58,6 +64,17 @@ func (f *fakeSession) approveCall(name, args string) bool {
 
 func (f *fakeSession) Close()                   { f.mu.Lock(); f.closed++; f.mu.Unlock() }
 func (f *fakeSession) ToolReg() *tools.Registry { return tools.NewRegistry() }
+func (f *fakeSession) AgentSessionID() string   { return f.id }
+
+// History returns a copy of the fake's history, mirroring
+// agentSession.History.
+func (f *fakeSession) History() []types.Message {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]types.Message, len(f.history))
+	copy(out, f.history)
+	return out
+}
 
 // currentView returns the view the server installed, under lock.
 func (f *fakeSession) currentView() agent.View {
@@ -69,27 +86,51 @@ func (f *fakeSession) currentView() agent.View {
 // acpHarness wires a Server to in-memory pipes and exposes
 // send/recv with timeouts.
 type acpHarness struct {
-	inW  io.Writer
-	send func(method string, id any, params string) error
-	recv func(t *testing.T) Message
-	done func()
+	inW     io.Writer
+	send    func(method string, id any, params string) error
+	recv    func(t *testing.T) Message
+	done    func()
+	resumes func() []string
 }
 
+// newACPHarness wires a Server whose factory always yields sess (or a
+// default fake used by session/new-first flows). Use
+// newACPHarnessFactory for tests that need to model failed builds or
+// per-resume-id sessions.
 func newACPHarness(t *testing.T, sess Session) *acpHarness {
+	t.Helper()
+	return newACPHarnessFactory(t, func(string) (Session, error) {
+		if sess != nil {
+			return sess, nil
+		}
+		return &fakeSession{id: "sess-test"}, nil
+	})
+}
+
+// newACPHarnessFactory wires a Server with an explicit session
+// factory. The factory receives the resume id a session/new or
+// session/load requested ("" for fresh); the harness's resumes method
+// reports the ids it was called with, in order.
+func newACPHarnessFactory(t *testing.T, factory func(resumeID string) (Session, error)) *acpHarness {
 	t.Helper()
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
+
+	var (
+		resumeMu  sync.Mutex
+		resumeIDs []string
+	)
 
 	s := &Server{
 		version: "test",
 		logf:    func(string, ...any) {},
 		stdin:   inR,
 		stdout:  outW,
-		newSession: func() (Session, error) {
-			if sess != nil {
-				return sess, nil
-			}
-			return &fakeSession{}, nil
+		newSession: func(resumeID string) (Session, error) {
+			resumeMu.Lock()
+			resumeIDs = append(resumeIDs, resumeID)
+			resumeMu.Unlock()
+			return factory(resumeID)
 		},
 		AutoAnswerQuestions: true,
 		AutoContinue:        true,
@@ -148,6 +189,13 @@ func newACPHarness(t *testing.T, sess Session) *acpHarness {
 			}
 		},
 		done: cancel,
+		resumes: func() []string {
+			resumeMu.Lock()
+			defer resumeMu.Unlock()
+			out := make([]string, len(resumeIDs))
+			copy(out, resumeIDs)
+			return out
+		},
 	}
 }
 
@@ -162,6 +210,7 @@ func initialize(t *testing.T, h *acpHarness) {
 	for _, want := range []string{
 		`"protocolVersion":1`,
 		`"agentCapabilities"`,
+		`"loadSession":true`,
 		`"agentInfo"`,
 		`"authMethods":[]`,
 		`"name":"yaah"`,
@@ -196,7 +245,7 @@ func newSession(t *testing.T, h *acpHarness) string {
 // TestServer_initializeNegotiatesV1 checks the handshake shape required
 // by ACP v1 clients (integer version, agentCapabilities, authMethods).
 func TestServer_initializeNegotiatesV1(t *testing.T) {
-	h := newACPHarness(t, &fakeSession{})
+	h := newACPHarness(t, &fakeSession{id: "sess-test"})
 	initialize(t, h)
 }
 
@@ -215,7 +264,7 @@ func TestServer_initializeWithoutClientInfo(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			h := newACPHarness(t, &fakeSession{})
+			h := newACPHarness(t, &fakeSession{id: "sess-test"})
 			if err := h.send("initialize", 1, tc.params); err != nil {
 				t.Fatal(err)
 			}
@@ -249,7 +298,7 @@ func TestServer_stopRunBoundedJoin(t *testing.T) {
 // issuing a fresh one would invalidate the handle the client already
 // holds while the same underlying conversation still answers it.
 func TestServer_sessionNewIdempotent(t *testing.T) {
-	h := newACPHarness(t, &fakeSession{})
+	h := newACPHarness(t, &fakeSession{id: "sess-test"})
 	initialize(t, h)
 	first := newSession(t, h)
 	if err := h.send("session/new", 3, `{"cwd":"."}`); err != nil {
@@ -265,10 +314,184 @@ func TestServer_sessionNewIdempotent(t *testing.T) {
 	}
 }
 
+// TestServer_sessionNewExposesAgentSessionID pins the session-id
+// contract session/load depends on: the ACP id handed to the client is
+// the underlying persisted conversation id, so a fresh process can
+// re-attach to the same conversation by that name.
+func TestServer_sessionNewExposesAgentSessionID(t *testing.T) {
+	h := newACPHarness(t, &fakeSession{id: "sess-abc123"})
+	initialize(t, h)
+	if got := newSession(t, h); got != "sess-abc123" {
+		t.Fatalf("session/new returned %q, want the underlying agent session id %q", got, "sess-abc123")
+	}
+}
+
+// loadProbe decodes a session/update notification's replay chunk into
+// "variant:text" for ordered assertions.
+func loadProbe(t *testing.T, raw json.RawMessage) string {
+	t.Helper()
+	var env updateEnvelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatalf("update envelope: %v", err)
+	}
+	var chunk ChunkUpdate
+	if err := json.Unmarshal(env.Update, &chunk); err != nil {
+		t.Fatalf("update payload: %v", err)
+	}
+	return chunk.SessionUpdate + ":" + chunk.Content.Text
+}
+
+// TestServer_sessionLoadReplaysHistory covers the happy path: a fresh
+// process loads a persisted conversation, streams user/assistant text
+// as session/update notifications before responding, skips
+// conversation internals (synthetic tool-call text, tool results,
+// system rows), and stays promptable afterwards.
+func TestServer_sessionLoadReplaysHistory(t *testing.T) {
+	fac := &fakeSession{
+		id: "sess-load-1",
+		history: []types.Message{
+			{Role: "user", Content: "fix the flake"},
+			{Role: "assistant", Content: "on it"},
+			{Role: "assistant", Content: "[tool:question] asked",
+				ToolCalls: []types.ToolCall{{Function: types.ToolCallFn{Name: "question"}}}},
+			{Role: "tool", Content: "answer", ToolCallID: "call-1"},
+			{Role: "assistant", Content: "done"},
+			{Role: "system", Content: "compaction summary"},
+		},
+	}
+	h := newACPHarness(t, fac)
+	initialize(t, h)
+	if err := h.send("session/load", 3, `{"sessionId":"sess-load-1","cwd":".","mcpServers":[]}`); err != nil {
+		t.Fatal(err)
+	}
+
+	var replayed []string
+	var resp Message
+	for {
+		msg := h.recv(t)
+		if msg.Method == "session/update" {
+			replayed = append(replayed, loadProbe(t, msg.Params))
+			continue
+		}
+		resp = msg
+		break
+	}
+
+	if resp.Error != nil {
+		t.Fatalf("session/load returned error: %+v", resp.Error)
+	}
+	if raw := string(resp.Result); raw != "{}" {
+		t.Errorf("session/load result = %s, want {}", raw)
+	}
+	want := []string{
+		UpdateUserMessageChunk + ":fix the flake",
+		UpdateAgentMessageChunk + ":on it",
+		UpdateAgentMessageChunk + ":done",
+	}
+	if len(replayed) != len(want) {
+		t.Fatalf("replayed %v, want %v", replayed, want)
+	}
+	for i := range want {
+		if replayed[i] != want[i] {
+			t.Errorf("replay[%d] = %q, want %q", i, replayed[i], want[i])
+		}
+	}
+	if res := h.resumes(); len(res) != 1 || res[0] != "sess-load-1" {
+		t.Errorf("factory called with %v, want [sess-load-1]", res)
+	}
+
+	// A loaded conversation is promptable: the run-state reset left by
+	// the load must not wedge the next turn.
+	if err := h.send("session/prompt", 4, `{"sessionId":"sess-load-1","prompt":[{"type":"text","text":"next"}]}`); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		msg := h.recv(t)
+		if msg.Method == "session/update" {
+			continue
+		}
+		if msg.Error != nil {
+			t.Fatalf("prompt after load returned error: %+v", msg.Error)
+		}
+		if !strings.Contains(string(msg.Result), `"stopReason":"end_turn"`) {
+			t.Errorf("prompt after load: %s", msg.Result)
+		}
+		break
+	}
+}
+
+// TestServer_sessionLoadUnknownSessionRejected covers the
+// foreign-session-id rejection for session/load: an id the session
+// store never issued fails the underlying build, and the server
+// surfaces that as invalid params.
+func TestServer_sessionLoadUnknownSessionRejected(t *testing.T) {
+	h := newACPHarnessFactory(t, func(resumeID string) (Session, error) {
+		return nil, fmt.Errorf("cannot resume session %s: session not found or has no messages", resumeID)
+	})
+	initialize(t, h)
+	if err := h.send("session/load", 5, `{"sessionId":"sess-ghost"}`); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recv(t)
+	if msg.Error == nil || msg.Error.Code != codeInvalidParams {
+		t.Fatalf("response = %+v, want invalid params", msg)
+	}
+	if !strings.Contains(msg.Error.Message, "sess-ghost") {
+		t.Errorf("error should name the rejected id: %s", msg.Error.Message)
+	}
+	if res := h.resumes(); len(res) != 1 || res[0] != "sess-ghost" {
+		t.Errorf("factory called with %v, want [sess-ghost]", res)
+	}
+}
+
+// TestServer_sessionLoadDifferentSessionRejected pins the
+// one-conversation-per-process boundary the other way: once a session
+// is established, loading a different id is rejected instead of
+// silently replacing the live workspace.
+func TestServer_sessionLoadDifferentSessionRejected(t *testing.T) {
+	h := newACPHarness(t, nil)
+	initialize(t, h)
+	if id := newSession(t, h); id != "sess-test" {
+		t.Fatalf("session/new returned %q, want sess-test", id)
+	}
+	if err := h.send("session/load", 6, `{"sessionId":"sess-other"}`); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recv(t)
+	if msg.Error == nil || msg.Error.Code != codeInvalidParams {
+		t.Fatalf("response = %+v, want invalid params", msg)
+	}
+	if res := h.resumes(); len(res) != 1 || res[0] != "" {
+		t.Errorf("factory called with %v, want only the fresh build [\"\"]", res)
+	}
+}
+
+// TestServer_sessionLoadSameSessionIdempotent covers a client
+// reloading the id it already established: the live conversation is
+// returned as-is (immediate empty result, no replay, no second build).
+func TestServer_sessionLoadSameSessionIdempotent(t *testing.T) {
+	h := newACPHarness(t, nil)
+	initialize(t, h)
+	id := newSession(t, h)
+	if err := h.send("session/load", 7, `{"sessionId":"`+id+`"}`); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recv(t)
+	if msg.Error != nil {
+		t.Fatalf("reload returned error: %+v", msg.Error)
+	}
+	if raw := string(msg.Result); raw != "{}" {
+		t.Errorf("reload result = %s, want {}", raw)
+	}
+	if res := h.resumes(); len(res) != 1 || res[0] != "" {
+		t.Errorf("factory called with %v, want only the fresh build [\"\"]", res)
+	}
+}
+
 // TestServer_unknownMethodReturns32601 mirrors the JSON-RPC requirement
 // for unresolvable requests.
 func TestServer_unknownMethodReturns32601(t *testing.T) {
-	h := newACPHarness(t, &fakeSession{})
+	h := newACPHarness(t, &fakeSession{id: "sess-test"})
 	if err := h.send("bogus/method", 7, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -281,24 +504,10 @@ func TestServer_unknownMethodReturns32601(t *testing.T) {
 	}
 }
 
-// TestServer_loadSessionRejected documents that session/load for a
-// foreign session id is rejected (the capability is not advertised).
-func TestServer_loadSessionRejected(t *testing.T) {
-	h := newACPHarness(t, &fakeSession{})
-	initialize(t, h)
-	if err := h.send("session/load", 9, `{"sessionId":"whatever","cwd":".","mcpServers":[]}`); err != nil {
-		t.Fatal(err)
-	}
-	msg := h.recv(t)
-	if msg.Error == nil || msg.Error.Code != codeInvalidParams {
-		t.Fatalf("response = %+v, want %d", msg, codeInvalidParams)
-	}
-}
-
 // TestServer_sessionPromptUnknownSession requires validation against
 // the session id issued by session/new.
 func TestServer_sessionPromptUnknownSession(t *testing.T) {
-	h := newACPHarness(t, &fakeSession{})
+	h := newACPHarness(t, &fakeSession{id: "sess-test"})
 	params := `{"sessionId":"sess_unknown","prompt":[{"type":"text","text":"hi"}]}`
 	if err := h.send("session/prompt", 2, params); err != nil {
 		t.Fatal(err)
@@ -312,7 +521,7 @@ func TestServer_sessionPromptUnknownSession(t *testing.T) {
 // TestServer_setModeAcknowledged keeps clients that surface a mode
 // picker from hanging.
 func TestServer_setModeAcknowledged(t *testing.T) {
-	h := newACPHarness(t, &fakeSession{})
+	h := newACPHarness(t, &fakeSession{id: "sess-test"})
 	initialize(t, h)
 	sid := newSession(t, h)
 	if err := h.send("session/set_mode", 4, fmt.Sprintf(`{"sessionId":%q,"modeId":"x"}`, sid)); err != nil {
@@ -328,7 +537,7 @@ func TestServer_setModeAcknowledged(t *testing.T) {
 // check: the session/prompt request stays open for the whole turn and
 // is answered with a stopReason, with streamed updates arriving first.
 func TestServer_promptRespondsWhenTurnEnds(t *testing.T) {
-	sess := &fakeSession{}
+	sess := &fakeSession{id: "sess-test"}
 	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
 		// Simulate the loop: stream a chunk, then complete.
 		sess.currentView().HandleEvent(&agent.TokenDeltaEvent{Text: "working..."})
@@ -388,6 +597,7 @@ func TestServer_promptRespondsWhenTurnEnds(t *testing.T) {
 func TestServer_promptRespondsCancelled(t *testing.T) {
 	started := make(chan struct{})
 	sess := &fakeSession{
+		id: "sess-test",
 		prompt: func(ctx context.Context, prompt string) (string, bool, error) {
 			close(started)
 			<-ctx.Done()
@@ -426,6 +636,7 @@ func TestServer_promptRelatedSetModeResponsive(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	sess := &fakeSession{
+		id: "sess-test",
 		prompt: func(ctx context.Context, prompt string) (string, bool, error) {
 			close(started)
 			<-release
@@ -460,6 +671,7 @@ func TestServer_secondPromptWhileBusy(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	sess := &fakeSession{
+		id: "sess-test",
 		prompt: func(ctx context.Context, prompt string) (string, bool, error) {
 			close(started)
 			<-release
@@ -494,7 +706,7 @@ func TestServer_secondPromptWhileBusy(t *testing.T) {
 
 // TestServer_emptyPromptRejected keeps empty prompt blocks out.
 func TestServer_emptyPromptRejected(t *testing.T) {
-	h := newACPHarness(t, &fakeSession{})
+	h := newACPHarness(t, &fakeSession{id: "sess-test"})
 	initialize(t, h)
 	sid := newSession(t, h)
 	if err := h.send("session/prompt", 5, fmt.Sprintf(`{"sessionId":%q,"prompt":[]}`, sid)); err != nil {
@@ -524,7 +736,7 @@ func (h *acpHarness) reply(id json.RawMessage, result any) error {
 // approval callback suspends the run, the request reaches the client,
 // and the routed response decides.
 func TestServer_permissionAllow(t *testing.T) {
-	sess := &fakeSession{}
+	sess := &fakeSession{id: "sess-test"}
 	var granted bool
 	sess.mu.Lock()
 	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
@@ -579,7 +791,7 @@ func TestServer_permissionAllow(t *testing.T) {
 // session sees deny and the client sees a failed tool_call_update for
 // the pending row.
 func TestServer_permissionDenyRejected(t *testing.T) {
-	sess := &fakeSession{}
+	sess := &fakeSession{id: "sess-test"}
 	var granted bool
 	sess.mu.Lock()
 	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
@@ -627,7 +839,7 @@ func TestServer_permissionDenyRejected(t *testing.T) {
 // TestServer_permissionTimeoutDenies checks the bounded wait: no reply,
 // the callback denies and the turn still completes.
 func TestServer_permissionTimeoutDenies(t *testing.T) {
-	sess := &fakeSession{}
+	sess := &fakeSession{id: "sess-test"}
 	var granted bool
 	sess.mu.Lock()
 	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
@@ -661,7 +873,7 @@ func TestServer_permissionTimeoutDenies(t *testing.T) {
 // TestServer_sessionCloseOnEOF verifies the server tears the underlying
 // session down when the client closes stdin.
 func TestServer_sessionCloseOnEOF(t *testing.T) {
-	sess := &fakeSession{}
+	sess := &fakeSession{id: "sess-test"}
 	h := newACPHarness(t, sess)
 	initialize(t, h)
 	_ = newSession(t, h)
@@ -689,6 +901,7 @@ func TestServer_sessionCloseOnEOF(t *testing.T) {
 func TestServer_resourceLinkPromptPreserved(t *testing.T) {
 	var got string
 	sess := &fakeSession{
+		id: "sess-test",
 		prompt: func(_ context.Context, prompt string) (string, bool, error) {
 			got = prompt
 			return "ok", false, nil
@@ -712,7 +925,7 @@ func TestServer_resourceLinkPromptPreserved(t *testing.T) {
 // TestServer_questionAutoAnswer (control-plane policy lives behind the
 // question tool; a full integration is in cmd/yaah tests).
 func TestServer_autoAnswerDefaultsOn(t *testing.T) {
-	s := NewServer(func() (Session, error) { return &fakeSession{}, nil }, "t", nil)
+	s := NewServer(func(string) (Session, error) { return &fakeSession{id: "sess-test"}, nil }, "t", nil)
 	if !s.AutoAnswerQuestions || !s.AutoContinue {
 		t.Fatal("defaults must enable auto-answer/auto-continue")
 	}

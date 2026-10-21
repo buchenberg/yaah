@@ -17,6 +17,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/control"
 	"github.com/buchenberg/yaah/internal/tools"
+	"github.com/buchenberg/yaah/internal/types"
 )
 
 // ProtocolVersion is the ACP major version this server speaks.
@@ -30,15 +31,24 @@ type Session interface {
 	SetCtrlCh(chan<- control.Msg)
 	GetCtrlCh() chan<- control.Msg
 	SetApproveFn(func(name, args string) bool)
+	// AgentSessionID returns the id of the underlying persisted
+	// conversation (the memory-DB session id). The ACP server exposes
+	// it as the ACP session id, so a later session/load in a fresh
+	// process names the same conversation.
+	AgentSessionID() string
+	// History returns the session's conversation state for replay on
+	// session/load (the conversation the restored loop carries).
+	History() []types.Message
 	Close()
 	ToolReg() *tools.Registry
 }
 
 // SessionFactory lazily builds the underlying agent session. It is
-// invoked once, on the first session/new, so the client's cwd can take
-// effect before construction (spec: the session cwd MUST be used for
-// the session regardless of where the subprocess was spawned).
-type SessionFactory func() (Session, error)
+// invoked once, on the first session/new or session/load, so the
+// client's cwd can take effect before construction. An empty resumeID
+// builds a fresh conversation; a non-empty one resumes the persisted
+// session of that id (unknown ids fail the build).
+type SessionFactory func(resumeID string) (Session, error)
 
 // Server is an ACP v1 agent speaking newline-delimited JSON-RPC 2.0
 // over stdin/stdout. All diagnostics go to the logf sink so stdout
@@ -139,8 +149,10 @@ func (c *connection) sendRequest(id int, method string, params any) {
 }
 
 // handleSessionNew applies the client's cwd once, builds the
-// underlying session on first use, and issues a fresh session ID.
-// A cwd that is not a usable directory rejects the request.
+// underlying session on first use, and returns the session's ACP id —
+// the underlying persisted conversation id, so a later session/load in
+// a fresh process names the same conversation. A cwd that is not a
+// usable directory rejects the request.
 func (s *Server) handleSessionNew(params json.RawMessage) (Session, error) {
 	var p SessionNewParams
 	if len(params) > 0 {
@@ -150,40 +162,180 @@ func (s *Server) handleSessionNew(params json.RawMessage) (Session, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if p.Cwd != "" {
-		if info, statErr := os.Stat(p.Cwd); statErr != nil || !info.IsDir() {
-			return nil, fmt.Errorf("cwd %q is not a directory", p.Cwd)
-		}
-		if s.sessionID != "" {
-			// One underlying conversation per process: chdir mid-session
-			// would silently move an established workspace. Docs record
-			// the single-conversation limitation; the first cwd wins.
-			s.logf("session/new cwd %q ignored: session already established", p.Cwd)
-		} else if err := os.Chdir(p.Cwd); err != nil {
-			return nil, fmt.Errorf("chdir %q: %w", p.Cwd, err)
-		} else {
-			s.logf("session cwd applied: %s", p.Cwd)
-		}
+	if err := s.applyCwdLocked(p.Cwd); err != nil {
+		return nil, err
 	}
-	if s.sess == nil {
-		sess, err := s.newSession()
-		if err != nil {
-			return nil, err
-		}
-		s.sess = sess
-		s.installQuestionHandler()
-		s.logf("agent session built")
+	fresh := s.sess == nil
+	if err := s.ensureSessionLocked(""); err != nil {
+		return nil, err
 	}
-	// One underlying conversation per process: a repeat session/new is
-	// idempotent — issuing a second ID would invalidate the client's
-	// existing handle while the same conversation still answers it.
-	if s.sessionID == "" {
-		s.sessionID = fmt.Sprintf("sess_%d", time.Now().UnixNano())
-		s.logf("session/new: %s", s.sessionID)
+	id := s.sess.AgentSessionID()
+	// One underlying conversation per process; the id is stable, so a
+	// repeat session/new is idempotent — issuing a second ID would
+	// invalidate the client's existing handle while the same
+	// conversation still answers it.
+	if !fresh {
+		s.logf("session/new repeated: returning %s", id)
 	} else {
-		s.logf("session/new repeated: returning %s", s.sessionID)
+		s.logf("session/new: %s", id)
 	}
+	s.sessionID = id
 	return s.sess, nil
+}
+
+// applyCwdLocked validates and chdirs into the client's cwd. Only the
+// first application counts: once a session has an established id, a
+// chdir would silently move an established workspace, so later cwds
+// are logged and ignored (docs record the single-conversation
+// limitation; the first cwd wins). Caller holds s.mu.
+func (s *Server) applyCwdLocked(cwd string) error {
+	if cwd == "" {
+		return nil
+	}
+	if s.sessionID != "" {
+		s.logf("cwd %q ignored: session already established", cwd)
+		return nil
+	}
+	info, statErr := os.Stat(cwd)
+	if statErr != nil || !info.IsDir() {
+		return fmt.Errorf("cwd %q is not a directory", cwd)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		return fmt.Errorf("chdir %q: %w", cwd, err)
+	}
+	s.logf("session cwd applied: %s", cwd)
+	return nil
+}
+
+// ensureSessionLocked builds the underlying session on first use.
+// An empty resumeID builds a fresh conversation; a non-empty one
+// resumes the persisted session of that id. Caller holds s.mu.
+func (s *Server) ensureSessionLocked(resumeID string) error {
+	if s.sess != nil {
+		return nil
+	}
+	sess, err := s.newSession(resumeID)
+	if err != nil {
+		return err
+	}
+	s.sess = sess
+	s.installQuestionHandler()
+	s.logf("agent session built")
+	return nil
+}
+
+// syntheticAssistantText is the content the loop persister stores for
+// an assistant message that carried only tool calls: no real text
+// existed, so the row's content is a falsified tool-call summary.
+// Replay skips those rows — they are conversation internals, not
+// user-visible agent text.
+const syntheticAssistantText = "[tool:"
+
+// replayable folds one persisted conversation message into the ACP
+// update variant it replays as, with the text to stream. Empty text
+// means "do not replay": system rows (compaction summaries,
+// post-interrupt continuations) and tool-result rows are conversation
+// internals; assistant rows that carry no real text are the
+// tool-call-only records above.
+func replayable(m types.Message) (updateKind, text string) {
+	switch m.Role {
+	case "user":
+		if m.Content == "" {
+			return "", ""
+		}
+		return UpdateUserMessageChunk, m.Content
+	case "assistant":
+		if len(m.ToolCalls) > 0 && strings.HasPrefix(m.Content, syntheticAssistantText) {
+			return "", ""
+		}
+		if m.Content == "" {
+			return "", ""
+		}
+		return UpdateAgentMessageChunk, m.Content
+	default:
+		return "", ""
+	}
+}
+
+// handleSessionLoad resumes a persisted conversation in a fresh
+// process: it applies the client's cwd exactly as session/new would,
+// builds the underlying session bound to the requested id (unknown ids
+// fail the build and are rejected), replays the conversation the
+// memory-DB restore carried as user_message_chunk /
+// agent_message_chunk updates, and then answers. Repeated loads of the
+// already-established id are idempotent (no replay: the conversation
+// is live); a load naming a different id is rejected — yaah serves one
+// conversation per process.
+func (s *Server) handleSessionLoad(
+	msg Message,
+	sendUpdate updateSender,
+	respOK func(id json.RawMessage, result any),
+	respErr func(id json.RawMessage, code int, message string),
+) {
+	var p SessionLoadParams
+	if len(msg.Params) > 0 {
+		if err := json.Unmarshal(msg.Params, &p); err != nil {
+			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
+			return
+		}
+	}
+	if p.SessionID == "" {
+		respErr(msg.ID, codeInvalidParams, "sessionId is required")
+		return
+	}
+
+	s.mu.Lock()
+	if s.sessionID == p.SessionID {
+		// Already established: the conversation is live in this
+		// process. Respond immediately without replay.
+		s.mu.Unlock()
+		respOK(msg.ID, nil)
+		return
+	}
+	if s.sessionID != "" {
+		// One underlying conversation per process (docs record the
+		// limitation): replacing a live conversation silently would
+		// strand the client's established workspace state.
+		live := s.sessionID
+		s.mu.Unlock()
+		respErr(msg.ID, codeInvalidParams,
+			fmt.Sprintf("session %q already established; one conversation per process", live))
+		return
+	}
+	if err := s.applyCwdLocked(p.Cwd); err != nil {
+		s.mu.Unlock()
+		respErr(msg.ID, codeInvalidParams, err.Error())
+		return
+	}
+	if err := s.ensureSessionLocked(p.SessionID); err != nil {
+		// The build failure is how a foreign or deleted session id is
+		// rejected: restoreSession reports "session ... not found or
+		// has no messages" for ids the store never saw.
+		s.mu.Unlock()
+		respErr(msg.ID, codeInvalidParams, err.Error())
+		return
+	}
+	s.sessionID = s.sess.AgentSessionID()
+	s.run = &runningPrompt{}
+	history := s.sess.History()
+	s.mu.Unlock()
+
+	// Spec: a load request streams the conversation to the client as
+	// session/update notifications BEFORE the response, then answers.
+	replayed := 0
+	for _, m := range history {
+		updateKind, text := replayable(m)
+		if text == "" {
+			continue
+		}
+		sendUpdate(p.SessionID, ChunkUpdate{
+			SessionUpdate: updateKind,
+			Content:       ContentBlock{Type: "text", Text: text},
+		})
+		replayed++
+	}
+	s.logf("session/load: %s replayed %d update(s)", p.SessionID, replayed)
+	respOK(msg.ID, nil)
 }
 
 // installQuestionHandler routes question-tool prompts to the client as
@@ -405,7 +557,7 @@ func (s *Server) dispatch(
 			}
 			respOK(msg.ID, InitializeResult{
 				ProtocolVersion:   ProtocolVersion,
-				AgentCapabilities: AgentCaps{},
+				AgentCapabilities: AgentCaps{LoadSession: true},
 				AgentInfo: ImplementationInfo{
 					Name:    "yaah",
 					Version: s.version,
@@ -431,7 +583,7 @@ func (s *Server) dispatch(
 			s.handlePrompt(msg, dispatchCtx, c, sendUpdate, respOK, respErr)
 
 		case "session/load":
-			respErr(msg.ID, codeInvalidParams, "loadSession is not supported: start a new session instead")
+			s.handleSessionLoad(msg, sendUpdate, respOK, respErr)
 
 		case "session/set_mode":
 			// Mode switching is not modeled yet (Tier 3); acknowledge so
