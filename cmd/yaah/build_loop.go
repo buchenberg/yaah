@@ -181,7 +181,13 @@ func (s *agentSession) loopBuilder(
 		debouncer = memory.NewDebouncedWriter(s.db)
 	}
 	persister := agent.NewSessionPersister(s.db, debouncer, s.sessionID)
-	persister.SetMsgIdx(s.msgIdx)
+	// Snapshot the conversation state under the read lock: prompt runs
+	// swap both fields under the write lock while this builder runs.
+	s.mu.RLock()
+	msgs := s.messages
+	msgIdx := s.msgIdx
+	s.mu.RUnlock()
+	persister.SetMsgIdx(msgIdx)
 	hooks := agent.NewHookEmitter(s.cfg.Hooks.Dir, s.sessionID)
 
 	return &agent.LoopBuilder{
@@ -191,7 +197,7 @@ func (s *agentSession) loopBuilder(
 		Registry:                   s.toolReg,
 		Model:                      modelName,
 		SystemPrompt:               s.mainPrompt,
-		Messages:                   s.messages,
+		Messages:                   msgs,
 		SessionID:                  s.sessionID,
 		Persister:                  persister,
 		Hooks:                      hooks,
