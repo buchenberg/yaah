@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.89.2](https://github.com/buchenberg/yaah/compare/v0.89.1...v0.89.2) (2026-10-21)
+
+
+### Bug Fixes
+
+* **runner:** the isolated lane's Go check uses the project root ([#511](https://github.com/buchenberg/yaah/issues/511)) ([d01bf27](https://github.com/buchenberg/yaah/commit/d01bf277f32836c785c4c746c54243205002df68))
+
+
+### Performance Improvements
+
+* **roles:** trim the built-in sub-agent tool belts and gate them on the environment ([#509](https://github.com/buchenberg/yaah/issues/509)) ([3c3142a](https://github.com/buchenberg/yaah/commit/3c3142a4f351949d7d633d95575c0fa8f2729974))
+
 ## [0.89.1](https://github.com/buchenberg/yaah/compare/v0.89.0...v0.89.1) (2026-10-20)
 
 
