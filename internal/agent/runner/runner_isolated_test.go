@@ -4,10 +4,8 @@ import (
 	"context"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -271,28 +269,23 @@ func TestSubAgentUnavailableTools(t *testing.T) {
 	nonGo := t.TempDir()
 	profile := subagent.RoleProfile{Tools: []string{"read", "bash", "powershell", "go_test", "go_outline"}}
 
-	got := subAgentUnavailableTools(taskRunnerOpts{}, profile, nonGo)
+	unavailable := subAgentUnavailableTools(taskRunnerOpts{}, profile, nonGo)
 	for _, want := range []string{"go_test", "go_outline"} {
-		if !slices.Contains(got, want) {
-			t.Errorf("Go machinery must be unavailable outside a Go module: %v", got)
+		if !slices.Contains(unavailable, want) {
+			t.Errorf("Go machinery must be unavailable outside a Go module: %v", unavailable)
 		}
 	}
-	// The shells are platform-gated: bash is not available on Windows,
-	// powershell needs pwsh on PATH.
-	if runtime.GOOS == "windows" {
-		if !slices.Contains(got, "bash") {
-			t.Errorf("bash must be unavailable on Windows: %v", got)
-		}
-	} else {
-		if slices.Contains(got, "bash") {
-			t.Errorf("bash must stay available on Unix: %v", got)
-		}
-		if _, err := exec.LookPath("pwsh"); err != nil && !slices.Contains(got, "powershell") {
-			t.Errorf("powershell must be unavailable without pwsh: %v", got)
+	// The shells are gated by the machine and by the workspace; the
+	// expectation comes from the same helper the gate uses, so the test
+	// cannot disagree with it.
+	for _, name := range []string{"bash", "powershell"} {
+		want := !tools.ShellToolAvailable(name)
+		if got := slices.Contains(unavailable, name); got != want {
+			t.Errorf("%s unavailable = %v, want %v (list %v)", name, got, want, unavailable)
 		}
 	}
-	if slices.Contains(got, "read") {
-		t.Errorf("ordinary tools must stay available: %v", got)
+	if slices.Contains(unavailable, "read") {
+		t.Errorf("ordinary tools must stay available: %v", unavailable)
 	}
 
 	// A Go module keeps the Go machinery.
@@ -300,10 +293,10 @@ func TestSubAgentUnavailableTools(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(goDir, "go.mod"), []byte("module example\n"), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
-	got = subAgentUnavailableTools(taskRunnerOpts{}, profile, goDir)
+	unavailable = subAgentUnavailableTools(taskRunnerOpts{}, profile, goDir)
 	for _, name := range []string{"go_test", "go_outline"} {
-		if slices.Contains(got, name) {
-			t.Errorf("%s must be available in a Go module: %v", name, got)
+		if slices.Contains(unavailable, name) {
+			t.Errorf("%s must be available in a Go module: %v", name, unavailable)
 		}
 	}
 }

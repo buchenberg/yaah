@@ -695,6 +695,24 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, profile subagent.RoleProfile, jsonMode bool, workdir string, conf *subAgentConfinement) string {
 	cwd, _ := os.Getwd()
 
+	// The tools this environment cannot offer (yaah-9n0): the shell
+	// header and the available-shell block must describe what the
+	// registry actually holds, not what the role asked for.
+	unavailable := subAgentUnavailableTools(opts, profile, workdir)
+	effectiveTools := profile.Tools
+	if len(unavailable) > 0 {
+		dropped := make(map[string]bool, len(unavailable))
+		for _, name := range unavailable {
+			dropped[name] = true
+		}
+		effectiveTools = make([]string, 0, len(profile.Tools))
+		for _, name := range profile.Tools {
+			if !dropped[name] {
+				effectiveTools = append(effectiveTools, name)
+			}
+		}
+	}
+
 	// The environment header must advertise the directory the sub-agent's
 	// tools actually resolve against. In an isolated session that is the
 	// sandbox workdir, not the host cwd — the header's working-directory
@@ -724,7 +742,7 @@ func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, pro
 	// shell, and tool-less roles resolve the contradiction by fabricating
 	// fenced command blocks with invented output. An empty shell drops the
 	// sentence; the OS and working-directory lines stay.
-	if !roleHasShell(profile.Tools) {
+	if !roleHasShell(effectiveTools) {
 		envShell = ""
 	}
 
@@ -770,7 +788,7 @@ func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, pro
 		}
 		sysPrompt += g
 	}
-	if g := prompts.SubAgentUnavailableTools(subAgentUnavailableTools(opts, profile, workdir)); g != "" {
+	if g := prompts.SubAgentUnavailableTools(unavailable); g != "" {
 		sysPrompt += "\n\n" + g
 	}
 
@@ -798,7 +816,7 @@ func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, pro
 	// structured escalations when they hit a blocker.
 	sysPrompt += prompts.Escalation()
 
-	if roleHasShell(profile.Tools) {
+	if roleHasShell(effectiveTools) {
 		shell := "bash"
 		if runtime.GOOS == "windows" {
 			shell = "powershell"
@@ -1053,9 +1071,21 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 // every call and buys a failed call later, so the tool is left out and
 // named in the prompt instead (yaah-9n0).
 func subAgentUnavailableTools(opts taskRunnerOpts, profile subagent.RoleProfile, workdir string) []string {
-	root := workdir
-	if root == "" && opts.workspace != nil {
+	// The root of the dispatch, in the same order the rest of this file
+	// uses: the workspace decides (in the isolated lane the workdir is
+	// meaningless), then the assigned worktree, then the process cwd the
+	// shared lane runs in.
+	root := ""
+	workspaceShell := ""
+	if opts.workspace != nil {
 		root = opts.workspace.WorkDir()
+		workspaceShell, _ = opts.workspace.Shell()
+	}
+	if root == "" {
+		root = workdir
+	}
+	if root == "" {
+		root, _ = os.Getwd()
 	}
 	goAvailable := tools.GoToolAvailable(root)
 
@@ -1063,7 +1093,10 @@ func subAgentUnavailableTools(opts taskRunnerOpts, profile subagent.RoleProfile,
 	for _, name := range profile.Tools {
 		switch {
 		case name == "bash" || name == "powershell":
-			if !tools.ShellToolAvailable(name) {
+			// Two gates: the machine must have the shell, and the
+			// workspace must launch it (a container running `sh` has no
+			// PowerShell).
+			if !tools.ShellToolAvailable(name) || !tools.WorkspaceShellAvailable(workspaceShell, name) {
 				unavailable = append(unavailable, name)
 			}
 		case tools.IsGoToolchainTool(name):
