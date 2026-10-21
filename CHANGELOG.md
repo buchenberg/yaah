@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.92.0](https://github.com/buchenberg/yaah/compare/v0.91.0...v0.92.0) (2026-10-21)
+
+
+### Features
+
+* **acp:** support session/load so a client can resume a session across processes ([00abacf](https://github.com/buchenberg/yaah/commit/00abacf38a7816e69248317dc889c607090775af))
+* **acp:** support session/load so a client can resume across processes ([9306523](https://github.com/buchenberg/yaah/commit/9306523da4f719ce76e6ddfbbf9cbf0193c63e20))
+
+
+### Bug Fixes
+
+* **acp:** second review round - background markers, close outside lock, guarded reads ([ea7a7e8](https://github.com/buchenberg/yaah/commit/ea7a7e823351bc020ef66f5a5d1dfb31aade5d33))
+* **acp:** skip internal user-role rows on replay; guard History writers; doc fixes ([2773488](https://github.com/buchenberg/yaah/commit/2773488f00cc08298a1d620aadde76b04d4cbfa1))
+* **acp:** tolerate clients that omit clientInfo in initialize ([5e7d092](https://github.com/buchenberg/yaah/commit/5e7d092b34f59e72fdf73daa07590778056d602b))
+* **session:** read messages/msgIdx under RLock in loopBuilder ([9dceb7d](https://github.com/buchenberg/yaah/commit/9dceb7dac7500c709f64412155d6a8e8a80caa99))
+
 ## [0.91.0](https://github.com/buchenberg/yaah/compare/v0.90.0...v0.91.0) (2026-10-21)
 
 
