@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.91.0](https://github.com/buchenberg/yaah/compare/v0.90.0...v0.91.0) (2026-10-21)
+
+
+### Features
+
+* **acp:** replace the homemade ACP surface with Agent Client Protocol v1 ([3d81886](https://github.com/buchenberg/yaah/commit/3d81886d0b1089aee2a49650444b3601576256d5))
+
+
+### Bug Fixes
+
+* **acp:** bound the shutdown join and clarify truncate docs ([38de6f1](https://github.com/buchenberg/yaah/commit/38de6f132f9663605f745c965bfe8290ebc5d24c))
+
 ## [0.90.0](https://github.com/buchenberg/yaah/compare/v0.89.2...v0.90.0) (2026-10-21)
 
 
