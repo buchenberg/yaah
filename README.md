@@ -21,7 +21,7 @@ running tests, and retrying. yaah splits that work:
 - **Sub-agents do the long-running work.** Each role gets a focused tool set, its own iteration/turn budget, and a structured evidence contract.
 - **Parallel by default.** Independent research, implementation, and validation can run at the same time.
 - **Isolated by construction.** A dispatch runs in its own git worktree and returns a sealed proposal (`select`, `apply`, `release`, or `discard`). A rejected attempt costs one dispatch and leaves the tree untouched.
-- **Confined when the host can.** Retention isolates files; confinement governs processes and the network. Where the host can jail (Landlock on Linux, winacl on Windows), a dispatch shells inside a syscall jail whose sole writable root is its worktree, and on Linux egress can also be fully denied or pinned to a session broker's allowlist. Hosts without a usable jail degrade visibly; `paddock` fails closed instead. See [Confinement and egress](#confinement-and-egress).
+- **Confined when the host can.** Retention isolates files; confinement governs processes and the network. Where the host can jail (Landlock on Linux, winacl on Windows), a dispatch shells inside a kernel-enforced confinement jail — Landlock's syscall filtering, winacl's write-restricted access checks — whose sole writable root is its worktree, and on Linux egress can also be fully denied or pinned to a session broker's allowlist. Hosts without a usable jail degrade visibly; `paddock` fails closed instead. See [Confinement and egress](#confinement-and-egress).
 - **Supervised while running.** A supervision kernel reads every session's trace and steers or halts a running sub-agent loop on advisory rules — destructive-command patterns, error-rate spikes — rather than waiting for the run to finish.
 - **Speculative by design.** The orchestrator can compare several proposals and land the best one; nothing is committed by a sub-agent.
 
@@ -173,14 +173,15 @@ survive it, and anything that cannot be moved back is reported rather than lost.
 
 On Linux the jail is real, and the network can be governed with it:
 
-- **Syscall jail.** `agents.subagent.containment: auto | paddock | advisory |
+- **Confinement jail.** `agents.subagent.containment: auto | paddock | advisory |
   off` (default `auto`; aliases `jail` for `paddock`, `none` for `off`).
   `advisory` and `off` leave the host path and never jail. A dispatch runs
-  inside a Landlock jail whose only writable
-  root is its own worktree; housekeeping writes (`HOME`, `TMPDIR`, package
-  caches) are redirected into a `.yaah-scratch/` inside it and scrubbed before
-  the proposal is sealed. The orchestrator is never jailed. Where no jail is
-  available, `auto` degrades visibly and records the tier on the trace;
+  inside a kernel-enforced confinement jail — Landlock's syscall filtering on
+  Linux, winacl's write-restricted access checks on Windows — whose only
+  writable root is its own worktree; housekeeping writes (`HOME`, `TMPDIR`,
+  package caches) are redirected into a `.yaah-scratch/` inside it and scrubbed
+  before the proposal is sealed. The orchestrator is never jailed. Where no jail
+  is available, `auto` degrades visibly and records the tier on the trace;
   `paddock` fails closed instead of degrading.
 - **One writer.** A confined dispatch cannot `git add`, `commit`, or `stash` —
   a linked worktree's index lives in the host repository's `.git`, outside the

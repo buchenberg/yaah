@@ -200,10 +200,12 @@ sub-agents too. `agents.default.workspace_deny_patterns` adds secret-file
 denials on top.
 
 Session path containment is one axis. Retained sub-agent dispatches can also
-carry OS-level confinement, where the host can provide one (Landlock on Linux,
-winacl on Windows): a syscall jail
-with a worktree-only writable root, read-only git for the confined body, and
-governed egress (`deny_all` or a broker-pinned allowlist). It is placement-gated
+carry OS-level confinement, where the host can provide one (Landlock's syscall
+filtering on Linux, winacl's write-restricted access checks on Windows): a
+kernel-enforced jail with a worktree-only writable root and read-only git for
+the confined body, plus — on Linux only; winacl has no network axis and refuses
+restrictive postures — governed egress (`deny_all` or a broker-pinned
+allowlist). It is placement-gated
 and host-dependent — `containment: off`/`advisory`, `mode: shared`, and any
 host without a usable jail run the advisory or host path instead — with a
 per-platform containment table in the

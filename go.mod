@@ -8,6 +8,7 @@ require (
 	github.com/buchenberg/shepherd-kernel-go v0.17.0
 	github.com/buchenberg/shepherd-runtime-go v0.18.0
 	github.com/buchenberg/shepherd-runtime-go/sandbox/landlock v0.1.1
+	github.com/buchenberg/shepherd-runtime-go/sandbox/winacl v0.1.0
 	github.com/buchenberg/tviewmd v0.3.1
 	github.com/gdamore/tcell/v2 v2.13.10
 	github.com/lsferreira42/figlet-go v0.0.2-beta
@@ -32,7 +33,6 @@ require (
 	github.com/Microsoft/go-winio v0.6.3-0.20251027160822-ad3df93bed29 // indirect
 	github.com/Microsoft/hcsshim v0.15.0-rc.1 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
-	github.com/buchenberg/shepherd-runtime-go/sandbox/winacl v0.1.0
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

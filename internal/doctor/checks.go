@@ -270,9 +270,14 @@ func containmentCheck(available bool, backendDesc, mode, containment, network st
 	if n != "allow_all" && !networkCapable {
 		// The dispatch refuses (a policy that cannot be applied is not applied
 		// quietly), so this is not a warning about a weak control: sub-agent
-		// dispatches will not run at all.
+		// dispatches will not run at all. Split the cause: a host without a
+		// usable backend names that, not a feature some backend lacks.
+		cause := "no containment backend on this host, so nothing enforces network rules"
+		if available {
+			cause = "this host's containment jail cannot enforce network rules (no network-rule support on this backend: Landlock needs ABI >= 4 on Linux, winacl has none)"
+		}
 		return Check{Label: "Containment", Status: "FAIL",
-			Detail: detail + " — this host's syscall jail cannot enforce network rules (no network-rule support on this backend: Landlock needs ABI >= 4 on Linux, winacl has none), and a restrictive egress posture is refused rather than run open; set network: allow_all or run where it can be enforced"}
+			Detail: detail + " — " + cause + ", and a restrictive egress posture is refused rather than run open; set network: allow_all or run where it can be enforced"}
 	}
 
 	switch p {

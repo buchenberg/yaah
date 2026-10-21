@@ -113,8 +113,9 @@ type WorkspaceSetter interface {
 // localWorkspace is the host filesystem: the default, and what every session
 // used before workspaces existed.
 //
-// When a confiner is set, Exec runs commands under the syscall jail (Landlock on
-// Linux, winacl on Windows) with the workspace as the sole writable root. The orchestrator's
+// When a confiner is set, Exec runs commands under the containment jail
+// (Landlock's syscall filtering on Linux, winacl's write-restricted access
+// checks on Windows) with the workspace as the sole writable root. The orchestrator's
 // workspace never carries one, so its commands keep running unconfined; a
 // confiner is attached only on the sub-agent workdir lane (that run's bound
 // world).
@@ -349,8 +350,9 @@ func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (Exe
 //
 // Detection of a refused write requires BOTH a permission failure and a denied
 // path the message names that lies outside the writable root. "Permission
-// denied" alone is not evidence of a boundary refusal — a `chmod 000` file or a
-// non-executable script inside the worktree produces the same errno — so a
+// denied" (POSIX phrasing) or "Access to the path ... is denied." (Windows
+// phrasing) alone is not evidence of a boundary refusal — a `chmod 000` file or
+// a non-executable script inside the worktree produces the same errno — so a
 // failure with no attributable path gets no hint. A missed hint costs nothing
 // (the raw error still surfaces); a wrong one sends the model to the wrong
 // remedy. The one exception is a snap-packaged toolchain, whose failure names
@@ -413,7 +415,9 @@ func deniedOutsideRoot(stderr, root string) (string, bool) {
 		resolvedRoot = r
 	}
 	for _, line := range strings.Split(stderr, "\n") {
-		if !strings.Contains(line, "Permission denied") && !strings.Contains(line, "Read-only file system") {
+		if !strings.Contains(line, "Permission denied") &&
+			!strings.Contains(line, "Read-only file system") &&
+			!strings.Contains(line, "Access is denied") {
 			continue
 		}
 		for _, cand := range pathCandidates(line) {
@@ -441,8 +445,8 @@ func deniedOutsideRoot(stderr, root string) (string, bool) {
 // withinRoot reports whether p is root or lies beneath it, separator-aware so
 // "/work/wt-other" is not "inside" "/work/wt". Host path rules apply because the
 // message is produced on this host: the hint is only reachable where a kernel
-// jail actually runs (Linux today), since every other placement either degrades
-// to advisory or refuses before the body starts.
+// jail actually runs (Linux via Landlock, Windows via winacl), since every other
+// placement either degrades to advisory or refuses before the body starts.
 func withinRoot(p, root string) bool {
 	if p == root {
 		return true

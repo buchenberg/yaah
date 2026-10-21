@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -34,12 +35,33 @@ func ConfinementScratchEnv(workdir string) ([]string, error) {
 		return nil, nil
 	}
 	scratch := filepath.Join(workdir, confinementScratchName)
+	// POSIX variables first: every member module moves housekeeping writes
+	// under these.
 	specs := []struct{ key, sub string }{
 		{"HOME", "home"},
 		{"TMPDIR", "tmp"},
 		{"XDG_CACHE_HOME", "cache"},
 		{"GOCACHE", "go-build"},
 		{"npm_config_cache", "npm"},
+	}
+	if runtime.GOOS == "windows" {
+		// winacl's Launch passes the caller's environment through unchanged, so
+		// the variables Windows tools write through (TEMP/TMP, and the profile
+		// trees APPDATA/LOCALAPPDATA/USERPROFILE) would point outside the
+		// writable root — the mirror of the POSIX denial loop this redirect
+		// exists to prevent. Redirect them into the scratch; reads (not
+		// governed by the mechanism) still reach the real trees exactly like a
+		// redirected HOME does. GOMODCACHE is pinned once below for both
+		// platforms; the git-config shim below covers the moved USERPROFILE
+		// (git reads %USERPROFILE%\.gitconfig) the way HOME's shim does on
+		// POSIX.
+		specs = append(specs,
+			struct{ key, sub string }{"TEMP", "tmp"},
+			struct{ key, sub string }{"TMP", "tmp"},
+			struct{ key, sub string }{"APPDATA", "appdata"},
+			struct{ key, sub string }{"LOCALAPPDATA", "localappdata"},
+			struct{ key, sub string }{"USERPROFILE", "home"},
+		)
 	}
 	env := make([]string, 0, len(specs)+1)
 	for _, s := range specs {
