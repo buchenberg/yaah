@@ -277,12 +277,21 @@ func TestSubAgentUnavailableTools(t *testing.T) {
 			t.Errorf("Go machinery must be unavailable outside a Go module: %v", got)
 		}
 	}
-	if !slices.Contains(got, "powershell") && runtime.GOOS != "windows" {
-		if _, err := exec.LookPath("pwsh"); err != nil {
+	// The shells are platform-gated: bash is not available on Windows,
+	// powershell needs pwsh on PATH.
+	if runtime.GOOS == "windows" {
+		if !slices.Contains(got, "bash") {
+			t.Errorf("bash must be unavailable on Windows: %v", got)
+		}
+	} else {
+		if slices.Contains(got, "bash") {
+			t.Errorf("bash must stay available on Unix: %v", got)
+		}
+		if _, err := exec.LookPath("pwsh"); err != nil && !slices.Contains(got, "powershell") {
 			t.Errorf("powershell must be unavailable without pwsh: %v", got)
 		}
 	}
-	if slices.Contains(got, "read") || slices.Contains(got, "bash") {
+	if slices.Contains(got, "read") {
 		t.Errorf("ordinary tools must stay available: %v", got)
 	}
 
