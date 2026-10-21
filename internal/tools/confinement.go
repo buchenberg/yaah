@@ -80,8 +80,17 @@ func ConfinementScratchEnv(workdir string) ([]string, error) {
 	// body then reads the shared cache. Landlock governs writes only, so the
 	// read is unpoliced; a *download* of a missing module needs a write, which
 	// the (unconfined) worktree bootstrap does.
+	//
+	// When no home resolves at all (HOME unset, UserHomeDir failed — the
+	// degenerate Unix case), the pin is left OFF rather than exporting a
+	// relative "go/pkg/mod": Go would resolve that against the body's cwd and
+	// download the cache into the worktree, defeating the pin and polluting the
+	// sealed delta. Leaving it unset makes Go resolve its own default the way it
+	// does on an unconfined run; the same download outcome, but not pinned here.
 	if _, set := os.LookupEnv("GOMODCACHE"); !set {
-		env = append(env, "GOMODCACHE="+defaultGoModCache())
+		if mc := defaultGoModCache(); mc != "" {
+			env = append(env, "GOMODCACHE="+mc)
+		}
 	}
 
 	// Point git at the user's REAL global config (see scratchGitGlobalConfig): the
@@ -246,11 +255,11 @@ func confinementScratchDir(root, dir string) error {
 }
 
 // defaultGoModCache resolves Go's default module cache against the CURRENT
-// (pre-redirect) environment: $GOMODCACHE if set, else $GOPATH/pkg/mod, else
+// (pre-redirect) environment: $GOPATH/pkg/mod if GOPATH is set, else
 // $HOME/go/pkg/mod — resolving the home the way Go does on every platform
 // ($HOME on Unix; %USERPROFILE% behind os.UserHomeDir on Windows, where HOME
-// is typically unset, so the pinned GOMODCACHE points at the real pre-redirect
-// cache rather than a relative "go/pkg/mod").
+// is typically unset). Empty when nothing resolves, so the caller leaves
+// GOMODCACHE unset instead of exporting a relative path.
 func defaultGoModCache() string {
 	if p := os.Getenv("GOPATH"); p != "" {
 		return filepath.Join(p, "pkg", "mod")
@@ -260,6 +269,9 @@ func defaultGoModCache() string {
 		if h, err := os.UserHomeDir(); err == nil {
 			home = h
 		}
+	}
+	if home == "" {
+		return ""
 	}
 	return filepath.Join(home, "go", "pkg", "mod")
 }

@@ -430,7 +430,7 @@ func deniedOutsideRoot(stderr, root string) (string, bool) {
 			continue
 		}
 		for _, cand := range pathCandidates(line) {
-			if !filepath.IsAbs(cand) {
+			if !absPath(cand) {
 				continue
 			}
 			c := filepath.Clean(cand)
@@ -456,11 +456,43 @@ func deniedOutsideRoot(stderr, root string) (string, bool) {
 // message is produced on this host: the hint is only reachable where a kernel
 // jail actually runs (Linux via Landlock, Windows via winacl), since every other
 // placement either degrades to advisory or refuses before the body starts.
+//
+// Windows-filesystem paths fold case: producers spell them inconsistently (an
+// MSYS tool lowercasing the drive letter, shell vs Explorer directory
+// capitalization), and NTFS folds them onto the same file — a refusal inside
+// the worktree must not be reported as a boundary refusal just because the
+// spelling differs. The drive-letter shape triggers folding on every host, so
+// attribution behaves the same on Linux CI as on Windows; a POSIX root keeps
+// exact comparison, because Unix paths are case-sensitive and the message
+// spells what the kernel named. An 8.3 short-name spelling stays inexact —
+// it neither matches nor misattributes; the hint is simply not offered, per
+// the "guessing is worse than none" rule above.
 func withinRoot(p, root string) bool {
+	if drivePath(p) || drivePath(root) {
+		pp := strings.ReplaceAll(p, "/", `\`)
+		rr := strings.ReplaceAll(root, "/", `\`)
+		lowerP, lowerR := strings.ToLower(pp), strings.ToLower(rr)
+		return lowerP == lowerR || strings.HasPrefix(lowerP, lowerR+`\`)
+	}
 	if p == root {
 		return true
 	}
 	return strings.HasPrefix(p, root+string(filepath.Separator))
+}
+
+// drivePath reports whether s carries a Windows drive-letter prefix ("C:\…",
+// "C:/…"), the shape case folding is decided on.
+func drivePath(s string) bool {
+	return len(s) >= 2 && s[1] == ':'
+}
+
+// absPath reports whether p is absolute for its own shape: host filepath rules,
+// plus the Windows drive-letter shape, which is absolute regardless of the
+// host GOOS — a drive-path candidate must reach the comparison on Linux CI too
+// (filepath.IsAbs("C:\x") is false off-Windows, and the hint code is pure
+// string matching that both hosts must agree on).
+func absPath(p string) bool {
+	return filepath.IsAbs(p) || drivePath(p)
 }
 
 // pathCandidates extracts the path-like tokens from one stderr line: quoted

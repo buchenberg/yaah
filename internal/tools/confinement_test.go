@@ -241,8 +241,8 @@ func TestGitConfigValue_QuotesAndEscapes(t *testing.T) {
 // the git rule when the refusal is git's own metadata.
 func TestConfinementHint_ExplainsRefusedWrites(t *testing.T) {
 	// Host-native absolute paths: the hint is only reachable where a kernel jail
-	// runs (Linux today), but the function is cross-platform code and must not be
-	// tested with one platform's path shapes.
+	// runs (Linux via Landlock, Windows via winacl), but the function is
+	// cross-platform code and must not be tested with one platform's path shapes.
 	root := t.TempDir()
 	outside := t.TempDir()
 
@@ -287,6 +287,34 @@ func TestConfinementHint_ExplainsRefusedWrites(t *testing.T) {
 	} {
 		if got := confinementHint(s, root); got != "" {
 			t.Errorf("confinementHint(%q) = %q, want no hint (inside the root, or unattributable)", s, got)
+		}
+	}
+
+	// Windows phrasings, matched on every host: the matching is pure string
+	// work, so the Windows producers a winacl body emits are pinned here rather
+	// than left to a Windows-only leg. Grow and verify a drive-letter root the
+	// way a Windows workspace would spell it.
+	wnRoot := `C:\work\wt`
+	for _, s := range []string{
+		// Go PathError form: path inline, lowercased drive (an MSYS-spelled
+		// tool run under the same body).
+		`open c:\Users\someone\out.txt: Access is denied.`,
+		// .NET/PowerShell form: "Access to the path ... is denied."
+		`Access to the path 'D:\temp\scratch' is denied.`,
+	} {
+		if got := confinementHint(s, wnRoot); got == "" {
+			t.Errorf("confinementHint(%q) = %q, want a hint for a denial outside the root", s, got)
+		}
+	}
+	// In-worktree refusals in the same phrasings must not be captioned as
+	// boundary refusals — case folding included, since producers capitalize
+	// inconsistently (root passed as `c:\work\wt`, message as `C:\Work\Wt`).
+	for _, s := range []string{
+		`open C:\work\wt\file.txt: Access is denied.`,
+		`Access to the path 'C:\Work\Wt\sub\log.txt' is denied.`,
+	} {
+		if got := confinementHint(s, wnRoot); got != "" {
+			t.Errorf("confinementHint(%q) = %q, want no hint for a Windows phrasing inside the root", s, got)
 		}
 	}
 

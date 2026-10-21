@@ -179,12 +179,13 @@ Windows; on Linux the network can be governed with it as well:
   `advisory` and `off` leave the host path and never jail. A dispatch runs
   inside a kernel-enforced confinement jail — Landlock's syscall filtering on
   Linux, winacl's write-restricted access checks on Windows — whose only
-  writable root is its own worktree; housekeeping writes (`HOME`, `TMPDIR` and
-  package caches on POSIX; `TEMP`, `TMP` and the `APPDATA`/`LOCALAPPDATA`/
-  `USERPROFILE` trees on Windows) are redirected into a `.yaah-scratch/` inside
-  it and scrubbed before the proposal is sealed. The orchestrator is never
-  jailed. Where no jail is available, `auto` degrades visibly and records the
-  tier on the trace; `paddock` fails closed instead of degrading.
+  writable root is its own worktree; housekeeping writes are redirected into a
+  `.yaah-scratch/` inside it and scrubbed before the proposal is sealed:
+  package caches (`XDG_CACHE_HOME`, `GOCACHE`, `npm_config_cache`) on every
+  platform, `HOME`/`TMPDIR` on POSIX, and `TEMP`/`TMP` plus the
+  `APPDATA`/`LOCALAPPDATA`/`USERPROFILE` trees on Windows. The orchestrator is
+  never jailed. Where no jail is available, `auto` degrades visibly and records
+  the tier on the trace; `paddock` fails closed instead of degrading.
 - **One writer.** A confined dispatch cannot `git add`, `commit`, or `stash` —
   a linked worktree's index lives in the host repository's `.git`, outside the
   jail. Read-only git (`status`, `diff`, `log`) is fine, and the orchestrator

@@ -563,8 +563,12 @@ runs on the host. The orchestrator is never jailed either way.
 > real linked-worktree layout and pins both.
 
 Housekeeping writes are **redirected into** the worktree rather than the jail
-being widened: `HOME`, `TMPDIR`, `XDG_CACHE_HOME`, `GOCACHE`, and
-`npm_config_cache` point at a `.yaah-scratch/` inside it. The scratch is scrubbed
+being widened, on every confinement host: `HOME`, `TMPDIR`, `XDG_CACHE_HOME`,
+`GOCACHE`, and `npm_config_cache` point at a `.yaah-scratch/` inside it (on
+Windows the redirect adds `TEMP`, `TMP`, and the profile trees
+`APPDATA`/`LOCALAPPDATA`/`USERPROFILE`, because winacl launches the child with
+the caller's environment and those would otherwise point outside the writable
+root). The scratch is scrubbed
 before the proposal is sealed, so it never reaches the delta. Two *reads* the
 redirect would otherwise hide are handled explicitly:
 
