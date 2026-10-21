@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -771,6 +774,92 @@ func TestServer_secondPromptWhileBusy(t *testing.T) {
 	close(release)
 }
 
+// TestResolveMCPRefsResolvesCommands covers clients that send a bare
+// executable name or a cwd-relative path instead of the absolute path
+// the spec asks for.
+func TestResolveMCPRefsResolvesCommands(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go is not on PATH")
+	}
+	refs, err := resolveMCPRefs([]McpServerRef{{Name: "bare", Command: "go"}}, t.TempDir())
+	if err != nil {
+		t.Fatalf("bare command: %v", err)
+	}
+	if !filepath.IsAbs(refs[0].Command) {
+		t.Errorf("bare command = %q, want absolute", refs[0].Command)
+	}
+	if _, err := os.Stat(refs[0].Command); err != nil {
+		t.Errorf("resolved command does not exist: %v", err)
+	}
+
+	cwd := t.TempDir()
+	local := filepath.Join(cwd, "tool.exe")
+	if err := os.WriteFile(local, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	refs, err = resolveMCPRefs([]McpServerRef{{Name: "local", Command: "./tool.exe"}}, cwd)
+	if err != nil {
+		t.Fatalf("relative command: %v", err)
+	}
+	if refs[0].Command != local {
+		t.Errorf("relative command = %q, want %q", refs[0].Command, local)
+	}
+
+	if _, err := resolveMCPRefs([]McpServerRef{{Name: "missing", Command: "definitely-not-on-path-xyz"}}, cwd); err == nil {
+		t.Error("missing bare command should fail")
+	}
+}
+
+// TestServer_sessionNewRequiresAbsoluteCwd pins the ACP cwd rules: a
+// missing or relative cwd is invalid params, not a silent fallback to
+// the process directory.
+func TestServer_sessionNewRequiresAbsoluteCwd(t *testing.T) {
+	h := newACPHarness(t, &fakeSession{id: "sess-test"})
+	initialize(t, h)
+	for i, params := range []string{
+		`{"mcpServers":[]}`,
+		`{"cwd":"relative/dir","mcpServers":[]}`,
+	} {
+		if err := h.send("session/new", i+2, params); err != nil {
+			t.Fatal(err)
+		}
+		msg := h.recv(t)
+		if msg.Error == nil || msg.Error.Code != codeInvalidParams {
+			t.Fatalf("%s: response = %+v, want invalid params", params, msg)
+		}
+	}
+}
+
+// TestServer_parseErrorRepliesWithNullID covers JSON-RPC 2.0's parse
+// error contract and keeps the connection usable.
+func TestServer_parseErrorRepliesWithNullID(t *testing.T) {
+	h := newACPHarness(t, &fakeSession{id: "sess-test"})
+	if _, err := io.WriteString(h.inW, "{not json\n"); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recv(t)
+	if msg.Error == nil || msg.Error.Code != codeParseError {
+		t.Fatalf("response = %+v, want parse error", msg)
+	}
+	if string(msg.ID) != "null" {
+		t.Fatalf("parse error id = %s, want null", msg.ID)
+	}
+	initialize(t, h)
+}
+
+// TestServer_invalidRequestRepliesWith32600 covers a request with no
+// method.
+func TestServer_invalidRequestRepliesWith32600(t *testing.T) {
+	h := newACPHarness(t, &fakeSession{id: "sess-test"})
+	if err := h.send("", 9, ""); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recv(t)
+	if msg.Error == nil || msg.Error.Code != codeInvalidRequest {
+		t.Fatalf("response = %+v, want invalid request", msg)
+	}
+}
+
 // TestServer_emptyPromptRejected keeps empty prompt blocks out.
 func TestServer_emptyPromptRejected(t *testing.T) {
 	h := newACPHarness(t, &fakeSession{id: "sess-test"})
@@ -833,13 +922,29 @@ func TestServer_permissionAllow(t *testing.T) {
 	if err := h.send("session/prompt", 3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"exec something"}]}`, sid)); err != nil {
 		t.Fatal(err)
 	}
+	announced := h.recv(t)
+	if announced.Method != "session/update" {
+		t.Fatalf("expected the pending tool_call update first, got %+v", announced)
+	}
+	var announcedEnv updateEnvelope
+	if err := json.Unmarshal(announced.Params, &announcedEnv); err != nil {
+		t.Fatalf("announce envelope: %v", err)
+	}
+	var announcedCall ToolCallUpdate
+	if err := json.Unmarshal(announcedEnv.Update, &announcedCall); err != nil {
+		t.Fatalf("announce update: %v", err)
+	}
+	if announcedCall.SessionUpdate != UpdateToolCall || announcedCall.ToolCallID != "call-1" || announcedCall.Status != StatusPending {
+		t.Fatalf("pending tool_call = %+v, want tool_call call-1 pending", announcedCall)
+	}
+
 	msg := h.recvRequest(t, "session/request_permission")
 	var params RequestPermissionParams
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		t.Fatalf("request_permission params: %v", err)
 	}
-	if params.ToolCall.ToolCallID == "" || params.ToolCall.Title == "" {
-		t.Fatalf("permission request missing toolCall identity: %+v", params.ToolCall)
+	if params.ToolCall.ToolCallID != "call-1" || params.ToolCall.Title == "" {
+		t.Fatalf("permission request must reuse the call id: %+v", params.ToolCall)
 	}
 	if len(params.Options) == 0 {
 		t.Fatal("permission request missing options")

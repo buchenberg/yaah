@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -200,30 +201,62 @@ func canonicalCwd(cwd string) (string, error) {
 	return filepath.Clean(abs), nil
 }
 
-// validateMCPRefs checks the client-declared MCP servers. Only stdio
-// is supported (the spec requires it of every agent; HTTP/SSE would
-// need mcpCapabilities first). Commands must be absolute.
-func validateMCPRefs(refs []McpServerRef) error {
+// resolveMCPRefs checks the client-declared MCP servers and turns each
+// command into an absolute path. Only stdio is supported (the spec
+// requires it of every agent; HTTP/SSE would need mcpCapabilities
+// first). ACP asks clients for an absolute command, but real clients
+// commonly send a bare executable name ("npx", "uvx") or a path
+// relative to the session cwd; resolve those here instead of rejecting
+// an otherwise usable server.
+func resolveMCPRefs(refs []McpServerRef, cwd string) ([]McpServerRef, error) {
+	out := make([]McpServerRef, 0, len(refs))
 	seen := make(map[string]bool, len(refs))
 	for i, ref := range refs {
 		if ref.Name == "" {
-			return fmt.Errorf("mcpServers[%d].name is required", i)
+			return nil, fmt.Errorf("mcpServers[%d].name is required", i)
 		}
 		if seen[ref.Name] {
-			return fmt.Errorf("mcpServers: duplicate name %q", ref.Name)
+			return nil, fmt.Errorf("mcpServers: duplicate name %q", ref.Name)
 		}
 		seen[ref.Name] = true
 		if ref.Type != "" && ref.Type != "stdio" {
-			return fmt.Errorf("mcpServers[%d]: unsupported transport %q", i, ref.Type)
+			return nil, fmt.Errorf("mcpServers[%d]: unsupported transport %q", i, ref.Type)
 		}
 		if ref.Command == "" {
-			return fmt.Errorf("mcpServers[%d].command is required", i)
+			return nil, fmt.Errorf("mcpServers[%d].command is required", i)
 		}
-		if !filepath.IsAbs(ref.Command) {
-			return fmt.Errorf("mcpServers[%d].command must be an absolute path", i)
+		command, err := resolveMCPCommand(ref.Command, cwd)
+		if err != nil {
+			return nil, fmt.Errorf("mcpServers[%d].command: %w", i, err)
+		}
+		ref.Command = command
+		out = append(out, ref)
+	}
+	return out, nil
+}
+
+// resolveMCPCommand resolves one stdio command. Absolute paths pass
+// through (cleaned); a name is looked up on PATH; a relative path with
+// a separator is resolved against the session cwd.
+func resolveMCPCommand(command, cwd string) (string, error) {
+	resolved := command
+	if !filepath.IsAbs(resolved) {
+		if strings.ContainsAny(resolved, `/\`) {
+			resolved = filepath.Join(cwd, resolved)
+		} else if p, err := exec.LookPath(resolved); err == nil {
+			resolved = p
+		} else {
+			return "", fmt.Errorf("%q is not on PATH", command)
 		}
 	}
-	return nil
+	abs, err := filepath.Abs(resolved)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(abs); err != nil {
+		return "", fmt.Errorf("%q: %w", command, err)
+	}
+	return filepath.Clean(abs), nil
 }
 
 // buildSession builds one underlying session and registers it under
@@ -275,11 +308,12 @@ func (s *Server) handleSessionNew(msg Message, respOK func(id json.RawMessage, r
 		respErr(msg.ID, codeInvalidParams, err.Error())
 		return
 	}
-	if err := validateMCPRefs(p.McpServers); err != nil {
+	mcpRefs, err := resolveMCPRefs(p.McpServers, cwd)
+	if err != nil {
 		respErr(msg.ID, codeInvalidParams, err.Error())
 		return
 	}
-	st, err := s.buildSession(BuildOptions{Cwd: cwd, MCPServers: p.McpServers}, "")
+	st, err := s.buildSession(BuildOptions{Cwd: cwd, MCPServers: mcpRefs}, "")
 	if err != nil {
 		respErr(msg.ID, codeInvalidParams, "create session: "+err.Error())
 		return
@@ -415,7 +449,8 @@ func (s *Server) handleSessionLoad(
 		respErr(msg.ID, codeInvalidParams, err.Error())
 		return
 	}
-	if err := validateMCPRefs(p.McpServers); err != nil {
+	mcpRefs, err := resolveMCPRefs(p.McpServers, cwd)
+	if err != nil {
 		respErr(msg.ID, codeInvalidParams, err.Error())
 		return
 	}
@@ -445,7 +480,7 @@ func (s *Server) handleSessionLoad(
 	st, err = s.buildSession(BuildOptions{
 		ResumeID:   p.SessionID,
 		Cwd:        cwd,
-		MCPServers: p.McpServers,
+		MCPServers: mcpRefs,
 	}, p.SessionID)
 	if err != nil {
 		respErr(msg.ID, codeInvalidParams, err.Error())
@@ -677,10 +712,15 @@ func (s *Server) dispatch(
 		// Method empty: a response to one of our requests (routed to the
 		// permission bridge) or a stray message to be dropped.
 		if msg.Method == "" {
-			if len(msg.ID) > 0 {
+			if len(msg.ID) > 0 && (len(msg.Result) > 0 || msg.Error != nil) {
+				// A response to one of our requests.
 				s.resolvePending(msg)
 			} else {
-				respErr(json.RawMessage("null"), codeInvalidRequest, "invalid request: method is required")
+				id := msg.ID
+				if len(id) == 0 {
+					id = json.RawMessage("null")
+				}
+				respErr(id, codeInvalidRequest, "invalid request: method is required")
 			}
 			continue
 		}
