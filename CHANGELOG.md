@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.89.1](https://github.com/buchenberg/yaah/compare/v0.89.0...v0.89.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* **tools:** keep the belt notice name-free and stop the typo check false-flagging ([#506](https://github.com/buchenberg/yaah/issues/506)) ([ff4ced8](https://github.com/buchenberg/yaah/commit/ff4ced8b48bb5f6acfb493559c804e3f0edf955e))
+
 ## [0.89.0](https://github.com/buchenberg/yaah/compare/v0.88.4...v0.89.0) (2026-10-20)
 
 
