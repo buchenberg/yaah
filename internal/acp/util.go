@@ -23,8 +23,10 @@ func rawOf(v any) json.RawMessage {
 	return data
 }
 
-// truncate shortens s to at most max runes, appending an ellipsis when
-// it cuts. Rune-safe: byte slicing would corrupt multi-byte characters.
+// truncate shortens s to at most max runes. A cut at max >= 4 is
+// marked with an ellipsis; below that, a bare prefix is returned
+// (and max <= 0 yields ""). Rune-safe: byte slicing would corrupt
+// multi-byte characters.
 func truncate(s string, max int) string {
 	if max < 0 {
 		max = 0

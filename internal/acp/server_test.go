@@ -200,6 +200,20 @@ func TestServer_initializeNegotiatesV1(t *testing.T) {
 	initialize(t, h)
 }
 
+// TestServer_stopRunBoundedJoin pins the shutdown bound: a prompt
+// goroutine that never unwinds (e.g. wedged on a stdout write a client
+// stopped draining) must not hang stopRun — the join times out and
+// teardown proceeds so SIGTERM can still kill the process.
+func TestServer_stopRunBoundedJoin(t *testing.T) {
+	s := &Server{logf: func(string, ...any) {}}
+	s.run = &runningPrompt{done: make(chan struct{})} // never closes
+	start := time.Now()
+	s.stopRun()
+	if elapsed := time.Since(start); elapsed < stopRunJoinTimeout-100*time.Millisecond {
+		t.Fatalf("stopRun returned after %s; want to wait ~%s for the stuck run", elapsed, stopRunJoinTimeout)
+	}
+}
+
 // TestServer_sessionNewIdempotent documents the one-conversation-per-
 // process contract: a repeat session/new returns the same session id —
 // issuing a fresh one would invalidate the handle the client already

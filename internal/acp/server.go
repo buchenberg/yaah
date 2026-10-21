@@ -75,9 +75,9 @@ type Server struct {
 }
 
 // runningPrompt tracks the single in-flight turn. cancel aborts it;
-// done joins the prompt goroutine — teardown must never close the
-// session while the run is still unwinding (it persists state, and
-// close() tears down what that unwind touches).
+// done joins the prompt goroutine — teardown joins (bounded by
+// stopRunJoinTimeout) so close() cannot race a still-unwinding run,
+// whose unwind touches state that teardown destroys.
 type runningPrompt struct {
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -307,9 +307,18 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
+// stopRunJoinTimeout bounds how long shutdown waits for the prompt
+// goroutine. A client that stops draining stdout can wedge the last
+// update writes (the run goroutine blocks joining forwardCtrl, which
+// is blocked in a write); when the bound expires, teardown proceeds
+// anyway — matching the pre-join behavior of cancelling and exiting
+// instead of hanging the process on SIGTERM.
+const stopRunJoinTimeout = 2 * time.Second
+
 // stopRun cancels the in-flight prompt (if any) and joins its
 // goroutine, so shutdown never tears the session down while the run is
 // still unwinding — RunPrompt persists state that close() destroys.
+// The join is bounded: a wedged stdout write must not hang shutdown.
 func (s *Server) stopRun() {
 	s.mu.Lock()
 	cancel := s.run.cancel
@@ -319,7 +328,13 @@ func (s *Server) stopRun() {
 		cancel()
 	}
 	if done != nil {
-		<-done
+		timer := time.NewTimer(stopRunJoinTimeout)
+		defer timer.Stop()
+		select {
+		case <-done:
+		case <-timer.C:
+			s.logf("prompt goroutine did not unwind within %s; proceeding with teardown", stopRunJoinTimeout)
+		}
 	}
 }
 
