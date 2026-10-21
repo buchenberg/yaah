@@ -116,8 +116,12 @@ type Loop struct {
 	// so it survives across Runs; only the event hooks are loop-scoped.
 	BackgroundJobs *jobs.BackgroundJobs
 
-	ApproveFn            func(name, args string) bool `json:"-"`
-	ContinueAfterMaxIter func() bool                  `json:"-"`
+	ApproveFn func(name, args string) bool `json:"-"`
+	// ApproveCallFn, when set, takes precedence over ApproveFn and also
+	// receives the provider tool_call id, so a client bridge can
+	// correlate its permission prompt with the call's later updates.
+	ApproveCallFn        func(callID, name, args string) bool `json:"-"`
+	ContinueAfterMaxIter func() bool                          `json:"-"`
 	ConflictTracker      *tools.ConflictTracker
 	CtxMgr               *ContextManager
 

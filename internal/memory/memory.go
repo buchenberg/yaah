@@ -120,6 +120,9 @@ type DB struct {
 	embedder  Embedder
 	embMu     sync.Mutex
 	embedWarn embedWarnLimiter
+	// embeds tracks in-flight background embedding writes so Close can
+	// drain them before the SQL pool is closed.
+	embeds pendingEmbeds
 }
 
 // SetEmbedder configures the embedding model used for semantic search.
@@ -163,8 +166,12 @@ func Open(path string) (*DB, error) {
 	return d, nil
 }
 
-// Close closes the database connection.
+// Close drains in-flight background embedding writes (bounded by
+// embedDrainTimeout) and then closes the database connection. Draining first
+// keeps a short-lived process from racing its own embeds against the pool
+// shutdown.
 func (d *DB) Close() error {
+	d.embeds.drain(embedDrainTimeout)
 	return d.sql.Close()
 }
 
@@ -446,7 +453,13 @@ func (d *DB) EmbedMemoryAsync(id, text string) <-chan struct{} {
 		return nil
 	}
 	done := make(chan struct{})
+	if !d.embeds.start() {
+		// Close has begun: skip the write rather than race the pool.
+		close(done)
+		return done
+	}
 	go func() {
+		defer d.embeds.done()
 		defer close(done)
 		emb, err := embedder.Embed(context.Background(), text)
 		if err != nil {

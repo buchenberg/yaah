@@ -171,7 +171,10 @@ type agentSession struct {
 	view      agent.View
 	ctrlCh    chan<- control.Msg
 	approveFn func(name, args string) bool
-	mu        sync.RWMutex
+	// approveCallFn is the call-id-aware approval bridge (ACP). When
+	// set it takes precedence over approveFn.
+	approveCallFn func(callID, name, args string) bool
+	mu            sync.RWMutex
 
 	// pendingEvents buffers session-scoped events for views whose
 	// HandleEvent cannot safely run outside a prompt (the REPL and ACP
@@ -600,6 +603,15 @@ func (s *agentSession) SetApproveFn(fn func(name, args string) bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.approveFn = fn
+}
+
+// SetApproveCallFn installs the call-id-aware approval bridge. It takes
+// precedence over SetApproveFn; drivers that never need the provider
+// tool_call id keep using SetApproveFn.
+func (s *agentSession) SetApproveCallFn(fn func(callID, name, args string) bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.approveCallFn = fn
 }
 
 // promptWorkspaceAccess is the PathValidator's ask fallback: it routes

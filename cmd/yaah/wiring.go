@@ -147,9 +147,17 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// bootstrap reads "" as "no source requested" and would silently skip
 	// the copy-in, starting the containerd session on an empty container
 	// with no baseline.
-	cwd, gerr := os.Getwd()
-	if gerr != nil {
-		return nil, fmt.Errorf("determine the working directory: %w", gerr)
+	//
+	// A caller-supplied cwd (ACP sessions) wins over the process cwd and
+	// is never applied with os.Chdir: several sessions with different
+	// workspaces must be able to share one process.
+	cwd := opts.Cwd
+	if cwd == "" {
+		var gerr error
+		cwd, gerr = os.Getwd()
+		if gerr != nil {
+			return nil, fmt.Errorf("determine the working directory: %w", gerr)
+		}
 	}
 
 	// Load sub-agent role definitions: built-in (embedded) +
@@ -251,8 +259,23 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		if opts.WorkspaceRoot != "" {
 			fmt.Fprintf(os.Stderr, "warning: --workspace %s has no effect: the workspace.backend containerd session is isolated from the host\n", opts.WorkspaceRoot)
 		}
-	case opts.WorkspaceRoot != "":
-		pathValidator = tools.NewPathValidator(opts.WorkspaceRoot, opts.AllowHomeAccess, deny)
+	default:
+		// Every local session gets a validator so relative paths and
+		// shell commands resolve against the session's own cwd rather
+		// than the process cwd (ACP serves several sessions, each
+		// with its own workspace, in one process). With no
+		// --workspace there is no containment: keep the legacy
+		// unrestricted behaviour, including ~ expansion and no deny
+		// patterns.
+		allowHome := opts.AllowHomeAccess
+		var patterns []string
+		if opts.WorkspaceRoot != "" {
+			patterns = deny
+		} else {
+			allowHome = true
+		}
+		pathValidator = tools.NewPathValidator(opts.WorkspaceRoot, allowHome, patterns)
+		pathValidator.WorkDir = cwd
 		toolReg.SetPathValidator(pathValidator)
 	}
 
@@ -306,7 +329,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// the D4 session row can name what was left out. mcpToolNames is
 	// then cleared for the loop config — the approval gate would prompt
 	// for calls to tools that cannot dispatch.
-	mcpClients, mcpInfos, mcpToolNames = initMCP(cfg, toolReg, skipMCP, sessionSandbox == nil)
+	mcpClients, mcpInfos, mcpToolNames = initMCP(cfg, toolReg, skipMCP, sessionSandbox == nil, opts.MCPManifests, cwd)
 	var omittedMCP []string
 	if sessionSandbox != nil {
 		for name := range mcpToolNames {
@@ -395,7 +418,6 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	if opts.ResumeSessionID == "" {
 		sessionID = fmt.Sprintf("sess-%d", time.Now().UnixNano())
 		if db != nil {
-			cwd, _ := os.Getwd()
 			db.CreateSession(memory.Session{
 				ID:           sessionID,
 				StartedAt:    time.Now().Unix(),

@@ -133,7 +133,12 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 		},
 		ApprovalMode:     l.Config.ApprovalMode,
 		ApprovalClassify: l.classifyGate,
-		ApprovalApprove:  func(name, args string) bool { return l.approveTool(name, abbreviateArgs(args, 120)) },
+		ApprovalApprove: func(callID, name, args string) bool {
+			if l.ApproveCallFn != nil {
+				return l.ApproveCallFn(callID, name, abbreviateArgs(args, 120))
+			}
+			return l.approveTool(name, args)
+		},
 		ApprovalEmitDeny: func(name, args, errMsg string) {
 			if l.Hooks == nil {
 				return

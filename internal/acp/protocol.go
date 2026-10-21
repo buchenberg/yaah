@@ -36,8 +36,10 @@ type RPCError struct {
 // Standard JSON-RPC error codes plus ACP-era custom range codes.
 const (
 	codeParseError     = -32700
+	codeInvalidRequest = -32600
 	codeMethodNotFound = -32601
 	codeInvalidParams  = -32602
+	codeInternalError  = -32603
 	codeBusy           = -32002 // custom (JSON-RPC server-defined range)
 )
 
@@ -108,12 +110,21 @@ type SessionNewParams struct {
 	McpServers []McpServerRef `json:"mcpServers,omitempty"`
 }
 
-// McpServerRef captures a stdio MCP server definition for future use.
+// McpServerRef is one client-declared MCP server. Only stdio is
+// supported (the spec requires it of every agent); HTTP and SSE would
+// need mcpCapabilities advertised first.
 type McpServerRef struct {
-	Name    string          `json:"name,omitempty"`
-	Command string          `json:"command,omitempty"`
-	Args    []string        `json:"args,omitempty"`
-	Env     json.RawMessage `json:"env,omitempty"`
+	Type    string        `json:"type,omitempty"`
+	Name    string        `json:"name,omitempty"`
+	Command string        `json:"command,omitempty"`
+	Args    []string      `json:"args,omitempty"`
+	Env     []EnvVariable `json:"env,omitempty"`
+}
+
+// EnvVariable is one environment variable for an MCP server process.
+type EnvVariable struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 // SessionNewResult is the result of session/new.

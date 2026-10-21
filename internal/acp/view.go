@@ -2,6 +2,7 @@ package acp
 
 import (
 	"strconv"
+	"sync"
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/toolfmt"
@@ -13,11 +14,34 @@ import (
 // tool_call_update at completion, correlated via the per-execution ID
 // carried on the events themselves and rendered as the string
 // toolCallId "t<N>".
-type View struct{}
+type View struct {
+	mu sync.Mutex
+	// announced holds tool call ids already sent as tool_call by a
+	// permission request. Their execution update must use
+	// tool_call_update instead of creating the call again.
+	announced map[string]bool
+}
 
 // NewView creates a View ready to translate agent events.
 func NewView() *View {
-	return &View{}
+	return &View{announced: make(map[string]bool)}
+}
+
+// Announce marks a tool call as already created by a permission
+// request, so the execution event updates it instead of re-creating it.
+func (v *View) Announce(callID string) {
+	if callID == "" {
+		return
+	}
+	v.mu.Lock()
+	v.announced[callID] = true
+	v.mu.Unlock()
+}
+
+func (v *View) wasAnnounced(callID string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.announced[callID]
 }
 
 // toolCallID renders the per-execution event ID as an ACP toolCallId.
@@ -47,9 +71,17 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 			Content:       textContent("\n"),
 		})
 	case *agent.ToolStartEvent:
+		callID := e.CallID
+		if callID == "" {
+			callID = toolCallID(e.ID)
+		}
+		updateKind := UpdateToolCall
+		if v.wasAnnounced(callID) {
+			updateKind = UpdateToolCallUpdate
+		}
 		call := ToolCallUpdate{
-			SessionUpdate: UpdateToolCall,
-			ToolCallID:    toolCallID(e.ID),
+			SessionUpdate: updateKind,
+			ToolCallID:    callID,
 			Name:          e.Name,
 			Kind:          toolKind(e.Name),
 			Status:        StatusInProgress,
@@ -63,9 +95,13 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 		}
 		send(sessionID, call)
 	case *agent.ToolEndEvent:
+		callID := e.CallID
+		if callID == "" {
+			callID = toolCallID(e.ID)
+		}
 		update := ToolCallUpdate{
 			SessionUpdate: UpdateToolCallUpdate,
-			ToolCallID:    toolCallID(e.ID),
+			ToolCallID:    callID,
 			Status:        StatusCompleted,
 			Content: []UpdateContent{{
 				Type:    "content",
@@ -147,6 +183,11 @@ func NewViewWithWrite(send updateSender, sessionID string) *ViewWithWrite {
 // HandleEvent implements agent.View.
 func (v *ViewWithWrite) HandleEvent(evt agent.Event) {
 	v.av.SendTo(v.sessionID, v.send, evt)
+}
+
+// Announce marks a tool call as created by a permission request.
+func (v *ViewWithWrite) Announce(callID string) {
+	v.av.Announce(callID)
 }
 
 // compile-time check

@@ -50,7 +50,13 @@ func (d *DB) embedMessageAsync(id, role, content string) <-chan struct{} {
 		return nil
 	}
 	done := make(chan struct{})
+	if !d.embeds.start() {
+		// Close has begun: skip the write rather than race the pool.
+		close(done)
+		return done
+	}
 	go func() {
+		defer d.embeds.done()
 		defer close(done)
 		emb, err := embedder.Embed(context.Background(), content)
 		if err != nil {

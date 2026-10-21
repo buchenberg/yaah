@@ -74,7 +74,7 @@ func toolKind(name string) string {
 // the outcome, and an approval is followed by the real tool_call from
 // the dispatch pipeline.
 func (s *Server) requestPermission(
-	sessionID, name, args string,
+	sessionID, callID, name, args string,
 	runCtx context.Context,
 	c *connection,
 ) bool {
@@ -87,7 +87,12 @@ func (s *Server) requestPermission(
 		return false
 	}
 
-	toolCallID := fmt.Sprintf("perm_%d", reqID)
+	toolCallID := callID
+	if toolCallID == "" {
+		// A model that supplies no call id cannot be correlated; keep
+		// the old synthetic id so the prompt still works.
+		toolCallID = fmt.Sprintf("perm_%d", reqID)
+	}
 	title := permissionTitle(name, args)
 	if title == "" {
 		title = name
@@ -117,6 +122,26 @@ func (s *Server) requestPermission(
 		delete(s.pendingReq, key)
 		s.mu.Unlock()
 	}()
+
+	// Create the tool call the client will show in its permission
+	// dialog, and remember it so the execution event below updates the
+	// same row instead of creating a second one.
+	if callID != "" {
+		s.mu.Lock()
+		st := s.sessions[sessionID]
+		if st != nil && st.view != nil {
+			st.view.Announce(toolCallID)
+		}
+		s.mu.Unlock()
+		send(sessionID, ToolCallUpdate{
+			SessionUpdate: UpdateToolCall,
+			ToolCallID:    toolCallID,
+			Title:         title,
+			Name:          name,
+			Kind:          toolKind(name),
+			Status:        StatusPending,
+		})
+	}
 
 	c.sendRequest(reqID, "session/request_permission", RequestPermissionParams{
 		SessionID: sessionID,
