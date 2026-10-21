@@ -6,7 +6,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.81.0
 	github.com/buchenberg/croft v0.3.0
 	github.com/buchenberg/shepherd-kernel-go v0.17.0
-	github.com/buchenberg/shepherd-runtime-go v0.17.0
+	github.com/buchenberg/shepherd-runtime-go v0.18.0
 	github.com/buchenberg/shepherd-runtime-go/sandbox/landlock v0.1.1
 	github.com/buchenberg/tviewmd v0.3.1
 	github.com/gdamore/tcell/v2 v2.13.10

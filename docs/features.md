@@ -199,6 +199,16 @@ session. Symlinks are resolved before the check, and approvals apply to
 sub-agents too. `agents.default.workspace_deny_patterns` adds secret-file
 denials on top.
 
+Session path containment is one axis. Retained sub-agent dispatches can also
+carry OS-level confinement, where the host can provide one: a syscall jail
+with a worktree-only writable root, read-only git for the confined body, and
+governed egress (`deny_all` or a broker-pinned allowlist). It is placement-gated
+and host-dependent — `containment: off`/`advisory`, `mode: shared`, and any
+host without a usable jail run the advisory or host path instead — with a
+per-platform containment table in the
+[README](../README.md#confinement-and-egress); full semantics are
+in [configuration.md](./configuration.md#retained-worktrees-and-turn-checkpoints).
+
 ## Isolated workspace
 
 For stronger isolation, a session can run its tools inside a Linux container:

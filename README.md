@@ -21,6 +21,8 @@ running tests, and retrying. yaah splits that work:
 - **Sub-agents do the long-running work.** Each role gets a focused tool set, its own iteration/turn budget, and a structured evidence contract.
 - **Parallel by default.** Independent research, implementation, and validation can run at the same time.
 - **Isolated by construction.** A dispatch runs in its own git worktree and returns a sealed proposal (`select`, `apply`, `release`, or `discard`). A rejected attempt costs one dispatch and leaves the tree untouched.
+- **Confined when the host can.** Retention isolates files; confinement governs processes and the network. On Linux a dispatch shells inside a Landlock jail whose sole writable root is its worktree, and egress can be fully denied or pinned to a session broker's allowlist. Hosts without a usable jail degrade visibly; `paddock` fails closed instead. See [Confinement and egress](#confinement-and-egress).
+- **Supervised while running.** A supervision kernel reads every session's trace and steers or halts a running sub-agent loop on advisory rules — destructive-command patterns, error-rate spikes — rather than waiting for the run to finish.
 - **Speculative by design.** The orchestrator can compare several proposals and land the best one; nothing is committed by a sub-agent.
 
 Four roles are built in: `analyst`, `developer`, `tester`, and `reviewer`. Add your own in `.agents/roles/*.md` or `~/.agents/roles/*.md`.
@@ -154,6 +156,69 @@ orchestrator
 
 Retained mode is the default in local sessions: tracing is integral, so the shepherd root scope always exists. With `agents.subagent.mode: shared`, or if the trace store cannot be opened, dispatches run directly on the host. See [configuration.md](./docs/configuration.md#retained-worktrees-and-turn-checkpoints)
 for the prerequisites and knobs.
+
+Report roles — `analyst`, `reviewer` — seal no changeset at all: a `report`
+dispatch returns the report text directly, in an isolated worktree when the
+role could mutate and straight on the shared host when it carries read-only
+tools only, so "did anything change?" is never the question.
+
+Retained work also rewinds. A turn checkpoint captures workspace state plus the
+conversation, so a turn that ends in a tool-phase error or an exhausted budget
+restores to the state before it instead of losing the whole attempt
+(`turn_checkpoints`, bounded by `max_turn_restores`). Rewind never deletes
+untracked content: scratch files, freshly authored roles, and sub-agent output
+survive it, and anything that cannot be moved back is reported rather than lost.
+
+### Confinement and egress
+
+On Linux the jail is real, and the network can be governed with it:
+
+- **Syscall jail.** `agents.subagent.containment: auto | paddock | advisory |
+  off` (default `auto`; aliases `jail` for `paddock`, `none` for `off`).
+  `advisory` and `off` leave the host path and never jail. A dispatch runs
+  inside a Landlock jail whose only writable
+  root is its own worktree; housekeeping writes (`HOME`, `TMPDIR`, package
+  caches) are redirected into a `.yaah-scratch/` inside it and scrubbed before
+  the proposal is sealed. The orchestrator is never jailed. Where no jail is
+  available, `auto` degrades visibly and records the tier on the trace;
+  `paddock` fails closed instead of degrading.
+- **One writer.** A confined dispatch cannot `git add`, `commit`, or `stash` —
+  a linked worktree's index lives in the host repository's `.git`, outside the
+  jail. Read-only git (`status`, `diff`, `log`) is fine, and the orchestrator
+  commits when it settles the proposal. Refusals carry an explanation naming
+  the rule.
+- **Egress posture.** `agents.subagent.network: allow_all | deny_all | broker`
+  (default `allow_all`). `deny_all` removes TCP egress entirely; `broker` pins
+  the jail's egress to a session broker whose `network_hosts` allowlist decides
+  what is reachable, with `HTTP_PROXY`/`HTTPS_PROXY` routing it without
+  configuration. A posture that cannot be applied fails the dispatch naming the
+  fix — it never runs with open egress after you asked for none. `yaah doctor`
+  reports the same conditions as a `FAIL` up front.
+- **Harder tier.** For OS-agnostic isolation, a session can run in a
+  per-session containerd sandbox where the container is the containment
+  boundary and every dispatch inherits it. See
+  [isolated-workspace-testing.md](./docs/isolated-workspace-testing.md).
+
+### Containment across platforms
+
+The containment family is one contract with per-platform mechanisms
+(`shepherd-runtime-go/sandbox/*`). Runtime v0.18.0 added the Windows member;
+yaah's backend selection is still Landlock-first today, as the statuses say.
+
+| | Linux — shipped | Windows — backend shipped, wiring pending | macOS — planned |
+|---|---|---|---|
+| Mechanism | Landlock rulesets: kernel-enforced filesystem rights, port-scoped network rules | Write-restricted token, per-root write capability SIDs, Low integrity level, no-write-up label | Seatbelt SBPL profiles |
+| Privilege | none | none (no elevation, container, or VM) | none (`sandbox-exec` ships with macOS) |
+| Writable root | worktree plus redirected scratch | worktree only (per-root write grants) | worktree plus platform temp directories (draft) |
+| Git rule | commit refusal with an explanation | same refusal; denials classified as discarded runs | profile denies writes under the repository's `.git` |
+| Egress | `allow_all` / `deny_all` / `broker` (port pin) | `allow_all` only — no kernel network axis yet | `deny_all` enforceable; broker allowlists are cooperative, not kernel-pinned |
+| Placement & probe | `paddock` / `auto` / `advisory`, fail-closed probe | same contract, same probe semantics | same semantics; probe coverage to be built |
+
+Mechanism differences are deliberate and reported with distinct enforcement
+tiers: Linux denies syscalls (`native-syscall-deny`), Windows denies access
+checks (`native-access-check-deny`). The macOS column is drafted from public
+Seatbelt implementations — it is a plan, not shipped code — and includes the
+known trade-off that profiles need broad read access so toolchains work.
 
 ## Commands
 
