@@ -354,8 +354,8 @@ func loadProbe(t *testing.T, raw json.RawMessage) string {
 // as session/update notifications before responding, skips
 // conversation internals (synthetic tool-call text, tool results,
 // system rows, and the persisted user-role guidance rows that carry
-// agent-internal steering/checkpoint/conflict text rather than user
-// input), and stays promptable afterwards.
+// agent-internal steering/checkpoint/conflict/background-delivery
+// text rather than user input), and stays promptable afterwards.
 func TestServer_sessionLoadReplaysHistory(t *testing.T) {
 	fac := &fakeSession{
 		id: "sess-load-1",
@@ -370,6 +370,7 @@ func TestServer_sessionLoadReplaysHistory(t *testing.T) {
 			{Role: "user", Content: "SUPERVISOR: the previous turn failed while executing tools: boom. Retry or report."},
 			{Role: "assistant", Content: "done"},
 			{Role: "user", Content: "CONFLICT: Parallel workers modified the same file(s)."},
+			{Role: "user", Content: "[BACKGROUND worker] reviewed the logs\njob finished cleanly."},
 			{Role: "system", Content: "compaction summary"},
 		},
 	}

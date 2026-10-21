@@ -57,7 +57,13 @@ func (s *agentSession) compactContext() {
 		}
 	}
 
-	if len(s.messages) <= 4 {
+	// Snapshot s.messages under the read lock: prompt runs swap the
+	// slice under the write lock while this method runs.
+	s.mu.RLock()
+	msgs := s.messages
+	s.mu.RUnlock()
+
+	if len(msgs) <= 4 {
 		msg("context is already small enough")
 		return
 	}
@@ -67,7 +73,7 @@ func (s *agentSession) compactContext() {
 		window = 1048576
 	}
 
-	estTokens := estimateTokens(s.messages)
+	estTokens := estimateTokens(msgs)
 
 	msg(fmt.Sprintf("context: %d/%d tokens (%d%%) — compacting...", estTokens, window, estTokens*100/window))
 
@@ -90,9 +96,10 @@ func (s *agentSession) compactContext() {
 
 	s.mu.Lock()
 	s.messages = loop.State.Messages
+	compacted := s.messages
 	s.mu.Unlock()
 
-	newEstimate := estimateTokens(s.messages)
+	newEstimate := estimateTokens(compacted)
 
 	if ch != nil {
 		select {

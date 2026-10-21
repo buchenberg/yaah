@@ -91,7 +91,8 @@ Load flow (`internal/acp/server.go` `handleSessionLoad`):
    `[tool:…]` summary, and user-role rows that carry agent-internal
    guidance rather than user input (`[STEER] ` steering/loop-detection
    nudges, `SUPERVISOR: ` checkpoint-recovery guidance, `CONFLICT: `
-   sub-agent conflict reports). Tool calls are not replayed as
+   sub-agent conflict reports, `[BACKGROUND <role>]` background-job
+   result deliveries). Tool calls are not replayed as
    `tool_call` updates — replay is text-level.
 4. The request then answers with `{}` (empty object), per spec.
 

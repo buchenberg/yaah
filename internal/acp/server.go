@@ -236,12 +236,14 @@ const syntheticAssistantText = "[tool:"
 // typed or said in a follow-up: steering and loop-detection nudges
 // (`[STEER] `, internal/agent/pipeline/steer.go and loopdetect.go),
 // checkpoint recovery guidance after a failed or budget-exhausted turn
-// (`SUPERVISOR: `, internal/agent/turn_checkpoint_loop.go), and
-// sub-agent conflict reports (`CONFLICT: `,
-// internal/tools/conflict_tracker.go). Replay skips them like the
-// other conversation internals — a resumed client renders them as
-// text the client never saw, not as its own input.
-var internalUserMarkers = []string{"[STEER] ", "SUPERVISOR: ", "CONFLICT: "}
+// (`SUPERVISOR: `, internal/agent/turn_checkpoint_loop.go), sub-agent
+// conflict reports (`CONFLICT: `,
+// internal/tools/conflict_tracker.go), and background sub-agent
+// results delivered as follow-up rows (`[BACKGROUND <role>]`,
+// cmd/yaah/wiring.go). Replay skips them like the other conversation
+// internals — none of them are streamed to the client during a live
+// run (they enter the model conversation, not the agent's output).
+var internalUserMarkers = []string{"[STEER] ", "SUPERVISOR: ", "CONFLICT: ", "[BACKGROUND"}
 
 func isInternalUserContent(content string) bool {
 	for _, marker := range internalUserMarkers {
@@ -342,12 +344,15 @@ func (s *Server) handleSessionLoad(
 	// conversation. A factory that silently resumed a different
 	// conversation would leave the client talking to an id it never
 	// negotiated; reject the response and drop the half-built session
-	// (Close uses its own lock, so this is safe under s.mu) so a retry
-	// or session/new is not wedged on an unwanted conversation.
+	// so a retry or session/new is not wedged on an unwanted
+	// conversation. Close runs outside s.mu (same hand-off as
+	// Server.close): teardown drains background jobs and destroys the
+	// workspace sandbox, which must not stall stopRun/Server.close.
 	if built := s.sess.AgentSessionID(); built != p.SessionID {
-		s.sess.Close()
+		stale := s.sess
 		s.sess = nil
 		s.mu.Unlock()
+		stale.Close()
 		respErr(msg.ID, codeInvalidParams,
 			fmt.Sprintf("resumed session %q does not match requested %q", built, p.SessionID))
 		return
