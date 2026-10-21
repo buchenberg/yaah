@@ -157,8 +157,10 @@ orchestrator
 Retained mode is the default in local sessions: tracing is integral, so the shepherd root scope always exists. With `agents.subagent.mode: shared`, or if the trace store cannot be opened, dispatches run directly on the host. See [configuration.md](./docs/configuration.md#retained-worktrees-and-turn-checkpoints)
 for the prerequisites and knobs.
 
-Read-only roles — `analyst`, `reviewer` — dispatch retained too and return an
-empty changeset, so "did anything change?" is never the question.
+Report roles — `analyst`, `reviewer` — seal no changeset at all: a `report`
+dispatch returns the report text directly, in an isolated worktree when the
+role could mutate and straight on the shared host when it carries read-only
+tools only, so "did anything change?" is never the question.
 
 Retained work also rewinds. A turn checkpoint captures workspace state plus the
 conversation, so a turn that ends in a tool-phase error or an exhausted budget
@@ -171,8 +173,10 @@ survive it, and anything that cannot be moved back is reported rather than lost.
 
 On Linux the jail is real, and the network can be governed with it:
 
-- **Syscall jail.** `agents.subagent.containment: auto | paddock | off`
-  (default `auto`). A dispatch runs inside a Landlock jail whose only writable
+- **Syscall jail.** `agents.subagent.containment: auto | paddock | advisory |
+  off` (default `auto`; aliases `jail` for `paddock`, `none` for `off`).
+  `advisory` and `off` leave the host path and never jail. A dispatch runs
+  inside a Landlock jail whose only writable
   root is its own worktree; housekeeping writes (`HOME`, `TMPDIR`, package
   caches) are redirected into a `.yaah-scratch/` inside it and scrubbed before
   the proposal is sealed. The orchestrator is never jailed. Where no jail is
