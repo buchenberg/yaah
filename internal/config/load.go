@@ -272,9 +272,10 @@ type SubAgentConfig struct {
 	OutputLimit int `yaml:"output_limit"`
 
 	// Containment selects the syscall jail for workdir sub-agent dispatches
-	// (Plan 7). "" / "auto" (the default) jail on a Landlock-capable host and
-	// fall back to advisory elsewhere; "off" (or "none"/"advisory") leaves the
-	// host path; "paddock" (alias "jail") fails closed when the host cannot
+	// (Plan 7). "" / "auto" (the default) jail on the platform backend (Landlock
+	// on Linux, winacl on Windows) and fall back to advisory elsewhere; "off"
+	// (or "none"/"advisory") leaves the host path; "paddock" (alias "jail")
+	// fails closed when the host cannot
 	// jail. The orchestrator's own commands are never jailed either way, only a
 	// dispatched sub-agent's.
 	//
@@ -297,7 +298,8 @@ type SubAgentConfig struct {
 	// to the session's egress broker, which admits only NetworkHosts — so a
 	// sub-agent can reach an allowlisted host and nothing else.
 	//
-	// The two restrictive modes need Landlock ABI >= 4 (network rules). Where the
+	// The two restrictive modes need network-rule support (Linux: Landlock ABI
+	// >= 4; winacl has no network axis and refuses them). Where the
 	// host cannot enforce them the dispatch FAILS rather than silently running
 	// with open egress — a policy that cannot be applied is not applied quietly.
 	// Only confined dispatches are governed: with Containment off there is no

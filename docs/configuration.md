@@ -538,12 +538,13 @@ question. `mode: shared` is the direct-to-host lane: the explicit opt-out from
 retention.
 
 **Confinement — `containment`, default `auto`.** Where the host can jail
-(Landlock on Linux) a dispatch runs its shell inside a syscall jail whose sole
-writable root is its worktree. `auto` jails where the host can and **degrades
-visibly to advisory** where it cannot (macOS, Windows, a kernel without
-Landlock), recording which happened on the sub-agent's trace; `paddock` (alias
-`jail`) fails closed instead of degrading; `off` (or `none`/`advisory`) always
-runs on the host. The orchestrator is never jailed either way.
+(Landlock on Linux, winacl on Windows) a dispatch runs its shell inside a
+syscall jail whose sole writable root is its worktree. `auto` jails where the
+host can and **degrades visibly to advisory** where it cannot (macOS, a kernel
+without Landlock), recording which happened on the sub-agent's trace;
+`paddock` (alias `jail`) fails closed instead of degrading; `off` (or
+`none`/`advisory`) always runs on the host. The orchestrator is never jailed
+either way.
 
 > **The git rule.** A retained dispatch works in a
 > **linked** `git worktree`, whose index and object store live in the *original*
@@ -618,8 +619,9 @@ Four things to know about the guarantee:
 - **It rides the jail, and it does not ride it silently.** `deny_all` and
   `broker` are kernel rules; the jail is where they live. So a restrictive posture
   that cannot be applied — `containment: off`/`advisory`/`none`, a workdir-less
-  dispatch with no world to jail, a host with no usable jail, or a Landlock ABI
-  below 4 (filesystem-only: the jail exists, the network rule does not) —
+  dispatch with no world to jail, a host with no usable jail, a backend with no
+  network axis (winacl), or a Landlock ABI below 4 on Linux (filesystem-only:
+  the jail exists, the network rule does not) —
   **fails the dispatch**, naming the fix, rather than running with open egress
   after you asked for none. `yaah doctor` reports the same conditions as a `FAIL`
   before you hit them.

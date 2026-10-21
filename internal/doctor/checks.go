@@ -13,10 +13,10 @@ import (
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
 
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/landlock"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/recovery"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/jail"
 )
 
 // Check represents a single diagnostic result.
@@ -199,7 +199,8 @@ func CheckSubAgents(cfg *config.Config, cfgErr error) Check {
 }
 
 // CheckContainment reports the sub-agent syscall-jail capability (Plan 7 Phase
-// 3): whether a Landlock backend is available here, and how agents.subagent's
+// 3): whether a containment backend is available here (Landlock on Linux,
+// winacl on Windows), and how agents.subagent's
 // mode + containment will use it. A `paddock` placement on a host with no
 // backend fails closed, so it is surfaced as a FAIL rather than discovered at
 // dispatch.
@@ -208,7 +209,7 @@ func CheckContainment(cfg *config.Config, cfgErr error) Check {
 		return Check{Label: "Containment", Status: "WARN", Detail: "config not loaded"}
 	}
 	sc := cfg.Agent.SubAgent
-	backend := landlock.Detect()
+	backend := jail.Backend()
 	available := false
 	backendDesc := "none (no jail on this host)"
 	if backend != nil {
@@ -238,8 +239,9 @@ func CheckContainment(cfg *config.Config, cfgErr error) Check {
 }
 
 // containmentCheck is the pure decision behind CheckContainment, split out so
-// the present-but-unusable backend case is testable (landlock.Detect never
-// returns one, but a future backend or a race could).
+// the present-but-unusable backend case is testable (the jail selection gates
+// every platform on Available, so Detect never returns one, but a future
+// backend or a race could).
 func containmentCheck(available bool, backendDesc, mode, containment, network string, hosts int, networkCapable bool) Check {
 	m := strings.ToLower(strings.TrimSpace(mode))
 	if m == "" {
@@ -270,7 +272,7 @@ func containmentCheck(available bool, backendDesc, mode, containment, network st
 		// quietly), so this is not a warning about a weak control: sub-agent
 		// dispatches will not run at all.
 		return Check{Label: "Containment", Status: "FAIL",
-			Detail: detail + " — this host's syscall jail cannot enforce network rules (needs Landlock ABI >= 4), and a restrictive egress posture is refused rather than run open; set network: allow_all or run where it can be enforced"}
+			Detail: detail + " — this host's syscall jail cannot enforce network rules (no network-rule support on this backend: Landlock needs ABI >= 4 on Linux, winacl has none), and a restrictive egress posture is refused rather than run open; set network: allow_all or run where it can be enforced"}
 	}
 
 	switch p {

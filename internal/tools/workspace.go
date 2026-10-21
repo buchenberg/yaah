@@ -114,7 +114,7 @@ type WorkspaceSetter interface {
 // used before workspaces existed.
 //
 // When a confiner is set, Exec runs commands under the syscall jail (Landlock on
-// Linux) with the workspace as the sole writable root. The orchestrator's
+// Linux, winacl on Windows) with the workspace as the sole writable root. The orchestrator's
 // workspace never carries one, so its commands keep running unconfined; a
 // confiner is attached only on the sub-agent workdir lane (that run's bound
 // world).

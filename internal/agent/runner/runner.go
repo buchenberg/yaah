@@ -29,7 +29,6 @@ import (
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 	shepherdgit "github.com/buchenberg/shepherd-runtime-go/sandbox/git"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/landlock"
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/budget"
 	"github.com/buchenberg/yaah/internal/agent/llm"
@@ -38,6 +37,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/gitsandbox"
+	"github.com/buchenberg/yaah/internal/jail"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/prompts"
 	"github.com/buchenberg/yaah/internal/tools"
@@ -1159,7 +1159,7 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 	// The isolated lane is exempt: its egress is the container's posture, which
 	// this key does not govern (documented in the config reference).
 	if opts.workspace == nil {
-		hostBackend := landlock.Detect()
+		hostBackend := jail.Backend()
 		hostAvailable := false
 		if hostBackend != nil {
 			if ok, _ := hostBackend.Available(); ok {
@@ -1524,7 +1524,7 @@ func recordConfinementFact(ctx context.Context, scope *shepherd.Scope, conf *sub
 type subAgentConfinement struct {
 	Requested string // the configured agents.subagent.containment value
 	Resolved  string // "paddock" (jailed) or "advisory" (host path)
-	Backend   string // backend name when jailed (e.g. "landlock")
+	Backend   string // backend name when jailed (e.g. "landlock", "winacl")
 	Tier      string // enforcement tier, e.g. "native-syscall-deny"
 	Enforced  bool   // a usable backend will actually establish the jail
 	Writable  string // the bound world — the sole writable root
@@ -1548,8 +1548,9 @@ func (c *subAgentConfinement) payload() map[string]any {
 // resolveSubAgentConfinement builds the syscall-jailed workspace for a sub-agent
 // workdir dispatch when agents.subagent.containment asks for one, and describes
 // what it resolved to (for the trace). It returns a nil workspace to leave the
-// host path. "" / "auto" (the default) jail on a Landlock-capable host and
-// degrade to advisory elsewhere; "off" (or "none"/"advisory") mean no jail;
+// host path. "" / "auto" (the default) jail on the platform backend (Landlock
+// on Linux, winacl on Windows) and degrade to advisory elsewhere; "off" (or
+// "none"/"advisory") mean no jail;
 // "paddock" (alias "jail") fails closed. The writable root is the worktree — the
 // sub-agent's bound world — so the kernel boundary and the run's own boundary
 // agree.
@@ -1571,7 +1572,7 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 
 	// Availability, not mere presence: a backend that is present but unusable
 	// (an LSM that is compiled in but disabled, say) means Exec will degrade.
-	backend := landlock.Detect()
+	backend := jail.Backend()
 	available := false
 	if backend != nil {
 		if ok, _ := backend.Available(); ok {
@@ -1689,7 +1690,8 @@ func hostNetworkToolsIn(profile subagent.RoleProfile) []string {
 // requireEnforceableEgress refuses a restrictive posture this host cannot apply.
 //
 // "allow_all" needs nothing. "deny_all" and "broker" are kernel rules: they need
-// a usable backend AND its network support (Landlock ABI >= 4). Without both, the
+// a usable backend AND its network support (Landlock ABI >= 4 on Linux; winacl
+// has no network axis). Without both, the
 // dispatch would either fail deep inside the jail with a kernel message, or — far
 // worse on the advisory fallback — run with open egress while the config, the
 // trace and the sub-agent's own prompt said otherwise.
@@ -1728,7 +1730,7 @@ func requireEnforceableEgress(available bool, backend containment.Backend, netwo
 	}
 	if !backend.SupportsNetwork(network.Mode) {
 		return fmt.Errorf(
-			"agents.subagent.network is %q, which this host's syscall jail cannot enforce (network rules need Landlock ABI >= 4): "+
+			"agents.subagent.network is %q, which this host's syscall jail cannot enforce (no network-rule support on this backend: Landlock needs ABI >= 4 on Linux, winacl has none): "+
 				"set network: allow_all, or remove the jail requirement", mode)
 	}
 	return nil
