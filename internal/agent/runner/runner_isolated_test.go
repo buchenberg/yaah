@@ -293,10 +293,12 @@ func TestSubAgentUnavailableTools(t *testing.T) {
 	}
 	// Windows always has Windows PowerShell; elsewhere the tool needs
 	// pwsh on PATH.
-	if runtime.GOOS != "windows" {
-		if _, err := exec.LookPath("pwsh"); err != nil && !slices.Contains(unavailable, "powershell") {
-			t.Errorf("powershell must be unavailable without pwsh: %v", unavailable)
+	if runtime.GOOS == "windows" {
+		if slices.Contains(unavailable, "powershell") {
+			t.Errorf("powershell must be available on Windows: %v", unavailable)
 		}
+	} else if _, err := exec.LookPath("pwsh"); err != nil && !slices.Contains(unavailable, "powershell") {
+		t.Errorf("powershell must be unavailable without pwsh: %v", unavailable)
 	}
 	if slices.Contains(unavailable, "read") {
 		t.Errorf("ordinary tools must stay available: %v", unavailable)
@@ -326,5 +328,22 @@ func TestSubAgentPromptNamesUnavailableTools(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "`go_test`") {
 		t.Errorf("the prompt must name the dropped tool:\n%s", prompt)
+	}
+}
+
+// TestSubAgentUnavailableTools_IsolatedLane pins the isolated lane's
+// shell gate: there is no PowerShell inside the Linux sandbox — the
+// tool itself refuses there — so an isolated dispatch must not carry
+// one, while bash stays (the tool delegates to the workspace).
+func TestSubAgentUnavailableTools_IsolatedLane(t *testing.T) {
+	opts := taskRunnerOpts{workspace: fakeSandboxWorkspace{}}
+	profile := subagent.RoleProfile{Tools: []string{"read", "bash", "powershell"}}
+
+	unavailable := subAgentUnavailableTools(opts, profile, "")
+	if !slices.Contains(unavailable, "powershell") {
+		t.Errorf("the isolated lane must drop powershell: %v", unavailable)
+	}
+	if slices.Contains(unavailable, "bash") {
+		t.Errorf("bash stays in the isolated lane: %v", unavailable)
 	}
 }
