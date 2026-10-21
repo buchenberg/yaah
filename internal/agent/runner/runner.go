@@ -1076,10 +1076,8 @@ func subAgentUnavailableTools(opts taskRunnerOpts, profile subagent.RoleProfile,
 	// meaningless), then the assigned worktree, then the process cwd the
 	// shared lane runs in.
 	root := ""
-	workspaceShell := ""
 	if opts.workspace != nil {
 		root = opts.workspace.WorkDir()
-		workspaceShell, _ = opts.workspace.Shell()
 	}
 	if root == "" {
 		root = workdir
@@ -1093,10 +1091,12 @@ func subAgentUnavailableTools(opts taskRunnerOpts, profile subagent.RoleProfile,
 	for _, name := range profile.Tools {
 		switch {
 		case name == "bash" || name == "powershell":
-			// Two gates: the machine must have the shell, and the
-			// workspace must launch it (a container running `sh` has no
-			// PowerShell).
-			if !tools.ShellToolAvailable(name) || !tools.WorkspaceShellAvailable(workspaceShell, name) {
+			// The host gate applies to the local lane, where the shell
+			// runs on this machine. In the isolated lane the tool
+			// delegates to the workspace, which runs commands in the
+			// container — a container has its own shells, whatever the
+			// host has.
+			if opts.workspace == nil && !tools.ShellToolAvailable(name) {
 				unavailable = append(unavailable, name)
 			}
 		case tools.IsGoToolchainTool(name):
