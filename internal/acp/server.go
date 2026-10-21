@@ -396,7 +396,13 @@ func (s *Server) dispatch(
 			if len(msg.Params) > 0 {
 				_ = json.Unmarshal(msg.Params, &params)
 			}
-			s.logf("initialize: client %q requested protocol %d", params.ClientInfo.Name, params.ProtocolVersion)
+			// clientInfo is optional in ACP v1: a minimal client sends
+			// only protocolVersion, so never dereference it unguarded.
+			if params.ClientInfo != nil {
+				s.logf("initialize: client %q requested protocol %d", params.ClientInfo.Name, params.ProtocolVersion)
+			} else {
+				s.logf("initialize: anonymous client requested protocol %d", params.ProtocolVersion)
+			}
 			respOK(msg.ID, InitializeResult{
 				ProtocolVersion:   ProtocolVersion,
 				AgentCapabilities: AgentCaps{},

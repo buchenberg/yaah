@@ -200,6 +200,36 @@ func TestServer_initializeNegotiatesV1(t *testing.T) {
 	initialize(t, h)
 }
 
+// TestServer_initializeWithoutClientInfo covers the minimal handshake a
+// strict ACP client may send: clientInfo and clientCapabilities are
+// both optional in v1, so initialize must answer instead of
+// dereferencing the nil clientInfo (which used to panic the process).
+func TestServer_initializeWithoutClientInfo(t *testing.T) {
+	tests := []struct {
+		name   string
+		params string
+	}{
+		{name: "version only", params: `{"protocolVersion":1}`},
+		{name: "empty params", params: `{}`},
+		{name: "caps but no info", params: `{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":true},"terminal":true}}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newACPHarness(t, &fakeSession{})
+			if err := h.send("initialize", 1, tc.params); err != nil {
+				t.Fatal(err)
+			}
+			msg := h.recv(t)
+			if msg.Error != nil {
+				t.Fatalf("initialize returned error: %+v", msg.Error)
+			}
+			if !strings.Contains(string(msg.Result), `"name":"yaah"`) {
+				t.Errorf("initialize result missing agent info: %s", msg.Result)
+			}
+		})
+	}
+}
+
 // TestServer_stopRunBoundedJoin pins the shutdown bound: a prompt
 // goroutine that never unwinds (e.g. wedged on a stdout write a client
 // stopped draining) must not hang stopRun — the join times out and
