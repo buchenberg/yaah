@@ -1077,9 +1077,14 @@ func subAgentUnavailableTools(opts taskRunnerOpts, profile subagent.RoleProfile,
 	// shared lane runs in.
 	// The Go check needs a HOST path: the workspace's workdir is a
 	// container path ("/workspace"), which the host cannot stat. The
-	// assigned worktree is a host path, and the shared lane runs in the
-	// process cwd.
+	// container holds a copy of the session's project, so the project
+	// root is the right proxy — the assigned worktree in the local
+	// lane, the process cwd in the isolated one (where the workdir is
+	// meaningless).
 	root := workdir
+	if opts.workspace != nil {
+		root = ""
+	}
 	if root == "" {
 		root, _ = os.Getwd()
 	}

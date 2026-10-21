@@ -291,8 +291,12 @@ func TestSubAgentUnavailableTools(t *testing.T) {
 	} else if slices.Contains(unavailable, "bash") {
 		t.Errorf("bash must be available on Unix: %v", unavailable)
 	}
-	if _, err := exec.LookPath("pwsh"); err != nil && !slices.Contains(unavailable, "powershell") {
-		t.Errorf("powershell must be unavailable without pwsh: %v", unavailable)
+	// Windows always has Windows PowerShell; elsewhere the tool needs
+	// pwsh on PATH.
+	if runtime.GOOS != "windows" {
+		if _, err := exec.LookPath("pwsh"); err != nil && !slices.Contains(unavailable, "powershell") {
+			t.Errorf("powershell must be unavailable without pwsh: %v", unavailable)
+		}
 	}
 	if slices.Contains(unavailable, "read") {
 		t.Errorf("ordinary tools must stay available: %v", unavailable)
