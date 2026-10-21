@@ -16,26 +16,24 @@ tools:
   - write
   - edit
   - delete
-  - replace
   - patch
+  - replace
   - grep
   - glob
   - ls
-  - powershell
   - bash
-  - json_query
+  - powershell
   - git
+  - diff
+  - file_info
+  - calculate
+  - json_query
+  - webfetch
   - go_outline
   - go_refactor
-  - calculate
-  - file_info
-  - webfetch
-  - http
   - go_test
-  - diff
   - staticcheck
   - go_mod
-  - bisect
 max_iterations: 75
 max_turns: 24
 min_turns: 6

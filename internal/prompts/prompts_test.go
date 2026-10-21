@@ -485,3 +485,17 @@ func TestIsolatedWorkspaceGuidance_BeltCountExcludesNamedTools(t *testing.T) {
 		t.Errorf("a belt exclusion already named must not be counted:\n%s", only)
 	}
 }
+
+// TestSubAgentUnavailableTools pins the notice for tools a role asked
+// for that the environment cannot offer (yaah-9n0).
+func TestSubAgentUnavailableTools(t *testing.T) {
+	if got := SubAgentUnavailableTools(nil); got != "" {
+		t.Errorf("no unavailable tools must render nothing, got %q", got)
+	}
+	got := SubAgentUnavailableTools([]string{"go_test", "powershell"})
+	for _, want := range []string{"## Unavailable tools", "`go_test`", "`powershell`", "do not attempt them"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("notice must contain %q:\n%s", want, got)
+		}
+	}
+}

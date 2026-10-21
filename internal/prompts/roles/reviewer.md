@@ -18,12 +18,12 @@ tools:
   - grep
   - glob
   - ls
-  - calculate
-  - file_info
-  - go_outline
-  - json_query
   - git
   - diff
+  - file_info
+  - calculate
+  - json_query
+  - go_outline
   - staticcheck
 max_iterations: 25
 max_turns: 12

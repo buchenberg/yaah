@@ -13,20 +13,19 @@ contract:
     - { name: findings,     kind: interpretation }
 output: report
 tools:
-  - webfetch
-  - http
   - read
   - grep
   - glob
   - ls
-  - powershell
   - bash
-  - json_query
-  - calculate
-  - file_info
-  - go_outline
+  - powershell
   - git
   - diff
+  - file_info
+  - calculate
+  - json_query
+  - webfetch
+  - go_outline
 max_iterations: 75
 max_turns: 24
 min_turns: 5

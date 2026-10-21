@@ -4,8 +4,11 @@ import (
 	"context"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -106,6 +109,11 @@ func TestBuildSubAgentRegistry_LocalRouteUnchanged(t *testing.T) {
 	child := filepath.Join(root, "worktrees", "child")
 	if err := os.MkdirAll(child, 0o755); err != nil {
 		t.Fatalf("mkdir workdir: %v", err)
+	}
+	// A Go module: the Go toolchain tools are gated on the workspace
+	// being one (yaah-9n0), so the fixture says it is.
+	if err := os.WriteFile(filepath.Join(child, "go.mod"), []byte("module example\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
 	}
 	pv := tools.NewPathValidator(root, false, nil)
 	opts := taskRunnerOpts{pathValidator: pv}
@@ -252,5 +260,55 @@ func TestBuildSubAgentSysPrompt_IsolatedGuidance(t *testing.T) {
 	local := buildSubAgentSysPrompt(taskRunnerOpts{}, "developer", profile, false, "", nil)
 	if strings.Contains(local, "isolated container") {
 		t.Error("a local sub-agent must not receive the isolated-workspace guidance")
+	}
+}
+
+// TestSubAgentUnavailableTools pins the environment gate (yaah-9n0): a
+// shell the machine does not have and Go toolchain machinery in a
+// non-Go workspace are left out, and the prompt names them so the model
+// does not call a tool that is not registered.
+func TestSubAgentUnavailableTools(t *testing.T) {
+	nonGo := t.TempDir()
+	profile := subagent.RoleProfile{Tools: []string{"read", "bash", "powershell", "go_test", "go_outline"}}
+
+	got := subAgentUnavailableTools(taskRunnerOpts{}, profile, nonGo)
+	for _, want := range []string{"go_test", "go_outline"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("Go machinery must be unavailable outside a Go module: %v", got)
+		}
+	}
+	if !slices.Contains(got, "powershell") && runtime.GOOS != "windows" {
+		if _, err := exec.LookPath("pwsh"); err != nil {
+			t.Errorf("powershell must be unavailable without pwsh: %v", got)
+		}
+	}
+	if slices.Contains(got, "read") || slices.Contains(got, "bash") {
+		t.Errorf("ordinary tools must stay available: %v", got)
+	}
+
+	// A Go module keeps the Go machinery.
+	goDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(goDir, "go.mod"), []byte("module example\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	got = subAgentUnavailableTools(taskRunnerOpts{}, profile, goDir)
+	for _, name := range []string{"go_test", "go_outline"} {
+		if slices.Contains(got, name) {
+			t.Errorf("%s must be available in a Go module: %v", name, got)
+		}
+	}
+}
+
+// TestSubAgentPromptNamesUnavailableTools: the sub-agent is told which
+// tools are gone, so it does not call one and narrate the failure.
+func TestSubAgentPromptNamesUnavailableTools(t *testing.T) {
+	nonGo := t.TempDir()
+	profile := subagent.RoleProfile{Tools: []string{"read", "go_test"}}
+	prompt := buildSubAgentSysPrompt(taskRunnerOpts{systemPrompt: "BASE"}, "developer", profile, false, nonGo, nil)
+	if !strings.Contains(prompt, "## Unavailable tools") {
+		t.Errorf("the prompt must name the unavailable tools:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "`go_test`") {
+		t.Errorf("the prompt must name the dropped tool:\n%s", prompt)
 	}
 }

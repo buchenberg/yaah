@@ -297,6 +297,25 @@ func ToolBeltGuidance(excluded int) string {
 	return b.String()
 }
 
+// SubAgentUnavailableTools names the tools a role asked for that this
+// environment cannot offer — a shell the machine does not have, Go
+// toolchain machinery in a workspace that is not a Go module (yaah-9n0).
+// Without the notice the model calls a tool that is not registered and
+// narrates the failure as a result.
+func SubAgentUnavailableTools(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Unavailable tools\n\n")
+	b.WriteString("These tools are not available in this environment; do not attempt them:\n")
+	for _, name := range names {
+		b.WriteString("\n- `" + name + "`")
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
 // IsolatedSubAgentGuidance is the isolated-mode prompt delta for a
 // sub-agent (plan §1.3, decision D2): unlike the session-level delta, it
 // does not describe the apply_out workflow — the parent session owns the

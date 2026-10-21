@@ -770,6 +770,10 @@ func buildSubAgentSysPrompt(opts taskRunnerOpts, role subagent.SubAgentRole, pro
 		}
 		sysPrompt += g
 	}
+	if g := prompts.SubAgentUnavailableTools(subAgentUnavailableTools(opts, profile, workdir)); g != "" {
+		sysPrompt += "\n\n" + g
+	}
+
 	if profile.Contract.Heading != "" && len(profile.Contract.Fields) > 0 {
 		var b strings.Builder
 		if jsonMode {
@@ -1040,6 +1044,37 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 // workspace — the sub-agent inherits the container (decision D2) — and
 // skips any host-only tool the profile names; a SetWorkspace refusal
 // surfaces as an error rather than a silently host-side sub-agent.
+// subAgentUnavailableTools names the tools a role asked for that this
+// environment cannot offer: a shell the machine does not have, or Go
+// toolchain machinery in a workspace that is not a Go module.
+//
+// The role file states what the role needs; the environment decides what
+// is there. Shipping a schema for a tool that cannot run costs tokens on
+// every call and buys a failed call later, so the tool is left out and
+// named in the prompt instead (yaah-9n0).
+func subAgentUnavailableTools(opts taskRunnerOpts, profile subagent.RoleProfile, workdir string) []string {
+	root := workdir
+	if root == "" && opts.workspace != nil {
+		root = opts.workspace.WorkDir()
+	}
+	goAvailable := tools.GoToolAvailable(root)
+
+	var unavailable []string
+	for _, name := range profile.Tools {
+		switch {
+		case name == "bash" || name == "powershell":
+			if !tools.ShellToolAvailable(name) {
+				unavailable = append(unavailable, name)
+			}
+		case tools.IsGoToolchainTool(name):
+			if !goAvailable {
+				unavailable = append(unavailable, name)
+			}
+		}
+	}
+	return unavailable
+}
+
 func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, remainingDepth int, workdir string) (*tools.Registry, *subAgentConfinement, error) {
 	resolveTimeout := subAgentTimeoutResolver(opts.subCfg)
 	registerTask := func(reg *tools.Registry) {
@@ -1153,11 +1188,21 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 	// docs rather than implied.
 	restrictiveEgress := opts.workspace == nil && restrictivePosture(opts.subNetwork)
 
+	// The tools this environment cannot offer are left out (yaah-9n0).
+	unavailable := subAgentUnavailableTools(opts, profile, workdir)
+	unavailableSet := make(map[string]bool, len(unavailable))
+	for _, name := range unavailable {
+		unavailableSet[name] = true
+	}
+
 	for _, name := range profile.Tools {
 		if name == "delegate" {
 			if remainingDepth > 0 {
 				registerTask(reg)
 			}
+			continue
+		}
+		if unavailableSet[name] {
 			continue
 		}
 		if restrictiveEgress && tools.LeafToolUsesHostNetwork(name) {

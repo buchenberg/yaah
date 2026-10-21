@@ -16,21 +16,19 @@ contract:
 output: report
 tools:
   - read
-  - powershell
   - bash
+  - powershell
   - grep
   - glob
   - ls
-  - go_outline
-  - calculate
+  - git
+  - diff
   - file_info
+  - calculate
   - json_query
   - webfetch
-  - http
-  - git
+  - go_outline
   - go_test
-  - diff
-  - bisect
 max_iterations: 30
 max_turns: 8
 min_turns: 4
