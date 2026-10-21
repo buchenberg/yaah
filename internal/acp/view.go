@@ -1,15 +1,19 @@
 package acp
 
 import (
-	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/toolfmt"
 )
 
 // View translates agent events into ACP session/update payloads.
-// tool_call and tool_result updates are correlated via the per-execution
-// ID carried on the events themselves.
+// Tool calls are delivered as an ACP tool_call at creation (status
+// in_progress — dispatch executes immediately after publish) and a
+// tool_call_update at completion, correlated via the per-execution ID
+// carried on the events themselves and rendered as the string
+// toolCallId "t<N>".
 type View struct{}
 
 // NewView creates a View ready to translate agent events.
@@ -17,54 +21,72 @@ func NewView() *View {
 	return &View{}
 }
 
-// SendTo converts evt to an update and passes it to send, tagging it with
-// the given session ID. Events with no ACP representation are dropped.
-func (v *View) SendTo(sessionID string, send func(string, Update), evt agent.Event) {
-	var update Update
+// toolCallID renders the per-execution event ID as an ACP toolCallId.
+func toolCallID(id int64) string { return "t" + strconv.FormatInt(id, 10) }
+
+// SendTo converts evt to an update and passes it to send, tagging it
+// with the given session ID. Events with no ACP representation are
+// dropped.
+func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 	switch e := evt.(type) {
 	case *agent.TokenDeltaEvent:
-		update = Update{
-			SessionUpdate: "agent_message_chunk",
-			Content:       &Content{Type: "text", Text: e.Text},
-		}
+		send(sessionID, ChunkUpdate{
+			SessionUpdate: UpdateAgentMessageChunk,
+			Content:       textContent(e.Text),
+		})
 	case *agent.ThinkingEvent:
-		update = Update{
-			SessionUpdate: "agent_thought_chunk",
-			Content:       &Content{Type: "text", Text: e.Text},
-		}
+		send(sessionID, ChunkUpdate{
+			SessionUpdate: UpdateAgentThoughtChunk,
+			Content:       textContent(e.Text),
+		})
 	case *agent.FlushEvent:
-		update = Update{
-			SessionUpdate: "agent_message_chunk",
-			Content:       &Content{Type: "text", Text: "\n"},
-		}
+		// ACP streams a continuous markdown narrative; a flush only
+		// separates logical segments for the REPL. Emit one newline so
+		// segment boundaries do not glue words together.
+		send(sessionID, ChunkUpdate{
+			SessionUpdate: UpdateAgentMessageChunk,
+			Content:       textContent("\n"),
+		})
 	case *agent.ToolStartEvent:
-		update = Update{
-			SessionUpdate: "tool_call",
-			ToolCall: &ToolCall{
-				ID:     e.ID,
-				Name:   e.Name,
-				Args:   e.Args,
-				Status: "started",
-			},
+		call := ToolCallUpdate{
+			SessionUpdate: UpdateToolCall,
+			ToolCallID:    toolCallID(e.ID),
+			Name:          e.Name,
+			Kind:          toolKind(e.Name),
+			Status:        StatusInProgress,
 		}
+		// tool_call requires a title; the abbreviated args hint makes
+		// rows distinguishable before any result content exists.
+		if hint := compactHint(e.Args); hint != "" {
+			call.Title = e.Name + ": " + hint
+		} else {
+			call.Title = e.Name
+		}
+		send(sessionID, call)
 	case *agent.ToolEndEvent:
-		update = Update{
-			SessionUpdate: "tool_result",
-			ToolResult: &ToolResult{
-				ID:      e.ID,
-				Name:    e.Name,
-				Result:  e.Result,
-				Error:   e.Error,
-				Ms:      e.Duration.Milliseconds(),
-				Summary: toolfmt.Summary(e.Name, e.Args, e.Result),
-			},
+		update := ToolCallUpdate{
+			SessionUpdate: UpdateToolCallUpdate,
+			ToolCallID:    toolCallID(e.ID),
+			Status:        StatusCompleted,
+			Content: []UpdateContent{{
+				Type:    "content",
+				Content: textContent(e.Result),
+			}},
 		}
+		if e.Error != "" {
+			update.Status = StatusFailed
+			update.Content = []UpdateContent{{
+				Type:    "content",
+				Content: textContent(e.Error),
+			}}
+		}
+		send(sessionID, update)
 	case *agent.SubAgentStartEvent:
 		label := toolfmt.SubagentRoleLabel(e.Role)
-		update = Update{
-			SessionUpdate: "agent_message_chunk",
-			Content:       &Content{Type: "text", Text: fmt.Sprintf("\n[sub-agent: %s] %s\n", label, e.Prompt)},
-		}
+		send(sessionID, ChunkUpdate{
+			SessionUpdate: UpdateAgentMessageChunk,
+			Content:       textContent(text("\n[sub-agent: %s] %s\n", label, e.Prompt)),
+		})
 	case *agent.SubAgentEndEvent:
 		label := toolfmt.SubagentRoleLabel(e.Role)
 		status := "completed"
@@ -75,46 +97,57 @@ func (v *View) SendTo(sessionID string, send func(string, Update), evt agent.Eve
 		if e.Model != "" {
 			modelStr = " [" + e.Model + "]"
 		}
-		update = Update{
-			SessionUpdate: "agent_message_chunk",
-			Content:       &Content{Type: "text", Text: fmt.Sprintf("[sub-agent: %s%s] %s\n", label, modelStr, status)},
-		}
+		send(sessionID, ChunkUpdate{
+			SessionUpdate: UpdateAgentMessageChunk,
+			Content:       textContent(text("[sub-agent: %s%s] %s\n", label, modelStr, status)),
+		})
 	case *agent.EscalationEvent:
-		update = Update{
-			SessionUpdate: "agent_message_chunk",
-			Content:       &Content{Type: "text", Text: fmt.Sprintf("ESCALATION [%s] %s: %s", e.Severity, e.SubAgentRole, e.Summary)},
-		}
+		send(sessionID, ChunkUpdate{
+			SessionUpdate: UpdateAgentMessageChunk,
+			Content:       textContent(text("ESCALATION [%s] %s: %s", e.Severity, e.SubAgentRole, e.Summary)),
+		})
 	case *agent.CompactionStartedEvent:
-		update = Update{
-			SessionUpdate: "agent_message_chunk",
-			Content:       &Content{Type: "text", Text: "[" + e.StartedSummary() + "]"},
-		}
+		send(sessionID, ChunkUpdate{
+			SessionUpdate: UpdateAgentMessageChunk,
+			Content:       textContent("[" + e.StartedSummary() + "]"),
+		})
 	case *agent.CompactionDoneEvent:
-		update = Update{
-			SessionUpdate: "agent_message_chunk",
-			Content:       &Content{Type: "text", Text: "[" + e.DoneSummary() + "]"},
-		}
+		// The client negotiates session.compaction before ID-addressed
+		// compaction updates may be sent (Tier 3); until then compaction
+		// surfaces as an ordinary message (the spec's fallback rule).
+		send(sessionID, ChunkUpdate{
+			SessionUpdate: UpdateAgentMessageChunk,
+			Content:       textContent("[" + e.DoneSummary() + "]"),
+		})
 	case *agent.DoneEvent:
 		// Intentionally ignored: ACP signals turn completion via the
-		// session/update stop reason, not the agent's DoneEvent.
+		// session/prompt response stopReason, not the agent's DoneEvent.
 	default:
 		return
 	}
+}
 
-	send(sessionID, update)
+// compactHint condenses the abbreviated tool args into a single-line
+// title hint.
+func compactHint(args string) string {
+	h := strings.Join(strings.Fields(args), " ")
+	if len(h) > 50 {
+		h = h[:47] + "..."
+	}
+	return h
 }
 
 // ViewWithWrite wraps View and sends session/update notifications
 // for each event, tagging them with the active session ID.
 type ViewWithWrite struct {
 	av        *View
-	send      func(sessionID string, update Update)
+	send      updateSender
 	sessionID string
 }
 
 // NewViewWithWrite creates an agent.View that forwards translated events
 // to send as session/update payloads for sessionID.
-func NewViewWithWrite(send func(sessionID string, update Update), sessionID string) *ViewWithWrite {
+func NewViewWithWrite(send updateSender, sessionID string) *ViewWithWrite {
 	return &ViewWithWrite{
 		av:        NewView(),
 		send:      send,

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -18,6 +19,9 @@ import (
 	"github.com/buchenberg/yaah/internal/tools"
 )
 
+// ProtocolVersion is the ACP major version this server speaks.
+const ProtocolVersion = 1
+
 // Session is the narrow capability the ACP server needs from an agent
 // session. *agentSession in cmd/yaah satisfies this interface.
 type Session interface {
@@ -25,379 +29,559 @@ type Session interface {
 	SetView(agent.View)
 	SetCtrlCh(chan<- control.Msg)
 	GetCtrlCh() chan<- control.Msg
+	SetApproveFn(func(name, args string) bool)
 	Close()
 	ToolReg() *tools.Registry
 }
 
-// Server is an ACP (Agent Communication Protocol) server speaking
-// newline-delimited JSON-RPC 2.0 over stdin/stdout. All diagnostics go to
-// the logf sink so stdout stays clean for protocol JSON.
-type Server struct {
-	sess    Session
-	version string
-	logf    func(format string, args ...any)
-	stdin   io.Reader
-	stdout  io.Writer
+// SessionFactory lazily builds the underlying agent session. It is
+// invoked once, on the first session/new, so the client's cwd can take
+// effect before construction (spec: the session cwd MUST be used for
+// the session regardless of where the subprocess was spawned).
+type SessionFactory func() (Session, error)
 
-	// AutoAnswerQuestions, when true, answers CtrlQuestion control
-	// messages with the first option (ACP is a machine-to-machine
-	// protocol without interactive users). Default true.
+// Server is an ACP v1 agent speaking newline-delimited JSON-RPC 2.0
+// over stdin/stdout. All diagnostics go to the logf sink so stdout
+// stays clean for protocol JSON.
+type Server struct {
+	version    string
+	logf       func(format string, args ...any)
+	stdin      io.Reader
+	stdout     io.Writer
+	newSession SessionFactory
+
+	// AutoAnswerQuestions, when true, answers question-tool prompts
+	// with the first option. ACP has no interactive question surface in
+	// Tier 1 (elicitation is a future capability). Default true.
 	AutoAnswerQuestions bool
 
-	// AutoContinue, when true, answers CtrlContinue control messages
-	// with "continue" when max iterations are reached. Default true.
+	// AutoContinue, when true, answers control.Continue messages with
+	// "continue" when max iterations are reached. Default true.
 	AutoContinue bool
+
+	// PermissionTimeout bounds how long session/request_permission
+	// waits for the client's decision. Default 5 minutes.
+	PermissionTimeout time.Duration
+
+	// mu guards session identity, run state, and the pending-request
+	// map. The agent session itself has its own locking.
+	mu sync.Mutex
+
+	sess       Session
+	sessionID  string
+	run        *runningPrompt
+	pendingReq map[string]chan clientResponse
+	nextReqID  int
+	conn       *connection
 }
 
-// NewServer creates an ACP server bound to sess, reading from os.Stdin
-// and writing protocol JSON to os.Stdout. logf receives diagnostic
-// messages (may be nil).
-func NewServer(sess Session, version string, logf func(format string, args ...any)) *Server {
+// runningPrompt tracks the single in-flight turn.
+type runningPrompt struct {
+	cancel context.CancelFunc
+}
+
+// NewServer creates an ACP server. build constructs the underlying
+// agent session lazily, once, after session/new has applied the
+// client's cwd. logf receives diagnostics (may be nil).
+func NewServer(build SessionFactory, version string, logf func(format string, args ...any)) *Server {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
 	return &Server{
-		sess:                sess,
 		version:             version,
 		logf:                logf,
 		stdin:               os.Stdin,
 		stdout:              os.Stdout,
+		newSession:          build,
 		AutoAnswerQuestions: true,
 		AutoContinue:        true,
+		PermissionTimeout:   5 * time.Minute,
+		pendingReq:          make(map[string]chan clientResponse),
+		run:                 &runningPrompt{},
 	}
 }
 
-// Run starts the dispatch loop and blocks until ctx is cancelled or stdin
-// reaches EOF.
-func (s *Server) Run(ctx context.Context) error {
-	// Wire question tool handler for ACP. Questions are formatted as
-	// agent_message_chunk text and auto-answered with the first option
-	// (ACP is a machine-to-machine protocol without interactive users).
-	if reg := s.sess.ToolReg(); reg != nil {
-		if qt := reg.Get("question"); qt != nil {
-			if qtp, ok := qt.(*tools.QuestionTool); ok {
-				qtp.Handler = func(entries []tools.QuestionEntry) []string {
-					var answers []string
-					for _, e := range entries {
-						// Format question text for the ACP client.
-						msg := fmt.Sprintf("❓ %s\n\n%s\n\n", e.Header, e.Question)
-						for i, o := range e.Options {
-							msg += fmt.Sprintf("  [%d] %s — %s\n", i+1, o.Label, o.Description)
-						}
-						// Send as a status message so the client sees it.
-						if ch := s.sess.GetCtrlCh(); ch != nil {
-							ch <- &control.Status{Text: msg}
-						}
-						// Auto-answer: pick the first option.
-						if s.AutoAnswerQuestions && len(e.Options) > 0 {
-							answers = append(answers, fmt.Sprintf("%s: %s", e.Header, e.Options[0].Label))
-						} else {
-							answers = append(answers, e.Header+": ")
-						}
-					}
-					return answers
-				}
-			}
+// connection serializes writes to stdout and issues server-initiated
+// requests (session/request_permission).
+type connection struct {
+	mu   sync.Mutex
+	w    io.Writer
+	logf func(format string, args ...any)
+}
+
+func (c *connection) write(v any) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		c.logf("marshal error: %v", err)
+		return
+	}
+	c.mu.Lock()
+	_, _ = fmt.Fprintln(c.w, string(data))
+	c.mu.Unlock()
+}
+
+// sendRequest writes a JSON-RPC request with the given numeric ID.
+func (c *connection) sendRequest(id int, method string, params any) {
+	data, err := json.Marshal(params)
+	if err != nil {
+		c.logf("marshal params: %v", err)
+		return
+	}
+	c.write(Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(fmt.Sprintf("%d", id)),
+		Method:  method,
+		Params:  data,
+	})
+}
+
+// handleSessionNew applies the client's cwd once, builds the
+// underlying session on first use, and issues a fresh session ID.
+// A cwd that is not a usable directory rejects the request.
+func (s *Server) handleSessionNew(params json.RawMessage) (Session, error) {
+	var p SessionNewParams
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, fmt.Errorf("invalid params: %w", err)
 		}
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if p.Cwd != "" {
+		if info, statErr := os.Stat(p.Cwd); statErr != nil || !info.IsDir() {
+			return nil, fmt.Errorf("cwd %q is not a directory", p.Cwd)
+		}
+		if s.sessionID != "" {
+			// One underlying conversation per process: chdir mid-session
+			// would silently move an established workspace. Docs record
+			// the single-conversation limitation; the first cwd wins.
+			s.logf("session/new cwd %q ignored: session already established", p.Cwd)
+		} else if err := os.Chdir(p.Cwd); err != nil {
+			return nil, fmt.Errorf("chdir %q: %w", p.Cwd, err)
+		} else {
+			s.logf("session cwd applied: %s", p.Cwd)
+		}
+	}
+	if s.sess == nil {
+		sess, err := s.newSession()
+		if err != nil {
+			return nil, err
+		}
+		s.sess = sess
+		s.installQuestionHandler()
+		s.logf("agent session built")
+	}
+	s.sessionID = fmt.Sprintf("sess_%d", time.Now().UnixNano())
+	s.logf("session/new: %s", s.sessionID)
+	return s.sess, nil
+}
 
+// installQuestionHandler routes question-tool prompts to the client as
+// status text and auto-answers with the first option when enabled.
+// Called once after the underlying session is built.
+func (s *Server) installQuestionHandler() {
+	if s.sess == nil {
+		return
+	}
+	qt, ok := s.sess.ToolReg().Get("question").(*tools.QuestionTool)
+	if !ok {
+		return
+	}
+	qt.Handler = func(entries []tools.QuestionEntry) []string {
+		var answers []string
+		for _, e := range entries {
+			msg := fmt.Sprintf("❓ %s\n\n%s\n\n", e.Header, e.Question)
+			for i, o := range e.Options {
+				msg += fmt.Sprintf("  [%d] %s — %s\n", i+1, o.Label, o.Description)
+			}
+			if ch := s.ctrlCh(); ch != nil {
+				select {
+				case ch <- &control.Status{Text: msg}:
+				default:
+				}
+			}
+			if s.AutoAnswerQuestions && len(e.Options) > 0 {
+				answers = append(answers, fmt.Sprintf("%s: %s", e.Header, e.Options[0].Label))
+			} else {
+				answers = append(answers, e.Header+": ")
+			}
+		}
+		return answers
+	}
+}
+
+// ctrlCh returns the session's current control channel, or nil.
+func (s *Server) ctrlCh() chan<- control.Msg {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sess == nil {
+		return nil
+	}
+	return s.sess.GetCtrlCh()
+}
+
+// close tears the underlying session down with the server.
+func (s *Server) close() {
+	s.mu.Lock()
+	sess := s.sess
+	s.sess = nil
+	s.mu.Unlock()
+	if sess != nil {
+		sess.Close()
+	}
+}
+
+// Run starts the dispatch loop and blocks until ctx is cancelled or
+// stdin reaches EOF.
+func (s *Server) Run(ctx context.Context) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	reader := bufio.NewReaderSize(s.stdin, 1<<20)
+	c := &connection{w: s.stdout, logf: s.logf}
+	s.mu.Lock()
+	s.conn = c
+	s.mu.Unlock()
 
-	// writeLock serializes writes to stdout so JSON-RPC messages don't
-	// interleave from multiple goroutines.
-	var writeLock sync.Mutex
-	writeMsg := func(msg Message) {
-		data, _ := json.Marshal(msg)
-		writeLock.Lock()
-		fmt.Fprintln(s.stdout, string(data))
-		writeLock.Unlock()
-	}
-
-	writeRaw := func(data []byte) {
-		writeLock.Lock()
-		fmt.Fprintln(s.stdout, string(data))
-		writeLock.Unlock()
-	}
-
-	sendUpdate := func(sessionID string, update Update) {
-		msg := SessionUpdateMsg{
+	sendUpdate := func(sessionID string, update any) {
+		raw, err := json.Marshal(update)
+		if err != nil {
+			s.logf("marshal update: %v", err)
+			return
+		}
+		c.write(Message{
 			JSONRPC: "2.0",
 			Method:  "session/update",
-			Params: SessionUpdate{
-				SessionID: sessionID,
-				Update:    update,
-			},
-		}
-		data, _ := json.Marshal(msg)
-		writeRaw(data)
+			Params:  rawOf(updateEnvelope{SessionID: sessionID, Update: raw}),
+		})
 	}
 
-	var currentPromptCancel context.CancelFunc
-	var currentPromptDone chan struct{}
-	var promptMu sync.Mutex
-
-	// sessions holds the IDs issued by session/new; session/prompt
-	// validates against it (review B11).
-	sessions := make(map[string]bool)
-	var sessionsMu sync.Mutex
-
-	// promptResults carries results from completed prompt runs
-	type promptResult struct {
-		sessionID string
-		response  string
-		err       error
+	respErr := func(id json.RawMessage, code int, message string) {
+		c.write(Message{
+			JSONRPC: "2.0",
+			ID:      id,
+			Error:   &RPCError{Code: code, Message: message},
+		})
 	}
-	promptResults := make(chan promptResult, 4)
-
-	done := make(chan struct{}, 1)
-	go func() {
-		defer func() { done <- struct{}{} }()
-		for {
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				if err != io.EOF {
-					s.logf("read error: %v", err)
-				}
-				return
-			}
-
-			var msg Message
-			if err := json.Unmarshal([]byte(line), &msg); err != nil {
-				s.logf("invalid JSON: %v", err)
-				continue
-			}
-
-			switch msg.Method {
-			case "initialize":
-				result := InitializeResult{
-					ProtocolVersion: "2024-11-05",
-					Capabilities: ServerCaps{
-						Tools: &ToolsCaps{ListChanged: false},
-					},
-					ServerInfo: ServerInfo{
-						Name:    "yaah",
-						Version: s.version,
-					},
-				}
-				respData, _ := json.Marshal(result)
-				writeMsg(Message{JSONRPC: "2.0", ID: msg.ID, Result: respData})
-
-			case "notifications/initialized":
-
-			case "session/new":
-				sessionID := fmt.Sprintf("sess-%d", time.Now().UnixNano())
-				sessionsMu.Lock()
-				sessions[sessionID] = true
-				sessionsMu.Unlock()
-				result := SessionNewResult{SessionID: sessionID}
-				respData, _ := json.Marshal(result)
-				writeMsg(Message{JSONRPC: "2.0", ID: msg.ID, Result: respData})
-
-			case "session/prompt":
-				var params PromptParams
-				if len(msg.Params) > 0 {
-					json.Unmarshal(msg.Params, &params)
-				}
-
-				sessionsMu.Lock()
-				known := sessions[params.SessionID]
-				sessionsMu.Unlock()
-				if !known {
-					writeMsg(Message{
-						JSONRPC: "2.0", ID: msg.ID,
-						Error: &Error{Code: -32602, Message: "unknown session id (call session/new first)"},
-					})
-					continue
-				}
-
-				promptText := ""
-				for _, b := range params.Prompt {
-					if b.Type == "text" {
-						promptText += b.Text
-					}
-				}
-				if promptText == "" {
-					writeMsg(Message{
-						JSONRPC: "2.0", ID: msg.ID,
-						Error: &Error{Code: -32602, Message: "prompt must contain at least one text block"},
-					})
-					continue
-				}
-
-				// Acknowledge the prompt immediately. The read goroutine
-				// must never block on a prompt's completion — a blocked
-				// reader stalled session/cancel and every other method
-				// (review B11).
-				writeMsg(Message{JSONRPC: "2.0", ID: msg.ID, Result: json.RawMessage(`{}`)})
-
-				sessionID := params.SessionID
-
-				promptCtx, promptCancel := context.WithCancel(ctx)
-
-				promptMu.Lock()
-				if currentPromptCancel != nil {
-					currentPromptCancel()
-				}
-				prevDone := currentPromptDone
-				myDone := make(chan struct{})
-				currentPromptDone = myDone
-				currentPromptCancel = promptCancel
-				promptMu.Unlock()
-
-				go func(sID string, myDone, prevDone chan struct{}) {
-					// Serialize prompts: wait for the previous run to
-					// finish swapping session state before starting.
-					// The read goroutine is never blocked by this. The
-					// view/ctrl swap happens HERE — inside the
-					// serialized region — so a rapidly following prompt
-					// cannot overwrite this prompt's view and ctrl
-					// channel before RunPrompt captures them (review:
-					// view/ctrl swap race).
-					if prevDone != nil {
-						<-prevDone
-					}
-					defer close(myDone)
-
-					wrapped := NewViewWithWrite(sendUpdate, sID)
-					ctrlCh := make(chan control.Msg, 64)
-					s.sess.SetView(wrapped)
-					s.sess.SetCtrlCh(ctrlCh)
-					go s.forwardCtrl(promptCtx, ctrlCh, sID, sendUpdate)
-
-					resp, _, runErr := s.sess.RunPrompt(promptCtx, promptText)
-					promptResults <- promptResult{sessionID: sID, response: resp, err: runErr}
-				}(sessionID, myDone, prevDone)
-
-			case "session/cancel":
-				promptMu.Lock()
-				if currentPromptCancel != nil {
-					currentPromptCancel()
-				}
-				promptMu.Unlock()
-
-			case "session/set_mode":
-				writeMsg(Message{JSONRPC: "2.0", ID: msg.ID, Result: json.RawMessage(`{}`)})
-
-			case "tools/list":
-				entries := make([]ToolListEntry, 0)
-				if s.sess != nil {
-					reg := s.sess.ToolReg()
-					if reg != nil {
-						for _, name := range reg.List() {
-							t := reg.Get(name)
-							if t == nil {
-								continue
-							}
-							schema := t.Schema()
-							var schemaRaw json.RawMessage
-							if len(schema) > 0 {
-								schemaRaw = schema
-							} else {
-								schemaRaw = json.RawMessage(`{"type":"object","properties":{}}`)
-							}
-							entries = append(entries, ToolListEntry{
-								Name:        t.Name(),
-								Description: t.Description(),
-								InputSchema: schemaRaw,
-							})
-						}
-					}
-				}
-				result := map[string]any{
-					"tools":      entries,
-					"nextCursor": "",
-				}
-				respData, _ := json.Marshal(result)
-				writeMsg(Message{JSONRPC: "2.0", ID: msg.ID, Result: respData})
-
-			case "tools/call":
-				var params struct {
-					Name      string         `json:"name"`
-					Arguments map[string]any `json:"arguments"`
-				}
-				if len(msg.Params) > 0 {
-					if err := json.Unmarshal(msg.Params, &params); err != nil {
-						writeMsg(Message{
-							JSONRPC: "2.0", ID: msg.ID,
-							Error: &Error{Code: -32602, Message: "invalid params: " + err.Error()},
-						})
-						continue
-					}
-				}
-
-				reg := s.sess.ToolReg()
-				if reg == nil {
-					resultData := json.RawMessage(`{"content":[{"type":"text","text":"session not ready"}],"isError":true}`)
-					writeMsg(Message{JSONRPC: "2.0", ID: msg.ID, Result: resultData})
-					continue
-				}
-
-				go func(id any, name string, args map[string]any) {
-					callCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-					defer cancel()
-
-					var resultData json.RawMessage
-					argsJSON, _ := json.Marshal(args)
-					r, execErr := reg.Execute(callCtx, name, string(argsJSON))
-					blocks := []map[string]any{
-						{"type": "text", "text": r},
-					}
-					isErr := execErr != nil
-					if isErr {
-						blocks[0]["text"] = execErr.Error()
-					}
-					result := map[string]any{
-						"content": blocks,
-						"isError": isErr,
-					}
-					resultData, _ = json.Marshal(result)
-					writeMsg(Message{JSONRPC: "2.0", ID: id, Result: resultData})
-				}(msg.ID, params.Name, params.Arguments)
-
-			default:
-				// Unknown methods must not be silently dropped (review
-				// B11): JSON-RPC requires -32601 for unresolvable
-				// requests. Unknown notifications are dropped.
-				if msg.ID != nil {
-					writeMsg(Message{
-						JSONRPC: "2.0", ID: msg.ID,
-						Error: &Error{Code: -32601, Message: "method not found: " + msg.Method},
-					})
-				}
-			}
+	respOK := func(id json.RawMessage, result any) {
+		if result == nil {
+			result = json.RawMessage("{}")
 		}
-	}()
+		c.write(Message{
+			JSONRPC: "2.0",
+			ID:      id,
+			Result:  rawOf(result),
+		})
+	}
 
-	// Background goroutine to clean up after completed prompts and
-	// signal turn completion with a stop-reason update (review B11).
+	reader := bufio.NewReaderSize(s.stdin, 1<<20)
+
+	// done closes when the reader loop exits (EOF).
+	done := make(chan struct{})
 	go func() {
-		for {
-			select {
-			case pr := <-promptResults:
-				reason := "end_turn"
-				if pr.err != nil {
-					s.logf("prompt error: %v", pr.err)
-					if ctx.Err() != nil || errors.Is(pr.err, context.Canceled) {
-						reason = "cancelled"
-					}
-				} else {
-					s.logf("prompt completed")
-				}
-				sendUpdate(pr.sessionID, Update{SessionUpdate: "stop_reason", StopReason: reason})
-			case <-ctx.Done():
-				return
-			}
-		}
+		defer close(done)
+		s.dispatch(ctx, reader, c, sendUpdate, respOK, respErr)
 	}()
 
 	select {
 	case <-ctx.Done():
+		// Signal or external cancel: stop the run, tear down the
+		// session, and return. The reader goroutine exits with EOF when
+		// the client side closes.
+		s.logf("context cancelled")
+		s.cancelRun()
+		s.close()
+		return nil
 	case <-done:
+		return nil
+	}
+}
+
+// dispatch reads and executes protocol messages until EOF.
+func (s *Server) dispatch(
+	dispatchCtx context.Context,
+	reader *bufio.Reader,
+	c *connection,
+	sendUpdate updateSender,
+	respOK func(id json.RawMessage, result any),
+	respErr func(id json.RawMessage, code int, message string),
+) {
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err != io.EOF {
+				s.logf("read error: %v", err)
+			}
+			s.logf("client closed stdin")
+			s.cancelRun()
+			s.close()
+			return
+		}
+
+		var msg Message
+		if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			s.logf("invalid JSON line: %v", err)
+			continue
+		}
+
+		// Method empty: a response to one of our requests (routed to the
+		// permission bridge) or a stray message to be dropped.
+		if msg.Method == "" {
+			if len(msg.ID) > 0 {
+				s.resolvePending(msg)
+			}
+			continue
+		}
+
+		// ID empty: notification. Initialized and cancel are handled;
+		// the unknown ones are dropped per spec.
+		if len(msg.ID) == 0 {
+			switch msg.Method {
+			case "notifications/initialized":
+			case "session/cancel":
+				s.handleCancel(msg)
+			default:
+				s.logf("dropped notification %s", msg.Method)
+			}
+			continue
+		}
+
+		switch msg.Method {
+		case "initialize":
+			var params InitializeParams
+			if len(msg.Params) > 0 {
+				_ = json.Unmarshal(msg.Params, &params)
+			}
+			s.logf("initialize: client %q requested protocol %d", params.ClientInfo.Name, params.ProtocolVersion)
+			respOK(msg.ID, InitializeResult{
+				ProtocolVersion:   ProtocolVersion,
+				AgentCapabilities: AgentCaps{},
+				AgentInfo: ImplementationInfo{
+					Name:    "yaah",
+					Version: s.version,
+				},
+				AuthMethods: []AuthMethod{},
+			})
+
+		case "authenticate":
+			// Never offered (authMethods is empty); reject for clarity.
+			respErr(msg.ID, codeMethodNotFound, "authenticate is not offered")
+
+		case "session/new":
+			if _, err := s.handleSessionNew(msg.Params); err != nil {
+				respErr(msg.ID, codeInvalidParams, err.Error())
+				continue
+			}
+			s.mu.Lock()
+			id := s.sessionID
+			s.mu.Unlock()
+			respOK(msg.ID, SessionNewResult{SessionID: id})
+
+		case "session/prompt":
+			s.handlePrompt(msg, dispatchCtx, c, sendUpdate, respOK, respErr)
+
+		case "session/load":
+			respErr(msg.ID, codeInvalidParams, "loadSession is not supported: start a new session instead")
+
+		case "session/set_mode":
+			// Mode switching is not modeled yet (Tier 3); acknowledge so
+			// clients that surface a mode picker do not hang.
+			respOK(msg.ID, nil)
+
+		default:
+			respErr(msg.ID, codeMethodNotFound, "method not found: "+msg.Method)
+		}
+	}
+}
+
+// canonicalID canonicalizes a JSON-RPC id (number or string) into a
+// stable map key for pending-request routing.
+func (s *Server) canonicalID(id json.RawMessage) string {
+	if len(id) == 0 {
+		return ""
+	}
+	var v any
+	if err := json.Unmarshal(id, &v); err != nil {
+		return string(id)
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return string(id)
+	}
+	return string(b)
+}
+
+// handleCancel cancels the in-flight turn if it belongs to the given
+// session, ignoring malformed params — cancel is idempotent.
+func (s *Server) handleCancel(msg Message) {
+	var p CancelParams
+	if len(msg.Params) > 0 {
+		_ = json.Unmarshal(msg.Params, &p)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.run.cancel == nil {
+		s.logf("cancel ignored: no prompt in flight")
+		return
+	}
+	if p.SessionID != "" && p.SessionID != s.sessionID {
+		s.logf("cancel ignored: unknown session %q", p.SessionID)
+		return
+	}
+	s.logf("cancelling prompt turn")
+	s.run.cancel()
+}
+
+// cancelRun cancels any in-flight prompt without touching session
+// identity (used on stdin EOF and shutdown).
+func (s *Server) cancelRun() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.run.cancel != nil {
+		s.run.cancel()
+	}
+}
+
+// ensureIdle rejects overlapping prompts. Caller holds s.mu.
+func (s *Server) ensureIdle() bool {
+	return s.run.cancel == nil
+}
+
+// handlePrompt runs one prompt turn. Per ACP v1, the request stays
+// open until the turn ends and is then answered with a stopReason;
+// session/update notifications stream before the response.
+func (s *Server) handlePrompt(
+	msg Message,
+	rootCtx context.Context,
+	c *connection,
+	sendUpdate updateSender,
+	respOK func(id json.RawMessage, result any),
+	respErr func(id json.RawMessage, code int, message string),
+) {
+	var p PromptParams
+	if len(msg.Params) > 0 {
+		if err := json.Unmarshal(msg.Params, &p); err != nil {
+			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
+			return
+		}
+	}
+	if p.SessionID == "" {
+		respErr(msg.ID, codeInvalidParams, "sessionId is required")
+		return
 	}
 
-	s.logf("shutting down")
-	return nil
+	s.mu.Lock()
+	if s.sessionID == "" || p.SessionID != s.sessionID {
+		s.mu.Unlock()
+		respErr(msg.ID, codeInvalidParams, "unknown session id (call session/new first)")
+		return
+	}
+	if !s.ensureIdle() {
+		s.mu.Unlock()
+		respErr(msg.ID, codeBusy, "a prompt is already in flight for this session")
+		return
+	}
+	sess := s.sess
+	promptText, renderErr := renderPrompt(p.Prompt)
+	if renderErr != nil {
+		s.mu.Unlock()
+		respErr(msg.ID, codeInvalidParams, renderErr.Error())
+		return
+	}
+	if promptText == "" {
+		s.mu.Unlock()
+		respErr(msg.ID, codeInvalidParams, "prompt must contain at least one non-empty content block")
+		return
+	}
+
+	promptCtx, cancel := context.WithCancel(rootCtx)
+	s.run = &runningPrompt{cancel: cancel}
+	s.mu.Unlock()
+
+	sess.SetView(NewViewWithWrite(sendUpdate, p.SessionID))
+	ctrlCh := make(chan control.Msg, 64)
+	sess.SetCtrlCh(ctrlCh)
+	sess.SetApproveFn(func(name, args string) bool {
+		return s.requestPermission(p.SessionID, name, args, promptCtx, c)
+	})
+
+	// forwardCtrl consumes control-plane sends during the run (todo
+	// writes use blocking sends; the channel must always drain). The
+	// flush channel lets the run goroutine deliver one final batch of
+	// queued messages after RunPrompt returns, deterministically.
+	flush := make(chan struct{})
+	go s.forwardCtrl(promptCtx, ctrlCh, p.SessionID, sendUpdate, flush)
+
+	go func() {
+		_, _, runErr := sess.RunPrompt(promptCtx, promptText)
+
+		stopReason := StopEndTurn
+		switch {
+		case runErr == nil:
+			s.logf("prompt completed")
+		case errors.Is(runErr, context.Canceled):
+			stopReason = StopCancelled
+			s.logf("prompt cancelled")
+		default:
+			s.logf("prompt error: %v", runErr)
+			stopReason = StopRefusal
+		}
+
+		// Free the single-flight slot. All control producers that run
+		// inside RunPrompt have returned, so anything already queued is
+		// deliverable: closing flush makes forwardCtrl drain the rest of
+		// its queue without regard to cancellation and return. Then the
+		// prompt context is finally cancelled.
+		s.mu.Lock()
+		s.run = &runningPrompt{}
+		s.mu.Unlock()
+		close(flush)
+		cancel()
+
+		respOK(msg.ID, PromptResult{StopReason: stopReason})
+	}()
+}
+
+// renderPrompt folds ACP content blocks into the flat text prompt the
+// underlying agent session speaks. resource and resource_link blocks
+// are preserved as inline text so nothing is silently dropped; image
+// and audio (which we do not advertise) degrade to a visible note.
+func renderPrompt(blocks []ContentBlock) (string, error) {
+	var parts []string
+	for _, b := range blocks {
+		switch b.Type {
+		case "text":
+			parts = append(parts, b.Text)
+		case "resource_link":
+			link := b.URI
+			if b.Name != "" {
+				link += " (" + b.Name + ")"
+			}
+			parts = append(parts, "[resource link: "+link+"]")
+		case "resource":
+			if b.Resource != nil {
+				if b.Resource.Text != "" {
+					parts = append(parts, b.Resource.Text)
+				} else {
+					parts = append(parts, "[resource: "+b.Resource.URI+"]")
+				}
+			} else {
+				parts = append(parts, "[embedded resource]")
+			}
+		case "image", "audio":
+			parts = append(parts, fmt.Sprintf("[%s content not supported by this agent]", b.Type))
+		default:
+			parts = append(parts, fmt.Sprintf("[unsupported content block: %s]", b.Type))
+		}
+	}
+	var out strings.Builder
+	for _, p := range parts {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		if out.Len() > 0 {
+			out.WriteString("\n")
+		}
+		out.WriteString(p)
+	}
+	return out.String(), nil
 }

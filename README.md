@@ -138,7 +138,7 @@ Built-in roles cannot be shadowed; custom roles are additive. The full frontmatt
 yaah serve --http 127.0.0.1:7333
 ```
 
-`yaah acp-serve` exposes the ACP JSON-RPC server over stdio. Both are useful for automation and agent-to-agent coordination.
+`yaah acp-serve` exposes yaah as an Agent Client Protocol (ACP) v1 agent over stdio — it can be pointed at any ACP client, such as the Zed editor or a VS Code ACP client extension. Both are useful for editor integration, automation, and agent-to-agent coordination.
 
 ## How a retained dispatch works
 

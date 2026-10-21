@@ -2,85 +2,148 @@ package acp
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/buchenberg/yaah/internal/control"
+	"github.com/buchenberg/yaah/internal/todo"
 )
 
 // forwardCtrl translates control-channel messages into session/update
-// notifications. Question and continue policies are governed by the
-// Server's AutoAnswerQuestions and AutoContinue fields.
-func (s *Server) forwardCtrl(ctx context.Context, ch <-chan control.Msg, sessionID string, send func(string, Update)) {
+// notifications. It runs for the lifetime of one prompt: the ctrl
+// channel drains concurrently while the run is active (todo writes use
+// blocking sends), then a close of the flush channel delivers one
+// final deterministic batch of queued messages before the
+// session/prompt response.
+//
+// Continue and question policies are governed by the Server's
+// AutoContinue and AutoAnswerQuestions fields. The question tool is
+// routed through the QuestionTool.Handler override in server.go, so
+// there is deliberately no control.Question path here.
+func (s *Server) forwardCtrl(
+	ctx context.Context,
+	ch <-chan control.Msg,
+	sessionID string,
+	send updateSender,
+	flush <-chan struct{},
+) {
 	for {
 		select {
 		case msg, ok := <-ch:
 			if !ok {
 				return
 			}
-			switch m := msg.(type) {
-			case *control.Status:
-				send(sessionID, Update{
-					SessionUpdate: "agent_message_chunk",
-					Content:       &Content{Type: "text", Text: m.Text},
-				})
-			case *control.Error:
-				send(sessionID, Update{
-					SessionUpdate: "agent_message_chunk",
-					Content:       &Content{Type: "text", Text: fmt.Sprintf("error: %v", m.Err)},
-				})
-			case *control.Continue:
-				// Inform the client and auto-continue.
-				msg := fmt.Sprintf("Max iterations (%d) reached — continuing.", m.MaxIter)
-				send(sessionID, Update{
-					SessionUpdate: "agent_message_chunk",
-					Content:       &Content{Type: "text", Text: msg},
-				})
-				if s.AutoContinue && m.AnswerCh != nil {
-					select {
-					case m.AnswerCh <- true:
-					default:
-					}
-				}
-			case *control.Done:
-				for {
-					select {
-					case <-ch:
-					case <-ctx.Done():
+			if !forwardOne(msg, sessionID, send, s, ch) {
+				return
+			}
+		case <-flush:
+			// RunPrompt has returned: no more producers. Drain whatever
+			// is already queued (ignoring ctx so the prompt response is
+			// the very last message the client sees) and finish.
+			for {
+				select {
+				case msg, ok := <-ch:
+					if !ok {
 						return
 					}
-				}
-			case *control.ContextInfo:
-				send(sessionID, Update{
-					SessionUpdate: "agent_message_chunk",
-					Content:       &Content{Type: "text", Text: fmt.Sprintf("[context: %d/%d tokens]", m.Tokens, m.Window)},
-				})
-			case *control.Question:
-				// Format and send the question text.
-				msg := fmt.Sprintf("❓ %s\n\n%s\n\n", m.Header, m.Question)
-				for i, o := range m.Options {
-					msg += fmt.Sprintf("  [%d] %s — %s\n", i+1, o.Label, o.Description)
-				}
-				send(sessionID, Update{
-					SessionUpdate: "agent_message_chunk",
-					Content:       &Content{Type: "text", Text: msg},
-				})
-				// Auto-answer with the first option.
-				if s.AutoAnswerQuestions && m.AnswerCh != nil {
-					if len(m.Options) > 0 {
-						select {
-						case m.AnswerCh <- m.Options[0].Label:
-						default:
-						}
-					} else {
-						select {
-						case m.AnswerCh <- "":
-						default:
-						}
+					if !forwardOne(msg, sessionID, send, s, ch) {
+						return
 					}
+				default:
+					return
 				}
 			}
 		case <-ctx.Done():
 			return
 		}
 	}
+}
+
+// forwardOne translates a single control message, reporting idle-exit
+// conditions as false. The channel is passed to drain the Done
+// sentinel's remaining queue in place.
+func forwardOne(msg control.Msg, sessionID string, send updateSender, s *Server, ch <-chan control.Msg) bool {
+	switch m := msg.(type) {
+	case *control.Status:
+		send(sessionID, ChunkUpdate{
+			SessionUpdate: UpdateAgentMessageChunk,
+			Content:       textContent(m.Text),
+		})
+	case *control.Error:
+		if s.logf != nil && m.Err != nil {
+			s.logf("control error: %v", m.Err)
+		}
+		send(sessionID, ChunkUpdate{
+			SessionUpdate: UpdateAgentMessageChunk,
+			Content:       textContent(text("error: %v", m.Err)),
+		})
+	case *control.Fallback:
+		send(sessionID, ChunkUpdate{
+			SessionUpdate: UpdateAgentMessageChunk,
+			Content:       textContent(text("fallback to %s/%s", m.Provider, m.Model)),
+		})
+	case *control.ContextInfo:
+		if m.Window > 0 {
+			used := m.LastPromptTokensInclusive
+			if used == 0 {
+				used = m.Tokens
+			}
+			send(sessionID, UsageUpdate{
+				SessionUpdate: UpdateUsageUpdate,
+				Used:          used,
+				Size:          m.Window,
+			})
+		}
+	case *control.Todos:
+		if len(m.Items) > 0 {
+			send(sessionID, PlanUpdate{
+				SessionUpdate: UpdatePlan,
+				Entries:       planEntries(m.Items),
+			})
+		}
+	case *control.Continue:
+		send(sessionID, ChunkUpdate{
+			SessionUpdate: UpdateAgentMessageChunk,
+			Content:       textContent(text("Max iterations (%d) reached — continuing.", m.MaxIter)),
+		})
+		if s.AutoContinue && m.AnswerCh != nil {
+			select {
+			case m.AnswerCh <- true:
+			default:
+			}
+		}
+	case *control.Done:
+		// Session closing. The queue is producerless past this point;
+		// drain it and stop.
+		for {
+			select {
+			case _, ok := <-ch:
+				if !ok {
+					return false
+				}
+			default:
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// planEntries maps todo items onto ACP plan entries. todo statuses
+// outside the ACP set (cancelled) clamp to pending so the entry stays
+// visible; priority passthrough matches the ACP enum exactly.
+func planEntries(items []todo.Item) []PlanEntry {
+	entries := make([]PlanEntry, 0, len(items))
+	for _, it := range items {
+		status := it.Status
+		switch status {
+		case PlanPending, PlanInProgress, PlanCompleted:
+		default:
+			status = PlanPending
+		}
+		entries = append(entries, PlanEntry{
+			Content:  it.Content,
+			Priority: it.Priority,
+			Status:   status,
+		})
+	}
+	return entries
 }
