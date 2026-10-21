@@ -72,7 +72,6 @@ type acpHarness struct {
 	inW  io.Writer
 	send func(method string, id any, params string) error
 	recv func(t *testing.T) Message
-	try  func() (Message, bool)
 	done func()
 }
 
@@ -119,10 +118,6 @@ func newACPHarness(t *testing.T, sess Session) *acpHarness {
 	return &acpHarness{
 		inW: inW,
 		send: func(method string, id any, params string) error {
-			data, _ := json.Marshal(struct {
-				JSONRPC string `json:"jsonrpc"`
-			}{JSONRPC: "2.0"})
-			_ = data
 			msg := Message{JSONRPC: "2.0", Method: method, Params: json.RawMessage(params)}
 			if id != nil {
 				b, _ := json.Marshal(id)
@@ -150,21 +145,6 @@ func newACPHarness(t *testing.T, sess Session) *acpHarness {
 			case <-time.After(5 * time.Second):
 				t.Fatal("timed out waiting for server message")
 				return Message{}
-			}
-		},
-		try: func() (Message, bool) {
-			select {
-			case line, ok := <-lines:
-				if !ok {
-					return Message{}, false
-				}
-				var msg Message
-				if err := json.Unmarshal([]byte(line), &msg); err != nil {
-					return Message{}, false
-				}
-				return msg, true
-			default:
-				return Message{}, false
 			}
 		},
 		done: cancel,
@@ -218,6 +198,27 @@ func newSession(t *testing.T, h *acpHarness) string {
 func TestServer_initializeNegotiatesV1(t *testing.T) {
 	h := newACPHarness(t, &fakeSession{})
 	initialize(t, h)
+}
+
+// TestServer_sessionNewIdempotent documents the one-conversation-per-
+// process contract: a repeat session/new returns the same session id —
+// issuing a fresh one would invalidate the handle the client already
+// holds while the same underlying conversation still answers it.
+func TestServer_sessionNewIdempotent(t *testing.T) {
+	h := newACPHarness(t, &fakeSession{})
+	initialize(t, h)
+	first := newSession(t, h)
+	if err := h.send("session/new", 3, `{"cwd":"."}`); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recv(t)
+	var repeat SessionNewResult
+	if err := json.Unmarshal(msg.Result, &repeat); err != nil {
+		t.Fatalf("repeat session/new result: %v", err)
+	}
+	if repeat.SessionID != first {
+		t.Fatalf("repeat session/new issued %q, want the original %q", repeat.SessionID, first)
+	}
 }
 
 // TestServer_unknownMethodReturns32601 mirrors the JSON-RPC requirement

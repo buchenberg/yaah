@@ -3,6 +3,7 @@ package acp
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // text formats a string with fmt.Sprintf.
@@ -20,4 +21,26 @@ func rawOf(v any) json.RawMessage {
 	}
 	data, _ := json.Marshal(v)
 	return data
+}
+
+// truncate shortens s to at most max runes, appending an ellipsis when
+// it cuts. Rune-safe: byte slicing would corrupt multi-byte characters.
+func truncate(s string, max int) string {
+	if max < 0 {
+		max = 0
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	if max <= 3 {
+		return string(runes[:max])
+	}
+	return string(runes[:max-3]) + "..."
+}
+
+// compactHint condenses the abbreviated tool args into a single-line
+// title hint.
+func compactHint(args string) string {
+	return truncate(strings.Join(strings.Fields(args), " "), 50)
 }

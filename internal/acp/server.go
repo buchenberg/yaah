@@ -72,12 +72,15 @@ type Server struct {
 	run        *runningPrompt
 	pendingReq map[string]chan clientResponse
 	nextReqID  int
-	conn       *connection
 }
 
-// runningPrompt tracks the single in-flight turn.
+// runningPrompt tracks the single in-flight turn. cancel aborts it;
+// done joins the prompt goroutine — teardown must never close the
+// session while the run is still unwinding (it persists state, and
+// close() tears down what that unwind touches).
 type runningPrompt struct {
 	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 // NewServer creates an ACP server. build constructs the underlying
@@ -171,8 +174,15 @@ func (s *Server) handleSessionNew(params json.RawMessage) (Session, error) {
 		s.installQuestionHandler()
 		s.logf("agent session built")
 	}
-	s.sessionID = fmt.Sprintf("sess_%d", time.Now().UnixNano())
-	s.logf("session/new: %s", s.sessionID)
+	// One underlying conversation per process: a repeat session/new is
+	// idempotent — issuing a second ID would invalidate the client's
+	// existing handle while the same conversation still answers it.
+	if s.sessionID == "" {
+		s.sessionID = fmt.Sprintf("sess_%d", time.Now().UnixNano())
+		s.logf("session/new: %s", s.sessionID)
+	} else {
+		s.logf("session/new repeated: returning %s", s.sessionID)
+	}
 	return s.sess, nil
 }
 
@@ -183,7 +193,11 @@ func (s *Server) installQuestionHandler() {
 	if s.sess == nil {
 		return
 	}
-	qt, ok := s.sess.ToolReg().Get("question").(*tools.QuestionTool)
+	reg := s.sess.ToolReg()
+	if reg == nil {
+		return
+	}
+	qt, ok := reg.Get("question").(*tools.QuestionTool)
 	if !ok {
 		return
 	}
@@ -238,9 +252,6 @@ func (s *Server) Run(ctx context.Context) error {
 	defer stop()
 
 	c := &connection{w: s.stdout, logf: s.logf}
-	s.mu.Lock()
-	s.conn = c
-	s.mu.Unlock()
 
 	sendUpdate := func(sessionID string, update any) {
 		raw, err := json.Marshal(update)
@@ -284,15 +295,31 @@ func (s *Server) Run(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-		// Signal or external cancel: stop the run, tear down the
+		// Signal or external cancel: join the run, tear down the
 		// session, and return. The reader goroutine exits with EOF when
 		// the client side closes.
 		s.logf("context cancelled")
-		s.cancelRun()
+		s.stopRun()
 		s.close()
 		return nil
 	case <-done:
 		return nil
+	}
+}
+
+// stopRun cancels the in-flight prompt (if any) and joins its
+// goroutine, so shutdown never tears the session down while the run is
+// still unwinding — RunPrompt persists state that close() destroys.
+func (s *Server) stopRun() {
+	s.mu.Lock()
+	cancel := s.run.cancel
+	done := s.run.done
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
 	}
 }
 
@@ -312,7 +339,10 @@ func (s *Server) dispatch(
 				s.logf("read error: %v", err)
 			}
 			s.logf("client closed stdin")
-			s.cancelRun()
+			// Join the run before teardown so close() cannot race the
+			// prompt goroutine's unwind (which persists state that
+			// close() destroys).
+			s.stopRun()
 			s.close()
 			return
 		}
@@ -431,16 +461,6 @@ func (s *Server) handleCancel(msg Message) {
 	s.run.cancel()
 }
 
-// cancelRun cancels any in-flight prompt without touching session
-// identity (used on stdin EOF and shutdown).
-func (s *Server) cancelRun() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.run.cancel != nil {
-		s.run.cancel()
-	}
-}
-
 // ensureIdle rejects overlapping prompts. Caller holds s.mu.
 func (s *Server) ensureIdle() bool {
 	return s.run.cancel == nil
@@ -494,7 +514,8 @@ func (s *Server) handlePrompt(
 	}
 
 	promptCtx, cancel := context.WithCancel(rootCtx)
-	s.run = &runningPrompt{cancel: cancel}
+	runDone := make(chan struct{})
+	s.run = &runningPrompt{cancel: cancel, done: runDone}
 	s.mu.Unlock()
 
 	sess.SetView(NewViewWithWrite(sendUpdate, p.SessionID))
@@ -505,13 +526,19 @@ func (s *Server) handlePrompt(
 	})
 
 	// forwardCtrl consumes control-plane sends during the run (todo
-	// writes use blocking sends; the channel must always drain). The
-	// flush channel lets the run goroutine deliver one final batch of
-	// queued messages after RunPrompt returns, deterministically.
+	// writes use blocking sends; the channel must always drain). After
+	// the run returns, close(flush) makes it deliver one final batch of
+	// queued messages; the run goroutine then joins on ctrlDone so the
+	// session/prompt response can never overtake the last update.
+	// ctrlDone is joined before the response; runDone is joined by
+	// teardown (stopRun) so shutdown never tears the session down under
+	// a still-unwinding prompt.
+	ctrlDone := make(chan struct{})
 	flush := make(chan struct{})
-	go s.forwardCtrl(promptCtx, ctrlCh, p.SessionID, sendUpdate, flush)
+	go s.forwardCtrl(promptCtx, ctrlCh, p.SessionID, sendUpdate, flush, ctrlDone)
 
 	go func() {
+		defer close(runDone)
 		_, _, runErr := sess.RunPrompt(promptCtx, promptText)
 
 		stopReason := StopEndTurn
@@ -529,12 +556,15 @@ func (s *Server) handlePrompt(
 		// Free the single-flight slot. All control producers that run
 		// inside RunPrompt have returned, so anything already queued is
 		// deliverable: closing flush makes forwardCtrl drain the rest of
-		// its queue without regard to cancellation and return. Then the
-		// prompt context is finally cancelled.
+		// its queue without regard to cancellation, and joining on
+		// ctrlDone guarantees every queued update is on the wire before
+		// the response. Only then is the prompt context cancelled. The
+		// join handle stays in s.run so teardown can still join.
 		s.mu.Lock()
-		s.run = &runningPrompt{}
+		s.run = &runningPrompt{done: runDone}
 		s.mu.Unlock()
 		close(flush)
+		<-ctrlDone
 		cancel()
 
 		respOK(msg.ID, PromptResult{StopReason: stopReason})

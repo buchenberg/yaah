@@ -64,13 +64,6 @@ func toolKind(name string) string {
 	}
 }
 
-// permissionGate decides how the current approval mode surfaces to the
-// client: true when the request should still be shown for confirmation
-// (ask), false when the mode already permits (allow) or forbids (deny).
-// The gate itself is enforced upstream by the loop's classifier; the
-// ACP ApproveFn below is only invoked when the client must choose.
-// This seam stays for future allow-always handling.
-
 // requestPermission implements the agent loop's ApproveFn for ACP: it
 // reports the pending tool call, sends session/request_permission to
 // the client, and blocks (bounded) for the decision.
@@ -148,63 +141,65 @@ func (s *Server) requestPermission(
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
+	deny := func(reason string) {
+		s.logf("permission %s denied: %s", toolCallID, reason)
+		// Render the denial so a row the client created from the
+		// permission request does not hang in a pending state.
+		send(sessionID, ToolCallUpdate{
+			SessionUpdate: UpdateToolCallUpdate,
+			ToolCallID:    toolCallID,
+			Title:         title,
+			Name:          name,
+			Kind:          toolKind(name),
+			Status:        StatusFailed,
+			Content: []UpdateContent{{
+				Type:    "content",
+				Content: textContent("Denied: " + reason),
+			}},
+		})
+	}
+
 	var resp clientResponse
 	select {
 	case resp = <-answer:
 	case <-timer.C:
-		s.logf("permission request %s timed out: denying", toolCallID)
+		deny("no answer from client within " + timeout.String())
 		return false
 	case <-runCtx.Done():
 		// The turn is over (cancel or shutdown); the spec requires a
 		// cancelled outcome from the client in this state, but a local
-		// deny is the safe interpretation either way.
+		// deny is the safe interpretation either way. No failed-row
+		// render here: the client is unwinding the same turn.
 		s.logf("permission request %s abandoned: turn ended", toolCallID)
 		return false
 	}
 
 	if resp.err != nil {
-		s.logf("permission %s: %v", toolCallID, resp.err)
+		deny(resp.err.Error())
 		return false
 	}
 	if resp.result == nil {
+		deny("empty response from client")
 		return false
 	}
 	var out RequestPermissionResult
 	if err := json.Unmarshal(resp.result, &out); err != nil {
-		s.logf("permission %s: bad result: %v", toolCallID, err)
+		deny("unparseable response: " + err.Error())
 		return false
 	}
-	decided := out.Outcome.Outcome == "selected" &&
-		out.Outcome.OptionID == "allow-once"
-	if decided {
+	if out.Outcome.Outcome == "selected" && out.Outcome.OptionID == "allow-once" {
 		return true
 	}
-	// Show the denial so it is visible without a hanging pending row.
-	send(sessionID, ToolCallUpdate{
-		SessionUpdate: UpdateToolCallUpdate,
-		ToolCallID:    toolCallID,
-		Title:         title,
-		Name:          name,
-		Kind:          toolKind(name),
-		Status:        StatusFailed,
-		Content: []UpdateContent{{
-			Type:    "content",
-			Content: textContent("Denied"),
-		}},
-	})
+	deny("rejected by user")
 	return false
 }
 
 // permissionTitle renders a short human-readable title for a pending
 // call: the tool name plus a compacted argument hint.
 func permissionTitle(name, args string) string {
-	hint := strings.TrimSpace(args)
-	if hint != "" {
-		hint = strings.Join(strings.Fields(hint), " ")
-		if len(hint) > 60 {
-			hint = hint[:57] + "..."
-		}
-		return fmt.Sprintf("%s: %s", name, hint)
+	hint := strings.Join(strings.Fields(args), " ")
+	if hint == "" {
+		return name
 	}
-	return name
+	return fmt.Sprintf("%s: %s", name, truncate(hint, 60))
 }

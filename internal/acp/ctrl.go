@@ -14,6 +14,10 @@ import (
 // final deterministic batch of queued messages before the
 // session/prompt response.
 //
+// ctrlDone is closed when goroutine work is fully finished — either
+// after the post-run flush batch was delivered, or on cancellation —
+// so the run goroutine can join before answering the prompt.
+//
 // Continue and question policies are governed by the Server's
 // AutoContinue and AutoAnswerQuestions fields. The question tool is
 // routed through the QuestionTool.Handler override in server.go, so
@@ -24,7 +28,9 @@ func (s *Server) forwardCtrl(
 	sessionID string,
 	send updateSender,
 	flush <-chan struct{},
+	ctrlDone chan<- struct{},
 ) {
+	defer close(ctrlDone)
 	for {
 		select {
 		case msg, ok := <-ch:

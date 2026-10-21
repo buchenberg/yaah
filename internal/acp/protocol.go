@@ -26,9 +26,6 @@ type Message struct {
 	Error   *RPCError       `json:"error,omitempty"`
 }
 
-// Method Responses helper.
-func (m Message) IsRequestNotification() bool { return m.Method != "" }
-
 // RPCError is a JSON-RPC 2.0 error object.
 type RPCError struct {
 	Code    int    `json:"code"`

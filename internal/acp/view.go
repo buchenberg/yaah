@@ -2,7 +2,6 @@ package acp
 
 import (
 	"strconv"
-	"strings"
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/toolfmt"
@@ -125,16 +124,6 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 	default:
 		return
 	}
-}
-
-// compactHint condenses the abbreviated tool args into a single-line
-// title hint.
-func compactHint(args string) string {
-	h := strings.Join(strings.Fields(args), " ")
-	if len(h) > 50 {
-		h = h[:47] + "..."
-	}
-	return h
 }
 
 // ViewWithWrite wraps View and sends session/update notifications
