@@ -171,27 +171,32 @@ survive it, and anything that cannot be moved back is reported rather than lost.
 
 ### Confinement and egress
 
-On Linux the jail is real, and the network can be governed with it:
+Where the host can jail, the jail is real — Landlock on Linux, winacl on
+Windows; on Linux the network can be governed with it as well:
 
 - **Confinement jail.** `agents.subagent.containment: auto | paddock | advisory |
   off` (default `auto`; aliases `jail` for `paddock`, `none` for `off`).
   `advisory` and `off` leave the host path and never jail. A dispatch runs
   inside a kernel-enforced confinement jail — Landlock's syscall filtering on
   Linux, winacl's write-restricted access checks on Windows — whose only
-  writable root is its own worktree; housekeeping writes (`HOME`, `TMPDIR`,
-  package caches) are redirected into a `.yaah-scratch/` inside it and scrubbed
-  before the proposal is sealed. The orchestrator is never jailed. Where no jail
-  is available, `auto` degrades visibly and records the tier on the trace;
-  `paddock` fails closed instead of degrading.
+  writable root is its own worktree; housekeeping writes (`HOME`, `TMPDIR` and
+  package caches on POSIX; `TEMP`, `TMP` and the `APPDATA`/`LOCALAPPDATA`/
+  `USERPROFILE` trees on Windows) are redirected into a `.yaah-scratch/` inside
+  it and scrubbed before the proposal is sealed. The orchestrator is never
+  jailed. Where no jail is available, `auto` degrades visibly and records the
+  tier on the trace; `paddock` fails closed instead of degrading.
 - **One writer.** A confined dispatch cannot `git add`, `commit`, or `stash` —
   a linked worktree's index lives in the host repository's `.git`, outside the
   jail. Read-only git (`status`, `diff`, `log`) is fine, and the orchestrator
   commits when it settles the proposal. Refusals carry an explanation naming
   the rule.
 - **Egress posture.** `agents.subagent.network: allow_all | deny_all | broker`
-  (default `allow_all`). `deny_all` removes TCP egress entirely; `broker` pins
-  the jail's egress to a session broker whose `network_hosts` allowlist decides
-  what is reachable, with `HTTP_PROXY`/`HTTPS_PROXY` routing it without
+  (default `allow_all`; the restrictive postures are Linux only — Landlock
+  carries the network axis, and a winacl host refuses `deny_all`/`broker` as
+  unrepresentable rather than run them open). `deny_all` removes TCP egress
+  entirely; `broker` pins the jail's
+  egress to a session broker whose `network_hosts` allowlist decides what is
+  reachable, with `HTTP_PROXY`/`HTTPS_PROXY` routing it without
   configuration. A posture that cannot be applied fails the dispatch naming the
   fix — it never runs with open egress after you asked for none. `yaah doctor`
   reports the same conditions as a `FAIL` up front.

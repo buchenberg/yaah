@@ -349,9 +349,11 @@ func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (Exe
 // the rule that makes it deliberate.
 //
 // Detection of a refused write requires BOTH a permission failure and a denied
-// path the message names that lies outside the writable root. "Permission
-// denied" (POSIX phrasing) or "Access to the path ... is denied." (Windows
-// phrasing) alone is not evidence of a boundary refusal — a `chmod 000` file or
+// path the message names that lies outside the writable root. The leading
+// phrases cover the producers a confined body actually emits — POSIX's
+// "Permission denied", Go's Windows PathError ("open C:\path: Access is
+// denied."), and .NET's "Access to the path 'C:\path' is denied." — and none of
+// them alone is evidence of a boundary refusal: a `chmod 000` file or
 // a non-executable script inside the worktree produces the same errno — so a
 // failure with no attributable path gets no hint. A missed hint costs nothing
 // (the raw error still surfaces); a wrong one sends the model to the wrong
@@ -415,9 +417,16 @@ func deniedOutsideRoot(stderr, root string) (string, bool) {
 		resolvedRoot = r
 	}
 	for _, line := range strings.Split(stderr, "\n") {
+		// Windows spellings vary by producer: a Go PathError prints
+		// "open C:\path: Access is denied." with the path inline, while
+		// .NET/PowerShell writes "Access to the path 'C:\path' is denied."
+		// Only lines naming a path can be attributed, so the bare cmd.exe
+		// "Access is denied." (no path) yields no hint rather than a
+		// misattributed refusal.
 		if !strings.Contains(line, "Permission denied") &&
 			!strings.Contains(line, "Read-only file system") &&
-			!strings.Contains(line, "Access is denied") {
+			!strings.Contains(line, "Access is denied") &&
+			!strings.Contains(line, "Access to the path") {
 			continue
 		}
 		for _, cand := range pathCandidates(line) {
