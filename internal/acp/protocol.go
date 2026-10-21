@@ -4,11 +4,12 @@
 // the control-channel policy for a headless client, and the
 // session/request_permission bridge for tool approvals.
 //
-// Supported surface: initialize, session/new, session/prompt,
+// Supported surface: initialize, session/new, session/load, session/prompt,
 // session/cancel, session/set_mode, session/update notifications with
-// the agent_message_chunk, agent_thought_chunk, tool_call,
-// tool_call_update, plan, and usage_update variants, and
-// session/request_permission back to the client for tool approvals.
+// the agent_message_chunk, agent_thought_chunk, user_message_chunk
+// (replay), tool_call, tool_call_update, plan, and usage_update
+// variants, and session/request_permission back to the client for
+// tool approvals.
 package acp
 
 import "encoding/json"
@@ -80,10 +81,14 @@ type InitializeResult struct {
 	AuthMethods       []AuthMethod       `json:"authMethods"`
 }
 
-// AgentCaps is empty: loadSession, promptCapabilities extras, and MCP
-// transports are unsupported (Tier 3). An empty struct decodes as all
-// defaults downstream.
-type AgentCaps struct{}
+// AgentCaps advertises what the server supports. loadSession is
+// advertised because a fresh acp-serve process can rebuild a prior
+// conversation from the SQLite session store (internal/memory).
+// promptCapabilities extras, MCP transports, and session/resume are
+// unsupported (Tier 3).
+type AgentCaps struct {
+	LoadSession bool `json:"loadSession,omitempty"`
+}
 
 // AuthMethod is a placeholder struct; the list is always empty.
 type AuthMethod struct {
@@ -114,6 +119,21 @@ type McpServerRef struct {
 // SessionNewResult is the result of session/new.
 type SessionNewResult struct {
 	SessionID string `json:"sessionId"`
+}
+
+// === session/load ===
+
+// SessionLoadParams are the params of session/load. The client sends
+// the ID of a conversation yaah previously created (the persisted
+// memory-DB session id), optionally with a cwd and mcpServers: the cwd
+// is applied to the process exactly as in session/new (first cwd
+// wins), and mcpServers is recorded but unused (Tier 3). Unknown
+// session IDs — ones yaah never created in its session store — are
+// rejected with invalid params.
+type SessionLoadParams struct {
+	SessionID  string         `json:"sessionId"`
+	Cwd        string         `json:"cwd,omitempty"`
+	McpServers []McpServerRef `json:"mcpServers,omitempty"`
 }
 
 // === session/prompt ===
@@ -162,6 +182,7 @@ const (
 const (
 	UpdateAgentMessageChunk = "agent_message_chunk"
 	UpdateAgentThoughtChunk = "agent_thought_chunk"
+	UpdateUserMessageChunk  = "user_message_chunk"
 	UpdateToolCall          = "tool_call"
 	UpdateToolCallUpdate    = "tool_call_update"
 	UpdatePlan              = "plan"
@@ -201,8 +222,9 @@ const (
 	PlanCompleted  = "completed"
 )
 
-// ChunkUpdate is the payload for agent_message_chunk and
-// agent_thought_chunk.
+// ChunkUpdate is the payload for agent_message_chunk,
+// agent_thought_chunk, and the user_message_chunk replay sent when a
+// resumed conversation is streamed on session/load.
 type ChunkUpdate struct {
 	SessionUpdate string       `json:"sessionUpdate"`
 	Content       ContentBlock `json:"content"`

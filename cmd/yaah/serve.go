@@ -238,8 +238,10 @@ func (s *agentSession) runHeadless(ctx context.Context, prompt string) (string, 
 
 	response, err := loop.Run(ctx, prompt)
 
+	s.mu.Lock()
 	s.messages = loop.State.Messages
 	s.msgIdx = loop.Persister.MsgIdx()
+	s.mu.Unlock()
 
 	return response, loop.State.TotalTokens, err
 }

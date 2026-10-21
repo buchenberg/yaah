@@ -377,6 +377,29 @@ func (s *agentSession) flushUsageValues(tokensIn, tokensOut, tokensCached, subTo
 
 // ToolReg returns the session's tool registry.
 func (s *agentSession) ToolReg() *tools.Registry { return s.toolReg }
+
+// AgentSessionID returns the id of the underlying persisted
+// conversation (the memory-DB session row). The ACP server exposes it
+// as the ACP session id so a later session/load in a fresh process
+// names the same conversation.
+func (s *agentSession) AgentSessionID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.sessionID
+}
+
+// History returns a copy of the session's live conversation, used by
+// the ACP server to replay the conversation on session/load. A copy:
+// the loop mutates the backing slice during runs while the caller
+// streams it after releasing the server lock.
+func (s *agentSession) History() []types.Message {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]types.Message, len(s.messages))
+	copy(out, s.messages)
+	return out
+}
+
 func (s *agentSession) ProviderName() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

@@ -100,7 +100,9 @@ yaah can also be driven by another agent:
 - `yaah acp-serve` exposes yaah as an Agent Client Protocol (ACP) v1
   agent over stdio (newline-delimited JSON-RPC), compatible with
   editor clients such as Zed and VS Code ACP extensions. See
-  [architecture.md](./architecture.md) for the event plumbing.
+  [acp.md](./acp.md) for the session lifecycle, resume support, and
+  client setup, and [architecture.md](./architecture.md) for the event
+  plumbing.
 
 This is useful for benchmark harnesses, editor integrations, and
 agent-to-agent coordination.

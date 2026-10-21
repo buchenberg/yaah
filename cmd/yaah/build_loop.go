@@ -63,8 +63,13 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 
 	response, err := loop.Run(ctx, prompt)
 
+	// s.messages / s.msgIdx are read concurrently (History under
+	// s.mu.RLock); guard the post-run swap the same way the usage
+	// counters below are guarded.
+	s.mu.Lock()
 	s.messages = loop.State.Messages
 	s.msgIdx = loop.Persister.MsgIdx()
+	s.mu.Unlock()
 
 	s.mu.Lock()
 	s.totalUsage.PromptTokens += loop.State.TotalTokens.PromptTokens
@@ -176,7 +181,13 @@ func (s *agentSession) loopBuilder(
 		debouncer = memory.NewDebouncedWriter(s.db)
 	}
 	persister := agent.NewSessionPersister(s.db, debouncer, s.sessionID)
-	persister.SetMsgIdx(s.msgIdx)
+	// Snapshot the conversation state under the read lock: prompt runs
+	// swap both fields under the write lock while this builder runs.
+	s.mu.RLock()
+	msgs := s.messages
+	msgIdx := s.msgIdx
+	s.mu.RUnlock()
+	persister.SetMsgIdx(msgIdx)
 	hooks := agent.NewHookEmitter(s.cfg.Hooks.Dir, s.sessionID)
 
 	return &agent.LoopBuilder{
@@ -186,7 +197,7 @@ func (s *agentSession) loopBuilder(
 		Registry:                   s.toolReg,
 		Model:                      modelName,
 		SystemPrompt:               s.mainPrompt,
-		Messages:                   s.messages,
+		Messages:                   msgs,
 		SessionID:                  s.sessionID,
 		Persister:                  persister,
 		Hooks:                      hooks,
