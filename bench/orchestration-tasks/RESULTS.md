@@ -393,3 +393,41 @@ branch trials landed below the pre-change sub-in mean, but single-trial
 variance is large (the pre-change spread alone is 92K–178K), so treat the
 magnitude as directional. The structural preconditions are pinned by tests;
 the tracking-table runs are the long-term confirmation.
+
+## 2026-10-21 — trimmed sub-agent role belts (yaah-9n0)
+
+The sub-agent request is ~86% schema bytes: the built-in roles shipped
+their full tool list on every dispatch, including tools the environment
+cannot run (`powershell` with no pwsh) or cannot use (the Go toolchain
+machinery in a Python workspace). Two changes:
+
+1. **Role belts trimmed** (`internal/prompts/roles/`): developer 24 → 22,
+   tester 16 → 14, analyst 14 → 13, reviewer 11 → 11 (reordered only).
+   The `http` tool goes (webfetch covers it) and so does `bisect` (git
+   covers it).
+2. **An environment gate** (`internal/tools/availability.go`): a shell
+   the machine does not have and Go toolchain machinery in a workspace
+   that is not a Go module are left out of the sub-agent registry, and
+   the sub-agent's prompt names them so the model does not call a tool
+   that is not registered.
+
+A/B on the two fan-out tasks, same day, same model, one trial each —
+`main` is the branch's base (stable prefix, quick-ref trim, sed removal,
+tool belt) and the branch adds only the role trims and the gate:
+
+| Task | main sub-in | trimmed sub-in | change |
+|---|---|---|---|
+| orch-fanout (developer role) | 559,070 | 295,561 | **−47%** |
+| orch-report-fanout (reviewer role) | 125,133 | 152,735 | +22% (noise) |
+
+Reading: the cut is where the belt was fat, and most of it comes from the
+environment gate rather than the file edit. The developer role loses two
+tools in the file (`http`, `bisect`) and six more at dispatch time — the
+five Go tools (no Go module in the fixture) and `powershell` (no pwsh) —
+so 24 named tools become 16 on the wire: −47% sub-agent prompt tokens and
+−34% total prompt tokens on that task. The reviewer role was already lean
+(two tools dropped: `go_outline`, `staticcheck`, both gated out in a
+Python fixture) — ~450 tokens a call, far below the run-to-run spread this
+task shows (85K–178K across trials), so it lands inside the noise. The
+mechanism scales with the number of tools actually left out, which is what
+the bead predicted.
