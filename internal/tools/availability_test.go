@@ -40,11 +40,9 @@ func TestGoToolAvailable(t *testing.T) {
 	}
 	dir := t.TempDir()
 	// The walk-up means the negative case depends on the ancestors: if
-	// the temp dir sits inside a module, this directory is one too.
-	if ancestorInModule(dir) {
-		t.Skip("the temp dir is inside a Go module; the negative case does not apply")
-	}
-	if GoToolAvailable(dir) {
+	// the temp dir sits inside a module, this directory is one too. The
+	// positive cases below still run — only this assertion is skipped.
+	if !ancestorInModule(dir) && GoToolAvailable(dir) {
 		t.Error("a directory without go.mod is not a Go module")
 	}
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example\n"), 0o644); err != nil {
