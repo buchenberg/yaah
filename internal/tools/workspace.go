@@ -113,8 +113,9 @@ type WorkspaceSetter interface {
 // localWorkspace is the host filesystem: the default, and what every session
 // used before workspaces existed.
 //
-// When a confiner is set, Exec runs commands under the syscall jail (Landlock on
-// Linux) with the workspace as the sole writable root. The orchestrator's
+// When a confiner is set, Exec runs commands under the containment jail
+// (Landlock's syscall filtering on Linux, winacl's write-restricted access
+// checks on Windows) with the workspace as the sole writable root. The orchestrator's
 // workspace never carries one, so its commands keep running unconfined; a
 // confiner is attached only on the sub-agent workdir lane (that run's bound
 // world).
@@ -348,9 +349,12 @@ func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (Exe
 // the rule that makes it deliberate.
 //
 // Detection of a refused write requires BOTH a permission failure and a denied
-// path the message names that lies outside the writable root. "Permission
-// denied" alone is not evidence of a boundary refusal — a `chmod 000` file or a
-// non-executable script inside the worktree produces the same errno — so a
+// path the message names that lies outside the writable root. The leading
+// phrases cover the producers a confined body actually emits — POSIX's
+// "Permission denied", Go's Windows PathError ("open C:\path: Access is
+// denied."), and .NET's "Access to the path 'C:\path' is denied." — and none of
+// them alone is evidence of a boundary refusal: a `chmod 000` file or
+// a non-executable script inside the worktree produces the same errno — so a
 // failure with no attributable path gets no hint. A missed hint costs nothing
 // (the raw error still surfaces); a wrong one sends the model to the wrong
 // remedy. The one exception is a snap-packaged toolchain, whose failure names
@@ -413,11 +417,20 @@ func deniedOutsideRoot(stderr, root string) (string, bool) {
 		resolvedRoot = r
 	}
 	for _, line := range strings.Split(stderr, "\n") {
-		if !strings.Contains(line, "Permission denied") && !strings.Contains(line, "Read-only file system") {
+		// Windows spellings vary by producer: a Go PathError prints
+		// "open C:\path: Access is denied." with the path inline, while
+		// .NET/PowerShell writes "Access to the path 'C:\path' is denied."
+		// Only lines naming a path can be attributed, so the bare cmd.exe
+		// "Access is denied." (no path) yields no hint rather than a
+		// misattributed refusal.
+		if !strings.Contains(line, "Permission denied") &&
+			!strings.Contains(line, "Read-only file system") &&
+			!strings.Contains(line, "Access is denied") &&
+			!strings.Contains(line, "Access to the path") {
 			continue
 		}
 		for _, cand := range pathCandidates(line) {
-			if !filepath.IsAbs(cand) {
+			if !absPath(cand) {
 				continue
 			}
 			c := filepath.Clean(cand)
@@ -441,13 +454,50 @@ func deniedOutsideRoot(stderr, root string) (string, bool) {
 // withinRoot reports whether p is root or lies beneath it, separator-aware so
 // "/work/wt-other" is not "inside" "/work/wt". Host path rules apply because the
 // message is produced on this host: the hint is only reachable where a kernel
-// jail actually runs (Linux today), since every other placement either degrades
-// to advisory or refuses before the body starts.
+// jail actually runs (Linux via Landlock, Windows via winacl), since every other
+// placement either degrades to advisory or refuses before the body starts.
+//
+// Windows-filesystem paths fold case: producers spell them inconsistently (an
+// MSYS tool lowercasing the drive letter, shell vs Explorer directory
+// capitalization), and NTFS folds them onto the same file — a refusal inside
+// the worktree must not be reported as a boundary refusal just because the
+// spelling differs. Folding triggers on two shapes: a drive-letter path on
+// either side on every host (so the attribution behavior is pinned in tests on
+// Linux CI, and an MSYS-spelled candidate folds off-Windows too), and every
+// path on a Windows host — which also covers a worktree rooted at a UNC share,
+// neither side of which is a drive path. A POSIX root keeps exact comparison,
+// because Unix paths are case-sensitive and the message spells what the kernel
+// named. An 8.3 short-name spelling stays inexact — it neither matches nor
+// misattributes; the hint is simply not offered, per the "guessing is worse
+// than none" rule above.
 func withinRoot(p, root string) bool {
+	if drivePath(p) || drivePath(root) || runtime.GOOS == "windows" {
+		pp := strings.ReplaceAll(p, "/", `\`)
+		rr := strings.ReplaceAll(root, "/", `\`)
+		lowerP, lowerR := strings.ToLower(pp), strings.ToLower(rr)
+		return lowerP == lowerR || strings.HasPrefix(lowerP, lowerR+`\`)
+	}
 	if p == root {
 		return true
 	}
 	return strings.HasPrefix(p, root+string(filepath.Separator))
+}
+
+// drivePath reports whether s carries a Windows drive-letter prefix
+// ("C:\…", "C:/…") — separator required after the colon, so "a:b:<c", "1:x",
+// and drive-relative "C:foo" spellings never count. The shape case folding and
+// host-independent absoluteness are decided on.
+func drivePath(s string) bool {
+	return len(s) >= 3 && s[1] == ':' && (s[2] == '\\' || s[2] == '/')
+}
+
+// absPath reports whether p is absolute for its own shape: host filepath rules,
+// plus the Windows drive-letter shape, which is absolute regardless of the
+// host GOOS — a drive-path candidate must reach the comparison on Linux CI too
+// (filepath.IsAbs("C:\x") is false off-Windows, and the hint code is pure
+// string matching that both hosts must agree on).
+func absPath(p string) bool {
+	return filepath.IsAbs(p) || drivePath(p)
 }
 
 // pathCandidates extracts the path-like tokens from one stderr line: quoted

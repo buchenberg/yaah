@@ -5,9 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/landlock"
-
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/jail"
 )
 
 // Plan 7 Phase 3: the pure decision behind CheckContainment, including the case
@@ -97,7 +96,7 @@ func TestCheckContainment(t *testing.T) {
 		t.Errorf("the default must resolve to auto, got %q", c.Detail)
 	}
 	want := "WARN"
-	if landlock.Detect() != nil {
+	if jail.Backend() != nil {
 		want = "OK"
 	}
 	if c.Status != want {

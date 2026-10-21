@@ -538,10 +538,12 @@ question. `mode: shared` is the direct-to-host lane: the explicit opt-out from
 retention.
 
 **Confinement — `containment`, default `auto`.** Where the host can jail
-(Landlock on Linux) a dispatch runs its shell inside a syscall jail whose sole
+(Landlock on Linux — syscall filtering — and winacl on Windows — write-restricted
+access checks — which is why its enforcement tier is `native-access-check-deny`)
+a dispatch runs its shell inside a kernel-enforced confinement jail whose sole
 writable root is its worktree. `auto` jails where the host can and **degrades
-visibly to advisory** where it cannot (macOS, Windows, a kernel without
-Landlock), recording which happened on the sub-agent's trace; `paddock` (alias
+visibly to advisory** where it cannot (a platform with no usable backend — macOS
+today), recording which happened on the sub-agent's trace; `paddock` (alias
 `jail`) fails closed instead of degrading; `off` (or `none`/`advisory`) always
 runs on the host. The orchestrator is never jailed either way.
 
@@ -561,8 +563,12 @@ runs on the host. The orchestrator is never jailed either way.
 > real linked-worktree layout and pins both.
 
 Housekeeping writes are **redirected into** the worktree rather than the jail
-being widened: `HOME`, `TMPDIR`, `XDG_CACHE_HOME`, `GOCACHE`, and
-`npm_config_cache` point at a `.yaah-scratch/` inside it. The scratch is scrubbed
+being widened, on every confinement host: `HOME`, `TMPDIR`, `XDG_CACHE_HOME`,
+`GOCACHE`, and `npm_config_cache` point at a `.yaah-scratch/` inside it (on
+Windows the redirect adds `TEMP`, `TMP`, and the profile trees
+`APPDATA`/`LOCALAPPDATA`/`USERPROFILE`, because winacl launches the child with
+the caller's environment and those would otherwise point outside the writable
+root). The scratch is scrubbed
 before the proposal is sealed, so it never reaches the delta. Two *reads* the
 redirect would otherwise hide are handled explicitly:
 
@@ -618,8 +624,9 @@ Four things to know about the guarantee:
 - **It rides the jail, and it does not ride it silently.** `deny_all` and
   `broker` are kernel rules; the jail is where they live. So a restrictive posture
   that cannot be applied — `containment: off`/`advisory`/`none`, a workdir-less
-  dispatch with no world to jail, a host with no usable jail, or a Landlock ABI
-  below 4 (filesystem-only: the jail exists, the network rule does not) —
+  dispatch with no world to jail, a host with no usable jail, a backend with no
+  network axis (winacl), or a Landlock ABI below 4 on Linux (filesystem-only:
+  the jail exists, the network rule does not) —
   **fails the dispatch**, naming the fix, rather than running with open egress
   after you asked for none. `yaah doctor` reports the same conditions as a `FAIL`
   before you hit them.

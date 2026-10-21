@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -34,12 +35,34 @@ func ConfinementScratchEnv(workdir string) ([]string, error) {
 		return nil, nil
 	}
 	scratch := filepath.Join(workdir, confinementScratchName)
+	// POSIX variables first: every member module moves housekeeping writes
+	// under these.
 	specs := []struct{ key, sub string }{
 		{"HOME", "home"},
 		{"TMPDIR", "tmp"},
 		{"XDG_CACHE_HOME", "cache"},
 		{"GOCACHE", "go-build"},
 		{"npm_config_cache", "npm"},
+	}
+	if runtime.GOOS == "windows" {
+		// winacl's Launch passes the caller's environment through unchanged, so
+		// the variables Windows tools write through (TEMP/TMP, and the profile
+		// trees APPDATA/LOCALAPPDATA/USERPROFILE) would point outside the
+		// writable root — the mirror of the POSIX denial loop this redirect
+		// exists to prevent. Redirect them into the scratch; reads (not
+		// governed by the mechanism) still reach the real trees exactly like a
+		// redirected HOME does. GOMODCACHE is pinned once below for both
+		// platforms; the git-config shim below covers the moved USERPROFILE
+		// the way HOME's shim does on POSIX — realGitGlobalConfigs resolves
+		// the pre-redirect home through os.UserHomeDir (%USERPROFILE% on
+		// Windows) when HOME is unset, which native Windows typically is.
+		specs = append(specs,
+			struct{ key, sub string }{"TEMP", "tmp"},
+			struct{ key, sub string }{"TMP", "tmp"},
+			struct{ key, sub string }{"APPDATA", "appdata"},
+			struct{ key, sub string }{"LOCALAPPDATA", "localappdata"},
+			struct{ key, sub string }{"USERPROFILE", "home"},
+		)
 	}
 	env := make([]string, 0, len(specs)+1)
 	for _, s := range specs {
@@ -57,8 +80,19 @@ func ConfinementScratchEnv(workdir string) ([]string, error) {
 	// body then reads the shared cache. Landlock governs writes only, so the
 	// read is unpoliced; a *download* of a missing module needs a write, which
 	// the (unconfined) worktree bootstrap does.
+	//
+	// When no home resolves at all (HOME unset, UserHomeDir failed — the
+	// degenerate Unix case), the pin is left OFF rather than exporting a
+	// relative "go/pkg/mod", which Go would resolve against the body's cwd and
+	// download the cache into the worktree, defeating the pin AND polluting the
+	// sealed delta. In that case the body's Go resolves its default from the
+	// redirected HOME — a cold cache under the scratch, which re-downloads on
+	// cold worktrees but is scrubbed before sealing. The pin is simply
+	// unavailable in this case; no relative path is exported here.
 	if _, set := os.LookupEnv("GOMODCACHE"); !set {
-		env = append(env, "GOMODCACHE="+defaultGoModCache())
+		if mc := defaultGoModCache(); mc != "" {
+			env = append(env, "GOMODCACHE="+mc)
+		}
 	}
 
 	// Point git at the user's REAL global config (see scratchGitGlobalConfig): the
@@ -154,8 +188,18 @@ func gitConfigValue(s string) string {
 // normal HOME, against the PRE-redirect environment, in git's precedence order:
 // $XDG_CONFIG_HOME/git/config (or ~/.config/git/config) first, ~/.gitconfig
 // second. Empty when the user has none — the normal case.
+//
+// The home is resolved the way git itself does on every platform: $HOME when
+// set, else the platform home directory (git-for-Windows derives its HOME from
+// %USERPROFILE%, where native Windows may leave HOME unset entirely). On Unix
+// with no HOME this still degrades to nil exactly as before.
 func realGitGlobalConfigs() []string {
 	home := os.Getenv("HOME")
+	if home == "" {
+		if h, err := os.UserHomeDir(); err == nil {
+			home = h
+		}
+	}
 	if home == "" {
 		return nil
 	}
@@ -213,13 +257,25 @@ func confinementScratchDir(root, dir string) error {
 }
 
 // defaultGoModCache resolves Go's default module cache against the CURRENT
-// (pre-redirect) environment: $GOMODCACHE if set, else $GOPATH/pkg/mod, else
-// $HOME/go/pkg/mod.
+// (pre-redirect) environment: $GOPATH/pkg/mod if GOPATH is set, else
+// $HOME/go/pkg/mod — resolving the home the way Go does on every platform
+// ($HOME on Unix; %USERPROFILE% behind os.UserHomeDir on Windows, where HOME
+// is typically unset). Empty when nothing resolves, so the caller leaves
+// GOMODCACHE unset instead of exporting a relative path.
 func defaultGoModCache() string {
 	if p := os.Getenv("GOPATH"); p != "" {
 		return filepath.Join(p, "pkg", "mod")
 	}
-	return filepath.Join(os.Getenv("HOME"), "go", "pkg", "mod")
+	home := os.Getenv("HOME")
+	if home == "" {
+		if h, err := os.UserHomeDir(); err == nil {
+			home = h
+		}
+	}
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, "go", "pkg", "mod")
 }
 
 // ScrubConfinementScratch removes the redirect scratch so the sealed proposal

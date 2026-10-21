@@ -10,16 +10,16 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/landlock"
 	"github.com/buchenberg/yaah/cmd/yaah"
+	"github.com/buchenberg/yaah/internal/jail"
 )
 
 func main() {
 	// A confined exec re-enters this binary with a trampoline sentinel as
 	// argv[1]: the Landlock backend confines the current process, then execs the
-	// target (see landlock.MaybeRunTrampoline). Handle it before any CLI work so
+	// target (see jail.MaybeRunTrampoline). Handle it before any CLI work so
 	// a confined sub-agent command never starts a second yaah.
-	if code, handled := landlock.MaybeRunTrampoline(os.Args); handled {
+	if code, handled := jail.MaybeRunTrampoline(os.Args); handled {
 		os.Exit(code)
 	}
 

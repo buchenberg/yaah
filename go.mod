@@ -8,6 +8,7 @@ require (
 	github.com/buchenberg/shepherd-kernel-go v0.17.0
 	github.com/buchenberg/shepherd-runtime-go v0.18.0
 	github.com/buchenberg/shepherd-runtime-go/sandbox/landlock v0.1.1
+	github.com/buchenberg/shepherd-runtime-go/sandbox/winacl v0.1.0
 	github.com/buchenberg/tviewmd v0.3.1
 	github.com/gdamore/tcell/v2 v2.13.10
 	github.com/lsferreira42/figlet-go v0.0.2-beta

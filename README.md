@@ -21,7 +21,7 @@ running tests, and retrying. yaah splits that work:
 - **Sub-agents do the long-running work.** Each role gets a focused tool set, its own iteration/turn budget, and a structured evidence contract.
 - **Parallel by default.** Independent research, implementation, and validation can run at the same time.
 - **Isolated by construction.** A dispatch runs in its own git worktree and returns a sealed proposal (`select`, `apply`, `release`, or `discard`). A rejected attempt costs one dispatch and leaves the tree untouched.
-- **Confined when the host can.** Retention isolates files; confinement governs processes and the network. On Linux a dispatch shells inside a Landlock jail whose sole writable root is its worktree, and egress can be fully denied or pinned to a session broker's allowlist. Hosts without a usable jail degrade visibly; `paddock` fails closed instead. See [Confinement and egress](#confinement-and-egress).
+- **Confined when the host can.** Retention isolates files; confinement governs processes and the network. Where the host can jail (Landlock on Linux, winacl on Windows), a dispatch shells inside a kernel-enforced confinement jail — Landlock's syscall filtering, winacl's write-restricted access checks — whose sole writable root is its worktree, and on Linux egress can also be fully denied or pinned to a session broker's allowlist. Hosts without a usable jail degrade visibly; `paddock` fails closed instead. See [Confinement and egress](#confinement-and-egress).
 - **Supervised while running.** A supervision kernel reads every session's trace and steers or halts a running sub-agent loop on advisory rules — destructive-command patterns, error-rate spikes — rather than waiting for the run to finish.
 - **Speculative by design.** The orchestrator can compare several proposals and land the best one; nothing is committed by a sub-agent.
 
@@ -171,26 +171,33 @@ survive it, and anything that cannot be moved back is reported rather than lost.
 
 ### Confinement and egress
 
-On Linux the jail is real, and the network can be governed with it:
+Where the host can jail, the jail is real — Landlock on Linux, winacl on
+Windows; on Linux the network can be governed with it as well:
 
-- **Syscall jail.** `agents.subagent.containment: auto | paddock | advisory |
+- **Confinement jail.** `agents.subagent.containment: auto | paddock | advisory |
   off` (default `auto`; aliases `jail` for `paddock`, `none` for `off`).
   `advisory` and `off` leave the host path and never jail. A dispatch runs
-  inside a Landlock jail whose only writable
-  root is its own worktree; housekeeping writes (`HOME`, `TMPDIR`, package
-  caches) are redirected into a `.yaah-scratch/` inside it and scrubbed before
-  the proposal is sealed. The orchestrator is never jailed. Where no jail is
-  available, `auto` degrades visibly and records the tier on the trace;
-  `paddock` fails closed instead of degrading.
+  inside a kernel-enforced confinement jail — Landlock's syscall filtering on
+  Linux, winacl's write-restricted access checks on Windows — whose only
+  writable root is its own worktree; housekeeping writes are redirected into a
+  `.yaah-scratch/` inside it and scrubbed before the proposal is sealed:
+  `HOME`, `TMPDIR` and the package caches (`XDG_CACHE_HOME`, `GOCACHE`,
+  `npm_config_cache`) on every platform, plus `TEMP`/`TMP` and the
+  `APPDATA`/`LOCALAPPDATA`/`USERPROFILE` trees on Windows. The orchestrator is
+  never jailed. Where no jail is available, `auto` degrades visibly and records
+  the tier on the trace; `paddock` fails closed instead of degrading.
 - **One writer.** A confined dispatch cannot `git add`, `commit`, or `stash` —
   a linked worktree's index lives in the host repository's `.git`, outside the
   jail. Read-only git (`status`, `diff`, `log`) is fine, and the orchestrator
   commits when it settles the proposal. Refusals carry an explanation naming
   the rule.
 - **Egress posture.** `agents.subagent.network: allow_all | deny_all | broker`
-  (default `allow_all`). `deny_all` removes TCP egress entirely; `broker` pins
-  the jail's egress to a session broker whose `network_hosts` allowlist decides
-  what is reachable, with `HTTP_PROXY`/`HTTPS_PROXY` routing it without
+  (default `allow_all`; the restrictive postures are Linux only — Landlock
+  carries the network axis, and a winacl host refuses `deny_all`/`broker` as
+  unrepresentable rather than run them open). `deny_all` removes TCP egress
+  entirely; `broker` pins the jail's
+  egress to a session broker whose `network_hosts` allowlist decides what is
+  reachable, with `HTTP_PROXY`/`HTTPS_PROXY` routing it without
   configuration. A posture that cannot be applied fails the dispatch naming the
   fix — it never runs with open egress after you asked for none. `yaah doctor`
   reports the same conditions as a `FAIL` up front.
@@ -202,17 +209,18 @@ On Linux the jail is real, and the network can be governed with it:
 ### Containment across platforms
 
 The containment family is one contract with per-platform mechanisms
-(`shepherd-runtime-go/sandbox/*`). Runtime v0.18.0 added the Windows member;
-yaah's backend selection is still Landlock-first today, as the statuses say.
+(`shepherd-runtime-go/sandbox/*`). yaah picks the member per platform:
+`landlock` on Linux, `winacl` on Windows, and nothing (advisory only)
+elsewhere — e.g. macOS.
 
-| | Linux — shipped | Windows — backend shipped, wiring pending | macOS — planned |
+| | Linux — shipped | Windows — shipped | macOS — planned |
 |---|---|---|---|
 | Mechanism | Landlock rulesets: kernel-enforced filesystem rights, port-scoped network rules | Write-restricted token, per-root write capability SIDs, Low integrity level, no-write-up label | Seatbelt SBPL profiles |
 | Privilege | none | none (no elevation, container, or VM) | none (`sandbox-exec` ships with macOS) |
 | Writable root | worktree plus redirected scratch | worktree only (per-root write grants) | worktree plus platform temp directories (draft) |
 | Git rule | commit refusal with an explanation | same refusal; denials classified as discarded runs | profile denies writes under the repository's `.git` |
-| Egress | `allow_all` / `deny_all` / `broker` (port pin) | `allow_all` only — no kernel network axis yet | `deny_all` enforceable; broker allowlists are cooperative, not kernel-pinned |
-| Placement & probe | `paddock` / `auto` / `advisory`, fail-closed probe | same contract, same probe semantics | same semantics; probe coverage to be built |
+| Egress | `allow_all` / `deny_all` / `broker` (port pin) | `allow_all` only — no kernel network axis; restrictive postures fail closed | `deny_all` enforceable; broker allowlists are cooperative, not kernel-pinned |
+| Placement & probe | `paddock` / `auto` / `advisory`, fail-closed probe | same contract, same fail-closed probe | same semantics; probe coverage to be built |
 
 Mechanism differences are deliberate and reported with distinct enforcement
 tiers: Linux denies syscalls (`native-syscall-deny`), Windows denies access
