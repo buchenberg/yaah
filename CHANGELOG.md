@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.100.0](https://github.com/buchenberg/yaah/compare/v0.99.0...v0.100.0) (2026-10-22)
+
+
+### Features
+
+* **memory:** P4 introspection — memory/skill stats + learning journey view ([#555](https://github.com/buchenberg/yaah/issues/555)) ([dce8811](https://github.com/buchenberg/yaah/commit/dce88110eb0061eb3a21546b52bcf41ad8b78d0f))
+
 ## [0.99.0](https://github.com/buchenberg/yaah/compare/v0.98.0...v0.99.0) (2026-10-22)
 
 
