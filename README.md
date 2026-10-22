@@ -27,7 +27,7 @@ running tests, and retrying. yaah splits that work:
 
 Four roles are built in: `analyst`, `developer`, `tester`, and `reviewer`. Add your own in `.agents/roles/*.md` or `~/.agents/roles/*.md`.
 
-## Memory that optimizes, not just forgets
+## Memory that optimizes
 
 yaah doesn't just summarize your context away when the window fills. It runs two complementary memory-optimization mechanisms:
 
