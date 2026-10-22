@@ -137,3 +137,33 @@ func TestConsolidateFnNilWithoutRegistry(t *testing.T) {
 		t.Fatal("session without a tool registry produced a ConsolidateFn")
 	}
 }
+
+func TestDeepSleepGate(t *testing.T) {
+	t.Run("default always deep", func(t *testing.T) {
+		g := newDeepSleepGate(0)
+		for i := 0; i < 5; i++ {
+			if !g.deep() {
+				t.Fatalf("nudge %d should be deep (deepEvery=0 -> always)", i+1)
+			}
+		}
+	})
+
+	t.Run("deep every third nudge", func(t *testing.T) {
+		g := newDeepSleepGate(3)
+		want := map[int]bool{1: true, 4: true, 7: true}
+		for i := 1; i <= 7; i++ {
+			if got := g.deep(); got != want[i] {
+				t.Errorf("nudge %d deep() = %v, want %v", i, got, want[i])
+			}
+		}
+	})
+
+	t.Run("one means every nudge", func(t *testing.T) {
+		g := newDeepSleepGate(1)
+		for i := 0; i < 3; i++ {
+			if !g.deep() {
+				t.Fatal("deepEvery=1 must fork every nudge")
+			}
+		}
+	})
+}

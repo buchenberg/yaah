@@ -45,6 +45,7 @@ func TestConfigAgentConfigParity(t *testing.T) {
 		"RetainedWorktreeBootstrap": true, // → retained-lane worktrees in wiring
 		"TurnCheckpointMax":         true, // → sub-agent runner turn checkpointer
 		"MaxTurnRestores":           true, // → sub-agent runner turn checkpointer
+		"ConsolidateDeepEvery":      true, // → read directly from s.cfg in consolidateFn (cmd/yaah), not via AgentConfig
 	}
 
 	// Fields in agent.AgentConfig that come from other config sections
