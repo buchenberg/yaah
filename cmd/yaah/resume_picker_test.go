@@ -149,6 +149,7 @@ func TestNormalizeResumeArgs(t *testing.T) {
 		"subcommand surface":      {[]string{"tui", "--resume", "sess-123"}, []string{"tui", "--resume=sess-123"}},
 		"prompt with sess- word":  {[]string{"--resume", "sess-management", "is", "broken"}, []string{"--resume", "sess-management", "is", "broken"}},
 		"non-numeric id":          {[]string{"--resume", "sess-abc"}, []string{"--resume", "sess-abc"}},
+		"bare sess- prefix":       {[]string{"--resume", "sess-"}, []string{"--resume", "sess-"}},
 		"explicit equals form":    {[]string{"--resume=sess-123", "hello"}, []string{"--resume=sess-123", "hello"}},
 		"bare picker form":        {[]string{"--resume", "hello"}, []string{"--resume", "hello"}},
 		"no resume flag":          {[]string{"sessions", "list"}, []string{"sessions", "list"}},
@@ -173,9 +174,45 @@ type stuckReader struct{}
 
 func (stuckReader) Read([]byte) (int, error) { return 0, nil }
 
+// partialStuckReader delivers s once, then stalls on (0, nil) forever.
+type partialStuckReader struct {
+	s string
+}
+
+func (r *partialStuckReader) Read(b []byte) (int, error) {
+	if r.s == "" {
+		return 0, nil
+	}
+	n := copy(b, r.s)
+	r.s = r.s[n:]
+	return n, nil
+}
+
 func TestReadPickerLine_noProgress(t *testing.T) {
 	if _, err := readPickerLine(stuckReader{}); err != io.ErrNoProgress {
 		t.Fatalf("err = %v, want io.ErrNoProgress (a (0, nil) reader must not spin)", err)
+	}
+	// A stall after partial input yields the partial line, matching the
+	// end-of-input path, instead of dropping what was read.
+	line, err := readPickerLine(&partialStuckReader{s: "7"})
+	if err != nil || line != "7" {
+		t.Fatalf("line = (%q, %v), want the partial \"7\"", line, err)
+	}
+}
+
+func TestSessionIDShape(t *testing.T) {
+	for s, want := range map[string]bool{
+		"sess-1234567890": true,
+		"sess-0":          true,
+		"sess-":           false,
+		"sess-12a":        false,
+		"sess-management": false,
+		"123":             false,
+		"":                false,
+	} {
+		if got := sessionIDShape(s); got != want {
+			t.Errorf("sessionIDShape(%q) = %v, want %v", s, got, want)
+		}
 	}
 }
 

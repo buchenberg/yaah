@@ -53,12 +53,14 @@ func normalizeResumeArgs(argv []string) []string {
 }
 
 // sessionIDShape reports whether s looks like a yaah-generated session
-// id (`sess-<unixnano>`); see newAgentSessionWithOptions.
+// id (`sess-<unixnano>`); see newAgentSessionWithOptions. At least one
+// digit is required — a bare "sess-" is not an id.
 func sessionIDShape(s string) bool {
-	if !strings.HasPrefix(s, "sess-") {
+	digits := strings.TrimPrefix(s, "sess-")
+	if digits == "" || len(digits) == len(s) {
 		return false
 	}
-	for _, r := range s[len("sess-"):] {
+	for _, r := range digits {
 		if r < '0' || r > '9' {
 			return false
 		}
@@ -170,12 +172,18 @@ func pickResumeSession(out io.Writer, in io.Reader, sessions []memory.SessionSum
 	return sessions[n-1].ID, nil
 }
 
+// maxEmptyReads bounds consecutive progress-free (0, nil) reads before
+// io.ErrNoProgress: such reads are legal (deadline-bearing network
+// readers) but a reader producing them forever is stuck, and the picker
+// must not busy-loop on it.
+const maxEmptyReads = 100
+
 // readPickerLine reads one line without buffering past the newline.
 // bufio.Scanner reads ahead into its buffer and would swallow input the
 // REPL or a piped prompt still needs (e.g. `printf '1\nhello\n' |
 // yaah --resume`), so this reads byte-wise and stops at the line end.
-// A reader stuck on (0, nil) reads trips io.ErrNoProgress instead of
-// spinning.
+// End of input and a stalled reader both yield whatever was read so far,
+// matching; only a reader that never delivers anything errors.
 func readPickerLine(in io.Reader) (string, error) {
 	var sb strings.Builder
 	var b [1]byte
@@ -197,7 +205,10 @@ func readPickerLine(in io.Reader) (string, error) {
 			return "", err
 		}
 		idle++
-		if idle > 100 {
+		if idle > maxEmptyReads {
+			if sb.Len() > 0 {
+				return sb.String(), nil
+			}
 			return "", io.ErrNoProgress
 		}
 	}
