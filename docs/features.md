@@ -48,6 +48,7 @@ vector search:
 ```bash
 yaah memory add "user prefers dark mode" --tags '["ui"]'
 yaah memory search "dark mode"
+yaah memory stats
 ```
 
 The agent uses `memory_search`, `memory_add`, `memory_update`, and
@@ -55,6 +56,14 @@ The agent uses `memory_search`, `memory_add`, `memory_update`, and
 embedded via any `/v1/embeddings` endpoint and searched by cosine similarity;
 FTS5 remains the exact-match fallback. See
 [configuration.md](./configuration.md#embeddings-reference).
+
+Memory is **tiered**: `global` atoms are durable across sessions, while
+`session` atoms are working context distilled by the consolidator (see
+[compaction-as-sleep.md](./compaction-as-sleep.md)). A cadence-driven nudge
+fires the consolidator, which writes `source:compaction` atoms; a conservative
+hygiene sweep later reclaims only the ones that were never recalled — an atom
+that has been accessed is never pruned. `yaah memory stats` renders the
+aggregate store and a merged learning journey.
 
 ## Sessions and traces
 
