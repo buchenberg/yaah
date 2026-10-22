@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -90,6 +91,35 @@ func collapseLine(s string) string {
 	return s
 }
 
+// deepSleepGate is the light/deep sleep policy (docs/compaction-as-sleep.md
+// §8 P3, direction 5): the expensive consolidator fork runs only on every
+// deepEvery-th nudge; the nudges in between take the cheap "light sleep" path
+// and skip the fork. Conversation pruning and compaction already reclaim
+// cheaply elsewhere, so light sleep is simply not spending an LLM sub-agent
+// when nothing new has accumulated.
+//
+// deepEvery <= 1 collapses to "always deep" (the historical behaviour), so an
+// unset config changes nothing.
+type deepSleepGate struct {
+	deepEvery int64
+	fires     atomic.Int64
+}
+
+func newDeepSleepGate(deepEvery int) *deepSleepGate {
+	if deepEvery <= 0 {
+		deepEvery = 1
+	}
+	return &deepSleepGate{deepEvery: int64(deepEvery)}
+}
+
+// deep reports whether this nudge should run the deep-sleep fork.
+func (g *deepSleepGate) deep() bool {
+	if g.deepEvery <= 1 {
+		return true
+	}
+	return g.fires.Add(1)%g.deepEvery == 1
+}
+
 // dispatchConsolidation runs a consolidator sub-agent out-of-band: the deep
 // sleep of docs/compaction-as-sleep.md §8 P3.
 //
@@ -144,7 +174,12 @@ func (s *agentSession) consolidateFn() func(ctx context.Context, kind string) {
 		}
 		return d.Runner
 	}
+	gate := newDeepSleepGate(s.cfg.Agent.Default.ConsolidateDeepEvery)
 	return func(ctx context.Context, kind string) {
+		if !gate.deep() {
+			slog.Debug("consolidate: light sleep — skipping deep fork", "kind", kind, "deepEvery", gate.deepEvery)
+			return
+		}
 		dispatchConsolidation(ctx, kind, runner, s.History)
 	}
 }

@@ -152,6 +152,13 @@ type Defaults struct {
 	ConsolidateTurnsInterval int `yaml:"consolidate_turns_interval"`
 	ConsolidateItersInterval int `yaml:"consolidate_iters_interval"`
 
+	// ConsolidateDeepEvery throttles the expensive deep-sleep fork: run the
+	// consolidator sub-agent on every Nth nudge, and take the cheap "light
+	// sleep" path (skip the fork; conversation pruning/compaction already
+	// reclaim cheaply elsewhere) on the nudges in between. 0 or 1 = every
+	// nudge is deep (the default).
+	ConsolidateDeepEvery int `yaml:"consolidate_deep_every"`
+
 	// Directives are session-level policy statements injected into the
 	// top-level agent's system prompt, immediately after the identity
 	// block. Sub-agents do NOT inherit these; they receive per-role
