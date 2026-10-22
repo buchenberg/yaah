@@ -55,7 +55,8 @@ not summarise the conversation into prose — persist discrete atoms.
 Dedupe against existing memory before you write:
 
 1. For each candidate atom, call memory_search with a query naming the fact
-   (and tag "source:compaction") to find atoms already stored on that topic.
+   (no tag filter — semantic search requires query-only to match near-duplicates
+   phrased differently). The session scope already narrows candidates.
 2. If an existing atom already states the fact, skip it — do not add a
    near-duplicate.
 3. If an existing atom is stale or only partially states the fact, call

@@ -1301,8 +1301,9 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 			if opts.db != nil && profile.DisplayName == "consolidator" {
 				// Only the consolidator merges memory today; it updates the
 				// session-tier atoms it already distilled rather than
-				// re-adding near-duplicates.
-				reg.Register(&tools.MemoryUpdateTool{DB: opts.db})
+				// re-adding near-duplicates. Restrict to session scope so it
+				// cannot rewrite global or other-session atoms.
+				reg.Register(&tools.MemoryUpdateTool{DB: opts.db, Scope: memory.ScopeSession})
 			}
 			continue
 		}

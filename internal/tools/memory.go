@@ -230,7 +230,8 @@ func (t *MemoryDeleteTool) Execute(ctx context.Context, args string) (string, er
 
 // MemoryUpdateTool updates the text of an existing memory entry.
 type MemoryUpdateTool struct {
-	DB *memory.DB
+	DB    *memory.DB
+	Scope string
 }
 
 func (t *MemoryUpdateTool) Name() string { return "memory_update" }
@@ -260,6 +261,24 @@ func (t *MemoryUpdateTool) Execute(ctx context.Context, args string) (string, er
 	if err := json.Unmarshal([]byte(args), &params); err != nil {
 		return "", fmt.Errorf("memory_update: invalid arguments: %w", err)
 	}
+
+	// If a scope is configured, verify the target atom belongs to that scope
+	// before allowing the update. This prevents the consolidator from rewriting
+	// global or other-session atoms.
+	if t.Scope != "" {
+		entry, err := t.DB.GetMemory(params.ID)
+		if err != nil {
+			return "", fmt.Errorf("memory_update: %w", err)
+		}
+		normScope, err := memory.NormalizeScope(t.Scope)
+		if err != nil {
+			return "", fmt.Errorf("memory_update: %w", err)
+		}
+		if entry.Scope != normScope {
+			return "", fmt.Errorf("memory_update: entry %s has scope %s, expected %s", params.ID, entry.Scope, normScope)
+		}
+	}
+
 	if err := t.DB.UpdateMemory(params.ID, params.Text); err != nil {
 		return "", fmt.Errorf("memory_update: %w", err)
 	}
