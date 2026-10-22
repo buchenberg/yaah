@@ -194,7 +194,7 @@ func pruneMemoryIDs(t *testing.T, db *DB) []string {
 	return ids
 }
 
-// TestPruneSession pins the session-close sweep: only the finished session's
+// TestPruneSession pins the session-deletion sweep: only the target session's
 // own session-scoped, never-accessed atoms go. Other sessions, global atoms
 // (even ones the session wrote), unlinked atoms, and anything that was ever
 // accessed all survive — access is proof the atom earned its keep, and an
@@ -264,10 +264,10 @@ func TestPruneSession(t *testing.T) {
 }
 
 // TestPruneStaleCompaction pins the slow sweep: only old, never-accessed,
-// global, compaction-tagged atoms go. Each guard rules out one mistake —
-// recent atoms may still be recalled, an accessed atom earned its keep, a
-// non-compaction tag marks a deliberate write, and session-scoped residue is
-// never aged out by wall-clock time alone.
+// compaction-tagged atoms go, whatever their scope. Each guard rules out one
+// mistake — recent atoms may still be recalled, an accessed atom earned its
+// keep, a non-compaction tag marks a deliberate write, and a non-compaction
+// tag on a session atom is still never swept.
 func TestPruneStaleCompaction(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-60 * 24 * time.Hour).Unix()
@@ -293,12 +293,12 @@ func TestPruneStaleCompaction(t *testing.T) {
 		want        []string
 	}{
 		{
-			name:        "old never-accessed global compaction only",
+			name:        "old never-accessed compaction atoms of any scope",
 			olderThan:   cutoff,
-			wantDeleted: 1,
+			wantDeleted: 2,
 			want: []string{
 				"b-old-compaction-accessed-count", "c-old-compaction-accessed-at",
-				"d-old-plain", "e-old-session-compaction", "f-recent-compaction",
+				"d-old-plain", "f-recent-compaction",
 			},
 		},
 		{
@@ -387,7 +387,7 @@ func TestMigrate_v4ToV5_addsSessionID(t *testing.T) {
 	if err := db.sql.QueryRow(`SELECT value FROM schema_meta WHERE key = 'version'`).Scan(&version); err != nil {
 		t.Fatalf("read schema version: %v", err)
 	}
-	if want := strconv.Itoa(memorySessionSchemaVersion); version != want {
+	if want := strconv.Itoa(currentSchemaVersion); version != want {
 		t.Errorf("schema version = %q, want %q", version, want)
 	}
 

@@ -64,14 +64,6 @@ const skillSchemaVersion = 3
 // per row.
 const memorySchemaVersion = 4
 
-// memorySessionSchemaVersion is the schema version that introduced
-// memory.session_id, the link from a session-scoped atom to the conversation
-// that distilled it (pruning lives in hygiene.go). The transition is purely
-// additive: the ALTER runs from the column-migration list and no repair is
-// needed, so a database stamped 5 always has the column and nothing older
-// carries values.
-const memorySessionSchemaVersion = 5
-
 // maxSessionPromptBytes caps the persisted system_prompt and
 // compacted_summary columns so unbounded prompts cannot bloat the DB
 // (review A6 / S7). Overlong content is truncated with a marker.

@@ -23,10 +23,11 @@ import (
 // global atom without it is never swept, however old.
 const compactionSourceTag = "source:compaction"
 
-// PruneSession deletes the session-scoped atoms distilled by one finished
-// conversation, returning the number of rows removed. An empty sessionID is
-// a no-op rather than a blanket delete: an atom without a link cannot be
-// attributed to the session being torn down, so nothing is attributable.
+// PruneSession deletes the session-scoped atoms distilled by one conversation,
+// returning the number of rows removed. It is for explicit session DELETION,
+// not close: sessions are resumable, so close deliberately leaves a session's
+// working context intact (the age-based PruneStaleCompaction reclaims dead
+// atoms later). An empty sessionID is a no-op rather than a blanket delete.
 //
 // Two guards keep recall intact:
 //
@@ -59,19 +60,21 @@ func (d *DB) PruneSession(sessionID string) (int64, error) {
 	return n, nil
 }
 
-// PruneStaleCompaction deletes global compaction atoms created before
-// olderThan that were never accessed, returning the number of rows removed.
-// It is the slow sweep for atoms no session will ever close over: the
-// consolidator's "deep sleep" output that no later recall ever touched.
+// PruneStaleCompaction deletes compaction atoms created before olderThan that
+// were never accessed, returning the number of rows removed. It is the single
+// sweep that closes the deep-sleep loop: the consolidator's output that no
+// later recall ever touched. It covers both scopes because a never-accessed
+// atom is dead weight whether the session that wrote it is still around or
+// not — and age alone is safe precisely because access is the proof that an
+// atom mattered.
 //
 // Every characteristic of a row must hold before it is deleted, and each one
 // rules out a distinct mistake:
 //
-//   - scope = 'global' — session-scoped residue is PruneSession's business,
-//     and must never be aged out by wall-clock time alone.
-//   - the compactionSourceTag substring in tags — a global atom written by a
-//     human, a turn, or the CLI carries no such tag and is never swept.
-//   - created_at < olderThan — the atom had its whole lifetime to be useful.
+//   - the compactionSourceTag element in tags — an atom written by a human, a
+//     turn, or the CLI carries no such tag and is never swept.
+//   - created_at < olderThan — the atom had its whole lifetime to be useful,
+//     including any session resume within that window.
 //   - neither accessed_at nor access_count is set — access is proof the atom
 //     earned its keep; a used one is kept indefinitely.
 //
@@ -80,12 +83,11 @@ func (d *DB) PruneSession(sessionID string) (int64, error) {
 func (d *DB) PruneStaleCompaction(olderThan time.Time) (int64, error) {
 	res, err := d.sql.Exec(
 		`DELETE FROM memory
-		 WHERE scope = ?
-		   AND tags LIKE ?
+		 WHERE tags LIKE ?
 		   AND created_at < ?
 		   AND COALESCE(accessed_at, 0) = 0
 		   AND COALESCE(access_count, 0) = 0`,
-		ScopeGlobal, "%"+compactionSourceTag+"%", olderThan.Unix(),
+		"%\""+compactionSourceTag+"\"%", olderThan.Unix(),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("prune stale compaction memory: %w", err)
