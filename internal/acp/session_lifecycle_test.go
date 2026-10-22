@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -17,6 +17,9 @@ func wireStore(h *acpHarness, pages [][]SessionInfo, deleted *[]string) {
 	h.server.ListSessions = func(cwdFilter, cursor string) ([]SessionInfo, string, error) {
 		switch cursor {
 		case "":
+			if len(pages) == 0 {
+				return []SessionInfo{}, "", nil
+			}
 			return append([]SessionInfo(nil), pages[0]...), "page-2", nil
 		case "page-2":
 			if len(pages) > 1 {
@@ -392,27 +395,56 @@ func TestServer_sessionDeletePrunesStoreAndSucceedsSilently(t *testing.T) {
 	}
 }
 
-// TestServer_canonicalFilterCwd pins the list-filter rules: empty is
+// TestServer_sessionDeleteUnwiredHasNoSideEffects pins the worst-case
+// ordering: when delete is not wired, an unadvertised-but-asked
+// session/delete must be method-not-found WITHOUT having first torn down
+// the live session.
+func TestServer_sessionDeleteUnwiredHasNoSideEffects(t *testing.T) {
+	sess := &fakeSession{id: "sess-live"}
+	h := newACPHarness(t, sess)
+	initialize(t, h)
+	sid := newSession(t, h)
+
+	if err := h.send("session/delete", 3, fmt.Sprintf(`{"sessionId":%q}`, sid)); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recv(t)
+	if msg.Error == nil || msg.Error.Code != codeMethodNotFound {
+		t.Fatalf("expected method-not-found, got %+v", msg)
+	}
+	if n := sess.closedCount(); n != 0 {
+		t.Fatalf("unwired delete closed the live session %d time(s)", n)
+	}
+}
+
+// TestServer_CanonicalFilterCwd pins the list-filter rules: empty is
 // allowed (matches everything), relative paths are rejected, absolute
-// paths are canonicalized, and a missing directory still canonicalizes
-// (it must match nothing rather than error).
-func TestServer_canonicalFilterCwd(t *testing.T) {
+// paths are canonicalized equivalently to a session cwd (compare against
+// the same canonicalization instead of the raw temp path — macOS and
+// Windows spell both through symlinked / junctioned parents), and a
+// missing directory still canonicalizes (it must match nothing rather
+// than error).
+func TestServer_CanonicalFilterCwd(t *testing.T) {
 	cwd := t.TempDir()
-	got, err := canonicalFilterCwd("")
+	got, err := CanonicalFilterCwd("")
 	if err != nil || got != "" {
 		t.Fatalf("empty filter = (%q, %v), want (\"\", nil)", got, err)
 	}
-	if _, err := canonicalFilterCwd("relative"); err == nil {
+	if _, err := CanonicalFilterCwd("relative"); err == nil {
 		t.Fatal("relative filter must be rejected")
 	}
-	got, err = canonicalFilterCwd(cwd + "/../" + path.Base(cwd))
+	got, err = CanonicalFilterCwd(filepath.Join(cwd, "..", filepath.Base(cwd)))
 	if err != nil {
 		t.Fatalf("absolute filter: %v", err)
 	}
-	if got != cwd {
-		t.Fatalf("canonicalized filter = %q, want %q", got, cwd)
+	want, err := CanonicalFilterCwd(cwd)
+	if err != nil {
+		t.Fatalf("reference canonicalization: %v", err)
 	}
-	if _, err = canonicalFilterCwd(cwd + "/does-not-exist"); err != nil {
+	if got != want {
+		t.Fatalf("canonicalized filter = %q, want %q", got, want)
+	}
+	if _, err = CanonicalFilterCwd(filepath.Join(cwd, "does-not-exist")); err != nil {
 		t.Fatalf("nonexistent filter must still canonicalize: %v", err)
 	}
 }

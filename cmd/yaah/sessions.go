@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/acp"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/spf13/cobra"
 )
@@ -26,10 +27,16 @@ var sessionsListCmd = &cobra.Command{
 	Short: "List recent conversation sessions",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cwdFilter, _ := cmd.Flags().GetString("cwd")
+		cwdFlag, _ := cmd.Flags().GetString("cwd")
 		limit, _ := cmd.Flags().GetInt("limit")
 		if limit <= 0 {
 			return fmt.Errorf("--limit must be positive")
+		}
+		// Same canonicalization session/list applies, so the CLI and ACP
+		// filters match the stored session cwds identically.
+		cwd, err := acp.CanonicalFilterCwd(cwdFlag)
+		if err != nil {
+			return fmt.Errorf("--cwd: %v", err)
 		}
 
 		db, err := memory.OpenDefault()
@@ -45,7 +52,7 @@ var sessionsListCmd = &cobra.Command{
 		for len(sessions) < limit {
 			pageSize := limit - len(sessions)
 			rows, next, err := db.ListSessionsPage(memory.SessionListFilter{
-				CWD: cwdFilter, Cursor: cursor, Limit: pageSize,
+				CWD: cwd, Cursor: cursor, Limit: pageSize,
 			})
 			if err != nil {
 				return fmt.Errorf("list sessions: %w", err)

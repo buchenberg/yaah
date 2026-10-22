@@ -552,12 +552,14 @@ func (s *Server) capabilities() AgentCaps {
 	return AgentCaps{LoadSession: true, Session: sc}
 }
 
-// canonicalFilterCwd validates the session/list cwd filter: it must be
-// absolute per the schema and is canonicalized like a session cwd
-// (symlink-resolved), so a filter matches the stored canonical session
-// cwds. A non-existent directory is allowed — it simply matches nothing
-// (an unmatched filter yields an empty page, not an error).
-func canonicalFilterCwd(cwd string) (string, error) {
+// CanonicalFilterCwd validates a session-list cwd filter: it must be
+// absolute per the schema and is canonicalized exactly like a session
+// cwd is on intake (absolute, symlink-resolved), so a filter matches the
+// stored canonical session cwds. A non-existent directory is allowed —
+// it simply matches nothing (an unmatched filter yields an empty page,
+// not an error). Shared by session/list and the yaah sessions CLI so
+// both surfaces filter identically.
+func CanonicalFilterCwd(cwd string) (string, error) {
 	if cwd == "" {
 		return "", nil
 	}
@@ -594,7 +596,7 @@ func (s *Server) handleSessionList(
 			return
 		}
 	}
-	filter, err := canonicalFilterCwd(p.Cwd)
+	filter, err := CanonicalFilterCwd(p.Cwd)
 	if err != nil {
 		respErr(msg.ID, codeInvalidParams, err.Error())
 		return
@@ -766,15 +768,18 @@ func (s *Server) handleSessionDelete(
 		respErr(msg.ID, codeInvalidParams, "sessionId is required")
 		return
 	}
+	if s.DeleteSession == nil {
+		// Defensively typed before any side effect: capabilities never
+		// advertise delete without wiring, but a client may still ask —
+		// and that must not have already torn down a live session.
+		respErr(msg.ID, codeMethodNotFound, "session/delete is not wired")
+		return
+	}
 	s.mu.Lock()
 	st, live := s.sessions[p.SessionID]
 	s.mu.Unlock()
 	if live {
 		s.retireSession(st)
-	}
-	if s.DeleteSession == nil {
-		respErr(msg.ID, codeMethodNotFound, "session/delete is not wired")
-		return
 	}
 	if err := s.DeleteSession(p.SessionID); err != nil && !errors.Is(err, ErrNoSession) {
 		respErr(msg.ID, codeInternal, "delete session: "+err.Error())
