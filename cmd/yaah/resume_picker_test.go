@@ -2,6 +2,10 @@ package yaah
 
 import (
 	"bytes"
+	"io"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -10,12 +14,21 @@ import (
 	"github.com/buchenberg/yaah/internal/memory"
 )
 
+// pickerRows is the canned candidate list for the pure picker tests:
+// newest first, as listPickerSessions returns them.
+func pickerRows() []memory.SessionSummary {
+	now := time.Now().Unix()
+	return []memory.SessionSummary{
+		{ID: "sess-new", Title: "fix the flaky test", StartedAt: now - 60, UpdatedAt: now, MessageCount: 2},
+		{ID: "sess-old", Title: "older untitled work", StartedAt: now - 600, UpdatedAt: now - 600, MessageCount: 5},
+	}
+}
+
 // pickerFixture opens a temp default store (YAAH_HOME redirect) with two
-// sessions in the named cwd, the newest one titled. The cwd is the
-// symlink-resolved directory (the same canonicalization the picker
-// applies to os.Getwd) so the interactive path matches the store rows on
-// every platform (/tmp → /private/tmp on macOS). Returns the resolved
-// cwd; chdirDir is the real directory for t.Chdir.
+// sessions in the named cwd, the newest one titled. Rows are written the
+// way production writes them (canonical cwd — canonicalStoredCwd in
+// wiring.go). Returns the resolved cwd and the real directory for
+// t.Chdir.
 func pickerFixture(t *testing.T) (cwd, chdirDir string) {
 	t.Helper()
 	t.Setenv("YAAH_HOME", t.TempDir())
@@ -39,87 +52,157 @@ func pickerFixture(t *testing.T) (cwd, chdirDir string) {
 	return cwd, chdirDir
 }
 
-func TestMaybeResolveResumePicker_sentinelRejectedNonInteractive(t *testing.T) {
-	orig := resumeSessionID
-	t.Cleanup(func() { resumeSessionID = orig })
-	resumeSessionID = resumePickerSentinel
-
-	// Non-interactive surfaces call newAgentSessionWithOptions directly
-	// (no picker in front): the sentinel must fail fast with guidance,
-	// before any config or provider work.
-	_, err := newAgentSessionWithOptions(SessionOptions{ResumeSessionID: resumePickerSentinel}, true, true)
-	if err == nil || !strings.Contains(err.Error(), "--resume without a value") {
-		t.Fatalf("err = %v, want sentinel rejection", err)
-	}
-}
-
 func TestPickResumeSession_selection(t *testing.T) {
-	cwd, _ := pickerFixture(t)
-
+	rows := pickerRows()
 	var out bytes.Buffer
-	id, err := pickResumeSession(&out, strings.NewReader("1\n"), cwd)
+	id, err := pickResumeSession(&out, strings.NewReader("1\n"), rows)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if id != "sess-new" {
-		t.Fatalf("picked %q, want the newest (sess-new)", id)
+		t.Fatalf("picked %q, want the first row (sess-new)", id)
 	}
 	if !strings.Contains(out.String(), "fix the flaky test") || !strings.Contains(out.String(), "older untitled work") {
 		t.Fatalf("picker output missing titles:\n%s", out.String())
 	}
 }
 
-func TestPickResumeSession_numberingIsNewestFirst(t *testing.T) {
-	cwd, _ := pickerFixture(t)
-
-	var out bytes.Buffer
-	id, err := pickResumeSession(&out, strings.NewReader("2\n"), cwd)
+func TestPickResumeSession_numbering(t *testing.T) {
+	id, err := pickResumeSession(&bytes.Buffer{}, strings.NewReader("2\n"), pickerRows())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if id != "sess-old" {
-		t.Fatalf("choice 2 = %q, want sess-old (keyset pages run newest first)", id)
+		t.Fatalf("choice 2 = %q, want sess-old", id)
 	}
 }
 
 func TestPickResumeSession_emptyInputStartsFresh(t *testing.T) {
-	cwd, _ := pickerFixture(t)
-
-	id, err := pickResumeSession(&bytes.Buffer{}, strings.NewReader("\n"), cwd)
+	id, err := pickResumeSession(&bytes.Buffer{}, strings.NewReader("\n"), pickerRows())
 	if err != nil || id != "" {
 		t.Fatalf("empty input = (%q, %v), want start-fresh (\"\", nil)", id, err)
 	}
 }
 
 func TestPickResumeSession_badInput(t *testing.T) {
-	cwd, _ := pickerFixture(t)
-
 	for name, input := range map[string]string{
 		"out of range": "9\n",
 		"not a number": "two\n",
 		"eof":          "",
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := pickResumeSession(&bytes.Buffer{}, strings.NewReader(input), cwd); err == nil {
+			if _, err := pickResumeSession(&bytes.Buffer{}, strings.NewReader(input), pickerRows()); err == nil {
 				t.Fatal("invalid picker input must error")
 			}
 		})
 	}
 }
 
-func TestPickResumeSession_emptyStore(t *testing.T) {
+// TestReadPickerLine_noReadAhead pins that consuming the picker's line
+// leaves the rest of stdin intact for the REPL or prompt: a buffering
+// scanner would swallow "hello" here.
+func TestReadPickerLine_noReadAhead(t *testing.T) {
+	in := strings.NewReader("1\nhello\n")
+	first, err := readPickerLine(in)
+	if err != nil || first != "1" {
+		t.Fatalf("first line = (%q, %v), want \"1\"", first, err)
+	}
+	second, err := readPickerLine(in)
+	if err != nil || second != "hello" {
+		t.Fatalf("second line = (%q, %v), want \"hello\" (input was over-consumed)", second, err)
+	}
+}
+
+func TestReadPickerLine_finalLineWithoutNewline(t *testing.T) {
+	line, err := readPickerLine(strings.NewReader("7"))
+	if err != nil || line != "7" {
+		t.Fatalf("line = (%q, %v), want \"7\"", line, err)
+	}
+	if _, err := readPickerLine(strings.NewReader("")); err != io.EOF {
+		t.Fatalf("empty input err = %v, want io.EOF", err)
+	}
+}
+
+func TestSafeLabel(t *testing.T) {
+	for name, tc := range map[string][2]string{
+		"csi colors":  {"fix \x1b[31mred\x1b[0m text", "fix red text"},
+		"osc title":   {"\x1b]0;evil\x07title", "title"},
+		"osc with st": {"\x1b]8;;http://x\x1b\\linked", "linked"},
+		"c0 bytes":    {"a\x00b\x07c", "abc"},
+		"plain":       {"plain text", "plain text"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := safeLabel(tc[0]); got != tc[1] {
+				t.Fatalf("safeLabel(%q) = %q, want %q", tc[0], got, tc[1])
+			}
+		})
+	}
+}
+
+func TestShiftResumeID(t *testing.T) {
+	orig := resumeSessionID
+	t.Cleanup(func() { resumeSessionID = orig })
+
+	// Legacy `yaah --resume <id> [prompt]`: the id arrives positional
+	// and is shifted back into the flag value.
+	resumeSessionID = resumePickerSentinel
+	if args := shiftResumeID([]string{"sess-123", "fix tests"}); len(args) != 1 || args[0] != "fix tests" || resumeSessionID != "sess-123" {
+		t.Fatalf("args = %v, resume = %q", args, resumeSessionID)
+	}
+
+	// A prompt that is not session-id-shaped stays a prompt.
+	resumeSessionID = resumePickerSentinel
+	if args := shiftResumeID([]string{"hello world"}); len(args) != 1 || resumeSessionID != resumePickerSentinel {
+		t.Fatalf("args = %v, resume = %q", args, resumeSessionID)
+	}
+
+	// Explicit --resume=<id> never shifts.
+	resumeSessionID = "sess-9"
+	if args := shiftResumeID([]string{"sess-123"}); len(args) != 1 || resumeSessionID != "sess-9" {
+		t.Fatalf("args = %v, resume = %q", args, resumeSessionID)
+	}
+}
+
+func TestListPickerSessions_canonicalRows(t *testing.T) {
+	cwd, chdirDir := pickerFixture(t)
+	rows, err := listPickerSessions(chdirDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2 (canonical filter %q)", len(rows), cwd)
+	}
+}
+
+// TestListPickerSessions_legacyRawCwdRows pins the fallback: rows
+// written before cwd canonicalization carry the raw (symlinked) path and
+// must still be found through it.
+func TestListPickerSessions_legacyRawCwdRows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory symlinks need elevated privileges on Windows")
+	}
 	t.Setenv("YAAH_HOME", t.TempDir())
-	const cwd = "/tmp/empty-project"
-	// OpenDefault once so the store exists, then close it: the picker
-	// must then report no candidates rather than crash.
+	dir := t.TempDir()
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
 	db, err := memory.OpenDefault()
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.Close()
+	t.Cleanup(func() { db.Close() })
+	// Legacy rows store the path the process saw, symlink and all.
+	if err := db.CreateSession(memory.Session{ID: "sess-legacy", StartedAt: time.Now().Unix(), CWD: link}); err != nil {
+		t.Fatal(err)
+	}
 
-	if _, err := pickResumeSession(&bytes.Buffer{}, strings.NewReader("1\n"), cwd); err == nil || !strings.Contains(err.Error(), "no sessions to resume") {
-		t.Fatalf("err = %v, want \"no sessions to resume\"", err)
+	rows, err := listPickerSessions(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ID != "sess-legacy" {
+		t.Fatalf("rows = %+v, want the legacy row via the raw fallback", rows)
 	}
 }
 
@@ -155,5 +238,31 @@ func TestMaybeResolveResumePicker(t *testing.T) {
 	}
 	if resumeSessionID != "" {
 		t.Fatalf("cancel left %q, want empty (fresh session)", resumeSessionID)
+	}
+}
+
+func TestMaybeResolveResumePicker_emptyStore(t *testing.T) {
+	_, _ = pickerFixture(t) // rows exist in one directory…
+	t.Chdir(t.TempDir())    // …but not in this one
+
+	orig := resumeSessionID
+	t.Cleanup(func() { resumeSessionID = orig })
+	resumeSessionID = resumePickerSentinel
+	if err := maybeResolveResumePicker(&bytes.Buffer{}, strings.NewReader("1\n")); err == nil || !strings.Contains(err.Error(), "no sessions to resume") {
+		t.Fatalf("err = %v, want \"no sessions to resume\"", err)
+	}
+}
+
+func TestMaybeResolveResumePicker_sentinelRejectedNonInteractive(t *testing.T) {
+	orig := resumeSessionID
+	t.Cleanup(func() { resumeSessionID = orig })
+	resumeSessionID = resumePickerSentinel
+
+	// Non-interactive surfaces call newAgentSessionWithOptions directly
+	// (no picker in front): the sentinel must fail fast with guidance,
+	// before any config or provider work.
+	_, err := newAgentSessionWithOptions(SessionOptions{ResumeSessionID: resumePickerSentinel}, true, true)
+	if err == nil || !strings.Contains(err.Error(), "--resume without a value") {
+		t.Fatalf("err = %v, want sentinel rejection", err)
 	}
 }

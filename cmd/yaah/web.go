@@ -7,6 +7,7 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -554,13 +555,19 @@ func (ws *webServer) handleSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, next, err := ws.sessionList(cwdFilter, q.Get("cursor"), limit)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		if errors.Is(err, memory.ErrInvalidCursor) {
+			http.Error(w, "invalid cursor", http.StatusBadRequest)
+			return
+		}
+		// Never echo internal error text to the client.
+		http.Error(w, "session store error", http.StatusInternalServerError)
 		return
 	}
 	if rows == nil {
 		rows = []memory.SessionSummary{} // empty pages serialize as []
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	json.NewEncoder(w).Encode(struct {
 		Sessions   []memory.SessionSummary `json:"sessions"`
 		NextCursor string                  `json:"nextCursor"`

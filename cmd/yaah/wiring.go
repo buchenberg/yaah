@@ -17,6 +17,7 @@ import (
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/egress"
 
+	"github.com/buchenberg/yaah/internal/acp"
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/budget"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
@@ -116,6 +117,18 @@ func rebuildDefaultRoleRegistry(cwd string) {
 		_ = reg.LoadDir(dir)
 	}
 	subagent.SetDefaultRoleRegistry(reg)
+}
+
+// canonicalStoredCwd normalizes a session's working directory before it
+// is persisted: the same canonicalization (absolute, symlink-resolved)
+// the ACP session/list filter and the resume picker apply, so stored
+// rows and their filters always agree. Best-effort — an unresolvable
+// path is stored as given rather than failing session creation.
+func canonicalStoredCwd(cwd string) string {
+	if canonical, err := acp.CanonicalFilterCwd(cwd); err == nil {
+		return canonical
+	}
+	return cwd
 }
 
 // newAgentSessionWithOptions creates an agent session. All CLI-flag and
@@ -475,7 +488,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			db.CreateSession(memory.Session{
 				ID:           sessionID,
 				StartedAt:    time.Now().Unix(),
-				CWD:          cwd,
+				CWD:          canonicalStoredCwd(cwd),
 				Model:        modelName,
 				SystemPrompt: systemPrompt,
 			})

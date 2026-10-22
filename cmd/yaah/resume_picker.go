@@ -1,13 +1,14 @@
 package yaah
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/buchenberg/yaah/internal/acp"
 	"github.com/buchenberg/yaah/internal/memory"
@@ -27,6 +28,20 @@ const resumePickerSentinel = "picker"
 // would be required; a picker is a chooser, not a browser.
 const maxPickerRows = 40
 
+// shiftResumeID restores the legacy space-separated form
+// `yaah --resume <id> [prompt]`. pflag's value-optional flag does not
+// consume the token after --resume, so <id> arrives as a positional
+// argument; a session-id-shaped first argument is shifted back into the
+// flag value. Everything else stays a prompt for the picker path.
+func shiftResumeID(args []string) []string {
+	if resumeSessionID == resumePickerSentinel && len(args) > 0 &&
+		strings.HasPrefix(args[0], "sess-") {
+		resumeSessionID = args[0]
+		return args[1:]
+	}
+	return args
+}
+
 // maybeResolveResumePicker turns the bare --resume sentinel into a
 // concrete session id, editing the global flag value. Interactive
 // surfaces call it before building their session.
@@ -34,14 +49,18 @@ func maybeResolveResumePicker(out io.Writer, in io.Reader) error {
 	if resumeSessionID != resumePickerSentinel {
 		return nil
 	}
-	cwd, err := os.Getwd()
-	if err == nil {
-		cwd, err = acp.CanonicalFilterCwd(cwd)
-	}
+	rawCwd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("resume picker: current directory: %v", err)
+		return fmt.Errorf("resume picker: current directory: %w", err)
 	}
-	id, err := pickResumeSession(out, in, cwd)
+	sessions, err := listPickerSessions(rawCwd)
+	if err != nil {
+		return err
+	}
+	if len(sessions) == 0 {
+		return fmt.Errorf("no sessions to resume for this directory (starting a run creates one)")
+	}
+	id, err := pickResumeSession(out, in, sessions)
 	if err != nil {
 		return err
 	}
@@ -54,32 +73,47 @@ func maybeResolveResumePicker(out io.Writer, in io.Reader) error {
 	return nil
 }
 
-// pickResumeSession lists candidate sessions and reads a choice. Empty
-// input cancels ("" returned); rows are the current-dwd filtered pages
-// like the yaah sessions CLI.
-func pickResumeSession(out io.Writer, in io.Reader, cwdFilter string) (string, error) {
+// listPickerSessions returns candidate sessions for the picker. The
+// canonical cwd filter (what rows carry going forward) comes first; when
+// it finds nothing, the raw process cwd is tried so rows written before
+// canonicalization — or through a symlinked PWD — still appear.
+func listPickerSessions(rawCwd string) ([]memory.SessionSummary, error) {
+	filters := []string{rawCwd}
+	if canonical, err := acp.CanonicalFilterCwd(rawCwd); err == nil && canonical != rawCwd {
+		filters = []string{canonical, rawCwd}
+	}
 	db, err := memory.OpenDefault()
 	if err != nil {
-		return "", fmt.Errorf("resume picker: %v", err)
+		return nil, fmt.Errorf("resume picker: %w", err)
 	}
 	defer db.Close()
 
-	var sessions []memory.SessionSummary
-	cursor := ""
-	for len(sessions) < maxPickerRows {
-		pageSize := maxPickerRows - len(sessions)
-		rows, next, err := db.ListSessionsPage(memory.SessionListFilter{
-			CWD: cwdFilter, Cursor: cursor, Limit: pageSize,
-		})
-		if err != nil {
-			return "", fmt.Errorf("resume picker: %v", err)
+	for _, filter := range filters {
+		var sessions []memory.SessionSummary
+		cursor := ""
+		for len(sessions) < maxPickerRows {
+			rows, next, err := db.ListSessionsPage(memory.SessionListFilter{
+				CWD: filter, Cursor: cursor, Limit: maxPickerRows - len(sessions),
+			})
+			if err != nil {
+				return nil, fmt.Errorf("resume picker: %w", err)
+			}
+			sessions = append(sessions, rows...)
+			if next == "" || len(rows) == 0 {
+				break
+			}
+			cursor = next
 		}
-		sessions = append(sessions, rows...)
-		if next == "" || len(rows) == 0 {
-			break
+		if len(sessions) > 0 {
+			return sessions, nil
 		}
-		cursor = next
 	}
+	return nil, nil
+}
+
+// pickResumeSession lists candidate sessions and reads a choice. Empty
+// input cancels ("" returned).
+func pickResumeSession(out io.Writer, in io.Reader, sessions []memory.SessionSummary) (string, error) {
 	if len(sessions) == 0 {
 		return "", fmt.Errorf("no sessions to resume for this directory (starting a run creates one)")
 	}
@@ -90,18 +124,18 @@ func pickResumeSession(out io.Writer, in io.Reader, cwdFilter string) (string, e
 		if title == "" {
 			title = "(untitled)"
 		}
-		fmt.Fprintf(out, "  %s %s\n", Bold(strconv.Itoa(i+1)), title)
+		fmt.Fprintf(out, "  %s %s\n", Bold(strconv.Itoa(i+1)), safeLabel(title))
 		fmt.Fprintf(out, "     %s\n", Dim(fmt.Sprintf("%s | %d msg(s) | started %s",
 			shortAge(time.Unix(s.UpdatedAt, 0)), s.MessageCount,
 			time.Unix(s.StartedAt, 0).Format("2006-01-02 15:04"))))
 	}
 	fmt.Fprint(out, "\nEnter number (empty to start a new session): ")
 
-	scanner := bufio.NewScanner(in)
-	if !scanner.Scan() {
+	choice, err := readPickerLine(in)
+	if err != nil {
 		return "", fmt.Errorf("resume picker: no input (use --resume=<id> in non-interactive runs)")
 	}
-	choice := strings.TrimSpace(scanner.Text())
+	choice = strings.TrimSpace(choice)
 	if choice == "" {
 		return "", nil
 	}
@@ -110,6 +144,77 @@ func pickResumeSession(out io.Writer, in io.Reader, cwdFilter string) (string, e
 		return "", fmt.Errorf("resume picker: %q is not a valid choice (1..%d)", choice, len(sessions))
 	}
 	return sessions[n-1].ID, nil
+}
+
+// readPickerLine reads one line without buffering past the newline.
+// bufio.Scanner reads ahead into its buffer and would swallow input the
+// REPL or a piped prompt still needs (e.g. `printf '1\nhello\n' |
+// yaah --resume`), so this reads byte-wise and stops at the line end.
+func readPickerLine(in io.Reader) (string, error) {
+	var sb strings.Builder
+	var b [1]byte
+	for {
+		n, err := in.Read(b[:])
+		if n > 0 {
+			if b[0] == '\n' {
+				return strings.TrimRight(sb.String(), "\r"), nil
+			}
+			sb.WriteByte(b[0])
+			continue
+		}
+		if err != nil {
+			if sb.Len() > 0 {
+				return sb.String(), nil
+			}
+			return "", err
+		}
+	}
+}
+
+// safeLabel strips ANSI/OSC escape sequences and stray control runes
+// from untrusted text before it reaches the terminal: session titles
+// derive from user messages and may carry sequences pasted from
+// elsewhere.
+func safeLabel(s string) string {
+	var sb strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] == 0x1b {
+			// ESC: consume the sequence it introduces — CSI (… final
+			// byte in @..~), OSC (… BEL or ESC \) — or just the byte.
+			i++
+			switch {
+			case i < len(s) && s[i] == '[':
+				i++
+				for i < len(s) && (s[i] < 0x40 || s[i] > 0x7e) {
+					i++
+				}
+				i++
+			case i < len(s) && s[i] == ']':
+				i++
+				for i < len(s) && s[i] != 0x07 {
+					if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '\\' {
+						i += 2
+						break
+					}
+					i++
+				}
+				if i < len(s) && s[i] == 0x07 {
+					i++
+				}
+			}
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size <= 1 {
+			i++
+			continue
+		}
+		if !unicode.IsControl(r) {
+			sb.WriteRune(r)
+		}
+		i += size
+	}
+	return sb.String()
 }
 
 // shortAge renders an approximate age for the picker's dim line.
