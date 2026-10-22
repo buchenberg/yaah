@@ -40,13 +40,20 @@ import (
 // migrate commits each repair and its version bump together, so a
 // transient failure re-runs the pair on the next open instead of
 // skipping a half-migrated database forever.
-const currentSchemaVersion = 2
+const currentSchemaVersion = 3
 
 // activitySchemaVersion is the schema version at which
 // sessions.updated_at came into being (its values were seeded from
 // started_at at that transition). Repairs gated with `dbVersion <
 // activitySchemaVersion` run inside those parameters.
 const activitySchemaVersion = 2
+
+// skillSchemaVersion is the schema version that introduced the skill
+// lifecycle tables (skill_usage, skill_provenance, skill_ledger). The
+// transition is purely additive: the migration runs the DDL once inside the
+// version-gated repair transaction (migrate) and then stamps the version —
+// no data backfill is required. See skill_repo.go.
+const skillSchemaVersion = 3
 
 // maxSessionPromptBytes caps the persisted system_prompt and
 // compacted_summary columns so unbounded prompts cannot bloat the DB
@@ -337,6 +344,38 @@ func (d *DB) migrate() error {
 		return fmt.Errorf("create memory_fts: %w", err)
 	}
 
+	// skillLifecycleSchema is the schema v3 addition (skill_repo.go),
+	// executed from the version-gated repair transaction below. Every
+	// statement is IF NOT EXISTS, so re-running the migration is
+	// harmless.
+	skillLifecycleSchema := `
+	CREATE TABLE IF NOT EXISTS skill_usage (
+		name              TEXT PRIMARY KEY,
+		use_count         INTEGER NOT NULL DEFAULT 0,
+		view_count        INTEGER NOT NULL DEFAULT 0,
+		reuse_after_patch INTEGER NOT NULL DEFAULT 0,
+		last_used_at      TEXT,
+		created_at        TEXT NOT NULL
+	);
+
+	CREATE TABLE IF NOT EXISTS skill_provenance (
+		name       TEXT PRIMARY KEY,
+		created_by TEXT NOT NULL,
+		source     TEXT,
+		created_at TEXT NOT NULL
+	);
+
+	CREATE TABLE IF NOT EXISTS skill_ledger (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		name        TEXT NOT NULL,
+		action      TEXT NOT NULL,
+		before_hash TEXT,
+		after_hash  TEXT,
+		delta       TEXT,
+		created_at  TEXT NOT NULL
+	);
+	`
+
 	// triggers seeds a floor version row: databases predating version
 	// stamping (or fresh ones) read a concrete number for repair gating
 	// instead of nothing. The current schema version is written only
@@ -429,6 +468,16 @@ func (d *DB) migrate() error {
 				`UPDATE sessions SET updated_at = started_at WHERE COALESCE(updated_at, 0) = 0`,
 			); err != nil {
 				return fmt.Errorf("backfill sessions.updated_at: %w", err)
+			}
+		}
+		if dbVersion < skillSchemaVersion {
+			// 2 → 3: skill lifecycle tables (docs/compaction-as-sleep.md
+			// §8 P1). Purely additive, so the migration *is* the DDL — no
+			// backfill to run. It lives here rather than in the base schema
+			// so the tables are created atomically with the version bump:
+			// a database stamped 3 therefore always has them.
+			if _, err := tx.Exec(skillLifecycleSchema); err != nil {
+				return fmt.Errorf("create skill lifecycle tables: %w", err)
 			}
 		}
 		if _, err := tx.Exec(

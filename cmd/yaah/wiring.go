@@ -418,6 +418,10 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	skillTool := &tools.SkillTool{Dirs: skillDirs, ReadOnly: sessionSandbox != nil}
 	if db != nil {
 		skillTool.Embedder = db.Embedder()
+		// Skill lifecycle tracking (usage, provenance, mutation ledger).
+		// Left nil when the session has no store: the tool then behaves
+		// exactly as it did before P1.
+		skillTool.Store = db
 	}
 	toolReg.Register(skillTool)
 

@@ -11,9 +11,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+// ArchiveDir is the directory, beside a skills root, that archived skills
+// move into. It is not itself a skills root: Discover only reads
+// <root>/<name>/SKILL.md, so an archived file is invisible to discovery —
+// and therefore to the agent — while staying on disk.
+const ArchiveDir = ".archive"
 
 // Skill represents a discovered skill with its metadata and body.
 type Skill struct {
@@ -185,4 +192,48 @@ func Edit(skill *Skill, description, body string) (string, error) {
 		return "", fmt.Errorf("write SKILL.md: %w", err)
 	}
 	return skill.Path, nil
+}
+
+// Archive moves a skill's SKILL.md into the ArchiveDir beside its skills
+// root, preserving the skill name as <name>.md. Archive-not-delete
+// (docs/compaction-as-sleep.md §8 P1) keeps an agent- or
+// consolidator-authored skill restorable: the content stays on disk, only
+// discovery stops seeing it. Returns the path of the archived file.
+func Archive(s *Skill) (string, error) {
+	if s == nil || s.Path == "" {
+		return "", fmt.Errorf("skill path is required")
+	}
+	// The name is read straight from frontmatter, so a skill can be
+	// discovered with a name that is not a single path element. Reject it
+	// before it becomes part of a destination path: the archive move must
+	// never escape the skills tree.
+	if s.Name == "" || filepath.Base(s.Name) != s.Name {
+		return "", fmt.Errorf("skill %q has an invalid name for archive", s.Name)
+	}
+	root := filepath.Dir(s.Dir)
+	if root == "" || root == "." {
+		return "", fmt.Errorf("skill %q has no skills root", s.Name)
+	}
+	archiveDir := filepath.Join(root, ArchiveDir)
+	if err := os.MkdirAll(archiveDir, 0o755); err != nil {
+		return "", fmt.Errorf("create archive directory: %w", err)
+	}
+	dest := filepath.Join(archiveDir, s.Name+".md")
+	if _, err := os.Stat(dest); err == nil {
+		// Keep an earlier archive of the same name: a second archive must
+		// not overwrite the revision a restore might want.
+		dest = filepath.Join(archiveDir, fmt.Sprintf("%s-%d.md", s.Name, time.Now().UnixNano()))
+	} else if !os.IsNotExist(err) {
+		// Any Stat failure other than not-exist (e.g. permission denied)
+		// must fail the archive rather than silently overwrite.
+		return "", fmt.Errorf("inspect archive destination: %w", err)
+	}
+	if err := os.Rename(s.Path, dest); err != nil {
+		return "", fmt.Errorf("archive SKILL.md: %w", err)
+	}
+	// Keep the skill directory even when the move leaves it empty, so the
+	// advertised restore path (<root>/<name>/SKILL.md) stays valid without
+	// the caller re-creating the parent. Discovery already skips it because
+	// SKILL.md is gone.
+	return dest, nil
 }
