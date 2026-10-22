@@ -148,8 +148,8 @@ func FormatSkillForAgent(skill *Skill) string {
 // Create writes a new SKILL.md file in the given directory. The skill is
 // placed at <dir>/<name>/SKILL.md. Returns the path to the created file.
 func Create(dir, name, description, body string) (string, error) {
-	if name == "" {
-		return "", fmt.Errorf("skill name is required")
+	if err := Validate(name, description, body); err != nil {
+		return "", fmt.Errorf("invalid skill: %w", err)
 	}
 	skillDir := filepath.Join(dir, name)
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
@@ -185,6 +185,10 @@ func Edit(skill *Skill, description, body string) (string, error) {
 	}
 	if body == "" {
 		body = current.Body
+	}
+
+	if err := Validate(current.Name, description, body); err != nil {
+		return "", fmt.Errorf("invalid skill: %w", err)
 	}
 
 	content := fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n%s\n", current.Name, description, body)

@@ -415,7 +415,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	}
 
 	skillDirs := skillSearchPaths()
-	skillTool := &tools.SkillTool{Dirs: skillDirs, ReadOnly: sessionSandbox != nil}
+	skillTool := &tools.SkillTool{Dirs: skillDirs, ReadOnly: sessionSandbox != nil, Strict: sessionSandbox == nil}
 	if db != nil {
 		skillTool.Embedder = db.Embedder()
 		// Skill lifecycle tracking (usage, provenance, mutation ledger).
