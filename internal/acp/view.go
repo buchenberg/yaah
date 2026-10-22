@@ -3,6 +3,7 @@ package acp
 import (
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/toolfmt"
@@ -153,6 +154,15 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 		send(sessionID, ChunkUpdate{
 			SessionUpdate: UpdateAgentMessageChunk,
 			Content:       textContent("[" + e.DoneSummary() + "]"),
+		})
+	case *agent.TitleSetEvent:
+		// Live session metadata: the persisted title transitioned from
+		// empty. Part of the update stream (not capability-gated in v1),
+		// matching what session/list would read back from the store.
+		send(sessionID, SessionInfoUpdate{
+			SessionUpdate: UpdateSessionInfo,
+			Title:         e.Title,
+			UpdatedAt:     time.Unix(e.UpdatedAt, 0).UTC().Format(time.RFC3339),
 		})
 	case *agent.DoneEvent:
 		// Intentionally ignored: ACP signals turn completion via the

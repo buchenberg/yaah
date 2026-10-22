@@ -102,6 +102,11 @@ type Loop struct {
 	// session's incremental-persistence seam: a session killed mid-run
 	// (timeout, crash) still reports what it spent so far.
 	OnUsage func(types.Usage)
+	// OnTitle, when set, fires when the session title transitions from
+	// empty (the store's one-shot adoption of the first derived title).
+	// The session-state bookkeeping seam: caches the title so later
+	// prompt runs know the store already carries one.
+	OnTitle func(title string, updatedAt int64)
 	// OnSubUsage, when set, fires when a blocking sub-agent dispatch's
 	// usage is folded into the loop's totals — the sub-agent
 	// attribution seam, so orchestrator and sub-agent spend can be

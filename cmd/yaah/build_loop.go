@@ -184,6 +184,28 @@ func (s *agentSession) loopBuilder(
 		debouncer = memory.NewDebouncedWriter(s.db)
 	}
 	persister := agent.NewSessionPersister(s.db, debouncer, s.sessionID)
+	// Title bookkeeping: the store owns the one-shot rule (TouchSession
+	// adopts the first derived title). Cache the known title (a cheap
+	// store read only while untitled), cache transitions on the persist
+	// hook, and let the loop forward the event to its broker view.
+	// titlePublished is guarded by mu (see agentSession) — read and write
+	// under it, same overlap the message snapshot below allows for.
+	s.mu.RLock()
+	titleKnown := s.titlePublished
+	sessID := s.sessionID
+	s.mu.RUnlock()
+	if titleKnown == "" && s.db != nil {
+		if row, err := s.db.GetSession(sessID); err == nil {
+			s.mu.Lock()
+			s.titlePublished = row.Title
+			s.mu.Unlock()
+		}
+	}
+	onTitle := func(title string, updatedAt int64) {
+		s.mu.Lock()
+		s.titlePublished = title
+		s.mu.Unlock()
+	}
 	// Snapshot the conversation state under the read lock: prompt runs
 	// swap both fields under the write lock while this builder runs.
 	s.mu.RLock()
@@ -191,11 +213,17 @@ func (s *agentSession) loopBuilder(
 	msgIdx := s.msgIdx
 	s.mu.RUnlock()
 	persister.SetMsgIdx(msgIdx)
+	persister.KnownTitle = func() string {
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		return s.titlePublished
+	}()
 	hooks := agent.NewHookEmitter(s.cfg.Hooks.Dir, s.sessionID)
 
 	return &agent.LoopBuilder{
 		OnUsage:                    onUsage,
 		OnSubUsage:                 onSubUsage,
+		OnTitle:                    onTitle,
 		Provider:                   prov,
 		Registry:                   s.toolReg,
 		Model:                      modelName,

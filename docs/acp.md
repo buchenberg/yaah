@@ -55,6 +55,12 @@ sub-agents, and prompts all resolve against it.
 `user_message_chunk` (replay only, on `session/load`; `session/resume`
 re-attaches without any history replay).
 
+`session_info_update` is sent when a session's title transitions from
+empty (the first user message that derives one). It carries `title` and
+`updatedAt` (RFC3339 UTC — the same values `session/list` reads back
+from the store); not capability-gated in v1 — clients that ignore it
+lose nothing.
+
 ## Session lifecycle
 
 ### session/new

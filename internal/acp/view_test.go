@@ -3,6 +3,7 @@ package acp
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/todo"
@@ -24,6 +25,34 @@ func decodeUpdate(t *testing.T, u any) map[string]any {
 		t.Fatalf("update not valid JSON: %v", err)
 	}
 	return m
+}
+
+// TestView_sessionInfoUpdate pins the title-transition translation: a
+// TitleSetEvent becomes one session_info_update with the title and an
+// RFC3339 UTC updatedAt, and no other kinds are emitted.
+func TestView_sessionInfoUpdate(t *testing.T) {
+	var got []any
+	v := NewView()
+	v.SendTo("sess_x", captureUpdate(&got), &agent.TitleSetEvent{
+		Title:     "fix the flaky test",
+		UpdatedAt: 1761060000,
+	})
+
+	if len(got) != 1 {
+		t.Fatalf("updates = %d, want 1", len(got))
+	}
+	m := decodeUpdate(t, got[0])
+	if m["sessionUpdate"] != UpdateSessionInfo {
+		t.Fatalf("update variant = %v, want %v", m["sessionUpdate"], UpdateSessionInfo)
+	}
+	if m["title"] != "fix the flaky test" {
+		t.Fatalf("title = %v", m["title"])
+	}
+	// RFC3339 UTC (the session/list conversion applied to a Unix-seconds
+	// event timestamp); computed programmatically, never by hand.
+	if want := time.Unix(1761060000, 0).UTC().Format(time.RFC3339); m["updatedAt"] != want {
+		t.Fatalf("updatedAt = %v, want %v", m["updatedAt"], want)
+	}
 }
 
 // TestView_messageChunks checks the agent_message_chunk and

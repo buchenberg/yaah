@@ -29,6 +29,17 @@ type SessionPersister struct {
 	// empty when OTel is disabled / before the first Run of a prompt.
 	traceID string
 	turnID  string
+
+	// KnownTitle mirrors the persisted session title (empty = untitled).
+	// Seeded from the store at build time; the first user message that
+	// derives a title transitions it — the store's TouchSession adopts
+	// the same value on its debounced flush, so the notification may
+	// land one beat ahead of the row.
+	KnownTitle string
+	// OnTitle fires at most once per untitled session, when the title
+	// transitions from empty. Callers publish events.TitleSetEvent so
+	// clients display live session names.
+	OnTitle func(title string, updatedAt int64)
 }
 
 // NewSessionPersister creates a SessionPersister. Pass nil for db to
@@ -84,6 +95,18 @@ func (p *SessionPersister) Persist(msg types.Message) {
 		Timestamp:          time.Now().Unix(),
 		TraceID:            p.traceID,
 		TurnID:             p.turnID,
+	}
+	// Title transition, mirroring the store's one-shot rule (user-role
+	// messages only, while the title column is empty). Fires here — during
+	// the prompt Run, while the loop's broker exists — even though the
+	// store row lands on the debouncer's flush.
+	if msg.Role == "user" && p.KnownTitle == "" {
+		if title := memory.DeriveSessionTitle(content); title != "" {
+			p.KnownTitle = title
+			if p.OnTitle != nil {
+				p.OnTitle(title, m.Timestamp)
+			}
+		}
 	}
 	if err := p.writeMsg(m); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: db persist: %v\n", err)
