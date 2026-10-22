@@ -8,17 +8,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/landlock"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/landlock"
 )
 
 // confinedTestWorkspace builds a confined workspace rooted at root.
-func confinedTestWorkspace(root string, backend containment.Backend, place confinement.Placement) *localWorkspace {
+func confinedTestWorkspace(root string, backend containment.Backend, place containment.Placement) *localWorkspace {
 	pv := NewPathValidator(root, false, nil)
 	pv.WorkDir = pv.WorkspaceRoot
 	return NewConfinedLocalWorkspace(pv, backend, place,
-		containment.NetworkPolicy{Mode: containment.NetAllowAll})
+		confinement.NetworkPolicy{Mode: confinement.NetAllowAll})
 }
 
 // The orchestrator's workspace carries no confiner, so its shell writes on the
@@ -62,7 +62,7 @@ func TestConfinedWorkspace_WriteOutsideDenied(t *testing.T) {
 	}
 	root := t.TempDir()
 	outside := t.TempDir()
-	ws := confinedTestWorkspace(root, backend, confinement.PlacementPaddock)
+	ws := confinedTestWorkspace(root, backend, containment.PlacementPaddock)
 
 	inside := filepath.Join(root, "in.txt")
 	res, err := ws.Exec(context.Background(), ExecRequest{
@@ -91,7 +91,7 @@ func TestConfinedWorkspace_WriteOutsideDenied(t *testing.T) {
 // runs on the host, so a non-Linux host behaves exactly as before.
 func TestConfinedWorkspace_AdvisoryWhenNoBackend(t *testing.T) {
 	root := t.TempDir()
-	ws := confinedTestWorkspace(root, nil, confinement.PlacementAuto)
+	ws := confinedTestWorkspace(root, nil, containment.PlacementAuto)
 	shell, flag := ws.Shell()
 	res, err := ws.Exec(context.Background(), ExecRequest{Command: shell, Args: []string{flag, "echo advisory"}})
 	if err != nil || res.ExitCode != 0 || !strings.Contains(res.Stdout, "advisory") {
@@ -103,7 +103,7 @@ func TestConfinedWorkspace_AdvisoryWhenNoBackend(t *testing.T) {
 // unconfined.
 func TestConfinedWorkspace_PaddockFailsClosed(t *testing.T) {
 	root := t.TempDir()
-	ws := confinedTestWorkspace(root, nil, confinement.PlacementPaddock)
+	ws := confinedTestWorkspace(root, nil, containment.PlacementPaddock)
 	_, err := ws.Exec(context.Background(), ExecRequest{Command: "true"})
 	if err == nil {
 		t.Fatal("a paddock placement with no backend must refuse, not run unconfined")
@@ -117,8 +117,8 @@ type unavailableBackend struct{}
 func (unavailableBackend) Name() string                             { return "unavailable" }
 func (unavailableBackend) EnforcementTier() string                  { return "none" }
 func (unavailableBackend) Available() (bool, string)                { return false, "no LSM" }
-func (unavailableBackend) SupportsNetwork(containment.NetMode) bool { return true }
-func (unavailableBackend) ProfileFor([]string, containment.NetworkPolicy) string {
+func (unavailableBackend) SupportsNetwork(confinement.NetMode) bool { return true }
+func (unavailableBackend) ProfileFor([]string, confinement.NetworkPolicy) string {
 	return ""
 }
 func (unavailableBackend) Probe(string, string, []string) error { return nil }
@@ -132,8 +132,8 @@ func TestConfinedWorkspace_BoundBackendUnavailableFailsClosed(t *testing.T) {
 	root := t.TempDir()
 	pv := NewPathValidator(root, false, nil)
 	pv.WorkDir = pv.WorkspaceRoot
-	ws := NewConfinedLocalWorkspace(pv, unavailableBackend{}, confinement.PlacementPaddock,
-		containment.NetworkPolicy{Mode: containment.NetAllowAll})
+	ws := NewConfinedLocalWorkspace(pv, unavailableBackend{}, containment.PlacementPaddock,
+		confinement.NetworkPolicy{Mode: confinement.NetAllowAll})
 	if _, err := ws.Exec(context.Background(), ExecRequest{Command: "true"}); err == nil {
 		t.Fatal("paddock with an unavailable backend must refuse, not run unconfined")
 	}
@@ -145,8 +145,8 @@ func TestConfinedWorkspace_BoundBackendUnavailableAdvisory(t *testing.T) {
 	root := t.TempDir()
 	pv := NewPathValidator(root, false, nil)
 	pv.WorkDir = pv.WorkspaceRoot
-	ws := NewConfinedLocalWorkspace(pv, unavailableBackend{}, confinement.PlacementAuto,
-		containment.NetworkPolicy{Mode: containment.NetAllowAll})
+	ws := NewConfinedLocalWorkspace(pv, unavailableBackend{}, containment.PlacementAuto,
+		confinement.NetworkPolicy{Mode: confinement.NetAllowAll})
 	shell, flag := ws.Shell()
 	res, err := ws.Exec(context.Background(), ExecRequest{Command: shell, Args: []string{flag, "echo hi"}})
 	if err != nil || res.ExitCode != 0 {

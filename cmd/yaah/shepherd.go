@@ -8,8 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherdgit "github.com/buchenberg/shepherd-runtime-go/sandbox/git"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
 	"github.com/spf13/cobra"
 
 	"github.com/buchenberg/yaah/internal/agent/recovery"
@@ -135,7 +135,7 @@ func pruneOrphan(w io.Writer, report *recovery.Report, name string) error {
 		if !registered || !recovery.WorktreeOwnedBy(o.Repo, name) {
 			return fmt.Errorf("shepherd: prune %s: the directory is no longer a worktree of its recorded repository — refusing; remove it manually if you are sure", name)
 		}
-		if err := shepherdgit.NewWorktreeSandbox(o.Repo, name).Destroy(context.Background()); err != nil {
+		if err := goatherdgit.NewWorktreeSandbox(o.Repo, name).Destroy(context.Background()); err != nil {
 			return fmt.Errorf("shepherd: prune %s: %w", name, err)
 		}
 		fmt.Fprintf(w, "pruned %s (scope %s)\n", name, o.ScopeID)

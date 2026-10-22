@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 
 	"github.com/buchenberg/yaah/internal/config"
 )
@@ -22,7 +22,7 @@ func TestWireSubAgentNetwork(t *testing.T) {
 			if broker != nil {
 				t.Errorf("mode %q must not start a broker", mode)
 			}
-			if np.Mode != containment.NetAllowAll {
+			if np.Mode != confinement.NetAllowAll {
 				t.Errorf("mode %q -> %q, want allow_all", mode, np.Mode)
 			}
 		}
@@ -36,7 +36,7 @@ func TestWireSubAgentNetwork(t *testing.T) {
 		if broker != nil {
 			t.Error("deny_all must not start a broker")
 		}
-		if np.Mode != containment.NetDenyAll {
+		if np.Mode != confinement.NetDenyAll {
 			t.Errorf("deny_all -> %q", np.Mode)
 		}
 	})
@@ -53,7 +53,7 @@ func TestWireSubAgentNetwork(t *testing.T) {
 			t.Fatal("broker mode must start a broker")
 		}
 		defer broker.Stop()
-		if np.Mode != containment.NetBroker || np.BrokerPort <= 0 {
+		if np.Mode != confinement.NetBroker || np.BrokerPort <= 0 {
 			t.Fatalf("policy = %+v, want broker on a live port", np)
 		}
 		if np.BrokerPort != broker.Port() {

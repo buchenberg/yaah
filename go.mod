@@ -5,10 +5,10 @@ go 1.26.3
 require (
 	github.com/anthropics/anthropic-sdk-go v1.81.0
 	github.com/buchenberg/croft v0.3.0
-	github.com/buchenberg/shepherd-kernel-go v0.17.0
-	github.com/buchenberg/shepherd-runtime-go v0.18.0
-	github.com/buchenberg/shepherd-runtime-go/sandbox/landlock v0.1.1
-	github.com/buchenberg/shepherd-runtime-go/sandbox/winacl v0.1.0
+	github.com/buchenberg/goatherd-kernel v0.18.0
+	github.com/buchenberg/goatherd-runtime v0.19.0
+	github.com/buchenberg/goatherd-runtime/sandbox/landlock v0.1.2
+	github.com/buchenberg/goatherd-runtime/sandbox/winacl v0.1.1
 	github.com/buchenberg/tviewmd v0.3.1
 	github.com/gdamore/tcell/v2 v2.13.10
 	github.com/lsferreira42/figlet-go v0.0.2-beta
@@ -30,13 +30,13 @@ require (
 )
 
 require (
+	cloud.google.com/go/compute/metadata v0.10.0 // indirect
 	github.com/Microsoft/go-winio v0.6.3-0.20251027160822-ad3df93bed29 // indirect
 	github.com/Microsoft/hcsshim v0.15.0-rc.1 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/containerd/cgroups/v3 v3.1.3 // indirect
 	github.com/containerd/containerd/api v1.11.1 // indirect
 	github.com/containerd/containerd/v2 v2.3.5 // indirect
@@ -65,7 +65,6 @@ require (
 	github.com/klauspost/compress v1.18.5 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/moby/locker v1.0.1 // indirect
 	github.com/moby/sys/mountinfo v0.7.2 // indirect
 	github.com/moby/sys/sequential v0.6.0 // indirect
@@ -100,6 +99,7 @@ require (
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
+	google.golang.org/api v0.247.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/grpc v1.81.1 // indirect

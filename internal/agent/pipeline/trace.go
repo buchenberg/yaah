@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"sync/atomic"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -22,7 +22,7 @@ func NewShepherdTraceStore(path string) (*shepherdtrace.SQLiteTraceStore, error)
 type ShepherdTraceMiddleware struct {
 	store           *shepherdtrace.SQLiteTraceStore
 	bus             *shepherdtrace.EffectBus
-	scopeManager    *shepherd.ScopeManager
+	scopeManager    *goatherd.ScopeManager
 	sessionID       string
 	ordinal         int
 	lastFactIDs     []string
@@ -375,6 +375,6 @@ func (m *ShepherdTraceMiddleware) Bus() *shepherdtrace.EffectBus {
 
 // ScopeManager returns the scope manager for fork/merge/discard operations.
 // Returns nil if supervision is not enabled.
-func (m *ShepherdTraceMiddleware) ScopeManager() *shepherd.ScopeManager {
+func (m *ShepherdTraceMiddleware) ScopeManager() *goatherd.ScopeManager {
 	return m.scopeManager
 }

@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
 
-	shepherdgit "github.com/buchenberg/shepherd-runtime-go/sandbox/git"
+	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/config"
 )
@@ -227,8 +227,8 @@ func TestCheckShepherd(t *testing.T) {
 	// The root must fork to be recoverable: a root that never forked
 	// left no trace record (the kernel's documented rule), and the
 	// doctor's counts must show the rebuilt tree.
-	mgr := shepherd.NewScopeManager(store)
-	root, err := mgr.Create("sess-doc", shepherdgit.NewLocalGitSandbox(newDoctorGitRepo(t)))
+	mgr := goatherd.NewScopeManager(store)
+	root, err := mgr.Create("sess-doc", goatherdgit.NewLocalGitSandbox(newDoctorGitRepo(t)))
 	if err != nil {
 		t.Fatalf("create root: %v", err)
 	}

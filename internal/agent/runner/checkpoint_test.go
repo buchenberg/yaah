@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
 	"github.com/buchenberg/yaah/internal/gitsandbox"
 )
 
@@ -23,7 +23,7 @@ func TestShepherdTurnCheckpointer_RestoreRevertsWorkspace(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 
 	repo := newRunnerTestGitRepo(t)
 	sb := gitsandbox.NewLocalSandbox(repo)

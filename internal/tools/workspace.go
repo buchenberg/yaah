@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
 )
 
 // ExecRequest describes a command to run in a workspace.
@@ -126,9 +126,9 @@ type localWorkspace struct {
 	// commands run unconfined (the orchestrator's workspace, always).
 	confiner containment.Backend
 	// placement decides whether a confined run jails or falls back to advisory.
-	placement confinement.Placement
+	placement containment.Placement
 	// network is the egress axis of the confinement spec.
-	network containment.NetworkPolicy
+	network confinement.NetworkPolicy
 	// confinedEnv, when non-empty, overrides the process environment for
 	// confined commands — the redirect that points HOME/TMPDIR/caches into the
 	// worktree's scratch.
@@ -147,7 +147,7 @@ func newLocalWorkspace(pv *PathValidator) *localWorkspace {
 // fails closed when the host cannot jail, PlacementAuto falls back to advisory,
 // PlacementAdvisory never jails. The orchestrator's workspace is never built
 // this way.
-func NewConfinedLocalWorkspace(pv *PathValidator, backend containment.Backend, placement confinement.Placement, network containment.NetworkPolicy) *localWorkspace {
+func NewConfinedLocalWorkspace(pv *PathValidator, backend containment.Backend, placement containment.Placement, network confinement.NetworkPolicy) *localWorkspace {
 	return &localWorkspace{pv: pv, confiner: backend, placement: placement, network: network}
 }
 
@@ -225,7 +225,7 @@ func (w *localWorkspace) MkdirAll(_ context.Context, path string, perm fs.FileMo
 // jail, rooted at the workspace's working directory.
 func (w *localWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResult, error) {
 	if w.confiner == nil {
-		if w.placement == confinement.PlacementPaddock {
+		if w.placement == containment.PlacementPaddock {
 			// Fail closed: a paddock placement with no backend refuses rather
 			// than running unconfined.
 			return ExecResult{ExitCode: -1}, fmt.Errorf(
@@ -238,7 +238,7 @@ func (w *localWorkspace) Exec(ctx context.Context, req ExecRequest) (ExecResult,
 	if ok, _ := w.confiner.Available(); !ok {
 		available = false
 	}
-	confine, err := confinement.ResolvePlacement(w.placement, available)
+	confine, err := containment.ResolvePlacement(w.placement, available)
 	if err != nil {
 		return ExecResult{ExitCode: -1}, err
 	}
@@ -294,7 +294,7 @@ func (w *localWorkspace) advisoryExec(ctx context.Context, req ExecRequest) (Exe
 // never ran, so there is no unconfined fallback.
 func (w *localWorkspace) confinedExec(ctx context.Context, req ExecRequest) (ExecResult, error) {
 	root := w.WorkDir()
-	spec := containment.ConfinementSpec{
+	spec := confinement.ConfinementSpec{
 		WritableRoots: []string{root},
 		Network:       w.network,
 	}

@@ -3,24 +3,24 @@ package runner
 import (
 	"context"
 
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
-	shepherdsandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
+	goatherd "github.com/buchenberg/goatherd-runtime"
+	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 	"github.com/buchenberg/yaah/internal/agent"
 )
 
 // ShepherdTurnCheckpointer adapts agent.TurnCheckpointer to the shared
-// shepherd-runtime-go ScopeManager. It records workspace checkpoints (plus
+// goatherd-runtime ScopeManager. It records workspace checkpoints (plus
 // opaque snapshots) on a single scope, using whatever Sandbox that scope holds
 // — an in-place repository, or the sub-agent's isolated worktree.
 type ShepherdTurnCheckpointer struct {
-	mgr     *shepherd.ScopeManager
+	mgr     *goatherd.ScopeManager
 	scopeID string
-	sandbox shepherdsandbox.Sandbox
+	sandbox goatherdsandbox.Sandbox
 }
 
 // NewShepherdTurnCheckpointer returns a turn checkpointer that creates
 // single-use checkpoints on scopeID against sb.
-func NewShepherdTurnCheckpointer(mgr *shepherd.ScopeManager, scopeID string, sb shepherdsandbox.Sandbox) *ShepherdTurnCheckpointer {
+func NewShepherdTurnCheckpointer(mgr *goatherd.ScopeManager, scopeID string, sb goatherdsandbox.Sandbox) *ShepherdTurnCheckpointer {
 	return &ShepherdTurnCheckpointer{mgr: mgr, scopeID: scopeID, sandbox: sb}
 }
 

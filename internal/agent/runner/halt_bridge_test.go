@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
 
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
@@ -39,7 +39,7 @@ func TestTaskRunner_HaltBridgeCancelsTheRun(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 
 	root, err := CreateRootScope(mgr, "sess-halt", "", true) // pure-causal root
 	if err != nil {

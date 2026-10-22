@@ -20,10 +20,10 @@ import (
 	"runtime"
 	"strings"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
-	shepherdsandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
-	shepherdgit "github.com/buchenberg/shepherd-runtime-go/sandbox/git"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
+	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
 
 	"github.com/buchenberg/yaah/internal/gitsandbox"
 )
@@ -36,6 +36,17 @@ import (
 // neither record recovers causal-only (deliberate non-adoption, not an
 // error).
 const SchemaWorktreeProvisioned = "yaah.worktree.provisioned.v1"
+
+// legacySchemaScopeForked is the fork schema ref as the runtime wrote it
+// before the goatherd rename (shepherd-runtime-go <= v0.18.0): the rename
+// rebranded the runtime's own record vocabulary, so traces from pre-rename
+// sessions carry the old value. Recovery scans it as a fallback so
+// worktrees carved before the upgrade still list and prune — silently
+// dropping them would strand live worktrees (the failure this file
+// exists to prevent). Removable at the next minor together with the
+// SchemaWorktreeProvisioned fallback above. The kernel's frozen
+// shepherd2.* vocabulary is unaffected and needs no fallback.
+const legacySchemaScopeForked = "shepherd.scope.forked.v1"
 
 // worktreeInfo is one recorded worktree provisioning: where it lives
 // and which repository it was carved from. The repository is what
@@ -113,7 +124,7 @@ type Report struct {
 //
 // A resolver error fails the recovery loudly: half-adopted sandboxes
 // are worse than none (the kernel's contract).
-func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPath string, adoptRoots bool, stats *shepherd.RecoveryStats) (*shepherd.ScopeManager, *Report, error) {
+func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPath string, adoptRoots bool, stats *goatherd.RecoveryStats) (*goatherd.ScopeManager, *Report, error) {
 	if repoPath == "" {
 		return nil, nil, fmt.Errorf("no repository to re-adopt onto")
 	}
@@ -122,7 +133,7 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 		return nil, nil, err
 	}
 
-	resolver := func(scopeID, backend, path string) (shepherdsandbox.Sandbox, error) {
+	resolver := func(scopeID, backend, path string) (goatherdsandbox.Sandbox, error) {
 		switch {
 		case backend == "":
 			// Roots resolve with empty backend and path by the
@@ -174,13 +185,13 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 			if !IsRegisteredWorktree(ctx, info.repo, info.path) {
 				return nil, nil
 			}
-			return shepherdgit.NewWorktreeSandbox(info.repo, info.path), nil
+			return goatherdgit.NewWorktreeSandbox(info.repo, info.path), nil
 		default:
 			return nil, nil
 		}
 	}
 
-	mgr, err := shepherd.RecoverScopes(store, shepherd.RecoverOptions{Resolver: resolver, Stats: stats})
+	mgr, err := goatherd.RecoverScopes(store, goatherd.RecoverOptions{Resolver: resolver, Stats: stats})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -192,7 +203,7 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 	// scopes here.
 	for owner := range paths {
 		scope, ok := mgr.Get("scope:" + owner)
-		if !ok || scope.State() == shepherd.ScopeActive {
+		if !ok || scope.State() == goatherd.ScopeActive {
 			continue
 		}
 		if scope.Sandbox() != nil {
@@ -217,9 +228,9 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 		_, statErr := os.Stat(info.path)
 		onDisk := statErr == nil
 		switch {
-		case !onDisk && scope.State() == shepherd.ScopeActive:
+		case !onDisk && scope.State() == goatherd.ScopeActive:
 			report.Missing = append(report.Missing, Missing{ScopeID: scope.ID(), Path: info.path})
-		case onDisk && scope.State() == shepherd.ScopeActive:
+		case onDisk && scope.State() == goatherd.ScopeActive:
 			// Adopted means adopted: the strict resolver refuses an
 			// unregistered occupant, and the report must not claim it —
 			// the refusal is reported as unadopted instead.
@@ -255,7 +266,7 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 func scanWorktreePaths(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, trustedRepo string) (map[string]worktreeInfo, error) {
 	paths := make(map[string]worktreeInfo)
 
-	forks, err := shepherdtrace.ScanRecordsBySchema(ctx, store, shepherd.SchemaScopeForked)
+	forks, err := shepherdtrace.ScanRecordsBySchema(ctx, store, goatherd.SchemaScopeForked)
 	if err != nil {
 		return nil, fmt.Errorf("scan fork records: %w", err)
 	}
@@ -264,6 +275,26 @@ func scanWorktreePaths(ctx context.Context, store *shepherdtrace.SQLiteTraceStor
 		path, _ := rec.Payload["sandbox_path"].(string)
 		if child == "" || path == "" {
 			continue // shared forks and unaddressed children have no record to read
+		}
+		paths[child] = worktreeInfo{path: path, repo: trustedRepo}
+	}
+
+	// Pre-rename traces carry the old fork ref (see
+	// legacySchemaScopeForked): scan them too so worktrees carved before
+	// the upgrade stay owned. The current ref wins on collision — same
+	// last-write rule as the fallback below.
+	legacyForks, err := shepherdtrace.ScanRecordsBySchema(ctx, store, legacySchemaScopeForked)
+	if err != nil {
+		return nil, fmt.Errorf("scan legacy fork records: %w", err)
+	}
+	for _, rec := range legacyForks {
+		child, _ := rec.Payload["child_owner"].(string)
+		path, _ := rec.Payload["sandbox_path"].(string)
+		if child == "" || path == "" {
+			continue
+		}
+		if _, covered := paths[child]; covered {
+			continue // the current-ref record owns this child
 		}
 		paths[child] = worktreeInfo{path: path, repo: trustedRepo}
 	}

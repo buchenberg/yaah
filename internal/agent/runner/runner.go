@@ -23,12 +23,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
-	shepherdsandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
-	shepherdgit "github.com/buchenberg/shepherd-runtime-go/sandbox/git"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
+	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
+	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/budget"
 	"github.com/buchenberg/yaah/internal/agent/llm"
@@ -100,7 +100,7 @@ type DelegateToolOpts struct {
 
 	// ScopeManager is the session's scope registry (plan 07, H4):
 	// sub-agent scopes fork through it. Nil when tracing is off.
-	ScopeManager *shepherd.ScopeManager
+	ScopeManager *goatherd.ScopeManager
 
 	// TraceStore is the session's Shepherd trace store (plan 07, H4):
 	// the sub-agent loops' shepherd_trace middleware writes through it.
@@ -132,7 +132,7 @@ type DelegateToolOpts struct {
 	// lowered from agents.subagent.network with the session broker's port (see
 	// SubAgentNetworkPolicy). The zero value means allow_all — the config
 	// default; the composition root passes an explicit policy either way.
-	SubNetwork containment.NetworkPolicy
+	SubNetwork confinement.NetworkPolicy
 }
 
 // NewDelegateTool builds the planner's DelegateTool: it resolves the advertised
@@ -274,7 +274,7 @@ type taskRunnerOpts struct {
 	// the runtime (whose own zero policy fails closed to deny_all). A caller that
 	// omits it therefore gets today's behaviour, not a dispatch that refuses
 	// wherever the host cannot jail.
-	subNetwork containment.NetworkPolicy
+	subNetwork confinement.NetworkPolicy
 
 	// subAgentProvider and subAgentModel override the planner's
 	// provider/model for sub-agent loops. When nil/empty, sub-agents
@@ -358,7 +358,7 @@ type taskRunnerOpts struct {
 	// injected by the wiring like the run registry — sub-agent scopes
 	// fork through it without reaching through package globals. Nil
 	// when tracing is off: dispatches then run without scopes.
-	scopeManager *shepherd.ScopeManager
+	scopeManager *goatherd.ScopeManager
 
 	// traceStore is the session's Shepherd trace store (plan 07, H4),
 	// injected alongside the manager: the sub-agent loops' shepherd_trace
@@ -505,7 +505,7 @@ func makeTaskRunner(opts taskRunnerOpts, remainingDepth int) tools.TaskRunner {
 		// isolated one, otherwise the root's shared sandbox (nil for an
 		// isolated session — the container is the substrate, isolation
 		// plan D2).
-		var subScope *shepherd.Scope
+		var subScope *goatherd.Scope
 		if mgr := opts.scopeManager; mgr != nil {
 			var cerr error
 			subScope, cerr = createSubAgentScope(mgr, opts, subTraceID, params.Workdir)
@@ -886,7 +886,7 @@ func subAgentTimeoutResolver(subCfg config.SubAgentConfig) func(tools.SubAgentPa
 // created it — so this sandbox is used for capture and apply only and never
 // calls Create. A nil return leaves the scope pure-causal, which makes its
 // workspace operations report ErrNoSandbox rather than silently doing nothing.
-func subAgentSandbox(opts taskRunnerOpts, workdir string) shepherdsandbox.Sandbox {
+func subAgentSandbox(opts taskRunnerOpts, workdir string) goatherdsandbox.Sandbox {
 	// Isolated session (plan §1.3, decision D2): the sub-agent shares the
 	// session's one sandbox, so there is no per-sub-agent host substrate
 	// to capture. A host worktree or host git sandbox would checkpoint a
@@ -907,7 +907,7 @@ func subAgentSandbox(opts taskRunnerOpts, workdir string) shepherdsandbox.Sandbo
 		return nil
 	}
 	if workdir != "" {
-		return shepherdgit.NewWorktreeSandbox(repoPath, workdir)
+		return goatherdgit.NewWorktreeSandbox(repoPath, workdir)
 	}
 	return gitsandbox.NewLocalSandbox(repoPath)
 }
@@ -937,7 +937,7 @@ var ErrRootTerminal = errors.New("recovered root scope is terminal")
 // pure-causal: the tree still exists, inject/halt still address every
 // scope, and only checkpoint capture is unavailable — which it would
 // have been anyway.
-func CreateRootScope(mgr *shepherd.ScopeManager, sessionID, repoPath string, isolated bool) (*shepherd.Scope, error) {
+func CreateRootScope(mgr *goatherd.ScopeManager, sessionID, repoPath string, isolated bool) (*goatherd.Scope, error) {
 	// Resume reattach (adoption plan R2): --resume continues under
 	// the same session ID, so a recovered registry already holds the
 	// crashed run's root — reattach it instead of colliding.
@@ -945,12 +945,12 @@ func CreateRootScope(mgr *shepherd.ScopeManager, sessionID, repoPath string, iso
 	// isolated session, matching the mode the resolver was given), so
 	// the scope tree resumes where it left off.
 	if scope, ok := mgr.Get("scope:" + sessionID); ok {
-		if scope.State() == shepherd.ScopeActive {
+		if scope.State() == goatherd.ScopeActive {
 			return scope, nil
 		}
 		return nil, fmt.Errorf("%w: %s — it is terminal, so scope-tree supervision for this session ended; start a new session", ErrRootTerminal, scope.State())
 	}
-	var sb shepherdsandbox.Sandbox
+	var sb goatherdsandbox.Sandbox
 	if !isolated {
 		if repoPath == "" {
 			repoPath, _ = os.Getwd()
@@ -974,7 +974,7 @@ func CreateRootScope(mgr *shepherd.ScopeManager, sessionID, repoPath string, iso
 // (D1): seed messages live in the loop config, not the trace. An empty
 // root scope ID — tracing came up without a root — falls back to the
 // legacy flat Create so the sub-agent still gets a superviseable scope.
-func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTraceID, workdir string) (*shepherd.Scope, error) {
+func createSubAgentScope(mgr *goatherd.ScopeManager, opts taskRunnerOpts, subTraceID, workdir string) (*goatherd.Scope, error) {
 	if opts.rootScopeID == "" {
 		return mgr.Create(subTraceID, subAgentSandbox(opts, workdir))
 	}
@@ -994,7 +994,7 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 	// is not this policy's case — the fork fails and the dispatch
 	// degrades like any other non-terminal failure.
 	root, ok := mgr.Get(opts.rootScopeID)
-	if ok && root.State() != shepherd.ScopeActive {
+	if ok && root.State() != goatherd.ScopeActive {
 		return nil, fmt.Errorf("%w: %s — the supervisor halt ended this session's supervision; start a new session", ErrRootTerminal, root.State())
 	}
 	// workdir isolates this dispatch in its own worktree — a local-mode
@@ -1010,7 +1010,7 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 			repoPath, _ = os.Getwd()
 		}
 		if repoPath != "" {
-			child, ferr := mgr.ForkIsolated(opts.rootScopeID, subTraceID, nil, shepherdgit.NewWorktreeSandbox(repoPath, workdir))
+			child, ferr := mgr.ForkIsolated(opts.rootScopeID, subTraceID, nil, goatherdgit.NewWorktreeSandbox(repoPath, workdir))
 			if ferr == nil {
 				// No yaah-side worktree record is needed (plan 06,
 				// kernel v0.14.0): the kernel's fork record carries
@@ -1023,7 +1023,7 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 			// fallback: re-check before degrading. A nil root is the
 			// registry miss the pre-check let through — it degrades
 			// like any other non-terminal failure.
-			if root != nil && root.State() != shepherd.ScopeActive {
+			if root != nil && root.State() != goatherd.ScopeActive {
 				return nil, fmt.Errorf("%w: %s — the supervisor halt ended this session's supervision; start a new session", ErrRootTerminal, root.State())
 			}
 			// A non-terminal ForkIsolated failure degrades loudly:
@@ -1042,7 +1042,7 @@ func createSubAgentScope(mgr *shepherd.ScopeManager, opts taskRunnerOpts, subTra
 	// slip through the TOCTOU window into the fallback: re-check
 	// before degrading. A nil root is the registry miss the pre-check
 	// let through — it degrades like any other non-terminal failure.
-	if root != nil && root.State() != shepherd.ScopeActive {
+	if root != nil && root.State() != goatherd.ScopeActive {
 		return nil, fmt.Errorf("%w: %s — the supervisor halt ended this session's supervision; start a new session", ErrRootTerminal, root.State())
 	}
 	// A non-terminal fork failure degrades loudly, the same contract:
@@ -1522,7 +1522,7 @@ func subagentTraceProfile(ctx context.Context, tracePath, sessionID string) stri
 // scope (Plan 7 Phase 3), so a reader can tell a jailed run from an advisory one.
 // Best-effort: a tracing failure must not fail the dispatch. It is a no-op when
 // either argument is nil (tracing off, or no confinement to record).
-func recordConfinementFact(ctx context.Context, scope *shepherd.Scope, conf *subAgentConfinement) {
+func recordConfinementFact(ctx context.Context, scope *goatherd.Scope, conf *subAgentConfinement) {
 	if scope == nil || conf == nil {
 		return
 	}
@@ -1567,7 +1567,7 @@ func (c *subAgentConfinement) payload() map[string]any {
 // "paddock" (alias "jail") fails closed. The writable root is the worktree — the
 // sub-agent's bound world — so the kernel boundary and the run's own boundary
 // agree.
-func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConfig, workdir string, network containment.NetworkPolicy) (tools.Workspace, *subAgentConfinement, error) {
+func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConfig, workdir string, network confinement.NetworkPolicy) (tools.Workspace, *subAgentConfinement, error) {
 	requested := strings.TrimSpace(cfg.Containment)
 	placement := containmentPlacement(requested)
 
@@ -1577,9 +1577,9 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 	// nobody set a key. The broker port goes with the mode: a port on a non-broker
 	// posture is a record saying two things at once.
 	if network.Mode == "" {
-		network.Mode = containment.NetAllowAll
+		network.Mode = confinement.NetAllowAll
 	}
-	if network.Mode != containment.NetBroker {
+	if network.Mode != confinement.NetBroker {
 		network.BrokerPort = 0
 	}
 
@@ -1635,8 +1635,8 @@ func resolveSubAgentConfinement(pv *tools.PathValidator, cfg config.SubAgentConf
 //
 // confine reports whether a confined workspace should be built: true whenever
 // the placement is paddock (so Exec can fail closed) or a usable backend exists.
-func confinementRecord(requested string, placement confinement.Placement, available bool, backend containment.Backend, workdir string, network containment.NetworkPolicy) (*subAgentConfinement, bool) {
-	if !available && placement != confinement.PlacementPaddock {
+func confinementRecord(requested string, placement containment.Placement, available bool, backend containment.Backend, workdir string, network confinement.NetworkPolicy) (*subAgentConfinement, bool) {
+	if !available && placement != containment.PlacementPaddock {
 		// No writable root is claimed — nothing bounded it.
 		return &subAgentConfinement{Requested: requested, Resolved: "advisory"}, false
 	}
@@ -1660,20 +1660,20 @@ func confinementRecord(requested string, placement confinement.Placement, availa
 // code that applies it — two copies drifting is exactly how a config key quietly
 // stops meaning what it says. The broker port is required for "broker": a policy
 // that cannot be applied is not applied quietly.
-func SubAgentNetworkPolicy(mode string, brokerPort int) (containment.NetworkPolicy, error) {
+func SubAgentNetworkPolicy(mode string, brokerPort int) (confinement.NetworkPolicy, error) {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "", "allow_all":
-		return containment.NetworkPolicy{Mode: containment.NetAllowAll}, nil
+		return confinement.NetworkPolicy{Mode: confinement.NetAllowAll}, nil
 	case "deny_all":
-		return containment.NetworkPolicy{Mode: containment.NetDenyAll}, nil
+		return confinement.NetworkPolicy{Mode: confinement.NetDenyAll}, nil
 	case "broker":
 		if brokerPort <= 0 {
-			return containment.NetworkPolicy{}, fmt.Errorf(
+			return confinement.NetworkPolicy{}, fmt.Errorf(
 				"agents.subagent.network is %q but no egress broker is running", mode)
 		}
-		return containment.NetworkPolicy{Mode: containment.NetBroker, BrokerPort: brokerPort}, nil
+		return confinement.NetworkPolicy{Mode: confinement.NetBroker, BrokerPort: brokerPort}, nil
 	default:
-		return containment.NetworkPolicy{}, fmt.Errorf(
+		return confinement.NetworkPolicy{}, fmt.Errorf(
 			"agents.subagent.network %q is not one of: allow_all, deny_all, broker", mode)
 	}
 }
@@ -1682,9 +1682,9 @@ func SubAgentNetworkPolicy(mode string, brokerPort int) (containment.NetworkPoli
 // modes whose rules a dispatch has to be jailed for. It reads the posture, not
 // whether a jail was established: a refused jail still must not leave the
 // host-network tools registered.
-func restrictivePosture(network containment.NetworkPolicy) bool {
+func restrictivePosture(network confinement.NetworkPolicy) bool {
 	mode := networkMode(network)
-	return mode != "" && mode != string(containment.NetAllowAll)
+	return mode != "" && mode != string(confinement.NetAllowAll)
 }
 
 // hostNetworkToolsIn lists the profile's tools that would reach the network from
@@ -1708,9 +1708,9 @@ func hostNetworkToolsIn(profile subagent.RoleProfile) []string {
 // dispatch would either fail deep inside the jail with a kernel message, or — far
 // worse on the advisory fallback — run with open egress while the config, the
 // trace and the sub-agent's own prompt said otherwise.
-func requireEnforceableEgress(available bool, backend containment.Backend, network containment.NetworkPolicy, placement confinement.Placement, workdir, requested string) error {
+func requireEnforceableEgress(available bool, backend containment.Backend, network confinement.NetworkPolicy, placement containment.Placement, workdir, requested string) error {
 	mode := networkMode(network)
-	if mode == string(containment.NetAllowAll) {
+	if mode == string(confinement.NetAllowAll) {
 		return nil
 	}
 	// "This dispatch is not jailed at all" is the primary reason the posture
@@ -1731,7 +1731,7 @@ func requireEnforceableEgress(available bool, backend containment.Backend, netwo
 				"set containment: auto (or paddock) to enforce it, or network: allow_all to accept open egress",
 			mode, configured)
 	}
-	if placement == confinement.PlacementPaddock && !available {
+	if placement == containment.PlacementPaddock && !available {
 		// paddock already fails closed at Exec; let that message stand.
 		return nil
 	}
@@ -1755,8 +1755,8 @@ func requireEnforceableEgress(available bool, backend containment.Backend, netwo
 // broker is advertised the way HTTP proxies are advertised, and clients that
 // honour the convention (curl, git-http, npm, pip, Go's net/http) reach it
 // without being told twice.
-func brokerProxyEnv(network containment.NetworkPolicy) []string {
-	if network.Mode != containment.NetBroker || network.BrokerPort <= 0 {
+func brokerProxyEnv(network confinement.NetworkPolicy) []string {
+	if network.Mode != confinement.NetBroker || network.BrokerPort <= 0 {
 		return nil
 	}
 	addr := fmt.Sprintf("http://127.0.0.1:%d", network.BrokerPort)
@@ -1774,9 +1774,9 @@ func brokerProxyEnv(network containment.NetworkPolicy) []string {
 // networkMode names a policy's posture for the trace and the prompt. It is read
 // after resolveSubAgentConfinement has normalized an unset mode, so it reports the
 // posture actually applied rather than a default nobody chose.
-func networkMode(np containment.NetworkPolicy) string {
+func networkMode(np confinement.NetworkPolicy) string {
 	if np.Mode == "" {
-		return string(containment.NetAllowAll)
+		return string(confinement.NetAllowAll)
 	}
 	return string(np.Mode)
 }
@@ -1784,16 +1784,16 @@ func networkMode(np containment.NetworkPolicy) string {
 // containmentPlacement maps agents.subagent.containment to a placement, or "" for
 // "run on the host" (the explicit opt-out: "off"/"none"/"advisory"). An unset
 // setting is the default and means auto.
-func containmentPlacement(v string) confinement.Placement {
+func containmentPlacement(v string) containment.Placement {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "", "auto":
 		// "auto" is the default (Plan 7 Phase 3): jail where the host can, and
 		// degrade visibly to advisory where it cannot. The opt-out is explicit
 		// — "off" (or "none"/"advisory") — so the unconfined host path is a
 		// choice, not an omission.
-		return confinement.PlacementAuto
+		return containment.PlacementAuto
 	case "paddock", "jail":
-		return confinement.PlacementPaddock
+		return containment.PlacementPaddock
 	default: // "off", "none", "advisory"
 		return ""
 	}

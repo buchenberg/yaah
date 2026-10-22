@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/landlock"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/landlock"
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/jail"
@@ -50,8 +50,8 @@ func TestResolveSubAgentConfinement_RefusalFailsTheDispatch(t *testing.T) {
 
 // allowAllNetwork is the default posture, so confinement tests exercise the jail
 // rather than an egress rule.
-func allowAllNetwork() containment.NetworkPolicy {
-	return containment.NetworkPolicy{Mode: containment.NetAllowAll}
+func allowAllNetwork() confinement.NetworkPolicy {
+	return confinement.NetworkPolicy{Mode: confinement.NetAllowAll}
 }
 
 // stubBackend stands in for a syscall-jail backend so both sides of the
@@ -65,8 +65,8 @@ type stubBackend struct {
 func (stubBackend) Name() string                               { return "stub" }
 func (stubBackend) EnforcementTier() string                    { return "stub-tier" }
 func (b stubBackend) Available() (bool, string)                { return b.usable, "" }
-func (b stubBackend) SupportsNetwork(containment.NetMode) bool { return b.netCapable }
-func (stubBackend) ProfileFor([]string, containment.NetworkPolicy) string {
+func (b stubBackend) SupportsNetwork(confinement.NetMode) bool { return b.netCapable }
+func (stubBackend) ProfileFor([]string, confinement.NetworkPolicy) string {
 	return ""
 }
 func (stubBackend) Probe(string, string, []string) error { return nil }
@@ -80,19 +80,19 @@ func (stubBackend) Launch(string, containment.LaunchRequest) (containment.Launch
 func TestConfinementRecord_Placement(t *testing.T) {
 	cases := []struct {
 		name         string
-		placement    confinement.Placement
+		placement    containment.Placement
 		available    bool
 		backend      containment.Backend
 		wantResolved string
 		wantEnforced bool
 		wantConfine  bool // build a workspace (so Exec can jail or fail closed)
 	}{
-		{"auto, no backend", confinement.PlacementAuto, false, nil, "advisory", false, false},
-		{"auto, unusable backend", confinement.PlacementAuto, false, stubBackend{}, "advisory", false, false},
-		{"paddock, no backend", confinement.PlacementPaddock, false, nil, "paddock", false, true},
-		{"paddock, unusable backend", confinement.PlacementPaddock, false, stubBackend{}, "paddock", false, true},
-		{"auto, usable backend", confinement.PlacementAuto, true, stubBackend{usable: true, netCapable: true}, "paddock", true, true},
-		{"paddock, usable backend", confinement.PlacementPaddock, true, stubBackend{usable: true, netCapable: true}, "paddock", true, true},
+		{"auto, no backend", containment.PlacementAuto, false, nil, "advisory", false, false},
+		{"auto, unusable backend", containment.PlacementAuto, false, stubBackend{}, "advisory", false, false},
+		{"paddock, no backend", containment.PlacementPaddock, false, nil, "paddock", false, true},
+		{"paddock, unusable backend", containment.PlacementPaddock, false, stubBackend{}, "paddock", false, true},
+		{"auto, usable backend", containment.PlacementAuto, true, stubBackend{usable: true, netCapable: true}, "paddock", true, true},
+		{"paddock, usable backend", containment.PlacementPaddock, true, stubBackend{usable: true, netCapable: true}, "paddock", true, true},
 	}
 	for _, c := range cases {
 		rec, confine := confinementRecord("auto", c.placement, c.available, c.backend, "/work", allowAllNetwork())
@@ -247,15 +247,15 @@ func TestNetworkPolicy_Lowering(t *testing.T) {
 	for _, tc := range []struct {
 		mode     string
 		broker   int
-		wantMode containment.NetMode
+		wantMode confinement.NetMode
 		wantPort int
 		wantErr  bool
 	}{
-		{"", 0, containment.NetAllowAll, 0, false},
-		{"allow_all", 0, containment.NetAllowAll, 0, false},
-		{"deny_all", 0, containment.NetDenyAll, 0, false},
-		{"DENY_ALL", 0, containment.NetDenyAll, 0, false},
-		{"broker", 41234, containment.NetBroker, 41234, false},
+		{"", 0, confinement.NetAllowAll, 0, false},
+		{"allow_all", 0, confinement.NetAllowAll, 0, false},
+		{"deny_all", 0, confinement.NetDenyAll, 0, false},
+		{"DENY_ALL", 0, confinement.NetDenyAll, 0, false},
+		{"broker", 41234, confinement.NetBroker, 41234, false},
 		{"broker", 0, "", 0, true}, // no broker to pin to
 		{"borker", 0, "", 0, true}, // unknown mode
 	} {
@@ -288,11 +288,11 @@ func TestResolveSubAgentConfinement_UnsetNetworkIsTheConfigDefault(t *testing.T)
 		t.Skip("Landlock present but unusable on this host")
 	}
 	pv := tools.NewPathValidator(t.TempDir(), false, nil)
-	_, rec, err := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: "auto"}, t.TempDir(), containment.NetworkPolicy{})
+	_, rec, err := resolveSubAgentConfinement(pv, config.SubAgentConfig{Containment: "auto"}, t.TempDir(), confinement.NetworkPolicy{})
 	if err != nil {
 		t.Fatalf("an unset network must not refuse the dispatch: %v", err)
 	}
-	if rec.Network != string(containment.NetAllowAll) {
+	if rec.Network != string(confinement.NetAllowAll) {
 		t.Errorf("an unset network records %q, want allow_all", rec.Network)
 	}
 }
@@ -301,9 +301,9 @@ func TestResolveSubAgentConfinement_UnsetNetworkIsTheConfigDefault(t *testing.T)
 // claimed on a host whose jail has no network rules: in both cases the dispatch
 // refuses rather than running — or recording — open egress.
 func TestRequireEnforceableEgress(t *testing.T) {
-	deny := containment.NetworkPolicy{Mode: containment.NetDenyAll}
-	allow := containment.NetworkPolicy{Mode: containment.NetAllowAll}
-	broker := containment.NetworkPolicy{Mode: containment.NetBroker, BrokerPort: 41234}
+	deny := confinement.NetworkPolicy{Mode: confinement.NetDenyAll}
+	allow := confinement.NetworkPolicy{Mode: confinement.NetAllowAll}
+	broker := confinement.NetworkPolicy{Mode: confinement.NetBroker, BrokerPort: 41234}
 	usableNoNet := stubBackend{usable: true, netCapable: false}
 	usableNet := stubBackend{usable: true, netCapable: true}
 
@@ -312,27 +312,27 @@ func TestRequireEnforceableEgress(t *testing.T) {
 		name      string
 		available bool
 		backend   containment.Backend
-		network   containment.NetworkPolicy
-		placement confinement.Placement
+		network   confinement.NetworkPolicy
+		placement containment.Placement
 		workdir   string
 		wantErr   bool
 		wantHint  string
 	}{
-		{"allow_all needs nothing", false, nil, allow, confinement.PlacementAuto, workdir, false, ""},
+		{"allow_all needs nothing", false, nil, allow, containment.PlacementAuto, workdir, false, ""},
 		{"allow_all with no placement needs nothing", false, nil, allow, "", "", false, ""},
-		{"deny_all with no backend refuses", false, nil, deny, confinement.PlacementAuto, workdir, true, "no usable syscall-jail backend"},
-		{"broker with no backend refuses", false, nil, broker, confinement.PlacementAuto, workdir, true, "no usable syscall-jail backend"},
-		{"deny_all without network rules refuses", true, usableNoNet, deny, confinement.PlacementAuto, workdir, true, "ABI >= 4"},
-		{"broker without network rules refuses", true, usableNoNet, broker, confinement.PlacementAuto, workdir, true, "ABI >= 4"},
-		{"deny_all with rules is fine", true, usableNet, deny, confinement.PlacementAuto, workdir, false, ""},
-		{"broker with rules is fine", true, usableNet, broker, confinement.PlacementPaddock, workdir, false, ""},
+		{"deny_all with no backend refuses", false, nil, deny, containment.PlacementAuto, workdir, true, "no usable syscall-jail backend"},
+		{"broker with no backend refuses", false, nil, broker, containment.PlacementAuto, workdir, true, "no usable syscall-jail backend"},
+		{"deny_all without network rules refuses", true, usableNoNet, deny, containment.PlacementAuto, workdir, true, "ABI >= 4"},
+		{"broker without network rules refuses", true, usableNoNet, broker, containment.PlacementAuto, workdir, true, "ABI >= 4"},
+		{"deny_all with rules is fine", true, usableNet, deny, containment.PlacementAuto, workdir, false, ""},
+		{"broker with rules is fine", true, usableNet, broker, containment.PlacementPaddock, workdir, false, ""},
 		// paddock already fails closed at Exec with its own message.
-		{"paddock with no backend keeps its own refusal", false, nil, deny, confinement.PlacementPaddock, workdir, false, ""},
+		{"paddock with no backend keeps its own refusal", false, nil, deny, containment.PlacementPaddock, workdir, false, ""},
 		// The fail-open combinations the review caught: a posture that would be
 		// dropped because the dispatch is not jailed at all.
 		{"containment off + deny_all refuses", true, usableNet, deny, "", workdir, true, "containment is"},
 		{"containment off + broker refuses", true, usableNet, broker, "", workdir, true, "containment is"},
-		{"no workdir + deny_all refuses", true, usableNet, deny, confinement.PlacementAuto, "", true, "no workdir"},
+		{"no workdir + deny_all refuses", true, usableNet, deny, containment.PlacementAuto, "", true, "no workdir"},
 	}
 	for _, c := range cases {
 		err := requireEnforceableEgress(c.available, c.backend, c.network, c.placement, c.workdir, "auto")
@@ -354,10 +354,10 @@ func TestRequireEnforceableEgress(t *testing.T) {
 // routing would permit only the broker's port while every ordinary fetch still
 // went direct and was refused.
 func TestBrokerProxyEnv(t *testing.T) {
-	if got := brokerProxyEnv(containment.NetworkPolicy{Mode: containment.NetAllowAll}); got != nil {
+	if got := brokerProxyEnv(confinement.NetworkPolicy{Mode: confinement.NetAllowAll}); got != nil {
 		t.Errorf("allow_all must set no proxy, got %v", got)
 	}
-	env := brokerProxyEnv(containment.NetworkPolicy{Mode: containment.NetBroker, BrokerPort: 41234})
+	env := brokerProxyEnv(confinement.NetworkPolicy{Mode: confinement.NetBroker, BrokerPort: 41234})
 	joined := strings.Join(env, " ")
 	for _, want := range []string{"HTTPS_PROXY=http://127.0.0.1:41234", "http_proxy=http://127.0.0.1:41234", "NO_PROXY="} {
 		if !strings.Contains(joined, want) {
@@ -391,14 +391,14 @@ func TestBuildSubAgentRegistry_RestrictiveEgressOmitsHostNetworkTools(t *testing
 		t.Skip("no Landlock on this host")
 	} else if ok, _ := b.Available(); !ok {
 		t.Skip("Landlock present but unusable on this host")
-	} else if !b.SupportsNetwork(containment.NetDenyAll) {
+	} else if !b.SupportsNetwork(confinement.NetDenyAll) {
 		t.Skip("no Landlock network support on this host")
 	}
 	closed, _, err := buildSubAgentRegistry(
 		taskRunnerOpts{
 			pathValidator: pv,
 			subCfg:        config.SubAgentConfig{},
-			subNetwork:    containment.NetworkPolicy{Mode: containment.NetDenyAll},
+			subNetwork:    confinement.NetworkPolicy{Mode: confinement.NetDenyAll},
 		},
 		profile, 0, t.TempDir())
 	if err != nil {
@@ -419,7 +419,7 @@ func TestBuildSubAgentRegistry_RestrictiveEgressOmitsHostNetworkTools(t *testing
 func TestBuildSubAgentSysPrompt_NamesOmittedHostNetworkTools(t *testing.T) {
 	opts := taskRunnerOpts{}
 	profile := subagent.RoleProfile{Tools: []string{"read", "webfetch", "http"}}
-	opts.subNetwork = containment.NetworkPolicy{Mode: containment.NetDenyAll}
+	opts.subNetwork = confinement.NetworkPolicy{Mode: confinement.NetDenyAll}
 	got := buildSubAgentSysPrompt(opts, "developer", profile, false, "/wt",
 		&subAgentConfinement{Requested: "auto", Resolved: "paddock", Enforced: true, Network: "deny_all"})
 	if !strings.Contains(got, "webfetch") || !strings.Contains(got, "http") {
@@ -437,7 +437,7 @@ func TestBuildSubAgentRegistry_RestrictiveEgressOnTheUnjailedLane(t *testing.T) 
 	opts := taskRunnerOpts{
 		pathValidator: pv,
 		subCfg:        config.SubAgentConfig{},
-		subNetwork:    containment.NetworkPolicy{Mode: containment.NetDenyAll},
+		subNetwork:    confinement.NetworkPolicy{Mode: confinement.NetDenyAll},
 	}
 
 	// No workdir: the lane does not jail, so the posture is refused outright.
@@ -468,7 +468,7 @@ func TestBuildSubAgentRegistry_RefusedJailStillOmitsHostNetworkTools(t *testing.
 	opts := taskRunnerOpts{
 		pathValidator: pv,
 		subCfg:        config.SubAgentConfig{Containment: "paddock"},
-		subNetwork:    containment.NetworkPolicy{Mode: containment.NetDenyAll},
+		subNetwork:    confinement.NetworkPolicy{Mode: confinement.NetDenyAll},
 	}
 	reg, _, err := buildSubAgentRegistry(opts, profile, 0, t.TempDir())
 	if err != nil {

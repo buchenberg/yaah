@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/landlock"
+	"github.com/buchenberg/goatherd-runtime/sandbox/landlock"
 )
 
 func TestMain(m *testing.M) {

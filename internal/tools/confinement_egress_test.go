@@ -21,10 +21,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/egress"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/landlock"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/egress"
+	"github.com/buchenberg/goatherd-runtime/sandbox/landlock"
 )
 
 // egressTestEnv skips unless this host can actually enforce egress.
@@ -34,7 +34,7 @@ func egressTestEnv(t *testing.T) containment.Backend {
 		t.Skip("Landlock is Linux-only")
 	}
 	backend := landlock.Detect()
-	if backend == nil || !backend.SupportsNetwork(containment.NetDenyAll) {
+	if backend == nil || !backend.SupportsNetwork(confinement.NetDenyAll) {
 		t.Skip("no Landlock network support on this host (needs ABI >= 4)")
 	}
 	if _, err := exec.LookPath("bash"); err != nil {
@@ -44,11 +44,11 @@ func egressTestEnv(t *testing.T) containment.Backend {
 }
 
 // confinedNetworkWorkspace is confinedTestWorkspace with an egress posture.
-func confinedNetworkWorkspace(root string, backend containment.Backend, mode containment.NetMode, brokerPort int) *localWorkspace {
+func confinedNetworkWorkspace(root string, backend containment.Backend, mode confinement.NetMode, brokerPort int) *localWorkspace {
 	pv := NewPathValidator(root, false, nil)
 	pv.WorkDir = pv.WorkspaceRoot
-	return NewConfinedLocalWorkspace(pv, backend, confinement.PlacementPaddock,
-		containment.NetworkPolicy{Mode: mode, BrokerPort: brokerPort})
+	return NewConfinedLocalWorkspace(pv, backend, containment.PlacementPaddock,
+		confinement.NetworkPolicy{Mode: mode, BrokerPort: brokerPort})
 }
 
 // connSink accepts connections and announces each one on a channel, so a test
@@ -122,7 +122,7 @@ func TestConfinedEgress_DenyAllRefusesConnect(t *testing.T) {
 
 	// Control: the same command under allow_all reaches the listener, so a
 	// failure below is the rule and not a broken harness.
-	open := confinedNetworkWorkspace(t.TempDir(), backend, containment.NetAllowAll, 0)
+	open := confinedNetworkWorkspace(t.TempDir(), backend, confinement.NetAllowAll, 0)
 	if res := connect(t, open, sink.port); res.ExitCode != 0 {
 		t.Fatalf("the allow_all control must connect (exit=%d stderr=%s)", res.ExitCode, res.Stderr)
 	}
@@ -130,7 +130,7 @@ func TestConfinedEgress_DenyAllRefusesConnect(t *testing.T) {
 		t.Fatalf("the control connect must have been accepted, saw %d", got)
 	}
 
-	denied := confinedNetworkWorkspace(t.TempDir(), backend, containment.NetDenyAll, 0)
+	denied := confinedNetworkWorkspace(t.TempDir(), backend, confinement.NetDenyAll, 0)
 	res := connect(t, denied, sink.port)
 	if res.ExitCode == 0 {
 		t.Fatalf("deny_all must refuse the connect (%+v)", res)
@@ -159,7 +159,7 @@ func TestConfinedEgress_BrokerPinsToItsPort(t *testing.T) {
 	t.Cleanup(broker.Stop)
 
 	other := newConnSink(t, 1)
-	ws := confinedNetworkWorkspace(t.TempDir(), backend, containment.NetBroker, brokerPort)
+	ws := confinedNetworkWorkspace(t.TempDir(), backend, confinement.NetBroker, brokerPort)
 
 	if res := connect(t, ws, brokerPort); res.ExitCode != 0 {
 		t.Fatalf("the pinned broker port must be reachable (exit=%d stderr=%s)", res.ExitCode, res.Stderr)
@@ -187,7 +187,7 @@ func TestConfinedEgress_BrokerDecidesByHost(t *testing.T) {
 	}
 	t.Cleanup(broker.Stop)
 
-	ws := confinedNetworkWorkspace(t.TempDir(), backend, containment.NetBroker, brokerPort)
+	ws := confinedNetworkWorkspace(t.TempDir(), backend, confinement.NetBroker, brokerPort)
 	connectTo := func(host string, port int) string {
 		t.Helper()
 		script := fmt.Sprintf(

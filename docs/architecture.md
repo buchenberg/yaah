@@ -526,7 +526,7 @@ A retained dispatch runs the sub-agent in a **worktree of its own** and seals it
 - **The settlement.** `select` fast-forwards and fails closed if the tree moved; `apply` is a three-way merge that lands only when the change sets are path-disjoint; `release` keeps whatever landed and drops the record; `discard` throws the work away and removes the worktree. A sealed output is consumed exactly once (`ErrOutputConsumed`), and a settlement that landed an effect but failed its causal merge reports the diagnostic instead of inviting a retry that would apply it twice.
 - **The judgement.** It is the orchestrator's, not a sub-agent's: the retained lane returns a diff and the orchestrator decides. No reviewer sub-agent is inserted automatically.
 
-**Turn checkpoints.** `ShepherdTurnCheckpointer` (`internal/agent/runner/checkpoint.go`) adapts `shepherd.ScopeManager` to the loop's `TurnCheckpointer` interface. A checkpoint captures the workspace *and* the conversation, and a restore consumes it, so the two stay in step. This is per-attempt robustness inside a dispatch (a role sets `turn_checkpoints`), not a settlement mechanism — the worktree already makes the attempt disposable.
+**Turn checkpoints.** `ShepherdTurnCheckpointer` (`internal/agent/runner/checkpoint.go`) adapts `goatherd.ScopeManager` to the loop's `TurnCheckpointer` interface. A checkpoint captures the workspace *and* the conversation, and a restore consumes it, so the two stay in step. This is per-attempt robustness inside a dispatch (a role sets `turn_checkpoints`), not a settlement mechanism — the worktree already makes the attempt disposable.
 
 **Confinement.** Isolation is only real if the sub-agent's tools actually operate in the worktree, so the dispatch carries `SubAgentParams.Workdir`. `buildSubAgentRegistry` turns that into a per-scope `PathValidator` — rooted at the worktree, inheriting deny patterns and the approval callback, with a fresh approval cache — and `bash`/`powershell` use it as `cmd.Dir`. Confinement then rides that root: `agents.subagent.containment` jails writes to it, and `agents.subagent.network` governs egress from it.
 
@@ -591,7 +591,7 @@ Two implementations:
 | | Backing | Writes | Exec |
 |---|---|---|---|
 | `localWorkspace` | the host filesystem, through the session's `PathValidator` | temp file plus rename (crash-safe) | `exec.CommandContext`, combined output |
-| `sandboxWorkspace` (`workspace_sandbox.go`) | a `shepherdsandbox.Sandbox` | temp file plus rename **inside** the sandbox | in-band through the sandbox |
+| `sandboxWorkspace` (`workspace_sandbox.go`) | a `goatherdsandbox.Sandbox` | temp file plus rename **inside** the sandbox | in-band through the sandbox |
 
 **Injection.** `Registry` carries both a `PathValidator` and a `Workspace`. Setting only a validator — which every existing caller does — derives a `localWorkspace` from it, so migrating a tool needs no change at its construction site. Both are injected into each tool, because unmigrated tools still need the validator. `SetWorkspace` overrides the derived workspace with an isolated one.
 

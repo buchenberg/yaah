@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 
 	"github.com/buchenberg/yaah/internal/skills"
 )
@@ -362,27 +362,27 @@ func TestIsolatedSubAgentGuidance(t *testing.T) {
 }
 
 // The egress guidance switches on the NetMode string values, while the runner
-// feeds it those values via string(containment.NetDenyAll) on a policy it lowered
+// feeds it those values via string(confinement.NetDenyAll) on a policy it lowered
 // from config. If a constant's value ever moves, the switch would fall through and
 // a deny_all sub-agent would never be told its egress is blocked — so the coupling
 // is asserted rather than assumed.
 func TestConfinementGuidance_EgressLiterals(t *testing.T) {
-	if string(containment.NetDenyAll) != "deny_all" || string(containment.NetBroker) != "broker" {
+	if string(confinement.NetDenyAll) != "deny_all" || string(confinement.NetBroker) != "broker" {
 		t.Fatalf("the NetMode literals moved (%q / %q): the guidance switch and the runner must agree",
-			containment.NetDenyAll, containment.NetBroker)
+			confinement.NetDenyAll, confinement.NetBroker)
 	}
 	// And the guidance really distinguishes them.
-	denied := ConfinementSubAgentGuidance("/wt", string(containment.NetDenyAll), 0, []string{"webfetch", "http"}, true)
+	denied := ConfinementSubAgentGuidance("/wt", string(confinement.NetDenyAll), 0, []string{"webfetch", "http"}, true)
 	for _, want := range []string{"no network egress", "not available to you here"} {
 		if !strings.Contains(denied, want) {
 			t.Errorf("deny_all guidance must contain %q:\n%s", want, denied)
 		}
 	}
-	brokered := ConfinementSubAgentGuidance("/wt", string(containment.NetBroker), 41234, nil, true)
+	brokered := ConfinementSubAgentGuidance("/wt", string(confinement.NetBroker), 41234, nil, true)
 	if !strings.Contains(brokered, "127.0.0.1:41234") {
 		t.Errorf("broker guidance must name the endpoint:\n%s", brokered)
 	}
-	open := ConfinementSubAgentGuidance("/wt", string(containment.NetAllowAll), 0, []string{"webfetch"}, true)
+	open := ConfinementSubAgentGuidance("/wt", string(confinement.NetAllowAll), 0, []string{"webfetch"}, true)
 	if strings.Contains(open, "no network egress") || strings.Contains(open, "not available to you here") {
 		t.Errorf("allow_all guidance must claim nothing about egress:\n%s", open)
 	}

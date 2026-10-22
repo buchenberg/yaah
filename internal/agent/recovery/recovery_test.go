@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
-	shepherdsandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
-	shepherdgit "github.com/buchenberg/shepherd-runtime-go/sandbox/git"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
+	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
 )
 
 // newGitRepo creates a committed repository — worktrees and captures
@@ -72,8 +72,8 @@ func buildCrashState(t *testing.T) *crashState {
 	state := &crashState{storePath: filepath.Join(dir, "trace.sqlite"), repo: repo}
 	t.Cleanup(func() { store.Close(context.Background()) })
 
-	mgr := shepherd.NewScopeManager(store)
-	root, err := mgr.Create("sess-old", shepherdgit.NewLocalGitSandbox(repo))
+	mgr := goatherd.NewScopeManager(store)
+	root, err := mgr.Create("sess-old", goatherdgit.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create root: %v", err)
 	}
@@ -103,8 +103,8 @@ func buildCrashState(t *testing.T) *crashState {
 	// An isolated worktree child with a sealed output — the crash
 	// happened mid-fork, before the settlement.
 	wtPath := filepath.Join(t.TempDir(), "wt-a")
-	sb := shepherdgit.NewWorktreeSandbox(repo, wtPath)
-	if err := sb.Create(context.Background(), shepherdsandbox.SandboxSpec{}); err != nil {
+	sb := goatherdgit.NewWorktreeSandbox(repo, wtPath)
+	if err := sb.Create(context.Background(), goatherdsandbox.SandboxSpec{}); err != nil {
 		t.Fatalf("create worktree: %v", err)
 	}
 	wtChild, err := mgr.ForkIsolated(root.ID(), "sub-worktree", nil, sb)
@@ -128,7 +128,7 @@ func buildCrashState(t *testing.T) *crashState {
 
 // reopen simulates the restart: a fresh process opens the same
 // durable trace and recovers.
-func reopen(t *testing.T, state *crashState) (*shepherd.ScopeManager, *Report) {
+func reopen(t *testing.T, state *crashState) (*goatherd.ScopeManager, *Report) {
 	t.Helper()
 	store, err := shepherdtrace.NewSQLiteTraceStore(state.storePath)
 	if err != nil {
@@ -155,7 +155,7 @@ func TestRecover_RebuildsTreeTerminalsCheckpointsOutputs(t *testing.T) {
 	// discarded child terminal, the worktree child active with its
 	// worktree re-adopted.
 	root, ok := mgr.Get("scope:sess-old")
-	if !ok || root.State() != shepherd.ScopeActive {
+	if !ok || root.State() != goatherd.ScopeActive {
 		t.Fatalf("root not recovered active: ok=%v state=%v", ok, root.State())
 	}
 	// Roots resolve with an empty backend by the kernel's recovery
@@ -165,15 +165,15 @@ func TestRecover_RebuildsTreeTerminalsCheckpointsOutputs(t *testing.T) {
 		t.Error("the root must be re-adopted onto the in-place git repository")
 	}
 	shared, ok := mgr.Get(state.sharedChildID)
-	if !ok || shared.State() != shepherd.ScopeActive || shared.Parent() == nil || shared.Parent().ID() != root.ID() {
+	if !ok || shared.State() != goatherd.ScopeActive || shared.Parent() == nil || shared.Parent().ID() != root.ID() {
 		t.Fatalf("shared child not recovered under the root: ok=%v state=%s", ok, shared.State())
 	}
 	dead, ok := mgr.Get(state.discardedID)
-	if !ok || dead.State() != shepherd.ScopeDiscarded {
+	if !ok || dead.State() != goatherd.ScopeDiscarded {
 		t.Fatalf("terminal state not recovered: ok=%v state=%v", ok, dead.State())
 	}
 	wtChild, ok := mgr.Get(state.worktreeChildID)
-	if !ok || wtChild.State() != shepherd.ScopeActive {
+	if !ok || wtChild.State() != goatherd.ScopeActive {
 		t.Fatalf("worktree child not recovered: ok=%v state=%v", ok, wtChild.State())
 	}
 	if wtChild.Sandbox() == nil {
@@ -197,7 +197,7 @@ func TestRecover_RebuildsTreeTerminalsCheckpointsOutputs(t *testing.T) {
 
 	// The retained outputs: the sealed output is settle-able again.
 	out, ok := mgr.Output(state.outputID)
-	if !ok || out.State() != shepherd.OutputUnconsumed {
+	if !ok || out.State() != goatherd.OutputUnconsumed {
 		t.Fatalf("sealed output not recovered settle-able: ok=%v state=%v", ok, out.State())
 	}
 	if len(out.Changes()) == 0 {
@@ -248,7 +248,7 @@ func TestRecover_FailsLoudlyOnCorruptTrace(t *testing.T) {
 			TraceOwnerID: "sess-bad",
 			FactDrafts: []shepherdtrace.RecordDraft{{
 				Mode:      shepherdtrace.Declaration,
-				SchemaRef: shepherd.SchemaScopeForked,
+				SchemaRef: goatherd.SchemaScopeForked,
 				KindLabel: "scope:forked",
 				Payload:   map[string]any{"isolated": false},
 			}},
@@ -259,6 +259,61 @@ func TestRecover_FailsLoudlyOnCorruptTrace(t *testing.T) {
 
 	if _, _, err := Recover(context.Background(), store, repo, true, nil); err == nil {
 		t.Fatal("a corrupt trace must fail the recovery loudly")
+	}
+}
+
+// TestScanWorktreePaths_LegacyForkRecordsListed pins the rename fallback:
+// fork records written before the goatherd rename carry the old schema ref,
+// and recovery must still read their worktree addresses — dropping them
+// would strand pre-rename worktrees (they would fall out of `paths` and
+// neither list nor prune). The current ref wins on collision.
+func TestScanWorktreePaths_LegacyForkRecordsListed(t *testing.T) {
+	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+
+	appendFork := func(ref, intent, owner, path string) {
+		t.Helper()
+		if _, err := store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+			AppendIntentID: intent,
+			Groups: []shepherdtrace.AppendGroup{{
+				TraceOwnerID: "sess-old",
+				FactDrafts: []shepherdtrace.RecordDraft{{
+					Mode:      shepherdtrace.Declaration,
+					SchemaRef: ref,
+					KindLabel: "scope:forked",
+					Payload:   map[string]any{"child_owner": owner, "sandbox_path": path, "isolated": true},
+				}},
+			}},
+		}); err != nil {
+			t.Fatalf("append %s record: %v", ref, err)
+		}
+	}
+	appendFork(legacySchemaScopeForked, "sess-old:fork:legacy:1", "scope:legacy-child", "/wt/legacy")
+	appendFork(goatherd.SchemaScopeForked, "sess-old:fork:new:1", "scope:new-child", "/wt/new")
+	// Collision: both refs know this child; the current ref's record must win.
+	appendFork(legacySchemaScopeForked, "sess-old:fork:legacy:2", "scope:both-child", "/wt/both-legacy")
+	appendFork(goatherd.SchemaScopeForked, "sess-old:fork:new:2", "scope:both-child", "/wt/both-new")
+
+	paths, err := scanWorktreePaths(context.Background(), store, "/trusted/repo")
+	if err != nil {
+		t.Fatalf("scanWorktreePaths: %v", err)
+	}
+	for _, want := range []struct{ child, path string }{
+		{"scope:legacy-child", "/wt/legacy"},
+		{"scope:new-child", "/wt/new"},
+		{"scope:both-child", "/wt/both-new"},
+	} {
+		got, ok := paths[want.child]
+		if !ok {
+			t.Errorf("%s missing from the scan (paths: %v)", want.child, paths)
+		} else if got.path != want.path {
+			t.Errorf("%s path = %q, want %q", want.child, got.path, want.path)
+		} else if got.repo != "/trusted/repo" {
+			t.Errorf("%s repo = %q, want the trusted repo", want.child, got.repo)
+		}
 	}
 }
 
@@ -313,7 +368,7 @@ func TestRecover_OrphanListedAndLeftOnDisk(t *testing.T) {
 	if found.Path != state.worktreePath || found.Size <= 0 {
 		t.Errorf("orphan = %+v, want the path and a nonzero size", found)
 	}
-	if scope, ok := mgr.Get(state.worktreeChildID); !ok || scope.State() != shepherd.ScopeDiscarded {
+	if scope, ok := mgr.Get(state.worktreeChildID); !ok || scope.State() != goatherd.ScopeDiscarded {
 		t.Errorf("the discarded scope must recover terminal (ok=%v)", ok)
 	} else if scope.Sandbox() != nil {
 		t.Error("an orphan must stay inert: no owned sandbox handle a later teardown could destroy it through")
@@ -380,14 +435,14 @@ func TestRecover_SquatterDirectoryNeverAdopted(t *testing.T) {
 		t.Fatalf("write user data: %v", err)
 	}
 
-	mgr1 := shepherd.NewScopeManager(store)
-	root, err := mgr1.Create("sess-squat", shepherdgit.NewLocalGitSandbox(repo))
+	mgr1 := goatherd.NewScopeManager(store)
+	root, err := mgr1.Create("sess-squat", goatherdgit.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create root: %v", err)
 	}
 	// The isolated fork never provisioned a real worktree — the crash
 	// left the scope pointing at the squatter's path.
-	child, err := mgr1.ForkIsolated(root.ID(), "sub-squat", nil, shepherdgit.NewWorktreeSandbox(repo, squat))
+	child, err := mgr1.ForkIsolated(root.ID(), "sub-squat", nil, goatherdgit.NewWorktreeSandbox(repo, squat))
 	if err != nil {
 		t.Fatalf("fork: %v", err)
 	}
@@ -404,7 +459,7 @@ func TestRecover_SquatterDirectoryNeverAdopted(t *testing.T) {
 	}
 
 	scope, ok := mgr.Get(child.ID())
-	if !ok || scope.State() != shepherd.ScopeActive {
+	if !ok || scope.State() != goatherd.ScopeActive {
 		t.Fatalf("child not recovered active (ok=%v)", ok)
 	}
 	if scope.Sandbox() != nil {
@@ -437,7 +492,7 @@ func TestRecover_IsolatedSessionKeepsRootsCausal(t *testing.T) {
 	mgr, _ := reopenMode(t, state, false)
 
 	root, ok := mgr.Get("scope:sess-old")
-	if !ok || root.State() != shepherd.ScopeActive {
+	if !ok || root.State() != goatherd.ScopeActive {
 		t.Fatalf("root not recovered active (ok=%v)", ok)
 	}
 	if root.Sandbox() != nil {
@@ -446,7 +501,7 @@ func TestRecover_IsolatedSessionKeepsRootsCausal(t *testing.T) {
 }
 
 // reopenMode recovers with an explicit adoptRoots mode.
-func reopenMode(t *testing.T, state *crashState, adoptRoots bool) (*shepherd.ScopeManager, *Report) {
+func reopenMode(t *testing.T, state *crashState, adoptRoots bool) (*goatherd.ScopeManager, *Report) {
 	t.Helper()
 	store, err := shepherdtrace.NewSQLiteTraceStore(state.storePath)
 	if err != nil {
@@ -501,15 +556,15 @@ func TestRecover_KernelRecordedWorktreeAdoptsWithoutYaahRecord(t *testing.T) {
 	repo := newGitRepo(t)
 	ctx := context.Background()
 
-	mgr := shepherd.NewScopeManager(store)
-	root, err := mgr.Create("sess-new", shepherdgit.NewLocalGitSandbox(repo))
+	mgr := goatherd.NewScopeManager(store)
+	root, err := mgr.Create("sess-new", goatherdgit.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create root: %v", err)
 	}
 
 	wtPath := filepath.Join(t.TempDir(), "wt-new")
-	sb := shepherdgit.NewWorktreeSandbox(repo, wtPath)
-	if err := sb.Create(ctx, shepherdsandbox.SandboxSpec{}); err != nil {
+	sb := goatherdgit.NewWorktreeSandbox(repo, wtPath)
+	if err := sb.Create(ctx, goatherdsandbox.SandboxSpec{}); err != nil {
 		t.Fatalf("create worktree: %v", err)
 	}
 	child, err := mgr.ForkIsolated(root.ID(), "sub-new", nil, sb)
@@ -567,15 +622,15 @@ func TestRecover_LegacyRecordFallbackAdopts(t *testing.T) {
 	repo := newGitRepo(t)
 	ctx := context.Background()
 
-	mgr := shepherd.NewScopeManager(store)
-	root, err := mgr.Create("sess-legacy", shepherdgit.NewLocalGitSandbox(repo))
+	mgr := goatherd.NewScopeManager(store)
+	root, err := mgr.Create("sess-legacy", goatherdgit.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create root: %v", err)
 	}
 
 	wtPath := filepath.Join(t.TempDir(), "wt-legacy")
-	sb := shepherdgit.NewWorktreeSandbox(repo, wtPath)
-	if err := sb.Create(ctx, shepherdsandbox.SandboxSpec{}); err != nil {
+	sb := goatherdgit.NewWorktreeSandbox(repo, wtPath)
+	if err := sb.Create(ctx, goatherdsandbox.SandboxSpec{}); err != nil {
 		t.Fatalf("create worktree: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(wtPath, "old.txt"), []byte("pre-bump work\n"), 0o644); err != nil {
@@ -590,7 +645,7 @@ func TestRecover_LegacyRecordFallbackAdopts(t *testing.T) {
 			TraceOwnerID: root.OwnerID(),
 			FactDrafts: []shepherdtrace.RecordDraft{{
 				Mode:      shepherdtrace.Declaration,
-				SchemaRef: shepherd.SchemaScopeForked,
+				SchemaRef: goatherd.SchemaScopeForked,
 				KindLabel: "scope:forked",
 				Payload: map[string]any{
 					"child_owner":     "sub-legacy",
@@ -651,7 +706,7 @@ func TestRecover_StatsSinkForwarded(t *testing.T) {
 		t.Fatalf("reopen store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	var stats shepherd.RecoveryStats
+	var stats goatherd.RecoveryStats
 	if _, _, err := Recover(context.Background(), store, state.repo, true, &stats); err != nil {
 		t.Fatalf("recover with stats: %v", err)
 	}

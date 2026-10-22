@@ -209,7 +209,7 @@ Windows; on Linux the network can be governed with it as well:
 ### Containment across platforms
 
 The containment family is one contract with per-platform mechanisms
-(`shepherd-runtime-go/sandbox/*`). yaah picks the member per platform:
+(`goatherd-runtime/sandbox/*`). yaah picks the member per platform:
 `landlock` on Linux, `winacl` on Windows, and nothing (advisory only)
 elsewhere — e.g. macOS.
 

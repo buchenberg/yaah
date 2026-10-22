@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
-	shepherdgit "github.com/buchenberg/shepherd-runtime-go/sandbox/git"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
+	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
 )
 
 // Benchmark per-turn git checkpoints to measure their cost and decide
@@ -70,8 +70,8 @@ func benchCheckpointer(b *testing.B, repo string) *ShepherdTurnCheckpointer {
 		b.Fatalf("open store: %v", err)
 	}
 	b.Cleanup(func() { store.Close(context.Background()) })
-	mgr := shepherd.NewScopeManager(store)
-	sb := shepherdgit.NewLocalGitSandbox(repo)
+	mgr := goatherd.NewScopeManager(store)
+	sb := goatherdgit.NewLocalGitSandbox(repo)
 	scope, err := mgr.Create("bench", sb)
 	if err != nil {
 		b.Fatalf("create scope: %v", err)

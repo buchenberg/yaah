@@ -8,7 +8,7 @@ import (
 	"slices"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	"github.com/buchenberg/yaah/internal/types"
 )
 

@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
 )
 
 // defaultBusBuffer is the per-subscriber effect bus buffer size used when
@@ -21,7 +21,7 @@ const defaultBusBuffer = 64
 // hosts shepherd_trace, so this is the single initialization point shared
 // by the SupervisorTool and the sub-agent trace middleware. tracePath is
 // the store file itself, not its parent directory.
-func InitShepherdInfrastructure(tracePath string, busBuffer int) (*shepherdtrace.SQLiteTraceStore, *shepherdtrace.EffectBus, *shepherd.ScopeManager, error) {
+func InitShepherdInfrastructure(tracePath string, busBuffer int) (*shepherdtrace.SQLiteTraceStore, *shepherdtrace.EffectBus, *goatherd.ScopeManager, error) {
 	traceDir := filepath.Dir(tracePath)
 	// Only tighten the directory we create. tracePath may be relative, in
 	// which case traceDir is "." — chmod'ing an existing cwd to 0700 would
@@ -53,7 +53,7 @@ func InitShepherdInfrastructure(tracePath string, busBuffer int) (*shepherdtrace
 	}
 	bus := shepherdtrace.NewEffectBus(busBuffer)
 	store.WithBus(bus)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	return store, bus, mgr, nil
 }
 
