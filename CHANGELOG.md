@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.99.0](https://github.com/buchenberg/yaah/compare/v0.98.0...v0.99.0) (2026-10-22)
+
+
+### Features
+
+* **memory:** hygiene loop — prune dead session + stale compaction atoms ([#553](https://github.com/buchenberg/yaah/issues/553)) ([b9fb77c](https://github.com/buchenberg/yaah/commit/b9fb77c7797b1c629be8026cfaa75b79968b6dc3))
+
 ## [0.98.0](https://github.com/buchenberg/yaah/compare/v0.97.0...v0.98.0) (2026-10-22)
 
 
