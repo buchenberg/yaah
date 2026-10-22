@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.101.1](https://github.com/buchenberg/yaah/compare/v0.101.0...v0.101.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* **consolidate:** dedupe atoms against existing memory before writing ([#559](https://github.com/buchenberg/yaah/issues/559)) ([03258a9](https://github.com/buchenberg/yaah/commit/03258a9824923ead1a08ede178d095ea5a96baac))
+
 ## [0.101.0](https://github.com/buchenberg/yaah/compare/v0.100.0...v0.101.0) (2026-10-22)
 
 
