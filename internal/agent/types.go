@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -114,6 +115,18 @@ type Loop struct {
 	// unchanged; this is an additional, read-only observation).
 	OnSubUsage func(types.Usage)
 
+	// ConsolidateFn, when set, is invoked by the consolidate middleware
+	// when its cadence triggers (docs/compaction-as-sleep.md §7). It is
+	// fire-and-forget: the loop continues immediately and the
+	// consolidation runs out-of-band. kind names the product to
+	// consolidate ("memory" in P0). Nil disables the nudge.
+	//
+	// P0 lands the seam only: no caller assigns this field yet, so the
+	// nudge is inert by default even with the "consolidate" middleware
+	// enabled. The consolidator sub-agent dispatch is wired in P1
+	// (bead yaah-8sy).
+	ConsolidateFn func(ctx context.Context, kind string)
+
 	// BackgroundJobs, when set, is wired with the loop's broker callbacks
 	// (SubAgentStart/End events) at Run start so background sub-agents
 	// dispatching through the shared DelegateTool emit live UI events while a
@@ -201,15 +214,20 @@ type LoopConfig struct {
 	StuckChildTimeout      time.Duration
 	StuckChildTimeouts     map[string]time.Duration
 	PromptCaching          bool
-	CompactModel           string
-	SessionID              string
-	PipelineNames          []string
-	PipelineDisabled       []string
-	PermissionRules        []pipeline.PermissionRule
-	OtelEnabled            bool
-	OtelVerbose            bool
-	SystemPrompt           string
-	SystemPromptOverride   string
+	// Consolidation "nudge" cadence (docs/compaction-as-sleep.md §7):
+	// fire the consolidate middleware every N turns or N tool results.
+	// Both 0 = disabled.
+	ConsolidateTurnsInterval int
+	ConsolidateItersInterval int
+	CompactModel             string
+	SessionID                string
+	PipelineNames            []string
+	PipelineDisabled         []string
+	PermissionRules          []pipeline.PermissionRule
+	OtelEnabled              bool
+	OtelVerbose              bool
+	SystemPrompt             string
+	SystemPromptOverride     string
 
 	// IsSubAgent marks loops created by NewSubAgentLoop. Sub-agent loops
 	// build the curated sub-agent middleware pipeline instead of the

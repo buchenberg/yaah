@@ -144,6 +144,14 @@ type Defaults struct {
 	PruneMinReclaim    int `yaml:"prune_min_reclaim"`    // min tokens to commit a prune; 0 = default (400)
 	PruneMinTurns      int `yaml:"prune_min_turns"`      // recent turns always kept; 0 = default (1)
 
+	// Consolidation "nudge" (docs/compaction-as-sleep.md §7): fire the
+	// consolidate middleware every N turns or every N tool results so the
+	// loop consolidates durable state to long-term memory out-of-band.
+	// Both 0 = disabled (default). Requires the "consolidate" middleware
+	// to be enabled in middleware.enabled.
+	ConsolidateTurnsInterval int `yaml:"consolidate_turns_interval"`
+	ConsolidateItersInterval int `yaml:"consolidate_iters_interval"`
+
 	// Directives are session-level policy statements injected into the
 	// top-level agent's system prompt, immediately after the identity
 	// block. Sub-agents do NOT inherit these; they receive per-role
