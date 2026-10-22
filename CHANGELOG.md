@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.96.0](https://github.com/buchenberg/yaah/compare/v0.95.0...v0.96.0) (2026-10-22)
+
+
+### Features
+
+* **sessions:** interactive --resume picker + web /api/sessions ([263f8f0](https://github.com/buchenberg/yaah/commit/263f8f08bf0b39392d622bc864e94ea5f5eec052))
+
+
+### Bug Fixes
+
+* **sessions:** review round + Windows CI for the resume picker and /api/sessions ([c31154b](https://github.com/buchenberg/yaah/commit/c31154b7f37b32639fe80f1ba3c74034f753315d))
+
 ## [0.95.0](https://github.com/buchenberg/yaah/compare/v0.94.0...v0.95.0) (2026-10-22)
 
 
