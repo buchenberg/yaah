@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.101.2](https://github.com/buchenberg/yaah/compare/v0.101.1...v0.101.2) (2026-10-22)
+
+
+### Documentation
+
+* rewrite README memory section — honest optimization framing ([#561](https://github.com/buchenberg/yaah/issues/561)) ([8143e1a](https://github.com/buchenberg/yaah/commit/8143e1aece88dc40d7accd3766b64a75f039670e))
+
 ## [0.101.1](https://github.com/buchenberg/yaah/compare/v0.101.0...v0.101.1) (2026-10-22)
 
 
