@@ -179,6 +179,7 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 	case *agent.TitleSetEvent:
 		// Intentionally ignored: the web UI has no session-title display
 		// yet; the /api/sessions endpoint serves titles from the store.
+		return
 	default:
 		// Deliberately unmatched events emit no wire frame — the
 		// previous fallthrough wrote an empty {"type":""} SSE event

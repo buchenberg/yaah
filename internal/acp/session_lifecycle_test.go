@@ -398,20 +398,20 @@ func TestServer_sessionDeletePrunesStoreAndSucceedsSilently(t *testing.T) {
 }
 
 // TestServer_sessionInfoUpdate pins the transport behavior for the
-// engine's title transition: during a prompt, one session/update with
-// session_info_update (title + RFC3339 updatedAt) reaches the client
-// before end_turn.
+// engine's title transition: a TitleSetEvent the loop publishes during a
+// prompt reaches the client as exactly one session/update carrying
+// session_info_update (title + RFC3339 updatedAt) before end_turn. The
+// engine's once-per-session guarantee itself is pinned in
+// internal/agent's TestSessionPersister_titleTransition — this harness
+// has no persister, so re-emission suppression is not asserted here.
 func TestServer_sessionInfoUpdate(t *testing.T) {
-	fire := false
 	sess := &fakeSession{id: "sess-tl"}
 	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
-		if fire {
-			if v := sess.currentView(); v != nil {
-				v.HandleEvent(&agent.TitleSetEvent{
-					Title:     "fix the flaky test",
-					UpdatedAt: 1761060000,
-				})
-			}
+		if v := sess.currentView(); v != nil {
+			v.HandleEvent(&agent.TitleSetEvent{
+				Title:     "fix the flaky test",
+				UpdatedAt: 1761060000,
+			})
 		}
 		return "done", false, nil
 	}
@@ -420,47 +420,41 @@ func TestServer_sessionInfoUpdate(t *testing.T) {
 	sid := newSession(t, h)
 
 	sawInfo := false
-	for round := 0; round < 2; round++ {
-		fire = round == 0
-		if err := h.send("session/prompt", 10+round, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"turn"}]}`, sid)); err != nil {
-			t.Fatal(err)
+	if err := h.send("session/prompt", 10, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"turn"}]}`, sid)); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		msg := h.recv(t)
+		if msg.Method == "session/update" {
+			var env updateEnvelope
+			if err := json.Unmarshal(msg.Params, &env); err != nil {
+				t.Fatalf("update envelope: %v", err)
+			}
+			var info SessionInfoUpdate
+			if err := json.Unmarshal(env.Update, &info); err != nil {
+				t.Fatalf("update payload: %v", err)
+			}
+			if info.SessionUpdate == UpdateSessionInfo {
+				if sawInfo {
+					t.Fatal("duplicate session_info_update for one transition")
+				}
+				sawInfo = true
+				if info.Title != "fix the flaky test" {
+					t.Fatalf("title = %v", info.Title)
+				}
+				if want := time.Unix(1761060000, 0).UTC().Format(time.RFC3339); info.UpdatedAt != want {
+					t.Fatalf("updatedAt = %q, want %q", info.UpdatedAt, want)
+				}
+			}
+			continue
 		}
-		for {
-			msg := h.recv(t)
-			if msg.Method == "session/update" {
-				var env updateEnvelope
-				if err := json.Unmarshal(msg.Params, &env); err != nil {
-					t.Fatalf("update envelope: %v", err)
-				}
-				var info SessionInfoUpdate
-				if err := json.Unmarshal(env.Update, &info); err != nil {
-					t.Fatalf("update payload: %v", err)
-				}
-				if info.SessionUpdate == UpdateSessionInfo {
-					if round == 1 {
-						t.Fatal("session_info_update re-emitted on the second prompt")
-					}
-					if sawInfo {
-						t.Fatal("duplicate session_info_update in one turn")
-					}
-					sawInfo = true
-					if info.Title != "fix the flaky test" {
-						t.Fatalf("title = %v", info.Title)
-					}
-					if want := time.Unix(1761060000, 0).UTC().Format(time.RFC3339); info.UpdatedAt != want {
-						t.Fatalf("updatedAt = %q, want %q", info.UpdatedAt, want)
-					}
-				}
-				continue
-			}
-			if msg.Error != nil {
-				t.Fatalf("prompt returned error: %+v", msg.Error)
-			}
-			if !strings.Contains(string(msg.Result), `"stopReason":"end_turn"`) {
-				continue
-			}
-			break
+		if msg.Error != nil {
+			t.Fatalf("prompt returned error: %+v", msg.Error)
 		}
+		if !strings.Contains(string(msg.Result), `"stopReason":"end_turn"`) {
+			continue
+		}
+		break
 	}
 	if !sawInfo {
 		t.Fatal("session_info_update never arrived on the title transition")

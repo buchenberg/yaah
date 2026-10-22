@@ -188,10 +188,13 @@ func (s *agentSession) loopBuilder(
 	// adopts the first derived title). Cache the known title (a cheap
 	// store read only while untitled), cache transitions on the persist
 	// hook, and let the loop forward the event to its broker view.
-	if s.titlePublished == "" && s.db != nil {
-		s.mu.RLock()
-		sessID := s.sessionID
-		s.mu.RUnlock()
+	// titlePublished is guarded by mu (see agentSession) — read and write
+	// under it, same overlap the message snapshot below allows for.
+	s.mu.RLock()
+	titleKnown := s.titlePublished
+	sessID := s.sessionID
+	s.mu.RUnlock()
+	if titleKnown == "" && s.db != nil {
 		if row, err := s.db.GetSession(sessID); err == nil {
 			s.mu.Lock()
 			s.titlePublished = row.Title

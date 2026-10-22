@@ -27,8 +27,6 @@ func decodeUpdate(t *testing.T, u any) map[string]any {
 	return m
 }
 
-// TestView_messageChunks checks the agent_message_chunk and
-// agent_thought_chunk shapes.
 // TestView_sessionInfoUpdate pins the title-transition translation: a
 // TitleSetEvent becomes one session_info_update with the title and an
 // RFC3339 UTC updatedAt, and no other kinds are emitted.
@@ -57,6 +55,8 @@ func TestView_sessionInfoUpdate(t *testing.T) {
 	}
 }
 
+// TestView_messageChunks checks the agent_message_chunk and
+// agent_thought_chunk shapes.
 func TestView_messageChunks(t *testing.T) {
 	var got []any
 	v := NewView()
