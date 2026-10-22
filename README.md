@@ -31,8 +31,8 @@ Four roles are built in: `analyst`, `developer`, `tester`, and `reviewer`. Add y
 
 yaah doesn't just summarize your context away when the window fills. It runs two complementary memory-optimization mechanisms:
 
-### Context compaction (reactive, overflow-driven)
-When the conversation grows past `compaction_threshold` (~25% of the model window), or you run `:compact`, a **CompactionMiddleware** summarizes history into a single `system` message. This is reactive — it triggers on pressure, not on a timer. The summary preserves decisions, facts, and constraints so the agent keeps continuity without re-reading the full transcript.
+### Context compaction (threshold-driven)
+When the conversation grows past `compaction_threshold` (~50% of the model window by default), or you run `:compact`, a **CompactionMiddleware** summarizes history into a single `system` message. The threshold is proactive — it triggers before the window fills. The summary preserves decisions, facts, and constraints so the agent keeps continuity without re-reading the full transcript.
 
 ### Scheduled consolidation (proactive, cadence-driven)
 Separately, a **ConsolidateMiddleware** fires on configurable turn/iteration intervals (`consolidate_turns_interval`, `consolidate_iters_interval`). It dispatches a **consolidator sub-agent** — a restricted role with only `memory_search`, `memory_add`, and `memory_update` — that scans recent turns, deduplicates against existing memory, and writes durable session-scoped atoms (decisions, facts, constraints) to local SQLite. This is proactive: it runs while the agent works, not just at overflow.
