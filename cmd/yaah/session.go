@@ -339,6 +339,11 @@ func (s *agentSession) close() {
 	if s.db != nil {
 		s.db.EndSession(s.sessionID, time.Now().Unix(), s.totalUsage.PromptTokens, s.totalUsage.CompletionTokens,
 			s.totalUsage.CachedPromptTokens, s.subUsage.PromptTokens, s.subUsage.CompletionTokens)
+		// Memory hygiene (docs/compaction-as-sleep.md §8): run the age-based
+		// staleness sweep. Sessions are resumable, so session-scoped atoms
+		// are intentionally NOT pruned here — only old, never-accessed
+		// compaction atoms go, whatever scope they carry.
+		pruneMemoryAtClose(s.db)
 		s.db.Close()
 	}
 	for _, c := range s.mcpClients {

@@ -2,6 +2,7 @@ package yaah
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -150,6 +151,30 @@ func initDBEmbedder(db *memory.DB) {
 		return
 	}
 	attachEmbedder(db, cfg)
+}
+
+// staleMemoryAge is the floor under PruneStaleCompaction: a global compaction
+// atom younger than this had its whole lifetime to be recalled and may still
+// be. A month is deliberately generous — the sweep exists to stop unbounded
+// accumulation, not to reclaim anything soon.
+const staleMemoryAge = 30 * 24 * time.Hour
+
+// pruneMemoryAtClose runs the memory-hygiene staleness sweep on the session
+// teardown path. It deliberately does NOT prune session-scoped atoms by
+// session: yaah sessions are resumable, so a session's working context may be
+// recalled again later. The sweep is age-based (30-day floor) and never
+// touches an accessed atom, so a close cannot race an in-flight consolidation
+// or destroy recall a resume might want. Best-effort: a failed sweep is
+// logged and the close continues.
+func pruneMemoryAtClose(db *memory.DB) {
+	if db == nil {
+		return
+	}
+	if n, err := db.PruneStaleCompaction(time.Now().Add(-staleMemoryAge)); err != nil {
+		slog.Warn("session: prune stale compaction memory failed", "err", err)
+	} else if n > 0 {
+		slog.Debug("session: pruned stale compaction memory", "deleted", n)
+	}
 }
 
 func init() {

@@ -1277,7 +1277,12 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 		switch name {
 		case "memory_add":
 			if opts.db != nil {
-				reg.Register(&tools.MemoryAddTool{DB: opts.db})
+				// Tag the write with the parent session so the atoms this
+				// sub-agent distills are attributable to the conversation
+				// that spawned it: the session-close pruning pass deletes
+				// session-scoped atoms by session, and an unlinked atom
+				// would outlive its session forever.
+				reg.Register(&tools.MemoryAddTool{DB: opts.db, SessionID: opts.parentSession})
 			}
 			continue
 		case "memory_search":

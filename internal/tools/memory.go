@@ -107,9 +107,17 @@ func entryListJSON(results []memory.Entry) string {
 // written to when the caller does not name one: ScopeSession for atoms
 // distilled from the running conversation (the consolidator's deep sleep),
 // ScopeGlobal for anything meant to outlive it. Empty means global.
+//
+// SessionID is the conversation the tool's writes belong to, recorded on the
+// entry so the session-close pruning pass can tell this session's atoms from
+// every other session's. It is an instance default, not a call argument: the
+// caller cannot choose whose atoms its writes will look like. Empty (the
+// session's own registry, the CLI) leaves the link NULL, so those atoms are
+// never pruned by session.
 type MemoryAddTool struct {
-	DB    *memory.DB
-	Scope string
+	DB        *memory.DB
+	Scope     string
+	SessionID string
 }
 
 func (t *MemoryAddTool) Name() string { return "memory_add" }
@@ -163,6 +171,7 @@ func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error
 		Tags:      params.Tags,
 		Source:    "agent",
 		Scope:     normScope,
+		SessionID: t.SessionID,
 		CreatedAt: time.Now().Unix(),
 	}
 
