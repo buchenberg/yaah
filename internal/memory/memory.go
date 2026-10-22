@@ -337,11 +337,17 @@ func (d *DB) migrate() error {
 		return fmt.Errorf("create memory_fts: %w", err)
 	}
 
-	triggers := fmt.Sprintf(`
-	INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('version', '%s');
+	// triggers seeds a floor version row: databases predating version
+	// stamping (or fresh ones) read a concrete number for repair gating
+	// instead of nothing. The current schema version is written only
+	// inside the repair transaction below — stamping it here, ahead of
+	// the repairs, would let a crash between the two make a
+	// half-repaired database look current on the next open.
+	triggers := `
+	INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('version', '1');
 	CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
 		INSERT INTO messages_fts(rowid, content, tool_name) VALUES (new.rowid, new.content, new.tool_name);
-	END;`, strconv.Itoa(currentSchemaVersion)) + `
+	END;
 	CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
 		INSERT INTO messages_fts(messages_fts, rowid, content, tool_name) VALUES ('delete', old.rowid, old.content, old.tool_name);
 	END;

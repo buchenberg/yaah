@@ -296,6 +296,9 @@ func TestDB_BackfillLegacyActivity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open legacy db: %v", err)
 	}
+	// Idempotent with the explicit Close below; kept so any t.Fatal
+	// before it still releases the handle and the temp dir on Windows.
+	t.Cleanup(func() { db.Close() })
 
 	got, err := db.GetSession("legacy")
 	if err != nil {
