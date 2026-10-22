@@ -43,11 +43,19 @@ fi
 git -C "$tck_dir" fetch --quiet origin
 git -C "$tck_dir" checkout --quiet --force "$tck_ref"
 
-# Build the default agent on demand; an explicit AGENT_BIN is used verbatim
-# (absolute paths and bare executables both work).
+# Resolve the agent command. An explicit AGENT_BIN is used verbatim when
+# it looks like a path; a bare name is resolved from PATH first (so
+# AGENT_BIN=yaah-dev works without being in the repo root) and falls back
+# to repo-root-relative.
 case $agent_bin in
 /*) agent_cmd=$agent_bin ;;
-*) agent_cmd=$root/$agent_bin ;;
+*)
+	if base=$(command -v -- "$agent_bin" 2>/dev/null); then
+		agent_cmd=$base
+	else
+		agent_cmd=$root/$agent_bin
+	fi
+	;;
 esac
 if [[ -z ${AGENT_BIN:-} && ! -x $agent_cmd ]]; then
 	go build -trimpath -ldflags '-s -w' -o yaah .
