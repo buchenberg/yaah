@@ -40,7 +40,7 @@ import (
 // migrate commits each repair and its version bump together, so a
 // transient failure re-runs the pair on the next open instead of
 // skipping a half-migrated database forever.
-const currentSchemaVersion = 4
+const currentSchemaVersion = 5
 
 // activitySchemaVersion is the schema version at which
 // sessions.updated_at came into being (its values were seeded from
@@ -63,6 +63,14 @@ const skillSchemaVersion = 3
 // column left empty — so a database stamped 4 always carries a concrete scope
 // per row.
 const memorySchemaVersion = 4
+
+// memorySessionSchemaVersion is the schema version that introduced
+// memory.session_id, the link from a session-scoped atom to the conversation
+// that distilled it (pruning lives in hygiene.go). The transition is purely
+// additive: the ALTER runs from the column-migration list and no repair is
+// needed, so a database stamped 5 always has the column and nothing older
+// carries values.
+const memorySessionSchemaVersion = 5
 
 // maxSessionPromptBytes caps the persisted system_prompt and
 // compacted_summary columns so unbounded prompts cannot bloat the DB
@@ -105,13 +113,17 @@ func NormalizeScope(scope string) (string, error) {
 }
 
 // Entry represents a long-term memory note. Scope is its tier (ScopeSession
-// or ScopeGlobal); it is always populated on read.
+// or ScopeGlobal); it is always populated on read. SessionID links a
+// session-scoped atom to the conversation that distilled it and is empty on
+// global atoms and on every row written before schema v5 — the garbage
+// collector in hygiene.go needs a non-empty value before it touches a row.
 type Entry struct {
 	ID          string `json:"id"`
 	Text        string `json:"text"`
 	Tags        string `json:"tags"` // JSON array
 	Source      string `json:"source"`
 	Scope       string `json:"scope"`
+	SessionID   string `json:"session_id,omitempty"`
 	CreatedAt   int64  `json:"created_at"`
 	AccessedAt  int64  `json:"accessed_at,omitempty"`
 	AccessCount int    `json:"access_count"`
@@ -346,6 +358,7 @@ func (d *DB) migrate() error {
 		tags        TEXT,
 		source      TEXT,
 		scope       TEXT NOT NULL DEFAULT 'global',
+		session_id  TEXT,
 		created_at  INTEGER NOT NULL,
 		accessed_at INTEGER,
 		access_count INTEGER DEFAULT 0,
@@ -472,6 +485,10 @@ func (d *DB) migrate() error {
 		// column. The DEFAULT backfills existing rows, so the ALTER alone
 		// leaves no NULL scope behind.
 		{"memory", "scope", "ALTER TABLE memory ADD COLUMN scope TEXT NOT NULL DEFAULT 'global'"},
+		// schema v5: the session link a session-scoped atom is pruned by
+		// (hygiene.go). Nullable and additive — pre-v5 rows stay NULL and
+		// are therefore never reached by PruneSession.
+		{"memory", "session_id", "ALTER TABLE memory ADD COLUMN session_id TEXT"},
 		{"messages", "embedding", "ALTER TABLE messages ADD COLUMN embedding BLOB"},
 		{"sessions", "workspace_backend", "ALTER TABLE sessions ADD COLUMN workspace_backend TEXT DEFAULT ''"},
 		{"sessions", "workspace_omitted_tools", "ALTER TABLE sessions ADD COLUMN workspace_omitted_tools TEXT DEFAULT ''"},
@@ -611,10 +628,21 @@ func (d *DB) AddMemory(e Entry) error {
 		return err
 	}
 	_, err = d.sql.Exec(
-		`INSERT INTO memory (id, text, tags, source, scope, created_at, digest) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.Text, e.Tags, e.Source, scope, e.CreatedAt, memoryDigest(e.Text),
+		`INSERT INTO memory (id, text, tags, source, scope, session_id, created_at, digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.Text, e.Tags, e.Source, scope, nullableText(e.SessionID), e.CreatedAt, memoryDigest(e.Text),
 	)
 	return err
+}
+
+// nullableText maps the empty string to SQL NULL: a global atom (or any atom
+// written by a caller with no session) carries no session link, and the
+// pruning sweeps in hygiene.go must never match an empty string as if it
+// named a session.
+func nullableText(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // EmbedMemoryAsync embeds the text in a background goroutine and stores
@@ -683,8 +711,8 @@ func (d *DB) AddMemoryDedup(e Entry) (string, error) {
 		return "", err
 	}
 	if _, err := tx.Exec(
-		`INSERT INTO memory (id, text, tags, source, scope, created_at, digest) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.Text, e.Tags, e.Source, scope, e.CreatedAt, digest,
+		`INSERT INTO memory (id, text, tags, source, scope, session_id, created_at, digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.Text, e.Tags, e.Source, scope, nullableText(e.SessionID), e.CreatedAt, digest,
 	); err != nil {
 		return "", err
 	}
@@ -948,11 +976,11 @@ func (d *DB) ReconcileEmbeddings(ctx context.Context) (int, error) {
 // GetMemory retrieves a single memory entry by ID.
 func (d *DB) GetMemory(id string) (Entry, error) {
 	row := d.sql.QueryRow(`
-		SELECT id, text, tags, source, scope, created_at, COALESCE(accessed_at, 0), access_count
+		SELECT id, text, tags, source, scope, COALESCE(session_id, ''), created_at, COALESCE(accessed_at, 0), access_count
 		FROM memory WHERE id = ?
 	`, id)
 	var e Entry
-	err := row.Scan(&e.ID, &e.Text, &e.Tags, &e.Source, &e.Scope, &e.CreatedAt, &e.AccessedAt, &e.AccessCount)
+	err := row.Scan(&e.ID, &e.Text, &e.Tags, &e.Source, &e.Scope, &e.SessionID, &e.CreatedAt, &e.AccessedAt, &e.AccessCount)
 	return e, err
 }
 
@@ -1035,7 +1063,7 @@ func (d *DB) ListMemory(limit int) ([]Entry, error) {
 // tier when scope is non-empty (empty lists every tier).
 func (d *DB) ListMemoryScoped(limit int, scope string) ([]Entry, error) {
 	listSQL := `
-		SELECT id, text, tags, source, scope, created_at, COALESCE(accessed_at, 0), access_count
+		SELECT id, text, tags, source, scope, COALESCE(session_id, ''), created_at, COALESCE(accessed_at, 0), access_count
 		FROM memory`
 	var listArgs []any
 	if scope != "" {
@@ -1054,7 +1082,7 @@ func (d *DB) ListMemoryScoped(limit int, scope string) ([]Entry, error) {
 	var results []Entry
 	for rows.Next() {
 		var e Entry
-		if err := rows.Scan(&e.ID, &e.Text, &e.Tags, &e.Source, &e.Scope, &e.CreatedAt, &e.AccessedAt, &e.AccessCount); err != nil {
+		if err := rows.Scan(&e.ID, &e.Text, &e.Tags, &e.Source, &e.Scope, &e.SessionID, &e.CreatedAt, &e.AccessedAt, &e.AccessCount); err != nil {
 			return nil, err
 		}
 		results = append(results, e)

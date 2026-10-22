@@ -117,3 +117,37 @@ func TestMemorySearchTool_RejectsUnknownScope(t *testing.T) {
 		t.Fatal("memory_search with an unknown scope should fail loudly")
 	}
 }
+
+// TestMemoryAddTool_PersistsSessionID pins the session link a consolidator's
+// writes carry (wired from the sub-agent runner): the session-close pruning
+// pass finds a session's atoms only through it, so an empty instance default
+// must stay empty rather than become a bogus link.
+func TestMemoryAddTool_PersistsSessionID(t *testing.T) {
+	cases := []struct {
+		name      string
+		sessionID string
+		want      string
+	}{
+		{"session link recorded", "sess-42", "sess-42"},
+		{"empty default stays empty", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openScopeTestDB(t)
+			tool := &MemoryAddTool{DB: db, Scope: memory.ScopeSession, SessionID: tc.sessionID}
+			if _, err := tool.Execute(context.Background(), `{"text":"session-linked atom"}`); err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			entries, err := db.ListMemoryScoped(10, "")
+			if err != nil {
+				t.Fatalf("ListMemoryScoped: %v", err)
+			}
+			if len(entries) != 1 {
+				t.Fatalf("entries = %d, want 1", len(entries))
+			}
+			if entries[0].SessionID != tc.want {
+				t.Errorf("SessionID = %q, want %q", entries[0].SessionID, tc.want)
+			}
+		})
+	}
+}

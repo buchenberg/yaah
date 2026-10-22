@@ -2,6 +2,7 @@ package yaah
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -150,6 +151,33 @@ func initDBEmbedder(db *memory.DB) {
 		return
 	}
 	attachEmbedder(db, cfg)
+}
+
+// staleMemoryAge is the floor under PruneStaleCompaction: a global compaction
+// atom younger than this had its whole lifetime to be recalled and may still
+// be. A month is deliberately generous — the sweep exists to stop unbounded
+// accumulation, not to reclaim anything soon.
+const staleMemoryAge = 30 * 24 * time.Hour
+
+// pruneMemoryAtClose sheds the memory atoms a finished session leaves behind:
+// its own session-scoped atoms first, then compaction atoms past the
+// staleness floor. Best-effort by design — this runs on the session teardown
+// path, so a failed sweep is logged and the close continues. A database that
+// keeps a dead row is a nuisance; a session that cannot close is a bug.
+func pruneMemoryAtClose(db *memory.DB, sessionID string) {
+	if db == nil {
+		return
+	}
+	if n, err := db.PruneSession(sessionID); err != nil {
+		slog.Warn("session: prune session memory failed", "session", sessionID, "err", err)
+	} else if n > 0 {
+		slog.Debug("session: pruned session-scoped memory", "session", sessionID, "deleted", n)
+	}
+	if n, err := db.PruneStaleCompaction(time.Now().Add(-staleMemoryAge)); err != nil {
+		slog.Warn("session: prune stale compaction memory failed", "err", err)
+	} else if n > 0 {
+		slog.Debug("session: pruned stale compaction memory", "deleted", n)
+	}
 }
 
 func init() {
