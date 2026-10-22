@@ -146,21 +146,28 @@ func (l *Loop) toPipelineConfig() pipeline.PipelineConfig {
 			l.Hooks.Emit(HookEvent{Event: events.ToolStart, ToolName: name, ToolArgs: args})
 			l.Hooks.Emit(HookEvent{Event: events.ToolEnd, ToolName: name, ToolArgs: args, ToolError: errMsg, ToolResult: errMsg})
 		},
-		PermissionRules:        l.Config.PermissionRules,
-		LoopDetectCount:        l.Config.LoopDetectCount,
-		LoopDetectWindow:       l.Config.LoopDetectWindow,
-		EvidenceGuardNudge:     l.Config.EvidenceGuardNudge,
-		EvidenceGuardHalt:      l.Config.EvidenceGuardHalt,
-		MaxToolConcurrency:     l.Config.MaxToolConcurrency,
-		MaxInlineToolsPerTurn:  l.Config.MaxInlineToolsPerTurn,
-		ToolConc:               l.toolConcurrency,
-		MaxSubAgentConcurrency: l.Config.MaxSubAgentConcurrency,
-		PromptCaching:          l.Config.PromptCaching,
-		Pruner:                 l.CtxMgr.Pruner,
-		PruneHooks:             l.pruneHooks(),
-		PipelineNames:          l.Config.PipelineNames,
-		PipelineDisabled:       l.Config.PipelineDisabled,
-		ConflictTracker:        l.ConflictTracker,
+		PermissionRules:          l.Config.PermissionRules,
+		LoopDetectCount:          l.Config.LoopDetectCount,
+		LoopDetectWindow:         l.Config.LoopDetectWindow,
+		EvidenceGuardNudge:       l.Config.EvidenceGuardNudge,
+		EvidenceGuardHalt:        l.Config.EvidenceGuardHalt,
+		MaxToolConcurrency:       l.Config.MaxToolConcurrency,
+		MaxInlineToolsPerTurn:    l.Config.MaxInlineToolsPerTurn,
+		ToolConc:                 l.toolConcurrency,
+		MaxSubAgentConcurrency:   l.Config.MaxSubAgentConcurrency,
+		PromptCaching:            l.Config.PromptCaching,
+		ConsolidateTurnsInterval: l.Config.ConsolidateTurnsInterval,
+		ConsolidateItersInterval: l.Config.ConsolidateItersInterval,
+		ConsolidateDispatch: func(ctx context.Context, kind string) {
+			if l.ConsolidateFn != nil {
+				l.ConsolidateFn(ctx, kind)
+			}
+		},
+		Pruner:           l.CtxMgr.Pruner,
+		PruneHooks:       l.pruneHooks(),
+		PipelineNames:    l.Config.PipelineNames,
+		PipelineDisabled: l.Config.PipelineDisabled,
+		ConflictTracker:  l.ConflictTracker,
 		ConflictOnCheck: func(ctx context.Context, model string, turn int) {
 			if l.Hooks == nil {
 				return

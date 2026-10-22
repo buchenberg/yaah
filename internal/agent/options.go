@@ -196,6 +196,12 @@ type AgentConfig struct {
 	MaxInlineToolsPerTurn  int
 	PromptCaching          bool
 
+	// Consolidation "nudge" cadence (docs/compaction-as-sleep.md §7):
+	// fire the consolidate middleware every N turns or N tool results.
+	// Both 0 = disabled.
+	ConsolidateTurnsInterval int
+	ConsolidateItersInterval int
+
 	// ToolSpillDir is injected straight into LoopConfig.ToolSpillDir.
 	ToolSpillDir          string
 	ReasoningProtectTurns int
@@ -233,6 +239,8 @@ func WithAgentConfig(cfg AgentConfig) Option {
 		l.Config.WrapUpThreshold = cfg.WrapUpThreshold
 		l.Config.MaxInlineToolsPerTurn = cfg.MaxInlineToolsPerTurn
 		l.Config.PromptCaching = cfg.PromptCaching
+		l.Config.ConsolidateTurnsInterval = cfg.ConsolidateTurnsInterval
+		l.Config.ConsolidateItersInterval = cfg.ConsolidateItersInterval
 		l.Config.ToolSpillDir = cfg.ToolSpillDir
 		l.Config.JSONMode = cfg.JSONMode
 		if l.CtxMgr == nil {

@@ -107,6 +107,20 @@ type PipelineConfig struct {
 	// every call passes, so tracing-off sessions are unchanged.
 	DestructiveGuard func(ownerID, toolName, argsJSON string) string
 
+	// ConsolidateDispatch is the cadence-driven "nudge" callback
+	// (docs/compaction-as-sleep.md §7). When the consolidate middleware's
+	// turn or tool-result interval is crossed it fires fire-and-forget and
+	// resets its counters. kind names the product to consolidate ("memory"
+	// in P0; "skills" later). Nil disables the nudge.
+	ConsolidateDispatch ConsolidateDispatch
+
+	// ConsolidateTurnsInterval and ConsolidateItersInterval set the nudge
+	// cadence: fire every N turns or every N tool results. Zero disables
+	// that dimension; both zero with a nil dispatch makes the middleware
+	// inert.
+	ConsolidateTurnsInterval int
+	ConsolidateItersInterval int
+
 	PipelineNames    []string
 	PipelineDisabled []string
 }
@@ -232,6 +246,12 @@ var subAgentBuilders = map[string]func(PipelineConfig) Middleware{
 			sessionID: cfg.SessionID,
 			ordinal:   int(nextOrdinal.Add(1 << 20)),
 		}
+	},
+	// consolidate: the cadence-driven "nudge" that fires ConsolidateDispatch
+	// out-of-band (docs/compaction-as-sleep.md §7). Inert when dispatch is
+	// nil or both intervals are zero.
+	"consolidate": func(cfg PipelineConfig) Middleware {
+		return NewConsolidateMiddleware(cfg.ConsolidateTurnsInterval, cfg.ConsolidateItersInterval, cfg.ConsolidateDispatch)
 	},
 }
 
