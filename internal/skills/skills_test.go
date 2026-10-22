@@ -192,3 +192,37 @@ func TestEdit_updatesBody(t *testing.T) {
 		t.Errorf("Body = %q, want %q", skill.Body, "new body content")
 	}
 }
+
+func TestArchive_RejectsPathTraversal(t *testing.T) {
+	s := &Skill{Name: "../evil", Dir: filepath.Join(t.TempDir(), "evil"), Path: filepath.Join(t.TempDir(), "evil", "SKILL.md")}
+	if _, err := Archive(s); err == nil {
+		t.Fatal("Archive() with a path-traversal name should fail")
+	}
+}
+
+func TestArchive_MovesAndKeepsDir(t *testing.T) {
+	tmp := t.TempDir()
+	dir := filepath.Join(tmp, "keepme")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	path := filepath.Join(dir, "SKILL.md")
+	if err := os.WriteFile(path, []byte("body"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	s := &Skill{Name: "keepme", Dir: dir, Path: path}
+
+	dest, err := Archive(s)
+	if err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("original SKILL.md still present (err=%v)", err)
+	}
+	if _, err := os.Stat(dest); err != nil {
+		t.Fatalf("archived file missing at %s: %v", dest, err)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("skill directory was removed; restore path broken: %v", err)
+	}
+}

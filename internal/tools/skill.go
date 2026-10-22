@@ -120,12 +120,17 @@ func (t *SkillTool) Execute(ctx context.Context, args string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("skill create: %w", err)
 		}
+		// Hash the file as written (re-parsed) so the create row's after_hash
+		// chains into the next edit row's before_hash, which re-reads the file.
+		after := skillContentHash(params.Name, params.Description, params.Body)
+		if created := skills.FindSkill(t.Dirs, params.Name); created != nil {
+			after = skillContentHash(created.Name, created.Description, created.Body)
+		}
 		t.track("skill_provenance", params.Name, func(db *memory.DB) error {
 			return db.RecordSkillProvenance(params.Name, "agent", "skill:create")
 		})
 		t.track("skill_ledger", params.Name, func(db *memory.DB) error {
-			return db.RecordSkillLedger(params.Name, "create", "",
-				skillContentHash(params.Name, params.Description, params.Body), "")
+			return db.RecordSkillLedger(params.Name, "create", "", after, "")
 		})
 		return fmt.Sprintf("Skill %q created at %s", params.Name, path), nil
 

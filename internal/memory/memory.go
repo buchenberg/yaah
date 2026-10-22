@@ -50,10 +50,9 @@ const activitySchemaVersion = 2
 
 // skillSchemaVersion is the schema version that introduced the skill
 // lifecycle tables (skill_usage, skill_provenance, skill_ledger). The
-// transition is purely additive — `CREATE TABLE IF NOT EXISTS` in the
-// base schema creates the tables on every open, including on a database
-// that stopped at version 2 — so the version bump records the transition
-// without a data repair behind it (see skill_repo.go).
+// transition is purely additive: the migration runs the DDL once inside the
+// version-gated repair transaction (migrate) and then stamps the version —
+// no data backfill is required. See skill_repo.go.
 const skillSchemaVersion = 3
 
 // maxSessionPromptBytes caps the persisted system_prompt and

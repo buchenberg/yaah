@@ -203,6 +203,13 @@ func Archive(s *Skill) (string, error) {
 	if s == nil || s.Path == "" {
 		return "", fmt.Errorf("skill path is required")
 	}
+	// The name is read straight from frontmatter, so a skill can be
+	// discovered with a name that is not a single path element. Reject it
+	// before it becomes part of a destination path: the archive move must
+	// never escape the skills tree.
+	if s.Name == "" || filepath.Base(s.Name) != s.Name {
+		return "", fmt.Errorf("skill %q has an invalid name for archive", s.Name)
+	}
 	root := filepath.Dir(s.Dir)
 	if root == "" || root == "." {
 		return "", fmt.Errorf("skill %q has no skills root", s.Name)
@@ -216,15 +223,17 @@ func Archive(s *Skill) (string, error) {
 		// Keep an earlier archive of the same name: a second archive must
 		// not overwrite the revision a restore might want.
 		dest = filepath.Join(archiveDir, fmt.Sprintf("%s-%d.md", s.Name, time.Now().UnixNano()))
+	} else if !os.IsNotExist(err) {
+		// Any Stat failure other than not-exist (e.g. permission denied)
+		// must fail the archive rather than silently overwrite.
+		return "", fmt.Errorf("inspect archive destination: %w", err)
 	}
 	if err := os.Rename(s.Path, dest); err != nil {
 		return "", fmt.Errorf("archive SKILL.md: %w", err)
 	}
-	// Drop the skill directory when the move left it empty, so a skills
-	// tree does not accumulate SKILL.md-less shells. A directory holding
-	// scripts or references stays put.
-	if entries, err := os.ReadDir(s.Dir); err == nil && len(entries) == 0 {
-		_ = os.Remove(s.Dir)
-	}
+	// Keep the skill directory even when the move leaves it empty, so the
+	// advertised restore path (<root>/<name>/SKILL.md) stays valid without
+	// the caller re-creating the parent. Discovery already skips it because
+	// SKILL.md is gone.
 	return dest, nil
 }
