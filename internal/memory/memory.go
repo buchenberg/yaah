@@ -40,7 +40,7 @@ import (
 // migrate commits each repair and its version bump together, so a
 // transient failure re-runs the pair on the next open instead of
 // skipping a half-migrated database forever.
-const currentSchemaVersion = 3
+const currentSchemaVersion = 4
 
 // activitySchemaVersion is the schema version at which
 // sessions.updated_at came into being (its values were seeded from
@@ -54,6 +54,15 @@ const activitySchemaVersion = 2
 // version-gated repair transaction (migrate) and then stamps the version —
 // no data backfill is required. See skill_repo.go.
 const skillSchemaVersion = 3
+
+// memorySchemaVersion is the schema version that introduced memory.scope, the
+// explicit tier column (docs/compaction-as-sleep.md §8 P3): 'session' for
+// atoms distilled from the running conversation, 'global' for entries meant to
+// outlive it. The transition is additive — the ALTER runs from the
+// column-migration list and the version-gated repair backfills any row the
+// column left empty — so a database stamped 4 always carries a concrete scope
+// per row.
+const memorySchemaVersion = 4
 
 // maxSessionPromptBytes caps the persisted system_prompt and
 // compacted_summary columns so unbounded prompts cannot bloat the DB
@@ -70,12 +79,33 @@ func truncateWithMarker(s string, max int) string {
 	return cut + "\n…[truncated]"
 }
 
-// Entry represents a long-term memory note.
+// Memory scopes are the explicit tiers of docs/compaction-as-sleep.md §8 P3
+// (directions 4/5): ScopeSession marks an atom distilled from the running
+// conversation — the consolidator's "deep sleep" product — and ScopeGlobal
+// marks one meant to outlive any single session. An empty scope means
+// ScopeGlobal.
+const (
+	ScopeGlobal  = "global"
+	ScopeSession = "session"
+)
+
+// NormalizeScope maps the empty scope to ScopeGlobal and passes any other
+// value through unchanged, so a future tier needs no migration here.
+func NormalizeScope(scope string) string {
+	if scope == "" {
+		return ScopeGlobal
+	}
+	return scope
+}
+
+// Entry represents a long-term memory note. Scope is its tier (ScopeSession
+// or ScopeGlobal); it is always populated on read.
 type Entry struct {
 	ID          string `json:"id"`
 	Text        string `json:"text"`
 	Tags        string `json:"tags"` // JSON array
 	Source      string `json:"source"`
+	Scope       string `json:"scope"`
 	CreatedAt   int64  `json:"created_at"`
 	AccessedAt  int64  `json:"accessed_at,omitempty"`
 	AccessCount int    `json:"access_count"`
@@ -309,6 +339,7 @@ func (d *DB) migrate() error {
 		text        TEXT NOT NULL,
 		tags        TEXT,
 		source      TEXT,
+		scope       TEXT NOT NULL DEFAULT 'global',
 		created_at  INTEGER NOT NULL,
 		accessed_at INTEGER,
 		access_count INTEGER DEFAULT 0,
@@ -431,6 +462,10 @@ func (d *DB) migrate() error {
 		{"sessions", "compacted_summary", "ALTER TABLE sessions ADD COLUMN compacted_summary TEXT DEFAULT ''"},
 		{"memory", "embedding", "ALTER TABLE memory ADD COLUMN embedding BLOB"},
 		{"memory", "digest", "ALTER TABLE memory ADD COLUMN digest TEXT"},
+		// schema v4 (docs/compaction-as-sleep.md §8 P3): the explicit tier
+		// column. The DEFAULT backfills existing rows, so the ALTER alone
+		// leaves no NULL scope behind.
+		{"memory", "scope", "ALTER TABLE memory ADD COLUMN scope TEXT NOT NULL DEFAULT 'global'"},
 		{"messages", "embedding", "ALTER TABLE messages ADD COLUMN embedding BLOB"},
 		{"sessions", "workspace_backend", "ALTER TABLE sessions ADD COLUMN workspace_backend TEXT DEFAULT ''"},
 		{"sessions", "workspace_omitted_tools", "ALTER TABLE sessions ADD COLUMN workspace_omitted_tools TEXT DEFAULT ''"},
@@ -478,6 +513,18 @@ func (d *DB) migrate() error {
 			// a database stamped 3 therefore always has them.
 			if _, err := tx.Exec(skillLifecycleSchema); err != nil {
 				return fmt.Errorf("create skill lifecycle tables: %w", err)
+			}
+		}
+		if dbVersion < memorySchemaVersion {
+			// 3 → 4: memory gained the explicit scope tier
+			// (docs/compaction-as-sleep.md §8 P3, deep sleep). The ALTER
+			// added the column with a 'global' default; this repairs any
+			// row a pre-v4 writer left empty, so a database stamped 4
+			// always carries a concrete scope per row.
+			if _, err := tx.Exec(
+				`UPDATE memory SET scope = 'global' WHERE COALESCE(scope, '') = ''`,
+			); err != nil {
+				return fmt.Errorf("backfill memory.scope: %w", err)
 			}
 		}
 		if _, err := tx.Exec(
@@ -554,8 +601,8 @@ func NewEntryID() string {
 // EmbedMemoryAsync to produce the embedding vector.
 func (d *DB) AddMemory(e Entry) error {
 	_, err := d.sql.Exec(
-		`INSERT INTO memory (id, text, tags, source, created_at, digest) VALUES (?, ?, ?, ?, ?, ?)`,
-		e.ID, e.Text, e.Tags, e.Source, e.CreatedAt, memoryDigest(e.Text),
+		`INSERT INTO memory (id, text, tags, source, scope, created_at, digest) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.Text, e.Tags, e.Source, NormalizeScope(e.Scope), e.CreatedAt, memoryDigest(e.Text),
 	)
 	return err
 }
@@ -622,8 +669,8 @@ func (d *DB) AddMemoryDedup(e Entry) (string, error) {
 	}
 
 	if _, err := tx.Exec(
-		`INSERT INTO memory (id, text, tags, source, created_at, digest) VALUES (?, ?, ?, ?, ?, ?)`,
-		e.ID, e.Text, e.Tags, e.Source, e.CreatedAt, digest,
+		`INSERT INTO memory (id, text, tags, source, scope, created_at, digest) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.Text, e.Tags, e.Source, NormalizeScope(e.Scope), e.CreatedAt, digest,
 	); err != nil {
 		return "", err
 	}
@@ -641,50 +688,56 @@ func (d *DB) SearchMemory(query string, limit int, tag ...string) ([]Entry, erro
 	if len(tag) > 0 {
 		tagFilter = tag[0]
 	}
+	return d.SearchMemoryScoped(query, limit, tagFilter, "")
+}
 
-	var rows *sql.Rows
-	var err error
+// SearchMemoryScoped is SearchMemory with an explicit scope (tier) filter: a
+// non-empty scope restricts the results to that tier, an empty one searches
+// every tier. Each returned entry carries its own Scope.
+func (d *DB) SearchMemoryScoped(query string, limit int, tagFilter, scope string) ([]Entry, error) {
+	const (
+		cols     = "id, text, tags, source, scope, created_at, COALESCE(accessed_at, 0), access_count"
+		colsJoin = "m.id, m.text, m.tags, m.source, m.scope, m.created_at, COALESCE(m.accessed_at, 0), m.access_count"
+	)
 
-	if query == "" && tagFilter == "" {
-		rows, err = d.sql.Query(`
-			SELECT id, text, tags, source, created_at, COALESCE(accessed_at, 0), access_count
-			FROM memory
-			ORDER BY created_at DESC
-			LIMIT ?
-		`, limit)
-	} else if tagFilter != "" {
-		safeTag := `%"` + strings.ReplaceAll(tagFilter, `"`, `""`) + `"%`
-		if query == "" {
-			rows, err = d.sql.Query(`
-				SELECT id, text, tags, source, created_at, COALESCE(accessed_at, 0), access_count
-				FROM memory
-				WHERE tags LIKE ?
-				ORDER BY created_at DESC
-				LIMIT ?
-			`, safeTag, limit)
-		} else {
-			safeQuery := sanitizeFTSQuery(query)
-			rows, err = d.sql.Query(`
-				SELECT m.id, m.text, m.tags, m.source, m.created_at, COALESCE(m.accessed_at, 0), m.access_count
-				FROM memory m
-				JOIN memory_fts ON memory_fts.rowid = m.rowid
-				WHERE memory_fts MATCH ? AND m.tags LIKE ?
-				ORDER BY rank
-				LIMIT ?
-			`, safeQuery, safeTag, limit)
-		}
-	} else {
-		safeQuery := sanitizeFTSQuery(query)
-		rows, err = d.sql.Query(`
-			SELECT m.id, m.text, m.tags, m.source, m.created_at, COALESCE(m.accessed_at, 0), m.access_count
-			FROM memory m
-			JOIN memory_fts ON memory_fts.rowid = m.rowid
-			WHERE memory_fts MATCH ?
-			ORDER BY rank
-			LIMIT ?
-		`, safeQuery, limit)
+	// tags/source also exist on the FTS table, so the join branch's
+	// predicates are qualified with the row alias; the plain branch needs
+	// no alias.
+	qual := ""
+	if query != "" {
+		qual = "m."
+	}
+	where := make([]string, 0, 2)
+	args := make([]any, 0, 4)
+	if tagFilter != "" {
+		where = append(where, qual+"tags LIKE ?")
+		args = append(args, `%"`+strings.ReplaceAll(tagFilter, `"`, `""`)+`"%`)
+	}
+	if scope != "" {
+		where = append(where, qual+"scope = ?")
+		args = append(args, scope)
 	}
 
+	var querySQL string
+	if query == "" {
+		querySQL = `SELECT ` + cols + ` FROM memory`
+		if len(where) > 0 {
+			querySQL += ` WHERE ` + strings.Join(where, " AND ")
+		}
+		querySQL += ` ORDER BY created_at DESC LIMIT ?`
+	} else {
+		where = append([]string{"memory_fts MATCH ?"}, where...)
+		args = append([]any{sanitizeFTSQuery(query)}, args...)
+		querySQL = `SELECT ` + colsJoin + `
+			FROM memory m
+			JOIN memory_fts ON memory_fts.rowid = m.rowid
+			WHERE ` + strings.Join(where, " AND ") + `
+			ORDER BY rank
+			LIMIT ?`
+	}
+	args = append(args, limit)
+
+	rows, err := d.sql.Query(querySQL, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -694,7 +747,7 @@ func (d *DB) SearchMemory(query string, limit int, tag ...string) ([]Entry, erro
 	now := time.Now().Unix()
 	for rows.Next() {
 		var e Entry
-		if err := rows.Scan(&e.ID, &e.Text, &e.Tags, &e.Source, &e.CreatedAt, &e.AccessedAt, &e.AccessCount); err != nil {
+		if err := rows.Scan(&e.ID, &e.Text, &e.Tags, &e.Source, &e.Scope, &e.CreatedAt, &e.AccessedAt, &e.AccessCount); err != nil {
 			return nil, err
 		}
 		results = append(results, e)
@@ -729,6 +782,13 @@ type VectorResult struct {
 // surfaced via the rate-limited warning log and the OTel embed-failure
 // counter.
 func (d *DB) SearchMemoryVector(ctx context.Context, query string, limit int) ([]VectorResult, error) {
+	return d.SearchMemoryVectorScoped(ctx, query, limit, "")
+}
+
+// SearchMemoryVectorScoped is SearchMemoryVector with an explicit scope (tier)
+// filter: a non-empty scope restricts the candidate set to that tier, an empty
+// one searches every tier.
+func (d *DB) SearchMemoryVectorScoped(ctx context.Context, query string, limit int, scope string) ([]VectorResult, error) {
 	embedder := d.Embedder()
 	if embedder == nil {
 		return nil, nil
@@ -739,11 +799,16 @@ func (d *DB) SearchMemoryVector(ctx context.Context, query string, limit int) ([
 		return nil, nil
 	}
 
-	rows, err := d.sql.Query(`
-		SELECT id, text, tags, source, created_at, COALESCE(accessed_at, 0), access_count, COALESCE(embedding, '')
+	vecSQL := `
+		SELECT id, text, tags, source, scope, created_at, COALESCE(accessed_at, 0), access_count, COALESCE(embedding, '')
 		FROM memory
-		WHERE embedding IS NOT NULL
-	`)
+		WHERE embedding IS NOT NULL`
+	var vecArgs []any
+	if scope != "" {
+		vecSQL += ` AND scope = ?`
+		vecArgs = append(vecArgs, scope)
+	}
+	rows, err := d.sql.Query(vecSQL, vecArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -757,7 +822,7 @@ func (d *DB) SearchMemoryVector(ctx context.Context, query string, limit int) ([
 	for rows.Next() {
 		var e Entry
 		var blob []byte
-		if err := rows.Scan(&e.ID, &e.Text, &e.Tags, &e.Source, &e.CreatedAt, &e.AccessedAt, &e.AccessCount, &blob); err != nil {
+		if err := rows.Scan(&e.ID, &e.Text, &e.Tags, &e.Source, &e.Scope, &e.CreatedAt, &e.AccessedAt, &e.AccessCount, &blob); err != nil {
 			return nil, err
 		}
 		candidates = append(candidates, candidate{e, blob})
@@ -869,11 +934,11 @@ func (d *DB) ReconcileEmbeddings(ctx context.Context) (int, error) {
 // GetMemory retrieves a single memory entry by ID.
 func (d *DB) GetMemory(id string) (Entry, error) {
 	row := d.sql.QueryRow(`
-		SELECT id, text, tags, source, created_at, COALESCE(accessed_at, 0), access_count
+		SELECT id, text, tags, source, scope, created_at, COALESCE(accessed_at, 0), access_count
 		FROM memory WHERE id = ?
 	`, id)
 	var e Entry
-	err := row.Scan(&e.ID, &e.Text, &e.Tags, &e.Source, &e.CreatedAt, &e.AccessedAt, &e.AccessCount)
+	err := row.Scan(&e.ID, &e.Text, &e.Tags, &e.Source, &e.Scope, &e.CreatedAt, &e.AccessedAt, &e.AccessCount)
 	return e, err
 }
 
@@ -949,12 +1014,24 @@ func (d *DB) ReconcileMemoryDigests() (int, error) {
 
 // ListMemory returns the most recent memory entries.
 func (d *DB) ListMemory(limit int) ([]Entry, error) {
-	rows, err := d.sql.Query(`
-		SELECT id, text, tags, source, created_at, COALESCE(accessed_at, 0), access_count
-		FROM memory
-		ORDER BY created_at DESC
-		LIMIT ?
-	`, limit)
+	return d.ListMemoryScoped(limit, "")
+}
+
+// ListMemoryScoped returns the most recent memory entries, restricted to one
+// tier when scope is non-empty (empty lists every tier).
+func (d *DB) ListMemoryScoped(limit int, scope string) ([]Entry, error) {
+	listSQL := `
+		SELECT id, text, tags, source, scope, created_at, COALESCE(accessed_at, 0), access_count
+		FROM memory`
+	var listArgs []any
+	if scope != "" {
+		listSQL += ` WHERE scope = ?`
+		listArgs = append(listArgs, scope)
+	}
+	listSQL += ` ORDER BY created_at DESC LIMIT ?`
+	listArgs = append(listArgs, limit)
+
+	rows, err := d.sql.Query(listSQL, listArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -963,7 +1040,7 @@ func (d *DB) ListMemory(limit int) ([]Entry, error) {
 	var results []Entry
 	for rows.Next() {
 		var e Entry
-		if err := rows.Scan(&e.ID, &e.Text, &e.Tags, &e.Source, &e.CreatedAt, &e.AccessedAt, &e.AccessCount); err != nil {
+		if err := rows.Scan(&e.ID, &e.Text, &e.Tags, &e.Source, &e.Scope, &e.CreatedAt, &e.AccessedAt, &e.AccessCount); err != nil {
 			return nil, err
 		}
 		results = append(results, e)

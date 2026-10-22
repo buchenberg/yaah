@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/jobs"
@@ -46,6 +47,11 @@ type LoopBuilder struct {
 	// (unknown title → first derived one). The session-state seam for
 	// caching; the loop itself forwards the event to its broker.
 	OnTitle func(title string, updatedAt int64)
+	// ConsolidateFn is the consolidate nudge's dispatcher
+	// (docs/compaction-as-sleep.md §8 P3): the cadence-driven middleware
+	// enqueues, this runs the consolidation out-of-band. Nil disables the
+	// nudge.
+	ConsolidateFn func(ctx context.Context, kind string)
 	// BackgroundJobs manages background sub-agent dispatch.
 	BackgroundJobs *jobs.BackgroundJobs
 	// ConflictTracker detects parallel sub-agent file conflicts.
@@ -136,7 +142,12 @@ func (b *LoopBuilder) Build(opts LoopBuildOptions) *Loop {
 		optsList = append(optsList, WithMCPApproval(b.MCPApproval, b.MCPToolNames))
 	}
 
-	return NewLoop(b.Provider, b.Registry, optsList...)
+	loop := NewLoop(b.Provider, b.Registry, optsList...)
+	// Assigned after construction because buildPipeline reads it lazily at
+	// Run: the consolidate nudge's dispatcher is wired by the composition
+	// root, which is outside the option list.
+	loop.ConsolidateFn = b.ConsolidateFn
+	return loop
 }
 
 // ResolveCompactProvider wraps a compact provider with OTel instrumentation

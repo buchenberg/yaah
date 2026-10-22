@@ -95,9 +95,13 @@ func entryListJSON(results []memory.Entry) string {
 	return strings.Join(lines, "\n")
 }
 
-// MemoryAddTool adds a new memory entry.
+// MemoryAddTool adds a new memory entry. Scope is the tier the entry is
+// written to when the caller does not name one: ScopeSession for atoms
+// distilled from the running conversation (the consolidator's deep sleep),
+// ScopeGlobal for anything meant to outlive it. Empty means global.
 type MemoryAddTool struct {
-	DB *memory.DB
+	DB    *memory.DB
+	Scope string
 }
 
 func (t *MemoryAddTool) Name() string { return "memory_add" }
@@ -110,7 +114,8 @@ func (t *MemoryAddTool) Schema() json.RawMessage {
 		"type": "object",
 		"properties": {
 			"text": {"type": "string", "description": "The memory note text"},
-			"tags": {"type": "string", "description": "Optional JSON array of tags"}
+			"tags": {"type": "string", "description": "Optional JSON array of tags"},
+			"scope": {"type": "string", "enum": ["session", "global"], "description": "Optional tier: 'session' for atoms distilled from this conversation, 'global' (default) for facts meant to outlive it"}
 		},
 		"required": ["text"]
 	}`)
@@ -122,11 +127,19 @@ func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error
 	}
 
 	var params struct {
-		Text string `json:"text"`
-		Tags string `json:"tags"`
+		Text  string `json:"text"`
+		Tags  string `json:"tags"`
+		Scope string `json:"scope"`
 	}
 	if err := json.Unmarshal([]byte(args), &params); err != nil {
 		return "", fmt.Errorf("memory_add: invalid arguments: %w", err)
+	}
+
+	// Scope precedence: the call's own scope, then the tool's configured
+	// default (the consolidator's instance is session-scoped), then global.
+	scope := params.Scope
+	if scope == "" {
+		scope = t.Scope
 	}
 
 	entry := memory.Entry{
@@ -134,6 +147,7 @@ func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error
 		Text:      params.Text,
 		Tags:      params.Tags,
 		Source:    "agent",
+		Scope:     memory.NormalizeScope(scope),
 		CreatedAt: time.Now().Unix(),
 	}
 

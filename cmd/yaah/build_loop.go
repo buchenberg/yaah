@@ -224,6 +224,7 @@ func (s *agentSession) loopBuilder(
 		OnUsage:                    onUsage,
 		OnSubUsage:                 onSubUsage,
 		OnTitle:                    onTitle,
+		ConsolidateFn:              s.consolidateFn(),
 		Provider:                   prov,
 		Registry:                   s.toolReg,
 		Model:                      modelName,
