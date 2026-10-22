@@ -174,21 +174,23 @@ func (s *agentSession) consolidateFn() func(ctx context.Context, kind string) {
 		}
 		return d.Runner
 	}
+	s.deepGateOnce.Do(func() {
+		s.deepGate = newDeepSleepGate(s.cfg.Agent.Default.ConsolidateDeepEvery)
+	})
 	gate := s.deepGate
-	if gate == nil {
-		s.deepGateOnce.Do(func() {
-			s.deepGate = newDeepSleepGate(s.cfg.Agent.Default.ConsolidateDeepEvery)
-		})
-		gate = s.deepGate
-	}
 	return func(ctx context.Context, kind string) {
 		if kind != consolidateKindMemory {
 			return // a future kind (e.g. skills) must not consume a memory deep-sleep slot
+		}
+		r := runner()
+		if r == nil {
+			slog.Debug("consolidate: no sub-agent runner available; skipping dispatch", "kind", kind)
+			return // a no-op nudge must not consume a deep-sleep slot
 		}
 		if !gate.deep() {
 			slog.Debug("consolidate: light sleep — skipping deep fork", "kind", kind, "deepEvery", gate.deepEvery)
 			return
 		}
-		dispatchConsolidation(ctx, kind, runner, s.History)
+		dispatchConsolidation(ctx, kind, func() tools.TaskRunner { return r }, s.History)
 	}
 }
