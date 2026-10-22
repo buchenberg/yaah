@@ -54,9 +54,9 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 	if params.TopK <= 0 {
 		params.TopK = 10
 	}
-	scope := t.Scope
-	if scope == "" {
-		scope = memory.ScopeGlobal
+	scope, err := memory.NormalizeScope(t.Scope)
+	if err != nil {
+		return "", fmt.Errorf("memory_search: %w", err)
 	}
 
 	if params.Query != "" && params.Tag == "" {

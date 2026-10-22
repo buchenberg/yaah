@@ -109,3 +109,11 @@ func TestMemorySearchTool_Scopes(t *testing.T) {
 		t.Fatalf("session search = %q, want session only", out)
 	}
 }
+
+func TestMemorySearchTool_RejectsUnknownScope(t *testing.T) {
+	db := openScopeTestDB(t)
+	tool := &MemorySearchTool{DB: db, Scope: "project"} // unknown tier
+	if _, err := tool.Execute(context.Background(), `{"query":"x"}`); err == nil {
+		t.Fatal("memory_search with an unknown scope should fail loudly")
+	}
+}

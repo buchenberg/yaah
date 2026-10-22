@@ -1282,7 +1282,14 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 			continue
 		case "memory_search":
 			if opts.db != nil {
-				reg.Register(&tools.MemorySearchTool{DB: opts.db})
+				scope := ""
+				if profile.DisplayName == "consolidator" {
+					// The consolidator writes session-tier atoms; let it recall
+					// them so it can dedupe against what it already distilled
+					// this session.
+					scope = memory.ScopeSession
+				}
+				reg.Register(&tools.MemorySearchTool{DB: opts.db, Scope: scope})
 			}
 			continue
 		}
