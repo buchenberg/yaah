@@ -15,6 +15,10 @@ import (
 // configured, vector embeddings for semantic search.
 type MemorySearchTool struct {
 	DB *memory.DB
+	// Scope filters the search tier. Empty means ScopeGlobal: session-scoped
+	// atoms are working-context and must not leak into a default (cross-
+	// session) recall; a caller that wants them sets Scope explicitly.
+	Scope string
 }
 
 func (t *MemorySearchTool) Name() string { return "memory_search" }
@@ -50,14 +54,18 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 	if params.TopK <= 0 {
 		params.TopK = 10
 	}
+	scope := t.Scope
+	if scope == "" {
+		scope = memory.ScopeGlobal
+	}
 
 	if params.Query != "" && params.Tag == "" {
-		if vecResults, err := t.DB.SearchMemoryVector(ctx, params.Query, params.TopK); err == nil && len(vecResults) > 0 {
+		if vecResults, err := t.DB.SearchMemoryVectorScoped(ctx, params.Query, params.TopK, scope); err == nil && len(vecResults) > 0 {
 			return vectorResultsJSON(vecResults), nil
 		}
 	}
 
-	ftsResults, err := t.DB.SearchMemory(params.Query, params.TopK, params.Tag)
+	ftsResults, err := t.DB.SearchMemoryScoped(params.Query, params.TopK, params.Tag, scope)
 	if err != nil {
 		return "", fmt.Errorf("memory_search: %w", err)
 	}
@@ -136,10 +144,17 @@ func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error
 	}
 
 	// Scope precedence: the call's own scope, then the tool's configured
-	// default (the consolidator's instance is session-scoped), then global.
+	// default, then global (via NormalizeScope). An unknown tier is rejected
+	// here rather than persisted as an unfilterable row. The consolidator's
+	// session scope is directive-driven: its prompt instructs scope:"session"
+	// on every call (cmd/yaah/consolidate.go), not enforced by a tool default.
 	scope := params.Scope
 	if scope == "" {
 		scope = t.Scope
+	}
+	normScope, err := memory.NormalizeScope(scope)
+	if err != nil {
+		return "", fmt.Errorf("memory_add: %w", err)
 	}
 
 	entry := memory.Entry{
@@ -147,7 +162,7 @@ func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error
 		Text:      params.Text,
 		Tags:      params.Tags,
 		Source:    "agent",
-		Scope:     memory.NormalizeScope(scope),
+		Scope:     normScope,
 		CreatedAt: time.Now().Unix(),
 	}
 

@@ -89,13 +89,19 @@ const (
 	ScopeSession = "session"
 )
 
-// NormalizeScope maps the empty scope to ScopeGlobal and passes any other
-// value through unchanged, so a future tier needs no migration here.
-func NormalizeScope(scope string) string {
-	if scope == "" {
-		return ScopeGlobal
+// NormalizeScope maps the empty scope to ScopeGlobal and lowercases the known
+// tiers. An unknown value is an error: persisting an unfilterable tier would
+// make the row invisible to every scope = ? query, so it must fail loudly
+// instead of being written verbatim.
+func NormalizeScope(scope string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case "", ScopeGlobal:
+		return ScopeGlobal, nil
+	case ScopeSession:
+		return ScopeSession, nil
+	default:
+		return "", fmt.Errorf("unknown memory scope %q (want %q or %q)", scope, ScopeSession, ScopeGlobal)
 	}
-	return scope
 }
 
 // Entry represents a long-term memory note. Scope is its tier (ScopeSession
@@ -600,9 +606,13 @@ func NewEntryID() string {
 // AddMemory inserts a new memory entry. The caller should separately call
 // EmbedMemoryAsync to produce the embedding vector.
 func (d *DB) AddMemory(e Entry) error {
-	_, err := d.sql.Exec(
+	scope, err := NormalizeScope(e.Scope)
+	if err != nil {
+		return err
+	}
+	_, err = d.sql.Exec(
 		`INSERT INTO memory (id, text, tags, source, scope, created_at, digest) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.Text, e.Tags, e.Source, NormalizeScope(e.Scope), e.CreatedAt, memoryDigest(e.Text),
+		e.ID, e.Text, e.Tags, e.Source, scope, e.CreatedAt, memoryDigest(e.Text),
 	)
 	return err
 }
@@ -668,9 +678,13 @@ func (d *DB) AddMemoryDedup(e Entry) (string, error) {
 		return "", err
 	}
 
+	scope, err := NormalizeScope(e.Scope)
+	if err != nil {
+		return "", err
+	}
 	if _, err := tx.Exec(
 		`INSERT INTO memory (id, text, tags, source, scope, created_at, digest) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.Text, e.Tags, e.Source, NormalizeScope(e.Scope), e.CreatedAt, digest,
+		e.ID, e.Text, e.Tags, e.Source, scope, e.CreatedAt, digest,
 	); err != nil {
 		return "", err
 	}
