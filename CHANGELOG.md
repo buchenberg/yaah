@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.98.0](https://github.com/buchenberg/yaah/compare/v0.97.0...v0.98.0) (2026-10-22)
+
+
+### Features
+
+* **memory:** P3 — explicit scope tiers + deep-sleep consolidator dispatch ([#551](https://github.com/buchenberg/yaah/issues/551)) ([954cacf](https://github.com/buchenberg/yaah/commit/954cacf788fe5c5ea7b19e13dd6ed45117d6f216))
+
 ## [0.97.0](https://github.com/buchenberg/yaah/compare/v0.96.1...v0.97.0) (2026-10-22)
 
 
