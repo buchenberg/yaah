@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/landlock"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/landlock"
 )
 
 // TestConfinementScratchEnv_Redirects: the redirect points the housekeeping keys
@@ -408,7 +408,7 @@ func TestConfinedWorkspace_EnvRedirectLandsInWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scratch env: %v", err)
 	}
-	ws := confinedTestWorkspace(root, backend, confinement.PlacementPaddock).WithEnv(env)
+	ws := confinedTestWorkspace(root, backend, containment.PlacementPaddock).WithEnv(env)
 
 	res, err := ws.Exec(context.Background(), ExecRequest{
 		Command: "sh",
@@ -426,7 +426,7 @@ func TestConfinedWorkspace_EnvRedirectLandsInWorktree(t *testing.T) {
 	}
 
 	// The redirect is load-bearing: without it, HOME is outside the jail.
-	plain := confinedTestWorkspace(root, backend, confinement.PlacementPaddock)
+	plain := confinedTestWorkspace(root, backend, containment.PlacementPaddock)
 	if res2, _ := plain.Exec(context.Background(), ExecRequest{
 		Command: "sh",
 		Args:    []string{"-c", `echo x > "$HOME/yaah-should-be-denied"`},

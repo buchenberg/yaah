@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherdsandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 )
 
 func gitCmd(t *testing.T, dir string, args ...string) string {
@@ -64,7 +64,7 @@ func readFile(t *testing.T, root, rel string) string {
 	return string(b)
 }
 
-func mustCapture(t *testing.T, sb shepherdsandbox.Sandbox) shepherdtrace.WorkspaceState {
+func mustCapture(t *testing.T, sb goatherdsandbox.Sandbox) shepherdtrace.WorkspaceState {
 	t.Helper()
 	ws, err := sb.Capture(context.Background())
 	if err != nil {
@@ -73,7 +73,7 @@ func mustCapture(t *testing.T, sb shepherdsandbox.Sandbox) shepherdtrace.Workspa
 	return ws
 }
 
-func mustApply(t *testing.T, sb shepherdsandbox.Sandbox, ws shepherdtrace.WorkspaceState) {
+func mustApply(t *testing.T, sb goatherdsandbox.Sandbox, ws shepherdtrace.WorkspaceState) {
 	t.Helper()
 	if err := sb.Apply(context.Background(), ws); err != nil {
 		t.Fatalf("Apply: %v", err)
@@ -182,13 +182,13 @@ func TestApply_FailedApplyRestoresEvacuated(t *testing.T) {
 // sandbox; the decorator must keep them reachable through promotion.
 func TestNewLocalSandbox_KeepsOptionalCapabilities(t *testing.T) {
 	sb := NewLocalSandbox(t.TempDir())
-	if _, ok := sb.(shepherdsandbox.DeltaApplier); !ok {
+	if _, ok := sb.(goatherdsandbox.DeltaApplier); !ok {
 		t.Error("DeltaApplier capability lost through the decorator")
 	}
-	if _, ok := sb.(shepherdsandbox.DeltaBaseAnnotator); !ok {
+	if _, ok := sb.(goatherdsandbox.DeltaBaseAnnotator); !ok {
 		t.Error("DeltaBaseAnnotator capability lost through the decorator")
 	}
-	if _, ok := sb.(shepherdsandbox.Addressed); !ok {
+	if _, ok := sb.(goatherdsandbox.Addressed); !ok {
 		t.Error("Addressed capability lost through the decorator")
 	}
 	if sb.Backend() != "git" {

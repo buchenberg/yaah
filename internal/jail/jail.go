@@ -18,9 +18,9 @@ package jail
 import (
 	"runtime"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/landlock"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/winacl"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/landlock"
+	"github.com/buchenberg/goatherd-runtime/sandbox/winacl"
 )
 
 // detectors maps a GOOS to the member module's Detect. Read-only in

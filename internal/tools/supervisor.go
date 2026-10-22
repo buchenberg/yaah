@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	goatherd "github.com/buchenberg/goatherd-runtime"
 
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 )
@@ -41,7 +41,7 @@ type SupervisorTool struct {
 	// ScopeManager is the session's scope registry (plan 07, H4):
 	// session-owned and injected by the wiring, like the run registry.
 	// Nil when tracing is disabled.
-	ScopeManager *shepherd.ScopeManager
+	ScopeManager *goatherd.ScopeManager
 
 	// HaltRoot is the agents.default.supervisor_halt_root opt-in
 	// (adoption plan A3): root halt needs it, and it defaults off — a
@@ -130,7 +130,7 @@ func (t *SupervisorTool) Execute(ctx context.Context, args string) (string, erro
 	}
 }
 
-func executeListScopes(mgr *shepherd.ScopeManager) (string, error) {
+func executeListScopes(mgr *goatherd.ScopeManager) (string, error) {
 	all := mgr.AllScopes()
 	if len(all) == 0 {
 		return "No scopes registered.", nil
@@ -149,7 +149,7 @@ func executeListScopes(mgr *shepherd.ScopeManager) (string, error) {
 	return sb, nil
 }
 
-func executeInject(mgr *shepherd.ScopeManager, runs *supervision.Registry, scopeID, guidance string) (string, error) {
+func executeInject(mgr *goatherd.ScopeManager, runs *supervision.Registry, scopeID, guidance string) (string, error) {
 	scope, ok := mgr.Get(scopeID)
 	if !ok {
 		return "", fmt.Errorf("supervisor: scope %s not found", scopeID)
@@ -178,7 +178,7 @@ func executeInject(mgr *shepherd.ScopeManager, runs *supervision.Registry, scope
 	}
 }
 
-func executeHalt(mgr *shepherd.ScopeManager, runs *supervision.Registry, scopeID string) (string, error) {
+func executeHalt(mgr *goatherd.ScopeManager, runs *supervision.Registry, scopeID string) (string, error) {
 	scope, ok := mgr.Get(scopeID)
 	if !ok {
 		return "", fmt.Errorf("supervisor: scope %s not found", scopeID)
@@ -227,7 +227,7 @@ func executeHalt(mgr *shepherd.ScopeManager, runs *supervision.Registry, scopeID
 	}
 }
 
-func executeStatus(mgr *shepherd.ScopeManager, runs *supervision.Registry, svc *supervision.Service) (string, error) {
+func executeStatus(mgr *goatherd.ScopeManager, runs *supervision.Registry, svc *supervision.Service) (string, error) {
 	active := mgr.ActiveScopes()
 	all := mgr.AllScopes()
 	out := fmt.Sprintf("Supervision status:\n  Scopes: %d active, %d total\n", len(active), len(all))

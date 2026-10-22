@@ -30,9 +30,9 @@ import (
 	"sync"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/egress"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
+	"github.com/buchenberg/goatherd-runtime/sandbox/egress"
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
@@ -151,7 +151,7 @@ type agentSession struct {
 	// close() prunes its terminal scopes — merged and discarded
 	// children accumulate over a long session, and the trace records
 	// survive either way. Nil when tracing is off.
-	scopes *shepherd.ScopeManager
+	scopes *goatherd.ScopeManager
 
 	// traceStore and traceBus are the session's shepherd infrastructure
 	// (plan 07, H2): the store and bus the wiring created and the

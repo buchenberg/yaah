@@ -36,17 +36,17 @@ import (
 	"path/filepath"
 	"strings"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherdsandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
-	shepherdgit "github.com/buchenberg/shepherd-runtime-go/sandbox/git"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
 )
 
 // NewLocalSandbox returns an in-place sandbox over repoPath whose Apply
 // preserves untracked content absent from the applied state. All other
 // operations delegate to the kernel GitSandbox unchanged.
-func NewLocalSandbox(repoPath string) shepherdsandbox.Sandbox {
+func NewLocalSandbox(repoPath string) goatherdsandbox.Sandbox {
 	return &untrackedPreserving{
-		GitSandbox: shepherdgit.NewLocalGitSandbox(repoPath),
+		GitSandbox: goatherdgit.NewLocalGitSandbox(repoPath),
 		repoPath:   repoPath,
 	}
 }
@@ -56,11 +56,11 @@ func NewLocalSandbox(repoPath string) shepherdsandbox.Sandbox {
 // DeltaBaseAnnotator, Addressed) satisfied through promotion; only Apply
 // changes behavior.
 type untrackedPreserving struct {
-	*shepherdgit.GitSandbox
+	*goatherdgit.GitSandbox
 	repoPath string
 }
 
-var _ shepherdsandbox.Sandbox = (*untrackedPreserving)(nil)
+var _ goatherdsandbox.Sandbox = (*untrackedPreserving)(nil)
 
 // stashedFile records one evacuated path and where its content waits.
 type stashedFile struct {

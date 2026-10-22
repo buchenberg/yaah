@@ -3,7 +3,7 @@ package agent
 import (
 	"time"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/tools"
 )

@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	agentctx "github.com/buchenberg/yaah/internal/agent/context"
 	"github.com/buchenberg/yaah/internal/agent/llm"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"

@@ -10,9 +10,9 @@ import (
 	"sort"
 	"strings"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/agent/recovery"
 	"github.com/buchenberg/yaah/internal/config"
@@ -229,9 +229,9 @@ func CheckContainment(cfg *config.Config, cfgErr error) Check {
 	// Network rules are a separate capability from the jail itself: Landlock ABI
 	// 1-3 confines the filesystem and nothing else, so a restrictive egress
 	// posture is a FAIL there rather than a claim of enforcement.
-	netMode := containment.NetMode(strings.ToLower(strings.TrimSpace(sc.Network)))
+	netMode := confinement.NetMode(strings.ToLower(strings.TrimSpace(sc.Network)))
 	if netMode == "" {
-		netMode = containment.NetAllowAll
+		netMode = confinement.NetAllowAll
 	}
 	netCapable := backend != nil && backend.SupportsNetwork(netMode)
 

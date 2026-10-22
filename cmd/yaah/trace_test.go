@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 )
 
 // setTestTraceConfig points the trace-store config key at

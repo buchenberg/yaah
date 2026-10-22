@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	"github.com/buchenberg/shepherd-runtime-go"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	"github.com/buchenberg/goatherd-runtime"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
@@ -47,7 +47,7 @@ func TestSubAgentLoop_ErrorRateRuleRescue(t *testing.T) {
 	bus := shepherdtrace.NewEffectBus(64)
 	t.Cleanup(bus.Close)
 	store.WithBus(bus)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	if _, err := mgr.Create("sub-worker", nil); err != nil {
 		t.Fatalf("create scope: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestSubAgentLoop_ErrorRateRuleRescue(t *testing.T) {
 	}
 	var recorded bool
 	for _, id := range slice.FactIDs() {
-		if slice.FactsByID[id].GetEnvelope().SchemaRef == shepherd.SchemaSupervisorInject {
+		if slice.FactsByID[id].GetEnvelope().SchemaRef == goatherd.SchemaSupervisorInject {
 			recorded = true
 		}
 	}

@@ -3,12 +3,12 @@ package runner
 import (
 	"context"
 	"fmt"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	"gopkg.in/yaml.v3"
 
 	"github.com/buchenberg/yaah/internal/agent/subagent"
@@ -101,14 +101,14 @@ func TestBuildSubAgentSysPrompt_ConfinementGuidance(t *testing.T) {
 	// The egress posture is stated before the sub-agent meets it, so a blocked
 	// fetch is not something it has to guess at.
 	noEgressOpts := opts
-	noEgressOpts.subNetwork = containment.NetworkPolicy{Mode: containment.NetDenyAll}
+	noEgressOpts.subNetwork = confinement.NetworkPolicy{Mode: confinement.NetDenyAll}
 	noEgress := buildSubAgentSysPrompt(noEgressOpts, "developer", profile, false, worktree,
 		&subAgentConfinement{Requested: "auto", Resolved: "paddock", Enforced: true, Network: "deny_all"})
 	if !strings.Contains(noEgress, "no network egress") {
 		t.Errorf("a deny_all dispatch must say so:\n%s", noEgress)
 	}
 	brokerOpts := opts
-	brokerOpts.subNetwork = containment.NetworkPolicy{Mode: containment.NetBroker, BrokerPort: 41234}
+	brokerOpts.subNetwork = confinement.NetworkPolicy{Mode: confinement.NetBroker, BrokerPort: 41234}
 	brokered := buildSubAgentSysPrompt(brokerOpts, "developer", profile, false, worktree,
 		&subAgentConfinement{Requested: "auto", Resolved: "paddock", Enforced: true, Network: "broker", Broker: 41234})
 	for _, want := range []string{"allowlist", "127.0.0.1:41234"} {

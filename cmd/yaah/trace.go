@@ -9,7 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
 	"github.com/buchenberg/yaah/internal/config"
 	"github.com/spf13/cobra"
 )

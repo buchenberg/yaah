@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
 
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 )
@@ -24,7 +24,7 @@ func TestSupervisorTool_InjectBridgesToRun(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	runs := supervision.NewRegistry()
 
 	child, err := mgr.Create("sub-bridge", nil)

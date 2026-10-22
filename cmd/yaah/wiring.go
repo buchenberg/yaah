@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/egress"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
+	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
+	"github.com/buchenberg/goatherd-runtime/sandbox/egress"
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/budget"
@@ -508,7 +508,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	// tree. The orchestrator pipeline no longer hosts shepherd_trace, so
 	// this is the single initialization point for the supervisor tools
 	// and sub-agent trace middleware.
-	var scopeMgr *shepherd.ScopeManager
+	var scopeMgr *goatherd.ScopeManager
 	var traceStore *shepherdtrace.SQLiteTraceStore
 	var traceBus *shepherdtrace.EffectBus
 	var rootScopeID string
@@ -554,7 +554,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			// Plan 07 H5: the kernel's scan stats ride the recovery —
 			// the scan is O(history), and the cost stays visible long
 			// before it matters.
-			var stats shepherd.RecoveryStats
+			var stats goatherd.RecoveryStats
 			recovered, report, rerr := recovery.Recover(context.Background(), store, repoPath, sessionSandbox == nil, &stats)
 			if rerr != nil {
 				fmt.Fprintf(os.Stderr, "warning: shepherd tracing disabled: scope recovery failed: %v\n", rerr)
@@ -1105,7 +1105,7 @@ func supervisorSvcGuardCheck(svc *supervision.Service) func(ownerID, toolName, a
 // dispatch time (and reported by doctor) rather than silently dropped. Starting
 // the broker here is unconditional so the port is known before any dispatch; the
 // dispatch is where the contradiction is caught, with the config in hand.
-func wireSubAgentNetwork(sc config.SubAgentConfig) (containment.NetworkPolicy, *egress.Broker, error) {
+func wireSubAgentNetwork(sc config.SubAgentConfig) (confinement.NetworkPolicy, *egress.Broker, error) {
 	// The broker comes first: its port is what the policy pins to. The mapping
 	// itself lives in the runner (one copy, next to the code that applies it).
 	if !strings.EqualFold(strings.TrimSpace(sc.Network), "broker") {
@@ -1116,12 +1116,12 @@ func wireSubAgentNetwork(sc config.SubAgentConfig) (containment.NetworkPolicy, *
 	broker := egress.NewBroker(egress.AllowHosts(normalizeBrokerHosts(sc.NetworkHosts)...))
 	port, err := broker.Start()
 	if err != nil {
-		return containment.NetworkPolicy{}, nil, fmt.Errorf("agents.subagent.network: start the egress broker: %w", err)
+		return confinement.NetworkPolicy{}, nil, fmt.Errorf("agents.subagent.network: start the egress broker: %w", err)
 	}
 	np, err := runner.SubAgentNetworkPolicy(sc.Network, port)
 	if err != nil {
 		broker.Stop()
-		return containment.NetworkPolicy{}, nil, err
+		return confinement.NetworkPolicy{}, nil, err
 	}
 	slog.Info("sub-agent egress broker started", "port", port, "allow_hosts", len(sc.NetworkHosts))
 	return np, broker, nil

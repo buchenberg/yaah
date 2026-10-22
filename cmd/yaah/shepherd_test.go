@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
-	shepherdsandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
+	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
 
-	shepherdgit "github.com/buchenberg/shepherd-runtime-go/sandbox/git"
+	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
 	"github.com/buchenberg/yaah/internal/agent/recovery"
 )
 
@@ -33,16 +33,16 @@ func shepherdOrphanEnv(t *testing.T) (*recovery.Report, string, string) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	mgr := shepherd.NewScopeManager(store)
-	root, err := mgr.Create("sess-shep", shepherdgit.NewLocalGitSandbox(repo))
+	mgr := goatherd.NewScopeManager(store)
+	root, err := mgr.Create("sess-shep", goatherdgit.NewLocalGitSandbox(repo))
 	if err != nil {
 		t.Fatalf("create root: %v", err)
 	}
 
 	// The live worktree: forked isolated, still active.
 	liveWT := filepath.Join(t.TempDir(), "wt-live")
-	liveSB := shepherdgit.NewWorktreeSandbox(repo, liveWT)
-	if err := liveSB.Create(context.Background(), shepherdsandbox.SandboxSpec{}); err != nil {
+	liveSB := goatherdgit.NewWorktreeSandbox(repo, liveWT)
+	if err := liveSB.Create(context.Background(), goatherdsandbox.SandboxSpec{}); err != nil {
 		t.Fatalf("create live worktree: %v", err)
 	}
 	if _, err := mgr.ForkIsolated(root.ID(), "sub-live", nil, liveSB); err != nil {
@@ -56,8 +56,8 @@ func shepherdOrphanEnv(t *testing.T) (*recovery.Report, string, string) {
 	// state) and then re-adding a REAL worktree at the same path with
 	// sentinel content: the exact shape the crash leaves.
 	orphanWT := filepath.Join(t.TempDir(), "wt-dead")
-	deadSB := shepherdgit.NewWorktreeSandbox(repo, orphanWT)
-	if err := deadSB.Create(context.Background(), shepherdsandbox.SandboxSpec{}); err != nil {
+	deadSB := goatherdgit.NewWorktreeSandbox(repo, orphanWT)
+	if err := deadSB.Create(context.Background(), goatherdsandbox.SandboxSpec{}); err != nil {
 		t.Fatalf("create dead worktree: %v", err)
 	}
 	deadChild, err := mgr.ForkIsolated(root.ID(), "sub-dead", nil, deadSB)

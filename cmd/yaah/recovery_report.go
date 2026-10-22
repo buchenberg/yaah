@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	goatherd "github.com/buchenberg/goatherd-runtime"
 
 	"github.com/buchenberg/yaah/internal/agent/recovery"
 )
@@ -52,7 +52,7 @@ func formatSize(n int64) string {
 // H5): the scan is O(history) with no bound, and the counts are what
 // tell a long-lived trace dir's owner when startup recovery has grown.
 // One line, beside the report it belongs to.
-func printRecoveryStats(stats *shepherd.RecoveryStats) {
+func printRecoveryStats(stats *goatherd.RecoveryStats) {
 	if stats == nil {
 		return
 	}

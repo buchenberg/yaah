@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
 
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 )
@@ -26,7 +26,7 @@ func TestSupervisorTool_StatusListsFirings(t *testing.T) {
 	t.Cleanup(bus.Close)
 	store.WithBus(bus)
 
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 
 	root, err := mgr.Create("sess-status", nil)
 	if err != nil {
@@ -87,7 +87,7 @@ func TestSupervisorTool_StatusWithoutService(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 
 	sup := &SupervisorTool{ScopeManager: mgr, Runs: supervision.NewRegistry()}
 	out, err := sup.Execute(context.Background(), `{"action":"status"}`)

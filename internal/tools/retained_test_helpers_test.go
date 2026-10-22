@@ -13,14 +13,14 @@ import (
 	"sync"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
 
 	"github.com/buchenberg/yaah/internal/gitsandbox"
 )
 
 type sessionFixtures struct {
-	mgr   *shepherd.ScopeManager
+	mgr   *goatherd.ScopeManager
 	store *shepherdtrace.SQLiteTraceStore
 }
 
@@ -35,7 +35,7 @@ func newSessionFixtures(t *testing.T) (*sessionFixtures, string, string) {
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
 
-	fx := &sessionFixtures{mgr: shepherd.NewScopeManager(store), store: store}
+	fx := &sessionFixtures{mgr: goatherd.NewScopeManager(store), store: store}
 
 	repo := newTestGitRepo(t)
 

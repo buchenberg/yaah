@@ -10,22 +10,22 @@ import (
 	"strings"
 	"testing"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
 
 	"github.com/buchenberg/yaah/internal/agent/recovery"
 	"github.com/buchenberg/yaah/internal/config"
 )
 
 // newScopeManagerForTest returns a scope manager over an in-memory store.
-func newScopeManagerForTest(t *testing.T) (*shepherd.ScopeManager, *shepherdtrace.SQLiteTraceStore) {
+func newScopeManagerForTest(t *testing.T) (*goatherd.ScopeManager, *shepherdtrace.SQLiteTraceStore) {
 	t.Helper()
 	store, err := shepherdtrace.NewSQLiteTraceStore(":memory:")
 	if err != nil {
 		t.Fatalf("open test store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	return shepherd.NewScopeManager(store), store
+	return goatherd.NewScopeManager(store), store
 }
 
 // TestCreateRootScope_LocalAndIsolated pins the D1 root substrate choice:
@@ -236,7 +236,7 @@ func TestCreateRootScope_ResumeReattachesRecoveredRoot(t *testing.T) {
 
 	// The crashed run: a root with a forked child (a root that never
 	// forked leaves no trace record).
-	crashed := shepherd.NewScopeManager(store)
+	crashed := goatherd.NewScopeManager(store)
 	root, err := CreateRootScope(crashed, "sess-resume", repo, false)
 	if err != nil {
 		t.Fatalf("CreateRootScope: %v", err)
@@ -289,7 +289,7 @@ func TestCreateRootScope_HaltedRecoveredRootRefuses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	crashed := shepherd.NewScopeManager(store)
+	crashed := goatherd.NewScopeManager(store)
 	root, err := CreateRootScope(crashed, "sess-halted", repo, false)
 	if err != nil {
 		t.Fatalf("CreateRootScope: %v", err)

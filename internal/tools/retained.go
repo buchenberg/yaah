@@ -16,10 +16,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
-	shepherdsandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
-	shepherdgit "github.com/buchenberg/shepherd-runtime-go/sandbox/git"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
+	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
 	"github.com/buchenberg/yaah/internal/agent/recovery"
 	"github.com/buchenberg/yaah/internal/jobs"
 )
@@ -44,7 +44,7 @@ type RetainedRuntime struct {
 	RepoPath string
 	// ScopeManager is the session's scope registry. Required: a retained run
 	// forks an isolated scope through it.
-	ScopeManager *shepherd.ScopeManager
+	ScopeManager *goatherd.ScopeManager
 	// RootScopeID is the session's root scope — the fork parent, and the merge
 	// target a settlement applies to. Required.
 	RootScopeID string
@@ -82,11 +82,11 @@ type retainedProposal struct {
 	id       string
 	scopeID  string
 	workdir  string
-	output   *shepherd.RetainedOutput
+	output   *goatherd.RetainedOutput
 	result   string
 	runErr   string
 	parentID string
-	mgr      *shepherd.ScopeManager
+	mgr      *goatherd.ScopeManager
 }
 
 // proposalSeq disambiguates proposal ids minted within the same nanosecond
@@ -213,7 +213,7 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 				slog.Warn("retained report: worktree discard failed", "worktree", wt, "err", derr)
 			}
 		} else if recovery.IsRegisteredWorktree(ctx, rt.RepoPath, wt) {
-			if derr := shepherdgit.NewWorktreeSandbox(rt.RepoPath, wt).Destroy(context.WithoutCancel(ctx)); derr != nil {
+			if derr := goatherdgit.NewWorktreeSandbox(rt.RepoPath, wt).Destroy(context.WithoutCancel(ctx)); derr != nil {
 				slog.Warn("retained report: worktree destroy failed", "worktree", wt, "err", derr)
 			}
 		} else {
@@ -300,11 +300,11 @@ func settleRetainedProposal(ctx context.Context, id, action string) (string, err
 	env := proposalEnvelope{Status: "settled", ProposalID: id, Action: action}
 	if err := p.output.Settle(ctx, verb); err != nil {
 		switch {
-		case errors.Is(err, shepherd.ErrOutputConsumed):
+		case errors.Is(err, goatherd.ErrOutputConsumed):
 			return "", fmt.Errorf("proposal %s was already settled — a sealed output is consumed once", id)
-		case errors.Is(err, shepherd.ErrApplyConflict):
+		case errors.Is(err, goatherd.ErrApplyConflict):
 			return "", fmt.Errorf("proposal %s: the parent changed paths this proposal also changes (%w); resolve the overlap, then apply or discard", id, err)
-		case errors.Is(err, shepherd.ErrSettleEffectLanded):
+		case errors.Is(err, goatherd.ErrSettleEffectLanded):
 			// The work is on the parent; only the causal merge failed to finish.
 			// End the proposal with the failure noted — a retry would re-apply
 			// an effect that already happened.
@@ -318,7 +318,7 @@ func settleRetainedProposal(ctx context.Context, id, action string) (string, err
 	// worktree — untouched (the kernel's release is "keep, don't integrate"), so
 	// tear the child down here rather than strand the worktree. Select, Apply,
 	// and Discard already end the child scope themselves.
-	if verb == shepherd.SettleRelease {
+	if verb == goatherd.SettleRelease {
 		teardownReleasedProposal(p)
 	}
 
@@ -348,16 +348,16 @@ func teardownReleasedProposal(p *retainedProposal) {
 }
 
 // settlementVerb maps a proposal verb to the kernel's settlement action.
-func settlementVerb(action string) (shepherd.SettlementAction, bool) {
+func settlementVerb(action string) (goatherd.SettlementAction, bool) {
 	switch strings.ToLower(strings.TrimSpace(action)) {
 	case "select":
-		return shepherd.SettleSelect, true
+		return goatherd.SettleSelect, true
 	case "apply":
-		return shepherd.SettleApply, true
+		return goatherd.SettleApply, true
 	case "release":
-		return shepherd.SettleRelease, true
+		return goatherd.SettleRelease, true
 	case "discard":
-		return shepherd.SettleDiscard, true
+		return goatherd.SettleDiscard, true
 	default:
 		return "", false
 	}
@@ -408,14 +408,14 @@ func provisionRetainedBranch(
 	// the scratch dirs as untracked; the worktree itself is unaffected.
 	_ = ensureWorktreeRootExcluded(ctx, rt)
 
-	sb := shepherdgit.NewWorktreeSandbox(rt.RepoPath, wtPath)
-	if err := sb.Create(ctx, shepherdsandbox.SandboxSpec{}); err != nil {
+	sb := goatherdgit.NewWorktreeSandbox(rt.RepoPath, wtPath)
+	if err := sb.Create(ctx, goatherdsandbox.SandboxSpec{}); err != nil {
 		// A worktree left behind by a killed run can occupy the path. Only
 		// clear it when it is actually a worktree registered with this repo.
 		if recovery.IsRegisteredWorktree(ctx, rt.RepoPath, wtPath) {
 			_ = sb.Destroy(context.WithoutCancel(ctx))
 		}
-		if retryErr := sb.Create(ctx, shepherdsandbox.SandboxSpec{}); retryErr != nil {
+		if retryErr := sb.Create(ctx, goatherdsandbox.SandboxSpec{}); retryErr != nil {
 			return "", fmt.Errorf("create worktree %s: %v (first attempt: %v)", wtPath, retryErr, err)
 		}
 	}
@@ -632,7 +632,7 @@ const retainedDiffMaxLines = 2000
 
 // changesPaths projects a sealed output's frozen changes as the changed file
 // list the envelopes carry.
-func changesPaths(changes []shepherd.ProposedChange) []string {
+func changesPaths(changes []goatherd.ProposedChange) []string {
 	if len(changes) == 0 {
 		return nil
 	}

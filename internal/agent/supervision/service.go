@@ -20,9 +20,9 @@ import (
 	"sync"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	"github.com/buchenberg/shepherd-runtime-go"
-	shepherdsupervisor "github.com/buchenberg/shepherd-runtime-go/supervisor"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	"github.com/buchenberg/goatherd-runtime"
+	shepherdsupervisor "github.com/buchenberg/goatherd-runtime/supervisor"
 
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -76,7 +76,7 @@ type firingKey struct{ rule, scope, kind string }
 type Service struct {
 	sup         *shepherdsupervisor.Supervisor
 	guard       *shepherdsupervisor.Supervisor
-	mgr         *shepherd.ScopeManager
+	mgr         *goatherd.ScopeManager
 	runs        *Registry
 	bus         *shepherdtrace.EffectBus
 	rootScopeID string
@@ -175,7 +175,7 @@ func advisoryRule(rule shepherdsupervisor.SupervisionRule, onFiring func(rule st
 	innerMatch := rule.Match
 	innerAction := rule.Action
 	rule.Match = func(e shepherdtrace.EffectEvent) bool {
-		if e.SchemaRef == shepherd.SchemaSupervisorInject {
+		if e.SchemaRef == goatherd.SchemaSupervisorInject {
 			return false
 		}
 		return innerMatch(e)
@@ -298,7 +298,7 @@ func shellGuardRule() shepherdsupervisor.SupervisionRule {
 // opt-in, default off — a rule halting the interactive session is a
 // big hammer). The manual supervisor tool's root inject (A2) is
 // unaffected either way.
-func NewService(mgr *shepherd.ScopeManager, bus *shepherdtrace.EffectBus, runs *Registry, rules AdvisoryRules, shellGuard, haltRoot bool, rootScopeID string) *Service {
+func NewService(mgr *goatherd.ScopeManager, bus *shepherdtrace.EffectBus, runs *Registry, rules AdvisoryRules, shellGuard, haltRoot bool, rootScopeID string) *Service {
 	errorThreshold := rules.ErrorRateThreshold
 	if errorThreshold <= 0 {
 		errorThreshold = defaultErrorRateThreshold

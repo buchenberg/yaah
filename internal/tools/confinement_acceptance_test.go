@@ -44,8 +44,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/confinement"
-	"github.com/buchenberg/shepherd-runtime-go/sandbox/landlock"
+	"github.com/buchenberg/goatherd-runtime/sandbox/containment"
+	"github.com/buchenberg/goatherd-runtime/sandbox/landlock"
 )
 
 func TestConfinedBuild_Acceptance(t *testing.T) {
@@ -128,7 +128,7 @@ func TestConfinedBuild_Acceptance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build confinement scratch: %v", err)
 	}
-	ws := confinedTestWorkspace(worktree, backend, confinement.PlacementPaddock).WithEnv(env)
+	ws := confinedTestWorkspace(worktree, backend, containment.PlacementPaddock).WithEnv(env)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

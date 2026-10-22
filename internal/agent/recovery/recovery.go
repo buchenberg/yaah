@@ -20,10 +20,10 @@ import (
 	"runtime"
 	"strings"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
-	shepherdsandbox "github.com/buchenberg/shepherd-runtime-go/sandbox"
-	shepherdgit "github.com/buchenberg/shepherd-runtime-go/sandbox/git"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
+	goatherdsandbox "github.com/buchenberg/goatherd-runtime/sandbox"
+	goatherdgit "github.com/buchenberg/goatherd-runtime/sandbox/git"
 
 	"github.com/buchenberg/yaah/internal/gitsandbox"
 )
@@ -113,7 +113,7 @@ type Report struct {
 //
 // A resolver error fails the recovery loudly: half-adopted sandboxes
 // are worse than none (the kernel's contract).
-func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPath string, adoptRoots bool, stats *shepherd.RecoveryStats) (*shepherd.ScopeManager, *Report, error) {
+func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPath string, adoptRoots bool, stats *goatherd.RecoveryStats) (*goatherd.ScopeManager, *Report, error) {
 	if repoPath == "" {
 		return nil, nil, fmt.Errorf("no repository to re-adopt onto")
 	}
@@ -122,7 +122,7 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 		return nil, nil, err
 	}
 
-	resolver := func(scopeID, backend, path string) (shepherdsandbox.Sandbox, error) {
+	resolver := func(scopeID, backend, path string) (goatherdsandbox.Sandbox, error) {
 		switch {
 		case backend == "":
 			// Roots resolve with empty backend and path by the
@@ -174,13 +174,13 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 			if !IsRegisteredWorktree(ctx, info.repo, info.path) {
 				return nil, nil
 			}
-			return shepherdgit.NewWorktreeSandbox(info.repo, info.path), nil
+			return goatherdgit.NewWorktreeSandbox(info.repo, info.path), nil
 		default:
 			return nil, nil
 		}
 	}
 
-	mgr, err := shepherd.RecoverScopes(store, shepherd.RecoverOptions{Resolver: resolver, Stats: stats})
+	mgr, err := goatherd.RecoverScopes(store, goatherd.RecoverOptions{Resolver: resolver, Stats: stats})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -192,7 +192,7 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 	// scopes here.
 	for owner := range paths {
 		scope, ok := mgr.Get("scope:" + owner)
-		if !ok || scope.State() == shepherd.ScopeActive {
+		if !ok || scope.State() == goatherd.ScopeActive {
 			continue
 		}
 		if scope.Sandbox() != nil {
@@ -217,9 +217,9 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 		_, statErr := os.Stat(info.path)
 		onDisk := statErr == nil
 		switch {
-		case !onDisk && scope.State() == shepherd.ScopeActive:
+		case !onDisk && scope.State() == goatherd.ScopeActive:
 			report.Missing = append(report.Missing, Missing{ScopeID: scope.ID(), Path: info.path})
-		case onDisk && scope.State() == shepherd.ScopeActive:
+		case onDisk && scope.State() == goatherd.ScopeActive:
 			// Adopted means adopted: the strict resolver refuses an
 			// unregistered occupant, and the report must not claim it —
 			// the refusal is reported as unadopted instead.
@@ -255,7 +255,7 @@ func Recover(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, repoPat
 func scanWorktreePaths(ctx context.Context, store *shepherdtrace.SQLiteTraceStore, trustedRepo string) (map[string]worktreeInfo, error) {
 	paths := make(map[string]worktreeInfo)
 
-	forks, err := shepherdtrace.ScanRecordsBySchema(ctx, store, shepherd.SchemaScopeForked)
+	forks, err := shepherdtrace.ScanRecordsBySchema(ctx, store, goatherd.SchemaScopeForked)
 	if err != nil {
 		return nil, fmt.Errorf("scan fork records: %w", err)
 	}

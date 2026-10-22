@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	shepherd "github.com/buchenberg/shepherd-runtime-go"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	goatherd "github.com/buchenberg/goatherd-runtime"
 
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
 	"github.com/buchenberg/yaah/internal/jobs"
@@ -79,7 +79,7 @@ func TestSessionClosePrunesTerminalScopes(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	root, err := mgr.Create("sess-prune", nil)
 	if err != nil {
 		t.Fatalf("create root: %v", err)
@@ -258,7 +258,7 @@ func storeAppendable(store *shepherdtrace.SQLiteTraceStore) bool {
 			TraceOwnerID: "probe",
 			FactDrafts: []shepherdtrace.RecordDraft{{
 				Mode:      shepherdtrace.Declaration,
-				SchemaRef: "shepherd.probe.v1",
+				SchemaRef: "goatherd.probe.v1",
 				KindLabel: "probe",
 				Payload:   map[string]any{"probe": true},
 			}},

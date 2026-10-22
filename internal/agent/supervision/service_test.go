@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
-	"github.com/buchenberg/shepherd-runtime-go"
-	shepherdsupervisor "github.com/buchenberg/shepherd-runtime-go/supervisor"
+	shepherdtrace "github.com/buchenberg/goatherd-kernel"
+	"github.com/buchenberg/goatherd-runtime"
+	shepherdsupervisor "github.com/buchenberg/goatherd-runtime/supervisor"
 )
 
 // newTestService assembles a real supervision stack for one fake
@@ -32,7 +32,7 @@ func newTestService(t *testing.T, rules AdvisoryRules) (*Service, *shepherdtrace
 	t.Cleanup(bus.Close)
 	store.WithBus(bus)
 
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	if _, err := mgr.Create("sess-root", nil); err != nil {
 		t.Fatalf("create root scope: %v", err)
 	}
@@ -87,7 +87,7 @@ func assertInjectRecorded(t *testing.T, store *shepherdtrace.SQLiteTraceStore, o
 		t.Fatalf("read trace: %v", err)
 	}
 	for _, id := range slice.FactIDs() {
-		if slice.FactsByID[id].GetEnvelope().SchemaRef == shepherd.SchemaSupervisorInject {
+		if slice.FactsByID[id].GetEnvelope().SchemaRef == goatherd.SchemaSupervisorInject {
 			return
 		}
 	}
@@ -248,7 +248,7 @@ func TestService_RootFiringsDropped(t *testing.T) {
 		t.Fatalf("read trace: %v", err)
 	}
 	for _, id := range slice.FactIDs() {
-		if slice.FactsByID[id].GetEnvelope().SchemaRef == shepherd.SchemaSupervisorInject {
+		if slice.FactsByID[id].GetEnvelope().SchemaRef == goatherd.SchemaSupervisorInject {
 			t.Error("a root firing must not be recorded — the fact is the record of a delivered intervention, and this one is dropped by policy")
 		}
 	}
@@ -288,7 +288,7 @@ func TestService_NoSelfFeedback(t *testing.T) {
 	}
 	injects := 0
 	for _, id := range slice.FactIDs() {
-		if slice.FactsByID[id].GetEnvelope().SchemaRef == shepherd.SchemaSupervisorInject {
+		if slice.FactsByID[id].GetEnvelope().SchemaRef == goatherd.SchemaSupervisorInject {
 			injects++
 		}
 	}
@@ -310,7 +310,7 @@ func TestService_CloseJoinsDrain(t *testing.T) {
 	t.Cleanup(bus.Close)
 	store.WithBus(bus)
 
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	if _, err := mgr.Create("sub-worker", nil); err != nil {
 		t.Fatalf("create scope: %v", err)
 	}
@@ -358,7 +358,7 @@ func TestService_NoRecordNoDelivery(t *testing.T) {
 	t.Cleanup(bus.Close)
 	store.WithBus(bus)
 
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	scope, err := mgr.Create("sub-worker", nil)
 	if err != nil {
 		t.Fatalf("create scope: %v", err)
@@ -397,7 +397,7 @@ func TestService_StartAfterCloseIsNoop(t *testing.T) {
 	t.Cleanup(func() { store.Close(context.Background()) })
 	bus := shepherdtrace.NewEffectBus(64)
 	t.Cleanup(bus.Close)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	runs := NewRegistry()
 
 	svc := NewService(mgr, bus, runs, allAdvisoryRules(), false, false, "")
@@ -430,7 +430,7 @@ func newGuardService(t *testing.T) (*Service, func(ownerID, toolName, argsJSON s
 	bus := shepherdtrace.NewEffectBus(64)
 	t.Cleanup(bus.Close)
 	store.WithBus(bus)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	runs := NewRegistry()
 
 	svc := NewService(mgr, bus, runs, AdvisoryRules{}, true, false, "scope:sess-root")
@@ -488,7 +488,7 @@ func TestGuardCheck_DisabledIsNil(t *testing.T) {
 	bus := shepherdtrace.NewEffectBus(64)
 	t.Cleanup(bus.Close)
 
-	svc := NewService(shepherd.NewScopeManager(store), bus, NewRegistry(), allAdvisoryRules(), false, false, "")
+	svc := NewService(goatherd.NewScopeManager(store), bus, NewRegistry(), allAdvisoryRules(), false, false, "")
 	if svc.GuardCheck() != nil {
 		t.Error("GuardCheck must be nil when the shell guard is disabled")
 	}
@@ -546,7 +546,7 @@ func TestService_HaltDispatchSubScope(t *testing.T) {
 	bus := shepherdtrace.NewEffectBus(64)
 	t.Cleanup(bus.Close)
 	store.WithBus(bus)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	if _, err := mgr.Create("sub-worker", nil); err != nil {
 		t.Fatalf("create scope: %v", err)
 	}
@@ -585,7 +585,7 @@ func TestService_HaltDispatchSubScope(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		scope, ok := mgr.Get("scope:sub-worker")
-		if ok && cancelled.Load() && scope.State() == shepherd.ScopeDiscarded {
+		if ok && cancelled.Load() && scope.State() == goatherd.ScopeDiscarded {
 			return
 		}
 		if !time.Now().Before(deadline) {
@@ -598,7 +598,7 @@ func TestService_HaltDispatchSubScope(t *testing.T) {
 // newRootHaltStack assembles a service with a root scope whose run is
 // cancellable, plus a halt rule that fires on "explode" declarations
 // from the root owner. haltRoot is the B3 gate under test.
-func newRootHaltStack(t *testing.T, haltRoot bool) (*shepherd.ScopeManager, *atomic.Bool, *shepherdtrace.EffectBus) {
+func newRootHaltStack(t *testing.T, haltRoot bool) (*goatherd.ScopeManager, *atomic.Bool, *shepherdtrace.EffectBus) {
 	t.Helper()
 	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
 	if err != nil {
@@ -608,7 +608,7 @@ func newRootHaltStack(t *testing.T, haltRoot bool) (*shepherd.ScopeManager, *ato
 	bus := shepherdtrace.NewEffectBus(64)
 	t.Cleanup(bus.Close)
 	store.WithBus(bus)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	if _, err := mgr.Create("sess-root", nil); err != nil {
 		t.Fatalf("create root: %v", err)
 	}
@@ -652,7 +652,7 @@ func TestService_RootHaltRefusedWithoutOptIn(t *testing.T) {
 	if !ok {
 		t.Fatal("root scope vanished")
 	}
-	if root.State() != shepherd.ScopeActive {
+	if root.State() != goatherd.ScopeActive {
 		t.Errorf("root state = %q, want active (the halt was refused)", root.State())
 	}
 }
@@ -669,7 +669,7 @@ func TestService_RootHaltWithOptIn(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		root, ok := mgr.Get("scope:sess-root")
-		if ok && cancelled.Load() && root.State() == shepherd.ScopeDiscarded {
+		if ok && cancelled.Load() && root.State() == goatherd.ScopeDiscarded {
 			return
 		}
 		if !time.Now().Before(deadline) {
@@ -731,7 +731,7 @@ func TestService_FiringsCountGuardDeny(t *testing.T) {
 	t.Cleanup(func() { store.Close(context.Background()) })
 	bus := shepherdtrace.NewEffectBus(64)
 	t.Cleanup(bus.Close)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 
 	svc := NewService(mgr, bus, NewRegistry(), AdvisoryRules{}, true, false, "")
 	check := svc.GuardCheck()
@@ -765,7 +765,7 @@ func TestService_FiringsCountHalt(t *testing.T) {
 	bus := shepherdtrace.NewEffectBus(64)
 	t.Cleanup(bus.Close)
 	store.WithBus(bus)
-	mgr := shepherd.NewScopeManager(store)
+	mgr := goatherd.NewScopeManager(store)
 	if _, err := mgr.Create("sub-worker", nil); err != nil {
 		t.Fatalf("create scope: %v", err)
 	}
@@ -785,7 +785,7 @@ func TestService_FiringsCountHalt(t *testing.T) {
 	for {
 		scope, ok := mgr.Get("scope:sub-worker")
 		firings := svc.Firings()
-		if ok && scope.State() == shepherd.ScopeDiscarded && len(firings) == 1 {
+		if ok && scope.State() == goatherd.ScopeDiscarded && len(firings) == 1 {
 			f := firings[0]
 			if f.Rule != "test_halt" || f.Scope != "scope:sub-worker" || f.Kind != "halt" || f.Count != 1 {
 				t.Errorf("firing = %+v, want test_halt/scope:sub-worker/halt/1", f)
