@@ -163,6 +163,18 @@ func (l *Loop) applyDefaults() {
 		l.brokerView = NewBrokerViewWithSync(l.broker, l.View, l.BeforeViewEvents)
 		l.brokerClosed = false
 	}
+	// Title notifications ride the live broker: the persister fires the
+	// hook during a prompt Run, when this loop's broker exists, so
+	// rebinding per Run (like publishTokenDelta) always targets the
+	// current generation.
+	if l.Persister != nil && l.View != nil {
+		l.Persister.OnTitle = func(title string, updatedAt int64) {
+			l.publishTitle(title, updatedAt)
+			if l.OnTitle != nil {
+				l.OnTitle(title, updatedAt)
+			}
+		}
+	}
 	if l.LLM == nil {
 		var onToken llm.TokenCallback
 		var onThinking llm.ThinkingCallback
@@ -202,6 +214,14 @@ func (l *Loop) applyDefaults() {
 func (l *Loop) publishTokenDelta(token string) {
 	if l.broker != nil {
 		l.broker.Publish(&TokenDeltaEvent{Text: token})
+	}
+}
+
+// publishTitle forwards a title transition (empty → first derived title)
+// to the broker; the ACP view translates it into session_info_update.
+func (l *Loop) publishTitle(title string, updatedAt int64) {
+	if l.broker != nil {
+		l.broker.Publish(&TitleSetEvent{Title: title, UpdatedAt: updatedAt})
 	}
 }
 

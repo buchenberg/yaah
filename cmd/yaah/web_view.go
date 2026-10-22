@@ -176,6 +176,9 @@ func (v *sseView) HandleEvent(evt agent.Event) {
 		we = sseWireEvent{Type: "ctrl.status", Text: e.StartedSummary()}
 	case *agent.CompactionDoneEvent:
 		we = sseWireEvent{Type: "ctrl.status", Text: e.DoneSummary()}
+	case *agent.TitleSetEvent:
+		// Intentionally ignored: the web UI has no session-title display
+		// yet; the /api/sessions endpoint serves titles from the store.
 	default:
 		// Deliberately unmatched events emit no wire frame — the
 		// previous fallthrough wrote an empty {"type":""} SSE event

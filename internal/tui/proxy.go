@@ -100,6 +100,9 @@ func (t *App) HandleEvent(event agent.Event) {
 			t.conversationLog = append(t.conversationLog, convItem{text: msg})
 			t.markDirty()
 		})
+	case *agent.TitleSetEvent:
+		// Intentionally ignored: the TUI's in-app session display does
+		// not track titles yet; pickers read them from the store.
 	case *agent.DoneEvent:
 		t.queueUpdateDrawCritical(func() {
 			flushed := t.flushPendingTokens()

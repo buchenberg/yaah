@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/types"
 )
 
@@ -392,6 +394,76 @@ func TestServer_sessionDeletePrunesStoreAndSucceedsSilently(t *testing.T) {
 	}
 	if len(deleted) != 2 || deleted[1] != "tck-never-created" {
 		t.Fatalf("store callback saw %v, want both ids", deleted)
+	}
+}
+
+// TestServer_sessionInfoUpdate pins the transport behavior for the
+// engine's title transition: during a prompt, one session/update with
+// session_info_update (title + RFC3339 updatedAt) reaches the client
+// before end_turn.
+func TestServer_sessionInfoUpdate(t *testing.T) {
+	fire := false
+	sess := &fakeSession{id: "sess-tl"}
+	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
+		if fire {
+			if v := sess.currentView(); v != nil {
+				v.HandleEvent(&agent.TitleSetEvent{
+					Title:     "fix the flaky test",
+					UpdatedAt: 1761060000,
+				})
+			}
+		}
+		return "done", false, nil
+	}
+	h := newACPHarness(t, sess)
+	initialize(t, h)
+	sid := newSession(t, h)
+
+	sawInfo := false
+	for round := 0; round < 2; round++ {
+		fire = round == 0
+		if err := h.send("session/prompt", 10+round, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"turn"}]}`, sid)); err != nil {
+			t.Fatal(err)
+		}
+		for {
+			msg := h.recv(t)
+			if msg.Method == "session/update" {
+				var env updateEnvelope
+				if err := json.Unmarshal(msg.Params, &env); err != nil {
+					t.Fatalf("update envelope: %v", err)
+				}
+				var info SessionInfoUpdate
+				if err := json.Unmarshal(env.Update, &info); err != nil {
+					t.Fatalf("update payload: %v", err)
+				}
+				if info.SessionUpdate == UpdateSessionInfo {
+					if round == 1 {
+						t.Fatal("session_info_update re-emitted on the second prompt")
+					}
+					if sawInfo {
+						t.Fatal("duplicate session_info_update in one turn")
+					}
+					sawInfo = true
+					if info.Title != "fix the flaky test" {
+						t.Fatalf("title = %v", info.Title)
+					}
+					if want := time.Unix(1761060000, 0).UTC().Format(time.RFC3339); info.UpdatedAt != want {
+						t.Fatalf("updatedAt = %q, want %q", info.UpdatedAt, want)
+					}
+				}
+				continue
+			}
+			if msg.Error != nil {
+				t.Fatalf("prompt returned error: %+v", msg.Error)
+			}
+			if !strings.Contains(string(msg.Result), `"stopReason":"end_turn"`) {
+				continue
+			}
+			break
+		}
+	}
+	if !sawInfo {
+		t.Fatal("session_info_update never arrived on the title transition")
 	}
 }
 

@@ -42,6 +42,10 @@ type LoopBuilder struct {
 	// blocking sub-agent dispatch's usage folds in (attribution).
 	OnUsage    func(types.Usage)
 	OnSubUsage func(types.Usage)
+	// OnTitle fires when the session title transitions from empty
+	// (unknown title → first derived one). The session-state seam for
+	// caching; the loop itself forwards the event to its broker.
+	OnTitle func(title string, updatedAt int64)
 	// BackgroundJobs manages background sub-agent dispatch.
 	BackgroundJobs *jobs.BackgroundJobs
 	// ConflictTracker detects parallel sub-agent file conflicts.
@@ -112,6 +116,7 @@ func (b *LoopBuilder) Build(opts LoopBuildOptions) *Loop {
 		WithSteer(b.Steer),
 		WithFollowUps(b.FollowUps),
 		WithUsageHooks(b.OnUsage, b.OnSubUsage),
+		WithTitleHook(b.OnTitle),
 		WithBackgroundJobs(b.BackgroundJobs),
 		WithConflictTracker(b.ConflictTracker),
 		WithToolsLevel(FullTools),

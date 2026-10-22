@@ -110,6 +110,18 @@ type EscalationEvent struct {
 
 func (*EscalationEvent) eventMarker() {}
 
+// TitleSetEvent is emitted when a session's persisted title transitions
+// from empty (the first user message that derives one — mirroring
+// TouchSession's one-shot rule in the store). UpdatedAt is Unix seconds.
+// Consumers forward it so clients show live session names; it fires at
+// most once per untitled session.
+type TitleSetEvent struct {
+	Title     string
+	UpdatedAt int64
+}
+
+func (*TitleSetEvent) eventMarker() {}
+
 // DoneEvent is emitted when the agent loop completes (success or error).
 // It carries the final response text (if any), error information,
 // context window statistics for the status bar, finish reason from the last

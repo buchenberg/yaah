@@ -271,10 +271,12 @@ func (d *DB) TouchSession(sessionID string, updatedAt int64, titleCandidate stri
 // become the session title.
 var titleSkipPrefixes = []string{"[STEER]", "SUPERVISOR:", "CONFLICT:", "[BACKGROUND"}
 
-// deriveSessionTitle condenses a first user message into a picker label:
+// DeriveSessionTitle condenses a user message into a picker label:
 // whitespace collapsed, synthetic traffic rejected, hard-capped at
 // maxSessionTitleRunes with an ellipsis. Empty return = no title yet.
-func deriveSessionTitle(content string) string {
+// Shared with the agent loop's persist hook, which mirrors TouchSession's
+// one-shot rule to notify clients of the title transition.
+func DeriveSessionTitle(content string) string {
 	c := strings.Join(strings.Fields(strings.TrimSpace(content)), " ")
 	if c == "" {
 		return ""

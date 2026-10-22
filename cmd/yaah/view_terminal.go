@@ -85,6 +85,9 @@ func (v *terminalView) HandleEvent(evt agent.Event) {
 			modelStr = " [" + Dim(e.Model) + "]"
 		}
 		fmt.Fprintf(os.Stderr, "╰─ sub-agent: %s%s · %s (%s)\n", Bold(label), modelStr, status, Dim(formatDuration(e.Duration)))
+	case *agent.TitleSetEvent:
+		// Intentionally ignored: the terminal view has no session-title
+		// line; pickers read titles from the store.
 	case *agent.EscalationEvent:
 		severity := e.Severity
 		color := replYellow

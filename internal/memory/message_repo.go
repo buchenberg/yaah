@@ -31,7 +31,7 @@ func (d *DB) AddMessage(m Message) error {
 		// message write or confuse the agent loop's retry path.
 		title := ""
 		if m.Role == "user" {
-			title = deriveSessionTitle(m.Content)
+			title = DeriveSessionTitle(m.Content)
 		}
 		_ = d.TouchSession(m.SessionID, m.Timestamp, title)
 		return nil
