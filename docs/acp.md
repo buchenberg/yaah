@@ -59,7 +59,11 @@ can also re-attach to it in a fresh process.
 
 Every call creates a separate conversation; two calls return two distinct
 ids, and prompts on different sessions may run concurrently. A missing or
-relative cwd is rejected with invalid params (`-32602`).
+relative cwd is rejected with invalid params (`-32602`); a second prompt on
+a session whose turn is still in flight is rejected busy (`-32002`),
+as is a `session/load` for a live id while its prompt runs — both retry
+after the turn ends. `session/set_mode` acknowledges modes for known
+session ids and rejects unknown ones with invalid params.
 
 ### session/load and where the state lives
 
@@ -110,11 +114,13 @@ describes the store problem; it does not name the id).
 ## Approvals and questions
 
 - **Tool approvals** bridge to the client via `session/request_permission`
-  (`internal/acp/approval.go`). The pending call is announced as a
-  `tool_call` first and the permission request carries the same provider
-  `toolCallId`; after approval the execution updates that row instead of
-  creating a second one. A timeout or a rejection denies the call and
-  closes the row as `failed`.
+  (`internal/acp/approval.go`). When the model supplies a provider call id,
+  the pending call is announced as a `tool_call` first and the permission
+  request carries the same `toolCallId`; after approval the execution
+  updates that row instead of creating a second one. Models that omit the
+  call id prompt under a synthetic id and produce no `tool_call` row. A
+  timeout or a rejection denies the call and, when a row was announced,
+  closes it as `failed`.
 - **Question-tool prompts** are surfaced as status text and auto-answered
   with the first option when `AutoAnswerQuestions` (default on), rather
   than an ACP elicitation round-trip.

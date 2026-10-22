@@ -183,30 +183,59 @@ func TestDB_EmbedAfterCloseSkips(t *testing.T) {
 
 func TestPendingEmbeds_DrainTimeout(t *testing.T) {
 	var p pendingEmbeds
-	if !p.start() {
-		t.Fatal("start() refused on a fresh pendingEmbeds")
+	finish, ok := p.begin(func() {})
+	if !ok {
+		t.Fatal("begin() refused on a fresh pendingEmbeds")
 	}
-	defer p.done()
+	defer finish()
 
 	if p.drain(20 * time.Millisecond) {
 		t.Fatal("drain reported success while an embed was still in flight")
 	}
-	if p.start() {
-		t.Fatal("start() accepted work after drain closed the gate")
+	if _, ok := p.begin(func() {}); ok {
+		t.Fatal("begin() accepted work after drain closed the gate")
 	}
 }
 
 func TestPendingEmbeds_DrainWaits(t *testing.T) {
 	var p pendingEmbeds
-	if !p.start() {
-		t.Fatal("start() refused on a fresh pendingEmbeds")
+	finish, ok := p.begin(func() {})
+	if !ok {
+		t.Fatal("begin() refused on a fresh pendingEmbeds")
 	}
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		p.done()
+		finish()
 	}()
 
 	if !p.drain(2 * time.Second) {
 		t.Fatal("drain timed out waiting for a finishing embed")
+	}
+}
+
+// TestPendingEmbeds_DrainCancels pins the bounded-shutdown fix for slow
+// embedding servers: drain cancels the registered embeds' contexts
+// before waiting, so a 30s HTTP embed cannot keep racing the pool past
+// a timed-out wait.
+func TestPendingEmbeds_DrainCancels(t *testing.T) {
+	var p pendingEmbeds
+	cancelled := make(chan struct{})
+	finish, ok := p.begin(func() { close(cancelled) })
+	if !ok {
+		t.Fatal("begin() refused on a fresh pendingEmbeds")
+	}
+	// Mirror the real embed goroutine: unwind (and unregister) once the
+	// context is cancelled.
+	go func() {
+		<-cancelled
+		finish()
+	}()
+	if !p.drain(2 * time.Second) {
+		t.Fatal("drain timed out with no in-flight work")
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("drain did not cancel the registered embed's context")
 	}
 }

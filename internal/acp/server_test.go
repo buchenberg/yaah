@@ -43,11 +43,6 @@ func (f *fakeSession) RunPrompt(ctx context.Context, prompt string) (string, boo
 }
 func (f *fakeSession) SetView(v agent.View)           { f.mu.Lock(); f.view = v; f.mu.Unlock() }
 func (f *fakeSession) SetCtrlCh(c chan<- control.Msg) { f.mu.Lock(); f.ctrl = c; f.mu.Unlock() }
-func (f *fakeSession) GetCtrlCh() chan<- control.Msg {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.ctrl
-}
 func (f *fakeSession) SetApproveCallFn(fn func(callID, name, args string) bool) {
 	f.mu.Lock()
 	f.approve = fn
@@ -536,25 +531,58 @@ func TestServer_sessionLoadSecondSessionAllowed(t *testing.T) {
 	}
 }
 
-// TestServer_sessionLoadSameSessionIdempotent covers a client
-// reloading the id it already established: the live conversation is
-// returned as-is (immediate empty result, no replay, no second build).
-func TestServer_sessionLoadSameSessionIdempotent(t *testing.T) {
-	h := newACPHarness(t, nil)
+// TestServer_sessionLoadSameIdReplaysAgain covers a client reloading
+// the id it already established: the live conversation is replayed
+// again (a load request must stream the full conversation before its
+// response), answered with {}, and no second factory build happens.
+func TestServer_sessionLoadSameIdReplaysAgain(t *testing.T) {
+	fac := &fakeSession{
+		id: "sess-live",
+		history: []types.Message{
+			{Role: "user", Content: "earlier question"},
+			{Role: "assistant", Content: "earlier answer"},
+		},
+	}
+	h := newACPHarness(t, fac)
 	initialize(t, h)
 	id := newSession(t, h)
+	if id != "sess-live" {
+		t.Fatalf("session/new returned %q, want sess-live", id)
+	}
 	if err := h.send("session/load", 7, loadParams(t, h, id)); err != nil {
 		t.Fatal(err)
 	}
-	msg := h.recv(t)
-	if msg.Error != nil {
-		t.Fatalf("reload returned error: %+v", msg.Error)
+	var replayed []string
+	var resp Message
+	for {
+		msg := h.recv(t)
+		if msg.Method == "session/update" {
+			replayed = append(replayed, loadProbe(t, msg.Params))
+			continue
+		}
+		resp = msg
+		break
 	}
-	if raw := string(msg.Result); raw != "{}" {
+	if resp.Error != nil {
+		t.Fatalf("reload returned error: %+v", resp.Error)
+	}
+	if raw := string(resp.Result); raw != "{}" {
 		t.Errorf("reload result = %s, want {}", raw)
 	}
+	want := []string{
+		UpdateUserMessageChunk + ":earlier question",
+		UpdateAgentMessageChunk + ":earlier answer",
+	}
+	if len(replayed) != len(want) {
+		t.Fatalf("replayed %v, want %v", replayed, want)
+	}
+	for i := range want {
+		if replayed[i] != want[i] {
+			t.Errorf("replay[%d] = %q, want %q", i, replayed[i], want[i])
+		}
+	}
 	if res := h.resumes(); len(res) != 1 || res[0] != "" {
-		t.Errorf("factory called with %v, want only the fresh build [\"\"]", res)
+		t.Errorf("factory calls = %v, want only the fresh build [\"\"]", res)
 	}
 }
 

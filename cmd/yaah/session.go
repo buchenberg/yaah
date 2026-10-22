@@ -593,12 +593,6 @@ func (s *agentSession) SetCtrlCh(ch chan<- control.Msg) {
 	}
 }
 
-func (s *agentSession) GetCtrlCh() chan<- control.Msg {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.ctrlCh
-}
-
 func (s *agentSession) SetApproveFn(fn func(name, args string) bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -620,8 +614,15 @@ func (s *agentSession) SetApproveCallFn(fn func(callID, name, args string) bool)
 // otherwise, mirroring the loop's approveTool behaviour.
 func (s *agentSession) promptWorkspaceAccess(path, reason string) bool {
 	s.mu.RLock()
+	call := s.approveCallFn
 	fn := s.approveFn
 	s.mu.RUnlock()
+	if call != nil {
+		// Call-id bridge (ACP). The ask carries no tool call, so the
+		// empty id tells requestPermission to fall back to its
+		// request-id identity and emit no tool_call row for it.
+		return call("", "workspace_access", fmt.Sprintf("%s (%s)", path, reason))
+	}
 	if fn != nil {
 		return fn("workspace_access", fmt.Sprintf("%s (%s)", path, reason))
 	}

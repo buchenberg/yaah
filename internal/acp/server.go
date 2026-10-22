@@ -31,7 +31,6 @@ type Session interface {
 	RunPrompt(ctx context.Context, prompt string) (string, bool, error)
 	SetView(agent.View)
 	SetCtrlCh(chan<- control.Msg)
-	GetCtrlCh() chan<- control.Msg
 	SetApproveCallFn(func(callID, name, args string) bool)
 	// AgentSessionID returns the id of the underlying persisted
 	// conversation (the memory-DB session id). The ACP server exposes
@@ -245,6 +244,14 @@ func resolveMCPCommand(command, cwd string) (string, error) {
 			resolved = filepath.Join(cwd, resolved)
 		} else if p, err := exec.LookPath(resolved); err == nil {
 			resolved = p
+			// A relative PATH entry (e.g. ".") can yield a relative
+			// result, which filepath.Abs below would then resolve
+			// against the process cwd — when the session cwd differs,
+			// silently the wrong file. Resolve it against the session
+			// cwd like the other relative forms.
+			if !filepath.IsAbs(resolved) {
+				resolved = filepath.Join(cwd, resolved)
+			}
 		} else {
 			return "", fmt.Errorf("%q is not on PATH", command)
 		}
@@ -267,6 +274,9 @@ func (s *Server) buildSession(opts BuildOptions, expectedID string) (*sessionSta
 	sess, err := s.newSession(opts)
 	if err != nil {
 		return nil, err
+	}
+	if sess == nil {
+		return nil, fmt.Errorf("session factory returned a nil session")
 	}
 	id := sess.AgentSessionID()
 	if id == "" {
@@ -941,7 +951,12 @@ func (s *Server) handlePrompt(
 			stopReason = StopCancelled
 			s.logf("prompt cancelled: %s", p.SessionID)
 		default:
+			// Keep the documented surface: a failed turn answers
+			// stopReason "refusal" like any other end-of-turn state, and
+			// the error detail lives in the log — the session/prompt
+			// response promises a stopReason and clients key on it.
 			s.logf("prompt error: %s: %v", p.SessionID, runErr)
+			stopReason = StopRefusal
 		}
 
 		// Free the single-flight slot. All control producers that run
@@ -960,18 +975,8 @@ func (s *Server) handlePrompt(
 		<-ctrlDone
 		cancel()
 
-		if runErr != nil && !errors.Is(runErr, context.Canceled) {
-			respErr(msg.ID, codeInternalError, "prompt failed: "+oneLine(runErr.Error()))
-			return
-		}
 		respOK(msg.ID, PromptResult{StopReason: stopReason})
 	}()
-}
-
-// oneLine folds a multi-line error into the single-line message the
-// JSON-RPC envelope expects.
-func oneLine(s string) string {
-	return strings.Join(strings.Fields(s), " ")
 }
 
 // renderPrompt folds ACP content blocks into the flat text prompt the

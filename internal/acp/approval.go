@@ -126,7 +126,8 @@ func (s *Server) requestPermission(
 	// Create the tool call the client will show in its permission
 	// dialog, and remember it so the execution event below updates the
 	// same row instead of creating a second one.
-	if callID != "" {
+	announced := callID != ""
+	if announced {
 		s.mu.Lock()
 		st := s.sessions[sessionID]
 		if st != nil && st.view != nil {
@@ -169,7 +170,13 @@ func (s *Server) requestPermission(
 	deny := func(reason string) {
 		s.logf("permission %s denied: %s", toolCallID, reason)
 		// Render the denial so a row the client created from the
-		// permission request does not hang in a pending state.
+		// permission request does not hang in a pending state. The
+		// id-less fallback (no announced row) renders nothing: a failed
+		// update for a synthetic perm_N id the client never saw would
+		// create an orphan row instead.
+		if !announced {
+			return
+		}
 		send(sessionID, ToolCallUpdate{
 			SessionUpdate: UpdateToolCallUpdate,
 			ToolCallID:    toolCallID,

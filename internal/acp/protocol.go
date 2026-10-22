@@ -39,8 +39,7 @@ const (
 	codeInvalidRequest = -32600
 	codeMethodNotFound = -32601
 	codeInvalidParams  = -32602
-	codeInternalError  = -32603
-	codeBusy           = -32002 // custom (JSON-RPC server-defined range)
+	codeBusy           = -32002 // no prompt turn may overlap; retry after it ends
 )
 
 // === initialize ===

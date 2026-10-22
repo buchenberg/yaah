@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	shepherdtrace "github.com/buchenberg/shepherd-kernel-go"
@@ -68,6 +69,53 @@ const workspaceSandboxStartTimeout = 15 * time.Minute
 // paths directly (finding C4).
 func toolSpillDir() string {
 	return filepath.Join(config.HomeDir(), "truncated")
+}
+
+// rolefileDirsMu guards the accumulated rolefile search directories.
+// rebuildDefaultRoleRegistry appends a session's dirs and rebuilds the
+// process-wide role registry as their union, so a later session build
+// atomically swaps in a registry that still carries every dir earlier
+// sessions contributed (multi-session ACP; a plain
+// SetDefaultRoleRegistry per build would silently replace the old one).
+var (
+	rolefileDirsMu sync.Mutex
+	rolefileDirs   []string
+)
+
+// rebuildDefaultRoleRegistry accumulates the session's rolefile search
+// directories and rebuilds the process-wide role registry as built-ins
+// plus the union of every directory seen so far, then swaps that in as
+// the default.
+func rebuildDefaultRoleRegistry(cwd string) {
+	rolefileDirsMu.Lock()
+	for _, dir := range runner.RoleSearchPaths(cwd) {
+		dup := false
+		for _, seen := range rolefileDirs {
+			if seen == dir {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			rolefileDirs = append(rolefileDirs, dir)
+		}
+	}
+	dirs := make([]string, len(rolefileDirs))
+	copy(dirs, rolefileDirs)
+	rolefileDirsMu.Unlock()
+
+	// Same tolerance as the original per-build loader and the hot-reload
+	// path: unreadable/on-missing dirs are skipped.
+	reg := subagent.NewRoleRegistry()
+	if files := runner.BuiltinRoleFiles(); files != nil {
+		_ = reg.LoadBytes(files)
+	}
+	for _, dir := range dirs {
+		// LoadDir itself tolerates missing dirs; other read errors are
+		// skipped, as in the original per-build loader.
+		_ = reg.LoadDir(dir)
+	}
+	subagent.SetDefaultRoleRegistry(reg)
 }
 
 // newAgentSessionWithOptions creates an agent session. All CLI-flag and
@@ -160,16 +208,16 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		}
 	}
 
-	// Load sub-agent role definitions: built-in (embedded) +
-	// user-defined (~/.agents/roles/, ./.agents/roles/).
-	reg := subagent.NewRoleRegistry()
-	if files := runner.BuiltinRoleFiles(); files != nil {
-		reg.LoadBytes(files)
-	}
-	for _, dir := range runner.RoleSearchPaths(cwd) {
-		reg.LoadDir(dir)
-	}
-	subagent.SetDefaultRoleRegistry(reg)
+	// Role registry: built-in (embedded) definitions plus user-defined
+	// rolefiles from the searched directories (project dirs walked up
+	// from cwd, then ~/.agents/roles). Multi-session (ACP): a session
+	// with a different cwd must not *overwrite* the registry earlier
+	// sessions still dispatch against, so one union registry is rebuilt
+	// and atomically swapped per build over every dir seen so far.
+	// Fully per-session registries remain future work — dispatch
+	// consults the process-wide DefaultRegistry — so the union trades
+	// same-name rolefile isolation for keeping earlier sessions usable.
+	rebuildDefaultRoleRegistry(cwd)
 
 	// The tool registry (plan §3, Option A): local mode installs every
 	// built-in; isolated mode curates the set — the host-only leaf tools
@@ -632,7 +680,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		SubAgentProvider:      subAgentProvider,
 		SubAgentModel:         subAgentModel,
 		SubCfg:                cfg.Agent.SubAgent,
-		RoleNames:             reg.Names(),
+		RoleNames:             subagent.Roles(),
 		OtelEnabled:           cfg.Observability.Otel.Enabled,
 		OtelVerbose:           cfg.Observability.Otel.Verbose,
 		Tracker:               tracker,
