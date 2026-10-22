@@ -27,6 +27,19 @@ running tests, and retrying. yaah splits that work:
 
 Four roles are built in: `analyst`, `developer`, `tester`, and `reviewer`. Add your own in `.agents/roles/*.md` or `~/.agents/roles/*.md`.
 
+## Memory that sleeps, not just forgets
+
+yaah doesn't just summarize your context away when the window fills. It **sleeps**:
+
+- A **nudge** fires on a cadence while the agent works, and a **consolidator sub-agent** distills recent turns into durable atoms — decisions, facts, constraints — tagged and stored in local SQLite instead of re-deriving them every run.
+- Memory has **tiers**: `global` (durable, cross-session) vs `session` (working context), so one session's scratch never leaks into another's recall.
+- **Skills are first-class memories.** Creating, editing, and even "deleting" a skill is tracked: provenance (who/where it came from), usage counts, and an append-only mutation ledger. Deletion archives rather than destroys — restorable and auditable.
+- **Guardrails keep self-modification safe.** Skill writes are schema-validated with a description limit, and a security scan ships ready to gate autonomous writes — it rejects fetch-and-execute, destructive deletes, fork bombs, and disk destroyers. It's opt-in (`SkillTool.Strict`), pending the unattended write path. The consolidator can't recurse into itself.
+- **Hygiene closes the loop.** A staleness sweep reclaims only compaction atoms that were never once recalled — access is proof an atom earned its keep, so useful memory is never pruned.
+- **It's observable.** `yaah memory stats` renders the aggregate store and a merged learning journey — because the learning graph is a render, not a store.
+
+Read the design in [docs/compaction-as-sleep.md](docs/compaction-as-sleep.md).
+
 ## Install
 
 macOS / Linux:

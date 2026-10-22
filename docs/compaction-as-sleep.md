@@ -2,7 +2,7 @@
 
 > **Bead:** `yaah-u4r` · **Type:** spike · **Priority:** P3 · **Label:** agent
 > **Title:** *spike: compaction-as-sleep — policy-driven, boundary-aware, memory-consolidating compaction middleware*
-> **Status:** open (design spike — no source changes; this document is the deliverable)
+> **Status:** shipped in phases (see §8 — each phase lists exactly what landed vs. what remains).
 > **Last expanded:** 2026-10-22 (hermes learning-loop analysis folded in — see §3–§6)
 
 ---
@@ -181,11 +181,12 @@ consolidator sub-agent (role: "consolidator", restricted tools, recursion guard)
 
 ## 8. Phased plan
 
-1. **P0 — Trigger.** Counter-gated `consolidate` middleware that fires a bounded pass and *writes memory entries* (no skills yet). Proves the "nudge" in yaah's pipeline.
-2. **P1 — Lifecycle.** Add provenance + usage + archive-not-delete + ledger to `skill`, and let the consolidator propose skill create/patch through the sealed-proposal path.
-3. **P2 — Guardrails.** Schema validation, description limits, security scan, recursion guard — ported from hermes's safety stack.
-4. **P3 — Multi-level memory + light/deep sleep.** Tie the consolidation product into directions 4 and 5 (short/medium/long tiers; cheap light sleep vs. expensive deep sleep).
-5. **P4 — Introspection.** A `memory stats` / journey-style view (optional, low priority — hermes's "learning graph" is a render, not a store).
+1. **P0 — Trigger.** ✅ Counter-gated `consolidate` middleware that fires a bounded pass and *writes memory entries* (no skills yet). Proves the "nudge" in yaah's pipeline.
+2. **P1 — Lifecycle.** ✅ Provenance + usage + archive-not-delete + ledger on `skill`. ⏳ The consolidator proposing skill create/patch through the sealed-proposal path is *not* wired yet — the lifecycle tables and tools are the foundation it will land on.
+3. **P2 — Guardrails.** ✅ Schema validation, description limits, security scan, recursion guard. (The security scan ships ready but is opt-in: no caller enables `SkillTool.Strict` yet, pending the unattended write path.)
+4. **P3 — Multi-level memory + light/deep sleep.** ✅ `session`/`global` scope tiers and the deep-sleep consolidator dispatch. ⏳ The three short/medium/long tiers and a light-sleep (cheap compress vs. deep-sleep) policy selector remain.
+5. **P4 — Introspection.** ✅ `yaah memory stats` renders aggregate stats and a merged learning journey (the "learning graph" as a render, not a store).
+6. **Hygiene.** ✅ A conservative staleness sweep reclaims compaction atoms that were never recalled; accessed atoms are never pruned.
 
 ---
 

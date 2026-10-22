@@ -23,6 +23,12 @@ import (
 // global atom without it is never swept, however old.
 const compactionSourceTag = "source:compaction"
 
+// StaleAge is the single staleness floor shared by the hygiene sweep and the
+// stats view: a compaction atom younger than this had its whole lifetime to be
+// recalled. Keeping it in one place prevents the sweep and its stats view
+// from drifting apart.
+const StaleAge = 30 * 24 * time.Hour
+
 // PruneSession deletes the session-scoped atoms distilled by one conversation,
 // returning the number of rows removed. It is for explicit session DELETION,
 // not close: sessions are resumable, so close deliberately leaves a session's

@@ -153,12 +153,6 @@ func initDBEmbedder(db *memory.DB) {
 	attachEmbedder(db, cfg)
 }
 
-// staleMemoryAge is the floor under PruneStaleCompaction: a global compaction
-// atom younger than this had its whole lifetime to be recalled and may still
-// be. A month is deliberately generous — the sweep exists to stop unbounded
-// accumulation, not to reclaim anything soon.
-const staleMemoryAge = 30 * 24 * time.Hour
-
 // pruneMemoryAtClose runs the memory-hygiene staleness sweep on the session
 // teardown path. It deliberately does NOT prune session-scoped atoms by
 // session: yaah sessions are resumable, so a session's working context may be
@@ -170,16 +164,80 @@ func pruneMemoryAtClose(db *memory.DB) {
 	if db == nil {
 		return
 	}
-	if n, err := db.PruneStaleCompaction(time.Now().Add(-staleMemoryAge)); err != nil {
+	if n, err := db.PruneStaleCompaction(time.Now().Add(-memory.StaleAge)); err != nil {
 		slog.Warn("session: prune stale compaction memory failed", "err", err)
 	} else if n > 0 {
 		slog.Debug("session: pruned stale compaction memory", "deleted", n)
 	}
 }
 
+// memoryStatsCmd renders the introspection view: aggregate memory/skill stats
+// plus a merged, newest-first journey of what the store has learned.
+// docs/compaction-as-sleep.md §8 P4 — a render, never a write.
+var memoryStatsCmd = &cobra.Command{
+	Use:   "stats",
+	Short: "Show memory and skill stats plus a recent learning journey",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		db, err := memory.OpenDefault()
+		if err != nil {
+			return fmt.Errorf("open database: %w", err)
+		}
+		defer db.Close()
+
+		stats, err := db.Stats()
+		if err != nil {
+			return err
+		}
+		cmd.Printf("%s\n", Bold("Memory"))
+		cmd.Printf("  total:            %d\n", stats.Total)
+		cmd.Printf("  global:           %d\n", stats.Global)
+		cmd.Printf("  session-scoped:   %d\n", stats.Session)
+		cmd.Printf("  never accessed:   %d\n", stats.NeverAccessed)
+		cmd.Printf("  stale candidates: %d\n", stats.StaleCandidates)
+		cmd.Printf("  created:          %s → %s\n",
+			formatStatsTime(stats.OldestCreatedAt), formatStatsTime(stats.NewestCreatedAt))
+		cmd.Printf("\n%s\n", Bold("Skills"))
+		cmd.Printf("  tracked:          %d\n", stats.SkillsTracked)
+		cmd.Printf("  ledger entries:   %d\n", stats.SkillLedgerEntries)
+
+		events, err := db.Journey(20)
+		if err != nil {
+			return err
+		}
+		if len(events) == 0 {
+			return nil
+		}
+		cmd.Printf("\n%s\n", Bold("Recent learning journey"))
+		for _, e := range events {
+			kind := e.Kind
+			if kind == "memory" {
+				kind = Bold("mem ")
+			} else {
+				kind = Bold("skill")
+			}
+			detail := e.Detail
+			if r := []rune(detail); len(r) > 60 {
+				detail = string(r[:60]) + "…"
+			}
+			cmd.Printf("  %s %s  %s\n", kind, Dim(formatStatsTime(e.CreatedAt)), detail)
+		}
+		return nil
+	},
+}
+
+// formatStatsTime renders a Unix-seconds timestamp, or "-" for a zero value
+// (an empty store has no oldest/newest).
+func formatStatsTime(unixSeconds int64) string {
+	if unixSeconds == 0 {
+		return "-"
+	}
+	return time.Unix(unixSeconds, 0).Format("2006-01-02 15:04")
+}
+
 func init() {
 	memoryAddCmd.Flags().String("tags", "", "JSON array of tags (e.g. '[\"preference\",\"ui\"]')")
 	memoryCmd.AddCommand(memorySearchCmd)
 	memoryCmd.AddCommand(memoryAddCmd)
+	memoryCmd.AddCommand(memoryStatsCmd)
 	rootCmd.AddCommand(memoryCmd)
 }
