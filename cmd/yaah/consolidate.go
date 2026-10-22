@@ -17,9 +17,9 @@ const consolidateKindMemory = "memory"
 
 // consolidatorRole is the role the deep-sleep dispatch runs as: the profile in
 // .agents/roles/consolidator.md, whose tool list is memory_add +
-// memory_search only — no file writes, no shell, no delegate — so a
-// background consolidation can neither mutate the workspace nor fork further
-// sub-agents.
+// memory_search + memory_update only — no file writes, no shell, no delegate —
+// so a background consolidation can neither mutate the workspace nor fork
+// further sub-agents.
 //
 // The recursion guard is structural: the sub-agent pipeline
 // (pipeline.NewSubAgentPipeline) omits the "consolidate" middleware, so a
@@ -52,7 +52,17 @@ learned about the project or user, and constraints discovered the hard way.
 Skip ephemeral tool output, transient errors, and in-progress speculation. Do
 not summarise the conversation into prose — persist discrete atoms.
 
-For every atom call memory_add with:
+Dedupe against existing memory before you write:
+
+1. For each candidate atom, call memory_search with a query naming the fact
+   (and tag "source:compaction") to find atoms already stored on that topic.
+2. If an existing atom already states the fact, skip it — do not add a
+   near-duplicate.
+3. If an existing atom is stale or only partially states the fact, call
+   memory_update with that atom's id to correct or extend it in place.
+4. Only when nothing existing covers the fact, call memory_add.
+
+For every memory_add call:
 - tags: a JSON array that always contains "source:compaction", plus any
   specific tags that apply (e.g. ["source:compaction","decision"]).
 - scope: "session" — these atoms were distilled from this session's work.
