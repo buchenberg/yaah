@@ -97,8 +97,14 @@ type agentSession struct {
 	messages     []types.Message
 	sessionID    string
 	msgIdx       int
-	otelShutdown func(context.Context) error
-	tracker      *tools.ConflictTracker
+	// titlePublished tracks the persisted session title (empty until the
+	// first user message derives one). Cached across prompt runs so the
+	// store's one-shot title adoption is known without re-reading; built
+	// runs seed the persister's KnownTitle from it and the persist hook
+	// updates it. Guarded by mu.
+	titlePublished string
+	otelShutdown   func(context.Context) error
+	tracker        *tools.ConflictTracker
 
 	// backgroundJobs manages background sub-agents for this session:
 	// owns their session-rooted contexts, tracks them for status/cancel,

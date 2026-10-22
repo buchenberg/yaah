@@ -64,8 +64,12 @@ func init() {
 // session/load rejects foreign ids and supplies the replay history.
 // The ACP client owns the session lifecycle, so --resume from the
 // command line is ignored: each session is built from the request that
-// created or loaded it.
+// created or loaded it. The bare picker form has nothing interactive to
+// pick with and is rejected rather than silently ignored.
 func newACPAgentSession(build acp.BuildOptions) (acp.Session, error) {
+	if resumeSessionID == resumePickerSentinel {
+		return nil, fmt.Errorf("--resume without a value opens the interactive picker, which is not available in ACP mode; pass --resume=<session-id> or omit it")
+	}
 	opts := sessionOptionsFromFlags()
 	opts.ResumeSessionID = build.ResumeID
 	opts.Cwd = build.Cwd

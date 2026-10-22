@@ -61,7 +61,10 @@ func init() {
 		"override approval mode: allow, ask, or deny")
 	rootCmd.PersistentFlags().StringVar(&resumeSessionID,
 		"resume", "",
-		"resume a previous session by ID")
+		"resume a previous session by ID (bare --resume lists recent sessions to pick from)")
+	// pflag NoOptDefVal: a bare --resume becomes the picker sentinel
+	// while --resume=<id> still names a concrete session.
+	rootCmd.PersistentFlags().Lookup("resume").NoOptDefVal = resumePickerSentinel
 	rootCmd.PersistentFlags().StringArrayVarP(&directiveOverrides,
 		"directive", "d", nil,
 		"session directive injected into all agent prompts (repeatable)")

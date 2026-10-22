@@ -25,8 +25,16 @@ Alpine.js + Pico CSS                  net/http + embed.FS
      │   (EventSource)                       │   (sseView.HandleEvent)
      ├── POST /api/action ───────────────────┤ prompt / abort / answer / compact / model / login / logout / steer
      │   (fetch JSON)                        │   (webServer.handleAction)
-     └── GET /api/commands ─────────────────┤ slash-command list
+     ├── GET /api/commands ─────────────────┤ slash-command list
+     └── GET /api/sessions ─────────────────┤ session registry (read-only)
 ```
+
+`GET /api/sessions` serves the shared session store — the same rows ACP
+`session/list` and the CLI read — as `{"sessions": [...], "nextCursor": ""}`
+(keyset pagination). Optional query parameters: `cwd` (exact-match filter,
+canonicalized like `session/list`), `limit` (1..200, default 50), and
+`cursor` for the next page. It is read-only; restoring a session is a
+process-level operation (`yaah --resume`), not a web one.
 
 ## Architecture
 

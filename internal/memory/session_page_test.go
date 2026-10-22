@@ -95,8 +95,8 @@ func TestDB_DeriveSessionTitle(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := deriveSessionTitle(tc.content); got != tc.want {
-				t.Fatalf("deriveSessionTitle(%q) = %q, want %q", tc.content, got, tc.want)
+			if got := DeriveSessionTitle(tc.content); got != tc.want {
+				t.Fatalf("DeriveSessionTitle(%q) = %q, want %q", tc.content, got, tc.want)
 			}
 		})
 	}

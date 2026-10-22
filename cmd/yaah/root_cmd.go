@@ -51,6 +51,14 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "warning: could not create default config: %v\n", err)
 	}
 
+	// Legacy `yaah --resume <id> [prompt]`: pflag's value-optional flag
+	// leaves <id> positional — shift it back before the mode dispatch so
+	// one-shot/REPL see a normal --resume=<id>.
+	args = shiftResumeID(args)
+	if err := maybeResolveResumePicker(os.Stdout, os.Stdin); err != nil {
+		return err
+	}
+
 	// One-shot mode: args present
 	if len(args) > 0 {
 		prompt := strings.Join(args, " ")

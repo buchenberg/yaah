@@ -134,6 +134,13 @@ func WithUsageHooks(onUsage, onSubUsage func(types.Usage)) Option {
 	}
 }
 
+// WithTitleHook sets the title-transition hook: it fires when the
+// session's title transitions from empty (the first user message that
+// derives one, mirroring the store's one-shot TouchSession rule).
+func WithTitleHook(onTitle func(title string, updatedAt int64)) Option {
+	return func(l *Loop) { l.OnTitle = onTitle }
+}
+
 // WithConflictTracker sets the file conflict tracker.
 func WithConflictTracker(t *tools.ConflictTracker) Option {
 	return func(l *Loop) { l.ConflictTracker = t }

@@ -73,13 +73,15 @@ var sessionsListCmd = &cobra.Command{
 			if title == "" {
 				title = "(untitled)"
 			}
-			cmd.Printf("  %s  %s\n", Bold(title), Dim(s.ID))
+			// Titles derive from user messages: strip control runes
+			// before they reach the terminal (same rule as the picker).
+			cmd.Printf("  %s  %s\n", Bold(safeLabel(title)), Dim(s.ID))
 			state := "open"
 			if s.EndedAt > 0 {
 				state = "ended"
 			}
 			cmd.Printf("        %s\n", Dim(fmt.Sprintf("%s | %s | %d msg(s) | cwd: %s",
-				time.Unix(s.UpdatedAt, 0).Format("2006-01-02 15:04"), state, s.MessageCount, s.CWD)))
+				time.Unix(s.UpdatedAt, 0).Format("2006-01-02 15:04"), state, s.MessageCount, safeLabel(s.CWD))))
 		}
 		return nil
 	},

@@ -272,6 +272,7 @@ const (
 	UpdateToolCallUpdate    = "tool_call_update"
 	UpdatePlan              = "plan"
 	UpdateUsageUpdate       = "usage_update"
+	UpdateSessionInfo       = "session_info_update"
 )
 
 // Tool call statuses.
@@ -355,6 +356,17 @@ type UsageUpdate struct {
 	SessionUpdate string `json:"sessionUpdate"`
 	Used          int    `json:"used"`
 	Size          int    `json:"size"`
+}
+
+// SessionInfoUpdate is a partial session-metadata update (schema: all
+// fields optional, null clears). yaah never clears; it sends the title
+// when the persisted session title transitions from empty, with
+// updatedAt as the RFC3339 UTC timestamp of the message that produced
+// it (session/list emits the same values from the store).
+type SessionInfoUpdate struct {
+	SessionUpdate string `json:"sessionUpdate"`
+	Title         string `json:"title,omitempty"`
+	UpdatedAt     string `json:"updatedAt,omitempty"`
 }
 
 // updateEnvelope is the session/update notification params shape.

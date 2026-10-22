@@ -26,6 +26,7 @@ func allEvents() []events.Event {
 		&events.SubAgentStartEvent{},
 		&events.SubAgentEndEvent{},
 		&events.EscalationEvent{},
+		&events.TitleSetEvent{},
 		&events.DoneEvent{},
 		&events.CompactionStartedEvent{},
 		&events.CompactionDoneEvent{},
