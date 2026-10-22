@@ -98,6 +98,9 @@ type acpHarness struct {
 	done    func()
 	resumes func() []string
 	cwd     string
+	// server is the wired Server instance, for tests that flip optional
+	// plumbing (ListSessions, DeleteSession) before traffic starts.
+	server *Server
 }
 
 // newACPHarness wires a Server whose factory always yields sess (or a
@@ -164,7 +167,8 @@ func newACPHarnessFactory(t *testing.T, factory func(resumeID string) (Session, 
 	})
 
 	return &acpHarness{
-		inW: inW,
+		server: s,
+		inW:    inW,
 		send: func(method string, id any, params string) error {
 			msg := Message{JSONRPC: "2.0", Method: method, Params: json.RawMessage(params)}
 			if id != nil {
