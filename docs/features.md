@@ -72,9 +72,11 @@ The bare `--resume` form resolves through an interactive picker (REPL, TUI,
 and one-shot runs): it lists the sessions recorded for the current
 directory — newest first, with titles, ages, and message counts — and a
 bare Enter starts a fresh session instead. The legacy space-separated
-form `yaah --resume <id> "prompt"` keeps working. Non-interactive
-surfaces (`web`, `serve`, ACP) reject the bare form with guidance and
-need an explicit id instead.
+form `yaah --resume <id> "prompt"` keeps working on every surface.
+Non-interactive surfaces (`web`, `serve`) reject the bare form with
+guidance and need an explicit id instead; ACP ignores `--resume`
+entirely — its sessions are named by the client's `session/new` and
+`session/load` requests.
 
 Session data lives in `~/.yaah/state.db` (or `$YAAH_HOME/state.db`).
 Shepherd execution traces, when enabled, record every tool call and turn

@@ -4,6 +4,7 @@ package yaah
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"runtime/debug"
 
 	"github.com/buchenberg/yaah/internal/mcp"
@@ -20,9 +21,20 @@ var (
 )
 
 // Execute is the entry point called by main.go. It runs the cobra root
-// command and returns the first error encountered, if any.
+// command and returns the first error encountered, if any. The argv is
+// normalized in init (see normalizeResumeArgs), before any Execute
+// caller parses it, so the legacy `--resume <id>` form survives pflag's
+// value-optional flag on every subcommand.
 func Execute() error {
 	return rootCmd.Execute()
+}
+
+// init normalizes the argv before anything parses it, so every
+// rootCmd.Execute() caller — not just Execute() — sees the legacy
+// `--resume <id>` form spliced into `--resume=<id>`. Callers that set
+// their own args explicitly (tests) still override this.
+func init() {
+	rootCmd.SetArgs(normalizeResumeArgs(os.Args[1:]))
 }
 
 // init populates the build-time variables. When built from a tagged

@@ -68,7 +68,7 @@ func init() {
 // pick with and is rejected rather than silently ignored.
 func newACPAgentSession(build acp.BuildOptions) (acp.Session, error) {
 	if resumeSessionID == resumePickerSentinel {
-		return nil, fmt.Errorf("--resume without a value opens the interactive picker, which is not available in ACP mode; pass --resume=<session-id> or omit it")
+		return nil, fmt.Errorf("--resume without a value opens the interactive picker, which is not available in ACP mode; omit the flag — sessions are named by the client's session/new and session/load requests")
 	}
 	opts := sessionOptionsFromFlags()
 	opts.ResumeSessionID = build.ResumeID
