@@ -24,6 +24,16 @@ func (d *DB) AddMessage(m Message) error {
 	}
 	if n == 1 {
 		d.embedMessageAsync(m.ID, m.Role, m.Content)
+		// Picker bookkeeping (title + last-activity timestamp) rides
+		// the durable insert. It is best-effort: the message row is
+		// already committed, and a stale timestamp only skews the
+		// ordering in `session/list` — it must not fail a healthy
+		// message write or confuse the agent loop's retry path.
+		title := ""
+		if m.Role == "user" {
+			title = deriveSessionTitle(m.Content)
+		}
+		_ = d.TouchSession(m.SessionID, m.Timestamp, title)
 		return nil
 	}
 

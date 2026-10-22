@@ -92,6 +92,12 @@ type Session struct {
 	// and "the model couldn't" must stay distinguishable in the record.
 	WorkspaceBackend      string `json:"workspace_backend,omitempty"`
 	WorkspaceOmittedTools string `json:"workspace_omitted_tools,omitempty"`
+	// Title is a short human-readable label derived from the first user
+	// message (session pickers, `yaah sessions`, ACP session/list).
+	Title string `json:"title,omitempty"`
+	// UpdatedAt is the ts of the last persisted message; 0 on a session
+	// with no messages yet (list queries COALESCE it to started_at).
+	UpdatedAt int64 `json:"updated_at,omitempty"`
 }
 
 // Message represents a single message in a session.
@@ -244,7 +250,9 @@ func (d *DB) migrate() error {
 		tokens_out INTEGER DEFAULT 0,
 		tokens_cached INTEGER DEFAULT 0,
 		sub_tokens_in INTEGER DEFAULT 0,
-		sub_tokens_out INTEGER DEFAULT 0
+		sub_tokens_out INTEGER DEFAULT 0,
+		title           TEXT DEFAULT '',
+		updated_at      INTEGER DEFAULT 0
 	);
 
 	CREATE TABLE IF NOT EXISTS messages (
@@ -368,11 +376,22 @@ func (d *DB) migrate() error {
 		{"sessions", "tokens_cached", "ALTER TABLE sessions ADD COLUMN tokens_cached INTEGER DEFAULT 0"},
 		{"sessions", "sub_tokens_in", "ALTER TABLE sessions ADD COLUMN sub_tokens_in INTEGER DEFAULT 0"},
 		{"sessions", "sub_tokens_out", "ALTER TABLE sessions ADD COLUMN sub_tokens_out INTEGER DEFAULT 0"},
+		{"sessions", "title", "ALTER TABLE sessions ADD COLUMN title TEXT DEFAULT ''"},
+		{"sessions", "updated_at", "ALTER TABLE sessions ADD COLUMN updated_at INTEGER DEFAULT 0"},
 	}
 	for _, s := range steps {
 		if err := d.ensureColumn(s.table, s.column, s.ddl); err != nil {
 			return err
 		}
+	}
+
+	// Backfill the activity timestamp for rows created before the column
+	// existed (release N-1): a session's "last activity" starts as its
+	// start time. New writes overwrite updated_at per message.
+	if _, err := d.sql.Exec(
+		`UPDATE sessions SET updated_at = started_at WHERE COALESCE(updated_at, 0) = 0`,
+	); err != nil {
+		return fmt.Errorf("backfill sessions.updated_at: %w", err)
 	}
 
 	// Index on the turn cross-link must be created after the turn_id
