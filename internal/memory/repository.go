@@ -12,6 +12,11 @@ type SessionRepository interface {
 	UpdateSessionSummary(id string, summary string) error
 	GetCompactionCooldown(sessionID string) (cooldownUntil int64, ineffective int, err error)
 	SetCompactionCooldown(sessionID string, cooldownUntil int64, ineffective int) error
+	// Session-lifecycle surface for pickers and multi-session hosts
+	// (ACP session/list, resume, delete; `yaah sessions`).
+	DeleteSession(id string) error
+	ListSessionsPage(filter SessionListFilter) ([]SessionSummary, string, error)
+	TouchSession(sessionID string, updatedAt int64, titleCandidate string) error
 }
 
 // MessageRepository manages the message history within sessions.

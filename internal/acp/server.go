@@ -25,6 +25,18 @@ import (
 // ProtocolVersion is the ACP major version this server speaks.
 const ProtocolVersion = 1
 
+// ErrInvalidCursor is the sentinel the ListSessions callback returns
+// (possibly wrapped) for a malformed pagination cursor. session/list
+// surfaces it as invalid params: the spec says agents SHOULD error on an
+// invalid cursor rather than silently restart the list.
+var ErrInvalidCursor = errors.New("invalid cursor")
+
+// ErrNoSession is the sentinel the DeleteSession callback returns for an
+// unknown session id. session/delete succeeds silently for those
+// (deleting an already-deleted or never-created session is a no-op);
+// every other error is a real store failure and is reported.
+var ErrNoSession = errors.New("unknown session")
+
 // Session is the narrow capability the ACP server needs from an agent
 // session. *agentSession in cmd/yaah satisfies this interface.
 type Session interface {
@@ -69,6 +81,20 @@ type Server struct {
 	stdin      io.Reader
 	stdout     io.Writer
 	newSession SessionFactory
+
+	// ListSessions, when non-nil, backs session/list
+	// (sessionCapabilities.list). It receives the canonical absolute cwd
+	// filter ("" matches any cwd) and the opaque cursor from the request,
+	// applies the page size itself, and returns one page plus the
+	// next-page cursor ("" = last page). A wrapped ErrInvalidCursor is
+	// surfaced as invalid params; other errors as internal errors.
+	ListSessions func(cwdFilter, cursor string) ([]SessionInfo, string, error)
+
+	// DeleteSession, when non-nil, backs session/delete
+	// (sessionCapabilities.delete). A wrapped ErrNoSession marks an
+	// unknown id, which succeeds silently per spec; other errors are
+	// internal errors and keep the session listed.
+	DeleteSession func(id string) error
 
 	// AutoAnswerQuestions, when true, answers question-tool prompts
 	// with the first option. ACP has no interactive question surface in
@@ -512,6 +538,256 @@ func sameDir(a, b string) bool {
 	return false
 }
 
+// capabilities builds the initialize advertisement: a capability is
+// advertised only when this server instance was wired for it, so a
+// client never calls a method the server cannot execute.
+func (s *Server) capabilities() AgentCaps {
+	sc := &SessionCaps{Resume: &SessionResumeCaps{}, Close: &SessionCloseCaps{}}
+	if s.ListSessions != nil {
+		sc.List = &SessionListCaps{}
+	}
+	if s.DeleteSession != nil {
+		sc.Delete = &SessionDeleteCaps{}
+	}
+	return AgentCaps{LoadSession: true, Session: sc}
+}
+
+// CanonicalFilterCwd validates a session-list cwd filter: it must be
+// absolute per the schema and is canonicalized exactly like a session
+// cwd is on intake (absolute, symlink-resolved), so a filter matches the
+// stored canonical session cwds. A non-existent directory is allowed —
+// it simply matches nothing (an unmatched filter yields an empty page,
+// not an error). Shared by session/list and the yaah sessions CLI so
+// both surfaces filter identically.
+func CanonicalFilterCwd(cwd string) (string, error) {
+	if cwd == "" {
+		return "", nil
+	}
+	if !filepath.IsAbs(cwd) {
+		return "", fmt.Errorf("cwd %q must be an absolute path", cwd)
+	}
+	abs, err := filepath.Abs(cwd)
+	if err != nil {
+		return "", fmt.Errorf("cwd %q: %w", cwd, err)
+	}
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = real
+	}
+	return filepath.Clean(abs), nil
+}
+
+// handleSessionList implements session/list (sessionCapabilities.list):
+// discovery of persisted sessions for a client's picker. The store
+// callback supplies pages; the cwd filter and pagination cursor are
+// validated here so malformed input surfaces as invalid params.
+func (s *Server) handleSessionList(
+	msg Message,
+	respOK func(id json.RawMessage, result any),
+	respErr func(id json.RawMessage, code int, message string),
+) {
+	if s.ListSessions == nil {
+		respErr(msg.ID, codeMethodNotFound, "session/list is not wired")
+		return
+	}
+	var p ListSessionsParams
+	if len(msg.Params) > 0 {
+		if err := json.Unmarshal(msg.Params, &p); err != nil {
+			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
+			return
+		}
+	}
+	filter, err := CanonicalFilterCwd(p.Cwd)
+	if err != nil {
+		respErr(msg.ID, codeInvalidParams, err.Error())
+		return
+	}
+	sessions, next, err := s.ListSessions(filter, p.Cursor)
+	if err != nil {
+		if errors.Is(err, ErrInvalidCursor) {
+			respErr(msg.ID, codeInvalidParams, "invalid cursor")
+			return
+		}
+		respErr(msg.ID, codeInternal, "list sessions: "+err.Error())
+		return
+	}
+	if sessions == nil {
+		// An empty page is an empty array: `sessions: null` is not
+		// schema-valid (ListSessionsResponse requires the array).
+		sessions = []SessionInfo{}
+	}
+	respOK(msg.ID, ListSessionsResult{Sessions: sessions, NextCursor: next})
+}
+
+// handleSessionResume implements session/resume (sessionCapabilities.resume):
+// re-attach to a persisted conversation WITHOUT replaying its history —
+// unlike session/load, no session/update notifications precede the
+// response, and the session is ready for new prompts immediately. A live
+// session re-attaches idempotently (result {}, exactly like the
+// not-yet-attached case); a persisted id is rebuilt through the same
+// factory session/load uses, so foreign ids are rejected with invalid
+// params.
+func (s *Server) handleSessionResume(
+	msg Message,
+	respOK func(id json.RawMessage, result any),
+	respErr func(id json.RawMessage, code int, message string),
+) {
+	var p SessionResumeParams
+	if len(msg.Params) > 0 {
+		if err := json.Unmarshal(msg.Params, &p); err != nil {
+			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
+			return
+		}
+	}
+	if p.SessionID == "" {
+		respErr(msg.ID, codeInvalidParams, "sessionId is required")
+		return
+	}
+	cwd, err := canonicalCwd(p.Cwd)
+	if err != nil {
+		respErr(msg.ID, codeInvalidParams, err.Error())
+		return
+	}
+	mcpRefs, err := resolveMCPRefs(p.McpServers, cwd)
+	if err != nil {
+		respErr(msg.ID, codeInvalidParams, err.Error())
+		return
+	}
+
+	s.mu.Lock()
+	st, live := s.sessions[p.SessionID]
+	var busy bool
+	if live {
+		busy = st.run != nil && st.run.cancel != nil
+	}
+	s.mu.Unlock()
+	if live {
+		if busy {
+			respErr(msg.ID, codeBusy, "a prompt is in flight for this session")
+			return
+		}
+		if st.cwd != "" && !sameDir(st.cwd, cwd) {
+			respErr(msg.ID, codeInvalidParams,
+				fmt.Sprintf("session %q was created with cwd %q, requested %q", st.id, st.cwd, cwd))
+			return
+		}
+		respOK(msg.ID, nil)
+		return
+	}
+
+	if _, err := s.buildSession(BuildOptions{
+		ResumeID:   p.SessionID,
+		Cwd:        cwd,
+		MCPServers: mcpRefs,
+	}, p.SessionID); err != nil {
+		respErr(msg.ID, codeInvalidParams, err.Error())
+		return
+	}
+	respOK(msg.ID, nil)
+}
+
+// retireSession is the shared teardown of session/close and session/
+// delete: cancel any in-flight turn exactly like session/cancel, join
+// the prompt goroutine (bounded — a wedged stdout write must not hang
+// the request), drop the session from the live set, and free the
+// underlying agent session. The dropped id stays resumable in a later
+// process; the conversation itself is persisted store data.
+func (s *Server) retireSession(st *sessionState) {
+	// Snapshot the run under the server lock: the prompt goroutine
+	// reassigns st.run (finished turns keep only the join handle) and
+	// reads must not race that write.
+	s.mu.Lock()
+	run := st.run
+	s.mu.Unlock()
+	if run != nil && run.cancel != nil {
+		run.cancel()
+		if run.done != nil {
+			timer := time.NewTimer(stopRunJoinTimeout)
+			select {
+			case <-run.done:
+			case <-timer.C:
+				s.logf("prompt goroutine did not unwind within %s; proceeding with teardown", stopRunJoinTimeout)
+			}
+			timer.Stop()
+		}
+	}
+	s.mu.Lock()
+	delete(s.sessions, st.id)
+	s.mu.Unlock()
+	st.sess.Close()
+}
+
+// handleSessionClose implements session/close (sessionCapabilities.close):
+// cancel any ongoing work as if session/cancel had been called, then
+// free the session. Only live sessions are closable — the spec allows an
+// error when the session does not exist or is not active in this agent.
+func (s *Server) handleSessionClose(
+	msg Message,
+	respOK func(id json.RawMessage, result any),
+	respErr func(id json.RawMessage, code int, message string),
+) {
+	var p SessionTargetParams
+	if len(msg.Params) > 0 {
+		if err := json.Unmarshal(msg.Params, &p); err != nil {
+			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
+			return
+		}
+	}
+	if p.SessionID == "" {
+		respErr(msg.ID, codeInvalidParams, "sessionId is required")
+		return
+	}
+	s.mu.Lock()
+	st, ok := s.sessions[p.SessionID]
+	s.mu.Unlock()
+	if !ok {
+		respErr(msg.ID, codeInvalidParams, "unknown session id")
+		return
+	}
+	s.retireSession(st)
+	respOK(msg.ID, nil)
+}
+
+// handleSessionDelete implements session/delete (sessionCapabilities.delete):
+// remove the conversation from the session store so session/list stops
+// reporting it. A still-live session is torn down first (the close
+// contract). Deleting an already-deleted or never-created id succeeds
+// silently per spec; real store failures are internal errors.
+func (s *Server) handleSessionDelete(
+	msg Message,
+	respOK func(id json.RawMessage, result any),
+	respErr func(id json.RawMessage, code int, message string),
+) {
+	var p SessionTargetParams
+	if len(msg.Params) > 0 {
+		if err := json.Unmarshal(msg.Params, &p); err != nil {
+			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
+			return
+		}
+	}
+	if p.SessionID == "" {
+		respErr(msg.ID, codeInvalidParams, "sessionId is required")
+		return
+	}
+	if s.DeleteSession == nil {
+		// Defensively typed before any side effect: capabilities never
+		// advertise delete without wiring, but a client may still ask —
+		// and that must not have already torn down a live session.
+		respErr(msg.ID, codeMethodNotFound, "session/delete is not wired")
+		return
+	}
+	s.mu.Lock()
+	st, live := s.sessions[p.SessionID]
+	s.mu.Unlock()
+	if live {
+		s.retireSession(st)
+	}
+	if err := s.DeleteSession(p.SessionID); err != nil && !errors.Is(err, ErrNoSession) {
+		respErr(msg.ID, codeInternal, "delete session: "+err.Error())
+		return
+	}
+	respOK(msg.ID, nil)
+}
+
 // installQuestionHandler routes question-tool prompts to the client as
 // status text and auto-answers with the first option when enabled.
 // Called once after the underlying session is built; the closure
@@ -763,7 +1039,7 @@ func (s *Server) dispatch(
 			}
 			respOK(msg.ID, InitializeResult{
 				ProtocolVersion:   ProtocolVersion,
-				AgentCapabilities: AgentCaps{LoadSession: true},
+				AgentCapabilities: s.capabilities(),
 				AgentInfo: ImplementationInfo{
 					Name:    "yaah",
 					Version: s.version,
@@ -783,6 +1059,18 @@ func (s *Server) dispatch(
 
 		case "session/load":
 			s.handleSessionLoad(msg, sendUpdate, respOK, respErr)
+
+		case "session/resume":
+			s.handleSessionResume(msg, respOK, respErr)
+
+		case "session/list":
+			s.handleSessionList(msg, respOK, respErr)
+
+		case "session/close":
+			s.handleSessionClose(msg, respOK, respErr)
+
+		case "session/delete":
+			s.handleSessionDelete(msg, respOK, respErr)
 
 		case "session/set_mode":
 			s.handleSetMode(msg, respOK, respErr)

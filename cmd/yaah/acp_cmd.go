@@ -1,11 +1,14 @@
 package yaah
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/buchenberg/yaah/internal/acp"
 	"github.com/buchenberg/yaah/internal/mcp"
+	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/spf13/cobra"
 )
 
@@ -27,6 +30,11 @@ Implemented:
   session/load                Resume a session from ~/.yaah state.db in a
                               fresh process; replays the conversation as
                               session/update notifications before answering
+  session/resume              Re-attach to a persisted session without
+                              replaying history
+  session/list                Page through persisted sessions (cwd filter)
+  session/close               Cancel in-flight work and free a session
+  session/delete              Remove a session from the store
   session/prompt              Run a turn; responds with a stopReason
   session/cancel              Cancel the in-flight turn (notification)
   session/set_mode            Acknowledged; mode switching is not modeled
@@ -34,9 +42,10 @@ Implemented:
                               tool calls, plans, usage
   session/request_permission  Tool approvals delegated to the client
 
-One agent conversation is served per process: a session/load naming an
-id the session store never issued is rejected, and a load for a second
-conversation after one is established is rejected. See docs/acp.md for
+Several conversations may coexist in one process; the persisted session
+store (~/.yaah state.db) is shared, so list/resume/close/delete operate
+on it the same way the yaah CLI does. A session/load or session/resume
+naming an id the store never issued is rejected. See docs/acp.md for
 the full surface, persisted state, and client setup details.`,
 	SilenceErrors: true,
 	SilenceUsage:  true,
@@ -92,8 +101,62 @@ func mcpManifestsFromACP(refs []acp.McpServerRef) map[string]mcp.Manifest {
 	return out
 }
 
+// acpListSessions adapts the session store to the session/list callback:
+// store rows become ACP SessionInfo entries, whose updatedAt is the ISO
+// 8601 timestamp of the last persisted activity. A malformed cursor is
+// re-flagged as the ACP sentinel so the surface errors with invalid
+// params instead of an internal error.
+func acpListSessions(store *memory.DB) func(cwdFilter, cursor string) ([]acp.SessionInfo, string, error) {
+	return func(cwdFilter, cursor string) ([]acp.SessionInfo, string, error) {
+		rows, next, err := store.ListSessionsPage(memory.SessionListFilter{CWD: cwdFilter, Cursor: cursor})
+		if err != nil {
+			if errors.Is(err, memory.ErrInvalidCursor) {
+				return nil, "", fmt.Errorf("%w: %v", acp.ErrInvalidCursor, err)
+			}
+			return nil, "", err
+		}
+		out := make([]acp.SessionInfo, 0, len(rows))
+		for _, row := range rows {
+			out = append(out, acp.SessionInfo{
+				SessionID: row.ID,
+				Cwd:       row.CWD,
+				Title:     row.Title,
+				// Store timestamps are Unix seconds (time.Unix origin).
+				UpdatedAt: time.Unix(row.UpdatedAt, 0).UTC().Format(time.RFC3339),
+			})
+		}
+		return out, next, nil
+	}
+}
+
+// acpDeleteSession adapts the session store to the session/delete
+// callback. An unknown id maps to the ACP sentinel: deleting a
+// deleted-or-never-created session succeeds silently per spec.
+func acpDeleteSession(store *memory.DB) func(id string) error {
+	return func(id string) error {
+		if err := store.DeleteSession(id); err != nil {
+			if errors.Is(err, memory.ErrSessionNotFound) {
+				return fmt.Errorf("%w: %s", acp.ErrNoSession, id)
+			}
+			return err
+		}
+		return nil
+	}
+}
+
 func runACPServe(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stderr, "%s starting ACP server (stdio)...\n", Dim("yaah acp-serve:"))
+
+	// The session store doubles as the lifecycle engine seam: the
+	// session/list and session/delete callbacks below share it with the
+	// yaah sessions CLI and any future picker surface. Per-conversation
+	// agent sessions open their own store handles inside the factory,
+	// so this one is used read-and-delete only.
+	store, err := memory.OpenDefault()
+	if err != nil {
+		return fmt.Errorf("open session store: %w", err)
+	}
+	defer store.Close()
 
 	srv := acp.NewServer(
 		newACPAgentSession,
@@ -102,5 +165,7 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr, Dim("yaah acp-serve:")+" "+format+"\n", args...)
 		},
 	)
+	srv.ListSessions = acpListSessions(store)
+	srv.DeleteSession = acpDeleteSession(store)
 	return srv.Run(cmd.Context())
 }

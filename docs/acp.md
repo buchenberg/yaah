@@ -20,7 +20,10 @@ ACP client (Zed, ...)                    yaah acp-serve
  ── initialize ─────────────────────────▶ version + agentCapabilities
  ── session/new {cwd} ──────────────────▶ agentSession built; ACP session id
  ── session/load {sessionId} ──────────▶ conversation restored from state.db
+ ── session/resume {sessionId} ────────▶ conversation re-attached, no replay
+ ── session/list {cwd?, cursor?} ──────▶ persisted sessions, paged
  ── session/prompt ─────────────────────▶ session/update stream, then stopReason
+ ── session/close / session/delete ────▶ cancel + free / remove from store
  ◀──────── session/request_permission ── tool approvals
 ```
 
@@ -34,9 +37,13 @@ sub-agents, and prompts all resolve against it.
 
 | Method | Status | Notes |
 |---|---|---|
-| `initialize` | supported | advertises `agentCapabilities.loadSession: true`; `authMethods` is empty so `authenticate` is rejected |
+| `initialize` | supported | advertises `agentCapabilities.loadSession: true` plus `sessionCapabilities` for `resume`, `list`, `close`, `delete`; `authMethods` is empty so `authenticate` is rejected |
 | `session/new` | supported | requires the client's absolute cwd; every call creates a distinct session |
 | `session/load` | supported | resume + replay; see below |
+| `session/resume` | supported | re-attach to a persisted session without replaying history |
+| `session/list` | supported | persisted sessions as `SessionInfo` pages (cwd filter, opaque cursor) |
+| `session/close` | supported | cancels in-flight work, frees the session; the id stays loadable in a later process |
+| `session/delete` | supported | removes the conversation from the store; unknown/deleted ids succeed silently |
 | `session/prompt` | supported | streams updates, then answers with a `stopReason` |
 | `session/cancel` | supported | notification; cancels the in-flight turn |
 | `session/set_mode` | acknowledged | mode switching is not modeled; the response keeps mode-picker clients from hanging |
@@ -45,7 +52,8 @@ sub-agents, and prompts all resolve against it.
 
 `session/update` variants: `agent_message_chunk`, `agent_thought_chunk`,
 `tool_call`, `tool_call_update`, `plan`, `usage_update`, and
-`user_message_chunk` (replay only, on `session/load`).
+`user_message_chunk` (replay only, on `session/load`; `session/resume`
+re-attaches without any history replay).
 
 ## Session lifecycle
 
@@ -111,6 +119,56 @@ with an invalid params error naming the id, while a state store that
 failed to open surfaces as its own invalid params error (the message
 describes the store problem; it does not name the id).
 
+### session/resume
+
+`session/resume` (`sessionCapabilities.resume`) re-attaches to a persisted
+conversation **without replaying history**: no `session/update`
+notifications precede the response, which is the plain empty object. It
+shares `session/load`'s attachment machinery — same required absolute
+cwd, same live-id checks (idempotent `{}` when already attached, busy
+error while a prompt runs), same store-backed rebuild for ids that are
+not live in this process, so foreign ids are rejected with invalid
+params. A client that wants to render history uses `session/load`; one
+that only continues a conversation uses `session/resume`.
+
+### session/list
+
+`session/list` (`sessionCapabilities.list`) pages through the persisted
+sessions so a client can offer a picker without loading anything:
+
+- Params: `{cwd?, cursor?}`. The optional `cwd` filters sessions by
+  exactly that working directory (must be absolute; a directory the
+  agent has never seen is not an error — it simply matches nothing).
+- Result: `{sessions: [SessionInfo…], nextCursor?}`. Each entry carries
+  `sessionId`, `cwd`, a human-readable `title` (yaah derives it from the
+  session's first user message; absent for sessions that have none), and
+  an ISO-8601 `updatedAt` (the last persisted activity; the creation
+  time for sessions with no messages).
+- Pagination is agent-controlled (50 rows per page) with an opaque
+  cursor: a missing `nextCursor` marks the end. An unparsable cursor is
+  rejected with invalid params rather than silently restarting the list.
+
+`yaah sessions list` and `yaah sessions delete <id>` run the same
+queries against the same store (`internal/memory.ListSessionsPage`,
+`DeleteSession`), so CLI and ACP clients see one session universe.
+
+### session/close and session/delete
+
+`session/close` (`sessionCapabilities.close`) frees a session: the
+in-flight turn is cancelled exactly as if `session/cancel` had been sent
+(the prompt resolves with `stopReason: "cancelled"`), the prompt
+goroutine is joined, and the underlying agent session is closed. The id
+is no longer usable in this process, but nothing is erased — a later
+`session/load` in a fresh process re-attaches. Only live sessions are
+closable; unknown or already-freed ids get invalid params.
+
+`session/delete` (`sessionCapabilities.delete`) removes the conversation
+from the store (messages included), so `session/list` stops reporting
+it. A still-live session is torn down first (same contract as close).
+Deleting an already-deleted or never-created id succeeds silently — the
+store no longer holding the id is exactly the requested end state; real
+store failures surface as internal errors.
+
 ## Approvals and questions
 
 - **Tool approvals** bridge to the client via `session/request_permission`
@@ -151,8 +209,13 @@ Or the generic stdio client loop (any language; one JSON object per line):
 {"jsonrpc":"2.0","method":"notifications/initialized"}
 {"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/repo","mcpServers":[]}}
 {"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"<id>","prompt":[{"type":"text","text":"hi"}]}}
-// later, after restarting the agent process:
-{"jsonrpc":"2.0","id":4,"method":"session/load","params":{"sessionId":"<id>","cwd":"/repo","mcpServers":[]}}
+{"jsonrpc":"2.0","id":4,"method":"session/resume","params":{"sessionId":"<id>","cwd":"/repo","mcpServers":[]}}
+// or, to render the history:
+{"jsonrpc":"2.0","id":5,"method":"session/load","params":{"sessionId":"<id>","cwd":"/repo","mcpServers":[]}}
+// pick a previous conversation:
+{"jsonrpc":"2.0","id":6,"method":"session/list","params":{}}
+// and later, to close the editor's session window:
+{"jsonrpc":"2.0","id":7,"method":"session/close","params":{"sessionId":"<id>"}}
 ```
 
 ## Tier 3: deliberately unsupported
@@ -169,6 +232,11 @@ Or the generic stdio client loop (any language; one JSON object per line):
   file system access that ACP allows agents to request from clients are
   not used; yaah's tools act in the session cwd only.
 - **Mode switching** — `session/set_mode` is acknowledged but does nothing;
-  modes are not part of the session result.
+  modes are not part of the session result, and
+  `sessionCapabilities.modes`/`configOptions` are not advertised.
+- **`additionalDirectories`** — not advertised; sessions act in the cwd
+  the lifecycle request named.
+- **`session_info_update` notifications** — live title/directory change
+  announcements are not sent; clients render titles from `session/list`.
 - **Compaction replay** — yaah does not advertise compaction support, so
   clients are not promised compaction `session/update` replay on load.

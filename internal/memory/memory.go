@@ -34,7 +34,19 @@ import (
 // understands. A database stamped with a higher version was created by
 // a newer yaah and is refused at open (review A6). Stored in
 // schema_meta as a decimal string; compared numerically.
-const currentSchemaVersion = 1
+//
+// Repairs that must run exactly once (backfills over existing rows) are
+// keyed to this version, not to whether an ALTER ran on the same open:
+// migrate commits each repair and its version bump together, so a
+// transient failure re-runs the pair on the next open instead of
+// skipping a half-migrated database forever.
+const currentSchemaVersion = 2
+
+// activitySchemaVersion is the schema version at which
+// sessions.updated_at came into being (its values were seeded from
+// started_at at that transition). Repairs gated with `dbVersion <
+// activitySchemaVersion` run inside those parameters.
+const activitySchemaVersion = 2
 
 // maxSessionPromptBytes caps the persisted system_prompt and
 // compacted_summary columns so unbounded prompts cannot bloat the DB
@@ -92,6 +104,12 @@ type Session struct {
 	// and "the model couldn't" must stay distinguishable in the record.
 	WorkspaceBackend      string `json:"workspace_backend,omitempty"`
 	WorkspaceOmittedTools string `json:"workspace_omitted_tools,omitempty"`
+	// Title is a short human-readable label derived from the first user
+	// message (session pickers, `yaah sessions`, ACP session/list).
+	Title string `json:"title,omitempty"`
+	// UpdatedAt is the ts of the last persisted message; 0 on a session
+	// with no messages yet (list queries COALESCE it to started_at).
+	UpdatedAt int64 `json:"updated_at,omitempty"`
 }
 
 // Message represents a single message in a session.
@@ -216,14 +234,18 @@ func (d *DB) migrate() error {
 	}
 	var version string
 	err := d.sql.QueryRow(`SELECT value FROM schema_meta WHERE key = 'version'`).Scan(&version)
+	// dbVersion counts schema releases; 0 = a database that predates
+	// version stamping (no row yet). The repairs below key off it.
+	dbVersion := 0
 	switch {
 	case err == nil:
 		// Numeric comparison — lexicographic ordering breaks at
 		// multi-digit versions ("10" < "2" as strings).
-		dbVersion, convErr := strconv.Atoi(version)
+		parsed, convErr := strconv.Atoi(version)
 		if convErr != nil {
 			return fmt.Errorf("invalid memory db schema version %q", version)
 		}
+		dbVersion = parsed
 		if dbVersion > currentSchemaVersion {
 			return fmt.Errorf(
 				"memory db schema version %d is newer than this binary supports (%d); upgrade yaah",
@@ -244,7 +266,9 @@ func (d *DB) migrate() error {
 		tokens_out INTEGER DEFAULT 0,
 		tokens_cached INTEGER DEFAULT 0,
 		sub_tokens_in INTEGER DEFAULT 0,
-		sub_tokens_out INTEGER DEFAULT 0
+		sub_tokens_out INTEGER DEFAULT 0,
+		title           TEXT DEFAULT '',
+		updated_at      INTEGER DEFAULT 0
 	);
 
 	CREATE TABLE IF NOT EXISTS messages (
@@ -313,6 +337,12 @@ func (d *DB) migrate() error {
 		return fmt.Errorf("create memory_fts: %w", err)
 	}
 
+	// triggers seeds a floor version row: databases predating version
+	// stamping (or fresh ones) read a concrete number for repair gating
+	// instead of nothing. The current schema version is written only
+	// inside the repair transaction below — stamping it here, ahead of
+	// the repairs, would let a crash between the two make a
+	// half-repaired database look current on the next open.
 	triggers := `
 	INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('version', '1');
 	CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
@@ -368,10 +398,48 @@ func (d *DB) migrate() error {
 		{"sessions", "tokens_cached", "ALTER TABLE sessions ADD COLUMN tokens_cached INTEGER DEFAULT 0"},
 		{"sessions", "sub_tokens_in", "ALTER TABLE sessions ADD COLUMN sub_tokens_in INTEGER DEFAULT 0"},
 		{"sessions", "sub_tokens_out", "ALTER TABLE sessions ADD COLUMN sub_tokens_out INTEGER DEFAULT 0"},
+		{"sessions", "title", "ALTER TABLE sessions ADD COLUMN title TEXT DEFAULT ''"},
+		{"sessions", "updated_at", "ALTER TABLE sessions ADD COLUMN updated_at INTEGER DEFAULT 0"},
 	}
 	for _, s := range steps {
 		if err := d.ensureColumn(s.table, s.column, s.ddl); err != nil {
 			return err
+		}
+	}
+
+	// One-time repairs gated on the schema version (a database behind
+	// currentSchemaVersion), not on whether an ALTER happened on this
+	// open: when the ALTER and its follow-up UPDATE disagree — a crash
+	// between them, a transient SQLITE_BUSY on the UPDATE — a
+	// column-presence gate would leave rows permanently un-repaired. Here
+	// each repair and the version bump commit together: either both
+	// happen or the next open retries (self-healing). Future versions
+	// append their repair before the bump.
+	if dbVersion < currentSchemaVersion {
+		tx, err := d.sql.BeginTx(context.Background(), nil) // immediate write lock via DSN
+		if err != nil {
+			return fmt.Errorf("begin schema repairs: %w", err)
+		}
+		defer tx.Rollback()
+		if dbVersion < activitySchemaVersion {
+			// 1 → 2: sessions gained title/updated_at. A session's
+			// "last activity" starts as its start time; new writes
+			// overwrite updated_at per message.
+			if _, err := tx.Exec(
+				`UPDATE sessions SET updated_at = started_at WHERE COALESCE(updated_at, 0) = 0`,
+			); err != nil {
+				return fmt.Errorf("backfill sessions.updated_at: %w", err)
+			}
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO schema_meta (key, value) VALUES ('version', ?)
+			 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+			strconv.Itoa(currentSchemaVersion),
+		); err != nil {
+			return fmt.Errorf("bump schema version: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit schema repairs: %w", err)
 		}
 	}
 

@@ -40,6 +40,7 @@ const (
 	codeMethodNotFound = -32601
 	codeInvalidParams  = -32602
 	codeBusy           = -32002 // no prompt turn may overlap; retry after it ends
+	codeInternal       = -32603
 )
 
 // === initialize ===
@@ -84,12 +85,41 @@ type InitializeResult struct {
 
 // AgentCaps advertises what the server supports. loadSession is
 // advertised because a fresh acp-serve process can rebuild a prior
-// conversation from the SQLite session store (internal/memory).
-// promptCapabilities extras, MCP transports, and session/resume are
+// conversation from the SQLite session store (internal/memory);
+// Session is advertised with the lifecycle methods the server can
+// actually serve (below). promptCapabilities extras, MCP transports,
+// additionalDirectories, and session modes/configOptions are
 // unsupported (Tier 3).
 type AgentCaps struct {
-	LoadSession bool `json:"loadSession,omitempty"`
+	LoadSession bool         `json:"loadSession,omitempty"`
+	Session     *SessionCaps `json:"sessionCapabilities,omitempty"`
 }
+
+// SessionCaps are the optional session-method capabilities.
+// session/load itself is governed by LoadSession (legacy binding).
+// Each field is a pointer: nil means "not advertised", an empty struct
+// means advertised with no options.
+type SessionCaps struct {
+	List   *SessionListCaps   `json:"list,omitempty"`
+	Resume *SessionResumeCaps `json:"resume,omitempty"`
+	Close  *SessionCloseCaps  `json:"close,omitempty"`
+	Delete *SessionDeleteCaps `json:"delete,omitempty"`
+}
+
+// SessionListCaps advertise session/list. No options exist yet; the
+// empty struct flips the capability.
+type SessionListCaps struct{}
+
+// SessionResumeCaps advertise session/resume (restore without replay).
+type SessionResumeCaps struct{}
+
+// SessionCloseCaps advertise session/close (cancel-then-free, sessions
+// are no longer usable afterwards).
+type SessionCloseCaps struct{}
+
+// SessionDeleteCaps advertise session/delete (remove from the session
+// store; unknown ids succeed silently).
+type SessionDeleteCaps struct{}
 
 // AuthMethod is a placeholder struct; the list is always empty.
 type AuthMethod struct {
@@ -144,6 +174,51 @@ type SessionLoadParams struct {
 	SessionID  string         `json:"sessionId"`
 	Cwd        string         `json:"cwd,omitempty"`
 	McpServers []McpServerRef `json:"mcpServers,omitempty"`
+}
+
+// === session/list ===
+
+// SessionInfo is one entry of a session/list result: enough metadata for
+// a client to show a session picker. cwd is the canonical absolute path
+// the session was created with; updatedAt is the ISO 8601 timestamp of
+// the last persisted activity.
+type SessionInfo struct {
+	SessionID string `json:"sessionId"`
+	Cwd       string `json:"cwd,omitempty"`
+	Title     string `json:"title,omitempty"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
+}
+
+// ListSessionsResult is the result of session/list. nextCursor, when
+// non-empty, is the opaque token for the following page; omitting it
+// (empty here) marks the end of the pages.
+type ListSessionsResult struct {
+	Sessions   []SessionInfo `json:"sessions"`
+	NextCursor string        `json:"nextCursor,omitempty"`
+}
+
+// === session lifecycle (resume / close / delete) ===
+
+// SessionResumeParams are the params of session/resume: re-attach to a
+// persisted conversation without replaying its history. They mirror the
+// session/load params (sessionId required; cwd and mcpServers optional).
+type SessionResumeParams struct {
+	SessionID  string         `json:"sessionId"`
+	Cwd        string         `json:"cwd,omitempty"`
+	McpServers []McpServerRef `json:"mcpServers,omitempty"`
+}
+
+// SessionTargetParams are the params of session/close and session/delete:
+// the only input is the ACP session id.
+type SessionTargetParams struct {
+	SessionID string `json:"sessionId"`
+}
+
+// ListSessionsParams are the params of session/list. cwd (optional)
+// filters by exact working directory; cursor pages through the result.
+type ListSessionsParams struct {
+	Cwd    string `json:"cwd,omitempty"`
+	Cursor string `json:"cursor,omitempty"`
 }
 
 // === session/prompt ===
