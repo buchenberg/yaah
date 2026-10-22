@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.93.0](https://github.com/buchenberg/yaah/compare/v0.92.0...v0.93.0) (2026-10-22)
+
+
+### Features
+
+* **acp:** resolve MCP server commands and enforce absolute session cwd ([bee8e7a](https://github.com/buchenberg/yaah/commit/bee8e7a237f8f515fed7778a3a2ce9e80b6a37c6))
+
+
+### Bug Fixes
+
+* address review findings on memory drain and ACP multi-session ([3d56b28](https://github.com/buchenberg/yaah/commit/3d56b28add6744c177e64db79b4cf98bad42e515))
+* **memory:** drain in-flight embedding writes before closing DB ([ca19d18](https://github.com/buchenberg/yaah/commit/ca19d186bd5d8a924005acc8e349b1c5d6f35133))
+
 ## [0.92.0](https://github.com/buchenberg/yaah/compare/v0.91.0...v0.92.0) (2026-10-21)
 
 
