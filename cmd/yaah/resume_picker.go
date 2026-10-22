@@ -182,8 +182,8 @@ const maxEmptyReads = 100
 // bufio.Scanner reads ahead into its buffer and would swallow input the
 // REPL or a piped prompt still needs (e.g. `printf '1\nhello\n' |
 // yaah --resume`), so this reads byte-wise and stops at the line end.
-// End of input and a stalled reader both yield whatever was read so far,
-// matching; only a reader that never delivers anything errors.
+// End of input and a stalled reader both yield whatever was read so far;
+// only a reader that never delivers anything errors.
 func readPickerLine(in io.Reader) (string, error) {
 	var sb strings.Builder
 	var b [1]byte
