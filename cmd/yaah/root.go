@@ -4,6 +4,7 @@ package yaah
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"runtime/debug"
 
 	"github.com/buchenberg/yaah/internal/mcp"
@@ -20,8 +21,11 @@ var (
 )
 
 // Execute is the entry point called by main.go. It runs the cobra root
-// command and returns the first error encountered, if any.
+// command and returns the first error encountered, if any. The argv is
+// normalized first so the legacy `--resume <id>` form survives pflag's
+// value-optional flag on every subcommand.
 func Execute() error {
+	rootCmd.SetArgs(normalizeResumeArgs(os.Args[1:]))
 	return rootCmd.Execute()
 }
 

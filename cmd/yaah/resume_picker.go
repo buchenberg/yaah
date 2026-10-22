@@ -28,18 +28,42 @@ const resumePickerSentinel = "picker"
 // would be required; a picker is a chooser, not a browser.
 const maxPickerRows = 40
 
-// shiftResumeID restores the legacy space-separated form
-// `yaah --resume <id> [prompt]`. pflag's value-optional flag does not
-// consume the token after --resume, so <id> arrives as a positional
-// argument; a session-id-shaped first argument is shifted back into the
-// flag value. Everything else stays a prompt for the picker path.
-func shiftResumeID(args []string) []string {
-	if resumeSessionID == resumePickerSentinel && len(args) > 0 &&
-		strings.HasPrefix(args[0], "sess-") {
-		resumeSessionID = args[0]
-		return args[1:]
+// normalizeResumeArgs splices the legacy space-separated form
+// `--resume <id>` into `--resume=<id>` before flag parsing. pflag's
+// value-optional flag (--resume carries a NoOptDefVal picker sentinel)
+// never consumes the next token, which would leave the id positional:
+// root's one-shot prompt would eat it and subcommands with cobra.NoArgs
+// (tui, serve, web, acp) would reject the argument outright. Only a
+// token shaped like a generated session id (sess-<digits>) is spliced —
+// a prompt like "sess-management is broken" stays a prompt. Everything
+// after `--` is positional and never touched.
+func normalizeResumeArgs(argv []string) []string {
+	out := append([]string(nil), argv...)
+	for i := 0; i < len(out)-1; i++ {
+		if out[i] == "--" {
+			break
+		}
+		if out[i] == "--resume" && sessionIDShape(out[i+1]) {
+			out[i] = "--resume=" + out[i+1]
+			out = append(out[:i+1], out[i+2:]...)
+			break
+		}
 	}
-	return args
+	return out
+}
+
+// sessionIDShape reports whether s looks like a yaah-generated session
+// id (`sess-<unixnano>`); see newAgentSessionWithOptions.
+func sessionIDShape(s string) bool {
+	if !strings.HasPrefix(s, "sess-") {
+		return false
+	}
+	for _, r := range s[len("sess-"):] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // maybeResolveResumePicker turns the bare --resume sentinel into a
@@ -150,12 +174,16 @@ func pickResumeSession(out io.Writer, in io.Reader, sessions []memory.SessionSum
 // bufio.Scanner reads ahead into its buffer and would swallow input the
 // REPL or a piped prompt still needs (e.g. `printf '1\nhello\n' |
 // yaah --resume`), so this reads byte-wise and stops at the line end.
+// A reader stuck on (0, nil) reads trips io.ErrNoProgress instead of
+// spinning.
 func readPickerLine(in io.Reader) (string, error) {
 	var sb strings.Builder
 	var b [1]byte
+	idle := 0
 	for {
 		n, err := in.Read(b[:])
 		if n > 0 {
+			idle = 0
 			if b[0] == '\n' {
 				return strings.TrimRight(sb.String(), "\r"), nil
 			}
@@ -167,6 +195,10 @@ func readPickerLine(in io.Reader) (string, error) {
 				return sb.String(), nil
 			}
 			return "", err
+		}
+		idle++
+		if idle > 100 {
+			return "", io.ErrNoProgress
 		}
 	}
 }

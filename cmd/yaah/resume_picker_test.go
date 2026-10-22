@@ -139,27 +139,43 @@ func TestSafeLabel(t *testing.T) {
 	}
 }
 
-func TestShiftResumeID(t *testing.T) {
-	orig := resumeSessionID
-	t.Cleanup(func() { resumeSessionID = orig })
-
-	// Legacy `yaah --resume <id> [prompt]`: the id arrives positional
-	// and is shifted back into the flag value.
-	resumeSessionID = resumePickerSentinel
-	if args := shiftResumeID([]string{"sess-123", "fix tests"}); len(args) != 1 || args[0] != "fix tests" || resumeSessionID != "sess-123" {
-		t.Fatalf("args = %v, resume = %q", args, resumeSessionID)
+func TestNormalizeResumeArgs(t *testing.T) {
+	for name, tc := range map[string]struct {
+		argv []string
+		want []string
+	}{
+		"legacy id before prompt": {[]string{"--resume", "sess-123", "fix tests"}, []string{"--resume=sess-123", "fix tests"}},
+		"legacy id for repl":      {[]string{"--resume", "sess-1234567890"}, []string{"--resume=sess-1234567890"}},
+		"subcommand surface":      {[]string{"tui", "--resume", "sess-123"}, []string{"tui", "--resume=sess-123"}},
+		"prompt with sess- word":  {[]string{"--resume", "sess-management", "is", "broken"}, []string{"--resume", "sess-management", "is", "broken"}},
+		"non-numeric id":          {[]string{"--resume", "sess-abc"}, []string{"--resume", "sess-abc"}},
+		"explicit equals form":    {[]string{"--resume=sess-123", "hello"}, []string{"--resume=sess-123", "hello"}},
+		"bare picker form":        {[]string{"--resume", "hello"}, []string{"--resume", "hello"}},
+		"no resume flag":          {[]string{"sessions", "list"}, []string{"sessions", "list"}},
+		"after double dash":       {[]string{"--", "--resume", "sess-123"}, []string{"--", "--resume", "sess-123"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := normalizeResumeArgs(tc.argv)
+			if len(got) != len(tc.want) {
+				t.Fatalf("argv = %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("argv = %v, want %v", got, tc.want)
+				}
+			}
+		})
 	}
+}
 
-	// A prompt that is not session-id-shaped stays a prompt.
-	resumeSessionID = resumePickerSentinel
-	if args := shiftResumeID([]string{"hello world"}); len(args) != 1 || resumeSessionID != resumePickerSentinel {
-		t.Fatalf("args = %v, resume = %q", args, resumeSessionID)
-	}
+// stuckReader always reports a legal but progress-free (0, nil) read.
+type stuckReader struct{}
 
-	// Explicit --resume=<id> never shifts.
-	resumeSessionID = "sess-9"
-	if args := shiftResumeID([]string{"sess-123"}); len(args) != 1 || resumeSessionID != "sess-9" {
-		t.Fatalf("args = %v, resume = %q", args, resumeSessionID)
+func (stuckReader) Read([]byte) (int, error) { return 0, nil }
+
+func TestReadPickerLine_noProgress(t *testing.T) {
+	if _, err := readPickerLine(stuckReader{}); err != io.ErrNoProgress {
+		t.Fatalf("err = %v, want io.ErrNoProgress (a (0, nil) reader must not spin)", err)
 	}
 }
 
