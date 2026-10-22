@@ -1,7 +1,9 @@
 package memory
 
 import (
+	"database/sql"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -234,28 +236,73 @@ func TestDB_DeleteSession(t *testing.T) {
 	}
 }
 
-// TestDB_BackfillLegacyActivity pins the N-1 migration step: a session
-// row written before updated_at existed is backfilled from started_at by
-// the next migrate, so old sessions list with usable activity times.
+// TestDB_BackfillLegacyActivity pins the N-1 migration step: a database
+// written by an older binary (no title/updated_at columns) gains them on
+// the first open of this build, with updated_at backfilled from
+// started_at, so existing sessions list with usable activity times. The
+// backfill is gated: ensureColumn reports when it actually added
+// updated_at, so later opens never re-scan the table (a no-op UPDATE
+// without the gate would grow linearly with the store).
 func TestDB_BackfillLegacyActivity(t *testing.T) {
-	db := openTestDB(t)
-	const end = 1234567890
-	if err := db.CreateSession(Session{ID: "legacy", StartedAt: end}); err != nil {
+	// Forge the N-1 shape: schema_meta plus bare sessions/messages
+	// tables, a session row, and a message row — no title/updated_at.
+	legacyPath := filepath.Join(t.TempDir(), "legacy.db")
+	legacy, err := sql.Open("sqlite", legacyPath)
+	if err != nil {
 		t.Fatal(err)
 	}
-	// A fresh CreateSession seeds activity from started_at…
-	if got, err := db.GetSession("legacy"); err != nil || got.UpdatedAt != end {
-		t.Fatalf("created row updated_at = %d (%v), want started_at %d", got.UpdatedAt, err, end)
+	_, err = legacy.Exec(`
+		CREATE TABLE sessions (
+			id         TEXT PRIMARY KEY,
+			started_at INTEGER NOT NULL,
+			ended_at   INTEGER,
+			cwd        TEXT,
+			model      TEXT,
+			tokens_in  INTEGER DEFAULT 0,
+			tokens_out INTEGER DEFAULT 0
+		);
+		CREATE TABLE messages (
+			session_id        TEXT NOT NULL REFERENCES sessions(id),
+			idx               INTEGER NOT NULL,
+			role              TEXT NOT NULL,
+			content           TEXT NOT NULL,
+			reasoning_content TEXT DEFAULT '',
+			reasoning_signature TEXT DEFAULT '',
+			tool_name         TEXT,
+			tool_call_id      TEXT,
+			tool_calls        TEXT,
+			ts                INTEGER NOT NULL,
+			PRIMARY KEY (session_id, idx)
+		);
+		INSERT INTO sessions (id, started_at, cwd) VALUES ('legacy', 1234567890, '/x');
+		INSERT INTO messages (session_id, idx, role, content, ts) VALUES ('legacy', 0, 'user', 'hi', 1234567891);
+	`)
+	if err != nil {
+		t.Fatalf("forge legacy db: %v", err)
 	}
-	// …but a row written by an older binary has 0, and the migrate
-	// backfill (run on every open) repairs it.
-	if _, err := db.sql.Exec(`UPDATE sessions SET updated_at = 0 WHERE id = 'legacy'`); err != nil {
+	if err := legacy.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
+
+	db, err := Open(legacyPath)
+	if err != nil {
+		t.Fatalf("Open legacy db: %v", err)
 	}
-	if got, err := db.GetSession("legacy"); err != nil || got.UpdatedAt != end {
-		t.Fatalf("backfilled updated_at = %d (%v), want started_at %d", got.UpdatedAt, err, end)
+	t.Cleanup(func() { db.Close() })
+
+	got, err := db.GetSession("legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UpdatedAt != 1234567890 {
+		t.Fatalf("backfilled updated_at = %d, want started_at 1234567890", got.UpdatedAt)
+	}
+	if got.Title != "" {
+		t.Fatalf("title = %q, want empty (legacy rows have no derivable title)", got.Title)
+	}
+	// The message row survived the migration.
+	msgs, err := db.GetMessages("legacy")
+	if err != nil || len(msgs) != 1 {
+		t.Fatalf("legacy messages = %d (%v), want 1", len(msgs), err)
 	}
 }

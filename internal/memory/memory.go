@@ -379,19 +379,30 @@ func (d *DB) migrate() error {
 		{"sessions", "title", "ALTER TABLE sessions ADD COLUMN title TEXT DEFAULT ''"},
 		{"sessions", "updated_at", "ALTER TABLE sessions ADD COLUMN updated_at INTEGER DEFAULT 0"},
 	}
+	// activityBackfill marks whether this open just added updated_at:
+	// only a genuinely legacy database needs its rows seeded from
+	// started_at, so the table-wide UPDATE below is skipped on every
+	// later open (a no-op full scan otherwise).
+	var activityBackfill bool
 	for _, s := range steps {
-		if err := d.ensureColumn(s.table, s.column, s.ddl); err != nil {
+		added, err := d.ensureColumn(s.table, s.column, s.ddl)
+		if err != nil {
 			return err
+		}
+		if added && s.table == "sessions" && s.column == "updated_at" {
+			activityBackfill = true
 		}
 	}
 
 	// Backfill the activity timestamp for rows created before the column
 	// existed (release N-1): a session's "last activity" starts as its
 	// start time. New writes overwrite updated_at per message.
-	if _, err := d.sql.Exec(
-		`UPDATE sessions SET updated_at = started_at WHERE COALESCE(updated_at, 0) = 0`,
-	); err != nil {
-		return fmt.Errorf("backfill sessions.updated_at: %w", err)
+	if activityBackfill {
+		if _, err := d.sql.Exec(
+			`UPDATE sessions SET updated_at = started_at WHERE COALESCE(updated_at, 0) = 0`,
+		); err != nil {
+			return fmt.Errorf("backfill sessions.updated_at: %w", err)
+		}
 	}
 
 	// Index on the turn cross-link must be created after the turn_id
@@ -410,24 +421,26 @@ func (d *DB) migrate() error {
 }
 
 // ensureColumn adds column to table via ddl when the column is missing,
-// returning any error from the pragma lookup or the ALTER. Migrations
-// must never silently no-op: a schema missing a column fails later
-// queries with confusing errors far from the root cause.
-func (d *DB) ensureColumn(table, column, ddl string) error {
+// returning true when the ALTER actually ran plus any error from the
+// pragma lookup or the ALTER. Migrations must never silently no-op: a
+// schema missing a column fails later queries with confusing errors far
+// from the root cause. The bool lets callers gate follow-up backfills on
+// the migration that makes them necessary (every open stays cheap).
+func (d *DB) ensureColumn(table, column, ddl string) (bool, error) {
 	var has int
 	err := d.sql.QueryRow(
 		"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", table, column,
 	).Scan(&has)
 	if err != nil {
-		return fmt.Errorf("check %s.%s: %w", table, column, err)
+		return false, fmt.Errorf("check %s.%s: %w", table, column, err)
 	}
 	if has == 1 {
-		return nil
+		return false, nil
 	}
 	if _, err := d.sql.Exec(ddl); err != nil {
-		return fmt.Errorf("add %s.%s: %w", table, column, err)
+		return false, fmt.Errorf("add %s.%s: %w", table, column, err)
 	}
-	return nil
+	return true, nil
 }
 
 // memoryDigest returns the exact content digest for a memory entry's text.

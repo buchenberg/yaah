@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -59,7 +60,7 @@ func (d *DB) UpdateSessionWorkspace(id, backend, omittedTools string) error {
 // GetSession retrieves a single session by ID.
 func (d *DB) GetSession(id string) (Session, error) {
 	row := d.sql.QueryRow(`
-		SELECT id, started_at, COALESCE(ended_at, 0), cwd, model, tokens_in, tokens_out,
+		SELECT id, started_at, COALESCE(ended_at, 0), COALESCE(cwd, ''), COALESCE(model, ''), tokens_in, tokens_out,
 			COALESCE(tokens_cached, 0), COALESCE(sub_tokens_in, 0), COALESCE(sub_tokens_out, 0),
 			COALESCE(system_prompt, ''), COALESCE(compacted_summary, ''),
 			COALESCE(workspace_backend, ''), COALESCE(workspace_omitted_tools, ''),
@@ -77,7 +78,7 @@ func (d *DB) GetSession(id string) (Session, error) {
 // ListSessions returns recent sessions.
 func (d *DB) ListSessions(limit int) ([]Session, error) {
 	rows, err := d.sql.Query(`
-		SELECT id, started_at, COALESCE(ended_at, 0), cwd, model, tokens_in, tokens_out,
+		SELECT id, started_at, COALESCE(ended_at, 0), COALESCE(cwd, ''), COALESCE(model, ''), tokens_in, tokens_out,
 			COALESCE(tokens_cached, 0), COALESCE(sub_tokens_in, 0), COALESCE(sub_tokens_out, 0),
 			COALESCE(system_prompt, ''), COALESCE(compacted_summary, ''),
 			COALESCE(workspace_backend, ''), COALESCE(workspace_omitted_tools, ''),
@@ -163,7 +164,11 @@ func (d *DB) ListSessionsPage(filter SessionListFilter) ([]SessionSummary, strin
 		if err != nil {
 			return nil, "", fmt.Errorf("%w: %s", ErrInvalidCursor, err)
 		}
-		if err := json.Unmarshal(raw, &key); err != nil || key.I == "" || key.S <= 0 {
+		// Only parseability counts: a zero/negative started_at stays a
+		// legal key (a legacy row with started_at = 0 sorts last and
+		// pages on) — rejecting it here would strand such a page with a
+		// cursor the next request could never replay.
+		if err := json.Unmarshal(raw, &key); err != nil || key.I == "" {
 			return nil, "", ErrInvalidCursor
 		}
 		where += ` AND (s.started_at < ? OR (s.started_at = ? AND s.id < ?))`
@@ -214,20 +219,27 @@ func (d *DB) ListSessionsPage(filter SessionListFilter) ([]SessionSummary, strin
 	return results, next, nil
 }
 
-// DeleteSession removes a session and its dependent rows. messages has a
-// foreign key to sessions(id) but foreign_keys enforcement is not
-// guaranteed (modernc.org/sqlite defaults it off), so children are
-// deleted explicitly. todos is not session-keyed and memory entries are
-// global; trace_owners rows pointing at the session are stale after
-// deletion and are removed too.
+// DeleteSession removes a session and its dependent rows atomically.
+// messages has a foreign key to sessions(id) but foreign_keys
+// enforcement is not guaranteed (modernc.org/sqlite defaults it off), so
+// children are deleted explicitly — inside one transaction, so a mid-way
+// failure never leaves an emptied session row still on the pages. todos
+// is not session-keyed and memory entries are global; trace_owners rows
+// pointing at the session are stale after deletion and are removed too.
 func (d *DB) DeleteSession(id string) error {
-	if _, err := d.sql.Exec(`DELETE FROM messages WHERE session_id = ?`, id); err != nil {
+	tx, err := d.sql.BeginTx(context.Background(), nil)
+	if err != nil {
+		return fmt.Errorf("begin delete: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM messages WHERE session_id = ?`, id); err != nil {
 		return fmt.Errorf("delete messages: %w", err)
 	}
-	if _, err := d.sql.Exec(`DELETE FROM trace_owners WHERE parent_session = ?`, id); err != nil {
+	if _, err := tx.Exec(`DELETE FROM trace_owners WHERE parent_session = ?`, id); err != nil {
 		return fmt.Errorf("delete trace owners: %w", err)
 	}
-	res, err := d.sql.Exec(`DELETE FROM sessions WHERE id = ?`, id)
+	res, err := tx.Exec(`DELETE FROM sessions WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete session: %w", err)
 	}
@@ -238,7 +250,7 @@ func (d *DB) DeleteSession(id string) error {
 	if n == 0 {
 		return ErrSessionNotFound
 	}
-	return nil
+	return tx.Commit()
 }
 
 // TouchSession records message activity: updated_at moves to the message
