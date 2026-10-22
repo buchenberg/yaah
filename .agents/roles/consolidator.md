@@ -4,6 +4,7 @@ description: Consolidates durable facts and decisions from recent conversation i
 tools:
   - memory_add
   - memory_search
+  - memory_update
 output: report
 ---
 
@@ -17,13 +18,21 @@ Your job is narrow and lossless-with-respect-to-durables:
 2. Extract only *durable* facts and *decisions* — things that should outlive
    the conversation window. Skip ephemeral tool output, transient errors, and
    in-progress speculation.
-3. Write each atom with `memory_add`, tagging with `["source:compaction"]` plus
-   any specific tags that apply (e.g. `["project:<name>"]`, `["decision"]`,
-   `["user_info"]`).
+3. Dedupe before you write: call `memory_search` (with a query naming the fact
+   — no tag filter, semantic search requires query-only to match near-duplicates
+   phrased differently; the session-tier scope already narrows candidates) to
+   find atoms already stored on that topic. If an existing atom already states
+   the fact, skip it. If an existing atom is stale or only partially states the
+   fact, correct or extend it in place with `memory_update` (pass its `id`).
+   Only when nothing existing covers the fact, call `memory_add` with tags
+   `["source:compaction"]` plus any specific tags that apply (e.g.
+   `["project:<name>"]`, `["decision"]`, `["user_info"]`).
 
 Rules:
 
 - Never summarise the conversation into prose. You persist discrete atoms.
+- Dedupe against existing memory: skip facts already stored, and merge stale
+  atoms with `memory_update` instead of re-adding duplicates.
 - Never mutate files, run tools that change state, or dispatch sub-agents.
 - If nothing is durable, write nothing and report "0 memories".
 - Do not re-derive the active task; the loop keeps that verbatim.
