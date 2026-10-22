@@ -11,9 +11,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+// ArchiveDir is the directory, beside a skills root, that archived skills
+// move into. It is not itself a skills root: Discover only reads
+// <root>/<name>/SKILL.md, so an archived file is invisible to discovery —
+// and therefore to the agent — while staying on disk.
+const ArchiveDir = ".archive"
 
 // Skill represents a discovered skill with its metadata and body.
 type Skill struct {
@@ -185,4 +192,39 @@ func Edit(skill *Skill, description, body string) (string, error) {
 		return "", fmt.Errorf("write SKILL.md: %w", err)
 	}
 	return skill.Path, nil
+}
+
+// Archive moves a skill's SKILL.md into the ArchiveDir beside its skills
+// root, preserving the skill name as <name>.md. Archive-not-delete
+// (docs/compaction-as-sleep.md §8 P1) keeps an agent- or
+// consolidator-authored skill restorable: the content stays on disk, only
+// discovery stops seeing it. Returns the path of the archived file.
+func Archive(s *Skill) (string, error) {
+	if s == nil || s.Path == "" {
+		return "", fmt.Errorf("skill path is required")
+	}
+	root := filepath.Dir(s.Dir)
+	if root == "" || root == "." {
+		return "", fmt.Errorf("skill %q has no skills root", s.Name)
+	}
+	archiveDir := filepath.Join(root, ArchiveDir)
+	if err := os.MkdirAll(archiveDir, 0o755); err != nil {
+		return "", fmt.Errorf("create archive directory: %w", err)
+	}
+	dest := filepath.Join(archiveDir, s.Name+".md")
+	if _, err := os.Stat(dest); err == nil {
+		// Keep an earlier archive of the same name: a second archive must
+		// not overwrite the revision a restore might want.
+		dest = filepath.Join(archiveDir, fmt.Sprintf("%s-%d.md", s.Name, time.Now().UnixNano()))
+	}
+	if err := os.Rename(s.Path, dest); err != nil {
+		return "", fmt.Errorf("archive SKILL.md: %w", err)
+	}
+	// Drop the skill directory when the move left it empty, so a skills
+	// tree does not accumulate SKILL.md-less shells. A directory holding
+	// scripts or references stays put.
+	if entries, err := os.ReadDir(s.Dir); err == nil && len(entries) == 0 {
+		_ = os.Remove(s.Dir)
+	}
+	return dest, nil
 }

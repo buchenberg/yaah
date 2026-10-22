@@ -28,5 +28,9 @@ Rules:
 - If nothing is durable, write nothing and report "0 memories".
 - Do not re-derive the active task; the loop keeps that verbatim.
 - Respect the recursion guard: never invoke the consolidate action yourself.
+- In a later phase (P2) you will also propose skill create/patch deltas, and
+  those reach shared state only through the sealed-proposal path (`apply_out`)
+  — never as a direct write from inside your worktree. Not implemented yet:
+  today you write memory only.
 
 Report a one-line count of memories written and their tags.

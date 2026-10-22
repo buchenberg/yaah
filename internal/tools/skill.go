@@ -2,8 +2,11 @@ package tools
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -12,10 +15,15 @@ import (
 	"github.com/buchenberg/yaah/internal/skills"
 )
 
-// SkillTool loads, creates, edits, and searches skills.
+// SkillTool loads, creates, edits, archives, and searches skills.
 type SkillTool struct {
 	Dirs     []string
 	Embedder memory.Embedder // optional; enables semantic skill search
+	// Store is the optional skill-lifecycle store: usage counters,
+	// provenance, and the append-only mutation ledger
+	// (docs/compaction-as-sleep.md §8 P1). Nil disables tracking
+	// entirely — the tool then behaves exactly as it did before P1.
+	Store *memory.DB
 	// ReadOnly disables the mutating actions (create, edit). Isolated
 	// sessions set it: skills are host harness configuration (.agents/
 	// directories the host reads), so writing them from inside the
@@ -39,8 +47,8 @@ func (t *SkillTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"action": {"type": "string", "enum": ["load", "list", "create", "edit", "search"], "description": "Action to perform (default: load)"},
-			"name": {"type": "string", "description": "Skill name (required for load, create, edit)"},
+			"action": {"type": "string", "enum": ["load", "list", "create", "edit", "delete", "search"], "description": "Action to perform (default: load)"},
+			"name": {"type": "string", "description": "Skill name (required for load, create, edit, delete)"},
 			"description": {"type": "string", "description": "Skill description (required for create, optional for edit)"},
 			"body": {"type": "string", "description": "Skill body in markdown (required for create, optional for edit)"},
 			"query": {"type": "string", "description": "Natural-language search query for semantic skill discovery (required for search)"}
@@ -73,6 +81,11 @@ func (t *SkillTool) Execute(ctx context.Context, args string) (string, error) {
 		if s == nil {
 			return "", fmt.Errorf("skill %q not found", params.Name)
 		}
+		// A load is a view, not a use: whether the skill was actually
+		// applied is only knowable later (P3).
+		t.track("skill_usage", params.Name, func(db *memory.DB) error {
+			return db.RecordSkillUsage(params.Name, false)
+		})
 		return skills.FormatSkillForAgent(s), nil
 
 	case "list":
@@ -107,6 +120,13 @@ func (t *SkillTool) Execute(ctx context.Context, args string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("skill create: %w", err)
 		}
+		t.track("skill_provenance", params.Name, func(db *memory.DB) error {
+			return db.RecordSkillProvenance(params.Name, "agent", "skill:create")
+		})
+		t.track("skill_ledger", params.Name, func(db *memory.DB) error {
+			return db.RecordSkillLedger(params.Name, "create", "",
+				skillContentHash(params.Name, params.Description, params.Body), "")
+		})
 		return fmt.Sprintf("Skill %q created at %s", params.Name, path), nil
 
 	case "edit":
@@ -120,11 +140,46 @@ func (t *SkillTool) Execute(ctx context.Context, args string) (string, error) {
 		if s == nil {
 			return "", fmt.Errorf("skill %q not found", params.Name)
 		}
+		before := skillContentHash(s.Name, s.Description, s.Body)
 		path, err := skills.Edit(s, params.Description, params.Body)
 		if err != nil {
 			return "", fmt.Errorf("skill edit: %w", err)
 		}
+		if t.Store != nil {
+			// Hash the file as written, not the arguments: Edit falls back
+			// to the current frontmatter for empty fields, so the effective
+			// content is not always what the caller passed.
+			after := before
+			if updated := skills.FindSkill(t.Dirs, params.Name); updated != nil {
+				after = skillContentHash(updated.Name, updated.Description, updated.Body)
+			}
+			t.track("skill_ledger", params.Name, func(db *memory.DB) error {
+				return db.RecordSkillLedger(params.Name, "edit", before, after, "")
+			})
+		}
 		return fmt.Sprintf("Skill %q updated at %s", params.Name, path), nil
+
+	case "delete":
+		if t.ReadOnly {
+			return "", readOnlyActionError("skill", "delete")
+		}
+		if params.Name == "" {
+			return "", fmt.Errorf("skill: name is required for delete")
+		}
+		s := skills.FindSkill(t.Dirs, params.Name)
+		if s == nil {
+			return "", fmt.Errorf("skill %q not found", params.Name)
+		}
+		hash := skillContentHash(s.Name, s.Description, s.Body)
+		archived, err := skills.Archive(s)
+		if err != nil {
+			return "", fmt.Errorf("skill archive: %w", err)
+		}
+		t.track("skill_ledger", params.Name, func(db *memory.DB) error {
+			return db.RecordSkillLedger(params.Name, "archive", hash, "", "")
+		})
+		return fmt.Sprintf("Skill %q archived (not deleted) at %s — restorable by moving the file back to %s",
+			params.Name, archived, s.Path), nil
 
 	case "search":
 		if params.Query == "" {
@@ -138,6 +193,27 @@ func (t *SkillTool) Execute(ctx context.Context, args string) (string, error) {
 
 	default:
 		return "", fmt.Errorf("skill: unknown action %q", params.Action)
+	}
+}
+
+// skillContentHash returns the SHA-256 digest of a skill's content. The
+// name is part of the digest so a rename reads as a change; the ledger
+// stores only hashes, never bodies.
+func skillContentHash(name, description, body string) string {
+	sum := sha256.Sum256([]byte(name + "\x00" + description + "\x00" + body))
+	return hex.EncodeToString(sum[:])
+}
+
+// track runs a best-effort lifecycle write against the optional store. The
+// skill file has already changed by the time these run, so a bookkeeping
+// failure is logged and never fails the tool call: a lost ledger row must
+// not make an applied edit look rejected. A nil Store disables tracking.
+func (t *SkillTool) track(op, name string, write func(*memory.DB) error) {
+	if t.Store == nil {
+		return
+	}
+	if err := write(t.Store); err != nil {
+		slog.Warn("skill: lifecycle write failed", "op", op, "name", name, "err", err)
 	}
 }
 
