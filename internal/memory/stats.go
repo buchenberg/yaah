@@ -12,9 +12,10 @@ import (
 // render, not a store — so it never writes, and it is cheap enough to run
 // from the `yaah memory stats` command.
 
-// staleStatsAge is the floor the stats view uses to count staleness
-// candidates, mirroring the hygiene sweep's 30-day floor (cmd/yaah/memory.go).
-const staleStatsAge = 30 * 24 * time.Hour
+// journeyDetailRunes is the rune cap applied to a memory atom's text when it
+// becomes a JourneyEvent.Detail: the journey is a timeline, not a prompt, so
+// a long atom is truncated rune-safely to keep the render legible.
+const journeyDetailRunes = 160
 
 // MemoryStats is the aggregate view shown by `yaah memory stats`.
 type MemoryStats struct {
@@ -46,7 +47,7 @@ func (d *DB) Stats() (MemoryStats, error) {
 		return MemoryStats{}, fmt.Errorf("memory stats: %w", err)
 	}
 
-	cutoff := time.Now().Add(-staleStatsAge).Unix()
+	cutoff := time.Now().Add(-StaleAge).Unix()
 	if err := d.sql.QueryRow(
 		`SELECT COUNT(*) FROM memory
 		  WHERE tags LIKE ?
@@ -99,6 +100,7 @@ func (d *DB) Journey(limit int) ([]JourneyEvent, error) {
 			return nil, fmt.Errorf("journey: scan memory: %w", err)
 		}
 		e.Kind = "memory"
+		e.Detail = truncateRunes(e.Detail, journeyDetailRunes)
 		events = append(events, e)
 	}
 	rows.Close()
@@ -124,6 +126,9 @@ func (d *DB) Journey(limit int) ([]JourneyEvent, error) {
 		if ts, err := time.Parse(time.RFC3339, createdAt); err == nil {
 			e.CreatedAt = ts.Unix()
 		}
+		// A skill row with an unparseable timestamp is kept but deterministically
+		// sinks to the bottom (CreatedAt 0) rather than being dropped or
+		// ordering nondeterministically against other zero-timestamp events.
 		events = append(events, e)
 	}
 	skillRows.Close()
@@ -131,9 +136,19 @@ func (d *DB) Journey(limit int) ([]JourneyEvent, error) {
 		return nil, fmt.Errorf("journey: skills: %w", err)
 	}
 
-	sort.Slice(events, func(i, j int) bool { return events[i].CreatedAt > events[j].CreatedAt })
+	sort.SliceStable(events, func(i, j int) bool { return events[i].CreatedAt > events[j].CreatedAt })
 	if len(events) > limit {
 		events = events[:limit]
 	}
 	return events, nil
+}
+
+// truncateRunes cuts s to at most n runes without splitting a multi-byte
+// rune, appending an ellipsis when truncation happened.
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }

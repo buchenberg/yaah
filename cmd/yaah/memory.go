@@ -153,12 +153,6 @@ func initDBEmbedder(db *memory.DB) {
 	attachEmbedder(db, cfg)
 }
 
-// staleMemoryAge is the floor under PruneStaleCompaction: a global compaction
-// atom younger than this had its whole lifetime to be recalled and may still
-// be. A month is deliberately generous — the sweep exists to stop unbounded
-// accumulation, not to reclaim anything soon.
-const staleMemoryAge = 30 * 24 * time.Hour
-
 // pruneMemoryAtClose runs the memory-hygiene staleness sweep on the session
 // teardown path. It deliberately does NOT prune session-scoped atoms by
 // session: yaah sessions are resumable, so a session's working context may be
@@ -170,7 +164,7 @@ func pruneMemoryAtClose(db *memory.DB) {
 	if db == nil {
 		return
 	}
-	if n, err := db.PruneStaleCompaction(time.Now().Add(-staleMemoryAge)); err != nil {
+	if n, err := db.PruneStaleCompaction(time.Now().Add(-memory.StaleAge)); err != nil {
 		slog.Warn("session: prune stale compaction memory failed", "err", err)
 	} else if n > 0 {
 		slog.Debug("session: pruned stale compaction memory", "deleted", n)
@@ -222,8 +216,8 @@ var memoryStatsCmd = &cobra.Command{
 				kind = Bold("skill")
 			}
 			detail := e.Detail
-			if len(detail) > 60 {
-				detail = detail[:60] + "…"
+			if r := []rune(detail); len(r) > 60 {
+				detail = string(r[:60]) + "…"
 			}
 			cmd.Printf("  %s %s  %s\n", kind, Dim(formatStatsTime(e.CreatedAt)), detail)
 		}
