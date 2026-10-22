@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"context"
+	"log/slog"
+	"sync/atomic"
 
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -28,6 +30,10 @@ type ConsolidateMiddleware struct {
 
 	turnsSince int
 	itersSince int
+	// inFlight is a single-flight guard: while a dispatch is running, a later
+	// cadence crossing skips its fire so overlapping consolidations cannot race
+	// on memory writes.
+	inFlight atomic.Bool
 }
 
 // NewConsolidateMiddleware returns a consolidate middleware. Zero for either
@@ -77,11 +83,27 @@ func (m *ConsolidateMiddleware) PostTool(ctx context.Context, results []ToolResu
 		fire = true
 	}
 
-	if fire {
-		m.reset()
-		dispatch := m.dispatch
-		go dispatch(context.WithoutCancel(ctx), "memory")
+	if !fire {
+		return step, nil
 	}
+
+	m.reset()
+
+	// Single-flight: skip if a previous dispatch is still in flight.
+	if !m.inFlight.CompareAndSwap(false, true) {
+		return step, nil
+	}
+
+	dispatch := m.dispatch
+	go func() {
+		defer m.inFlight.Store(false)
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("consolidate: dispatch panicked", "kind", "memory", "panic", r)
+			}
+		}()
+		dispatch(context.WithoutCancel(ctx), "memory")
+	}()
 
 	return step, nil
 }

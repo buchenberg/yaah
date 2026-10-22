@@ -120,6 +120,11 @@ type Loop struct {
 	// fire-and-forget: the loop continues immediately and the
 	// consolidation runs out-of-band. kind names the product to
 	// consolidate ("memory" in P0). Nil disables the nudge.
+	//
+	// P0 lands the seam only: no caller assigns this field yet, so the
+	// nudge is inert by default even with the "consolidate" middleware
+	// enabled. The consolidator sub-agent dispatch is wired in P1
+	// (bead yaah-8sy).
 	ConsolidateFn func(ctx context.Context, kind string)
 
 	// BackgroundJobs, when set, is wired with the loop's broker callbacks
