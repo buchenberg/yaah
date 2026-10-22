@@ -89,6 +89,10 @@ type agentSession struct {
 	db         *memory.DB
 	mcpClients []mcp.MCPClient
 	mcpInfos   []mcp.ServerInfo
+	// deepGate is the light/deep sleep policy, created once per session so
+	// its every-Nth cadence spans prompt runs instead of resetting each turn.
+	deepGate     *deepSleepGate
+	deepGateOnce sync.Once
 	// mcpToolNames lists tool names registered from MCP servers so the
 	// loop can apply the mcp_approval policy to them (remote tools
 	// cannot implement tools.DangerClassifier).
