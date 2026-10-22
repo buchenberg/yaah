@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.96.1](https://github.com/buchenberg/yaah/compare/v0.96.0...v0.96.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* **sessions:** normalize the legacy --resume &lt;id&gt; form on every surface ([24b88c3](https://github.com/buchenberg/yaah/commit/24b88c334e74d909b42779046dfb02d037dc9e3a))
+* **sessions:** normalize the legacy --resume &lt;id&gt; form on every surface ([3e1f84d](https://github.com/buchenberg/yaah/commit/3e1f84d2bc97aec04cf089994b39ca18fe12ecce))
+* **sessions:** review round on the resume argv splice ([652040f](https://github.com/buchenberg/yaah/commit/652040ffa9e337e3a08f43b4629fed6eb617144e))
+
+
+### Documentation
+
+* drop the dangling clause in readPickerLine's contract ([49607f5](https://github.com/buchenberg/yaah/commit/49607f5cf21f577007b07d1075eec779c3795c81))
+
 ## [0.96.0](https://github.com/buchenberg/yaah/compare/v0.95.0...v0.96.0) (2026-10-22)
 
 
