@@ -37,6 +37,17 @@ import (
 // error).
 const SchemaWorktreeProvisioned = "yaah.worktree.provisioned.v1"
 
+// legacySchemaScopeForked is the fork schema ref as the runtime wrote it
+// before the goatherd rename (shepherd-runtime-go <= v0.18.0): the rename
+// rebranded the runtime's own record vocabulary, so traces from pre-rename
+// sessions carry the old value. Recovery scans it as a fallback so
+// worktrees carved before the upgrade still list and prune — silently
+// dropping them would strand live worktrees (the failure this file
+// exists to prevent). Removable at the next minor together with the
+// SchemaWorktreeProvisioned fallback above. The kernel's frozen
+// shepherd2.* vocabulary is unaffected and needs no fallback.
+const legacySchemaScopeForked = "shepherd.scope.forked.v1"
+
 // worktreeInfo is one recorded worktree provisioning: where it lives
 // and which repository it was carved from. The repository is what
 // makes adoption safe — an unrelated directory squatting on the path
@@ -264,6 +275,26 @@ func scanWorktreePaths(ctx context.Context, store *shepherdtrace.SQLiteTraceStor
 		path, _ := rec.Payload["sandbox_path"].(string)
 		if child == "" || path == "" {
 			continue // shared forks and unaddressed children have no record to read
+		}
+		paths[child] = worktreeInfo{path: path, repo: trustedRepo}
+	}
+
+	// Pre-rename traces carry the old fork ref (see
+	// legacySchemaScopeForked): scan them too so worktrees carved before
+	// the upgrade stay owned. The current ref wins on collision — same
+	// last-write rule as the fallback below.
+	legacyForks, err := shepherdtrace.ScanRecordsBySchema(ctx, store, legacySchemaScopeForked)
+	if err != nil {
+		return nil, fmt.Errorf("scan legacy fork records: %w", err)
+	}
+	for _, rec := range legacyForks {
+		child, _ := rec.Payload["child_owner"].(string)
+		path, _ := rec.Payload["sandbox_path"].(string)
+		if child == "" || path == "" {
+			continue
+		}
+		if _, covered := paths[child]; covered {
+			continue // the current-ref record owns this child
 		}
 		paths[child] = worktreeInfo{path: path, repo: trustedRepo}
 	}

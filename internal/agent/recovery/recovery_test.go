@@ -267,6 +267,64 @@ func TestRecover_FailsLoudlyOnCorruptTrace(t *testing.T) {
 // still stand — the crash window between the discard record and the
 // teardown — is listed with its scope, path, and size, and survives
 // recovery byte-identical. Nothing is deleted.
+// TestScanWorktreePaths_LegacyForkRecordsListed pins the rename fallback:
+// fork records written before the goatherd rename carry the old schema ref,
+// and recovery must still read their worktree addresses — dropping them
+// would strand pre-rename worktrees (they would fall out of `paths` and
+// neither list nor prune). The current ref wins on collision.
+func TestScanWorktreePaths_LegacyForkRecordsListed(t *testing.T) {
+	store, err := shepherdtrace.NewSQLiteTraceStore(filepath.Join(t.TempDir(), "trace.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { store.Close(context.Background()) })
+
+	appendFork := func(ref, intent, owner, path string) {
+		t.Helper()
+		if _, err := store.Append(context.Background(), shepherdtrace.TrustedAppendContext, shepherdtrace.AppendBatch{
+			AppendIntentID: intent,
+			Groups: []shepherdtrace.AppendGroup{{
+				TraceOwnerID: "sess-old",
+				FactDrafts: []shepherdtrace.RecordDraft{{
+					Mode:      shepherdtrace.Declaration,
+					SchemaRef: ref,
+					KindLabel: "scope:forked",
+					Payload:   map[string]any{"child_owner": owner, "sandbox_path": path, "isolated": true},
+				}},
+			}},
+		}); err != nil {
+			t.Fatalf("append %s record: %v", ref, err)
+		}
+	}
+	appendFork(legacySchemaScopeForked, "sess-old:fork:legacy:1", "scope:legacy-child", "/wt/legacy")
+	appendFork(goatherd.SchemaScopeForked, "sess-old:fork:new:1", "scope:new-child", "/wt/new")
+	// Collision: both refs know this child; the current ref's record must win.
+	appendFork(legacySchemaScopeForked, "sess-old:fork:legacy:2", "scope:both-child", "/wt/both-legacy")
+	appendFork(goatherd.SchemaScopeForked, "sess-old:fork:new:2", "scope:both-child", "/wt/both-new")
+
+	paths, err := scanWorktreePaths(context.Background(), store, "/trusted/repo")
+	if err != nil {
+		t.Fatalf("scanWorktreePaths: %v", err)
+	}
+	for _, want := range []struct{ child, path string }{
+		{"scope:legacy-child", "/wt/legacy"},
+		{"scope:new-child", "/wt/new"},
+		{"scope:both-child", "/wt/both-new"},
+	} {
+		got, ok := paths[want.child]
+		if !ok {
+			t.Errorf("%s missing from the scan (paths: %v)", want.child, paths)
+		} else if got.path != want.path {
+			t.Errorf("%s path = %q, want %q", want.child, got.path, want.path)
+		} else if got.repo != "/trusted/repo" {
+			t.Errorf("%s repo = %q, want the trusted repo", want.child, got.repo)
+		}
+	}
+	if _, ok := paths["scope:both-child-lt"]; ok {
+		t.Error("the legacy record must not own a child the current ref covers")
+	}
+}
+
 func TestRecover_OrphanListedAndLeftOnDisk(t *testing.T) {
 	state := buildCrashState(t)
 
