@@ -27,18 +27,37 @@ running tests, and retrying. yaah splits that work:
 
 Four roles are built in: `analyst`, `developer`, `tester`, and `reviewer`. Add your own in `.agents/roles/*.md` or `~/.agents/roles/*.md`.
 
-## Memory that sleeps, not just forgets
+## Memory that optimizes
 
-yaah doesn't just summarize your context away when the window fills. It **sleeps**:
+yaah doesn't just summarize your context away when the window fills. It runs two complementary memory-optimization mechanisms:
 
-- A **nudge** fires on a cadence while the agent works, and a **consolidator sub-agent** distills recent turns into durable atoms — decisions, facts, constraints — tagged and stored in local SQLite instead of re-deriving them every run.
-- Memory has **tiers**: `global` (durable, cross-session) vs `session` (working context), so one session's scratch never leaks into another's recall.
-- **Skills are first-class memories.** Creating, editing, and even "deleting" a skill is tracked: provenance (who/where it came from), usage counts, and an append-only mutation ledger. Deletion archives rather than destroys — restorable and auditable.
-- **Guardrails keep self-modification safe.** Skill writes are schema-validated with a description limit, and a security scan ships ready to gate autonomous writes — it rejects fetch-and-execute, destructive deletes, fork bombs, and disk destroyers. It's opt-in (`SkillTool.Strict`), pending the unattended write path. The consolidator can't recurse into itself.
-- **Hygiene closes the loop.** A staleness sweep reclaims only compaction atoms that were never once recalled — access is proof an atom earned its keep, so useful memory is never pruned.
-- **It's observable.** `yaah memory stats` renders the aggregate store and a merged learning journey — because the learning graph is a render, not a store.
+### Context compaction (threshold-driven)
+When the conversation grows past `compaction_threshold` (~50% of the model window by default), or you run `:compact`, a **CompactionMiddleware** summarizes history into a single `system` message. The threshold is proactive — it triggers before the window fills. The summary preserves decisions, facts, and constraints so the agent keeps continuity without re-reading the full transcript.
 
-Read the design in [docs/compaction-as-sleep.md](docs/compaction-as-sleep.md).
+### Scheduled consolidation (proactive, cadence-driven)
+Separately, a **ConsolidateMiddleware** fires on configurable turn/iteration intervals (`consolidate_turns_interval`, `consolidate_iters_interval`). It dispatches a **consolidator sub-agent** — a restricted role with only `memory_search`, `memory_add`, and `memory_update` — that scans recent turns, deduplicates against existing memory, and writes durable session-scoped atoms (decisions, facts, constraints) to local SQLite. This is proactive: it runs while the agent works, not just at overflow.
+
+### Tiers and isolation
+- **`global`** — durable, cross-session atoms you explicitly promoted
+- **`session`** — working-context atoms distilled from the current session
+
+One session's scratch never leaks into another's recall unless you promote it.
+
+### Skills as first-class memories
+Creating, editing, or archiving a skill is tracked: provenance (origin), usage counts, and an append-only mutation ledger. Archival preserves history — restorable and auditable.
+
+### Guardrails
+- Schema validation with description limits on skill writes
+- Opt-in security scan (`SkillTool.Strict`) rejects fetch-and-execute, destructive deletes, fork bombs, disk destroyers
+- Consolidator role cannot recurse into itself or use destructive tools
+
+### Hygiene
+A staleness sweep reclaims only compaction atoms that were never recalled — access proves an atom earned its keep, so useful memory is never pruned.
+
+### Observability
+`yaah memory stats` renders the aggregate store and a merged learning journey — the learning graph is a render, not a store.
+
+Design reference: [docs/compaction-as-sleep.md](docs/compaction-as-sleep.md) (analogy under review — see bead `yaah-brd`).
 
 ## Install
 
