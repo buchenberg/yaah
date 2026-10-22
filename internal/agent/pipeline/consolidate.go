@@ -57,7 +57,10 @@ func (m *ConsolidateMiddleware) PostModel(_ context.Context, _ *types.Message, s
 }
 
 // PostTool advances the cadence counters and, if an interval is crossed, fires
-// the consolidation dispatch once and resets both counters.
+// the consolidation dispatch once and resets both counters. The dispatch is
+// fire-and-forget: it runs on a detached goroutine with a context that is not
+// cancelled when the turn or run ends, so it can neither block the loop nor be
+// killed mid-flight.
 func (m *ConsolidateMiddleware) PostTool(ctx context.Context, results []ToolResult, step *Step) (*Step, error) {
 	if m.dispatch == nil {
 		return step, nil
@@ -66,13 +69,18 @@ func (m *ConsolidateMiddleware) PostTool(ctx context.Context, results []ToolResu
 	m.turnsSince++
 	m.itersSince += len(results)
 
+	var fire bool
 	switch {
 	case m.turnsInterval > 0 && m.turnsSince >= m.turnsInterval:
-		m.reset()
-		m.dispatch(ctx, "memory")
+		fire = true
 	case m.itersInterval > 0 && m.itersSince >= m.itersInterval:
+		fire = true
+	}
+
+	if fire {
 		m.reset()
-		m.dispatch(ctx, "memory")
+		dispatch := m.dispatch
+		go dispatch(context.WithoutCancel(ctx), "memory")
 	}
 
 	return step, nil

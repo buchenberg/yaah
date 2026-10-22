@@ -209,6 +209,12 @@ var builtinBuilders = map[string]func(PipelineConfig) Middleware{
 	"conflict_detect": func(cfg PipelineConfig) Middleware {
 		return NewConflictDetectMiddleware(cfg.ConflictTracker, cfg.ConflictOnCheck, cfg.ConflictOnFound, cfg.ConflictPersist)
 	},
+	// consolidate: the cadence-driven "nudge" that fires ConsolidateDispatch
+	// out-of-band (docs/compaction-as-sleep.md §7). Inert when dispatch is
+	// nil or both intervals are zero.
+	"consolidate": func(cfg PipelineConfig) Middleware {
+		return NewConsolidateMiddleware(cfg.ConsolidateTurnsInterval, cfg.ConsolidateItersInterval, cfg.ConsolidateDispatch)
+	},
 }
 
 var subAgentBuilders = map[string]func(PipelineConfig) Middleware{
@@ -246,12 +252,6 @@ var subAgentBuilders = map[string]func(PipelineConfig) Middleware{
 			sessionID: cfg.SessionID,
 			ordinal:   int(nextOrdinal.Add(1 << 20)),
 		}
-	},
-	// consolidate: the cadence-driven "nudge" that fires ConsolidateDispatch
-	// out-of-band (docs/compaction-as-sleep.md §7). Inert when dispatch is
-	// nil or both intervals are zero.
-	"consolidate": func(cfg PipelineConfig) Middleware {
-		return NewConsolidateMiddleware(cfg.ConsolidateTurnsInterval, cfg.ConsolidateItersInterval, cfg.ConsolidateDispatch)
 	},
 }
 
