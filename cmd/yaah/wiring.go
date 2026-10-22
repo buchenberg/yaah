@@ -124,6 +124,12 @@ func rebuildDefaultRoleRegistry(cwd string) {
 // CPU and make tview input sluggish on Windows). When skipOtel is true,
 // OTel exporters are not initialised.
 func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*agentSession, error) {
+	// The bare --resume sentinel resolves only on interactive surfaces
+	// (REPL, TUI, one-shot) which run maybeResolveResumePicker first.
+	// Non-interactive readers (serve, web, ACP) must name a session.
+	if opts.ResumeSessionID == resumePickerSentinel {
+		return nil, fmt.Errorf("--resume without a value opens the interactive picker, which is not available in this mode; pass --resume=<session-id>")
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)

@@ -63,7 +63,16 @@ and restarts:
 
 ```bash
 yaah --resume <id> "pick up where we left off"
+
+# or let yaah list recent sessions for this directory and pick one:
+yaah --resume
 ```
+
+The bare `--resume` form resolves through an interactive picker (REPL, TUI,
+and one-shot runs): it lists the sessions recorded for the current
+directory — newest first, with titles, ages, and message counts — and a
+bare Enter starts a fresh session instead. Non-interactive surfaces (`web`,
+`serve`, ACP) ignore the picker and require an explicit session id.
 
 Session data lives in `~/.yaah/state.db` (or `$YAAH_HOME/state.db`).
 Shepherd execution traces, when enabled, record every tool call and turn

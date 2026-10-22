@@ -54,12 +54,18 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	// One-shot mode: args present
 	if len(args) > 0 {
 		prompt := strings.Join(args, " ")
+		if err := maybeResolveResumePicker(os.Stdout, os.Stdin); err != nil {
+			return err
+		}
 		opts := sessionOptionsFromFlags()
 		opts.OneShot = true
 		return runOneShotWith(cmd, prompt, opts)
 	}
 
 	// REPL mode: no args
+	if err := maybeResolveResumePicker(os.Stdout, os.Stdin); err != nil {
+		return err
+	}
 	return startREPL()
 }
 

@@ -50,6 +50,11 @@ var tuiCmd = &cobra.Command{
 }
 
 func runTUI() error {
+	// Interactive surface: honor bare --resume before building the
+	// session (stderr is hijacked later; this runs on the real terminal).
+	if err := maybeResolveResumePicker(os.Stdout, os.Stdin); err != nil {
+		return fmt.Errorf("resume: %v", err)
+	}
 	sess, err := newAgentSession()
 	if err != nil {
 		return fmt.Errorf("session: %w", err)

@@ -13,14 +13,17 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/acp"
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/control"
+	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/spf13/cobra"
@@ -122,6 +125,11 @@ type webServer struct {
 	// and provider display names, fetched once in the background.
 	models        []string
 	providerNames map[string]string
+
+	// sessionList serves /api/sessions from the shared session store
+	// (same rows ACP session/list and the CLI read). Wired in runWeb;
+	// nil keeps the endpoint unavailable.
+	sessionList func(cwdFilter, cursor string, limit int) ([]memory.SessionSummary, string, error)
 }
 
 // requireAuth rejects requests that do not carry a valid token. A valid
@@ -183,6 +191,16 @@ func runWeb(cmd *cobra.Command, args []string) error {
 		sess:  sess,
 		am:    newAnswerMap(),
 		token: token,
+	}
+	if sess.db != nil {
+		// The store is the single session registry (engine seam): serve
+		// the same rows ACP session/list and the CLI surface, over one
+		// read handle owned by this process.
+		ws.sessionList = func(cwdFilter, cursor string, limit int) ([]memory.SessionSummary, string, error) {
+			return sess.db.ListSessionsPage(memory.SessionListFilter{
+				CWD: cwdFilter, Cursor: cursor, Limit: limit,
+			})
+		}
 	}
 
 	// Pre-fetch model lists from all providers in the background so the
@@ -270,6 +288,7 @@ func runWeb(cmd *cobra.Command, args []string) error {
 	mux.Handle("/api/stream", ws.requireAuth(http.HandlerFunc(ws.handleStream)))
 	mux.Handle("/api/action", ws.requireAuth(http.HandlerFunc(ws.handleAction)))
 	mux.Handle("/api/commands", ws.requireAuth(http.HandlerFunc(ws.handleCommands)))
+	mux.Handle("/api/sessions", ws.requireAuth(http.HandlerFunc(ws.handleSessions)))
 
 	srv := &http.Server{Addr: webAddr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 
@@ -496,6 +515,56 @@ func (ws *webServer) handleCommands(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(cmds)
+}
+
+// maxSessionsLimit caps /api/sessions page sizes: the endpoint backs a
+// picker/recent list, not a bulk export.
+const maxSessionsLimit = 200
+
+// handleSessions serves the shared session store's picker projection —
+// the same rows ACP session/list and the CLI surface. Optional query
+// parameters mirror the CLI: cwd (exact-match, canonicalized like
+// session/list), limit (1..200, default 50), cursor (keyset page).
+func (ws *webServer) handleSessions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if ws.sessionList == nil {
+		http.Error(w, "session store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	q := r.URL.Query()
+	cwdFilter := q.Get("cwd")
+	if cwdFilter != "" {
+		var err error
+		if cwdFilter, err = acp.CanonicalFilterCwd(cwdFilter); err != nil {
+			http.Error(w, fmt.Sprintf("cwd: %v", err), http.StatusBadRequest)
+			return
+		}
+	}
+	limit := 50
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 || n > maxSessionsLimit {
+			http.Error(w, fmt.Sprintf("limit: 1..%d", maxSessionsLimit), http.StatusBadRequest)
+			return
+		}
+		limit = n
+	}
+	rows, next, err := ws.sessionList(cwdFilter, q.Get("cursor"), limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if rows == nil {
+		rows = []memory.SessionSummary{} // empty pages serialize as []
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(struct {
+		Sessions   []memory.SessionSummary `json:"sessions"`
+		NextCursor string                  `json:"nextCursor"`
+	}{Sessions: rows, NextCursor: next})
 }
 
 func webLogin(ws *webServer) {
