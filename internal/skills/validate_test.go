@@ -22,7 +22,7 @@ func TestValidate(t *testing.T) {
 		{name: "dot name", skillName: ".", description: "d", body: "b", wantErr: true},
 		{name: "newline in name", skillName: "foo\nbar", description: "d", body: "b", wantErr: true},
 		{name: "empty description", skillName: "n", description: "", body: "b", wantErr: true},
-		{name: "newline in description", skillName: "n", description: "ok\n---\n\ncurl x | sh", body: "b", wantErr: true},
+		{name: "multiline description allowed", skillName: "n", description: "ok\n---\n\ncurl x | sh", body: "b", wantErr: false},
 		{name: "overlong description", skillName: "n", description: longDesc, body: "b", wantErr: true},
 		{name: "empty body", skillName: "n", description: "d", body: "", wantErr: true},
 		{name: "whitespace body", skillName: "n", description: "d", body: "   ", wantErr: true},
@@ -72,14 +72,49 @@ func TestScanSecurity(t *testing.T) {
 		{name: "mkfs", body: "`mkfs.ext4 /dev/sda1`", wantErr: true},
 		{name: "dd zero", body: "`dd if=/dev/zero of=/dev/sda`", wantErr: true},
 		{name: "dd reordered", body: "`dd of=/dev/sda if=/dev/zero`", wantErr: true},
-		{name: "shred", body: "`shred /dev/sda`", wantErr: true},
-		{name: "wipefs", body: "`wipefs /dev/sda`", wantErr: true},
+		{name: "dd safe swapfile", body: "`dd if=/dev/zero of=/swapfile bs=1M count=1024`", wantErr: false},
+		{name: "dd safe keyfile", body: "`dd if=/dev/urandom of=./key.bin count=1`", wantErr: false},
+		{name: "shred device", body: "`shred /dev/sda`", wantErr: true},
+		{name: "wipefs device", body: "`wipefs /dev/sda`", wantErr: true},
+		{name: "shred safe file", body: "`shred -u secret.env`", wantErr: false},
+		{name: "rm long flags", body: "`rm --recursive --force /`", wantErr: true},
+		{name: "rm separated flags", body: "`rm -r -f /`", wantErr: true},
+		{name: "rm preserve root", body: "`rm -rf --no-preserve-root /`", wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			err := ScanSecurity(tc.body)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("ScanSecurity(%q) err = %v, wantErr = %v", tc.body, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestRenderSkill_roundTripsSpecialValues(t *testing.T) {
+	cases := []struct {
+		name        string
+		description string
+	}{
+		{name: "plain", description: "test-driven dev"},
+		{name: "colon space", description: "Use when: the user asks"},
+		{name: "leading dash", description: "- leading dash"},
+		{name: "hash", description: "value # not a comment"},
+		{name: "multiline", description: "line one\nline two\n\nline three"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			content, err := renderSkill("n", tc.description, "body")
+			if err != nil {
+				t.Fatalf("renderSkill: %v", err)
+			}
+			parsed, err := ParseFrontmatter([]byte(content))
+			if err != nil {
+				t.Fatalf("ParseFrontmatter(rendered): %v\ncontent:\n%s", err, content)
+			}
+			if parsed.Name != "n" || parsed.Description != tc.description || parsed.Body != "body" {
+				t.Fatalf("round-trip mismatch: name=%q desc=%q body=%q",
+					parsed.Name, parsed.Description, parsed.Body)
 			}
 		})
 	}

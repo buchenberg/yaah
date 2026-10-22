@@ -30,13 +30,16 @@ func Validate(name, description, body string) error {
 // cap. Edit uses it directly: an edit that only changes the body must not be
 // rejected because an existing skill's description exceeds MaxDescriptionLength
 // (the repo already ships skills with 300+ byte descriptions).
+//
+// The name is additionally restricted to a single path element with no control
+// characters, because it becomes a directory name. The description is only
+// required to be non-empty: yaml.Marshal (renderSkill) quotes or block-scalars
+// YAML-special and multi-line values safely, so a newline in a description is
+// no longer an injection vector.
 func validateShape(name, description, body string) error {
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("skill name is required")
 	}
-	// The name is interpolated unquoted into frontmatter and used as a
-	// directory name. Reject path escapes and control characters (which could
-	// break out of the YAML field), but allow ordinary spaces.
 	if filepath.Base(name) != name || name == "." || name == ".." {
 		return fmt.Errorf("skill name %q must be a single path element", name)
 	}
@@ -46,9 +49,6 @@ func validateShape(name, description, body string) error {
 	if strings.TrimSpace(description) == "" {
 		return fmt.Errorf("skill description is required")
 	}
-	if hasControlOrNewline(description) {
-		return fmt.Errorf("skill description must not contain control characters or newlines")
-	}
 	if strings.TrimSpace(body) == "" {
 		return fmt.Errorf("skill body is required")
 	}
@@ -56,9 +56,8 @@ func validateShape(name, description, body string) error {
 }
 
 // hasControlOrNewline reports whether s contains a newline or any C0 control
-// character. Both are dangerous when interpolated into unquoted YAML: a
-// newline can terminate the field early and smuggle arbitrary content into
-// the body, and control bytes can break ParseFrontmatter entirely.
+// character. These are unsafe in a filename (the skill name becomes a
+// directory name) regardless of how the YAML is serialized.
 func hasControlOrNewline(s string) bool {
 	for _, r := range s {
 		if r == '\n' || r == '\r' || r < 0x20 || r == unicode.ReplacementChar {
@@ -90,14 +89,17 @@ var dangerousPatterns = []*regexp.Regexp{
 	// those are ordinary cleanup, not an attack chain. The target must be
 	// followed by a non-path character (whitespace, quote, backtick, or EOL)
 	// so `/` only matches the root itself.
-	regexp.MustCompile("(?i)\\brm\\s+-(?:[a-z]*r[a-z]*f[a-z]*|[a-z]*f[a-z]*r[a-z]*)\\s+(/\\*?|~/?\\*?)(?:\\s|$|\\x60|'|\")"),
+	regexp.MustCompile("(?i)\\brm\\s+[^\\n]*?(?:-[a-z]*[rf][a-z]*|--(?:recursive|force))[^\\n]*?(/\\*?|~/?\\*?)(?:\\s|$|\\x60|'|\")"),
 	// Classic fork bomb.
 	regexp.MustCompile(`:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:`),
-	// Filesystem / disk destroyers.
+	// Filesystem / disk destroyers. dd is only flagged when the OUTPUT is a
+	// raw device (of=/dev/...) — writing to a regular file, a swap file, or
+	// generating a key file is legitimate. shred/wipefs are only flagged
+	// against a device target.
 	regexp.MustCompile(`(?i)\bmkfs\b`),
-	regexp.MustCompile(`(?i)\bdd\s+if=/dev/(zero|urandom)\b`),
-	regexp.MustCompile(`(?i)\bdd\s+of=\S+\s+if=/dev/(zero|urandom)\b`),
-	regexp.MustCompile(`(?i)\b(shred|wipefs)\b`),
+	regexp.MustCompile(`(?i)\bdd\s+[^\n]*if=/dev/(zero|urandom|random)\s+[^\n]*of=/dev/`),
+	regexp.MustCompile(`(?i)\bdd\s+[^\n]*of=/dev/\S+\s+[^\n]*if=/dev/(zero|urandom|random)\b`),
+	regexp.MustCompile(`(?i)\b(shred|wipefs)\b[^\n]*/dev/`),
 }
 
 // ScanSecurity rejects content that contains a dangerous construct. It is the

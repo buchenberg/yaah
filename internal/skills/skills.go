@@ -159,7 +159,10 @@ func Create(dir, name, description, body string) (string, error) {
 	if _, err := os.Stat(path); err == nil {
 		return "", fmt.Errorf("skill %q already exists at %s", name, path)
 	}
-	content := fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n%s\n", name, description, body)
+	content, err := renderSkill(name, description, body)
+	if err != nil {
+		return "", err
+	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return "", fmt.Errorf("write SKILL.md: %w", err)
 	}
@@ -193,11 +196,31 @@ func Edit(skill *Skill, description, body string) (string, error) {
 		return "", fmt.Errorf("invalid skill: %w", err)
 	}
 
-	content := fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n%s\n", current.Name, description, body)
+	content, err := renderSkill(current.Name, description, body)
+	if err != nil {
+		return "", err
+	}
 	if err := os.WriteFile(skill.Path, []byte(content), 0o644); err != nil {
 		return "", fmt.Errorf("write SKILL.md: %w", err)
 	}
 	return skill.Path, nil
+}
+
+// renderSkill serializes a skill to its SKILL.md form. The frontmatter is
+// built with yaml.Marshal rather than string interpolation so YAML-special
+// values — a colon-space sequence, a leading '-' or ':', a mid-value ' # ',
+// or a multi-line (block-scalar) description — are quoted or block-scalared
+// correctly instead of producing frontmatter ParseFrontmatter cannot read, or
+// silently truncating the value at '#'.
+func renderSkill(name, description, body string) (string, error) {
+	fm, err := yaml.Marshal(struct {
+		Name        string `yaml:"name"`
+		Description string `yaml:"description"`
+	}{name, description})
+	if err != nil {
+		return "", fmt.Errorf("marshal frontmatter: %w", err)
+	}
+	return "---\n" + string(fm) + "---\n\n" + body + "\n", nil
 }
 
 // Archive moves a skill's SKILL.md into the ArchiveDir beside its skills
