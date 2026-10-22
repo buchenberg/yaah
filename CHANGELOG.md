@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.94.0](https://github.com/buchenberg/yaah/compare/v0.93.0...v0.94.0) (2026-10-22)
+
+
+### Features
+
+* ACP v1 session lifecycle and cross-view session surface ([085b727](https://github.com/buchenberg/yaah/commit/085b727afb850977932160f72986f35147b2f032))
+* **acp:** session resume/list/close/delete over the shared session store ([8083388](https://github.com/buchenberg/yaah/commit/8083388329dc45b7e4399b72645885329f68afb5))
+* **cli:** yaah sessions to list and delete stored conversations ([0734679](https://github.com/buchenberg/yaah/commit/0734679a950a67c1b4d6d31db963acf5cd028b1c))
+* **memory:** session titles, activity timestamps, paged list and delete ([776ac84](https://github.com/buchenberg/yaah/commit/776ac84369ecf124cb9b366fba7c63b8dfad0616))
+
+
+### Bug Fixes
+
+* **acp:** shared canonical filter, unwired-delete ordering, portable tests ([e4407a0](https://github.com/buchenberg/yaah/commit/e4407a0cf5782883d6cbebcad22ddf499cba34a7))
+* **memory:** stamp the floor version outside the repair transaction ([cee06c9](https://github.com/buchenberg/yaah/commit/cee06c91417f18e7ad6af3d8b1264edc446ba8d3))
+* **memory:** transactional delete, one-shot backfill, NULL-tolerant legacy reads ([f554926](https://github.com/buchenberg/yaah/commit/f554926913fb4386b26a3de21711f9e7dbc69968))
+* **memory:** version-gated self-healing backfill ([c56eb23](https://github.com/buchenberg/yaah/commit/c56eb235db722828c5272f63b0bdb1b2c6a832b4))
+
+
+### Documentation
+
+* **acp:** session lifecycle surface (resume/list/close/delete) ([d5d143e](https://github.com/buchenberg/yaah/commit/d5d143e0f5be9067f6848bea630f1238caae9241))
+
 ## [0.93.0](https://github.com/buchenberg/yaah/compare/v0.92.0...v0.93.0) (2026-10-22)
 
 
