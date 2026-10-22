@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.97.0](https://github.com/buchenberg/yaah/compare/v0.96.1...v0.97.0) (2026-10-22)
+
+
+### Features
+
+* **agent:** consolidate middleware P0 — cadence-driven nudge (yaah-u4r) ([#547](https://github.com/buchenberg/yaah/issues/547)) ([e63fd7c](https://github.com/buchenberg/yaah/commit/e63fd7c59055c038ee53d534686f12b8ac40018d))
+* **skill:** lifecycle tracking — provenance, usage, archive-not-delete, ledger (P1) ([#549](https://github.com/buchenberg/yaah/issues/549)) ([bd6968f](https://github.com/buchenberg/yaah/commit/bd6968fe026461f4902682d1c152b5a385775c37))
+* **skill:** P2 guardrails — schema validation, description limits, security scan, recursion guard ([#550](https://github.com/buchenberg/yaah/issues/550)) ([44ac809](https://github.com/buchenberg/yaah/commit/44ac809ad33651f5dde4171bd14328a9b719f9b4))
+
+
+### Documentation
+
+* **agent:** compaction-as-sleep design note (yaah-u4r) ([#546](https://github.com/buchenberg/yaah/issues/546)) ([6ee7333](https://github.com/buchenberg/yaah/commit/6ee7333edb018c679c8e1ec20509bdcd4fb140a5))
+
 ## [0.96.1](https://github.com/buchenberg/yaah/compare/v0.96.0...v0.96.1) (2026-10-22)
 
 
