@@ -415,7 +415,12 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	}
 
 	skillDirs := skillSearchPaths()
-	skillTool := &tools.SkillTool{Dirs: skillDirs, ReadOnly: sessionSandbox != nil, Strict: sessionSandbox == nil}
+	// Strict (the autonomous-write security scan) is opt-in and defaults off:
+	// it is meant to guard unattended consolidation writes, not human-directed
+	// skill editing. No caller enables it yet — the unattended write path lands
+	// in P3/P4 (docs/compaction-as-sleep.md §8). When that lands, derive it
+	// from an explicit "unattended" session mode, not the sandbox flag.
+	skillTool := &tools.SkillTool{Dirs: skillDirs, ReadOnly: sessionSandbox != nil}
 	if db != nil {
 		skillTool.Embedder = db.Embedder()
 		// Skill lifecycle tracking (usage, provenance, mutation ledger).

@@ -187,7 +187,9 @@ func Edit(skill *Skill, description, body string) (string, error) {
 		body = current.Body
 	}
 
-	if err := Validate(current.Name, description, body); err != nil {
+	// Shape only: an edit that preserves an existing over-long description
+	// must still be allowed, but a newline/control-char injection must not.
+	if err := validateShape(current.Name, description, body); err != nil {
 		return "", fmt.Errorf("invalid skill: %w", err)
 	}
 

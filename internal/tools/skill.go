@@ -120,7 +120,10 @@ func (t *SkillTool) Execute(ctx context.Context, args string) (string, error) {
 			return "", fmt.Errorf("skill: body is required for create")
 		}
 		if t.Strict {
-			if err := skills.ScanSecurity(params.Body); err != nil {
+			// Scan the whole serialized skill, not just the body: name and
+			// description are interpolated into the written SKILL.md, so a
+			// dangerous pattern there lands in the file too.
+			if err := skills.ScanSecurity(params.Name + "\n" + params.Description + "\n" + params.Body); err != nil {
 				return "", fmt.Errorf("skill create blocked: %w", err)
 			}
 		}
@@ -158,13 +161,17 @@ func (t *SkillTool) Execute(ctx context.Context, args string) (string, error) {
 			return "", fmt.Errorf("skill %q not found", params.Name)
 		}
 		if t.Strict {
-			// Scan the effective body: Edit falls back to the current body
-			// for an empty field, so that is what actually gets written.
+			// Scan the whole serialized skill, falling back to the preserved
+			// description/body for empty fields (that is what gets written).
+			desc := params.Description
+			if desc == "" {
+				desc = s.Description
+			}
 			body := params.Body
 			if body == "" {
 				body = s.Body
 			}
-			if err := skills.ScanSecurity(body); err != nil {
+			if err := skills.ScanSecurity(s.Name + "\n" + desc + "\n" + body); err != nil {
 				return "", fmt.Errorf("skill edit blocked: %w", err)
 			}
 		}
