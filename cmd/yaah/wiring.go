@@ -17,6 +17,7 @@ import (
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/containment"
 	"github.com/buchenberg/shepherd-runtime-go/sandbox/egress"
 
+	"github.com/buchenberg/yaah/internal/acp"
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/budget"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
@@ -118,12 +119,30 @@ func rebuildDefaultRoleRegistry(cwd string) {
 	subagent.SetDefaultRoleRegistry(reg)
 }
 
+// canonicalStoredCwd normalizes a session's working directory before it
+// is persisted: the same canonicalization (absolute, symlink-resolved)
+// the ACP session/list filter and the resume picker apply, so stored
+// rows and their filters always agree. Best-effort — an unresolvable
+// path is stored as given rather than failing session creation.
+func canonicalStoredCwd(cwd string) string {
+	if canonical, err := acp.CanonicalFilterCwd(cwd); err == nil {
+		return canonical
+	}
+	return cwd
+}
+
 // newAgentSessionWithOptions creates an agent session. All CLI-flag and
 // serve-mode inputs arrive via opts — no hidden package state. When
 // skipMCP is true, MCP server subprocesses are not started (they consume
 // CPU and make tview input sluggish on Windows). When skipOtel is true,
 // OTel exporters are not initialised.
 func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*agentSession, error) {
+	// The bare --resume sentinel resolves only on interactive surfaces
+	// (REPL, TUI, one-shot) which run maybeResolveResumePicker first.
+	// Non-interactive readers (serve, web, ACP) must name a session.
+	if opts.ResumeSessionID == resumePickerSentinel {
+		return nil, fmt.Errorf("--resume without a value opens the interactive picker, which is not available in this mode; pass --resume=<session-id>")
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
@@ -469,7 +488,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 			db.CreateSession(memory.Session{
 				ID:           sessionID,
 				StartedAt:    time.Now().Unix(),
-				CWD:          cwd,
+				CWD:          canonicalStoredCwd(cwd),
 				Model:        modelName,
 				SystemPrompt: systemPrompt,
 			})
