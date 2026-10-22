@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.101.0](https://github.com/buchenberg/yaah/compare/v0.100.0...v0.101.0) (2026-10-22)
+
+
+### Features
+
+* **agent:** light/deep sleep policy — throttle the deep-sleep fork ([#557](https://github.com/buchenberg/yaah/issues/557)) ([ec7ebeb](https://github.com/buchenberg/yaah/commit/ec7ebebfc6728c971b33ed890dd02b03048e1bd9))
+
 ## [0.100.0](https://github.com/buchenberg/yaah/compare/v0.99.0...v0.100.0) (2026-10-22)
 
 
