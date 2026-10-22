@@ -47,6 +47,21 @@ func (r *dispatchRecorder) assertNone(t *testing.T) {
 	}
 }
 
+// TestConsolidateRecursionGuard locks in the P2 recursion guard: the
+// "consolidate" middleware exists only on the orchestrator pipeline. A
+// sub-agent (e.g. the consolidator role) must never carry it, otherwise a
+// nudge could fire recursively from inside a consolidation pass.
+func TestConsolidateRecursionGuard(t *testing.T) {
+	for _, name := range subAgentPipelineNames {
+		if name == "consolidate" {
+			t.Fatalf("consolidate must not appear in subAgentPipelineNames: %v", subAgentPipelineNames)
+		}
+	}
+	if _, ok := subAgentBuilders["consolidate"]; ok {
+		t.Fatal("consolidate must not be registered in subAgentBuilders")
+	}
+}
+
 func TestConsolidateMiddleware_Name(t *testing.T) {
 	m := NewConsolidateMiddleware(1, 0, func(context.Context, string) {})
 	if got := m.Name(); got != "consolidate" {

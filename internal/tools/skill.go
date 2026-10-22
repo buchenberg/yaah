@@ -30,6 +30,13 @@ type SkillTool struct {
 	// container would mutate tracked host files around the apply-out
 	// boundary. Reading — load, list, search — stays available.
 	ReadOnly bool
+	// Strict enables the autonomous-write guardrail: before create/edit
+	// writes, the skill body is run through skills.ScanSecurity, which
+	// rejects fetch-and-execute, destructive-delete, fork-bomb, and
+	// disk-destroyer constructs. Agent-session wiring sets it so that
+	// unattended consolidation cannot smuggle an attack chain into a skill
+	// a later run will load and follow (docs/compaction-as-sleep.md §8 P2).
+	Strict bool
 }
 
 // readOnlyActionError is the shared refusal for a mutating action on a
@@ -112,6 +119,14 @@ func (t *SkillTool) Execute(ctx context.Context, args string) (string, error) {
 		if params.Body == "" {
 			return "", fmt.Errorf("skill: body is required for create")
 		}
+		if t.Strict {
+			// Scan the whole serialized skill, not just the body: name and
+			// description are interpolated into the written SKILL.md, so a
+			// dangerous pattern there lands in the file too.
+			if err := skills.ScanSecurity(params.Name + "\n" + params.Description + "\n" + params.Body); err != nil {
+				return "", fmt.Errorf("skill create blocked: %w", err)
+			}
+		}
 		// Create in the first search path (project-level .agents/skills/)
 		if len(t.Dirs) == 0 {
 			return "", fmt.Errorf("skill: no search paths configured")
@@ -144,6 +159,21 @@ func (t *SkillTool) Execute(ctx context.Context, args string) (string, error) {
 		s := skills.FindSkill(t.Dirs, params.Name)
 		if s == nil {
 			return "", fmt.Errorf("skill %q not found", params.Name)
+		}
+		if t.Strict {
+			// Scan the whole serialized skill, falling back to the preserved
+			// description/body for empty fields (that is what gets written).
+			desc := params.Description
+			if desc == "" {
+				desc = s.Description
+			}
+			body := params.Body
+			if body == "" {
+				body = s.Body
+			}
+			if err := skills.ScanSecurity(s.Name + "\n" + desc + "\n" + body); err != nil {
+				return "", fmt.Errorf("skill edit blocked: %w", err)
+			}
 		}
 		before := skillContentHash(s.Name, s.Description, s.Body)
 		path, err := skills.Edit(s, params.Description, params.Body)
