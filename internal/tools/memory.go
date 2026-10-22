@@ -15,6 +15,10 @@ import (
 // configured, vector embeddings for semantic search.
 type MemorySearchTool struct {
 	DB *memory.DB
+	// Scope filters the search tier. Empty means ScopeGlobal: session-scoped
+	// atoms are working-context and must not leak into a default (cross-
+	// session) recall; a caller that wants them sets Scope explicitly.
+	Scope string
 }
 
 func (t *MemorySearchTool) Name() string { return "memory_search" }
@@ -50,14 +54,18 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 	if params.TopK <= 0 {
 		params.TopK = 10
 	}
+	scope, err := memory.NormalizeScope(t.Scope)
+	if err != nil {
+		return "", fmt.Errorf("memory_search: %w", err)
+	}
 
 	if params.Query != "" && params.Tag == "" {
-		if vecResults, err := t.DB.SearchMemoryVector(ctx, params.Query, params.TopK); err == nil && len(vecResults) > 0 {
+		if vecResults, err := t.DB.SearchMemoryVectorScoped(ctx, params.Query, params.TopK, scope); err == nil && len(vecResults) > 0 {
 			return vectorResultsJSON(vecResults), nil
 		}
 	}
 
-	ftsResults, err := t.DB.SearchMemory(params.Query, params.TopK, params.Tag)
+	ftsResults, err := t.DB.SearchMemoryScoped(params.Query, params.TopK, params.Tag, scope)
 	if err != nil {
 		return "", fmt.Errorf("memory_search: %w", err)
 	}
@@ -95,9 +103,13 @@ func entryListJSON(results []memory.Entry) string {
 	return strings.Join(lines, "\n")
 }
 
-// MemoryAddTool adds a new memory entry.
+// MemoryAddTool adds a new memory entry. Scope is the tier the entry is
+// written to when the caller does not name one: ScopeSession for atoms
+// distilled from the running conversation (the consolidator's deep sleep),
+// ScopeGlobal for anything meant to outlive it. Empty means global.
 type MemoryAddTool struct {
-	DB *memory.DB
+	DB    *memory.DB
+	Scope string
 }
 
 func (t *MemoryAddTool) Name() string { return "memory_add" }
@@ -110,7 +122,8 @@ func (t *MemoryAddTool) Schema() json.RawMessage {
 		"type": "object",
 		"properties": {
 			"text": {"type": "string", "description": "The memory note text"},
-			"tags": {"type": "string", "description": "Optional JSON array of tags"}
+			"tags": {"type": "string", "description": "Optional JSON array of tags"},
+			"scope": {"type": "string", "enum": ["session", "global"], "description": "Optional tier: 'session' for atoms distilled from this conversation, 'global' (default) for facts meant to outlive it"}
 		},
 		"required": ["text"]
 	}`)
@@ -122,11 +135,26 @@ func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error
 	}
 
 	var params struct {
-		Text string `json:"text"`
-		Tags string `json:"tags"`
+		Text  string `json:"text"`
+		Tags  string `json:"tags"`
+		Scope string `json:"scope"`
 	}
 	if err := json.Unmarshal([]byte(args), &params); err != nil {
 		return "", fmt.Errorf("memory_add: invalid arguments: %w", err)
+	}
+
+	// Scope precedence: the call's own scope, then the tool's configured
+	// default, then global (via NormalizeScope). An unknown tier is rejected
+	// here rather than persisted as an unfilterable row. The consolidator's
+	// session scope is directive-driven: its prompt instructs scope:"session"
+	// on every call (cmd/yaah/consolidate.go), not enforced by a tool default.
+	scope := params.Scope
+	if scope == "" {
+		scope = t.Scope
+	}
+	normScope, err := memory.NormalizeScope(scope)
+	if err != nil {
+		return "", fmt.Errorf("memory_add: %w", err)
 	}
 
 	entry := memory.Entry{
@@ -134,6 +162,7 @@ func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error
 		Text:      params.Text,
 		Tags:      params.Tags,
 		Source:    "agent",
+		Scope:     normScope,
 		CreatedAt: time.Now().Unix(),
 	}
 

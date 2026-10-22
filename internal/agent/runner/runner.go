@@ -1269,6 +1269,30 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 			// the sub-agent does not retry a call that cannot succeed.
 			continue
 		}
+		// DB-backed tools are not in leafTools (they need the session's
+		// memory store), so a role that declares them would otherwise get
+		// them silently dropped. Register them here from the shared store:
+		// memory_add/memory_search are what the consolidator role uses to
+		// write and dedupe durable atoms.
+		switch name {
+		case "memory_add":
+			if opts.db != nil {
+				reg.Register(&tools.MemoryAddTool{DB: opts.db})
+			}
+			continue
+		case "memory_search":
+			if opts.db != nil {
+				scope := ""
+				if profile.DisplayName == "consolidator" {
+					// The consolidator writes session-tier atoms; let it recall
+					// them so it can dedupe against what it already distilled
+					// this session.
+					scope = memory.ScopeSession
+				}
+				reg.Register(&tools.MemorySearchTool{DB: opts.db, Scope: scope})
+			}
+			continue
+		}
 		registerLeaf(reg, name)
 	}
 	if isolated {
