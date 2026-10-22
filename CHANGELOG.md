@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.95.0](https://github.com/buchenberg/yaah/compare/v0.94.0...v0.95.0) (2026-10-22)
+
+
+### Features
+
+* **acp:** session_info_update on the session title transition ([ee17f04](https://github.com/buchenberg/yaah/commit/ee17f0409cb15ba6292d5b8b9b44f8e3f4ea6652))
+* **acp:** session_info_update on the session title transition ([fbb49ba](https://github.com/buchenberg/yaah/commit/fbb49ba8529b48e6e67ff45bee057d87e5c4afc3))
+
+
+### Bug Fixes
+
+* **acp:** review-round fixes for session_info_update ([eb4ed35](https://github.com/buchenberg/yaah/commit/eb4ed35e479eed5fada2d15d8f1e659a0d4d6f86))
+
 ## [0.94.0](https://github.com/buchenberg/yaah/compare/v0.93.0...v0.94.0) (2026-10-22)
 
 
