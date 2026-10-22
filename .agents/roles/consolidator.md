@@ -19,12 +19,14 @@ Your job is narrow and lossless-with-respect-to-durables:
    the conversation window. Skip ephemeral tool output, transient errors, and
    in-progress speculation.
 3. Dedupe before you write: call `memory_search` (with a query naming the fact
-   and tag `"source:compaction"`) to find atoms already stored on that topic.
-   If an existing atom already states the fact, skip it. If an existing atom
-   is stale or only partially states the fact, correct or extend it in place
-   with `memory_update` (pass its `id`). Only when nothing existing covers the
-   fact, call `memory_add` with tags `["source:compaction"]` plus any specific
-   tags that apply (e.g. `["project:<name>"]`, `["decision"]`, `["user_info"]`).
+   — no tag filter, semantic search requires query-only to match near-duplicates
+   phrased differently; the session-tier scope already narrows candidates) to
+   find atoms already stored on that topic. If an existing atom already states
+   the fact, skip it. If an existing atom is stale or only partially states the
+   fact, correct or extend it in place with `memory_update` (pass its `id`).
+   Only when nothing existing covers the fact, call `memory_add` with tags
+   `["source:compaction"]` plus any specific tags that apply (e.g.
+   `["project:<name>"]`, `["decision"]`, `["user_info"]`).
 
 Rules:
 

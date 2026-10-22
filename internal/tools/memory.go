@@ -2,7 +2,9 @@ package tools
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -230,8 +232,9 @@ func (t *MemoryDeleteTool) Execute(ctx context.Context, args string) (string, er
 
 // MemoryUpdateTool updates the text of an existing memory entry.
 type MemoryUpdateTool struct {
-	DB    *memory.DB
-	Scope string
+	DB        *memory.DB
+	Scope     string
+	SessionID string
 }
 
 func (t *MemoryUpdateTool) Name() string { return "memory_update" }
@@ -268,6 +271,9 @@ func (t *MemoryUpdateTool) Execute(ctx context.Context, args string) (string, er
 	if t.Scope != "" {
 		entry, err := t.DB.GetMemory(params.ID)
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return "", memory.ErrMemoryNotFound
+			}
 			return "", fmt.Errorf("memory_update: %w", err)
 		}
 		normScope, err := memory.NormalizeScope(t.Scope)
@@ -276,6 +282,11 @@ func (t *MemoryUpdateTool) Execute(ctx context.Context, args string) (string, er
 		}
 		if entry.Scope != normScope {
 			return "", fmt.Errorf("memory_update: entry %s has scope %s, expected %s", params.ID, entry.Scope, normScope)
+		}
+		// If we have a session ID, also verify the entry belongs to that session
+		// (prevents updating another session's session-scoped atoms).
+		if t.SessionID != "" && entry.SessionID != "" && entry.SessionID != t.SessionID {
+			return "", fmt.Errorf("memory_update: entry %s belongs to session %s, expected %s", params.ID, entry.SessionID, t.SessionID)
 		}
 	}
 
