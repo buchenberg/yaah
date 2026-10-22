@@ -127,7 +127,7 @@ Two orthogonal triggers, one action. The middleware contract (`PrepareStep` /
 
 ```
 pipeline: steer → followup → compaction → soft_prune → approval → inline_limit
-          → tool_concurrency → loop_detection → conflict_detect → consolidate
+          → tool_concurrency → loop_detection → evidence_guard → conflict_detect → consolidate
 
 compaction  (enriched — "sleep check", PRESSURE-driven)
   PrepareStep / PostTool:
