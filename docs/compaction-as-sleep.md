@@ -1,6 +1,6 @@
 # Compaction-as-Sleep — Expanded Design Note
 
-> **Bead:** `yaah-u4r` · **GitHub:** #495 · **Type:** spike · **Priority:** P3 · **Label:** agent
+> **Bead:** `yaah-u4r` · **Type:** spike · **Priority:** P3 · **Label:** agent
 > **Title:** *spike: compaction-as-sleep — policy-driven, boundary-aware, memory-consolidating compaction middleware*
 > **Status:** open (design spike — no source changes; this document is the deliverable)
 > **Last expanded:** 2026-10-22 (hermes learning-loop analysis folded in — see §3–§6)
