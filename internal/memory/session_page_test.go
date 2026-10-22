@@ -237,21 +237,29 @@ func TestDB_DeleteSession(t *testing.T) {
 }
 
 // TestDB_BackfillLegacyActivity pins the N-1 migration step: a database
-// written by an older binary (no title/updated_at columns) gains them on
-// the first open of this build, with updated_at backfilled from
+// written by an older binary — schema_meta stamped at version 1 (what
+// the previous release seeds) and no title/updated_at columns — gains
+// them on the first open of this build, with updated_at backfilled from
 // started_at, so existing sessions list with usable activity times. The
-// backfill is gated: ensureColumn reports when it actually added
-// updated_at, so later opens never re-scan the table (a no-op UPDATE
-// without the gate would grow linearly with the store).
+// repair and the version bump commit together (self-healing), and later
+// opens of an already-current database must not re-run the backfill —
+// rewriting live rows from their stale started_at would corrupt
+// per-message activity tracking.
 func TestDB_BackfillLegacyActivity(t *testing.T) {
-	// Forge the N-1 shape: schema_meta plus bare sessions/messages
-	// tables, a session row, and a message row — no title/updated_at.
+	// Forge the N-1 shape: schema_meta at version 1, bare
+	// sessions/messages tables, a session row, and a message row — no
+	// title/updated_at.
 	legacyPath := filepath.Join(t.TempDir(), "legacy.db")
 	legacy, err := sql.Open("sqlite", legacyPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = legacy.Exec(`
+		CREATE TABLE schema_meta (
+			key   TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		);
+		INSERT INTO schema_meta (key, value) VALUES ('version', '1');
 		CREATE TABLE sessions (
 			id         TEXT PRIMARY KEY,
 			started_at INTEGER NOT NULL,
@@ -288,7 +296,6 @@ func TestDB_BackfillLegacyActivity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open legacy db: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
 
 	got, err := db.GetSession("legacy")
 	if err != nil {
@@ -304,5 +311,25 @@ func TestDB_BackfillLegacyActivity(t *testing.T) {
 	msgs, err := db.GetMessages("legacy")
 	if err != nil || len(msgs) != 1 {
 		t.Fatalf("legacy messages = %d (%v), want 1", len(msgs), err)
+	}
+
+	// The gate, not luck, keeps later opens from re-running the repair:
+	// the version bump commits with the backfill, so an already-current
+	// database must leave rows alone — here a row zeroed between closes
+	// (as if written by an old binary pattern) stays zero instead of
+	// being re-seeded from started_at.
+	if _, err := db.sql.Exec(`UPDATE sessions SET updated_at = 0`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db2, err := Open(legacyPath)
+	if err != nil {
+		t.Fatalf("reopen current db: %v", err)
+	}
+	defer db2.Close()
+	if got, err := db2.GetSession("legacy"); err != nil || got.UpdatedAt != 0 {
+		t.Fatalf("backfill re-ran on a current db: updated_at = %d (%v), want 0", got.UpdatedAt, err)
 	}
 }
