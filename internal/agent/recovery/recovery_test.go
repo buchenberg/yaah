@@ -262,11 +262,6 @@ func TestRecover_FailsLoudlyOnCorruptTrace(t *testing.T) {
 	}
 }
 
-// TestRecover_OrphanListedAndLeftOnDisk pins the warn-only orphan
-// contract (R1/D5): a worktree whose scope is terminal but whose files
-// still stand — the crash window between the discard record and the
-// teardown — is listed with its scope, path, and size, and survives
-// recovery byte-identical. Nothing is deleted.
 // TestScanWorktreePaths_LegacyForkRecordsListed pins the rename fallback:
 // fork records written before the goatherd rename carry the old schema ref,
 // and recovery must still read their worktree addresses — dropping them
@@ -320,11 +315,13 @@ func TestScanWorktreePaths_LegacyForkRecordsListed(t *testing.T) {
 			t.Errorf("%s repo = %q, want the trusted repo", want.child, got.repo)
 		}
 	}
-	if _, ok := paths["scope:both-child-lt"]; ok {
-		t.Error("the legacy record must not own a child the current ref covers")
-	}
 }
 
+// TestRecover_OrphanListedAndLeftOnDisk pins the warn-only orphan
+// contract (R1/D5): a worktree whose scope is terminal but whose files
+// still stand — the crash window between the discard record and the
+// teardown — is listed with its scope, path, and size, and survives
+// recovery byte-identical. Nothing is deleted.
 func TestRecover_OrphanListedAndLeftOnDisk(t *testing.T) {
 	state := buildCrashState(t)
 

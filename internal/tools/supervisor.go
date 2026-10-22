@@ -104,7 +104,7 @@ func (t *SupervisorTool) Execute(ctx context.Context, args string) (string, erro
 
 	mgr := t.ScopeManager
 	if mgr == nil {
-		return "", fmt.Errorf("supervisor: shepherd scope manager unavailable (trace store failed to open)")
+		return "", fmt.Errorf("supervisor: goatherd scope manager unavailable (trace store failed to open)")
 	}
 
 	switch raw.Action {

@@ -134,10 +134,10 @@ func startRetainedRun(ctx context.Context, rt RetainedRuntime, prompt string, su
 	}
 	mgr := rt.ScopeManager
 	if mgr == nil {
-		return "", fmt.Errorf("delegate: retained mode needs the shepherd scope manager (trace store unavailable)")
+		return "", fmt.Errorf("delegate: retained mode needs the goatherd scope manager (trace store unavailable)")
 	}
 	if rt.RootScopeID == "" {
-		return "", fmt.Errorf("delegate: retained mode needs a shepherd root scope to fork from")
+		return "", fmt.Errorf("delegate: retained mode needs a goatherd root scope to fork from")
 	}
 	parent, ok := mgr.Get(rt.RootScopeID)
 	if !ok {

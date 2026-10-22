@@ -20,7 +20,7 @@
 // rewind cannot relocate preserved content outside the repository.
 //
 // Upstream note: the deletion lives in the runtime's applyTree/applyState
-// (shepherd-runtime-go sandbox/git/backend.go, cleanFiles). If the runtime
+// (goatherd-runtime sandbox/git/backend.go, cleanFiles). If the runtime
 // ever makes the clean policy host-selectable, this wrapper can retire.
 package gitsandbox
 
