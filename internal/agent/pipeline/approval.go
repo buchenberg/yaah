@@ -44,7 +44,7 @@ type ApprovalMiddleware struct {
 	classify func(name, args string) GateDecision
 	// approve asks the user (or ApproveFn); consulted for GateAsk and
 	// GateGlobal under "ask" mode.
-	approve func(name, args string) bool
+	approve func(callID, name, args string) bool
 	// emitDeny fires the ToolStart/ToolEnd hook pair for a stripped call.
 	emitDeny func(name, args, errMsg string)
 }
@@ -77,7 +77,7 @@ func (m *ApprovalMiddleware) PostModel(ctx context.Context, msg *types.Message, 
 			errMsg = fmt.Sprintf("error: tool %q is denied by mcp_approval 'deny'", name)
 		case GateAsk:
 			// Origin policy asks independent of the global mode.
-			if m.approve != nil && m.approve(name, args) {
+			if m.approve != nil && m.approve(tc.ID, name, args) {
 				filtered = append(filtered, tc)
 				continue
 			}
@@ -87,7 +87,7 @@ func (m *ApprovalMiddleware) PostModel(ctx context.Context, msg *types.Message, 
 			case "deny":
 				errMsg = fmt.Sprintf("error: tool %q requires approval but approval mode is 'deny'", name)
 			case "ask":
-				if m.approve != nil && m.approve(name, args) {
+				if m.approve != nil && m.approve(tc.ID, name, args) {
 					filtered = append(filtered, tc)
 					continue
 				}

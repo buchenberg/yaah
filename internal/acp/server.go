@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -29,8 +31,7 @@ type Session interface {
 	RunPrompt(ctx context.Context, prompt string) (string, bool, error)
 	SetView(agent.View)
 	SetCtrlCh(chan<- control.Msg)
-	GetCtrlCh() chan<- control.Msg
-	SetApproveFn(func(name, args string) bool)
+	SetApproveCallFn(func(callID, name, args string) bool)
 	// AgentSessionID returns the id of the underlying persisted
 	// conversation (the memory-DB session id). The ACP server exposes
 	// it as the ACP session id, so a later session/load in a fresh
@@ -43,12 +44,21 @@ type Session interface {
 	ToolReg() *tools.Registry
 }
 
-// SessionFactory lazily builds the underlying agent session. It is
-// invoked once, on the first session/new or session/load, so the
-// client's cwd can take effect before construction. An empty resumeID
-// builds a fresh conversation; a non-empty one resumes the persisted
-// session of that id (unknown ids fail the build).
-type SessionFactory func(resumeID string) (Session, error)
+// BuildOptions are the per-session inputs the ACP server passes to the
+// session factory. Every session gets its own cwd (the protocol's
+// working directory), its own client-declared MCP servers, and either a
+// fresh conversation (empty ResumeID) or the persisted one named by
+// ResumeID (unknown ids fail the build).
+type BuildOptions struct {
+	ResumeID   string
+	Cwd        string
+	MCPServers []McpServerRef
+}
+
+// SessionFactory builds one underlying agent session. It is invoked
+// once per session/new or session/load; several sessions may coexist in
+// one process, each with its own cwd.
+type SessionFactory func(BuildOptions) (Session, error)
 
 // Server is an ACP v1 agent speaking newline-delimited JSON-RPC 2.0
 // over stdin/stdout. All diagnostics go to the logf sink so stdout
@@ -77,11 +87,28 @@ type Server struct {
 	// map. The agent session itself has its own locking.
 	mu sync.Mutex
 
-	sess       Session
-	sessionID  string
-	run        *runningPrompt
+	sessions   map[string]*sessionState
 	pendingReq map[string]chan clientResponse
 	nextReqID  int
+}
+
+// sessionState is one ACP session: the underlying agent session, the
+// working directory it was created with, and the single prompt turn it
+// may have in flight. The ACP session id is the underlying persisted
+// conversation id, so session/load can re-attach in a fresh process.
+type sessionState struct {
+	id   string
+	sess Session
+	cwd  string
+	run  *runningPrompt
+	// ctrl is the control channel of the prompt currently running in
+	// this session. The question-tool handler installed on sess reads
+	// it so prompts never cross sessions.
+	ctrl chan control.Msg
+	// view is the prompt's event translator. It remembers which tool
+	// calls were already announced by a permission request, so the
+	// later execution update reuses the same toolCallId.
+	view *ViewWithWrite
 }
 
 // runningPrompt tracks the single in-flight turn. cancel aborts it;
@@ -93,9 +120,9 @@ type runningPrompt struct {
 	done   chan struct{}
 }
 
-// NewServer creates an ACP server. build constructs the underlying
-// agent session lazily, once, after session/new has applied the
-// client's cwd. logf receives diagnostics (may be nil).
+// NewServer creates an ACP server. build constructs one underlying
+// agent session per session/new or session/load. logf receives
+// diagnostics (may be nil).
 func NewServer(build SessionFactory, version string, logf func(format string, args ...any)) *Server {
 	if logf == nil {
 		logf = func(string, ...any) {}
@@ -110,7 +137,7 @@ func NewServer(build SessionFactory, version string, logf func(format string, ar
 		AutoContinue:        true,
 		PermissionTimeout:   5 * time.Minute,
 		pendingReq:          make(map[string]chan clientResponse),
-		run:                 &runningPrompt{},
+		sessions:            make(map[string]*sessionState),
 	}
 }
 
@@ -148,80 +175,160 @@ func (c *connection) sendRequest(id int, method string, params any) {
 	})
 }
 
-// handleSessionNew applies the client's cwd once, builds the
-// underlying session on first use, and returns the session's ACP id —
-// the underlying persisted conversation id, so a later session/load in
-// a fresh process names the same conversation. A cwd that is not a
-// usable directory rejects the request.
-func (s *Server) handleSessionNew(params json.RawMessage) (Session, error) {
-	var p SessionNewParams
-	if len(params) > 0 {
-		if err := json.Unmarshal(params, &p); err != nil {
-			return nil, fmt.Errorf("invalid params: %w", err)
-		}
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.applyCwdLocked(p.Cwd); err != nil {
-		return nil, err
-	}
-	fresh := s.sess == nil
-	if err := s.ensureSessionLocked(""); err != nil {
-		return nil, err
-	}
-	id := s.sess.AgentSessionID()
-	// One underlying conversation per process; the id is stable, so a
-	// repeat session/new is idempotent — issuing a second ID would
-	// invalidate the client's existing handle while the same
-	// conversation still answers it.
-	if !fresh {
-		s.logf("session/new repeated: returning %s", id)
-	} else {
-		s.logf("session/new: %s", id)
-	}
-	s.sessionID = id
-	return s.sess, nil
-}
-
-// applyCwdLocked validates and chdirs into the client's cwd. Only the
-// first application counts: once a session has an established id, a
-// chdir would silently move an established workspace, so later cwds
-// are logged and ignored (docs record the single-conversation
-// limitation; the first cwd wins). Caller holds s.mu.
-func (s *Server) applyCwdLocked(cwd string) error {
+// canonicalCwd validates the client's working directory per ACP: it
+// MUST be absolute, and it MUST be used for the session. The canonical
+// form (absolute, symlink-resolved) is what the session factory gets and
+// what a later session/load's cwd is compared against.
+func canonicalCwd(cwd string) (string, error) {
 	if cwd == "" {
-		return nil
+		return "", fmt.Errorf("cwd is required")
 	}
-	if s.sessionID != "" {
-		s.logf("cwd %q ignored: session already established", cwd)
-		return nil
+	if !filepath.IsAbs(cwd) {
+		return "", fmt.Errorf("cwd %q must be an absolute path", cwd)
 	}
 	info, statErr := os.Stat(cwd)
 	if statErr != nil || !info.IsDir() {
-		return fmt.Errorf("cwd %q is not a directory", cwd)
+		return "", fmt.Errorf("cwd %q is not a directory", cwd)
 	}
-	if err := os.Chdir(cwd); err != nil {
-		return fmt.Errorf("chdir %q: %w", cwd, err)
+	abs, err := filepath.Abs(cwd)
+	if err != nil {
+		return "", fmt.Errorf("cwd %q: %w", cwd, err)
 	}
-	s.logf("session cwd applied: %s", cwd)
-	return nil
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = real
+	}
+	return filepath.Clean(abs), nil
 }
 
-// ensureSessionLocked builds the underlying session on first use.
-// An empty resumeID builds a fresh conversation; a non-empty one
-// resumes the persisted session of that id. Caller holds s.mu.
-func (s *Server) ensureSessionLocked(resumeID string) error {
-	if s.sess != nil {
-		return nil
+// resolveMCPRefs checks the client-declared MCP servers and turns each
+// command into an absolute path. Only stdio is supported (the spec
+// requires it of every agent; HTTP/SSE would need mcpCapabilities
+// first). ACP asks clients for an absolute command, but real clients
+// commonly send a bare executable name ("npx", "uvx") or a path
+// relative to the session cwd; resolve those here instead of rejecting
+// an otherwise usable server.
+func resolveMCPRefs(refs []McpServerRef, cwd string) ([]McpServerRef, error) {
+	out := make([]McpServerRef, 0, len(refs))
+	seen := make(map[string]bool, len(refs))
+	for i, ref := range refs {
+		if ref.Name == "" {
+			return nil, fmt.Errorf("mcpServers[%d].name is required", i)
+		}
+		if seen[ref.Name] {
+			return nil, fmt.Errorf("mcpServers: duplicate name %q", ref.Name)
+		}
+		seen[ref.Name] = true
+		if ref.Type != "" && ref.Type != "stdio" {
+			return nil, fmt.Errorf("mcpServers[%d]: unsupported transport %q", i, ref.Type)
+		}
+		if ref.Command == "" {
+			return nil, fmt.Errorf("mcpServers[%d].command is required", i)
+		}
+		command, err := resolveMCPCommand(ref.Command, cwd)
+		if err != nil {
+			return nil, fmt.Errorf("mcpServers[%d].command: %w", i, err)
+		}
+		ref.Command = command
+		out = append(out, ref)
 	}
-	sess, err := s.newSession(resumeID)
+	return out, nil
+}
+
+// resolveMCPCommand resolves one stdio command. Absolute paths pass
+// through (cleaned); a name is looked up on PATH; a relative path with
+// a separator is resolved against the session cwd.
+func resolveMCPCommand(command, cwd string) (string, error) {
+	resolved := command
+	if !filepath.IsAbs(resolved) {
+		if strings.ContainsAny(resolved, `/\`) {
+			resolved = filepath.Join(cwd, resolved)
+		} else if p, err := exec.LookPath(resolved); err == nil {
+			resolved = p
+			// A relative PATH entry (e.g. ".") can yield a relative
+			// result, which filepath.Abs below would then resolve
+			// against the process cwd — when the session cwd differs,
+			// silently the wrong file. Resolve it against the session
+			// cwd like the other relative forms.
+			if !filepath.IsAbs(resolved) {
+				resolved = filepath.Join(cwd, resolved)
+			}
+		} else {
+			return "", fmt.Errorf("%q is not on PATH", command)
+		}
+	}
+	abs, err := filepath.Abs(resolved)
 	if err != nil {
-		return err
+		return "", err
 	}
-	s.sess = sess
-	s.installQuestionHandler()
-	s.logf("agent session built")
-	return nil
+	if _, err := os.Stat(abs); err != nil {
+		return "", fmt.Errorf("%q: %w", command, err)
+	}
+	return filepath.Clean(abs), nil
+}
+
+// buildSession builds one underlying session and registers it under
+// its persisted conversation id. expectedID, when non-empty, pins the
+// id the factory must resume; a mismatch closes the half-built session
+// instead of exposing it under an id the client never negotiated.
+func (s *Server) buildSession(opts BuildOptions, expectedID string) (*sessionState, error) {
+	sess, err := s.newSession(opts)
+	if err != nil {
+		return nil, err
+	}
+	if sess == nil {
+		return nil, fmt.Errorf("session factory returned a nil session")
+	}
+	id := sess.AgentSessionID()
+	if id == "" {
+		sess.Close()
+		return nil, fmt.Errorf("session factory returned an empty session id")
+	}
+	if expectedID != "" && id != expectedID {
+		sess.Close()
+		return nil, fmt.Errorf("resumed session %q does not match requested %q", id, expectedID)
+	}
+	st := &sessionState{id: id, sess: sess, cwd: opts.Cwd}
+	s.mu.Lock()
+	if _, exists := s.sessions[id]; exists {
+		s.mu.Unlock()
+		sess.Close()
+		return nil, fmt.Errorf("session id %q already exists", id)
+	}
+	s.sessions[id] = st
+	s.mu.Unlock()
+	s.installQuestionHandler(st)
+	s.logf("agent session built: %s (cwd %s)", id, opts.Cwd)
+	return st, nil
+}
+
+// handleSessionNew creates a fresh conversation for the requested cwd
+// and returns its ACP id. Every call builds a new session: session ids
+// are unique per created session, and independent sessions may coexist
+// in one process.
+func (s *Server) handleSessionNew(msg Message, respOK func(id json.RawMessage, result any), respErr func(id json.RawMessage, code int, message string)) {
+	var p SessionNewParams
+	if len(msg.Params) > 0 {
+		if err := json.Unmarshal(msg.Params, &p); err != nil {
+			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
+			return
+		}
+	}
+	cwd, err := canonicalCwd(p.Cwd)
+	if err != nil {
+		respErr(msg.ID, codeInvalidParams, err.Error())
+		return
+	}
+	mcpRefs, err := resolveMCPRefs(p.McpServers, cwd)
+	if err != nil {
+		respErr(msg.ID, codeInvalidParams, err.Error())
+		return
+	}
+	st, err := s.buildSession(BuildOptions{Cwd: cwd, MCPServers: mcpRefs}, "")
+	if err != nil {
+		respErr(msg.ID, codeInvalidParams, "create session: "+err.Error())
+		return
+	}
+	respOK(msg.ID, SessionNewResult{SessionID: st.id})
 }
 
 // syntheticAssistantText is the content the loop persister stores for
@@ -282,15 +389,54 @@ func replayable(m types.Message) (updateKind, text string) {
 	}
 }
 
-// handleSessionLoad resumes a persisted conversation in a fresh
-// process: it applies the client's cwd exactly as session/new would,
-// builds the underlying session bound to the requested id (unknown ids
-// fail the build and are rejected), replays the conversation the
-// memory-DB restore carried as user_message_chunk /
-// agent_message_chunk updates, and then answers. Repeated loads of the
-// already-established id are idempotent (no replay: the conversation
-// is live); a load naming a different id is rejected — yaah serves one
-// conversation per process.
+// replayConversation streams one session's history to the client as
+// session/update notifications. ACP requires the entire conversation
+// before the session/load response; text is replayed as message chunks
+// and tool activity as tool_call / tool_call_update pairs.
+func (s *Server) replayConversation(st *sessionState, sendUpdate updateSender) {
+	history := st.sess.History()
+	replayed := 0
+	for _, m := range history {
+		updateKind, text := replayable(m)
+		if text != "" {
+			sendUpdate(st.id, ChunkUpdate{
+				SessionUpdate: updateKind,
+				Content:       ContentBlock{Type: "text", Text: text},
+			})
+			replayed++
+		}
+		for _, call := range m.ToolCalls {
+			if call.ID == "" {
+				// Older persisted rows may not carry a provider call
+				// id; a tool call without one cannot be replayed.
+				continue
+			}
+			name := call.Function.Name
+			title := name
+			update := ToolCallUpdate{
+				SessionUpdate: UpdateToolCall,
+				ToolCallID:    call.ID,
+				Title:         title,
+				Name:          name,
+				Kind:          toolKind(name),
+				Status:        StatusCompleted,
+			}
+			if json.Valid([]byte(call.Function.Arguments)) {
+				update.RawInput = json.RawMessage(call.Function.Arguments)
+			}
+			sendUpdate(st.id, update)
+			replayed++
+		}
+	}
+	s.logf("session/load: %s replayed %d update(s)", st.id, replayed)
+}
+
+// handleSessionLoad resumes a persisted conversation: it builds the
+// underlying session bound to the requested id (unknown ids fail the
+// build and are rejected), replays the conversation as session/update
+// notifications, and then answers. Loading an id that is already live
+// in this process is idempotent; it replays the live conversation
+// again, as a load request requires.
 func (s *Server) handleSessionLoad(
 	msg Message,
 	sendUpdate updateSender,
@@ -308,86 +454,73 @@ func (s *Server) handleSessionLoad(
 		respErr(msg.ID, codeInvalidParams, "sessionId is required")
 		return
 	}
+	cwd, err := canonicalCwd(p.Cwd)
+	if err != nil {
+		respErr(msg.ID, codeInvalidParams, err.Error())
+		return
+	}
+	mcpRefs, err := resolveMCPRefs(p.McpServers, cwd)
+	if err != nil {
+		respErr(msg.ID, codeInvalidParams, err.Error())
+		return
+	}
 
 	s.mu.Lock()
-	if s.sessionID == p.SessionID {
-		// Already established: the conversation is live in this
-		// process. Respond immediately without replay.
-		s.mu.Unlock()
+	st, live := s.sessions[p.SessionID]
+	var busy bool
+	if live {
+		busy = st.run != nil && st.run.cancel != nil
+	}
+	s.mu.Unlock()
+	if live {
+		if busy {
+			respErr(msg.ID, codeBusy, "a prompt is in flight for this session")
+			return
+		}
+		if st.cwd != "" && !sameDir(st.cwd, cwd) {
+			respErr(msg.ID, codeInvalidParams,
+				fmt.Sprintf("session %q was created with cwd %q, requested %q", st.id, st.cwd, cwd))
+			return
+		}
+		s.replayConversation(st, sendUpdate)
 		respOK(msg.ID, nil)
 		return
 	}
-	if s.sessionID != "" {
-		// One underlying conversation per process (docs record the
-		// limitation): replacing a live conversation silently would
-		// strand the client's established workspace state.
-		live := s.sessionID
-		s.mu.Unlock()
-		respErr(msg.ID, codeInvalidParams,
-			fmt.Sprintf("session %q already established; one conversation per process", live))
-		return
-	}
-	if err := s.applyCwdLocked(p.Cwd); err != nil {
-		s.mu.Unlock()
-		respErr(msg.ID, codeInvalidParams, err.Error())
-		return
-	}
-	if err := s.ensureSessionLocked(p.SessionID); err != nil {
-		// The build failure is how a foreign or deleted session id is
-		// rejected: restoreSession reports "session ... not found or
-		// has no messages" for ids the store never saw.
-		s.mu.Unlock()
-		respErr(msg.ID, codeInvalidParams, err.Error())
-		return
-	}
-	// Invariant: the build must have re-attached to the requested
-	// conversation. A factory that silently resumed a different
-	// conversation would leave the client talking to an id it never
-	// negotiated; reject the response and drop the half-built session
-	// so a retry or session/new is not wedged on an unwanted
-	// conversation. Close runs outside s.mu (same hand-off as
-	// Server.close): teardown drains background jobs and destroys the
-	// workspace sandbox, which must not stall stopRun/Server.close.
-	if built := s.sess.AgentSessionID(); built != p.SessionID {
-		stale := s.sess
-		s.sess = nil
-		s.mu.Unlock()
-		stale.Close()
-		respErr(msg.ID, codeInvalidParams,
-			fmt.Sprintf("resumed session %q does not match requested %q", built, p.SessionID))
-		return
-	}
-	s.sessionID = p.SessionID
-	s.run = &runningPrompt{}
-	history := s.sess.History()
-	s.mu.Unlock()
 
-	// Spec: a load request streams the conversation to the client as
-	// session/update notifications BEFORE the response, then answers.
-	replayed := 0
-	for _, m := range history {
-		updateKind, text := replayable(m)
-		if text == "" {
-			continue
-		}
-		sendUpdate(p.SessionID, ChunkUpdate{
-			SessionUpdate: updateKind,
-			Content:       ContentBlock{Type: "text", Text: text},
-		})
-		replayed++
+	st, err = s.buildSession(BuildOptions{
+		ResumeID:   p.SessionID,
+		Cwd:        cwd,
+		MCPServers: mcpRefs,
+	}, p.SessionID)
+	if err != nil {
+		respErr(msg.ID, codeInvalidParams, err.Error())
+		return
 	}
-	s.logf("session/load: %s replayed %d update(s)", p.SessionID, replayed)
+	s.replayConversation(st, sendUpdate)
 	respOK(msg.ID, nil)
+}
+
+// sameDir compares two canonical cwds case-insensitively on Windows,
+// where the client may spell the same directory differently.
+func sameDir(a, b string) bool {
+	if a == b {
+		return true
+	}
+	if os.PathSeparator == '\\' {
+		return strings.EqualFold(a, b)
+	}
+	return false
 }
 
 // installQuestionHandler routes question-tool prompts to the client as
 // status text and auto-answers with the first option when enabled.
-// Called once after the underlying session is built.
-func (s *Server) installQuestionHandler() {
-	if s.sess == nil {
+// Called once after the underlying session is built; the closure
+// captures its session so a prompt can never cross sessions.
+func (s *Server) installQuestionHandler(st *sessionState) {
+	if st == nil || st.sess == nil {
 		return
 	}
-	reg := s.sess.ToolReg()
+	reg := st.sess.ToolReg()
 	if reg == nil {
 		return
 	}
@@ -402,7 +535,7 @@ func (s *Server) installQuestionHandler() {
 			for i, o := range e.Options {
 				msg += fmt.Sprintf("  [%d] %s — %s\n", i+1, o.Label, o.Description)
 			}
-			if ch := s.ctrlCh(); ch != nil {
+			if ch := s.ctrlChFor(st); ch != nil {
 				select {
 				case ch <- &control.Status{Text: msg}:
 				default:
@@ -418,24 +551,28 @@ func (s *Server) installQuestionHandler() {
 	}
 }
 
-// ctrlCh returns the session's current control channel, or nil.
-func (s *Server) ctrlCh() chan<- control.Msg {
+// ctrlChFor returns the control channel of the prompt currently running
+// in st, or nil.
+func (s *Server) ctrlChFor(st *sessionState) chan<- control.Msg {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.sess == nil {
+	if st == nil {
 		return nil
 	}
-	return s.sess.GetCtrlCh()
+	return st.ctrl
 }
 
-// close tears the underlying session down with the server.
+// close tears every underlying session down with the server.
 func (s *Server) close() {
 	s.mu.Lock()
-	sess := s.sess
-	s.sess = nil
+	sessions := make([]*sessionState, 0, len(s.sessions))
+	for _, st := range s.sessions {
+		sessions = append(sessions, st)
+	}
+	s.sessions = make(map[string]*sessionState)
 	s.mu.Unlock()
-	if sess != nil {
-		sess.Close()
+	for _, st := range sessions {
+		st.sess.Close()
 	}
 }
 
@@ -509,26 +646,35 @@ func (s *Server) Run(ctx context.Context) error {
 // instead of hanging the process on SIGTERM.
 const stopRunJoinTimeout = 2 * time.Second
 
-// stopRun cancels the in-flight prompt (if any) and joins its
-// goroutine, so shutdown never tears the session down while the run is
-// still unwinding — RunPrompt persists state that close() destroys.
-// The join is bounded: a wedged stdout write must not hang shutdown.
+// stopRun cancels every in-flight prompt and joins its goroutine, so
+// shutdown never tears a session down while its run is still
+// unwinding — RunPrompt persists state that close() destroys. Each
+// join is bounded: a wedged stdout write must not hang shutdown.
 func (s *Server) stopRun() {
 	s.mu.Lock()
-	cancel := s.run.cancel
-	done := s.run.done
-	s.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	runs := make([]*runningPrompt, 0, len(s.sessions))
+	for _, st := range s.sessions {
+		if st.run != nil {
+			runs = append(runs, st.run)
+		}
 	}
-	if done != nil {
+	s.mu.Unlock()
+	for _, r := range runs {
+		if r.cancel != nil {
+			r.cancel()
+		}
+	}
+	for _, r := range runs {
+		if r.done == nil {
+			continue
+		}
 		timer := time.NewTimer(stopRunJoinTimeout)
-		defer timer.Stop()
 		select {
-		case <-done:
+		case <-r.done:
 		case <-timer.C:
 			s.logf("prompt goroutine did not unwind within %s; proceeding with teardown", stopRunJoinTimeout)
 		}
+		timer.Stop()
 	}
 }
 
@@ -559,14 +705,32 @@ func (s *Server) dispatch(
 		var msg Message
 		if err := json.Unmarshal([]byte(line), &msg); err != nil {
 			s.logf("invalid JSON line: %v", err)
+			// JSON-RPC 2.0: a parse error is answered with id null.
+			respErr(json.RawMessage("null"), codeParseError, "parse error")
+			continue
+		}
+		if msg.JSONRPC != "2.0" {
+			s.logf("invalid request: jsonrpc = %q", msg.JSONRPC)
+			id := msg.ID
+			if len(id) == 0 {
+				id = json.RawMessage("null")
+			}
+			respErr(id, codeInvalidRequest, "invalid request: jsonrpc must be \"2.0\"")
 			continue
 		}
 
 		// Method empty: a response to one of our requests (routed to the
 		// permission bridge) or a stray message to be dropped.
 		if msg.Method == "" {
-			if len(msg.ID) > 0 {
+			if len(msg.ID) > 0 && (len(msg.Result) > 0 || msg.Error != nil) {
+				// A response to one of our requests.
 				s.resolvePending(msg)
+			} else {
+				id := msg.ID
+				if len(id) == 0 {
+					id = json.RawMessage("null")
+				}
+				respErr(id, codeInvalidRequest, "invalid request: method is required")
 			}
 			continue
 		}
@@ -612,14 +776,7 @@ func (s *Server) dispatch(
 			respErr(msg.ID, codeMethodNotFound, "authenticate is not offered")
 
 		case "session/new":
-			if _, err := s.handleSessionNew(msg.Params); err != nil {
-				respErr(msg.ID, codeInvalidParams, err.Error())
-				continue
-			}
-			s.mu.Lock()
-			id := s.sessionID
-			s.mu.Unlock()
-			respOK(msg.ID, SessionNewResult{SessionID: id})
+			s.handleSessionNew(msg, respOK, respErr)
 
 		case "session/prompt":
 			s.handlePrompt(msg, dispatchCtx, c, sendUpdate, respOK, respErr)
@@ -628,9 +785,7 @@ func (s *Server) dispatch(
 			s.handleSessionLoad(msg, sendUpdate, respOK, respErr)
 
 		case "session/set_mode":
-			// Mode switching is not modeled yet (Tier 3); acknowledge so
-			// clients that surface a mode picker do not hang.
-			respOK(msg.ID, nil)
+			s.handleSetMode(msg, respOK, respErr)
 
 		default:
 			respErr(msg.ID, codeMethodNotFound, "method not found: "+msg.Method)
@@ -662,28 +817,56 @@ func (s *Server) handleCancel(msg Message) {
 	if len(msg.Params) > 0 {
 		_ = json.Unmarshal(msg.Params, &p)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.run.cancel == nil {
-		s.logf("cancel ignored: no prompt in flight")
+	if p.SessionID == "" {
+		s.logf("cancel ignored: sessionId is required")
 		return
 	}
-	if p.SessionID != "" && p.SessionID != s.sessionID {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.sessions[p.SessionID]
+	if !ok {
 		s.logf("cancel ignored: unknown session %q", p.SessionID)
 		return
 	}
-	s.logf("cancelling prompt turn")
-	s.run.cancel()
+	if st.run == nil || st.run.cancel == nil {
+		s.logf("cancel ignored: no prompt in flight for %s", p.SessionID)
+		return
+	}
+	s.logf("cancelling prompt turn: %s", p.SessionID)
+	st.run.cancel()
 }
 
-// ensureIdle rejects overlapping prompts. Caller holds s.mu.
-func (s *Server) ensureIdle() bool {
-	return s.run.cancel == nil
+// handleSetMode acknowledges mode switches. Modes are not modeled, so
+// none are advertised; the request is validated against the live
+// session set and then accepted so a client that surfaces a mode
+// picker does not hang.
+func (s *Server) handleSetMode(
+	msg Message,
+	respOK func(id json.RawMessage, result any),
+	respErr func(id json.RawMessage, code int, message string),
+) {
+	var p SetModeParams
+	if len(msg.Params) > 0 {
+		if err := json.Unmarshal(msg.Params, &p); err != nil {
+			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
+			return
+		}
+	}
+	s.mu.Lock()
+	_, ok := s.sessions[p.SessionID]
+	s.mu.Unlock()
+	if !ok {
+		respErr(msg.ID, codeInvalidParams, "unknown session id")
+		return
+	}
+	respOK(msg.ID, nil)
 }
 
 // handlePrompt runs one prompt turn. Per ACP v1, the request stays
 // open until the turn ends and is then answered with a stopReason;
-// session/update notifications stream before the response.
+// session/update notifications stream before the response. Prompts on
+// different sessions may run concurrently; a second prompt on the same
+// session is rejected as busy.
 func (s *Server) handlePrompt(
 	msg Message,
 	rootCtx context.Context,
@@ -703,41 +886,45 @@ func (s *Server) handlePrompt(
 		respErr(msg.ID, codeInvalidParams, "sessionId is required")
 		return
 	}
-
-	s.mu.Lock()
-	if s.sessionID == "" || p.SessionID != s.sessionID {
-		s.mu.Unlock()
-		respErr(msg.ID, codeInvalidParams, "unknown session id (call session/new first)")
-		return
-	}
-	if !s.ensureIdle() {
-		s.mu.Unlock()
-		respErr(msg.ID, codeBusy, "a prompt is already in flight for this session")
-		return
-	}
-	sess := s.sess
 	promptText, renderErr := renderPrompt(p.Prompt)
 	if renderErr != nil {
-		s.mu.Unlock()
 		respErr(msg.ID, codeInvalidParams, renderErr.Error())
 		return
 	}
 	if promptText == "" {
-		s.mu.Unlock()
 		respErr(msg.ID, codeInvalidParams, "prompt must contain at least one non-empty content block")
 		return
 	}
 
+	ctrlCh := make(chan control.Msg, 64)
+	view := NewViewWithWrite(sendUpdate, p.SessionID)
 	promptCtx, cancel := context.WithCancel(rootCtx)
 	runDone := make(chan struct{})
-	s.run = &runningPrompt{cancel: cancel, done: runDone}
+
+	s.mu.Lock()
+	st, ok := s.sessions[p.SessionID]
+	if !ok {
+		s.mu.Unlock()
+		cancel()
+		respErr(msg.ID, codeInvalidParams, "unknown session id (call session/new first)")
+		return
+	}
+	if st.run != nil && st.run.cancel != nil {
+		s.mu.Unlock()
+		cancel()
+		respErr(msg.ID, codeBusy, "a prompt is already in flight for this session")
+		return
+	}
+	st.run = &runningPrompt{cancel: cancel, done: runDone}
+	st.ctrl = ctrlCh
+	st.view = view
+	sess := st.sess
 	s.mu.Unlock()
 
-	sess.SetView(NewViewWithWrite(sendUpdate, p.SessionID))
-	ctrlCh := make(chan control.Msg, 64)
+	sess.SetView(view)
 	sess.SetCtrlCh(ctrlCh)
-	sess.SetApproveFn(func(name, args string) bool {
-		return s.requestPermission(p.SessionID, name, args, promptCtx, c)
+	sess.SetApproveCallFn(func(callID, name, args string) bool {
+		return s.requestPermission(p.SessionID, callID, name, args, promptCtx, c)
 	})
 
 	// forwardCtrl consumes control-plane sends during the run (todo
@@ -759,12 +946,16 @@ func (s *Server) handlePrompt(
 		stopReason := StopEndTurn
 		switch {
 		case runErr == nil:
-			s.logf("prompt completed")
+			s.logf("prompt completed: %s", p.SessionID)
 		case errors.Is(runErr, context.Canceled):
 			stopReason = StopCancelled
-			s.logf("prompt cancelled")
+			s.logf("prompt cancelled: %s", p.SessionID)
 		default:
-			s.logf("prompt error: %v", runErr)
+			// Keep the documented surface: a failed turn answers
+			// stopReason "refusal" like any other end-of-turn state, and
+			// the error detail lives in the log — the session/prompt
+			// response promises a stopReason and clients key on it.
+			s.logf("prompt error: %s: %v", p.SessionID, runErr)
 			stopReason = StopRefusal
 		}
 
@@ -774,9 +965,11 @@ func (s *Server) handlePrompt(
 		// its queue without regard to cancellation, and joining on
 		// ctrlDone guarantees every queued update is on the wire before
 		// the response. Only then is the prompt context cancelled. The
-		// join handle stays in s.run so teardown can still join.
+		// join handle stays in st.run so teardown can still join.
 		s.mu.Lock()
-		s.run = &runningPrompt{done: runDone}
+		st.run = &runningPrompt{done: runDone}
+		st.ctrl = nil
+		st.view = nil
 		s.mu.Unlock()
 		close(flush)
 		<-ctrlDone

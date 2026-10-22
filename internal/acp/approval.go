@@ -74,7 +74,7 @@ func toolKind(name string) string {
 // the outcome, and an approval is followed by the real tool_call from
 // the dispatch pipeline.
 func (s *Server) requestPermission(
-	sessionID, name, args string,
+	sessionID, callID, name, args string,
 	runCtx context.Context,
 	c *connection,
 ) bool {
@@ -87,7 +87,12 @@ func (s *Server) requestPermission(
 		return false
 	}
 
-	toolCallID := fmt.Sprintf("perm_%d", reqID)
+	toolCallID := callID
+	if toolCallID == "" {
+		// A model that supplies no call id cannot be correlated; keep
+		// the old synthetic id so the prompt still works.
+		toolCallID = fmt.Sprintf("perm_%d", reqID)
+	}
 	title := permissionTitle(name, args)
 	if title == "" {
 		title = name
@@ -118,6 +123,27 @@ func (s *Server) requestPermission(
 		s.mu.Unlock()
 	}()
 
+	// Create the tool call the client will show in its permission
+	// dialog, and remember it so the execution event below updates the
+	// same row instead of creating a second one.
+	announced := callID != ""
+	if announced {
+		s.mu.Lock()
+		st := s.sessions[sessionID]
+		if st != nil && st.view != nil {
+			st.view.Announce(toolCallID)
+		}
+		s.mu.Unlock()
+		send(sessionID, ToolCallUpdate{
+			SessionUpdate: UpdateToolCall,
+			ToolCallID:    toolCallID,
+			Title:         title,
+			Name:          name,
+			Kind:          toolKind(name),
+			Status:        StatusPending,
+		})
+	}
+
 	c.sendRequest(reqID, "session/request_permission", RequestPermissionParams{
 		SessionID: sessionID,
 		ToolCall: ToolCallUpdate{
@@ -144,7 +170,13 @@ func (s *Server) requestPermission(
 	deny := func(reason string) {
 		s.logf("permission %s denied: %s", toolCallID, reason)
 		// Render the denial so a row the client created from the
-		// permission request does not hang in a pending state.
+		// permission request does not hang in a pending state. The
+		// id-less fallback (no announced row) renders nothing: a failed
+		// update for a synthetic perm_N id the client never saw would
+		// create an orphan row instead.
+		if !announced {
+			return
+		}
 		send(sessionID, ToolCallUpdate{
 			SessionUpdate: UpdateToolCallUpdate,
 			ToolCallID:    toolCallID,

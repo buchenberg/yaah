@@ -165,6 +165,60 @@ func TestBuildSubAgentRegistry_WorkdirWithoutSessionValidator(t *testing.T) {
 	}
 }
 
+// TestBuildSubAgentRegistry_UnrestrictedSessionPostureGuard pins the
+// multi-session widening fix: the session validator cmd/yaah wiring
+// installs for the default local mode (no root, forced AllowHomeAccess,
+// no patterns — it only exists to give per-session cwd resolution a
+// WorkDir) encodes the *main tree's* legacy unrestricted posture and
+// must not widen a worktree dispatch. The derived validator keeps the
+// historical standalone posture: fresh, rooted at the workdir,
+// home-restricted, no inherited approval widening. A genuinely
+// constrained session (real containment root plus explicit home access)
+// still inherits its policy.
+func TestBuildSubAgentRegistry_UnrestrictedSessionPostureGuard(t *testing.T) {
+	profile := subagent.RoleProfile{Tools: []string{"read", "bash", "write"}}
+	workdir := t.TempDir()
+	want := resolvedWorkdir(t, workdir)
+
+	opts := taskRunnerOpts{
+		pathValidator: tools.NewPathValidator("", true, nil),
+	}
+	reg, _, err := buildSubAgentRegistry(opts, profile, 0, workdir)
+	if err != nil {
+		t.Fatalf("buildSubAgentRegistry: %v", err)
+	}
+	got := reg.PathValidator
+	if got == nil || got.WorkDir != want || got.WorkspaceRoot != want {
+		t.Fatalf("validator must be rooted at the workdir: got %#v, want %s", got, want)
+	}
+	if got.AllowHomeAccess {
+		t.Error("root-less session's forced AllowHomeAccess must not widen the worktree lane")
+	}
+	if got.AskFn != nil {
+		t.Error("root-less session's AskFn must not carry over to the worktree lane")
+	}
+
+	// Contrast: an explicitly configured contained session inherits.
+	rooted := t.TempDir()
+	ask := func(path, reason string) bool { return true }
+	contained := tools.NewPathValidator(rooted, true, nil)
+	contained.AskFn = ask
+	reg2, _, err := buildSubAgentRegistry(taskRunnerOpts{pathValidator: contained}, profile, 0, workdir)
+	if err != nil {
+		t.Fatalf("buildSubAgentRegistry (contained): %v", err)
+	}
+	got2 := reg2.PathValidator
+	if got2 == nil || got2.WorkspaceRoot != want {
+		t.Fatalf("contained-session validator must still root at the workdir: got %#v, want %s", got2, want)
+	}
+	if !got2.AllowHomeAccess {
+		t.Error("contained session's explicit AllowHomeAccess must inherit")
+	}
+	if got2.AskFn == nil {
+		t.Error("contained session's AskFn must inherit")
+	}
+}
+
 // TestBuildSubAgentSysPrompt_WorkdirHeader pins that a local-mode workdir
 // dispatch's environment header advertises the assigned worktree, not the
 // orchestrator's process cwd (#312).

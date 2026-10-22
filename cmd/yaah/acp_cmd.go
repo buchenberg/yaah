@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/buchenberg/yaah/internal/acp"
+	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/spf13/cobra"
 )
 
@@ -47,22 +48,48 @@ func init() {
 	rootCmd.AddCommand(acpServeCmd)
 }
 
-// newACPAgentSession builds an agent session for the ACP server. An
-// empty resumeID starts a fresh conversation; otherwise the persisted
+// newACPAgentSession builds one agent session for the ACP server. An
+// empty ResumeID starts a fresh conversation; otherwise the persisted
 // session of that id is restored from the SQLite session store
 // (~/.yaah state.db via internal/memory) — that restore is how
 // session/load rejects foreign ids and supplies the replay history.
 // The ACP client owns the session lifecycle, so --resume from the
-// command line is overridden: an acp-serve process always starts
-// without a conversation until the client loads one.
-func newACPAgentSession(resumeID string) (acp.Session, error) {
+// command line is ignored: each session is built from the request that
+// created or loaded it.
+func newACPAgentSession(build acp.BuildOptions) (acp.Session, error) {
 	opts := sessionOptionsFromFlags()
-	opts.ResumeSessionID = resumeID
+	opts.ResumeSessionID = build.ResumeID
+	opts.Cwd = build.Cwd
+	opts.MCPManifests = mcpManifestsFromACP(build.MCPServers)
 	sess, err := newAgentSessionWithOptions(opts, false, false)
 	if err != nil {
 		return nil, fmt.Errorf("session: %w", err)
 	}
 	return sess, nil
+}
+
+// mcpManifestsFromACP converts ACP's stdio server entries to the
+// manifest form the MCP client starts.
+func mcpManifestsFromACP(refs []acp.McpServerRef) map[string]mcp.Manifest {
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make(map[string]mcp.Manifest, len(refs))
+	for _, ref := range refs {
+		env := make(map[string]string, len(ref.Env))
+		for _, e := range ref.Env {
+			if e.Name != "" {
+				env[e.Name] = e.Value
+			}
+		}
+		out[ref.Name] = mcp.Manifest{
+			Command:   ref.Command,
+			Args:      ref.Args,
+			Env:       env,
+			Transport: "stdio",
+		}
+	}
+	return out
 }
 
 func runACPServe(cmd *cobra.Command, args []string) error {

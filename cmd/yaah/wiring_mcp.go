@@ -25,7 +25,12 @@ import (
 // returned so the caller can record the omission; the caller must then
 // NOT pass them to the approval gate, which would prompt for calls to
 // tools that cannot dispatch.
-func initMCP(cfg *config.Config, toolReg *tools.Registry, skipMCP, register bool) ([]mcp.MCPClient, []mcp.ServerInfo, map[string]bool) {
+//
+// extra carries MCP servers declared by an ACP client for this session.
+// They are merged with the config-declared set, with the client's entry
+// winning on a name collision, and run with the session's cwd so a
+// relative command resolves like the rest of the session.
+func initMCP(cfg *config.Config, toolReg *tools.Registry, skipMCP, register bool, extra map[string]mcp.Manifest, cwd string) ([]mcp.MCPClient, []mcp.ServerInfo, map[string]bool) {
 	if skipMCP {
 		return nil, nil, nil
 	}
@@ -39,7 +44,13 @@ func initMCP(cfg *config.Config, toolReg *tools.Registry, skipMCP, register bool
 			Transport: s.Transport,
 			Framing:   s.Framing,
 			Headers:   s.Headers,
+			Cwd:       cwd,
 		}
+	}
+	for name, m := range extra {
+		manifest := m
+		manifest.Cwd = cwd
+		mcpManifests[name] = &manifest
 	}
 	clients, mcpTools, infos, err := mcp.StartMCPClientsFromConfig(context.Background(), mcpManifests, io.Discard)
 	if err != nil {

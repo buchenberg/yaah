@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -23,7 +26,7 @@ type fakeSession struct {
 	prompt  func(ctx context.Context, prompt string) (string, bool, error)
 	view    agent.View
 	ctrl    chan<- control.Msg
-	approve func(name, args string) bool
+	approve func(callID, name, args string) bool
 	closed  int
 	// id is the persisted conversation id AgentSessionID reports; set
 	// at construction and never mutated.
@@ -40,12 +43,7 @@ func (f *fakeSession) RunPrompt(ctx context.Context, prompt string) (string, boo
 }
 func (f *fakeSession) SetView(v agent.View)           { f.mu.Lock(); f.view = v; f.mu.Unlock() }
 func (f *fakeSession) SetCtrlCh(c chan<- control.Msg) { f.mu.Lock(); f.ctrl = c; f.mu.Unlock() }
-func (f *fakeSession) GetCtrlCh() chan<- control.Msg {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.ctrl
-}
-func (f *fakeSession) SetApproveFn(fn func(name, args string) bool) {
+func (f *fakeSession) SetApproveCallFn(fn func(callID, name, args string) bool) {
 	f.mu.Lock()
 	f.approve = fn
 	f.mu.Unlock()
@@ -59,7 +57,7 @@ func (f *fakeSession) approveCall(name, args string) bool {
 	if fn == nil {
 		return false
 	}
-	return fn(name, args)
+	return fn("call-1", name, args)
 }
 
 func (f *fakeSession) Close() { f.mu.Lock(); f.closed++; f.mu.Unlock() }
@@ -99,6 +97,7 @@ type acpHarness struct {
 	recv    func(t *testing.T) Message
 	done    func()
 	resumes func() []string
+	cwd     string
 }
 
 // newACPHarness wires a Server whose factory always yields sess (or a
@@ -134,17 +133,17 @@ func newACPHarnessFactory(t *testing.T, factory func(resumeID string) (Session, 
 		logf:    func(string, ...any) {},
 		stdin:   inR,
 		stdout:  outW,
-		newSession: func(resumeID string) (Session, error) {
+		newSession: func(build BuildOptions) (Session, error) {
 			resumeMu.Lock()
-			resumeIDs = append(resumeIDs, resumeID)
+			resumeIDs = append(resumeIDs, build.ResumeID)
 			resumeMu.Unlock()
-			return factory(resumeID)
+			return factory(build.ResumeID)
 		},
 		AutoAnswerQuestions: true,
 		AutoContinue:        true,
 		PermissionTimeout:   time.Second,
 		pendingReq:          make(map[string]chan clientResponse),
-		run:                 &runningPrompt{},
+		sessions:            make(map[string]*sessionState),
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = s.Run(ctx) }()
@@ -204,6 +203,7 @@ func newACPHarnessFactory(t *testing.T, factory func(resumeID string) (Session, 
 			copy(out, resumeIDs)
 			return out
 		},
+		cwd: t.TempDir(),
 	}
 }
 
@@ -236,7 +236,8 @@ func initialize(t *testing.T, h *acpHarness) {
 // its id.
 func newSession(t *testing.T, h *acpHarness) string {
 	t.Helper()
-	if err := h.send("session/new", 2, fmt.Sprintf(`{"cwd":%q,"mcpServers":[]}`, ".")); err != nil {
+	cwd, _ := json.Marshal(h.cwd)
+	if err := h.send("session/new", 2, fmt.Sprintf(`{"cwd":%s,"mcpServers":[]}`, cwd)); err != nil {
 		t.Fatal(err)
 	}
 	msg := h.recv(t)
@@ -248,6 +249,13 @@ func newSession(t *testing.T, h *acpHarness) string {
 		t.Fatalf("session/new gave empty session id: %s", msg.Result)
 	}
 	return result.SessionID
+}
+
+// loadParams builds session/load params for the harness's cwd.
+func loadParams(t *testing.T, h *acpHarness, id string) string {
+	t.Helper()
+	cwd, _ := json.Marshal(h.cwd)
+	return fmt.Sprintf(`{"sessionId":%q,"cwd":%s,"mcpServers":[]}`, id, cwd)
 }
 
 // TestServer_initializeNegotiatesV1 checks the handshake shape required
@@ -292,8 +300,10 @@ func TestServer_initializeWithoutClientInfo(t *testing.T) {
 // stopped draining) must not hang stopRun — the join times out and
 // teardown proceeds so SIGTERM can still kill the process.
 func TestServer_stopRunBoundedJoin(t *testing.T) {
-	s := &Server{logf: func(string, ...any) {}}
-	s.run = &runningPrompt{done: make(chan struct{})} // never closes
+	s := &Server{
+		logf:     func(string, ...any) {},
+		sessions: map[string]*sessionState{"sess-test": {run: &runningPrompt{done: make(chan struct{})}}},
+	}
 	start := time.Now()
 	s.stopRun()
 	if elapsed := time.Since(start); elapsed < stopRunJoinTimeout-100*time.Millisecond {
@@ -301,24 +311,19 @@ func TestServer_stopRunBoundedJoin(t *testing.T) {
 	}
 }
 
-// TestServer_sessionNewIdempotent documents the one-conversation-per-
-// process contract: a repeat session/new returns the same session id —
-// issuing a fresh one would invalidate the handle the client already
-// holds while the same underlying conversation still answers it.
-func TestServer_sessionNewIdempotent(t *testing.T) {
-	h := newACPHarness(t, &fakeSession{id: "sess-test"})
+// TestServer_sessionNewDistinctIDs pins ACP-SESSION-002: every
+// session/new creates a new conversation and returns a distinct id.
+func TestServer_sessionNewDistinctIDs(t *testing.T) {
+	next := 0
+	h := newACPHarnessFactory(t, func(string) (Session, error) {
+		next++
+		return &fakeSession{id: fmt.Sprintf("sess-%d", next)}, nil
+	})
 	initialize(t, h)
 	first := newSession(t, h)
-	if err := h.send("session/new", 3, `{"cwd":"."}`); err != nil {
-		t.Fatal(err)
-	}
-	msg := h.recv(t)
-	var repeat SessionNewResult
-	if err := json.Unmarshal(msg.Result, &repeat); err != nil {
-		t.Fatalf("repeat session/new result: %v", err)
-	}
-	if repeat.SessionID != first {
-		t.Fatalf("repeat session/new issued %q, want the original %q", repeat.SessionID, first)
+	second := newSession(t, h)
+	if first == second {
+		t.Fatalf("two session/new calls returned the same id %q", first)
 	}
 }
 
@@ -376,7 +381,7 @@ func TestServer_sessionLoadReplaysHistory(t *testing.T) {
 	}
 	h := newACPHarness(t, fac)
 	initialize(t, h)
-	if err := h.send("session/load", 3, `{"sessionId":"sess-load-1","cwd":".","mcpServers":[]}`); err != nil {
+	if err := h.send("session/load", 3, loadParams(t, h, "sess-load-1")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -444,7 +449,7 @@ func TestServer_sessionLoadUnknownSessionRejected(t *testing.T) {
 		return nil, fmt.Errorf("cannot resume session %s: session not found or has no messages", resumeID)
 	})
 	initialize(t, h)
-	if err := h.send("session/load", 5, `{"sessionId":"sess-ghost"}`); err != nil {
+	if err := h.send("session/load", 5, loadParams(t, h, "sess-ghost")); err != nil {
 		t.Fatal(err)
 	}
 	msg := h.recv(t)
@@ -471,7 +476,7 @@ func TestServer_sessionLoadMismatchedResumedSession(t *testing.T) {
 		return built, nil
 	})
 	initialize(t, h)
-	if err := h.send("session/load", 8, `{"sessionId":"sess-requested"}`); err != nil {
+	if err := h.send("session/load", 8, loadParams(t, h, "sess-requested")); err != nil {
 		t.Fatal(err)
 	}
 	msg := h.recv(t)
@@ -497,47 +502,87 @@ func TestServer_sessionLoadMismatchedResumedSession(t *testing.T) {
 	}
 }
 
-// TestServer_sessionLoadDifferentSessionRejected pins the
-// one-conversation-per-process boundary the other way: once a session
-// is established, loading a different id is rejected instead of
-// silently replacing the live workspace.
-func TestServer_sessionLoadDifferentSessionRejected(t *testing.T) {
-	h := newACPHarness(t, nil)
+// TestServer_sessionLoadSecondSessionAllowed covers the multi-session
+// model: a second, independent conversation can be loaded while the
+// first stays live.
+func TestServer_sessionLoadSecondSessionAllowed(t *testing.T) {
+	h := newACPHarnessFactory(t, func(resumeID string) (Session, error) {
+		if resumeID == "" {
+			return &fakeSession{id: "sess-new"}, nil
+		}
+		return &fakeSession{id: resumeID}, nil
+	})
 	initialize(t, h)
-	if id := newSession(t, h); id != "sess-test" {
-		t.Fatalf("session/new returned %q, want sess-test", id)
+	if id := newSession(t, h); id != "sess-new" {
+		t.Fatalf("session/new returned %q, want sess-new", id)
 	}
-	if err := h.send("session/load", 6, `{"sessionId":"sess-other"}`); err != nil {
-		t.Fatal(err)
-	}
-	msg := h.recv(t)
-	if msg.Error == nil || msg.Error.Code != codeInvalidParams {
-		t.Fatalf("response = %+v, want invalid params", msg)
-	}
-	if res := h.resumes(); len(res) != 1 || res[0] != "" {
-		t.Errorf("factory called with %v, want only the fresh build [\"\"]", res)
-	}
-}
-
-// TestServer_sessionLoadSameSessionIdempotent covers a client
-// reloading the id it already established: the live conversation is
-// returned as-is (immediate empty result, no replay, no second build).
-func TestServer_sessionLoadSameSessionIdempotent(t *testing.T) {
-	h := newACPHarness(t, nil)
-	initialize(t, h)
-	id := newSession(t, h)
-	if err := h.send("session/load", 7, `{"sessionId":"`+id+`"}`); err != nil {
+	if err := h.send("session/load", 6, loadParams(t, h, "sess-other")); err != nil {
 		t.Fatal(err)
 	}
 	msg := h.recv(t)
 	if msg.Error != nil {
-		t.Fatalf("reload returned error: %+v", msg.Error)
+		t.Fatalf("second load returned error: %+v", msg.Error)
 	}
 	if raw := string(msg.Result); raw != "{}" {
+		t.Errorf("second load result = %s, want {}", raw)
+	}
+	if res := h.resumes(); len(res) != 2 || res[0] != "" || res[1] != "sess-other" {
+		t.Errorf("factory calls = %v, want [\"\", \"sess-other\"]", res)
+	}
+}
+
+// TestServer_sessionLoadSameIdReplaysAgain covers a client reloading
+// the id it already established: the live conversation is replayed
+// again (a load request must stream the full conversation before its
+// response), answered with {}, and no second factory build happens.
+func TestServer_sessionLoadSameIdReplaysAgain(t *testing.T) {
+	fac := &fakeSession{
+		id: "sess-live",
+		history: []types.Message{
+			{Role: "user", Content: "earlier question"},
+			{Role: "assistant", Content: "earlier answer"},
+		},
+	}
+	h := newACPHarness(t, fac)
+	initialize(t, h)
+	id := newSession(t, h)
+	if id != "sess-live" {
+		t.Fatalf("session/new returned %q, want sess-live", id)
+	}
+	if err := h.send("session/load", 7, loadParams(t, h, id)); err != nil {
+		t.Fatal(err)
+	}
+	var replayed []string
+	var resp Message
+	for {
+		msg := h.recv(t)
+		if msg.Method == "session/update" {
+			replayed = append(replayed, loadProbe(t, msg.Params))
+			continue
+		}
+		resp = msg
+		break
+	}
+	if resp.Error != nil {
+		t.Fatalf("reload returned error: %+v", resp.Error)
+	}
+	if raw := string(resp.Result); raw != "{}" {
 		t.Errorf("reload result = %s, want {}", raw)
 	}
+	want := []string{
+		UpdateUserMessageChunk + ":earlier question",
+		UpdateAgentMessageChunk + ":earlier answer",
+	}
+	if len(replayed) != len(want) {
+		t.Fatalf("replayed %v, want %v", replayed, want)
+	}
+	for i := range want {
+		if replayed[i] != want[i] {
+			t.Errorf("replay[%d] = %q, want %q", i, replayed[i], want[i])
+		}
+	}
 	if res := h.resumes(); len(res) != 1 || res[0] != "" {
-		t.Errorf("factory called with %v, want only the fresh build [\"\"]", res)
+		t.Errorf("factory calls = %v, want only the fresh build [\"\"]", res)
 	}
 }
 
@@ -757,6 +802,92 @@ func TestServer_secondPromptWhileBusy(t *testing.T) {
 	close(release)
 }
 
+// TestResolveMCPRefsResolvesCommands covers clients that send a bare
+// executable name or a cwd-relative path instead of the absolute path
+// the spec asks for.
+func TestResolveMCPRefsResolvesCommands(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go is not on PATH")
+	}
+	refs, err := resolveMCPRefs([]McpServerRef{{Name: "bare", Command: "go"}}, t.TempDir())
+	if err != nil {
+		t.Fatalf("bare command: %v", err)
+	}
+	if !filepath.IsAbs(refs[0].Command) {
+		t.Errorf("bare command = %q, want absolute", refs[0].Command)
+	}
+	if _, err := os.Stat(refs[0].Command); err != nil {
+		t.Errorf("resolved command does not exist: %v", err)
+	}
+
+	cwd := t.TempDir()
+	local := filepath.Join(cwd, "tool.exe")
+	if err := os.WriteFile(local, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	refs, err = resolveMCPRefs([]McpServerRef{{Name: "local", Command: "./tool.exe"}}, cwd)
+	if err != nil {
+		t.Fatalf("relative command: %v", err)
+	}
+	if refs[0].Command != local {
+		t.Errorf("relative command = %q, want %q", refs[0].Command, local)
+	}
+
+	if _, err := resolveMCPRefs([]McpServerRef{{Name: "missing", Command: "definitely-not-on-path-xyz"}}, cwd); err == nil {
+		t.Error("missing bare command should fail")
+	}
+}
+
+// TestServer_sessionNewRequiresAbsoluteCwd pins the ACP cwd rules: a
+// missing or relative cwd is invalid params, not a silent fallback to
+// the process directory.
+func TestServer_sessionNewRequiresAbsoluteCwd(t *testing.T) {
+	h := newACPHarness(t, &fakeSession{id: "sess-test"})
+	initialize(t, h)
+	for i, params := range []string{
+		`{"mcpServers":[]}`,
+		`{"cwd":"relative/dir","mcpServers":[]}`,
+	} {
+		if err := h.send("session/new", i+2, params); err != nil {
+			t.Fatal(err)
+		}
+		msg := h.recv(t)
+		if msg.Error == nil || msg.Error.Code != codeInvalidParams {
+			t.Fatalf("%s: response = %+v, want invalid params", params, msg)
+		}
+	}
+}
+
+// TestServer_parseErrorRepliesWithNullID covers JSON-RPC 2.0's parse
+// error contract and keeps the connection usable.
+func TestServer_parseErrorRepliesWithNullID(t *testing.T) {
+	h := newACPHarness(t, &fakeSession{id: "sess-test"})
+	if _, err := io.WriteString(h.inW, "{not json\n"); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recv(t)
+	if msg.Error == nil || msg.Error.Code != codeParseError {
+		t.Fatalf("response = %+v, want parse error", msg)
+	}
+	if string(msg.ID) != "null" {
+		t.Fatalf("parse error id = %s, want null", msg.ID)
+	}
+	initialize(t, h)
+}
+
+// TestServer_invalidRequestRepliesWith32600 covers a request with no
+// method.
+func TestServer_invalidRequestRepliesWith32600(t *testing.T) {
+	h := newACPHarness(t, &fakeSession{id: "sess-test"})
+	if err := h.send("", 9, ""); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recv(t)
+	if msg.Error == nil || msg.Error.Code != codeInvalidRequest {
+		t.Fatalf("response = %+v, want invalid request", msg)
+	}
+}
+
 // TestServer_emptyPromptRejected keeps empty prompt blocks out.
 func TestServer_emptyPromptRejected(t *testing.T) {
 	h := newACPHarness(t, &fakeSession{id: "sess-test"})
@@ -769,6 +900,21 @@ func TestServer_emptyPromptRejected(t *testing.T) {
 	if msg.Error == nil || msg.Error.Code != codeInvalidParams {
 		t.Fatalf("response = %+v, want %d empty prompt", msg, codeInvalidParams)
 	}
+}
+
+// recvRequest waits for a specific server-initiated request, skipping
+// session/update notifications (a permission request is preceded by the
+// pending tool_call it belongs to).
+func (h *acpHarness) recvRequest(t *testing.T, method string) Message {
+	t.Helper()
+	for i := 0; i < 8; i++ {
+		msg := h.recv(t)
+		if msg.Method == method {
+			return msg
+		}
+	}
+	t.Fatalf("did not receive %s", method)
+	return Message{}
 }
 
 // reply sends a client response for a server-initiated request.
@@ -804,16 +950,29 @@ func TestServer_permissionAllow(t *testing.T) {
 	if err := h.send("session/prompt", 3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"exec something"}]}`, sid)); err != nil {
 		t.Fatal(err)
 	}
-	msg := h.recv(t)
-	if msg.Method != "session/request_permission" {
-		t.Fatalf("expected request_permission, got %+v", msg)
+	announced := h.recv(t)
+	if announced.Method != "session/update" {
+		t.Fatalf("expected the pending tool_call update first, got %+v", announced)
 	}
+	var announcedEnv updateEnvelope
+	if err := json.Unmarshal(announced.Params, &announcedEnv); err != nil {
+		t.Fatalf("announce envelope: %v", err)
+	}
+	var announcedCall ToolCallUpdate
+	if err := json.Unmarshal(announcedEnv.Update, &announcedCall); err != nil {
+		t.Fatalf("announce update: %v", err)
+	}
+	if announcedCall.SessionUpdate != UpdateToolCall || announcedCall.ToolCallID != "call-1" || announcedCall.Status != StatusPending {
+		t.Fatalf("pending tool_call = %+v, want tool_call call-1 pending", announcedCall)
+	}
+
+	msg := h.recvRequest(t, "session/request_permission")
 	var params RequestPermissionParams
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		t.Fatalf("request_permission params: %v", err)
 	}
-	if params.ToolCall.ToolCallID == "" || params.ToolCall.Title == "" {
-		t.Fatalf("permission request missing toolCall identity: %+v", params.ToolCall)
+	if params.ToolCall.ToolCallID != "call-1" || params.ToolCall.Title == "" {
+		t.Fatalf("permission request must reuse the call id: %+v", params.ToolCall)
 	}
 	if len(params.Options) == 0 {
 		t.Fatal("permission request missing options")
@@ -859,10 +1018,7 @@ func TestServer_permissionDenyRejected(t *testing.T) {
 	if err := h.send("session/prompt", 3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"exec something"}]}`, sid)); err != nil {
 		t.Fatal(err)
 	}
-	msg := h.recv(t)
-	if msg.Method != "session/request_permission" {
-		t.Fatalf("expected request_permission, got %+v", msg)
-	}
+	msg := h.recvRequest(t, "session/request_permission")
 	if err := h.reply(msg.ID, map[string]any{
 		"outcome": map[string]any{"outcome": "selected", "optionId": "reject-once"},
 	}); err != nil {
@@ -878,7 +1034,7 @@ func TestServer_permissionDenyRejected(t *testing.T) {
 			}
 			var up ToolCallUpdate
 			if err := json.Unmarshal(env.Update, &up); err == nil &&
-				up.Status == StatusFailed && strings.Contains(up.ToolCallID, "perm_") {
+				up.Status == StatusFailed && up.ToolCallID == "call-1" {
 				sawFailed = true
 			}
 		}
@@ -907,7 +1063,7 @@ func TestServer_permissionTimeoutDenies(t *testing.T) {
 	if err := h.send("session/prompt", 3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"exec something"}]}`, sid)); err != nil {
 		t.Fatal(err)
 	}
-	_ = h.recv(t) // the permission request
+	_ = h.recvRequest(t, "session/request_permission")
 	for i := 0; i < 8; i++ {
 		msg := h.recv(t)
 		if msg.Method == "" && msg.Error == nil {
@@ -978,7 +1134,7 @@ func TestServer_resourceLinkPromptPreserved(t *testing.T) {
 // TestServer_questionAutoAnswer (control-plane policy lives behind the
 // question tool; a full integration is in cmd/yaah tests).
 func TestServer_autoAnswerDefaultsOn(t *testing.T) {
-	s := NewServer(func(string) (Session, error) { return &fakeSession{id: "sess-test"}, nil }, "t", nil)
+	s := NewServer(func(BuildOptions) (Session, error) { return &fakeSession{id: "sess-test"}, nil }, "t", nil)
 	if !s.AutoAnswerQuestions || !s.AutoContinue {
 		t.Fatal("defaults must enable auto-answer/auto-continue")
 	}

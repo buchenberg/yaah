@@ -1189,6 +1189,19 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 		// empty, and choose has nothing to apply (#312/#318).
 		pv := opts.pathValidator
 		if workdir != "" {
+			// An unrestricted *session* validator must not widen the
+			// worktree lane. AllowHomeAccess=true on a root-less session
+			// validator (cmd/yaah wiring for the default local mode)
+			// encodes the legacy unrestricted posture of the main tree,
+			// not a policy a sub-agent should inherit — historically the
+			// session carried no validator at all here, and
+			// nil.WithWorkspaceRoot derived a fresh, home-restricted
+			// validator. Containment roots and deny patterns (a real
+			// constrained session) still inherit.
+			if pv != nil && pv.WorkspaceRoot == "" &&
+				pv.AllowHomeAccess && len(pv.DenyPatterns) == 0 {
+				pv = nil
+			}
 			pv = pv.WithWorkspaceRoot(workdir)
 		}
 		reg.SetPathValidator(pv)

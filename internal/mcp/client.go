@@ -22,6 +22,9 @@ type Manifest struct {
 	Transport string            `json:"transport,omitempty"` // "stdio" (default) or "http"
 	Framing   string            `json:"framing,omitempty"`   // stdio only: "" (auto), "newline", or "framed"
 	Headers   map[string]string `json:"headers,omitempty"`   // HTTP transport only
+	// Cwd is the working directory for a stdio server. Empty inherits
+	// the process working directory.
+	Cwd string `json:"-"`
 }
 
 // ServerTool represents a tool exposed by an MCP server.
@@ -95,6 +98,9 @@ func NewClient(name string, manifest Manifest) *Client {
 // starts the read loop that dispatches responses to pending calls.
 func (c *Client) Start(ctx context.Context) error {
 	c.cmd = exec.CommandContext(ctx, c.manifest.Command, c.manifest.Args...)
+	if c.manifest.Cwd != "" {
+		c.cmd.Dir = c.manifest.Cwd
+	}
 	c.cmd.Env = os.Environ()
 	for k, v := range c.manifest.Env {
 		c.cmd.Env = append(c.cmd.Env, k+"="+v)

@@ -22,6 +22,7 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 	v := s.view
 	ctrl := s.ctrlCh
 	appr := s.approveFn
+	apprCall := s.approveCallFn
 	s.mu.RUnlock()
 
 	if v == nil {
@@ -41,7 +42,9 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 	// forwarder, before it starts delivering live broker events.
 	loop.BeforeViewEvents = s.deliverPendingEvents
 
-	if appr != nil {
+	if apprCall != nil {
+		loop.ApproveCallFn = apprCall
+	} else if appr != nil {
 		loop.ApproveFn = appr
 	}
 

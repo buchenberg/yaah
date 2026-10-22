@@ -120,6 +120,9 @@ type DB struct {
 	embedder  Embedder
 	embMu     sync.Mutex
 	embedWarn embedWarnLimiter
+	// embeds tracks in-flight background embedding writes so Close can
+	// drain them before the SQL pool is closed.
+	embeds pendingEmbeds
 }
 
 // SetEmbedder configures the embedding model used for semantic search.
@@ -163,8 +166,12 @@ func Open(path string) (*DB, error) {
 	return d, nil
 }
 
-// Close closes the database connection.
+// Close drains in-flight background embedding writes (bounded by
+// embedDrainTimeout) and then closes the database connection. Draining first
+// keeps a short-lived process from racing its own embeds against the pool
+// shutdown.
 func (d *DB) Close() error {
+	d.embeds.drain(embedDrainTimeout)
 	return d.sql.Close()
 }
 
@@ -437,18 +444,32 @@ func (d *DB) AddMemory(e Entry) error {
 }
 
 // EmbedMemoryAsync embeds the text in a background goroutine and stores
-// the result. Returns a channel that closes when the embed completes, or
-// nil when no embedder is configured. Callers that need to wait for the
-// embedding (e.g. the memory_add tool) can read from the channel.
+// the result. Returns a channel that closes when the embed completes —
+// or immediately, with nothing written, when no embedder is configured
+// or the store is closing (a skipped embed is recovered by the reconcile
+// pass). Callers that need to wait for the embedding (e.g. the
+// memory_add tool) can read from the channel.
 func (d *DB) EmbedMemoryAsync(id, text string) <-chan struct{} {
 	embedder := d.Embedder()
 	if embedder == nil {
 		return nil
 	}
 	done := make(chan struct{})
+	// Drain cancels the context, so a slow embedding server cannot keep
+	// the write queued past a timed-out Close.
+	embedCtx, cancel := context.WithCancel(context.Background())
+	finish, ok := d.embeds.begin(cancel)
+	if !ok {
+		// Close has begun: skip the write rather than race the pool.
+		cancel()
+		close(done)
+		return done
+	}
 	go func() {
+		defer finish()
 		defer close(done)
-		emb, err := embedder.Embed(context.Background(), text)
+		defer cancel()
+		emb, err := embedder.Embed(embedCtx, text)
 		if err != nil {
 			d.recordEmbedFailure("embed_memory", err)
 			return

@@ -43,16 +43,30 @@ func (d *DB) AddMessage(m Message) error {
 
 // embedMessageAsync embeds the content in a background goroutine and
 // stores the result. Tool messages are skipped. Returns a channel that
-// closes when the embed completes, or nil when no embedder is configured.
+// closes when the embed completes — or immediately, with nothing
+// written, when no embedder is configured or the store is closing (a
+// skipped embed is recovered by the reconcile pass).
 func (d *DB) embedMessageAsync(id, role, content string) <-chan struct{} {
 	embedder := d.Embedder()
 	if embedder == nil || role != "user" && role != "assistant" || content == "" || id == "" {
 		return nil
 	}
 	done := make(chan struct{})
+	// Drain cancels the context, so a slow embedding server cannot keep
+	// the write queued past a timed-out Close.
+	embedCtx, cancel := context.WithCancel(context.Background())
+	finish, ok := d.embeds.begin(cancel)
+	if !ok {
+		// Close has begun: skip the write rather than race the pool.
+		cancel()
+		close(done)
+		return done
+	}
 	go func() {
+		defer finish()
 		defer close(done)
-		emb, err := embedder.Embed(context.Background(), content)
+		defer cancel()
+		emb, err := embedder.Embed(embedCtx, content)
 		if err != nil {
 			d.recordEmbedFailure("embed_message", err)
 			return

@@ -7,6 +7,8 @@ package yaah
 
 import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+
+	"github.com/buchenberg/yaah/internal/mcp"
 )
 
 // SessionOptions carries everything the CLI flags (and serve mode)
@@ -18,6 +20,17 @@ type SessionOptions struct {
 
 	// ResumeSessionID is --resume: restore a prior session by ID.
 	ResumeSessionID string
+
+	// Cwd is the session's working directory. Empty defers to the
+	// process working directory. ACP sets it per session so several
+	// sessions with different cwds can share one process without
+	// chdir.
+	Cwd string
+
+	// MCPManifests are additional MCP servers supplied by the client
+	// (ACP session/new or session/load). They are merged with the
+	// config-declared servers for this session only.
+	MCPManifests map[string]mcp.Manifest
 
 	// DirectiveOverrides are --directive flags (repeatable), prepended
 	// to config directives.
