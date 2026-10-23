@@ -4,8 +4,8 @@
 // the control-channel policy for a headless client, and the
 // session/request_permission bridge for tool approvals.
 //
-// Supported surface: initialize, session/new, session/load, session/prompt,
-// session/cancel, session/set_mode, session/update notifications with
+// Supported surface: initialize, authenticate, session/new, session/load,
+// session/prompt, session/cancel, session/set_mode, session/update notifications with
 // the agent_message_chunk, agent_thought_chunk, user_message_chunk
 // (replay), tool_call, tool_call_update, plan, and usage_update
 // variants, and session/request_permission back to the client for
@@ -74,8 +74,9 @@ type ImplementationInfo struct {
 }
 
 // InitializeResult is the result of the initialize handshake. The
-// server speaks protocol version 1 only; authMethods is always empty
-// so compliant clients will never send authenticate.
+// server speaks protocol version 1 only and advertises a static catalog
+// of agent-typed auth methods (staticAuthMethods); a client may answer
+// with authenticate naming one of them.
 type InitializeResult struct {
 	ProtocolVersion   int                `json:"protocolVersion"`
 	AgentCapabilities AgentCaps          `json:"agentCapabilities"`
@@ -121,9 +122,24 @@ type SessionCloseCaps struct{}
 // store; unknown ids succeed silently).
 type SessionDeleteCaps struct{}
 
-// AuthMethod is a placeholder struct; the list is always empty.
+// AuthMethod is one entry of the initialize response's authMethods
+// catalog. The schema's terminal variant requires `type: "terminal"`;
+// the agent variant has no `type` at all, and a method without one is
+// treated as agent-typed. yaah advertises agent-typed methods only (see
+// auth.go), so Type stays empty and omitempty drops it — never set it to
+// "terminal" unless the client enabled clientCapabilities.auth.terminal.
 type AuthMethod struct {
-	Type string `json:"type,omitempty"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Type        string `json:"type,omitempty"`
+}
+
+// AuthenticateParams are the params of the authenticate request.
+// methodId must name one of the methods the initialize response
+// advertised.
+type AuthenticateParams struct {
+	MethodID string `json:"methodId"`
 }
 
 // === session/new ===
@@ -181,12 +197,23 @@ type SessionLoadParams struct {
 // SessionInfo is one entry of a session/list result: enough metadata for
 // a client to show a session picker. cwd is the canonical absolute path
 // the session was created with; updatedAt is the ISO 8601 timestamp of
-// the last persisted activity.
+// the last persisted activity; _meta carries yaah's extensions.
 type SessionInfo struct {
-	SessionID string `json:"sessionId"`
-	Cwd       string `json:"cwd,omitempty"`
-	Title     string `json:"title,omitempty"`
-	UpdatedAt string `json:"updatedAt,omitempty"`
+	SessionID string       `json:"sessionId"`
+	Cwd       string       `json:"cwd,omitempty"`
+	Title     string       `json:"title,omitempty"`
+	UpdatedAt string       `json:"updatedAt,omitempty"`
+	Meta      *SessionMeta `json:"_meta,omitempty"`
+}
+
+// SessionMeta is the `_meta` extension object of a SessionInfo entry. ACP
+// reserves `_meta` for implementation-defined extras; yaah puts the
+// picker's message count there so a client can show session size without
+// loading anything. The object is omitted entirely when empty, and
+// messageCount is omitted when zero (a session with no persisted
+// messages).
+type SessionMeta struct {
+	MessageCount int `json:"messageCount,omitempty"`
 }
 
 // ListSessionsResult is the result of session/list. nextCursor, when

@@ -224,7 +224,7 @@ func initialize(t *testing.T, h *acpHarness) {
 		`"agentCapabilities"`,
 		`"loadSession":true`,
 		`"agentInfo"`,
-		`"authMethods":[]`,
+		`"authMethods":[{"id":`,
 		`"name":"yaah"`,
 	} {
 		if !strings.Contains(raw, want) {
@@ -234,6 +234,75 @@ func initialize(t *testing.T, h *acpHarness) {
 	if strings.Contains(raw, "serverInfo") || strings.Contains(raw, "protocol_version") {
 		t.Errorf("initialize result carries MCP-era fields: %s", raw)
 	}
+}
+
+// TestServer_initializeAdvertisesAuthMethods pins the authMethods wire
+// shape: a non-empty catalog of agent-typed methods, each with an id and
+// a name and none carrying a `type` — a "terminal" method would be
+// illegal here because the client did not enable the auth terminal
+// capability.
+func TestServer_initializeAdvertisesAuthMethods(t *testing.T) {
+	h := newACPHarness(t, &fakeSession{id: "sess-test"})
+	if err := h.send("initialize", 1, `{"protocolVersion":1,"clientCapabilities":{}}`); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		AuthMethods []struct {
+			ID          string `json:"id"`
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Type        string `json:"type"`
+		} `json:"authMethods"`
+	}
+	if err := json.Unmarshal(h.recv(t).Result, &result); err != nil {
+		t.Fatalf("initialize result: %v", err)
+	}
+	if len(result.AuthMethods) == 0 {
+		t.Fatal("initialize advertised no auth methods")
+	}
+	for i, m := range result.AuthMethods {
+		if m.ID == "" || m.Name == "" {
+			t.Errorf("authMethods[%d] = %+v, want id and name", i, m)
+		}
+		if m.Type != "" {
+			t.Errorf("authMethods[%d] (%s) sets type %q; agent methods omit type", i, m.ID, m.Type)
+		}
+	}
+}
+
+// TestServer_authenticate pins the authenticate contract: a declared
+// method id succeeds with an empty result object, an undeclared one is
+// invalid params, and neither path requires a credential to be present.
+func TestServer_authenticate(t *testing.T) {
+	t.Run("declared method succeeds with an empty result", func(t *testing.T) {
+		h := newACPHarness(t, &fakeSession{id: "sess-test"})
+		initialize(t, h)
+		if err := h.send("authenticate", 2, `{"methodId":"openai-api-key"}`); err != nil {
+			t.Fatal(err)
+		}
+		msg := h.recv(t)
+		if msg.Error != nil {
+			t.Fatalf("authenticate error: %+v", msg.Error)
+		}
+		if got := strings.TrimSpace(string(msg.Result)); got != "{}" {
+			t.Fatalf("authenticate result = %s, want empty object", got)
+		}
+	})
+
+	t.Run("unknown method is invalid params", func(t *testing.T) {
+		h := newACPHarness(t, &fakeSession{id: "sess-test"})
+		initialize(t, h)
+		if err := h.send("authenticate", 2, `{"methodId":"not-a-method"}`); err != nil {
+			t.Fatal(err)
+		}
+		msg := h.recv(t)
+		if msg.Error == nil || msg.Error.Code != codeInvalidParams {
+			t.Fatalf("response = %+v, want %d invalid params", msg, codeInvalidParams)
+		}
+		if !strings.Contains(msg.Error.Message, "not-a-method") {
+			t.Errorf("error message %q does not name the rejected method", msg.Error.Message)
+		}
+	})
 }
 
 // newSession performs the handshake and creates a session, returning
