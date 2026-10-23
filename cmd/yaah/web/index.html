@@ -348,7 +348,7 @@ dialog article{max-width:480px;min-width:320px}
   </div>
 </div>
 
-<dialog x-ref="dlg">
+<dialog x-ref="dlg" @close="modal.type === 'continue' && modal.aid && allow('no')">
   <article>
     <header x-text="modal.title"></header>
     <template x-if="modal.type === 'question'">
@@ -369,6 +369,12 @@ dialog article{max-width:480px;min-width:320px}
         <pre x-show="modal.args" x-text="modal.args"></pre>
       </div>
     </template>
+    <template x-if="modal.type === 'continue'">
+      <div>
+        <p x-text="modal.q"></p>
+        <p><small>The run stops here unless the agent is told to keep going.</small></p>
+      </div>
+    </template>
     <footer>
       <template x-if="modal.type === 'question'">
         <button class="contrast" @click="ask()">Confirm</button>
@@ -377,6 +383,12 @@ dialog article{max-width:480px;min-width:320px}
         <div style="display:flex;gap:.5rem;justify-content:flex-end">
           <button @click="allow(false)">Deny</button>
           <button class="contrast" @click="allow(true)">Allow</button>
+        </div>
+      </template>
+      <template x-if="modal.type === 'continue'">
+        <div style="display:flex;gap:.5rem;justify-content:flex-end">
+          <button @click="allow('no')">Stop</button>
+          <button class="contrast" @click="allow('yes')">Continue</button>
         </div>
       </template>
     </footer>
@@ -542,8 +554,27 @@ document.addEventListener('alpine:init', () => {
             if (row && d.model) row.subModel = d.model
             this.status = 'ready'; break
           }
+          case 'ctrl.continue':
+            // The agent hit its iteration cap and is blocked on an answer.
+            // Without this handler the run deadlocked: the loop waited on
+            // AnswerCh while the client silently ignored the event.
+            this.modal = {
+              type: 'continue', title: 'Iteration limit',
+              q: 'The agent reached its limit of ' + (d.max_iter || 'the configured number of') +
+                 ' iterations. Continue the run?',
+              opts: [], multi: false, name: '', args: '', aid: d.id
+            }
+            this.$refs.dlg.showModal()
+            break
+          case 'ctrl.state':
+            // Catch-up frame on connect: reconcile the live flag with the
+            // server instead of assuming a reconnect means an idle agent.
+            this.live = !!d.running
+            if (!this.live) { this.think = ''; this.stream = '' }
+            break
           case 'done':
             if (this.stream) { this.add('asst', this.stream); this.stream = '' }
+            else if (d.response) { this.add('asst', d.response) }
             for (const id in this._tools) {
               const t = this._tools[id]
               t.running = false
@@ -686,7 +717,12 @@ document.addEventListener('alpine:init', () => {
         this.post({type:'answer', id:this.modal.aid, value: this.modal.multi ? v.join(',') : (v[0]||'')})
         this.$refs.dlg.close()
       },
-      allow(v) { this.post({type:'answer', id:this.modal.aid, value: String(v)}); this.$refs.dlg.close() },
+      allow(v) {
+        const id = this.modal.aid
+        this.modal.aid = null
+        if (id) this.post({type:'answer', id, value: String(v)}).catch(() => {})
+        this.$refs.dlg.close()
+      },
 
       // colon-command typeahead
       cmdList: [
@@ -827,15 +863,26 @@ document.addEventListener('alpine:init', () => {
         this.cmdOpen = false
         this.add('user', t); el.value = ''; el.style.height = 'auto'
         this.live = true; this.think = ''; this.reasonExpanded = false
-        this.post({type:'prompt', text: t}); this.scroll()
+        // Roll back if the prompt never left: otherwise a rejected or dropped
+        // request left the composer disabled until a manual reload.
+        this.post({type:'prompt', text: t}).catch(() => {
+          this.live = false; this.think = ''
+          this.add('error', 'prompt was not delivered — press Send to retry')
+        })
+        this.scroll()
       },
 
       stop() { this.post({type:'abort'}) },
       post(body) {
-        fetch('/api/action', {method:'POST', headers:{'Content-Type':'application/json', 'X-Yaah-Token': _token}, body:JSON.stringify(body)})
+        // Returns a promise that rejects on any non-2xx or network failure, so
+        // callers can roll back optimistic state. Swallowing the rejection left
+        // the UI claiming a run had started when the server never saw it.
+        return fetch('/api/action', {method:'POST', headers:{'Content-Type':'application/json', 'X-Yaah-Token': _token}, body:JSON.stringify(body)})
           .then(r => {
-            if (r.status === 409) this.status = 'agent is busy'
-            else if (r.status === 401) this.status = 'unauthorized — reload with the token URL from the terminal'
+            if (r.status === 409) { this.status = 'agent is busy'; throw new Error('busy') }
+            if (r.status === 401) { this.status = 'unauthorized — reload with the token URL from the terminal'; throw new Error('unauthorized') }
+            if (!r.ok) { this.status = 'request failed (' + r.status + ')'; throw new Error('request failed') }
+            return r.json().catch(() => null)
           })
       }
     }
