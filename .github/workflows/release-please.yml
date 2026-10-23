@@ -35,6 +35,9 @@ jobs:
           - { goos: linux,   goarch: amd64 }
           - { goos: linux,   goarch: arm64 }
           - { goos: windows, goarch: amd64 }
+          # The ACP registry manifest needs a key for all six platforms, so
+          # windows-aarch64 must exist even though it is the least used.
+          - { goos: windows, goarch: arm64 }
     steps:
       - name: checkout
         uses: actions/checkout@v4
@@ -71,11 +74,34 @@ jobs:
           ldflags="$ldflags -X github.com/buchenberg/yaah/cmd/yaah.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           go build -trimpath -ldflags "$ldflags" -o "$out" .
 
+      # The registry manifest's distribution.binary map needs a per-platform
+      # archive, not a bare binary: flat, canonical key, .tar.gz or .zip, with
+      # yaah (or yaah.exe) at the extract root so cmd can be "./yaah". The
+      # bare binary above is still uploaded — `yaah update` looks for
+      # yaah-<goos>-<goarch>[.exe] and would break if this replaced it.
+      - name: package registry archive
+        shell: bash
+        env:
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          bin=dist/yaah-${{ matrix.goos }}-${{ matrix.goarch }}
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            bin="${bin}.exe"
+          fi
+          scripts/package-release.sh \
+            --goos "${{ matrix.goos }}" \
+            --goarch "${{ matrix.goarch }}" \
+            --binary "$bin" \
+            --version "$TAG_NAME" \
+            --outdir dist
+
       - name: upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: yaah-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/yaah-${{ matrix.goos }}-${{ matrix.goarch }}*
+          # Whole dist dir: the bare binary (for `yaah update`) plus the
+          # registry archive and its sha256 line.
+          path: dist/*
           if-no-files-found: error
 
   upload:
@@ -96,8 +122,37 @@ jobs:
       - name: generate checksums
         run: |
           cd dist
+          # Covers the bare binaries and the registry archives: the archives
+          # are named yaah-<tag>-<platform-key>.{tar.gz,zip}. The per-job
+          # sha256sums.txt files carry the same values and would only collide
+          # after merge-multiple, so drop them.
+          rm -f sha256sums.txt
           sha256sum yaah-* > checksums.txt
           cat checksums.txt
+
+      - name: verify archives resolve the manifest cmd
+        run: |
+          # Mirror the registry's launch probe: extract each archive and check
+          # that the manifest's cmd ("./yaah", "./yaah.exe") resolves from the
+          # EXTRACT ROOT. A nested tarball or a non-executable bit fails here
+          # rather than in a client.
+          cd dist
+          fail=0
+          for a in yaah-*.tar.gz; do
+            [ -f "$a" ] || continue
+            d=$(mktemp -d)
+            tar -xzf "$a" -C "$d"
+            if [ ! -x "$d/yaah" ]; then echo "FAIL $a: ./yaah missing or not executable"; fail=1; fi
+            rm -rf "$d"
+          done
+          for a in yaah-*.zip; do
+            [ -f "$a" ] || continue
+            d=$(mktemp -d)
+            unzip -q "$a" -d "$d"
+            if [ ! -f "$d/yaah.exe" ]; then echo "FAIL $a: yaah.exe missing at root"; fail=1; fi
+            rm -rf "$d"
+          done
+          [ "$fail" -eq 0 ] && echo "all archives resolve ./yaah from the extract root"
 
       - name: upload to release
         env:
