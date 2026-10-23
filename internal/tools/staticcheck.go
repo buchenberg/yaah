@@ -180,6 +180,12 @@ const (
 	staticcheckError = "error"
 )
 
+// exportDataVersionMismatch matches the exact line a stale analyzer produces
+// when it cannot read a newer toolchain's export data, e.g.
+// "version 5 > maximum supported 4". Compiled here rather than stored in a
+// package-level var so the failure path stays self-contained.
+var exportDataVersionMismatch = regexp.MustCompile(`version \d+ > maximum supported \d+`)
+
 // staleAnalyzerHint turns an out-of-date staticcheck into something a caller
 // can act on.
 //
@@ -191,21 +197,25 @@ const (
 // and could only report "source-reading only"; the workaround lived in
 // AGENTS.md rather than in the tool's own output (yaah-2vc).
 func staleAnalyzerHint(output string) string {
-	// Require the version comparison itself. "export data" on its own is not
-	// enough: a corrupt build cache, or an ordinary failure whose message
-	// happens to mention export data, would otherwise be diagnosed as a stale
-	// analyzer — confidently wrong advice is worse than none.
+	// Require the concrete version comparison. Matching a phrase is not
+	// enough: a corrupt build cache, a test fixture, or a user's own error
+	// text could otherwise be diagnosed as a stale analyzer, and confidently
+	// wrong advice is worse than none.
 	for _, line := range strings.Split(output, "\n") {
 		t := strings.TrimSpace(line)
 		if t == "" {
 			continue
 		}
-		l := strings.ToLower(t)
-		if strings.Contains(l, "maximum supported") {
-			return fmt.Sprintf(
-				"-- your staticcheck is too old for this Go toolchain (%s) — refresh it with: go install honnef.co/go/tools/cmd/staticcheck@latest --\n",
-				t)
+		// Anchor to the concrete comparison, not just the phrase. A message
+		// that merely contains "maximum supported" — a docs string in a test
+		// fixture, a user's own error text — must not be diagnosed as a stale
+		// analyzer.
+		if !exportDataVersionMismatch.MatchString(t) {
+			continue
 		}
+		return fmt.Sprintf(
+			"-- your staticcheck is too old for this Go toolchain (%s) — refresh it with: go install honnef.co/go/tools/cmd/staticcheck@latest --\n",
+			t)
 	}
 	return ""
 }

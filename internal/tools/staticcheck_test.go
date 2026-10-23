@@ -159,6 +159,13 @@ func TestStaleAnalyzerHint(t *testing.T) {
 			wantQuoted: "maximum supported",
 		},
 		{
+			// The phrase without the comparison must not diagnose anything:
+			// this is the "confidently wrong advice" case.
+			name:     "phrase without the version comparison gets no hint",
+			output:   "-: our policy says the maximum supported value is 4",
+			wantHint: false,
+		},
+		{
 			name:     "genuine compile failure gets no hint",
 			output:   "-: # example.com/pkg\n./x.go:3:2: undefined: nope",
 			wantHint: false,
