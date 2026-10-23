@@ -354,13 +354,16 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	ctrlCh := make(chan control.Msg, 64)
 	done := make(chan struct{})
 
+	// Install the session view inside the same critical section the teardown
+	// re-checks below. Done separately, a reload could slip between an
+	// ownership check and the clear, leaving the session detached from the
+	// live connection.
 	ws.mu.Lock()
 	ws.view = v
 	ws.sseDone = done
-	ws.mu.Unlock()
-
 	ws.sess.SetView(v)
 	ws.sess.SetCtrlCh(ctrlCh)
+	ws.mu.Unlock()
 
 	// Store ctrlCh for the question handler.
 	ws.ctrlChMu.Lock()
@@ -369,6 +372,13 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 
 	// Send meta and current todo state to the newly-connected client.
 	v.SendConnect()
+
+	// Catch-up frame. A reload or an EventSource auto-reconnect has no idea
+	// whether a run is still in flight, so the client reconciles its live
+	// flag from this instead of guessing. Without it, a run that finished
+	// while the tab was disconnected left the composer permanently busy.
+	running := ws.running.Load()
+	v.write(marshalWire(sseWireEvent{Type: "ctrl.state", Running: &running}))
 
 	// If the model list has already been fetched, deliver it immediately;
 	// otherwise the background fetch goroutine sends it when ready.
@@ -386,18 +396,50 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 
 	<-r.Context().Done()
 
-	ws.mu.Lock()
-	ws.view = nil
+	// Ownership-conditional teardown. On reload the browser opens the new
+	// stream (installing its view and ctrlCh) before this handler's context
+	// is cancelled, so an unconditional teardown here wiped state that now
+	// belongs to the newer connection: the live client was left with a nil
+	// view and a nil ctrlCh, so approvals and tool events never arrived and
+	// the composer stayed wedged.
+	owned := ws.releaseStream(v)
 	close(done)
-	ws.mu.Unlock()
+	if !owned {
+		return
+	}
 
-	// Clear ctrlCh when stream disconnects.
+	// Clear ctrlCh only when this handler still owns it.
 	ws.ctrlChMu.Lock()
-	ws.ctrlCh = nil
+	if ws.ctrlCh == ctrlCh {
+		ws.ctrlCh = nil
+	}
 	ws.ctrlChMu.Unlock()
 
-	ws.sess.SetView(agent.NoopView{})
-	ws.sess.SetCtrlCh(nil)
+	// Re-check under ws.mu before detaching the session. releaseStream having
+	// returned true only says no newer view existed at that instant; a reload
+	// may have installed one since, and that connection must keep its view.
+	ws.mu.Lock()
+	if ws.view == nil {
+		ws.sess.SetView(agent.NoopView{})
+		ws.sess.SetCtrlCh(nil)
+	}
+	ws.mu.Unlock()
+}
+
+// releaseStream uninstalls v as the active SSE view and reports whether it was
+// still the active one. A superseded handler — one whose request was cancelled
+// after a reload or an EventSource reconnect installed a newer view — must not
+// clear state that belongs to its successor, or the live client is left with a
+// nil view/ctrlCh and never sees another approval prompt.
+func (ws *webServer) releaseStream(v *sseView) (owned bool) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	if ws.view != v {
+		return false
+	}
+	ws.view = nil
+	ws.sseDone = nil
+	return true
 }
 
 func (ws *webServer) handleAction(w http.ResponseWriter, r *http.Request) {
