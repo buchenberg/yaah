@@ -374,6 +374,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	if db != nil {
 		toolReg.Register(&tools.MemorySearchTool{DB: db})
 		toolReg.Register(&tools.MemoryAddTool{DB: db})
+		toolReg.Register(&tools.MemoryPromoteTool{DB: db})
 		toolReg.Register(&tools.MemoryDeleteTool{DB: db})
 		toolReg.Register(&tools.MemoryUpdateTool{DB: db})
 		toolReg.Register(&tools.MemorySessionSearchTool{DB: db})

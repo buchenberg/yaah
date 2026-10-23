@@ -34,10 +34,12 @@ func buildSystemPrompt(cfg *config.Config, cwd string, db *memory.DB, resumeSess
 	if db != nil && resumeSessionID == "" {
 		systemPrompt += `
 ## Memory Guidelines
-- Use memory_search to find relevant memories before answering personal/project questions. This uses semantic vector search (understands paraphrases and meaning, not just keywords). Pass a tag to filter by category.
+- Use memory_search to find relevant memories before answering personal/project questions. This uses semantic vector search (understands paraphrases and meaning, not just keywords). Pass a tag to filter by category. Results default to cross-session facts; pass scope "session" (or "all") to also reach atoms distilled from earlier conversations.
 - When the user asks about past conversations or session history, use memory_search_sessions with an empty query to list recent transcripts.
 - Use memory_add to save important facts. Always include a tags array (e.g., ["user_info"], ["preferences"], ["project:yaah"], ["decision"]).
 - Use memory_update to correct stale facts (requires the memory ID). Use memory_delete to remove incorrect memories.
+- To correct a fact whose *claim* changed rather than its wording, prefer memory_add with supersedes set to the old atom's ID: the old atom is kept for audit, marked superseded, and drops out of recall.
+- Use memory_promote to move a session atom into the global tier once it proves to outlive the conversation it came from.
 - At the end of a conversation or when the user says goodbye, use memory_add to save a 2-3 line summary of key discussion points with tag ["session_summary"].`
 	}
 

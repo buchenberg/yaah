@@ -17,9 +17,12 @@ import (
 // configured, vector embeddings for semantic search.
 type MemorySearchTool struct {
 	DB *memory.DB
-	// Scope filters the search tier. Empty means ScopeGlobal: session-scoped
-	// atoms are working-context and must not leak into a default (cross-
-	// session) recall; a caller that wants them sets Scope explicitly.
+	// Scope is the default tier filter for the search. Empty means
+	// ScopeGlobal: session-scoped atoms are working-context and must not leak
+	// into a default (cross-session) recall; a caller that wants them sets
+	// Scope explicitly. The call's own "scope" argument outranks this
+	// default — the field exists so an unwidened search stays global, not so
+	// a search can never be widened.
 	Scope string
 }
 
@@ -34,7 +37,8 @@ func (t *MemorySearchTool) Schema() json.RawMessage {
 		"properties": {
 			"query": {"type": "string", "description": "The search query (empty to list all)"},
 			"tag": {"type": "string", "description": "Optional tag to filter by (e.g. 'user_info', 'preferences')"},
-			"top_k": {"type": "integer", "description": "Maximum number of results (default 10)"}
+			"top_k": {"type": "integer", "description": "Maximum number of results (default 10)"},
+			"scope": {"type": "string", "enum": ["global", "session", "all"], "description": "Tier filter. 'global' (default) returns facts that outlive any single session; 'session' returns atoms distilled from conversations, including past ones; 'all' spans both. Session atoms are excluded unless you ask for them."}
 		},
 		"required": []
 	}`)
@@ -49,6 +53,7 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 		Query string `json:"query"`
 		Tag   string `json:"tag"`
 		TopK  int    `json:"top_k"`
+		Scope string `json:"scope"`
 	}
 	if err := json.Unmarshal([]byte(args), &params); err != nil {
 		return "", fmt.Errorf("memory_search: invalid arguments: %w", err)
@@ -56,14 +61,28 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 	if params.TopK <= 0 {
 		params.TopK = 10
 	}
-	scope, err := memory.NormalizeScope(t.Scope)
+	scope := t.Scope
+	if params.Scope != "" {
+		// An explicit request outranks the instance default: the default
+		// exists so an unwidened search stays global, not so a search can
+		// never be widened.
+		scope = params.Scope
+	}
+	if scope == "" {
+		// An unwidened recall is global by design — session atoms are one
+		// conversation's working context and must not surface unless asked
+		// for. The store demands an explicit tier, so the default lives here,
+		// in the one place that is allowed to have one.
+		scope = memory.ScopeGlobal
+	}
+	scope, err := memory.NormalizeScopeFilter(scope)
 	if err != nil {
 		return "", fmt.Errorf("memory_search: %w", err)
 	}
 
 	if params.Query != "" && params.Tag == "" {
 		if vecResults, err := t.DB.SearchMemoryVectorScoped(ctx, params.Query, params.TopK, scope); err == nil && len(vecResults) > 0 {
-			return vectorResultsJSON(vecResults), nil
+			return formatVectorResults(vecResults), nil
 		}
 	}
 
@@ -73,34 +92,100 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args string) (string, er
 	}
 
 	if len(ftsResults) == 0 {
-		return "No matching memories found.", nil
+		return t.emptyHint(scope), nil
 	}
 
-	return entryListJSON(ftsResults), nil
+	return formatEntries(ftsResults), nil
 }
 
-func vectorResultsJSON(results []memory.VectorResult) string {
-	var lines []string
+// emptyHint explains a miss instead of dead-ending on it. The usual cause is a
+// default (global-only) recall against a store whose knowledge is mostly
+// session atoms — reporting a bare "not found" is exactly what made 149 of 152
+// atoms look like they did not exist.
+func (t *MemorySearchTool) emptyHint(scope string) string {
+	const miss = "No matching memories found."
+	if scope != memory.ScopeGlobal || t.DB == nil {
+		return miss
+	}
+	n, err := t.DB.CountMemories(memory.ScopeSession)
+	if err != nil || n == 0 {
+		return miss
+	}
+	return fmt.Sprintf(`%s %d session-scoped atom(s) distilled from earlier conversations are excluded by the default scope — re-run with scope "session" or "all" to search them.`, miss, n)
+}
+
+// entryLine renders one hit. Tier and age are part of the line because a
+// recall is only as useful as the reader's ability to weigh it: a durable
+// global fact and a session atom from four days ago deserve different trust,
+// and that cannot be read off the text alone.
+func entryLine(id, tags, scope, text string, createdAt int64, score *float32) string {
+	var b strings.Builder
+	b.WriteString("- [")
+	b.WriteString(id)
+	b.WriteString("]")
+	if meta := entryMeta(scope, createdAt); meta != "" {
+		b.WriteString(" (")
+		b.WriteString(meta)
+		b.WriteString(")")
+	}
+	if tags != "" && tags != "null" {
+		b.WriteString(" ")
+		b.WriteString(tags)
+	}
+	b.WriteString(" ")
+	b.WriteString(text)
+	if score != nil {
+		fmt.Fprintf(&b, "  (score: %.2f)", *score)
+	}
+	return b.String()
+}
+
+// entryMeta renders the tier and a coarse age, e.g. "global, 3d ago".
+func entryMeta(scope string, createdAt int64) string {
+	parts := make([]string, 0, 2)
+	if scope != "" {
+		parts = append(parts, scope)
+	}
+	if age := memoryAge(createdAt); age != "" {
+		parts = append(parts, age)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// memoryAge renders a creation timestamp as a deliberately coarse age. A reader
+// needs "old durable fact" versus "last turn", not a minute.
+func memoryAge(createdAt int64) string {
+	if createdAt <= 0 {
+		return ""
+	}
+	d := time.Since(time.Unix(createdAt, 0))
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	case d < 7*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	default:
+		return fmt.Sprintf("%dw ago", int(d.Hours())/24/7)
+	}
+}
+
+func formatEntries(results []memory.Entry) string {
+	lines := make([]string, 0, len(results))
 	for _, r := range results {
-		id := r.ID
-		tag := ""
-		if r.Tags != "" && r.Tags != "null" {
-			tag = " " + r.Tags
-		}
-		lines = append(lines, fmt.Sprintf("- [%s]%s %s  (score: %.2f)", id, tag, r.Text, r.Score))
+		lines = append(lines, entryLine(r.ID, r.Tags, r.Scope, r.Text, r.CreatedAt, nil))
 	}
 	return strings.Join(lines, "\n")
 }
 
-func entryListJSON(results []memory.Entry) string {
-	var lines []string
+func formatVectorResults(results []memory.VectorResult) string {
+	lines := make([]string, 0, len(results))
 	for _, r := range results {
-		id := r.ID
-		tag := ""
-		if r.Tags != "" && r.Tags != "null" {
-			tag = " " + r.Tags
-		}
-		lines = append(lines, fmt.Sprintf("- [%s]%s %s", id, tag, r.Text))
+		score := r.Score
+		lines = append(lines, entryLine(r.ID, r.Tags, r.Scope, r.Text, r.CreatedAt, &score))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -133,7 +218,8 @@ func (t *MemoryAddTool) Schema() json.RawMessage {
 		"properties": {
 			"text": {"type": "string", "description": "The memory note text"},
 			"tags": {"type": "string", "description": "Optional JSON array of tags"},
-			"scope": {"type": "string", "enum": ["session", "global"], "description": "Optional tier: 'session' for atoms distilled from this conversation, 'global' (default) for facts meant to outlive it"}
+			"scope": {"type": "string", "enum": ["session", "global"], "description": "Optional tier: 'session' for atoms distilled from this conversation, 'global' (default) for facts meant to outlive it"},
+			"supersedes": {"type": "string", "description": "Optional ID of an existing atom this one corrects or replaces. The older atom is marked superseded: kept for audit, no longer returned by memory_search."}
 		},
 		"required": ["text"]
 	}`)
@@ -145,12 +231,22 @@ func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error
 	}
 
 	var params struct {
-		Text  string `json:"text"`
-		Tags  string `json:"tags"`
-		Scope string `json:"scope"`
+		Text       string `json:"text"`
+		Tags       string `json:"tags"`
+		Scope      string `json:"scope"`
+		Supersedes string `json:"supersedes"`
 	}
 	if err := json.Unmarshal([]byte(args), &params); err != nil {
 		return "", fmt.Errorf("memory_add: invalid arguments: %w", err)
+	}
+
+	// Validate the supersede target before writing anything: a fact claiming to
+	// correct an atom that does not exist is a caller bug, and saving it anyway
+	// would leave the store holding a correction that corrects nothing.
+	if params.Supersedes != "" {
+		if _, err := t.DB.GetMemory(params.Supersedes); err != nil {
+			return "", fmt.Errorf("memory_add: cannot supersede %s: %w", params.Supersedes, err)
+		}
 	}
 
 	// Scope precedence: the call's own scope, then the tool's configured
@@ -182,7 +278,14 @@ func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error
 		return "", fmt.Errorf("memory_add: %w", err)
 	}
 	if dupID != "" {
-		return fmt.Sprintf("Memory already exists (id: %s): %s\nUse memory_search to retrieve this fact when relevant.", dupID, params.Text), nil
+		note := ""
+		if params.Supersedes != "" && params.Supersedes != dupID {
+			if err := t.DB.SupersedeMemory(params.Supersedes, dupID); err != nil {
+				return "", fmt.Errorf("memory_add: %w", err)
+			}
+			note = fmt.Sprintf("\nSuperseded %s with the existing atom.", params.Supersedes)
+		}
+		return fmt.Sprintf("Memory already exists (id: %s): %s\nUse memory_search to retrieve this fact when relevant.%s", dupID, params.Text, note), nil
 	}
 
 	// Embed the new entry synchronously so it is searchable immediately.
@@ -193,7 +296,59 @@ func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error
 		}
 	}
 
-	return fmt.Sprintf("Memory saved (id: %s): %s. This fact is now in persistent memory — use memory_search to recall it when relevant.", entry.ID, params.Text), nil
+	note := ""
+	if params.Supersedes != "" {
+		if err := t.DB.SupersedeMemory(params.Supersedes, entry.ID); err != nil {
+			return "", fmt.Errorf("memory_add: %w", err)
+		}
+		note = fmt.Sprintf(" It supersedes %s, which is kept for audit and no longer surfaced by search.", params.Supersedes)
+	}
+
+	return fmt.Sprintf("Memory saved (id: %s): %s. This fact is now in persistent memory — use memory_search to recall it when relevant.%s", entry.ID, params.Text, note), nil
+}
+
+// MemoryPromoteTool moves an atom from the session tier into the global tier,
+// so a fact that proved to outlive its conversation stops expiring with it.
+type MemoryPromoteTool struct {
+	DB *memory.DB
+}
+
+func (t *MemoryPromoteTool) Name() string { return "memory_promote" }
+func (t *MemoryPromoteTool) Description() string {
+	return prompts.ToolDescription("memory_promote")
+}
+
+func (t *MemoryPromoteTool) Schema() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"id": {"type": "string", "description": "The ID of the memory entry to promote — a session atom that turned out to be a durable fact"}
+		},
+		"required": ["id"]
+	}`)
+}
+
+func (t *MemoryPromoteTool) Execute(_ context.Context, args string) (string, error) {
+	if t.DB == nil {
+		return "", fmt.Errorf("memory database not available")
+	}
+	var params struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(args), &params); err != nil {
+		return "", fmt.Errorf("memory_promote: invalid arguments: %w", err)
+	}
+	if params.ID == "" {
+		return "", fmt.Errorf("memory_promote: id is required")
+	}
+	from, err := t.DB.PromoteMemory(params.ID)
+	if err != nil {
+		return "", fmt.Errorf("memory_promote: %w", err)
+	}
+	if from == memory.ScopeGlobal {
+		return fmt.Sprintf("Memory %s is already in the global tier; nothing to promote.", params.ID), nil
+	}
+	return fmt.Sprintf("Memory %s promoted from %s to %s: it now outlives any single session and appears in default recall.", params.ID, from, memory.ScopeGlobal), nil
 }
 
 // MemoryDeleteTool removes a memory entry by ID.

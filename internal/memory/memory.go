@@ -87,6 +87,12 @@ func truncateWithMarker(s string, max int) string {
 const (
 	ScopeGlobal  = "global"
 	ScopeSession = "session"
+
+	// ScopeAll is a read-path-only widening: it asks a search to span every
+	// tier. It is deliberately not a persistable tier — NormalizeScope
+	// rejects it — so no row can be written with scope = "all" and become
+	// invisible to a scope = ? filter.
+	ScopeAll = "all"
 )
 
 // NormalizeScope maps the empty scope to ScopeGlobal and lowercases the known
@@ -101,6 +107,25 @@ func NormalizeScope(scope string) (string, error) {
 		return ScopeSession, nil
 	default:
 		return "", fmt.Errorf("unknown memory scope %q (want %q or %q)", scope, ScopeSession, ScopeGlobal)
+	}
+}
+
+// NormalizeScopeFilter validates the tier filter of a read path. Unlike
+// NormalizeScope it accepts ScopeAll, because widening a query cannot make a
+// row unreachable the way writing an unknown tier can.
+//
+// It deliberately does not treat the empty string as "every tier". The store
+// used to read "" as "no predicate" while the tool layer read the same "" as
+// "global only", so one input meant opposite things a hundred lines apart.
+// Every read now has to name its tier.
+func NormalizeScopeFilter(scope string) (string, error) {
+	switch s := strings.ToLower(strings.TrimSpace(scope)); s {
+	case ScopeGlobal, ScopeSession, ScopeAll:
+		return s, nil
+	case "":
+		return "", fmt.Errorf("memory scope filter is required: name %q, %q, or %q", ScopeGlobal, ScopeSession, ScopeAll)
+	default:
+		return "", fmt.Errorf("unknown memory scope %q (want %q, %q, or %q)", scope, ScopeGlobal, ScopeSession, ScopeAll)
 	}
 }
 
@@ -473,6 +498,10 @@ func (d *DB) migrate() error {
 		{"sessions", "compacted_summary", "ALTER TABLE sessions ADD COLUMN compacted_summary TEXT DEFAULT ''"},
 		{"memory", "embedding", "ALTER TABLE memory ADD COLUMN embedding BLOB"},
 		{"memory", "digest", "ALTER TABLE memory ADD COLUMN digest TEXT"},
+		// Supersession: an atom contradicted or restated by a newer one is
+		// marked, never deleted, so the record survives for audit while
+		// dropping out of every read path. NULL means live.
+		{"memory", "superseded_by", "ALTER TABLE memory ADD COLUMN superseded_by TEXT"},
 		// schema v4 (docs/compaction-as-sleep.md §8 P3): the explicit tier
 		// column. The DEFAULT backfills existing rows, so the ALTER alone
 		// leaves no NULL scope behind.
@@ -690,7 +719,7 @@ func (d *DB) AddMemoryDedup(e Entry) (string, error) {
 	defer tx.Rollback()
 
 	var dupID string
-	err = tx.QueryRow(`SELECT id FROM memory WHERE digest = ? LIMIT 1`, digest).Scan(&dupID)
+	err = tx.QueryRow(`SELECT id FROM memory WHERE digest = ? AND superseded_by IS NULL LIMIT 1`, digest).Scan(&dupID)
 	if err == nil {
 		return dupID, nil
 	}
@@ -722,13 +751,18 @@ func (d *DB) SearchMemory(query string, limit int, tag ...string) ([]Entry, erro
 	if len(tag) > 0 {
 		tagFilter = tag[0]
 	}
-	return d.SearchMemoryScoped(query, limit, tagFilter, "")
+	return d.SearchMemoryScoped(query, limit, tagFilter, ScopeAll)
 }
 
-// SearchMemoryScoped is SearchMemory with an explicit scope (tier) filter: a
-// non-empty scope restricts the results to that tier, an empty one searches
-// every tier. Each returned entry carries its own Scope.
+// SearchMemoryScoped is SearchMemory with an explicit scope (tier) filter.
+// scope must name a tier: ScopeGlobal, ScopeSession, or ScopeAll. Each returned
+// entry carries its own Scope.
 func (d *DB) SearchMemoryScoped(query string, limit int, tagFilter, scope string) ([]Entry, error) {
+	scope, err := NormalizeScopeFilter(scope)
+	if err != nil {
+		return nil, err
+	}
+
 	const (
 		cols     = "id, text, tags, source, scope, created_at, COALESCE(accessed_at, 0), access_count"
 		colsJoin = "m.id, m.text, m.tags, m.source, m.scope, m.created_at, COALESCE(m.accessed_at, 0), m.access_count"
@@ -741,16 +775,19 @@ func (d *DB) SearchMemoryScoped(query string, limit int, tagFilter, scope string
 	if query != "" {
 		qual = "m."
 	}
-	where := make([]string, 0, 2)
+	where := make([]string, 0, 3)
 	args := make([]any, 0, 4)
 	if tagFilter != "" {
 		where = append(where, qual+"tags LIKE ?")
 		args = append(args, `%"`+strings.ReplaceAll(tagFilter, `"`, `""`)+`"%`)
 	}
-	if scope != "" {
+	if scope != ScopeAll {
 		where = append(where, qual+"scope = ?")
 		args = append(args, scope)
 	}
+	// A superseded atom is history: kept for audit, never surfaced, so a
+	// corrected fact cannot come back from the dead on the next recall.
+	where = append(where, qual+"superseded_by IS NULL")
 
 	var querySQL string
 	if query == "" {
@@ -816,13 +853,16 @@ type VectorResult struct {
 // surfaced via the rate-limited warning log and the OTel embed-failure
 // counter.
 func (d *DB) SearchMemoryVector(ctx context.Context, query string, limit int) ([]VectorResult, error) {
-	return d.SearchMemoryVectorScoped(ctx, query, limit, "")
+	return d.SearchMemoryVectorScoped(ctx, query, limit, ScopeAll)
 }
 
 // SearchMemoryVectorScoped is SearchMemoryVector with an explicit scope (tier)
-// filter: a non-empty scope restricts the candidate set to that tier, an empty
-// one searches every tier.
+// filter. scope must name a tier: ScopeGlobal, ScopeSession, or ScopeAll.
 func (d *DB) SearchMemoryVectorScoped(ctx context.Context, query string, limit int, scope string) ([]VectorResult, error) {
+	scope, err := NormalizeScopeFilter(scope)
+	if err != nil {
+		return nil, err
+	}
 	embedder := d.Embedder()
 	if embedder == nil {
 		return nil, nil
@@ -836,9 +876,9 @@ func (d *DB) SearchMemoryVectorScoped(ctx context.Context, query string, limit i
 	vecSQL := `
 		SELECT id, text, tags, source, scope, created_at, COALESCE(accessed_at, 0), access_count, COALESCE(embedding, '')
 		FROM memory
-		WHERE embedding IS NOT NULL`
+		WHERE embedding IS NOT NULL AND superseded_by IS NULL`
 	var vecArgs []any
-	if scope != "" {
+	if scope != ScopeAll {
 		vecSQL += ` AND scope = ?`
 		vecArgs = append(vecArgs, scope)
 	}
@@ -998,6 +1038,64 @@ func (d *DB) DeleteMemory(id string) error {
 	return nil
 }
 
+// SupersedeMemory marks oldID as superseded by newID. The row is kept for
+// audit but excluded from every read path, so a contradicted fact stops
+// surfacing instead of being silently retained beside its correction. A second
+// supersede of the same atom is an error: the first correction is the one that
+// counts, and silently re-pointing it would lose that provenance.
+func (d *DB) SupersedeMemory(oldID, newID string) error {
+	if oldID == newID {
+		return fmt.Errorf("memory %s cannot supersede itself", oldID)
+	}
+	result, err := d.sql.Exec(
+		`UPDATE memory SET superseded_by = ? WHERE id = ? AND superseded_by IS NULL`,
+		newID, oldID,
+	)
+	if err != nil {
+		return fmt.Errorf("supersede %s: %w", oldID, err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("%w: %s (missing or already superseded)", ErrMemoryNotFound, oldID)
+	}
+	return nil
+}
+
+// SupersededBy reports which atom superseded id, or "" when id is still live.
+func (d *DB) SupersededBy(id string) (string, error) {
+	var by sql.NullString
+	if err := d.sql.QueryRow(`SELECT superseded_by FROM memory WHERE id = ?`, id).Scan(&by); err != nil {
+		return "", err
+	}
+	return by.String, nil
+}
+
+// PromoteMemory moves an atom from the session tier into the global one and
+// returns the tier it came from. Promotion is one-way on purpose: a global fact
+// is a claim about the world, and a demoted atom would only be re-promoted (and
+// re-contested) on the next recall. Promoting an atom that is already global is
+// a no-op rather than an error, so a retry after a partial failure is safe.
+func (d *DB) PromoteMemory(id string) (string, error) {
+	var scope, supersededBy sql.NullString
+	err := d.sql.QueryRow(`SELECT scope, superseded_by FROM memory WHERE id = ?`, id).Scan(&scope, &supersededBy)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("%w: %s", ErrMemoryNotFound, id)
+	}
+	if err != nil {
+		return "", err
+	}
+	if supersededBy.Valid {
+		return "", fmt.Errorf("memory %s is superseded by %s; promote the replacement instead", id, supersededBy.String)
+	}
+	if scope.String == ScopeGlobal {
+		return scope.String, nil
+	}
+	if _, err := d.sql.Exec(`UPDATE memory SET scope = ? WHERE id = ?`, ScopeGlobal, id); err != nil {
+		return "", fmt.Errorf("promote %s: %w", id, err)
+	}
+	return scope.String, nil
+}
+
 // UpdateMemory updates the text of an existing memory entry.
 func (d *DB) UpdateMemory(id string, text string) error {
 	result, err := d.sql.Exec(`UPDATE memory SET text = ?, digest = ? WHERE id = ?`, text, memoryDigest(text), id)
@@ -1048,18 +1146,45 @@ func (d *DB) ReconcileMemoryDigests() (int, error) {
 
 // ListMemory returns the most recent memory entries.
 func (d *DB) ListMemory(limit int) ([]Entry, error) {
-	return d.ListMemoryScoped(limit, "")
+	return d.ListMemoryScoped(limit, ScopeAll)
 }
 
-// ListMemoryScoped returns the most recent memory entries, restricted to one
-// tier when scope is non-empty (empty lists every tier).
+// CountMemories reports how many entries live in the named tier: ScopeGlobal,
+// ScopeSession, or ScopeAll. It exists so a caller can say "there are memories
+// here, just not in the tier you searched" instead of reporting a bare miss.
+func (d *DB) CountMemories(scope string) (int, error) {
+	scope, err := NormalizeScopeFilter(scope)
+	if err != nil {
+		return 0, err
+	}
+	countSQL := `SELECT COUNT(*) FROM memory WHERE superseded_by IS NULL`
+	var args []any
+	if scope != ScopeAll {
+		countSQL += ` AND scope = ?`
+		args = append(args, scope)
+	}
+	var n int
+	if err := d.sql.QueryRow(countSQL, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count memory: %w", err)
+	}
+	return n, nil
+}
+
+// ListMemoryScoped returns the most recent memory entries, restricted to the
+// named tier (ScopeGlobal, ScopeSession, or ScopeAll).
 func (d *DB) ListMemoryScoped(limit int, scope string) ([]Entry, error) {
+	scope, err := NormalizeScopeFilter(scope)
+	if err != nil {
+		return nil, err
+	}
+
 	listSQL := `
 		SELECT id, text, tags, source, scope, COALESCE(session_id, ''), created_at, COALESCE(accessed_at, 0), access_count
-		FROM memory`
+		FROM memory
+		WHERE superseded_by IS NULL`
 	var listArgs []any
-	if scope != "" {
-		listSQL += ` WHERE scope = ?`
+	if scope != ScopeAll {
+		listSQL += ` AND scope = ?`
 		listArgs = append(listArgs, scope)
 	}
 	listSQL += ` ORDER BY created_at DESC LIMIT ?`

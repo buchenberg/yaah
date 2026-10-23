@@ -31,8 +31,17 @@ var memorySearchCmd = &cobra.Command{
 		defer db.Close()
 		initDBEmbedder(db)
 
+		// The CLI is the inspection view: it spans every tier unless asked to
+		// narrow. The agent tool defaults to global for a different reason —
+		// an unwidened recall there must not pull in another session's
+		// working context.
+		scope, err := memory.NormalizeScopeFilter(cliScopeFlag(cmd))
+		if err != nil {
+			return err
+		}
+
 		// Try vector search first, fall back to FTS5.
-		if vecResults, vErr := db.SearchMemoryVector(cmd.Context(), query, 10); vErr == nil && len(vecResults) > 0 {
+		if vecResults, vErr := db.SearchMemoryVectorScoped(cmd.Context(), query, 10, scope); vErr == nil && len(vecResults) > 0 {
 			cmd.Printf("Found %d result(s):\n\n", len(vecResults))
 			for _, r := range vecResults {
 				cmd.Printf("  %s  (score: %.2f)\n", Bold(r.Text), r.Score)
@@ -40,13 +49,13 @@ var memorySearchCmd = &cobra.Command{
 				if r.Tags != "" && r.Tags != "null" {
 					cmd.Printf("        tags: %s\n", Dim(r.Tags))
 				}
-				cmd.Printf("        %s\n", Dim(fmt.Sprintf("source: %s | created: %s", r.Source,
+				cmd.Printf("        %s\n", Dim(fmt.Sprintf("source: %s | scope: %s | created: %s", r.Source, r.Scope,
 					time.Unix(r.CreatedAt, 0).Format("2006-01-02 15:04"))))
 			}
 			return nil
 		}
 
-		results, err := db.SearchMemory(query, 10)
+		results, err := db.SearchMemoryScoped(query, 10, "", scope)
 		if err != nil {
 			return fmt.Errorf("search: %w", err)
 		}
@@ -63,7 +72,7 @@ var memorySearchCmd = &cobra.Command{
 			if r.Tags != "" && r.Tags != "null" {
 				cmd.Printf("        tags: %s\n", Dim(r.Tags))
 			}
-			cmd.Printf("        %s\n", Dim(fmt.Sprintf("source: %s | created: %s", r.Source,
+			cmd.Printf("        %s\n", Dim(fmt.Sprintf("source: %s | scope: %s | created: %s", r.Source, r.Scope,
 				time.Unix(r.CreatedAt, 0).Format("2006-01-02 15:04"))))
 		}
 		return nil
@@ -92,7 +101,15 @@ var memoryAddCmd = &cobra.Command{
 			Text:      text,
 			Tags:      tags,
 			Source:    "cli",
+			Scope:     memory.ScopeGlobal,
 			CreatedAt: time.Now().Unix(),
+		}
+		if scope, err := cmd.Flags().GetString("scope"); err == nil && scope != "" {
+			normalized, normErr := memory.NormalizeScope(scope)
+			if normErr != nil {
+				return normErr
+			}
+			entry.Scope = normalized
 		}
 
 		if err := db.AddMemory(entry); err != nil {
@@ -234,8 +251,20 @@ func formatStatsTime(unixSeconds int64) string {
 	return time.Unix(unixSeconds, 0).Format("2006-01-02 15:04")
 }
 
+// cliScopeFlag returns the --scope value, or ScopeAll when unset so an
+// unqualified CLI search spans every tier.
+func cliScopeFlag(cmd *cobra.Command) string {
+	scope, err := cmd.Flags().GetString("scope")
+	if err != nil || scope == "" {
+		return memory.ScopeAll
+	}
+	return scope
+}
+
 func init() {
 	memoryAddCmd.Flags().String("tags", "", "JSON array of tags (e.g. '[\"preference\",\"ui\"]')")
+	memoryAddCmd.Flags().String("scope", "", "Memory tier: global (default) or session")
+	memorySearchCmd.Flags().String("scope", "", "Tier filter: all (default), global, or session")
 	memoryCmd.AddCommand(memorySearchCmd)
 	memoryCmd.AddCommand(memoryAddCmd)
 	memoryCmd.AddCommand(memoryStatsCmd)

@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"database/sql"
 	"path/filepath"
 	"testing"
@@ -110,7 +111,7 @@ func TestMemoryScope_Filters(t *testing.T) {
 		scope string
 		want  int
 	}{
-		{"no filter sees every tier", "", 3},
+		{"all tiers", ScopeAll, 3},
 		{"session only", ScopeSession, 1},
 		{"global only", ScopeGlobal, 2},
 	}
@@ -124,7 +125,7 @@ func TestMemoryScope_Filters(t *testing.T) {
 				t.Fatalf("SearchMemoryScoped(%q) = %d results, want %d", tc.scope, len(got), tc.want)
 			}
 			for _, e := range got {
-				if tc.scope != "" && e.Scope != tc.scope {
+				if tc.scope != ScopeAll && e.Scope != tc.scope {
 					t.Fatalf("result scope = %q, want %q", e.Scope, tc.scope)
 				}
 			}
@@ -200,5 +201,116 @@ func TestMemoryScope_MigrationFromV3(t *testing.T) {
 	}
 	if got.Scope != ScopeSession {
 		t.Fatalf("scope = %q, want %q", got.Scope, ScopeSession)
+	}
+}
+
+// TestScopedReadsRejectEmptyFilter pins that the storage layer no longer reads
+// "" as "every tier". It used to mean "no predicate" down here while the tool
+// layer read the same "" as "global only", so one input had two opposite
+// meanings a hundred lines apart — the sort of ambiguity that hid this bug.
+func TestScopedReadsRejectEmptyFilter(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.SearchMemoryScoped("x", 10, "", ""); err == nil {
+		t.Error("SearchMemoryScoped accepted an empty scope filter")
+	}
+	if _, err := db.ListMemoryScoped(10, ""); err == nil {
+		t.Error("ListMemoryScoped accepted an empty scope filter")
+	}
+	if _, err := db.SearchMemoryVectorScoped(context.Background(), "x", 10, ""); err == nil {
+		t.Error("SearchMemoryVectorScoped accepted an empty scope filter")
+	}
+}
+
+// TestNormalizeScopeFilter covers the read-path tier filter. It differs from
+// the write-path NormalizeScope in exactly one way: it accepts ScopeAll, since
+// widening a query cannot strand a row the way writing an unknown tier can.
+func TestNormalizeScopeFilter(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{"empty is rejected", "", "", true},
+		{"global", ScopeGlobal, ScopeGlobal, false},
+		{"session", ScopeSession, ScopeSession, false},
+		{"all", ScopeAll, ScopeAll, false},
+		{"all is case and padding insensitive", "  ALL ", ScopeAll, false},
+		{"unknown tier", "project", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := NormalizeScopeFilter(tc.in)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("NormalizeScopeFilter(%q) = %q, want an error", tc.in, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("NormalizeScopeFilter(%q): %v", tc.in, err)
+			}
+			if got != tc.want {
+				t.Fatalf("NormalizeScopeFilter(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestScopeAllIsNotPersistable pins the one-way door that keeps ScopeAll
+// honest: it is a filter, never a stored tier. A row written with scope "all"
+// would be invisible to every scope = ? filter, which is the bug this whole
+// bead exists to remove.
+func TestScopeAllIsNotPersistable(t *testing.T) {
+	if _, err := NormalizeScope(ScopeAll); err == nil {
+		t.Fatal("NormalizeScope(ScopeAll) succeeded; \"all\" must stay read-path-only")
+	}
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := db.AddMemory(Entry{ID: "a1", Text: "unfilterable", Scope: ScopeAll, CreatedAt: 1}); err == nil {
+		t.Fatal("AddMemory(ScopeAll) succeeded; unfilterable rows must be impossible")
+	}
+}
+
+// TestSearchMemoryScoped_AllSpansTiers verifies ScopeAll actually widens the
+// query at the storage layer, which is what lets a fresh session recall atoms
+// distilled by an earlier one.
+func TestSearchMemoryScoped_AllSpansTiers(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	for _, e := range []Entry{
+		{ID: "g1", Text: "wigwams global", Scope: ScopeGlobal, CreatedAt: 1},
+		{ID: "s1", Text: "wigwams session", Scope: ScopeSession, CreatedAt: 2},
+	} {
+		if err := db.AddMemory(e); err != nil {
+			t.Fatalf("AddMemory(%s): %v", e.ID, err)
+		}
+	}
+	count := func(scope string) int {
+		t.Helper()
+		got, err := db.SearchMemoryScoped("wigwams", 10, "", scope)
+		if err != nil {
+			t.Fatalf("SearchMemoryScoped(%q): %v", scope, err)
+		}
+		return len(got)
+	}
+	if n := count(ScopeGlobal); n != 1 {
+		t.Fatalf("global search returned %d, want 1", n)
+	}
+	if n := count(ScopeSession); n != 1 {
+		t.Fatalf("session search returned %d, want 1", n)
+	}
+	if n := count(ScopeAll); n != 2 {
+		t.Fatalf("all search returned %d, want 2", n)
 	}
 }
