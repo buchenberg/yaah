@@ -33,11 +33,13 @@ var sessionsListCmd = &cobra.Command{
 		if limit <= 0 {
 			return fmt.Errorf("--limit must be positive")
 		}
-		// Canonicalize before opening the store, for two reasons: a rejected
-		// --cwd must not leave a freshly created state.db behind on a cold
-		// machine, and the value validated here is the value the registry
-		// filters on — so its own canonicalization is then a no-op instead of
-		// repeating the work.
+		// Canonicalize before opening the store: a rejected --cwd must not
+		// leave a freshly created state.db behind on a cold machine. The
+		// canonical value is what the filter then carries, so the registry's
+		// own pass (List still performs one) returns the same spelling rather
+		// than a differently-spelled equivalent. That pass is idempotent, not
+		// skipped — it stays because the ACP and picker callers rely on the
+		// registry to canonicalize for them.
 		cwd, err := cwdpath.Canonical(cwdFlag)
 		if err != nil {
 			return fmt.Errorf("--cwd: %v", err)
