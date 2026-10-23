@@ -275,14 +275,17 @@ func awaitModal(ctx context.Context, am *answerMap, id string, ansCh <-chan stri
 }
 
 func forwardCtrl(ctx context.Context, ch <-chan control.Msg, v *sseView, am *answerMap, idGen *atomic.Int64) {
-	// One modal at a time. The browser renders a single dialog, so a control
-	// item that needs an answer is held in this loop until the open one is
-	// resolved: emitting the next frame immediately overwrote the dialog the
-	// user was looking at and the first answer was lost forever. Holding the
-	// loop is safe — the control channel is buffered and its senders already
-	// bound their wait (ctrlSendTimeout for questions, a non-blocking send for
-	// max-iteration continuation) — and it orders modals exactly as the user
-	// will see them.
+	// This loop must never park on a pending answer. Every frame is delivered
+	// straight through and each prompt waits for its answer in its own
+	// goroutine: blocking here would stall later control frames and, once the
+	// channel filled, the producers feeding it — turning an unanswered dialog
+	// into a stalled agent.
+	//
+	// The cost is that two prompts arriving together both emit, and the
+	// browser's single dialog shows the later one. That is a pre-existing
+	// limitation of the client, not something this loop can fix; queueing
+	// modals client-side is the follow-up. What this loop does guarantee is
+	// that no answer id outlives its prompt (see awaitModal).
 	for {
 		select {
 		case msg, ok := <-ch:

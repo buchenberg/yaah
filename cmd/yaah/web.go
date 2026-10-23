@@ -148,12 +148,13 @@ func (ws *webServer) requireAuth(next http.Handler) http.Handler {
 			return
 		}
 		if q := r.URL.Query().Get("t"); q != "" && q == presented {
-			// Secure is set only when the request arrived over TLS. yaah
+			// Secure is set only when the request itself arrived over TLS. yaah
 			// binds to loopback and is normally used over plain
-			// http://127.0.0.1, where a Secure cookie is never sent back:
-			// auth would silently break after the first redirect. Behind a
-			// TLS-terminating proxy r.TLS is non-nil and the cookie is
-			// hardened.
+			// http://127.0.0.1, where a Secure cookie is never sent back, so
+			// marking it unconditionally would silently break auth after the
+			// first redirect. Note r.TLS is nil behind a TLS-terminating
+			// proxy unless the server is configured to trust its forwarding
+			// headers, so in that setup the cookie stays non-Secure.
 			http.SetCookie(w, &http.Cookie{
 				Name:     "yaah_token",
 				Value:    presented,
@@ -178,8 +179,9 @@ func (ws *webServer) requireAuth(next http.Handler) http.Handler {
 // stream through an EventSource on /api/stream. 'unsafe-inline' is therefore
 // required for script-src and style-src, default-src stays 'self', and
 // connect-src 'self' keeps the same-origin SSE connection working. Nothing on
-// the page submits a form or rewrites its base URL, so base-uri and
-// form-action are 'none'.
+// the page rewrites its base URL and the composer's <form> is handled
+// entirely in JS (preventDefault, no action), so base-uri and form-action
+// stay 'none'.
 // 'unsafe-eval' is required by Alpine: x-show/x-if/x-on expressions are
 // evaluated with new Function(), which a policy without it blocks — the page
 // then renders but nothing is reactive. 'unsafe-inline' covers the single
