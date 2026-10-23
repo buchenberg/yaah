@@ -11,6 +11,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/control"
+	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/toolfmt"
 )
 
@@ -34,9 +35,27 @@ type wireHeaderMeta struct {
 }
 
 type wireTodo struct {
-	Content  string `json:"content"`
-	Status   string `json:"status"`
-	Priority string `json:"priority,omitempty"`
+	ID      string `json:"id"`
+	Content string `json:"content"`
+	Status  string `json:"status"`
+	// Priority is always serialized: the absence of a priority is meaningful
+	// (the item simply has none) and omitempty made the field vanish from the
+	// frame, so the client saw two different row shapes.
+	Priority string `json:"priority"`
+}
+
+// wireTodoOf maps a todo-store item onto the SSE wire shape. ID is the item's
+// stable identity: the client keys per-row state (expansion, animation,
+// scroll anchoring) off it and only falls back to the array index when it is
+// empty, so dropping it reattached that state to the wrong todo after a
+// reorder (yaah-ljk).
+func wireTodoOf(item todo.Item) wireTodo {
+	return wireTodo{
+		ID:       item.ID,
+		Content:  item.Content,
+		Status:   item.Status,
+		Priority: item.Priority,
+	}
 }
 
 type sseWireEvent struct {
@@ -240,7 +259,33 @@ func (am *answerMap) cancel(id string) {
 	delete(am.pending, id)
 }
 
+// awaitModal blocks until the browser answers the outstanding prompt or the
+// stream is torn down, and always releases the answer slot. Registering an id
+// without releasing it leaked one map entry per question/approval/continue for
+// the lifetime of the server (yaah-fcg); every exit path — answered,
+// abandoned, superseded stream — releases it here.
+func awaitModal(ctx context.Context, am *answerMap, id string, ansCh <-chan string) (string, bool) {
+	defer am.cancel(id)
+	select {
+	case ans := <-ansCh:
+		return ans, true
+	case <-ctx.Done():
+		return "", false
+	}
+}
+
 func forwardCtrl(ctx context.Context, ch <-chan control.Msg, v *sseView, am *answerMap, idGen *atomic.Int64) {
+	// This loop must never park on a pending answer. Every frame is delivered
+	// straight through and each prompt waits for its answer in its own
+	// goroutine: blocking here would stall later control frames and, once the
+	// channel filled, the producers feeding it — turning an unanswered dialog
+	// into a stalled agent.
+	//
+	// The cost is that two prompts arriving together both emit, and the
+	// browser's single dialog shows the later one. That is a pre-existing
+	// limitation of the client, not something this loop can fix; queueing
+	// modals client-side is the follow-up. What this loop does guarantee is
+	// that no answer id outlives its prompt (see awaitModal).
 	for {
 		select {
 		case msg, ok := <-ch:
@@ -265,12 +310,18 @@ func forwardCtrl(ctx context.Context, ch <-chan control.Msg, v *sseView, am *ans
 					Header: m.Header, Question: m.Question,
 					Options: opts, Multi: m.Multiple,
 				}))
+				// Detached so the loop keeps draining: holding it here
+				// would stall delivery of every later control frame (and
+				// the producers feeding the channel) until this prompt was
+				// answered. awaitModal still releases the id on every exit
+				// path, so the map cannot grow without bound.
+				answerCh := m.AnswerCh
 				go func() {
-					select {
-					case ans := <-ansCh:
-						m.AnswerCh <- ans
-					case <-ctx.Done():
+					if ans, ok := awaitModal(ctx, am, id, ansCh); ok {
+						answerCh <- ans
 					}
+					// Stream gone: the question tool's own timeout
+					// supplies the fallback.
 				}()
 			case *control.Approval:
 				id := fmt.Sprintf("q%d", idGen.Add(1))
@@ -280,11 +331,10 @@ func forwardCtrl(ctx context.Context, ch <-chan control.Msg, v *sseView, am *ans
 					Type: "ctrl.approval", ID: id,
 					Name: m.Name, Args: m.Args,
 				}))
+				approveCh := m.ApproveCh
 				go func() {
-					select {
-					case ans := <-ansCh:
-						m.ApproveCh <- (ans == "true")
-					case <-ctx.Done():
+					if ans, ok := awaitModal(ctx, am, id, ansCh); ok {
+						approveCh <- (ans == "true")
 					}
 				}()
 			case *control.Continue:
@@ -296,18 +346,23 @@ func forwardCtrl(ctx context.Context, ch <-chan control.Msg, v *sseView, am *ans
 					ID:      id,
 					MaxIter: m.MaxIter,
 				}))
+				contCh := m.AnswerCh
 				go func() {
-					select {
-					case ans := <-ansCh:
-						m.AnswerCh <- (ans == "yes")
-					case <-ctx.Done():
-						m.AnswerCh <- false
+					ans, ok := awaitModal(ctx, am, id, ansCh)
+					if !ok {
+						// Stream torn down unanswered: tell the agent to
+						// stop rather than leave it waiting on an answer
+						// that can no longer arrive (the caller buffers
+						// this channel, so the send cannot block).
+						contCh <- false
+						return
 					}
+					contCh <- (ans == "yes")
 				}()
 			case *control.Todos:
 				items := make([]wireTodo, len(m.Items))
 				for i, item := range m.Items {
-					items[i] = wireTodo{Content: item.Content, Status: item.Status, Priority: item.Priority}
+					items[i] = wireTodoOf(item)
 				}
 				v.mu.Lock()
 				v.todos = items

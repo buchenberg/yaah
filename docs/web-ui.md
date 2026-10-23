@@ -25,7 +25,6 @@ Alpine.js + Pico CSS                  net/http + embed.FS
      │   (EventSource)                       │   (sseView.HandleEvent)
      ├── POST /api/action ───────────────────┤ prompt / abort / answer / compact / model / login / logout / steer
      │   (fetch JSON)                        │   (webServer.handleAction)
-     ├── GET /api/commands ─────────────────┤ slash-command list
      └── GET /api/sessions ─────────────────┤ session registry (read-only)
 ```
 

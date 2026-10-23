@@ -10,8 +10,15 @@
 <script src="purify.min.js"></script>
 <script defer src="alpine.min.js"></script>
 <style>
-:root{color-scheme:light dark;--wui-ok:#22c55e;--wui-warn:#facc15;--wui-err:#dc2626;--wui-err-text:#f87171;--wui-info:#60a5fa;--wui-muted:#9ca3af;--wui-off:#555}
-@media (prefers-color-scheme:light){:root{--wui-ok:#16a34a;--wui-warn:#a16207;--wui-err:#dc2626;--wui-err-text:#b91c1c;--wui-info:#2563eb;--wui-muted:#6b7280;--wui-off:#9ca3af}}
+:root{color-scheme:light dark;--wui-ok:#16a34a;--wui-warn:#a16207;--wui-err:#dc2626;--wui-err-text:#b91c1c;--wui-info:#2563eb;--wui-muted:#4b5563;--wui-off:#9ca3af;--wui-radius-sm:4px;--wui-radius:6px;--wui-radius-md:8px;--wui-radius-lg:10px;--wui-radius-xl:12px;--wui-radius-pill:20px;--wui-space-xs:.25rem;--wui-space-sm:.5rem;--wui-space-md:.75rem;--wui-space-lg:1rem;--wui-shadow-sm:0 2px 8px rgba(0,0,0,.18);--wui-shadow:0 4px 12px rgba(0,0,0,.25);--wui-shadow-lg:0 8px 24px rgba(0,0,0,.35);--wui-shadow-xl:0 4px 16px rgba(0,0,0,.3);--wui-mono:var(--pico-font-family-monospace,monospace)}
+/* Mirrors Pico's direction: light in :root, dark under the media query. The
+   previous arrangement declared dark accents in :root and light ones under
+   prefers-color-scheme:light, so any mismatch between the two queries paired
+   a light Pico palette with dark-tuned accents (~1.5-2:1 on white). */
+@media (prefers-color-scheme:dark){:root{--wui-ok:#22c55e;--wui-warn:#facc15;--wui-err:#dc2626;--wui-err-text:#f87171;--wui-info:#60a5fa;--wui-muted:#9ca3af;--wui-off:#555;--wui-shadow-sm:0 2px 8px rgba(0,0,0,.5);--wui-shadow:0 4px 12px rgba(0,0,0,.5);--wui-shadow-lg:0 8px 24px rgba(0,0,0,.6);--wui-shadow-xl:0 4px 16px rgba(0,0,0,.6)}}
+/* Visually hidden but announced by screen readers: used for the h1, the
+   composer label and the radio-group legend. */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}#log{scroll-behavior:auto!important}}
 [x-cloak]{display:none!important}
 body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
@@ -25,7 +32,7 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 .msg :where(ul,ol){padding-left:1.5rem;margin:.25rem 0}
 .msg :where(li){margin:0}
 .msg :where(pre){margin:.3rem 0;padding:.5rem;font-size:.8em}
-.msg :where(code){font-size:.85em;padding:0;background:0}
+.msg :where(code){font-size:.85em;padding:0;background:none}
 .msg :where(blockquote){margin:.3rem 0;padding:.2rem .8rem;border-left:3px solid var(--pico-muted-border-color)}
 .msg :where(table){font-size:.85em;margin:.3rem 0}
 .msg :where(th,td){padding:.15rem .4rem}
@@ -35,13 +42,14 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 /* tool messages — inline collapsible, matching TUI style */
 
 /* header bar */
-#head{display:flex;align-items:center;gap:1rem;padding:.5rem 1rem;background:var(--pico-card-background-color);border-bottom:1px solid var(--pico-muted-border-color);font-size:.85rem;font-family:var(--pico-font-family-monospace,monospace)}
+#head{display:flex;align-items:center;flex-wrap:wrap;min-width:0;gap:var(--wui-space-lg);padding:.5rem 1rem;background:var(--pico-card-background-color);border-bottom:1px solid var(--pico-muted-border-color);font-size:.85rem;font-family:var(--wui-mono)}
 #head .brand{font-weight:700;color:var(--pico-primary)}
-#head .meta{color:var(--pico-muted-color);flex:1}
-#head .mcp-badge{background:var(--pico-primary);color:var(--pico-primary-inverse);padding:.15rem .5rem;border-radius:8px;font-size:.75rem;cursor:pointer}
+#head .meta{color:var(--pico-muted-color);flex:1;min-width:0;overflow-wrap:anywhere}
+#head .mcp-badge{background:var(--pico-primary);color:var(--pico-primary-inverse);padding:.15rem var(--wui-space-sm);border-radius:var(--wui-radius-md);font-size:.75rem;cursor:pointer}
+#head .mcp-badge:focus-visible{outline:2px solid var(--pico-primary);outline-offset:2px}
 .mcp-wrap{position:relative}
-.mcp-drop{position:absolute;right:0;top:calc(100% + 6px);background:var(--pico-card-background-color);border:1px solid var(--pico-muted-border-color);border-radius:8px;padding:.5rem .75rem;min-width:220px;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,.25)}
-.mcp-item{display:flex;align-items:center;gap:.5rem;padding:.3rem 0;font-size:.8rem}
+.mcp-drop{position:absolute;right:0;top:calc(100% + 6px);background:var(--pico-card-background-color);border:1px solid var(--pico-muted-border-color);border-radius:var(--wui-radius-md);padding:var(--wui-space-sm) var(--wui-space-md);min-width:220px;max-width:calc(100vw - 1.5rem);z-index:100;box-shadow:var(--wui-shadow)}
+.mcp-item{display:flex;align-items:center;flex-wrap:wrap;gap:var(--wui-space-sm);padding:.3rem 0;font-size:.8rem}
 .mcp-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .mcp-dot.on{background:var(--wui-ok)}
 .mcp-dot.off{background:var(--wui-err)}
@@ -51,31 +59,34 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 
 /* command palette */
 .pal-wrap{position:relative}
-.pal-btn{font-family:inherit;font-size:.75rem;line-height:1.2;margin:0;width:auto;padding:.2rem .55rem;border:1px solid var(--pico-muted-border-color);border-radius:6px;background:transparent;color:var(--pico-muted-color);cursor:pointer;box-shadow:none;transition:border-color .15s,color .15s,background-color .15s}
+.pal-btn{font-size:.75rem;line-height:1.2;margin:0;width:auto;padding:.2rem .55rem;border:1px solid var(--pico-muted-border-color);border-radius:var(--wui-radius);background:transparent;color:var(--pico-muted-color);cursor:pointer;box-shadow:none;transition:border-color .15s,color .15s,background-color .15s}
 .pal-btn:hover,.pal-btn:focus-visible{border-color:var(--pico-primary);color:var(--pico-primary);background:color-mix(in srgb,var(--pico-primary) 10%,transparent);box-shadow:none}
-.pal-drop{position:absolute;right:0;top:calc(100% + 6px);width:340px;background:var(--pico-card-background-color);border:1px solid var(--pico-muted-border-color);border-radius:10px;z-index:100;box-shadow:0 8px 24px rgba(0,0,0,.35);overflow:hidden;animation:pal-in .13s ease-out}
+.pal-drop{position:absolute;right:0;top:calc(100% + 6px);width:340px;max-width:calc(100vw - 1.5rem);background:var(--pico-card-background-color);border:1px solid var(--pico-muted-border-color);border-radius:var(--wui-radius-lg);z-index:100;box-shadow:var(--wui-shadow-lg);overflow:hidden;animation:pal-in .13s ease-out}
 @keyframes pal-in{from{opacity:0;transform:translateY(-4px) scale(.98)}to{opacity:1;transform:none}}
 .pal-input-wrap{display:flex;align-items:center;gap:.5rem;padding:.55rem .75rem;border-bottom:1px solid var(--pico-muted-border-color)}
 .pal-prompt{color:var(--pico-primary);font-weight:700}
-.pal-input-wrap input{flex:1;margin:0;padding:0;border:0;background:transparent;box-shadow:none;color:var(--pico-color);font-size:.85rem;font-family:inherit}
+.pal-input-wrap input{flex:1;margin:0;padding:0;border:0;background:transparent;box-shadow:none;color:var(--pico-color);font-size:.85rem}
+/* the input is the palette's whole keyboard surface, so its focus ring is
+   drawn on the wrapper rather than stripped with nothing in its place */
 .pal-input-wrap input:focus,.pal-input-wrap input:focus-visible{outline:none;border:0;box-shadow:none;background:transparent}
+.pal-input-wrap:focus-within{outline:2px solid var(--pico-primary);outline-offset:-2px;border-radius:var(--wui-radius-sm)}
 .pal-list{max-height:320px;overflow-y:auto;padding:.35rem}
 .pal-group{font-size:.68rem;text-transform:uppercase;letter-spacing:.08em;color:var(--pico-muted-color);padding:.45rem .6rem .2rem}
-.pal-item{display:flex;align-items:center;gap:.5rem;padding:.4rem .6rem;border-radius:6px;cursor:pointer;font-size:.83rem}
+.pal-item{display:flex;align-items:center;gap:.5rem;padding:.4rem .6rem;border-radius:var(--wui-radius);cursor:pointer;font-size:.83rem}
 .pal-item.active,.pal-item:hover{background:color-mix(in srgb,var(--pico-primary) 16%,transparent)}
 .pal-icon{flex-shrink:0;width:1.1em;text-align:center;color:var(--pico-muted-color);font-size:.85em}
 .pal-item.current .pal-icon{color:var(--pico-primary)}
-.pal-label{color:var(--pico-color);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pal-label{flex:1;min-width:0;color:var(--pico-color);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pal-item.current .pal-label{color:var(--pico-primary)}
 .pal-hint{margin-left:auto;color:var(--pico-muted-color);font-size:.72rem;flex-shrink:0}
 .pal-item.disabled{opacity:.4;cursor:default}
 .pal-item.disabled:hover{background:transparent}
 .pal-empty{padding:.8rem .6rem;color:var(--pico-muted-color);font-size:.8rem;text-align:center}
 .pal-foot{display:flex;gap:.9rem;align-items:center;padding:.4rem .75rem;border-top:1px solid var(--pico-muted-border-color);color:var(--pico-muted-color);font-size:.7rem}
-.pal-kbd{border:1px solid var(--pico-muted-border-color);border-bottom-width:2px;border-radius:4px;padding:0 .3rem;font-size:.68rem;font-family:inherit;margin-right:.15rem}
+.pal-kbd{border:1px solid var(--pico-muted-border-color);border-bottom-width:2px;border-radius:var(--wui-radius-sm);padding:0 .3rem;font-size:.68rem;margin-right:.15rem}
 
 /* todo panel */
-#todos-wrap{border-bottom:1px solid var(--pico-muted-border-color);font-size:.8rem;font-family:var(--pico-font-family-monospace,monospace)}
+#todos-wrap{border-bottom:1px solid var(--pico-muted-border-color);font-size:.8rem;font-family:var(--wui-mono)}
 #todos-wrap .todos-head{display:flex;align-items:center;gap:.5rem;padding:.35rem 1rem;cursor:pointer;user-select:none;color:var(--pico-muted-color);background:transparent;border:0;box-shadow:none;font-weight:inherit;text-align:left}
 #todos-wrap .todos-head:hover{background:var(--pico-card-background-color)}
 #todos-wrap .todos-head .arrow{display:inline-block;transition:transform .2s}
@@ -84,25 +95,25 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 .todo-item{display:flex;align-items:baseline;gap:.35rem;padding:.15rem 0}
 .todo-status{flex-shrink:0;font-size:.9em;width:1.2em;text-align:center;color:var(--wui-muted)}
 .todo-prio{flex-shrink:0;font-size:.7em;padding:0 .25rem;border-radius:3px;text-transform:uppercase}
-.todo-prio.high{background:rgba(220,38,38,.2);color:var(--wui-err-text)}
-.todo-prio.medium{background:rgba(250,204,21,.2);color:var(--wui-warn)}
-.todo-prio.low{background:rgba(156,163,175,.2);color:var(--wui-muted)}
-.todo-content{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* tints are mixed from the theme's own accents so they follow light/dark */
+.todo-prio.high{background:color-mix(in srgb,var(--wui-err-text) 22%,transparent);color:var(--wui-err-text)}
+.todo-prio.medium{background:color-mix(in srgb,var(--wui-warn) 22%,transparent);color:var(--wui-warn)}
+.todo-prio.low{background:color-mix(in srgb,var(--wui-muted) 22%,transparent);color:var(--wui-muted)}
+.todo-content{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .todo-status.st-completed{color:var(--wui-ok)}
 .todo-status.st-in_progress{color:var(--wui-info)}
 .todo-status.st-cancelled{color:var(--wui-err-text)}
-.todo-time{flex-shrink:0;font-size:.75em;color:var(--pico-muted-color)}
 .tool{align-self:flex-start;max-width:90%;font-size:.8rem;margin:.15rem 0;cursor:pointer;user-select:none;background:transparent;border:0;box-shadow:none;font-weight:inherit;color:inherit;padding:0;text-align:left}
-.tool-head{display:flex;align-items:baseline;gap:.35rem;padding:.25rem 0;color:var(--pico-muted-color);font-family:var(--pico-font-family-monospace,monospace)}
+.tool-head{display:flex;align-items:baseline;gap:.35rem;padding:.25rem 0;color:var(--pico-muted-color);font-family:var(--wui-mono)}
 .tool-icon{flex-shrink:0;font-size:.85em}
 .tool-name{font-weight:600;color:var(--pico-color)}
-.tool-summary{color:var(--pico-muted-color);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tool-summary{flex:1;min-width:0;color:var(--pico-muted-color);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tool-head .tool-summary::before{content:'—';margin-right:.35rem;color:var(--pico-muted-border-color)}
 .tool-model{flex-shrink:0;font-size:.72em;color:var(--pico-muted-color);border:1px solid var(--pico-muted-border-color);border-radius:4px;padding:.05rem .35rem;white-space:nowrap}
 .tool-dur{flex-shrink:0;font-size:.75em;color:var(--pico-muted-color);margin-left:auto}
 .tool-err{color:var(--wui-err-text);font-weight:600}
 .tool-body{margin-top:.2rem}
-.tool-result{border:1px solid var(--pico-muted-border-color);border-radius:6px;padding:.5rem .65rem;font-size:.78rem;font-family:var(--pico-font-family-monospace,monospace);white-space:pre-wrap;word-wrap:break-word;max-height:280px;overflow-y:auto;background:var(--pico-card-background-color);line-height:1.35}
+.tool-result{border:1px solid var(--pico-muted-border-color);border-radius:var(--wui-radius);padding:.5rem .65rem;font-size:.78rem;font-family:var(--wui-mono);white-space:pre-wrap;word-wrap:break-word;max-height:280px;overflow-y:auto;background:var(--pico-card-background-color);line-height:1.35}
 
 /* running tool pulse */
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
@@ -110,50 +121,47 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 .tool:hover{background:color-mix(in srgb,var(--pico-primary) 6%,transparent);border-radius:6px}
 
 /* scroll-to-bottom button */
-.scroll-btn{position:sticky;bottom:0;align-self:center;background:var(--pico-card-background-color);border:1px solid var(--pico-muted-border-color);border-radius:20px;padding:.25rem .75rem;font-size:.8rem;cursor:pointer;color:var(--pico-muted-color);box-shadow:0 2px 8px rgba(0,0,0,.18);margin-top:-2rem;z-index:10;transition:opacity .2s,transform .2s}
+.scroll-btn{position:sticky;bottom:0;align-self:center;background:var(--pico-card-background-color);border:1px solid var(--pico-muted-border-color);border-radius:var(--wui-radius-pill);padding:.25rem .75rem;font-size:.8rem;cursor:pointer;color:var(--pico-muted-color);box-shadow:var(--wui-shadow-sm);margin-top:-2rem;z-index:10;transition:opacity .2s,transform .2s}
 .scroll-btn:hover{color:var(--pico-primary);border-color:var(--pico-primary)}
-
-/* smooth scrolling */
-#log{scroll-behavior:smooth}
-
-/* auto-resize transition */
-#prompt{transition:height .12s ease}
 
 /* colon-command dropdown */
 .cmd-wrap{position:relative;flex:1;display:flex;flex-direction:column-reverse}
-.cmd-drop{background:var(--pico-card-background-color);border:1px solid var(--pico-muted-border-color);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.25);max-height:260px;overflow-y:auto;margin-bottom:4px;animation:pal-in .12s ease-out;z-index:50}
-.cmd-drop .cmd-item{padding:.35rem .65rem;cursor:pointer;font-size:.8rem;font-family:var(--pico-font-family-monospace,monospace);display:flex;align-items:center;gap:.4rem}
+.cmd-drop{background:var(--pico-card-background-color);border:1px solid var(--pico-muted-border-color);border-radius:var(--wui-radius-md);box-shadow:var(--wui-shadow);max-height:260px;overflow-y:auto;margin-bottom:4px;animation:pal-in .12s ease-out;z-index:50}
+.cmd-drop .cmd-item{padding:.35rem .65rem;cursor:pointer;font-size:.8rem;font-family:var(--wui-mono);display:flex;align-items:center;gap:.4rem}
 .cmd-drop .cmd-item.active,.cmd-drop .cmd-item:hover{background:color-mix(in srgb,var(--pico-primary) 16%,transparent)}
 .cmd-drop .cmd-desc{color:var(--pico-muted-color);font-size:.75rem;margin-left:auto;flex-shrink:0}
 .cmd-steer-wrap{display:flex;align-items:center;gap:.35rem;padding:.35rem .65rem;border-bottom:1px solid var(--pico-muted-border-color)}
-.cmd-steer-wrap .cmd-prefix{color:var(--pico-primary);font-weight:700;font-family:var(--pico-font-family-monospace,monospace);font-size:.8rem;white-space:nowrap}
-.cmd-steer-wrap input{flex:1;margin:0;padding:.15rem .3rem;border:1px solid var(--pico-muted-border-color);border-radius:4px;font-size:.8rem;font-family:inherit;background:transparent;color:var(--pico-color)}
+.cmd-steer-wrap .cmd-prefix{color:var(--pico-primary);font-weight:700;font-family:var(--wui-mono);font-size:.8rem;white-space:nowrap}
+.cmd-steer-wrap input{flex:1;margin:0;padding:.15rem .3rem;border:1px solid var(--pico-muted-border-color);border-radius:var(--wui-radius-sm);font-size:.8rem;background:transparent;color:var(--pico-color)}
 .cmd-steer-wrap input:focus{outline:none;border-color:var(--pico-primary)}
 
 /* search overlay */
-.search-overlay{position:fixed;top:0;left:0;right:0;z-index:200;background:var(--pico-card-background-color);border-bottom:2px solid var(--pico-primary);padding:.6rem 1rem;display:flex;align-items:center;gap:.5rem;box-shadow:0 4px 16px rgba(0,0,0,.3);animation:pal-in .15s ease-out}
-.search-overlay input{flex:1;margin:0;padding:.3rem 0;border:0;background:transparent;color:var(--pico-color);font-size:1rem;font-family:inherit;box-shadow:none}
+.search-overlay{position:fixed;top:0;left:0;right:0;z-index:200;background:var(--pico-card-background-color);border-bottom:2px solid var(--pico-primary);padding:.6rem 1rem;display:flex;align-items:center;flex-wrap:wrap;gap:.5rem;box-shadow:var(--wui-shadow-lg);animation:pal-in .15s ease-out}
+.search-overlay input{flex:1;min-width:0;margin:0;padding:.3rem 0;border:0;background:transparent;color:var(--pico-color);font-size:1rem;box-shadow:none}
 .search-overlay input:focus{outline:none;border:0;box-shadow:none;background:transparent}
+/* the field is the overlay's keyboard surface, so the ring stripped above is
+   replaced instead of removed (a /-open reaches it with focus) */
+.search-overlay input:focus-visible{outline:2px solid var(--pico-primary);outline-offset:2px;border-radius:var(--wui-radius-sm)}
 .search-overlay .search-info{color:var(--pico-muted-color);font-size:.8rem;white-space:nowrap}
-.search-overlay .search-kbd{border:1px solid var(--pico-muted-border-color);border-radius:3px;padding:0 .25rem;font-size:.7rem;font-family:inherit}
+.search-overlay .search-kbd{border:1px solid var(--pico-muted-border-color);border-radius:3px;padding:0 .25rem;font-size:.7rem}
 
 /* help overlay */
 .help-overlay{position:fixed;top:0;left:0;right:0;bottom:0;z-index:200;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45)}
-.help-card{background:var(--pico-card-background-color);border:1px solid var(--pico-muted-border-color);border-radius:12px;padding:1.2rem 1.5rem;max-width:450px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.35);animation:pal-in .15s ease-out;max-height:80vh;overflow-y:auto}
+.help-card{background:var(--pico-card-background-color);border:1px solid var(--pico-muted-border-color);border-radius:var(--wui-radius-xl);padding:1.2rem 1.5rem;max-width:450px;width:90%;box-shadow:var(--wui-shadow-xl);animation:pal-in .15s ease-out;max-height:80vh;overflow-y:auto}
 .help-card h3{margin:0 0 .8rem;font-size:1.1rem}
 .help-card .help-cmd{display:flex;align-items:baseline;gap:.5rem;padding:.3rem 0;font-size:.85rem;border-bottom:1px solid var(--pico-muted-border-color)}
 .help-card .help-cmd:last-child{border-bottom:0}
-.help-card .help-name{font-family:var(--pico-font-family-monospace,monospace);font-weight:600;color:var(--pico-primary);flex-shrink:0;min-width:7rem}
+.help-card .help-name{font-family:var(--wui-mono);font-weight:600;color:var(--pico-primary);flex-shrink:0;min-width:7rem}
 .help-card .help-desc{color:var(--pico-muted-color)}
 .help-card .help-close{margin-top:.8rem}
 
 /* message search highlight */
-.msg.search-hit{outline:2px solid var(--pico-primary);outline-offset:2px;border-radius:4px}
+.msg.search-hit{outline:2px solid var(--pico-primary);outline-offset:2px;border-radius:var(--wui-radius-xl)}
 
 /* reasoning toggle */
 .reason-toggle{cursor:pointer;user-select:none;color:var(--pico-muted-color);font-size:.8rem;padding:.25rem 0;background:transparent;border:0;box-shadow:none;font-weight:inherit;text-align:left}
 .reason-toggle:hover{color:var(--pico-color)}
-.todos-head:focus-visible,.tool:focus-visible,.reason-toggle:focus-visible{outline:2px solid var(--pico-primary);outline-offset:2px;border-radius:6px}
+.todos-head:focus-visible,.tool:focus-visible,.reason-toggle:focus-visible{outline:2px solid var(--pico-primary);outline-offset:2px;border-radius:var(--wui-radius)}
 
 /* thinking bounce */
 .think{align-self:flex-start;padding:.6rem 1rem;border-radius:12px;border-bottom-left-radius:4px;font-size:.85rem;max-width:80%;background:var(--pico-card-background-color);color:var(--pico-muted-color)}
@@ -163,24 +171,39 @@ body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}
 @keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
 .reason{margin-top:.4rem;font-size:.8rem;max-height:120px;overflow-y:auto;white-space:pre-wrap;font-style:italic;color:var(--pico-muted-color)}
 
-#bar{display:flex;gap:.5rem;padding:.75rem 1rem;border-top:1px solid var(--pico-muted-border-color);align-items:stretch}
-#prompt{flex:1;resize:none;min-height:44px;max-height:160px}
+#bar{display:flex;gap:var(--wui-space-sm);margin:0;padding:.75rem 1rem;border-top:1px solid var(--pico-muted-border-color);align-items:stretch}
+#prompt{flex:1;resize:none;min-height:44px;max-height:160px;transition:height .12s ease}
 #bar button{align-self:stretch;margin:0}
 #foot{display:flex;justify-content:space-between;align-items:center;padding:.25rem 1rem;font-size:.75rem;border-top:1px solid var(--pico-muted-border-color);color:var(--pico-muted-color)}
 .led{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px;background:var(--wui-off);transition:background .2s}
 .led.on{background:var(--wui-ok)}
-.led.off{background:var(--wui-off)}
 .led.active{background:var(--wui-warn);animation:pulse-led 1s ease-in-out infinite}
 @keyframes pulse-led{0%,100%{opacity:1}50%{opacity:.3}}
-dialog article{max-width:480px;min-width:320px}
+
+/* modal: question / approval / continue */
+dialog article{max-width:480px;min-width:min(320px,100%)}
+.q-opts{margin:0;padding:0;border:0}
+.dlg-err{color:var(--wui-err-text);font-size:.8rem;margin:var(--wui-space-sm) 0 0}
+
+/* narrow viewports: no width queries existed, so anchored drops and the
+   header row used to overflow under ~360px */
+@media (max-width:480px){
+  #head{padding:.5rem .6rem;gap:var(--wui-space-sm)}
+  #log{padding:.6rem}
+  #bar{padding:.6rem;gap:var(--wui-space-xs)}
+  #foot{padding:.25rem .6rem}
+  .msg{max-width:95%}
+}
 </style>
 </head>
 <body x-data="yaah" x-cloak @keydown.window="globKey($event)">
 
   <!-- header bar -->
-  <div id="head">
-    <span class="brand">yaah</span>
+  <header id="head">
+    <h1 class="sr-only">yaah agent console</h1>
+    <span class="brand" aria-hidden="true">yaah</span>
     <span class="meta" x-text="head.provider ? head.provider + ' / ' + head.model : ''"></span>
+    <button type="button" class="pal-btn" @click="searchShow()" title="Search messages (/)" aria-label="Search messages">/</button>
     <div class="pal-wrap" @keydown.window="palKey($event)">
       <button class="pal-btn" @click="palToggle()" :title="'Command palette (' + palKeyLabel + ')'" x-text="palKeyLabel"></button>
       <div class="pal-drop" x-show="palOpen" @click.outside="palClose()">
@@ -224,7 +247,7 @@ dialog article{max-width:480px;min-width:320px}
         </template>
       </div>
     </div>
-  </div>
+  </header>
 
   <!-- todo panel -->
   <div id="todos-wrap" x-show="todos.length">
@@ -238,13 +261,13 @@ dialog article{max-width:480px;min-width:320px}
           <span class="todo-status" :class="'st-' + t.status" x-text="statusIcon(t.status)"></span>
           <span class="todo-prio" :class="t.priority" x-show="t.priority" x-text="t.priority"></span>
           <span class="todo-content" x-text="t.content"></span>
-          <span class="todo-time" x-show="t.created_at" x-text="shortTime(t.created_at)"></span>
         </div>
       </template>
     </div>
   </div>
 
-<div id="log" x-ref="log" role="log">
+<main id="main">
+<div id="log" x-ref="log" role="log" aria-label="Conversation">
   <template x-for="m in msgs" :key="m.id">
     <div>
       <!-- assistant / user / error messages -->
@@ -277,8 +300,11 @@ dialog article{max-width:480px;min-width:320px}
   </div>
   <div class="msg asst" x-show="stream" x-html="md(stream)" aria-live="off"></div>
 </div>
+</main>
 
-<div id="bar">
+<!-- composer -->
+<form id="bar" @submit.prevent="send()">
+  <label for="prompt" class="sr-only">Message yaah</label>
   <div class="cmd-wrap">
     <div class="cmd-drop" x-show="cmdOpen" @click.outside="cmdDismiss()">
       <template x-if="cmdSteerMode">
@@ -302,7 +328,7 @@ dialog article{max-width:480px;min-width:320px}
       </template>
     </div>
     <textarea id="prompt" rows="1" placeholder="Ask yaah…" x-ref="el" role="combobox" aria-haspopup="listbox" aria-controls="cmd-listbox" :aria-expanded="cmdOpen" :aria-activedescendant="cmdOpen && !cmdSteerMode && cmdFiltered().length ? 'cmd-opt-' + cmdIdx : null"
-      :disabled="(live && !cmdOpen) || cmdSteerMode"
+      :disabled="cmdSteerMode"
       @keydown.enter="!$event.shiftKey && ($event.preventDefault(), cmdOpen ? cmdRun() : send())"
       @keydown.escape="cmdOpen && ($event.preventDefault(), cmdDismiss())"
       @keydown.up="cmdOpen && ($event.preventDefault(), cmdMove(-1))"
@@ -310,29 +336,30 @@ dialog article{max-width:480px;min-width:320px}
       @input="autoResize(); cmdDetect()"
       autofocus></textarea>
   </div>
-  <button :disabled="live" @click="send()">Send</button>
-  <button x-show="live" class="secondary" @click="stop()">Stop</button>
-</div>
+  <button type="submit" :disabled="live">Send</button>
+  <button type="button" x-show="live" class="secondary" @click="stop()">Stop</button>
+</form>
 
-<div id="foot">
+<footer id="foot">
   <span><span class="led" :class="live ? 'active' : (on ? 'on' : 'off')" aria-hidden="true"></span><span x-text="status"></span></span>
   <span x-text="ctx ? ctx + '% context' : ''"></span>
-</div>
+</footer>
 
 <!-- search overlay -->
-<div class="search-overlay" x-show="searchOpen" @keydown.window.escape="searchClose()">
-  <input x-ref="searchInput" x-model="searchQuery" placeholder="Search messages…"
+<div class="search-overlay" x-show="searchOpen" role="search" aria-label="Search conversation" @keydown.window.escape="searchClose()">
+  <input x-ref="searchInput" x-model="searchQuery" placeholder="Search messages…" aria-label="Search messages"
     @input="searchIdx = 0; searchFind()"
     @keydown.enter.prevent="searchIdx++; searchFind()"
     autocomplete="off" spellcheck="false">
   <span class="search-info" x-show="searchTotal" x-text="searchInfo()"></span>
   <span class="search-info"><span class="search-kbd">esc</span> close</span>
+  <button type="button" class="pal-btn" @click="searchClose()" aria-label="Close search" title="Close (Esc)">✕</button>
 </div>
 
 <!-- help overlay -->
-<div class="help-overlay" x-show="helpOpen" @click.outside="helpOpen = false" @keydown.window.escape="helpOpen = false">
+<div class="help-overlay" x-show="helpOpen" role="dialog" aria-modal="true" aria-labelledby="help-title" @click.self="helpClose()" @keydown.window.escape="helpClose()" @keydown.tab.prevent="$refs.helpClose && $refs.helpClose.focus()">
   <div class="help-card">
-    <h3>Colon Commands</h3>
+    <h3 id="help-title">Colon Commands</h3>
     <div class="help-cmd"><span class="help-name">:compact</span><span class="help-desc">Compact context / free tokens</span></div>
     <div class="help-cmd"><span class="help-name">:model</span><span class="help-desc">Switch provider/model</span></div>
     <div class="help-cmd"><span class="help-name">:steer &lt;text&gt;</span><span class="help-desc">Inject steering message (while running)</span></div>
@@ -344,15 +371,16 @@ dialog article{max-width:480px;min-width:320px}
     <div class="help-cmd"><span class="help-name" x-text="palKeyLabel"></span><span class="help-desc">Command palette</span></div>
     <div class="help-cmd"><span class="help-name">:</span><span class="help-desc">Colon-command typeahead</span></div>
     <div class="help-cmd"><span class="help-name">/</span><span class="help-desc">Search messages</span></div>
-    <button class="help-close secondary" @click="helpOpen = false">Close</button>
+    <button type="button" class="help-close secondary" x-ref="helpClose" @click="helpClose()">Close</button>
   </div>
 </div>
 
-<dialog x-ref="dlg" @close="modal.type === 'continue' && modal.aid && allow('no')">
+<dialog x-ref="dlg" aria-labelledby="dlg-title" @close="modal.type === 'continue' && modal.aid && allow('no')" @cancel.prevent="dlgCancel()">
   <article>
-    <header x-text="modal.title"></header>
+    <header id="dlg-title" x-text="modal.title"></header>
     <template x-if="modal.type === 'question'">
-      <div>
+      <fieldset class="q-opts">
+        <legend class="sr-only">Answer</legend>
         <p x-text="modal.q"></p>
         <template x-for="(o, i) in modal.opts" :key="i">
           <label>
@@ -361,7 +389,7 @@ dialog article{max-width:480px;min-width:320px}
             <small x-show="o.description" x-text="' — ' + o.description"></small>
           </label>
         </template>
-      </div>
+      </fieldset>
     </template>
     <template x-if="modal.type === 'approval'">
       <div>
@@ -375,6 +403,7 @@ dialog article{max-width:480px;min-width:320px}
         <p><small>The run stops here unless the agent is told to keep going.</small></p>
       </div>
     </template>
+    <p class="dlg-err" x-show="modal.err" x-text="modal.err" role="alert"></p>
     <footer>
       <template x-if="modal.type === 'question'">
         <button class="contrast" @click="ask()">Confirm</button>
@@ -406,7 +435,18 @@ const _token = new URLSearchParams(location.search).get('t') || ''
 // render converts assistant markdown to sanitized HTML. DOMPurify
 // strips script/event-handler injection from model- or tool-sourced
 // content before it reaches x-html (review finding S1).
-function render(t) { return DOMPurify.sanitize(marked.parse(t)) }
+// The explicit config narrows DOMPurify's default allow-list: model or
+// tool output could otherwise carry a <style> block (hide the running LED,
+// spoof the header) or a <form>/<input>/<button> that reads as a real
+// approval control next to the actual dialog. Nothing legitimate depends on
+// those tags/attributes — render() only sees Markdown from assistant text
+// and tool results, plus the streaming bubble (md()).
+const PURIFY_CFG = {
+  USE_PROFILES: {html: true},
+  FORBID_TAGS: ['style', 'form', 'input', 'button', 'select', 'textarea'],
+  FORBID_ATTR: ['style'],
+}
+function render(t) { return DOMPurify.sanitize(marked.parse(t), PURIFY_CFG) }
 
 function esc(s) {
   const d = document.createElement('div')
@@ -443,7 +483,7 @@ document.addEventListener('alpine:init', () => {
       head: {}, todos: [], todosOpen: true, mcpOpen: false,
       palOpen: false, palQuery: '', palIdx: 0, palKeyLabel: 'Ctrl+K',
       models: [], providerNames: {},
-      modal: {type:'',title:'',q:'',opts:[],multi:false,name:'',args:'',aid:null},
+      modal: {type:'',title:'',q:'',opts:[],multi:false,name:'',args:'',aid:null,err:''},
       _es: null,
       _tools: {},
       cmdOpen: false, cmdIdx: 0, cmdQuery: '', cmdSteerMode: false, cmdSteerText: '',
@@ -562,9 +602,9 @@ document.addEventListener('alpine:init', () => {
               type: 'continue', title: 'Iteration limit',
               q: 'The agent reached its limit of ' + (d.max_iter || 'the configured number of') +
                  ' iterations. Continue the run?',
-              opts: [], multi: false, name: '', args: '', aid: d.id
+              opts: [], multi: false, name: '', args: '', aid: d.id, err: ''
             }
-            this.$refs.dlg.showModal()
+            this.$nextTick(() => this.openDialog())
             break
           case 'ctrl.state':
             // Catch-up frame on connect: reconcile the live flag with the
@@ -588,16 +628,16 @@ document.addEventListener('alpine:init', () => {
           case 'ctrl.status': this.status = d.text; break
           case 'ctrl.error':  this.add('error', d.error); this.scroll(); break
           case 'ctrl.question':
-            this.modal = {type:'question', title:d.header||'Question', q:d.question, opts:d.options||[], multi:!!d.multi, name:'', args:'', aid:d.id}
-            this.$nextTick(() => this.$refs.dlg.showModal()); break
+            this.modal = {type:'question', title:d.header||'Question', q:d.question, opts:d.options||[], multi:!!d.multi, name:'', args:'', aid:d.id, err:''}
+            this.$nextTick(() => this.openDialog()); break
           case 'ctrl.approval':
-            this.modal = {type:'approval', title:'Tool Approval', q:'', opts:[], multi:false, name:d.name, args:d.args||'', aid:d.id}
-            this.$nextTick(() => this.$refs.dlg.showModal()); break
+            this.modal = {type:'approval', title:'Tool Approval', q:'', opts:[], multi:false, name:d.name, args:d.args||'', aid:d.id, err:''}
+            this.$nextTick(() => this.openDialog()); break
           case 'ctrl.context':
             if (d.tokens && d.window) this.ctx = Math.min(Math.round(d.tokens / d.window * 100), 100); break
           case 'ctrl.todos':
             this.todos = (d.items || []).map(function(item, idx) {
-              return {id: item.id || idx, status: item.status, priority: item.priority, content: item.content, created_at: item.created_at}
+              return {id: item.id || idx, status: item.status, priority: item.priority, content: item.content}
             }); break
           case 'ctrl.header':
             this.head = d.meta || {}; break
@@ -610,12 +650,6 @@ document.addEventListener('alpine:init', () => {
       // todo helpers for the template
       statusIcon(s) {
         return s === 'completed' ? '✓' : s === 'in_progress' ? '●' : s === 'cancelled' ? '✗' : '○'
-      },
-      shortTime(ts) {
-        if (!ts) return ''
-        var d = new Date(ts); if (isNaN(d.getTime())) return ''
-        var h = d.getHours(), m = String(d.getMinutes()).padStart(2, '0')
-        return h + ':' + m
       },
 
       // command palette
@@ -714,17 +748,58 @@ document.addEventListener('alpine:init', () => {
       ask() {
         const c = this.$refs.dlg.querySelectorAll('input[name="qopt"]:checked')
         const v = Array.from(c).map(c => c.value)
-        this.post({type:'answer', id:this.modal.aid, value: this.modal.multi ? v.join(',') : (v[0]||'')})
-        this.$refs.dlg.close()
+        const value = this.modal.multi ? v.join(',') : (v[0] || '')
+        this.settle(value)
       },
       allow(v) {
+        this.settle(String(v))
+      },
+      // settle posts the answer and closes the dialog only once the server
+      // confirms it accepted it. A 404 means the server no longer holds a
+      // pending answer (it timed out, or the dialog was already settled), so
+      // the failure is surfaced inline instead of the dialog vanishing while
+      // the agent still waits.
+      settle(value) {
         const id = this.modal.aid
-        this.modal.aid = null
-        if (id) this.post({type:'answer', id, value: String(v)})
-        this.$refs.dlg.close()
+        if (!id) { this.closeDialog(); return }
+        this.modal.err = ''
+        this.post({type:'answer', id, value}).then(res => {
+          if (!res.ok) { this.modal.err = this.answerError(res); return }
+          this.modal.aid = null
+          this.closeDialog()
+        })
+      },
+      // answerError renders a failed post() result for the dialog body.
+      answerError(res) {
+        if (res.reason === 'http') return 'no pending answer on the server — this request may have timed out.'
+        if (res.reason === 'unauthorized') return 'unauthorized — reopen the token URL printed by the terminal.'
+        if (res.reason === 'network') return 'connection lost — the answer was not delivered.'
+        if (res.reason === 'busy') return 'agent is busy — the answer was not delivered.'
+        return 'answer not delivered (' + (res.reason || 'error') + ').'
+      },
+      // openDialog avoids a second showModal() on an already-open dialog
+      // (which throws), and dlgCancel intercepts Esc. Without it, Esc closed
+      // the dialog natively, leaving an approval blocked on AnswerCh with no
+      // path back to the prompt — so Esc now answers Dismiss = Deny.
+      openDialog() {
+        const d = this.$refs.dlg
+        if (d && !d.open) d.showModal()
+      },
+      closeDialog() {
+        const d = this.$refs.dlg
+        if (d && d.open) d.close()
+      },
+      dlgCancel() {
+        if (!this.modal.aid) { this.closeDialog(); return }
+        if (this.modal.type === 'approval') { this.allow(false); return }
+        if (this.modal.type === 'continue') { this.allow('no'); return }
+        if (this.modal.type === 'question') { this.ask(); return }
+        this.closeDialog()
       },
 
-      // colon-command typeahead
+      // colon-command typeahead. The list is client-local on purpose: every id
+      // here is handled in cmdRun() below, so the menu cannot drift from what
+      // the page implements (the dead /api/commands route used to shadow it).
       cmdList: [
         {id:'compact', label:':compact', desc:'Compact context'},
         {id:'model', label:':model', desc:'Switch provider/model'},
@@ -781,7 +856,7 @@ document.addEventListener('alpine:init', () => {
         this.cmdDismiss()
         if (c.id === 'model') { this.palShow(); return }
         if (c.id === 'clear') { this.msgs = []; this._tools = {}; return }
-        if (c.id === 'help') { this.helpOpen = true; return }
+        if (c.id === 'help') { this.helpShow(); return }
         if (c.id === 'compact') { this.post({type:'compact'}); return }
         if (c.id === 'stop') { this.stop(); return }
         if (c.id === 'login') { this.post({type:'login'}); return }
@@ -814,12 +889,7 @@ document.addEventListener('alpine:init', () => {
           const tag = e.target.tagName
           if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
           e.preventDefault()
-          this.searchOpen = true
-          this.searchQuery = ''
-          this.searchIdx = 0
-          this.searchHits = []
-          this.searchTotal = 0
-          this.$nextTick(() => { const i = this.$refs.searchInput; if (i) i.focus() })
+          this.searchShow()
         }
       },
 
@@ -844,13 +914,47 @@ document.addEventListener('alpine:init', () => {
           hits[idx].scrollIntoView({block:'center', behavior:'smooth'})
         }
       },
+      // searchShow opens the overlay and remembers what had focus, so closing
+      // (Esc, the ✕ button, or a mouse-open) can put focus back.
+      searchShow() {
+        this._focusReturn = document.activeElement
+        this.searchOpen = true
+        this.searchQuery = ''
+        this.searchIdx = 0
+        this.searchHits = []
+        this.searchTotal = 0
+        this.$nextTick(() => { const i = this.$refs.searchInput; if (i) i.focus() })
+      },
       searchClose() {
+        const was = this.searchOpen
         this.searchOpen = false
         this.searchQuery = ''
         this.searchHits = []
         this.searchTotal = 0
         const els = this.$refs.log.querySelectorAll('.search-hit')
         els.forEach(el => el.classList.remove('search-hit'))
+        if (was) this.restoreFocus()
+      },
+      // restoreFocus returns focus to whatever opened an overlay (the
+      // composer when nothing was focused).
+      restoreFocus() {
+        const r = this._focusReturn
+        this._focusReturn = null
+        if (r && r.isConnected && r.focus) r.focus()
+        else if (this.$refs.el) this.$refs.el.focus()
+      },
+      // The help card is a full-viewport backdrop, so `@click.outside` could
+      // never fire (the backdrop IS the element): the markup now uses
+      // `@click.self`, traps Tab on its single control, and restores focus.
+      helpShow() {
+        this._focusReturn = document.activeElement
+        this.helpOpen = true
+        this.$nextTick(() => { const b = this.$refs.helpClose; if (b) b.focus() })
+      },
+      helpClose() {
+        if (!this.helpOpen) return
+        this.helpOpen = false
+        this.restoreFocus()
       },
       searchInfo() {
         if (!this.searchTotal) return ''
@@ -859,7 +963,11 @@ document.addEventListener('alpine:init', () => {
 
       send() {
         const el = this.$refs.el, t = el.value.trim()
-        if (!t || (this.live && !this.cmdOpen)) return
+        if (!t) return
+        // The composer stays typeable while a run is live so the colon palette
+        // can reach :stop / :steer / :compact; a plain prompt is refused here
+        // (the server would answer 409 for it anyway).
+        if (this.live) { this.status = 'agent is running — use :stop, :steer, or wait'; return }
         this.cmdOpen = false
         this.add('user', t); el.value = ''; el.style.height = 'auto'
         this.live = true; this.think = ''; this.reasonExpanded = false
