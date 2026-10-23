@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/cwdpath"
 	"github.com/buchenberg/yaah/internal/memory"
 )
 
@@ -42,10 +43,14 @@ func TestRegistryIntegration(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	const (
-		cwd = "/work"
-		n   = 5
-	)
+	// A real canonicalized temp dir rather than a POSIX literal: on Windows
+	// "/work" is not an absolute path, and the registry canonicalizes the
+	// filter, so the stored cwd has to be its canonical form to match.
+	cwd, err := cwdpath.Canonical(t.TempDir())
+	if err != nil {
+		t.Fatalf("canonicalize cwd: %v", err)
+	}
+	const n = 5
 	now := time.Now().Unix()
 	for i := 0; i < n; i++ {
 		if err := db.CreateSession(memory.Session{
@@ -94,7 +99,7 @@ func TestRegistryIntegration(t *testing.T) {
 	}
 
 	// A different cwd matches nothing rather than erroring.
-	if other, err := reg.List(Filter{CWD: "/elsewhere", Limit: n}); err != nil || len(other) != 0 {
+	if other, err := reg.List(Filter{CWD: t.TempDir(), Limit: n}); err != nil || len(other) != 0 {
 		t.Fatalf("other cwd = (%+v, %v), want an empty page", other, err)
 	}
 
