@@ -61,6 +61,10 @@ type sseWireEvent struct {
 	ContextTokens int    `json:"context_tokens,omitempty"`
 	ContextWindow int    `json:"context_window,omitempty"`
 
+	// Running appears only on the ctrl.state catch-up frame sent when a
+	// client connects, so it is a pointer: absent everywhere else.
+	Running *bool `json:"running,omitempty"`
+
 	ID       string       `json:"id,omitempty"`
 	Header   string       `json:"header,omitempty"`
 	Question string       `json:"question,omitempty"`
