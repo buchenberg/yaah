@@ -17,9 +17,12 @@ var ErrSessionNotFound = errors.New("session not found")
 // (ACP session/list) surface it as invalid params.
 var ErrInvalidCursor = errors.New("invalid cursor")
 
-// defaultSessionPageSize caps ListSessionsPage when the caller passes no
+// DefaultSessionPageSize caps ListSessionsPage when the caller passes no
 // limit (the ACP spec: agents SHOULD enforce a sensible page size).
-const defaultSessionPageSize = 50
+//
+// Exported so higher layers that need to reason about a page (the session
+// registry's List clamp) derive it from here instead of restating 50.
+const DefaultSessionPageSize = 50
 
 // maxSessionTitleRunes bounds the derived session title; longer first
 // messages are cut with an ellipsis.
@@ -114,7 +117,7 @@ type SessionListFilter struct {
 	// Cursor is the opaque pagination cursor from a previous page;
 	// empty for the first page.
 	Cursor string
-	// Limit caps the page size; <= 0 uses defaultSessionPageSize.
+	// Limit caps the page size; <= 0 uses DefaultSessionPageSize.
 	Limit int
 }
 
@@ -148,7 +151,7 @@ type cursorKey struct {
 func (d *DB) ListSessionsPage(filter SessionListFilter) ([]SessionSummary, string, error) {
 	limit := filter.Limit
 	if limit <= 0 {
-		limit = defaultSessionPageSize
+		limit = DefaultSessionPageSize
 	}
 
 	where := `WHERE 1 = 1`

@@ -55,8 +55,8 @@ type Filter struct {
 	// for the first page.
 	Cursor string
 	// Limit caps the rows returned. List treats <= 0 as the store's default
-	// page size (50), so an unbounded List still stops after one page.
-	// Page passes it straight through.
+	// page size (memory.DefaultSessionPageSize), so an unbounded List still
+	// stops after one page. Page passes it straight through.
 	Limit int
 	// CwdRawFallback is a picker-only escape hatch: when the canonicalized
 	// CWD pass returns no rows and the raw CWD is non-empty and spelled
@@ -66,10 +66,11 @@ type Filter struct {
 	CwdRawFallback bool
 }
 
-// defaultListLimit mirrors the store's own page size. List treats a
-// non-positive Filter.Limit as this many rows: without the clamp an unbounded
-// List would chase every page up to maxChasePages.
-const defaultListLimit = 50
+// defaultListLimit is the store's own page size. List treats a non-positive
+// Filter.Limit as this many rows: without the clamp an unbounded List would
+// chase every page up to maxChasePages. Derived from the store's constant
+// rather than restated, so the two cannot silently diverge.
+const defaultListLimit = memory.DefaultSessionPageSize
 
 // maxChasePages bounds List's cursor chase: a picker is a chooser, not a bulk
 // export, and a store bug must not turn into an unbounded loop.

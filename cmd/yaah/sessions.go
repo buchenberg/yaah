@@ -33,9 +33,13 @@ var sessionsListCmd = &cobra.Command{
 		if limit <= 0 {
 			return fmt.Errorf("--limit must be positive")
 		}
-		// Validate the flag before opening the store: a rejected --cwd must
-		// not leave a freshly created state.db behind on a cold machine.
-		if _, err := cwdpath.Canonical(cwdFlag); err != nil {
+		// Canonicalize before opening the store, for two reasons: a rejected
+		// --cwd must not leave a freshly created state.db behind on a cold
+		// machine, and the value validated here is the value the registry
+		// filters on — so its own canonicalization is then a no-op instead of
+		// repeating the work.
+		cwd, err := cwdpath.Canonical(cwdFlag)
+		if err != nil {
 			return fmt.Errorf("--cwd: %v", err)
 		}
 
@@ -49,12 +53,8 @@ var sessionsListCmd = &cobra.Command{
 		// session/list intake, so the CLI and ACP filters match the stored
 		// session cwds identically, and it chases the store's cursors up to
 		// the user's limit.
-		rows, err := reg.List(sessions.Filter{CWD: cwdFlag, Limit: limit})
+		rows, err := reg.List(sessions.Filter{CWD: cwd, Limit: limit})
 		if err != nil {
-			if errors.Is(err, sessions.ErrInvalidCWD) {
-				// Same text this command printed before the registry seam.
-				return fmt.Errorf("--cwd: cwd %q must be an absolute path", cwdFlag)
-			}
 			return fmt.Errorf("list sessions: %w", err)
 		}
 
