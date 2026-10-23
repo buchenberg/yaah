@@ -42,10 +42,19 @@ func (t *App) buildUI() {
 	prompt := input.BuildPrompt(t.Theme)
 	t.Input = prompt.TextArea
 	t.prompt = prompt
-	prompt.TextArea.SetChangedFunc(t.growPromptInput)
+	prompt.TextArea.SetChangedFunc(func() {
+		t.growPromptInput()
+		t.updateSuggestions()
+	})
 
 	// Activity line: spinner/gauge + state label, always reserved.
 	t.activityLine = activity.NewRow(t.Theme)
+
+	// Typeahead strip: zero height until a colon command name is being typed,
+	// then grows to fit the matches.
+	t.suggestionsView = tview.NewTextView().
+		SetDynamicColors(true).
+		SetWrap(false)
 
 	// Sticky prompt echo: shows the current user prompt at the top of
 	// the messages pane so it never scrolls away. Wraps up to
@@ -105,6 +114,7 @@ func (t *App) buildUI() {
 	t.Root.AddItem(t.Header, headerRows, 0, false)
 	t.Root.AddItem(body, 0, 1, true)
 	t.Root.AddItem(t.activityLine, 1, 0, false)
+	t.Root.AddItem(t.suggestionsView, 0, 0, false)
 	t.Root.AddItem(prompt, 3, 0, true)
 
 	t.Pages = tview.NewPages()

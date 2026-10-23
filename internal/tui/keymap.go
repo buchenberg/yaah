@@ -40,7 +40,7 @@ type Binding struct {
 func DefaultBindings() []Binding {
 	return []Binding{
 		{Key: tcell.KeyCtrlC, Action: ActionQuit, Label: "Ctrl+C", HelpText: "quit"},
-		{Key: tcell.KeyEscape, Action: ActionCancel, Label: "Esc", HelpText: "cancel / back"},
+		{Key: tcell.KeyEscape, Action: ActionCancel, Label: "Esc", HelpText: "cancel / back, dismiss completion, stop the turn"},
 		{Key: tcell.KeyCtrlL, Action: ActionClear, Label: "Ctrl+L", HelpText: "clear screen"},
 		{Key: tcell.KeyCtrlP, Action: ActionCommand, Label: "Ctrl+P", HelpText: "command palette"},
 		{Key: tcell.KeyCtrlR, Action: ActionToggleReasoning, Label: "Ctrl+R", HelpText: "toggle reasoning blocks"},
@@ -52,7 +52,7 @@ func DefaultBindings() []Binding {
 		{Key: tcell.KeyPgDn, Action: ActionPageDown, Label: "PgDn", HelpText: "page down"},
 		{Key: tcell.KeyHome, Action: ActionTop, Label: "Home", HelpText: "jump to top"},
 		{Key: tcell.KeyEnd, Action: ActionBottom, Label: "End", HelpText: "jump to bottom"},
-		{Key: tcell.KeyTab, Action: ActionNextPanel, Label: "Tab", HelpText: "next panel"},
+		{Key: tcell.KeyTab, Action: ActionNextPanel, Label: "Tab", HelpText: "next panel, or complete a :command"},
 		{Key: tcell.KeyBacktab, Action: ActionPrevPanel, Label: "Shift+Tab", HelpText: "previous panel"},
 	}
 }

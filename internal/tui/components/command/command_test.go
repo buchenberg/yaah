@@ -172,3 +172,103 @@ func TestDefaultEntries_UniqueLabels(t *testing.T) {
 		seen[e.Label] = true
 	}
 }
+
+func TestSplit_CommandAndArg(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantCmd Cmd
+		wantArg string
+	}{
+		{"steer keep it short", CmdSteer, "keep it short"},
+		{"steer  padded arg ", CmdSteer, "padded arg"},
+		{"followup and then?", CmdFollowUp, "and then?"},
+		{"search keyword", CmdSearch, "keyword"},
+		{"model gpt-4", CmdModel, "gpt-4"},
+		{"model", CmdModel, ""},
+		{"clear", CmdClear, ""},
+		{"  quit  ", CmdQuit, ""},
+		{"steer", CmdSteer, ""},
+		{"followup", CmdFollowUp, ""},
+		{"search", CmdSearch, ""},
+		{"nope", CmdNone, ""},
+		{"steerx", CmdNone, ""},
+		{"", CmdNone, ""},
+	}
+	for _, tt := range tests {
+		cmd, arg := Split(tt.input)
+		if cmd != tt.wantCmd || arg != tt.wantArg {
+			t.Errorf("Split(%q) = (%v, %q), want (%v, %q)", tt.input, cmd, arg, tt.wantCmd, tt.wantArg)
+		}
+	}
+}
+
+// A bare command name must parse to its command so callers can report a missing
+// argument rather than an unknown command.
+func TestParse_BareArgCommand(t *testing.T) {
+	if got := Parse("steer"); got != CmdSteer {
+		t.Errorf("Parse(\"steer\") = %v, want CmdSteer", got)
+	}
+	if got := Parse("followup"); got != CmdFollowUp {
+		t.Errorf("Parse(\"followup\") = %v, want CmdFollowUp", got)
+	}
+}
+
+func TestRequiresArg(t *testing.T) {
+	for _, cmd := range []Cmd{CmdSteer, CmdFollowUp, CmdSearch} {
+		if !RequiresArg(cmd) {
+			t.Errorf("RequiresArg(%v) = false, want true", cmd)
+		}
+		if Usage(cmd) == "" {
+			t.Errorf("Usage(%v) is empty for an arg-requiring command", cmd)
+		}
+	}
+	for _, cmd := range []Cmd{CmdQuit, CmdClear, CmdHelp, CmdCompact, CmdStop, CmdNone} {
+		if RequiresArg(cmd) {
+			t.Errorf("RequiresArg(%v) = true, want false", cmd)
+		}
+	}
+}
+
+// Every command that requires an argument should be reachable from the palette.
+func TestDefaultEntries_CoversArgCommands(t *testing.T) {
+	have := make(map[Cmd]bool)
+	for _, e := range DefaultEntries() {
+		have[e.Cmd] = true
+	}
+	for _, cmd := range []Cmd{CmdSteer, CmdFollowUp, CmdSearch} {
+		if !have[cmd] {
+			t.Errorf("palette is missing an entry for %v", cmd)
+		}
+	}
+}
+
+// Split must treat every whitespace separator the way Complete does, or text the
+// typeahead accepts would parse differently when submitted.
+func TestSplit_WhitespaceSeparators(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantCmd Cmd
+		wantArg string
+	}{
+		{"steer\ttabbed", CmdSteer, "tabbed"},
+		{"model  two spaces", CmdModel, "two spaces"},
+		{"steer \t mixed", CmdSteer, "mixed"},
+		{"clear\t", CmdClear, ""},
+	}
+	for _, tt := range tests {
+		cmd, arg := Split(tt.input)
+		if cmd != tt.wantCmd || arg != tt.wantArg {
+			t.Errorf("Split(%q) = (%v, %q), want (%v, %q)", tt.input, cmd, arg, tt.wantCmd, tt.wantArg)
+		}
+	}
+}
+
+// Name prints the canonical spelling, not whichever alias happens to come first.
+func TestName_PrefersCanonicalSpelling(t *testing.T) {
+	if got := Name(CmdQuit); got != "quit" {
+		t.Errorf(`Name(CmdQuit) = %q, want "quit"`, got)
+	}
+	if got := Name(CmdHelp); got != "help" {
+		t.Errorf(`Name(CmdHelp) = %q, want "help"`, got)
+	}
+}

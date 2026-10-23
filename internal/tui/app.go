@@ -9,6 +9,7 @@ import (
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/tui/colors"
 	"github.com/buchenberg/yaah/internal/tui/components/activity"
+	"github.com/buchenberg/yaah/internal/tui/components/command"
 	"github.com/buchenberg/yaah/internal/tui/components/input"
 	"github.com/buchenberg/yaah/internal/tui/components/mcpinfo"
 	"github.com/buchenberg/yaah/internal/tui/components/reasoning"
@@ -30,11 +31,19 @@ type App struct {
 
 	Theme *colors.Theme
 
-	Banner             *tview.TextView
-	Messages           *tview.TextView
-	Input              *tview.TextArea
-	promptEcho         *tview.TextView
-	prompt             *input.Prompt
+	Banner     *tview.TextView
+	Messages   *tview.TextView
+	Input      *tview.TextArea
+	promptEcho *tview.TextView
+	prompt     *input.Prompt
+
+	// Typeahead: suggestionsView is a strip above the composer that appears
+	// while a colon command name is being typed. suggestionIdx highlights the
+	// match Tab will accept; Up/Down cycle, Esc dismisses. Touched only from the
+	// UI goroutine — the composer's changed handler and the key capture.
+	suggestionsView    *tview.TextView
+	suggestions        []command.Completion
+	suggestionIdx      int
 	messagesCol        *tview.Flex
 	InfoPane           *tview.TextView
 	TodoPane           *tview.TextView
@@ -49,6 +58,9 @@ type App struct {
 	conversationLog []convItem
 	activityLine    *activity.Row
 	focus           focusState
+	// modalDepth counts open layered views so nested overlays release focus in
+	// order; it is paired with focus and touched only from the UI goroutine.
+	modalDepth int
 
 	// Usage tracking
 	cumulativeUsage cumulativeUsage

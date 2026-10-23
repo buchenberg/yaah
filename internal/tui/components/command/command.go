@@ -6,6 +6,7 @@ package command
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/buchenberg/yaah/internal/tui/components/modal"
 	"github.com/gdamore/tcell/v2"
@@ -38,47 +39,113 @@ const (
 )
 
 // Parse maps a colon command string (without the leading ":") to a Cmd.
+//
+// A bare command name parses too: Parse("steer") is CmdSteer with no argument,
+// so callers can report a missing argument instead of an unknown command.
 func Parse(input string) Cmd {
-	input = strings.TrimSpace(input)
-	switch {
-	case input == "q" || input == "quit" || input == "exit":
-		return CmdQuit
-	case input == "clear":
-		return CmdClear
-	case input == "h" || input == "help":
-		return CmdHelp
-	case input == "compact":
-		return CmdCompact
-	case input == "stop":
-		return CmdStop
-	case strings.HasPrefix(input, "steer "):
-		return CmdSteer
-	case strings.HasPrefix(input, "followup "):
-		return CmdFollowUp
-	case input == "verbose":
-		return CmdVerbose
-	case strings.HasPrefix(input, "search "):
-		return CmdSearch
-	case input == "top":
-		return CmdTop
-	case input == "bottom":
-		return CmdBottom
-	case input == "banner":
-		return CmdBanner
-	case input == "roles":
-		return CmdReloadRoles
-	case input == "login":
-		return CmdLogin
-	case input == "logout":
-		return CmdLogout
-	case input == "session":
-		return CmdSession
-	case input == "mcp":
-		return CmdMCP
-	case strings.HasPrefix(input, "model"):
-		return CmdModel
+	cmd, _ := Split(input)
+	return cmd
+}
+
+// commandNames maps every recognized command name to its Cmd. It is the single
+// table behind Split and Name, so parsing and printing cannot drift apart.
+var commandNames = []struct {
+	name string
+	cmd  Cmd
+}{
+	{"quit", CmdQuit}, {"q", CmdQuit}, {"exit", CmdQuit},
+	{"clear", CmdClear},
+	{"help", CmdHelp}, {"h", CmdHelp},
+	{"compact", CmdCompact},
+	{"stop", CmdStop},
+	{"steer", CmdSteer},
+	{"followup", CmdFollowUp},
+	{"verbose", CmdVerbose},
+	{"search", CmdSearch},
+	{"top", CmdTop},
+	{"bottom", CmdBottom},
+	{"banner", CmdBanner},
+	{"roles", CmdReloadRoles},
+	{"login", CmdLogin},
+	{"logout", CmdLogout},
+	{"session", CmdSession},
+	{"mcp", CmdMCP},
+	{"model", CmdModel},
+}
+
+// splitName splits input at the first run of whitespace, so every separator
+// Complete treats as an argument boundary parses the same way here.
+func splitName(input string) (name, arg string) {
+	if i := strings.IndexFunc(input, unicode.IsSpace); i >= 0 {
+		return input[:i], strings.TrimSpace(input[i:])
+	}
+	return input, ""
+}
+
+// takesArg reports whether cmd consumes the rest of the line.
+func takesArg(cmd Cmd) bool {
+	switch cmd {
+	case CmdSteer, CmdFollowUp, CmdSearch, CmdModel:
+		return true
 	default:
-		return CmdNone
+		return false
+	}
+}
+
+// Split parses a colon command string (without the leading ":") into its
+// command and argument.
+//
+// The argument is empty for commands that take none, and also when a required
+// argument was omitted; RequiresArg tells those two cases apart. Unrecognized
+// input yields CmdNone.
+func Split(input string) (Cmd, string) {
+	name, arg := splitName(strings.TrimSpace(input))
+	for _, e := range commandNames {
+		if e.name == name {
+			if !takesArg(e.cmd) {
+				return e.cmd, ""
+			}
+			return e.cmd, arg
+		}
+	}
+	return CmdNone, ""
+}
+
+// Name returns the canonical name of cmd — the first entry in the command
+// table, so aliases print as their primary spelling. It is empty for CmdNone.
+func Name(cmd Cmd) string {
+	for _, e := range commandNames {
+		if e.cmd == cmd {
+			return e.name
+		}
+	}
+	return ""
+}
+
+// RequiresArg reports whether cmd is useless without an argument.
+func RequiresArg(cmd Cmd) bool {
+	switch cmd {
+	case CmdSteer, CmdFollowUp, CmdSearch:
+		return true
+	default:
+		return false
+	}
+}
+
+// Usage returns the canonical invocation for cmd, shown when an argument is
+// missing. It is empty for commands that take no argument.
+func Usage(cmd Cmd) string {
+	switch cmd {
+	case CmdSteer:
+		return ":steer <text>"
+	case CmdFollowUp:
+		return ":followup <text>"
+	case CmdSearch:
+		return ":search <query>"
+	case CmdModel:
+		return ":model [name]"
+	default:
+		return ""
 	}
 }
 
@@ -97,6 +164,7 @@ func DefaultEntries() []Entry {
 		{"compact", "Compact context window", CmdCompact},
 		{"stop", "Abort running agent", CmdStop},
 		{"steer", "Inject steering text (requires arg)", CmdSteer},
+		{"followup", "Queue text as a follow-up message (requires arg)", CmdFollowUp},
 		{"model", "Switch model", CmdModel},
 		{"search", "Search messages (requires arg)", CmdSearch},
 		{"verbose", "Toggle verbose mode", CmdVerbose},
