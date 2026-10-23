@@ -15,7 +15,16 @@ const modalPageName = "modelpicker_modal"
 // bookkeeping; it runs before onSelect. The returned func dismisses the picker
 // programmatically, which is also how tests exercise the Escape path.
 func Show(app *tview.Application, pages *tview.Pages, models []string, providerNames map[string]string, onSelect, onDismiss func(model string), focusAfter tview.Primitive) func() {
+	// Idempotent: the Escape capture and the item-selected callback share this
+	// closure, and the returned func is also the programmatic path, so a second
+	// call (double Escape, or a dismissal racing a selection) must not release a
+	// second layer of the caller's focus bookkeeping.
+	closed := false
 	dismiss := func() {
+		if closed {
+			return
+		}
+		closed = true
 		pages.RemovePage(modalPageName)
 		if focusAfter != nil {
 			app.SetFocus(focusAfter)

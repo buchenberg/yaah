@@ -38,3 +38,25 @@ func TestShow_DismissNotifiesAndLeavesNoPage(t *testing.T) {
 		t.Fatalf("page count after dismiss = %d, want 0", got)
 	}
 }
+
+// Escape and selection share the dismiss closure, and it is the documented
+// programmatic path, so a second call must not release another focus layer.
+func TestShow_DismissIsIdempotent(t *testing.T) {
+	app := tview.NewApplication()
+	pages := tview.NewPages()
+
+	dismissed := 0
+	dismiss := Show(app, pages,
+		[]string{"provider/model"}, map[string]string{"provider/model": "Provider"},
+		nil,
+		func(string) { dismissed++ },
+		nil,
+	)
+
+	dismiss()
+	dismiss()
+
+	if dismissed != 1 {
+		t.Fatalf("onDismiss called %d times, want exactly 1 across two dismissals", dismissed)
+	}
+}
