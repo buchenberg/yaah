@@ -201,9 +201,15 @@ func Create(dir, name, description, body string) (string, error) {
 	}
 	if _, err := f.WriteString(content); err != nil {
 		f.Close()
+		// The O_EXCL create already claimed the name, so leaving the
+		// partial file behind would wedge it forever: every later create
+		// would report "already exists" for a plan that has no usable
+		// content.
+		os.Remove(path)
 		return "", fmt.Errorf("write PLAN.md: %w", err)
 	}
 	if err := f.Close(); err != nil {
+		os.Remove(path)
 		return "", fmt.Errorf("write PLAN.md: %w", err)
 	}
 	return path, nil
@@ -233,7 +239,13 @@ func Edit(plan *Plan, description, status, body string) (string, error) {
 	}
 
 	content := fmt.Sprintf("---\nname: %s\ndescription: %s\nstatus: %s\n---\n\n%s\n", current.Name, description, status, body)
-	if err := writeFileAtomic(plan.Path, []byte(content), 0o644); err != nil {
+	// Preserve the mode the file already had: replacing it with a temp file
+	// would otherwise silently reset a 0600 plan to 0644.
+	perm := os.FileMode(0o644)
+	if fi, statErr := os.Stat(plan.Path); statErr == nil {
+		perm = fi.Mode().Perm()
+	}
+	if err := writeFileAtomic(plan.Path, []byte(content), perm); err != nil {
 		return "", fmt.Errorf("write PLAN.md: %w", err)
 	}
 	return plan.Path, nil
@@ -252,6 +264,13 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	tmp := f.Name()
 	defer os.Remove(tmp) // no-op once the rename below succeeds
 	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	// Sync before the rename so a crash cannot leave the renamed file
+	// present but empty; without it the atomicity is only against
+	// interruptions, not power loss.
+	if err := f.Sync(); err != nil {
 		f.Close()
 		return err
 	}

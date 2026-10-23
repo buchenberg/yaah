@@ -3,6 +3,7 @@ package plans
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -100,5 +101,36 @@ func TestEditLeavesNoTempFiles(t *testing.T) {
 		if strings.HasPrefix(e.Name(), ".PLAN-") {
 			t.Fatalf("temp file left behind: %s", e.Name())
 		}
+	}
+}
+
+// TestEditPreservesFileMode pins the review finding that the atomic replace
+// used a fixed 0644: a plan created (or chmod-ed) 0600 must not be silently
+// widened by a status change. Skipped on Windows, where file modes carry no
+// permission bits.
+func TestEditPreservesFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file modes are not meaningful on Windows")
+	}
+	dir := t.TempDir()
+	if _, err := Create(dir, "secret", "desc", "body"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	path := filepath.Join(dir, "secret", "PLAN.md")
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+
+	plan := &Plan{Name: "secret", Path: path}
+	if _, err := SetStatus(plan, "in_progress"); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Fatalf("mode = %o; want 600 (a status change must not widen it)", got)
 	}
 }
