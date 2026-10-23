@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.102.0](https://github.com/buchenberg/yaah/compare/v0.101.2...v0.102.0) (2026-10-23)
+
+
+### Features
+
+* **acp:** registry readiness — authMethods, session registry, release archives ([#563](https://github.com/buchenberg/yaah/issues/563)) ([701dead](https://github.com/buchenberg/yaah/commit/701deadd7039cacea4da7e2b94b4105d7ca86711))
+
 ## [0.101.2](https://github.com/buchenberg/yaah/compare/v0.101.1...v0.101.2) (2026-10-22)
 
 
