@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.102.2](https://github.com/buchenberg/yaah/compare/v0.102.1...v0.102.2) (2026-10-23)
+
+
+### Bug Fixes
+
+* **plans:** create exclusively and replace atomically ([#568](https://github.com/buchenberg/yaah/issues/568)) ([1495402](https://github.com/buchenberg/yaah/commit/14954029b2f29e661ff40af38e30d9c0378e1a99))
+* **plans:** stop Edit from deleting unmodelled frontmatter ([#570](https://github.com/buchenberg/yaah/issues/570)) ([2989065](https://github.com/buchenberg/yaah/commit/29890654b7f61b72a7901b6beeec7b3603088df1))
+* **staticcheck:** say when the analyzer is too old for the toolchain ([#571](https://github.com/buchenberg/yaah/issues/571)) ([547061b](https://github.com/buchenberg/yaah/commit/547061be0280a5eef6d5139e33cf0f3885b54206))
+
 ## [0.102.1](https://github.com/buchenberg/yaah/compare/v0.102.0...v0.102.1) (2026-10-23)
 
 
