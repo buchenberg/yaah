@@ -272,3 +272,49 @@ func TestEditKeepsInlineCommentAndQuoting(t *testing.T) {
 		t.Errorf("original quoting was dropped:\n%s", got)
 	}
 }
+
+// TestEditDoesNotDuplicateInlineComments pins the follow-on review finding: the
+// parser kept an inline comment as part of the modelled value, so Edit re-emitted
+// it inside the value and then again as the preserved comment.
+func TestEditDoesNotDuplicateInlineComments(t *testing.T) {
+	dir := t.TempDir()
+	planDir := filepath.Join(dir, "dup")
+	if err := os.MkdirAll(planDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	path := filepath.Join(planDir, "PLAN.md")
+	original := "---\n" +
+		"name: dup\n" +
+		"description: keep me # tracked by the bot\n" +
+		"status: draft\n" +
+		"---\n\nBody.\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Touch only the status: description is carried through unchanged.
+	if _, err := SetStatus(&Plan{Name: "dup", Path: path}, "approved"); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	got := string(data)
+	if n := strings.Count(got, "tracked by the bot"); n != 1 {
+		t.Fatalf("inline comment appears %d times; want 1\n%s", n, got)
+	}
+	if !strings.Contains(got, "description: keep me # tracked by the bot") {
+		t.Fatalf("description line mangled:\n%s", got)
+	}
+
+	// The parsed description must not carry the comment either.
+	plan, err := ParseFrontmatter(data)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if plan.Description != "keep me" {
+		t.Errorf("description = %q; want %q", plan.Description, "keep me")
+	}
+}

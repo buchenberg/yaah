@@ -93,11 +93,11 @@ func ParseFrontmatter(data []byte) (*Plan, error) {
 			continue
 		}
 		if strings.HasPrefix(line, "name:") {
-			plan.Name = unquote(strings.TrimPrefix(line, "name:"))
+			plan.Name = unquote(splitInlineComment(strings.TrimPrefix(line, "name:")))
 		} else if strings.HasPrefix(line, "description:") {
-			plan.Description = unquote(strings.TrimPrefix(line, "description:"))
+			plan.Description = unquote(splitInlineComment(strings.TrimPrefix(line, "description:")))
 		} else if strings.HasPrefix(line, "status:") {
-			plan.Status = unquote(strings.TrimPrefix(line, "status:"))
+			plan.Status = unquote(splitInlineComment(strings.TrimPrefix(line, "status:")))
 		}
 	}
 
@@ -106,6 +106,27 @@ func ParseFrontmatter(data []byte) (*Plan, error) {
 	}
 
 	return plan, nil
+}
+
+// splitInlineComment returns a scalar without its trailing YAML inline comment.
+// A " #" inside a quoted scalar is not a comment, so the split is quote-aware.
+// Values carry these comments otherwise, and Edit would then re-emit the comment
+// as part of the value AND keep the original, duplicating it.
+func splitInlineComment(v string) string {
+	t := strings.TrimSpace(v)
+	if len(t) == 0 {
+		return t
+	}
+	if t[0] == '"' || t[0] == '\'' {
+		if end := strings.IndexByte(t[1:], t[0]); end >= 0 {
+			return t[:end+2]
+		}
+		return t
+	}
+	if i := strings.Index(t, " #"); i >= 0 {
+		return strings.TrimSpace(t[:i])
+	}
+	return t
 }
 
 // unquote strips a matching pair of YAML quotes from a scalar. The
@@ -274,19 +295,34 @@ func rewriteFrontmatter(frontmatter string, updates map[string]string, order []s
 }
 
 // restyleValue rebuilds "key:<rest>" after replacing the value with val,
-// keeping the two things a naive rewrite would silently drop: a trailing
-// inline comment, and the original quoting when it was a simple quoted scalar.
+// keeping the two things a naive rewrite would silently drop: a trailing inline
+// comment, and the original quoting when it was a simple quoted scalar.
+//
+// The comment split is quote-aware: a value may itself contain " #" inside
+// quotes, and splitting there would truncate it. Re-quoting is skipped when val
+// contains the quote character, since escaping it is more likely to surprise
+// than to help in a line-based frontmatter writer.
 func restyleValue(rest, val string) string {
+	trimmed := strings.TrimSpace(rest)
 	comment := ""
-	if i := strings.Index(rest, " #"); i >= 0 {
-		comment = rest[i:]
-		rest = rest[:i]
+	if len(trimmed) > 0 && (trimmed[0] == '"' || trimmed[0] == '\'') {
+		if end := strings.IndexByte(trimmed[1:], trimmed[0]); end >= 0 {
+			comment = strings.TrimSpace(trimmed[end+2:])
+			trimmed = trimmed[:end+2]
+		}
+	} else if i := strings.Index(trimmed, " #"); i >= 0 {
+		comment = strings.TrimSpace(trimmed[i:])
+		trimmed = strings.TrimSpace(trimmed[:i])
 	}
-	old := strings.TrimSpace(rest)
-	if len(old) >= 2 && (old[0] == '"' || old[0] == '\'') && old[len(old)-1] == old[0] {
-		val = string(old[0]) + val + string(old[0])
+	out := val
+	if len(trimmed) >= 2 && (trimmed[0] == '"' || trimmed[0] == '\'') &&
+		trimmed[len(trimmed)-1] == trimmed[0] && !strings.ContainsRune(val, rune(trimmed[0])) {
+		out = string(trimmed[0]) + val + string(trimmed[0])
 	}
-	return val + comment
+	if comment != "" {
+		out += " " + comment
+	}
+	return out
 }
 
 // Edit updates an existing PLAN.md file. Non-empty fields overwrite the
