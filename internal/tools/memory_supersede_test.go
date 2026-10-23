@@ -131,3 +131,54 @@ func TestMemoryPromoteTool_RequiresID(t *testing.T) {
 		t.Fatal("memory_promote accepted an id that does not exist")
 	}
 }
+
+// TestMemoryPromoteTool_RefusesOtherSessionsAtoms pins the ownership guard: a
+// session-scoped caller may promote what its own conversation distilled, not
+// another session's working context. An unscoped orchestrator is unaffected.
+func TestMemoryPromoteTool_RefusesOtherSessionsAtoms(t *testing.T) {
+	db := openScopeTestDB(t)
+	out, err := (&MemoryAddTool{DB: db, SessionID: "sess-a"}).Execute(
+		context.Background(), `{"text":"session a learned the deploy needs a prefix","scope":"session"}`)
+	if err != nil {
+		t.Fatalf("memory_add: %v", err)
+	}
+	id := savedID(t, out)
+
+	if _, err := (&MemoryPromoteTool{DB: db, SessionID: "sess-b"}).Execute(
+		context.Background(), `{"id":"`+id+`"}`); err == nil {
+		t.Fatal("a sub-agent promoted another session's atom to global")
+	}
+	if _, err := (&MemoryPromoteTool{DB: db, SessionID: "sess-a"}).Execute(
+		context.Background(), `{"id":"`+id+`"}`); err != nil {
+		t.Fatalf("owning session could not promote its own atom: %v", err)
+	}
+}
+
+// TestMemoryAddTool_SupersedeIsAtomic pins that a refused supersede does not
+// leave the correction behind: the write and the retirement of the old claim
+// stand or fall together.
+func TestMemoryAddTool_SupersedeIsAtomic(t *testing.T) {
+	db := openScopeTestDB(t)
+	add := &MemoryAddTool{DB: db}
+	out, err := add.Execute(context.Background(), `{"text":"yaah ships linux and windows"}`)
+	if err != nil {
+		t.Fatalf("memory_add: %v", err)
+	}
+	globalID := savedID(t, out)
+
+	// A session atom may not retire a global fact, so this must fail outright.
+	if _, err := add.Execute(context.Background(),
+		`{"text":"yaah ships linux, windows and darwin","scope":"session","supersedes":"`+globalID+`"}`); err == nil {
+		t.Fatal("session atom superseded a global atom through memory_add")
+	}
+	n, err := db.CountMemories("all")
+	if err != nil {
+		t.Fatalf("CountMemories: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("store has %d atoms after the refused correction, want 1", n)
+	}
+	if got, err := db.SupersededBy(globalID); err != nil || got != "" {
+		t.Fatalf("global atom retired despite the refusal: (%q, %v)", got, err)
+	}
+}

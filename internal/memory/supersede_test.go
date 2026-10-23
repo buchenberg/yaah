@@ -105,6 +105,9 @@ func TestDedupeIgnoresSupersededAtoms(t *testing.T) {
 	if err := db.AddMemory(Entry{ID: "old", Text: "the gate runs on linux", Scope: ScopeGlobal, CreatedAt: 1}); err != nil {
 		t.Fatalf("AddMemory: %v", err)
 	}
+	if err := db.AddMemory(Entry{ID: "replacement", Text: "the gate runs on linux and windows", Scope: ScopeGlobal, CreatedAt: 2}); err != nil {
+		t.Fatalf("AddMemory: %v", err)
+	}
 	if err := db.SupersedeMemory("old", "replacement"); err != nil {
 		t.Fatalf("SupersedeMemory: %v", err)
 	}
@@ -172,5 +175,88 @@ func TestPromoteMemoryRejectsBadTargets(t *testing.T) {
 	}
 	if _, err := db.PromoteMemory("s1"); err == nil {
 		t.Fatal("promoted a superseded atom; its replacement should be promoted instead")
+	}
+}
+
+// TestSupersedeRefusesSessionOverGlobal pins the one-way tier rule: a session
+// atom may not retire a global fact. The global claim would leave recall and
+// then vanish with the session atom, which is a silent demotion of exactly the
+// knowledge the tiers protect.
+func TestSupersedeRefusesSessionOverGlobal(t *testing.T) {
+	db := openSupersedeTestDB(t)
+	if err := db.AddMemory(Entry{ID: "g", Text: "the gate runs on linux and windows", Scope: ScopeGlobal, CreatedAt: 1}); err != nil {
+		t.Fatalf("AddMemory: %v", err)
+	}
+	if err := db.AddMemory(Entry{ID: "s", Text: "the gate now also runs on darwin", Scope: ScopeSession, CreatedAt: 2}); err != nil {
+		t.Fatalf("AddMemory: %v", err)
+	}
+	if err := db.SupersedeMemory("g", "s"); err == nil {
+		t.Fatal("a session atom superseded a global atom; that demotes knowledge silently")
+	}
+	if got, err := db.SupersededBy("g"); err != nil || got != "" {
+		t.Fatalf("global atom was marked despite the refusal: (%q, %v)", got, err)
+	}
+}
+
+// TestSupersedeRefusesDeadReplacement pins that a superseded atom cannot act as
+// a replacement: chaining corrections onto a retired atom hides both.
+func TestSupersedeRefusesDeadReplacement(t *testing.T) {
+	db := openSupersedeTestDB(t)
+	for _, id := range []string{"a", "b", "c"} {
+		if err := db.AddMemory(Entry{ID: id, Text: "fact " + id, Scope: ScopeGlobal, CreatedAt: 1}); err != nil {
+			t.Fatalf("AddMemory(%s): %v", id, err)
+		}
+	}
+	// Retire b itself, then try to chain a correction onto it.
+	if err := db.SupersedeMemory("b", "c"); err != nil {
+		t.Fatalf("SupersedeMemory(b,c): %v", err)
+	}
+	if err := db.SupersedeMemory("a", "b"); err == nil {
+		t.Fatal("a superseded atom was used as a replacement")
+	}
+}
+
+// TestAddMemorySupersedingIsAtomic pins that a rejected supersede leaves no
+// trace of the new atom: the correction and the retirement of the old claim
+// happen together or not at all.
+func TestAddMemorySupersedingIsAtomic(t *testing.T) {
+	db := openSupersedeTestDB(t)
+	if err := db.AddMemory(Entry{ID: "g", Text: "old claim about ports", Scope: ScopeGlobal, CreatedAt: 1}); err != nil {
+		t.Fatalf("AddMemory: %v", err)
+	}
+	if _, _, err := db.AddMemorySuperseding(
+		Entry{ID: "s", Text: "new claim about ports", Scope: ScopeSession, CreatedAt: 2}, "g",
+	); err == nil {
+		t.Fatal("session-over-global supersede was accepted through AddMemorySuperseding")
+	}
+	if n, err := db.CountMemories(ScopeAll); err != nil {
+		t.Fatalf("CountMemories: %v", err)
+	} else if n != 1 {
+		t.Fatalf("store has %d atoms after the refused write, want 1", n)
+	}
+	if got, err := db.SupersededBy("g"); err != nil || got != "" {
+		t.Fatalf("global atom was retired despite the refusal: (%q, %v)", got, err)
+	}
+}
+
+// TestStatsExcludeSuperseded pins that superseded atoms leave the aggregate:
+// "how much does this agent know" must not count retired claims.
+func TestStatsExcludeSuperseded(t *testing.T) {
+	db := openSupersedeTestDB(t)
+	if err := db.AddMemory(Entry{ID: "old", Text: "retired fact", Scope: ScopeGlobal, CreatedAt: 1}); err != nil {
+		t.Fatalf("AddMemory: %v", err)
+	}
+	if err := db.AddMemory(Entry{ID: "new", Text: "replacement fact", Scope: ScopeGlobal, CreatedAt: 2}); err != nil {
+		t.Fatalf("AddMemory: %v", err)
+	}
+	if err := db.SupersedeMemory("old", "new"); err != nil {
+		t.Fatalf("SupersedeMemory: %v", err)
+	}
+	st, err := db.Stats()
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if st.Total != 1 {
+		t.Fatalf("Stats().Total = %d, want 1 live atom", st.Total)
 	}
 }

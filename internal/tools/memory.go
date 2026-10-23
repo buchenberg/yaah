@@ -240,15 +240,6 @@ func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error
 		return "", fmt.Errorf("memory_add: invalid arguments: %w", err)
 	}
 
-	// Validate the supersede target before writing anything: a fact claiming to
-	// correct an atom that does not exist is a caller bug, and saving it anyway
-	// would leave the store holding a correction that corrects nothing.
-	if params.Supersedes != "" {
-		if _, err := t.DB.GetMemory(params.Supersedes); err != nil {
-			return "", fmt.Errorf("memory_add: cannot supersede %s: %w", params.Supersedes, err)
-		}
-	}
-
 	// Scope precedence: the call's own scope, then the tool's configured
 	// default, then global (via NormalizeScope). An unknown tier is rejected
 	// here rather than persisted as an unfilterable row. The consolidator's
@@ -273,23 +264,24 @@ func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error
 		CreatedAt: time.Now().Unix(),
 	}
 
-	dupID, err := t.DB.AddMemoryDedup(entry)
+	// The write and the supersede share one transaction: inserting first and
+	// superseding after leaves the worst half-state available on failure — the
+	// correction saved, the claim it corrects still live and still surfacing.
+	id, existed, err := t.DB.AddMemorySuperseding(entry, params.Supersedes)
 	if err != nil {
 		return "", fmt.Errorf("memory_add: %w", err)
 	}
-	if dupID != "" {
+
+	if existed {
 		note := ""
-		if params.Supersedes != "" && params.Supersedes != dupID {
-			if err := t.DB.SupersedeMemory(params.Supersedes, dupID); err != nil {
-				return "", fmt.Errorf("memory_add: %w", err)
-			}
+		if params.Supersedes != "" && params.Supersedes != id {
 			note = fmt.Sprintf("\nSuperseded %s with the existing atom.", params.Supersedes)
 		}
-		return fmt.Sprintf("Memory already exists (id: %s): %s\nUse memory_search to retrieve this fact when relevant.%s", dupID, params.Text, note), nil
+		return fmt.Sprintf("Memory already exists (id: %s): %s\nUse memory_search to retrieve this fact when relevant.%s", id, params.Text, note), nil
 	}
 
 	// Embed the new entry synchronously so it is searchable immediately.
-	if ch := t.DB.EmbedMemoryAsync(entry.ID, entry.Text); ch != nil {
+	if ch := t.DB.EmbedMemoryAsync(id, entry.Text); ch != nil {
 		select {
 		case <-ch:
 		case <-ctx.Done():
@@ -298,19 +290,21 @@ func (t *MemoryAddTool) Execute(ctx context.Context, args string) (string, error
 
 	note := ""
 	if params.Supersedes != "" {
-		if err := t.DB.SupersedeMemory(params.Supersedes, entry.ID); err != nil {
-			return "", fmt.Errorf("memory_add: %w", err)
-		}
 		note = fmt.Sprintf(" It supersedes %s, which is kept for audit and no longer surfaced by search.", params.Supersedes)
 	}
 
-	return fmt.Sprintf("Memory saved (id: %s): %s. This fact is now in persistent memory — use memory_search to recall it when relevant.%s", entry.ID, params.Text, note), nil
+	return fmt.Sprintf("Memory saved (id: %s): %s. This fact is now in persistent memory — use memory_search to recall it when relevant.%s", id, params.Text, note), nil
 }
 
 // MemoryPromoteTool moves an atom from the session tier into the global tier,
 // so a fact that proved to outlive its conversation stops expiring with it.
 type MemoryPromoteTool struct {
 	DB *memory.DB
+	// SessionID, when set, restricts promotion to atoms distilled by that
+	// session. A sub-agent gets its parent's id, so it can promote what its own
+	// conversation learned; without the guard a narrow worker could publish
+	// another session's working context to every future recall.
+	SessionID string
 }
 
 func (t *MemoryPromoteTool) Name() string { return "memory_promote" }
@@ -340,6 +334,18 @@ func (t *MemoryPromoteTool) Execute(_ context.Context, args string) (string, err
 	}
 	if params.ID == "" {
 		return "", fmt.Errorf("memory_promote: id is required")
+	}
+	if t.SessionID != "" {
+		entry, err := t.DB.GetMemory(params.ID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return "", memory.ErrMemoryNotFound
+			}
+			return "", fmt.Errorf("memory_promote: %w", err)
+		}
+		if entry.SessionID != "" && entry.SessionID != t.SessionID {
+			return "", fmt.Errorf("memory_promote: entry %s belongs to session %s, expected %s", params.ID, entry.SessionID, t.SessionID)
+		}
 	}
 	from, err := t.DB.PromoteMemory(params.ID)
 	if err != nil {

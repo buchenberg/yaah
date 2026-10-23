@@ -83,6 +83,7 @@ func newToolColors() map[string]string {
 		"memory_add":             "#ff66aa",
 		"memory_update":          "#ff66aa",
 		"memory_delete":          "#ff66aa",
+		"memory_promote":         "#ff66aa",
 		"memory_search_sessions": "#ff66aa",
 		"background_process":     "#cc99ff",
 		"task":                   "#00ffff",

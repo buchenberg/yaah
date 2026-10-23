@@ -1039,26 +1039,115 @@ func (d *DB) DeleteMemory(id string) error {
 }
 
 // SupersedeMemory marks oldID as superseded by newID. The row is kept for
-// audit but excluded from every read path, so a contradicted fact stops
-// surfacing instead of being silently retained beside its correction. A second
-// supersede of the same atom is an error: the first correction is the one that
-// counts, and silently re-pointing it would lose that provenance.
+// audit but excluded from every recall path, so a contradicted fact stops
+// surfacing instead of being silently retained beside its correction.
 func (d *DB) SupersedeMemory(oldID, newID string) error {
 	if oldID == newID {
 		return fmt.Errorf("memory %s cannot supersede itself", oldID)
 	}
-	result, err := d.sql.Exec(
-		`UPDATE memory SET superseded_by = ? WHERE id = ? AND superseded_by IS NULL`,
-		newID, oldID,
-	)
+	tx, err := d.sql.Begin()
 	if err != nil {
 		return fmt.Errorf("supersede %s: %w", oldID, err)
 	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
-		return fmt.Errorf("%w: %s (missing or already superseded)", ErrMemoryNotFound, oldID)
+	defer func() { _ = tx.Rollback() }()
+	if err := supersedeInTx(tx, oldID, newID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("supersede %s: %w", oldID, err)
 	}
 	return nil
+}
+
+// supersedeInTx validates both ends of a supersede and writes the marker. The
+// validation and the write share the caller's transaction because a
+// half-applied supersede is the worst state available: the replacement saved,
+// the claim it was meant to correct still live.
+func supersedeInTx(tx *sql.Tx, oldID, newID string) error {
+	oldScope, oldSup, err := liveAtomScope(tx, oldID)
+	if err != nil {
+		return err
+	}
+	if oldSup != "" {
+		return fmt.Errorf("%w: %s (already superseded by %s)", ErrMemoryNotFound, oldID, oldSup)
+	}
+	newScope, newSup, err := liveAtomScope(tx, newID)
+	if err != nil {
+		return err
+	}
+	if newSup != "" {
+		return fmt.Errorf("replacement %s is itself superseded by %s", newID, newSup)
+	}
+	// A session atom may not retire a global fact. The global claim would leave
+	// recall and be lost for good once the session atom is pruned, which is a
+	// silent demotion of exactly the knowledge the tiers exist to protect.
+	if newScope == ScopeSession && oldScope == ScopeGlobal {
+		return fmt.Errorf("a %s atom cannot supersede a %s one: write the correction as %s, or promote it afterwards", ScopeSession, ScopeGlobal, ScopeGlobal)
+	}
+	if _, err := tx.Exec(`UPDATE memory SET superseded_by = ? WHERE id = ?`, newID, oldID); err != nil {
+		return fmt.Errorf("supersede %s: %w", oldID, err)
+	}
+	return nil
+}
+
+// liveAtomScope reads an atom's tier and its supersession marker. A missing row
+// reports ErrMemoryNotFound; a non-empty marker means the atom is dead.
+func liveAtomScope(tx *sql.Tx, id string) (scope, supersededBy string, err error) {
+	var scopeCol, supCol sql.NullString
+	err = tx.QueryRow(`SELECT scope, superseded_by FROM memory WHERE id = ?`, id).Scan(&scopeCol, &supCol)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", fmt.Errorf("%w: %s", ErrMemoryNotFound, id)
+	}
+	if err != nil {
+		return "", "", err
+	}
+	return scopeCol.String, supCol.String, nil
+}
+
+// AddMemorySuperseding writes e and marks supersedesID as superseded by the
+// atom that ends up representing it, in one transaction. It returns the atom's
+// id and whether that atom already existed (an identical live atom is reused
+// rather than duplicated, exactly as AddMemoryDedup does).
+func (d *DB) AddMemorySuperseding(e Entry, supersedesID string) (string, bool, error) {
+	digest := memoryDigest(e.Text)
+	scope, err := NormalizeScope(e.Scope)
+	if err != nil {
+		return "", false, err
+	}
+
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return "", false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	id := e.ID
+	existed := false
+	var dupID string
+	err = tx.QueryRow(`SELECT id FROM memory WHERE digest = ? AND superseded_by IS NULL LIMIT 1`, digest).Scan(&dupID)
+	switch {
+	case err == nil:
+		id, existed = dupID, true
+	case errors.Is(err, sql.ErrNoRows):
+		if _, err := tx.Exec(
+			`INSERT INTO memory (id, text, tags, source, scope, session_id, created_at, digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			e.ID, e.Text, e.Tags, e.Source, scope, nullableText(e.SessionID), e.CreatedAt, digest,
+		); err != nil {
+			return "", false, err
+		}
+	default:
+		return "", false, err
+	}
+
+	if supersedesID != "" && supersedesID != id {
+		if err := supersedeInTx(tx, supersedesID, id); err != nil {
+			return "", false, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return "", false, err
+	}
+	return id, existed, nil
 }
 
 // SupersededBy reports which atom superseded id, or "" when id is still live.
