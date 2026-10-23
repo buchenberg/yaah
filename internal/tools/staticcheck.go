@@ -182,8 +182,11 @@ const (
 
 // exportDataVersionMismatch matches the exact line a stale analyzer produces
 // when it cannot read a newer toolchain's export data, e.g.
-// "version 5 > maximum supported 4". Compiled here rather than stored in a
-// package-level var so the failure path stays self-contained.
+// "version 5 > maximum supported 4".
+//
+// Package-level because MustCompile is meant to run once; it is immutable and
+// mirrors the other compiled patterns in this package, so it is not the kind of
+// mutable shared state the repo's no-globals rule targets.
 var exportDataVersionMismatch = regexp.MustCompile(`version \d+ > maximum supported \d+`)
 
 // staleAnalyzerHint turns an out-of-date staticcheck into something a caller
