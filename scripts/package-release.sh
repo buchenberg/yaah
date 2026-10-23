@@ -25,8 +25,10 @@
 #   scripts/package-release.sh --goos linux --goarch amd64 \
 #     --binary dist/yaah-linux-amd64 --version v0.102.0 --outdir dist
 #
-# Prints the archive path on stdout and appends "<sha256>  <name>" to
-# <outdir>/sha256sums.txt.
+# Prints the archive path on stdout and APPENDS "<sha256>  <name>" to
+# <outdir>/sha256sums.txt, so one clean outdir accumulates a line per platform.
+# Run it against a fresh outdir (the release workflow does) — it does not
+# truncate, and re-running it for the same platform adds a second line.
 set -euo pipefail
 
 usage() {
@@ -52,11 +54,17 @@ outdir="dist"
 
 while [ $# -gt 0 ]; do
 	case "$1" in
-	--goos) goos=${2:-}; shift 2 ;;
-	--goarch) goarch=${2:-}; shift 2 ;;
-	--binary) binary=${2:-}; shift 2 ;;
-	--version) version=${2:-}; shift 2 ;;
-	--outdir) outdir=${2:-}; shift 2 ;;
+	--goos | --goarch | --binary | --version | --outdir)
+		[ $# -ge 2 ] || die "$1 needs a value"
+		case "$1" in
+		--goos) goos=$2 ;;
+		--goarch) goarch=$2 ;;
+		--binary) binary=$2 ;;
+		--version) version=$2 ;;
+		--outdir) outdir=$2 ;;
+		esac
+		shift 2
+		;;
 	-h | --help) usage; exit 0 ;;
 	*) die "unknown argument: $1" ;;
 	esac
@@ -116,7 +124,12 @@ fi
 [ -f "$archive" ] || die "archive was not created: $archive"
 
 # Guard the flat layout rather than trusting tar/zip flags.
-listing=$(if [ "$goos" = "windows" ]; then unzip -Z1 "$archive"; else tar -tzf "$archive"; fi)
+if [ "$goos" = "windows" ]; then
+	command -v unzip >/dev/null || die "unzip is required to verify windows archives"
+	listing=$(unzip -Z1 "$archive")
+else
+	listing=$(tar -tzf "$archive")
+fi
 [ "$listing" = "$binname" ] ||
 	die "archive is not flat: expected only $binname, got: $(echo "$listing" | tr '\n' ' ')"
 
