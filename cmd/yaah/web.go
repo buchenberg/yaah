@@ -148,11 +148,18 @@ func (ws *webServer) requireAuth(next http.Handler) http.Handler {
 			return
 		}
 		if q := r.URL.Query().Get("t"); q != "" && q == presented {
+			// Secure is set only when the request arrived over TLS. yaah
+			// binds to loopback and is normally used over plain
+			// http://127.0.0.1, where a Secure cookie is never sent back:
+			// auth would silently break after the first redirect. Behind a
+			// TLS-terminating proxy r.TLS is non-nil and the cookie is
+			// hardened.
 			http.SetCookie(w, &http.Cookie{
 				Name:     "yaah_token",
 				Value:    presented,
 				Path:     "/",
 				HttpOnly: true,
+				Secure:   r.TLS != nil,
 				SameSite: http.SameSiteLaxMode,
 			})
 			if r.Method == http.MethodGet && r.URL.Path == "/" {
@@ -163,6 +170,62 @@ func (ws *webServer) requireAuth(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// webCSP is the Content-Security-Policy for the embedded UI. index.html is a
+// single self-contained page: its <script> and <style> are inline, it loads
+// alpine/marked/purify/pico from this same origin, and it consumes the agent
+// stream through an EventSource on /api/stream. 'unsafe-inline' is therefore
+// required for script-src and style-src, default-src stays 'self', and
+// connect-src 'self' keeps the same-origin SSE connection working. Nothing on
+// the page submits a form or rewrites its base URL, so base-uri and
+// form-action are 'none'.
+const webCSP = "default-src 'self'; " +
+	"script-src 'self' 'unsafe-inline'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data:; " +
+	"connect-src 'self'; " +
+	"base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
+// withSecurityHeaders hardens every response. It is defence in depth for a
+// loopback-only tool: the browser holding the token is the only intended
+// client, and a stray asset must not be able to frame the UI, have its markup
+// sniffed as script, or leak the URL — which carries ?t= on first load —
+// through a Referer. Applied to the whole mux, so a route added later cannot
+// ship without them.
+func withSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", webCSP)
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("X-Frame-Options", "DENY")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// routes builds the HTTP surface: static assets under /, the SSE stream, the
+// action endpoint, and the session-registry projection. Every route sits
+// behind the token check and the whole mux behind withSecurityHeaders.
+//
+// There is deliberately no /api/commands endpoint (yaah-dvp). Nothing ever
+// fetched it: the browser's slash-command list lives in index.html and every
+// one of those commands is either executed client-side or posted to
+// /api/action, and the server copy had already drifted from what the client
+// can actually run. A second hand-maintained copy of a purely client-side list
+// only manufactures drift, so the route and its handler were deleted rather
+// than kept as a pretend source of truth.
+func (ws *webServer) routes() (http.Handler, error) {
+	subFS, err := fs.Sub(webFS, "web")
+	if err != nil {
+		return nil, fmt.Errorf("embed: %w", err)
+	}
+	mux := http.NewServeMux()
+	mux.Handle("/", ws.requireAuth(http.FileServer(http.FS(subFS))))
+	mux.Handle("/api/stream", ws.requireAuth(http.HandlerFunc(ws.handleStream)))
+	mux.Handle("/api/action", ws.requireAuth(http.HandlerFunc(ws.handleAction)))
+	mux.Handle("/api/sessions", ws.requireAuth(http.HandlerFunc(ws.handleSessions)))
+	return withSecurityHeaders(mux), nil
 }
 
 type actionRequest struct {
@@ -279,19 +342,12 @@ func runWeb(cmd *cobra.Command, args []string) error {
 		}
 	})
 
-	mux := http.NewServeMux()
-
-	subFS, err := fs.Sub(webFS, "web")
+	handler, err := ws.routes()
 	if err != nil {
-		return fmt.Errorf("embed: %w", err)
+		return err
 	}
-	mux.Handle("/", ws.requireAuth(http.FileServer(http.FS(subFS))))
-	mux.Handle("/api/stream", ws.requireAuth(http.HandlerFunc(ws.handleStream)))
-	mux.Handle("/api/action", ws.requireAuth(http.HandlerFunc(ws.handleAction)))
-	mux.Handle("/api/commands", ws.requireAuth(http.HandlerFunc(ws.handleCommands)))
-	mux.Handle("/api/sessions", ws.requireAuth(http.HandlerFunc(ws.handleSessions)))
 
-	srv := &http.Server{Addr: webAddr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: webAddr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -538,26 +594,6 @@ func (ws *webServer) runPrompt(text string) {
 	ws.promptCtxCancel = nil
 	ws.mu.Unlock()
 	ws.running.Store(false)
-}
-
-func (ws *webServer) handleCommands(w http.ResponseWriter, r *http.Request) {
-	type cmd struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Arg         bool   `json:"arg,omitempty"`
-	}
-	cmds := []cmd{
-		{Name: ":compact", Description: "Summarize old messages"},
-		{Name: ":model", Description: "Switch model"},
-		{Name: ":steer", Description: "Inject text into current turn", Arg: true},
-		{Name: ":clear", Description: "Clear chat history"},
-		{Name: ":help", Description: "Show available commands"},
-		{Name: ":stop", Description: "Abort the running agent"},
-		{Name: ":login", Description: "Authenticate with an OAuth provider"},
-		{Name: ":logout", Description: "Remove stored OAuth credentials"},
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(cmds)
 }
 
 // maxSessionsLimit caps /api/sessions page sizes: the endpoint backs a
