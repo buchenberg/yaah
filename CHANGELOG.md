@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.102.3](https://github.com/buchenberg/yaah/compare/v0.102.2...v0.102.3) (2026-10-23)
+
+
+### Bug Fixes
+
+* **tui:** complete colon commands, add typeahead, stop from any focus ([73b67dd](https://github.com/buchenberg/yaah/commit/73b67ddcb62c669e4a26a7e861696c730a53da38))
+
 ## [0.102.2](https://github.com/buchenberg/yaah/compare/v0.102.1...v0.102.2) (2026-10-23)
 
 
