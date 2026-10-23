@@ -180,9 +180,11 @@ const (
 	staticcheckError = "error"
 )
 
-// exportDataVersionMismatch matches the exact line a stale analyzer produces
-// when it cannot read a newer toolchain's export data, e.g.
-// "version 5 > maximum supported 4".
+// exportDataVersionMismatch matches the version comparison a stale analyzer
+// prints when it cannot read a newer toolchain's export data, e.g.
+// "version 5 > maximum supported 4". Deliberately unanchored: the comparison
+// may be prefixed (as in the "-: version 5 > maximum supported 4" line above),
+// so this finds it anywhere in a line rather than matching a whole line.
 //
 // Package-level because MustCompile is meant to run once; it is immutable and
 // mirrors the other compiled patterns in this package, so it is not the kind of
