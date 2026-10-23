@@ -160,6 +160,11 @@ func (t *StaticcheckTool) Execute(ctx context.Context, args string) (string, err
 			}
 			if buildFailed || (res.ExitCode != 0 && len(result.Diagnostics) == before) {
 				status = staticcheckError
+				// A stale analyzer is the one failure a caller can actually
+				// fix, and its output says so only obliquely.
+				if hint := staleAnalyzerHint(res.Stdout + "\n" + res.Stderr); hint != "" {
+					result.Stderr += hint
+				}
 			}
 		}
 	}
@@ -174,6 +179,38 @@ const (
 	staticcheckOK    = "ok"
 	staticcheckError = "error"
 )
+
+// staleAnalyzerHint turns an out-of-date staticcheck into something a caller
+// can act on.
+//
+// A binary built against an older Go cannot read a newer toolchain's export
+// data: it exits non-zero, prints no diagnostics, and reports only "version N >
+// maximum supported M". The result then lands in the generic failure path —
+// status:error with an empty diagnostics list — which is indistinguishable from
+// a package that genuinely failed to analyse. Two reviewers hit exactly this
+// and could only report "source-reading only"; the workaround lived in
+// AGENTS.md rather than in the tool's own output (yaah-2vc).
+func staleAnalyzerHint(output string) string {
+	lower := strings.ToLower(output)
+	if !strings.Contains(lower, "export data") && !strings.Contains(lower, "maximum supported") {
+		return ""
+	}
+	// Quote the offending line: it carries the version numbers, which are the
+	// provenance the caller needs to confirm the diagnosis.
+	for _, line := range strings.Split(output, "\n") {
+		t := strings.TrimSpace(line)
+		if t == "" {
+			continue
+		}
+		l := strings.ToLower(t)
+		if strings.Contains(l, "export data") || strings.Contains(l, "maximum supported") {
+			return fmt.Sprintf(
+				"-- your staticcheck is too old for this Go toolchain (%s) — refresh it with: go install honnef.co/go/tools/cmd/staticcheck@latest --\n",
+				t)
+		}
+	}
+	return ""
+}
 
 // analyzerBuildFailure reports whether the analyzer output carries Go's build
 // header (`# pkg`, or staticcheck's `-: # pkg`), which both tools print only

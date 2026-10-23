@@ -135,3 +135,59 @@ func TestStaticcheck_StaticcheckLoadFailureIsAnError(t *testing.T) {
 		t.Errorf("count = %d, want 0", r.Count)
 	}
 }
+
+// TestStaleAnalyzerHint covers yaah-2vc: an analyzer too old for the toolchain
+// exits non-zero with no diagnostics, which is indistinguishable from a real
+// analysis failure unless the tool says what to do about it.
+func TestStaleAnalyzerHint(t *testing.T) {
+	tests := []struct {
+		name       string
+		output     string
+		wantHint   bool
+		wantQuoted string
+	}{
+		{
+			name:       "export data version mismatch",
+			output:     "staticcheck: cannot read export data: version 5 > maximum supported 4",
+			wantHint:   true,
+			wantQuoted: "version 5 > maximum supported 4",
+		},
+		{
+			name:       "maximum supported phrasing alone",
+			output:     "-: version 5 > maximum supported 4",
+			wantHint:   true,
+			wantQuoted: "maximum supported",
+		},
+		{
+			name:     "genuine compile failure gets no hint",
+			output:   "-: # example.com/pkg\n./x.go:3:2: undefined: nope",
+			wantHint: false,
+		},
+		{
+			name:     "clean analysis gets no hint",
+			output:   "",
+			wantHint: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := staleAnalyzerHint(tt.output)
+			if tt.wantHint {
+				if got == "" {
+					t.Fatalf("staleAnalyzerHint(%q) = empty; want a hint", tt.output)
+				}
+				if !strings.Contains(got, "go install honnef.co/go/tools/cmd/staticcheck@latest") {
+					t.Errorf("hint does not name the fix: %q", got)
+				}
+				if tt.wantQuoted != "" && !strings.Contains(got, tt.wantQuoted) {
+					t.Errorf("hint does not quote the offending line %q: %q", tt.wantQuoted, got)
+				}
+				return
+			}
+			if got != "" {
+				t.Errorf("staleAnalyzerHint(%q) = %q; want no hint", tt.output, got)
+			}
+		})
+	}
+}
