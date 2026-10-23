@@ -354,13 +354,16 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	ctrlCh := make(chan control.Msg, 64)
 	done := make(chan struct{})
 
+	// Install the session view inside the same critical section the teardown
+	// re-checks below. Done separately, a reload could slip between an
+	// ownership check and the clear, leaving the session detached from the
+	// live connection.
 	ws.mu.Lock()
 	ws.view = v
 	ws.sseDone = done
-	ws.mu.Unlock()
-
 	ws.sess.SetView(v)
 	ws.sess.SetCtrlCh(ctrlCh)
+	ws.mu.Unlock()
 
 	// Store ctrlCh for the question handler.
 	ws.ctrlChMu.Lock()
@@ -412,8 +415,15 @@ func (ws *webServer) handleStream(w http.ResponseWriter, r *http.Request) {
 	}
 	ws.ctrlChMu.Unlock()
 
-	ws.sess.SetView(agent.NoopView{})
-	ws.sess.SetCtrlCh(nil)
+	// Re-check under ws.mu before detaching the session. releaseStream having
+	// returned true only says no newer view existed at that instant; a reload
+	// may have installed one since, and that connection must keep its view.
+	ws.mu.Lock()
+	if ws.view == nil {
+		ws.sess.SetView(agent.NoopView{})
+		ws.sess.SetCtrlCh(nil)
+	}
+	ws.mu.Unlock()
 }
 
 // releaseStream uninstalls v as the active SSE view and reports whether it was

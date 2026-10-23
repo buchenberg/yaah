@@ -720,7 +720,7 @@ document.addEventListener('alpine:init', () => {
       allow(v) {
         const id = this.modal.aid
         this.modal.aid = null
-        if (id) this.post({type:'answer', id, value: String(v)}).catch(() => {})
+        if (id) this.post({type:'answer', id, value: String(v)})
         this.$refs.dlg.close()
       },
 
@@ -864,8 +864,11 @@ document.addEventListener('alpine:init', () => {
         this.add('user', t); el.value = ''; el.style.height = 'auto'
         this.live = true; this.think = ''; this.reasonExpanded = false
         // Roll back if the prompt never left: otherwise a rejected or dropped
-        // request left the composer disabled until a manual reload.
-        this.post({type:'prompt', text: t}).catch(() => {
+        // request left the composer disabled until a manual reload. A 409 is
+        // the exception — it means a run really is in flight, so keep live set
+        // and let the status line explain why the prompt was refused.
+        this.post({type:'prompt', text: t}).then(res => {
+          if (res.ok || res.reason === 'busy') return
           this.live = false; this.think = ''
           this.add('error', 'prompt was not delivered — press Send to retry')
         })
@@ -874,16 +877,21 @@ document.addEventListener('alpine:init', () => {
 
       stop() { this.post({type:'abort'}) },
       post(body) {
-        // Returns a promise that rejects on any non-2xx or network failure, so
-        // callers can roll back optimistic state. Swallowing the rejection left
-        // the UI claiming a run had started when the server never saw it.
+        // Resolves to {ok, reason} and never rejects: most call sites invoke it
+        // bare, and rejecting would turn every failed action into an unhandled
+        // promise rejection that silently swallowed the error. The status line
+        // is updated here; callers that hold optimistic state branch on the
+        // result instead of catching.
         return fetch('/api/action', {method:'POST', headers:{'Content-Type':'application/json', 'X-Yaah-Token': _token}, body:JSON.stringify(body)})
-          .then(r => {
-            if (r.status === 409) { this.status = 'agent is busy'; throw new Error('busy') }
-            if (r.status === 401) { this.status = 'unauthorized — reload with the token URL from the terminal'; throw new Error('unauthorized') }
-            if (!r.ok) { this.status = 'request failed (' + r.status + ')'; throw new Error('request failed') }
-            return r.json().catch(() => null)
-          })
+          .then(
+            r => {
+              if (r.status === 409) { this.status = 'agent is busy'; return {ok:false, reason:'busy'} }
+              if (r.status === 401) { this.status = 'unauthorized — reload with the token URL from the terminal'; return {ok:false, reason:'unauthorized'} }
+              if (!r.ok) { this.status = 'request failed (' + r.status + ')'; return {ok:false, reason:'http'} }
+              return {ok:true}
+            },
+            () => { this.status = 'connection lost — check the terminal'; return {ok:false, reason:'network'} }
+          )
       }
     }
   })
