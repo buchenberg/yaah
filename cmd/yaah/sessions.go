@@ -5,16 +5,16 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/acp"
-	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/buchenberg/yaah/internal/sessions"
 	"github.com/spf13/cobra"
 )
 
 // sessionsCmd is the `yaah sessions` subcommand tree: direct access to
-// the persisted conversation store from the CLI. ACP clients reach the
-// same rows through session/list and session/delete (acp session
-// lifecycle); TUI/REPL resume pickers are planned follow-ups on the
-// same store seam.
+// the persisted conversation store from the CLI. Every surface reads the
+// same rows through the engine-level session registry
+// (internal/sessions): ACP session/list and session/delete, the web
+// session picker, the interactive resume picker, and this command all
+// page, filter, and delete through it.
 var sessionsCmd = &cobra.Command{
 	Use:   "sessions",
 	Short: "Inspect the persisted conversation sessions",
@@ -32,43 +32,31 @@ var sessionsListCmd = &cobra.Command{
 		if limit <= 0 {
 			return fmt.Errorf("--limit must be positive")
 		}
-		// Same canonicalization session/list applies, so the CLI and ACP
-		// filters match the stored session cwds identically.
-		cwd, err := acp.CanonicalFilterCwd(cwdFlag)
-		if err != nil {
-			return fmt.Errorf("--cwd: %v", err)
-		}
 
-		db, err := memory.OpenDefault()
+		reg, err := sessions.OpenDefault()
 		if err != nil {
 			return fmt.Errorf("open database: %w", err)
 		}
-		defer db.Close()
+		defer reg.Close()
 
-		// Page until limit rows or the last page; the store enforces its
-		// own page size, the CLI cursor-chases to reach the user's limit.
-		var sessions []memory.SessionSummary
-		cursor := ""
-		for len(sessions) < limit {
-			pageSize := limit - len(sessions)
-			rows, next, err := db.ListSessionsPage(memory.SessionListFilter{
-				CWD: cwd, Cursor: cursor, Limit: pageSize,
-			})
-			if err != nil {
-				return fmt.Errorf("list sessions: %w", err)
+		// The registry canonicalizes the cwd filter exactly like the ACP
+		// session/list intake, so the CLI and ACP filters match the stored
+		// session cwds identically, and it chases the store's cursors up to
+		// the user's limit.
+		rows, err := reg.List(sessions.Filter{CWD: cwdFlag, Limit: limit})
+		if err != nil {
+			if errors.Is(err, sessions.ErrInvalidCWD) {
+				// Same text this command printed before the registry seam.
+				return fmt.Errorf("--cwd: cwd %q must be an absolute path", cwdFlag)
 			}
-			sessions = append(sessions, rows...)
-			if next == "" {
-				break
-			}
-			cursor = next
+			return fmt.Errorf("list sessions: %w", err)
 		}
 
-		if len(sessions) == 0 {
+		if len(rows) == 0 {
 			cmd.Println("No sessions found.")
 			return nil
 		}
-		for _, s := range sessions {
+		for _, s := range rows {
 			title := s.Title
 			if title == "" {
 				title = "(untitled)"
@@ -95,13 +83,13 @@ var sessionsDeleteCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id := args[0]
-		db, err := memory.OpenDefault()
+		reg, err := sessions.OpenDefault()
 		if err != nil {
 			return fmt.Errorf("open database: %w", err)
 		}
-		defer db.Close()
-		if err := db.DeleteSession(id); err != nil {
-			if errors.Is(err, memory.ErrSessionNotFound) {
+		defer reg.Close()
+		if err := reg.Delete(id); err != nil {
+			if errors.Is(err, sessions.ErrNotFound) {
 				return fmt.Errorf("no session %q in the store", id)
 			}
 			return fmt.Errorf("delete session: %w", err)

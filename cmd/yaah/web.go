@@ -21,11 +21,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/acp"
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/control"
+	"github.com/buchenberg/yaah/internal/cwdpath"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/providers"
+	"github.com/buchenberg/yaah/internal/sessions"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/spf13/cobra"
 )
@@ -194,13 +195,12 @@ func runWeb(cmd *cobra.Command, args []string) error {
 		token: token,
 	}
 	if sess.db != nil {
-		// The store is the single session registry (engine seam): serve
-		// the same rows ACP session/list and the CLI surface, over one
-		// read handle owned by this process.
+		// The registry is the single session seam: serve the same rows ACP
+		// session/list and the CLI surface. The store is borrowed — the
+		// agent session owns the handle and closes it.
+		reg := sessions.New(sess.db)
 		ws.sessionList = func(cwdFilter, cursor string, limit int) ([]memory.SessionSummary, string, error) {
-			return sess.db.ListSessionsPage(memory.SessionListFilter{
-				CWD: cwdFilter, Cursor: cursor, Limit: limit,
-			})
+			return reg.Page(sessions.Filter{CWD: cwdFilter, Cursor: cursor, Limit: limit})
 		}
 	}
 
@@ -522,9 +522,9 @@ func (ws *webServer) handleCommands(w http.ResponseWriter, r *http.Request) {
 // picker/recent list, not a bulk export.
 const maxSessionsLimit = 200
 
-// handleSessions serves the shared session store's picker projection —
-// the same rows ACP session/list and the CLI surface. Optional query
-// parameters mirror the CLI: cwd (exact-match, canonicalized like
+// handleSessions serves the engine-level session registry's picker
+// projection — the same rows ACP session/list and the CLI surface. Optional
+// query parameters mirror the CLI: cwd (exact-match, canonicalized like
 // session/list), limit (1..200, default 50), cursor (keyset page).
 func (ws *webServer) handleSessions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -539,7 +539,7 @@ func (ws *webServer) handleSessions(w http.ResponseWriter, r *http.Request) {
 	cwdFilter := q.Get("cwd")
 	if cwdFilter != "" {
 		var err error
-		if cwdFilter, err = acp.CanonicalFilterCwd(cwdFilter); err != nil {
+		if cwdFilter, err = cwdpath.Canonical(cwdFilter); err != nil {
 			http.Error(w, fmt.Sprintf("cwd: %v", err), http.StatusBadRequest)
 			return
 		}
@@ -555,7 +555,7 @@ func (ws *webServer) handleSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, next, err := ws.sessionList(cwdFilter, q.Get("cursor"), limit)
 	if err != nil {
-		if errors.Is(err, memory.ErrInvalidCursor) {
+		if errors.Is(err, sessions.ErrInvalidCursor) {
 			http.Error(w, "invalid cursor", http.StatusBadRequest)
 			return
 		}

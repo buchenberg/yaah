@@ -10,15 +10,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/acp"
+	"github.com/buchenberg/yaah/internal/cwdpath"
 	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/buchenberg/yaah/internal/sessions"
 )
 
 // sessionsStub installs a canned sessionList on a bare webServer (the
 // production wiring links the store in runWeb). The returned slice
 // records each store call as "cwd|cursor|limit". A "bad" cursor fails
-// with memory.ErrInvalidCursor; a "boom" cursor fails with internal
-// error text that must not leak to clients.
+// with sessions.ErrInvalidCursor (what the registry hands the handler); a
+// "boom" cursor fails with internal error text that must not leak to clients.
 func sessionsStub(t *testing.T) (*webServer, *[]string) {
 	t.Helper()
 	touched := &[]string{}
@@ -26,7 +27,7 @@ func sessionsStub(t *testing.T) (*webServer, *[]string) {
 	ws.sessionList = func(cwdFilter, cursor string, limit int) ([]memory.SessionSummary, string, error) {
 		*touched = append(*touched, fmt.Sprintf("%s|%s|%d", cwdFilter, cursor, limit))
 		if cursor == "bad" {
-			return nil, "", memory.ErrInvalidCursor
+			return nil, "", sessions.ErrInvalidCursor
 		}
 		if cursor == "boom" {
 			return nil, "", fmt.Errorf("sqlite: disk I/O error at /home/user/.yaah/state.db")
@@ -60,7 +61,7 @@ func TestWebSessions_authAndShape(t *testing.T) {
 	// envelope. The cwd is a real directory so the test passes on
 	// Windows too (where "/x" is not an absolute path).
 	dir := t.TempDir()
-	canonical, err := acp.CanonicalFilterCwd(dir)
+	canonical, err := cwdpath.Canonical(dir)
 	if err != nil {
 		t.Fatal(err)
 	}

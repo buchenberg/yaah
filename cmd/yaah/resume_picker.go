@@ -10,15 +10,16 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/buchenberg/yaah/internal/acp"
 	"github.com/buchenberg/yaah/internal/memory"
+	"github.com/buchenberg/yaah/internal/sessions"
 )
 
 // The interactive --resume picker. `yaah --resume` (no value) resolves
 // the sentinel below into a concrete session id by listing the store's
-// sessions for the current directory, the same canonical-filtered page
-// the CLI and ACP session/list read. Non-interactive surfaces (web,
-// serve, ACP) never invoke it.
+// sessions for the current directory through the engine-level session
+// registry (internal/sessions) — the same canonical-filtered page the CLI
+// and ACP session/list read. Non-interactive surfaces (web, serve, ACP)
+// never invoke it.
 
 // resumePickerSentinel is the --resume flag value meaning "pick from a
 // list". Set as the flag's NoOptDefVal so a bare --resume works.
@@ -99,42 +100,27 @@ func maybeResolveResumePicker(out io.Writer, in io.Reader) error {
 	return nil
 }
 
-// listPickerSessions returns candidate sessions for the picker. The
-// canonical cwd filter (what rows carry going forward) comes first; when
-// it finds nothing, the raw process cwd is tried so rows written before
-// canonicalization — or through a symlinked PWD — still appear.
+// listPickerSessions returns candidate sessions for the picker through the
+// engine-level session registry. The canonical cwd filter (what rows carry
+// going forward) is what the registry queries first; CwdRawFallback asks it to
+// retry with the raw process cwd when that finds nothing, so rows written
+// before canonicalization — or through a symlinked PWD — still appear.
 func listPickerSessions(rawCwd string) ([]memory.SessionSummary, error) {
-	filters := []string{rawCwd}
-	if canonical, err := acp.CanonicalFilterCwd(rawCwd); err == nil && canonical != rawCwd {
-		filters = []string{canonical, rawCwd}
-	}
-	db, err := memory.OpenDefault()
+	reg, err := sessions.OpenDefault()
 	if err != nil {
 		return nil, fmt.Errorf("resume picker: %w", err)
 	}
-	defer db.Close()
+	defer reg.Close()
 
-	for _, filter := range filters {
-		var sessions []memory.SessionSummary
-		cursor := ""
-		for len(sessions) < maxPickerRows {
-			rows, next, err := db.ListSessionsPage(memory.SessionListFilter{
-				CWD: filter, Cursor: cursor, Limit: maxPickerRows - len(sessions),
-			})
-			if err != nil {
-				return nil, fmt.Errorf("resume picker: %w", err)
-			}
-			sessions = append(sessions, rows...)
-			if next == "" || len(rows) == 0 {
-				break
-			}
-			cursor = next
-		}
-		if len(sessions) > 0 {
-			return sessions, nil
-		}
+	rows, err := reg.List(sessions.Filter{
+		CWD:            rawCwd,
+		CwdRawFallback: true,
+		Limit:          maxPickerRows,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("resume picker: %w", err)
 	}
-	return nil, nil
+	return rows, nil
 }
 
 // pickResumeSession lists candidate sessions and reads a choice. Empty
