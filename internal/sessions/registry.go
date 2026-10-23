@@ -54,8 +54,9 @@ type Filter struct {
 	// Cursor is the opaque pagination cursor from a previous page; empty
 	// for the first page.
 	Cursor string
-	// Limit caps the rows returned; <= 0 uses the store's default page size
-	// (50).
+	// Limit caps the rows returned. List treats <= 0 as the store's default
+	// page size (50), so an unbounded List still stops after one page.
+	// Page passes it straight through.
 	Limit int
 	// CwdRawFallback is a picker-only escape hatch: when the canonicalized
 	// CWD pass returns no rows and the raw CWD is non-empty and spelled
@@ -64,6 +65,11 @@ type Filter struct {
 	// ignores it — it always issues exactly one store query.
 	CwdRawFallback bool
 }
+
+// defaultListLimit mirrors the store's own page size. List treats a
+// non-positive Filter.Limit as this many rows: without the clamp an unbounded
+// List would chase every page up to maxChasePages.
+const defaultListLimit = 50
 
 // maxChasePages bounds List's cursor chase: a picker is a chooser, not a bulk
 // export, and a store bug must not turn into an unbounded loop.
@@ -133,7 +139,11 @@ func (r *Registry) List(f Filter) ([]memory.SessionSummary, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := r.chase(canonical, f.Cursor, f.Limit)
+	limit := f.Limit
+	if limit <= 0 {
+		limit = defaultListLimit
+	}
+	rows, err := r.chase(canonical, f.Cursor, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +153,7 @@ func (r *Registry) List(f Filter) ([]memory.SessionSummary, error) {
 	// Legacy rows carry the path the process saw (symlink and all); the
 	// canonical pass above cannot see them, so retry with the raw spelling
 	// exactly as the caller gave it.
-	return r.chase(f.CWD, f.Cursor, f.Limit)
+	return r.chase(f.CWD, f.Cursor, limit)
 }
 
 // chase pages through the store's cursors, collecting rows in store order. The

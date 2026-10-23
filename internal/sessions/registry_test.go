@@ -247,9 +247,13 @@ func TestRegistryListCwdRawFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw := filepath.Join(dir, "..", filepath.Base(dir))
-	if raw == canonical {
-		t.Skipf("raw spelling %q is already canonical", raw)
+	// A symlink is the realistic non-canonical spelling: the process sees the
+	// link, the store holds the resolved target. Joining ".."/base does not
+	// work here — filepath.Join cleans it straight back to the canonical form,
+	// which made this test skip every run and left the fallback unexercised.
+	raw := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(canonical, raw); err != nil {
+		t.Skipf("cannot create symlink on this platform: %v", err)
 	}
 	legacy := memory.SessionSummary{ID: "sess-legacy", CWD: raw}
 	store := &fakeStore{pageFn: func(filter memory.SessionListFilter) ([]memory.SessionSummary, string, error) {

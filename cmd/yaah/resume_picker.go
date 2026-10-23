@@ -80,14 +80,16 @@ func maybeResolveResumePicker(out io.Writer, in io.Reader) error {
 	if err != nil {
 		return fmt.Errorf("resume picker: current directory: %w", err)
 	}
-	sessions, err := listPickerSessions(rawCwd)
+	// Named rows, not "sessions": that would shadow the package this file
+	// imports just below.
+	rows, err := listPickerSessions(rawCwd)
 	if err != nil {
 		return err
 	}
-	if len(sessions) == 0 {
+	if len(rows) == 0 {
 		return fmt.Errorf("no sessions to resume for this directory (starting a run creates one)")
 	}
-	id, err := pickResumeSession(out, in, sessions)
+	id, err := pickResumeSession(out, in, rows)
 	if err != nil {
 		return err
 	}

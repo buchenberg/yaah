@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/buchenberg/yaah/internal/cwdpath"
 	"github.com/buchenberg/yaah/internal/sessions"
 	"github.com/spf13/cobra"
 )
@@ -31,6 +32,11 @@ var sessionsListCmd = &cobra.Command{
 		limit, _ := cmd.Flags().GetInt("limit")
 		if limit <= 0 {
 			return fmt.Errorf("--limit must be positive")
+		}
+		// Validate the flag before opening the store: a rejected --cwd must
+		// not leave a freshly created state.db behind on a cold machine.
+		if _, err := cwdpath.Canonical(cwdFlag); err != nil {
+			return fmt.Errorf("--cwd: %v", err)
 		}
 
 		reg, err := sessions.OpenDefault()
