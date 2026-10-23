@@ -10,8 +10,15 @@
 <script src="purify.min.js"></script>
 <script defer src="alpine.min.js"></script>
 <style>
-:root{color-scheme:light dark;--wui-ok:#22c55e;--wui-warn:#facc15;--wui-err:#dc2626;--wui-err-text:#f87171;--wui-info:#60a5fa;--wui-muted:#9ca3af;--wui-off:#555}
-@media (prefers-color-scheme:light){:root{--wui-ok:#16a34a;--wui-warn:#a16207;--wui-err:#dc2626;--wui-err-text:#b91c1c;--wui-info:#2563eb;--wui-muted:#6b7280;--wui-off:#9ca3af}}
+:root{color-scheme:light dark;--wui-ok:#16a34a;--wui-warn:#a16207;--wui-err:#dc2626;--wui-err-text:#b91c1c;--wui-info:#2563eb;--wui-muted:#4b5563;--wui-off:#9ca3af;--wui-radius-sm:4px;--wui-radius:6px;--wui-radius-md:8px;--wui-radius-lg:10px;--wui-radius-xl:12px;--wui-radius-pill:20px;--wui-space-xs:.25rem;--wui-space-sm:.5rem;--wui-space-md:.75rem;--wui-space-lg:1rem;--wui-shadow-sm:0 2px 8px rgba(0,0,0,.18);--wui-shadow:0 4px 12px rgba(0,0,0,.25);--wui-shadow-lg:0 8px 24px rgba(0,0,0,.35);--wui-shadow-xl:0 4px 16px rgba(0,0,0,.3);--wui-mono:var(--pico-font-family-monospace,monospace)}
+/* Mirrors Pico's direction: light in :root, dark under the media query. The
+   previous arrangement declared dark accents in :root and light ones under
+   prefers-color-scheme:light, so any mismatch between the two queries paired
+   a light Pico palette with dark-tuned accents (~1.5-2:1 on white). */
+@media (prefers-color-scheme:dark){:root{--wui-ok:#22c55e;--wui-warn:#facc15;--wui-err:#dc2626;--wui-err-text:#f87171;--wui-info:#60a5fa;--wui-muted:#9ca3af;--wui-off:#555;--wui-shadow-sm:0 2px 8px rgba(0,0,0,.5);--wui-shadow:0 4px 12px rgba(0,0,0,.5);--wui-shadow-lg:0 8px 24px rgba(0,0,0,.6);--wui-shadow-xl:0 4px 16px rgba(0,0,0,.6)}}
+/* Visually hidden but announced by screen readers: used for the h1, the
+   composer label and the radio-group legend. */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}#log{scroll-behavior:auto!important}}
 [x-cloak]{display:none!important}
 body{height:100dvh;display:flex;flex-direction:column;font-size:.925rem}

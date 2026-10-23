@@ -180,8 +180,14 @@ func (ws *webServer) requireAuth(next http.Handler) http.Handler {
 // connect-src 'self' keeps the same-origin SSE connection working. Nothing on
 // the page submits a form or rewrites its base URL, so base-uri and
 // form-action are 'none'.
+// 'unsafe-eval' is required by Alpine: x-show/x-if/x-on expressions are
+// evaluated with new Function(), which a policy without it blocks — the page
+// then renders but nothing is reactive. 'unsafe-inline' covers the single
+// inline <script>/<style> the page is built from. Both are the honest cost of
+// shipping a self-contained page; removing them means adopting Alpine's
+// CSP build plus a nonce, which is a larger change than this one.
 const webCSP = "default-src 'self'; " +
-	"script-src 'self' 'unsafe-inline'; " +
+	"script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
 	"style-src 'self' 'unsafe-inline'; " +
 	"img-src 'self' data:; " +
 	"connect-src 'self'; " +

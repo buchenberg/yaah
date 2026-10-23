@@ -68,7 +68,9 @@ func TestSecurityHeaders(t *testing.T) {
 	t.Run("csp keeps the inline assets and same-origin stream", func(t *testing.T) {
 		for _, want := range []string{
 			"default-src 'self'",
-			"script-src 'self' 'unsafe-inline'",
+			// Alpine evaluates its directives with new Function(), so dropping
+			// 'unsafe-eval' leaves the page rendered but inert.
+			"script-src 'self' 'unsafe-inline' 'unsafe-eval'",
 			"style-src 'self' 'unsafe-inline'",
 			"img-src 'self' data:",
 			"connect-src 'self'",

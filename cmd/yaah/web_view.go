@@ -307,13 +307,19 @@ func forwardCtrl(ctx context.Context, ch <-chan control.Msg, v *sseView, am *ans
 					Header: m.Header, Question: m.Question,
 					Options: opts, Multi: m.Multiple,
 				}))
-				ans, ok := awaitModal(ctx, am, id, ansCh)
-				if !ok {
-					// Stream gone: the question tool's own answer
-					// timeout supplies the fallback.
-					return
-				}
-				m.AnswerCh <- ans
+				// Detached so the loop keeps draining: holding it here
+				// would stall delivery of every later control frame (and
+				// the producers feeding the channel) until this prompt was
+				// answered. awaitModal still releases the id on every exit
+				// path, so the map cannot grow without bound.
+				answerCh := m.AnswerCh
+				go func() {
+					if ans, ok := awaitModal(ctx, am, id, ansCh); ok {
+						answerCh <- ans
+					}
+					// Stream gone: the question tool's own timeout
+					// supplies the fallback.
+				}()
 			case *control.Approval:
 				id := fmt.Sprintf("q%d", idGen.Add(1))
 				ansCh := make(chan string, 1)
@@ -322,11 +328,12 @@ func forwardCtrl(ctx context.Context, ch <-chan control.Msg, v *sseView, am *ans
 					Type: "ctrl.approval", ID: id,
 					Name: m.Name, Args: m.Args,
 				}))
-				ans, ok := awaitModal(ctx, am, id, ansCh)
-				if !ok {
-					return
-				}
-				m.ApproveCh <- (ans == "true")
+				approveCh := m.ApproveCh
+				go func() {
+					if ans, ok := awaitModal(ctx, am, id, ansCh); ok {
+						approveCh <- (ans == "true")
+					}
+				}()
 			case *control.Continue:
 				id := fmt.Sprintf("q%d", idGen.Add(1))
 				ansCh := make(chan string, 1)
@@ -336,16 +343,19 @@ func forwardCtrl(ctx context.Context, ch <-chan control.Msg, v *sseView, am *ans
 					ID:      id,
 					MaxIter: m.MaxIter,
 				}))
-				ans, ok := awaitModal(ctx, am, id, ansCh)
-				if !ok {
-					// Stream torn down with the prompt unanswered: tell the
-					// agent to stop instead of leaving it waiting on an answer
-					// that can no longer arrive (AnswerCh is buffered by the
-					// caller, so this cannot block).
-					m.AnswerCh <- false
-					return
-				}
-				m.AnswerCh <- (ans == "yes")
+				contCh := m.AnswerCh
+				go func() {
+					ans, ok := awaitModal(ctx, am, id, ansCh)
+					if !ok {
+						// Stream torn down unanswered: tell the agent to
+						// stop rather than leave it waiting on an answer
+						// that can no longer arrive (the caller buffers
+						// this channel, so the send cannot block).
+						contCh <- false
+						return
+					}
+					contCh <- (ans == "yes")
+				}()
 			case *control.Todos:
 				items := make([]wireTodo, len(m.Items))
 				for i, item := range m.Items {
