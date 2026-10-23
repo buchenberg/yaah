@@ -135,3 +135,106 @@ func TestStaticcheck_StaticcheckLoadFailureIsAnError(t *testing.T) {
 		t.Errorf("count = %d, want 0", r.Count)
 	}
 }
+
+// TestStaleAnalyzerHint covers yaah-2vc: an analyzer too old for the toolchain
+// exits non-zero with no diagnostics, which is indistinguishable from a real
+// analysis failure unless the tool says what to do about it.
+func TestStaleAnalyzerHint(t *testing.T) {
+	tests := []struct {
+		name       string
+		output     string
+		wantHint   bool
+		wantQuoted string
+	}{
+		{
+			name:       "export data version mismatch",
+			output:     "staticcheck: cannot read export data: version 5 > maximum supported 4",
+			wantHint:   true,
+			wantQuoted: "version 5 > maximum supported 4",
+		},
+		{
+			name:       "maximum supported phrasing alone",
+			output:     "-: version 5 > maximum supported 4",
+			wantHint:   true,
+			wantQuoted: "maximum supported",
+		},
+		{
+			// The phrase without the comparison must not diagnose anything:
+			// this is the "confidently wrong advice" case.
+			name:     "phrase without the version comparison gets no hint",
+			output:   "-: our policy says the maximum supported value is 4",
+			wantHint: false,
+		},
+		{
+			name:     "genuine compile failure gets no hint",
+			output:   "-: # example.com/pkg\n./x.go:3:2: undefined: nope",
+			wantHint: false,
+		},
+		{
+			name:     "clean analysis gets no hint",
+			output:   "",
+			wantHint: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := staleAnalyzerHint(tt.output)
+			if tt.wantHint {
+				if got == "" {
+					t.Fatalf("staleAnalyzerHint(%q) = empty; want a hint", tt.output)
+				}
+				if !strings.Contains(got, "go install honnef.co/go/tools/cmd/staticcheck@latest") {
+					t.Errorf("hint does not name the fix: %q", got)
+				}
+				if tt.wantQuoted != "" && !strings.Contains(got, tt.wantQuoted) {
+					t.Errorf("hint does not quote the offending line %q: %q", tt.wantQuoted, got)
+				}
+				return
+			}
+			if got != "" {
+				t.Errorf("staleAnalyzerHint(%q) = %q; want no hint", tt.output, got)
+			}
+		})
+	}
+}
+
+// TestStaticcheckStaleAnalyzerWiring drives the hint through Execute, so the
+// error path itself is covered rather than only the pure helper.
+func TestStaticcheckStaleAnalyzerWiring(t *testing.T) {
+	r := runStaticcheck(t, func(req ExecRequest) (ExecResult, error) {
+		if req.Command == "go" {
+			return ExecResult{ExitCode: 0}, nil
+		}
+		// A stale analyzer: non-zero, no diagnostics, only the version line.
+		return ExecResult{ExitCode: 1, Stdout: "-: version 5 > maximum supported 4\n"}, nil
+	}, `{"packages":"./...","analyzers":"staticcheck"}`)
+
+	if r.Status != staticcheckError {
+		t.Errorf("status = %q; want %q", r.Status, staticcheckError)
+	}
+	if r.Count != 0 {
+		t.Errorf("count = %d; want 0 (nothing was analysed)", r.Count)
+	}
+	if !strings.Contains(r.Stderr, "too old for this Go toolchain") {
+		t.Errorf("stderr does not carry the hint: %q", r.Stderr)
+	}
+	if !strings.Contains(r.Stderr, "version 5 > maximum supported 4") {
+		t.Errorf("stderr does not quote the offending line: %q", r.Stderr)
+	}
+}
+
+// TestStaticcheckCompileFailureGetsNoStaleHint is the guard against the loose
+// gate: a genuine compile failure must not be blamed on the analyzer version.
+func TestStaticcheckCompileFailureGetsNoStaleHint(t *testing.T) {
+	r := runStaticcheck(t, func(req ExecRequest) (ExecResult, error) {
+		if req.Command == "go" {
+			return ExecResult{ExitCode: 0}, nil
+		}
+		return ExecResult{ExitCode: 1, Stdout: "-: # example.com/pkg\n./x.go:3:2: undefined: nope\n"}, nil
+	}, `{"packages":"./...","analyzers":"staticcheck"}`)
+
+	if strings.Contains(r.Stderr, "too old for this Go toolchain") {
+		t.Errorf("compile failure was misdiagnosed as a stale analyzer: %q", r.Stderr)
+	}
+}
