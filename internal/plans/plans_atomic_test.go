@@ -134,3 +134,66 @@ func TestEditPreservesFileMode(t *testing.T) {
 		t.Fatalf("mode = %o; want 600 (a status change must not widen it)", got)
 	}
 }
+
+// TestEditPreservesUnmodelledFrontmatter pins yaah-ayh: Edit rebuilt the
+// frontmatter from name/description/status alone, so every other key — owner,
+// a linked issue, a dependency — was silently deleted on each status change.
+func TestEditPreservesUnmodelledFrontmatter(t *testing.T) {
+	dir := t.TempDir()
+	planDir := filepath.Join(dir, "keepme")
+	if err := os.MkdirAll(planDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	path := filepath.Join(planDir, "PLAN.md")
+	original := "---\n" +
+		"name: keepme\n" +
+		"description: keep my extras\n" +
+		"status: draft\n" +
+		"# managed by the issue tracker\n" +
+		"owner: greg\n" +
+		"depends_on:\n  - yaah-34b\n" +
+		"issue: https://github.com/buchenberg/yaah/issues/530\n" +
+		"---\n\nBody text.\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if _, err := SetStatus(&Plan{Name: "keepme", Path: path}, "in_progress"); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	got := string(data)
+
+	for _, want := range []string{
+		"status: in_progress",            // the modelled key was updated
+		"# managed by the issue tracker", // comment survived
+		"owner: greg",                    // unknown scalar survived
+		"depends_on:",                    // unknown nested key survived
+		"  - yaah-34b",                   // and its sequence item
+		"issue: https://github.com/buchenberg/yaah/issues/530",
+		"Body text.", // body untouched
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("PLAN.md missing %q\n---\n%s", want, got)
+		}
+	}
+
+	// And the result must still parse, with the modelled fields correct.
+	plan, err := ParseFrontmatter(data)
+	if err != nil {
+		t.Fatalf("parse after edit: %v", err)
+	}
+	if plan.Status != "in_progress" {
+		t.Errorf("status = %q; want in_progress", plan.Status)
+	}
+	if plan.Name != "keepme" {
+		t.Errorf("name = %q; want keepme", plan.Name)
+	}
+	if plan.Description != "keep my extras" {
+		t.Errorf("description = %q; want 'keep my extras'", plan.Description)
+	}
+}

@@ -77,20 +77,10 @@ func Discover(dirs []string) []Plan {
 // ParseFrontmatter parses YAML frontmatter (between --- markers) and the
 // markdown body from a PLAN.md file.
 func ParseFrontmatter(data []byte) (*Plan, error) {
-	s := string(data)
-
-	if !strings.HasPrefix(s, "---") {
-		return nil, fmt.Errorf("missing YAML frontmatter")
+	frontmatter, body, err := splitFrontmatter(data)
+	if err != nil {
+		return nil, err
 	}
-
-	rest := s[3:]
-	endIdx := strings.Index(rest, "\n---")
-	if endIdx < 0 {
-		return nil, fmt.Errorf("unclosed YAML frontmatter")
-	}
-
-	frontmatter := rest[:endIdx]
-	body := rest[endIdx+4:]
 
 	plan := &Plan{
 		Body:   strings.TrimSpace(body),
@@ -215,6 +205,68 @@ func Create(dir, name, description, body string) (string, error) {
 	return path, nil
 }
 
+// splitFrontmatter returns the raw YAML block between the fences and the body
+// after them. Both callers need the text, not just the parsed struct: Edit
+// rewrites the block in place so it can keep what it does not model.
+func splitFrontmatter(data []byte) (frontmatter, body string, err error) {
+	s := string(data)
+	if !strings.HasPrefix(s, "---") {
+		return "", "", fmt.Errorf("missing YAML frontmatter")
+	}
+	rest := s[3:]
+	endIdx := strings.Index(rest, "\n---")
+	if endIdx < 0 {
+		return "", "", fmt.Errorf("unclosed YAML frontmatter")
+	}
+	return rest[:endIdx], rest[endIdx+4:], nil
+}
+
+// rewriteFrontmatter returns the frontmatter block with the modelled keys set,
+// preserving every other line verbatim.
+//
+// Edit used to rebuild the block from name/description/status alone, so any key
+// this package does not model — owner, depends_on, a link to the issue the plan
+// came from — was silently deleted on every status change, with no error and no
+// way to notice until someone went looking for it. Rewriting line by line keeps
+// unknown keys, their order, and comments.
+//
+// Keys are matched only at column zero, so a nested key (or an indented
+// continuation line) that happens to start with "name:" is left alone. This
+// package's parser reads the modelled keys as single-line "key: value" pairs, so
+// a multi-line modelled value was never supported and is not reinterpreted here.
+func rewriteFrontmatter(frontmatter string, updates map[string]string, order []string) string {
+	seen := make(map[string]bool, len(updates))
+	lines := strings.Split(strings.TrimSpace(frontmatter), "\n")
+	out := make([]string, 0, len(lines)+len(updates))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		replaced := false
+		if line == trimmed { // column zero only
+			for _, key := range order {
+				val, ok := updates[key]
+				if !ok {
+					continue
+				}
+				if strings.HasPrefix(trimmed, key+":") {
+					out = append(out, key+": "+val)
+					seen[key] = true
+					replaced = true
+					break
+				}
+			}
+		}
+		if !replaced {
+			out = append(out, line)
+		}
+	}
+	for _, key := range order {
+		if val, ok := updates[key]; ok && !seen[key] {
+			out = append(out, key+": "+val)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
 // Edit updates an existing PLAN.md file. Non-empty fields overwrite the
 // corresponding frontmatter or body. Returns the path to the edited file.
 func Edit(plan *Plan, description, status, body string) (string, error) {
@@ -238,7 +290,16 @@ func Edit(plan *Plan, description, status, body string) (string, error) {
 		body = current.Body
 	}
 
-	content := fmt.Sprintf("---\nname: %s\ndescription: %s\nstatus: %s\n---\n\n%s\n", current.Name, description, status, body)
+	frontmatter, _, err := splitFrontmatter(data)
+	if err != nil {
+		return "", fmt.Errorf("parse PLAN.md: %w", err)
+	}
+	rewritten := rewriteFrontmatter(frontmatter, map[string]string{
+		"name":        current.Name,
+		"description": description,
+		"status":      status,
+	}, []string{"name", "description", "status"})
+	content := "---\n" + rewritten + "\n---\n\n" + body + "\n"
 	// Preserve the mode the file already had: replacing it with a temp file
 	// would otherwise silently reset a 0600 plan to 0644.
 	perm := os.FileMode(0o644)
