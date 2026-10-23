@@ -118,8 +118,8 @@ func splitInlineComment(v string) string {
 		return t
 	}
 	if t[0] == '"' || t[0] == '\'' {
-		if end := strings.IndexByte(t[1:], t[0]); end >= 0 {
-			return t[:end+2]
+		if end := closingQuote(t); end > 0 {
+			return t[:end+1]
 		}
 		return t
 	}
@@ -127,6 +127,29 @@ func splitInlineComment(v string) string {
 		return strings.TrimSpace(t[:i])
 	}
 	return t
+}
+
+// closingQuote returns the index of the quote that closes the scalar starting
+// at s[0], or -1. It honours YAML's escapes: a backslash-escaped \" inside a
+// double-quoted scalar, and a doubled ” inside a single-quoted one, are not
+// the end of the value. A plain IndexByte would truncate "he said \"hi\"" at
+// the first escaped quote.
+func closingQuote(s string) int {
+	q := s[0]
+	for i := 1; i < len(s); i++ {
+		if q == '"' && s[i] == '\\' {
+			i++ // skip the escaped byte
+			continue
+		}
+		if s[i] == q {
+			if q == '\'' && i+1 < len(s) && s[i+1] == '\'' {
+				i++ // '' is an escaped single quote
+				continue
+			}
+			return i
+		}
+	}
+	return -1
 }
 
 // unquote strips a matching pair of YAML quotes from a scalar. The
@@ -306,9 +329,9 @@ func restyleValue(rest, val string) string {
 	trimmed := strings.TrimSpace(rest)
 	comment := ""
 	if len(trimmed) > 0 && (trimmed[0] == '"' || trimmed[0] == '\'') {
-		if end := strings.IndexByte(trimmed[1:], trimmed[0]); end >= 0 {
-			comment = strings.TrimSpace(trimmed[end+2:])
-			trimmed = trimmed[:end+2]
+		if end := closingQuote(trimmed); end > 0 {
+			comment = strings.TrimSpace(trimmed[end+1:])
+			trimmed = trimmed[:end+1]
 		}
 	} else if i := strings.Index(trimmed, " #"); i >= 0 {
 		comment = strings.TrimSpace(trimmed[i:])

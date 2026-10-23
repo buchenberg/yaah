@@ -318,3 +318,29 @@ func TestEditDoesNotDuplicateInlineComments(t *testing.T) {
 		t.Errorf("description = %q; want %q", plan.Description, "keep me")
 	}
 }
+
+// TestParseHandlesEscapedQuotesInFrontmatter pins the review finding that
+// closing-quote detection ignored YAML escapes and truncated the value at the
+// first escaped quote.
+func TestParseHandlesEscapedQuotesInFrontmatter(t *testing.T) {
+	content := "---\n" +
+		"name: esc\n" +
+		"description: \"he said \\\"hi\\\" loudly\" # trailing note\n" +
+		"status: 'it''s done'\n" +
+		"---\n\nBody.\n"
+
+	plan, err := ParseFrontmatter([]byte(content))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if want := `he said \"hi\" loudly`; plan.Description != want {
+		t.Errorf("description = %q; want %q", plan.Description, want)
+	}
+	// unquote is documented as stripping the outer quotes without decoding
+	// escapes, so the doubled single quote survives verbatim. What matters here
+	// is that closingQuote did not end the scalar at the escaped quote and
+	// swallow the rest of the line.
+	if want := "it''s done"; plan.Status != want {
+		t.Errorf("status = %q; want %q", plan.Status, want)
+	}
+}
