@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.102.1](https://github.com/buchenberg/yaah/compare/v0.102.0...v0.102.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **web:** accessibility, security headers, theming, and dead client paths ([#567](https://github.com/buchenberg/yaah/issues/567)) ([208beca](https://github.com/buchenberg/yaah/commit/208becadebbe08d98fabf9a27c211c6d296075f3))
+* **web:** repair the wedged-input state machine (P1 cluster) ([#565](https://github.com/buchenberg/yaah/issues/565)) ([7d0b358](https://github.com/buchenberg/yaah/commit/7d0b35878a6e0a892460c13d3e21529b6ee66d0b))
+
 ## [0.102.0](https://github.com/buchenberg/yaah/compare/v0.101.2...v0.102.0) (2026-10-23)
 
 
