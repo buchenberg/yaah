@@ -191,19 +191,17 @@ const (
 // and could only report "source-reading only"; the workaround lived in
 // AGENTS.md rather than in the tool's own output (yaah-2vc).
 func staleAnalyzerHint(output string) string {
-	lower := strings.ToLower(output)
-	if !strings.Contains(lower, "export data") && !strings.Contains(lower, "maximum supported") {
-		return ""
-	}
-	// Quote the offending line: it carries the version numbers, which are the
-	// provenance the caller needs to confirm the diagnosis.
+	// Require the version comparison itself. "export data" on its own is not
+	// enough: a corrupt build cache, or an ordinary failure whose message
+	// happens to mention export data, would otherwise be diagnosed as a stale
+	// analyzer — confidently wrong advice is worse than none.
 	for _, line := range strings.Split(output, "\n") {
 		t := strings.TrimSpace(line)
 		if t == "" {
 			continue
 		}
 		l := strings.ToLower(t)
-		if strings.Contains(l, "export data") || strings.Contains(l, "maximum supported") {
+		if strings.Contains(l, "maximum supported") {
 			return fmt.Sprintf(
 				"-- your staticcheck is too old for this Go toolchain (%s) — refresh it with: go install honnef.co/go/tools/cmd/staticcheck@latest --\n",
 				t)
