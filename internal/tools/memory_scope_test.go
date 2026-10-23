@@ -45,7 +45,7 @@ func TestMemoryAddTool_Scope(t *testing.T) {
 			if tc.wantErr {
 				return
 			}
-			entries, err := db.ListMemoryScoped(10, "")
+			entries, err := db.ListMemoryScoped(10, memory.ScopeAll)
 			if err != nil {
 				t.Fatalf("ListMemoryScoped: %v", err)
 			}
@@ -138,7 +138,7 @@ func TestMemoryAddTool_PersistsSessionID(t *testing.T) {
 			if _, err := tool.Execute(context.Background(), `{"text":"session-linked atom"}`); err != nil {
 				t.Fatalf("Execute: %v", err)
 			}
-			entries, err := db.ListMemoryScoped(10, "")
+			entries, err := db.ListMemoryScoped(10, memory.ScopeAll)
 			if err != nil {
 				t.Fatalf("ListMemoryScoped: %v", err)
 			}
@@ -149,5 +149,94 @@ func TestMemoryAddTool_PersistsSessionID(t *testing.T) {
 				t.Errorf("SessionID = %q, want %q", entries[0].SessionID, tc.want)
 			}
 		})
+	}
+}
+
+// TestMemorySearchTool_CallScopeArg pins the call-argument path — the one that
+// makes atoms distilled in an earlier conversation reachable. The instance
+// default stays global (session atoms must not surface in an unwidened recall);
+// only an explicit "scope" in the call opens the session tier.
+func TestMemorySearchTool_CallScopeArg(t *testing.T) {
+	cases := []struct {
+		name      string
+		toolScope string
+		args      string
+		want      []string
+		notWant   []string
+	}{
+		{"no arg stays global", "", `{"query":"fact"}`, []string{"global fact"}, []string{"session fact"}},
+		{"arg reaches session tier", "", `{"query":"fact","scope":"session"}`, []string{"session fact"}, []string{"global fact"}},
+		{"arg spans both tiers", "", `{"query":"fact","scope":"all"}`, []string{"global fact", "session fact"}, nil},
+		{"arg outranks instance default", memory.ScopeSession, `{"query":"fact","scope":"global"}`, []string{"global fact"}, []string{"session fact"}},
+		{"arg tolerates case and padding", "", `{"query":"fact","scope":" ALL "}`, []string{"global fact", "session fact"}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openScopeTestDB(t)
+			now := time.Now().Unix()
+			for _, e := range []memory.Entry{
+				{ID: "g1", Text: "global fact", Scope: memory.ScopeGlobal, CreatedAt: now},
+				{ID: "s1", Text: "session fact", Scope: memory.ScopeSession, CreatedAt: now},
+			} {
+				if err := db.AddMemory(e); err != nil {
+					t.Fatalf("AddMemory(%s): %v", e.ID, err)
+				}
+			}
+			out, err := (&MemorySearchTool{DB: db, Scope: tc.toolScope}).Execute(context.Background(), tc.args)
+			if err != nil {
+				t.Fatalf("memory_search %s: %v", tc.args, err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(out, want) {
+					t.Fatalf("memory_search(%s) = %q, want it to contain %q", tc.args, out, want)
+				}
+			}
+			for _, absent := range tc.notWant {
+				if strings.Contains(out, absent) {
+					t.Fatalf("memory_search(%s) = %q, want no %q", tc.args, out, absent)
+				}
+			}
+		})
+	}
+}
+
+// TestMemorySearchTool_RejectsUnknownScopeArg pins that a bad argument fails as
+// loudly as a bad instance default rather than silently falling back to a
+// wider tier.
+func TestMemorySearchTool_RejectsUnknownScopeArg(t *testing.T) {
+	db := openScopeTestDB(t)
+	if _, err := (&MemorySearchTool{DB: db}).Execute(context.Background(), `{"query":"x","scope":"everything"}`); err == nil {
+		t.Fatal("memory_search with an unknown scope argument should fail loudly")
+	}
+}
+
+// TestMemorySearchTool_ScopeSchema pins that the tool advertises the tiers it
+// accepts: a schema without a "scope" property is what made session atoms
+// write-only in the first place.
+func TestMemorySearchTool_ScopeSchema(t *testing.T) {
+	var schema struct {
+		Properties map[string]struct {
+			Type string   `json:"type"`
+			Enum []string `json:"enum"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal((&MemorySearchTool{}).Schema(), &schema); err != nil {
+		t.Fatalf("Schema is not valid JSON: %v", err)
+	}
+	scope, ok := schema.Properties["scope"]
+	if !ok {
+		t.Fatal("memory_search schema has no scope property")
+	}
+	if scope.Type != "string" {
+		t.Fatalf("scope type = %q, want string", scope.Type)
+	}
+	got := map[string]bool{}
+	for _, v := range scope.Enum {
+		got[v] = true
+	}
+	for _, want := range []string{memory.ScopeGlobal, memory.ScopeSession, memory.ScopeAll} {
+		if !got[want] {
+			t.Errorf("scope enum %v missing %q", scope.Enum, want)
+		}
 	}
 }
