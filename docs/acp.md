@@ -37,7 +37,8 @@ sub-agents, and prompts all resolve against it.
 
 | Method | Status | Notes |
 |---|---|---|
-| `initialize` | supported | advertises `agentCapabilities.loadSession: true` plus `sessionCapabilities` for `resume`, `list`, `close`, `delete`; `authMethods` is empty so `authenticate` is rejected |
+| `initialize` | supported | advertises `agentCapabilities.loadSession: true` plus `sessionCapabilities` for `resume`, `list`, `close`, `delete`, and a static catalog of agent-typed `authMethods` (see [Authentication and credentials](#authentication-and-credentials)) |
+| `authenticate` | supported | validates the named auth method and answers `{}`; no credential check, no network call |
 | `session/new` | supported | requires the client's absolute cwd; every call creates a distinct session |
 | `session/load` | supported | resume + replay; see below |
 | `session/resume` | supported | re-attach to a persisted session without replaying history |
@@ -153,10 +154,21 @@ sessions so a client can offer a picker without loading anything:
 - Pagination is agent-controlled (50 rows per page) with an opaque
   cursor: a missing `nextCursor` marks the end. An unparsable cursor is
   rejected with invalid params rather than silently restarting the list.
+- Each entry also carries `_meta: {"messageCount": N}` — the number of
+  persisted messages — so a client can show session size without loading
+  anything. `_meta` is omitted for a session with no messages rather than
+  reporting a zero.
 
 `yaah sessions list` and `yaah sessions delete <id>` run the same
 queries against the same store (`internal/memory.ListSessionsPage`,
-`DeleteSession`), so CLI and ACP clients see one session universe.
+`DeleteSession`), so CLI and ACP clients see one session universe. Both
+sides reach it through the engine-level session registry
+(`internal/sessions`), which owns cwd canonicalization (`internal/cwdpath`),
+cursor chasing, and the invalid-cwd / invalid-cursor / not-found mapping; ACP
+session/list and session/delete are thin adapters over `Registry.Page` and
+`Registry.Delete`, and the web picker and `yaah --resume` picker call the same
+methods. `internal/acp` therefore does not depend on `internal/sessions` or
+`internal/memory`: the registry is injected as callbacks.
 
 ### session/close and session/delete
 
@@ -174,6 +186,64 @@ it. A still-live session is torn down first (same contract as close).
 Deleting an already-deleted or never-created id succeeds silently — the
 store no longer holding the id is exactly the requested end state; real
 store failures surface as internal errors.
+
+## Authentication and credentials
+
+`initialize` advertises a **static** catalog of agent-typed `authMethods`
+(`internal/acp/auth.go`). The list is compiled in and is never derived from
+config, the environment, or the provider list, so a client on a cold
+machine — empty environment, fresh HOME, no API keys — still sees it.
+
+Each method carries only `id`, `name`, and a `description`; none carries a
+`type`. The schema's `terminal` variant applies only when the client
+enabled `clientCapabilities.auth.terminal`, which yaah never requires, so
+every method here is agent-typed (a missing `type` means exactly that).
+
+| `methodId` | What it names |
+|---|---|
+| `openai-api-key` | An OpenAI-compatible key referenced from `~/.yaah/config.yaml` as `api_key: ${OPENAI_API_KEY}`; the default scaffold wires `${DEEPSEEK_API_KEY}` the same way |
+| `anthropic-api-key` | A native Anthropic key referenced as `api_key: ${ANTHROPIC_API_KEY}` |
+| `providers-config` | Whatever is already in `~/.yaah/config.yaml` under `providers.<name>.api_key`, or an OAuth token obtained through the web UI's login action (`POST /api/action` with `{"action":"login"}`); there is no `yaah login` CLI command |
+
+### Credential resolution and precedence (yaah-side, not ACP-side)
+
+For a given provider entry in `~/.yaah/config.yaml` (or
+`$YAAH_HOME/config.yaml`):
+
+1. `auth: oauth` wins: the OAuth token obtained through the web UI's
+   login action (`POST /api/action` with `{"action":"login"}`) is used
+   and `api_key` is ignored.
+2. Otherwise `api_key` is used after `${VAR}` substitution. Only the
+   placeholders the config file itself references are expanded —
+   `${OPENAI_API_KEY}`, `${ANTHROPIC_API_KEY}`, `${DEEPSEEK_API_KEY}`, and
+   so on — because `config.Resolve` substitutes `${VAR}` in `api_key`,
+   `base_url`, and the OAuth fields. There is no implicit fallback to a
+   bare `OPENAI_API_KEY` environment variable.
+3. Native Anthropic providers add one negative rule: yaah disables the
+   Anthropic SDK's environment credential chain
+   (`option.WithoutEnvironmentDefaults()`), so a stray `ANTHROPIC_AUTH_TOKEN`
+   is never sent alongside yaah's own key to whatever endpoint is
+   configured.
+
+### What `authenticate` does and does not validate
+
+It validates the method **id** against the advertised catalog and nothing
+else. It does not check that a credential is present, does not store one,
+and makes no network call: a client may declare its method before
+provisioning a key. A declared id answers with an empty result object
+(`{}`, the schema's `AuthenticateResponse` has only an optional `_meta`);
+an unknown id is rejected with invalid params (`-32602`).
+
+### What ACP does not surface
+
+ACP has no channel for yaah's security posture, and no client can change
+it. The approval bridge (`session/request_permission` plus yaah's own
+`approval` / `mcp_approval` policy), the tool-kind classification that
+decides which calls need approval, and the sandbox/egress layers are
+configured yaah-side (`~/.yaah/config.yaml`, CLI flags). A client can
+approve or reject an individual call through
+`session/request_permission`; it cannot loosen or tighten the policy that
+produced the request.
 
 ## Approvals and questions
 
@@ -226,8 +296,6 @@ Or the generic stdio client loop (any language; one JSON object per line):
 
 ## Tier 3: deliberately unsupported
 
-- **`authenticate`** — `authMethods` is empty; authenticate requests are
-  rejected with method-not-found.
 - **HTTP/SSE MCP transports** — not advertised (`mcpCapabilities` omits
   them). Client-declared **stdio** MCP servers are started and merged with
   the config-declared set for that session; their tools join the session's

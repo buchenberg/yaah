@@ -29,9 +29,12 @@ Alpine.js + Pico CSS                  net/http + embed.FS
      └── GET /api/sessions ─────────────────┤ session registry (read-only)
 ```
 
-`GET /api/sessions` serves the shared session store — the same rows ACP
-`session/list` and the CLI read — as `{"sessions": [...], "nextCursor": ""}`
-(keyset pagination). Optional query parameters: `cwd` (exact-match filter,
+`GET /api/sessions` serves the engine-level session registry
+(`internal/sessions`) — the same rows ACP `session/list` and the CLI read — as
+`{"sessions": [...], "nextCursor": ""}` (keyset pagination). The endpoint is a
+thin adapter over `Registry.Page`, so cwd canonicalization (`internal/cwdpath`),
+the keyset cursor, and the invalid-cursor mapping are identical to every other
+surface. Optional query parameters: `cwd` (exact-match filter,
 canonicalized like `session/list`), `limit` (1..200, default 50), and
 `cursor` for the next page. It is read-only; restoring a session is a
 process-level operation (`yaah --resume`), not a web one.

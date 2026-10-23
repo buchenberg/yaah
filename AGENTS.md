@@ -50,6 +50,7 @@ yaah/
 │   │   ├── subagent/            #   role definitions and registry
 │   │   └── supervision/         #   advisory rules and destructive guard
 │   ├── config/                  # config load, env substitution, validation
+│   ├── cwdpath/                 # cwd canonicalization shared by store + filters
 │   ├── doctor/                  # `yaah doctor` checks
 │   ├── gitsandbox/              # untracked-file-preserving git sandbox wrapper
 │   ├── instructions/            # AGENTS.md/CLAUDE.md discovery
@@ -65,6 +66,7 @@ yaah/
 │   ├── repl/                    # REPL history, slash commands, colors
 │   ├── rolefile/                # role frontmatter parsing/validation
 │   ├── sandboxfake/             # in-memory sandbox test double
+│   ├── sessions/                # engine-level session registry (all views)
 │   ├── skills/                  # SKILL.md discovery/parsing
 │   ├── toolfmt/                 # shared tool result formatting
 │   ├── tools/                   # built-in tools

@@ -323,7 +323,7 @@ printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion
 
 Expected output:
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{},"agentInfo":{"name":"yaah","version":"..."},"authMethods":[]}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"list":{},"resume":{},"close":{},"delete":{}}},"agentInfo":{"name":"yaah","version":"..."},"authMethods":[{"id":"openai-api-key","name":"OpenAI API key"},{"id":"anthropic-api-key","name":"Anthropic API key"},{"id":"providers-config","name":"Provider config file"}]}}
 ```
 
 A full turn drive (session/new honors the client cwd; session/prompt

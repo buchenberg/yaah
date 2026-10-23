@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/buchenberg/yaah/internal/acp"
+	"github.com/buchenberg/yaah/internal/cwdpath"
 	"github.com/buchenberg/yaah/internal/memory"
 )
 
@@ -33,7 +33,7 @@ func pickerFixture(t *testing.T) (cwd, chdirDir string) {
 	t.Helper()
 	t.Setenv("YAAH_HOME", t.TempDir())
 	chdirDir = t.TempDir()
-	cwd, err := acp.CanonicalFilterCwd(chdirDir)
+	cwd, err := cwdpath.Canonical(chdirDir)
 	if err != nil {
 		t.Fatal(err)
 	}

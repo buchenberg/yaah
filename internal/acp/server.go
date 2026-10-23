@@ -18,6 +18,7 @@ import (
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/control"
+	"github.com/buchenberg/yaah/internal/cwdpath"
 	"github.com/buchenberg/yaah/internal/tools"
 	"github.com/buchenberg/yaah/internal/types"
 )
@@ -557,23 +558,15 @@ func (s *Server) capabilities() AgentCaps {
 // cwd is on intake (absolute, symlink-resolved), so a filter matches the
 // stored canonical session cwds. A non-existent directory is allowed —
 // it simply matches nothing (an unmatched filter yields an empty page,
-// not an error). Shared by session/list and the yaah sessions CLI so
-// both surfaces filter identically.
+// not an error).
+//
+// Deprecated: use cwdpath.Canonical. The canonicalization lives in the
+// leaf package internal/cwdpath so the engine-level session registry
+// (internal/sessions) and every view can share it without importing the
+// protocol package; this shim keeps the existing callers and this
+// package's own test working.
 func CanonicalFilterCwd(cwd string) (string, error) {
-	if cwd == "" {
-		return "", nil
-	}
-	if !filepath.IsAbs(cwd) {
-		return "", fmt.Errorf("cwd %q must be an absolute path", cwd)
-	}
-	abs, err := filepath.Abs(cwd)
-	if err != nil {
-		return "", fmt.Errorf("cwd %q: %w", cwd, err)
-	}
-	if real, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = real
-	}
-	return filepath.Clean(abs), nil
+	return cwdpath.Canonical(cwd)
 }
 
 // handleSessionList implements session/list (sessionCapabilities.list):
@@ -596,7 +589,7 @@ func (s *Server) handleSessionList(
 			return
 		}
 	}
-	filter, err := CanonicalFilterCwd(p.Cwd)
+	filter, err := cwdpath.Canonical(p.Cwd)
 	if err != nil {
 		respErr(msg.ID, codeInvalidParams, err.Error())
 		return
@@ -1044,12 +1037,27 @@ func (s *Server) dispatch(
 					Name:    "yaah",
 					Version: s.version,
 				},
-				AuthMethods: []AuthMethod{},
+				AuthMethods: staticAuthMethods(),
 			})
 
 		case "authenticate":
-			// Never offered (authMethods is empty); reject for clarity.
-			respErr(msg.ID, codeMethodNotFound, "authenticate is not offered")
+			// Validate the method name against the advertised catalog.
+			// Deliberately no credential check and no network call: the
+			// client is only declaring which advertised method it uses,
+			// and may do so before provisioning a key.
+			var params AuthenticateParams
+			if len(msg.Params) > 0 {
+				if err := json.Unmarshal(msg.Params, &params); err != nil {
+					respErr(msg.ID, codeInvalidParams, "authenticate: invalid params: "+err.Error())
+					continue
+				}
+			}
+			if !validAuthMethod(params.MethodID) {
+				respErr(msg.ID, codeInvalidParams, "authenticate: unknown auth method: "+params.MethodID)
+				continue
+			}
+			// AuthenticateResponse carries only an optional _meta.
+			respOK(msg.ID, struct{}{})
 
 		case "session/new":
 			s.handleSessionNew(msg, respOK, respErr)

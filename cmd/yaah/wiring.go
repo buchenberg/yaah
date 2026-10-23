@@ -17,7 +17,6 @@ import (
 	"github.com/buchenberg/goatherd-runtime/sandbox/confinement"
 	"github.com/buchenberg/goatherd-runtime/sandbox/egress"
 
-	"github.com/buchenberg/yaah/internal/acp"
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/agent/budget"
 	"github.com/buchenberg/yaah/internal/agent/pipeline"
@@ -26,6 +25,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent/subagent"
 	"github.com/buchenberg/yaah/internal/agent/supervision"
 	"github.com/buchenberg/yaah/internal/config"
+	"github.com/buchenberg/yaah/internal/cwdpath"
 	"github.com/buchenberg/yaah/internal/jobs"
 	"github.com/buchenberg/yaah/internal/mcp"
 	"github.com/buchenberg/yaah/internal/memory"
@@ -121,14 +121,11 @@ func rebuildDefaultRoleRegistry(cwd string) {
 
 // canonicalStoredCwd normalizes a session's working directory before it
 // is persisted: the same canonicalization (absolute, symlink-resolved)
-// the ACP session/list filter and the resume picker apply, so stored
+// the engine-level session registry and its filters apply, so stored
 // rows and their filters always agree. Best-effort — an unresolvable
 // path is stored as given rather than failing session creation.
 func canonicalStoredCwd(cwd string) string {
-	if canonical, err := acp.CanonicalFilterCwd(cwd); err == nil {
-		return canonical
-	}
-	return cwd
+	return cwdpath.CanonicalStored(cwd)
 }
 
 // newAgentSessionWithOptions creates an agent session. All CLI-flag and
