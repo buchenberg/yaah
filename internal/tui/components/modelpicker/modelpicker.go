@@ -10,11 +10,18 @@ import (
 
 const modalPageName = "modelpicker_modal"
 
-func Show(app *tview.Application, pages *tview.Pages, models []string, providerNames map[string]string, onSelect func(model string), focusAfter tview.Primitive) {
+// Show displays the model picker. onDismiss is called whenever the picker goes
+// away — on selection AND on Escape — so callers can restore their own focus
+// bookkeeping; it runs before onSelect. The returned func dismisses the picker
+// programmatically, which is also how tests exercise the Escape path.
+func Show(app *tview.Application, pages *tview.Pages, models []string, providerNames map[string]string, onSelect, onDismiss func(model string), focusAfter tview.Primitive) func() {
 	dismiss := func() {
 		pages.RemovePage(modalPageName)
 		if focusAfter != nil {
 			app.SetFocus(focusAfter)
+		}
+		if onDismiss != nil {
+			onDismiss("")
 		}
 	}
 
@@ -111,4 +118,5 @@ func Show(app *tview.Application, pages *tview.Pages, models []string, providerN
 
 	pages.AddPage(modalPageName, modal.Wrap(inner), true, true)
 	app.SetFocus(list)
+	return dismiss
 }

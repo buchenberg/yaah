@@ -297,3 +297,25 @@ func TestGlobalInputCapture_TypeaheadYieldsToOtherPanes(t *testing.T) {
 		t.Fatalf("composer = %q, want it untouched", got)
 	}
 }
+
+// Overlays nest (an error dialog over the picker), so closing the inner one must
+// not hand the keys to the composer while the outer is still visible.
+func TestModals_NestedLayersReleaseInOrder(t *testing.T) {
+	ui := newColonUI(t)
+
+	ui.beginModal()
+	ui.beginModal()
+	ui.endModal()
+	if ui.focus != focusModal {
+		t.Fatalf("focus = %v after closing the inner layer, want focusModal", ui.focus)
+	}
+	ui.endModal()
+	if ui.focus != focusNormal {
+		t.Fatalf("focus = %v after closing the last layer, want focusNormal", ui.focus)
+	}
+	// An unmatched endModal must not underflow into a stuck state.
+	ui.endModal()
+	if ui.focus != focusNormal {
+		t.Fatalf("focus = %v after an extra endModal, want focusNormal", ui.focus)
+	}
+}

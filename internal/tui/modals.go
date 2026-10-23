@@ -16,10 +16,21 @@ import (
 // just the ones that happened to set it before.
 func (t *App) beginModal() {
 	t.hideSuggestions()
+	t.modalDepth++
 	t.focus = focusModal
 }
 
+// endModal releases one layer. Layers nest — an error dialog can open over the
+// model picker — so focus returns to normal only when the last one closes;
+// otherwise closing an inner view would hand the keys to the composer behind a
+// still-visible overlay.
 func (t *App) endModal() {
+	if t.modalDepth > 0 {
+		t.modalDepth--
+	}
+	if t.modalDepth > 0 {
+		return
+	}
 	t.focus = focusNormal
 	t.App.SetFocus(t.Input)
 }
@@ -54,11 +65,11 @@ func (t *App) ShowApproval(name, args string, onAnswer func(bool)) {
 // ShowModelPicker displays a model picker modal.
 func (t *App) ShowModelPicker(models []string, providerNames map[string]string, onSelect func(string)) {
 	t.beginModal()
-	modelpicker.Show(t.App, t.Pages, models, providerNames, func(model string) {
+	// Esc and selection both route through dismiss, which calls endModal — an
+	// Escape that only removed the page would leave focusModal stuck and Esc
+	// permanently unable to stop the turn.
+	modelpicker.Show(t.App, t.Pages, models, providerNames, onSelect, func(string) {
 		t.endModal()
-		if onSelect != nil {
-			onSelect(model)
-		}
 	}, t.Input)
 }
 

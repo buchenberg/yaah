@@ -41,6 +41,7 @@ type App struct {
 	// while a colon command name is being typed. suggestionIdx highlights the
 	// match Tab will accept; Up/Down cycle, Esc dismisses. Touched only from the
 	// UI goroutine — the composer's changed handler and the key capture.
+	modalDepth         int // number of layered views currently open
 	suggestionsView    *tview.TextView
 	suggestions        []command.Completion
 	suggestionIdx      int

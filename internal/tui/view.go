@@ -55,7 +55,6 @@ func (t *App) buildUI() {
 	t.suggestionsView = tview.NewTextView().
 		SetDynamicColors(true).
 		SetWrap(false)
-	t.suggestionsView.SetBackgroundColor(tcell.ColorBlack)
 
 	// Sticky prompt echo: shows the current user prompt at the top of
 	// the messages pane so it never scrolls away. Wraps up to
