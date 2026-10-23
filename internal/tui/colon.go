@@ -33,9 +33,13 @@ func (t *App) handleColonInput(text string) bool {
 		t.SetEphemeral("usage: " + command.Usage(cmd))
 		return true
 	}
-	t.flushRefresh()
-	t.Input.SetText("", false)
-	t.HandleCommand(cmd, arg)
+	// Dispatch first and clear only on success: a refusal (no turn to steer,
+	// missing or unavailable handler) keeps the text so it can be edited
+	// instead of retyped.
+	if t.HandleCommand(cmd, arg) {
+		t.flushRefresh()
+		t.Input.SetText("", false)
+	}
 	return true
 }
 

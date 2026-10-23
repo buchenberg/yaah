@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/buchenberg/yaah/internal/tui/components/command"
@@ -36,15 +35,28 @@ func (t *App) renderSuggestions() {
 	}
 	var b strings.Builder
 	for i, s := range t.suggestions {
-		label := ":" + s.Label
-		if i == t.suggestionIdx {
-			fmt.Fprintf(&b, "[black:yellow] %s [%s:yellow] %s[-:-:-]\n", label, t.Theme.Dim, s.Desc)
-			continue
-		}
-		fmt.Fprintf(&b, "[%s] %s  %s[-]\n", t.Theme.Dim, label, s.Desc)
+		b.WriteString(t.suggestionLine(s, i == t.suggestionIdx))
+		b.WriteByte('\n')
 	}
 	t.suggestionsView.SetText(b.String())
 	t.Root.ResizeItem(t.suggestionsView, len(t.suggestions), 0)
+}
+
+// suggestionLine renders one match. The highlighted row uses reverse video
+// rather than fixed colours, so it follows the terminal's palette; with
+// NO_COLOR set it degrades to a plain "> " marker.
+func (t *App) suggestionLine(s command.Completion, selected bool) string {
+	label := ":" + s.Label
+	if t.Theme.NoColor {
+		if selected {
+			return "> " + label + "  " + s.Desc
+		}
+		return "  " + label + "  " + s.Desc
+	}
+	if selected {
+		return "[::r] " + label + " " + t.Theme.Tag(t.Theme.Dim, s.Desc) + t.Theme.ResetTag()
+	}
+	return " " + t.Theme.Tag(t.Theme.Dim, label) + t.Theme.Tag(t.Theme.Dim, " "+s.Desc)
 }
 
 // hasSuggestions reports whether the typeahead strip is currently shown.

@@ -17,6 +17,7 @@ func newColonUI(t *testing.T) *App {
 	t.Cleanup(func() { ephemeralTTL = oldTTL })
 
 	ui := newTestUI()
+	ui.App.SetFocus(ui.Input) // the composer holds the keys while typing
 	done := make(chan struct{})
 	drainUIEvents(ui, done)
 	t.Cleanup(func() { close(done) })
@@ -222,5 +223,77 @@ func TestHandleCommand_FollowUpQueuedDuringTurn(t *testing.T) {
 	}
 	if submitted != "" {
 		t.Fatalf("sent as a prompt instead of a follow-up: %q", submitted)
+	}
+}
+
+// A refused command must leave the composer intact: clearing before dispatch
+// deleted exactly the text the user needed to fix.
+func TestSubmitInput_RefusedCommandKeepsComposerText(t *testing.T) {
+	ui := newColonUI(t)
+	ui.agentActive = false // :steer will be refused
+
+	for _, text := range []string{":steer keep it short", ":steer", ":nosuchcommand"} {
+		t.Run(text, func(t *testing.T) {
+			ui.Input.SetText(text, true)
+			ui.submitInput()
+			if got := ui.Input.GetText(); got != text {
+				t.Fatalf("composer = %q, want %q retained after refusal", got, text)
+			}
+		})
+	}
+}
+
+// Every overlay must claim the key space, or Esc at normal focus would stop the
+// turn behind it instead of dismissing it.
+func TestModals_ClaimAndReleaseFocus(t *testing.T) {
+	cases := map[string]func(*App){
+		"question": func(ui *App) {
+			ui.ShowQuestion("h", "q?", []struct{ Label, Description string }{{"a", "d"}}, false, nil)
+		},
+		"approval": func(ui *App) { ui.ShowApproval("tool", "args", nil) },
+		"model":    func(ui *App) { ui.ShowModelPicker([]string{"m"}, map[string]string{"m": "p"}, nil) },
+		"help":     func(ui *App) { ui.ShowHelp() },
+	}
+	for name, open := range cases {
+		t.Run(name, func(t *testing.T) {
+			ui := newColonUI(t)
+			open(ui)
+			if ui.focus != focusModal {
+				t.Fatalf("focus = %v after opening the %s overlay, want focusModal", ui.focus, name)
+			}
+			// Esc must reach the layer, not stop the turn.
+			stopped := false
+			ui.OnStop = func() { stopped = true }
+			esc := tcell.NewEventKey(tcell.KeyEscape, 0, tcell.ModNone)
+			if ret := ui.globalInputCapture(esc); ret == nil {
+				t.Fatalf("%s: Esc consumed by the app instead of the layer", name)
+			}
+			if stopped {
+				t.Fatalf("%s: Esc stopped the turn while the layer was open", name)
+			}
+			// Releasing focus returns the composer to normal handling.
+			ui.endModal()
+			if ui.focus != focusNormal {
+				t.Fatalf("focus = %v after endModal, want focusNormal", ui.focus)
+			}
+		})
+	}
+}
+
+// Typeahead must not capture Tab or the arrows when another pane holds the keys.
+func TestGlobalInputCapture_TypeaheadYieldsToOtherPanes(t *testing.T) {
+	ui := newColonUI(t)
+	typeText(ui, ":ste")
+	if !ui.hasSuggestions() {
+		t.Fatal("precondition: strip should be visible")
+	}
+	ui.App.SetFocus(ui.Messages) // focus moved away from the composer
+
+	tab := tcell.NewEventKey(tcell.KeyTab, 0, tcell.ModNone)
+	if ret := ui.globalInputCapture(tab); ret == nil {
+		t.Fatal("Tab captured by typeahead while the message pane had focus")
+	}
+	if got := ui.Input.GetText(); got != ":ste" {
+		t.Fatalf("composer = %q, want it untouched", got)
 	}
 }

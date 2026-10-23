@@ -8,7 +8,9 @@ import (
 func (t *App) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
 	// Typeahead owns Tab, Up and Down while its strip is visible over the
 	// composer, so those keys complete and cycle instead of editing or scrolling.
-	if t.hasSuggestions() && t.focus == focusNormal {
+	// Only when the composer actually holds the keys: Tab and the arrows belong
+	// to whatever pane has focus, and typeahead must not capture them from there.
+	if t.hasSuggestions() && t.focus == focusNormal && t.App.GetFocus() == t.Input {
 		switch ev.Key() {
 		case tcell.KeyTab:
 			if t.acceptSuggestion() {
@@ -50,17 +52,18 @@ func (t *App) globalInputCapture(ev *tcell.EventKey) *tcell.EventKey {
 		}
 		return nil
 	case ActionCancel:
-		// Escape dismisses the typeahead strip first: while it is open the user
-		// is editing a command name, not asking to stop the turn.
-		if t.dismissSuggestions() {
-			return nil
-		}
-		// Escape belongs to whatever is layered on top: the command palette and
-		// modals dismiss themselves with it. Only at the normal focus does it
-		// mean "stop the running turn", and that now holds whether or not the
-		// input box happens to be focused.
+		// A layered view owns Escape: the palette, dialogs and pickers dismiss
+		// themselves with it, and stopping the turn underneath them would be a
+		// surprise. Every overlay claims focusModal via beginModal, so this check
+		// must come first — including before the typeahead strip, which would
+		// otherwise eat the Escape meant for the layer above it.
 		if t.focus != focusNormal {
 			return ev
+		}
+		// Typeahead is next: while the strip is open the user is editing a
+		// command name, not asking to stop the turn.
+		if t.dismissSuggestions() {
+			return nil
 		}
 		if t.OnStop != nil {
 			t.OnStop()

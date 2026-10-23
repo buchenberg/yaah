@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/buchenberg/yaah/internal/tui/components/command"
+
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -153,5 +155,21 @@ func TestGlobalInputCapture_EscapeDismissesSuggestionsBeforeStopping(t *testing.
 	}
 	if !stopped {
 		t.Fatal("second Esc did not stop the turn")
+	}
+}
+
+// The highlighted row must not depend on a hardcoded colour pair: with NO_COLOR
+// it degrades to a plain marker.
+func TestSuggestionLine_NoColorUsesMarker(t *testing.T) {
+	ui := newColonUI(t)
+	ui.Theme.NoColor = true
+
+	sel := ui.suggestionLine(command.Completion{Label: "steer", Desc: "Inject"}, true)
+	if !strings.HasPrefix(sel, "> ") || strings.Contains(sel, "[") {
+		t.Fatalf("selected line = %q, want a plain '> ' marker with no colour tags", sel)
+	}
+	plain := ui.suggestionLine(command.Completion{Label: "steer", Desc: "Inject"}, false)
+	if strings.Contains(plain, "[::r]") {
+		t.Fatalf("unselected line = %q, want no colour tags", plain)
 	}
 }

@@ -241,3 +241,34 @@ func TestDefaultEntries_CoversArgCommands(t *testing.T) {
 		}
 	}
 }
+
+// Split must treat every whitespace separator the way Complete does, or text the
+// typeahead accepts would parse differently when submitted.
+func TestSplit_WhitespaceSeparators(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantCmd Cmd
+		wantArg string
+	}{
+		{"steer\ttabbed", CmdSteer, "tabbed"},
+		{"model  two spaces", CmdModel, "two spaces"},
+		{"steer \t mixed", CmdSteer, "mixed"},
+		{"clear\t", CmdClear, ""},
+	}
+	for _, tt := range tests {
+		cmd, arg := Split(tt.input)
+		if cmd != tt.wantCmd || arg != tt.wantArg {
+			t.Errorf("Split(%q) = (%v, %q), want (%v, %q)", tt.input, cmd, arg, tt.wantCmd, tt.wantArg)
+		}
+	}
+}
+
+// Name prints the canonical spelling, not whichever alias happens to come first.
+func TestName_PrefersCanonicalSpelling(t *testing.T) {
+	if got := Name(CmdQuit); got != "quit" {
+		t.Errorf(`Name(CmdQuit) = %q, want "quit"`, got)
+	}
+	if got := Name(CmdHelp); got != "help" {
+		t.Errorf(`Name(CmdHelp) = %q, want "help"`, got)
+	}
+}

@@ -6,6 +6,7 @@ package command
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/buchenberg/yaah/internal/tui/components/modal"
 	"github.com/gdamore/tcell/v2"
@@ -52,9 +53,9 @@ var commandNames = []struct {
 	name string
 	cmd  Cmd
 }{
-	{"q", CmdQuit}, {"quit", CmdQuit}, {"exit", CmdQuit},
+	{"quit", CmdQuit}, {"q", CmdQuit}, {"exit", CmdQuit},
 	{"clear", CmdClear},
-	{"h", CmdHelp}, {"help", CmdHelp},
+	{"help", CmdHelp}, {"h", CmdHelp},
 	{"compact", CmdCompact},
 	{"stop", CmdStop},
 	{"steer", CmdSteer},
@@ -70,6 +71,15 @@ var commandNames = []struct {
 	{"session", CmdSession},
 	{"mcp", CmdMCP},
 	{"model", CmdModel},
+}
+
+// splitName splits input at the first run of whitespace, so every separator
+// Complete treats as an argument boundary parses the same way here.
+func splitName(input string) (name, arg string) {
+	if i := strings.IndexFunc(input, unicode.IsSpace); i >= 0 {
+		return input[:i], strings.TrimSpace(input[i:])
+	}
+	return input, ""
 }
 
 // takesArg reports whether cmd consumes the rest of the line.
@@ -89,8 +99,7 @@ func takesArg(cmd Cmd) bool {
 // argument was omitted; RequiresArg tells those two cases apart. Unrecognized
 // input yields CmdNone.
 func Split(input string) (Cmd, string) {
-	name, arg, _ := strings.Cut(strings.TrimSpace(input), " ")
-	arg = strings.TrimSpace(arg)
+	name, arg := splitName(strings.TrimSpace(input))
 	for _, e := range commandNames {
 		if e.name == name {
 			if !takesArg(e.cmd) {

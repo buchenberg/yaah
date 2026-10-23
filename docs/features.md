@@ -13,7 +13,7 @@ sub-agent team, see [sub-agents.md](./sub-agents.md); for configuration, see
   collapsible tool cards (`ctrl+t`)
 - Sub-agent dispatch cards with role, duration, and status
 - A command palette (`ctrl+p`) with `:help`, `:clear`, `:compact`,
-  `:banner`, `:model`, `:search`, `:steer`, `:verbose`, `:quit`, and `:stop`
+  `:banner`, `:model`, `:search`, `:steer`, `:followup`, `:verbose`, `:quit`, and `:stop`
 - A paned layout: conversation, info pane (session, context, MCP, config),
   todo sidebar, and background sub-agent jobs
 - Mouse and keyboard navigation, input history, and multi-line input
