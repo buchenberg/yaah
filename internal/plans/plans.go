@@ -238,21 +238,27 @@ func rewriteFrontmatter(frontmatter string, updates map[string]string, order []s
 	seen := make(map[string]bool, len(updates))
 	lines := strings.Split(strings.TrimSpace(frontmatter), "\n")
 	out := make([]string, 0, len(lines)+len(updates))
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
+	for _, raw := range lines {
+		// Normalise the line ending first: on a CRLF file the trailing "\r"
+		// would defeat the column-zero test and the key would be appended as
+		// a duplicate rather than replaced.
+		line := strings.TrimSuffix(raw, "\r")
 		replaced := false
-		if line == trimmed { // column zero only
+		// A top-level key is one with no leading indentation.
+		if line == strings.TrimLeft(line, " \t") {
 			for _, key := range order {
 				val, ok := updates[key]
 				if !ok {
 					continue
 				}
-				if strings.HasPrefix(trimmed, key+":") {
-					out = append(out, key+": "+val)
-					seen[key] = true
-					replaced = true
-					break
+				rest, found := strings.CutPrefix(line, key+":")
+				if !found {
+					continue
 				}
+				out = append(out, key+": "+restyleValue(rest, val))
+				seen[key] = true
+				replaced = true
+				break
 			}
 		}
 		if !replaced {
@@ -265,6 +271,22 @@ func rewriteFrontmatter(frontmatter string, updates map[string]string, order []s
 		}
 	}
 	return strings.Join(out, "\n")
+}
+
+// restyleValue rebuilds "key:<rest>" after replacing the value with val,
+// keeping the two things a naive rewrite would silently drop: a trailing
+// inline comment, and the original quoting when it was a simple quoted scalar.
+func restyleValue(rest, val string) string {
+	comment := ""
+	if i := strings.Index(rest, " #"); i >= 0 {
+		comment = rest[i:]
+		rest = rest[:i]
+	}
+	old := strings.TrimSpace(rest)
+	if len(old) >= 2 && (old[0] == '"' || old[0] == '\'') && old[len(old)-1] == old[0] {
+		val = string(old[0]) + val + string(old[0])
+	}
+	return val + comment
 }
 
 // Edit updates an existing PLAN.md file. Non-empty fields overwrite the

@@ -197,3 +197,78 @@ func TestEditPreservesUnmodelledFrontmatter(t *testing.T) {
 		t.Errorf("description = %q; want 'keep my extras'", plan.Description)
 	}
 }
+
+// TestEditHandlesCRLFFrontmatter pins the review finding that a CRLF file had
+// its modelled keys appended as duplicates instead of replaced: the trailing
+// "\r" defeated the column-zero test.
+func TestEditHandlesCRLFFrontmatter(t *testing.T) {
+	dir := t.TempDir()
+	planDir := filepath.Join(dir, "crlf")
+	if err := os.MkdirAll(planDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	path := filepath.Join(planDir, "PLAN.md")
+	crlf := "---\r\nname: crlf\r\ndescription: has crlf\r\nstatus: draft\r\n---\r\n\r\nBody.\r\n"
+	if err := os.WriteFile(path, []byte(crlf), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if _, err := SetStatus(&Plan{Name: "crlf", Path: path}, "approved"); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	got := string(data)
+	if n := strings.Count(got, "status:"); n != 1 {
+		t.Fatalf("status key appears %d times; want 1 (duplicated, not replaced)\n%s", n, got)
+	}
+	if !strings.Contains(got, "status: approved") {
+		t.Fatalf("status not updated:\n%s", got)
+	}
+	plan, err := ParseFrontmatter(data)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if plan.Status != "approved" {
+		t.Errorf("status = %q; want approved", plan.Status)
+	}
+}
+
+// TestEditKeepsInlineCommentAndQuoting pins the second review finding: a naive
+// line rewrite dropped a trailing inline comment and silently unquoted a
+// quoted scalar.
+func TestEditKeepsInlineCommentAndQuoting(t *testing.T) {
+	dir := t.TempDir()
+	planDir := filepath.Join(dir, "styled")
+	if err := os.MkdirAll(planDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	path := filepath.Join(planDir, "PLAN.md")
+	original := "---\n" +
+		"name: \"styled\"\n" +
+		"description: styled plan\n" +
+		"status: draft # set by the release bot\n" +
+		"---\n\nBody.\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if _, err := SetStatus(&Plan{Name: "styled", Path: path}, "completed"); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "status: completed # set by the release bot") {
+		t.Errorf("inline comment lost or status not updated:\n%s", got)
+	}
+	if !strings.Contains(got, `name: "styled"`) {
+		t.Errorf("original quoting was dropped:\n%s", got)
+	}
+}
