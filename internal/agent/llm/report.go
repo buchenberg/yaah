@@ -61,13 +61,12 @@ func LooksLikeUnexecutedToolCalls(content string) bool {
 	stripped := trimmed
 	markup := false
 
-	if dsmlBlockRe.MatchString(stripped) || dsmlOpenRe.MatchString(stripped) {
+	if dsmlMarkupStart(stripped) >= 0 {
 		markup = true
 		stripped = dsmlBlockRe.ReplaceAllString(stripped, "")
 		stripped = dsmlInvokeRe.ReplaceAllString(stripped, "")
 		stripped = dsmlParamRe.ReplaceAllString(stripped, "")
-		stripped = dsmlOpenRe.ReplaceAllString(stripped, "")
-		stripped = strings.ReplaceAll(stripped, dsmlCloseTag, "")
+		stripped = dsmlResidualRe.ReplaceAllString(stripped, "")
 	}
 
 	if attrFuncOpenRe.MatchString(stripped) || attrWrapperRe.MatchString(stripped) {

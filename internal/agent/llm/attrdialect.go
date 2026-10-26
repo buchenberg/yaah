@@ -321,10 +321,11 @@ func attrParamValue(raw, declared string) any {
 // neither executing the remainder nor accepting the content as the answer
 // is a truthful outcome.
 func recoverDialectToolCalls(content string, seq *int, tools []types.ToolDef) (string, []types.ToolCall, []string, bool) {
-	cleaned, calls, ok := parseDSMLToolCalls(content, seq)
-	attrCleaned, attrCalls, rejected, attrOK := parseAttrToolCalls(cleaned, seq, tools)
+	cleaned, calls, dsmlRejected, ok := parseDSMLToolCalls(content, seq)
+	attrCleaned, attrCalls, attrRejected, attrOK := parseAttrToolCalls(cleaned, seq, tools)
+	rejected := append(dsmlRejected, attrRejected...)
 	if attrOK {
 		return attrCleaned, append(calls, attrCalls...), rejected, true
 	}
-	return cleaned, calls, nil, ok
+	return cleaned, calls, rejected, ok
 }
