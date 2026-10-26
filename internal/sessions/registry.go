@@ -198,6 +198,38 @@ func (r *Registry) Resolve(id string) (memory.Session, error) {
 	return sess, nil
 }
 
+// TranscriptStore is the extra method a store needs for Transcript to work.
+// It is a separate interface rather than part of Store so that stores which
+// only answer listing/deleting (fakes in tests, partial implementations) keep
+// compiling; Transcript reports ErrNoTranscript for those instead of failing
+// to build.
+type TranscriptStore interface {
+	GetMessages(sessionID string) ([]memory.Message, error)
+}
+
+// ErrNoTranscript marks a store that cannot serve message history.
+var ErrNoTranscript = errors.New("session store cannot serve transcripts")
+
+// Transcript resolves a session and returns it together with its message
+// history in conversation order. Every CLI / protocol surface that wants to
+// read a conversation goes through here instead of opening the database
+// directly, which is what kept 'yaah sessions' limited to list/delete.
+func (r *Registry) Transcript(id string) (memory.Session, []memory.Message, error) {
+	sess, err := r.Resolve(id)
+	if err != nil {
+		return memory.Session{}, nil, err
+	}
+	ts, ok := r.store.(TranscriptStore)
+	if !ok {
+		return sess, nil, ErrNoTranscript
+	}
+	msgs, err := ts.GetMessages(sess.ID)
+	if err != nil {
+		return sess, nil, err
+	}
+	return sess, msgs, nil
+}
+
 // Delete removes a session and its messages. Deleting an unknown id wraps
 // ErrNotFound so a protocol surface can succeed silently (per the ACP delete
 // contract) instead of reporting an internal failure.

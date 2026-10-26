@@ -36,3 +36,9 @@ func (s dbStore) GetSession(id string) (memory.Session, error) {
 func (s dbStore) DeleteSession(id string) error {
 	return s.db.DeleteSession(id)
 }
+
+// GetMessages satisfies TranscriptStore so the registry can serve transcripts
+// without callers reaching for the raw *memory.DB and bypassing this package.
+func (s dbStore) GetMessages(sessionID string) ([]memory.Message, error) {
+	return s.db.GetMessages(sessionID)
+}

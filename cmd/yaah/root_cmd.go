@@ -25,8 +25,18 @@ MCP over stdio JSON-RPC). One static Go binary, minimal config at
 Start an interactive REPL:
   yaah
 
-Run a one-shot prompt:
-  yaah "explain this function"`,
+Run a one-shot prompt (arguments are joined with spaces, quoting optional):
+  yaah explain this function
+
+Prefix the prompt with '--' when it contains words that look like flags.
+Cobra parses flags anywhere, so without the separator they are treated as
+flags for yaah rather than as part of the prompt:
+  yaah -- explain why --strict mode matters`,
+
+	Example: `  yaah                              # interactive REPL
+  yaah fix the failing test         # one-shot prompt
+  yaah -- explain the --strict flag # prompt containing a flag-shaped word
+  yaah tui                          # full-screen TUI`,
 
 	SilenceErrors: true,
 	SilenceUsage:  true,

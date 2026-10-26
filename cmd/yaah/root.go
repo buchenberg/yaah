@@ -26,6 +26,11 @@ var (
 // caller parses it, so the legacy `--resume <id>` form survives pflag's
 // value-optional flag on every subcommand.
 func Execute() error {
+	// pflag keeps each flag's Changed bit on the shared *Flag, so a second
+	// Execute() in the same process (tests, embedding) would see flags from
+	// the previous run still marked as set. The agent-flag guard reads
+	// Changed, so clear it up front and keep the guard's verdict per-run.
+	resetAgentFlagChanged(rootCmd)
 	return rootCmd.Execute()
 }
 
@@ -63,20 +68,24 @@ func init() {
 	}
 	rootCmd.Version = fmt.Sprintf("%s (commit %s, built %s)", version, commit, date)
 	mcp.SetClientVersion(version)
-	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
 			slog.Debug("otel export error", "err", err)
 		}))
+		return rejectAgentFlagsOnNonAgentCommands(cmd)
 	}
 	rootCmd.PersistentFlags().StringVarP(&approvalOverride,
 		"approval", "a", "",
 		"override approval mode: allow, ask, or deny")
 	rootCmd.PersistentFlags().StringVar(&resumeSessionID,
 		"resume", "",
-		"resume a previous session by ID (bare --resume lists recent sessions to pick from)")
+		"resume a previous session by ID (bare --resume lists recent sessions to pick from; prefer --session)")
 	// pflag NoOptDefVal: a bare --resume becomes the picker sentinel
 	// while --resume=<id> still names a concrete session.
 	rootCmd.PersistentFlags().Lookup("resume").NoOptDefVal = resumePickerSentinel
+	rootCmd.PersistentFlags().StringVar(&resumeSessionIDExplicit,
+		"session", "",
+		"resume a previous session by ID (value-carrying form: --session sess-123)")
 	rootCmd.PersistentFlags().StringArrayVarP(&directiveOverrides,
 		"directive", "d", nil,
 		"session directive injected into all agent prompts (repeatable)")
@@ -93,6 +102,12 @@ func init() {
 
 var approvalOverride string
 var resumeSessionID string
+
+// resumeSessionIDExplicit backs --session, the value-carrying spelling of
+// "resume this specific session". --resume keeps its value-optional shape
+// (bare = interactive picker) plus the legacy --resume=<id> form, so
+// existing scripts keep working.
+var resumeSessionIDExplicit string
 var directiveOverrides []string
 var workspaceRoot string
 var allowHomeAccess bool

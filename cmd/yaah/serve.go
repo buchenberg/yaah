@@ -25,10 +25,19 @@ import (
 // Protocol: newline-delimited JSON-RPC 2.0 on stdin/stdout. All diagnostics
 // (banners, warnings, logs) go to stderr so stdout stays clean for the MCP
 // client.
-var serveCmd = &cobra.Command{
-	Use:   "serve",
-	Short: "Expose the yaah engine as an MCP tool server over stdio",
-	Long: `serve starts yaah as an MCP (Model Context Protocol) tool server,
+var serveCmd = newMCPServeCmd(true)
+
+// mcpServeCmd is the canonical spelling: the MCP server lives under the mcp
+// group, next to the other MCP surface (list/add/remove). 'yaah serve' remains
+// as a deprecated alias because MCP client configs and benchmarking harnesses
+// reference it by name.
+var mcpServeCmd = newMCPServeCmd(false)
+
+func newMCPServeCmd(deprecated bool) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Expose the yaah engine as an MCP tool server (stdio, or HTTP with --listen)",
+		Long: `serve starts yaah as an MCP (Model Context Protocol) tool server,
 reading newline-delimited JSON-RPC 2.0 from stdin and writing responses to
 stdout. It exposes three tools:
 
@@ -37,20 +46,33 @@ stdout. It exposes three tools:
   traces   Query in-process OpenTelemetry spans (flat list or per-trace tree).
   status   Report provider, model, session, message count, and token usage.
 
+By default the transport is stdio. Passing --listen <addr> switches to the
+Streamable HTTP transport instead (stdio is not served in that mode).
+
 All diagnostics are written to stderr; stdout carries only protocol JSON.
 This mode is intended for agent-to-agent communication and benchmarking.`,
-	SilenceErrors: true,
-	SilenceUsage:  true,
-	Args:          cobra.NoArgs,
-	RunE:          runServe,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		Args:          cobra.NoArgs,
+		RunE:          runServe,
+	}
+	registerServeFlags(cmd)
+	if deprecated {
+		cmd.Deprecated = "use 'yaah mcp serve' instead"
+	}
+	return cmd
 }
 
 func init() {
 	rootCmd.AddCommand(serveCmd)
+	mcpCmd.AddCommand(mcpServeCmd)
 }
 
-// httpAddr is the listen address for the Streamable HTTP transport.
+// listenAddr is the listen address for the Streamable HTTP transport.
 // Empty (default) preserves the stdio-only behavior.
+var listenAddr string
+
+// httpAddr is the deprecated --http alias; kept working, warns once.
 var httpAddr string
 
 // serveToken authenticates the HTTP transport. Empty generates a
@@ -63,10 +85,12 @@ var serveToken string
 // cover the restart case for spec-compliant clients.
 var serveAllowUnknownSessions bool
 
-func init() {
-	serveCmd.Flags().StringVar(&httpAddr, "http", "", "expose MCP over Streamable HTTP at this address (e.g. 127.0.0.1:7333); empty keeps stdio transport")
-	serveCmd.Flags().StringVar(&serveToken, "token", "", "bearer token required by --http endpoints (randomly generated when empty)")
-	serveCmd.Flags().BoolVar(&serveAllowUnknownSessions, "allow-unknown-sessions", false, "--http: accept stale/unknown Mcp-Session-Id values (server restart transparency); rejected by default")
+func registerServeFlags(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&listenAddr, "listen", "", "expose MCP over Streamable HTTP at this address (e.g. 127.0.0.1:7333); empty keeps stdio transport")
+	cmd.Flags().StringVar(&httpAddr, "http", "", "deprecated: use --listen")
+	_ = cmd.Flags().MarkHidden("http")
+	cmd.Flags().StringVar(&serveToken, "token", "", "bearer token required by --listen endpoints (randomly generated when empty)")
+	cmd.Flags().BoolVar(&serveAllowUnknownSessions, "allow-unknown-sessions", false, "--listen: accept stale/unknown Mcp-Session-Id values (server restart transparency); rejected by default")
 }
 
 // serveState bundles the state shared by both serve transports: the
@@ -115,6 +139,11 @@ func runServeTransport(start func(st *serveState, srv *mcp.Server) error) error 
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
+	addr, err := resolveListenAddr(cmd, "listen", "http", listenAddr, httpAddr)
+	if err != nil {
+		return err
+	}
+	httpAddr = addr
 	if httpAddr != "" {
 		fmt.Fprintf(os.Stderr, "%s starting MCP tool server (HTTP at %s/mcp)...\n", Dim("yaah serve:"), httpAddr)
 		return runServeTransport(serveHTTPTransport)

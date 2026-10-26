@@ -29,7 +29,7 @@ var mcpListCmd = &cobra.Command{
 			cmd.Println("No MCP servers configured.")
 			cmd.Println()
 			cmd.Println("Add one with:")
-			cmd.Println("  yaah mcp add <name> <command> [args...]")
+			cmd.Println("  yaah mcp add <name> -- <command> [args...]")
 			cmd.Println("  yaah mcp add <name> --url <http-url>")
 			return nil
 		}
@@ -57,19 +57,30 @@ var mcpListCmd = &cobra.Command{
 
 // mcpAddCmd registers a new MCP server in config.yaml.
 var mcpAddCmd = &cobra.Command{
-	Use:   "add <name> <command> [args...]",
+	Use:   "add <name> [--url URL | -- command [args...]]",
 	Short: "Register a new MCP server (stdio or HTTP)",
-	Long: `Register an MCP server in config.yaml.
+	Long: `Register an MCP server in config.yaml. Exactly one of the two forms must
+be used.
 
-For stdio servers:
-  yaah mcp add filesystem npx -y @modelcontextprotocol/server-filesystem /tmp
+For stdio servers, put '--' before the command. Everything after it is the
+command and its arguments, including anything that looks like a flag:
 
-For HTTP servers (pass --url):
+  yaah mcp add filesystem -- npx -y @modelcontextprotocol/server-filesystem /tmp
+
+For HTTP servers (pass --url, no trailing command):
+
   yaah mcp add github --url http://localhost:3333/mcp`,
-	Args: cobra.MinimumNArgs(1),
+	Example: "  yaah mcp add filesystem -- npx -y @modelcontextprotocol/server-filesystem /tmp\n  yaah mcp add github --url http://localhost:3333/mcp",
+	Args:    cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 		url, _ := cmd.Flags().GetString("url")
+
+		// --url and a trailing command are alternative forms; accepting both
+		// would silently drop one of them.
+		if url != "" && len(args) > 1 {
+			return fmt.Errorf("cannot combine --url with a trailing command: pick one form (see 'yaah mcp add --help')")
+		}
 
 		var mcpCfg config.MCPServerConfig
 		if url != "" {
