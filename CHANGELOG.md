@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.104.3](https://github.com/buchenberg/yaah/compare/v0.104.2...v0.104.3) (2026-10-26)
+
+
+### Bug Fixes
+
+* **acp:** advertise the model picker on session/new and session/load ([#586](https://github.com/buchenberg/yaah/issues/586)) ([db160be](https://github.com/buchenberg/yaah/commit/db160be292774f580227e1ce1b2d05acd52a80fc))
+
 ## [0.104.2](https://github.com/buchenberg/yaah/compare/v0.104.1...v0.104.2) (2026-10-26)
 
 
