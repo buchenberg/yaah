@@ -179,7 +179,7 @@ func TestAgentFlagGuard(t *testing.T) {
 // or their flags would be rejected.
 func TestAgentCommandPathsAreExempt(t *testing.T) {
 	for _, path := range []string{
-		"yaah", "yaah tui", "yaah web", "yaah serve",
+		"yaah", "yaah doctor", "yaah tui", "yaah web", "yaah serve",
 		"yaah mcp serve", "yaah acp-serve", "yaah acp serve",
 	} {
 		if !agentCommandPaths[path] {
@@ -372,6 +372,16 @@ func TestSessionsShowFlags(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), `"messages"`) || !strings.Contains(buf.String(), `"role": "user"`) {
 		t.Errorf("--json output looks wrong:\n%s", buf.String())
+	}
+
+	// --no-tools must filter JSON too: returning before the filter was
+	// applied made the flag silently do nothing.
+	cmd, buf = showCmd(t, true, true, 2000)
+	if err := sessionsShowCmd.RunE(cmd, []string{id}); err != nil {
+		t.Fatalf("--json --no-tools: %v", err)
+	}
+	if strings.Contains(buf.String(), "serve.go") {
+		t.Errorf("--json must respect --no-tools:\n%s", buf.String())
 	}
 }
 

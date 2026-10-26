@@ -30,8 +30,13 @@ var agentFlagNames = []string{
 // agentCommandPaths lists, by full command path, every command that reads
 // the persistent agent flags through sessionOptionsFromFlags. Anything not
 // listed here rejects them.
+//
+// Keep this in sync with the callers of sessionOptionsFromFlags
+// (root_cmd.go, doctor.go, serve.go, acp_cmd.go via wiring.go, web.go, tui.go):
+// a missing entry turns a previously working flag into an error.
 var agentCommandPaths = map[string]bool{
 	"yaah":           true, // bare REPL and one-shot prompts
+	"yaah doctor":    true, // reads DirectiveOverrides to check directive state
 	"yaah tui":       true,
 	"yaah web":       true,
 	"yaah serve":     true, // deprecated alias

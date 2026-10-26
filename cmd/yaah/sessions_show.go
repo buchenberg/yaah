@@ -54,6 +54,16 @@ Use 'yaah sessions list' to find the id. Long messages are truncated to
 		noTools, _ := cmd.Flags().GetBool("no-tools")
 		maxChars, _ := cmd.Flags().GetInt("max-chars")
 
+		if noTools {
+			filtered := msgs[:0:0]
+			for _, m := range msgs {
+				if !isToolTraffic(m) {
+					filtered = append(filtered, m)
+				}
+			}
+			msgs = filtered
+		}
+
 		if jsonOut {
 			return printJSON(cmd, map[string]any{"session": sess, "messages": msgs})
 		}
@@ -77,9 +87,6 @@ Use 'yaah sessions list' to find the id. Long messages are truncated to
 
 		shown := 0
 		for _, m := range msgs {
-			if noTools && isToolTraffic(m) {
-				continue
-			}
 			cmd.Printf("%s\n", renderTranscriptMessage(m, maxChars))
 			shown++
 		}
@@ -154,5 +161,5 @@ func init() {
 	sessionsCmd.AddCommand(sessionsShowCmd)
 	sessionsShowCmd.Flags().Bool("json", false, "emit the session and messages as JSON")
 	sessionsShowCmd.Flags().Bool("no-tools", false, "hide tool calls and tool results")
-	sessionsShowCmd.Flags().Int("max-chars", 2000, "truncate each message to this many characters (0 = no limit)")
+	sessionsShowCmd.Flags().Int("max-chars", 2000, "truncate each message to this many characters in text output (0 = no limit; --json is never truncated)")
 }

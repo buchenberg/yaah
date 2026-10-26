@@ -97,7 +97,7 @@ The note is taken from the positional arguments, joined with single spaces, so
 it does not need quoting. Use '--' when the text begins with a dash:
 
   yaah memory add -- --allow-home is opt-in, not a default`,
-	Example: "  yaah memory add workspace sandbox denies egress by default\n  yaah memory add --tags '[\"decision\"]' adopt --listen everywhere",
+	Example: "  yaah memory add workspace sandbox denies egress by default\n  yaah memory add --tags '[\"decision\"]' -- adopt --listen everywhere",
 	Args:    cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		text := strings.Join(args, " ")
