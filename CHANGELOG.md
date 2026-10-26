@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.103.3](https://github.com/buchenberg/yaah/compare/v0.103.2...v0.103.3) (2026-10-26)
+
+
+### CI / Build
+
+* **release:** recover release assets after a failed release run ([#580](https://github.com/buchenberg/yaah/issues/580)) ([c5e84fa](https://github.com/buchenberg/yaah/commit/c5e84fa8e21a9ef59977ba6cebbe8db75bfc236b))
+
 ## [0.103.2](https://github.com/buchenberg/yaah/compare/v0.103.1...v0.103.2) (2026-10-26)
 
 
