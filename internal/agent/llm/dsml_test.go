@@ -466,3 +466,77 @@ func TestDSMLTokenFilterVariants(t *testing.T) {
 		}
 	})
 }
+
+// TestDSMLQuotedExamplesStayProse pins the safety gate the attribute dialect
+// already had: DSML inside a fenced block or blockquote is an example the user
+// asked to see, never a call to run.
+func TestDSMLQuotedExamplesStayProse(t *testing.T) {
+	block := "<\uFF5C\uFF5CDSML\uFF5C\uFF5C calls>\n" +
+		"<\uFF5C\uFF5CDSML\uFF5C\uFF5C invoke name=\"powershell\">\n" +
+		"<\uFF5C\uFF5CDSML\uFF5C\uFF5C parameter name=\"command\" string=\"true\">Get-Date</\uFF5C\uFF5CDSML\uFF5C\uFF5C parameter>\n" +
+		"</\uFF5C\uFF5CDSML\uFF5C\uFF5C invoke>\n" +
+		"</\uFF5C\uFF5CDSML\uFF5C\uFF5C calls>"
+
+	t.Run("fenced example is not executed", func(t *testing.T) {
+		content := "Here is the format:\n\n```\n" + block + "\n```\n"
+		cleaned, calls, rejected, ok := parseDSMLToolCalls(content, new(int))
+		if ok || len(calls) != 0 || len(rejected) != 0 {
+			t.Fatalf("quoted example must stay prose: ok=%v calls=%v rejected=%v", ok, calls, rejected)
+		}
+		if cleaned != content {
+			t.Fatalf("content modified:\n got %q\nwant %q", cleaned, content)
+		}
+	})
+
+	t.Run("blockquoted example is not executed", func(t *testing.T) {
+		content := "> " + strings.ReplaceAll(block, "\n", "\n> ")
+		cleaned, calls, rejected, ok := parseDSMLToolCalls(content, new(int))
+		if ok || len(calls) != 0 || len(rejected) != 0 {
+			t.Fatalf("quoted example must stay prose: ok=%v calls=%v rejected=%v", ok, calls, rejected)
+		}
+		if cleaned != content {
+			t.Fatalf("content modified: %q", cleaned)
+		}
+	})
+
+	t.Run("every unquoted block is recovered", func(t *testing.T) {
+		content := "before\n" + block + "\nmiddle\n" + block + "\nafter"
+		cleaned, calls, _, ok := parseDSMLToolCalls(content, new(int))
+		if !ok || len(calls) != 2 {
+			t.Fatalf("ok=%v calls=%d, want 2", ok, len(calls))
+		}
+		for _, want := range []string{"before", "middle", "after"} {
+			if !strings.Contains(cleaned, want) {
+				t.Fatalf("cleaned dropped %q: %q", want, cleaned)
+			}
+		}
+		if strings.Contains(cleaned, "DSML") {
+			t.Fatalf("markup left in cleaned content: %q", cleaned)
+		}
+	})
+
+	t.Run("prose after bare invoke is preserved", func(t *testing.T) {
+		content := "<\uFF5C\uFF5CDSML\uFF5C\uFF5C invoke name=\"read\">\n" +
+			"<\uFF5C\uFF5CDSML\uFF5C\uFF5C parameter name=\"filePath\" string=\"true\">main.go</\uFF5C\uFF5CDSML\uFF5C\uFF5C parameter>\n" +
+			"</\uFF5C\uFF5CDSML\uFF5C\uFF5C invoke>\nDone reading."
+		cleaned, calls, _, ok := parseDSMLToolCalls(content, new(int))
+		if !ok || len(calls) != 1 {
+			t.Fatalf("ok=%v calls=%d, want 1", ok, len(calls))
+		}
+		if !strings.Contains(cleaned, "Done reading.") {
+			t.Fatalf("trailing prose dropped: %q", cleaned)
+		}
+	})
+
+	t.Run("four bar run held back from live stream", func(t *testing.T) {
+		leaked := strings.ReplaceAll(block, "\uFF5C\uFF5CDSML\uFF5C\uFF5C", "\uFF5C\uFF5C\uFF5C\uFF5CDSML\uFF5C\uFF5C\uFF5C\uFF5C")
+		var f dsmlTokenFilter
+		var out strings.Builder
+		for i := 0; i < len(leaked); i++ {
+			out.WriteString(f.filterToken(leaked[i : i+1]))
+		}
+		if got := out.String(); got != "" {
+			t.Fatalf("markup reached the view: %q", got)
+		}
+	})
+}
