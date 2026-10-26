@@ -11,8 +11,10 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -191,6 +193,13 @@ type sessionState struct {
 	// session, never persisted: a fresh session re-asks.
 	permAllow map[string]bool
 	permDeny  map[string]bool
+
+	// compactionSeq fuels the agent-owned compaction ids (cmp-<n>)
+	// handed to each prompt's view. It lives here — session lifetime,
+	// like the per-session permission decisions — because a fresh View
+	// is built for every prompt turn and the id namespace must not
+	// reset (a repeated compactionId patches the earlier card).
+	compactionSeq atomic.Int64
 }
 
 // runningPrompt tracks the single in-flight turn. cancel aborts it;
@@ -1365,10 +1374,6 @@ func (s *Server) handlePrompt(
 	}
 
 	ctrlCh := make(chan control.Msg, 64)
-	view := NewViewWithWrite(sendUpdate, p.SessionID)
-	if capsSupportsCompaction(s.clientCaps) {
-		view.EnableCompaction()
-	}
 	promptCtx, cancel := context.WithCancel(rootCtx)
 	runDone := make(chan struct{})
 
@@ -1385,6 +1390,16 @@ func (s *Server) handlePrompt(
 		cancel()
 		respErr(msg.ID, codeBusy, "a prompt is already in flight for this session")
 		return
+	}
+	// Snapshot the caps under the lock like the other readers, and
+	// hand the view a session-lifetime compaction id allocator (a
+	// fresh view is built per turn; the id namespace must not reset).
+	caps := s.clientCaps
+	view := NewViewWithWrite(sendUpdate, p.SessionID)
+	if capsSupportsCompaction(caps) {
+		view.EnableCompaction(func() string {
+			return "cmp-" + strconv.FormatInt(st.compactionSeq.Add(1), 10)
+		})
 	}
 	st.run = &runningPrompt{cancel: cancel, done: runDone}
 	st.ctrl = ctrlCh

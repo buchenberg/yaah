@@ -72,10 +72,10 @@ type ClientCaps struct {
 	Auth        *ClientAuthCaps    `json:"auth,omitempty"`
 }
 
-// ClientSessionCaps mirror the client's sessionCapabilities.session
-// object. The response-side SessionCaps (the sessionCapabilities the
-// agent advertises) is a separate type; this one is what the client
-// sends.
+// ClientSessionCaps mirrors the client's session capabilities object
+// (clientCapabilities.session on initialize). The response-side
+// SessionCaps (the sessionCapabilities the agent advertises) is a
+// separate type; this one is what the client sends.
 type ClientSessionCaps struct {
 	// Compaction advertises support for ID-addressed compaction
 	// updates. The spec shapes it as an object; flexCap tolerant of
@@ -392,8 +392,6 @@ const (
 	// Compaction lifecycle statuses (CompactionUpdate.Status).
 	CompactionInProgress = "in_progress"
 	CompactionCompleted  = "completed"
-	CompactionFailed     = "failed"
-	CompactionCancelled  = "cancelled"
 )
 
 // Tool kinds (session/update tool_call.kind).
@@ -453,9 +451,10 @@ type UpdateContent struct {
 // CompactionUpdate is the ID-addressed compaction upsert (the spec's
 // compaction_update session-update variant). The first notification
 // for a compactionId fixes the card's timeline position; later updates
-// with the same id patch it in place. Summary/error/\_meta have patch
-// semantics: omission leaves the stored value unchanged, null clears
-// it. Agents MUST only send this when the client advertised
+// with the same id patch it in place. Yaah patches by omission only:
+// every field it wants to change is sent with a concrete value, and
+// the explicit-null "clear" form the spec allows is never produced.
+// Agents MUST only send this when the client advertised
 // clientCapabilities.session.compaction; otherwise compaction surfaces
 // as ordinary text message chunks.
 type CompactionUpdate struct {

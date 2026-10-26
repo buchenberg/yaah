@@ -1915,8 +1915,76 @@ func TestServer_compactionCapabilityGated(t *testing.T) {
 		}
 	})
 
+	t.Run("with cap, second turn", func(t *testing.T) {
+		// The id allocator is session-lifetime: a fresh view for a new
+		// prompt turn must continue the sequence, not reset to cmp-1
+		// (which would patch the previous turn's card in place).
+		sess := &fakeSession{id: "sess-test"}
+		turns := 0
+		sess.mu.Lock()
+		sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
+			sess.mu.Lock()
+			v := sess.view
+			sess.mu.Unlock()
+			turns++
+			v.HandleEvent(&agent.CompactionStartedEvent{BeforeTokens: turns, TargetTokens: turns})
+			return "ok", false, nil
+		}
+		sess.mu.Unlock()
+		h := newACPHarness(t, sess)
+		if err := h.send("initialize", 1, `{"protocolVersion":1,"clientCapabilities":{"session":{"compaction":{}}}}`); err != nil {
+			t.Fatal(err)
+		}
+		h.recv(t)
+		sid := newSession(t, h)
+		lastID := ""
+		for n := 1; n <= 2; n++ {
+			if err := h.send("session/prompt", n+3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"go"}]}`, sid)); err != nil {
+				t.Fatal(err)
+			}
+			want := fmt.Sprintf("cmp-%d", n)
+			for i := 0; i < 16; i++ {
+				msg := h.recv(t)
+				if msg.Method == "" && msg.Error == nil {
+					break
+				}
+				if len(msg.Params) == 0 {
+					continue
+				}
+				var params struct {
+					Update json.RawMessage `json:"update"`
+				}
+				if json.Unmarshal([]byte(msg.Params), &params) != nil {
+					continue
+				}
+				var upd struct {
+					SessionUpdate string           `json:"sessionUpdate"`
+					CompactionID  string           `json:"compactionId"`
+					Summary       []map[string]any `json:"summary"`
+				}
+				if json.Unmarshal(params.Update, &upd) != nil || upd.SessionUpdate != UpdateCompaction {
+					continue
+				}
+				if upd.CompactionID != want {
+					t.Fatalf("turn %d card id = %v, want %v (id namespace must not reset per turn)", n, upd.CompactionID, want)
+				}
+				if n == 2 && len(upd.Summary) != 1 || n == 1 && len(upd.Summary) != 1 {
+					t.Fatalf("turn %d summary = %v, want the readable start line", n, upd.Summary)
+				}
+				lastID = upd.CompactionID
+			}
+			if lastID != want {
+				t.Fatalf("turn %d: no compaction_update with id %v observed", n, want)
+			}
+		}
+	})
+
 	t.Run("without cap", func(t *testing.T) {
 		updates := run(t, `{}`)
+		if len(updates) == 0 {
+			t.Fatal("no updates were emitted; gating must not suppress the stream")
+		}
+		sawFallback := false
 		for _, m := range updates {
 			params := map[string]any{}
 			if json.Unmarshal([]byte(m.Params), &params) != nil {
@@ -1930,6 +1998,15 @@ func TestServer_compactionCapabilityGated(t *testing.T) {
 			if variant == UpdateCompaction || variant == UpdateCompactionSummaryChunk {
 				t.Fatalf("structured compaction update leaked without capability: %v", params)
 			}
+			if variant == UpdateAgentMessageChunk {
+				content, _ := params["content"].(map[string]any)
+				if text, _ := content["text"].(string); strings.HasPrefix(text, "[compacting") {
+					sawFallback = true
+				}
+			}
+		}
+		if !sawFallback {
+			t.Fatal("documented plain-text compaction fallback (agent_message_chunk '[compacting …]') not emitted")
 		}
 	})
 }

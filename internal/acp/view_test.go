@@ -2,6 +2,7 @@ package acp
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -321,35 +322,53 @@ func TestView_remainingEventsRender(t *testing.T) {
 
 // TestView_compactionStructured checks the capability-gated path: with
 // EnableCompaction, the start event becomes an in_progress
-// compaction_update (details in _meta), and the done event emits a
-// compaction_summary_chunk (the completed line appended to the card)
-// followed by a completed compaction_update patching status in place —
-// same compactionId, reused from the start event.
+// compaction_update (readable line in summary, details in _meta), and
+// the done event emits a compaction_summary_chunk (the completed line
+// appended to the card) followed by a completed compaction_update
+// patching status in place — same compactionId, reused from the start
+// event. A second, independent view (fresh prompt turn) continues the
+// id sequence, since the allocator is session-lifetime.
 func TestView_compactionStructured(t *testing.T) {
+	seq := 0
+	next := func() string { seq++; return "cmp-" + strconv.Itoa(seq) }
+	emitted := func(t *testing.T, ids ...any) []map[string]any {
+		t.Helper()
+		out := make([]map[string]any, 0, len(ids))
+		for _, u := range ids {
+			out = append(out, decodeUpdate(t, u))
+		}
+		return out
+	}
 	var got []any
 	v := NewView()
-	v.EnableCompaction()
+	v.EnableCompaction(next)
 	v.SendTo("s", captureUpdate(&got), &agent.CompactionStartedEvent{BeforeTokens: 10, TargetTokens: 4, Reason: "threshold"})
 	v.SendTo("s", captureUpdate(&got), &agent.CompactionDoneEvent{BeforeTokens: 10, AfterTokens: 4, SavingsPct: 0.6, Method: "single", ElapsedSeconds: 1.5, IneffectiveNote: "hot", OldMsgCount: 9, KeepMsgCount: 3, Budget: 2})
 	if len(got) != 3 {
 		t.Fatalf("updates = %d, want 3 (start, chunk, done)", len(got))
 	}
-	start := decodeUpdate(t, got[0])
+	m := emitted(t, got...)
+	start, chunk, done := m[0], m[1], m[2]
 	if start["sessionUpdate"] != UpdateCompaction || start["compactionId"] != "cmp-1" {
 		t.Fatalf("start = %v", start)
 	}
 	if start["status"] != CompactionInProgress {
 		t.Fatalf("start status = %v", start["status"])
 	}
+	blocks, _ := start["summary"].([]any)
+	if len(blocks) != 1 || blocks[0].(map[string]any)["text"] != "compacting (10→4 tokens, threshold)" {
+		t.Fatalf("start summary = %v", start["summary"])
+	}
 	meta, _ := start["_meta"].(map[string]any)
 	if meta == nil || meta["reason"] != "threshold" || meta["beforeTokens"] != float64(10) {
 		t.Fatalf("start _meta = %v", start["_meta"])
 	}
-	chunk := decodeUpdate(t, got[1])
+	if block, _ := start["_meta"].(map[string]any)["text"]; block != nil {
+		t.Fatalf("readable line must be in summary, not _meta.text: %v", start["_meta"])
+	}
 	if chunk["sessionUpdate"] != UpdateCompactionSummaryChunk || chunk["compactionId"] != "cmp-1" {
 		t.Fatalf("chunk = %v", chunk)
 	}
-	done := decodeUpdate(t, got[2])
 	if done["sessionUpdate"] != UpdateCompaction || done["compactionId"] != "cmp-1" || done["status"] != CompactionCompleted {
 		t.Fatalf("done = %v", done)
 	}
@@ -357,15 +376,26 @@ func TestView_compactionStructured(t *testing.T) {
 		t.Fatalf("done must not carry a summary (chunk path owns the summary): %v", done["summary"])
 	}
 	dmeta := done["_meta"].(map[string]any)
-	if dmeta["note"] != "hot" || dmeta["savingsPct"] != float64(0.6) {
+	if dmeta["note"] != "hot" || dmeta["savings"] != float64(0.6) {
 		t.Fatalf("done _meta = %v", done["_meta"])
+	}
+	// Cross-turn: a fresh view (production builds one per prompt turn)
+	// continues the session's id namespace rather than restarting at
+	// cmp-1, which would patch the previous turn's card.
+	var turn2 []any
+	v2 := NewView()
+	v2.EnableCompaction(next)
+	v2.SendTo("s", captureUpdate(&turn2), &agent.CompactionStartedEvent{BeforeTokens: 1, TargetTokens: 1})
+	if id := decodeUpdate(t, turn2[0])["compactionId"]; id != "cmp-2" {
+		t.Fatalf("second view started at %v, want cmp-2 (no cross-turn collision)", id)
 	}
 	// A done event with no recorded start allocates its own id.
 	var solo []any
-	v.SendTo("s", captureUpdate(&solo), &agent.CompactionDoneEvent{BeforeTokens: 1, AfterTokens: 0})
-	s := decodeUpdate(t, solo[1])
-	if s["compactionId"] != "cmp-2" {
-		t.Fatalf("orphan done id = %v", s["compactionId"])
+	vs := NewView()
+	vs.EnableCompaction(next)
+	vs.SendTo("s", captureUpdate(&solo), &agent.CompactionDoneEvent{BeforeTokens: 1, AfterTokens: 0})
+	if id := decodeUpdate(t, solo[0])["compactionId"]; id != "cmp-3" {
+		t.Fatalf("orphan done id = %v, want cmp-3", id)
 	}
 }
 

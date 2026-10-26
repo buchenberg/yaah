@@ -25,9 +25,11 @@ type View struct {
 	// clientCapabilities.session.compaction (set at prompt start from
 	// the server's stored caps).
 	compaction bool
-	// compactionSeq fuels agent-owned compaction ids, unique per ACP
-	// session: "cmp-<n>".
-	compactionSeq map[string]int
+	// compactionNext allocates agent-owned compaction ids supplied by
+	// the server from a session-lifetime counter (a fresh view is built
+	// per prompt turn; the id namespace must not reset). Nil unless
+	// compaction is enabled.
+	compactionNext func() string
 	// compactionOpen holds the id of the started-but-not-yet-finished
 	// compaction, if any, so the done event patches the card the start
 	// event created.
@@ -38,17 +40,17 @@ type View struct {
 func NewView() *View {
 	return &View{
 		announced:      make(map[string]bool),
-		compactionSeq:  make(map[string]int),
 		compactionOpen: make(map[string]string),
 	}
 }
 
-// EnableCompaction turns on ID-addressed compaction updates. The
-// server calls it when the prompt's connection advertised the
-// session.compaction capability.
-func (v *View) EnableCompaction() {
+// EnableCompaction turns on ID-addressed compaction updates using next
+// as the id allocator. The server calls it when the prompt's
+// connection advertised the session.compaction capability.
+func (v *View) EnableCompaction(next func() string) {
 	v.mu.Lock()
 	v.compaction = true
+	v.compactionNext = next
 	v.mu.Unlock()
 }
 
@@ -56,17 +58,6 @@ func (v *View) compactionEnabled() bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	return v.compaction
-}
-
-// nextCompactionID allocates the next agent-owned compaction id for
-// the session and records it as the open compaction.
-func (v *View) nextCompactionID(sessionID string) string {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	v.compactionSeq[sessionID]++
-	id := "cmp-" + strconv.Itoa(v.compactionSeq[sessionID])
-	v.compactionOpen[sessionID] = id
-	return id
 }
 
 // currentCompactionID returns the id of the open compaction, or a
@@ -79,8 +70,16 @@ func (v *View) currentCompactionID(sessionID string) string {
 		delete(v.compactionOpen, sessionID)
 		return id
 	}
-	v.compactionSeq[sessionID]++
-	return "cmp-" + strconv.Itoa(v.compactionSeq[sessionID])
+	return v.compactionNext()
+}
+
+// claimCompactionID allocates an id via next and records it as the
+// session's open compaction.
+func (v *View) claimCompactionID(sessionID string) string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.compactionOpen[sessionID] = v.compactionNext()
+	return v.compactionOpen[sessionID]
 }
 
 // Announce marks a tool call as already created by a permission
@@ -231,13 +230,13 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 		if v.compactionEnabled() {
 			send(sessionID, CompactionUpdate{
 				SessionUpdate: UpdateCompaction,
-				CompactionID:  v.nextCompactionID(sessionID),
+				CompactionID:  v.claimCompactionID(sessionID),
 				Status:        CompactionInProgress,
+				Summary:       []ContentBlock{textContent(e.StartedSummary())},
 				Meta: map[string]any{
 					"beforeTokens": e.BeforeTokens,
 					"targetTokens": e.TargetTokens,
 					"reason":       e.Reason,
-					"text":         e.StartedSummary(),
 				},
 			})
 			break
@@ -256,7 +255,7 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 			meta := map[string]any{
 				"beforeTokens":   e.BeforeTokens,
 				"afterTokens":    e.AfterTokens,
-				"savingsPct":     e.SavingsPct,
+				"savings":        e.SavingsPct, // fraction, not a percent
 				"method":         e.Method,
 				"elapsedSeconds": e.ElapsedSeconds,
 				"oldMsgCount":    e.OldMsgCount,
@@ -343,11 +342,11 @@ func (v *ViewWithWrite) HandleEvent(evt agent.Event) {
 	v.av.SendTo(v.sessionID, v.send, evt)
 }
 
-// EnableCompaction turns on ID-addressed compaction updates (see
-// agent.View.EnableCompaction). The server calls it per prompt turn
-// when the connection advertised session.compaction.
-func (v *ViewWithWrite) EnableCompaction() {
-	v.av.EnableCompaction()
+// EnableCompaction turns on ID-addressed compaction updates using next
+// as the id allocator (see View.EnableCompaction). The server calls it
+// per prompt turn when the connection advertised session.compaction.
+func (v *ViewWithWrite) EnableCompaction(next func() string) {
+	v.av.EnableCompaction(next)
 }
 
 // Announce marks a tool call as created by a permission request.
