@@ -3,6 +3,16 @@ name: release-please
 on:
   push:
     branches: [main]
+  # Recovery path. `release_created` is only true on the run that creates the
+  # release, so re-running a failed run (or any run after the release exists)
+  # skips build/upload forever. Dispatching with an existing tag rebuilds and
+  # re-uploads that release's assets from the tagged source.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to (re)build, e.g. v0.103.2'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -11,6 +21,9 @@ permissions:
 
 jobs:
   release-please:
+    # Only push runs drive releases. On workflow_dispatch there is nothing to
+    # release; the build job checks out the requested tag instead.
+    if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
@@ -24,8 +37,15 @@ jobs:
   build:
     name: build (${{ matrix.goos }}/${{ matrix.goarch }})
     needs: [release-please]
-    if: ${{ needs.release-please.outputs.release_created }}
+    # `always()` keeps this job alive when release-please is skipped (dispatch)
+    # or fails. The latter matters: release-please can create the tag/release
+    # and *then* die on a transient GitHub 5xx, which is exactly how v0.103.2
+    # shipped with zero assets. If the outputs survived the failure, build and
+    # upload still run; if they did not, dispatch this workflow with the tag.
+    if: ${{ always() && (needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
+    env:
+      TAG_NAME: ${{ inputs.tag || needs.release-please.outputs.tag_name }}
     strategy:
       fail-fast: false
       matrix:
@@ -41,6 +61,17 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@v4
+        with:
+          # Build the tagged source, not whatever is on main: a dispatch may
+          # be repairing an older release, and main moves on.
+          ref: ${{ inputs.tag || github.sha }}
+
+      - name: verify release tag
+        shell: bash
+        run: |
+          test -n "$TAG_NAME" || { echo "missing release tag (release_created=${{ needs.release-please.outputs.release_created }})"; exit 1; }
+          git ls-remote --exit-code --tags origin "refs/tags/$TAG_NAME" >/dev/null ||
+            { echo "tag $TAG_NAME does not exist on origin"; exit 1; }
 
       - name: setup Go
         uses: actions/setup-go@v5
@@ -54,7 +85,6 @@ jobs:
           GOOS:   ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '0'
-          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
         run: |
           mkdir -p dist
           out=dist/yaah-${{ matrix.goos }}-${{ matrix.goarch }}
@@ -67,10 +97,12 @@ jobs:
           # shallow checkout that is a v0.0.0-<ts>-<sha> pseudo-version, and
           # `yaah update` parses that as 0.0.0 forever. (Verified on the
           # v0.77.0 asset and reproduced locally with go1.27.)
-          test -n "$TAG_NAME" || { echo "missing release-please tag_name"; exit 1; }
+          test -n "$TAG_NAME" || { echo "missing release tag"; exit 1; }
           ldflags="-s -w"
           ldflags="$ldflags -X github.com/buchenberg/yaah/cmd/yaah.version=$TAG_NAME"
-          ldflags="$ldflags -X github.com/buchenberg/yaah/cmd/yaah.commit=${GITHUB_SHA::7}"
+          # HEAD, not GITHUB_SHA: on dispatch the latter is the branch tip,
+          # which may be newer than the tag being rebuilt.
+          ldflags="$ldflags -X github.com/buchenberg/yaah/cmd/yaah.commit=$(git rev-parse --short=7 HEAD)"
           ldflags="$ldflags -X github.com/buchenberg/yaah/cmd/yaah.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           go build -trimpath -ldflags "$ldflags" -o "$out" .
 
@@ -81,8 +113,6 @@ jobs:
       # yaah-<goos>-<goarch>[.exe] and would break if this replaced it.
       - name: package registry archive
         shell: bash
-        env:
-          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
         run: |
           bin=dist/yaah-${{ matrix.goos }}-${{ matrix.goarch }}
           if [ "${{ matrix.goos }}" = "windows" ]; then
@@ -107,8 +137,13 @@ jobs:
   upload:
     name: upload release assets
     needs: [release-please, build]
-    if: ${{ needs.release-please.outputs.release_created }}
+    # Attach whatever build actually produced. Gating on release_created meant
+    # a re-run could never repair a release whose first run failed mid-flight.
+    if: ${{ always() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
+    env:
+      TAG_NAME: ${{ inputs.tag || needs.release-please.outputs.tag_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: checkout
         uses: actions/checkout@v4
@@ -155,7 +190,22 @@ jobs:
           [ "$fail" -eq 0 ] && echo "all archives resolve ./yaah from the extract root"
 
       - name: upload to release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
-          gh release upload ${{ needs.release-please.outputs.tag_name }} dist/yaah-* dist/checksums.txt
+          test -n "$TAG_NAME" || { echo "missing release tag"; exit 1; }
+          # --clobber makes re-runs idempotent: assets from a partial or
+          # previous upload are replaced, not rejected as already existing.
+          gh release upload "$TAG_NAME" dist/yaah-* dist/checksums.txt --clobber
+
+      - name: verify every built asset is attached
+        shell: bash
+        run: |
+          # A skipped or partial upload is invisible otherwise: the workflow
+          # goes green and the release page silently ships with no downloads.
+          cd dist
+          printf '%s\n' yaah-* checksums.txt | sort > "$RUNNER_TEMP/expected.txt"
+          gh release view "$TAG_NAME" --json assets --jq '.assets[].name' |
+            sort > "$RUNNER_TEMP/attached.txt"
+          diff -u "$RUNNER_TEMP/expected.txt" "$RUNNER_TEMP/attached.txt" ||
+            { echo "release $TAG_NAME is missing assets (see diff above)"; exit 1; }
+          echo "all $(wc -l < "$RUNNER_TEMP/expected.txt") assets attached to $TAG_NAME"
