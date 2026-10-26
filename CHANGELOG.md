@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.103.2](https://github.com/buchenberg/yaah/compare/v0.103.1...v0.103.2) (2026-10-26)
+
+
+### Bug Fixes
+
+* **llm:** accept all DSML attribute spellings and flush held tails ([#578](https://github.com/buchenberg/yaah/issues/578)) ([8c28569](https://github.com/buchenberg/yaah/commit/8c28569fc4f9b4d035a4cf1593636731d7e69cea))
+
 ## [0.103.1](https://github.com/buchenberg/yaah/compare/v0.103.0...v0.103.1) (2026-10-26)
 
 
