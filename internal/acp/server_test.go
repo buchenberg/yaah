@@ -445,6 +445,135 @@ func TestServer_sessionNewExposesAgentSessionID(t *testing.T) {
 	}
 }
 
+// fakeModelCatalog is a static ModelCatalog for picker tests.
+type fakeModelCatalog struct{ options []ModelOption }
+
+func (c fakeModelCatalog) Options(context.Context) []ModelOption { return c.options }
+
+// pickerCatalog is the catalog the picker-advertisement tests wire.
+func pickerCatalog() fakeModelCatalog {
+	return fakeModelCatalog{options: []ModelOption{
+		{Provider: "openai", Model: "gpt-5", Name: "gpt-5 (OpenAI)"},
+		{Provider: "deepseek", Model: "deepseek-flash"},
+	}}
+}
+
+// assertModelPicker checks one decoded configOptions set: the single
+// model-category select with both catalog values and the given current
+// selection.
+func assertModelPicker(t *testing.T, opts []SessionConfigOption, current string) {
+	t.Helper()
+	if len(opts) != 1 {
+		t.Fatalf("configOptions = %+v, want exactly the model picker", opts)
+	}
+	picker := opts[0]
+	if picker.ID != ConfigOptionModelID || picker.Category != ConfigOptionCategoryModel || picker.Type != ConfigOptionTypeSelect {
+		t.Fatalf("model picker = %+v, want id=%s category=%s type=%s", picker, ConfigOptionModelID, ConfigOptionCategoryModel, ConfigOptionTypeSelect)
+	}
+	if picker.CurrentValue != current {
+		t.Errorf("currentValue = %q, want %q", picker.CurrentValue, current)
+	}
+	values := make([]string, 0, len(picker.Options))
+	for _, o := range picker.Options {
+		values = append(values, o.Value)
+	}
+	want := []string{"openai/gpt-5", "deepseek/deepseek-flash"}
+	if len(values) != len(want) || values[0] != want[0] || values[1] != want[1] {
+		t.Errorf("option values = %v, want %v", values, want)
+	}
+}
+
+// TestServer_modelPickerAdvertisedOnSessionNewAndLoad pins the wire
+// contract Zed's model selector depends on: session/new and
+// session/load results carry configOptions (the model-category select),
+// built from the wired catalog and the session's current model. With no
+// catalog wired, the field is omitted entirely.
+func TestServer_modelPickerAdvertisedOnSessionNewAndLoad(t *testing.T) {
+	t.Run("session/new advertises the picker", func(t *testing.T) {
+		h := newACPHarness(t, &fakeSession{id: "sess-m1", provider: "openai", model: "gpt-5"})
+		h.server.catalog = pickerCatalog()
+		initialize(t, h)
+		cwd, _ := json.Marshal(h.cwd)
+		if err := h.send("session/new", 2, fmt.Sprintf(`{"cwd":%s,"mcpServers":[]}`, cwd)); err != nil {
+			t.Fatal(err)
+		}
+		msg := h.recv(t)
+		if msg.Error != nil {
+			t.Fatalf("session/new error: %+v", msg.Error)
+		}
+		var result SessionNewResult
+		if err := json.Unmarshal(msg.Result, &result); err != nil {
+			t.Fatalf("session/new result: %v", err)
+		}
+		assertModelPicker(t, result.ConfigOptions, "openai/gpt-5")
+	})
+
+	t.Run("session/load re-advertises the picker", func(t *testing.T) {
+		h := newACPHarness(t, &fakeSession{id: "sess-m2", provider: "deepseek", model: "deepseek-flash"})
+		h.server.catalog = pickerCatalog()
+		initialize(t, h)
+		if err := h.send("session/load", 2, loadParams(t, h, "sess-m2")); err != nil {
+			t.Fatal(err)
+		}
+		msg := h.recv(t)
+		if msg.Error != nil {
+			t.Fatalf("session/load error: %+v", msg.Error)
+		}
+		var result SessionLoadResult
+		if err := json.Unmarshal(msg.Result, &result); err != nil {
+			t.Fatalf("session/load result: %v", err)
+		}
+		assertModelPicker(t, result.ConfigOptions, "deepseek/deepseek-flash")
+	})
+
+	t.Run("no catalog omits configOptions", func(t *testing.T) {
+		h := newACPHarness(t, nil)
+		initialize(t, h)
+		cwd, _ := json.Marshal(h.cwd)
+		if err := h.send("session/new", 2, fmt.Sprintf(`{"cwd":%s,"mcpServers":[]}`, cwd)); err != nil {
+			t.Fatal(err)
+		}
+		msg := h.recv(t)
+		if msg.Error != nil {
+			t.Fatalf("session/new error: %+v", msg.Error)
+		}
+		if strings.Contains(string(msg.Result), "configOptions") {
+			t.Errorf("session/new result = %s, want no configOptions without a wired catalog", msg.Result)
+		}
+	})
+}
+
+// TestServer_setConfigOptionSwitchesModel pins the picker round trip: a
+// client echoing back an advertised value switches the session's model,
+// and the response carries the recomputed picker state.
+func TestServer_setConfigOptionSwitchesModel(t *testing.T) {
+	sess := &fakeSession{id: "sess-m3", provider: "openai", model: "gpt-5"}
+	h := newACPHarness(t, sess)
+	h.server.catalog = pickerCatalog()
+	initialize(t, h)
+	if id := newSession(t, h); id != "sess-m3" {
+		t.Fatalf("session/new returned %q, want sess-m3", id)
+	}
+	if err := h.send("session/set_config_option", 2, `{"sessionId":"sess-m3","configId":"model","value":"deepseek/deepseek-flash"}`); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recv(t)
+	if msg.Error != nil {
+		t.Fatalf("set_config_option error: %+v", msg.Error)
+	}
+	var result SetConfigOptionResult
+	if err := json.Unmarshal(msg.Result, &result); err != nil {
+		t.Fatalf("set_config_option result: %v", err)
+	}
+	assertModelPicker(t, result.ConfigOptions, "deepseek/deepseek-flash")
+	if got := sess.ModelName(); got != "deepseek-flash" {
+		t.Errorf("session model = %q, want deepseek-flash", got)
+	}
+	if got := sess.ProviderName(); got != "deepseek" {
+		t.Errorf("session provider = %q, want deepseek", got)
+	}
+}
+
 // loadProbe decodes a session/update notification's replay chunk into
 // "variant:text" for ordered assertions.
 func loadProbe(t *testing.T, raw json.RawMessage) string {

@@ -3,7 +3,7 @@ package acp
 import "strings"
 
 // ModelOption is one selectable model, as the injected model catalog
-// (Server.ModelCatalog) reports it. The wire value is
+// (the ModelCatalog passed to NewServer) reports it. The wire value is
 // "<provider>/<model>": provider names never contain a slash, while
 // model ids may ("openrouter/anthropic/claude-3.5-sonnet"), so a value
 // is split on its FIRST slash only.
