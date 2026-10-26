@@ -51,9 +51,10 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 	var reasoning strings.Builder
 	var signature strings.Builder
 	var dsmlFilter dsmlTokenFilter
-	// Releasing the held tail is only correct for a stream whose message is
-	// actually delivered: a failed attempt is retried, the same bytes stream
-	// again, and the view would show the fragment twice.
+	// The held tail may only be released when the message is actually
+	// delivered, or a replayed attempt shows the fragment twice. Delivery is
+	// decided by the finish_reason return, not by the channel state: a stream
+	// without a finish_reason is discarded and replayed by Client.Call.
 	var streamDelivered bool
 	defer func() {
 		if !streamDelivered || c.OnToken == nil {
@@ -156,7 +157,6 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 				default:
 				}
 				recordVerbose("channel_closed")
-				streamDelivered = true
 				if streamSpan != nil {
 					observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 					streamSpan.End()
@@ -267,6 +267,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 					}
 				}
 				recordVerbose("finish_reason")
+				streamDelivered = true
 				if streamSpan != nil {
 					observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 					streamSpan.End()
@@ -299,7 +300,6 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 				return partialStreamedMessage(content.String()), "", "", totalUsage, err
 			}
 			recordVerbose("errs_nil")
-			streamDelivered = true
 			if streamSpan != nil {
 				observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 				streamSpan.End()
