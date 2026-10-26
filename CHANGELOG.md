@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.103.1](https://github.com/buchenberg/yaah/compare/v0.103.0...v0.103.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* **llm:** recover variant DSML tool calls and reject unparsable blocks ([#576](https://github.com/buchenberg/yaah/issues/576)) ([d530568](https://github.com/buchenberg/yaah/commit/d5305681183c278606383bd6cd0da2149ea39788))
+
 ## [0.103.0](https://github.com/buchenberg/yaah/compare/v0.102.3...v0.103.0) (2026-10-26)
 
 
