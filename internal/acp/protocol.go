@@ -82,14 +82,15 @@ type ElicitationCaps struct {
 }
 
 // flexCap is one optional capability field that the spec defines as an
-// object but some clients send as a boolean. Accepted payloads: true,
-// {}, or an object with arbitrary properties (interpreted as
-// advertised); false, null, or anything else counts as not advertised.
+// object but some clients send as a boolean. Accepted payloads: true
+// (the boolean spelling), or any object ({} and property-carrying
+// objects both mean advertised); false, null, or anything else counts
+// as not advertised.
 type flexCap bool
 
 func (c *flexCap) UnmarshalJSON(data []byte) error {
 	s := strings.TrimSpace(string(data))
-	*c = s == "true" || s == "{}"
+	*c = s == "true" || (len(s) >= 2 && s[0] == '{' && s[len(s)-1] == '}')
 	return nil
 }
 
@@ -414,10 +415,12 @@ type UpdateContent struct {
 	// Diff variant (Type == "diff"): Path is the modified file's
 	// absolute path, OldText the content before (omitted for a newly
 	// created file, per the schema's nullable field), NewText the
-	// content after.
+	// content after. Both are pointers so empty strings survive:
+	// newText is a required string on the wire, and a deleted block or
+	// an empty new file must still transmit it.
 	Path    string  `json:"path,omitempty"`
 	OldText *string `json:"oldText,omitempty"`
-	NewText string  `json:"newText,omitempty"`
+	NewText *string `json:"newText,omitempty"`
 }
 
 // ToolCallLocation points the client at a file touched by the tool

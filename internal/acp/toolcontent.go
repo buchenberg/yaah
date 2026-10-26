@@ -46,10 +46,11 @@ func diffWalker(name, rawArgs string) ([]ToolCallLocation, []UpdateContent) {
 		if err := json.Unmarshal([]byte(rawArgs), &a); err != nil || a.FilePath == "" {
 			return nil, nil
 		}
+		contentPane := a.Content
 		return []ToolCallLocation{{Path: a.FilePath}}, []UpdateContent{{
 			Type:    "diff",
 			Path:    a.FilePath,
-			NewText: a.Content,
+			NewText: &contentPane,
 		}}
 	case "edit":
 		var a editArgs
@@ -70,11 +71,12 @@ func diffWalker(name, rawArgs string) ([]ToolCallLocation, []UpdateContent) {
 				continue
 			}
 			old := e.OldString
+			nw := e.NewString
 			diffs = append(diffs, UpdateContent{
 				Type:    "diff",
 				Path:    a.FilePath,
 				OldText: &old,
-				NewText: e.NewString,
+				NewText: &nw,
 			})
 		}
 		if len(diffs) == 0 {

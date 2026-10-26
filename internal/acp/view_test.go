@@ -8,6 +8,7 @@ import (
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/types"
+	"strings"
 )
 
 // captureUpdate builds a sender capturing the raw update envelopes.
@@ -256,6 +257,30 @@ func TestView_diffContentForEditTools(t *testing.T) {
 		if b.(map[string]any)["type"] != "content" {
 			t.Fatalf("bash block type = %v, want content", b.(map[string]any)["type"])
 		}
+	}
+}
+
+// TestView_diffEmptyNewText stays on the wire checks that a diff whose
+// new content is empty (a deleted block) still transmits required
+// newText, per the schema's required string.
+func TestView_diffEmptyNewTextStillOnWire(t *testing.T) {
+	var got []any
+	v := NewView()
+	v.SendTo("s", captureUpdate(&got), &agent.ToolEndEvent{
+		ID: 1, Name: "edit", RawArgs: `{"filePath":"/repo/a.go","oldString":"gone\n","newString":""}`, Result: "ok",
+	})
+	m := decodeUpdate(t, got[0])
+	blocks, _ := m["content"].([]any)
+	if len(blocks) != 2 || blocks[0].(map[string]any)["type"] != "diff" {
+		t.Fatalf("blocks = %v", m["content"])
+	}
+	df := blocks[0].(map[string]any)
+	raw, err := json.Marshal(df)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"newText":""`) {
+		t.Fatalf("empty newText dropped (must transmit required field): %s", raw)
 	}
 }
 
