@@ -1621,6 +1621,9 @@ func TestServer_questionElicitation(t *testing.T) {
 	if err := json.Unmarshal(ep.RequestedSchema, &schema); err != nil {
 		t.Fatalf("requestedSchema: %v", err)
 	}
+	if schema["type"] != "object" {
+		t.Fatalf("requestedSchema must be an object schema: %v", schema)
+	}
 	props, _ := schema["properties"].(map[string]any)
 	if props == nil || props["answer"] == nil {
 		t.Fatalf("schema missing answer property: %v", schema)
@@ -1739,4 +1742,104 @@ func TestServer_questionElicitationDeclineStaysEmpty(t *testing.T) {
 		}
 	}
 	t.Fatal("prompt never completed after decline")
+}
+
+// TestServer_questionElicitationObjectCapability checks the
+// spec-shaped capability payload: eligibility.form arrives as the
+// schema's empty capability object, exactly the shape from the ACP
+// schema, and must light up the elicitation path like the boolean
+// spelling does.
+func TestServer_questionElicitationObjectCapability(t *testing.T) {
+	reg := tools.NewEmptyRegistry()
+	qt := &tools.QuestionTool{}
+	reg.Register(qt)
+	sess := &fakeSession{id: "sess-test", reg: reg}
+	var answer string
+	sess.mu.Lock()
+	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
+		qt := sess.ToolReg().Get("question").(*tools.QuestionTool)
+		answer = qt.Handler([]tools.QuestionEntry{{
+			Question: "which way?", Header: "Direction",
+			Options: []tools.QuestionOption{{Label: "left"}, {Label: "right"}},
+		}})[0]
+		return "done", false, nil
+	}
+	sess.mu.Unlock()
+	h := newACPHarness(t, sess)
+	// The ElicitationFormCapabilities variant on the wire: {} (not a bool).
+	if err := h.send("initialize", 1, `{"protocolVersion":1,"clientCapabilities":{"elicitation":{"form":{},"url":{}}}}`); err != nil {
+		t.Fatal(err)
+	}
+	h.recv(t)
+	sid := newSession(t, h)
+
+	if err := h.send("session/prompt", 3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"ask"}]}`, sid)); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recvRequest(t, "elicitation/create")
+	if err := h.reply(msg.ID, map[string]any{
+		"action": "accept", "content": map[string]any{"answer": "left"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 8; i++ {
+		msg = h.recv(t)
+		if msg.Method == "" && msg.Error == nil {
+			if answer != "Direction: left" {
+				t.Fatalf("answer = %q, want the chosen label", answer)
+			}
+			return
+		}
+	}
+	t.Fatal("prompt never completed after elicitation")
+}
+
+// TestServer_questionElicitationGarbageCapability checks that a
+// malformed elicitation capability payload counts as not advertised
+// instead of failing the initialize decode entirely.
+func TestServer_questionElicitationGarbageCapability(t *testing.T) {
+	reg := tools.NewEmptyRegistry()
+	qt := &tools.QuestionTool{}
+	reg.Register(qt)
+	sess := &fakeSession{id: "sess-test", reg: reg}
+	var answer string
+	sess.mu.Lock()
+	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
+		qt := sess.ToolReg().Get("question").(*tools.QuestionTool)
+		answer = qt.Handler([]tools.QuestionEntry{{
+			Question: "which way?", Header: "Direction",
+			Options: []tools.QuestionOption{{Label: "left"}, {Label: "right"}},
+		}})[0]
+		return "done", false, nil
+	}
+	sess.mu.Unlock()
+	h := newACPHarness(t, sess)
+	if err := h.send("initialize", 1, `{"protocolVersion":1,"clientCapabilities":{"elicitation":{"form":42}}}`); err != nil {
+		t.Fatal(err)
+	}
+	h.recv(t)
+	sid := newSession(t, h)
+
+	if err := h.send("session/prompt", 3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"ask"}]}`, sid)); err != nil {
+		t.Fatal(err)
+	}
+	// No elicitation request may arrive; the legacy auto-answer path
+	// (first option) answers the turn.
+	var sawElicitation bool
+	for i := 0; i < 16; i++ {
+		msg := h.recv(t)
+		if msg.Method == "elicitation/create" {
+			sawElicitation = true
+		}
+		if msg.Method == "" && msg.Error == nil {
+			if sawElicitation {
+				t.Fatal("garbage capability must not route through elicitation")
+			}
+			if answer != "Direction: left" {
+				t.Fatalf("answer = %q, want auto-answered first option", answer)
+			}
+			return
+		}
+	}
+	t.Fatal("turn never completed")
 }

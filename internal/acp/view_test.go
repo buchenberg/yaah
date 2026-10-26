@@ -211,12 +211,14 @@ func TestView_diffContentForEditTools(t *testing.T) {
 	if len(blocks) != 2 || blocks[0].(map[string]any)["type"] != "diff" {
 		t.Fatalf("edit blocks = %v", end["content"])
 	}
-	df := blocks[0].(map[string]any)["diff"].(map[string]any)
+	// The schema's diff variant is flattened: path/oldText/newText sit
+	// next to the type discriminator, never under a nested "diff" key.
+	df := blocks[0].(map[string]any)
 	if df["path"] != "/repo/a.go" || df["newText"] != "y" {
 		t.Fatalf("diff = %v", df)
 	}
-	if _, present := df["oldText"]; !present {
-		t.Fatalf("edit diff must carry oldText: %v", df)
+	if _, nested := df["diff"]; nested {
+		t.Fatalf("diff payload must be flat, not nested: %v", df)
 	}
 	if df["oldText"] != "x" {
 		t.Fatalf("oldText = %v, want x", df["oldText"])
@@ -227,7 +229,7 @@ func TestView_diffContentForEditTools(t *testing.T) {
 	if len(wblocks) != 2 || wblocks[0].(map[string]any)["type"] != "diff" {
 		t.Fatalf("write blocks = %v", write["content"])
 	}
-	wdiff := wblocks[0].(map[string]any)["diff"].(map[string]any)
+	wdiff := wblocks[0].(map[string]any)
 	if _, present := wdiff["oldText"]; present {
 		t.Fatalf("write diff must omit oldText (new file): %v", wdiff)
 	}

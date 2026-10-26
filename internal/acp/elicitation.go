@@ -21,12 +21,16 @@ func runCtxDone(ctx context.Context) <-chan struct{} {
 }
 
 // elicitationFormSchema builds the JSON Schema a question entry
-// becomes. A single-answer question is a string enum of the option
-// labels; a multiple-answer question is a string array of the same
-// enum. Option descriptions travel inside the property description so
-// the client's form explains every choice without bespoke rendering.
+// becomes. The top level is an object schema (required by form
+// renderers); the single `answer` property is a string enum of the
+// option labels, or a string array of the same enum for a
+// multiple-answer question. The question text and option descriptions
+// travel in the property description so the form is self-describing
+// without bespoke rendering.
 func elicitationFormSchema(question string, multiple bool, opts []tools.QuestionOption) json.RawMessage {
 	var desc strings.Builder
+	desc.WriteString(question)
+	desc.WriteString("\n\n")
 	for i, o := range opts {
 		if i > 0 {
 			desc.WriteString("\n")
@@ -36,9 +40,7 @@ func elicitationFormSchema(question string, multiple bool, opts []tools.Question
 			desc.WriteString(" — " + o.Description)
 		}
 	}
-	item := map[string]any{
-		"type": "string",
-	}
+	item := map[string]any{"type": "string"}
 	labels := make([]string, 0, len(opts))
 	for _, o := range opts {
 		labels = append(labels, o.Label)
@@ -47,30 +49,20 @@ func elicitationFormSchema(question string, multiple bool, opts []tools.Question
 		item["enum"] = labels
 		item["enumNames"] = labels
 	}
-	// Option descriptions travel inside the property description so the
-	// client's form explains every choice without bespoke rendering;
-	// the array item itself only enumerates labels.
-	prop := map[string]any{
-		"description": desc.String(),
-	}
-	for k, v := range item {
-		prop[k] = v
-	}
+	var prop any = item
 	if multiple {
-		delete(prop, "type")
-		delete(prop, "enum")
-		delete(prop, "enumNames")
 		prop = map[string]any{
 			"type":        "array",
 			"items":       item,
 			"description": desc.String(),
 		}
+	} else {
+		item["description"] = desc.String()
 	}
 	schema := map[string]any{
-		"properties": map[string]any{
-			"answer": prop,
-		},
-		"required": []string{"answer"},
+		"type":       "object",
+		"properties": map[string]any{"answer": prop},
+		"required":   []string{"answer"},
 	}
 	raw, err := json.Marshal(schema)
 	if err != nil {
@@ -162,20 +154,20 @@ func (s *Server) elicitAnswer(
 		s.logf("elicitation %s: %s", st.id, orEmpty(out.Action, "no action"))
 		return "", true, false
 	}
-	labels := chosenLabels(out.Content, entry.Multiple, entry.Options)
+	labels := chosenLabels(out.Content, entry.Multiple)
 	if len(labels) == 0 {
 		return "", true, false
 	}
 	return strings.Join(labels, ", "), true, true
 }
 
-// chosenLabels maps the elicitation content back onto the question's
-// labels. The schema declares a single-string or string-array answer,
-// but a client may echo back something less tidy (null content, a
-// chosen label as plain string, an unknown string): the tolerant
-// shapes are matched, unknown strings pass through verbatim so the
-// agent still sees the user's intent.
-func chosenLabels(content json.RawMessage, multiple bool, opts []tools.QuestionOption) []string {
+// chosenLabels maps the elicitation content back onto the answer
+// value(s). The schema declares a single-string or string-array
+// answer, but a client may echo back something less tidy (null
+// content, one option chosen as a plain string): the tolerant shapes
+// are matched, and unknown strings pass through verbatim so the agent
+// still sees the user's intent.
+func chosenLabels(content json.RawMessage, multiple bool) []string {
 	if len(content) == 0 || string(content) == "null" {
 		return nil
 	}
@@ -184,10 +176,6 @@ func chosenLabels(content json.RawMessage, multiple bool, opts []tools.QuestionO
 	}
 	if err := json.Unmarshal(content, &fields); err != nil {
 		return nil
-	}
-	valid := make(map[string]bool, len(opts))
-	for _, o := range opts {
-		valid[o.Label] = true
 	}
 	var labels []string
 	if multiple {
@@ -218,8 +206,7 @@ func chosenLabels(content json.RawMessage, multiple bool, opts []tools.QuestionO
 }
 
 func capsAdvertiseElicitation(caps *ClientCaps) bool {
-	return caps != nil && caps.Elicitation != nil &&
-		caps.Elicitation.Form != nil && *caps.Elicitation.Form
+	return caps != nil && caps.Elicitation != nil && bool(caps.Elicitation.Form)
 }
 
 func orEmpty(v, fallback string) string {

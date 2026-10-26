@@ -51,12 +51,15 @@ func toolCallID(id int64) string { return "t" + strconv.FormatInt(id, 10) }
 // SendTo converts evt to an update and passes it to send, tagging it
 // with the given session ID. Events with no ACP representation are
 // dropped.
-// toolEditClass reports whether a tool name describes a file
+// isEditClassTool reports whether a tool name describes a file
 // modification whose arguments the client can render as a diff.
 func isEditClassTool(name string) bool {
 	return name == "write" || name == "edit"
 }
 
+// SendTo converts evt to an update and passes it to send, tagging it
+// with the given session ID. Events with no ACP representation are
+// dropped.
 func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 	switch e := evt.(type) {
 	case *agent.TokenDeltaEvent:

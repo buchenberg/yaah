@@ -16,7 +16,10 @@
 // locations.
 package acp
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // === JSON-RPC 2.0 wire types ===
 
@@ -68,12 +71,26 @@ type ClientCaps struct {
 	Auth        *ClientAuthCaps  `json:"auth,omitempty"`
 }
 
-// ElicitationCaps is the client's elicitation capability set. The spec
-// uses an empty object {} for "supported"; the bool form matches most
-// real payloads (Zed sends {"elicitation":{"form":true,"url":true}}).
+// ElicitationCaps is the client's elicitation capability set. On the
+// wire the spec shapes form/url as capability objects ({} = advertised;
+// real Zed payloads also send the boolean true), so each field unrolls
+// both spellings; an unparseable payload counts as not advertised
+// rather than failing the whole initialize decode.
 type ElicitationCaps struct {
-	Form *bool `json:"form,omitempty"`
-	URL  *bool `json:"url,omitempty"`
+	Form flexCap `json:"form,omitempty"`
+	URL  flexCap `json:"url,omitempty"`
+}
+
+// flexCap is one optional capability field that the spec defines as an
+// object but some clients send as a boolean. Accepted payloads: true,
+// {}, or an object with arbitrary properties (interpreted as
+// advertised); false, null, or anything else counts as not advertised.
+type flexCap bool
+
+func (c *flexCap) UnmarshalJSON(data []byte) error {
+	s := strings.TrimSpace(string(data))
+	*c = s == "true" || s == "{}"
+	return nil
 }
 
 // ClientAuthCaps is the client's auth-method capability set (only the
@@ -386,22 +403,21 @@ type ChunkUpdate struct {
 
 // UpdateContent is one block of tool-call content. Two variants exist:
 // Type "content" wraps a standard content block (the result text), and
-// Type "diff" describes a file modification (Path plus the before/after
-// text the client renders as a file diff).
+// Type "diff" describes a file modification. The diff fields are
+// flattened next to the discriminator exactly like the schema's
+// allOf-merged Diff definition: {"type":"diff","path":…,"oldText":
+// …,"newText":…} — never a nested "diff" object.
 type UpdateContent struct {
 	Type    string        `json:"type"`
 	Content *ContentBlock `json:"content,omitempty"`
-	Diff    *DiffBlock    `json:"diff,omitempty"`
-}
 
-// DiffBlock is a diff content block: the modified file's absolute path
-// and its content before and after. OldText is nil for a newly created
-// file ("content": null on the wire means "no previous text"); NewText
-// is always the post-modification content.
-type DiffBlock struct {
-	Path    string  `json:"path"`
+	// Diff variant (Type == "diff"): Path is the modified file's
+	// absolute path, OldText the content before (omitted for a newly
+	// created file, per the schema's nullable field), NewText the
+	// content after.
+	Path    string  `json:"path,omitempty"`
 	OldText *string `json:"oldText,omitempty"`
-	NewText string  `json:"newText"`
+	NewText string  `json:"newText,omitempty"`
 }
 
 // ToolCallLocation points the client at a file touched by the tool
