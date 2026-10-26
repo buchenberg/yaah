@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.103.0](https://github.com/buchenberg/yaah/compare/v0.102.3...v0.103.0) (2026-10-26)
+
+
+### Features
+
+* **memory:** reachable session atoms, promotion, and supersession ([#574](https://github.com/buchenberg/yaah/issues/574)) ([665a5f7](https://github.com/buchenberg/yaah/commit/665a5f7a2d3b74fe6850fda972082727d426dbdc))
+
 ## [0.102.3](https://github.com/buchenberg/yaah/compare/v0.102.2...v0.102.3) (2026-10-23)
 
 
