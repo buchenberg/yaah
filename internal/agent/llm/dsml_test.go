@@ -594,6 +594,50 @@ func TestDSMLAttributeSpellings(t *testing.T) {
 			t.Fatalf("args=%s", calls[0].Function.Arguments)
 		}
 	})
+
+	t.Run("empty invoke name is rejected, not dispatched", func(t *testing.T) {
+		for _, body := range []string{`name=""`, `name=''`} {
+			content := wrap(invoke(body, "payload"))
+			_, calls, rejected, ok := parseDSMLToolCalls(content, new(int))
+			if !ok {
+				t.Fatalf("%s: expected markup detected", body)
+			}
+			if len(calls) != 0 {
+				t.Fatalf("%s: dispatched a nameless call: %+v", body, calls)
+			}
+			if len(rejected) != 1 {
+				t.Fatalf("%s: rejected=%v", body, rejected)
+			}
+		}
+	})
+
+	t.Run("empty parameter name inserts no key", func(t *testing.T) {
+		content := wrap(invoke(`name="git"`, param(`name=""`, "status")))
+		_, calls, _, ok := parseDSMLToolCalls(content, new(int))
+		if !ok || len(calls) != 1 {
+			t.Fatalf("ok=%v calls=%d", ok, len(calls))
+		}
+		if calls[0].Function.Arguments != `{}` {
+			t.Fatalf("args=%s", calls[0].Function.Arguments)
+		}
+	})
+
+	t.Run("parameter value keeps its own quotes", func(t *testing.T) {
+		// The element body is a value, not an attribute: stripping matching
+		// quotes from it would corrupt a legitimate string argument.
+		content := wrap(invoke(`name="shell"`, param(`name="code" string="true"`, `"use strict"`)))
+		_, calls, _, ok := parseDSMLToolCalls(content, new(int))
+		if !ok || len(calls) != 1 {
+			t.Fatalf("ok=%v calls=%d", ok, len(calls))
+		}
+		var args map[string]any
+		if err := json.Unmarshal([]byte(calls[0].Function.Arguments), &args); err != nil {
+			t.Fatalf("invalid arguments JSON: %v", err)
+		}
+		if args["code"] != `"use strict"` {
+			t.Fatalf("code = %q, want %q", args["code"], `"use strict"`)
+		}
+	})
 }
 
 // TestDSMLTokenFilterFlush pins the end-of-stream release: a tail held back as

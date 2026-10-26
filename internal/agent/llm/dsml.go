@@ -27,8 +27,9 @@ const (
 
 	// dsmlAttrValue is one attribute value. Models quote with " or ', and
 	// sometimes not at all, so all three spellings are accepted rather than
-	// rejecting markup we could otherwise dispatch.
-	dsmlAttrValue = `(?:"[^"]*"|'[^']*'|[^\s"'>]+)`
+	// rejecting markup we could otherwise dispatch. A value must be non-empty:
+	// an empty name would otherwise dispatch a nameless tool call.
+	dsmlAttrValue = `(?:"[^"]+"|'[^']+'|[^\s"'>]+)`
 
 	// Block wrapper around a group of invokes.
 	dsmlCallsOpen  = `<` + dsmlBars + `DSML` + dsmlBars + `\s*(?:tool_|function_)?calls\s*>`
@@ -350,7 +351,7 @@ func parseDSMLInvokes(block string, dsmlSeq *int) []types.ToolCall {
 		for _, pm := range dsmlParamRe.FindAllStringSubmatch(body, -1) {
 			paramName := unquoteDSMLAttr(pm[1])
 			isString := unquoteDSMLAttr(pm[2]) != "false"
-			paramVal := unquoteDSMLAttr(pm[3])
+			paramVal := pm[3]
 			if isString {
 				args[paramName] = paramVal
 			} else if n, err := strconv.ParseFloat(paramVal, 64); err == nil {

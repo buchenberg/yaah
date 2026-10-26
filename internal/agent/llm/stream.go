@@ -51,11 +51,12 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 	var reasoning strings.Builder
 	var signature strings.Builder
 	var dsmlFilter dsmlTokenFilter
-	// A tail the filter holds back still belongs to the view, even when the
-	// stream ends mid-tag: deferring the release covers every exit path,
-	// including error and cancellation.
+	// Releasing the held tail is only correct for a stream whose message is
+	// actually delivered: a failed attempt is retried, the same bytes stream
+	// again, and the view would show the fragment twice.
+	var streamDelivered bool
 	defer func() {
-		if c.OnToken == nil {
+		if !streamDelivered || c.OnToken == nil {
 			return
 		}
 		if tail := dsmlFilter.flush(); tail != "" {
@@ -155,6 +156,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 				default:
 				}
 				recordVerbose("channel_closed")
+				streamDelivered = true
 				if streamSpan != nil {
 					observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 					streamSpan.End()
@@ -297,6 +299,7 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 				return partialStreamedMessage(content.String()), "", "", totalUsage, err
 			}
 			recordVerbose("errs_nil")
+			streamDelivered = true
 			if streamSpan != nil {
 				observability.FinishStream(streamSpan, 0, tokenCount, len(toolCallMap))
 				streamSpan.End()
