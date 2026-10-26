@@ -1,13 +1,19 @@
 package yaah
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/acp"
+	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/mcp"
+	"github.com/buchenberg/yaah/internal/providers"
 	"github.com/buchenberg/yaah/internal/sessions"
 	"github.com/spf13/cobra"
 )
@@ -175,7 +181,160 @@ func acpDeleteSession(reg *sessions.Registry) func(id string) error {
 	}
 }
 
+// === ACP model catalog ===
+
+// acpModelCatalogBudget bounds the single network round of model discovery
+// the ACP catalog performs. A provider endpoint that is slow or
+// unreachable must not hold up a client, so the fetch is abandoned at the
+// deadline and the catalog keeps whatever config already declares.
+const acpModelCatalogBudget = 2 * time.Second
+
+// newACPModelCatalog builds the process-lifetime model catalog handed to
+// the ACP server. Discovery reuses the provider machinery behind the TUI
+// model picker and the web command palette (providers.FetchAllModels with
+// makeModelLister), so ACP offers exactly the models those surfaces offer
+// rather than a second, drifting code path.
+//
+// A config that cannot be loaded, or that declares no providers, disables
+// the feature: the catalog is nil, which the ACP server treats as "no
+// model picker", and serve carries on. Nothing here can fail acp-serve,
+// and none of the network work happens on the session/new path.
+func newACPModelCatalog(logf func(format string, args ...any)) acp.ModelCatalog {
+	if logf == nil {
+		logf = func(string, ...any) {}
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		logf("model catalog disabled: %v", err)
+		return nil
+	}
+	if len(cfg.Providers) == 0 {
+		logf("model catalog disabled: no providers configured")
+		return nil
+	}
+	return &acpModelCatalog{cfg: cfg, logf: logf, budget: acpModelCatalogBudget}
+}
+
+// acpModelCatalog is the ACP server's model catalog: the providers' model
+// lists reduced to the flat provider/model options a picker shows.
+//
+// Discovery is two-phase. The fast path answers from config alone — every
+// model a provider declares under models: is offered with no network call,
+// so a picker always has content. The slow path then asks each provider
+// that declares no models to list its own; it runs once, under
+// acpModelCatalogBudget, and the result is cached for the process
+// lifetime. Discovery failures are logged and dropped: model discovery is
+// a convenience and never fails a session.
+type acpModelCatalog struct {
+	cfg    *config.Config
+	logf   func(format string, args ...any)
+	budget time.Duration
+
+	mu      sync.Mutex
+	settled bool
+	options []acp.ModelOption
+}
+
+// Options implements acp.ModelCatalog. The mutex is held across the slow
+// path so concurrent callers trigger one fetch rather than one each; the
+// budget bounds the hold.
+func (c *acpModelCatalog) Options(ctx context.Context) []acp.ModelOption {
+	if c == nil || c.cfg == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.settled {
+		return c.options
+	}
+	opts, complete := c.discover(ctx)
+	// Config-declared models are worth keeping even when the fetch did not
+	// finish, but the slow path is only marked settled once it completed:
+	// a caller whose context was already dead must not leave the catalog
+	// stuck at the static subset for the rest of the process.
+	c.options = opts
+	c.settled = complete
+	return opts
+}
+
+// discover builds the option list — config-declared models first, then
+// whatever the providers report — and reports whether the network phase
+// finished inside the budget, which is what makes the result cacheable.
+func (c *acpModelCatalog) discover(ctx context.Context) (options []acp.ModelOption, complete bool) {
+	seen := make(map[string]bool, len(c.cfg.Providers))
+	for _, name := range sortedProviderNames(c.cfg) {
+		for _, m := range c.cfg.Providers[name].Models {
+			if m.Name == "" {
+				continue
+			}
+			id := name + "/" + m.Name
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			options = append(options, c.option(id, name, m.Name))
+		}
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, c.budget)
+	defer cancel()
+	for _, id := range providers.FetchAllModels(fetchCtx, c.cfg, makeModelLister) {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		providerName, modelName := splitModelID(id)
+		options = append(options, c.option(id, providerName, modelName))
+	}
+	if err := fetchCtx.Err(); err != nil {
+		c.logf("model catalog: discovery incomplete (%v), offering %d model(s) from config", err, len(options))
+		return options, false
+	}
+	return options, true
+}
+
+// option builds one catalog entry. The label qualifies the model with the
+// provider's display name when config sets one (providers[].name), falling
+// back to the provider key, so a picker shows "claude-sonnet-4 (Anthropic)"
+// instead of a bare slug.
+func (c *acpModelCatalog) option(id, providerName, modelName string) acp.ModelOption {
+	label := providerName
+	if p, ok := c.cfg.Providers[providerName]; ok && p.Name != "" {
+		label = p.Name
+	}
+	return acp.ModelOption{
+		Provider:    providerName,
+		Model:       modelName,
+		Name:        modelName + " (" + label + ")",
+		Description: "",
+	}
+}
+
+// sortedProviderNames lists the configured provider keys in stable order
+// so the picker's contents do not shuffle between processes.
+func sortedProviderNames(cfg *config.Config) []string {
+	names := make([]string, 0, len(cfg.Providers))
+	for name := range cfg.Providers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// splitModelID splits a "provider/model" id. Only the first separator
+// belongs to the provider: model names may contain slashes of their own
+// (e.g. "prism-ml/Bonsai-27B-gguf:Q1_0").
+func splitModelID(id string) (providerName, modelName string) {
+	if i := strings.Index(id, "/"); i >= 0 {
+		return id[:i], id[i+1:]
+	}
+	return id, id
+}
+
 func runACPServe(cmd *cobra.Command, args []string) error {
+	logf := func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, Dim("yaah acp-serve:")+" "+format+"\n", args...)
+	}
 	fmt.Fprintf(os.Stderr, "%s starting ACP server (stdio)...\n", Dim("yaah acp-serve:"))
 
 	// The engine-level session registry is the lifecycle seam: the
@@ -192,9 +351,8 @@ func runACPServe(cmd *cobra.Command, args []string) error {
 	srv := acp.NewServer(
 		newACPAgentSession,
 		version,
-		func(format string, args ...any) {
-			fmt.Fprintf(os.Stderr, Dim("yaah acp-serve:")+" "+format+"\n", args...)
-		},
+		logf,
+		newACPModelCatalog(logf),
 	)
 	srv.ListSessions = acpListSessions(reg)
 	srv.DeleteSession = acpDeleteSession(reg)

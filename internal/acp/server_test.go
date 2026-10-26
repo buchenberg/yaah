@@ -33,6 +33,10 @@ type fakeSession struct {
 	id string
 	// history is what History returns for session/load replay tests.
 	history []types.Message
+	// provider and model track SetModel, so config-option tests can
+	// assert the switch reached the session.
+	provider string
+	model    string
 }
 
 func (f *fakeSession) RunPrompt(ctx context.Context, prompt string) (string, bool, error) {
@@ -71,6 +75,25 @@ func (f *fakeSession) closedCount() int {
 
 func (f *fakeSession) ToolReg() *tools.Registry { return tools.NewRegistry() }
 func (f *fakeSession) AgentSessionID() string   { return f.id }
+
+func (f *fakeSession) SetModel(provider, model string) {
+	f.mu.Lock()
+	f.provider = provider
+	f.model = model
+	f.mu.Unlock()
+}
+
+func (f *fakeSession) ProviderName() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.provider
+}
+
+func (f *fakeSession) ModelName() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.model
+}
 
 // History returns a copy of the fake's history, mirroring
 // agentSession.History.
@@ -142,6 +165,7 @@ func newACPHarnessFactory(t *testing.T, factory func(resumeID string) (Session, 
 			resumeMu.Unlock()
 			return factory(build.ResumeID)
 		},
+		catalog:             nil,
 		AutoAnswerQuestions: true,
 		AutoContinue:        true,
 		PermissionTimeout:   time.Second,
@@ -1207,7 +1231,7 @@ func TestServer_resourceLinkPromptPreserved(t *testing.T) {
 // TestServer_questionAutoAnswer (control-plane policy lives behind the
 // question tool; a full integration is in cmd/yaah tests).
 func TestServer_autoAnswerDefaultsOn(t *testing.T) {
-	s := NewServer(func(BuildOptions) (Session, error) { return &fakeSession{id: "sess-test"}, nil }, "t", nil)
+	s := NewServer(func(BuildOptions) (Session, error) { return &fakeSession{id: "sess-test"}, nil }, "t", nil, nil)
 	if !s.AutoAnswerQuestions || !s.AutoContinue {
 		t.Fatal("defaults must enable auto-answer/auto-continue")
 	}

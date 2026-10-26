@@ -59,7 +59,7 @@ func listResult(t *testing.T, msg Message) ListSessionsResult {
 // capability is advertised only when its plumbing is wired, so clients
 // never call a method the server cannot execute.
 func TestServer_capabilitiesReflectWiring(t *testing.T) {
-	s := NewServer(func(BuildOptions) (Session, error) { return nil, fmt.Errorf("not used") }, "test", nil)
+	s := NewServer(func(BuildOptions) (Session, error) { return nil, fmt.Errorf("not used") }, "test", nil, nil)
 
 	caps := s.capabilities()
 	if !caps.LoadSession {
