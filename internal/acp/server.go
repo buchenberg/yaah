@@ -1366,6 +1366,9 @@ func (s *Server) handlePrompt(
 
 	ctrlCh := make(chan control.Msg, 64)
 	view := NewViewWithWrite(sendUpdate, p.SessionID)
+	if capsSupportsCompaction(s.clientCaps) {
+		view.EnableCompaction()
+	}
 	promptCtx, cancel := context.WithCancel(rootCtx)
 	runDone := make(chan struct{})
 

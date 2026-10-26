@@ -1843,3 +1843,93 @@ func TestServer_questionElicitationGarbageCapability(t *testing.T) {
 	}
 	t.Fatal("turn never completed")
 }
+
+// TestServer_compactionCapabilityGated checks the full live path: a
+// client advertising session.compaction gets the ID-addressed
+// compaction_update / compaction_summary_chunk updates for compaction
+// events emitted during a prompt turn; a client without the cap gets
+// the plain text fallback.
+func TestServer_compactionCapabilityGated(t *testing.T) {
+	run := func(t *testing.T, initCaps string) []Message {
+		sess := &fakeSession{id: "sess-test"}
+		sess.mu.Lock()
+		sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
+			sess.mu.Lock()
+			v := sess.view
+			sess.mu.Unlock()
+			v.HandleEvent(&agent.CompactionStartedEvent{BeforeTokens: 10, TargetTokens: 4, Reason: "threshold"})
+			v.HandleEvent(&agent.CompactionDoneEvent{BeforeTokens: 10, AfterTokens: 4, SavingsPct: 0.5, Method: "single", ElapsedSeconds: 2})
+			return "ok", false, nil
+		}
+		sess.mu.Unlock()
+		h := newACPHarness(t, sess)
+		if err := h.send("initialize", 1, `{"protocolVersion":1,"clientCapabilities":`+initCaps+`}`); err != nil {
+			t.Fatal(err)
+		}
+		h.recv(t)
+		sid := newSession(t, h)
+		if err := h.send("session/prompt", 3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"go"}]}`, sid)); err != nil {
+			t.Fatal(err)
+		}
+		var updates []Message
+		for i := 0; i < 16; i++ {
+			msg := h.recv(t)
+			if msg.Method == "" && msg.Error == nil {
+				break
+			}
+			updates = append(updates, msg)
+		}
+		return updates
+	}
+
+	t.Run("with cap", func(t *testing.T) {
+		updates := run(t, `{"session":{"compaction":{}}}`)
+		var sawUpsert, sawChunk bool
+		for _, m := range updates {
+			params := map[string]any{}
+			if json.Unmarshal([]byte(m.Params), &params) != nil {
+				continue
+			}
+			params, _ = params["update"].(map[string]any)
+			if params == nil {
+				continue
+			}
+			switch params["sessionUpdate"] {
+			case UpdateCompaction:
+				sawUpsert = true
+				if params["status"] != CompactionInProgress && params["status"] != CompactionCompleted {
+					t.Fatalf("upsert status = %v", params["status"])
+				}
+				if params["compactionId"] != "cmp-1" {
+					t.Fatalf("compactionId = %v", params["compactionId"])
+				}
+			case UpdateCompactionSummaryChunk:
+				sawChunk = true
+				if params["compactionId"] != "cmp-1" {
+					t.Fatalf("chunk compactionId = %v", params["compactionId"])
+				}
+			}
+		}
+		if !sawUpsert || !sawChunk {
+			t.Fatalf("missed variants: upsert=%v chunk=%v in updates %v", sawUpsert, sawChunk, updates)
+		}
+	})
+
+	t.Run("without cap", func(t *testing.T) {
+		updates := run(t, `{}`)
+		for _, m := range updates {
+			params := map[string]any{}
+			if json.Unmarshal([]byte(m.Params), &params) != nil {
+				continue
+			}
+			params, _ = params["update"].(map[string]any)
+			if params == nil {
+				continue
+			}
+			variant, _ := params["sessionUpdate"].(string)
+			if variant == UpdateCompaction || variant == UpdateCompactionSummaryChunk {
+				t.Fatalf("structured compaction update leaked without capability: %v", params)
+			}
+		}
+	})
+}

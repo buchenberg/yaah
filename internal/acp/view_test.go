@@ -319,6 +319,56 @@ func TestView_remainingEventsRender(t *testing.T) {
 	}
 }
 
+// TestView_compactionStructured checks the capability-gated path: with
+// EnableCompaction, the start event becomes an in_progress
+// compaction_update (details in _meta), and the done event emits a
+// compaction_summary_chunk (the completed line appended to the card)
+// followed by a completed compaction_update patching status in place —
+// same compactionId, reused from the start event.
+func TestView_compactionStructured(t *testing.T) {
+	var got []any
+	v := NewView()
+	v.EnableCompaction()
+	v.SendTo("s", captureUpdate(&got), &agent.CompactionStartedEvent{BeforeTokens: 10, TargetTokens: 4, Reason: "threshold"})
+	v.SendTo("s", captureUpdate(&got), &agent.CompactionDoneEvent{BeforeTokens: 10, AfterTokens: 4, SavingsPct: 0.6, Method: "single", ElapsedSeconds: 1.5, IneffectiveNote: "hot", OldMsgCount: 9, KeepMsgCount: 3, Budget: 2})
+	if len(got) != 3 {
+		t.Fatalf("updates = %d, want 3 (start, chunk, done)", len(got))
+	}
+	start := decodeUpdate(t, got[0])
+	if start["sessionUpdate"] != UpdateCompaction || start["compactionId"] != "cmp-1" {
+		t.Fatalf("start = %v", start)
+	}
+	if start["status"] != CompactionInProgress {
+		t.Fatalf("start status = %v", start["status"])
+	}
+	meta, _ := start["_meta"].(map[string]any)
+	if meta == nil || meta["reason"] != "threshold" || meta["beforeTokens"] != float64(10) {
+		t.Fatalf("start _meta = %v", start["_meta"])
+	}
+	chunk := decodeUpdate(t, got[1])
+	if chunk["sessionUpdate"] != UpdateCompactionSummaryChunk || chunk["compactionId"] != "cmp-1" {
+		t.Fatalf("chunk = %v", chunk)
+	}
+	done := decodeUpdate(t, got[2])
+	if done["sessionUpdate"] != UpdateCompaction || done["compactionId"] != "cmp-1" || done["status"] != CompactionCompleted {
+		t.Fatalf("done = %v", done)
+	}
+	if done["summary"] != nil {
+		t.Fatalf("done must not carry a summary (chunk path owns the summary): %v", done["summary"])
+	}
+	dmeta := done["_meta"].(map[string]any)
+	if dmeta["note"] != "hot" || dmeta["savingsPct"] != float64(0.6) {
+		t.Fatalf("done _meta = %v", done["_meta"])
+	}
+	// A done event with no recorded start allocates its own id.
+	var solo []any
+	v.SendTo("s", captureUpdate(&solo), &agent.CompactionDoneEvent{BeforeTokens: 1, AfterTokens: 0})
+	s := decodeUpdate(t, solo[1])
+	if s["compactionId"] != "cmp-2" {
+		t.Fatalf("orphan done id = %v", s["compactionId"])
+	}
+}
+
 // TestView_planShape checks the todo→plan mapping, including status
 // clamping for todo statuses outside the ACP enum.
 func TestView_planShape(t *testing.T) {
@@ -334,5 +384,30 @@ func TestView_planShape(t *testing.T) {
 	}
 	if entries[1].Status != PlanPending {
 		t.Errorf("cancelled todo should clamp to pending, got %+v", entries[1])
+	}
+}
+
+// TestClientCaps_compactionGate checks the session.compaction
+// capability decode through InitializeParams: the spec's object
+// spelling ({}), the boolean spelling, and garbage all behave like the
+// other flexCap fields; absent means unsupported.
+func TestClientCaps_compactionGate(t *testing.T) {
+	for name, payload := range map[string]struct {
+		val string
+		ok  bool
+	}{
+		"object":        {`{"session":{"compaction":{}}}`, true},
+		"boolean":       {`{"session":{"compaction":true}}`, true},
+		"absent":        {`{"session":{}}`, false},
+		"garbage":       {`{"session":{"compaction":42}}`, false},
+		"noSessionCaps": {`{}`, false},
+	} {
+		var p InitializeParams
+		if err := json.Unmarshal([]byte(`{"protocolVersion":1,"clientCapabilities":`+payload.val+`}`), &p); err != nil {
+			t.Fatalf("%s: decode failed: %v", name, err)
+		}
+		if got := capsSupportsCompaction(p.ClientCapabilities); got != payload.ok {
+			t.Errorf("%s: capsSupportsCompaction = %v, want %v", name, got, payload.ok)
+		}
 	}
 }

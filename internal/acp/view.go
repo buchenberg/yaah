@@ -21,11 +21,66 @@ type View struct {
 	// permission request. Their execution update must use
 	// tool_call_update instead of creating the call again.
 	announced map[string]bool
+	// compaction records whether the client advertised
+	// clientCapabilities.session.compaction (set at prompt start from
+	// the server's stored caps).
+	compaction bool
+	// compactionSeq fuels agent-owned compaction ids, unique per ACP
+	// session: "cmp-<n>".
+	compactionSeq map[string]int
+	// compactionOpen holds the id of the started-but-not-yet-finished
+	// compaction, if any, so the done event patches the card the start
+	// event created.
+	compactionOpen map[string]string
 }
 
 // NewView creates a View ready to translate agent events.
 func NewView() *View {
-	return &View{announced: make(map[string]bool)}
+	return &View{
+		announced:      make(map[string]bool),
+		compactionSeq:  make(map[string]int),
+		compactionOpen: make(map[string]string),
+	}
+}
+
+// EnableCompaction turns on ID-addressed compaction updates. The
+// server calls it when the prompt's connection advertised the
+// session.compaction capability.
+func (v *View) EnableCompaction() {
+	v.mu.Lock()
+	v.compaction = true
+	v.mu.Unlock()
+}
+
+func (v *View) compactionEnabled() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.compaction
+}
+
+// nextCompactionID allocates the next agent-owned compaction id for
+// the session and records it as the open compaction.
+func (v *View) nextCompactionID(sessionID string) string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.compactionSeq[sessionID]++
+	id := "cmp-" + strconv.Itoa(v.compactionSeq[sessionID])
+	v.compactionOpen[sessionID] = id
+	return id
+}
+
+// currentCompactionID returns the id of the open compaction, or a
+// freshly allocated one when the done event arrives with no recorded
+// start (e.g. a compaction that began before the prompt turn).
+func (v *View) currentCompactionID(sessionID string) string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if id, ok := v.compactionOpen[sessionID]; ok {
+		delete(v.compactionOpen, sessionID)
+		return id
+	}
+	v.compactionSeq[sessionID]++
+	return "cmp-" + strconv.Itoa(v.compactionSeq[sessionID])
 }
 
 // Announce marks a tool call as already created by a permission
@@ -168,14 +223,62 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 			Content:       textContent(text("ESCALATION [%s] %s: %s", e.Severity, e.SubAgentRole, e.Summary)),
 		})
 	case *agent.CompactionStartedEvent:
+		// The client negotiates session.compaction before ID-addressed
+		// compaction updates may be sent; with the capability, the card
+		// is an in_progress compaction_update, the details riding _meta;
+		// without it, compaction surfaces as an ordinary message (the
+		// spec's fallback rule).
+		if v.compactionEnabled() {
+			send(sessionID, CompactionUpdate{
+				SessionUpdate: UpdateCompaction,
+				CompactionID:  v.nextCompactionID(sessionID),
+				Status:        CompactionInProgress,
+				Meta: map[string]any{
+					"beforeTokens": e.BeforeTokens,
+					"targetTokens": e.TargetTokens,
+					"reason":       e.Reason,
+					"text":         e.StartedSummary(),
+				},
+			})
+			break
+		}
 		send(sessionID, ChunkUpdate{
 			SessionUpdate: UpdateAgentMessageChunk,
 			Content:       textContent("[" + e.StartedSummary() + "]"),
 		})
 	case *agent.CompactionDoneEvent:
-		// The client negotiates session.compaction before ID-addressed
-		// compaction updates may be sent (Tier 3); until then compaction
-		// surfaces as an ordinary message (the spec's fallback rule).
+		// Capability-gated like the start event: with it, the completed
+		// summary streams as a summary chunk appended to the (patched)
+		// compaction card, then a completed upsert carries the tally in
+		// _meta. Fallback stays a plain text chunk.
+		if v.compactionEnabled() {
+			id := v.currentCompactionID(sessionID)
+			meta := map[string]any{
+				"beforeTokens":   e.BeforeTokens,
+				"afterTokens":    e.AfterTokens,
+				"savingsPct":     e.SavingsPct,
+				"method":         e.Method,
+				"elapsedSeconds": e.ElapsedSeconds,
+				"oldMsgCount":    e.OldMsgCount,
+				"keepMsgCount":   e.KeepMsgCount,
+				"budget":         e.Budget,
+			}
+			if e.IneffectiveNote != "" {
+				meta["note"] = e.IneffectiveNote
+			}
+			send(sessionID, CompactionSummaryChunk{
+				SessionUpdate: UpdateCompactionSummaryChunk,
+				CompactionID:  id,
+				Content:       textContent("[" + e.DoneSummary() + "]"),
+			})
+			send(sessionID, CompactionUpdate{
+				SessionUpdate: UpdateCompaction,
+				CompactionID:  id,
+				Status:        CompactionCompleted,
+				Meta:          meta,
+			})
+			break
+		}
 		send(sessionID, ChunkUpdate{
 			SessionUpdate: UpdateAgentMessageChunk,
 			Content:       textContent("[" + e.DoneSummary() + "]"),
@@ -238,6 +341,13 @@ func NewViewWithWrite(send updateSender, sessionID string) *ViewWithWrite {
 // HandleEvent implements agent.View.
 func (v *ViewWithWrite) HandleEvent(evt agent.Event) {
 	v.av.SendTo(v.sessionID, v.send, evt)
+}
+
+// EnableCompaction turns on ID-addressed compaction updates (see
+// agent.View.EnableCompaction). The server calls it per prompt turn
+// when the connection advertised session.compaction.
+func (v *ViewWithWrite) EnableCompaction() {
+	v.av.EnableCompaction()
 }
 
 // Announce marks a tool call as created by a permission request.
