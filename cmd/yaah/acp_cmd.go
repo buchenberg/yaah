@@ -20,10 +20,24 @@ import (
 
 // === ACP serve command ===
 
-var acpServeCmd = &cobra.Command{
-	Use:   "acp-serve",
-	Short: "Expose yaah as an Agent Client Protocol v1 (ACP) agent over stdio",
-	Long: `acp-serve starts yaah as an Agent Client Protocol (ACP) v1 agent,
+// acpServeCmd is the original top-level spelling, kept working because editor
+// ACP configs reference it by name (see docs/acp.md). The canonical spelling
+// is 'yaah acp serve'.
+var acpServeCmd = newACPServeCmd("acp-serve", true)
+
+// acpCmd groups the ACP surface. Today it holds only 'serve', but naming it
+// after the protocol keeps the spelling consistent with 'yaah mcp serve'
+// instead of putting a verb inside the server name.
+var acpCmd = &cobra.Command{
+	Use:   "acp",
+	Short: "Agent Client Protocol (ACP) integration",
+}
+
+func newACPServeCmd(use string, deprecated bool) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   use,
+		Short: "Expose yaah as an Agent Client Protocol v1 (ACP) agent over stdio",
+		Long: `Serve yaah as an Agent Client Protocol (ACP) v1 agent,
 speaking the protocol used by editors such as Zed and VS Code
 (https://agentclientprotocol.com).
 
@@ -64,14 +78,21 @@ present. The approval bridge, tool-kind classification, and sandbox
 layers are yaah-side policy and are not surfaced through ACP. See
 docs/acp.md for the full surface, persisted state, and client setup
 details.`,
-	SilenceErrors: true,
-	SilenceUsage:  true,
-	Args:          cobra.NoArgs,
-	RunE:          runACPServe,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		Args:          cobra.NoArgs,
+		RunE:          runACPServe,
+	}
+	if deprecated {
+		cmd.Deprecated = "use 'yaah acp serve' instead"
+	}
+	return cmd
 }
 
 func init() {
 	rootCmd.AddCommand(acpServeCmd)
+	rootCmd.AddCommand(acpCmd)
+	acpCmd.AddCommand(newACPServeCmd("serve", false))
 }
 
 // newACPAgentSession builds one agent session for the ACP server. An

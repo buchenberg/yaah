@@ -35,6 +35,7 @@ import (
 var webFS embed.FS
 
 var webAddr string
+var webAddrAlias string
 var webToken string
 
 var webCmd = &cobra.Command{
@@ -55,7 +56,9 @@ generated and printed at startup.`,
 }
 
 func init() {
-	webCmd.Flags().StringVar(&webAddr, "addr", "127.0.0.1:8080", "listen address")
+	webCmd.Flags().StringVar(&webAddr, "listen", "127.0.0.1:8080", "listen address for the web UI")
+	webCmd.Flags().StringVar(&webAddrAlias, "addr", "127.0.0.1:8080", "deprecated: use --listen")
+	_ = webCmd.Flags().MarkHidden("addr")
 	webCmd.Flags().StringVar(&webToken, "token", "", "auth token for the web UI (randomly generated when empty)")
 	rootCmd.AddCommand(webCmd)
 }
@@ -246,6 +249,12 @@ type actionRequest struct {
 }
 
 func runWeb(cmd *cobra.Command, args []string) error {
+	addr, err := resolveListenAddr(cmd, "listen", "addr", webAddr, webAddrAlias)
+	if err != nil {
+		return err
+	}
+	webAddr = addr
+
 	sess, err := newAgentSession()
 	if err != nil {
 		return fmt.Errorf("session: %w", err)

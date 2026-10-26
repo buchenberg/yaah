@@ -116,7 +116,7 @@ Use the HTTP MCP transport so the host agent can connect once and survive
 rebuilds:
 
 ```bash
-yaah serve --http 127.0.0.1:7333
+yaah mcp serve --listen 127.0.0.1:7333
 ```
 
 After a code change, rebuild and restart only the server process; the host

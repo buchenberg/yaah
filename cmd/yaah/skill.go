@@ -15,7 +15,7 @@ import (
 // skillCmd is the `yaah skill` subcommand tree.
 var skillCmd = &cobra.Command{
 	Use:   "skill",
-	Short: "Discover and inspect skills",
+	Short: "Discover, create, edit, and inspect skills",
 }
 
 // skillListCmd lists all discovered skills.

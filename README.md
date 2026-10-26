@@ -100,7 +100,7 @@ yaah "explain this repo"    	# one-shot
 yaah                        	# interactive REPL
 yaah tui                    	# full-screen terminal UI
 yaah web                    	# browser UI on port 8080
-yaah web --addr 127.0.0.1:8081 # specify a port
+yaah web --listen 127.0.0.1:8081 # specify a port
 ```
 
 The default config lives at `~/.yaah/config.yaml` (or
@@ -164,13 +164,13 @@ Built-in roles cannot be shadowed; custom roles are additive. The full frontmatt
 
 ### Drive yaah from another agent
 
-`yaah serve` exposes yaah as an MCP server (`prompt`, `traces`, `status`, `steer`, `compact`), so another agent can run multi-turn tasks and inspect the traces. This is mostly used for testing and developing yaah itself.
+`yaah mcp serve` exposes yaah as an MCP server (`prompt`, `traces`, `status`, `steer`, `compact`), so another agent can run multi-turn tasks and inspect the traces. This is mostly used for testing and developing yaah itself.
 
 ```bash
-yaah serve --http 127.0.0.1:7333
+yaah mcp serve --listen 127.0.0.1:7333
 ```
 
-`yaah acp-serve` exposes yaah as an Agent Client Protocol (ACP) v1 agent over stdio — it can be pointed at any ACP client, such as the Zed editor or a VS Code ACP client extension. Both are useful for editor integration, automation, and agent-to-agent coordination.
+`yaah acp serve` exposes yaah as an Agent Client Protocol (ACP) v1 agent over stdio — it can be pointed at any ACP client, such as the Zed editor or a VS Code ACP client extension. Both are useful for editor integration, automation, and agent-to-agent coordination.
 
 ## How a retained dispatch works
 
@@ -265,21 +265,22 @@ known trade-off that profiles need broad read access so toolchains work.
 ```bash
 yaah                              # interactive REPL
 yaah "prompt"                     # one-shot
-yaah --resume <id> "continue"     # resume a session
+yaah --session <id> "continue"    # resume a session (also --resume=<id>)
 yaah --approval allow "..."       # override approval policy
 yaah --workspace ~/code "fix X"   # confine file tools to a directory
 yaah -d "always run tests first" "fix X"
 
 yaah tui                          # terminal UI
 yaah web                          # browser UI
-yaah serve [--http addr]          # MCP tool server
-yaah acp-serve                    # ACP server
+yaah mcp serve [--listen addr]    # MCP tool server
+yaah acp serve                    # ACP server
 
 yaah config show|edit             # inspect or edit config
 yaah doctor                       # diagnostics
 yaah memory add|search            # persistent memory
 yaah skill list|show|create|edit  # skills
 yaah mcp list|add|remove          # MCP servers
+yaah sessions list|show|delete    # inspect stored conversations
 yaah shepherd [prune <path>]      # inspect/clean crashed worktrees
 yaah shepherd-trace list|show|profile
 yaah update                       # update the binary

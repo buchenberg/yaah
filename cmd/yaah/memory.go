@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/config"
@@ -19,11 +20,18 @@ var memoryCmd = &cobra.Command{
 
 // memorySearchCmd searches memory entries.
 var memorySearchCmd = &cobra.Command{
-	Use:   "search <query>",
+	Use:   "search <query...>",
 	Short: "Search memory entries by keyword",
-	Args:  cobra.MinimumNArgs(1),
+	Long: `Search memory entries by keyword.
+
+The query may be written without quoting: every positional argument is joined
+with single spaces. Use '--' when the query itself begins with a dash:
+
+  yaah memory search -- -v is a flag to the tool, not to grep`,
+	Example: "  yaah memory search workspace sandbox policy\n  yaah memory search -- --strict handling",
+	Args:    cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		query := args[0]
+		query := strings.Join(args, " ")
 		db, err := memory.OpenDefault()
 		if err != nil {
 			return fmt.Errorf("open database: %w", err)
@@ -81,11 +89,18 @@ var memorySearchCmd = &cobra.Command{
 
 // memoryAddCmd adds a memory entry.
 var memoryAddCmd = &cobra.Command{
-	Use:   "add <text>",
+	Use:   "add <text...>",
 	Short: "Add a new memory note",
-	Args:  cobra.MinimumNArgs(1),
+	Long: `Add a new memory note.
+
+The note is taken from the positional arguments, joined with single spaces, so
+it does not need quoting. Use '--' when the text begins with a dash:
+
+  yaah memory add -- --allow-home is opt-in, not a default`,
+	Example: "  yaah memory add workspace sandbox denies egress by default\n  yaah memory add --tags '[\"decision\"]' -- adopt --listen everywhere",
+	Args:    cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		text := args[0]
+		text := strings.Join(args, " ")
 		tags, _ := cmd.Flags().GetString("tags")
 
 		db, err := memory.OpenDefault()

@@ -67,10 +67,17 @@ type SessionOptions struct {
 
 // sessionOptionsFromFlags snapshots the parsed persistent flags into a
 // SessionOptions. It is the ONLY reader of the flag package variables.
+//
+// --session is the value-carrying spelling and wins over --resume, which
+// keeps its value-optional shape (bare = picker) for compatibility.
 func sessionOptionsFromFlags() SessionOptions {
+	resumeID := resumeSessionIDExplicit
+	if resumeID == "" {
+		resumeID = resumeSessionID
+	}
 	return SessionOptions{
 		ApprovalOverride:   approvalOverride,
-		ResumeSessionID:    resumeSessionID,
+		ResumeSessionID:    resumeID,
 		DirectiveOverrides: directiveOverrides,
 		WorkspaceRoot:      workspaceRoot,
 		AllowHomeAccess:    allowHomeAccess,
