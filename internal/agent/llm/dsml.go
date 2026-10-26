@@ -25,6 +25,12 @@ import (
 const (
 	dsmlBars = `\x{FF5C}+`
 
+	// dsmlAttrValue is one attribute value. Models quote with " or ', and
+	// sometimes not at all, so all three spellings are accepted rather than
+	// rejecting markup we could otherwise dispatch. A value must be non-empty:
+	// an empty name would otherwise dispatch a nameless tool call.
+	dsmlAttrValue = `(?:"[^"]+"|'[^']+'|[^\s"'>]+)`
+
 	// Block wrapper around a group of invokes.
 	dsmlCallsOpen  = `<` + dsmlBars + `DSML` + dsmlBars + `\s*(?:tool_|function_)?calls\s*>`
 	dsmlCallsClose = `</` + dsmlBars + `DSML` + dsmlBars + `\s*(?:tool_|function_)?calls\s*>`
@@ -50,10 +56,10 @@ var (
 	dsmlBlockRe       = regexp.MustCompile(`(?s)\n?` + dsmlCallsOpen + `(.*?)` + dsmlCallsClose + `\n?`)
 	dsmlCallsOpenRe   = regexp.MustCompile(dsmlCallsOpen)
 	dsmlCallsCloseRe  = regexp.MustCompile(dsmlCallsClose)
-	dsmlInvokeOpenRe  = regexp.MustCompile(dsmlInvokeHead + `"[^"]+"\s*>`)
+	dsmlInvokeOpenRe  = regexp.MustCompile(dsmlInvokeHead + dsmlAttrValue + `\s*>`)
 	dsmlInvokeHeadRe  = regexp.MustCompile(dsmlInvokeHead)
 	dsmlInvokeCloseRe = regexp.MustCompile(dsmlInvokeClose)
-	dsmlInvokeRe      = regexp.MustCompile(`(?s)` + dsmlInvokeHead + `"([^"]+)"\s*>(.*?)` + dsmlInvokeClose)
+	dsmlInvokeRe      = regexp.MustCompile(`(?s)` + dsmlInvokeHead + `(` + dsmlAttrValue + `)\s*>(.*?)` + dsmlInvokeClose)
 	// dsmlPartialTagRe matches an unterminated DSML tag fragment as a second,
 	// regex-based opinion behind dsmlTagPrefixLen: it catches tag shapes whose
 	// namespace word is complete but whose element name has not arrived yet.
@@ -65,7 +71,7 @@ var (
 	// report inspector to measure how much prose survives once markup is
 	// stripped.
 	dsmlResidualRe = regexp.MustCompile(`</?` + dsmlBars + `DSML` + dsmlBars + `[^>\n]*>?`)
-	dsmlParamRe    = regexp.MustCompile(`(?s)` + dsmlParamHead + `"([^"]+)"(?:\s+string="(true|false)")?\s*>(.*?)` + dsmlParamClose)
+	dsmlParamRe    = regexp.MustCompile(`(?s)` + dsmlParamHead + `(` + dsmlAttrValue + `)(?:\s+string=(` + dsmlAttrValue + `))?\s*>(.*?)` + dsmlParamClose)
 )
 
 // maxDSMLTagLen bounds how many bytes the streaming filter may hold back
@@ -224,6 +230,29 @@ func (f *dsmlTokenFilter) scanOpen() (at, length int, bare bool) {
 	return bestAt, bestLen, bestBare
 }
 
+// flush releases any tail the filter held back, so the closing prose of a
+// stream always reaches the view. It is idempotent and safe to call from a
+// deferred exit path.
+func (f *dsmlTokenFilter) flush() string {
+	if f.inBlock {
+		// Never terminated: the markup was genuine and incomplete, so dropping
+		// it shows nothing rather than half a tag.
+		f.inBlock, f.bare, f.pending = false, false, ""
+		return ""
+	}
+	out := f.pending
+	f.pending = ""
+	return out
+}
+
+// unquoteDSMLAttr strips one layer of matching quotes from an attribute value.
+func unquoteDSMLAttr(s string) string {
+	if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') && s[len(s)-1] == s[0] {
+		return s[1 : len(s)-1]
+	}
+	return s
+}
+
 // parseDSMLToolCalls detects DSML tool-call markup leaked into content and
 // converts it to proper tool calls. It returns the cleaned content, the
 // recovered calls, rejection reasons for markup that could not be turned
@@ -315,13 +344,13 @@ func dsmlMarkupStart(content string) int {
 func parseDSMLInvokes(block string, dsmlSeq *int) []types.ToolCall {
 	var calls []types.ToolCall
 	for _, m := range dsmlInvokeRe.FindAllStringSubmatch(block, -1) {
-		name := m[1]
+		name := unquoteDSMLAttr(m[1])
 		body := m[2]
 
 		args := make(map[string]any)
 		for _, pm := range dsmlParamRe.FindAllStringSubmatch(body, -1) {
-			paramName := pm[1]
-			isString := pm[2] != "false"
+			paramName := unquoteDSMLAttr(pm[1])
+			isString := unquoteDSMLAttr(pm[2]) != "false"
 			paramVal := pm[3]
 			if isString {
 				args[paramName] = paramVal
