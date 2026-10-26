@@ -190,8 +190,8 @@ type AuthenticateParams struct {
 // govern the session's filesystem context and mcpServers list servers
 // the agent should connect to; both are processed here (cwd becomes the
 // process working directory before the underlying session is built;
-// mcpServers connection is Tier 3 and currently recorded but unused).
-// Field must be absolute.
+// client-declared stdio MCP servers are started and merged with the
+// config-declared set via mcpManifestsFromACP). Field must be absolute.
 type SessionNewParams struct {
 	Cwd        string         `json:"cwd,omitempty"`
 	McpServers []McpServerRef `json:"mcpServers,omitempty"`
@@ -229,7 +229,8 @@ type SessionNewResult struct {
 // the ID of a conversation yaah previously created (the persisted
 // memory-DB session id), optionally with a cwd and mcpServers: the cwd
 // is applied to the process exactly as in session/new (first cwd
-// wins), and mcpServers is recorded but unused (Tier 3). Unknown
+// wins), and stdio mcpServers are started and merged the same way.
+// Unknown
 // session IDs — ones yaah never created in its session store — are
 // rejected with invalid params.
 type SessionLoadParams struct {

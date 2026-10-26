@@ -334,7 +334,8 @@ Or the generic stdio client loop (any language; one JSON object per line):
   tool registry.
 - **Context/content blocks** — only text content is produced and replayed
   (plus `diff` blocks for `write`/`edit` tool calls); image and audio
-  blocks are not modeled.
+  blocks are not produced, but inbound ones on prompts degrade to a
+  visible "unsupported content type" note rather than being dropped.
 - **`fs/` and `terminal/` client capabilities** — a read-only terminal and
   file system access that ACP allows agents to request from clients are
   not used; yaah's tools act in the session cwd only.
@@ -343,7 +344,5 @@ Or the generic stdio client loop (any language; one JSON object per line):
   `sessionCapabilities.modes`/`configOptions` are not advertised.
 - **`additionalDirectories`** — not advertised; sessions act in the cwd
   the lifecycle request named.
-- **`session_info_update` notifications** — live title/directory change
-  announcements are not sent; clients render titles from `session/list`.
 - **Compaction replay** — yaah does not advertise compaction support, so
   clients are not promised compaction `session/update` replay on load.
