@@ -252,6 +252,8 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 	}
 
 	l.applyDefaults()
+	// Per-Run signal: a previous Run's budget end must not color this one.
+	l.State.TurnBudgetExhausted = false
 	l.initMessages(userInput)
 
 	// messages is the authoritative working copy of the conversation for
@@ -383,6 +385,10 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 				if turnSpan != nil {
 					turnSpan.End()
 				}
+				// A tool-free iteration means the soft cap stripped
+				// tools: the text is a budget end, not a model-chosen
+				// finish. ACP surfaces this as max_turn_requests.
+				l.State.TurnBudgetExhausted = l.toolTurnsStripped(iter)
 				l.State.Messages = messages // end-of-iteration sync; the deferred write covers the return
 				observability.RecordAgentTurn(turnCtx, time.Since(turnStart))
 				if traceMw != nil {
@@ -447,6 +453,7 @@ func (l *Loop) runMiddleware(ctx context.Context, userInput, turnID string) (res
 				IterationsSource: l.Config.BudgetIterationsSource,
 				TurnsSource:      l.Config.BudgetTurnsSource,
 			}
+			l.State.TurnBudgetExhausted = true
 			if traceMw != nil {
 				traceMw.FailTurn(ctx, l.Config.MaxLoopCycles, err)
 			}

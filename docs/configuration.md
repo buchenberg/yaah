@@ -263,7 +263,7 @@ rather than retrying a request that cannot succeed.
 | `model` | `deepseek/deepseek-v4-pro` | Model for the main agent |
 | `small_model` | `deepseek/deepseek-v4-flash` | Cheaper model for context compaction |
 | `max_iterations` | 50 | Safety cap on loop turns |
-| `max_turns` | 0 | Soft cap; tools are stripped at this iteration. `0` = no soft cap (the derive rule applies only to `agents.subagent.default_max_turns`) |
+| `max_turns` | 0 | Soft cap; tools are stripped at this iteration and a final-report notice tells the model why. `0` = no soft cap (the derive rule applies only to `agents.subagent.default_max_turns`). In ACP, a turn ended by this cap reports `stopReason: max_turn_requests` |
 | `context_window` | 1048576 | Caps the model's resolved window. `0` = use the model's known window, not "disabled" |
 | `approval` | `ask` | `allow`, `ask`, or `deny` |
 | `mcp_approval` | `ask` | `allow`, `ask`, or `deny` for MCP-served tools |

@@ -37,6 +37,15 @@ type fakeSession struct {
 	// assert the switch reached the session.
 	provider string
 	model    string
+	// budgetExhausted is what TurnBudgetExhausted reports; stop-reason
+	// tests set it to simulate a soft tool-turn cap ending the turn.
+	budgetExhausted bool
+}
+
+func (f *fakeSession) TurnBudgetExhausted() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.budgetExhausted
 }
 
 func (f *fakeSession) RunPrompt(ctx context.Context, prompt string) (string, bool, error) {
@@ -784,6 +793,59 @@ func TestServer_promptRespondsWhenTurnEnds(t *testing.T) {
 		}
 	}
 	t.Fatalf("never reached the prompt response (chunk=%v stop=%v)", sawChunk, sawStop)
+}
+
+// TestServer_promptStopReasonMaxTurnRequests covers both budget ends: a
+// turn that produced text only after the soft cap stripped tools, and a
+// hard iteration-limit error. Both must answer max_turn_requests so the
+// client can offer a continuation instead of treating the turn as done.
+func TestServer_promptStopReasonMaxTurnRequests(t *testing.T) {
+	tests := []struct {
+		name string
+		sess *fakeSession
+	}{
+		{
+			name: "soft cap stripped tools",
+			sess: &fakeSession{
+				id:              "sess-test",
+				budgetExhausted: true,
+				prompt: func(ctx context.Context, prompt string) (string, bool, error) {
+					return "I was about to keep going", false, nil
+				},
+			},
+		},
+		{
+			name: "iteration limit",
+			sess: &fakeSession{
+				id: "sess-test",
+				prompt: func(ctx context.Context, prompt string) (string, bool, error) {
+					return "", false, agent.MaxIterationsError{MaxIter: 5}
+				},
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newACPHarness(t, tc.sess)
+			initialize(t, h)
+			sid := newSession(t, h)
+
+			if err := h.send("session/prompt", 3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"do a thing"}]}`, sid)); err != nil {
+				t.Fatal(err)
+			}
+			msg := h.recv(t)
+			if msg.Error != nil {
+				t.Fatalf("prompt produced an RPC error, want stopReason max_turn_requests: %+v", msg)
+			}
+			var result PromptResult
+			if err := json.Unmarshal(msg.Result, &result); err != nil {
+				t.Fatalf("prompt result: %v (raw=%s)", err, msg.Result)
+			}
+			if result.StopReason != StopMaxTurnRequests {
+				t.Fatalf("stopReason = %q, want %q", result.StopReason, StopMaxTurnRequests)
+			}
+		})
+	}
 }
 
 // TestServer_promptRespondsCancelled covers cancel-while-running: the

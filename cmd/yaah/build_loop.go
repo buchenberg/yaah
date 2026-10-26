@@ -72,6 +72,7 @@ func (s *agentSession) runPrompt(ctx context.Context, prompt string) (string, bo
 	s.mu.Lock()
 	s.messages = loop.State.Messages
 	s.msgIdx = loop.Persister.MsgIdx()
+	s.turnBudgetExhausted = loop.State.TurnBudgetExhausted
 	s.mu.Unlock()
 
 	s.mu.Lock()

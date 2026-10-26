@@ -41,7 +41,14 @@ var ErrNoSession = errors.New("unknown session")
 // Session is the narrow capability the ACP server needs from an agent
 // session. *agentSession in cmd/yaah satisfies this interface.
 type Session interface {
+	// RunPrompt runs one turn. The bool reports whether the answer was
+	// streamed through the view.
 	RunPrompt(ctx context.Context, prompt string) (string, bool, error)
+	// TurnBudgetExhausted reports whether the last Run ended because a
+	// request budget (soft tool-turn cap or hard iteration limit) ran
+	// out rather than the model choosing to finish. session/prompt maps
+	// it to stopReason max_turn_requests.
+	TurnBudgetExhausted() bool
 	SetView(agent.View)
 	SetCtrlCh(chan<- control.Msg)
 	SetApproveCallFn(func(callID, name, args string) bool)
@@ -1333,10 +1340,21 @@ func (s *Server) handlePrompt(
 		stopReason := StopEndTurn
 		switch {
 		case runErr == nil:
-			s.logf("prompt completed: %s", p.SessionID)
+			if sess.TurnBudgetExhausted() {
+				// The turn produced text, but only after the soft
+				// tool-turn cap stripped tools: the agent stopped
+				// because it could not act, not because it was done.
+				stopReason = StopMaxTurnRequests
+				s.logf("prompt hit turn budget: %s", p.SessionID)
+			} else {
+				s.logf("prompt completed: %s", p.SessionID)
+			}
 		case errors.Is(runErr, context.Canceled):
 			stopReason = StopCancelled
 			s.logf("prompt cancelled: %s", p.SessionID)
+		case errors.Is(runErr, agent.MaxIterationsError{}):
+			stopReason = StopMaxTurnRequests
+			s.logf("prompt exhausted iteration budget: %s: %v", p.SessionID, runErr)
 		default:
 			// Keep the documented surface: a failed turn answers
 			// stopReason "refusal" like any other end-of-turn state, and
