@@ -55,7 +55,7 @@ func resolveListenAddr(cmd *cobra.Command, primaryName, legacyName, primaryVal, 
 	case primarySet && legacySet:
 		return "", fmt.Errorf("--%s and --%s are mutually exclusive: use --%s", primaryName, legacyName, primaryName)
 	case legacySet:
-		fmt.Fprintf(os.Stderr, "%s --%s is deprecated, use --%s\n", os.Args[0], legacyName, primaryName)
+		fmt.Fprintf(os.Stderr, "warning: --%s is deprecated, use --%s\n", legacyName, primaryName)
 		return legacyVal, nil
 	default:
 		return primaryVal, nil

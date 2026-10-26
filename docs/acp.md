@@ -1,8 +1,11 @@
 # ACP (Agent Client Protocol)
 
-How `yaah acp-serve` exposes yaah as an Agent Client Protocol v1 agent over
+How `yaah acp serve` exposes yaah as an Agent Client Protocol v1 agent over
 stdio: the session lifecycle, where resumed sessions live, and what is
 deliberately out of scope (Tier 3).
+
+> The former name `yaah acp-serve` still works and prints a deprecation
+> notice; `yaah acp serve` is the canonical spelling.
 
 - Spec: <https://agentclientprotocol.com> (this server speaks v1)
 - Implementation: `internal/acp` (protocol + server), `cmd/yaah/acp_cmd.go`
@@ -10,12 +13,12 @@ deliberately out of scope (Tier 3).
 
 ## Overview
 
-`yaah acp-serve` runs yaah as an ACP **agent** (server side) speaking
+`yaah acp serve` runs yaah as an ACP **agent** (server side) speaking
 newline-delimited JSON-RPC 2.0 on stdin/stdout. All diagnostics go to stderr
 so stdout stays protocol-clean.
 
 ```
-ACP client (Zed, ...)                    yaah acp-serve
+ACP client (Zed, ...)                    yaah acp serve
 ─────────────────────                    ───────────────
  ── initialize ─────────────────────────▶ version + agentCapabilities
  ── session/new {cwd} ──────────────────▶ agentSession built; ACP session id
@@ -82,7 +85,7 @@ session ids and rejects unknown ones with invalid params.
 
 ### session/load and where the state lives
 
-`yaah acp-serve` is disposable: the client can kill and restart it at any
+`yaah acp serve` is disposable: the client can kill and restart it at any
 time, then call `session/load` to re-attach. Persisted state lives in the
 existing SQLite session store — `~/.yaah/state.db` via `internal/memory` —
 which every yaah process already writes through (`SessionPersister` records
@@ -271,7 +274,7 @@ produced the request.
     "yaah": {
       "type": "custom",
       "command": "/path/to/yaah",
-      "args": ["acp-serve"],
+      "args": ["acp", "serve"],
       "env": {}
     }
   }
