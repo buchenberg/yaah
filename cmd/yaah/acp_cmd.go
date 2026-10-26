@@ -189,11 +189,19 @@ func acpDeleteSession(reg *sessions.Registry) func(id string) error {
 // deadline and the catalog keeps whatever config already declares.
 const acpModelCatalogBudget = 2 * time.Second
 
-// acpModelCatalogRetry is how long an incomplete discovery is cached
-// before a later request may retry it. Without the cooldown a provider
+// acpModelCatalogRetry is how long an incomplete result is cached before
+// a later request may retry discovery. Without the cooldown a provider
 // that was unreachable at startup would make every session/new pay the
 // full budget again.
 const acpModelCatalogRetry = 30 * time.Second
+
+// acpModelCatalogWait bounds how long a request waits for a discovery
+// attempt that is already running. Discovery keeps going in the
+// background; a request that misses the window gets the current snapshot
+// and the next request sees the result. Without this bound a slow
+// provider would stall the ACP dispatch goroutine — and every message
+// queued behind it — for the whole budget.
+const acpModelCatalogWait = 500 * time.Millisecond
 
 // newACPModelCatalog builds the process-lifetime model catalog handed to
 // the ACP server. Discovery reuses the provider machinery behind the TUI
@@ -243,7 +251,10 @@ type acpModelCatalog struct {
 	settled  bool
 	options  []acp.ModelOption
 	inflight chan struct{} // non-nil while a discovery attempt runs
-	lastTry  time.Time
+	lastTry  time.Time     // when the last attempt published its result
+
+	// wait overrides acpModelCatalogWait when non-zero.
+	wait time.Duration
 
 	// discoverFn replaces the network phase in tests. It must be set
 	// before the first Options call.
@@ -252,10 +263,10 @@ type acpModelCatalog struct {
 
 // Options implements acp.ModelCatalog. The slow path runs in one shared
 // goroutine so concurrent callers wait on the same attempt rather than
-// starting one each; the budget bounds that attempt. A caller's ctx only
-// bounds its own wait — an attempt already in flight keeps running and
-// publishes its result for the next request, so a client disconnect or
-// shutdown does not throw away discovery.
+// starting one each; the budget bounds that attempt. A caller waits at
+// most wait for the result: its ctx (shutdown, disconnect) and the wait
+// deadline both end the wait, while the attempt keeps running and
+// publishes its result for the next request.
 func (c *acpModelCatalog) Options(ctx context.Context) []acp.ModelOption {
 	if c == nil || c.cfg == nil {
 		return nil
@@ -268,23 +279,29 @@ func (c *acpModelCatalog) Options(ctx context.Context) []acp.ModelOption {
 	}
 	done := c.inflight
 	if done == nil {
-		// An incomplete attempt is retried at most once per cooldown, so
-		// a provider that is down at startup cannot make every request
-		// pay the full budget.
+		// An incomplete result is cached for one cooldown, so a provider
+		// that is down at startup cannot make every request pay the full
+		// budget.
 		if !c.lastTry.IsZero() && time.Since(c.lastTry) < acpModelCatalogRetry {
 			opts := c.options
 			c.mu.Unlock()
 			return opts
 		}
-		c.lastTry = time.Now()
 		done = make(chan struct{})
 		c.inflight = done
 		go c.refresh(done)
 	}
 	c.mu.Unlock()
 
+	wait := c.wait
+	if wait <= 0 {
+		wait = acpModelCatalogWait
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
 	select {
 	case <-done:
+	case <-timer.C:
 	case <-ctx.Done():
 	}
 	c.mu.Lock()
@@ -311,6 +328,9 @@ func (c *acpModelCatalog) refresh(done chan struct{}) {
 	c.options = opts
 	c.settled = complete
 	c.inflight = nil
+	// The cooldown starts when the result is published, not when the
+	// attempt started, so a full-budget attempt does not eat into it.
+	c.lastTry = time.Now()
 	c.mu.Unlock()
 }
 

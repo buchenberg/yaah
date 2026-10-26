@@ -102,11 +102,13 @@ func TestMcpManifestsFromACP(t *testing.T) {
 }
 
 // testCatalog builds an acpModelCatalog whose slow phase is a test stub.
+// The wait is long so a coordinated test controls when an attempt ends.
 func testCatalog(discover func(context.Context) ([]acp.ModelOption, bool)) *acpModelCatalog {
 	return &acpModelCatalog{
 		cfg:        &config.Config{},
 		logf:       func(string, ...any) {},
 		budget:     time.Second,
+		wait:       5 * time.Second,
 		discoverFn: discover,
 	}
 }
@@ -206,5 +208,33 @@ func TestACPCatalogOptionsRetryCooldown(t *testing.T) {
 	}
 	if n := calls.Load(); n != 2 {
 		t.Fatalf("discovery ran %d times after the cooldown, want 2", n)
+	}
+}
+
+// TestACPCatalogOptionsWaitIsBounded pins that a request never waits out
+// a whole slow attempt: it gets the current snapshot, and the attempt's
+// result is there for the next request.
+func TestACPCatalogOptionsWaitIsBounded(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	catalog := testCatalog(func(context.Context) ([]acp.ModelOption, bool) {
+		started <- struct{}{}
+		<-release
+		return []acp.ModelOption{{Provider: "p", Model: "m"}}, true
+	})
+	catalog.wait = 20 * time.Millisecond
+
+	begin := time.Now()
+	if got := catalog.Options(context.Background()); len(got) != 0 {
+		t.Errorf("options = %#v, want the empty snapshot", got)
+	}
+	if elapsed := time.Since(begin); elapsed > time.Second {
+		t.Fatalf("Options waited %v for a slow attempt", elapsed)
+	}
+	<-started
+
+	close(release)
+	if got := catalog.Options(context.Background()); len(got) != 1 || got[0].Model != "m" {
+		t.Errorf("next options = %#v, want the discovered model", got)
 	}
 }
