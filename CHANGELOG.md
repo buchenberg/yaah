@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.104.0](https://github.com/buchenberg/yaah/compare/v0.103.3...v0.104.0) (2026-10-26)
+
+
+### Features
+
+* ACP model picker via configOptions and session/set_config_option ([#582](https://github.com/buchenberg/yaah/issues/582)) ([d72041e](https://github.com/buchenberg/yaah/commit/d72041ea90fa07b1035b25164545ed25875af507))
+
 ## [0.103.3](https://github.com/buchenberg/yaah/compare/v0.103.2...v0.103.3) (2026-10-26)
 
 
