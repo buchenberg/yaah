@@ -257,15 +257,21 @@ type LoopState struct {
 	// dispatches. It is tracked separately so the loop's own usage can be
 	// reported without double-counting nested delegates, and so child
 	// totals never masquerade as the parent's current context occupancy.
-	SubAgentTokens             types.Usage
-	LastPromptTokens           int  // provider-shaped prompt tokens (compaction raw gate)
-	LastPromptTokensInclusive  int  // cache-inclusive prompt size (views)
-	LastPromptIncludesCache    bool // raw prompt already contains cache reads
-	LastCachedPromptTokens     int
-	TotalReasoningTokens       int
-	TotalCachedPromptTokens    int
-	LastFinishReason           string
-	LastResponseModel          string
+	SubAgentTokens            types.Usage
+	LastPromptTokens          int  // provider-shaped prompt tokens (compaction raw gate)
+	LastPromptTokensInclusive int  // cache-inclusive prompt size (views)
+	LastPromptIncludesCache   bool // raw prompt already contains cache reads
+	LastCachedPromptTokens    int
+	TotalReasoningTokens      int
+	TotalCachedPromptTokens   int
+	LastFinishReason          string
+	LastResponseModel         string
+	// TurnBudgetExhausted reports that the most recent Run ended because
+	// the soft tool-turn cap (MaxToolTurns) had stripped tools: the final
+	// text was produced without the ability to act, so it is a budget end
+	// rather than a model-chosen finish. Consumers (ACP stopReason) use it
+	// to tell a client the turn can be continued.
+	TurnBudgetExhausted        bool
 	PreviousSummary            string
 	LastCompactionTokens       int
 	IneffectiveCompactions     int

@@ -1,0 +1,1 @@
+[system] Tool budget exhausted: no tools are available for this response. Do not describe what you are about to do next, and do not emit tool-call markup — nothing you emit now can execute. Reply with your complete final report: what is finished, what remains unfinished, and the exact next step the caller must take.

@@ -40,12 +40,8 @@ func (l *Loop) buildTurnRequest(ctx context.Context, iter int, messages []types.
 		Tools:    l.buildToolsForLevel(),
 	}
 
-	if l.Config.MaxToolTurns > 0 {
-		effective := l.Config.MaxToolTurns
-		if effective >= l.Config.MaxLoopCycles {
-			effective = l.Config.MaxLoopCycles - 1
-		}
-		if iter >= effective {
+	if limit := l.toolTurnCap(); limit > 0 {
+		if iter >= limit {
 			req.Tools = nil
 			if l.Config.OtelEnabled && turnSpan != nil {
 				attrs := []attribute.KeyValue{
@@ -59,8 +55,13 @@ func (l *Loop) buildTurnRequest(ctx context.Context, iter int, messages []types.
 				}
 				turnSpan.AddEvent("maxturns.stripped", trace.WithAttributes(attrs...))
 			}
-		} else if l.Config.WrapUpThreshold > 0 && iter >= effective-l.Config.WrapUpThreshold {
-			l.injectWrapUpNotice(&req, turnSpan, effective-iter)
+			// The wrap-up notice is transient and the stripped request
+			// would otherwise carry no explanation at all: the model
+			// sees its tools vanish, narrates a next step it cannot
+			// take, and the text-only answer ends the turn mid-task.
+			l.injectBudgetExhaustedNotice(&req, turnSpan)
+		} else if l.Config.WrapUpThreshold > 0 && iter >= limit-l.Config.WrapUpThreshold {
+			l.injectWrapUpNotice(&req, turnSpan, limit-iter)
 		}
 	} else if l.Config.WrapUpThreshold > 0 && iter >= l.Config.MaxLoopCycles-l.Config.WrapUpThreshold {
 		l.injectWrapUpNotice(&req, turnSpan, l.Config.MaxLoopCycles-iter)
@@ -191,4 +192,37 @@ func (l *Loop) injectWrapUpNotice(req *types.ChatRequest, turnSpan trace.Span, r
 			attribute.Int("maxturns.remaining", remaining),
 		))
 	}
+}
+
+// injectBudgetExhaustedNotice appends the notice used on the iteration
+// where the soft tool-turn cap has removed tools. Unlike the wrap-up
+// countdown it is not transient in effect: it is the only explanation the
+// model gets for the missing tools, so it must state that tool calls
+// cannot execute and that this response is the final report.
+func (l *Loop) injectBudgetExhaustedNotice(req *types.ChatRequest, turnSpan trace.Span) {
+	req.Messages = append(req.Messages, types.UserMsg(prompts.BudgetExhaustedMessage()))
+	if l.Config.OtelEnabled && turnSpan != nil {
+		turnSpan.AddEvent("maxturns.budget_exhausted_notice")
+	}
+}
+
+// toolTurnCap returns the effective soft tool-turn cap, or 0 when the cap
+// is disabled. The cap is clamped below MaxLoopCycles so the loop always
+// keeps one tool-free iteration to produce a final answer.
+func (l *Loop) toolTurnCap() int {
+	if l.Config.MaxToolTurns <= 0 {
+		return 0
+	}
+	limit := l.Config.MaxToolTurns
+	if limit >= l.Config.MaxLoopCycles {
+		limit = l.Config.MaxLoopCycles - 1
+	}
+	return limit
+}
+
+// toolTurnsStripped reports whether iter ran with tools removed by the
+// soft tool-turn cap.
+func (l *Loop) toolTurnsStripped(iter int) bool {
+	limit := l.toolTurnCap()
+	return limit > 0 && iter >= limit
 }

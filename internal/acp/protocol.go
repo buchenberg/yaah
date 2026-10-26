@@ -297,6 +297,11 @@ const (
 	StopEndTurn   = "end_turn"
 	StopCancelled = "cancelled"
 	StopRefusal   = "refusal"
+	// StopMaxTurnRequests reports that the turn ended because the agent
+	// exhausted its request budget (the soft tool-turn cap or the hard
+	// iteration limit) rather than choosing to finish. Clients use it to
+	// offer a continuation instead of treating the turn as complete.
+	StopMaxTurnRequests = "max_turn_requests"
 )
 
 // === session/update notifications ===

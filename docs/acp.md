@@ -56,6 +56,13 @@ sub-agents, and prompts all resolve against it.
 `user_message_chunk` (replay only, on `session/load`; `session/resume`
 re-attaches without any history replay).
 
+`stopReason` values: `end_turn` (the model finished), `max_turn_requests`
+(a request budget ended the turn — the soft `max_turns` cap stripped tools
+before the model finished, or `max_iterations` was exhausted), `cancelled`,
+and `refusal` (the turn failed with an error). Clients should treat
+`max_turn_requests` as continuable: sending another `session/prompt`
+resumes with a fresh budget.
+
 `session_info_update` is sent when a session's title transitions from
 empty (the first user message that derives one). It carries `title` and
 `updatedAt` (RFC3339 UTC — the same values `session/list` reads back

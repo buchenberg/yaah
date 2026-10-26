@@ -147,3 +147,70 @@ func TestWrapUp_HardIterationLimit(t *testing.T) {
 		t.Error("final iteration before the hard limit must carry the wrap-up notice")
 	}
 }
+
+// requestHasBudgetNotice reports whether req carries the notice injected
+// on the tool-stripped iteration.
+func requestHasBudgetNotice(req types.ChatRequest) bool {
+	for _, m := range req.Messages {
+		if strings.Contains(m.Content, "Tool budget exhausted") {
+			return true
+		}
+	}
+	return false
+}
+
+// The stripped iteration must explain why tools are gone: without it the
+// model narrates a next step it cannot take and the text-only answer ends
+// the turn mid-task. The Run must also record the budget end so consumers
+// (ACP stopReason) can tell a cap stop from a finished answer.
+func TestWrapUp_StrippedTurnCarriesBudgetNotice(t *testing.T) {
+	fp := &fakeProvider{responses: []*types.ChatResponse{
+		toolCallResponse("c1"),
+		toolCallResponse("c2"),
+		textResponse("final report"),
+	}}
+	loop := &Loop{Config: LoopConfig{SystemPrompt: "You are helpful.",
+		MaxLoopCycles:   10,
+		MaxToolTurns:    2,
+		WrapUpThreshold: 1}, Provider: fp,
+		Registry: tools.NewRegistry(),
+	}
+
+	resp, err := loop.Run(context.Background(), "do the work")
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if resp != "final report" {
+		t.Errorf("response = %q", resp)
+	}
+	if requestHasBudgetNotice(fp.requests[1]) {
+		t.Error("tool-enabled iterations must not carry the budget-exhausted notice")
+	}
+	if !requestHasBudgetNotice(fp.requests[2]) {
+		t.Error("the tool-stripped iteration must explain that tools are unavailable")
+	}
+	if !loop.State.TurnBudgetExhausted {
+		t.Error("a text answer produced after the cap stripped tools must set TurnBudgetExhausted")
+	}
+}
+
+// A model that answers while tools are still available finished on its own:
+// the turn must not be reported as budget-exhausted.
+func TestWrapUp_EarlyFinishIsNotBudgetExhausted(t *testing.T) {
+	fp := &fakeProvider{responses: []*types.ChatResponse{
+		textResponse("done"),
+	}}
+	loop := &Loop{Config: LoopConfig{SystemPrompt: "You are helpful.",
+		MaxLoopCycles:   10,
+		MaxToolTurns:    5,
+		WrapUpThreshold: 1}, Provider: fp,
+		Registry: tools.NewRegistry(),
+	}
+
+	if _, err := loop.Run(context.Background(), "quick question"); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if loop.State.TurnBudgetExhausted {
+		t.Error("an early text answer must not set TurnBudgetExhausted")
+	}
+}

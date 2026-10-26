@@ -101,6 +101,10 @@ type agentSession struct {
 	messages     []types.Message
 	sessionID    string
 	msgIdx       int
+	// turnBudgetExhausted mirrors the last Run's soft tool-turn cap
+	// outcome (tool-stripped final answer or hard iteration limit) so
+	// the ACP server can report max_turn_requests instead of end_turn.
+	turnBudgetExhausted bool
 	// titlePublished tracks the persisted session title (empty until the
 	// first user message derives one). Cached across prompt runs so the
 	// store's one-shot title adoption is known without re-reading; built
@@ -433,6 +437,16 @@ func (s *agentSession) Model() (provider, model string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.providerName, s.modelName
+}
+
+// TurnBudgetExhausted reports whether the last Run ended because a
+// request budget ran out — the soft tool-turn cap stripped tools before
+// the model finished, or the hard iteration limit was reached. ACP maps
+// it to stopReason max_turn_requests so the client can offer a continue.
+func (s *agentSession) TurnBudgetExhausted() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.turnBudgetExhausted
 }
 
 // RunPrompt runs one prompt under a context the session owns: derived

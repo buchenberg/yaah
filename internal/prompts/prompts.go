@@ -67,6 +67,9 @@ var steeringMessageRaw string
 //go:embed wrap_up.md
 var wrapUpMessageRaw string
 
+//go:embed budget_exhausted.md
+var budgetExhaustedMessageRaw string
+
 //go:embed environment_header.md
 var environmentHeaderRaw string
 
@@ -433,6 +436,14 @@ func EvidenceSteerMessage(stale, distinct int) string {
 func WrapUpMessage(count int) string {
 	s := strings.TrimSpace(wrapUpMessageRaw)
 	return strings.ReplaceAll(s, "{{COUNT}}", fmt.Sprint(count))
+}
+
+// BudgetExhaustedMessage returns the notice injected on the iteration
+// after the soft tool-turn cap has stripped tools. It tells the model
+// that no tool can execute, so a narration of the next step is a dead
+// end — the response must be the final report instead.
+func BudgetExhaustedMessage() string {
+	return strings.TrimSpace(budgetExhaustedMessageRaw)
 }
 
 // --- Environment header ---
