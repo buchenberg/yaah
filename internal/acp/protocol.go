@@ -175,9 +175,13 @@ type EnvVariable struct {
 	Value string `json:"value"`
 }
 
-// SessionNewResult is the result of session/new.
+// SessionNewResult is the result of session/new. configOptions carries
+// the session's configuration selectors (the model picker) and is
+// omitted when the session has none to advertise — no model catalog is
+// wired, or discovery returned nothing.
 type SessionNewResult struct {
-	SessionID string `json:"sessionId"`
+	SessionID     string                `json:"sessionId"`
+	ConfigOptions []SessionConfigOption `json:"configOptions,omitempty"`
 }
 
 // === session/load ===

@@ -39,8 +39,8 @@ sub-agents, and prompts all resolve against it.
 |---|---|---|
 | `initialize` | supported | advertises `agentCapabilities.loadSession: true` plus `sessionCapabilities` for `resume`, `list`, `close`, `delete`, and a static catalog of agent-typed `authMethods` (see [Authentication and credentials](#authentication-and-credentials)) |
 | `authenticate` | supported | validates the named auth method and answers `{}`; no credential check, no network call |
-| `session/new` | supported | requires the client's absolute cwd; every call creates a distinct session |
-| `session/load` | supported | resume + replay; see below |
+| `session/new` | supported | requires the client's absolute cwd; every call creates a distinct session; advertises `configOptions` (the model picker) when a model catalog is wired |
+| `session/load` | supported | resume + replay; re-advertises `configOptions` like `session/new`; see below |
 | `session/resume` | supported | re-attach to a persisted session without replaying history |
 | `session/list` | supported | persisted sessions as `SessionInfo` pages (cwd filter, opaque cursor) |
 | `session/close` | supported | cancels in-flight work, frees the session; the id stays loadable in a later process |
@@ -48,6 +48,7 @@ sub-agents, and prompts all resolve against it.
 | `session/prompt` | supported | streams updates, then answers with a `stopReason` |
 | `session/cancel` | supported | notification; cancels the in-flight turn |
 | `session/set_mode` | acknowledged | mode switching is not modeled; the response keeps mode-picker clients from hanging |
+| `session/set_config_option` | supported | the model picker (`configId: "model"`); validates the value against the advertised options, switches the model for subsequent turns, and echoes the recomputed `configOptions` set |
 | `session/update` | supported | variants below |
 | `session/request_permission` | supported | tool approvals delegated to the client |
 
