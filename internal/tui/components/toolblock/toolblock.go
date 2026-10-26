@@ -46,7 +46,7 @@ func Icon(name string) string {
 		return "🎯"
 	case "role":
 		return "🎭"
-	case "memory_search", "memory_add", "memory_update", "memory_delete", "memory_search_sessions":
+	case "memory_search", "memory_add", "memory_update", "memory_delete", "memory_promote", "memory_search_sessions":
 		return "🧠"
 	case "background_process":
 		return "🌀"

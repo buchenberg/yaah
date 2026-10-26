@@ -947,6 +947,19 @@ found, they fall back to FTS5 keyword search. The CLI memory commands
 (`yaah memory add` / `yaah memory search`) load config and set the embedder
 independently (they open their own short-lived DB connections).
 
+### Scope tiers
+
+Every atom carries a `scope`: `global` outlives a session, `session` is
+distilled from one conversation. `memory_search` filters to `global` by
+default, because session atoms are a single conversation's working context and
+must not surface in an unwidened recall. Naming `scope:"session"` reaches atoms
+distilled from earlier conversations — they persist until pruned (30 days
+unused, or an explicitly deleted session) — and `scope:"all"` spans both.
+`all` is a filter, never a stored tier: `memory.NormalizeScope` rejects it on
+write, so no row can be created invisible to a `scope = ?` predicate. A call's
+`scope` argument outranks the tool's instance default, which exists so an
+unwidened search stays global rather than so a search can never be widened.
+
 ### Cosine similarity
 
 ```go

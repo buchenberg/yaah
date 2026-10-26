@@ -47,6 +47,7 @@ var readOnlyWorkspaceTools = []string{
 	"ls",
 	"memory_add",
 	"memory_delete",
+	"memory_promote",
 	"memory_search",
 	"memory_search_sessions",
 	"memory_update",

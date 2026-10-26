@@ -1283,6 +1283,7 @@ func buildSubAgentRegistry(opts taskRunnerOpts, profile subagent.RoleProfile, re
 				// session-scoped atoms by session, and an unlinked atom
 				// would outlive its session forever.
 				reg.Register(&tools.MemoryAddTool{DB: opts.db, SessionID: opts.parentSession})
+				reg.Register(&tools.MemoryPromoteTool{DB: opts.db, SessionID: opts.parentSession})
 			}
 			continue
 		case "memory_search":

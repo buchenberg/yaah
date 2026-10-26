@@ -374,6 +374,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 	if db != nil {
 		toolReg.Register(&tools.MemorySearchTool{DB: db})
 		toolReg.Register(&tools.MemoryAddTool{DB: db})
+		toolReg.Register(&tools.MemoryPromoteTool{DB: db})
 		toolReg.Register(&tools.MemoryDeleteTool{DB: db})
 		toolReg.Register(&tools.MemoryUpdateTool{DB: db})
 		toolReg.Register(&tools.MemorySessionSearchTool{DB: db})
@@ -381,7 +382,7 @@ func newAgentSessionWithOptions(opts SessionOptions, skipMCP, skipOtel bool) (*a
 		// The tools exist but this session has nowhere to put them: the
 		// belt must know the names, or an allowlist that names them reads
 		// as a typo.
-		belt.Know("memory_search", "memory_add", "memory_delete", "memory_update", "memory_search_sessions")
+		belt.Know("memory_search", "memory_add", "memory_delete", "memory_update", "memory_promote", "memory_search_sessions")
 	}
 
 	// --- MCP servers ------------------------------------------------------

@@ -41,7 +41,8 @@ func (d *DB) Stats() (MemoryStats, error) {
 		        COALESCE(SUM(CASE WHEN COALESCE(access_count, 0) = 0 AND COALESCE(accessed_at, 0) = 0 THEN 1 ELSE 0 END), 0),
 		        COALESCE(MIN(created_at), 0),
 		        COALESCE(MAX(created_at), 0)
-		   FROM memory`,
+		   FROM memory
+		  WHERE superseded_by IS NULL`,
 	).Scan(&s.Total, &s.Global, &s.Session, &s.NeverAccessed, &s.OldestCreatedAt, &s.NewestCreatedAt)
 	if err != nil {
 		return MemoryStats{}, fmt.Errorf("memory stats: %w", err)
@@ -88,7 +89,7 @@ func (d *DB) Journey(limit int) ([]JourneyEvent, error) {
 	var events []JourneyEvent
 
 	rows, err := d.sql.Query(
-		`SELECT id, text, created_at FROM memory ORDER BY created_at DESC LIMIT ?`, limit,
+		`SELECT id, text, created_at FROM memory WHERE superseded_by IS NULL ORDER BY created_at DESC LIMIT ?`, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("journey: memories: %w", err)

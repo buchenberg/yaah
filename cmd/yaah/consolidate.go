@@ -61,7 +61,11 @@ Dedupe against existing memory before you write:
    near-duplicate.
 3. If an existing atom is stale or only partially states the fact, call
    memory_update with that atom's id to correct or extend it in place.
-4. Only when nothing existing covers the fact, call memory_add.
+4. If an existing atom is *contradicted* — the world changed, rather than the
+   wording — call memory_add with supersedes: that atom's id. The older claim
+   stays on record, marked superseded, and stops surfacing in recall, so the
+   correction is visible instead of silently overwriting the history.
+5. Only when nothing existing covers the fact, call memory_add.
 
 For every memory_add call:
 - tags: a JSON array that always contains "source:compaction", plus any
