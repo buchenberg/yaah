@@ -52,10 +52,11 @@ func (*FlushEvent) eventMarker() {}
 
 // ToolStartEvent is emitted before a tool begins execution.
 type ToolStartEvent struct {
-	ID     int64  // unique per-execution ID, shared with the matching ToolEndEvent
-	CallID string // provider tool_call id, when the model supplied one
-	Name   string // tool name (e.g. "read", "grep")
-	Args   string // abbreviated arguments for display
+	ID      int64  // unique per-execution ID, shared with the matching ToolEndEvent
+	CallID  string // provider tool_call id, when the model supplied one
+	Name    string // tool name (e.g. "read", "grep")
+	Args    string // abbreviated arguments for display
+	RawArgs string // full, unabbreviated JSON arguments (views derive file locations from it)
 }
 
 func (*ToolStartEvent) eventMarker() {}
@@ -66,6 +67,7 @@ type ToolEndEvent struct {
 	CallID   string        // provider tool_call id, when the model supplied one
 	Name     string        // tool name
 	Args     string        // abbreviated arguments
+	RawArgs  string        // full, unabbreviated JSON arguments (edit-class views derive diffs from it)
 	Result   string        // truncated result
 	Duration time.Duration // execution duration
 	Error    string        // error message (empty on success)

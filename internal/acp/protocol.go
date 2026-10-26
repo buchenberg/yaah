@@ -1,16 +1,19 @@
 // Package acp implements an agent (server) for the Agent Client
 // Protocol v1 (https://agentclientprotocol.com): newline-delimited
 // JSON-RPC 2.0 over stdio, the agent-event-to-update view translator,
-// the control-channel policy for a headless client, and the
-// session/request_permission bridge for tool approvals.
+// the control-channel policy for a headless client, the
+// session/request_permission bridge for tool approvals with the four
+// permission option kinds (allow/reject × once/always, remembered per
+// session), and the elicitation/create bridge for question-tool
+// prompts.
 //
 // Supported surface: initialize, authenticate, session/new, session/load,
 // session/prompt, session/cancel, session/set_mode,
 // session/set_config_option, session/update notifications with
 // the agent_message_chunk, agent_thought_chunk, user_message_chunk
 // (replay), tool_call, tool_call_update, plan, and usage_update
-// variants, and session/request_permission back to the client for
-// tool approvals.
+// variants. File-modifying tool calls carry diff content blocks and
+// locations.
 package acp
 
 import "encoding/json"
@@ -53,12 +56,30 @@ type InitializeParams struct {
 	ClientInfo         *ImplementationInfo `json:"clientInfo,omitempty"`
 }
 
-// ClientCaps are the capabilities the client advertised. Parsed so the
-// server can decide, e.g., whether session/request_permission answers
-// can be expected to include structured UI; nothing yet gates on them.
+// ClientCaps are the capabilities the client advertised. The server
+// gates behavior on them: session/request_permission answers are only
+// expected from connected clients, and question-tool prompts route
+// through elicitation/create only when the client advertised
+// elicitation.form.
 type ClientCaps struct {
-	Fs       *FSCaps `json:"fs,omitempty"`
-	Terminal bool    `json:"terminal,omitempty"`
+	Fs          *FSCaps          `json:"fs,omitempty"`
+	Terminal    bool             `json:"terminal,omitempty"`
+	Elicitation *ElicitationCaps `json:"elicitation,omitempty"`
+	Auth        *ClientAuthCaps  `json:"auth,omitempty"`
+}
+
+// ElicitationCaps is the client's elicitation capability set. The spec
+// uses an empty object {} for "supported"; the bool form matches most
+// real payloads (Zed sends {"elicitation":{"form":true,"url":true}}).
+type ElicitationCaps struct {
+	Form *bool `json:"form,omitempty"`
+	URL  *bool `json:"url,omitempty"`
+}
+
+// ClientAuthCaps is the client's auth-method capability set (only the
+// terminal variant is opt-in).
+type ClientAuthCaps struct {
+	Terminal bool `json:"terminal,omitempty"`
 }
 
 // FSCaps is the client's file-system capability set.
@@ -363,26 +384,49 @@ type ChunkUpdate struct {
 	Content       ContentBlock `json:"content"`
 }
 
-// UpdateContent is one block of tool-call content (ACP type "content"
-// wraps a standard content block; "diff" and "terminal" exist in the
-// schema but are not produced by yaah yet).
+// UpdateContent is one block of tool-call content. Two variants exist:
+// Type "content" wraps a standard content block (the result text), and
+// Type "diff" describes a file modification (Path plus the before/after
+// text the client renders as a file diff).
 type UpdateContent struct {
-	Type    string       `json:"type"`
-	Content ContentBlock `json:"content"`
+	Type    string        `json:"type"`
+	Content *ContentBlock `json:"content,omitempty"`
+	Diff    *DiffBlock    `json:"diff,omitempty"`
+}
+
+// DiffBlock is a diff content block: the modified file's absolute path
+// and its content before and after. OldText is nil for a newly created
+// file ("content": null on the wire means "no previous text"); NewText
+// is always the post-modification content.
+type DiffBlock struct {
+	Path    string  `json:"path"`
+	OldText *string `json:"oldText,omitempty"`
+	NewText string  `json:"newText"`
+}
+
+// ToolCallLocation points the client at a file touched by the tool
+// call, so it can offer jump-to-file navigation. Line is 1-based and
+// optional (0 means the location is the whole file).
+type ToolCallLocation struct {
+	Path string `json:"path"`
+	Line int    `json:"line,omitempty"`
 }
 
 // ToolCallUpdate is the payload for tool_call and tool_call_update.
 // toolCallId is always set; on the initial tool_call report title and
 // status are also set, and the toolCallId correlates later updates.
+// locations replaces the client's jump-to-file list for the call;
+// content replaces the call's displayed content.
 type ToolCallUpdate struct {
-	SessionUpdate string          `json:"sessionUpdate"`
-	ToolCallID    string          `json:"toolCallId"`
-	Title         string          `json:"title,omitempty"`
-	Name          string          `json:"name,omitempty"`
-	Kind          string          `json:"kind,omitempty"`
-	Status        string          `json:"status,omitempty"`
-	Content       []UpdateContent `json:"content,omitempty"`
-	RawInput      json.RawMessage `json:"rawInput,omitempty"`
+	SessionUpdate string             `json:"sessionUpdate"`
+	ToolCallID    string             `json:"toolCallId"`
+	Title         string             `json:"title,omitempty"`
+	Name          string             `json:"name,omitempty"`
+	Kind          string             `json:"kind,omitempty"`
+	Status        string             `json:"status,omitempty"`
+	Content       []UpdateContent    `json:"content,omitempty"`
+	Locations     []ToolCallLocation `json:"locations,omitempty"`
+	RawInput      json.RawMessage    `json:"rawInput,omitempty"`
 }
 
 // PlanEntry is one entry of a plan update.
@@ -398,11 +442,23 @@ type PlanUpdate struct {
 	Entries       []PlanEntry `json:"entries"`
 }
 
-// UsageUpdate is the payload for the usage_update variant.
+// UsageUpdate is the payload for the usage_update variant: context
+// occupancy (used/size) plus, when the turn's tally is known, the
+// cumulative session cost and a _meta bag carrying the engine's token
+// counts, the finish reason, and the response model.
 type UsageUpdate struct {
-	SessionUpdate string `json:"sessionUpdate"`
-	Used          int    `json:"used"`
-	Size          int    `json:"size"`
+	SessionUpdate string          `json:"sessionUpdate"`
+	Used          int             `json:"used"`
+	Size          int             `json:"size"`
+	Cost          *UsageCost      `json:"cost,omitempty"`
+	Meta          json.RawMessage `json:"_meta,omitempty"`
+}
+
+// UsageCost is the cumulative session cost block of usage_update.
+// Amount is a decimal in the given ISO 4217 currency.
+type UsageCost struct {
+	Amount   float64 `json:"amount"`
+	Currency string  `json:"currency"`
 }
 
 // SessionInfoUpdate is a partial session-metadata update (schema: all
@@ -471,6 +527,38 @@ type SetModeParams struct {
 type CancelParams struct {
 	SessionID string `json:"sessionId"`
 }
+
+// === elicitation/create (client method) ===
+
+// ElicitationParams are the params of elicitation/create: the agent's
+// request for structured user input. Only the form mode is produced
+// (question-tool prompts); url mode needs OAuth flows and is not wired.
+// The session binding is required here, matching the spec's
+// Session alternative.
+type ElicitationParams struct {
+	Message         string          `json:"message"`
+	Mode            string          `json:"mode"` // form | url
+	SessionID       string          `json:"sessionId"`
+	RequestedSchema json.RawMessage `json:"requestedSchema"`
+}
+
+// Elicitation mode.
+const ElicitationModeForm = "form"
+
+// ElicitationResult is the client's answer to an elicitation request.
+// Action is accept | decline | cancel; content, when present, matches
+// the requested schema (parsed leniently as raw JSON).
+type ElicitationResult struct {
+	Action  string          `json:"action"`
+	Content json.RawMessage `json:"content,omitempty"`
+}
+
+// Elicitation response actions.
+const (
+	ElicitationAccept  = "accept"
+	ElicitationDecline = "decline"
+	ElicitationCancel  = "cancel"
+)
 
 // === session/set_config_option ===
 

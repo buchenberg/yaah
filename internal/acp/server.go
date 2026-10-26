@@ -38,6 +38,11 @@ var ErrInvalidCursor = errors.New("invalid cursor")
 // every other error is a real store failure and is reported.
 var ErrNoSession = errors.New("unknown session")
 
+// defaultPermissionTimeout bounds how long a session/request_permission
+// or elicitation/create wait for the client when PermissionTimeout is
+// not set (the same bound approval.go and elicitation.go apply).
+const defaultPermissionTimeout = 5 * time.Minute
+
 // Session is the narrow capability the ACP server needs from an agent
 // session. *agentSession in cmd/yaah satisfies this interface.
 type Session interface {
@@ -123,8 +128,10 @@ type Server struct {
 	DeleteSession func(id string) error
 
 	// AutoAnswerQuestions, when true, answers question-tool prompts
-	// with the first option. ACP has no interactive question surface in
-	// Tier 1 (elicitation is a future capability). Default true.
+	// with the first option. Used as the fallback when the client did
+	// not advertise elicitation.form or no connection is live (the
+	// connected-client path routes the question modal back
+	// interactively). Default true.
 	AutoAnswerQuestions bool
 
 	// AutoContinue, when true, answers control.Continue messages with
@@ -134,6 +141,17 @@ type Server struct {
 	// PermissionTimeout bounds how long session/request_permission
 	// waits for the client's decision. Default 5 minutes.
 	PermissionTimeout time.Duration
+
+	// conn is the live connection the server is serving over. Set once
+	// when Run starts; server-initiated requests
+	// (session/request_permission, elicitation/create) flow through it.
+	// Nil means no routing is possible (never started, or a direct
+	// dispatch in tests without a connection).
+	conn *connection
+
+	// clientCaps is the capability set the client advertised during
+	// initialize; nil until then. It gates the elicitation path.
+	clientCaps *ClientCaps
 
 	// mu guards session identity, run state, and the pending-request
 	// map. The agent session itself has its own locking.
@@ -161,6 +179,18 @@ type sessionState struct {
 	// calls were already announced by a permission request, so the
 	// later execution update reuses the same toolCallId.
 	view *ViewWithWrite
+
+	// prunCtx is the context of the prompt currently running in this
+	// session (nil outside a turn). Server-initiated requests that must
+	// abandon with the turn — elicitation for question prompts — join
+	// on it the way the permission bridge does.
+	prunCtx context.Context
+
+	// permAllow / permDeny hold this session's allow_always /
+	// reject_always permission decisions, keyed by tool name. Per
+	// session, never persisted: a fresh session re-asks.
+	permAllow map[string]bool
+	permDeny  map[string]bool
 }
 
 // runningPrompt tracks the single in-flight turn. cancel aborts it;
@@ -821,10 +851,14 @@ func (s *Server) handleSessionDelete(
 	respOK(msg.ID, nil)
 }
 
-// installQuestionHandler routes question-tool prompts to the client as
-// status text and auto-answers with the first option when enabled.
-// Called once after the underlying session is built; the closure
-// captures its session so a prompt can never cross sessions.
+// installQuestionHandler routes question-tool prompts to the client.
+// When the client advertised elicitation.form and a connection is
+// live, each question becomes a form elicitation and the chosen
+// answer(s) reach the agent (withheld answers stay empty — never
+// auto-answered over the user's decision); otherwise the question
+// surfaces as status text and auto-answers with the first option when
+// enabled. Called once after the underlying session is built; the
+// closure captures its session so a prompt can never cross sessions.
 func (s *Server) installQuestionHandler(st *sessionState) {
 	if st == nil || st.sess == nil {
 		return
@@ -840,6 +874,20 @@ func (s *Server) installQuestionHandler(st *sessionState) {
 	qt.Handler = func(entries []tools.QuestionEntry) []string {
 		var answers []string
 		for _, e := range entries {
+			answer, asked, accepted := s.elicitAnswer(st, e)
+			switch {
+			case asked && accepted:
+				answers = append(answers, fmt.Sprintf("%s: %s", e.Header, answer))
+				continue
+			case asked && !accepted:
+				// The user was offered the modal and withheld an answer
+				// (decline, cancel, timeout): record the empty choice, do
+				// not auto-answer over their decision.
+				answers = append(answers, e.Header+": ")
+				continue
+			}
+			// Un-available path: legacy fallback — status prose and
+			// answering per AutoAnswerQuestions (headless/no-capability).
 			msg := fmt.Sprintf("❓ %s\n\n%s\n\n", e.Header, e.Question)
 			for i, o := range e.Options {
 				msg += fmt.Sprintf("  [%d] %s — %s\n", i+1, o.Label, o.Description)
@@ -892,6 +940,9 @@ func (s *Server) Run(ctx context.Context) error {
 	defer stop()
 
 	c := &connection{w: s.stdout, logf: s.logf}
+	s.mu.Lock()
+	s.conn = c
+	s.mu.Unlock()
 
 	sendUpdate := func(sessionID string, update any) {
 		raw, err := json.Marshal(update)
@@ -1063,6 +1114,12 @@ func (s *Server) dispatch(
 			if len(msg.Params) > 0 {
 				_ = json.Unmarshal(msg.Params, &params)
 			}
+			// Capability-driven behavior is resolved from the stored set:
+			// elicitation.form routes question prompts to elicitation/
+			// create; nothing else gates yet.
+			s.mu.Lock()
+			s.clientCaps = params.ClientCapabilities
+			s.mu.Unlock()
 			// clientInfo is optional in ACP v1: a minimal client sends
 			// only protocolVersion, so never dereference it unguarded.
 			if params.ClientInfo != nil {
@@ -1329,6 +1386,7 @@ func (s *Server) handlePrompt(
 	st.run = &runningPrompt{cancel: cancel, done: runDone}
 	st.ctrl = ctrlCh
 	st.view = view
+	st.prunCtx = promptCtx
 	sess := st.sess
 	s.mu.Unlock()
 
@@ -1392,6 +1450,7 @@ func (s *Server) handlePrompt(
 		st.run = &runningPrompt{done: runDone}
 		st.ctrl = nil
 		st.view = nil
+		st.prunCtx = nil
 		s.mu.Unlock()
 		close(flush)
 		<-ctrlDone

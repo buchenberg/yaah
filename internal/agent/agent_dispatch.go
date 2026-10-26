@@ -71,7 +71,7 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 
 	if l.broker != nil {
 		observability.RecordToolGoroutine(ctx, d.call.Function.Name, "publish_start")
-		l.broker.PublishMustDeliver(&events.ToolStartEvent{ID: d.toolID, CallID: d.call.ID, Name: d.call.Function.Name, Args: d.abbreviated})
+		l.broker.PublishMustDeliver(&events.ToolStartEvent{ID: d.toolID, CallID: d.call.ID, Name: d.call.Function.Name, Args: d.abbreviated, RawArgs: d.call.Function.Arguments})
 		observability.RecordToolGoroutine(ctx, d.call.Function.Name, "published")
 	}
 
@@ -181,6 +181,7 @@ func (d *toolDispatch) run(ctx context.Context, results chan<- toolExecResult) {
 			CallID:   d.call.ID,
 			Name:     d.call.Function.Name,
 			Args:     d.abbreviated,
+			RawArgs:  d.call.Function.Arguments,
 			Result:   res,
 			Duration: duration,
 		}

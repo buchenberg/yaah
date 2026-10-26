@@ -51,6 +51,12 @@ func toolCallID(id int64) string { return "t" + strconv.FormatInt(id, 10) }
 // SendTo converts evt to an update and passes it to send, tagging it
 // with the given session ID. Events with no ACP representation are
 // dropped.
+// toolEditClass reports whether a tool name describes a file
+// modification whose arguments the client can render as a diff.
+func isEditClassTool(name string) bool {
+	return name == "write" || name == "edit"
+}
+
 func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 	switch e := evt.(type) {
 	case *agent.TokenDeltaEvent:
@@ -94,6 +100,13 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 		} else {
 			call.Title = e.Name
 		}
+		// Jump-to-file location for file-modifying calls, available
+		// while the tool is still running.
+		if isEditClassTool(e.Name) {
+			if locs, _ := diffWalker(e.Name, e.RawArgs); len(locs) > 0 {
+				call.Locations = locs
+			}
+		}
 		send(sessionID, call)
 	case *agent.ToolEndEvent:
 		callID := e.CallID
@@ -106,14 +119,23 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 			Status:        StatusCompleted,
 			Content: []UpdateContent{{
 				Type:    "content",
-				Content: textContent(e.Result),
+				Content: &ContentBlock{Type: "text", Text: e.Result},
 			}},
+		}
+		// File-modifying calls surface their change as a diff block so
+		// rendering clients (Zed) show a file diff instead of raw
+		// arguments; the plain result text keeps its own block.
+		if isEditClassTool(e.Name) && e.Error == "" {
+			if locs, diffs := diffWalker(e.Name, e.RawArgs); len(diffs) > 0 {
+				update.Locations = locs
+				update.Content = append(diffs, update.Content...)
+			}
 		}
 		if e.Error != "" {
 			update.Status = StatusFailed
 			update.Content = []UpdateContent{{
 				Type:    "content",
-				Content: textContent(e.Error),
+				Content: &ContentBlock{Type: "text", Text: e.Error},
 			}}
 		}
 		send(sessionID, update)
@@ -165,8 +187,28 @@ func (v *View) SendTo(sessionID string, send updateSender, evt agent.Event) {
 			UpdatedAt:     time.Unix(e.UpdatedAt, 0).UTC().Format(time.RFC3339),
 		})
 	case *agent.DoneEvent:
-		// Intentionally ignored: ACP signals turn completion via the
-		// session/prompt response stopReason, not the agent's DoneEvent.
+		// End-of-turn usage: the context occupancy mirrors the
+		// control.ContextInfo path, and the _meta bag carries the
+		// engine's cumulative token tally, finish reason, and response
+		// model. The turn completion itself still rides the
+		// session/prompt response stopReason, not DoneEvent. Cumulative
+		// cost is not emitted: yaah has no pricing source outside the
+		// TUI's estimate table, and a wrong cost renders worse than no
+		// cost (the field is optional in the schema).
+		used := e.LastPromptTokensInclusive
+		if used == 0 {
+			used = e.ContextTokens
+		}
+		size := e.ContextWindow
+		if size <= 0 {
+			size = used
+		}
+		send(sessionID, UsageUpdate{
+			SessionUpdate: UpdateUsageUpdate,
+			Used:          used,
+			Size:          size,
+			Meta:          usageMeta(e.Usage, e.FinishReason, e.ResponseModel),
+		})
 	default:
 		return
 	}
