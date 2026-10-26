@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.104.2](https://github.com/buchenberg/yaah/compare/v0.104.1...v0.104.2) (2026-10-26)
+
+
+### Bug Fixes
+
+* **cli:** join memory args, document '--' boundaries, scope agent flags, unify serve ([#587](https://github.com/buchenberg/yaah/issues/587)) ([e8d57d2](https://github.com/buchenberg/yaah/commit/e8d57d2981f8c28ec32c94402925811f9a97e711))
+
 ## [0.104.1](https://github.com/buchenberg/yaah/compare/v0.104.0...v0.104.1) (2026-10-26)
 
 
