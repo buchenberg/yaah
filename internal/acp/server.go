@@ -53,6 +53,13 @@ type Session interface {
 	// History returns the session's conversation state for replay on
 	// session/load (the conversation the restored loop carries).
 	History() []types.Message
+	// SetModel switches the provider and model subsequent turns use.
+	// An in-flight turn finishes on the model it started with.
+	SetModel(provider, model string)
+	// ProviderName and ModelName report the current selection, which the
+	// ACP server renders as the model picker's currentValue.
+	ProviderName() string
+	ModelName() string
 	Close()
 	ToolReg() *tools.Registry
 }
@@ -82,6 +89,7 @@ type Server struct {
 	stdin      io.Reader
 	stdout     io.Writer
 	newSession SessionFactory
+	catalog    ModelCatalog
 
 	// ListSessions, when non-nil, backs session/list
 	// (sessionCapabilities.list). It receives the canonical absolute cwd
@@ -96,6 +104,16 @@ type Server struct {
 	// unknown id, which succeeds silently per spec; other errors are
 	// internal errors and keep the session listed.
 	DeleteSession func(id string) error
+
+	// ModelCatalog, when non-nil, lists the models a client may switch
+	// between. It backs the model picker: session/set_config_option
+	// validates the requested value against it and echoes the recomputed
+	// set, and the same helper renders the initial state for session/new.
+	// Nil or empty means no picker is advertised at all (configOptions is
+	// omitted) — session builds never fail because discovery is
+	// unavailable. It is called per request, so a later provider switch is
+	// reflected without restarting the server.
+	ModelCatalog func() []ModelOption
 
 	// AutoAnswerQuestions, when true, answers question-tool prompts
 	// with the first option. ACP has no interactive question surface in
@@ -149,14 +167,16 @@ type runningPrompt struct {
 
 // NewServer creates an ACP server. build constructs one underlying
 // agent session per session/new or session/load. logf receives
-// diagnostics (may be nil).
-func NewServer(build SessionFactory, version string, logf func(format string, args ...any)) *Server {
+// diagnostics (may be nil). catalog supplies the models the client may
+// pick from; it may be nil, which leaves the model picker off.
+func NewServer(build SessionFactory, version string, logf func(format string, args ...any), catalog ModelCatalog) *Server {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
 	return &Server{
 		version:             version,
 		logf:                logf,
+		catalog:             catalog,
 		stdin:               os.Stdin,
 		stdout:              os.Stdout,
 		newSession:          build,
@@ -510,7 +530,7 @@ func (s *Server) handleSessionLoad(
 			return
 		}
 		s.replayConversation(st, sendUpdate)
-		respOK(msg.ID, nil)
+		respOK(msg.ID, SessionLoadResult{})
 		return
 	}
 
@@ -524,7 +544,7 @@ func (s *Server) handleSessionLoad(
 		return
 	}
 	s.replayConversation(st, sendUpdate)
-	respOK(msg.ID, nil)
+	respOK(msg.ID, SessionLoadResult{})
 }
 
 // sameDir compares two canonical cwds case-insensitively on Windows,
@@ -1083,6 +1103,9 @@ func (s *Server) dispatch(
 		case "session/set_mode":
 			s.handleSetMode(msg, respOK, respErr)
 
+		case "session/set_config_option":
+			s.handleSetConfigOption(msg, respOK, respErr)
+
 		default:
 			respErr(msg.ID, codeMethodNotFound, "method not found: "+msg.Method)
 		}
@@ -1156,6 +1179,74 @@ func (s *Server) handleSetMode(
 		return
 	}
 	respOK(msg.ID, nil)
+}
+
+// modelCatalog returns the models discovery reports for the picker, or
+// nil when no catalog is wired (configOptions is then omitted entirely).
+func (s *Server) modelCatalog() []ModelOption {
+	if s.ModelCatalog == nil {
+		return nil
+	}
+	return s.ModelCatalog()
+}
+
+// handleSetConfigOption switches one session config option, which is
+// the model picker and nothing else: any other configId is rejected
+// rather than silently accepted. The value must be one of the values
+// the session currently advertises (a client echoes back exactly what
+// it was given); an unknown value leaves the session untouched and is
+// invalid params. The response echoes the whole configOptions set
+// recomputed from the new selection, as the spec requires.
+func (s *Server) handleSetConfigOption(
+	msg Message,
+	respOK func(id json.RawMessage, result any),
+	respErr func(id json.RawMessage, code int, message string),
+) {
+	var p SetConfigOptionParams
+	if len(msg.Params) > 0 {
+		if err := json.Unmarshal(msg.Params, &p); err != nil {
+			respErr(msg.ID, codeInvalidParams, "invalid params: "+err.Error())
+			return
+		}
+	}
+	if p.SessionID == "" {
+		respErr(msg.ID, codeInvalidParams, "sessionId is required")
+		return
+	}
+	s.mu.Lock()
+	st, ok := s.sessions[p.SessionID]
+	s.mu.Unlock()
+	if !ok {
+		respErr(msg.ID, codeInvalidParams, "unknown session id (call session/new first)")
+		return
+	}
+	if p.ConfigID != ConfigOptionModelID {
+		respErr(msg.ID, codeInvalidParams, fmt.Sprintf("unsupported configId %q (supported: %s)", p.ConfigID, ConfigOptionModelID))
+		return
+	}
+	catalog := s.modelCatalog()
+	// Validate against the options the session advertises right now,
+	// not against the raw catalog: the picker also lists a current model
+	// discovery no longer reports, and re-selecting it must stay valid.
+	advertised := buildModelConfigOptions(catalog, st.sess.ProviderName(), st.sess.ModelName())
+	if advertised == nil {
+		respErr(msg.ID, codeInvalidParams, "the model picker is not available: no models are configured")
+		return
+	}
+	if !configOptionHasValue(advertised, ConfigOptionModelID, p.Value) {
+		respErr(msg.ID, codeInvalidParams, fmt.Sprintf("unknown value %q for configId %q", p.Value, p.ConfigID))
+		return
+	}
+	provider, model, split := splitModelValue(p.Value)
+	if !split {
+		respErr(msg.ID, codeInvalidParams, fmt.Sprintf("invalid value %q: want \"<provider>/<model>\"", p.Value))
+		return
+	}
+	st.sess.SetModel(provider, model)
+	s.logf("session %s: model set to %s/%s", st.id, provider, model)
+	respOK(msg.ID, SetConfigOptionResult{
+		ConfigOptions: buildModelConfigOptions(catalog, provider, model),
+	})
 }
 
 // handlePrompt runs one prompt turn. Per ACP v1, the request stays

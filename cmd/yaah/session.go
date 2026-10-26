@@ -426,6 +426,15 @@ func (s *agentSession) ProviderName() string {
 func (s *agentSession) ModelName() string          { s.mu.RLock(); defer s.mu.RUnlock(); return s.modelName }
 func (s *agentSession) MCPInfos() []mcp.ServerInfo { return s.mcpInfos }
 
+// Model reports the provider and model the session currently runs on.
+// The ACP server reads it to publish the model picker's current value;
+// it is the pair SetModel last installed.
+func (s *agentSession) Model() (provider, model string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.providerName, s.modelName
+}
+
 // RunPrompt runs one prompt under a context the session owns: derived
 // from the caller's, so the frontends' own cancels (TUI abort, serve's
 // signal context) compose, but with a session-held cancel that

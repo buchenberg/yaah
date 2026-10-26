@@ -5,7 +5,8 @@
 // session/request_permission bridge for tool approvals.
 //
 // Supported surface: initialize, authenticate, session/new, session/load,
-// session/prompt, session/cancel, session/set_mode, session/update notifications with
+// session/prompt, session/cancel, session/set_mode,
+// session/set_config_option, session/update notifications with
 // the agent_message_chunk, agent_thought_chunk, user_message_chunk
 // (replay), tool_call, tool_call_update, plan, and usage_update
 // variants, and session/request_permission back to the client for
@@ -89,8 +90,10 @@ type InitializeResult struct {
 // conversation from the SQLite session store (internal/memory);
 // Session is advertised with the lifecycle methods the server can
 // actually serve (below). promptCapabilities extras, MCP transports,
-// additionalDirectories, and session modes/configOptions are
-// unsupported (Tier 3).
+// additionalDirectories, and session modes are unsupported (Tier 3);
+// configOptions are not a capability — they ride on the session
+// results and session/set_config_option, and are emitted only when a
+// model catalog is wired (see Server.ModelCatalog).
 type AgentCaps struct {
 	LoadSession bool         `json:"loadSession,omitempty"`
 	Session     *SessionCaps `json:"sessionCapabilities,omitempty"`
@@ -190,6 +193,14 @@ type SessionLoadParams struct {
 	SessionID  string         `json:"sessionId"`
 	Cwd        string         `json:"cwd,omitempty"`
 	McpServers []McpServerRef `json:"mcpServers,omitempty"`
+}
+
+// SessionLoadResult is the result of session/load. Attaching to a
+// persisted conversation re-advertises its configOptions exactly like
+// session/new, so a client restored into an existing conversation shows
+// the same model picker without a separate request.
+type SessionLoadResult struct {
+	ConfigOptions []SessionConfigOption `json:"configOptions,omitempty"`
 }
 
 // === session/list ===
@@ -451,3 +462,70 @@ type SetModeParams struct {
 type CancelParams struct {
 	SessionID string `json:"sessionId"`
 }
+
+// === session/set_config_option ===
+
+// SetConfigOptionParams are the params of session/set_config_option:
+// configId names one of the session's configOptions, and value is one
+// of that option's values. The model picker is yaah's only config
+// option, and its values are "<provider>/<model>".
+//
+// value is a string, not the spec's string|boolean union: yaah
+// advertises select options only, so a boolean value is a client error
+// and fails decoding as invalid params.
+type SetConfigOptionParams struct {
+	SessionID string `json:"sessionId"`
+	ConfigID  string `json:"configId"`
+	Value     string `json:"value"`
+}
+
+// SetConfigOptionResult is the result of session/set_config_option: the
+// session's whole configOptions set with currentValue updated, so the
+// client re-renders every picker from one response. The field is not
+// omitempty — the spec requires it — but it is nil when no catalog is
+// wired (the same shape session/new reports).
+type SetConfigOptionResult struct {
+	ConfigOptions []SessionConfigOption `json:"configOptions"`
+}
+
+// SessionConfigOption is one session configuration option: a `select`
+// of a single current value, keyed by id. yaah advertises exactly one
+// (the model picker) and only when a model catalog is wired.
+//
+// The wire shape flattens the kind into the option, per the spec: id,
+// name, description and category alongside type="select",
+// currentValue and options.
+type SessionConfigOption struct {
+	ID           string                      `json:"id"`
+	Name         string                      `json:"name"`
+	Description  string                      `json:"description,omitempty"`
+	Category     string                      `json:"category,omitempty"`
+	Type         string                      `json:"type"`
+	CurrentValue string                      `json:"currentValue"`
+	Options      []SessionConfigSelectOption `json:"options"`
+}
+
+// SessionConfigSelectOption is one selectable value of a select-style
+// config option. value is what session/set_config_option must echo
+// back; name is the human label.
+type SessionConfigSelectOption struct {
+	Value       string `json:"value"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+// Config option types, categories, and the id of the model picker.
+const (
+	// ConfigOptionTypeSelect is the only type yaah emits. The spec's
+	// "boolean" type requires the client to advertise
+	// session.configOptions.boolean, which yaah never emits.
+	ConfigOptionTypeSelect = "select"
+
+	// ConfigOptionCategoryModel is the spec's reserved category for a
+	// model selector; clients use it for placement and shortcuts.
+	ConfigOptionCategoryModel = "model"
+
+	// ConfigOptionModelID is the id of the model picker: the only
+	// configId session/set_config_option accepts.
+	ConfigOptionModelID = "model"
+)
