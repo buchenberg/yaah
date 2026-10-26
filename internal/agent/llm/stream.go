@@ -51,6 +51,17 @@ func (c *Client) runStream(ctx context.Context, sp StreamProvider, req types.Cha
 	var reasoning strings.Builder
 	var signature strings.Builder
 	var dsmlFilter dsmlTokenFilter
+	// A tail the filter holds back still belongs to the view, even when the
+	// stream ends mid-tag: deferring the release covers every exit path,
+	// including error and cancellation.
+	defer func() {
+		if c.OnToken == nil {
+			return
+		}
+		if tail := dsmlFilter.flush(); tail != "" {
+			c.OnToken(tail)
+		}
+	}()
 	toolCallMap := make(map[int]*types.ToolCall)
 	var finishReason string
 	var responseModel string

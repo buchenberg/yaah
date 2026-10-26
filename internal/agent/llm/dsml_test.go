@@ -540,3 +540,86 @@ func TestDSMLQuotedExamplesStayProse(t *testing.T) {
 		}
 	})
 }
+
+// TestDSMLAttributeSpellings covers attribute quoting variants. When a call can
+// be parsed it is dispatched rather than rejecting the whole turn, so a
+// near-miss spelling costs nothing.
+func TestDSMLAttributeSpellings(t *testing.T) {
+	bar := "\uFF5C\uFF5CDSML\uFF5C\uFF5C"
+	wrap := func(inner string) string {
+		return "<" + bar + " calls>" + inner + "</" + bar + " calls>"
+	}
+	invoke := func(attr, body string) string {
+		return "<" + bar + " invoke " + attr + ">" + body + "</" + bar + " invoke>"
+	}
+	param := func(attr, val string) string {
+		return "<" + bar + " parameter " + attr + ">" + val + "</" + bar + " parameter>"
+	}
+
+	t.Run("single quoted", func(t *testing.T) {
+		content := wrap(invoke(`name='git'`, param(`name='action' string='true'`, "status")))
+		_, calls, rejected, ok := parseDSMLToolCalls(content, new(int))
+		if !ok || len(rejected) != 0 {
+			t.Fatalf("ok=%v rejected=%v", ok, rejected)
+		}
+		if len(calls) != 1 || calls[0].Function.Name != "git" {
+			t.Fatalf("calls=%+v", calls)
+		}
+		if calls[0].Function.Arguments != `{"action":"status"}` {
+			t.Fatalf("args=%s", calls[0].Function.Arguments)
+		}
+	})
+
+	t.Run("bare", func(t *testing.T) {
+		content := wrap(invoke(`name=git`, param(`name=action`, "status")))
+		_, calls, rejected, ok := parseDSMLToolCalls(content, new(int))
+		if !ok || len(rejected) != 0 {
+			t.Fatalf("ok=%v rejected=%v", ok, rejected)
+		}
+		if len(calls) != 1 || calls[0].Function.Name != "git" {
+			t.Fatalf("calls=%+v", calls)
+		}
+		if calls[0].Function.Arguments != `{"action":"status"}` {
+			t.Fatalf("args=%s", calls[0].Function.Arguments)
+		}
+	})
+
+	t.Run("bare numeric parameter", func(t *testing.T) {
+		content := wrap(invoke("name=read", param("name=limit string=false", "25")))
+		_, calls, _, ok := parseDSMLToolCalls(content, new(int))
+		if !ok || len(calls) != 1 {
+			t.Fatalf("ok=%v calls=%d", ok, len(calls))
+		}
+		if calls[0].Function.Arguments != `{"limit":25}` {
+			t.Fatalf("args=%s", calls[0].Function.Arguments)
+		}
+	})
+}
+
+// TestDSMLTokenFilterFlush pins the end-of-stream release: a tail held back as
+// a possible tag must reach the view once the stream ends, and an unterminated
+// block must not.
+func TestDSMLTokenFilterFlush(t *testing.T) {
+	t.Run("held partial tag is released on flush", func(t *testing.T) {
+		var f dsmlTokenFilter
+		if got := f.filterToken("done <"); got != "done " {
+			t.Fatalf("expected the partial tag to be held, got %q", got)
+		}
+		if got := f.flush(); got != "<" {
+			t.Fatalf("expected flush to release the held tail, got %q", got)
+		}
+		if got := f.flush(); got != "" {
+			t.Fatalf("flush must be idempotent, got %q", got)
+		}
+	})
+
+	t.Run("unterminated block is dropped on flush", func(t *testing.T) {
+		var f dsmlTokenFilter
+		if got := f.filterToken("<\uFF5C\uFF5CDSML\uFF5C\uFF5C calls>"); got != "" {
+			t.Fatalf("expected suppression, got %q", got)
+		}
+		if got := f.flush(); got != "" {
+			t.Fatalf("expected incomplete markup to be dropped, got %q", got)
+		}
+	})
+}
