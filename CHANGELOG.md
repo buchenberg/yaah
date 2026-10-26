@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.104.1](https://github.com/buchenberg/yaah/compare/v0.104.0...v0.104.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* **acp:** report turn-budget stops and explain stripped tools ([#584](https://github.com/buchenberg/yaah/issues/584)) ([bb4213f](https://github.com/buchenberg/yaah/commit/bb4213f2dfb1f53e7aa9b81d9fadacc67cd2e591))
+
 ## [0.104.0](https://github.com/buchenberg/yaah/compare/v0.103.3...v0.104.0) (2026-10-26)
 
 
