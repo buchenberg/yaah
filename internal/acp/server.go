@@ -351,8 +351,9 @@ func (s *Server) buildSession(opts BuildOptions, expectedID string) (*sessionSta
 // handleSessionNew creates a fresh conversation for the requested cwd
 // and returns its ACP id. Every call builds a new session: session ids
 // are unique per created session, and independent sessions may coexist
-// in one process.
-func (s *Server) handleSessionNew(msg Message, respOK func(id json.RawMessage, result any), respErr func(id json.RawMessage, code int, message string)) {
+// in one process. ctx bounds the model-catalog wait so a slow provider
+// discovery is abandoned when the server shuts down.
+func (s *Server) handleSessionNew(ctx context.Context, msg Message, respOK func(id json.RawMessage, result any), respErr func(id json.RawMessage, code int, message string)) {
 	var p SessionNewParams
 	if len(msg.Params) > 0 {
 		if err := json.Unmarshal(msg.Params, &p); err != nil {
@@ -377,7 +378,7 @@ func (s *Server) handleSessionNew(msg Message, respOK func(id json.RawMessage, r
 	}
 	respOK(msg.ID, SessionNewResult{
 		SessionID:     st.id,
-		ConfigOptions: buildModelConfigOptions(s.modelCatalog(), st.sess.ProviderName(), st.sess.ModelName()),
+		ConfigOptions: buildModelConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName()),
 	})
 }
 
@@ -488,6 +489,7 @@ func (s *Server) replayConversation(st *sessionState, sendUpdate updateSender) {
 // in this process is idempotent; it replays the live conversation
 // again, as a load request requires.
 func (s *Server) handleSessionLoad(
+	ctx context.Context,
 	msg Message,
 	sendUpdate updateSender,
 	respOK func(id json.RawMessage, result any),
@@ -533,7 +535,7 @@ func (s *Server) handleSessionLoad(
 			return
 		}
 		s.replayConversation(st, sendUpdate)
-		respOK(msg.ID, SessionLoadResult{ConfigOptions: s.loadConfigOptions(st)})
+		respOK(msg.ID, SessionLoadResult{ConfigOptions: s.loadConfigOptions(ctx, st)})
 		return
 	}
 
@@ -547,15 +549,15 @@ func (s *Server) handleSessionLoad(
 		return
 	}
 	s.replayConversation(st, sendUpdate)
-	respOK(msg.ID, SessionLoadResult{ConfigOptions: s.loadConfigOptions(st)})
+	respOK(msg.ID, SessionLoadResult{ConfigOptions: s.loadConfigOptions(ctx, st)})
 }
 
 // loadConfigOptions renders the config options a session/load response
 // re-advertises: the same model picker session/new reports, built from
 // the session's current selection. An unwired catalog yields nil, which
 // omits the field entirely.
-func (s *Server) loadConfigOptions(st *sessionState) []SessionConfigOption {
-	return buildModelConfigOptions(s.modelCatalog(), st.sess.ProviderName(), st.sess.ModelName())
+func (s *Server) loadConfigOptions(ctx context.Context, st *sessionState) []SessionConfigOption {
+	return buildModelConfigOptions(s.modelCatalog(ctx), st.sess.ProviderName(), st.sess.ModelName())
 }
 
 // sameDir compares two canonical cwds case-insensitively on Windows,
@@ -1091,13 +1093,13 @@ func (s *Server) dispatch(
 			respOK(msg.ID, struct{}{})
 
 		case "session/new":
-			s.handleSessionNew(msg, respOK, respErr)
+			s.handleSessionNew(dispatchCtx, msg, respOK, respErr)
 
 		case "session/prompt":
 			s.handlePrompt(msg, dispatchCtx, c, sendUpdate, respOK, respErr)
 
 		case "session/load":
-			s.handleSessionLoad(msg, sendUpdate, respOK, respErr)
+			s.handleSessionLoad(dispatchCtx, msg, sendUpdate, respOK, respErr)
 
 		case "session/resume":
 			s.handleSessionResume(msg, respOK, respErr)
@@ -1115,7 +1117,7 @@ func (s *Server) dispatch(
 			s.handleSetMode(msg, respOK, respErr)
 
 		case "session/set_config_option":
-			s.handleSetConfigOption(msg, respOK, respErr)
+			s.handleSetConfigOption(dispatchCtx, msg, respOK, respErr)
 
 		default:
 			respErr(msg.ID, codeMethodNotFound, "method not found: "+msg.Method)
@@ -1194,11 +1196,13 @@ func (s *Server) handleSetMode(
 
 // modelCatalog returns the models discovery reports for the picker, or
 // nil when no catalog is wired (configOptions is then omitted entirely).
-func (s *Server) modelCatalog() []ModelOption {
+// ctx bounds the wait for a catalog that discovers models over the
+// network, so shutdown does not wait out a slow provider.
+func (s *Server) modelCatalog(ctx context.Context) []ModelOption {
 	if s.catalog == nil {
 		return nil
 	}
-	return s.catalog.Options(context.Background())
+	return s.catalog.Options(ctx)
 }
 
 // handleSetConfigOption switches one session config option, which is
@@ -1207,8 +1211,10 @@ func (s *Server) modelCatalog() []ModelOption {
 // the session currently advertises (a client echoes back exactly what
 // it was given); an unknown value leaves the session untouched and is
 // invalid params. The response echoes the whole configOptions set
-// recomputed from the new selection, as the spec requires.
+// recomputed from the new selection, as the spec requires. ctx bounds the
+// model-catalog wait as in session/new.
 func (s *Server) handleSetConfigOption(
+	ctx context.Context,
 	msg Message,
 	respOK func(id json.RawMessage, result any),
 	respErr func(id json.RawMessage, code int, message string),
@@ -1235,7 +1241,7 @@ func (s *Server) handleSetConfigOption(
 		respErr(msg.ID, codeInvalidParams, fmt.Sprintf("unsupported configId %q (supported: %s)", p.ConfigID, ConfigOptionModelID))
 		return
 	}
-	catalog := s.modelCatalog()
+	catalog := s.modelCatalog(ctx)
 	// Validate against the options the session advertises right now,
 	// not against the raw catalog: the picker also lists a current model
 	// discovery no longer reports, and re-selecting it must stay valid.

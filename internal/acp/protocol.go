@@ -93,7 +93,7 @@ type InitializeResult struct {
 // additionalDirectories, and session modes are unsupported (Tier 3);
 // configOptions are not a capability — they ride on the session
 // results and session/set_config_option, and are emitted only when a
-// model catalog is wired (see Server.ModelCatalog).
+// model catalog is wired (see ModelCatalog / NewServer).
 type AgentCaps struct {
 	LoadSession bool         `json:"loadSession,omitempty"`
 	Session     *SessionCaps `json:"sessionCapabilities,omitempty"`

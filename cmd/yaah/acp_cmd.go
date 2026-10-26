@@ -189,6 +189,12 @@ func acpDeleteSession(reg *sessions.Registry) func(id string) error {
 // deadline and the catalog keeps whatever config already declares.
 const acpModelCatalogBudget = 2 * time.Second
 
+// acpModelCatalogRetry is how long an incomplete discovery is cached
+// before a later request may retry it. Without the cooldown a provider
+// that was unreachable at startup would make every session/new pay the
+// full budget again.
+const acpModelCatalogRetry = 30 * time.Second
+
 // newACPModelCatalog builds the process-lifetime model catalog handed to
 // the ACP server. Discovery reuses the provider machinery behind the TUI
 // model picker and the web command palette (providers.FetchAllModels with
@@ -197,8 +203,9 @@ const acpModelCatalogBudget = 2 * time.Second
 //
 // A config that cannot be loaded, or that declares no providers, disables
 // the feature: the catalog is nil, which the ACP server treats as "no
-// model picker", and serve carries on. Nothing here can fail acp-serve,
-// and none of the network work happens on the session/new path.
+// model picker", and serve carries on. Nothing here can fail acp-serve.
+// Discovery starts here, off the request path, so the first session/new
+// normally finds a warm catalog instead of paying for the network round.
 func newACPModelCatalog(logf func(format string, args ...any)) acp.ModelCatalog {
 	if logf == nil {
 		logf = func(string, ...any) {}
@@ -212,7 +219,9 @@ func newACPModelCatalog(logf func(format string, args ...any)) acp.ModelCatalog 
 		logf("model catalog disabled: no providers configured")
 		return nil
 	}
-	return &acpModelCatalog{cfg: cfg, logf: logf, budget: acpModelCatalogBudget}
+	cat := &acpModelCatalog{cfg: cfg, logf: logf, budget: acpModelCatalogBudget}
+	go cat.Options(context.Background())
+	return cat
 }
 
 // acpModelCatalog is the ACP server's model catalog: the providers' model
@@ -230,31 +239,79 @@ type acpModelCatalog struct {
 	logf   func(format string, args ...any)
 	budget time.Duration
 
-	mu      sync.Mutex
-	settled bool
-	options []acp.ModelOption
+	mu       sync.Mutex
+	settled  bool
+	options  []acp.ModelOption
+	inflight chan struct{} // non-nil while a discovery attempt runs
+	lastTry  time.Time
+
+	// discoverFn replaces the network phase in tests. It must be set
+	// before the first Options call.
+	discoverFn func(ctx context.Context) ([]acp.ModelOption, bool)
 }
 
-// Options implements acp.ModelCatalog. The mutex is held across the slow
-// path so concurrent callers trigger one fetch rather than one each; the
-// budget bounds the hold.
+// Options implements acp.ModelCatalog. The slow path runs in one shared
+// goroutine so concurrent callers wait on the same attempt rather than
+// starting one each; the budget bounds that attempt. A caller's ctx only
+// bounds its own wait — an attempt already in flight keeps running and
+// publishes its result for the next request, so a client disconnect or
+// shutdown does not throw away discovery.
 func (c *acpModelCatalog) Options(ctx context.Context) []acp.ModelOption {
 	if c == nil || c.cfg == nil {
 		return nil
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.settled {
-		return c.options
+		opts := c.options
+		c.mu.Unlock()
+		return opts
 	}
-	opts, complete := c.discover(ctx)
+	done := c.inflight
+	if done == nil {
+		// An incomplete attempt is retried at most once per cooldown, so
+		// a provider that is down at startup cannot make every request
+		// pay the full budget.
+		if !c.lastTry.IsZero() && time.Since(c.lastTry) < acpModelCatalogRetry {
+			opts := c.options
+			c.mu.Unlock()
+			return opts
+		}
+		c.lastTry = time.Now()
+		done = make(chan struct{})
+		c.inflight = done
+		go c.refresh(done)
+	}
+	c.mu.Unlock()
+
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+	c.mu.Lock()
+	opts := c.options
+	c.mu.Unlock()
+	return opts
+}
+
+// refresh runs one discovery attempt and publishes the result. It holds
+// no lock across the network call, so callers wait on the channel instead
+// of on a mutex.
+func (c *acpModelCatalog) refresh(done chan struct{}) {
+	defer close(done)
+	discover := c.discover
+	if c.discoverFn != nil {
+		discover = c.discoverFn
+	}
+	opts, complete := discover(context.Background())
 	// Config-declared models are worth keeping even when the fetch did not
 	// finish, but the slow path is only marked settled once it completed:
-	// a caller whose context was already dead must not leave the catalog
-	// stuck at the static subset for the rest of the process.
+	// a caller whose wait was abandoned must not leave the catalog stuck
+	// at the static subset for the rest of the process.
+	c.mu.Lock()
 	c.options = opts
 	c.settled = complete
-	return opts
+	c.inflight = nil
+	c.mu.Unlock()
 }
 
 // discover builds the option list — config-declared models first, then

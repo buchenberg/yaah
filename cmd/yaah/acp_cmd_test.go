@@ -1,13 +1,16 @@
 package yaah
 
 import (
+	"context"
 	"encoding/json"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/acp"
+	"github.com/buchenberg/yaah/internal/config"
 	"github.com/buchenberg/yaah/internal/memory"
 	"github.com/buchenberg/yaah/internal/sessions"
 )
@@ -95,5 +98,113 @@ func TestMcpManifestsFromACP(t *testing.T) {
 	}
 	if got := mcpManifestsFromACP(nil); got != nil {
 		t.Errorf("empty refs = %#v, want nil", got)
+	}
+}
+
+// testCatalog builds an acpModelCatalog whose slow phase is a test stub.
+func testCatalog(discover func(context.Context) ([]acp.ModelOption, bool)) *acpModelCatalog {
+	return &acpModelCatalog{
+		cfg:        &config.Config{},
+		logf:       func(string, ...any) {},
+		budget:     time.Second,
+		discoverFn: discover,
+	}
+}
+
+// TestACPCatalogOptionsSharesOneDiscovery pins single-flight: concurrent
+// callers wait on one attempt instead of triggering one each.
+func TestACPCatalogOptionsSharesOneDiscovery(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var calls atomic.Int32
+	catalog := testCatalog(func(context.Context) ([]acp.ModelOption, bool) {
+		calls.Add(1)
+		started <- struct{}{}
+		<-release
+		return []acp.ModelOption{{Provider: "p", Model: "m"}}, true
+	})
+
+	first := make(chan []acp.ModelOption, 1)
+	go func() { first <- catalog.Options(context.Background()) }()
+	<-started
+
+	second := make(chan []acp.ModelOption, 1)
+	go func() { second <- catalog.Options(context.Background()) }()
+
+	close(release)
+	for i, got := range [][]acp.ModelOption{<-first, <-second} {
+		if len(got) != 1 || got[0].Model != "m" {
+			t.Errorf("caller %d options = %#v, want the discovered model", i, got)
+		}
+	}
+	if n := calls.Load(); n != 1 {
+		t.Errorf("discovery ran %d times, want 1", n)
+	}
+}
+
+// TestACPCatalogOptionsHonorsContext pins that a caller's cancellation
+// bounds only its own wait: the attempt keeps running and its result is
+// cached for the next request.
+func TestACPCatalogOptionsHonorsContext(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	catalog := testCatalog(func(context.Context) ([]acp.ModelOption, bool) {
+		started <- struct{}{}
+		<-release
+		return []acp.ModelOption{{Provider: "p", Model: "m"}}, true
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan []acp.ModelOption, 1)
+	go func() { result <- catalog.Options(ctx) }()
+	<-started
+	cancel()
+
+	select {
+	case got := <-result:
+		if len(got) != 0 {
+			t.Errorf("canceled caller options = %#v, want the empty snapshot", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Options ignored its canceled context")
+	}
+
+	close(release)
+	// The aborted caller must not have discarded the attempt: the next
+	// caller sees its result without paying again.
+	got := catalog.Options(context.Background())
+	if len(got) != 1 || got[0].Model != "m" {
+		t.Errorf("next caller options = %#v, want the discovered model", got)
+	}
+}
+
+// TestACPCatalogOptionsRetryCooldown pins that an incomplete discovery is
+// not re-run on every call.
+func TestACPCatalogOptionsRetryCooldown(t *testing.T) {
+	var calls atomic.Int32
+	catalog := testCatalog(func(context.Context) ([]acp.ModelOption, bool) {
+		calls.Add(1)
+		return []acp.ModelOption{{Provider: "p", Model: "m"}}, false
+	})
+
+	if got := catalog.Options(context.Background()); len(got) != 1 {
+		t.Fatalf("first options = %#v, want the config-declared model", got)
+	}
+	if got := catalog.Options(context.Background()); len(got) != 1 {
+		t.Fatalf("cached options = %#v, want the previous snapshot", got)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("discovery ran %d times inside the cooldown, want 1", n)
+	}
+
+	// Past the cooldown a later request may retry.
+	catalog.mu.Lock()
+	catalog.lastTry = time.Now().Add(-acpModelCatalogRetry - time.Second)
+	catalog.mu.Unlock()
+	if got := catalog.Options(context.Background()); len(got) != 1 {
+		t.Fatalf("retried options = %#v, want the discovered model", got)
+	}
+	if n := calls.Load(); n != 2 {
+		t.Fatalf("discovery ran %d times after the cooldown, want 2", n)
 	}
 }
