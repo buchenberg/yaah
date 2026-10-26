@@ -2,11 +2,13 @@ package acp
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/todo"
+	"github.com/buchenberg/yaah/internal/types"
 )
 
 // captureUpdate builds a sender capturing the raw update envelopes.
@@ -135,19 +137,168 @@ func TestView_toolCallFailed(t *testing.T) {
 	}
 }
 
-// TestView_doneEventIgnored matches the exhaustive-event contract: the
-// turn completion rides the session/prompt response, not DoneEvent.
-func TestView_doneEventIgnored(t *testing.T) {
+// TestView_doneUsageUpdate checks the end-of-turn usage translation:
+// the occupancy comes from LastPromptTokensInclusive (falling back to
+// the char/4 estimate), the window is the size, and the _meta bag
+// carries the engine's tally, finish reason, and response model.
+func TestView_doneUsageUpdate(t *testing.T) {
 	var got []any
 	v := NewView()
-	v.SendTo("sess_x", captureUpdate(&got), &agent.DoneEvent{})
-	if len(got) != 0 {
-		t.Fatalf("DoneEvent produced %d updates", len(got))
+	v.SendTo("sess_x", captureUpdate(&got), &agent.DoneEvent{
+		ContextTokens:             120,
+		ContextWindow:             1000,
+		LastPromptTokensInclusive: 800,
+		FinishReason:              "end_of_turn",
+		ResponseModel:             "anthropic/claude-x",
+		Usage:                     types.Usage{PromptTokens: 800, TotalTokens: 830},
+	})
+	if len(got) != 1 {
+		t.Fatalf("updates = %d, want 1", len(got))
+	}
+	m := decodeUpdate(t, got[0])
+	if m["sessionUpdate"] != UpdateUsageUpdate {
+		t.Fatalf("variant = %v, want usage_update", m["sessionUpdate"])
+	}
+	if m["used"] != float64(800) || m["size"] != float64(1000) {
+		t.Fatalf("occupancy = %v/%v, want 800/1000", m["used"], m["size"])
+	}
+	meta, ok := m["_meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("_meta = %v, want object", m["_meta"])
+	}
+	if meta["promptTokens"] != float64(800) || meta["totalTokens"] != float64(830) {
+		t.Fatalf("token tally = %v", meta)
+	}
+	if meta["finishReason"] != "end_of_turn" || meta["responseModel"] != "anthropic/claude-x" {
+		t.Fatalf("finish/model = %v", meta)
+	}
+	if _, present := meta["completionTokens"]; present {
+		t.Fatalf("zero counts must be omitted: %v", meta)
+	}
+}
+
+// TestView_diffContentForEditTools checks that file-modifying calls
+// carry diff content blocks and jump-to-file locations: write gets an
+// oldText-less diff for its new file, edit derives one diff per
+// replacement (single or edits[]), and non-edit tools are untouched.
+func TestView_diffContentForEditTools(t *testing.T) {
+	var got []any
+	v := NewView()
+	v.SendTo("s", captureUpdate(&got), &agent.ToolStartEvent{
+		ID: 1, Name: "edit", RawArgs: `{"filePath":"/repo/a.go","oldString":"x","newString":"y"}`,
+	})
+	v.SendTo("s", captureUpdate(&got), &agent.ToolEndEvent{
+		ID: 1, Name: "edit", RawArgs: `{"filePath":"/repo/a.go","oldString":"x","newString":"y"}`, Result: "ok",
+	})
+	v.SendTo("s", captureUpdate(&got), &agent.ToolEndEvent{
+		ID: 2, Name: "write", RawArgs: `{"filePath":"/repo/b.txt","content":"hi"}`, Result: "ok",
+	})
+	v.SendTo("s", captureUpdate(&got), &agent.ToolEndEvent{
+		ID: 3, Name: "edit", RawArgs: `{"filePath":"/repo/c.go","edits":[{"oldString":"a","newString":"b"},{"oldString":"c","newString":"d"}]}`, Result: "ok",
+	})
+	v.SendTo("s", captureUpdate(&got), &agent.ToolEndEvent{
+		ID: 4, Name: "bash", RawArgs: `{"command":"ls"}`, Result: "ok",
+	})
+
+	// tool_call start: locations only.
+	start := decodeUpdate(t, got[0])
+	locs, _ := start["locations"].([]any)
+	if len(locs) != 1 || locs[0].(map[string]any)["path"] != "/repo/a.go" {
+		t.Fatalf("start locations = %v", start["locations"])
+	}
+	// Edit completion: diff first, then the result content.
+	end := decodeUpdate(t, got[1])
+	blocks, _ := end["content"].([]any)
+	if len(blocks) != 2 || blocks[0].(map[string]any)["type"] != "diff" {
+		t.Fatalf("edit blocks = %v", end["content"])
+	}
+	// The schema's diff variant is flattened: path/oldText/newText sit
+	// next to the type discriminator, never under a nested "diff" key.
+	df := blocks[0].(map[string]any)
+	if df["path"] != "/repo/a.go" || df["newText"] != "y" {
+		t.Fatalf("diff = %v", df)
+	}
+	if _, nested := df["diff"]; nested {
+		t.Fatalf("diff payload must be flat, not nested: %v", df)
+	}
+	if df["oldText"] != "x" {
+		t.Fatalf("oldText = %v, want x", df["oldText"])
+	}
+	// Write completion: no oldText (new file), full newText.
+	write := decodeUpdate(t, got[2])
+	wblocks, _ := write["content"].([]any)
+	if len(wblocks) != 2 || wblocks[0].(map[string]any)["type"] != "diff" {
+		t.Fatalf("write blocks = %v", write["content"])
+	}
+	wdiff := wblocks[0].(map[string]any)
+	if _, present := wdiff["oldText"]; present {
+		t.Fatalf("write diff must omit oldText (new file): %v", wdiff)
+	}
+	if wdiff["newText"] != "hi" {
+		t.Fatalf("write newText = %v", wdiff["newText"])
+	}
+	// Multi-edit: one diff per replacement.
+	multi := decodeUpdate(t, got[3])
+	mblocks, _ := multi["content"].([]any)
+	if len(mblocks) != 3 {
+		t.Fatalf("multi-edit blocks = %v", multi["content"])
+	}
+	for i, b := range mblocks[:2] {
+		if b.(map[string]any)["type"] != "diff" {
+			t.Fatalf("multi-edit block %d = %v", i, b)
+		}
+	}
+	// Non-edit tools carry no diff and no locations.
+	other := decodeUpdate(t, got[4])
+	if other["locations"] != nil {
+		t.Fatalf("bash locations = %v, want none", other["locations"])
+	}
+	for _, b := range other["content"].([]any) {
+		if b.(map[string]any)["type"] != "content" {
+			t.Fatalf("bash block type = %v, want content", b.(map[string]any)["type"])
+		}
+	}
+}
+
+// TestView_diffEmptyNewText stays on the wire checks that a diff whose
+// new content is empty (a deleted block) still transmits required
+// newText, per the schema's required string.
+func TestView_diffEmptyNewTextStillOnWire(t *testing.T) {
+	var got []any
+	v := NewView()
+	v.SendTo("s", captureUpdate(&got), &agent.ToolEndEvent{
+		ID: 1, Name: "edit", RawArgs: `{"filePath":"/repo/a.go","oldString":"gone\n","newString":""}`, Result: "ok",
+	})
+	m := decodeUpdate(t, got[0])
+	blocks, _ := m["content"].([]any)
+	if len(blocks) != 2 || blocks[0].(map[string]any)["type"] != "diff" {
+		t.Fatalf("blocks = %v", m["content"])
+	}
+	df := blocks[0].(map[string]any)
+	raw, err := json.Marshal(df)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"newText":""`) {
+		t.Fatalf("empty newText dropped (must transmit required field): %s", raw)
+	}
+}
+
+// TestView_diffInvalidArgsTolerated checks that unparsable raw args
+// degrade to the plain content block without a diff.
+func TestView_diffInvalidArgsTolerated(t *testing.T) {
+	var got []any
+	v := NewView()
+	v.SendTo("s", captureUpdate(&got), &agent.ToolEndEvent{ID: 1, Name: "edit", RawArgs: "not json", Result: "ok"})
+	m := decodeUpdate(t, got[0])
+	blocks, _ := m["content"].([]any)
+	if len(blocks) != 1 || blocks[0].(map[string]any)["type"] != "content" {
+		t.Fatalf("blocks = %v", m["content"])
 	}
 }
 
 // TestView_remainingEventsRender covers sub-agent, escalation, and
-// compactionsurfaces as agent messages.
+// compaction surfaces as agent messages.
 func TestView_remainingEventsRender(t *testing.T) {
 	var got []any
 	v := NewView()

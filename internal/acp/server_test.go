@@ -40,6 +40,9 @@ type fakeSession struct {
 	// budgetExhausted is what TurnBudgetExhausted reports; stop-reason
 	// tests set it to simulate a soft tool-turn cap ending the turn.
 	budgetExhausted bool
+	// reg, when set, is what ToolReg returns; question-tool and
+	// elicitation tests register a question tool there.
+	reg *tools.Registry
 }
 
 func (f *fakeSession) TurnBudgetExhausted() bool {
@@ -82,8 +85,15 @@ func (f *fakeSession) closedCount() int {
 	return f.closed
 }
 
-func (f *fakeSession) ToolReg() *tools.Registry { return tools.NewRegistry() }
-func (f *fakeSession) AgentSessionID() string   { return f.id }
+func (f *fakeSession) ToolReg() *tools.Registry {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.reg != nil {
+		return f.reg
+	}
+	return tools.NewRegistry()
+}
+func (f *fakeSession) AgentSessionID() string { return f.id }
 
 func (f *fakeSession) SetModel(provider, model string) {
 	f.mu.Lock()
@@ -1426,4 +1436,410 @@ func TestServer_autoAnswerDefaultsOn(t *testing.T) {
 	if !s.AutoAnswerQuestions || !s.AutoContinue {
 		t.Fatal("defaults must enable auto-answer/auto-continue")
 	}
+}
+
+// TestServer_permissionAlwaysKindsOffered checks the decision menu:
+// all four option kinds (allow/reject × once/always) are offered so
+// rendering clients enable their "Always for <tool>" buttons.
+func TestServer_permissionAlwaysKindsOffered(t *testing.T) {
+	sess := &fakeSession{id: "sess-test"}
+	sess.mu.Lock()
+	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
+		_ = sess.approveCall("bash", `{"command":"ls"}`)
+		return "done", false, nil
+	}
+	sess.mu.Unlock()
+	h := newACPHarness(t, sess)
+	initialize(t, h)
+	sid := newSession(t, h)
+
+	if err := h.send("session/prompt", 3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"exec"}]}`, sid)); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recvRequest(t, "session/request_permission")
+	var params RequestPermissionParams
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		t.Fatalf("request_permission params: %v", err)
+	}
+	kinds := make([]string, 0, len(params.Options))
+	for _, o := range params.Options {
+		kinds = append(kinds, o.Kind)
+		if o.OptionID == "" || o.Name == "" {
+			t.Fatalf("option missing id/name: %+v", o)
+		}
+	}
+	want := []string{PermAllowOnce, PermAllowAlways, PermRejectOnce, PermRejectAlways}
+	if fmt.Sprint(kinds) != fmt.Sprint(want) {
+		t.Fatalf("option kinds = %v, want %v", kinds, want)
+	}
+	if err := h.reply(msg.ID, map[string]any{"outcome": map[string]any{"outcome": "cancelled"}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestServer_permissionAlwaysRemembers checks that allow_always
+// suppresses the next request for the same tool within the session:
+// two approveCall rounds produce exactly one permission request.
+func TestServer_permissionAlwaysRemembers(t *testing.T) {
+	sess := &fakeSession{id: "sess-test"}
+	sess.mu.Lock()
+	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
+		g1 := sess.approveCall("bash", `{"command":"first"}`)
+		g2 := sess.approveCall("bash", `{"command":"second"}`)
+		if !g1 || !g2 {
+			t.Errorf("both calls must be granted, got %v/%v", g1, g2)
+		}
+		return "done", false, nil
+	}
+	sess.mu.Unlock()
+	h := newACPHarness(t, sess)
+	initialize(t, h)
+	sid := newSession(t, h)
+
+	if err := h.send("session/prompt", 3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"exec twice"}]}`, sid)); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recvRequest(t, "session/request_permission")
+	if err := h.reply(msg.ID, map[string]any{
+		"outcome": map[string]any{"outcome": "selected", "optionId": "allow-always"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 8; i++ {
+		msg = h.recv(t)
+		if msg.Method == "session/request_permission" {
+			t.Fatal("always-allow must suppress the second permission request")
+		}
+		if msg.Method == "" && msg.Error == nil {
+			var result PromptResult
+			if err := json.Unmarshal(msg.Result, &result); err == nil && result.StopReason == StopEndTurn {
+				return
+			}
+		}
+	}
+	t.Fatal("prompt never completed")
+}
+
+// TestServer_permissionRejectAlwaysDenies checks that reject_always
+// auto-denies the next call for that tool without a second request,
+// and a different tool still gets asked.
+func TestServer_permissionRejectAlwaysDenies(t *testing.T) {
+	sess := &fakeSession{id: "sess-test"}
+	sess.mu.Lock()
+	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
+		d1 := !sess.approveCall("bash", `{"command":"first"}`)
+		d2 := !sess.approveCall("bash", `{"command":"second"}`)
+		g3 := sess.approveCall("edit", `{"filePath":"/repo/a.go"}`)
+		if !d1 || !d2 || !g3 {
+			t.Errorf("bash must be denied twice, edit granted, got %v/%v/%v", d1, d2, g3)
+		}
+		return "done", false, nil
+	}
+	sess.mu.Unlock()
+	h := newACPHarness(t, sess)
+	initialize(t, h)
+	sid := newSession(t, h)
+
+	if err := h.send("session/prompt", 3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"exec"}]}`, sid)); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recvRequest(t, "session/request_permission")
+	if err := h.reply(msg.ID, map[string]any{
+		"outcome": map[string]any{"outcome": "selected", "optionId": "reject-always"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The edit call (never remembered) must still promote one request.
+	for i := 0; i < 16; i++ {
+		msg = h.recv(t)
+		if msg.Method == "session/request_permission" {
+			var params RequestPermissionParams
+			_ = json.Unmarshal(msg.Params, &params)
+			if params.ToolCall.Name != "edit" {
+				t.Fatalf("request for remembered tool: %+v", params.ToolCall)
+			}
+			if err := h.reply(msg.ID, map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": "allow-once"}}); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		if msg.Method == "" && msg.Error == nil {
+			var result PromptResult
+			if err := json.Unmarshal(msg.Result, &result); err == nil && result.StopReason == StopEndTurn {
+				return
+			}
+		}
+	}
+	t.Fatal("prompt never completed")
+}
+
+// TestServer_questionElicitation drives the question-tool path when the
+// client advertises elicitation.form: the modal arrives as
+// elicitation/create, the chosen label reaches the session, and a
+// second (headless) session on an unadvertising client auto-answers.
+func TestServer_questionElicitation(t *testing.T) {
+	reg := tools.NewEmptyRegistry()
+	qt := &tools.QuestionTool{}
+	reg.Register(qt)
+	sess := &fakeSession{id: "sess-test", reg: reg}
+	var answer string
+	sess.mu.Lock()
+	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
+		reg := sess.ToolReg()
+		qt := reg.Get("question").(*tools.QuestionTool)
+		if qt.Handler == nil {
+			t.Fatal("question tool handler not installed")
+		}
+		answers := qt.Handler([]tools.QuestionEntry{{
+			Question: "which way?", Header: "Direction",
+			Options: []tools.QuestionOption{{Label: "left", Description: "go left"}, {Label: "right", Description: "go right"}},
+		}})
+		answer = answers[0]
+		return "done", false, nil
+	}
+	sess.mu.Unlock()
+	h := newACPHarness(t, sess)
+	// Handshake with the form capability.
+	if err := h.send("initialize", 1, `{"protocolVersion":1,"clientCapabilities":{"elicitation":{"form":true}},"clientInfo":{"name":"test-client","version":"1"}}`); err != nil {
+		t.Fatal(err)
+	}
+	h.recv(t)
+	sid := newSession(t, h)
+
+	if err := h.send("session/prompt", 3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"ask"}]}`, sid)); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recvRequest(t, "elicitation/create")
+	var ep ElicitationParams
+	if err := json.Unmarshal(msg.Params, &ep); err != nil {
+		t.Fatalf("elicitation params: %v", err)
+	}
+	if ep.Mode != ElicitationModeForm || ep.SessionID != sid || ep.Message != "Direction: which way?" {
+		t.Fatalf("elicitation = %+v", ep)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(ep.RequestedSchema, &schema); err != nil {
+		t.Fatalf("requestedSchema: %v", err)
+	}
+	if schema["type"] != "object" {
+		t.Fatalf("requestedSchema must be an object schema: %v", schema)
+	}
+	props, _ := schema["properties"].(map[string]any)
+	if props == nil || props["answer"] == nil {
+		t.Fatalf("schema missing answer property: %v", schema)
+	}
+	if err := h.reply(msg.ID, map[string]any{
+		"action": "accept", "content": map[string]any{"answer": "right"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 8; i++ {
+		msg = h.recv(t)
+		if msg.Method == "" && msg.Error == nil {
+			// The turn is over; the tool result carries the answer.
+			if answer != "Direction: right" {
+				t.Fatalf("answer = %q, want the chosen label", answer)
+			}
+			return
+		}
+	}
+	t.Fatal("prompt never completed after elicitation")
+}
+
+// TestServer_questionAutoAnswerWithoutElicitation checks the legacy
+// fallback: without the form capability the question renders as
+// status prose and auto-answers with the first option.
+func TestServer_questionAutoAnswerWithoutElicitation(t *testing.T) {
+	reg := tools.NewEmptyRegistry()
+	qt := &tools.QuestionTool{}
+	reg.Register(qt)
+	sess := &fakeSession{id: "sess-test", reg: reg}
+	var answer string
+	sess.mu.Lock()
+	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
+		qt := sess.ToolReg().Get("question").(*tools.QuestionTool)
+		answer = qt.Handler([]tools.QuestionEntry{{
+			Question: "which way?", Header: "Direction",
+			Options: []tools.QuestionOption{{Label: "left"}, {Label: "right"}},
+		}})[0]
+		return "done", false, nil
+	}
+	sess.mu.Unlock()
+	h := newACPHarness(t, sess)
+	initialize(t, h)
+	sid := newSession(t, h)
+
+	if err := h.send("session/prompt", 3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"ask"}]}`, sid)); err != nil {
+		t.Fatal(err)
+	}
+	var sawStatus bool
+	for i := 0; i < 16; i++ {
+		msg := h.recv(t)
+		if msg.Method == "session/update" {
+			var env updateEnvelope
+			if err := json.Unmarshal(msg.Params, &env); err != nil {
+				continue
+			}
+			var chunk ChunkUpdate
+			if err := json.Unmarshal(env.Update, &chunk); err == nil &&
+				chunk.SessionUpdate == UpdateAgentMessageChunk &&
+				strings.Contains(chunk.Content.Text, "Direction") {
+				sawStatus = true
+			}
+			continue
+		}
+		if msg.Method == "" && msg.Error == nil && sawStatus {
+			if answer != "Direction: left" {
+				t.Fatalf("answer = %q, want first option auto-answered", answer)
+			}
+			return
+		}
+	}
+	t.Fatal("turn never completed")
+}
+
+// TestServer_questionElicitationDeclineStaysEmpty checks that a
+// declined modal is recorded as an empty answer — the auto-answer
+// default must not override a user who was offered the question and
+// declined it.
+func TestServer_questionElicitationDeclineStaysEmpty(t *testing.T) {
+	reg := tools.NewEmptyRegistry()
+	qt := &tools.QuestionTool{}
+	reg.Register(qt)
+	sess := &fakeSession{id: "sess-test", reg: reg}
+	var answer string
+	sess.mu.Lock()
+	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
+		qt := sess.ToolReg().Get("question").(*tools.QuestionTool)
+		answer = qt.Handler([]tools.QuestionEntry{{
+			Question: "proceed?", Header: "Go",
+			Options: []tools.QuestionOption{{Label: "yes"}, {Label: "no"}},
+		}})[0]
+		return "done", false, nil
+	}
+	sess.mu.Unlock()
+	h := newACPHarness(t, sess)
+	if err := h.send("initialize", 1, `{"protocolVersion":1,"clientCapabilities":{"elicitation":{"form":true}}}`); err != nil {
+		t.Fatal(err)
+	}
+	h.recv(t)
+	sid := newSession(t, h)
+
+	if err := h.send("session/prompt", 3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"ask"}]}`, sid)); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recvRequest(t, "elicitation/create")
+	if err := h.reply(msg.ID, map[string]any{"action": "decline"}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 8; i++ {
+		msg = h.recv(t)
+		if msg.Method == "" && msg.Error == nil {
+			if answer != "Go: " {
+				t.Fatalf("answer = %q, want empty after decline", answer)
+			}
+			return
+		}
+	}
+	t.Fatal("prompt never completed after decline")
+}
+
+// TestServer_questionElicitationObjectCapability checks the
+// spec-shaped capability payload: eligibility.form arrives as the
+// schema's empty capability object, exactly the shape from the ACP
+// schema, and must light up the elicitation path like the boolean
+// spelling does.
+func TestServer_questionElicitationObjectCapability(t *testing.T) {
+	reg := tools.NewEmptyRegistry()
+	qt := &tools.QuestionTool{}
+	reg.Register(qt)
+	sess := &fakeSession{id: "sess-test", reg: reg}
+	var answer string
+	sess.mu.Lock()
+	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
+		qt := sess.ToolReg().Get("question").(*tools.QuestionTool)
+		answer = qt.Handler([]tools.QuestionEntry{{
+			Question: "which way?", Header: "Direction",
+			Options: []tools.QuestionOption{{Label: "left"}, {Label: "right"}},
+		}})[0]
+		return "done", false, nil
+	}
+	sess.mu.Unlock()
+	h := newACPHarness(t, sess)
+	// The ElicitationFormCapabilities variant on the wire: {} (not a bool).
+	if err := h.send("initialize", 1, `{"protocolVersion":1,"clientCapabilities":{"elicitation":{"form":{},"url":{}}}}`); err != nil {
+		t.Fatal(err)
+	}
+	h.recv(t)
+	sid := newSession(t, h)
+
+	if err := h.send("session/prompt", 3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"ask"}]}`, sid)); err != nil {
+		t.Fatal(err)
+	}
+	msg := h.recvRequest(t, "elicitation/create")
+	if err := h.reply(msg.ID, map[string]any{
+		"action": "accept", "content": map[string]any{"answer": "left"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 8; i++ {
+		msg = h.recv(t)
+		if msg.Method == "" && msg.Error == nil {
+			if answer != "Direction: left" {
+				t.Fatalf("answer = %q, want the chosen label", answer)
+			}
+			return
+		}
+	}
+	t.Fatal("prompt never completed after elicitation")
+}
+
+// TestServer_questionElicitationGarbageCapability checks that a
+// malformed elicitation capability payload counts as not advertised
+// instead of failing the initialize decode entirely.
+func TestServer_questionElicitationGarbageCapability(t *testing.T) {
+	reg := tools.NewEmptyRegistry()
+	qt := &tools.QuestionTool{}
+	reg.Register(qt)
+	sess := &fakeSession{id: "sess-test", reg: reg}
+	var answer string
+	sess.mu.Lock()
+	sess.prompt = func(ctx context.Context, prompt string) (string, bool, error) {
+		qt := sess.ToolReg().Get("question").(*tools.QuestionTool)
+		answer = qt.Handler([]tools.QuestionEntry{{
+			Question: "which way?", Header: "Direction",
+			Options: []tools.QuestionOption{{Label: "left"}, {Label: "right"}},
+		}})[0]
+		return "done", false, nil
+	}
+	sess.mu.Unlock()
+	h := newACPHarness(t, sess)
+	if err := h.send("initialize", 1, `{"protocolVersion":1,"clientCapabilities":{"elicitation":{"form":42}}}`); err != nil {
+		t.Fatal(err)
+	}
+	h.recv(t)
+	sid := newSession(t, h)
+
+	if err := h.send("session/prompt", 3, fmt.Sprintf(`{"sessionId":%q,"prompt":[{"type":"text","text":"ask"}]}`, sid)); err != nil {
+		t.Fatal(err)
+	}
+	// No elicitation request may arrive; the legacy auto-answer path
+	// (first option) answers the turn.
+	var sawElicitation bool
+	for i := 0; i < 16; i++ {
+		msg := h.recv(t)
+		if msg.Method == "elicitation/create" {
+			sawElicitation = true
+		}
+		if msg.Method == "" && msg.Error == nil {
+			if sawElicitation {
+				t.Fatal("garbage capability must not route through elicitation")
+			}
+			if answer != "Direction: left" {
+				t.Fatalf("answer = %q, want auto-answered first option", answer)
+			}
+			return
+		}
+	}
+	t.Fatal("turn never completed")
 }

@@ -53,12 +53,15 @@ sub-agents, and prompts all resolve against it.
 | `session/set_mode` | acknowledged | mode switching is not modeled; the response keeps mode-picker clients from hanging |
 | `session/set_config_option` | supported | the model picker (`configId: "model"`); validates the value against the advertised options, switches the model for subsequent turns, and echoes the recomputed `configOptions` set |
 | `session/update` | supported | variants below |
-| `session/request_permission` | supported | tool approvals delegated to the client |
+| `session/request_permission` | supported | tool approvals delegated to the client; all four option kinds (`allow_once`/`allow_always`/`reject_once`/`reject_always`) are offered, and an always-decision is remembered for the rest of the session |
 
 `session/update` variants: `agent_message_chunk`, `agent_thought_chunk`,
 `tool_call`, `tool_call_update`, `plan`, `usage_update`, and
 `user_message_chunk` (replay only, on `session/load`; `session/resume`
-re-attaches without any history replay).
+re-attaches without any history replay). `usage_update` streams the
+context occupancy during the turn and once more at turn end with the
+engine's cumulative token tally, finish reason, and response model in
+its `_meta` (cumulative `cost` is omitted — no pricing source).
 
 `stopReason` values: `end_turn` (the model finished), `max_turn_requests`
 (a request budget ended the turn — the soft `max_turns` cap stripped tools
@@ -266,9 +269,27 @@ produced the request.
   call id prompt under a synthetic id and produce no `tool_call` row. A
   timeout or a rejection denies the call and, when a row was announced,
   closes it as `failed`.
-- **Question-tool prompts** are surfaced as status text and auto-answered
-  with the first option when `AutoAnswerQuestions` (default on), rather
-  than an ACP elicitation round-trip.
+- **Question-tool prompts** route through `elicitation/create` (form
+  mode) when the client advertised the `elicitation.form` capability
+  (`internal/acp/elicitation.go`): each question becomes a form whose
+  `answer` property is a string (string-array for `multiple`) enum of the
+  option labels, and the chosen label(s) reach the agent. A decline,
+  cancel, or timeout records an empty answer — the auto-answer default
+  never overrides a user who was actually offered the question. Without
+  the capability the legacy path stands: status prose, auto-answered
+  with the first option when `AutoAnswerQuestions` (default on).
+
+### Diff content and locations
+
+File-modifying tool calls (`write`, `edit`) carry ACP `diff` content
+blocks plus jump-to-file `locations` on both the pending `tool_call` and
+the completing `tool_call_update` (`internal/acp/toolcontent.go`): a
+`write` yields an `oldText`-less diff for its new file, and an `edit`
+yields one diff per replacement (`edits[]` entries included). Rendering
+clients (Zed) show a real file diff instead of raw JSON arguments.
+`patch` and `replace` keep their plain result text — replace is
+multi-file and patch is hunk-based, so neither maps to an honest whole-file
+diff.
 
 ## Client setup (Zed)
 
@@ -311,8 +332,10 @@ Or the generic stdio client loop (any language; one JSON object per line):
   them). Client-declared **stdio** MCP servers are started and merged with
   the config-declared set for that session; their tools join the session's
   tool registry.
-- **Context/content blocks** — only text content is produced and replayed;
-  image and audio blocks are not modeled.
+- **Context/content blocks** — only text content is produced and replayed
+  (plus `diff` blocks for `write`/`edit` tool calls); image and audio
+  blocks are not produced, but inbound ones on prompts degrade to a
+  visible "unsupported content type" note rather than being dropped.
 - **`fs/` and `terminal/` client capabilities** — a read-only terminal and
   file system access that ACP allows agents to request from clients are
   not used; yaah's tools act in the session cwd only.
@@ -321,7 +344,5 @@ Or the generic stdio client loop (any language; one JSON object per line):
   `sessionCapabilities.modes`/`configOptions` are not advertised.
 - **`additionalDirectories`** — not advertised; sessions act in the cwd
   the lifecycle request named.
-- **`session_info_update` notifications** — live title/directory change
-  announcements are not sent; clients render titles from `session/list`.
 - **Compaction replay** — yaah does not advertise compaction support, so
   clients are not promised compaction `session/update` replay on load.

@@ -78,6 +78,32 @@ func (s *Server) requestPermission(
 	runCtx context.Context,
 	c *connection,
 ) bool {
+	// A previous allow_always/reject_always decision short-circuits the
+	// client round-trip: an always-allowed tool proceeds, an
+	// always-rejected one is denied, both without re-prompting for the
+	// rest of the session. No client row is created in either case —
+	// an approval is followed by the pipeline's real tool_call, and a
+	// denial surfaces through the agent's own failed tool result.
+	s.mu.Lock()
+	st := s.sessions[sessionID]
+	var remembered string
+	if st != nil {
+		if st.permAllow[name] {
+			remembered = PermAllowAlways
+		} else if st.permDeny[name] {
+			remembered = PermRejectAlways
+		}
+	}
+	s.mu.Unlock()
+	switch remembered {
+	case PermAllowAlways:
+		s.logf("permission auto-allowed for session %s: %s (always)", sessionID, name)
+		return true
+	case PermRejectAlways:
+		s.logf("permission auto-denied for session %s: %s (always)", sessionID, name)
+		return false
+	}
+
 	s.mu.Lock()
 	s.nextReqID++
 	reqID := s.nextReqID
@@ -154,15 +180,12 @@ func (s *Server) requestPermission(
 			Kind:          toolKind(name),
 			Status:        StatusPending,
 		},
-		Options: []PermissionOption{
-			{OptionID: "allow-once", Name: "Allow once", Kind: PermAllowOnce},
-			{OptionID: "reject-once", Name: "Reject", Kind: PermRejectOnce},
-		},
+		Options: permissionOptions(name),
 	})
 
 	timeout := s.PermissionTimeout
 	if timeout <= 0 {
-		timeout = 5 * time.Minute
+		timeout = defaultPermissionTimeout
 	}
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
@@ -186,7 +209,7 @@ func (s *Server) requestPermission(
 			Status:        StatusFailed,
 			Content: []UpdateContent{{
 				Type:    "content",
-				Content: textContent("Denied: " + reason),
+				Content: &ContentBlock{Type: "text", Text: "Denied: " + reason},
 			}},
 		})
 	}
@@ -219,11 +242,63 @@ func (s *Server) requestPermission(
 		deny("unparseable response: " + err.Error())
 		return false
 	}
-	if out.Outcome.Outcome == "selected" && out.Outcome.OptionID == "allow-once" {
-		return true
+	if out.Outcome.Outcome != "selected" {
+		deny("not selected")
+		return false
 	}
-	deny("rejected by user")
-	return false
+	switch out.Outcome.OptionID {
+	case "allow-once":
+		return true
+	case "allow-always":
+		s.rememberPermission(sessionID, name, PermAllowAlways)
+		return true
+	case "reject-once":
+		deny("rejected by user")
+		return false
+	case "reject-always":
+		s.rememberPermission(sessionID, name, PermRejectAlways)
+		deny("always rejected for this session")
+		return false
+	default:
+		deny("unknown option " + out.Outcome.OptionID)
+		return false
+	}
+}
+
+// permissionOptions is the full decision menu Zed renders as "Allow
+// once / Always for <tool> / Reject / Always for <pattern>"-style
+// buttons; the always kinds only enable those buttons when present.
+func permissionOptions(name string) []PermissionOption {
+	return []PermissionOption{
+		{OptionID: "allow-once", Name: "Allow once", Kind: PermAllowOnce},
+		{OptionID: "allow-always", Name: "Always allow " + name, Kind: PermAllowAlways},
+		{OptionID: "reject-once", Name: "Reject", Kind: PermRejectOnce},
+		{OptionID: "reject-always", Name: "Always reject " + name, Kind: PermRejectAlways},
+	}
+}
+
+// rememberPermission records an always-kind decision for the rest of
+// the session; the entry dies with the session (retireSession), never
+// in the store.
+func (s *Server) rememberPermission(sessionID, name, kind string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.sessions[sessionID]
+	if !ok {
+		return
+	}
+	switch kind {
+	case PermAllowAlways:
+		if st.permAllow == nil {
+			st.permAllow = make(map[string]bool)
+		}
+		st.permAllow[name] = true
+	case PermRejectAlways:
+		if st.permDeny == nil {
+			st.permDeny = make(map[string]bool)
+		}
+		st.permDeny[name] = true
+	}
 }
 
 // permissionTitle renders a short human-readable title for a pending
