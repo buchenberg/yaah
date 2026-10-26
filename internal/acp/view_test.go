@@ -2,13 +2,13 @@ package acp
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/buchenberg/yaah/internal/agent"
 	"github.com/buchenberg/yaah/internal/todo"
 	"github.com/buchenberg/yaah/internal/types"
-	"strings"
 )
 
 // captureUpdate builds a sender capturing the raw update envelopes.
