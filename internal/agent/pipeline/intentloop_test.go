@@ -180,6 +180,11 @@ func TestIntentLoop_ProgressClassification(t *testing.T) {
 		{"git commit", ToolResult{Name: "git", Args: `{"action":"commit"}`, Result: "ok"}, true},
 		{"plan list", ToolResult{Name: "plan", Args: `{"action":"list"}`, Result: "[]"}, false},
 		{"plan create", ToolResult{Name: "plan", Args: `{"action":"create"}`, Result: "ok"}, true},
+		{"memory add", ToolResult{Name: "memory_add", Args: `{}`, Result: "ok"}, false},
+		{"delegate proposal", ToolResult{Name: "delegate", Args: `{"role":"developer"}`, Result: `{"status":"proposal","proposal_id":"p1"}`}, true},
+		{"delegate report", ToolResult{Name: "delegate", Args: `{"role":"reviewer"}`, Result: `{"status":"report"}`}, true},
+		{"delegate error", ToolResult{Name: "delegate", Args: `{}`, Result: `{"status":"error"}`}, false},
+		{"delegate background", ToolResult{Name: "delegate", Args: `{}`, Result: `{"job_id":"j1"}`}, false},
 		{"failed edit", ToolResult{Name: "edit", Args: `{}`, Error: errSentinel}, false},
 	}
 	for _, tt := range tests {

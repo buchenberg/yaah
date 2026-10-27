@@ -84,6 +84,8 @@ agents:
 
     loop_detect_count: 5
     loop_detect_window: 10
+    intent_steer_after: 4              # same-plan turns before the model is steered
+    intent_halt_after: 8               # same-plan turns before the run halts
     evidence_guard_nudge: 6            # 0 = default 6; negative = disabled
     evidence_guard_halt: 0             # 0 = never halt; e.g. 16
     max_retries: 2
@@ -285,6 +287,8 @@ rather than retrying a request that cannot succeed.
 | `max_turn_restores` | 3 | Turn-level restores per run |
 | `loop_detect_count` | 5 | Identical tool-call hashes within the window that trigger a halt |
 | `loop_detect_window` | 10 | Sliding window size for loop detection |
+| `intent_steer_after` | 4 | Consecutive same-plan turns (no workspace progress) before an in-conversation steer |
+| `intent_halt_after` | 8 | Consecutive same-plan turns before the run halts; must be greater than `intent_steer_after` |
 | `evidence_guard_nudge` | 6 | Stale calls before a “no new evidence” steer; negative disables |
 | `evidence_guard_halt` | 0 (off) | Stale calls before halting; 0 = never |
 | `max_retries` | 0 (off) | Retries on transient provider errors |

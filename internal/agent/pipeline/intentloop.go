@@ -119,11 +119,21 @@ func madeProgress(r ToolResult) bool {
 		case "create", "edit", "delete", "approve":
 			return true
 		}
-	case "memory_add", "memory_update", "memory_promote":
-		return true
 	case "delegate":
-		// A successful dispatch did real work on the user's behalf.
-		return true
+		// A dispatch only counts as progress when it produced work — a
+		// sealed proposal or a report. An error, cancellation, or a
+		// background job id is still a turn spent talking, so it does not
+		// reset the streak.
+		var res struct {
+			Status string `json:"status"`
+		}
+		if json.Unmarshal([]byte(r.Result), &res) != nil {
+			return false
+		}
+		switch res.Status {
+		case "proposal", "report":
+			return true
+		}
 	case "background_process":
 		var p struct {
 			Action string `json:"action"`

@@ -441,3 +441,40 @@ agents:
 		t.Errorf("CompactionModel = %q, want compact/model", cfg.Agent.Default.CompactionModel)
 	}
 }
+
+// TestLoad_intentKnobValidation: the intent-loop knobs are validated at load
+// like the other guards' bounds — negative values and a halt at or below the
+// steer fail instead of silently degrading.
+func TestLoad_intentKnobValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{"valid", "intent_steer_after: 4\n    intent_halt_after: 8", ""},
+		{"defaults", "", ""},
+		{"zero halt", "intent_steer_after: 4\n    intent_halt_after: 0", ""},
+		{"negative", "intent_steer_after: -1", "must not be negative"},
+		{"halt below steer", "intent_steer_after: 6\n    intent_halt_after: 6", "must be greater than"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			t.Setenv("YAAH_HOME", tmp)
+			content := "agents:\n  default:\n    model: m/m\n    " + tt.body + "\n"
+			if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), []byte(content), 0o644); err != nil {
+				t.Fatalf("WriteFile() error: %v", err)
+			}
+			_, err := Load()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Errorf("Load() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("Load() error = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}

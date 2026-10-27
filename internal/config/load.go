@@ -576,6 +576,17 @@ func Load() (*Config, error) {
 		fmt.Fprintf(os.Stderr, "warning: config key `agents.default.small_model` was renamed to `compaction_model`; the old key is ignored — compaction uses the default compaction_model unless you set `compaction_model` explicitly\n")
 	}
 
+	// The intent-loop knobs must be coherent: both non-negative (0 =
+	// default) and, when both are set, a halt after the steer.
+	if cfg.Agent.Default.IntentSteerAfter < 0 || cfg.Agent.Default.IntentHaltAfter < 0 {
+		return nil, fmt.Errorf("agents.default.intent_steer_after / intent_halt_after must not be negative")
+	}
+	if cfg.Agent.Default.IntentSteerAfter > 0 && cfg.Agent.Default.IntentHaltAfter > 0 &&
+		cfg.Agent.Default.IntentHaltAfter <= cfg.Agent.Default.IntentSteerAfter {
+		return nil, fmt.Errorf("agents.default.intent_halt_after (%d) must be greater than intent_steer_after (%d)",
+			cfg.Agent.Default.IntentHaltAfter, cfg.Agent.Default.IntentSteerAfter)
+	}
+
 	// reasoning_replay must name one of the three strategies; anything
 	// else would silently degrade to the default at replay time.
 	for name, p := range cfg.Providers {
