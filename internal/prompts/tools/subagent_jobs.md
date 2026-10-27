@@ -1,8 +1,20 @@
-Manage background sub-agent jobs dispatched via `delegate` with `background: true`. Provides `action: list` (all jobs), `status` (details for one `job_id`), `cancel` (abort a running job), and `wait` (block until a job finishes or `timeout_seconds` elapses — default 60s). Use `list` first to discover job ids and pending count.
+Manage background sub-agent jobs dispatched via `delegate` with `background: true`. Provides `action: list` (all jobs), `status` (details for one `job_id`), `cancel` (abort a running job), and `wait` (block until a job finishes or `timeout_seconds` elapses — default 60s, max 300s). Use `list` first to discover job ids and pending count.
 
 Job state is reported truthfully. A job that has not finished carries
 `still_running: true` alongside its `status`; a `wait` that hits its deadline
 reports **both** `timed_out: true` and `still_running: true` (the job is not
-done, the *wait call* timed out). `cancel` only requests cancellation — it does
-not guarantee the job has stopped; read the `status`/`still_running` fields in
-the response to know whether it is actually done.
+done, the *wait call* timed out). A `wait` cut short because the turn was
+cancelled or a parent deadline fired reports `interrupted: true` instead of
+`timed_out`, again with `still_running: true` — the job was not asked to stop.
+
+`cancel` reports what it actually did in a `cancel` field, in one of exactly
+three values:
+
+- `cancelled` — the id named a running job and the request reached it. The job
+  may still be winding down; read `status`/`still_running` in the same response
+  to know whether it has stopped. A request is not a stop.
+- `already_finished` — the job had already reached a terminal state, so nothing
+  was interrupted. `status` carries that real final state (`completed`,
+  `failed`, `cancelled`).
+- `unknown` — no such job: never dispatched in this session, or its finished
+  record was reaped. No job fields are reported, because there is no job.

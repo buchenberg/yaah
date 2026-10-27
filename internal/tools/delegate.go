@@ -141,19 +141,34 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 		return "", fmt.Errorf("delegate: sub-agent runner not configured")
 	}
 
-	// Clamp model-supplied overrides to the advertised schema bounds so a
-	// runaway or injected value cannot neutralize the deadline or iterate
-	// forever. Values below the minimum fall back to the role default.
+	// Clamp every model-supplied numeric override to the bounds advertised
+	// in the schema (delegate_schema.go) before it reaches the runner: schema
+	// bounds are advisory — nothing in the transport enforces them — so a
+	// runaway or injected payload can otherwise send a negative value or 10^6
+	// and neutralize the deadline, iterate forever, or blank the report.
+	// 0 is the "unset, the role decides" sentinel for all four params, so a
+	// clamped-away value lands on 0 rather than on an invented default: only
+	// values actually supplied are clamped.
+	//
+	// The role's min_turns / min_iterations floor is deliberately NOT applied
+	// here — DelegateTool has no view of the role profile or the per-role
+	// config. It is enforced downstream when the runner resolves the budget
+	// (internal/agent/runner → internal/agent/budget.Resolve), where a
+	// declared floor beats a per-call override and can even grow iterations to
+	// protect it. That is what keeps the schema's "cannot go below the role's
+	// min_turns" promise true.
 	clampedTimeout := clampTimeoutSeconds(params.TimeoutSeconds)
 	clampedIter := clampMaxLoopCycles(params.MaxLoopCycles)
+	clampedTurns := clampMaxToolTurns(params.MaxTurns)
+	clampedOutput := clampOutputLimit(params.OutputLimit)
 
 	subParams := jobs.SubAgentParams{
 		Role:           params.Role,
 		TimeoutSeconds: clampedTimeout,
 		MaxLoopCycles:  clampedIter,
-		MaxToolTurns:   params.MaxTurns,
+		MaxToolTurns:   clampedTurns,
 		JSONMode:       params.JSONMode,
-		OutputLimit:    params.OutputLimit,
+		OutputLimit:    clampedOutput,
 	}
 
 	timeout := resolveTaskTimeout(clampedTimeout, t.ResolveTimeout, subParams)
@@ -230,7 +245,17 @@ func (t *DelegateTool) Execute(ctx context.Context, args string) (string, error)
 // output the sub-agent produced before stopping.
 func (t *DelegateTool) classifyRunnerResult(result string, err error, role string, timeout time.Duration, runCtx context.Context) (string, error) {
 	if err != nil {
-		partial := result
+		// A report-lane failure carries its caveat (a stranded worktree, a
+		// provisioning problem) out of band, so it never has to be parsed
+		// back out of model output.
+		cause := err
+		note := ""
+		var runErr *retainedRunError
+		if errors.As(err, &runErr) {
+			cause = runErr.cause
+			note = runErr.note
+		}
+		partial := retainedNote(result, note)
 		switch {
 		case errors.Is(err, context.DeadlineExceeded), runCtx.Err() == context.DeadlineExceeded:
 			return structuredTaskResult("timed out", role, timeout, partial), nil
@@ -239,7 +264,18 @@ func (t *DelegateTool) classifyRunnerResult(result string, err error, role strin
 		case errors.Is(err, context.Canceled), runCtx.Err() == context.Canceled:
 			return structuredTaskResult("cancelled", role, timeout, partial), nil
 		default:
-			return "", err
+			// A non-nil error makes the agent loop replace the result with
+			// the error text delivered verbatim, so a partial the
+			// orchestrator should see must ride inside the error. The
+			// partial is success-detail content: keep the body's head —
+			// the part that orients — bounded at the tool-result cap, and
+			// re-attach the caveat, itself tail-bounded because teardown
+			// notes end with the worktree path (yaah-atn). The folded error
+			// stays finite; the error's own diagnostic stays untruncated.
+			if strings.TrimSpace(partial) == "" {
+				return "", cause
+			}
+			return "", fmt.Errorf("%w\n%s", cause, foldRetainedPartial(result, note))
 		}
 	}
 	return result, nil
@@ -268,6 +304,39 @@ func clampMaxLoopCycles(v int) int {
 	}
 	if v < 0 {
 		return 0
+	}
+	return v
+}
+
+// clampMaxToolTurns enforces the schema's 1–50 window for the soft turn
+// cap. Values above 50 are capped; any value below the window falls back
+// to 0 ("use the role default") instead of being raised to 1, because
+// max_turns=1 means "one tool turn then answer" — a meaning a negative or
+// injected value must not be able to acquire. The role's own min_turns
+// floor is applied later, when the runner resolves the budget.
+func clampMaxToolTurns(v int) int {
+	if v > 50 {
+		return 50
+	}
+	if v < 0 {
+		return 0
+	}
+	return v
+}
+
+// clampOutputLimit enforces the schema's 1024-byte minimum on the report
+// cap. 0 and negative values mean "use the role/config default" and are
+// preserved as 0; a smaller positive value is raised to the minimum so an
+// injected sub-kilobyte cap cannot blank the sub-agent's report. The schema
+// advertises no maximum, so none is enforced here — a generous cap costs
+// nothing beyond output the run already paid for, unlike an unbounded loop.
+func clampOutputLimit(v int) int {
+	const minOutputLimit = 1024
+	if v <= 0 {
+		return 0
+	}
+	if v < minOutputLimit {
+		return minOutputLimit
 	}
 	return v
 }

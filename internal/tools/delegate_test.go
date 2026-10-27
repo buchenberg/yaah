@@ -266,7 +266,6 @@ func TestExecute_BackgroundWithoutManagerErrors(t *testing.T) {
 // job is launched through startRetainedRun and its delivered result is a proposal
 // envelope like any other dispatch's.
 func TestExecute_BackgroundRetainedReturnsProposal(t *testing.T) {
-	resetRetainedProposals()
 
 	mgr := jobs.NewBackgroundJobs()
 	defer mgr.Close()
@@ -382,7 +381,6 @@ func TestExecute_LaneForRoleRouting(t *testing.T) {
 	}
 
 	t.Run("report lane returns the report, no proposal", func(t *testing.T) {
-		resetRetainedProposals()
 		runner := writingRunner(t, "r.txt")
 		rt := newRetainedTestEnv(t, runner)
 		tt := newTool(runner.run(), &rt, func(string) DelegateLane { return LaneReport })
@@ -394,7 +392,7 @@ func TestExecute_LaneForRoleRouting(t *testing.T) {
 		if res != "default" {
 			t.Errorf("report lane must return the runner text, got %q", res)
 		}
-		if got := listRetainedProposalsSummaries(); got != "No open proposals." {
+		if got := rt.Proposals.summaries(); got != "No open proposals." {
 			t.Errorf("report lane must not register a proposal, got %q", got)
 		}
 		wd := runner.workdirFor(t, 0)
@@ -407,7 +405,6 @@ func TestExecute_LaneForRoleRouting(t *testing.T) {
 	})
 
 	t.Run("shared lane bypasses retention", func(t *testing.T) {
-		resetRetainedProposals()
 		runner := &sessionRunner{responses: []runnerResponse{{result: "shared report"}}}
 		rt := newRetainedTestEnv(t, runner)
 		tt := newTool(runner.run(), &rt, func(string) DelegateLane { return LaneShared })
@@ -422,13 +419,12 @@ func TestExecute_LaneForRoleRouting(t *testing.T) {
 		if wd := runner.workdirFor(t, 0); wd != "" {
 			t.Errorf("shared lane must not provision a worktree, got %q", wd)
 		}
-		if got := listRetainedProposalsSummaries(); got != "No open proposals." {
+		if got := rt.Proposals.summaries(); got != "No open proposals." {
 			t.Errorf("shared lane must not register a proposal, got %q", got)
 		}
 	})
 
 	t.Run("nil LaneForRole keeps the proposal lane", func(t *testing.T) {
-		resetRetainedProposals()
 		runner := writingRunner(t, "p.txt")
 		rt := newRetainedTestEnv(t, runner)
 		tt := &DelegateTool{RoleNames: []string{"developer"}, Runner: runner.run(), Retained: &rt}
@@ -442,4 +438,327 @@ func TestExecute_LaneForRoleRouting(t *testing.T) {
 			t.Fatalf("nil LaneForRole must keep the proposal lane, got %+v", env)
 		}
 	})
+}
+
+// capturingRunner records the params Execute forwarded so a test can
+// assert the clamped values that actually reached the runner.
+func capturingRunner(rec *SubAgentParams) TaskRunner {
+	return func(ctx context.Context, prompt string, params SubAgentParams) (string, error) {
+		*rec = params
+		return "ok", nil
+	}
+}
+
+// TestExecute_ClampsNumericParams pins yaah-pgk: JSON Schema bounds are
+// advisory — nothing in the transport validates them — so every numeric
+// delegate param is clamped to the advertised bound before it reaches the
+// runner. An injected payload can otherwise send a negative value or 10^6
+// and neutralize the deadline or iterate forever.
+//
+// 0 is the "unset, use the role's own budget" sentinel for every one of
+// these params, so a clamped-away value must land on 0 rather than being
+// turned into a default: only values actually provided are clamped.
+func TestExecute_ClampsNumericParams(t *testing.T) {
+	tests := []struct {
+		name        string
+		params      string
+		wantIter    int
+		wantTurns   int
+		wantOutput  int
+		wantTimeout int
+	}{
+		// max_turns: schema "minimum": 1, "maximum": 50.
+		{"max_turns over the maximum is capped", `"max_turns":1000000`, 0, 50, 0, 0},
+		{"max_turns at the maximum is honoured", `"max_turns":50`, 0, 50, 0, 0},
+		{"max_turns inside the window is honoured", `"max_turns":7`, 0, 7, 0, 0},
+		{"max_turns negative falls back to the role default", `"max_turns":-3`, 0, 0, 0, 0},
+		{"max_turns absent stays unset", ``, 0, 0, 0, 0},
+
+		// max_iterations: schema "minimum": 1, "maximum": 50.
+		{"max_iterations over the maximum is capped", `"max_iterations":1000000`, 50, 0, 0, 0},
+		{"max_iterations at the maximum is honoured", `"max_iterations":50`, 50, 0, 0, 0},
+		{"max_iterations negative falls back to the role default", `"max_iterations":-2`, 0, 0, 0, 0},
+		{"max_iterations absent stays unset", ``, 0, 0, 0, 0},
+
+		// timeout_seconds: not in the schema (roles own timeouts); the
+		// 600s cap is the documented ceiling in clampTimeoutSeconds.
+		{"timeout_seconds over the maximum is capped", `"timeout_seconds":1000000`, 0, 0, 0, 600},
+		{"timeout_seconds negative falls back to the role default", `"timeout_seconds":-30`, 0, 0, 0, 0},
+
+		// output_limit: schema "minimum": 1024, no maximum.
+		{"output_limit below the minimum is raised to it", `"output_limit":512`, 0, 0, 1024, 0},
+		{"output_limit at the minimum is honoured", `"output_limit":1024`, 0, 0, 1024, 0},
+		{"output_limit above the minimum is honoured", `"output_limit":8192`, 0, 0, 8192, 0},
+		{"output_limit has no advertised maximum so a large value stands", `"output_limit":1048576`, 0, 0, 1048576, 0},
+		{"output_limit negative falls back to the role default", `"output_limit":-1`, 0, 0, 0, 0},
+		{"output_limit absent stays unset", ``, 0, 0, 0, 0},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var got SubAgentParams
+			tt := &DelegateTool{
+				RoleNames: []string{"analyst"},
+				Runner:    capturingRunner(&got),
+			}
+			args := `{"description":"d","prompt":"p","role":"analyst"`
+			if tc.params != "" {
+				args += "," + tc.params
+			}
+			args += "}"
+
+			if _, err := tt.Execute(context.Background(), args); err != nil {
+				t.Fatalf("Execute(%s): %v", args, err)
+			}
+			if got.MaxToolTurns != tc.wantTurns {
+				t.Errorf("runner got max_turns=%d, want %d", got.MaxToolTurns, tc.wantTurns)
+			}
+			if got.MaxLoopCycles != tc.wantIter {
+				t.Errorf("runner got max_iterations=%d, want %d", got.MaxLoopCycles, tc.wantIter)
+			}
+			if got.OutputLimit != tc.wantOutput {
+				t.Errorf("runner got output_limit=%d, want %d", got.OutputLimit, tc.wantOutput)
+			}
+			if got.TimeoutSeconds != tc.wantTimeout {
+				t.Errorf("runner got timeout_seconds=%d, want %d", got.TimeoutSeconds, tc.wantTimeout)
+			}
+		})
+	}
+}
+
+// TestClampMaxToolTurns covers the max_turns window in isolation, including
+// the 0/absent sentinel that must survive unchanged.
+func TestClampMaxToolTurns(t *testing.T) {
+	tests := []struct {
+		name string
+		in   int
+		want int
+	}{
+		{"over the maximum is capped", 1000000, 50},
+		{"one over the maximum is capped", 51, 50},
+		{"at the maximum is honoured", 50, 50},
+		{"inside the window is honoured", 12, 12},
+		{"at the minimum is honoured", 1, 1},
+		{"zero means unset and is preserved", 0, 0},
+		{"negative means unset", -3, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := clampMaxToolTurns(tc.in); got != tc.want {
+				t.Errorf("clampMaxToolTurns(%d) = %d, want %d", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestClampOutputLimit covers the 1024-byte floor. The schema advertises no
+// maximum, so none is enforced here — a bigger cap is the orchestrator's
+// call, not a containment property.
+func TestClampOutputLimit(t *testing.T) {
+	tests := []struct {
+		name string
+		in   int
+		want int
+	}{
+		{"below the minimum is raised to it", 512, 1024},
+		{"one below the minimum is raised to it", 1023, 1024},
+		{"at the minimum is honoured", 1024, 1024},
+		{"above the minimum is honoured", 51200, 51200},
+		{"a very large value stands (no advertised maximum)", 1048576, 1048576},
+		{"zero means unset and is preserved", 0, 0},
+		{"negative means unset", -1024, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := clampOutputLimit(tc.in); got != tc.want {
+				t.Errorf("clampOutputLimit(%d) = %d, want %d", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSchema_BoundsMatchClamp keeps the runtime clamp and the advertised
+// bounds from drifting apart: the clamp is only as honest as the numbers the
+// model was told, and the schema is only as honest as what the runtime does
+// with a value that honours it. Every schema variant is checked, because the
+// fallback literal schema and the generated enum schema are separate
+// declarations.
+func TestSchema_BoundsMatchClamp(t *testing.T) {
+	type bounds struct {
+		min    float64
+		max    float64
+		hasMax bool
+	}
+	want := map[string]bounds{
+		"max_iterations": {min: 1, max: 50, hasMax: true},
+		"max_turns":      {min: 1, max: 50, hasMax: true},
+		"output_limit":   {min: 1024, hasMax: false},
+	}
+
+	schemas := map[string]*DelegateTool{
+		"enum schema":     {RoleNames: []string{"analyst"}},
+		"fallback schema": {},
+	}
+	for name, tool := range schemas {
+		t.Run(name, func(t *testing.T) {
+			var parsed struct {
+				Properties map[string]struct {
+					Minimum *float64 `json:"minimum"`
+					Maximum *float64 `json:"maximum"`
+				} `json:"properties"`
+			}
+			if err := json.Unmarshal(tool.Schema(), &parsed); err != nil {
+				t.Fatalf("invalid schema JSON: %v", err)
+			}
+			for prop, w := range want {
+				p, ok := parsed.Properties[prop]
+				if !ok {
+					t.Fatalf("schema is missing %q", prop)
+				}
+				if p.Minimum == nil || *p.Minimum != w.min {
+					t.Errorf("%s minimum = %v, want %v", prop, p.Minimum, w.min)
+				}
+				if w.hasMax {
+					if p.Maximum == nil || *p.Maximum != w.max {
+						t.Errorf("%s maximum = %v, want %v", prop, p.Maximum, w.max)
+					}
+					continue
+				}
+				if p.Maximum != nil {
+					t.Errorf("%s advertises maximum %v but no clamp enforces it", prop, *p.Maximum)
+				}
+			}
+
+			// The clamp must agree with what the schema promised: over-max is
+			// capped to the maximum, below-min is answered per bound style.
+			if got := clampMaxToolTurns(int(want["max_turns"].max) + 1); float64(got) != want["max_turns"].max {
+				t.Errorf("clampMaxToolTurns above the schema maximum = %d, want %v", got, want["max_turns"].max)
+			}
+			if got := clampMaxLoopCycles(int(want["max_iterations"].max) + 1); float64(got) != want["max_iterations"].max {
+				t.Errorf("clampMaxLoopCycles above the schema maximum = %d, want %v", got, want["max_iterations"].max)
+			}
+			if got := clampOutputLimit(int(want["output_limit"].min) - 1); float64(got) != want["output_limit"].min {
+				t.Errorf("clampOutputLimit below the schema minimum = %d, want %v", got, want["output_limit"].min)
+			}
+		})
+	}
+}
+
+// TestDelegate_ClassifyGenericErrorCarriesPartial pins the yaah-atn path on
+// generic failures: the report lane attaches a teardown note to a result that
+// ends with a non-nil error, and classifyRunnerResult's default branch must
+// not swallow it. The note arrives out of band (retainedRunError), because the
+// body is model output that can contain "note: " lines of its own. The agent
+// loop replaces a failed result with the error text, so the note can only
+// survive inside the error; the partial body keeps its head, bounded like
+// success detail.
+func TestDelegate_ClassifyGenericErrorCarriesPartial(t *testing.T) {
+	tool := &DelegateTool{}
+	partial := strings.Repeat("report body\n", 400) // 4.8 KiB, under the cap
+	note := "the report dispatch could not discard its isolated scope; it left the worktree at /tmp/wt/scratch"
+
+	got, err := tool.classifyRunnerResult(partial, &retainedRunError{cause: errors.New("max iterations reached"), note: note}, "reviewer", 30*time.Second, context.Background())
+	if err == nil {
+		t.Fatal("a generic runner error must stay an error")
+	}
+	if got != "" {
+		t.Errorf("result = %q, want empty (the loop discards it anyway)", got)
+	}
+	if !strings.Contains(err.Error(), "max iterations reached") {
+		t.Errorf("error lost the cause: %v", err)
+	}
+	if !strings.Contains(err.Error(), "left the worktree at /tmp/wt/scratch") {
+		t.Errorf("error lost the partial teardown note: %v", err)
+	}
+	if !strings.Contains(err.Error(), "report body") {
+		t.Errorf("error lost the partial body: %v", err)
+	}
+}
+
+// TestDelegate_ClassifyGenericErrorDoesNotReinterpretBodyNotes: the caveat
+// travels out of band, so a report that legitimately contains — or opens
+// with — a "note: " line is delivered unchanged instead of being cut there and
+// re-labelled as the caveat.
+func TestDelegate_ClassifyGenericErrorDoesNotReinterpretBodyNotes(t *testing.T) {
+	tool := &DelegateTool{}
+	body := "note: a report may legitimately open with this\n\nfindings\n\nnote: and contain more later"
+
+	_, err := tool.classifyRunnerResult(body, errors.New("max iterations reached"), "reviewer", 30*time.Second, context.Background())
+	if err == nil {
+		t.Fatal("a generic runner error must stay an error")
+	}
+	if !strings.Contains(err.Error(), body) {
+		t.Errorf("the report body was rewritten: %v", err)
+	}
+	if got := strings.Count(err.Error(), "note: "); got != 2 {
+		t.Errorf("note markers = %d, want the body's 2 and no fabricated caveat: %v", got, err)
+	}
+}
+
+// TestDelegate_ClassifyGenericErrorKeepsHeadAndNoteOfOversizedPartial:
+// errors are delivered verbatim by the loop, so the folded partial is
+// bounded — its head keeps the truncation marker, and the teardown note is
+// re-attached after the bound so a long report cannot eat it.
+func TestDelegate_ClassifyGenericErrorKeepsHeadAndNoteOfOversizedPartial(t *testing.T) {
+	tool := &DelegateTool{}
+	partial := strings.Repeat("report body\n", 2000) // ~24 KiB, past toolResultMaxBytes
+	note := "the report dispatch could not discard its isolated scope; it left the worktree at /tmp/wt/scratch"
+
+	_, err := tool.classifyRunnerResult(partial, &retainedRunError{cause: errors.New("max iterations reached"), note: note}, "reviewer", 30*time.Second, context.Background())
+	if err == nil {
+		t.Fatal("a generic runner error must stay an error")
+	}
+	if len(err.Error()) > len("max iterations reached\n")+toolResultMaxBytes+len(truncationMarker)+len(note)+16 {
+		t.Errorf("folded error is unbounded: %d bytes", len(err.Error()))
+	}
+	if !strings.Contains(err.Error(), "left the worktree at /tmp/wt/scratch") {
+		t.Errorf("the bounded fold lost the teardown note: %v", err)
+	}
+	if !strings.Contains(err.Error(), "report body") {
+		t.Errorf("the bounded fold lost the head of the partial: %v", err)
+	}
+	if !strings.Contains(err.Error(), truncationMarker) {
+		t.Errorf("a capped body must carry the canonical truncation marker: %v", err)
+	}
+}
+
+// TestDelegate_ClassifyGenericErrorBoundsAnOversizedNote: the caveat half is
+// bounded too — retainedNote can attach a full provisioning error — and
+// keepTail keeps its tail, which is where the worktree path lives. The
+// ceiling pins noteBudget, not the body cap, so widening the caveat budget
+// cannot slip through.
+func TestDelegate_ClassifyGenericErrorBoundsAnOversizedNote(t *testing.T) {
+	tool := &DelegateTool{}
+	note := "provisioning failed: " + strings.Repeat("provider diagnostics ", 400) +
+		"it left the worktree at /tmp/wt/scratch"
+
+	_, err := tool.classifyRunnerResult("", &retainedRunError{cause: errors.New("max iterations reached"), note: note}, "reviewer", 30*time.Second, context.Background())
+	if err == nil {
+		t.Fatal("a generic runner error must stay an error")
+	}
+	// Body is empty here (the whole partial is the caveat), so the error is
+	// the cause, a newline, and "note: " + at most noteBudget tail bytes.
+	ceiling := len("max iterations reached\n") + len("note: ") + noteBudget + len(tailTruncationMarker) + 16
+	if len(err.Error()) > ceiling {
+		t.Errorf("folded error exceeds the note budget: %d bytes, want <= %d", len(err.Error()), ceiling)
+	}
+	if !strings.Contains(err.Error(), "left the worktree at /tmp/wt/scratch") {
+		t.Errorf("note tail-keeping lost the worktree path: %v", err)
+	}
+	if !strings.Contains(err.Error(), tailTruncationMarker) {
+		t.Errorf("a cut note must carry the tail truncation marker: %v", err)
+	}
+}
+
+// TestDelegate_ClassifyGenericErrorWithoutPartialStaysBare: nothing to
+// preserve, nothing appended.
+func TestDelegate_ClassifyGenericErrorWithoutPartialStaysBare(t *testing.T) {
+	tool := &DelegateTool{}
+	got, err := tool.classifyRunnerResult("", errors.New("boom"), "reviewer", 30*time.Second, context.Background())
+	if err == nil || err.Error() != "boom" {
+		t.Errorf("err = %v, want the bare cause", err)
+	}
+	if got != "" {
+		t.Errorf("result = %q, want empty", got)
+	}
 }
